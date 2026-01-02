@@ -1,0 +1,96 @@
+2026-01-02 09:06:46,752 - __main__ - INFO - Gradio WebUI 将在端口 7860 启动
+2026-01-02 09:06:46,781 - __main__ - INFO - 晨曦Origins Agent 启动中...
+2026-01-02 09:06:46,782 - __main__ - INFO - 上下文管理器初始化完成
+2026-01-02 09:06:46,783 - core.danmaku_cache - INFO - 弹幕缓存管理器初始化完成: dir=data/danmaku_cache, retention_days=7
+2026-01-02 09:06:46,783 - __main__ - INFO - 弹幕缓存管理器初始化完成
+2026-01-02 09:06:46,799 - core.memory.manager - INFO - 记忆管理器初始化完成: db=database/memories.db
+2026-01-02 09:06:46,799 - __main__ - INFO - 记忆管理器初始化完成
+2026-01-02 09:06:46,799 - llm.vllm_client - INFO - vLLM客户端初始化: url=http://localhost:8000/v1, model=Qwen2.5-7B-Instruct
+2026-01-02 09:06:46,799 - llm.client - INFO - vLLM客户端初始化成功: localhost:8000
+2026-01-02 09:06:46,799 - llm.ollama_client - INFO - Ollama客户端初始化: url=http://localhost:11434, model=llama3.2
+2026-01-02 09:06:46,799 - llm.client - INFO - Ollama客户端初始化成功: http://localhost:11434
+2026-01-02 09:06:46,799 - __main__ - INFO - LLM工厂初始化完成
+2026-01-02 09:06:46,800 - audio.parser - INFO - 音效解析器初始化完成: dir=data/effects, effects=0
+2026-01-02 09:06:46,800 - __main__ - INFO - 音效解析器初始化完成，扫描到 0 个音效
+2026-01-02 09:06:46,892 - __main__ - ERROR - 启动失败: Dataframe.__init__() got an unexpected keyword argument 'height'
+2026-01-02 09:06:49,085 - httpx - INFO - HTTP Request: GET https://api.gradio.app/pkg-version "HTTP/1.1 200 OK"
+2026-01-02 09:07:27,718 - __main__ - WARNING - 配置文件不存在，使用默认配置
+2026-01-02 09:07:27,718 - __main__ - INFO - Gradio WebUI 将在端口 7860 启动
+2026-01-02 09:07:27,733 - __main__ - INFO - 晨曦Origins Agent 启动中...
+2026-01-02 09:07:27,734 - __main__ - WARNING - 配置文件不存在，使用默认配置
+2026-01-02 09:07:27,736 - __main__ - INFO - 上下文管理器初始化完成
+2026-01-02 09:07:27,737 - core.danmaku_cache - INFO - 弹幕缓存管理器初始化完成: dir=data/danmaku_cache, retention_days=7
+2026-01-02 09:07:27,737 - __main__ - INFO - 弹幕缓存管理器初始化完成
+2026-01-02 09:07:27,751 - core.memory.manager - INFO - 记忆管理器初始化完成: db=database/memories.db
+2026-01-02 09:07:27,751 - __main__ - INFO - 记忆管理器初始化完成
+2026-01-02 09:07:27,751 - __main__ - INFO - LLM工厂初始化完成
+2026-01-02 09:07:27,751 - audio.parser - INFO - 音效解析器初始化完成: dir=data/effects, effects=0
+2026-01-02 09:07:27,751 - __main__ - INFO - 音效解析器初始化完成，扫描到 0 个音效
+2026-01-02 09:07:27,832 - __main__ - ERROR - 启动失败: Dataframe.__init__() got an unexpected keyword argument 'height'
+2026-01-02 09:07:31,016 - httpx - INFO - HTTP Request: GET https://api.gradio.app/pkg-version "HTTP/1.1 200 OK"
+2026-01-02 09:12:02,443 - __main__ - WARNING - 配置文件不存在，使用默认配置
+2026-01-02 09:12:02,444 - __main__ - INFO - Gradio WebUI 将在端口 7860 启动
+2026-01-02 09:12:02,456 - __main__ - INFO - 晨曦Origins Agent 启动中...
+2026-01-02 09:12:02,456 - __main__ - WARNING - 配置文件不存在，使用默认配置
+2026-01-02 09:12:02,456 - __main__ - INFO - 上下文管理器初始化完成
+2026-01-02 09:12:02,457 - core.danmaku_cache - INFO - 弹幕缓存管理器初始化完成: dir=data/danmaku_cache, retention_days=7
+2026-01-02 09:12:02,457 - __main__ - INFO - 弹幕缓存管理器初始化完成
+2026-01-02 09:12:02,458 - core.memory.manager - INFO - 记忆管理器初始化完成: db=database/memories.db
+2026-01-02 09:12:02,459 - __main__ - INFO - 记忆管理器初始化完成
+2026-01-02 09:12:02,459 - __main__ - INFO - LLM工厂初始化完成
+2026-01-02 09:12:02,459 - audio.parser - INFO - 音效解析器初始化完成: dir=data/effects, effects=0
+2026-01-02 09:12:02,459 - __main__ - INFO - 音效解析器初始化完成，扫描到 0 个音效
+2026-01-02 09:12:02,538 - __main__ - ERROR - 启动失败: module 'gradio' has no attribute 'Box'
+2026-01-02 09:12:04,684 - httpx - INFO - HTTP Request: GET https://api.gradio.app/pkg-version "HTTP/1.1 200 OK"
+2026-01-02 09:18:40,721 - __main__ - INFO - 后端服务启动中: 端口 8000
+2026-01-02 09:19:55,706 - __main__ - INFO - 后端服务停止中...
+2026-01-02 09:32:06,439 - __main__ - INFO - 后端服务启动中: 端口 8000
+2026-01-02 09:33:22,412 - __main__ - INFO - 后端服务停止中...
+2026-01-02 09:37:14,147 - numexpr.utils - INFO - NumExpr defaulting to 16 threads.
+2026-01-02 09:37:18,002 - httpx - INFO - HTTP Request: GET https://api.gradio.app/pkg-version "HTTP/1.1 200 OK"
+2026-01-02 09:48:49,905 - numexpr.utils - INFO - NumExpr defaulting to 16 threads.
+2026-01-02 09:48:53,635 - httpx - INFO - HTTP Request: GET https://api.gradio.app/pkg-version "HTTP/1.1 200 OK"
+2026-01-02 09:51:20,085 - numexpr.utils - INFO - NumExpr defaulting to 16 threads.
+2026-01-02 09:51:21,883 - webui.app - INFO - 启动WebUI: http://0.0.0.0:7860
+2026-01-02 09:51:24,133 - httpx - INFO - HTTP Request: GET https://api.gradio.app/pkg-version "HTTP/1.1 200 OK"
+2026-01-02 09:51:24,549 - httpx - INFO - HTTP Request: GET http://localhost:7860/gradio_api/startup-events "HTTP/1.1 200 OK"
+2026-01-02 09:51:26,639 - httpx - INFO - HTTP Request: HEAD http://localhost:7860/ "HTTP/1.1 200 OK"
+2026-01-02 09:51:32,389 - httpx - INFO - HTTP Request: GET https://api.gradio.app/v3/tunnel-request "HTTP/1.1 200 OK"
+2026-01-02 09:53:54,689 - main - INFO - 后端服务启动中: 端口 7860
+2026-01-02 09:59:20,681 - numexpr.utils - INFO - NumExpr defaulting to 16 threads.
+2026-01-02 09:59:22,405 - webui.app - INFO - 启动WebUI: http://0.0.0.0:7860
+2026-01-02 09:59:24,451 - httpx - INFO - HTTP Request: GET https://api.gradio.app/pkg-version "HTTP/1.1 200 OK"
+2026-01-02 09:59:25,094 - httpx - INFO - HTTP Request: GET http://localhost:7860/gradio_api/startup-events "HTTP/1.1 200 OK"
+2026-01-02 09:59:27,142 - httpx - INFO - HTTP Request: HEAD http://localhost:7860/ "HTTP/1.1 200 OK"
+2026-01-02 09:59:30,624 - httpx - INFO - HTTP Request: GET https://api.gradio.app/v3/tunnel-request "HTTP/1.1 200 OK"
+2026-01-02 09:59:31,956 - main - INFO - 后端服务启动中: 端口 8000
+2026-01-02 09:59:37,624 - main - INFO - 后端服务停止中...
+2026-01-02 10:04:06,483 - numexpr.utils - INFO - NumExpr defaulting to 16 threads.
+2026-01-02 10:04:08,225 - webui.app - INFO - 启动WebUI: http://0.0.0.0:7860
+2026-01-02 10:04:09,191 - httpx - INFO - HTTP Request: GET https://api.gradio.app/pkg-version "HTTP/1.1 200 OK"
+2026-01-02 10:04:10,881 - httpx - INFO - HTTP Request: GET http://localhost:7860/gradio_api/startup-events "HTTP/1.1 200 OK"
+2026-01-02 10:04:12,950 - httpx - INFO - HTTP Request: HEAD http://localhost:7860/ "HTTP/1.1 200 OK"
+2026-01-02 10:04:17,469 - httpx - INFO - HTTP Request: GET https://api.gradio.app/v3/tunnel-request "HTTP/1.1 200 OK"
+2026-01-02 10:10:28,853 - numexpr.utils - INFO - NumExpr defaulting to 16 threads.
+2026-01-02 10:10:30,532 - webui.app - INFO - 启动WebUI: http://0.0.0.0:7860
+2026-01-02 10:10:31,662 - httpx - INFO - HTTP Request: GET https://api.gradio.app/pkg-version "HTTP/1.1 200 OK"
+2026-01-02 10:10:33,183 - httpx - INFO - HTTP Request: GET http://localhost:7860/gradio_api/startup-events "HTTP/1.1 200 OK"
+2026-01-02 10:10:35,243 - httpx - INFO - HTTP Request: HEAD http://localhost:7860/ "HTTP/1.1 200 OK"
+2026-01-02 10:17:22,474 - numexpr.utils - INFO - NumExpr defaulting to 16 threads.
+2026-01-02 10:17:24,202 - webui.app - INFO - 启动WebUI: http://0.0.0.0:7860
+2026-01-02 10:17:25,157 - httpx - INFO - HTTP Request: GET https://api.gradio.app/pkg-version "HTTP/1.1 200 OK"
+2026-01-02 10:17:26,875 - httpx - INFO - HTTP Request: GET http://localhost:7860/gradio_api/startup-events "HTTP/1.1 200 OK"
+2026-01-02 10:17:28,960 - httpx - INFO - HTTP Request: HEAD http://localhost:7860/ "HTTP/1.1 200 OK"
+2026-01-02 10:17:30,351 - httpx - INFO - HTTP Request: GET https://api.gradio.app/v3/tunnel-request "HTTP/1.1 200 OK"
+2026-01-02 10:25:48,667 - numexpr.utils - INFO - NumExpr defaulting to 16 threads.
+2026-01-02 10:25:50,384 - webui.app - INFO - 启动WebUI: http://0.0.0.0:7860
+2026-01-02 10:25:51,377 - httpx - INFO - HTTP Request: GET https://api.gradio.app/pkg-version "HTTP/1.1 200 OK"
+2026-01-02 10:25:53,045 - httpx - INFO - HTTP Request: GET http://localhost:7860/gradio_api/startup-events "HTTP/1.1 200 OK"
+2026-01-02 10:25:55,109 - httpx - INFO - HTTP Request: HEAD http://localhost:7860/ "HTTP/1.1 200 OK"
+2026-01-02 10:25:58,121 - httpx - INFO - HTTP Request: GET https://api.gradio.app/v3/tunnel-request "HTTP/1.1 200 OK"
+2026-01-02 10:31:29,908 - numexpr.utils - INFO - NumExpr defaulting to 16 threads.
+2026-01-02 10:31:31,703 - webui.app - INFO - 启动WebUI: http://0.0.0.0:7860
+2026-01-02 10:31:34,359 - httpx - INFO - HTTP Request: GET http://localhost:7860/gradio_api/startup-events "HTTP/1.1 200 OK"
+2026-01-02 10:31:36,426 - httpx - INFO - HTTP Request: HEAD http://localhost:7860/ "HTTP/1.1 200 OK"
+2026-01-02 10:31:36,763 - httpx - INFO - HTTP Request: GET https://api.gradio.app/pkg-version "HTTP/1.1 200 OK"
+2026-01-02 10:31:38,259 - httpx - INFO - HTTP Request: GET https://api.gradio.app/v3/tunnel-request "HTTP/1.1 200 OK"

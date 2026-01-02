@@ -1,0 +1,37 @@
+{
+  "system": {
+    "llm_provider": "vllm",
+    "vllm": {
+      "host": "localhost",
+      "port": 8000,
+      "model": "Qwen2.5-7B-Instruct"
+    },
+    "ollama": {
+      "host": "http://localhost:11434",
+      "model": "llama3.2"
+    },
+    "main_port": 8000,
+    "webui_port": 7860,
+    "log_level": "INFO"
+  },
+  "memory": {
+    "context_dir": "data/contexts",
+    "vector_dimension": 1024,
+    "archive_interval": 3600,
+    "retrieval_limit": 10,
+    "max_history_rounds": 20,
+    "danmaku_cache_dir": "data/danmaku_cache",
+    "danmaku_retention_days": 7
+  },
+  "danmaku": {
+    "enabled": true,
+    "websocket_uri": "ws://localhost:9898",
+    "task_ids": [],
+    "audit_enabled": true
+  },
+  "audio": {
+    "effects_dir": "data/effects",
+    "tts_model": "F5-TTS",
+    "asr_model": "SenseVoice"
+  }
+}

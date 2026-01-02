@@ -1,0 +1,43 @@
+{
+  "system": {
+    "llm_provider": "ollama",
+    "vllm": {
+      "host": "localhost",
+      "port": 8000,
+      "model": "Qwen2.5-7B-Instruct"
+    },
+    "ollama": {
+      "host": "http://localhost:11434",
+      "model": "llama3.2"
+    },
+    "assistant_provider": "ollama",
+    "assistant_vllm": {
+      "host": "localhost",
+      "model": "Qwen2.5-1.5B-Instruct"
+    },
+    "assistant_ollama": {
+      "host": "http://localhost:11434",
+      "model": "llama3.2"
+    }
+  },
+  "memory": {
+    "archive_interval": 3600,
+    "retrieval_limit": 10,
+    "max_history_rounds": 20
+  },
+  "danmaku": {
+    "enabled": false,
+    "websocket_uri": "ws://localhost:9898",
+    "task_ids": [],
+    "audit_enabled": false
+  },
+  "tts": {
+    "provider": "f5-tts",
+    "voice": "zh-CN-XiaoxiaoNeural",
+    "voice_ref": ""
+  },
+  "asr": {
+    "provider": "sensevoice",
+    "use_gpu": true
+  }
+}
