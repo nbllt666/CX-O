@@ -1,0 +1,343 @@
+生成聊天完成
+POST /api/chat
+使用提供的模型在聊天中生成下一条消息。这是一个流式处理终结点，因此将有一系列响应。可以使用"stream": false.最终响应对象将包含来自请求的统计信息和其他数据。
+
+参数
+model：（必需）模型名称
+messages：聊天的消息，可用于保存聊天记录
+tools：JSON 中供模型使用的工具列表（如果支持）
+这messageobject 具有以下字段：
+
+role：消息的角色system,user,assistant或tool
+content：消息的内容
+images（可选）：要包含在消息中的图像列表（对于多模态模型，例如llava)
+tool_calls（可选）：模型要使用的 JSON 中的工具列表
+高级参数（可选）：
+
+format：返回响应的格式。格式可以是json或 JSON 架构。
+options：Modelfile 文档中列出的其他模型参数，例如temperature
+stream：如果false响应将作为单个响应对象返回，而不是对象流
+keep_alive：控制模型在请求后加载到内存中的时间（默认值：5m)
+结构化输出
+通过在format参数。该模型将生成与架构匹配的响应。请参阅下面的 Chat request （Structured outputs） 示例。
+
+示例
+聊天请求 （流式处理）
+请求
+发送包含流式响应的聊天消息。
+
+curl http://localhost:11434/api/chat -d '{
+  "model": "llama3.2",
+  "messages": [
+    {
+      "role": "user",
+      "content": "why is the sky blue?"
+    }
+  ]
+}'
+响应
+返回 JSON 对象流：
+
+{
+  "model": "llama3.2",
+  "created_at": "2023-08-04T08:52:19.385406455-07:00",
+  "message": {
+    "role": "assistant",
+    "content": "The",
+    "images": null
+  },
+  "done": false
+}
+最终回应：
+
+{
+  "model": "llama3.2",
+  "created_at": "2023-08-04T19:22:45.499127Z",
+  "done": true,
+  "total_duration": 4883583458,
+  "load_duration": 1334875,
+  "prompt_eval_count": 26,
+  "prompt_eval_duration": 342546000,
+  "eval_count": 282,
+  "eval_duration": 4535599000
+}
+聊天请求 （无流式处理）
+请求
+curl http://localhost:11434/api/chat -d '{
+  "model": "llama3.2",
+  "messages": [
+    {
+      "role": "user",
+      "content": "why is the sky blue?"
+    }
+  ],
+  "stream": false
+}'
+响应
+{
+  "model": "llama3.2",
+  "created_at": "2023-12-12T14:13:43.416799Z",
+  "message": {
+    "role": "assistant",
+    "content": "Hello! How are you today?"
+  },
+  "done": true,
+  "total_duration": 5191566416,
+  "load_duration": 2154458,
+  "prompt_eval_count": 26,
+  "prompt_eval_duration": 383809000,
+  "eval_count": 298,
+  "eval_duration": 4799921000
+}
+聊天请求（结构化输出）
+请求
+curl -X POST http://localhost:11434/api/chat -H "Content-Type: application/json" -d '{
+  "model": "llama3.1",
+  "messages": [{"role": "user", "content": "Ollama is 22 years old and busy saving the world. Return a JSON object with the age and availability."}],
+  "stream": false,
+  "format": {
+    "type": "object",
+    "properties": {
+      "age": {
+        "type": "integer"
+      },
+      "available": {
+        "type": "boolean"
+      }
+    },
+    "required": [
+      "age",
+      "available"
+    ]
+  },
+  "options": {
+    "temperature": 0
+  }
+}'
+响应
+{
+  "model": "llama3.1",
+  "created_at": "2024-12-06T00:46:58.265747Z",
+  "message": { "role": "assistant", "content": "{\"age\": 22, \"available\": false}" },
+  "done_reason": "stop",
+  "done": true,
+  "total_duration": 2254970291,
+  "load_duration": 574751416,
+  "prompt_eval_count": 34,
+  "prompt_eval_duration": 1502000000,
+  "eval_count": 12,
+  "eval_duration": 175000000
+}
+聊天请求（带历史记录）
+发送包含对话历史记录的聊天消息。您可以使用相同的方法，使用多发或思维链提示来开始对话。
+
+请求
+curl http://localhost:11434/api/chat -d '{
+  "model": "llama3.2",
+  "messages": [
+    {
+      "role": "user",
+      "content": "why is the sky blue?"
+    },
+    {
+      "role": "assistant",
+      "content": "due to rayleigh scattering."
+    },
+    {
+      "role": "user",
+      "content": "how is that different than mie scattering?"
+    }
+  ]
+}'
+响应
+返回 JSON 对象流：
+
+{
+  "model": "llama3.2",
+  "created_at": "2023-08-04T08:52:19.385406455-07:00",
+  "message": {
+    "role": "assistant",
+    "content": "The"
+  },
+  "done": false
+}
+最终回应：
+
+{
+  "model": "llama3.2",
+  "created_at": "2023-08-04T19:22:45.499127Z",
+  "done": true,
+  "total_duration": 8113331500,
+  "load_duration": 6396458,
+  "prompt_eval_count": 61,
+  "prompt_eval_duration": 398801000,
+  "eval_count": 468,
+  "eval_duration": 7701267000
+}
+聊天请求（带图片）
+请求
+发送带有图像的聊天消息。图像应以数组形式提供，单个图像以 Base64 编码。
+
+curl http://localhost:11434/api/chat -d '{
+  "model": "llava",
+  "messages": [
+    {
+      "role": "user",
+      "content": "what is in this image?",
+      "images": ["******"]
+    }
+  ]
+}'
+响应
+{
+  "model": "llava",
+  "created_at": "2023-12-13T22:42:50.203334Z",
+  "message": {
+    "role": "assistant",
+    "content": " The image features a cute, little pig with an angry facial expression. It's wearing a heart on its shirt and is waving in the air. This scene appears to be part of a drawing or sketching project.",
+    "images": null
+  },
+  "done": true,
+  "total_duration": 1668506709,
+  "load_duration": 1986209,
+  "prompt_eval_count": 26,
+  "prompt_eval_duration": 359682000,
+  "eval_count": 83,
+  "eval_duration": 1303285000
+}
+聊天请求（可重现的输出）
+请求
+curl http://localhost:11434/api/chat -d '{
+  "model": "llama3.2",
+  "messages": [
+    {
+      "role": "user",
+      "content": "Hello!"
+    }
+  ],
+  "options": {
+    "seed": 101,
+    "temperature": 0
+  }
+}'
+响应
+{
+  "model": "llama3.2",
+  "created_at": "2023-12-12T14:13:43.416799Z",
+  "message": {
+    "role": "assistant",
+    "content": "Hello! How are you today?"
+  },
+  "done": true,
+  "total_duration": 5191566416,
+  "load_duration": 2154458,
+  "prompt_eval_count": 26,
+  "prompt_eval_duration": 383809000,
+  "eval_count": 298,
+  "eval_duration": 4799921000
+}
+聊天请求（带工具）
+请求
+curl http://localhost:11434/api/chat -d '{
+  "model": "llama3.2",
+  "messages": [
+    {
+      "role": "user",
+      "content": "What is the weather today in Paris?"
+    }
+  ],
+  "stream": false,
+  "tools": [
+    {
+      "type": "function",
+      "function": {
+        "name": "get_current_weather",
+        "description": "Get the current weather for a location",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "location": {
+              "type": "string",
+              "description": "The location to get the weather for, e.g. San Francisco, CA"
+            },
+            "format": {
+              "type": "string",
+              "description": "The format to return the weather in, e.g. 'celsius' or 'fahrenheit'",
+              "enum": ["celsius", "fahrenheit"]
+            }
+          },
+          "required": ["location", "format"]
+        }
+      }
+    }
+  ]
+}'
+响应
+{
+  "model": "llama3.2",
+  "created_at": "2024-07-22T20:33:28.123648Z",
+  "message": {
+    "role": "assistant",
+    "content": "",
+    "tool_calls": [
+      {
+        "function": {
+          "name": "get_current_weather",
+          "arguments": {
+            "format": "celsius",
+            "location": "Paris, FR"
+          }
+        }
+      }
+    ]
+  },
+  "done_reason": "stop",
+  "done": true,
+  "total_duration": 885095291,
+  "load_duration": 3753500,
+  "prompt_eval_count": 122,
+  "prompt_eval_duration": 328493000,
+  "eval_count": 33,
+  "eval_duration": 552222000
+}
+加载模型
+如果 messages 数组为空，则模型将被加载到内存中。
+
+请求
+curl http://localhost:11434/api/chat -d '{
+  "model": "llama3.2",
+  "messages": []
+}'
+响应
+{
+  "model": "llama3.2",
+  "created_at":"2024-09-12T21:17:29.110811Z",
+  "message": {
+    "role": "assistant",
+    "content": ""
+  },
+  "done_reason": "load",
+  "done": true
+}
+卸载模型
+如果 messages 数组为空且keep_aliveparameter 设置为0，模型将从内存中卸载。
+
+请求
+curl http://localhost:11434/api/chat -d '{
+  "model": "llama3.2",
+  "messages": [],
+  "keep_alive": 0
+}'
+响应
+返回单个 JSON 对象：
+
+{
+  "model": "llama3.2",
+  "created_at":"2024-09-12T21:33:17.547535Z",
+  "message": {
+    "role": "assistant",
+    "content": ""
+  },
+  "done_reason": "unload",
+  "done": true
+}
