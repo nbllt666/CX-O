@@ -1,0 +1,3 @@
+@echo off 
+echo Testing API... 
+curl -s -o nul -w "%%{http_code}" http://localhost:8000/ 

@@ -1,0 +1,7 @@
+{
+  "name": "set_alarm",
+  "arguments": {
+    "seconds": 60,
+    "message": "测试提醒"
+  }
+}

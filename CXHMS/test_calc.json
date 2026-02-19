@@ -1,0 +1,5 @@
+{
+  "message": "计算 123 乘以 456 等于多少",
+  "agent_id": "default",
+  "stream": true
+}

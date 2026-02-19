@@ -1,0 +1,24 @@
+{
+  "id": "example_plugin",
+  "name": "示例插件",
+  "version": "1.0.0",
+  "description": "这是一个示例插件，展示了插件系统的基本用法",
+  "author": "CXHMS Team",
+  "author_email": "team@cxhms.local",
+  "url": "https://github.com/cxhms/example-plugin",
+  "license": "MIT",
+  "requires": [],
+  "conflicts": [],
+  "hooks": [
+    "memory_created",
+    "chat_after",
+    "session_created"
+  ],
+  "provides": [
+    "example_feature"
+  ],
+  "default_config": {
+    "enabled_features": ["logging", "notification"],
+    "log_level": "info"
+  }
+}

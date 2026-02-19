@@ -1,0 +1,150 @@
+server:
+  host: 0.0.0.0
+  port: 8000
+  debug: true
+cors:
+  enabled: true
+  origins:
+  - '*'
+  methods:
+  - '*'
+  headers:
+  - '*'
+  allow_credentials: true
+logging:
+  level: INFO
+  format: '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+  file: logs/app.log
+  max_bytes: 10485760
+  backup_count: 5
+database:
+  type: sqlite
+  path: data/cxhms.db
+  memories_db: data/memories.db
+  sessions_db: data/sessions.db
+  acp_db: data/acp
+  echo: false
+models:
+  main:
+    provider: ollama
+    host: http://localhost:11434
+    model: qwen3-vl:8b
+    apiKey: ''
+    enabled: true
+    port: 8000
+    temperature: 0.7
+    max_tokens: 0
+    timeout: 60
+    api_key: ''
+  summary:
+    provider: ollama
+    host: http://localhost:11434
+    model: qwen3-vl:8b
+    apiKey: ''
+    enabled: false
+    port: 8000
+    temperature: 0.7
+    max_tokens: 131072
+    timeout: 60
+    api_key: ''
+  memory:
+    provider: ollama
+    host: http://localhost:11434
+    model: qwen3-vl:8b
+    apiKey: ''
+    enabled: false
+    port: 8000
+    temperature: 0.7
+    max_tokens: 131072
+    timeout: 60
+    api_key: ''
+model_defaults:
+  summary: main
+  memory: main
+agent:
+  agent_id: cxhms_agent_001
+  name: CXHMS Agent
+  version: 1.0.0
+  description: 一个智能记忆管理系统
+  capabilities:
+  - memory
+  - tools
+  - chat
+  - context
+memory:
+  enabled: true
+  max_memories: 10000
+  default_importance: 3
+  decay_enabled: true
+  decay_rate: 0.1
+  decay_interval_days: 7
+  reactivation_boost: 0.2
+  emotion_enabled: true
+  vector_enabled: true
+  vector_backend: weaviate
+  decay_model: exponential
+  ebbinghaus_params:
+    t50: 30.0
+    k: 2.0
+  chroma:
+    db_path: data/chroma_db
+    collection_name: memory_vectors
+    vector_size: 768
+  milvus_lite:
+    db_path: data/milvus_lite.db
+    vector_size: 768
+  qdrant:
+    host: localhost
+    port: 6333
+    vector_size: 768
+  weaviate:
+    host: localhost
+    port: 8090
+    grpc_port: 50061
+    embedded: false
+    vector_size: 768
+    schema_class: CXHMSMemory
+    api_key: null
+  hybrid_search_enabled: false
+  archive_enabled: true
+  dedup_threshold: 0.85
+  archive_compression_enabled: true
+context:
+  enabled: true
+  max_context_length: 4000
+  context_window: 10
+  include_memories: true
+  max_memories_in_context: 5
+tools:
+  enabled: true
+  auto_discovery: true
+  mcp_enabled: false
+  builtin_tools:
+  - calculator
+  - datetime
+  - weather
+acp:
+  enabled: true
+  local_agent_id: cxhms_agent_001
+  local_agent_name: CXHMS Agent
+  discovery_enabled: true
+  discovery_port: 9999
+  broadcast_port: 9998
+  broadcast_address: 255.255.255.255
+  discovery_interval: 30
+security:
+  api_key_enabled: false
+  api_key: ''
+  rate_limit_enabled: false
+  rate_limit_requests: 100
+  rate_limit_period: 60
+monitoring:
+  enabled: true
+  metrics_enabled: true
+  health_check_enabled: true
+  performance_logging: true
+llm_params:
+  temperature: 1.3
+  maxTokens: 0
+  topP: 0.9
+  timeout: 30

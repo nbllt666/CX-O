@@ -1,0 +1,62 @@
+{
+    "gateway": {
+        "host": "0.0.0.0",
+        "port": 8100
+    },
+    "services": {
+        "cxhms": {
+            "url": "ws://127.0.0.1:8000/ws",
+            "pool_size": 5,
+            "reconnect_interval": 5,
+            "heartbeat_interval": 30
+        },
+        "asr": {
+            "url": "http://127.0.0.1:8001",
+            "timeout": 60
+        },
+        "tts": {
+            "url": "http://127.0.0.1:8002",
+            "timeout": 120,
+            "ref_audio_path": "",
+            "ref_text": "",
+            "model_type": "F5-TTS",
+            "speed": 1.0,
+            "cross_fade_duration": 0.15,
+            "emotion_enabled": true,
+            "effects_enabled": true,
+            "emotion_voices": {
+                "normal": {
+                    "ref_audio": "",
+                    "ref_text": ""
+                },
+                "happy": {
+                    "ref_audio": "",
+                    "ref_text": ""
+                },
+                "sad": {
+                    "ref_audio": "",
+                    "ref_text": ""
+                },
+                "angry": {
+                    "ref_audio": "",
+                    "ref_text": ""
+                },
+                "surprised": {
+                    "ref_audio": "",
+                    "ref_text": ""
+                },
+                "tender": {
+                    "ref_audio": "",
+                    "ref_text": ""
+                }
+            }
+        },
+        "audio": {
+            "effects_dir": "data/effects"
+        }
+    },
+    "logging": {
+        "level": "INFO",
+        "format": "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+    }
+}
