@@ -16,15 +16,15 @@ export default defineConfig({
     port: 3000,
     proxy: {
       '/api': {
-        target: 'http://localhost:8000',
+        target: 'http://localhost:8100',
         changeOrigin: true,
       },
       '/control': {
-        target: 'http://localhost:8765',
+        target: 'http://localhost:8100',
         changeOrigin: true,
       },
       '/health': {
-        target: 'http://localhost:8765',
+        target: 'http://localhost:8100',
         changeOrigin: true,
       },
     },

@@ -613,7 +613,7 @@ async def memory_agent_chat_stream(request: MemoryAgentChatRequest):
         session_id = "memory-agent-default"
         try:
             context_mgr.get_session(session_id)
-        except:
+        except Exception:
             session_id = context_mgr.create_session(
                 workspace_id="memory-agent", title="记忆管理对话"
             )

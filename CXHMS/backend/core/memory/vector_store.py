@@ -183,11 +183,12 @@ class QdrantVectorStore(VectorStoreBase):
                 query_filter=search_filter,
             )
 
-            # Qdrant返回的是距离，距离越小越相似，所以需要转换为相似度分数
-            # 使用 1/(1+distance) 转换为相似度分数，这样分数越大越相似
+            # Qdrant 使用 COSINE 距离时，score 是余弦相似度，范围 -1 到 1
+            # 值越大越相似，需要归一化到 0-1 范围
             filtered_results = []
             for r in results:
-                similarity_score = 1 / (1 + r.score)  # 将距离转换为相似度
+                # 将余弦相似度从 [-1, 1] 映射到 [0, 1]
+                similarity_score = (r.score + 1) / 2
                 if similarity_score >= min_score:
                     filtered_results.append(
                         {

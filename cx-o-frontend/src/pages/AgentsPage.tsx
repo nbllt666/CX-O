@@ -147,7 +147,8 @@ export function AgentsPage() {
     try {
       setLoading(true);
       const data = await api.getAgents();
-      const filteredAgents = data.filter((agent: Agent) => agent.id !== 'memory-agent');
+      const agentList = Array.isArray(data) ? data : data.agents || [];
+      const filteredAgents = agentList.filter((agent: Agent) => agent.id !== 'memory-agent');
       setAgents(filteredAgents);
     } catch (error) {
       console.error('加载 Agent 失败:', error);

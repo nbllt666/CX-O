@@ -1,21 +1,8 @@
 import { useEffect, useRef, useCallback, useState } from 'react';
 
-const WS_BASE_URL = import.meta.env.VITE_WS_URL || 'ws://localhost:8100/ws';
-
-// Gateway Protocol Types
-export type WSMessageType = 'request' | 'response' | 'stream' | 'error' | 'ping' | 'pong';
-
-export interface WSMessage {
-  type: WSMessageType;
-  request_id: string;
-  action?: string;
-  data?: Record<string, unknown>;
-  status?: string;
-  error?: { code: string; message: string };
-  chunk_index?: number;
-  is_final?: boolean;
-  timestamp?: number;
-}
+const WS_BASE_URL =
+  import.meta.env.VITE_WS_URL ||
+  (import.meta.env.VITE_API_URL || 'http://localhost:8000').replace('http', 'ws');
 
 export interface WebSocketMessage {
   type: string;
@@ -28,28 +15,16 @@ export interface WebSocketMessage {
   tool_name?: string;
   result?: unknown;
   triggered_at?: string;
-  // Gateway protocol fields
-  request_id?: string;
-  action?: string;
-  data?: Record<string, unknown>;
-  status?: string;
-  chunk_index?: number;
-  is_final?: boolean;
-  timestamp?: number;
 }
 
 export interface WebSocketOptions {
-  agentId?: string;
+  agentId: string;
   timeout?: number;
   onMessage?: (data: WebSocketMessage) => void;
   onAlarm?: (message: string, triggeredAt: string) => void;
   onError?: (error: string) => void;
   onConnect?: () => void;
   onDisconnect?: () => void;
-  // Gateway protocol callbacks
-  onResponse?: (message: WSMessage) => void;
-  onStream?: (message: WSMessage) => void;
-  onGatewayError?: (message: WSMessage) => void;
 }
 
 export interface UseWebSocketReturn {
@@ -59,30 +34,11 @@ export interface UseWebSocketReturn {
   cancelGeneration: () => void;
   disconnect: () => void;
   reconnect: () => void;
-  // Gateway protocol methods
-  sendRequest: (action: string, data?: Record<string, unknown>) => string;
-  sendPing: () => void;
-  sendPong: () => void;
 }
 
-// Generate unique request ID
-const generateRequestId = (): string => {
-  return `${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
-};
-
 export function useWebSocket(options: WebSocketOptions): UseWebSocketReturn {
-  const {
-    agentId,
-    timeout: propTimeout,
-    onMessage,
-    onAlarm,
-    onError,
-    onConnect,
-    onDisconnect,
-    onResponse,
-    onStream,
-    onGatewayError,
-  } = options;
+  const agentId = options.agentId;
+  const propTimeout = options.timeout;
 
   const getStoredTimeout = useCallback(() => {
     const stored = localStorage.getItem('cxhms-offline-timeout');
@@ -96,6 +52,26 @@ export function useWebSocket(options: WebSocketOptions): UseWebSocketReturn {
   const reconnectTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const [isConnected, setIsConnected] = useState(false);
   const [isGenerating, setIsGenerating] = useState(false);
+  const agentIdRef = useRef(agentId);
+  const timeoutRef = useRef(timeout);
+
+  const onMessageRef = useRef(options.onMessage);
+  const onAlarmRef = useRef(options.onAlarm);
+  const onErrorRef = useRef(options.onError);
+  const onConnectRef = useRef(options.onConnect);
+  const onDisconnectRef = useRef(options.onDisconnect);
+
+  useEffect(() => {
+    onMessageRef.current = options.onMessage;
+    onAlarmRef.current = options.onAlarm;
+    onErrorRef.current = options.onError;
+    onConnectRef.current = options.onConnect;
+    onDisconnectRef.current = options.onDisconnect;
+  });
+
+  useEffect(() => {
+    timeoutRef.current = timeout;
+  }, [timeout]);
 
   const clearPingInterval = useCallback(() => {
     if (pingIntervalRef.current) {
@@ -108,173 +84,10 @@ export function useWebSocket(options: WebSocketOptions): UseWebSocketReturn {
     clearPingInterval();
     pingIntervalRef.current = setInterval(() => {
       if (wsRef.current?.readyState === WebSocket.OPEN) {
-        sendPing();
+        wsRef.current.send(JSON.stringify({ type: 'ping' }));
       }
     }, 30000);
   }, [clearPingInterval]);
-
-  // Send ping message (Gateway protocol)
-  const sendPing = useCallback(() => {
-    if (wsRef.current?.readyState === WebSocket.OPEN) {
-      const pingMessage: WSMessage = {
-        type: 'ping',
-        request_id: generateRequestId(),
-        timestamp: Date.now(),
-      };
-      wsRef.current.send(JSON.stringify(pingMessage));
-    }
-  }, []);
-
-  // Send pong message (Gateway protocol)
-  const sendPong = useCallback(() => {
-    if (wsRef.current?.readyState === WebSocket.OPEN) {
-      const pongMessage: WSMessage = {
-        type: 'pong',
-        request_id: generateRequestId(),
-        timestamp: Date.now(),
-      };
-      wsRef.current.send(JSON.stringify(pongMessage));
-    }
-  }, []);
-
-  // Send request message (Gateway protocol)
-  const sendRequest = useCallback(
-    (action: string, data?: Record<string, unknown>): string => {
-      if (wsRef.current?.readyState !== WebSocket.OPEN) {
-        onError?.('WebSocket is not connected');
-        return '';
-      }
-
-      const requestId = generateRequestId();
-      const requestMessage: WSMessage = {
-        type: 'request',
-        request_id: requestId,
-        action,
-        data: data || {},
-        timestamp: Date.now(),
-      };
-      wsRef.current.send(JSON.stringify(requestMessage));
-      return requestId;
-    },
-    [onError]
-  );
-
-  const connect = useCallback(() => {
-    if (wsRef.current?.readyState === WebSocket.OPEN) {
-      return;
-    }
-
-    // Use Gateway WebSocket URL format
-    const wsUrl = agentId
-      ? `${WS_BASE_URL}?agent_id=${agentId}&timeout=${timeout}`
-      : `${WS_BASE_URL}?timeout=${timeout}`;
-    const ws = new WebSocket(wsUrl);
-
-    ws.onopen = () => {
-      setIsConnected(true);
-      startPingInterval();
-      onConnect?.();
-    };
-
-    ws.onclose = () => {
-      setIsConnected(false);
-      setIsGenerating(false);
-      clearPingInterval();
-      onDisconnect?.();
-    };
-
-    ws.onerror = (event) => {
-      console.error('WebSocket error:', event);
-      onError?.('WebSocket connection error');
-    };
-
-    ws.onmessage = (event) => {
-      try {
-        const data: WSMessage = JSON.parse(event.data);
-
-        // Handle Gateway protocol message types
-        switch (data.type) {
-          case 'pong':
-            // Pong received, connection is alive
-            break;
-          case 'ping':
-            // Respond with pong
-            sendPong();
-            break;
-          case 'response':
-            onResponse?.(data);
-            // Also call onMessage for backward compatibility
-            onMessage?.({
-              type: data.type,
-              request_id: data.request_id,
-              action: data.action,
-              data: data.data,
-              status: data.status,
-              timestamp: data.timestamp,
-            });
-            break;
-          case 'stream':
-            onStream?.(data);
-            // Also call onMessage for backward compatibility
-            onMessage?.({
-              type: data.type,
-              request_id: data.request_id,
-              action: data.action,
-              data: data.data,
-              chunk_index: data.chunk_index,
-              is_final: data.is_final,
-              timestamp: data.timestamp,
-            });
-            if (data.is_final) {
-              setIsGenerating(false);
-            }
-            break;
-          case 'error':
-            onGatewayError?.(data);
-            setIsGenerating(false);
-            onError?.(data.error?.message || 'Gateway error');
-            break;
-          // Legacy message types for backward compatibility
-          case 'alarm':
-            onAlarm?.(data.data?.message as string || '', data.data?.triggered_at as string || '');
-            break;
-          case 'content':
-          case 'tool_call':
-          case 'tool_result':
-            onMessage?.(data as unknown as WebSocketMessage);
-            break;
-          case 'done':
-            setIsGenerating(false);
-            onMessage?.(data as unknown as WebSocketMessage);
-            break;
-          case 'cancelled':
-            setIsGenerating(false);
-            onMessage?.(data as unknown as WebSocketMessage);
-            break;
-          default:
-            onMessage?.(data as unknown as WebSocketMessage);
-        }
-      } catch (e) {
-        console.error('Failed to parse WebSocket message:', e);
-      }
-    };
-
-    wsRef.current = ws;
-  }, [
-    agentId,
-    timeout,
-    onMessage,
-    onAlarm,
-    onError,
-    onConnect,
-    onDisconnect,
-    onResponse,
-    onStream,
-    onGatewayError,
-    startPingInterval,
-    clearPingInterval,
-    sendPong,
-  ]);
 
   const disconnect = useCallback(() => {
     if (reconnectTimeoutRef.current) {
@@ -288,6 +101,79 @@ export function useWebSocket(options: WebSocketOptions): UseWebSocketReturn {
     }
   }, [clearPingInterval]);
 
+  const connect = useCallback(() => {
+    if (!agentIdRef.current) {
+      return;
+    }
+    if (wsRef.current?.readyState === WebSocket.OPEN) {
+      return;
+    }
+
+    const wsUrl = `${WS_BASE_URL}/ws/${agentIdRef.current}?timeout=${timeoutRef.current}`;
+    const ws = new WebSocket(wsUrl);
+
+    ws.onopen = () => {
+      setIsConnected(true);
+      startPingInterval();
+      onConnectRef.current?.();
+    };
+
+    ws.onclose = () => {
+      setIsConnected(false);
+      setIsGenerating(false);
+      clearPingInterval();
+      onDisconnectRef.current?.();
+    };
+
+    ws.onerror = (event) => {
+      console.error('WebSocket error:', event);
+      onErrorRef.current?.('WebSocket connection error');
+    };
+
+    ws.onmessage = (event) => {
+      try {
+        const data: WebSocketMessage = JSON.parse(event.data);
+
+        switch (data.type) {
+          case 'pong':
+            break;
+          case 'alarm':
+            onAlarmRef.current?.(data.message || '', data.triggered_at || '');
+            break;
+          case 'content':
+          case 'tool_call':
+          case 'tool_result':
+            onMessageRef.current?.(data);
+            break;
+          case 'done':
+            setIsGenerating(false);
+            onMessageRef.current?.(data);
+            break;
+          case 'error':
+            setIsGenerating(false);
+            onErrorRef.current?.(data.error || 'Unknown error');
+            break;
+          case 'cancelled':
+            setIsGenerating(false);
+            onMessageRef.current?.(data);
+            break;
+          case 'thinking':
+            onMessageRef.current?.(data);
+            break;
+          case 'tool_start':
+            onMessageRef.current?.(data);
+            break;
+          default:
+            onMessageRef.current?.(data);
+        }
+      } catch (e) {
+        console.error('Failed to parse WebSocket message:', e);
+      }
+    };
+
+    wsRef.current = ws;
+  }, [startPingInterval, clearPingInterval]);
+
   const reconnect = useCallback(() => {
     disconnect();
     window.setTimeout(connect, 100);
@@ -296,27 +182,20 @@ export function useWebSocket(options: WebSocketOptions): UseWebSocketReturn {
   const sendMessage = useCallback(
     (message: string, images?: string[]) => {
       if (wsRef.current?.readyState !== WebSocket.OPEN) {
-        onError?.('WebSocket is not connected');
+        onErrorRef.current?.('WebSocket is not connected');
         return;
       }
 
       setIsGenerating(true);
-      // Use Gateway protocol request format
-      const requestId = generateRequestId();
-      const requestMessage: WSMessage = {
-        type: 'request',
-        request_id: requestId,
-        action: 'chat.send',
-        data: {
+      wsRef.current.send(
+        JSON.stringify({
+          type: 'chat',
           message,
           images: images && images.length > 0 ? images : undefined,
-          agent_id: agentId || 'default',
-        },
-        timestamp: Date.now(),
-      };
-      wsRef.current.send(JSON.stringify(requestMessage));
+        })
+      );
     },
-    [onError, agentId]
+    []
   );
 
   const cancelGeneration = useCallback(() => {
@@ -324,17 +203,22 @@ export function useWebSocket(options: WebSocketOptions): UseWebSocketReturn {
       return;
     }
 
-    // Use Gateway protocol to cancel
-    const requestId = generateRequestId();
-    const cancelMessage: WSMessage = {
-      type: 'request',
-      request_id: requestId,
-      action: 'chat.cancel',
-      data: {},
-      timestamp: Date.now(),
-    };
-    wsRef.current.send(JSON.stringify(cancelMessage));
+    wsRef.current.send(JSON.stringify({ type: 'cancel' }));
   }, []);
+
+  useEffect(() => {
+    const prevAgentId = agentIdRef.current;
+    agentIdRef.current = agentId;
+
+    if (prevAgentId !== agentId) {
+      if (wsRef.current) {
+        disconnect();
+      }
+      if (agentId) {
+        connect();
+      }
+    }
+  }, [agentId, disconnect, connect]);
 
   useEffect(() => {
     connect();
@@ -356,16 +240,12 @@ export function useWebSocket(options: WebSocketOptions): UseWebSocketReturn {
 
   useEffect(() => {
     if (wsRef.current?.readyState === WebSocket.OPEN) {
-      // Send config update via Gateway protocol
-      const requestId = generateRequestId();
-      const configMessage: WSMessage = {
-        type: 'request',
-        request_id: requestId,
-        action: 'config.update',
-        data: { timeout },
-        timestamp: Date.now(),
-      };
-      wsRef.current.send(JSON.stringify(configMessage));
+      wsRef.current.send(
+        JSON.stringify({
+          type: 'config',
+          timeout,
+        })
+      );
     }
   }, [timeout]);
 
@@ -376,10 +256,6 @@ export function useWebSocket(options: WebSocketOptions): UseWebSocketReturn {
     cancelGeneration,
     disconnect,
     reconnect,
-    // Gateway protocol methods
-    sendRequest,
-    sendPing,
-    sendPong,
   };
 }
 

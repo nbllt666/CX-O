@@ -94,7 +94,7 @@ def register_audio_handlers(
             if "ref_audio_path" in kwargs:
                 try:
                     os.unlink(kwargs["ref_audio_path"])
-                except:
+                except Exception:
                     pass
             
             audio_base64 = base64.b64encode(audio_bytes).decode("utf-8")
@@ -197,7 +197,7 @@ def register_audio_handlers(
                 try:
                     import os
                     os.unlink(temp_file)
-                except:
+                except Exception:
                     pass
                 
         except Exception as e:

@@ -2,7 +2,7 @@ import axios, { AxiosInstance, AxiosError } from 'axios';
 import type { AxiosRequestConfig, InternalAxiosRequestConfig } from 'axios';
 
 const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:8100';
-const CONTROL_SERVICE_URL = import.meta.env.VITE_CONTROL_SERVICE_URL || 'http://localhost:8765';
+const CONTROL_SERVICE_URL = import.meta.env.VITE_CONTROL_SERVICE_URL || 'http://localhost:8100';
 export const WS_BASE_URL = import.meta.env.VITE_WS_URL || 'ws://localhost:8100/ws';
 
 interface RetryConfig extends InternalAxiosRequestConfig {
@@ -1046,6 +1046,26 @@ class ApiClient {
         error: `Fetch error: ${fetchError instanceof Error ? fetchError.message : 'Unknown error'}`,
       });
     }
+  }
+
+  // ========== Audio Config API ==========
+
+  async getAudioConfig() {
+    const response = await this.client.get('/api/config/audio');
+    return response.data;
+  }
+
+  async updateAudioConfig(config: {
+    ref_audio_path?: string;
+    ref_text?: string;
+    speed?: number;
+    cross_fade_duration?: number;
+    emotion_enabled?: boolean;
+    effects_enabled?: boolean;
+    emotion_voices?: Record<string, { ref_audio: string; ref_text: string }>;
+  }) {
+    const response = await this.client.post('/api/config/audio', config);
+    return response.data;
   }
 }
 

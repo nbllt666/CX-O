@@ -59,7 +59,7 @@ def main():
         "backend.api.app:app",
         host=host,
         port=port,
-        reload=debug,
+        reload=False,
         log_level=settings.config.system.log_level.lower(),
     )
 

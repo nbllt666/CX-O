@@ -135,7 +135,7 @@ class WeaviateVectorStore:
             return False
         try:
             return self._client.is_ready()
-        except:
+        except Exception:
             return False
 
     async def add_memory_vector(
@@ -217,9 +217,10 @@ class WeaviateVectorStore:
             # 处理结果
             filtered_results = []
             for obj in results:
-                # Weaviate 返回的是距离，需要转换为相似度
+                # Weaviate 返回的是余弦距离，范围 [0, 2]
+                # 需要归一化到 [0, 1]: (2 - distance) / 2
                 distance = obj.metadata.distance if obj.metadata else 0
-                similarity_score = 1 - distance  # 将距离转换为相似度
+                similarity_score = (2 - distance) / 2
 
                 if similarity_score >= min_score:
                     filtered_results.append(

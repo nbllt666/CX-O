@@ -234,7 +234,7 @@ export function AcpPage() {
                               ? '错误'
                               : '停用'}
                         </span>
-                        {agent.capabilities.map((cap) => (
+                        {agent.capabilities?.map((cap) => (
                           <span
                             key={cap}
                             className="text-xs px-2 py-0.5 rounded-full bg-primary/10 text-primary"

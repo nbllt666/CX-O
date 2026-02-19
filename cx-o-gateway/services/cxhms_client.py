@@ -9,6 +9,7 @@ import uuid
 from typing import Any, Callable, Optional
 import websockets
 from websockets.client import WebSocketClientProtocol
+from websockets.protocol import State
 
 from protocol.message import create_request, MessageType
 
@@ -111,14 +112,14 @@ class CXHMSClient:
             try:
                 await asyncio.sleep(self._heartbeat_interval)
                 for conn in self._connections:
-                    if conn.open:
+                    if conn.state == State.OPEN:
                         await conn.send(json.dumps({"type": "ping", "timestamp": time.time()}))
             except Exception as e:
                 logger.error(f"Heartbeat error: {e}")
 
     def _get_connection(self) -> Optional[WebSocketClientProtocol]:
         for conn in self._connections:
-            if conn.open:
+            if conn.state == State.OPEN:
                 return conn
         return None
 

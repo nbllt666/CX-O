@@ -13,10 +13,10 @@ const Logo: React.FC = () => (
   <div className="flex items-center">
     <div className="flex flex-col">
       <span className="text-base font-bold text-[var(--color-text-primary)] leading-tight">
-        CXHMS
+        CX-O
       </span>
       <span className="text-[10px] text-[var(--color-text-tertiary)] leading-tight">
-        晨曦人格化记忆系统
+        晨曦长记忆Agent系统
       </span>
     </div>
   </div>

@@ -371,7 +371,7 @@ export function ChatPage() {
     sendMessage: wsSendMessage,
     cancelGeneration,
   } = useWebSocket({
-    agentId: currentAgentId || 'default',
+    agentId: currentAgentId || '',
     timeout: 60,
     onMessage: handleWebSocketMessage,
     onAlarm: handleAlarm,
@@ -1049,41 +1049,6 @@ export function ChatPage() {
             </Button>
           )}
 
-          {/* 语音输入按钮 */}
-          <Button
-            variant={isRecording ? 'primary' : 'secondary'}
-            onClick={toggleRecording}
-            disabled={isLoading}
-            className={`self-end ${isRecording ? 'animate-pulse bg-red-500 hover:bg-red-600' : ''}`}
-            title={isRecording ? '停止录音' : '语音输入'}
-          >
-            {isRecording ? (
-              <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  strokeWidth={2}
-                  d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z"
-                />
-                <path
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  strokeWidth={2}
-                  d="M9 10a1 1 0 011-1h4a1 1 0 011 1v4a1 1 0 01-1 1h-4a1 1 0 01-1-1v-4z"
-                />
-              </svg>
-            ) : (
-              <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  strokeWidth={2}
-                  d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z"
-                />
-              </svg>
-            )}
-          </Button>
-
           <Textarea
             value={input}
             onChange={(e) => setInput(e.target.value)}
@@ -1092,44 +1057,87 @@ export function ChatPage() {
             className="flex-1 min-h-[48px] max-h-[200px]"
             disabled={isLoading}
           />
-          {isLoading ? (
+
+          {/* 右侧按钮组：语音输入 + 发送 */}
+          <div className="flex flex-col gap-2">
+            {/* 语音输入按钮 */}
             <Button
-              variant="secondary"
-              onClick={cancelGeneration}
-              className="self-end"
-              title="停止生成"
+              variant={isRecording ? 'primary' : 'secondary'}
+              onClick={toggleRecording}
+              disabled={isLoading}
+              size="sm"
+              className={`self-end ${isRecording ? 'animate-pulse bg-red-500 hover:bg-red-600' : ''}`}
+              title={isRecording ? '停止录音' : '语音输入'}
             >
-              <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  strokeWidth={2}
-                  d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z"
-                />
-                <path
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  strokeWidth={2}
-                  d="M9 10a1 1 0 011-1h4a1 1 0 011 1v4a1 1 0 01-1 1h-4a1 1 0 01-1-1v-4z"
-                />
-              </svg>
+              {isRecording ? (
+                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    strokeWidth={2}
+                    d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z"
+                  />
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    strokeWidth={2}
+                    d="M9 10a1 1 0 011-1h4a1 1 0 011 1v4a1 1 0 01-1 1h-4a1 1 0 01-1-1v-4z"
+                  />
+                </svg>
+              ) : (
+                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    strokeWidth={2}
+                    d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z"
+                  />
+                </svg>
+              )}
             </Button>
-          ) : (
-            <Button
-              onClick={handleSend}
-              disabled={(!input.trim() && selectedImages.length === 0) || isLoading}
-              className="self-end"
-            >
-              <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  strokeWidth={2}
-                  d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8"
-                />
-              </svg>
-            </Button>
-          )}
+
+            {/* 发送/停止按钮 */}
+            {isLoading ? (
+              <Button
+                variant="secondary"
+                onClick={cancelGeneration}
+                size="sm"
+                className="self-end"
+                title="停止生成"
+              >
+                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    strokeWidth={2}
+                    d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z"
+                  />
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    strokeWidth={2}
+                    d="M9 10a1 1 0 011-1h4a1 1 0 011 1v4a1 1 0 01-1 1h-4a1 1 0 01-1-1v-4z"
+                  />
+                </svg>
+              </Button>
+            ) : (
+              <Button
+                onClick={handleSend}
+                disabled={(!input.trim() && selectedImages.length === 0) || isLoading}
+                size="sm"
+                className="self-end"
+              >
+                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    strokeWidth={2}
+                    d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8"
+                  />
+                </svg>
+              </Button>
+            )}
+          </div>
         </div>
         <div className="flex items-center justify-between mt-2">
           <div className="flex items-center gap-4">

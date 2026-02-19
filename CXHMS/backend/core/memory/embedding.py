@@ -84,15 +84,12 @@ class SentenceTransformersEmbedding(EmbeddingModel):
 
             from sentence_transformers import SentenceTransformer
 
-            print(f"\n正在加载 SentenceTransformers 模型: {model_name}", file=sys.stderr)
-            print("这可能需要几分钟时间下载模型...", file=sys.stderr)
-            sys.stderr.flush()
+            logger.info(f"正在加载 SentenceTransformers 模型: {model_name}")
 
             self.model = SentenceTransformer(model_name)
             self._model_name = model_name
 
-            print(f"✓ SentenceTransformers 模型加载成功: {model_name}", file=sys.stderr)
-            logger.info(f"SentenceTransformers模型加载成功: {model_name}")
+            logger.info(f"SentenceTransformers 模型加载成功: {model_name}")
         except ImportError:
             logger.error("sentence-transformers未安装")
             raise ImportError("请安装: pip install sentence-transformers")

@@ -4,21 +4,48 @@
 import json
 import os
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any, Optional, List, Dict
 from pydantic import BaseModel, Field
+
+
+class CorsConfig(BaseModel):
+    allow_origins: List[str] = Field(default_factory=lambda: ["*"])
+    allow_methods: List[str] = Field(default_factory=lambda: ["*"])
+    allow_headers: List[str] = Field(default_factory=lambda: ["*"])
+    allow_credentials: bool = True
 
 
 class ServiceConfig(BaseModel):
     url: str
+    http_url: Optional[str] = None
     timeout: int = 30
     pool_size: int = 5
     reconnect_interval: int = 5
     heartbeat_interval: int = 30
 
 
+class EmotionVoiceConfig(BaseModel):
+    ref_audio: str = ""
+    ref_text: str = ""
+
+
+class TTSConfig(BaseModel):
+    url: str
+    timeout: int = 120
+    ref_audio_path: str = ""
+    ref_text: str = ""
+    model_type: str = "F5-TTS"
+    speed: float = 1.0
+    cross_fade_duration: float = 0.15
+    emotion_enabled: bool = True
+    effects_enabled: bool = True
+    emotion_voices: Dict[str, EmotionVoiceConfig] = Field(default_factory=dict)
+
+
 class GatewayConfig(BaseModel):
     host: str = "0.0.0.0"
     port: int = 8100
+    cors: CorsConfig = Field(default_factory=CorsConfig)
 
 
 class LoggingConfig(BaseModel):
@@ -26,10 +53,15 @@ class LoggingConfig(BaseModel):
     format: str = "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
 
 
+class AudioConfig(BaseModel):
+    effects_dir: str = "data/effects"
+
+
 class ServicesConfig(BaseModel):
     cxhms: ServiceConfig
     asr: ServiceConfig
-    tts: ServiceConfig
+    tts: TTSConfig
+    audio: Optional[AudioConfig] = None
 
 
 class Config(BaseModel):
@@ -68,6 +100,16 @@ def get_config() -> Config:
     if _config is None:
         return load_config()
     return _config
+
+
+def save_config(config: Config) -> None:
+    global _config
+    config_path = get_config_path()
+    
+    with open(config_path, "w", encoding="utf-8") as f:
+        json.dump(config.model_dump(), f, indent=4, ensure_ascii=False)
+    
+    _config = config
 
 
 def get_service_url(service_name: str) -> str:

@@ -2134,7 +2134,7 @@ class MemoryManager:
                     tags = json.loads(tag_row[0]) if tag_row[0] else []
                     for tag in tags:
                         tag_counts[tag] = tag_counts.get(tag, 0) + 1
-                except:
+                except Exception:
                     pass
 
             # 获取热门标签
@@ -2238,7 +2238,7 @@ class MemoryManager:
 
                     try:
                         current_tags = set(json.loads(row[0]) if row[0] else [])
-                    except:
+                    except Exception:
                         current_tags = set()
 
                     if operation == "add":

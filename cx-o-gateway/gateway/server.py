@@ -6,15 +6,17 @@ import json
 import logging
 import time
 from typing import Any, Callable, Optional
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import StreamingResponse, Response
+import httpx
 
 from protocol.message import (
     MessageType, create_response, create_error, create_pong,
     PingMessage, RequestMessage
 )
 from protocol.actions import get_handler_name, SystemActions
-from gateway.config import get_config
+from gateway.config import get_config, save_config
 from gateway.health import health_checker
 
 logger = logging.getLogger(__name__)
@@ -133,21 +135,116 @@ def create_app() -> FastAPI:
     
     app = FastAPI(
         title="CX-O Gateway",
-        description="微服务网关 - 统一 WebSocket 通讯入口",
+        description="微服务网关 - 统一 WebSocket 和 HTTP API 通讯入口",
         version="1.0.0"
     )
 
+    cors_config = config.gateway.cors
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=["*"],
-        allow_credentials=True,
-        allow_methods=["*"],
-        allow_headers=["*"],
+        allow_origins=cors_config.allow_origins,
+        allow_credentials=cors_config.allow_credentials,
+        allow_methods=cors_config.allow_methods,
+        allow_headers=cors_config.allow_headers,
     )
 
     health_checker.register_service("cxhms")
     health_checker.register_service("asr")
     health_checker.register_service("tts")
+
+    cxhms_http_url = config.services.cxhms.http_url or "http://127.0.0.1:8000"
+
+    @app.api_route("/api/{path:path}", methods=["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"])
+    async def proxy_api(request: Request, path: str):
+        target_url = f"{cxhms_http_url}/api/{path}"
+        
+        query_params = str(request.query_params)
+        if query_params:
+            target_url += f"?{query_params}"
+        
+        headers = dict(request.headers)
+        headers.pop("host", None)
+        
+        body = await request.body()
+        
+        async with httpx.AsyncClient(timeout=60.0) as client:
+            try:
+                response = await client.request(
+                    method=request.method,
+                    url=target_url,
+                    headers=headers,
+                    content=body if body else None,
+                )
+                
+                excluded_headers = ["content-encoding", "content-length", "transfer-encoding", "connection"]
+                response_headers = {
+                    k: v for k, v in response.headers.items()
+                    if k.lower() not in excluded_headers
+                }
+                
+                return Response(
+                    content=response.content,
+                    status_code=response.status_code,
+                    headers=response_headers,
+                    media_type=response.headers.get("content-type"),
+                )
+            except httpx.RequestError as e:
+                logger.error(f"Proxy error: {e}")
+                return Response(
+                    content=json.dumps({"error": "Proxy error", "detail": str(e)}),
+                    status_code=502,
+                    media_type="application/json",
+                )
+
+    control_service_url = "http://127.0.0.1:8765"
+
+    @app.api_route("/control/{path:path}", methods=["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"])
+    async def proxy_control(request: Request, path: str):
+        target_url = f"{control_service_url}/control/{path}"
+        
+        query_params = str(request.query_params)
+        if query_params:
+            target_url += f"?{query_params}"
+        
+        headers = dict(request.headers)
+        headers.pop("host", None)
+        
+        body = await request.body()
+        
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            try:
+                response = await client.request(
+                    method=request.method,
+                    url=target_url,
+                    headers=headers,
+                    content=body if body else None,
+                )
+                
+                excluded_headers = ["content-encoding", "content-length", "transfer-encoding", "connection"]
+                response_headers = {
+                    k: v for k, v in response.headers.items()
+                    if k.lower() not in excluded_headers
+                }
+                
+                return Response(
+                    content=response.content,
+                    status_code=response.status_code,
+                    headers=response_headers,
+                    media_type=response.headers.get("content-type"),
+                )
+            except httpx.ConnectError:
+                return Response(
+                    content=json.dumps({"error": "Control service not available", "running": False}),
+                    status_code=503,
+                    media_type="application/json",
+                )
+            except httpx.RequestError as e:
+                logger.error(f"Control proxy error: {e}")
+                return Response(
+                    content=json.dumps({"error": "Proxy error", "detail": str(e)}),
+                    status_code=502,
+                    media_type="application/json",
+                )
 
     @app.websocket("/ws")
     async def websocket_endpoint(websocket: WebSocket):
@@ -158,5 +255,52 @@ def create_app() -> FastAPI:
     @app.get("/health")
     async def health_check():
         return health_checker.get_all_status()
+
+    @app.get("/api/config/audio")
+    async def get_audio_config():
+        config = get_config()
+        tts_config = config.services.tts
+        return {
+            "status": "success",
+            "config": {
+                "ref_audio_path": getattr(tts_config, 'ref_audio_path', ''),
+                "ref_text": getattr(tts_config, 'ref_text', ''),
+                "speed": getattr(tts_config, 'speed', 1.0),
+                "cross_fade_duration": getattr(tts_config, 'cross_fade_duration', 0.15),
+                "emotion_enabled": getattr(tts_config, 'emotion_enabled', True),
+                "effects_enabled": getattr(tts_config, 'effects_enabled', True),
+                "emotion_voices": getattr(tts_config, 'emotion_voices', {})
+            }
+        }
+
+    @app.post("/api/config/audio")
+    async def update_audio_config(request: Request):
+        try:
+            data = await request.json()
+            config = get_config()
+            
+            if hasattr(config.services, 'tts'):
+                tts_config = config.services.tts
+                if 'ref_audio_path' in data:
+                    tts_config.ref_audio_path = data['ref_audio_path']
+                if 'ref_text' in data:
+                    tts_config.ref_text = data['ref_text']
+                if 'speed' in data:
+                    tts_config.speed = data['speed']
+                if 'cross_fade_duration' in data:
+                    tts_config.cross_fade_duration = data['cross_fade_duration']
+                if 'emotion_enabled' in data:
+                    tts_config.emotion_enabled = data['emotion_enabled']
+                if 'effects_enabled' in data:
+                    tts_config.effects_enabled = data['effects_enabled']
+                if 'emotion_voices' in data:
+                    tts_config.emotion_voices = data['emotion_voices']
+            
+            save_config(config)
+            
+            return {"status": "success", "message": "配置已保存"}
+        except Exception as e:
+            logger.error(f"Failed to update audio config: {e}")
+            return {"status": "error", "message": str(e)}
 
     return app

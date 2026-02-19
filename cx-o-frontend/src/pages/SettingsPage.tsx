@@ -45,6 +45,21 @@ const sections: SettingSection[] = [
     description: '启动/停止后端服务',
   },
   {
+    id: 'audio',
+    title: '音频设置',
+    icon: (
+      <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+        <path
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          strokeWidth={2}
+          d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z"
+        />
+      </svg>
+    ),
+    description: 'TTS 参考音频和情感语音配置',
+  },
+  {
     id: 'vector',
     title: '向量存储',
     icon: (
@@ -92,7 +107,7 @@ const accentColors = [
 ];
 
 export function SettingsPage() {
-  const [activeSection, setActiveSection] = useState<'appearance' | 'service' | 'vector' | 'llm'>(
+  const [activeSection, setActiveSection] = useState<'appearance' | 'service' | 'audio' | 'vector' | 'llm'>(
     'appearance'
   );
   const [saveStatus, setSaveStatus] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
@@ -202,6 +217,45 @@ export function SettingsPage() {
     topP: 0.9,
     timeout: 30,
   });
+
+  const [audioConfig, setAudioConfig] = useState({
+    ref_audio_path: '',
+    ref_text: '',
+    speed: 1.0,
+    cross_fade_duration: 0.15,
+    emotion_enabled: true,
+    effects_enabled: true,
+    emotion_voices: {
+      normal: { ref_audio: '', ref_text: '' },
+      happy: { ref_audio: '', ref_text: '' },
+      sad: { ref_audio: '', ref_text: '' },
+      angry: { ref_audio: '', ref_text: '' },
+      surprised: { ref_audio: '', ref_text: '' },
+      tender: { ref_audio: '', ref_text: '' },
+    } as Record<string, { ref_audio: string; ref_text: string }>,
+  });
+
+  useEffect(() => {
+    const loadAudioConfig = async () => {
+      try {
+        const data = await api.getAudioConfig();
+        if (data.config) {
+          setAudioConfig({
+            ref_audio_path: data.config.ref_audio_path || '',
+            ref_text: data.config.ref_text || '',
+            speed: data.config.speed || 1.0,
+            cross_fade_duration: data.config.cross_fade_duration || 0.15,
+            emotion_enabled: data.config.emotion_enabled ?? true,
+            effects_enabled: data.config.effects_enabled ?? true,
+            emotion_voices: data.config.emotion_voices || audioConfig.emotion_voices,
+          });
+        }
+      } catch (error) {
+        console.error('Failed to load audio config:', error);
+      }
+    };
+    loadAudioConfig();
+  }, []);
 
   useEffect(() => {
     if (serviceConfig?.config) {
@@ -323,13 +377,13 @@ export function SettingsPage() {
   };
 
   const handleSave = async () => {
-    if (!isBackendRunning) {
-      alert('后端服务未运行，无法保存配置');
-      return;
-    }
     setSaveStatus('saving');
     try {
       if (activeSection === 'vector') {
+        if (!isBackendRunning) {
+          alert('后端服务未运行，无法保存配置');
+          return;
+        }
         const vectorPayload: Record<string, unknown> = {
           backend: vectorConfig.backend,
           vector_size: vectorConfig.vectorSize,
@@ -355,12 +409,22 @@ export function SettingsPage() {
           vector: vectorPayload,
         });
       } else if (activeSection === 'llm') {
+        if (!isBackendRunning) {
+          alert('后端服务未运行，无法保存配置');
+          return;
+        }
+        const updatedModelDefaults = {
+          summary: modelsConfig.summary.enabled ? 'summary' : 'main',
+          memory: modelsConfig.memory.enabled ? 'memory' : 'main',
+        };
         await api.updateServiceConfig({
           models: modelsConfig,
-          model_defaults: modelDefaults,
+          model_defaults: updatedModelDefaults,
           llm_params: llmParams,
         });
         localStorage.setItem('cxhms-current-model', modelsConfig.main.model);
+      } else if (activeSection === 'audio') {
+        await api.updateAudioConfig(audioConfig);
       }
       setSaveStatus('saved');
     } catch {
@@ -715,9 +779,15 @@ export function SettingsPage() {
 
           {activeSection === 'llm' && (
             <div className="space-y-6">
+              {/* 默认模型配置 */}
               <Card>
                 <CardBody>
-                  <h3 className="text-lg font-semibold mb-4">模型配置</h3>
+                  <div className="mb-4">
+                    <h3 className="text-lg font-semibold">默认模型</h3>
+                    <p className="text-sm text-[var(--color-text-secondary)]">
+                      用于日常对话的默认模型配置（始终启用）
+                    </p>
+                  </div>
                   <div className="space-y-4">
                     <div className="grid grid-cols-2 gap-4">
                       <div>
@@ -749,32 +819,473 @@ export function SettingsPage() {
                             }))
                           }
                           className="w-full px-3 py-2 bg-[var(--color-bg-primary)] border border-[var(--color-border)] rounded-[var(--radius-md)]"
+                          placeholder="llama3.2:3b"
                         />
                       </div>
                     </div>
-                    <div>
-                      <label className="text-sm font-medium mb-2 block">
-                        温度: {llmParams.temperature}
-                      </label>
-                      <input
-                        type="range"
-                        min="0"
-                        max="2"
-                        step="0.1"
-                        value={llmParams.temperature}
-                        onChange={(e) =>
-                          setLlmParams({ ...llmParams, temperature: parseFloat(e.target.value) })
-                        }
-                        className="w-full"
-                      />
+                    <div className="grid grid-cols-2 gap-4">
+                      <div>
+                        <label className="text-sm font-medium mb-2 block">主机地址</label>
+                        <input
+                          type="text"
+                          value={modelsConfig.main.host}
+                          onChange={(e) =>
+                            setModelsConfig((prev) => ({
+                              ...prev,
+                              main: { ...prev.main, host: e.target.value },
+                            }))
+                          }
+                          className="w-full px-3 py-2 bg-[var(--color-bg-primary)] border border-[var(--color-border)] rounded-[var(--radius-md)]"
+                          placeholder="http://localhost:11434"
+                        />
+                      </div>
+                      <div>
+                        <label className="text-sm font-medium mb-2 block">API Key</label>
+                        <input
+                          type="password"
+                          value={modelsConfig.main.apiKey}
+                          onChange={(e) =>
+                            setModelsConfig((prev) => ({
+                              ...prev,
+                              main: { ...prev.main, apiKey: e.target.value },
+                            }))
+                          }
+                          className="w-full px-3 py-2 bg-[var(--color-bg-primary)] border border-[var(--color-border)] rounded-[var(--radius-md)]"
+                          placeholder="可选，用于 OpenAI 等需要认证的提供商"
+                        />
+                      </div>
                     </div>
                   </div>
+                </CardBody>
+              </Card>
+
+              {/* 记忆管理模型配置 */}
+              <Card>
+                <CardBody>
+                  <div className="flex items-center justify-between mb-4">
+                    <div>
+                      <h3 className="text-lg font-semibold">记忆管理模型</h3>
+                      <p className="text-sm text-[var(--color-text-secondary)]">
+                        用于记忆归档、记忆合并等后台任务（未启用时使用默认模型）
+                      </p>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <span className="text-sm text-[var(--color-text-secondary)]">启用</span>
+                      <button
+                        onClick={() =>
+                          setModelsConfig((prev) => ({
+                            ...prev,
+                            memory: { ...prev.memory, enabled: !prev.memory.enabled },
+                          }))
+                        }
+                        className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${
+                          modelsConfig.memory.enabled
+                            ? 'bg-[var(--color-accent)]'
+                            : 'bg-[var(--color-border)]'
+                        }`}
+                      >
+                        <span
+                          className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
+                            modelsConfig.memory.enabled ? 'translate-x-6' : 'translate-x-1'
+                          }`}
+                        />
+                      </button>
+                    </div>
+                  </div>
+                  <div className="space-y-4">
+                    <div className="grid grid-cols-2 gap-4">
+                      <div>
+                        <label className="text-sm font-medium mb-2 block">模型提供商</label>
+                        <select
+                          value={modelsConfig.memory.provider}
+                          onChange={(e) =>
+                            setModelsConfig((prev) => ({
+                              ...prev,
+                              memory: { ...prev.memory, provider: e.target.value },
+                            }))
+                          }
+                          className="w-full px-3 py-2 bg-[var(--color-bg-primary)] border border-[var(--color-border)] rounded-[var(--radius-md)]"
+                        >
+                          <option value="ollama">Ollama (本地)</option>
+                          <option value="vllm">vLLM</option>
+                          <option value="openai">OpenAI</option>
+                        </select>
+                      </div>
+                      <div>
+                        <label className="text-sm font-medium mb-2 block">模型名称</label>
+                        <input
+                          type="text"
+                          value={modelsConfig.memory.model}
+                          onChange={(e) =>
+                            setModelsConfig((prev) => ({
+                              ...prev,
+                              memory: { ...prev.memory, model: e.target.value },
+                            }))
+                          }
+                          className="w-full px-3 py-2 bg-[var(--color-bg-primary)] border border-[var(--color-border)] rounded-[var(--radius-md)]"
+                          placeholder="llama3.2:3b"
+                        />
+                      </div>
+                    </div>
+                    <div className="grid grid-cols-2 gap-4">
+                      <div>
+                        <label className="text-sm font-medium mb-2 block">主机地址</label>
+                        <input
+                          type="text"
+                          value={modelsConfig.memory.host}
+                          onChange={(e) =>
+                            setModelsConfig((prev) => ({
+                              ...prev,
+                              memory: { ...prev.memory, host: e.target.value },
+                            }))
+                          }
+                          className="w-full px-3 py-2 bg-[var(--color-bg-primary)] border border-[var(--color-border)] rounded-[var(--radius-md)]"
+                          placeholder="http://localhost:11434"
+                        />
+                      </div>
+                      <div>
+                        <label className="text-sm font-medium mb-2 block">API Key</label>
+                        <input
+                          type="password"
+                          value={modelsConfig.memory.apiKey}
+                          onChange={(e) =>
+                            setModelsConfig((prev) => ({
+                              ...prev,
+                              memory: { ...prev.memory, apiKey: e.target.value },
+                            }))
+                          }
+                          className="w-full px-3 py-2 bg-[var(--color-bg-primary)] border border-[var(--color-border)] rounded-[var(--radius-md)]"
+                          placeholder="可选，用于 OpenAI 等需要认证的提供商"
+                        />
+                      </div>
+                    </div>
+                  </div>
+                </CardBody>
+              </Card>
+
+              {/* 摘要模型配置 */}
+              <Card>
+                <CardBody>
+                  <div className="flex items-center justify-between mb-4">
+                    <div>
+                      <h3 className="text-lg font-semibold">摘要模型</h3>
+                      <p className="text-sm text-[var(--color-text-secondary)]">
+                        用于对话摘要生成（未启用时使用默认模型）
+                      </p>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <span className="text-sm text-[var(--color-text-secondary)]">启用</span>
+                      <button
+                        onClick={() =>
+                          setModelsConfig((prev) => ({
+                            ...prev,
+                            summary: { ...prev.summary, enabled: !prev.summary.enabled },
+                          }))
+                        }
+                        className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${
+                          modelsConfig.summary.enabled
+                            ? 'bg-[var(--color-accent)]'
+                            : 'bg-[var(--color-border)]'
+                        }`}
+                      >
+                        <span
+                          className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
+                            modelsConfig.summary.enabled ? 'translate-x-6' : 'translate-x-1'
+                          }`}
+                        />
+                      </button>
+                    </div>
+                  </div>
+                  <div className="space-y-4">
+                    <div className="grid grid-cols-2 gap-4">
+                      <div>
+                        <label className="text-sm font-medium mb-2 block">模型提供商</label>
+                        <select
+                          value={modelsConfig.summary.provider}
+                          onChange={(e) =>
+                            setModelsConfig((prev) => ({
+                              ...prev,
+                              summary: { ...prev.summary, provider: e.target.value },
+                            }))
+                          }
+                          className="w-full px-3 py-2 bg-[var(--color-bg-primary)] border border-[var(--color-border)] rounded-[var(--radius-md)]"
+                        >
+                          <option value="ollama">Ollama (本地)</option>
+                          <option value="vllm">vLLM</option>
+                          <option value="openai">OpenAI</option>
+                        </select>
+                      </div>
+                      <div>
+                        <label className="text-sm font-medium mb-2 block">模型名称</label>
+                        <input
+                          type="text"
+                          value={modelsConfig.summary.model}
+                          onChange={(e) =>
+                            setModelsConfig((prev) => ({
+                              ...prev,
+                              summary: { ...prev.summary, model: e.target.value },
+                            }))
+                          }
+                          className="w-full px-3 py-2 bg-[var(--color-bg-primary)] border border-[var(--color-border)] rounded-[var(--radius-md)]"
+                          placeholder="llama3.2:3b"
+                        />
+                      </div>
+                    </div>
+                    <div className="grid grid-cols-2 gap-4">
+                      <div>
+                        <label className="text-sm font-medium mb-2 block">主机地址</label>
+                        <input
+                          type="text"
+                          value={modelsConfig.summary.host}
+                          onChange={(e) =>
+                            setModelsConfig((prev) => ({
+                              ...prev,
+                              summary: { ...prev.summary, host: e.target.value },
+                            }))
+                          }
+                          className="w-full px-3 py-2 bg-[var(--color-bg-primary)] border border-[var(--color-border)] rounded-[var(--radius-md)]"
+                          placeholder="http://localhost:11434"
+                        />
+                      </div>
+                      <div>
+                        <label className="text-sm font-medium mb-2 block">API Key</label>
+                        <input
+                          type="password"
+                          value={modelsConfig.summary.apiKey}
+                          onChange={(e) =>
+                            setModelsConfig((prev) => ({
+                              ...prev,
+                              summary: { ...prev.summary, apiKey: e.target.value },
+                            }))
+                          }
+                          className="w-full px-3 py-2 bg-[var(--color-bg-primary)] border border-[var(--color-border)] rounded-[var(--radius-md)]"
+                          placeholder="可选，用于 OpenAI 等需要认证的提供商"
+                        />
+                      </div>
+                    </div>
+                  </div>
+                </CardBody>
+              </Card>
+
+              {/* 保存按钮 */}
+              <div className="flex justify-end">
+                <Button
+                  onClick={handleSave}
+                  loading={saveStatus === 'saving'}
+                  disabled={!isBackendRunning}
+                >
+                  {saveStatus === 'saved' ? '已保存' : '保存配置'}
+                </Button>
+              </div>
+            </div>
+          )}
+
+          {activeSection === 'audio' && (
+            <div className="space-y-6">
+              <Card>
+                <CardBody>
+                  <h3 className="text-lg font-semibold mb-4">TTS 基础配置</h3>
+                  <p className="text-sm text-[var(--color-text-secondary)] mb-4">
+                    配置 TTS 语音合成的参考音频和文本，用于克隆声音
+                  </p>
+                  <div className="space-y-4">
+                    <div>
+                      <label className="text-sm font-medium mb-2 block">参考音频路径</label>
+                      <input
+                        type="text"
+                        value={audioConfig.ref_audio_path}
+                        onChange={(e) =>
+                          setAudioConfig({ ...audioConfig, ref_audio_path: e.target.value })
+                        }
+                        className="w-full px-3 py-2 bg-[var(--color-bg-primary)] border border-[var(--color-border)] rounded-[var(--radius-md)]"
+                        placeholder="data/reference/default.wav"
+                      />
+                      <p className="text-xs text-[var(--color-text-tertiary)] mt-1">
+                        参考音频文件的绝对路径或相对路径
+                      </p>
+                    </div>
+                    <div>
+                      <label className="text-sm font-medium mb-2 block">参考文本</label>
+                      <textarea
+                        value={audioConfig.ref_text}
+                        onChange={(e) =>
+                          setAudioConfig({ ...audioConfig, ref_text: e.target.value })
+                        }
+                        className="w-full px-3 py-2 bg-[var(--color-bg-primary)] border border-[var(--color-border)] rounded-[var(--radius-md)] resize-none"
+                        rows={2}
+                        placeholder="参考音频对应的文本内容"
+                      />
+                    </div>
+                    <div className="grid grid-cols-2 gap-4">
+                      <div>
+                        <label className="text-sm font-medium mb-2 block">
+                          语速: {audioConfig.speed}
+                        </label>
+                        <input
+                          type="range"
+                          min="0.5"
+                          max="2"
+                          step="0.1"
+                          value={audioConfig.speed}
+                          onChange={(e) =>
+                            setAudioConfig({ ...audioConfig, speed: parseFloat(e.target.value) })
+                          }
+                          className="w-full"
+                        />
+                      </div>
+                      <div>
+                        <label className="text-sm font-medium mb-2 block">
+                          淡入淡出: {audioConfig.cross_fade_duration}s
+                        </label>
+                        <input
+                          type="range"
+                          min="0"
+                          max="1"
+                          step="0.05"
+                          value={audioConfig.cross_fade_duration}
+                          onChange={(e) =>
+                            setAudioConfig({
+                              ...audioConfig,
+                              cross_fade_duration: parseFloat(e.target.value),
+                            })
+                          }
+                          className="w-full"
+                        />
+                      </div>
+                    </div>
+                  </div>
+                </CardBody>
+              </Card>
+
+              <Card>
+                <CardBody>
+                  <h3 className="text-lg font-semibold mb-4">功能开关</h3>
+                  <div className="space-y-4">
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <label className="text-sm font-medium">情感解析</label>
+                        <p className="text-xs text-[var(--color-text-tertiary)]">
+                          解析文本中的情感标签，使用不同的情感语音
+                        </p>
+                      </div>
+                      <button
+                        onClick={() =>
+                          setAudioConfig({
+                            ...audioConfig,
+                            emotion_enabled: !audioConfig.emotion_enabled,
+                          })
+                        }
+                        className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${
+                          audioConfig.emotion_enabled
+                            ? 'bg-[var(--color-accent)]'
+                            : 'bg-[var(--color-border)]'
+                        }`}
+                      >
+                        <span
+                          className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
+                            audioConfig.emotion_enabled ? 'translate-x-6' : 'translate-x-1'
+                          }`}
+                        />
+                      </button>
+                    </div>
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <label className="text-sm font-medium">音效</label>
+                        <p className="text-xs text-[var(--color-text-tertiary)]">
+                          解析文本中的音效标签，播放背景音效
+                        </p>
+                      </div>
+                      <button
+                        onClick={() =>
+                          setAudioConfig({
+                            ...audioConfig,
+                            effects_enabled: !audioConfig.effects_enabled,
+                          })
+                        }
+                        className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${
+                          audioConfig.effects_enabled
+                            ? 'bg-[var(--color-accent)]'
+                            : 'bg-[var(--color-border)]'
+                        }`}
+                      >
+                        <span
+                          className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
+                            audioConfig.effects_enabled ? 'translate-x-6' : 'translate-x-1'
+                          }`}
+                        />
+                      </button>
+                    </div>
+                  </div>
+                </CardBody>
+              </Card>
+
+              <Card>
+                <CardBody>
+                  <h3 className="text-lg font-semibold mb-4">情感语音配置</h3>
+                  <p className="text-sm text-[var(--color-text-secondary)] mb-4">
+                    为不同情感配置专用的参考音频，留空则使用默认配置
+                  </p>
+                  <div className="space-y-4">
+                    {Object.entries(audioConfig.emotion_voices).map(([emotion, config]) => (
+                      <div
+                        key={emotion}
+                        className="p-4 bg-[var(--color-bg-tertiary)] rounded-[var(--radius-lg)]"
+                      >
+                        <h4 className="text-sm font-medium mb-3 capitalize">
+                          {emotion === 'normal' && '😐 普通'}
+                          {emotion === 'happy' && '😊 开心'}
+                          {emotion === 'sad' && '😢 悲伤'}
+                          {emotion === 'angry' && '😠 愤怒'}
+                          {emotion === 'surprised' && '😲 惊讶'}
+                          {emotion === 'tender' && '🥰 温柔'}
+                        </h4>
+                        <div className="grid grid-cols-2 gap-3">
+                          <div>
+                            <label className="text-xs text-[var(--color-text-tertiary)] mb-1 block">
+                              参考音频
+                            </label>
+                            <input
+                              type="text"
+                              value={config.ref_audio}
+                              onChange={(e) =>
+                                setAudioConfig({
+                                  ...audioConfig,
+                                  emotion_voices: {
+                                    ...audioConfig.emotion_voices,
+                                    [emotion]: { ...config, ref_audio: e.target.value },
+                                  },
+                                })
+                              }
+                              className="w-full px-2 py-1.5 text-sm bg-[var(--color-bg-primary)] border border-[var(--color-border)] rounded-[var(--radius-md)]"
+                              placeholder="音频路径"
+                            />
+                          </div>
+                          <div>
+                            <label className="text-xs text-[var(--color-text-tertiary)] mb-1 block">
+                              参考文本
+                            </label>
+                            <input
+                              type="text"
+                              value={config.ref_text}
+                              onChange={(e) =>
+                                setAudioConfig({
+                                  ...audioConfig,
+                                  emotion_voices: {
+                                    ...audioConfig.emotion_voices,
+                                    [emotion]: { ...config, ref_text: e.target.value },
+                                  },
+                                })
+                              }
+                              className="w-full px-2 py-1.5 text-sm bg-[var(--color-bg-primary)] border border-[var(--color-border)] rounded-[var(--radius-md)]"
+                              placeholder="参考文本"
+                            />
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
                   <div className="flex justify-end mt-6">
-                    <Button
-                      onClick={handleSave}
-                      loading={saveStatus === 'saving'}
-                      disabled={!isBackendRunning}
-                    >
+                    <Button onClick={handleSave} loading={saveStatus === 'saving'}>
                       {saveStatus === 'saved' ? '已保存' : '保存配置'}
                     </Button>
                   </div>

@@ -136,7 +136,10 @@ class ChromaVectorStore:
             formatted_results = []
             for i, doc_id in enumerate(results["ids"][0]):
                 distance = results["distances"][0][i] if results.get("distances") else 0
-                similarity = 1 - distance
+                # Chroma 使用 cosine 空间时，distance 是余弦距离
+                # 范围 [0, 2]，需要归一化到 [0, 1]
+                # 相似度 = (2 - distance) / 2
+                similarity = (2 - distance) / 2
 
                 if similarity < min_score:
                     continue

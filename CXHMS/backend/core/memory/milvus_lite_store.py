@@ -122,9 +122,12 @@ class MilvusLiteVectorStore:
 
             filtered_results = []
             for result in results[0]:
-                # Milvus返回的是距离，距离越小越相似，所以需要转换为相似度分数
-                # 使用 1/(1+distance) 转换为相似度分数，这样分数越大越相似
-                similarity_score = 1 / (1 + result["distance"])  # 将距离转换为相似度
+                # Milvus 使用 COSINE 度量时，返回的是余弦距离 (1 - 余弦相似度)
+                # distance 范围 [0, 2]，需要转换为相似度
+                # 相似度 = 1 - distance，范围 [-1, 1]
+                # 归一化到 [0, 1]: (1 - distance + 1) / 2 = (2 - distance) / 2
+                cosine_distance = result["distance"]
+                similarity_score = (2 - cosine_distance) / 2
                 if similarity_score >= min_score:
                     filtered_results.append(
                         {
