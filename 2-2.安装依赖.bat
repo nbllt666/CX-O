@@ -1,75 +1,53 @@
 @echo off
 chcp 65001 > nul
+setlocal enabledelayedexpansion
 
-echo ========================================
-echo 正在检测并清理无效包分布...
-echo ========================================
-
-REM 定位site-packages目录
-set "SITE_PACKAGES=%~dp0Miniconda3\Lib\site-packages"
-
-echo 检测到site-packages路径: %SITE_PACKAGES%
-
-REM 检查并删除所有以连字符开头的无效包
-echo 搜索并清理无效包分布...
-set count=0
-
-REM 处理无效目录
-for /f "delims=" %%i in ('dir /b /ad "%SITE_PACKAGES%\-*" 2^>nul') do (
-    echo 删除无效目录: %%i
-    rd /s /q "%SITE_PACKAGES%\%%i" >nul 2>&1
-    set /a count+=1
+REM ========== 智能定位 Miniconda ==========
+set "SCRIPT_DIR=%~dp0"
+set "SCRIPT_DIR=%SCRIPT_DIR:~0,-1%"
+if exist "%SCRIPT_DIR%\Miniconda3\Scripts\conda.exe" (
+    set "MINICONDA_PATH=%SCRIPT_DIR%\Miniconda3"
+) else if exist "%SCRIPT_DIR%\..\Miniconda3\Scripts\conda.exe" (
+    set "MINICONDA_PATH=%SCRIPT_DIR%\..\Miniconda3"
+) else (
+    echo [!] 未找到 Miniconda3！请将脚本放在与 Miniconda3 同级目录
+    pause & exit /b 1
 )
 
-REM 处理无效文件
-for /f "delims=" %%i in ('dir /b "%SITE_PACKAGES%\-*.*" 2^>nul') do (
-    echo 删除无效文件: %%i
-    del /f /q "%SITE_PACKAGES%\%%i" >nul 2>&1
-    set /a count+=1
+REM ========== 环境隔离 ==========
+set "PATH=%MINICONDA_PATH%;%MINICONDA_PATH%\Scripts;%MINICONDA_PATH%\Library\bin;%PATH%"
+call "%MINICONDA_PATH%\Scripts\activate.bat" "%MINICONDA_PATH%"
+
+echo ========================================
+echo 使用 base 环境 (路径: %MINICONDA_PATH%)
+echo ========================================
+call conda activate base
+
+REM ========== 智能安装依赖 ==========
+echo ========================================
+echo 安装项目依赖 (清华源优先)...
+echo ========================================
+python -m pip install -r requirements.txt -i https://pypi.tuna.tsinghua.edu.cn/simple --timeout=10000
+
+REM 失败时切换官方源重试
+if errorlevel 1 (
+    echo [提示] 清华源失败，切换官方 PyPI 源重试...
+    python -m pip install -r requirements.txt -i https://pypi.org/simple/ --timeout=10000
 )
 
-echo 共清理 %count% 个无效包分布
-
-REM 额外检查特定的无效文件
-echo 检查并清理特定无效文件...
-del /f /q "%SITE_PACKAGES%\[~-]*" >nul 2>&1
-del /f /q "%SITE_PACKAGES%\[~-]*.*" >nul 2>&1
-
-echo.
-echo ========================================
-echo 重新安装关键依赖包...
-echo ========================================
-Miniconda3\python.exe -m pip install --upgrade --force-reinstall protobuf==4.25.3 pillow==10.4.0
-
-echo.
-echo ========================================
-echo 尝试从清华镜像源安装依赖...
-echo ========================================
-Miniconda3\python.exe -m pip install -r requirements.txt -i https://pypi.tuna.tsinghua.edu.cn/simple --timeout=100 --no-cache-dir
-
-if %errorlevel% equ 0 (
-    echo.
-    echo ========================================
-    echo 所有依赖已成功安装！
-    echo ========================================
-    goto end
+REM 仍失败则降级策略（跳过需编译包）
+if errorlevel 1 (
+    echo [提示] 尝试跳过需编译包...
+    python -m pip install --only-binary=:all: --no-deps -r requirements.txt -i https://pypi.org/simple/ --timeout=100
+    echo [提示] 单独安装关键包...
+    for %%p in (fastapi "pydantic==2.5.3" httpx jieba pypinyin) do (
+        python -m pip install %%p -i https://pypi.org/simple/ --quiet 2>nul
+    )
 )
 
 echo.
 echo ========================================
-echo 部分依赖安装失败，尝试从官方源安装剩余依赖...
+echo [OK] 依赖安装完成！
 echo ========================================
-Miniconda3\python.exe -m pip install -r requirements.txt -i https://pypi.org/simple --timeout=100 --no-cache-dir
-
-:end
-echo.
-echo ========================================
-echo 安装过程完成
-echo 建议检查以下事项：
-echo 1. 依赖冲突: 注意上述错误中提到的版本冲突
-echo 2. 如有必要，可尝试手动安装特定版本:
-echo    pip install package_name==version
-echo 3. 如果问题持续，考虑创建新虚拟环境:
-echo    conda create -n new_env python=3.10
-echo ========================================
+endlocal
 pause

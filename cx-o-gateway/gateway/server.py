@@ -5,6 +5,7 @@ import asyncio
 import json
 import logging
 import time
+from pathlib import Path
 from typing import Any, Callable, Optional
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -302,5 +303,274 @@ def create_app() -> FastAPI:
         except Exception as e:
             logger.error(f"Failed to update audio config: {e}")
             return {"status": "error", "message": str(e)}
+
+    voice_refs_dir = Path(__file__).parent.parent / "data" / "voice_refs"
+    voice_refs_dir.mkdir(parents=True, exist_ok=True)
+    allowed_audio_extensions = {".wav", ".mp3", ".ogg", ".flac"}
+
+    @app.get("/api/audio/files")
+    async def list_audio_files():
+        try:
+            files = []
+            for f in voice_refs_dir.iterdir():
+                if f.is_file() and f.suffix.lower() in allowed_audio_extensions:
+                    files.append({
+                        "name": f.name,
+                        "size": f.stat().st_size,
+                        "modified": f.stat().st_mtime
+                    })
+            return {"status": "success", "files": files}
+        except Exception as e:
+            logger.error(f"Failed to list audio files: {e}")
+            return {"status": "error", "message": str(e)}
+
+    @app.post("/api/audio/upload")
+    async def upload_audio_file(request: Request):
+        try:
+            from fastapi import UploadFile, File, Form
+            import shutil
+            
+            form = await request.form()
+            file = form.get("file")
+            
+            if not file:
+                return {"status": "error", "message": "No file provided"}
+            
+            filename = file.filename
+            ext = Path(filename).suffix.lower()
+            
+            if ext not in allowed_audio_extensions:
+                return {
+                    "status": "error", 
+                    "message": f"Invalid file type. Allowed: {', '.join(allowed_audio_extensions)}"
+                }
+            
+            file_path = voice_refs_dir / filename
+            
+            with open(file_path, "wb") as f:
+                content = await file.read()
+                f.write(content)
+            
+            return {
+                "status": "success", 
+                "filename": filename,
+                "message": "File uploaded successfully"
+            }
+        except Exception as e:
+            logger.error(f"Failed to upload audio file: {e}")
+            return {"status": "error", "message": str(e)}
+
+    @app.get("/api/audio/files/{filename}")
+    async def get_audio_file(filename: str):
+        from fastapi.responses import FileResponse
+        
+        file_path = voice_refs_dir / filename
+        
+        if not file_path.exists():
+            return {"status": "error", "message": "File not found"}
+        
+        return FileResponse(
+            path=file_path,
+            media_type="audio/wav" if filename.endswith(".wav") else "audio/mpeg",
+            filename=filename
+        )
+
+    @app.delete("/api/audio/files/{filename}")
+    async def delete_audio_file(filename: str):
+        try:
+            file_path = voice_refs_dir / filename
+            
+            if not file_path.exists():
+                return {"status": "error", "message": "File not found"}
+            
+            file_path.unlink()
+            
+            return {"status": "success", "message": "File deleted"}
+        except Exception as e:
+            logger.error(f"Failed to delete audio file: {e}")
+            return {"status": "error", "message": str(e)}
+
+    @app.get("/api/cosyvoice/status")
+    async def get_cosyvoice_status():
+        config = get_config()
+        cosyvoice_config = getattr(config.services, 'cosyvoice', None)
+        if not cosyvoice_config or not cosyvoice_config.enabled:
+            return {"status": "disabled", "message": "CosyVoice service is not enabled"}
+        
+        try:
+            from services.cosyvoice_manager import get_cosyvoice_manager
+            manager = get_cosyvoice_manager(
+                base_url=cosyvoice_config.url,
+                start_command=cosyvoice_config.start_command,
+                working_dir=cosyvoice_config.working_dir,
+                auto_stop_delay=cosyvoice_config.auto_stop_delay,
+                root_dir=Path(__file__).parent.parent.parent
+            )
+            return await manager.get_status()
+        except Exception as e:
+            logger.error(f"CosyVoice status check failed: {e}")
+            return {"status": "error", "message": str(e)}
+
+    @app.post("/api/cosyvoice/start")
+    async def start_cosyvoice():
+        config = get_config()
+        cosyvoice_config = getattr(config.services, 'cosyvoice', None)
+        
+        if not cosyvoice_config or not cosyvoice_config.enabled:
+            return {"status": "error", "message": "CosyVoice service is not enabled"}
+        
+        try:
+            from services.cosyvoice_manager import get_cosyvoice_manager
+            manager = get_cosyvoice_manager(
+                base_url=cosyvoice_config.url,
+                start_command=cosyvoice_config.start_command,
+                working_dir=cosyvoice_config.working_dir,
+                auto_stop_delay=cosyvoice_config.auto_stop_delay,
+                root_dir=Path(__file__).parent.parent.parent
+            )
+            return await manager.start()
+        except Exception as e:
+            logger.error(f"CosyVoice start failed: {e}")
+            return {"status": "error", "message": str(e)}
+
+    @app.post("/api/cosyvoice/stop")
+    async def stop_cosyvoice():
+        config = get_config()
+        cosyvoice_config = getattr(config.services, 'cosyvoice', None)
+        
+        if not cosyvoice_config or not cosyvoice_config.enabled:
+            return {"status": "error", "message": "CosyVoice service is not enabled"}
+        
+        try:
+            from services.cosyvoice_manager import get_cosyvoice_manager
+            manager = get_cosyvoice_manager(
+                base_url=cosyvoice_config.url,
+                start_command=cosyvoice_config.start_command,
+                working_dir=cosyvoice_config.working_dir,
+                auto_stop_delay=cosyvoice_config.auto_stop_delay,
+                root_dir=Path(__file__).parent.parent.parent
+            )
+            return await manager.stop()
+        except Exception as e:
+            logger.error(f"CosyVoice stop failed: {e}")
+            return {"status": "error", "message": str(e)}
+
+    @app.post("/api/audio/generate-emotions")
+    async def generate_emotion_audios(request: Request):
+        config = get_config()
+        cosyvoice_config = getattr(config.services, 'cosyvoice', None)
+        
+        if not cosyvoice_config or not cosyvoice_config.enabled:
+            return {"status": "error", "message": "CosyVoice service is not enabled"}
+        
+        try:
+            from services.cosyvoice_manager import get_cosyvoice_manager
+            manager = get_cosyvoice_manager(
+                base_url=cosyvoice_config.url,
+                start_command=cosyvoice_config.start_command,
+                working_dir=cosyvoice_config.working_dir,
+                auto_stop_delay=cosyvoice_config.auto_stop_delay,
+                root_dir=Path(__file__).parent.parent.parent
+            )
+            
+            is_running = await manager.ensure_running()
+            if not is_running:
+                return {"status": "error", "message": "Failed to start CosyVoice service"}
+            
+            data = await request.json()
+            ref_audio = data.get("ref_audio", "")
+            ref_text = data.get("ref_text", "")
+            emotions = data.get("emotions", ["happy", "sad", "angry", "surprised", "tender"])
+            
+            if not ref_audio:
+                return {"status": "error", "message": "Reference audio is required"}
+            
+            audio_path = voice_refs_dir / ref_audio
+            if not audio_path.exists():
+                return {"status": "error", "message": f"Reference audio file not found: {ref_audio}"}
+            
+            from services.cosyvoice_client import CosyVoiceClient
+            client = CosyVoiceClient(
+                base_url=cosyvoice_config.url,
+                timeout=cosyvoice_config.timeout
+            )
+            
+            generated: dict[str, str] = {}
+            errors: dict[str, str] = {}
+            
+            for emotion in emotions:
+                try:
+                    audio_bytes = await client.generate_emotion_audio(
+                        emotion=emotion,
+                        prompt_audio=str(audio_path)
+                    )
+                    
+                    base_name = Path(ref_audio).stem
+                    output_name = f"{base_name}_{emotion}.wav"
+                    output_path = voice_refs_dir / output_name
+                    
+                    CosyVoiceClient.save_audio(audio_bytes, output_path)
+                    generated[emotion] = output_name
+                    
+                except Exception as e:
+                    logger.error(f"Failed to generate {emotion}: {e}")
+                    errors[emotion] = str(e)
+            
+            await client.close()
+            
+            manager.reset_auto_stop_timer()
+            
+            if generated:
+                tts_config = config.services.tts
+                if not hasattr(tts_config, 'emotion_voices') or tts_config.emotion_voices is None:
+                    tts_config.emotion_voices = {}
+                
+                for emotion, filename in generated.items():
+                    if emotion not in tts_config.emotion_voices:
+                        tts_config.emotion_voices[emotion] = {
+                            "ref_audio": filename,
+                            "ref_text": ref_text or f"这是{emotion}情感的参考音频。"
+                        }
+                    else:
+                        tts_config.emotion_voices[emotion]["ref_audio"] = filename
+                        if ref_text:
+                            tts_config.emotion_voices[emotion]["ref_text"] = ref_text
+                
+                save_config(config)
+            
+            return {
+                "status": "success",
+                "generated": generated,
+                "errors": errors,
+                "config_updated": len(generated) > 0
+            }
+            
+        except Exception as e:
+            logger.error(f"Generate emotion audios failed: {e}")
+            return {"status": "error", "message": str(e)}
+
+    @app.get("/api/audio/emotions/list")
+    async def list_emotion_configs():
+        from services.cosyvoice_client import get_supported_emotions, get_emotion_text, get_emotion_instruct
+        config = get_config()
+        tts_config = config.services.tts
+        
+        emotions = get_supported_emotions()
+        result = []
+        
+        for emotion in emotions:
+            voice_config = {}
+            if hasattr(tts_config, 'emotion_voices') and tts_config.emotion_voices:
+                voice_config = tts_config.emotion_voices.get(emotion, {})
+            
+            result.append({
+                "emotion": emotion,
+                "default_text": get_emotion_text(emotion),
+                "instruct": get_emotion_instruct(emotion),
+                "ref_audio": voice_config.get("ref_audio", ""),
+                "ref_text": voice_config.get("ref_text", "")
+            })
+        
+        return {"status": "success", "emotions": result}
 
     return app

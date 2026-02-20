@@ -1067,6 +1067,64 @@ class ApiClient {
     const response = await this.client.post('/api/config/audio', config);
     return response.data;
   }
+
+  // ========== Audio File API ==========
+
+  async getAudioFiles() {
+    const response = await this.client.get('/api/audio/files');
+    return response.data;
+  }
+
+  async uploadAudioFile(file: File) {
+    const formData = new FormData();
+    formData.append('file', file);
+    const response = await this.client.post('/api/audio/upload', formData, {
+      headers: {
+        'Content-Type': 'multipart/form-data',
+      },
+    });
+    return response.data;
+  }
+
+  async deleteAudioFile(filename: string) {
+    const response = await this.client.delete(`/api/audio/files/${filename}`);
+    return response.data;
+  }
+
+  getAudioFileUrl(filename: string) {
+    return `${API_BASE_URL}/api/audio/files/${filename}`;
+  }
+
+  // ========== CosyVoice API ==========
+
+  async getCosyVoiceStatus() {
+    const response = await this.client.get('/api/cosyvoice/status');
+    return response.data;
+  }
+
+  async startCosyVoice() {
+    const response = await this.client.post('/api/cosyvoice/start');
+    return response.data;
+  }
+
+  async stopCosyVoice() {
+    const response = await this.client.post('/api/cosyvoice/stop');
+    return response.data;
+  }
+
+  async generateEmotionAudios(data: {
+    ref_audio: string;
+    ref_text?: string;
+    emotions?: string[];
+  }) {
+    const response = await this.client.post('/api/audio/generate-emotions', data);
+    return response.data;
+  }
+
+  async getEmotionConfigs() {
+    const response = await this.client.get('/api/audio/emotions/list');
+    return response.data;
+  }
 }
 
 export const api = new ApiClient();

@@ -57,11 +57,21 @@ class AudioConfig(BaseModel):
     effects_dir: str = "data/effects"
 
 
+class CosyVoiceConfig(BaseModel):
+    url: str = "http://127.0.0.1:8003"
+    timeout: int = 120
+    enabled: bool = True
+    auto_stop_delay: int = 300
+    start_command: str = "python runtime/python/fastapi/server.py --port 8003 --model_dir pretrained_models/CosyVoice2-0.5B"
+    working_dir: str = "CosyVoice"
+
+
 class ServicesConfig(BaseModel):
     cxhms: ServiceConfig
     asr: ServiceConfig
     tts: TTSConfig
     audio: Optional[AudioConfig] = None
+    cosyvoice: Optional[CosyVoiceConfig] = None
 
 
 class Config(BaseModel):

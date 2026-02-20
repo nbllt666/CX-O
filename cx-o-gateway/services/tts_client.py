@@ -58,7 +58,8 @@ class TTSClient:
         ref_text: str = "",
         timeout: float = 120.0,
         emotion_voices: dict[str, dict[str, str]] | None = None,
-        effects_dir: str | Path | None = None
+        effects_dir: str | Path | None = None,
+        voice_refs_dir: str | Path | None = None
     ):
         self._base_url = base_url.rstrip("/")
         self._timeout = timeout
@@ -69,6 +70,7 @@ class TTSClient:
         self._emotion_voices = emotion_voices or {}
         self._effect_parser = EffectParser(effects_dir)
         self._emotion_audio_cache: dict[str, bytes] = {}
+        self._voice_refs_dir = Path(voice_refs_dir) if voice_refs_dir else Path(__file__).parent.parent / "data" / "voice_refs"
 
     async def _get_client(self) -> httpx.AsyncClient:
         if self._client is None:
@@ -277,15 +279,33 @@ class TTSClient:
         if not ref_audio:
             return await self._load_ref_audio()
         
-        if not Path(ref_audio).exists():
+        audio_path = self._resolve_audio_path(ref_audio)
+        
+        if not audio_path or not audio_path.exists():
             logger.warning(f"Emotion audio file not found: {ref_audio}, using default")
             return await self._load_ref_audio()
         
-        with open(ref_audio, "rb") as f:
+        with open(audio_path, "rb") as f:
             audio_data = f.read()
         
         self._emotion_audio_cache[emotion] = audio_data
         return audio_data
+    
+    def _resolve_audio_path(self, ref_audio: str) -> Path | None:
+        if not ref_audio:
+            return None
+        
+        if Path(ref_audio).is_absolute():
+            return Path(ref_audio)
+        
+        if Path(ref_audio).exists():
+            return Path(ref_audio)
+        
+        voice_refs_path = self._voice_refs_dir / ref_audio
+        if voice_refs_path.exists():
+            return voice_refs_path
+        
+        return None
     
     def _load_effect_audio(self, effect_name: str) -> bytes | None:
         effect_path = self._effect_parser.get_effect_path(effect_name)

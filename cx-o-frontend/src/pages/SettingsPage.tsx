@@ -210,7 +210,6 @@ export function SettingsPage() {
     },
   });
 
-  const [modelDefaults, setModelDefaults] = useState({ summary: 'main', memory: 'main' });
   const [llmParams, setLlmParams] = useState({
     temperature: 0.7,
     maxTokens: 0,
@@ -235,6 +234,13 @@ export function SettingsPage() {
     } as Record<string, { ref_audio: string; ref_text: string }>,
   });
 
+  const [audioFiles, setAudioFiles] = useState<{ name: string; size: number; modified: number }[]>([]);
+  const [uploadingFile, setUploadingFile] = useState(false);
+  const [playingAudio, setPlayingAudio] = useState<string | null>(null);
+  const [cosyvoiceStatus, setCosyvoiceStatus] = useState<{ status: string; message?: string; url?: string } | null>(null);
+  const [generatingEmotions, setGeneratingEmotions] = useState(false);
+  const [generateProgress, setGenerateProgress] = useState<{ current: number; total: number; emotion: string } | null>(null);
+
   useEffect(() => {
     const loadAudioConfig = async () => {
       try {
@@ -256,6 +262,133 @@ export function SettingsPage() {
     };
     loadAudioConfig();
   }, []);
+
+  useEffect(() => {
+    const loadAudioFiles = async () => {
+      try {
+        const data = await api.getAudioFiles();
+        if (data.status === 'success') {
+          setAudioFiles(data.files || []);
+        }
+      } catch (error) {
+        console.error('Failed to load audio files:', error);
+      }
+    };
+    loadAudioFiles();
+  }, []);
+
+  useEffect(() => {
+    const checkCosyVoiceStatus = async () => {
+      try {
+        const data = await api.getCosyVoiceStatus();
+        setCosyvoiceStatus(data);
+      } catch (error) {
+        console.error('Failed to check CosyVoice status:', error);
+        setCosyvoiceStatus({ status: 'error', message: '无法连接服务' });
+      }
+    };
+    checkCosyVoiceStatus();
+    const interval = setInterval(checkCosyVoiceStatus, 30000);
+    return () => clearInterval(interval);
+  }, []);
+
+  const handleAudioUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    setUploadingFile(true);
+    try {
+      const result = await api.uploadAudioFile(file);
+      if (result.status === 'success') {
+        setAudioFiles((prev) => [
+          ...prev,
+          { name: result.filename, size: file.size, modified: Date.now() },
+        ]);
+      } else {
+        alert(result.message || '上传失败');
+      }
+    } catch (error) {
+      console.error('Upload error:', error);
+      alert('上传失败');
+    } finally {
+      setUploadingFile(false);
+      e.target.value = '';
+    }
+  };
+
+  const handlePlayAudio = (filename: string) => {
+    if (playingAudio === filename) {
+      setPlayingAudio(null);
+    } else {
+      setPlayingAudio(filename);
+    }
+  };
+
+  const handleDeleteAudio = async (filename: string) => {
+    if (!confirm(`确定要删除 ${filename} 吗？`)) return;
+
+    try {
+      await api.deleteAudioFile(filename);
+      setAudioFiles((prev) => prev.filter((f) => f.name !== filename));
+    } catch (error) {
+      console.error('Delete error:', error);
+      alert('删除失败');
+    }
+  };
+
+  const handleGenerateEmotions = async () => {
+    if (!audioConfig.ref_audio_path) {
+      alert('请先选择参考音频');
+      return;
+    }
+
+    setGeneratingEmotions(true);
+    setGenerateProgress({ current: 0, total: 5, emotion: '' });
+
+    try {
+      const emotions = ['happy', 'sad', 'angry', 'surprised', 'tender'];
+      const result = await api.generateEmotionAudios({
+        ref_audio: audioConfig.ref_audio_path,
+        ref_text: audioConfig.ref_text,
+        emotions,
+      });
+
+      if (result.status === 'success') {
+        const generated = result.generated || {};
+        const errors = result.errors || {};
+
+        const filesData = await api.getAudioFiles();
+        if (filesData.status === 'success') {
+          setAudioFiles(filesData.files || []);
+        }
+
+        const configData = await api.getAudioConfig();
+        if (configData.config) {
+          setAudioConfig((prev) => ({
+            ...prev,
+            emotion_voices: configData.config.emotion_voices || prev.emotion_voices,
+          }));
+        }
+
+        const status = await api.getCosyVoiceStatus();
+        setCosyvoiceStatus(status);
+
+        if (Object.keys(errors).length > 0) {
+          alert(`部分情感生成失败：${Object.keys(errors).join(', ')}`);
+        } else {
+          alert(`成功生成 ${Object.keys(generated).length} 个情感音频！服务将在 5 分钟后自动停止。`);
+        }
+      } else {
+        alert(result.message || '生成失败');
+      }
+    } catch (error) {
+      console.error('Generate emotions error:', error);
+      alert('生成失败');
+    } finally {
+      setGeneratingEmotions(false);
+      setGenerateProgress(null);
+    }
+  };
 
   useEffect(() => {
     if (serviceConfig?.config) {
@@ -1082,6 +1215,203 @@ export function SettingsPage() {
 
           {activeSection === 'audio' && (
             <div className="space-y-6">
+              {/* 音频文件管理 */}
+              <Card>
+                <CardBody>
+                  <h3 className="text-lg font-semibold mb-4">音频文件管理</h3>
+                  <p className="text-sm text-[var(--color-text-secondary)] mb-4">
+                    上传参考音频文件，用于 TTS 语音克隆
+                  </p>
+                  <div className="space-y-4">
+                    <div className="flex items-center gap-4">
+                      <label className="flex items-center gap-2 px-4 py-2 bg-[var(--color-accent)] text-white rounded-[var(--radius-md)] cursor-pointer hover:opacity-90">
+                        <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12" />
+                        </svg>
+                        <span>{uploadingFile ? '上传中...' : '上传音频'}</span>
+                        <input
+                          type="file"
+                          accept=".wav,.mp3,.ogg,.flac"
+                          onChange={handleAudioUpload}
+                          disabled={uploadingFile}
+                          className="hidden"
+                        />
+                      </label>
+                      <span className="text-sm text-[var(--color-text-tertiary)]">
+                        支持 WAV, MP3, OGG, FLAC 格式
+                      </span>
+                    </div>
+                    
+                    {audioFiles.length > 0 && (
+                      <div className="border border-[var(--color-border)] rounded-[var(--radius-md)] overflow-hidden">
+                        <table className="w-full text-sm">
+                          <thead className="bg-[var(--color-bg-tertiary)]">
+                            <tr>
+                              <th className="px-4 py-2 text-left">文件名</th>
+                              <th className="px-4 py-2 text-left">大小</th>
+                              <th className="px-4 py-2 text-right">操作</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {audioFiles.map((file) => (
+                              <tr key={file.name} className="border-t border-[var(--color-border)]">
+                                <td className="px-4 py-2">{file.name}</td>
+                                <td className="px-4 py-2 text-[var(--color-text-secondary)]">
+                                  {(file.size / 1024).toFixed(1)} KB
+                                </td>
+                                <td className="px-4 py-2 text-right">
+                                  <button
+                                    onClick={() => handlePlayAudio(file.name)}
+                                    className="text-[var(--color-accent)] hover:underline mr-3"
+                                  >
+                                    {playingAudio === file.name ? '停止' : '播放'}
+                                  </button>
+                                  <button
+                                    onClick={() => handleDeleteAudio(file.name)}
+                                    className="text-red-500 hover:underline"
+                                  >
+                                    删除
+                                  </button>
+                                </td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    )}
+
+                    {playingAudio && (
+                      <audio
+                        src={api.getAudioFileUrl(playingAudio)}
+                        autoPlay
+                        onEnded={() => setPlayingAudio(null)}
+                        className="hidden"
+                      />
+                    )}
+                  </div>
+                </CardBody>
+              </Card>
+
+              {/* CosyVoice 情感音频生成 */}
+              <Card>
+                <CardBody>
+                  <h3 className="text-lg font-semibold mb-4">情感音频生成</h3>
+                  <p className="text-sm text-[var(--color-text-secondary)] mb-4">
+                    使用 CosyVoice 从一条参考音频自动生成所有情感的参考音频（按需启动，自动释放显存）
+                  </p>
+                  <div className="space-y-4">
+                    <div className="flex items-center justify-between p-3 bg-[var(--color-bg-tertiary)] rounded-[var(--radius-lg)]">
+                      <div className="flex items-center gap-3">
+                        <span
+                          className={`w-3 h-3 rounded-full ${
+                            cosyvoiceStatus?.status === 'running'
+                              ? 'bg-green-500'
+                              : cosyvoiceStatus?.status === 'starting'
+                              ? 'bg-yellow-500 animate-pulse'
+                              : cosyvoiceStatus?.status === 'disabled'
+                              ? 'bg-gray-400'
+                              : 'bg-red-500'
+                          }`}
+                        />
+                        <div>
+                          <div className="text-sm font-medium">CosyVoice 服务</div>
+                          <div className="text-xs text-[var(--color-text-tertiary)]">
+                            {cosyvoiceStatus?.status === 'running'
+                              ? `运行中 - ${cosyvoiceStatus.url}`
+                              : cosyvoiceStatus?.status === 'starting'
+                              ? '启动中...'
+                              : cosyvoiceStatus?.status === 'disabled'
+                              ? '已禁用'
+                              : '已停止（点击生成时自动启动）'}
+                          </div>
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        {cosyvoiceStatus?.status === 'running' && (
+                          <button
+                            onClick={async () => {
+                              try {
+                                await api.stopCosyVoice();
+                                const status = await api.getCosyVoiceStatus();
+                                setCosyvoiceStatus(status);
+                              } catch (error) {
+                                console.error('Stop failed:', error);
+                              }
+                            }}
+                            className="px-3 py-1 text-sm bg-red-500/20 text-red-400 rounded-[var(--radius-md)] hover:bg-red-500/30 transition-colors"
+                          >
+                            停止
+                          </button>
+                        )}
+                        {(cosyvoiceStatus?.status === 'stopped' || cosyvoiceStatus?.status === 'error') && (
+                          <button
+                            onClick={async () => {
+                              try {
+                                await api.startCosyVoice();
+                                const status = await api.getCosyVoiceStatus();
+                                setCosyvoiceStatus(status);
+                              } catch (error) {
+                                console.error('Start failed:', error);
+                              }
+                            }}
+                            className="px-3 py-1 text-sm bg-green-500/20 text-green-400 rounded-[var(--radius-md)] hover:bg-green-500/30 transition-colors"
+                          >
+                            启动
+                          </button>
+                        )}
+                      </div>
+                    </div>
+
+                    <div className="flex items-center gap-4">
+                      <button
+                        onClick={handleGenerateEmotions}
+                        disabled={
+                          generatingEmotions ||
+                          !audioConfig.ref_audio_path ||
+                          cosyvoiceStatus?.status === 'starting'
+                        }
+                        className={`flex items-center gap-2 px-4 py-2 rounded-[var(--radius-md)] transition-colors ${
+                          generatingEmotions ||
+                          !audioConfig.ref_audio_path ||
+                          cosyvoiceStatus?.status === 'starting'
+                            ? 'bg-[var(--color-border)] text-[var(--color-text-tertiary)] cursor-not-allowed'
+                            : 'bg-[var(--color-accent)] text-white hover:opacity-90'
+                        }`}
+                      >
+                        <svg
+                          className="w-5 h-5"
+                          fill="none"
+                          viewBox="0 0 24 24"
+                          stroke="currentColor"
+                        >
+                          <path
+                            strokeLinecap="round"
+                            strokeLinejoin="round"
+                            strokeWidth={2}
+                            d="M13 10V3L4 14h7v7l9-11h-7z"
+                          />
+                        </svg>
+                        <span>
+                          {generatingEmotions
+                            ? `生成中... ${generateProgress?.current || 0}/${generateProgress?.total || 5}`
+                            : '生成情感音频'}
+                        </span>
+                      </button>
+                      <span className="text-sm text-[var(--color-text-tertiary)]">
+                        将为 happy, sad, angry, surprised, tender 生成情感音频
+                      </span>
+                    </div>
+
+                    {!audioConfig.ref_audio_path && (
+                      <p className="text-sm text-amber-600">
+                        请先在上方 TTS 基础配置中选择参考音频
+                      </p>
+                    )}
+                  </div>
+                </CardBody>
+              </Card>
+
+              {/* TTS 基础配置 */}
               <Card>
                 <CardBody>
                   <h3 className="text-lg font-semibold mb-4">TTS 基础配置</h3>
@@ -1089,32 +1419,36 @@ export function SettingsPage() {
                     配置 TTS 语音合成的参考音频和文本，用于克隆声音
                   </p>
                   <div className="space-y-4">
-                    <div>
-                      <label className="text-sm font-medium mb-2 block">参考音频路径</label>
-                      <input
-                        type="text"
-                        value={audioConfig.ref_audio_path}
-                        onChange={(e) =>
-                          setAudioConfig({ ...audioConfig, ref_audio_path: e.target.value })
-                        }
-                        className="w-full px-3 py-2 bg-[var(--color-bg-primary)] border border-[var(--color-border)] rounded-[var(--radius-md)]"
-                        placeholder="data/reference/default.wav"
-                      />
-                      <p className="text-xs text-[var(--color-text-tertiary)] mt-1">
-                        参考音频文件的绝对路径或相对路径
-                      </p>
-                    </div>
-                    <div>
-                      <label className="text-sm font-medium mb-2 block">参考文本</label>
-                      <textarea
-                        value={audioConfig.ref_text}
-                        onChange={(e) =>
-                          setAudioConfig({ ...audioConfig, ref_text: e.target.value })
-                        }
-                        className="w-full px-3 py-2 bg-[var(--color-bg-primary)] border border-[var(--color-border)] rounded-[var(--radius-md)] resize-none"
-                        rows={2}
-                        placeholder="参考音频对应的文本内容"
-                      />
+                    <div className="grid grid-cols-2 gap-4">
+                      <div>
+                        <label className="text-sm font-medium mb-2 block">参考音频</label>
+                        <select
+                          value={audioConfig.ref_audio_path}
+                          onChange={(e) =>
+                            setAudioConfig({ ...audioConfig, ref_audio_path: e.target.value })
+                          }
+                          className="w-full px-3 py-2 bg-[var(--color-bg-primary)] border border-[var(--color-border)] rounded-[var(--radius-md)]"
+                        >
+                          <option value="">选择音频文件</option>
+                          {audioFiles.map((file) => (
+                            <option key={file.name} value={file.name}>
+                              {file.name}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+                      <div>
+                        <label className="text-sm font-medium mb-2 block">参考文本</label>
+                        <input
+                          type="text"
+                          value={audioConfig.ref_text}
+                          onChange={(e) =>
+                            setAudioConfig({ ...audioConfig, ref_text: e.target.value })
+                          }
+                          className="w-full px-3 py-2 bg-[var(--color-bg-primary)] border border-[var(--color-border)] rounded-[var(--radius-md)]"
+                          placeholder="参考音频对应的文本内容"
+                        />
+                      </div>
                     </div>
                     <div className="grid grid-cols-2 gap-4">
                       <div>
@@ -1157,6 +1491,7 @@ export function SettingsPage() {
                 </CardBody>
               </Card>
 
+              {/* 功能开关 */}
               <Card>
                 <CardBody>
                   <h3 className="text-lg font-semibold mb-4">功能开关</h3>
@@ -1219,6 +1554,7 @@ export function SettingsPage() {
                 </CardBody>
               </Card>
 
+              {/* 情感语音配置 */}
               <Card>
                 <CardBody>
                   <h3 className="text-lg font-semibold mb-4">情感语音配置</h3>
@@ -1244,8 +1580,7 @@ export function SettingsPage() {
                             <label className="text-xs text-[var(--color-text-tertiary)] mb-1 block">
                               参考音频
                             </label>
-                            <input
-                              type="text"
+                            <select
                               value={config.ref_audio}
                               onChange={(e) =>
                                 setAudioConfig({
@@ -1257,8 +1592,14 @@ export function SettingsPage() {
                                 })
                               }
                               className="w-full px-2 py-1.5 text-sm bg-[var(--color-bg-primary)] border border-[var(--color-border)] rounded-[var(--radius-md)]"
-                              placeholder="音频路径"
-                            />
+                            >
+                              <option value="">使用默认</option>
+                              {audioFiles.map((file) => (
+                                <option key={file.name} value={file.name}>
+                                  {file.name}
+                                </option>
+                              ))}
+                            </select>
                           </div>
                           <div>
                             <label className="text-xs text-[var(--color-text-tertiary)] mb-1 block">

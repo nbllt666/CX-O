@@ -60,6 +60,14 @@
         },
         "audio": {
             "effects_dir": "data/effects"
+        },
+        "cosyvoice": {
+            "url": "http://127.0.0.1:8003",
+            "timeout": 120,
+            "enabled": true,
+            "auto_stop_delay": 300,
+            "start_command": "python runtime/python/fastapi/server.py --port 8003 --model_dir pretrained_models/CosyVoice2-0.5B",
+            "working_dir": "CosyVoice"
         }
     },
     "logging": {
