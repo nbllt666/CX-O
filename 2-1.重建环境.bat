@@ -35,19 +35,30 @@ REM ========== 安全更新工具链（仅升级，不卸载！）==========
 echo [修复] 重置构建工具...
 python -m pip install --upgrade "setuptools>=68.0.0" "pip>=23.0" "wheel" --quiet --no-warn-script-location
 
+REM ========== 安装 PyTorch CUDA 版本 ==========
+echo ========================================
+echo 安装 PyTorch (CUDA 12.8)...
+echo ========================================
+python -m pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu128
+
 REM ========== 智能安装依赖 ==========
 echo ========================================
-echo 安装项目依赖 (清华源 + 二进制优先)...
+echo 安装项目依赖 (清华源优先)...
 echo ========================================
-python -m pip install --only-binary=:all: -r requirements.txt -i https://pypi.tuna.tsinghua.edu.cn/simple --timeout=100
+python -m pip install -r requirements.txt -i https://pypi.tuna.tsinghua.edu.cn/simple --timeout=10000
 
-REM 失败时降级策略（跳过需编译包）
+REM 失败时切换官方源重试
 if errorlevel 1 (
-    echo [提示] 尝试跳过需编译包...
-    python -m pip install --only-binary=:all: --no-deps -r requirements.txt -i https://pypi.tuna.tsinghua.edu.cn/simple --timeout=100
-    echo [提示] 单独安装关键包...
-    for %%p in (fastapi "pydantic==2.5.3" httpx) do (
-        python -m pip install --only-binary=:all: %%p -i https://pypi.tuna.tsinghua.edu.cn/simple --quiet 2>nul
+    echo [提示] 清华源失败，切换官方 PyPI 源重试...
+    python -m pip install -r requirements.txt -i https://pypi.org/simple/ --timeout=10000
+)
+
+REM 仍失败则降级策略（逐个安装关键包）
+if errorlevel 1 (
+    echo [提示] 逐个安装关键包...
+    for %%p in (numpy fastapi pydantic httpx jieba pypinyin transformers accelerate librosa soundfile) do (
+        echo 安装 %%p...
+        python -m pip install %%p -i https://pypi.org/simple/ --quiet 2>nul
     )
 )
 
