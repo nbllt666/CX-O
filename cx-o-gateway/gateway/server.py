@@ -154,108 +154,20 @@ def create_app() -> FastAPI:
     health_checker.register_service("tts")
 
     cxhms_http_url = config.services.cxhms.http_url or "http://127.0.0.1:8000"
-
-    @app.api_route("/api/{path:path}", methods=["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"])
-    async def proxy_api(request: Request, path: str):
-        target_url = f"{cxhms_http_url}/api/{path}"
-        
-        query_params = str(request.query_params)
-        if query_params:
-            target_url += f"?{query_params}"
-        
-        headers = dict(request.headers)
-        headers.pop("host", None)
-        
-        body = await request.body()
-        
-        async with httpx.AsyncClient(timeout=60.0) as client:
-            try:
-                response = await client.request(
-                    method=request.method,
-                    url=target_url,
-                    headers=headers,
-                    content=body if body else None,
-                )
-                
-                excluded_headers = ["content-encoding", "content-length", "transfer-encoding", "connection"]
-                response_headers = {
-                    k: v for k, v in response.headers.items()
-                    if k.lower() not in excluded_headers
-                }
-                
-                return Response(
-                    content=response.content,
-                    status_code=response.status_code,
-                    headers=response_headers,
-                    media_type=response.headers.get("content-type"),
-                )
-            except httpx.RequestError as e:
-                logger.error(f"Proxy error: {e}")
-                return Response(
-                    content=json.dumps({"error": "Proxy error", "detail": str(e)}),
-                    status_code=502,
-                    media_type="application/json",
-                )
-
     control_service_url = "http://127.0.0.1:8765"
+    voice_refs_dir = Path(__file__).parent.parent / "data" / "voice_refs"
+    voice_refs_dir.mkdir(parents=True, exist_ok=True)
+    allowed_audio_extensions = {".wav", ".mp3", ".ogg", ".flac"}
 
-    @app.api_route("/control/{path:path}", methods=["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"])
-    async def proxy_control(request: Request, path: str):
-        target_url = f"{control_service_url}/control/{path}"
-        
-        query_params = str(request.query_params)
-        if query_params:
-            target_url += f"?{query_params}"
-        
-        headers = dict(request.headers)
-        headers.pop("host", None)
-        
-        body = await request.body()
-        
-        async with httpx.AsyncClient(timeout=30.0) as client:
-            try:
-                response = await client.request(
-                    method=request.method,
-                    url=target_url,
-                    headers=headers,
-                    content=body if body else None,
-                )
-                
-                excluded_headers = ["content-encoding", "content-length", "transfer-encoding", "connection"]
-                response_headers = {
-                    k: v for k, v in response.headers.items()
-                    if k.lower() not in excluded_headers
-                }
-                
-                return Response(
-                    content=response.content,
-                    status_code=response.status_code,
-                    headers=response_headers,
-                    media_type=response.headers.get("content-type"),
-                )
-            except httpx.ConnectError:
-                return Response(
-                    content=json.dumps({"error": "Control service not available", "running": False}),
-                    status_code=503,
-                    media_type="application/json",
-                )
-            except httpx.RequestError as e:
-                logger.error(f"Control proxy error: {e}")
-                return Response(
-                    content=json.dumps({"error": "Proxy error", "detail": str(e)}),
-                    status_code=502,
-                    media_type="application/json",
-                )
+    @app.get("/health")
+    async def health_check():
+        return health_checker.get_all_status()
 
     @app.websocket("/ws")
     async def websocket_endpoint(websocket: WebSocket):
         import uuid
         client_id = str(uuid.uuid4())
         await websocket_handler(websocket, client_id)
-
-    @app.get("/health")
-    async def health_check():
-        return health_checker.get_all_status()
 
     @app.get("/api/config/audio")
     async def get_audio_config():
@@ -303,10 +215,6 @@ def create_app() -> FastAPI:
         except Exception as e:
             logger.error(f"Failed to update audio config: {e}")
             return {"status": "error", "message": str(e)}
-
-    voice_refs_dir = Path(__file__).parent.parent / "data" / "voice_refs"
-    voice_refs_dir.mkdir(parents=True, exist_ok=True)
-    allowed_audio_extensions = {".wav", ".mp3", ".ogg", ".flac"}
 
     @app.get("/api/audio/files")
     async def list_audio_files():
@@ -572,5 +480,95 @@ def create_app() -> FastAPI:
             })
         
         return {"status": "success", "emotions": result}
+
+    @app.api_route("/api/{path:path}", methods=["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"])
+    async def proxy_api(request: Request, path: str):
+        target_url = f"{cxhms_http_url}/api/{path}"
+        
+        query_params = str(request.query_params)
+        if query_params:
+            target_url += f"?{query_params}"
+        
+        headers = dict(request.headers)
+        headers.pop("host", None)
+        
+        body = await request.body()
+        
+        async with httpx.AsyncClient(timeout=60.0) as client:
+            try:
+                response = await client.request(
+                    method=request.method,
+                    url=target_url,
+                    headers=headers,
+                    content=body if body else None,
+                )
+                
+                excluded_headers = ["content-encoding", "content-length", "transfer-encoding", "connection"]
+                response_headers = {
+                    k: v for k, v in response.headers.items()
+                    if k.lower() not in excluded_headers
+                }
+                
+                return Response(
+                    content=response.content,
+                    status_code=response.status_code,
+                    headers=response_headers,
+                    media_type=response.headers.get("content-type"),
+                )
+            except httpx.RequestError as e:
+                logger.error(f"Proxy error: {e}")
+                return Response(
+                    content=json.dumps({"error": "Proxy error", "detail": str(e)}),
+                    status_code=502,
+                    media_type="application/json",
+                )
+
+    @app.api_route("/control/{path:path}", methods=["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"])
+    async def proxy_control(request: Request, path: str):
+        target_url = f"{control_service_url}/control/{path}"
+        
+        query_params = str(request.query_params)
+        if query_params:
+            target_url += f"?{query_params}"
+        
+        headers = dict(request.headers)
+        headers.pop("host", None)
+        
+        body = await request.body()
+        
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            try:
+                response = await client.request(
+                    method=request.method,
+                    url=target_url,
+                    headers=headers,
+                    content=body if body else None,
+                )
+                
+                excluded_headers = ["content-encoding", "content-length", "transfer-encoding", "connection"]
+                response_headers = {
+                    k: v for k, v in response.headers.items()
+                    if k.lower() not in excluded_headers
+                }
+                
+                return Response(
+                    content=response.content,
+                    status_code=response.status_code,
+                    headers=response_headers,
+                    media_type=response.headers.get("content-type"),
+                )
+            except httpx.ConnectError:
+                return Response(
+                    content=json.dumps({"error": "Control service not available", "running": False}),
+                    status_code=503,
+                    media_type="application/json",
+                )
+            except httpx.RequestError as e:
+                logger.error(f"Control proxy error: {e}")
+                return Response(
+                    content=json.dumps({"error": "Proxy error", "detail": str(e)}),
+                    status_code=502,
+                    media_type="application/json",
+                )
 
     return app
