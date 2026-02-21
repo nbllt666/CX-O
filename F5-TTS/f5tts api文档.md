@@ -63,7 +63,7 @@ F5-TTS 还提供了基于 FastAPI 的 Web API 接口，支持通过 HTTP 请求�
 | ref_audio | File | 是 | - | 参考音频文件，用于提取语音特征 |
 | ref_text | String | 是 | - | 参考音频对应的文本内容 |
 | gen_text | String | 是 | - | 需要生成语音的文本内容 |
-| model_type | String | 否 | "F5-TTS" | 模型类型，可选值："F5-TTS" 或 "E2-TTS" |
+| tts_model | String | 否 | "F5-TTS" | 模型类型，可选值："F5-TTS" 或 "E2-TTS" |
 | remove_silence | Boolean | 否 | false | 是否移除生成音频中的静音部分 |
 | cross_fade_duration | Float | 否 | 0.15 | 跨越淡入淡出持续时间（秒） |
 | speed | Float | 否 | 1.0 | 语速倍率 |
@@ -78,7 +78,7 @@ F5-TTS 还提供了基于 FastAPI 的 Web API 接口，支持通过 HTTP 请求�
 - **响应体**: 生成的音频文件（WAV格式）
 
 **错误响应**:
-- **状态码**: 400 Bad Request - 当 model_type 不是 "F5-TTS" 或 "E2-TTS" 时
+- **状态码**: 400 Bad Request - 当 tts_model 不是 "F5-TTS" 或 "E2-TTS" 时
 - **状态码**: 500 Internal Server Error - 生成语音过程中发生错误
 
 **请求示例** (使用 curl):
@@ -88,7 +88,7 @@ curl -X POST "http://your-host:8000/tts/" \
   -F "ref_audio=@reference_audio.wav" \
   -F "ref_text=This is a reference text." \
   -F "gen_text=This is the text to be converted to speech." \
-  -F "model_type=F5-TTS" \
+  -F "tts_model=F5-TTS" \
   -F "remove_silence=false" \
   -F "cross_fade_duration=0.15" \
   -F "speed=1.0" \

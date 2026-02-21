@@ -48,7 +48,7 @@ if MODEL_AVAILABLE:
         ref_audio: UploadFile = File(...),
         ref_text: str = Form(...),
         gen_text: str = Form(...),
-        model_type: str = Form("F5-TTS"),
+        tts_model: str = Form("F5-TTS"),
         remove_silence: bool = Form(False),
         cross_fade_duration: float = Form(0.15),
         speed: float = Form(1.0),
@@ -60,9 +60,8 @@ if MODEL_AVAILABLE:
         Convert text to speech using reference audio
         """
         try:
-            # Validate model type
-            if model_type not in ["F5-TTS", "E2-TTS"]:
-                raise HTTPException(status_code=400, detail="model_type must be 'F5-TTS' or 'E2-TTS'")
+            if tts_model not in ["F5-TTS", "E2-TTS"]:
+                raise HTTPException(status_code=400, detail="tts_model must be 'F5-TTS' or 'E2-TTS'")
 
             # Create temporary files
             ref_path = None
@@ -125,7 +124,7 @@ else:
         ref_audio: UploadFile = File(...),
         ref_text: str = Form(...),
         gen_text: str = Form(...),
-        model_type: str = Form("F5-TTS"),
+        tts_model: str = Form("F5-TTS"),
         remove_silence: bool = Form(False),
         cross_fade_duration: float = Form(0.15),
         speed: float = Form(1.0),
