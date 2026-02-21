@@ -20,7 +20,7 @@ try:
     from f5_tts.api import F5TTS # type: ignore
     print("Loading F5-TTS model...")
     try:
-        f5tts = F5TTS(model_type="F5-TTS")
+        f5tts = F5TTS(model="F5TTS_v1_Base")
         print("Model loaded successfully!")
         MODEL_AVAILABLE = True
     except Exception as e:
