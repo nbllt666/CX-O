@@ -9,7 +9,6 @@ export function AudioTestPage() {
   const [ttsAudio, setTtsAudio] = useState<string | null>(null);
   const [asrLoading, setAsrLoading] = useState(false);
   const [ttsLoading, setTtsLoading] = useState(false);
-  const audioRef = useRef<HTMLAudioElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -40,19 +39,15 @@ export function AudioTestPage() {
 
     try {
       const audioBlob = await api.textToSpeech(ttsText);
+      console.log('TTS audio blob:', audioBlob.type, audioBlob.size);
       const url = URL.createObjectURL(audioBlob);
+      console.log('Created audio URL:', url);
       setTtsAudio(url);
     } catch (error) {
       console.error('TTS 合成失败:', error);
       alert('语音合成失败，请重试');
     } finally {
       setTtsLoading(false);
-    }
-  };
-
-  const playAudio = () => {
-    if (audioRef.current && ttsAudio) {
-      audioRef.current.play();
     }
   };
 
@@ -152,16 +147,10 @@ export function AudioTestPage() {
               {ttsAudio && (
                 <div className="mt-4 p-4 bg-[var(--color-bg-tertiary)] rounded-[var(--radius-lg)]">
                   <p className="text-sm font-medium text-[var(--color-text-secondary)] mb-3">合成结果：</p>
-                  <div className="flex items-center gap-4">
-                    <Button variant="secondary" onClick={playAudio}>
-                      <svg className="w-4 h-4 mr-2" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z" />
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-                      </svg>
-                      播放
-                    </Button>
-                    <audio ref={audioRef} src={ttsAudio} className="flex-1" controls />
-                  </div>
+                  <audio src={ttsAudio} controls style={{ width: '100%' }} />
+                  <p className="text-xs text-[var(--color-text-tertiary)] mt-2">
+                    如果无法播放，请检查浏览器是否支持该音频格式，或查看浏览器控制台获取错误信息
+                  </p>
                 </div>
               )}
             </div>

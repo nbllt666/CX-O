@@ -162,19 +162,65 @@ async def general_exception_handler(request, exc):
 
 def process_audio(file_io: BytesIO) -> tuple:
     try:
-        data_or_path_or_list, audio_fs = torchaudio.load(file_io)
+        import torch
+        import torchaudio
+        import numpy as np
+        from scipy.io import wavfile
+        from scipy import signal
+        import tempfile
         
-        if audio_fs != TARGET_FS:
-            resampler = torchaudio.transforms.Resample(orig_freq=audio_fs, new_freq=TARGET_FS)
-            data_or_path_or_list = resampler(data_or_path_or_list)
+        # 尝试使用 scipy 加载音频
+        file_io.seek(0)
         
-        if data_or_path_or_list.dim() > 1:
-            data_or_path_or_list = data_or_path_or_list.mean(0)
+        # 保存到临时文件因为 scipy 需要文件路径
+        with tempfile.NamedTemporaryFile(suffix='.wav', delete=False) as tmp:
+            tmp.write(file_io.read())
+            tmp_path = tmp.name
         
-        return data_or_path_or_list, True
+        try:
+            sr, data = wavfile.read(tmp_path)
+            # 转换为 float32
+            if data.dtype == np.int16:
+                audio_data = data.astype(np.float32) / 32768.0
+            else:
+                audio_data = data.astype(np.float32)
+            
+            # 转为 1D
+            if audio_data.ndim > 1:
+                audio_data = audio_data.mean(axis=1)
+            
+            # 重采样
+            if sr != TARGET_FS:
+                # 使用 scipy 进行重采样
+                num_samples = int(len(audio_data) * TARGET_FS / sr)
+                audio_data = signal.resample(audio_data, num_samples)
+            
+            return torch.from_numpy(audio_data), True
+        finally:
+            import os
+            os.unlink(tmp_path)
+            
     except Exception as e:
-        logger.error(f"Error processing audio: {str(e)}")
-        return None, False
+        logger.error(f"Error processing audio with scipy: {str(e)}")
+        
+        # 回退到 torchaudio
+        try:
+            import torch
+            import torchaudio
+            file_io.seek(0)
+            data_or_path_or_list, audio_fs = torchaudio.load(file_io)
+            
+            if audio_fs != TARGET_FS:
+                resampler = torchaudio.transforms.Resample(orig_freq=audio_fs, new_freq=TARGET_FS)
+                data_or_path_or_list = resampler(data_or_path_or_list)
+            
+            if data_or_path_or_list.dim() > 1:
+                data_or_path_or_list = data_or_path_or_list.mean(0)
+            
+            return data_or_path_or_list, True
+        except Exception as e2:
+            logger.error(f"Error processing audio with torchaudio: {str(e2)}")
+            return None, False
 
 
 def run_inference(audios: List, lang: str, asr_config: ASRConfig) -> List[Dict[str, Any]]:

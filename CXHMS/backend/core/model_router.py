@@ -60,8 +60,30 @@ class ModelRouter:
         # 检查所有模型状态
         await self.check_all_status()
 
+        # 预热模型 (加载到内存)
+        await self.warmup_models()
+
         self._initialized = True
         logger.info("模型路由器初始化完成")
+
+    async def warmup_models(self):
+        """预热模型，使模型加载到内存中"""
+        logger.info("开始预热模型...")
+        for model_type, client in self._clients.items():
+            if client:
+                try:
+                    logger.info(f"预热模型 {model_type} ({client.model_name})...")
+                    result = await client.chat(
+                        messages=[{"role": "user", "content": "hi"}],
+                        stream=False
+                    )
+                    if result.error:
+                        logger.warning(f"模型 {model_type} 预热失败: {result.error}")
+                    else:
+                        logger.info(f"模型 {model_type} 预热成功")
+                except Exception as e:
+                    logger.warning(f"模型 {model_type} 预热异常: {e}")
+        logger.info("模型预热完成")
 
     def _create_client(self, model_type: str) -> Optional[LLMClient]:
         """创建指定类型的模型客户端"""

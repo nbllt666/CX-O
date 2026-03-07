@@ -2,6 +2,8 @@
 CosyVoice 服务管理器
 支持按需启动和自动关闭
 """
+from __future__ import annotations
+
 import asyncio
 import logging
 import os
@@ -74,10 +76,7 @@ class CosyVoiceManager:
     async def _check_service_health(self) -> bool:
         try:
             async with httpx.AsyncClient(timeout=5.0) as client:
-                response = await client.get(f"{self._base_url}/inference_sft", params={
-                    "tts_text": "test",
-                    "spk_id": "中文女"
-                })
+                response = await client.get(f"{self._base_url}/health")
                 return response.status_code == 200
         except Exception:
             return False

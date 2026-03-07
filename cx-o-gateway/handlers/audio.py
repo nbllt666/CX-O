@@ -1,6 +1,8 @@
 """
 音频处理器 (ASR/TTS)
 """
+from __future__ import annotations
+
 import base64
 import logging
 from typing import TYPE_CHECKING

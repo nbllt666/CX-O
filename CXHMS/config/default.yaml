@@ -28,7 +28,7 @@ models:
   main:
     provider: ollama
     host: http://localhost:11434
-    model: qwen3-vl:8b
+    model: qwen3:latest
     apiKey: ''
     enabled: true
     port: 8000

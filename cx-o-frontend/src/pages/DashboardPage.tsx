@@ -2,7 +2,7 @@ import React from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
 import { PageHeader } from '../components/layout';
-import { Card, CardBody, Button, SkeletonCard, EmptyStateIcon } from '../components/ui';
+import { Card, CardBody, Button, SkeletonCard } from '../components/ui';
 import { api } from '../api/client';
 
 interface Stats {
@@ -12,11 +12,11 @@ interface Stats {
   todayMessages: number;
 }
 
-interface RecentActivity {
-  id: string;
-  type: 'chat' | 'memory' | 'agent';
-  title: string;
-  timestamp: string;
+interface ServiceStats {
+  tts_count: number;
+  asr_count: number;
+  llm_count: number;
+  client_count: number;
 }
 
 const StatCard: React.FC<{
@@ -58,30 +58,44 @@ export const DashboardPage: React.FC = () => {
   const { data: stats, isLoading: statsLoading } = useQuery<Stats>({
     queryKey: ['dashboard-stats'],
     queryFn: async () => {
-      const [memories, sessions, agents] = await Promise.all([
-        api.getMemories({ limit: 1 }),
-        api.getSessions(),
-        api.getAgents(),
-      ]);
+      // 获取记忆总数（使用较大的 limit 来获取实际总数）
+      const memoriesResponse = await api.getMemories({ limit: 10000 });
+      const sessionsResponse = await api.getSessions();
+      const agentsResponse = await api.getAgents();
+      
+      // API 返回格式：{ status: "success", memories: [], total: number }
+      const memories = memoriesResponse.memories || [];
+      const memoriesTotal = memoriesResponse.total || memories.length;
+      
+      // API 返回格式：{ status: "success", sessions: [], total: number }
+      const sessions = sessionsResponse.sessions || [];
+      const sessionsTotal = sessionsResponse.total || sessions.length;
+      
+      // API 返回格式：{ status: "success", agents: [], total: number }
+      const agents = agentsResponse.agents || agentsResponse || [];
+      
+      // 计算今日消息数（从会话中统计今天更新的会话）
+      const today = new Date();
+      today.setHours(0, 0, 0, 0);
+      const todaySessions = sessions.filter((s: { updated_at?: string }) => {
+        if (!s.updated_at) return false;
+        const sessionDate = new Date(s.updated_at);
+        return sessionDate >= today;
+      });
+
       return {
-        memoryCount: memories.total || 0,
-        sessionCount: sessions.length || 0,
+        memoryCount: memoriesTotal,
+        sessionCount: sessionsTotal,
         agentCount: agents.filter((a: { id: string }) => a.id !== 'memory-agent').length || 0,
-        todayMessages: 0,
+        todayMessages: todaySessions.length || 0,
       };
     },
   });
 
-  const { data: recentActivity, isLoading: activityLoading } = useQuery<RecentActivity[]>({
-    queryKey: ['recent-activity'],
+  const { data: serviceStats, isLoading: serviceStatsLoading } = useQuery<ServiceStats>({
+    queryKey: ['service-stats'],
     queryFn: async () => {
-      const sessions = await api.getSessions();
-      return sessions.slice(0, 5).map((s: { id: string; title?: string; updated_at?: string }) => ({
-        id: s.id,
-        type: 'chat' as const,
-        title: s.title || '新对话',
-        timestamp: s.updated_at || new Date().toISOString(),
-      }));
+      return await api.getStats();
     },
   });
 
@@ -167,44 +181,36 @@ export const DashboardPage: React.FC = () => {
         <Card className="lg:col-span-2">
           <CardBody>
             <h2 className="text-lg font-semibold text-[var(--color-text-primary)] mb-4">
-              最近活动
+              服务统计
             </h2>
-            {activityLoading ? (
-              <div className="space-y-3">
-                {[1, 2, 3].map((i) => (
-                  <div key={i} className="animate-pulse flex items-center gap-3">
-                    <div className="w-10 h-10 bg-[var(--color-bg-tertiary)] rounded-[var(--radius-md)]" />
-                    <div className="flex-1">
-                      <div className="h-4 bg-[var(--color-bg-tertiary)] rounded w-1/2 mb-2" />
-                      <div className="h-3 bg-[var(--color-bg-tertiary)] rounded w-1/4" />
-                    </div>
+            {serviceStatsLoading ? (
+              <div className="grid grid-cols-2 gap-4">
+                {[1, 2, 3, 4].map((i) => (
+                  <div key={i} className="animate-pulse p-4 bg-[var(--color-bg-tertiary)] rounded-[var(--radius-md)]">
+                    <div className="h-4 bg-[var(--color-bg-secondary)] rounded w-1/2 mb-2" />
+                    <div className="h-8 bg-[var(--color-bg-secondary)] rounded w-3/4" />
                   </div>
                 ))}
               </div>
-            ) : recentActivity && recentActivity.length > 0 ? (
-              <div className="space-y-3">
-                {recentActivity.map((activity) => (
-                  <Link
-                    key={activity.id}
-                    to={`/${activity.type === 'chat' ? 'chat' : activity.type}`}
-                    className="flex items-center gap-3 p-3 rounded-[var(--radius-md)] hover:bg-[var(--color-bg-hover)] transition-colors"
-                  >
-                    <div className="w-10 h-10 bg-[var(--color-bg-tertiary)] rounded-[var(--radius-md)] flex items-center justify-center">
-                      <EmptyStateIcon type="chat" />
-                    </div>
-                    <div className="flex-1 min-w-0">
-                      <p className="text-sm font-medium text-[var(--color-text-primary)] truncate">
-                        {activity.title}
-                      </p>
-                      <p className="text-xs text-[var(--color-text-tertiary)]">
-                        {new Date(activity.timestamp).toLocaleString('zh-CN')}
-                      </p>
-                    </div>
-                  </Link>
-                ))}
-              </div>
             ) : (
-              <div className="text-center py-8 text-[var(--color-text-tertiary)]">暂无最近活动</div>
+              <div className="grid grid-cols-2 gap-4">
+                <div className="p-4 bg-[var(--color-bg-tertiary)] rounded-[var(--radius-md)]">
+                  <p className="text-sm text-[var(--color-text-secondary)]">TTS 合成次数</p>
+                  <p className="text-2xl font-bold text-[var(--color-accent)]">{serviceStats?.tts_count || 0}</p>
+                </div>
+                <div className="p-4 bg-[var(--color-bg-tertiary)] rounded-[var(--radius-md)]">
+                  <p className="text-sm text-[var(--color-text-secondary)]">ASR 识别次数</p>
+                  <p className="text-2xl font-bold text-[var(--color-success)]">{serviceStats?.asr_count || 0}</p>
+                </div>
+                <div className="p-4 bg-[var(--color-bg-tertiary)] rounded-[var(--radius-md)]">
+                  <p className="text-sm text-[var(--color-text-secondary)]">LLM 调用次数</p>
+                  <p className="text-2xl font-bold text-[var(--color-warning)]">{serviceStats?.llm_count || 0}</p>
+                </div>
+                <div className="p-4 bg-[var(--color-bg-tertiary)] rounded-[var(--radius-md)]">
+                  <p className="text-sm text-[var(--color-text-secondary)]">在线客户端数</p>
+                  <p className="text-2xl font-bold text-[var(--color-info)]">{serviceStats?.client_count || 0}</p>
+                </div>
+              </div>
             )}
           </CardBody>
         </Card>

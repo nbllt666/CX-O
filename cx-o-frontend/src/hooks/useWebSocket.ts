@@ -2,19 +2,31 @@ import { useEffect, useRef, useCallback, useState } from 'react';
 
 const WS_BASE_URL =
   import.meta.env.VITE_WS_URL ||
-  (import.meta.env.VITE_API_URL || 'http://localhost:8000').replace('http', 'ws');
+  (import.meta.env.VITE_API_URL || 'http://localhost:8100')
+    .replace('http', 'ws')
+    .replace(/\/ws$/, '')
+    .replace(/\/$/, '');
 
 export interface WebSocketMessage {
   type: string;
   content?: string;
   message?: string;
   done?: boolean;
-  error?: string;
+  error?: string | { code: string; message: string };
   session_id?: string;
   tool_call?: Record<string, unknown>;
   tool_name?: string;
   result?: unknown;
   triggered_at?: string;
+  request_id?: string;
+  action?: string;
+  status?: string;
+  data?: {
+    content?: string;
+    [key: string]: unknown;
+  };
+  is_final?: boolean;
+  chunk_index?: number;
 }
 
 export interface WebSocketOptions {
@@ -109,8 +121,9 @@ export function useWebSocket(options: WebSocketOptions): UseWebSocketReturn {
       return;
     }
 
-    const wsUrl = `${WS_BASE_URL}/ws/${agentIdRef.current}?timeout=${timeoutRef.current}`;
-    const ws = new WebSocket(wsUrl);
+    const wsUrl = `${WS_BASE_URL}/ws`;
+  console.log('[WebSocket] Connecting to:', wsUrl, 'with agent:', agentIdRef.current);
+  const ws = new WebSocket(wsUrl);
 
     ws.onopen = () => {
       setIsConnected(true);
@@ -140,6 +153,24 @@ export function useWebSocket(options: WebSocketOptions): UseWebSocketReturn {
           case 'alarm':
             onAlarmRef.current?.(data.message || '', data.triggered_at || '');
             break;
+          case 'stream':
+            if (data.is_final) {
+              setIsGenerating(false);
+              onMessageRef.current?.({ type: 'done' });
+            } else if (data.data?.content) {
+              onMessageRef.current?.({ type: 'content', content: data.data.content });
+            }
+            break;
+          case 'response':
+            if (data.status === 'error') {
+              setIsGenerating(false);
+              onErrorRef.current?.(data.error?.message || 'Unknown error');
+            }
+            break;
+          case 'error':
+            setIsGenerating(false);
+            onErrorRef.current?.(data.error?.message || data.error || 'Unknown error');
+            break;
           case 'content':
           case 'tool_call':
           case 'tool_result':
@@ -148,10 +179,6 @@ export function useWebSocket(options: WebSocketOptions): UseWebSocketReturn {
           case 'done':
             setIsGenerating(false);
             onMessageRef.current?.(data);
-            break;
-          case 'error':
-            setIsGenerating(false);
-            onErrorRef.current?.(data.error || 'Unknown error');
             break;
           case 'cancelled':
             setIsGenerating(false);
@@ -187,11 +214,16 @@ export function useWebSocket(options: WebSocketOptions): UseWebSocketReturn {
       }
 
       setIsGenerating(true);
+      const requestId = `${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
       wsRef.current.send(
         JSON.stringify({
-          type: 'chat',
-          message,
-          images: images && images.length > 0 ? images : undefined,
+          action: 'chat.stream',
+          request_id: requestId,
+          data: {
+            text: message,
+            agent_id: agentIdRef.current,
+            images: images && images.length > 0 ? images : undefined,
+          },
         })
       );
     },

@@ -64,8 +64,10 @@ export const useChatStore = create<ChatState>()(
       fetchAgents: async () => {
         set({ isLoadingAgents: true, agentsError: null });
         try {
-          const data = await api.getAgents();
-          const filteredAgents = data.filter((agent: Agent) => agent.id !== 'memory-agent');
+          const response = await api.getAgents();
+          // API 返回格式：{ status: "success", agents: [], total: number }
+          const agentsList = response.agents || response || [];
+          const filteredAgents = agentsList.filter((agent: Agent) => agent.id !== 'memory-agent');
           set({ agents: filteredAgents });
 
           const { currentAgentId } = get();

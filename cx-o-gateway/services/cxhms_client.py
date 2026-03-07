@@ -70,10 +70,26 @@ class CXHMSClient:
                     data = json.loads(message)
                     request_id = data.get("request_id")
                     
+                    logger.debug(f"Received message from CXHMS: request_id={request_id}, data={data}")
+                    
                     if request_id and request_id in self._pending_requests:
-                        future = self._pending_requests.pop(request_id)
-                        if not future.done():
-                            future.set_result(data)
+                        pending = self._pending_requests.pop(request_id)
+                        logger.debug(f"Found pending request for {request_id}, type={type(pending)}")
+                        
+                        # 检查是 Future 还是 callback function
+                        if callable(pending):
+                            # Stream callback - 可能是 async 或 sync
+                            callback = pending
+                            logger.debug(f"Calling stream callback with data: {data}")
+                            if asyncio.iscoroutinefunction(callback):
+                                await callback(data)
+                            else:
+                                callback(data)
+                        else:
+                            # Future
+                            future = pending
+                            if not future.done():
+                                future.set_result(data)
                     else:
                         logger.debug(f"Received message without pending request: {data}")
                         
@@ -150,15 +166,24 @@ class CXHMSClient:
         request_id = str(uuid.uuid4())
         message = create_request(action, data, request_id)
         
+        logger.info(f"Stream request: action={action}, request_id={request_id}")
+        
         stream_complete = asyncio.Event()
         
-        def handle_stream_response(response: dict):
+        async def handle_stream_response(response: dict):
+            logger.debug(f"Stream handler received response: {response}")
             if response.get("request_id") == request_id:
-                callback(response)
+                logger.debug(f"Request ID matches, calling callback")
+                if asyncio.iscoroutinefunction(callback):
+                    await callback(response)
+                else:
+                    callback(response)
                 if response.get("is_final", False) or response.get("type") == "error":
+                    logger.debug("Stream complete")
                     stream_complete.set()
         
         self._pending_requests[request_id] = handle_stream_response
+        logger.info(f"Registered stream handler for request_id={request_id}")
         
         conn = self._get_connection()
         if not conn:
@@ -166,8 +191,11 @@ class CXHMSClient:
             raise ConnectionError("No available connection to CXHMS")
         
         try:
+            logger.info(f"Sending stream request to CXHMS: {message}")
             await conn.send(json.dumps(message))
+            logger.info("Waiting for stream to complete...")
             await asyncio.wait_for(stream_complete.wait(), timeout=timeout)
+            logger.info("Stream completed successfully")
         except asyncio.TimeoutError:
             self._pending_requests.pop(request_id, None)
             raise TimeoutError(f"Stream {action} timed out")

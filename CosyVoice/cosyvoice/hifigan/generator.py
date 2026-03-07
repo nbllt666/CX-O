@@ -505,6 +505,12 @@ class HiFTGenerator(nn.Module):
         return inverse_transform
 
     def decode(self, x: torch.Tensor, s: torch.Tensor = torch.zeros(1, 1, 0)) -> torch.Tensor:
+        if x.shape[2] == 0:
+            return torch.zeros(1, 1, 0, device=x.device, dtype=x.dtype)
+        min_input_len = 7
+        if x.shape[2] < min_input_len:
+            padding_len = min_input_len - x.shape[2]
+            x = torch.nn.functional.pad(x, (0, padding_len), mode='replicate')
         s_stft_real, s_stft_imag = self._stft(s.squeeze(1))
         s_stft = torch.cat([s_stft_real, s_stft_imag], dim=1)
 

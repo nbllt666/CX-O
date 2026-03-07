@@ -2,6 +2,8 @@
 音效解析模块
 解析文本中的音效标记，扫描音效文件
 """
+from __future__ import annotations
+
 import logging
 import re
 from pathlib import Path

@@ -5,7 +5,7 @@ import json
 import os
 from pathlib import Path
 from typing import Any, Optional, List, Dict
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class CorsConfig(BaseModel):
@@ -30,6 +30,8 @@ class EmotionVoiceConfig(BaseModel):
 
 
 class TTSConfig(BaseModel):
+    model_config = ConfigDict(protected_namespaces=())
+
     url: str
     timeout: int = 120
     ref_audio_path: str = ""
@@ -72,6 +74,7 @@ class ServicesConfig(BaseModel):
     tts: TTSConfig
     audio: Optional[AudioConfig] = None
     cosyvoice: Optional[CosyVoiceConfig] = None
+    control_service_url: Optional[str] = None
 
 
 class Config(BaseModel):

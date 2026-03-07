@@ -3,7 +3,7 @@ import type { AxiosRequestConfig, InternalAxiosRequestConfig } from 'axios';
 
 const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:8100';
 const CONTROL_SERVICE_URL = import.meta.env.VITE_CONTROL_SERVICE_URL || 'http://localhost:8100';
-export const WS_BASE_URL = import.meta.env.VITE_WS_URL || 'ws://localhost:8100/ws';
+export const WS_BASE_URL = import.meta.env.VITE_WS_URL || 'ws://localhost:8100';
 
 interface RetryConfig extends InternalAxiosRequestConfig {
   retryCount?: number;
@@ -434,11 +434,6 @@ class ApiClient {
   // Admin
   async getHealth() {
     const response = await this.client.get('/health');
-    return response.data;
-  }
-
-  async getStats() {
-    const response = await this.client.get('/api/admin/stats');
     return response.data;
   }
 
@@ -950,9 +945,20 @@ class ApiClient {
     const response = await this.client.post('/api/tts/synthesize', {
       text,
       ...options,
-    }, {
-      responseType: 'blob',
     });
+    
+    // Gateway 返回 JSON 格式：{ status: "success", audio_data: base64, format: "wav" }
+    if (response.data && response.data.audio_data) {
+      // 将 base64 转换为 Blob
+      const binaryString = atob(response.data.audio_data);
+      const bytes = new Uint8Array(binaryString.length);
+      for (let i = 0; i < binaryString.length; i++) {
+        bytes[i] = binaryString.charCodeAt(i);
+      }
+      return new Blob([bytes], { type: `audio/${response.data.format || 'wav'}` });
+    }
+    
+    // 如果返回的是直接 Blob（备用路径）
     return response.data;
   }
 
@@ -1055,6 +1061,11 @@ class ApiClient {
     return response.data;
   }
 
+  async getStats() {
+    const response = await this.client.get('/api/stats');
+    return response.data;
+  }
+
   async updateAudioConfig(config: {
     ref_audio_path?: string;
     ref_text?: string;
@@ -1117,8 +1128,95 @@ class ApiClient {
     ref_text?: string;
     emotions?: string[];
   }) {
-    const response = await this.client.post('/api/audio/generate-emotions', data);
+    const response = await this.client.post('/api/audio/generate-emotions', data, {
+      timeout: 600000,
+    });
     return response.data;
+  }
+
+  async generateEmotionAudiosStream(
+    data: {
+      ref_audio: string;
+      ref_text?: string;
+      emotions?: string[];
+    },
+    onChunk: (chunk: {
+      type: string;
+      emotion?: string;
+      current?: number;
+      total?: number;
+      filename?: string;
+      message?: string;
+      generated?: Record<string, string>;
+      errors?: Record<string, string>;
+    }) => void
+  ) {
+    const response = await fetch(`${API_BASE_URL}/api/audio/generate-emotions/stream`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${localStorage.getItem('cxhms-token') || ''}`,
+      },
+      body: JSON.stringify(data),
+    });
+
+    if (!response.ok) {
+      const errorText = await response.text().catch(() => 'Unknown error');
+      onChunk({ type: 'error', message: `HTTP ${response.status}: ${errorText}` });
+      return;
+    }
+
+    const reader = response.body?.getReader();
+    if (!reader) {
+      onChunk({ type: 'error', message: 'No response body' });
+      return;
+    }
+
+    const decoder = new TextDecoder();
+    let buffer = '';
+
+    try {
+      while (true) {
+        const { done, value } = await reader.read();
+
+        if (value) {
+          buffer += decoder.decode(value, { stream: true });
+        }
+
+        const lines = buffer.split('\n');
+        buffer = lines.pop() || '';
+
+        for (const line of lines) {
+          if (line.trim().startsWith('data: ')) {
+            try {
+              const eventData = JSON.parse(line.trim().slice(6));
+              onChunk(eventData);
+            } catch (e) {
+              console.error('Failed to parse SSE data:', e);
+            }
+          }
+        }
+
+        if (done) {
+          if (buffer.trim().startsWith('data: ')) {
+            try {
+              const eventData = JSON.parse(buffer.trim().slice(6));
+              onChunk(eventData);
+            } catch (e) {
+              console.error('Failed to parse remaining buffer:', e);
+            }
+          }
+          break;
+        }
+      }
+    } catch (streamError) {
+      onChunk({
+        type: 'error',
+        message: `Stream error: ${streamError instanceof Error ? streamError.message : 'Unknown error'}`,
+      });
+    } finally {
+      reader.releaseLock();
+    }
   }
 
   async getEmotionConfigs() {

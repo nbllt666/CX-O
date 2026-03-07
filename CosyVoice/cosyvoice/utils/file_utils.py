@@ -16,8 +16,10 @@
 
 import os
 import json
+import io
 import torch
 import torchaudio
+import soundfile as sf
 import logging
 logging.getLogger('matplotlib').setLevel(logging.WARNING)
 logging.basicConfig(level=logging.DEBUG,
@@ -42,8 +44,23 @@ def read_json_lists(list_file):
 
 
 def load_wav(wav, target_sr, min_sr=16000):
-    speech, sample_rate = torchaudio.load(wav, backend='soundfile')
-    speech = speech.mean(dim=0, keepdim=True)
+    if isinstance(wav, torch.Tensor):
+        if wav.dim() == 1:
+            wav = wav.unsqueeze(0)
+        return wav
+    if hasattr(wav, 'read') and hasattr(wav, 'seek'):
+        wav.seek(0)
+        audio_bytes = wav.read()
+        audio_buffer = io.BytesIO(audio_bytes)
+        speech_array, sample_rate = sf.read(audio_buffer)
+        if speech_array.ndim == 2:
+            speech_array = speech_array.mean(axis=1)
+        speech = torch.from_numpy(speech_array).float().unsqueeze(0)
+    else:
+        speech_array, sample_rate = sf.read(wav)
+        if speech_array.ndim == 2:
+            speech_array = speech_array.mean(axis=1)
+        speech = torch.from_numpy(speech_array).float().unsqueeze(0)
     if sample_rate != target_sr:
         assert sample_rate >= min_sr, 'wav sample rate {} must be greater than {}'.format(sample_rate, target_sr)
         speech = torchaudio.transforms.Resample(orig_freq=sample_rate, new_freq=target_sr)(speech)

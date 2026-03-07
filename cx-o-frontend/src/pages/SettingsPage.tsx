@@ -253,7 +253,7 @@ export function SettingsPage() {
             cross_fade_duration: data.config.cross_fade_duration || 0.15,
             emotion_enabled: data.config.emotion_enabled ?? true,
             effects_enabled: data.config.effects_enabled ?? true,
-            emotion_voices: data.config.emotion_voices || audioConfig.emotion_voices,
+            emotion_voices: data.config.emotion_voices || [],
           });
         }
       } catch (error) {
@@ -347,39 +347,63 @@ export function SettingsPage() {
 
     try {
       const emotions = ['happy', 'sad', 'angry', 'surprised', 'tender'];
-      const result = await api.generateEmotionAudios({
-        ref_audio: audioConfig.ref_audio_path,
-        ref_text: audioConfig.ref_text,
-        emotions,
-      });
+      const generated: Record<string, string> = {};
+      const errors: Record<string, string> = {};
 
-      if (result.status === 'success') {
-        const generated = result.generated || {};
-        const errors = result.errors || {};
-
-        const filesData = await api.getAudioFiles();
-        if (filesData.status === 'success') {
-          setAudioFiles(filesData.files || []);
+      await api.generateEmotionAudiosStream(
+        {
+          ref_audio: audioConfig.ref_audio_path,
+          ref_text: audioConfig.ref_text,
+          emotions,
+        },
+        (chunk) => {
+          if (chunk.type === 'start') {
+            setGenerateProgress({ current: 0, total: chunk.total || 5, emotion: '' });
+          } else if (chunk.type === 'progress') {
+            setGenerateProgress({
+              current: chunk.current || 0,
+              total: chunk.total || 5,
+              emotion: chunk.emotion || '',
+            });
+          } else if (chunk.type === 'success') {
+            if (chunk.emotion && chunk.filename) {
+              generated[chunk.emotion] = chunk.filename;
+            }
+          } else if (chunk.type === 'error') {
+            if (chunk.emotion) {
+              errors[chunk.emotion] = chunk.message || 'Unknown error';
+            }
+          } else if (chunk.type === 'complete') {
+            if (chunk.generated) {
+              Object.assign(generated, chunk.generated);
+            }
+            if (chunk.errors) {
+              Object.assign(errors, chunk.errors);
+            }
+          }
         }
+      );
 
-        const configData = await api.getAudioConfig();
-        if (configData.config) {
-          setAudioConfig((prev) => ({
-            ...prev,
-            emotion_voices: configData.config.emotion_voices || prev.emotion_voices,
-          }));
-        }
+      const filesData = await api.getAudioFiles();
+      if (filesData.status === 'success') {
+        setAudioFiles(filesData.files || []);
+      }
 
-        const status = await api.getCosyVoiceStatus();
-        setCosyvoiceStatus(status);
+      const configData = await api.getAudioConfig();
+      if (configData.config) {
+        setAudioConfig((prev) => ({
+          ...prev,
+          emotion_voices: configData.config.emotion_voices || prev.emotion_voices,
+        }));
+      }
 
-        if (Object.keys(errors).length > 0) {
-          alert(`部分情感生成失败：${Object.keys(errors).join(', ')}`);
-        } else {
-          alert(`成功生成 ${Object.keys(generated).length} 个情感音频！服务将在 5 分钟后自动停止。`);
-        }
+      const status = await api.getCosyVoiceStatus();
+      setCosyvoiceStatus(status);
+
+      if (Object.keys(errors).length > 0) {
+        alert(`部分情感生成失败：${Object.keys(errors).join(', ')}`);
       } else {
-        alert(result.message || '生成失败');
+        alert(`成功生成 ${Object.keys(generated).length} 个情感音频！服务将在 5 分钟后自动停止。`);
       }
     } catch (error) {
       console.error('Generate emotions error:', error);
@@ -417,9 +441,6 @@ export function SettingsPage() {
             ? { ...prev.memory, ...serviceConfig.config.models.memory }
             : prev.memory,
         }));
-      }
-      if (serviceConfig.config.model_defaults) {
-        setModelDefaults(serviceConfig.config.model_defaults);
       }
       if (serviceConfig.config.llm_params) {
         setLlmParams({

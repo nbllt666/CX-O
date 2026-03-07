@@ -26,6 +26,7 @@ from backend.api.routers import (
     chat,
     context,
     memory,
+    memory_chat,
     service,
     tools,
     websocket,
@@ -449,6 +450,7 @@ if getattr(settings.config, "cors", None) and settings.config.cors.enabled:
 
 app.include_router(chat.router, prefix="/api")
 app.include_router(memory.router, prefix="/api")
+app.include_router(memory_chat.router, prefix="/api")
 app.include_router(context.router, prefix="/api")
 app.include_router(tools.router, prefix="/api")
 app.include_router(acp.router, prefix="/api")

@@ -1,7 +1,11 @@
-from fastapi import FastAPI, File, UploadFile, Form, HTTPException # type: ignore
-from fastapi.responses import StreamingResponse # type: ignore
-import tempfile
 import os
+os.environ.setdefault("HF_HUB_ENABLE_HF_TRANSFER", "1")
+hf_home = os.path.join(os.path.dirname(os.path.abspath(__file__)), "hf_download")
+os.environ.setdefault("HF_HOME", hf_home)
+
+from fastapi import FastAPI, File, Form, HTTPException, UploadFile
+from fastapi.responses import StreamingResponse
+import tempfile
 import numpy as np
 import wave
 
@@ -11,16 +15,16 @@ app = FastAPI(
     version="1.0.0"
 )
 
-
-# 尝试导入F5TTS，如果失败则使用模拟实现
 MODEL_AVAILABLE = False
 f5tts = None
 
 try:
-    from f5_tts.api import F5TTS # type: ignore
+    from f5_tts.api import F5TTS
     print("Loading F5-TTS model...")
+    print(f"HF_ENDPOINT: {os.environ.get('HF_ENDPOINT')}")
+    print(f"HF_HOME: {os.environ.get('HF_HOME')}")
     try:
-        f5tts = F5TTS(model="F5TTS_v1_Base")
+        f5tts = F5TTS()
         print("Model loaded successfully!")
         MODEL_AVAILABLE = True
     except Exception as e:
@@ -41,7 +45,6 @@ def health_check():
     return {"status": "healthy", "model_loaded": MODEL_AVAILABLE}
 
 
-# 在应用启动时检查模型可用性，决定是否注册tts端点
 if MODEL_AVAILABLE:
     @app.post("/tts/")
     async def text_to_speech(
@@ -56,29 +59,22 @@ if MODEL_AVAILABLE:
         cfg_strength: int = Form(2),
         seed: int = Form(-1)
     ):
-        """
-        Convert text to speech using reference audio
-        """
         try:
             if tts_model not in ["F5-TTS", "E2-TTS"]:
                 raise HTTPException(status_code=400, detail="tts_model must be 'F5-TTS' or 'E2-TTS'")
 
-            # Create temporary files
             ref_path = None
             output_path = None
 
             try:
-                # Save uploaded reference audio to temporary file
-                ref_fd, ref_path = tempfile.mkstemp(suffix=os.path.splitext(ref_audio.filename)[1])
+                ref_fd, ref_path = tempfile.mkstemp(suffix=os.path.splitext(ref_audio.filename)[1] if ref_audio.filename else ".wav")
                 with os.fdopen(ref_fd, "wb") as tmp_file:
                     content = await ref_audio.read()
                     tmp_file.write(content)
 
-                # Create temporary output file
                 output_fd, output_path = tempfile.mkstemp(suffix=".wav")
                 os.close(output_fd)
 
-                # Generate speech
                 wav, sr, spect = f5tts.infer(
                     ref_file=ref_path,
                     ref_text=ref_text,
@@ -95,10 +91,15 @@ if MODEL_AVAILABLE:
                     seed=seed
                 )
 
-                # Return the generated audio file
                 def iterfile():
-                    with open(output_path, mode="rb") as file_like:
-                        yield from file_like
+                    try:
+                        with open(output_path, mode="rb") as file_like:
+                            yield from file_like
+                    finally:
+                        if output_path and os.path.exists(output_path):
+                            os.unlink(output_path)
+                        if ref_path and os.path.exists(ref_path):
+                            os.unlink(ref_path)
 
                 return StreamingResponse(
                     iterfile(),
@@ -108,17 +109,16 @@ if MODEL_AVAILABLE:
                     }
                 )
 
-            finally:
-                # Clean up temporary files
+            except Exception as e:
                 if ref_path and os.path.exists(ref_path):
                     os.unlink(ref_path)
                 if output_path and os.path.exists(output_path):
                     os.unlink(output_path)
+                raise
 
         except Exception as e:
             raise HTTPException(status_code=500, detail=f"Error generating speech: {str(e)}")
 else:
-    # 如果模型不可用，提供一个模拟的tts端点
     @app.post("/tts/")
     async def text_to_speech_mock(
         ref_audio: UploadFile = File(...),
@@ -132,39 +132,24 @@ else:
         cfg_strength: int = Form(2),
         seed: int = Form(-1)
     ):
-        """
-        Mock endpoint for text to speech (model not available)
-        """
         return generate_mock_audio()
 
 
 def generate_mock_audio():
-    """
-    生成模拟音频文件用于演示
-    """
-    import io
-    import wave
-    import numpy as np
-
-    # Create temporary output file
     output_fd, output_path = tempfile.mkstemp(suffix=".wav")
 
-    # Generate a simple mock audio (sine wave sweep for demo purposes)
     sample_rate = 24000
-    duration = 2  # seconds
+    duration = 2
     t = np.linspace(0, duration, int(sample_rate * duration), endpoint=False)
 
-    # Create a frequency sweep to simulate speech
     start_freq = 200
     end_freq = 800
     freq_sweep = start_freq + (end_freq - start_freq) * t / duration
 
-    # Generate audio with frequency sweep
     audio_data = np.zeros_like(t)
     for i, freq in enumerate(freq_sweep):
         audio_data[i] = 0.3 * np.sin(2 * np.pi * freq * t[i])
 
-    # Add some variation to simulate speech patterns
     envelope = np.ones_like(t)
     attack_time = int(0.1 * sample_rate)
     release_time = int(0.2 * sample_rate)
@@ -172,20 +157,21 @@ def generate_mock_audio():
     envelope[-release_time:] = np.linspace(1, 0, release_time)
     audio_data *= envelope
 
-    # Convert to 16-bit integers
     audio_data = (audio_data * 32767).astype(np.int16)
 
-    # Write WAV file
     with wave.open(os.fdopen(output_fd, 'wb'), 'wb') as wav_file:
-        wav_file.setnchannels(1)  # Mono
-        wav_file.setsampwidth(2)  # 16-bit
+        wav_file.setnchannels(1)
+        wav_file.setsampwidth(2)
         wav_file.setframerate(sample_rate)
         wav_file.writeframes(audio_data.tobytes())
 
-    # Return the generated audio file
     def iterfile():
-        with open(output_path, mode="rb") as file_like:
-            yield from file_like
+        try:
+            with open(output_path, mode="rb") as file_like:
+                yield from file_like
+        finally:
+            if os.path.exists(output_path):
+                os.unlink(output_path)
 
     return StreamingResponse(
         iterfile(),
@@ -198,6 +184,5 @@ def generate_mock_audio():
 
 if __name__ == "__main__":
     import uvicorn
-    import os
     port = int(os.environ.get("PORT", 8002))
     uvicorn.run(app, host="0.0.0.0", port=port)

@@ -54,6 +54,12 @@ class ConvRNNF0Predictor(nn.Module):
         self.classifier = nn.Linear(in_features=cond_channels, out_features=self.num_class)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
+        if x.shape[2] == 0:
+            return torch.zeros(x.shape[0], x.shape[1], device=x.device, dtype=x.dtype)
+        min_input_len = 3
+        if x.shape[2] < min_input_len:
+            padding_len = min_input_len - x.shape[2]
+            x = torch.nn.functional.pad(x, (0, padding_len), mode='replicate')
         x = self.condnet(x)
         x = x.transpose(1, 2)
         return torch.abs(self.classifier(x).squeeze(-1))
@@ -93,6 +99,12 @@ class CausalConvRNNF0Predictor(nn.Module):
         self.classifier = nn.Linear(in_features=cond_channels, out_features=self.num_class)
 
     def forward(self, x: torch.Tensor, finalize: bool = True) -> torch.Tensor:
+        if x.shape[2] == 0:
+            return torch.zeros(x.shape[0], x.shape[1], device=x.device, dtype=x.dtype)
+        min_input_len = self.condnet[0].causal_padding + 1
+        if x.shape[2] < min_input_len:
+            padding_len = min_input_len - x.shape[2]
+            x = torch.nn.functional.pad(x, (0, padding_len), mode='replicate')
         if finalize is True:
             x = self.condnet[0](x)
         else:

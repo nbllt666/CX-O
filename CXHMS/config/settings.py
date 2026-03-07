@@ -67,7 +67,7 @@ class ModelConfig:
     provider: str = "ollama"
     host: str = "http://localhost:11434"
     port: int = 8000
-    model: str = "llama3.2:3b"
+    model: str = "qwen3:latest"
     temperature: float = 0.7
     max_tokens: int = 0
     timeout: int = 60
@@ -79,7 +79,7 @@ class ModelConfig:
             provider=data.get("provider", "ollama"),
             host=data.get("host", "http://localhost:11434"),
             port=data.get("port", 8000),
-            model=data.get("model", "llama3.2:3b"),
+            model=data.get("model", "qwen3:latest"),
             temperature=data.get("temperature", 0.7),
             max_tokens=data.get("max_tokens", 0),
             timeout=data.get("timeout", 60),
@@ -140,7 +140,7 @@ class ModelsConfig:
 class LLMConfig:
     provider: str = "ollama"
     host: str = "http://localhost:11434"
-    model: str = "llama3.2"
+    model: str = "qwen3:latest"
     temperature: float = 0.7
     max_tokens: int = 4096
     stream: bool = True
@@ -151,7 +151,7 @@ class LLMConfig:
         return cls(
             provider=data.get("provider", "ollama"),
             host=data.get("host", "http://localhost:11434"),
-            model=data.get("model", "llama3.2"),
+            model=data.get("model", "qwen3:latest"),
             temperature=data.get("temperature", 0.7),
             max_tokens=data.get("max_tokens", 4096),
             stream=data.get("stream", True),

@@ -1,5 +1,5 @@
 # ========================================
-# CX-O 微服务架构 - Git 忽略规则
+# CX-O 智能语音对话系统 - Git 忽略规则
 # ========================================
 
 # ----------------------------------------
@@ -34,6 +34,7 @@ MANIFEST
 .venv/
 venv/
 ENV/
+env/
 
 # ----------------------------------------
 # Node.js
@@ -43,12 +44,14 @@ npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
 .pnpm-debug.log*
+pnpm-lock.yaml
 
 # ----------------------------------------
 # 前端构建输出
 # ----------------------------------------
 cx-o-frontend/dist/
 cx-o-frontend/.vite/
+cx-o-frontend/coverage/
 
 # ----------------------------------------
 # IDE 和编辑器
@@ -61,6 +64,7 @@ cx-o-frontend/.vite/
 .project
 .pydevproject
 .settings/
+*.sublime-*
 
 # ----------------------------------------
 # 操作系统
@@ -73,6 +77,7 @@ cx-o-frontend/.vite/
 ehthumbs.db
 Thumbs.db
 desktop.ini
+$RECYCLE.BIN/
 
 # ----------------------------------------
 # 日志和缓存
@@ -96,6 +101,7 @@ checkpoints/
 *.h5
 *.pkl
 *.pickle
+*.msgpack
 
 # ----------------------------------------
 # 音频和视频输出
@@ -105,7 +111,13 @@ checkpoints/
 *.mp4
 *.ogg
 *.flac
-!**/ref_audio/*.wav
+output/
+outputs/
+
+# 保留参考音频目录
+!ref_audio/
+ref_audio/
+!ref_audio/*.wav
 
 # ----------------------------------------
 # 数据库文件
@@ -115,6 +127,7 @@ checkpoints/
 *.sqlite3
 chroma_db/
 qdrant_data/
+milvus_lite.db
 
 # ----------------------------------------
 # 环境变量和配置
@@ -123,6 +136,8 @@ qdrant_data/
 .env.local
 .env.*.local
 *.local.json
+config.json
+!cx-o-gateway/config.json
 
 # ----------------------------------------
 # 临时文件
@@ -132,9 +147,10 @@ temp/
 *.tmp
 *.temp
 *.bak
+*.orig
 
 # ----------------------------------------
-# 测试覆盖率
+# 测试和覆盖率
 # ----------------------------------------
 htmlcov/
 .tox/
@@ -147,40 +163,43 @@ coverage.xml
 *.cover
 .hypothesis/
 .pytest_cache/
+vitest.config.*.ts
+vitest.config.*.js
 
 # ----------------------------------------
 # Jupyter Notebook
 # ----------------------------------------
 .ipynb_checkpoints
+*.ipynb
 
 # ----------------------------------------
-# mypy
+# mypy / 类型检查
 # ----------------------------------------
 .mypy_cache/
 .dmypy.json
 dmypy.json
 
 # ----------------------------------------
-# 其他
+# 进程 ID
 # ----------------------------------------
-*.orig
 *.pid
-*.seed
-*.pid.lock
-
-# ----------------------------------------
-# 示例项目 (不参与开发)
-# ----------------------------------------
-cx_o/
 
 # ----------------------------------------
 # HuggingFace 模型缓存
 # ----------------------------------------
 F5-TTS/hf_download/
 SenseVoice/models/
+CosyVoice/models/
+.cache/
+huggingface/
 
 # ----------------------------------------
-# Trae IDE 配置和临时文件
+# Docker
+# ----------------------------------------
+.dockerignore
+
+# ----------------------------------------
+# Trae IDE 配置
 # ----------------------------------------
 .trae/
 
@@ -189,5 +208,42 @@ SenseVoice/models/
 # ----------------------------------------
 cx-o-frontend-backup/
 frontend_old/
+backup/
+old/
 
+# ----------------------------------------
+# 测试输出文件
+# ----------------------------------------
+*_test.py
+test_*.py
+*_output.txt
+*_output.raw
+container_log.txt
+test_error.txt
 
+# ----------------------------------------
+# 运行时二进制文件 (不应提交到仓库)
+# ----------------------------------------
+ffmpeg-8.0.1-full_build-shared/
+ffmpeg-release-full-shared.7z
+
+# TensorRT 引擎文件
+F5-fast/f5_trt_llm_engine/
+F5-fast/f5_trt_llm_engine_new/
+F5-fast/f5_trt_llm_engine_rebuilt/
+F5-fast/vocos_vocoder.plan
+F5-fast/model_repo/vocoder/1/vocoder.plan
+F5-fast/model_repo_f5_tts/vocoder/1/vocoder.plan
+
+# SenseVoice 模型文件
+F5-fast/SenseVoiceSmall/.mdl
+F5-fast/SenseVoiceSmall/.msc
+F5-fast/SenseVoiceSmall/.mv
+F5-fast/SenseVoiceSmall/am.mvn
+F5-fast/f5-server.tar
+
+# Docker 相关
+F5-fast/Docker Desktop Installer.exe
+
+# 日志
+log.txt

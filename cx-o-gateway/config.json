@@ -3,9 +3,15 @@
         "host": "0.0.0.0",
         "port": 8100,
         "cors": {
-            "allow_origins": ["*"],
-            "allow_methods": ["*"],
-            "allow_headers": ["*"],
+            "allow_origins": [
+                "*"
+            ],
+            "allow_methods": [
+                "*"
+            ],
+            "allow_headers": [
+                "*"
+            ],
             "allow_credentials": true
         }
     },
@@ -13,48 +19,55 @@
         "cxhms": {
             "url": "ws://127.0.0.1:8000/ws",
             "http_url": "http://127.0.0.1:8000",
+            "timeout": 30,
             "pool_size": 5,
             "reconnect_interval": 5,
             "heartbeat_interval": 30
         },
         "asr": {
             "url": "http://127.0.0.1:8001",
-            "timeout": 60
+            "http_url": null,
+            "timeout": 60,
+            "pool_size": 5,
+            "reconnect_interval": 5,
+            "heartbeat_interval": 30
         },
         "tts": {
             "url": "http://127.0.0.1:8002",
+            "gateway_url": "http://127.0.0.1:8100",
             "timeout": 120,
-            "ref_audio_path": "",
-            "ref_text": "",
-            "model_type": "F5-TTS",
-            "speed": 1.0,
+            "use_triton": false,
+            "ref_audio_path": "d:/CX-O/cx-o-gateway/data/voice_refs/cc763bdb-b4ed-4eaf-934f-924c4499a3b5_hoshino_0key_sovits_rmvpe.wav",
+            "ref_text": "我对自己的歌唱水平还是很有自信的，不过值得我开口唱诵的段落可不多。希望那些剧团里的创作者们加把劲，不要让我等太久。",
+            "model_type": "F5-TTS-Triton",
+            "speed": 1,
             "cross_fade_duration": 0.15,
             "emotion_enabled": true,
             "effects_enabled": true,
             "emotion_voices": {
                 "normal": {
-                    "ref_audio": "",
-                    "ref_text": ""
+                    "ref_audio": "d:/CX-O/cx-o-gateway/data/voice_refs/cc763bdb-b4ed-4eaf-934f-924c4499a3b5_hoshino_0key_sovits_rmvpe.wav",
+                    "ref_text": "我对自己的歌唱水平还是很有自信的，不过值得我开口唱诵的段落可不多。希望那些剧团里的创作者们加把劲，不要让我等太久。"
                 },
                 "happy": {
-                    "ref_audio": "",
-                    "ref_text": ""
+                    "ref_audio": "d:/CX-O/cx-o-gateway/data/voice_refs/cc763bdb-b4ed-4eaf-934f-924c4499a3b5_hoshino_0key_sovits_rmvpe_happy.wav",
+                    "ref_text": "太棒了！今天真是美好的一天，我感到非常开心！"
                 },
                 "sad": {
-                    "ref_audio": "",
-                    "ref_text": ""
+                    "ref_audio": "d:/CX-O/cx-o-gateway/data/voice_refs/cc763bdb-b4ed-4eaf-934f-924c4499a3b5_hoshino_0key_sovits_rmvpe_sad.wav",
+                    "ref_text": "有些事情让人感到难过，心情有些低落。"
                 },
                 "angry": {
-                    "ref_audio": "",
-                    "ref_text": ""
+                    "ref_audio": "d:/CX-O/cx-o-gateway/data/voice_refs/cc763bdb-b4ed-4eaf-934f-924c4499a3b5_hoshino_0key_sovits_rmvpe_angry.wav",
+                    "ref_text": "这真是太让人气愤了，我对此非常不满！"
                 },
                 "surprised": {
-                    "ref_audio": "",
-                    "ref_text": ""
+                    "ref_audio": "d:/CX-O/cx-o-gateway/data/voice_refs/cc763bdb-b4ed-4eaf-934f-924c4499a3b5_hoshino_0key_sovits_rmvpe_surprised.wav",
+                    "ref_text": "哇！这真是太让人意外了，完全没想到！"
                 },
                 "tender": {
-                    "ref_audio": "",
-                    "ref_text": ""
+                    "ref_audio": "d:/CX-O/cx-o-gateway/data/voice_refs/cc763bdb-b4ed-4eaf-934f-924c4499a3b5_hoshino_0key_sovits_rmvpe_tender.wav",
+                    "ref_text": "亲爱的，我会一直陪伴在你身边，照顾你。"
                 }
             }
         },
@@ -63,7 +76,7 @@
         },
         "cosyvoice": {
             "url": "http://127.0.0.1:8003",
-            "timeout": 120,
+            "timeout": 600,
             "enabled": true,
             "auto_stop_delay": 300,
             "start_command": "python runtime/python/fastapi/server.py --port 8003 --model_dir pretrained_models/CosyVoice2-0.5B",

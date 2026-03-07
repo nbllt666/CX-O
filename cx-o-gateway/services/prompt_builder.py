@@ -2,6 +2,8 @@
 系统提示词生成模块
 生成包含情感指导和音效指导的系统提示词
 """
+from __future__ import annotations
+
 import logging
 from pathlib import Path
 from typing import Any

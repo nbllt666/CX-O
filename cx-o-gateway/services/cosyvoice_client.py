@@ -3,15 +3,24 @@ CosyVoice 客户端
 支持零样本语音克隆和情感控制
 CosyVoice FastAPI 服务端使用 multipart form data
 """
+from __future__ import annotations
+
+import json
 import logging
 from pathlib import Path
 
 import httpx
 import numpy as np
-import torch
-import torchaudio
 
 logger = logging.getLogger(__name__)
+
+
+class CosyVoiceError(Exception):
+    def __init__(self, message: str, status_code: int | None = None, detail: str | None = None):
+        super().__init__(message)
+        self.status_code = status_code
+        self.detail = detail
+
 
 EMOTION_INSTRUCTS: dict[str, str] = {
     "normal": "You are a helpful assistant. 请用平静、自然的语气说话。<|endofprompt|>",
@@ -58,17 +67,41 @@ class CosyVoiceClient:
             await self._client.aclose()
             self._client = None
 
+    def _handle_error_response(self, response: httpx.Response, operation: str) -> None:
+        try:
+            error_data = response.json()
+            detail = error_data.get("detail", error_data.get("error", str(error_data)))
+        except Exception:
+            detail = response.text or f"HTTP {response.status_code}"
+        
+        error_msg = f"CosyVoice {operation} failed: {detail}"
+        logger.error(error_msg)
+        raise CosyVoiceError(error_msg, status_code=response.status_code, detail=detail)
+
     async def health_check(self) -> bool:
         try:
             client = await self._get_client()
-            response = await client.get(f"{self._base_url}/inference_sft", params={
-                "tts_text": "test",
-                "spk_id": "中文女"
-            })
-            return response.status_code == 200
+            response = await client.get(f"{self._base_url}/health")
+            if response.status_code == 200:
+                data = response.json()
+                if data.get("status") == "error":
+                    logger.warning(f"CosyVoice service error: {data.get('error')}")
+                    return False
+                return True
+            return False
         except Exception as e:
             logger.error(f"CosyVoice health check failed: {e}")
             return False
+
+    async def get_health_status(self) -> dict:
+        try:
+            client = await self._get_client()
+            response = await client.get(f"{self._base_url}/health")
+            if response.status_code == 200:
+                return response.json()
+            return {"status": "error", "error": f"HTTP {response.status_code}"}
+        except Exception as e:
+            return {"status": "error", "error": str(e)}
 
     async def synthesize_zero_shot(
         self,
@@ -102,7 +135,8 @@ class CosyVoiceClient:
             data=data,
             files=files
         )
-        response.raise_for_status()
+        if response.status_code != 200:
+            self._handle_error_response(response, "zero_shot synthesis")
         return response.content
 
     async def synthesize_instruct(
@@ -123,7 +157,8 @@ class CosyVoiceClient:
             f"{self._base_url}/inference_instruct",
             data=data
         )
-        response.raise_for_status()
+        if response.status_code != 200:
+            self._handle_error_response(response, "instruct synthesis")
         return response.content
 
     async def synthesize_instruct2(
@@ -157,7 +192,8 @@ class CosyVoiceClient:
             data=data,
             files=files
         )
-        response.raise_for_status()
+        if response.status_code != 200:
+            self._handle_error_response(response, "instruct2 synthesis")
         return response.content
 
     async def synthesize_cross_lingual(
@@ -189,7 +225,8 @@ class CosyVoiceClient:
             data=data,
             files=files
         )
-        response.raise_for_status()
+        if response.status_code != 200:
+            self._handle_error_response(response, "cross_lingual synthesis")
         return response.content
 
     async def generate_emotion_audio(
@@ -251,18 +288,18 @@ class CosyVoiceClient:
 
     @staticmethod
     def save_audio(audio_bytes: bytes, output_path: str | Path, sample_rate: int = 22050):
+        import soundfile as sf
         audio_array = np.frombuffer(audio_bytes, dtype=np.int16)
-        tensor = torch.from_numpy(audio_array).float() / 32768.0
-        tensor = tensor.unsqueeze(0)
-        torchaudio.save(str(output_path), tensor, sample_rate)
+        sf.write(str(output_path), audio_array.astype(np.float32) / 32768.0, sample_rate)
 
     @staticmethod
     def load_audio(audio_path: str | Path, target_sr: int = 16000) -> bytes:
-        waveform, sr = torchaudio.load(str(audio_path))
+        import soundfile as sf
+        audio_array, sr = sf.read(str(audio_path))
         if sr != target_sr:
-            resampler = torchaudio.transforms.Resample(sr, target_sr)
-            waveform = resampler(waveform)
-        audio_int16 = (waveform.numpy() * 32768).astype(np.int16)
+            import scipy.signal
+            audio_array = scipy.signal.resample_poly(audio_array, target_sr, sr)
+        audio_int16 = (audio_array * 32768).astype(np.int16)
         return audio_int16.tobytes()
 
 

@@ -1,6 +1,8 @@
 """
 健康检查模块
 """
+from __future__ import annotations
+
 import asyncio
 import time
 from typing import Any

@@ -1,6 +1,8 @@
 """
 CX-O Gateway 主入口
 """
+from __future__ import annotations
+
 import asyncio
 import logging
 import signal

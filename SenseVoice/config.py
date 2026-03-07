@@ -14,7 +14,7 @@ class LogLevel(str, Enum):
 class Settings(BaseModel):
     device: str = os.getenv("SENSEVOICE_DEVICE", "cuda:0")
     host: str = os.getenv("SENSEVOICE_HOST", "0.0.0.0")
-    port: int = int(os.getenv("SENSEVOICE_PORT", "50000"))
+    port: int = int(os.getenv("SENSEVOICE_PORT", "8001"))
     workers: int = int(os.getenv("SENSEVOICE_WORKERS", "1"))
     log_level: LogLevel = LogLevel.INFO
     max_concurrent_requests: int = int(os.getenv("SENSEVOICE_MAX_CONCURRENT", "10"))

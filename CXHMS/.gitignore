@@ -36,10 +36,14 @@ env/
 Miniconda3/
 cx_o/
 .trae/
-data/
 logs/
-*.db
 *.log
+
+# Data and database
+data/
+*.db
+*.sqlite
+*.sqlite3
 
 # Frontend
 frontend/node_modules/
@@ -52,3 +56,7 @@ Thumbs.db
 
 # Git
 .git/COMMIT_EDITMSG
+
+# Environment
+.env
+.env.local

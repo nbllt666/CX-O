@@ -1,20 +1,20 @@
-# CX-O 微服务架构
+# CX-O 智能语音对话系统
 
-基于 CXHMS + SenseVoice (ASR) + F5-TTS (TTS) 的语音对话微服务系统。
+基于微服务架构的智能语音对话系统，集成语音识别（ASR）、大语言模型（LLM）和语音合成（TTS）能力。
 
-## 架构图
+## 系统架构
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
-│                        CX-O Frontend                            │
-│                     (React + TypeScript)                        │
+│                      CX-O Frontend                               │
+│                   (React + TypeScript)                          │
 │                      http://127.0.0.1:5173                      │
 └──────────────────────────┬──────────────────────────────────────┘
                            │ WebSocket
                            ▼
 ┌─────────────────────────────────────────────────────────────────┐
 │                      CX-O Gateway                               │
-│                   (WebSocket 网关服务)                           │
+│                   (WebSocket 网关服务)                          │
 │                      ws://127.0.0.1:8100                        │
 └───────────┬─────────────┬───────────────────┬───────────────────┘
             │             │                   │
@@ -26,75 +26,128 @@
    └─────────────┘ └─────────────┘    └─────────────┘
 ```
 
+## 功能特性
+
+- **语音对话**: 端到端语音交互，集成 ASR → LLM → TTS
+- **智能记忆**: 长期记忆存储、语义搜索、自动归档
+- **多模型支持**: Ollama 本地模型，可扩展支持其他 LLM
+- **工具生态**: MCP 协议支持，内置多种工具
+- **ACP 协议**: 局域网自动发现、点对点通信、群组协同
+
+## 快速开始
+
+### 环境要求
+
+- Windows 10/11
+- Python 3.10+
+- Node.js 18+
+- Miniconda3 (项目内置)
+
+### 启动服务
+
+```batch
+# 一键启动所有服务
+d:\CX-O\1-1.start-all.bat
+
+# 停止所有服务
+d:\CX-O\1-2.stop-all.bat
+```
+
+### 访问界面
+
+- 管理控制台: http://127.0.0.1:5173
+
 ## 服务说明
 
 | 服务 | 端口 | 协议 | 说明 |
 |------|------|------|------|
 | CX-O Gateway | 8100 | WebSocket | 前端网关，统一入口 |
-| CXHMS Backend | 8000 | WebSocket | 后端核心服务 (Chat/Memory/Tools) |
+| CXHMS Backend | 8000 | WebSocket | 后端核心服务 |
 | SenseVoice ASR | 8001 | HTTP | 语音识别服务 |
 | F5-TTS | 8002 | HTTP | 语音合成服务 |
-| CX-O Frontend | 5173 | HTTP | 管理控制台 |
-
-## 快速开始
-
-### 1. 安装依赖
-
-```batch
-# 安装所有依赖 (Python + npm)
-d:\CX-O\install-all.bat
-
-# 或仅安装 npm 依赖
-d:\CX-O\install-npm.bat
-```
-
-### 2. 启动服务
-
-```batch
-d:\CX-O\start-all.bat
-```
-
-### 3. 访问管理界面
-
-打开浏览器访问: http://127.0.0.1:5173
 
 ## 项目结构
 
 ```
 CX-O/
 ├── cx-o-gateway/          # WebSocket 网关服务
-│   ├── main.py           # 入口文件
-│   ├── config.json       # 配置文件
-│   ├── gateway/          # 网关核心
-│   ├── services/         # 服务客户端
-│   ├── handlers/         # 消息处理器
-│   └── protocol/         # 协议定义
+│   ├── main.py            # 入口文件
+│   ├── config.json        # 配置文件
+│   ├── gateway/           # 网关核心
+│   ├── handlers/          # 消息处理器
+│   └── requirements.txt
 │
-├── cx-o-frontend/        # 前端管理界面
+├── cx-o-frontend/         # 前端管理界面
 │   ├── src/
-│   │   ├── api/          # WebSocket 客户端
-│   │   ├── components/   # 组件
-│   │   ├── pages/        # 页面
-│   │   └── stores/       # 状态管理
+│   │   ├── api/           # WebSocket 客户端
+│   │   ├── components/    # UI 组件
+│   │   ├── pages/         # 页面
+│   │   └── store/         # 状态管理
 │   └── package.json
 │
-├── CXHMS/               # 后端核心服务 (不修改)
-│   └── backend/
+├── CXHMS/                 # 后端核心服务
+│   ├── backend/           # FastAPI 后端
+│   │   ├── api/           # API 路由
+│   │   ├── core/          # 核心模块
+│   │   └── tests/         # 测试
+│   ├── config/            # 配置文件
+│   ├── docs/              # 文档
+│   └── requirements.txt
 │
-├── SenseVoice/          # 语音识别服务 (不修改)
+├── SenseVoice/            # 语音识别服务
 │   └── api.py
 │
-├── F5-TTS/              # 语音合成服务
-│   └── webapi.py
+├── F5-TTS/                # 语音合成服务
+│   ├── webapi.py
+│   └── requirements.txt
 │
-├── Miniconda3/          # 内置 Python 环境
+├── CosyVoice/             # 备用语音合成
 │
-├── start-all.bat        # 启动所有服务
-├── stop-all.bat         # 停止所有服务
-├── install-all.bat      # 安装所有依赖
-├── install-npm.bat      # 安装 npm 依赖
-├── requirements.txt     # Python 依赖列表
-└── .gitignore          # Git 忽略规则
+├── data/                  # 数据配置
+│   ├── acp/               # ACP 配置
+│   └── agents.json
+│
+└── docs/                  # 项目文档
+```
+
+## 配置说明
+
+### Gateway 配置
+
+文件: `cx-o-gateway/config.json`
+
+```json
+{
+  "gateway": {
+    "host": "0.0.0.0",
+    "port": 8100
+  },
+  "services": {
+    "cxhms": {
+      "url": "ws://127.0.0.1:8000/ws"
+    },
+    "asr": {
+      "url": "http://127.0.0.1:8001"
+    },
+    "tts": {
+      "url": "http://127.0.0.1:8002"
+    }
+  }
+}
+```
+
+### CXHMS 配置
+
+文件: `CXHMS/config/default.yaml`
+
+```yaml
+models:
+  main:
+    provider: ollama
+    model: qwen3-vl:8b
+
+memory:
+  vector_backend: milvus_lite
 ```
 
 ## WebSocket 协议
@@ -111,132 +164,70 @@ CX-O/
 }
 ```
 
-### 消息类型
+### 核心 Action
 
-| 类型 | 说明 |
-|------|------|
-| request | 请求消息 |
-| response | 响应消息 |
-| stream | 流式消息 |
-| error | 错误消息 |
-| ping | 心跳 |
-| pong | 心跳响应 |
+| 模块 | Action | 说明 |
+|------|--------|------|
+| 聊天 | chat.message | 发送消息 |
+| 聊天 | chat.voice | 语音对话 |
+| 记忆 | memory.save | 保存记忆 |
+| 记忆 | memory.search | 搜索记忆 |
+| 工具 | tools.list | 列出工具 |
+| 工具 | tools.call | 调用工具 |
+| 语音 | asr.recognize | 语音识别 |
+| 语音 | tts.synthesize | 语音合成 |
 
-### 错误响应
+## 技术栈
 
-```json
-{
-  "type": "error",
-  "request_id": "uuid-string",
-  "action": "chat.message",
-  "code": "ERROR_CODE",
-  "message": "错误描述"
-}
-```
-
-## 功能模块
-
-### 1. 聊天功能 (chat.*)
-
-| Action | 说明 |
-|--------|------|
-| chat.message | 发送消息 |
-| chat.voice | 语音对话 |
-| chat.history | 获取历史 |
-| chat.clear | 清除会话 |
-
-### 2. 记忆功能 (memory.*)
-
-| Action | 说明 |
-|--------|------|
-| memory.save | 保存记忆 |
-| memory.search | 搜索记忆 |
-| memory.list | 列出记忆 |
-| memory.delete | 删除记忆 |
-
-### 3. 工具功能 (tools.*)
-
-| Action | 说明 |
-|--------|------|
-| tools.list | 列出工具 |
-| tools.call | 调用工具 |
-| tools.result | 工具结果 |
-
-### 4. 音频功能 (audio.* / asr.* / tts.*)
-
-| Action | 说明 |
-|--------|------|
-| asr.recognize | 语音识别 |
-| tts.synthesize | 语音合成 |
-| tts.synthesize_stream | 流式语音合成 |
-
-### 5. 系统功能 (system.*)
-
-| Action | 说明 |
-|--------|------|
-| system.health | 健康检查 |
-| system.metrics | 系统指标 |
-| system.config | 系统配置 |
-
-## 配置说明
-
-### Gateway 配置 (cx-o-gateway/config.json)
-
-```json
-{
-  "gateway": {
-    "host": "0.0.0.0",
-    "port": 8100
-  },
-  "services": {
-    "cxhms": {
-      "url": "ws://127.0.0.1:8000/ws"
-    },
-    "asr": {
-      "url": "http://127.0.0.1:8001"
-    },
-    "tts": {
-      "url": "http://127.0.0.1:8002",
-      "ref_audio_path": "",
-      "ref_text": ""
-    }
-  }
-}
-```
+- **后端**: Python, FastAPI, WebSocket, httpx
+- **前端**: React, TypeScript, Tailwind CSS, Zustand
+- **语音识别**: SenseVoice
+- **语音合成**: F5-TTS, CosyVoice
+- **向量存储**: Milvus Lite, ChromaDB
 
 ## 常见问题
 
 ### 1. 启动失败
 
-- 检查端口是否被占用: `netstat -ano | findstr "8000 8001 8002 8100 5173"`
+- 检查端口占用: `netstat -ano | findstr "8000 8001 8002 8100 5173"`
 - 确认 Miniconda3 环境存在
 
 ### 2. 模型加载失败
 
 - SenseVoice/F5-TTS 首次启动会下载模型，请确保网络连接
-- 可手动下载模型到本地
 
-### 3. TTS 语音合成使用说明
+### 3. TTS 使用说明
 
 F5-TTS 是零样本语音克隆模型，使用时需要提供：
-- **参考音频 (ref_audio)**: 用于克隆音色的音频文件 (WAV 格式)
-- **参考文本 (ref_text)**: 参考音频对应的文本转录
+- **参考音频**: 用于克隆音色的 WAV 音频
+- **参考文本**: 参考音频对应的文本
 
-使用方式：
-1. 在前端测试页面上传参考音频并输入参考文本
-2. 或在 `config.json` 中配置默认的 `ref_audio_path` 和 `ref_text`
+## 开发
 
-### 4. 前端连接失败
+### 安装依赖
 
-- 确认 Gateway 服务已启动 (端口 8100)
-- 检查浏览器控制台错误信息
+```batch
+# 安装所有依赖
+d:\CX-O\install-all.bat
 
-## 技术栈
+# 仅安装 npm 依赖
+d:\CX-O\install-npm.bat
+```
 
-- **后端**: Python, FastAPI, WebSocket, httpx
-- **前端**: React, TypeScript, Ant Design, Zustand
-- **语音**: SenseVoice, F5-TTS
-- **向量库**: ChromaDB, Milvus, Qdrant
+### 前端开发
+
+```bash
+cd cx-o-frontend
+
+# 开发模式
+npm run dev
+
+# 构建
+npm run build
+
+# 类型检查
+npm run typecheck
+```
 
 ## License
 

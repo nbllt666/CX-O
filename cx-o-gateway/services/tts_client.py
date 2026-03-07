@@ -3,6 +3,8 @@ TTS (F5-TTS) 客户端
 支持双流式合成
 F5-TTS webapi 使用 multipart form data
 """
+from __future__ import annotations
+
 import asyncio
 import base64
 import logging
@@ -59,9 +61,13 @@ class TTSClient:
         timeout: float = 120.0,
         emotion_voices: dict[str, dict[str, str]] | None = None,
         effects_dir: str | Path | None = None,
-        voice_refs_dir: str | Path | None = None
+        voice_refs_dir: str | Path | None = None,
+        gateway_url: str | None = None,
+        use_triton: bool = False
     ):
         self._base_url = base_url.rstrip("/")
+        self._gateway_url = gateway_url.rstrip("/") if gateway_url else None
+        self._use_triton = use_triton
         self._timeout = timeout
         self._ref_audio_path = ref_audio_path
         self._ref_text = ref_text
@@ -109,21 +115,25 @@ class TTSClient:
         text: str,
         ref_audio_path: str | None = None,
         ref_text: str | None = None,
+        ref_audio: str | None = None,
         **kwargs
     ) -> bytes:
         client = await self._get_client()
         
+        # 获取传入的参数或从 kwargs 中获取
+        ref_audio_data = ref_audio or kwargs.get("ref_audio")
+        ref_text_data = ref_text or kwargs.get("ref_text")
+        
         audio_path = ref_audio_path or self._ref_audio_path
-        text_ref = ref_text or self._ref_text
+        text_ref = ref_text_data or self._ref_text
         
-        if not audio_path:
-            raise ValueError(
-                "TTS requires reference audio. "
-                "Please provide ref_audio (base64 encoded) in request data."
-            )
-        
-        if ref_audio_path and Path(ref_audio_path).exists():
-            audio_data = open(ref_audio_path, "rb").read()
+        if ref_audio_data:
+            try:
+                audio_data = base64.b64decode(ref_audio_data)
+            except Exception as e:
+                raise ValueError(f"Invalid base64 ref_audio: {e}")
+        elif audio_path and Path(audio_path).exists():
+            audio_data = open(audio_path, "rb").read()
         else:
             audio_data = await self._load_ref_audio()
         
@@ -133,11 +143,56 @@ class TTSClient:
                 "Please provide ref_text in request data or configure it in config.json"
             )
         
+        # 使用 Triton Gateway API
+        if self._use_triton and self._gateway_url:
+            return await self._synthesize_triton(client, text, audio_data, text_ref, **kwargs)
+        else:
+            return await self._synthesize_local(client, text, audio_data, text_ref, **kwargs)
+    
+    async def _synthesize_triton(
+        self,
+        client: httpx.AsyncClient,
+        text: str,
+        audio_data: bytes,
+        ref_text: str,
+        **kwargs
+    ) -> bytes:
+        """使用 Triton Gateway API 进行 TTS 合成"""
+        ref_audio_b64 = base64.b64encode(audio_data).decode("utf-8")
+        
+        response = await client.post(
+            f"{self._gateway_url}/api/v1/tts/synthesize",
+            json={
+                "reference_audio": ref_audio_b64,
+                "reference_text": ref_text,
+                "target_text": text,
+                "speed": float(kwargs.get("speed", 1.0))
+            }
+        )
+        response.raise_for_status()
+        result = response.json()
+        
+        if "audio_data" in result:
+            return base64.b64decode(result["audio_data"])
+        elif "error" in result:
+            raise ValueError(f"TTS error: {result['error']}")
+        else:
+            raise ValueError("TTS response missing audio_data")
+    
+    async def _synthesize_local(
+        self,
+        client: httpx.AsyncClient,
+        text: str,
+        audio_data: bytes,
+        ref_text: str,
+        **kwargs
+    ) -> bytes:
+        """使用本地 F5-TTS API 进行 TTS 合成"""
         files = {
             "ref_audio": ("ref_audio.wav", audio_data, "audio/wav")
         }
         data = {
-            "ref_text": text_ref,
+            "ref_text": ref_text,
             "gen_text": text,
             "model_type": kwargs.get("model_type", "F5-TTS"),
             "remove_silence": str(kwargs.get("remove_silence", False)).lower(),

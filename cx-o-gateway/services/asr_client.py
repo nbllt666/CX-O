@@ -1,6 +1,8 @@
 """
 ASR (SenseVoice) 客户端
 """
+from __future__ import annotations
+
 import asyncio
 import base64
 import logging

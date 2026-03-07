@@ -44,6 +44,7 @@ fastapi
 # ----------------------------------------
 torch
 torchaudio
+torchcodec
 torchdiffeq>=0.2.3
 accelerate>=0.33.0
 lightning==2.2.4
@@ -66,6 +67,7 @@ soundfile==0.12.1
 pydub>=0.25.1
 vocos>=0.1.0
 pyworld==0.3.4
+ffmpeg-python
 
 # ----------------------------------------
 # Chinese Processing

@@ -2,6 +2,8 @@
 情感标记解析模块
 解析文本中的情感标记，格式为【emotion】（全角方括号）
 """
+from __future__ import annotations
+
 import logging
 import re
 from typing import Any
