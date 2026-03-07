@@ -42,6 +42,8 @@ class TTSConfig(BaseModel):
     emotion_enabled: bool = True
     effects_enabled: bool = True
     emotion_voices: Dict[str, EmotionVoiceConfig] = Field(default_factory=dict)
+    default_emotion_intensity: float = 0.5
+    emotion_templates: Optional[Dict[str, Any]] = None
 
 
 class GatewayConfig(BaseModel):
@@ -59,13 +61,13 @@ class AudioConfig(BaseModel):
     effects_dir: str = "data/effects"
 
 
-class CosyVoiceConfig(BaseModel):
-    url: str = "http://127.0.0.1:8003"
-    timeout: int = 120
+class IndexTTSConfig(BaseModel):
+    url: str = "http://127.0.0.1:8004"
+    timeout: int = 180
     enabled: bool = True
     auto_stop_delay: int = 300
-    start_command: str = "python runtime/python/fastapi/server.py --port 8003 --model_dir pretrained_models/CosyVoice2-0.5B"
-    working_dir: str = "CosyVoice"
+    start_command: str = "python -m index_tts.app --port 8004 --host 0.0.0.0"
+    working_dir: str = "index-tts"
 
 
 class ServicesConfig(BaseModel):
@@ -73,7 +75,7 @@ class ServicesConfig(BaseModel):
     asr: ServiceConfig
     tts: TTSConfig
     audio: Optional[AudioConfig] = None
-    cosyvoice: Optional[CosyVoiceConfig] = None
+    index_tts: Optional[IndexTTSConfig] = None
     control_service_url: Optional[str] = None
 
 

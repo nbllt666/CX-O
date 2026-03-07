@@ -364,98 +364,143 @@ def create_app() -> FastAPI:
             logger.error(f"Failed to delete audio file: {e}")
             return {"status": "error", "message": str(e)}
 
-    @app.get("/api/cosyvoice/status")
-    async def get_cosyvoice_status():
+    @app.get("/api/audio/emotions/list")
+    async def list_emotion_configs():
+        from services.index_tts_client import get_supported_emotions, get_emotion_text, get_index_emotions
         config = get_config()
-        cosyvoice_config = getattr(config.services, 'cosyvoice', None)
-        if not cosyvoice_config or not cosyvoice_config.enabled:
-            return {"status": "disabled", "message": "CosyVoice service is not enabled"}
+        tts_config = config.services.tts
+        
+        emotions = get_supported_emotions()
+        result = []
+        
+        for emotion in emotions:
+            voice_config = {}
+            if hasattr(tts_config, 'emotion_voices') and tts_config.emotion_voices:
+                voice_config = tts_config.emotion_voices.get(emotion, {})
+            
+            result.append({
+                "emotion": emotion,
+                "default_text": get_emotion_text(emotion),
+                "ref_audio": voice_config.get("ref_audio", ""),
+                "ref_text": voice_config.get("ref_text", "")
+            })
+        
+        return {"status": "success", "emotions": result}
+
+    @app.get("/api/index-tts/status")
+    async def get_index_tts_status():
+        config = get_config()
+        index_tts_config = getattr(config.services, 'index_tts', None)
+        
+        if not index_tts_config or not getattr(index_tts_config, 'enabled', False):
+            return {"status": "disabled", "message": "IndexTTS service is not enabled"}
         
         try:
-            from services.cosyvoice_manager import get_cosyvoice_manager
-            manager = get_cosyvoice_manager(
-                base_url=cosyvoice_config.url,
-                start_command=cosyvoice_config.start_command,
-                working_dir=cosyvoice_config.working_dir,
-                auto_stop_delay=cosyvoice_config.auto_stop_delay,
+            from services.index_tts_manager import get_indextts_manager
+            manager = get_indextts_manager(
+                base_url=index_tts_config.url,
+                start_command=getattr(index_tts_config, 'start_command', ''),
+                working_dir=getattr(index_tts_config, 'working_dir', 'IndexTTS'),
+                auto_stop_delay=getattr(index_tts_config, 'auto_stop_delay', 300),
                 root_dir=Path(__file__).parent.parent.parent
             )
             return await manager.get_status()
         except Exception as e:
-            logger.error(f"CosyVoice status check failed: {e}")
+            logger.error(f"IndexTTS status check failed: {e}")
             return {"status": "error", "message": str(e)}
 
-    @app.post("/api/cosyvoice/start")
-    async def start_cosyvoice():
+    @app.post("/api/index-tts/synthesize")
+    async def index_tts_synthesize(request: Request):
         config = get_config()
-        cosyvoice_config = getattr(config.services, 'cosyvoice', None)
+        index_tts_config = getattr(config.services, 'index_tts', None)
         
-        if not cosyvoice_config or not cosyvoice_config.enabled:
-            return {"status": "error", "message": "CosyVoice service is not enabled"}
+        if not index_tts_config or not getattr(index_tts_config, 'enabled', False):
+            return {"status": "error", "message": "IndexTTS service is not enabled"}
         
         try:
-            from services.cosyvoice_manager import get_cosyvoice_manager
-            manager = get_cosyvoice_manager(
-                base_url=cosyvoice_config.url,
-                start_command=cosyvoice_config.start_command,
-                working_dir=cosyvoice_config.working_dir,
-                auto_stop_delay=cosyvoice_config.auto_stop_delay,
-                root_dir=Path(__file__).parent.parent.parent
-            )
-            return await manager.start()
-        except Exception as e:
-            logger.error(f"CosyVoice start failed: {e}")
-            return {"status": "error", "message": str(e)}
-
-    @app.post("/api/cosyvoice/stop")
-    async def stop_cosyvoice():
-        config = get_config()
-        cosyvoice_config = getattr(config.services, 'cosyvoice', None)
-        
-        if not cosyvoice_config or not cosyvoice_config.enabled:
-            return {"status": "error", "message": "CosyVoice service is not enabled"}
-        
-        try:
-            from services.cosyvoice_manager import get_cosyvoice_manager
-            manager = get_cosyvoice_manager(
-                base_url=cosyvoice_config.url,
-                start_command=cosyvoice_config.start_command,
-                working_dir=cosyvoice_config.working_dir,
-                auto_stop_delay=cosyvoice_config.auto_stop_delay,
-                root_dir=Path(__file__).parent.parent.parent
-            )
-            return await manager.stop()
-        except Exception as e:
-            logger.error(f"CosyVoice stop failed: {e}")
-            return {"status": "error", "message": str(e)}
-
-    @app.post("/api/audio/generate-emotions")
-    async def generate_emotion_audios(request: Request):
-        from services.cosyvoice_client import get_emotion_text
-        config = get_config()
-        cosyvoice_config = getattr(config.services, 'cosyvoice', None)
-        
-        if not cosyvoice_config or not cosyvoice_config.enabled:
-            return {"status": "error", "message": "CosyVoice service is not enabled"}
-        
-        try:
-            from services.cosyvoice_manager import get_cosyvoice_manager
-            manager = get_cosyvoice_manager(
-                base_url=cosyvoice_config.url,
-                start_command=cosyvoice_config.start_command,
-                working_dir=cosyvoice_config.working_dir,
-                auto_stop_delay=cosyvoice_config.auto_stop_delay,
+            from services.index_tts_manager import get_indextts_manager
+            manager = get_indextts_manager(
+                base_url=index_tts_config.url,
+                start_command=getattr(index_tts_config, 'start_command', ''),
+                working_dir=getattr(index_tts_config, 'working_dir', 'IndexTTS'),
+                auto_stop_delay=getattr(index_tts_config, 'auto_stop_delay', 300),
                 root_dir=Path(__file__).parent.parent.parent
             )
             
             is_running = await manager.ensure_running()
             if not is_running:
-                return {"status": "error", "message": "Failed to start CosyVoice service"}
+                return {"status": "error", "message": "Failed to start IndexTTS service"}
+            
+            data = await request.json()
+            text = data.get("text", "")
+            
+            if not text:
+                return {"status": "error", "message": "Text is required"}
+            
+            from services.index_tts_client import IndexTTSClient
+            client = IndexTTSClient(
+                base_url=index_tts_config.url,
+                timeout=getattr(index_tts_config, 'timeout', 180)
+            )
+            
+            kwargs = {
+                "emotion": data.get("emotion", "neutral"),
+                "emotion_intensity": data.get("emotion_intensity", 0.5),
+                "speed": data.get("speed", 1.0),
+                "pitch": data.get("pitch", 0.0),
+            }
+            
+            ref_audio = data.get("ref_audio")
+            ref_text = data.get("ref_text", "")
+            
+            if ref_audio:
+                audio_path = voice_refs_dir / ref_audio
+                if not audio_path.exists():
+                    await client.close()
+                    return {"status": "error", "message": f"Reference audio file not found: {ref_audio}"}
+                kwargs["timbre_ref"] = str(audio_path)
+                kwargs["ref_text"] = ref_text
+            
+            audio_bytes = await client.synthesize(text, **kwargs)
+            await client.close()
+            manager.reset_auto_stop_timer()
+            
+            import base64
+            return {
+                "status": "success",
+                "audio_data": base64.b64encode(audio_bytes).decode("utf-8"),
+                "format": "wav"
+            }
+        except Exception as e:
+            logger.error(f"IndexTTS synthesize error: {e}")
+            return {"status": "error", "message": str(e)}
+
+    @app.post("/api/audio/generate-emotions")
+    async def generate_emotion_audios(request: Request):
+        from services.index_tts_client import get_emotion_text, EMOTION_TEMPLATES
+        config = get_config()
+        index_tts_config = getattr(config.services, 'index_tts', None)
+        
+        if not index_tts_config or not getattr(index_tts_config, 'enabled', False):
+            return {"status": "error", "message": "IndexTTS service is not enabled"}
+        
+        try:
+            from services.index_tts_manager import get_indextts_manager
+            manager = get_indextts_manager(
+                base_url=index_tts_config.url,
+                start_command=getattr(index_tts_config, 'start_command', ''),
+                working_dir=getattr(index_tts_config, 'working_dir', 'IndexTTS'),
+                auto_stop_delay=getattr(index_tts_config, 'auto_stop_delay', 300),
+                root_dir=Path(__file__).parent.parent.parent
+            )
+            
+            is_running = await manager.ensure_running()
+            if not is_running:
+                return {"status": "error", "message": "Failed to start IndexTTS service"}
             
             data = await request.json()
             ref_audio = data.get("ref_audio", "")
             ref_text = data.get("ref_text", "")
-            emotions = data.get("emotions", ["happy", "sad", "angry", "surprised", "tender"])
             
             if not ref_audio:
                 return {"status": "error", "message": "Reference audio is required"}
@@ -464,43 +509,76 @@ def create_app() -> FastAPI:
             if not audio_path.exists():
                 return {"status": "error", "message": f"Reference audio file not found: {ref_audio}"}
             
-            from services.cosyvoice_client import CosyVoiceClient
-            client = CosyVoiceClient(
-                base_url=cosyvoice_config.url,
-                timeout=cosyvoice_config.timeout
+            from services.index_tts_client import IndexTTSClient
+            client = IndexTTSClient(
+                base_url=index_tts_config.url,
+                timeout=getattr(index_tts_config, 'timeout', 180)
             )
+            
+            emotions_to_generate: list[tuple[str, float]] = []
+            
+            if data.get("auto_full", False):
+                emotions_to_generate = [
+                    (e, i) 
+                    for e in ["happy", "sad", "angry", "surprised", "tender", "fearful", "disgusted", "normal"]
+                    for i in [0.2, 0.4, 0.6, 0.8, 1.0]
+                ]
+            elif data.get("template"):
+                template_name = data.get("template")
+                if template_name not in EMOTION_TEMPLATES:
+                    await client.close()
+                    return {"status": "error", "message": f"Unknown template: {template_name}"}
+                emotions_to_generate = EMOTION_TEMPLATES[template_name]
+            elif data.get("emotions"):
+                emotions_list = data.get("emotions", [])
+                for item in emotions_list:
+                    if isinstance(item, dict):
+                        emotion = item.get("type", "neutral")
+                        intensity = item.get("intensity", 0.5)
+                    else:
+                        emotion = item
+                        intensity = 0.5
+                    emotions_to_generate.append((emotion, intensity))
             
             generated: dict[str, str] = {}
             errors: dict[str, str] = {}
             
-            for emotion in emotions:
+            for emotion, intensity in emotions_to_generate:
                 try:
                     audio_bytes = await client.generate_emotion_audio(
                         emotion=emotion,
-                        prompt_audio=str(audio_path)
+                        intensity=intensity,
+                        ref_audio=str(audio_path),
+                        ref_text=ref_text
                     )
                     
                     base_name = Path(ref_audio).stem
-                    output_name = f"{base_name}_{emotion}.wav"
+                    if intensity == 0.5:
+                        output_name = f"{base_name}_{emotion}.wav"
+                    else:
+                        output_name = f"{base_name}_{emotion}_{intensity}.wav"
                     output_path = voice_refs_dir / output_name
                     
-                    CosyVoiceClient.save_audio(audio_bytes, output_path)
-                    generated[emotion] = output_name
+                    IndexTTSClient.save_audio(audio_bytes, output_path)
+                    
+                    key = f"{emotion}_{intensity}" if intensity != 0.5 else emotion
+                    generated[key] = output_name
                     
                 except Exception as e:
-                    logger.error(f"Failed to generate {emotion}: {e}")
-                    errors[emotion] = str(e)
+                    logger.error(f"Failed to generate {emotion}@{intensity}: {e}")
+                    errors[f"{emotion}_{intensity}"] = str(e)
             
             await client.close()
-            
-            manager.reset_auto_stop_timer()
+            await manager.stop()
             
             if generated:
                 tts_config = config.services.tts
                 if not hasattr(tts_config, 'emotion_voices') or tts_config.emotion_voices is None:
                     tts_config.emotion_voices = {}
                 
-                for emotion, filename in generated.items():
+                for key, filename in generated.items():
+                    parts = key.rsplit("_", 1)
+                    emotion = parts[0]
                     emotion_text = get_emotion_text(emotion)
                     tts_config.emotion_voices[emotion] = {
                         "ref_audio": filename,
@@ -519,139 +597,6 @@ def create_app() -> FastAPI:
         except Exception as e:
             logger.error(f"Generate emotion audios failed: {e}")
             return {"status": "error", "message": str(e)}
-
-    @app.post("/api/audio/generate-emotions/stream")
-    async def generate_emotion_audios_stream(request: Request):
-        from services.cosyvoice_client import get_emotion_text
-        config = get_config()
-        cosyvoice_config = getattr(config.services, 'cosyvoice', None)
-        
-        try:
-            request_data = await request.json()
-        except Exception as e:
-            logger.error(f"Failed to parse request body: {e}")
-            async def error_stream():
-                yield f"data: {json.dumps({'type': 'error', 'message': 'Invalid request body'}, ensure_ascii=False)}\n\n"
-            return StreamingResponse(error_stream(), media_type="text/event-stream")
-        
-        async def stream_generator():
-            if not cosyvoice_config or not cosyvoice_config.enabled:
-                yield f"data: {json.dumps({'type': 'error', 'message': 'CosyVoice service is not enabled'}, ensure_ascii=False)}\n\n"
-                return
-            
-            try:
-                from services.cosyvoice_manager import get_cosyvoice_manager
-                manager = get_cosyvoice_manager(
-                    base_url=cosyvoice_config.url,
-                    start_command=cosyvoice_config.start_command,
-                    working_dir=cosyvoice_config.working_dir,
-                    auto_stop_delay=cosyvoice_config.auto_stop_delay,
-                    root_dir=Path(__file__).parent.parent.parent
-                )
-                
-                is_running = await manager.ensure_running()
-                if not is_running:
-                    yield f"data: {json.dumps({'type': 'error', 'message': 'Failed to start CosyVoice service'}, ensure_ascii=False)}\n\n"
-                    return
-                
-                ref_audio = request_data.get("ref_audio", "")
-                emotions = request_data.get("emotions", ["happy", "sad", "angry", "surprised", "tender"])
-                
-                if not ref_audio:
-                    yield f"data: {json.dumps({'type': 'error', 'message': 'Reference audio is required'}, ensure_ascii=False)}\n\n"
-                    return
-                
-                audio_path = voice_refs_dir / ref_audio
-                if not audio_path.exists():
-                    yield f"data: {json.dumps({'type': 'error', 'message': f'Reference audio file not found: {ref_audio}'}, ensure_ascii=False)}\n\n"
-                    return
-                
-                from services.cosyvoice_client import CosyVoiceClient
-                client = CosyVoiceClient(
-                    base_url=cosyvoice_config.url,
-                    timeout=cosyvoice_config.timeout
-                )
-                
-                generated: dict[str, str] = {}
-                errors: dict[str, str] = {}
-                total = len(emotions)
-                
-                yield f"data: {json.dumps({'type': 'start', 'total': total}, ensure_ascii=False)}\n\n"
-                
-                for i, emotion in enumerate(emotions):
-                    yield f"data: {json.dumps({'type': 'progress', 'emotion': emotion, 'current': i + 1, 'total': total}, ensure_ascii=False)}\n\n"
-                    
-                    try:
-                        audio_bytes = await client.generate_emotion_audio(
-                            emotion=emotion,
-                            prompt_audio=str(audio_path)
-                        )
-                        
-                        base_name = Path(ref_audio).stem
-                        output_name = f"{base_name}_{emotion}.wav"
-                        output_path = voice_refs_dir / output_name
-                        
-                        CosyVoiceClient.save_audio(audio_bytes, output_path)
-                        generated[emotion] = output_name
-                        
-                        yield f"data: {json.dumps({'type': 'success', 'emotion': emotion, 'filename': output_name}, ensure_ascii=False)}\n\n"
-                        
-                    except Exception as e:
-                        logger.error(f"Failed to generate {emotion}: {e}")
-                        errors[emotion] = str(e)
-                        yield f"data: {json.dumps({'type': 'error', 'emotion': emotion, 'message': str(e)}, ensure_ascii=False)}\n\n"
-                
-                await client.close()
-                
-                manager.reset_auto_stop_timer()
-                
-                if generated:
-                    tts_config = config.services.tts
-                    if not hasattr(tts_config, 'emotion_voices') or tts_config.emotion_voices is None:
-                        tts_config.emotion_voices = {}
-                    
-                    for emotion, filename in generated.items():
-                        emotion_text = get_emotion_text(emotion)
-                        tts_config.emotion_voices[emotion] = {
-                            "ref_audio": filename,
-                            "ref_text": emotion_text
-                        }
-                    
-                    save_config(config)
-                
-                yield f"data: {json.dumps({'type': 'complete', 'generated': generated, 'errors': errors}, ensure_ascii=False)}\n\n"
-                
-            except Exception as e:
-                import traceback
-                logger.error(f"Generate emotion audios failed: {e}")
-                logger.error(traceback.format_exc())
-                yield f"data: {json.dumps({'type': 'error', 'message': str(e) or 'Unknown error'}, ensure_ascii=False)}\n\n"
-        
-        return StreamingResponse(stream_generator(), media_type="text/event-stream")
-
-    @app.get("/api/audio/emotions/list")
-    async def list_emotion_configs():
-        from services.cosyvoice_client import get_supported_emotions, get_emotion_text, get_emotion_instruct
-        config = get_config()
-        tts_config = config.services.tts
-        
-        emotions = get_supported_emotions()
-        result = []
-        
-        for emotion in emotions:
-            voice_config = {}
-            if hasattr(tts_config, 'emotion_voices') and tts_config.emotion_voices:
-                voice_config = tts_config.emotion_voices.get(emotion, {})
-            
-            result.append({
-                "emotion": emotion,
-                "default_text": get_emotion_text(emotion),
-                "instruct": get_emotion_instruct(emotion),
-                "ref_audio": voice_config.get("ref_audio", ""),
-                "ref_text": voice_config.get("ref_text", "")
-            })
-        
-        return {"status": "success", "emotions": result}
 
     @app.post("/api/tts/synthesize")
     async def tts_synthesize(request: Request):

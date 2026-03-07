@@ -1106,117 +1106,47 @@ class ApiClient {
     return `${API_BASE_URL}/api/audio/files/${filename}`;
   }
 
-  // ========== CosyVoice API ==========
+  // ========== IndexTTS 2 API ==========
 
-  async getCosyVoiceStatus() {
-    const response = await this.client.get('/api/cosyvoice/status');
+  async getIndexTTSStatus() {
+    const response = await this.client.get('/api/index-tts/status');
     return response.data;
   }
 
-  async startCosyVoice() {
-    const response = await this.client.post('/api/cosyvoice/start');
-    return response.data;
-  }
-
-  async stopCosyVoice() {
-    const response = await this.client.post('/api/cosyvoice/stop');
-    return response.data;
-  }
-
-  async generateEmotionAudios(data: {
-    ref_audio: string;
-    ref_text?: string;
-    emotions?: string[];
+  async synthesizeWithIndexTTS(data: {
+    text: string;
+    ref_audio?: string;
+    format?: string;
+    speed?: number;
+    vol?: number;
+    pitch?: number;
+    top_p?: number;
+    top_k?: number;
+    temperature?: number;
+    guide?: boolean;
+    guide_audio?: string;
+    batch_size?: number;
+    seed?: number;
   }) {
-    const response = await this.client.post('/api/audio/generate-emotions', data, {
+    const response = await this.client.post('/api/index-tts/synthesize', data, {
       timeout: 600000,
     });
     return response.data;
   }
 
-  async generateEmotionAudiosStream(
-    data: {
-      ref_audio: string;
-      ref_text?: string;
-      emotions?: string[];
-    },
-    onChunk: (chunk: {
-      type: string;
-      emotion?: string;
-      current?: number;
-      total?: number;
-      filename?: string;
-      message?: string;
-      generated?: Record<string, string>;
-      errors?: Record<string, string>;
-    }) => void
-  ) {
-    const response = await fetch(`${API_BASE_URL}/api/audio/generate-emotions/stream`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${localStorage.getItem('cxhms-token') || ''}`,
-      },
-      body: JSON.stringify(data),
+  // ========== Audio Generation API ==========
+
+  async generateEmotionAudios(data: {
+    ref_audio: string;
+    ref_text?: string;
+    emotions?: { type: string; intensity: number }[];
+    template?: string;
+    auto_full?: boolean;
+  }) {
+    const response = await this.client.post('/api/audio/generate-emotions', data, {
+      timeout: 600000,
     });
-
-    if (!response.ok) {
-      const errorText = await response.text().catch(() => 'Unknown error');
-      onChunk({ type: 'error', message: `HTTP ${response.status}: ${errorText}` });
-      return;
-    }
-
-    const reader = response.body?.getReader();
-    if (!reader) {
-      onChunk({ type: 'error', message: 'No response body' });
-      return;
-    }
-
-    const decoder = new TextDecoder();
-    let buffer = '';
-
-    try {
-      while (true) {
-        const { done, value } = await reader.read();
-
-        if (value) {
-          buffer += decoder.decode(value, { stream: true });
-        }
-
-        const lines = buffer.split('\n');
-        buffer = lines.pop() || '';
-
-        for (const line of lines) {
-          if (line.trim().startsWith('data: ')) {
-            try {
-              const eventData = JSON.parse(line.trim().slice(6));
-              onChunk(eventData);
-            } catch (e) {
-              console.error('Failed to parse SSE data:', e);
-            }
-          }
-        }
-
-        if (done) {
-          if (buffer.trim().startsWith('data: ')) {
-            try {
-              const eventData = JSON.parse(buffer.trim().slice(6));
-              onChunk(eventData);
-            } catch (e) {
-              console.error('Failed to parse remaining buffer:', e);
-            }
-          }
-          break;
-        }
-      }
-    } catch (streamError) {
-      onChunk({
-        type: 'error',
-        message: `Stream error: ${streamError instanceof Error ? streamError.message : 'Unknown error'}`,
-      });
-    } finally {
-      reader.releaseLock();
-    }
+    return response.data;
   }
 
   async getEmotionConfigs() {

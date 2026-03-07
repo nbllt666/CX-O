@@ -35,35 +35,29 @@ timeout /t 5 /nobreak > nul
 
 echo.
 echo ========================================
-echo [3/6] Starting CosyVoice Service (Port 8003)
+echo [3/6] Starting IndexTTS 2 Service (Port 8004)
 echo ========================================
-start "CosyVoice" cmd /k "cd /d %ROOT_DIR%CosyVoice && "%PYTHON_EXE%" runtime/python/fastapi/server.py --port 8003 --model_dir pretrained_models/CosyVoice2-0.5B"
+call "%ROOT_DIR%7.激活conda环境.bat"
+start "IndexTTS 2" cmd /k "cd /d %ROOT_DIR%index-tts && "%PYTHON_EXE%" -m index_tts.app --port 8004 --host 0.0.0.0"
 timeout /t 5 /nobreak > nul
 
 echo.
 echo ========================================
-echo [4/7] Starting CXHMS Control Service (Port 8765)
-echo ========================================
-start "CXHMS Control" cmd /k "cd /d %ROOT_DIR%CXHMS && "%PYTHON_EXE%" backend/control_service.py"
-timeout /t 3 /nobreak > nul
-
-echo.
-echo ========================================
-echo [5/7] Starting CXHMS Backend Service (Port 8000)
+echo [4/6] Starting CXHMS Backend Service (Port 8000)
 echo ========================================
 start "CXHMS Backend" cmd /k "cd /d %ROOT_DIR%CXHMS && "%PYTHON_EXE%" main.py"
 timeout /t 8 /nobreak > nul
 
 echo.
 echo ========================================
-echo [6/7] Starting CX-O Gateway (Port 8100)
+echo [5/6] Starting CX-O Gateway (Port 8100)
 echo ========================================
 start "CX-O Gateway" cmd /k "cd /d %ROOT_DIR%cx-o-gateway && "%PYTHON_EXE%" main.py"
 timeout /t 5 /nobreak > nul
 
 echo.
 echo ========================================
-echo [7/7] Starting CX-O Frontend (Port 3000)
+echo [6/6] Starting CX-O Frontend (Port 3000)
 echo ========================================
 start "CX-O Frontend" cmd /k "cd /d %ROOT_DIR%cx-o-frontend && npm run dev"
 timeout /t 3 /nobreak > nul
@@ -76,8 +70,7 @@ echo.
 echo Service URLs:
 echo   - SenseVoice ASR:  http://127.0.0.1:8001
 echo   - F5-TTS:          http://127.0.0.1:8002
-echo   - CosyVoice:       http://127.0.0.1:8003
-echo   - CXHMS Control:   http://127.0.0.1:8765
+echo   - IndexTTS 2:      http://127.0.0.1:8004
 echo   - CXHMS Backend:   http://127.0.0.1:8000
 echo   - CX-O Gateway:    ws://127.0.0.1:8100/ws
 echo   - CX-O Frontend:   http://127.0.0.1:3000

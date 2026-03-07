@@ -1,5 +1,5 @@
 """
-CosyVoice 服务管理器
+IndexTTS 2 服务管理器
 支持按需启动和自动关闭
 """
 from __future__ import annotations
@@ -16,6 +16,15 @@ from typing import Optional
 
 import httpx
 
+from index_tts_client import (
+    EMOTION_TEMPLATES,
+    EMOTION_TEXTS,
+    EMOTION_INTENSITY_VALUES,
+    ALL_EMOTIONS,
+    USER_EMOTIONS,
+    INDEX_EMOTIONS,
+)
+
 logger = logging.getLogger(__name__)
 
 
@@ -27,8 +36,8 @@ class ServiceStatus(str, Enum):
     ERROR = "error"
 
 
-class CosyVoiceManager:
-    _instance: Optional["CosyVoiceManager"] = None
+class IndexTTSManager:
+    _instance: Optional["IndexTTSManager"] = None
     _lock: Lock = Lock()
 
     def __new__(cls, *args, **kwargs):
@@ -39,31 +48,31 @@ class CosyVoiceManager:
 
     def __init__(
         self,
-        base_url: str = "http://127.0.0.1:8003",
+        base_url: str = "http://127.0.0.1:8004",
         start_command: str = "",
-        working_dir: str = "CosyVoice",
+        working_dir: str = "IndexTTS",
         auto_stop_delay: int = 300,
         startup_timeout: int = 60,
         root_dir: Optional[Path] = None
     ):
         if self._initialized:
             return
-        
+
         self._base_url = base_url.rstrip("/")
         self._start_command = start_command
         self._working_dir = working_dir
         self._auto_stop_delay = auto_stop_delay
         self._startup_timeout = startup_timeout
         self._root_dir = root_dir or Path.cwd()
-        
+
         self._status = ServiceStatus.STOPPED
         self._process: Optional[subprocess.Popen] = None
         self._auto_stop_task: Optional[asyncio.Task] = None
         self._last_activity: float = 0
         self._error_message: str = ""
-        
+
         self._initialized = True
-        logger.info(f"CosyVoiceManager initialized: url={base_url}, working_dir={working_dir}")
+        logger.info(f"IndexTTSManager initialized: url={base_url}, working_dir={working_dir}")
 
     @property
     def status(self) -> ServiceStatus:
@@ -93,20 +102,20 @@ class CosyVoiceManager:
         async with self._lock:
             if self._status == ServiceStatus.RUNNING:
                 return {"status": "success", "message": "Service already running"}
-            
+
             if self._status == ServiceStatus.STARTING:
                 return {"status": "error", "message": "Service is starting"}
-            
+
             if not self._start_command:
                 return {"status": "error", "message": "Start command not configured"}
-            
+
             self._status = ServiceStatus.STARTING
             self._error_message = ""
-            logger.info("Starting CosyVoice service...")
-            
+            logger.info("Starting IndexTTS service...")
+
             try:
                 working_path = self._root_dir / self._working_dir
-                
+
                 if sys.platform == "win32":
                     python_exe = str(self._root_dir / "Miniconda3" / "python.exe")
                     cmd_parts = self._start_command.split()
@@ -115,7 +124,7 @@ class CosyVoiceManager:
                     cmd = cmd_parts
                 else:
                     cmd = self._start_command.split()
-                
+
                 self._process = subprocess.Popen(
                     cmd,
                     cwd=str(working_path),
@@ -123,15 +132,15 @@ class CosyVoiceManager:
                     stderr=subprocess.PIPE,
                     creationflags=subprocess.CREATE_NEW_PROCESS_GROUP if sys.platform == "win32" else 0
                 )
-                
+
                 logger.info(f"Process started with PID: {self._process.pid}")
-                
+
                 ready = await self._wait_for_ready(self._startup_timeout)
-                
+
                 if ready:
                     self._status = ServiceStatus.RUNNING
                     self._last_activity = asyncio.get_event_loop().time()
-                    logger.info("CosyVoice service started successfully")
+                    logger.info("IndexTTS service started successfully")
                     return {"status": "success", "message": "Service started"}
                 else:
                     self._status = ServiceStatus.ERROR
@@ -141,28 +150,28 @@ class CosyVoiceManager:
                         self._process = None
                     logger.error(self._error_message)
                     return {"status": "error", "message": self._error_message}
-                    
+
             except Exception as e:
                 self._status = ServiceStatus.ERROR
                 self._error_message = str(e)
-                logger.error(f"Failed to start CosyVoice: {e}")
+                logger.error(f"Failed to start IndexTTS: {e}")
                 return {"status": "error", "message": str(e)}
 
     async def stop(self) -> dict:
         async with self._lock:
             if self._status == ServiceStatus.STOPPED:
                 return {"status": "success", "message": "Service already stopped"}
-            
+
             if self._status == ServiceStatus.STOPPING:
                 return {"status": "error", "message": "Service is stopping"}
-            
+
             self._status = ServiceStatus.STOPPING
-            logger.info("Stopping CosyVoice service...")
-            
+            logger.info("Stopping IndexTTS service...")
+
             if self._auto_stop_task:
                 self._auto_stop_task.cancel()
                 self._auto_stop_task = None
-            
+
             try:
                 if self._process:
                     if sys.platform == "win32":
@@ -173,17 +182,17 @@ class CosyVoiceManager:
                             self._process.kill()
                     else:
                         self._process.terminate()
-                    
+
                     self._process = None
-                
+
                 self._status = ServiceStatus.STOPPED
-                logger.info("CosyVoice service stopped")
+                logger.info("IndexTTS service stopped")
                 return {"status": "success", "message": "Service stopped"}
-                
+
             except Exception as e:
                 self._status = ServiceStatus.ERROR
                 self._error_message = str(e)
-                logger.error(f"Failed to stop CosyVoice: {e}")
+                logger.error(f"Failed to stop IndexTTS: {e}")
                 return {"status": "error", "message": str(e)}
 
     async def ensure_running(self) -> bool:
@@ -191,29 +200,29 @@ class CosyVoiceManager:
             if await self._check_service_health():
                 self._last_activity = asyncio.get_event_loop().time()
                 return True
-        
+
         if self._status == ServiceStatus.STARTING:
             return await self._wait_for_ready(self._startup_timeout)
-        
+
         result = await self.start()
         return result.get("status") == "success"
 
     def reset_auto_stop_timer(self):
         self._last_activity = asyncio.get_event_loop().time()
-        
+
         if self._auto_stop_task:
             self._auto_stop_task.cancel()
-        
+
         if self._auto_stop_delay > 0:
             self._auto_stop_task = asyncio.create_task(self._auto_stop_callback())
 
     async def _auto_stop_callback(self):
         try:
             await asyncio.sleep(self._auto_stop_delay)
-            
+
             current_time = asyncio.get_event_loop().time()
             if current_time - self._last_activity >= self._auto_stop_delay:
-                logger.info("Auto-stopping CosyVoice service due to inactivity")
+                logger.info("Auto-stopping IndexTTS service due to inactivity")
                 await self.stop()
         except asyncio.CancelledError:
             pass
@@ -227,7 +236,7 @@ class CosyVoiceManager:
             if not is_healthy:
                 self._status = ServiceStatus.ERROR
                 self._error_message = "Service not responding"
-        
+
         return {
             "status": self._status.value,
             "url": self._base_url,
@@ -237,19 +246,47 @@ class CosyVoiceManager:
         }
 
 
-_manager_instance: Optional[CosyVoiceManager] = None
+def get_emotion_templates() -> dict[str, list[tuple[str, float]]]:
+    return EMOTION_TEMPLATES
 
 
-def get_cosyvoice_manager(
-    base_url: str = "http://127.0.0.1:8003",
+def get_emotion_template(template_name: str) -> list[tuple[str, float]]:
+    return EMOTION_TEMPLATES.get(template_name, [])
+
+
+def get_all_emotions() -> list[str]:
+    return ALL_EMOTIONS
+
+
+def get_user_emotions() -> list[str]:
+    return list(USER_EMOTIONS)
+
+
+def get_index_emotions() -> list[str]:
+    return list(INDEX_EMOTIONS)
+
+
+def get_emotion_intensities() -> list[float]:
+    return EMOTION_INTENSITY_VALUES
+
+
+def get_emotion_text(emotion: str) -> str:
+    return EMOTION_TEXTS.get(emotion, EMOTION_TEXTS.get("normal", ""))
+
+
+_manager_instance: Optional[IndexTTSManager] = None
+
+
+def get_indextts_manager(
+    base_url: str = "http://127.0.0.1:8004",
     start_command: str = "",
-    working_dir: str = "CosyVoice",
+    working_dir: str = "IndexTTS",
     auto_stop_delay: int = 300,
     root_dir: Optional[Path] = None
-) -> CosyVoiceManager:
+) -> IndexTTSManager:
     global _manager_instance
     if _manager_instance is None:
-        _manager_instance = CosyVoiceManager(
+        _manager_instance = IndexTTSManager(
             base_url=base_url,
             start_command=start_command,
             working_dir=working_dir,

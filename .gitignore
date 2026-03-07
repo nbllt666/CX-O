@@ -249,6 +249,9 @@ F5-fast/SenseVoiceSmall/model.pt
 # CosyVoice 模型文件
 CosyVoice/pretrained_models/
 
+# IndexTTS 模型和代码
+index-tts/
+
 # Docker 相关
 F5-fast/Docker Desktop Installer.exe
 

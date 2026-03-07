@@ -44,6 +44,28 @@
             "cross_fade_duration": 0.15,
             "emotion_enabled": true,
             "effects_enabled": true,
+            "default_emotion_intensity": 0.5,
+            "emotion_templates": {
+                "basic": [
+                    {"type": "normal", "intensity": 0.5},
+                    {"type": "happy", "intensity": 0.5},
+                    {"type": "sad", "intensity": 0.5},
+                    {"type": "angry", "intensity": 0.5}
+                ],
+                "strong": [
+                    {"type": "happy", "intensity": 0.8},
+                    {"type": "angry", "intensity": 0.8},
+                    {"type": "sad", "intensity": 0.8},
+                    {"type": "surprised", "intensity": 0.8}
+                ],
+                "weak": [
+                    {"type": "happy", "intensity": 0.2},
+                    {"type": "angry", "intensity": 0.2},
+                    {"type": "sad", "intensity": 0.2},
+                    {"type": "tender", "intensity": 0.2}
+                ],
+                "full": []
+            },
             "emotion_voices": {
                 "normal": {
                     "ref_audio": "d:/CX-O/cx-o-gateway/data/voice_refs/cc763bdb-b4ed-4eaf-934f-924c4499a3b5_hoshino_0key_sovits_rmvpe.wav",
@@ -74,13 +96,13 @@
         "audio": {
             "effects_dir": "data/effects"
         },
-        "cosyvoice": {
-            "url": "http://127.0.0.1:8003",
-            "timeout": 600,
+        "index_tts": {
+            "url": "http://127.0.0.1:8004",
+            "timeout": 180,
             "enabled": true,
             "auto_stop_delay": 300,
-            "start_command": "python runtime/python/fastapi/server.py --port 8003 --model_dir pretrained_models/CosyVoice2-0.5B",
-            "working_dir": "CosyVoice"
+            "start_command": "python -m index_tts.app --port 8004 --host 0.0.0.0",
+            "working_dir": "index-tts"
         }
     },
     "logging": {

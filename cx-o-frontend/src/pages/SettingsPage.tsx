@@ -237,7 +237,7 @@ export function SettingsPage() {
   const [audioFiles, setAudioFiles] = useState<{ name: string; size: number; modified: number }[]>([]);
   const [uploadingFile, setUploadingFile] = useState(false);
   const [playingAudio, setPlayingAudio] = useState<string | null>(null);
-  const [cosyvoiceStatus, setCosyvoiceStatus] = useState<{ status: string; message?: string; url?: string } | null>(null);
+  const [indexTtsStatus, setIndexTtsStatus] = useState<{ status: string; message?: string; url?: string } | null>(null);
   const [generatingEmotions, setGeneratingEmotions] = useState(false);
   const [generateProgress, setGenerateProgress] = useState<{ current: number; total: number; emotion: string } | null>(null);
 
@@ -278,17 +278,17 @@ export function SettingsPage() {
   }, []);
 
   useEffect(() => {
-    const checkCosyVoiceStatus = async () => {
+    const checkIndexTTSStatus = async () => {
       try {
-        const data = await api.getCosyVoiceStatus();
-        setCosyvoiceStatus(data);
+        const data = await api.getIndexTTSStatus();
+        setIndexTtsStatus(data);
       } catch (error) {
-        console.error('Failed to check CosyVoice status:', error);
-        setCosyvoiceStatus({ status: 'error', message: '无法连接服务' });
+        console.error('Failed to check IndexTTS status:', error);
+        setIndexTtsStatus({ status: 'error', message: '无法连接服务' });
       }
     };
-    checkCosyVoiceStatus();
-    const interval = setInterval(checkCosyVoiceStatus, 30000);
+    checkIndexTTSStatus();
+    const interval = setInterval(checkIndexTTSStatus, 30000);
     return () => clearInterval(interval);
   }, []);
 
@@ -346,43 +346,21 @@ export function SettingsPage() {
     setGenerateProgress({ current: 0, total: 5, emotion: '' });
 
     try {
-      const emotions = ['happy', 'sad', 'angry', 'surprised', 'tender'];
-      const generated: Record<string, string> = {};
-      const errors: Record<string, string> = {};
+      const emotions = [
+        { type: 'happy', intensity: 1.0 },
+        { type: 'sad', intensity: 1.0 },
+        { type: 'angry', intensity: 1.0 },
+        { type: 'surprised', intensity: 1.0 },
+        { type: 'tender', intensity: 1.0 },
+      ];
 
-      await api.generateEmotionAudiosStream(
-        {
-          ref_audio: audioConfig.ref_audio_path,
-          ref_text: audioConfig.ref_text,
-          emotions,
-        },
-        (chunk) => {
-          if (chunk.type === 'start') {
-            setGenerateProgress({ current: 0, total: chunk.total || 5, emotion: '' });
-          } else if (chunk.type === 'progress') {
-            setGenerateProgress({
-              current: chunk.current || 0,
-              total: chunk.total || 5,
-              emotion: chunk.emotion || '',
-            });
-          } else if (chunk.type === 'success') {
-            if (chunk.emotion && chunk.filename) {
-              generated[chunk.emotion] = chunk.filename;
-            }
-          } else if (chunk.type === 'error') {
-            if (chunk.emotion) {
-              errors[chunk.emotion] = chunk.message || 'Unknown error';
-            }
-          } else if (chunk.type === 'complete') {
-            if (chunk.generated) {
-              Object.assign(generated, chunk.generated);
-            }
-            if (chunk.errors) {
-              Object.assign(errors, chunk.errors);
-            }
-          }
-        }
-      );
+      const result = await api.generateEmotionAudios({
+        ref_audio: audioConfig.ref_audio_path,
+        ref_text: audioConfig.ref_text,
+        emotions,
+        template: 'full',
+        auto_full: true,
+      });
 
       const filesData = await api.getAudioFiles();
       if (filesData.status === 'success') {
@@ -397,13 +375,15 @@ export function SettingsPage() {
         }));
       }
 
-      const status = await api.getCosyVoiceStatus();
-      setCosyvoiceStatus(status);
+      const status = await api.getIndexTTSStatus();
+      setIndexTtsStatus(status);
 
-      if (Object.keys(errors).length > 0) {
-        alert(`部分情感生成失败：${Object.keys(errors).join(', ')}`);
+      if (result.errors && Object.keys(result.errors).length > 0) {
+        alert(`部分情感生成失败：${Object.keys(result.errors).join(', ')}`);
+      } else if (result.generated) {
+        alert(`成功生成 ${Object.keys(result.generated).length} 个情感音频！`);
       } else {
-        alert(`成功生成 ${Object.keys(generated).length} 个情感音频！服务将在 5 分钟后自动停止。`);
+        alert('情感音频生成完成！');
       }
     } catch (error) {
       console.error('Generate emotions error:', error);
@@ -1318,68 +1298,34 @@ export function SettingsPage() {
                 <CardBody>
                   <h3 className="text-lg font-semibold mb-4">情感音频生成</h3>
                   <p className="text-sm text-[var(--color-text-secondary)] mb-4">
-                    使用 CosyVoice 从一条参考音频自动生成所有情感的参考音频（按需启动，自动释放显存）
+                    使用 IndexTTS 2 从一条参考音频自动生成所有情感的参考音频
                   </p>
                   <div className="space-y-4">
                     <div className="flex items-center justify-between p-3 bg-[var(--color-bg-tertiary)] rounded-[var(--radius-lg)]">
                       <div className="flex items-center gap-3">
                         <span
                           className={`w-3 h-3 rounded-full ${
-                            cosyvoiceStatus?.status === 'running'
+                            indexTtsStatus?.status === 'running'
                               ? 'bg-green-500'
-                              : cosyvoiceStatus?.status === 'starting'
+                              : indexTtsStatus?.status === 'starting'
                               ? 'bg-yellow-500 animate-pulse'
-                              : cosyvoiceStatus?.status === 'disabled'
+                              : indexTtsStatus?.status === 'disabled'
                               ? 'bg-gray-400'
                               : 'bg-red-500'
                           }`}
                         />
                         <div>
-                          <div className="text-sm font-medium">CosyVoice 服务</div>
+                          <div className="text-sm font-medium">IndexTTS 2 服务</div>
                           <div className="text-xs text-[var(--color-text-tertiary)]">
-                            {cosyvoiceStatus?.status === 'running'
-                              ? `运行中 - ${cosyvoiceStatus.url}`
-                              : cosyvoiceStatus?.status === 'starting'
+                            {indexTtsStatus?.status === 'running'
+                              ? `运行中 - ${indexTtsStatus.url}`
+                              : indexTtsStatus?.status === 'starting'
                               ? '启动中...'
-                              : cosyvoiceStatus?.status === 'disabled'
+                              : indexTtsStatus?.status === 'disabled'
                               ? '已禁用'
-                              : '已停止（点击生成时自动启动）'}
+                              : '已停止'}
                           </div>
                         </div>
-                      </div>
-                      <div className="flex items-center gap-2">
-                        {cosyvoiceStatus?.status === 'running' && (
-                          <button
-                            onClick={async () => {
-                              try {
-                                await api.stopCosyVoice();
-                                const status = await api.getCosyVoiceStatus();
-                                setCosyvoiceStatus(status);
-                              } catch (error) {
-                                console.error('Stop failed:', error);
-                              }
-                            }}
-                            className="px-3 py-1 text-sm bg-red-500/20 text-red-400 rounded-[var(--radius-md)] hover:bg-red-500/30 transition-colors"
-                          >
-                            停止
-                          </button>
-                        )}
-                        {(cosyvoiceStatus?.status === 'stopped' || cosyvoiceStatus?.status === 'error') && (
-                          <button
-                            onClick={async () => {
-                              try {
-                                await api.startCosyVoice();
-                                const status = await api.getCosyVoiceStatus();
-                                setCosyvoiceStatus(status);
-                              } catch (error) {
-                                console.error('Start failed:', error);
-                              }
-                            }}
-                            className="px-3 py-1 text-sm bg-green-500/20 text-green-400 rounded-[var(--radius-md)] hover:bg-green-500/30 transition-colors"
-                          >
-                            启动
-                          </button>
-                        )}
                       </div>
                     </div>
 
@@ -1389,12 +1335,12 @@ export function SettingsPage() {
                         disabled={
                           generatingEmotions ||
                           !audioConfig.ref_audio_path ||
-                          cosyvoiceStatus?.status === 'starting'
+                          indexTtsStatus?.status === 'starting'
                         }
                         className={`flex items-center gap-2 px-4 py-2 rounded-[var(--radius-md)] transition-colors ${
                           generatingEmotions ||
                           !audioConfig.ref_audio_path ||
-                          cosyvoiceStatus?.status === 'starting'
+                          indexTtsStatus?.status === 'starting'
                             ? 'bg-[var(--color-border)] text-[var(--color-text-tertiary)] cursor-not-allowed'
                             : 'bg-[var(--color-accent)] text-white hover:opacity-90'
                         }`}
