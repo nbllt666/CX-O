@@ -234,13 +234,20 @@ F5-fast/f5_trt_llm_engine_rebuilt/
 F5-fast/vocos_vocoder.plan
 F5-fast/model_repo/vocoder/1/vocoder.plan
 F5-fast/model_repo_f5_tts/vocoder/1/vocoder.plan
+F5-fast/f5-server.tar
+
+# F5-TTS 模型文件
+F5-fast/F5-TTS/
 
 # SenseVoice 模型文件
 F5-fast/SenseVoiceSmall/.mdl
 F5-fast/SenseVoiceSmall/.msc
 F5-fast/SenseVoiceSmall/.mv
 F5-fast/SenseVoiceSmall/am.mvn
-F5-fast/f5-server.tar
+F5-fast/SenseVoiceSmall/model.pt
+
+# CosyVoice 模型文件
+CosyVoice/pretrained_models/
 
 # Docker 相关
 F5-fast/Docker Desktop Installer.exe
