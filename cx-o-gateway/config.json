@@ -101,8 +101,8 @@
             "timeout": 180,
             "enabled": true,
             "auto_stop_delay": 300,
-            "start_command": "python -m index_tts.app --port 8004 --host 0.0.0.0",
-            "working_dir": "index-tts"
+            "start_command": "python api.py --port 8004 --host 0.0.0.0 --model_dir checkpoints",
+            "working_dir": "index-tts/index-tts-main"
         }
     },
     "logging": {
