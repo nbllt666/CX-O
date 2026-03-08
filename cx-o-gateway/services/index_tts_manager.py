@@ -16,7 +16,7 @@ from typing import Optional
 
 import httpx
 
-from index_tts_client import (
+from .index_tts_client import (
     EMOTION_TEMPLATES,
     EMOTION_TEXTS,
     EMOTION_INTENSITY_VALUES,
