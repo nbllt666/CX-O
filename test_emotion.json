@@ -1,0 +1,8 @@
+{
+    "ref_audio": "d:\\CX-O\\cx-o-gateway\\data\\voice_refs\\cc763bdb-b4ed-4eaf-934f-924c4499a3b5_hoshino_0key_sovits_rmvpe.wav",
+    "ref_text": "你好，我是星野。",
+    "emotions": [
+        {"type": "happy", "intensity": 0.8},
+        {"type": "sad", "intensity": 0.5}
+    ]
+}
