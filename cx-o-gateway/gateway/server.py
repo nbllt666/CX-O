@@ -402,6 +402,7 @@ def create_app() -> FastAPI:
                 start_command=getattr(index_tts_config, 'start_command', ''),
                 working_dir=getattr(index_tts_config, 'working_dir', 'IndexTTS'),
                 auto_stop_delay=getattr(index_tts_config, 'auto_stop_delay', 300),
+                startup_timeout=getattr(index_tts_config, 'startup_timeout', 180),
                 root_dir=Path(__file__).parent.parent.parent
             )
             return await manager.get_status()
@@ -424,6 +425,7 @@ def create_app() -> FastAPI:
                 start_command=getattr(index_tts_config, 'start_command', ''),
                 working_dir=getattr(index_tts_config, 'working_dir', 'IndexTTS'),
                 auto_stop_delay=getattr(index_tts_config, 'auto_stop_delay', 300),
+                startup_timeout=getattr(index_tts_config, 'startup_timeout', 180),
                 root_dir=Path(__file__).parent.parent.parent
             )
             
@@ -491,6 +493,7 @@ def create_app() -> FastAPI:
                 start_command=getattr(index_tts_config, 'start_command', ''),
                 working_dir=getattr(index_tts_config, 'working_dir', 'IndexTTS'),
                 auto_stop_delay=getattr(index_tts_config, 'auto_stop_delay', 300),
+                startup_timeout=getattr(index_tts_config, 'startup_timeout', 180),
                 root_dir=Path(__file__).parent.parent.parent
             )
             

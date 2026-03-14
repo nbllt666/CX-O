@@ -282,6 +282,7 @@ def get_indextts_manager(
     start_command: str = "",
     working_dir: str = "IndexTTS",
     auto_stop_delay: int = 300,
+    startup_timeout: int = 180,
     root_dir: Optional[Path] = None
 ) -> IndexTTSManager:
     global _manager_instance
@@ -291,6 +292,7 @@ def get_indextts_manager(
             start_command=start_command,
             working_dir=working_dir,
             auto_stop_delay=auto_stop_delay,
+            startup_timeout=startup_timeout,
             root_dir=root_dir
         )
     return _manager_instance
