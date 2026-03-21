@@ -109,8 +109,8 @@ class OllamaClient(LLMClient):
                 raise ValueError(f"消息 {i} 缺少 'role' 字段")
             if "content" not in msg:
                 raise ValueError(f"消息 {i} 缺少 'content' 字段")
-            if msg["role"] not in ["system", "user", "assistant"]:
-                raise ValueError(f"消息 {i} 的 role 必须是 'system', 'user' 或 'assistant'")
+            if msg["role"] not in ["system", "user", "assistant", "tool"]:
+                raise ValueError(f"消息 {i} 的 role 必须是 'system', 'user', 'assistant' 或 'tool'")
 
     async def chat(self, messages: List[Dict], stream: bool = False, **kwargs) -> LLMResponse:
         """发送聊天请求
@@ -143,7 +143,7 @@ class OllamaClient(LLMClient):
             if tools:
                 request_body["tools"] = tools
 
-            async with httpx.AsyncClient(timeout=120.0) as client:
+            async with httpx.AsyncClient(timeout=120.0, proxy=None) as client:
                 response = await client.post(f"{self.host}/api/chat", json=request_body)
 
                 if response.status_code == 200:
@@ -240,7 +240,7 @@ class OllamaClient(LLMClient):
             if self.api_key:
                 headers["Authorization"] = f"Bearer {self.api_key}"
 
-            async with httpx.AsyncClient(timeout=120.0) as client:
+            async with httpx.AsyncClient(timeout=120.0, proxy=None) as client:
                 async with client.stream(
                     "POST", f"{self.host}/api/chat", json=request_body, headers=headers
                 ) as response:
@@ -279,7 +279,7 @@ class OllamaClient(LLMClient):
     async def is_available(self) -> bool:
         """检查Ollama模型是否可用"""
         try:
-            async with httpx.AsyncClient(timeout=10.0) as client:
+            async with httpx.AsyncClient(timeout=10.0, proxy=None) as client:
                 response = await client.get(f"{self.host}/api/tags")
                 return response.status_code == 200
         except Exception:
@@ -288,7 +288,7 @@ class OllamaClient(LLMClient):
     async def get_embedding(self, text: str) -> Optional[List[float]]:
         """使用Ollama获取文本的向量嵌入"""
         try:
-            async with httpx.AsyncClient(timeout=30.0) as client:
+            async with httpx.AsyncClient(timeout=30.0, proxy=None) as client:
                 response = await client.post(
                     f"{self.host}/api/embeddings", json={"model": self.model, "prompt": text}
                 )
@@ -332,8 +332,8 @@ class VLLMClient(LLMClient):
                 raise ValueError(f"消息 {i} 缺少 'role' 字段")
             if "content" not in msg:
                 raise ValueError(f"消息 {i} 缺少 'content' 字段")
-            if msg["role"] not in ["system", "user", "assistant"]:
-                raise ValueError(f"消息 {i} 的 role 必须是 'system', 'user' 或 'assistant'")
+            if msg["role"] not in ["system", "user", "assistant", "tool"]:
+                raise ValueError(f"消息 {i} 的 role 必须是 'system', 'user', 'assistant' 或 'tool'")
 
     async def chat(self, messages: List[Dict], stream: bool = False, **kwargs) -> LLMResponse:
         """发送聊天请求
@@ -350,7 +350,7 @@ class VLLMClient(LLMClient):
             # 验证输入
             self._validate_messages(messages)
 
-            async with httpx.AsyncClient(timeout=120.0) as client:
+            async with httpx.AsyncClient(timeout=120.0, proxy=None) as client:
                 response = await client.post(
                     f"{self.host}/v1/chat/completions",
                     json={
@@ -446,7 +446,7 @@ class VLLMClient(LLMClient):
             if "tools" in kwargs and kwargs["tools"]:
                 request_body["tools"] = kwargs["tools"]
 
-            async with httpx.AsyncClient(timeout=120.0) as client:
+            async with httpx.AsyncClient(timeout=120.0, proxy=None) as client:
                 async with client.stream(
                     "POST", f"{self.host}/v1/chat/completions", json=request_body
                 ) as response:
@@ -477,7 +477,7 @@ class VLLMClient(LLMClient):
     async def is_available(self) -> bool:
         """检查VLLM模型是否可用"""
         try:
-            async with httpx.AsyncClient(timeout=10.0) as client:
+            async with httpx.AsyncClient(timeout=10.0, proxy=None) as client:
                 # VLLM 使用 /health 端点检查健康状态
                 response = await client.get(f"{self.host}/health")
                 return response.status_code == 200
@@ -490,7 +490,7 @@ class VLLMClient(LLMClient):
         VLLM 支持通过 /v1/embeddings 端点获取 embedding
         """
         try:
-            async with httpx.AsyncClient(timeout=30.0) as client:
+            async with httpx.AsyncClient(timeout=30.0, proxy=None) as client:
                 response = await client.post(
                     f"{self.host}/v1/embeddings", json={"model": self.model, "input": text}
                 )

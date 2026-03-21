@@ -31,8 +31,7 @@ from backend.api.routers import (
     tools,
     websocket,
 )
-from backend.api.websocket.server import manager as ws_manager, websocket_handler
-from backend.api.websocket.actions import register_all_handlers
+from backend.core.websocket import get_websocket_manager, get_chat_handler
 from backend.core.logging_config import LogContext, get_contextual_logger, setup_logging
 from config.settings import settings
 
@@ -60,6 +59,7 @@ setup_logging(
 logger = get_contextual_logger(__name__)
 
 memory_manager = None
+async_memory_manager = None
 context_manager = None
 acp_manager = None
 llm_client = None
@@ -71,19 +71,22 @@ model_router = None  # 新增：模型路由器
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    global memory_manager, context_manager, acp_manager, llm_client, secondary_router, decay_batch_processor, mcp_manager, model_router
+    global memory_manager, async_memory_manager, context_manager, acp_manager, llm_client, secondary_router, decay_batch_processor, mcp_manager, model_router
 
     from backend.core.acp.manager import ACPManager
     from backend.core.context.manager import ContextManager
     from backend.core.llm.client import LLMFactory
     from backend.core.memory.decay_batch import DecayBatchProcessor
     from backend.core.memory.manager import MemoryManager
+    from backend.core.memory.async_manager import AsyncMemoryManager
     from backend.core.memory.secondary_router import SecondaryModelRouter
     from backend.core.model_router import model_router as mr  # 导入模型路由器
     from backend.core.tools.mcp import MCPManager
     from backend.core.tools.registry import tool_registry
 
     logger.info("正在启动CXHMS服务...")
+
+    db_config = settings.config.database
 
     # 1. 初始化模型路由器（最先初始化，其他组件可能依赖它）
     try:
@@ -95,7 +98,6 @@ async def lifespan(app: FastAPI):
         model_router = None
 
     try:
-        db_config = settings.config.database
         memory_manager = MemoryManager(db_path=db_config.memories_db)
         logger.info("记忆管理器已启动")
     except Exception as e:
@@ -103,7 +105,14 @@ async def lifespan(app: FastAPI):
         memory_manager = None
 
     try:
-        db_config = settings.config.database
+        async_memory_manager = AsyncMemoryManager(db_path=db_config.memories_db)
+        await async_memory_manager.initialize()
+        logger.info("异步记忆管理器已启动")
+    except Exception as e:
+        logger.warning(f"异步记忆管理器启动失败: {e}")
+        async_memory_manager = None
+
+    try:
         context_manager = ContextManager(db_path=db_config.sessions_db)
         logger.info("上下文管理器已启动")
     except Exception as e:
@@ -111,7 +120,6 @@ async def lifespan(app: FastAPI):
         context_manager = None
 
     try:
-        db_config = settings.config.database
         acp_manager = ACPManager(data_dir=db_config.acp_db)
         acp_manager.initialize(
             agent_id=settings.config.acp.agent_id, agent_name=settings.config.acp.agent_name
@@ -405,6 +413,12 @@ async def lifespan(app: FastAPI):
     if memory_manager:
         memory_manager.shutdown()
 
+    if async_memory_manager:
+        try:
+            await async_memory_manager.close()
+        except Exception:
+            pass
+
     # 关闭备份管理器
     try:
         from backend.core.backup.manager import get_backup_manager
@@ -459,20 +473,7 @@ app.include_router(archive.router, prefix="/api")
 app.include_router(service.router, prefix="/api")
 app.include_router(agents.router, prefix="/api")
 app.include_router(backup.router, prefix="/api")
-
-register_all_handlers(ws_manager)
-
-
-@app.websocket("/ws")
-async def websocket_endpoint(websocket: WebSocket):
-    client_id = str(uuid.uuid4())
-    await websocket_handler(websocket, client_id)
-
-
-@app.websocket("/ws/{agent_id}")
-async def websocket_agent_endpoint(websocket: WebSocket, agent_id: str):
-    client_id = str(uuid.uuid4())
-    await websocket_handler(websocket, client_id)
+app.include_router(websocket.router, prefix="/api")
 
 app.add_exception_handler(CXHMSError, cxhms_exception_handler)
 app.add_exception_handler(HTTPException, http_exception_handler)
@@ -511,6 +512,12 @@ def get_memory_manager():
     if memory_manager is None:
         raise HTTPException(status_code=503, detail="记忆服务不可用")
     return memory_manager
+
+
+def get_async_memory_manager():
+    if async_memory_manager is None:
+        raise HTTPException(status_code=503, detail="异步记忆服务不可用")
+    return async_memory_manager
 
 
 def get_context_manager():

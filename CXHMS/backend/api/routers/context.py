@@ -256,7 +256,7 @@ async def generate_summary(session_id: str, max_points: int = 5, save_as_memory:
         summary_memory_id = None
         if save_as_memory and memory_manager:
             try:
-                summary_memory_id = memory_manager.write_memory(
+                summary_memory_id = await memory_manager.write_memory(
                     content=summary_text,
                     memory_type="conversation_summary",
                     importance=4,

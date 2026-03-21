@@ -166,6 +166,7 @@ npm run typecheck
 - [架构文档](docs/ARCHITECTURE.md)
 - [部署指南](docs/DEPLOYMENT.md)
 - [技术文档](docs/TECHNICAL.md)
+- [Bug 笔记](docs/BUG_NOTES.md)
 
 ## 许可证
 

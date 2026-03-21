@@ -57,7 +57,22 @@ const sections: SettingSection[] = [
         />
       </svg>
     ),
-    description: 'TTS 参考音频和情感语音配置',
+    description: 'TTS、VAD 语音检测、双向打断配置',
+  },
+  {
+    id: 'live',
+    title: '直播管理',
+    icon: (
+      <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+        <path
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          strokeWidth={2}
+          d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z"
+        />
+      </svg>
+    ),
+    description: '弹幕接收和直播客户端配置',
   },
   {
     id: 'vector',
@@ -107,7 +122,7 @@ const accentColors = [
 ];
 
 export function SettingsPage() {
-  const [activeSection, setActiveSection] = useState<'appearance' | 'service' | 'audio' | 'vector' | 'llm'>(
+  const [activeSection, setActiveSection] = useState<'appearance' | 'service' | 'audio' | 'live' | 'vector' | 'llm'>(
     'appearance'
   );
   const [saveStatus, setSaveStatus] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
@@ -175,6 +190,46 @@ export function SettingsPage() {
     enabled: isBackendRunning,
   });
 
+  const [gatewayServicesConfig, setGatewayServicesConfig] = useState({
+    cxhms: { url: 'ws://127.0.0.1:8000/ws', http_url: 'http://127.0.0.1:8000', timeout: 30 },
+    asr: { url: 'http://127.0.0.1:8001', timeout: 60 },
+    tts: { url: 'http://127.0.0.1:8002', timeout: 120 },
+    index_tts: { url: 'http://127.0.0.1:8004', enabled: true, timeout: 180 },
+  });
+  const [isGatewayConfigLoading, setIsGatewayConfigLoading] = useState(false);
+
+  useEffect(() => {
+    const loadGatewayConfig = async () => {
+      if (!isBackendRunning) return;
+      try {
+        const data = await api.getGatewayServicesConfig();
+        if (data.status === 'success' && data.config) {
+          setGatewayServicesConfig(data.config);
+        }
+      } catch (error) {
+        console.error('Failed to load Gateway config:', error);
+      }
+    };
+    loadGatewayConfig();
+  }, [isBackendRunning]);
+
+  const handleUpdateGatewayServices = async () => {
+    setIsGatewayConfigLoading(true);
+    try {
+      const result = await api.updateGatewayServicesConfig(gatewayServicesConfig);
+      if (result.status === 'success') {
+        alert('Gateway 服务配置已保存，需要重启服务生效');
+      } else {
+        alert('保存失败: ' + result.message);
+      }
+    } catch (error) {
+      console.error('Failed to update Gateway config:', error);
+      alert('保存失败');
+    } finally {
+      setIsGatewayConfigLoading(false);
+    }
+  };
+
   const [vectorConfig, setVectorConfig] = useState({
     backend: 'chroma',
     vectorSize: 768,
@@ -241,6 +296,62 @@ export function SettingsPage() {
   const [generatingEmotions, setGeneratingEmotions] = useState(false);
   const [generateProgress, setGenerateProgress] = useState<{ current: number; total: number; emotion: string } | null>(null);
 
+  const [danmakuConfig, setDanmakuConfig] = useState({
+    websocket: {
+      endpoint: '/ws/live',
+      max_connections: 100,
+    },
+    sources: {
+      bilibili: { enabled: true, websocket_url: 'ws://localhost:8080' },
+      rdf: { enabled: true, websocket_url: 'ws://localhost:9898' },
+    },
+  });
+
+  const [firewallConfig, setFirewallConfig] = useState({
+    llm: { default_model: 'qwen2.5:latest' },
+    blocking: { blacklist_enabled: true, blacklist: [] as string[] },
+    decision: { timeout_ms: 5000 },
+  });
+
+  const [firewallV3Config, setFirewallV3Config] = useState({
+    interrupt: {
+      enabled: true,
+      mode: 'main_llm' as 'main_llm' | 'independent_llm',
+      main_llm: { enabled: true, prompt: '' },
+      independent_llm: { enabled: false, model: 'qwen2.5:1.5b' },
+    },
+  });
+
+  const [vadConfig, setVadConfig] = useState({
+    vad: {
+      mode: 'webrtc' as 'energy' | 'webrtc' | 'silero',
+      sample_rate: 16000,
+      frame_duration_ms: 30,
+      energy_threshold: 500,
+      silence_threshold_ms: 500,
+      speech_threshold_ms: 300,
+    },
+    audio_stream: {
+      asr_interval_ms: 500,
+      buffer_duration_ms: 1000,
+    },
+    agent_interrupt: {
+      enabled: true,
+      interrupt_threshold_ms: 500,
+      min_speech_duration_ms: 1000,
+      interrupt_cooldown_ms: 3000,
+    },
+  });
+
+  const [liveClientStatus, setLiveClientStatus] = useState<{
+    connected: boolean;
+    client_id?: string;
+    room_id?: string;
+    client_type?: string;
+  }>({ connected: false });
+
+  const [newBlacklistUid, setNewBlacklistUid] = useState('');
+
   useEffect(() => {
     const loadAudioConfig = async () => {
       try {
@@ -291,6 +402,41 @@ export function SettingsPage() {
     const interval = setInterval(checkIndexTTSStatus, 30000);
     return () => clearInterval(interval);
   }, []);
+
+  useEffect(() => {
+    const loadLiveConfigs = async () => {
+      try {
+        const [danmakuData, firewallData, firewallV3Data, liveStatus, vadData] = await Promise.all([
+          api.getDanmakuConfig(),
+          api.getFirewallConfig(),
+          api.getFirewallV3Config(),
+          api.getLiveClientStatus(),
+          api.getVadConfig(),
+        ]);
+
+        if (danmakuData.config) {
+          setDanmakuConfig(danmakuData.config);
+        }
+        if (firewallData.config) {
+          setFirewallConfig(firewallData.config);
+        }
+        if (firewallV3Data.config) {
+          setFirewallV3Config(firewallV3Data.config);
+        }
+        if (liveStatus) {
+          setLiveClientStatus(liveStatus);
+        }
+        if (vadData.config) {
+          setVadConfig(vadData.config);
+        }
+      } catch (error) {
+        console.error('Failed to load live configs:', error);
+      }
+    };
+    if (isBackendRunning) {
+      loadLiveConfigs();
+    }
+  }, [isBackendRunning]);
 
   const handleAudioUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -559,6 +705,11 @@ export function SettingsPage() {
         localStorage.setItem('cxhms-current-model', modelsConfig.main.model);
       } else if (activeSection === 'audio') {
         await api.updateAudioConfig(audioConfig);
+      } else if (activeSection === 'live') {
+        await api.updateDanmakuConfig(danmakuConfig);
+        await api.updateFirewallConfig(firewallConfig);
+        await api.updateFirewallV3Config(firewallV3Config);
+        await api.updateVadConfig(vadConfig);
       }
       setSaveStatus('saved');
     } catch {
@@ -714,7 +865,156 @@ export function SettingsPage() {
                 <CardBody>
                   <div className="flex items-center justify-between mb-6">
                     <div>
-                      <h3 className="text-lg font-semibold">服务管理</h3>
+                      <h3 className="text-lg font-semibold">Gateway 服务配置</h3>
+                      <p className="text-sm text-[var(--color-text-secondary)]">
+                        管理各微服务连接 (ASR/TTS/Index-TTS)
+                      </p>
+                    </div>
+                    <Button
+                      onClick={handleUpdateGatewayServices}
+                      loading={isGatewayConfigLoading}
+                    >
+                      保存配置
+                    </Button>
+                  </div>
+
+                  <div className="space-y-4">
+                    <div className="grid grid-cols-2 gap-4">
+                      <div>
+                        <label className="text-sm font-medium mb-2 block">CXHMS 后端 URL</label>
+                        <input
+                          type="text"
+                          value={gatewayServicesConfig.cxhms.url}
+                          onChange={(e) => setGatewayServicesConfig({
+                            ...gatewayServicesConfig,
+                            cxhms: { ...gatewayServicesConfig.cxhms, url: e.target.value }
+                          })}
+                          className="w-full px-3 py-2 bg-[var(--color-bg-primary)] border border-[var(--color-border)] rounded-[var(--radius-md)]"
+                          placeholder="ws://127.0.0.1:8000/ws"
+                        />
+                      </div>
+                      <div>
+                        <label className="text-sm font-medium mb-2 block">CXHMS HTTP URL</label>
+                        <input
+                          type="text"
+                          value={gatewayServicesConfig.cxhms.http_url || ''}
+                          onChange={(e) => setGatewayServicesConfig({
+                            ...gatewayServicesConfig,
+                            cxhms: { ...gatewayServicesConfig.cxhms, http_url: e.target.value }
+                          })}
+                          className="w-full px-3 py-2 bg-[var(--color-bg-primary)] border border-[var(--color-border)] rounded-[var(--radius-md)]"
+                          placeholder="http://127.0.0.1:8000"
+                        />
+                      </div>
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-4">
+                      <div>
+                        <label className="text-sm font-medium mb-2 block">ASR 服务 URL</label>
+                        <input
+                          type="text"
+                          value={gatewayServicesConfig.asr.url}
+                          onChange={(e) => setGatewayServicesConfig({
+                            ...gatewayServicesConfig,
+                            asr: { ...gatewayServicesConfig.asr, url: e.target.value }
+                          })}
+                          className="w-full px-3 py-2 bg-[var(--color-bg-primary)] border border-[var(--color-border)] rounded-[var(--radius-md)]"
+                          placeholder="http://127.0.0.1:8001"
+                        />
+                      </div>
+                      <div>
+                        <label className="text-sm font-medium mb-2 block">ASR 超时 (秒)</label>
+                        <input
+                          type="number"
+                          value={gatewayServicesConfig.asr.timeout}
+                          onChange={(e) => setGatewayServicesConfig({
+                            ...gatewayServicesConfig,
+                            asr: { ...gatewayServicesConfig.asr, timeout: parseInt(e.target.value) || 60 }
+                          })}
+                          className="w-full px-3 py-2 bg-[var(--color-bg-primary)] border border-[var(--color-border)] rounded-[var(--radius-md)]"
+                        />
+                      </div>
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-4">
+                      <div>
+                        <label className="text-sm font-medium mb-2 block">TTS 服务 URL</label>
+                        <input
+                          type="text"
+                          value={gatewayServicesConfig.tts.url}
+                          onChange={(e) => setGatewayServicesConfig({
+                            ...gatewayServicesConfig,
+                            tts: { ...gatewayServicesConfig.tts, url: e.target.value }
+                          })}
+                          className="w-full px-3 py-2 bg-[var(--color-bg-primary)] border border-[var(--color-border)] rounded-[var(--radius-md)]"
+                          placeholder="http://127.0.0.1:8002"
+                        />
+                      </div>
+                      <div>
+                        <label className="text-sm font-medium mb-2 block">TTS 超时 (秒)</label>
+                        <input
+                          type="number"
+                          value={gatewayServicesConfig.tts.timeout}
+                          onChange={(e) => setGatewayServicesConfig({
+                            ...gatewayServicesConfig,
+                            tts: { ...gatewayServicesConfig.tts, timeout: parseInt(e.target.value) || 120 }
+                          })}
+                          className="w-full px-3 py-2 bg-[var(--color-bg-primary)] border border-[var(--color-border)] rounded-[var(--radius-md)]"
+                        />
+                      </div>
+                    </div>
+
+                    <div className="grid grid-cols-3 gap-4">
+                      <div>
+                        <label className="text-sm font-medium mb-2 block">Index-TTS URL</label>
+                        <input
+                          type="text"
+                          value={gatewayServicesConfig.index_tts.url}
+                          onChange={(e) => setGatewayServicesConfig({
+                            ...gatewayServicesConfig,
+                            index_tts: { ...gatewayServicesConfig.index_tts, url: e.target.value }
+                          })}
+                          className="w-full px-3 py-2 bg-[var(--color-bg-primary)] border border-[var(--color-border)] rounded-[var(--radius-md)]"
+                          placeholder="http://127.0.0.1:8004"
+                        />
+                      </div>
+                      <div>
+                        <label className="text-sm font-medium mb-2 block">Index-TTS 超时 (秒)</label>
+                        <input
+                          type="number"
+                          value={gatewayServicesConfig.index_tts.timeout}
+                          onChange={(e) => setGatewayServicesConfig({
+                            ...gatewayServicesConfig,
+                            index_tts: { ...gatewayServicesConfig.index_tts, timeout: parseInt(e.target.value) || 180 }
+                          })}
+                          className="w-full px-3 py-2 bg-[var(--color-bg-primary)] border border-[var(--color-border)] rounded-[var(--radius-md)]"
+                        />
+                      </div>
+                      <div>
+                        <label className="text-sm font-medium mb-2 block">启用 Index-TTS</label>
+                        <label className="flex items-center gap-2 mt-2">
+                          <input
+                            type="checkbox"
+                            checked={gatewayServicesConfig.index_tts.enabled}
+                            onChange={(e) => setGatewayServicesConfig({
+                              ...gatewayServicesConfig,
+                              index_tts: { ...gatewayServicesConfig.index_tts, enabled: e.target.checked }
+                            })}
+                            className="w-4 h-4"
+                          />
+                          <span>启用</span>
+                        </label>
+                      </div>
+                    </div>
+                  </div>
+                </CardBody>
+              </Card>
+
+              <Card>
+                <CardBody>
+                  <div className="flex items-center justify-between mb-6">
+                    <div>
+                      <h3 className="text-lg font-semibold">CXHMS 后端服务</h3>
                       <p className="text-sm text-[var(--color-text-secondary)]">
                         管理 CXHMS 后端服务
                       </p>
@@ -1592,13 +1892,615 @@ export function SettingsPage() {
                       </div>
                     ))}
                   </div>
-                  <div className="flex justify-end mt-6">
-                    <Button onClick={handleSave} loading={saveStatus === 'saving'}>
-                      {saveStatus === 'saved' ? '已保存' : '保存配置'}
+                </CardBody>
+              </Card>
+
+              {/* VAD 语音检测配置 */}
+              <Card>
+                <CardBody>
+                  <h3 className="text-lg font-semibold mb-4">VAD 语音检测配置</h3>
+                  <div className="space-y-4">
+                    <div>
+                      <label className="text-sm font-medium mb-2 block">VAD 模式</label>
+                      <div className="flex gap-4">
+                        <label className="flex items-center gap-2">
+                          <input
+                            type="radio"
+                            checked={vadConfig.vad.mode === 'energy'}
+                            onChange={() =>
+                              setVadConfig({
+                                ...vadConfig,
+                                vad: { ...vadConfig.vad, mode: 'energy' },
+                              })
+                            }
+                          />
+                          <span className="text-sm">Energy (能量检测)</span>
+                        </label>
+                        <label className="flex items-center gap-2">
+                          <input
+                            type="radio"
+                            checked={vadConfig.vad.mode === 'webrtc'}
+                            onChange={() =>
+                              setVadConfig({
+                                ...vadConfig,
+                                vad: { ...vadConfig.vad, mode: 'webrtc' },
+                              })
+                            }
+                          />
+                          <span className="text-sm">WebRTC (推荐)</span>
+                        </label>
+                        <label className="flex items-center gap-2">
+                          <input
+                            type="radio"
+                            checked={vadConfig.vad.mode === 'silero'}
+                            onChange={() =>
+                              setVadConfig({
+                                ...vadConfig,
+                                vad: { ...vadConfig.vad, mode: 'silero' },
+                              })
+                            }
+                          />
+                          <span className="text-sm">Silero (深度学习)</span>
+                        </label>
+                      </div>
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-4">
+                      <div>
+                        <label className="text-sm font-medium mb-2 block">采样率 (Hz)</label>
+                        <input
+                          type="number"
+                          value={vadConfig.vad.sample_rate}
+                          onChange={(e) =>
+                            setVadConfig({
+                              ...vadConfig,
+                              vad: { ...vadConfig.vad, sample_rate: parseInt(e.target.value) || 16000 },
+                            })
+                          }
+                          className="w-full px-3 py-2 bg-[var(--color-bg-primary)] border border-[var(--color-border)] rounded-[var(--radius-md)]"
+                        />
+                      </div>
+                      <div>
+                        <label className="text-sm font-medium mb-2 block">帧时长 (ms)</label>
+                        <input
+                          type="number"
+                          value={vadConfig.vad.frame_duration_ms}
+                          onChange={(e) =>
+                            setVadConfig({
+                              ...vadConfig,
+                              vad: { ...vadConfig.vad, frame_duration_ms: parseInt(e.target.value) || 30 },
+                            })
+                          }
+                          className="w-full px-3 py-2 bg-[var(--color-bg-primary)] border border-[var(--color-border)] rounded-[var(--radius-md)]"
+                        />
+                      </div>
+                    </div>
+
+                    {vadConfig.vad.mode === 'energy' && (
+                      <div>
+                        <label className="text-sm font-medium mb-2 block">
+                          能量阈值: {vadConfig.vad.energy_threshold}
+                        </label>
+                        <input
+                          type="range"
+                          min="100"
+                          max="2000"
+                          value={vadConfig.vad.energy_threshold}
+                          onChange={(e) =>
+                            setVadConfig({
+                              ...vadConfig,
+                              vad: { ...vadConfig.vad, energy_threshold: parseInt(e.target.value) },
+                            })
+                          }
+                          className="w-full"
+                        />
+                      </div>
+                    )}
+
+                    <div className="grid grid-cols-2 gap-4">
+                      <div>
+                        <label className="text-sm font-medium mb-2 block">静音阈值 (ms)</label>
+                        <input
+                          type="number"
+                          value={vadConfig.vad.silence_threshold_ms}
+                          onChange={(e) =>
+                            setVadConfig({
+                              ...vadConfig,
+                              vad: { ...vadConfig.vad, silence_threshold_ms: parseInt(e.target.value) || 500 },
+                            })
+                          }
+                          className="w-full px-3 py-2 bg-[var(--color-bg-primary)] border border-[var(--color-border)] rounded-[var(--radius-md)]"
+                        />
+                      </div>
+                      <div>
+                        <label className="text-sm font-medium mb-2 block">语音阈值 (ms)</label>
+                        <input
+                          type="number"
+                          value={vadConfig.vad.speech_threshold_ms}
+                          onChange={(e) =>
+                            setVadConfig({
+                              ...vadConfig,
+                              vad: { ...vadConfig.vad, speech_threshold_ms: parseInt(e.target.value) || 300 },
+                            })
+                          }
+                          className="w-full px-3 py-2 bg-[var(--color-bg-primary)] border border-[var(--color-border)] rounded-[var(--radius-md)]"
+                        />
+                      </div>
+                    </div>
+                  </div>
+                </CardBody>
+              </Card>
+
+              {/* Agent 打断用户配置 */}
+              <Card>
+                <CardBody>
+                  <h3 className="text-lg font-semibold mb-4">Agent 打断用户</h3>
+                  <p className="text-sm text-[var(--color-text-secondary)] mb-4">
+                    配置 Agent 在用户说话时插话的行为
+                  </p>
+                  <div className="space-y-4">
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <label className="text-sm font-medium">启用 Agent 打断</label>
+                        <p className="text-xs text-[var(--color-text-tertiary)]">Agent 可以在用户说话时插话</p>
+                      </div>
+                      <button
+                        onClick={() =>
+                          setVadConfig({
+                            ...vadConfig,
+                            agent_interrupt: { ...vadConfig.agent_interrupt, enabled: !vadConfig.agent_interrupt.enabled },
+                          })
+                        }
+                        className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${
+                          vadConfig.agent_interrupt.enabled ? 'bg-[var(--color-accent)]' : 'bg-[var(--color-border)]'
+                        }`}
+                      >
+                        <span className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${vadConfig.agent_interrupt.enabled ? 'translate-x-6' : 'translate-x-1'}`} />
+                      </button>
+                    </div>
+
+                    {vadConfig.agent_interrupt.enabled && (
+                      <div className="grid grid-cols-3 gap-4">
+                        <div>
+                          <label className="text-sm font-medium mb-2 block">打断阈值 (ms)</label>
+                          <input
+                            type="number"
+                            value={vadConfig.agent_interrupt.interrupt_threshold_ms}
+                            onChange={(e) =>
+                              setVadConfig({
+                                ...vadConfig,
+                                agent_interrupt: { ...vadConfig.agent_interrupt, interrupt_threshold_ms: parseInt(e.target.value) || 500 },
+                              })
+                            }
+                            className="w-full px-3 py-2 bg-[var(--color-bg-primary)] border border-[var(--color-border)] rounded-[var(--radius-md)]"
+                          />
+                        </div>
+                        <div>
+                          <label className="text-sm font-medium mb-2 block">最小语音时长 (ms)</label>
+                          <input
+                            type="number"
+                            value={vadConfig.agent_interrupt.min_speech_duration_ms}
+                            onChange={(e) =>
+                              setVadConfig({
+                                ...vadConfig,
+                                agent_interrupt: { ...vadConfig.agent_interrupt, min_speech_duration_ms: parseInt(e.target.value) || 1000 },
+                              })
+                            }
+                            className="w-full px-3 py-2 bg-[var(--color-bg-primary)] border border-[var(--color-border)] rounded-[var(--radius-md)]"
+                          />
+                        </div>
+                        <div>
+                          <label className="text-sm font-medium mb-2 block">打断冷却 (ms)</label>
+                          <input
+                            type="number"
+                            value={vadConfig.agent_interrupt.interrupt_cooldown_ms}
+                            onChange={(e) =>
+                              setVadConfig({
+                                ...vadConfig,
+                                agent_interrupt: { ...vadConfig.agent_interrupt, interrupt_cooldown_ms: parseInt(e.target.value) || 3000 },
+                              })
+                            }
+                            className="w-full px-3 py-2 bg-[var(--color-bg-primary)] border border-[var(--color-border)] rounded-[var(--radius-md)]"
+                          />
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                </CardBody>
+              </Card>
+
+              {/* 用户打断 Agent 配置 */}
+              <Card>
+                <CardBody>
+                  <h3 className="text-lg font-semibold mb-4">用户打断 Agent</h3>
+                  <p className="text-sm text-[var(--color-text-secondary)] mb-4">
+                    配置用户打断 Agent TTS 播报的行为
+                  </p>
+                  <div className="space-y-4">
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <label className="text-sm font-medium">启用打断</label>
+                        <p className="text-xs text-[var(--color-text-tertiary)]">用户说话时打断当前 TTS 回复</p>
+                      </div>
+                      <button
+                        onClick={() =>
+                          setFirewallV3Config({
+                            ...firewallV3Config,
+                            interrupt: { ...firewallV3Config.interrupt, enabled: !firewallV3Config.interrupt.enabled },
+                          })
+                        }
+                        className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${
+                          firewallV3Config.interrupt.enabled ? 'bg-[var(--color-accent)]' : 'bg-[var(--color-border)]'
+                        }`}
+                      >
+                        <span className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${firewallV3Config.interrupt.enabled ? 'translate-x-6' : 'translate-x-1'}`} />
+                      </button>
+                    </div>
+
+                    {firewallV3Config.interrupt.enabled && (
+                      <>
+                        <div>
+                          <label className="text-sm font-medium mb-2 block">打断模式</label>
+                          <div className="flex gap-4">
+                            <label className="flex items-center gap-2">
+                              <input
+                                type="radio"
+                                checked={firewallV3Config.interrupt.mode === 'main_llm'}
+                                onChange={() =>
+                                  setFirewallV3Config({
+                                    ...firewallV3Config,
+                                    interrupt: {
+                                      ...firewallV3Config.interrupt,
+                                      mode: 'main_llm',
+                                      main_llm: { ...firewallV3Config.interrupt.main_llm, enabled: true },
+                                      independent_llm: { ...firewallV3Config.interrupt.independent_llm, enabled: false },
+                                    },
+                                  })
+                                }
+                              />
+                              <span className="text-sm">主 LLM 模式</span>
+                            </label>
+                            <label className="flex items-center gap-2">
+                              <input
+                                type="radio"
+                                checked={firewallV3Config.interrupt.mode === 'independent_llm'}
+                                onChange={() =>
+                                  setFirewallV3Config({
+                                    ...firewallV3Config,
+                                    interrupt: {
+                                      ...firewallV3Config.interrupt,
+                                      mode: 'independent_llm',
+                                      main_llm: { ...firewallV3Config.interrupt.main_llm, enabled: false },
+                                      independent_llm: { ...firewallV3Config.interrupt.independent_llm, enabled: true },
+                                    },
+                                  })
+                                }
+                              />
+                              <span className="text-sm">独立 LLM 模式</span>
+                            </label>
+                          </div>
+                        </div>
+
+                        {firewallV3Config.interrupt.mode === 'independent_llm' && (
+                          <div>
+                            <label className="text-sm font-medium mb-2 block">独立 LLM 模型</label>
+                            <input
+                              type="text"
+                              value={firewallV3Config.interrupt.independent_llm.model}
+                              onChange={(e) =>
+                                setFirewallV3Config({
+                                  ...firewallV3Config,
+                                  interrupt: {
+                                    ...firewallV3Config.interrupt,
+                                    independent_llm: { ...firewallV3Config.interrupt.independent_llm, model: e.target.value },
+                                  },
+                                })
+                              }
+                              className="w-full px-3 py-2 bg-[var(--color-bg-primary)] border border-[var(--color-border)] rounded-[var(--radius-md)]"
+                              placeholder="qwen2.5:1.5b"
+                            />
+                          </div>
+                        )}
+                      </>
+                    )}
+                  </div>
+                </CardBody>
+              </Card>
+
+              <div className="flex justify-end mt-6">
+                <Button onClick={handleSave} loading={saveStatus === 'saving'}>
+                  {saveStatus === 'saved' ? '已保存' : '保存配置'}
+                </Button>
+              </div>
+            </div>
+          )}
+
+          {activeSection === 'live' && (
+            <div className="space-y-6">
+              {/* 直播客户端状态 */}
+              <Card>
+                <CardBody>
+                  <h3 className="text-lg font-semibold mb-4">直播客户端状态</h3>
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-3">
+                      <div className={`w-3 h-3 rounded-full ${liveClientStatus.connected ? 'bg-green-500' : 'bg-gray-400'}`} />
+                      <span className="text-sm font-medium">
+                        {liveClientStatus.connected ? '已连接' : '未连接'}
+                      </span>
+                      {liveClientStatus.connected && liveClientStatus.client_id && (
+                        <span className="text-xs text-[var(--color-text-tertiary)]">
+                          ID: {liveClientStatus.client_id.slice(0, 8)}...
+                        </span>
+                      )}
+                    </div>
+                    <Button
+                      onClick={async () => {
+                        if (liveClientStatus.connected && liveClientStatus.client_id) {
+                          await api.disconnectLiveClient(liveClientStatus.client_id);
+                          setLiveClientStatus({ connected: false });
+                        }
+                      }}
+                      disabled={!liveClientStatus.connected}
+                      variant="ghost"
+                      size="sm"
+                    >
+                      断开连接
                     </Button>
                   </div>
                 </CardBody>
               </Card>
+
+              {/* 弹幕 WebSocket 配置 */}
+              <Card>
+                <CardBody>
+                  <h3 className="text-lg font-semibold mb-4">弹幕 WebSocket 配置</h3>
+                  <div className="space-y-4">
+                    <div>
+                      <label className="text-sm font-medium mb-2 block">WebSocket 端点</label>
+                      <input
+                        type="text"
+                        value={danmakuConfig.websocket.endpoint}
+                        onChange={(e) =>
+                          setDanmakuConfig({
+                            ...danmakuConfig,
+                            websocket: { ...danmakuConfig.websocket, endpoint: e.target.value },
+                          })
+                        }
+                        className="w-full px-3 py-2 bg-[var(--color-bg-primary)] border border-[var(--color-border)] rounded-[var(--radius-md)]"
+                        placeholder="/ws/live"
+                      />
+                    </div>
+                    <div>
+                      <label className="text-sm font-medium mb-2 block">最大连接数</label>
+                      <input
+                        type="number"
+                        value={danmakuConfig.websocket.max_connections}
+                        onChange={(e) =>
+                          setDanmakuConfig({
+                            ...danmakuConfig,
+                            websocket: { ...danmakuConfig.websocket, max_connections: parseInt(e.target.value) || 100 },
+                          })
+                        }
+                        className="w-full px-3 py-2 bg-[var(--color-bg-primary)] border border-[var(--color-border)] rounded-[var(--radius-md)]"
+                      />
+                    </div>
+                  </div>
+                </CardBody>
+              </Card>
+
+              {/* 弹幕数据源配置 */}
+              <Card>
+                <CardBody>
+                  <h3 className="text-lg font-semibold mb-4">弹幕数据源</h3>
+                  <div className="space-y-4">
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <label className="text-sm font-medium">B站弹幕</label>
+                        <p className="text-xs text-[var(--color-text-tertiary)]">接入 B站 直播弹幕</p>
+                      </div>
+                      <button
+                        onClick={() =>
+                          setDanmakuConfig({
+                            ...danmakuConfig,
+                            sources: {
+                              ...danmakuConfig.sources,
+                              bilibili: { ...danmakuConfig.sources.bilibili, enabled: !danmakuConfig.sources.bilibili.enabled },
+                            },
+                          })
+                        }
+                        className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${
+                          danmakuConfig.sources.bilibili.enabled ? 'bg-[var(--color-accent)]' : 'bg-[var(--color-border)]'
+                        }`}
+                      >
+                        <span className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${danmakuConfig.sources.bilibili.enabled ? 'translate-x-6' : 'translate-x-1'}`} />
+                      </button>
+                    </div>
+                    {danmakuConfig.sources.bilibili.enabled && (
+                      <div>
+                        <label className="text-sm font-medium mb-2 block">B站 WebSocket 地址</label>
+                        <input
+                          type="text"
+                          value={danmakuConfig.sources.bilibili.websocket_url}
+                          onChange={(e) =>
+                            setDanmakuConfig({
+                              ...danmakuConfig,
+                              sources: {
+                                ...danmakuConfig.sources,
+                                bilibili: { ...danmakuConfig.sources.bilibili, websocket_url: e.target.value },
+                              },
+                            })
+                          }
+                          className="w-full px-3 py-2 bg-[var(--color-bg-primary)] border border-[var(--color-border)] rounded-[var(--radius-md)]"
+                          placeholder="ws://localhost:8080"
+                        />
+                      </div>
+                    )}
+
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <label className="text-sm font-medium">RDF 弹幕</label>
+                        <p className="text-xs text-[var(--color-text-tertiary)]">接入 RDF 直播弹幕</p>
+                      </div>
+                      <button
+                        onClick={() =>
+                          setDanmakuConfig({
+                            ...danmakuConfig,
+                            sources: {
+                              ...danmakuConfig.sources,
+                              rdf: { ...danmakuConfig.sources.rdf, enabled: !danmakuConfig.sources.rdf.enabled },
+                            },
+                          })
+                        }
+                        className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${
+                          danmakuConfig.sources.rdf.enabled ? 'bg-[var(--color-accent)]' : 'bg-[var(--color-border)]'
+                        }`}
+                      >
+                        <span className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${danmakuConfig.sources.rdf.enabled ? 'translate-x-6' : 'translate-x-1'}`} />
+                      </button>
+                    </div>
+                    {danmakuConfig.sources.rdf.enabled && (
+                      <div>
+                        <label className="text-sm font-medium mb-2 block">RDF WebSocket 地址</label>
+                        <input
+                          type="text"
+                          value={danmakuConfig.sources.rdf.websocket_url}
+                          onChange={(e) =>
+                            setDanmakuConfig({
+                              ...danmakuConfig,
+                              sources: {
+                                ...danmakuConfig.sources,
+                                rdf: { ...danmakuConfig.sources.rdf, websocket_url: e.target.value },
+                              },
+                            })
+                          }
+                          className="w-full px-3 py-2 bg-[var(--color-bg-primary)] border border-[var(--color-border)] rounded-[var(--radius-md)]"
+                          placeholder="ws://localhost:9898"
+                        />
+                      </div>
+                    )}
+                  </div>
+                </CardBody>
+              </Card>
+
+              {/* 弹幕防火墙配置 */}
+              <Card>
+                <CardBody>
+                  <h3 className="text-lg font-semibold mb-4">弹幕防火墙</h3>
+                  <div className="space-y-4">
+                    <div>
+                      <label className="text-sm font-medium mb-2 block">LLM 模型</label>
+                      <input
+                        type="text"
+                        value={firewallConfig.llm.default_model}
+                        onChange={(e) =>
+                          setFirewallConfig({
+                            ...firewallConfig,
+                            llm: { ...firewallConfig.llm, default_model: e.target.value },
+                          })
+                        }
+                        className="w-full px-3 py-2 bg-[var(--color-bg-primary)] border border-[var(--color-border)] rounded-[var(--radius-md)]"
+                        placeholder="qwen2.5:latest"
+                      />
+                    </div>
+                    <div>
+                      <label className="text-sm font-medium mb-2 block">LLM 超时 (ms)</label>
+                      <input
+                        type="number"
+                        value={firewallConfig.decision.timeout_ms}
+                        onChange={(e) =>
+                          setFirewallConfig({
+                            ...firewallConfig,
+                            decision: { ...firewallConfig.decision, timeout_ms: parseInt(e.target.value) || 5000 },
+                          })
+                        }
+                        className="w-full px-3 py-2 bg-[var(--color-bg-primary)] border border-[var(--color-border)] rounded-[var(--radius-md)]"
+                      />
+                    </div>
+
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <label className="text-sm font-medium">黑名单</label>
+                        <p className="text-xs text-[var(--color-text-tertiary)]">启用用户黑名单过滤</p>
+                      </div>
+                      <button
+                        onClick={() =>
+                          setFirewallConfig({
+                            ...firewallConfig,
+                            blocking: { ...firewallConfig.blocking, blacklist_enabled: !firewallConfig.blocking.blacklist_enabled },
+                          })
+                        }
+                        className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${
+                          firewallConfig.blocking.blacklist_enabled ? 'bg-[var(--color-accent)]' : 'bg-[var(--color-border)]'
+                        }`}
+                      >
+                        <span className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${firewallConfig.blocking.blacklist_enabled ? 'translate-x-6' : 'translate-x-1'}`} />
+                      </button>
+                    </div>
+
+                    {firewallConfig.blocking.blacklist_enabled && (
+                      <div>
+                        <label className="text-sm font-medium mb-2 block">黑名单 UID 列表</label>
+                        <div className="flex gap-2 mb-2">
+                          <input
+                            type="text"
+                            value={newBlacklistUid}
+                            onChange={(e) => setNewBlacklistUid(e.target.value)}
+                            className="flex-1 px-3 py-2 bg-[var(--color-bg-primary)] border border-[var(--color-border)] rounded-[var(--radius-md)]"
+                            placeholder="输入 UID"
+                          />
+                          <Button
+                            onClick={() => {
+                              if (newBlacklistUid.trim()) {
+                                setFirewallConfig({
+                                  ...firewallConfig,
+                                  blocking: {
+                                    ...firewallConfig.blocking,
+                                    blacklist: [...firewallConfig.blocking.blacklist, newBlacklistUid.trim()],
+                                  },
+                                });
+                                setNewBlacklistUid('');
+                              }
+                            }}
+                            size="sm"
+                          >
+                            添加
+                          </Button>
+                        </div>
+                        <div className="flex flex-wrap gap-2">
+                          {firewallConfig.blocking.blacklist.map((uid) => (
+                            <span
+                              key={uid}
+                              className="inline-flex items-center gap-1 px-2 py-1 bg-[var(--color-bg-tertiary)] rounded-[var(--radius-md)] text-sm"
+                            >
+                              {uid}
+                              <button
+                                onClick={() =>
+                                  setFirewallConfig({
+                                    ...firewallConfig,
+                                    blocking: {
+                                      ...firewallConfig.blocking,
+                                      blacklist: firewallConfig.blocking.blacklist.filter((u) => u !== uid),
+                                    },
+                                  })
+                                }
+                                className="text-[var(--color-text-tertiary)] hover:text-red-500"
+                              >
+                                ×
+                              </button>
+                            </span>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                </CardBody>
+              </Card>
+
+              <div className="flex justify-end">
+                <Button onClick={handleSave} loading={saveStatus === 'saving'}>
+                  {saveStatus === 'saved' ? '已保存' : '保存配置'}
+                </Button>
+              </div>
             </div>
           )}
         </div>

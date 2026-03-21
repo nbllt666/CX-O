@@ -27,6 +27,12 @@ export interface WebSocketMessage {
   };
   is_final?: boolean;
   chunk_index?: number;
+  is_speaking?: boolean;
+  speech_probability?: number;
+  speech_duration_ms?: number;
+  silence_duration_ms?: number;
+  should_reply?: boolean;
+  reply_content?: string;
 }
 
 export interface WebSocketOptions {
@@ -164,12 +170,14 @@ export function useWebSocket(options: WebSocketOptions): UseWebSocketReturn {
           case 'response':
             if (data.status === 'error') {
               setIsGenerating(false);
-              onErrorRef.current?.(data.error?.message || 'Unknown error');
+              const errorMsg = typeof data.error === 'object' ? data.error?.message : data.error;
+              onErrorRef.current?.(errorMsg || 'Unknown error');
             }
             break;
           case 'error':
             setIsGenerating(false);
-            onErrorRef.current?.(data.error?.message || data.error || 'Unknown error');
+            const errMsg = typeof data.error === 'object' ? data.error?.message : data.error;
+            onErrorRef.current?.(errMsg || 'Unknown error');
             break;
           case 'content':
           case 'tool_call':
@@ -188,6 +196,14 @@ export function useWebSocket(options: WebSocketOptions): UseWebSocketReturn {
             onMessageRef.current?.(data);
             break;
           case 'tool_start':
+            onMessageRef.current?.(data);
+            break;
+          case 'vad_status':
+          case 'vad_frame':
+          case 'asr_stream_result':
+          case 'asr_stream_status':
+          case 'agent_interrupt_user':
+          case 'agent_reply':
             onMessageRef.current?.(data);
             break;
           default:

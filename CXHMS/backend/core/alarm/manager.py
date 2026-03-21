@@ -66,6 +66,7 @@ class AlarmManager:
         self._lock = threading.Lock()
         self._on_trigger_callback = None
         self._shutdown = False
+        self._connection_cache: Dict[int, sqlite3.Connection] = {}
         self._ensure_db()
 
     def _ensure_db(self):
@@ -88,12 +89,37 @@ class AlarmManager:
         """
         )
         conn.commit()
-        conn.close()
+        self._close_connection(conn)
 
     def _get_connection(self) -> sqlite3.Connection:
-        conn = sqlite3.connect(self.db_path)
+        thread_id = threading.get_ident()
+        
+        if thread_id in self._connection_cache:
+            conn = self._connection_cache[thread_id]
+            try:
+                conn.execute("SELECT 1")
+                return conn
+            except Exception:
+                try:
+                    conn.close()
+                except Exception:
+                    pass
+                del self._connection_cache[thread_id]
+        
+        conn = sqlite3.connect(self.db_path, timeout=30.0)
         conn.row_factory = sqlite3.Row
+        conn.execute("PRAGMA journal_mode=WAL")
+        conn.execute("PRAGMA synchronous=NORMAL")
+        conn.execute("PRAGMA cache_size=-64000")
+        conn.execute("PRAGMA busy_timeout=30000")
+        self._connection_cache[thread_id] = conn
         return conn
+    
+    def _close_connection(self, conn: sqlite3.Connection):
+        try:
+            conn.close()
+        except Exception:
+            pass
 
     def set_trigger_callback(self, callback):
         self._on_trigger_callback = callback

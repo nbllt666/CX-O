@@ -1,11 +1,58 @@
 """
 配置管理模块
+支持环境变量 + JSON 配置文件混合配置
+环境变量优先级高于配置文件
 """
 import json
 import os
 from pathlib import Path
 from typing import Any, Optional, List, Dict
 from pydantic import BaseModel, ConfigDict, Field
+
+
+# 环境变量前缀
+ENV_PREFIX = "CXO_GATEWAY_"
+
+
+def get_env_config() -> Dict[str, Any]:
+    """从环境变量获取配置，覆盖 JSON 配置"""
+    env_config: Dict[str, Any] = {"services": {}, "gateway": {}, "logging": {}}
+    
+    # Gateway 配置
+    if os.getenv(f"{ENV_PREFIX}HOST"):
+        env_config["gateway"]["host"] = os.getenv(f"{ENV_PREFIX}HOST")
+    if os.getenv(f"{ENV_PREFIX}PORT"):
+        env_config["gateway"]["port"] = int(os.getenv(f"{ENV_PREFIX}PORT"))
+    
+    # 服务 URL 配置
+    if os.getenv(f"{ENV_PREFIX}CXHMS_URL"):
+        env_config["services"]["cxhms"] = env_config["services"].get("cxhms", {})
+        env_config["services"]["cxhms"]["url"] = os.getenv(f"{ENV_PREFIX}CXHMS_URL")
+    if os.getenv(f"{ENV_PREFIX}CXHMS_HTTP_URL"):
+        env_config["services"]["cxhms"] = env_config["services"].get("cxhms", {})
+        env_config["services"]["cxhms"]["http_url"] = os.getenv(f"{ENV_PREFIX}CXHMS_HTTP_URL")
+    
+    if os.getenv(f"{ENV_PREFIX}ASR_URL"):
+        env_config["services"]["asr"] = env_config["services"].get("asr", {})
+        env_config["services"]["asr"]["url"] = os.getenv(f"{ENV_PREFIX}ASR_URL")
+    
+    if os.getenv(f"{ENV_PREFIX}TTS_URL"):
+        env_config["services"]["tts"] = env_config["services"].get("tts", {})
+        env_config["services"]["tts"]["url"] = os.getenv(f"{ENV_PREFIX}TTS_URL")
+    
+    if os.getenv(f"{ENV_PREFIX}INDEX_TTS_URL"):
+        env_config["services"]["index_tts"] = env_config["services"].get("index_tts", {})
+        env_config["services"]["index_tts"]["url"] = os.getenv(f"{ENV_PREFIX}INDEX_TTS_URL")
+    
+    # 日志配置
+    if os.getenv(f"{ENV_PREFIX}LOG_LEVEL"):
+        env_config["logging"]["level"] = os.getenv(f"{ENV_PREFIX}LOG_LEVEL")
+    
+    # 移除空嵌套
+    env_config = {k: v for k, v in env_config.items() if v}
+    env_config["services"] = {k: v for k, v in env_config.get("services", {}).items() if v}
+    
+    return env_config
 
 
 class CorsConfig(BaseModel):
@@ -107,8 +154,23 @@ def load_config() -> Config:
     with open(config_path, "r", encoding="utf-8") as f:
         config_data = json.load(f)
     
+    # 合并环境变量配置（优先级更高）
+    env_config = get_env_config()
+    config_data = deep_merge(config_data, env_config)
+    
     _config = Config(**config_data)
     return _config
+
+
+def deep_merge(base: Dict[str, Any], override: Dict[str, Any]) -> Dict[str, Any]:
+    """深度合并字典，override 优先级高于 base"""
+    result = base.copy()
+    for key, value in override.items():
+        if key in result and isinstance(result[key], dict) and isinstance(value, dict):
+            result[key] = deep_merge(result[key], value)
+        else:
+            result[key] = value
+    return result
 
 
 def get_config() -> Config:

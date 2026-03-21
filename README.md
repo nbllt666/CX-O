@@ -33,6 +33,9 @@
 - **多模型支持**: Ollama 本地模型，可扩展支持其他 LLM
 - **工具生态**: MCP 协议支持，内置多种工具
 - **ACP 协议**: 局域网自动发现、点对点通信、群组协同
+- **弹幕系统**: B站/RDF 弹幕接入，三档防火墙（block/passive/reply）
+- **双向全双工**: 用户打断 Agent TTS、Agent 打断用户说话
+- **VAD 语音检测**: WebRTC/Energy/Silero 多种模式
 
 ## 快速开始
 
@@ -176,6 +179,84 @@ memory:
 | 工具 | tools.call | 调用工具 |
 | 语音 | asr.recognize | 语音识别 |
 | 语音 | tts.synthesize | 语音合成 |
+| 语音 | asr_stream | 实时音频流（带 VAD） |
+| 直播 | live.connect | 连接直播客户端 |
+| 直播 | live.danmaku | 弹幕消息 |
+| 防火墙 | firewall.decide | 弹幕决策 |
+
+## v3 新增功能
+
+### 双向全双工架构
+
+```
+┌─────────────────────────────────────────────────────────────────────────┐
+│                        双向全双工架构                                     │
+├─────────────────────────────────────────────────────────────────────────┤
+│                                                                         │
+│  场景 1: 用户打断 Agent                                                 │
+│  Agent TTS 播放中 ──▶ 用户说话 ──▶ ASR 识别 ──▶ LLM 判断               │
+│                                              │                          │
+│                              ┌───────────────┴───────────────┐          │
+│                              ▼                               ▼          │
+│                      需要打断用户              不需要打断                │
+│                      停止 TTS                 继续播放                  │
+│                      生成新回复                                          │
+│                                                                         │
+│  场景 2: Agent 打断用户                                                 │
+│  用户说话中 ──▶ 实时 ASR 流 ──▶ LLM 实时判断                           │
+│                                    │                                    │
+│                    ┌───────────────┴───────────────┐                    │
+│                    ▼                               ▼                    │
+│            可以插话/用户说完              用户还在说                    │
+│            打断用户音频                   继续监听                      │
+│            开始 TTS 回复                                                │
+│                                                                         │
+└─────────────────────────────────────────────────────────────────────────┘
+```
+
+### VAD 配置
+
+文件: `CXHMS/config/vad.yaml`
+
+```yaml
+vad:
+  mode: "webrtc"           # energy | webrtc | silero
+  sample_rate: 16000
+  frame_duration_ms: 30
+  silence_threshold_ms: 500
+  speech_threshold_ms: 300
+
+audio_stream:
+  asr_interval_ms: 500
+
+agent_interrupt:
+  enabled: true
+  interrupt_threshold_ms: 500
+  min_speech_duration_ms: 1000
+  interrupt_cooldown_ms: 3000
+```
+
+### 弹幕防火墙
+
+文件: `CXHMS/config/firewall.yaml`
+
+```yaml
+llm:
+  default_model: "qwen2.5:latest"
+
+blocking:
+  blacklist:
+    - "123456"
+  blacklist_enabled: true
+
+decision:
+  timeout_ms: 5000
+```
+
+三档决策：
+- **BLOCK**: 阻断弹幕，不加入上下文
+- **PASSIVE**: 放行弹幕，加入上下文，不触发回复
+- **REPLY**: 放行弹幕，加入上下文，触发 LLM 回复
 
 ## 技术栈
 

@@ -1,0 +1,18 @@
+# 弹幕配置
+websocket:
+  endpoint: "/ws/live"
+  max_connections: 100
+
+sources:
+  bilibili:
+    enabled: true
+    websocket_url: "ws://localhost:8080"
+    room_id: "12345678"
+    
+  rdf:
+    enabled: true
+    websocket_url: "ws://localhost:9898"
+
+processing:
+  max_queue_size: 100
+  timeout_seconds: 30

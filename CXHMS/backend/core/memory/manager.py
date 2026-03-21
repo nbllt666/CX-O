@@ -579,22 +579,31 @@ class MemoryManager:
         import sqlite3
 
         thread_id = threading.get_ident()
+        current_time = time.time()
 
         with self._lock:
             if thread_id in self._connection_pool:
                 conn_info = self._connection_pool[thread_id]
                 if isinstance(conn_info, dict):
                     conn = conn_info["connection"]
+                    last_used = conn_info.get("last_used", 0)
                 else:
                     conn = conn_info
+                    last_used = current_time
 
                 try:
                     conn.execute("SELECT 1")
+                    
                     if isinstance(conn_info, dict):
-                        conn_info["last_used"] = time.time()
+                        conn_info["last_used"] = current_time
+                        conn_info["use_count"] = conn_info.get("use_count", 0) + 1
+                        
+                        if current_time - last_used > 300 and conn_info.get("use_count", 0) > 100:
+                            conn.close()
+                            del self._connection_pool[thread_id]
+                            conn = None
                     return conn
                 except Exception:
-                    # 连接已关闭或失效，需要重新创建
                     pass
 
                 try:
@@ -616,8 +625,15 @@ class MemoryManager:
         conn.execute("PRAGMA journal_mode=WAL")
         conn.execute("PRAGMA synchronous=NORMAL")
         conn.execute("PRAGMA cache_size=-64000")
+        conn.execute("PRAGMA temp_store=MEMORY")
+        conn.execute("PRAGMA mmap_size=268435456")
+        conn.execute("PRAGMA busy_timeout=30000")
 
-        connection_info = {"connection": conn, "last_used": time.time()}
+        connection_info = {
+            "connection": conn, 
+            "last_used": current_time,
+            "use_count": 0
+        }
 
         with self._lock:
             self._connection_pool[thread_id] = connection_info

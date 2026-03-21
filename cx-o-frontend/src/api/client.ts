@@ -215,6 +215,16 @@ class ApiClient {
     return response.data;
   }
 
+  async getGatewayServicesConfig() {
+    const response = await this.client.get('/api/config/services');
+    return response.data;
+  }
+
+  async updateGatewayServicesConfig(config: Record<string, unknown>) {
+    const response = await this.client.post('/api/config/services', config);
+    return response.data;
+  }
+
   async getEnvironmentInfo() {
     const response = await this.client.get('/api/service/environment');
     return response.data;
@@ -1151,6 +1161,107 @@ class ApiClient {
 
   async getEmotionConfigs() {
     const response = await this.client.get('/api/audio/emotions/list');
+    return response.data;
+  }
+
+  // ========== Live/Danmaku Config API ==========
+
+  async getDanmakuConfig() {
+    const response = await this.client.get('/api/config/danmaku');
+    return response.data;
+  }
+
+  async updateDanmakuConfig(config: {
+    websocket?: {
+      endpoint?: string;
+      max_connections?: number;
+    };
+    sources?: {
+      bilibili?: { enabled?: boolean; websocket_url?: string };
+      rdf?: { enabled?: boolean; websocket_url?: string };
+    };
+  }) {
+    const response = await this.client.post('/api/config/danmaku', config);
+    return response.data;
+  }
+
+  async getFirewallConfig() {
+    const response = await this.client.get('/api/config/firewall');
+    return response.data;
+  }
+
+  async updateFirewallConfig(config: {
+    llm?: { default_model?: string };
+    blocking?: { blacklist_enabled?: boolean; blacklist?: string[] };
+    decision?: { confidence_threshold?: number; timeout_ms?: number };
+  }) {
+    const response = await this.client.post('/api/config/firewall', config);
+    return response.data;
+  }
+
+  async getFirewallV3Config() {
+    const response = await this.client.get('/api/config/firewall_v3');
+    return response.data;
+  }
+
+  async updateFirewallV3Config(config: {
+    interrupt?: {
+      enabled?: boolean;
+      mode?: 'main_llm' | 'independent_llm';
+      main_llm?: { enabled?: boolean; prompt?: string };
+      independent_llm?: { enabled?: boolean; model?: string };
+    };
+  }) {
+    const response = await this.client.post('/api/config/firewall_v3', config);
+    return response.data;
+  }
+
+  async getLiveClientStatus() {
+    const response = await this.client.get('/api/live/status');
+    return response.data;
+  }
+
+  async connectLiveClient(data: {
+    client_type?: string;
+    room_id?: string;
+    supported_markers?: string[];
+    marker_config?: Record<string, unknown>;
+  }) {
+    const response = await this.client.post('/api/live/connect', data);
+    return response.data;
+  }
+
+  async disconnectLiveClient(client_id: string) {
+    const response = await this.client.delete(`/api/live/disconnect/${client_id}`);
+    return response.data;
+  }
+
+  async getVadConfig() {
+    const response = await this.client.get('/api/config/vad');
+    return response.data;
+  }
+
+  async updateVadConfig(config: {
+    vad?: {
+      mode?: 'energy' | 'webrtc' | 'silero';
+      sample_rate?: number;
+      frame_duration_ms?: number;
+      energy_threshold?: number;
+      silence_threshold_ms?: number;
+      speech_threshold_ms?: number;
+    };
+    audio_stream?: {
+      asr_interval_ms?: number;
+      buffer_duration_ms?: number;
+    };
+    agent_interrupt?: {
+      enabled?: boolean;
+      interrupt_threshold_ms?: number;
+      min_speech_duration_ms?: number;
+      interrupt_cooldown_ms?: number;
+    };
+  }) {
+    const response = await this.client.post('/api/config/vad', config);
     return response.data;
   }
 }

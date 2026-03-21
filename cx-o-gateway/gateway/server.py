@@ -1,12 +1,14 @@
 """
 WebSocket 服务端
 """
+from __future__ import annotations
+
 import asyncio
 import json
 import logging
 import time
 from pathlib import Path
-from typing import Any, Callable, Optional
+from typing import Any, Callable, Optional, TYPE_CHECKING
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse, Response
@@ -19,6 +21,9 @@ from protocol.message import (
 from protocol.actions import get_handler_name, SystemActions
 from gateway.config import get_config, save_config
 from gateway.health import health_checker
+
+if TYPE_CHECKING:
+    from services.cxhms_client import CXHMSClient
 
 logger = logging.getLogger(__name__)
 
@@ -77,11 +82,70 @@ class ConnectionManager:
 
 
 manager = ConnectionManager()
+_cxhms_client: Optional[CXHMSClient] = None
+
+
+def get_cxhms_client() -> Optional[CXHMSClient]:
+    """获取 CXHMS 客户端实例"""
+    return _cxhms_client
+
+
+def get_config():
+    """获取配置实例"""
+    from gateway.config import get_config as _get_config
+    return _get_config()
 
 
 async def handle_ping(websocket: WebSocket, message: dict, client_id: str):
     timestamp = message.get("timestamp", time.time())
     await manager.send_message(client_id, create_pong(timestamp))
+
+
+async def handle_live_connection(websocket: WebSocket, client_id: str):
+    """处理直播客户端连接"""
+    await websocket.accept()
+    logger.info(f"Live client connected: {client_id}")
+    
+    # 存储客户端配置
+    client_config = {
+        "client_type": None,
+        "room_id": None,
+        "supported_markers": [],
+        "marker_config": {}
+    }
+    
+    # 导入所需模块
+    from services.live_client import LiveClientHandler
+    
+    live_handler = LiveClientHandler(manager, client_id, client_config)
+    
+    try:
+        while True:
+            # 接收文本或二进制数据
+            msg = await websocket.receive()
+            
+            if msg.get("type") == "text":
+                data = msg.get("text", "")
+                try:
+                    message = json.loads(data)
+                    await live_handler.handle_message(websocket, message, client_id)
+                except json.JSONDecodeError:
+                    logger.error(f"Invalid JSON from live client {client_id}")
+                    
+            elif msg.get("type") == "bytes":
+                # 处理二进制音频数据
+                audio_data = msg.get("bytes", b"")
+                await live_handler.handle_audio(websocket, audio_data, client_id)
+                
+            elif msg.get("type") == "disconnect":
+                break
+                
+    except WebSocketDisconnect:
+        logger.info(f"Live client disconnected: {client_id}")
+    except Exception as e:
+        logger.error(f"Live WebSocket error: {e}")
+    finally:
+        logger.info(f"Live client cleanup: {client_id}")
 
 
 async def handle_system_health(websocket: WebSocket, message: dict, client_id: str):
@@ -191,6 +255,12 @@ def create_app() -> FastAPI:
         url=cxhms_url,
         pool_size=5
     )
+    global _cxhms_client
+    _cxhms_client = cxhms_client
+    
+    from services.firewall import FirewallService
+    firewall = FirewallService.get_instance()
+    firewall.set_cxhms_client(cxhms_client)
     
     tts_config = config.services.tts
     tts_client = TTSClient(
@@ -217,6 +287,10 @@ def create_app() -> FastAPI:
     register_chat_handlers(manager, cxhms_client)
     register_memory_handlers(manager, cxhms_client)
     register_audio_handlers(manager, asr_client, tts_client)
+    
+    from handlers.audio import init_interrupt_module, init_audio_stream_processor
+    init_interrupt_module(cxhms_client)
+    init_audio_stream_processor(asr_client, cxhms_client)
 
     @app.get("/health")
     async def health_check():
@@ -235,6 +309,16 @@ def create_app() -> FastAPI:
         except Exception as e:
             logger.error(f"WebSocket error: {e}")
 
+    @app.websocket("/ws/live")
+    async def live_websocket_endpoint(websocket: WebSocket):
+        """直播客户端 WebSocket 端点 - 用于接收音频/弹幕"""
+        import uuid
+        client_id = str(uuid.uuid4())
+        try:
+            await handle_live_connection(websocket, client_id)
+        except Exception as e:
+            logger.error(f"Live WebSocket error: {e}")
+
     @app.get("/api/config/audio")
     async def get_audio_config():
         config = get_config()
@@ -251,6 +335,78 @@ def create_app() -> FastAPI:
                 "emotion_voices": getattr(tts_config, 'emotion_voices', {})
             }
         }
+
+    @app.get("/api/config/services")
+    async def get_services_config():
+        """获取所有服务配置"""
+        config = get_config()
+        services = config.services
+        return {
+            "status": "success",
+            "config": {
+                "cxhms": {
+                    "url": services.cxhms.url,
+                    "http_url": getattr(services.cxhms, 'http_url', None),
+                    "timeout": services.cxhms.timeout
+                },
+                "asr": {
+                    "url": services.asr.url,
+                    "timeout": services.asr.timeout
+                },
+                "tts": {
+                    "url": services.tts.url,
+                    "timeout": services.tts.timeout
+                },
+                "index_tts": {
+                    "url": getattr(services, 'index_tts', {}).get('url', 'http://127.0.0.1:8004') if hasattr(services, 'index_tts') else None,
+                    "enabled": getattr(services, 'index_tts', {}).get('enabled', True) if hasattr(services, 'index_tts') else False,
+                    "timeout": getattr(services, 'index_tts', {}).get('timeout', 180) if hasattr(services, 'index_tts') else 180
+                }
+            }
+        }
+
+    @app.post("/api/config/services")
+    async def update_services_config(request: Request):
+        """更新服务配置"""
+        try:
+            data = await request.json()
+            config = get_config()
+            services = config.services
+            
+            if 'cxhms' in data:
+                if 'url' in data['cxhms']:
+                    services.cxhms.url = data['cxhms']['url']
+                if 'http_url' in data['cxhms']:
+                    services.cxhms.http_url = data['cxhms']['http_url']
+                if 'timeout' in data['cxhms']:
+                    services.cxhms.timeout = data['cxhms']['timeout']
+            
+            if 'asr' in data:
+                if 'url' in data['asr']:
+                    services.asr.url = data['asr']['url']
+                if 'timeout' in data['asr']:
+                    services.asr.timeout = data['asr']['timeout']
+            
+            if 'tts' in data:
+                if 'url' in data['tts']:
+                    services.tts.url = data['tts']['url']
+                if 'timeout' in data['tts']:
+                    services.tts.timeout = data['tts']['timeout']
+            
+            if 'index_tts' in data and hasattr(services, 'index_tts'):
+                if 'url' in data['index_tts']:
+                    services.index_tts.url = data['index_tts']['url']
+                if 'enabled' in data['index_tts']:
+                    services.index_tts.enabled = data['index_tts']['enabled']
+                if 'timeout' in data['index_tts']:
+                    services.index_tts.timeout = data['index_tts']['timeout']
+            
+            save_config(config)
+            
+            return {"status": "success", "message": "服务配置已保存，需要重启生效"}
+        except Exception as e:
+            logger.error(f"Failed to update services config: {e}")
+            return {"status": "error", "message": str(e)}
 
     @app.post("/api/config/audio")
     async def update_audio_config(request: Request):
@@ -806,6 +962,13 @@ def create_app() -> FastAPI:
 
     @app.api_route("/control/{path:path}", methods=["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"])
     async def proxy_control(request: Request, path: str):
+        if not control_service_url or not control_service_url.startswith('http'):
+            return Response(
+                content=json.dumps({"error": "Control service not configured", "running": False}),
+                status_code=503,
+                media_type="application/json",
+            )
+
         target_url = f"{control_service_url}/control/{path}"
         
         query_params = str(request.query_params)

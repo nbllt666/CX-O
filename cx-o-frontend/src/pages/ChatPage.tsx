@@ -206,7 +206,7 @@ export function ChatPage() {
       type: string;
       content?: string;
       done?: boolean;
-      error?: string;
+      error?: string | { code: string; message: string };
       tool_call?: Record<string, unknown>;
       tool_name?: string;
       result?: unknown;

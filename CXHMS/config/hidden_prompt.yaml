@@ -1,0 +1,29 @@
+# 隐藏提示词配置（工具调用相关）
+
+tool_instructions: |
+  ## 工具调用规则
+  
+  ### 记忆系统
+  - write_memory: 用户告诉你重要信息时（名字、爱好等）
+  - search_memories: 用户询问之前聊过的内容时
+
+  ### 弹幕决策
+  - danmaku_decide: 收到弹幕时自动判断是否需要回复
+
+tools: |
+  ## 工具说明
+  
+  ### write_memory
+ 用途：保存重要信息到长期记忆
+ 调用时机：用户告诉你他的名字、年龄、爱好等信息
+ 参数：content
+ 
+ ### search_memories  
+ 用途：从记忆库搜索相关内容
+ 调用时机：用户询问之前聊过的内容
+ 参数：query
+ 
+ ### danmaku_decide
+ 用途：判断弹幕是否需要回复
+ 调用时机：收到新弹幕
+ 返回：passive | reply
