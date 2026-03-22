@@ -105,6 +105,27 @@ memory:
     vector_size: 768
     schema_class: CXHMSMemory
     api_key: null
+  graph_enabled: true
+  graph_backend: neo4j
+  neo4j:
+    uri: bolt://localhost:7687
+    user: neo4j
+    password: password
+    database: neo4j
+    max_connection_pool_size: 50
+  graph_libraries:
+    user:
+      enabled: true
+      label_prefix: "User"
+    thing:
+      enabled: true
+      label_prefix: "Thing"
+    concept:
+      enabled: true
+      label_prefix: "Concept"
+    event:
+      enabled: true
+      label_prefix: "Event"
   hybrid_search_enabled: false
   archive_enabled: true
   dedup_threshold: 0.85

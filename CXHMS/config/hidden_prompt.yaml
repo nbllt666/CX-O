@@ -11,19 +11,145 @@ tool_instructions: |
   - danmaku_decide: 收到弹幕时自动判断是否需要回复
 
 tools: |
-  ## 工具说明
+  ## 工具详细说明
   
   ### write_memory
- 用途：保存重要信息到长期记忆
- 调用时机：用户告诉你他的名字、年龄、爱好等信息
- 参数：content
- 
- ### search_memories  
- 用途：从记忆库搜索相关内容
- 调用时机：用户询问之前聊过的内容
- 参数：query
- 
- ### danmaku_decide
- 用途：判断弹幕是否需要回复
- 调用时机：收到新弹幕
- 返回：passive | reply
+  用途：保存重要信息到长期记忆
+  调用时机：用户告诉你他的名字、年龄、爱好等信息
+  参数：content
+  
+  ### search_memories
+  用途：从记忆库搜索相关内容
+  调用时机：用户询问之前聊过的内容
+  参数：query
+  
+  ### danmaku_decide
+  用途：判断弹幕是否需要回复
+  调用时机：收到新弹幕
+  返回：passive | reply
+
+emotion_prompts: |
+  ## 情感标记使用指南
+
+  ### 标记格式
+  使用全角方括号包裹情感名称：【情感名】
+
+  ### 支持的情感类型
+  - normal: 平静，自然的语气
+  - happy: 开心、愉快的语气，表达积极情绪
+  - sad: 悲伤、低沉的语气，表达失落情绪
+  - angry: 愤怒、激动的语气，表达不满情绪
+  - surprised: 惊讶、意外的语气，表达震惊情绪
+  - fearful: 恐惧、紧张的语气，表达害怕情绪
+  - disgusted: 厌恶、反感的语气，表达不喜欢情绪
+  - tender: 温柔、柔和的语气，表达关爱情绪
+
+  ### 使用时机建议
+  - 用户表达喜悦 → 【happy】
+  - 用户表达悲伤 → 【sad】
+  - 用户表达愤怒 → 【angry】
+  - 用户表达惊讶 → 【surprised】
+  - 用户表达恐惧 → 【fearful】
+  - 用户表达厌恶 → 【disgusted】
+  - 用户表达温柔 → 【tender】
+  - 普通对话 → 【normal】
+
+  ### 示例
+  【happy】太棒了！今天天气真好！
+  【sad】听到这个消息我很难过。
+  【surprised】什么？竟然发生了这种事！
+
+effect_prompts: |
+  ## 音效标记使用指南
+
+  ### 标记格式
+  使用全角括号包裹音效名称：（音效名）
+
+  ### 音效使用原则
+  1. 适度使用：不要在每句话都添加音效
+  2. 场景匹配：音效应与对话内容相符
+  3. 情感配合：音效应与当前情感标记一致
+
+  ### 使用时机
+  - 描述到达：【normal】（敲门声）
+  - 表达喜悦：【happy】（笑声）
+  - 场景转换：配合情节发展
+  - 强调重点：配合关键信息
+
+  ### 注意事项
+  - 音效是对话的点缀，不是主体
+  - 避免过度使用造成干扰
+  - 优先保证文字内容的完整性
+
+tool_usage_prompts: |
+  ## 工具使用时机指南
+
+  ### 记忆工具
+  - write_memory: 用户告诉你重要信息时（名字、爱好、计划等）
+  - search_memories: 用户询问之前聊过的内容时
+  - update_memory_node: 用户要求修正或补充记忆时
+
+  ### 提醒工具
+  - set_alarm: 用户要求在特定时间提醒时
+  - get_alarms: 用户查询已设置的提醒时
+  - cancel_alarm: 用户要求取消提醒时
+
+  ### 上下文工具
+  - mono: 需要跨多轮记住关键信息时
+  - call_assistant: 需要复杂记忆管理任务时
+
+  ### ACP 网络工具
+  - acp_list_agents: 用户询问可用 Agent 时
+  - acp_connect: 用户要求连接其他 Agent 时
+  - acp_send_message: 用户需要向其他 Agent 发送消息时
+
+graph_tools: |
+  ## 图数据库工具使用指南
+
+  ### 四库架构说明
+  - UserGraph: 存储用户、人物、联系人实体
+    - 实体类型: person, user, contact
+    - 关系类型: knows, friend, family, colleague, enemy
+  - ThingGraph: 存储事物、物品、产品实体
+    - 实体类型: object, item, product
+    - 关系类型: owns, part_of, similar_to, located_at, made_of
+  - ConceptGraph: 存储概念、想法、主题实体
+    - 实体类型: concept, idea, topic
+    - 关系类型: related_to, subtopic_of, opposite_of, implies
+  - EventGraph: 存储事件、活动、发生的事
+    - 实体类型: event, activity, occurrence
+    - 关系类型: caused, followed_by, concurrent_with, prevents
+
+  ### 实体创建规范
+  1. 每个实体必须有 name 和 entity_type
+  2. 实体应关联到相关记忆 ID（memory_ids 字段）
+  3. 使用 properties 存储额外属性
+
+  ### 关系创建规范
+  1. 关系必须有 from_entity, to_entity, relation_type
+  2. 关系强度 strength 范围 0.0-1.0
+  3. 关系应关联到证据记忆 ID（evidence_memory_ids）
+
+  ### 使用时机
+  - 用户介绍自己或他人 → user_graph_create_entity
+  - 用户提到物品、产品 → thing_graph_create_entity
+  - 用户讨论概念、观点 → concept_graph_create_entity
+  - 用户描述发生的事 → event_graph_create_entity
+
+master_model_prompt: |
+  ## 主模型操作指南
+  当用户提及人物、事物、概念或事件时，主动使用对应的图工具记录实体和关系。
+  优先使用 search_related_memories 检索相关记忆。
+  情感表达要自然，音效使用要适度。
+
+summary_model_prompt: |
+  ## 摘要模型操作指南
+  在摘要对话时，使用 extract_entities 抽取实体并存储到对应图库。
+  合并重复实体时使用 merge_entities。
+  保持摘要简洁，突出重点。
+
+assistant_model_prompt: |
+  ## 记忆管理 Agent 操作指南
+  管理图数据时，使用 update/delete 操作维护数据质量。
+  定期使用 get_stats 检查图库健康状态。
+  响应用户的记忆管理请求时，要清晰说明操作结果。

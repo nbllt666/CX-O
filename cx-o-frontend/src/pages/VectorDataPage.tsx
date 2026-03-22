@@ -1,0 +1,409 @@
+import { useState } from 'react';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { api } from '../api/client';
+import { PageHeader } from '../components/layout';
+import { Button, Card, CardBody, Modal, Badge, Input } from '../components/ui';
+import { TimeAxis, TimeAxisDataPoint } from '../components/TimeAxis';
+
+interface Vector {
+  memory_id: number;
+  content: string;
+  memory_type: string;
+  importance: number;
+  created_at: string;
+  has_vector: boolean;
+}
+
+interface VectorStats {
+  vector_enabled: boolean;
+  total_vectors: number;
+  total_memories: number;
+  indexed_ratio: number;
+  backend: string;
+  collection_info: Record<string, unknown>;
+}
+
+export function VectorDataPage() {
+  const queryClient = useQueryClient();
+  const [searchQuery, setSearchQuery] = useState('');
+  const [memoryTypeFilter, setMemoryTypeFilter] = useState<string>('');
+  const [showSearchModal, setShowSearchModal] = useState(false);
+  const [showDetailModal, setShowDetailModal] = useState(false);
+  const [selectedVector, setSelectedVector] = useState<Vector | null>(null);
+  const [searchResults, setSearchResults] = useState<unknown[]>([]);
+  const [timeRange, setTimeRange] = useState<{ start: Date; end: Date } | null>(null);
+
+  const { data: vectorStatus, isLoading: statusLoading } = useQuery({
+    queryKey: ['vectorStatus'],
+    queryFn: () => api.getVectorStatus(),
+  });
+
+  const { data: vectorStats } = useQuery({
+    queryKey: ['vectorStats'],
+    queryFn: () => api.getVectorStats(),
+  });
+
+  const { data: vectors, isLoading: vectorsLoading } = useQuery({
+    queryKey: ['vectors', memoryTypeFilter, timeRange],
+    queryFn: () => api.listVectors({ limit: 100, memory_type: memoryTypeFilter || undefined }),
+    enabled: vectorStatus?.vector_status?.connected,
+    select: (data) => {
+      if (!timeRange || !data.vectors) return data;
+      return {
+        ...data,
+        vectors: data.vectors.filter((v: Vector) => {
+          const vectorDate = new Date(v.created_at);
+          return vectorDate >= timeRange.start && vectorDate <= timeRange.end;
+        }),
+      };
+    },
+  });
+
+  const syncMutation = useMutation({
+    mutationFn: () => api.syncVectors(),
+    onSuccess: (data) => {
+      queryClient.invalidateQueries({ queryKey: ['vectors'] });
+      queryClient.invalidateQueries({ queryKey: ['vectorStats'] });
+      alert(`同步完成: 检查 ${data.result.total_checked} 条, 同步 ${data.result.synced} 条`);
+    },
+  });
+
+  const rebuildMutation = useMutation({
+    mutationFn: () => api.rebuildVectors(),
+    onSuccess: (data) => {
+      queryClient.invalidateQueries({ queryKey: ['vectors'] });
+      queryClient.invalidateQueries({ queryKey: ['vectorStats'] });
+      alert(`重建完成: 同步 ${data.result.synced} 条`);
+    },
+  });
+
+  const deleteMutation = useMutation({
+    mutationFn: (memoryId: number) => api.deleteVector(memoryId),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['vectors'] });
+      queryClient.invalidateQueries({ queryKey: ['vectorStats'] });
+    },
+  });
+
+  const connected = vectorStatus?.vector_status?.connected;
+  const stats = vectorStats?.stats as VectorStats | undefined;
+
+  const handleSearch = async () => {
+    if (!searchQuery.trim()) return;
+    try {
+      const result = await api.searchVectors({
+        query: searchQuery,
+        limit: 10,
+        min_score: 0.5,
+      });
+      setSearchResults(result.results || []);
+      setShowSearchModal(true);
+    } catch {
+      alert('搜索失败');
+    }
+  };
+
+  return (
+    <div className="max-w-7xl mx-auto">
+      <PageHeader
+        title="向量数据库管理"
+        description="管理向量数据库中的嵌入向量"
+        actions={
+          <div className="flex items-center gap-2">
+            <span
+              className={`w-3 h-3 rounded-full ${
+                connected ? 'bg-green-500' : 'bg-red-500'
+              }`}
+            />
+            <span className="text-sm text-[var(--color-text-secondary)]">
+              {connected ? '已连接' : '未连接'}
+            </span>
+          </div>
+        }
+      />
+
+      {statusLoading ? (
+        <Card>
+          <CardBody>
+            <div className="text-center py-8">加载中...</div>
+          </CardBody>
+        </Card>
+      ) : !connected ? (
+        <Card>
+          <CardBody>
+            <div className="text-center py-12">
+              <div className="text-4xl mb-4">📊</div>
+              <h3 className="text-lg font-semibold mb-2">向量数据库未连接</h3>
+              <p className="text-[var(--color-text-secondary)]">
+                请先在设置中启用并配置向量数据库
+              </p>
+            </div>
+          </CardBody>
+        </Card>
+      ) : (
+        <div className="space-y-6">
+          <div className="grid grid-cols-4 gap-4">
+            <Card>
+              <CardBody>
+                <div className="text-sm text-[var(--color-text-tertiary)]">向量总数</div>
+                <div className="text-2xl font-bold">{stats?.total_vectors || 0}</div>
+              </CardBody>
+            </Card>
+            <Card>
+              <CardBody>
+                <div className="text-sm text-[var(--color-text-tertiary)]">记忆总数</div>
+                <div className="text-2xl font-bold">{stats?.total_memories || 0}</div>
+              </CardBody>
+            </Card>
+            <Card>
+              <CardBody>
+                <div className="text-sm text-[var(--color-text-tertiary)]">索引率</div>
+                <div className="text-2xl font-bold">
+                  {((stats?.indexed_ratio || 0) * 100).toFixed(1)}%
+                </div>
+              </CardBody>
+            </Card>
+            <Card>
+              <CardBody>
+                <div className="text-sm text-[var(--color-text-tertiary)]">后端</div>
+                <div className="text-2xl font-bold">{stats?.backend || 'unknown'}</div>
+              </CardBody>
+            </Card>
+          </div>
+
+          {/* 时间轴组件 */}
+          {vectors?.vectors && vectors.vectors.length > 0 && (
+            <TimeAxis
+              data={
+                vectors.vectors.reduce((acc: TimeAxisDataPoint[], vec: Vector) => {
+                  const date = new Date(vec.created_at);
+                  const dateStr = date.toISOString();
+                  const existing = acc.find((a: TimeAxisDataPoint) => a.timestamp === dateStr);
+                  if (existing) {
+                    existing.count += 1;
+                  } else {
+                    acc.push({ timestamp: dateStr, count: 1 });
+                  }
+                  return acc;
+                }, [] as TimeAxisDataPoint[])
+                .sort((a: TimeAxisDataPoint, b: TimeAxisDataPoint) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime())
+              }
+              width={800}
+              height={120}
+              onTimeRangeChange={(start, end) => {
+                console.log('时间范围变化:', start, end);
+              }}
+              onTimeRangeSelected={(start, end) => {
+                setTimeRange({ start, end });
+              }}
+            />
+          )}
+
+          <Card>
+            <CardBody>
+              <div className="flex items-center justify-between mb-4">
+                <h3 className="text-lg font-semibold">向量操作</h3>
+              </div>
+              <div className="flex items-center gap-4">
+                <div className="flex-1 flex items-center gap-2">
+                  <Input
+                    placeholder="语义搜索..."
+                    value={searchQuery}
+                    onChange={(e) => setSearchQuery(e.target.value)}
+                    onKeyDown={(e) => e.key === 'Enter' && handleSearch()}
+                    className="flex-1"
+                  />
+                  <Button onClick={handleSearch}>搜索</Button>
+                </div>
+                <Button
+                  variant="secondary"
+                  onClick={() => syncMutation.mutate()}
+                  loading={syncMutation.isPending}
+                >
+                  同步向量
+                </Button>
+                <Button
+                  variant="secondary"
+                  onClick={() => {
+                    if (confirm('确定要重建所有向量吗？这将清空现有向量并重新生成。')) {
+                      rebuildMutation.mutate();
+                    }
+                  }}
+                  loading={rebuildMutation.isPending}
+                >
+                  重建向量
+                </Button>
+              </div>
+            </CardBody>
+          </Card>
+
+          <Card>
+            <CardBody>
+              <div className="flex items-center justify-between mb-4">
+                <h3 className="text-lg font-semibold">向量列表</h3>
+                <select
+                  value={memoryTypeFilter}
+                  onChange={(e) => setMemoryTypeFilter(e.target.value)}
+                  className="px-3 py-2 bg-[var(--color-bg-primary)] border border-[var(--color-border)] rounded-[var(--radius-md)]"
+                >
+                  <option value="">全部类型</option>
+                  <option value="short_term">短期记忆</option>
+                  <option value="long_term">长期记忆</option>
+                  <option value="working">工作记忆</option>
+                  <option value="episodic">情景记忆</option>
+                </select>
+              </div>
+
+              {vectorsLoading ? (
+                <div className="text-center py-8">加载中...</div>
+              ) : vectors?.vectors?.length === 0 ? (
+                <div className="text-center py-8 text-[var(--color-text-secondary)]">
+                  暂无向量数据
+                </div>
+              ) : (
+                <div className="overflow-x-auto">
+                  <table className="w-full text-sm">
+                    <thead className="bg-[var(--color-bg-tertiary)]">
+                      <tr>
+                        <th className="px-4 py-3 text-left">记忆 ID</th>
+                        <th className="px-4 py-3 text-left">内容预览</th>
+                        <th className="px-4 py-3 text-left">类型</th>
+                        <th className="px-4 py-3 text-left">重要性</th>
+                        <th className="px-4 py-3 text-left">创建时间</th>
+                        <th className="px-4 py-3 text-right">操作</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {vectors?.vectors?.map((vec: Vector) => (
+                        <tr key={vec.memory_id} className="border-t border-[var(--color-border)]">
+                          <td className="px-4 py-3 font-mono">{vec.memory_id}</td>
+                          <td className="px-4 py-3 max-w-xs truncate">{vec.content}</td>
+                          <td className="px-4 py-3">
+                            <Badge variant="secondary">{vec.memory_type}</Badge>
+                          </td>
+                          <td className="px-4 py-3">{vec.importance}</td>
+                          <td className="px-4 py-3 text-[var(--color-text-secondary)]">
+                            {vec.created_at ? new Date(vec.created_at).toLocaleString() : '-'}
+                          </td>
+                          <td className="px-4 py-3 text-right">
+                            <button
+                              onClick={async () => {
+                                try {
+                                  const detail = await api.getVector(vec.memory_id);
+                                  setSelectedVector({ ...vec, ...detail.vector });
+                                  setShowDetailModal(true);
+                                } catch {
+                                  alert('获取详情失败');
+                                }
+                              }}
+                              className="text-[var(--color-accent)] hover:underline mr-3"
+                            >
+                              详情
+                            </button>
+                            <button
+                              onClick={() => {
+                                if (confirm('确定删除此向量?')) {
+                                  deleteMutation.mutate(vec.memory_id);
+                                }
+                              }}
+                              className="text-red-500 hover:underline"
+                            >
+                              删除
+                            </button>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </CardBody>
+          </Card>
+
+          {stats?.collection_info && Object.keys(stats.collection_info).length > 0 && (
+            <Card>
+              <CardBody>
+                <h3 className="text-lg font-semibold mb-4">集合信息</h3>
+                <pre className="text-xs bg-[var(--color-bg-tertiary)] p-4 rounded overflow-auto max-h-60">
+                  {JSON.stringify(stats.collection_info, null, 2)}
+                </pre>
+              </CardBody>
+            </Card>
+          )}
+        </div>
+      )}
+
+      <Modal
+        isOpen={showSearchModal}
+        onClose={() => setShowSearchModal(false)}
+        title="语义搜索结果"
+      >
+        <div className="space-y-4 max-h-96 overflow-auto">
+          {searchResults.length === 0 ? (
+            <div className="text-center py-4 text-[var(--color-text-secondary)]">
+              未找到相关结果
+            </div>
+          ) : (
+            searchResults.map((result: unknown, idx: number) => {
+              const r = result as Record<string, unknown>;
+              const memory = r.memory as Record<string, unknown> | undefined;
+              const content = String(memory?.content || r.content || '无内容');
+              const id = String(r.memory_id || r.id || '');
+              return (
+                <div key={idx} className="p-3 bg-[var(--color-bg-tertiary)] rounded">
+                  <div className="flex items-center justify-between mb-2">
+                    <Badge>相似度: {((r.score as number) || 0).toFixed(3)}</Badge>
+                    <span className="text-xs text-[var(--color-text-tertiary)]">
+                      ID: {id}
+                    </span>
+                  </div>
+                  <div className="text-sm">
+                    {content}
+                  </div>
+                </div>
+              );
+            })
+          )}
+        </div>
+      </Modal>
+
+      <Modal
+        isOpen={showDetailModal}
+        onClose={() => {
+          setShowDetailModal(false);
+          setSelectedVector(null);
+        }}
+        title="向量详情"
+      >
+        {selectedVector && (
+          <div className="space-y-4">
+            <div>
+              <label className="text-sm font-medium">记忆 ID</label>
+              <div className="font-mono">{selectedVector.memory_id}</div>
+            </div>
+            <div>
+              <label className="text-sm font-medium">向量维度</label>
+              <div>{String((selectedVector as unknown as Record<string, unknown>).vector_size || 'N/A')}</div>
+            </div>
+            <div>
+              <label className="text-sm font-medium">记忆类型</label>
+              <div>{selectedVector.memory_type}</div>
+            </div>
+            <div>
+              <label className="text-sm font-medium">内容</label>
+              <pre className="text-xs bg-[var(--color-bg-tertiary)] p-2 rounded overflow-auto max-h-40">
+                {String(((selectedVector as unknown as Record<string, unknown>).memory as Record<string, unknown>)?.content || selectedVector.content || '')}
+              </pre>
+            </div>
+            <div>
+              <label className="text-sm font-medium">元数据</label>
+              <pre className="text-xs bg-[var(--color-bg-tertiary)] p-2 rounded overflow-auto max-h-40">
+                {JSON.stringify((selectedVector as unknown as Record<string, unknown>).metadata || {}, null, 2)}
+              </pre>
+            </div>
+          </div>
+        )}
+      </Modal>
+    </div>
+  );
+}

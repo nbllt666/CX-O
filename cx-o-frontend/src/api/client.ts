@@ -1264,6 +1264,222 @@ class ApiClient {
     const response = await this.client.post('/api/config/vad', config);
     return response.data;
   }
+
+  // ========== Graph Database APIs ==========
+
+  async getGraphConfig() {
+    const response = await this.client.get('/api/graph/config');
+    return response.data;
+  }
+
+  async updateGraphConfig(config: {
+    graph_enabled?: boolean;
+    graph_backend?: string;
+    neo4j?: {
+      uri?: string;
+      user?: string;
+      password?: string;
+      database?: string;
+      max_connection_pool_size?: number;
+    };
+    graph_libraries?: Record<string, { enabled?: boolean; label_prefix?: string }>;
+  }) {
+    const response = await this.client.post('/api/graph/config', config);
+    return response.data;
+  }
+
+  async getGraphStatus() {
+    const response = await this.client.get('/api/graph/status');
+    return response.data;
+  }
+
+  async getGraphHealth() {
+    const response = await this.client.get('/api/graph/health');
+    return response.data;
+  }
+
+  async testGraphConnection(config?: {
+    uri?: string;
+    user?: string;
+    password?: string;
+    database?: string;
+    max_connection_pool_size?: number;
+  }) {
+    const response = await this.client.post('/api/graph/test-connection', config);
+    return response.data;
+  }
+
+  async getGraphLibraryStats(library: string) {
+    const response = await this.client.get(`/api/graph/stats/${library}`);
+    return response.data;
+  }
+
+  async exportGraphLibrary(library: string) {
+    const response = await this.client.post(`/api/graph/export/${library}`);
+    return response.data;
+  }
+
+  // ========== Graph Data Management APIs ==========
+
+  async listGraphEntities(library: string, params?: {
+    entity_type?: string;
+    search?: string;
+    limit?: number;
+    offset?: number;
+  }) {
+    const response = await this.client.get(`/api/graph/${library}/entities`, { params });
+    return response.data;
+  }
+
+  async getGraphEntity(library: string, entityId: string) {
+    const response = await this.client.get(`/api/graph/${library}/entities/${entityId}`);
+    return response.data;
+  }
+
+  async createGraphEntity(library: string, data: {
+    entity_id: string;
+    name: string;
+    entity_type: string;
+    properties?: Record<string, unknown>;
+    memory_ids?: string[];
+  }) {
+    const response = await this.client.post(`/api/graph/${library}/entities`, data);
+    return response.data;
+  }
+
+  async updateGraphEntity(library: string, entityId: string, data: {
+    name?: string;
+    properties?: Record<string, unknown>;
+    memory_ids?: string[];
+  }) {
+    const response = await this.client.put(`/api/graph/${library}/entities/${entityId}`, data);
+    return response.data;
+  }
+
+  async deleteGraphEntity(library: string, entityId: string, hard: boolean = false) {
+    const response = await this.client.delete(`/api/graph/${library}/entities/${entityId}`, {
+      params: { hard },
+    });
+    return response.data;
+  }
+
+  async getGraphEntityRelations(library: string, entityId: string, params?: {
+    relation_type?: string;
+    depth?: number;
+  }) {
+    const response = await this.client.get(`/api/graph/${library}/entities/${entityId}/relations`, { params });
+    return response.data;
+  }
+
+  async listGraphRelations(library: string, params?: {
+    relation_type?: string;
+    limit?: number;
+    offset?: number;
+  }) {
+    const response = await this.client.get(`/api/graph/${library}/relations`, { params });
+    return response.data;
+  }
+
+  async createGraphRelation(library: string, data: {
+    from_entity: string;
+    to_entity: string;
+    relation_type: string;
+    strength?: number;
+    evidence_memory_ids?: string[];
+  }) {
+    const response = await this.client.post(`/api/graph/${library}/relations`, data);
+    return response.data;
+  }
+
+  async deleteGraphRelation(library: string, params: {
+    from_entity: string;
+    to_entity: string;
+    relation_type: string;
+    hard?: boolean;
+  }) {
+    const response = await this.client.delete(`/api/graph/${library}/relations`, { params });
+    return response.data;
+  }
+
+  async getGraphEntityTypes(library: string) {
+    const response = await this.client.get(`/api/graph/${library}/entity-types`);
+    return response.data;
+  }
+
+  async getGraphRelationTypes(library: string) {
+    const response = await this.client.get(`/api/graph/${library}/relation-types`);
+    return response.data;
+  }
+
+  async findGraphPath(library: string, params: {
+    start_entity: string;
+    end_entity: string;
+    max_depth?: number;
+  }) {
+    const response = await this.client.get(`/api/graph/${library}/path`, { params });
+    return response.data;
+  }
+
+  // ========== Vector Database Management APIs ==========
+
+  async getVectorConfig() {
+    const response = await this.client.get('/api/vector/config');
+    return response.data;
+  }
+
+  async getVectorStatus() {
+    const response = await this.client.get('/api/vector/status');
+    return response.data;
+  }
+
+  async getVectorHealth() {
+    const response = await this.client.get('/api/vector/health');
+    return response.data;
+  }
+
+  async listVectors(params?: {
+    limit?: number;
+    offset?: number;
+    memory_type?: string;
+  }) {
+    const response = await this.client.get('/api/vector/vectors', { params });
+    return response.data;
+  }
+
+  async getVector(memoryId: number) {
+    const response = await this.client.get(`/api/vector/vectors/${memoryId}`);
+    return response.data;
+  }
+
+  async deleteVector(memoryId: number) {
+    const response = await this.client.delete(`/api/vector/vectors/${memoryId}`);
+    return response.data;
+  }
+
+  async syncVectors() {
+    const response = await this.client.post('/api/vector/sync');
+    return response.data;
+  }
+
+  async rebuildVectors() {
+    const response = await this.client.post('/api/vector/rebuild');
+    return response.data;
+  }
+
+  async searchVectors(params: {
+    query: string;
+    limit?: number;
+    min_score?: number;
+    memory_type?: string;
+  }) {
+    const response = await this.client.post('/api/vector/search', null, { params });
+    return response.data;
+  }
+
+  async getVectorStats() {
+    const response = await this.client.get('/api/vector/stats');
+    return response.data;
+  }
 }
 
 export const api = new ApiClient();

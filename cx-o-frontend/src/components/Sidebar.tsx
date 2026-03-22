@@ -16,6 +16,8 @@ import {
   X,
   Loader2,
   RefreshCw,
+  Database,
+  Link2,
 } from 'lucide-react';
 import { useThemeStore } from '../store/themeStore';
 import { useChatStore } from '../store/chatStore';
@@ -29,6 +31,8 @@ const navigation = [
   { name: '归档', href: '/archive', icon: Archive },
   { name: 'ACP', href: '/acp', icon: Network },
   { name: '工具', href: '/tools', icon: Wrench },
+  { name: '图数据', href: '/graph-data', icon: Link2 },
+  { name: '向量数据', href: '/vector-data', icon: Database },
   { name: '设置', href: '/settings', icon: Settings },
 ];
 

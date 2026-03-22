@@ -20,3 +20,4 @@ weaviate-client>=4.0.0
 # LLM clients (optional)
 openai>=1.3.6
 anthropic>=0.7.8
+neo4j>=5.14.0

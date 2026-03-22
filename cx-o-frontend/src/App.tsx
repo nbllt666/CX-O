@@ -10,6 +10,8 @@ import { ToolsPage } from './pages/ToolsPage';
 import { AgentsPage } from './pages/AgentsPage';
 import { MemoryAgentPage } from './pages/MemoryAgentPage';
 import { AudioTestPage } from './pages/AudioTestPage';
+import { GraphDataPage } from './pages/GraphDataPage';
+import { VectorDataPage } from './pages/VectorDataPage';
 import { ErrorBoundary } from './components/ErrorBoundary';
 
 function App() {
@@ -28,6 +30,8 @@ function App() {
           <Route path="audio" element={<AudioTestPage />} />
           <Route path="settings" element={<SettingsPage />} />
           <Route path="memory-agent" element={<MemoryAgentPage />} />
+          <Route path="graph-data" element={<GraphDataPage />} />
+          <Route path="vector-data" element={<VectorDataPage />} />
         </Route>
       </Routes>
     </ErrorBoundary>

@@ -25,10 +25,12 @@ from backend.api.routers import (
     backup,
     chat,
     context,
+    graph,
     memory,
     memory_chat,
     service,
     tools,
+    vector,
     websocket,
 )
 from backend.core.websocket import get_websocket_manager, get_chat_handler
@@ -474,6 +476,8 @@ app.include_router(service.router, prefix="/api")
 app.include_router(agents.router, prefix="/api")
 app.include_router(backup.router, prefix="/api")
 app.include_router(websocket.router, prefix="/api")
+app.include_router(graph.router, prefix="/api")
+app.include_router(vector.router, prefix="/api")
 
 app.add_exception_handler(CXHMSError, cxhms_exception_handler)
 app.add_exception_handler(HTTPException, http_exception_handler)

@@ -4,6 +4,8 @@
 """
 
 import json
+import yaml
+from pathlib import Path
 from typing import Dict, List, Optional
 
 from fastapi import APIRouter, HTTPException
@@ -88,22 +90,58 @@ def build_messages(
     """构建消息列表"""
     messages = []
 
-    # 1. 系统提示词
+    # 1. 加载隐藏提示词配置
+    from config.settings import settings
+
+    config_dir = Path(settings._config_path).parent if settings._config_path else Path("config")
+    hidden_prompt_path = config_dir / "hidden_prompt.yaml"
+    hidden_prompts = {}
+    if hidden_prompt_path.exists():
+        with open(hidden_prompt_path, "r", encoding="utf-8") as f:
+            hidden_prompts = yaml.safe_load(f) or {}
+
+    # 2. 系统提示词
     system_prompt = agent_config.get("system_prompt", "")
     if system_prompt:
         messages.append({"role": "system", "content": system_prompt})
 
-    # 2. 记忆上下文（如果启用记忆且有相关记忆）
+    # 3. 根据模型类型注入隐藏提示词
+    model_type = agent_config.get("model", "main").lower()
+    hidden_parts = []
+
+    # 3.1 注入基础工具说明（所有模型都需要）
+    for key in ["tool_instructions", "tools"]:
+        if key in hidden_prompts:
+            hidden_parts.append(hidden_prompts[key])
+
+    # 3.2 根据模型类型注入特定提示词
+    if model_type == "main":
+        for key in ["emotion_prompts", "effect_prompts", "tool_usage_prompts", "graph_tools", "master_model_prompt"]:
+            if key in hidden_prompts:
+                hidden_parts.append(hidden_prompts[key])
+    elif model_type == "summary":
+        for key in ["emotion_prompts", "effect_prompts", "graph_tools", "summary_model_prompt"]:
+            if key in hidden_prompts:
+                hidden_parts.append(hidden_prompts[key])
+    elif model_type in ["assistant", "memory"]:
+        for key in ["emotion_prompts", "effect_prompts", "tool_usage_prompts", "graph_tools", "assistant_model_prompt"]:
+            if key in hidden_prompts:
+                hidden_parts.append(hidden_prompts[key])
+
+    if hidden_parts:
+        messages.append({"role": "system", "content": "\n\n".join(hidden_parts)})
+
+    # 4. 记忆上下文（如果启用记忆且有相关记忆）
     if memory_context and agent_config.get("use_memory", True):
         messages.append({"role": "system", "content": f"相关记忆:\n{memory_context}"})
 
-    # 3. 历史消息（最近10条）
+    # 5. 历史消息（最近10条）
     history = context_mgr.get_messages(session_id, limit=10)
     for msg in history:
         if msg.get("role") in ["user", "assistant"]:
             messages.append({"role": msg["role"], "content": msg.get("content", "")})
 
-    # 4. 用户最新消息（支持多模态）
+    # 6. 用户最新消息（支持多模态）
     if images and agent_config.get("vision_enabled", False):
         # 构建多模态消息
         content = [{"type": "text", "text": user_message}]

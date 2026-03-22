@@ -7,6 +7,12 @@ from datetime import datetime
 from typing import Any, Dict, List, Optional
 
 from .registry import tool_registry
+from .graph_tools import (
+    user_graph_update_entity, user_graph_delete_entity, user_graph_update_relation, user_graph_delete_relation, user_graph_get_stats, user_graph_export,
+    thing_graph_update_entity, thing_graph_delete_entity, thing_graph_update_relation, thing_graph_delete_relation, thing_graph_get_stats, thing_graph_export,
+    concept_graph_update_entity, concept_graph_delete_entity, concept_graph_update_relation, concept_graph_delete_relation, concept_graph_get_stats, concept_graph_export,
+    event_graph_update_entity, event_graph_delete_entity, event_graph_update_relation, event_graph_delete_relation, event_graph_get_stats, event_graph_export,
+)
 
 _MEMORY_MANAGER = None
 _SECONDARY_ROUTER = None
@@ -365,6 +371,418 @@ def register_assistant_tools():
         category="assistant",
         tags=["commands", "list", "help"],
         examples=["查看我可以使用哪些命令"],
+    )
+
+    # ===== 用户图工具 =====
+    # 17. user_graph_update_entity - 更新用户图实体
+    tool_registry.register(
+        name="user_graph_update_entity",
+        description="更新用户图中的实体属性。",
+        parameters={
+            "type": "object",
+            "properties": {
+                "entity_id": {"type": "string", "description": "要更新的实体ID"},
+                "properties": {"type": "object", "description": "新的属性字典"},
+            },
+            "required": ["entity_id", "properties"],
+        },
+        function=user_graph_update_entity,
+        category="assistant",
+        tags=["graph", "user", "update", "entity"],
+        examples=["更新用户图实体属性"],
+    )
+
+    # 18. user_graph_delete_entity - 删除用户图实体
+    tool_registry.register(
+        name="user_graph_delete_entity",
+        description="删除用户图中的实体（软删除）。",
+        parameters={
+            "type": "object",
+            "properties": {
+                "entity_id": {"type": "string", "description": "要删除的实体ID"},
+            },
+            "required": ["entity_id"],
+        },
+        function=user_graph_delete_entity,
+        category="assistant",
+        tags=["graph", "user", "delete", "entity"],
+        examples=["删除用户图实体"],
+    )
+
+    # 19. user_graph_update_relation - 更新用户图关系
+    tool_registry.register(
+        name="user_graph_update_relation",
+        description="更新用户图中两个实体之间的关系。",
+        parameters={
+            "type": "object",
+            "properties": {
+                "from_entity": {"type": "string", "description": "起始实体名称或ID"},
+                "to_entity": {"type": "string", "description": "目标实体名称或ID"},
+                "relation_type": {"type": "string", "description": "关系类型"},
+                "strength": {"type": "number", "description": "关系强度（0-1）"},
+            },
+            "required": ["from_entity", "to_entity", "relation_type", "strength"],
+        },
+        function=user_graph_update_relation,
+        category="assistant",
+        tags=["graph", "user", "update", "relation"],
+        examples=["更新用户图关系"],
+    )
+
+    # 20. user_graph_delete_relation - 删除用户图关系
+    tool_registry.register(
+        name="user_graph_delete_relation",
+        description="删除用户图中两个实体之间的关系（软删除）。",
+        parameters={
+            "type": "object",
+            "properties": {
+                "from_entity": {"type": "string", "description": "起始实体名称或ID"},
+                "to_entity": {"type": "string", "description": "目标实体名称或ID"},
+                "relation_type": {"type": "string", "description": "关系类型"},
+            },
+            "required": ["from_entity", "to_entity", "relation_type"],
+        },
+        function=user_graph_delete_relation,
+        category="assistant",
+        tags=["graph", "user", "delete", "relation"],
+        examples=["删除用户图关系"],
+    )
+
+    # 21. user_graph_get_stats - 获取用户图统计
+    tool_registry.register(
+        name="user_graph_get_stats",
+        description="获取用户图的统计信息，包括实体数量、关系数量等。",
+        parameters={"type": "object", "properties": {}},
+        function=user_graph_get_stats,
+        category="assistant",
+        tags=["graph", "user", "stats", "statistics"],
+        examples=["查看用户图统计信息"],
+    )
+
+    # 22. user_graph_export - 导出用户图
+    tool_registry.register(
+        name="user_graph_export",
+        description="导出用户图数据为指定格式。",
+        parameters={
+            "type": "object",
+            "properties": {
+                "format": {"type": "string", "enum": ["json", "csv"], "description": "导出格式"},
+            },
+            "required": ["format"],
+        },
+        function=user_graph_export,
+        category="assistant",
+        tags=["graph", "user", "export"],
+        examples=["导出用户图为JSON格式"],
+    )
+
+    # ===== 物品图工具 =====
+    # 23. thing_graph_update_entity - 更新物品图实体
+    tool_registry.register(
+        name="thing_graph_update_entity",
+        description="更新物品图中的实体属性。",
+        parameters={
+            "type": "object",
+            "properties": {
+                "entity_id": {"type": "string", "description": "要更新的实体ID"},
+                "properties": {"type": "object", "description": "新的属性字典"},
+            },
+            "required": ["entity_id", "properties"],
+        },
+        function=thing_graph_update_entity,
+        category="assistant",
+        tags=["graph", "thing", "update", "entity"],
+        examples=["更新物品图实体属性"],
+    )
+
+    # 24. thing_graph_delete_entity - 删除物品图实体
+    tool_registry.register(
+        name="thing_graph_delete_entity",
+        description="删除物品图中的实体（软删除）。",
+        parameters={
+            "type": "object",
+            "properties": {
+                "entity_id": {"type": "string", "description": "要删除的实体ID"},
+            },
+            "required": ["entity_id"],
+        },
+        function=thing_graph_delete_entity,
+        category="assistant",
+        tags=["graph", "thing", "delete", "entity"],
+        examples=["删除物品图实体"],
+    )
+
+    # 25. thing_graph_update_relation - 更新物品图关系
+    tool_registry.register(
+        name="thing_graph_update_relation",
+        description="更新物品图中两个实体之间的关系。",
+        parameters={
+            "type": "object",
+            "properties": {
+                "from_entity": {"type": "string", "description": "起始实体名称或ID"},
+                "to_entity": {"type": "string", "description": "目标实体名称或ID"},
+                "relation_type": {"type": "string", "description": "关系类型"},
+                "strength": {"type": "number", "description": "关系强度（0-1）"},
+            },
+            "required": ["from_entity", "to_entity", "relation_type", "strength"],
+        },
+        function=thing_graph_update_relation,
+        category="assistant",
+        tags=["graph", "thing", "update", "relation"],
+        examples=["更新物品图关系"],
+    )
+
+    # 26. thing_graph_delete_relation - 删除物品图关系
+    tool_registry.register(
+        name="thing_graph_delete_relation",
+        description="删除物品图中两个实体之间的关系（软删除）。",
+        parameters={
+            "type": "object",
+            "properties": {
+                "from_entity": {"type": "string", "description": "起始实体名称或ID"},
+                "to_entity": {"type": "string", "description": "目标实体名称或ID"},
+                "relation_type": {"type": "string", "description": "关系类型"},
+            },
+            "required": ["from_entity", "to_entity", "relation_type"],
+        },
+        function=thing_graph_delete_relation,
+        category="assistant",
+        tags=["graph", "thing", "delete", "relation"],
+        examples=["删除物品图关系"],
+    )
+
+    # 27. thing_graph_get_stats - 获取物品图统计
+    tool_registry.register(
+        name="thing_graph_get_stats",
+        description="获取物品图的统计信息，包括实体数量、关系数量等。",
+        parameters={"type": "object", "properties": {}},
+        function=thing_graph_get_stats,
+        category="assistant",
+        tags=["graph", "thing", "stats", "statistics"],
+        examples=["查看物品图统计信息"],
+    )
+
+    # 28. thing_graph_export - 导出物品图
+    tool_registry.register(
+        name="thing_graph_export",
+        description="导出物品图数据为指定格式。",
+        parameters={
+            "type": "object",
+            "properties": {
+                "format": {"type": "string", "enum": ["json", "csv"], "description": "导出格式"},
+            },
+            "required": ["format"],
+        },
+        function=thing_graph_export,
+        category="assistant",
+        tags=["graph", "thing", "export"],
+        examples=["导出物品图为JSON格式"],
+    )
+
+    # ===== 概念图工具 =====
+    # 29. concept_graph_update_entity - 更新概念图实体
+    tool_registry.register(
+        name="concept_graph_update_entity",
+        description="更新概念图中的实体属性。",
+        parameters={
+            "type": "object",
+            "properties": {
+                "entity_id": {"type": "string", "description": "要更新的实体ID"},
+                "properties": {"type": "object", "description": "新的属性字典"},
+            },
+            "required": ["entity_id", "properties"],
+        },
+        function=concept_graph_update_entity,
+        category="assistant",
+        tags=["graph", "concept", "update", "entity"],
+        examples=["更新概念图实体属性"],
+    )
+
+    # 30. concept_graph_delete_entity - 删除概念图实体
+    tool_registry.register(
+        name="concept_graph_delete_entity",
+        description="删除概念图中的实体（软删除）。",
+        parameters={
+            "type": "object",
+            "properties": {
+                "entity_id": {"type": "string", "description": "要删除的实体ID"},
+            },
+            "required": ["entity_id"],
+        },
+        function=concept_graph_delete_entity,
+        category="assistant",
+        tags=["graph", "concept", "delete", "entity"],
+        examples=["删除概念图实体"],
+    )
+
+    # 31. concept_graph_update_relation - 更新概念图关系
+    tool_registry.register(
+        name="concept_graph_update_relation",
+        description="更新概念图中两个实体之间的关系。",
+        parameters={
+            "type": "object",
+            "properties": {
+                "from_entity": {"type": "string", "description": "起始实体名称或ID"},
+                "to_entity": {"type": "string", "description": "目标实体名称或ID"},
+                "relation_type": {"type": "string", "description": "关系类型"},
+                "strength": {"type": "number", "description": "关系强度（0-1）"},
+            },
+            "required": ["from_entity", "to_entity", "relation_type", "strength"],
+        },
+        function=concept_graph_update_relation,
+        category="assistant",
+        tags=["graph", "concept", "update", "relation"],
+        examples=["更新概念图关系"],
+    )
+
+    # 32. concept_graph_delete_relation - 删除概念图关系
+    tool_registry.register(
+        name="concept_graph_delete_relation",
+        description="删除概念图中两个实体之间的关系（软删除）。",
+        parameters={
+            "type": "object",
+            "properties": {
+                "from_entity": {"type": "string", "description": "起始实体名称或ID"},
+                "to_entity": {"type": "string", "description": "目标实体名称或ID"},
+                "relation_type": {"type": "string", "description": "关系类型"},
+            },
+            "required": ["from_entity", "to_entity", "relation_type"],
+        },
+        function=concept_graph_delete_relation,
+        category="assistant",
+        tags=["graph", "concept", "delete", "relation"],
+        examples=["删除概念图关系"],
+    )
+
+    # 33. concept_graph_get_stats - 获取概念图统计
+    tool_registry.register(
+        name="concept_graph_get_stats",
+        description="获取概念图的统计信息，包括实体数量、关系数量等。",
+        parameters={"type": "object", "properties": {}},
+        function=concept_graph_get_stats,
+        category="assistant",
+        tags=["graph", "concept", "stats", "statistics"],
+        examples=["查看概念图统计信息"],
+    )
+
+    # 34. concept_graph_export - 导出概念图
+    tool_registry.register(
+        name="concept_graph_export",
+        description="导出概念图数据为指定格式。",
+        parameters={
+            "type": "object",
+            "properties": {
+                "format": {"type": "string", "enum": ["json", "csv"], "description": "导出格式"},
+            },
+            "required": ["format"],
+        },
+        function=concept_graph_export,
+        category="assistant",
+        tags=["graph", "concept", "export"],
+        examples=["导出概念图为JSON格式"],
+    )
+
+    # ===== 事件图工具 =====
+    # 35. event_graph_update_entity - 更新事件图实体
+    tool_registry.register(
+        name="event_graph_update_entity",
+        description="更新事件图中的实体属性。",
+        parameters={
+            "type": "object",
+            "properties": {
+                "entity_id": {"type": "string", "description": "要更新的实体ID"},
+                "properties": {"type": "object", "description": "新的属性字典"},
+            },
+            "required": ["entity_id", "properties"],
+        },
+        function=event_graph_update_entity,
+        category="assistant",
+        tags=["graph", "event", "update", "entity"],
+        examples=["更新事件图实体属性"],
+    )
+
+    # 36. event_graph_delete_entity - 删除事件图实体
+    tool_registry.register(
+        name="event_graph_delete_entity",
+        description="删除事件图中的实体（软删除）。",
+        parameters={
+            "type": "object",
+            "properties": {
+                "entity_id": {"type": "string", "description": "要删除的实体ID"},
+            },
+            "required": ["entity_id"],
+        },
+        function=event_graph_delete_entity,
+        category="assistant",
+        tags=["graph", "event", "delete", "entity"],
+        examples=["删除事件图实体"],
+    )
+
+    # 37. event_graph_update_relation - 更新事件图关系
+    tool_registry.register(
+        name="event_graph_update_relation",
+        description="更新事件图中两个实体之间的关系。",
+        parameters={
+            "type": "object",
+            "properties": {
+                "from_entity": {"type": "string", "description": "起始实体名称或ID"},
+                "to_entity": {"type": "string", "description": "目标实体名称或ID"},
+                "relation_type": {"type": "string", "description": "关系类型"},
+                "strength": {"type": "number", "description": "关系强度（0-1）"},
+            },
+            "required": ["from_entity", "to_entity", "relation_type", "strength"],
+        },
+        function=event_graph_update_relation,
+        category="assistant",
+        tags=["graph", "event", "update", "relation"],
+        examples=["更新事件图关系"],
+    )
+
+    # 38. event_graph_delete_relation - 删除事件图关系
+    tool_registry.register(
+        name="event_graph_delete_relation",
+        description="删除事件图中两个实体之间的关系（软删除）。",
+        parameters={
+            "type": "object",
+            "properties": {
+                "from_entity": {"type": "string", "description": "起始实体名称或ID"},
+                "to_entity": {"type": "string", "description": "目标实体名称或ID"},
+                "relation_type": {"type": "string", "description": "关系类型"},
+            },
+            "required": ["from_entity", "to_entity", "relation_type"],
+        },
+        function=event_graph_delete_relation,
+        category="assistant",
+        tags=["graph", "event", "delete", "relation"],
+        examples=["删除事件图关系"],
+    )
+
+    # 39. event_graph_get_stats - 获取事件图统计
+    tool_registry.register(
+        name="event_graph_get_stats",
+        description="获取事件图的统计信息，包括实体数量、关系数量等。",
+        parameters={"type": "object", "properties": {}},
+        function=event_graph_get_stats,
+        category="assistant",
+        tags=["graph", "event", "stats", "statistics"],
+        examples=["查看事件图统计信息"],
+    )
+
+    # 40. event_graph_export - 导出事件图
+    tool_registry.register(
+        name="event_graph_export",
+        description="导出事件图数据为指定格式。",
+        parameters={
+            "type": "object",
+            "properties": {
+                "format": {"type": "string", "enum": ["json", "csv"], "description": "导出格式"},
+            },
+            "required": ["format"],
+        },
+        function=event_graph_export,
+        category="assistant",
+        tags=["graph", "event", "export"],
+        examples=["导出事件图为JSON格式"],
     )
 
 

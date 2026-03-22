@@ -5,6 +5,12 @@
 from typing import Any, Dict, List, Optional
 
 from .registry import tool_registry
+from .graph_tools import (
+    user_graph_extract_entities, user_graph_merge_entities, user_graph_get_entity_summary,
+    thing_graph_extract_entities, thing_graph_merge_entities, thing_graph_get_entity_summary,
+    concept_graph_extract_entities, concept_graph_merge_entities, concept_graph_get_entity_summary,
+    event_graph_extract_entities, event_graph_merge_entities, event_graph_get_entity_summary,
+)
 
 _MEMORY_MANAGER = None
 _MODEL_ROUTER = None
@@ -127,6 +133,215 @@ def register_summary_tools():
         category="summary",
         tags=["summary", "context", "clear"],
         examples=["清空当前会话的上下文", "重置对话历史"],
+    )
+
+    # 5-16. 图工具注册 (4库 × 3工具 = 12个)
+    # 5. user_graph_extract_entities
+    tool_registry.register(
+        name="user_graph_extract_entities",
+        description="从内容中提取用户图实体（使用LLM）。用于从文本中识别和提取用户相关的实体信息。",
+        parameters={
+            "type": "object",
+            "properties": {
+                "content": {"type": "string", "description": "待提取的内容"},
+            },
+            "required": ["content"],
+        },
+        function=user_graph_extract_entities,
+        category="summary",
+        tags=["graph", "user", "extract", "entities"],
+        examples=["从这段文字中提取用户实体", "识别文本中的用户相关信息"],
+    )
+
+    # 6. user_graph_merge_entities
+    tool_registry.register(
+        name="user_graph_merge_entities",
+        description="合并用户图中的两个实体。当存在重复或相似的用户实体时使用。",
+        parameters={
+            "type": "object",
+            "properties": {
+                "entity1_id": {"type": "string", "description": "第一个实体ID（保留）"},
+                "entity2_id": {"type": "string", "description": "第二个实体ID（合并到第一个）"},
+            },
+            "required": ["entity1_id", "entity2_id"],
+        },
+        function=user_graph_merge_entities,
+        category="summary",
+        tags=["graph", "user", "merge", "entities"],
+        examples=["合并两个重复的用户实体", "将entity2合并到entity1"],
+    )
+
+    # 7. user_graph_get_entity_summary
+    tool_registry.register(
+        name="user_graph_get_entity_summary",
+        description="获取用户图实体摘要。查询指定用户实体的详细信息和摘要。",
+        parameters={
+            "type": "object",
+            "properties": {
+                "entity_name_or_id": {"type": "string", "description": "实体名称或ID"},
+            },
+            "required": ["entity_name_or_id"],
+        },
+        function=user_graph_get_entity_summary,
+        category="summary",
+        tags=["graph", "user", "summary", "entity"],
+        examples=["获取用户'张三'的实体摘要", "查询该用户实体的详细信息"],
+    )
+
+    # 8. thing_graph_extract_entities
+    tool_registry.register(
+        name="thing_graph_extract_entities",
+        description="从内容中提取物品图实体（使用LLM）。用于从文本中识别和提取物品相关的实体信息。",
+        parameters={
+            "type": "object",
+            "properties": {
+                "content": {"type": "string", "description": "待提取的内容"},
+            },
+            "required": ["content"],
+        },
+        function=thing_graph_extract_entities,
+        category="summary",
+        tags=["graph", "thing", "extract", "entities"],
+        examples=["从这段文字中提取物品实体", "识别文本中的物品相关信息"],
+    )
+
+    # 9. thing_graph_merge_entities
+    tool_registry.register(
+        name="thing_graph_merge_entities",
+        description="合并物品图中的两个实体。当存在重复或相似的物品实体时使用。",
+        parameters={
+            "type": "object",
+            "properties": {
+                "entity1_id": {"type": "string", "description": "第一个实体ID（保留）"},
+                "entity2_id": {"type": "string", "description": "第二个实体ID（合并到第一个）"},
+            },
+            "required": ["entity1_id", "entity2_id"],
+        },
+        function=thing_graph_merge_entities,
+        category="summary",
+        tags=["graph", "thing", "merge", "entities"],
+        examples=["合并两个重复的物品实体", "将entity2合并到entity1"],
+    )
+
+    # 10. thing_graph_get_entity_summary
+    tool_registry.register(
+        name="thing_graph_get_entity_summary",
+        description="获取物品图实体摘要。查询指定物品实体的详细信息和摘要。",
+        parameters={
+            "type": "object",
+            "properties": {
+                "entity_name_or_id": {"type": "string", "description": "实体名称或ID"},
+            },
+            "required": ["entity_name_or_id"],
+        },
+        function=thing_graph_get_entity_summary,
+        category="summary",
+        tags=["graph", "thing", "summary", "entity"],
+        examples=["获取物品'电脑'的实体摘要", "查询该物品实体的详细信息"],
+    )
+
+    # 11. concept_graph_extract_entities
+    tool_registry.register(
+        name="concept_graph_extract_entities",
+        description="从内容中提取概念图实体（使用LLM）。用于从文本中识别和提取概念相关的实体信息。",
+        parameters={
+            "type": "object",
+            "properties": {
+                "content": {"type": "string", "description": "待提取的内容"},
+            },
+            "required": ["content"],
+        },
+        function=concept_graph_extract_entities,
+        category="summary",
+        tags=["graph", "concept", "extract", "entities"],
+        examples=["从这段文字中提取概念实体", "识别文本中的概念相关信息"],
+    )
+
+    # 12. concept_graph_merge_entities
+    tool_registry.register(
+        name="concept_graph_merge_entities",
+        description="合并概念图中的两个实体。当存在重复或相似的概念实体时使用。",
+        parameters={
+            "type": "object",
+            "properties": {
+                "entity1_id": {"type": "string", "description": "第一个实体ID（保留）"},
+                "entity2_id": {"type": "string", "description": "第二个实体ID（合并到第一个）"},
+            },
+            "required": ["entity1_id", "entity2_id"],
+        },
+        function=concept_graph_merge_entities,
+        category="summary",
+        tags=["graph", "concept", "merge", "entities"],
+        examples=["合并两个重复的概念实体", "将entity2合并到entity1"],
+    )
+
+    # 13. concept_graph_get_entity_summary
+    tool_registry.register(
+        name="concept_graph_get_entity_summary",
+        description="获取概念图实体摘要。查询指定概念实体的详细信息和摘要。",
+        parameters={
+            "type": "object",
+            "properties": {
+                "entity_name_or_id": {"type": "string", "description": "实体名称或ID"},
+            },
+            "required": ["entity_name_or_id"],
+        },
+        function=concept_graph_get_entity_summary,
+        category="summary",
+        tags=["graph", "concept", "summary", "entity"],
+        examples=["获取概念'人工智能'的实体摘要", "查询该概念实体的详细信息"],
+    )
+
+    # 14. event_graph_extract_entities
+    tool_registry.register(
+        name="event_graph_extract_entities",
+        description="从内容中提取事件图实体（使用LLM）。用于从文本中识别和提取事件相关的实体信息。",
+        parameters={
+            "type": "object",
+            "properties": {
+                "content": {"type": "string", "description": "待提取的内容"},
+            },
+            "required": ["content"],
+        },
+        function=event_graph_extract_entities,
+        category="summary",
+        tags=["graph", "event", "extract", "entities"],
+        examples=["从这段文字中提取事件实体", "识别文本中的事件相关信息"],
+    )
+
+    # 15. event_graph_merge_entities
+    tool_registry.register(
+        name="event_graph_merge_entities",
+        description="合并事件图中的两个实体。当存在重复或相似的事件实体时使用。",
+        parameters={
+            "type": "object",
+            "properties": {
+                "entity1_id": {"type": "string", "description": "第一个实体ID（保留）"},
+                "entity2_id": {"type": "string", "description": "第二个实体ID（合并到第一个）"},
+            },
+            "required": ["entity1_id", "entity2_id"],
+        },
+        function=event_graph_merge_entities,
+        category="summary",
+        tags=["graph", "event", "merge", "entities"],
+        examples=["合并两个重复的事件实体", "将entity2合并到entity1"],
+    )
+
+    # 16. event_graph_get_entity_summary
+    tool_registry.register(
+        name="event_graph_get_entity_summary",
+        description="获取事件图实体摘要。查询指定事件实体的详细信息和摘要。",
+        parameters={
+            "type": "object",
+            "properties": {
+                "entity_name_or_id": {"type": "string", "description": "实体名称或ID"},
+            },
+            "required": ["entity_name_or_id"],
+        },
+        function=event_graph_get_entity_summary,
+        category="summary",
+        tags=["graph", "event", "summary", "entity"],
+        examples=["获取事件'产品发布会'的实体摘要", "查询该事件实体的详细信息"],
     )
 
 
