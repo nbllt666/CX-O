@@ -1,12 +1,12 @@
 """
 ASR 打断模块 - 伪全双工实现
-打断判断由 LLM 完成，不使用简单关键词匹配
+打断判断由 LLM 完成，使用系统提示词中的打断规则
 """
 import asyncio
 import json
 import logging
 import re
-from typing import Optional, Callable, Any
+from typing import Optional, Callable, Any, Tuple
 
 logger = logging.getLogger(__name__)
 
@@ -15,19 +15,16 @@ class ASRInterruptModule:
     """
     ASR 打断模块 - 伪全双工
     
-    支持两种模式：
-    1. 主 LLM 模式 - 调用 CXHMS 生成回复，解析 ##[interrupt]## 或 ##[no_reply]##
-    2. 独立 LLM 模式 - 调用独立小 LLM (Qwen2.5-1.5B)，返回 interrupt: true/false
+    三种打断决策：
+    1. CONTINUE - 用户没说完，不打断，不添加到上下文
+    2. IGNORE - 不用回复，不打断，但添加到上下文
+    3. INTERRUPT - 需要回复，打断并添加到上下文
     """
     _instance = None
     
     def __init__(self):
         self.mode = "main_llm"
         self.enabled = True
-        self.main_llm_config = {
-            "enabled": True,
-            "prompt": ""
-        }
         self.independent_llm_config = {
             "enabled": False,
             "model": "qwen2.5:1.5b",
@@ -37,6 +34,8 @@ class ASRInterruptModule:
         self._is_interrupted = False
         self._tts_playing = False
         self._cxhms_client: Any = None
+        self._session_id: Optional[str] = None
+        self._context_manager: Any = None
         
     @classmethod
     def get_instance(cls):
@@ -49,10 +48,6 @@ class ASRInterruptModule:
         interrupt_config = config.get("interrupt", {})
         self.mode = interrupt_config.get("mode", "main_llm")
         self.enabled = interrupt_config.get("enabled", True)
-        self.main_llm_config = interrupt_config.get("main_llm", {
-            "enabled": True,
-            "prompt": ""
-        })
         self.independent_llm_config = interrupt_config.get("independent_llm", {
             "enabled": False,
             "model": "qwen2.5:1.5b",
@@ -73,133 +68,161 @@ class ASRInterruptModule:
         """设置 CXHMS 客户端"""
         self._cxhms_client = client
     
-    async def on_asr_result(self, asr_text: str) -> bool:
+    def set_session_id(self, session_id: str):
+        """设置当前会话 ID"""
+        self._session_id = session_id
+    
+    def set_context_manager(self, context_manager: Any):
+        """设置上下文管理器"""
+        self._context_manager = context_manager
+    
+    def _get_context(self) -> list:
+        """获取当前会话的上下文（不含系统提示词）"""
+        if self._context_manager and self._session_id:
+            return self._context_manager.get_context(self._session_id)
+        return []
+    
+    def _get_context_with_system_prompt(self) -> list:
+        """获取当前会话的完整上下文（包含系统提示词）"""
+        if self._context_manager and self._session_id:
+            return self._context_manager.get_context_with_system_prompt(self._session_id)
+        return []
+    
+    async def on_asr_result(self, asr_text: str, is_final: bool = False) -> Tuple[str, bool]:
         """
         当收到 ASR 识别结果时调用
         
+        Args:
+            asr_text: ASR 识别的累积内容（从用户开始说话到现在的所有内容）
+            is_final: 是否是最终识别结果
+            
         Returns:
-            bool: 是否触发了打断
+            Tuple[str, bool]: (决策标记, 是否触发打断)
+                决策标记: "CONTINUE", "IGNORE", "INTERRUPT"
         """
         if not self.enabled:
             logger.debug("ASR interrupt module is disabled")
-            return False
+            return "IGNORE", False
         
         if not asr_text or not asr_text.strip():
             logger.debug("Empty ASR text, skipping interrupt check")
-            return False
+            return "IGNORE", False
         
         if not self._tts_playing:
             logger.debug("TTS not playing, no need to check interrupt")
-            return False
+            return "IGNORE", False
         
-        logger.info(f"Checking interrupt for ASR text: {asr_text}")
+        logger.info(f"Checking interrupt for ASR text: {asr_text}, is_final: {is_final}")
         
         if self.mode == "main_llm":
             return await self._check_with_main_llm(asr_text)
         else:
             return await self._check_with_independent_llm(asr_text)
     
-    async def _check_with_main_llm(self, asr_text: str) -> bool:
+    async def _check_with_main_llm(self, asr_text: str) -> Tuple[str, bool]:
         """
         使用主 LLM 判断是否需要打断
         
-        主 LLM 会输出：
-        - ##[interrupt]## 表示需要打断并回复
-        - ##[no_reply]## 表示不需要回复
+        LLM 根据系统提示词中的打断规则自行判断，输出以下标记：
+        - ##[CONTINUE]## - 用户没说完，不打断
+        - ##[IGNORE]## - 不用回复，不打断
+        - ##[INTERRUPT]## - 需要回复，打断
         """
         if not self._cxhms_client:
             logger.warning("CXHMS client not set, cannot check interrupt with main LLM")
-            return False
+            return "IGNORE", False
         
         try:
-            prompt = self._build_main_llm_prompt(asr_text)
+            messages = self._get_context_with_system_prompt()
+            user_message = {"role": "user", "content": asr_text}
+            messages.append(user_message)
             
-            response = await self._cxhms_client.send_message(
-                message=prompt,
-                context=[],
-                stream=False
-            )
+            response = await self._cxhms_client.request("chat", {
+                "messages": messages,
+                "stream": False
+            })
             
             if not response:
                 logger.warning("No response from main LLM")
-                return False
+                return "IGNORE", False
             
             response_text = response.get("content", "") or response.get("text", "")
             
-            if "##[interrupt]##" in response_text:
-                logger.info(f"Main LLM decided to interrupt: {asr_text}")
-                return await self._trigger_interrupt(asr_text, response_text)
-            elif "##[no_reply]##" in response_text:
-                logger.info(f"Main LLM decided no reply needed: {asr_text}")
-                return False
+            decision = self._parse_interrupt_decision(response_text)
+            
+            if decision == "INTERRUPT":
+                self._context_manager.add_message(self._session_id, user_message)
+                logger.info(f"Main LLM decided to INTERRUPT: {asr_text}")
+                await self._trigger_interrupt(asr_text, response_text)
+                return "INTERRUPT", True
+            elif decision == "IGNORE":
+                self._context_manager.add_message(self._session_id, user_message)
+                logger.info(f"Main LLM decided to IGNORE: {asr_text}")
+                return "IGNORE", False
             else:
-                logger.debug(f"Main LLM response has no interrupt marker: {response_text[:100]}")
-                return False
+                logger.debug(f"Main LLM decided to CONTINUE: {asr_text}")
+                return "CONTINUE", False
                 
         except Exception as e:
             logger.error(f"Failed to check interrupt with main LLM: {e}")
-            return False
+            return "IGNORE", False
     
-    async def _check_with_independent_llm(self, asr_text: str) -> bool:
+    def _parse_interrupt_decision(self, response_text: str) -> str:
+        """解析打断决策标记"""
+        if "##[INTERRUPT]##" in response_text:
+            return "INTERRUPT"
+        elif "##[IGNORE]##" in response_text:
+            return "IGNORE"
+        elif "##[CONTINUE]##" in response_text:
+            return "CONTINUE"
+        else:
+            logger.warning(f"Unknown interrupt decision in response: {response_text[:100]}")
+            return "IGNORE"
+    
+    async def _check_with_independent_llm(self, asr_text: str) -> Tuple[str, bool]:
         """
         使用独立 LLM 判断是否需要打断
         
-        独立 LLM 返回 JSON: {"interrupt": true/false, "reason": "..."}
+        独立 LLM 返回 JSON: {"decision": "CONTINUE"|"IGNORE"|"INTERRUPT", "reason": "..."}
         """
         try:
             result = await self._call_independent_llm(asr_text)
             
-            if result.get("interrupt"):
-                logger.info(f"Independent LLM decided to interrupt: {asr_text}, reason: {result.get('reason')}")
-                return await self._trigger_interrupt(asr_text)
+            decision = result.get("decision", "IGNORE")
+            
+            if decision == "INTERRUPT":
+                self._context_manager.add_message(self._session_id, {"role": "user", "content": asr_text})
+                logger.info(f"Independent LLM decided to INTERRUPT: {asr_text}")
+                await self._trigger_interrupt(asr_text)
+                return "INTERRUPT", True
+            elif decision == "IGNORE":
+                self._context_manager.add_message(self._session_id, {"role": "user", "content": asr_text})
+                logger.info(f"Independent LLM decided to IGNORE: {asr_text}")
+                return "IGNORE", False
             else:
-                logger.debug(f"Independent LLM decided no interrupt: {asr_text}")
-                return False
+                logger.debug(f"Independent LLM decided to CONTINUE: {asr_text}")
+                return "CONTINUE", False
                 
         except Exception as e:
             logger.error(f"Failed to check interrupt with independent LLM: {e}")
-            return False
-    
-    def _build_main_llm_prompt(self, asr_text: str) -> str:
-        """构建主 LLM 打断判断 Prompt"""
-        custom_prompt = self.main_llm_config.get("prompt", "")
-        
-        if custom_prompt:
-            return custom_prompt.replace("{asr_text}", asr_text)
-        
-        return f"""你是一个直播助手。当前正在通过 TTS 播报回复。
-
-用户刚才说的话: {asr_text}
-
-请判断是否需要打断当前回复并生成新回复：
-
-- 如果用户是在提问、呼叫你、或需要回复，请输出 "##[interrupt]##" 然后直接开始回复
-- 如果用户只是在自言自语、背景噪音、不需要回复，请输出 "##[no_reply]##"
-
-示例：
-用户: "你在吗？" → ##[interrupt]##我在的，有什么事吗？
-用户: "主播好厉害" → ##[no_reply]##
-用户: "今天天气怎么样" → ##[interrupt]##今天天气不错呢！"""
+            return "IGNORE", False
     
     async def _call_independent_llm(self, asr_text: str) -> dict:
         """调用独立 LLM"""
         import aiohttp
         
-        prompt = f"""你是一个语音打断判断助手。请判断用户的语音输入是否需要打断当前播报并生成回复。
+        prompt = f"""你是一个语音打断判断助手。请根据以下规则判断用户的语音输入：
 
 【用户语音】
 {asr_text}
 
 【判断规则】
-- 用户是否在提问？
-- 用户是否在呼叫？
-- 用户是否在说重要的事情？
-- 用户是否需要回复？
+- CONTINUE：用户还在组织语言，没说完
+- IGNORE：用户在自言自语或情绪表达，不需要回复
+- INTERRUPT：用户明确提问或需要互动，需要回复
 
 请返回 JSON 格式：
-{{"interrupt": true, "reason": "用户在提问"}}
-或
-{{"interrupt": false, "reason": "用户在自言自语"}}"""
+{{"decision": "CONTINUE|IGNORE|INTERRUPT", "reason": "判断原因"}}"""
         
         try:
             async with aiohttp.ClientSession() as session:
@@ -219,20 +242,22 @@ class ASRInterruptModule:
                     try:
                         parsed = json.loads(text)
                         return {
-                            "interrupt": parsed.get("interrupt", False),
+                            "decision": parsed.get("decision", "IGNORE"),
                             "reason": parsed.get("reason", "")
                         }
                     except json.JSONDecodeError:
-                        if "true" in text.lower():
-                            return {"interrupt": True, "reason": "从文本解析"}
-                        return {"interrupt": False, "reason": "JSON 解析失败"}
+                        if "INTERRUPT" in text:
+                            return {"decision": "INTERRUPT", "reason": "从文本解析"}
+                        elif "IGNORE" in text:
+                            return {"decision": "IGNORE", "reason": "从文本解析"}
+                        return {"decision": "CONTINUE", "reason": "JSON解析失败"}
                         
         except asyncio.TimeoutError:
             logger.warning("Independent LLM timeout")
-            return {"interrupt": False, "reason": "超时"}
+            return {"decision": "CONTINUE", "reason": "超时"}
         except Exception as e:
             logger.error(f"Independent LLM error: {e}")
-            return {"interrupt": False, "reason": str(e)}
+            return {"decision": "IGNORE", "reason": str(e)}
     
     async def _trigger_interrupt(self, asr_text: str, llm_response: str = "") -> bool:
         """触发打断"""

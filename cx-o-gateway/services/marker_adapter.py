@@ -32,9 +32,43 @@ class MarkerAdapter:
             "marker_config": {}
         })
     
-    def generate_marker_prompt(self, supported_markers: list, marker_config: dict) -> str:
-        """根据前端支持的标记类型生成对应的提示词"""
+    def generate_marker_prompt(self, supported_markers: list, marker_config: dict, include_interrupt_rules: bool = False) -> str:
+        """根据前端支持的标记类型生成对应的提示词
+
+        Args:
+            supported_markers: 支持的标记类型列表
+            marker_config: 标记配置
+            include_interrupt_rules: 是否包含打断判断规则（用于双工模式）
+        """
         prompt_parts = []
+        
+        # 打断判断规则（双工模式）
+        if include_interrupt_rules:
+            prompt_parts.append("""
+## 打断判断规则
+当前 TTS 正在播报时，用户可能会说话打断。根据以下规则判断：
+
+1. CONTINUE（用户没有说完）→ 不打断，不添加到上下文
+   - 用户还在组织语言
+   - 用户在思考
+   - 用户在说一半的句子
+
+2. IGNORE（不用回复）→ 不打断，但添加到上下文
+   - 用户只是自言自语
+   - 用户在表达情绪（如"哈哈哈"）
+   - 用户在说背景对话
+   - 不需要回应的内容
+
+3. INTERRUPT（回复）→ 打断并添加到上下文
+   - 用户明确提问
+   - 用户在呼叫助手
+   - 用户需要实质性回复
+
+判断结果通过以下标记返回：
+- ##[CONTINUE]## → 继续播报，不添加到上下文
+- ##[IGNORE]## → 不回复，添加到上下文
+- ##[INTERRUPT]## → 打断并回复，添加到上下文
+""")
         
         # Live2D 动作标记
         if "live2d" in supported_markers:

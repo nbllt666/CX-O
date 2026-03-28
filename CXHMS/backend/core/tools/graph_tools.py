@@ -1486,3 +1486,223 @@ def event_graph_export(format: str) -> Dict[str, Any]:
         return {"status": "success", "format": format, "data": data, "entity_count": len(data.get("entities", [])), "relation_count": len(data.get("relations", []))}
     except Exception as e:
         return {"error": f"导出事件图数据失败: {str(e)}"}
+
+
+def register_graph_tools():
+    """注册所有图数据库工具到工具注册表
+    
+    注册 56 个图工具：
+    - 主模型：20 个工具（用户图 5 + 事物图 5 + 概念图 5 + 事件图 5）
+    - 摘要模型：12 个工具（用户图 3 + 事物图 3 + 概念图 3 + 事件图 3）
+    - 记忆管理 Agent：24 个工具（用户图 6 + 事物图 6 + 概念图 6 + 事件图 6）
+    """
+    from .registry import tool_registry
+    
+    user_graph_tools = [
+        (user_graph_create_entity, "user_graph_create_entity", "在用户图中创建实体", ["main", "assistant"]),
+        (user_graph_create_relation, "user_graph_create_relation", "在用户图中创建关系", ["main", "assistant"]),
+        (user_graph_query_entities, "user_graph_query_entities", "查询用户图中的关联实体", ["main", "summary", "assistant"]),
+        (user_graph_find_paths, "user_graph_find_paths", "查找用户图中两个实体之间的路径", ["main", "assistant"]),
+        (user_graph_search_related_memories, "user_graph_search_related_memories", "用户图增强记忆搜索", ["main", "summary"]),
+        (user_graph_extract_entities, "user_graph_extract_entities", "从内容中提取用户图实体", ["assistant"]),
+        (user_graph_merge_entities, "user_graph_merge_entities", "合并用户图中的两个实体", ["assistant"]),
+        (user_graph_get_entity_summary, "user_graph_get_entity_summary", "获取用户图实体摘要", ["summary", "assistant"]),
+        (user_graph_update_entity, "user_graph_update_entity", "更新用户图实体", ["assistant"]),
+        (user_graph_delete_entity, "user_graph_delete_entity", "删除用户图实体", ["assistant"]),
+        (user_graph_update_relation, "user_graph_update_relation", "更新用户图关系", ["assistant"]),
+        (user_graph_delete_relation, "user_graph_delete_relation", "删除用户图关系", ["assistant"]),
+        (user_graph_get_stats, "user_graph_get_stats", "获取用户图统计信息", ["summary", "assistant"]),
+        (user_graph_export, "user_graph_export", "导出用户图数据", ["assistant"]),
+    ]
+    
+    thing_graph_tools = [
+        (thing_graph_create_entity, "thing_graph_create_entity", "在事物图中创建实体", ["main", "assistant"]),
+        (thing_graph_create_relation, "thing_graph_create_relation", "在事物图中创建关系", ["main", "assistant"]),
+        (thing_graph_query_entities, "thing_graph_query_entities", "查询事物图中的关联实体", ["main", "summary", "assistant"]),
+        (thing_graph_find_paths, "thing_graph_find_paths", "查找事物图中两个实体之间的路径", ["main", "assistant"]),
+        (thing_graph_search_related_memories, "thing_graph_search_related_memories", "事物图增强记忆搜索", ["main", "summary"]),
+        (thing_graph_extract_entities, "thing_graph_extract_entities", "从内容中提取事物图实体", ["assistant"]),
+        (thing_graph_merge_entities, "thing_graph_merge_entities", "合并事物图中的两个实体", ["assistant"]),
+        (thing_graph_get_entity_summary, "thing_graph_get_entity_summary", "获取事物图实体摘要", ["summary", "assistant"]),
+        (thing_graph_update_entity, "thing_graph_update_entity", "更新事物图实体", ["assistant"]),
+        (thing_graph_delete_entity, "thing_graph_delete_entity", "删除事物图实体", ["assistant"]),
+        (thing_graph_update_relation, "thing_graph_update_relation", "更新事物图关系", ["assistant"]),
+        (thing_graph_delete_relation, "thing_graph_delete_relation", "删除事物图关系", ["assistant"]),
+        (thing_graph_get_stats, "thing_graph_get_stats", "获取事物图统计信息", ["summary", "assistant"]),
+        (thing_graph_export, "thing_graph_export", "导出事物图数据", ["assistant"]),
+    ]
+    
+    concept_graph_tools = [
+        (concept_graph_create_entity, "concept_graph_create_entity", "在概念图中创建实体", ["main", "assistant"]),
+        (concept_graph_create_relation, "concept_graph_create_relation", "在概念图中创建关系", ["main", "assistant"]),
+        (concept_graph_query_entities, "concept_graph_query_entities", "查询概念图中的关联实体", ["main", "summary", "assistant"]),
+        (concept_graph_find_paths, "concept_graph_find_paths", "查找概念图中两个实体之间的路径", ["main", "assistant"]),
+        (concept_graph_search_related_memories, "concept_graph_search_related_memories", "概念图增强记忆搜索", ["main", "summary"]),
+        (concept_graph_extract_entities, "concept_graph_extract_entities", "从内容中提取概念图实体", ["assistant"]),
+        (concept_graph_merge_entities, "concept_graph_merge_entities", "合并概念图中的两个实体", ["assistant"]),
+        (concept_graph_get_entity_summary, "concept_graph_get_entity_summary", "获取概念图实体摘要", ["summary", "assistant"]),
+        (concept_graph_update_entity, "concept_graph_update_entity", "更新概念图实体", ["assistant"]),
+        (concept_graph_delete_entity, "concept_graph_delete_entity", "删除概念图实体", ["assistant"]),
+        (concept_graph_update_relation, "concept_graph_update_relation", "更新概念图关系", ["assistant"]),
+        (concept_graph_delete_relation, "concept_graph_delete_relation", "删除概念图关系", ["assistant"]),
+        (concept_graph_get_stats, "concept_graph_get_stats", "获取概念图统计信息", ["summary", "assistant"]),
+        (concept_graph_export, "concept_graph_export", "导出概念图数据", ["assistant"]),
+    ]
+    
+    event_graph_tools = [
+        (event_graph_create_entity, "event_graph_create_entity", "在事件图中创建实体", ["main", "assistant"]),
+        (event_graph_create_relation, "event_graph_create_relation", "在事件图中创建关系", ["main", "assistant"]),
+        (event_graph_query_entities, "event_graph_query_entities", "查询事件图中的关联实体", ["main", "summary", "assistant"]),
+        (event_graph_find_paths, "event_graph_find_paths", "查找事件图中两个实体之间的路径", ["main", "assistant"]),
+        (event_graph_search_related_memories, "event_graph_search_related_memories", "事件图增强记忆搜索", ["main", "summary"]),
+        (event_graph_extract_entities, "event_graph_extract_entities", "从内容中提取事件图实体", ["assistant"]),
+        (event_graph_merge_entities, "event_graph_merge_entities", "合并事件图中的两个实体", ["assistant"]),
+        (event_graph_get_entity_summary, "event_graph_get_entity_summary", "获取事件图实体摘要", ["summary", "assistant"]),
+        (event_graph_update_entity, "event_graph_update_entity", "更新事件图实体", ["assistant"]),
+        (event_graph_delete_entity, "event_graph_delete_entity", "删除事件图实体", ["assistant"]),
+        (event_graph_update_relation, "event_graph_update_relation", "更新事件图关系", ["assistant"]),
+        (event_graph_delete_relation, "event_graph_delete_relation", "删除事件图关系", ["assistant"]),
+        (event_graph_get_stats, "event_graph_get_stats", "获取事件图统计信息", ["summary", "assistant"]),
+        (event_graph_export, "event_graph_export", "导出事件图数据", ["assistant"]),
+    ]
+    
+    all_tools = user_graph_tools + thing_graph_tools + concept_graph_tools + event_graph_tools
+    
+    tool_schemas = {
+        "create_entity": {
+            "type": "object",
+            "properties": {
+                "name": {"type": "string", "description": "实体名称"},
+                "entity_type": {"type": "string", "description": "实体类型"},
+                "properties": {"type": "object", "description": "实体属性"},
+                "memory_ids": {"type": "array", "items": {"type": "string"}, "description": "关联的记忆ID列表"}
+            },
+            "required": ["name", "entity_type"]
+        },
+        "create_relation": {
+            "type": "object",
+            "properties": {
+                "from_entity": {"type": "string", "description": "起始实体ID"},
+                "to_entity": {"type": "string", "description": "目标实体ID"},
+                "relation_type": {"type": "string", "description": "关系类型"},
+                "strength": {"type": "number", "description": "关系强度，默认1.0"},
+                "evidence_memory_ids": {"type": "array", "items": {"type": "string"}, "description": "证据记忆ID列表"}
+            },
+            "required": ["from_entity", "to_entity", "relation_type"]
+        },
+        "query_entities": {
+            "type": "object",
+            "properties": {
+                "entity_name_or_id": {"type": "string", "description": "实体名称或ID"},
+                "depth": {"type": "integer", "description": "查询深度，默认1"}
+            },
+            "required": ["entity_name_or_id"]
+        },
+        "find_paths": {
+            "type": "object",
+            "properties": {
+                "from_entity": {"type": "string", "description": "起始实体ID"},
+                "to_entity": {"type": "string", "description": "目标实体ID"},
+                "max_depth": {"type": "integer", "description": "最大搜索深度，默认3"}
+            },
+            "required": ["from_entity", "to_entity"]
+        },
+        "search_related_memories": {
+            "type": "object",
+            "properties": {
+                "entity_name": {"type": "string", "description": "实体名称"},
+                "memory_query": {"type": "string", "description": "记忆查询字符串"},
+                "limit": {"type": "integer", "description": "返回结果数量限制，默认10"}
+            },
+            "required": ["entity_name", "memory_query"]
+        },
+        "extract_entities": {
+            "type": "object",
+            "properties": {
+                "content": {"type": "string", "description": "待提取的内容"}
+            },
+            "required": ["content"]
+        },
+        "merge_entities": {
+            "type": "object",
+            "properties": {
+                "entity1_id": {"type": "string", "description": "第一个实体ID（保留）"},
+                "entity2_id": {"type": "string", "description": "第二个实体ID（合并到第一个）"}
+            },
+            "required": ["entity1_id", "entity2_id"]
+        },
+        "get_entity_summary": {
+            "type": "object",
+            "properties": {
+                "entity_name_or_id": {"type": "string", "description": "实体名称或ID"}
+            },
+            "required": ["entity_name_or_id"]
+        },
+        "update_entity": {
+            "type": "object",
+            "properties": {
+                "entity_id": {"type": "string", "description": "实体ID"},
+                "properties": {"type": "object", "description": "要更新的属性"}
+            },
+            "required": ["entity_id", "properties"]
+        },
+        "delete_entity": {
+            "type": "object",
+            "properties": {
+                "entity_id": {"type": "string", "description": "实体ID"}
+            },
+            "required": ["entity_id"]
+        },
+        "update_relation": {
+            "type": "object",
+            "properties": {
+                "from_entity": {"type": "string", "description": "起始实体ID"},
+                "to_entity": {"type": "string", "description": "目标实体ID"},
+                "relation_type": {"type": "string", "description": "关系类型"},
+                "strength": {"type": "number", "description": "新的关系强度"}
+            },
+            "required": ["from_entity", "to_entity", "relation_type", "strength"]
+        },
+        "delete_relation": {
+            "type": "object",
+            "properties": {
+                "from_entity": {"type": "string", "description": "起始实体ID"},
+                "to_entity": {"type": "string", "description": "目标实体ID"},
+                "relation_type": {"type": "string", "description": "关系类型"}
+            },
+            "required": ["from_entity", "to_entity", "relation_type"]
+        },
+        "get_stats": {
+            "type": "object",
+            "properties": {}
+        },
+        "export": {
+            "type": "object",
+            "properties": {
+                "format": {"type": "string", "description": "导出格式（如 json, csv）"}
+            },
+            "required": ["format"]
+        }
+    }
+    
+    for func, name, description, models in all_tools:
+        parts = name.split("_")
+        if len(parts) >= 3:
+            schema_key = "_".join(parts[2:])
+        else:
+            schema_key = parts[-1]
+        
+        parameters = tool_schemas.get(schema_key, {
+            "type": "object",
+            "properties": {}
+        })
+        
+        tool_registry.register(
+            name=name,
+            description=description,
+            parameters=parameters,
+            handler=func,
+            models=models,
+        )
+    
+    return len(all_tools)

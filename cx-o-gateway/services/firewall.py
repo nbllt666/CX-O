@@ -16,6 +16,8 @@ class FirewallService:
         self.blacklist_enabled = True
         self.llm_config = {}
         self._cxhms_client = None
+        self._context_manager = None
+        self._session_id = None
         
     @classmethod
     def get_instance(cls):
@@ -26,6 +28,17 @@ class FirewallService:
     def set_cxhms_client(self, client):
         """设置 CXHMS 客户端用于 LLM 决策"""
         self._cxhms_client = client
+    
+    def set_context_manager(self, context_manager, session_id: str = None):
+        """设置上下文管理器和会话 ID"""
+        self._context_manager = context_manager
+        self._session_id = session_id
+    
+    def _get_context(self) -> list:
+        """获取当前会话的上下文"""
+        if self._context_manager and self._session_id:
+            return self._context_manager.get_context(self._session_id)
+        return []
     
     def load_config(self, config: dict):
         """加载配置"""
@@ -66,11 +79,12 @@ class FirewallService:
     
     async def _llm_decide(self, content: str, user: Dict) -> Dict:
         """调用 LLM 进行决策"""
-        prompt = self._build_decision_prompt(content, user)
+        context = self._get_context()
+        prompt = self._build_decision_prompt(content, user, context)
         
         try:
             if self._cxhms_client:
-                messages = [{"role": "user", "content": prompt}]
+                messages = context + [{"role": "user", "content": prompt}]
                 
                 result = await self._cxhms_client.request("chat", {
                     "messages": messages,
@@ -117,7 +131,7 @@ class FirewallService:
                 "reply_triggered": False
             }
     
-    def _build_decision_prompt(self, content: str, user: Dict) -> str:
+    def _build_decision_prompt(self, content: str, user: Dict, context: list = None) -> str:
         """构建决策 prompt"""
         return f"""你是一个直播弹幕安全审查助手。请根据以下规则判断弹幕内容：
 

@@ -116,16 +116,16 @@ memory:
   graph_libraries:
     user:
       enabled: true
-      label_prefix: "User"
+      label_prefix: User
     thing:
       enabled: true
-      label_prefix: "Thing"
+      label_prefix: Thing
     concept:
       enabled: true
-      label_prefix: "Concept"
+      label_prefix: Concept
     event:
       enabled: true
-      label_prefix: "Event"
+      label_prefix: Event
   hybrid_search_enabled: false
   archive_enabled: true
   dedup_threshold: 0.85

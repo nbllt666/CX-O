@@ -201,3 +201,54 @@ class CXHMSClient:
             raise TimeoutError(f"Stream {action} timed out")
         finally:
             self._pending_requests.pop(request_id, None)
+
+    async def send_message(
+        self,
+        message: str,
+        context: list = None,
+        stream: bool = False,
+        agent_id: str = "default"
+    ) -> dict:
+        """
+        发送消息到 CXHMS 的便捷方法
+        
+        Args:
+            message: 用户消息
+            context: 对话上下文（消息列表）
+            stream: 是否使用流式响应
+            agent_id: Agent ID
+            
+        Returns:
+            dict: 响应结果，包含 content/text 字段
+        """
+        if context is None:
+            context = []
+        
+        messages = context + [{"role": "user", "content": message}]
+        
+        data = {
+            "messages": messages,
+            "agent_id": agent_id,
+            "stream": stream
+        }
+        
+        if stream:
+            result = {"content": "", "text": "", "is_final": False}
+            
+            async def handle_stream(response: dict):
+                content = response.get("content", response.get("text", ""))
+                if content:
+                    result["content"] += content
+                    result["text"] += content
+                if response.get("is_final", False):
+                    result["is_final"] = True
+            
+            await self.stream("chat", data, handle_stream)
+            return result
+        else:
+            response = await self.request("chat", data)
+            return {
+                "content": response.get("content", response.get("text", "")),
+                "text": response.get("content", response.get("text", "")),
+                "success": response.get("success", True)
+            }

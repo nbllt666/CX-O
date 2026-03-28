@@ -259,8 +259,10 @@ def create_app() -> FastAPI:
     _cxhms_client = cxhms_client
     
     from services.firewall import FirewallService
+    from services.context_manager import get_context_manager
     firewall = FirewallService.get_instance()
     firewall.set_cxhms_client(cxhms_client)
+    firewall.set_context_manager(get_context_manager())
     
     tts_config = config.services.tts
     tts_client = TTSClient(

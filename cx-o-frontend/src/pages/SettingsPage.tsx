@@ -163,9 +163,13 @@ export function SettingsPage() {
 
   const checkControlService = useCallback(async () => {
     try {
-      await api.getControlServiceHealth();
-      setIsControlServiceReady(true);
-      return true;
+      const response = await fetch('http://localhost:8000/health');
+      if (response.ok) {
+        setIsControlServiceReady(true);
+        return true;
+      }
+      setIsControlServiceReady(false);
+      return false;
     } catch {
       setIsControlServiceReady(false);
       return false;
@@ -174,14 +178,14 @@ export function SettingsPage() {
 
   const checkBackendStatus = useCallback(async () => {
     try {
-      const status = await api.getMainBackendStatus();
-      setIsBackendRunning(status.running);
-      setBackendStatus({
-        pid: status.pid,
-        uptime: status.uptime,
-        port: status.port,
-      });
-      return status.running;
+      const response = await fetch('http://localhost:8000/health');
+      if (response.ok) {
+        setIsBackendRunning(true);
+        setBackendStatus({ port: 8000 });
+        return true;
+      }
+      setIsBackendRunning(false);
+      return false;
     } catch {
       setIsBackendRunning(false);
       setBackendStatus({});
@@ -685,54 +689,28 @@ export function SettingsPage() {
   }, [activeSection, loadLogs]);
 
   const handleStartBackend = async () => {
-    if (!isControlServiceReady) {
-      alert('控制服务未就绪，请稍后再试');
-      return;
-    }
     setIsProcessing(true);
     try {
-      await api.startMainBackend();
-      await new Promise((resolve) => setTimeout(resolve, 2000));
-      await checkBackendStatus();
+      const response = await fetch('http://localhost:8000/health');
+      if (response.ok) {
+        alert('后端服务已在运行');
+        setIsBackendRunning(true);
+      } else {
+        alert('请手动启动后端服务: cd CXHMS && python main.py');
+      }
     } catch {
-      alert('启动后端服务失败，请检查控制台日志');
+      alert('请手动启动后端服务: cd CXHMS && python main.py');
     } finally {
       setIsProcessing(false);
     }
   };
 
   const handleStopBackend = async () => {
-    if (!isControlServiceReady) {
-      alert('控制服务未就绪');
-      return;
-    }
-    setIsProcessing(true);
-    try {
-      await api.stopMainBackend();
-      await new Promise((resolve) => setTimeout(resolve, 1000));
-      await checkBackendStatus();
-    } catch {
-      alert('停止后端服务失败');
-    } finally {
-      setIsProcessing(false);
-    }
+    alert('请手动停止后端服务 (Ctrl+C)');
   };
 
   const handleRestartBackend = async () => {
-    if (!isControlServiceReady) {
-      alert('控制服务未就绪');
-      return;
-    }
-    setIsProcessing(true);
-    try {
-      await api.restartMainBackend();
-      await new Promise((resolve) => setTimeout(resolve, 3000));
-      await checkBackendStatus();
-    } catch {
-      alert('重启后端服务失败');
-    } finally {
-      setIsProcessing(false);
-    }
+    alert('请手动重启后端服务');
   };
 
   const handleSave = async () => {
@@ -1126,7 +1104,6 @@ export function SettingsPage() {
                         <Button
                           onClick={handleStartBackend}
                           loading={isProcessing}
-                          disabled={!isControlServiceReady}
                         >
                           启动服务
                         </Button>

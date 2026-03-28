@@ -70,7 +70,7 @@ from .graph_tools import (
     event_graph_update_entity,
     event_graph_update_relation,
     register_graph_tools,
-    set_dependencies as set_graph_dependencies,
+    set_graph_dependencies,
     thing_graph_create_entity,
     thing_graph_create_relation,
     thing_graph_delete_entity,

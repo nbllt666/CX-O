@@ -2,7 +2,7 @@ import axios, { AxiosInstance, AxiosError } from 'axios';
 import type { AxiosRequestConfig, InternalAxiosRequestConfig } from 'axios';
 
 const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:8100';
-const CONTROL_SERVICE_URL = import.meta.env.VITE_CONTROL_SERVICE_URL || 'http://localhost:8100';
+const CONTROL_SERVICE_URL = import.meta.env.VITE_CONTROL_SERVICE_URL || 'http://localhost:8765';
 export const WS_BASE_URL = import.meta.env.VITE_WS_URL || 'ws://localhost:8100';
 
 interface RetryConfig extends InternalAxiosRequestConfig {

@@ -44,6 +44,8 @@ class AgentInterruptUser:
         self._asr_client: Any = None
         self._last_interrupt_time: float = 0
         self._interrupt_cooldown_ms = 3000
+        self._session_id: Optional[str] = None
+        self._context_manager: Any = None
         
     @classmethod
     def get_instance(cls):
@@ -66,6 +68,26 @@ class AgentInterruptUser:
     def set_asr_client(self, client: Any):
         """设置 ASR 客户端"""
         self._asr_client = client
+    
+    def set_session_id(self, session_id: str):
+        """设置当前会话 ID"""
+        self._session_id = session_id
+    
+    def set_context_manager(self, context_manager: Any):
+        """设置上下文管理器"""
+        self._context_manager = context_manager
+    
+    def _get_context(self) -> list:
+        """获取当前会话的上下文（不含系统提示词）"""
+        if self._context_manager and self._session_id:
+            return self._context_manager.get_context(self._session_id)
+        return []
+    
+    def _get_context_with_system_prompt(self) -> list:
+        """获取当前会话的完整上下文（包含系统提示词）"""
+        if self._context_manager and self._session_id:
+            return self._context_manager.get_context_with_system_prompt(self._session_id)
+        return []
     
     def set_callbacks(
         self,
@@ -164,13 +186,14 @@ class AgentInterruptUser:
             return {"can_interrupt": False, "should_reply": False}
         
         try:
-            prompt = self._build_interrupt_prompt(asr_text, is_final)
+            messages = self._get_context_with_system_prompt()
+            user_message = {"role": "user", "content": asr_text}
+            messages.append(user_message)
             
-            response = await self._cxhms_client.send_message(
-                message=prompt,
-                context=[],
-                stream=False
-            )
+            response = await self._cxhms_client.request("chat", {
+                "messages": messages,
+                "stream": False
+            })
             
             if not response:
                 return {"can_interrupt": False, "should_reply": False}
@@ -183,7 +206,7 @@ class AgentInterruptUser:
             logger.error(f"Failed to check can interrupt: {e}")
             return {"can_interrupt": False, "should_reply": False}
     
-    def _build_interrupt_prompt(self, asr_text: str, is_final: bool) -> str:
+    def _build_interrupt_prompt(self, asr_text: str, is_final: bool, context: list = None) -> str:
         """构建打断判断 Prompt"""
         status = "用户说完了" if is_final else "用户正在说话"
         

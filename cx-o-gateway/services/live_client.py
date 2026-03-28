@@ -62,9 +62,11 @@ class LiveClientHandler:
             self.client_config.get("marker_config", {})
         )
         
+        is_duplex = self.client_config.get("duplex_mode", True)
         self._marker_prompt = adapter.generate_marker_prompt(
             self.client_config.get("supported_markers", []),
-            self.client_config.get("marker_config", {})
+            self.client_config.get("marker_config", {}),
+            include_interrupt_rules=is_duplex
         )
         
         from services.context_manager import get_context_manager
@@ -281,10 +283,14 @@ class LiveClientHandler:
             
             asr_interrupt = get_asr_interrupt_module()
             asr_interrupt.set_cxhms_client(cxhms_client)
+            asr_interrupt.set_session_id(self._session_id)
+            asr_interrupt.set_context_manager(get_context_manager())
             asr_interrupt.set_interrupt_callback(self._on_asr_interrupt)
             
             agent_interrupt = get_agent_interrupt_module()
             agent_interrupt.set_cxhms_client(cxhms_client)
+            agent_interrupt.set_session_id(self._session_id)
+            agent_interrupt.set_context_manager(get_context_manager())
             agent_interrupt.set_asr_client(asr_client)
             self._audio_stream_processor.set_agent_interrupt(agent_interrupt)
             
