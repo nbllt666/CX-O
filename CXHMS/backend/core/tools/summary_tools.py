@@ -16,6 +16,12 @@ _MEMORY_MANAGER = None
 _MODEL_ROUTER = None
 _CONTEXT_MANAGER = None
 
+_TOPIC_SUMMARY_CONFIG = {
+    "max_history_topics": None,  # None 表示无限制，数字表示保留的历史话题数量
+    "auto_save_memory": True,
+    "topic_marker_enabled": True,
+}
+
 
 def set_dependencies(memory_manager=None, model_router=None, context_manager=None):
     """设置依赖的组件"""
@@ -23,6 +29,61 @@ def set_dependencies(memory_manager=None, model_router=None, context_manager=Non
     _MEMORY_MANAGER = memory_manager
     _MODEL_ROUTER = model_router
     _CONTEXT_MANAGER = context_manager
+
+
+def get_topic_summary_config() -> Dict[str, Any]:
+    """获取话题摘要配置"""
+    return _TOPIC_SUMMARY_CONFIG.copy()
+
+
+def update_topic_summary_config(key: str, value: Any) -> Dict[str, Any]:
+    """更新话题摘要配置
+    
+    Args:
+        key: 配置项名称
+        value: 配置值
+    
+    Returns:
+        更新后的配置
+    """
+    if key in _TOPIC_SUMMARY_CONFIG:
+        _TOPIC_SUMMARY_CONFIG[key] = value
+        return {"status": "success", "config": _TOPIC_SUMMARY_CONFIG}
+    return {"error": f"未知的配置项: {key}"}
+
+
+def set_max_history_topics(max_topics: Optional[int] = None):
+    """设置保持在上下文中的历史话题数量
+
+    Args:
+        max_topics: 最大历史话题数量，None 表示无限制
+    """
+    _TOPIC_SUMMARY_CONFIG["max_history_topics"] = max_topics
+
+
+def get_topic_summary_config_wrapper() -> Dict[str, Any]:
+    """获取话题摘要配置的包装函数"""
+    return get_topic_summary_config()
+
+
+def set_max_history_topics_wrapper(max_topics: Optional[int]) -> Dict[str, Any]:
+    """设置历史话题数量的包装函数
+
+    Args:
+        max_topics: 最大历史话题数量，None 表示无限制
+
+    Returns:
+        执行结果
+    """
+    try:
+        set_max_history_topics(max_topics)
+        return {
+            "status": "success",
+            "message": f"历史话题数量已设置为 {max_topics if max_topics else '无限制'}",
+            "max_history_topics": _TOPIC_SUMMARY_CONFIG["max_history_topics"],
+        }
+    except Exception as e:
+        return {"error": f"设置失败: {str(e)}"}
 
 
 def get_summary_client():
@@ -133,6 +194,66 @@ def register_summary_tools():
         category="summary",
         tags=["summary", "context", "clear"],
         examples=["清空当前会话的上下文", "重置对话历史"],
+    )
+
+    # 4.1 trigger_topic_summary - 触发话题摘要
+    tool_registry.register(
+        name="trigger_topic_summary",
+        description="触发当前话题的摘要生成。应在判断当前话题已结束时调用，摘要将替换当前话题的上下文并保存为记忆。摘要内容由摘要模型自主生成。",
+        parameters={
+            "type": "object",
+            "properties": {
+                "session_id": {"type": "string", "description": "会话ID"},
+                "topic": {
+                    "type": "string",
+                    "description": "话题名称/主题（可选，由主模型提供）",
+                },
+                "end_signal": {
+                    "type": "string",
+                    "description": "结束信号（可选），主模型判断话题结束的依据",
+                },
+            },
+            "required": ["session_id"],
+        },
+        function=trigger_topic_summary,
+        category="summary",
+        tags=["summary", "topic", "trigger", "compress"],
+        examples=["触发当前话题摘要", "总结当前讨论的内容"],
+    )
+
+    # 4.2 start_topic - 开始新话题
+    # 4.2 get_topic_summary_config - 获取话题摘要配置
+    tool_registry.register(
+        name="get_topic_summary_config",
+        description="获取话题摘要系统的当前配置，包括保持在上下文中的历史话题数量等设置。",
+        parameters={
+            "type": "object",
+            "properties": {},
+        },
+        function=get_topic_summary_config_wrapper,
+        category="summary",
+        tags=["summary", "config", "topic", "settings"],
+        examples=["查看话题摘要配置", "获取当前设置"],
+    )
+
+    # 4.4 set_max_history_topics - 设置历史话题数量
+    tool_registry.register(
+        name="set_max_history_topics",
+        description="设置保持在上下文中的历史话题数量。当历史话题超过此数量时，最早的话题摘要将被清理。设置为 null 表示无限制。",
+        parameters={
+            "type": "object",
+            "properties": {
+                "max_topics": {
+                    "type": "integer",
+                    "description": "最大历史话题数量，设置为 null 表示无限制",
+                },
+            },
+            "required": ["max_topics"],
+        },
+        function=set_max_history_topics_wrapper,
+        category="summary",
+        tags=["summary", "config", "topic", "limit"],
+        examples=["设置历史话题数量为 5", "限制历史话题为 3 个"],
     )
 
     # 5-16. 图工具注册 (4库 × 3工具 = 12个)
@@ -384,7 +505,7 @@ async def summarize_content(content: str, max_length: int = 200) -> Dict[str, An
 
 
 async def save_summary_memory(
-    content: str, importance: int, timestamp: str, tags: list = None
+    content: str, importance: int, timestamp: str, tags: list = None, topic: str = None
 ) -> Dict[str, Any]:
     """保存摘要记忆
 
@@ -393,6 +514,7 @@ async def save_summary_memory(
         importance: 重要性 (1-10, 10为最重要)
         timestamp: 时间戳 (格式: yyyymmddhhmm, 如 202602112235)
         tags: 标签列表 (可选)
+        topic: 话题名称 (可选)
 
     Returns:
         保存结果
@@ -424,17 +546,27 @@ async def save_summary_memory(
         # 将重要性转换为 0-1 范围
         importance_normalized = importance / 10.0
 
+        # 构建元信息
+        metadata = {
+            "source": "summary",
+            "original_timestamp": timestamp,
+            "importance_level": importance,
+        }
+        if topic:
+            metadata["topic"] = topic
+
+        # 构建标签
+        final_tags = tags or ["summary"]
+        if topic:
+            final_tags.append(f"topic:{topic}")
+
         # 保存记忆
         memory_id = await _MEMORY_MANAGER.add_memory(
             content=content,
             memory_type="long_term",
             importance=importance_normalized,
-            tags=tags or ["summary"],
-            metadata={
-                "source": "summary",
-                "original_timestamp": timestamp,
-                "importance_level": importance,
-            },
+            tags=final_tags,
+            metadata=metadata,
         )
 
         return {
@@ -443,6 +575,7 @@ async def save_summary_memory(
             "content": content,
             "importance": importance,
             "timestamp": timestamp,
+            "topic": topic,
             "message": f"记忆已保存 (ID: {memory_id})",
         }
 
@@ -479,3 +612,146 @@ def clear_summary_context(session_id: str) -> Dict[str, Any]:
         return {"status": "success", "session_id": session_id, "message": "上下文已清空"}
     except Exception as e:
         return {"error": f"清空上下文失败: {str(e)}"}
+
+
+async def trigger_topic_summary(
+    session_id: str, topic: str = None, end_signal: str = None
+) -> Dict[str, Any]:
+    """触发当前话题的摘要生成
+
+    流程：
+    1. 提取当前话题的所有上下文消息（从最后一个话题摘要之后）
+    2. 调用摘要模型生成摘要（摘要模型自主决定内容）
+    3. 将当前话题上下文替换为摘要
+    4. 保存摘要为长期记忆
+
+    Args:
+        session_id: 会话ID
+        topic: 话题名称/主题（可选）
+        end_signal: 结束信号（可选）
+
+    Returns:
+        执行结果
+    """
+    cm = get_context_manager()
+    if not cm:
+        return {"error": "上下文管理器不可用"}
+
+    if not _MEMORY_MANAGER:
+        return {"error": "记忆管理器未初始化"}
+
+    try:
+        messages = cm.get_messages(session_id, limit=1000)
+
+        if not messages:
+            return {"error": "没有可摘要的消息"}
+
+        topic_start_idx = 0
+        for i, msg in enumerate(messages):
+            content = msg.get("content", "")
+            content_type = msg.get("content_type", "")
+            if content.startswith("[话题摘要]") or content_type == "topic_summary":
+                topic_start_idx = i + 1
+
+        if topic_start_idx >= len(messages):
+            return {"error": "当前话题没有新消息可摘要"}
+
+        current_topic_messages = messages[topic_start_idx:]
+
+        context_text = "\n".join(
+            f"{msg.get('role', 'unknown')}: {msg.get('content', '')}"
+            for msg in current_topic_messages
+        )
+
+        summary_prompt = f"""请对以下对话内容进行摘要。
+
+对话内容：
+{context_text}
+
+请生成一段简洁的摘要，准确表达本次对话的核心内容。
+
+注意：
+- 摘要应包含对话的主要议题、关键决策和重要信息
+- 如果有未完成的事项或待办任务，请明确标注
+- 格式和长度由你自主决定，以清晰准确为原则"""
+
+        summary_client = get_summary_client()
+        if not summary_client:
+            return {"error": "摘要模型不可用"}
+
+        response = await summary_client.chat(
+            messages=[{"role": "user", "content": summary_prompt}], stream=False
+        )
+
+        summary = ""
+        if hasattr(response, "content") and response.content:
+            summary = response.content.strip()
+        elif isinstance(response, dict) and response.get("content"):
+            summary = response.get("content").strip()
+        else:
+            summary = str(response)
+
+        for i in range(len(messages) - 1, topic_start_idx - 1, -1):
+            cm.delete_message(messages[i]["id"])
+
+        summary_marker = f"[话题摘要] {summary}"
+        cm.add_message(
+            session_id=session_id,
+            role="topic_summary",
+            content=summary_marker,
+            content_type="topic_summary",
+        )
+
+        max_history = _TOPIC_SUMMARY_CONFIG.get("max_history_topics")
+        if max_history is not None:
+            all_messages = cm.get_messages(session_id, limit=1000)
+            topic_summaries = [
+                msg for msg in all_messages
+                if msg.get("content_type") == "topic_summary" or
+                   (msg.get("content", "").startswith("[话题摘要]"))
+            ]
+            if len(topic_summaries) > max_history:
+                summaries_to_delete = topic_summaries[:-max_history]
+                for msg in summaries_to_delete:
+                    cm.delete_message(msg["id"])
+                logger.info(f"已清理 {len(summaries_to_delete)} 条历史话题摘要")
+
+        from datetime import datetime
+
+        timestamp = datetime.now().strftime("%Y%m%d%H%M")
+        importance = 7
+
+        tags = ["topic_summary", "conversation_summary"]
+        if topic:
+            tags.append(f"topic:{topic}")
+
+        memory_id = await _MEMORY_MANAGER.add_memory(
+            content=summary,
+            memory_type="conversation_summary",
+            importance=importance / 10.0,
+            tags=tags,
+            metadata={
+                "session_id": session_id,
+                "topic": topic or "未知话题",
+                "end_signal": end_signal,
+                "summarized_at": datetime.now().isoformat(),
+                "message_count": len(current_topic_messages),
+            },
+        )
+
+        logger.info(
+            f"话题摘要已生成并保存: session_id={session_id}, memory_id={memory_id}"
+        )
+
+        return {
+            "status": "success",
+            "summary": summary,
+            "memory_id": memory_id,
+            "message": "话题摘要已生成并保存",
+            "topic": topic or "未知话题",
+            "summarized_messages": len(current_topic_messages),
+        }
+
+    except Exception as e:
+        logger.error(f"触发话题摘要失败: {e}")
+        return {"error": f"触发话题摘要失败: {str(e)}"}

@@ -88,6 +88,7 @@ class MemoryManager:
         self._hybrid_search = None
         self.archiver = None
         self.deduplication_engine = None
+        self.vectorization_queue = None
         self._last_sync_time: Optional[str] = None
 
         self._graph_stores: Dict[str, "GraphStoreBase"] = {}
@@ -520,6 +521,58 @@ JSON响应："""
             logger.warning(f"去重引擎初始化失败: {e}")
             self.deduplication_engine = None
 
+        try:
+            from backend.core.memory.vectorization_queue import VectorizationQueue
+
+            self.vectorization_queue = VectorizationQueue(max_workers=2, batch_size=5)
+            self.vectorization_queue.set_callbacks(
+                on_complete=self._on_vectorization_complete,
+                on_error=self._on_vectorization_error
+            )
+            self.vectorization_queue.start()
+            logger.info("向量化队列已初始化并启动")
+        except Exception as e:
+            logger.warning(f"向量化队列初始化失败：{e}")
+            self.vectorization_queue = None
+
+    def _on_vectorization_complete(self, memory_id: str, content: str):
+        """向量化完成回调 - 执行实际的向量化并存储
+        
+        Args:
+            memory_id: 记忆 ID
+            content: 需要向量化的内容
+        """
+        logger.debug(f"向量化开始：memory_id={memory_id}")
+        
+        if not self._vector_store or not self._embedding_model:
+            logger.warning(f"向量存储或嵌入模型未初始化，跳过向量化：memory_id={memory_id}")
+            return
+        
+        try:
+            # 在工作线程中执行异步向量化
+            async def _do_vectorization():
+                # 获取向量
+                embedding = await self._embedding_model.get_embedding(content)
+                # 存储到向量数据库
+                return await self._vector_store.add_memory_vector(
+                    memory_id=int(memory_id),
+                    content=content,
+                    embedding=embedding
+                )
+            
+            result = self._run_async_sync(_do_vectorization())
+            if result:
+                logger.info(f"向量化完成并存储：memory_id={memory_id}")
+            else:
+                logger.warning(f"向量化存储失败：memory_id={memory_id}")
+                
+        except Exception as e:
+            logger.error(f"向量化处理失败：memory_id={memory_id}, error={e}")
+        
+    def _on_vectorization_error(self, memory_id: str, error: Exception):
+        """向量化失败回调"""
+        logger.error(f"向量化失败：memory_id={memory_id}, error={error}")
+
     def _run_async_sync(self, coro):
         """在同步方法中运行异步协程
 
@@ -544,19 +597,32 @@ JSON响应："""
             return asyncio.run(coro)
 
     def _sync_vector_for_memory(self, memory_id: int, content: str, metadata: Dict = None) -> bool:
-        """同步记忆到向量数据库
+        """同步记忆到向量数据库（异步非阻塞）
+        
+        使用向量化队列进行异步处理，立即返回，不阻塞主线程
 
         Args:
-            memory_id: 记忆ID
+            memory_id: 记忆 ID
             content: 记忆内容
             metadata: 元数据
 
         Returns:
-            是否同步成功
+            是否同步成功（总是返回 True，因为异步处理）
         """
         if not self._vector_store or not self._embedding_model:
-            logger.debug(f"向量存储或嵌入模型未启用，跳过向量同步: memory_id={memory_id}")
+            logger.debug(f"向量存储或嵌入模型未启用，跳过向量同步：memory_id={memory_id}")
             return False
+
+        # 如果向量化队列可用，使用异步处理
+        if self.vectorization_queue:
+            # 将向量化任务添加到队列
+            task_id = self.vectorization_queue.add_task(
+                memory_id=str(memory_id),
+                content=content,
+                priority=5  # 默认优先级
+            )
+            logger.debug(f"向量化任务已添加到队列：memory_id={memory_id}, task_id={task_id}")
+            return True  # 立即返回成功，实际向量化在后台进行
 
         try:
 
@@ -568,10 +634,10 @@ JSON响应："""
 
             result = self._run_async_sync(_sync())
             if result:
-                logger.info(f"向量同步成功: memory_id={memory_id}")
+                logger.info(f"向量同步成功：memory_id={memory_id}")
             return result
         except Exception as e:
-            logger.warning(f"向量同步失败: memory_id={memory_id}, error={e}")
+            logger.warning(f"向量同步失败：memory_id={memory_id}, error={e}")
             return False
 
     def _update_vector_for_memory(
@@ -722,13 +788,18 @@ JSON响应："""
         if self._cleanup_thread and self._cleanup_thread.is_alive():
             self._cleanup_thread.join(timeout=5)
 
+        # 停止向量化队列
+        if self.vectorization_queue:
+            self.vectorization_queue.stop()
+            self.vectorization_queue = None
+
         self.close_all_connections()
 
         if self._vector_store:
             try:
                 self._vector_store.close()
             except Exception as e:
-                logger.warning(f"关闭向量存储失败: {e}")
+                logger.warning(f"关闭向量存储失败：{e}")
             self._vector_store = None
 
         logger.info("记忆管理器已关闭")

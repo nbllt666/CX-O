@@ -13,6 +13,7 @@ from .graph_tools import (
     concept_graph_create_entity, concept_graph_create_relation, concept_graph_query_entities, concept_graph_find_paths, concept_graph_search_related_memories,
     event_graph_create_entity, event_graph_create_relation, event_graph_query_entities, event_graph_find_paths, event_graph_search_related_memories,
 )
+from . import summary_tools
 
 _MEMORY_MANAGER = None
 _SECONDARY_ROUTER = None
@@ -264,6 +265,65 @@ def register_master_tools():
             "记住用户是素食主义者",
             "保存用户的核心理念：诚实是最重要的品质",
         ],
+    )
+
+    # 6.1 trigger_topic_summary - 触发话题摘要
+    tool_registry.register(
+        name="trigger_topic_summary",
+        description="触发当前话题的摘要生成。应在判断当前话题已结束时调用，摘要将替换当前话题的上下文并保存为记忆。摘要内容由摘要模型自主生成。",
+        parameters={
+            "type": "object",
+            "properties": {
+                "session_id": {"type": "string", "description": "会话ID"},
+                "topic": {
+                    "type": "string",
+                    "description": "话题名称/主题（可选，由主模型提供）",
+                },
+                "end_signal": {
+                    "type": "string",
+                    "description": "结束信号（可选），主模型判断话题结束的依据",
+                },
+            },
+            "required": ["session_id"],
+        },
+        function=trigger_topic_summary_wrapper,
+        category="summary",
+        tags=["summary", "topic", "trigger", "compress"],
+        examples=["触发当前话题摘要", "总结当前讨论的内容"],
+    )
+
+    # 6.2 get_topic_summary_config - 获取话题摘要配置
+    tool_registry.register(
+        name="get_topic_summary_config",
+        description="获取话题摘要系统的当前配置，包括保持在上下文中的历史话题数量等设置。",
+        parameters={
+            "type": "object",
+            "properties": {},
+        },
+        function=get_topic_summary_config_wrapper,
+        category="summary",
+        tags=["summary", "config", "topic", "settings"],
+        examples=["查看话题摘要配置", "获取当前设置"],
+    )
+
+    # 6.4 set_max_history_topics - 设置历史话题数量
+    tool_registry.register(
+        name="set_max_history_topics",
+        description="设置保持在上下文中的历史话题数量。当历史话题超过此数量时，最早的话题摘要将被清理。设置为 null 表示无限制。",
+        parameters={
+            "type": "object",
+            "properties": {
+                "max_topics": {
+                    "type": "integer",
+                    "description": "最大历史话题数量，设置为 null 表示无限制",
+                },
+            },
+            "required": ["max_topics"],
+        },
+        function=set_max_history_topics_wrapper,
+        category="summary",
+        tags=["summary", "config", "topic", "limit"],
+        examples=["设置历史话题数量为 5", "限制历史话题为 3 个"],
     )
 
     # 7. acp_list_agents - 列出可用的远程 Agent
@@ -1194,3 +1254,18 @@ async def acp_leave_group(group_id: str) -> Dict[str, Any]:
             return {"error": f"群组 {group_id} 不存在或你不在该群组中"}
     except Exception as e:
         return {"error": f"离开群组失败: {str(e)}"}
+
+
+async def trigger_topic_summary_wrapper(session_id: str, topic: str = None, end_signal: str = None) -> Dict[str, Any]:
+    """触发话题摘要的包装函数"""
+    return await summary_tools.trigger_topic_summary(session_id, topic, end_signal)
+
+
+def get_topic_summary_config_wrapper() -> Dict[str, Any]:
+    """获取话题摘要配置的包装函数"""
+    return summary_tools.get_topic_summary_config()
+
+
+def set_max_history_topics_wrapper(max_topics: int) -> Dict[str, Any]:
+    """设置历史话题数量的包装函数"""
+    return summary_tools.set_max_history_topics_wrapper(max_topics)
