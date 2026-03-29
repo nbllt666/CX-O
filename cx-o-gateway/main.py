@@ -71,7 +71,6 @@ async def lifespan(app):
 
 
 app = create_app()
-app.router.lifespan_context = lifespan
 
 
 def run():

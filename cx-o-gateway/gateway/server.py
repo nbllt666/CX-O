@@ -90,12 +90,6 @@ def get_cxhms_client() -> Optional[CXHMSClient]:
     return _cxhms_client
 
 
-def get_config():
-    """获取配置实例"""
-    from gateway.config import get_config as _get_config
-    return _get_config()
-
-
 async def handle_ping(websocket: WebSocket, message: dict, client_id: str):
     timestamp = message.get("timestamp", time.time())
     await manager.send_message(client_id, create_pong(timestamp))
@@ -1031,12 +1025,12 @@ def create_app() -> FastAPI:
             
             config = get_config()
             asr_config = config.services.asr
-            
+
             from services.asr_client import ASRClient
             client = ASRClient(base_url=asr_config.url)
-            
+
             # Read audio file if exists
-            if 'temp_path' in dir():
+            if temp_path:
                 with open(temp_path, 'rb') as f:
                     audio_data = f.read()
                 os.unlink(temp_path)

@@ -126,7 +126,11 @@ class LiveClientHandler:
         # 添加到上下文管理器
         ctx_mgr = get_context_manager()
         session_id = f"live_{self.client_id}"
-        ctx_mgr.add_message(session_id, context_message)
+        ctx_mgr.add_message(
+            session_id,
+            role=context_message.get("role", "user"),
+            content=context_message.get("content", "")
+        )
         
         messages = ctx_mgr.get_context_with_system_prompt(session_id)
         
@@ -267,6 +271,7 @@ class LiveClientHandler:
             from services.asr_interrupt import get_asr_interrupt_module
             from services.agent_interrupt_user import get_agent_interrupt_module
             from services.asr_client import ASRClient
+            from services.context_manager import get_context_manager
             from gateway.server import get_cxhms_client, get_config
             
             cxhms_client = get_cxhms_client()

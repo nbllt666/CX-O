@@ -119,6 +119,9 @@ class MemoryManager:
         safe_agent_id = re.sub(r"[^a-zA-Z0-9_]", "_", agent_id)
         if not re.match(r"^[a-zA-Z_]", safe_agent_id):
             safe_agent_id = "agent_" + safe_agent_id
+        if not re.match(r"^[a-zA-Z_][a-zA-Z0-9_]*$", safe_agent_id):
+            logger.warning(f"非法的agent_id: {agent_id}，回退到默认表名")
+            return "memories"
         return f"memories_{safe_agent_id}"
 
     def _ensure_agent_table(self, agent_id: str):
@@ -582,19 +585,14 @@ JSON响应："""
         Returns:
             协程的返回值
         """
-        try:
-            loop = asyncio.get_running_loop()
-        except RuntimeError:
-            loop = None
+        import concurrent.futures
 
-        if loop and loop.is_running():
-            import concurrent.futures
-
-            with concurrent.futures.ThreadPoolExecutor() as executor:
-                future = executor.submit(asyncio.run, coro)
-                return future.result()
-        else:
+        def run_in_new_loop():
             return asyncio.run(coro)
+
+        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+            future = executor.submit(run_in_new_loop)
+            return future.result()
 
     def _sync_vector_for_memory(self, memory_id: int, content: str, metadata: Dict = None) -> bool:
         """同步记忆到向量数据库（异步非阻塞）
@@ -961,16 +959,19 @@ JSON响应："""
 
                 try:
                     conn.execute("SELECT 1")
-                    
+
                     if isinstance(conn_info, dict):
                         conn_info["last_used"] = current_time
                         conn_info["use_count"] = conn_info.get("use_count", 0) + 1
-                        
+
                         if current_time - last_used > 300 and conn_info.get("use_count", 0) > 100:
                             conn.close()
                             del self._connection_pool[thread_id]
                             conn = None
-                    return conn
+                        else:
+                            return conn
+                    else:
+                        return conn
                 except Exception:
                     pass
 
@@ -1970,9 +1971,9 @@ JSON响应："""
             decay_calculator = DecayCalculator()
             old_time_score = decay_calculator.calculate_time_score(memory, apply_reactivation=False)
 
-            new_time_score = min(1.0, old_time_score * (1 + 0.2 * reactivation_count) + 0.1)
+            reactivation_bonus = 0.1 + 0.2 * reactivation_count
             emotion_bonus = 0.05 * abs(emotion_intensity)
-            new_time_score = min(new_time_score + emotion_bonus, 1.0)
+            new_time_score = min(old_time_score + reactivation_bonus + emotion_bonus, 1.0)
 
             new_reactivation_count = reactivation_count + 1
             new_emotion_score = (memory.get("emotion_score", 0.0) + abs(emotion_intensity)) / 2

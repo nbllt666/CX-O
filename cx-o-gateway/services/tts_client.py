@@ -436,7 +436,49 @@ class TTSClient:
         return await self._concatenate_audio(audio_segments)
     
     async def _concatenate_audio(self, audio_segments: list[bytes]) -> bytes:
-        return b"".join(audio_segments)
+        if not audio_segments:
+            return b""
+
+        if len(audio_segments) == 1:
+            return audio_segments[0]
+
+        def is_wav(data: bytes) -> bool:
+            return len(data) > 44 and data[:4] == b'RIFF' and data[8:12] == b'WAVE'
+
+        if all(is_wav(seg) for seg in audio_segments):
+            import struct
+
+            first = audio_segments[0]
+            num_channels = struct.unpack('<H', first[22:24])[0]
+            sample_rate = struct.unpack('<I', first[24:28])[0]
+            bits_per_sample = struct.unpack('<H', first[34:36])[0]
+
+            byte_rate = sample_rate * num_channels * bits_per_sample // 8
+
+            combined_data = bytearray()
+            for seg in audio_segments:
+                data_size = struct.unpack('<I', seg[40:44])[0]
+                combined_data.extend(seg[44:44+data_size])
+
+            data_size = len(combined_data)
+            wav_header = bytearray(44)
+            wav_header[0:4] = b'RIFF'
+            wav_header[4:8] = struct.pack('<I', data_size + 36)
+            wav_header[8:12] = b'WAVE'
+            wav_header[12:16] = b'fmt '
+            wav_header[16:20] = struct.pack('<I', 16)
+            wav_header[20:22] = struct.pack('<H', 1)
+            wav_header[22:24] = struct.pack('<H', num_channels)
+            wav_header[24:28] = struct.pack('<I', sample_rate)
+            wav_header[28:32] = struct.pack('<I', byte_rate)
+            wav_header[32:34] = struct.pack('<H', num_channels * bits_per_sample // 8)
+            wav_header[34:36] = struct.pack('<H', bits_per_sample)
+            wav_header[36:40] = b'data'
+            wav_header[40:44] = struct.pack('<I', data_size)
+
+            return bytes(wav_header) + bytes(combined_data)
+        else:
+            return b"".join(audio_segments)
     
     async def synthesize_stream_with_emotions(
         self,

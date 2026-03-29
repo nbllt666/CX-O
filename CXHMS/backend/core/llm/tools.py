@@ -1,4 +1,5 @@
 from typing import Any, Dict, List
+import json
 
 from backend.core.logging_config import get_contextual_logger
 
@@ -101,6 +102,3 @@ class LLMTools:
             "tool_calls": tool_calls,
             "warning": "达到最大迭代次数",
         }
-
-
-import json

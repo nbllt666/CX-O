@@ -4,6 +4,7 @@
 """
 
 import json
+import time
 import yaml
 from pathlib import Path
 from typing import Dict, List, Optional
@@ -240,10 +241,10 @@ async def chat(request: ChatRequest):
             not in EXCLUDED_CATEGORIES
         ]
         if not tools:
-            tools = None
+            tools = []
 
         # 8. 调用 LLM
-        response = await llm.chat(messages=messages, stream=False, tools=tools if tools else None)
+        response = await llm.chat(messages=messages, stream=False, tools=tools)
 
         # 9. 处理工具调用
         final_response = response.content
@@ -285,7 +286,7 @@ async def chat(request: ChatRequest):
                 messages.append(
                     {
                         "role": "tool",
-                        "tool_call_id": tool_call.get("id", ""),
+                        "tool_call_id": tool_call.get("id") or f"call_{tool_name}_{int(time.time() * 1000)}",
                         "name": tool_name,
                         "content": json.dumps(tool_result, ensure_ascii=False),
                     }
@@ -424,7 +425,7 @@ async def chat_stream(request: ChatRequest):
                     messages=messages,
                     temperature=agent_config.get("temperature", 0.7),
                     max_tokens=agent_config.get("max_tokens", 4096),
-                    tools=tools if tools else None,
+                    tools=tools,
                 ):
                     if chunk:
                         logger.debug(f"收到 chunk: {type(chunk)}, 内容: {chunk}")
@@ -707,7 +708,7 @@ async def memory_agent_chat_stream(request: MemoryAgentChatRequest):
                     messages=messages,
                     temperature=agent_config.get("temperature", 0.3),
                     max_tokens=agent_config.get("max_tokens", 4096),
-                    tools=tools if tools else None,
+                    tools=tools,
                 ):
                     if chunk:
                         # 检查是否是字典类型（新的返回格式）

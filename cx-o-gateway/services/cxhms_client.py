@@ -28,6 +28,7 @@ class CXHMSClient:
         self._reconnect_interval = 5
         self._heartbeat_interval = 30
         self._heartbeat_task: Optional[asyncio.Task] = None
+        self._connection_lock = asyncio.Lock()
 
     async def connect(self):
         self._running = True
@@ -107,17 +108,15 @@ class CXHMSClient:
             try:
                 await asyncio.sleep(self._reconnect_interval)
                 conn = await websockets.connect(self._url)
-                if conn_id < len(self._connections):
-                    self._connections[conn_id] = conn
-                else:
-                    self._connections.append(conn)
-                
+                while len(self._connections) <= conn_id:
+                    self._connections.append(None)
+                self._connections[conn_id] = conn
+
                 task = asyncio.create_task(self._receive_loop(conn, conn_id))
-                if conn_id < len(self._receive_tasks):
-                    self._receive_tasks[conn_id] = task
-                else:
-                    self._receive_tasks.append(task)
-                
+                while len(self._receive_tasks) <= conn_id:
+                    self._receive_tasks.append(None)
+                self._receive_tasks[conn_id] = task
+
                 logger.info(f"Reconnected CXHMS connection {conn_id}")
                 break
             except Exception as e:
@@ -133,26 +132,38 @@ class CXHMSClient:
             except Exception as e:
                 logger.error(f"Heartbeat error: {e}")
 
-    def _get_connection(self) -> Optional[WebSocketClientProtocol]:
-        for conn in self._connections:
-            if conn.state == State.OPEN:
-                return conn
-        return None
+    async def _get_connection(self) -> Optional[WebSocketClientProtocol]:
+        async with self._connection_lock:
+            for conn in self._connections:
+                if conn and conn.state == State.OPEN:
+                    return conn
+            return None
 
     async def request(self, action: str, data: dict[str, Any], timeout: float = 30.0) -> dict:
         request_id = str(uuid.uuid4())
         message = create_request(action, data, request_id)
-        
+
         future: asyncio.Future = asyncio.get_event_loop().create_future()
         self._pending_requests[request_id] = future
-        
-        conn = self._get_connection()
-        if not conn:
-            self._pending_requests.pop(request_id, None)
-            raise ConnectionError("No available connection to CXHMS")
-        
+
+        async with self._connection_lock:
+            conn = None
+            for c in self._connections:
+                if c and c.state == State.OPEN:
+                    conn = c
+                    break
+
+            if not conn:
+                self._pending_requests.pop(request_id, None)
+                raise ConnectionError("No available connection to CXHMS")
+
+            try:
+                await conn.send(json.dumps(message))
+            except websockets.ConnectionClosed:
+                self._pending_requests.pop(request_id, None)
+                raise ConnectionError("Connection closed during send")
+
         try:
-            await conn.send(json.dumps(message))
             result = await asyncio.wait_for(future, timeout=timeout)
             return result
         except asyncio.TimeoutError:
@@ -165,11 +176,11 @@ class CXHMSClient:
     async def stream(self, action: str, data: dict[str, Any], callback: Callable[[dict], None], timeout: float = 60.0):
         request_id = str(uuid.uuid4())
         message = create_request(action, data, request_id)
-        
+
         logger.info(f"Stream request: action={action}, request_id={request_id}")
-        
+
         stream_complete = asyncio.Event()
-        
+
         async def handle_stream_response(response: dict):
             logger.debug(f"Stream handler received response: {response}")
             if response.get("request_id") == request_id:
@@ -181,18 +192,28 @@ class CXHMSClient:
                 if response.get("is_final", False) or response.get("type") == "error":
                     logger.debug("Stream complete")
                     stream_complete.set()
-        
-        self._pending_requests[request_id] = handle_stream_response
-        logger.info(f"Registered stream handler for request_id={request_id}")
-        
-        conn = self._get_connection()
-        if not conn:
-            self._pending_requests.pop(request_id, None)
-            raise ConnectionError("No available connection to CXHMS")
-        
+
+        async with self._connection_lock:
+            conn = None
+            for c in self._connections:
+                if c and c.state == State.OPEN:
+                    conn = c
+                    break
+
+            if not conn:
+                raise ConnectionError("No available connection to CXHMS")
+
+            self._pending_requests[request_id] = handle_stream_response
+            logger.info(f"Registered stream handler for request_id={request_id}")
+
+            try:
+                logger.info(f"Sending stream request to CXHMS: {message}")
+                await conn.send(json.dumps(message))
+            except websockets.ConnectionClosed:
+                self._pending_requests.pop(request_id, None)
+                raise ConnectionError("Connection closed during send")
+
         try:
-            logger.info(f"Sending stream request to CXHMS: {message}")
-            await conn.send(json.dumps(message))
             logger.info("Waiting for stream to complete...")
             await asyncio.wait_for(stream_complete.wait(), timeout=timeout)
             logger.info("Stream completed successfully")

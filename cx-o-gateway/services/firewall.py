@@ -93,15 +93,15 @@ class FirewallService:
                 
                 if result.get("success") and result.get("content"):
                     response_text = result.get("content", "")
-                    import re
-                    json_match = re.search(r'\{[^{}]*\}', response_text, re.DOTALL)
-                    if json_match:
+                    json_start = response_text.find('{')
+                    json_end = response_text.rfind('}') + 1
+                    if json_start != -1 and json_end > json_start:
                         try:
-                            decision_data = json.loads(json_match.group())
+                            decision_data = json.loads(response_text[json_start:json_end])
                             decision = decision_data.get("decision", "passive")
                             confidence = decision_data.get("confidence", 0.5)
                             reason = decision_data.get("reason", "LLM决策")
-                            
+
                             return {
                                 "decision": decision,
                                 "confidence": confidence,
@@ -110,7 +110,7 @@ class FirewallService:
                                 "reply_triggered": decision == "reply"
                             }
                         except json.JSONDecodeError:
-                            logger.warning(f"Failed to parse LLM decision JSON: {json_match.group()}")
+                            logger.warning(f"Failed to parse LLM decision JSON: {response_text[json_start:json_end]}")
             
             logger.warning("LLM decision unavailable, using default")
             return {

@@ -155,10 +155,9 @@ class OllamaClient(LLMClient):
                     if message.get("tool_calls"):
                         tool_calls = message["tool_calls"]
 
-                    # 优先使用 content，如果没有则使用 thinking（某些模型如 qwen3-vl）
+                    # 优先使用 content，thinking 不作为最终回复内容
                     content = message.get("content", "")
-                    if not content:
-                        content = message.get("thinking", "")
+                    thinking = message.get("thinking", "")
 
                     return LLMResponse(
                         content=content,

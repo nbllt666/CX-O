@@ -5,6 +5,7 @@ import logging
 import httpx
 from typing import TYPE_CHECKING
 
+from gateway.config import get_config
 from protocol.message import create_response, create_error, create_stream
 from protocol.actions import ChatActions
 
@@ -39,13 +40,16 @@ def register_chat_handlers(manager: "ConnectionManager", cxhms_client: "CXHMSCli
         data = message.get("data", {})
         
         logger.info(f"Chat stream request: request_id={request_id}, data={data}")
-        
+
         try:
+            config = get_config()
+            cxhms_http_url = config.services.cxhms.http_url
+
             # 调用 CXHMS HTTP 流式接口 - 使用更长的超时时间
             async with httpx.AsyncClient(timeout=httpx.Timeout(300.0, read=300.0)) as client:
                 async with client.stream(
                     "POST",
-                    "http://127.0.0.1:8000/api/chat/stream",
+                    f"{cxhms_http_url}/api/chat/stream",
                     json={
                         "message": data.get("text", ""),
                         "agent_id": data.get("agent_id", "default"),

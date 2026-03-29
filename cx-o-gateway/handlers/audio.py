@@ -211,14 +211,14 @@ def register_audio_handlers(
     async def handle_tts_synthesize_stream(websocket, message, client_id):
         request_id = message.get("request_id", "")
         data = message.get("data", {})
-        
+
         try:
             text = data.get("text", "")
             ref_audio_base64 = data.get("ref_audio")
             ref_text = data.get("ref_text", "")
             emotion_enabled = data.get("emotion_enabled", False)
             effects_enabled = data.get("effects_enabled", False)
-            
+
             if not text:
                 await manager.send_message(client_id, create_error(
                     request_id=request_id,
@@ -227,7 +227,7 @@ def register_audio_handlers(
                     message="Missing text"
                 ))
                 return
-            
+
             kwargs = {}
             temp_file = None
             if ref_audio_base64:
@@ -240,17 +240,17 @@ def register_audio_handlers(
                     kwargs["ref_audio_path"] = temp_file
                 if ref_text:
                     kwargs["ref_text"] = ref_text
-            
+
             chunk_index = 0
             set_tts_playing(client_id, True)
-            
+
             try:
                 if emotion_enabled or effects_enabled:
                     async for chunk in tts_client.synthesize_stream_with_emotions(text, **kwargs):
                         audio_base64 = None
                         if chunk.get("audio_data"):
                             audio_base64 = base64.b64encode(chunk["audio_data"]).decode("utf-8")
-                        
+
                         stream_msg = create_stream(
                             request_id=request_id,
                             action=TTSActions.SYNTHESIZE_STREAM,
@@ -264,7 +264,7 @@ def register_audio_handlers(
                             },
                             is_final=chunk.get("is_final", False)
                         )
-                        
+
                         await manager.send_message(client_id, stream_msg)
                         chunk_index += 1
                 else:
@@ -272,7 +272,7 @@ def register_audio_handlers(
                         audio_base64 = None
                         if chunk.get("audio_data"):
                             audio_base64 = base64.b64encode(chunk["audio_data"]).decode("utf-8")
-                        
+
                         stream_msg = create_stream(
                             request_id=request_id,
                             action=TTSActions.SYNTHESIZE_STREAM,
@@ -283,21 +283,29 @@ def register_audio_handlers(
                             },
                             is_final=chunk.get("is_final", False)
                         )
-                        
+
                         await manager.send_message(client_id, stream_msg)
                         chunk_index += 1
+            except Exception as e:
+                logger.error(f"TTS stream error: {e}")
+                await manager.send_message(client_id, create_error(
+                    request_id=request_id,
+                    action=TTSActions.SYNTHESIZE_STREAM,
+                    code="TTS_ERROR",
+                    message=str(e)
+                ))
             finally:
                 set_tts_playing(client_id, False)
-            
-            if temp_file:
-                try:
-                    import os
-                    os.unlink(temp_file)
-                except Exception:
-                    pass
-                
+
+                if temp_file:
+                    try:
+                        import os
+                        os.unlink(temp_file)
+                    except Exception:
+                        pass
+
         except Exception as e:
-            logger.error(f"TTS stream error: {e}")
+            logger.error(f"TTS synthesize error: {e}")
             await manager.send_message(client_id, create_error(
                 request_id=request_id,
                 action=TTSActions.SYNTHESIZE_STREAM,
