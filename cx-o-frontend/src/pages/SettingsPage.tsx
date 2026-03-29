@@ -362,6 +362,24 @@ export function SettingsPage() {
     },
   });
 
+  const [sensevoiceStreamingConfig, setSensevoiceStreamingConfig] = useState({
+    chunk_size: 1600,
+    hop_size: 800,
+    look_back: 8000,
+  });
+
+  const [adaptivePollingConfig, setAdaptivePollingConfig] = useState({
+    offset_ms: 0,
+    window_size: 3,
+  });
+
+  const [adaptivePollingStats, setAdaptivePollingStats] = useState({
+    current_interval_ms: 100,
+    average_latency_ms: 0,
+    latency_count: 0,
+    recent_latencies: [] as number[],
+  });
+
   const [graphConfig, setGraphConfig] = useState({
     graph_enabled: false,
     graph_backend: 'neo4j',
@@ -458,12 +476,14 @@ export function SettingsPage() {
   useEffect(() => {
     const loadLiveConfigs = async () => {
       try {
-        const [danmakuData, firewallData, firewallV3Data, liveStatus, vadData] = await Promise.all([
+        const [danmakuData, firewallData, firewallV3Data, liveStatus, vadData, sensevoiceData, adaptivePollingData] = await Promise.all([
           api.getDanmakuConfig(),
           api.getFirewallConfig(),
           api.getFirewallV3Config(),
           api.getLiveClientStatus(),
           api.getVadConfig(),
+          api.getSenseVoiceStreamingConfig(),
+          api.getAdaptivePollingConfig(),
         ]);
 
         if (danmakuData.config) {
@@ -480,6 +500,22 @@ export function SettingsPage() {
         }
         if (vadData.config) {
           setVadConfig(vadData.config);
+        }
+        if (sensevoiceData.config) {
+          setSensevoiceStreamingConfig({
+            chunk_size: sensevoiceData.config.chunk_size ?? 1600,
+            hop_size: sensevoiceData.config.hop_size ?? 800,
+            look_back: sensevoiceData.config.look_back ?? 8000,
+          });
+        }
+        if (adaptivePollingData.config) {
+          setAdaptivePollingConfig({
+            offset_ms: adaptivePollingData.config.offset_ms ?? 0,
+            window_size: adaptivePollingData.config.window_size ?? 3,
+          });
+        }
+        if (adaptivePollingData.stats) {
+          setAdaptivePollingStats(adaptivePollingData.stats);
         }
       } catch (error) {
         console.error('Failed to load live configs:', error);
@@ -716,63 +752,42 @@ export function SettingsPage() {
   const handleSave = async () => {
     setSaveStatus('saving');
     try {
-      if (activeSection === 'vector') {
-        if (!isBackendRunning) {
-          alert('后端服务未运行，无法保存配置');
-          return;
+      switch (activeSection) {
+        case 'audio':
+          await api.updateConfig({ section: 'audio', data: audioConfig });
+          break;
+        case 'live':
+          await api.updateConfig({
+            section: 'live',
+            data: {
+              danmaku: danmakuConfig,
+              firewall: firewallConfig,
+              firewall_v3: firewallV3Config,
+              vad: vadConfig,
+              sensevoice_streaming: sensevoiceStreamingConfig,
+              adaptive_polling: adaptivePollingConfig,
+            },
+          });
+          break;
+        case 'vector':
+          await api.updateConfig({ section: 'vector', data: vectorConfig });
+          break;
+        case 'graph':
+          await api.updateConfig({ section: 'graph', data: graphConfig });
+          break;
+        case 'llm': {
+          const updatedModelDefaults = {
+            summary: modelsConfig.summary.enabled ? 'summary' : 'main',
+            memory: modelsConfig.memory.enabled ? 'memory' : 'main',
+          };
+          await api.updateLLMConfig({
+            models: modelsConfig,
+            model_defaults: updatedModelDefaults,
+            llm_params: llmParams,
+          });
+          localStorage.setItem('cxhms-current-model', modelsConfig.main.model);
+          break;
         }
-        const vectorPayload: Record<string, unknown> = {
-          backend: vectorConfig.backend,
-          vector_size: vectorConfig.vectorSize,
-        };
-
-        if (vectorConfig.backend === 'chroma') {
-          vectorPayload.db_path = vectorConfig.dbPath;
-          vectorPayload.collection_name = vectorConfig.collectionName;
-        } else if (vectorConfig.backend === 'milvus_lite') {
-          vectorPayload.db_path = vectorConfig.dbPath;
-        } else if (
-          vectorConfig.backend === 'weaviate' ||
-          vectorConfig.backend === 'weaviate_embedded'
-        ) {
-          vectorPayload.weaviate_host = vectorConfig.weaviateHost;
-          vectorPayload.weaviate_port = vectorConfig.weaviatePort;
-        } else if (vectorConfig.backend === 'qdrant') {
-          vectorPayload.qdrant_host = vectorConfig.qdrantHost;
-          vectorPayload.qdrant_port = vectorConfig.qdrantPort;
-        }
-
-        await api.updateServiceConfig({
-          vector: vectorPayload,
-        });
-      } else if (activeSection === 'llm') {
-        if (!isBackendRunning) {
-          alert('后端服务未运行，无法保存配置');
-          return;
-        }
-        const updatedModelDefaults = {
-          summary: modelsConfig.summary.enabled ? 'summary' : 'main',
-          memory: modelsConfig.memory.enabled ? 'memory' : 'main',
-        };
-        await api.updateServiceConfig({
-          models: modelsConfig,
-          model_defaults: updatedModelDefaults,
-          llm_params: llmParams,
-        });
-        localStorage.setItem('cxhms-current-model', modelsConfig.main.model);
-      } else if (activeSection === 'audio') {
-        await api.updateAudioConfig(audioConfig);
-      } else if (activeSection === 'live') {
-        await api.updateDanmakuConfig(danmakuConfig);
-        await api.updateFirewallConfig(firewallConfig);
-        await api.updateFirewallV3Config(firewallV3Config);
-        await api.updateVadConfig(vadConfig);
-      } else if (activeSection === 'graph') {
-        if (!isBackendRunning) {
-          alert('后端服务未运行，无法保存配置');
-          return;
-        }
-        await api.updateGraphConfig(graphConfig);
       }
       setSaveStatus('saved');
     } catch {
@@ -2346,6 +2361,180 @@ export function SettingsPage() {
                           }
                           className="w-full px-3 py-2 bg-[var(--color-bg-primary)] border border-[var(--color-border)] rounded-[var(--radius-md)]"
                         />
+                      </div>
+                    </div>
+                  </div>
+                </CardBody>
+              </Card>
+
+              {/* SenseVoice 流式模式配置 */}
+              <Card>
+                <CardBody>
+                  <h3 className="text-lg font-semibold mb-4">SenseVoice 流式模式</h3>
+                  <p className="text-sm text-[var(--color-text-secondary)] mb-4">
+                    配置 SenseVoice 流式 ASR 参数
+                  </p>
+                  <div className="space-y-4 pl-4 border-l-2 border-[var(--color-border)]">
+                    <div>
+                      <label className="text-sm font-medium mb-2 block">
+                        chunk_size: {sensevoiceStreamingConfig.chunk_size}
+                      </label>
+                      <input
+                        type="range"
+                        min="1000"
+                        max="3200"
+                        step="100"
+                        value={sensevoiceStreamingConfig.chunk_size}
+                        onChange={(e) =>
+                          setSensevoiceStreamingConfig({
+                            ...sensevoiceStreamingConfig,
+                            chunk_size: parseInt(e.target.value),
+                          })
+                        }
+                        className="w-full"
+                      />
+                      <div className="flex justify-between text-xs text-[var(--color-text-tertiary)] mt-1">
+                        <span>1000 (更快)</span>
+                        <span>3200 (更稳)</span>
+                      </div>
+                    </div>
+
+                    <div>
+                      <label className="text-sm font-medium mb-2 block">
+                        hop_size: {sensevoiceStreamingConfig.hop_size}
+                      </label>
+                      <input
+                        type="range"
+                        min="200"
+                        max="1600"
+                        step="100"
+                        value={sensevoiceStreamingConfig.hop_size}
+                        onChange={(e) =>
+                          setSensevoiceStreamingConfig({
+                            ...sensevoiceStreamingConfig,
+                            hop_size: parseInt(e.target.value),
+                          })
+                        }
+                        className="w-full"
+                      />
+                      <div className="flex justify-between text-xs text-[var(--color-text-tertiary)] mt-1">
+                        <span>200 (低延迟)</span>
+                        <span>1600 (高延迟)</span>
+                      </div>
+                    </div>
+
+                    <div>
+                      <label className="text-sm font-medium mb-2 block">
+                        look_back: {sensevoiceStreamingConfig.look_back}
+                      </label>
+                      <input
+                        type="range"
+                        min="2000"
+                        max="16000"
+                        step="1000"
+                        value={sensevoiceStreamingConfig.look_back}
+                        onChange={(e) =>
+                          setSensevoiceStreamingConfig({
+                            ...sensevoiceStreamingConfig,
+                            look_back: parseInt(e.target.value),
+                          })
+                        }
+                        className="w-full"
+                      />
+                      <div className="flex justify-between text-xs text-[var(--color-text-tertiary)] mt-1">
+                        <span>2000 (短)</span>
+                        <span>16000 (长)</span>
+                      </div>
+                    </div>
+                  </div>
+                </CardBody>
+              </Card>
+
+              {/* LLM 自适应轮询配置 */}
+              <Card>
+                <CardBody>
+                  <h3 className="text-lg font-semibold mb-4">LLM 轮询配置</h3>
+                  <p className="text-sm text-[var(--color-text-secondary)] mb-4">
+                    配置 LLM 流式响应的自适应轮询参数
+                  </p>
+                  <div className="space-y-4">
+                    <div>
+                      <label className="text-sm font-medium mb-2 block">
+                        偏移量 (offset_ms): {adaptivePollingConfig.offset_ms}ms
+                      </label>
+                      <input
+                        type="range"
+                        min="-500"
+                        max="500"
+                        step="10"
+                        value={adaptivePollingConfig.offset_ms}
+                        onChange={(e) =>
+                          setAdaptivePollingConfig({
+                            ...adaptivePollingConfig,
+                            offset_ms: parseInt(e.target.value),
+                          })
+                        }
+                        className="w-full"
+                      />
+                      <div className="flex justify-between text-xs text-[var(--color-text-tertiary)] mt-1">
+                        <span>-500ms (更快)</span>
+                        <span>0ms (默认)</span>
+                        <span>+500ms (更稳)</span>
+                      </div>
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-4">
+                      <div>
+                        <label className="text-sm font-medium mb-2 block">
+                          窗口大小: {adaptivePollingConfig.window_size}
+                        </label>
+                        <input
+                          type="range"
+                          min="1"
+                          max="10"
+                          step="1"
+                          value={adaptivePollingConfig.window_size}
+                          onChange={(e) =>
+                            setAdaptivePollingConfig({
+                              ...adaptivePollingConfig,
+                              window_size: parseInt(e.target.value),
+                            })
+                          }
+                          className="w-full"
+                        />
+                        <p className="text-xs text-[var(--color-text-tertiary)] mt-1">
+                          最近 {adaptivePollingConfig.window_size} 个包取平均
+                        </p>
+                      </div>
+                      <div>
+                        <label className="text-sm font-medium mb-2 block">
+                          当前间隔 (ms)
+                        </label>
+                        <div className="px-3 py-2 bg-[var(--color-bg-tertiary)] rounded-[var(--radius-md)] text-sm">
+                          {adaptivePollingStats.current_interval_ms}
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="p-3 bg-[var(--color-bg-tertiary)] rounded-[var(--radius-lg)]">
+                      <div className="text-xs text-[var(--color-text-tertiary)] mb-2">实时统计</div>
+                      <div className="grid grid-cols-3 gap-2 text-sm">
+                        <div>
+                          <span className="text-[var(--color-text-tertiary)]">平均延迟:</span>
+                          <span className="ml-1 font-medium">{adaptivePollingStats.average_latency_ms.toFixed(1)}ms</span>
+                        </div>
+                        <div>
+                          <span className="text-[var(--color-text-tertiary)]">采样数:</span>
+                          <span className="ml-1 font-medium">{adaptivePollingStats.latency_count}</span>
+                        </div>
+                        <div>
+                          <span className="text-[var(--color-text-tertiary)]">最近延迟:</span>
+                          <span className="ml-1 font-medium">
+                            {adaptivePollingStats.recent_latencies.length > 0
+                              ? adaptivePollingStats.recent_latencies.slice(-3).map(l => l.toFixed(0)).join(', ') + 'ms'
+                              : 'N/A'}
+                          </span>
+                        </div>
                       </div>
                     </div>
                   </div>

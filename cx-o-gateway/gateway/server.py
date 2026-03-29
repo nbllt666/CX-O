@@ -19,7 +19,7 @@ from protocol.message import (
     PingMessage, RequestMessage
 )
 from protocol.actions import get_handler_name, SystemActions
-from gateway.config import get_config, save_config
+from gateway.config import get_config, save_config, SenseVoiceStreamingConfig
 from gateway.health import health_checker
 
 if TYPE_CHECKING:
@@ -415,7 +415,7 @@ def create_app() -> FastAPI:
         try:
             data = await request.json()
             config = get_config()
-            
+
             if hasattr(config.services, 'tts'):
                 tts_config = config.services.tts
                 if 'ref_audio_path' in data:
@@ -432,12 +432,212 @@ def create_app() -> FastAPI:
                     tts_config.effects_enabled = data['effects_enabled']
                 if 'emotion_voices' in data:
                     tts_config.emotion_voices = data['emotion_voices']
-            
+
             save_config(config)
-            
+
             return {"status": "success", "message": "配置已保存"}
         except Exception as e:
             logger.error(f"Failed to update audio config: {e}")
+            return {"status": "error", "message": str(e)}
+
+    @app.post("/api/config")
+    async def update_unified_config(request: Request):
+        try:
+            data = await request.json()
+            section = data.get("section")
+            section_data = data.get("data", {})
+
+            if not section:
+                return {"status": "error", "message": "Missing section"}
+
+            config = get_config()
+
+            if section == "audio":
+                if hasattr(config.services, 'tts'):
+                    tts_config = config.services.tts
+                    for key in ['ref_audio_path', 'ref_text', 'speed', 'cross_fade_duration',
+                               'emotion_enabled', 'effects_enabled', 'emotion_voices']:
+                        if key in section_data:
+                            setattr(tts_config, key, section_data[key])
+                save_config(config)
+                return {"status": "success", "message": "Audio config saved"}
+
+            elif section == "live":
+                if 'danmaku' in section_data:
+                    if not hasattr(config.services, 'danmaku'):
+                        from gateway.config import BaseModel
+                        config.services.danmaku = type('DanmakuConfig', (), {})()
+                    for key, value in section_data['danmaku'].items():
+                        setattr(config.services.danmaku, key, value)
+
+                if 'firewall' in section_data:
+                    if not hasattr(config.services, 'firewall'):
+                        config.services.firewall = type('FirewallConfig', (), {})()
+                    for key, value in section_data['firewall'].items():
+                        setattr(config.services.firewall, key, value)
+
+                if 'firewall_v3' in section_data:
+                    if not hasattr(config.services, 'firewall_v3'):
+                        config.services.firewall_v3 = type('FirewallV3Config', (), {})()
+                    for key, value in section_data['firewall_v3'].items():
+                        setattr(config.services.firewall_v3, key, value)
+
+                if 'vad' in section_data:
+                    if not hasattr(config.services, 'vad'):
+                        config.services.vad = type('VadConfig', (), {})()
+                    for key, value in section_data['vad'].items():
+                        setattr(config.services.vad, key, value)
+
+                if 'sensevoice_streaming' in section_data:
+                    if config.services.sensevoice_streaming is None:
+                        from gateway.config import SenseVoiceStreamingConfig
+                        config.services.sensevoice_streaming = SenseVoiceStreamingConfig()
+                    sv_data = section_data['sensevoice_streaming']
+                    for key in ['chunk_size', 'hop_size', 'look_back']:
+                        if key in sv_data:
+                            setattr(config.services.sensevoice_streaming, key, sv_data[key])
+
+                if 'adaptive_polling' in section_data:
+                    if config.services.adaptive_polling is None:
+                        from gateway.config import AdaptivePollingConfig
+                        config.services.adaptive_polling = AdaptivePollingConfig()
+                    ap_data = section_data['adaptive_polling']
+                    for key in ['offset_ms', 'window_size', 'enabled', 'min_interval_ms', 'max_interval_ms']:
+                        if key in ap_data:
+                            setattr(config.services.adaptive_polling, key, ap_data[key])
+
+                save_config(config)
+                return {"status": "success", "message": "Live config saved"}
+
+            elif section == "vector":
+                if _cxhms_client:
+                    response = await _cxhms_client.request("config.set", {
+                        "type": "vector",
+                        "data": section_data
+                    })
+                    return {"status": "success", "message": "Vector config saved via CXHMS"}
+                return {"status": "error", "message": "CXHMS client not available"}
+
+            elif section == "graph":
+                if _cxhms_client:
+                    response = await _cxhms_client.request("config.set", {
+                        "type": "graph",
+                        "data": section_data
+                    })
+                    return {"status": "success", "message": "Graph config saved via CXHMS"}
+                return {"status": "error", "message": "CXHMS client not available"}
+
+            else:
+                return {"status": "error", "message": f"Unknown section: {section}"}
+
+        except Exception as e:
+            logger.error(f"Failed to update unified config: {e}")
+            return {"status": "error", "message": str(e)}
+
+    @app.post("/api/config/llm")
+    async def update_llm_config(request: Request):
+        try:
+            data = await request.json()
+            models = data.get("models", {})
+            model_defaults = data.get("model_defaults", {})
+            llm_params = data.get("llm_params", {})
+
+            if _cxhms_client:
+                response = await _cxhms_client.request("config.set", {
+                    "type": "llm",
+                    "data": {
+                        "models": models,
+                        "model_defaults": model_defaults,
+                        "llm_params": llm_params
+                    }
+                })
+                return {"status": "success", "message": "LLM config saved via CXHMS"}
+            return {"status": "error", "message": "CXHMS client not available"}
+        except Exception as e:
+            logger.error(f"Failed to update LLM config: {e}")
+            return {"status": "error", "message": str(e)}
+
+    @app.get("/api/config/sensevoice-streaming")
+    async def get_sensevoice_streaming_config():
+        config = get_config()
+        sensevoice_config = getattr(config.services, 'sensevoice_streaming', None)
+        if sensevoice_config is None:
+            sensevoice_config = SenseVoiceStreamingConfig()
+        return {
+            "status": "success",
+            "config": {
+                "chunk_size": sensevoice_config.chunk_size,
+                "hop_size": sensevoice_config.hop_size,
+                "look_back": sensevoice_config.look_back
+            }
+        }
+
+    @app.post("/api/config/sensevoice-streaming")
+    async def update_sensevoice_streaming_config(request: Request):
+        try:
+            data = await request.json()
+            config = get_config()
+
+            if config.services.sensevoice_streaming is None:
+                config.services.sensevoice_streaming = SenseVoiceStreamingConfig()
+
+            sensevoice_config = config.services.sensevoice_streaming
+
+            if 'chunk_size' in data:
+                sensevoice_config.chunk_size = data['chunk_size']
+            if 'hop_size' in data:
+                sensevoice_config.hop_size = data['hop_size']
+            if 'look_back' in data:
+                sensevoice_config.look_back = data['look_back']
+
+            save_config(config)
+
+            return {"status": "success", "message": "SenseVoice 流式配置已保存"}
+        except Exception as e:
+            logger.error(f"Failed to update sensevoice streaming config: {e}")
+            return {"status": "error", "message": str(e)}
+
+    @app.get("/api/config/adaptive-polling")
+    async def get_adaptive_polling_config():
+        """获取自适应轮询配置"""
+        from services.adaptive_polling import get_adaptive_polling_manager
+        manager = get_adaptive_polling_manager()
+        stats = manager.get_stats()
+        return {
+            "status": "success",
+            "config": stats["config"],
+            "stats": {
+                "current_interval_ms": stats["current_interval_ms"],
+                "average_latency_ms": stats["average_latency_ms"],
+                "latency_count": stats["latency_count"],
+                "recent_latencies": stats["recent_latencies"]
+            }
+        }
+
+    @app.post("/api/config/adaptive-polling")
+    async def update_adaptive_polling_config(request: Request):
+        """更新自适应轮询配置"""
+        try:
+            data = await request.json()
+            from services.adaptive_polling import get_adaptive_polling_manager
+            manager = get_adaptive_polling_manager()
+
+            if 'offset_ms' in data:
+                manager.set_offset(data['offset_ms'])
+            if 'window_size' in data:
+                manager.set_window_size(data['window_size'])
+
+            config = get_config()
+            if hasattr(config.services, 'adaptive_polling') and config.services.adaptive_polling:
+                if 'offset_ms' in data:
+                    config.services.adaptive_polling.offset_ms = data['offset_ms']
+                if 'window_size' in data:
+                    config.services.adaptive_polling.window_size = data['window_size']
+                save_config(config)
+
+            return {"status": "success", "message": "自适应轮询配置已更新"}
+        except Exception as e:
+            logger.error(f"Failed to update adaptive polling config: {e}")
             return {"status": "error", "message": str(e)}
 
     @app.get("/api/audio/files")

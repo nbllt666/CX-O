@@ -117,6 +117,22 @@ class IndexTTSConfig(BaseModel):
     working_dir: str = "index-tts"
 
 
+class AdaptivePollingConfig(BaseModel):
+    """自适应轮询配置"""
+    enabled: bool = True
+    offset_ms: int = 0
+    window_size: int = 3
+    min_interval_ms: int = 50
+    max_interval_ms: int = 2000
+
+
+class SenseVoiceStreamingConfig(BaseModel):
+    """SenseVoice 流式配置"""
+    chunk_size: int = 1600
+    hop_size: int = 800
+    look_back: int = 8000
+
+
 class ServicesConfig(BaseModel):
     cxhms: ServiceConfig
     asr: ServiceConfig
@@ -124,6 +140,8 @@ class ServicesConfig(BaseModel):
     audio: Optional[AudioConfig] = None
     index_tts: Optional[IndexTTSConfig] = None
     control_service_url: Optional[str] = None
+    adaptive_polling: Optional[AdaptivePollingConfig] = None
+    sensevoice_streaming: Optional[SenseVoiceStreamingConfig] = None
 
 
 class Config(BaseModel):

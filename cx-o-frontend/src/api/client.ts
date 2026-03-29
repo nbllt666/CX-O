@@ -9,6 +9,11 @@ interface RetryConfig extends InternalAxiosRequestConfig {
   retryCount?: number;
 }
 
+interface UpdateConfigRequest {
+  section: string;
+  data: Record<string, unknown>;
+}
+
 // Type definitions
 export interface Agent {
   id: string;
@@ -212,16 +217,6 @@ class ApiClient {
 
   async updateServiceConfig(config: Record<string, unknown>) {
     const response = await this.client.post('/api/service/config', config);
-    return response.data;
-  }
-
-  async getGatewayServicesConfig() {
-    const response = await this.client.get('/api/config/services');
-    return response.data;
-  }
-
-  async updateGatewayServicesConfig(config: Record<string, unknown>) {
-    const response = await this.client.post('/api/config/services', config);
     return response.data;
   }
 
@@ -1076,19 +1071,6 @@ class ApiClient {
     return response.data;
   }
 
-  async updateAudioConfig(config: {
-    ref_audio_path?: string;
-    ref_text?: string;
-    speed?: number;
-    cross_fade_duration?: number;
-    emotion_enabled?: boolean;
-    effects_enabled?: boolean;
-    emotion_voices?: Record<string, { ref_audio: string; ref_text: string }>;
-  }) {
-    const response = await this.client.post('/api/config/audio', config);
-    return response.data;
-  }
-
   // ========== Audio File API ==========
 
   async getAudioFiles() {
@@ -1164,24 +1146,22 @@ class ApiClient {
     return response.data;
   }
 
+  // ========== Config APIs ==========
+
+  async updateConfig(request: UpdateConfigRequest) {
+    const response = await this.client.post('/api/config', request);
+    return response.data;
+  }
+
+  async updateLLMConfig(config: { models: any; model_defaults: any; llm_params: any }) {
+    const response = await this.client.post('/api/config/llm', config);
+    return response.data;
+  }
+
   // ========== Live/Danmaku Config API ==========
 
   async getDanmakuConfig() {
     const response = await this.client.get('/api/config/danmaku');
-    return response.data;
-  }
-
-  async updateDanmakuConfig(config: {
-    websocket?: {
-      endpoint?: string;
-      max_connections?: number;
-    };
-    sources?: {
-      bilibili?: { enabled?: boolean; websocket_url?: string };
-      rdf?: { enabled?: boolean; websocket_url?: string };
-    };
-  }) {
-    const response = await this.client.post('/api/config/danmaku', config);
     return response.data;
   }
 
@@ -1190,29 +1170,8 @@ class ApiClient {
     return response.data;
   }
 
-  async updateFirewallConfig(config: {
-    llm?: { default_model?: string };
-    blocking?: { blacklist_enabled?: boolean; blacklist?: string[] };
-    decision?: { confidence_threshold?: number; timeout_ms?: number };
-  }) {
-    const response = await this.client.post('/api/config/firewall', config);
-    return response.data;
-  }
-
   async getFirewallV3Config() {
     const response = await this.client.get('/api/config/firewall_v3');
-    return response.data;
-  }
-
-  async updateFirewallV3Config(config: {
-    interrupt?: {
-      enabled?: boolean;
-      mode?: 'main_llm' | 'independent_llm';
-      main_llm?: { enabled?: boolean; prompt?: string };
-      independent_llm?: { enabled?: boolean; model?: string };
-    };
-  }) {
-    const response = await this.client.post('/api/config/firewall_v3', config);
     return response.data;
   }
 
@@ -1241,27 +1200,13 @@ class ApiClient {
     return response.data;
   }
 
-  async updateVadConfig(config: {
-    vad?: {
-      mode?: 'energy' | 'webrtc' | 'silero';
-      sample_rate?: number;
-      frame_duration_ms?: number;
-      energy_threshold?: number;
-      silence_threshold_ms?: number;
-      speech_threshold_ms?: number;
-    };
-    audio_stream?: {
-      asr_interval_ms?: number;
-      buffer_duration_ms?: number;
-    };
-    agent_interrupt?: {
-      enabled?: boolean;
-      interrupt_threshold_ms?: number;
-      min_speech_duration_ms?: number;
-      interrupt_cooldown_ms?: number;
-    };
-  }) {
-    const response = await this.client.post('/api/config/vad', config);
+  async getSenseVoiceStreamingConfig() {
+    const response = await this.client.get('/api/config/sensevoice-streaming');
+    return response.data;
+  }
+
+  async getAdaptivePollingConfig() {
+    const response = await this.client.get('/api/config/adaptive-polling');
     return response.data;
   }
 
@@ -1269,22 +1214,6 @@ class ApiClient {
 
   async getGraphConfig() {
     const response = await this.client.get('/api/graph/config');
-    return response.data;
-  }
-
-  async updateGraphConfig(config: {
-    graph_enabled?: boolean;
-    graph_backend?: string;
-    neo4j?: {
-      uri?: string;
-      user?: string;
-      password?: string;
-      database?: string;
-      max_connection_pool_size?: number;
-    };
-    graph_libraries?: Record<string, { enabled?: boolean; label_prefix?: string }>;
-  }) {
-    const response = await this.client.post('/api/graph/config', config);
     return response.data;
   }
 
