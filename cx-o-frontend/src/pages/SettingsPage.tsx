@@ -221,7 +221,7 @@ export function SettingsPage() {
     const loadGatewayConfig = async () => {
       if (!isBackendRunning) return;
       try {
-        const data = await api.getGatewayServicesConfig();
+        const data = await api.getServiceConfig();
         if (data.status === 'success' && data.config) {
           setGatewayServicesConfig(data.config);
         }
@@ -235,7 +235,7 @@ export function SettingsPage() {
   const handleUpdateGatewayServices = async () => {
     setIsGatewayConfigLoading(true);
     try {
-      const result = await api.updateGatewayServicesConfig(gatewayServicesConfig);
+      const result = await api.updateServiceConfig(gatewayServicesConfig);
       if (result.status === 'success') {
         alert('Gateway 服务配置已保存，需要重启服务生效');
       } else {
