@@ -108,13 +108,13 @@ class CXHMSClient:
             try:
                 await asyncio.sleep(self._reconnect_interval)
                 conn = await websockets.connect(self._url)
-                while len(self._connections) <= conn_id:
-                    self._connections.append(None)
+                if conn_id >= len(self._connections):
+                    self._connections += [None] * (conn_id - len(self._connections) + 1)
                 self._connections[conn_id] = conn
 
                 task = asyncio.create_task(self._receive_loop(conn, conn_id))
-                while len(self._receive_tasks) <= conn_id:
-                    self._receive_tasks.append(None)
+                if conn_id >= len(self._receive_tasks):
+                    self._receive_tasks += [None] * (conn_id - len(self._receive_tasks) + 1)
                 self._receive_tasks[conn_id] = task
 
                 logger.info(f"Reconnected CXHMS connection {conn_id}")

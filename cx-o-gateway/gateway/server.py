@@ -1003,6 +1003,7 @@ def create_app() -> FastAPI:
         try:
             # Parse multipart form data
             content_type = request.headers.get("content-type", "")
+            temp_path = None
             if "multipart/form-data" in content_type:
                 form = await request.form()
                 audio_file = form.get("file")
