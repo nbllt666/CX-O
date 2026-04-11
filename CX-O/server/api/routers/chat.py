@@ -6,6 +6,7 @@
 import json
 import time
 import yaml
+from enum import Enum
 from pathlib import Path
 from typing import Dict, List, Optional
 
@@ -22,8 +23,6 @@ router = APIRouter()
 
 
 class ChatRequest(BaseModel):
-    """聊天请求 - 前端只发送最新一条消息"""
-
     message: str
     agent_id: str = "default"
     stream: bool = True
@@ -31,12 +30,63 @@ class ChatRequest(BaseModel):
 
 
 class ChatResponse(BaseModel):
-    """聊天响应"""
-
     status: str
     response: str
     session_id: str
     tokens_used: int = 0
+
+
+class AgentModelType(Enum):
+    MAIN = "main"
+    SUMMARY = "summary"
+    MEMORY = "memory"
+    ASSISTANT = "assistant"
+    CUSTOM = "custom"
+
+
+class LLMClientFactory:
+    @staticmethod
+    def get_model_type(model: str) -> AgentModelType:
+        try:
+            return AgentModelType(model.lower())
+        except ValueError:
+            return AgentModelType.CUSTOM
+
+    @classmethod
+    def create_client_for_agent(cls, agent_config: dict):
+        from server.api.app import get_llm_client, get_model_router
+
+        model = agent_config.get("model", "main")
+        model_type = cls.get_model_type(model)
+
+        try:
+            model_router = get_model_router()
+
+            if model_type in (AgentModelType.MAIN, AgentModelType.SUMMARY, AgentModelType.MEMORY):
+                client = model_router.get_client(model.lower())
+                if client:
+                    return client
+            else:
+                return cls._create_custom_model_client(model_router, model, agent_config)
+
+        except Exception as e:
+            logger.warning(f"Failed to create client for model {model}: {e}")
+
+        return get_llm_client()
+
+    @classmethod
+    def _create_custom_model_client(cls, model_router, model: str, agent_config: dict):
+        main_client = model_router.get_client("main")
+        if main_client:
+            from server.core.llm.client import OllamaClient
+
+            return OllamaClient(
+                host=main_client.host,
+                model=model,
+                temperature=agent_config.get("temperature", 0.7),
+                max_tokens=agent_config.get("max_tokens", 4096),
+            )
+        return None
 
 
 def get_agent_config(agent_id: str) -> Optional[dict]:
@@ -47,34 +97,7 @@ def get_agent_config(agent_id: str) -> Optional[dict]:
 
 def get_llm_client_for_agent(agent_config: dict):
     """根据 Agent 配置获取 LLM 客户端"""
-    from server.api.app import get_llm_client, get_model_router
-
-    model = agent_config.get("model", "main")
-
-    try:
-        model_router = get_model_router()
-
-        if model.lower() in ["main", "summary", "memory"]:
-            client = model_router.get_client(model.lower())
-            if client:
-                return client
-        else:
-            main_client = model_router.get_client("main")
-            if main_client:
-                from server.core.llm.client import OllamaClient
-
-                return OllamaClient(
-                    host=main_client.host,
-                    model=model,
-                    temperature=agent_config.get("temperature", 0.7),
-                    max_tokens=agent_config.get("max_tokens", 4096),
-                )
-    except Exception as e:
-        import logging
-
-        logging.getLogger(__name__).warning(f"Failed to create client for model {model}: {e}")
-
-    return get_llm_client()
+    return LLMClientFactory.create_client_for_agent(agent_config)
 
 
 def build_messages(

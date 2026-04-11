@@ -59,21 +59,95 @@ setup_logging(
 
 logger = get_contextual_logger(__name__)
 
-memory_manager = None
-async_memory_manager = None
-context_manager = None
-acp_manager = None
-llm_client = None
-secondary_router = None
-decay_batch_processor = None
-mcp_manager = None
-model_router = None
+
+class AppState:
+    _instance = None
+
+    def __init__(self):
+        self.memory_manager = None
+        self.async_memory_manager = None
+        self.context_manager = None
+        self.acp_manager = None
+        self.llm_client = None
+        self.secondary_router = None
+        self.decay_batch_processor = None
+        self.mcp_manager = None
+        self.model_router = None
+
+    @classmethod
+    def get_instance(cls):
+        if cls._instance is None:
+            cls._instance = cls()
+        return cls._instance
+
+    @classmethod
+    def reset(cls):
+        cls._instance = None
+
+
+app_state = AppState.get_instance()
+
+
+def get_memory_manager():
+    if app_state.memory_manager is None:
+        raise HTTPException(status_code=503, detail="记忆服务不可用")
+    return app_state.memory_manager
+
+
+def get_async_memory_manager():
+    if app_state.async_memory_manager is None:
+        raise HTTPException(status_code=503, detail="异步记忆服务不可用")
+    return app_state.async_memory_manager
+
+
+def get_context_manager():
+    if app_state.context_manager is None:
+        raise HTTPException(status_code=503, detail="上下文服务不可用")
+    return app_state.context_manager
+
+
+def get_acp_manager():
+    if app_state.acp_manager is None:
+        raise HTTPException(status_code=503, detail="ACP服务不可用")
+    return app_state.acp_manager
+
+
+def get_llm_client():
+    if app_state.llm_client is None:
+        raise HTTPException(status_code=503, detail="LLM服务不可用")
+    return app_state.llm_client
+
+
+def get_secondary_router():
+    if app_state.secondary_router is None:
+        raise HTTPException(status_code=503, detail="副模型路由器不可用")
+    return app_state.secondary_router
+
+
+def get_decay_batch_processor():
+    if app_state.decay_batch_processor is None:
+        raise HTTPException(status_code=503, detail="批量衰减处理器不可用")
+    return app_state.decay_batch_processor
+
+
+def get_mcp_manager():
+    if app_state.mcp_manager is None:
+        raise HTTPException(status_code=503, detail="MCP管理器不可用")
+    return app_state.mcp_manager
+
+
+def get_model_router():
+    if app_state.model_router is None:
+        raise HTTPException(status_code=503, detail="模型路由器不可用")
+    return app_state.model_router
+
+
+def get_app_state():
+    return app_state
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    global memory_manager, async_memory_manager, context_manager, acp_manager, llm_client, secondary_router, decay_batch_processor, mcp_manager, model_router
-
     from server.core.acp.manager import ACPManager
     from server.core.context.manager import ContextManager
     from server.core.llm.client import LLMFactory
@@ -90,83 +164,83 @@ async def lifespan(app: FastAPI):
     db_config = settings.config.database
 
     try:
-        model_router = mr
-        await model_router.initialize()
+        app_state.model_router = mr
+        await app_state.model_router.initialize()
         logger.info("模型路由器已启动")
     except Exception as e:
         logger.warning(f"模型路由器启动失败: {e}")
-        model_router = None
+        app_state.model_router = None
 
     try:
-        memory_manager = MemoryManager(db_path=db_config.memories_db)
+        app_state.memory_manager = MemoryManager(db_path=db_config.memories_db)
         logger.info("记忆管理器已启动")
     except Exception as e:
         logger.warning(f"记忆管理器启动失败: {e}")
-        memory_manager = None
+        app_state.memory_manager = None
 
     try:
-        async_memory_manager = AsyncMemoryManager(db_path=db_config.memories_db)
-        await async_memory_manager.initialize()
+        app_state.async_memory_manager = AsyncMemoryManager(db_path=db_config.memories_db)
+        await app_state.async_memory_manager.initialize()
         logger.info("异步记忆管理器已启动")
     except Exception as e:
         logger.warning(f"异步记忆管理器启动失败: {e}")
-        async_memory_manager = None
+        app_state.async_memory_manager = None
 
     try:
-        context_manager = ContextManager(db_path=db_config.sessions_db)
+        app_state.context_manager = ContextManager(db_path=db_config.sessions_db)
         logger.info("上下文管理器已启动")
     except Exception as e:
         logger.warning(f"上下文管理器启动失败: {e}")
-        context_manager = None
+        app_state.context_manager = None
 
     try:
-        acp_manager = ACPManager(data_dir=db_config.acp_db)
-        acp_manager.initialize(
+        app_state.acp_manager = ACPManager(data_dir=db_config.acp_db)
+        app_state.acp_manager.initialize(
             agent_id=settings.config.acp.agent_id, agent_name=settings.config.acp.agent_name
         )
-        await acp_manager.start()
+        await app_state.acp_manager.start()
         logger.info("ACP管理器已启动")
     except Exception as e:
         logger.warning(f"ACP管理器启动失败: {e}")
-        acp_manager = None
+        app_state.acp_manager = None
 
     try:
-        if model_router:
-            llm_client = model_router.get_client("main")
-            logger.info(f"LLM客户端已启动: {llm_client.model_name if llm_client else 'None'}")
+        if app_state.model_router:
+            app_state.llm_client = app_state.model_router.get_client("main")
+            logger.info(f"LLM客户端已启动: {app_state.llm_client.model_name if app_state.llm_client else 'None'}")
         else:
-            llm_client = LLMFactory.create_client(
+            app_state.llm_client = LLMFactory.create_client(
                 provider=settings.config.llm.provider,
                 host=settings.config.llm.host,
                 model=settings.config.llm.model,
                 temperature=settings.config.llm.temperature,
                 max_tokens=settings.config.llm.max_tokens,
             )
-            logger.info(f"LLM客户端已启动(回退模式): {llm_client.model_name}")
+            logger.info(f"LLM客户端已启动(回退模式): {app_state.llm_client.model_name}")
     except Exception as e:
         logger.warning(f"LLM客户端启动失败: {e}")
-        llm_client = None
+        app_state.llm_client = None
 
     try:
-        if memory_manager:
-            secondary_router = SecondaryModelRouter(
-                memory_manager,
-                llm_client,
-                model_router=model_router,
-                context_manager=context_manager,
+        if app_state.memory_manager:
+            app_state.secondary_router = SecondaryModelRouter(
+                app_state.memory_manager,
+                app_state.llm_client,
+                model_router=app_state.model_router,
+                context_manager=app_state.context_manager,
             )
             logger.info("副模型路由器已启动")
     except Exception as e:
         logger.warning(f"副模型路由器启动失败: {e}")
-        secondary_router = None
+        app_state.secondary_router = None
 
     try:
-        mcp_manager = MCPManager()
-        mcp_manager.set_tool_registry(tool_registry)
+        app_state.mcp_manager = MCPManager()
+        app_state.mcp_manager.set_tool_registry(tool_registry)
         logger.info("MCP管理器已启动")
     except Exception as e:
         logger.warning(f"MCP管理器启动失败: {e}")
-        mcp_manager = None
+        app_state.mcp_manager = None
 
     try:
         from server.core.tools import register_builtin_tools
@@ -181,10 +255,10 @@ async def lifespan(app: FastAPI):
         from server.core.tools import register_master_tools, set_master_dependencies
 
         set_master_dependencies(
-            memory_manager=memory_manager,
-            secondary_router=secondary_router,
-            context_manager=context_manager,
-            acp_manager=acp_manager,
+            memory_manager=app_state.memory_manager,
+            secondary_router=app_state.secondary_router,
+            context_manager=app_state.context_manager,
+            acp_manager=app_state.acp_manager,
         )
         register_master_tools()
         master_tools_registered = True
@@ -197,9 +271,9 @@ async def lifespan(app: FastAPI):
         from server.core.tools import register_summary_tools, set_summary_dependencies
 
         set_summary_dependencies(
-            memory_manager=memory_manager,
-            model_router=model_router,
-            context_manager=context_manager,
+            memory_manager=app_state.memory_manager,
+            model_router=app_state.model_router,
+            context_manager=app_state.context_manager,
         )
         register_summary_tools()
         summary_tools_registered = True
@@ -212,9 +286,9 @@ async def lifespan(app: FastAPI):
         from server.core.tools import register_assistant_tools, set_assistant_dependencies
 
         set_assistant_dependencies(
-            memory_manager=memory_manager,
-            secondary_router=secondary_router,
-            context_manager=context_manager,
+            memory_manager=app_state.memory_manager,
+            secondary_router=app_state.secondary_router,
+            context_manager=app_state.context_manager,
         )
         register_assistant_tools()
         assistant_tools_registered = True
@@ -235,34 +309,34 @@ async def lifespan(app: FastAPI):
         logger.warning("部分工具注册失败，系统可能无法正常工作")
 
     try:
-        if memory_manager and llm_client and settings.config.memory.vector_enabled:
+        if app_state.memory_manager and app_state.llm_client and settings.config.memory.vector_enabled:
             vector_backend = settings.config.memory.vector_backend
             if vector_backend == "chroma":
-                memory_manager.enable_vector_search(
-                    embedding_model=llm_client,
+                app_state.memory_manager.enable_vector_search(
+                    embedding_model=app_state.llm_client,
                     vector_backend="chroma",
                     db_path=settings.config.memory.chroma.db_path,
                     collection_name=settings.config.memory.chroma.collection_name,
                     vector_size=settings.config.memory.chroma.vector_size,
                 )
             elif vector_backend == "milvus_lite":
-                memory_manager.enable_vector_search(
-                    embedding_model=llm_client,
+                app_state.memory_manager.enable_vector_search(
+                    embedding_model=app_state.llm_client,
                     vector_backend="milvus_lite",
                     db_path=settings.config.memory.milvus_lite.db_path,
                     vector_size=settings.config.memory.milvus_lite.vector_size,
                 )
             elif vector_backend == "qdrant":
-                memory_manager.enable_vector_search(
-                    embedding_model=llm_client,
+                app_state.memory_manager.enable_vector_search(
+                    embedding_model=app_state.llm_client,
                     vector_backend="qdrant",
                     host=settings.config.memory.qdrant.host,
                     port=settings.config.memory.qdrant.port,
                     vector_size=settings.config.memory.qdrant.vector_size,
                 )
             elif vector_backend == "weaviate":
-                memory_manager.enable_vector_search(
-                    embedding_model=llm_client,
+                app_state.memory_manager.enable_vector_search(
+                    embedding_model=app_state.llm_client,
                     vector_backend="weaviate",
                     host=settings.config.memory.weaviate.host,
                     port=settings.config.memory.weaviate.port,
@@ -272,8 +346,8 @@ async def lifespan(app: FastAPI):
                     schema_class=settings.config.memory.weaviate.schema_class,
                 )
             elif vector_backend == "weaviate_embedded":
-                memory_manager.enable_vector_search(
-                    embedding_model=llm_client,
+                app_state.memory_manager.enable_vector_search(
+                    embedding_model=app_state.llm_client,
                     vector_backend="weaviate_embedded",
                     embedded=True,
                     vector_size=settings.config.memory.weaviate.vector_size,
@@ -281,12 +355,12 @@ async def lifespan(app: FastAPI):
                 )
             logger.info(f"向量搜索已启用: {vector_backend}")
 
-            if memory_manager.is_vector_search_enabled():
+            if app_state.memory_manager.is_vector_search_enabled():
                 try:
-                    sync_result = await memory_manager._vector_store.sync_with_sqlite(
-                        memory_manager, last_sync_time=memory_manager._last_sync_time
+                    sync_result = await app_state.memory_manager._vector_store.sync_with_sqlite(
+                        app_state.memory_manager, last_sync_time=app_state.memory_manager._last_sync_time
                     )
-                    memory_manager._last_sync_time = datetime.now().isoformat()
+                    app_state.memory_manager._last_sync_time = datetime.now().isoformat()
                     logger.info(
                         f"启动时向量同步完成: checked={sync_result.total_checked}, synced={sync_result.synced}, errors={sync_result.errors}"
                     )
@@ -368,13 +442,13 @@ async def lifespan(app: FastAPI):
         logger.warning(f"提醒管理器启动失败: {e}")
 
     try:
-        if memory_manager:
-            decay_batch_processor = DecayBatchProcessor(memory_manager, interval_hours=24)
-            await decay_batch_processor.start()
+        if app_state.memory_manager:
+            app_state.decay_batch_processor = DecayBatchProcessor(app_state.memory_manager, interval_hours=24)
+            await app_state.decay_batch_processor.start()
             logger.info("批量衰减处理器已启动")
     except Exception as e:
         logger.warning(f"批量衰减处理器启动失败: {e}")
-        decay_batch_processor = None
+        app_state.decay_batch_processor = None
 
     yield
 
@@ -396,18 +470,18 @@ async def lifespan(app: FastAPI):
     except Exception:
         pass
 
-    if decay_batch_processor:
-        await decay_batch_processor.stop()
+    if app_state.decay_batch_processor:
+        await app_state.decay_batch_processor.stop()
 
-    if acp_manager:
-        await acp_manager.stop()
+    if app_state.acp_manager:
+        await app_state.acp_manager.stop()
 
-    if memory_manager:
-        memory_manager.shutdown()
+    if app_state.memory_manager:
+        app_state.memory_manager.shutdown()
 
-    if async_memory_manager:
+    if app_state.async_memory_manager:
         try:
-            await async_memory_manager.close()
+            await app_state.async_memory_manager.close()
         except Exception:
             pass
 
@@ -427,8 +501,8 @@ async def lifespan(app: FastAPI):
     except Exception:
         pass
 
-    if model_router:
-        await model_router.close()
+    if app_state.model_router:
+        await app_state.model_router.close()
 
     logger.info("CXHMS服务已关闭")
 
@@ -469,11 +543,11 @@ app.add_exception_handler(Exception, generic_exception_handler)
 @app.get("/health", response_model=HealthResponse)
 async def health_check():
     components = {
-        "memory_manager": memory_manager is not None,
-        "context_manager": context_manager is not None,
-        "acp_manager": acp_manager is not None,
-        "llm_client": llm_client is not None,
-        "model_router": model_router is not None,
+        "memory_manager": app_state.memory_manager is not None,
+        "context_manager": app_state.context_manager is not None,
+        "acp_manager": app_state.acp_manager is not None,
+        "llm_client": app_state.llm_client is not None,
+        "model_router": app_state.model_router is not None,
     }
     return HealthResponse(
         status="healthy" if all(components.values()) else "degraded",
@@ -491,57 +565,3 @@ async def root():
         "docs": "/docs",
         "redoc": "/redoc",
     }
-
-
-def get_memory_manager():
-    if memory_manager is None:
-        raise HTTPException(status_code=503, detail="记忆服务不可用")
-    return memory_manager
-
-
-def get_async_memory_manager():
-    if async_memory_manager is None:
-        raise HTTPException(status_code=503, detail="异步记忆服务不可用")
-    return async_memory_manager
-
-
-def get_context_manager():
-    if context_manager is None:
-        raise HTTPException(status_code=503, detail="上下文服务不可用")
-    return context_manager
-
-
-def get_acp_manager():
-    if acp_manager is None:
-        raise HTTPException(status_code=503, detail="ACP服务不可用")
-    return acp_manager
-
-
-def get_llm_client():
-    if llm_client is None:
-        raise HTTPException(status_code=503, detail="LLM服务不可用")
-    return llm_client
-
-
-def get_secondary_router():
-    if secondary_router is None:
-        raise HTTPException(status_code=503, detail="副模型路由器不可用")
-    return secondary_router
-
-
-def get_decay_batch_processor():
-    if decay_batch_processor is None:
-        raise HTTPException(status_code=503, detail="批量衰减处理器不可用")
-    return decay_batch_processor
-
-
-def get_mcp_manager():
-    if mcp_manager is None:
-        raise HTTPException(status_code=503, detail="MCP管理器不可用")
-    return mcp_manager
-
-
-def get_model_router():
-    if model_router is None:
-        raise HTTPException(status_code=503, detail="模型路由器不可用")
-    return model_router
