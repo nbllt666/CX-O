@@ -59,9 +59,12 @@ setup_logging(
 
 logger = get_contextual_logger(__name__)
 
+import threading
+
 
 class AppState:
     _instance = None
+    _lock = threading.Lock()
 
     def __init__(self):
         self.memory_manager = None
@@ -77,12 +80,15 @@ class AppState:
     @classmethod
     def get_instance(cls):
         if cls._instance is None:
-            cls._instance = cls()
+            with cls._lock:
+                if cls._instance is None:
+                    cls._instance = cls()
         return cls._instance
 
     @classmethod
     def reset(cls):
-        cls._instance = None
+        with cls._lock:
+            cls._instance = None
 
 
 app_state = AppState.get_instance()
