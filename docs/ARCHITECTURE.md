@@ -2,14 +2,16 @@
 
 ## 整体架构图
 
+### 单体架构（v4）
+
 ```mermaid
 graph TB
     subgraph Frontend["前端"]
         FE[CX-O Frontend<br/>Port: 5173]
     end
 
-    subgraph Gateway["CX-O Gateway"]
-        GW[CX-O Gateway<br/>Port: 8100]
+    subgraph Server["CX-O Server (单体应用)"]
+        WS[WebSocket Gateway<br/>Port: 8100]
         subgraph Handlers["Handlers"]
             CH[Chat Handler]
             MH[Memory Handler]
@@ -19,144 +21,127 @@ graph TB
             ACPH[ACP Handler]
             MP[MCP Handler]
         end
+        subgraph Services["Services Layer"]
+            ASR[ASR Service<br/>SenseVoice]
+            TTS[TTS Service<br/>F5-TTS]
+            VAD[VAD Processor]
+            FIREWALL[Firewall]
+            INTERRUPT[Interrupt Manager]
+        end
+        subgraph Core["Core Layer"]
+            LLM[LLM Client]
+            MEMORY[Memory Manager]
+            CONTEXT[Context Manager]
+            TOOLS[Tool Registry]
+            ACP[ACP Manager]
+            SESSION[Session Manager]
+        end
+        subgraph API["API Layer"]
+            REST[REST API]
+            WS_API[WebSocket API]
+        end
     end
 
-    subgraph Backend["后端服务"]
-        CXHMS[CXHMS Backend<br/>Port: 8000]
-        SV[SenseVoice ASR<br/>Port: 8001]
-        F5TTS[F5-TTS TTS<br/>Port: 8002]
-    end
+    FE --> WS
+    WS --> CH
+    WS --> MH
+    WS --> AH
+    WS --> LH
+    WS --> TH
+    WS --> ACPH
+    WS --> MP
 
-    FE --> GW
-    GW --> CH
-    GW --> MH
-    GW --> AH
-    GW --> LH
-    GW --> TH
-    GW --> ACPH
-    GW --> MP
+    CH --> LLM
+    MH --> MEMORY
+    AH --> ASR
+    AH --> TTS
+    AH --> VAD
+    AH --> INTERRUPT
+    LH --> FIREWALL
 
-    CH --> CXHMS
-    MH --> CXHMS
-    AH --> SV
-    AH --> F5TTS
-    LH --> CXHMS
-    LH --> SV
-    TH --> CXHMS
-    ACPH --> CXHMS
-    MP --> CXHMS
-
-    CXHMS <--> SV
-    CXHMS <--> F5TTS
+    LLM --> CORE_LLM[(LLM)]
+    MEMORY --> CORE_MEM[(SQLite)]
+    MEMORY --> VECTOR[(Vector DB)]
+    TOOLS --> ACP
 ```
 
 ## 模块职责
 
-### CX-O Gateway（网关服务）
+### CX-O Server（单体应用）
 
-**职责**：作为统一入口，处理所有前端请求的路由和转发。
+**职责**：集成所有功能于单一应用中，降低延迟、简化部署。
 
-**核心组件**：
-- **ConnectionManager**：WebSocket 连接管理
-- **HealthChecker**：服务健康检查
-- **Handler 模块**：处理不同类型的消息
-
-**Handler 模块**：
-
-| Handler | 职责 |
-|---------|------|
-| chat | 聊天消息处理，转发到 CXHMS |
-| memory | 记忆 CRUD 操作 |
-| audio | ASR/TTS 音频处理 |
-| live | 直播客户端弹幕/VAD 处理 |
-| tools | 工具调用 |
-| acp | ACP 协议通信 |
-| mcp | MCP 服务器管理 |
-| plugin | 插件管理 |
-| config | 配置管理 |
-| metrics | 指标统计 |
-| system | 系统操作 |
-
-**Services 模块**：
-
-| Service | 职责 |
-|---------|------|
-| CXHMSClient | 与 CXHMS 后端通信 |
-| ASRClient | 语音识别客户端 |
-| TTSClient | 语音合成客户端 |
-| LiveClient | 直播客户端处理 |
-| FirewallService | 弹幕防火墙 |
-| VADProcessor | 语音活动检测 |
-| ASRInterrupt | ASR 打断处理 |
-| AgentInterruptUser | Agent 打断用户 |
-| EmotionParser | 情感解析 |
-| EffectParser | 音效解析 |
-| PromptBuilder | 提示词构建 |
-| HiddenPrompt | 隐藏提示词 |
-| FrontendMarker | 前端标记 |
-| MarkerAdapter | 标记适配器 |
-
-### CXHMS Backend（核心后端）
-
-**职责**：提供 Agent 系统、记忆管理、工具调用、上下文管理。
+**端口**：8100
 
 **核心组件**：
+
+| 层级 | 组件 | 职责 |
+|------|------|------|
+| Gateway | WebSocket Server | 前端通信、统一入口 |
+| Handlers | Chat/Memory/Audio/Live | 消息处理路由 |
+| Services | ASR/TTS/VAD | AI 服务直接调用 |
+| Core | LLM/Memory/Tools/ACP | 核心业务逻辑 |
+| API | REST/WebSocket | HTTP 接口 |
+
+### 服务层级详情
+
+#### Services Layer
+
+| Service | 职责 | 备注 |
+|---------|------|------|
+| ASR Service | 语音识别（SenseVoice） | 直接调用模型，无 HTTP 开销 |
+| TTS Service | 语音合成（F5-TTS） | 直接调用模型，无 HTTP 开销 |
+| VAD Processor | 语音活动检测 | WebRTC/Energy/Silero |
+| Firewall | 弹幕防火墙 | 三档决策 |
+| Interrupt Manager | 打断管理 | 用户/Agent 相互打断 |
+| Emotion Parser | 情感解析 | 支持情感 TTS |
+| Effect Parser | 音效解析 | 音效插入 |
+
+#### Core Layer
 
 | 组件 | 职责 |
 |------|------|
-| MemoryManager | 记忆 CRUD、向量搜索、三维评分、衰减计算 |
-| ContextManager | 会话管理、消息历史、上下文摘要 |
-| ToolRegistry | 工具注册、发现、调用 |
-| MCPManager | MCP 服务器生命周期管理 |
-| ACPManager | Agent 发现、连接、群组、消息传递 |
-| LLMClient | Ollama/VLLM 客户端封装 |
-| ModelRouter | 多模型路由、故障转移 |
-
-### SenseVoice（ASR 服务）
-
-**职责**：语音识别，将音频转换为文本。
-
-**端口**：8001
-
-**特性**：
-- 支持多语言
-- 实时流式识别
-- 情感识别（SER）
-
-### F5-TTS（TTS 服务）
-
-**职责**：零样本语音克隆合成。
-
-**端口**：8002
-
-**特性**：
-- 参考音频 + 参考文本 → 克隆音色
-- 支持情感 TTS（需 IndexTTS）
-- 流式输出
+| LLM Client | Ollama/VLLM 客户端封装 |
+| Memory Manager | 记忆 CRUD、向量搜索、衰减计算 |
+| Context Manager | 会话管理、消息历史、上下文摘要 |
+| Tool Registry | 工具注册、发现、调用 |
+| ACP Manager | Agent 发现、连接、群组、消息传递 |
+| Session Manager | 会话清理、元数据管理 |
+| Alarm Manager | 定时提醒管理 |
+| Backup Manager | 数据备份 |
+| Plugin Manager | 插件生命周期管理 |
+| WebSocket Manager | WebSocket 连接管理 |
 
 ## 数据流
 
-### 语音对话流程
+### 语音对话流程（单体内部调用）
 
 ```mermaid
 sequenceDiagram
     participant User as 用户
-    participant GW as Gateway
-    participant ASR as SenseVoice
-    participant LLM as CXHMS/LLM
-    participant TTS as F5-TTS
+    participant WS as WebSocket
+    participant ASR as ASR Service
+    participant LLM as LLM Client
+    participant TTS as TTS Service
 
-    User->>GW: 音频数据
-    GW->>ASR: 音频
-    ASR-->>GW: 文本
-    GW->>LLM: 文本
-    LLM-->>GW: 回复文本
-    GW->>TTS: 文本 + 参考音频
-    TTS-->>GW: 合成音频
-    GW-->>User: 音频
+    User->>WS: 音频数据
+    WS->>ASR: 音频（直接调用）
+    ASR-->>WS: 文本
+    WS->>LLM: 文本（直接调用）
+    LLM-->>WS: 回复文本
+    WS->>TTS: 文本（直接调用）
+    TTS-->>WS: 合成音频
+    WS-->>User: 音频
 
-    LLM->>LLM: 存储记忆
+    Note over WS: 无网络开销，全部进程内调用
 ```
+
+**对比微服务架构延迟**：
+
+| 架构 | 阶段数 | 预估延迟 |
+|------|--------|----------|
+| 微服务 | Gateway → CXHMS → ASR/TTS (HTTP) | ~800ms |
+| 单体 | 进程内直接调用 | ~400ms |
 
 ### 全双工打断流程
 
@@ -231,7 +216,6 @@ flowchart TD
 ## 存储架构
 
 ### SQLite（结构化数据）
-- CXHMS 元数据
 - 记忆内容
 - 会话消息
 - ACP 连接信息
@@ -242,62 +226,117 @@ flowchart TD
 - **Qdrant**：生产级向量服务
 
 ### 文件存储
-- 音频参考文件：`data/voice_refs/`
+- 音频参考文件：`server/data/voice_refs/`
+- 音效文件：`server/data/effects/`
 - 备份文件：`data/backups/`
 
 ## 配置管理
 
-### 配置层级
+### 统一配置
 
-```mermaid
-graph LR
-    A[环境变量 .env] --> B[Gateway config.json]
-    B --> C[CXHMS default.yaml]
-    C --> D[server 配置]
-    C --> E[models 配置]
-    C --> F[memory 配置]
-    C --> G[context 配置]
-    C --> H[tools 配置]
-    C --> I[acp 配置]
+文件：`cx-o/server/config.json`
+
+```json
+{
+  "server": {
+    "host": "0.0.0.0",
+    "port": 8100
+  },
+  "asr": {
+    "model_dir": "SenseVoice",
+    "device": "cuda",
+    "enabled": true
+  },
+  "tts": {
+    "model_dir": "F5-TTS",
+    "device": "cuda",
+    "enabled": true
+  },
+  "llm": {
+    "provider": "ollama",
+    "host": "http://localhost:11434",
+    "model": "qwen3-vl:8b"
+  }
+}
 ```
 
-### 配置文件
+## 目录结构
 
-| 文件 | 描述 |
-|------|------|
-| cx-o-gateway/config.json | 网关服务配置 |
-| CXHMS/config/default.yaml | CXHMS 默认配置 |
-| CXHMS/config/vad.yaml | VAD 语音检测配置 |
-| CXHMS/config/firewall.yaml | 弹幕防火墙配置 |
-| CXHMS/config/firewall_v3.yaml | v3 防火墙配置（打断） |
-| CXHMS/config/hidden_prompt.yaml | 隐藏提示词 |
-| CXHMS/config/danmaku.yaml | 弹幕配置 |
+```
+cx-o/
+├── server/                    # 单体应用
+│   ├── __init__.py
+│   ├── main.py               # 入口文件
+│   ├── config.py             # 配置管理
+│   ├── config.json           # 配置文件
+│   │
+│   ├── gateway/              # WebSocket 网关
+│   │   ├── server.py
+│   │   ├── health.py
+│   │   └── gateway_config.py
+│   │
+│   ├── handlers/             # 消息处理器
+│   │   ├── chat.py
+│   │   ├── memory.py
+│   │   ├── audio.py
+│   │   ├── live.py
+│   │   ├── tools.py
+│   │   ├── acp.py
+│   │   ├── mcp.py
+│   │   └── ...
+│   │
+│   ├── services/             # 服务层
+│   │   ├── asr.py           # SenseVoice ASR
+│   │   ├── tts.py           # F5-TTS TTS
+│   │   ├── emotion.py
+│   │   ├── effect.py
+│   │   └── ...
+│   │
+│   ├── core/                # 核心业务层
+│   │   ├── llm/
+│   │   ├── memory/
+│   │   ├── context/
+│   │   ├── tools/
+│   │   ├── acp/
+│   │   └── ...
+│   │
+│   ├── api/                 # REST API
+│   │   ├── app.py
+│   │   ├── routers/
+│   │   └── middleware/
+│   │
+│   ├── protocol/            # 协议定义
+│   │   ├── message.py
+│   │   └── actions.py
+│   │
+│   └── data/                 # 数据目录
+│       ├── effects/
+│       ├── acp/
+│       └── voice_refs/
+│
+├── frontend/                # 前端（保持不变）
+│   └── ...
+│
+└── data/                    # 共享数据
+    ├── memories.db
+    ├── sessions.db
+    └── acp/
+```
 
-## 安全机制
+## 技术栈
 
-### 弹幕防火墙（三档决策）
-
-| 决策 | 行为 |
-|------|------|
-| BLOCK | 阻断弹幕，不加入上下文 |
-| PASSIVE | 放行弹幕，加入上下文，不触发回复 |
-| REPLY | 放行弹幕，加入上下文，触发 LLM 回复 |
-
-### VAD 打断机制
-
-**打断阈值配置**：
-- `interrupt_threshold_ms`：打断阈值
-- `min_speech_duration_ms`：最小语音时长
-- `interrupt_cooldown_ms`：打断冷却时间
+- **框架**：Python 3.10+, FastAPI, uvicorn, WebSocket
+- **AI 服务**：SenseVoice（ASR）、F5-TTS（TTS）
+- **LLM**：Ollama、VLLM
+- **数据库**：SQLite、Milvus Lite、ChromaDB
+- **前端**：React 18+, TypeScript, Tailwind CSS, Zustand
+- **协议**：MCP（Model Context Protocol）、ACP
 
 ## 扩展性设计
 
 ### MCP 工具系统
 
-支持通过 MCP（Model Context Protocol）扩展工具能力：
-- 进程生命周期管理
-- HTTP 端点通信
-- 工具自动同步
+支持通过 MCP（Model Context Protocol）扩展工具能力。
 
 ### Agent 系统
 

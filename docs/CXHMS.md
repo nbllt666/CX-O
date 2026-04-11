@@ -1,304 +1,151 @@
-# CXHMS 后端服务
+# CXHMS 核心服务文档
 
 ## 概述
 
-CXHMS (CX-O History & Memory Service) 是系统的核心后端服务，提供 Agent 管理、记忆管理、上下文管理、工具调用和 ACP 协议通信等功能。
+在 v4 单体架构中，CXHMS 的核心功能已整合到 `server/core/` 目录，作为业务逻辑层。
 
-## 入口文件
+## 核心模块
 
-**文件**：`CXHMS/backend/api/app.py`
+### LLM Client (`server/core/llm/`)
 
-## 核心组件
+LLM 客户端封装，支持 Ollama 和 VLLM。
 
-### 1. 记忆管理系统 (MemoryManager)
-
-**位置**：`backend/core/memory/manager.py`
-
-**职责**：
-- 记忆 CRUD 操作
-- 向量搜索（语义搜索）
-- 混合搜索（向量+关键词）
-- 三维评分（重要性、时间、相关性）
-- 记忆衰减计算
-- 记忆召回与重激活
-- 批量操作支持
-
-**数据模型**：
 ```python
-class Memory:
-    id: int
-    type: str  # long_term, short_term, permanent
-    content: str
-    importance: int  # 1-5
-    importance_score: float
-    decay_type: str
-    reactivation_count: int
-    emotion_score: float
-    tags: List[str]
-    created_at: datetime
+from server.core.llm import get_llm_client
+
+llm = get_llm_client()
+response = await llm.chat(messages)
 ```
 
-**存储架构**：
-- **SQLite**：结构化数据存储
-- **向量存储**：Milvus Lite / ChromaDB / Qdrant / Weaviate
+### Memory Manager (`server/core/memory/`)
 
-### 2. 上下文管理系统 (ContextManager)
+记忆管理系统，负责记忆的 CRUD、向量搜索和衰减。
 
-**位置**：`backend/core/context/manager.py`
+```python
+from server.core.memory import get_memory_manager
 
-**职责**：
-- 会话管理
-- 消息历史存储
-- Mono 上下文（临时上下文）
-- 上下文摘要生成
+memory = get_memory_manager()
+memory.write_memory(content="今天很开心", memory_type="long_term")
+results = memory.search_memories(query="心情")
+```
 
-**特性**：
-- LRU 缓存（100 条上限）
-- 过期自动清理
-- 工作区隔离
+### Context Manager (`server/core/context/`)
 
-### 3. 工具系统 (Tools System)
+上下文管理器，处理会话和消息历史。
 
-**位置**：
-- `backend/core/tools/registry.py`
-- `backend/core/tools/mcp.py`
+```python
+from server.core.context import get_context_manager
 
-**职责**：
-- 工具注册与发现
-- MCP 服务器管理
-- 工具调用执行
-- OpenAI Functions 兼容
+context = get_context_manager()
+messages = context.get_messages(session_id)
+context.add_message(session_id, role="user", content="你好")
+```
 
-**MCP 服务器管理**：
-- 进程生命周期管理
-- HTTP 端点通信
-- 工具自动同步
-- 健康检查
+### Tool Registry (`server/core/tools/`)
 
-### 4. ACP 互联系统 (ACPManager)
+工具注册表，管理所有可用工具。
 
-**位置**：`backend/core/acp/manager.py`
+```python
+from server.core.tools import tool_registry
 
-**职责**：
-- Agent 发现（UDP 广播）
-- 连接管理
-- 群组管理
-- 消息传递
+tools = tool_registry.list_tools()
+result = await tool_registry.call_tool("calculator", {"expr": "1+1"})
+```
 
-**通信协议**：
-- **发现**：UDP 广播（端口 9998/9999）
-- **连接**：HTTP/REST API
-- **消息**：异步消息队列
+### ACP Manager (`server/core/acp/`)
 
-### 5. LLM 客户端 (LLMClient)
+ACP 协议管理器，处理 Agent 发现和通信。
 
-**位置**：`backend/core/llm/client.py`
+```python
+from server.core.acp import get_acp_manager
 
-**支持的提供商**：
-- **Ollama**：本地模型
-- **VLLM**：高性能推理
+acp = get_acp_manager()
+agents = acp.discover_agents()
+```
 
-**特性**：
-- 同步/流式对话
-- 错误分类处理
-- 请求验证
-- 超时控制
-- 多模态支持（图片输入）
-- 工具调用支持
+## 数据流
 
-### 6. 模型路由器 (ModelRouter)
+```
+Handler → Core Module → Database/Vector Store
+```
 
-**位置**：`backend/core/model_router.py`
+## 数据库
 
-**职责**：
-- 管理多个 LLM 模型客户端
-- 按用途路由请求（main/summary/memory）
-- 模型配置热加载
-- 健康检查和故障转移
+### SQLite
 
-**预配置模型用途**：
-- `main`：主对话模型（128k 上下文）
-- `summary`：摘要生成模型
-- `memory`：记忆处理模型
+- `data/memories.db` - 记忆数据
+- `data/sessions.db` - 会话数据
+- `data/acp/` - ACP 数据
 
-### 7. 副模型路由器 (SecondaryModelRouter)
+### 向量存储
 
-**位置**：`backend/core/memory/secondary_router.py`
+支持 Milvus Lite、ChromaDB、Qdrant。
 
-**职责**：
-- 处理辅助任务（摘要、分类等）
-- 与主模型协同工作
+```python
+memory.enable_vector_search(
+    embedding_model=llm_client,
+    vector_backend="milvus_lite",
+    db_path="data/milvus.db"
+)
+```
 
-## API 路由
+## 工具系统
 
-### Chat 模块
-- `POST /api/chat` - 非流式聊天
-- `POST /api/chat/stream` - 流式聊天（SSE）
-- `GET /api/chat/history/{session_id}` - 获取聊天历史
+### 内置工具
 
-### Memory 模块
-- `GET /api/memories` - 获取记忆列表
-- `POST /api/memories` - 创建记忆
-- `GET /api/memories/{memory_id}` - 获取记忆详情
-- `PUT /api/memories/{memory_id}` - 更新记忆
-- `DELETE /api/memories/{memory_id}` - 删除记忆
-- `POST /api/memories/search` - 搜索记忆
-- `POST /api/memories/rag` - RAG 搜索
-- `POST /api/memories/3d` - 3D 记忆搜索
-- `POST /api/memories/semantic-search` - 语义搜索
-- `POST /api/memories/permanent` - 创建永久记忆
-- `POST /api/memories/batch/write` - 批量写入
-- `POST /api/memories/batch/delete` - 批量删除
+- `calculator` - 数学计算
+- `datetime` - 日期时间
+- `random` - 随机数生成
+- `json_format` - JSON 格式化
 
-### Context 模块
-- `GET /api/context/sessions` - 列出会话
-- `POST /api/context/sessions` - 创建会话
-- `GET /api/context/messages/{session_id}` - 获取消息
-- `POST /api/context/messages` - 添加消息
-- `POST /api/context/summary` - 生成摘要
+### 主模型工具
 
-### Tools 模块
-- `GET /api/tools` - 列出工具
-- `POST /api/tools` - 注册工具
-- `POST /api/tools/call` - 调用工具
-- `GET /api/tools/mcp/servers` - MCP 服务器列表
-- `POST /api/tools/mcp/servers` - 添加 MCP 服务器
+- 记忆工具（搜索、创建、更新）
+- ACP 工具（发现、连接、发送）
+- 提醒工具（设置、取消）
+- 图工具（关系管理）
 
-### ACP 模块
-- `POST /api/acp/discover` - 发现 Agent
-- `POST /api/acp/connect` - 连接 Agent
-- `POST /api/acp/groups` - 创建群组
-- `POST /api/acp/send` - 发送消息
+### MCP 工具
 
-### Agent 模块
-- `GET /api/agents` - 列出 Agent
-- `POST /api/agents` - 创建 Agent
-- `GET /api/agents/{agent_id}` - 获取 Agent
-- `PUT /api/agents/{agent_id}` - 更新 Agent
-- `DELETE /api/agents/{agent_id}` - 删除 Agent
-- `POST /api/agents/{agent_id}/clone` - 克隆 Agent
-
-### Archive 模块
-- `POST /api/archive/memory` - 归档记忆
-- `POST /api/archive/merge` - 合并归档
-- `POST /api/archive/deduplicate` - 去重
-
-### Backup 模块
-- `GET /api/backups` - 列出备份
-- `POST /api/backups` - 创建备份
-- `POST /api/backups/{backup_id}/restore` - 恢复备份
-
-### Admin 模块
-- `GET /api/admin/dashboard` - 仪表盘统计
-- `GET /api/admin/stats` - 系统统计
-- `GET /api/admin/health` - 健康检查
-- `GET /api/admin/config` - 获取配置
-- `PUT /api/admin/config` - 更新配置
-
-### Service 模块
-- `GET /api/service/status` - 服务状态
-- `POST /api/service/start` - 启动服务
-- `POST /api/service/stop` - 停止服务
-- `POST /api/service/restart` - 重启服务
-- `GET /api/service/models` - 可用模型列表
+通过 MCP 协议扩展的工具。
 
 ## 配置
 
-**文件**：`CXHMS/config/default.yaml`
-
-```yaml
-server:
-  host: 0.0.0.0
-  port: 8000
-
-models:
-  main:
-    provider: ollama
-    host: http://localhost:11434
-    model: qwen3-vl:8b
-    temperature: 0.7
-    max_tokens: 0
-  summary:
-    provider: ollama
-    model: qwen3-vl:8b
-  memory:
-    provider: ollama
-    model: qwen3-vl:8b
-
-memory:
-  enabled: true
-  vector_enabled: true
-  vector_backend: milvus_lite
-  decay_enabled: true
-  decay_rate: 0.1
-
-context:
-  max_context_length: 4000
-  context_window: 10
-
-tools:
-  enabled: true
-  mcp_enabled: false
-
-acp:
-  enabled: true
-  discovery_enabled: true
-  discovery_port: 9999
-```
-
-## 启动流程
-
-```
-1. 初始化模型路由器 (ModelRouter)
-2. 初始化记忆管理器 (MemoryManager)
-3. 初始化异步记忆管理器 (AsyncMemoryManager)
-4. 初始化上下文管理器 (ContextManager)
-5. 初始化 ACP 管理器 (ACPManager)
-6. 初始化 LLM 客户端
-7. 初始化副模型路由器 (SecondaryModelRouter)
-8. 初始化 MCP 管理器 (MCPManager)
-9. 注册内置工具
-10. 注册主模型工具
-11. 注册摘要模型工具
-12. 启用向量搜索
-13. 启动衰减批处理器
-14. 启动提醒管理器
-```
-
-## 错误处理
-
-### 错误分类
-
-1. **LLMError**：LLM 调用错误
-   - LLMConnectionError：连接错误
-   - LLMTimeoutError：超时错误
-   - LLMRateLimitError：速率限制
-
-2. **MCPError**：MCP 服务器错误
-   - MCPConnectionError：连接错误
-   - MCPTimeoutError：超时错误
-
-3. **MemoryError**：记忆操作错误
-4. **ContextError**：上下文操作错误
-
-### 错误响应格式
+在 `server/config.json` 中配置：
 
 ```json
 {
-  "status": "error",
-  "error": "错误描述",
-  "error_details": {
-    "status_code": 500,
-    "exception": "详细异常信息"
+  "llm": {
+    "provider": "ollama",
+    "host": "http://localhost:11434",
+    "model": "qwen3-vl:8b"
+  },
+  "memory": {
+    "vector_enabled": true,
+    "vector_backend": "milvus_lite"
   }
 }
 ```
 
-## 插件系统
+## 扩展
 
-CXHMS 支持插件扩展：
-- 工具插件
-- 存储后端插件
-- LLM 提供商插件
+### 添加新工具
 
-**位置**：`backend/core/plugins/manager.py`
+```python
+from server.core.tools import tool_registry
+
+@tool_registry.register
+async def my_tool(param1: str) -> str:
+    return f"Result: {param1}"
+```
+
+### 添加新的记忆类型
+
+```python
+memory.write_memory(
+    content="内容",
+    memory_type="custom_type",
+    importance=3,
+    tags=["tag1"]
+)
+```
