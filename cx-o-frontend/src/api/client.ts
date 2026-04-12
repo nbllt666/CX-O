@@ -1153,7 +1153,7 @@ class ApiClient {
     return response.data;
   }
 
-  async updateLLMConfig(config: { models: any; model_defaults: any; llm_params: any }) {
+  async updateLLMConfig(config: { models: Record<string, unknown>; model_defaults: Record<string, string>; llm_params: Record<string, unknown> }) {
     const response = await this.client.post('/api/config/llm', config);
     return response.data;
   }

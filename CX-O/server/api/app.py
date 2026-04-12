@@ -465,16 +465,16 @@ async def lifespan(app: FastAPI):
 
         alarm_mgr = get_alarm_manager()
         alarm_mgr.shutdown()
-    except Exception:
-        pass
+    except Exception as e:
+        logger.error(f"关闭 AlarmManager 失败：{e}")
 
     try:
         from server.core.websocket.manager import get_websocket_manager
 
         ws_mgr = get_websocket_manager()
         await ws_mgr.stop_cleanup_task()
-    except Exception:
-        pass
+    except Exception as e:
+        logger.error(f"关闭 WebSocketManager 失败：{e}")
 
     if app_state.decay_batch_processor:
         await app_state.decay_batch_processor.stop()
@@ -488,24 +488,24 @@ async def lifespan(app: FastAPI):
     if app_state.async_memory_manager:
         try:
             await app_state.async_memory_manager.close()
-        except Exception:
-            pass
+        except Exception as e:
+            logger.error(f"关闭 AsyncMemoryManager 失败：{e}")
 
     try:
         from server.core.backup.manager import get_backup_manager
 
         backup_mgr = get_backup_manager()
         backup_mgr.shutdown()
-    except Exception:
-        pass
+    except Exception as e:
+        logger.error(f"关闭 BackupManager 失败：{e}")
 
     try:
         from server.core.plugins.manager import get_plugin_manager
 
         plugin_mgr = get_plugin_manager()
         await plugin_mgr.shutdown()
-    except Exception:
-        pass
+    except Exception as e:
+        logger.error(f"关闭 PluginManager 失败：{e}")
 
     if app_state.model_router:
         await app_state.model_router.close()

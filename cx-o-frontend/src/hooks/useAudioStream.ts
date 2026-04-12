@@ -53,10 +53,10 @@ const DEFAULT_CONFIG: AudioStreamConfig = {
 export function useAudioStream(options: UseAudioStreamOptions): UseAudioStreamReturn {
   const {
     wsSend,
-    onVADStatus: _onVADStatus,
-    onVADFrame: _onVADFrame,
-    onASRResult: _onASRResult,
-    onInterrupt: _onInterrupt,
+    // onVADStatus,
+    // onVADFrame,
+    // onASRResult,
+    // onInterrupt,
     config = DEFAULT_CONFIG,
     chunkInterval = 100,
   } = options;

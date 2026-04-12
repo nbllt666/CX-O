@@ -2,21 +2,23 @@
 
 ## 概述
 
-CX-O v4 单体架构中，WebSocket 网关是统一入口，处理前端所有请求。
+CX-O Gateway 是系统的统一入口，处理前端所有请求，负责 WebSocket 通信、协议解析和服务协调。
+
+**服务端口**: 8100
 
 ## 架构
 
 ```
-前端 (5173) → WebSocket (8100) → Handlers → Services/Core
+前端 (5173) → WebSocket (8100) → Handlers → Services → CXHMS/SenseVoice/F5-TTS
 ```
 
 ## WebSocket 连接
 
 ```javascript
-const ws = new WebSocket("ws://127.0.0.1:8100");
+const ws = new WebSocket("ws://127.0.0.1:8100/ws");
 
 ws.onopen = () => {
-  console.log("Connected to CX-O Server");
+  console.log("Connected to CX-O Gateway");
 };
 
 ws.onmessage = (event) => {
@@ -31,6 +33,7 @@ ws.onmessage = (event) => {
 
 ```json
 {
+  "type": "request",
   "action": "module.action",
   "request_id": "uuid-string",
   "data": {}
@@ -59,6 +62,18 @@ ws.onmessage = (event) => {
   "chunk_index": 0,
   "data": {},
   "is_final": false
+}
+```
+
+### 错误响应
+
+```json
+{
+  "type": "error",
+  "request_id": "uuid-string",
+  "action": "module.action",
+  "code": "ERROR_CODE",
+  "message": "错误描述"
 }
 ```
 
@@ -106,32 +121,33 @@ ws.onmessage = (event) => {
 | system.health | 健康检查 | `{}` |
 | system.config | 获取配置 | `{}` |
 
-## 直接调用服务
+### ACP
 
-在单体架构中，Handlers 直接调用 Services，无需 HTTP：
-
-```python
-# handlers/audio.py
-from server.services.asr import get_asr_service
-from server.services.tts import get_tts_service
-
-asr = get_asr_service()
-tts = get_tts_service()
-
-# 直接调用
-result = await asr.recognize(audio_data)
-audio = await tts.synthesize(text)
-```
+| Action | 说明 | data |
+|--------|------|------|
+| acp.discover | 发现 Agent | `{}` |
+| acp.send | 发送消息 | `{target, message}` |
 
 ## 配置
 
-`server/config.json`:
+`cx-o-gateway/config.json`:
 
 ```json
 {
   "server": {
     "host": "0.0.0.0",
     "port": 8100
+  },
+  "services": {
+    "cxhms": {
+      "url": "http://127.0.0.1:8000"
+    },
+    "sensevoice": {
+      "url": "http://127.0.0.1:8001"
+    },
+    "f5tts": {
+      "url": "http://127.0.0.1:8002"
+    }
   },
   "cors": {
     "enabled": true,
@@ -140,28 +156,35 @@ audio = await tts.synthesize(text)
 }
 ```
 
+## 服务调用
+
+Gateway 通过 HTTP 客户端调用后端服务：
+
+```python
+# handlers/audio.py
+from services.asr_client import get_asr_client
+from services.tts_client import get_tts_client
+
+asr = get_asr_client()
+tts = get_tts_client()
+
+# 调用 ASR 服务
+result = await asr.recognize(audio_data)
+
+# 调用 TTS 服务
+audio = await tts.synthesize(text)
+```
+
 ## 心跳
 
-网关支持心跳检测：
+Gateway 支持心跳检测：
 
 ```json
 {"type": "ping", "timestamp": 1234567890}
 ```
 
-## 错误处理
-
-```json
-{
-  "type": "error",
-  "request_id": "uuid-string",
-  "action": "module.action",
-  "code": "ERROR_CODE",
-  "message": "错误描述"
-}
-```
-
 ## 性能优化
 
-- 进程内直接调用，无网络开销
+- HTTP 客户端连接复用
 - 流式响应减少首字节延迟
-- 连接池复用
+- 并发请求处理

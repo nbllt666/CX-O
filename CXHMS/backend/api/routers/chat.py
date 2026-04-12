@@ -240,8 +240,10 @@ async def chat(request: ChatRequest):
             and tool_registry.get_tool(t.get("function", {}).get("name", "")).category
             not in EXCLUDED_CATEGORIES
         ]
+        # 确保 tools 始终为列表，避免 None 导致 LLM 无法使用工具
         if not tools:
             tools = []
+            logger.debug("未找到可用工具，使用空列表")
 
         # 8. 调用 LLM
         response = await llm.chat(messages=messages, stream=False, tools=tools)
@@ -283,10 +285,14 @@ async def chat(request: ChatRequest):
 
                 # 添加工具调用结果到消息
                 messages.append({"role": "assistant", "content": None, "tool_calls": [tool_call]})
+                # 生成 tool_call_id，确保不为空
+                tool_call_id = tool_call.get("id")
+                if not tool_call_id:
+                    tool_call_id = f"call_{tool_name}_{int(time.time() * 1000)}_{id(tool_call)}"
                 messages.append(
                     {
                         "role": "tool",
-                        "tool_call_id": tool_call.get("id") or f"call_{tool_name}_{int(time.time() * 1000)}",
+                        "tool_call_id": tool_call_id,
                         "name": tool_name,
                         "content": json.dumps(tool_result, ensure_ascii=False),
                     }

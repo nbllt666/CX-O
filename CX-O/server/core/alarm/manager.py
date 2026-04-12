@@ -12,22 +12,40 @@ from typing import Any, Dict, List, Optional
 logger = logging.getLogger(__name__)
 
 
-class _SilentHandler(logging.NullHandler):
+class _SilentHandler(logging.Handler):
+    """静默日志处理器，仅在 shutdown 时使用"""
     def emit(self, record):
-        pass
+        try:
+            msg = self.format(record)
+            # 保存到内存，避免 shutdown 时丢失日志
+            if not hasattr(_SilentHandler, '_buffer'):
+                _SilentHandler._buffer = []
+            _SilentHandler._buffer.append(msg)
+        except Exception:
+            self.handleError(record)
 
 
 def _silence_logger():
+    """静默日志记录器，避免 shutdown 时的异常"""
     if not logger.handlers or all(isinstance(h, logging.NullHandler) for h in logger.handlers):
         return
-    logger.handlers = [_SilentHandler()]
+    for handler in logger.handlers:
+        try:
+            handler.flush()
+            handler.close()
+        except Exception:
+            pass
+    logger.handlers = []
 
 
 def _safe_log(level, msg):
+    """安全日志记录，避免异常"""
     try:
         logger.log(level, msg)
-    except (ValueError, AttributeError, OSError):
-        pass
+    except (ValueError, AttributeError, OSError) as e:
+        # 如果日志系统已关闭，忽略错误
+        if not hasattr(logging, '_shutdown') or not logging._shutdown:
+            print(f"[ALARM] {msg}")  # 降级到标准输出
 
 
 @dataclass

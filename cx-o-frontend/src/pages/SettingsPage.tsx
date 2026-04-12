@@ -163,7 +163,8 @@ export function SettingsPage() {
 
   const checkControlService = useCallback(async () => {
     try {
-      const response = await fetch('http://localhost:8000/health');
+      const controlUrl = import.meta.env.VITE_CONTROL_SERVICE_URL || 'http://localhost:8765';
+      const response = await fetch(`${controlUrl}/health`);
       if (response.ok) {
         setIsControlServiceReady(true);
         return true;
@@ -178,13 +179,16 @@ export function SettingsPage() {
 
   const checkBackendStatus = useCallback(async () => {
     try {
-      const response = await fetch('http://localhost:8000/health');
+      const apiUrl = import.meta.env.VITE_API_URL || 'http://localhost:8100';
+      const response = await fetch(`${apiUrl}/health`);
       if (response.ok) {
         setIsBackendRunning(true);
-        setBackendStatus({ port: 8000 });
+        const port = new URL(apiUrl).port;
+        setBackendStatus({ port: parseInt(port, 10) });
         return true;
       }
       setIsBackendRunning(false);
+      setBackendStatus({});
       return false;
     } catch {
       setIsBackendRunning(false);
@@ -555,6 +559,7 @@ export function SettingsPage() {
       }
     };
     loadGraphConfig();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isBackendRunning]);
 
   const handleAudioUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -1520,7 +1525,7 @@ export function SettingsPage() {
                           } else {
                             alert('连接测试失败: ' + result.message);
                           }
-                        } catch (error) {
+                        } catch {
                           alert('连接测试失败');
                         } finally {
                           setTestingConnection(false);

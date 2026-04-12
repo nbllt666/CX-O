@@ -242,6 +242,7 @@ def register_audio_handlers(
                     kwargs["ref_text"] = ref_text
 
             chunk_index = 0
+            tts_playing = True
             set_tts_playing(client_id, True)
 
             try:
@@ -295,17 +296,27 @@ def register_audio_handlers(
                     message=str(e)
                 ))
             finally:
-                set_tts_playing(client_id, False)
+                # 确保状态始终正确重置
+                try:
+                    set_tts_playing(client_id, False)
+                    tts_playing = False
+                except Exception as reset_error:
+                    logger.error(f"重置 TTS 播放状态失败：{reset_error}")
 
                 if temp_file:
                     try:
                         import os
                         os.unlink(temp_file)
-                    except Exception:
-                        pass
+                    except Exception as cleanup_error:
+                        logger.warning(f"清理临时文件失败：{cleanup_error}")
 
         except Exception as e:
             logger.error(f"TTS synthesize error: {e}")
+            # 确保外层异常也能重置状态
+            try:
+                set_tts_playing(client_id, False)
+            except Exception as reset_error:
+                logger.error(f"重置 TTS 播放状态失败：{reset_error}")
             await manager.send_message(client_id, create_error(
                 request_id=request_id,
                 action=TTSActions.SYNTHESIZE_STREAM,

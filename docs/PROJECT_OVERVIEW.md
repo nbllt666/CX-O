@@ -1,19 +1,70 @@
-# CX-O 项目概述
+# CX-O 智能语音对话系统
 
 ## 项目简介
 
-**CX-O** 是一个基于单体架构的智能语音对话系统，集成语音识别（ASR）、大语言模型（LLM）和语音合成（TTS）能力，提供端到端的语音交互体验。
+**CX-O** (晨曦语音对话系统) 是一个智能语音对话平台，集成了语音识别（ASR）、大语言模型（LLM）和语音合成（TTS）能力，支持双向全双工语音交互。
 
-### 架构演进
+## 系统架构
 
-| 版本 | 架构 | 特点 |
-|------|------|------|
-| v1-v3 | 微服务 | 多进程分离，延迟较高 |
-| **v4** | **单体** | **进程内直接调用，延迟降低 50%** |
+CX-O 采用分布式微服务架构，由多个独立服务组成：
 
-## 系统特性
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                      CX-O Frontend                              │
+│                   (React + TypeScript)                          │
+│                      http://127.0.0.1:5173                       │
+└──────────────────────────┬──────────────────────────────────────┘
+                           │ WebSocket / HTTP
+                           ▼
+┌─────────────────────────────────────────────────────────────────┐
+│                   CX-O Gateway (8100)                          │
+│              WebSocket 网关、协议解析、服务路由                     │
+└──────────────────────────┬──────────────────────────────────────┘
+                           │
+           ┌───────────────┼───────────────┐
+           │               │               │
+           ▼               ▼               ▼
+    ┌──────────┐    ┌──────────┐    ┌──────────┐
+    │  CXHMS   │    │SenseVoice│    │  F5-TTS  │
+    │ (8000)   │    │  ASR     │    │   TTS    │
+    └──────────┘    └──────────┘    └──────────┘
+```
+
+## 核心组件
+
+### CXHMS 后端服务 (端口 8000)
+
+CXHMS (CX-O History & Memory Service) 是系统的核心AI服务，提供：
+
+- **记忆管理系统**：长期记忆存储、语义搜索、自动遗忘衰减机制
+- **工具系统**：MCP 协议支持、内置工具、动态注册
+- **ACP 协议**：局域网自动发现、点对点通信、群组协同
+- **对话系统**：流式响应、RAG检索增强、多Agent支持、多模态视觉
+- **LLM 路由**：支持 Ollama、VLLM 等多种 LLM 提供商
+
+### CX-O Gateway 网关服务 (端口 8100)
+
+- **WebSocket 网关**：统一入口，处理前端所有请求
+- **协议解析**：WebSocket 消息格式解析、Action 路由
+- **服务协调**：与 CXHMS、SenseVoice、F5-TTS 通信
+- **音频处理**：音频流管理、TTS 流式播放
+
+### CX-O Frontend 前端界面 (端口 5173)
+
+- **React 18 + TypeScript**：现代化前端框架
+- **Zustand**：状态管理
+- **Tailwind CSS**：样式框架
+- **WebSocket 客户端**：实时通信
+
+### 语音服务
+
+- **SenseVoice (ASR)**：阿里语音识别，支持多语言、实时流式、情感识别
+- **F5-TTS (TTS)**：零样本语音克隆、实时流式合成、情感 TTS
+
+## 功能特性
 
 ### 核心能力
+
 - **语音对话**：端到端语音交互，ASR → LLM → TTS 全流程
 - **智能记忆**：长期记忆存储、语义搜索、自动归档遗忘机制
 - **多模型支持**：Ollama 本地模型，可扩展支持 VLLM 等其他 LLM
@@ -23,108 +74,182 @@
 - **双向全双工**：支持用户打断 Agent TTS、Agent 打断用户说话
 - **VAD 语音检测**：WebRTC/Energy/Silero 多种模式
 
-### 技术架构（单体）
-- **服务层**：统一的 WebSocket/HTTP 网关 + ASR/TTS 直接调用
-- **核心层**：记忆管理、工具调用、Agent 系统（进程内）
-- **前端层**：React + TypeScript 管理界面
-
 ## 目录结构
 
 ```
 CX-O/
-├── server/                    # 单体应用
-│   ├── main.py               # 入口文件
-│   ├── config.py             # 配置管理
-│   ├── config.json           # 配置文件
-│   │
+├── CXHMS/                    # CXHMS 后端服务
+│   ├── backend/
+│   │   ├── api/routers/     # API 路由
+│   │   │   ├── chat.py       # 聊天接口
+│   │   │   ├── memory.py     # 记忆管理
+│   │   │   ├── agents.py     # Agent 管理
+│   │   │   ├── tools.py      # 工具管理
+│   │   │   ├── acp.py        # ACP 协议
+│   │   │   └── ...
+│   │   ├── core/             # 核心模块
+│   │   │   ├── memory/       # 记忆系统
+│   │   │   ├── llm/          # LLM 客户端
+│   │   │   ├── tools/        # 工具系统
+│   │   │   ├── acp/          # ACP 协议
+│   │   │   └── context/      # 上下文管理
+│   │   └── tests/            # 测试用例
+│   ├── config/               # 配置文件
+│   ├── docs/                 # 服务文档
+│   └── requirements.txt
+│
+├── cx-o-gateway/             # CX-O 网关服务
 │   ├── gateway/              # WebSocket 网关
+│   │   ├── server.py         # 主服务器
+│   │   └── config.py         # 配置管理
 │   ├── handlers/             # 消息处理器
-│   ├── services/             # 服务层（ASR/TTS/记忆等）
-│   ├── core/                 # 核心业务（LLM/记忆/工具等）
-│   ├── api/                  # REST API
-│   └── protocol/             # 协议定义
+│   │   ├── chat.py          # 聊天处理
+│   │   ├── audio.py         # 音频处理
+│   │   └── ...
+│   ├── services/             # 服务层
+│   │   ├── cxhms_client.py  # CXHMS 客户端
+│   │   ├── tts_client.py    # TTS 客户端
+│   │   ├── asr_client.py    # ASR 客户端
+│   │   └── ...
+│   └── requirements.txt
 │
-├── frontend/                  # 前端管理界面
-│   └── src/                  # React 源码
+├── cx-o-frontend/            # CX-O 前端界面
+│   └── src/
+│       ├── api/             # API 客户端
+│       ├── components/       # UI 组件
+│       ├── pages/           # 页面
+│       └── store/           # 状态管理
 │
-├── data/                      # 数据文件
-│   ├── acp/                  # ACP 配置
-│   ├── memories.db            # 记忆数据库
-│   └── sessions.db            # 会话数据库
+├── SenseVoice/               # 语音识别服务
+├── F5-TTS/                  # 语音合成服务
+├── CosyVoice/               # 备用语音合成
+├── F5-fast/                 # F5-TTS 快速推理
 │
-└── docs/                     # 项目文档
+├── docs/                    # 项目文档
+│   ├── PROJECT_OVERVIEW.md  # 项目概述
+│   ├── ARCHITECTURE.md      # 架构文档
+│   ├── API.md               # API 文档
+│   └── DEPLOYMENT.md        # 部署指南
+│
+└── data/                    # 共享数据
+    ├── acp/                # ACP 配置
+    ├── memories.db          # 记忆数据库
+    └── sessions.db          # 会话数据库
 ```
 
 ## 服务端口
 
 | 服务 | 端口 | 协议 | 说明 |
 |------|------|------|------|
-| CX-O Server | 8100 | WebSocket/HTTP | 统一入口，包含所有功能 |
-| 前端界面 | 5173 | HTTP | React 开发服务器 |
+| CXHMS Backend | 8000 | HTTP | 核心 AI 服务 |
+| CX-O Gateway | 8100 | WebSocket/HTTP | 统一入口 |
+| CX-O Frontend | 5173 | HTTP | Web 前端 |
+| SenseVoice ASR | 8001 | HTTP | 语音识别 |
+| F5-TTS TTS | 8002 | HTTP | 语音合成 |
+| CosyVoice | 8090 | HTTP | 备用语音合成 |
 
-**注意**：v4 单体架构不再需要独立的服务端口（8000/8001/8002）。
+## 快速开始
+
+### 环境要求
+
+- Windows 10/11 或 Linux
+- Python 3.10+
+- Node.js 18+
+- CUDA 11.8+ (GPU 支持)
+- Miniconda3
+
+### 启动服务
+
+#### Windows 一键启动
+
+```batch
+.\1-1.start-all.bat
+```
+
+#### 手动启动
+
+1. **启动 CXHMS 后端**
+```batch
+cd CXHMS
+python main.py
+```
+
+2. **启动 Gateway**
+```batch
+cd cx-o-gateway
+python main.py
+```
+
+3. **启动前端**
+```batch
+cd cx-o-frontend
+npm run dev
+```
+
+### 访问界面
+
+- 前端界面: http://127.0.0.1:5173
+- CXHMS API 文档: http://127.0.0.1:8000/docs
+- CXHMS WebUI: http://127.0.0.1:7860
 
 ## 技术栈
 
 ### 后端
-- **框架**：Python 3.10+, FastAPI, uvicorn
-- **WebSocket**：fastapi-websocket
-- **数据库**：SQLite, Milvus Lite, ChromaDB
-- **日志**：logging-config
+
+- **框架**: Python 3.10+, FastAPI, uvicorn
+- **WebSocket**: fastapi-websocket
+- **数据库**: SQLite, Milvus Lite, ChromaDB
+- **LLM**: Ollama, VLLM
+- **日志**: logging-config
 
 ### 前端
-- **框架**：React 18+, TypeScript
-- **状态管理**：Zustand
-- **样式**：Tailwind CSS
-- **构建工具**：Vite
+
+- **框架**: React 18+, TypeScript
+- **状态管理**: Zustand
+- **样式**: Tailwind CSS
+- **构建工具**: Vite
 
 ### 语音模型
-- **ASR**：SenseVoice（阿里，直接调用）
-- **TTS**：F5-TTS（零样本语音克隆，直接调用）
-- **LLM**：Ollama（本地方便）、VLLM（高性能推理）
 
-## 快速启动
+- **ASR**: SenseVoice（阿里，直接调用）
+- **TTS**: F5-TTS（零样本语音克隆）
+- **LLM**: Ollama（本地方便）、VLLM（高性能推理）
 
-### 环境要求
-- Windows 10/11
-- Python 3.10+
-- Node.js 18+
-- Miniconda3（项目内置）
+## WebSocket 协议
 
-### 启动单体服务
-```batch
-cd cx-o/server
-python main.py
+### 消息格式
+
+```json
+{
+  "type": "request",
+  "action": "module.action",
+  "request_id": "uuid-string",
+  "data": {}
+}
 ```
 
-### 访问界面
-- 管理控制台：http://127.0.0.1:5173
+### 核心 Action
 
-## 配置说明
+| 模块 | Action | 说明 |
+|------|--------|------|
+| 聊天 | chat.message | 发送消息 |
+| 聊天 | chat.stream | 流式聊天 |
+| 记忆 | memory.list | 列出记忆 |
+| 记忆 | memory.create | 创建记忆 |
+| 记忆 | memory.search | 搜索记忆 |
+| 工具 | tools.list | 列出工具 |
+| 工具 | tools.call | 调用工具 |
+| 语音 | asr.recognize | 语音识别 |
+| 语音 | tts.synthesize | 语音合成 |
 
-### 单体配置
-文件：`server/config.json`
+## 文档
 
-### VAD 配置
-文件：`CXHMS/config/vad.yaml`
-
-### 弹幕防火墙配置
-文件：`CXHMS/config/firewall.yaml` 或 `firewall_v3.yaml`
-
-## 版本历史
-
-- **v4**：单体架构重构，ASR/TTS 直接调用，延迟降低 50%
-- **v3**：新增双向全双工架构，支持用户/Agent 相互打断
-- **v2**：弹幕防火墙系统
-- **v1**：基础语音对话功能
-
-## 性能对比
-
-| 指标 | 微服务 (v3) | 单体 (v4) | 改善 |
-|------|-------------|-----------|------|
-| 语音对话延迟 | ~800ms | ~400ms | -50% |
-| 内存占用 | ~8GB | ~6GB | -25% |
-| 启动时间 | ~60s | ~45s | -25% |
+- [架构文档](ARCHITECTURE.md)
+- [API 文档](API.md)
+- [部署指南](DEPLOYMENT.md)
+- [CXHMS 文档](CXHMS.md)
+- [网关文档](GATEWAY.md)
+- [语音服务文档](VOICE_SERVICES.md)
 
 ## License
 

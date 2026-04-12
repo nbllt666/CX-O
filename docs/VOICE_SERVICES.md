@@ -2,9 +2,11 @@
 
 ## 概述
 
-CX-O v4 单体架构集成了语音识别（ASR）和语音合成（TTS）服务，直接在进程内调用模型，无需网络通信开销。
+CX-O 系统集成了语音识别（ASR）和语音合成（TTS）服务，通过 HTTP API 提供语音处理能力。
 
 ## ASR 服务（SenseVoice）
+
+**服务端口**: 8001
 
 ### 功能
 
@@ -13,34 +15,19 @@ CX-O v4 单体架构集成了语音识别（ASR）和语音合成（TTS）服务
 - 情感识别（SER）
 - 事件检测（BGM、笑声、掌声等）
 
-### 直接调用示例
+### API 调用示例
 
 ```python
-from server.services.asr import get_asr_service
+import httpx
 
-asr_service = get_asr_service()
-
-# 单次识别
-result = await asr_service.recognize(audio_data, language="auto")
-print(result["text"])
-
-# 流式识别
-async for chunk in asr_service.recognize_stream(audio_chunks, language="auto"):
-    print(chunk["text"], end="", flush=True)
-```
-
-### 配置
-
-```json
-{
-  "asr": {
-    "model_dir": "SenseVoice",
-    "device": "cuda",
-    "enabled": true,
-    "language": "auto",
-    "use_itn": true
-  }
-}
+async def recognize(audio_data: bytes):
+    async with httpx.AsyncClient() as client:
+        response = await client.post(
+            "http://127.0.0.1:8001/recognize",
+            files={"audio": audio_data},
+            data={"language": "auto"}
+        )
+        return response.json()
 ```
 
 ### WebSocket Action
@@ -49,8 +36,11 @@ async for chunk in asr_service.recognize_stream(audio_chunks, language="auto"):
 |--------|------|
 | asr.recognize | 语音识别 |
 | asr.recognize_base64 | Base64 编码音频识别 |
+| asr.stream | 实时 ASR 流 |
 
 ## TTS 服务（F5-TTS）
+
+**服务端口**: 8002
 
 ### 功能
 
@@ -59,59 +49,34 @@ async for chunk in asr_service.recognize_stream(audio_chunks, language="auto"):
 - 情感 TTS
 - 音效插入
 
-### 直接调用示例
+### API 调用示例
 
 ```python
-from server.services.tts import get_tts_service
+import httpx
 
-tts_service = get_tts_service()
-
-# 单次合成
-audio_bytes = await tts_service.synthesize(
-    text="你好，世界！",
-    ref_audio_path="data/voice_refs/default.wav",
-    ref_text="你好，我是语音助手。"
-)
-
-# 流式合成
-async for chunk in tts_service.synthesize_stream(text):
-    if chunk["audio_data"]:
-        send_audio(chunk["audio_data"])
+async def synthesize(text: str, ref_audio: str, ref_text: str):
+    async with httpx.AsyncClient() as client:
+        response = await client.post(
+            "http://127.0.0.1:8002/synthesize",
+            json={
+                "text": text,
+                "ref_audio": ref_audio,
+                "ref_text": ref_text
+            }
+        )
+        return response.content
 ```
 
 ### 情感 TTS
 
 ```python
 text_with_emotion = "[emotion:happy]今天真开心！[/emotion][emotion:sad]不过有点难过。[/emotion]"
-
-async for chunk in tts_service.synthesize_stream_with_emotions(text_with_emotion):
-    if chunk["audio_data"]:
-        send_audio(chunk["audio_data"])
 ```
 
 ### 音效
 
 ```python
 text_with_sound = "大家好。[sound:applause]欢迎来到直播间！"
-
-async for chunk in tts_service.synthesize_stream_with_emotions(text_with_sound):
-    if chunk["audio_data"]:
-        send_audio(chunk["audio_data"])
-```
-
-### 配置
-
-```json
-{
-  "tts": {
-    "model_dir": "F5-TTS",
-    "device": "cuda",
-    "enabled": true,
-    "ref_audio": "data/voice_refs/default.wav",
-    "ref_text": "你好，我是语音助手。",
-    "speed": 1.0
-  }
-}
 ```
 
 ### WebSocket Action
@@ -168,29 +133,25 @@ Agent TTS 播放中 ──▶ 用户说话 ──▶ VAD 检测 ──▶ ASR �
     开始 TTS 回复
 ```
 
-## 性能优化
+## 备用语音服务（CosyVoice）
 
-### 单体架构优势
+**服务端口**: 8090
 
-| 指标 | 微服务 | 单体 | 改善 |
-|------|--------|------|------|
-| ASR 延迟 | ~100ms | ~50ms | -50% |
-| TTS 延迟 | ~300ms | ~150ms | -50% |
-| 总体延迟 | ~800ms | ~400ms | -50% |
+CosyVoice 是备用的语音合成服务，提供额外的音色选择。
 
-### 优化策略
+### 启动
 
-1. **进程内调用**：消除 HTTP/网络开销
-2. **模型缓存**：模型只加载一次
-3. **流式处理**：边识别边返回，减少首字节延迟
-4. **批量推理**：多个请求合并处理
+```batch
+cd CosyVoice
+python webui.py
+```
 
 ## 故障排除
 
 ### ASR 识别失败
 
 1. 检查音频格式是否为 16kHz WAV
-2. 检查 `config.json` 中 ASR 配置
+2. 检查服务是否正常运行
 3. 查看日志中的错误信息
 
 ### TTS 合成失败

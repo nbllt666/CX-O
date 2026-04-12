@@ -174,11 +174,12 @@ export function useWebSocket(options: WebSocketOptions): UseWebSocketReturn {
               onErrorRef.current?.(errorMsg || 'Unknown error');
             }
             break;
-          case 'error':
+          case 'error': {
             setIsGenerating(false);
             const errMsg = typeof data.error === 'object' ? data.error?.message : data.error;
             onErrorRef.current?.(errMsg || 'Unknown error');
             break;
+          }
           case 'content':
           case 'tool_call':
           case 'tool_result':

@@ -155,15 +155,19 @@ class OllamaClient(LLMClient):
                     if message.get("tool_calls"):
                         tool_calls = message["tool_calls"]
 
-                    # 优先使用 content，thinking 不作为最终回复内容
+                    # 优先使用 content，thinking 仅作为推理过程不返回
                     content = message.get("content", "")
+                    # thinking 字段保留但不作为回复内容，仅用于调试
                     thinking = message.get("thinking", "")
+                    if thinking and not content:
+                        logger.debug(f"模型返回 thinking 但无 content: {thinking[:100]}...")
 
                     return LLMResponse(
                         content=content,
                         finish_reason=result.get("done_reason", "stop"),
                         usage={"eval_count": result.get("eval_count", 0)},
                         tool_calls=tool_calls,
+                        thinking=thinking if thinking else None,
                     )
                 else:
                     # 详细的错误处理
