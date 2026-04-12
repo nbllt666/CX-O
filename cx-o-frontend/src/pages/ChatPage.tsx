@@ -95,13 +95,70 @@ function MarkdownContent({ content }: { content: string }) {
   );
 }
 
+function ToolCallItem({ toolCall }: { toolCall: ToolCall }) {
+  const [isExpanded, setIsExpanded] = useState(false);
+
+  return (
+    <div className="p-2 bg-[var(--color-bg-tertiary)] rounded border border-[var(--color-border)] mb-2">
+      <button
+        onClick={() => setIsExpanded(!isExpanded)}
+        className="w-full flex items-center justify-between text-left"
+      >
+        <div className="flex items-center gap-2">
+          <span className="font-medium text-[var(--color-text-primary)]">
+            🔧 {toolCall.name}
+          </span>
+          {toolCall.status === 'executing' && (
+            <span className="animate-pulse text-[var(--color-info)]">执行中...</span>
+          )}
+          {toolCall.status === 'completed' && (
+            <span className="text-[var(--color-success)]">✓ 完成</span>
+          )}
+          {toolCall.status === 'failed' && (
+            <span className="text-[var(--color-error)]">✗ 失败</span>
+          )}
+        </div>
+        <svg
+          className={`w-4 h-4 transition-transform ${isExpanded ? 'rotate-180' : ''}`}
+          fill="none"
+          viewBox="0 0 24 24"
+          stroke="currentColor"
+        >
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+        </svg>
+      </button>
+
+      {isExpanded && (
+        <div className="mt-2 space-y-1">
+          {Boolean(toolCall.arguments) && (
+            <div className="text-[var(--color-text-tertiary)] font-mono text-[10px]">
+              <div className="font-medium mb-1">参数:</div>
+              <pre className="bg-[var(--color-bg-secondary)] p-2 rounded overflow-x-auto">
+                {JSON.stringify(toolCall.arguments, null, 2)}
+              </pre>
+            </div>
+          )}
+          {toolCall.result !== undefined && (
+            <div className="text-[var(--color-text-tertiary)] font-mono text-[10px]">
+              <div className="font-medium mb-1">结果:</div>
+              <pre className="bg-[var(--color-bg-secondary)] p-2 rounded overflow-x-auto">
+                {JSON.stringify(toolCall.result, null, 2)}
+              </pre>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function ThinkingProcess({ thinking, toolCalls }: { thinking?: string; toolCalls?: ToolCall[] }) {
   const [isExpanded, setIsExpanded] = useState(false);
 
   if (!thinking && (!toolCalls || toolCalls.length === 0)) return null;
 
   return (
-    <div className="mt-3 border border-[var(--color-border)] rounded-[var(--radius-md)] overflow-hidden">
+    <div className="mb-3 border border-[var(--color-border)] rounded-[var(--radius-md)] overflow-hidden">
       <button
         onClick={() => setIsExpanded(!isExpanded)}
         className="w-full flex items-center justify-between px-3 py-2 bg-[var(--color-bg-tertiary)] hover:bg-[var(--color-bg-hover)] transition-colors text-xs text-[var(--color-text-secondary)]"
@@ -133,43 +190,15 @@ function ThinkingProcess({ thinking, toolCalls }: { thinking?: string; toolCalls
       </button>
 
       {isExpanded && (
-        <div className="px-3 py-2 bg-[var(--color-bg-secondary)] text-xs space-y-2">
+        <div className="px-3 py-2 bg-[var(--color-bg-secondary)] text-xs space-y-3">
           {thinking && (
             <div className="text-[var(--color-text-tertiary)] whitespace-pre-wrap">{thinking}</div>
           )}
 
           {toolCalls && toolCalls.length > 0 && (
-            <div className="space-y-2">
+            <div className="space-y-1">
               {toolCalls.map((toolCall, idx) => (
-                <div
-                  key={idx}
-                  className="p-2 bg-[var(--color-bg-tertiary)] rounded border border-[var(--color-border)]"
-                >
-                  <div className="flex items-center gap-2 mb-1">
-                    <span className="font-medium text-[var(--color-text-primary)]">
-                      🔧 {toolCall.name}
-                    </span>
-                    {toolCall.status === 'executing' && (
-                      <span className="animate-pulse text-[var(--color-info)]">执行中...</span>
-                    )}
-                    {toolCall.status === 'completed' && (
-                      <span className="text-[var(--color-success)]">✓ 完成</span>
-                    )}
-                    {toolCall.status === 'failed' && (
-                      <span className="text-[var(--color-error)]">✗ 失败</span>
-                    )}
-                  </div>
-                  {Boolean(toolCall.arguments) && (
-                    <div className="text-[var(--color-text-tertiary)] font-mono text-[10px] mb-1">
-                      参数: {JSON.stringify(toolCall.arguments, null, 2)}
-                    </div>
-                  )}
-                  {toolCall.result !== undefined && (
-                    <div className="text-[var(--color-text-tertiary)] font-mono text-[10px]">
-                      结果: {JSON.stringify(toolCall.result, null, 2)}
-                    </div>
-                  )}
-                </div>
+                <ToolCallItem key={idx} toolCall={toolCall} />
               ))}
             </div>
           )}
@@ -387,6 +416,8 @@ export function ChatPage() {
 
   const currentAgent = agents.find((a) => a.id === currentAgentId);
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const chatContainerRef = useRef<HTMLDivElement>(null);
+  const [isNearBottom, setIsNearBottom] = useState(true);
 
   useEffect(() => {
     if (currentAgentId) {
@@ -396,9 +427,34 @@ export function ChatPage() {
     }
   }, [currentAgentId]);
 
+  // 滚动相关
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   };
+
+  const handleScroll = () => {
+    if (!chatContainerRef.current) return;
+    
+    const { scrollTop, scrollHeight, clientHeight } = chatContainerRef.current;
+    const threshold = 200; // 距离底部200px以内视为接近底部
+    setIsNearBottom(scrollHeight - scrollTop - clientHeight < threshold);
+  };
+
+  // 监听滚动事件
+  useEffect(() => {
+    const chatContainer = chatContainerRef.current;
+    if (chatContainer) {
+      chatContainer.addEventListener('scroll', handleScroll);
+      return () => chatContainer.removeEventListener('scroll', handleScroll);
+    }
+  }, []);
+
+  // 当消息更新且接近底部时自动滚动
+  useEffect(() => {
+    if (isNearBottom) {
+      scrollToBottom();
+    }
+  }, [messages, isNearBottom]);
 
   // 只在用户发送消息或AI开始响应时自动滚动
   const [shouldAutoScroll, setShouldAutoScroll] = useState(false);
@@ -408,7 +464,7 @@ export function ChatPage() {
       scrollToBottom();
       setShouldAutoScroll(false);
     }
-  }, [messages, shouldAutoScroll]);
+  }, [shouldAutoScroll]);
 
   const loadAgentHistory = async (agentId: string) => {
     try {
@@ -882,7 +938,7 @@ export function ChatPage() {
         }
       />
 
-      <div className="flex-1 overflow-y-auto space-y-4 mb-4">
+      <div className="flex-1 overflow-y-auto space-y-4 mb-4" ref={chatContainerRef}>
         {messages.length === 0 ? (
           <div className="flex flex-col items-center justify-center h-full text-center py-12">
             <div className="w-16 h-16 rounded-2xl bg-[var(--color-accent-light)] flex items-center justify-center mb-4">
@@ -951,6 +1007,10 @@ export function ChatPage() {
               <div
                 className={`max-w-[80%] ${message.role === 'user' ? 'items-end' : 'items-start'}`}
               >
+                {message.role === 'assistant' && (
+                  <ThinkingProcess thinking={message.thinking} toolCalls={message.tool_calls} />
+                )}
+
                 <div
                   className={`px-4 py-3 rounded-2xl ${
                     message.role === 'user'
@@ -972,10 +1032,6 @@ export function ChatPage() {
                 <span className="text-xs text-[var(--color-text-tertiary)] mt-1 px-1">
                   {formatRelativeTime(message.timestamp)}
                 </span>
-
-                {message.role === 'assistant' && (
-                  <ThinkingProcess thinking={message.thinking} toolCalls={message.tool_calls} />
-                )}
 
                 {message.memory_refs && message.memory_refs.length > 0 && (
                   <div className="mt-2 flex gap-2">
