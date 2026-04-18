@@ -1,6 +1,0 @@
-Collecting neo4j
-  Downloading neo4j-6.1.0-py3-none-any.whl.metadata (5.3 kB)
-Requirement already satisfied: pytz in .\miniconda3\lib\site-packages (from neo4j) (2025.2)
-Downloading neo4j-6.1.0-py3-none-any.whl (325 kB)
-Installing collected packages: neo4j
-Successfully installed neo4j-6.1.0
