@@ -1169,6 +1169,9 @@ export function SettingsPage() {
               <Card>
                 <CardBody>
                   <h3 className="text-lg font-semibold mb-4">向量存储配置</h3>
+                  <p className="text-sm text-[var(--color-text-secondary)] mb-4">
+                    向量存储用于语义搜索和记忆检索
+                  </p>
                   <div className="space-y-4">
                     <div>
                       <label className="text-sm font-medium mb-2 block">向量存储后端</label>
@@ -1179,12 +1182,12 @@ export function SettingsPage() {
                         }
                         className="w-full px-3 py-2 bg-[var(--color-bg-primary)] border border-[var(--color-border)] rounded-[var(--radius-md)]"
                       >
-                        <option value="chroma">Chroma (推荐 Windows)</option>
-                        <option value="milvus_lite">Milvus Lite (仅 Linux/macOS)</option>
-                        <option value="weaviate_embedded">Weaviate Embedded</option>
                         <option value="weaviate">Weaviate (独立服务)</option>
-                        <option value="qdrant">Qdrant</option>
+                        <option value="weaviate_embedded">Weaviate Embedded (内置)</option>
                       </select>
+                      <p className="text-xs text-[var(--color-text-tertiary)] mt-1">
+                        仅支持 Weaviate。Chroma、Milvus Lite、Qdrant 已不再支持。
+                      </p>
                     </div>
                     <div>
                       <label className="text-sm font-medium mb-2 block">向量维度</label>
@@ -1201,20 +1204,6 @@ export function SettingsPage() {
                         <option value={1536}>1536 (OpenAI)</option>
                       </select>
                     </div>
-                    {vectorConfig.backend === 'chroma' && (
-                      <div>
-                        <label className="text-sm font-medium mb-2 block">数据存储路径</label>
-                        <input
-                          type="text"
-                          value={vectorConfig.dbPath || 'data/chroma_db'}
-                          onChange={(e) =>
-                            setVectorConfig({ ...vectorConfig, dbPath: e.target.value })
-                          }
-                          className="w-full px-3 py-2 bg-[var(--color-bg-primary)] border border-[var(--color-border)] rounded-[var(--radius-md)]"
-                          placeholder="data/chroma_db"
-                        />
-                      </div>
-                    )}
                     {(vectorConfig.backend === 'weaviate' ||
                       vectorConfig.backend === 'weaviate_embedded') && (
                       <>
@@ -1243,37 +1232,6 @@ export function SettingsPage() {
                             }
                             className="w-full px-3 py-2 bg-[var(--color-bg-primary)] border border-[var(--color-border)] rounded-[var(--radius-md)]"
                             placeholder="8080"
-                          />
-                        </div>
-                      </>
-                    )}
-                    {vectorConfig.backend === 'qdrant' && (
-                      <>
-                        <div>
-                          <label className="text-sm font-medium mb-2 block">Qdrant 主机</label>
-                          <input
-                            type="text"
-                            value={vectorConfig.qdrantHost || 'localhost'}
-                            onChange={(e) =>
-                              setVectorConfig({ ...vectorConfig, qdrantHost: e.target.value })
-                            }
-                            className="w-full px-3 py-2 bg-[var(--color-bg-primary)] border border-[var(--color-border)] rounded-[var(--radius-md)]"
-                            placeholder="localhost"
-                          />
-                        </div>
-                        <div>
-                          <label className="text-sm font-medium mb-2 block">Qdrant 端口</label>
-                          <input
-                            type="number"
-                            value={vectorConfig.qdrantPort || 6333}
-                            onChange={(e) =>
-                              setVectorConfig({
-                                ...vectorConfig,
-                                qdrantPort: parseInt(e.target.value),
-                              })
-                            }
-                            className="w-full px-3 py-2 bg-[var(--color-bg-primary)] border border-[var(--color-border)] rounded-[var(--radius-md)]"
-                            placeholder="6333"
                           />
                         </div>
                       </>
@@ -1348,194 +1306,79 @@ export function SettingsPage() {
                     <div>
                       <h3 className="text-lg font-semibold">图数据库配置</h3>
                       <p className="text-sm text-[var(--color-text-secondary)]">
-                        配置 Neo4j 图数据库连接，用于存储用户记忆的实体关系
+                        SQLite + Weaviate 语义图数据库，支持语义检索和图遍历
                       </p>
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <span className="text-sm text-[var(--color-text-secondary)]">启用</span>
-                      <button
-                        onClick={() =>
-                          setGraphConfig({ ...graphConfig, graph_enabled: !graphConfig.graph_enabled })
-                        }
-                        className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${
-                          graphConfig.graph_enabled ? 'bg-[var(--color-accent)]' : 'bg-[var(--color-border)]'
-                        }`}
-                      >
-                        <span
-                          className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
-                            graphConfig.graph_enabled ? 'translate-x-6' : 'translate-x-1'
-                          }`}
-                        />
-                      </button>
                     </div>
                   </div>
 
-                  {graphConfig.graph_enabled && (
-                    <div className="space-y-4">
+                  <div className="space-y-4">
+                    <div className="p-4 bg-[var(--color-bg-tertiary)] rounded-[var(--radius-lg)]">
                       <div className="grid grid-cols-2 gap-4">
                         <div>
-                          <label className="text-sm font-medium mb-2 block">连接 URI</label>
-                          <input
-                            type="text"
-                            value={graphConfig.neo4j.uri}
-                            onChange={(e) =>
-                              setGraphConfig({
-                                ...graphConfig,
-                                neo4j: { ...graphConfig.neo4j, uri: e.target.value },
-                              })
-                            }
-                            className="w-full px-3 py-2 bg-[var(--color-bg-primary)] border border-[var(--color-border)] rounded-[var(--radius-md)]"
-                            placeholder="bolt://localhost:7687"
-                          />
-                        </div>
-                        <div>
-                          <label className="text-sm font-medium mb-2 block">数据库</label>
-                          <input
-                            type="text"
-                            value={graphConfig.neo4j.database}
-                            onChange={(e) =>
-                              setGraphConfig({
-                                ...graphConfig,
-                                neo4j: { ...graphConfig.neo4j, database: e.target.value },
-                              })
-                            }
-                            className="w-full px-3 py-2 bg-[var(--color-bg-primary)] border border-[var(--color-border)] rounded-[var(--radius-md)]"
-                            placeholder="neo4j"
-                          />
-                        </div>
-                      </div>
-                      <div className="grid grid-cols-2 gap-4">
-                        <div>
-                          <label className="text-sm font-medium mb-2 block">用户名</label>
-                          <input
-                            type="text"
-                            value={graphConfig.neo4j.user}
-                            onChange={(e) =>
-                              setGraphConfig({
-                                ...graphConfig,
-                                neo4j: { ...graphConfig.neo4j, user: e.target.value },
-                              })
-                            }
-                            className="w-full px-3 py-2 bg-[var(--color-bg-primary)] border border-[var(--color-border)] rounded-[var(--radius-md)]"
-                            placeholder="neo4j"
-                          />
-                        </div>
-                        <div>
-                          <label className="text-sm font-medium mb-2 block">密码</label>
-                          <input
-                            type="password"
-                            value={graphConfig.neo4j.password}
-                            onChange={(e) =>
-                              setGraphConfig({
-                                ...graphConfig,
-                                neo4j: { ...graphConfig.neo4j, password: e.target.value },
-                              })
-                            }
-                            className="w-full px-3 py-2 bg-[var(--color-bg-primary)] border border-[var(--color-border)] rounded-[var(--radius-md)]"
-                            placeholder="password"
-                          />
-                        </div>
-                      </div>
-                      <div>
-                        <label className="text-sm font-medium mb-2 block">最大连接池大小</label>
-                        <input
-                          type="number"
-                          value={graphConfig.neo4j.max_connection_pool_size}
-                          onChange={(e) =>
-                            setGraphConfig({
-                              ...graphConfig,
-                              neo4j: {
-                                ...graphConfig.neo4j,
-                                max_connection_pool_size: parseInt(e.target.value) || 50,
-                              },
-                            })
-                          }
-                          className="w-full px-3 py-2 bg-[var(--color-bg-primary)] border border-[var(--color-border)] rounded-[var(--radius-md)]"
-                        />
-                      </div>
-                    </div>
-                  )}
-                </CardBody>
-              </Card>
-
-              {/* 图库配置 */}
-              {graphConfig.graph_enabled && (
-                <Card>
-                  <CardBody>
-                    <h3 className="text-lg font-semibold mb-4">图库配置</h3>
-                    <p className="text-sm text-[var(--color-text-secondary)] mb-4">
-                      四个独立的图库用于存储不同类型的实体关系
-                    </p>
-                    <div className="grid grid-cols-2 gap-4">
-                      {Object.entries(graphConfig.graph_libraries).map(([name, config]) => (
-                        <div
-                          key={name}
-                          className="p-4 border border-[var(--color-border)] rounded-[var(--radius-lg)]"
-                        >
-                          <div className="flex items-center justify-between mb-2">
-                            <span className="font-medium capitalize">{name} Graph</span>
-                            <button
-                              onClick={() =>
-                                setGraphConfig({
-                                  ...graphConfig,
-                                  graph_libraries: {
-                                    ...graphConfig.graph_libraries,
-                                    [name]: { ...config, enabled: !config.enabled },
-                                  },
-                                })
-                              }
-                              className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors ${
-                                config.enabled ? 'bg-[var(--color-accent)]' : 'bg-[var(--color-border)]'
-                              }`}
-                            >
-                              <span
-                                className={`inline-block h-3 w-3 transform rounded-full bg-white transition-transform ${
-                                  config.enabled ? 'translate-x-5' : 'translate-x-1'
-                                }`}
-                              />
-                            </button>
-                          </div>
-                          <p className="text-xs text-[var(--color-text-tertiary)]">
-                            标签前缀: {config.label_prefix}
+                          <span className="text-sm font-medium">数据库路径</span>
+                          <p className="text-xs text-[var(--color-text-tertiary)] mt-1">
+                            data/graph.db
                           </p>
                         </div>
-                      ))}
+                        <div>
+                          <span className="text-sm font-medium">状态</span>
+                          <p className="text-xs text-[var(--color-text-tertiary)] mt-1">
+                            {graphHealth?.connected ? '已连接' : '未连接'}
+                          </p>
+                        </div>
+                      </div>
                     </div>
-                  </CardBody>
-                </Card>
-              )}
 
-              {/* 连接测试 */}
-              <Card>
-                <CardBody>
-                  <div className="flex items-center justify-between">
-                    <div>
-                      <h3 className="text-lg font-semibold">连接测试</h3>
-                      <p className="text-sm text-[var(--color-text-secondary)]">
-                        测试 Neo4j 数据库连接是否正常
-                      </p>
+                    <div className="p-4 bg-[var(--color-bg-tertiary)] rounded-[var(--radius-lg)]">
+                      <h4 className="text-sm font-medium mb-3">图数据库功能</h4>
+                      <div className="grid grid-cols-3 gap-4">
+                        <div className="text-center">
+                          <div className="text-lg font-semibold">{graphStats?.node_count || 0}</div>
+                          <div className="text-xs text-[var(--color-text-tertiary)]">节点</div>
+                        </div>
+                        <div className="text-center">
+                          <div className="text-lg font-semibold">{graphStats?.edge_count || 0}</div>
+                          <div className="text-xs text-[var(--color-text-tertiary)]">边</div>
+                        </div>
+                        <div className="text-center">
+                          <div className="text-lg font-semibold">
+                            {graphStats?.graph_enabled ? '启用' : '禁用'}
+                          </div>
+                          <div className="text-xs text-[var(--color-text-tertiary)]">图存储</div>
+                        </div>
+                      </div>
                     </div>
-                    <Button
-                      onClick={async () => {
-                        setTestingConnection(true);
-                        try {
-                          const result = await api.testGraphConnection();
-                          if (result.status === 'success') {
-                            alert('连接测试成功！');
-                          } else {
-                            alert('连接测试失败: ' + result.message);
+
+                    <div className="flex gap-2 flex-wrap">
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        onClick={async () => {
+                          try {
+                            const result = await api.getGraphStats();
+                            setGraphStats(result);
+                          } catch {
+                            console.error('获取图统计失败');
                           }
-                        } catch {
-                          alert('连接测试失败');
-                        } finally {
-                          setTestingConnection(false);
-                        }
-                      }}
-                      loading={testingConnection}
-                      disabled={!isBackendRunning || !graphConfig.graph_enabled}
-                    >
-                      测试连接
-                    </Button>
+                        }}
+                      >
+                        刷新统计
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        onClick={async () => {
+                          try {
+                            const health = await api.getGraphHealth();
+                            setGraphHealth(health);
+                          } catch {
+                            console.error('获取图健康状态失败');
+                          }
+                        }}
+                      >
+                        健康检查
+                      </Button>
+                    </div>
                   </div>
                 </CardBody>
               </Card>

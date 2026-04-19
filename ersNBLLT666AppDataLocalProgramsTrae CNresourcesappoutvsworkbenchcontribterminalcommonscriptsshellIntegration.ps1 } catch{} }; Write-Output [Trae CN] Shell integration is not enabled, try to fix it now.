@@ -1,0 +1,124 @@
+[33mcommit 6a5a8fdade9df6cbb78cf90de40ef99f464c256f[m[33m ([m[1;36mHEAD[m[33m -> [m[1;32mmain[m[33m)[m
+Author: NBLLT666 <195445358@qq.com>
+Date:   Sat Apr 18 20:22:27 2026 +0800
+
+    refactor: 重构项目结构并迁移文件到新位置
+    
+    重构项目目录结构，将文件从旧路径迁移到新位置。主要包括：
+    - 删除旧路径下的文件
+    - 添加新路径下的文件
+    - 更新配置文件和环境变量示例
+    - 调整前端组件结构
+    
+    此次重构旨在优化项目组织，提高代码可维护性
+
+ 1-1.start-all.bat                                  |   80 [31m-[m
+ 1-1.start-monolith.bat                             |   39 [31m-[m
+ 1-2.stop-all.bat                                   |   20 [31m-[m
+ ...is not enabled, try to fix it now.\357\200\242" |  190 [32m+[m
+ ...07\215\345\273\272\347\216\257\345\242\203.bat" |   81 [31m-[m
+ ...56\211\350\243\205\344\276\235\350\265\226.bat" |   58 [31m-[m
+ 5.14.0                                             |    6 [31m-[m
+ ...0\346\264\273conda\347\216\257\345\242\203.bat" |    8 [31m-[m
+ CX-O/download-f5tts.bat                            |   42 [31m-[m
+ CX-O/download-glm4v.ps1                            |   59 [31m-[m
+ CX-O/download-sensevoice.bat                       |   41 [31m-[m
+ CX-O/download_f5tts.py                             |   35 [31m-[m
+ CX-O/download_glm4v.bat                            |   28 [31m-[m
+ CX-O/download_glm4v_model.py                       |   39 [31m-[m
+ CX-O/download_qwen2vl.bat                          |   47 [31m-[m
+ CX-O/download_sensevoice.py                        |   34 [31m-[m
+ CX-O/install-conda-deps.bat                        |   27 [31m-[m
+ CX-O/server/api/__init__.py                        |   22 [31m-[m
+ CX-O/server/api/app.py                             |  573 [31m---[m
+ CX-O/server/api/middleware/__init__.py             |    7 [31m-[m
+ CX-O/server/api/middleware/performance.py          |   90 [31m-[m
+ CX-O/server/api/routers/__init__.py                |   31 [31m-[m
+ CX-O/server/api/routers/acp.py                     |  329 [31m--[m
+ CX-O/server/api/routers/admin.py                   |  247 [31m--[m
+ CX-O/server/api/routers/agents.py                  |  404 [31m---[m
+ CX-O/server/api/routers/archive.py                 |  385 [31m---[m
+ CX-O/server/api/routers/backup.py                  |  247 [31m--[m
+ CX-O/server/api/routers/chat.py                    |  776 [31m-----[m
+ CX-O/server/api/routers/context.py                 |  298 [31m--[m
+ CX-O/server/api/routers/graph.py                   |  777 [31m-----[m
+ CX-O/server/api/routers/memory.py                  |  934 [31m-----[m
+ CX-O/server/api/routers/memory_chat.py             |  180 [31m-[m
+ CX-O/server/api/routers/service.py                 |  629 [31m----[m
+ CX-O/server/api/routers/tools.py                   |  463 [31m---[m
+ CX-O/server/api/routers/vector.py                  |  385 [31m---[m
+ CX-O/server/api/routers/websocket.py               |  134 [31m-[m
+ CX-O/server/config.py                              |  209 [31m--[m
+ CX-O/server/core/__init__.py                       |   50 [31m-[m
+ CX-O/server/core/acp/__init__.py                   |    3 [31m-[m
+ CX-O/server/core/acp/discover.py                   |   51 [31m-[m
+ CX-O/server/core/acp/group.py                      |   61 [31m-[m
+ CX-O/server/core/acp/manager.py                    |  171 [31m-[m
+ CX-O/server/core/alarm/__init__.py                 |    3 [31m-[m
+ CX-O/server/core/alarm/manager.py                  |  251 [31m--[m
+ CX-O/server/core/cache.py                          |  137 [31m-[m
+ CX-O/server/core/context/__init__.py               |    4 [31m-[m
+ CX-O/server/core/context/agent_context_manager.py  |  200 [31m--[m
+ CX-O/server/core/context/manager.py                |  299 [31m--[m
+ CX-O/server/core/context/summarizer.py             |   98 [31m-[m
+ CX-O/server/core/exceptions.py                     |  155 [31m-[m
+ CX-O/server/core/llm/__init__.py                   |    4 [31m-[m
+ CX-O/server/core/llm/client.py                     |  524 [31m---[m
+ CX-O/server/core/llm/tools.py                      |  104 [31m-[m
+ CX-O/server/core/logging_config.py                 |  143 [31m-[m
+ CX-O/server/core/memory/__init__.py                |   25 [31m-[m
+ CX-O/server/core/memory/archiver.py                |   53 [31m-[m
+ CX-O/server/core/memory/conversation.py            |  103 [31m-[m
+ CX-O/server/core/memory/decay.py                   |  348 [31m--[m
+ CX-O/server/core/memory/decay_batch.py             |  186 [31m-[m
+ CX-O/server/core/memory/deduplication.py           |   29 [31m-[m
+ CX-O/server/core/memory/embedding.py               |  153 [31m-[m
+ CX-O/server/core/memory/emotion.py                 |  209 [31m--[m
+ CX-O/server/core/memory/graph_store.py             |  399 [31m---[m
+ CX-O/server/core/memory/hybrid_search.py           |  202 [31m--[m
+ CX-O/server/core/memory/milvus_lite_store.py       |  289 [31m--[m
+ CX-O/server/core/memory/router.py                  |  345 [31m--[m
+ CX-O/server/core/memory/secondary_router.py        |  997 [31m------[m
+ CX-O/server/core/memory/vector_store.py            |  166 [31m-[m
+ CX-O/server/core/memory/vectorization_queue.py     |  211 [31m--[m
+ CX-O/server/core/model_router.py                   |  142 [31m-[m
+ CX-O/server/core/plugins/__init__.py               |    5 [31m-[m
+ CX-O/server/core/plugins/context.py                |   59 [31m-[m
+ CX-O/server/core/plugins/manager.py                |  289 [31m--[m
+ CX-O/server/core/plugins/models.py                 |   93 [31m-[m
+ CX-O/server/core/session/__init__.py               |    5 [31m-[m
+ CX-O/server/core/session/cleanup.py                |   85 [31m-[m
+ CX-O/server/core/session/models.py                 |   54 [31m-[m
+ CX-O/server/core/session/store.py                  |  249 [31m--[m
+ CX-O/server/core/tools/__init__.py                 |   17 [31m-[m
+ CX-O/server/core/tools/assistant_tools.py          | 1016 [31m------[m
+ CX-O/server/core/tools/builtin.py                  |  362 [31m--[m
+ CX-O/server/core/tools/graph_tools.py              | 1708 [31m---------[m
+ CX-O/server/core/tools/master_tools.py             | 1218 [31m-------[m
+ CX-O/server/core/tools/mcp.py                      |  438 [31m---[m
+ CX-O/server/core/tools/registry.py                 |  206 [31m--[m
+ CX-O/server/core/tools/summary_tools.py            |  698 [31m----[m
+ CX-O/server/core/utils.py                          |   12 [31m-[m
+ CX-O/server/core/websocket/__init__.py             |    4 [31m-[m
+ CX-O/server/core/websocket/handlers.py             |   60 [31m-[m
+ CX-O/server/core/websocket/manager.py              |  203 [31m--[m
+ CX-O/server/data/effects/.gitkeep                  |    0
+ CX-O/server/data/voice_refs/.gitkeep               |    0
+ CX-O/server/gateway/gateway_config.py              |  215 [31m--[m
+ CX-O/server/gateway/health.py                      |   64 [31m-[m
+ CX-O/server/gateway/server.py                      |  818 [31m-----[m
+ CX-O/server/handlers/__init__.py                   |   49 [31m-[m
+ CX-O/server/handlers/acp.py                        |  168 [31m-[m
+ CX-O/server/handlers/audio.py                      |  509 [31m---[m
+ CX-O/server/handlers/chat.py                       |  194 [31m--[m
+ CX-O/server/handlers/config.py                     |  102 [31m-[m
+ CX-O/server/handlers/live.py                       |   36 [31m-[m
+ CX-O/server/handlers/mcp.py                        |  168 [31m-[m
+ CX-O/server/handlers/memory.py                     |  210 [31m--[m
+ CX-O/server/handlers/metrics.py                    |   47 [31m-[m
+ CX-O/server/handlers/plugin.py                     |  168 [31m-[m
+ CX-O/server/handlers/system.py                     |   89 [31m-[m
+ CX-O/server/handlers/tools.py                      |  168 [31m-[m
+ CX-O/server/main.py                                |  125 [31m-[m
+ CX-O/server/protocol/actions.py                    |  166 [31m-[m
+ CX-O/server/protocol/message.py         

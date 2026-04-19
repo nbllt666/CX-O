@@ -327,6 +327,46 @@ class MemoryConfig:
 
 
 @dataclass
+class ASRConfig:
+    provider: str = "local"
+    model: str = "sensevoice"
+    device: str = "cpu"
+    remote_url: Optional[str] = None
+    language: str = "auto"
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> "ASRConfig":
+        return cls(
+            provider=data.get("provider", "local"),
+            model=data.get("model", "sensevoice"),
+            device=data.get("device", "cpu"),
+            remote_url=data.get("remote_url"),
+            language=data.get("language", "auto"),
+        )
+
+
+@dataclass
+class TTSConfig:
+    provider: str = "local"
+    local_model: str = "cosyvoice"
+    device: str = "cpu"
+    remote_url: Optional[str] = None
+    voice: str = "default"
+    speed: float = 1.0
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> "TTSConfig":
+        return cls(
+            provider=data.get("provider", "local"),
+            local_model=data.get("local_model", "cosyvoice"),
+            device=data.get("device", "cpu"),
+            remote_url=data.get("remote_url"),
+            voice=data.get("voice", "default"),
+            speed=data.get("speed", 1.0),
+        )
+
+
+@dataclass
 class ContextConfig:
     max_messages: int = 100
     summary_threshold: int = 20

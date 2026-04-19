@@ -9,15 +9,16 @@ from typing import Any, Dict, List, Optional, Set
 from backend.core.graph.database import Database
 from backend.core.graph.models import GraphNode, GraphEdge
 from backend.core.graph.vectorizer import get_vectorizer
+from backend.core.graph.repository import BaseGraphRepository
 
 logger = logging.getLogger(__name__)
 
 
-class SemanticQueryManager:
+class SemanticQueryManager(BaseGraphRepository):
     """多跳语义查询管理器"""
 
     def __init__(self, db: Database):
-        self.db = db
+        super().__init__(db)
 
     def semantic_query_with_hops(
         self,
@@ -46,7 +47,7 @@ class SemanticQueryManager:
 
         nodes_with_text = []
         for node_id in reachable_nodes:
-            node = self._get_node(node_id)
+            node = self.get_node(node_id)
             if node:
                 text_content = self._extract_node_text(node)
                 nodes_with_text.append((node_id, node, text_content))
@@ -116,7 +117,7 @@ class SemanticQueryManager:
             if node_id == start_node_id or node_id == end_node_id:
                 continue
 
-            node = self._get_node(node_id)
+            node = self.get_node(node_id)
             if node:
                 text_content = self._extract_node_text(node)
                 nodes_with_text.append((node_id, node, text_content))
@@ -169,39 +170,12 @@ class SemanticQueryManager:
             visited.add(current_id)
 
             if depth < max_hops:
-                neighbor_ids = self._get_neighbor_ids(current_id, direction)
+                neighbor_ids = self.get_neighbor_ids(current_id, direction)
                 for neighbor_id in neighbor_ids:
                     if neighbor_id not in visited:
                         queue.append((neighbor_id, depth + 1))
 
         return visited
-
-    def _get_neighbor_ids(self, node_id: str, direction: str = "both") -> List[str]:
-        """获取邻居节点 ID"""
-        if direction == "outgoing":
-            query = "SELECT target_id FROM edges WHERE source_id = ?"
-            rows = self.db.execute(query, (node_id,))
-            return [row["target_id"] for row in rows]
-        elif direction == "incoming":
-            query = "SELECT source_id FROM edges WHERE target_id = ?"
-            rows = self.db.execute(query, (node_id,))
-            return [row["source_id"] for row in rows]
-        else:
-            query = """
-                SELECT target_id as neighbor_id FROM edges WHERE source_id = ?
-                UNION
-                SELECT source_id as neighbor_id FROM edges WHERE target_id = ?
-            """
-            rows = self.db.execute(query, (node_id, node_id))
-            return [row["neighbor_id"] for row in rows]
-
-    def _get_node(self, node_id: str) -> Optional[GraphNode]:
-        """获取节点"""
-        query = "SELECT * FROM nodes WHERE id = ?"
-        row = self.db.execute_one(query, (node_id,))
-        if row:
-            return GraphNode.from_dict(dict(row))
-        return None
 
     def _extract_node_text(self, node: GraphNode) -> str:
         """从节点提取文本内容"""
@@ -261,7 +235,7 @@ class SemanticQueryManager:
         while queue:
             current_id, path = queue.popleft()
 
-            neighbor_ids = self._get_neighbor_ids(current_id, "both")
+            neighbor_ids = self.get_neighbor_ids(current_id, "both")
             for neighbor_id in neighbor_ids:
                 if neighbor_id == end_id:
                     return path + [neighbor_id]
@@ -289,7 +263,7 @@ class SemanticQueryManager:
                 results.append(path.copy())
                 return
 
-            neighbor_ids = self._get_neighbor_ids(current, "both")
+            neighbor_ids = self.get_neighbor_ids(current, "both")
             for neighbor_id in neighbor_ids:
                 if neighbor_id not in path:
                     path.append(neighbor_id)

@@ -1,0 +1,72 @@
+version: '3.8'
+
+services:
+  weaviate:
+    image: cr.weaviate.io/semitechnologies/weaviate:1.26.6
+    container_name: weaviate
+    restart: unless-stopped
+    ports:
+      - "8090:8080"
+      - "50061:50051"
+    environment:
+      - QUERY_DEFAULTS_LIMIT=25
+      - AUTHENTICATION_ANONYMO_ACCESS_ENABLED=true
+      - PERSISTENCE_DATA_PATH=/var/lib/weaviate
+      - DEFAULT_VECTORIZER_MODULE=none
+      - ENABLE_MODULES=text2vec-transformers,text2vec-openai,text2vec-cohere,text2vec-huggingface
+      - TRANSFORMERS_INFERENCE_API=http://t2v-transformers:8080
+      - CLUSTER_HOSTNAME=weaviate-node-1
+      - GOMEMLIMIT=4096MiB
+    volumes:
+      - weaviate_data:/var/lib/weaviate
+    depends_on:
+      - t2v-transformers
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:8080/v1/.well-known/ready"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+    deploy:
+      resources:
+        reservations:
+          memory: 2G
+        limits:
+          memory: 4G
+
+  t2v-transformers:
+    image: cr.weaviate.io/semitechnologies/transformers-inference:distiluse-base-multilingual-cased-v1
+    container_name: weaviate-t2v-transformers
+    restart: unless-stopped
+    environment:
+      - ENABLE_CUDA=1
+      - NVIDIA_VISIBLE_DEVICES=all
+      - NVIDIA_DRIVER_CAPABILITIES=compute,utility
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+          memory: 4G
+        limits:
+          memory: 8G
+    volumes:
+      - transformers_cache:/cache
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:8080/.well-known/ready"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 120s
+
+volumes:
+  weaviate_data:
+    driver: local
+  transformers_cache:
+    driver: local
+
+networks:
+  default:
+    name: weaviate-network

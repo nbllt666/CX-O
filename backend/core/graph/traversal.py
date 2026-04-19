@@ -10,15 +10,16 @@ from collections import deque
 from backend.core.graph.database import Database
 from backend.core.graph.models import GraphNode, GraphEdge, PathResult
 from backend.core.graph.config import GraphConfig
+from backend.core.graph.repository import BaseGraphRepository
 
 logger = logging.getLogger(__name__)
 
 
-class TraversalManager:
+class TraversalManager(BaseGraphRepository):
     """图遍历管理器"""
 
     def __init__(self, db: Database, config: GraphConfig):
-        self.db = db
+        super().__init__(db)
         self.config = config
 
     def get_neighbors(
@@ -50,13 +51,13 @@ class TraversalManager:
             visited.add(current_id)
 
             if depth > 0:
-                node = self._get_node(current_id)
+                node = self.get_node(current_id)
                 if node:
                     edges = self._get_edges_for_node(current_id, direction)
                     result.append((node, edges))
 
             if depth < max_depth:
-                neighbor_ids = self._get_neighbor_ids(current_id, direction)
+                neighbor_ids = self.get_neighbor_ids(current_id, direction)
                 for neighbor_id in neighbor_ids:
                     if neighbor_id not in visited:
                         queue.append((neighbor_id, depth + 1))
@@ -86,13 +87,13 @@ class TraversalManager:
 
             visited.add(current_id)
 
-            node = self._get_node(current_id)
+            node = self.get_node(current_id)
             if node:
                 if node_type_filter is None or node.type == node_type_filter:
                     result.append(node)
 
             if depth < max_depth:
-                neighbor_ids = self._get_neighbor_ids(current_id, "both")
+                neighbor_ids = self.get_neighbor_ids(current_id, "both")
                 for neighbor_id in neighbor_ids:
                     if neighbor_id not in visited:
                         queue.append((neighbor_id, depth + 1))
@@ -119,13 +120,13 @@ class TraversalManager:
 
             visited.add(node_id)
 
-            node = self._get_node(node_id)
+            node = self.get_node(node_id)
             if node:
                 if node_type_filter is None or node.type == node_type_filter:
                     result.append(node)
 
             if depth < max_depth:
-                neighbor_ids = self._get_neighbor_ids(node_id, "both")
+                neighbor_ids = self.get_neighbor_ids(node_id, "both")
                 for neighbor_id in neighbor_ids:
                     if neighbor_id not in visited:
                         dfs(neighbor_id, depth + 1)
@@ -253,33 +254,6 @@ class TraversalManager:
             return GraphEdge.from_dict(dict(row))
         return None
 
-    def _get_node(self, node_id: str) -> Optional[GraphNode]:
-        """获取节点"""
-        query = "SELECT * FROM nodes WHERE id = ?"
-        row = self.db.execute_one(query, (node_id,))
-        if row:
-            return GraphNode.from_dict(dict(row))
-        return None
-
-    def _get_neighbor_ids(self, node_id: str, direction: str = "both") -> List[str]:
-        """获取邻居节点 ID"""
-        if direction == "outgoing":
-            query = "SELECT target_id FROM edges WHERE source_id = ?"
-            rows = self.db.execute(query, (node_id,))
-            return [row["target_id"] for row in rows]
-        elif direction == "incoming":
-            query = "SELECT source_id FROM edges WHERE target_id = ?"
-            rows = self.db.execute(query, (node_id,))
-            return [row["source_id"] for row in rows]
-        else:  # both
-            query = """
-                SELECT target_id as neighbor_id FROM edges WHERE source_id = ?
-                UNION
-                SELECT source_id as neighbor_id FROM edges WHERE target_id = ?
-            """
-            rows = self.db.execute(query, (node_id, node_id))
-            return [row["neighbor_id"] for row in rows]
-
     def _get_edges_for_node(self, node_id: str, direction: str = "both") -> List[GraphEdge]:
         """获取与节点相关的边"""
         if direction == "outgoing":
@@ -370,7 +344,7 @@ class TraversalManager:
 
         results = []
         for node_id, score in sorted_nodes[:limit]:
-            node = self._get_node(node_id)
+            node = self.get_node(node_id)
             if node:
                 results.append({
                     "node": node,

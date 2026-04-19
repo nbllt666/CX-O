@@ -6,6 +6,7 @@ from .env import EnvConfig, get_env_config
 from .settings import (
     ACPConfig,
     AgentStatus,
+    ASRConfig,
     ContextConfig,
     CORSConfig,
     CXHMSConfig,
@@ -19,6 +20,7 @@ from .settings import (
     ModelsConfig,
     Settings,
     SystemConfig,
+    TTSConfig,
     VectorConfig,
     settings,
 )
@@ -27,6 +29,7 @@ from .validation import ValidationError, ValidationResult, validate_config
 __all__ = [
     "settings",
     "Settings",
+    "ASRConfig",
     "CXHMSConfig",
     "ModelConfig",
     "ModelsConfig",
@@ -38,6 +41,7 @@ __all__ = [
     "ContextConfig",
     "CORSConfig",
     "SystemConfig",
+    "TTSConfig",
     "LLMProvider",
     "MemoryType",
     "AgentStatus",

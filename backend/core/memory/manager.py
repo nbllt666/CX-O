@@ -102,8 +102,49 @@ class MemoryManager:
         self._cleanup_thread = None
         self._start_cleanup_task()
 
+        self._check_deprecated_config()
+
         logger.info(f"记忆管理器初始化完成: db={db_path}")
         self._initialized = True
+
+    def _check_deprecated_config(self):
+        """检查并警告已弃用的配置"""
+        try:
+            from config.settings import settings
+            if hasattr(settings, 'config') and hasattr(settings.config, 'memory'):
+                memory_config = settings.config.memory
+                vector_backend = getattr(memory_config, 'vector_backend', None)
+
+                deprecated_backends = ['chroma', 'milvus_lite', 'qdrant']
+                if vector_backend and vector_backend.lower() in deprecated_backends:
+                    logger.warning(
+                        f"检测到已弃用的向量存储后端配置: vector_backend='{vector_backend}'。"
+                        f"Chroma、Milvus Lite 和 Qdrant 已不再支持。"
+                        f"请更改为 'weaviate' 或 'weaviate_embedded'。"
+                        f"详见配置迁移文档。"
+                    )
+
+                if hasattr(memory_config, 'milvus_lite') and memory_config.milvus_lite:
+                    logger.warning(
+                        "检测到已弃用的 Milvus Lite 配置。"
+                        "Milvus Lite 已不再支持，请更改为使用 Weaviate。"
+                    )
+
+                if hasattr(memory_config, 'qdrant') and memory_config.qdrant:
+                    logger.warning(
+                        "检测到已弃用的 Qdrant 配置。"
+                        "Qdrant 已不再支持，请更改为使用 Weaviate。"
+                    )
+
+                if hasattr(memory_config, 'chroma') and memory_config.chroma:
+                    logger.warning(
+                        "检测到已弃用的 Chroma 配置。"
+                        "Chroma 已不再支持，请更改为使用 Weaviate。"
+                    )
+        except ImportError:
+            pass
+        except Exception as e:
+            logger.debug(f"配置兼容性检查跳过: {e}")
 
     def _get_table_name(self, agent_id: str = "default") -> str:
         """获取Agent对应的记忆表名
@@ -726,9 +767,16 @@ JSON响应："""
                 config = self._vector_store_config
                 from backend.core.memory.vector_store import create_vector_store
 
+                backend = config.get("backend", "weaviate")
+                if backend not in ["weaviate", "weaviate_embedded"]:
+                    logger.warning(f"不支持的向量存储后端: {backend}，仅支持 weaviate 和 weaviate_embedded")
+                    return
+
                 vector_store = create_vector_store(
-                    backend=config.get("backend", "milvus_lite"),
-                    db_path=config.get("milvus_db_path", "data/milvus_lite.db"),
+                    backend=backend,
+                    host=config.get("weaviate_host", "localhost"),
+                    port=config.get("weaviate_port", 8080),
+                    grpc_port=config.get("weaviate_grpc_port", 50051),
                     vector_size=config.get("vector_size", 768),
                     embedding_model=self._embedding_model,
                 )

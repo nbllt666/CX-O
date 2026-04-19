@@ -10,15 +10,16 @@ from backend.core.graph.semantic_search import SemanticSearch
 from backend.core.graph.models import GraphNode, GraphEdge, SemanticSearchResult, SearchResult
 from backend.core.graph.config import GraphConfig
 from backend.core.graph.traversal import TraversalManager
+from backend.core.graph.repository import BaseGraphRepository
 
 logger = logging.getLogger(__name__)
 
 
-class HybridQueryManager:
+class HybridQueryManager(BaseGraphRepository):
     """混合查询管理器"""
 
     def __init__(self, db: Database, semantic: SemanticSearch, config: GraphConfig):
-        self.db = db
+        super().__init__(db)
         self.semantic = semantic
         self.config = config
         self.traversal = TraversalManager(db, config)
@@ -39,7 +40,7 @@ class HybridQueryManager:
         Returns:
             语义相似的邻居节点列表
         """
-        node = self._get_node(node_id)
+        node = self.get_node(node_id)
         if not node or not node.text_content:
             return []
 
@@ -89,7 +90,7 @@ class HybridQueryManager:
         if properties_filter:
             filtered = []
             for result in results:
-                node = self._get_node(result.node_id)
+                node = self.get_node(result.node_id)
                 if node and self._matches_filter(node, properties_filter):
                     filtered.append(result)
             results = filtered
@@ -145,7 +146,7 @@ class HybridQueryManager:
 
         texts = []
         for node_id in path_result.path:
-            node = self._get_node(node_id)
+            node = self.get_node(node_id)
             if node and node.text_content:
                 texts.append(node.text_content)
 
@@ -161,14 +162,6 @@ class HybridQueryManager:
             similarities.append(sim)
 
         return sum(similarities) / len(similarities) if similarities else 0.0
-
-    def _get_node(self, node_id: str) -> Optional[GraphNode]:
-        """获取节点"""
-        query = "SELECT * FROM nodes WHERE id = ?"
-        row = self.db.execute_one(query, (node_id,))
-        if row:
-            return GraphNode.from_dict(dict(row))
-        return None
 
     def _matches_filter(self, node: GraphNode, filter_dict: Dict[str, Any]) -> bool:
         """检查节点是否匹配过滤器"""

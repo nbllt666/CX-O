@@ -7,6 +7,7 @@ from backend.core.graph.database import Database, get_database
 from backend.core.graph.models import GraphNode, GraphEdge, NodeCreate, EdgeCreate
 from backend.core.graph.nodes import NodeManager
 from backend.core.graph.edges import EdgeManager
+from backend.core.graph.repository import BaseGraphRepository
 from backend.core.graph.traversal import TraversalManager
 from backend.core.graph.vectorizer import TextVectorizer, get_vectorizer
 from backend.core.graph.semantic_search import SemanticSearch
@@ -28,6 +29,7 @@ __all__ = [
     # 管理器
     "NodeManager",
     "EdgeManager",
+    "BaseGraphRepository",
     "TraversalManager",
     "SemanticSearch",
     "HybridQueryManager",
