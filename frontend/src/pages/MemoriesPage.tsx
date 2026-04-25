@@ -4,6 +4,7 @@ import { api } from '../api/client';
 import { formatDate, truncate, getImportanceColor, getImportanceLabel } from '../lib/utils';
 import { PageHeader } from '../components/layout';
 import { Button, Card, CardBody, Input, Badge, Modal, Textarea, Drawer } from '../components/ui';
+import { AnimatedList } from '../components/AnimatedList';
 import { useHotkey } from '../hooks';
 
 interface Memory {
@@ -391,7 +392,7 @@ export function MemoriesPage() {
           </div>
         </Card>
       ) : viewMode === 'card' ? (
-        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+        <AnimatedList className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
           {filteredMemories.map((memory: Memory) => (
             <Card
               key={memory.id}
@@ -507,7 +508,7 @@ export function MemoriesPage() {
               </CardBody>
             </Card>
           ))}
-        </div>
+        </AnimatedList>
       ) : (
         <Card>
           <CardBody className="p-0">

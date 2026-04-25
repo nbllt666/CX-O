@@ -28,10 +28,15 @@ function App() {
     const backendUrl = localStorage.getItem('cxhms-backend-url') || 'http://localhost:8000';
 
     try {
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 3000);
+
       const response = await fetch(`${backendUrl}/health`, {
         method: 'GET',
-        signal: AbortSignal.timeout(3000),
+        signal: controller.signal,
       });
+
+      clearTimeout(timeoutId);
 
       if (response.ok) {
         setIsConnected(true);

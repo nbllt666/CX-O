@@ -1,5 +1,4 @@
 import { useState, useEffect } from 'react';
-import { api } from '../api/client';
 
 interface ConnectionSetupProps {
   onConnected: () => void;

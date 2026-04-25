@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { createPortal } from 'react-dom';
+import { motion, AnimatePresence } from 'framer-motion';
 import { cn } from '../../lib/utils';
 
 type ToastType = 'success' | 'error' | 'warning' | 'info';
@@ -70,6 +71,37 @@ const toastStyles = {
   info: 'bg-[var(--color-info-light)] text-[var(--color-info)] border-[var(--color-info)]',
 };
 
+const toastVariants = {
+  initial: {
+    opacity: 0,
+    y: -100,
+    scale: 0.95,
+    x: 50
+  },
+  animate: {
+    opacity: 1,
+    y: 0,
+    scale: 1,
+    x: 0,
+    transition: {
+      type: 'spring',
+      damping: 25,
+      stiffness: 300,
+      mass: 0.8
+    }
+  },
+  exit: {
+    opacity: 0,
+    y: -20,
+    scale: 0.95,
+    x: 30,
+    transition: {
+      duration: 0.2,
+      ease: [0.4, 0, 0.2, 1]
+    }
+  }
+};
+
 const ToastItem: React.FC<{ toast: Toast; onClose: () => void }> = ({ toast, onClose }) => {
   useEffect(() => {
     if (toast.duration) {
@@ -79,18 +111,27 @@ const ToastItem: React.FC<{ toast: Toast; onClose: () => void }> = ({ toast, onC
   }, [toast.duration, onClose]);
 
   return (
-    <div
+    <motion.div
+      layout
+      variants={toastVariants}
+      initial="initial"
+      animate="animate"
+      exit="exit"
       className={cn(
         'flex items-center gap-3 px-4 py-3 rounded-[var(--radius-lg)]',
         'border shadow-[var(--shadow-md)]',
-        'animate-slide-in',
-        toastStyles[toast.type]
+        toastStyles[toast.type],
+        'cursor-pointer'
       )}
+      onClick={onClose}
     >
       {toastIcons[toast.type]}
       <span className="flex-1 text-sm font-medium">{toast.message}</span>
       <button
-        onClick={onClose}
+        onClick={(e) => {
+          e.stopPropagation();
+          onClose();
+        }}
         className="p-1 rounded-[var(--radius-sm)] hover:bg-black/10 transition-colors"
       >
         <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -102,7 +143,7 @@ const ToastItem: React.FC<{ toast: Toast; onClose: () => void }> = ({ toast, onC
           />
         </svg>
       </button>
-    </div>
+    </motion.div>
   );
 };
 
@@ -122,10 +163,14 @@ export const ToastProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     <ToastContext.Provider value={{ toasts, addToast, removeToast }}>
       {children}
       {createPortal(
-        <div className="fixed top-4 right-4 z-[100] flex flex-col gap-2 max-w-sm">
-          {toasts.map((toast) => (
-            <ToastItem key={toast.id} toast={toast} onClose={() => removeToast(toast.id)} />
-          ))}
+        <div className="fixed top-4 right-4 z-[100] flex flex-col-reverse gap-2 max-w-sm pointer-events-none">
+          <AnimatePresence mode="popLayout">
+            {toasts.map((toast) => (
+              <div key={toast.id} className="pointer-events-auto">
+                <ToastItem toast={toast} onClose={() => removeToast(toast.id)} />
+              </div>
+            ))}
+          </AnimatePresence>
         </div>,
         document.body
       )}

@@ -1,4 +1,6 @@
 import React, { useState } from 'react';
+import { useLocation } from 'react-router-dom';
+import { motion, AnimatePresence } from 'framer-motion';
 import { cn } from '../../lib/utils';
 
 interface SidebarProps {
@@ -14,6 +16,7 @@ interface LayoutProps {
 
 export const Layout: React.FC<LayoutProps> = ({ children, sidebar, header }) => {
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  const location = useLocation();
 
   const renderSidebar = () => {
     if (!sidebar) return null;
@@ -47,13 +50,20 @@ export const Layout: React.FC<LayoutProps> = ({ children, sidebar, header }) => 
           className={cn(
             'flex-1 min-h-[calc(100vh-var(--header-height))]',
             'transition-all duration-[var(--transition-normal)]',
-            sidebar &&
-              (sidebarCollapsed
-                ? 'ml-[var(--sidebar-collapsed-width)]'
-                : 'ml-[var(--sidebar-width)]')
+            sidebar ? (sidebarCollapsed ? 'ml-[var(--sidebar-collapsed-width)]' : 'ml-[var(--sidebar-width)]') : false
           )}
         >
-          {children}
+          <AnimatePresence mode="wait">
+            <motion.div
+              key={location.pathname}
+              initial={{ opacity: 0, x: 20 }}
+              animate={{ opacity: 1, x: 0 }}
+              exit={{ opacity: 0, x: -20 }}
+              transition={{ duration: 0.3, ease: 'easeOut' }}
+            >
+              {children}
+            </motion.div>
+          </AnimatePresence>
         </main>
       </div>
     </div>

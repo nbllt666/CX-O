@@ -1,7 +1,8 @@
 import React from 'react';
+import { motion } from 'framer-motion';
 import { cn } from '../../lib/utils';
 
-export interface CardProps extends React.HTMLAttributes<HTMLDivElement> {
+export interface CardProps extends Omit<React.HTMLAttributes<HTMLDivElement>, 'onDrag' | 'onDragEnd' | 'onAnimationStart' | 'onDragStart' | 'onDragOver' | 'onDragEnter' | 'onDragLeave' | 'onDrop'> {
   hoverable?: boolean;
   selected?: boolean;
 }
@@ -9,22 +10,28 @@ export interface CardProps extends React.HTMLAttributes<HTMLDivElement> {
 export const Card = React.forwardRef<HTMLDivElement, CardProps>(
   ({ className, hoverable, selected, children, ...props }, ref) => {
     return (
-      <div
+      <motion.div
         ref={ref}
         className={cn(
           'bg-[var(--color-bg-primary)] rounded-[var(--radius-lg)]',
           'border border-[var(--color-border)]',
           'shadow-[var(--shadow-sm)]',
-          'transition-all duration-[var(--transition-fast)]',
-          hoverable &&
-            'hover:shadow-[var(--shadow-md)] hover:border-[var(--color-border-hover)] cursor-pointer',
           selected && 'border-[var(--color-accent)] ring-2 ring-[var(--color-accent-light)]',
           className
         )}
+        {...(hoverable && {
+          whileHover: {
+            y: -4,
+            boxShadow: 'var(--shadow-lg)',
+            borderColor: 'var(--color-accent)',
+            cursor: 'pointer',
+          },
+          transition: { duration: 0.2, ease: [0.25, 0.46, 0.45, 0.94] },
+        })}
         {...props}
       >
         {children}
-      </div>
+      </motion.div>
     );
   }
 );

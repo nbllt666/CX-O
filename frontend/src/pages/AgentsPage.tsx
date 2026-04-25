@@ -1,27 +1,10 @@
 import { useState, useEffect } from 'react';
-import { api } from '../api/client';
+import { api, Agent } from '../api/client';
 import { formatRelativeTime } from '../lib/utils';
 import { PageHeader } from '../components/layout';
 import { Button, Card, CardBody, Modal, Input, Textarea, Badge } from '../components/ui';
+import { AnimatedList } from '../components/AnimatedList';
 import { useHotkey } from '../hooks';
-
-interface Agent {
-  id: string;
-  name: string;
-  description: string;
-  system_prompt: string;
-  model: string;
-  temperature: number;
-  max_tokens: number;
-  use_memory: boolean;
-  use_tools: boolean;
-  vision_enabled?: boolean;
-  memory_scene: string;
-  decay_model: string;
-  is_default: boolean;
-  created_at: string;
-  updated_at: string;
-}
 
 interface AgentTemplate {
   id: string;
@@ -102,7 +85,6 @@ export function AgentsPage() {
   const [showTemplateModal, setShowTemplateModal] = useState(false);
   const [editingAgent, setEditingAgent] = useState<Agent | null>(null);
   const [availableModels, setAvailableModels] = useState<{ name: string }[]>([]);
-  const [providers, setProviders] = useState<{ id: string; name: string; provider: string }[]>([]);
 
   const [formData, setFormData] = useState({
     name: '',
@@ -132,11 +114,8 @@ export function AgentsPage() {
   const loadModels = async () => {
     try {
       const data = await api.getAvailableModels();
-      if (data.providers) {
-        setProviders(data.providers);
-      }
-      if (data.ollama_models) {
-        setAvailableModels(data.ollama_models);
+      if (Array.isArray(data.models)) {
+        setAvailableModels(data.models.map((name: string) => ({ name })));
       }
     } catch (error) {
       console.error('加载模型列表失败:', error);
@@ -147,7 +126,7 @@ export function AgentsPage() {
     try {
       setLoading(true);
       const data = await api.getAgents();
-      const agentList = Array.isArray(data) ? data : data.agents || [];
+      const agentList = Array.isArray(data) ? data : [];
       const filteredAgents = agentList.filter((agent: Agent) => agent.id !== 'memory-agent');
       setAgents(filteredAgents);
     } catch (error) {
@@ -234,12 +213,12 @@ export function AgentsPage() {
     setEditingAgent(agent);
     setFormData({
       name: agent.name,
-      description: agent.description,
-      system_prompt: agent.system_prompt,
+      description: agent.description || '',
+      system_prompt: agent.system_prompt || '',
       model: agent.model || '',
-      temperature: agent.temperature,
-      max_tokens: agent.max_tokens,
-      memory_scene: agent.memory_scene,
+      temperature: agent.temperature ?? 0.7,
+      max_tokens: agent.max_tokens ?? 0,
+      memory_scene: agent.memory_scene || 'chat',
       decay_model: agent.decay_model || 'exponential',
     });
   };
@@ -304,7 +283,7 @@ export function AgentsPage() {
         }
       />
 
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+      <AnimatedList className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
         {agents.map((agent) => (
           <Card
             key={agent.id}
@@ -476,12 +455,12 @@ export function AgentsPage() {
               </div>
 
               <div className="mt-4 pt-3 border-t border-[var(--color-border)] text-xs text-[var(--color-text-tertiary)]">
-                更新于 {formatRelativeTime(agent.updated_at)}
+                更新于 {formatRelativeTime(agent.updated_at || '')}
               </div>
             </CardBody>
           </Card>
         ))}
-      </div>
+      </AnimatedList>
 
       <Modal
         isOpen={showTemplateModal}
@@ -527,15 +506,9 @@ export function AgentsPage() {
                 onChange={(e) => setFormData({ ...formData, model: e.target.value })}
                 className="w-full px-3 py-2 bg-[var(--color-bg-primary)] border border-[var(--color-border)] rounded-[var(--radius-md)]"
               >
-                <optgroup label="配置的提供商">
-                  {providers.map((p) => (
-                    <option key={p.id} value={p.name}>
-                      {p.name} ({p.provider})
-                    </option>
-                  ))}
-                </optgroup>
+                <option value="">默认模型</option>
                 {availableModels.length > 0 && (
-                  <optgroup label="Ollama 可用模型">
+                  <optgroup label="可用模型">
                     {availableModels.map((m) => (
                       <option key={m.name} value={m.name}>
                         {m.name}

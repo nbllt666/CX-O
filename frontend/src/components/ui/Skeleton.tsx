@@ -23,11 +23,17 @@ export const Skeleton: React.FC<SkeletonProps> = ({
   return (
     <div
       className={cn(
-        'animate-pulse bg-[var(--color-bg-tertiary)]',
+        'animate-shimmer relative overflow-hidden bg-[var(--color-bg-tertiary)]',
+        'before:absolute before:inset-0 before:bg-[var(--color-bg-tertiary)]',
         variantStyles[variant],
         className
       )}
-      style={{ width, height }}
+      style={{
+        width,
+        height,
+        backgroundImage: 'linear-gradient(90deg, transparent, rgba(255,255,255,0.08), transparent)',
+        backgroundSize: '200% 100%',
+      }}
     />
   );
 };

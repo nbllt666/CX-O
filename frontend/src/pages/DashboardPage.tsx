@@ -1,9 +1,12 @@
 import React from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
+import { motion } from 'framer-motion';
 import { PageHeader } from '../components/layout';
 import { Card, CardBody, Button, SkeletonCard } from '../components/ui';
 import { api } from '../api/client';
+import { CountUp } from '../components/CountUp';
+import { AnimatedList } from '../components/AnimatedList';
 
 interface Stats {
   memoryCount: number;
@@ -13,10 +16,10 @@ interface Stats {
 }
 
 interface ServiceStats {
-  tts_count: number;
-  asr_count: number;
-  llm_count: number;
-  client_count: number;
+  total_memories: number;
+  total_sessions: number;
+  total_agents: number;
+  archived_memories: number;
 }
 
 const StatCard: React.FC<{
@@ -24,21 +27,38 @@ const StatCard: React.FC<{
   value: number | string;
   icon: React.ReactNode;
   color: string;
-}> = ({ title, value, icon, color }) => (
-  <Card className="p-4">
-    <div className="flex items-center gap-4">
-      <div
-        className="w-12 h-12 rounded-[var(--radius-lg)] flex items-center justify-center"
-        style={{ backgroundColor: `var(--color-${color}-light)` }}
-      >
-        <span style={{ color: `var(--color-${color})` }}>{icon}</span>
+  index?: number;
+}> = ({ title, value, icon, color, index = 0 }) => (
+  <motion.div
+    initial={{ opacity: 0, y: 20 }}
+    animate={{ opacity: 1, y: 0 }}
+    transition={{
+      duration: 0.5,
+      delay: index * 0.1,
+      ease: 'easeOut',
+    }}
+  >
+    <Card className="p-4">
+      <div className="flex items-center gap-4">
+        <div
+          className="w-12 h-12 rounded-[var(--radius-lg)] flex items-center justify-center"
+          style={{ backgroundColor: `var(--color-${color}-light)` }}
+        >
+          <span style={{ color: `var(--color-${color})` }}>{icon}</span>
+        </div>
+        <div>
+          <p className="text-sm text-[var(--color-text-secondary)]">{title}</p>
+          <p className="text-2xl font-bold text-[var(--color-text-primary)]">
+            {typeof value === 'number' ? (
+              <CountUp end={value} />
+            ) : (
+              value
+            )}
+          </p>
+        </div>
       </div>
-      <div>
-        <p className="text-sm text-[var(--color-text-secondary)]">{title}</p>
-        <p className="text-2xl font-bold text-[var(--color-text-primary)]">{value}</p>
-      </div>
-    </div>
-  </Card>
+    </Card>
+  </motion.div>
 );
 
 const QuickAction: React.FC<{ to: string; icon: React.ReactNode; label: string }> = ({
@@ -47,10 +67,25 @@ const QuickAction: React.FC<{ to: string; icon: React.ReactNode; label: string }
   label,
 }) => (
   <Link to={to}>
-    <Button variant="secondary" className="w-full justify-start gap-2">
-      {icon}
-      {label}
-    </Button>
+    <motion.div whileHover={{ x: 4 }} transition={{ duration: 0.2 }}>
+      <Button variant="secondary" className="w-full justify-start gap-2 group">
+        {icon}
+        <span>{label}</span>
+        <svg
+          className="w-4 h-4 ml-auto opacity-0 group-hover:opacity-100 transition-opacity duration-200"
+          fill="none"
+          viewBox="0 0 24 24"
+          stroke="currentColor"
+        >
+          <path
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            strokeWidth={2}
+            d="M9 5l7 7-7 7"
+          />
+        </svg>
+      </Button>
+    </motion.div>
   </Link>
 );
 
@@ -58,23 +93,18 @@ export const DashboardPage: React.FC = () => {
   const { data: stats, isLoading: statsLoading } = useQuery<Stats>({
     queryKey: ['dashboard-stats'],
     queryFn: async () => {
-      // 获取记忆总数（使用较大的 limit 来获取实际总数）
       const memoriesResponse = await api.getMemories({ limit: 10000 });
       const sessionsResponse = await api.getSessions();
       const agentsResponse = await api.getAgents();
-      
-      // API 返回格式：{ status: "success", memories: [], total: number }
+
       const memories = memoriesResponse.memories || [];
-      const memoriesTotal = memoriesResponse.total || memories.length;
-      
-      // API 返回格式：{ status: "success", sessions: [], total: number }
-      const sessions = sessionsResponse.sessions || [];
-      const sessionsTotal = sessionsResponse.total || sessions.length;
-      
-      // API 返回格式：{ status: "success", agents: [], total: number }
-      const agents = agentsResponse.agents || agentsResponse || [];
-      
-      // 计算今日消息数（从会话中统计今天更新的会话）
+      const memoriesTotal = memories.length;
+
+      const sessions = Array.isArray(sessionsResponse) ? sessionsResponse : [];
+      const sessionsTotal = sessions.length;
+
+      const agents = Array.isArray(agentsResponse) ? agentsResponse : [];
+
       const today = new Date();
       today.setHours(0, 0, 0, 0);
       const todaySessions = sessions.filter((s: { updated_at?: string }) => {
@@ -99,6 +129,92 @@ export const DashboardPage: React.FC = () => {
     },
   });
 
+  const statCardsData = [
+    {
+      title: '记忆总数',
+      value: stats?.memoryCount || 0,
+      color: 'accent',
+      icon: (
+        <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+          <path
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            strokeWidth={2}
+            d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"
+          />
+        </svg>
+      ),
+    },
+    {
+      title: '会话数',
+      value: stats?.sessionCount || 0,
+      color: 'success',
+      icon: (
+        <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+          <path
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            strokeWidth={2}
+            d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z"
+          />
+        </svg>
+      ),
+    },
+    {
+      title: 'Agent数',
+      value: stats?.agentCount || 0,
+      color: 'warning',
+      icon: (
+        <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+          <path
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            strokeWidth={2}
+            d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z"
+          />
+        </svg>
+      ),
+    },
+    {
+      title: '今日消息',
+      value: stats?.todayMessages || 0,
+      color: 'info',
+      icon: (
+        <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+          <path
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            strokeWidth={2}
+            d="M7 8h10M7 12h4m1 8l-4-4H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-3l-4 4z"
+          />
+        </svg>
+      ),
+    },
+  ];
+
+  const serviceStatItems = [
+    {
+      label: '记忆总数',
+      value: serviceStats?.total_memories || 0,
+      color: 'accent',
+    },
+    {
+      label: '会话总数',
+      value: serviceStats?.total_sessions || 0,
+      color: 'success',
+    },
+    {
+      label: 'Agent 总数',
+      value: serviceStats?.total_agents || 0,
+      color: 'warning',
+    },
+    {
+      label: '已归档记忆',
+      value: serviceStats?.archived_memories || 0,
+      color: 'info',
+    },
+  ];
+
   return (
     <div className="max-w-6xl mx-auto">
       <PageHeader title="仪表盘" description="系统概览与快捷操作" />
@@ -112,68 +228,18 @@ export const DashboardPage: React.FC = () => {
             <SkeletonCard />
           </>
         ) : (
-          <>
-            <StatCard
-              title="记忆总数"
-              value={stats?.memoryCount || 0}
-              color="accent"
-              icon={
-                <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                  <path
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    strokeWidth={2}
-                    d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"
-                  />
-                </svg>
-              }
-            />
-            <StatCard
-              title="会话数"
-              value={stats?.sessionCount || 0}
-              color="success"
-              icon={
-                <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                  <path
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    strokeWidth={2}
-                    d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z"
-                  />
-                </svg>
-              }
-            />
-            <StatCard
-              title="Agent数"
-              value={stats?.agentCount || 0}
-              color="warning"
-              icon={
-                <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                  <path
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    strokeWidth={2}
-                    d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z"
-                  />
-                </svg>
-              }
-            />
-            <StatCard
-              title="今日消息"
-              value={stats?.todayMessages || 0}
-              color="info"
-              icon={
-                <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                  <path
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    strokeWidth={2}
-                    d="M7 8h10M7 12h4m1 8l-4-4H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-3l-4 4z"
-                  />
-                </svg>
-              }
-            />
-          </>
+          <AnimatedList className="contents">
+            {statCardsData.map((card, index) => (
+              <StatCard
+                key={card.title}
+                title={card.title}
+                value={card.value}
+                color={card.color}
+                icon={card.icon}
+                index={index}
+              />
+            ))}
+          </AnimatedList>
         )}
       </div>
 
@@ -186,30 +252,32 @@ export const DashboardPage: React.FC = () => {
             {serviceStatsLoading ? (
               <div className="grid grid-cols-2 gap-4">
                 {[1, 2, 3, 4].map((i) => (
-                  <div key={i} className="animate-pulse p-4 bg-[var(--color-bg-tertiary)] rounded-[var(--radius-md)]">
-                    <div className="h-4 bg-[var(--color-bg-secondary)] rounded w-1/2 mb-2" />
-                    <div className="h-8 bg-[var(--color-bg-secondary)] rounded w-3/4" />
+                  <div key={i} className="p-4 bg-[var(--color-bg-primary)] rounded-[var(--radius-md)] border border-[var(--color-border)] animate-shimmer relative overflow-hidden" style={{ backgroundImage: 'linear-gradient(90deg, transparent, rgba(255,255,255,0.06), transparent)', backgroundSize: '200% 100%' }}>
+                    <div className="h-4 bg-[var(--color-bg-tertiary)] rounded w-1/2 mb-2" />
+                    <div className="h-8 bg-[var(--color-bg-tertiary)] rounded w-3/4" />
                   </div>
                 ))}
               </div>
             ) : (
               <div className="grid grid-cols-2 gap-4">
-                <div className="p-4 bg-[var(--color-bg-tertiary)] rounded-[var(--radius-md)]">
-                  <p className="text-sm text-[var(--color-text-secondary)]">TTS 合成次数</p>
-                  <p className="text-2xl font-bold text-[var(--color-accent)]">{serviceStats?.tts_count || 0}</p>
-                </div>
-                <div className="p-4 bg-[var(--color-bg-tertiary)] rounded-[var(--radius-md)]">
-                  <p className="text-sm text-[var(--color-text-secondary)]">ASR 识别次数</p>
-                  <p className="text-2xl font-bold text-[var(--color-success)]">{serviceStats?.asr_count || 0}</p>
-                </div>
-                <div className="p-4 bg-[var(--color-bg-tertiary)] rounded-[var(--radius-md)]">
-                  <p className="text-sm text-[var(--color-text-secondary)]">LLM 调用次数</p>
-                  <p className="text-2xl font-bold text-[var(--color-warning)]">{serviceStats?.llm_count || 0}</p>
-                </div>
-                <div className="p-4 bg-[var(--color-bg-tertiary)] rounded-[var(--radius-md)]">
-                  <p className="text-sm text-[var(--color-text-secondary)]">在线客户端数</p>
-                  <p className="text-2xl font-bold text-[var(--color-info)]">{serviceStats?.client_count || 0}</p>
-                </div>
+                {serviceStatItems.map((item, index) => (
+                  <motion.div
+                    key={item.label}
+                    initial={{ opacity: 0, y: 20 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    transition={{
+                      duration: 0.5,
+                      delay: 0.5 + index * 0.1,
+                      ease: 'easeOut',
+                    }}
+                    className="p-4 bg-[var(--color-bg-tertiary)] rounded-[var(--radius-md)]"
+                  >
+                    <p className="text-sm text-[var(--color-text-secondary)]">{item.label}</p>
+                    <p className={`text-2xl font-bold text-[var(--color-${item.color})]`}>
+                      <CountUp end={item.value} />
+                    </p>
+                  </motion.div>
+                ))}
               </div>
             )}
           </CardBody>
