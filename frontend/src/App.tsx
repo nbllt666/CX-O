@@ -1,3 +1,4 @@
+import { useState, useEffect } from 'react';
 import { Routes, Route, Navigate } from 'react-router-dom';
 import { AppLayout } from './components/AppLayout';
 import { DashboardPage } from './pages/DashboardPage';
@@ -13,8 +14,53 @@ import { AudioTestPage } from './pages/AudioTestPage';
 import { GraphDataPage } from './pages/GraphDataPage';
 import { VectorDataPage } from './pages/VectorDataPage';
 import { ErrorBoundary } from './components/ErrorBoundary';
+import { ConnectionSetup } from './components/ConnectionSetup';
 
 function App() {
+  const [isConnected, setIsConnected] = useState(false);
+  const [isChecking, setIsChecking] = useState(true);
+
+  useEffect(() => {
+    checkBackendConnection();
+  }, []);
+
+  const checkBackendConnection = async () => {
+    const backendUrl = localStorage.getItem('cxhms-backend-url') || 'http://localhost:8000';
+
+    try {
+      const response = await fetch(`${backendUrl}/health`, {
+        method: 'GET',
+        signal: AbortSignal.timeout(3000),
+      });
+
+      if (response.ok) {
+        setIsConnected(true);
+      } else {
+        setIsConnected(false);
+      }
+    } catch {
+      setIsConnected(false);
+    } finally {
+      setIsChecking(false);
+    }
+  };
+
+  const handleConnected = () => {
+    setIsConnected(true);
+  };
+
+  if (isChecking) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-[var(--color-bg-primary)]">
+        <div className="text-[var(--color-text-secondary)]">检查连接...</div>
+      </div>
+    );
+  }
+
+  if (!isConnected) {
+    return <ConnectionSetup onConnected={handleConnected} />;
+  }
+
   return (
     <ErrorBoundary>
       <Routes>

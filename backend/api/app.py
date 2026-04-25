@@ -22,13 +22,16 @@ from backend.api.routers import (
     admin,
     agents,
     archive,
+    audio,
     backup,
     chat,
+    config,
     context,
     graph,
     memory,
     memory_chat,
     service,
+    stats,
     tools,
     vector,
     websocket,
@@ -440,14 +443,22 @@ if getattr(settings.config, "cors", None) and settings.config.cors.enabled:
     )
 
 app.include_router(chat.router, prefix="/api")
+app.include_router(config.router, prefix="/api")
 app.include_router(memory.router, prefix="/api")
 app.include_router(memory_chat.router, prefix="/api")
 app.include_router(context.router, prefix="/api")
 app.include_router(tools.router, prefix="/api")
 app.include_router(acp.router, prefix="/api")
 app.include_router(service.router, prefix="/api")
+app.include_router(stats.router, prefix="/api")
 app.include_router(websocket.router, prefix="/api")
 app.include_router(graph.router, prefix="/api")
+app.include_router(agents.router, prefix="/api")
+app.include_router(archive.router, prefix="/api")
+app.include_router(audio.router, prefix="/api")
+app.include_router(admin.router, prefix="/api")
+app.include_router(backup.router, prefix="/api")
+app.include_router(vector.router, prefix="/api")
 
 app.add_exception_handler(CXHMSError, cxhms_exception_handler)
 app.add_exception_handler(HTTPException, http_exception_handler)

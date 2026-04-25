@@ -6,11 +6,13 @@ from typing import Any, Dict, List, Optional
 
 from backend.core.memory.graph_store import (
     GraphStoreBase,
-    Neo4jGraphStore,
     GraphLibrary,
     Entity,
     Relation,
 )
+
+# Neo4jGraphStore 已移除，使用新的语义图数据库替代
+# from backend.core.memory.graph_store import Neo4jGraphStore
 
 _graph_store: Optional[GraphStoreBase] = None
 

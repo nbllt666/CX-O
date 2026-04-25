@@ -437,6 +437,81 @@ async def get_service_config():
     return {"status": "success", "config": config}
 
 
+@router.put("/service/config")
+async def update_service_config_put(config: dict):
+    """更新服务配置（PUT方法，需要重启生效）"""
+    try:
+        import yaml
+
+        config_path = "config/default.yaml"
+
+        if os.path.exists(config_path):
+            with open(config_path, "r", encoding="utf-8") as f:
+                current_config = yaml.safe_load(f) or {}
+        else:
+            current_config = {}
+
+        if "vector" in config:
+            vector_cfg = config["vector"]
+            if "memory" not in current_config:
+                current_config["memory"] = {}
+
+            if "backend" in vector_cfg:
+                current_config["memory"]["vector_backend"] = vector_cfg["backend"]
+
+            backend = vector_cfg.get("backend", "chroma")
+            if backend == "chroma":
+                if "chroma" not in current_config["memory"]:
+                    current_config["memory"]["chroma"] = {}
+                for key in ["db_path", "collection_name", "vector_size"]:
+                    if key in vector_cfg:
+                        current_config["memory"]["chroma"][key] = vector_cfg[key]
+            elif backend == "milvus_lite":
+                if "milvus_lite" not in current_config["memory"]:
+                    current_config["memory"]["milvus_lite"] = {}
+                for key in ["db_path", "vector_size"]:
+                    if key in vector_cfg:
+                        current_config["memory"]["milvus_lite"][key] = vector_cfg[key]
+            elif backend in ["weaviate", "weaviate_embedded"]:
+                if "weaviate" not in current_config["memory"]:
+                    current_config["memory"]["weaviate"] = {}
+                for key in ["weaviate_host", "weaviate_port", "vector_size"]:
+                    if key in vector_cfg:
+                        current_config["memory"]["weaviate"][key] = vector_cfg[key]
+            elif backend == "qdrant":
+                if "qdrant" not in current_config["memory"]:
+                    current_config["memory"]["qdrant"] = {}
+                for key in ["qdrant_host", "qdrant_port", "vector_size"]:
+                    if key in vector_cfg:
+                        current_config["memory"]["qdrant"][key] = vector_cfg[key]
+
+        if "models" in config:
+            current_config["models"] = config["models"]
+
+        if "model_defaults" in config:
+            current_config["model_defaults"] = config["model_defaults"]
+
+        if "llm_params" in config:
+            current_config["llm_params"] = config["llm_params"]
+
+        if "system" in config:
+            if "system" not in current_config:
+                current_config["system"] = {}
+            current_config["system"].update(config["system"])
+        elif any(k in config for k in ["host", "port", "log_level", "reload", "use_conda"]):
+            if "system" not in current_config:
+                current_config["system"] = {}
+            for key in ["host", "port", "log_level", "reload", "use_conda"]:
+                if key in config:
+                    current_config["system"][key] = config[key]
+
+        with open(config_path, "w", encoding="utf-8") as f:
+            yaml.dump(current_config, f, allow_unicode=True, sort_keys=False)
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to save config: {str(e)}")
+
+
 @router.post("/service/config")
 async def update_service_config(config: dict):
     """更新服务配置（需要重启生效）"""

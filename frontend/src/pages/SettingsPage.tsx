@@ -254,12 +254,12 @@ export function SettingsPage() {
   };
 
   const [vectorConfig, setVectorConfig] = useState({
-    backend: 'chroma',
+    backend: 'weaviate',
     vectorSize: 768,
     dbPath: 'data/chroma_db',
     collectionName: 'memory_vectors',
     weaviateHost: 'localhost',
-    weaviatePort: 8080,
+    weaviatePort: 8090,
     qdrantHost: 'localhost',
     qdrantPort: 6333,
   });
@@ -669,12 +669,12 @@ export function SettingsPage() {
       if (serviceConfig.config.vector) {
         const vec = serviceConfig.config.vector;
         setVectorConfig({
-          backend: vec.backend ?? 'chroma',
+          backend: vec.backend ?? vec.vector_backend ?? 'weaviate',
           vectorSize: vec.vector_size ?? 768,
           dbPath: vec.db_path ?? 'data/chroma_db',
           collectionName: vec.collection_name ?? 'memory_vectors',
-          weaviateHost: vec.weaviate_host ?? 'localhost',
-          weaviatePort: vec.weaviate_port ?? 8080,
+          weaviateHost: vec.host ?? vec.weaviate_host ?? 'localhost',
+          weaviatePort: vec.port ?? vec.weaviate_port ?? 8090,
           qdrantHost: vec.qdrant_host ?? 'localhost',
           qdrantPort: vec.qdrant_port ?? 6333,
         });
@@ -1204,14 +1204,13 @@ export function SettingsPage() {
                         <option value={1536}>1536 (OpenAI)</option>
                       </select>
                     </div>
-                    {(vectorConfig.backend === 'weaviate' ||
-                      vectorConfig.backend === 'weaviate_embedded') && (
+                    {vectorConfig.backend === 'weaviate' && (
                       <>
                         <div>
                           <label className="text-sm font-medium mb-2 block">Weaviate 主机</label>
                           <input
                             type="text"
-                            value={vectorConfig.weaviateHost || 'localhost'}
+                            value={vectorConfig.weaviateHost}
                             onChange={(e) =>
                               setVectorConfig({ ...vectorConfig, weaviateHost: e.target.value })
                             }
@@ -1223,7 +1222,7 @@ export function SettingsPage() {
                           <label className="text-sm font-medium mb-2 block">Weaviate 端口</label>
                           <input
                             type="number"
-                            value={vectorConfig.weaviatePort || 8080}
+                            value={vectorConfig.weaviatePort}
                             onChange={(e) =>
                               setVectorConfig({
                                 ...vectorConfig,
@@ -1231,10 +1230,15 @@ export function SettingsPage() {
                               })
                             }
                             className="w-full px-3 py-2 bg-[var(--color-bg-primary)] border border-[var(--color-border)] rounded-[var(--radius-md)]"
-                            placeholder="8080"
+                            placeholder="8090"
                           />
                         </div>
                       </>
+                    )}
+                    {vectorConfig.backend === 'weaviate_embedded' && (
+                      <div className="p-3 bg-[var(--color-bg-tertiary)] rounded-[var(--radius-md)] text-sm text-[var(--color-text-secondary)]">
+                        Weaviate Embedded 模式将使用内置向量引擎，无需配置主机和端口。
+                      </div>
                     )}
                   </div>
                   <div className="flex justify-end mt-6">
