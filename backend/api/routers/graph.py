@@ -16,6 +16,7 @@ from backend.core.graph.models import (
 from backend.core.graph.visualization import GraphExporter
 from backend.core.graph.semantic_query import SemanticQueryManager
 from backend.core.graph.monitoring import GraphMonitor
+from backend.core.graph.config import get_graph_config
 
 router = APIRouter(prefix="/graph", tags=["graph"])
 
@@ -545,3 +546,32 @@ async def export_dot(
     exporter = GraphExporter(graph.db)
     exporter.export_dot(file_path)
     return {"format": "dot", "file_path": file_path, "status": "exported"}
+
+
+@router.get("/config")
+async def get_graph_config_endpoint():
+    """获取图数据库配置"""
+    config = get_graph_config()
+    return {
+        "status": "success",
+        "config": {
+            "database_path": config.database_path,
+            "auto_create_schema": config.auto_create_schema,
+            "pool_size": config.pool_size,
+            "timeout": config.timeout,
+            "weaviate": {
+                "url": config.weaviate.url,
+                "api_key": "***" if config.weaviate.api_key else None,
+                "vector_dim": config.weaviate.vector_dim,
+                "batch_size": config.weaviate.batch_size,
+                "ef_construction": config.weaviate.ef_construction,
+                "max_connections": config.weaviate.max_connections,
+            },
+            "embedding": {
+                "model": config.embedding.model,
+                "batch_size": config.embedding.batch_size,
+                "device": config.embedding.device,
+                "cache_folder": config.embedding.cache_folder,
+            }
+        }
+    }

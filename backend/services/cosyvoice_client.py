@@ -85,7 +85,7 @@ class CosyVoiceClient:
         timeout: float = 120.0,
         default_mode: CosyVoiceMode = CosyVoiceMode.INSTRUCT2,
         default_spk_id: str = "中文女"
-    ):
+    ) -> None:
         self._base_url = base_url.rstrip("/")
         self._timeout = timeout
         self._default_mode = default_mode
@@ -97,7 +97,7 @@ class CosyVoiceClient:
             self._client = httpx.AsyncClient(timeout=self._timeout)
         return self._client
 
-    async def close(self):
+    async def close(self) -> None:
         if self._client:
             await self._client.aclose()
             self._client = None

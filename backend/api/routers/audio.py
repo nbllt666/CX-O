@@ -1,13 +1,15 @@
+import base64
 import json
 import os
+import tempfile
 from datetime import datetime
 from pathlib import Path
 from typing import Optional
 
 import httpx
 
-from fastapi import APIRouter, HTTPException
-from fastapi.responses import FileResponse, Response
+from fastapi import APIRouter, HTTPException, Request
+from fastapi.responses import FileResponse, Response, StreamingResponse
 from pydantic import BaseModel
 
 from backend.core.logging_config import get_contextual_logger
@@ -36,6 +38,14 @@ class PregenerateProgress(BaseModel):
     total: int
     message: str
     status: str = "in_progress"
+
+
+class TTSSynthesizeRequest(BaseModel):
+    text: str
+    speed: float = 1.0
+    cross_fade_duration: float = 0.15
+    ref_audio: Optional[str] = None
+    ref_text: Optional[str] = None
 
 
 _pregenerate_status: dict = {
@@ -373,6 +383,378 @@ async def get_refs_status():
     }
 
 
+@router.get("/audio/emotions/list", summary="列出情绪配置")
+async def list_emotion_configs():
+    try:
+        from backend.services.emotion_parser import get_supported_emotions
+        from backend.services.index_tts_client import get_emotion_text
+
+        config = _load_tts_config()
+        emotion_voices = config.get("emotion_voices", {})
+
+        emotions = get_supported_emotions()
+        result = []
+        for emotion in emotions:
+            voice_config = emotion_voices.get(emotion, {})
+            result.append({
+                "emotion": emotion,
+                "default_text": get_emotion_text(emotion),
+                "ref_audio": voice_config.get("ref_audio", ""),
+                "ref_text": voice_config.get("ref_text", "")
+            })
+
+        return {"status": "success", "emotions": result}
+    except Exception as e:
+        logger.error(f"获取情绪配置列表失败: {e}", exc_info=True)
+        return {"status": "error", "message": "获取情绪配置列表失败"}
+
+
+@router.post("/tts/synthesize", summary="TTS合成")
+async def tts_synthesize(request: TTSSynthesizeRequest):
+    try:
+        if not request.text:
+            return {"status": "error", "message": "缺少文本内容"}
+
+        config = _load_tts_config()
+        engine = config.get("engine", "cosyvoice")
+
+        if engine == "cosyvoice":
+            tts_url = config.get("cosyvoice", {}).get("url", "http://127.0.0.1:50000")
+            timeout = config.get("cosyvoice", {}).get("timeout", 120)
+            cosyvoice_url = tts_url
+        else:
+            f5_config = config.get("f5_tts", {})
+            tts_url = f5_config.get("url", "http://127.0.0.1:5000")
+            timeout = f5_config.get("timeout", 120)
+            cosyvoice_url = config.get("cosyvoice", {}).get("url")
+
+        from backend.services.tts_client import TTSClient
+        client = TTSClient(
+            base_url=tts_url,
+            ref_audio_path=config.get("ref_audio_path", ""),
+            ref_text=config.get("ref_text", ""),
+            timeout=timeout,
+            emotion_voices=config.get("emotion_voices", {}),
+            voice_refs_dir=str(VOICE_REFS_DIR),
+            engine=engine,
+            cosyvoice_url=cosyvoice_url,
+            transition_enabled=config.get("transition", {}).get("enabled", True),
+            transition_text=config.get("transition", {}).get("transition_text", "嗯，")
+        )
+
+        try:
+            kwargs = {
+                "speed": request.speed if request.speed != 1.0 else config.get("speed", 1.0),
+                "cross_fade_duration": request.cross_fade_duration if request.cross_fade_duration != 0.15 else config.get("cross_fade_duration", 0.15),
+            }
+            if request.ref_audio:
+                kwargs["ref_audio"] = request.ref_audio
+            if request.ref_text:
+                kwargs["ref_text"] = request.ref_text
+
+            audio_bytes = await client.synthesize(request.text, **kwargs)
+
+            return {
+                "status": "success",
+                "audio_data": base64.b64encode(audio_bytes).decode("utf-8"),
+                "format": "wav"
+            }
+        finally:
+            await client.close()
+
+    except Exception as e:
+        logger.error(f"TTS合成失败: {e}", exc_info=True)
+        return {"status": "error", "message": "TTS合成失败"}
+
+
+@router.post("/tts/synthesize-stream", summary="TTS流式合成")
+async def tts_synthesize_stream(request: Request):
+    try:
+        data = await request.json()
+        text = data.get("text", "")
+
+        if not text:
+            async def error_stream():
+                yield f"data: {json.dumps({'type': 'error', 'message': '缺少文本内容'}, ensure_ascii=False)}\n\n"
+            return StreamingResponse(error_stream(), media_type="text/event-stream")
+
+        config = _load_tts_config()
+        engine = config.get("engine", "cosyvoice")
+
+        if engine == "cosyvoice":
+            tts_url = config.get("cosyvoice", {}).get("url", "http://127.0.0.1:50000")
+            timeout = config.get("cosyvoice", {}).get("timeout", 120)
+            cosyvoice_url = tts_url
+        else:
+            f5_config = config.get("f5_tts", {})
+            tts_url = f5_config.get("url", "http://127.0.0.1:5000")
+            timeout = f5_config.get("timeout", 120)
+            cosyvoice_url = config.get("cosyvoice", {}).get("url")
+
+        from backend.services.tts_client import TTSClient
+        client = TTSClient(
+            base_url=tts_url,
+            ref_audio_path=config.get("ref_audio_path", ""),
+            ref_text=config.get("ref_text", ""),
+            timeout=timeout,
+            emotion_voices=config.get("emotion_voices", {}),
+            voice_refs_dir=str(VOICE_REFS_DIR),
+            engine=engine,
+            cosyvoice_url=cosyvoice_url,
+            transition_enabled=config.get("transition", {}).get("enabled", True),
+            transition_text=config.get("transition", {}).get("transition_text", "嗯，")
+        )
+
+        kwargs = {
+            "speed": data.get("speed", config.get("speed", 1.0)),
+            "cross_fade_duration": data.get("cross_fade_duration", config.get("cross_fade_duration", 0.15)),
+        }
+
+        async def stream_generator():
+            try:
+                async for chunk in client.synthesize_stream(text, **kwargs):
+                    audio_base64 = None
+                    if chunk.get("audio_data"):
+                        audio_base64 = base64.b64encode(chunk["audio_data"]).decode("utf-8")
+                    chunk_data = json.dumps({
+                        "type": "chunk",
+                        "text_segment": chunk.get("text_segment", ""),
+                        "audio_data": audio_base64,
+                        "chunk_index": chunk.get("chunk_index", 0),
+                        "is_final": chunk.get("is_final", False)
+                    }, ensure_ascii=False)
+                    yield f"data: {chunk_data}\n\n"
+            except Exception as e:
+                logger.error(f"TTS流式合成错误: {e}", exc_info=True)
+                error_data = json.dumps({"type": "error", "message": "TTS流式合成失败"}, ensure_ascii=False)
+                yield f"data: {error_data}\n\n"
+            finally:
+                await client.close()
+
+        return StreamingResponse(stream_generator(), media_type="text/event-stream")
+    except Exception as e:
+        logger.error(f"TTS流式合成初始化失败: {e}", exc_info=True)
+
+        async def error_stream():
+            err_data = json.dumps({"type": "error", "message": "TTS流式合成初始化失败"}, ensure_ascii=False)
+            yield f"data: {err_data}\n\n"
+
+        return StreamingResponse(error_stream(), media_type="text/event-stream")
+
+
+@router.post("/asr/speech-to-text", summary="ASR语音识别")
+async def asr_speech_to_text(request: Request):
+    temp_path = None
+    try:
+        content_type = request.headers.get("content-type", "")
+        language = "auto"
+
+        if "multipart/form-data" in content_type:
+            form = await request.form()
+            audio_file = form.get("file")
+            language = form.get("language", "auto")
+            if not audio_file:
+                return {"status": "error", "message": "未提供音频文件"}
+            audio_data = await audio_file.read()
+        else:
+            data = await request.json()
+            audio_base64 = data.get("audio", "")
+            language = data.get("language", "auto")
+            if not audio_base64:
+                return {"status": "error", "message": "未提供音频数据"}
+            audio_bytes = base64.b64decode(audio_base64)
+            with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as f:
+                f.write(audio_bytes)
+                temp_path = f.name
+            with open(temp_path, "rb") as f:
+                audio_data = f.read()
+
+        asr_config = _load_asr_config()
+
+        from backend.services.asr_client import ASRClient
+        client = ASRClient(base_url=asr_config["url"], timeout=asr_config.get("timeout", 60))
+        try:
+            result = await client.recognize(audio_data, language)
+
+            return {
+                "status": "success",
+                "text": result.get("text", ""),
+                "language": result.get("language", "")
+            }
+        finally:
+            await client.close()
+    except Exception as e:
+        logger.error(f"ASR语音识别失败: {e}", exc_info=True)
+        return {"status": "error", "message": "语音识别失败"}
+    finally:
+        if temp_path and os.path.exists(temp_path):
+            try:
+                os.unlink(temp_path)
+            except Exception:
+                pass
+
+
+@router.post("/audio/generate-emotions", summary="生成情绪音频")
+async def generate_emotion_audios(request: Request):
+    try:
+        from backend.services.index_tts_client import get_emotion_text, EMOTION_TEMPLATES, IndexTTSClient
+        from backend.services.index_tts_manager import get_indextts_manager
+
+        index_tts_config = _load_index_tts_config()
+        if not index_tts_config.get("enabled", False):
+            return {"status": "error", "message": "IndexTTS 服务未启用"}
+
+        manager = get_indextts_manager(
+            base_url=index_tts_config["url"],
+            start_command=index_tts_config.get("start_command", ""),
+            working_dir=index_tts_config.get("working_dir", "IndexTTS"),
+            auto_stop_delay=index_tts_config.get("auto_stop_delay", 300),
+            startup_timeout=index_tts_config.get("startup_timeout", 180),
+            root_dir=Path(__file__).resolve().parents[3]
+        )
+
+        is_running = await manager.ensure_running()
+        if not is_running:
+            return {"status": "error", "message": "IndexTTS 服务启动失败"}
+
+        data = await request.json()
+        ref_audio = data.get("ref_audio", "")
+        ref_text = data.get("ref_text", "")
+
+        if not ref_audio:
+            return {"status": "error", "message": "需要提供参考音频"}
+
+        _ensure_voice_refs_dir()
+        audio_path = VOICE_REFS_DIR / ref_audio
+        if not audio_path.exists():
+            return {"status": "error", "message": f"参考音频文件不存在: {ref_audio}"}
+
+        client = IndexTTSClient(
+            base_url=index_tts_config["url"],
+            timeout=index_tts_config.get("timeout", 180)
+        )
+
+        try:
+            emotions_to_generate: list[tuple[str, float]] = []
+
+            if data.get("auto_full", False):
+                emotions_to_generate = [
+                    (e, i)
+                    for e in ["happy", "sad", "angry", "surprised", "tender", "fearful", "disgusted", "normal"]
+                    for i in [0.2, 0.4, 0.6, 0.8, 1.0]
+                ]
+            elif data.get("template"):
+                template_name = data.get("template")
+                if template_name not in EMOTION_TEMPLATES:
+                    return {"status": "error", "message": f"未知模板: {template_name}"}
+                emotions_to_generate = EMOTION_TEMPLATES[template_name]
+            elif data.get("emotions"):
+                for item in data.get("emotions", []):
+                    if isinstance(item, dict):
+                        emotions_to_generate.append((item.get("type", "neutral"), item.get("intensity", 0.5)))
+                    else:
+                        emotions_to_generate.append((item, 0.5))
+
+            generated: dict[str, str] = {}
+            errors: dict[str, str] = {}
+
+            for emotion, intensity in emotions_to_generate:
+                try:
+                    audio_bytes = await client.generate_emotion_audio(
+                        emotion=emotion, intensity=intensity,
+                        ref_audio=str(audio_path), ref_text=ref_text
+                    )
+                    base_name = Path(ref_audio).stem
+                    output_name = f"{base_name}_{emotion}.wav" if intensity == 0.5 else f"{base_name}_{emotion}_{intensity}.wav"
+                    output_path = VOICE_REFS_DIR / output_name
+                    IndexTTSClient.save_audio(audio_bytes, output_path)
+                    key = f"{emotion}_{intensity}" if intensity != 0.5 else emotion
+                    generated[key] = output_name
+                except Exception as e:
+                    logger.error(f"生成情绪音频失败 {emotion}@{intensity}: {e}", exc_info=True)
+                    errors[f"{emotion}_{intensity}"] = str(e)
+
+            if generated:
+                config = _load_tts_config()
+                emotion_voices = config.get("emotion_voices", {})
+                for key, filename in generated.items():
+                    parts = key.rsplit("_", 1)
+                    emotion = parts[0]
+                    emotion_text = get_emotion_text(emotion)
+                    emotion_voices[emotion] = {"ref_audio": filename, "ref_text": emotion_text}
+                _save_tts_emotion_voices(emotion_voices)
+
+            return {"status": "success", "generated": generated, "errors": errors, "config_updated": len(generated) > 0}
+        finally:
+            await client.close()
+            await manager.stop()
+    except Exception as e:
+        logger.error(f"生成情绪音频失败: {e}", exc_info=True)
+        return {"status": "error", "message": "生成情绪音频失败"}
+
+
+@router.post("/index-tts/synthesize", summary="IndexTTS合成")
+async def index_tts_synthesize(request: Request):
+    try:
+        index_tts_config = _load_index_tts_config()
+        if not index_tts_config.get("enabled", False):
+            return {"status": "error", "message": "IndexTTS 服务未启用"}
+
+        from backend.services.index_tts_manager import get_indextts_manager
+        manager = get_indextts_manager(
+            base_url=index_tts_config["url"],
+            start_command=index_tts_config.get("start_command", ""),
+            working_dir=index_tts_config.get("working_dir", "IndexTTS"),
+            auto_stop_delay=index_tts_config.get("auto_stop_delay", 300),
+            startup_timeout=index_tts_config.get("startup_timeout", 180),
+            root_dir=Path(__file__).resolve().parents[3]
+        )
+
+        is_running = await manager.ensure_running()
+        if not is_running:
+            return {"status": "error", "message": "IndexTTS 服务启动失败"}
+
+        data = await request.json()
+        text = data.get("text", "")
+        if not text:
+            return {"status": "error", "message": "缺少文本内容"}
+
+        from backend.services.index_tts_client import IndexTTSClient
+        client = IndexTTSClient(base_url=index_tts_config["url"], timeout=index_tts_config.get("timeout", 180))
+
+        try:
+            kwargs = {
+                "emotion": data.get("emotion", "neutral"),
+                "emotion_intensity": data.get("emotion_intensity", 0.5),
+                "speed": data.get("speed", 1.0),
+                "pitch": data.get("pitch", 0.0),
+            }
+
+            ref_audio = data.get("ref_audio")
+            ref_text = data.get("ref_text", "")
+            if ref_audio:
+                _ensure_voice_refs_dir()
+                audio_path = VOICE_REFS_DIR / ref_audio
+                if not audio_path.exists():
+                    return {"status": "error", "message": f"参考音频文件不存在: {ref_audio}"}
+                kwargs["timbre_ref"] = str(audio_path)
+                kwargs["ref_text"] = ref_text
+
+            audio_bytes = await client.synthesize(text, **kwargs)
+            manager.reset_auto_stop_timer()
+
+            return {
+                "status": "success",
+                "audio_data": base64.b64encode(audio_bytes).decode("utf-8"),
+                "format": "wav"
+            }
+        finally:
+            await client.close()
+    except Exception as e:
+        logger.error(f"IndexTTS合成失败: {e}", exc_info=True)
+        return {"status": "error", "message": "IndexTTS合成失败"}
+
+
 def _load_tts_config() -> dict:
     """加载 TTS 配置
     
@@ -475,3 +857,70 @@ async def _check_index_tts_health() -> str:
         str: 服务状态
     """
     return await _check_cosyvoice_health()
+
+
+def _load_asr_config() -> dict:
+    config_file = Path("config/settings.json")
+    default_config = {"url": "http://127.0.0.1:5001", "timeout": 60}
+    if not config_file.exists():
+        return default_config
+    try:
+        with open(config_file, "r", encoding="utf-8") as f:
+            config_data = json.load(f)
+        asr_config = config_data.get("asr", {})
+        return {
+            "url": asr_config.get("url", default_config["url"]),
+            "timeout": asr_config.get("timeout", default_config["timeout"])
+        }
+    except Exception as e:
+        logger.warning(f"加载 ASR 配置失败，使用默认配置: {e}")
+        return default_config
+
+
+def _load_index_tts_config() -> dict:
+    config_file = Path("config/settings.json")
+    default_config = {
+        "enabled": False,
+        "url": "http://127.0.0.1:8004",
+        "start_command": "",
+        "working_dir": "IndexTTS",
+        "auto_stop_delay": 300,
+        "startup_timeout": 180,
+        "timeout": 180
+    }
+    if not config_file.exists():
+        return default_config
+    try:
+        with open(config_file, "r", encoding="utf-8") as f:
+            config_data = json.load(f)
+        index_tts_config = config_data.get("index_tts", {})
+        return {
+            "enabled": index_tts_config.get("enabled", default_config["enabled"]),
+            "url": index_tts_config.get("url", default_config["url"]),
+            "start_command": index_tts_config.get("start_command", default_config["start_command"]),
+            "working_dir": index_tts_config.get("working_dir", default_config["working_dir"]),
+            "auto_stop_delay": index_tts_config.get("auto_stop_delay", default_config["auto_stop_delay"]),
+            "startup_timeout": index_tts_config.get("startup_timeout", default_config["startup_timeout"]),
+            "timeout": index_tts_config.get("timeout", default_config["timeout"])
+        }
+    except Exception as e:
+        logger.warning(f"加载 IndexTTS 配置失败，使用默认配置: {e}")
+        return default_config
+
+
+def _save_tts_emotion_voices(emotion_voices: dict):
+    config_file = Path("config/settings.json")
+    try:
+        if config_file.exists():
+            with open(config_file, "r", encoding="utf-8") as f:
+                config_data = json.load(f)
+        else:
+            config_data = {}
+        if "tts" not in config_data:
+            config_data["tts"] = {}
+        config_data["tts"]["emotion_voices"] = emotion_voices
+        with open(config_file, "w", encoding="utf-8") as f:
+            json.dump(config_data, f, ensure_ascii=False, indent=2)
+        logger.info("情绪语音配置已保存")
+    except Exception as e:
+        logger.error(f"保存情绪语音配置失败: {e}", exc_info=True)

@@ -396,7 +396,9 @@ class ApiClient {
   }
 
   async getChatHistory(agentId: string = 'default'): Promise<{ messages: ChatMessage[] }> {
-    return this.request<{ messages: ChatMessage[] }>({ url: `/api/context/history/${agentId}` });
+    const sessionId = `agent-${agentId}`;
+    const response = await this.request<{ status: string; messages: ChatMessage[] }>({ url: `/api/chat/history/${sessionId}` });
+    return { messages: response.messages || [] };
   }
 
   async createSession(title: string, agentId: string = 'default'): Promise<Session> {
@@ -736,11 +738,11 @@ class ApiClient {
   }
 
   async getSenseVoiceStreamingConfig(): Promise<Record<string, unknown>> {
-    return this.request<Record<string, unknown>>({ url: '/api/sense-voice-streaming/config' });
+    return this.request<Record<string, unknown>>({ url: '/api/config/sensevoice-streaming' });
   }
 
   async getAdaptivePollingConfig(): Promise<Record<string, unknown>> {
-    return this.request<Record<string, unknown>>({ url: '/api/adaptive-polling/config' });
+    return this.request<Record<string, unknown>>({ url: '/api/config/adaptive-polling' });
   }
 
   async getGraphConfig(): Promise<Record<string, unknown>> {

@@ -36,6 +36,12 @@ export function Live2DViewer({
   const loadModel = useCallback(async () => {
     if (!canvasRef.current) return;
 
+    if (!modelPath) {
+      setLoadError('MODEL_NOT_CONFIGURED');
+      setIsLoading(false);
+      return;
+    }
+
     try {
       setIsLoading(true);
       setLoadError(null);
@@ -80,10 +86,9 @@ export function Live2DViewer({
       onModelLoaded?.();
     } catch (error) {
       console.error('Live2D: Failed to load model:', error);
-      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-      setLoadError(errorMessage);
+      setLoadError('LOAD_FAILED');
       setIsLoading(false);
-      onError?.(error instanceof Error ? error : new Error(errorMessage));
+      onError?.(error instanceof Error ? error : new Error('Failed to load model'));
     }
   }, [modelPath, scale, xOffset, yOffset, idleMotionEnabled, onModelLoaded, onError]);
 
@@ -152,15 +157,20 @@ export function Live2DViewer({
   }, [xOffset, yOffset]);
 
   if (loadError) {
+    const isNotConfigured = loadError === 'MODEL_NOT_CONFIGURED';
     return (
       <div className="flex flex-col items-center justify-center h-full text-center p-4">
-        <div className="text-red-500 mb-2">
-          <svg className="w-12 h-12 mx-auto" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+        <div className="text-[var(--color-text-tertiary)] mb-3">
+          <svg className="w-16 h-16 mx-auto" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10" />
           </svg>
         </div>
-        <p className="text-sm text-[var(--color-text-secondary)]">模型加载失败</p>
-        <p className="text-xs text-[var(--color-text-tertiary)] mt-1">{loadError}</p>
+        <p className="text-sm text-[var(--color-text-secondary)]">
+          {isNotConfigured ? '模型未配置' : '模型加载失败'}
+        </p>
+        <p className="text-xs text-[var(--color-text-tertiary)] mt-1">
+          {isNotConfigured ? '请在设置中配置模型路径' : '请检查模型文件是否存在且格式正确'}
+        </p>
       </div>
     );
   }
