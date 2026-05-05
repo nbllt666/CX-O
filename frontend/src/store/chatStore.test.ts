@@ -50,8 +50,8 @@ describe('chatStore', () => {
   describe('setSessions', () => {
     it('should set sessions', () => {
       const mockSessions = [
-        { id: '1', title: 'Session 1', message_count: 5, created_at: new Date().toISOString() },
-        { id: '2', title: 'Session 2', message_count: 3, created_at: new Date().toISOString() },
+        { id: '1', title: 'Session 1', agent_id: 'default', message_count: 5, created_at: new Date().toISOString(), updated_at: new Date().toISOString() },
+        { id: '2', title: 'Session 2', agent_id: 'default', message_count: 3, created_at: new Date().toISOString(), updated_at: new Date().toISOString() },
       ];
       useChatStore.getState().setSessions(mockSessions);
       expect(useChatStore.getState().sessions).toHaveLength(2);
@@ -60,7 +60,7 @@ describe('chatStore', () => {
 
     it('should set empty sessions array', () => {
       const mockSessions = [
-        { id: '1', title: 'Session 1', message_count: 5, created_at: new Date().toISOString() },
+        { id: '1', title: 'Session 1', agent_id: 'default', message_count: 5, created_at: new Date().toISOString(), updated_at: new Date().toISOString() },
       ];
       useChatStore.getState().setSessions(mockSessions);
       useChatStore.getState().setSessions([]);
@@ -69,11 +69,11 @@ describe('chatStore', () => {
 
     it('should replace existing sessions', () => {
       const mockSessions1 = [
-        { id: '1', title: 'Session 1', message_count: 5, created_at: new Date().toISOString() },
+        { id: '1', title: 'Session 1', agent_id: 'default', message_count: 5, created_at: new Date().toISOString(), updated_at: new Date().toISOString() },
       ];
       const mockSessions2 = [
-        { id: '2', title: 'Session 2', message_count: 3, created_at: new Date().toISOString() },
-        { id: '3', title: 'Session 3', message_count: 1, created_at: new Date().toISOString() },
+        { id: '2', title: 'Session 2', agent_id: 'default', message_count: 3, created_at: new Date().toISOString(), updated_at: new Date().toISOString() },
+        { id: '3', title: 'Session 3', agent_id: 'default', message_count: 1, created_at: new Date().toISOString(), updated_at: new Date().toISOString() },
       ];
       useChatStore.getState().setSessions(mockSessions1);
       useChatStore.getState().setSessions(mockSessions2);
@@ -89,6 +89,7 @@ describe('chatStore', () => {
           agent_id: 'agent-1',
           message_count: 5,
           created_at: '2024-01-15T10:30:00Z',
+          updated_at: '2024-01-15T10:30:00Z',
         },
       ];
       useChatStore.getState().setSessions(mockSessions);
@@ -261,7 +262,7 @@ describe('chatStore', () => {
         },
       ];
       const mockSessions = [
-        { id: '1', title: 'Session 1', message_count: 5, created_at: new Date().toISOString() },
+        { id: '1', title: 'Session 1', agent_id: 'default', message_count: 5, created_at: new Date().toISOString(), updated_at: new Date().toISOString() },
       ];
 
       useChatStore.getState().setAgents(mockAgents);
@@ -307,7 +308,7 @@ describe('chatStore', () => {
 
     it('should handle session with zero message count', () => {
       const mockSessions = [
-        { id: '1', title: 'Empty Session', message_count: 0, created_at: new Date().toISOString() },
+        { id: '1', title: 'Empty Session', agent_id: 'default', message_count: 0, created_at: new Date().toISOString(), updated_at: new Date().toISOString() },
       ];
       useChatStore.getState().setSessions(mockSessions);
       expect(useChatStore.getState().sessions[0].message_count).toBe(0);

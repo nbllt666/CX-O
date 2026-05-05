@@ -1,4 +1,4 @@
-import React, { useEffect, useRef } from 'react';
+import React, { useEffect, useState } from 'react';
 import { useMotionValue, useTransform, animate } from 'framer-motion';
 
 interface CountUpProps {
@@ -18,7 +18,7 @@ export const CountUp: React.FC<CountUpProps> = ({
 }) => {
   const count = useMotionValue(0);
   const rounded = useTransform(count, (latest) => Math.round(latest));
-  const displayValue = useRef(0);
+  const [displayValue, setDisplayValue] = useState(rounded.get());
 
   useEffect(() => {
     const controls = animate(count, end, {
@@ -27,19 +27,20 @@ export const CountUp: React.FC<CountUpProps> = ({
     });
 
     const unsubscribe = rounded.on('change', (latest) => {
-      displayValue.current = latest;
+      setDisplayValue(latest);
     });
 
     return () => {
       controls.stop();
       unsubscribe();
     };
-  }, [count, end, duration, rounded]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- rounded is a stable motion transform hook
+  }, [count, end, duration]);
 
   return (
     <span className={className}>
       {prefix}
-      {displayValue.current}
+      {displayValue}
       {suffix}
     </span>
   );

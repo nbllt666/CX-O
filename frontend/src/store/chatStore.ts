@@ -1,30 +1,6 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
-import { api } from '../api/client';
-
-interface Agent {
-  id: string;
-  name: string;
-  description: string;
-  system_prompt: string;
-  model: string;
-  temperature: number;
-  max_tokens: number;
-  use_memory: boolean;
-  use_tools: boolean;
-  memory_scene: string;
-  vision_enabled?: boolean;
-  is_default?: boolean;
-}
-
-interface Session {
-  id: string;
-  title: string;
-  agent_id?: string;
-  message_count?: number;
-  created_at?: string;
-  updated_at?: string;
-}
+import { api, type Agent, type Session } from '../api/client';
 
 interface ChatState {
   agents: Agent[];
@@ -64,19 +40,17 @@ export const useChatStore = create<ChatState>()(
       fetchAgents: async () => {
         set({ isLoadingAgents: true, agentsError: null });
         try {
-          const response = await api.getAgents();
-          // API 返回格式：{ status: "success", agents: [], total: number }
-          const agentsList = response.agents || response || [];
-          const filteredAgents = agentsList.filter((agent: Agent) => agent.id !== 'memory-agent');
+          const agentsList = await api.getAgents();
+          const filteredAgents = agentsList.filter((agent) => agent.id !== 'memory-agent');
           set({ agents: filteredAgents });
 
           const { currentAgentId } = get();
           if (!currentAgentId && filteredAgents.length > 0) {
             const defaultAgent =
-              filteredAgents.find((a: Agent) => a.is_default) || filteredAgents[0];
+              filteredAgents.find((a) => a.is_default) || filteredAgents[0];
             set({ currentAgentId: defaultAgent.id });
           }
-        } catch (error) {
+        } catch (error: unknown) {
           console.error('Failed to fetch agents:', error);
           set({ agentsError: '加载失败' });
         } finally {
@@ -96,9 +70,9 @@ export const useChatStore = create<ChatState>()(
       fetchSessions: async () => {
         set({ isLoadingSessions: true, sessionsError: null });
         try {
-          const data = await api.getSessions();
-          set({ sessions: data.sessions || [] });
-        } catch (error) {
+          const sessions = await api.getSessions();
+          set({ sessions });
+        } catch (error: unknown) {
           console.error('Failed to fetch sessions:', error);
           set({ sessionsError: '加载失败' });
         } finally {
@@ -108,7 +82,8 @@ export const useChatStore = create<ChatState>()(
 
       createSession: async (agentId?: string) => {
         try {
-          const data = await api.createSession();
+          const aid = agentId ?? get().currentAgentId ?? 'default';
+          const data = await api.createSession('新对话', aid);
           if (data.session_id) {
             if (agentId) {
               set({ currentAgentId: agentId });
@@ -118,7 +93,7 @@ export const useChatStore = create<ChatState>()(
             return data.session_id;
           }
           return null;
-        } catch (error) {
+        } catch (error: unknown) {
           console.error('Failed to create session:', error);
           return null;
         }
@@ -132,7 +107,7 @@ export const useChatStore = create<ChatState>()(
             set({ currentSessionId: null });
           }
           await get().fetchSessions();
-        } catch (error) {
+        } catch (error: unknown) {
           console.error('Failed to delete session:', error);
           throw error;
         }

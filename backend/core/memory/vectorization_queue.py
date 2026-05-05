@@ -10,7 +10,7 @@ import time
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
-from queue import PriorityQueue
+from queue import Empty, PriorityQueue
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
 logger = logging.getLogger(__name__)
@@ -206,7 +206,7 @@ class VectorizationQueue:
                 # 从队列获取任务（带超时）
                 try:
                     task = self._queue.get(timeout=1.0)
-                except:
+                except Empty:
                     continue
                 
                 # 更新任务状态

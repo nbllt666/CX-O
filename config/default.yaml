@@ -1,6 +1,6 @@
 server:
   host: 0.0.0.0
-  port: 8000
+  port: 8100
   debug: true
 cors:
   enabled: true
@@ -169,3 +169,65 @@ llm_params:
   maxTokens: 0
   topP: 0.9
   timeout: 30
+tts:
+  engine: f5-tts
+  f5_tts:
+    url: http://127.0.0.1:5000
+    timeout: 120
+  cosyvoice:
+    url: http://127.0.0.1:50000
+    model: CosyVoice2-0.5B
+    default_mode: instruct2
+    timeout: 120
+    default_spk_id: 中文女
+  emotion_refs:
+    enabled: true
+    emotions_dir: data/voice_refs/emotions
+    transitions_dir: data/voice_refs/transitions
+    emotions:
+    - normal
+    - happy
+    - sad
+    - angry
+    - surprised
+    - tender
+    - fearful
+    - disgusted
+  transition:
+    enabled: true
+    duration: 0.5
+    intensity: 0.7
+    transition_text: 嗯，
+  ref_audio_path: ""
+  ref_text: ""
+  speed: 1.0
+  cross_fade_duration: 0.15
+  emotion_enabled: true
+  effects_enabled: true
+  emotion_voices: {}
+avatar:
+  type: "live2d"
+  live2d:
+    enabled: false
+    model_path: "/models/shizuku/shizuku.model.json"
+    width: 300
+    min_width: 200
+    max_width: 400
+    position: "left"
+    lip_sync: true
+    idle_motion: true
+    scale: 0.3
+    x_offset: 0
+    y_offset: 0
+  vrm:
+    enabled: false
+    model_path: "/models/avatar.vrm"
+    width: 300
+    min_width: 200
+    max_width: 400
+    position: "left"
+    lip_sync: true
+    idle_animation: true
+    look_at_mouse: true
+    scale: 1.0
+    position_3d: [0, 0, 0]

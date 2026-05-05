@@ -317,6 +317,33 @@ class ACPManager:
                 return True
             return False
 
+    async def update_agent(
+        self,
+        agent_id: str,
+        *,
+        name: Optional[str] = None,
+        description: Optional[str] = None,
+        capabilities: Optional[List[str]] = None,
+        status: Optional[str] = None,
+    ) -> bool:
+        async with self._lock:
+            if agent_id not in self.agents:
+                return False
+            agent = self.agents[agent_id]
+            if name is not None:
+                agent.name = name
+            if description is not None:
+                meta = dict(agent.metadata or {})
+                meta["description"] = description
+                agent.metadata = meta
+            if capabilities is not None:
+                agent.capabilities = capabilities
+            if status is not None:
+                agent.status = "online" if status == "active" else "offline"
+            agent.last_seen = datetime.now().isoformat()
+            self._save_data()
+            return True
+
     async def create_connection(self, connection: ACPConnectionInfo) -> ACPConnectionInfo:
         async with self._lock:
             self.connections[connection.id] = connection

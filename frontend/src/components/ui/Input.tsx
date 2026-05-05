@@ -34,8 +34,8 @@ export const Input = React.forwardRef<HTMLInputElement, InputProps>(
               'focus:outline-none focus:ring-2 focus:ring-[var(--color-accent)] focus:border-transparent',
               'transition-all duration-[var(--transition-fast)]',
               'disabled:opacity-50 disabled:cursor-not-allowed',
-              icon && 'pl-10',
-              suffix && 'pr-10',
+              Boolean(icon) && 'pl-10',
+              Boolean(suffix) && 'pr-10',
               error && 'border-[var(--color-error)] focus:ring-[var(--color-error)]',
               className
             )}

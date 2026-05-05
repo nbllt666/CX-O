@@ -1,7 +1,7 @@
 """
-TTS (F5-TTS) 客户端
-支持双流式合成
-F5-TTS webapi 使用 multipart form data
+TTS 客户端
+支持 F5-TTS 和 CosyVoice 双引擎
+支持情感过渡音频生成
 """
 from __future__ import annotations
 
@@ -10,7 +10,7 @@ import base64
 import logging
 import re
 from pathlib import Path
-from typing import Any, AsyncGenerator, Callable
+from typing import Any, AsyncGenerator, Callable, Optional
 
 import httpx
 
@@ -63,7 +63,11 @@ class TTSClient:
         effects_dir: str | Path | None = None,
         voice_refs_dir: str | Path | None = None,
         gateway_url: str | None = None,
-        use_triton: bool = False
+        use_triton: bool = False,
+        engine: str = "f5-tts",
+        cosyvoice_url: str | None = None,
+        transition_enabled: bool = True,
+        transition_text: str = "嗯，"
     ):
         self._base_url = base_url.rstrip("/")
         self._gateway_url = gateway_url.rstrip("/") if gateway_url else None
@@ -77,6 +81,12 @@ class TTSClient:
         self._effect_parser = EffectParser(effects_dir)
         self._emotion_audio_cache: dict[str, bytes] = {}
         self._voice_refs_dir = Path(voice_refs_dir) if voice_refs_dir else Path(__file__).parent.parent / "data" / "voice_refs"
+        self._engine = engine.lower()
+        self._cosyvoice_url = cosyvoice_url
+        self._cosyvoice_client = None
+        self._transition_enabled = transition_enabled
+        self._transition_text = transition_text
+        self._transition_audio_cache: dict[tuple[str, str], bytes] = {}
 
     async def _get_client(self) -> httpx.AsyncClient:
         if self._client is None:
@@ -100,8 +110,24 @@ class TTSClient:
         if self._client:
             await self._client.aclose()
             self._client = None
+        if self._cosyvoice_client:
+            await self._cosyvoice_client.close()
+            self._cosyvoice_client = None
+
+    async def _get_cosyvoice_client(self):
+        if self._cosyvoice_client is None and self._cosyvoice_url:
+            from .cosyvoice_client import CosyVoiceClient, CosyVoiceMode
+            self._cosyvoice_client = CosyVoiceClient(
+                base_url=self._cosyvoice_url,
+                timeout=self._timeout
+            )
+        return self._cosyvoice_client
 
     async def health_check(self) -> bool:
+        if self._engine == "cosyvoice" and self._cosyvoice_url:
+            client = await self._get_cosyvoice_client()
+            if client:
+                return await client.health_check()
         try:
             client = await self._get_client()
             response = await client.get(f"{self._base_url}/health")
@@ -109,6 +135,38 @@ class TTSClient:
         except Exception as e:
             logger.error(f"TTS health check failed: {e}")
             return False
+
+    async def generate_transition_audio(
+        self,
+        from_emotion: str,
+        to_emotion: str,
+        ref_audio: bytes | None = None
+    ) -> bytes | None:
+        if not self._transition_enabled:
+            return None
+
+        cache_key = (from_emotion, to_emotion)
+        if cache_key in self._transition_audio_cache:
+            return self._transition_audio_cache[cache_key]
+
+        if self._engine == "cosyvoice" and self._cosyvoice_url:
+            client = await self._get_cosyvoice_client()
+            if client:
+                try:
+                    audio_data = ref_audio or await self._load_ref_audio()
+                    transition_audio = await client.generate_transition_audio(
+                        from_emotion=from_emotion,
+                        to_emotion=to_emotion,
+                        ref_audio=audio_data,
+                        transition_text=self._transition_text
+                    )
+                    self._transition_audio_cache[cache_key] = transition_audio
+                    logger.info(f"Generated transition audio: {from_emotion} -> {to_emotion}")
+                    return transition_audio
+                except Exception as e:
+                    logger.error(f"Failed to generate transition audio: {e}")
+                    return None
+        return None
 
     async def synthesize(
         self,
@@ -327,24 +385,47 @@ class TTSClient:
     async def _load_emotion_audio(self, emotion: str) -> bytes:
         if emotion in self._emotion_audio_cache:
             return self._emotion_audio_cache[emotion]
-        
+
+        emotion_ref_path = self._voice_refs_dir / "emotions" / f"{emotion}.wav"
+        if emotion_ref_path.exists():
+            logger.info(f"Loading pre-generated emotion ref: {emotion}")
+            with open(emotion_ref_path, "rb") as f:
+                audio_data = f.read()
+            self._emotion_audio_cache[emotion] = audio_data
+            return audio_data
+
         voice_config = self.get_emotion_voice(emotion)
         ref_audio = voice_config.get("ref_audio", "")
-        
+
         if not ref_audio:
             return await self._load_ref_audio()
-        
+
         audio_path = self._resolve_audio_path(ref_audio)
-        
+
         if not audio_path or not audio_path.exists():
             logger.warning(f"Emotion audio file not found: {ref_audio}, using default")
             return await self._load_ref_audio()
-        
+
         with open(audio_path, "rb") as f:
             audio_data = f.read()
-        
+
         self._emotion_audio_cache[emotion] = audio_data
         return audio_data
+
+    async def _load_transition_audio(self, from_emotion: str, to_emotion: str) -> bytes | None:
+        cache_key = (from_emotion, to_emotion)
+        if cache_key in self._transition_audio_cache:
+            return self._transition_audio_cache[cache_key]
+
+        transition_ref_path = self._voice_refs_dir / "transitions" / f"{from_emotion}_to_{to_emotion}.wav"
+        if transition_ref_path.exists():
+            logger.info(f"Loading pre-generated transition ref: {from_emotion} -> {to_emotion}")
+            with open(transition_ref_path, "rb") as f:
+                audio_data = f.read()
+            self._transition_audio_cache[cache_key] = audio_data
+            return audio_data
+
+        return None
     
     def _resolve_audio_path(self, ref_audio: str) -> Path | None:
         if not ref_audio:
@@ -504,10 +585,39 @@ class TTSClient:
         client = await self._get_client()
         chunk_index = 0
         current_emotion = "normal"
+        previous_emotion = None
         
         for segment in segments:
             if segment["type"] == "emotion":
+                previous_emotion = current_emotion
                 current_emotion = segment["emotion"]
+
+                if previous_emotion and previous_emotion != current_emotion and self._transition_enabled:
+                    transition_audio = await self._load_transition_audio(
+                        from_emotion=previous_emotion,
+                        to_emotion=current_emotion
+                    )
+                    if not transition_audio:
+                        transition_audio = await self.generate_transition_audio(
+                            from_emotion=previous_emotion,
+                            to_emotion=current_emotion
+                        )
+                    if transition_audio:
+                        chunk = {
+                            "text_segment": "",
+                            "audio_data": transition_audio,
+                            "chunk_index": chunk_index,
+                            "is_final": False,
+                            "emotion": None,
+                            "is_effect": False,
+                            "is_transition": True,
+                            "from_emotion": previous_emotion,
+                            "to_emotion": current_emotion
+                        }
+                        if on_chunk:
+                            on_chunk("[transition]", transition_audio)
+                        yield chunk
+                        chunk_index += 1
                 continue
             
             if segment["type"] == "sound":

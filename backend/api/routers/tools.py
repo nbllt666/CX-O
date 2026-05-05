@@ -1,7 +1,8 @@
+from datetime import datetime
 from typing import Dict, List, Optional
 
 from fastapi import APIRouter, HTTPException
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from backend.core.exceptions import ToolError
 from backend.core.logging_config import get_contextual_logger
@@ -62,6 +63,18 @@ class MCPToolCallRequest(BaseModel):
     server_name: str
     tool_name: str
     arguments: Dict = {}
+
+
+class ToolPatchRequest(BaseModel):
+    """工具局部更新（兼容前端 status / enabled）"""
+
+    enabled: Optional[bool] = None
+    description: Optional[str] = None
+    parameters: Optional[Dict] = None
+    category: Optional[str] = None
+    tags: Optional[List[str]] = None
+    examples: Optional[List[str]] = None
+    status: Optional[str] = Field(None, description="active | inactive")
 
 
 @router.get("/tools")
@@ -434,6 +447,40 @@ async def get_plugins():
             "total": 0,
             "message": f"插件功能暂不可用: {str(e)}",
         }
+
+
+@router.patch("/tools/{name}")
+async def patch_tool(name: str, request: ToolPatchRequest):
+    from backend.core.tools.registry import tool_registry
+
+    try:
+        tool = tool_registry.get_tool(name)
+        if not tool:
+            raise HTTPException(status_code=404, detail="工具不存在")
+
+        enabled = request.enabled
+        if request.status is not None:
+            enabled = request.status == "active"
+        if enabled is not None:
+            tool.enabled = enabled
+        if request.description is not None:
+            tool.description = request.description
+        if request.parameters is not None:
+            tool.parameters = request.parameters
+        if request.category is not None:
+            tool.category = request.category
+        if request.tags is not None:
+            tool.tags = request.tags
+        if request.examples is not None:
+            tool.examples = request.examples
+        tool.updated_at = datetime.now().isoformat()
+
+        return {"status": "success", "message": f"工具 {name} 已更新"}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"更新工具失败: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="内部服务器错误")
 
 
 # 这些路由必须放在最后，因为它们使用路径参数

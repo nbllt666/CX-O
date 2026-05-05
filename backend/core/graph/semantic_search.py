@@ -236,6 +236,36 @@ class SemanticSearch:
             logger.error(f"Weaviate 健康检查失败: {e}")
             return False
 
+    def encode_batch(self, texts: List[str]) -> np.ndarray:
+        """批量编码文本为向量
+
+        Args:
+            texts: 文本列表
+
+        Returns:
+            向量数组
+        """
+        return self._vectorizer.encode_batch(texts)
+
+    def compute_similarity(self, vec1: np.ndarray, vec2: np.ndarray) -> float:
+        """计算两个向量的余弦相似度
+
+        Args:
+            vec1: 第一个向量
+            vec2: 第二个向量
+
+        Returns:
+            余弦相似度 (0-1)
+        """
+        if len(vec1) != len(vec2):
+            return 0.0
+        dot_product = np.dot(vec1, vec2)
+        norm1 = np.linalg.norm(vec1)
+        norm2 = np.linalg.norm(vec2)
+        if norm1 == 0 or norm2 == 0:
+            return 0.0
+        return float(dot_product / (norm1 * norm2))
+
     def close(self) -> None:
         """关闭连接"""
         if self._client:

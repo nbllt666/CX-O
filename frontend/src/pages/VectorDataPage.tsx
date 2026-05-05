@@ -45,13 +45,13 @@ export function VectorDataPage() {
 
   const { data: vectors, isLoading: vectorsLoading } = useQuery({
     queryKey: ['vectors', memoryTypeFilter, timeRange],
-    queryFn: () => api.listVectors({ limit: 100, memory_type: memoryTypeFilter || undefined }),
-    enabled: vectorStatus?.vector_status?.connected,
+    queryFn: () => api.listVectors(100),
+    enabled: Boolean(vectorStatus?.connected),
     select: (data) => {
       if (!timeRange || !data.vectors) return data;
       return {
         ...data,
-        vectors: data.vectors.filter((v: Vector) => {
+        vectors: (data.vectors as Vector[]).filter((v: Vector) => {
           const vectorDate = new Date(v.created_at);
           return vectorDate >= timeRange.start && vectorDate <= timeRange.end;
         }),
@@ -64,7 +64,7 @@ export function VectorDataPage() {
     onSuccess: (data) => {
       queryClient.invalidateQueries({ queryKey: ['vectors'] });
       queryClient.invalidateQueries({ queryKey: ['vectorStats'] });
-      alert(`同步完成: 检查 ${data.result.total_checked} 条, 同步 ${data.result.synced} 条`);
+      alert(`同步完成: ${data.status}`);
     },
   });
 
@@ -73,7 +73,7 @@ export function VectorDataPage() {
     onSuccess: (data) => {
       queryClient.invalidateQueries({ queryKey: ['vectors'] });
       queryClient.invalidateQueries({ queryKey: ['vectorStats'] });
-      alert(`重建完成: 同步 ${data.result.synced} 条`);
+      alert(`重建完成: ${data.status}`);
     },
   });
 
@@ -85,17 +85,13 @@ export function VectorDataPage() {
     },
   });
 
-  const connected = vectorStatus?.vector_status?.connected;
-  const stats = vectorStats?.stats as VectorStats | undefined;
+  const connected = vectorStatus?.connected;
+  const stats = vectorStats as VectorStats | undefined;
 
   const handleSearch = async () => {
     if (!searchQuery.trim()) return;
     try {
-      const result = await api.searchVectors({
-        query: searchQuery,
-        limit: 10,
-        min_score: 0.5,
-      });
+      const result = await api.searchVectors(searchQuery, 10);
       setSearchResults(result.results || []);
       setShowSearchModal(true);
     } catch {
@@ -175,7 +171,7 @@ export function VectorDataPage() {
           {vectors?.vectors && vectors.vectors.length > 0 && (
             <TimeAxis
               data={
-                vectors.vectors.reduce((acc: TimeAxisDataPoint[], vec: Vector) => {
+                (vectors.vectors as Vector[]).reduce((acc: TimeAxisDataPoint[], vec: Vector) => {
                   const date = new Date(vec.created_at);
                   const dateStr = date.toISOString();
                   const existing = acc.find((a: TimeAxisDataPoint) => a.timestamp === dateStr);
@@ -274,7 +270,7 @@ export function VectorDataPage() {
                       </tr>
                     </thead>
                     <tbody>
-                      {vectors?.vectors?.map((vec: Vector) => (
+                      {(vectors?.vectors as Vector[] | undefined)?.map((vec: Vector) => (
                         <tr key={vec.memory_id} className="border-t border-[var(--color-border)]">
                           <td className="px-4 py-3 font-mono">{vec.memory_id}</td>
                           <td className="px-4 py-3 max-w-xs truncate">{vec.content}</td>
@@ -289,8 +285,9 @@ export function VectorDataPage() {
                             <button
                               onClick={async () => {
                                 try {
-                                  const detail = await api.getVector(vec.memory_id);
-                                  setSelectedVector({ ...vec, ...detail.vector });
+                                  const detail = await api.getVector(vec.memory_id) as { vector?: Partial<Vector> };
+                                  const extra = (detail.vector ?? {}) as Partial<Vector>;
+                                  setSelectedVector({ ...vec, ...extra });
                                   setShowDetailModal(true);
                                 } catch {
                                   alert('获取详情失败');

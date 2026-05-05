@@ -14,29 +14,12 @@ import {
   Loader2,
   Network,
 } from 'lucide-react';
-import { api } from '../api/client';
+import { api, type AcpStats, type AcpAgentRow } from '../api/client';
 import { cn } from '../lib/utils';
-
-interface Agent {
-  id: string;
-  name: string;
-  description: string;
-  status: 'active' | 'inactive' | 'error';
-  capabilities: string[];
-  created_at: string;
-  last_active?: string;
-}
-
-interface AcpStats {
-  total_agents: number;
-  active_agents: number;
-  total_conversations: number;
-  avg_response_time: number;
-}
 
 export function AcpPage() {
   const queryClient = useQueryClient();
-  const [selectedAgent, setSelectedAgent] = useState<Agent | null>(null);
+  const [selectedAgent, setSelectedAgent] = useState<AcpAgentRow | null>(null);
   const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
   const [isEditModalOpen, setIsEditModalOpen] = useState(false);
 
@@ -51,18 +34,20 @@ export function AcpPage() {
   });
 
   // Fetch agents list
-  const { data: agents, isLoading: agentsLoading } = useQuery<Agent[]>({
+  const { data: agents, isLoading: agentsLoading } = useQuery<AcpAgentRow[]>({
     queryKey: ['acp-agents'],
-    queryFn: async () => {
-      const response = await api.getAgents();
-      return response.agents || [];
-    },
+    queryFn: () => api.getAcpAgents(),
     refetchInterval: 5000,
   });
 
   // Create agent mutation
   const createAgentMutation = useMutation({
-    mutationFn: api.createAgent,
+    mutationFn: (data: { name: string; description?: string; capabilities?: string[]; status?: 'active' | 'inactive' }) =>
+      api.createAcpAgent({
+        name: data.name,
+        description: data.description,
+        capabilities: data.capabilities,
+      }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['acp-agents'] });
       queryClient.invalidateQueries({ queryKey: ['acp-stats'] });
@@ -83,7 +68,13 @@ export function AcpPage() {
         capabilities?: string[];
         status?: 'active' | 'inactive';
       };
-    }) => api.updateAgent(id, data),
+    }) =>
+      api.updateAcpAgent(id, {
+        name: data.name,
+        description: data.description,
+        capabilities: data.capabilities,
+        status: data.status,
+      }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['acp-agents'] });
       setIsEditModalOpen(false);
@@ -93,7 +84,7 @@ export function AcpPage() {
 
   // Delete agent mutation
   const deleteAgentMutation = useMutation({
-    mutationFn: api.deleteAgent,
+    mutationFn: api.deleteAcpAgent,
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['acp-agents'] });
       queryClient.invalidateQueries({ queryKey: ['acp-stats'] });
@@ -102,7 +93,7 @@ export function AcpPage() {
   });
 
   // Toggle agent status
-  const toggleAgentStatus = (agent: Agent) => {
+  const toggleAgentStatus = (agent: AcpAgentRow) => {
     updateAgentMutation.mutate({
       id: agent.id,
       data: { status: agent.status === 'active' ? 'inactive' : 'active' },
@@ -373,7 +364,7 @@ function StatCard({
 // Agent Modal Component
 interface AgentModalProps {
   title: string;
-  agent?: Agent;
+  agent?: AcpAgentRow;
   onClose: () => void;
   onSubmit: (data: {
     name: string;

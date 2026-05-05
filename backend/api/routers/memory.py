@@ -77,7 +77,7 @@ async def list_agent_memory_tables():
         return {"status": "success", "agents": agents, "total": len(agents)}
     except Exception as e:
         logger.error(f"获取Agent记忆表列表失败: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="获取Agent记忆表列表失败")
 
 
 @router.get("/memories")
@@ -188,7 +188,8 @@ async def get_memory(memory_id: int):
     except HTTPException:
         raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.error(f"获取记忆失败: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="获取记忆失败")
 
 
 @router.put("/memories/{memory_id}")
@@ -212,7 +213,8 @@ async def update_memory(memory_id: int, request: MemoryUpdateRequest):
     except HTTPException:
         raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.error(f"更新记忆失败: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="更新记忆失败")
 
 
 @router.delete("/memories/{memory_id}")
@@ -231,7 +233,8 @@ async def delete_memory(memory_id: int, soft_delete: bool = False):
     except HTTPException:
         raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.error(f"删除记忆失败: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="删除记忆失败")
 
 
 @router.post("/memories/search")
@@ -255,7 +258,8 @@ async def search_memories(request: MemorySearchRequest):
 
         return {"status": "success", "memories": memories, "total": len(memories)}
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.error(f"搜索记忆失败: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="搜索记忆失败")
 
 
 @router.post("/memories/rag")
@@ -294,7 +298,8 @@ async def get_memory_stats(workspace_id: str = "default"):
 
         return {"status": "success", "statistics": stats}
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.error(f"获取记忆统计失败: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="获取记忆统计失败")
 
 
 @router.post("/memories/permanent")
@@ -320,7 +325,8 @@ async def create_permanent_memory(
 
         return {"status": "success", "memory_id": memory_id, "message": "永久记忆创建成功"}
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.error(f"创建永久记忆失败: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="创建永久记忆失败")
 
 
 @router.get("/memories/permanent/{memory_id}")
@@ -338,7 +344,8 @@ async def get_permanent_memory(memory_id: int):
     except HTTPException:
         raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.error(f"获取永久记忆失败: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="获取永久记忆失败")
 
 
 @router.get("/memories/permanent")
@@ -353,7 +360,8 @@ async def list_permanent_memories(limit: int = 20, offset: int = 0, tags: List[s
 
         return {"status": "success", "memories": memories, "total": len(memories)}
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.error(f"获取永久记忆列表失败: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="获取永久记忆列表失败")
 
 
 @router.put("/memories/permanent/{memory_id}")
@@ -375,7 +383,8 @@ async def update_permanent_memory(
     except HTTPException:
         raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.error(f"更新永久记忆失败: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="更新永久记忆失败")
 
 
 @router.delete("/memories/permanent/{memory_id}")
@@ -393,7 +402,8 @@ async def delete_permanent_memory(memory_id: int):
     except HTTPException:
         raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.error(f"召回记忆失败: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="召回记忆失败")
 
 
 @router.post("/memories/3d")
@@ -466,7 +476,8 @@ async def batch_write_memories(memories: List[Dict], raise_on_error: bool = Fals
 
         return {"status": "success", "result": result}
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.error(f"批量写入记忆失败: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="批量写入记忆失败")
 
 
 class BatchUpdateRequest(BaseModel):
@@ -501,7 +512,8 @@ async def batch_update_memories(request: BatchUpdateRequest):
 
         return {"status": "success", "result": result}
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.error(f"批量更新记忆失败: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="批量更新记忆失败")
 
 
 class BatchIdsRequest(BaseModel):
@@ -535,7 +547,8 @@ async def batch_delete_memories(
 
         return {"status": "success", "result": result}
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.error(f"批量删除记忆失败: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="批量删除记忆失败")
 
 
 @router.post("/memories/batch/tags")
@@ -558,7 +571,8 @@ async def batch_update_memory_tags(request: BatchTagsRequest):
 
         return {"status": "success", "result": result}
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.error(f"批量更新标签失败: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="批量更新标签失败")
 
 
 @router.post("/memories/batch/archive")
@@ -572,7 +586,8 @@ async def batch_archive_memories(request: BatchIdsRequest):
 
         return {"status": "success", "result": result}
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.error(f"批量归档记忆失败: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="批量归档记忆失败")
 
 
 @router.post("/memories/batch/restore")
@@ -600,7 +615,8 @@ async def batch_restore_memories(request: BatchIdsRequest):
             "result": {"restored_count": restored_count, "failed_count": failed_count},
         }
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.error(f"批量恢复记忆失败: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="批量恢复记忆失败")
 
 
 class BatchTagByQueryRequest(BaseModel):
@@ -639,7 +655,8 @@ async def batch_tag_by_query(request: BatchTagByQueryRequest):
 
         return {"status": "success", "result": result}
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.error(f"按查询批量更新标签失败: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="按查询批量更新标签失败")
 
 
 class BatchDeleteByQueryRequest(BaseModel):
@@ -671,7 +688,8 @@ async def batch_delete_by_query(request: BatchDeleteByQueryRequest):
 
         return {"status": "success", "result": result}
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.error(f"按查询批量删除失败: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="按查询批量删除失败")
 
 
 class BatchArchiveByQueryRequest(BaseModel):
@@ -704,7 +722,8 @@ async def batch_archive_by_query(request: BatchArchiveByQueryRequest):
 
         return {"status": "success", "result": result}
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.error(f"按查询批量归档失败: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="按查询批量归档失败")
 
 
 @router.get("/memories/type/{memory_type}")
@@ -722,7 +741,8 @@ async def get_memories_by_type(
 
         return {"status": "success", "memories": memories, "count": len(memories)}
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.error(f"按类型获取记忆失败: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="按类型获取记忆失败")
 
 
 @router.get("/memories/search-by-tag")
@@ -740,7 +760,8 @@ async def search_by_tag(
 
         return {"status": "success", "memories": memories, "count": len(memories)}
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.error(f"按标签搜索记忆失败: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="按标签搜索记忆失败")
 
 
 @router.post("/memories/sync-decay")
@@ -753,7 +774,8 @@ async def sync_decay_values(workspace_id: str = "default"):
 
         return {"status": "success", "result": result}
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.error(f"同步衰减值失败: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="同步衰减值失败")
 
 
 @router.get("/memories/decay-stats")
@@ -802,7 +824,8 @@ async def execute_secondary_command(
     except HTTPException:
         raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.error(f"执行副模型命令失败: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="执行副模型命令失败")
 
 
 @router.get("/memories/secondary/commands")
@@ -940,4 +963,4 @@ async def get_vector_status():
         return {"status": "success", "data": result}
     except Exception as e:
         logger.error(f"获取向量状态失败: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="获取向量状态失败")

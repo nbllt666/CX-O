@@ -50,26 +50,8 @@ class AsyncMemoryManager:
         
     async def initialize(self):
         """初始化数据库连接池"""
-        if self._initialized:
-            return
-            
-        Path(self.db_path).parent.mkdir(parents=True, exist_ok=True)
-        
-        self._pool = await aiosqlite.connect(
-            self.db_path, 
-            timeout=30.0
-        )
-        self._pool.row_factory = aiosqlite.Row
-        await self._pool.execute("PRAGMA journal_mode=WAL")
-        await self._pool.execute("PRAGMA synchronous=NORMAL")
-        await self._pool.execute("PRAGMA cache_size=-64000")
-        await self._pool.execute("PRAGMA temp_store=MEMORY")
-        await self._pool.execute("PRAGMA mmap_size=268435456")
-        await self._pool.execute("PRAGMA busy_timeout=30000")
-        
-        await self._init_db()
-        self._initialized = True
-        logger.info(f"AsyncMemoryManager 初始化完成: {self.db_path}")
+        async with self._pool_lock:
+            await self._init_connection()
 
     async def _init_db(self):
         """初始化数据库表结构"""
@@ -117,9 +99,33 @@ class AsyncMemoryManager:
 
     async def _get_connection(self) -> aiosqlite.Connection:
         """获取数据库连接"""
-        if not self._initialized:
-            await self.initialize()
-        return self._pool
+        async with self._pool_lock:
+            if not self._initialized:
+                await self._init_connection()
+            return self._pool
+
+    async def _init_connection(self):
+        """内部初始化连接方法（需要在锁内调用）"""
+        if self._initialized:
+            return
+            
+        Path(self.db_path).parent.mkdir(parents=True, exist_ok=True)
+        
+        self._pool = await aiosqlite.connect(
+            self.db_path, 
+            timeout=30.0
+        )
+        self._pool.row_factory = aiosqlite.Row
+        await self._pool.execute("PRAGMA journal_mode=WAL")
+        await self._pool.execute("PRAGMA synchronous=NORMAL")
+        await self._pool.execute("PRAGMA cache_size=-64000")
+        await self._pool.execute("PRAGMA temp_store=MEMORY")
+        await self._pool.execute("PRAGMA mmap_size=268435456")
+        await self._pool.execute("PRAGMA busy_timeout=30000")
+        
+        await self._init_db()
+        self._initialized = True
+        logger.info(f"AsyncMemoryManager 初始化完成: {self.db_path}")
 
     async def write_memory(
         self,
@@ -664,11 +670,12 @@ class AsyncMemoryManager:
 
     async def close(self):
         """关闭连接池"""
-        if self._pool:
-            await self._pool.close()
-            self._pool = None
-            self._initialized = False
-            logger.info("AsyncMemoryManager 连接池已关闭")
+        async with self._pool_lock:
+            if self._pool:
+                await self._pool.close()
+                self._pool = None
+                self._initialized = False
+                logger.info("AsyncMemoryManager 连接池已关闭")
 
 
 async def get_async_memory_manager(db_path: str = "data/memories.db") -> AsyncMemoryManager:

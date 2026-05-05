@@ -1,0 +1,37 @@
+{
+  "version": "0.3.6",
+  "exportDate": "2026-05-04T07:49:00.124Z",
+  "baseUrl": "https://integrate.api.nvidia.com/v1",
+  "apiKey": "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",
+  "delay": 0,
+  "retry": {
+    "enabled": true,
+    "max_attempts": 3,
+    "interval_ms": 1000,
+    "status_codes": []
+  },
+  "commitLanguage": "Chinese (Simplified)",
+  "commitModel": "z-ai/glm-5.1",
+  "models": [
+    {
+      "id": "__provider__nvida",
+      "owned_by": "nvida",
+      "baseUrl": "https://integrate.api.nvidia.com/v1",
+      "apiMode": "openai"
+    },
+    {
+      "id": "z-ai/glm-5.1",
+      "owned_by": "nvida",
+      "baseUrl": "https://integrate.api.nvidia.com/v1",
+      "context_length": 204800,
+      "max_tokens": 128000,
+      "apiMode": "openai",
+      "temperature": 1,
+      "useForCommitGeneration": true
+    }
+  ],
+  "readFileLines": 0,
+  "providerKeys": {
+    "nvida": "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"
+  }
+}

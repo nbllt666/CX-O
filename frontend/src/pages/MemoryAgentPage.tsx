@@ -172,7 +172,7 @@ export function MemoryAgentPage() {
     setIsLoading(true);
 
     try {
-      await api.sendMemoryAgentMessageStream(userMessage.content, (chunk) => {
+      await api.sendMemoryAgentMessageStream(userMessage.content, (chunk: Record<string, unknown>) => {
         if (chunk.type === 'content' && chunk.content) {
           setMessages((prev) => {
             const lastMsg = prev[prev.length - 1];
@@ -181,7 +181,7 @@ export function MemoryAgentPage() {
                 ...prev.slice(0, -1),
                 {
                   ...lastMsg,
-                  content: lastMsg.content + chunk.content!,
+                  content: lastMsg.content + String(chunk.content),
                 },
               ];
             }
@@ -252,7 +252,7 @@ export function MemoryAgentPage() {
                 ...prev.slice(0, -1),
                 {
                   ...lastMsg,
-                  thinking: (lastMsg.thinking || '') + chunk.content,
+                  thinking: (lastMsg.thinking || '') + String(chunk.content),
                 },
               ];
             }
@@ -273,7 +273,7 @@ export function MemoryAgentPage() {
             return prev;
           });
         } else if (chunk.type === 'error') {
-          throw new Error(chunk.error || '未知错误');
+          throw new Error(String(chunk.error ?? '未知错误'));
         }
       });
     } catch (error) {

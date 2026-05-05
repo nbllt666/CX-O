@@ -29,7 +29,7 @@ class ServiceStatus(BaseModel):
 
     running: bool
     pid: Optional[int] = None
-    port: int = 8000
+    port: int = 8100
     uptime: Optional[float] = None  # 运行时间（秒）
     using_conda: bool = False  # 是否使用 Conda 环境
 
@@ -38,7 +38,7 @@ class ServiceConfig(BaseModel):
     """服务配置"""
 
     host: str = "0.0.0.0"
-    port: int = 8000
+    port: int = 8100
     log_level: str = "info"
     reload: bool = False
     use_conda: bool = True  # 是否优先使用 Conda 环境
@@ -140,10 +140,10 @@ async def get_service_status():
             logger.warning(f"检查Conda环境失败: {e}")
 
         return ServiceStatus(
-            running=True, pid=process.pid, port=8000, uptime=uptime, using_conda=using_conda
+            running=True, pid=process.pid, port=8100, uptime=uptime, using_conda=using_conda
         )
 
-    return ServiceStatus(running=False, port=8000)
+    return ServiceStatus(running=False, port=8100)
 
 
 def validate_service_config(config: ServiceConfig) -> None:
@@ -283,7 +283,7 @@ async def start_service(config: ServiceConfig):
 
     except Exception as e:
         logger.error(f"Failed to start service: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"Failed to start: {str(e)}")
+        raise HTTPException(status_code=500, detail="启动服务失败")
 
 
 @router.post("/service/stop")
@@ -332,7 +332,7 @@ async def stop_service():
 
     except Exception as e:
         logger.error(f"Failed to stop service: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"Failed to stop: {str(e)}")
+        raise HTTPException(status_code=500, detail="停止服务失败")
 
 
 @router.post("/service/restart")
@@ -368,7 +368,8 @@ async def get_service_logs(lines: int = 100):
         return {"status": "success", "logs": "No log file available"}
 
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to read logs: {str(e)}")
+        logger.error(f"Failed to read logs: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="读取日志失败")
 
 
 @router.get("/service/config")
@@ -376,10 +377,8 @@ async def get_service_config():
     """获取当前服务配置"""
     from config.settings import settings
 
-    # 检查 Conda 环境是否可用
     conda_available = get_conda_python_path() is not None
 
-    # 构建完整配置响应
     config = {
         "host": settings.config.system.host,
         "port": settings.config.system.port,
@@ -388,19 +387,15 @@ async def get_service_config():
         "conda_available": conda_available,
     }
 
-    # 添加模型配置
     if hasattr(settings.config, "models"):
         config["models"] = settings.config.models
 
-    # 添加模型默认配置
     if hasattr(settings.config, "model_defaults"):
         config["model_defaults"] = settings.config.model_defaults
 
-    # 添加LLM参数
     if hasattr(settings.config, "llm_params"):
         config["llm_params"] = settings.config.llm_params
 
-    # 添加向量配置
     if hasattr(settings.config, "memory"):
         memory_config = settings.config.memory
         vector_config = {
@@ -408,7 +403,6 @@ async def get_service_config():
             "vector_size": 768,
         }
 
-        # 根据后端类型添加特定配置
         backend = vector_config["backend"]
         if backend == "chroma" and hasattr(memory_config, "chroma"):
             chroma_cfg = memory_config.chroma
@@ -435,6 +429,24 @@ async def get_service_config():
         config["vector"] = vector_config
 
     return {"status": "success", "config": config}
+
+
+@router.get("/config/gateway")
+async def get_gateway_config():
+    """获取单体架构网关配置（简化版，供前端兼容）"""
+    from config.settings import settings
+
+    monolith_config = {
+        "status": "集成",
+        "url": "ws://127.0.0.1:8100/ws",
+        "http_url": "http://127.0.0.1:8100",
+        "timeout": 30,
+        "asr": {"status": "集成", "note": "已集成到主服务"},
+        "tts": {"status": "集成", "note": "已集成到主服务"},
+        "index_tts": {"status": "可选", "enabled": True, "note": "可配置外部服务"},
+    }
+
+    return {"status": "success", "config": monolith_config}
 
 
 @router.put("/service/config")
@@ -509,7 +521,8 @@ async def update_service_config_put(config: dict):
             yaml.dump(current_config, f, allow_unicode=True, sort_keys=False)
 
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to save config: {str(e)}")
+        logger.error(f"Failed to save config: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="保存配置失败")
 
 
 @router.post("/service/config")
@@ -606,7 +619,8 @@ async def update_service_config(config: dict):
         return {"status": "success", "message": "Configuration updated, restart to apply changes"}
 
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to save config: {str(e)}")
+        logger.error(f"Failed to save config: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="保存配置失败")
 
 
 @router.get("/service/environment")
@@ -634,7 +648,7 @@ async def get_startup_command(use_conda: bool = True):
     conda_activate = get_conda_activate_script()
     project_root = get_project_root()
 
-    config = {"host": "0.0.0.0", "port": 8000, "log_level": "info"}
+    config = {"host": "0.0.0.0", "port": 8100, "log_level": "info"}
 
     from config.settings import settings
 

@@ -1,8 +1,9 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { api } from '../api/client';
 import { cn } from '../lib/utils';
 import { useThemeStore } from '../store/themeStore';
+import { useSettingsStore } from '../store/settingsStore';
 import { PageHeader } from '../components/layout';
 import { Button, Card, CardBody } from '../components/ui';
 
@@ -75,6 +76,21 @@ const sections: SettingSection[] = [
     description: '弹幕接收和直播客户端配置',
   },
   {
+    id: 'live2d',
+    title: '虚拟形象',
+    icon: (
+      <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+        <path
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          strokeWidth={2}
+          d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z"
+        />
+      </svg>
+    ),
+    description: 'Live2D 和 VRM 3D 虚拟形象设置',
+  },
+  {
     id: 'vector',
     title: '向量存储',
     icon: (
@@ -137,7 +153,7 @@ const accentColors = [
 ];
 
 export function SettingsPage() {
-  const [activeSection, setActiveSection] = useState<'appearance' | 'service' | 'audio' | 'live' | 'vector' | 'graph' | 'llm'>(
+  const [activeSection, setActiveSection] = useState<'appearance' | 'service' | 'audio' | 'live' | 'live2d' | 'vector' | 'graph' | 'llm'>(
     'appearance'
   );
   const [saveStatus, setSaveStatus] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
@@ -145,6 +161,9 @@ export function SettingsPage() {
   const [isBackendRunning, setIsBackendRunning] = useState(false);
   const [isControlServiceReady, setIsControlServiceReady] = useState(false);
   const [isProcessing, setIsProcessing] = useState(false);
+
+  // 虚拟形象设置
+  const { live2d: live2dSettings, vrm: vrmSettings, avatarType, setLive2DSettings, setVRMSettings, setAvatarType } = useSettingsStore();
   const [backendStatus, setBackendStatus] = useState<{
     pid?: number;
     uptime?: number;
@@ -155,16 +174,33 @@ export function SettingsPage() {
   const { theme, setTheme } = useThemeStore();
   const [selectedAccent, setSelectedAccent] = useState('#3b82f6');
 
+  const themeTransitionTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const saveStatusTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+
+  useEffect(() => {
+    return () => {
+      if (themeTransitionTimeoutRef.current) {
+        clearTimeout(themeTransitionTimeoutRef.current);
+      }
+      if (saveStatusTimeoutRef.current) {
+        clearTimeout(saveStatusTimeoutRef.current);
+      }
+    };
+  }, []);
+
   const handleThemeChange = (newTheme: 'light' | 'dark' | 'system') => {
     setThemeTransition(true);
     setTheme(newTheme);
-    setTimeout(() => setThemeTransition(false), 300);
+    if (themeTransitionTimeoutRef.current) {
+      clearTimeout(themeTransitionTimeoutRef.current);
+    }
+    themeTransitionTimeoutRef.current = setTimeout(() => setThemeTransition(false), 300);
   };
 
   const checkControlService = useCallback(async () => {
     try {
-      const controlUrl = import.meta.env.VITE_CONTROL_SERVICE_URL || 'http://localhost:8765';
-      const response = await fetch(`${controlUrl}/health`);
+      const apiUrl = import.meta.env.VITE_API_URL || 'http://localhost:8100';
+      const response = await fetch(`${apiUrl}/health`);
       if (response.ok) {
         setIsControlServiceReady(true);
         return true;
@@ -214,18 +250,14 @@ export function SettingsPage() {
   });
 
   const [gatewayServicesConfig, setGatewayServicesConfig] = useState({
-    cxhms: { url: 'ws://127.0.0.1:8000/ws', http_url: 'http://127.0.0.1:8000', timeout: 30 },
-    asr: { url: 'http://127.0.0.1:8001', timeout: 60 },
-    tts: { url: 'http://127.0.0.1:8002', timeout: 120 },
-    index_tts: { url: 'http://127.0.0.1:8004', enabled: true, timeout: 180 },
+    monolith: { url: 'ws://127.0.0.1:8100/ws', http_url: 'http://127.0.0.1:8100', timeout: 30, status: '集成' },
   });
-  const [isGatewayConfigLoading, setIsGatewayConfigLoading] = useState(false);
 
   useEffect(() => {
     const loadGatewayConfig = async () => {
       if (!isBackendRunning) return;
       try {
-        const data = await api.getServiceConfig();
+        const data = await api.getServiceConfig() as { status?: string; config?: typeof gatewayServicesConfig };
         if (data.status === 'success' && data.config) {
           setGatewayServicesConfig(data.config);
         }
@@ -237,21 +269,16 @@ export function SettingsPage() {
   }, [isBackendRunning]);
 
   const handleUpdateGatewayServices = async () => {
-    setIsGatewayConfigLoading(true);
     try {
-      const result = await api.updateServiceConfig(gatewayServicesConfig);
-      if (result.status === 'success') {
-        alert('Gateway 服务配置已保存，需要重启服务生效');
-      } else {
-        alert('保存失败: ' + result.message);
-      }
+      await api.updateServiceConfig(gatewayServicesConfig);
+      alert('Gateway 服务配置已保存，需要重启服务生效');
     } catch (error) {
       console.error('Failed to update Gateway config:', error);
       alert('保存失败');
-    } finally {
-      setIsGatewayConfigLoading(false);
     }
   };
+
+  void handleUpdateGatewayServices;
 
   const [vectorConfig, setVectorConfig] = useState({
     backend: 'weaviate',
@@ -315,9 +342,10 @@ export function SettingsPage() {
   const [audioFiles, setAudioFiles] = useState<{ name: string; size: number; modified: number }[]>([]);
   const [uploadingFile, setUploadingFile] = useState(false);
   const [playingAudio, setPlayingAudio] = useState<string | null>(null);
-  const [indexTtsStatus, setIndexTtsStatus] = useState<{ status: string; message?: string; url?: string } | null>(null);
+  const [cosyvoiceStatus, setCosyvoiceStatus] = useState<{ status: string; message?: string; url?: string } | null>(null);
   const [generatingEmotions, setGeneratingEmotions] = useState(false);
-  const [generateProgress, setGenerateProgress] = useState<{ current: number; total: number; emotion: string } | null>(null);
+  const [generateProgress, setGenerateProgress] = useState<{ current: number; total: number; message: string } | null>(null);
+  const [refsStatus, setRefsStatus] = useState<{ emotions_count: number; transitions_count: number; total_count: number; is_complete: boolean } | null>(null);
 
   const [danmakuConfig, setDanmakuConfig] = useState({
     websocket: {
@@ -415,8 +443,6 @@ export function SettingsPage() {
     libraries: Record<string, { entity_count: number; relation_count: number }>;
   } | null>(null);
 
-  const [testingConnection, setTestingConnection] = useState(false);
-
   const [liveClientStatus, setLiveClientStatus] = useState<{
     connected: boolean;
     client_id?: string;
@@ -429,7 +455,15 @@ export function SettingsPage() {
   useEffect(() => {
     const loadAudioConfig = async () => {
       try {
-        const data = await api.getAudioConfig();
+        const data = await api.getAudioConfig() as { config?: {
+          ref_audio_path?: string;
+          ref_text?: string;
+          speed?: number;
+          cross_fade_duration?: number;
+          emotion_enabled?: boolean;
+          effects_enabled?: boolean;
+          emotion_voices?: Record<string, { ref_audio: string; ref_text: string }>;
+        } };
         if (data.config) {
           setAudioConfig({
             ref_audio_path: data.config.ref_audio_path || '',
@@ -438,7 +472,14 @@ export function SettingsPage() {
             cross_fade_duration: data.config.cross_fade_duration || 0.15,
             emotion_enabled: data.config.emotion_enabled ?? true,
             effects_enabled: data.config.effects_enabled ?? true,
-            emotion_voices: data.config.emotion_voices || [],
+            emotion_voices: data.config.emotion_voices || {
+              normal: { ref_audio: '', ref_text: '' },
+              happy: { ref_audio: '', ref_text: '' },
+              sad: { ref_audio: '', ref_text: '' },
+              angry: { ref_audio: '', ref_text: '' },
+              surprised: { ref_audio: '', ref_text: '' },
+              tender: { ref_audio: '', ref_text: '' },
+            },
           });
         }
       } catch (error) {
@@ -451,9 +492,9 @@ export function SettingsPage() {
   useEffect(() => {
     const loadAudioFiles = async () => {
       try {
-        const data = await api.getAudioFiles();
-        if (data.status === 'success') {
-          setAudioFiles(data.files || []);
+        const data = await api.getAudioFiles() as { files?: { name: string; size: number; modified: string }[] };
+        if (data.files) {
+          setAudioFiles(data.files.map(f => ({ ...f, modified: new Date(f.modified).getTime() })));
         }
       } catch (error) {
         console.error('Failed to load audio files:', error);
@@ -463,17 +504,26 @@ export function SettingsPage() {
   }, []);
 
   useEffect(() => {
-    const checkIndexTTSStatus = async () => {
+    const checkCosyVoiceStatus = async () => {
       try {
-        const data = await api.getIndexTTSStatus();
-        setIndexTtsStatus(data);
+        const data = await api.getCosyVoiceStatus();
+        setCosyvoiceStatus(data);
       } catch (error) {
-        console.error('Failed to check IndexTTS status:', error);
-        setIndexTtsStatus({ status: 'error', message: '无法连接服务' });
+        console.error('Failed to check CosyVoice status:', error);
+        setCosyvoiceStatus({ status: 'error', message: '无法连接服务' });
       }
     };
-    checkIndexTTSStatus();
-    const interval = setInterval(checkIndexTTSStatus, 30000);
+    const checkRefsStatus = async () => {
+      try {
+        const data = await api.getCosyVoiceRefsStatus();
+        setRefsStatus(data);
+      } catch (error) {
+        console.error('Failed to check refs status:', error);
+      }
+    };
+    checkCosyVoiceStatus();
+    checkRefsStatus();
+    const interval = setInterval(checkCosyVoiceStatus, 30000);
     return () => clearInterval(interval);
   }, []);
 
@@ -488,38 +538,42 @@ export function SettingsPage() {
           api.getVadConfig(),
           api.getSenseVoiceStreamingConfig(),
           api.getAdaptivePollingConfig(),
-        ]);
+        ]) as [unknown, unknown, unknown, unknown, unknown, unknown, unknown];
 
-        if (danmakuData.config) {
-          setDanmakuConfig(danmakuData.config);
+        if (danmakuData && typeof danmakuData === 'object' && 'config' in danmakuData) {
+          setDanmakuConfig((danmakuData as { config: typeof danmakuConfig }).config);
         }
-        if (firewallData.config) {
-          setFirewallConfig(firewallData.config);
+        if (firewallData && typeof firewallData === 'object' && 'config' in firewallData) {
+          setFirewallConfig((firewallData as { config: typeof firewallConfig }).config);
         }
-        if (firewallV3Data.config) {
-          setFirewallV3Config(firewallV3Data.config);
+        if (firewallV3Data && typeof firewallV3Data === 'object' && 'config' in firewallV3Data) {
+          setFirewallV3Config((firewallV3Data as { config: typeof firewallV3Config }).config);
         }
-        if (liveStatus) {
-          setLiveClientStatus(liveStatus);
+        if (liveStatus && typeof liveStatus === 'object') {
+          setLiveClientStatus(liveStatus as typeof liveClientStatus);
         }
-        if (vadData.config) {
-          setVadConfig(vadData.config);
+        if (vadData && typeof vadData === 'object' && 'config' in vadData) {
+          setVadConfig((vadData as { config: typeof vadConfig }).config);
         }
-        if (sensevoiceData.config) {
+        if (sensevoiceData && typeof sensevoiceData === 'object' && 'config' in sensevoiceData) {
+          const cfg = (sensevoiceData as { config: { chunk_size?: number; hop_size?: number; look_back?: number } }).config;
           setSensevoiceStreamingConfig({
-            chunk_size: sensevoiceData.config.chunk_size ?? 1600,
-            hop_size: sensevoiceData.config.hop_size ?? 800,
-            look_back: sensevoiceData.config.look_back ?? 8000,
+            chunk_size: cfg.chunk_size ?? 1600,
+            hop_size: cfg.hop_size ?? 800,
+            look_back: cfg.look_back ?? 8000,
           });
         }
-        if (adaptivePollingData.config) {
-          setAdaptivePollingConfig({
-            offset_ms: adaptivePollingData.config.offset_ms ?? 0,
-            window_size: adaptivePollingData.config.window_size ?? 3,
-          });
-        }
-        if (adaptivePollingData.stats) {
-          setAdaptivePollingStats(adaptivePollingData.stats);
+        if (adaptivePollingData && typeof adaptivePollingData === 'object') {
+          const apData = adaptivePollingData as { config?: { offset_ms?: number; window_size?: number }; stats?: typeof adaptivePollingStats };
+          if (apData.config) {
+            setAdaptivePollingConfig({
+              offset_ms: apData.config.offset_ms ?? 0,
+              window_size: apData.config.window_size ?? 3,
+            });
+          }
+          if (apData.stats) {
+            setAdaptivePollingStats(apData.stats);
+          }
         }
       } catch (error) {
         console.error('Failed to load live configs:', error);
@@ -538,21 +592,28 @@ export function SettingsPage() {
           api.getGraphConfig(),
           api.getGraphHealth(),
           api.getGraphStatus(),
-        ]);
+        ]) as [unknown, unknown, unknown];
 
-        if (configData.status === 'success' && configData.config) {
+        const cfg = configData as { status?: string; config?: {
+          graph_enabled?: boolean;
+          graph_backend?: string;
+          neo4j?: typeof graphConfig.neo4j;
+          graph_libraries?: typeof graphConfig.graph_libraries;
+        } };
+        if (cfg.status === 'success' && cfg.config) {
           setGraphConfig({
-            graph_enabled: configData.config.graph_enabled ?? false,
-            graph_backend: configData.config.graph_backend ?? 'neo4j',
-            neo4j: configData.config.neo4j ?? graphConfig.neo4j,
-            graph_libraries: configData.config.graph_libraries ?? graphConfig.graph_libraries,
+            graph_enabled: cfg.config.graph_enabled ?? false,
+            graph_backend: cfg.config.graph_backend ?? 'neo4j',
+            neo4j: cfg.config.neo4j ?? graphConfig.neo4j,
+            graph_libraries: cfg.config.graph_libraries ?? graphConfig.graph_libraries,
           });
         }
-        if (healthData) {
-          setGraphHealth(healthData);
+        if (healthData && typeof healthData === 'object') {
+          setGraphHealth(healthData as typeof graphHealth);
         }
-        if (statsData.status === 'success' && statsData.graph_status) {
-          setGraphStats(statsData.graph_status);
+        const st = statsData as { status?: string; graph_status?: typeof graphStats };
+        if (st.status === 'success' && st.graph_status) {
+          setGraphStats(st.graph_status);
         }
       } catch (error) {
         console.error('Failed to load graph config:', error);
@@ -569,13 +630,11 @@ export function SettingsPage() {
     setUploadingFile(true);
     try {
       const result = await api.uploadAudioFile(file);
-      if (result.status === 'success') {
+      if (result.filename) {
         setAudioFiles((prev) => [
           ...prev,
           { name: result.filename, size: file.size, modified: Date.now() },
         ]);
-      } else {
-        alert(result.message || '上传失败');
       }
     } catch (error) {
       console.error('Upload error:', error);
@@ -613,51 +672,26 @@ export function SettingsPage() {
     }
 
     setGeneratingEmotions(true);
-    setGenerateProgress({ current: 0, total: 5, emotion: '' });
+    setGenerateProgress({ current: 0, total: 64, message: '准备生成...' });
 
     try {
-      const emotions = [
-        { type: 'happy', intensity: 1.0 },
-        { type: 'sad', intensity: 1.0 },
-        { type: 'angry', intensity: 1.0 },
-        { type: 'surprised', intensity: 1.0 },
-        { type: 'tender', intensity: 1.0 },
-      ];
-
-      const result = await api.generateEmotionAudios({
-        ref_audio: audioConfig.ref_audio_path,
-        ref_text: audioConfig.ref_text,
-        emotions,
-        template: 'full',
-        auto_full: true,
+      const result = await api.pregenerateEmotionRefs({
+        base_audio_path: audioConfig.ref_audio_path,
       });
 
-      const filesData = await api.getAudioFiles();
-      if (filesData.status === 'success') {
-        setAudioFiles(filesData.files || []);
-      }
-
-      const configData = await api.getAudioConfig();
-      if (configData.config) {
-        setAudioConfig((prev) => ({
-          ...prev,
-          emotion_voices: configData.config.emotion_voices || prev.emotion_voices,
-        }));
-      }
-
-      const status = await api.getIndexTTSStatus();
-      setIndexTtsStatus(status);
-
-      if (result.errors && Object.keys(result.errors).length > 0) {
-        alert(`部分情感生成失败：${Object.keys(result.errors).join(', ')}`);
-      } else if (result.generated) {
-        alert(`成功生成 ${Object.keys(result.generated).length} 个情感音频！`);
+      if (result.status === 'success') {
+        alert(`成功生成 ${result.total} 个参考音频！\n情感: ${result.emotions_count}\n过渡: ${result.transitions_count}`);
+        
+        const refsData = await api.getCosyVoiceRefsStatus();
+        if (refsData) {
+          setRefsStatus(refsData);
+        }
       } else {
-        alert('情感音频生成完成！');
+        alert('预生成失败，请检查 CosyVoice 服务是否运行');
       }
     } catch (error) {
       console.error('Generate emotions error:', error);
-      alert('生成失败');
+      alert('预生成失败');
     } finally {
       setGeneratingEmotions(false);
       setGenerateProgress(null);
@@ -665,39 +699,36 @@ export function SettingsPage() {
   };
 
   useEffect(() => {
-    if (serviceConfig?.config) {
-      if (serviceConfig.config.vector) {
-        const vec = serviceConfig.config.vector;
+    if (serviceConfig && typeof serviceConfig === 'object' && 'config' in serviceConfig) {
+      const cfg = (serviceConfig as { config: Record<string, unknown> }).config;
+      if (cfg.vector && typeof cfg.vector === 'object') {
+        const vec = cfg.vector as Record<string, unknown>;
         setVectorConfig({
-          backend: vec.backend ?? vec.vector_backend ?? 'weaviate',
-          vectorSize: vec.vector_size ?? 768,
-          dbPath: vec.db_path ?? 'data/chroma_db',
-          collectionName: vec.collection_name ?? 'memory_vectors',
-          weaviateHost: vec.host ?? vec.weaviate_host ?? 'localhost',
-          weaviatePort: vec.port ?? vec.weaviate_port ?? 8090,
-          qdrantHost: vec.qdrant_host ?? 'localhost',
-          qdrantPort: vec.qdrant_port ?? 6333,
+          backend: (vec.backend as string) ?? (vec.vector_backend as string) ?? 'weaviate',
+          vectorSize: (vec.vector_size as number) ?? 768,
+          dbPath: (vec.db_path as string) ?? 'data/chroma_db',
+          collectionName: (vec.collection_name as string) ?? 'memory_vectors',
+          weaviateHost: (vec.host as string) ?? (vec.weaviate_host as string) ?? 'localhost',
+          weaviatePort: (vec.port as number) ?? (vec.weaviate_port as number) ?? 8090,
+          qdrantHost: (vec.qdrant_host as string) ?? 'localhost',
+          qdrantPort: (vec.qdrant_port as number) ?? 6333,
         });
       }
-      if (serviceConfig.config.models) {
+      if (cfg.models && typeof cfg.models === 'object') {
+        const models = cfg.models as Record<string, unknown>;
         setModelsConfig((prev) => ({
-          main: serviceConfig.config.models?.main
-            ? { ...prev.main, ...serviceConfig.config.models.main }
-            : prev.main,
-          summary: serviceConfig.config.models?.summary
-            ? { ...prev.summary, ...serviceConfig.config.models.summary }
-            : prev.summary,
-          memory: serviceConfig.config.models?.memory
-            ? { ...prev.memory, ...serviceConfig.config.models.memory }
-            : prev.memory,
+          main: models.main ? { ...prev.main, ...(models.main as Record<string, unknown>) } : prev.main,
+          summary: models.summary ? { ...prev.summary, ...(models.summary as Record<string, unknown>) } : prev.summary,
+          memory: models.memory ? { ...prev.memory, ...(models.memory as Record<string, unknown>) } : prev.memory,
         }));
       }
-      if (serviceConfig.config.llm_params) {
+      if (cfg.llm_params && typeof cfg.llm_params === 'object') {
+        const llm = cfg.llm_params as Record<string, unknown>;
         setLlmParams({
-          temperature: serviceConfig.config.llm_params.temperature ?? 0.7,
-          maxTokens: serviceConfig.config.llm_params.maxTokens ?? 2048,
-          topP: serviceConfig.config.llm_params.topP ?? 0.9,
-          timeout: serviceConfig.config.llm_params.timeout ?? 30,
+          temperature: (llm.temperature as number) ?? 0.7,
+          maxTokens: (llm.maxTokens as number) ?? 2048,
+          topP: (llm.topP as number) ?? 0.9,
+          timeout: (llm.timeout as number) ?? 30,
         });
       }
     }
@@ -732,15 +763,15 @@ export function SettingsPage() {
   const handleStartBackend = async () => {
     setIsProcessing(true);
     try {
-      const response = await fetch('http://localhost:8000/health');
+      const response = await fetch('http://localhost:8100/health');
       if (response.ok) {
         alert('后端服务已在运行');
         setIsBackendRunning(true);
       } else {
-        alert('请手动启动后端服务: cd CXHMS && python main.py');
+        alert('请手动启动后端服务: cd backend && python main.py');
       }
     } catch {
-      alert('请手动启动后端服务: cd CXHMS && python main.py');
+      alert('请手动启动后端服务: cd backend && python main.py');
     } finally {
       setIsProcessing(false);
     }
@@ -759,33 +790,30 @@ export function SettingsPage() {
     try {
       switch (activeSection) {
         case 'audio':
-          await api.updateConfig({ section: 'audio', data: audioConfig });
+          await api.updateConfig('audio', audioConfig);
           break;
         case 'live':
-          await api.updateConfig({
-            section: 'live',
-            data: {
-              danmaku: danmakuConfig,
-              firewall: firewallConfig,
-              firewall_v3: firewallV3Config,
-              vad: vadConfig,
-              sensevoice_streaming: sensevoiceStreamingConfig,
-              adaptive_polling: adaptivePollingConfig,
-            },
+          await api.updateConfig('live', {
+            danmaku: danmakuConfig,
+            firewall: firewallConfig,
+            firewall_v3: firewallV3Config,
+            vad: vadConfig,
+            sensevoice_streaming: sensevoiceStreamingConfig,
+            adaptive_polling: adaptivePollingConfig,
           });
           break;
         case 'vector':
-          await api.updateConfig({ section: 'vector', data: vectorConfig });
+          await api.updateConfig('vector', vectorConfig);
           break;
         case 'graph':
-          await api.updateConfig({ section: 'graph', data: graphConfig });
+          await api.updateConfig('graph', graphConfig);
           break;
         case 'llm': {
           const updatedModelDefaults = {
             summary: modelsConfig.summary.enabled ? 'summary' : 'main',
             memory: modelsConfig.memory.enabled ? 'memory' : 'main',
           };
-          await api.updateLLMConfig({
+          await api.updateConfig('llm', {
             models: modelsConfig,
             model_defaults: updatedModelDefaults,
             llm_params: llmParams,
@@ -798,7 +826,10 @@ export function SettingsPage() {
     } catch {
       setSaveStatus('error');
     }
-    setTimeout(() => setSaveStatus('idle'), 2000);
+    if (saveStatusTimeoutRef.current) {
+      clearTimeout(saveStatusTimeoutRef.current);
+    }
+    saveStatusTimeoutRef.current = setTimeout(() => setSaveStatus('idle'), 2000);
   };
 
   return (
@@ -948,147 +979,29 @@ export function SettingsPage() {
                 <CardBody>
                   <div className="flex items-center justify-between mb-6">
                     <div>
-                      <h3 className="text-lg font-semibold">Gateway 服务配置</h3>
+                      <h3 className="text-lg font-semibold">服务状态</h3>
                       <p className="text-sm text-[var(--color-text-secondary)]">
-                        管理各微服务连接 (ASR/TTS/Index-TTS)
+                        单体架构服务 - ASR/TTS 已集成
                       </p>
                     </div>
-                    <Button
-                      onClick={handleUpdateGatewayServices}
-                      loading={isGatewayConfigLoading}
-                    >
-                      保存配置
-                    </Button>
                   </div>
 
-                  <div className="space-y-4">
-                    <div className="grid grid-cols-2 gap-4">
-                      <div>
-                        <label className="text-sm font-medium mb-2 block">CXHMS 后端 URL</label>
-                        <input
-                          type="text"
-                          value={gatewayServicesConfig.cxhms.url}
-                          onChange={(e) => setGatewayServicesConfig({
-                            ...gatewayServicesConfig,
-                            cxhms: { ...gatewayServicesConfig.cxhms, url: e.target.value }
-                          })}
-                          className="w-full px-3 py-2 bg-[var(--color-bg-primary)] border border-[var(--color-border)] rounded-[var(--radius-md)]"
-                          placeholder="ws://127.0.0.1:8000/ws"
-                        />
-                      </div>
-                      <div>
-                        <label className="text-sm font-medium mb-2 block">CXHMS HTTP URL</label>
-                        <input
-                          type="text"
-                          value={gatewayServicesConfig.cxhms.http_url || ''}
-                          onChange={(e) => setGatewayServicesConfig({
-                            ...gatewayServicesConfig,
-                            cxhms: { ...gatewayServicesConfig.cxhms, http_url: e.target.value }
-                          })}
-                          className="w-full px-3 py-2 bg-[var(--color-bg-primary)] border border-[var(--color-border)] rounded-[var(--radius-md)]"
-                          placeholder="http://127.0.0.1:8000"
-                        />
-                      </div>
+                  <div className="p-4 bg-[var(--color-bg-tertiary)] rounded-[var(--radius-lg)] mb-4">
+                    <div className="flex items-center gap-3 mb-3">
+                      <div className={`w-3 h-3 rounded-full ${isBackendRunning ? 'bg-green-500' : 'bg-gray-400'}`} />
+                      <span className="font-medium">
+                        {isBackendRunning ? '单体服务运行中' : '服务未运行'}
+                      </span>
                     </div>
+                    <div className="text-sm text-[var(--color-text-secondary)]">
+                      <p>WebSocket: <code className="px-1 py-0.5 bg-[var(--color-bg-primary)] rounded">ws://127.0.0.1:8100/ws</code></p>
+                      <p>HTTP API: <code className="px-1 py-0.5 bg-[var(--color-bg-primary)] rounded">http://127.0.0.1:8100</code></p>
+                    </div>
+                  </div>
 
-                    <div className="grid grid-cols-2 gap-4">
-                      <div>
-                        <label className="text-sm font-medium mb-2 block">ASR 服务 URL</label>
-                        <input
-                          type="text"
-                          value={gatewayServicesConfig.asr.url}
-                          onChange={(e) => setGatewayServicesConfig({
-                            ...gatewayServicesConfig,
-                            asr: { ...gatewayServicesConfig.asr, url: e.target.value }
-                          })}
-                          className="w-full px-3 py-2 bg-[var(--color-bg-primary)] border border-[var(--color-border)] rounded-[var(--radius-md)]"
-                          placeholder="http://127.0.0.1:8001"
-                        />
-                      </div>
-                      <div>
-                        <label className="text-sm font-medium mb-2 block">ASR 超时 (秒)</label>
-                        <input
-                          type="number"
-                          value={gatewayServicesConfig.asr.timeout}
-                          onChange={(e) => setGatewayServicesConfig({
-                            ...gatewayServicesConfig,
-                            asr: { ...gatewayServicesConfig.asr, timeout: parseInt(e.target.value) || 60 }
-                          })}
-                          className="w-full px-3 py-2 bg-[var(--color-bg-primary)] border border-[var(--color-border)] rounded-[var(--radius-md)]"
-                        />
-                      </div>
-                    </div>
-
-                    <div className="grid grid-cols-2 gap-4">
-                      <div>
-                        <label className="text-sm font-medium mb-2 block">TTS 服务 URL</label>
-                        <input
-                          type="text"
-                          value={gatewayServicesConfig.tts.url}
-                          onChange={(e) => setGatewayServicesConfig({
-                            ...gatewayServicesConfig,
-                            tts: { ...gatewayServicesConfig.tts, url: e.target.value }
-                          })}
-                          className="w-full px-3 py-2 bg-[var(--color-bg-primary)] border border-[var(--color-border)] rounded-[var(--radius-md)]"
-                          placeholder="http://127.0.0.1:8002"
-                        />
-                      </div>
-                      <div>
-                        <label className="text-sm font-medium mb-2 block">TTS 超时 (秒)</label>
-                        <input
-                          type="number"
-                          value={gatewayServicesConfig.tts.timeout}
-                          onChange={(e) => setGatewayServicesConfig({
-                            ...gatewayServicesConfig,
-                            tts: { ...gatewayServicesConfig.tts, timeout: parseInt(e.target.value) || 120 }
-                          })}
-                          className="w-full px-3 py-2 bg-[var(--color-bg-primary)] border border-[var(--color-border)] rounded-[var(--radius-md)]"
-                        />
-                      </div>
-                    </div>
-
-                    <div className="grid grid-cols-3 gap-4">
-                      <div>
-                        <label className="text-sm font-medium mb-2 block">Index-TTS URL</label>
-                        <input
-                          type="text"
-                          value={gatewayServicesConfig.index_tts.url}
-                          onChange={(e) => setGatewayServicesConfig({
-                            ...gatewayServicesConfig,
-                            index_tts: { ...gatewayServicesConfig.index_tts, url: e.target.value }
-                          })}
-                          className="w-full px-3 py-2 bg-[var(--color-bg-primary)] border border-[var(--color-border)] rounded-[var(--radius-md)]"
-                          placeholder="http://127.0.0.1:8004"
-                        />
-                      </div>
-                      <div>
-                        <label className="text-sm font-medium mb-2 block">Index-TTS 超时 (秒)</label>
-                        <input
-                          type="number"
-                          value={gatewayServicesConfig.index_tts.timeout}
-                          onChange={(e) => setGatewayServicesConfig({
-                            ...gatewayServicesConfig,
-                            index_tts: { ...gatewayServicesConfig.index_tts, timeout: parseInt(e.target.value) || 180 }
-                          })}
-                          className="w-full px-3 py-2 bg-[var(--color-bg-primary)] border border-[var(--color-border)] rounded-[var(--radius-md)]"
-                        />
-                      </div>
-                      <div>
-                        <label className="text-sm font-medium mb-2 block">启用 Index-TTS</label>
-                        <label className="flex items-center gap-2 mt-2">
-                          <input
-                            type="checkbox"
-                            checked={gatewayServicesConfig.index_tts.enabled}
-                            onChange={(e) => setGatewayServicesConfig({
-                              ...gatewayServicesConfig,
-                              index_tts: { ...gatewayServicesConfig.index_tts, enabled: e.target.checked }
-                            })}
-                            className="w-4 h-4"
-                          />
-                          <span>启用</span>
-                        </label>
-                      </div>
-                    </div>
+                  <div className="p-3 bg-blue-500/10 border border-blue-500/30 rounded-[var(--radius-md)] text-sm text-blue-600 dark:text-blue-400">
+                    <p className="font-medium mb-1">架构变更说明</p>
+                    <p>系统已从微服务架构重构为单体架构。ASR（语音识别）和 TTS（语音合成）功能已直接集成到主服务中，无需单独配置微服务端点。</p>
                   </div>
                 </CardBody>
               </Card>
@@ -1097,9 +1010,9 @@ export function SettingsPage() {
                 <CardBody>
                   <div className="flex items-center justify-between mb-6">
                     <div>
-                      <h3 className="text-lg font-semibold">CXHMS 后端服务</h3>
+                      <h3 className="text-lg font-semibold">服务管理</h3>
                       <p className="text-sm text-[var(--color-text-secondary)]">
-                        管理 CXHMS 后端服务
+                        启动/停止单体服务
                       </p>
                     </div>
                     <div className="flex items-center gap-2">
@@ -1143,7 +1056,7 @@ export function SettingsPage() {
                     </div>
                     <div>
                       <span className="text-xs text-[var(--color-text-tertiary)]">端口</span>
-                      <p className="font-medium">{backendStatus.port || 8000}</p>
+                      <p className="font-medium">8100</p>
                     </div>
                     <div>
                       <span className="text-xs text-[var(--color-text-tertiary)]">进程 ID</span>
@@ -1337,11 +1250,15 @@ export function SettingsPage() {
                       <h4 className="text-sm font-medium mb-3">图数据库功能</h4>
                       <div className="grid grid-cols-3 gap-4">
                         <div className="text-center">
-                          <div className="text-lg font-semibold">{graphStats?.node_count || 0}</div>
+                          <div className="text-lg font-semibold">
+                            {Object.values(graphStats?.libraries || {}).reduce((sum, lib) => sum + (lib.entity_count || 0), 0)}
+                          </div>
                           <div className="text-xs text-[var(--color-text-tertiary)]">节点</div>
                         </div>
                         <div className="text-center">
-                          <div className="text-lg font-semibold">{graphStats?.edge_count || 0}</div>
+                          <div className="text-lg font-semibold">
+                            {Object.values(graphStats?.libraries || {}).reduce((sum, lib) => sum + (lib.relation_count || 0), 0)}
+                          </div>
                           <div className="text-xs text-[var(--color-text-tertiary)]">边</div>
                         </div>
                         <div className="text-center">
@@ -1356,11 +1273,11 @@ export function SettingsPage() {
                     <div className="flex gap-2 flex-wrap">
                       <Button
                         size="sm"
-                        variant="outline"
+                        variant="secondary"
                         onClick={async () => {
                           try {
-                            const result = await api.getGraphStats();
-                            setGraphStats(result);
+                            const result = await api.getGraphStats() as unknown as typeof graphStats;
+                            if (result) setGraphStats(result);
                           } catch {
                             console.error('获取图统计失败');
                           }
@@ -1370,11 +1287,11 @@ export function SettingsPage() {
                       </Button>
                       <Button
                         size="sm"
-                        variant="outline"
+                        variant="secondary"
                         onClick={async () => {
                           try {
-                            const health = await api.getGraphHealth();
-                            setGraphHealth(health);
+                            const health = await api.getGraphHealth() as typeof graphHealth;
+                            if (health) setGraphHealth(health);
                           } catch {
                             console.error('获取图健康状态失败');
                           }
@@ -1781,40 +1698,48 @@ export function SettingsPage() {
                 </CardBody>
               </Card>
 
-              {/* CosyVoice 情感音频生成 */}
+              {/* CosyVoice 情感参考音频预生成 */}
               <Card>
                 <CardBody>
-                  <h3 className="text-lg font-semibold mb-4">情感音频生成</h3>
+                  <h3 className="text-lg font-semibold mb-4">情感参考音频预生成</h3>
                   <p className="text-sm text-[var(--color-text-secondary)] mb-4">
-                    使用 IndexTTS 2 从一条参考音频自动生成所有情感的参考音频
+                    使用 CosyVoice 从一条参考音频预生成 64 个情感和过渡参考音频
                   </p>
                   <div className="space-y-4">
                     <div className="flex items-center justify-between p-3 bg-[var(--color-bg-tertiary)] rounded-[var(--radius-lg)]">
                       <div className="flex items-center gap-3">
                         <span
                           className={`w-3 h-3 rounded-full ${
-                            indexTtsStatus?.status === 'running'
+                            cosyvoiceStatus?.status === 'running'
                               ? 'bg-green-500'
-                              : indexTtsStatus?.status === 'starting'
+                              : cosyvoiceStatus?.status === 'starting'
                               ? 'bg-yellow-500 animate-pulse'
-                              : indexTtsStatus?.status === 'disabled'
+                              : cosyvoiceStatus?.status === 'disabled'
                               ? 'bg-gray-400'
                               : 'bg-red-500'
                           }`}
                         />
                         <div>
-                          <div className="text-sm font-medium">IndexTTS 2 服务</div>
+                          <div className="text-sm font-medium">CosyVoice 服务</div>
                           <div className="text-xs text-[var(--color-text-tertiary)]">
-                            {indexTtsStatus?.status === 'running'
-                              ? `运行中 - ${indexTtsStatus.url}`
-                              : indexTtsStatus?.status === 'starting'
+                            {cosyvoiceStatus?.status === 'running'
+                              ? '运行中'
+                              : cosyvoiceStatus?.status === 'starting'
                               ? '启动中...'
-                              : indexTtsStatus?.status === 'disabled'
+                              : cosyvoiceStatus?.status === 'disabled'
                               ? '已禁用'
                               : '已停止'}
                           </div>
                         </div>
                       </div>
+                      {refsStatus && (
+                        <div className="text-right">
+                          <div className="text-sm font-medium">{refsStatus.total_count}/64</div>
+                          <div className="text-xs text-[var(--color-text-tertiary)]">
+                            {refsStatus.is_complete ? '已完成' : '未完成'}
+                          </div>
+                        </div>
+                      )}
                     </div>
 
                     <div className="flex items-center gap-4">
@@ -1823,12 +1748,12 @@ export function SettingsPage() {
                         disabled={
                           generatingEmotions ||
                           !audioConfig.ref_audio_path ||
-                          indexTtsStatus?.status === 'starting'
+                          cosyvoiceStatus?.status === 'starting'
                         }
                         className={`flex items-center gap-2 px-4 py-2 rounded-[var(--radius-md)] transition-colors ${
                           generatingEmotions ||
                           !audioConfig.ref_audio_path ||
-                          indexTtsStatus?.status === 'starting'
+                          cosyvoiceStatus?.status === 'starting'
                             ? 'bg-[var(--color-border)] text-[var(--color-text-tertiary)] cursor-not-allowed'
                             : 'bg-[var(--color-accent)] text-white hover:opacity-90'
                         }`}
@@ -1848,14 +1773,26 @@ export function SettingsPage() {
                         </svg>
                         <span>
                           {generatingEmotions
-                            ? `生成中... ${generateProgress?.current || 0}/${generateProgress?.total || 5}`
-                            : '生成情感音频'}
+                            ? `生成中... ${generateProgress?.current || 0}/${generateProgress?.total || 64}`
+                            : '预生成参考音频 (64)'}
                         </span>
                       </button>
                       <span className="text-sm text-[var(--color-text-tertiary)]">
-                        将为 happy, sad, angry, surprised, tender 生成情感音频
+                        生成 8 个情感 + 56 个过渡参考音频
                       </span>
                     </div>
+
+                    {generateProgress && (
+                      <div className="w-full bg-[var(--color-bg-tertiary)] rounded-[var(--radius-md)] overflow-hidden">
+                        <div
+                          className="h-2 bg-[var(--color-accent)] transition-all duration-300"
+                          style={{ width: `${(generateProgress.current / generateProgress.total) * 100}%` }}
+                        />
+                        <div className="px-3 py-1 text-xs text-[var(--color-text-secondary)]">
+                          {generateProgress.message}
+                        </div>
+                      </div>
+                    )}
 
                     {!audioConfig.ref_audio_path && (
                       <p className="text-sm text-amber-600">
@@ -2565,6 +2502,320 @@ export function SettingsPage() {
                         )}
                       </>
                     )}
+                  </div>
+                </CardBody>
+              </Card>
+
+              <div className="flex justify-end mt-6">
+                <Button onClick={handleSave} loading={saveStatus === 'saving'}>
+                  {saveStatus === 'saved' ? '已保存' : '保存配置'}
+                </Button>
+              </div>
+            </div>
+          )}
+
+          {activeSection === 'live2d' && (
+            <div className="space-y-6">
+              {/* 虚拟形象类型选择 */}
+              <Card>
+                <CardBody>
+                  <h3 className="text-lg font-semibold mb-4">虚拟形象类型</h3>
+                  <p className="text-sm text-[var(--color-text-secondary)] mb-4">
+                    选择在聊天页面显示的虚拟形象类型
+                  </p>
+                  <div className="flex gap-2">
+                    <button
+                      onClick={() => setAvatarType('none')}
+                      className={`flex-1 p-3 rounded-[var(--radius-md)] border transition-colors ${
+                        avatarType === 'none'
+                          ? 'border-[var(--color-accent)] bg-[var(--color-accent-light)]'
+                          : 'border-[var(--color-border)] hover:border-[var(--color-accent)]'
+                      }`}
+                    >
+                      <div className="text-center">
+                        <svg className="w-6 h-6 mx-auto mb-2" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M18.364 18.364A9 9 0 005.636 5.636m12.728 12.728A9 9 0 015.636 5.636m12.728 12.728L5.636 5.636" />
+                        </svg>
+                        <span className="text-sm font-medium">无</span>
+                      </div>
+                    </button>
+                    <button
+                      onClick={() => setAvatarType('live2d')}
+                      className={`flex-1 p-3 rounded-[var(--radius-md)] border transition-colors ${
+                        avatarType === 'live2d'
+                          ? 'border-[var(--color-accent)] bg-[var(--color-accent-light)]'
+                          : 'border-[var(--color-border)] hover:border-[var(--color-accent)]'
+                      }`}
+                    >
+                      <div className="text-center">
+                        <svg className="w-6 h-6 mx-auto mb-2" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M14.828 14.828a4 4 0 01-5.656 0M9 10h.01M15 10h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                        </svg>
+                        <span className="text-sm font-medium">Live2D</span>
+                      </div>
+                    </button>
+                    <button
+                      onClick={() => setAvatarType('vrm')}
+                      className={`flex-1 p-3 rounded-[var(--radius-md)] border transition-colors ${
+                        avatarType === 'vrm'
+                          ? 'border-[var(--color-accent)] bg-[var(--color-accent-light)]'
+                          : 'border-[var(--color-border)] hover:border-[var(--color-accent)]'
+                      }`}
+                    >
+                      <div className="text-center">
+                        <svg className="w-6 h-6 mx-auto mb-2" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
+                        </svg>
+                        <span className="text-sm font-medium">VRM 3D</span>
+                      </div>
+                    </button>
+                  </div>
+                </CardBody>
+              </Card>
+
+              {/* Live2D 配置 */}
+              <Card>
+                <CardBody>
+                  <h3 className="text-lg font-semibold mb-4">Live2D 虚拟形象</h3>
+                  <p className="text-sm text-[var(--color-text-secondary)] mb-4">
+                    在聊天页面显示 Live2D 虚拟形象，支持口型同步
+                  </p>
+                  <div className="space-y-4">
+                    <div>
+                      <label className="text-sm font-medium mb-2 block">模型路径</label>
+                      <input
+                        type="text"
+                        value={live2dSettings.modelPath}
+                        onChange={(e) => setLive2DSettings({ modelPath: e.target.value })}
+                        placeholder="/models/shizuku/shizuku.model.json"
+                        className="w-full px-3 py-2 bg-[var(--color-bg-primary)] border border-[var(--color-border)] rounded-[var(--radius-md)]"
+                      />
+                      <p className="text-xs text-[var(--color-text-tertiary)] mt-1">
+                        模型文件相对于 public 目录的路径
+                      </p>
+                    </div>
+
+                    <div className="grid grid-cols-3 gap-4">
+                      <div>
+                        <label className="text-sm font-medium mb-2 block">缩放</label>
+                        <input
+                          type="number"
+                          step="0.05"
+                          value={live2dSettings.scale}
+                          onChange={(e) => setLive2DSettings({ scale: parseFloat(e.target.value) || 0.3 })}
+                          className="w-full px-3 py-2 bg-[var(--color-bg-primary)] border border-[var(--color-border)] rounded-[var(--radius-md)]"
+                        />
+                      </div>
+                      <div>
+                        <label className="text-sm font-medium mb-2 block">X 偏移</label>
+                        <input
+                          type="number"
+                          value={live2dSettings.xOffset}
+                          onChange={(e) => setLive2DSettings({ xOffset: parseInt(e.target.value) || 0 })}
+                          className="w-full px-3 py-2 bg-[var(--color-bg-primary)] border border-[var(--color-border)] rounded-[var(--radius-md)]"
+                        />
+                      </div>
+                      <div>
+                        <label className="text-sm font-medium mb-2 block">Y 偏移</label>
+                        <input
+                          type="number"
+                          value={live2dSettings.yOffset}
+                          onChange={(e) => setLive2DSettings({ yOffset: parseInt(e.target.value) || 0 })}
+                          className="w-full px-3 py-2 bg-[var(--color-bg-primary)] border border-[var(--color-border)] rounded-[var(--radius-md)]"
+                        />
+                      </div>
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-4">
+                      <div className="flex items-center justify-between p-3 bg-[var(--color-bg-tertiary)] rounded-[var(--radius-md)]">
+                        <span className="text-sm">口型同步</span>
+                        <button
+                          onClick={() => setLive2DSettings({ lipSync: !live2dSettings.lipSync })}
+                          className={`w-10 h-5 rounded-full transition-colors ${
+                            live2dSettings.lipSync ? 'bg-[var(--color-accent)]' : 'bg-[var(--color-border)]'
+                          }`}
+                        >
+                          <div
+                            className={`w-4 h-4 rounded-full bg-white transition-transform ${
+                              live2dSettings.lipSync ? 'translate-x-5' : 'translate-x-0.5'
+                            }`}
+                          />
+                        </button>
+                      </div>
+                      <div className="flex items-center justify-between p-3 bg-[var(--color-bg-tertiary)] rounded-[var(--radius-md)]">
+                        <span className="text-sm">空闲动作</span>
+                        <button
+                          onClick={() => setLive2DSettings({ idleMotion: !live2dSettings.idleMotion })}
+                          className={`w-10 h-5 rounded-full transition-colors ${
+                            live2dSettings.idleMotion ? 'bg-[var(--color-accent)]' : 'bg-[var(--color-border)]'
+                          }`}
+                        >
+                          <div
+                            className={`w-4 h-4 rounded-full bg-white transition-transform ${
+                              live2dSettings.idleMotion ? 'translate-x-5' : 'translate-x-0.5'
+                            }`}
+                          />
+                        </button>
+                      </div>
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-4">
+                      <div>
+                        <label className="text-sm font-medium mb-2 block">最小宽度</label>
+                        <input
+                          type="number"
+                          value={live2dSettings.minWidth}
+                          onChange={(e) => setLive2DSettings({ minWidth: parseInt(e.target.value) || 200 })}
+                          className="w-full px-3 py-2 bg-[var(--color-bg-primary)] border border-[var(--color-border)] rounded-[var(--radius-md)]"
+                        />
+                      </div>
+                      <div>
+                        <label className="text-sm font-medium mb-2 block">最大宽度</label>
+                        <input
+                          type="number"
+                          value={live2dSettings.maxWidth}
+                          onChange={(e) => setLive2DSettings({ maxWidth: parseInt(e.target.value) || 400 })}
+                          className="w-full px-3 py-2 bg-[var(--color-bg-primary)] border border-[var(--color-border)] rounded-[var(--radius-md)]"
+                        />
+                      </div>
+                    </div>
+                  </div>
+                </CardBody>
+              </Card>
+
+              {/* VRM 3D 配置 */}
+              <Card>
+                <CardBody>
+                  <h3 className="text-lg font-semibold mb-4">VRM 3D 虚拟形象</h3>
+                  <p className="text-sm text-[var(--color-text-secondary)] mb-4">
+                    在聊天页面显示 VRM 3D 虚拟形象，支持口型同步和视线追踪
+                  </p>
+                  <div className="space-y-4">
+                    <div>
+                      <label className="text-sm font-medium mb-2 block">模型路径</label>
+                      <input
+                        type="text"
+                        value={vrmSettings.modelPath}
+                        onChange={(e) => setVRMSettings({ modelPath: e.target.value })}
+                        placeholder="/models/avatar.vrm"
+                        className="w-full px-3 py-2 bg-[var(--color-bg-primary)] border border-[var(--color-border)] rounded-[var(--radius-md)]"
+                      />
+                      <p className="text-xs text-[var(--color-text-tertiary)] mt-1">
+                        VRM 模型文件相对于 public 目录的路径
+                      </p>
+                    </div>
+
+                    <div className="grid grid-cols-4 gap-4">
+                      <div>
+                        <label className="text-sm font-medium mb-2 block">缩放</label>
+                        <input
+                          type="number"
+                          step="0.1"
+                          value={vrmSettings.scale}
+                          onChange={(e) => setVRMSettings({ scale: parseFloat(e.target.value) || 1.0 })}
+                          className="w-full px-3 py-2 bg-[var(--color-bg-primary)] border border-[var(--color-border)] rounded-[var(--radius-md)]"
+                        />
+                      </div>
+                      <div>
+                        <label className="text-sm font-medium mb-2 block">X 位置</label>
+                        <input
+                          type="number"
+                          step="0.1"
+                          value={vrmSettings.position3d[0]}
+                          onChange={(e) => setVRMSettings({ position3d: [parseFloat(e.target.value) || 0, vrmSettings.position3d[1], vrmSettings.position3d[2]] })}
+                          className="w-full px-3 py-2 bg-[var(--color-bg-primary)] border border-[var(--color-border)] rounded-[var(--radius-md)]"
+                        />
+                      </div>
+                      <div>
+                        <label className="text-sm font-medium mb-2 block">Y 位置</label>
+                        <input
+                          type="number"
+                          step="0.1"
+                          value={vrmSettings.position3d[1]}
+                          onChange={(e) => setVRMSettings({ position3d: [vrmSettings.position3d[0], parseFloat(e.target.value) || 0, vrmSettings.position3d[2]] })}
+                          className="w-full px-3 py-2 bg-[var(--color-bg-primary)] border border-[var(--color-border)] rounded-[var(--radius-md)]"
+                        />
+                      </div>
+                      <div>
+                        <label className="text-sm font-medium mb-2 block">Z 位置</label>
+                        <input
+                          type="number"
+                          step="0.1"
+                          value={vrmSettings.position3d[2]}
+                          onChange={(e) => setVRMSettings({ position3d: [vrmSettings.position3d[0], vrmSettings.position3d[1], parseFloat(e.target.value) || 0] })}
+                          className="w-full px-3 py-2 bg-[var(--color-bg-primary)] border border-[var(--color-border)] rounded-[var(--radius-md)]"
+                        />
+                      </div>
+                    </div>
+
+                    <div className="grid grid-cols-3 gap-4">
+                      <div className="flex items-center justify-between p-3 bg-[var(--color-bg-tertiary)] rounded-[var(--radius-md)]">
+                        <span className="text-sm">口型同步</span>
+                        <button
+                          onClick={() => setVRMSettings({ lipSync: !vrmSettings.lipSync })}
+                          className={`w-10 h-5 rounded-full transition-colors ${
+                            vrmSettings.lipSync ? 'bg-[var(--color-accent)]' : 'bg-[var(--color-border)]'
+                          }`}
+                        >
+                          <div
+                            className={`w-4 h-4 rounded-full bg-white transition-transform ${
+                              vrmSettings.lipSync ? 'translate-x-5' : 'translate-x-0.5'
+                            }`}
+                          />
+                        </button>
+                      </div>
+                      <div className="flex items-center justify-between p-3 bg-[var(--color-bg-tertiary)] rounded-[var(--radius-md)]">
+                        <span className="text-sm">空闲动画</span>
+                        <button
+                          onClick={() => setVRMSettings({ idleAnimation: !vrmSettings.idleAnimation })}
+                          className={`w-10 h-5 rounded-full transition-colors ${
+                            vrmSettings.idleAnimation ? 'bg-[var(--color-accent)]' : 'bg-[var(--color-border)]'
+                          }`}
+                        >
+                          <div
+                            className={`w-4 h-4 rounded-full bg-white transition-transform ${
+                              vrmSettings.idleAnimation ? 'translate-x-5' : 'translate-x-0.5'
+                            }`}
+                          />
+                        </button>
+                      </div>
+                      <div className="flex items-center justify-between p-3 bg-[var(--color-bg-tertiary)] rounded-[var(--radius-md)]">
+                        <span className="text-sm">视线追踪</span>
+                        <button
+                          onClick={() => setVRMSettings({ lookAtMouse: !vrmSettings.lookAtMouse })}
+                          className={`w-10 h-5 rounded-full transition-colors ${
+                            vrmSettings.lookAtMouse ? 'bg-[var(--color-accent)]' : 'bg-[var(--color-border)]'
+                          }`}
+                        >
+                          <div
+                            className={`w-4 h-4 rounded-full bg-white transition-transform ${
+                              vrmSettings.lookAtMouse ? 'translate-x-5' : 'translate-x-0.5'
+                            }`}
+                          />
+                        </button>
+                      </div>
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-4">
+                      <div>
+                        <label className="text-sm font-medium mb-2 block">最小宽度</label>
+                        <input
+                          type="number"
+                          value={vrmSettings.minWidth}
+                          onChange={(e) => setVRMSettings({ minWidth: parseInt(e.target.value) || 200 })}
+                          className="w-full px-3 py-2 bg-[var(--color-bg-primary)] border border-[var(--color-border)] rounded-[var(--radius-md)]"
+                        />
+                      </div>
+                      <div>
+                        <label className="text-sm font-medium mb-2 block">最大宽度</label>
+                        <input
+                          type="number"
+                          value={vrmSettings.maxWidth}
+                          onChange={(e) => setVRMSettings({ maxWidth: parseInt(e.target.value) || 400 })}
+                          className="w-full px-3 py-2 bg-[var(--color-bg-primary)] border border-[var(--color-border)] rounded-[var(--radius-md)]"
+                        />
+                      </div>
+                    </div>
                   </div>
                 </CardBody>
               </Card>

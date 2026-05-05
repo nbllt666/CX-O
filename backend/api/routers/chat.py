@@ -315,7 +315,8 @@ async def chat(request: ChatRequest):
     except HTTPException:
         raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.error(f"聊天处理失败: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="聊天处理失败")
 
 
 @router.post("/chat/stream")
@@ -554,7 +555,7 @@ async def chat_stream(request: ChatRequest):
 
             except Exception as e:
                 logger.error(f"流式聊天错误: {e}", exc_info=True)
-                yield f"data: {json.dumps({'type': 'error', 'error': str(e)})}\n\n"
+                yield f"data: {json.dumps({'type': 'error', 'message': '流式聊天处理失败'})}\n\n"
 
         return StreamingResponse(
             generate_stream(),
@@ -568,7 +569,8 @@ async def chat_stream(request: ChatRequest):
     except HTTPException:
         raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.error(f"记忆管理模型流式聊天处理失败: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="记忆管理模型流式聊天处理失败")
 
 
 @router.get("/chat/history/{session_id}")
@@ -616,7 +618,7 @@ async def get_chat_history(session_id: str, limit: int = 50):
         raise
     except Exception as e:
         logger.error(f"获取聊天历史失败: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="获取聊天历史失败")
 
 
 # ========== 记忆管理模型专用路由 ==========
@@ -829,7 +831,7 @@ async def memory_agent_chat_stream(request: MemoryAgentChatRequest):
 
             except Exception as e:
                 logger.error(f"记忆管理模型流式聊天错误: {e}", exc_info=True)
-                yield f"data: {json.dumps({'type': 'error', 'error': str(e)})}\n\n"
+                yield f"data: {json.dumps({'type': 'error', 'message': '记忆管理模型流式聊天处理失败'})}\n\n"
 
         return StreamingResponse(
             generate_stream(),

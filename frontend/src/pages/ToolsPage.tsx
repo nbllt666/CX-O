@@ -22,7 +22,7 @@ import {
   Copy,
   Check,
 } from 'lucide-react';
-import { api } from '../api/client';
+import { api, type ToolStats } from '../api/client';
 import { cn } from '../lib/utils';
 
 interface Tool {
@@ -39,14 +39,6 @@ interface Tool {
   parameters?: Record<string, unknown>;
   examples?: string[];
   tags?: string[];
-}
-
-interface ToolStats {
-  total_tools: number;
-  active_tools: number;
-  mcp_tools: number;
-  native_tools: number;
-  total_calls: number;
 }
 
 const toolIcons: Record<string, React.ElementType> = {
@@ -132,10 +124,7 @@ export function ToolsPage() {
   // Fetch tools stats
   const { data: stats, isLoading: statsLoading } = useQuery<ToolStats>({
     queryKey: ['tools-stats'],
-    queryFn: async () => {
-      const response = await api.getToolsStats();
-      return response;
-    },
+    queryFn: () => api.getToolsStats(),
     refetchInterval: 10000,
   });
 
@@ -144,15 +133,40 @@ export function ToolsPage() {
     queryKey: ['tools', filter],
     queryFn: async () => {
       const response = await api.getTools(filter === 'all' ? undefined : filter);
-      // 将工具对象转换为数组
       const toolsObj = response.tools || {};
-      return Object.values(toolsObj) as Tool[];
+      return Object.entries(toolsObj).map(([key, tool]) => {
+        const name = tool.name ?? key;
+        return {
+          id: tool.id ?? name,
+          name,
+          description: tool.description ?? '',
+          type: tool.type || 'custom',
+          status: tool.status || 'inactive',
+          config: tool.config ?? {},
+          icon: tool.icon,
+          created_at: tool.created_at ?? new Date().toISOString(),
+          last_used: tool.last_used,
+          use_count: tool.use_count ?? 0,
+          parameters: tool.parameters,
+          examples: tool.examples,
+          tags: tool.tags,
+        } satisfies Tool;
+      });
     },
   });
 
   // Create tool mutation
   const createToolMutation = useMutation({
-    mutationFn: api.createTool,
+    mutationFn: (payload: {
+      name: string;
+      description?: string;
+      type: 'mcp' | 'native' | 'custom';
+      icon?: string;
+      config?: Record<string, unknown>;
+      parameters?: Record<string, unknown>;
+      examples?: string[];
+      tags?: string[];
+    }) => api.createTool({ ...payload, enabled: true }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['tools'] });
       queryClient.invalidateQueries({ queryKey: ['tools-stats'] });
@@ -238,7 +252,7 @@ export function ToolsPage() {
           icon={CheckCircle2}
           loading={statsLoading}
           trend={
-            stats ? `${Math.round((stats.active_tools / stats.total_tools) * 100)}%` : undefined
+            stats && stats.active_tools !== undefined ? `${Math.round((stats.active_tools / stats.total_tools) * 100)}%` : undefined
           }
         />
         <StatCard

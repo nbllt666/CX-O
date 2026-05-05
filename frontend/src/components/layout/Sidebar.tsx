@@ -386,9 +386,9 @@ export const Sidebar: React.FC<SidebarProps> = ({ collapsed, setCollapsed }) => 
           if (collapsed) {
             return (
               <Tooltip key={item.path} content={item.label} position="right">
-                <NavLink to={item.path} className="block relative">
+                <NavLink to={item.path} className="block">
                   <motion.div
-                    className="flex items-center justify-center px-3 py-2.5 rounded-[var(--radius-md)]"
+                    className="relative flex items-center justify-center pl-4 pr-3 py-2.5 rounded-[var(--radius-md)]"
                     variants={navItemVariants}
                     animate={isActive ? 'active' : 'inactive'}
                     whileHover={{
@@ -398,7 +398,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ collapsed, setCollapsed }) => 
                     }}
                   >
                     <motion.div
-                      className="absolute left-0 top-1/2 -translate-y-1/2 w-[3px] h-[60%] bg-[var(--color-accent)] rounded-r-full origin-center"
+                      className="absolute left-0 inset-y-0 w-[5px] bg-[var(--color-accent)]/85 rounded-l-full origin-center"
                       variants={indicatorVariants}
                       animate={isActive ? 'active' : 'inactive'}
                     />
@@ -415,10 +415,10 @@ export const Sidebar: React.FC<SidebarProps> = ({ collapsed, setCollapsed }) => 
                 <>
                   <button
                     onClick={() => setIsChatExpanded(!isChatExpanded)}
-                    className="w-full block relative"
+                    className="w-full block"
                   >
                     <motion.div
-                      className="flex items-center gap-3 px-3 py-2.5 rounded-[var(--radius-md)]"
+                      className="relative flex items-center gap-3 pl-4 pr-3 py-2.5 rounded-[var(--radius-md)]"
                       variants={navItemVariants}
                       animate={isActive ? 'active' : 'inactive'}
                       whileHover={{
@@ -428,20 +428,20 @@ export const Sidebar: React.FC<SidebarProps> = ({ collapsed, setCollapsed }) => 
                       }}
                     >
                       <motion.div
-                        className="absolute left-0 top-1/2 -translate-y-1/2 w-[3px] h-[60%] bg-[var(--color-accent)] rounded-r-full origin-center"
-                        variants={indicatorVariants}
-                        animate={isActive ? 'active' : 'inactive'}
-                      />
-                      <span className="flex-shrink-0">{item.icon}</span>
-                      <motion.span
-                        className="text-sm font-medium"
-                        variants={labelVariants}
-                        initial="visible"
-                        animate="visible"
-                      >
-                        {item.label}
-                      </motion.span>
-                      <motion.svg
+                        className="absolute left-0 inset-y-0 w-[5px] bg-[var(--color-accent)]/85 rounded-l-full origin-center"
+                      variants={indicatorVariants}
+                      animate={isActive ? 'active' : 'inactive'}
+                    />
+                    <span className="flex-shrink-0">{item.icon}</span>
+                    <motion.span
+                      className="text-sm font-medium"
+                      variants={labelVariants}
+                      initial="visible"
+                      animate="visible"
+                    >
+                      {item.label}
+                    </motion.span>
+                    <motion.svg
                         className="w-4 h-4 ml-auto"
                         variants={chevronVariants}
                         animate={isChatExpanded ? 'expanded' : 'collapsed'}
@@ -468,11 +468,11 @@ export const Sidebar: React.FC<SidebarProps> = ({ collapsed, setCollapsed }) => 
                             <button
                               onClick={() => handleAgentClick(agent.id)}
                               className={cn(
-                                'w-full flex items-center gap-2 px-3 py-2 rounded-[var(--radius-md)] text-left relative'
+                                'w-full flex items-center gap-2 pl-3 pr-3 py-2 rounded-[var(--radius-md)] text-left relative'
                               )}
                             >
                               <motion.div
-                                className="absolute left-0 top-1/2 -translate-y-1/2 w-[2px] h-[50%] bg-[var(--color-accent)] rounded-r-full origin-center"
+                                className="absolute -left-[13px] inset-y-1 w-[2px] bg-[var(--color-accent)]/85 rounded-l-full origin-center"
                                 initial={{ scaleY: 0, opacity: 0 }}
                                 animate={
                                   currentAgentId === agent.id
@@ -507,9 +507,9 @@ export const Sidebar: React.FC<SidebarProps> = ({ collapsed, setCollapsed }) => 
                   </AnimatePresence>
                 </>
               ) : (
-                <NavLink to={item.path} className="block relative">
+                <NavLink to={item.path} className="block">
                   <motion.div
-                    className="flex items-center gap-3 px-3 py-2.5 rounded-[var(--radius-md)]"
+                    className="relative flex items-center gap-3 pl-4 pr-3 py-2.5 rounded-[var(--radius-md)]"
                     variants={navItemVariants}
                     animate={isActive ? 'active' : 'inactive'}
                     whileHover={{
@@ -519,7 +519,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ collapsed, setCollapsed }) => 
                     }}
                   >
                     <motion.div
-                      className="absolute left-0 top-1/2 -translate-y-1/2 w-[3px] h-[60%] bg-[var(--color-accent)] rounded-r-full origin-center"
+                      className="absolute left-0 inset-y-0 w-[5px] bg-[var(--color-accent)]/85 rounded-l-full origin-center"
                       variants={indicatorVariants}
                       animate={isActive ? 'active' : 'inactive'}
                     />

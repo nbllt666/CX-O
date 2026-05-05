@@ -10,15 +10,8 @@ import {
   AlertCircle,
   CheckCircle2,
 } from 'lucide-react';
-import { api } from '../api/client';
+import { api, type ArchiveStats } from '../api/client';
 import { cn } from '../lib/utils';
-
-interface ArchiveStats {
-  archive_level_counts: Record<number, number>;
-  total_archived: number;
-  merge_count: number;
-  duplicate_count: number;
-}
 
 interface DuplicateGroup {
   group_id: string;
@@ -34,7 +27,7 @@ export function ArchivePage() {
 
   const { data: stats, refetch: refetchStats } = useQuery<ArchiveStats>({
     queryKey: ['archiveStats'],
-    queryFn: () => api.getArchiveStats(),
+    queryFn: async () => api.getArchiveStats(),
     refetchInterval: 10000,
   });
 
@@ -42,7 +35,10 @@ export function ArchivePage() {
     duplicate_groups: DuplicateGroup[];
   }>({
     queryKey: ['duplicates'],
-    queryFn: () => api.detectDuplicates(),
+    queryFn: async () => {
+      const res = await api.detectDuplicates();
+      return { duplicate_groups: res.duplicate_groups as DuplicateGroup[] };
+    },
     enabled: activeTab === 'duplicates',
   });
 
@@ -50,9 +46,9 @@ export function ArchivePage() {
     setIsProcessing(true);
     setProcessResult(null);
     try {
-      const result = await api.autoArchiveProcess();
+      const result = await api.autoArchiveProcess() as { results?: { archived?: unknown[]; merged?: unknown[] } };
       setProcessResult(
-        `归档完成：归档 ${result.results.archived.length} 条，合并 ${result.results.merged.length} 条`
+        `归档完成：归档 ${result.results?.archived?.length || 0} 条，合并 ${result.results?.merged?.length || 0} 条`
       );
       refetchStats();
     } catch {

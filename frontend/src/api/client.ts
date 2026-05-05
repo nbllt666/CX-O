@@ -1,9 +1,9 @@
 import axios, { AxiosInstance, AxiosError } from 'axios';
 import type { AxiosRequestConfig, InternalAxiosRequestConfig } from 'axios';
 
-const getApiBaseUrl = () => localStorage.getItem('cxhms-backend-url') || import.meta.env.VITE_API_URL || 'http://localhost:8000';
-const getControlServiceUrl = () => localStorage.getItem('cxhms-control-url') || import.meta.env.VITE_CONTROL_SERVICE_URL || 'http://localhost:8765';
-const getWsBaseUrl = () => localStorage.getItem('cxhms-ws-url') || import.meta.env.VITE_WS_URL || 'ws://localhost:8000';
+const getApiBaseUrl = () => localStorage.getItem('cxhms-backend-url') || import.meta.env.VITE_API_URL || 'http://localhost:8100';
+const getControlServiceUrl = () => localStorage.getItem('cxhms-control-url') || import.meta.env.VITE_CONTROL_SERVICE_URL || 'http://localhost:8100';
+const getWsBaseUrl = () => localStorage.getItem('cxhms-ws-url') || import.meta.env.VITE_WS_URL || 'ws://localhost:8100';
 
 export const WS_BASE_URL = getWsBaseUrl();
 
@@ -52,6 +52,103 @@ export interface GraphStats {
   graph_density?: number;
   node_types?: string[];
   edge_types?: string[];
+  connected?: boolean;
+  libraries?: Record<string, { entity_count: number; relation_count: number }>;
+}
+
+export interface AcpStats {
+  total_agents: number;
+  active_agents: number;
+  total_messages: number;
+  total_conversations?: number;
+  avg_response_time?: number;
+}
+
+export interface AcpAgentRow {
+  id: string;
+  name: string;
+  description?: string;
+  capabilities?: string[];
+  status?: string;
+}
+
+export interface ArchiveStats {
+  total_memories: number;
+  archived_memories: number;
+  active_memories: number;
+  total_archived?: number;
+  merge_count?: number;
+  duplicate_count?: number;
+  archive_level_counts?: Record<string, number>;
+}
+
+export interface ToolStats {
+  total_tools: number;
+  enabled_tools: number;
+  builtin_tools: number;
+  custom_tools: number;
+  active_tools?: number;
+  mcp_tools?: number;
+  total_calls?: number;
+}
+
+export interface Tool {
+  id: string;
+  name: string;
+  description: string;
+  type: 'builtin' | 'custom' | 'mcp';
+  status: 'active' | 'inactive' | 'error';
+  config: Record<string, unknown>;
+  icon?: string;
+  created_at: string;
+  last_used?: string;
+  use_count: number;
+  parameters?: Record<string, unknown>;
+  examples?: string[];
+  tags?: string[];
+}
+
+export interface GraphEntity {
+  id: string;
+  type: string;
+  name?: string;
+  properties?: Record<string, unknown>;
+  created_at?: string;
+}
+
+export interface GraphRelation {
+  id: string;
+  type: string;
+  source_id: string;
+  target_id: string;
+  properties?: Record<string, unknown>;
+  created_at?: string;
+}
+
+export interface VectorData {
+  memory_id: number;
+  content: string;
+  memory_type: string;
+  importance: number;
+  created_at: string;
+  has_vector: boolean;
+}
+
+export interface DuplicateGroup {
+  group_id: string;
+  memory_ids: number[];
+  canonical_id: number;
+  similarity_matrix: Record<string, number>;
+}
+
+export interface ArchiveResult {
+  archived_count: number;
+  merged_count: number;
+  errors?: string[];
+  results?: {
+    archived?: unknown[];
+    merged?: unknown[];
+  };
 }
 
 export interface Memory {
@@ -74,6 +171,7 @@ export interface Session {
   created_at: string;
   updated_at: string;
   message_count?: number;
+  session_id?: string;
 }
 
 export interface ChatMessage {
@@ -419,52 +517,52 @@ class ApiClient {
     }>({ url: '/api/stats' });
   }
 
-  async getArchiveStats(): Promise<{ statistics: Record<string, unknown> }> {
-    return this.request<{ statistics: Record<string, unknown> }>({ url: '/archive/stats' });
+  async getArchiveStats(): Promise<ArchiveStats> {
+    return this.request<ArchiveStats>({ url: '/archive/stats' });
   }
 
   async mergeMemories(memoryIds: number[]): Promise<{ success: boolean; merged_memory_id?: number }> {
     return this.request<{ success: boolean; merged_memory_id?: number }>({ url: '/api/archive/merge', method: 'post', data: { memory_ids: memoryIds } });
   }
 
-  async detectDuplicates(): Promise<{ duplicate_groups: unknown[] }> {
-    return this.request<{ duplicate_groups: unknown[] }>({ url: '/api/archive/deduplicate', method: 'post', data: {} });
+  async detectDuplicates(): Promise<{ duplicate_groups: DuplicateGroup[] }> {
+    return this.request<{ duplicate_groups: DuplicateGroup[] }>({ url: '/api/archive/deduplicate', method: 'post', data: {} });
   }
 
-  async autoArchiveProcess(): Promise<{ results: unknown }> {
-    return this.request<{ results: unknown }>({ url: '/api/archive/auto-process', method: 'post' });
+  async autoArchiveProcess(): Promise<ArchiveResult> {
+    return this.request<ArchiveResult>({ url: '/api/archive/auto-process', method: 'post' });
   }
 
-  async getTools(filter?: string): Promise<{ tools: unknown[] }> {
-    return this.request<{ tools: unknown[] }>({ url: '/api/tools', params: filter ? { filter } : undefined });
+  async getTools(filter?: string): Promise<{ tools: Record<string, Tool> }> {
+    return this.request<{ tools: Record<string, Tool> }>({ url: '/api/tools', params: filter ? { filter } : undefined });
   }
 
-  async getToolsStats(): Promise<{ total: number; enabled: number; disabled: number }> {
-    return this.request<{ total: number; enabled: number; disabled: number }>({ url: '/api/tools/stats' });
+  async getToolsStats(): Promise<ToolStats> {
+    return this.request<ToolStats>({ url: '/api/tools/stats' });
   }
 
   async deleteTool(toolId: string): Promise<void> {
     await this.request({ url: `/api/tools/${toolId}`, method: 'delete' });
   }
 
-  async testTool(toolId: string, params?: Record<string, unknown>): Promise<{ result: unknown }> {
-    return this.request<{ result: unknown }>({ url: `/api/tools/${toolId}/test`, method: 'post', data: params });
+  async testTool(toolId: string, params?: Record<string, unknown>): Promise<{ result: Record<string, unknown> }> {
+    return this.request<{ result: Record<string, unknown> }>({ url: `/api/tools/${toolId}/test`, method: 'post', data: params });
   }
 
-  async getAcpStats(): Promise<{ peers: number; groups: number }> {
-    return this.request<{ peers: number; groups: number }>({ url: '/api/acp/stats' });
+  async getAcpStats(): Promise<AcpStats> {
+    return this.request<AcpStats>({ url: '/api/acp/stats' });
   }
 
-  async getAcpAgents(): Promise<{ agents: unknown[] }> {
-    return this.request<{ agents: unknown[] }>({ url: '/api/acp/agents' });
+  async getAcpAgents(): Promise<AcpAgentRow[]> {
+    return this.request<AcpAgentRow[]>({ url: '/api/acp/agents' });
   }
 
-  async createAcpAgent(data: { name: string; capabilities?: string[] }): Promise<unknown> {
-    return this.request<unknown>({ url: '/api/acp/agents', method: 'post', data });
+  async createAcpAgent(data: { name: string; description?: string; capabilities?: string[] }): Promise<AcpAgentRow> {
+    return this.request<AcpAgentRow>({ url: '/api/acp/agents', method: 'post', data });
   }
 
-  async updateAcpAgent(agentId: string, data: Record<string, unknown>): Promise<unknown> {
-    return this.request<unknown>({ url: `/api/acp/agents/${agentId}`, method: 'put', data });
+  async updateAcpAgent(agentId: string, data: Record<string, unknown>): Promise<AcpAgentRow> {
+    return this.request<AcpAgentRow>({ url: `/api/acp/agents/${agentId}`, method: 'put', data });
   }
 
   async deleteAcpAgent(agentId: string): Promise<void> {
@@ -523,32 +621,32 @@ class ApiClient {
     return this.controlRequest<{ status: string }>({ url: '/api/restart', method: 'post' });
   }
 
-  async getVectorStatus(): Promise<{ status: string; backend: string }> {
-    return this.request<{ status: string; backend: string }>({ url: '/api/vector/status' });
+  async getVectorStatus(): Promise<{ status: string; backend: string; connected: boolean }> {
+    return this.request<{ status: string; backend: string; connected: boolean }>({ url: '/api/vector/status' });
   }
 
   async getVectorStats(): Promise<{ total: number; by_type: Record<string, number> }> {
     return this.request<{ total: number; by_type: Record<string, number> }>({ url: '/api/vector/stats' });
   }
 
-  async getVector(memoryId: number): Promise<unknown> {
-    return this.request<unknown>({ url: `/api/vector/${memoryId}` });
+  async getVector(memoryId: number): Promise<VectorData> {
+    return this.request<VectorData>({ url: `/api/vector/${memoryId}` });
   }
 
   async deleteVector(memoryId: number): Promise<void> {
     await this.request({ url: `/api/vector/${memoryId}`, method: 'delete' });
   }
 
-  async getGraphStatus(): Promise<{ connected: boolean; database: string }> {
-    return this.request<{ connected: boolean; database: string }>({ url: '/api/graph/status' });
+  async getGraphStatus(): Promise<GraphStats> {
+    return this.request<GraphStats>({ url: '/api/graph/status' });
   }
 
-  async getGraphEntityTypes(library: string = 'thing'): Promise<{ types: string[] }> {
-    return this.request<{ types: string[] }>({ url: `/api/graph/${library}/entity-types` });
+  async getGraphEntityTypes(library: string = 'thing'): Promise<{ types: string[]; entity_types?: string[] }> {
+    return this.request<{ types: string[]; entity_types?: string[] }>({ url: `/api/graph/${library}/entity-types` });
   }
 
-  async getGraphRelationTypes(library: string = 'thing'): Promise<{ types: string[] }> {
-    return this.request<{ types: string[] }>({ url: `/api/graph/${library}/relation-types` });
+  async getGraphRelationTypes(library: string = 'thing'): Promise<{ types: string[]; relation_types?: string[] }> {
+    return this.request<{ types: string[]; relation_types?: string[] }>({ url: `/api/graph/${library}/relation-types` });
   }
 
   async deleteGraphEntity(library: string, entityId: string): Promise<void> {
@@ -571,8 +669,50 @@ class ApiClient {
     await this.request({ url: `/api/audio/files/${filename}`, method: 'delete' });
   }
 
+  async getCosyVoiceStatus(): Promise<{ status: string; engine?: string }> {
+    return this.request<{ status: string; engine?: string }>({ url: '/api/audio/cosyvoice/status' });
+  }
+
+  async getCosyVoiceRefsStatus(): Promise<{ 
+    emotions_count: number; 
+    transitions_count: number; 
+    total_count: number; 
+    is_complete: boolean;
+    expected_total: number;
+  }> {
+    return this.request<{ 
+      emotions_count: number; 
+      transitions_count: number; 
+      total_count: number; 
+      is_complete: boolean;
+      expected_total: number;
+    }>({ url: '/api/audio/cosyvoice/refs-status' });
+  }
+
+  async pregenerateEmotionRefs(data: { 
+    base_audio_path: string;
+    sample_text?: string;
+    transition_text?: string;
+  }): Promise<{ 
+    status: string; 
+    emotions_count: number; 
+    transitions_count: number; 
+    total: number;
+  }> {
+    return this.request<{ 
+      status: string; 
+      emotions_count: number; 
+      transitions_count: number; 
+      total: number;
+    }>({ 
+      url: '/api/audio/cosyvoice/pregenerate-refs', 
+      method: 'POST',
+      data
+    });
+  }
+
   async getIndexTTSStatus(): Promise<{ status: string }> {
-    return this.request<{ status: string }>({ url: '/api/audio/index-tts/status' });
+    return this.request<{ status: string }>({ url: '/api/audio/cosyvoice/status' });
   }
 
   async getDanmakuConfig(): Promise<Record<string, unknown>> {
@@ -605,6 +745,172 @@ class ApiClient {
 
   async getGraphConfig(): Promise<Record<string, unknown>> {
     return this.request<Record<string, unknown>>({ url: '/api/graph/config' });
+  }
+
+  async textToSpeech(text: string): Promise<Blob> {
+    const response = await this.request<ArrayBuffer>({
+      url: '/api/tts',
+      method: 'post',
+      data: { text },
+      responseType: 'arraybuffer',
+    });
+    return new Blob([response], { type: 'audio/mp3' });
+  }
+
+  async speechToText(audioBlob: Blob): Promise<{ text: string }> {
+    const formData = new FormData();
+    formData.append('audio', audioBlob);
+    
+    const axiosInstance = this.client;
+    this._setupInterceptors(axiosInstance);
+    
+    const response = await axiosInstance.post<{ text: string }>('/api/asr', formData, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+    });
+    return response.data;
+  }
+
+  async sendMessageStream(
+    message: string,
+    onChunk: (chunk: Record<string, unknown>) => void,
+    agentId: string = 'default',
+    images?: string[]
+  ): Promise<void> {
+    const axiosInstance = this.client;
+    this._setupInterceptors(axiosInstance);
+
+    const response = await axiosInstance.post('/api/chat/stream', {
+      message,
+      agent_id: agentId,
+      images,
+    }, {
+      responseType: 'text',
+      transformResponse: [(data: string) => data],
+    });
+
+    const lines = response.data.split('\n');
+    for (const line of lines) {
+      if (line.startsWith('data: ')) {
+        try {
+          const jsonStr = line.slice(6);
+          if (jsonStr.trim()) {
+            const chunk = JSON.parse(jsonStr) as Record<string, unknown>;
+            onChunk(chunk);
+          }
+        } catch {
+          // Ignore parse errors
+        }
+      }
+    }
+  }
+
+  async uploadAudioFile(file: File): Promise<{ filename: string; url: string }> {
+    const formData = new FormData();
+    formData.append('file', file);
+    
+    const axiosInstance = this.client;
+    this._setupInterceptors(axiosInstance);
+    
+    const response = await axiosInstance.post<{ filename: string; url: string }>('/api/audio/upload', formData, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+    });
+    return response.data;
+  }
+
+  async disconnectLiveClient(clientId: string): Promise<void> {
+    await this.request({ url: `/api/live/client/${clientId}/disconnect`, method: 'post' });
+  }
+
+  async listGraphEntities(entityType?: string, limit?: number): Promise<{ entities: GraphEntity[] }> {
+    const params = new URLSearchParams();
+    if (entityType) params.append('entity_type', entityType);
+    if (limit) params.append('limit', String(limit));
+    return this.request({ url: `/api/graph/entities?${params.toString()}` });
+  }
+
+  async listGraphRelations(relationType?: string, limit?: number): Promise<{ relations: GraphRelation[] }> {
+    const params = new URLSearchParams();
+    if (relationType) params.append('relation_type', relationType);
+    if (limit) params.append('limit', String(limit));
+    return this.request({ url: `/api/graph/relations?${params.toString()}` });
+  }
+
+  async createGraphEntity(entityType: string, entityData: Record<string, unknown>): Promise<GraphEntity> {
+    return this.request({ url: '/api/graph/entities', method: 'post', data: { entity_type: entityType, ...entityData } });
+  }
+
+  async createGraphRelation(relationType: string, sourceId: string, targetId: string, relationData?: Record<string, unknown>): Promise<GraphRelation> {
+    return this.request({ url: '/api/graph/relations', method: 'post', data: { relation_type: relationType, source_id: sourceId, target_id: targetId, ...relationData } });
+  }
+
+  async findGraphPath(sourceId: string, targetId: string, maxDepth?: number): Promise<{ path: GraphEntity[] }> {
+    const params = new URLSearchParams();
+    params.append('source_id', sourceId);
+    params.append('target_id', targetId);
+    if (maxDepth) params.append('max_depth', String(maxDepth));
+    return this.request({ url: `/api/graph/path?${params.toString()}` });
+  }
+
+  async listVectors(limit?: number, offset?: number): Promise<{ vectors: VectorData[]; total: number }> {
+    const params = new URLSearchParams();
+    if (limit) params.append('limit', String(limit));
+    if (offset) params.append('offset', String(offset));
+    return this.request({ url: `/api/vectors?${params.toString()}` });
+  }
+
+  async searchVectors(query: string, limit?: number): Promise<{ results: VectorData[] }> {
+    const params = new URLSearchParams();
+    params.append('query', query);
+    if (limit) params.append('limit', String(limit));
+    return this.request({ url: `/api/vectors/search?${params.toString()}` });
+  }
+
+  async syncVectors(): Promise<{ status: string }> {
+    return this.request({ url: '/api/vectors/sync', method: 'post' });
+  }
+
+  async rebuildVectors(): Promise<{ status: string }> {
+    return this.request({ url: '/api/vectors/rebuild', method: 'post' });
+  }
+
+  async createTool(toolData: Record<string, unknown>): Promise<Tool> {
+    return this.request({ url: '/api/tools', method: 'post', data: toolData });
+  }
+
+  async updateTool(toolId: string, toolData: Record<string, unknown>): Promise<Tool> {
+    return this.request({ url: `/api/tools/${toolId}`, method: 'put', data: toolData });
+  }
+
+  async sendMemoryAgentMessageStream(
+    message: string,
+    onChunk: (chunk: Record<string, unknown>) => void,
+    sessionId?: string
+  ): Promise<void> {
+    const axiosInstance = this.client;
+    this._setupInterceptors(axiosInstance);
+
+    const response = await axiosInstance.post('/api/memory-agent/stream', {
+      message,
+      session_id: sessionId,
+    }, {
+      responseType: 'text',
+      transformResponse: [(data: string) => data],
+    });
+
+    const lines = response.data.split('\n');
+    for (const line of lines) {
+      if (line.startsWith('data: ')) {
+        try {
+          const jsonStr = line.slice(6);
+          if (jsonStr.trim()) {
+            const chunk = JSON.parse(jsonStr) as Record<string, unknown>;
+            onChunk(chunk);
+          }
+        } catch {
+          // Ignore parse errors
+        }
+      }
+    }
   }
 
   getAudioFileUrl(filename: string): string {

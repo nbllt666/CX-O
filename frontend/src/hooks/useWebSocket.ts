@@ -210,7 +210,7 @@ export function useWebSocket(options: WebSocketOptions): UseWebSocketReturn {
           default:
             onMessageRef.current?.(data);
         }
-      } catch (e) {
+      } catch (e: unknown) {
         console.error('Failed to parse WebSocket message:', e);
       }
     };
@@ -272,18 +272,19 @@ export function useWebSocket(options: WebSocketOptions): UseWebSocketReturn {
   useEffect(() => {
     connect();
 
-    const handleTimeoutChange = (e: CustomEvent) => {
-      const newTimeout = parseInt(e.detail, 10);
+    const handleTimeoutChange = (e: Event) => {
+      const customEvent = e as CustomEvent<string>;
+      const newTimeout = parseInt(customEvent.detail, 10);
       if (!isNaN(newTimeout)) {
         setTimeoutState(newTimeout);
       }
     };
 
-    window.addEventListener('offline-timeout-change', handleTimeoutChange as EventListener);
+    window.addEventListener('offline-timeout-change', handleTimeoutChange);
 
     return () => {
       disconnect();
-      window.removeEventListener('offline-timeout-change', handleTimeoutChange as EventListener);
+      window.removeEventListener('offline-timeout-change', handleTimeoutChange);
     };
   }, [connect, disconnect]);
 

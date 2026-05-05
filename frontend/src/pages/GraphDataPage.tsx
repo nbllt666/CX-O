@@ -82,14 +82,14 @@ export function GraphDataPage() {
 
   const { data: entities, isLoading: entitiesLoading } = useQuery({
     queryKey: ['graphEntities', activeLibrary, searchQuery],
-    queryFn: () => api.listGraphEntities(activeLibrary, { search: searchQuery || undefined, limit: 100 }),
-    enabled: graphStatus?.graph_status?.connected,
+    queryFn: () => api.listGraphEntities(searchQuery || undefined, 100),
+    enabled: graphStatus?.connected,
   });
 
   const { data: relations, isLoading: relationsLoading } = useQuery({
     queryKey: ['graphRelations', activeLibrary],
-    queryFn: () => api.listGraphRelations(activeLibrary, { limit: 100 }),
-    enabled: graphStatus?.graph_status?.connected,
+    queryFn: () => api.listGraphRelations(undefined, 100),
+    enabled: graphStatus?.connected,
   });
 
   const createEntityMutation = useMutation({
@@ -116,7 +116,7 @@ export function GraphDataPage() {
 
   const createRelationMutation = useMutation({
     mutationFn: (data: typeof newRelation) =>
-      api.createGraphRelation(activeLibrary, data),
+      api.createGraphRelation(data.relation_type, data.from_entity, data.to_entity, { strength: data.strength }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['graphRelations', activeLibrary] });
       setShowRelationModal(false);
@@ -126,13 +126,17 @@ export function GraphDataPage() {
 
   const deleteRelationMutation = useMutation({
     mutationFn: (params: { from_entity: string; to_entity: string; relation_type: string }) =>
-      api.deleteGraphRelation(activeLibrary, params),
+      api.deleteGraphRelation(activeLibrary, {
+        source_id: params.from_entity,
+        target_id: params.to_entity,
+        relation_type: params.relation_type,
+      }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['graphRelations', activeLibrary] });
     },
   });
 
-  const connected = graphStatus?.graph_status?.connected;
+  const connected = graphStatus?.connected;
 
   return (
     <div className="max-w-7xl mx-auto">
@@ -176,10 +180,9 @@ export function GraphDataPage() {
             </button>
           ))}
 
-          {graphStatus?.graph_status?.libraries && (
-            <div className="mt-4 p-3 bg-[var(--color-bg-tertiary)] rounded-[var(--radius-lg)]">
-              <div className="text-xs text-[var(--color-text-tertiary)] mb-2">统计信息</div>
-              {Object.entries(graphStatus.graph_status.libraries).map(([name, stats]: [string, unknown]) => {
+          {graphStatus?.libraries && (
+            <div className="flex gap-4">
+              {Object.entries(graphStatus.libraries).map(([name, stats]: [string, unknown]) => {
                 const s = stats as { entity_count?: number; relation_count?: number };
                 return (
                   <div key={name} className="flex justify-between text-xs mb-1">
@@ -210,7 +213,7 @@ export function GraphDataPage() {
               {/* 统计概览卡片 */}
               <div className="grid grid-cols-4 gap-4 mb-6">
                 {(Object.keys(libraryLabels) as LibraryType[]).map((lib) => {
-                  const stats = graphStatus?.graph_status?.libraries?.[lib] as { entity_count?: number; relation_count?: number } | undefined;
+                  const stats = graphStatus?.libraries?.[lib] as { entity_count?: number; relation_count?: number } | undefined;
                   return (
                     <Card key={lib}>
                       <CardBody>
@@ -297,16 +300,16 @@ export function GraphDataPage() {
                 <div className="mb-6">
                   <GraphVisualization
                     nodes={
-                      entities?.entities?.map((e: Entity) => ({
+                      (entities?.entities as Entity[] | undefined)?.map((e: Entity) => ({
                         id: e.entity_id,
                         name: e.name,
                         type: e.entity_type,
                         val: 5,
-                        data: e,
+                        data: { ...e } as Record<string, unknown>,
                       })) || []
                     }
                     links={
-                      relations?.relations?.map((r: Relation) => ({
+                      (relations?.relations as Relation[] | undefined)?.map((r: Relation) => ({
                         source: r.from_entity,
                         target: r.to_entity,
                         type: r.relation_type,
@@ -350,7 +353,7 @@ export function GraphDataPage() {
                             </tr>
                           </thead>
                           <tbody>
-                            {entities?.entities?.map((entity: Entity) => (
+                            {(entities?.entities as Entity[] | undefined)?.map((entity: Entity) => (
                               <tr key={entity.entity_id} className="border-t border-[var(--color-border)]">
                                 <td className="px-4 py-3 font-mono text-xs">{entity.entity_id}</td>
                                 <td className="px-4 py-3 font-medium">{entity.name}</td>
@@ -419,7 +422,7 @@ export function GraphDataPage() {
                             </tr>
                           </thead>
                           <tbody>
-                            {relations?.relations?.map((rel: Relation, idx: number) => (
+                            {(relations?.relations as Relation[] | undefined)?.map((rel: Relation, idx: number) => (
                               <tr key={idx} className="border-t border-[var(--color-border)]">
                                 <td className="px-4 py-3">
                                   <div className="font-medium">{rel.from_entity_name || rel.from_entity}</div>
@@ -527,8 +530,8 @@ export function GraphDataPage() {
                 className="w-full px-3 py-2 bg-[var(--color-bg-primary)] border border-[var(--color-border)] rounded-[var(--radius-md)]"
               >
                 <option value="">选择类型</option>
-                {entityTypes?.entity_types?.map((t: { value: string; label: string }) => (
-                  <option key={t.value} value={t.value}>{t.label}</option>
+                {entityTypes?.types?.map((t: string) => (
+                  <option key={t} value={t}>{t}</option>
                 ))}
               </select>
             </div>
@@ -579,8 +582,8 @@ export function GraphDataPage() {
               className="w-full px-3 py-2 bg-[var(--color-bg-primary)] border border-[var(--color-border)] rounded-[var(--radius-md)]"
             >
               <option value="">选择类型</option>
-              {relationTypes?.relation_types?.map((t: { value: string; label: string }) => (
-                <option key={t.value} value={t.value}>{t.label}</option>
+              {relationTypes?.types?.map((t: string) => (
+                <option key={t} value={t}>{t}</option>
               ))}
             </select>
           </div>
@@ -656,8 +659,8 @@ export function GraphDataPage() {
             <Button
               onClick={async () => {
                 try {
-                  const result = await api.findGraphPath(activeLibrary, pathQuery);
-                  alert(`找到 ${result.path_count} 条路径`);
+                  const result = await api.findGraphPath(pathQuery.start_entity, pathQuery.end_entity, pathQuery.max_depth);
+                  alert(`找到 ${result.path?.length || 0} 条路径`);
                 } catch {
                   alert('路径查询失败');
                 }

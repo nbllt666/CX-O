@@ -55,6 +55,24 @@ class ACPSendMessageRequest(BaseModel):
     msg_type: str = "chat"
 
 
+class ACPAgentRegisterRequest(BaseModel):
+    """手动注册本地 ACP 代理条目"""
+
+    name: str
+    description: str = ""
+    capabilities: List[str] = []
+    host: str = "127.0.0.1"
+    port: int = 0
+    id: Optional[str] = None
+
+
+class ACPAgentPatchRequest(BaseModel):
+    name: Optional[str] = None
+    description: Optional[str] = None
+    capabilities: Optional[List[str]] = None
+    status: Optional[str] = None
+
+
 @router.post("/acp/discover")
 async def discover_agents(request: ACPDiscoverRequest = None):
     """发现Agents"""
@@ -88,6 +106,73 @@ async def list_agents(online_only: bool = False):
         return {"status": "success", "agents": agents, "total": len(agents)}
     except Exception as e:
         logger.error(f"列出Agents失败: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="内部服务器错误")
+
+
+@router.post("/acp/agents")
+async def register_agent(request: ACPAgentRegisterRequest):
+    from backend.api.app import get_acp_manager
+    from backend.core.acp.manager import ACPAgentInfo
+
+    try:
+        acp_mgr = get_acp_manager()
+        agent_id = request.id or str(uuid.uuid4())
+        meta: Dict = {}
+        if request.description:
+            meta["description"] = request.description
+        agent = ACPAgentInfo(
+            id=agent_id,
+            name=request.name,
+            host=request.host,
+            port=request.port,
+            status="offline",
+            capabilities=request.capabilities or [],
+            metadata=meta,
+        )
+        await acp_mgr.register_agent(agent)
+        return {"status": "success", "agent": agent.to_dict(), "message": "代理已注册"}
+    except Exception as e:
+        logger.error(f"注册ACP代理失败: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="内部服务器错误")
+
+
+@router.patch("/acp/agents/{agent_id}")
+async def patch_agent(agent_id: str, request: ACPAgentPatchRequest):
+    from backend.api.app import get_acp_manager
+
+    try:
+        acp_mgr = get_acp_manager()
+        ok = await acp_mgr.update_agent(
+            agent_id,
+            name=request.name,
+            description=request.description,
+            capabilities=request.capabilities,
+            status=request.status,
+        )
+        if not ok:
+            raise HTTPException(status_code=404, detail="代理不存在")
+        return {"status": "success", "message": "代理已更新"}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"更新ACP代理失败: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="内部服务器错误")
+
+
+@router.delete("/acp/agents/{agent_id}")
+async def delete_agent(agent_id: str):
+    from backend.api.app import get_acp_manager
+
+    try:
+        acp_mgr = get_acp_manager()
+        ok = await acp_mgr.remove_agent(agent_id)
+        if not ok:
+            raise HTTPException(status_code=404, detail="代理不存在")
+        return {"status": "success", "message": "代理已删除"}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"删除ACP代理失败: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail="内部服务器错误")
 
 

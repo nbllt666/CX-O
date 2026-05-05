@@ -33,7 +33,7 @@ class LiveClientHandler:
             try:
                 from .cxhms_client import CXHMSClient
                 from config.settings import settings
-                cxhms_url = getattr(settings.config, 'cxhms_url', 'ws://localhost:8000/ws')
+                cxhms_url = getattr(settings.config, 'cxhms_url', 'ws://localhost:8100/ws')
                 self._cxhms_client = CXHMSClient(url=cxhms_url)
             except Exception as e:
                 logger.warning(f"Failed to create CXHMS client: {e}")

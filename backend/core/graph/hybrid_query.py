@@ -4,6 +4,7 @@
 
 import logging
 from typing import Optional, List, Dict, Any
+import numpy as np
 
 from backend.core.graph.database import Database
 from backend.core.graph.semantic_search import SemanticSearch
@@ -153,12 +154,10 @@ class HybridQueryManager(BaseGraphRepository):
         if len(texts) < 2:
             return 0.0
 
-        vectors = self.semantic._vectorizer.encode_batch(texts)
+        vectors = self.semantic.encode_batch(texts)
         similarities = []
         for i in range(len(vectors) - 1):
-            sim = np.dot(vectors[i], vectors[i+1]) / (
-                np.linalg.norm(vectors[i]) * np.linalg.norm(vectors[i+1])
-            )
+            sim = self.semantic.compute_similarity(vectors[i], vectors[i+1])
             similarities.append(sim)
 
         return sum(similarities) / len(similarities) if similarities else 0.0

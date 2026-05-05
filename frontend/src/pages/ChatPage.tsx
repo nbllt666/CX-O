@@ -3,11 +3,13 @@ import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { api } from '../api/client';
 import { useChatStore } from '../store/chatStore';
+import { useSettingsStore } from '../store/settingsStore';
 import { formatRelativeTime } from '../lib/utils';
 import { SummaryModal } from '../components/SummaryModal';
 import { Button, Textarea, Card } from '../components/ui';
 import { PageHeader } from '../components/layout';
 import { useWebSocket } from '../hooks/useWebSocket';
+import { AvatarPanel, AvatarTypeSelector } from '../components/Avatar';
 
 interface Message {
   id: string;
@@ -223,10 +225,15 @@ export function ChatPage() {
   const [isRecording, setIsRecording] = useState(false);
   const [isVoiceMode, setIsVoiceMode] = useState(false);
   const [enableVoiceOutput, setEnableVoiceOutput] = useState(false);
+  const [currentAudioElement, setCurrentAudioElement] = useState<HTMLAudioElement | null>(null);
+  const [isAudioPlaying, setIsAudioPlaying] = useState(false);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const audioChunksRef = useRef<Blob[]>([]);
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const playAudioRef = useRef<(audioData: ArrayBuffer) => void>();
+
+  // 虚拟形象和布局状态
+  const { layout, toggleChatCollapsed } = useSettingsStore();
 
   const { agents, currentAgentId, fetchAgents } = useChatStore();
 
@@ -335,11 +342,11 @@ export function ChatPage() {
             const finalContent = lastMsg.content || '响应已完成';
             // 如果开启语音输出，调用 TTS
             if (enableVoiceOutput && finalContent) {
-              api.textToSpeech(finalContent).then(audioBlob => {
+              api.textToSpeech(finalContent).then((audioBlob: Blob) => {
                 audioBlob.arrayBuffer().then((arrayBuffer: ArrayBuffer) => {
                   playAudioRef.current?.(arrayBuffer);
                 });
-              }).catch(error => {
+              }).catch((error: Error) => {
                 console.error('语音合成失败:', error);
               });
             }
@@ -468,26 +475,26 @@ export function ChatPage() {
 
   const loadAgentHistory = async (agentId: string) => {
     try {
-      const data = await api.getChatHistory(agentId);
+      const data = await api.getChatHistory(`agent-${agentId}`);
       if (data.messages) {
         const formattedMessages = data.messages.map(
           (msg: {
             id?: string;
-            role: 'user' | 'assistant';
+            role: string;
             content: string;
             created_at?: string;
             thinking?: string;
             images?: string[];
           }) => ({
             id: msg.id || Math.random().toString(),
-            role: msg.role,
+            role: msg.role === 'assistant' ? 'assistant' : 'user',
             content: msg.content,
             timestamp: msg.created_at || new Date().toISOString(),
             thinking: msg.thinking,
             images: msg.images,
           })
         );
-        setMessages(formattedMessages);
+        setMessages(formattedMessages as Message[]);
       }
     } catch (error) {
       console.error('加载历史消息失败:', error);
@@ -551,7 +558,7 @@ export function ChatPage() {
     if (!confirm('确定要执行记忆归档吗？这将归档旧的记忆数据。')) return;
 
     try {
-      const result = await api.autoArchiveProcess();
+      const result = await api.autoArchiveProcess() as { results?: { archived?: unknown[]; merged?: unknown[] } };
       alert(
         `记忆归档完成：归档 ${result.results?.archived?.length || 0} 条，合并 ${result.results?.merged?.length || 0} 条`
       );
@@ -589,7 +596,7 @@ export function ChatPage() {
             // 如果是语音对话模式，自动发送
             if (isVoiceMode) {
               setTimeout(() => {
-                handleSendWithText(result.text);
+                handleSendWithText(result.text ?? '');
               }, 100);
             }
           }
@@ -643,10 +650,14 @@ export function ChatPage() {
       const url = URL.createObjectURL(blob);
       const audio = new Audio(url);
       audioRef.current = audio;
+      setCurrentAudioElement(audio);
+      setIsAudioPlaying(true);
 
       audio.onended = () => {
         URL.revokeObjectURL(url);
         audioRef.current = null;
+        setCurrentAudioElement(null);
+        setIsAudioPlaying(false);
         // 如果是语音对话模式，播放完成后自动开始录音
         if (isVoiceMode && !isLoading) {
           setTimeout(() => {
@@ -659,6 +670,8 @@ export function ChatPage() {
         console.error('音频播放失败:', error);
         URL.revokeObjectURL(url);
         audioRef.current = null;
+        setCurrentAudioElement(null);
+        setIsAudioPlaying(false);
       });
     } catch (error) {
       console.error('播放音频失败:', error);
@@ -716,7 +729,7 @@ export function ChatPage() {
       try {
         await api.sendMessageStream(
           userMessage.content,
-          (chunk) => {
+          (chunk: Record<string, unknown>) => {
             if (chunk.type === 'content' && chunk.content) {
               setMessages((prev) => {
                 const lastMsg = prev[prev.length - 1];
@@ -725,7 +738,7 @@ export function ChatPage() {
                     ...prev.slice(0, -1),
                     {
                       ...lastMsg,
-                      content: lastMsg.content + chunk.content!,
+                      content: lastMsg.content + String(chunk.content),
                     },
                   ];
                 }
@@ -801,7 +814,7 @@ export function ChatPage() {
                     ...prev.slice(0, -1),
                     {
                       ...lastMsg,
-                      thinking: (lastMsg.thinking || '') + chunk.content,
+                      thinking: (lastMsg.thinking || '') + String(chunk.content),
                     },
                   ];
                 }
@@ -824,13 +837,13 @@ export function ChatPage() {
                 return prev;
               });
             } else if (chunk.type === 'error') {
-              throw new Error(chunk.error || '未知错误');
+              throw new Error(String(chunk.error ?? '未知错误'));
             }
           },
           currentAgentId || 'default',
           userMessage.images
         );
-      } catch (error) {
+      } catch (error: unknown) {
         console.error('发送消息失败:', error);
         setMessages((prev) => {
           const lastMsg = prev[prev.length - 1];
@@ -856,12 +869,46 @@ export function ChatPage() {
   };
 
   return (
-    <div className="max-w-4xl mx-auto h-full flex flex-col">
+    <div className="flex h-full">
+      {/* 虚拟形象面板 */}
+      <AvatarPanel
+        audioElement={currentAudioElement}
+        isPlaying={isAudioPlaying}
+      />
+
+      {/* 聊天区域 */}
+      <div className={`flex flex-col h-full transition-all duration-300 ${layout.chatCollapsed ? 'w-16' : 'flex-1'}`}>
+        {/* 折叠/展开按钮 */}
+        <button
+          onClick={toggleChatCollapsed}
+          className="absolute top-2 right-2 z-10 p-1.5 rounded bg-[var(--color-bg-secondary)] hover:bg-[var(--color-bg-hover)] transition-colors"
+          title={layout.chatCollapsed ? '展开聊天' : '折叠聊天'}
+        >
+          <svg
+            className={`w-4 h-4 transition-transform ${layout.chatCollapsed ? 'rotate-180' : ''}`}
+            fill="none"
+            viewBox="0 0 24 24"
+            stroke="currentColor"
+          >
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 19l-7-7 7-7m8 14l-7-7 7-7" />
+          </svg>
+        </button>
+
+        {layout.chatCollapsed ? (
+          <div className="flex flex-col items-center py-4 h-full">
+            <span className="text-xs text-[var(--color-text-tertiary)] writing-mode-vertical" style={{ writingMode: 'vertical-rl' }}>
+              聊天
+            </span>
+          </div>
+        ) : (
+          <div className="max-w-4xl mx-auto h-full flex flex-col w-full">
       <PageHeader
         title={currentAgent?.name || '对话'}
         description={currentAgent?.description}
         actions={
           <div className="flex gap-2">
+            {/* 虚拟形象选择器 */}
+            <AvatarTypeSelector />
             <Button
               variant="secondary"
               size="sm"
@@ -1296,6 +1343,9 @@ export function ChatPage() {
         sessionId={currentAgentId || 'default'}
         autoStart={autoStartSummary}
       />
+          </div>
+        )}
+      </div>
     </div>
   );
 }

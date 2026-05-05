@@ -69,7 +69,7 @@ ${contextText}
 
       await api.sendMessageStream(
         fullPrompt,
-        (chunk: { type: string; content?: string; done?: boolean; error?: string }) => {
+        (chunk: Record<string, unknown>) => {
           setMessages((prev) => {
             const lastMsg = prev[prev.length - 1];
             if (lastMsg.role === 'assistant' && lastMsg.isStreaming) {
@@ -77,8 +77,8 @@ ${contextText}
                 ...prev.slice(0, -1),
                 {
                   ...lastMsg,
-                  content: lastMsg.content + (chunk.content || ''),
-                  isStreaming: !chunk.done,
+                  content: lastMsg.content + String(chunk.content ?? ''),
+                  isStreaming: chunk.done !== true,
                 },
               ];
             }
@@ -175,16 +175,7 @@ ${contextText}
 
       await api.sendMessageStream(
         fullPrompt,
-        (chunk: {
-          type: string;
-          content?: string;
-          done?: boolean;
-          error?: string;
-          session_id?: string;
-          tool_call?: Record<string, unknown>;
-          tool_name?: string;
-          result?: unknown;
-        }) => {
+        (chunk: Record<string, unknown>) => {
           setMessages((prev) => {
             const lastMsg = prev[prev.length - 1];
             if (lastMsg.role === 'assistant' && lastMsg.isStreaming) {
@@ -192,8 +183,8 @@ ${contextText}
                 ...prev.slice(0, -1),
                 {
                   ...lastMsg,
-                  content: lastMsg.content + (chunk.content || ''),
-                  isStreaming: !chunk.done,
+                  content: lastMsg.content + String(chunk.content ?? ''),
+                  isStreaming: chunk.done !== true,
                 },
               ];
             }
