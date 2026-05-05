@@ -526,7 +526,7 @@ async def tts_synthesize_stream(request: Request):
                     yield f"data: {chunk_data}\n\n"
             except Exception as e:
                 logger.error(f"TTS流式合成错误: {e}", exc_info=True)
-                error_data = json.dumps({"type": "error", "message": "TTS流式合成失败"}, ensure_ascii=False)
+                error_data = json.dumps({"type": "error", "message": f"TTS流式合成失败: {str(e)}"}, ensure_ascii=False)
                 yield f"data: {error_data}\n\n"
             finally:
                 await client.close()
