@@ -272,7 +272,6 @@ async def websocket_live_endpoint(
         websocket=websocket, metadata={"session_id": session_id, "type": "live"}
     )
 
-    client_id = client_id if 'client_id' in dir() else connection.client_id
     client_id = connection.client_id
 
     ws_manager.subscribe_to_channel(client_id, "live")

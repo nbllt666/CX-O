@@ -98,13 +98,10 @@ export function useLiveWebSocket(options: UseLiveWebSocketOptions = {}): UseLive
   const onStreamContentRef = useRef(onStreamContent);
   const onGiftRef = useRef(onGift);
   const onEnterRef = useRef(onEnter);
-  onVadStatus?.toString();
   const onVadStatusRef = useRef(onVadStatus);
   const onASRResultRef = useRef(onASRResult);
   const onTTSSyncRef = useRef(onTTSSync);
-  onTTSTick?.toString();
   const onTTSTickRef = useRef(onTTSTick);
-  onTTSEnd?.toString();
   const onTTSEndRef = useRef(onTTSEnd);
   const onErrorRef = useRef(onError);
   const onConnectRef = useRef(onConnect);
