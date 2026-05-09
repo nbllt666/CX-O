@@ -170,6 +170,10 @@ llm_params:
   topP: 0.9
   timeout: 30
 tts:
+  mode: remote          # embedded | remote
+  model_dir: F5TTS_v1_Base
+  device: cuda
+  remote_url: http://127.0.0.1:5000
   engine: f5-tts
   f5_tts:
     url: http://127.0.0.1:5000
@@ -231,3 +235,11 @@ avatar:
     look_at_mouse: true
     scale: 1.0
     position_3d: [0, 0, 0]
+asr:
+  mode: remote          # embedded | remote
+  model_dir: SenseVoiceSmall
+  device: cuda
+  remote_url: http://127.0.0.1:8001
+voice_workstation:
+  url: http://127.0.0.1:8200
+  enabled: true
