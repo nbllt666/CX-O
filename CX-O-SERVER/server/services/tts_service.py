@@ -8,10 +8,70 @@ import asyncio
 import logging
 import os
 import tempfile
+import time
 from pathlib import Path
 from typing import Optional
 
+import httpx
+
 logger = logging.getLogger(__name__)
+
+_http_client: Optional[httpx.AsyncClient] = None
+
+
+def _get_http_client() -> httpx.AsyncClient:
+    global _http_client
+    if _http_client is None:
+        _http_client = httpx.AsyncClient(
+            timeout=httpx.Timeout(
+                connect=10.0,
+                read=120.0,
+                write=120.0,
+                pool=10.0
+            ),
+            limits=httpx.Limits(
+                max_keepalive_connections=5,
+                max_connections=10,
+                keepalive_expiry=30.0
+            )
+        )
+    return _http_client
+
+
+async def _retry_with_backoff(
+    func,
+    max_retries: int = 3,
+    base_delay: float = 1.0,
+    max_delay: float = 30.0,
+    *args,
+    **kwargs
+):
+    last_exception = None
+    for attempt in range(max_retries):
+        try:
+            return await func(*args, **kwargs)
+        except (httpx.ConnectError, httpx.ReadTimeout, httpx.WriteTimeout, httpx.ConnectTimeout) as e:
+            last_exception = e
+            if attempt < max_retries - 1:
+                delay = min(base_delay * (2 ** attempt), max_delay)
+                logger.warning(f"TTS request failed (attempt {attempt + 1}/{max_retries}): {e}. Retrying in {delay:.1f}s...")
+                await asyncio.sleep(delay)
+            else:
+                logger.error(f"TTS request failed after {max_retries} attempts: {e}")
+                raise
+        except httpx.HTTPStatusError as e:
+            if e.response.status_code >= 500 and attempt < max_retries - 1:
+                delay = min(base_delay * (2 ** attempt), max_delay)
+                logger.warning(f"TTS server error (attempt {attempt + 1}/{max_retries}): {e}. Retrying in {delay:.1f}s...")
+                await asyncio.sleep(delay)
+            else:
+                raise
+        except Exception as e:
+            logger.error(f"Unexpected error in TTS request: {e}")
+            raise
+    
+    if last_exception:
+        raise last_exception
 
 
 class TTSService:
@@ -58,9 +118,15 @@ class TTSService:
         logger.info("F5-TTS model loaded successfully")
 
     async def shutdown(self):
+        global _http_client
         import f5_tts.api as _api
         _api._f5tts_instance = None
         self._initialized = False
+        
+        if _http_client:
+            await _http_client.aclose()
+            _http_client = None
+            logger.info("TTS HTTP client closed")
 
     async def synthesize(
         self,
@@ -116,9 +182,9 @@ class TTSService:
     async def _synthesize_remote(
         self, text: str, ref_audio_path: str, ref_text: str, speed: float, cross_fade_duration: float, **kwargs
     ) -> bytes:
-        import httpx
-
-        async with httpx.AsyncClient(timeout=120.0) as client:
+        async def _make_request():
+            client = _get_http_client()
+            
             files = {}
             if ref_audio_path and Path(ref_audio_path).exists():
                 with open(ref_audio_path, "rb") as f:
@@ -138,6 +204,8 @@ class TTSService:
             response = await client.post(f"{self._remote_url}/tts/", files=files, data=data)
             response.raise_for_status()
             return response.content
+        
+        return await _retry_with_backoff(_make_request, max_retries=3, base_delay=1.0, max_delay=30.0)
 
 
 _tts_service: Optional[TTSService] = None

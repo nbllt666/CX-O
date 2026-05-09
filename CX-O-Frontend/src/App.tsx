@@ -13,6 +13,12 @@ import { MemoryAgentPage } from './pages/MemoryAgentPage';
 import { AudioTestPage } from './pages/AudioTestPage';
 import { GraphDataPage } from './pages/GraphDataPage';
 import { VectorDataPage } from './pages/VectorDataPage';
+import { LivePage } from './pages/LivePage';
+import { LiveSplitPage } from './pages/LiveSplitPage';
+import { AvatarSource } from './pages/live/AvatarSource';
+import { DanmakuSource } from './pages/live/DanmakuSource';
+import { SubtitleSource } from './pages/live/SubtitleSource';
+import { AudioPanel } from './pages/live/AudioPanel';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import { ConnectionSetup } from './components/ConnectionSetup';
 
@@ -83,6 +89,12 @@ function App() {
           <Route path="memory-agent" element={<MemoryAgentPage />} />
           <Route path="graph-data" element={<GraphDataPage />} />
           <Route path="vector-data" element={<VectorDataPage />} />
+          <Route path="live" element={<LivePage />} />
+          <Route path="live/split" element={<LiveSplitPage />} />
+          <Route path="live/split/avatar" element={<AvatarSource />} />
+          <Route path="live/split/danmaku" element={<DanmakuSource />} />
+          <Route path="live/split/subtitle" element={<SubtitleSource />} />
+          <Route path="live/split/audio" element={<AudioPanel />} />
         </Route>
       </Routes>
     </ErrorBoundary>

@@ -243,3 +243,62 @@ asr:
 voice_workstation:
   url: http://127.0.0.1:8200
   enabled: true
+live:
+  enabled: true
+  mode: "integrated"
+  stage:
+    avatar_type: "live2d"
+    background_color: "#1a1a2e"
+    background_image: ""
+  danmaku:
+    enabled: true
+    position: "right"
+    max_count: 50
+    speed: 8
+    font_size: 24
+    font_family: "sans-serif"
+    opacity: 0.9
+    colors:
+      default: "#ffffff"
+      member: "#ff6b6b"
+      admin: "#ffd93d"
+  subtitle:
+    enabled: true
+    position: "bottom"
+    max_lines: 3
+    font_size: 28
+    font_family: "sans-serif"
+    color: "#ffffff"
+    background: "rgba(0,0,0,0.6)"
+    typing_speed: 50
+    auto_clear: true
+    clear_delay: 5000
+  notifications:
+    gift_enabled: true
+    enter_enabled: true
+  audio:
+    input_device: ""
+    output_volume: 1.0
+    tts_volume: 1.0
+    noise_suppression: true
+    mic_enabled: false
+    mic_volume: 1.0
+    aec:
+      enabled: true
+      mode: "auto"
+      suppression_db: 30
+      manual_balance: 0.5
+    sync:
+      enabled: true
+      tick_interval_ms: 100
+      max_drift_ms: 100
+      target_sync_ms: 200
+  latency:
+    target_ms: 500
+    ws_heartbeat_interval: 15
+    reconnect_base_ms: 100
+    reconnect_max_ms: 2000
+  split:
+    avatar_resolution: "1920x1080"
+    danmaku_resolution: "1920x1080"
+    subtitle_resolution: "1920x1080"
