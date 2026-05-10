@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useRef, useEffect } from 'react';
 import { Live2DViewer } from '../Live2D';
 import { VRMViewer } from '../VRM';
 import { DanmakuOverlay } from './DanmakuOverlay';
@@ -24,6 +24,15 @@ export function LiveStage({
   onAudioPanelClick,
 }: LiveStageProps) {
   const [showControls, setShowControls] = useState(false);
+  const modelDataRef = useRef<ArrayBuffer | undefined>(undefined);
+  const [dataVersion, setDataVersion] = useState(0);
+
+  useEffect(() => {
+    if (modelData !== modelDataRef.current) {
+      modelDataRef.current = modelData;
+      setDataVersion(v => v + 1);
+    }
+  }, [modelData]);
 
   return (
     <div
@@ -41,7 +50,8 @@ export function LiveStage({
             avatarType === 'vrm' ? (
               <VRMViewer
                 modelPath=""
-                modelData={modelData}
+                modelDataRef={modelDataRef}
+                dataVersion={dataVersion}
                 scale={1.0}
                 position={[0, -0.3, 0]}
                 lipSyncEnabled
