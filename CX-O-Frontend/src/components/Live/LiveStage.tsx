@@ -32,6 +32,7 @@ export function LiveStage({
       modelDataRef.current = modelData;
       setDataVersion(v => v + 1);
     }
+    return () => {};
   }, [modelData]);
 
   return (
