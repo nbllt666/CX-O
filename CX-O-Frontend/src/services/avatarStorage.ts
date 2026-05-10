@@ -54,6 +54,7 @@ export const saveAvatar = async (avatar: AvatarRecord): Promise<void> => {
     store.put(avatar);
     transaction.oncomplete = () => resolve();
     transaction.onerror = () => reject(new Error('Failed to save avatar'));
+    transaction.onabort = () => reject(new Error('Transaction aborted while saving avatar'));
   });
 };
 
@@ -65,6 +66,7 @@ export const getAvatar = async (id: string): Promise<AvatarRecord | null> => {
     const request = store.get(id);
     request.onsuccess = () => resolve(request.result || null);
     request.onerror = () => reject(new Error('Failed to get avatar'));
+    transaction.onabort = () => reject(new Error('Transaction aborted while getting avatar'));
   });
 };
 
@@ -76,6 +78,7 @@ export const listAvatars = async (): Promise<AvatarRecord[]> => {
     const request = store.getAll();
     request.onsuccess = () => resolve(request.result || []);
     request.onerror = () => reject(new Error('Failed to list avatars'));
+    transaction.onabort = () => reject(new Error('Transaction aborted while listing avatars'));
   });
 };
 
@@ -87,6 +90,7 @@ export const deleteAvatar = async (id: string): Promise<void> => {
     store.delete(id);
     transaction.oncomplete = () => resolve();
     transaction.onerror = () => reject(new Error('Failed to delete avatar'));
+    transaction.onabort = () => reject(new Error('Transaction aborted while deleting avatar'));
   });
 };
 

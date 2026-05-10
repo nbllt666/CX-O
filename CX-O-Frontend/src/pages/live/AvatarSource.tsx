@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { Live2DViewer } from '../../components/Live2D/Live2DViewer';
 import { VRMViewer } from '../../components/VRM/VRMViewer';
 import { useLiveWebSocket } from '../../hooks/useLiveWebSocket';
@@ -7,7 +7,8 @@ import { getAvatar } from '../../services/avatarStorage';
 
 export function AvatarSource() {
   const [mouthOpenY, setMouthOpenY] = useState(0);
-  const [modelData, setModelData] = useState<ArrayBuffer | undefined>(undefined);
+  const modelDataRef = useRef<ArrayBuffer | undefined>(undefined);
+  const [dataVersion, setDataVersion] = useState(0);
   const [loading, setLoading] = useState(false);
 
   const { live2d, vrm, avatarType } = useSettingsStore();
@@ -19,16 +20,19 @@ export function AvatarSource() {
       getAvatar(currentModelId).then((avatar) => {
         if (avatar) {
           avatar.data.arrayBuffer().then((buf) => {
-            setModelData(buf);
+            modelDataRef.current = buf;
+            setDataVersion(v => v + 1);
             setLoading(false);
           });
         } else {
-          setModelData(undefined);
+          modelDataRef.current = undefined;
+          setDataVersion(v => v + 1);
           setLoading(false);
         }
       });
     } else {
-      setModelData(undefined);
+      modelDataRef.current = undefined;
+      setDataVersion(v => v + 1);
       setLoading(false);
     }
   }, [currentModelId]);
@@ -61,11 +65,12 @@ export function AvatarSource() {
       className="w-screen h-screen flex items-center justify-center"
       style={{ backgroundColor: 'transparent', width: 1920, height: 1080 }}
     >
-      {modelData ? (
+      {modelDataRef.current ? (
         effectiveAvatarType === 'vrm' ? (
           <VRMViewer
             modelPath=""
-            modelData={modelData}
+            modelDataRef={modelDataRef}
+            dataVersion={dataVersion}
             scale={1.3}
             position={[0, -0.35, 0]}
             lipSyncEnabled
@@ -75,7 +80,7 @@ export function AvatarSource() {
         ) : (
           <Live2DViewer
             modelPath=""
-            modelData={modelData}
+            modelData={modelDataRef.current}
             scale={0.45}
             xOffset={0}
             yOffset={30}

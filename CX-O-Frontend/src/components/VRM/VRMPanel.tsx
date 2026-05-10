@@ -15,7 +15,8 @@ export function VRMPanel({ audioElement, isPlaying }: VRMPanelProps) {
   const panelRef = useRef<HTMLDivElement>(null);
   const startXRef = useRef(0);
   const startWidthRef = useRef(0);
-  const [modelData, setModelData] = useState<ArrayBuffer | undefined>(undefined);
+  const modelDataRef = useRef<ArrayBuffer | undefined>(undefined);
+  const [dataVersion, setDataVersion] = useState(0);
 
   useEffect(() => {
     if (vrm.modelId) {
@@ -25,16 +26,19 @@ export function VRMPanel({ audioElement, isPlaying }: VRMPanelProps) {
           console.log('[VRMPanel] Avatar found, size:', avatar.data.size);
           avatar.data.arrayBuffer().then((buf) => {
             console.log('[VRMPanel] ArrayBuffer loaded, byteLength:', buf.byteLength);
-            setModelData(buf);
+            modelDataRef.current = buf;
+            setDataVersion(v => v + 1);
           });
         } else {
           console.warn('[VRMPanel] Avatar not found for id:', vrm.modelId);
-          setModelData(undefined);
+          modelDataRef.current = undefined;
+          setDataVersion(v => v + 1);
         }
       });
     } else {
       console.log('[VRMPanel] No modelId, clearing data');
-      setModelData(undefined);
+      modelDataRef.current = undefined;
+      setDataVersion(v => v + 1);
     }
   }, [vrm.modelId]);
 
@@ -176,7 +180,8 @@ export function VRMPanel({ audioElement, isPlaying }: VRMPanelProps) {
       <div className="flex-1 overflow-hidden">
         <VRMViewer
           modelPath={vrm.modelId ? '' : vrm.modelPath}
-          modelData={modelData}
+          modelDataRef={modelDataRef}
+          dataVersion={dataVersion}
           scale={vrm.scale}
           position={vrm.position3d}
           lipSyncEnabled={vrm.lipSync}

@@ -6,7 +6,8 @@ import { VRMAudioLipSync } from './AudioLipSync';
 
 interface VRMViewerProps {
   modelPath: string;
-  modelData?: ArrayBuffer;
+  modelDataRef: React.RefObject<ArrayBuffer | undefined>;
+  dataVersion: number;
   scale?: number;
   position?: [number, number, number];
   lipSyncEnabled?: boolean;
@@ -18,7 +19,8 @@ interface VRMViewerProps {
 
 export function VRMViewer({
   modelPath,
-  modelData,
+  modelDataRef,
+  dataVersion,
   scale = 1.0,
   position = [0, 0, 0],
   lipSyncEnabled = true,
@@ -35,185 +37,125 @@ export function VRMViewer({
   const clockRef = useRef(new THREE.Timer());
   const lipSyncRef = useRef<VRMAudioLipSync | null>(null);
   const animationFrameRef = useRef<number | null>(null);
-  const blobUrlRef = useRef<string | null>(null);
+  const activeBlobUrlRef = useRef<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
-  const [isCanvasReady, setIsCanvasReady] = useState(false);
   const propsRef = useRef({ scale, position, onModelLoaded, onError });
+  const lastVersionRef = useRef(-1);
 
   propsRef.current = { scale, position, onModelLoaded, onError };
 
-  useEffect(() => {
-    const canvas = canvasRef.current;
-    if (!canvas) return;
-
-    let checkCount = 0;
-    const maxChecks = 50;
-
-    const checkCanvasReady = () => {
-      if (canvas.clientWidth > 0 && canvas.clientHeight > 0) {
-        console.log('[VRMViewer] Canvas ready:', canvas.clientWidth, 'x', canvas.clientHeight);
-        setIsCanvasReady(true);
-      } else if (checkCount < maxChecks) {
-        checkCount++;
-        requestAnimationFrame(checkCanvasReady);
-      } else {
-        console.log('[VRMViewer] Canvas timeout, using fallback size');
-        setIsCanvasReady(true);
-      }
-    };
-
-    checkCanvasReady();
-  }, []);
+  const waitForCanvas = (): Promise<HTMLCanvasElement> => {
+    return new Promise((resolve, reject) => {
+      let attempts = 0;
+      const check = () => {
+        if (canvasRef.current && canvasRef.current.clientWidth > 0 && canvasRef.current.clientHeight > 0) {
+          resolve(canvasRef.current);
+          return;
+        }
+        if (++attempts >= 100) reject(new Error('Canvas not ready'));
+        else requestAnimationFrame(check);
+      };
+      check();
+    });
+  };
 
   useEffect(() => {
-    if (!isCanvasReady) return;
+    if (dataVersion === lastVersionRef.current) return;
+    lastVersionRef.current = dataVersion;
 
-    console.log('[VRMViewer] useEffect triggered, modelData:', modelData ? `${modelData.byteLength} bytes` : 'none', 'modelPath:', JSON.stringify(modelPath));
-
+    console.log(`[VRMViewer] Load #${dataVersion} started`);
     let cancelled = false;
 
     const loadModel = async () => {
-      const canvas = canvasRef.current;
-      if (!canvas) {
-        console.log('[VRMViewer] No canvas ref');
+      const modelData = modelDataRef.current;
+      const useBuf = modelData && modelData.byteLength > 0;
+      const usePath = !useBuf && modelPath && modelPath.length > 0;
+
+      if (!useBuf && !usePath) {
+        if (!cancelled) { setLoadError('MODEL_NOT_CONFIGURED'); setIsLoading(false); }
         return;
       }
 
-      let effectiveModelPath: string | null = null;
-      let createdBlobUrl = false;
+      let url: string | null = null;
+      let isBlob = false;
 
-      if (modelData && modelData.byteLength > 0) {
-        const blob = new Blob([modelData], { type: 'application/octet-stream' });
-        effectiveModelPath = URL.createObjectURL(blob);
-        createdBlobUrl = true;
-        console.log('[VRMViewer] Created blob URL from modelData');
-      } else if (modelPath && modelPath.length > 0) {
-        effectiveModelPath = modelPath;
-        console.log('[VRMViewer] Using modelPath');
+      if (useBuf) {
+        url = URL.createObjectURL(new Blob([modelData], { type: 'application/octet-stream' }));
+        isBlob = true;
+      } else {
+        url = modelPath;
       }
 
-      if (!effectiveModelPath) {
-        console.log('[VRMViewer] No valid path or data, showing MODEL_NOT_CONFIGURED');
-        if (!cancelled) setLoadError('MODEL_NOT_CONFIGURED');
-        if (!cancelled) setIsLoading(false);
-        return;
-      }
-
-      console.log('[VRMViewer] Loading from:', createdBlobUrl ? 'Blob URL' : effectiveModelPath);
-
-      if (blobUrlRef.current && blobUrlRef.current.startsWith('blob:')) {
-        URL.revokeObjectURL(blobUrlRef.current);
-      }
-      if (createdBlobUrl) {
-        blobUrlRef.current = effectiveModelPath;
-      }
-
-      if (cancelled) return;
+      if (!url) return;
 
       try {
-        if (!cancelled) setIsLoading(true);
-        if (!cancelled) setLoadError(null);
+        if (!cancelled) { setIsLoading(true); setLoadError(null); }
+        if (rendererRef.current) { try { rendererRef.current.dispose(); } catch(e){/*ignore*/} rendererRef.current = null; }
 
-        if (rendererRef.current) {
-          try {
-            rendererRef.current.dispose();
-          } catch (e) {
-            console.warn('[VRMViewer] Error disposing old renderer:', e);
-          }
-          rendererRef.current = null;
-        }
+        const canvas = await waitForCanvas();
+        if (cancelled) return;
 
-        const width = canvas.clientWidth || 300;
-        const height = canvas.clientHeight || 400;
-        console.log('[VRMViewer] Canvas size:', width, 'x', height);
-
+        const w = canvas.clientWidth || 300, h = canvas.clientHeight || 400;
         const scene = new THREE.Scene();
         sceneRef.current = scene;
+        const cam = new THREE.PerspectiveCamera(30, w / h, 0.1, 20);
+        cam.position.set(0, 1, 1.5);
+        cameraRef.current = cam;
 
-        const camera = new THREE.PerspectiveCamera(30.0, width / height, 0.1, 20.0);
-        camera.position.set(0.0, 1.0, 1.5);
-        cameraRef.current = camera;
-
-        console.log('[VRMViewer] Creating WebGLRenderer...');
-        const renderer = new THREE.WebGLRenderer({
-          canvas: canvas,
-          alpha: true,
-          antialias: true,
-        });
-        console.log('[VRMViewer] WebGLRenderer created successfully');
-
-        renderer.setSize(width, height);
+        const renderer = new THREE.WebGLRenderer({ canvas, alpha: true, antialias: true });
+        renderer.setSize(w, h);
         renderer.setPixelRatio(window.devicePixelRatio);
         renderer.outputColorSpace = THREE.SRGBColorSpace;
         rendererRef.current = renderer;
 
-        const light = new THREE.DirectionalLight(0xffffff, 1.0);
-        light.position.set(1.0, 1.0, 1.0).normalize();
-        scene.add(light);
+        scene.add(new THREE.DirectionalLight(1, 1).translateX(1).translateY(1).translateZ(1));
+        scene.add(new THREE.AmbientLight(0xffffff, 0.5));
 
-        const ambientLight = new THREE.AmbientLight(0xffffff, 0.5);
-        scene.add(ambientLight);
-
-        console.log('[VRMViewer] Starting GLTF load...');
         const loader = new GLTFLoader();
-        loader.register((parser) => new VRMLoaderPlugin(parser));
+        loader.register((p) => new VRMLoaderPlugin(p));
+        const gltf = await loader.loadAsync(url);
 
-        const gltf = await loader.loadAsync(effectiveModelPath);
-        
-        if (cancelled) {
-          console.log('[VRMViewer] Load cancelled after async');
-          return;
-        }
+        if (cancelled || dataVersion !== lastVersionRef.current) return;
 
-        console.log('[VRMViewer] GLTF loaded, userData:', Object.keys(gltf.userData));
         const vrm = gltf.userData.vrm as VRM;
-        if (!vrm) {
-          throw new Error('Loaded file is not a valid VRM model (no vrm in userData)');
-        }
-        vrmRef.current = vrm;
-        console.log('[VRMViewer] VRM model loaded successfully');
+        if (!vrm) throw new Error('Not a VRM model');
 
+        vrmRef.current = vrm;
         vrm.scene.scale.setScalar(propsRef.current.scale);
-        vrm.scene.position.set(propsRef.current.position[0], propsRef.current.position[1], propsRef.current.position[2]);
+        vrm.scene.position.set(...propsRef.current.position);
         vrm.scene.rotation.y = Math.PI;
         scene.add(vrm.scene);
 
-        const lipSync = new VRMAudioLipSync();
-        lipSync.bindVRM(vrm);
-        lipSyncRef.current = lipSync;
+        lipSyncRef.current = new VRMAudioLipSync();
+        lipSyncRef.current.bindVRM(vrm);
 
         if (!cancelled) setIsLoading(false);
         propsRef.current.onModelLoaded?.();
 
         const animate = () => {
-          if (cancelled) return;
-          
-          const delta = clockRef.current.getDelta();
-
-          if (vrmRef.current) {
-            vrmRef.current.update(delta);
-          }
-
-          if (rendererRef.current && sceneRef.current && cameraRef.current) {
+          if (cancelled || dataVersion !== lastVersionRef.current) return;
+          const dt = clockRef.current.getDelta();
+          if (vrmRef.current) vrmRef.current.update(dt);
+          if (rendererRef.current && sceneRef.current && cameraRef.current)
             rendererRef.current.render(sceneRef.current, cameraRef.current);
-          }
-
           animationFrameRef.current = requestAnimationFrame(animate);
         };
-
         animate();
-      } catch (error) {
-        if (cancelled) return;
-        console.error('VRM: Failed to load model:', error);
-        const errorMessage = error instanceof Error ? error.message : '';
-        if (errorMessage.includes('<!doctype') || errorMessage.includes('Unexpected token')) {
-          setLoadError('MODEL_FILE_NOT_FOUND');
-        } else {
-          setLoadError('LOAD_FAILED');
-        }
+
+        if (isBlob) activeBlobUrlRef.current = url;
+      } catch (err) {
+        if (cancelled || dataVersion !== lastVersionRef.current) return;
+        console.error('[VRMViewer] Load failed:', err);
+        const msg = err instanceof Error ? err.message : '';
+        if (msg.includes('<!doctype') || msg.includes('Unexpected token')) setLoadError('MODEL_FILE_NOT_FOUND');
+        else setLoadError('LOAD_FAILED');
         setIsLoading(false);
-        propsRef.current.onError?.(error instanceof Error ? error : new Error('Failed to load model'));
+        propsRef.current.onError?.(err instanceof Error ? err : new Error(String(err)));
+      } finally {
+        if ((cancelled || dataVersion !== lastVersionRef.current) && isBlob) {
+          URL.revokeObjectURL(url!);
+        }
       }
     };
 
@@ -221,119 +163,67 @@ export function VRMViewer({
 
     return () => {
       cancelled = true;
-      if (animationFrameRef.current) {
-        cancelAnimationFrame(animationFrameRef.current);
-        animationFrameRef.current = null;
-      }
-      if (rendererRef.current) {
-        try {
-          rendererRef.current.dispose();
-        } catch (e) {
-          // ignore
-        }
-        rendererRef.current = null;
-      }
-      if (blobUrlRef.current && blobUrlRef.current.startsWith('blob:')) {
-        URL.revokeObjectURL(blobUrlRef.current);
-        blobUrlRef.current = null;
-      }
+      if (animationFrameRef.current) cancelAnimationFrame(animationFrameRef.current);
+      if (rendererRef.current) { try { rendererRef.current.dispose(); } catch(e){/*ignore*/} rendererRef.current = null; }
+      if (activeBlobUrlRef.current) { URL.revokeObjectURL(activeBlobUrlRef.current); activeBlobUrlRef.current = null; }
     };
-  }, [modelPath, modelData, isCanvasReady]);
+  }, [dataVersion, modelPath]);
 
   useEffect(() => {
     if (lipSyncEnabled && vrmRef.current && mouthOpenY !== undefined) {
-      const expressionManager = vrmRef.current.expressionManager;
-      if (expressionManager) {
-        expressionManager.setValue(VRMExpressionPresetName.Aa, mouthOpenY * 0.8);
-        expressionManager.setValue(VRMExpressionPresetName.Ou, mouthOpenY * 0.3);
-        expressionManager.setValue(VRMExpressionPresetName.Ih, mouthOpenY * 0.2);
+      const em = vrmRef.current.expressionManager;
+      if (em) {
+        em.setValue(VRMExpressionPresetName.Aa, mouthOpenY * 0.8);
+        em.setValue(VRMExpressionPresetName.Ou, mouthOpenY * 0.3);
+        em.setValue(VRMExpressionPresetName.Ih, mouthOpenY * 0.2);
       }
     }
   }, [mouthOpenY, lipSyncEnabled]);
 
   useEffect(() => {
     if (!lookAtMouse || !vrmRef.current) return;
-
-    const handleMouseMove = (event: MouseEvent) => {
+    const h = (e: MouseEvent) => {
       if (!vrmRef.current || !canvasRef.current) return;
-
-      const rect = canvasRef.current.getBoundingClientRect();
-      const x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
-      const y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
-
-      const lookAt = vrmRef.current.lookAt;
-      if (lookAt && lookAt.target) {
-        lookAt.target.position.set(x * 2, y * 1.5 + 1.0, 1.5);
-      }
+      const r = canvasRef.current.getBoundingClientRect();
+      const x = ((e.clientX - r.left) / r.width) * 2 - 1;
+      const y = -((e.clientY - r.top) / r.height) * 2 + 1;
+      const la = vrmRef.current.lookAt;
+      if (la?.target) la.target.position.set(x * 2, y * 1.5 + 1, 1.5);
     };
-
-    window.addEventListener('mousemove', handleMouseMove);
-    return () => window.removeEventListener('mousemove', handleMouseMove);
+    window.addEventListener('mousemove', h);
+    return () => window.removeEventListener('mousemove', h);
   }, [lookAtMouse]);
 
   useEffect(() => {
-    const handleResize = () => {
+    const h = () => {
       if (!canvasRef.current || !rendererRef.current || !cameraRef.current) return;
-
-      const width = canvasRef.current.clientWidth;
-      const height = canvasRef.current.clientHeight;
-
-      rendererRef.current.setSize(width, height);
-      cameraRef.current.aspect = width / height;
+      const w = canvasRef.current.clientWidth, h2 = canvasRef.current.clientHeight;
+      rendererRef.current.setSize(w, h2);
+      cameraRef.current.aspect = w / h2;
       cameraRef.current.updateProjectionMatrix();
     };
-
-    window.addEventListener('resize', handleResize);
-    return () => window.removeEventListener('resize', handleResize);
+    window.addEventListener('resize', h);
+    return () => window.removeEventListener('resize', h);
   }, []);
 
-  useEffect(() => {
-    if (vrmRef.current) {
-      vrmRef.current.scene.scale.setScalar(scale);
-    }
-  }, [scale]);
-
-  useEffect(() => {
-    if (vrmRef.current) {
-      vrmRef.current.scene.position.set(position[0], position[1], position[2]);
-    }
-  }, [position]);
+  useEffect(() => { if (vrmRef.current) vrmRef.current.scene.scale.setScalar(scale); }, [scale]);
+  useEffect(() => { if (vrmRef.current) vrmRef.current.scene.position.set(position[0], position[1], position[2]); }, [position]);
 
   if (loadError) {
-    const isNotConfigured = loadError === 'MODEL_NOT_CONFIGURED';
-    const isFileNotFound = loadError === 'MODEL_FILE_NOT_FOUND';
+    const m: Record<string, string> = { MODEL_NOT_CONFIGURED: '模型未配置', MODEL_FILE_NOT_FOUND: '模型文件不存在', LOAD_FAILED: '模型加载失败' };
     return (
       <div className="flex flex-col items-center justify-center h-full text-center p-4">
-        <div className="text-[var(--color-text-tertiary)] mb-3">
-          <svg className="w-16 h-16 mx-auto" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10" />
-          </svg>
-        </div>
-        <p className="text-sm text-[var(--color-text-secondary)]">
-          {isNotConfigured ? '模型未配置' : isFileNotFound ? '模型文件不存在' : '模型加载失败'}
-        </p>
-        <p className="text-xs text-[var(--color-text-tertiary)] mt-1">
-          {isNotConfigured || isFileNotFound ? '请上传模型或检查模型路径' : '请检查模型文件是否存在且格式正确'}
-        </p>
+        <svg className="w-16 h-16 mx-auto text-[var(--color-text-tertiary)]" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10" /></svg>
+        <p className="text-sm text-[var(--color-text-secondary)] mt-3">{m[loadError] ?? '?'}</p>
+        <p className="text-xs text-[var(--color-text-tertiary)] mt-1">请上传模型或刷新页面</p>
       </div>
     );
   }
 
   return (
     <div className="relative w-full h-full">
-      {isLoading && (
-        <div className="absolute inset-0 flex items-center justify-center bg-[var(--color-bg-secondary)]">
-          <div className="flex flex-col items-center">
-            <div className="w-8 h-8 border-2 border-[var(--color-accent)] border-t-transparent rounded-full animate-spin" />
-            <p className="text-sm text-[var(--color-text-secondary)] mt-2">加载 VRM 模型...</p>
-          </div>
-        </div>
-      )}
-      <canvas
-        ref={canvasRef}
-        className="w-full h-full"
-        style={{ opacity: isLoading ? 0 : 1 }}
-      />
+      {isLoading && <div className="absolute inset-0 flex items-center justify-center bg-[var(--color-bg-secondary)]"><div className="flex flex-col items-center"><div className="w-8 h-8 border-2 border-[var(--color-accent)] border-t-transparent rounded-full animate-spin" /><p className="text-sm text-[var(--color-text-secondary)] mt-2">加载中...</p></div></div>}
+      <canvas ref={canvasRef} className="w-full h-full" style={{ opacity: isLoading ? 0 : 1 }} />
     </div>
   );
 }

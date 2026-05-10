@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { listAvatars, deleteAvatar, getAvatar, saveAvatar } from '../../services/avatarStorage';
 import type { AvatarRecord } from '../../services/avatarStorage';
 import { useSettingsStore } from '../../store/settingsStore';
@@ -14,7 +14,8 @@ export function AvatarManager({ type, onClose }: AvatarManagerProps) {
   const [avatars, setAvatars] = useState<AvatarRecord[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [previewAvatar, setPreviewAvatar] = useState<AvatarRecord | null>(null);
-  const [previewData, setPreviewData] = useState<ArrayBuffer | null>(null);
+  const previewDataRef = useRef<ArrayBuffer | undefined>(undefined);
+  const [previewDataVersion, setPreviewDataVersion] = useState(0);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editingName, setEditingName] = useState('');
   const [isUploading, setIsUploading] = useState(false);
@@ -78,7 +79,8 @@ export function AvatarManager({ type, onClose }: AvatarManagerProps) {
     const fullAvatar = await getAvatar(avatar.id);
     if (fullAvatar) {
       const arrayBuffer = await fullAvatar.data.arrayBuffer();
-      setPreviewData(arrayBuffer);
+      previewDataRef.current = arrayBuffer;
+      setPreviewDataVersion(v => v + 1);
       setPreviewAvatar(fullAvatar);
     }
   }, []);
@@ -295,19 +297,20 @@ export function AvatarManager({ type, onClose }: AvatarManagerProps) {
           )}
         </div>
 
-        {previewAvatar && previewData && (
-          <div className="fixed inset-0 z-60 flex items-center justify-center bg-black/70" onClick={() => { setPreviewAvatar(null); setPreviewData(null); }}>
+        {previewAvatar && previewDataRef.current && (
+          <div className="fixed inset-0 z-60 flex items-center justify-center bg-black/70" onClick={() => { setPreviewAvatar(null); previewDataRef.current = undefined; }}>
             <div className="w-[400px] h-[400px] bg-[var(--color-bg-secondary)] rounded-xl overflow-hidden" onClick={(e) => e.stopPropagation()}>
               {previewAvatar.type === 'live2d' ? (
                 <Live2DViewer
                   modelPath=""
-                  modelData={previewData}
+                  modelData={previewDataRef.current}
                   scale={0.3}
                 />
               ) : (
                 <VRMViewer
                   modelPath=""
-                  modelData={previewData}
+                  modelDataRef={previewDataRef}
+                  dataVersion={previewDataVersion}
                   scale={1.0}
                 />
               )}
