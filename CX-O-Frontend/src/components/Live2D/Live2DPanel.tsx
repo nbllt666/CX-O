@@ -1,6 +1,7 @@
 import { useState, useCallback, useRef, useEffect } from 'react';
 import { Live2DViewer } from './Live2DViewer';
 import { useSettingsStore } from '../../store/settingsStore';
+import { getAvatar } from '../../services/avatarStorage';
 
 interface Live2DPanelProps {
   audioElement: HTMLAudioElement | null;
@@ -14,6 +15,19 @@ export function Live2DPanel({ audioElement, isPlaying }: Live2DPanelProps) {
   const panelRef = useRef<HTMLDivElement>(null);
   const startXRef = useRef(0);
   const startWidthRef = useRef(0);
+  const [modelData, setModelData] = useState<ArrayBuffer | undefined>(undefined);
+
+  useEffect(() => {
+    if (live2d.modelId) {
+      getAvatar(live2d.modelId).then((avatar) => {
+        if (avatar) {
+          avatar.data.arrayBuffer().then(setModelData);
+        }
+      });
+    } else {
+      setModelData(undefined);
+    }
+  }, [live2d.modelId]);
 
   useEffect(() => {
     if (!audioElement || !isPlaying || !live2d.lipSync) {
@@ -140,7 +154,8 @@ export function Live2DPanel({ audioElement, isPlaying }: Live2DPanelProps) {
       {/* Live2D Canvas */}
       <div className="flex-1 overflow-hidden">
         <Live2DViewer
-          modelPath={live2d.modelPath}
+          modelPath={live2d.modelId ? '' : live2d.modelPath}
+          modelData={modelData}
           scale={live2d.scale}
           xOffset={live2d.xOffset}
           yOffset={live2d.yOffset}

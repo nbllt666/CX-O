@@ -57,10 +57,10 @@ class VoiceWorkstationConfig:
 class ServerSettings:
     def __init__(self):
         self._shared = _shared_settings
-        self.system = getattr(_shared.config, 'system', type('obj', (), {'host': '0.0.0.0', 'port': 8100, 'log_level': 'INFO', 'debug': True})())
-        self.cors = getattr(_shared.config, 'cors', None)
+        self.system = getattr(self._shared.config, 'system', type('obj', (), {'host': '0.0.0.0', 'port': 8100, 'log_level': 'INFO', 'debug': True})())
+        self.cors = getattr(self._shared.config, 'cors', None)
 
-        asr_cfg = getattr(_shared.config, 'asr', None) or {}
+        asr_cfg = getattr(self._shared.config, 'asr', None) or {}
         if isinstance(asr_cfg, dict):
             self.asr = ASRConfig(**asr_cfg)
         else:
@@ -71,7 +71,7 @@ class ServerSettings:
                 remote_url=getattr(asr_cfg, 'remote_url', 'http://127.0.0.1:8001'),
             )
 
-        tts_raw = getattr(_shared.config, 'tts', None)
+        tts_raw = getattr(self._shared.config, 'tts', None)
         if isinstance(tts_raw, dict):
             self.tts = TTSConfig(**tts_raw)
         else:
@@ -88,7 +88,7 @@ class ServerSettings:
                 effects_enabled=getattr(tts_raw, 'effects_enabled', True) if tts_raw else True,
             )
 
-        vw_cfg = getattr(_shared.config, 'voice_workstation', None) or {}
+        vw_cfg = getattr(self._shared.config, 'voice_workstation', None) or {}
         if isinstance(vw_cfg, dict):
             self.voice_workstation = VoiceWorkstationConfig(**vw_cfg)
         else:
@@ -97,7 +97,7 @@ class ServerSettings:
                 enabled=getattr(vw_cfg, 'enabled', True),
             )
 
-        self.config = _shared.config
+        self.config = self._shared.config
 
 
 _settings: Optional[ServerSettings] = None

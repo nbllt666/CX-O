@@ -100,7 +100,10 @@ async def lifespan(app: FastAPI):
         health_checker.update_status("tts", "remote")
 
     logger.info(f"CX-O-SERVER started successfully (ASR: {app.state.asr_status}, TTS: {app.state.tts_status})")
-    yield
+
+    from server.api.app import lifespan as api_lifespan
+    async with api_lifespan(app):
+        yield
 
     logger.info("Shutting down CX-O-SERVER...")
     try:

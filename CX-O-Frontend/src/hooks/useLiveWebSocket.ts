@@ -52,7 +52,7 @@ export interface UseLiveWebSocketOptions {
   onStreamContent?: (content: string) => void;
   onGift?: (data: Record<string, unknown>) => void;
   onEnter?: (data: Record<string, unknown>) => void;
-  onVadStatus?: (data: { status: string; speech_duration_ms: number }) => void;
+  onVadStatus?: (data: { status: string; speech_duration_ms: number; speech_probability?: number }) => void;
   onASRResult?: (data: { text: string; is_final: boolean }) => void;
   onTTSSync?: (data: TTSSyncData) => void;
   onTTSTick?: (data: TTSTickData) => void;

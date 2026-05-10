@@ -6,7 +6,7 @@ import { SubtitleDisplay } from './SubtitleDisplay';
 
 interface LiveStageProps {
   avatarType?: 'live2d' | 'vrm';
-  modelPath?: string;
+  modelData?: ArrayBuffer;
   danmakuList: Array<{ id: string; content: string; username?: string; color?: string }>;
   subtitleText: string;
   mouthOpenY?: number;
@@ -16,7 +16,7 @@ interface LiveStageProps {
 
 export function LiveStage({
   avatarType = 'live2d',
-  modelPath = '',
+  modelData,
   danmakuList,
   subtitleText,
   mouthOpenY = 0,
@@ -37,25 +37,33 @@ export function LiveStage({
           className="relative flex-shrink-0"
           style={{ width: '55%', height: '100%' }}
         >
-          {avatarType === 'vrm' ? (
-            <VRMViewer
-              modelPath={modelPath}
-              scale={1.0}
-              position={[0, -0.3, 0]}
-              lipSyncEnabled
-              lookAtMouse
-              mouthOpenY={mouthOpenY}
-            />
+          {modelData ? (
+            avatarType === 'vrm' ? (
+              <VRMViewer
+                modelPath=""
+                modelData={modelData}
+                scale={1.0}
+                position={[0, -0.3, 0]}
+                lipSyncEnabled
+                lookAtMouse
+                mouthOpenY={mouthOpenY}
+              />
+            ) : (
+              <Live2DViewer
+                modelPath=""
+                modelData={modelData}
+                scale={0.35}
+                xOffset={0}
+                yOffset={20}
+                lipSyncEnabled
+                idleMotionEnabled
+                mouthOpenY={mouthOpenY}
+              />
+            )
           ) : (
-            <Live2DViewer
-              modelPath={modelPath}
-              scale={0.35}
-              xOffset={0}
-              yOffset={20}
-              lipSyncEnabled
-              idleMotionEnabled
-              mouthOpenY={mouthOpenY}
-            />
+            <div className="flex items-center justify-center h-full text-[var(--color-text-tertiary)]">
+              等待模型加载...
+            </div>
           )}
         </div>
 

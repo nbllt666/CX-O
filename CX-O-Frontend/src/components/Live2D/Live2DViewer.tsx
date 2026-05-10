@@ -6,6 +6,7 @@ import { Live2DModel } from 'pixi-live2d-display';
 
 interface Live2DViewerProps {
   modelPath: string;
+  modelData?: ArrayBuffer;
   scale?: number;
   xOffset?: number;
   yOffset?: number;
@@ -18,6 +19,7 @@ interface Live2DViewerProps {
 
 export function Live2DViewer({
   modelPath,
+  modelData,
   scale = 0.3,
   xOffset = 0,
   yOffset = 0,
@@ -30,16 +32,35 @@ export function Live2DViewer({
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const appRef = useRef<PIXI.Application | null>(null);
   const modelRef = useRef<Live2DModel | null>(null);
+  const blobUrlRef = useRef<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
 
   const loadModel = useCallback(async () => {
     if (!canvasRef.current) return;
 
-    if (!modelPath) {
+    let effectiveModelPath: string | null = null;
+    let createdBlobUrl = false;
+
+    if (modelData && modelData.byteLength > 0) {
+      const blob = new Blob([modelData], { type: 'application/octet-stream' });
+      effectiveModelPath = URL.createObjectURL(blob);
+      createdBlobUrl = true;
+    } else if (modelPath && modelPath.length > 0) {
+      effectiveModelPath = modelPath;
+    }
+
+    if (!effectiveModelPath) {
       setLoadError('MODEL_NOT_CONFIGURED');
       setIsLoading(false);
       return;
+    }
+
+    if (blobUrlRef.current && blobUrlRef.current.startsWith('blob:')) {
+      URL.revokeObjectURL(blobUrlRef.current);
+    }
+    if (createdBlobUrl) {
+      blobUrlRef.current = effectiveModelPath;
     }
 
     try {
@@ -47,7 +68,11 @@ export function Live2DViewer({
       setLoadError(null);
 
       if (appRef.current) {
-        appRef.current.destroy(true, { children: true });
+        try {
+          appRef.current.destroy(true, { children: true });
+        } catch (e) {
+          console.warn('Live2D: Error destroying previous app:', e);
+        }
         appRef.current = null;
       }
 
@@ -62,7 +87,7 @@ export function Live2DViewer({
 
       appRef.current = app;
 
-      const model = await Live2DModel.from(modelPath, {
+      const model = await Live2DModel.from(effectiveModelPath, {
         autoInteract: true,
       });
 
@@ -86,18 +111,33 @@ export function Live2DViewer({
       onModelLoaded?.();
     } catch (error) {
       console.error('Live2D: Failed to load model:', error);
-      setLoadError('LOAD_FAILED');
+      const errorMessage = error instanceof Error ? error.message : '';
+      if (errorMessage.includes('<!doctype') || errorMessage.includes('Unexpected token')) {
+        setLoadError('MODEL_FILE_NOT_FOUND');
+      } else {
+        setLoadError('LOAD_FAILED');
+      }
       setIsLoading(false);
       onError?.(error instanceof Error ? error : new Error('Failed to load model'));
     }
-  }, [modelPath, scale, xOffset, yOffset, idleMotionEnabled, onModelLoaded, onError]);
+  }, [modelPath, modelData, scale, xOffset, yOffset, idleMotionEnabled, onModelLoaded, onError]);
 
   useEffect(() => {
     loadModel();
 
     return () => {
+      if (blobUrlRef.current && blobUrlRef.current.startsWith('blob:')) {
+        URL.revokeObjectURL(blobUrlRef.current);
+        blobUrlRef.current = null;
+      }
       if (appRef.current) {
-        appRef.current.destroy(true, { children: true });
+        try {
+          if (typeof appRef.current.destroy === 'function') {
+            appRef.current.destroy(true, { children: true });
+          }
+        } catch (e) {
+          console.warn('Live2D: Error during cleanup:', e);
+        }
         appRef.current = null;
       }
       modelRef.current = null;
@@ -158,6 +198,7 @@ export function Live2DViewer({
 
   if (loadError) {
     const isNotConfigured = loadError === 'MODEL_NOT_CONFIGURED';
+    const isFileNotFound = loadError === 'MODEL_FILE_NOT_FOUND';
     return (
       <div className="flex flex-col items-center justify-center h-full text-center p-4">
         <div className="text-[var(--color-text-tertiary)] mb-3">
@@ -166,10 +207,10 @@ export function Live2DViewer({
           </svg>
         </div>
         <p className="text-sm text-[var(--color-text-secondary)]">
-          {isNotConfigured ? '模型未配置' : '模型加载失败'}
+          {isNotConfigured ? '模型未配置' : isFileNotFound ? '模型文件不存在' : '模型加载失败'}
         </p>
         <p className="text-xs text-[var(--color-text-tertiary)] mt-1">
-          {isNotConfigured ? '请在设置中配置模型路径' : '请检查模型文件是否存在且格式正确'}
+          {isNotConfigured || isFileNotFound ? '请上传模型或检查模型路径' : '请检查模型文件是否存在且格式正确'}
         </p>
       </div>
     );

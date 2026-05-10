@@ -1,7 +1,9 @@
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { LiveStage } from '../components/Live/LiveStage';
 import { useLiveWebSocket } from '../hooks/useLiveWebSocket';
+import { useSettingsStore } from '../store/settingsStore';
+import { getAvatar } from '../services/avatarStorage';
 import type { LiveDanmakuData } from '../hooks/useLiveWebSocket';
 
 export function LivePage() {
@@ -9,7 +11,22 @@ export function LivePage() {
   const [danmakuList, setDanmakuList] = useState<LiveDanmakuData[]>([]);
   const [subtitleText, setSubtitleText] = useState('');
   const [mouthOpenY, setMouthOpenY] = useState(0);
-  const [avatarType] = useState<'live2d' | 'vrm'>('live2d');
+  const [modelData, setModelData] = useState<ArrayBuffer | undefined>(undefined);
+
+  const { live2d, vrm, avatarType } = useSettingsStore();
+  const currentModelId = avatarType === 'live2d' ? live2d.modelId : vrm.modelId;
+
+  useEffect(() => {
+    if (currentModelId) {
+      getAvatar(currentModelId).then((avatar) => {
+        if (avatar) {
+          avatar.data.arrayBuffer().then(setModelData);
+        }
+      });
+    } else {
+      setModelData(undefined);
+    }
+  }, [currentModelId]);
 
   const handleDanmaku = useCallback((data: LiveDanmakuData) => {
     setDanmakuList((prev) => [
@@ -27,9 +44,9 @@ export function LivePage() {
     setSubtitleText(content);
   }, []);
 
-  const handleVadStatus = useCallback((data: { status: string; speech_duration_ms: number }) => {
-    if (data.status === 'speech_start') {
-      setMouthOpenY(Math.min(data.speech_duration_ms / 500, 1));
+  const handleVadStatus = useCallback((data: { status: string; speech_duration_ms: number; speech_probability?: number }) => {
+    if (data.status === 'speech_start' && data.speech_probability !== undefined) {
+      setMouthOpenY(Math.min(data.speech_probability * 1.5, 1));
     } else if (data.status === 'speech_end') {
       setMouthOpenY(0);
     }
@@ -44,8 +61,8 @@ export function LivePage() {
   return (
     <div className="w-full h-screen">
       <LiveStage
-        avatarType={avatarType}
-        modelPath=""
+        avatarType={avatarType === 'none' ? 'live2d' : avatarType}
+        modelData={modelData}
         danmakuList={danmakuList}
         subtitleText={subtitleText}
         mouthOpenY={mouthOpenY}

@@ -3,6 +3,7 @@ import { persist } from 'zustand/middleware';
 
 export interface Live2DSettings {
   enabled: boolean;
+  modelId?: string;
   modelPath: string;
   width: number;
   minWidth: number;
@@ -17,6 +18,7 @@ export interface Live2DSettings {
 
 export interface VRMSettings {
   enabled: boolean;
+  modelId?: string;
   modelPath: string;
   width: number;
   minWidth: number;
@@ -47,6 +49,8 @@ interface SettingsState {
   setAvatarType: (type: AvatarType) => void;
   setLive2DSettings: (settings: Partial<Live2DSettings>) => void;
   setVRMSettings: (settings: Partial<VRMSettings>) => void;
+  setLive2DModelId: (modelId: string | undefined) => void;
+  setVRMModelId: (modelId: string | undefined) => void;
   setLayoutSettings: (settings: Partial<LayoutSettings>) => void;
   toggleLive2D: () => void;
   toggleVRM: () => void;
@@ -116,6 +120,16 @@ export const useSettingsStore = create<SettingsState>()(
       setVRMSettings: (settings) =>
         set((state) => ({
           vrm: { ...state.vrm, ...settings },
+        })),
+
+      setLive2DModelId: (modelId) =>
+        set((state) => ({
+          live2d: { ...state.live2d, modelId },
+        })),
+
+      setVRMModelId: (modelId) =>
+        set((state) => ({
+          vrm: { ...state.vrm, modelId },
         })),
 
       setLayoutSettings: (settings) =>

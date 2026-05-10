@@ -72,6 +72,24 @@ class ACPConnectionInfo:
 
 
 @dataclass
+class ACPGroupMember:
+    agent_id: str = ""
+    agent_name: str = ""
+    role: str = "member"
+    joined_at: str = ""
+    metadata: Dict = field(default_factory=dict)
+
+    def to_dict(self) -> Dict:
+        return {
+            "agent_id": self.agent_id,
+            "agent_name": self.agent_name,
+            "role": self.role,
+            "joined_at": self.joined_at,
+            "metadata": self.metadata,
+        }
+
+
+@dataclass
 class ACPGroupInfo:
     id: str = ""
     name: str = ""

@@ -1,6 +1,7 @@
 import { useState, useCallback, useRef, useEffect } from 'react';
 import { VRMViewer } from './VRMViewer';
 import { useSettingsStore } from '../../store/settingsStore';
+import { getAvatar } from '../../services/avatarStorage';
 
 interface VRMPanelProps {
   audioElement: HTMLAudioElement | null;
@@ -14,6 +15,28 @@ export function VRMPanel({ audioElement, isPlaying }: VRMPanelProps) {
   const panelRef = useRef<HTMLDivElement>(null);
   const startXRef = useRef(0);
   const startWidthRef = useRef(0);
+  const [modelData, setModelData] = useState<ArrayBuffer | undefined>(undefined);
+
+  useEffect(() => {
+    if (vrm.modelId) {
+      console.log('[VRMPanel] Loading model:', vrm.modelId);
+      getAvatar(vrm.modelId).then((avatar) => {
+        if (avatar) {
+          console.log('[VRMPanel] Avatar found, size:', avatar.data.size);
+          avatar.data.arrayBuffer().then((buf) => {
+            console.log('[VRMPanel] ArrayBuffer loaded, byteLength:', buf.byteLength);
+            setModelData(buf);
+          });
+        } else {
+          console.warn('[VRMPanel] Avatar not found for id:', vrm.modelId);
+          setModelData(undefined);
+        }
+      });
+    } else {
+      console.log('[VRMPanel] No modelId, clearing data');
+      setModelData(undefined);
+    }
+  }, [vrm.modelId]);
 
   useEffect(() => {
     if (!audioElement || !isPlaying || !vrm.lipSync) {
@@ -152,7 +175,8 @@ export function VRMPanel({ audioElement, isPlaying }: VRMPanelProps) {
       {/* VRM Canvas */}
       <div className="flex-1 overflow-hidden">
         <VRMViewer
-          modelPath={vrm.modelPath}
+          modelPath={vrm.modelId ? '' : vrm.modelPath}
+          modelData={modelData}
           scale={vrm.scale}
           position={vrm.position3d}
           lipSyncEnabled={vrm.lipSync}

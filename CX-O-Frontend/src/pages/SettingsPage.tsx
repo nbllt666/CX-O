@@ -6,6 +6,7 @@ import { useThemeStore } from '../store/themeStore';
 import { useSettingsStore } from '../store/settingsStore';
 import { PageHeader } from '../components/layout';
 import { Button, Card, CardBody } from '../components/ui';
+import { AvatarManager } from '../components/Avatar/AvatarManager';
 
 interface SettingSection {
   id: string;
@@ -161,6 +162,7 @@ export function SettingsPage() {
   const [isBackendRunning, setIsBackendRunning] = useState(false);
   const [isControlServiceReady, setIsControlServiceReady] = useState(false);
   const [isProcessing, setIsProcessing] = useState(false);
+  const [showAvatarManager, setShowAvatarManager] = useState<'live2d' | 'vrm' | null>(null);
 
   // 虚拟形象设置
   const { live2d: live2dSettings, vrm: vrmSettings, avatarType, setLive2DSettings, setVRMSettings, setAvatarType } = useSettingsStore();
@@ -2461,18 +2463,26 @@ export function SettingsPage() {
                     在聊天页面显示 Live2D 虚拟形象，支持口型同步
                   </p>
                   <div className="space-y-4">
-                    <div>
-                      <label className="text-sm font-medium mb-2 block">模型路径</label>
-                      <input
-                        type="text"
-                        value={live2dSettings.modelPath}
-                        onChange={(e) => setLive2DSettings({ modelPath: e.target.value })}
-                        placeholder="/models/shizuku/shizuku.model.json"
-                        className="w-full px-3 py-2 bg-[var(--color-bg-primary)] border border-[var(--color-border)] rounded-[var(--radius-md)]"
-                      />
-                      <p className="text-xs text-[var(--color-text-tertiary)] mt-1">
-                        模型文件相对于 public 目录的路径
-                      </p>
+                    <div className="flex items-end gap-2">
+                      <div className="flex-1">
+                        <label className="text-sm font-medium mb-2 block">模型路径</label>
+                        <input
+                          type="text"
+                          value={live2dSettings.modelPath}
+                          onChange={(e) => setLive2DSettings({ modelPath: e.target.value })}
+                          placeholder="/models/shizuku/shizuku.model.json"
+                          className="w-full px-3 py-2 bg-[var(--color-bg-primary)] border border-[var(--color-border)] rounded-[var(--radius-md)]"
+                        />
+                        <p className="text-xs text-[var(--color-text-tertiary)] mt-1">
+                          模型文件相对于 public 目录的路径
+                        </p>
+                      </div>
+                      <button
+                        onClick={() => setShowAvatarManager('live2d')}
+                        className="px-4 py-2 text-sm bg-[var(--color-accent)] text-white rounded-[var(--radius-md)] hover:opacity-90 transition-opacity whitespace-nowrap"
+                      >
+                        管理模型
+                      </button>
                     </div>
 
                     <div className="grid grid-cols-3 gap-4">
@@ -2571,18 +2581,26 @@ export function SettingsPage() {
                     在聊天页面显示 VRM 3D 虚拟形象，支持口型同步和视线追踪
                   </p>
                   <div className="space-y-4">
-                    <div>
-                      <label className="text-sm font-medium mb-2 block">模型路径</label>
-                      <input
-                        type="text"
-                        value={vrmSettings.modelPath}
-                        onChange={(e) => setVRMSettings({ modelPath: e.target.value })}
-                        placeholder="/models/avatar.vrm"
-                        className="w-full px-3 py-2 bg-[var(--color-bg-primary)] border border-[var(--color-border)] rounded-[var(--radius-md)]"
-                      />
-                      <p className="text-xs text-[var(--color-text-tertiary)] mt-1">
-                        VRM 模型文件相对于 public 目录的路径
-                      </p>
+                    <div className="flex items-end gap-2">
+                      <div className="flex-1">
+                        <label className="text-sm font-medium mb-2 block">模型路径</label>
+                        <input
+                          type="text"
+                          value={vrmSettings.modelPath}
+                          onChange={(e) => setVRMSettings({ modelPath: e.target.value })}
+                          placeholder="/models/avatar.vrm"
+                          className="w-full px-3 py-2 bg-[var(--color-bg-primary)] border border-[var(--color-border)] rounded-[var(--radius-md)]"
+                        />
+                        <p className="text-xs text-[var(--color-text-tertiary)] mt-1">
+                          VRM 模型文件相对于 public 目录的路径
+                        </p>
+                      </div>
+                      <button
+                        onClick={() => setShowAvatarManager('vrm')}
+                        className="px-4 py-2 text-sm bg-[var(--color-accent)] text-white rounded-[var(--radius-md)] hover:opacity-90 transition-opacity whitespace-nowrap"
+                      >
+                        管理模型
+                      </button>
                     </div>
 
                     <div className="grid grid-cols-4 gap-4">
@@ -2998,6 +3016,13 @@ export function SettingsPage() {
           )}
         </div>
       </div>
+
+      {showAvatarManager && (
+        <AvatarManager
+          type={showAvatarManager}
+          onClose={() => setShowAvatarManager(null)}
+        />
+      )}
     </div>
   );
 }
