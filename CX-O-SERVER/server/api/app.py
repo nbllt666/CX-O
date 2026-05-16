@@ -23,6 +23,7 @@ from server.api.routers import (
     agents,
     archive,
     audio,
+    avatars,
     backup,
     chat,
     config,
@@ -440,6 +441,7 @@ def register_api_routes(app: FastAPI):
     app.include_router(agents.router, prefix="/api")
     app.include_router(archive.router, prefix="/api")
     app.include_router(audio.router, prefix="/api")
+    app.include_router(avatars.router, prefix="/api")
     app.include_router(admin.router, prefix="/api")
     app.include_router(backup.router, prefix="/api")
     app.include_router(vector.router, prefix="/api")

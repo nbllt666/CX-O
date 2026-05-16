@@ -1,9 +1,9 @@
 import axios, { AxiosInstance, AxiosError } from 'axios';
 import type { AxiosRequestConfig, InternalAxiosRequestConfig } from 'axios';
 
-const getApiBaseUrl = () => localStorage.getItem('cxhms-backend-url') || import.meta.env.VITE_API_URL || 'http://127.0.0.1:8100';
-const getControlServiceUrl = () => localStorage.getItem('cxhms-control-url') || import.meta.env.VITE_CONTROL_SERVICE_URL || 'http://127.0.0.1:8100';
-const getWsBaseUrl = () => localStorage.getItem('cxhms-ws-url') || import.meta.env.VITE_WS_URL || 'ws://127.0.0.1:8100';
+const getApiBaseUrl = () => localStorage.getItem('cxhms-backend-url') || import.meta.env.VITE_API_URL || 'http://127.0.0.1:8000';
+const getControlServiceUrl = () => localStorage.getItem('cxhms-control-url') || import.meta.env.VITE_CONTROL_SERVICE_URL || 'http://127.0.0.1:8000';
+const getWsBaseUrl = () => localStorage.getItem('cxhms-ws-url') || import.meta.env.VITE_WS_URL || 'ws://127.0.0.1:8000';
 const getVoiceWorkstationUrl = () => localStorage.getItem('cxhms-voicews-url') || import.meta.env.VITE_VOICE_WS_URL || 'http://127.0.0.1:8200';
 
 export const WS_BASE_URL = getWsBaseUrl();
@@ -994,6 +994,90 @@ class ApiClient {
 
   getAudioFileUrl(filename: string): string {
     return `${getApiBaseUrl()}/api/audio/files/${filename}`;
+  }
+
+  // ========== Avatar APIs ==========
+
+  async listAvatars(type?: 'vrm' | 'live2d'): Promise<{ avatars: Array<{
+    id: string;
+    name: string;
+    type: string;
+    size: number;
+    created_at: string;
+    updated_at?: string;
+    metadata?: Record<string, unknown>;
+  }>; total: number }> {
+    return this.request({
+      url: '/api/avatars',
+      params: type ? { type } : undefined,
+    });
+  }
+
+  async uploadAvatar(
+    file: File,
+    avatarType: 'vrm' | 'live2d',
+    name?: string,
+    onProgress?: (progress: number) => void
+  ): Promise<{ status: string; avatar: {
+    id: string;
+    name: string;
+    type: string;
+    size: number;
+    created_at: string;
+  } }> {
+    const formData = new FormData();
+    formData.append('file', file);
+    formData.append('avatar_type', avatarType);
+    if (name) formData.append('name', name);
+
+    const axiosInstance = this.client;
+    this._setupInterceptors(axiosInstance);
+
+    const response = await axiosInstance.post('/api/avatars/upload', formData, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+      onUploadProgress: onProgress
+        ? (progressEvent) => {
+            const total = progressEvent.total || file.size;
+            const progress = Math.round((progressEvent.loaded * 100) / total);
+            onProgress(progress);
+          }
+        : undefined,
+    });
+    return response.data;
+  }
+
+  async getAvatarFileUrl(avatarId: string, avatarType: string): string {
+    return `${getApiBaseUrl()}/api/avatars/${avatarId}/file?avatar_type=${avatarType}`;
+  }
+
+  async downloadAvatarFile(avatarId: string, avatarType: string): Promise<Blob> {
+    const axiosInstance = this.client;
+    this._setupInterceptors(axiosInstance);
+
+    const response = await axiosInstance.get(`/api/avatars/${avatarId}/file`, {
+      params: { avatar_type: avatarType },
+      responseType: 'blob',
+    });
+    return response.data;
+  }
+
+  async updateAvatar(
+    avatarId: string,
+    avatarType: string,
+    updates: { name?: string; metadata?: Record<string, unknown> }
+  ): Promise<{ status: string; avatar: unknown }> {
+    return this.request({
+      url: `/api/avatars/${avatarId}?avatar_type=${avatarType}`,
+      method: 'put',
+      data: updates,
+    });
+  }
+
+  async deleteAvatar(avatarId: string, avatarType: string): Promise<{ status: string; message: string }> {
+    return this.request({
+      url: `/api/avatars/${avatarId}?avatar_type=${avatarType}`,
+      method: 'delete',
+    });
   }
 }
 

@@ -59,8 +59,8 @@ export class Live2DExpression {
     const expressions = this.model.internalModel?.expressions;
     if (!expressions) return;
 
-    if (this.emotionWeight > 0.01 && this.currentEmotion !== 'neutral') {
-      const expressionName = this.currentEmotion;
+    if (this.emotionWeight > 0.01 && this.targetEmotion !== 'neutral') {
+      const expressionName = this.targetEmotion;
       const idx = expressions.findIndex((e: { name: string }) => e.name === expressionName);
       if (idx >= 0) {
         try {

@@ -31,7 +31,7 @@ function App() {
   }, []);
 
   const checkBackendConnection = async () => {
-    const backendUrl = localStorage.getItem('cxhms-backend-url') || 'http://localhost:8100';
+    const backendUrl = localStorage.getItem('cxhms-backend-url') || 'http://localhost:8000';
 
     try {
       const controller = new AbortController();

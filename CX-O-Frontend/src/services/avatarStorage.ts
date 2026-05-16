@@ -1,8 +1,10 @@
+import { api } from '../api/client';
+
 export interface AvatarRecord {
   id: string;
   name: string;
   type: 'live2d' | 'vrm';
-  data: Blob;
+  data?: Blob;
   thumbnail?: string;
   createdAt: number;
   size: number;
@@ -16,110 +18,112 @@ export interface AvatarRecord {
   };
 }
 
-let db: IDBDatabase | null = null;
+interface BackendAvatar {
+  id: string;
+  name: string;
+  type: string;
+  size: number;
+  created_at: string;
+  updated_at?: string;
+  metadata?: Record<string, unknown>;
+}
 
-export const initDB = (): Promise<IDBDatabase> => {
-  return new Promise((resolve, reject) => {
-    if (db) {
-      resolve(db);
-      return;
-    }
+function backendToRecord(backend: BackendAvatar): AvatarRecord {
+  return {
+    id: backend.id,
+    name: backend.name,
+    type: backend.type as 'live2d' | 'vrm',
+    size: backend.size,
+    createdAt: new Date(backend.created_at).getTime(),
+    metadata: backend.metadata as AvatarRecord['metadata'],
+  };
+}
 
-    const request = indexedDB.open('cxhms-avatars', 1);
+export const saveAvatar = async (
+  avatar: Omit<AvatarRecord, 'id' | 'createdAt'> & { file: File }
+): Promise<AvatarRecord> => {
+  const response = await api.uploadAvatar(
+    avatar.file,
+    avatar.type,
+    avatar.name
+  );
 
-    request.onerror = () => reject(new Error('Failed to open IndexedDB'));
-
-    request.onsuccess = () => {
-      db = request.result;
-      resolve(db);
-    };
-
-    request.onupgradeneeded = (event) => {
-      const database = (event.target as IDBOpenDBRequest).result;
-      if (!database.objectStoreNames.contains('avatars')) {
-        const store = database.createObjectStore('avatars', { keyPath: 'id' });
-        store.createIndex('name', 'name', { unique: false });
-        store.createIndex('type', 'type', { unique: false });
-        store.createIndex('createdAt', 'createdAt', { unique: false });
-      }
-    };
-  });
-};
-
-export const saveAvatar = async (avatar: AvatarRecord): Promise<void> => {
-  const database = await initDB();
-  return new Promise((resolve, reject) => {
-    const transaction = database.transaction(['avatars'], 'readwrite');
-    const store = transaction.objectStore('avatars');
-    store.put(avatar);
-    transaction.oncomplete = () => resolve();
-    transaction.onerror = () => reject(new Error('Failed to save avatar'));
-    transaction.onabort = () => reject(new Error('Transaction aborted while saving avatar'));
-  });
+  return {
+    id: response.avatar.id,
+    name: response.avatar.name,
+    type: response.avatar.type as 'live2d' | 'vrm',
+    size: response.avatar.size,
+    createdAt: new Date(response.avatar.created_at).getTime(),
+  };
 };
 
 export const getAvatar = async (id: string): Promise<AvatarRecord | null> => {
-  const database = await initDB();
-  return new Promise((resolve, reject) => {
-    const transaction = database.transaction(['avatars'], 'readonly');
-    const store = transaction.objectStore('avatars');
-    const request = store.get(id);
-    request.onsuccess = () => resolve(request.result || null);
-    request.onerror = () => reject(new Error('Failed to get avatar'));
-    transaction.onabort = () => reject(new Error('Transaction aborted while getting avatar'));
-  });
+  try {
+    const list = await api.listAvatars();
+    const backendAvatar = list.avatars.find((a) => a.id === id);
+    if (!backendAvatar) return null;
+
+    const record = backendToRecord(backendAvatar);
+
+    // 下载文件内容
+    const blob = await api.downloadAvatarFile(id, backendAvatar.type);
+    record.data = blob;
+
+    return record;
+  } catch (error) {
+    console.error('Failed to get avatar:', error);
+    return null;
+  }
 };
 
 export const listAvatars = async (): Promise<AvatarRecord[]> => {
-  const database = await initDB();
-  return new Promise((resolve, reject) => {
-    const transaction = database.transaction(['avatars'], 'readonly');
-    const store = transaction.objectStore('avatars');
-    const request = store.getAll();
-    request.onsuccess = () => resolve(request.result || []);
-    request.onerror = () => reject(new Error('Failed to list avatars'));
-    transaction.onabort = () => reject(new Error('Transaction aborted while listing avatars'));
-  });
+  try {
+    const response = await api.listAvatars();
+    return response.avatars.map(backendToRecord);
+  } catch (error) {
+    console.error('Failed to list avatars:', error);
+    return [];
+  }
 };
 
 export const deleteAvatar = async (id: string): Promise<void> => {
-  const database = await initDB();
-  return new Promise((resolve, reject) => {
-    const transaction = database.transaction(['avatars'], 'readwrite');
-    const store = transaction.objectStore('avatars');
-    store.delete(id);
-    transaction.oncomplete = () => resolve();
-    transaction.onerror = () => reject(new Error('Failed to delete avatar'));
-    transaction.onabort = () => reject(new Error('Transaction aborted while deleting avatar'));
-  });
+  try {
+    const list = await api.listAvatars();
+    const backendAvatar = list.avatars.find((a) => a.id === id);
+    if (!backendAvatar) {
+      throw new Error('Avatar not found');
+    }
+    await api.deleteAvatar(id, backendAvatar.type);
+  } catch (error) {
+    console.error('Failed to delete avatar:', error);
+    throw error;
+  }
 };
 
-export const updateAvatar = async (id: string, updates: Partial<AvatarRecord>): Promise<void> => {
-  const database = await initDB();
-  return new Promise((resolve, reject) => {
-    const transaction = database.transaction(['avatars'], 'readwrite');
-    const store = transaction.objectStore('avatars');
-    
-    const request = store.get(id);
-    request.onsuccess = () => {
-      const existing = request.result;
-      if (!existing) {
-        reject(new Error('Avatar not found'));
-        return;
-      }
-      
-      const updated = { ...existing, ...updates };
-      const putRequest = store.put(updated);
-      putRequest.onerror = () => reject(new Error('Failed to put updated avatar'));
-    };
-    
-    transaction.oncomplete = () => resolve();
-    transaction.onerror = () => reject(new Error('Failed to update avatar'));
-    transaction.onabort = () => reject(new Error('Transaction aborted while updating avatar'));
-  });
+export const updateAvatar = async (
+  id: string,
+  updates: Partial<Pick<AvatarRecord, 'name' | 'metadata'>>
+): Promise<void> => {
+  try {
+    const list = await api.listAvatars();
+    const backendAvatar = list.avatars.find((a) => a.id === id);
+    if (!backendAvatar) {
+      throw new Error('Avatar not found');
+    }
+    await api.updateAvatar(id, backendAvatar.type, {
+      name: updates.name,
+      metadata: updates.metadata as Record<string, unknown>,
+    });
+  } catch (error) {
+    console.error('Failed to update avatar:', error);
+    throw error;
+  }
 };
 
-export const generateThumbnail = async (_blob: Blob, _type: 'live2d' | 'vrm'): Promise<string | undefined> => {
+export const generateThumbnail = async (
+  _blob: Blob,
+  _type: 'live2d' | 'vrm'
+): Promise<string | undefined> => {
   return undefined;
 };
 

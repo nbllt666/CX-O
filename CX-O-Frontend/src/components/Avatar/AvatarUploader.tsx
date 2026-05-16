@@ -49,30 +49,15 @@ export function AvatarUploader({ type, onUploadSuccess, onError }: AvatarUploade
     setUploadProgress(0);
 
     try {
-      setUploadProgress(20);
-
-      const arrayBuffer = await file.arrayBuffer();
-      setUploadProgress(50);
-
-      const blob = new Blob([arrayBuffer], {
-        type: type === 'vrm' ? 'model/gltf-binary' : 'application/octet-stream',
-      });
-
-      setUploadProgress(70);
-
-      const avatar: AvatarRecord = {
-        id: crypto.randomUUID(),
+      const avatar = await saveAvatar({
+        file,
         name: file.name.replace(/\.[^.]+$/, ''),
         type,
-        data: blob,
-        createdAt: Date.now(),
         size: file.size,
         metadata: type === 'live2d' && file.name.endsWith('.zip') ? { modelJsonPath: undefined } : undefined,
-      };
+      });
 
-      await saveAvatar(avatar);
       setUploadProgress(100);
-
       onUploadSuccess?.(avatar);
     } catch (error) {
       console.error('Upload failed:', error);
@@ -146,7 +131,7 @@ export function AvatarUploader({ type, onUploadSuccess, onError }: AvatarUploade
       {isUploading ? (
         <div className="space-y-3">
           <div className="w-12 h-12 mx-auto rounded-full border-2 border-[var(--color-accent)] border-t-transparent animate-spin" />
-          <p className="text-sm text-[var(--color-text-secondary)]">上传中...</p>
+          <p className="text-sm text-[var(--color-text-secondary)]">上传中... {uploadProgress}%</p>
           <div className="w-full max-w-xs mx-auto h-2 bg-[var(--color-bg-tertiary)] rounded-full overflow-hidden">
             <div
               className="h-full bg-[var(--color-accent)] transition-all duration-300"

@@ -1,10 +1,11 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
-import { listAvatars, deleteAvatar, getAvatar, saveAvatar, updateAvatar } from '../../services/avatarStorage';
+import { listAvatars, deleteAvatar, getAvatar, updateAvatar } from '../../services/avatarStorage';
 import type { AvatarRecord } from '../../services/avatarStorage';
 import { useSettingsStore } from '../../store/settingsStore';
 import { Live2DViewer } from '../Live2D/Live2DViewer';
 import { VRMViewer, DEFAULT_TWEAK_CONFIG, type VRMTweakConfig } from '../VRM/VRMViewer';
 import { VRMTweakPanel } from '../VRM/VRMTweakPanel';
+import { api } from '../../api/client';
 
 interface AvatarManagerProps {
   type: 'live2d' | 'vrm';
@@ -172,23 +173,14 @@ export function AvatarManager({ type, onClose }: AvatarManagerProps) {
 
                   setIsUploading(true);
                   try {
-                    const arrayBuffer = await file.arrayBuffer();
-                    const blob = new Blob([arrayBuffer], { type: 'application/octet-stream' });
-
-                    const avatar: AvatarRecord = {
-                      id: crypto.randomUUID(),
-                      name: file.name.replace(/\.[^.]+$/, ''),
-                      type,
-                      data: blob,
-                      createdAt: Date.now(),
-                      size: file.size,
-                    };
-
-                    await saveAvatar(avatar);
+                    await api.uploadAvatar(file, type, file.name.replace(/\.[^.]+$/, ''), (progress) => {
+                      // 可以在这里添加进度条逻辑
+                      console.log(`Upload progress: ${progress}%`);
+                    });
                     loadAvatars();
                   } catch (error) {
                     console.error('Upload failed:', error);
-                    alert('上传失败');
+                    alert('上传失败: ' + (error instanceof Error ? error.message : '未知错误'));
                   } finally {
                     setIsUploading(false);
                   }

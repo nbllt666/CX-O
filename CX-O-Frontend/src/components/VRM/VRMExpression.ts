@@ -76,8 +76,8 @@ export class VRMExpression {
     });
 
     // Apply current emotion
-    if (this.emotionWeight > 0.01 && this.currentEmotion !== 'neutral') {
-      const presets = this.emotionMap[this.currentEmotion];
+    if (this.emotionWeight > 0.01 && this.targetEmotion !== 'neutral') {
+      const presets = this.emotionMap[this.targetEmotion];
       presets.forEach((preset) => {
         em.setValue(preset, this.emotionWeight);
       });
