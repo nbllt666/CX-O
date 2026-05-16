@@ -4,6 +4,35 @@ import { VRM, VRMLoaderPlugin, VRMExpressionPresetName } from '@pixiv/three-vrm'
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { VRMAudioLipSync } from './AudioLipSync';
 
+export interface VRMCameraConfig {
+  offsetX: number;
+  offsetY: number;
+  offsetZ: number;
+  lookAtY: number;
+}
+
+export interface VRMLightConfig {
+  directionalIntensity: number;
+  ambientIntensity: number;
+  pointIntensity: number;
+}
+
+export interface VRMTweakConfig {
+  camera: VRMCameraConfig;
+  light: VRMLightConfig;
+  modelRotationX: number;
+  modelRotationY: number;
+  modelRotationZ: number;
+}
+
+export const DEFAULT_TWEAK_CONFIG: VRMTweakConfig = {
+  camera: { offsetX: 0, offsetY: 1.2, offsetZ: 2.5, lookAtY: 0.45 },
+  light: { directionalIntensity: 2, ambientIntensity: 1.2, pointIntensity: 0.8 },
+  modelRotationX: 0,
+  modelRotationY: Math.PI,
+  modelRotationZ: 0,
+};
+
 interface VRMViewerProps {
   modelPath: string;
   modelDataRef: React.RefObject<ArrayBuffer | undefined>;
@@ -15,6 +44,7 @@ interface VRMViewerProps {
   mouthOpenY?: number;
   onModelLoaded?: () => void;
   onError?: (error: Error) => void;
+  tweakConfig?: Partial<VRMTweakConfig>;
 }
 
 export function VRMViewer({
@@ -28,6 +58,7 @@ export function VRMViewer({
   mouthOpenY = 0,
   onModelLoaded,
   onError,
+  tweakConfig,
 }: VRMViewerProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const rendererRef = useRef<THREE.WebGLRenderer | null>(null);
@@ -37,137 +68,171 @@ export function VRMViewer({
   const clockRef = useRef(new THREE.Timer());
   const lipSyncRef = useRef<VRMAudioLipSync | null>(null);
   const animationFrameRef = useRef<number | null>(null);
-  const activeBlobUrlRef = useRef<string | null>(null);
+
+  const dirLightRef = useRef<THREE.DirectionalLight | null>(null);
+  const ambLightRef = useRef<THREE.AmbientLight | null>(null);
+  const pntLightRef = useRef<THREE.PointLight | null>(null);
+
   const [isLoading, setIsLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
+  const [modelSize, setModelSize] = useState<{ height: number; width: number }>({ height: 1.6, width: 0.8 });
+
   const propsRef = useRef({ scale, position, onModelLoaded, onError });
   const lastVersionRef = useRef(-1);
+  const renderIdRef = useRef(0);
 
-  propsRef.current = { scale, position, onModelLoaded, onError };
-
-  const waitForCanvas = (): Promise<HTMLCanvasElement> => {
-    return new Promise((resolve, reject) => {
-      let attempts = 0;
-      const check = () => {
-        if (canvasRef.current && canvasRef.current.clientWidth > 0 && canvasRef.current.clientHeight > 0) {
-          resolve(canvasRef.current);
-          return;
-        }
-        if (++attempts >= 100) reject(new Error('Canvas not ready'));
-        else requestAnimationFrame(check);
-      };
-      check();
-    });
-  };
+  const effectiveTweak = useRef<Partial<VRMTweakConfig>>(tweakConfig || {});
+  if (tweakConfig) effectiveTweak.current = tweakConfig;
+  const tc: VRMTweakConfig = { ...DEFAULT_TWEAK_CONFIG, ...effectiveTweak.current };
 
   useEffect(() => {
     if (dataVersion === lastVersionRef.current) return;
     lastVersionRef.current = dataVersion;
+    const myRenderId = ++renderIdRef.current;
 
-    console.log(`[VRMViewer] Load #${dataVersion} started`);
-    let cancelled = false;
+    console.log(`[VRMViewer] Load #${dataVersion} (r=${myRenderId})`);
 
     const loadModel = async () => {
-      const modelData = modelDataRef.current;
-      const useBuf = modelData && modelData.byteLength > 0;
-      const usePath = !useBuf && modelPath && modelPath.length > 0;
+      const data = modelDataRef?.current;
+      console.log(`[VRMViewer] r=${myRenderId} modelData:`, data ? `${data.byteLength} bytes` : 'null');
+      const useBuf = data && data.byteLength > 0;
+      const usePath = !useBuf && modelPath?.length;
 
-      if (!useBuf && !usePath) {
-        if (!cancelled) { setLoadError('MODEL_NOT_CONFIGURED'); setIsLoading(false); }
-        return;
-      }
+      if (!useBuf && !usePath) { setLoadError('MODEL_NOT_CONFIGURED'); setIsLoading(false); return; }
 
       let url: string | null = null;
-      let isBlob = false;
-
-      if (useBuf) {
-        url = URL.createObjectURL(new Blob([modelData], { type: 'application/octet-stream' }));
-        isBlob = true;
-      } else {
-        url = modelPath;
-      }
-
+      if (useBuf) url = URL.createObjectURL(new Blob([data], { type: 'application/octet-stream' }));
+      else url = modelPath;
       if (!url) return;
 
       try {
-        if (!cancelled) { setIsLoading(true); setLoadError(null); }
+        setIsLoading(true); setLoadError(null);
         if (rendererRef.current) { try { rendererRef.current.dispose(); } catch(e){/*ignore*/} rendererRef.current = null; }
 
+        console.log(`[VRMViewer] r=${myRenderId} Waiting for canvas...`);
         const canvas = await waitForCanvas();
-        if (cancelled) return;
+        console.log(`[VRMViewer] r=${myRenderId} Canvas obtained:`, canvas.clientWidth, 'x', canvas.clientHeight);
 
         const w = canvas.clientWidth || 300, h = canvas.clientHeight || 400;
-        const scene = new THREE.Scene();
-        sceneRef.current = scene;
-        const cam = new THREE.PerspectiveCamera(30, w / h, 0.1, 20);
-        cam.position.set(0, 1, 1.5);
-        cameraRef.current = cam;
+        const scene = new THREE.Scene(); sceneRef.current = scene;
+        const cam = new THREE.PerspectiveCamera(30, w / h, 0.1, 20); cameraRef.current = cam;
 
+        console.log(`[VRMViewer] r=${myRenderId} Creating WebGLRenderer...`);
         const renderer = new THREE.WebGLRenderer({ canvas, alpha: true, antialias: true });
-        renderer.setSize(w, h);
-        renderer.setPixelRatio(window.devicePixelRatio);
-        renderer.outputColorSpace = THREE.SRGBColorSpace;
-        rendererRef.current = renderer;
+        console.log(`[VRMViewer] r=${myRenderId} WebGLRenderer OK`);
+        renderer.setSize(w, h); renderer.setPixelRatio(window.devicePixelRatio); renderer.outputColorSpace = THREE.SRGBColorSpace; rendererRef.current = renderer;
 
-        scene.add(new THREE.DirectionalLight(1, 1).translateX(1).translateY(1).translateZ(1));
-        scene.add(new THREE.AmbientLight(0xffffff, 0.5));
+        const dl = new THREE.DirectionalLight(0xffffff, tc.light.directionalIntensity); dl.position.set(1,1.5,1); dirLightRef.current=dl; scene.add(dl);
+        const al = new THREE.AmbientLight(0xffffff, tc.light.ambientIntensity); ambLightRef.current=al; scene.add(al);
+        const pl = new THREE.PointLight(0xffffff, tc.light.pointIntensity,10); pl.position.set(-1,1,1); pntLightRef.current=pl; scene.add(pl);
 
-        const loader = new GLTFLoader();
-        loader.register((p) => new VRMLoaderPlugin(p));
+        console.log(`[VRMViewer] r=${myRenderId} Starting GLTF load...`);
+        const loader = new GLTFLoader(); loader.register((p) => new VRMLoaderPlugin(p));
         const gltf = await loader.loadAsync(url);
+        console.log(`[VRMViewer] r=${myRenderId} GLTF loaded`);
 
-        if (cancelled || dataVersion !== lastVersionRef.current) return;
+        if (renderIdRef.current !== myRenderId) { console.log(`[VRMViewer] r=${myRenderId} Superseded`); return; }
 
         const vrm = gltf.userData.vrm as VRM;
         if (!vrm) throw new Error('Not a VRM model');
 
         vrmRef.current = vrm;
         vrm.scene.scale.setScalar(propsRef.current.scale);
-        vrm.scene.position.set(...propsRef.current.position);
-        vrm.scene.rotation.y = Math.PI;
+        vrm.scene.rotation.x = tc.modelRotationX; vrm.scene.rotation.y = tc.modelRotationY; vrm.scene.rotation.z = tc.modelRotationZ;
+
+        // Apply natural idle pose
+        const humanoid = vrm.humanoid;
+        if (humanoid) {
+          const setRot = (name: string, x: number, y: number, z: number) => {
+            const bone = humanoid.getNormalizedBoneNode(name as any);
+            if (bone) bone.rotation.set(x, y, z);
+          };
+          setRot('leftUpperArm', 0, 0, 0.3);
+          setRot('rightUpperArm', 0, 0, -0.3);
+          setRot('leftLowerArm', 0, 0, 0.1);
+          setRot('rightLowerArm', 0, 0, -0.1);
+          setRot('leftUpperLeg', 0.1, 0, 0);
+          setRot('rightUpperLeg', -0.1, 0, 0);
+          setRot('leftLowerLeg', 0.05, 0, 0);
+          setRot('rightLowerLeg', -0.05, 0, 0);
+          setRot('spine', 0, 0, 0);
+          setRot('chest', 0, 0, 0);
+        }
+
+        const box = new THREE.Box3().setFromObject(vrm.scene);
+        const size = box.getSize(new THREE.Vector3());
+        const height = Math.max(size.y, 0.1), width = Math.max(size.x, 0.1);
+        setModelSize({ height, width });
+        vrm.scene.position.set(0, -box.min.y * propsRef.current.scale, 0);
+        vrm.scene.position.x += propsRef.current.position[0]; vrm.scene.position.y += propsRef.current.position[1]; vrm.scene.position.z += propsRef.current.position[2];
+        cam.position.set(tc.camera.offsetX, height * 0.7 + tc.camera.offsetY, Math.max(width * 2.5, tc.camera.offsetZ));
+        cam.lookAt(0, height * tc.camera.lookAtY, 0);
         scene.add(vrm.scene);
+        lipSyncRef.current = new VRMAudioLipSync(); lipSyncRef.current.bindVRM(vrm);
 
-        lipSyncRef.current = new VRMAudioLipSync();
-        lipSyncRef.current.bindVRM(vrm);
-
-        if (!cancelled) setIsLoading(false);
+        setIsLoading(false);
         propsRef.current.onModelLoaded?.();
 
         const animate = () => {
-          if (cancelled || dataVersion !== lastVersionRef.current) return;
+          if (renderIdRef.current !== myRenderId) return;
           const dt = clockRef.current.getDelta();
           if (vrmRef.current) vrmRef.current.update(dt);
-          if (rendererRef.current && sceneRef.current && cameraRef.current)
-            rendererRef.current.render(sceneRef.current, cameraRef.current);
+          if (rendererRef.current && sceneRef.current && cameraRef.current) rendererRef.current.render(sceneRef.current, cameraRef.current);
           animationFrameRef.current = requestAnimationFrame(animate);
         };
         animate();
-
-        if (isBlob) activeBlobUrlRef.current = url;
       } catch (err) {
-        if (cancelled || dataVersion !== lastVersionRef.current) return;
-        console.error('[VRMViewer] Load failed:', err);
+        if (renderIdRef.current !== myRenderId) return;
+        console.error(`[VRMViewer] r=${myRenderId} Failed:`, err);
         const msg = err instanceof Error ? err.message : '';
         if (msg.includes('<!doctype') || msg.includes('Unexpected token')) setLoadError('MODEL_FILE_NOT_FOUND');
         else setLoadError('LOAD_FAILED');
         setIsLoading(false);
         propsRef.current.onError?.(err instanceof Error ? err : new Error(String(err)));
-      } finally {
-        if ((cancelled || dataVersion !== lastVersionRef.current) && isBlob) {
-          URL.revokeObjectURL(url!);
-        }
-      }
+      } finally { if (url.startsWith('blob:')) URL.revokeObjectURL(url); }
     };
+
+    const waitForCanvas = (): Promise<HTMLCanvasElement> =>
+      new Promise((resolve) => {
+        let n = 0;
+        const check = () => {
+          const c = canvasRef.current;
+          if (c && c.clientWidth > 0 && c.clientHeight > 0) resolve(c);
+          else if (++n >= 200) resolve(c || document.createElement('canvas'));
+          else requestAnimationFrame(check);
+        };
+        check();
+      });
 
     loadModel();
 
     return () => {
-      cancelled = true;
       if (animationFrameRef.current) cancelAnimationFrame(animationFrameRef.current);
       if (rendererRef.current) { try { rendererRef.current.dispose(); } catch(e){/*ignore*/} rendererRef.current = null; }
-      if (activeBlobUrlRef.current) { URL.revokeObjectURL(activeBlobUrlRef.current); activeBlobUrlRef.current = null; }
     };
   }, [dataVersion, modelPath]);
+
+  useEffect(() => {
+    if (dirLightRef.current) dirLightRef.current.intensity = tc.light.directionalIntensity;
+    if (ambLightRef.current) ambLightRef.current.intensity = tc.light.ambientIntensity;
+    if (pntLightRef.current) pntLightRef.current.intensity = tc.light.pointIntensity;
+  }, [tc.light.directionalIntensity, tc.light.ambientIntensity, tc.light.pointIntensity]);
+
+  useEffect(() => {
+    if (vrmRef.current) {
+      vrmRef.current.scene.rotation.x = tc.modelRotationX;
+      vrmRef.current.scene.rotation.y = tc.modelRotationY;
+      vrmRef.current.scene.rotation.z = tc.modelRotationZ;
+    }
+  }, [tc.modelRotationX, tc.modelRotationY, tc.modelRotationZ]);
+
+  useEffect(() => {
+    const cam = cameraRef.current;
+    if (!cam) return;
+    const { height } = modelSize;
+    cam.position.set(tc.camera.offsetX, height * 0.7 + tc.camera.offsetY, Math.max(modelSize.width * 2.5, tc.camera.offsetZ));
+    cam.lookAt(0, height * tc.camera.lookAtY, 0);
+  }, [tc.camera.offsetX, tc.camera.offsetY, tc.camera.offsetZ, tc.camera.lookAtY, modelSize]);
 
   useEffect(() => {
     if (lipSyncEnabled && vrmRef.current && mouthOpenY !== undefined) {
@@ -223,7 +288,7 @@ export function VRMViewer({
   return (
     <div className="relative w-full h-full">
       {isLoading && <div className="absolute inset-0 flex items-center justify-center bg-[var(--color-bg-secondary)]"><div className="flex flex-col items-center"><div className="w-8 h-8 border-2 border-[var(--color-accent)] border-t-transparent rounded-full animate-spin" /><p className="text-sm text-[var(--color-text-secondary)] mt-2">加载中...</p></div></div>}
-      <canvas ref={canvasRef} className="w-full h-full" style={{ opacity: isLoading ? 0 : 1 }} />
+      <canvas ref={canvasRef} className="w-full h-full block" style={{ opacity: isLoading ? 0 : 1, minWidth: '100%', minHeight: '100%' }} />
     </div>
   );
 }

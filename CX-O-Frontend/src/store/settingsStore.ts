@@ -16,6 +16,35 @@ export interface Live2DSettings {
   yOffset: number;
 }
 
+export interface VRMCameraTweak {
+  offsetX: number;
+  offsetY: number;
+  offsetZ: number;
+  lookAtY: number;
+}
+
+export interface VRMLightTweak {
+  directionalIntensity: number;
+  ambientIntensity: number;
+  pointIntensity: number;
+}
+
+export interface VRMTweakConfig {
+  camera: VRMCameraTweak;
+  light: VRMLightTweak;
+  modelRotationX: number;
+  modelRotationY: number;
+  modelRotationZ: number;
+}
+
+export const DEFAULT_VRM_TWEAK: VRMTweakConfig = {
+  camera: { offsetX: 0, offsetY: 1.2, offsetZ: 2.5, lookAtY: 0.45 },
+  light: { directionalIntensity: 2, ambientIntensity: 1.2, pointIntensity: 0.8 },
+  modelRotationX: 0,
+  modelRotationY: Math.PI,
+  modelRotationZ: 0,
+};
+
 export interface VRMSettings {
   enabled: boolean;
   modelId?: string;
@@ -29,6 +58,7 @@ export interface VRMSettings {
   lookAtMouse: boolean;
   scale: number;
   position3d: [number, number, number];
+  tweak?: VRMTweakConfig;
 }
 
 export interface LayoutSettings {

@@ -3,24 +3,34 @@ import { listAvatars, deleteAvatar, getAvatar, saveAvatar } from '../../services
 import type { AvatarRecord } from '../../services/avatarStorage';
 import { useSettingsStore } from '../../store/settingsStore';
 import { Live2DViewer } from '../Live2D/Live2DViewer';
-import { VRMViewer } from '../VRM/VRMViewer';
+import { VRMViewer, DEFAULT_TWEAK_CONFIG, type VRMTweakConfig } from '../VRM/VRMViewer';
+import { VRMTweakPanel } from '../VRM/VRMTweakPanel';
 
 interface AvatarManagerProps {
   type: 'live2d' | 'vrm';
   onClose?: () => void;
 }
 
+interface PreviewState {
+  avatar: AvatarRecord | null;
+  dataVersion: number;
+  tweakConfig: VRMTweakConfig;
+}
+
 export function AvatarManager({ type, onClose }: AvatarManagerProps) {
   const [avatars, setAvatars] = useState<AvatarRecord[]>([]);
   const [isLoading, setIsLoading] = useState(true);
-  const [previewAvatar, setPreviewAvatar] = useState<AvatarRecord | null>(null);
+  const [previewState, setPreviewState] = useState<PreviewState>({
+    avatar: null,
+    dataVersion: 0,
+    tweakConfig: { ...DEFAULT_TWEAK_CONFIG },
+  });
   const previewDataRef = useRef<ArrayBuffer | undefined>(undefined);
-  const [previewDataVersion, setPreviewDataVersion] = useState(0);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editingName, setEditingName] = useState('');
   const [isUploading, setIsUploading] = useState(false);
 
-  const { live2d, vrm, setLive2DModelId, setVRMModelId } = useSettingsStore();
+  const { live2d, vrm, setLive2DModelId, setVRMModelId, setVRMSettings } = useSettingsStore();
   const currentModelId = type === 'live2d' ? live2d.modelId : vrm.modelId;
 
   const loadAvatars = useCallback(async () => {
@@ -65,14 +75,14 @@ export function AvatarManager({ type, onClose }: AvatarManagerProps) {
           }
         }
         loadAvatars();
-        if (previewAvatar?.id === id) {
-          setPreviewAvatar(null);
+        if (previewState.avatar?.id === id) {
+          setPreviewState(prev => ({ ...prev, avatar: null }));
         }
       } catch (error) {
         console.error('Failed to delete avatar:', error);
       }
     },
-    [currentModelId, type, setLive2DModelId, setVRMModelId, loadAvatars, previewAvatar]
+    [currentModelId, type, setLive2DModelId, setVRMModelId, loadAvatars, previewState.avatar]
   );
 
   const handlePreview = useCallback(async (avatar: AvatarRecord) => {
@@ -80,8 +90,11 @@ export function AvatarManager({ type, onClose }: AvatarManagerProps) {
     if (fullAvatar) {
       const arrayBuffer = await fullAvatar.data.arrayBuffer();
       previewDataRef.current = arrayBuffer;
-      setPreviewDataVersion(v => v + 1);
-      setPreviewAvatar(fullAvatar);
+      setPreviewState(prev => ({
+        avatar: fullAvatar,
+        dataVersion: prev.dataVersion + 1,
+        tweakConfig: { ...DEFAULT_TWEAK_CONFIG },
+      }));
     }
   }, []);
 
@@ -297,22 +310,44 @@ export function AvatarManager({ type, onClose }: AvatarManagerProps) {
           )}
         </div>
 
-        {previewAvatar && previewDataRef.current && (
-          <div className="fixed inset-0 z-60 flex items-center justify-center bg-black/70" onClick={() => { setPreviewAvatar(null); previewDataRef.current = undefined; }}>
-            <div className="w-[400px] h-[400px] bg-[var(--color-bg-secondary)] rounded-xl overflow-hidden" onClick={(e) => e.stopPropagation()}>
-              {previewAvatar.type === 'live2d' ? (
-                <Live2DViewer
-                  modelPath=""
-                  modelData={previewDataRef.current}
-                  scale={0.3}
-                />
-              ) : (
-                <VRMViewer
-                  modelPath=""
-                  modelDataRef={previewDataRef}
-                  dataVersion={previewDataVersion}
-                  scale={1.0}
-                />
+        {previewState.avatar && previewDataRef.current && (
+          <div className="fixed inset-0 z-60 flex items-center justify-center bg-black/70" onClick={() => { setPreviewState(prev => ({ ...prev, avatar: null })); previewDataRef.current = undefined; }}>
+            <div
+              className="flex bg-[var(--color-bg-secondary)] rounded-xl overflow-hidden shadow-2xl"
+              style={{ width: 680, height: 440 }}
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="flex-1 relative" style={{ width: 440, height: 440 }}>
+                {previewState.avatar.type === 'live2d' ? (
+                  <Live2DViewer
+                    modelPath=""
+                    modelData={previewDataRef.current}
+                    scale={0.3}
+                  />
+                ) : (
+                  <VRMViewer
+                    modelPath=""
+                    modelDataRef={previewDataRef}
+                    dataVersion={previewState.dataVersion}
+                    scale={1.0}
+                    tweakConfig={previewState.tweakConfig}
+                  />
+                )}
+              </div>
+              {previewState.avatar.type === 'vrm' && (
+                <div className="w-[240px] p-3 border-l border-[var(--color-border)] flex flex-col">
+                  <div className="text-sm font-medium text-[var(--color-text-primary)] mb-2">参数调节</div>
+                  <VRMTweakPanel
+                    config={previewState.tweakConfig}
+                    onChange={(tc) => setPreviewState(prev => ({ ...prev, tweakConfig: tc }))}
+                    onApply={() => {
+                      const tc = previewState.tweakConfig;
+                      setVRMSettings({ tweak: tc });
+                      console.log('[AvatarManager] Applied tweak config to settings:', tc);
+                    }}
+                    onReset={() => setPreviewState(prev => ({ ...prev, tweakConfig: { ...DEFAULT_TWEAK_CONFIG } }))}
+                  />
+                </div>
               )}
             </div>
           </div>

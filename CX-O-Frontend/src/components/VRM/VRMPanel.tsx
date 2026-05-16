@@ -187,6 +187,7 @@ export function VRMPanel({ audioElement, isPlaying }: VRMPanelProps) {
           lipSyncEnabled={vrm.lipSync}
           lookAtMouse={vrm.lookAtMouse}
           mouthOpenY={mouthOpenY}
+          tweakConfig={vrm.tweak}
         />
       </div>
 
