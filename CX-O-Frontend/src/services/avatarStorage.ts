@@ -109,7 +109,8 @@ export const updateAvatar = async (id: string, updates: Partial<AvatarRecord>): 
       }
       
       const updated = { ...existing, ...updates };
-      store.put(updated);
+      const putRequest = store.put(updated);
+      putRequest.onerror = () => reject(new Error('Failed to put updated avatar'));
     };
     
     transaction.oncomplete = () => resolve();

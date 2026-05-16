@@ -2,8 +2,11 @@ import { useEffect, useRef, useState } from 'react';
 import * as THREE from 'three';
 import { VRM, VRMLoaderPlugin, VRMExpressionPresetName } from '@pixiv/three-vrm';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
-import { VRMAudioLipSync } from './AudioLipSync';
-import { VRMTweakConfig, DEFAULT_VRM_TWEAK } from '../../store/settingsStore';
+import { VRMTweakConfig, DEFAULT_VRM_TWEAK, AnimationSettings, DEFAULT_ANIMATION_SETTINGS } from '../../store/settingsStore';
+import { VRMLipSync } from './VRMLipSync';
+import { VRMExpression } from './VRMExpression';
+import { VRMAnimation } from './VRMAnimation';
+import { VowelAnalyzer } from './VowelAnalyzer';
 
 export type { VRMTweakConfig };
 export { DEFAULT_VRM_TWEAK as DEFAULT_TWEAK_CONFIG };
@@ -20,6 +23,7 @@ interface VRMViewerProps {
   onModelLoaded?: () => void;
   onError?: (error: Error) => void;
   tweakConfig?: Partial<VRMTweakConfig>;
+  animationConfig?: Partial<AnimationSettings>;
 }
 
 export function VRMViewer({
@@ -34,6 +38,7 @@ export function VRMViewer({
   onModelLoaded,
   onError,
   tweakConfig,
+  animationConfig,
 }: VRMViewerProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const rendererRef = useRef<THREE.WebGLRenderer | null>(null);
@@ -41,7 +46,10 @@ export function VRMViewer({
   const cameraRef = useRef<THREE.PerspectiveCamera | null>(null);
   const vrmRef = useRef<VRM | null>(null);
   const clockRef = useRef(new THREE.Timer());
-  const lipSyncRef = useRef<VRMAudioLipSync | null>(null);
+  const lipSyncRef = useRef<VRMLipSync | null>(null);
+  const expressionRef = useRef<VRMExpression | null>(null);
+  const animationRef = useRef<VRMAnimation | null>(null);
+  const vowelAnalyzerRef = useRef<VowelAnalyzer | null>(null);
   const animationFrameRef = useRef<number | null>(null);
 
   const dirLightRef = useRef<THREE.DirectionalLight | null>(null);
@@ -59,6 +67,10 @@ export function VRMViewer({
   const effectiveTweak = useRef<Partial<VRMTweakConfig>>(tweakConfig || {});
   if (tweakConfig) effectiveTweak.current = tweakConfig;
   const tc: VRMTweakConfig = { ...DEFAULT_VRM_TWEAK, ...effectiveTweak.current };
+
+  const effectiveAnim = useRef<Partial<AnimationSettings>>(animationConfig || {});
+  if (animationConfig) effectiveAnim.current = animationConfig;
+  const ac: AnimationSettings = { ...DEFAULT_ANIMATION_SETTINGS, ...effectiveAnim.current };
 
   useEffect(() => {
     if (dataVersion === lastVersionRef.current) return;
@@ -98,7 +110,7 @@ export function VRMViewer({
         renderer.setSize(w, h); renderer.setPixelRatio(window.devicePixelRatio); renderer.outputColorSpace = THREE.SRGBColorSpace; rendererRef.current = renderer;
 
         const dl = new THREE.DirectionalLight(0xffffff, tc.light.directionalIntensity); dl.position.set(1,1.5,1); dirLightRef.current=dl; scene.add(dl);
-        const al = new THREE.AmbientLight(0xffffff, tc.light.ambientIntensity); ambLightRef.current=al; scene.add(al);
+        const al = THREE.AmbientLight(0xffffff, tc.light.ambientIntensity); ambLightRef.current=al; scene.add(al);
         const pl = new THREE.PointLight(0xffffff, tc.light.pointIntensity,10); pl.position.set(-1,1,1); pntLightRef.current=pl; scene.add(pl);
 
         console.log(`[VRMViewer] r=${myRenderId} Starting GLTF load...`);
@@ -143,7 +155,30 @@ export function VRMViewer({
         cam.position.set(tc.camera.offsetX, height * 0.7 + tc.camera.offsetY, Math.max(width * 2.5, tc.camera.offsetZ));
         cam.lookAt(0, height * tc.camera.lookAtY, 0);
         scene.add(vrm.scene);
-        lipSyncRef.current = new VRMAudioLipSync(); lipSyncRef.current.bindVRM(vrm);
+
+        // Initialize new systems
+        lipSyncRef.current = new VRMLipSync();
+        lipSyncRef.current.bindVRM(vrm);
+        lipSyncRef.current.setSmoothing(ac.lipSyncSmoothing);
+
+        expressionRef.current = new VRMExpression();
+        expressionRef.current.bindVRM(vrm);
+        expressionRef.current.setConfig({
+          intensity: ac.emotionIntensity,
+          duration: ac.emotionDuration,
+          recoverSpeed: ac.emotionRecoverSpeed,
+        });
+
+        animationRef.current = new VRMAnimation();
+        animationRef.current.bindVRM(vrm);
+        animationRef.current.setConfig({
+          breathFrequency: ac.breathFrequency,
+          breathAmplitude: ac.breathAmplitude,
+          blinkInterval: ac.blinkInterval,
+          blinkDuration: ac.blinkDuration,
+          headFollowSpeed: ac.headFollowSpeed,
+          bodyFollowDelay: ac.bodyFollowDelay,
+        });
 
         setIsLoading(false);
         propsRef.current.onModelLoaded?.();
@@ -151,7 +186,12 @@ export function VRMViewer({
         const animate = () => {
           if (renderIdRef.current !== myRenderId) return;
           const dt = clockRef.current.getDelta();
+
           if (vrmRef.current) vrmRef.current.update(dt);
+          if (lipSyncRef.current) lipSyncRef.current.update(dt);
+          if (expressionRef.current) expressionRef.current.update(dt);
+          if (animationRef.current) animationRef.current.update(dt);
+
           if (rendererRef.current && sceneRef.current && cameraRef.current) rendererRef.current.render(sceneRef.current, cameraRef.current);
           animationFrameRef.current = requestAnimationFrame(animate);
         };
@@ -184,8 +224,35 @@ export function VRMViewer({
     return () => {
       if (animationFrameRef.current) cancelAnimationFrame(animationFrameRef.current);
       if (rendererRef.current) { try { rendererRef.current.dispose(); } catch(e){/*ignore*/} rendererRef.current = null; }
+      if (vowelAnalyzerRef.current) { vowelAnalyzerRef.current.stop(); vowelAnalyzerRef.current = null; }
     };
   }, [dataVersion, modelPath]);
+
+  // Update animation config
+  useEffect(() => {
+    if (animationRef.current) {
+      animationRef.current.setConfig({
+        breathFrequency: ac.breathFrequency,
+        breathAmplitude: ac.breathAmplitude,
+        blinkInterval: ac.blinkInterval,
+        blinkDuration: ac.blinkDuration,
+        headFollowSpeed: ac.headFollowSpeed,
+        bodyFollowDelay: ac.bodyFollowDelay,
+      });
+    }
+    if (expressionRef.current) {
+      expressionRef.current.setConfig({
+        intensity: ac.emotionIntensity,
+        duration: ac.emotionDuration,
+        recoverSpeed: ac.emotionRecoverSpeed,
+      });
+    }
+    if (lipSyncRef.current) {
+      lipSyncRef.current.setSmoothing(ac.lipSyncSmoothing);
+    }
+  }, [ac.breathFrequency, ac.breathAmplitude, ac.blinkInterval, ac.blinkDuration,
+      ac.headFollowSpeed, ac.bodyFollowDelay, ac.emotionIntensity, ac.emotionDuration,
+      ac.emotionRecoverSpeed, ac.lipSyncSmoothing]);
 
   useEffect(() => {
     if (dirLightRef.current) dirLightRef.current.intensity = tc.light.directionalIntensity;
@@ -209,16 +276,21 @@ export function VRMViewer({
     cam.lookAt(0, height * tc.camera.lookAtY, 0);
   }, [tc.camera.offsetX, tc.camera.offsetY, tc.camera.offsetZ, tc.camera.lookAtY, modelSize]);
 
+  // New vowel-based lip sync
   useEffect(() => {
-    if (lipSyncEnabled && vrmRef.current && mouthOpenY !== undefined) {
-      const em = vrmRef.current.expressionManager;
-      if (em) {
-        em.setValue(VRMExpressionPresetName.Aa, mouthOpenY * 0.8);
-        em.setValue(VRMExpressionPresetName.Ou, mouthOpenY * 0.3);
-        em.setValue(VRMExpressionPresetName.Ih, mouthOpenY * 0.2);
-      }
+    if (!lipSyncEnabled || !vrmRef.current) return;
+
+    // For now, use the simple mouthOpenY as fallback
+    // In a full implementation, this would connect to the audio analyzer
+    const em = vrmRef.current.expressionManager;
+    if (em) {
+      em.setValue(VRMExpressionPresetName.Aa, mouthOpenY * 0.8 * ac.vowelWeightA);
+      em.setValue(VRMExpressionPresetName.Ih, mouthOpenY * 0.2 * ac.vowelWeightI);
+      em.setValue(VRMExpressionPresetName.Ou, mouthOpenY * 0.3 * ac.vowelWeightU);
+      em.setValue(VRMExpressionPresetName.Ee, mouthOpenY * 0.15 * ac.vowelWeightE);
+      em.setValue(VRMExpressionPresetName.Oh, mouthOpenY * 0.25 * ac.vowelWeightO);
     }
-  }, [mouthOpenY, lipSyncEnabled]);
+  }, [mouthOpenY, lipSyncEnabled, ac.vowelWeightA, ac.vowelWeightI, ac.vowelWeightU, ac.vowelWeightE, ac.vowelWeightO]);
 
   useEffect(() => {
     if (!lookAtMouse || !vrmRef.current) return;
@@ -229,6 +301,11 @@ export function VRMViewer({
       const y = -((e.clientY - r.top) / r.height) * 2 + 1;
       const la = vrmRef.current.lookAt;
       if (la?.target) la.target.position.set(x * 2, y * 1.5 + 1, 1.5);
+
+      // Update animation head target
+      if (animationRef.current) {
+        animationRef.current.setHeadTarget(x * 2, y * 1.5 + 1, 1.5);
+      }
     };
     window.addEventListener('mousemove', h);
     return () => window.removeEventListener('mousemove', h);

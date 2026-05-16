@@ -45,6 +45,48 @@ export const DEFAULT_VRM_TWEAK: VRMTweakConfig = {
   modelRotationZ: 0,
 };
 
+export interface AnimationSettings {
+  lipSyncSensitivity: number;
+  lipSyncSmoothing: number;
+  vowelWeightA: number;
+  vowelWeightI: number;
+  vowelWeightU: number;
+  vowelWeightE: number;
+  vowelWeightO: number;
+  emotionIntensity: number;
+  emotionDuration: number;
+  emotionRecoverSpeed: number;
+  breathFrequency: number;
+  breathAmplitude: number;
+  blinkInterval: number;
+  blinkDuration: number;
+  headFollowSpeed: number;
+  bodyFollowDelay: number;
+  motionTriggerProbability: number;
+  focusSpeed: number;
+}
+
+export const DEFAULT_ANIMATION_SETTINGS: AnimationSettings = {
+  lipSyncSensitivity: 1.0,
+  lipSyncSmoothing: 0.3,
+  vowelWeightA: 1.0,
+  vowelWeightI: 1.0,
+  vowelWeightU: 1.0,
+  vowelWeightE: 1.0,
+  vowelWeightO: 1.0,
+  emotionIntensity: 1.0,
+  emotionDuration: 3.0,
+  emotionRecoverSpeed: 0.5,
+  breathFrequency: 0.3,
+  breathAmplitude: 0.02,
+  blinkInterval: 3.0,
+  blinkDuration: 0.15,
+  headFollowSpeed: 2.0,
+  bodyFollowDelay: 0.3,
+  motionTriggerProbability: 0.5,
+  focusSpeed: 3.0,
+};
+
 export interface VRMSettings {
   enabled: boolean;
   modelId?: string;
@@ -59,6 +101,7 @@ export interface VRMSettings {
   scale: number;
   position3d: [number, number, number];
   tweak?: VRMTweakConfig;
+  animation?: AnimationSettings;
 }
 
 export interface LayoutSettings {
@@ -118,6 +161,7 @@ const defaultVRMSettings: VRMSettings = {
   scale: 1.0,
   position3d: [0, 0, 0],
   tweak: DEFAULT_VRM_TWEAK,
+  animation: DEFAULT_ANIMATION_SETTINGS,
 };
 
 const defaultLayoutSettings: LayoutSettings = {

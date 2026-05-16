@@ -1,6 +1,10 @@
 import { useEffect, useRef, useCallback, useState } from 'react';
 import * as PIXI from 'pixi.js';
 import { Live2DModel } from 'pixi-live2d-display';
+import { AnimationSettings, DEFAULT_ANIMATION_SETTINGS } from '../../store/settingsStore';
+import { Live2DLipSync } from './Live2DLipSync';
+import { Live2DExpression } from './Live2DExpression';
+import { Live2DMotion } from './Live2DMotion';
 
 (window as unknown as { PIXI: typeof PIXI }).PIXI = PIXI;
 
@@ -15,6 +19,7 @@ interface Live2DViewerProps {
   mouthOpenY?: number;
   onModelLoaded?: () => void;
   onError?: (error: Error) => void;
+  animationConfig?: Partial<AnimationSettings>;
 }
 
 export function Live2DViewer({
@@ -28,13 +33,23 @@ export function Live2DViewer({
   mouthOpenY = 0,
   onModelLoaded,
   onError,
+  animationConfig,
 }: Live2DViewerProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const appRef = useRef<PIXI.Application | null>(null);
   const modelRef = useRef<Live2DModel | null>(null);
   const blobUrlRef = useRef<string | null>(null);
+  const lipSyncRef = useRef<Live2DLipSync | null>(null);
+  const expressionRef = useRef<Live2DExpression | null>(null);
+  const motionRef = useRef<Live2DMotion | null>(null);
+  const animationFrameRef = useRef<number | null>(null);
+  const clockRef = useRef(0);
   const [isLoading, setIsLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
+
+  const effectiveAnim = useRef<Partial<AnimationSettings>>(animationConfig || {});
+  if (animationConfig) effectiveAnim.current = animationConfig;
+  const ac: AnimationSettings = { ...DEFAULT_ANIMATION_SETTINGS, ...effectiveAnim.current };
 
   const loadModel = useCallback(async () => {
     if (!canvasRef.current) return;
@@ -107,6 +122,42 @@ export function Live2DViewer({
         }
       }
 
+      // Initialize new systems
+      lipSyncRef.current = new Live2DLipSync();
+      lipSyncRef.current.bindModel(model);
+      lipSyncRef.current.setSmoothing(ac.lipSyncSmoothing);
+
+      expressionRef.current = new Live2DExpression();
+      expressionRef.current.bindModel(model);
+      expressionRef.current.setConfig({
+        intensity: ac.emotionIntensity,
+        duration: ac.emotionDuration,
+        recoverSpeed: ac.emotionRecoverSpeed,
+      });
+
+      motionRef.current = new Live2DMotion();
+      motionRef.current.bindModel(model);
+      motionRef.current.setConfig({
+        emotionMotionProbability: ac.motionTriggerProbability,
+        speechMotionProbability: ac.motionTriggerProbability,
+        focusSpeed: ac.focusSpeed,
+      });
+
+      // Start animation loop
+      const animate = () => {
+        const now = performance.now();
+        const dt = (now - clockRef.current) / 1000;
+        clockRef.current = now;
+
+        if (lipSyncRef.current) lipSyncRef.current.update(dt);
+        if (expressionRef.current) expressionRef.current.update(dt);
+        if (motionRef.current) motionRef.current.update(dt);
+
+        animationFrameRef.current = requestAnimationFrame(animate);
+      };
+      clockRef.current = performance.now();
+      animate();
+
       setIsLoading(false);
       onModelLoaded?.();
     } catch (error) {
@@ -120,12 +171,13 @@ export function Live2DViewer({
       setIsLoading(false);
       onError?.(error instanceof Error ? error : new Error('Failed to load model'));
     }
-  }, [modelPath, modelData, scale, xOffset, yOffset, idleMotionEnabled, onModelLoaded, onError]);
+  }, [modelPath, modelData, scale, xOffset, yOffset, idleMotionEnabled, onModelLoaded, onError, ac.lipSyncSmoothing, ac.emotionIntensity, ac.emotionDuration, ac.emotionRecoverSpeed, ac.motionTriggerProbability, ac.focusSpeed]);
 
   useEffect(() => {
     loadModel();
 
     return () => {
+      if (animationFrameRef.current) cancelAnimationFrame(animationFrameRef.current);
       if (blobUrlRef.current && blobUrlRef.current.startsWith('blob:')) {
         URL.revokeObjectURL(blobUrlRef.current);
         blobUrlRef.current = null;
@@ -144,26 +196,42 @@ export function Live2DViewer({
     };
   }, [loadModel]);
 
+  // Update animation config
   useEffect(() => {
-    if (lipSyncEnabled && modelRef.current && mouthOpenY !== undefined) {
-      try {
-        const coreModel = modelRef.current.internalModel?.coreModel as Record<string, unknown> | undefined;
-        if (coreModel) {
-          if (typeof coreModel.setParameterValueById === 'function') {
-            (coreModel.setParameterValueById as (id: string, value: number) => void)('ParamMouthOpenY', mouthOpenY);
-          } else if (typeof coreModel.setParameterValue === 'function') {
-            const getParameterIndex = coreModel.getParameterIndex as ((name: string) => number) | undefined;
-            const paramIndex = getParameterIndex?.('ParamMouthOpenY');
-            if (paramIndex !== undefined && paramIndex >= 0) {
-              (coreModel.setParameterValue as (index: number, value: number) => void)(paramIndex, mouthOpenY);
-            }
-          }
-        }
-      } catch (error) {
-        console.warn('Live2D: Failed to set mouth parameter:', error);
-      }
+    if (lipSyncRef.current) lipSyncRef.current.setSmoothing(ac.lipSyncSmoothing);
+    if (expressionRef.current) {
+      expressionRef.current.setConfig({
+        intensity: ac.emotionIntensity,
+        duration: ac.emotionDuration,
+        recoverSpeed: ac.emotionRecoverSpeed,
+      });
     }
-  }, [mouthOpenY, lipSyncEnabled]);
+    if (motionRef.current) {
+      motionRef.current.setConfig({
+        emotionMotionProbability: ac.motionTriggerProbability,
+        speechMotionProbability: ac.motionTriggerProbability,
+        focusSpeed: ac.focusSpeed,
+      });
+    }
+  }, [ac.lipSyncSmoothing, ac.emotionIntensity, ac.emotionDuration, ac.emotionRecoverSpeed, ac.motionTriggerProbability, ac.focusSpeed]);
+
+  // Vowel-based lip sync
+  useEffect(() => {
+    if (!lipSyncEnabled || !modelRef.current) return;
+
+    // For now, distribute mouthOpenY across vowels
+    const weights = {
+      a: mouthOpenY * 0.8 * ac.vowelWeightA,
+      i: mouthOpenY * 0.2 * ac.vowelWeightI,
+      u: mouthOpenY * 0.3 * ac.vowelWeightU,
+      e: mouthOpenY * 0.15 * ac.vowelWeightE,
+      o: mouthOpenY * 0.25 * ac.vowelWeightO,
+    };
+
+    if (lipSyncRef.current) {
+      lipSyncRef.current.updateWeights(weights);
+    }
+  }, [mouthOpenY, lipSyncEnabled, ac.vowelWeightA, ac.vowelWeightI, ac.vowelWeightU, ac.vowelWeightE, ac.vowelWeightO]);
 
   useEffect(() => {
     const handleResize = () => {
