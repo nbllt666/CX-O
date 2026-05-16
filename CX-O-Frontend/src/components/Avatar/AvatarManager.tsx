@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
-import { listAvatars, deleteAvatar, getAvatar, saveAvatar } from '../../services/avatarStorage';
+import { listAvatars, deleteAvatar, getAvatar, saveAvatar, updateAvatar } from '../../services/avatarStorage';
 import type { AvatarRecord } from '../../services/avatarStorage';
 import { useSettingsStore } from '../../store/settingsStore';
 import { Live2DViewer } from '../Live2D/Live2DViewer';
@@ -101,12 +101,16 @@ export function AvatarManager({ type, onClose }: AvatarManagerProps) {
   const handleRename = useCallback(
     async (avatar: AvatarRecord) => {
       if (!editingName.trim()) return;
-      const updated: AvatarRecord = { ...avatar, name: editingName.trim() };
-      await deleteAvatar(avatar.id);
-      await import('../../services/avatarStorage').then((m) => m.saveAvatar(updated));
-      setEditingId(null);
-      setEditingName('');
-      loadAvatars();
+      
+      try {
+        await updateAvatar(avatar.id, { name: editingName.trim() });
+        setEditingId(null);
+        setEditingName('');
+        loadAvatars();
+      } catch (error) {
+        console.error('Failed to rename avatar:', error);
+        alert('重命名失败，请重试');
+      }
     },
     [editingName, loadAvatars]
   );

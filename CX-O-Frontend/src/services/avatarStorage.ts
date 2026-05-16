@@ -94,6 +94,30 @@ export const deleteAvatar = async (id: string): Promise<void> => {
   });
 };
 
+export const updateAvatar = async (id: string, updates: Partial<AvatarRecord>): Promise<void> => {
+  const database = await initDB();
+  return new Promise((resolve, reject) => {
+    const transaction = database.transaction(['avatars'], 'readwrite');
+    const store = transaction.objectStore('avatars');
+    
+    const request = store.get(id);
+    request.onsuccess = () => {
+      const existing = request.result;
+      if (!existing) {
+        reject(new Error('Avatar not found'));
+        return;
+      }
+      
+      const updated = { ...existing, ...updates };
+      store.put(updated);
+    };
+    
+    transaction.oncomplete = () => resolve();
+    transaction.onerror = () => reject(new Error('Failed to update avatar'));
+    transaction.onabort = () => reject(new Error('Transaction aborted while updating avatar'));
+  });
+};
+
 export const generateThumbnail = async (_blob: Blob, _type: 'live2d' | 'vrm'): Promise<string | undefined> => {
   return undefined;
 };

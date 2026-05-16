@@ -3,35 +3,10 @@ import * as THREE from 'three';
 import { VRM, VRMLoaderPlugin, VRMExpressionPresetName } from '@pixiv/three-vrm';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { VRMAudioLipSync } from './AudioLipSync';
+import { VRMTweakConfig, DEFAULT_VRM_TWEAK } from '../../store/settingsStore';
 
-export interface VRMCameraConfig {
-  offsetX: number;
-  offsetY: number;
-  offsetZ: number;
-  lookAtY: number;
-}
-
-export interface VRMLightConfig {
-  directionalIntensity: number;
-  ambientIntensity: number;
-  pointIntensity: number;
-}
-
-export interface VRMTweakConfig {
-  camera: VRMCameraConfig;
-  light: VRMLightConfig;
-  modelRotationX: number;
-  modelRotationY: number;
-  modelRotationZ: number;
-}
-
-export const DEFAULT_TWEAK_CONFIG: VRMTweakConfig = {
-  camera: { offsetX: 0, offsetY: 1.2, offsetZ: 2.5, lookAtY: 0.45 },
-  light: { directionalIntensity: 2, ambientIntensity: 1.2, pointIntensity: 0.8 },
-  modelRotationX: 0,
-  modelRotationY: Math.PI,
-  modelRotationZ: 0,
-};
+export type { VRMTweakConfig };
+export { DEFAULT_VRM_TWEAK as DEFAULT_TWEAK_CONFIG };
 
 interface VRMViewerProps {
   modelPath: string;
@@ -83,7 +58,7 @@ export function VRMViewer({
 
   const effectiveTweak = useRef<Partial<VRMTweakConfig>>(tweakConfig || {});
   if (tweakConfig) effectiveTweak.current = tweakConfig;
-  const tc: VRMTweakConfig = { ...DEFAULT_TWEAK_CONFIG, ...effectiveTweak.current };
+  const tc: VRMTweakConfig = { ...DEFAULT_VRM_TWEAK, ...effectiveTweak.current };
 
   useEffect(() => {
     if (dataVersion === lastVersionRef.current) return;

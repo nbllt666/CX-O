@@ -117,6 +117,7 @@ const defaultVRMSettings: VRMSettings = {
   lookAtMouse: true,
   scale: 1.0,
   position3d: [0, 0, 0],
+  tweak: DEFAULT_VRM_TWEAK,
 };
 
 const defaultLayoutSettings: LayoutSettings = {
