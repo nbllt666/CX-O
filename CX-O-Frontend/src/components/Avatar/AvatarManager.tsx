@@ -88,7 +88,7 @@ export function AvatarManager({ type, onClose }: AvatarManagerProps) {
 
   const handlePreview = useCallback(async (avatar: AvatarRecord) => {
     const fullAvatar = await getAvatar(avatar.id);
-    if (fullAvatar) {
+    if (fullAvatar && fullAvatar.data) {
       const arrayBuffer = await fullAvatar.data.arrayBuffer();
       previewDataRef.current = arrayBuffer;
       setPreviewState(prev => ({

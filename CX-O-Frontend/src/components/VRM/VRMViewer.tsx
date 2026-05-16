@@ -110,7 +110,7 @@ export function VRMViewer({
         renderer.setSize(w, h); renderer.setPixelRatio(window.devicePixelRatio); renderer.outputColorSpace = THREE.SRGBColorSpace; rendererRef.current = renderer;
 
         const dl = new THREE.DirectionalLight(0xffffff, tc.light.directionalIntensity); dl.position.set(1,1.5,1); dirLightRef.current=dl; scene.add(dl);
-        const al = THREE.AmbientLight(0xffffff, tc.light.ambientIntensity); ambLightRef.current=al; scene.add(al);
+        const al = new THREE.AmbientLight(0xffffff, tc.light.ambientIntensity); ambLightRef.current=al; scene.add(al);
         const pl = new THREE.PointLight(0xffffff, tc.light.pointIntensity,10); pl.position.set(-1,1,1); pntLightRef.current=pl; scene.add(pl);
 
         console.log(`[VRMViewer] r=${myRenderId} Starting GLTF load...`);

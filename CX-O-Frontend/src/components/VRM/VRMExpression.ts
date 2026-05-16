@@ -10,7 +10,6 @@ export interface EmotionConfig {
 
 export class VRMExpression {
   private vrm: VRM | null = null;
-  private currentEmotion: EmotionType = 'neutral';
   private targetEmotion: EmotionType = 'neutral';
   private emotionWeight = 0;
   private emotionTimer = 0;
@@ -67,10 +66,15 @@ export class VRMExpression {
     }
 
     // Reset all emotion blend shapes
+    const emotionPresets: VRMExpressionPresetName[] = [
+      VRMExpressionPresetName.Happy,
+      VRMExpressionPresetName.Angry,
+      VRMExpressionPresetName.Sad,
+      VRMExpressionPresetName.Surprised,
+      VRMExpressionPresetName.Relaxed,
+    ];
     Object.values(VRMExpressionPresetName).forEach((preset) => {
-      if ([VRMExpressionPresetName.Happy, VRMExpressionPresetName.Angry,
-           VRMExpressionPresetName.Sad, VRMExpressionPresetName.Surprised,
-           VRMExpressionPresetName.Relaxed].includes(preset)) {
+      if (emotionPresets.includes(preset as VRMExpressionPresetName)) {
         em.setValue(preset, 0);
       }
     });
@@ -85,24 +89,28 @@ export class VRMExpression {
 
     // Update current emotion when transition completes
     if (this.emotionWeight < 0.01 && this.targetEmotion === 'neutral') {
-      this.currentEmotion = 'neutral';
+      // transitioned to neutral
     } else if (this.emotionWeight > 0.99 && this.targetEmotion !== 'neutral') {
-      this.currentEmotion = this.targetEmotion;
+      // transitioned to target emotion
     }
   }
 
   reset(): void {
-    this.currentEmotion = 'neutral';
     this.targetEmotion = 'neutral';
     this.emotionWeight = 0;
     this.emotionTimer = 0;
     if (!this.vrm) return;
     const em = this.vrm.expressionManager;
     if (!em) return;
+    const emotionPresets: VRMExpressionPresetName[] = [
+      VRMExpressionPresetName.Happy,
+      VRMExpressionPresetName.Angry,
+      VRMExpressionPresetName.Sad,
+      VRMExpressionPresetName.Surprised,
+      VRMExpressionPresetName.Relaxed,
+    ];
     Object.values(VRMExpressionPresetName).forEach((preset) => {
-      if ([VRMExpressionPresetName.Happy, VRMExpressionPresetName.Angry,
-           VRMExpressionPresetName.Sad, VRMExpressionPresetName.Surprised,
-           VRMExpressionPresetName.Relaxed].includes(preset)) {
+      if (emotionPresets.includes(preset as VRMExpressionPresetName)) {
         em.setValue(preset, 0);
       }
     });

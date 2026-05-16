@@ -19,7 +19,7 @@ export function LivePage() {
   useEffect(() => {
     if (currentModelId) {
       getAvatar(currentModelId).then((avatar) => {
-        if (avatar) {
+        if (avatar?.data) {
           avatar.data.arrayBuffer().then(setModelData);
         }
       });

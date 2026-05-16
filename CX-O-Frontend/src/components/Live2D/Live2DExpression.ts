@@ -10,7 +10,6 @@ export interface EmotionConfig {
 
 export class Live2DExpression {
   private model: Live2DModel | null = null;
-  private currentEmotion: EmotionType = 'neutral';
   private targetEmotion: EmotionType = 'neutral';
   private emotionWeight = 0;
   private emotionTimer = 0;
@@ -56,7 +55,7 @@ export class Live2DExpression {
     }
 
     // Apply expression
-    const expressions = this.model.internalModel?.expressions;
+    const expressions = (this.model.internalModel as unknown as { expressions?: Array<{ name: string }> })?.expressions;
     if (!expressions) return;
 
     if (this.emotionWeight > 0.01 && this.targetEmotion !== 'neutral') {
@@ -64,14 +63,14 @@ export class Live2DExpression {
       const idx = expressions.findIndex((e: { name: string }) => e.name === expressionName);
       if (idx >= 0) {
         try {
-          this.model.setExpression(idx);
+          (this.model as unknown as { setExpression: (idx: number) => void }).setExpression(idx);
         } catch {
           // Expression not available
         }
       }
     } else if (this.emotionWeight < 0.01) {
       try {
-        this.model.resetExpression();
+        (this.model as unknown as { resetExpression: () => void }).resetExpression();
       } catch {
         // Ignore
       }
@@ -79,20 +78,19 @@ export class Live2DExpression {
 
     // Update current emotion when transition completes
     if (this.emotionWeight < 0.01 && this.targetEmotion === 'neutral') {
-      this.currentEmotion = 'neutral';
+      // transitioned to neutral
     } else if (this.emotionWeight > 0.99 && this.targetEmotion !== 'neutral') {
-      this.currentEmotion = this.targetEmotion;
+      // transitioned to target emotion
     }
   }
 
   reset(): void {
-    this.currentEmotion = 'neutral';
     this.targetEmotion = 'neutral';
     this.emotionWeight = 0;
     this.emotionTimer = 0;
     if (!this.model) return;
     try {
-      this.model.resetExpression();
+      (this.model as unknown as { resetExpression: () => void }).resetExpression();
     } catch {
       // Ignore
     }

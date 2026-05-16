@@ -65,7 +65,7 @@ export class VowelAnalyzer {
       return;
     }
 
-    this.analyser.getByteFrequencyData(this.dataArray);
+    this.analyser.getByteFrequencyData(this.dataArray as Uint8Array<ArrayBuffer>);
 
     const weights = this.detectVowels(this.dataArray);
     this.onVowelDetected(weights);

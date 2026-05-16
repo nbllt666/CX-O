@@ -20,7 +20,7 @@ export function Live2DPanel({ audioElement, isPlaying }: Live2DPanelProps) {
   useEffect(() => {
     if (live2d.modelId) {
       getAvatar(live2d.modelId).then((avatar) => {
-        if (avatar) {
+        if (avatar?.data) {
           avatar.data.arrayBuffer().then(setModelData);
         }
       });

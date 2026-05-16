@@ -18,7 +18,7 @@ export function AvatarSource() {
     if (currentModelId) {
       setLoading(true);
       getAvatar(currentModelId).then((avatar) => {
-        if (avatar) {
+        if (avatar?.data) {
           avatar.data.arrayBuffer().then((buf) => {
             modelDataRef.current = buf;
             setDataVersion(v => v + 1);

@@ -57,16 +57,30 @@ export const saveAvatar = async (
   };
 };
 
-export const getAvatar = async (id: string): Promise<AvatarRecord | null> => {
+export const getAvatar = async (id: string, type?: 'live2d' | 'vrm'): Promise<AvatarRecord | null> => {
   try {
-    const list = await api.listAvatars();
-    const backendAvatar = list.avatars.find((a) => a.id === id);
+    let avatarType: string;
+    let backendAvatar: BackendAvatar | null = null;
+
+    if (type) {
+      // 如果已知类型，直接获取单个元数据
+      avatarType = type;
+      backendAvatar = await api.getAvatar(id, type);
+    } else {
+      // 兼容旧调用：先列表查找获取类型
+      const list = await api.listAvatars();
+      const found = list.avatars.find((a) => a.id === id);
+      if (!found) return null;
+      avatarType = found.type;
+      backendAvatar = found;
+    }
+
     if (!backendAvatar) return null;
 
     const record = backendToRecord(backendAvatar);
 
     // 下载文件内容
-    const blob = await api.downloadAvatarFile(id, backendAvatar.type);
+    const blob = await api.downloadAvatarFile(id, avatarType);
     record.data = blob;
 
     return record;

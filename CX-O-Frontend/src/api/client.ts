@@ -1046,7 +1046,7 @@ class ApiClient {
     return response.data;
   }
 
-  async getAvatarFileUrl(avatarId: string, avatarType: string): string {
+  getAvatarFileUrl(avatarId: string, avatarType: string): string {
     return `${getApiBaseUrl()}/api/avatars/${avatarId}/file?avatar_type=${avatarType}`;
   }
 
@@ -1059,6 +1059,21 @@ class ApiClient {
       responseType: 'blob',
     });
     return response.data;
+  }
+
+  async getAvatar(avatarId: string, avatarType: string): Promise<{
+    id: string;
+    name: string;
+    type: string;
+    size: number;
+    created_at: string;
+    updated_at?: string;
+    metadata?: Record<string, unknown>;
+  }> {
+    return this.request({
+      url: `/api/avatars/${avatarId}`,
+      params: { avatar_type: avatarType },
+    });
   }
 
   async updateAvatar(

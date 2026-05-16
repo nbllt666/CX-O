@@ -31,7 +31,6 @@ export class Live2DMotion {
 
   private isSpeaking = false;
   private speechTimer = 0;
-  private lastEmotion: EmotionType = 'neutral';
 
   bindModel(model: Live2DModel): void {
     this.model = model;
@@ -115,6 +114,5 @@ export class Live2DMotion {
   reset(): void {
     this.isSpeaking = false;
     this.speechTimer = 0;
-    this.lastEmotion = 'neutral';
   }
 }

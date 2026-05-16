@@ -49,9 +49,9 @@ export const DEFAULT_ANIMATION_CONFIG: AnimationConfig = {
 
 interface VRMTweakPanelProps {
   config: VRMTweakConfig;
-  animConfig: AnimationConfig;
+  animConfig?: AnimationConfig;
   onChange: (config: VRMTweakConfig) => void;
-  onAnimChange: (config: AnimationConfig) => void;
+  onAnimChange?: (config: AnimationConfig) => void;
   onApply: () => void;
   onReset: () => void;
   avatarType?: 'vrm' | 'live2d';
@@ -59,7 +59,7 @@ interface VRMTweakPanelProps {
 
 export function VRMTweakPanel({
   config,
-  animConfig,
+  animConfig = DEFAULT_ANIMATION_CONFIG,
   onChange,
   onAnimChange,
   onApply,
@@ -81,7 +81,7 @@ export function VRMTweakPanel({
   };
 
   const updateAnim = <K extends keyof AnimationConfig>(key: K, value: AnimationConfig[K]) => {
-    onAnimChange({ ...animConfig, [key]: value });
+    onAnimChange?.({ ...animConfig, [key]: value });
   };
 
   const tabs = [

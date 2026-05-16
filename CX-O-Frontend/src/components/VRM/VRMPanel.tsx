@@ -22,7 +22,7 @@ export function VRMPanel({ audioElement, isPlaying }: VRMPanelProps) {
     if (vrm.modelId) {
       console.log('[VRMPanel] Loading model:', vrm.modelId);
       getAvatar(vrm.modelId).then((avatar) => {
-        if (avatar) {
+        if (avatar?.data) {
           console.log('[VRMPanel] Avatar found, size:', avatar.data.size);
           avatar.data.arrayBuffer().then((buf) => {
             console.log('[VRMPanel] ArrayBuffer loaded, byteLength:', buf.byteLength);
