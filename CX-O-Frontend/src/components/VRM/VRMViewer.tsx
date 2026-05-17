@@ -24,6 +24,8 @@ interface VRMViewerProps {
   onError?: (error: Error) => void;
   tweakConfig?: Partial<VRMTweakConfig>;
   animationConfig?: Partial<AnimationSettings>;
+  renderScale?: number;
+  devicePixelRatio?: number | 'auto';
 }
 
 export function VRMViewer({
@@ -39,6 +41,8 @@ export function VRMViewer({
   onError,
   tweakConfig,
   animationConfig,
+  renderScale = 1.0,
+  devicePixelRatio = 'auto',
 }: VRMViewerProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const rendererRef = useRef<THREE.WebGLRenderer | null>(null);
@@ -60,7 +64,7 @@ export function VRMViewer({
   const [loadError, setLoadError] = useState<string | null>(null);
   const [modelSize, setModelSize] = useState<{ height: number; width: number }>({ height: 1.6, width: 0.8 });
 
-  const propsRef = useRef({ scale, position, onModelLoaded, onError });
+  const propsRef = useRef({ scale, position, onModelLoaded, onError, renderScale, devicePixelRatio });
   const lastVersionRef = useRef(-1);
   const renderIdRef = useRef(0);
 
@@ -107,7 +111,9 @@ export function VRMViewer({
         console.log(`[VRMViewer] r=${myRenderId} Creating WebGLRenderer...`);
         const renderer = new THREE.WebGLRenderer({ canvas, alpha: true, antialias: true });
         console.log(`[VRMViewer] r=${myRenderId} WebGLRenderer OK`);
-        renderer.setSize(w, h); renderer.setPixelRatio(window.devicePixelRatio); renderer.outputColorSpace = THREE.SRGBColorSpace; rendererRef.current = renderer;
+        const dpr = devicePixelRatio === 'auto' ? window.devicePixelRatio : devicePixelRatio;
+        renderer.setPixelRatio(dpr * renderScale);
+        renderer.setSize(w * renderScale, h * renderScale, false); renderer.outputColorSpace = THREE.SRGBColorSpace; rendererRef.current = renderer;
 
         const dl = new THREE.DirectionalLight(0xffffff, tc.light.directionalIntensity); dl.position.set(1,1.5,1); dirLightRef.current=dl; scene.add(dl);
         const al = new THREE.AmbientLight(0xffffff, tc.light.ambientIntensity); ambLightRef.current=al; scene.add(al);
@@ -315,7 +321,9 @@ export function VRMViewer({
     const h = () => {
       if (!canvasRef.current || !rendererRef.current || !cameraRef.current) return;
       const w = canvasRef.current.clientWidth, h2 = canvasRef.current.clientHeight;
-      rendererRef.current.setSize(w, h2);
+      const dpr = propsRef.current.devicePixelRatio === 'auto' ? window.devicePixelRatio : propsRef.current.devicePixelRatio;
+      rendererRef.current.setPixelRatio(dpr * propsRef.current.renderScale);
+      rendererRef.current.setSize(w * propsRef.current.renderScale, h2 * propsRef.current.renderScale, false);
       cameraRef.current.aspect = w / h2;
       cameraRef.current.updateProjectionMatrix();
     };

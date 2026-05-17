@@ -14,6 +14,7 @@ export interface Live2DSettings {
   scale: number;
   xOffset: number;
   yOffset: number;
+  animation?: AnimationSettings;
 }
 
 export interface VRMCameraTweak {
@@ -102,6 +103,8 @@ export interface VRMSettings {
   position3d: [number, number, number];
   tweak?: VRMTweakConfig;
   animation?: AnimationSettings;
+  renderScale: number;
+  devicePixelRatio: number | 'auto';
 }
 
 export interface LayoutSettings {
@@ -146,6 +149,7 @@ const defaultLive2DSettings: Live2DSettings = {
   scale: 0.3,
   xOffset: 0,
   yOffset: 0,
+  animation: DEFAULT_ANIMATION_SETTINGS,
 };
 
 const defaultVRMSettings: VRMSettings = {
@@ -162,6 +166,8 @@ const defaultVRMSettings: VRMSettings = {
   position3d: [0, 0, 0],
   tweak: DEFAULT_VRM_TWEAK,
   animation: DEFAULT_ANIMATION_SETTINGS,
+  renderScale: 1.0,
+  devicePixelRatio: 'auto',
 };
 
 const defaultLayoutSettings: LayoutSettings = {

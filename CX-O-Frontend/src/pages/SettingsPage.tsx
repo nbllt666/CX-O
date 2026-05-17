@@ -165,7 +165,7 @@ export function SettingsPage() {
   const [showAvatarManager, setShowAvatarManager] = useState<'live2d' | 'vrm' | null>(null);
 
   // 虚拟形象设置
-  const { live2d: live2dSettings, vrm: vrmSettings, avatarType, setLive2DSettings, setVRMSettings, setAvatarType } = useSettingsStore();
+  const { avatarType, setAvatarType } = useSettingsStore();
   const [backendStatus, setBackendStatus] = useState<{
     pid?: number;
     uptime?: number;
@@ -2455,266 +2455,41 @@ export function SettingsPage() {
                 </CardBody>
               </Card>
 
-              {/* Live2D 配置 */}
               <Card>
                 <CardBody>
                   <h3 className="text-lg font-semibold mb-4">Live2D 虚拟形象</h3>
                   <p className="text-sm text-[var(--color-text-secondary)] mb-4">
-                    在聊天页面显示 Live2D 虚拟形象，支持口型同步
+                    在聊天页面显示 Live2D 虚拟形象，支持口型同步和表情动画
                   </p>
-                  <div className="space-y-4">
-                    <div className="flex items-end gap-2">
-                      <div className="flex-1">
-                        <label className="text-sm font-medium mb-2 block">模型路径</label>
-                        <input
-                          type="text"
-                          value={live2dSettings.modelPath}
-                          onChange={(e) => setLive2DSettings({ modelPath: e.target.value })}
-                          placeholder="/models/shizuku/shizuku.model.json"
-                          className="w-full px-3 py-2 bg-[var(--color-bg-primary)] border border-[var(--color-border)] rounded-[var(--radius-md)]"
-                        />
-                        <p className="text-xs text-[var(--color-text-tertiary)] mt-1">
-                          模型文件相对于 public 目录的路径
-                        </p>
-                      </div>
-                      <button
-                        onClick={() => setShowAvatarManager('live2d')}
-                        className="px-4 py-2 text-sm bg-[var(--color-accent)] text-white rounded-[var(--radius-md)] hover:opacity-90 transition-opacity whitespace-nowrap"
-                      >
-                        管理模型
-                      </button>
-                    </div>
-
-                    <div className="grid grid-cols-3 gap-4">
-                      <div>
-                        <label className="text-sm font-medium mb-2 block">缩放</label>
-                        <input
-                          type="number"
-                          step="0.05"
-                          value={live2dSettings.scale}
-                          onChange={(e) => setLive2DSettings({ scale: parseFloat(e.target.value) || 0.3 })}
-                          className="w-full px-3 py-2 bg-[var(--color-bg-primary)] border border-[var(--color-border)] rounded-[var(--radius-md)]"
-                        />
-                      </div>
-                      <div>
-                        <label className="text-sm font-medium mb-2 block">X 偏移</label>
-                        <input
-                          type="number"
-                          value={live2dSettings.xOffset}
-                          onChange={(e) => setLive2DSettings({ xOffset: parseInt(e.target.value) || 0 })}
-                          className="w-full px-3 py-2 bg-[var(--color-bg-primary)] border border-[var(--color-border)] rounded-[var(--radius-md)]"
-                        />
-                      </div>
-                      <div>
-                        <label className="text-sm font-medium mb-2 block">Y 偏移</label>
-                        <input
-                          type="number"
-                          value={live2dSettings.yOffset}
-                          onChange={(e) => setLive2DSettings({ yOffset: parseInt(e.target.value) || 0 })}
-                          className="w-full px-3 py-2 bg-[var(--color-bg-primary)] border border-[var(--color-border)] rounded-[var(--radius-md)]"
-                        />
-                      </div>
-                    </div>
-
-                    <div className="grid grid-cols-2 gap-4">
-                      <div className="flex items-center justify-between p-3 bg-[var(--color-bg-tertiary)] rounded-[var(--radius-md)]">
-                        <span className="text-sm">口型同步</span>
-                        <button
-                          onClick={() => setLive2DSettings({ lipSync: !live2dSettings.lipSync })}
-                          className={`w-10 h-5 rounded-full transition-colors ${
-                            live2dSettings.lipSync ? 'bg-[var(--color-accent)]' : 'bg-[var(--color-border)]'
-                          }`}
-                        >
-                          <div
-                            className={`w-4 h-4 rounded-full bg-white transition-transform ${
-                              live2dSettings.lipSync ? 'translate-x-5' : 'translate-x-0.5'
-                            }`}
-                          />
-                        </button>
-                      </div>
-                      <div className="flex items-center justify-between p-3 bg-[var(--color-bg-tertiary)] rounded-[var(--radius-md)]">
-                        <span className="text-sm">空闲动作</span>
-                        <button
-                          onClick={() => setLive2DSettings({ idleMotion: !live2dSettings.idleMotion })}
-                          className={`w-10 h-5 rounded-full transition-colors ${
-                            live2dSettings.idleMotion ? 'bg-[var(--color-accent)]' : 'bg-[var(--color-border)]'
-                          }`}
-                        >
-                          <div
-                            className={`w-4 h-4 rounded-full bg-white transition-transform ${
-                              live2dSettings.idleMotion ? 'translate-x-5' : 'translate-x-0.5'
-                            }`}
-                          />
-                        </button>
-                      </div>
-                    </div>
-
-                    <div className="grid grid-cols-2 gap-4">
-                      <div>
-                        <label className="text-sm font-medium mb-2 block">最小宽度</label>
-                        <input
-                          type="number"
-                          value={live2dSettings.minWidth}
-                          onChange={(e) => setLive2DSettings({ minWidth: parseInt(e.target.value) || 200 })}
-                          className="w-full px-3 py-2 bg-[var(--color-bg-primary)] border border-[var(--color-border)] rounded-[var(--radius-md)]"
-                        />
-                      </div>
-                      <div>
-                        <label className="text-sm font-medium mb-2 block">最大宽度</label>
-                        <input
-                          type="number"
-                          value={live2dSettings.maxWidth}
-                          onChange={(e) => setLive2DSettings({ maxWidth: parseInt(e.target.value) || 400 })}
-                          className="w-full px-3 py-2 bg-[var(--color-bg-primary)] border border-[var(--color-border)] rounded-[var(--radius-md)]"
-                        />
-                      </div>
-                    </div>
-                  </div>
+                  <button
+                    onClick={() => setShowAvatarManager('live2d')}
+                    className="w-full px-4 py-3 text-sm bg-[var(--color-accent)] text-white rounded-[var(--radius-md)] hover:opacity-90 transition-opacity flex items-center justify-center gap-2"
+                  >
+                    <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.066 2.573c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.573 1.066c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.066-2.573c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                    </svg>
+                    打开 Live2D 配置面板
+                  </button>
                 </CardBody>
               </Card>
 
-              {/* VRM 3D 配置 */}
               <Card>
                 <CardBody>
                   <h3 className="text-lg font-semibold mb-4">VRM 3D 虚拟形象</h3>
                   <p className="text-sm text-[var(--color-text-secondary)] mb-4">
-                    在聊天页面显示 VRM 3D 虚拟形象，支持口型同步和视线追踪
+                    在聊天页面显示 VRM 3D 虚拟形象，支持口型同步、视线追踪和渲染调节
                   </p>
-                  <div className="space-y-4">
-                    <div className="flex items-end gap-2">
-                      <div className="flex-1">
-                        <label className="text-sm font-medium mb-2 block">模型路径</label>
-                        <input
-                          type="text"
-                          value={vrmSettings.modelPath}
-                          onChange={(e) => setVRMSettings({ modelPath: e.target.value })}
-                          placeholder="/models/avatar.vrm"
-                          className="w-full px-3 py-2 bg-[var(--color-bg-primary)] border border-[var(--color-border)] rounded-[var(--radius-md)]"
-                        />
-                        <p className="text-xs text-[var(--color-text-tertiary)] mt-1">
-                          VRM 模型文件相对于 public 目录的路径
-                        </p>
-                      </div>
-                      <button
-                        onClick={() => setShowAvatarManager('vrm')}
-                        className="px-4 py-2 text-sm bg-[var(--color-accent)] text-white rounded-[var(--radius-md)] hover:opacity-90 transition-opacity whitespace-nowrap"
-                      >
-                        管理模型
-                      </button>
-                    </div>
-
-                    <div className="grid grid-cols-4 gap-4">
-                      <div>
-                        <label className="text-sm font-medium mb-2 block">缩放</label>
-                        <input
-                          type="number"
-                          step="0.1"
-                          value={vrmSettings.scale}
-                          onChange={(e) => setVRMSettings({ scale: parseFloat(e.target.value) || 1.0 })}
-                          className="w-full px-3 py-2 bg-[var(--color-bg-primary)] border border-[var(--color-border)] rounded-[var(--radius-md)]"
-                        />
-                      </div>
-                      <div>
-                        <label className="text-sm font-medium mb-2 block">X 位置</label>
-                        <input
-                          type="number"
-                          step="0.1"
-                          value={vrmSettings.position3d[0]}
-                          onChange={(e) => setVRMSettings({ position3d: [parseFloat(e.target.value) || 0, vrmSettings.position3d[1], vrmSettings.position3d[2]] })}
-                          className="w-full px-3 py-2 bg-[var(--color-bg-primary)] border border-[var(--color-border)] rounded-[var(--radius-md)]"
-                        />
-                      </div>
-                      <div>
-                        <label className="text-sm font-medium mb-2 block">Y 位置</label>
-                        <input
-                          type="number"
-                          step="0.1"
-                          value={vrmSettings.position3d[1]}
-                          onChange={(e) => setVRMSettings({ position3d: [vrmSettings.position3d[0], parseFloat(e.target.value) || 0, vrmSettings.position3d[2]] })}
-                          className="w-full px-3 py-2 bg-[var(--color-bg-primary)] border border-[var(--color-border)] rounded-[var(--radius-md)]"
-                        />
-                      </div>
-                      <div>
-                        <label className="text-sm font-medium mb-2 block">Z 位置</label>
-                        <input
-                          type="number"
-                          step="0.1"
-                          value={vrmSettings.position3d[2]}
-                          onChange={(e) => setVRMSettings({ position3d: [vrmSettings.position3d[0], vrmSettings.position3d[1], parseFloat(e.target.value) || 0] })}
-                          className="w-full px-3 py-2 bg-[var(--color-bg-primary)] border border-[var(--color-border)] rounded-[var(--radius-md)]"
-                        />
-                      </div>
-                    </div>
-
-                    <div className="grid grid-cols-3 gap-4">
-                      <div className="flex items-center justify-between p-3 bg-[var(--color-bg-tertiary)] rounded-[var(--radius-md)]">
-                        <span className="text-sm">口型同步</span>
-                        <button
-                          onClick={() => setVRMSettings({ lipSync: !vrmSettings.lipSync })}
-                          className={`w-10 h-5 rounded-full transition-colors ${
-                            vrmSettings.lipSync ? 'bg-[var(--color-accent)]' : 'bg-[var(--color-border)]'
-                          }`}
-                        >
-                          <div
-                            className={`w-4 h-4 rounded-full bg-white transition-transform ${
-                              vrmSettings.lipSync ? 'translate-x-5' : 'translate-x-0.5'
-                            }`}
-                          />
-                        </button>
-                      </div>
-                      <div className="flex items-center justify-between p-3 bg-[var(--color-bg-tertiary)] rounded-[var(--radius-md)]">
-                        <span className="text-sm">空闲动画</span>
-                        <button
-                          onClick={() => setVRMSettings({ idleAnimation: !vrmSettings.idleAnimation })}
-                          className={`w-10 h-5 rounded-full transition-colors ${
-                            vrmSettings.idleAnimation ? 'bg-[var(--color-accent)]' : 'bg-[var(--color-border)]'
-                          }`}
-                        >
-                          <div
-                            className={`w-4 h-4 rounded-full bg-white transition-transform ${
-                              vrmSettings.idleAnimation ? 'translate-x-5' : 'translate-x-0.5'
-                            }`}
-                          />
-                        </button>
-                      </div>
-                      <div className="flex items-center justify-between p-3 bg-[var(--color-bg-tertiary)] rounded-[var(--radius-md)]">
-                        <span className="text-sm">视线追踪</span>
-                        <button
-                          onClick={() => setVRMSettings({ lookAtMouse: !vrmSettings.lookAtMouse })}
-                          className={`w-10 h-5 rounded-full transition-colors ${
-                            vrmSettings.lookAtMouse ? 'bg-[var(--color-accent)]' : 'bg-[var(--color-border)]'
-                          }`}
-                        >
-                          <div
-                            className={`w-4 h-4 rounded-full bg-white transition-transform ${
-                              vrmSettings.lookAtMouse ? 'translate-x-5' : 'translate-x-0.5'
-                            }`}
-                          />
-                        </button>
-                      </div>
-                    </div>
-
-                    <div className="grid grid-cols-2 gap-4">
-                      <div>
-                        <label className="text-sm font-medium mb-2 block">最小宽度</label>
-                        <input
-                          type="number"
-                          value={vrmSettings.minWidth}
-                          onChange={(e) => setVRMSettings({ minWidth: parseInt(e.target.value) || 200 })}
-                          className="w-full px-3 py-2 bg-[var(--color-bg-primary)] border border-[var(--color-border)] rounded-[var(--radius-md)]"
-                        />
-                      </div>
-                      <div>
-                        <label className="text-sm font-medium mb-2 block">最大宽度</label>
-                        <input
-                          type="number"
-                          value={vrmSettings.maxWidth}
-                          onChange={(e) => setVRMSettings({ maxWidth: parseInt(e.target.value) || 400 })}
-                          className="w-full px-3 py-2 bg-[var(--color-bg-primary)] border border-[var(--color-border)] rounded-[var(--radius-md)]"
-                        />
-                      </div>
-                    </div>
-                  </div>
+                  <button
+                    onClick={() => setShowAvatarManager('vrm')}
+                    className="w-full px-4 py-3 text-sm bg-[var(--color-accent)] text-white rounded-[var(--radius-md)] hover:opacity-90 transition-opacity flex items-center justify-center gap-2"
+                  >
+                    <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.066 2.573c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.573 1.066c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.066-2.573c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                    </svg>
+                    打开 VRM 配置面板
+                  </button>
                 </CardBody>
               </Card>
 
