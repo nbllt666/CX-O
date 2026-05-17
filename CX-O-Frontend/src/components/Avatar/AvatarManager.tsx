@@ -66,16 +66,6 @@ export function AvatarManager({ type, onClose }: AvatarManagerProps) {
     }
   }, [type]);
 
-  useEffect(() => {
-    loadAvatars();
-  }, [loadAvatars]);
-
-  useEffect(() => {
-    if (currentModelId) {
-      loadPreviewModel(currentModelId);
-    }
-  }, []);
-
   const loadPreviewModel = useCallback(async (id: string) => {
     try {
       const avatar = await getAvatar(id);
@@ -89,6 +79,16 @@ export function AvatarManager({ type, onClose }: AvatarManagerProps) {
       console.error('Failed to load preview model:', error);
     }
   }, []);
+
+  useEffect(() => {
+    loadAvatars();
+  }, [loadAvatars]);
+
+  useEffect(() => {
+    if (currentModelId) {
+      loadPreviewModel(currentModelId);
+    }
+  }, [currentModelId, loadPreviewModel]);
 
   const handleSelect = useCallback(
     async (avatar: AvatarRecord) => {
