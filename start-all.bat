@@ -24,7 +24,7 @@ REM ==========================================
 REM 启动 CX-O-SERVER
 REM ==========================================
 echo.
-echo [启动 CX-O-SERVER - 端口 8100]
+echo [启动 CX-O-SERVER - 端口 8000]
 cd CX-O-SERVER
 start "CX-O-SERVER" cmd /c "start.bat"
 cd ..
@@ -32,7 +32,7 @@ cd ..
 echo [等待 CX-O-SERVER 启动...]
 for /L %%i in (1,1,30) do (
     ping -n 2 127.0.0.1 > nul 2>&1
-    netstat -an | findstr ":8100" | findstr "LISTENING" > nul 2>&1
+    netstat -an | findstr ":8000" | findstr "LISTENING" > nul 2>&1
     if not errorlevel 1 (
         echo [CX-O-SERVER 已启动]
         goto :start_voiceworkstation
@@ -89,7 +89,7 @@ echo ========================================
 echo.
 echo 服务地址:
 echo   - 前端:             http://localhost:3000
-echo   - CX-O-SERVER:      http://localhost:8100
+echo   - CX-O-SERVER:      http://localhost:8000
 echo   - VoiceWorkStation: http://localhost:8200
 echo.
 echo 按任意键打开浏览器...

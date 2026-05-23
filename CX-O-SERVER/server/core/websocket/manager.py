@@ -128,6 +128,18 @@ class WebSocketManager:
         for client_id in disconnected:
             await self.disconnect(client_id)
 
+    async def broadcast_external_event(self, source: str, event_type: str, title: str, body: str):
+        message = {
+            "event": "external_event",
+            "data": {
+                "source": source,
+                "type": event_type,
+                "title": title,
+                "body": body,
+            }
+        }
+        await self.broadcast(message)
+
     async def broadcast_to_channel(self, channel: str, message: Dict[str, Any]):
         """广播消息给频道内所有客户端"""
         if channel not in self.channels:

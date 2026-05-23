@@ -16,19 +16,19 @@ export default defineConfig({
     port: 3000,
     proxy: {
       '/api': {
-        target: 'http://127.0.0.1:8100',
+        target: 'http://127.0.0.1:8000',
         changeOrigin: true,
       },
       '/ws': {
-        target: 'ws://127.0.0.1:8100',
+        target: 'ws://127.0.0.1:8000',
         ws: true,
       },
       '/control': {
-        target: 'http://127.0.0.1:8100',
+        target: 'http://127.0.0.1:8000',
         changeOrigin: true,
       },
       '/health': {
-        target: 'http://127.0.0.1:8100',
+        target: 'http://127.0.0.1:8000',
         changeOrigin: true,
       },
       '/voice-station': {

@@ -201,7 +201,7 @@ export function SettingsPage() {
 
   const checkControlService = useCallback(async () => {
     try {
-      const apiUrl = import.meta.env.VITE_API_URL || 'http://127.0.0.1:8100';
+      const apiUrl = import.meta.env.VITE_API_URL || 'http://127.0.0.1:8000';
       const response = await fetch(`${apiUrl}/health`);
       if (response.ok) {
         setIsControlServiceReady(true);
@@ -217,7 +217,7 @@ export function SettingsPage() {
 
   const checkBackendStatus = useCallback(async () => {
     try {
-      const apiUrl = import.meta.env.VITE_API_URL || 'http://127.0.0.1:8100';
+      const apiUrl = import.meta.env.VITE_API_URL || 'http://127.0.0.1:8000';
       const response = await fetch(`${apiUrl}/health`);
       if (response.ok) {
         setIsBackendRunning(true);
@@ -252,7 +252,7 @@ export function SettingsPage() {
   });
 
   const [gatewayServicesConfig, setGatewayServicesConfig] = useState({
-    monolith: { url: 'ws://127.0.0.1:8100/ws', http_url: 'http://127.0.0.1:8100', timeout: 30, status: '集成' },
+    monolith: { url: 'ws://127.0.0.1:8000/ws', http_url: 'http://127.0.0.1:8000', timeout: 30, status: '集成' },
   });
 
   useEffect(() => {
@@ -719,7 +719,7 @@ export function SettingsPage() {
   const handleStartBackend = async () => {
     setIsProcessing(true);
     try {
-      const response = await fetch('http://127.0.0.1:8100/health');
+      const response = await fetch('http://127.0.0.1:8000/health');
       if (response.ok) {
         alert('后端服务已在运行');
         setIsBackendRunning(true);
@@ -950,8 +950,8 @@ export function SettingsPage() {
                       </span>
                     </div>
                     <div className="text-sm text-[var(--color-text-secondary)]">
-                      <p>WebSocket: <code className="px-1 py-0.5 bg-[var(--color-bg-primary)] rounded">ws://127.0.0.1:8100/ws</code></p>
-                      <p>HTTP API: <code className="px-1 py-0.5 bg-[var(--color-bg-primary)] rounded">http://127.0.0.1:8100</code></p>
+                      <p>WebSocket: <code className="px-1 py-0.5 bg-[var(--color-bg-primary)] rounded">ws://127.0.0.1:8000/ws</code></p>
+                      <p>HTTP API: <code className="px-1 py-0.5 bg-[var(--color-bg-primary)] rounded">http://127.0.0.1:8000</code></p>
                     </div>
                   </div>
 
@@ -1012,7 +1012,7 @@ export function SettingsPage() {
                     </div>
                     <div>
                       <span className="text-xs text-[var(--color-text-tertiary)]">端口</span>
-                      <p className="font-medium">8100</p>
+                      <p className="font-medium">8000</p>
                     </div>
                     <div>
                       <span className="text-xs text-[var(--color-text-tertiary)]">进程 ID</span>

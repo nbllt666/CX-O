@@ -105,6 +105,12 @@ class EventsActions:
     UNSUBSCRIBE = "events.unsubscribe"
 
 
+class ExternalEventsActions:
+    EXTERNAL_EVENT = "external_event"
+    SUBSCRIBE = "events.subscribe"
+    UNSUBSCRIBE = "events.unsubscribe"
+
+
 ACTION_HANDLERS = {
     ChatActions.MESSAGE: "chat",
     ChatActions.STREAM: "chat",

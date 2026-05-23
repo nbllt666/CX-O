@@ -1,4 +1,4 @@
-from typing import Optional
+from typing import Optional, Any
 
 from fastapi import HTTPException, Request
 from fastapi import Depends
@@ -19,6 +19,7 @@ class ServiceState:
         self.tts_service = None
         self.graph_database = None
         self.graph_store = None
+        self.cxfc_manager: Optional[Any] = None
 
 
 _service_state: Optional[ServiceState] = None
@@ -130,3 +131,7 @@ def get_graph_store(state: ServiceState = Depends(get_service_state)):
     if state.graph_store is None:
         raise HTTPException(status_code=503, detail="图存储服务不可用")
     return state.graph_store
+
+
+def get_cxfc_manager(state: ServiceState = Depends(get_service_state)) -> Optional[Any]:
+    return _resolve_state(state).cxfc_manager

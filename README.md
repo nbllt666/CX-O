@@ -13,7 +13,7 @@ CX-O 是一个基于单体应用架构的智能语音对话系统，集成语音
                            │ WebSocket / HTTP
                            ▼
 ┌─────────────────────────────────────────────────────────────────┐
-│                   CX-O Server (8100)                           │
+│                   CX-O Server (8000)                           │
 │              单体应用，集成所有功能                               │
 │  ┌─────────────────────────────────────────────────────────┐  │
 │  │  Gateway Layer: WebSocket、HTTP REST API                 │  │
@@ -89,14 +89,14 @@ npm run dev
 ### 访问界面
 
 - 前端界面: <http://127.0.0.1:5173>
-- API 文档: <http://127.0.0.1:8100/docs>
-- 健康检查: <http://127.0.0.1:8100/health>
+- API 文档: <http://127.0.0.1:8000/docs>
+- 健康检查: <http://127.0.0.1:8000/health>
 
 ## 服务端口
 
 | 服务                | 端口   | 协议             | 说明          |
 | ----------------- | ---- | -------------- | ----------- |
-| CX-O Server       | 8100 | WebSocket/HTTP | 单体应用，集成所有功能 |
+| CX-O Server       | 8000 | WebSocket/HTTP | 单体应用，集成所有功能 |
 | CX-O Frontend     | 5173 | HTTP           | Web 前端      |
 | Voice WorkStation | 8200 | HTTP           | 语音工作站 (可选)  |
 | Weaviate          | 8090 | HTTP/gRPC      | 向量数据库 (可选)  |
@@ -269,7 +269,7 @@ CX-O/
 ```yaml
 server:
   host: 0.0.0.0
-  port: 8100
+  port: 8000
   debug: true
 
 models:
@@ -320,7 +320,7 @@ live:
 - **知识图谱**: `GET/POST/PUT/DELETE /api/graph/nodes`, `/api/graph/edges`
 - **工具管理**: `GET/POST /api/tools`
 - **ACP 协议**: `POST /api/acp/discover`, `/api/acp/send`
-- **WebSocket**: `ws://localhost:8100/api/ws/{agent_id}`
+- **WebSocket**: `ws://localhost:8000/api/ws/{agent_id}`
 
 ## 开发指南
 
@@ -368,7 +368,7 @@ docker-compose up -d
 
 ### 1. 后端无法启动
 
-检查端口 8100 是否被占用，或修改 `config/default.yaml` 中的端口配置。
+检查端口 8000 是否被占用，或修改 `config/default.yaml` 中的端口配置。
 
 ### 2. 前端无法连接后端
 

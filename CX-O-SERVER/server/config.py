@@ -76,7 +76,7 @@ def get_env_config() -> Dict[str, Any]:
 
 class SystemConfig(BaseModel):
     host: str = "0.0.0.0"
-    port: int = 8100
+    port: int = 8000
     debug: bool = False
     log_level: str = "INFO"
     workers: int = 1
@@ -91,7 +91,7 @@ class CorsConfig(BaseModel):
 
 class GatewayConfig(BaseModel):
     host: str = "0.0.0.0"
-    port: int = 8100
+    port: int = 8000
     cors: CorsConfig = Field(default_factory=CorsConfig)
 
 
@@ -368,6 +368,17 @@ class GraphConfigSection(BaseModel):
     embedding: GraphEmbeddingConfig = Field(default_factory=GraphEmbeddingConfig)
 
 
+class CXFCConfig(BaseModel):
+    enabled: bool = True
+    heartbeat_timeout: int = 30
+    heartbeat_check_interval: int = 10
+    discovery_enabled: bool = True
+    discovery_port: int = 9996
+    broadcast_port: int = 9997
+    auto_connect_on_startup: bool = True
+    storage_path: str = "data/cxfc_plugins.db"
+
+
 class UnifiedConfig(BaseModel):
     model_config = ConfigDict(protected_namespaces=())
 
@@ -388,6 +399,7 @@ class UnifiedConfig(BaseModel):
     voice_workstation: VoiceWorkstationConfig = Field(default_factory=VoiceWorkstationConfig)
     graph: GraphConfigSection = Field(default_factory=GraphConfigSection)
     rate_limit: RateLimitConfig = Field(default_factory=RateLimitConfig)
+    cxfc: CXFCConfig = Field(default_factory=CXFCConfig)
 
 
 class Settings:

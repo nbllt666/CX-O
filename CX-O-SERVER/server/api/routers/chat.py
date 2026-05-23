@@ -4,12 +4,13 @@
 """
 
 import json
+import base64
 import time
 import yaml
 from pathlib import Path
 from typing import Dict, List, Optional
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
@@ -168,47 +169,75 @@ def build_messages(
 
 
 @router.post("/chat")
-async def chat(request: ChatRequest):
-    """
-    非流式聊天
-    前端只发送最新消息，后端根据 Agent 配置构建完整上下文
-    每个 Agent 对应一个固定会话
-    """
+async def chat(request: Request):
     from server.dependencies import get_context_manager, get_memory_manager
 
-    try:
-        # 1. 获取 Agent 配置
-        agent_config = get_agent_config(request.agent_id)
-        if not agent_config:
-            raise HTTPException(status_code=404, detail=f"Agent '{request.agent_id}' 不存在")
+    content_type = request.headers.get("content-type", "")
 
-        # 2. 获取管理器
+    if "multipart/form-data" in content_type:
+        form = await request.form()
+        text = form.get("text", "")
+        agent_id = form.get("agent_id", "default")
+        images = []
+
+        image_file = form.get("image")
+        if image_file:
+            image_bytes = await image_file.read()
+            b64 = base64.b64encode(image_bytes).decode()
+            mime_type = image_file.content_type or "image/png"
+            images.append(f"data:{mime_type};base64,{b64}")
+
+        audio_file = form.get("audio")
+        if audio_file:
+            try:
+                from server.services.asr_service import get_asr_service as _get_asr
+                asr_svc = _get_asr()
+                if asr_svc:
+                    audio_bytes = await audio_file.read()
+                    result = await asr_svc.recognize(audio_bytes)
+                    transcript = result.get("text", "")
+                    if transcript:
+                        text = f"{text} {transcript}".strip() if text else transcript
+            except Exception as e:
+                logger.warning(f"ASR 转录失败: {e}")
+
+        chat_req = ChatRequest(
+            message=text,
+            agent_id=agent_id,
+            images=images if images else None,
+        )
+    else:
+        data = await request.json()
+        chat_req = ChatRequest(**data)
+
+    try:
+        agent_config = get_agent_config(chat_req.agent_id)
+        if not agent_config:
+            raise HTTPException(status_code=404, detail=f"Agent '{chat_req.agent_id}' 不存在")
+
         memory_mgr = get_memory_manager()
         context_mgr = get_context_manager()
         llm = get_llm_client_for_agent(agent_config)
 
-        # 3. 获取/创建 Agent 专属会话（每个 Agent 只有一个会话）
-        session_id = f"agent-{request.agent_id}"
+        session_id = f"agent-{chat_req.agent_id}"
         existing_session = context_mgr.get_session(session_id)
         if not existing_session:
             context_mgr.create_session(
                 workspace_id="agent-chats",
                 title=f"{agent_config['name']} 的对话",
                 session_id=session_id,
-                metadata={"agent_id": request.agent_id},
+                metadata={"agent_id": chat_req.agent_id},
             )
 
-        # 4. 添加用户消息到上下文
-        context_mgr.add_message(session_id=session_id, role="user", content=request.message)
+        context_mgr.add_message(session_id=session_id, role="user", content=chat_req.message)
 
-        # 5. 检索记忆（如果启用）
         memory_context = None
         if agent_config.get("use_memory", True) and memory_mgr:
             from server.core.memory.router import MemoryRouter
 
             router = MemoryRouter(memory_manager=memory_mgr)
             routing_result = await router.route(
-                query=request.message,
+                query=chat_req.message,
                 session_id=session_id,
                 scene_type=agent_config.get("memory_scene", "chat"),
             )
@@ -217,21 +246,18 @@ async def chat(request: ChatRequest):
                     [f"- {m['content']}" for m in routing_result.memories[:5]]
                 )
 
-        # 6. 构建消息列表
         messages = build_messages(
             agent_config=agent_config,
             context_mgr=context_mgr,
             session_id=session_id,
-            user_message=request.message,
+            user_message=chat_req.message,
             memory_context=memory_context,
-            images=request.images,
+            images=chat_req.images,
         )
 
-        # 7. 获取工具（只过滤 summary 类别）
         from server.core.tools import tool_registry
 
         all_tools = tool_registry.list_openai_functions(include_builtin=True)
-        # 只过滤 summary 类别的工具
         EXCLUDED_CATEGORIES = {"summary"}
         tools = [
             t
@@ -240,18 +266,14 @@ async def chat(request: ChatRequest):
             and tool_registry.get_tool(t.get("function", {}).get("name", "")).category
             not in EXCLUDED_CATEGORIES
         ]
-        # 确保 tools 始终为列表，避免 None 导致 LLM 无法使用工具
         if not tools:
             tools = []
             logger.debug("未找到可用工具，使用空列表")
 
-        # 8. 调用 LLM
         response = await llm.chat(messages=messages, stream=False, tools=tools)
 
-        # 9. 处理工具调用
         final_response = response.content
         if hasattr(response, "tool_calls") and response.tool_calls:
-            # 处理工具调用
             from server.core.tools import tool_registry
             from server.core.tools.builtin import call_builtin_tool
 
@@ -277,15 +299,12 @@ async def chat(request: ChatRequest):
                         except Exception:
                             tool_args = {}
 
-                # 执行工具（区分内置工具和注册工具）
                 if tool_name in BUILTIN_TOOL_NAMES:
                     tool_result = call_builtin_tool(tool_name, tool_args or {})
                 else:
                     tool_result = tool_registry.call_tool(tool_name, tool_args)
 
-                # 添加工具调用结果到消息
                 messages.append({"role": "assistant", "content": None, "tool_calls": [tool_call]})
-                # 生成 tool_call_id，确保不为空
                 tool_call_id = tool_call.get("id")
                 if not tool_call_id:
                     tool_call_id = f"call_{tool_name}_{int(time.time() * 1000)}_{id(tool_call)}"
@@ -298,11 +317,9 @@ async def chat(request: ChatRequest):
                     }
                 )
 
-            # 再次调用 LLM 获取最终响应
             response = await llm.chat(messages=messages, stream=False)
             final_response = response.content
 
-        # 10. 保存助手响应到上下文
         context_mgr.add_message(session_id=session_id, role="assistant", content=final_response)
 
         return {

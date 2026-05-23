@@ -181,6 +181,40 @@ async def lifespan(app: FastAPI):
         lifespan_logger.warning(f"图工具注册失败: {e}")
 
     try:
+        from server.core.cxfc import CXFCManager
+        cxfc_manager = CXFCManager()
+        cxfc_manager.set_tool_registry(tool_registry)
+        await cxfc_manager.start()
+
+        from server.core.websocket.manager import get_websocket_manager
+        ws_mgr = get_websocket_manager()
+        cxfc_manager.set_ws_manager(ws_mgr)
+
+        async def on_cxfc_event(skill, event):
+            try:
+                if ws_mgr:
+                    await ws_mgr.broadcast({
+                        "type": "skill_triggered",
+                        "data": {
+                            "skill_name": skill.name,
+                            "skill_description": skill.description,
+                            "event_type": event.event_type,
+                            "source_plugin": skill.source_plugin_id,
+                            "prompt_template": skill.prompt_template,
+                        },
+                    })
+            except Exception as e:
+                lifespan_logger.warning(f"广播 Skill 触发事件失败: {e}")
+
+        cxfc_manager.set_on_event_callback(on_cxfc_event)
+
+        services.cxfc_manager = cxfc_manager
+        lifespan_logger.info("CXFC管理器已启动")
+    except Exception as e:
+        lifespan_logger.warning(f"CXFC管理器启动失败: {e}")
+        services.cxfc_manager = None
+
+    try:
         from server.core.tools import register_builtin_tools
         register_builtin_tools()
         lifespan_logger.info("内置工具已注册")
@@ -360,6 +394,44 @@ async def lifespan(app: FastAPI):
         lifespan_logger.warning(f"批量衰减处理器启动失败: {e}")
         services.decay_batch_processor = None
 
+    try:
+        from server.core.cxfc.manager import CXFCManager
+        from server.core.cxfc.discovery import CXFCDiscovery
+
+        cxfc_config = getattr(settings, 'cxfc', None)
+        if cxfc_config and getattr(cxfc_config, 'enabled', True):
+            cxfc_manager = CXFCManager(
+                storage_path=getattr(cxfc_config, 'storage_path', 'data/cxfc_plugins.db'),
+                heartbeat_timeout=getattr(cxfc_config, 'heartbeat_timeout', 30),
+                heartbeat_check_interval=getattr(cxfc_config, 'heartbeat_check_interval', 10),
+            )
+
+            if hasattr(services, 'tool_registry') and services.tool_registry:
+                cxfc_manager.set_tool_registry(services.tool_registry)
+
+            if hasattr(services, 'ws_manager') and services.ws_manager:
+                cxfc_manager.set_ws_manager(services.ws_manager)
+
+            await cxfc_manager.start()
+
+            services.cxfc_manager = cxfc_manager
+
+            if getattr(cxfc_config, 'discovery_enabled', True):
+                cxfc_discovery = CXFCDiscovery(
+                    broadcast_port=getattr(cxfc_config, 'broadcast_port', 9997),
+                    discovery_port=getattr(cxfc_config, 'discovery_port', 9996),
+                )
+                await cxfc_discovery.start_discovery(
+                    local_name="CX-O",
+                    local_port=getattr(settings, 'system', None) and getattr(settings.system, 'port', 8000) or 8000,
+                    capabilities=["chat", "memory", "tools", "asr", "tts"],
+                )
+                services.cxfc_discovery = cxfc_discovery
+
+            lifespan_logger.info("CXFC管理器已启动")
+    except Exception as e:
+        lifespan_logger.warning(f"CXFC管理器启动失败: {e}")
+
     from server.services.asr_service import get_asr_service
     from server.services.tts_service import get_tts_service
     from server.gateway.health import health_checker
@@ -451,6 +523,11 @@ async def lifespan(app: FastAPI):
     yield
 
     lifespan_logger.info("正在关闭CX-O服务...")
+
+    if hasattr(services, 'cxfc_manager') and services.cxfc_manager:
+        await services.cxfc_manager.shutdown()
+    if hasattr(services, 'cxfc_discovery') and services.cxfc_discovery:
+        await services.cxfc_discovery.stop_discovery()
 
     if services.graph_database:
         try:
@@ -565,7 +642,7 @@ app = create_app()
 def main():
     settings = get_settings()
     host = getattr(settings.system, 'host', '0.0.0.0')
-    port = getattr(settings.system, 'port', 8100)
+    port = getattr(settings.system, 'port', 8000)
     log_level = getattr(settings.system, 'log_level', 'info').lower()
 
     uvicorn.run(

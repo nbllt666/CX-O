@@ -1532,7 +1532,7 @@ ws.send(JSON.stringify({
 
 **使用示例：**
 ```javascript
-const ws = new WebSocket('ws://localhost:8100/api/ws/live');
+const ws = new WebSocket('ws://localhost:8000/api/ws/live');
 
 ws.onopen = () => {
   ws.send(JSON.stringify({ type: 'init', data: { session_id: 'live-001' } }));

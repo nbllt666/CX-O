@@ -2,7 +2,7 @@ import { useEffect, useRef, useCallback, useState } from 'react';
 
 const WS_BASE_URL =
   import.meta.env.VITE_WS_URL ||
-  (import.meta.env.VITE_API_URL || 'http://127.0.0.1:8100')
+  (import.meta.env.VITE_API_URL || 'http://127.0.0.1:8000')
     .replace('http', 'ws')
     .replace(/\/ws$/, '')
     .replace(/\/$/, '');

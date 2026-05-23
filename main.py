@@ -15,7 +15,7 @@ from config.settings import settings
 def main():
     """启动后端服务"""
     host = getattr(settings.config.system, 'host', '0.0.0.0')
-    port = getattr(settings.config.system, 'port', 8100)
+    port = getattr(settings.config.system, 'port', 8000)
     log_level = settings.config.system.log_level.lower()
 
     print(f"Starting CXHMS Backend on {host}:{port}")

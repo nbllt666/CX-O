@@ -29,7 +29,7 @@ class ServiceStatus(BaseModel):
 
     running: bool
     pid: Optional[int] = None
-    port: int = 8100
+    port: int = 8000
     uptime: Optional[float] = None  # 运行时间（秒）
     using_conda: bool = False  # 是否使用 Conda 环境
 
@@ -38,7 +38,7 @@ class ServiceConfig(BaseModel):
     """服务配置"""
 
     host: str = "0.0.0.0"
-    port: int = 8100
+    port: int = 8000
     log_level: str = "info"
     reload: bool = False
     use_conda: bool = True  # 是否优先使用 Conda 环境
@@ -140,10 +140,10 @@ async def get_service_status():
             logger.warning(f"检查Conda环境失败: {e}")
 
         return ServiceStatus(
-            running=True, pid=process.pid, port=8100, uptime=uptime, using_conda=using_conda
+            running=True, pid=process.pid, port=8000, uptime=uptime, using_conda=using_conda
         )
 
-    return ServiceStatus(running=False, port=8100)
+    return ServiceStatus(running=False, port=8000)
 
 
 def validate_service_config(config: ServiceConfig) -> None:
@@ -438,8 +438,8 @@ async def get_gateway_config():
 
     monolith_config = {
         "status": "集成",
-        "url": "ws://127.0.0.1:8100/ws",
-        "http_url": "http://127.0.0.1:8100",
+        "url": "ws://127.0.0.1:8000/ws",
+        "http_url": "http://127.0.0.1:8000",
         "timeout": 30,
         "asr": {"status": "集成", "note": "已集成到主服务"},
         "tts": {"status": "集成", "note": "已集成到主服务"},
@@ -648,7 +648,7 @@ async def get_startup_command(use_conda: bool = True):
     conda_activate = get_conda_activate_script()
     project_root = get_project_root()
 
-    config = {"host": "0.0.0.0", "port": 8100, "log_level": "info"}
+    config = {"host": "0.0.0.0", "port": 8000, "log_level": "info"}
 
     from config.settings import settings
 

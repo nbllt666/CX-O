@@ -311,7 +311,7 @@ class OllamaClient(LLMClient):
 class VLLMClient(LLMClient):
     def __init__(
         self,
-        host: str = "http://localhost:8100",
+        host: str = "http://localhost:8000",
         model: str = "llama3.2",
         temperature: float = 0.7,
         max_tokens: int = 4096,

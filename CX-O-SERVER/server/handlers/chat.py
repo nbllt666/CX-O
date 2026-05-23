@@ -98,6 +98,27 @@ def _build_messages(agent_config, context_mgr, session_id, user_message, memory_
     if memory_context and agent_config.get("use_memory", True):
         messages.append({"role": "system", "content": f"相关记忆:\n{memory_context}"})
 
+    try:
+        from server.dependencies import get_cxfc_manager
+        cxfc_mgr = get_cxfc_manager()
+        if cxfc_mgr:
+            skill_registry = cxfc_mgr.get_skill_registry()
+            matched_skills = skill_registry.find_by_keywords(user_message)
+            if matched_skills:
+                skill_prompts = []
+                for skill in matched_skills:
+                    if skill.auto_inject:
+                        rendered = skill_registry.render_template(
+                            skill.prompt_template,
+                            {"user_message": user_message},
+                        )
+                        skill_prompts.append(rendered)
+                if skill_prompts:
+                    skill_context = "\n\n".join(skill_prompts)
+                    messages.append({"role": "system", "content": skill_context})
+    except Exception as e:
+        logger.warning(f"Skills injection failed: {e}")
+
     history = context_mgr.get_messages(session_id, limit=10)
     for msg in history:
         if msg.get("role") in ["user", "assistant"]:

@@ -6,10 +6,10 @@ interface ConnectionSetupProps {
 
 export function ConnectionSetup({ onConnected }: ConnectionSetupProps) {
   const [backendUrl, setBackendUrl] = useState(() => {
-    return localStorage.getItem('cxhms-backend-url') || 'http://127.0.0.1:8100';
+    return localStorage.getItem('cxhms-backend-url') || 'http://127.0.0.1:8000';
   });
   const [wsUrl, setWsUrl] = useState(() => {
-    return localStorage.getItem('cxhms-ws-url') || 'ws://127.0.0.1:8100';
+    return localStorage.getItem('cxhms-ws-url') || 'ws://127.0.0.1:8000';
   });
   const [isChecking, setIsChecking] = useState(false);
   const [error, setError] = useState('');
@@ -67,7 +67,7 @@ export function ConnectionSetup({ onConnected }: ConnectionSetupProps) {
               type="url"
               value={backendUrl}
               onChange={(e) => setBackendUrl(e.target.value)}
-              placeholder="http://127.0.0.1:8100"
+              placeholder="http://127.0.0.1:8000"
               className="w-full px-4 py-2 rounded-lg bg-[var(--color-bg-primary)] border border-[var(--color-border)] focus:outline-none focus:border-[var(--color-accent)]"
               required
             />
@@ -81,7 +81,7 @@ export function ConnectionSetup({ onConnected }: ConnectionSetupProps) {
               type="url"
               value={wsUrl}
               onChange={(e) => setWsUrl(e.target.value)}
-              placeholder="ws://127.0.0.1:8100"
+              placeholder="ws://127.0.0.1:8000"
               className="w-full px-4 py-2 rounded-lg bg-[var(--color-bg-primary)] border border-[var(--color-border)] focus:outline-none focus:border-[var(--color-accent)]"
               required
             />
@@ -105,8 +105,8 @@ export function ConnectionSetup({ onConnected }: ConnectionSetupProps) {
         <div className="mt-6 p-4 rounded-lg bg-[var(--color-bg-tertiary)] text-xs text-[var(--color-text-secondary)]">
           <p className="font-medium mb-2">默认配置:</p>
           <ul className="space-y-1">
-            <li>• 后端地址: http://127.0.0.1:8100</li>
-            <li>• WebSocket: ws://127.0.0.1:8100</li>
+            <li>• 后端地址: http://127.0.0.1:8000</li>
+            <li>• WebSocket: ws://127.0.0.1:8000</li>
           </ul>
         </div>
       </div>
