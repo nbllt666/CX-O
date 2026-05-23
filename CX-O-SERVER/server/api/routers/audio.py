@@ -6,11 +6,13 @@ from datetime import datetime
 from pathlib import Path
 from typing import Optional
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel
 
 from server.core.logging_config import get_contextual_logger
+from server.dependencies import get_asr_service, get_tts_service
+from server.services.asr_service import ASRService
 
 router = APIRouter()
 logger = get_contextual_logger(__name__)
@@ -168,13 +170,10 @@ async def delete_audio_file(filename: str):
 
 
 @router.post("/tts/synthesize", summary="TTS合成")
-async def tts_synthesize(request: TTSSynthesizeRequest):
+async def tts_synthesize(request: TTSSynthesizeRequest, tts_svc = Depends(get_tts_service)):
     try:
         if not request.text:
             return {"status": "error", "message": "缺少文本内容"}
-
-        from server.services.tts_service import get_tts_service
-        tts_svc = get_tts_service()
 
         kwargs = {
             "speed": request.speed if request.speed != 1.0 else tts_svc._speed,
@@ -199,7 +198,7 @@ async def tts_synthesize(request: TTSSynthesizeRequest):
 
 
 @router.post("/tts/synthesize-stream", summary="TTS流式合成")
-async def tts_synthesize_stream(request: Request):
+async def tts_synthesize_stream(request: Request, tts_svc = Depends(get_tts_service)):
     try:
         data = await request.json()
         text = data.get("text", "")
@@ -208,9 +207,6 @@ async def tts_synthesize_stream(request: Request):
             async def error_stream():
                 yield f"data: {json.dumps({'type': 'error', 'message': '缺少文本内容'}, ensure_ascii=False)}\n\n"
             return StreamingResponse(error_stream(), media_type="text/event-stream")
-
-        from server.services.tts_service import get_tts_service
-        tts_svc = get_tts_service()
 
         kwargs = {
             "speed": data.get("speed", tts_svc._speed),
@@ -248,7 +244,7 @@ async def tts_synthesize_stream(request: Request):
 
 
 @router.post("/asr/speech-to-text", summary="ASR语音识别")
-async def asr_speech_to_text(request: Request):
+async def asr_speech_to_text(request: Request, asr_svc: ASRService = Depends(get_asr_service)):
     temp_path = None
     try:
         content_type = request.headers.get("content-type", "")
@@ -273,9 +269,6 @@ async def asr_speech_to_text(request: Request):
                 temp_path = f.name
             with open(temp_path, "rb") as f:
                 audio_data = f.read()
-
-        from server.services.asr_service import get_asr_service
-        asr_svc = get_asr_service()
 
         result = await asr_svc.recognize(audio_data, language)
 

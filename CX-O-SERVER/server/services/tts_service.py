@@ -748,6 +748,38 @@ class TTSService:
 _tts_service: Optional[TTSService] = None
 
 
+def _load_emotion_voices(emotion_refs_dir: str) -> dict:
+    import json
+    from pathlib import Path
+    emotion_voices = {}
+    refs_dir = Path(emotion_refs_dir)
+    if not refs_dir.exists():
+        return emotion_voices
+    mapping_file = refs_dir / "emotion_mapping.json"
+    if mapping_file.exists():
+        with open(mapping_file, "r", encoding="utf-8") as f:
+            emotion_voices = json.load(f)
+    else:
+        for emotion_dir in refs_dir.iterdir():
+            if emotion_dir.is_dir():
+                ref_audio = None
+                ref_text = ""
+                for ext in [".wav", ".mp3", ".flac"]:
+                    candidate = emotion_dir / f"ref{ext}"
+                    if candidate.exists():
+                        ref_audio = str(candidate)
+                        break
+                text_file = emotion_dir / "ref.txt"
+                if text_file.exists():
+                    ref_text = text_file.read_text(encoding="utf-8").strip()
+                if ref_audio:
+                    emotion_voices[emotion_dir.name] = {
+                        "ref_audio": ref_audio,
+                        "ref_text": ref_text,
+                    }
+    return emotion_voices
+
+
 def get_tts_service() -> TTSService:
     global _tts_service
     if _tts_service is None:
@@ -762,5 +794,10 @@ def get_tts_service() -> TTSService:
             ref_text=settings.tts.ref_text,
             speed=settings.tts.speed,
             cross_fade_duration=settings.tts.cross_fade_duration,
+            emotion_voices=_load_emotion_voices(settings.tts.emotion_refs_dir) if settings.tts.emotion_enabled else {},
+            effects_dir=settings.tts.transitions_dir if settings.tts.effects_enabled else None,
+            voice_refs_dir=settings.tts.emotion_refs_dir if settings.tts.emotion_enabled else None,
+            gateway_url=settings.tts.remote_url,
+            use_triton=(settings.tts.mode == "triton"),
         )
     return _tts_service

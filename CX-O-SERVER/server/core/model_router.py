@@ -125,7 +125,7 @@ class ModelRouter:
         """
         model_type = model_type.lower()
 
-        # 检查是否有默认跟随配置
+        settings = get_settings()
         if model_type in settings.config.models.defaults:
             target = settings.config.models.defaults[model_type]
             if target in self._clients:
@@ -144,6 +144,7 @@ class ModelRouter:
         Returns:
             ModelConfig实例或None
         """
+        settings = get_settings()
         return settings.config.models.get_model_config(model_type)
 
     async def check_status(self, model_type: str) -> ModelStatus:
