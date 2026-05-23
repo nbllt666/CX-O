@@ -98,7 +98,7 @@ export interface Tool {
   id: string;
   name: string;
   description: string;
-  type: 'builtin' | 'custom' | 'mcp';
+  type: 'builtin' | 'custom' | 'mcp' | 'cxfc';
   status: 'active' | 'inactive' | 'error';
   config: Record<string, unknown>;
   icon?: string;
@@ -108,6 +108,40 @@ export interface Tool {
   parameters?: Record<string, unknown>;
   examples?: string[];
   tags?: string[];
+  source_plugin_id?: string;
+}
+
+export interface CxfcPlugin {
+  plugin_id: string;
+  host: string;
+  port: number;
+  name?: string;
+  version?: string;
+  capabilities: string[];
+  status: 'connected' | 'disconnected';
+  last_seen?: string | null;
+  tools: Array<{ name: string; description?: string }>;
+  skills: Array<{ name: string; description?: string }>;
+  created_at?: string | null;
+  updated_at?: string | null;
+}
+
+export interface CxfcSkill {
+  name: string;
+  description?: string;
+  prompt_template?: string;
+  trigger_keywords: string[];
+  trigger_events: string[];
+  auto_inject: boolean;
+  source_plugin_id: string;
+}
+
+export interface CxfcDiscoveredPlugin {
+  host: string;
+  port: number;
+  name?: string;
+  capabilities: string[];
+  version?: string;
 }
 
 export interface GraphEntity {
@@ -1092,6 +1126,45 @@ class ApiClient {
     return this.request({
       url: `/api/avatars/${avatarId}?avatar_type=${avatarType}`,
       method: 'delete',
+    });
+  }
+
+  async getCxfcPlugins(): Promise<CxfcPlugin[]> {
+    const response = await this.request<{ plugins: CxfcPlugin[] }>({ url: '/api/cxfc/plugins' });
+    return response.plugins || [];
+  }
+
+  async getCxfcSkills(): Promise<CxfcSkill[]> {
+    const response = await this.request<{ skills: CxfcSkill[] }>({ url: '/api/cxfc/skills' });
+    return response.skills || [];
+  }
+
+  async connectCxfcPlugin(host: string, port: number): Promise<{ status: string; plugin_id: string }> {
+    return this.request<{ status: string; plugin_id: string }>({
+      url: '/api/cxfc/connect',
+      method: 'post',
+      data: { host, port },
+    });
+  }
+
+  async disconnectCxfcPlugin(pluginId: string): Promise<{ status: string }> {
+    return this.request<{ status: string }>({
+      url: `/api/cxfc/plugins/${pluginId}/disconnect`,
+      method: 'post',
+    });
+  }
+
+  async refreshCxfcPlugin(pluginId: string): Promise<{ status: string }> {
+    return this.request<{ status: string }>({
+      url: `/api/cxfc/plugins/${pluginId}/refresh`,
+      method: 'post',
+    });
+  }
+
+  async discoverCxfcPlugins(scan: boolean = false): Promise<{ remote: CxfcDiscoveredPlugin[] }> {
+    return this.request<{ remote: CxfcDiscoveredPlugin[] }>({
+      url: '/api/cxfc/discover',
+      params: scan ? { scan: true } : undefined,
     });
   }
 }

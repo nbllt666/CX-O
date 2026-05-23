@@ -145,6 +145,32 @@ const navItems: NavItem[] = [
     ),
   },
   {
+    path: '/plugins',
+    label: '插件',
+    icon: (
+      <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+        <path
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          strokeWidth={2}
+          d="M12 2L2 7l10 5 10-5-10-5z"
+        />
+        <path
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          strokeWidth={2}
+          d="M2 17l10 5 10-5"
+        />
+        <path
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          strokeWidth={2}
+          d="M2 12l10 5 10-5"
+        />
+      </svg>
+    ),
+  },
+  {
     path: '/settings',
     label: '设置',
     icon: (

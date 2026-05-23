@@ -13,13 +13,15 @@ import { AvatarPanel, AvatarTypeSelector } from '../components/Avatar';
 
 interface Message {
   id: string;
-  role: 'user' | 'assistant';
+  role: 'user' | 'assistant' | 'system';
   content: string;
   timestamp: string;
   memory_refs?: number[];
   tool_calls?: ToolCall[];
   thinking?: string;
   images?: string[]; // base64 encoded images
+  type?: string;
+  eventData?: Record<string, unknown>;
 }
 
 interface ToolCall {
@@ -247,7 +249,21 @@ export function ChatPage() {
       tool_name?: string;
       result?: unknown;
       thinking?: string;
+      data?: Record<string, unknown>;
     }) => {
+      if (data.type === 'external_event') {
+        const eventData = data.data || {};
+        setMessages(prev => [...prev, {
+          id: `ext-${Date.now()}`,
+          role: 'system' as const,
+          content: `[外部事件] ${eventData.source || '未知来源'}: ${eventData.title || eventData.body || ''}`,
+          timestamp: new Date().toISOString(),
+          type: 'external_event',
+          eventData: eventData,
+        }]);
+        return;
+      }
+
       if (data.type === 'content' && data.content) {
         setMessages((prev) => {
           const lastMsg = prev[prev.length - 1];
@@ -411,6 +427,16 @@ export function ChatPage() {
     timeout: 60,
     onMessage: handleWebSocketMessage,
     onAlarm: handleAlarm,
+    onExternalEvent: (eventData) => {
+      setMessages(prev => [...prev, {
+        id: `ext-${Date.now()}`,
+        role: 'system' as const,
+        content: `[外部事件] ${eventData.source}: ${eventData.title || eventData.body || ''}`,
+        timestamp: new Date().toISOString(),
+        type: 'external_event',
+        eventData: eventData as Record<string, unknown>,
+      }]);
+    },
     onError: (error) => {
       console.error('WebSocket error:', error);
       setIsLoading(false);
@@ -1024,8 +1050,22 @@ export function ChatPage() {
           messages.map((message) => (
             <div
               key={message.id}
-              className={`flex gap-3 ${message.role === 'user' ? 'flex-row-reverse' : ''}`}
+              className={`flex gap-3 ${message.role === 'user' ? 'flex-row-reverse' : ''} ${message.role === 'system' ? 'justify-center' : ''}`}
             >
+              {message.role === 'system' ? (
+                <div className="max-w-[90%] px-4 py-2.5 rounded-xl bg-blue-50 border border-blue-200 text-blue-700 text-sm">
+                  <div className="flex items-center gap-2">
+                    <svg className="w-4 h-4 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                    </svg>
+                    <span>{message.content}</span>
+                  </div>
+                  <span className="text-xs text-blue-400 mt-1 block">
+                    {formatRelativeTime(message.timestamp)}
+                  </span>
+                </div>
+              ) : (
+              <>
               <div
                 className={`w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0 ${
                   message.role === 'user'
@@ -1093,6 +1133,8 @@ export function ChatPage() {
                   </div>
                 )}
               </div>
+              </>
+              )}
             </div>
           ))
         )}

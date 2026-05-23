@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { api } from '../api/client';
+import type { CxfcPlugin, CxfcSkill } from '../api/client';
 import { cn } from '../lib/utils';
 import { useThemeStore } from '../store/themeStore';
 import { useSettingsStore } from '../store/settingsStore';
@@ -136,6 +137,16 @@ const sections: SettingSection[] = [
     ),
     description: '配置大语言模型参数',
   },
+  {
+    id: 'plugin',
+    title: '插件管理',
+    icon: (
+      <svg xmlns="http://www.w3.org/2000/svg" className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+        <path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5" />
+      </svg>
+    ),
+    description: '管理CXFC插件连接、Skills和事件',
+  },
 ];
 
 const themeOptions = [
@@ -154,7 +165,7 @@ const accentColors = [
 ];
 
 export function SettingsPage() {
-  const [activeSection, setActiveSection] = useState<'appearance' | 'service' | 'audio' | 'live' | 'live2d' | 'vector' | 'graph' | 'llm'>(
+  const [activeSection, setActiveSection] = useState<'appearance' | 'service' | 'audio' | 'live' | 'live2d' | 'vector' | 'graph' | 'llm' | 'plugin'>(
     'appearance'
   );
   const [saveStatus, setSaveStatus] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
@@ -163,6 +174,65 @@ export function SettingsPage() {
   const [isControlServiceReady, setIsControlServiceReady] = useState(false);
   const [isProcessing, setIsProcessing] = useState(false);
   const [showAvatarManager, setShowAvatarManager] = useState<'live2d' | 'vrm' | null>(null);
+
+  const [plugins, setPlugins] = useState<CxfcPlugin[]>([]);
+  const [skills, setSkills] = useState<CxfcSkill[]>([]);
+  const [showConnectDialog, setShowConnectDialog] = useState(false);
+  const [connectHost, setConnectHost] = useState('localhost');
+  const [connectPort, setConnectPort] = useState(8081);
+
+  const loadPlugins = async () => {
+    try {
+      const data = await api.getCxfcPlugins();
+      setPlugins(data);
+    } catch { /* ignore */ }
+  };
+
+  const loadSkills = async () => {
+    try {
+      const data = await api.getCxfcSkills();
+      setSkills(data);
+    } catch { /* ignore */ }
+  };
+
+  const handleScanPlugins = async () => {
+    try {
+      const result = await api.discoverCxfcPlugins(true);
+      if (result.remote && result.remote.length > 0) {
+        alert(`发现 ${result.remote.length} 个局域网插件`);
+      } else {
+        alert('未发现局域网插件');
+      }
+      loadPlugins();
+    } catch { /* ignore */ }
+  };
+
+  const handleConnectPlugin = async () => {
+    try {
+      await api.connectCxfcPlugin(connectHost, connectPort);
+      setShowConnectDialog(false);
+      loadPlugins();
+      loadSkills();
+    } catch {
+      alert('连接失败');
+    }
+  };
+
+  const handleDisconnectPlugin = async (pluginId: string) => {
+    try {
+      await api.disconnectCxfcPlugin(pluginId);
+      loadPlugins();
+      loadSkills();
+    } catch { /* ignore */ }
+  };
+
+  const handleRefreshPlugin = async (pluginId: string) => {
+    try {
+      await api.refreshCxfcPlugin(pluginId);
+      loadPlugins();
+      loadSkills();
+    } catch { /* ignore */ }
+  };
 
   // 虚拟形象设置
   const { avatarType, setAvatarType } = useSettingsStore();
@@ -715,6 +785,13 @@ export function SettingsPage() {
       return () => clearInterval(interval);
     }
   }, [activeSection, loadLogs]);
+
+  useEffect(() => {
+    if (activeSection === 'plugin') {
+      loadPlugins();
+      loadSkills();
+    }
+  }, [activeSection]);
 
   const handleStartBackend = async () => {
     setIsProcessing(true);
@@ -1572,6 +1649,148 @@ export function SettingsPage() {
                   {saveStatus === 'saved' ? '已保存' : '保存配置'}
                 </Button>
               </div>
+            </div>
+          )}
+
+          {activeSection === 'plugin' && (
+            <div className="space-y-6">
+              <div className="flex items-center justify-between">
+                <h3 className="text-lg font-medium">插件管理</h3>
+                <div className="flex gap-2">
+                  <button
+                    onClick={handleScanPlugins}
+                    className="px-3 py-1.5 text-sm bg-blue-600 text-white rounded hover:bg-blue-700"
+                  >
+                    扫描局域网
+                  </button>
+                  <button
+                    onClick={() => setShowConnectDialog(true)}
+                    className="px-3 py-1.5 text-sm bg-green-600 text-white rounded hover:bg-green-700"
+                  >
+                    连接插件
+                  </button>
+                </div>
+              </div>
+
+              {plugins.length === 0 ? (
+                <div className="text-center py-8 text-gray-500">
+                  <p>暂无已连接的插件</p>
+                  <p className="text-sm mt-1">点击"连接插件"或"扫描局域网"来发现和连接插件</p>
+                </div>
+              ) : (
+                <div className="space-y-3">
+                  {plugins.map(plugin => (
+                    <div key={plugin.plugin_id} className="border rounded-lg p-4">
+                      <div className="flex items-center justify-between">
+                        <div>
+                          <div className="flex items-center gap-2">
+                            <span className="font-medium">{plugin.name || plugin.plugin_id}</span>
+                            <span className={`text-xs px-2 py-0.5 rounded ${plugin.status === 'connected' ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'}`}>
+                              {plugin.status === 'connected' ? '已连接' : '已断开'}
+                            </span>
+                          </div>
+                          <div className="text-sm text-gray-500 mt-1">
+                            {plugin.host}:{plugin.port} · {plugin.tools.length} 个工具 · {plugin.skills.length} 个Skills
+                          </div>
+                        </div>
+                        <div className="flex gap-2">
+                          <button
+                            onClick={() => handleRefreshPlugin(plugin.plugin_id)}
+                            className="px-2 py-1 text-xs bg-gray-100 rounded hover:bg-gray-200"
+                          >
+                            刷新
+                          </button>
+                          <button
+                            onClick={() => handleDisconnectPlugin(plugin.plugin_id)}
+                            className="px-2 py-1 text-xs bg-red-100 text-red-600 rounded hover:bg-red-200"
+                          >
+                            断开
+                          </button>
+                        </div>
+                      </div>
+                      {plugin.capabilities.length > 0 && (
+                        <div className="flex gap-1 mt-2">
+                          {plugin.capabilities.map(cap => (
+                            <span key={cap} className="text-xs px-2 py-0.5 bg-blue-50 text-blue-600 rounded">
+                              {cap}
+                            </span>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {skills.length > 0 && (
+                <div className="mt-6">
+                  <h4 className="text-md font-medium mb-3">Skills 列表</h4>
+                  <div className="space-y-2">
+                    {skills.map(skill => (
+                      <div key={`${skill.source_plugin_id}:${skill.name}`} className="border rounded p-3">
+                        <div className="flex items-center justify-between">
+                          <span className="font-medium">{skill.name}</span>
+                          <span className="text-xs text-gray-500">来自 {skill.source_plugin_id}</span>
+                        </div>
+                        <p className="text-sm text-gray-600 mt-1">{skill.description}</p>
+                        {skill.trigger_keywords.length > 0 && (
+                          <div className="flex gap-1 mt-2">
+                            {skill.trigger_keywords.map(kw => (
+                              <span key={kw} className="text-xs px-1.5 py-0.5 bg-yellow-50 text-yellow-700 rounded">
+                                {kw}
+                              </span>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {showConnectDialog && (
+                <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+                  <div className="bg-white rounded-lg p-6 w-96">
+                    <h4 className="text-lg font-medium mb-4">连接插件</h4>
+                    <div className="space-y-3">
+                      <div>
+                        <label className="block text-sm font-medium mb-1">主机地址</label>
+                        <input
+                          type="text"
+                          value={connectHost}
+                          onChange={e => setConnectHost(e.target.value)}
+                          className="w-full border rounded px-3 py-2"
+                          placeholder="localhost"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-sm font-medium mb-1">端口</label>
+                        <input
+                          type="number"
+                          value={connectPort}
+                          onChange={e => setConnectPort(Number(e.target.value))}
+                          className="w-full border rounded px-3 py-2"
+                          placeholder="8081"
+                        />
+                      </div>
+                    </div>
+                    <div className="flex justify-end gap-2 mt-4">
+                      <button
+                        onClick={() => setShowConnectDialog(false)}
+                        className="px-4 py-2 text-sm border rounded hover:bg-gray-50"
+                      >
+                        取消
+                      </button>
+                      <button
+                        onClick={handleConnectPlugin}
+                        className="px-4 py-2 text-sm bg-green-600 text-white rounded hover:bg-green-700"
+                      >
+                        连接
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              )}
             </div>
           )}
 

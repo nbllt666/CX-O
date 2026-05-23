@@ -60,6 +60,7 @@ export interface UseLiveWebSocketOptions {
   onError?: (error: string) => void;
   onConnect?: () => void;
   onDisconnect?: () => void;
+  onExternalEvent?: (data: { source: string; type: string; title: string; body: string }) => void;
 }
 
 export interface UseLiveWebSocketReturn {
@@ -86,6 +87,7 @@ export function useLiveWebSocket(options: UseLiveWebSocketOptions = {}): UseLive
     onError,
     onConnect,
     onDisconnect,
+    onExternalEvent,
   } = options;
 
   const wsRef = useRef<WebSocket | null>(null);
@@ -106,6 +108,7 @@ export function useLiveWebSocket(options: UseLiveWebSocketOptions = {}): UseLive
   const onErrorRef = useRef(onError);
   const onConnectRef = useRef(onConnect);
   const onDisconnectRef = useRef(onDisconnect);
+  const onExternalEventRef = useRef(onExternalEvent);
 
   useEffect(() => {
     onDanmakuRef.current = onDanmaku;
@@ -120,6 +123,7 @@ export function useLiveWebSocket(options: UseLiveWebSocketOptions = {}): UseLive
     onErrorRef.current = onError;
     onConnectRef.current = onConnect;
     onDisconnectRef.current = onDisconnect;
+    onExternalEventRef.current = onExternalEvent;
   });
 
   const RECONNECT_DELAYS = [100, 200, 500, 1000, 2000];
@@ -242,6 +246,11 @@ export function useLiveWebSocket(options: UseLiveWebSocketOptions = {}): UseLive
             case 'tts_end':
               if (data.data && onTTSEndRef.current) {
                 onTTSEndRef.current(data.data as unknown as TTSEndData);
+              }
+              break;
+            case 'external_event':
+              if (onExternalEventRef.current && data.data) {
+                onExternalEventRef.current(data.data as { source: string; type: string; title: string; body: string });
               }
               break;
             default:

@@ -7,6 +7,7 @@ import { MemoriesPage } from './pages/MemoriesPage';
 import { ArchivePage } from './pages/ArchivePage';
 import { SettingsPage } from './pages/SettingsPage';
 import { AcpPage } from './pages/AcpPage';
+import PluginsPage from './pages/PluginsPage';
 import { ToolsPage } from './pages/ToolsPage';
 import { AgentsPage } from './pages/AgentsPage';
 import { MemoryAgentPage } from './pages/MemoryAgentPage';
@@ -83,6 +84,7 @@ function App() {
           <Route path="archive" element={<ArchivePage />} />
           <Route path="agents" element={<AgentsPage />} />
           <Route path="acp" element={<AcpPage />} />
+          <Route path="plugins" element={<PluginsPage />} />
           <Route path="tools" element={<ToolsPage />} />
           <Route path="audio" element={<AudioTestPage />} />
           <Route path="settings" element={<SettingsPage />} />

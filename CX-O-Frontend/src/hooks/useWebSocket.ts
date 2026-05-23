@@ -33,6 +33,7 @@ export interface WebSocketMessage {
   silence_duration_ms?: number;
   should_reply?: boolean;
   reply_content?: string;
+  event?: string;
 }
 
 export interface WebSocketOptions {
@@ -40,6 +41,7 @@ export interface WebSocketOptions {
   timeout?: number;
   onMessage?: (data: WebSocketMessage) => void;
   onAlarm?: (message: string, triggeredAt: string) => void;
+  onExternalEvent?: (eventData: Record<string, unknown>) => void;
   onError?: (error: string) => void;
   onConnect?: () => void;
   onDisconnect?: () => void;
@@ -78,6 +80,7 @@ export function useWebSocket(options: WebSocketOptions): UseWebSocketReturn {
   const onErrorRef = useRef(options.onError);
   const onConnectRef = useRef(options.onConnect);
   const onDisconnectRef = useRef(options.onDisconnect);
+  const onExternalEventRef = useRef(options.onExternalEvent);
 
   useEffect(() => {
     onMessageRef.current = options.onMessage;
@@ -85,6 +88,7 @@ export function useWebSocket(options: WebSocketOptions): UseWebSocketReturn {
     onErrorRef.current = options.onError;
     onConnectRef.current = options.onConnect;
     onDisconnectRef.current = options.onDisconnect;
+    onExternalEventRef.current = options.onExternalEvent;
   });
 
   useEffect(() => {
@@ -205,6 +209,12 @@ export function useWebSocket(options: WebSocketOptions): UseWebSocketReturn {
           case 'asr_stream_status':
           case 'agent_interrupt_user':
           case 'agent_reply':
+            onMessageRef.current?.(data);
+            break;
+          case 'external_event':
+            if (onExternalEventRef.current && data.data) {
+              onExternalEventRef.current(data.data as Record<string, unknown>);
+            }
             onMessageRef.current?.(data);
             break;
           default:

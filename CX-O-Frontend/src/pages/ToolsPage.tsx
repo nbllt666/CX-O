@@ -29,7 +29,7 @@ interface Tool {
   id: string;
   name: string;
   description: string;
-  type: 'builtin' | 'mcp' | 'custom';
+  type: 'builtin' | 'mcp' | 'custom' | 'cxfc';
   status: 'active' | 'inactive' | 'error';
   config: Record<string, unknown>;
   icon?: string;
@@ -39,6 +39,7 @@ interface Tool {
   parameters?: Record<string, unknown>;
   examples?: string[];
   tags?: string[];
+  source_plugin_id?: string;
 }
 
 const toolIcons: Record<string, React.ElementType> = {
@@ -119,7 +120,7 @@ export function ToolsPage() {
   const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
   const [isEditModalOpen, setIsEditModalOpen] = useState(false);
   const [isTestModalOpen, setIsTestModalOpen] = useState(false);
-  const [filter, setFilter] = useState<'all' | 'builtin' | 'mcp' | 'custom'>('all');
+  const [filter, setFilter] = useState<'all' | 'builtin' | 'mcp' | 'custom' | 'cxfc'>('all');
 
   // Fetch tools stats
   const { data: stats, isLoading: statsLoading } = useQuery<ToolStats>({
@@ -140,7 +141,7 @@ export function ToolsPage() {
           id: tool.id ?? name,
           name,
           description: tool.description ?? '',
-          type: tool.type || 'custom',
+          type: (tool.type || 'custom') as Tool['type'],
           status: tool.status || 'inactive',
           config: tool.config ?? {},
           icon: tool.icon,
@@ -150,6 +151,7 @@ export function ToolsPage() {
           parameters: tool.parameters,
           examples: tool.examples,
           tags: tool.tags,
+          source_plugin_id: tool.source_plugin_id,
         } satisfies Tool;
       });
     },
@@ -271,7 +273,7 @@ export function ToolsPage() {
 
       {/* Filter Tabs */}
       <div className="flex gap-2">
-        {(['all', 'builtin', 'mcp', 'custom'] as const).map((type) => (
+        {(['all', 'builtin', 'mcp', 'custom', 'cxfc'] as const).map((type) => (
           <button
             key={type}
             onClick={() => setFilter(type)}
@@ -288,7 +290,9 @@ export function ToolsPage() {
                 ? '内置'
                 : type === 'mcp'
                   ? 'MCP'
-                  : '自定义'}
+                  : type === 'cxfc'
+                    ? 'CXFC'
+                    : '自定义'}
           </button>
         ))}
       </div>
@@ -324,7 +328,10 @@ export function ToolsPage() {
                     </div>
                     <div>
                       <h3 className="font-medium">{tool.name}</h3>
-                      <p className="text-sm text-muted-foreground">{tool.type}</p>
+                      <p className="text-sm text-muted-foreground">
+                        {tool.type === 'cxfc' ? 'CXFC' : tool.type}
+                        {tool.type === 'cxfc' && tool.source_plugin_id && ` · ${tool.source_plugin_id}`}
+                      </p>
                     </div>
                   </div>
                   <div className="flex items-center gap-1">
