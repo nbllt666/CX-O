@@ -427,16 +427,6 @@ export function ChatPage() {
     timeout: 60,
     onMessage: handleWebSocketMessage,
     onAlarm: handleAlarm,
-    onExternalEvent: (eventData) => {
-      setMessages(prev => [...prev, {
-        id: `ext-${Date.now()}`,
-        role: 'system' as const,
-        content: `[外部事件] ${eventData.source}: ${eventData.title || eventData.body || ''}`,
-        timestamp: new Date().toISOString(),
-        type: 'external_event',
-        eventData: eventData as Record<string, unknown>,
-      }]);
-    },
     onError: (error) => {
       console.error('WebSocket error:', error);
       setIsLoading(false);
