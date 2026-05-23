@@ -181,40 +181,6 @@ async def lifespan(app: FastAPI):
         lifespan_logger.warning(f"图工具注册失败: {e}")
 
     try:
-        from server.core.cxfc import CXFCManager
-        cxfc_manager = CXFCManager()
-        cxfc_manager.set_tool_registry(tool_registry)
-        await cxfc_manager.start()
-
-        from server.core.websocket.manager import get_websocket_manager
-        ws_mgr = get_websocket_manager()
-        cxfc_manager.set_ws_manager(ws_mgr)
-
-        async def on_cxfc_event(skill, event):
-            try:
-                if ws_mgr:
-                    await ws_mgr.broadcast({
-                        "type": "skill_triggered",
-                        "data": {
-                            "skill_name": skill.name,
-                            "skill_description": skill.description,
-                            "event_type": event.event_type,
-                            "source_plugin": skill.source_plugin_id,
-                            "prompt_template": skill.prompt_template,
-                        },
-                    })
-            except Exception as e:
-                lifespan_logger.warning(f"广播 Skill 触发事件失败: {e}")
-
-        cxfc_manager.set_on_event_callback(on_cxfc_event)
-
-        services.cxfc_manager = cxfc_manager
-        lifespan_logger.info("CXFC管理器已启动")
-    except Exception as e:
-        lifespan_logger.warning(f"CXFC管理器启动失败: {e}")
-        services.cxfc_manager = None
-
-    try:
         from server.core.tools import register_builtin_tools
         register_builtin_tools()
         lifespan_logger.info("内置工具已注册")
@@ -409,10 +375,29 @@ async def lifespan(app: FastAPI):
             if hasattr(services, 'tool_registry') and services.tool_registry:
                 cxfc_manager.set_tool_registry(services.tool_registry)
 
-            if hasattr(services, 'ws_manager') and services.ws_manager:
-                cxfc_manager.set_ws_manager(services.ws_manager)
-
             await cxfc_manager.start()
+
+            from server.core.websocket.manager import get_websocket_manager
+            ws_mgr = get_websocket_manager()
+            cxfc_manager.set_ws_manager(ws_mgr)
+
+            async def on_cxfc_event(skill, event):
+                try:
+                    if ws_mgr:
+                        await ws_mgr.broadcast({
+                            "type": "skill_triggered",
+                            "data": {
+                                "skill_name": skill.name,
+                                "skill_description": skill.description,
+                                "event_type": event.event_type,
+                                "source_plugin": skill.source_plugin_id,
+                                "prompt_template": skill.prompt_template,
+                            },
+                        })
+                except Exception as e:
+                    lifespan_logger.warning(f"广播 Skill 触发事件失败: {e}")
+
+            cxfc_manager.set_on_event_callback(on_cxfc_event)
 
             services.cxfc_manager = cxfc_manager
 
