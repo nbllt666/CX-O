@@ -17,6 +17,8 @@ class ServiceState:
         self.model_router = None
         self.asr_service = None
         self.tts_service = None
+        self.graph_database = None
+        self.graph_store = None
 
 
 _service_state: Optional[ServiceState] = None
@@ -114,3 +116,17 @@ def get_tts_service(state: ServiceState = Depends(get_service_state)):
     if state.tts_service is None:
         raise HTTPException(status_code=503, detail="TTS服务不可用")
     return state.tts_service
+
+
+def get_graph_database(state: ServiceState = Depends(get_service_state)):
+    state = _resolve_state(state)
+    if state.graph_database is None:
+        raise HTTPException(status_code=503, detail="图数据库服务不可用")
+    return state.graph_database
+
+
+def get_graph_store(state: ServiceState = Depends(get_service_state)):
+    state = _resolve_state(state)
+    if state.graph_store is None:
+        raise HTTPException(status_code=503, detail="图存储服务不可用")
+    return state.graph_store

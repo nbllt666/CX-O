@@ -3,7 +3,7 @@
 """
 
 import json
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 from typing import Optional, List, Dict, Any
 from pydantic import BaseModel
 
@@ -16,20 +16,15 @@ from server.core.graph.models import (
 from server.core.graph.visualization import GraphExporter
 from server.core.graph.semantic_query import SemanticQueryManager
 from server.core.graph.monitoring import GraphMonitor
-from server.core.graph.config import get_graph_config
+from server.dependencies import get_graph_database as _get_graph_database
 
-router = APIRouter(prefix="/graph", tags=["graph"])
-
-_graph_db: Optional[GraphDatabase] = None
+router = APIRouter(tags=["graph"])
 
 
-def get_graph_db() -> GraphDatabase:
-    """获取图数据库实例"""
-    global _graph_db
-    if _graph_db is None:
-        _graph_db = GraphDatabase()
-        _graph_db.initialize()
-    return _graph_db
+def get_graph_db(db=Depends(_get_graph_database)):
+    return db
+
+
 
 
 class NodeCreateRequest(BaseModel):
@@ -550,8 +545,8 @@ async def export_dot(
 
 @router.get("/config")
 async def get_graph_config_endpoint():
-    """获取图数据库配置"""
-    config = get_graph_config()
+    graph = get_graph_db()
+    config = graph.config
     return {
         "status": "success",
         "config": {

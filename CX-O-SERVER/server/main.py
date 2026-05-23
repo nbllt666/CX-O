@@ -20,6 +20,8 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from server.config import get_settings
 from server.dependencies import ServiceState, set_service_state
+from server.core.graph import GraphDatabase
+from server.core.graph.config import get_graph_config
 
 logger = logging.getLogger(__name__)
 
@@ -148,6 +150,35 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         lifespan_logger.warning(f"MCP管理器启动失败: {e}")
         services.mcp_manager = None
+
+    try:
+        graph_config = get_graph_config()
+        graph_db = GraphDatabase(config=graph_config)
+        graph_db.initialize()
+        services.graph_database = graph_db
+        lifespan_logger.info("图数据库已启动")
+    except Exception as e:
+        lifespan_logger.warning(f"图数据库启动失败: {e}")
+        services.graph_database = None
+
+    try:
+        if services.graph_database:
+            from server.core.memory.graph_store import SQLiteGraphStore
+            graph_store = SQLiteGraphStore(services.graph_database)
+            services.graph_store = graph_store
+            lifespan_logger.info("图存储桥接已启动")
+    except Exception as e:
+        lifespan_logger.warning(f"图存储桥接启动失败: {e}")
+        services.graph_store = None
+
+    try:
+        if services.graph_store:
+            from server.core.tools.graph_tools import set_graph_dependencies, register_graph_tools
+            set_graph_dependencies(services.graph_store)
+            register_graph_tools()
+            lifespan_logger.info("图工具已注册")
+    except Exception as e:
+        lifespan_logger.warning(f"图工具注册失败: {e}")
 
     try:
         from server.core.tools import register_builtin_tools
@@ -420,6 +451,13 @@ async def lifespan(app: FastAPI):
     yield
 
     lifespan_logger.info("正在关闭CX-O服务...")
+
+    if services.graph_database:
+        try:
+            services.graph_database.close()
+            lifespan_logger.info("图数据库已关闭")
+        except Exception as e:
+            lifespan_logger.warning(f"图数据库关闭失败: {e}")
 
     try:
         from server.core.alarm import get_alarm_manager

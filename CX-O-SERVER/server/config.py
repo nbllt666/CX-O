@@ -48,6 +48,8 @@ def get_env_config() -> Dict[str, Any]:
         "CXO_TTS_URL": ["services", "tts", "url"],
         "CXO_INDEX_TTS_URL": ["services", "index_tts", "url"],
         "CXO_LOG_LEVEL": ["logging", "level"],
+        "CXO_GRAPH_DATABASE_PATH": ["graph", "database_path"],
+        "CXO_GRAPH_ENABLED": ["graph", "enabled"],
     }
 
     for env_key, path_parts in _env_mappings.items():
@@ -340,6 +342,32 @@ class RateLimitConfig(BaseModel):
     enabled: bool = True
 
 
+class GraphWeaviateConfig(BaseModel):
+    url: str = "http://localhost:8080"
+    api_key: Optional[str] = None
+    vector_dim: int = 384
+    batch_size: int = 100
+    ef_construction: int = 128
+    max_connections: int = 16
+
+
+class GraphEmbeddingConfig(BaseModel):
+    model: str = "sentence-transformers/all-MiniLM-L6-v2"
+    batch_size: int = 32
+    device: str = "cpu"
+    cache_folder: Optional[str] = None
+
+
+class GraphConfigSection(BaseModel):
+    enabled: bool = True
+    database_path: str = "data/graph.db"
+    auto_create_schema: bool = True
+    pool_size: int = 10
+    timeout: int = 30
+    weaviate: GraphWeaviateConfig = Field(default_factory=GraphWeaviateConfig)
+    embedding: GraphEmbeddingConfig = Field(default_factory=GraphEmbeddingConfig)
+
+
 class UnifiedConfig(BaseModel):
     model_config = ConfigDict(protected_namespaces=())
 
@@ -358,6 +386,7 @@ class UnifiedConfig(BaseModel):
     asr: ASRConfig = Field(default_factory=ASRConfig)
     tts: TTSConfig = Field(default_factory=TTSConfig)
     voice_workstation: VoiceWorkstationConfig = Field(default_factory=VoiceWorkstationConfig)
+    graph: GraphConfigSection = Field(default_factory=GraphConfigSection)
     rate_limit: RateLimitConfig = Field(default_factory=RateLimitConfig)
 
 

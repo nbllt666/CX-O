@@ -258,7 +258,7 @@ class MemoryManager:
     def _init_graph_stores(self) -> None:
         self._graph_enabled = False
         self._graph_stores = {}
-        logger.info("图数据库已移至独立模块（backend/core/graph），MemoryManager 不再管理图存储")
+        logger.info("图数据库已移至独立模块（server/core/graph），MemoryManager 不再管理图存储")
 
     def _sync_to_graph(
         self,
@@ -268,6 +268,7 @@ class MemoryManager:
         metadata: Optional[Dict] = None,
     ) -> None:
         if not self._graph_enabled or not self._graph_stores:
+            logger.debug("图同步功能当前未启用，跳过同步")
             return
 
         try:
@@ -470,6 +471,7 @@ JSON响应："""
 
     def _update_graph_on_delete(self, memory_id: int) -> None:
         if not self._graph_enabled or not self._graph_stores:
+            logger.debug("图同步功能当前未启用，跳过删除同步")
             return
 
         try:

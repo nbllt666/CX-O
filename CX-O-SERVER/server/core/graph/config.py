@@ -42,10 +42,38 @@ _config: Optional[GraphConfig] = None
 
 
 def get_graph_config() -> GraphConfig:
-    """获取全局配置实例"""
     global _config
-    if _config is None:
-        _config = _load_config_from_env()
+    if _config is not None:
+        return _config
+    try:
+        from server.config import get_config
+        unified = get_config()
+        if hasattr(unified, 'graph') and unified.graph.enabled:
+            gc = unified.graph
+            _config = GraphConfig(
+                database_path=gc.database_path,
+                auto_create_schema=gc.auto_create_schema,
+                pool_size=gc.pool_size,
+                timeout=gc.timeout,
+                weaviate=WeaviateConfig(
+                    url=gc.weaviate.url,
+                    api_key=gc.weaviate.api_key,
+                    vector_dim=gc.weaviate.vector_dim,
+                    batch_size=gc.weaviate.batch_size,
+                    ef_construction=gc.weaviate.ef_construction,
+                    max_connections=gc.weaviate.max_connections,
+                ),
+                embedding=EmbeddingConfig(
+                    model=gc.embedding.model,
+                    batch_size=gc.embedding.batch_size,
+                    device=gc.embedding.device,
+                    cache_folder=gc.embedding.cache_folder,
+                ),
+            )
+            return _config
+    except Exception:
+        pass
+    _config = _load_config_from_env()
     return _config
 
 
