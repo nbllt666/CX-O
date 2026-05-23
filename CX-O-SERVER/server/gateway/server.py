@@ -122,7 +122,7 @@ async def websocket_handler(websocket: WebSocket, client_id: str):
                         code="HANDLER_ERROR",
                         message=str(e)
                     ))
-            elif msg_type or not action:
+            elif msg_type:
                 await ws_manager.handle_message(client_id, message)
             else:
                 logger.warning(f"未知的 WebSocket action: {action}")
