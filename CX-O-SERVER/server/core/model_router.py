@@ -13,7 +13,7 @@ from typing import Any, Dict, List, Optional
 import httpx
 
 from server.core.llm.client import LLMClient, OllamaClient, VLLMClient
-from config.settings import ModelConfig, settings
+from server.config import ModelConfig, get_settings
 
 logger = logging.getLogger(__name__)
 
@@ -87,7 +87,7 @@ class ModelRouter:
 
     def _create_client(self, model_type: str) -> Optional[LLMClient]:
         """创建指定类型的模型客户端"""
-        config = settings.config.models.get_model_config(model_type)
+        config = get_settings().config.models.get_model_config(model_type)
 
         if not config:
             logger.warning(f"未找到模型配置: {model_type}")
@@ -348,8 +348,8 @@ class ModelRouter:
             }
 
         # 检查是否跟随其他模型
-        if model_type in settings.config.models.defaults:
-            target = settings.config.models.defaults[model_type]
+        if model_type in get_settings().config.models.defaults:
+            target = get_settings().config.models.defaults[model_type]
             if target != model_type:
                 info["follows"] = target
 

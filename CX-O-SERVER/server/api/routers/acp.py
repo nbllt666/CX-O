@@ -76,7 +76,7 @@ class ACPAgentPatchRequest(BaseModel):
 @router.post("/acp/discover")
 async def discover_agents(request: ACPDiscoverRequest = None):
     """发现Agents"""
-    from server.api.app import get_acp_manager
+    from server.dependencies import get_acp_manager
     from server.core.acp.discover import ACPLanDiscovery
 
     try:
@@ -98,7 +98,7 @@ async def discover_agents(request: ACPDiscoverRequest = None):
 
 @router.get("/acp/agents")
 async def list_agents(online_only: bool = False):
-    from server.api.app import get_acp_manager
+    from server.dependencies import get_acp_manager
 
     try:
         acp_mgr = get_acp_manager()
@@ -111,7 +111,7 @@ async def list_agents(online_only: bool = False):
 
 @router.post("/acp/agents")
 async def register_agent(request: ACPAgentRegisterRequest):
-    from server.api.app import get_acp_manager
+    from server.dependencies import get_acp_manager
     from server.core.acp.manager import ACPAgentInfo
 
     try:
@@ -138,7 +138,7 @@ async def register_agent(request: ACPAgentRegisterRequest):
 
 @router.patch("/acp/agents/{agent_id}")
 async def patch_agent(agent_id: str, request: ACPAgentPatchRequest):
-    from server.api.app import get_acp_manager
+    from server.dependencies import get_acp_manager
 
     try:
         acp_mgr = get_acp_manager()
@@ -161,7 +161,7 @@ async def patch_agent(agent_id: str, request: ACPAgentPatchRequest):
 
 @router.delete("/acp/agents/{agent_id}")
 async def delete_agent(agent_id: str):
-    from server.api.app import get_acp_manager
+    from server.dependencies import get_acp_manager
 
     try:
         acp_mgr = get_acp_manager()
@@ -178,7 +178,7 @@ async def delete_agent(agent_id: str):
 
 @router.post("/acp/connect")
 async def connect_to_agent(request: ACPConnectRequest):
-    from server.api.app import get_acp_manager
+    from server.dependencies import get_acp_manager
     from server.core.acp.manager import ACPConnectionInfo
 
     try:
@@ -209,7 +209,7 @@ async def connect_to_agent(request: ACPConnectRequest):
 
 @router.delete("/acp/connect/{connection_id}")
 async def disconnect_from_agent(connection_id: str):
-    from server.api.app import get_acp_manager
+    from server.dependencies import get_acp_manager
 
     try:
         acp_mgr = get_acp_manager()
@@ -229,7 +229,7 @@ async def disconnect_from_agent(connection_id: str):
 @router.get("/acp/connections")
 async def list_connections(local_only: bool = True):
     """列出连接"""
-    from server.api.app import get_acp_manager
+    from server.dependencies import get_acp_manager
 
     try:
         acp_mgr = get_acp_manager()
@@ -245,7 +245,7 @@ async def list_connections(local_only: bool = True):
 @router.post("/acp/groups")
 async def create_group(request: ACPGroupCreateRequest):
     """创建群组"""
-    from server.api.app import get_acp_manager
+    from server.dependencies import get_acp_manager
     from server.core.acp.group import ACPGroupManager
 
     try:
@@ -270,7 +270,7 @@ async def create_group(request: ACPGroupCreateRequest):
 
 @router.get("/acp/groups")
 async def list_groups():
-    from server.api.app import get_acp_manager
+    from server.dependencies import get_acp_manager
     from server.core.acp.group import ACPGroupManager
 
     try:
@@ -286,7 +286,7 @@ async def list_groups():
 
 @router.post("/acp/groups/{group_id}/join")
 async def join_group(group_id: str):
-    from server.api.app import get_acp_manager
+    from server.dependencies import get_acp_manager
     from server.core.acp.group import ACPGroupManager
 
     try:
@@ -312,7 +312,7 @@ async def join_group(group_id: str):
 
 @router.post("/acp/groups/{group_id}/leave")
 async def leave_group(group_id: str):
-    from server.api.app import get_acp_manager
+    from server.dependencies import get_acp_manager
     from server.core.acp.group import ACPGroupManager
 
     try:
@@ -334,7 +334,7 @@ async def leave_group(group_id: str):
 
 @router.post("/acp/send")
 async def send_message(request: ACPSendMessageRequest):
-    from server.api.app import get_acp_manager
+    from server.dependencies import get_acp_manager
     from server.core.acp.manager import ACPMessageInfo
 
     try:
@@ -362,7 +362,7 @@ async def send_message(request: ACPSendMessageRequest):
 
 @router.post("/acp/send/group")
 async def send_group_message(group_id: str, content: Dict):
-    from server.api.app import get_acp_manager
+    from server.dependencies import get_acp_manager
     from server.core.acp.group import ACPGroupManager
 
     try:
@@ -386,7 +386,7 @@ async def send_group_message(group_id: str, content: Dict):
 async def get_messages(
     agent_id: Optional[str] = None, group_id: Optional[str] = None, limit: int = 50
 ):
-    from server.api.app import get_acp_manager
+    from server.dependencies import get_acp_manager
 
     try:
         acp_mgr = get_acp_manager()
@@ -402,7 +402,7 @@ async def get_messages(
 
 @router.get("/acp/stats")
 async def get_acp_stats():
-    from server.api.app import get_acp_manager
+    from server.dependencies import get_acp_manager
 
     try:
         acp_mgr = get_acp_manager()

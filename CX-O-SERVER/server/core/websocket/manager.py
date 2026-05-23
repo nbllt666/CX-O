@@ -59,13 +59,18 @@ class WebSocketManager:
         self.connections: Dict[str, WebSocketConnection] = {}
         self.channels: Dict[str, Set[str]] = {}  # 频道 -> 客户端ID集合
         self.message_handlers: Dict[str, Callable] = {}
+        self._action_handlers: Dict[str, Callable] = {}
         self._cleanup_task: Optional[asyncio.Task] = None
         self._running = False
         self._offline_callback: Optional[Callable] = None
         self._agent_timeouts: Dict[str, int] = {}  # agent_id -> timeout seconds
+        self._tts_count: int = 0
+        self._asr_count: int = 0
+        self._llm_count: int = 0
 
     async def connect(
-        self, websocket: WebSocket, client_id: Optional[str] = None, metadata: Optional[Dict] = None
+        self, websocket: WebSocket, client_id: Optional[str] = None, metadata: Optional[Dict] = None,
+        send_connected: bool = True
     ) -> WebSocketConnection:
         """接受新连接"""
         await websocket.accept()
@@ -80,10 +85,10 @@ class WebSocketManager:
 
         logger.info(f"WebSocket 连接已建立: {client_id}, 当前连接数: {len(self.connections)}")
 
-        # 发送连接成功消息
-        await connection.send(
-            {"type": "connected", "client_id": client_id, "timestamp": datetime.now().isoformat()}
-        )
+        if send_connected:
+            await connection.send(
+                {"type": "connected", "client_id": client_id, "timestamp": datetime.now().isoformat()}
+            )
 
         return connection
 
@@ -103,6 +108,10 @@ class WebSocketManager:
         """发送消息给指定客户端"""
         if client_id in self.connections:
             await self.connections[client_id].send(message)
+
+    async def send_message(self, client_id: str, message: Dict[str, Any]):
+        """发送消息给指定客户端（send_to_client 的别名）"""
+        await self.send_to_client(client_id, message)
 
     async def broadcast(self, message: Dict[str, Any], exclude: Optional[str] = None):
         """广播消息给所有客户端"""
@@ -166,9 +175,18 @@ class WebSocketManager:
                 del self.channels[channel]
 
     def register_handler(self, message_type: str, handler: Callable):
-        """注册消息处理器"""
+        """注册消息处理器（基于 type 路由）"""
         self.message_handlers[message_type] = handler
         logger.debug(f"注册消息处理器: {message_type}")
+
+    def register_action_handler(self, action: str, handler: Callable):
+        """注册 action 处理器（基于 action 路由）"""
+        self._action_handlers[action] = handler
+        logger.debug(f"注册 action 处理器: {action}")
+
+    def get_handler(self, action: str) -> Optional[Callable]:
+        """获取 action 对应的处理器"""
+        return self._action_handlers.get(action)
 
     def set_offline_callback(self, callback: Callable):
         """设置离线回调函数
@@ -185,7 +203,7 @@ class WebSocketManager:
         logger.debug(f"设置 Agent {agent_id} 离线超时: {timeout}秒")
 
     async def handle_message(self, client_id: str, message: Dict[str, Any]):
-        """处理收到的消息"""
+        """处理收到的消息（基于 type 路由）"""
         msg_type = message.get("type", "unknown")
 
         if msg_type in self.message_handlers:
@@ -200,6 +218,20 @@ class WebSocketManager:
             logger.warning(f"未知消息类型: {msg_type}")
             await self.send_to_client(
                 client_id, {"type": "error", "error": f"未知消息类型: {msg_type}"}
+            )
+
+    async def handle_action_message(self, client_id: str, message: Dict[str, Any]):
+        """处理收到的消息（基于 action 路由）"""
+        action = message.get("action", "")
+        if action in self._action_handlers:
+            handler = self._action_handlers[action]
+            connection = self.connections.get(client_id)
+            websocket = connection.websocket if connection else None
+            await handler(websocket, message, client_id)
+        else:
+            logger.warning(f"未知 action: {action}")
+            await self.send_to_client(
+                client_id, {"type": "error", "error": f"未知 action: {action}"}
             )
 
     async def start_cleanup_task(self, interval_seconds: int = 300):
@@ -255,12 +287,25 @@ class WebSocketManager:
                 except Exception as e:
                     logger.error(f"离线回调失败 {agent_id}: {e}")
 
+    def increment_tts_count(self):
+        self._tts_count += 1
+
+    def increment_asr_count(self):
+        self._asr_count += 1
+
+    def increment_llm_count(self):
+        self._llm_count += 1
+
     def get_stats(self) -> Dict[str, Any]:
         """获取统计信息"""
         return {
             "total_connections": len(self.connections),
             "total_channels": len(self.channels),
             "channels": {channel: len(clients) for channel, clients in self.channels.items()},
+            "tts_count": self._tts_count,
+            "asr_count": self._asr_count,
+            "llm_count": self._llm_count,
+            "client_count": len(self.connections),
         }
 
 

@@ -33,7 +33,7 @@ class ChatWebSocketHandler:
 
     async def _handle_chat(self, client_id: str, message: Dict[str, Any]):
         """处理普通聊天消息"""
-        from server.api.app import get_context_manager, get_memory_manager
+        from server.dependencies import get_context_manager, get_memory_manager
         from server.api.routers.chat import (
             build_messages,
             get_agent_config,
@@ -132,7 +132,7 @@ class ChatWebSocketHandler:
 
     async def _handle_chat_stream(self, client_id: str, message: Dict[str, Any]):
         """处理流式聊天消息"""
-        from server.api.app import get_context_manager, get_memory_manager
+        from server.dependencies import get_context_manager, get_memory_manager
         from server.api.routers.chat import (
             build_messages,
             get_agent_config,

@@ -29,7 +29,6 @@ class AgentInterruptUser:
         self.interrupt_threshold_ms = 500
         self.min_speech_duration_ms = 1000
         self._user_state = UserSpeechState()
-        self._cxhms_client: Any = None
         self._interrupt_user_callback: Optional[Callable] = None
         self._start_tts_callback: Optional[Callable] = None
         self._asr_client: Any = None
@@ -50,9 +49,6 @@ class AgentInterruptUser:
         self.interrupt_threshold_ms = agent_interrupt.get("interrupt_threshold_ms", 500)
         self.min_speech_duration_ms = agent_interrupt.get("min_speech_duration_ms", 1000)
         self._interrupt_cooldown_ms = agent_interrupt.get("interrupt_cooldown_ms", 3000)
-
-    def set_cxhms_client(self, client: Any):
-        self._cxhms_client = client
 
     def set_asr_client(self, client: Any):
         self._asr_client = client
@@ -137,8 +133,11 @@ class AgentInterruptUser:
         return {"should_interrupt": False, "should_reply": False}
 
     async def _check_can_interrupt(self, asr_text: str, is_final: bool) -> dict:
-        if not self._cxhms_client:
-            logger.warning("CXHMS client not set for agent interrupt")
+        try:
+            from server.dependencies import get_llm_client
+            llm = get_llm_client()
+        except Exception as e:
+            logger.warning(f"LLM client not available for agent interrupt: {e}")
             return {"can_interrupt": False, "should_reply": False}
 
         try:
@@ -146,15 +145,12 @@ class AgentInterruptUser:
             user_message = {"role": "user", "content": asr_text}
             messages.append(user_message)
 
-            response = await self._cxhms_client.request("chat", {
-                "messages": messages,
-                "stream": False
-            })
+            response = await llm.chat(messages=messages, stream=False)
 
-            if not response:
+            if not response or response.error:
                 return {"can_interrupt": False, "should_reply": False}
 
-            response_text = response.get("content", "") or response.get("text", "")
+            response_text = response.content or ""
 
             return self._parse_interrupt_response(response_text, is_final)
 

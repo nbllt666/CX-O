@@ -4,19 +4,17 @@
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from server.gateway.server import ConnectionManager
-    from server.services.cxhms_client import CXHMSClient
-    from server.services.asr_client import ASRClient
-    from server.services.tts_client import TTSClient
+    from server.core.websocket.manager import WebSocketManager
+    from server.services.asr_service import ASRService
+    from server.services.tts_service import TTSService
 
 
 def register_handlers(
-    manager: "ConnectionManager",
-    cxhms_client: "CXHMSClient" = None,
-    asr_client: "ASRClient" = None,
-    tts_client: "TTSClient" = None
+    manager: "WebSocketManager",
+    asr_service: "ASRService" = None,
+    tts_service: "TTSService" = None
 ):
-    if cxhms_client is None or asr_client is None or tts_client is None:
+    if asr_service is None or tts_service is None:
         return
 
     from server.handlers.chat import register_chat_handlers
@@ -30,13 +28,13 @@ def register_handlers(
     from server.handlers.metrics import register_metrics_handlers
     from server.handlers.system import register_system_handlers
 
-    register_chat_handlers(manager, cxhms_client)
-    register_memory_handlers(manager, cxhms_client)
-    register_tools_handlers(manager, cxhms_client)
-    register_plugin_handlers(manager, cxhms_client)
-    register_audio_handlers(manager, asr_client, tts_client)
-    register_acp_handlers(manager, cxhms_client)
-    register_mcp_handlers(manager, cxhms_client)
-    register_config_handlers(manager, cxhms_client)
-    register_metrics_handlers(manager, cxhms_client)
-    register_system_handlers(manager, cxhms_client)
+    register_chat_handlers(manager)
+    register_memory_handlers(manager)
+    register_tools_handlers(manager)
+    register_plugin_handlers(manager)
+    register_audio_handlers(manager, asr_service, tts_service)
+    register_acp_handlers(manager)
+    register_mcp_handlers(manager)
+    register_config_handlers(manager)
+    register_metrics_handlers(manager)
+    register_system_handlers(manager)

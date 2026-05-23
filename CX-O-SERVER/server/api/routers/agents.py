@@ -330,7 +330,7 @@ async def clone_agent(agent_id: str):
 @router.get("/agents/{agent_id}/stats")
 async def get_agent_stats(agent_id: str):
     """获取 Agent 统计信息"""
-    from server.api.app import get_context_manager
+    from server.dependencies import get_context_manager
 
     try:
         agents = _load_agents()

@@ -241,7 +241,7 @@ async def export_backup(backup_id: str):
             raise HTTPException(status_code=404, detail="备份文件不存在")
 
         return FileResponse(
-            path=backup_path, filename=f"cxhms_backup_{backup_id}.zip", media_type="application/zip"
+            path=backup_path, filename=f"cxo_backup_{backup_id}.zip", media_type="application/zip"
         )
     except HTTPException:
         raise

@@ -359,7 +359,7 @@ async def get_service_logs(lines: int = 100):
     """获取服务日志"""
     try:
         # 读取日志文件（如果配置了日志文件）
-        log_file = "logs/cxhms.log"
+        log_file = "logs/cxo.log"
         if os.path.exists(log_file):
             with open(log_file, "r", encoding="utf-8") as f:
                 all_lines = f.readlines()

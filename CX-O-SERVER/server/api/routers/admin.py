@@ -31,7 +31,7 @@ async def get_dashboard(x_api_key: Optional[str] = Header(None)):
     if not verify_admin_api_key(x_api_key):
         raise HTTPException(status_code=401, detail="未授权访问")
 
-    from server.api.app import get_acp_manager, get_context_manager, get_memory_manager
+    from server.dependencies import get_acp_manager, get_context_manager, get_memory_manager
 
     stats = {"memory": {}, "context": {}, "acp": {}}
 
@@ -61,7 +61,7 @@ async def get_stats(x_api_key: Optional[str] = Header(None)):
     if not verify_admin_api_key(x_api_key):
         raise HTTPException(status_code=401, detail="未授权访问")
 
-    from server.api.app import get_context_manager, get_memory_manager
+    from server.dependencies import get_context_manager, get_memory_manager
     from server.core.tools.registry import tool_registry
 
     stats = {"memory": {}, "context": {}, "tools": {}}
@@ -89,7 +89,7 @@ async def get_stats(x_api_key: Optional[str] = Header(None)):
 @router.get("/admin/health")
 async def health_check():
     """健康检查端点 - 不需要认证"""
-    from server.api.app import get_acp_manager, get_context_manager, get_memory_manager
+    from server.dependencies import get_acp_manager, get_context_manager, get_memory_manager
 
     health = {"memory": "unknown", "context": "unknown", "acp": "unknown"}
 

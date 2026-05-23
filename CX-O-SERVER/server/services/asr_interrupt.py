@@ -25,7 +25,6 @@ class ASRInterruptModule:
         self._interrupt_callback: Optional[Callable] = None
         self._is_interrupted = False
         self._tts_playing = False
-        self._cxhms_client: Any = None
         self._session_id: Optional[str] = None
         self._context_manager: Any = None
 
@@ -52,9 +51,6 @@ class ASRInterruptModule:
         self._tts_playing = playing
         if not playing:
             self._is_interrupted = False
-
-    def set_cxhms_client(self, client: Any):
-        self._cxhms_client = client
 
     def set_session_id(self, session_id: str):
         self._session_id = session_id
@@ -93,8 +89,11 @@ class ASRInterruptModule:
             return await self._check_with_independent_llm(asr_text)
 
     async def _check_with_main_llm(self, asr_text: str) -> Tuple[str, bool]:
-        if not self._cxhms_client:
-            logger.warning("CXHMS client not set, cannot check interrupt with main LLM")
+        try:
+            from server.dependencies import get_llm_client
+            llm = get_llm_client()
+        except Exception as e:
+            logger.warning(f"LLM client not available, cannot check interrupt: {e}")
             return "IGNORE", False
 
         try:
@@ -102,16 +101,13 @@ class ASRInterruptModule:
             user_message = {"role": "user", "content": asr_text}
             messages.append(user_message)
 
-            response = await self._cxhms_client.request("chat", {
-                "messages": messages,
-                "stream": False
-            })
+            response = await llm.chat(messages=messages, stream=False)
 
-            if not response:
-                logger.warning("No response from main LLM")
+            if not response or response.error:
+                logger.warning(f"No response from main LLM: {response.error if response else 'None'}")
                 return "IGNORE", False
 
-            response_text = response.get("content", "") or response.get("text", "")
+            response_text = response.content or ""
 
             decision = self._parse_interrupt_decision(response_text)
 

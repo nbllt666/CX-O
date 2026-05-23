@@ -2,6 +2,7 @@ import { useState, useCallback, useRef, useEffect } from 'react';
 import { Live2DViewer } from './Live2DViewer';
 import { useSettingsStore } from '../../store/settingsStore';
 import { getAvatar } from '../../services/avatarStorage';
+import { useAudioAnalyzer } from '../../hooks/useAudioAnalyzer';
 
 interface Live2DPanelProps {
   audioElement: HTMLAudioElement | null;
@@ -10,12 +11,17 @@ interface Live2DPanelProps {
 
 export function Live2DPanel({ audioElement, isPlaying }: Live2DPanelProps) {
   const { live2d, layout, toggleLive2DCollapsed, setLive2DWidth, setLive2DSettings } = useSettingsStore();
-  const [mouthOpenY, setMouthOpenY] = useState(0);
   const [isResizing, setIsResizing] = useState(false);
   const panelRef = useRef<HTMLDivElement>(null);
   const startXRef = useRef(0);
   const startWidthRef = useRef(0);
   const [modelData, setModelData] = useState<ArrayBuffer | undefined>(undefined);
+
+  const { volume: mouthOpenY } = useAudioAnalyzer({
+    audioElement,
+    isPlaying,
+    enabled: live2d.lipSync,
+  });
 
   useEffect(() => {
     if (live2d.modelId) {
@@ -28,43 +34,6 @@ export function Live2DPanel({ audioElement, isPlaying }: Live2DPanelProps) {
       setModelData(undefined);
     }
   }, [live2d.modelId]);
-
-  useEffect(() => {
-    if (!audioElement || !isPlaying || !live2d.lipSync) {
-      setMouthOpenY(0);
-      return;
-    }
-
-    let animationFrame: number;
-    const audioContext = new (window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext)();
-    const analyser = audioContext.createAnalyser();
-    analyser.fftSize = 256;
-    analyser.smoothingTimeConstant = 0.8;
-
-    const source = audioContext.createMediaElementSource(audioElement);
-    source.connect(analyser);
-    analyser.connect(audioContext.destination);
-
-    const dataArray = new Uint8Array(analyser.frequencyBinCount);
-
-    const analyze = () => {
-      analyser.getByteFrequencyData(dataArray);
-      const sum = dataArray.reduce((acc, val) => acc + val, 0);
-      const average = sum / dataArray.length;
-      const normalizedVolume = Math.min(average / 100, 1);
-      setMouthOpenY(normalizedVolume);
-      animationFrame = requestAnimationFrame(analyze);
-    };
-
-    analyze();
-
-    return () => {
-      cancelAnimationFrame(animationFrame);
-      source.disconnect();
-      analyser.disconnect();
-      audioContext.close();
-    };
-  }, [audioElement, isPlaying, live2d.lipSync]);
 
   const handleMouseDown = useCallback((e: React.MouseEvent) => {
     e.preventDefault();

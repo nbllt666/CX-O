@@ -47,7 +47,7 @@ def get_agent_config(agent_id: str) -> Optional[dict]:
 
 def get_llm_client_for_agent(agent_config: dict):
     """根据 Agent 配置获取 LLM 客户端"""
-    from server.api.app import get_llm_client, get_model_router
+    from server.dependencies import get_llm_client, get_model_router
 
     model = agent_config.get("model", "main")
 
@@ -174,7 +174,7 @@ async def chat(request: ChatRequest):
     前端只发送最新消息，后端根据 Agent 配置构建完整上下文
     每个 Agent 对应一个固定会话
     """
-    from server.api.app import get_context_manager, get_memory_manager
+    from server.dependencies import get_context_manager, get_memory_manager
 
     try:
         # 1. 获取 Agent 配置
@@ -326,7 +326,7 @@ async def chat_stream(request: ChatRequest):
     前端只发送最新消息，后端根据 Agent 配置构建完整上下文
     每个 Agent 对应一个固定会话
     """
-    from server.api.app import get_context_manager, get_memory_manager
+    from server.dependencies import get_context_manager, get_memory_manager
 
     try:
         # 1. 获取 Agent 配置
@@ -576,7 +576,7 @@ async def chat_stream(request: ChatRequest):
 @router.get("/chat/history/{session_id}")
 async def get_chat_history(session_id: str, limit: int = 50):
     """获取聊天历史"""
-    from server.api.app import get_context_manager
+    from server.dependencies import get_context_manager
 
     try:
         context_mgr = get_context_manager()
@@ -636,7 +636,7 @@ async def memory_agent_chat_stream(request: MemoryAgentChatRequest):
     记忆管理模型流式聊天 - 支持上下文持久化
     记忆管理Agent只有一个固定会话
     """
-    from server.api.app import get_context_manager, get_memory_manager, get_model_router
+    from server.dependencies import get_context_manager, get_memory_manager, get_model_router
     from server.core.context.agent_context_manager import AgentContextManager
 
     try:

@@ -8,7 +8,7 @@ logger = get_contextual_logger(__name__)
 
 @router.get("/stats")
 async def get_system_stats():
-    from server.api.app import get_memory_manager
+    from server.dependencies import get_memory_manager
 
     try:
         memory_mgr = get_memory_manager()

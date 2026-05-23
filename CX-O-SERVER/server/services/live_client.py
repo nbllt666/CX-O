@@ -20,13 +20,13 @@ from server.services.agent_interrupt_user import get_agent_interrupt_module
 from server.services.adaptive_polling import get_adaptive_polling_manager
 
 if TYPE_CHECKING:
-    from server.gateway.server import ConnectionManager
+    from server.core.websocket.manager import WebSocketManager
 
 logger = logging.getLogger(__name__)
 
 
 class LiveClientHandler:
-    def __init__(self, manager: "ConnectionManager", client_id: str, client_config: dict):
+    def __init__(self, manager: "WebSocketManager", client_id: str, client_config: dict):
         self.manager = manager
         self.client_id = client_id
         self.client_config = client_config
@@ -228,7 +228,7 @@ class LiveClientHandler:
         logger.info(f"Stop TTS request from {self.client_id}")
 
         from server.handlers.audio import set_tts_playing
-        set_tts_playing(self.client_id, False)
+        await set_tts_playing(self.client_id, False)
 
         await self.manager.send_message(self.client_id, {
             "type": "stop_tts_ack",

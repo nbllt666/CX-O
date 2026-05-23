@@ -5,7 +5,7 @@ from __future__ import annotations
 
 import base64
 import logging
-import threading
+import asyncio
 from typing import TYPE_CHECKING
 
 from server.protocol.message import create_response, create_error, create_stream
@@ -14,21 +14,21 @@ from server.services.emotion_parser import get_supported_emotions, parse_text_wi
 from server.services.effect_parser import EffectParser
 
 if TYPE_CHECKING:
-    from server.gateway.server import ConnectionManager
-    from server.services.asr_client import ASRClient
-    from server.services.tts_client import TTSClient
+    from server.core.websocket.manager import WebSocketManager
+    from server.services.asr_service import ASRService
+    from server.services.tts_service import TTSService
 
 logger = logging.getLogger(__name__)
 
 _tts_playing_clients: set = set()
-_tts_playing_lock = threading.Lock()
+_tts_playing_lock = asyncio.Lock()
 
 
-def set_tts_playing(client_id: str, playing: bool):
+async def set_tts_playing(client_id: str, playing: bool):
     from server.services.asr_interrupt import get_asr_interrupt_module
     interrupt_module = get_asr_interrupt_module()
 
-    with _tts_playing_lock:
+    async with _tts_playing_lock:
         if playing:
             _tts_playing_clients.add(client_id)
         else:
@@ -39,22 +39,20 @@ def set_tts_playing(client_id: str, playing: bool):
     interrupt_module.set_tts_playing(has_tts_playing)
 
 
-def is_tts_playing() -> bool:
-    with _tts_playing_lock:
+async def is_tts_playing() -> bool:
+    async with _tts_playing_lock:
         return len(_tts_playing_clients) > 0
 
 
-def init_interrupt_module(cxhms_client):
+def init_interrupt_module():
     from server.services.asr_interrupt import get_asr_interrupt_module
     interrupt_module = get_asr_interrupt_module()
-    interrupt_module.set_cxhms_client(cxhms_client)
 
     from server.services.agent_interrupt_user import get_agent_interrupt_module
     agent_interrupt = get_agent_interrupt_module()
-    agent_interrupt.set_cxhms_client(cxhms_client)
 
 
-def init_audio_stream_processor(asr_client, cxhms_client):
+def init_audio_stream_processor(asr_client):
     from server.services.vad_processor import get_audio_stream_processor
     from server.services.agent_interrupt_user import get_agent_interrupt_module
 
@@ -62,7 +60,6 @@ def init_audio_stream_processor(asr_client, cxhms_client):
     stream_processor.set_asr_client(asr_client)
 
     agent_interrupt = get_agent_interrupt_module()
-    agent_interrupt.set_cxhms_client(cxhms_client)
     stream_processor.set_agent_interrupt(agent_interrupt)
 
 
@@ -93,9 +90,9 @@ def init_agent_interrupt_callbacks(manager, client_id: str):
 
 
 def register_audio_handlers(
-    manager: "ConnectionManager",
-    asr_client: "ASRClient",
-    tts_client: "TTSClient",
+    manager: "WebSocketManager",
+    asr_service: "ASRService",
+    tts_service: "TTSService",
     effects_dir: str | None = None
 ):
     effect_parser = EffectParser(effects_dir)
@@ -118,7 +115,7 @@ def register_audio_handlers(
                 return
 
             audio_data = base64.b64decode(audio_base64)
-            result = await asr_client.recognize(audio_data, language)
+            result = await asr_service.recognize(audio_data, language)
 
             await manager.send_message(client_id, create_response(
                 request_id=request_id,
@@ -173,7 +170,7 @@ def register_audio_handlers(
                 if ref_text:
                     kwargs["ref_text"] = ref_text
 
-            audio_bytes = await tts_client.synthesize(text, **kwargs)
+            audio_bytes = await tts_service.synthesize(text, **kwargs)
 
             if "ref_audio_path" in kwargs:
                 try:
@@ -235,11 +232,11 @@ def register_audio_handlers(
 
             chunk_index = 0
             tts_playing = True
-            set_tts_playing(client_id, True)
+            await set_tts_playing(client_id, True)
 
             try:
                 if emotion_enabled or effects_enabled:
-                    async for chunk in tts_client.synthesize_stream_with_emotions(text, **kwargs):
+                    async for chunk in tts_service.synthesize_stream_with_emotions(text, **kwargs):
                         audio_base64 = None
                         if chunk.get("audio_data"):
                             audio_base64 = base64.b64encode(chunk["audio_data"]).decode("utf-8")
@@ -261,7 +258,7 @@ def register_audio_handlers(
                         await manager.send_message(client_id, stream_msg)
                         chunk_index += 1
                 else:
-                    async for chunk in tts_client.synthesize_stream(text, **kwargs):
+                    async for chunk in tts_service.synthesize_stream(text, **kwargs):
                         audio_base64 = None
                         if chunk.get("audio_data"):
                             audio_base64 = base64.b64encode(chunk["audio_data"]).decode("utf-8")
@@ -289,7 +286,7 @@ def register_audio_handlers(
                 ))
             finally:
                 try:
-                    set_tts_playing(client_id, False)
+                    await set_tts_playing(client_id, False)
                     tts_playing = False
                 except Exception as reset_error:
                     logger.error(f"重置 TTS 播放状态失败：{reset_error}")
@@ -304,7 +301,7 @@ def register_audio_handlers(
         except Exception as e:
             logger.error(f"TTS synthesize error: {e}")
             try:
-                set_tts_playing(client_id, False)
+                await set_tts_playing(client_id, False)
             except Exception as reset_error:
                 logger.error(f"重置 TTS 播放状态失败：{reset_error}")
             await manager.send_message(client_id, create_error(
@@ -489,7 +486,7 @@ def register_audio_handlers(
             logger.error(f"ASR stream error: {e}")
             await manager.send_message(client_id, create_error(
                 request_id=request_id,
-                action="asr_stream",
+                action=ASRActions.STREAM,
                 code="ASR_STREAM_ERROR",
                 message=str(e)
             ))
@@ -502,4 +499,4 @@ def register_audio_handlers(
     manager.register_handler(EmotionActions.PARSE, handle_emotions_parse)
     manager.register_handler(EffectActions.LIST, handle_effects_list)
     manager.register_handler(EffectActions.PARSE, handle_effects_parse)
-    manager.register_handler("asr_stream", handle_asr_stream)
+    manager.register_handler(ASRActions.STREAM, handle_asr_stream)

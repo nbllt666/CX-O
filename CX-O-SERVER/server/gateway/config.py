@@ -1,4 +1,8 @@
 """
+[DEPRECATED] 此模块已弃用，将在后续版本中删除。
+所有配置已统一到 server.config 模块中，请使用:
+  from server.config import get_config, save_config, SenseVoiceStreamingConfig, AdaptivePollingConfig
+  from server.config import Config, GatewayConfig, ServicesConfig, LoggingConfig
 配置管理模块
 支持环境变量 + JSON 配置文件混合配置
 环境变量优先级高于配置文件
@@ -20,13 +24,6 @@ def get_env_config() -> Dict[str, Any]:
         env_config["gateway"]["host"] = os.getenv(f"{ENV_PREFIX}HOST")
     if os.getenv(f"{ENV_PREFIX}PORT"):
         env_config["gateway"]["port"] = int(os.getenv(f"{ENV_PREFIX}PORT"))
-
-    if os.getenv(f"{ENV_PREFIX}CXHMS_URL"):
-        env_config["services"]["cxhms"] = env_config["services"].get("cxhms", {})
-        env_config["services"]["cxhms"]["url"] = os.getenv(f"{ENV_PREFIX}CXHMS_URL")
-    if os.getenv(f"{ENV_PREFIX}CXHMS_HTTP_URL"):
-        env_config["services"]["cxhms"] = env_config["services"].get("cxhms", {})
-        env_config["services"]["cxhms"]["http_url"] = os.getenv(f"{ENV_PREFIX}CXHMS_HTTP_URL")
 
     if os.getenv(f"{ENV_PREFIX}ASR_URL"):
         env_config["services"]["asr"] = env_config["services"].get("asr", {})
@@ -126,7 +123,6 @@ class SenseVoiceStreamingConfig(BaseModel):
 
 
 class ServicesConfig(BaseModel):
-    cxhms: ServiceConfig
     asr: ServiceConfig
     tts: TTSConfig
     audio: Optional[AudioConfig] = None

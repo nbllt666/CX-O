@@ -45,7 +45,6 @@ class FirewallService:
 
     def __init__(self):
         self.config = FirewallConfig()
-        self._cxhms_client: Any = None
         self._context_manager: Any = None
         self._message_timestamps: deque = deque(maxlen=1000)
         self._user_message_counts: dict[str, deque] = {}
@@ -59,9 +58,6 @@ class FirewallService:
         if cls._instance is None:
             cls._instance = cls()
         return cls._instance
-
-    def set_cxhms_client(self, client: Any):
-        self._cxhms_client = client
 
     def set_context_manager(self, context_manager: Any):
         self._context_manager = context_manager

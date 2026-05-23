@@ -7,7 +7,7 @@ from fastapi.responses import JSONResponse
 from .response import APIResponse, ErrorResponse
 
 
-class CXHMSError(Exception):
+class ServiceError(Exception):
     def __init__(
         self,
         message: str,
@@ -22,47 +22,47 @@ class CXHMSError(Exception):
         super().__init__(self.message)
 
 
-class DatabaseError(CXHMSError):
+class DatabaseError(ServiceError):
     def __init__(self, message: str, details: Dict[str, Any] = None):
         super().__init__(message, "DATABASE_ERROR", 500, details)
 
 
-class MemoryNotFoundError(CXHMSError):
+class MemoryNotFoundError(ServiceError):
     def __init__(self, memory_id: str):
         super().__init__(f"Memory not found: {memory_id}", "MEMORY_NOT_FOUND", 404)
 
 
-class AgentNotFoundError(CXHMSError):
+class AgentNotFoundError(ServiceError):
     def __init__(self, agent_id: str):
         super().__init__(f"Agent not found: {agent_id}", "AGENT_NOT_FOUND", 404)
 
 
-class SessionNotFoundError(CXHMSError):
+class SessionNotFoundError(ServiceError):
     def __init__(self, session_id: str):
         super().__init__(f"Session not found: {session_id}", "SESSION_NOT_FOUND", 404)
 
 
-class LLMError(CXHMSError):
+class LLMError(ServiceError):
     def __init__(self, message: str, details: Dict[str, Any] = None):
         super().__init__(message, "LLM_ERROR", 503, details)
 
 
-class VectorStoreError(CXHMSError):
+class VectorStoreError(ServiceError):
     def __init__(self, message: str, details: Dict[str, Any] = None):
         super().__init__(message, "VECTOR_STORE_ERROR", 503, details)
 
 
-class ValidationError(CXHMSError):
+class ValidationError(ServiceError):
     def __init__(self, message: str, details: Dict[str, Any] = None):
         super().__init__(message, "VALIDATION_ERROR", 400, details)
 
 
-class AuthenticationError(CXHMSError):
+class AuthenticationError(ServiceError):
     def __init__(self, message: str = "Authentication required"):
         super().__init__(message, "AUTHENTICATION_ERROR", 401)
 
 
-class RateLimitError(CXHMSError):
+class RateLimitError(ServiceError):
     def __init__(self, retry_after: int = 60):
         super().__init__(
             f"Rate limit exceeded. Retry after {retry_after} seconds",
@@ -72,7 +72,7 @@ class RateLimitError(CXHMSError):
         )
 
 
-async def cxhms_exception_handler(request: Request, exc: CXHMSError) -> JSONResponse:
+async def service_exception_handler(request: Request, exc: ServiceError) -> JSONResponse:
     return JSONResponse(
         status_code=exc.status_code,
         content=ErrorResponse(

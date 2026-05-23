@@ -574,7 +574,7 @@ class MemoryConversationEngine:
                 ]
             )
 
-            prompt = f"""你是 CXHMS 记忆管理系统的智能助手。请根据对话历史回复用户。
+            prompt = f"""你是 CX-O 记忆管理系统的智能助手。请根据对话历史回复用户。
 
 对话历史：
 {conversation_history}

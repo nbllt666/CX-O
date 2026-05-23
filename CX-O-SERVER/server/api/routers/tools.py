@@ -283,7 +283,7 @@ async def import_tools(tools: List[Dict]):
 
 @router.get("/tools/mcp/servers")
 async def get_mcp_servers():
-    from server.api.app import get_mcp_manager
+    from server.dependencies import get_mcp_manager
 
     try:
         mcp_mgr = get_mcp_manager()
@@ -299,7 +299,7 @@ async def get_mcp_servers():
 
 @router.post("/tools/mcp/servers")
 async def add_mcp_server(request: MCPServerAddRequest):
-    from server.api.app import get_mcp_manager
+    from server.dependencies import get_mcp_manager
 
     try:
         mcp_mgr = get_mcp_manager()
@@ -320,7 +320,7 @@ async def add_mcp_server(request: MCPServerAddRequest):
 
 @router.delete("/tools/mcp/servers/{name}")
 async def remove_mcp_server(name: str):
-    from server.api.app import get_mcp_manager
+    from server.dependencies import get_mcp_manager
 
     try:
         mcp_mgr = get_mcp_manager()
@@ -337,7 +337,7 @@ async def remove_mcp_server(name: str):
 
 @router.post("/tools/mcp/servers/start")
 async def start_mcp_server(request: MCPServerStartRequest):
-    from server.api.app import get_mcp_manager
+    from server.dependencies import get_mcp_manager
 
     try:
         mcp_mgr = get_mcp_manager()
@@ -354,7 +354,7 @@ async def start_mcp_server(request: MCPServerStartRequest):
 
 @router.post("/tools/mcp/servers/stop")
 async def stop_mcp_server(request: MCPServerStopRequest):
-    from server.api.app import get_mcp_manager
+    from server.dependencies import get_mcp_manager
 
     try:
         mcp_mgr = get_mcp_manager()
@@ -371,7 +371,7 @@ async def stop_mcp_server(request: MCPServerStopRequest):
 
 @router.get("/tools/mcp/servers/{name}/health")
 async def check_mcp_server_health(name: str):
-    from server.api.app import get_mcp_manager
+    from server.dependencies import get_mcp_manager
 
     try:
         mcp_mgr = get_mcp_manager()
@@ -386,7 +386,7 @@ async def check_mcp_server_health(name: str):
 
 @router.get("/tools/mcp/servers/{name}/tools")
 async def get_mcp_server_tools(name: str):
-    from server.api.app import get_mcp_manager
+    from server.dependencies import get_mcp_manager
 
     try:
         mcp_mgr = get_mcp_manager()
@@ -401,7 +401,7 @@ async def get_mcp_server_tools(name: str):
 
 @router.post("/tools/mcp/call")
 async def call_mcp_tool(request: MCPToolCallRequest):
-    from server.api.app import get_mcp_manager
+    from server.dependencies import get_mcp_manager
 
     try:
         mcp_mgr = get_mcp_manager()
@@ -420,7 +420,7 @@ async def call_mcp_tool(request: MCPToolCallRequest):
 
 @router.post("/tools/mcp/sync")
 async def sync_mcp_tools():
-    from server.api.app import get_mcp_manager
+    from server.dependencies import get_mcp_manager
 
     try:
         mcp_mgr = get_mcp_manager()

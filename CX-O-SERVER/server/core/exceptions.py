@@ -7,10 +7,9 @@
 from typing import Any, Dict, Optional
 
 
-class CXHMSException(Exception):
-    """CXHMS基础异常类"""
+class CoreException(Exception):
 
-    ERROR_CODE = "CXHMS_ERROR"
+    ERROR_CODE = "CORE_ERROR"
 
     def __init__(
         self,
@@ -35,7 +34,7 @@ class CXHMSException(Exception):
         }
 
 
-class DatabaseError(CXHMSException):
+class DatabaseError(CoreException):
     """数据库操作异常"""
 
     ERROR_CODE = "DATABASE_ERROR"
@@ -49,7 +48,7 @@ class DatabaseError(CXHMSException):
         super().__init__(message, code, details)
 
 
-class ValidationError(CXHMSException):
+class ValidationError(CoreException):
     """数据验证异常"""
 
     ERROR_CODE = "VALIDATION_ERROR"
@@ -63,7 +62,7 @@ class ValidationError(CXHMSException):
         super().__init__(message, code, details)
 
 
-class ACPError(CXHMSException):
+class ACPError(CoreException):
     """ACP相关异常"""
 
     ERROR_CODE = "ACP_ERROR"
@@ -77,7 +76,7 @@ class ACPError(CXHMSException):
         super().__init__(message, code, details)
 
 
-class MemoryOperationError(CXHMSException):
+class MemoryOperationError(CoreException):
     """记忆管理异常"""
 
     ERROR_CODE = "MEMORY_ERROR"
@@ -91,7 +90,7 @@ class MemoryOperationError(CXHMSException):
         super().__init__(message, code, details)
 
 
-class VectorStoreError(CXHMSException):
+class VectorStoreError(CoreException):
     """向量存储异常"""
 
     ERROR_CODE = "VECTOR_STORE_ERROR"
@@ -105,7 +104,7 @@ class VectorStoreError(CXHMSException):
         super().__init__(message, code, details)
 
 
-class LLMError(CXHMSException):
+class LLMError(CoreException):
     """LLM调用异常"""
 
     ERROR_CODE = "LLM_ERROR"
@@ -119,7 +118,7 @@ class LLMError(CXHMSException):
         super().__init__(message, code, details)
 
 
-class ToolError(CXHMSException):
+class ToolError(CoreException):
     """工具调用异常"""
 
     ERROR_CODE = "TOOL_ERROR"
@@ -133,7 +132,7 @@ class ToolError(CXHMSException):
         super().__init__(message, code, details)
 
 
-class MCPError(CXHMSException):
+class MCPError(CoreException):
     """MCP协议异常"""
 
     ERROR_CODE = "MCP_ERROR"
@@ -147,7 +146,7 @@ class MCPError(CXHMSException):
         super().__init__(message, code, details)
 
 
-class ContextError(CXHMSException):
+class ContextError(CoreException):
     """上下文管理异常"""
 
     ERROR_CODE = "CONTEXT_ERROR"

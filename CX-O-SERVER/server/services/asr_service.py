@@ -1,10 +1,12 @@
 """
-内嵌 ASR 服务
+统一 ASR 服务
 支持 embedded（直接调用 SenseVoice 模型）和 remote（HTTP 调用）两种模式
+合并了原 ASRClient 的 base64/文件识别功能
 """
 from __future__ import annotations
 
 import asyncio
+import base64
 import logging
 import os
 import re
@@ -17,6 +19,8 @@ from typing import Any, Optional
 
 import httpx
 
+from server.core.utils import get_shared_http_client, close_shared_http_client, retry_with_backoff
+
 logger = logging.getLogger(__name__)
 
 TARGET_FS = 16000
@@ -25,62 +29,6 @@ regex = r"<\|.*\|>"
 _model_instance = None
 _model_kwargs = None
 _executor: Optional[ThreadPoolExecutor] = None
-_http_client: Optional[httpx.AsyncClient] = None
-
-
-def _get_http_client() -> httpx.AsyncClient:
-    global _http_client
-    if _http_client is None:
-        _http_client = httpx.AsyncClient(
-            timeout=httpx.Timeout(
-                connect=10.0,
-                read=120.0,
-                write=120.0,
-                pool=10.0
-            ),
-            limits=httpx.Limits(
-                max_keepalive_connections=5,
-                max_connections=10,
-                keepalive_expiry=30.0
-            )
-        )
-    return _http_client
-
-
-async def _retry_with_backoff(
-    func,
-    max_retries: int = 3,
-    base_delay: float = 1.0,
-    max_delay: float = 30.0,
-    *args,
-    **kwargs
-):
-    last_exception = None
-    for attempt in range(max_retries):
-        try:
-            return await func(*args, **kwargs)
-        except (httpx.ConnectError, httpx.ReadTimeout, httpx.WriteTimeout, httpx.ConnectTimeout) as e:
-            last_exception = e
-            if attempt < max_retries - 1:
-                delay = min(base_delay * (2 ** attempt), max_delay)
-                logger.warning(f"ASR request failed (attempt {attempt + 1}/{max_retries}): {e}. Retrying in {delay:.1f}s...")
-                await asyncio.sleep(delay)
-            else:
-                logger.error(f"ASR request failed after {max_retries} attempts: {e}")
-                raise
-        except httpx.HTTPStatusError as e:
-            if e.response.status_code >= 500 and attempt < max_retries - 1:
-                delay = min(base_delay * (2 ** attempt), max_delay)
-                logger.warning(f"ASR server error (attempt {attempt + 1}/{max_retries}): {e}. Retrying in {delay:.1f}s...")
-                await asyncio.sleep(delay)
-            else:
-                raise
-        except Exception as e:
-            logger.error(f"Unexpected error in ASR request: {e}")
-            raise
-    
-    if last_exception:
-        raise last_exception
 
 
 class ASRService:
@@ -136,24 +84,36 @@ class ASRService:
                 raise RuntimeError(f"ASR service initialization failed: {error_msg}. Fallback to remote mode also failed: {fallback_error}")
 
     async def shutdown(self):
-        global _model_instance, _model_kwargs, _executor, _http_client
+        global _model_instance, _model_kwargs, _executor
         if _executor:
             _executor.shutdown(wait=False)
             _executor = None
         _model_instance = None
         _model_kwargs = None
         self._initialized = False
-        
-        if _http_client:
-            await _http_client.aclose()
-            _http_client = None
-            logger.info("ASR HTTP client closed")
 
     async def recognize(self, audio_data: bytes, language: str = "auto", use_itn: bool = True) -> dict[str, Any]:
         if self._mode == "embedded" and _model_instance is not None:
             return await self._recognize_embedded(audio_data, language, use_itn)
         else:
             return await self._recognize_remote(audio_data, language, use_itn)
+
+    async def recognize_base64(self, audio_base64: str, language: str = "auto", use_itn: bool = True) -> dict[str, Any]:
+        if self._mode == "embedded" and _model_instance is not None:
+            audio_data = base64.b64decode(audio_base64)
+            return await self._recognize_embedded(audio_data, language, use_itn)
+        else:
+            return await self._recognize_remote_base64(audio_base64, language, use_itn)
+
+    async def recognize_file(self, file_path: str | Path, language: str = "auto", use_itn: bool = True) -> dict[str, Any]:
+        path = Path(file_path)
+        if not path.exists():
+            raise FileNotFoundError(f"Audio file not found: {file_path}")
+
+        with open(path, "rb") as f:
+            audio_data = f.read()
+
+        return await self.recognize(audio_data, language, use_itn)
 
     async def _recognize_embedded(self, audio_data: bytes, language: str = "auto", use_itn: bool = True) -> dict[str, Any]:
         from funasr.utils.postprocess_utils import rich_transcription_postprocess
@@ -174,7 +134,7 @@ class ASRService:
 
     async def _recognize_remote(self, audio_data: bytes, language: str = "auto", use_itn: bool = True) -> dict[str, Any]:
         async def _make_request():
-            client = _get_http_client()
+            client = get_shared_http_client()
             files = {"file": ("audio.wav", audio_data, "audio/wav")}
             data = {"language": language, "use_itn": str(use_itn), "task": "rich"}
             response = await client.post(f"{self._remote_url}/api/v1/asr", files=files, data=data)
@@ -189,7 +149,22 @@ class ASRService:
                     }
             return {"text": "", "error": f"ASR remote error: HTTP {response.status_code}"}
         
-        return await _retry_with_backoff(_make_request, max_retries=3, base_delay=1.0, max_delay=30.0)
+        return await retry_with_backoff(_make_request, max_retries=3, base_delay=1.0, max_delay=30.0, service_name="ASR")
+
+    async def _recognize_remote_base64(self, audio_base64: str, language: str = "auto", use_itn: bool = True) -> dict[str, Any]:
+        async def _make_request():
+            client = get_shared_http_client()
+            response = await client.post(
+                f"{self._remote_url}/asr",
+                json={
+                    "audio": audio_base64,
+                    "language": language
+                }
+            )
+            response.raise_for_status()
+            return response.json()
+
+        return await retry_with_backoff(_make_request, max_retries=3, base_delay=1.0, max_delay=30.0, service_name="ASR")
 
     def _process_audio(self, file_io: BytesIO) -> tuple:
         try:

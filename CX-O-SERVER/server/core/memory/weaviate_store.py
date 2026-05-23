@@ -26,7 +26,7 @@ class WeaviateConfig:
     grpc_port: int = 50051
     embedded: bool = False
     vector_size: int = 768
-    schema_class: str = "CXHMSMemory"
+    schema_class: str = "CXOMemory"
     api_key: Optional[str] = None
 
 
@@ -40,7 +40,7 @@ class WeaviateVectorStore:
         grpc_port: int = 50051,
         embedded: bool = False,
         vector_size: int = 768,
-        schema_class: str = "CXHMSMemory",
+        schema_class: str = "CXOMemory",
         embedding_model=None,
         api_key: Optional[str] = None,
     ):

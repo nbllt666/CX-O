@@ -173,52 +173,25 @@ async def tts_synthesize(request: TTSSynthesizeRequest):
         if not request.text:
             return {"status": "error", "message": "缺少文本内容"}
 
-        config = _load_tts_config()
-        engine = config.get("engine", "cosyvoice")
+        from server.services.tts_service import get_tts_service
+        tts_svc = get_tts_service()
 
-        if engine == "cosyvoice":
-            tts_url = config.get("cosyvoice", {}).get("url", "http://127.0.0.1:50000")
-            timeout = config.get("cosyvoice", {}).get("timeout", 120)
-            cosyvoice_url = tts_url
-        else:
-            f5_config = config.get("f5_tts", {})
-            tts_url = f5_config.get("url", "http://127.0.0.1:5000")
-            timeout = f5_config.get("timeout", 120)
-            cosyvoice_url = config.get("cosyvoice", {}).get("url")
+        kwargs = {
+            "speed": request.speed if request.speed != 1.0 else tts_svc._speed,
+            "cross_fade_duration": request.cross_fade_duration if request.cross_fade_duration != 0.15 else tts_svc._cross_fade_duration,
+        }
+        if request.ref_audio:
+            kwargs["ref_audio"] = request.ref_audio
+        if request.ref_text:
+            kwargs["ref_text"] = request.ref_text
 
-        from server.services.tts_client import TTSClient
-        client = TTSClient(
-            base_url=tts_url,
-            ref_audio_path=config.get("ref_audio_path", ""),
-            ref_text=config.get("ref_text", ""),
-            timeout=timeout,
-            emotion_voices=config.get("emotion_voices", {}),
-            voice_refs_dir=str(VOICE_REFS_DIR),
-            engine=engine,
-            cosyvoice_url=cosyvoice_url,
-            transition_enabled=config.get("transition", {}).get("enabled", True),
-            transition_text=config.get("transition", {}).get("transition_text", "嗯，")
-        )
+        audio_bytes = await tts_svc.synthesize(request.text, **kwargs)
 
-        try:
-            kwargs = {
-                "speed": request.speed if request.speed != 1.0 else config.get("speed", 1.0),
-                "cross_fade_duration": request.cross_fade_duration if request.cross_fade_duration != 0.15 else config.get("cross_fade_duration", 0.15),
-            }
-            if request.ref_audio:
-                kwargs["ref_audio"] = request.ref_audio
-            if request.ref_text:
-                kwargs["ref_text"] = request.ref_text
-
-            audio_bytes = await client.synthesize(request.text, **kwargs)
-
-            return {
-                "status": "success",
-                "audio_data": base64.b64encode(audio_bytes).decode("utf-8"),
-                "format": "wav"
-            }
-        finally:
-            await client.close()
+        return {
+            "status": "success",
+            "audio_data": base64.b64encode(audio_bytes).decode("utf-8"),
+            "format": "wav"
+        }
 
     except Exception as e:
         logger.error(f"TTS合成失败: {e}", exc_info=True)
@@ -236,41 +209,17 @@ async def tts_synthesize_stream(request: Request):
                 yield f"data: {json.dumps({'type': 'error', 'message': '缺少文本内容'}, ensure_ascii=False)}\n\n"
             return StreamingResponse(error_stream(), media_type="text/event-stream")
 
-        config = _load_tts_config()
-        engine = config.get("engine", "cosyvoice")
-
-        if engine == "cosyvoice":
-            tts_url = config.get("cosyvoice", {}).get("url", "http://127.0.0.1:50000")
-            timeout = config.get("cosyvoice", {}).get("timeout", 120)
-            cosyvoice_url = tts_url
-        else:
-            f5_config = config.get("f5_tts", {})
-            tts_url = f5_config.get("url", "http://127.0.0.1:5000")
-            timeout = f5_config.get("timeout", 120)
-            cosyvoice_url = config.get("cosyvoice", {}).get("url")
-
-        from server.services.tts_client import TTSClient
-        client = TTSClient(
-            base_url=tts_url,
-            ref_audio_path=config.get("ref_audio_path", ""),
-            ref_text=config.get("ref_text", ""),
-            timeout=timeout,
-            emotion_voices=config.get("emotion_voices", {}),
-            voice_refs_dir=str(VOICE_REFS_DIR),
-            engine=engine,
-            cosyvoice_url=cosyvoice_url,
-            transition_enabled=config.get("transition", {}).get("enabled", True),
-            transition_text=config.get("transition", {}).get("transition_text", "嗯，")
-        )
+        from server.services.tts_service import get_tts_service
+        tts_svc = get_tts_service()
 
         kwargs = {
-            "speed": data.get("speed", config.get("speed", 1.0)),
-            "cross_fade_duration": data.get("cross_fade_duration", config.get("cross_fade_duration", 0.15)),
+            "speed": data.get("speed", tts_svc._speed),
+            "cross_fade_duration": data.get("cross_fade_duration", tts_svc._cross_fade_duration),
         }
 
         async def stream_generator():
             try:
-                async for chunk in client.synthesize_stream(text, **kwargs):
+                async for chunk in tts_svc.synthesize_stream(text, **kwargs):
                     audio_base64 = None
                     if chunk.get("audio_data"):
                         audio_base64 = base64.b64encode(chunk["audio_data"]).decode("utf-8")
@@ -286,8 +235,6 @@ async def tts_synthesize_stream(request: Request):
                 logger.error(f"TTS流式合成错误: {e}", exc_info=True)
                 error_data = json.dumps({"type": "error", "message": f"TTS流式合成失败: {str(e)}"}, ensure_ascii=False)
                 yield f"data: {error_data}\n\n"
-            finally:
-                await client.close()
 
         return StreamingResponse(stream_generator(), media_type="text/event-stream")
     except Exception as e:
@@ -327,20 +274,16 @@ async def asr_speech_to_text(request: Request):
             with open(temp_path, "rb") as f:
                 audio_data = f.read()
 
-        asr_config = _load_asr_config()
+        from server.services.asr_service import get_asr_service
+        asr_svc = get_asr_service()
 
-        from server.services.asr_client import ASRClient
-        client = ASRClient(base_url=asr_config["url"], timeout=asr_config.get("timeout", 60))
-        try:
-            result = await client.recognize(audio_data, language)
+        result = await asr_svc.recognize(audio_data, language)
 
-            return {
-                "status": "success",
-                "text": result.get("text", ""),
-                "language": result.get("language", "")
-            }
-        finally:
-            await client.close()
+        return {
+            "status": "success",
+            "text": result.get("text", ""),
+            "language": result.get("language", "")
+        }
     except Exception as e:
         logger.error(f"ASR语音识别失败: {e}", exc_info=True)
         return {"status": "error", "message": "语音识别失败"}
