@@ -70,10 +70,10 @@ def get_graph_config() -> GraphConfig:
                     cache_folder=gc.embedding.cache_folder,
                 ),
             )
-            return _config
     except Exception:
         pass
-    _config = _load_config_from_env()
+    if _config is None:
+        _config = _load_config_from_env()
     return _config
 
 
