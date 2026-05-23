@@ -540,11 +540,12 @@ def create_app() -> FastAPI:
     )
 
     cors_config = getattr(settings, 'cors', None)
-    if cors_config and getattr(cors_config, 'enabled', False):
+    cors_enabled = getattr(cors_config, 'enabled', True) if cors_config else True
+    if cors_enabled:
         app.add_middleware(
             CORSMiddleware,
-            allow_origins=getattr(cors_config, 'origins', ['*']),
-            allow_credentials=getattr(cors_config, 'allow_credentials', True),
+            allow_origins=getattr(cors_config, 'origins', ['*']) if cors_config else ['*'],
+            allow_credentials=getattr(cors_config, 'allow_credentials', True) if cors_config else True,
             allow_methods=["*"],
             allow_headers=["*"],
         )

@@ -170,7 +170,7 @@ async def delete_audio_file(filename: str):
 
 
 @router.post("/tts/synthesize", summary="TTS合成")
-async def tts_synthesize(request: TTSSynthesizeRequest, tts_svc = Depends(get_tts_service)):
+async def tts_synthesize(request: TTSSynthesizeRequest, tts_svc: TTSService = Depends(get_tts_service)):
     try:
         if not request.text:
             return {"status": "error", "message": "缺少文本内容"}
@@ -198,7 +198,7 @@ async def tts_synthesize(request: TTSSynthesizeRequest, tts_svc = Depends(get_tt
 
 
 @router.post("/tts/synthesize-stream", summary="TTS流式合成")
-async def tts_synthesize_stream(request: Request, tts_svc = Depends(get_tts_service)):
+async def tts_synthesize_stream(request: Request, tts_svc: TTSService = Depends(get_tts_service)):
     try:
         data = await request.json()
         text = data.get("text", "")

@@ -122,13 +122,11 @@ async def websocket_handler(websocket: WebSocket, client_id: str):
                         code="HANDLER_ERROR",
                         message=str(e)
                     ))
+            elif msg_type or not action:
+                await ws_manager.handle_message(client_id, message)
             else:
-                await ws_manager.send_message(client_id, create_error(
-                    request_id=request_id,
-                    action=action,
-                    code="UNKNOWN_ACTION",
-                    message=f"Unknown action: {action}"
-                ))
+                logger.warning(f"未知的 WebSocket action: {action}")
+                await websocket.send_json({"type": "error", "data": {"message": f"未知操作: {action}"}})
 
     except WebSocketDisconnect:
         await ws_manager.disconnect(client_id)

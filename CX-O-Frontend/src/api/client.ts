@@ -1,9 +1,9 @@
 import axios, { AxiosInstance, AxiosError } from 'axios';
 import type { AxiosRequestConfig, InternalAxiosRequestConfig } from 'axios';
 
-const getApiBaseUrl = () => localStorage.getItem('cxhms-backend-url') || import.meta.env.VITE_API_URL || 'http://127.0.0.1:8000';
-const getControlServiceUrl = () => localStorage.getItem('cxhms-control-url') || import.meta.env.VITE_CONTROL_SERVICE_URL || 'http://127.0.0.1:8000';
-const getWsBaseUrl = () => localStorage.getItem('cxhms-ws-url') || import.meta.env.VITE_WS_URL || 'ws://127.0.0.1:8000';
+const getApiBaseUrl = () => localStorage.getItem('cxhms-backend-url') || import.meta.env.VITE_API_URL || 'http://127.0.0.1:8100';
+const getControlServiceUrl = () => localStorage.getItem('cxhms-control-url') || import.meta.env.VITE_CONTROL_SERVICE_URL || 'http://127.0.0.1:8100';
+const getWsBaseUrl = () => localStorage.getItem('cxhms-ws-url') || import.meta.env.VITE_WS_URL || 'ws://127.0.0.1:8100';
 const getVoiceWorkstationUrl = () => localStorage.getItem('cxhms-voicews-url') || import.meta.env.VITE_VOICE_WS_URL || 'http://127.0.0.1:8200';
 
 export const WS_BASE_URL = getWsBaseUrl();
@@ -411,7 +411,7 @@ class ApiClient {
 
   async sendMessage(message: string, agentId: string = 'default', sessionId?: string): Promise<{ response: string; session_id: string }> {
     const response = await this.request<{ status: string; response: string; session_id: string }>({
-      url: '/api/chat/send',
+      url: '/api/chat',
       method: 'post',
       data: { message, agent_id: agentId, session_id: sessionId }
     });
@@ -543,7 +543,7 @@ class ApiClient {
   }
 
   async getArchiveStats(): Promise<ArchiveStats> {
-    return this.request<ArchiveStats>({ url: '/archive/stats' });
+    return this.request<ArchiveStats>({ url: '/api/archive/stats' });
   }
 
   async mergeMemories(memoryIds: number[]): Promise<{ success: boolean; merged_memory_id?: number }> {
@@ -968,7 +968,7 @@ class ApiClient {
     const axiosInstance = this.client;
     this._setupInterceptors(axiosInstance);
 
-    const response = await axiosInstance.post('/api/memory-agent/stream', {
+    const response = await axiosInstance.post('/api/memory-agent/chat/stream', {
       message,
       session_id: sessionId,
     }, {

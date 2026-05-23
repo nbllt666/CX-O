@@ -201,7 +201,7 @@ export function SettingsPage() {
 
   const checkControlService = useCallback(async () => {
     try {
-      const apiUrl = import.meta.env.VITE_API_URL || 'http://localhost:8000';
+      const apiUrl = import.meta.env.VITE_API_URL || 'http://127.0.0.1:8100';
       const response = await fetch(`${apiUrl}/health`);
       if (response.ok) {
         setIsControlServiceReady(true);
@@ -217,7 +217,7 @@ export function SettingsPage() {
 
   const checkBackendStatus = useCallback(async () => {
     try {
-      const apiUrl = import.meta.env.VITE_API_URL || 'http://localhost:8000';
+      const apiUrl = import.meta.env.VITE_API_URL || 'http://127.0.0.1:8100';
       const response = await fetch(`${apiUrl}/health`);
       if (response.ok) {
         setIsBackendRunning(true);
@@ -719,7 +719,7 @@ export function SettingsPage() {
   const handleStartBackend = async () => {
     setIsProcessing(true);
     try {
-      const response = await fetch('http://localhost:8000/health');
+      const response = await fetch('http://127.0.0.1:8100/health');
       if (response.ok) {
         alert('后端服务已在运行');
         setIsBackendRunning(true);
