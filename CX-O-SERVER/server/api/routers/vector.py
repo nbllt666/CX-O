@@ -24,7 +24,7 @@ class VectorConfig(BaseModel):
 
 
 def get_vector_store():
-    from server.api.app import get_memory_manager
+    from server.dependencies import get_memory_manager
 
     mm = get_memory_manager()
     if hasattr(mm, "_vector_store") and mm._vector_store:
@@ -75,7 +75,7 @@ async def get_vector_config():
 
 @router.get("/vector/status")
 async def get_vector_status():
-    from server.api.app import get_memory_manager
+    from server.dependencies import get_memory_manager
 
     try:
         mm = get_memory_manager()
@@ -103,7 +103,7 @@ async def get_vector_status():
 
 @router.get("/vector/health")
 async def vector_health_check():
-    from server.api.app import get_memory_manager
+    from server.dependencies import get_memory_manager
 
     health = {
         "status": "unknown",
@@ -141,7 +141,7 @@ async def list_vectors(
     offset: int = Query(0, ge=0),
     memory_type: Optional[str] = Query(None, description="按记忆类型过滤"),
 ):
-    from server.api.app import get_memory_manager
+    from server.dependencies import get_memory_manager
 
     try:
         mm = get_memory_manager()
@@ -188,7 +188,7 @@ async def list_vectors(
 
 @router.get("/vector/vectors/{memory_id}")
 async def get_vector(memory_id: int):
-    from server.api.app import get_memory_manager
+    from server.dependencies import get_memory_manager
 
     try:
         mm = get_memory_manager()
@@ -221,7 +221,7 @@ async def get_vector(memory_id: int):
 
 @router.delete("/vector/vectors/{memory_id}")
 async def delete_vector(memory_id: int):
-    from server.api.app import get_memory_manager
+    from server.dependencies import get_memory_manager
 
     try:
         mm = get_memory_manager()
@@ -244,7 +244,7 @@ async def delete_vector(memory_id: int):
 
 @router.post("/vector/sync")
 async def sync_vectors():
-    from server.api.app import get_memory_manager
+    from server.dependencies import get_memory_manager
 
     try:
         mm = get_memory_manager()
@@ -271,7 +271,7 @@ async def sync_vectors():
 
 @router.post("/vector/rebuild")
 async def rebuild_vectors():
-    from server.api.app import get_memory_manager
+    from server.dependencies import get_memory_manager
     from datetime import datetime
 
     try:
@@ -307,7 +307,7 @@ async def search_vectors(
     min_score: float = Query(0.5, ge=0.0, le=1.0),
     memory_type: Optional[str] = Query(None, description="按记忆类型过滤"),
 ):
-    from server.api.app import get_memory_manager, get_llm_client
+    from server.dependencies import get_memory_manager, get_llm_client
 
     try:
         mm = get_memory_manager()
@@ -350,7 +350,7 @@ async def search_vectors(
 
 @router.get("/vector/stats")
 async def get_vector_stats():
-    from server.api.app import get_memory_manager
+    from server.dependencies import get_memory_manager
 
     try:
         mm = get_memory_manager()

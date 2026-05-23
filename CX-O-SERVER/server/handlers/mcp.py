@@ -20,7 +20,7 @@ def register_mcp_handlers(manager: "WebSocketManager"):
         data = message.get("data", {})
 
         try:
-            from server.api.app import get_mcp_manager
+            from server.dependencies import get_mcp_manager
 
             mcp_mgr = get_mcp_manager()
             server_info = await mcp_mgr.add_server(
@@ -53,7 +53,7 @@ def register_mcp_handlers(manager: "WebSocketManager"):
         data = message.get("data", {})
 
         try:
-            from server.api.app import get_mcp_manager
+            from server.dependencies import get_mcp_manager
 
             mcp_mgr = get_mcp_manager()
             server_name = data.get("server_name", "")
@@ -86,7 +86,7 @@ def register_mcp_handlers(manager: "WebSocketManager"):
         data = message.get("data", {})
 
         try:
-            from server.api.app import get_mcp_manager
+            from server.dependencies import get_mcp_manager
 
             mcp_mgr = get_mcp_manager()
             result = await mcp_mgr.call_tool(

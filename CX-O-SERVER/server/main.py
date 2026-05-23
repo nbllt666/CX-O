@@ -19,7 +19,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from server.config import get_settings
-from server.dependencies import ServiceState
+from server.dependencies import ServiceState, set_service_state
 
 logger = logging.getLogger(__name__)
 
@@ -31,6 +31,7 @@ async def lifespan(app: FastAPI):
 
     services = ServiceState()
     app.state.services = services
+    set_service_state(services)
 
     from server.core.logging_config import LogContext, get_contextual_logger, setup_logging
 

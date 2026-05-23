@@ -20,7 +20,7 @@ def register_memory_handlers(manager: "WebSocketManager"):
         data = message.get("data", {})
 
         try:
-            from server.api.app import get_memory_manager
+            from server.dependencies import get_memory_manager
 
             memory_mgr = get_memory_manager()
             result = memory_mgr.search_memories(
@@ -53,7 +53,7 @@ def register_memory_handlers(manager: "WebSocketManager"):
         data = message.get("data", {})
 
         try:
-            from server.api.app import get_memory_manager
+            from server.dependencies import get_memory_manager
 
             memory_mgr = get_memory_manager()
             memory_id = memory_mgr.write_memory(
@@ -87,7 +87,7 @@ def register_memory_handlers(manager: "WebSocketManager"):
         data = message.get("data", {})
 
         try:
-            from server.api.app import get_memory_manager
+            from server.dependencies import get_memory_manager
 
             memory_mgr = get_memory_manager()
             success = memory_mgr.delete_memory(
@@ -115,7 +115,7 @@ def register_memory_handlers(manager: "WebSocketManager"):
         data = message.get("data", {})
 
         try:
-            from server.api.app import get_memory_manager
+            from server.dependencies import get_memory_manager
 
             memory_mgr = get_memory_manager()
 

@@ -22,7 +22,7 @@ def _get_agent_config(agent_id: str):
 
 
 def _get_llm_client_for_agent(agent_config: dict):
-    from server.api.app import get_llm_client, get_model_router
+    from server.dependencies import get_llm_client, get_model_router
 
     model = agent_config.get("model", "main")
 
@@ -193,7 +193,7 @@ def register_chat_handlers(manager: "WebSocketManager"):
         data = message.get("data", {})
 
         try:
-            from server.api.app import get_context_manager, get_memory_manager
+            from server.dependencies import get_context_manager, get_memory_manager
 
             agent_id = data.get("agent_id", "default")
             text = data.get("text", "")
@@ -271,7 +271,7 @@ def register_chat_handlers(manager: "WebSocketManager"):
         data = message.get("data", {})
 
         try:
-            from server.api.app import get_context_manager, get_memory_manager
+            from server.dependencies import get_context_manager, get_memory_manager
 
             agent_id = data.get("agent_id", "default")
             text = data.get("text", "")
@@ -451,7 +451,7 @@ def register_chat_handlers(manager: "WebSocketManager"):
         data = message.get("data", {})
 
         try:
-            from server.api.app import get_context_manager, get_memory_manager
+            from server.dependencies import get_context_manager, get_memory_manager
 
             agent_id = data.get("agent_id", "default")
             text = data.get("text", "")
