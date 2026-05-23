@@ -20,7 +20,7 @@ def register_acp_handlers(manager: "WebSocketManager"):
         data = message.get("data", {})
 
         try:
-            from server.dependencies import get_acp_manager
+            from server.api.app import get_acp_manager
             from server.core.acp.manager import ACPAgentInfo, ACPConnectionInfo
 
             acp_mgr = get_acp_manager()
@@ -64,7 +64,7 @@ def register_acp_handlers(manager: "WebSocketManager"):
         data = message.get("data", {})
 
         try:
-            from server.dependencies import get_acp_manager
+            from server.api.app import get_acp_manager
 
             acp_mgr = get_acp_manager()
             connection_id = data.get("connection_id", "")
@@ -90,7 +90,7 @@ def register_acp_handlers(manager: "WebSocketManager"):
         data = message.get("data", {})
 
         try:
-            from server.dependencies import get_acp_manager
+            from server.api.app import get_acp_manager
 
             acp_mgr = get_acp_manager()
             connections = await acp_mgr.list_connections(local_only=data.get("local_only", True))

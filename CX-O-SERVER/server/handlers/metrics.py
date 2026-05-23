@@ -20,7 +20,7 @@ def register_metrics_handlers(manager: "WebSocketManager"):
         data = message.get("data", {})
 
         try:
-            from server.dependencies import get_memory_manager, get_acp_manager, get_mcp_manager
+            from server.api.app import get_memory_manager, get_acp_manager, get_mcp_manager
 
             metrics = {}
 

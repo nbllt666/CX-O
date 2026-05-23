@@ -45,35 +45,35 @@ def register_system_handlers(manager: "WebSocketManager"):
             }
 
             try:
-                from server.dependencies import get_memory_manager
+                from server.api.app import get_memory_manager
                 memory_mgr = get_memory_manager()
                 status["services"]["memory"] = {"available": True, "stats": memory_mgr.get_statistics()}
             except Exception:
                 status["services"]["memory"] = {"available": False}
 
             try:
-                from server.dependencies import get_acp_manager
+                from server.api.app import get_acp_manager
                 acp_mgr = get_acp_manager()
                 status["services"]["acp"] = {"available": True, "stats": await acp_mgr.get_statistics()}
             except Exception:
                 status["services"]["acp"] = {"available": False}
 
             try:
-                from server.dependencies import get_mcp_manager
+                from server.api.app import get_mcp_manager
                 mcp_mgr = get_mcp_manager()
                 status["services"]["mcp"] = {"available": True, "stats": mcp_mgr.get_stats()}
             except Exception:
                 status["services"]["mcp"] = {"available": False}
 
             try:
-                from server.dependencies import get_llm_client
+                from server.api.app import get_llm_client
                 llm = get_llm_client()
                 status["services"]["llm"] = {"available": True, "model": llm.model_name}
             except Exception:
                 status["services"]["llm"] = {"available": False}
 
             try:
-                from server.dependencies import get_model_router
+                from server.api.app import get_model_router
                 mr = get_model_router()
                 status["services"]["model_router"] = {"available": True}
             except Exception:
