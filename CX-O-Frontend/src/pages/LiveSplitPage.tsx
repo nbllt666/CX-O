@@ -1,13 +1,6 @@
 import { Link } from 'react-router-dom';
-import { useLiveWebSocket } from '../hooks/useLiveWebSocket';
-import type { LiveDanmakuData } from '../hooks/useLiveWebSocket';
 
 export function LiveSplitPage() {
-  useLiveWebSocket({
-    onDanmaku: (_data: LiveDanmakuData) => {},
-    onStreamContent: (_content: string) => {},
-  });
-
   const baseUrl = window.location.origin;
 
   const sources = [
@@ -84,6 +77,11 @@ export function LiveSplitPage() {
                     {source.name}
                   </h3>
                   <p className="text-sm text-[var(--color-text-secondary)] mt-1">{source.description}</p>
+                  {source.path === '/live/split/audio' && (
+                    <a href="/audio" target="_blank" rel="noopener noreferrer" className="text-xs text-[var(--color-accent)] hover:underline">
+                      在新页面打开 →
+                    </a>
+                  )}
                   <code className="text-xs text-[var(--color-text-tertiary)] mt-2 block break-all">
                     {baseUrl}{source.path}
                   </code>

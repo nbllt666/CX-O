@@ -1,10 +1,19 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { DanmakuOverlay } from '../../components/Live/DanmakuOverlay';
 import { useLiveWebSocket } from '../../hooks/useLiveWebSocket';
 import type { LiveDanmakuData } from '../../hooks/useLiveWebSocket';
 
 export function DanmakuSource() {
   const [danmakuList, setDanmakuList] = useState<LiveDanmakuData[]>([]);
+
+  useEffect(() => {
+    document.body.style.background = 'transparent';
+    document.documentElement.style.background = 'transparent';
+    return () => {
+      document.body.style.background = '';
+      document.documentElement.style.background = '';
+    };
+  }, []);
 
   useLiveWebSocket({
     onDanmaku: (data) => {

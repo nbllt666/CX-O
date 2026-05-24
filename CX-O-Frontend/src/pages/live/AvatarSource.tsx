@@ -11,6 +11,15 @@ export function AvatarSource() {
   const [dataVersion, setDataVersion] = useState(0);
   const [loading, setLoading] = useState(false);
 
+  useEffect(() => {
+    document.body.style.background = 'transparent';
+    document.documentElement.style.background = 'transparent';
+    return () => {
+      document.body.style.background = '';
+      document.documentElement.style.background = '';
+    };
+  }, []);
+
   const { live2d, vrm, avatarType } = useSettingsStore();
   const currentModelId = avatarType === 'live2d' ? live2d.modelId : vrm.modelId;
 

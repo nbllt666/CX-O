@@ -67,7 +67,7 @@ export function LivePage() {
         subtitleText={subtitleText}
         mouthOpenY={mouthOpenY}
         onModeSwitch={() => navigate('/live/split')}
-        onAudioPanelClick={() => navigate('/live/split/audio')}
+        onAudioPanelClick={() => navigate('/audio')}
       />
 
       <div

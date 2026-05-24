@@ -11,7 +11,6 @@ import PluginsPage from './pages/PluginsPage';
 import { ToolsPage } from './pages/ToolsPage';
 import { AgentsPage } from './pages/AgentsPage';
 import { MemoryAgentPage } from './pages/MemoryAgentPage';
-import { AudioTestPage } from './pages/AudioTestPage';
 import { GraphDataPage } from './pages/GraphDataPage';
 import { VectorDataPage } from './pages/VectorDataPage';
 import { LivePage } from './pages/LivePage';
@@ -20,6 +19,8 @@ import { AvatarSource } from './pages/live/AvatarSource';
 import { DanmakuSource } from './pages/live/DanmakuSource';
 import { SubtitleSource } from './pages/live/SubtitleSource';
 import { AudioPanel } from './pages/live/AudioPanel';
+import { AudioPanelOBS } from './pages/live/AudioPanelOBS';
+import { AudioTestPage } from './pages/AudioTestPage';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import { ConnectionSetup } from './components/ConnectionSetup';
 
@@ -86,18 +87,19 @@ function App() {
           <Route path="acp" element={<AcpPage />} />
           <Route path="plugins" element={<PluginsPage />} />
           <Route path="tools" element={<ToolsPage />} />
-          <Route path="audio" element={<AudioTestPage />} />
+          <Route path="audio" element={<AudioPanel />} />
+          <Route path="audio-test" element={<AudioTestPage />} />
           <Route path="settings" element={<SettingsPage />} />
           <Route path="memory-agent" element={<MemoryAgentPage />} />
           <Route path="graph-data" element={<GraphDataPage />} />
           <Route path="vector-data" element={<VectorDataPage />} />
           <Route path="live" element={<LivePage />} />
           <Route path="live/split" element={<LiveSplitPage />} />
-          <Route path="live/split/avatar" element={<AvatarSource />} />
-          <Route path="live/split/danmaku" element={<DanmakuSource />} />
-          <Route path="live/split/subtitle" element={<SubtitleSource />} />
-          <Route path="live/split/audio" element={<AudioPanel />} />
         </Route>
+        <Route path="/live/split/avatar" element={<AvatarSource />} />
+        <Route path="/live/split/danmaku" element={<DanmakuSource />} />
+        <Route path="/live/split/subtitle" element={<SubtitleSource />} />
+        <Route path="/live/split/audio" element={<AudioPanelOBS />} />
       </Routes>
     </ErrorBoundary>
   );

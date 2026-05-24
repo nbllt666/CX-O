@@ -101,6 +101,15 @@ html {
   scroll-behavior: smooth;
 }
 
+.split-source-page {
+  background: transparent;
+}
+
+.split-source-page body,
+.split-source-page #root {
+  background: transparent;
+}
+
 /* Focus visible styles */
 :focus-visible {
   outline: 2px solid hsl(var(--ring));
