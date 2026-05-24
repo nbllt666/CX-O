@@ -11,7 +11,7 @@ interface AudioPanelProps {
   standalone?: boolean;
 }
 
-export function AudioPanel({ standalone }: AudioPanelProps) {
+export function AudioPanel({ standalone = false }: AudioPanelProps) {
   const [micEnabled, setMicEnabled] = useState(false);
   const [selectedDevice, setSelectedDevice] = useState('');
   const [devices, setDevices] = useState<AudioDeviceInfo[]>([]);
