@@ -12,7 +12,14 @@ interface AvatarPanelProps {
 }
 
 function useDriverState(driver: IAvatarDriver) {
-  const getSnapshot = useCallback(() => driver, [driver]);
+  const getSnapshot = useCallback(() => ({
+    avatar: driver.avatar,
+    mouthOpen: driver.mouthOpen,
+    expressionMix: driver.expressionMix,
+    parameterOverrides: driver.parameterOverrides,
+    watermarkVisible: driver.watermarkVisible,
+    transform: driver.transform,
+  }), [driver]);
   const subscribe = useCallback((listener: () => void) => driver.subscribe(listener), [driver]);
   return useSyncExternalStore(subscribe, getSnapshot);
 }

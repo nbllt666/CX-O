@@ -795,7 +795,7 @@ class ApiClient {
   }
 
   async startSoVITSSVCTrain(data: {
-    ref_audio_path: string;
+    training_data_dir: string;
     model_name?: string;
     epochs?: number;
     batch_size?: number;

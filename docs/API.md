@@ -45,6 +45,14 @@ GET /health
 9. [配置管理 API](#配置管理-api)
 10. [统计信息 API](#统计信息-api)
 11. [WebSocket API](#websocket-api)
+12. [CXFC 插件联邦 API](#cxfc-插件联邦-api)
+13. [记忆归档 API](#记忆归档-api)
+14. [向量数据库 API](#向量数据库-api)
+15. [管理员 API](#管理员-api)
+16. [Avatar 模型管理 API](#avatar-模型管理-api)
+17. [备份管理 API](#备份管理-api)
+18. [服务管理 API](#服务管理-api)
+19. [记忆对话 API](#记忆对话-api)
 
 ---
 
@@ -1633,6 +1641,1713 @@ navigator.mediaDevices.getUserMedia({ audio: true }).then(stream => {
 | error | 错误消息 | 服务端 → 客户端 |
 | ping | 心跳检测 | 双向 |
 | pong | 心跳响应 | 双向 |
+
+### WebSocket Action 列表
+
+WebSocket 消息中可通过 `action` 字段指定操作类型，以下是完整的 Action 列表：
+
+#### 监控指标 Actions
+
+| Action | 说明 |
+|--------|------|
+| metrics.get | 获取当前监控指标 |
+| metrics.requests | 获取请求统计 |
+| metrics.history | 获取历史监控数据 |
+
+**请求示例：**
+```json
+{
+  "type": "action",
+  "action": "metrics.get"
+}
+```
+
+**响应示例：**
+```json
+{
+  "type": "action_result",
+  "action": "metrics.get",
+  "data": {
+    "cpu_usage": 45.2,
+    "memory_usage": 62.1,
+    "active_connections": 5
+  }
+}
+```
+
+#### 插件管理 Actions
+
+| Action | 说明 |
+|--------|------|
+| plugin.register | 注册插件 |
+| plugin.heartbeat | 插件心跳上报 |
+| plugin.list | 列出已注册插件 |
+| plugin.unregister | 注销插件 |
+
+**请求示例：**
+```json
+{
+  "type": "action",
+  "action": "plugin.register",
+  "data": {
+    "name": "my-plugin",
+    "port": 9001,
+    "skills": ["skill1", "skill2"]
+  }
+}
+```
+
+#### 系统管理 Actions
+
+| Action | 说明 |
+|--------|------|
+| system.health | 系统健康检查 |
+| system.status | 获取系统状态 |
+| system.info | 获取系统信息 |
+
+**请求示例：**
+```json
+{
+  "type": "action",
+  "action": "system.health"
+}
+```
+
+**响应示例：**
+```json
+{
+  "type": "action_result",
+  "action": "system.health",
+  "data": {
+    "status": "healthy",
+    "uptime": 86400,
+    "version": "1.0.0"
+  }
+}
+```
+
+#### MCP 协议 Actions
+
+| Action | 说明 |
+|--------|------|
+| mcp.connect | 连接 MCP 服务器 |
+| mcp.disconnect | 断开 MCP 服务器 |
+| mcp.tools | 获取 MCP 工具列表 |
+| mcp.call | 调用 MCP 工具 |
+| mcp.status | 获取 MCP 状态 |
+
+**请求示例：**
+```json
+{
+  "type": "action",
+  "action": "mcp.call",
+  "data": {
+    "server_name": "filesystem",
+    "tool_name": "read_file",
+    "arguments": {"path": "/tmp/test.txt"}
+  }
+}
+```
+
+#### 情感/特效 Actions
+
+| Action | 说明 |
+|--------|------|
+| emotions.list | 列出可用情感 |
+| emotions.parse | 解析文本情感 |
+| effects.list | 列出可用特效 |
+| effects.parse | 解析特效参数 |
+
+**请求示例：**
+```json
+{
+  "type": "action",
+  "action": "emotions.parse",
+  "data": {
+    "text": "今天真是太开心了！"
+  }
+}
+```
+
+**响应示例：**
+```json
+{
+  "type": "action_result",
+  "action": "emotions.parse",
+  "data": {
+    "emotion": "happy",
+    "intensity": 0.85,
+    "suggested_effects": ["sparkle", "bounce"]
+  }
+}
+```
+
+---
+
+## CXFC 插件联邦 API
+
+CXFC (CX-O Federation Connector) 插件联邦协议，用于插件的注册、发现、连接和生命周期管理。
+
+源文件：`server/api/routers/cxfc.py`，路由前缀 `/api`
+
+### 1. 注册插件
+
+**POST** `/api/cxfc/register`
+
+注册插件到 CXFC 联邦。
+
+**请求体：** `CXFCRegisterRequest`
+```json
+{
+  "name": "my-plugin",
+  "description": "我的自定义插件",
+  "host": "127.0.0.1",
+  "port": 9001,
+  "skills": ["skill1", "skill2"],
+  "version": "1.0.0"
+}
+```
+
+**响应示例：**
+```json
+{
+  "status": "success",
+  "plugin_id": "plugin-abc123",
+  "message": "插件注册成功"
+}
+```
+
+### 2. 插件心跳上报
+
+**POST** `/api/cxfc/heartbeat`
+
+插件定期上报心跳以维持在线状态。
+
+**请求体：** `CXFCHeartbeatRequest`
+```json
+{
+  "plugin_id": "plugin-abc123",
+  "port": 9001
+}
+```
+
+**响应示例：**
+```json
+{
+  "status": "success",
+  "message": "心跳已更新"
+}
+```
+
+### 3. 推送事件
+
+**POST** `/api/cxfc/event/push`
+
+推送事件到 CXFC 管理器。
+
+**请求体：** `CXFCEvent`
+```json
+{
+  "event_type": "data_update",
+  "source": "plugin-abc123",
+  "data": {
+    "key": "value"
+  }
+}
+```
+
+**响应示例：**
+```json
+{
+  "status": "success",
+  "message": "事件已推送"
+}
+```
+
+### 4. 发现已注册插件
+
+**GET** `/api/cxfc/discover`
+
+发现已注册插件列表。
+
+**查询参数：**
+| 参数 | 类型 | 必填 | 说明 |
+|------|------|------|------|
+| scan | boolean | 否 | 设为 true 时同时扫描网络中的插件，默认 false |
+
+**响应示例：**
+```json
+{
+  "status": "success",
+  "plugins": [
+    {
+      "plugin_id": "plugin-abc123",
+      "name": "my-plugin",
+      "host": "127.0.0.1",
+      "port": 9001,
+      "status": "online",
+      "skills": ["skill1", "skill2"]
+    }
+  ]
+}
+```
+
+### 5. 获取 CXFC Skills 列表
+
+**GET** `/api/cxfc/skills`
+
+获取所有已注册的 CXFC Skills 列表。
+
+**响应示例：**
+```json
+{
+  "status": "success",
+  "skills": [
+    {
+      "name": "skill1",
+      "description": "技能描述",
+      "plugin_id": "plugin-abc123"
+    }
+  ]
+}
+```
+
+### 6. 主动连接到指定插件
+
+**POST** `/api/cxfc/connect`
+
+主动连接到指定插件。
+
+**请求体：** `CXFCConnectRequest`
+```json
+{
+  "host": "192.168.1.100",
+  "port": 9001
+}
+```
+
+**响应示例：**
+```json
+{
+  "status": "success",
+  "plugin_id": "plugin-xyz789",
+  "message": "连接成功"
+}
+```
+
+### 7. 断开并移除指定插件
+
+**DELETE** `/api/cxfc/plugins/{plugin_id}`
+
+断开并移除指定插件。
+
+**路径参数：**
+- `plugin_id`: 插件ID
+
+**响应示例：**
+```json
+{
+  "status": "success",
+  "message": "插件已断开并移除"
+}
+```
+
+### 8. 列出所有已注册插件
+
+**GET** `/api/cxfc/plugins`
+
+列出所有已注册插件。
+
+**响应示例：**
+```json
+{
+  "status": "success",
+  "plugins": [
+    {
+      "plugin_id": "plugin-abc123",
+      "name": "my-plugin",
+      "host": "127.0.0.1",
+      "port": 9001,
+      "status": "online",
+      "last_heartbeat": "2024-01-01T00:00:00"
+    }
+  ],
+  "total": 1
+}
+```
+
+### 9. 刷新指定插件
+
+**POST** `/api/cxfc/plugins/{plugin_id}/refresh`
+
+刷新指定插件的连接状态和 Skill 信息。
+
+**路径参数：**
+- `plugin_id`: 插件ID
+
+**响应示例：**
+```json
+{
+  "status": "success",
+  "plugin_id": "plugin-abc123",
+  "message": "插件信息已刷新",
+  "skills": ["skill1", "skill2"]
+}
+```
+
+---
+
+## 记忆归档 API
+
+提供记忆的归档、合并、去重等高级管理功能。
+
+源文件：`server/api/routers/archive.py`，路由前缀 `/api`
+
+### 1. 归档单个记忆
+
+**POST** `/api/archive/memory`
+
+归档单个记忆到指定层级。
+
+**请求体：**
+```json
+{
+  "memory_id": 123,
+  "target_level": 2,
+  "compress": true
+}
+```
+
+**参数说明：**
+| 参数 | 类型 | 必填 | 说明 |
+|------|------|------|------|
+| memory_id | integer | 是 | 要归档的记忆ID |
+| target_level | integer | 是 | 目标归档层级 |
+| compress | boolean | 否 | 是否压缩，默认 true |
+
+**响应示例：**
+```json
+{
+  "status": "success",
+  "message": "记忆已归档",
+  "archive_id": 456,
+  "target_level": 2
+}
+```
+
+### 2. 合并重复记忆
+
+**POST** `/api/archive/merge`
+
+合并重复记忆为一条。
+
+**请求体：**
+```json
+{
+  "memory_ids": [1, 2, 3],
+  "strategy": "smart"
+}
+```
+
+**参数说明：**
+| 参数 | 类型 | 必填 | 说明 |
+|------|------|------|------|
+| memory_ids | array | 是 | 要合并的记忆ID列表，至少2个 |
+| strategy | string | 否 | 合并策略：smart（智能合并）/ simple（简单合并），默认 smart |
+
+**响应示例：**
+```json
+{
+  "status": "success",
+  "message": "记忆已合并",
+  "merged_memory_id": 999,
+  "source_count": 3
+}
+```
+
+### 3. 检测重复记忆
+
+**POST** `/api/archive/deduplicate`
+
+检测重复记忆，返回相似记忆组。
+
+**请求体：**
+```json
+{
+  "memory_ids": [1, 2, 3, 4, 5],
+  "threshold": 0.85
+}
+```
+
+**参数说明：**
+| 参数 | 类型 | 必填 | 说明 |
+|------|------|------|------|
+| memory_ids | array | 否 | 指定检测范围，为空则检测全部 |
+| threshold | float | 否 | 相似度阈值，默认使用全局阈值 |
+
+**响应示例：**
+```json
+{
+  "status": "success",
+  "duplicate_groups": [
+    {
+      "group_id": 1,
+      "memory_ids": [1, 3],
+      "similarity": 0.92
+    }
+  ],
+  "total_groups": 1
+}
+```
+
+### 4. 获取去重组列表
+
+**GET** `/api/archive/duplicates`
+
+获取所有去重组列表。
+
+**响应示例：**
+```json
+{
+  "status": "success",
+  "groups": [
+    {
+      "group_id": 1,
+      "memory_ids": [1, 3],
+      "similarity": 0.92,
+      "suggested_action": "merge"
+    }
+  ]
+}
+```
+
+### 5. 归档的归档（二次压缩）
+
+**POST** `/api/archive/of-archives`
+
+对已归档的记忆进行二次压缩。
+
+**请求体：**
+```json
+{
+  "target_level": 4
+}
+```
+
+**参数说明：**
+| 参数 | 类型 | 必填 | 说明 |
+|------|------|------|------|
+| target_level | integer | 否 | 目标层级，默认 4 |
+
+**响应示例：**
+```json
+{
+  "status": "success",
+  "message": "二次归档完成",
+  "archived_count": 15,
+  "target_level": 4
+}
+```
+
+### 6. 获取归档统计信息
+
+**GET** `/api/archive/stats`
+
+获取归档统计信息。
+
+**响应示例：**
+```json
+{
+  "status": "success",
+  "statistics": {
+    "total_archived": 50,
+    "by_level": {
+      "1": 10,
+      "2": 20,
+      "3": 15,
+      "4": 5
+    },
+    "total_merged": 8,
+    "space_saved": "35%"
+  }
+}
+```
+
+### 7. 获取归档层级定义
+
+**GET** `/api/archive/levels`
+
+获取归档层级定义。
+
+**响应示例：**
+```json
+{
+  "status": "success",
+  "levels": [
+    {
+      "level": 1,
+      "name": "轻度归档",
+      "compression_ratio": 0.8,
+      "max_retention_days": 90
+    },
+    {
+      "level": 2,
+      "name": "中度归档",
+      "compression_ratio": 0.6,
+      "max_retention_days": 180
+    },
+    {
+      "level": 3,
+      "name": "深度归档",
+      "compression_ratio": 0.4,
+      "max_retention_days": 365
+    },
+    {
+      "level": 4,
+      "name": "极限压缩",
+      "compression_ratio": 0.2,
+      "max_retention_days": null
+    }
+  ]
+}
+```
+
+### 8. 设置去重相似度阈值
+
+**POST** `/api/archive/threshold`
+
+设置去重相似度阈值。
+
+**请求体：**
+```json
+{
+  "threshold": 0.85
+}
+```
+
+**参数说明：**
+| 参数 | 类型 | 必填 | 说明 |
+|------|------|------|------|
+| threshold | float | 是 | 相似度阈值，范围 0.5~1.0 |
+
+**响应示例：**
+```json
+{
+  "status": "success",
+  "threshold": 0.85,
+  "message": "阈值已更新"
+}
+```
+
+### 9. 获取当前去重相似度阈值
+
+**GET** `/api/archive/threshold`
+
+获取当前去重相似度阈值。
+
+**响应示例：**
+```json
+{
+  "status": "success",
+  "threshold": 0.85
+}
+```
+
+### 10. 自动归档处理
+
+**POST** `/api/archive/auto-process`
+
+自动归档处理：归档旧记忆并合并重复项。
+
+**查询参数：**
+| 参数 | 类型 | 必填 | 说明 |
+|------|------|------|------|
+| min_age_days | integer | 否 | 最小记忆天数，默认 30 |
+| target_level | integer | 否 | 目标归档层级，默认 2 |
+| auto_merge | boolean | 否 | 是否自动合并重复项，默认 false |
+
+**响应示例：**
+```json
+{
+  "status": "success",
+  "archived_count": 25,
+  "merged_count": 5,
+  "target_level": 2,
+  "message": "自动归档处理完成"
+}
+```
+
+---
+
+## 向量数据库 API
+
+提供向量数据库的配置、状态查询、数据管理和搜索功能。
+
+源文件：`server/api/routers/vector.py`，路由前缀 `/api`
+
+### 1. 获取向量数据库配置
+
+**GET** `/api/vector/config`
+
+获取向量数据库配置信息。
+
+**响应示例：**
+```json
+{
+  "status": "success",
+  "config": {
+    "backend": "weaviate",
+    "vector_size": 384,
+    "host": "http://localhost:8080",
+    "collection_name": "cxo_memories"
+  }
+}
+```
+
+### 2. 获取向量数据库运行状态
+
+**GET** `/api/vector/status`
+
+获取向量数据库运行状态。
+
+**响应示例：**
+```json
+{
+  "status": "success",
+  "running": true,
+  "backend": "weaviate",
+  "connected": true,
+  "collections": 1
+}
+```
+
+### 3. 向量数据库健康检查
+
+**GET** `/api/vector/health`
+
+向量数据库健康检查。
+
+**响应示例：**
+```json
+{
+  "status": "healthy",
+  "backend": "weaviate",
+  "response_time_ms": 12
+}
+```
+
+### 4. 列出向量数据
+
+**GET** `/api/vector/vectors`
+
+列出向量数据。
+
+**查询参数：**
+| 参数 | 类型 | 必填 | 说明 |
+|------|------|------|------|
+| limit | integer | 否 | 返回数量，默认 20 |
+| offset | integer | 否 | 偏移量，默认 0 |
+| memory_type | string | 否 | 按记忆类型过滤 |
+
+**响应示例：**
+```json
+{
+  "status": "success",
+  "vectors": [
+    {
+      "memory_id": 1,
+      "memory_type": "long_term",
+      "vector_size": 384,
+      "created_at": "2024-01-01T00:00:00"
+    }
+  ],
+  "total": 100
+}
+```
+
+### 5. 获取指定记忆的向量数据详情
+
+**GET** `/api/vector/vectors/{memory_id}`
+
+获取指定记忆的向量数据详情。
+
+**路径参数：**
+- `memory_id`: 记忆ID
+
+**响应示例：**
+```json
+{
+  "status": "success",
+  "memory_id": 1,
+  "memory_type": "long_term",
+  "vector_size": 384,
+  "content_preview": "用户喜欢喝咖啡...",
+  "created_at": "2024-01-01T00:00:00"
+}
+```
+
+### 6. 删除指定记忆的向量数据
+
+**DELETE** `/api/vector/vectors/{memory_id}`
+
+删除指定记忆的向量数据。
+
+**路径参数：**
+- `memory_id`: 记忆ID
+
+**响应示例：**
+```json
+{
+  "status": "success",
+  "message": "向量数据已删除"
+}
+```
+
+### 7. 同步向量数据库
+
+**POST** `/api/vector/sync`
+
+同步向量数据库与 SQLite（增量同步）。
+
+**响应示例：**
+```json
+{
+  "status": "success",
+  "synced_count": 15,
+  "message": "增量同步完成"
+}
+```
+
+### 8. 重建全部向量数据
+
+**POST** `/api/vector/rebuild`
+
+重建全部向量数据（清空后全量同步）。
+
+**响应示例：**
+```json
+{
+  "status": "success",
+  "rebuilt_count": 100,
+  "message": "全量重建完成"
+}
+```
+
+### 9. 向量相似度搜索
+
+**POST** `/api/vector/search`
+
+基于向量相似度的语义搜索。
+
+**查询参数：**
+| 参数 | 类型 | 必填 | 说明 |
+|------|------|------|------|
+| query | string | 是 | 搜索查询文本 |
+| limit | integer | 否 | 返回数量，默认 10 |
+| min_score | float | 否 | 最低相似度分数，默认 0.5 |
+| memory_type | string | 否 | 按记忆类型过滤 |
+
+**响应示例：**
+```json
+{
+  "status": "success",
+  "results": [
+    {
+      "memory_id": 1,
+      "content": "用户喜欢喝咖啡",
+      "score": 0.92,
+      "memory_type": "long_term"
+    }
+  ],
+  "total": 1
+}
+```
+
+### 10. 获取向量数据库统计
+
+**GET** `/api/vector/stats`
+
+获取向量数据库统计信息。
+
+**响应示例：**
+```json
+{
+  "status": "success",
+  "statistics": {
+    "total_vectors": 100,
+    "by_type": {
+      "short_term": 20,
+      "long_term": 75,
+      "permanent": 5
+    },
+    "index_size_mb": 12.5,
+    "backend": "weaviate"
+  }
+}
+```
+
+---
+
+## 管理员 API
+
+管理员专用 API，需要 `X-API-Key` Header 认证。
+
+源文件：`server/api/routers/admin.py`，路由前缀 `/api`
+
+**认证方式：** 所有端点（除 `/health` 外）需要在请求头中携带 `X-API-Key`。
+
+```
+X-API-Key: your-admin-api-key
+```
+
+### 1. 获取管理仪表盘数据
+
+**GET** `/api/admin/dashboard`
+
+获取管理仪表盘数据。
+
+**请求头：**
+- `X-API-Key`: 管理员密钥（必填）
+
+**响应示例：**
+```json
+{
+  "status": "success",
+  "dashboard": {
+    "system": {
+      "uptime": 86400,
+      "cpu_usage": 45.2,
+      "memory_usage": 62.1
+    },
+    "memories": {
+      "total": 100,
+      "archived": 5
+    },
+    "agents": {
+      "total": 3,
+      "active": 2
+    },
+    "recent_activity": [
+      {
+        "type": "memory_created",
+        "timestamp": "2024-01-01T00:00:00"
+      }
+    ]
+  }
+}
+```
+
+### 2. 获取管理员统计
+
+**GET** `/api/admin/stats`
+
+获取管理员统计信息。
+
+**请求头：**
+- `X-API-Key`: 管理员密钥（必填）
+
+**响应示例：**
+```json
+{
+  "status": "success",
+  "statistics": {
+    "total_requests": 10000,
+    "total_errors": 50,
+    "avg_response_time_ms": 120,
+    "active_users": 5
+  }
+}
+```
+
+### 3. 管理员健康检查
+
+**GET** `/api/admin/health`
+
+管理员健康检查（无需认证）。
+
+**响应示例：**
+```json
+{
+  "status": "healthy",
+  "version": "1.0.0",
+  "components": {
+    "database": true,
+    "vector_db": true,
+    "llm": true
+  }
+}
+```
+
+### 4. 获取系统配置
+
+**GET** `/api/admin/config`
+
+获取系统配置。
+
+**请求头：**
+- `X-API-Key`: 管理员密钥（必填）
+
+**响应示例：**
+```json
+{
+  "status": "success",
+  "config": {
+    "system": {
+      "debug": false,
+      "log_level": "INFO"
+    },
+    "llm": {
+      "provider": "ollama",
+      "model": "qwen2.5:latest"
+    },
+    "vector": {
+      "backend": "weaviate"
+    }
+  }
+}
+```
+
+### 5. 更新系统配置
+
+**PUT** `/api/admin/config`
+
+更新系统配置。
+
+**请求头：**
+- `X-API-Key`: 管理员密钥（必填）
+
+**请求体：**
+```json
+{
+  "section": "system",
+  "data": {
+    "debug": true,
+    "log_level": "DEBUG"
+  }
+}
+```
+
+**响应示例：**
+```json
+{
+  "status": "success",
+  "message": "配置已更新"
+}
+```
+
+### 6. 获取系统日志
+
+**GET** `/api/admin/logs`
+
+获取系统日志。
+
+**请求头：**
+- `X-API-Key`: 管理员密钥（必填）
+
+**查询参数：**
+| 参数 | 类型 | 必填 | 说明 |
+|------|------|------|------|
+| level | string | 否 | 日志级别过滤（DEBUG/INFO/WARNING/ERROR） |
+| lines | integer | 否 | 返回行数，默认 100 |
+
+**响应示例：**
+```json
+{
+  "status": "success",
+  "logs": [
+    {
+      "timestamp": "2024-01-01T00:00:00",
+      "level": "INFO",
+      "message": "系统启动完成"
+    }
+  ]
+}
+```
+
+### 7. 创建数据备份
+
+**POST** `/api/admin/backup`
+
+创建数据备份。
+
+**请求头：**
+- `X-API-Key`: 管理员密钥（必填）
+
+**响应示例：**
+```json
+{
+  "status": "success",
+  "backup_id": "backup-20240101",
+  "message": "备份创建成功"
+}
+```
+
+---
+
+## Avatar 模型管理 API
+
+提供 VRM/Live2D 虚拟形象模型的上传、下载和管理功能。
+
+源文件：`server/api/routers/avatars.py`，路由前缀 `/api`
+
+### 1. 获取模型列表
+
+**GET** `/api/avatars`
+
+获取所有已上传的 VRM/Live2D 模型列表。
+
+**查询参数：**
+| 参数 | 类型 | 必填 | 说明 |
+|------|------|------|------|
+| type | string | 否 | 模型类型过滤：vrm / live2d |
+
+**响应示例：**
+```json
+{
+  "status": "success",
+  "avatars": [
+    {
+      "avatar_id": "avatar-001",
+      "name": "默认角色",
+      "avatar_type": "vrm",
+      "file_size": 5242880,
+      "created_at": "2024-01-01T00:00:00"
+    }
+  ],
+  "total": 1
+}
+```
+
+### 2. 上传模型文件
+
+**POST** `/api/avatars/upload`
+
+上传 VRM 或 Live2D 模型文件。
+
+**请求格式：** multipart/form-data
+
+**字段：**
+| 字段 | 类型 | 必填 | 说明 |
+|------|------|------|------|
+| file | file | 是 | 模型文件，限制 50MB |
+| name | string | 是 | 模型名称 |
+| avatar_type | string | 是 | 模型类型：vrm / live2d |
+
+**响应示例：**
+```json
+{
+  "status": "success",
+  "avatar_id": "avatar-002",
+  "name": "新角色",
+  "avatar_type": "vrm",
+  "message": "模型上传成功"
+}
+```
+
+### 3. 获取单个模型元数据
+
+**GET** `/api/avatars/{avatar_id}`
+
+获取单个模型的元数据。
+
+**路径参数：**
+- `avatar_id`: 模型ID
+
+**查询参数：**
+| 参数 | 类型 | 必填 | 说明 |
+|------|------|------|------|
+| avatar_type | string | 否 | 模型类型：vrm / live2d |
+
+**响应示例：**
+```json
+{
+  "status": "success",
+  "avatar": {
+    "avatar_id": "avatar-001",
+    "name": "默认角色",
+    "avatar_type": "vrm",
+    "file_size": 5242880,
+    "metadata": {},
+    "created_at": "2024-01-01T00:00:00",
+    "updated_at": "2024-01-01T00:00:00"
+  }
+}
+```
+
+### 4. 下载模型文件
+
+**GET** `/api/avatars/{avatar_id}/file`
+
+下载模型文件。
+
+**路径参数：**
+- `avatar_id`: 模型ID
+
+**查询参数：**
+| 参数 | 类型 | 必填 | 说明 |
+|------|------|------|------|
+| avatar_type | string | 否 | 模型类型：vrm / live2d |
+
+**响应：** 模型文件二进制流
+
+### 5. 更新模型元数据
+
+**PUT** `/api/avatars/{avatar_id}`
+
+更新模型元数据。
+
+**路径参数：**
+- `avatar_id`: 模型ID
+
+**查询参数：**
+| 参数 | 类型 | 必填 | 说明 |
+|------|------|------|------|
+| avatar_type | string | 否 | 模型类型：vrm / live2d |
+
+**请求体：**
+```json
+{
+  "name": "更新后的名称",
+  "metadata": {
+    "description": "角色描述"
+  }
+}
+```
+
+**响应示例：**
+```json
+{
+  "status": "success",
+  "message": "模型元数据已更新"
+}
+```
+
+### 6. 删除模型
+
+**DELETE** `/api/avatars/{avatar_id}`
+
+删除模型及其文件。
+
+**路径参数：**
+- `avatar_id`: 模型ID
+
+**查询参数：**
+| 参数 | 类型 | 必填 | 说明 |
+|------|------|------|------|
+| avatar_type | string | 否 | 模型类型：vrm / live2d |
+
+**响应示例：**
+```json
+{
+  "status": "success",
+  "message": "模型已删除"
+}
+```
+
+---
+
+## 备份管理 API
+
+提供数据备份的创建、恢复、导入导出等功能。
+
+源文件：`server/api/routers/backup.py`，路由前缀 `/api`
+
+### 1. 获取备份列表
+
+**GET** `/api/backups`
+
+获取所有备份列表。
+
+**响应示例：**
+```json
+{
+  "status": "success",
+  "backups": [
+    {
+      "backup_id": "backup-001",
+      "backup_type": "full",
+      "description": "每日全量备份",
+      "size_mb": 128.5,
+      "created_at": "2024-01-01T00:00:00"
+    }
+  ],
+  "total": 1
+}
+```
+
+### 2. 创建新备份
+
+**POST** `/api/backups`
+
+创建新备份。
+
+**请求体：**
+```json
+{
+  "backup_type": "full",
+  "description": "手动全量备份"
+}
+```
+
+**参数说明：**
+| 参数 | 类型 | 必填 | 说明 |
+|------|------|------|------|
+| backup_type | string | 是 | 备份类型：full / incremental / differential |
+| description | string | 否 | 备份描述 |
+
+**响应示例：**
+```json
+{
+  "status": "success",
+  "backup_id": "backup-002",
+  "backup_type": "full",
+  "message": "备份创建成功"
+}
+```
+
+### 3. 获取备份详情
+
+**GET** `/api/backups/{backup_id}`
+
+获取备份详情。
+
+**路径参数：**
+- `backup_id`: 备份ID
+
+**响应示例：**
+```json
+{
+  "status": "success",
+  "backup": {
+    "backup_id": "backup-001",
+    "backup_type": "full",
+    "description": "每日全量备份",
+    "size_mb": 128.5,
+    "file_count": 15,
+    "created_at": "2024-01-01T00:00:00"
+  }
+}
+```
+
+### 4. 恢复指定备份
+
+**POST** `/api/backups/{backup_id}/restore`
+
+恢复指定备份。
+
+**路径参数：**
+- `backup_id`: 备份ID
+
+**响应示例：**
+```json
+{
+  "status": "success",
+  "backup_id": "backup-001",
+  "message": "备份恢复成功"
+}
+```
+
+### 5. 删除指定备份
+
+**DELETE** `/api/backups/{backup_id}`
+
+删除指定备份。
+
+**路径参数：**
+- `backup_id`: 备份ID
+
+**响应示例：**
+```json
+{
+  "status": "success",
+  "message": "备份已删除"
+}
+```
+
+### 6. 获取备份统计
+
+**GET** `/api/backups/stats`
+
+获取备份统计信息。
+
+**响应示例：**
+```json
+{
+  "status": "success",
+  "statistics": {
+    "total_backups": 5,
+    "total_size_mb": 640.0,
+    "by_type": {
+      "full": 2,
+      "incremental": 2,
+      "differential": 1
+    },
+    "latest_backup": "2024-01-01T00:00:00"
+  }
+}
+```
+
+### 7. 导入备份文件
+
+**POST** `/api/backups/import`
+
+导入备份文件。
+
+**请求格式：** multipart/form-data
+
+**字段：**
+- `file`: 备份文件（zip 格式）
+
+**响应示例：**
+```json
+{
+  "status": "success",
+  "backup_id": "backup-imported-001",
+  "message": "备份导入成功"
+}
+```
+
+### 8. 导出备份文件
+
+**GET** `/api/backups/{backup_id}/export`
+
+导出备份文件。
+
+**路径参数：**
+- `backup_id`: 备份ID
+
+**响应：** 备份文件二进制流（zip 格式）
+
+---
+
+## 服务管理 API
+
+提供后端服务的运行状态查询、启停控制和配置管理功能。
+
+源文件：`server/api/routers/service.py`，路由前缀 `/api`
+
+### 1. 获取服务运行状态
+
+**GET** `/api/service/status`
+
+获取后端服务运行状态。
+
+**响应示例：**
+```json
+{
+  "status": "success",
+  "service": {
+    "running": true,
+    "pid": 12345,
+    "port": 8000,
+    "uptime_seconds": 86400,
+    "uptime_formatted": "1 day, 0:00:00"
+  }
+}
+```
+
+### 2. 启动后端服务
+
+**POST** `/api/service/start`
+
+启动后端服务。
+
+**响应示例：**
+```json
+{
+  "status": "success",
+  "message": "服务启动成功",
+  "pid": 12345
+}
+```
+
+### 3. 停止后端服务
+
+**POST** `/api/service/stop`
+
+停止后端服务。
+
+**响应示例：**
+```json
+{
+  "status": "success",
+  "message": "服务已停止"
+}
+```
+
+### 4. 重启后端服务
+
+**POST** `/api/service/restart`
+
+重启后端服务。
+
+**响应示例：**
+```json
+{
+  "status": "success",
+  "message": "服务重启成功",
+  "pid": 12346
+}
+```
+
+### 5. 获取服务日志
+
+**GET** `/api/service/logs`
+
+获取服务日志。
+
+**查询参数：**
+| 参数 | 类型 | 必填 | 说明 |
+|------|------|------|------|
+| lines | integer | 否 | 返回行数，默认 100 |
+
+**响应示例：**
+```json
+{
+  "status": "success",
+  "logs": [
+    "[INFO] 2024-01-01 00:00:00 - 服务启动完成",
+    "[INFO] 2024-01-01 00:00:01 - 数据库连接成功"
+  ]
+}
+```
+
+### 6. 获取服务配置
+
+**GET** `/api/service/config`
+
+获取当前服务配置。
+
+**响应示例：**
+```json
+{
+  "status": "success",
+  "config": {
+    "host": "0.0.0.0",
+    "port": 8000,
+    "workers": 1,
+    "log_level": "INFO"
+  }
+}
+```
+
+### 7. 更新服务配置
+
+**PUT** `/api/service/config`
+
+更新服务配置（需重启生效）。
+
+**请求体：**
+```json
+{
+  "log_level": "DEBUG",
+  "workers": 2
+}
+```
+
+**响应示例：**
+```json
+{
+  "status": "success",
+  "message": "配置已更新，需重启服务生效"
+}
+```
+
+### 8. 更新服务配置（POST）
+
+**POST** `/api/service/config`
+
+更新服务配置（同 PUT，需重启生效）。
+
+**请求体：** 同 PUT `/api/service/config`
+
+### 9. 获取运行环境信息
+
+**GET** `/api/service/environment`
+
+获取运行环境信息。
+
+**响应示例：**
+```json
+{
+  "status": "success",
+  "environment": {
+    "python_version": "3.11.0",
+    "os": "Linux",
+    "cpu_count": 8,
+    "memory_total_gb": 16.0,
+    "cuda_available": true
+  }
+}
+```
+
+### 10. 获取启动命令信息
+
+**GET** `/api/service/startup-command`
+
+获取启动命令信息。
+
+**响应示例：**
+```json
+{
+  "status": "success",
+  "command": "python -m uvicorn server.main:app --host 0.0.0.0 --port 8000",
+  "working_directory": "/app"
+}
+```
+
+### 11. 获取可用模型列表
+
+**GET** `/api/service/models`
+
+获取可用模型列表。
+
+**响应示例：**
+```json
+{
+  "status": "success",
+  "models": [
+    {
+      "name": "qwen2.5:latest",
+      "provider": "ollama",
+      "size": "4.7GB",
+      "status": "available"
+    }
+  ]
+}
+```
+
+### 12. 获取单体架构网关配置
+
+**GET** `/api/config/gateway`
+
+获取单体架构网关配置。
+
+**响应示例：**
+```json
+{
+  "status": "success",
+  "gateway": {
+    "mode": "monolithic",
+    "port": 8000,
+    "routes": {
+      "api": "/api",
+      "ws": "/api/ws"
+    }
+  }
+}
+```
+
+---
+
+## 记忆对话 API
+
+与记忆管理模型进行自然语言对话，支持通过自然语言指令管理记忆。
+
+### 1. 记忆管理对话
+
+**POST** `/api/memory-chat`
+
+与记忆管理模型自然语言对话。
+
+**请求体：**
+```json
+{
+  "message": "帮我搜索关于咖啡的记忆",
+  "session_id": "optional-session-id"
+}
+```
+
+**参数说明：**
+| 参数 | 类型 | 必填 | 说明 |
+|------|------|------|------|
+| message | string | 是 | 用户消息内容 |
+| session_id | string | 否 | 会话ID，不提供则创建新会话 |
+
+**响应示例：**
+```json
+{
+  "status": "success",
+  "response": "找到了2条关于咖啡的记忆：1. 用户喜欢喝咖啡... 2. 用户偏好拿铁...",
+  "session_id": "memory-chat-abc123"
+}
+```
+
+### 2. 获取对话会话历史
+
+**GET** `/api/memory-chat/sessions/{session_id}`
+
+获取对话会话历史。
+
+**路径参数：**
+- `session_id`: 会话ID
+
+**响应示例：**
+```json
+{
+  "status": "success",
+  "session_id": "memory-chat-abc123",
+  "messages": [
+    {
+      "role": "user",
+      "content": "帮我搜索关于咖啡的记忆",
+      "created_at": "2024-01-01T00:00:00"
+    },
+    {
+      "role": "assistant",
+      "content": "找到了2条关于咖啡的记忆...",
+      "created_at": "2024-01-01T00:00:01"
+    }
+  ]
+}
+```
+
+### 3. 清除指定对话会话
+
+**DELETE** `/api/memory-chat/sessions/{session_id}`
+
+清除指定对话会话。
+
+**路径参数：**
+- `session_id`: 会话ID
+
+**响应示例：**
+```json
+{
+  "status": "success",
+  "message": "会话已清除"
+}
+```
+
+### 4. 列出可用记忆管理命令
+
+**GET** `/api/memory-chat/commands`
+
+列出可用的记忆管理命令。
+
+**响应示例：**
+```json
+{
+  "status": "success",
+  "commands": [
+    {
+      "name": "search",
+      "description": "搜索记忆",
+      "usage": "搜索 [关键词]"
+    },
+    {
+      "name": "archive",
+      "description": "归档记忆",
+      "usage": "归档 [记忆ID]"
+    },
+    {
+      "name": "merge",
+      "description": "合并重复记忆",
+      "usage": "合并 [记忆ID1] [记忆ID2]"
+    }
+  ]
+}
+```
 
 ---
 

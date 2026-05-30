@@ -175,7 +175,7 @@ export function VoiceWorkstationPage() {
     setTrainTraining(true);
     try {
       await api.startSoVITSSVCTrain({
-        ref_audio_path: trainDataDir,
+        training_data_dir: trainDataDir,
         model_name: trainSpeakerName || undefined,
         epochs: trainEpochs,
         batch_size: trainBatchSize,
