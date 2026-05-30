@@ -1,4 +1,5 @@
 import { VRM, VRMExpressionPresetName } from '@pixiv/three-vrm';
+import type { ExpressionLayer } from '../Avatar/avatarManifest';
 
 export type EmotionType = 'happy' | 'angry' | 'sad' | 'surprised' | 'relaxed' | 'neutral';
 
@@ -6,6 +7,63 @@ export interface EmotionConfig {
   intensity: number;
   duration: number;
   recoverSpeed: number;
+}
+
+const LLM_EMOTION_MAP: Record<string, EmotionType> = {
+  happy: 'happy',
+  joy: 'happy',
+  excited: 'happy',
+  cheerful: 'happy',
+  delighted: 'happy',
+  glad: 'happy',
+  pleased: 'happy',
+  angry: 'angry',
+  fury: 'angry',
+  rage: 'angry',
+  mad: 'angry',
+  irritated: 'angry',
+  annoyed: 'angry',
+  sad: 'sad',
+  sorrow: 'sad',
+  grief: 'sad',
+  melancholy: 'sad',
+  depressed: 'sad',
+  gloomy: 'sad',
+  surprised: 'surprised',
+  shock: 'surprised',
+  amazed: 'surprised',
+  astonished: 'surprised',
+  startled: 'surprised',
+  relaxed: 'relaxed',
+  calm: 'relaxed',
+  peaceful: 'relaxed',
+  serene: 'relaxed',
+  content: 'relaxed',
+  neutral: 'neutral',
+  default: 'neutral',
+  none: 'neutral',
+  idle: 'neutral',
+};
+
+const EMOTION_PRESET_MAP: Record<EmotionType, VRMExpressionPresetName[]> = {
+  happy: [VRMExpressionPresetName.Happy],
+  angry: [VRMExpressionPresetName.Angry],
+  sad: [VRMExpressionPresetName.Sad],
+  surprised: [VRMExpressionPresetName.Surprised],
+  relaxed: [VRMExpressionPresetName.Relaxed],
+  neutral: [],
+};
+
+const ALL_EMOTION_PRESETS: VRMExpressionPresetName[] = [
+  VRMExpressionPresetName.Happy,
+  VRMExpressionPresetName.Angry,
+  VRMExpressionPresetName.Sad,
+  VRMExpressionPresetName.Surprised,
+  VRMExpressionPresetName.Relaxed,
+];
+
+export function mapLLMEmotion(emotion: string): EmotionType {
+  return LLM_EMOTION_MAP[emotion.toLowerCase()] ?? 'neutral';
 }
 
 export class VRMExpression {
@@ -18,15 +76,8 @@ export class VRMExpression {
     duration: 3.0,
     recoverSpeed: 0.5,
   };
-
-  private emotionMap: Record<EmotionType, VRMExpressionPresetName[]> = {
-    happy: [VRMExpressionPresetName.Happy],
-    angry: [VRMExpressionPresetName.Angry],
-    sad: [VRMExpressionPresetName.Sad],
-    surprised: [VRMExpressionPresetName.Surprised],
-    relaxed: [VRMExpressionPresetName.Relaxed],
-    neutral: [],
-  };
+  private activeExpressionMix: ExpressionLayer[] = [];
+  private mixBlendShapeValues: Map<string, number> = new Map();
 
   bindVRM(vrm: VRM): void {
     this.vrm = vrm;
@@ -36,10 +87,75 @@ export class VRMExpression {
     this.config = { ...this.config, ...config };
   }
 
-  setEmotion(emotion: EmotionType): void {
-    if (this.targetEmotion === emotion) return;
-    this.targetEmotion = emotion;
+  setEmotion(emotion: EmotionType | string, intensity?: number): void {
+    const resolvedEmotion = typeof emotion === 'string' && !this.isEmotionType(emotion)
+      ? mapLLMEmotion(emotion)
+      : emotion as EmotionType;
+
+    if (this.targetEmotion === resolvedEmotion && intensity === undefined) return;
+    this.targetEmotion = resolvedEmotion;
+    if (intensity !== undefined) {
+      this.emotionWeight = Math.max(0, Math.min(1, intensity));
+    }
     this.emotionTimer = this.config.duration;
+  }
+
+  applyExpressionMix(mix: ExpressionLayer[]): void {
+    this.activeExpressionMix = mix;
+    this.rebuildMixBlendShapes();
+  }
+
+  getActiveExpressionMix(): ExpressionLayer[] {
+    return this.activeExpressionMix;
+  }
+
+  private isEmotionType(value: string): value is EmotionType {
+    return ['happy', 'angry', 'sad', 'surprised', 'relaxed', 'neutral'].includes(value);
+  }
+
+  private rebuildMixBlendShapes(): void {
+    this.mixBlendShapeValues.clear();
+    if (!this.vrm) return;
+    const em = this.vrm.expressionManager;
+    if (!em) return;
+
+    for (const layer of this.activeExpressionMix) {
+      const presetName = this.layerKeyToPreset(layer.key);
+      if (presetName && em.getValue(presetName as keyof typeof VRMExpressionPresetName) !== undefined) {
+        const current = this.mixBlendShapeValues.get(presetName) ?? 0;
+        this.mixBlendShapeValues.set(presetName, Math.min(1, current + layer.weight));
+      }
+    }
+  }
+
+  private layerKeyToPreset(key: string): string | null {
+    const lower = key.toLowerCase();
+    const presetMap: Record<string, string> = {
+      happy: 'Happy',
+      angry: 'Angry',
+      sad: 'Sad',
+      surprised: 'Surprised',
+      relaxed: 'Relaxed',
+      neutral: 'Neutral',
+      blink: 'Blink',
+      blinkl: 'BlinkL',
+      blinkr: 'BlinkR',
+      aa: 'Aa',
+      ih: 'Ih',
+      ou: 'Ou',
+      ee: 'Ee',
+      oh: 'Oh',
+      a: 'A',
+      i: 'I',
+      u: 'U',
+      e: 'E',
+      o: 'O',
+      lookup: 'LookUp',
+      lookdown: 'LookDown',
+      lookleft: 'LookLeft',
+      lookright: 'LookRight',
+    };
+    return presetMap[lower] ?? null;
   }
 
   update(deltaTime: number): void {
@@ -47,7 +163,6 @@ export class VRMExpression {
     const em = this.vrm.expressionManager;
     if (!em) return;
 
-    // Update emotion timer
     if (this.emotionTimer > 0) {
       this.emotionTimer -= deltaTime;
       if (this.emotionTimer <= 0) {
@@ -55,7 +170,6 @@ export class VRMExpression {
       }
     }
 
-    // Smooth weight transition
     const targetWeight = this.targetEmotion === 'neutral' ? 0 : this.config.intensity;
     const speed = this.targetEmotion === 'neutral' ? this.config.recoverSpeed : 2.0;
     const diff = targetWeight - this.emotionWeight;
@@ -65,33 +179,27 @@ export class VRMExpression {
       this.emotionWeight = targetWeight;
     }
 
-    // Reset all emotion blend shapes
-    const emotionPresets: VRMExpressionPresetName[] = [
-      VRMExpressionPresetName.Happy,
-      VRMExpressionPresetName.Angry,
-      VRMExpressionPresetName.Sad,
-      VRMExpressionPresetName.Surprised,
-      VRMExpressionPresetName.Relaxed,
-    ];
     Object.values(VRMExpressionPresetName).forEach((preset) => {
-      if (emotionPresets.includes(preset as VRMExpressionPresetName)) {
+      if (ALL_EMOTION_PRESETS.includes(preset as VRMExpressionPresetName)) {
         em.setValue(preset, 0);
       }
     });
 
-    // Apply current emotion
     if (this.emotionWeight > 0.01 && this.targetEmotion !== 'neutral') {
-      const presets = this.emotionMap[this.targetEmotion];
+      const presets = EMOTION_PRESET_MAP[this.targetEmotion];
       presets.forEach((preset) => {
         em.setValue(preset, this.emotionWeight);
       });
     }
 
-    // Update current emotion when transition completes
-    if (this.emotionWeight < 0.01 && this.targetEmotion === 'neutral') {
-      // transitioned to neutral
-    } else if (this.emotionWeight > 0.99 && this.targetEmotion !== 'neutral') {
-      // transitioned to target emotion
+    for (const [name, value] of this.mixBlendShapeValues) {
+      const current = em.getValue(name as keyof typeof VRMExpressionPresetName);
+      if (typeof current === 'number') {
+        const isEmotionPreset = ALL_EMOTION_PRESETS.includes(name as VRMExpressionPresetName);
+        if (!isEmotionPreset || this.emotionWeight < 0.01) {
+          em.setValue(name as keyof typeof VRMExpressionPresetName, value);
+        }
+      }
     }
   }
 
@@ -99,18 +207,13 @@ export class VRMExpression {
     this.targetEmotion = 'neutral';
     this.emotionWeight = 0;
     this.emotionTimer = 0;
+    this.activeExpressionMix = [];
+    this.mixBlendShapeValues.clear();
     if (!this.vrm) return;
     const em = this.vrm.expressionManager;
     if (!em) return;
-    const emotionPresets: VRMExpressionPresetName[] = [
-      VRMExpressionPresetName.Happy,
-      VRMExpressionPresetName.Angry,
-      VRMExpressionPresetName.Sad,
-      VRMExpressionPresetName.Surprised,
-      VRMExpressionPresetName.Relaxed,
-    ];
     Object.values(VRMExpressionPresetName).forEach((preset) => {
-      if (emotionPresets.includes(preset as VRMExpressionPresetName)) {
+      if (ALL_EMOTION_PRESETS.includes(preset as VRMExpressionPresetName)) {
         em.setValue(preset, 0);
       }
     });

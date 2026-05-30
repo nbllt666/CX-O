@@ -4,7 +4,8 @@
 import json
 import logging
 import time
-from typing import TYPE_CHECKING
+from dataclasses import dataclass
+from typing import TYPE_CHECKING, Optional
 
 from server.protocol.message import create_response, create_error, create_stream
 from server.protocol.actions import ChatActions
@@ -13,6 +14,71 @@ if TYPE_CHECKING:
     from server.core.websocket.manager import WebSocketManager
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass
+class ChatContext:
+    agent_config: dict
+    context_mgr: object
+    llm: object
+    session_id: str
+    memory_context: Optional[str] = None
+
+
+async def _build_chat_context(
+    agent_id: str,
+    user_message: str,
+    manager: "WebSocketManager",
+    client_id: str,
+    request_id: str,
+    action: str,
+) -> Optional[ChatContext]:
+    from server.dependencies import get_context_manager, get_memory_manager
+
+    agent_config = _get_agent_config(agent_id)
+    if not agent_config:
+        await manager.send_message(client_id, create_error(
+            request_id=request_id,
+            action=action,
+            code="AGENT_NOT_FOUND",
+            message=f"Agent '{agent_id}' 不存在"
+        ))
+        return None
+
+    memory_mgr = get_memory_manager()
+    context_mgr = get_context_manager()
+    llm = _get_llm_client_for_agent(agent_config)
+
+    session_id = f"agent-{agent_id}"
+    existing_session = context_mgr.get_session(session_id)
+    if not existing_session:
+        context_mgr.create_session(
+            workspace_id="agent-chats",
+            title=f"{agent_config['name']} 的对话",
+            session_id=session_id,
+            metadata={"agent_id": agent_id},
+        )
+
+    context_mgr.add_message(session_id=session_id, role="user", content=user_message)
+
+    memory_context = None
+    if agent_config.get("use_memory", True) and memory_mgr:
+        from server.core.memory.router import MemoryRouter
+        router = MemoryRouter(memory_manager=memory_mgr)
+        routing_result = await router.route(
+            query=user_message, session_id=session_id,
+            scene_type=agent_config.get("memory_scene", "chat"),
+        )
+        if routing_result.memories:
+            memory_context = "\n".join([f"- {m['content']}" for m in routing_result.memories[:5]])
+
+    return ChatContext(
+        agent_config=agent_config,
+        context_mgr=context_mgr,
+        llm=llm,
+        session_id=session_id,
+        memory_context=memory_context,
+    )
 
 
 def _get_agent_config(agent_id: str):
@@ -164,6 +230,24 @@ def _get_tools_for_agent(agent_config):
     return tools
 
 
+def _parse_tool_args(tool_call: dict) -> dict:
+    tool_args = tool_call.get("arguments") or tool_call.get("function", {}).get("arguments", "{}")
+
+    if isinstance(tool_args, str):
+        try:
+            tool_args = json.loads(tool_args)
+        except json.JSONDecodeError:
+            try:
+                import ast
+                tool_args = ast.literal_eval(tool_args)
+                if not isinstance(tool_args, dict):
+                    tool_args = {}
+            except Exception:
+                tool_args = {}
+
+    return tool_args if isinstance(tool_args, dict) else {}
+
+
 async def _process_tool_calls(tool_calls_buffer, messages, llm, agent_config):
     from server.core.tools import tool_registry
     from server.core.tools.builtin import call_builtin_tool
@@ -172,19 +256,7 @@ async def _process_tool_calls(tool_calls_buffer, messages, llm, agent_config):
 
     for tool_call in tool_calls_buffer:
         tool_name = tool_call.get("name") or tool_call.get("function", {}).get("name")
-        tool_args = tool_call.get("arguments") or tool_call.get("function", {}).get("arguments", "{}")
-
-        if isinstance(tool_args, str):
-            try:
-                tool_args = json.loads(tool_args)
-            except json.JSONDecodeError:
-                try:
-                    import ast
-                    tool_args = ast.literal_eval(tool_args)
-                    if not isinstance(tool_args, dict):
-                        tool_args = {}
-                except Exception:
-                    tool_args = {}
+        tool_args = _parse_tool_args(tool_call)
 
         if tool_name in BUILTIN_TOOL_NAMES:
             tool_result = call_builtin_tool(tool_name, tool_args or {})
@@ -214,67 +286,32 @@ def register_chat_handlers(manager: "WebSocketManager"):
         data = message.get("data", {})
 
         try:
-            from server.dependencies import get_context_manager, get_memory_manager
-
             agent_id = data.get("agent_id", "default")
             text = data.get("text", "")
             images = data.get("images")
 
-            agent_config = _get_agent_config(agent_id)
-            if not agent_config:
-                await _manager.send_message(client_id, create_error(
-                    request_id=request_id,
-                    action=ChatActions.MESSAGE,
-                    code="AGENT_NOT_FOUND",
-                    message=f"Agent '{agent_id}' 不存在"
-                ))
+            ctx = await _build_chat_context(agent_id, text, _manager, client_id, request_id, ChatActions.MESSAGE)
+            if not ctx:
                 return
 
-            memory_mgr = get_memory_manager()
-            context_mgr = get_context_manager()
-            llm = _get_llm_client_for_agent(agent_config)
+            messages = _build_messages(ctx.agent_config, ctx.context_mgr, ctx.session_id, text, ctx.memory_context, images)
+            tools = _get_tools_for_agent(ctx.agent_config)
 
-            session_id = f"agent-{agent_id}"
-            existing_session = context_mgr.get_session(session_id)
-            if not existing_session:
-                context_mgr.create_session(
-                    workspace_id="agent-chats",
-                    title=f"{agent_config['name']} 的对话",
-                    session_id=session_id,
-                    metadata={"agent_id": agent_id},
-                )
-
-            context_mgr.add_message(session_id=session_id, role="user", content=text)
-
-            memory_context = None
-            if agent_config.get("use_memory", True) and memory_mgr:
-                from server.core.memory.router import MemoryRouter
-                router = MemoryRouter(memory_manager=memory_mgr)
-                routing_result = await router.route(
-                    query=text, session_id=session_id,
-                    scene_type=agent_config.get("memory_scene", "chat"),
-                )
-                if routing_result.memories:
-                    memory_context = "\n".join([f"- {m['content']}" for m in routing_result.memories[:5]])
-
-            messages = _build_messages(agent_config, context_mgr, session_id, text, memory_context, images)
-            tools = _get_tools_for_agent(agent_config)
-
-            response = await llm.chat(messages=messages, stream=False, tools=tools)
+            response = await ctx.llm.chat(messages=messages, stream=False, tools=tools)
 
             final_response = response.content
             if hasattr(response, "tool_calls") and response.tool_calls:
-                response = await _process_tool_calls(response.tool_calls, messages, llm, agent_config)
+                response = await _process_tool_calls(response.tool_calls, messages, ctx.llm, ctx.agent_config)
                 final_response = response.content
 
-            context_mgr.add_message(session_id=session_id, role="assistant", content=final_response)
+            ctx.context_mgr.add_message(session_id=ctx.session_id, role="assistant", content=final_response)
 
             await _manager.send_message(client_id, create_response(
                 request_id=request_id,
                 action=ChatActions.MESSAGE,
                 data={
                     "content": final_response,
-                    "session_id": session_id,
+                    "session_id": ctx.session_id,
                     "tokens_used": response.usage.get("total_tokens", 0) if response.usage else 0,
                 }
             ))
@@ -292,59 +329,24 @@ def register_chat_handlers(manager: "WebSocketManager"):
         data = message.get("data", {})
 
         try:
-            from server.dependencies import get_context_manager, get_memory_manager
-
             agent_id = data.get("agent_id", "default")
             text = data.get("text", "")
 
-            agent_config = _get_agent_config(agent_id)
-            if not agent_config:
-                await _manager.send_message(client_id, create_error(
-                    request_id=request_id,
-                    action=ChatActions.STREAM,
-                    code="AGENT_NOT_FOUND",
-                    message=f"Agent '{agent_id}' 不存在"
-                ))
+            ctx = await _build_chat_context(agent_id, text, _manager, client_id, request_id, ChatActions.STREAM)
+            if not ctx:
                 return
 
-            memory_mgr = get_memory_manager()
-            context_mgr = get_context_manager()
-            llm = _get_llm_client_for_agent(agent_config)
-
-            session_id = f"agent-{agent_id}"
-            existing_session = context_mgr.get_session(session_id)
-            if not existing_session:
-                context_mgr.create_session(
-                    workspace_id="agent-chats",
-                    title=f"{agent_config['name']} 的对话",
-                    session_id=session_id,
-                    metadata={"agent_id": agent_id},
-                )
-
-            context_mgr.add_message(session_id=session_id, role="user", content=text)
-
-            memory_context = None
-            if agent_config.get("use_memory", True) and memory_mgr:
-                from server.core.memory.router import MemoryRouter
-                router = MemoryRouter(memory_manager=memory_mgr)
-                routing_result = await router.route(
-                    query=text, session_id=session_id,
-                    scene_type=agent_config.get("memory_scene", "chat"),
-                )
-                if routing_result.memories:
-                    memory_context = "\n".join([f"- {m['content']}" for m in routing_result.memories[:5]])
-
-            messages = _build_messages(agent_config, context_mgr, session_id, text, memory_context)
-            tools = _get_tools_for_agent(agent_config)
+            messages = _build_messages(ctx.agent_config, ctx.context_mgr, ctx.session_id, text, ctx.memory_context)
+            tools = _get_tools_for_agent(ctx.agent_config)
 
             full_response = ""
             tool_calls_buffer = []
             chunk_index = 0
 
-            async for chunk in llm.stream_chat(
+            async for chunk in ctx.llm.stream_chat(
                 messages=messages,
-                temperature=agent_config.get("temperature", 0.7),
-                max_tokens=agent_config.get("max_tokens", 4096),
+                temperature=ctx.agent_config.get("temperature", 0.7),
+                max_tokens=ctx.agent_config.get("max_tokens", 4096),
                 tools=tools,
             ):
                 if chunk:
@@ -378,46 +380,13 @@ def register_chat_handlers(manager: "WebSocketManager"):
                         chunk_index += 1
 
             if tool_calls_buffer:
-                from server.core.tools import tool_registry
-                from server.core.tools.builtin import call_builtin_tool
-
-                BUILTIN_TOOL_NAMES = {"calculator", "datetime", "random", "json_format"}
-
-                for tool_call in tool_calls_buffer:
-                    tool_name = tool_call.get("name") or tool_call.get("function", {}).get("name")
-                    tool_args = tool_call.get("arguments") or tool_call.get("function", {}).get("arguments", "{}")
-
-                    if isinstance(tool_args, str):
-                        try:
-                            tool_args = json.loads(tool_args)
-                        except json.JSONDecodeError:
-                            try:
-                                import ast
-                                tool_args = ast.literal_eval(tool_args)
-                                if not isinstance(tool_args, dict):
-                                    tool_args = {}
-                            except Exception:
-                                tool_args = {}
-
-                    if tool_name in BUILTIN_TOOL_NAMES:
-                        tool_result = call_builtin_tool(tool_name, tool_args or {})
-                    else:
-                        tool_result = tool_registry.call_tool(tool_name, tool_args)
-
-                    messages.append({"role": "assistant", "content": None, "tool_calls": [tool_call]})
-                    tool_call_id = tool_call.get("id", "")
-                    messages.append({
-                        "role": "tool",
-                        "tool_call_id": tool_call_id,
-                        "name": tool_name,
-                        "content": json.dumps(tool_result, ensure_ascii=False),
-                    })
+                await _process_tool_calls(tool_calls_buffer, messages, ctx.llm, ctx.agent_config)
 
                 full_response = ""
-                async for chunk in llm.stream_chat(
+                async for chunk in ctx.llm.stream_chat(
                     messages=messages,
-                    temperature=agent_config.get("temperature", 0.7),
-                    max_tokens=agent_config.get("max_tokens", 4096),
+                    temperature=ctx.agent_config.get("temperature", 0.7),
+                    max_tokens=ctx.agent_config.get("max_tokens", 4096),
                 ):
                     if chunk:
                         if isinstance(chunk, dict):
@@ -447,7 +416,7 @@ def register_chat_handlers(manager: "WebSocketManager"):
                             chunk_index += 1
 
             if full_response:
-                context_mgr.add_message(session_id=session_id, role="assistant", content=full_response)
+                ctx.context_mgr.add_message(session_id=ctx.session_id, role="assistant", content=full_response)
 
             await _manager.send_message(client_id, create_stream(
                 request_id=request_id,
@@ -472,67 +441,32 @@ def register_chat_handlers(manager: "WebSocketManager"):
         data = message.get("data", {})
 
         try:
-            from server.dependencies import get_context_manager, get_memory_manager
-
             agent_id = data.get("agent_id", "default")
             text = data.get("text", "")
             images = data.get("images")
 
-            agent_config = _get_agent_config(agent_id)
-            if not agent_config:
-                await _manager.send_message(client_id, create_error(
-                    request_id=request_id,
-                    action=ChatActions.MULTIMODAL,
-                    code="AGENT_NOT_FOUND",
-                    message=f"Agent '{agent_id}' 不存在"
-                ))
+            ctx = await _build_chat_context(agent_id, text, _manager, client_id, request_id, ChatActions.MULTIMODAL)
+            if not ctx:
                 return
 
-            memory_mgr = get_memory_manager()
-            context_mgr = get_context_manager()
-            llm = _get_llm_client_for_agent(agent_config)
+            messages = _build_messages(ctx.agent_config, ctx.context_mgr, ctx.session_id, text, ctx.memory_context, images)
+            tools = _get_tools_for_agent(ctx.agent_config)
 
-            session_id = f"agent-{agent_id}"
-            existing_session = context_mgr.get_session(session_id)
-            if not existing_session:
-                context_mgr.create_session(
-                    workspace_id="agent-chats",
-                    title=f"{agent_config['name']} 的对话",
-                    session_id=session_id,
-                    metadata={"agent_id": agent_id},
-                )
-
-            context_mgr.add_message(session_id=session_id, role="user", content=text)
-
-            memory_context = None
-            if agent_config.get("use_memory", True) and memory_mgr:
-                from server.core.memory.router import MemoryRouter
-                router = MemoryRouter(memory_manager=memory_mgr)
-                routing_result = await router.route(
-                    query=text, session_id=session_id,
-                    scene_type=agent_config.get("memory_scene", "chat"),
-                )
-                if routing_result.memories:
-                    memory_context = "\n".join([f"- {m['content']}" for m in routing_result.memories[:5]])
-
-            messages = _build_messages(agent_config, context_mgr, session_id, text, memory_context, images)
-            tools = _get_tools_for_agent(agent_config)
-
-            response = await llm.chat(messages=messages, stream=False, tools=tools)
+            response = await ctx.llm.chat(messages=messages, stream=False, tools=tools)
 
             final_response = response.content
             if hasattr(response, "tool_calls") and response.tool_calls:
-                response = await _process_tool_calls(response.tool_calls, messages, llm, agent_config)
+                response = await _process_tool_calls(response.tool_calls, messages, ctx.llm, ctx.agent_config)
                 final_response = response.content
 
-            context_mgr.add_message(session_id=session_id, role="assistant", content=final_response)
+            ctx.context_mgr.add_message(session_id=ctx.session_id, role="assistant", content=final_response)
 
             await _manager.send_message(client_id, create_response(
                 request_id=request_id,
                 action=ChatActions.MULTIMODAL,
                 data={
                     "content": final_response,
-                    "session_id": session_id,
+                    "session_id": ctx.session_id,
                     "tokens_used": response.usage.get("total_tokens", 0) if response.usage else 0,
                 }
             ))

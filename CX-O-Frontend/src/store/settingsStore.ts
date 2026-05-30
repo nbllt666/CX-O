@@ -14,6 +14,7 @@ export interface Live2DSettings {
   scale: number;
   xOffset: number;
   yOffset: number;
+  expressionMixEnabled: boolean;
   animation?: AnimationSettings;
 }
 
@@ -64,6 +65,7 @@ export interface AnimationSettings {
   headFollowSpeed: number;
   bodyFollowDelay: number;
   motionTriggerProbability: number;
+  speechMotionInterval: number;
   focusSpeed: number;
 }
 
@@ -85,6 +87,7 @@ export const DEFAULT_ANIMATION_SETTINGS: AnimationSettings = {
   headFollowSpeed: 2.0,
   bodyFollowDelay: 0.3,
   motionTriggerProbability: 0.5,
+  speechMotionInterval: 1.5,
   focusSpeed: 3.0,
 };
 
@@ -102,6 +105,8 @@ export interface VRMSettings {
   scale: number;
   position3d: [number, number, number];
   tweak?: VRMTweakConfig;
+  expressionMixEnabled: boolean;
+  motionTriggerEnabled: boolean;
   animation?: AnimationSettings;
   renderScale: number;
   devicePixelRatio: number | 'auto';
@@ -149,6 +154,7 @@ const defaultLive2DSettings: Live2DSettings = {
   scale: 0.3,
   xOffset: 0,
   yOffset: 0,
+  expressionMixEnabled: true,
   animation: DEFAULT_ANIMATION_SETTINGS,
 };
 
@@ -165,6 +171,8 @@ const defaultVRMSettings: VRMSettings = {
   scale: 1.0,
   position3d: [0, 0, 0],
   tweak: DEFAULT_VRM_TWEAK,
+  expressionMixEnabled: true,
+  motionTriggerEnabled: true,
   animation: DEFAULT_ANIMATION_SETTINGS,
   renderScale: 1.0,
   devicePixelRatio: 'auto',

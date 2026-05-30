@@ -18,6 +18,7 @@ import {
   RefreshCw,
   Database,
   Link2,
+  Mic,
 } from 'lucide-react';
 import { useThemeStore } from '../store/themeStore';
 import { useChatStore } from '../store/chatStore';
@@ -26,6 +27,7 @@ import { useState, useEffect, useRef } from 'react';
 
 const navigation = [
   { name: '对话', href: '/', icon: MessageSquare, hasSubmenu: true },
+  { name: '语音工作站', href: '/voice-workstation', icon: Mic },
   { name: '助手', href: '/agents', icon: Bot },
   { name: '记忆', href: '/memories', icon: Brain },
   { name: '归档', href: '/archive', icon: Archive },

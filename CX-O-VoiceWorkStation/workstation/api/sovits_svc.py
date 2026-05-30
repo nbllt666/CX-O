@@ -13,6 +13,11 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 
+class SVCPreprocessRequest(BaseModel):
+    training_data_dir: str
+    speaker_name: str = "speaker"
+
+
 class SVCTrainRequest(BaseModel):
     training_data_dir: Optional[str] = None
     epochs: int = 10000
@@ -26,6 +31,7 @@ class SVCInferRequest(BaseModel):
     model_path: Optional[str] = None
     speaker_id: int = 0
     transpose: int = 0
+    cluster_model_path: Optional[str] = None
 
 
 _train_status: dict = {
@@ -37,6 +43,42 @@ _train_status: dict = {
     "message": "",
 }
 
+_trainer_instance = None
+
+
+def _get_trainer():
+    global _trainer_instance
+    from workstation.services.sovits_svc_trainer import SoVITSSVCTrainer
+    from workstation.config import get_settings
+
+    settings = get_settings()
+    _trainer_instance = SoVITSSVCTrainer(
+        output_dir=settings.sovits_svc.output_dir,
+        training_data_dir=settings.sovits_svc.training_data_dir,
+        so_vits_svc_dir=settings.sovits_svc.so_vits_svc_dir,
+        python_path=settings.sovits_svc.python_path,
+    )
+    return _trainer_instance
+
+
+@router.post("/preprocess")
+async def preprocess(request: SVCPreprocessRequest):
+    """So-VITS-SVC 数据预处理"""
+    try:
+        trainer = _get_trainer()
+        results = await trainer.preprocess(
+            training_data_dir=request.training_data_dir,
+            speaker_name=request.speaker_name,
+        )
+        all_success = all(v.get("success", False) for v in results.values())
+        return {
+            "status": "success" if all_success else "partial",
+            "results": results,
+        }
+    except Exception as e:
+        logger.error(f"So-VITS-SVC preprocess error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
 
 @router.post("/train")
 async def start_training(request: SVCTrainRequest):
@@ -47,14 +89,7 @@ async def start_training(request: SVCTrainRequest):
         return {"status": "error", "message": "训练任务正在进行中"}
 
     try:
-        from workstation.services.sovits_svc_trainer import SoVITSSVCTrainer
-        from workstation.config import get_settings
-
-        settings = get_settings()
-        trainer = SoVITSSVCTrainer(
-            output_dir=settings.sovits_svc.output_dir,
-            training_data_dir=request.training_data_dir or settings.sovits_svc.training_data_dir,
-        )
+        trainer = _get_trainer()
 
         task_id = await trainer.start_training(
             epochs=request.epochs,
@@ -84,8 +119,7 @@ async def get_training_status():
 async def stop_training():
     """停止训练"""
     try:
-        from workstation.services.sovits_svc_trainer import SoVITSSVCTrainer
-        trainer = SoVITSSVCTrainer()
+        trainer = _get_trainer()
         await trainer.stop_training()
         _train_status["status"] = "stopped"
         return {"status": "success", "message": "训练已停止"}
@@ -104,12 +138,16 @@ async def infer(request: SVCInferRequest):
         inferer = SoVITSSVCInferer(
             model_path=request.model_path,
             output_dir=settings.sovits_svc.output_dir,
+            so_vits_svc_dir=settings.sovits_svc.so_vits_svc_dir,
+            python_path=settings.sovits_svc.python_path,
         )
 
         result_path = await inferer.infer(
             audio_path=request.audio_path,
             speaker_id=request.speaker_id,
             transpose=request.transpose,
+            model_path=request.model_path,
+            cluster_model_path=request.cluster_model_path,
         )
 
         import base64
@@ -131,11 +169,7 @@ async def infer(request: SVCInferRequest):
 async def list_models():
     """列出已训练的模型"""
     try:
-        from workstation.services.sovits_svc_trainer import SoVITSSVCTrainer
-        from workstation.config import get_settings
-
-        settings = get_settings()
-        trainer = SoVITSSVCTrainer(output_dir=settings.sovits_svc.output_dir)
+        trainer = _get_trainer()
         models = trainer.list_models()
         return {"status": "success", "models": models}
     except Exception as e:

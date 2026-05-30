@@ -3,13 +3,16 @@ import { VRMViewer } from './VRMViewer';
 import { useSettingsStore } from '../../store/settingsStore';
 import { getAvatar } from '../../services/avatarStorage';
 import { useAudioAnalyzer } from '../../hooks/useAudioAnalyzer';
+import type { IAvatarDriver } from '../Avatar/AvatarDriver';
+import type { ExpressionLayer } from '../Avatar/avatarManifest';
 
 interface VRMPanelProps {
   audioElement: HTMLAudioElement | null;
   isPlaying: boolean;
+  driver?: IAvatarDriver;
 }
 
-export function VRMPanel({ audioElement, isPlaying }: VRMPanelProps) {
+export function VRMPanel({ audioElement, isPlaying, driver }: VRMPanelProps) {
   const { vrm, layout, toggleVRMCollapsed, setVRMWidth, setVRMSettings } = useSettingsStore();
   const [isResizing, setIsResizing] = useState(false);
   const panelRef = useRef<HTMLDivElement>(null);
@@ -17,6 +20,8 @@ export function VRMPanel({ audioElement, isPlaying }: VRMPanelProps) {
   const startWidthRef = useRef(0);
   const modelDataRef = useRef<ArrayBuffer | undefined>(undefined);
   const [dataVersion, setDataVersion] = useState(0);
+  const [activeExpressions, setActiveExpressions] = useState<ExpressionLayer[]>([]);
+  const [showExpressionInfo, setShowExpressionInfo] = useState(false);
 
   const { volume: mouthOpenY } = useAudioAnalyzer({
     audioElement,
@@ -26,27 +31,30 @@ export function VRMPanel({ audioElement, isPlaying }: VRMPanelProps) {
 
   useEffect(() => {
     if (vrm.modelId) {
-      console.log('[VRMPanel] Loading model:', vrm.modelId);
       getAvatar(vrm.modelId).then((avatar) => {
         if (avatar?.data) {
-          console.log('[VRMPanel] Avatar found, size:', avatar.data.size);
           avatar.data.arrayBuffer().then((buf) => {
-            console.log('[VRMPanel] ArrayBuffer loaded, byteLength:', buf.byteLength);
             modelDataRef.current = buf;
             setDataVersion(v => v + 1);
           });
         } else {
-          console.warn('[VRMPanel] Avatar not found for id:', vrm.modelId);
           modelDataRef.current = undefined;
           setDataVersion(v => v + 1);
         }
       });
     } else {
-      console.log('[VRMPanel] No modelId, clearing data');
       modelDataRef.current = undefined;
       setDataVersion(v => v + 1);
     }
   }, [vrm.modelId]);
+
+  useEffect(() => {
+    if (!driver) return;
+    const interval = setInterval(() => {
+      setActiveExpressions(driver.getActiveExpressions());
+    }, 500);
+    return () => clearInterval(interval);
+  }, [driver]);
 
   const handleMouseDown = useCallback((e: React.MouseEvent) => {
     e.preventDefault();
@@ -77,6 +85,13 @@ export function VRMPanel({ audioElement, isPlaying }: VRMPanelProps) {
     };
   }, [isResizing, vrm.position, vrm.minWidth, vrm.maxWidth, setVRMWidth]);
 
+  const handleEmotionTrigger = useCallback((emotion: string) => {
+    if (driver) {
+      driver.setEmotion(emotion, 1.0);
+      driver.triggerEmotionMotion(emotion as 'happy' | 'angry' | 'sad' | 'surprised' | 'relaxed' | 'neutral');
+    }
+  }, [driver]);
+
   if (!vrm.enabled) {
     return null;
   }
@@ -106,10 +121,22 @@ export function VRMPanel({ audioElement, isPlaying }: VRMPanelProps) {
       className="relative flex flex-col bg-[var(--color-bg-secondary)] border-r border-[var(--color-border)]"
       style={{ width: layout.vrmWidth }}
     >
-      {/* Header */}
       <div className="flex items-center justify-between px-2 py-1 border-b border-[var(--color-border)]">
         <span className="text-xs font-medium text-[var(--color-text-secondary)]">VRM 3D</span>
         <div className="flex items-center gap-1">
+          {driver && (
+            <button
+              onClick={() => setShowExpressionInfo(!showExpressionInfo)}
+              className={`p-1 rounded transition-colors ${
+                showExpressionInfo ? 'text-[var(--color-accent)]' : 'text-[var(--color-text-tertiary)]'
+              }`}
+              title={showExpressionInfo ? '隐藏表情信息' : '显示表情信息'}
+            >
+              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M14.828 14.828a4 4 0 01-5.656 0M9 10h.01M15 10h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+              </svg>
+            </button>
+          )}
           <button
             onClick={() => setVRMSettings({ lipSync: !vrm.lipSync })}
             className={`p-1 rounded transition-colors ${
@@ -145,7 +172,38 @@ export function VRMPanel({ audioElement, isPlaying }: VRMPanelProps) {
         </div>
       </div>
 
-      {/* VRM Canvas */}
+      {driver && showExpressionInfo && (
+        <div className="px-2 py-1 border-b border-[var(--color-border)] bg-[var(--color-bg-tertiary)]">
+          <div className="text-xs text-[var(--color-text-tertiary)] mb-1">活跃表情</div>
+          {activeExpressions.length === 0 ? (
+            <div className="text-xs text-[var(--color-text-tertiary)]">无</div>
+          ) : (
+            <div className="flex flex-wrap gap-1">
+              {activeExpressions.map((expr, i) => (
+                <span
+                  key={`${expr.key}-${i}`}
+                  className="text-xs px-1.5 py-0.5 rounded bg-[var(--color-accent)]/20 text-[var(--color-accent)]"
+                >
+                  {expr.key} {(expr.weight * 100).toFixed(0)}%
+                </span>
+              ))}
+            </div>
+          )}
+          <div className="text-xs text-[var(--color-text-tertiary)] mt-1 mb-1">动作触发</div>
+          <div className="flex flex-wrap gap-1">
+            {['happy', 'angry', 'sad', 'surprised', 'relaxed'].map((emotion) => (
+              <button
+                key={emotion}
+                onClick={() => handleEmotionTrigger(emotion)}
+                className="text-xs px-1.5 py-0.5 rounded bg-[var(--color-bg-secondary)] hover:bg-[var(--color-accent)]/20 text-[var(--color-text-secondary)] hover:text-[var(--color-accent)] transition-colors"
+              >
+                {emotion}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+
       <div className="flex-1 overflow-hidden">
         <VRMViewer
           modelPath={vrm.modelId ? '' : vrm.modelPath}
@@ -157,15 +215,14 @@ export function VRMPanel({ audioElement, isPlaying }: VRMPanelProps) {
           lookAtMouse={vrm.lookAtMouse}
           mouthOpenY={mouthOpenY}
           tweakConfig={vrm.tweak}
+          driver={driver}
         />
       </div>
 
-      {/* Width indicator */}
       <div className="text-center text-xs text-[var(--color-text-tertiary)] py-1 border-t border-[var(--color-border)]">
         {layout.vrmWidth}px
       </div>
 
-      {/* Resize handle */}
       <div
         className={`absolute top-0 bottom-0 w-1 cursor-ew-resize hover:bg-[var(--color-accent)] transition-colors ${
           isResizing ? 'bg-[var(--color-accent)]' : 'bg-transparent'

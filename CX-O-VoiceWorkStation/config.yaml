@@ -31,5 +31,14 @@ sovits_svc:
   output_dir: data/models/sovits_svc
   training_data_dir: data/training/sovits_svc
 
+voxcpm:
+  model_path: openbmb/VoxCPM2
+  device: auto
+  enable_denoiser: true
+  cfg_value: 2.0
+  inference_timesteps: 10
+  zipenhancer_model_path: "iic/speech_zipenhancer_ans_multiloss_16k_base"
+  working_dir: "VoxCPM-main"
+
 output:
   voice_refs_dir: ../CX-O-SERVER/data/voice_refs

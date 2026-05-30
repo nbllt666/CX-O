@@ -4,7 +4,7 @@ import type { AxiosRequestConfig, InternalAxiosRequestConfig } from 'axios';
 const getApiBaseUrl = () => localStorage.getItem('cxhms-backend-url') || import.meta.env.VITE_API_URL || 'http://127.0.0.1:8000';
 const getControlServiceUrl = () => localStorage.getItem('cxhms-control-url') || import.meta.env.VITE_CONTROL_SERVICE_URL || 'http://127.0.0.1:8000';
 const getWsBaseUrl = () => localStorage.getItem('cxhms-ws-url') || import.meta.env.VITE_WS_URL || 'ws://127.0.0.1:8000';
-const getVoiceWorkstationUrl = () => localStorage.getItem('cxhms-voicews-url') || import.meta.env.VITE_VOICE_WS_URL || 'http://127.0.0.1:8200';
+const getVoiceWorkstationUrl = () => localStorage.getItem('cxhms-voicews-url') || import.meta.env.VITE_VOICE_WS_URL || (import.meta.env.DEV ? '/voice-station' : 'http://127.0.0.1:8200');
 
 export const WS_BASE_URL = getWsBaseUrl();
 
@@ -797,6 +797,9 @@ class ApiClient {
   async startSoVITSSVCTrain(data: {
     ref_audio_path: string;
     model_name?: string;
+    epochs?: number;
+    batch_size?: number;
+    learning_rate?: number;
   }): Promise<{ status: string; task_id: string }> {
     return this.voiceWorkstationRequest<{ status: string; task_id: string }>({
       url: '/sovits-svc/train',
@@ -805,15 +808,24 @@ class ApiClient {
     });
   }
 
+  async stopSoVITSSVCTrain(): Promise<{ status: string }> {
+    return this.voiceWorkstationRequest<{ status: string }>({
+      url: '/sovits-svc/train/stop',
+      method: 'POST',
+    });
+  }
+
   async getSoVITSSVCStatus(): Promise<{
     status: string;
     progress?: number;
     message?: string;
+    models?: string[];
   }> {
     return this.voiceWorkstationRequest<{
       status: string;
       progress?: number;
       message?: string;
+      models?: string[];
     }>({ url: '/sovits-svc/status' });
   }
 
@@ -823,6 +835,114 @@ class ApiClient {
   }): Promise<{ status: string; output_path: string }> {
     return this.voiceWorkstationRequest<{ status: string; output_path: string }>({
       url: '/sovits-svc/infer',
+      method: 'POST',
+      data,
+    });
+  }
+
+  async generateVoxCPM(data: {
+    mode: 'design' | 'controllable_clone' | 'ultimate_clone';
+    text: string;
+    control?: string;
+    reference_audio_path?: string;
+    prompt_audio_path?: string;
+    prompt_text?: string;
+    output_path?: string;
+    cfg_value?: number;
+    inference_timesteps?: number;
+  }): Promise<{ status: string; output_path: string }> {
+    return this.voiceWorkstationRequest<{ status: string; output_path: string }>({
+      url: '/api/voxcpm/generate',
+      method: 'POST',
+      data,
+    });
+  }
+
+  async getVoxCPMStatus(): Promise<{ status: string; model_path: string }> {
+    return this.voiceWorkstationRequest<{ status: string; model_path: string }>({
+      url: '/api/voxcpm/status',
+    });
+  }
+
+  async exportEmotionRefsZip(data: {
+    base_audio_path: string;
+    sample_text?: string;
+    transition_text?: string;
+  }): Promise<Blob> {
+    const axiosInstance = this.voiceWorkstationClient;
+    this._setupInterceptors(axiosInstance);
+    const response = await axiosInstance.post('/api/ref-audio/export-zip', data, {
+      responseType: 'blob',
+    });
+    return response.data;
+  }
+
+  async importEmotionRefsZip(file: File): Promise<{
+    status: string;
+    meta: {
+      emotions: Array<{ file: string; emotion: string; text: string; instruct_text: string }>;
+      transitions: Array<{ file: string; from_emotion: string; to_emotion: string; text: string; instruct_text: string }>;
+    };
+  }> {
+    const formData = new FormData();
+    formData.append('file', file);
+    const axiosInstance = this.voiceWorkstationClient;
+    this._setupInterceptors(axiosInstance);
+    const response = await axiosInstance.post('/api/ref-audio/import-zip', formData, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+    });
+    return response.data;
+  }
+
+  async getWorkflowStatus(): Promise<{
+    current_step: number;
+    steps: Array<{ id: string; name: string; status: string; output: unknown }>;
+  }> {
+    return this.voiceWorkstationRequest<{
+      current_step: number;
+      steps: Array<{ id: string; name: string; status: string; output: unknown }>;
+    }>({ url: '/api/workflow/status' });
+  }
+
+  async executeWorkflowStep(stepId: string, params: Record<string, unknown>): Promise<{
+    current_step: number;
+    steps: Array<{ id: string; name: string; status: string; output: unknown }>;
+  }> {
+    return this.voiceWorkstationRequest<{
+      current_step: number;
+      steps: Array<{ id: string; name: string; status: string; output: unknown }>;
+    }>({
+      url: `/api/workflow/step/${stepId}/execute`,
+      method: 'POST',
+      data: params,
+    });
+  }
+
+  async resetWorkflow(): Promise<{
+    current_step: number;
+    steps: Array<{ id: string; name: string; status: string; output: unknown }>;
+  }> {
+    return this.voiceWorkstationRequest<{
+      current_step: number;
+      steps: Array<{ id: string; name: string; status: string; output: unknown }>;
+    }>({
+      url: '/api/workflow/reset',
+      method: 'POST',
+    });
+  }
+
+  async getWorkflowStepOutput(stepId: string): Promise<{ output: unknown }> {
+    return this.voiceWorkstationRequest<{ output: unknown }>({
+      url: `/api/workflow/step/${stepId}/output`,
+    });
+  }
+
+  async sovitsSVCPreprocess(data: {
+    training_data_dir: string;
+    speaker_name: string;
+  }): Promise<{ status: string; results: Record<string, unknown> }> {
+    return this.voiceWorkstationRequest<{ status: string; results: Record<string, unknown> }>({
+      url: '/api/sovits-svc/preprocess',
       method: 'POST',
       data,
     });

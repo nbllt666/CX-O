@@ -21,6 +21,7 @@ import { SubtitleSource } from './pages/live/SubtitleSource';
 import { AudioPanel } from './pages/live/AudioPanel';
 import { AudioPanelOBS } from './pages/live/AudioPanelOBS';
 import { AudioTestPage } from './pages/AudioTestPage';
+import { VoiceWorkstationPage } from './pages/VoiceWorkstationPage';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import { ConnectionSetup } from './components/ConnectionSetup';
 
@@ -89,6 +90,7 @@ function App() {
           <Route path="tools" element={<ToolsPage />} />
           <Route path="audio" element={<AudioPanel />} />
           <Route path="audio-test" element={<AudioTestPage />} />
+          <Route path="voice-workstation" element={<VoiceWorkstationPage />} />
           <Route path="settings" element={<SettingsPage />} />
           <Route path="memory-agent" element={<MemoryAgentPage />} />
           <Route path="graph-data" element={<GraphDataPage />} />

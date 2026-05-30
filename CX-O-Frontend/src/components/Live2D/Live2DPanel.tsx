@@ -1,5 +1,9 @@
-import { useState, useCallback, useRef, useEffect } from 'react';
+import { useState, useCallback, useRef, useEffect, useSyncExternalStore, useMemo } from 'react';
 import { Live2DViewer } from './Live2DViewer';
+import { Live2DStage } from './Live2DStage';
+import type { IAvatarDriver } from '../Avatar/AvatarDriver';
+import type { ParameterOverride } from '../Avatar/avatarManifest';
+import type { StageTransform } from './live2dEngine';
 import { useSettingsStore } from '../../store/settingsStore';
 import { getAvatar } from '../../services/avatarStorage';
 import { useAudioAnalyzer } from '../../hooks/useAudioAnalyzer';
@@ -7,9 +11,48 @@ import { useAudioAnalyzer } from '../../hooks/useAudioAnalyzer';
 interface Live2DPanelProps {
   audioElement: HTMLAudioElement | null;
   isPlaying: boolean;
+  driver?: IAvatarDriver;
 }
 
-export function Live2DPanel({ audioElement, isPlaying }: Live2DPanelProps) {
+function useDriverState(driver: IAvatarDriver) {
+  const getSnapshot = useCallback(() => driver, [driver]);
+  const subscribe = useCallback((listener: () => void) => driver.subscribe(listener), [driver]);
+  return useSyncExternalStore(subscribe, getSnapshot);
+}
+
+function ExpressionInfo({ driver }: { driver: IAvatarDriver }) {
+  const state = useDriverState(driver);
+  const activeExpressions = state.expressionMix.filter((layer) => layer.weight > 0);
+
+  if (activeExpressions.length === 0) {
+    return (
+      <div className="px-2 py-1 text-xs text-[var(--color-text-tertiary)] border-t border-[var(--color-border)]">
+        表情: 默认
+      </div>
+    );
+  }
+
+  return (
+    <div className="px-2 py-1 text-xs text-[var(--color-text-tertiary)] border-t border-[var(--color-border)] flex flex-wrap gap-1 items-center">
+      <span>表情:</span>
+      {activeExpressions.map((layer) => {
+        const expressionItem = driver.avatar.expressions.find((e) => e.id === layer.key);
+        const label = expressionItem?.label ?? layer.key;
+        return (
+          <span
+            key={layer.key}
+            className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded bg-[var(--color-bg-tertiary)] text-[var(--color-text-secondary)]"
+          >
+            {label}
+            <span className="text-[10px] opacity-60">{Math.round(layer.weight * 100)}%</span>
+          </span>
+        );
+      })}
+    </div>
+  );
+}
+
+export function Live2DPanel({ audioElement, isPlaying, driver }: Live2DPanelProps) {
   const { live2d, layout, toggleLive2DCollapsed, setLive2DWidth, setLive2DSettings } = useSettingsStore();
   const [isResizing, setIsResizing] = useState(false);
   const panelRef = useRef<HTMLDivElement>(null);
@@ -87,13 +130,27 @@ export function Live2DPanel({ audioElement, isPlaying }: Live2DPanelProps) {
     );
   }
 
+  const stageContent = driver ? (
+    <DriverStageContent driver={driver} lipSyncEnabled={live2d.lipSync} mouthOpenY={mouthOpenY} />
+  ) : (
+    <Live2DViewer
+      modelPath={live2d.modelId ? '' : live2d.modelPath}
+      modelData={modelData}
+      scale={live2d.scale}
+      xOffset={live2d.xOffset}
+      yOffset={live2d.yOffset}
+      lipSyncEnabled={live2d.lipSync}
+      idleMotionEnabled={live2d.idleMotion}
+      mouthOpenY={mouthOpenY}
+    />
+  );
+
   return (
     <div
       ref={panelRef}
       className="relative flex flex-col bg-[var(--color-bg-secondary)] border-r border-[var(--color-border)]"
       style={{ width: layout.live2dWidth }}
     >
-      {/* Header */}
       <div className="flex items-center justify-between px-2 py-1 border-b border-[var(--color-border)]">
         <span className="text-xs font-medium text-[var(--color-text-secondary)]">Live2D</span>
         <div className="flex items-center gap-1">
@@ -120,26 +177,16 @@ export function Live2DPanel({ audioElement, isPlaying }: Live2DPanelProps) {
         </div>
       </div>
 
-      {/* Live2D Canvas */}
       <div className="flex-1 overflow-hidden">
-        <Live2DViewer
-          modelPath={live2d.modelId ? '' : live2d.modelPath}
-          modelData={modelData}
-          scale={live2d.scale}
-          xOffset={live2d.xOffset}
-          yOffset={live2d.yOffset}
-          lipSyncEnabled={live2d.lipSync}
-          idleMotionEnabled={live2d.idleMotion}
-          mouthOpenY={mouthOpenY}
-        />
+        {stageContent}
       </div>
 
-      {/* Width indicator */}
+      {driver && <ExpressionInfo driver={driver} />}
+
       <div className="text-center text-xs text-[var(--color-text-tertiary)] py-1 border-t border-[var(--color-border)]">
         {layout.live2dWidth}px
       </div>
 
-      {/* Resize handle */}
       <div
         className={`absolute top-0 bottom-0 w-1 cursor-ew-resize hover:bg-[var(--color-accent)] transition-colors ${
           isResizing ? 'bg-[var(--color-accent)]' : 'bg-transparent'
@@ -148,5 +195,40 @@ export function Live2DPanel({ audioElement, isPlaying }: Live2DPanelProps) {
         onMouseDown={handleMouseDown}
       />
     </div>
+  );
+}
+
+function DriverStageContent({
+  driver,
+  lipSyncEnabled,
+  mouthOpenY,
+}: {
+  driver: IAvatarDriver;
+  lipSyncEnabled: boolean;
+  mouthOpenY: number;
+}) {
+  const state = useDriverState(driver);
+
+  const lipSyncOverrides = useMemo<ParameterOverride[]>(() => {
+    if (!lipSyncEnabled) return [];
+    return [{ id: 'ParamMouthOpenY', value: mouthOpenY }];
+  }, [lipSyncEnabled, mouthOpenY]);
+
+  const allOverrides = useMemo<ParameterOverride[]>(() => {
+    return [...lipSyncOverrides, ...state.parameterOverrides];
+  }, [lipSyncOverrides, state.parameterOverrides]);
+
+  const [transform, setTransform] = useState<StageTransform>(state.transform);
+
+  return (
+    <Live2DStage
+      avatar={state.avatar}
+      expressionMix={state.expressionMix}
+      parameterOverrides={allOverrides}
+      watermarkVisible={state.watermarkVisible}
+      transform={transform}
+      onTransformChange={setTransform}
+      driver={driver}
+    />
   );
 }

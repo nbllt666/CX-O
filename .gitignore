@@ -257,3 +257,11 @@ F5-fast/Docker Desktop Installer.exe
 
 # 日志
 log.txt
+
+# ----------------------------------------
+# 外部项目目录
+# ----------------------------------------
+CosyVoice-main/
+LLM_Live2D-master/
+so-vits-svc-4.1-Stable/
+VoxCPM-main/

@@ -1,12 +1,17 @@
-import { useEffect, useRef, useCallback, useState } from 'react';
-import * as PIXI from 'pixi.js';
-import { Live2DModel } from 'pixi-live2d-display';
-import { AnimationSettings, DEFAULT_ANIMATION_SETTINGS } from '../../store/settingsStore';
-import { Live2DLipSync } from './Live2DLipSync';
-import { Live2DExpression } from './Live2DExpression';
-import { Live2DMotion } from './Live2DMotion';
-
-(window as unknown as { PIXI: typeof PIXI }).PIXI = PIXI;
+import { useEffect, useRef, useState, useMemo } from 'react';
+import type { AvatarManifest, ExpressionLayer, ParameterOverride } from '../Avatar/avatarManifest';
+import type { IAvatarDriver } from '../Avatar/AvatarDriver';
+import { Live2DAvatarDriver } from '../Avatar/AvatarDriver';
+import type { StageTransform } from './live2dEngine';
+import {
+  applyExpressionMix,
+  createLive2DRuntime,
+  destroyRuntime,
+  resizeRuntime,
+  setParameterOverrides,
+  updateStageTransform,
+} from './live2dEngine';
+import type { AnimationSettings } from '../../store/settingsStore';
 
 interface Live2DViewerProps {
   modelPath: string;
@@ -20,6 +25,39 @@ interface Live2DViewerProps {
   onModelLoaded?: () => void;
   onError?: (error: Error) => void;
   animationConfig?: Partial<AnimationSettings>;
+  expressionMix?: ExpressionLayer[];
+  parameterOverrides?: ParameterOverride[];
+  driver?: IAvatarDriver;
+}
+
+function createSyntheticManifest(
+  modelJson: string,
+  scale: number,
+  xOffset: number,
+  yOffset: number,
+): AvatarManifest {
+  return {
+    id: 'synthetic',
+    name: 'Model',
+    summary: '',
+    persona: { tone: '', traits: [], styleRules: [] },
+    modelJson,
+    scaleMultiplier: scale,
+    verticalOffset: 0.08,
+    modelTransform: {
+      scale: 8,
+      offsetX: xOffset / 400,
+      offsetY: yOffset / 400 + 1.3,
+    },
+    transformDefaults: {
+      scale: 1,
+      offsetX: 0,
+      offsetY: 0,
+    },
+    expressions: [],
+    parameterControls: [],
+    avatarType: 'live2d',
+  };
 }
 
 export function Live2DViewer({
@@ -29,240 +67,149 @@ export function Live2DViewer({
   xOffset = 0,
   yOffset = 0,
   lipSyncEnabled = true,
-  idleMotionEnabled = true,
   mouthOpenY = 0,
   onModelLoaded,
   onError,
-  animationConfig,
+  expressionMix,
+  parameterOverrides: externalOverrides,
+  driver,
 }: Live2DViewerProps) {
-  const canvasRef = useRef<HTMLCanvasElement>(null);
-  const appRef = useRef<PIXI.Application | null>(null);
-  const modelRef = useRef<Live2DModel | null>(null);
+  const containerRef = useRef<HTMLDivElement | null>(null);
+  const runtimeRef = useRef<Awaited<ReturnType<typeof createLive2DRuntime>> | null>(null);
   const blobUrlRef = useRef<string | null>(null);
-  const lipSyncRef = useRef<Live2DLipSync | null>(null);
-  const expressionRef = useRef<Live2DExpression | null>(null);
-  const motionRef = useRef<Live2DMotion | null>(null);
-  const animationFrameRef = useRef<number | null>(null);
-  const clockRef = useRef(0);
+  const onModelLoadedRef = useRef(onModelLoaded);
+  const onErrorRef = useRef(onError);
   const [isLoading, setIsLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
+  const transformRef = useRef<StageTransform>({
+    scale: 1,
+    offsetX: 0,
+    offsetY: 0,
+  });
 
-  const effectiveAnim = useRef<Partial<AnimationSettings>>(animationConfig || {});
-  if (animationConfig) effectiveAnim.current = animationConfig;
-  const ac: AnimationSettings = { ...DEFAULT_ANIMATION_SETTINGS, ...effectiveAnim.current };
+  onModelLoadedRef.current = onModelLoaded;
+  onErrorRef.current = onError;
 
-  const loadModel = useCallback(async () => {
-    if (!canvasRef.current) return;
-
-    let effectiveModelPath: string | null = null;
-    let createdBlobUrl = false;
-
+  const effectiveModelPath = useMemo(() => {
     if (modelData && modelData.byteLength > 0) {
+      if (blobUrlRef.current && blobUrlRef.current.startsWith('blob:')) {
+        URL.revokeObjectURL(blobUrlRef.current);
+      }
       const blob = new Blob([modelData], { type: 'application/octet-stream' });
-      effectiveModelPath = URL.createObjectURL(blob);
-      createdBlobUrl = true;
-    } else if (modelPath && modelPath.length > 0) {
-      effectiveModelPath = modelPath;
+      const url = URL.createObjectURL(blob);
+      blobUrlRef.current = url;
+      return url;
     }
-
-    if (!effectiveModelPath) {
-      setLoadError('MODEL_NOT_CONFIGURED');
-      setIsLoading(false);
-      return;
-    }
-
-    if (blobUrlRef.current && blobUrlRef.current.startsWith('blob:')) {
-      URL.revokeObjectURL(blobUrlRef.current);
-    }
-    if (createdBlobUrl) {
-      blobUrlRef.current = effectiveModelPath;
-    }
-
-    try {
-      setIsLoading(true);
-      setLoadError(null);
-
-      if (appRef.current) {
-        try {
-          appRef.current.destroy(true, { children: true });
-        } catch (e) {
-          console.warn('Live2D: Error destroying previous app:', e);
-        }
-        appRef.current = null;
-      }
-
-      const app = new PIXI.Application({
-        view: canvasRef.current,
-        width: canvasRef.current.clientWidth,
-        height: canvasRef.current.clientHeight,
-        backgroundAlpha: 0,
-        resolution: window.devicePixelRatio || 1,
-        autoDensity: true,
-      });
-
-      appRef.current = app;
-
-      const model = await Live2DModel.from(effectiveModelPath, {
-        autoInteract: true,
-      });
-
-      modelRef.current = model;
-
-      model.scale.set(scale);
-      model.x = app.screen.width / 2 + xOffset;
-      model.y = app.screen.height / 2 + yOffset;
-
-      app.stage.addChild(model as unknown as PIXI.Container);
-
-      if (idleMotionEnabled && model.internalModel?.motionManager) {
-        try {
-          model.internalModel.motionManager.startRandomMotion('idle');
-        } catch {
-          console.log('Live2D: No idle motion available');
-        }
-      }
-
-      // Initialize new systems
-      lipSyncRef.current = new Live2DLipSync();
-      lipSyncRef.current.bindModel(model);
-      lipSyncRef.current.setSmoothing(ac.lipSyncSmoothing);
-
-      expressionRef.current = new Live2DExpression();
-      expressionRef.current.bindModel(model);
-      expressionRef.current.setConfig({
-        intensity: ac.emotionIntensity,
-        duration: ac.emotionDuration,
-        recoverSpeed: ac.emotionRecoverSpeed,
-      });
-
-      motionRef.current = new Live2DMotion();
-      motionRef.current.bindModel(model);
-      motionRef.current.setConfig({
-        emotionMotionProbability: ac.motionTriggerProbability,
-        speechMotionProbability: ac.motionTriggerProbability,
-        focusSpeed: ac.focusSpeed,
-      });
-
-      // Start animation loop
-      const animate = () => {
-        const now = performance.now();
-        const dt = (now - clockRef.current) / 1000;
-        clockRef.current = now;
-
-        if (lipSyncRef.current) lipSyncRef.current.update(dt);
-        if (expressionRef.current) expressionRef.current.update(dt);
-        if (motionRef.current) motionRef.current.update(dt);
-
-        animationFrameRef.current = requestAnimationFrame(animate);
-      };
-      clockRef.current = performance.now();
-      animate();
-
-      setIsLoading(false);
-      onModelLoaded?.();
-    } catch (error) {
-      console.error('Live2D: Failed to load model:', error);
-      const errorMessage = error instanceof Error ? error.message : '';
-      if (errorMessage.includes('<!doctype') || errorMessage.includes('Unexpected token')) {
-        setLoadError('MODEL_FILE_NOT_FOUND');
-      } else {
-        setLoadError('LOAD_FAILED');
-      }
-      setIsLoading(false);
-      onError?.(error instanceof Error ? error : new Error('Failed to load model'));
-    }
-  }, [modelPath, modelData, scale, xOffset, yOffset, idleMotionEnabled, onModelLoaded, onError, ac.lipSyncSmoothing, ac.emotionIntensity, ac.emotionDuration, ac.emotionRecoverSpeed, ac.motionTriggerProbability, ac.focusSpeed]);
+    return modelPath;
+  }, [modelData, modelPath]);
 
   useEffect(() => {
-    loadModel();
-
     return () => {
-      if (animationFrameRef.current) cancelAnimationFrame(animationFrameRef.current);
       if (blobUrlRef.current && blobUrlRef.current.startsWith('blob:')) {
         URL.revokeObjectURL(blobUrlRef.current);
         blobUrlRef.current = null;
       }
-      if (appRef.current) {
-        try {
-          if (typeof appRef.current.destroy === 'function') {
-            appRef.current.destroy(true, { children: true });
-          }
-        } catch (e) {
-          console.warn('Live2D: Error during cleanup:', e);
-        }
-        appRef.current = null;
+    };
+  }, []);
+
+  const avatar = useMemo(
+    () => createSyntheticManifest(effectiveModelPath, scale, xOffset, yOffset),
+    [effectiveModelPath, scale, xOffset, yOffset],
+  );
+
+  const lipSyncOverrides = useMemo<ParameterOverride[]>(() => {
+    if (!lipSyncEnabled) return [];
+    return [{ id: 'ParamMouthOpenY', value: mouthOpenY }];
+  }, [lipSyncEnabled, mouthOpenY]);
+
+  const allOverrides = useMemo<ParameterOverride[]>(() => {
+    return [...lipSyncOverrides, ...(externalOverrides ?? [])];
+  }, [lipSyncOverrides, externalOverrides]);
+
+  const effectiveExpressionMix = useMemo<ExpressionLayer[]>(() => {
+    return expressionMix ?? [];
+  }, [expressionMix]);
+
+  useEffect(() => {
+    const container = containerRef.current;
+    if (!container || !effectiveModelPath) {
+      if (!effectiveModelPath) {
+        setLoadError('MODEL_NOT_CONFIGURED');
+        setIsLoading(false);
       }
-      modelRef.current = null;
-    };
-  }, [loadModel]);
-
-  // Update animation config
-  useEffect(() => {
-    if (lipSyncRef.current) lipSyncRef.current.setSmoothing(ac.lipSyncSmoothing);
-    if (expressionRef.current) {
-      expressionRef.current.setConfig({
-        intensity: ac.emotionIntensity,
-        duration: ac.emotionDuration,
-        recoverSpeed: ac.emotionRecoverSpeed,
-      });
+      return;
     }
-    if (motionRef.current) {
-      motionRef.current.setConfig({
-        emotionMotionProbability: ac.motionTriggerProbability,
-        speechMotionProbability: ac.motionTriggerProbability,
-        focusSpeed: ac.focusSpeed,
-      });
-    }
-  }, [ac.lipSyncSmoothing, ac.emotionIntensity, ac.emotionDuration, ac.emotionRecoverSpeed, ac.motionTriggerProbability, ac.focusSpeed]);
 
-  // Vowel-based lip sync
-  useEffect(() => {
-    if (!lipSyncEnabled || !modelRef.current) return;
+    let cancelled = false;
+    setIsLoading(true);
+    setLoadError(null);
 
-    // For now, distribute mouthOpenY across vowels
-    const weights = {
-      a: mouthOpenY * 0.8 * ac.vowelWeightA,
-      i: mouthOpenY * 0.2 * ac.vowelWeightI,
-      u: mouthOpenY * 0.3 * ac.vowelWeightU,
-      e: mouthOpenY * 0.15 * ac.vowelWeightE,
-      o: mouthOpenY * 0.25 * ac.vowelWeightO,
-    };
+    const initialMix = effectiveExpressionMix.length > 0 ? effectiveExpressionMix : [{ key: 'neutral', weight: 1 }];
 
-    if (lipSyncRef.current) {
-      lipSyncRef.current.updateWeights(weights);
-    }
-  }, [mouthOpenY, lipSyncEnabled, ac.vowelWeightA, ac.vowelWeightI, ac.vowelWeightU, ac.vowelWeightE, ac.vowelWeightO]);
-
-  useEffect(() => {
-    const handleResize = () => {
-      if (appRef.current && canvasRef.current) {
-        appRef.current.renderer.resize(
-          canvasRef.current.clientWidth,
-          canvasRef.current.clientHeight
-        );
-        if (modelRef.current) {
-          modelRef.current.x = appRef.current.screen.width / 2 + xOffset;
-          modelRef.current.y = appRef.current.screen.height / 2 + yOffset;
+    void createLive2DRuntime(container, avatar)
+      .then(async (runtime) => {
+        if (cancelled) {
+          destroyRuntime(runtime);
+          return;
         }
+
+        runtimeRef.current = runtime;
+        if (driver) {
+          (driver as Live2DAvatarDriver).bindRuntime(runtime);
+        }
+        await applyExpressionMix(runtime, avatar, initialMix);
+        await setParameterOverrides(runtime, avatar, allOverrides);
+        updateStageTransform(runtime, container, transformRef.current);
+        setIsLoading(false);
+        onModelLoadedRef.current?.();
+      })
+      .catch((error) => {
+        if (cancelled) return;
+        console.error('Live2D: Failed to load model:', error);
+        const errorMessage = error instanceof Error ? error.message : '';
+        if (errorMessage.includes('<!doctype') || errorMessage.includes('Unexpected token')) {
+          setLoadError('MODEL_FILE_NOT_FOUND');
+        } else {
+          setLoadError('LOAD_FAILED');
+        }
+        setIsLoading(false);
+        onErrorRef.current?.(error instanceof Error ? error : new Error('Failed to load model'));
+      });
+
+    const observer = new ResizeObserver(() => {
+      if (runtimeRef.current && containerRef.current) {
+        resizeRuntime(runtimeRef.current, containerRef.current);
+      }
+    });
+
+    observer.observe(container);
+
+    return () => {
+      cancelled = true;
+      observer.disconnect();
+
+      if (runtimeRef.current) {
+        destroyRuntime(runtimeRef.current);
+        runtimeRef.current = null;
       }
     };
-
-    window.addEventListener('resize', handleResize);
-    return () => window.removeEventListener('resize', handleResize);
-  }, [xOffset, yOffset]);
+  }, [avatar, effectiveModelPath, allOverrides, effectiveExpressionMix]);
 
   useEffect(() => {
-    if (modelRef.current) {
-      modelRef.current.scale.set(scale);
-    }
-  }, [scale]);
+    if (!runtimeRef.current) return;
+    const mix = effectiveExpressionMix.length > 0 ? effectiveExpressionMix : [{ key: 'neutral', weight: 1 }];
+    void applyExpressionMix(runtimeRef.current, avatar, mix).catch(console.error);
+  }, [avatar, effectiveExpressionMix]);
 
   useEffect(() => {
-    if (modelRef.current && appRef.current) {
-      modelRef.current.x = appRef.current.screen.width / 2 + xOffset;
-      modelRef.current.y = appRef.current.screen.height / 2 + yOffset;
-    }
-  }, [xOffset, yOffset]);
+    if (!runtimeRef.current) return;
+    void setParameterOverrides(runtimeRef.current, avatar, allOverrides).catch(console.error);
+  }, [avatar, allOverrides]);
+
+  useEffect(() => {
+    if (!runtimeRef.current || !containerRef.current) return;
+    updateStageTransform(runtimeRef.current, containerRef.current, transformRef.current);
+  }, [transformRef]);
 
   if (loadError) {
     const isNotConfigured = loadError === 'MODEL_NOT_CONFIGURED';
@@ -294,8 +241,8 @@ export function Live2DViewer({
           </div>
         </div>
       )}
-      <canvas
-        ref={canvasRef}
+      <div
+        ref={containerRef}
         className="w-full h-full"
         style={{ opacity: isLoading ? 0 : 1 }}
       />

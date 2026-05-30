@@ -52,6 +52,19 @@ class SoVitSSVCConfig:
     enabled: bool = True
     output_dir: str = str(_BASE_DIR / "data" / "models" / "sovits_svc")
     training_data_dir: str = str(_BASE_DIR / "data" / "training" / "sovits_svc")
+    so_vits_svc_dir: str = str(_BASE_DIR.parent / "so-vits-svc-4.1-Stable")
+    python_path: str = "python"
+
+
+@dataclass
+class VoxCPMConfig:
+    model_path: str = "openbmb/VoxCPM2"
+    device: str = "auto"
+    enable_denoiser: bool = True
+    cfg_value: float = 2.0
+    inference_timesteps: int = 10
+    zipenhancer_model_path: str = "iic/speech_zipenhancer_ans_multiloss_16k_base"
+    working_dir: str = "VoxCPM-main"
 
 
 @dataclass
@@ -66,6 +79,7 @@ class WorkstationSettings:
     index_tts: IndexTTSConfig = field(default_factory=IndexTTSConfig)
     f5tts_finetune: F5TTSFinetuneConfig = field(default_factory=F5TTSFinetuneConfig)
     sovits_svc: SoVitSSVCConfig = field(default_factory=SoVitSSVCConfig)
+    voxcpm: VoxCPMConfig = field(default_factory=VoxCPMConfig)
     output: OutputConfig = field(default_factory=OutputConfig)
 
 

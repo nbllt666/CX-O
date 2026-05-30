@@ -4,9 +4,11 @@
 from __future__ import annotations
 
 import logging
+import tempfile
 from typing import Optional
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, HTTPException, Request, UploadFile, File
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 logger = logging.getLogger(__name__)
@@ -154,6 +156,68 @@ async def index_tts_synthesize(request: Request):
     except Exception as e:
         logger.error(f"IndexTTS synthesize error: {e}")
         return {"status": "error", "message": str(e)}
+
+
+@router.post("/export-zip")
+async def export_zip(request: PregenerateRequest):
+    try:
+        from workstation.services.emotion_ref_generator import EmotionRefGenerator
+        from workstation.config import get_settings
+
+        settings = get_settings()
+        generator = EmotionRefGenerator(
+            cosyvoice_url=settings.cosyvoice.url,
+            output_dir=settings.output.voice_refs_dir,
+        )
+
+        zip_path = await generator.generate_and_pack_zip(
+            base_audio_path=request.base_audio_path,
+            sample_text=request.sample_text,
+            transition_text=request.transition_text,
+            force=request.force,
+        )
+
+        def iter_file():
+            with open(zip_path, "rb") as f:
+                while chunk := f.read(64 * 1024):
+                    yield chunk
+
+        return StreamingResponse(
+            iter_file(),
+            media_type="application/zip",
+            headers={
+                "Content-Disposition": "attachment; filename=emotion_refs.zip",
+            },
+        )
+    except Exception as e:
+        logger.error(f"Failed to export zip: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/import-zip")
+async def import_zip(file: UploadFile = File(...)):
+    try:
+        from workstation.services.emotion_ref_generator import EmotionRefGenerator
+        from workstation.config import get_settings
+
+        settings = get_settings()
+
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".zip") as tmp:
+            content = await file.read()
+            tmp.write(content)
+            tmp_path = tmp.name
+
+        try:
+            output_dir = settings.output.voice_refs_dir
+            meta = EmotionRefGenerator.import_from_zip(tmp_path, output_dir)
+        finally:
+            import os
+            os.unlink(tmp_path)
+
+        return {"status": "success", "meta": meta}
+    except Exception as e:
+        logger.error(f"Failed to import zip: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 def _update_progress(current: int, total: int, message: str):

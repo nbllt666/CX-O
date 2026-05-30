@@ -10,6 +10,10 @@ import { Button, Textarea, Card } from '../components/ui';
 import { PageHeader } from '../components/layout';
 import { useWebSocket } from '../hooks/useWebSocket';
 import { AvatarPanel, AvatarTypeSelector } from '../components/Avatar';
+import type { IAvatarDriver } from '../components/Avatar/AvatarDriver';
+import { createAvatarDriver } from '../components/Avatar/AvatarDriver';
+import { resolveAvatarManifestById, getAvatarById } from '../components/Avatar/avatarManifest';
+import { normalizeExpressionMix, normalizeParameterOverrides, getAvatarNeutralExpressionId, parseAssistantPayload } from '../lib/avatarLlm';
 
 interface Message {
   id: string;
@@ -234,10 +238,39 @@ export function ChatPage() {
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const playAudioRef = useRef<(audioData: ArrayBuffer) => void>();
 
+  const driverRef = useRef<IAvatarDriver | null>(null);
+  const [activeDriver, setActiveDriver] = useState<IAvatarDriver | null>(null);
+
   // 虚拟形象和布局状态
   const { layout, toggleChatCollapsed } = useSettingsStore();
+  const { avatarType, live2d, vrm } = useSettingsStore();
 
   const { agents, currentAgentId, fetchAgents } = useChatStore();
+
+  useEffect(() => {
+    let cancelled = false;
+    const avatarId = avatarType === 'live2d' ? (live2d.modelId || 'yumi') : (vrm.modelId || undefined);
+    const baseAvatar = avatarId ? getAvatarById(avatarId) : undefined;
+    if (!baseAvatar) {
+      driverRef.current = null;
+      setActiveDriver(null);
+      return;
+    }
+    resolveAvatarManifestById(baseAvatar.id)
+      .then((manifest) => {
+        if (cancelled) return;
+        const driver = createAvatarDriver(manifest);
+        driverRef.current = driver;
+        setActiveDriver(driver);
+      })
+      .catch(() => {
+        if (cancelled) return;
+        const driver = createAvatarDriver(baseAvatar);
+        driverRef.current = driver;
+        setActiveDriver(driver);
+      });
+    return () => { cancelled = true; };
+  }, [avatarType, live2d.modelId, vrm.modelId]);
 
   const handleWebSocketMessage = useCallback(
     (data: {
@@ -356,7 +389,6 @@ export function ChatPage() {
           const lastMsg = prev[prev.length - 1];
           if (lastMsg && lastMsg.id === tempAssistantIdRef.current) {
             const finalContent = lastMsg.content || '响应已完成';
-            // 如果开启语音输出，调用 TTS
             if (enableVoiceOutput && finalContent) {
               api.textToSpeech(finalContent).then((audioBlob: Blob) => {
                 audioBlob.arrayBuffer().then((arrayBuffer: ArrayBuffer) => {
@@ -366,6 +398,22 @@ export function ChatPage() {
                 console.error('语音合成失败:', error);
               });
             }
+            try {
+              const driver = driverRef.current;
+              if (driver && finalContent) {
+                const parsed = parseAssistantPayload(finalContent);
+                if (parsed) {
+                  const mix = normalizeExpressionMix(driver.avatar, parsed.expressionMix, parsed.expression);
+                  driver.setExpressionMix(mix);
+                  if (parsed.parameterOverrides) {
+                    const overrides = normalizeParameterOverrides(driver.avatar, parsed.parameterOverrides);
+                    driver.setParameterOverrides(overrides);
+                  }
+                } else {
+                  driver.setExpressionMix([{ key: getAvatarNeutralExpressionId(driver.avatar), weight: 1 }]);
+                }
+              }
+            } catch { /* expression parsing failed, don't crash */ }
             return [
               ...prev.slice(0, -1),
               {
@@ -656,7 +704,6 @@ export function ChatPage() {
 
   const playAudio = (audioData: ArrayBuffer) => {
     try {
-      // 停止之前的音频
       if (audioRef.current) {
         audioRef.current.pause();
         audioRef.current = null;
@@ -669,12 +716,14 @@ export function ChatPage() {
       setCurrentAudioElement(audio);
       setIsAudioPlaying(true);
 
+      driverRef.current?.setMouthOpen(0.6);
+
       audio.onended = () => {
         URL.revokeObjectURL(url);
         audioRef.current = null;
         setCurrentAudioElement(null);
         setIsAudioPlaying(false);
-        // 如果是语音对话模式，播放完成后自动开始录音
+        driverRef.current?.setMouthOpen(0);
         if (isVoiceMode && !isLoading) {
           setTimeout(() => {
             startRecording();
@@ -688,6 +737,7 @@ export function ChatPage() {
         audioRef.current = null;
         setCurrentAudioElement(null);
         setIsAudioPlaying(false);
+        driverRef.current?.setMouthOpen(0);
       });
     } catch (error) {
       console.error('播放音频失败:', error);
@@ -727,7 +777,6 @@ export function ChatPage() {
 
     const handleDone = async (finalContent: string) => {
       setIsLoading(false);
-      // 如果开启语音输出，调用 TTS
       if (enableVoiceOutput && finalContent) {
         try {
           const audioBlob = await api.textToSpeech(finalContent);
@@ -737,6 +786,22 @@ export function ChatPage() {
           console.error('语音合成失败:', error);
         }
       }
+      try {
+        const driver = driverRef.current;
+        if (driver && finalContent) {
+          const parsed = parseAssistantPayload(finalContent);
+          if (parsed) {
+            const mix = normalizeExpressionMix(driver.avatar, parsed.expressionMix, parsed.expression);
+            driver.setExpressionMix(mix);
+            if (parsed.parameterOverrides) {
+              const overrides = normalizeParameterOverrides(driver.avatar, parsed.parameterOverrides);
+              driver.setParameterOverrides(overrides);
+            }
+          } else {
+            driver.setExpressionMix([{ key: getAvatarNeutralExpressionId(driver.avatar), weight: 1 }]);
+          }
+        }
+      } catch { /* expression parsing failed, don't crash */ }
     };
 
     if (isConnected) {
@@ -890,6 +955,7 @@ export function ChatPage() {
       <AvatarPanel
         audioElement={currentAudioElement}
         isPlaying={isAudioPlaying}
+        driver={activeDriver ?? undefined}
       />
 
       {/* 聊天区域 */}

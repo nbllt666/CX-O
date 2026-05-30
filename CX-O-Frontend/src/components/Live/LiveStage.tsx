@@ -1,8 +1,10 @@
-import { useState, useRef, useEffect } from 'react';
+import { useState, useRef, useEffect, useSyncExternalStore, useCallback } from 'react';
 import { Live2DViewer } from '../Live2D';
 import { VRMViewer } from '../VRM';
 import { DanmakuOverlay } from './DanmakuOverlay';
 import { SubtitleDisplay } from './SubtitleDisplay';
+import type { IAvatarDriver } from '../Avatar/AvatarDriver';
+import type { ParameterOverride } from '../Avatar/avatarManifest';
 
 interface LiveStageProps {
   avatarType?: 'live2d' | 'vrm';
@@ -12,6 +14,58 @@ interface LiveStageProps {
   mouthOpenY?: number;
   onModeSwitch?: () => void;
   onAudioPanelClick?: () => void;
+  driver?: IAvatarDriver;
+}
+
+function useDriverState(driver: IAvatarDriver) {
+  const getSnapshot = useCallback(() => driver, [driver]);
+  const subscribe = useCallback((listener: () => void) => driver.subscribe(listener), [driver]);
+  return useSyncExternalStore(subscribe, getSnapshot);
+}
+
+function DriverLive2DViewer({
+  modelData,
+  scale,
+  xOffset,
+  yOffset,
+  lipSyncEnabled,
+  idleMotionEnabled,
+  driver,
+}: {
+  modelData: ArrayBuffer;
+  scale: number;
+  xOffset: number;
+  yOffset: number;
+  lipSyncEnabled: boolean;
+  idleMotionEnabled: boolean;
+  driver: IAvatarDriver;
+}) {
+  const state = useDriverState(driver);
+
+  const lipSyncOverrides: ParameterOverride[] = lipSyncEnabled
+    ? [{ id: 'ParamMouthOpenY', value: state.mouthOpen }]
+    : [];
+
+  const allOverrides: ParameterOverride[] = [
+    ...lipSyncOverrides,
+    ...state.parameterOverrides,
+  ];
+
+  return (
+    <Live2DViewer
+      modelPath=""
+      modelData={modelData}
+      scale={scale}
+      xOffset={xOffset}
+      yOffset={yOffset}
+      lipSyncEnabled={false}
+      idleMotionEnabled={idleMotionEnabled}
+      mouthOpenY={0}
+      expressionMix={state.expressionMix}
+      parameterOverrides={allOverrides}
+      driver={driver}
+    />
+  );
 }
 
 export function LiveStage({
@@ -22,6 +76,7 @@ export function LiveStage({
   mouthOpenY = 0,
   onModeSwitch,
   onAudioPanelClick,
+  driver,
 }: LiveStageProps) {
   const [showControls, setShowControls] = useState(false);
   const modelDataRef = useRef<ArrayBuffer | undefined>(undefined);
@@ -57,7 +112,18 @@ export function LiveStage({
                 position={[0, -0.3, 0]}
                 lipSyncEnabled
                 lookAtMouse
-                mouthOpenY={mouthOpenY}
+                mouthOpenY={driver ? driver.mouthOpen : mouthOpenY}
+                driver={driver}
+              />
+            ) : driver ? (
+              <DriverLive2DViewer
+                modelData={modelData}
+                scale={0.35}
+                xOffset={0}
+                yOffset={20}
+                lipSyncEnabled
+                idleMotionEnabled
+                driver={driver}
               />
             ) : (
               <Live2DViewer

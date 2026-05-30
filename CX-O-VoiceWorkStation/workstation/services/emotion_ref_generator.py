@@ -4,7 +4,9 @@
 """
 from __future__ import annotations
 
+import json
 import logging
+import zipfile
 from pathlib import Path
 from typing import Callable, Optional
 
@@ -69,3 +71,100 @@ class EmotionRefGenerator:
             }
         finally:
             await client.close()
+
+    async def generate_and_pack_zip(
+        self,
+        base_audio_path: str,
+        sample_text: str = "这是参考音频样本。",
+        transition_text: str = "嗯，",
+        force: bool = False,
+        progress_callback: Optional[Callable[[int, int, str], None]] = None,
+    ) -> Path:
+        from workstation.services.cosyvoice_client import (
+            ALL_EMOTIONS,
+            EMOTION_INSTRUCT_TEMPLATES,
+            get_transition_instruct,
+        )
+
+        await self.generate_all(
+            base_audio_path=base_audio_path,
+            sample_text=sample_text,
+            transition_text=transition_text,
+            force=force,
+            progress_callback=progress_callback,
+        )
+
+        emotions_dir = self._output_dir / "emotions"
+        transitions_dir = self._output_dir / "transitions"
+
+        emotions_meta = []
+        for emotion in ALL_EMOTIONS:
+            wav_path = emotions_dir / f"{emotion}.wav"
+            if wav_path.exists():
+                emotions_meta.append({
+                    "file": f"emotions/{emotion}.wav",
+                    "emotion": emotion,
+                    "text": sample_text,
+                    "instruct_text": EMOTION_INSTRUCT_TEMPLATES.get(emotion, ""),
+                })
+
+        transitions_meta = []
+        for from_emotion in ALL_EMOTIONS:
+            for to_emotion in ALL_EMOTIONS:
+                if from_emotion != to_emotion:
+                    wav_path = transitions_dir / f"{from_emotion}_to_{to_emotion}.wav"
+                    if wav_path.exists():
+                        transitions_meta.append({
+                            "file": f"transitions/{from_emotion}_to_{to_emotion}.wav",
+                            "from_emotion": from_emotion,
+                            "to_emotion": to_emotion,
+                            "text": transition_text,
+                            "instruct_text": get_transition_instruct(from_emotion, to_emotion),
+                        })
+
+        meta = {
+            "emotions": emotions_meta,
+            "transitions": transitions_meta,
+        }
+
+        zip_path = self._output_dir / "emotion_refs.zip"
+
+        with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zf:
+            for emotion in ALL_EMOTIONS:
+                wav_path = emotions_dir / f"{emotion}.wav"
+                if wav_path.exists():
+                    zf.write(wav_path, f"emotions/{emotion}.wav")
+
+            for from_emotion in ALL_EMOTIONS:
+                for to_emotion in ALL_EMOTIONS:
+                    if from_emotion != to_emotion:
+                        wav_path = transitions_dir / f"{from_emotion}_to_{to_emotion}.wav"
+                        if wav_path.exists():
+                            zf.write(wav_path, f"transitions/{from_emotion}_to_{to_emotion}.wav")
+
+            zf.writestr("refs_meta.json", json.dumps(meta, ensure_ascii=False, indent=2))
+
+        logger.info(f"Packed emotion refs zip: {zip_path}")
+        return zip_path
+
+    @staticmethod
+    def import_from_zip(zip_path: str, output_dir: str) -> dict:
+        zip_file = Path(zip_path)
+        if not zip_file.exists():
+            raise FileNotFoundError(f"Zip file not found: {zip_path}")
+
+        out = Path(output_dir)
+        out.mkdir(parents=True, exist_ok=True)
+
+        with zipfile.ZipFile(zip_file, "r") as zf:
+            zf.extractall(out)
+
+        meta_path = out / "refs_meta.json"
+        if not meta_path.exists():
+            raise FileNotFoundError("refs_meta.json not found in zip archive")
+
+        with open(meta_path, "r", encoding="utf-8") as f:
+            meta: dict = json.load(f)
+
+        logger.info(f"Imported emotion refs zip to: {output_dir}")
+        return meta

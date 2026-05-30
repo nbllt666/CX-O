@@ -1,13 +1,68 @@
+import { useCallback, useSyncExternalStore } from 'react';
 import { useSettingsStore, AvatarType } from '../../store/settingsStore';
 import { Live2DPanel } from '../Live2D';
 import { VRMPanel } from '../VRM';
+import type { IAvatarDriver } from './AvatarDriver';
+import type { ExpressionLayer } from './avatarManifest';
 
 interface AvatarPanelProps {
   audioElement: HTMLAudioElement | null;
   isPlaying: boolean;
+  driver?: IAvatarDriver;
 }
 
-export function AvatarPanel({ audioElement, isPlaying }: AvatarPanelProps) {
+function useDriverState(driver: IAvatarDriver) {
+  const getSnapshot = useCallback(() => driver, [driver]);
+  const subscribe = useCallback((listener: () => void) => driver.subscribe(listener), [driver]);
+  return useSyncExternalStore(subscribe, getSnapshot);
+}
+
+function DriverExpressionOverlay({ driver }: { driver: IAvatarDriver }) {
+  const state = useDriverState(driver);
+  const activeExpressions = state.expressionMix.filter((layer: ExpressionLayer) => layer.weight > 0);
+
+  const handleEmotionTrigger = useCallback((emotion: string) => {
+    driver.setEmotion(emotion, 1.0);
+  }, [driver]);
+
+  return (
+    <div className="absolute bottom-0 left-0 right-0 z-10 pointer-events-none">
+      {activeExpressions.length > 0 && (
+        <div className="px-2 py-1 text-xs text-[var(--color-text-tertiary)] bg-[var(--color-bg-secondary)]/80 backdrop-blur-sm border-t border-[var(--color-border)] flex flex-wrap gap-1 items-center">
+          <span>表情:</span>
+          {activeExpressions.map((layer: ExpressionLayer) => {
+            const expressionItem = driver.avatar.expressions.find((e) => e.id === layer.key);
+            const label = expressionItem?.label ?? layer.key;
+            return (
+              <span
+                key={layer.key}
+                className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded bg-[var(--color-bg-tertiary)] text-[var(--color-text-secondary)]"
+              >
+                {label}
+                <span className="text-[10px] opacity-60">{Math.round(layer.weight * 100)}%</span>
+              </span>
+            );
+          })}
+        </div>
+      )}
+      <div className="px-2 py-1 bg-[var(--color-bg-secondary)]/80 backdrop-blur-sm border-t border-[var(--color-border)] pointer-events-auto">
+        <div className="flex flex-wrap gap-1">
+          {['happy', 'angry', 'sad', 'surprised', 'relaxed', 'neutral'].map((emotion) => (
+            <button
+              key={emotion}
+              onClick={() => handleEmotionTrigger(emotion)}
+              className="text-[10px] px-1.5 py-0.5 rounded bg-[var(--color-bg-tertiary)] hover:bg-[var(--color-accent)]/20 text-[var(--color-text-secondary)] hover:text-[var(--color-accent)] transition-colors"
+            >
+              {emotion}
+            </button>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+export function AvatarPanel({ audioElement, isPlaying, driver }: AvatarPanelProps) {
   const { avatarType, live2d, vrm } = useSettingsStore();
 
   if (avatarType === 'none' || (!live2d.enabled && !vrm.enabled)) {
@@ -15,11 +70,21 @@ export function AvatarPanel({ audioElement, isPlaying }: AvatarPanelProps) {
   }
 
   if (avatarType === 'live2d' && live2d.enabled) {
-    return <Live2DPanel audioElement={audioElement} isPlaying={isPlaying} />;
+    return (
+      <div className="relative h-full">
+        <Live2DPanel audioElement={audioElement} isPlaying={isPlaying} driver={driver} />
+        {driver && <DriverExpressionOverlay driver={driver} />}
+      </div>
+    );
   }
 
   if (avatarType === 'vrm' && vrm.enabled) {
-    return <VRMPanel audioElement={audioElement} isPlaying={isPlaying} />;
+    return (
+      <div className="relative h-full">
+        <VRMPanel audioElement={audioElement} isPlaying={isPlaying} driver={driver} />
+        {driver && <DriverExpressionOverlay driver={driver} />}
+      </div>
+    );
   }
 
   return null;
