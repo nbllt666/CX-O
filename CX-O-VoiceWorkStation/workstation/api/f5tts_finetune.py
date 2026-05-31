@@ -42,6 +42,17 @@ _train_status: dict = {
     "message": "",
 }
 
+_service_instance: Optional["F5TTSFinetuneService"] = None
+
+
+def _get_service(**kwargs) -> "F5TTSFinetuneService":
+    global _service_instance
+    from workstation.services.f5tts_finetune import F5TTSFinetuneService
+
+    if _service_instance is None:
+        _service_instance = F5TTSFinetuneService(**kwargs)
+    return _service_instance
+
 
 @router.post("/train")
 async def start_training(request: TrainRequest):
@@ -52,11 +63,10 @@ async def start_training(request: TrainRequest):
         return {"status": "error", "message": "训练任务正在进行中"}
 
     try:
-        from workstation.services.f5tts_finetune import F5TTSFinetuneService
         from workstation.config import get_settings
 
         settings = get_settings()
-        service = F5TTSFinetuneService(
+        service = _get_service(
             base_model=request.base_model or settings.f5tts_finetune.base_model,
             output_dir=settings.f5tts_finetune.output_dir,
             training_data_dir=request.training_data_dir or settings.f5tts_finetune.training_data_dir,
@@ -90,8 +100,7 @@ async def get_training_status():
 async def stop_training():
     """停止训练"""
     try:
-        from workstation.services.f5tts_finetune import F5TTSFinetuneService
-        service = F5TTSFinetuneService()
+        service = _get_service()
         await service.stop_training()
         _train_status["status"] = "stopped"
         return {"status": "success", "message": "训练已停止"}
@@ -103,11 +112,10 @@ async def stop_training():
 async def list_models():
     """列出已微调的模型"""
     try:
-        from workstation.services.f5tts_finetune import F5TTSFinetuneService
         from workstation.config import get_settings
 
         settings = get_settings()
-        service = F5TTSFinetuneService(output_dir=settings.f5tts_finetune.output_dir)
+        service = _get_service(output_dir=settings.f5tts_finetune.output_dir)
         models = service.list_models()
         return {"status": "success", "models": models}
     except Exception as e:

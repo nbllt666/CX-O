@@ -354,48 +354,49 @@ class AdvancedArchiver:
 
             # 标记其他记忆为已合并
             conn = self.memory_manager._get_connection()
-            cursor = conn.cursor()
+            try:
+                cursor = conn.cursor()
 
-            for memory in memories[1:]:
-                # 在Python中处理metadata更新，避免依赖SQLite JSON1扩展
-                new_metadata = {**(memory.get("metadata") or {}), "merged_into": primary_id}
-                cursor.execute(
-                    """
-                    UPDATE memories 
-                    SET is_deleted = TRUE, 
-                        metadata = ?
-                    WHERE id = ?
-                """,
-                    (json.dumps(new_metadata), memory["id"]),
+                for memory in memories[1:]:
+                    new_metadata = {**(memory.get("metadata") or {}), "merged_into": primary_id}
+                    cursor.execute(
+                        """
+                        UPDATE memories 
+                        SET is_deleted = TRUE, 
+                            metadata = ?
+                        WHERE id = ?
+                    """,
+                        (json.dumps(new_metadata), memory["id"]),
+                    )
+
+                    cursor.execute(
+                        """
+                        INSERT INTO merge_records 
+                        (merged_memory_id, merged_from, merged_content, merge_metadata)
+                        VALUES (?, ?, ?, ?)
+                    """,
+                        (
+                            primary_id,
+                            json.dumps(memory_ids),
+                            merged_content,
+                            json.dumps(merge_metadata),
+                        ),
+                    )
+
+                conn.commit()
+
+                logger.info(f"记忆已合并: {memory_ids} -> {primary_id}")
+
+                return MergeResult(
+                    success=True,
+                    merged_memory_id=primary_id,
+                    merged_from=memory_ids,
+                    merged_content=merged_content,
+                    merge_metadata=merge_metadata,
+                    message=f"成功合并 {len(memory_ids)} 个记忆",
                 )
-
-                # 记录合并关系
-                cursor.execute(
-                    """
-                    INSERT INTO merge_records 
-                    (merged_memory_id, merged_from, merged_content, merge_metadata)
-                    VALUES (?, ?, ?, ?)
-                """,
-                    (
-                        primary_id,
-                        json.dumps(memory_ids),
-                        merged_content,
-                        json.dumps(merge_metadata),
-                    ),
-                )
-
-            conn.commit()
-
-            logger.info(f"记忆已合并: {memory_ids} -> {primary_id}")
-
-            return MergeResult(
-                success=True,
-                merged_memory_id=primary_id,
-                merged_from=memory_ids,
-                merged_content=merged_content,
-                merge_metadata=merge_metadata,
-                message=f"成功合并 {len(memory_ids)} 个记忆",
-            )
+            finally:
+                conn.close()
 
         except Exception as e:
             logger.error(f"合并记忆失败: {e}")
@@ -449,11 +450,11 @@ class AdvancedArchiver:
 
     async def archive_of_archives(self, archive_level: int = 4):
         """归档的归档 - 对已有归档进行二次压缩"""
+        conn = None
         try:
             conn = self.memory_manager._get_connection()
             cursor = conn.cursor()
 
-            # 获取指定层级的归档记录
             cursor.execute(
                 """
                 SELECT * FROM archive_records 
@@ -478,7 +479,6 @@ class AdvancedArchiver:
                 current_content = archive[3]
                 original_content = archive[4]
 
-                # 进一步压缩
                 if self.llm_client:
                     further_compressed = await self._compress_content(
                         current_content, archive_level
@@ -486,7 +486,6 @@ class AdvancedArchiver:
                 else:
                     further_compressed = current_content
 
-                # 保存新的归档记录
                 compression_metadata = {
                     "previous_archive_id": archive_id,
                     "original_length": len(original_content),
@@ -532,14 +531,17 @@ class AdvancedArchiver:
         except Exception as e:
             logger.error(f"归档的归档失败: {e}")
             return []
+        finally:
+            if conn:
+                conn.close()
 
     def get_archive_stats(self) -> Dict[str, Any]:
         """获取归档统计"""
+        conn = None
         try:
             conn = self.memory_manager._get_connection()
             cursor = conn.cursor()
 
-            # 各级别归档数量
             cursor.execute(
                 """
                 SELECT archive_level, COUNT(*) FROM archive_records GROUP BY archive_level
@@ -547,11 +549,9 @@ class AdvancedArchiver:
             )
             level_counts = {row[0]: row[1] for row in cursor.fetchall()}
 
-            # 合并记录数量
             cursor.execute("SELECT COUNT(*) FROM merge_records")
             merge_count = cursor.fetchone()[0]
 
-            # 相似性记录数量
             cursor.execute("SELECT COUNT(*) FROM similarity_records WHERE is_duplicate = TRUE")
             duplicate_count = cursor.fetchone()[0]
 
@@ -573,6 +573,9 @@ class AdvancedArchiver:
         except Exception as e:
             logger.error(f"获取归档统计失败: {e}")
             return {}
+        finally:
+            if conn:
+                conn.close()
 
     def record_similarity(
         self,
@@ -582,11 +585,11 @@ class AdvancedArchiver:
         is_duplicate: bool = False,
     ):
         """记录相似性"""
+        conn = None
         try:
             conn = self.memory_manager._get_connection()
             cursor = conn.cursor()
 
-            # 确保顺序一致
             id_1, id_2 = min(memory_id_1, memory_id_2), max(memory_id_1, memory_id_2)
 
             cursor.execute(
@@ -602,3 +605,6 @@ class AdvancedArchiver:
 
         except Exception as e:
             logger.warning(f"记录相似性失败: {e}")
+        finally:
+            if conn:
+                conn.close()

@@ -4,6 +4,7 @@
 
 import json
 import logging
+import re
 from typing import Optional, List, Dict, Any
 
 from server.core.graph.database import Database
@@ -11,6 +12,12 @@ from server.core.graph.models import GraphEdge, EdgeCreate, EdgeUpdate, SearchRe
 from server.core.graph.config import GraphConfig
 
 logger = logging.getLogger(__name__)
+
+
+def _validate_property_key(key: str) -> str:
+    if not re.match(r'^[a-zA-Z_][a-zA-Z0-9_]*$', key):
+        raise ValueError(f"Invalid property key: {key}")
+    return key
 
 
 class EdgeManager:
@@ -188,6 +195,7 @@ class EdgeManager:
 
         if properties_filter:
             for key, value in properties_filter.items():
+                _validate_property_key(key)
                 conditions.append(f"json_extract(properties, '$.{key}') = ?")
                 params.append(json.dumps(value))
 

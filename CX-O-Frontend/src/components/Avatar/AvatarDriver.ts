@@ -7,7 +7,13 @@ import {
   setParameterOverrides as vrmSetParameterOverrides,
   updateStageTransform as vrmUpdateStageTransform,
   destroyRuntime,
+  setBlendShapes as vrmSetBlendShapes,
+  setBoneRotations as vrmSetBoneRotations,
+  holdPose as vrmHoldPose,
+  releasePose as vrmReleasePose,
 } from '../VRM/VRMEngine';
+import { VRMWindField } from '../VRM/VRMWindField';
+import type { WindParams } from '../VRM/VRMWindField';
 import {
   applyExpressionMix as live2dApplyExpressionMix,
   setParameterOverrides as live2dSetParameterOverrides,
@@ -37,6 +43,11 @@ export interface IAvatarDriver {
   triggerSpeechMotion(): void;
   bindRuntime(runtime: unknown): void;
   update(dt: number): void;
+  setBlendShapes(entries: Array<{ name: string; weight: number }>): void;
+  setBoneRotations(entries: Array<{ boneName: string; rotation: { x: number; y: number; z: number }; speed?: number }>): void;
+  holdPose(durationMs?: number): void;
+  releasePose(): void;
+  setWind(params: Partial<WindParams>): void;
 }
 
 type DriverListener = () => void;
@@ -130,6 +141,23 @@ export class Live2DAvatarDriver implements IAvatarDriver {
     }
   }
 
+  setBlendShapes(entries: Array<{ name: string; weight: number }>): void {
+    const overrides = entries.map((entry) => ({ id: entry.name, value: entry.weight }));
+    this._parameterOverrides.push(...overrides);
+    if (this.runtime) {
+      live2dSetParameterOverrides(this.runtime as never, this._avatar, this._parameterOverrides);
+    }
+    this._notify();
+  }
+
+  setBoneRotations(_entries: Array<{ boneName: string; rotation: { x: number; y: number; z: number }; speed?: number }>): void {}
+
+  holdPose(_durationMs?: number): void {}
+
+  releasePose(): void {}
+
+  setWind(_params: Partial<WindParams>): void {}
+
   update(dt: number): void {
     if (this.motion) this.motion.update(dt);
   }
@@ -160,6 +188,7 @@ export class VRMDriver implements IAvatarDriver {
   private runtime: VRMRuntimeState | null = null;
   private expression: VRMExpression | null = null;
   private motionTrigger: VRMMotionTrigger | null = null;
+  private windField: VRMWindField | null = null;
   private _avatar: AvatarManifest;
   private _expressionMix: ExpressionLayer[] = [];
   private _parameterOverrides: ParameterOverride[] = [];
@@ -186,6 +215,8 @@ export class VRMDriver implements IAvatarDriver {
     this.expression.bindVRM(this.runtime.vrm);
     this.motionTrigger = new VRMMotionTrigger();
     this.motionTrigger.bindVRM(this.runtime.vrm);
+    this.windField = new VRMWindField();
+    this.windField.bindVRM(this.runtime.vrm);
   }
 
   setExpressionMix(mix: ExpressionLayer[]): void {
@@ -249,9 +280,43 @@ export class VRMDriver implements IAvatarDriver {
     }
   }
 
+  setBlendShapes(entries: Array<{ name: string; weight: number }>): void {
+    if (this.runtime) {
+      vrmSetBlendShapes(this.runtime, entries);
+    }
+  }
+
+  setBoneRotations(entries: Array<{ boneName: string; rotation: { x: number; y: number; z: number }; speed?: number }>): void {
+    if (this.runtime) {
+      vrmSetBoneRotations(this.runtime, entries);
+      this.motionTrigger?.interrupt();
+    }
+  }
+
+  holdPose(durationMs?: number): void {
+    if (this.runtime) {
+      vrmHoldPose(this.runtime, durationMs);
+      this.motionTrigger?.setPaused(true);
+      this.runtime.animation.setBreathingAmplitude(0.3);
+    }
+  }
+
+  releasePose(): void {
+    if (this.runtime) {
+      vrmReleasePose(this.runtime);
+      this.motionTrigger?.setPaused(false);
+      this.runtime.animation.setBreathingAmplitude(1.0);
+    }
+  }
+
+  setWind(params: Partial<WindParams>): void {
+    this.windField?.setWindParams(params);
+  }
+
   update(dt: number): void {
     if (this.expression) this.expression.update(dt);
     if (this.motionTrigger) this.motionTrigger.update(dt);
+    if (this.windField) this.windField.update(dt);
   }
 
   destroy(): void {
@@ -261,6 +326,8 @@ export class VRMDriver implements IAvatarDriver {
     }
     this.expression = null;
     this.motionTrigger = null;
+    this.windField?.reset();
+    this.windField = null;
     this._expressionMix = [];
     this._parameterOverrides = [];
   }

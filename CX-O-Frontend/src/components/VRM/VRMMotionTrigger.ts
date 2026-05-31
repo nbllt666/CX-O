@@ -117,6 +117,8 @@ export class VRMMotionTrigger {
   private activeMotion: ActiveMotion | null = null;
   private speechTimer = 0;
   private isSpeaking = false;
+  private _paused = false;
+  get paused(): boolean { return this._paused; }
 
   bindVRM(vrm: VRM): void {
     this.vrm = vrm;
@@ -145,8 +147,23 @@ export class VRMMotionTrigger {
     }
   }
 
+  interrupt(): void {
+    if (this.activeMotion) {
+      this.restoreIdleBones(this.activeMotion);
+      this.activeMotion = null;
+    }
+  }
+
+  setPaused(paused: boolean): void {
+    this._paused = paused;
+    if (paused) {
+      this.interrupt();
+    }
+  }
+
   update(deltaTime: number): void {
     if (!this.vrm) return;
+    if (this._paused) return;
 
     if (this.isSpeaking) {
       this.speechTimer += deltaTime;

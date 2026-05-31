@@ -835,7 +835,7 @@ def delete_memory(memory_id: str, reason: str) -> Dict[str, Any]:
         return {"error": "记忆管理器不可用"}
 
     try:
-        success = mm.soft_delete(memory_id=memory_id, reason=reason)
+        success = mm.delete_memory(memory_id=memory_id, soft_delete=True)
         return {
             "status": "deleted" if success else "failed",
             "memory_id": memory_id,
@@ -853,13 +853,7 @@ def merge_memories(memory_ids: List[str], merged_content: str) -> Dict[str, Any]
         return {"error": "记忆管理器不可用"}
 
     try:
-        merged_id = mm.merge_memories(memory_ids=memory_ids, merged_content=merged_content)
-        return {
-            "status": "success",
-            "merged_memory_id": merged_id,
-            "original_count": len(memory_ids),
-            "merged_content_preview": merged_content[:100],
-        }
+        return {"error": "This feature is not yet implemented"}
     except Exception as e:
         return {"error": f"合并记忆失败: {str(e)}"}
 
@@ -871,8 +865,7 @@ def clean_expired() -> Dict[str, Any]:
         return {"error": "记忆管理器不可用"}
 
     try:
-        cleaned = mm.clean_expired(days=7)
-        return {"status": "completed", "cleaned_count": cleaned}
+        return {"error": "This feature is not yet implemented"}
     except Exception as e:
         return {"error": f"清理过期记忆失败: {str(e)}"}
 
@@ -884,8 +877,7 @@ def export_memories(format: str, memory_type: str = "all") -> Dict[str, Any]:
         return {"error": "记忆管理器不可用"}
 
     try:
-        data = mm.export_memories(format=format, memory_type=memory_type)
-        return {"status": "success", "format": format, "memory_type": memory_type, "data": data}
+        return {"error": "This feature is not yet implemented"}
     except Exception as e:
         return {"error": f"导出记忆失败: {str(e)}"}
 
@@ -910,20 +902,7 @@ def search_by_time(start_time: str, end_time: str) -> Dict[str, Any]:
         return {"error": "记忆管理器不可用"}
 
     try:
-        memories = mm.search_by_time(start=start_time, end=end_time)
-        return {
-            "start_time": start_time,
-            "end_time": end_time,
-            "count": len(memories),
-            "memories": [
-                {
-                    "id": m.get("id"),
-                    "content": m.get("content", "")[:200],
-                    "created_at": m.get("created_at"),
-                }
-                for m in memories
-            ],
-        }
+        return {"error": "This feature is not yet implemented"}
     except Exception as e:
         return {"error": f"按时间搜索失败: {str(e)}"}
 
@@ -935,7 +914,7 @@ def search_by_tag(tags: List[str]) -> Dict[str, Any]:
         return {"error": "记忆管理器不可用"}
 
     try:
-        memories = mm.search_by_tags(tags=tags)
+        memories = mm.search_memories(tags=tags)
         return {
             "tags": tags,
             "count": len(memories),
@@ -959,7 +938,7 @@ def bulk_delete(memory_ids: List[str], reason: str) -> Dict[str, Any]:
         return {"error": "记忆管理器不可用"}
 
     try:
-        result = mm.bulk_soft_delete(ids=memory_ids, reason=reason)
+        result = mm.batch_delete_memories(memory_ids=[int(mid) for mid in memory_ids], soft_delete=True)
         return {
             "status": "completed",
             "deleted_count": result.get("success", 0),
@@ -978,7 +957,7 @@ def restore_memory(memory_id: str) -> Dict[str, Any]:
         return {"error": "记忆管理器不可用"}
 
     try:
-        success = mm.restore(memory_id=memory_id)
+        success = mm.restore_memory(memory_id=memory_id)
         return {"status": "restored" if success else "failed", "memory_id": memory_id}
     except Exception as e:
         return {"error": f"恢复记忆失败: {str(e)}"}
@@ -993,13 +972,7 @@ def search_similar_memories(
         return {"error": "记忆管理器不可用"}
 
     try:
-        similar = mm.find_similar(memory_id=memory_id, threshold=threshold, limit=limit)
-        return {
-            "reference_memory_id": memory_id,
-            "threshold": threshold,
-            "count": len(similar),
-            "similar_memories": similar,
-        }
+        return {"error": "This feature is not yet implemented"}
     except Exception as e:
         return {"error": f"搜索相似记忆失败: {str(e)}"}
 
@@ -1024,12 +997,7 @@ def get_similar_memories(content: str, limit: int = 10) -> Dict[str, Any]:
         return {"error": "记忆管理器不可用"}
 
     try:
-        memories = mm.find_similar_by_content(content=content, limit=limit)
-        return {
-            "content_preview": content[:100],
-            "count": len(memories),
-            "similar_memories": memories,
-        }
+        return {"error": "This feature is not yet implemented"}
     except Exception as e:
         return {"error": f"搜索相似记忆失败: {str(e)}"}
 
@@ -1041,8 +1009,7 @@ def get_memory_logs(memory_id: str = None, limit: int = 100) -> Dict[str, Any]:
         return {"error": "记忆管理器不可用"}
 
     try:
-        logs = mm.get_operation_logs(memory_id=memory_id, limit=limit)
-        return {"memory_id": memory_id, "count": len(logs), "logs": logs[-limit:]}
+        return {"error": "This feature is not yet implemented"}
     except Exception as e:
         return {"error": f"获取日志失败: {str(e)}"}
 

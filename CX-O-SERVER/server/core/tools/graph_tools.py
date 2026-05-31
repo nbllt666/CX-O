@@ -1703,8 +1703,8 @@ def register_graph_tools():
             name=name,
             description=description,
             parameters=parameters,
-            handler=func,
-            models=models,
+            function=func,
+            tags=models,
         )
     
     return len(all_tools)

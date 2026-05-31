@@ -218,34 +218,59 @@ export interface ChatMessage {
 }
 
 class ApiClient {
+  private _client: AxiosInstance | null = null;
+  private _clientBaseUrl: string | null = null;
+  private _controlClient: AxiosInstance | null = null;
+  private _controlClientBaseUrl: string | null = null;
+  private _voiceWorkstationClient: AxiosInstance | null = null;
+  private _voiceWorkstationClientBaseUrl: string | null = null;
+
   private get client(): AxiosInstance {
-    return axios.create({
-      baseURL: getApiBaseUrl(),
-      timeout: 30000,
-      headers: {
-        'Content-Type': 'application/json',
-      },
-    });
+    const baseUrl = getApiBaseUrl();
+    if (!this._client || this._clientBaseUrl !== baseUrl) {
+      this._client = axios.create({
+        baseURL: baseUrl,
+        timeout: 30000,
+        headers: {
+          'Content-Type': 'application/json',
+        },
+      });
+      this._setupInterceptors(this._client);
+      this._clientBaseUrl = baseUrl;
+    }
+    return this._client;
   }
 
   private get controlClient(): AxiosInstance {
-    return axios.create({
-      baseURL: getControlServiceUrl(),
-      timeout: 30000,
-      headers: {
-        'Content-Type': 'application/json',
-      },
-    });
+    const baseUrl = getControlServiceUrl();
+    if (!this._controlClient || this._controlClientBaseUrl !== baseUrl) {
+      this._controlClient = axios.create({
+        baseURL: baseUrl,
+        timeout: 30000,
+        headers: {
+          'Content-Type': 'application/json',
+        },
+      });
+      this._setupInterceptors(this._controlClient);
+      this._controlClientBaseUrl = baseUrl;
+    }
+    return this._controlClient;
   }
 
   private get voiceWorkstationClient(): AxiosInstance {
-    return axios.create({
-      baseURL: getVoiceWorkstationUrl(),
-      timeout: 60000,
-      headers: {
-        'Content-Type': 'application/json',
-      },
-    });
+    const baseUrl = getVoiceWorkstationUrl();
+    if (!this._voiceWorkstationClient || this._voiceWorkstationClientBaseUrl !== baseUrl) {
+      this._voiceWorkstationClient = axios.create({
+        baseURL: baseUrl,
+        timeout: 60000,
+        headers: {
+          'Content-Type': 'application/json',
+        },
+      });
+      this._setupInterceptors(this._voiceWorkstationClient);
+      this._voiceWorkstationClientBaseUrl = baseUrl;
+    }
+    return this._voiceWorkstationClient;
   }
 
   private maxRetries: number = 3;
@@ -308,18 +333,18 @@ class ApiClient {
       (response) => response,
       async (error: AxiosError) => {
         const config = error.config as RetryConfig;
-        if (!config || config.retryCount !== undefined) {
+        if (!config) {
           return Promise.reject(error);
         }
 
         const retryCount = (config.retryCount || 0) + 1;
-        if (retryCount <= this.maxRetries) {
-          config.retryCount = retryCount;
-          await new Promise((resolve) => setTimeout(resolve, this.retryDelay * retryCount));
-          return axiosInstance(config);
+        if (retryCount > this.maxRetries) {
+          return Promise.reject(error);
         }
+        config.retryCount = retryCount;
 
-        return Promise.reject(error);
+        await new Promise((resolve) => setTimeout(resolve, this.retryDelay * retryCount));
+        return axiosInstance(config);
       }
     );
   }
@@ -334,7 +359,6 @@ class ApiClient {
 
     try {
       const axiosInstance = this.client;
-      this._setupInterceptors(axiosInstance);
       const response = await axiosInstance.request<T>(config);
 
       if (useCache && config.method === 'get') {
@@ -350,7 +374,6 @@ class ApiClient {
   async controlRequest<T>(config: AxiosRequestConfig): Promise<T> {
     try {
       const axiosInstance = this.controlClient;
-      this._setupInterceptors(axiosInstance);
       const response = await axiosInstance.request<T>(config);
       return response.data;
     } catch (error) {
@@ -361,7 +384,6 @@ class ApiClient {
   async voiceWorkstationRequest<T>(config: AxiosRequestConfig): Promise<T> {
     try {
       const axiosInstance = this.voiceWorkstationClient;
-      this._setupInterceptors(axiosInstance);
       const response = await axiosInstance.request<T>(config);
       return response.data;
     } catch (error) {
@@ -870,7 +892,6 @@ class ApiClient {
     transition_text?: string;
   }): Promise<Blob> {
     const axiosInstance = this.voiceWorkstationClient;
-    this._setupInterceptors(axiosInstance);
     const response = await axiosInstance.post('/api/ref-audio/export-zip', data, {
       responseType: 'blob',
     });
@@ -887,7 +908,6 @@ class ApiClient {
     const formData = new FormData();
     formData.append('file', file);
     const axiosInstance = this.voiceWorkstationClient;
-    this._setupInterceptors(axiosInstance);
     const response = await axiosInstance.post('/api/ref-audio/import-zip', formData, {
       headers: { 'Content-Type': 'multipart/form-data' },
     });
@@ -993,10 +1013,8 @@ class ApiClient {
   async speechToText(audioBlob: Blob): Promise<{ text: string }> {
     const formData = new FormData();
     formData.append('audio', audioBlob);
-    
+
     const axiosInstance = this.client;
-    this._setupInterceptors(axiosInstance);
-    
     const response = await axiosInstance.post<{ text: string }>('/api/asr', formData, {
       headers: { 'Content-Type': 'multipart/form-data' },
     });
@@ -1010,7 +1028,6 @@ class ApiClient {
     images?: string[]
   ): Promise<void> {
     const axiosInstance = this.client;
-    this._setupInterceptors(axiosInstance);
 
     const response = await axiosInstance.post('/api/chat/stream', {
       message,
@@ -1031,7 +1048,6 @@ class ApiClient {
             onChunk(chunk);
           }
         } catch {
-          // Ignore parse errors
         }
       }
     }
@@ -1040,10 +1056,8 @@ class ApiClient {
   async uploadAudioFile(file: File): Promise<{ filename: string; url: string }> {
     const formData = new FormData();
     formData.append('file', file);
-    
+
     const axiosInstance = this.client;
-    this._setupInterceptors(axiosInstance);
-    
     const response = await axiosInstance.post<{ filename: string; url: string }>('/api/audio/upload', formData, {
       headers: { 'Content-Type': 'multipart/form-data' },
     });
@@ -1120,7 +1134,6 @@ class ApiClient {
     sessionId?: string
   ): Promise<void> {
     const axiosInstance = this.client;
-    this._setupInterceptors(axiosInstance);
 
     const response = await axiosInstance.post('/api/memory-agent/chat/stream', {
       message,
@@ -1140,7 +1153,6 @@ class ApiClient {
             onChunk(chunk);
           }
         } catch {
-          // Ignore parse errors
         }
       }
     }
@@ -1149,8 +1161,6 @@ class ApiClient {
   getAudioFileUrl(filename: string): string {
     return `${getApiBaseUrl()}/api/audio/files/${filename}`;
   }
-
-  // ========== Avatar APIs ==========
 
   async listAvatars(type?: 'vrm' | 'live2d'): Promise<{ avatars: Array<{
     id: string;
@@ -1185,7 +1195,6 @@ class ApiClient {
     if (name) formData.append('name', name);
 
     const axiosInstance = this.client;
-    this._setupInterceptors(axiosInstance);
 
     const response = await axiosInstance.post('/api/avatars/upload', formData, {
       headers: { 'Content-Type': 'multipart/form-data' },
@@ -1206,7 +1215,6 @@ class ApiClient {
 
   async downloadAvatarFile(avatarId: string, avatarType: string): Promise<Blob> {
     const axiosInstance = this.client;
-    this._setupInterceptors(axiosInstance);
 
     const response = await axiosInstance.get(`/api/avatars/${avatarId}/file`, {
       params: { avatar_type: avatarType },

@@ -56,6 +56,12 @@ export type VRMRuntimeState = {
   animationFrameId: number;
   modelHeight: number;
   modelWidth: number;
+  directBlendShapes: Map<string, number>;
+  heldBones: Map<string, { x: number; y: number; z: number }>;
+  poseHoldTimer: number;
+  boneTransitionSpeeds: Map<string, number>;
+  boneCurrentRotations: Map<string, { x: number; y: number; z: number }>;
+  boneTargetRotations: Map<string, { x: number; y: number; z: number }>;
 };
 
 function easeTowards(current: number, target: number, factor: number): number {
@@ -296,6 +302,12 @@ export function createVRMRuntime(
     animationFrameId: 0,
     modelHeight: Math.max(size.y, 0.1),
     modelWidth: Math.max(size.x, 0.1),
+    directBlendShapes: new Map(),
+    heldBones: new Map(),
+    poseHoldTimer: 0,
+    boneTransitionSpeeds: new Map(),
+    boneCurrentRotations: new Map(),
+    boneTargetRotations: new Map(),
   };
 
   fitVRMModel(runtime);
@@ -319,6 +331,48 @@ export function createVRMRuntime(
       }
     }
 
+    if (runtime.directBlendShapes.size > 0) {
+      const em = runtime.vrm.expressionManager;
+      if (em) {
+        for (const [name, weight] of runtime.directBlendShapes) {
+          em.setValue(name as keyof typeof VRMExpressionPresetName, weight);
+        }
+      }
+    }
+
+    if (runtime.poseHoldTimer > 0) {
+      runtime.poseHoldTimer -= dt;
+      if (runtime.poseHoldTimer <= 0) {
+        runtime.poseHoldTimer = 0;
+        releasePose(runtime);
+      }
+    }
+
+    if (runtime.boneTargetRotations.size > 0) {
+      const humanoid = runtime.vrm.humanoid;
+      if (humanoid) {
+        for (const [boneName, target] of runtime.boneTargetRotations) {
+          const bone = humanoid.getNormalizedBoneNode(boneName as never);
+          if (!bone) continue;
+
+          const speed = runtime.boneTransitionSpeeds.get(boneName) ?? 1.0;
+          const current = runtime.boneCurrentRotations.get(boneName) ?? { x: bone.rotation.x, y: bone.rotation.y, z: bone.rotation.z };
+
+          const factor = Math.min(1, speed * dt * 5);
+          const next = {
+            x: current.x + (target.x - current.x) * factor,
+            y: current.y + (target.y - current.y) * factor,
+            z: current.z + (target.z - current.z) * factor,
+          };
+
+          runtime.boneCurrentRotations.set(boneName, next);
+          bone.rotation.x = next.x;
+          bone.rotation.y = next.y;
+          bone.rotation.z = next.z;
+        }
+      }
+    }
+
     runtime.vrm.update(dt);
     runtime.renderer.render(runtime.scene, runtime.camera);
     runtime.animationFrameId = requestAnimationFrame(animate);
@@ -326,6 +380,47 @@ export function createVRMRuntime(
 
   runtime.animationFrameId = requestAnimationFrame(animate);
   return runtime;
+}
+
+export function setBlendShapes(runtime: VRMRuntimeState, entries: Array<{ name: string; weight: number }>): void {
+  for (const entry of entries) {
+    runtime.directBlendShapes.set(entry.name, Math.min(Math.max(entry.weight, 0), 1));
+  }
+}
+
+export function setBoneRotations(runtime: VRMRuntimeState, entries: Array<{ boneName: string; rotation: { x: number; y: number; z: number }; speed?: number }>): void {
+  for (const entry of entries) {
+    runtime.boneTargetRotations.set(entry.boneName, entry.rotation);
+    runtime.boneTransitionSpeeds.set(entry.boneName, entry.speed ?? 1.0);
+    if (!runtime.boneCurrentRotations.has(entry.boneName)) {
+      const humanoid = runtime.vrm.humanoid;
+      if (humanoid) {
+        const bone = humanoid.getNormalizedBoneNode(entry.boneName as never);
+        if (bone) {
+          runtime.boneCurrentRotations.set(entry.boneName, { x: bone.rotation.x, y: bone.rotation.y, z: bone.rotation.z });
+          continue;
+        }
+      }
+      runtime.boneCurrentRotations.set(entry.boneName, { x: 0, y: 0, z: 0 });
+    }
+  }
+}
+
+export function holdPose(runtime: VRMRuntimeState, durationMs?: number): void {
+  for (const [boneName, target] of runtime.boneTargetRotations) {
+    runtime.heldBones.set(boneName, { ...target });
+  }
+  runtime.poseHoldTimer = (durationMs ?? 3000) / 1000;
+}
+
+export function releasePose(runtime: VRMRuntimeState): void {
+  runtime.heldBones.clear();
+  runtime.poseHoldTimer = 0;
+  runtime.directBlendShapes.clear();
+  for (const boneName of runtime.boneTargetRotations.keys()) {
+    runtime.boneTargetRotations.set(boneName, { x: 0, y: 0, z: 0 });
+    runtime.boneTransitionSpeeds.set(boneName, 3.3);
+  }
 }
 
 export async function applyExpressionMix(
@@ -387,4 +482,9 @@ export function destroyRuntime(runtime: VRMRuntimeState): void {
   runtime.overlayTargetValues.clear();
   runtime.baselineValues.clear();
   runtime.resolvedBindingCache.clear();
+  runtime.directBlendShapes.clear();
+  runtime.heldBones.clear();
+  runtime.boneTransitionSpeeds.clear();
+  runtime.boneCurrentRotations.clear();
+  runtime.boneTargetRotations.clear();
 }

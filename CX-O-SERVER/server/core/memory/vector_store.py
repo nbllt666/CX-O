@@ -94,7 +94,4 @@ def create_vector_store(backend: str = "weaviate", **kwargs) -> VectorStoreBase:
 
         return WeaviateVectorStore(embedded=True, **kwargs)
     else:
-        logger.warning(f"不支持的向量存储后端: {backend}，仅支持 weaviate 和 weaviate_embedded")
-        from .weaviate_store import WeaviateVectorStore
-
-        return WeaviateVectorStore(embedded=False, **kwargs)
+        raise ValueError(f"Unknown vector store backend: {backend}. Supported: weaviate, weaviate_embedded")

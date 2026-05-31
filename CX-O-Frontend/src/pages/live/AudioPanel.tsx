@@ -33,6 +33,7 @@ export function AudioPanel({ standalone = false }: AudioPanelProps) {
   const outputGainRef = useRef<GainNode | null>(null);
   const ttsGainRef = useRef<GainNode | null>(null);
   const rafRef = useRef<number>(0);
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
 
   const playbackIdRef = useRef<string>('');
   const clockOffsetRef = useRef(0);
@@ -54,8 +55,9 @@ export function AudioPanel({ standalone = false }: AudioPanelProps) {
 
   const enumerateDevices = useCallback(async () => {
     try {
-      await navigator.mediaDevices.getUserMedia({ audio: true });
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       const allDevices = await navigator.mediaDevices.enumerateDevices();
+      stream.getTracks().forEach(track => track.stop());
       const audioInputs = allDevices
         .filter((d) => d.kind === 'audioinput')
         .map((d) => ({ deviceId: d.deviceId, label: d.label || `麦克风 ${d.deviceId.slice(0, 6)}` }));
@@ -69,6 +71,10 @@ export function AudioPanel({ standalone = false }: AudioPanelProps) {
   }, [selectedDevice]);
 
   const cleanupAudio = useCallback(() => {
+    if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
+      mediaRecorderRef.current.stop();
+      mediaRecorderRef.current = null;
+    }
     if (streamRef.current) {
       streamRef.current.getTracks().forEach((t) => t.stop());
       streamRef.current = null;
@@ -190,6 +196,7 @@ export function AudioPanel({ standalone = false }: AudioPanelProps) {
       outGain.connect(dest);
 
       const processor = new MediaRecorder(dest.stream, { mimeType: 'audio/webm;codecs=opus' });
+      mediaRecorderRef.current = processor;
       processor.ondataavailable = (e) => {
         if (e.data.size > 0 && sendAudio) {
           e.data.arrayBuffer().then((buf) => sendAudio(buf));

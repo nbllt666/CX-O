@@ -7,12 +7,14 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import io
 import logging
 import os
 import re
 import struct
 import tempfile
 import time
+import wave
 from pathlib import Path
 from typing import Any, AsyncGenerator, Callable, Optional
 
@@ -401,68 +403,80 @@ class TTSService:
         text: str,
         **kwargs
     ) -> bytes:
-        emotion_text_pairs = extract_emotions_with_text(text)
+        segments = extract_emotions_with_text(text)
 
-        if not emotion_text_pairs:
+        if not segments:
             return await self.synthesize(text, **kwargs)
 
         audio_segments: list[bytes] = []
+        current_emotion = "normal"
 
-        for emotion, text_segment in emotion_text_pairs:
-            if not text_segment.strip():
+        for segment in segments:
+            if segment["type"] == "emotion":
+                current_emotion = segment["emotion"]
                 continue
 
-            voice_config = self.get_emotion_voice(emotion)
-            ref_audio = voice_config.get("ref_audio", self._ref_audio_path)
-            ref_text = voice_config.get("ref_text", self._ref_text)
+            if segment["type"] == "sleep":
+                silence = self._generate_silence(segment["duration_ms"])
+                audio_segments.append(silence)
+                continue
 
-            if not ref_audio:
-                ref_audio = self._ref_audio_path
-            if not ref_text:
-                ref_text = self._ref_text
-
-            if not ref_audio or not ref_text:
-                raise ValueError(
-                    f"TTS requires reference audio and text for emotion '{emotion}'."
-                )
-
-            audio_data = await self._load_emotion_audio(emotion)
-
-            if self._mode == "embedded":
-                from f5_tts.api import get_f5tts
-                if get_f5tts() is not None:
-                    seg_bytes = await self._synthesize_embedded(
-                        text_segment, ref_audio, ref_text,
-                        kwargs.get("speed", self._speed),
-                        kwargs.get("cross_fade_duration", self._cross_fade_duration),
-                        **kwargs
-                    )
-                    audio_segments.append(seg_bytes)
+            if segment["type"] == "text":
+                text_segment = segment["content"]
+                if not text_segment.strip():
                     continue
 
-            client = get_shared_http_client()
-            files = {
-                "ref_audio": ("ref_audio.wav", audio_data, "audio/wav")
-            }
-            data = {
-                "ref_text": ref_text,
-                "gen_text": text_segment,
-                "model_type": kwargs.get("model_type", "F5-TTS"),
-                "remove_silence": str(kwargs.get("remove_silence", False)).lower(),
-                "cross_fade_duration": str(kwargs.get("cross_fade_duration", 0.15)),
-                "speed": str(kwargs.get("speed", 1.0)),
-                "nfe_step": str(kwargs.get("nfe_step", 32)),
-                "cfg_strength": str(kwargs.get("cfg_strength", 2)),
-                "seed": str(kwargs.get("seed", -1))
-            }
+                voice_config = self.get_emotion_voice(current_emotion)
+                ref_audio = voice_config.get("ref_audio", self._ref_audio_path)
+                ref_text = voice_config.get("ref_text", self._ref_text)
 
-            response = await client.post(
-                f"{self._remote_url}/tts/",
-                files=files,
-                data=data
-            )
-            response.raise_for_status()
-            audio_segments.append(response.content)
+                if not ref_audio:
+                    ref_audio = self._ref_audio_path
+                if not ref_text:
+                    ref_text = self._ref_text
+
+                if not ref_audio or not ref_text:
+                    raise ValueError(
+                        f"TTS requires reference audio and text for emotion '{current_emotion}'."
+                    )
+
+                audio_data = await self._load_emotion_audio(current_emotion)
+
+                if self._mode == "embedded":
+                    from f5_tts.api import get_f5tts
+                    if get_f5tts() is not None:
+                        seg_bytes = await self._synthesize_embedded(
+                            text_segment, ref_audio, ref_text,
+                            kwargs.get("speed", self._speed),
+                            kwargs.get("cross_fade_duration", self._cross_fade_duration),
+                            **kwargs
+                        )
+                        audio_segments.append(seg_bytes)
+                        continue
+
+                client = get_shared_http_client()
+                files = {
+                    "ref_audio": ("ref_audio.wav", audio_data, "audio/wav")
+                }
+                data = {
+                    "ref_text": ref_text,
+                    "gen_text": text_segment,
+                    "model_type": kwargs.get("model_type", "F5-TTS"),
+                    "remove_silence": str(kwargs.get("remove_silence", False)).lower(),
+                    "cross_fade_duration": str(kwargs.get("cross_fade_duration", 0.15)),
+                    "speed": str(kwargs.get("speed", 1.0)),
+                    "nfe_step": str(kwargs.get("nfe_step", 32)),
+                    "cfg_strength": str(kwargs.get("cfg_strength", 2)),
+                    "seed": str(kwargs.get("seed", -1))
+                }
+
+                response = await client.post(
+                    f"{self._remote_url}/tts/",
+                    files=files,
+                    data=data
+                )
+                response.raise_for_status()
+                audio_segments.append(response.content)
 
         if not audio_segments:
             return b""
@@ -521,6 +535,22 @@ class TTSService:
 
                     yield chunk
                     chunk_index += 1
+                continue
+
+            if segment["type"] == "sleep":
+                silence = self._generate_silence(segment["duration_ms"])
+                chunk = {
+                    "text_segment": "",
+                    "audio_data": silence,
+                    "chunk_index": chunk_index,
+                    "is_final": False,
+                    "emotion": current_emotion,
+                    "is_effect": False,
+                    "is_sleep": True,
+                    "sleep_duration_ms": segment["duration_ms"]
+                }
+                yield chunk
+                chunk_index += 1
                 continue
 
             if segment["type"] == "text":
@@ -691,6 +721,19 @@ class TTSService:
 
     def _load_effect_audio(self, effect_name: str) -> bytes | None:
         return self._effect_parser._load_effect(effect_name)
+
+    def _generate_silence(self, duration_ms: int) -> bytes:
+        sample_rate = 22050
+        num_channels = 1
+        sample_width = 2
+        num_frames = int(sample_rate * duration_ms / 1000)
+        buf = io.BytesIO()
+        with wave.open(buf, "wb") as wf:
+            wf.setnchannels(num_channels)
+            wf.setsampwidth(sample_width)
+            wf.setframerate(sample_rate)
+            wf.writeframes(b"\x00\x00" * num_frames)
+        return buf.getvalue()
 
     async def _concatenate_audio(self, audio_segments: list[bytes]) -> bytes:
         if not audio_segments:

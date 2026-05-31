@@ -1,9 +1,18 @@
-import { useCallback, useSyncExternalStore } from 'react';
+import { useRef, useSyncExternalStore, useCallback } from 'react';
 import { useSettingsStore, AvatarType } from '../../store/settingsStore';
 import { Live2DPanel } from '../Live2D';
 import { VRMPanel } from '../VRM';
 import type { IAvatarDriver } from './AvatarDriver';
 import type { ExpressionLayer } from './avatarManifest';
+
+interface DriverSnapshot {
+  avatar: IAvatarDriver['avatar'];
+  mouthOpen: number;
+  expressionMix: IAvatarDriver['expressionMix'];
+  parameterOverrides: IAvatarDriver['parameterOverrides'];
+  watermarkVisible: boolean;
+  transform: IAvatarDriver['transform'];
+}
 
 interface AvatarPanelProps {
   audioElement: HTMLAudioElement | null;
@@ -12,14 +21,32 @@ interface AvatarPanelProps {
 }
 
 function useDriverState(driver: IAvatarDriver) {
-  const getSnapshot = useCallback(() => ({
-    avatar: driver.avatar,
-    mouthOpen: driver.mouthOpen,
-    expressionMix: driver.expressionMix,
-    parameterOverrides: driver.parameterOverrides,
-    watermarkVisible: driver.watermarkVisible,
-    transform: driver.transform,
-  }), [driver]);
+  const prevSnapshotRef = useRef<DriverSnapshot | null>(null);
+  const getSnapshot = useCallback(() => {
+    const newSnapshot: DriverSnapshot = {
+      avatar: driver.avatar,
+      mouthOpen: driver.mouthOpen,
+      expressionMix: driver.expressionMix,
+      parameterOverrides: driver.parameterOverrides,
+      watermarkVisible: driver.watermarkVisible,
+      transform: driver.transform,
+    };
+    if (prevSnapshotRef.current) {
+      const prev = prevSnapshotRef.current;
+      if (
+        prev.avatar === newSnapshot.avatar &&
+        prev.mouthOpen === newSnapshot.mouthOpen &&
+        prev.expressionMix === newSnapshot.expressionMix &&
+        prev.parameterOverrides === newSnapshot.parameterOverrides &&
+        prev.watermarkVisible === newSnapshot.watermarkVisible &&
+        prev.transform === newSnapshot.transform
+      ) {
+        return prev;
+      }
+    }
+    prevSnapshotRef.current = newSnapshot;
+    return newSnapshot;
+  }, [driver]);
   const subscribe = useCallback((listener: () => void) => driver.subscribe(listener), [driver]);
   return useSyncExternalStore(subscribe, getSnapshot);
 }

@@ -265,3 +265,12 @@ CosyVoice-main/
 LLM_Live2D-master/
 so-vits-svc-4.1-Stable/
 VoxCPM-main/
+vllm-gemma4/
+weaviate-embeddings/
+
+# Weaviate Docker Compose 文件
+docker-compose.weaviate.yml
+docker-compose.weaviate-gpu.yml
+docker-compose.weaviate-gpu-custom.yml
+docker-compose.weaviate-gpu-full.yml
+docker-compose.weaviate-gpu-multilingual.yml

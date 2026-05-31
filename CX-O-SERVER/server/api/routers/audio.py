@@ -29,6 +29,18 @@ class TTSSynthesizeRequest(BaseModel):
     ref_text: Optional[str] = None
 
 
+def _validate_filename(filename: str) -> str:
+    if not filename:
+        raise HTTPException(status_code=400, detail="Filename is required")
+    if '..' in filename or '/' in filename or '\\' in filename:
+        raise HTTPException(status_code=400, detail="Invalid filename")
+    if os.path.isabs(filename):
+        raise HTTPException(status_code=400, detail="Absolute paths not allowed")
+    resolved = (VOICE_REFS_DIR / filename).resolve()
+    if not str(resolved).startswith(str(VOICE_REFS_DIR.resolve())):
+        raise HTTPException(status_code=400, detail="Path traversal not allowed")
+    return filename
+
 def _ensure_voice_refs_dir():
     VOICE_REFS_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -118,6 +130,7 @@ async def upload_audio_file(request: Request):
 )
 async def get_audio_file(filename: str):
     try:
+        _validate_filename(filename)
         _ensure_voice_refs_dir()
 
         file_path = VOICE_REFS_DIR / filename
@@ -149,6 +162,7 @@ async def get_audio_file(filename: str):
 )
 async def delete_audio_file(filename: str):
     try:
+        _validate_filename(filename)
         _ensure_voice_refs_dir()
 
         file_path = VOICE_REFS_DIR / filename

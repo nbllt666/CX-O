@@ -93,12 +93,11 @@ export const DashboardPage: React.FC = () => {
   const { data: stats, isLoading: statsLoading } = useQuery<Stats>({
     queryKey: ['dashboard-stats'],
     queryFn: async () => {
-      const memoriesResponse = await api.getMemories({ limit: 10000 });
-      const sessionsResponse = await api.getSessions();
-      const agentsResponse = await api.getAgents();
-
-      const memories = memoriesResponse.memories || [];
-      const memoriesTotal = memories.length;
+      const [statsResponse, sessionsResponse, agentsResponse] = await Promise.all([
+        api.getStats(),
+        api.getSessions(),
+        api.getAgents(),
+      ]);
 
       const sessions = Array.isArray(sessionsResponse) ? sessionsResponse : [];
       const sessionsTotal = sessions.length;
@@ -114,7 +113,7 @@ export const DashboardPage: React.FC = () => {
       });
 
       return {
-        memoryCount: memoriesTotal,
+        memoryCount: statsResponse.total_memories || 0,
         sessionCount: sessionsTotal,
         agentCount: agents.filter((a: { id: string }) => a.id !== 'memory-agent').length || 0,
         todayMessages: todaySessions.length || 0,

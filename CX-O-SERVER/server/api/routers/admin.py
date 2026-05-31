@@ -9,21 +9,15 @@ from server.core.logging_config import get_contextual_logger
 router = APIRouter()
 logger = get_contextual_logger(__name__)
 
-ADMIN_API_KEY = os.environ.get("ADMIN_API_KEY")
-# ADMIN_API_KEY 为可选配置，如果不设置，则不需要认证
+ADMIN_API_KEY = os.environ.get("ADMIN_API_KEY", "")
 
 
 def verify_admin_api_key(x_api_key: Optional[str] = Header(None)) -> bool:
-    """验证管理员 API Key
-    
-    Returns:
-        bool: 如果未设置 ADMIN_API_KEY 则返回 True（不需要认证），否则验证 API Key
-    """
     if not ADMIN_API_KEY:
-        return True  # 未设置 ADMIN_API_KEY，不需要认证
-    if not x_api_key:
-        return False
-    return x_api_key == ADMIN_API_KEY
+        raise HTTPException(status_code=403, detail="Admin API key not configured")
+    if not x_api_key or x_api_key != ADMIN_API_KEY:
+        raise HTTPException(status_code=403, detail="Invalid API key")
+    return True
 
 
 @router.get("/admin/dashboard")

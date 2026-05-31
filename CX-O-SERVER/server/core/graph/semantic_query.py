@@ -179,7 +179,7 @@ class SemanticQueryManager(BaseGraphRepository):
 
     def _extract_node_text(self, node: GraphNode) -> str:
         """从节点提取文本内容"""
-        parts = [node.name or ""]
+        parts = [node.properties.get('name', node.id) or ""]
         if node.type:
             parts.append(node.type)
         if node.properties:
@@ -196,7 +196,7 @@ class SemanticQueryManager(BaseGraphRepository):
         """获取查询文本的嵌入向量"""
         try:
             vectorizer = get_vectorizer()
-            return vectorizer.embed(query)
+            return vectorizer.encode(query)
         except Exception as e:
             logger.warning(f"Failed to get query embedding: {e}")
             return None
@@ -205,7 +205,7 @@ class SemanticQueryManager(BaseGraphRepository):
         """获取文本的嵌入向量"""
         try:
             vectorizer = get_vectorizer()
-            return vectorizer.embed(text)
+            return vectorizer.encode(text)
         except Exception as e:
             logger.warning(f"Failed to get text embedding: {e}")
             return None

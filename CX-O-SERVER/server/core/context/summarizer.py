@@ -47,7 +47,7 @@ class ContextSummarizer:
 
             import json as json_parser
 
-            result = json_parser.loads(response)
+            result = json_parser.loads(response.content)
 
             return {
                 "summary": result.get("summary", ""),
@@ -125,7 +125,7 @@ class ContextSummarizer:
 
             import json as json_parser
 
-            key_points = json_parser.loads(response)
+            key_points = json_parser.loads(response.content)
 
             if isinstance(key_points, list):
                 return key_points[:5]

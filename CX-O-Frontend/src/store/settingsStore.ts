@@ -91,6 +91,14 @@ export const DEFAULT_ANIMATION_SETTINGS: AnimationSettings = {
   focusSpeed: 3.0,
 };
 
+export interface VRMWindConfig {
+  direction: number;
+  strength: number;
+  gustStrength: number;
+  gustFrequency: number;
+  gustDuration: number | string;
+}
+
 export interface VRMSettings {
   enabled: boolean;
   modelId?: string;
@@ -110,6 +118,8 @@ export interface VRMSettings {
   animation?: AnimationSettings;
   renderScale: number;
   devicePixelRatio: number | 'auto';
+  wind: VRMWindConfig;
+  windAffectedGroups: Array<{ boneNames: string[]; enabled: boolean }>;
 }
 
 export interface LayoutSettings {
@@ -176,6 +186,14 @@ const defaultVRMSettings: VRMSettings = {
   animation: DEFAULT_ANIMATION_SETTINGS,
   renderScale: 1.0,
   devicePixelRatio: 'auto',
+  wind: {
+    direction: 0,
+    strength: 0,
+    gustStrength: 0,
+    gustFrequency: 0,
+    gustDuration: 0,
+  },
+  windAffectedGroups: [],
 };
 
 const defaultLayoutSettings: LayoutSettings = {

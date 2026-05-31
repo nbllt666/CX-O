@@ -17,7 +17,7 @@ type ExpressionPresetBinding = {
 
 export type ExpressionBinding = ExpressionFileBinding | ExpressionPresetBinding;
 
-export type ExpressionKind = 'emotion' | 'pose' | 'prop' | 'effect';
+export type ExpressionKind = 'emotion' | 'pose' | 'prop' | 'effect' | 'custom';
 
 export type AvatarExpression = {
   id: ExpressionId;
@@ -41,6 +41,17 @@ export type AvatarParameterControl = {
   prompt: string;
   min: number;
   max: number;
+};
+
+export type AvatarBoneControl = {
+  id: string;
+  label: string;
+  rotationRange: {
+    x: [number, number];
+    y: [number, number];
+    z: [number, number];
+  };
+  prompt: string;
 };
 
 export type MotionBinding = {
@@ -77,6 +88,7 @@ export type AvatarManifest = {
   };
   expressions: AvatarExpression[];
   parameterControls?: AvatarParameterControl[];
+  boneControls?: AvatarBoneControl[];
   motions?: Record<string, MotionBinding>;
   watermark?: WatermarkBinding;
   avatarType: 'live2d' | 'vrm';
@@ -173,6 +185,29 @@ const VRM_HUMANOID_BONE_CONTROLS: Array<{
   { boneName: 'leftLowerLeg', label: 'Left Lower Leg', prompt: 'rotate left lower leg', min: -Math.PI, max: Math.PI },
   { boneName: 'rightLowerLeg', label: 'Right Lower Leg', prompt: 'rotate right lower leg', min: -Math.PI, max: Math.PI },
 ];
+
+export const VRM_HUMANOID_BONE_RANGES: Record<string, { x: [number, number]; y: [number, number]; z: [number, number]; label: string; prompt: string }> = {
+  head: { x: [-0.5, 0.5], y: [-0.8, 0.8], z: [-0.3, 0.3], label: '头部', prompt: 'Head tilt and rotation' },
+  neck: { x: [-0.3, 0.3], y: [-0.5, 0.5], z: [-0.2, 0.2], label: '脖子', prompt: 'Neck rotation' },
+  spine: { x: [-0.3, 0.3], y: [-0.4, 0.4], z: [-0.2, 0.2], label: '脊柱', prompt: 'Upper body lean' },
+  chest: { x: [-0.2, 0.2], y: [-0.3, 0.3], z: [-0.15, 0.15], label: '胸部', prompt: 'Chest movement' },
+  upperChest: { x: [-0.15, 0.15], y: [-0.2, 0.2], z: [-0.1, 0.1], label: '上胸', prompt: 'Upper chest movement' },
+  leftShoulder: { x: [-0.3, 0.3], y: [-0.2, 0.2], z: [-0.1, 1.5], label: '左肩', prompt: 'Left shoulder raise' },
+  rightShoulder: { x: [-0.3, 0.3], y: [-0.2, 0.2], z: [-1.5, 0.1], label: '右肩', prompt: 'Right shoulder raise' },
+  leftUpperArm: { x: [-1.5, 1.5], y: [-0.5, 0.5], z: [-0.2, 1.8], label: '左上臂', prompt: 'Left arm raise and rotation' },
+  rightUpperArm: { x: [-1.5, 1.5], y: [-0.5, 0.5], z: [-1.8, 0.2], label: '右上臂', prompt: 'Right arm raise and rotation' },
+  leftLowerArm: { x: [-2.5, 0.1], y: [-0.3, 0.3], z: [-0.3, 0.3], label: '左前臂', prompt: 'Left forearm bend' },
+  rightLowerArm: { x: [-2.5, 0.1], y: [-0.3, 0.3], z: [-0.3, 0.3], label: '右前臂', prompt: 'Right forearm bend' },
+  leftHand: { x: [-0.5, 0.5], y: [-0.3, 0.3], z: [-0.5, 0.5], label: '左手', prompt: 'Left hand rotation' },
+  rightHand: { x: [-0.5, 0.5], y: [-0.3, 0.3], z: [-0.5, 0.5], label: '右手', prompt: 'Right hand rotation' },
+  leftUpperLeg: { x: [-2.0, 0.5], y: [-0.3, 0.3], z: [-0.3, 0.5], label: '左大腿', prompt: 'Left leg raise' },
+  rightUpperLeg: { x: [-2.0, 0.5], y: [-0.3, 0.3], z: [-0.5, 0.3], label: '右大腿', prompt: 'Right leg raise' },
+  leftLowerLeg: { x: [-2.5, 0.1], y: [0, 0], z: [0, 0], label: '左小腿', prompt: 'Left knee bend' },
+  rightLowerLeg: { x: [-2.5, 0.1], y: [0, 0], z: [0, 0], label: '右小腿', prompt: 'Right knee bend' },
+  leftFoot: { x: [-0.5, 0.8], y: [-0.3, 0.3], z: [-0.2, 0.2], label: '左脚', prompt: 'Left foot rotation' },
+  rightFoot: { x: [-0.5, 0.8], y: [-0.3, 0.3], z: [-0.2, 0.2], label: '右脚', prompt: 'Right foot rotation' },
+  hips: { x: [-0.2, 0.2], y: [-0.3, 0.3], z: [-0.2, 0.2], label: '臀部', prompt: 'Hip sway and rotation' },
+};
 
 const genericParameterCatalog = [
   { id: 'ParamAngleX', label: 'Head Turn X', prompt: 'turn head left or right', fallbackMin: -30, fallbackMax: 30 },
@@ -398,24 +433,21 @@ function discoverVRMExpressions(availableBlendShapes: string[]) {
       continue;
     }
 
-    const id = toExpressionId(name);
+    const id = name;
     if (seen.has(id)) {
       continue;
     }
 
     seen.add(id);
-    const label = toExpressionLabel(name);
-    const kind = inferExpressionKind(name);
     discovered.push({
       id,
-      label,
-      kind,
-      prompt: createGenericExpressionPrompt(label, kind),
+      label: name,
+      kind: 'custom',
+      prompt: `Custom expression: ${name}`,
       binding: {
         mode: 'preset',
         params: { [name]: 1 },
       },
-      aliases: [name.toLowerCase()],
     });
   }
 
@@ -443,6 +475,19 @@ function discoverVRMParameterControls(availableBones: string[]) {
   return VRM_HUMANOID_BONE_CONTROLS
     .filter((bone) => availableSet.has(bone.boneName))
     .map((bone) => parameterControl(bone.boneName, bone.label, bone.prompt, bone.min, bone.max));
+}
+
+export function discoverVRMBoneControls(_vrm: { humanoid: { getNormalizedBoneNode: (name: string) => unknown | null } }): AvatarBoneControl[] {
+  const controls: AvatarBoneControl[] = [];
+  for (const [id, range] of Object.entries(VRM_HUMANOID_BONE_RANGES)) {
+    controls.push({
+      id,
+      label: range.label,
+      rotationRange: { x: range.x, y: range.y, z: range.z },
+      prompt: range.prompt,
+    });
+  }
+  return controls;
 }
 
 async function discoverLive2DParameterControls(avatar: AvatarManifest) {

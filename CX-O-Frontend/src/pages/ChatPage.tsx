@@ -13,7 +13,81 @@ import { AvatarPanel, AvatarTypeSelector } from '../components/Avatar';
 import type { IAvatarDriver } from '../components/Avatar/AvatarDriver';
 import { createAvatarDriver } from '../components/Avatar/AvatarDriver';
 import { resolveAvatarManifestById, getAvatarById } from '../components/Avatar/avatarManifest';
-import { normalizeExpressionMix, normalizeParameterOverrides, getAvatarNeutralExpressionId, parseAssistantPayload } from '../lib/avatarLlm';
+import { parseAvatarTags, type AvatarTag, type Segment } from '../lib/avatarTagParser';
+
+function applyAvatarTags(driver: IAvatarDriver, tags: AvatarTag[]) {
+  for (const tag of tags) {
+    switch (tag.type) {
+      case 'emotion':
+        driver.setEmotion(tag.name, 1.0);
+        break;
+      case 'blend':
+        driver.setBlendShapes([{ name: tag.name, weight: tag.weight }]);
+        break;
+      case 'bone':
+        driver.setBoneRotations([{ boneName: tag.boneName, rotation: tag.rotation, speed: tag.speed }]);
+        break;
+      case 'pose':
+        driver.holdPose(tag.durationMs);
+        break;
+      case 'release':
+        driver.releasePose();
+        break;
+      case 'wind':
+        driver.setWind(tag);
+        break;
+      case 'sleep':
+        console.log('[avatar] sleep tag:', tag.ms, 'ms');
+        break;
+    }
+  }
+}
+
+async function playTTSWithPauses(
+  segments: Segment[],
+  ttsFn: (text: string) => Promise<Blob>,
+  playFn: (audioData: ArrayBuffer, isLastSegment?: boolean) => Promise<void>,
+): Promise<void> {
+  const groups: { text: string; sleepAfterMs?: number }[] = [];
+  let textBuffer = '';
+
+  for (const segment of segments) {
+    if (segment.type === 'text') {
+      textBuffer += segment.content;
+    } else if (segment.type === 'tag' && segment.tag.type === 'sleep') {
+      if (textBuffer.trim()) {
+        groups.push({ text: textBuffer, sleepAfterMs: segment.tag.ms });
+        textBuffer = '';
+      } else if (groups.length > 0) {
+        const last = groups[groups.length - 1];
+        last.sleepAfterMs = (last.sleepAfterMs || 0) + segment.tag.ms;
+      }
+    }
+  }
+
+  if (textBuffer.trim()) {
+    groups.push({ text: textBuffer });
+  }
+
+  if (groups.length === 0) return;
+
+  for (let i = 0; i < groups.length; i++) {
+    const group = groups[i];
+    if (!group.text.trim()) continue;
+
+    try {
+      const audioBlob = await ttsFn(group.text);
+      const arrayBuffer = await audioBlob.arrayBuffer();
+      await playFn(arrayBuffer, i === groups.length - 1);
+    } catch (error) {
+      console.error('语音合成失败:', error);
+    }
+
+    if (group.sleepAfterMs && i < groups.length - 1) {
+      await new Promise(resolve => setTimeout(resolve, group.sleepAfterMs));
+    }
+  }
+}
 
 interface Message {
   id: string;
@@ -226,17 +300,19 @@ export function ChatPage() {
   const [alarms, setAlarms] = useState<{ message: string; triggeredAt: string }[]>([]);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const tempAssistantIdRef = useRef<string>('');
+  const lastDoneContentRef = useRef<string | null>(null);
+  const [doneTrigger, setDoneTrigger] = useState(0);
 
-  // 语音相关状态
   const [isRecording, setIsRecording] = useState(false);
   const [isVoiceMode, setIsVoiceMode] = useState(false);
   const [enableVoiceOutput, setEnableVoiceOutput] = useState(false);
   const [currentAudioElement, setCurrentAudioElement] = useState<HTMLAudioElement | null>(null);
   const [isAudioPlaying, setIsAudioPlaying] = useState(false);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+  const streamRef = useRef<MediaStream | null>(null);
   const audioChunksRef = useRef<Blob[]>([]);
   const audioRef = useRef<HTMLAudioElement | null>(null);
-  const playAudioRef = useRef<(audioData: ArrayBuffer) => void>();
+  const playAudioRef = useRef<(audioData: ArrayBuffer, isLastSegment?: boolean) => Promise<void>>();
 
   const driverRef = useRef<IAvatarDriver | null>(null);
   const [activeDriver, setActiveDriver] = useState<IAvatarDriver | null>(null);
@@ -389,31 +465,7 @@ export function ChatPage() {
           const lastMsg = prev[prev.length - 1];
           if (lastMsg && lastMsg.id === tempAssistantIdRef.current) {
             const finalContent = lastMsg.content || '响应已完成';
-            if (enableVoiceOutput && finalContent) {
-              api.textToSpeech(finalContent).then((audioBlob: Blob) => {
-                audioBlob.arrayBuffer().then((arrayBuffer: ArrayBuffer) => {
-                  playAudioRef.current?.(arrayBuffer);
-                });
-              }).catch((error: Error) => {
-                console.error('语音合成失败:', error);
-              });
-            }
-            try {
-              const driver = driverRef.current;
-              if (driver && finalContent) {
-                const parsed = parseAssistantPayload(finalContent);
-                if (parsed) {
-                  const mix = normalizeExpressionMix(driver.avatar, parsed.expressionMix, parsed.expression);
-                  driver.setExpressionMix(mix);
-                  if (parsed.parameterOverrides) {
-                    const overrides = normalizeParameterOverrides(driver.avatar, parsed.parameterOverrides);
-                    driver.setParameterOverrides(overrides);
-                  }
-                } else {
-                  driver.setExpressionMix([{ key: getAvatarNeutralExpressionId(driver.avatar), weight: 1 }]);
-                }
-              }
-            } catch { /* expression parsing failed, don't crash */ }
+            lastDoneContentRef.current = finalContent;
             return [
               ...prev.slice(0, -1),
               {
@@ -424,6 +476,7 @@ export function ChatPage() {
           }
           return prev;
         });
+        setDoneTrigger(t => t + 1);
       } else if (data.type === 'error') {
         setIsLoading(false);
         setMessages((prev) => {
@@ -456,8 +509,51 @@ export function ChatPage() {
         });
       }
     },
-    [enableVoiceOutput]
+    [],
   );
+
+  useEffect(() => {
+    const content = lastDoneContentRef.current;
+    if (content === null) return;
+    lastDoneContentRef.current = null;
+
+    setIsLoading(false);
+    const { segments, cleanText, tags } = parseAvatarTags(content);
+    const driver = driverRef.current;
+    if (driver) {
+      applyAvatarTags(driver, tags);
+    }
+    if (enableVoiceOutput && cleanText) {
+      const hasSleepTag = segments.some(s => s.type === 'tag' && s.tag.type === 'sleep');
+      if (hasSleepTag) {
+        playTTSWithPauses(
+          segments,
+          (text) => api.textToSpeech(text),
+          (audioData, isLast) => playAudioRef.current?.(audioData, isLast) ?? Promise.resolve(),
+        );
+      } else {
+        api.textToSpeech(cleanText).then((audioBlob: Blob) => {
+          audioBlob.arrayBuffer().then((arrayBuffer: ArrayBuffer) => {
+            playAudioRef.current?.(arrayBuffer);
+          });
+        }).catch((error: Error) => {
+          console.error('语音合成失败:', error);
+        });
+      }
+    }
+    if (cleanText !== content) {
+      setMessages((prev) => {
+        const lastMsg = prev[prev.length - 1];
+        if (lastMsg && lastMsg.id === tempAssistantIdRef.current) {
+          return [
+            ...prev.slice(0, -1),
+            { ...lastMsg, content: cleanText },
+          ];
+        }
+        return prev;
+      });
+    }
+  }, [doneTrigger, enableVoiceOutput]);
 
   const handleAlarm = useCallback((message: string, triggeredAt: string) => {
     setAlarms((prev) => [...prev, { message, triggeredAt }]);
@@ -484,6 +580,17 @@ export function ChatPage() {
   useEffect(() => {
     fetchAgents();
   }, [fetchAgents]);
+
+  useEffect(() => {
+    return () => {
+      if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
+        mediaRecorderRef.current.stop();
+      }
+      if (streamRef.current) {
+        streamRef.current.getTracks().forEach(track => track.stop());
+      }
+    };
+  }, []);
 
   const currentAgent = agents.find((a) => a.id === currentAgentId);
   const messagesEndRef = useRef<HTMLDivElement>(null);
@@ -642,6 +749,7 @@ export function ChatPage() {
   const startRecording = async () => {
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      streamRef.current = stream;
       const mediaRecorder = new MediaRecorder(stream);
       audioChunksRef.current = [];
 
@@ -670,12 +778,14 @@ export function ChatPage() {
         }
         // 停止所有轨道
         stream.getTracks().forEach(track => track.stop());
+        streamRef.current = null;
       };
 
       mediaRecorder.onerror = () => {
         console.error('录音错误');
         setIsRecording(false);
         stream.getTracks().forEach(track => track.stop());
+        streamRef.current = null;
       };
 
       mediaRecorder.start();
@@ -702,46 +812,51 @@ export function ChatPage() {
     }
   };
 
-  const playAudio = (audioData: ArrayBuffer) => {
-    try {
-      if (audioRef.current) {
-        audioRef.current.pause();
-        audioRef.current = null;
-      }
-
-      const blob = new Blob([audioData], { type: 'audio/mp3' });
-      const url = URL.createObjectURL(blob);
-      const audio = new Audio(url);
-      audioRef.current = audio;
-      setCurrentAudioElement(audio);
-      setIsAudioPlaying(true);
-
-      driverRef.current?.setMouthOpen(0.6);
-
-      audio.onended = () => {
-        URL.revokeObjectURL(url);
-        audioRef.current = null;
-        setCurrentAudioElement(null);
-        setIsAudioPlaying(false);
-        driverRef.current?.setMouthOpen(0);
-        if (isVoiceMode && !isLoading) {
-          setTimeout(() => {
-            startRecording();
-          }, 500);
+  const playAudio = (audioData: ArrayBuffer, isLastSegment: boolean = true): Promise<void> => {
+    return new Promise<void>((resolve, reject) => {
+      try {
+        if (audioRef.current) {
+          audioRef.current.pause();
+          audioRef.current = null;
         }
-      };
 
-      audio.play().catch(error => {
-        console.error('音频播放失败:', error);
-        URL.revokeObjectURL(url);
-        audioRef.current = null;
-        setCurrentAudioElement(null);
-        setIsAudioPlaying(false);
-        driverRef.current?.setMouthOpen(0);
-      });
-    } catch (error) {
-      console.error('播放音频失败:', error);
-    }
+        const blob = new Blob([audioData], { type: 'audio/mp3' });
+        const url = URL.createObjectURL(blob);
+        const audio = new Audio(url);
+        audioRef.current = audio;
+        setCurrentAudioElement(audio);
+        setIsAudioPlaying(true);
+
+        driverRef.current?.setMouthOpen(0.6);
+
+        audio.onended = () => {
+          URL.revokeObjectURL(url);
+          audioRef.current = null;
+          setCurrentAudioElement(null);
+          setIsAudioPlaying(false);
+          driverRef.current?.setMouthOpen(0);
+          if (isLastSegment && isVoiceMode && !isLoading) {
+            setTimeout(() => {
+              startRecording();
+            }, 500);
+          }
+          resolve();
+        };
+
+        audio.play().catch(error => {
+          console.error('音频播放失败:', error);
+          URL.revokeObjectURL(url);
+          audioRef.current = null;
+          setCurrentAudioElement(null);
+          setIsAudioPlaying(false);
+          driverRef.current?.setMouthOpen(0);
+          reject(error);
+        });
+      } catch (error) {
+        console.error('播放音频失败:', error);
+        reject(error);
+      }
+    });
   };
 
   // 设置 playAudioRef，使 WebSocket 回调可以使用
@@ -774,35 +889,6 @@ export function ChatPage() {
     setSelectedImages([]);
     setIsLoading(true);
     setShouldAutoScroll(true);
-
-    const handleDone = async (finalContent: string) => {
-      setIsLoading(false);
-      if (enableVoiceOutput && finalContent) {
-        try {
-          const audioBlob = await api.textToSpeech(finalContent);
-          const arrayBuffer = await audioBlob.arrayBuffer();
-          playAudio(arrayBuffer);
-        } catch (error) {
-          console.error('语音合成失败:', error);
-        }
-      }
-      try {
-        const driver = driverRef.current;
-        if (driver && finalContent) {
-          const parsed = parseAssistantPayload(finalContent);
-          if (parsed) {
-            const mix = normalizeExpressionMix(driver.avatar, parsed.expressionMix, parsed.expression);
-            driver.setExpressionMix(mix);
-            if (parsed.parameterOverrides) {
-              const overrides = normalizeParameterOverrides(driver.avatar, parsed.parameterOverrides);
-              driver.setParameterOverrides(overrides);
-            }
-          } else {
-            driver.setExpressionMix([{ key: getAvatarNeutralExpressionId(driver.avatar), weight: 1 }]);
-          }
-        }
-      } catch { /* expression parsing failed, don't crash */ }
-    };
 
     if (isConnected) {
       wsSendMessage(userMessage.content, userMessage.images);
@@ -904,9 +990,9 @@ export function ChatPage() {
             } else if (chunk.type === 'done') {
               setMessages((prev) => {
                 const lastMsg = prev[prev.length - 1];
-                const finalContent = lastMsg?.content || '响应已完成';
-                handleDone(finalContent);
                 if (lastMsg && lastMsg.id === tempAssistantId) {
+                  const finalContent = lastMsg.content || '响应已完成';
+                  lastDoneContentRef.current = finalContent;
                   return [
                     ...prev.slice(0, -1),
                     {
@@ -917,6 +1003,7 @@ export function ChatPage() {
                 }
                 return prev;
               });
+              setDoneTrigger(t => t + 1);
             } else if (chunk.type === 'error') {
               throw new Error(String(chunk.error ?? '未知错误'));
             }

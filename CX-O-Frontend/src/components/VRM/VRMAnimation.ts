@@ -22,6 +22,7 @@ export class VRMAnimation {
   private currentHeadRot = new THREE.Euler(0, 0, 0);
   private targetHeadRot = new THREE.Euler(0, 0, 0);
   private bodyRot = new THREE.Euler(0, 0, 0);
+  private breathingAmplitude = 1.0;
 
   private config: IdleConfig = {
     breathFrequency: 0.3,
@@ -46,6 +47,10 @@ export class VRMAnimation {
     this.headTarget.set(x, y, z);
   }
 
+  setBreathingAmplitude(factor: number): void {
+    this.breathingAmplitude = Math.min(Math.max(factor, 0), 1);
+  }
+
   update(deltaTime: number): void {
     if (!this.vrm) return;
     this.time += deltaTime;
@@ -62,22 +67,20 @@ export class VRMAnimation {
     if (!humanoid) return;
 
     const breath = Math.sin(this.time * this.config.breathFrequency * Math.PI * 2);
-    const scale = 1 + breath * this.config.breathAmplitude;
+    const scale = 1 + breath * this.config.breathAmplitude * this.breathingAmplitude;
 
-    // Chest breathing
     const chest = humanoid.getNormalizedBoneNode('chest');
     if (chest) {
       chest.scale.setScalar(scale);
     }
 
-    // Shoulder micro movement
     const leftShoulder = humanoid.getNormalizedBoneNode('leftShoulder');
     const rightShoulder = humanoid.getNormalizedBoneNode('rightShoulder');
     if (leftShoulder) {
-      leftShoulder.rotation.z = Math.sin(this.time * this.config.breathFrequency * Math.PI * 2) * 0.02;
+      leftShoulder.rotation.z = Math.sin(this.time * this.config.breathFrequency * Math.PI * 2) * 0.02 * this.breathingAmplitude;
     }
     if (rightShoulder) {
-      rightShoulder.rotation.z = -Math.sin(this.time * this.config.breathFrequency * Math.PI * 2) * 0.02;
+      rightShoulder.rotation.z = -Math.sin(this.time * this.config.breathFrequency * Math.PI * 2) * 0.02 * this.breathingAmplitude;
     }
   }
 

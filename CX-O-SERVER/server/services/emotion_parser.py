@@ -11,6 +11,8 @@ from typing import Any
 logger = logging.getLogger(__name__)
 
 EMOTION_PATTERN = re.compile(r'\[emotion:([^\]]+)\]')
+SLEEP_PATTERN = re.compile(r'\[sleep:(\d+)\]')
+COMBINED_PATTERN = re.compile(r'\[(?:emotion:([^\]]+)|sleep:(\d+))\]')
 
 SUPPORTED_EMOTIONS = {
     "happy", "sad", "angry", "surprised", "fear",
@@ -27,7 +29,7 @@ def extract_emotions_with_text(text: str) -> list[dict[str, Any]]:
     segments: list[dict[str, Any]] = []
     last_end = 0
 
-    for match in EMOTION_PATTERN.finditer(text):
+    for match in COMBINED_PATTERN.finditer(text):
         if match.start() > last_end:
             text_before = text[last_end:match.start()].strip()
             if text_before:
@@ -36,17 +38,26 @@ def extract_emotions_with_text(text: str) -> list[dict[str, Any]]:
                     "content": text_before
                 })
 
-        emotion_name = match.group(1).lower()
-        if emotion_name in SUPPORTED_EMOTIONS:
+        emotion_name = match.group(1)
+        sleep_ms = match.group(2)
+
+        if emotion_name is not None:
+            emotion_name = emotion_name.lower()
+            if emotion_name in SUPPORTED_EMOTIONS:
+                segments.append({
+                    "type": "emotion",
+                    "emotion": emotion_name
+                })
+            else:
+                logger.warning(f"Unknown emotion: {emotion_name}")
+                segments.append({
+                    "type": "text",
+                    "content": match.group(0)
+                })
+        elif sleep_ms is not None:
             segments.append({
-                "type": "emotion",
-                "emotion": emotion_name
-            })
-        else:
-            logger.warning(f"Unknown emotion: {emotion_name}")
-            segments.append({
-                "type": "text",
-                "content": match.group(0)
+                "type": "sleep",
+                "duration_ms": int(sleep_ms)
             })
 
         last_end = match.end()
@@ -67,7 +78,7 @@ def parse_text_with_emotions(text: str) -> list[dict[str, Any]]:
 
 
 def strip_emotion_tags(text: str) -> str:
-    return EMOTION_PATTERN.sub('', text).strip()
+    return COMBINED_PATTERN.sub('', text).strip()
 
 
 def get_emotion_at_position(text: str, position: int) -> str | None:

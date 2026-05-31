@@ -124,37 +124,38 @@ class HybridSearch:
         keyword_weight: float,
     ) -> List[SearchResult]:
         merged_dict: Dict[int, SearchResult] = {}
+        raw_scores: Dict[int, Dict[str, float]] = {}
 
         for r in vector_results:
-            if r.memory_id in merged_dict:
-                existing = merged_dict[r.memory_id]
-                existing.score = existing.score * (1 - vector_weight) + r.score * vector_weight
-                existing.content = r.content
-            else:
-                merged_dict[r.memory_id] = SearchResult(
-                    memory_id=r.memory_id,
-                    content=r.content,
-                    score=r.score * vector_weight,
-                    source="vector",
-                    metadata=r.metadata,
-                )
+            raw_scores[r.memory_id] = {"vector": r.score, "keyword": 0.0}
+            merged_dict[r.memory_id] = SearchResult(
+                memory_id=r.memory_id,
+                content=r.content,
+                score=0.0,
+                source="vector",
+                metadata=r.metadata,
+            )
 
         for r in keyword_results:
-            if r.memory_id in merged_dict:
-                existing = merged_dict[r.memory_id]
-                combined_score = existing.score * (1 - keyword_weight) + r.score * keyword_weight
-                existing.score = combined_score
-                existing.source = "hybrid"
+            if r.memory_id in raw_scores:
+                raw_scores[r.memory_id]["keyword"] = r.score
+                merged_dict[r.memory_id].source = "hybrid"
                 if r.metadata:
-                    existing.metadata = r.metadata
+                    merged_dict[r.memory_id].metadata = r.metadata
             else:
+                raw_scores[r.memory_id] = {"vector": 0.0, "keyword": r.score}
                 merged_dict[r.memory_id] = SearchResult(
                     memory_id=r.memory_id,
                     content=r.content,
-                    score=r.score * keyword_weight,
+                    score=0.0,
                     source="keyword",
                     metadata=r.metadata,
                 )
+
+        for memory_id, scores in raw_scores.items():
+            merged_dict[memory_id].score = (
+                scores["vector"] * vector_weight + scores["keyword"] * keyword_weight
+            )
 
         return list(merged_dict.values())
 

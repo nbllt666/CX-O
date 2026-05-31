@@ -184,8 +184,11 @@ class MemoryRouter:
             memories = []
             page = 1
             page_size = 20
+            max_iterations = 10
+            iteration = 0
 
-            while recent_count < 50:
+            while recent_count < 50 and iteration < max_iterations:
+                iteration += 1
                 results = self.memory_manager.search_memories(
                     query=None,
                     memory_type=None,

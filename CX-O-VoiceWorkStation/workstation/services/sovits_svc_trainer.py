@@ -133,53 +133,49 @@ class SoVITSSVCTrainer:
 
         return self._task_id
 
+    async def _read_stream(self, stream, callback):
+        while True:
+            line = await stream.readline()
+            if not line:
+                break
+            callback(line.decode("utf-8", errors="replace").strip())
+
     async def _monitor_training(self, total_epochs: int, progress_callback: Optional[Callable] = None):
         epoch_pattern = re.compile(r"epoch:\s*(\d+)", re.IGNORECASE)
         current_epoch = 0
 
-        while self._process and self._process.returncode is None:
-            try:
-                line = await self._process.stderr.readline()
-                if not line:
-                    line = await self._process.stdout.readline()
-                if not line:
-                    break
+        def _process_line(line_str: str):
+            nonlocal current_epoch
+            if not line_str:
+                return
+            match = epoch_pattern.search(line_str)
+            if match:
+                current_epoch = int(match.group(1))
+                progress = min(current_epoch / total_epochs, 1.0) if total_epochs > 0 else 0.0
+                if progress_callback:
+                    try:
+                        progress_callback(
+                            progress=progress,
+                            epoch=current_epoch,
+                            total_epochs=total_epochs,
+                            message=line_str,
+                        )
+                    except Exception as e:
+                        logger.warning(f"Progress callback error: {e}")
 
-                line_str = line.decode("utf-8", errors="replace").strip()
-                if not line_str:
-                    continue
+        stdout_task = asyncio.create_task(self._read_stream(self._process.stdout, _process_line))
+        stderr_task = asyncio.create_task(self._read_stream(self._process.stderr, _process_line))
+        await asyncio.gather(stdout_task, stderr_task)
 
-                match = epoch_pattern.search(line_str)
-                if match:
-                    current_epoch = int(match.group(1))
-                    progress = min(current_epoch / total_epochs, 1.0) if total_epochs > 0 else 0.0
-                    if progress_callback:
-                        try:
-                            progress_callback(
-                                progress=progress,
-                                epoch=current_epoch,
-                                total_epochs=total_epochs,
-                                message=line_str,
-                            )
-                        except Exception as e:
-                            logger.warning(f"Progress callback error: {e}")
-
-            except asyncio.CancelledError:
-                break
-            except Exception as e:
-                logger.warning(f"Error monitoring training: {e}")
-                break
-
-        if self._process:
-            await self._process.wait()
+        await self._process.wait()
 
         if progress_callback:
             try:
                 progress_callback(
-                    progress=1.0 if self._process and self._process.returncode == 0 else 0.0,
+                    progress=1.0 if self._process.returncode == 0 else 0.0,
                     epoch=current_epoch,
                     total_epochs=total_epochs,
-                    status="completed" if self._process and self._process.returncode == 0 else "failed",
+                    status="completed" if self._process.returncode == 0 else "failed",
                 )
             except Exception as e:
                 logger.warning(f"Progress callback error: {e}")

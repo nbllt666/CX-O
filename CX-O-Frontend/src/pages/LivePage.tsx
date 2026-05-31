@@ -8,7 +8,35 @@ import type { LiveDanmakuData } from '../hooks/useLiveWebSocket';
 import type { IAvatarDriver } from '../components/Avatar/AvatarDriver';
 import { createAvatarDriver } from '../components/Avatar/AvatarDriver';
 import { resolveAvatarManifestById, getAvatarById } from '../components/Avatar/avatarManifest';
-import { normalizeExpressionMix, normalizeParameterOverrides, parseAssistantPayload } from '../lib/avatarLlm';
+import { parseAvatarTags, type AvatarTag } from '../lib/avatarTagParser';
+
+function applyAvatarTags(driver: IAvatarDriver, tags: AvatarTag[]) {
+  for (const tag of tags) {
+    switch (tag.type) {
+      case 'emotion':
+        driver.setEmotion(tag.name, 1.0);
+        break;
+      case 'blend':
+        driver.setBlendShapes([{ name: tag.name, weight: tag.weight }]);
+        break;
+      case 'bone':
+        driver.setBoneRotations([{ boneName: tag.boneName, rotation: tag.rotation, speed: tag.speed }]);
+        break;
+      case 'pose':
+        driver.holdPose(tag.durationMs);
+        break;
+      case 'release':
+        driver.releasePose();
+        break;
+      case 'wind':
+        driver.setWind(tag);
+        break;
+      case 'sleep':
+        console.log('[avatar] sleep tag:', tag.ms, 'ms');
+        break;
+    }
+  }
+}
 
 export function LivePage() {
   const navigate = useNavigate();
@@ -72,21 +100,12 @@ export function LivePage() {
   }, []);
 
   const handleStreamContent = useCallback((content: string) => {
-    setSubtitleText(content);
-    try {
-      const driver = driverRef.current;
-      if (driver && content) {
-        const parsed = parseAssistantPayload(content);
-        if (parsed) {
-          const mix = normalizeExpressionMix(driver.avatar, parsed.expressionMix, parsed.expression);
-          driver.setExpressionMix(mix);
-          if (parsed.parameterOverrides) {
-            const overrides = normalizeParameterOverrides(driver.avatar, parsed.parameterOverrides);
-            driver.setParameterOverrides(overrides);
-          }
-        }
-      }
-    } catch { /* expression parsing failed */ }
+    const { cleanText, tags } = parseAvatarTags(content);
+    setSubtitleText(cleanText);
+    const driver = driverRef.current;
+    if (driver) {
+      applyAvatarTags(driver, tags);
+    }
   }, []);
 
   const handleVadStatus = useCallback((data: { status: string; speech_duration_ms: number; speech_probability?: number }) => {

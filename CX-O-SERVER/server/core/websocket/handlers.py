@@ -51,7 +51,6 @@ class ChatWebSocketHandler:
                 )
                 return
 
-            # 获取配置
             agent_config = get_agent_config(agent_id)
             if not agent_config:
                 await self.ws_manager.send_to_client(
@@ -59,12 +58,10 @@ class ChatWebSocketHandler:
                 )
                 return
 
-            # 获取管理器
             memory_mgr = get_memory_manager()
             context_mgr = get_context_manager()
             llm = get_llm_client_for_agent(agent_config)
 
-            # 获取/创建会话
             if session_id:
                 try:
                     context_mgr.get_session(session_id)
@@ -78,10 +75,8 @@ class ChatWebSocketHandler:
                     workspace_id="default", title=f"与 {agent_config['name']} 的对话"
                 )
 
-            # 添加用户消息
             context_mgr.add_message(session_id=session_id, role="user", content=user_message)
 
-            # 检索记忆
             memory_context = None
             if agent_config.get("use_memory", True) and memory_mgr:
                 from server.core.memory.router import MemoryRouter
@@ -97,7 +92,6 @@ class ChatWebSocketHandler:
                         [f"- {m['content']}" for m in routing_result.memories[:5]]
                     )
 
-            # 构建消息列表
             messages = build_messages(
                 agent_config=agent_config,
                 context_mgr=context_mgr,
@@ -106,15 +100,12 @@ class ChatWebSocketHandler:
                 memory_context=memory_context,
             )
 
-            # 调用 LLM
             response = await llm.chat(messages=messages, stream=False)
 
-            # 保存助手响应
             context_mgr.add_message(
                 session_id=session_id, role="assistant", content=response.content
             )
 
-            # 发送响应
             await self.ws_manager.send_to_client(
                 client_id,
                 {
@@ -129,6 +120,8 @@ class ChatWebSocketHandler:
         except Exception as e:
             logger.error(f"处理聊天消息失败: {e}")
             await self.ws_manager.send_to_client(client_id, {"type": "error", "error": str(e)})
+        finally:
+            self._cancel_flags.pop(client_id, None)
 
     async def _handle_chat_stream(self, client_id: str, message: Dict[str, Any]):
         """处理流式聊天消息"""
@@ -250,6 +243,8 @@ class ChatWebSocketHandler:
         except Exception as e:
             logger.error(f"处理流式聊天消息失败: {e}")
             await self.ws_manager.send_to_client(client_id, {"type": "error", "error": str(e)})
+        finally:
+            self._cancel_flags.pop(client_id, None)
 
     async def _handle_subscribe(self, client_id: str, message: Dict[str, Any]):
         """处理订阅请求"""

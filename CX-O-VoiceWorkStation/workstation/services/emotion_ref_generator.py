@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import zipfile
 from pathlib import Path
 from typing import Callable, Optional
@@ -148,6 +149,14 @@ class EmotionRefGenerator:
         return zip_path
 
     @staticmethod
+    def _safe_extract_zip(zf: zipfile.ZipFile, output_dir: Path):
+        for member in zf.infolist():
+            member_path = os.path.normpath(member.filename)
+            if member_path.startswith("..") or os.path.isabs(member_path):
+                raise ValueError(f"Unsafe path in zip: {member.filename}")
+            zf.extract(member, output_dir)
+
+    @staticmethod
     def import_from_zip(zip_path: str, output_dir: str) -> dict:
         zip_file = Path(zip_path)
         if not zip_file.exists():
@@ -156,8 +165,8 @@ class EmotionRefGenerator:
         out = Path(output_dir)
         out.mkdir(parents=True, exist_ok=True)
 
-        with zipfile.ZipFile(zip_file, "r") as zf:
-            zf.extractall(out)
+        with zipfile.ZipFile(zip_path, "r") as zf:
+            EmotionRefGenerator._safe_extract_zip(zf, out)
 
         meta_path = out / "refs_meta.json"
         if not meta_path.exists():

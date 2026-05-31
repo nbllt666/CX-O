@@ -151,6 +151,13 @@ class FirewallService:
                 )
 
             if user_id:
+                expired_users = [
+                    uid for uid, timestamps in self._user_message_counts.items()
+                    if not timestamps or now - timestamps[-1] > 60.0
+                ]
+                for uid in expired_users:
+                    del self._user_message_counts[uid]
+
                 if user_id not in self._user_message_counts:
                     self._user_message_counts[user_id] = deque(maxlen=100)
                 self._user_message_counts[user_id].append(now)

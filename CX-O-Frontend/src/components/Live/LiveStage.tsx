@@ -6,6 +6,15 @@ import { SubtitleDisplay } from './SubtitleDisplay';
 import type { IAvatarDriver } from '../Avatar/AvatarDriver';
 import type { ParameterOverride } from '../Avatar/avatarManifest';
 
+interface DriverSnapshot {
+  avatar: IAvatarDriver['avatar'];
+  mouthOpen: number;
+  expressionMix: IAvatarDriver['expressionMix'];
+  parameterOverrides: IAvatarDriver['parameterOverrides'];
+  watermarkVisible: boolean;
+  transform: IAvatarDriver['transform'];
+}
+
 interface LiveStageProps {
   avatarType?: 'live2d' | 'vrm';
   modelData?: ArrayBuffer;
@@ -18,14 +27,32 @@ interface LiveStageProps {
 }
 
 function useDriverState(driver: IAvatarDriver) {
-  const getSnapshot = useCallback(() => ({
-    avatar: driver.avatar,
-    mouthOpen: driver.mouthOpen,
-    expressionMix: driver.expressionMix,
-    parameterOverrides: driver.parameterOverrides,
-    watermarkVisible: driver.watermarkVisible,
-    transform: driver.transform,
-  }), [driver]);
+  const prevSnapshotRef = useRef<DriverSnapshot | null>(null);
+  const getSnapshot = useCallback(() => {
+    const newSnapshot: DriverSnapshot = {
+      avatar: driver.avatar,
+      mouthOpen: driver.mouthOpen,
+      expressionMix: driver.expressionMix,
+      parameterOverrides: driver.parameterOverrides,
+      watermarkVisible: driver.watermarkVisible,
+      transform: driver.transform,
+    };
+    if (prevSnapshotRef.current) {
+      const prev = prevSnapshotRef.current;
+      if (
+        prev.avatar === newSnapshot.avatar &&
+        prev.mouthOpen === newSnapshot.mouthOpen &&
+        prev.expressionMix === newSnapshot.expressionMix &&
+        prev.parameterOverrides === newSnapshot.parameterOverrides &&
+        prev.watermarkVisible === newSnapshot.watermarkVisible &&
+        prev.transform === newSnapshot.transform
+      ) {
+        return prev;
+      }
+    }
+    prevSnapshotRef.current = newSnapshot;
+    return newSnapshot;
+  }, [driver]);
   const subscribe = useCallback((listener: () => void) => driver.subscribe(listener), [driver]);
   return useSyncExternalStore(subscribe, getSnapshot);
 }

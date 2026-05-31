@@ -43,21 +43,22 @@ _train_status: dict = {
     "message": "",
 }
 
-_trainer_instance = None
+_trainer_instance: Optional["SoVITSSVCTrainer"] = None
 
 
-def _get_trainer():
+def _get_trainer() -> "SoVITSSVCTrainer":
     global _trainer_instance
     from workstation.services.sovits_svc_trainer import SoVITSSVCTrainer
     from workstation.config import get_settings
 
-    settings = get_settings()
-    _trainer_instance = SoVITSSVCTrainer(
-        output_dir=settings.sovits_svc.output_dir,
-        training_data_dir=settings.sovits_svc.training_data_dir,
-        so_vits_svc_dir=settings.sovits_svc.so_vits_svc_dir,
-        python_path=settings.sovits_svc.python_path,
-    )
+    if _trainer_instance is None:
+        settings = get_settings()
+        _trainer_instance = SoVITSSVCTrainer(
+            output_dir=settings.sovits_svc.output_dir,
+            training_data_dir=settings.sovits_svc.training_data_dir,
+            so_vits_svc_dir=settings.sovits_svc.so_vits_svc_dir,
+            python_path=settings.sovits_svc.python_path,
+        )
     return _trainer_instance
 
 

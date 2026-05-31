@@ -84,6 +84,7 @@ export function useAudioAnalyzer({
   const audioContextRef = useRef<AudioContext | null>(null);
   const analyserRef = useRef<AnalyserNode | null>(null);
   const sourceRef = useRef<MediaElementAudioSourceNode | null>(null);
+  const sourceAudioElRef = useRef<HTMLAudioElement | null>(null);
   const animationFrameRef = useRef<number | null>(null);
   const lastStateUpdateRef = useRef(0);
 
@@ -104,14 +105,33 @@ export function useAudioAnalyzer({
   );
 
   useEffect(() => {
-    if (!audioElement || !isPlaying || !enabled) {
-      setVolume(0);
-      setVoiceBandVolume(0);
-      setVowelWeights({ a: 0, i: 0, u: 0, e: 0, o: 0 });
-      volumeRef.current = 0;
-      vowelWeightsRef.current = { a: 0, i: 0, u: 0, e: 0, o: 0 };
+    if (!audioElement) {
+      if (sourceRef.current) {
+        sourceRef.current.disconnect();
+        sourceRef.current = null;
+      }
+      if (audioContextRef.current) {
+        audioContextRef.current.close();
+        audioContextRef.current = null;
+      }
+      analyserRef.current = null;
+      sourceAudioElRef.current = null;
       return;
     }
+
+    if (sourceAudioElRef.current === audioElement && sourceRef.current && audioContextRef.current) {
+      return;
+    }
+
+    if (sourceRef.current) {
+      sourceRef.current.disconnect();
+      sourceRef.current = null;
+    }
+    if (audioContextRef.current) {
+      audioContextRef.current.close();
+      audioContextRef.current = null;
+    }
+    analyserRef.current = null;
 
     const AudioContextClass =
       window.AudioContext ||
@@ -126,8 +146,27 @@ export function useAudioAnalyzer({
 
     const source = audioContext.createMediaElementSource(audioElement);
     sourceRef.current = source;
+    sourceAudioElRef.current = audioElement;
     source.connect(analyser);
     analyser.connect(audioContext.destination);
+  }, [audioElement, fftSize, smoothingTimeConstant]);
+
+  useEffect(() => {
+    if (!audioElement || !isPlaying || !enabled) {
+      setVolume(0);
+      setVoiceBandVolume(0);
+      setVowelWeights({ a: 0, i: 0, u: 0, e: 0, o: 0 });
+      volumeRef.current = 0;
+      vowelWeightsRef.current = { a: 0, i: 0, u: 0, e: 0, o: 0 };
+      if (animationFrameRef.current) {
+        cancelAnimationFrame(animationFrameRef.current);
+        animationFrameRef.current = null;
+      }
+      return;
+    }
+
+    const analyser = analyserRef.current;
+    if (!analyser) return;
 
     const dataArray = new Uint8Array(analyser.frequencyBinCount);
 
@@ -157,18 +196,10 @@ export function useAudioAnalyzer({
     return () => {
       if (animationFrameRef.current) {
         cancelAnimationFrame(animationFrameRef.current);
-      }
-      if (sourceRef.current) {
-        sourceRef.current.disconnect();
-      }
-      if (analyserRef.current) {
-        analyserRef.current.disconnect();
-      }
-      if (audioContextRef.current) {
-        audioContextRef.current.close();
+        animationFrameRef.current = null;
       }
     };
-  }, [audioElement, isPlaying, enabled, fftSize, smoothingTimeConstant, normalizationFactor, throttledSetState]);
+  }, [audioElement, isPlaying, enabled, normalizationFactor, throttledSetState]);
 
   return { volume, voiceBandVolume, vowelWeights, volumeRef, vowelWeightsRef };
 }

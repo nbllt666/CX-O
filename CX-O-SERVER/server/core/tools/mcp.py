@@ -2,6 +2,7 @@ import asyncio
 import json
 import os
 import subprocess
+import threading
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any, Dict, List, Optional
@@ -220,6 +221,16 @@ class MCPManager:
                 server.error = error_msg
                 logger.error(f"MCP服务器启动失败: {name}, {error_msg}")
                 raise MCPError(f"启动MCP服务器失败: {error_msg}")
+
+            def _drain_stream(stream, log_func):
+                try:
+                    for line in stream:
+                        log_func(line.decode().strip())
+                except Exception:
+                    pass
+
+            threading.Thread(target=_drain_stream, args=(process.stdout, logger.debug), daemon=True).start()
+            threading.Thread(target=_drain_stream, args=(process.stderr, logger.warning), daemon=True).start()
 
             # 同步工具
             await self._sync_tools(name)
