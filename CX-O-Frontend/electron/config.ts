@@ -21,7 +21,11 @@ function readConfig(): Record<string, string> {
 
 function writeConfig(config: Record<string, string>): void {
   const configPath = getConfigPath();
-  fs.writeFileSync(configPath, JSON.stringify(config, null, 2), 'utf-8');
+  try {
+    fs.writeFileSync(configPath, JSON.stringify(config, null, 2), 'utf-8');
+  } catch (error: unknown) {
+    console.error(`Failed to write config to ${configPath}:`, error);
+  }
 }
 
 export function getConfig(key: string): string | null {
