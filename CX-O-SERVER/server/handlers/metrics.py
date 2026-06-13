@@ -27,32 +27,37 @@ def register_metrics_handlers(manager: "WebSocketManager"):
             try:
                 memory_mgr = get_memory_manager()
                 metrics["memory"] = memory_mgr.get_statistics()
-            except Exception:
+            except Exception as e:
+                logger.warning("获取memory metrics失败: %s", e, exc_info=True)
                 metrics["memory"] = {"error": "unavailable"}
 
             try:
                 acp_mgr = get_acp_manager()
                 metrics["acp"] = await acp_mgr.get_statistics()
-            except Exception:
+            except Exception as e:
+                logger.warning("获取acp metrics失败: %s", e, exc_info=True)
                 metrics["acp"] = {"error": "unavailable"}
 
             try:
                 mcp_mgr = get_mcp_manager()
                 metrics["mcp"] = mcp_mgr.get_stats()
-            except Exception:
+            except Exception as e:
+                logger.warning("获取mcp metrics失败: %s", e, exc_info=True)
                 metrics["mcp"] = {"error": "unavailable"}
 
             try:
                 from server.core.tools import tool_registry
                 metrics["tools"] = tool_registry.get_tool_stats()
-            except Exception:
+            except Exception as e:
+                logger.warning("获取tools metrics失败: %s", e, exc_info=True)
                 metrics["tools"] = {"error": "unavailable"}
 
             try:
                 from server.core.plugins.manager import get_plugin_manager
                 plugin_mgr = get_plugin_manager()
                 metrics["plugins"] = plugin_mgr.get_stats()
-            except Exception:
+            except Exception as e:
+                logger.warning("获取plugins metrics失败: %s", e, exc_info=True)
                 metrics["plugins"] = {"error": "unavailable"}
 
             metrics["gateway"] = manager.get_stats()

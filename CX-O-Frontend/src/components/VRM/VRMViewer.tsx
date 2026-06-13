@@ -82,11 +82,11 @@ export function VRMViewer({
   const renderIdRef = useRef(0);
 
   const effectiveTweak = useRef<Partial<VRMTweakConfig>>(tweakConfig || {});
-  if (tweakConfig) effectiveTweak.current = tweakConfig;
+  useEffect(() => { effectiveTweak.current = tweakConfig || {}; }, [tweakConfig]);
   const tc: VRMTweakConfig = { ...DEFAULT_VRM_TWEAK, ...effectiveTweak.current };
 
   const effectiveAnim = useRef<Partial<AnimationSettings>>(animationConfig || {});
-  if (animationConfig) effectiveAnim.current = animationConfig;
+  useEffect(() => { effectiveAnim.current = animationConfig || {}; }, [animationConfig]);
   const ac: AnimationSettings = { ...DEFAULT_ANIMATION_SETTINGS, ...effectiveAnim.current };
 
   useEffect(() => {

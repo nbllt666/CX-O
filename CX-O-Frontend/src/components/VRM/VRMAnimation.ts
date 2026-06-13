@@ -110,7 +110,7 @@ export class VRMAnimation {
         // Parabolic blink curve
         blinkWeight = Math.sin(this.blinkPhase * Math.PI);
       }
-      em.setValue('blink' as any, blinkWeight);
+      em.setValue('blink', blinkWeight);
     }
   }
 

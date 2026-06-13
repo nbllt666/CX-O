@@ -5,11 +5,28 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
+import re
+import subprocess
+import sys
 import uuid
 from pathlib import Path
 from typing import Callable, Optional
 
 logger = logging.getLogger(__name__)
+
+_OUTPUT_NAME_PATTERN = re.compile(r"^[A-Za-z0-9_-]+$")
+
+
+def _sanitize_output_name(name: str) -> str:
+    """校验 output_name 仅由字母/数字/下划线/连字符组成，防止目录穿越。"""
+    base = os.path.basename(name or "")
+    if not base or not _OUTPUT_NAME_PATTERN.match(base):
+        raise ValueError(
+            f"Invalid output_name: {name!r}. "
+            "Only letters, digits, underscore and hyphen are allowed and path separators are forbidden."
+        )
+    return base
 
 
 class F5TTSFinetuneService:
@@ -24,6 +41,7 @@ class F5TTSFinetuneService:
         self._training_data_dir = Path(training_data_dir)
         self._process: Optional[asyncio.subprocess.Process] = None
         self._task_id: Optional[str] = None
+        self._monitor_task: Optional[asyncio.Task] = None
 
     async def start_training(
         self,
@@ -33,10 +51,16 @@ class F5TTSFinetuneService:
         output_name: Optional[str] = None,
         progress_callback: Optional[Callable] = None,
     ) -> str:
+        if self._process and self._process.returncode is None:
+            raise RuntimeError("训练已在进行，请先停止当前训练")
+
         self._task_id = str(uuid.uuid4())
         self._output_dir.mkdir(parents=True, exist_ok=True)
 
-        output_name = output_name or f"f5tts_finetuned_{self._task_id[:8]}"
+        if output_name:
+            output_name = _sanitize_output_name(output_name)
+        else:
+            output_name = f"f5tts_finetuned_{self._task_id[:8]}"
         output_path = self._output_dir / output_name
         output_path.mkdir(parents=True, exist_ok=True)
 
@@ -56,13 +80,15 @@ class F5TTSFinetuneService:
             "--learning_rate", str(learning_rate),
         ]
 
-        self._process = await asyncio.create_subprocess_exec(
+        proc = await asyncio.create_subprocess_exec(
             *args,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
+            creationflags=subprocess.CREATE_NEW_PROCESS_GROUP if sys.platform == "win32" else 0,
         )
+        self._process = proc
 
-        asyncio.create_task(self._monitor_training(epochs, progress_callback))
+        self._monitor_task = asyncio.create_task(self._monitor_training(epochs, progress_callback, proc))
 
         return self._task_id
 
@@ -81,29 +107,45 @@ class F5TTSFinetuneService:
         if line:
             logger.info(f"[F5-TTS train stderr] {line}")
 
-    async def _monitor_training(self, total_epochs: int, progress_callback: Optional[Callable] = None):
-        stdout_task = asyncio.create_task(self._read_stream(self._process.stdout, self._log_stdout))
-        stderr_task = asyncio.create_task(self._read_stream(self._process.stderr, self._log_stderr))
+    async def _monitor_training(
+        self,
+        total_epochs: int,
+        progress_callback: Optional[Callable] = None,
+        proc: Optional[asyncio.subprocess.Process] = None,
+    ):
+        process = proc or self._process
+        if process is None:
+            logger.warning("Monitor training called without a process")
+            return
+        stdout_task = asyncio.create_task(self._read_stream(process.stdout, self._log_stdout))
+        stderr_task = asyncio.create_task(self._read_stream(process.stderr, self._log_stderr))
         await asyncio.gather(stdout_task, stderr_task)
 
-        await self._process.wait()
+        await process.wait()
 
         if progress_callback:
             try:
                 progress_callback(
-                    progress=1.0 if self._process.returncode == 0 else 0.0,
-                    status="completed" if self._process.returncode == 0 else "failed",
+                    progress=1.0 if process.returncode == 0 else 0.0,
+                    status="completed" if process.returncode == 0 else "failed",
                 )
             except Exception as e:
                 logger.warning(f"Progress callback error: {e}")
 
-        logger.info(f"F5-TTS training finished with return code: {self._process.returncode}")
+        logger.info(f"F5-TTS training finished with return code: {process.returncode}")
 
     async def stop_training(self):
         if self._process and self._process.returncode is None:
             self._process.kill()
             await self._process.wait()
+        if self._monitor_task and not self._monitor_task.done():
+            self._monitor_task.cancel()
+            try:
+                await self._monitor_task
+            except (asyncio.CancelledError, Exception):
+                pass
         self._process = None
+        self._monitor_task = None
         logger.info("F5-TTS training stopped")
 
     def list_models(self) -> list[dict]:

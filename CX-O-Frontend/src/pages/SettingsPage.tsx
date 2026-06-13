@@ -679,7 +679,6 @@ export function SettingsPage() {
       }
     };
     loadGraphConfig();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isBackendRunning]);
 
   const handleAudioUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {

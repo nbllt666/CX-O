@@ -30,6 +30,7 @@ export function AvatarManager({ type, onClose }: AvatarManagerProps) {
   const [previewData, setPreviewData] = useState<ArrayBuffer | undefined>(undefined);
   const [dataVersion, setDataVersion] = useState(0);
   const previewDataRef = useRef<ArrayBuffer | undefined>(undefined);
+  const previewTokenRef = useRef(0);
 
   const {
     live2d, vrm,
@@ -54,6 +55,11 @@ export function AvatarManager({ type, onClose }: AvatarManagerProps) {
   const [vrmScale, setVrmScale] = useState(vrm.scale);
   const [vrmPosition, setVrmPosition] = useState<[number, number, number]>(vrm.position3d);
 
+  // 同步 store tweak 变化到本地 state
+  useEffect(() => {
+    setTweakConfig(vrm.tweak || { ...DEFAULT_VRM_TWEAK });
+  }, [vrm.tweak]);
+
   const loadAvatars = useCallback(async () => {
     setIsLoading(true);
     try {
@@ -67,15 +73,19 @@ export function AvatarManager({ type, onClose }: AvatarManagerProps) {
   }, [type]);
 
   const loadPreviewModel = useCallback(async (id: string) => {
+    const token = ++previewTokenRef.current;
     try {
       const avatar = await getAvatar(id);
+      if (token !== previewTokenRef.current) return;
       if (avatar?.data) {
         const ab = await avatar.data.arrayBuffer();
+        if (token !== previewTokenRef.current) return;
         previewDataRef.current = ab;
         setPreviewData(ab);
         setDataVersion((v) => v + 1);
       }
     } catch (error) {
+      if (token !== previewTokenRef.current) return;
       console.error('Failed to load preview model:', error);
     }
   }, []);

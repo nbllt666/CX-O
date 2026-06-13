@@ -19,21 +19,32 @@ const mockRequest = vi.fn(async (config: { url?: string; method?: string; data?:
   return hasParams ? mockGet(url, { params: config.params }) : mockGet(url);
 });
 
-vi.mock('axios', () => ({
-  default: {
-    create: vi.fn(() => ({
-      request: mockRequest,
-      get: mockGet,
-      post: mockPost,
-      put: mockPut,
-      delete: mockDelete,
-      interceptors: {
-        request: { use: vi.fn() },
-        response: { use: vi.fn() },
-      },
-    })),
-  },
-}));
+vi.mock('axios', () => {
+  class MockAxiosError extends Error {
+    response?: unknown;
+    config?: unknown;
+    constructor(message?: string) {
+      super(message);
+      this.name = 'AxiosError';
+    }
+  }
+  return {
+    default: {
+      create: vi.fn(() => ({
+        request: mockRequest,
+        get: mockGet,
+        post: mockPost,
+        put: mockPut,
+        delete: mockDelete,
+        interceptors: {
+          request: { use: vi.fn() },
+          response: { use: vi.fn() },
+        },
+      })),
+    },
+    AxiosError: MockAxiosError,
+  };
+});
 
 describe('API Client', () => {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any

@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react';
+import { setCachedBackendUrl, setCachedWsUrl } from '../api/client';
 
 interface ConnectionSetupProps {
   onConnected: () => void;
@@ -16,7 +17,6 @@ export function ConnectionSetup({ onConnected }: ConnectionSetupProps) {
 
   useEffect(() => {
     checkConnection();
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- mount-only probe; URLs come from state/localStorage
   }, []);
 
   const checkConnection = async () => {
@@ -30,8 +30,8 @@ export function ConnectionSetup({ onConnected }: ConnectionSetupProps) {
       });
 
       if (response.ok) {
-        localStorage.setItem('cxhms-backend-url', backendUrl);
-        localStorage.setItem('cxhms-ws-url', wsUrl);
+        setCachedBackendUrl(backendUrl);
+        setCachedWsUrl(wsUrl);
         onConnected();
       } else {
         setError(`服务器返回错误: ${response.status}`);

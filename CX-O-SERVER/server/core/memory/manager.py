@@ -984,7 +984,9 @@ JSON响应："""
                     else:
                         return conn
                 except Exception:
-                    pass
+                    logger.warning(
+                        "复用连接失败，将重建: thread_id=%s", thread_id, exc_info=True
+                    )
 
                 try:
                     if isinstance(conn_info, dict):
@@ -2527,8 +2529,8 @@ JSON响应："""
                     tags = json.loads(tag_row[0]) if tag_row[0] else []
                     for tag in tags:
                         tag_counts[tag] = tag_counts.get(tag, 0) + 1
-                except Exception:
-                    pass
+                except Exception as e:
+                    logger.warning("解析记忆标签失败，跳过该行: %s", tag_row, exc_info=True)
 
             # 获取热门标签
             top_tags = sorted(tag_counts.items(), key=lambda x: x[1], reverse=True)[:10]
@@ -2897,3 +2899,98 @@ JSON响应："""
         except Exception as e:
             logger.error(f"按情感获取记忆失败: {e}", exc_info=True)
             return []
+
+    # ----------------------------------------------------------------------
+    # 异步包装方法 (BUG-B06 关联)
+    # 同步 sqlite 调用通过 asyncio.to_thread 包装，避免阻塞事件循环
+    # ----------------------------------------------------------------------
+
+    async def write_memory_async(
+        self,
+        content: str,
+        memory_type: str = "long_term",
+        importance: int = 3,
+        tags: Optional[List[str]] = None,
+        metadata: Optional[Dict] = None,
+        permanent: bool = False,
+        emotion_score: float = 0.0,
+        workspace_id: str = "default",
+        agent_id: str = "default",
+    ) -> int:
+        """异步写入记忆（通过 to_thread 包装同步 sqlite 调用）"""
+        return await asyncio.to_thread(
+            self.write_memory,
+            content=content,
+            memory_type=memory_type,
+            importance=importance,
+            tags=tags,
+            metadata=metadata,
+            permanent=permanent,
+            emotion_score=emotion_score,
+            workspace_id=workspace_id,
+            agent_id=agent_id,
+        )
+
+    async def get_memory_async(
+        self, memory_id: int, include_deleted: bool = False
+    ) -> Optional[Dict]:
+        """异步获取记忆"""
+        return await asyncio.to_thread(self.get_memory, memory_id, include_deleted)
+
+    async def search_memories_async(
+        self,
+        query: Optional[str] = None,
+        memory_type: Optional[str] = None,
+        tags: Optional[List[str]] = None,
+        time_range: Optional[str] = None,
+        limit: int = 10,
+        offset: int = 0,
+        include_deleted: bool = False,
+        workspace_id: str = "default",
+        agent_id: str = "default",
+    ) -> List[Dict]:
+        """异步搜索记忆"""
+        return await asyncio.to_thread(
+            self.search_memories,
+            query=query,
+            memory_type=memory_type,
+            tags=tags,
+            time_range=time_range,
+            limit=limit,
+            offset=offset,
+            include_deleted=include_deleted,
+            workspace_id=workspace_id,
+            agent_id=agent_id,
+        )
+
+    async def update_memory_async(
+        self,
+        memory_id: int,
+        new_content: str = None,
+        new_tags: List[str] = None,
+        new_importance: int = None,
+        new_metadata: Dict = None,
+        agent_id: str = "default",
+    ) -> bool:
+        """异步更新记忆"""
+        return await asyncio.to_thread(
+            self.update_memory,
+            memory_id=memory_id,
+            new_content=new_content,
+            new_tags=new_tags,
+            new_importance=new_importance,
+            new_metadata=new_metadata,
+            agent_id=agent_id,
+        )
+
+    async def delete_memory_async(
+        self, memory_id: int, soft_delete: bool = True, agent_id: str = "default"
+    ) -> bool:
+        """异步删除记忆"""
+        return await asyncio.to_thread(
+            self.delete_memory, memory_id, soft_delete, agent_id
+        )
+
+    async def get_statistics_async(self, workspace_id: str = "default") -> Dict:
+        """异步获取记忆统计"""
+        return await asyncio.to_thread(self.get_statistics, workspace_id)

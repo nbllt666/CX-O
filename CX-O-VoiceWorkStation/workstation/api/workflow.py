@@ -1,8 +1,18 @@
 """
 工作流 API
+
+注意：本模块使用模块级状态 dict 缓存工作流状态（_workflow_state）
+与 SoVITS trainer 实例（_sovits_trainer_instance）。
+在 FastAPI 多 worker 部署下，每个 worker 进程会持有独立的工作流状态，
+跨进程不同步。
+
+部署要求：必须以单 worker 启动（uvicorn --workers 1），
+否则前端的步骤状态、训练进度只能命中其中一个 worker，
+可能导致状态显示与实际执行不一致。
 """
 from __future__ import annotations
 
+import asyncio
 import copy
 import logging
 from typing import Optional
@@ -23,6 +33,20 @@ _workflow_state: dict = {
         {"id": "inference", "name": "推理", "status": "pending", "output": None},
     ],
 }
+
+# 保护 _workflow_state 中各 step 字段的并发读写。即使在单 worker 下，
+# 同一 worker 内也可能存在并发请求同时修改 step 状态（例如前端同时
+# 触发多个步骤执行或 reset）。该锁确保 step 状态变更的原子性。
+_workflow_lock = asyncio.Lock()
+
+
+def _get_sovits_trainer():
+    """复用 sovits_svc 模块导出的共享单例，确保跨接口共享同一个
+    SoVITSSVCTrainer 实例（含 `_preprocessed` 状态与运行中的训练进程），
+    避免跨接口触发训练时误报 "Preprocessing must be completed"。"""
+    from workstation.api.sovits_svc import get_sovits_trainer
+
+    return get_sovits_trainer()
 
 
 def _find_step(step_id: str) -> Optional[dict]:
@@ -46,42 +70,43 @@ async def get_workflow_status():
 
 @router.post("/step/{step_id}/execute")
 async def execute_step(step_id: str, request: Request):
-    step = _find_step(step_id)
-    if step is None:
-        raise HTTPException(status_code=404, detail=f"Step not found: {step_id}")
+    async with _workflow_lock:
+        step = _find_step(step_id)
+        if step is None:
+            raise HTTPException(status_code=404, detail=f"Step not found: {step_id}")
 
-    body = await request.json() if request.headers.get("content-type", "").startswith("application/json") else {}
+        body = await request.json() if request.headers.get("content-type", "").startswith("application/json") else {}
 
-    step["status"] = "running"
+        step["status"] = "running"
 
-    try:
-        if step_id == "ref_audio":
-            output = await _execute_ref_audio(body)
-        elif step_id == "emotion_refs":
-            output = await _execute_emotion_refs(body)
-        elif step_id == "train_prep":
-            output = await _execute_train_prep(body)
-        elif step_id == "training":
-            output = await _execute_training(body)
-        elif step_id == "inference":
-            output = await _execute_inference(body)
-        else:
-            raise HTTPException(status_code=400, detail=f"Unknown step: {step_id}")
+        try:
+            if step_id == "ref_audio":
+                output = await _execute_ref_audio(body)
+            elif step_id == "emotion_refs":
+                output = await _execute_emotion_refs(body)
+            elif step_id == "train_prep":
+                output = await _execute_train_prep(body)
+            elif step_id == "training":
+                output = await _execute_training(body)
+            elif step_id == "inference":
+                output = await _execute_inference(body)
+            else:
+                raise HTTPException(status_code=400, detail=f"Unknown step: {step_id}")
 
-        step["status"] = "completed"
-        step["output"] = output
+            step["status"] = "completed"
+            step["output"] = output
 
-        idx = _step_index(step_id)
-        if idx >= 0 and _workflow_state["current_step"] <= idx:
-            _workflow_state["current_step"] = idx + 1
+            idx = _step_index(step_id)
+            if idx >= 0 and _workflow_state["current_step"] <= idx:
+                _workflow_state["current_step"] = idx + 1
 
-        return copy.deepcopy(_workflow_state)
+            return copy.deepcopy(_workflow_state)
 
-    except Exception as e:
-        logger.error(f"Workflow step {step_id} failed: {e}")
-        step["status"] = "error"
-        step["output"] = {"error": str(e)}
-        raise HTTPException(status_code=500, detail=str(e))
+        except Exception as e:
+            logger.error(f"Workflow step {step_id} failed: {e}")
+            step["status"] = "error"
+            step["output"] = {"error": str(e)}
+            raise HTTPException(status_code=500, detail=str(e))
 
 
 async def _execute_ref_audio(body: dict) -> dict:
@@ -94,14 +119,13 @@ async def _execute_ref_audio(body: dict) -> dict:
     mode = body.get("mode", "design")
     text = body.get("text", "")
     control = body.get("control", "")
-    output_path = body.get("output_path")
 
-    if not output_path:
-        from pathlib import Path
-        import uuid
-        output_dir = Path(settings.output.voice_refs_dir) / "voxcpm"
-        output_dir.mkdir(parents=True, exist_ok=True)
-        output_path = str(output_dir / f"{uuid.uuid4().hex}.wav")
+    # 忽略客户端传入的 output_path，统一由服务端生成 UUID 路径
+    from pathlib import Path
+    import uuid
+    output_dir = Path(settings.output.voice_refs_dir) / "voxcpm"
+    output_dir.mkdir(parents=True, exist_ok=True)
+    output_path = str(output_dir / f"{uuid.uuid4().hex}.wav")
 
     kwargs = {}
     if "cfg_value" in body:
@@ -176,18 +200,9 @@ async def _execute_emotion_refs(body: dict) -> dict:
 
 
 async def _execute_train_prep(body: dict) -> dict:
-    from workstation.services.sovits_svc_trainer import SoVITSSVCTrainer
-    from workstation.config import get_settings
+    trainer = _get_sovits_trainer()
 
-    settings = get_settings()
-    trainer = SoVITSSVCTrainer(
-        output_dir=settings.sovits_svc.output_dir,
-        training_data_dir=settings.sovits_svc.training_data_dir,
-        so_vits_svc_dir=settings.sovits_svc.so_vits_svc_dir,
-        python_path=settings.sovits_svc.python_path,
-    )
-
-    training_data_dir = body.get("training_data_dir", settings.sovits_svc.training_data_dir)
+    training_data_dir = body.get("training_data_dir") or str(trainer._training_data_dir)
     speaker_name = body.get("speaker_name", "speaker")
 
     results = await trainer.preprocess(
@@ -199,27 +214,20 @@ async def _execute_train_prep(body: dict) -> dict:
 
 
 async def _execute_training(body: dict) -> dict:
-    from workstation.services.sovits_svc_trainer import SoVITSSVCTrainer
-    from workstation.config import get_settings
-
-    settings = get_settings()
-    trainer = SoVITSSVCTrainer(
-        output_dir=settings.sovits_svc.output_dir,
-        training_data_dir=settings.sovits_svc.training_data_dir,
-        so_vits_svc_dir=settings.sovits_svc.so_vits_svc_dir,
-        python_path=settings.sovits_svc.python_path,
-    )
+    trainer = _get_sovits_trainer()
 
     epochs = body.get("epochs", 10000)
     batch_size = body.get("batch_size", 4)
     learning_rate = body.get("learning_rate", 1e-4)
     output_name = body.get("output_name")
+    speaker_name = body.get("speaker_name", "speaker")
 
     task_id = await trainer.start_training(
         epochs=epochs,
         batch_size=batch_size,
         learning_rate=learning_rate,
         output_name=output_name,
+        speaker_name=speaker_name,
     )
 
     return {"task_id": task_id}
@@ -257,11 +265,26 @@ async def _execute_inference(body: dict) -> dict:
 
 @router.post("/reset")
 async def reset_workflow():
-    for step in _workflow_state["steps"]:
-        step["status"] = "pending"
-        step["output"] = None
-    _workflow_state["current_step"] = 0
-    return copy.deepcopy(_workflow_state)
+    """
+    重置工作流状态。
+
+    若 SoVITS trainer 仍有正在运行的训练子进程，会先显式调用
+    `trainer.stop_training()` 终止子进程，再清空所有 step 状态。
+    整个流程在 _workflow_lock 内完成，确保与 execute_step 互斥。
+    """
+    async with _workflow_lock:
+        trainer = _get_sovits_trainer()
+        try:
+            await trainer.stop_training()
+        except Exception as e:
+            # stop_training 失败不应阻塞 reset，仅记录告警
+            logger.warning(f"reset_workflow: trainer.stop_training raised: {e}")
+
+        for step in _workflow_state["steps"]:
+            step["status"] = "pending"
+            step["output"] = None
+        _workflow_state["current_step"] = 0
+        return copy.deepcopy(_workflow_state)
 
 
 @router.get("/step/{step_id}/output")

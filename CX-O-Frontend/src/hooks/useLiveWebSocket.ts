@@ -1,11 +1,6 @@
 import { useEffect, useRef, useCallback, useState } from 'react';
 
-const WS_BASE_URL =
-  import.meta.env.VITE_WS_URL ||
-  (import.meta.env.VITE_API_URL || 'http://127.0.0.1:8000')
-    .replace('http', 'ws')
-    .replace(/\/ws$/, '')
-    .replace(/\/$/, '');
+import { getWS_BASE_URL } from '../api/client';
 
 export interface LiveDanmakuData {
   id: string;
@@ -91,8 +86,9 @@ export function useLiveWebSocket(options: UseLiveWebSocketOptions = {}): UseLive
   } = options;
 
   const wsRef = useRef<WebSocket | null>(null);
-  const reconnectTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const reconnectTimeoutRef = useRef<number | null>(null);
   const reconnectAttemptsRef = useRef(0);
+  const isUnmountedRef = useRef(false);
   const [isConnected, setIsConnected] = useState(false);
   const [connectionCount, setConnectionCount] = useState(0);
 
@@ -139,6 +135,7 @@ export function useLiveWebSocket(options: UseLiveWebSocketOptions = {}): UseLive
       reconnectTimeoutRef.current = null;
     }
     if (wsRef.current) {
+      isUnmountedRef.current = true;
       wsRef.current.close();
       wsRef.current = null;
     }
@@ -148,7 +145,7 @@ export function useLiveWebSocket(options: UseLiveWebSocketOptions = {}): UseLive
   const connect = useCallback(() => {
     if (wsRef.current?.readyState === WebSocket.OPEN) return;
 
-    const url = `${WS_BASE_URL}/ws/live${sessionId ? `?session_id=${sessionId}` : ''}`;
+    const url = `${getWS_BASE_URL()}/ws/live${sessionId ? `?session_id=${sessionId}` : ''}`;
     console.log('[LiveWS] Connecting to:', url);
 
     try {
@@ -158,6 +155,7 @@ export function useLiveWebSocket(options: UseLiveWebSocketOptions = {}): UseLive
       ws.binaryType = 'arraybuffer';
 
       ws.onopen = () => {
+        if (isUnmountedRef.current) return;
         console.log('[LiveWS] Connected');
         setIsConnected(true);
         reconnectAttemptsRef.current = 0;
@@ -168,22 +166,26 @@ export function useLiveWebSocket(options: UseLiveWebSocketOptions = {}): UseLive
       };
 
       ws.onclose = () => {
+        if (isUnmountedRef.current) return;
         console.log('[LiveWS] Disconnected');
         setIsConnected(false);
+        setConnectionCount((prev) => Math.max(0, prev - 1));
         onDisconnectRef.current?.();
 
         const delay = getReconnectDelay();
         reconnectAttemptsRef.current++;
         console.log(`[LiveWS] Reconnecting in ${delay}ms (attempt ${reconnectAttemptsRef.current})`);
-        reconnectTimeoutRef.current = setTimeout(connect, delay);
+        reconnectTimeoutRef.current = window.setTimeout(connect, delay);
       };
 
       ws.onerror = () => {
+        if (isUnmountedRef.current) return;
         console.error('[LiveWS] Error');
         onErrorRef.current?.('WebSocket connection error');
       };
 
       ws.onmessage = (event) => {
+        if (isUnmountedRef.current) return;
         try {
           if (event.data instanceof ArrayBuffer) {
             return;
@@ -222,6 +224,7 @@ export function useLiveWebSocket(options: UseLiveWebSocketOptions = {}): UseLive
                 onVadStatusRef.current({
                   status: String(data.data.status || ''),
                   speech_duration_ms: Number(data.data.speech_duration_ms || 0),
+                  speech_probability: Number(data.data.speech_probability || 0),
                 });
               }
               break;
@@ -286,10 +289,12 @@ export function useLiveWebSocket(options: UseLiveWebSocketOptions = {}): UseLive
   const reconnect = useCallback(() => {
     disconnect();
     reconnectAttemptsRef.current = 0;
-    setTimeout(connect, 50);
+    isUnmountedRef.current = false;
+    reconnectTimeoutRef.current = window.setTimeout(connect, 50);
   }, [disconnect, connect]);
 
   useEffect(() => {
+    isUnmountedRef.current = false;
     connect();
     return () => {
       disconnect();

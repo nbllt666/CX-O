@@ -34,7 +34,6 @@ export const CountUp: React.FC<CountUpProps> = ({
       controls.stop();
       unsubscribe();
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- rounded is a stable motion transform hook
   }, [count, end, duration]);
 
   return (

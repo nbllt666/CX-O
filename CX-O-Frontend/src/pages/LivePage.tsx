@@ -51,15 +51,25 @@ export function LivePage() {
   const currentModelId = avatarType === 'live2d' ? live2d.modelId : vrm.modelId;
 
   useEffect(() => {
+    let cancelled = false;
     if (currentModelId) {
       getAvatar(currentModelId).then((avatar) => {
+        if (cancelled) return;
         if (avatar?.data) {
-          avatar.data.arrayBuffer().then(setModelData);
+          avatar.data.arrayBuffer().then((buffer) => {
+            if (cancelled) return;
+            setModelData(buffer);
+          });
+        } else {
+          setModelData(undefined);
         }
       });
     } else {
       setModelData(undefined);
     }
+    return () => {
+      cancelled = true;
+    };
   }, [currentModelId]);
 
   useEffect(() => {

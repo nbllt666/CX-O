@@ -1018,9 +1018,8 @@ def mono(content: str, session_id: str = None, rounds: int = 1) -> Dict[str, Any
     try:
         result = cm.add_mono_context(session_id=session_id, content=content, rounds=rounds)
         if result:
-            from datetime import datetime, timedelta
+            from datetime import datetime
 
-            expires_at = datetime.now() + timedelta(rounds=rounds)
             return {
                 "status": "success",
                 "message": "上下文已添加，将在指定轮数内保持",

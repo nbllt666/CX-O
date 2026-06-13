@@ -18,7 +18,12 @@ if not exist "node_modules\" (
     npm install
 )
 
-echo 正在启动前端开发服务器...
-npm run dev
+if "%1"=="electron" (
+    echo 正在以 Electron 模式启动...
+    npm run dev
+) else (
+    echo 正在以浏览器模式启动...
+    npm run dev
+)
 
 pause

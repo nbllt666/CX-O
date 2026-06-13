@@ -4,12 +4,14 @@
 支持使用内置 Conda 环境或系统 Python
 """
 
+import json
 import os
 import signal
 import subprocess
 import sys
+import threading
 import time
-from typing import Optional
+from typing import Any, Optional
 
 import psutil
 from fastapi import APIRouter, HTTPException
@@ -22,6 +24,137 @@ logger = get_contextual_logger(__name__)
 
 # 全局变量存储后端进程
 _backend_process: Optional[subprocess.Popen] = None
+# BUG-B07 修复: 保护对 _backend_process / _backend_log_handle / _backend_log_path
+# 的并发读写,避免多请求同时启动/停止后端时出现数据竞争
+_backend_process_lock = threading.Lock()
+# 后端进程日志文件句柄,防止 GC 关闭文件描述符
+_backend_log_handle: Optional[Any] = None
+# 后端进程日志文件绝对路径,供 /service/logs 端点读取
+_backend_log_path: Optional[str] = None
+
+
+# ---------------------------------------------------------------------------
+# BUG-B04 修复: 配置文件路径统一
+# 之前: PUT/POST /service/config 写入 config/default.yaml (YAML)
+#       但 server.config 实际从 config.json 加载 —— 写入根本不会生效。
+# 现在: 统一读写项目根目录下的 config.json, 与 server.config._get_config_path() 一致。
+# ---------------------------------------------------------------------------
+
+
+def _get_service_config_path() -> str:
+    """获取项目根目录下的 config.json 绝对路径。
+
+    与 ``server.config.Settings._get_config_path()`` 保持一致,避免
+    写文件与读文件路径不一致导致的"修改不生效"问题。
+    """
+    return os.path.join(get_project_root(), "config.json")
+
+
+def _load_service_config_file() -> dict:
+    """读取 config.json 现有内容,文件不存在则返回空 dict。"""
+    config_path = _get_service_config_path()
+    if not os.path.exists(config_path):
+        return {}
+    try:
+        with open(config_path, "r", encoding="utf-8") as f:
+            return json.load(f) or {}
+    except (OSError, json.JSONDecodeError) as e:
+        logger.warning(f"读取 config.json 失败, 将以空配置继续: {e}")
+        return {}
+
+
+def _save_service_config_file(payload: dict) -> None:
+    """将配置 dict 写回 config.json。"""
+    config_path = _get_service_config_path()
+    with open(config_path, "w", encoding="utf-8") as f:
+        json.dump(payload, f, indent=4, ensure_ascii=False)
+
+
+def _apply_config_updates(current_config: dict, incoming: dict) -> dict:
+    """将前端传入的 in-memory 配置片段合并进 current_config。
+
+    同时保持与原 YAML 路径相同的字段语义(vector/models/llm_params/system)，
+    但实际写入的是 config.json。
+    """
+    if "vector" in incoming:
+        vector_cfg = incoming["vector"]
+        current_config.setdefault("memory", {})
+
+        if "backend" in vector_cfg:
+            current_config["memory"]["vector_backend"] = vector_cfg["backend"]
+
+        backend = vector_cfg.get("backend", "chroma")
+        if backend == "chroma":
+            current_config["memory"].setdefault("chroma", {})
+            for key in ["db_path", "collection_name", "vector_size"]:
+                if key in vector_cfg:
+                    current_config["memory"]["chroma"][key] = vector_cfg[key]
+        elif backend == "milvus_lite":
+            current_config["memory"].setdefault("milvus_lite", {})
+            for key in ["db_path", "vector_size"]:
+                if key in vector_cfg:
+                    current_config["memory"]["milvus_lite"][key] = vector_cfg[key]
+        elif backend in ["weaviate", "weaviate_embedded"]:
+            current_config["memory"].setdefault("weaviate", {})
+            for key in ["weaviate_host", "weaviate_port", "vector_size"]:
+                if key in vector_cfg:
+                    current_config["memory"]["weaviate"][key] = vector_cfg[key]
+        elif backend == "qdrant":
+            current_config["memory"].setdefault("qdrant", {})
+            for key in ["qdrant_host", "qdrant_port", "vector_size"]:
+                if key in vector_cfg:
+                    current_config["memory"]["qdrant"][key] = vector_cfg[key]
+
+    if "models" in incoming:
+        current_config["models"] = incoming["models"]
+
+    if "model_defaults" in incoming:
+        current_config["model_defaults"] = incoming["model_defaults"]
+
+    if "llm_params" in incoming:
+        current_config["llm_params"] = incoming["llm_params"]
+
+    if "system" in incoming:
+        current_config.setdefault("system", {})
+        current_config["system"].update(incoming["system"])
+    elif any(k in incoming for k in ["host", "port", "log_level", "reload", "use_conda"]):
+        current_config.setdefault("system", {})
+        for key in ["host", "port", "log_level", "reload", "use_conda"]:
+            if key in incoming:
+                current_config["system"][key] = incoming[key]
+
+    return current_config
+
+
+def _open_backend_log_file(root_dir: str) -> tuple:
+    """为子进程打开一个日志文件(覆盖写入),用于重定向 stdout/stderr。
+
+    避免使用 ``subprocess.PIPE`` —— 当子进程输出超过 64KB 缓冲区而无人读取时
+    会阻塞死锁(BUG-B03)。返回 ``(log_path, file_handle)``。
+    调用方有责任持有 ``file_handle`` 直至进程结束。
+
+    BUG-B07 修复: 通过 ``_backend_process_lock`` 保护 ``_backend_log_handle`` /
+    ``_backend_log_path`` 的并发写。
+    """
+    global _backend_log_handle, _backend_log_path
+    log_dir = os.path.join(root_dir, "logs")
+    try:
+        os.makedirs(log_dir, exist_ok=True)
+    except Exception as e:
+        logger.warning(f"创建日志目录失败: {e}")
+        return None, None
+
+    log_path = os.path.join(log_dir, "cxo.log")
+    try:
+        handle = open(log_path, "wb", buffering=0)
+    except Exception as e:
+        logger.warning(f"打开日志文件失败 {log_path}: {e}")
+        return None, None
+
+    with _backend_process_lock:
+        _backend_log_handle = handle
+        _backend_log_path = log_path
+    return log_path, handle
 
 
 class ServiceStatus(BaseModel):
@@ -85,19 +218,27 @@ def get_conda_activate_script() -> Optional[str]:
 
 
 def get_backend_process() -> Optional[psutil.Process]:
-    """获取后端进程"""
+    """获取后端进程
+
+    BUG-B07 修复: 通过 ``_backend_process_lock`` 保护 ``_backend_process``
+    全局变量在并发请求下的安全访问。
+    """
     global _backend_process
-    if _backend_process is None:
+    with _backend_process_lock:
+        proc = _backend_process
+
+    if proc is None:
         return None
 
     try:
-        process = psutil.Process(_backend_process.pid)
+        process = psutil.Process(proc.pid)
         if process.is_running():
             return process
     except (psutil.NoSuchProcess, psutil.AccessDenied):
         pass
 
-    _backend_process = None
+    with _backend_process_lock:
+        _backend_process = None
     return None
 
 
@@ -116,7 +257,6 @@ async def get_service_status():
                     and "uvicorn" in " ".join(cmdline)
                     and "backend.api.app:app" in " ".join(cmdline)
                 ):
-                    global _backend_process
                     # 找到已运行的进程，直接使用其PID
                     process = proc
                     break
@@ -169,7 +309,11 @@ def validate_service_config(config: ServiceConfig) -> None:
 
 @router.post("/service/start")
 async def start_service(config: ServiceConfig):
-    """启动后端服务"""
+    """启动后端服务
+
+    BUG-B07 修复: 通过 ``_backend_process_lock`` 保护 ``_backend_process`` 赋值,
+    避免多请求同时启动/停止后端时出现数据竞争。
+    """
     global _backend_process
 
     # 验证配置
@@ -180,6 +324,11 @@ async def start_service(config: ServiceConfig):
     if existing_process is not None:
         raise HTTPException(status_code=400, detail="Service is already running")
 
+    # 在创建子进程前再确认一次,避免 TOCTOU 竞争
+    with _backend_process_lock:
+        if _backend_process is not None and get_backend_process() is not None:
+            raise HTTPException(status_code=400, detail="Service is already running")
+
     try:
         # 获取项目根目录
         root_dir = get_project_root()
@@ -188,6 +337,15 @@ async def start_service(config: ServiceConfig):
         conda_python = get_conda_python_path()
         conda_activate = get_conda_activate_script()
         use_conda = config.use_conda and conda_python is not None
+
+        # 为子进程打开一个日志文件,避免 stdout/stderr=PIPE 死锁 (BUG-B03)
+        _log_path, _log_handle = _open_backend_log_file(root_dir)
+        if _log_handle is not None:
+            _stdout_target = _log_handle
+            _stderr_target = _log_handle
+        else:
+            _stdout_target = subprocess.DEVNULL
+            _stderr_target = subprocess.DEVNULL
 
         if use_conda and sys.platform == "win32" and conda_activate:
             # Windows: 使用 activate.bat 激活环境
@@ -204,11 +362,11 @@ async def start_service(config: ServiceConfig):
             logger.info(f"Starting with Conda activate script")
 
             # 使用 shell=False 执行命令
-            _backend_process = subprocess.Popen(
+            new_process = subprocess.Popen(
                 cmd,
                 cwd=root_dir,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
+                stdout=_stdout_target,
+                stderr=_stderr_target,
                 shell=False,
                 creationflags=subprocess.CREATE_NEW_PROCESS_GROUP,
             )
@@ -233,11 +391,11 @@ async def start_service(config: ServiceConfig):
 
             logger.info(f"Starting with Conda Python: {' '.join(cmd)}")
 
-            _backend_process = subprocess.Popen(
+            new_process = subprocess.Popen(
                 cmd,
                 cwd=root_dir,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
+                stdout=_stdout_target,
+                stderr=_stderr_target,
                 creationflags=subprocess.CREATE_NEW_PROCESS_GROUP if sys.platform == "win32" else 0,
             )
 
@@ -261,22 +419,26 @@ async def start_service(config: ServiceConfig):
 
             logger.info(f"Starting with system Python: {' '.join(cmd)}")
 
-            _backend_process = subprocess.Popen(
+            new_process = subprocess.Popen(
                 cmd,
                 cwd=root_dir,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
+                stdout=_stdout_target,
+                stderr=_stderr_target,
                 creationflags=subprocess.CREATE_NEW_PROCESS_GROUP if sys.platform == "win32" else 0,
             )
 
+        # BUG-B07 修复: 在锁内完成对全局 _backend_process 的赋值,保证可见性
+        with _backend_process_lock:
+            _backend_process = new_process
+
         logger.info(
-            f"Backend service started: PID={_backend_process.pid}, Port={config.port}, Conda={use_conda}"
+            f"Backend service started: PID={new_process.pid}, Port={config.port}, Conda={use_conda}"
         )
 
         return {
             "status": "success",
             "message": "Service started",
-            "pid": _backend_process.pid,
+            "pid": new_process.pid,
             "port": config.port,
             "using_conda": use_conda,
         }
@@ -288,7 +450,11 @@ async def start_service(config: ServiceConfig):
 
 @router.post("/service/stop")
 async def stop_service():
-    """停止后端服务"""
+    """停止后端服务
+
+    BUG-B07 修复: 通过 ``_backend_process_lock`` 保护 ``_backend_process`` 写,
+    避免多请求同时停止后端时出现数据竞争。
+    """
     global _backend_process
 
     process = get_backend_process()
@@ -324,7 +490,8 @@ async def stop_service():
             # 强制终止
             process.kill()
 
-        _backend_process = None
+        with _backend_process_lock:
+            _backend_process = None
 
         logger.info("Backend service stopped")
 
@@ -375,8 +542,9 @@ async def get_service_logs(lines: int = 100):
 @router.get("/service/config")
 async def get_service_config():
     """获取当前服务配置"""
-    from config.settings import settings
+    from server.config import get_settings
 
+    settings = get_settings()
     conda_available = get_conda_python_path() is not None
 
     config = {
@@ -434,7 +602,9 @@ async def get_service_config():
 @router.get("/config/gateway")
 async def get_gateway_config():
     """获取单体架构网关配置（简化版，供前端兼容）"""
-    from config.settings import settings
+    from server.config import get_settings
+
+    settings = get_settings()
 
     monolith_config = {
         "status": "集成",
@@ -451,74 +621,23 @@ async def get_gateway_config():
 
 @router.put("/service/config")
 async def update_service_config_put(config: dict):
-    """更新服务配置（PUT方法，需要重启生效）"""
+    """更新服务配置（PUT方法，需要重启生效）
+
+    BUG-B04 修复: 统一写入项目根目录的 config.json，与 ``server.config``
+    加载路径一致；写入后立即 reload Settings，确保运行期内存配置随之更新。
+    """
     try:
-        import yaml
+        current_config = _load_service_config_file()
+        _apply_config_updates(current_config, config)
+        _save_service_config_file(current_config)
 
-        config_path = "config/default.yaml"
+        # 同步热更新 settings 单例，避免前端写入后立即读取仍拿到旧值
+        try:
+            from server.config import get_settings
 
-        if os.path.exists(config_path):
-            with open(config_path, "r", encoding="utf-8") as f:
-                current_config = yaml.safe_load(f) or {}
-        else:
-            current_config = {}
-
-        if "vector" in config:
-            vector_cfg = config["vector"]
-            if "memory" not in current_config:
-                current_config["memory"] = {}
-
-            if "backend" in vector_cfg:
-                current_config["memory"]["vector_backend"] = vector_cfg["backend"]
-
-            backend = vector_cfg.get("backend", "chroma")
-            if backend == "chroma":
-                if "chroma" not in current_config["memory"]:
-                    current_config["memory"]["chroma"] = {}
-                for key in ["db_path", "collection_name", "vector_size"]:
-                    if key in vector_cfg:
-                        current_config["memory"]["chroma"][key] = vector_cfg[key]
-            elif backend == "milvus_lite":
-                if "milvus_lite" not in current_config["memory"]:
-                    current_config["memory"]["milvus_lite"] = {}
-                for key in ["db_path", "vector_size"]:
-                    if key in vector_cfg:
-                        current_config["memory"]["milvus_lite"][key] = vector_cfg[key]
-            elif backend in ["weaviate", "weaviate_embedded"]:
-                if "weaviate" not in current_config["memory"]:
-                    current_config["memory"]["weaviate"] = {}
-                for key in ["weaviate_host", "weaviate_port", "vector_size"]:
-                    if key in vector_cfg:
-                        current_config["memory"]["weaviate"][key] = vector_cfg[key]
-            elif backend == "qdrant":
-                if "qdrant" not in current_config["memory"]:
-                    current_config["memory"]["qdrant"] = {}
-                for key in ["qdrant_host", "qdrant_port", "vector_size"]:
-                    if key in vector_cfg:
-                        current_config["memory"]["qdrant"][key] = vector_cfg[key]
-
-        if "models" in config:
-            current_config["models"] = config["models"]
-
-        if "model_defaults" in config:
-            current_config["model_defaults"] = config["model_defaults"]
-
-        if "llm_params" in config:
-            current_config["llm_params"] = config["llm_params"]
-
-        if "system" in config:
-            if "system" not in current_config:
-                current_config["system"] = {}
-            current_config["system"].update(config["system"])
-        elif any(k in config for k in ["host", "port", "log_level", "reload", "use_conda"]):
-            if "system" not in current_config:
-                current_config["system"] = {}
-            for key in ["host", "port", "log_level", "reload", "use_conda"]:
-                if key in config:
-                    current_config["system"][key] = config[key]
-
-        with open(config_path, "w", encoding="utf-8") as f:
-            yaml.dump(current_config, f, allow_unicode=True, sort_keys=False)
+            get_settings().reload_config()
+        except Exception as e:
+            logger.warning(f"reload config 失败, 下次重启生效: {e}")
 
     except Exception as e:
         logger.error(f"Failed to save config: {e}", exc_info=True)
@@ -527,94 +646,22 @@ async def update_service_config_put(config: dict):
 
 @router.post("/service/config")
 async def update_service_config(config: dict):
-    """更新服务配置（需要重启生效）"""
+    """更新服务配置（需要重启生效）
+
+    BUG-B04 修复: 统一读写 config.json，避免与 server.config 加载路径不一致。
+    """
     try:
-        import yaml
+        current_config = _load_service_config_file()
+        _apply_config_updates(current_config, config)
+        _save_service_config_file(current_config)
 
-        config_path = "config/default.yaml"
+        # 同步热更新 settings 单例
+        try:
+            from server.config import get_settings
 
-        # 读取现有配置
-        if os.path.exists(config_path):
-            with open(config_path, "r", encoding="utf-8") as f:
-                current_config = yaml.safe_load(f) or {}
-        else:
-            current_config = {}
-
-        # 更新配置 - 根据配置类型更新对应的部分
-        if "vector" in config:
-            vector_cfg = config["vector"]
-            if "memory" not in current_config:
-                current_config["memory"] = {}
-
-            # 更新 vector_backend
-            if "backend" in vector_cfg:
-                current_config["memory"]["vector_backend"] = vector_cfg["backend"]
-
-            # 更新对应后端的配置
-            backend = vector_cfg.get("backend", "chroma")
-            if backend == "chroma":
-                if "chroma" not in current_config["memory"]:
-                    current_config["memory"]["chroma"] = {}
-                if "db_path" in vector_cfg:
-                    current_config["memory"]["chroma"]["db_path"] = vector_cfg["db_path"]
-                if "collection_name" in vector_cfg:
-                    current_config["memory"]["chroma"]["collection_name"] = vector_cfg[
-                        "collection_name"
-                    ]
-                if "vector_size" in vector_cfg:
-                    current_config["memory"]["chroma"]["vector_size"] = vector_cfg["vector_size"]
-            elif backend == "milvus_lite":
-                if "milvus_lite" not in current_config["memory"]:
-                    current_config["memory"]["milvus_lite"] = {}
-                if "db_path" in vector_cfg:
-                    current_config["memory"]["milvus_lite"]["db_path"] = vector_cfg["db_path"]
-                if "vector_size" in vector_cfg:
-                    current_config["memory"]["milvus_lite"]["vector_size"] = vector_cfg[
-                        "vector_size"
-                    ]
-            elif backend in ["weaviate", "weaviate_embedded"]:
-                if "weaviate" not in current_config["memory"]:
-                    current_config["memory"]["weaviate"] = {}
-                if "weaviate_host" in vector_cfg:
-                    current_config["memory"]["weaviate"]["host"] = vector_cfg["weaviate_host"]
-                if "weaviate_port" in vector_cfg:
-                    current_config["memory"]["weaviate"]["port"] = vector_cfg["weaviate_port"]
-                if "vector_size" in vector_cfg:
-                    current_config["memory"]["weaviate"]["vector_size"] = vector_cfg["vector_size"]
-            elif backend == "qdrant":
-                if "qdrant" not in current_config["memory"]:
-                    current_config["memory"]["qdrant"] = {}
-                if "qdrant_host" in vector_cfg:
-                    current_config["memory"]["qdrant"]["host"] = vector_cfg["qdrant_host"]
-                if "qdrant_port" in vector_cfg:
-                    current_config["memory"]["qdrant"]["port"] = vector_cfg["qdrant_port"]
-                if "vector_size" in vector_cfg:
-                    current_config["memory"]["qdrant"]["vector_size"] = vector_cfg["vector_size"]
-
-        if "models" in config:
-            current_config["models"] = config["models"]
-
-        if "model_defaults" in config:
-            current_config["model_defaults"] = config["model_defaults"]
-
-        if "llm_params" in config:
-            current_config["llm_params"] = config["llm_params"]
-
-        # system 配置
-        if "system" in config:
-            if "system" not in current_config:
-                current_config["system"] = {}
-            current_config["system"].update(config["system"])
-        elif any(k in config for k in ["host", "port", "log_level", "reload", "use_conda"]):
-            if "system" not in current_config:
-                current_config["system"] = {}
-            for key in ["host", "port", "log_level", "reload", "use_conda"]:
-                if key in config:
-                    current_config["system"][key] = config[key]
-
-        # 写回文件
-        with open(config_path, "w", encoding="utf-8") as f:
-            yaml.dump(current_config, f, allow_unicode=True, sort_keys=False)
+            get_settings().reload_config()
+        except Exception as e:
+            logger.warning(f"reload config 失败, 下次重启生效: {e}")
 
         return {"status": "success", "message": "Configuration updated, restart to apply changes"}
 
@@ -650,8 +697,9 @@ async def get_startup_command(use_conda: bool = True):
 
     config = {"host": "0.0.0.0", "port": 8000, "log_level": "info"}
 
-    from config.settings import settings
+    from server.config import get_settings
 
+    settings = get_settings()
     try:
         config["host"] = settings.config.system.host
         config["port"] = settings.config.system.port
@@ -703,8 +751,9 @@ async def get_available_models():
     """获取可用的模型列表"""
     import httpx
 
-    from config.settings import settings
+    from server.config import get_settings
 
+    settings = get_settings()
     models = []
     providers = []
 

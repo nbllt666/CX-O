@@ -13,8 +13,8 @@ export interface UseAudioAnalyzerReturn {
   volume: number;
   voiceBandVolume: number;
   vowelWeights: { a: number; i: number; u: number; e: number; o: number };
-  volumeRef: React.RefObject<number>;
-  vowelWeightsRef: React.RefObject<{ a: number; i: number; u: number; e: number; o: number }>;
+  volumeRef: React.MutableRefObject<number>;
+  vowelWeightsRef: React.MutableRefObject<{ a: number; i: number; u: number; e: number; o: number }>;
 }
 
 function computeVowelWeights(
@@ -104,14 +104,15 @@ export function useAudioAnalyzer({
     [],
   );
 
+  // 第一个 effect: 管理 audioContext 生命周期，仅依赖 [audioElement, enabled]
   useEffect(() => {
-    if (!audioElement) {
+    if (!audioElement || !enabled) {
       if (sourceRef.current) {
         sourceRef.current.disconnect();
         sourceRef.current = null;
       }
       if (audioContextRef.current) {
-        audioContextRef.current.close();
+        audioContextRef.current.close().catch(() => {});
         audioContextRef.current = null;
       }
       analyserRef.current = null;
@@ -128,7 +129,7 @@ export function useAudioAnalyzer({
       sourceRef.current = null;
     }
     if (audioContextRef.current) {
-      audioContextRef.current.close();
+      audioContextRef.current.close().catch(() => {});
       audioContextRef.current = null;
     }
     analyserRef.current = null;
@@ -140,8 +141,6 @@ export function useAudioAnalyzer({
     audioContextRef.current = audioContext;
 
     const analyser = audioContext.createAnalyser();
-    analyser.fftSize = fftSize;
-    analyser.smoothingTimeConstant = smoothingTimeConstant;
     analyserRef.current = analyser;
 
     const source = audioContext.createMediaElementSource(audioElement);
@@ -149,7 +148,29 @@ export function useAudioAnalyzer({
     sourceAudioElRef.current = audioElement;
     source.connect(analyser);
     analyser.connect(audioContext.destination);
-  }, [audioElement, fftSize, smoothingTimeConstant]);
+
+    return () => {
+      if (sourceRef.current) {
+        sourceRef.current.disconnect();
+        sourceRef.current = null;
+      }
+      if (audioContextRef.current) {
+        audioContextRef.current.close().catch(() => {});
+        audioContextRef.current = null;
+      }
+      analyserRef.current = null;
+      sourceAudioElRef.current = null;
+    };
+  }, [audioElement, enabled]);
+
+  // 第二个 effect: 管理 analyser 节点参数，依赖 [audioContext, fftSize, smoothingTimeConstant]
+  useEffect(() => {
+    const audioContext = audioContextRef.current;
+    const analyser = analyserRef.current;
+    if (!audioContext || !analyser) return;
+    analyser.fftSize = fftSize;
+    analyser.smoothingTimeConstant = smoothingTimeConstant;
+  }, [audioContextRef.current, fftSize, smoothingTimeConstant]);
 
   useEffect(() => {
     if (!audioElement || !isPlaying || !enabled) {

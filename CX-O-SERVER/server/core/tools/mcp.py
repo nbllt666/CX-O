@@ -87,6 +87,8 @@ class MCPManager:
         self.servers: Dict[str, MCPServer] = {}
         self._http_clients: Dict[str, httpx.AsyncClient] = {}
         self._tool_registry = None
+        self._stdout_threads: Dict[str, threading.Thread] = {}
+        self._stderr_threads: Dict[str, threading.Thread] = {}
 
     def set_tool_registry(self, tool_registry):
         """设置工具注册表
@@ -147,6 +149,10 @@ class MCPManager:
             if name in self._http_clients:
                 await self._http_clients[name].aclose()
                 del self._http_clients[name]
+
+            # 清理后台排空线程引用
+            self._stdout_threads.pop(name, None)
+            self._stderr_threads.pop(name, None)
 
             del self.servers[name]
             logger.info(f"MCP服务器已移除: {name}")
@@ -226,11 +232,21 @@ class MCPManager:
                 try:
                     for line in stream:
                         log_func(line.decode().strip())
-                except Exception:
-                    pass
+                except Exception as e:
+                    logger.debug(f"MCP进程流排空异常: {e}")
 
-            threading.Thread(target=_drain_stream, args=(process.stdout, logger.debug), daemon=True).start()
-            threading.Thread(target=_drain_stream, args=(process.stderr, logger.warning), daemon=True).start()
+            stdout_thread = threading.Thread(
+                target=_drain_stream, args=(process.stdout, logger.debug), daemon=True
+            )
+            stdout_thread.name = f"mcp-stdout-drain-{name}"
+            stdout_thread.start()
+            stderr_thread = threading.Thread(
+                target=_drain_stream, args=(process.stderr, logger.warning), daemon=True
+            )
+            stderr_thread.name = f"mcp-stderr-drain-{name}"
+            stderr_thread.start()
+            self._stdout_threads[name] = stdout_thread
+            self._stderr_threads[name] = stderr_thread
 
             # 同步工具
             await self._sync_tools(name)

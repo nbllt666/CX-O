@@ -20,7 +20,6 @@ interface ToastContextValue {
 
 const ToastContext = React.createContext<ToastContextValue | null>(null);
 
-// eslint-disable-next-line react-refresh/only-export-components
 export const useToast = () => {
   const context = React.useContext(ToastContext);
   if (!context) {

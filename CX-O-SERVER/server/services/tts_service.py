@@ -220,31 +220,58 @@ class TTSService:
             if os.path.exists(output_path):
                 os.unlink(output_path)
 
-    async def _synthesize_remote(
-        self, text: str, audio_data: bytes, ref_text: str, speed: float, cross_fade_duration: float, **kwargs
+    def _build_tts_request_data(
+        self,
+        gen_text: str,
+        ref_text: str,
+        audio_data: bytes,
+        **kwargs
+    ) -> tuple[dict, dict]:
+        """构建TTS请求的files和data字典"""
+        files = {
+            "ref_audio": ("ref_audio.wav", audio_data, "audio/wav")
+        }
+        data = {
+            "ref_text": ref_text,
+            "gen_text": gen_text,
+            "model_type": kwargs.get("model_type", "F5-TTS"),
+            "remove_silence": str(kwargs.get("remove_silence", False)).lower(),
+            "cross_fade_duration": str(kwargs.get("cross_fade_duration", 0.15)),
+            "speed": str(kwargs.get("speed", 1.0)),
+            "nfe_step": str(kwargs.get("nfe_step", 32)),
+            "cfg_strength": str(kwargs.get("cfg_strength", 2)),
+            "seed": str(kwargs.get("seed", -1))
+        }
+        return files, data
+
+    async def _make_tts_request(
+        self,
+        gen_text: str,
+        ref_text: str,
+        audio_data: bytes,
+        **kwargs
     ) -> bytes:
+        """执行TTS HTTP请求"""
         async def _make_request():
             client = get_shared_http_client()
-
-            files = {
-                "ref_audio": ("ref_audio.wav", audio_data, "audio/wav")
-            }
-            data = {
-                "ref_text": ref_text,
-                "gen_text": text,
-                "speed": str(speed),
-                "cross_fade_duration": str(cross_fade_duration),
-                "nfe_step": str(kwargs.get("nfe_step", 32)),
-                "cfg_strength": str(kwargs.get("cfg_strength", 2)),
-                "seed": str(kwargs.get("seed", -1)),
-                "remove_silence": str(kwargs.get("remove_silence", False)).lower(),
-            }
-
+            files, data = self._build_tts_request_data(gen_text, ref_text, audio_data, **kwargs)
             response = await client.post(f"{self._remote_url}/tts/", files=files, data=data)
             response.raise_for_status()
             return response.content
 
         return await retry_with_backoff(_make_request, max_retries=3, base_delay=1.0, max_delay=30.0, service_name="TTS")
+
+    async def _synthesize_remote(
+        self, text: str, audio_data: bytes, ref_text: str, speed: float, cross_fade_duration: float, **kwargs
+    ) -> bytes:
+        return await self._make_tts_request(
+            gen_text=text,
+            ref_text=ref_text,
+            audio_data=audio_data,
+            speed=speed,
+            cross_fade_duration=cross_fade_duration,
+            **kwargs
+        )
 
     async def _synthesize_triton(
         self,
@@ -351,30 +378,12 @@ class TTSService:
                         yield chunk
                         continue
 
-                client = get_shared_http_client()
-                files = {
-                    "ref_audio": ("ref_audio.wav", audio_data, "audio/wav")
-                }
-                data = {
-                    "ref_text": text_ref,
-                    "gen_text": sentence,
-                    "model_type": kwargs.get("model_type", "F5-TTS"),
-                    "remove_silence": str(kwargs.get("remove_silence", False)).lower(),
-                    "cross_fade_duration": str(kwargs.get("cross_fade_duration", 0.15)),
-                    "speed": str(kwargs.get("speed", 1.0)),
-                    "nfe_step": str(kwargs.get("nfe_step", 32)),
-                    "cfg_strength": str(kwargs.get("cfg_strength", 2)),
-                    "seed": str(kwargs.get("seed", -1))
-                }
-
-                response = await client.post(
-                    f"{self._remote_url}/tts/",
-                    files=files,
-                    data=data
+                audio_bytes = await self._make_tts_request(
+                    gen_text=sentence,
+                    ref_text=text_ref,
+                    audio_data=audio_data,
+                    **kwargs
                 )
-                response.raise_for_status()
-
-                audio_bytes = response.content
 
                 chunk = {
                     "text_segment": sentence,
@@ -454,29 +463,12 @@ class TTSService:
                         audio_segments.append(seg_bytes)
                         continue
 
-                client = get_shared_http_client()
-                files = {
-                    "ref_audio": ("ref_audio.wav", audio_data, "audio/wav")
-                }
-                data = {
-                    "ref_text": ref_text,
-                    "gen_text": text_segment,
-                    "model_type": kwargs.get("model_type", "F5-TTS"),
-                    "remove_silence": str(kwargs.get("remove_silence", False)).lower(),
-                    "cross_fade_duration": str(kwargs.get("cross_fade_duration", 0.15)),
-                    "speed": str(kwargs.get("speed", 1.0)),
-                    "nfe_step": str(kwargs.get("nfe_step", 32)),
-                    "cfg_strength": str(kwargs.get("cfg_strength", 2)),
-                    "seed": str(kwargs.get("seed", -1))
-                }
-
-                response = await client.post(
-                    f"{self._remote_url}/tts/",
-                    files=files,
-                    data=data
-                )
-                response.raise_for_status()
-                audio_segments.append(response.content)
+                audio_segments.append(await self._make_tts_request(
+                    gen_text=text_segment,
+                    ref_text=ref_text,
+                    audio_data=audio_data,
+                    **kwargs
+                ))
 
         if not audio_segments:
             return b""
@@ -622,30 +614,12 @@ class TTSService:
                                 chunk_index += 1
                                 continue
 
-                        client = get_shared_http_client()
-                        files = {
-                            "ref_audio": ("ref_audio.wav", audio_data, "audio/wav")
-                        }
-                        data = {
-                            "ref_text": ref_text,
-                            "gen_text": sentence,
-                            "model_type": kwargs.get("model_type", "F5-TTS"),
-                            "remove_silence": str(kwargs.get("remove_silence", False)).lower(),
-                            "cross_fade_duration": str(kwargs.get("cross_fade_duration", 0.15)),
-                            "speed": str(kwargs.get("speed", 1.0)),
-                            "nfe_step": str(kwargs.get("nfe_step", 32)),
-                            "cfg_strength": str(kwargs.get("cfg_strength", 2)),
-                            "seed": str(kwargs.get("seed", -1))
-                        }
-
-                        response = await client.post(
-                            f"{self._remote_url}/tts/",
-                            files=files,
-                            data=data
+                        audio_bytes = await self._make_tts_request(
+                            gen_text=sentence,
+                            ref_text=ref_text,
+                            audio_data=audio_data,
+                            **kwargs
                         )
-                        response.raise_for_status()
-
-                        audio_bytes = response.content
 
                         chunk = {
                             "text_segment": sentence,

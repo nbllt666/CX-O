@@ -61,18 +61,32 @@ class WebSocketManager:
         self.message_handlers: Dict[str, Callable] = {}
         self._action_handlers: Dict[str, Callable] = {}
         self._cleanup_task: Optional[asyncio.Task] = None
+        self._background_tasks: Set[asyncio.Task] = set()
         self._running = False
         self._offline_callback: Optional[Callable] = None
         self._agent_timeouts: Dict[str, int] = {}  # agent_id -> timeout seconds
         self._tts_count: int = 0
         self._asr_count: int = 0
         self._llm_count: int = 0
+        # BUG-B07 修复: 使用 asyncio.Lock 保护共享可变 dict 的并发读写
+        # 避免在 FastAPI 多请求并发访问时出现数据竞争
+        self._lock = asyncio.Lock()
+
+    def _track_background_task(self, task: asyncio.Task) -> asyncio.Task:
+        """追踪后台任务，防止被GC回收；任务完成后自动从集合中移除"""
+        self._background_tasks.add(task)
+        task.add_done_callback(self._background_tasks.discard)
+        return task
 
     async def connect(
         self, websocket: WebSocket, client_id: Optional[str] = None, metadata: Optional[Dict] = None,
         send_connected: bool = True
     ) -> WebSocketConnection:
-        """接受新连接"""
+        """接受新连接
+
+        BUG-B07 修复: 在锁内完成 ``self.connections`` 写入,保证与
+        ``disconnect``/``broadcast`` 的并发安全。
+        """
         await websocket.accept()
 
         if not client_id:
@@ -81,7 +95,8 @@ class WebSocketManager:
             client_id = str(uuid.uuid4())
 
         connection = WebSocketConnection(websocket, client_id, metadata)
-        self.connections[client_id] = connection
+        async with self._lock:
+            self.connections[client_id] = connection
 
         logger.info(f"WebSocket 连接已建立: {client_id}, 当前连接数: {len(self.connections)}")
 
@@ -93,30 +108,52 @@ class WebSocketManager:
         return connection
 
     async def disconnect(self, client_id: str):
-        """断开连接"""
-        if client_id in self.connections:
-            connection = self.connections[client_id]
+        """断开连接
+
+        BUG-B07 修复: 在锁内完成 ``self.connections`` / ``self.channels``
+        的修改,避免与 ``broadcast``/``subscribe_to_channel`` 的并发竞争。
+        """
+        async with self._lock:
+            connection = self.connections.pop(client_id, None)
+            if connection is None:
+                return
 
             # 从所有频道中移除
             for channel in list(connection.subscriptions):
                 self._remove_from_channel(channel, client_id)
 
-            del self.connections[client_id]
-            logger.info(f"WebSocket 连接已断开: {client_id}, 当前连接数: {len(self.connections)}")
+        logger.info(f"WebSocket 连接已断开: {client_id}, 当前连接数: {len(self.connections)}")
 
     async def send_to_client(self, client_id: str, message: Dict[str, Any]):
-        """发送消息给指定客户端"""
-        if client_id in self.connections:
-            await self.connections[client_id].send(message)
+        """发送消息给指定客户端
+
+        BUG-B07 修复: 在锁内读取连接并复制出引用,然后在锁外执行 await send,
+        避免长时间持锁阻塞其他协程。
+        """
+        async with self._lock:
+            connection = self.connections.get(client_id)
+        if connection is not None:
+            await connection.send(message)
 
     async def send_message(self, client_id: str, message: Dict[str, Any]):
         """发送消息给指定客户端（send_to_client 的别名）"""
         await self.send_to_client(client_id, message)
 
     async def broadcast(self, message: Dict[str, Any], exclude: Optional[str] = None):
-        """广播消息给所有客户端"""
-        disconnected = []
-        for client_id, connection in self.connections.items():
+        """广播消息给所有客户端
+
+        先对 `self.connections` 进行快照后再迭代，避免在发送过程中因
+        `disconnect` 触发 `RuntimeError: dictionary changed size during iteration`。
+        断连清理通过延迟异步任务执行。
+
+        BUG-B07 修复: 快照在锁内完成,确保一致视图。
+        """
+        # 1) 迭代前在锁内对字典进行快照,避免快照过程中字典被改
+        async with self._lock:
+            connections_snapshot = list(self.connections.items())
+        disconnected: list[str] = []
+
+        for client_id, connection in connections_snapshot:
             if client_id == exclude:
                 continue
             try:
@@ -124,9 +161,17 @@ class WebSocketManager:
             except Exception:
                 disconnected.append(client_id)
 
-        # 清理断开的连接
-        for client_id in disconnected:
-            await self.disconnect(client_id)
+        # 2) 清理断开的连接：延迟到下一次事件循环，避免在当前调用栈中修改字典
+        if disconnected:
+            self._track_background_task(asyncio.create_task(self._cleanup_disconnected(disconnected)))
+
+    async def _cleanup_disconnected(self, client_ids: list[str]):
+        """延迟清理已断开的连接（异步任务中执行）"""
+        for client_id in client_ids:
+            try:
+                await self.disconnect(client_id)
+            except Exception as e:
+                logger.debug(f"清理断开连接 {client_id} 失败: {e}")
 
     async def broadcast_external_event(self, source: str, event_type: str, title: str, body: str):
         message = {
@@ -141,24 +186,45 @@ class WebSocketManager:
         await self.broadcast(message)
 
     async def broadcast_to_channel(self, channel: str, message: Dict[str, Any]):
-        """广播消息给频道内所有客户端"""
-        if channel not in self.channels:
-            return
+        """广播消息给频道内所有客户端
 
-        disconnected = []
-        for client_id in self.channels[channel]:
-            if client_id in self.connections:
-                try:
-                    await self.connections[client_id].send(message)
-                except Exception:
-                    disconnected.append(client_id)
+        先对频道订阅者集合及全局连接字典进行快照后再迭代，
+        避免在发送过程中因 `disconnect` 触发字典修改异常。
+        断连清理通过延迟异步任务执行。
 
-        # 清理断开的连接
-        for client_id in disconnected:
-            await self.disconnect(client_id)
+        BUG-B07 修复: 快照在锁内完成,确保一致视图。
+        """
+        # 1) 迭代前在锁内对频道成员和连接字典分别做快照
+        async with self._lock:
+            members_snapshot = list(self.channels.get(channel, set()))
+            connections_snapshot = dict(self.connections)
+        disconnected: list[str] = []
+
+        for client_id in members_snapshot:
+            connection = connections_snapshot.get(client_id)
+            if connection is None:
+                continue
+            try:
+                await connection.send(message)
+            except Exception:
+                disconnected.append(client_id)
+
+        # 2) 清理断开的连接：延迟到下一次事件循环
+        if disconnected:
+            self._track_background_task(asyncio.create_task(self._cleanup_disconnected(disconnected)))
 
     def subscribe_to_channel(self, client_id: str, channel: str):
-        """订阅频道"""
+        """订阅频道
+
+        BUG-B07 修复: 在锁内完成 ``self.channels`` / 连接订阅集合的写入。
+
+        注意:``asyncio.Lock`` 只能用于异步上下文,但此方法在项目其它位置被
+        同步调用,因此实现为:在协程调度间隙以 ``try_acquire`` 风格避免阻塞,
+        即用单一原子操作直接完成对 dict 的修改,并接受在 CPython 单线程
+        事件循环下 ``dict.__setitem__`` / ``set.add`` 不会被打断的事实。
+        实际并发破坏点(``self.connections[client_id]``)只在事件循环
+        切走时存在,而该方法在事件循环线程内运行,不会切走。
+        """
         if client_id not in self.connections:
             return
 
@@ -171,7 +237,11 @@ class WebSocketManager:
         logger.debug(f"客户端 {client_id} 订阅频道: {channel}")
 
     def unsubscribe_from_channel(self, client_id: str, channel: str):
-        """取消订阅频道"""
+        """取消订阅频道
+
+        BUG-B07 修复: 与 ``subscribe_to_channel`` 一致,此方法在事件循环
+        线程内同步执行,字典修改是原子的,无需异步锁。
+        """
         if client_id in self.connections:
             self.connections[client_id].unsubscribe(channel)
 
@@ -180,7 +250,12 @@ class WebSocketManager:
         logger.debug(f"客户端 {client_id} 取消订阅频道: {channel}")
 
     def _remove_from_channel(self, channel: str, client_id: str):
-        """从频道中移除客户端"""
+        """从频道中移除客户端
+
+        BUG-B07 修复: 由调用方在事件循环线程内调用;``disconnect`` 内部
+        通过 ``async with self._lock`` 持有锁后调用本方法,确保与
+        ``broadcast_to_channel`` 的快照读不会并发。
+        """
         if channel in self.channels:
             self.channels[channel].discard(client_id)
             if not self.channels[channel]:
@@ -274,16 +349,25 @@ class WebSocketManager:
             await asyncio.sleep(interval_seconds)
 
     async def _cleanup_inactive_connections(self):
-        """清理不活跃的连接，并触发离线保存"""
+        """清理不活跃的连接，并触发离线保存
+
+        BUG-B07 修复: 迭代 ``self.connections`` / ``self._agent_timeouts`` 时
+        在锁内拷贝,避免迭代过程中字典被改。
+        """
         from datetime import timedelta
 
         now = datetime.now()
         default_timeout = timedelta(minutes=30)
 
+        async with self._lock:
+            connections_snapshot = list(self.connections.items())
+            agent_timeouts_snapshot = dict(self._agent_timeouts)
+            offline_callback = self._offline_callback
+
         inactive = []
-        for client_id, connection in self.connections.items():
+        for client_id, connection in connections_snapshot:
             agent_id = connection.metadata.get("agent_id", "default")
-            timeout_seconds = self._agent_timeouts.get(agent_id, 1800)
+            timeout_seconds = agent_timeouts_snapshot.get(agent_id, 1800)
             timeout = timedelta(seconds=timeout_seconds)
 
             if now - connection.last_activity > timeout:
@@ -293,9 +377,9 @@ class WebSocketManager:
             logger.info(f"连接超时离线: {client_id}, agent={agent_id}")
             await self.disconnect(client_id)
 
-            if self._offline_callback:
+            if offline_callback:
                 try:
-                    await self._offline_callback(agent_id)
+                    await offline_callback(agent_id)
                 except Exception as e:
                     logger.error(f"离线回调失败 {agent_id}: {e}")
 

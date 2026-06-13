@@ -1,8 +1,17 @@
 """
 F5-TTS 微调 API
+
+注意：本模块使用模块级状态 dict 缓存训练状态与 service 实例。
+在 FastAPI 多 worker 部署下，每个 worker 进程会持有独立的
+_train_status 与 _service_instance，跨进程不同步。
+
+部署要求：必须以单 worker 启动（uvicorn --workers 1），
+否则会出现多进程状态不一致、训练任务被多个进程重复启动的问题。
 """
 from __future__ import annotations
 
+import hashlib
+import json
 import logging
 from typing import Optional
 
@@ -43,14 +52,33 @@ _train_status: dict = {
 }
 
 _service_instance: Optional["F5TTSFinetuneService"] = None
+_service_kwargs_hash: Optional[str] = None
 
 
-def _get_service(**kwargs) -> "F5TTSFinetuneService":
-    global _service_instance
+def _hash_kwargs(kwargs: dict) -> str:
+    """对 kwargs 做稳定 hash，用于检测配置变化决定是否重建 service。"""
+    payload = json.dumps(kwargs, sort_keys=True, default=str)
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+
+def _get_service(rebuild: bool = False, **kwargs) -> "F5TTSFinetuneService":
+    """
+    获取 F5TTSFinetuneService 稳定单例。
+
+    实例一旦创建即被复用，以保留正在运行的训练进程状态。/stop 与 /models
+    复用 /train 创建的同一实例（rebuild=False，直接复用，不重建），避免把
+    正在训练的实例替换成新的空实例导致 stop 停不掉真实进程。
+
+    仅 /train 传入 rebuild=True：当配置变化时允许按新配置重建，以支持用
+    新配置启动训练。
+    """
+    global _service_instance, _service_kwargs_hash
     from workstation.services.f5tts_finetune import F5TTSFinetuneService
 
-    if _service_instance is None:
+    new_hash = _hash_kwargs(kwargs)
+    if _service_instance is None or (rebuild and _service_kwargs_hash != new_hash):
         _service_instance = F5TTSFinetuneService(**kwargs)
+        _service_kwargs_hash = new_hash
     return _service_instance
 
 
@@ -67,6 +95,7 @@ async def start_training(request: TrainRequest):
 
         settings = get_settings()
         service = _get_service(
+            rebuild=True,
             base_model=request.base_model or settings.f5tts_finetune.base_model,
             output_dir=settings.f5tts_finetune.output_dir,
             training_data_dir=request.training_data_dir or settings.f5tts_finetune.training_data_dir,

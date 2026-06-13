@@ -9,9 +9,6 @@ const resources = {
   'zh-CN': {
     translation: zhCN,
   },
-  en: {
-    translation: enUS,
-  },
   'en-US': {
     translation: enUS,
   },
@@ -22,7 +19,7 @@ i18n
   .use(initReactI18next)
   .init({
     resources,
-    fallbackLng: 'zh-CN',
+    fallbackLng: { 'en': ['en-US'], default: ['zh-CN'] },
     debug: false,
 
     interpolation: {
@@ -32,7 +29,7 @@ i18n
     detection: {
       order: ['localStorage', 'navigator', 'htmlTag'],
       caches: ['localStorage'],
-      lookupLocalStorage: 'i18nextLng',
+      lookupLocalStorage: 'cxhms-lang',
     },
   });
 

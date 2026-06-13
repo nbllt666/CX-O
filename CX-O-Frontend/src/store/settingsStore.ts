@@ -1,5 +1,6 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
+import { createStorage } from '../lib/createStorage';
 
 export interface Live2DSettings {
   enabled: boolean;
@@ -297,6 +298,7 @@ export const useSettingsStore = create<SettingsState>()(
     }),
     {
       name: 'cxhms-settings',
+      storage: createStorage(),
       partialize: (state) => ({
         avatarType: state.avatarType,
         live2d: state.live2d,

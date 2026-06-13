@@ -474,6 +474,25 @@ export function updateStageTransform(runtime: VRMRuntimeState, transform: StageT
 export function destroyRuntime(runtime: VRMRuntimeState): void {
   cancelAnimationFrame(runtime.animationFrameId);
   runtime.scene.remove(runtime.vrm.scene);
+
+  const vrmWithDispose = runtime.vrm as unknown as { dispose?: () => void };
+  if (typeof vrmWithDispose.dispose === 'function') {
+    vrmWithDispose.dispose();
+  } else {
+    runtime.vrm.scene.traverse((o) => {
+      const mesh = o as THREE.Mesh;
+      if (mesh.geometry) mesh.geometry.dispose();
+      const mat = mesh.material;
+      if (mat) {
+        if (Array.isArray(mat)) {
+          mat.forEach((m) => m.dispose());
+        } else {
+          mat.dispose();
+        }
+      }
+    });
+  }
+
   runtime.renderer.dispose();
   runtime.animation.reset();
   runtime.lipSync.reset();
@@ -487,4 +506,6 @@ export function destroyRuntime(runtime: VRMRuntimeState): void {
   runtime.boneTransitionSpeeds.clear();
   runtime.boneCurrentRotations.clear();
   runtime.boneTargetRotations.clear();
+  runtime.activeExpressionMix = [];
+  runtime.parameterOverrides = [];
 }

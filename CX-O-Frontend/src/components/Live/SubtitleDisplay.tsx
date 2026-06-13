@@ -1,4 +1,4 @@
-import { useEffect, useRef, useCallback, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 
 interface SubtitleDisplayProps {
   text: string;
@@ -37,33 +37,59 @@ export function SubtitleDisplay({
   const textRef = useRef(text);
   const clearTimerRef = useRef<ReturnType<typeof setTimeout>>();
 
-  const startTyping = useCallback(() => {
+  const typingConfigRef = useRef({ typingSpeed, autoClear, clearDelay });
+  useEffect(() => {
+    typingConfigRef.current = { typingSpeed, autoClear, clearDelay };
+  }, [typingSpeed, autoClear, clearDelay]);
+
+  useEffect(() => {
+    if (rafRef.current) {
+      cancelAnimationFrame(rafRef.current);
+      rafRef.current = 0;
+    }
+    if (clearTimerRef.current) {
+      clearTimeout(clearTimerRef.current);
+      clearTimerRef.current = undefined;
+    }
+
+    if (!enabled) {
+      setDisplayedText('');
+      setIsTyping(false);
+      setIsVisible(false);
+      return;
+    }
+
+    textRef.current = text;
+    if (!text) {
+      setDisplayedText('');
+      setIsTyping(false);
+      setIsVisible(false);
+      return;
+    }
+
     charIndexRef.current = 0;
     setDisplayedText('');
     setIsTyping(true);
     setIsVisible(true);
 
-    if (clearTimerRef.current) {
-      clearTimeout(clearTimerRef.current);
-    }
-
     lastTimeRef.current = performance.now();
 
     const tick = (now: number) => {
+      const { typingSpeed: speed, autoClear: shouldAutoClear, clearDelay: delay } = typingConfigRef.current;
       const elapsed = now - lastTimeRef.current;
-      if (elapsed >= typingSpeed) {
-        const charsToAdd = Math.floor(elapsed / typingSpeed);
+      if (elapsed >= speed) {
+        const charsToAdd = Math.floor(elapsed / speed);
         const newIndex = Math.min(charIndexRef.current + charsToAdd, textRef.current.length);
         charIndexRef.current = newIndex;
         setDisplayedText(textRef.current.slice(0, newIndex));
-        lastTimeRef.current = now - (elapsed % typingSpeed);
+        lastTimeRef.current = now - (elapsed % speed);
 
         if (newIndex >= textRef.current.length) {
           setIsTyping(false);
-          if (autoClear && clearDelay > 0) {
+          if (shouldAutoClear && delay > 0) {
             clearTimerRef.current = setTimeout(() => {
               setIsVisible(false);
-            }, clearDelay);
+            }, delay);
           }
           return;
         }
@@ -72,35 +98,14 @@ export function SubtitleDisplay({
     };
 
     rafRef.current = requestAnimationFrame(tick);
-  }, [typingSpeed, autoClear, clearDelay]);
-
-  useEffect(() => {
-    if (!enabled) {
-      setDisplayedText('');
-      setIsVisible(false);
-      return;
-    }
-
-    if (text !== textRef.current) {
-      textRef.current = text;
-      if (rafRef.current) {
-        cancelAnimationFrame(rafRef.current);
-      }
-      if (!text) {
-        setDisplayedText('');
-        setIsTyping(false);
-        setIsVisible(false);
-        return;
-      }
-      startTyping();
-    }
 
     return () => {
       if (rafRef.current) {
         cancelAnimationFrame(rafRef.current);
+        rafRef.current = 0;
       }
     };
-  }, [text, enabled, startTyping]);
+  }, [text, enabled]);
 
   useEffect(() => {
     return () => {

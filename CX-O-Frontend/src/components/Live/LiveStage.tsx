@@ -115,6 +115,8 @@ export function LiveStage({
   const [showControls, setShowControls] = useState(false);
   const modelDataRef = useRef<ArrayBuffer | undefined>(undefined);
   const [dataVersion, setDataVersion] = useState(0);
+  const prevDriverRef = useRef<IAvatarDriver | undefined>(driver);
+  const [driverKey, setDriverKey] = useState(0);
 
   useEffect(() => {
     if (modelData !== modelDataRef.current) {
@@ -123,6 +125,31 @@ export function LiveStage({
     }
     return () => {};
   }, [modelData]);
+
+  useEffect(() => {
+    if (prevDriverRef.current !== driver) {
+      const oldDriver = prevDriverRef.current;
+      prevDriverRef.current = driver;
+      setDriverKey((k) => k + 1);
+      if (oldDriver && typeof (oldDriver as unknown as { destroy?: () => void }).destroy === 'function') {
+        try {
+          (oldDriver as unknown as { destroy: () => void }).destroy();
+        } catch {
+          /* ignore destroy errors during driver switch */
+        }
+      }
+    }
+    return () => {
+      const d = prevDriverRef.current;
+      if (d && typeof (d as unknown as { destroy?: () => void }).destroy === 'function') {
+        try {
+          (d as unknown as { destroy: () => void }).destroy();
+        } catch {
+          /* ignore destroy errors during unmount */
+        }
+      }
+    };
+  }, [driver]);
 
   return (
     <div
@@ -139,6 +166,7 @@ export function LiveStage({
           {modelData ? (
             avatarType === 'vrm' ? (
               <VRMViewer
+                key={`vrm-${driverKey}`}
                 modelPath=""
                 modelDataRef={modelDataRef}
                 dataVersion={dataVersion}
@@ -151,6 +179,7 @@ export function LiveStage({
               />
             ) : driver ? (
               <DriverLive2DViewer
+                key={`live2d-${driverKey}`}
                 modelData={modelData}
                 scale={0.35}
                 xOffset={0}

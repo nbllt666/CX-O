@@ -83,7 +83,7 @@ export function AudioPanel({ standalone = false }: AudioPanelProps) {
       audioContextRef.current.close().catch(() => {});
       audioContextRef.current = null;
     }
-    rafRef.current && cancelAnimationFrame(rafRef.current);
+    if (rafRef.current) cancelAnimationFrame(rafRef.current);
     setCurrentLevel(0);
   }, []);
 
@@ -93,23 +93,26 @@ export function AudioPanel({ standalone = false }: AudioPanelProps) {
     const constraints: MediaStreamConstraints = { audio: true };
 
     if (aecMode === 'auto' || aecMode === 'browser') {
+      let testStream: MediaStream | null = null;
       try {
         (constraints.audio as MediaTrackConstraints).echoCancellation = true;
         (constraints.audio as MediaTrackConstraints).noiseSuppression = true;
         (constraints.audio as MediaTrackConstraints).autoGainControl = true;
 
-        const testStream = await navigator.mediaDevices.getUserMedia(constraints);
+        testStream = await navigator.mediaDevices.getUserMedia(constraints);
         const track = testStream.getAudioTracks()[0];
         const settings = track.getSettings();
 
         if (settings.echoCancellation) {
           testStream.getTracks().forEach((t) => t.stop());
+          testStream = null;
           setAecStatus('active');
           return 'browser';
         }
-        testStream.getTracks().forEach((t) => t.stop());
       } catch {
         // browser AEC not available
+      } finally {
+        if (testStream) testStream.getTracks().forEach((t) => t.stop());
       }
     }
 
@@ -199,7 +202,11 @@ export function AudioPanel({ standalone = false }: AudioPanelProps) {
       mediaRecorderRef.current = processor;
       processor.ondataavailable = (e) => {
         if (e.data.size > 0 && sendAudio) {
-          e.data.arrayBuffer().then((buf) => sendAudio(buf));
+          try {
+            e.data.arrayBuffer().then((buf) => sendAudio(buf));
+          } catch (err) {
+            console.error('[AudioPanel] Failed to process audio data:', err);
+          }
         }
       };
       processor.start(100);

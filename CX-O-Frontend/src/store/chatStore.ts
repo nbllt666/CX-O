@@ -1,6 +1,7 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 import { api, type Agent, type Session } from '../api/client';
+import { createStorage } from '../lib/createStorage';
 
 interface ChatState {
   agents: Agent[];
@@ -45,10 +46,17 @@ export const useChatStore = create<ChatState>()(
           set({ agents: filteredAgents });
 
           const { currentAgentId } = get();
-          if (!currentAgentId && filteredAgents.length > 0) {
-            const defaultAgent =
-              filteredAgents.find((a) => a.is_default) || filteredAgents[0];
-            set({ currentAgentId: defaultAgent.id });
+          const stillExists =
+            currentAgentId !== null &&
+            filteredAgents.some((a) => a.id === currentAgentId);
+          if (!currentAgentId || !stillExists) {
+            if (filteredAgents.length > 0) {
+              const defaultAgent =
+                filteredAgents.find((a) => a.is_default) || filteredAgents[0];
+              set({ currentAgentId: defaultAgent.id });
+            } else {
+              set({ currentAgentId: null });
+            }
           }
         } catch (error: unknown) {
           console.error('Failed to fetch agents:', error);
@@ -118,6 +126,7 @@ export const useChatStore = create<ChatState>()(
     }),
     {
       name: 'cxhms-chat-storage',
+      storage: createStorage(),
       partialize: (state) => ({
         currentAgentId: state.currentAgentId,
         currentSessionId: state.currentSessionId,

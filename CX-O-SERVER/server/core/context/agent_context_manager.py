@@ -53,6 +53,10 @@ class AgentContextManager:
         self.db_path = Path(db_path)
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
         self._local = threading.local()
+        # BUG-B10 修复: 增加 max_size 上限和实例级 _conn_lock,
+        # 保护 _connection_pool 的并发读写并避免线程数爆炸时连接数无限增长
+        self._max_pool_size: int = 32
+        self._conn_lock = threading.Lock()
         self._connection_pool: Dict[int, sqlite3.Connection] = {}
 
         self._init_db()
@@ -120,21 +124,38 @@ class AgentContextManager:
         logger.info("Agent上下文表初始化完成")
 
     def _get_connection(self) -> sqlite3.Connection:
-        """获取数据库连接（线程安全）"""
+        """获取数据库连接（线程安全）
+
+        BUG-B10 修复: 增加 ``_conn_lock`` 保护 ``_connection_pool`` 的并发读写;
+        当缓存中线程数达到 ``_max_pool_size`` 上限时,直接创建新连接(用完关闭)
+        而不写入缓存,避免缓存无限增长。
+        """
         thread_id = threading.get_ident()
 
-        if thread_id in self._connection_pool:
-            conn = self._connection_pool[thread_id]
-            try:
-                conn.execute("SELECT 1")
-                return conn
-            except Exception:
-                pass
+        with self._conn_lock:
+            conn = self._connection_pool.get(thread_id)
+            if conn is not None:
+                try:
+                    conn.execute("SELECT 1")
+                    return conn
+                except Exception:
+                    try:
+                        conn.close()
+                    except Exception:
+                        pass
+                    self._connection_pool.pop(thread_id, None)
+            # 池未满,创建并缓存;已满则不缓存
+            should_cache = len(self._connection_pool) < self._max_pool_size
 
-        conn = sqlite3.connect(str(self.db_path), timeout=20.0, check_same_thread=False)
-        conn.row_factory = sqlite3.Row
-        self._connection_pool[thread_id] = conn
-        return conn
+        new_conn = sqlite3.connect(str(self.db_path), timeout=20.0, check_same_thread=False)
+        new_conn.row_factory = sqlite3.Row
+
+        if should_cache:
+            with self._conn_lock:
+                # 双重检查:并发场景下,池可能已满
+                if len(self._connection_pool) < self._max_pool_size:
+                    self._connection_pool[thread_id] = new_conn
+        return new_conn
 
     def save_context(
         self,
@@ -425,11 +446,17 @@ class AgentContextManager:
             logger.error(f"清理Agent旧消息失败: {e}")
 
     def close_all_connections(self):
-        """关闭所有数据库连接"""
-        for thread_id, conn in list(self._connection_pool.items()):
+        """关闭所有数据库连接
+
+        BUG-B10 修复: 在 ``_conn_lock`` 内完成对池的清空,避免与其他线程并发
+        创建连接时出现 race。
+        """
+        with self._conn_lock:
+            connections_snapshot = list(self._connection_pool.values())
+            self._connection_pool.clear()
+        for thread_id, conn in enumerate(connections_snapshot):
             try:
                 conn.close()
                 logger.debug(f"已关闭连接: thread={thread_id}")
             except Exception as e:
                 logger.warning(f"关闭连接失败: thread={thread_id}, error={e}")
-        self._connection_pool.clear()

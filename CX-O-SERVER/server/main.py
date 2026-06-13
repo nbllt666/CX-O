@@ -296,7 +296,8 @@ async def lifespan(app: FastAPI):
                 logging.getLogger(__name__).error(f"推送提醒失败: {e}")
 
         alarm_manager.set_trigger_callback(on_alarm_trigger)
-        alarm_manager.restore_pending_alarms()
+        # BUG-B06 修复: 在事件循环中通过 async 版本调用,避免同步 sqlite 阻塞
+        await alarm_manager.arestore_pending_alarms()
         lifespan_logger.info("提醒管理器已启动")
 
         async def on_offline(agent_id: str):
@@ -462,7 +463,7 @@ async def lifespan(app: FastAPI):
             asr_service = get_asr_service()
             services.asr_service = asr_service
         except Exception:
-            pass
+            logger.warning("初始化ASR远程模式服务失败，回退到空实例", exc_info=True)
         app.state.asr_status = "remote"
         health_checker.update_status("asr", "remote")
 
@@ -499,7 +500,7 @@ async def lifespan(app: FastAPI):
             tts_service = get_tts_service()
             services.tts_service = tts_service
         except Exception:
-            pass
+            logger.warning("初始化TTS远程模式服务失败，回退到空实例", exc_info=True)
         app.state.tts_status = "remote"
         health_checker.update_status("tts", "remote")
 
@@ -526,14 +527,14 @@ async def lifespan(app: FastAPI):
         alarm_mgr = get_alarm_manager()
         alarm_mgr.shutdown()
     except Exception:
-        pass
+        lifespan_logger.warning("关闭AlarmManager失败", exc_info=True)
 
     try:
         from server.core.websocket.manager import get_websocket_manager
         ws_mgr = get_websocket_manager()
         await ws_mgr.stop_cleanup_task()
     except Exception:
-        pass
+        lifespan_logger.warning("关闭WebSocket管理器cleanup任务失败", exc_info=True)
 
     if services.decay_batch_processor:
         await services.decay_batch_processor.stop()
@@ -548,21 +549,21 @@ async def lifespan(app: FastAPI):
         try:
             await services.async_memory_manager.close()
         except Exception:
-            pass
+            lifespan_logger.warning("关闭AsyncMemoryManager失败", exc_info=True)
 
     try:
         from server.core.backup.manager import get_backup_manager
         backup_mgr = get_backup_manager()
         backup_mgr.shutdown()
     except Exception:
-        pass
+        lifespan_logger.warning("关闭BackupManager失败", exc_info=True)
 
     try:
         from server.core.plugins.manager import get_plugin_manager
         plugin_mgr = get_plugin_manager()
         await plugin_mgr.shutdown()
     except Exception:
-        pass
+        lifespan_logger.warning("关闭PluginManager失败", exc_info=True)
 
     if services.model_router:
         await services.model_router.close()

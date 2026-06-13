@@ -375,7 +375,7 @@ async def check_mcp_server_health(name: str):
 
     try:
         mcp_mgr = get_mcp_manager()
-        health = await mcp_mgr.check_health(name)
+        health = await mcp_mgr.check_server_health(name)
         return {"status": "success", "server": name, "healthy": health}
     except ToolError as e:
         raise HTTPException(status_code=400, detail=str(e))
@@ -390,7 +390,7 @@ async def get_mcp_server_tools(name: str):
 
     try:
         mcp_mgr = get_mcp_manager()
-        tools = await mcp_mgr.list_server_tools(name)
+        tools = await mcp_mgr.get_tools(name)
         return {"status": "success", "server": name, "tools": tools}
     except ToolError as e:
         raise HTTPException(status_code=400, detail=str(e))
@@ -424,7 +424,10 @@ async def sync_mcp_tools():
 
     try:
         mcp_mgr = get_mcp_manager()
-        count = await mcp_mgr.sync_all_tools()
+        count = 0
+        for server_name in list(mcp_mgr.servers.keys()):
+            await mcp_mgr._sync_tools(server_name)
+            count += len(await mcp_mgr.get_tools(server_name))
         return {"status": "success", "message": f"同步了 {count} 个MCP工具", "count": count}
     except ToolError as e:
         raise HTTPException(status_code=400, detail=str(e))

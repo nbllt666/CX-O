@@ -22,7 +22,8 @@ class VoxCPMGenerateRequest(BaseModel):
     reference_audio_path: Optional[str] = None
     prompt_audio_path: Optional[str] = None
     prompt_text: Optional[str] = None
-    output_path: Optional[str] = None
+    # 注意：output_path 不再接受客户端输入，统一由服务端生成 UUID 路径，避免路径遍历风险。
+    output_path: Optional[str] = Field(default=None, exclude=True)
     cfg_value: Optional[float] = None
     inference_timesteps: Optional[int] = None
 
@@ -48,11 +49,10 @@ async def generate(request: VoxCPMGenerateRequest):
         settings = get_settings()
         client = get_voxcpm_client(config=settings.voxcpm)
 
-        output_path = request.output_path
-        if not output_path:
-            output_dir = Path(settings.output.voice_refs_dir) / "voxcpm"
-            output_dir.mkdir(parents=True, exist_ok=True)
-            output_path = str(output_dir / f"{uuid.uuid4().hex}.wav")
+        # output_path 永远由服务端生成，忽略请求体中的 output_path 字段
+        output_dir = Path(settings.output.voice_refs_dir) / "voxcpm"
+        output_dir.mkdir(parents=True, exist_ok=True)
+        output_path = str(output_dir / f"{uuid.uuid4().hex}.wav")
 
         kwargs = {}
         if request.cfg_value is not None:

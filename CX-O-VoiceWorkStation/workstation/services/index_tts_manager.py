@@ -9,6 +9,7 @@ import logging
 import os
 import subprocess
 import sys
+import threading
 from asyncio import Lock
 from enum import Enum
 from pathlib import Path
@@ -90,6 +91,41 @@ class IndexTTSManager:
         except Exception:
             return False
 
+    def _start_pipe_drainers(self, process: subprocess.Popen) -> None:
+        """启动后台线程持续排空子进程的 stdout/stderr 管道。
+
+        子进程启动时若 stdout/stderr 使用 PIPE 但无消费者，管道缓冲写满后子进程将阻塞。
+        这里使用守护线程持续 `readline()` 并把内容记录到 logger，确保 PIPE 始终可写。
+        """
+        def _drain(stream, label: str):
+            try:
+                for line in iter(stream.readline, b""):
+                    try:
+                        decoded = line.decode("utf-8", errors="replace").rstrip()
+                    except Exception:
+                        decoded = repr(line)
+                    if decoded:
+                        logger.info(f"[IndexTTS {label}] {decoded}")
+            except Exception as e:
+                logger.debug(f"Pipe drainer for {label} exited: {e}")
+
+        if process.stdout is not None:
+            t_out = threading.Thread(
+                target=_drain,
+                args=(process.stdout, "stdout"),
+                name="indextts-stdout-drain",
+                daemon=True,
+            )
+            t_out.start()
+        if process.stderr is not None:
+            t_err = threading.Thread(
+                target=_drain,
+                args=(process.stderr, "stderr"),
+                name="indextts-stderr-drain",
+                daemon=True,
+            )
+            t_err.start()
+
     async def _wait_for_ready(self, timeout: int) -> bool:
         start_time = asyncio.get_event_loop().time()
         while asyncio.get_event_loop().time() - start_time < timeout:
@@ -134,6 +170,9 @@ class IndexTTSManager:
                 )
 
                 logger.info(f"Process started with PID: {self._process.pid}")
+
+                # 启动后台 reader 线程持续排空 PIPE，避免子进程因 PIPE 缓冲满而阻塞
+                self._start_pipe_drainers(self._process)
 
                 ready = await self._wait_for_ready(self._startup_timeout)
 
@@ -182,6 +221,10 @@ class IndexTTSManager:
                             self._process.kill()
                     else:
                         self._process.terminate()
+                        try:
+                            self._process.wait(timeout=5)
+                        except subprocess.TimeoutExpired:
+                            self._process.kill()
 
                     self._process = None
 

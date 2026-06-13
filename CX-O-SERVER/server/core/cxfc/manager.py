@@ -26,11 +26,19 @@ class CXFCManager:
         self._http_client: Optional[httpx.AsyncClient] = None
         self._tool_registry = None
         self._plugins: Dict[str, CXFCPluginInfo] = {}
+        # BUG-B07 修复: 保护共享 _plugins dict 的并发读写
+        self._plugins_lock = asyncio.Lock()
         self._heartbeat_timeout = heartbeat_timeout
         self._heartbeat_check_interval = heartbeat_check_interval
         self._heartbeat_task: Optional[asyncio.Task] = None
         self._ws_manager = None
         self._on_event_callback: Optional[Callable] = None
+
+    def _track_background_task(self, task: asyncio.Task) -> asyncio.Task:
+        """追踪后台任务，防止被GC回收；任务完成后自动从集合中移除"""
+        self._background_tasks.add(task)
+        task.add_done_callback(self._background_tasks.discard)
+        return task
 
     def set_tool_registry(self, tool_registry):
         self._tool_registry = tool_registry
@@ -46,8 +54,12 @@ class CXFCManager:
         plugins = await self._storage.load_plugins()
         self._http_client = httpx.AsyncClient(timeout=10.0)
         for plugin in plugins:
-            self._plugins[plugin.plugin_id] = plugin
-            asyncio.create_task(self._connect_to_plugin_if_alive(plugin))
+            # BUG-B07 修复: 在锁内写入 _plugins,避免与并发修改竞争
+            async with self._plugins_lock:
+                self._plugins[plugin.plugin_id] = plugin
+            self._track_background_task(
+                asyncio.create_task(self._connect_to_plugin_if_alive(plugin))
+            )
         self._heartbeat_task = asyncio.create_task(self._check_heartbeats_loop())
 
     async def _connect_to_plugin_if_alive(self, plugin: CXFCPluginInfo):
@@ -154,7 +166,9 @@ class CXFCManager:
         )
 
         await self._register_plugin_tools_and_skills(plugin)
-        self._plugins[plugin_id] = plugin
+        # BUG-B07 修复: 在锁内完成 _plugins 写入
+        async with self._plugins_lock:
+            self._plugins[plugin_id] = plugin
         return plugin
 
     async def register_plugin(self, request: CXFCRegisterRequest) -> CXFCPluginInfo:
@@ -203,11 +217,15 @@ class CXFCManager:
                 logger.warning(f"注册 Skill {skill_data.get('name')} 失败: {e}")
 
         await self._storage.save_plugin(plugin)
-        self._plugins[plugin_id] = plugin
+        # BUG-B07 修复: 在锁内完成 _plugins 写入
+        async with self._plugins_lock:
+            self._plugins[plugin_id] = plugin
         return plugin
 
     async def disconnect_plugin(self, plugin_id: str, remove_persistent: bool = True):
-        plugin = self._plugins.get(plugin_id)
+        # BUG-B07 修复: 在锁内获取并删除插件,避免与 connect_to_plugin / heartbeat 等并发
+        async with self._plugins_lock:
+            plugin = self._plugins.pop(plugin_id, None)
         if not plugin:
             return
 
@@ -222,15 +240,15 @@ class CXFCManager:
 
         self._skill_registry.unregister_skills(plugin_id)
 
-        del self._plugins[plugin_id]
-
         if remove_persistent:
             await self._storage.delete_plugin(plugin_id)
         else:
             await self._storage.update_status(plugin_id, PluginStatus.DISCONNECTED)
 
     async def call_tool(self, plugin_id: str, tool_name: str, arguments: Dict[str, Any] = None) -> Dict[str, Any]:
-        plugin = self._plugins.get(plugin_id)
+        # BUG-B07 修复: 在锁内读取插件引用
+        async with self._plugins_lock:
+            plugin = self._plugins.get(plugin_id)
         if not plugin or plugin.status != PluginStatus.CONNECTED:
             return {"success": False, "error": f"插件 {plugin_id} 不可用"}
 
@@ -245,19 +263,22 @@ class CXFCManager:
             return {"success": False, "error": str(e)}
 
     async def update_heartbeat(self, plugin_id: str, port: int) -> bool:
-        if not plugin_id:
-            for pid, p in self._plugins.items():
-                if p.port == port:
-                    plugin_id = pid
-                    break
+        # BUG-B07 修复: 在锁内完成 plugin 查找
+        async with self._plugins_lock:
+            if not plugin_id:
+                for pid, p in self._plugins.items():
+                    if p.port == port:
+                        plugin_id = pid
+                        break
 
-        plugin = self._plugins.get(plugin_id)
-        if not plugin:
-            return False
+            plugin = self._plugins.get(plugin_id)
+            if not plugin:
+                return False
 
-        was_disconnected = plugin.status == PluginStatus.DISCONNECTED
-        plugin.status = PluginStatus.CONNECTED
-        plugin.last_seen = datetime.now()
+            was_disconnected = plugin.status == PluginStatus.DISCONNECTED
+            plugin.status = PluginStatus.CONNECTED
+            plugin.last_seen = datetime.now()
+
         await self._storage.update_status(plugin_id, PluginStatus.CONNECTED, datetime.now())
 
         if was_disconnected:
@@ -291,7 +312,9 @@ class CXFCManager:
         return True
 
     async def refresh_plugin(self, plugin_id: str) -> Optional[CXFCPluginInfo]:
-        plugin = self._plugins.get(plugin_id)
+        # BUG-B07 修复: 在锁内读取插件引用
+        async with self._plugins_lock:
+            plugin = self._plugins.get(plugin_id)
         if not plugin or plugin.status != PluginStatus.CONNECTED:
             return None
 
@@ -317,7 +340,10 @@ class CXFCManager:
 
     async def _check_heartbeats(self):
         now = datetime.now()
-        for plugin_id, plugin in list(self._plugins.items()):
+        # BUG-B07 修复: 在锁内对 _plugins 拷贝快照,避免迭代时字典被改
+        async with self._plugins_lock:
+            plugins_snapshot = list(self._plugins.items())
+        for plugin_id, plugin in plugins_snapshot:
             if plugin.status != PluginStatus.CONNECTED:
                 continue
             if plugin.last_seen and (now - plugin.last_seen).total_seconds() > self._heartbeat_timeout:
@@ -348,6 +374,8 @@ class CXFCManager:
                         pass
 
     def get_plugins(self) -> List[CXFCPluginInfo]:
+        # BUG-B07 修复: 在锁内拷贝,避免迭代时字典被改
+        # 注: 此方法为同步,在事件循环线程内运行,dict 复制是原子的
         return list(self._plugins.values())
 
     def get_plugin(self, plugin_id: str) -> Optional[CXFCPluginInfo]:

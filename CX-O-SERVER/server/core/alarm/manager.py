@@ -64,6 +64,7 @@ class AlarmManager:
         self.db_path = db_path
         self._timers: Dict[str, threading.Timer] = {}
         self._lock = threading.Lock()
+        self._conn_lock = threading.Lock()  # BUG-B05 修复: 保护 _connection_cache
         self._on_trigger_callback = None
         self._shutdown = False
         self._connection_cache: Dict[int, sqlite3.Connection] = {}
@@ -73,53 +74,68 @@ class AlarmManager:
         os.makedirs(
             os.path.dirname(self.db_path) if os.path.dirname(self.db_path) else ".", exist_ok=True
         )
-        conn = self._get_connection()
-        cursor = conn.cursor()
-        cursor.execute(
+        # BUG-B05 修复: 仅首次调用建表;此处使用临时连接,不再依赖 _get_connection 缓存
+        conn = sqlite3.connect(self.db_path, timeout=30.0)
+        try:
+            cursor = conn.cursor()
+            cursor.execute(
+                """
+                CREATE TABLE IF NOT EXISTS alarms (
+                    id TEXT PRIMARY KEY,
+                    agent_id TEXT NOT NULL,
+                    message TEXT NOT NULL,
+                    trigger_time TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    status TEXT DEFAULT 'pending',
+                    triggered_at TEXT
+                )
             """
-            CREATE TABLE IF NOT EXISTS alarms (
-                id TEXT PRIMARY KEY,
-                agent_id TEXT NOT NULL,
-                message TEXT NOT NULL,
-                trigger_time TEXT NOT NULL,
-                created_at TEXT NOT NULL,
-                status TEXT DEFAULT 'pending',
-                triggered_at TEXT
             )
-        """
-        )
-        conn.commit()
-        self._close_connection(conn)
+            conn.commit()
+        finally:
+            conn.close()
 
     def _get_connection(self) -> sqlite3.Connection:
+        """获取当前线程的缓存连接(线程级单例)
+
+        BUG-B05 修复: 增加 ``_conn_lock`` 保护缓存字典的并发访问;命中失败或
+        缓存命中时连接的 ``SELECT 1`` 健康检查也会在锁内完成,避免在多线程
+        场景下重复创建连接导致缓存膨胀。
+        """
         thread_id = threading.get_ident()
-        
-        if thread_id in self._connection_cache:
-            conn = self._connection_cache[thread_id]
-            try:
-                conn.execute("SELECT 1")
-                return conn
-            except Exception:
+
+        with self._conn_lock:
+            cached = self._connection_cache.get(thread_id)
+            if cached is not None:
+                try:
+                    cached.execute("SELECT 1")
+                    return cached
+                except Exception:
+                    # 连接已损坏,清理并重新创建
+                    try:
+                        cached.close()
+                    except Exception:
+                        pass
+                    self._connection_cache.pop(thread_id, None)
+
+            conn = sqlite3.connect(self.db_path, timeout=30.0)
+            conn.row_factory = sqlite3.Row
+            conn.execute("PRAGMA journal_mode=WAL")
+            conn.execute("PRAGMA synchronous=NORMAL")
+            conn.execute("PRAGMA cache_size=-64000")
+            conn.execute("PRAGMA busy_timeout=30000")
+            self._connection_cache[thread_id] = conn
+            return conn
+
+    def _close_all_connections(self):
+        """关闭并清理所有缓存连接(用于 shutdown / 单元测试)"""
+        with self._conn_lock:
+            for conn in list(self._connection_cache.values()):
                 try:
                     conn.close()
                 except Exception:
                     pass
-                del self._connection_cache[thread_id]
-        
-        conn = sqlite3.connect(self.db_path, timeout=30.0)
-        conn.row_factory = sqlite3.Row
-        conn.execute("PRAGMA journal_mode=WAL")
-        conn.execute("PRAGMA synchronous=NORMAL")
-        conn.execute("PRAGMA cache_size=-64000")
-        conn.execute("PRAGMA busy_timeout=30000")
-        self._connection_cache[thread_id] = conn
-        return conn
-    
-    def _close_connection(self, conn: sqlite3.Connection):
-        try:
-            conn.close()
-        except Exception:
-            pass
+            self._connection_cache.clear()
 
     def set_trigger_callback(self, callback):
         self._on_trigger_callback = callback
@@ -138,6 +154,7 @@ class AlarmManager:
             status="pending",
         )
 
+        # BUG-B05 修复: 复用缓存连接,不再主动 close
         conn = self._get_connection()
         cursor = conn.cursor()
         cursor.execute(
@@ -155,7 +172,6 @@ class AlarmManager:
             ),
         )
         conn.commit()
-        conn.close()
 
         self._schedule_alarm(alarm)
         _safe_log(
@@ -163,16 +179,22 @@ class AlarmManager:
         )
         return alarm_id
 
+    async def acreate_alarm(self, agent_id: str, seconds: int, message: str) -> str:
+        """异步版本的 create_alarm:在事件循环线程中通过线程池执行同步调用,避免阻塞"""
+        return await asyncio.to_thread(self.create_alarm, agent_id, seconds, message)
+
     def get_alarm(self, alarm_id: str) -> Optional[Dict]:
         conn = self._get_connection()
         cursor = conn.cursor()
         cursor.execute("SELECT * FROM alarms WHERE id = ?", (alarm_id,))
         row = cursor.fetchone()
-        conn.close()
 
         if row:
             return dict(row)
         return None
+
+    async def aget_alarm(self, alarm_id: str) -> Optional[Dict]:
+        return await asyncio.to_thread(self.get_alarm, alarm_id)
 
     def get_alarms_by_agent(self, agent_id: str, include_triggered: bool = False) -> List[Dict]:
         conn = self._get_connection()
@@ -189,8 +211,10 @@ class AlarmManager:
             )
 
         rows = cursor.fetchall()
-        conn.close()
         return [dict(row) for row in rows]
+
+    async def aget_alarms_by_agent(self, agent_id: str, include_triggered: bool = False) -> List[Dict]:
+        return await asyncio.to_thread(self.get_alarms_by_agent, agent_id, include_triggered)
 
     def cancel_alarm(self, alarm_id: str) -> bool:
         with self._lock:
@@ -198,6 +222,7 @@ class AlarmManager:
                 self._timers[alarm_id].cancel()
                 del self._timers[alarm_id]
 
+        # BUG-B05 修复: 复用缓存连接
         conn = self._get_connection()
         cursor = conn.cursor()
         cursor.execute(
@@ -206,15 +231,18 @@ class AlarmManager:
         )
         affected = cursor.rowcount
         conn.commit()
-        conn.close()
 
         if affected > 0:
             _safe_log(logging.INFO, f"取消提醒: {alarm_id}")
             return True
         return False
 
+    async def acancel_alarm(self, alarm_id: str) -> bool:
+        return await asyncio.to_thread(self.cancel_alarm, alarm_id)
+
     def mark_triggered(self, alarm_id: str) -> bool:
         now = datetime.now()
+        # BUG-B05 修复: 复用缓存连接
         conn = self._get_connection()
         cursor = conn.cursor()
         cursor.execute(
@@ -223,7 +251,6 @@ class AlarmManager:
         )
         affected = cursor.rowcount
         conn.commit()
-        conn.close()
 
         with self._lock:
             if alarm_id in self._timers:
@@ -231,13 +258,18 @@ class AlarmManager:
 
         return affected > 0
 
+    async def amark_triggered(self, alarm_id: str) -> bool:
+        return await asyncio.to_thread(self.mark_triggered, alarm_id)
+
     def get_pending_alarms(self) -> List[Dict]:
         conn = self._get_connection()
         cursor = conn.cursor()
         cursor.execute("SELECT * FROM alarms WHERE status = 'pending' ORDER BY trigger_time")
         rows = cursor.fetchall()
-        conn.close()
         return [dict(row) for row in rows]
+
+    async def aget_pending_alarms(self) -> List[Dict]:
+        return await asyncio.to_thread(self.get_pending_alarms)
 
     def _schedule_alarm(self, alarm: Alarm):
         now = datetime.now()
@@ -292,12 +324,18 @@ class AlarmManager:
 
         _safe_log(logging.INFO, f"恢复 {len(pending)} 个待触发提醒")
 
+    async def arestore_pending_alarms(self):
+        """异步版本的 restore_pending_alarms:在事件循环线程中通过线程池执行同步调用"""
+        await asyncio.to_thread(self.restore_pending_alarms)
+
     def shutdown(self):
         self._shutdown = True
         with self._lock:
             for timer in self._timers.values():
                 timer.cancel()
             self._timers.clear()
+        # BUG-B05 修复: 关闭并清空缓存的连接,避免进程退出时持有文件句柄
+        self._close_all_connections()
         _silence_logger()
 
 

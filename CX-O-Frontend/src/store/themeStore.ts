@@ -1,5 +1,6 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
+import { createStorage } from '../lib/createStorage';
 
 interface ThemeState {
   theme: 'light' | 'dark' | 'system';
@@ -24,6 +25,7 @@ export const useThemeStore = create<ThemeState>()(
     }),
     {
       name: 'cxhms-theme',
+      storage: createStorage(),
     }
   )
 );

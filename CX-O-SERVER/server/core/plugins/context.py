@@ -1,5 +1,7 @@
 from dataclasses import dataclass, field
-from typing import Any, Callable, Dict, Optional
+from typing import Any, Callable, Dict, Optional, Set
+
+import asyncio
 
 from server.core.logging_config import get_contextual_logger
 
@@ -24,6 +26,14 @@ class PluginContext:
     _llm_client: Optional[Any] = field(default=None, repr=False)
     _tool_registry: Optional[Any] = field(default=None, repr=False)
     _ws_manager: Optional[Any] = field(default=None, repr=False)
+    # 后台异步任务引用集合，防止被GC回收
+    _background_tasks: Set[asyncio.Task] = field(default_factory=set, repr=False)
+
+    def _track_background_task(self, task: asyncio.Task) -> asyncio.Task:
+        """追踪插件上下文创建的后台任务"""
+        self._background_tasks.add(task)
+        task.add_done_callback(self._background_tasks.discard)
+        return task
 
     def log_info(self, message: str):
         """记录信息日志"""
@@ -135,13 +145,15 @@ class PluginContext:
         if self._ws_manager:
             try:
                 if channel:
-                    import asyncio
-
-                    asyncio.create_task(self._ws_manager.broadcast_to_channel(channel, message))
+                    self._track_background_task(
+                        asyncio.create_task(
+                            self._ws_manager.broadcast_to_channel(channel, message)
+                        )
+                    )
                 else:
-                    import asyncio
-
-                    asyncio.create_task(self._ws_manager.broadcast(message))
+                    self._track_background_task(
+                        asyncio.create_task(self._ws_manager.broadcast(message))
+                    )
             except Exception as e:
                 self.log_error(f"广播消息失败: {e}")
 

@@ -29,7 +29,6 @@ export function DanmakuOverlay({
 }: DanmakuOverlayProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const activeIdsRef = useRef<Set<string>>(new Set());
-  const nextIndexRef = useRef(0);
 
   const displayList = useMemo(() => {
     if (danmakuList.length <= maxCount) return danmakuList;
@@ -139,7 +138,7 @@ export function DanmakuOverlay({
 
         return (
           <div
-            key={`${item.id}-${nextIndexRef.current++}`}
+            key={item.id}
             className={className}
             style={style}
             onAnimationEnd={() => handleAnimationEnd(item.id)}

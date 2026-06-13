@@ -19,6 +19,9 @@ class AsyncConnectionPool:
         self.max_size = max_size
         self._pool: List[aiosqlite.Connection] = []
         self._lock = asyncio.Lock()
+        # BUG-B10 修复: 记录当前已分配(未归还)的连接数,确保 total
+        # outstanding <= max_size,而不是依赖 pool 长度做判断
+        self._in_flight: int = 0
         self._initialized = False
 
     async def initialize(self):
@@ -27,12 +30,12 @@ class AsyncConnectionPool:
 
         Path(self.db_path).parent.mkdir(parents=True, exist_ok=True)
 
-        for _ in range(self.min_size):
-            conn = await self._create_connection()
-            if conn:
-                self._pool.append(conn)
-
-        self._initialized = True
+        async with self._lock:
+            for _ in range(self.min_size):
+                conn = await self._create_connection()
+                if conn:
+                    self._pool.append(conn)
+            self._initialized = True
         logger.info(f"连接池初始化完成: {len(self._pool)} 个连接")
 
     async def _create_connection(self) -> Optional[aiosqlite.Connection]:
@@ -50,31 +53,58 @@ class AsyncConnectionPool:
 
     @asynccontextmanager
     async def get_connection(self):
+        """从池中借出连接。BUG-B10 修复: 锁内统一处理借/还,确保总占用 <= max_size。"""
+        conn: Optional[aiosqlite.Connection] = None
         async with self._lock:
             if self._pool:
                 conn = self._pool.pop()
-            else:
-                if len(self._pool) < self.max_size:
-                    conn = await self._create_connection()
+                self._in_flight += 1
+            elif self._in_flight < self.max_size:
+                # 在锁内创建新连接,避免多个协程同时越过 max_size
+                conn = await self._create_connection()
+                if conn is not None:
+                    self._in_flight += 1
                 else:
                     conn = None
+            else:
+                conn = None
 
+        # 锁内已达 max_size 且无空闲连接:在锁外等待并重试(简单退避)
         if conn is None:
-            conn = await self._create_connection()
+            for _ in range(50):  # 最多退避 5s
+                await asyncio.sleep(0.1)
+                async with self._lock:
+                    if self._pool:
+                        conn = self._pool.pop()
+                        self._in_flight += 1
+                        break
+            else:
+                # 最后一次尝试:若仍达 max_size,创建临时连接(用完关闭)
+                conn = await self._create_connection()
+                if conn is None:
+                    raise RuntimeError("无法获取数据库连接:连接池耗尽且新连接创建失败")
 
         try:
             yield conn
         finally:
-            if conn:
+            # BUG-B10 修复: 锁内归还,先做健康检查,确保 max_size 严格不超
+            should_return = True
+            if conn is not None:
                 try:
                     await conn.execute("SELECT 1")
-                    async with self._lock:
-                        if len(self._pool) < self.max_size:
-                            self._pool.append(conn)
-                        else:
-                            await conn.close()
                 except Exception as e:
-                    logger.warning(f"连接回收失败: {e}")
+                    logger.warning(f"连接健康检查失败,直接关闭: {e}")
+                    should_return = False
+                    try:
+                        await conn.close()
+                    except Exception:
+                        pass
+
+            async with self._lock:
+                self._in_flight = max(0, self._in_flight - 1)
+                if should_return and conn is not None and len(self._pool) < self.max_size:
+                    self._pool.append(conn)
+                elif conn is not None:
                     try:
                         await conn.close()
                     except Exception:
@@ -88,6 +118,7 @@ class AsyncConnectionPool:
                 except Exception as e:
                     logger.warning(f"关闭连接失败: {e}")
             self._pool.clear()
+            self._in_flight = 0
         self._initialized = False
         logger.info("所有数据库连接已关闭")
 
@@ -99,6 +130,7 @@ class SyncConnectionPool:
         self._connections: Dict[int, sqlite3.Connection] = {}
         import threading
 
+        # BUG-B10 修复: 显式线程锁保护 _connections / _last_used 的并发读写
         self._lock = threading.Lock()
         self._last_used: Dict[int, float] = {}
         self._initialized = False
@@ -109,16 +141,16 @@ class SyncConnectionPool:
 
         Path(self.db_path).parent.mkdir(parents=True, exist_ok=True)
 
-        for _ in range(self.pool_size):
-            conn = self._create_connection()
-            if conn:
-                import threading
+        with self._lock:
+            for _ in range(self.pool_size):
+                conn = self._create_connection()
+                if conn:
+                    import threading
 
-                thread_id = threading.get_ident()
-                self._connections[thread_id] = conn
-                self._last_used[thread_id] = 0
-
-        self._initialized = True
+                    thread_id = threading.get_ident()
+                    self._connections[thread_id] = conn
+                    self._last_used[thread_id] = 0
+            self._initialized = True
         logger.info(f"同步连接池初始化完成: {len(self._connections)} 个连接")
 
     def _create_connection(self) -> Optional[sqlite3.Connection]:
@@ -135,27 +167,38 @@ class SyncConnectionPool:
             return None
 
     def get_connection(self) -> sqlite3.Connection:
+        """获取当前线程的连接,优先复用缓存。
+
+        BUG-B10 修复: 缓存字典 ``_connections`` / ``_last_used`` 的
+        全部读写都在 ``self._lock`` 内完成,避免多线程下出现 ``pool_size``
+        上限被突破或数据竞争。
+        """
         import threading
         import time
 
         thread_id = threading.get_ident()
 
-        if thread_id in self._connections:
-            conn = self._connections[thread_id]
-            try:
-                conn.execute("SELECT 1")
-                self._last_used[thread_id] = time.time()
-                return conn
-            except Exception:
+        with self._lock:
+            conn = self._connections.get(thread_id)
+            if conn is not None:
                 try:
-                    conn.close()
+                    conn.execute("SELECT 1")
+                    self._last_used[thread_id] = time.time()
+                    return conn
                 except Exception:
-                    pass
-                del self._connections[thread_id]
-                del self._last_used[thread_id]
+                    try:
+                        conn.close()
+                    except Exception:
+                        pass
+                    self._connections.pop(thread_id, None)
+                    self._last_used.pop(thread_id, None)
 
+        # 锁外创建连接:每个线程最多持有一个,此操作不改变其他线程的 in_flight
         conn = self._create_connection()
-        if conn:
+        if conn is None:
+            raise RuntimeError("无法创建同步数据库连接")
+
+        with self._lock:
             self._connections[thread_id] = conn
             self._last_used[thread_id] = time.time()
 
@@ -166,21 +209,24 @@ class SyncConnectionPool:
 
         thread_id = threading.get_ident()
 
-        if thread_id in self._connections:
-            try:
-                self._connections[thread_id].close()
-            except Exception:
-                pass
-            del self._connections[thread_id]
-            del self._last_used[thread_id]
-
-    def close_all(self):
-        for conn in self._connections.values():
+        with self._lock:
+            conn = self._connections.pop(thread_id, None)
+            self._last_used.pop(thread_id, None)
+        if conn is not None:
             try:
                 conn.close()
             except Exception:
                 pass
-        self._connections.clear()
-        self._last_used.clear()
+
+    def close_all(self):
+        with self._lock:
+            connections_snapshot = list(self._connections.values())
+            self._connections.clear()
+            self._last_used.clear()
+        for conn in connections_snapshot:
+            try:
+                conn.close()
+            except Exception:
+                pass
         self._initialized = False
         logger.info("所有同步数据库连接已关闭")

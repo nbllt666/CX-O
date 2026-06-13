@@ -277,8 +277,7 @@ async function assetExists(assetPath: string) {
     if (response.ok) {
       return true;
     }
-  } catch {
-  }
+  } catch { /* HEAD 请求失败则尝试下一种探测方式 */ }
 
   try {
     const response = await fetch(assetPath, { method: 'GET' });

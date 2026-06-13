@@ -60,14 +60,14 @@ const PluginsPage: React.FC = () => {
     try {
       await api.disconnectCxfcPlugin(pluginId);
       loadData();
-    } catch {}
+    } catch { /* 忽略错误，已通过 UI 状态处理 */ }
   };
 
   const handleRefresh = async (pluginId: string) => {
     try {
       await api.refreshCxfcPlugin(pluginId);
       loadData();
-    } catch {}
+    } catch { /* 忽略错误，已通过 UI 状态处理 */ }
   };
 
   const handleScan = async () => {

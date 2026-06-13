@@ -5,10 +5,43 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
+import subprocess
+import sys
 from pathlib import Path
 from typing import Optional
 
 logger = logging.getLogger(__name__)
+
+# 推理子进程超时（秒）。覆盖 So-VITS-SVC 默认较长的推理时间，但避免挂死。
+_INFER_TIMEOUT_SECONDS = 300.0
+
+
+async def _communicate_with_timeout(process: asyncio.subprocess.Process, timeout: float) -> tuple[bytes, bytes]:
+    """对 process.communicate() 做超时包装；超时后先 terminate 再 kill 兜底。"""
+    try:
+        return await asyncio.wait_for(process.communicate(), timeout=timeout)
+    except asyncio.TimeoutError:
+        logger.error(
+            f"Subprocess timeout after {timeout}s (pid={process.pid}); terminating..."
+        )
+        try:
+            process.terminate()
+        except ProcessLookupError:
+            pass
+        try:
+            await asyncio.wait_for(process.wait(), timeout=5.0)
+        except asyncio.TimeoutError:
+            logger.error(f"Subprocess did not exit after terminate, killing (pid={process.pid})")
+            try:
+                process.kill()
+            except ProcessLookupError:
+                pass
+            try:
+                await asyncio.wait_for(process.wait(), timeout=5.0)
+            except asyncio.TimeoutError:
+                pass
+        raise
 
 
 class SoVITSSVCInferer:
@@ -18,11 +51,31 @@ class SoVITSSVCInferer:
         output_dir: str = "data/models/sovits_svc",
         so_vits_svc_dir: str = "",
         python_path: str = "python",
+        allowed_audio_root: Optional[str] = None,
     ):
         self._model_path = model_path
         self._output_dir = Path(output_dir)
         self._so_vits_svc_dir = Path(so_vits_svc_dir) if so_vits_svc_dir else Path("so-vits-svc-4.1-Stable")
         self._python_path = python_path
+        # 允许作为推理输入的根目录。默认仅允许 input 目录。
+        self._allowed_audio_root = (
+            Path(allowed_audio_root).resolve() if allowed_audio_root else Path("data/input").resolve()
+        )
+
+    def _validate_audio_path(self, audio_path: str) -> Path:
+        """校验 audio_path 解析后必须位于允许的根目录之内，防止任意文件传入子进程。"""
+        audio = Path(audio_path)
+        try:
+            resolved = audio.resolve()
+        except Exception as e:
+            raise ValueError(f"Invalid audio path: {audio_path}: {e}")
+        try:
+            resolved.relative_to(self._allowed_audio_root)
+        except ValueError:
+            raise ValueError(
+                f"audio_path must be located under {self._allowed_audio_root}, got: {resolved}"
+            )
+        return resolved
 
     async def infer(
         self,
@@ -32,7 +85,7 @@ class SoVITSSVCInferer:
         model_path: Optional[str] = None,
         cluster_model_path: Optional[str] = None,
     ) -> Path:
-        audio = Path(audio_path)
+        audio = self._validate_audio_path(audio_path)
         if not audio.exists():
             raise FileNotFoundError(f"Audio file not found: {audio_path}")
 
@@ -63,8 +116,9 @@ class SoVITSSVCInferer:
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
             cwd=str(self._so_vits_svc_dir),
+            creationflags=subprocess.CREATE_NEW_PROCESS_GROUP if sys.platform == "win32" else 0,
         )
-        stdout, stderr = await process.communicate()
+        stdout, stderr = await _communicate_with_timeout(process, _INFER_TIMEOUT_SECONDS)
 
         if process.returncode != 0:
             error_msg = stderr.decode("utf-8", errors="replace")

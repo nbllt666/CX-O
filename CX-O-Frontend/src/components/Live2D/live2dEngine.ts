@@ -467,5 +467,13 @@ export function resetRuntimeFocus(runtime: RuntimeState) {
 }
 
 export function destroyRuntime(runtime: RuntimeState) {
-  runtime.app.destroy(true, { children: true });
+  runtime.overlayCurrentParams.clear();
+  runtime.overlayTargetParams.clear();
+  runtime.baselineParams.clear();
+  runtime.trackedParamIds.clear();
+  runtime.resolvedBindingCache.clear();
+  runtime.expressionMix.length = 0;
+  runtime.parameterOverrides.length = 0;
+  runtime.activeParams = null;
+  runtime.app.destroy(true, { children: true, texture: true, textureSource: true });
 }

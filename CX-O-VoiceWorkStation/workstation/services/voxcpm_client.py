@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import subprocess
 import sys
 from pathlib import Path
 from typing import Any
@@ -15,6 +16,35 @@ from workstation.config import VoxCPMConfig
 logger = logging.getLogger(__name__)
 
 _CXO_ROOT = Path(__file__).resolve().parents[3]
+
+# VoxCPM 子进程默认超时（秒），与 CosyVoice / SoVITS 保持数量级
+_VOXCPM_SUBPROCESS_TIMEOUT = 300.0
+_VOXCPM_STOP_WAIT_TIMEOUT = 10.0
+
+
+async def _communicate_with_timeout(process: asyncio.subprocess.Process, timeout: float) -> tuple[bytes, bytes]:
+    """对 process.communicate() 做超时包装；超时后先 terminate 再 kill 兜底。"""
+    try:
+        return await asyncio.wait_for(process.communicate(), timeout=timeout)
+    except asyncio.TimeoutError:
+        logger.error(f"VoxCPM subprocess timeout after {timeout}s (pid={process.pid}); terminating")
+        try:
+            process.terminate()
+        except ProcessLookupError:
+            pass
+        try:
+            await asyncio.wait_for(process.wait(), timeout=_VOXCPM_STOP_WAIT_TIMEOUT)
+        except asyncio.TimeoutError:
+            logger.error(f"VoxCPM subprocess did not exit after terminate, killing (pid={process.pid})")
+            try:
+                process.kill()
+            except ProcessLookupError:
+                pass
+            try:
+                await asyncio.wait_for(process.wait(), timeout=_VOXCPM_STOP_WAIT_TIMEOUT)
+            except asyncio.TimeoutError:
+                pass
+        raise
 
 
 class VoxCPMError(Exception):
@@ -35,6 +65,23 @@ class VoxCPMClient:
         self._zipenhancer_model_path = self._config.zipenhancer_model_path
         self._working_dir = str(_CXO_ROOT / self._config.working_dir)
         self._model = None
+        # 允许作为输入参考音频的根目录，默认仅允许 data/input，防止任意本地文件读取。
+        self._allowed_audio_root = Path("data/input").resolve()
+
+    def _validate_audio_path(self, audio_path: str) -> Path:
+        """校验 audio_path 解析后必须位于允许的根目录之内，防止任意文件传入子进程。"""
+        audio = Path(audio_path)
+        try:
+            resolved = audio.resolve()
+        except Exception as e:
+            raise ValueError(f"Invalid audio path: {audio_path}: {e}")
+        try:
+            resolved.relative_to(self._allowed_audio_root)
+        except ValueError:
+            raise ValueError(
+                f"audio path must be located under {self._allowed_audio_root}, got: {resolved}"
+            )
+        return resolved
 
     def _build_base_args(self) -> list[str]:
         args = [
@@ -56,8 +103,15 @@ class VoxCPMClient:
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
             cwd=self._working_dir,
+            creationflags=subprocess.CREATE_NEW_PROCESS_GROUP if sys.platform == "win32" else 0,
         )
-        stdout, stderr = await process.communicate()
+        try:
+            stdout, stderr = await _communicate_with_timeout(process, _VOXCPM_SUBPROCESS_TIMEOUT)
+        except asyncio.TimeoutError:
+            raise VoxCPMError(
+                f"VoxCPM subprocess timed out after {_VOXCPM_SUBPROCESS_TIMEOUT}s",
+                returncode=None,
+            )
         return process.returncode or 0, stdout.decode(errors="replace"), stderr.decode(errors="replace")
 
     async def design(self, text: str, control: str, output_path: str, **kwargs: Any) -> Path:
@@ -96,7 +150,7 @@ class VoxCPMClient:
         return output
 
     async def controllable_clone(self, text: str, control: str, reference_audio: str, output_path: str, **kwargs: Any) -> Path:
-        ref_path = Path(reference_audio)
+        ref_path = self._validate_audio_path(reference_audio)
         if not ref_path.exists():
             raise ValueError(f"Reference audio file not found: {reference_audio}")
 
@@ -139,7 +193,7 @@ class VoxCPMClient:
         return output
 
     async def ultimate_clone(self, text: str, prompt_audio: str, prompt_text: str, output_path: str, **kwargs: Any) -> Path:
-        pa_path = Path(prompt_audio)
+        pa_path = self._validate_audio_path(prompt_audio)
         if not pa_path.exists():
             raise ValueError(f"Prompt audio file not found: {prompt_audio}")
 
@@ -182,20 +236,20 @@ class VoxCPMClient:
         return output
 
     async def health_check(self) -> bool:
+        """
+        轻量级健康检查：仅验证子进程能否成功启动 Python 解释器及 voxcpm 模块，
+        不执行任何模型推理操作，避免加载大模型造成阻塞与性能损耗。
+
+        Returns:
+            True 表示 CLI 模块可被成功 import 与启动，False 表示不可用。
+        """
         try:
+            import sys
+            # 使用极快的 --help 参数：仅触发模块 import 与 argparse，毫秒级完成
             args = [
-                sys.executable, "-m", "voxcpm",
-                "design",
-                "--text", "health",
-                "--output", str(Path(self._working_dir) / "_health_check_tmp.wav"),
-                "--model-path", self._model_path,
-                "--device", self._device,
-                "--no-denoiser",
+                sys.executable, "-m", "voxcpm", "--help",
             ]
-            returncode, stdout, stderr = await self._run_subprocess(args)
-            tmp = Path(self._working_dir) / "_health_check_tmp.wav"
-            if tmp.exists():
-                tmp.unlink()
+            returncode, _stdout, _stderr = await self._run_subprocess(args)
             return returncode == 0
         except Exception as e:
             logger.error(f"VoxCPM health check failed: {e}")

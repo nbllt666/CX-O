@@ -1,12 +1,85 @@
 import axios, { AxiosInstance, AxiosError } from 'axios';
 import type { AxiosRequestConfig, InternalAxiosRequestConfig } from 'axios';
 
-const getApiBaseUrl = () => localStorage.getItem('cxhms-backend-url') || import.meta.env.VITE_API_URL || 'http://127.0.0.1:8000';
+// ── Cached backend / WS URLs ──
+let _cachedBackendUrl: string | null = null;
+let _cachedWsUrl: string | null = null;
+
+const getApiBaseUrl = () => {
+  if (_cachedBackendUrl) return _cachedBackendUrl;
+  return localStorage.getItem('cxhms-backend-url') || import.meta.env.VITE_API_URL || 'http://127.0.0.1:8000';
+};
 const getControlServiceUrl = () => localStorage.getItem('cxhms-control-url') || import.meta.env.VITE_CONTROL_SERVICE_URL || 'http://127.0.0.1:8000';
-const getWsBaseUrl = () => localStorage.getItem('cxhms-ws-url') || import.meta.env.VITE_WS_URL || 'ws://127.0.0.1:8000';
+const getWsBaseUrl = () => {
+  if (_cachedWsUrl) return _cachedWsUrl;
+  return localStorage.getItem('cxhms-ws-url') || import.meta.env.VITE_WS_URL || httpToWsUrl(getApiBaseUrl());
+};
 const getVoiceWorkstationUrl = () => localStorage.getItem('cxhms-voicews-url') || import.meta.env.VITE_VOICE_WS_URL || (import.meta.env.DEV ? '/voice-station' : 'http://127.0.0.1:8200');
 
-export const WS_BASE_URL = getWsBaseUrl();
+export function getWS_BASE_URL() {
+  return getWsBaseUrl();
+}
+
+/**
+ * 将 HTTP(S) base URL 转换为对应的 WS(S) base URL。
+ * 通过 new URL().protocol 切换，避免在 base URL 含 "http" 子串时被错误转换。
+ */
+export const httpToWsUrl = (httpBaseUrl: string): string => {
+  try {
+    const u = new URL(httpBaseUrl);
+    u.protocol = u.protocol === 'https:' ? 'wss:' : 'ws:';
+    return u.toString().replace(/\/$/, '');
+  } catch {
+    // 解析失败时退化为朴素替换作为兜底
+    return httpBaseUrl.replace(/^http/i, httpBaseUrl.startsWith('https') ? 'wss' : 'ws').replace(/\/$/, '');
+  }
+};
+
+/** Set the cached backend URL and persist to localStorage (and optionally IPC). */
+export function setCachedBackendUrl(url: string) {
+  _cachedBackendUrl = url;
+  localStorage.setItem('cxhms-backend-url', url);
+  if (window.electronAPI) {
+    window.electronAPI.setBackendUrl(url).catch(() => {});
+  }
+}
+
+/** Set the cached WS URL and persist to localStorage. */
+export function setCachedWsUrl(url: string) {
+  _cachedWsUrl = url;
+  localStorage.setItem('cxhms-ws-url', url);
+}
+
+/**
+ * Initialise the backend URL with Electron IPC priority.
+ * Priority: Electron IPC > localStorage > env > default
+ * Must be called early in the app lifecycle (before first API call).
+ */
+export async function initBackendUrl(): Promise<string> {
+  if (window.electronAPI) {
+    try {
+      const ipcUrl = await window.electronAPI.getBackendUrl();
+      if (ipcUrl) {
+        _cachedBackendUrl = ipcUrl;
+        localStorage.setItem('cxhms-backend-url', ipcUrl);
+        // Auto-derive WS URL from backend URL
+        const derivedWs = httpToWsUrl(ipcUrl);
+        _cachedWsUrl = derivedWs;
+        localStorage.setItem('cxhms-ws-url', derivedWs);
+        return ipcUrl;
+      }
+    } catch {
+      // IPC failed, fall through
+    }
+  }
+  const url = localStorage.getItem('cxhms-backend-url') || import.meta.env.VITE_API_URL || 'http://127.0.0.1:8000';
+  _cachedBackendUrl = url;
+  // Also cache WS URL
+  if (!_cachedWsUrl) {
+    _cachedWsUrl = localStorage.getItem('cxhms-ws-url') || import.meta.env.VITE_WS_URL || httpToWsUrl(url);
+  }
+  return url;
+}
 
 export const getApiUrl = () => getApiBaseUrl();
 export const getControlUrl = () => getControlServiceUrl();
@@ -275,6 +348,7 @@ class ApiClient {
 
   private maxRetries: number = 3;
   private retryDelay: number = 1000;
+  private cacheMaxEntries: number = 100;
   private cache: Map<string, { data: unknown; timestamp: number; ttl: number }>;
 
   constructor() {
@@ -282,7 +356,39 @@ class ApiClient {
   }
 
   private _getCacheKey(url: string, params?: Record<string, unknown>): string {
-    return `${url}?${JSON.stringify(params || {})}`;
+    return `${url}?${this._stableStringify(params || {})}`;
+  }
+
+  /**
+   * 稳定的 JSON 序列化：按 key 排序、移除 undefined 值，
+   * 避免参数对象 key 顺序或 undefined 字段差异导致缓存 key 不一致。
+   */
+  private _stableStringify(value: unknown): string {
+    const seen = new WeakSet<object>();
+    const stringify = (v: unknown): string => {
+      if (v === null || typeof v !== 'object') {
+        return JSON.stringify(v ?? null);
+      }
+      if (seen.has(v as object)) {
+        return '"[Circular]"';
+      }
+      seen.add(v as object);
+      if (Array.isArray(v)) {
+        return '[' + v.map((item) => stringify(item)).join(',') + ']';
+      }
+      const obj = v as Record<string, unknown>;
+      const keys = Object.keys(obj)
+        .filter((k) => obj[k] !== undefined)
+        .sort();
+      return (
+        '{' +
+        keys
+          .map((k) => JSON.stringify(k) + ':' + stringify(obj[k]))
+          .join(',') +
+        '}'
+      );
+    };
+    return stringify(value);
   }
 
   private _getFromCache(key: string): unknown | null {
@@ -294,21 +400,43 @@ class ApiClient {
       return null;
     }
 
+    // 命中后刷新 LRU 顺序
+    this.cache.delete(key);
+    this.cache.set(key, cached);
     return cached.data;
   }
 
   private _setCache(key: string, data: unknown, ttl: number = 60000): void {
+    if (this.cache.has(key)) {
+      this.cache.delete(key);
+    }
     this.cache.set(key, {
       data,
       timestamp: Date.now(),
       ttl,
     });
+    // 超过容量上限时淘汰最早写入的条目
+    while (this.cache.size > this.cacheMaxEntries) {
+      const oldestKey = this.cache.keys().next().value;
+      if (oldestKey === undefined) break;
+      this.cache.delete(oldestKey);
+    }
   }
 
+  /**
+   * 精确匹配清除缓存。
+   * pattern 视为 URL 路径段：仅当 key 中的 path 与 pattern 相等或以 `${pattern}/`、
+   * `${pattern}?` 开头时匹配；避免 `agents` 误伤 `listAgents`、`agents/123` 之外的键。
+   */
   private _clearCache(pattern?: string): void {
     if (pattern) {
       for (const key of this.cache.keys()) {
-        if (key.includes(pattern)) {
+        const path = key.split('?', 1)[0];
+        if (
+          path === pattern ||
+          path.startsWith(`${pattern}/`) ||
+          path.startsWith(`${pattern}?`)
+        ) {
           this.cache.delete(key);
         }
       }
@@ -337,22 +465,84 @@ class ApiClient {
           return Promise.reject(error);
         }
 
+        // BUG-F46: 仅对 network error / 5xx / 408 / 429 触发重试，其他 4xx 不重试
+        if (!this._shouldRetry(error)) {
+          return Promise.reject(error);
+        }
+
         const retryCount = (config.retryCount || 0) + 1;
         if (retryCount > this.maxRetries) {
           return Promise.reject(error);
         }
         config.retryCount = retryCount;
 
-        await new Promise((resolve) => setTimeout(resolve, this.retryDelay * retryCount));
+        // BUG-F47: 重试延迟支持 AbortController，提前检查 abort 状态
+        const signal = (config.signal as AbortSignal | undefined) ?? undefined;
+        if (signal?.aborted) {
+          return Promise.reject(error);
+        }
+
+        try {
+          await this._sleepWithAbort(this.retryDelay * retryCount, signal);
+        } catch (abortErr) {
+          return Promise.reject(abortErr);
+        }
+
+        if (signal?.aborted) {
+          return Promise.reject(error);
+        }
+
         return axiosInstance(config);
       }
     );
   }
 
+  /**
+   * 判断是否应当重试：仅对网络层错误或服务端临时错误（5xx / 408 / 429）触发。
+   * 其他 4xx 错误（401/403/404/422 等）不重试，避免无意义的重试开销。
+   */
+  private _shouldRetry(error: AxiosError): boolean {
+    // 网络错误：没有 response
+    if (!error.response) {
+      return true;
+    }
+    const status = error.response.status;
+    if (status >= 500 && status < 600) return true;
+    if (status === 408) return true; // Request Timeout
+    if (status === 429) return true; // Too Many Requests
+    return false;
+  }
+
+  /**
+   * 带 abort 感知的 sleep：支持在等待期间被 AbortController 取消。
+   */
+  private _sleepWithAbort(ms: number, signal?: AbortSignal): Promise<void> {
+    return new Promise((resolve, reject) => {
+      if (signal?.aborted) {
+        reject(new DOMException('Aborted', 'AbortError'));
+        return;
+      }
+      const timer = setTimeout(() => {
+        if (signal && onAbort) {
+          signal.removeEventListener('abort', onAbort);
+        }
+        resolve();
+      }, ms);
+      const onAbort = () => {
+        clearTimeout(timer);
+        reject(new DOMException('Aborted', 'AbortError'));
+      };
+      if (signal) {
+        signal.addEventListener('abort', onAbort, { once: true });
+      }
+    });
+  }
+
   async request<T>(config: AxiosRequestConfig, useCache: boolean = false): Promise<T> {
     const cacheKey = this._getCacheKey(config.url || '', config.params as Record<string, unknown>);
+    const isGet = (config.method || 'get').toLowerCase() === 'get';
 
-    if (useCache && config.method === 'get') {
+    if (useCache && isGet) {
       const cached = this._getFromCache(cacheKey);
       if (cached) return cached as T;
     }
@@ -361,7 +551,7 @@ class ApiClient {
       const axiosInstance = this.client;
       const response = await axiosInstance.request<T>(config);
 
-      if (useCache && config.method === 'get') {
+      if (useCache && isGet) {
         this._setCache(cacheKey, response.data);
       }
 
@@ -435,16 +625,19 @@ class ApiClient {
 
   async createAgent(data: Partial<Agent>): Promise<Agent> {
     const response = await this.request<{ status: string; agent: Agent; message: string }>({ url: '/api/agents', method: 'post', data });
+    this._clearCache('/api/agents');
     return response.agent;
   }
 
   async updateAgent(agentId: string, data: Partial<Agent>): Promise<Agent> {
     const response = await this.request<{ status: string; agent: Agent; message: string }>({ url: `/api/agents/${agentId}`, method: 'put', data });
+    this._clearCache('/api/agents');
     return response.agent;
   }
 
   async deleteAgent(agentId: string): Promise<void> {
     await this.request<{ status: string; message: string }>({ url: `/api/agents/${agentId}`, method: 'delete' });
+    this._clearCache('/api/agents');
   }
 
   async cloneAgent(agentId: string): Promise<Agent> {
@@ -485,7 +678,8 @@ class ApiClient {
   }
 
   async getSessions(): Promise<Session[]> {
-    return this.request<Session[]>({ url: '/api/context/sessions' });
+    const response = await this.request<{ status: string; sessions: Session[]; total: number }>({ url: '/api/context/sessions' });
+    return response.sessions || [];
   }
 
   async deleteSession(sessionId: string): Promise<void> {
@@ -599,7 +793,8 @@ class ApiClient {
   }
 
   async getArchiveStats(): Promise<ArchiveStats> {
-    return this.request<ArchiveStats>({ url: '/api/archive/stats' });
+    const response = await this.request<{ status?: string; statistics: ArchiveStats }>({ url: '/api/archive/stats' });
+    return response.statistics;
   }
 
   async mergeMemories(memoryIds: number[]): Promise<{ success: boolean; merged_memory_id?: number }> {
@@ -615,11 +810,12 @@ class ApiClient {
   }
 
   async getTools(filter?: string): Promise<{ tools: Record<string, Tool> }> {
-    return this.request<{ tools: Record<string, Tool> }>({ url: '/api/tools', params: filter ? { filter } : undefined });
+    return this.request<{ tools: Record<string, Tool> }>({ url: '/api/tools', params: filter ? { category: filter } : undefined });
   }
 
   async getToolsStats(): Promise<ToolStats> {
-    return this.request<ToolStats>({ url: '/api/tools/stats' });
+    const response = await this.request<{ status?: string; statistics: ToolStats }>({ url: '/api/tools/stats' });
+    return response.statistics;
   }
 
   async deleteTool(toolId: string): Promise<void> {
@@ -631,19 +827,37 @@ class ApiClient {
   }
 
   async getAcpStats(): Promise<AcpStats> {
-    return this.request<AcpStats>({ url: '/api/acp/stats' });
+    const response = await this.request<{ status?: string; statistics: Record<string, number> }>({ url: '/api/acp/stats' });
+    const stats = response.statistics || {};
+    return {
+      total_agents: stats.total_agents ?? 0,
+      active_agents: stats.online_agents ?? stats.active_agents ?? 0,
+      total_messages: stats.total_messages ?? 0,
+      total_conversations: stats.total_messages ?? 0,
+    };
   }
 
   async getAcpAgents(): Promise<AcpAgentRow[]> {
-    return this.request<AcpAgentRow[]>({ url: '/api/acp/agents' });
+    const response = await this.request<{ status?: string; agents: AcpAgentRow[] }>({ url: '/api/acp/agents' });
+    return response.agents || [];
   }
 
   async createAcpAgent(data: { name: string; description?: string; capabilities?: string[] }): Promise<AcpAgentRow> {
-    return this.request<AcpAgentRow>({ url: '/api/acp/agents', method: 'post', data });
+    return this.request<AcpAgentRow>({
+      url: '/api/acp/agents',
+      method: 'post',
+      data: {
+        name: data.name,
+        description: data.description ?? '',
+        capabilities: data.capabilities ?? [],
+        host: '127.0.0.1',
+        port: 0,
+      },
+    });
   }
 
   async updateAcpAgent(agentId: string, data: Record<string, unknown>): Promise<AcpAgentRow> {
-    return this.request<AcpAgentRow>({ url: `/api/acp/agents/${agentId}`, method: 'put', data });
+    return this.request<AcpAgentRow>({ url: `/api/acp/agents/${agentId}`, method: 'patch', data });
   }
 
   async deleteAcpAgent(agentId: string): Promise<void> {
@@ -1001,13 +1215,14 @@ class ApiClient {
   }
 
   async textToSpeech(text: string): Promise<Blob> {
-    const response = await this.request<ArrayBuffer>({
-      url: '/api/tts',
-      method: 'post',
-      data: { text },
-      responseType: 'arraybuffer',
-    });
-    return new Blob([response], { type: 'audio/mp3' });
+    // BUG-F48: 单独走 axios 配置 responseType: 'arraybuffer'，确保返回正确的二进制数据
+    const axiosInstance = this.client;
+    const response = await axiosInstance.post<ArrayBuffer>(
+      '/api/tts',
+      { text },
+      { responseType: 'arraybuffer' }
+    );
+    return new Blob([response.data], { type: 'audio/mp3' });
   }
 
   async speechToText(audioBlob: Blob): Promise<{ text: string }> {
@@ -1027,29 +1242,61 @@ class ApiClient {
     agentId: string = 'default',
     images?: string[]
   ): Promise<void> {
-    const axiosInstance = this.client;
+    const baseUrl = getApiBaseUrl();
+    const token = localStorage.getItem('cxhms-token');
+    const headers: Record<string, string> = { 'Content-Type': 'application/json', Accept: 'text/event-stream' };
+    if (token) headers.Authorization = `Bearer ${token}`;
 
-    const response = await axiosInstance.post('/api/chat/stream', {
-      message,
-      agent_id: agentId,
-      images,
-    }, {
-      responseType: 'text',
-      transformResponse: [(data: string) => data],
+    const response = await fetch(`${baseUrl}/api/chat/stream`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ message, agent_id: agentId, images }),
     });
 
-    const lines = response.data.split('\n');
-    for (const line of lines) {
-      if (line.startsWith('data: ')) {
-        try {
-          const jsonStr = line.slice(6);
-          if (jsonStr.trim()) {
-            const chunk = JSON.parse(jsonStr) as Record<string, unknown>;
-            onChunk(chunk);
-          }
-        } catch {
-        }
+    if (!response.ok || !response.body) {
+      const errorText = await response.text().catch(() => '');
+      throw new Error(`请求失败: ${response.status} ${response.statusText} ${errorText}`);
+    }
+
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder('utf-8');
+    let buffer = '';
+    let streamDone = false;
+
+    const flushLine = (rawLine: string) => {
+      if (!rawLine) return;
+      const line = rawLine.endsWith('\r') ? rawLine.slice(0, -1) : rawLine;
+      if (!line.startsWith('data:')) return;
+      const dataPayload = line.startsWith('data: ') ? line.slice(6) : line.slice(5);
+      if (!dataPayload) return;
+      if (dataPayload.trim() === '[DONE]') {
+        streamDone = true;
+        return;
       }
+      try {
+        const chunk = JSON.parse(dataPayload) as Record<string, unknown>;
+        onChunk(chunk);
+      } catch {
+        // 忽略单行解析错误
+      }
+    };
+
+    while (!streamDone) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+
+      // 按行处理；保留最后未换行的部分到 buffer
+      const parts = buffer.split('\n');
+      buffer = parts.pop() ?? '';
+      for (const line of parts) {
+        flushLine(line);
+      }
+    }
+
+    // 处理流结束时 buffer 中可能残留的最后一帧（无 \n 终止）
+    if (buffer.length > 0) {
+      flushLine(buffer);
     }
   }
 
@@ -1125,7 +1372,7 @@ class ApiClient {
   }
 
   async updateTool(toolId: string, toolData: Record<string, unknown>): Promise<Tool> {
-    return this.request({ url: `/api/tools/${toolId}`, method: 'put', data: toolData });
+    return this.request({ url: `/api/tools/${toolId}`, method: 'patch', data: toolData });
   }
 
   async sendMemoryAgentMessageStream(
@@ -1153,6 +1400,7 @@ class ApiClient {
             onChunk(chunk);
           }
         } catch {
+          /* 忽略无法解析的 SSE 数据行 */
         }
       }
     }

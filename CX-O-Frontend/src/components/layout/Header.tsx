@@ -3,6 +3,9 @@ import { useNavigate } from 'react-router-dom';
 import { cn } from '../../lib/utils';
 import { useThemeStore } from '../../store/themeStore';
 
+// Check if running in Electron
+const isElectron = !!(window as unknown as { electronAPI?: unknown }).electronAPI;
+
 interface HeaderProps {
   title?: string;
   actions?: React.ReactNode;
@@ -74,6 +77,28 @@ export const Header: React.FC<HeaderProps> = ({ title, actions }) => {
             <path d="M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z" />
           </svg>
         </a>
+
+        {/* 桌宠模式按钮 - 仅在 Electron 环境显示 */}
+        {isElectron && (
+          <button
+            onClick={() => {
+              const electronAPI = (window as unknown as { electronAPI?: { openPetWindow: () => void } }).electronAPI;
+              if (electronAPI?.openPetWindow) {
+                electronAPI.openPetWindow();
+              }
+            }}
+            className={cn(
+              'p-2 rounded-[var(--radius-md)]',
+              'text-[var(--color-text-secondary)] hover:bg-[var(--color-bg-hover)]',
+              'transition-colors duration-[var(--transition-fast)]'
+            )}
+            title="桌宠模式"
+          >
+            <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6" />
+            </svg>
+          </button>
+        )}
 
         <button
           onClick={toggleTheme}

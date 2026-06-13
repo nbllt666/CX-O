@@ -48,48 +48,55 @@ def register_system_handlers(manager: "WebSocketManager"):
                 from server.dependencies import get_memory_manager
                 memory_mgr = get_memory_manager()
                 status["services"]["memory"] = {"available": True, "stats": memory_mgr.get_statistics()}
-            except Exception:
+            except Exception as e:
+                logger.warning("获取memory管理器状态失败: %s", e, exc_info=True)
                 status["services"]["memory"] = {"available": False}
 
             try:
                 from server.dependencies import get_acp_manager
                 acp_mgr = get_acp_manager()
                 status["services"]["acp"] = {"available": True, "stats": await acp_mgr.get_statistics()}
-            except Exception:
+            except Exception as e:
+                logger.warning("获取acp管理器状态失败: %s", e, exc_info=True)
                 status["services"]["acp"] = {"available": False}
 
             try:
                 from server.dependencies import get_mcp_manager
                 mcp_mgr = get_mcp_manager()
                 status["services"]["mcp"] = {"available": True, "stats": mcp_mgr.get_stats()}
-            except Exception:
+            except Exception as e:
+                logger.warning("获取mcp管理器状态失败: %s", e, exc_info=True)
                 status["services"]["mcp"] = {"available": False}
 
             try:
                 from server.dependencies import get_llm_client
                 llm = get_llm_client()
                 status["services"]["llm"] = {"available": True, "model": llm.model_name}
-            except Exception:
+            except Exception as e:
+                logger.warning("获取llm客户端状态失败: %s", e, exc_info=True)
                 status["services"]["llm"] = {"available": False}
 
             try:
                 from server.dependencies import get_model_router
                 mr = get_model_router()
                 status["services"]["model_router"] = {"available": True}
-            except Exception:
+            except Exception as e:
+                logger.warning("获取model router状态失败: %s", e, exc_info=True)
                 status["services"]["model_router"] = {"available": False}
 
             try:
                 from server.core.tools import tool_registry
                 status["services"]["tools"] = {"available": True, "stats": tool_registry.get_tool_stats()}
-            except Exception:
+            except Exception as e:
+                logger.warning("获取tools状态失败: %s", e, exc_info=True)
                 status["services"]["tools"] = {"available": False}
 
             try:
                 from server.core.plugins.manager import get_plugin_manager
                 plugin_mgr = get_plugin_manager()
                 status["services"]["plugins"] = {"available": True, "stats": plugin_mgr.get_stats()}
-            except Exception:
+            except Exception as e:
+                logger.warning("获取plugins状态失败: %s", e, exc_info=True)
                 status["services"]["plugins"] = {"available": False}
 
             await manager.send_message(client_id, create_response(

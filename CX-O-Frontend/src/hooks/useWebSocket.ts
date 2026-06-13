@@ -1,11 +1,6 @@
 import { useEffect, useRef, useCallback, useState } from 'react';
 
-const WS_BASE_URL =
-  import.meta.env.VITE_WS_URL ||
-  (import.meta.env.VITE_API_URL || 'http://127.0.0.1:8000')
-    .replace('http', 'ws')
-    .replace(/\/ws$/, '')
-    .replace(/\/$/, '');
+import { getWS_BASE_URL } from '../api/client';
 
 export interface WebSocketMessage {
   type: string;
@@ -69,7 +64,7 @@ export function useWebSocket(options: WebSocketOptions): UseWebSocketReturn {
 
   const wsRef = useRef<WebSocket | null>(null);
   const pingIntervalRef = useRef<NodeJS.Timeout | null>(null);
-  const reconnectTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const reconnectTimeoutRef = useRef<number | null>(null);
   const [isConnected, setIsConnected] = useState(false);
   const [isGenerating, setIsGenerating] = useState(false);
   const agentIdRef = useRef(agentId);
@@ -131,13 +126,21 @@ export function useWebSocket(options: WebSocketOptions): UseWebSocketReturn {
       return;
     }
 
-    const wsUrl = `${WS_BASE_URL}/ws`;
+    const wsUrl = `${getWS_BASE_URL()}/ws`;
   console.log('[WebSocket] Connecting to:', wsUrl, 'with agent:', agentIdRef.current);
   const ws = new WebSocket(wsUrl);
 
     ws.onopen = () => {
       setIsConnected(true);
       startPingInterval();
+      // 同步最新的 agentId 和 timeout 到服务端
+      ws.send(
+        JSON.stringify({
+          type: 'config',
+          agent_id: agentIdRef.current,
+          timeout: timeoutRef.current,
+        })
+      );
       onConnectRef.current?.();
     };
 
@@ -230,7 +233,7 @@ export function useWebSocket(options: WebSocketOptions): UseWebSocketReturn {
 
   const reconnect = useCallback(() => {
     disconnect();
-    window.setTimeout(connect, 100);
+    reconnectTimeoutRef.current = window.setTimeout(connect, 100);
   }, [connect, disconnect]);
 
   const sendMessage = useCallback(
@@ -303,6 +306,7 @@ export function useWebSocket(options: WebSocketOptions): UseWebSocketReturn {
       wsRef.current.send(
         JSON.stringify({
           type: 'config',
+          agent_id: agentIdRef.current,
           timeout,
         })
       );

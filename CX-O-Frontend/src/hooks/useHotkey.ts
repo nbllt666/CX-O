@@ -54,18 +54,17 @@ export function useHotkey(key: string, callback: () => void, options: HotkeyOpti
   }, [callback, options]);
 
   useEffect(() => {
-    const { enabled = true, preventDefault = true, stopPropagation = false } = optionsRef.current;
-
-    if (!enabled) return;
-
     const normalizedKey = normalizeKey(key);
 
     const handleKeyDown = (event: KeyboardEvent) => {
-      if (normalizedKey === normalizeKey(event.key) && matchModifiers(event, optionsRef.current)) {
-        if (preventDefault) {
+      const opts = optionsRef.current;
+      if (opts.enabled === false) return;
+
+      if (normalizedKey === normalizeKey(event.key) && matchModifiers(event, opts)) {
+        if (opts.preventDefault ?? true) {
           event.preventDefault();
         }
-        if (stopPropagation) {
+        if (opts.stopPropagation) {
           event.stopPropagation();
         }
         callbackRef.current();

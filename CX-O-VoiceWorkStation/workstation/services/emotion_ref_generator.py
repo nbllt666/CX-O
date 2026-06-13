@@ -22,6 +22,23 @@ class EmotionRefGenerator:
     ):
         self._cosyvoice_url = cosyvoice_url
         self._output_dir = Path(output_dir)
+        # 允许作为输入基准音频的根目录，默认仅允许 data/input，防止任意本地文件读取。
+        self._allowed_audio_root = Path("data/input").resolve()
+
+    def _validate_audio_path(self, audio_path: str) -> Path:
+        """校验 audio_path 解析后必须位于允许的根目录之内，防止任意文件读取。"""
+        audio = Path(audio_path)
+        try:
+            resolved = audio.resolve()
+        except Exception as e:
+            raise ValueError(f"Invalid audio path: {audio_path}: {e}")
+        try:
+            resolved.relative_to(self._allowed_audio_root)
+        except ValueError:
+            raise ValueError(
+                f"audio path must be located under {self._allowed_audio_root}, got: {resolved}"
+            )
+        return resolved
 
     async def generate_all(
         self,
@@ -33,7 +50,7 @@ class EmotionRefGenerator:
     ) -> dict:
         from workstation.services.cosyvoice_client import CosyVoiceClient
 
-        base_audio = Path(base_audio_path)
+        base_audio = self._validate_audio_path(base_audio_path)
         if not base_audio.exists():
             raise FileNotFoundError(f"Base audio file not found: {base_audio_path}")
 

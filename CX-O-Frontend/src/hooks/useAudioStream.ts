@@ -50,16 +50,30 @@ const DEFAULT_CONFIG: AudioStreamConfig = {
   autoGainControl: true,
 };
 
+const MAX_AUDIO_BUFFER_LENGTH = 50;
+
 export function useAudioStream(options: UseAudioStreamOptions): UseAudioStreamReturn {
   const {
     wsSend,
-    // onVADStatus,
-    // onVADFrame,
-    // onASRResult,
-    // onInterrupt,
+    onVADStatus,
+    onVADFrame,
+    onASRResult,
+    onInterrupt,
     config = DEFAULT_CONFIG,
     chunkInterval = 100,
   } = options;
+
+  const onVADStatusRef = useRef(onVADStatus);
+  const onVADFrameRef = useRef(onVADFrame);
+  const onASRResultRef = useRef(onASRResult);
+  const onInterruptRef = useRef(onInterrupt);
+
+  useEffect(() => {
+    onVADStatusRef.current = onVADStatus;
+    onVADFrameRef.current = onVADFrame;
+    onASRResultRef.current = onASRResult;
+    onInterruptRef.current = onInterrupt;
+  }, [onVADStatus, onVADFrame, onASRResult, onInterrupt]);
 
   const [isStreaming, setIsStreaming] = useState(false);
   const [isSpeaking, setIsSpeaking] = useState(false);
@@ -123,12 +137,17 @@ export function useAudioStream(options: UseAudioStreamOptions): UseAudioStreamRe
       scriptProcessor.onaudioprocess = (event) => {
         const inputData = event.inputBuffer.getChannelData(0);
         const int16Data = float32ToInt16(inputData);
+        if (audioBufferRef.current.length >= MAX_AUDIO_BUFFER_LENGTH) {
+          audioBufferRef.current.shift();
+        }
         audioBufferRef.current.push(int16Data);
       };
 
+      const mediaStreamDestination = audioContext.createMediaStreamDestination();
+
       source.connect(analyser);
       analyser.connect(scriptProcessor);
-      scriptProcessor.connect(audioContext.destination);
+      scriptProcessor.connect(mediaStreamDestination);
 
       setIsStreaming(true);
 

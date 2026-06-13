@@ -11,6 +11,9 @@ from .graph_tools import (
     concept_graph_extract_entities, concept_graph_merge_entities, concept_graph_get_entity_summary,
     event_graph_extract_entities, event_graph_merge_entities, event_graph_get_entity_summary,
 )
+from server.core.logging_config import get_contextual_logger
+
+logger = get_contextual_logger(__name__)
 
 _MEMORY_MANAGER = None
 _MODEL_ROUTER = None
@@ -561,7 +564,7 @@ async def save_summary_memory(
             final_tags.append(f"topic:{topic}")
 
         # 保存记忆
-        memory_id = await _MEMORY_MANAGER.add_memory(
+        memory_id = await _MEMORY_MANAGER.write_memory_async(
             content=content,
             memory_type="long_term",
             importance=importance_normalized,
@@ -725,7 +728,7 @@ async def trigger_topic_summary(
         if topic:
             tags.append(f"topic:{topic}")
 
-        memory_id = await _MEMORY_MANAGER.add_memory(
+        memory_id = await _MEMORY_MANAGER.write_memory_async(
             content=summary,
             memory_type="conversation_summary",
             importance=importance / 10.0,

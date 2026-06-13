@@ -50,8 +50,6 @@ BUILTIN_TOOL_NAMES = {
     "get_similar_memories",
     "get_memory_logs",
     "get_available_commands",
-    # 记忆工具
-    "save_memory",
 }
 
 

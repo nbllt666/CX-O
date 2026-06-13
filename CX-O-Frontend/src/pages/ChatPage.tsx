@@ -301,6 +301,8 @@ export function ChatPage() {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const tempAssistantIdRef = useRef<string>('');
   const lastDoneContentRef = useRef<string | null>(null);
+  const alarmTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const loadHistoryCancelledRef = useRef<{ cancelled: boolean }>({ cancelled: false });
   const [doneTrigger, setDoneTrigger] = useState(0);
 
   const [isRecording, setIsRecording] = useState(false);
@@ -557,8 +559,12 @@ export function ChatPage() {
 
   const handleAlarm = useCallback((message: string, triggeredAt: string) => {
     setAlarms((prev) => [...prev, { message, triggeredAt }]);
-    setTimeout(() => {
+    if (alarmTimeoutRef.current) {
+      clearTimeout(alarmTimeoutRef.current);
+    }
+    alarmTimeoutRef.current = setTimeout(() => {
       setAlarms((prev) => prev.slice(1));
+      alarmTimeoutRef.current = null;
     }, 5000);
   }, []);
 
@@ -589,6 +595,10 @@ export function ChatPage() {
       if (streamRef.current) {
         streamRef.current.getTracks().forEach(track => track.stop());
       }
+      if (alarmTimeoutRef.current) {
+        clearTimeout(alarmTimeoutRef.current);
+        alarmTimeoutRef.current = null;
+      }
     };
   }, []);
 
@@ -598,11 +608,17 @@ export function ChatPage() {
   const [isNearBottom, setIsNearBottom] = useState(true);
 
   useEffect(() => {
+    loadHistoryCancelledRef.current.cancelled = true;
+    const myToken = { cancelled: false };
+    loadHistoryCancelledRef.current = myToken;
     if (currentAgentId) {
-      loadAgentHistory(currentAgentId);
+      loadAgentHistory(currentAgentId, myToken);
     } else {
       setMessages([]);
     }
+    return () => {
+      myToken.cancelled = true;
+    };
   }, [currentAgentId]);
 
   // 滚动相关
@@ -644,9 +660,10 @@ export function ChatPage() {
     }
   }, [shouldAutoScroll]);
 
-  const loadAgentHistory = async (agentId: string) => {
+  const loadAgentHistory = async (agentId: string, token: { cancelled: boolean }) => {
     try {
       const data = await api.getChatHistory(`agent-${agentId}`);
+      if (token.cancelled) return;
       if (data.messages) {
         const formattedMessages = data.messages.map(
           (msg: {
@@ -665,9 +682,11 @@ export function ChatPage() {
             images: msg.images,
           })
         );
+        if (token.cancelled) return;
         setMessages(formattedMessages as Message[]);
       }
     } catch (error) {
+      if (token.cancelled) return;
       console.error('加载历史消息失败:', error);
       setMessages([]);
     }
@@ -713,11 +732,12 @@ export function ChatPage() {
   const handleClearContext = async () => {
     if (!confirm('确定要清空当前对话的上下文吗？这将清除所有对话历史。')) return;
 
+    const token = { cancelled: false };
     try {
       const sessionId = `agent-${currentAgentId}`;
       await api.deleteSession(sessionId);
       // 清空后重新加载历史（会创建新的空会话）
-      await loadAgentHistory(currentAgentId || 'default');
+      await loadAgentHistory(currentAgentId || 'default', token);
       alert('上下文已清空');
     } catch (error) {
       console.error('清空上下文失败:', error);
