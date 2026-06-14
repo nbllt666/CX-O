@@ -22,6 +22,7 @@ from server.config import get_settings
 from server.dependencies import ServiceState, set_service_state
 from server.core.graph import GraphDatabase
 from server.core.graph.config import get_graph_config
+from server.core.lifecycle import init_service, shutdown_service
 
 logger = logging.getLogger(__name__)
 
@@ -72,123 +73,102 @@ async def lifespan(app: FastAPI):
 
     db_config = settings.config.database
 
-    try:
+    async def _init_model_router():
         services.model_router = mr
         await services.model_router.initialize()
-        lifespan_logger.info("模型路由器已启动")
-    except Exception as e:
-        lifespan_logger.warning(f"模型路由器启动失败: {e}")
-        services.model_router = None
+        return services.model_router
 
-    try:
-        services.memory_manager = MemoryManager(db_path=db_config.memories_db)
-        lifespan_logger.info("记忆管理器已启动")
-    except Exception as e:
-        lifespan_logger.warning(f"记忆管理器启动失败: {e}")
-        services.memory_manager = None
+    services.model_router = await init_service("模型路由器", _init_model_router, logger_=lifespan_logger)
 
-    try:
-        services.async_memory_manager = AsyncMemoryManager(db_path=db_config.memories_db)
-        await services.async_memory_manager.initialize()
-        lifespan_logger.info("异步记忆管理器已启动")
-    except Exception as e:
-        lifespan_logger.warning(f"异步记忆管理器启动失败: {e}")
-        services.async_memory_manager = None
+    services.memory_manager = await init_service(
+        "记忆管理器", lambda: MemoryManager(db_path=db_config.memories_db), logger_=lifespan_logger
+    )
 
-    try:
-        services.context_manager = ContextManager(db_path=db_config.sessions_db)
-        lifespan_logger.info("上下文管理器已启动")
-    except Exception as e:
-        lifespan_logger.warning(f"上下文管理器启动失败: {e}")
-        services.context_manager = None
+    async def _init_async_memory_manager():
+        mgr = AsyncMemoryManager(db_path=db_config.memories_db)
+        await mgr.initialize()
+        return mgr
 
-    try:
-        services.acp_manager = ACPManager(data_dir=db_config.acp_db)
-        services.acp_manager.initialize(
+    services.async_memory_manager = await init_service("异步记忆管理器", _init_async_memory_manager, logger_=lifespan_logger)
+
+    services.context_manager = await init_service(
+        "上下文管理器", lambda: ContextManager(db_path=db_config.sessions_db), logger_=lifespan_logger
+    )
+
+    async def _init_acp_manager():
+        mgr = ACPManager(data_dir=db_config.acp_db)
+        mgr.initialize(
             agent_id=settings.config.acp.agent_id, agent_name=settings.config.acp.agent_name
         )
-        await services.acp_manager.start()
-        lifespan_logger.info("ACP管理器已启动")
-    except Exception as e:
-        lifespan_logger.warning(f"ACP管理器启动失败: {e}")
-        services.acp_manager = None
+        await mgr.start()
+        return mgr
 
-    try:
+    services.acp_manager = await init_service("ACP管理器", _init_acp_manager, logger_=lifespan_logger)
+
+    def _init_llm_client():
         if services.model_router:
-            services.llm_client = services.model_router.get_client("main")
-            lifespan_logger.info(f"LLM客户端已启动: {services.llm_client.model_name if services.llm_client else 'None'}")
-        else:
-            services.llm_client = LLMFactory.create_client(
-                provider=settings.config.llm.provider,
-                host=settings.config.llm.host,
-                model=settings.config.llm.model,
-                temperature=settings.config.llm.temperature,
-                max_tokens=settings.config.llm.max_tokens,
-            )
-            lifespan_logger.info(f"LLM客户端已启动(回退模式): {services.llm_client.model_name}")
-    except Exception as e:
-        lifespan_logger.warning(f"LLM客户端启动失败: {e}")
-        services.llm_client = None
+            client = services.model_router.get_client("main")
+            if client:
+                return client
+        return LLMFactory.create_client(
+            provider=settings.config.llm.provider,
+            host=settings.config.llm.host,
+            model=settings.config.llm.model,
+            temperature=settings.config.llm.temperature,
+            max_tokens=settings.config.llm.max_tokens,
+        )
 
-    try:
-        if services.memory_manager:
-            services.secondary_router = SecondaryModelRouter(
+    services.llm_client = await init_service("LLM客户端", _init_llm_client, logger_=lifespan_logger)
+
+    if services.memory_manager:
+        services.secondary_router = await init_service(
+            "副模型路由器",
+            lambda: SecondaryModelRouter(
                 services.memory_manager,
                 services.llm_client,
                 model_router=services.model_router,
                 context_manager=services.context_manager,
-            )
-            lifespan_logger.info("副模型路由器已启动")
-    except Exception as e:
-        lifespan_logger.warning(f"副模型路由器启动失败: {e}")
-        services.secondary_router = None
+            ),
+            logger_=lifespan_logger,
+        )
 
-    try:
-        services.mcp_manager = MCPManager()
-        services.mcp_manager.set_tool_registry(tool_registry)
-        lifespan_logger.info("MCP管理器已启动")
-    except Exception as e:
-        lifespan_logger.warning(f"MCP管理器启动失败: {e}")
-        services.mcp_manager = None
+    def _init_mcp_manager():
+        mgr = MCPManager()
+        mgr.set_tool_registry(tool_registry)
+        return mgr
 
-    try:
+    services.mcp_manager = await init_service("MCP管理器", _init_mcp_manager, logger_=lifespan_logger)
+
+    def _init_graph_database():
         graph_config = get_graph_config()
         graph_db = GraphDatabase(config=graph_config)
         graph_db.initialize()
-        services.graph_database = graph_db
-        lifespan_logger.info("图数据库已启动")
-    except Exception as e:
-        lifespan_logger.warning(f"图数据库启动失败: {e}")
-        services.graph_database = None
+        return graph_db
 
-    try:
-        if services.graph_database:
+    services.graph_database = await init_service("图数据库", _init_graph_database, logger_=lifespan_logger)
+
+    if services.graph_database:
+        def _init_graph_store():
             from server.core.memory.graph_store import SQLiteGraphStore
-            graph_store = SQLiteGraphStore(services.graph_database)
-            services.graph_store = graph_store
-            lifespan_logger.info("图存储桥接已启动")
-    except Exception as e:
-        lifespan_logger.warning(f"图存储桥接启动失败: {e}")
-        services.graph_store = None
+            return SQLiteGraphStore(services.graph_database)
 
-    try:
-        if services.graph_store:
+        services.graph_store = await init_service("图存储桥接", _init_graph_store, logger_=lifespan_logger)
+
+    if services.graph_store:
+        def _register_graph_tools():
             from server.core.tools.graph_tools import set_graph_dependencies, register_graph_tools
             set_graph_dependencies(services.graph_store)
             register_graph_tools()
-            lifespan_logger.info("图工具已注册")
-    except Exception as e:
-        lifespan_logger.warning(f"图工具注册失败: {e}")
 
-    try:
+        await init_service("图工具", _register_graph_tools, logger_=lifespan_logger)
+
+    def _register_builtin():
         from server.core.tools import register_builtin_tools
         register_builtin_tools()
-        lifespan_logger.info("内置工具已注册")
-    except Exception as e:
-        lifespan_logger.warning(f"内置工具注册失败: {e}")
 
-    master_tools_registered = False
-    try:
+    await init_service("内置工具", _register_builtin, logger_=lifespan_logger)
+
+    def _register_master():
         from server.core.tools import register_master_tools, set_master_dependencies
         set_master_dependencies(
             memory_manager=services.memory_manager,
@@ -197,13 +177,10 @@ async def lifespan(app: FastAPI):
             acp_manager=services.acp_manager,
         )
         register_master_tools()
-        master_tools_registered = True
-        lifespan_logger.info("主模型工具已注册")
-    except Exception as e:
-        lifespan_logger.warning(f"主模型工具注册失败: {e}")
 
-    summary_tools_registered = False
-    try:
+    master_tools_registered = await init_service("主模型工具", _register_master, logger_=lifespan_logger) is not None
+
+    def _register_summary():
         from server.core.tools import register_summary_tools, set_summary_dependencies
         set_summary_dependencies(
             memory_manager=services.memory_manager,
@@ -211,13 +188,10 @@ async def lifespan(app: FastAPI):
             context_manager=services.context_manager,
         )
         register_summary_tools()
-        summary_tools_registered = True
-        lifespan_logger.info("摘要模型工具已注册")
-    except Exception as e:
-        lifespan_logger.warning(f"摘要模型工具注册失败: {e}")
 
-    assistant_tools_registered = False
-    try:
+    summary_tools_registered = await init_service("摘要模型工具", _register_summary, logger_=lifespan_logger) is not None
+
+    def _register_assistant():
         from server.core.tools import register_assistant_tools, set_assistant_dependencies
         set_assistant_dependencies(
             memory_manager=services.memory_manager,
@@ -225,10 +199,8 @@ async def lifespan(app: FastAPI):
             context_manager=services.context_manager,
         )
         register_assistant_tools()
-        assistant_tools_registered = True
-        lifespan_logger.info("记忆管理模型工具已注册")
-    except Exception as e:
-        lifespan_logger.warning(f"记忆管理模型工具注册失败: {e}")
+
+    assistant_tools_registered = await init_service("记忆管理模型工具", _register_assistant, logger_=lifespan_logger) is not None
 
     from server.core.tools import tool_registry
     tools_stats = tool_registry.get_tool_stats()
@@ -241,8 +213,8 @@ async def lifespan(app: FastAPI):
     if not (master_tools_registered and summary_tools_registered and assistant_tools_registered):
         lifespan_logger.warning("部分工具注册失败，系统可能无法正常工作")
 
-    try:
-        if services.memory_manager and services.llm_client and settings.config.memory.vector_enabled:
+    if services.memory_manager and services.llm_client and settings.config.memory.vector_enabled:
+        async def _init_vector_search():
             vector_backend = settings.config.memory.vector_backend
             if vector_backend == "weaviate":
                 services.memory_manager.enable_vector_search(
@@ -260,24 +232,21 @@ async def lifespan(app: FastAPI):
                     vector_size=settings.config.memory.weaviate.vector_size,
                 )
             else:
-                lifespan_logger.warning(f"不支持的向量存储后端: {vector_backend}，仅支持 weaviate 和 weaviate_embedded")
+                raise ValueError(f"不支持的向量存储后端: {vector_backend}，仅支持 weaviate 和 weaviate_embedded")
             lifespan_logger.info(f"向量搜索已启用: {vector_backend}")
 
             if services.memory_manager.is_vector_search_enabled():
-                try:
-                    sync_result = await services.memory_manager._vector_store.sync_with_sqlite(
-                        services.memory_manager, last_sync_time=services.memory_manager._last_sync_time
-                    )
-                    services.memory_manager._last_sync_time = datetime.now().isoformat()
-                    lifespan_logger.info(
-                        f"启动时向量同步完成: checked={sync_result.total_checked}, synced={sync_result.synced}, errors={sync_result.errors}"
-                    )
-                except Exception as e:
-                    lifespan_logger.warning(f"启动时向量同步失败: {e}")
-    except Exception as e:
-        lifespan_logger.warning(f"向量搜索启动失败: {e}")
+                sync_result = await services.memory_manager._vector_store.sync_with_sqlite(
+                    services.memory_manager, last_sync_time=services.memory_manager._last_sync_time
+                )
+                services.memory_manager._last_sync_time = datetime.now().isoformat()
+                lifespan_logger.info(
+                    f"启动时向量同步完成: checked={sync_result.total_checked}, synced={sync_result.synced}, errors={sync_result.errors}"
+                )
 
-    try:
+        await init_service("向量搜索", _init_vector_search, logger_=lifespan_logger)
+
+    async def _init_alarm_and_ws():
         from server.core.alarm import get_alarm_manager
         from server.core.websocket.handlers import push_alarm_to_agent
         from server.core.websocket.manager import get_websocket_manager
@@ -292,7 +261,6 @@ async def lifespan(app: FastAPI):
                 )
                 future.result(timeout=5)
             except Exception as e:
-                import logging
                 logging.getLogger(__name__).error(f"推送提醒失败: {e}")
 
         alarm_manager.set_trigger_callback(on_alarm_trigger)
@@ -349,74 +317,73 @@ async def lifespan(app: FastAPI):
         ws_manager.set_offline_callback(on_offline)
         await ws_manager.start_cleanup_task(interval_seconds=30)
         lifespan_logger.info("WebSocket 离线保存已启用")
-    except Exception as e:
-        lifespan_logger.warning(f"提醒管理器启动失败: {e}")
 
-    try:
-        if services.memory_manager:
-            services.decay_batch_processor = DecayBatchProcessor(services.memory_manager, interval_hours=24)
-            await services.decay_batch_processor.start()
-            lifespan_logger.info("批量衰减处理器已启动")
-    except Exception as e:
-        lifespan_logger.warning(f"批量衰减处理器启动失败: {e}")
-        services.decay_batch_processor = None
+    await init_service("提醒管理器", _init_alarm_and_ws, logger_=lifespan_logger)
 
-    try:
+    if services.memory_manager:
+        async def _init_decay_batch():
+            processor = DecayBatchProcessor(services.memory_manager, interval_hours=24)
+            await processor.start()
+            return processor
+
+        services.decay_batch_processor = await init_service("批量衰减处理器", _init_decay_batch, logger_=lifespan_logger)
+
+    async def _init_cxfc():
         from server.core.cxfc.manager import CXFCManager
         from server.core.cxfc.discovery import CXFCDiscovery
 
         cxfc_config = getattr(settings, 'cxfc', None)
-        if cxfc_config and getattr(cxfc_config, 'enabled', True):
-            cxfc_manager = CXFCManager(
-                storage_path=getattr(cxfc_config, 'storage_path', 'data/cxfc_plugins.db'),
-                heartbeat_timeout=getattr(cxfc_config, 'heartbeat_timeout', 30),
-                heartbeat_check_interval=getattr(cxfc_config, 'heartbeat_check_interval', 10),
+        if not cxfc_config or not getattr(cxfc_config, 'enabled', True):
+            return None
+
+        cxfc_manager = CXFCManager(
+            storage_path=getattr(cxfc_config, 'storage_path', 'data/cxfc_plugins.db'),
+            heartbeat_timeout=getattr(cxfc_config, 'heartbeat_timeout', 30),
+            heartbeat_check_interval=getattr(cxfc_config, 'heartbeat_check_interval', 10),
+        )
+
+        if hasattr(services, 'tool_registry') and services.tool_registry:
+            cxfc_manager.set_tool_registry(services.tool_registry)
+
+        await cxfc_manager.start()
+
+        from server.core.websocket.manager import get_websocket_manager
+        ws_mgr = get_websocket_manager()
+        cxfc_manager.set_ws_manager(ws_mgr)
+
+        async def on_cxfc_event(skill, event):
+            try:
+                if ws_mgr:
+                    await ws_mgr.broadcast({
+                        "type": "skill_triggered",
+                        "data": {
+                            "skill_name": skill.name,
+                            "skill_description": skill.description,
+                            "event_type": event.event_type,
+                            "source_plugin": skill.source_plugin_id,
+                            "prompt_template": skill.prompt_template,
+                        },
+                    })
+            except Exception as e:
+                lifespan_logger.warning(f"广播 Skill 触发事件失败: {e}")
+
+        cxfc_manager.set_on_event_callback(on_cxfc_event)
+
+        if getattr(cxfc_config, 'discovery_enabled', True):
+            cxfc_discovery = CXFCDiscovery(
+                broadcast_port=getattr(cxfc_config, 'broadcast_port', 9997),
+                discovery_port=getattr(cxfc_config, 'discovery_port', 9996),
             )
+            await cxfc_discovery.start_discovery(
+                local_name="CX-O",
+                local_port=getattr(settings, 'system', None) and getattr(settings.system, 'port', 8000) or 8000,
+                capabilities=["chat", "memory", "tools", "asr", "tts"],
+            )
+            services.cxfc_discovery = cxfc_discovery
 
-            if hasattr(services, 'tool_registry') and services.tool_registry:
-                cxfc_manager.set_tool_registry(services.tool_registry)
+        return cxfc_manager
 
-            await cxfc_manager.start()
-
-            from server.core.websocket.manager import get_websocket_manager
-            ws_mgr = get_websocket_manager()
-            cxfc_manager.set_ws_manager(ws_mgr)
-
-            async def on_cxfc_event(skill, event):
-                try:
-                    if ws_mgr:
-                        await ws_mgr.broadcast({
-                            "type": "skill_triggered",
-                            "data": {
-                                "skill_name": skill.name,
-                                "skill_description": skill.description,
-                                "event_type": event.event_type,
-                                "source_plugin": skill.source_plugin_id,
-                                "prompt_template": skill.prompt_template,
-                            },
-                        })
-                except Exception as e:
-                    lifespan_logger.warning(f"广播 Skill 触发事件失败: {e}")
-
-            cxfc_manager.set_on_event_callback(on_cxfc_event)
-
-            services.cxfc_manager = cxfc_manager
-
-            if getattr(cxfc_config, 'discovery_enabled', True):
-                cxfc_discovery = CXFCDiscovery(
-                    broadcast_port=getattr(cxfc_config, 'broadcast_port', 9997),
-                    discovery_port=getattr(cxfc_config, 'discovery_port', 9996),
-                )
-                await cxfc_discovery.start_discovery(
-                    local_name="CX-O",
-                    local_port=getattr(settings, 'system', None) and getattr(settings.system, 'port', 8000) or 8000,
-                    capabilities=["chat", "memory", "tools", "asr", "tts"],
-                )
-                services.cxfc_discovery = cxfc_discovery
-
-            lifespan_logger.info("CXFC管理器已启动")
-    except Exception as e:
-        lifespan_logger.warning(f"CXFC管理器启动失败: {e}")
+    services.cxfc_manager = await init_service("CXFC管理器", _init_cxfc, logger_=lifespan_logger)
 
     from server.services.asr_service import get_asr_service
     from server.services.tts_service import get_tts_service
@@ -511,83 +478,63 @@ async def lifespan(app: FastAPI):
     lifespan_logger.info("正在关闭CX-O服务...")
 
     if hasattr(services, 'cxfc_manager') and services.cxfc_manager:
-        await services.cxfc_manager.shutdown()
+        await shutdown_service("CXFC管理器", services.cxfc_manager.shutdown, logger_=lifespan_logger)
     if hasattr(services, 'cxfc_discovery') and services.cxfc_discovery:
-        await services.cxfc_discovery.stop_discovery()
+        await shutdown_service("CXFC发现服务", services.cxfc_discovery.stop_discovery, logger_=lifespan_logger)
 
     if services.graph_database:
-        try:
-            services.graph_database.close()
-            lifespan_logger.info("图数据库已关闭")
-        except Exception as e:
-            lifespan_logger.warning(f"图数据库关闭失败: {e}")
+        await shutdown_service("图数据库", services.graph_database.close, logger_=lifespan_logger)
 
-    try:
+    async def _shutdown_alarm():
         from server.core.alarm import get_alarm_manager
-        alarm_mgr = get_alarm_manager()
-        alarm_mgr.shutdown()
-    except Exception:
-        lifespan_logger.warning("关闭AlarmManager失败", exc_info=True)
+        get_alarm_manager().shutdown()
 
-    try:
+    await shutdown_service("AlarmManager", _shutdown_alarm, logger_=lifespan_logger)
+
+    async def _shutdown_ws_cleanup():
         from server.core.websocket.manager import get_websocket_manager
-        ws_mgr = get_websocket_manager()
-        await ws_mgr.stop_cleanup_task()
-    except Exception:
-        lifespan_logger.warning("关闭WebSocket管理器cleanup任务失败", exc_info=True)
+        await get_websocket_manager().stop_cleanup_task()
+
+    await shutdown_service("WebSocket管理器cleanup任务", _shutdown_ws_cleanup, logger_=lifespan_logger)
 
     if services.decay_batch_processor:
-        await services.decay_batch_processor.stop()
+        await shutdown_service("批量衰减处理器", services.decay_batch_processor.stop, logger_=lifespan_logger)
 
     if services.acp_manager:
-        await services.acp_manager.stop()
+        await shutdown_service("ACP管理器", services.acp_manager.stop, logger_=lifespan_logger)
 
     if services.memory_manager:
-        services.memory_manager.shutdown()
+        await shutdown_service("记忆管理器", services.memory_manager.shutdown, logger_=lifespan_logger)
 
     if services.async_memory_manager:
-        try:
-            await services.async_memory_manager.close()
-        except Exception:
-            lifespan_logger.warning("关闭AsyncMemoryManager失败", exc_info=True)
+        await shutdown_service("异步记忆管理器", services.async_memory_manager.close, logger_=lifespan_logger)
 
-    try:
+    async def _shutdown_backup():
         from server.core.backup.manager import get_backup_manager
-        backup_mgr = get_backup_manager()
-        backup_mgr.shutdown()
-    except Exception:
-        lifespan_logger.warning("关闭BackupManager失败", exc_info=True)
+        get_backup_manager().shutdown()
 
-    try:
+    await shutdown_service("BackupManager", _shutdown_backup, logger_=lifespan_logger)
+
+    async def _shutdown_plugins():
         from server.core.plugins.manager import get_plugin_manager
-        plugin_mgr = get_plugin_manager()
-        await plugin_mgr.shutdown()
-    except Exception:
-        lifespan_logger.warning("关闭PluginManager失败", exc_info=True)
+        await get_plugin_manager().shutdown()
+
+    await shutdown_service("PluginManager", _shutdown_plugins, logger_=lifespan_logger)
 
     if services.model_router:
-        await services.model_router.close()
+        await shutdown_service("模型路由器", services.model_router.close, logger_=lifespan_logger)
 
-    try:
-        asr_service = get_asr_service()
-        await asr_service.shutdown()
-        lifespan_logger.info("ASR service shutdown complete")
-    except Exception as e:
-        lifespan_logger.error(f"Error during ASR shutdown: {e}")
+    asr_service = get_asr_service()
+    await shutdown_service("ASR服务", asr_service.shutdown, logger_=lifespan_logger)
 
-    try:
-        tts_service = get_tts_service()
-        await tts_service.shutdown()
-        lifespan_logger.info("TTS service shutdown complete")
-    except Exception as e:
-        lifespan_logger.error(f"Error during TTS shutdown: {e}")
+    tts_service = get_tts_service()
+    await shutdown_service("TTS服务", tts_service.shutdown, logger_=lifespan_logger)
 
-    try:
+    async def _close_http_client():
         from server.core.utils import close_shared_http_client
         await close_shared_http_client()
-        lifespan_logger.info("Shared HTTP client closed")
-    except Exception as e:
-        lifespan_logger.error(f"Error closing shared HTTP client: {e}")
+
+    await shutdown_service("共享HTTP客户端", _close_http_client, logger_=lifespan_logger)
 
     lifespan_logger.info("CX-O服务已关闭")
 
