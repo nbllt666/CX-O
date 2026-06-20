@@ -51,12 +51,12 @@ class ConfigValidator:
     RANGE_CONSTRAINTS: Dict[str, Tuple[float, float]] = {
         "server.port": (1, 65535),
         "memory.max_memories": (1, 1000000),
-        "memory.default_importance": (1, 5),
+        "memory.default_importance": (1, 10),
         "memory.decay_rate": (0, 1),
         "memory.dedup_threshold": (0, 1),
-        "models.main.temperature": (0, 2),
+        "models.main.temperature": (0, 5),
         "models.main.max_tokens": (0, 10000000),
-        "context.max_context_length": (100, 100000),
+        "context.max_context_length": (100, 2000000),
     }
 
     PATH_FIELDS: Set[str] = {
@@ -133,8 +133,8 @@ class ConfigValidator:
             exists, value = cls._get_nested_value(config, field_path)
             if exists and value is not None:
                 if str(value) not in valid_values:
-                    result.add_error(
-                        field_path, f"无效值: '{value}', 有效值: {', '.join(valid_values)}"
+                    result.add_warning(
+                        field_path, f"未知值(非标准): '{value}', 标准值: {', '.join(valid_values)}"
                     )
 
     @classmethod

@@ -1,10 +1,12 @@
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Request
 from typing import Dict, Any
 import json
 import yaml
 from pathlib import Path
 
 from server.core.logging_config import get_contextual_logger
+from server.config import Settings
+from server.api.routers.admin import verify_admin_api_key
 
 router = APIRouter()
 logger = get_contextual_logger(__name__)
@@ -17,8 +19,8 @@ def _get_services_config() -> Dict[str, Any]:
         try:
             with open(config_file, "r", encoding="utf-8") as f:
                 return json.load(f)
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning(f"读取服务配置失败: {e}")
     return {}
 
 
@@ -48,6 +50,13 @@ def _get_default_adaptive_polling_config() -> Dict[str, Any]:
         "min_interval_ms": 50,
         "max_interval_ms": 500
     }
+
+
+@router.get("/config/limits")
+async def get_frontend_limits():
+    """获取前端限制配置"""
+    settings = Settings()
+    return settings.config.limits.frontend.model_dump()
 
 
 @router.get("/config")
@@ -100,7 +109,7 @@ async def get_unified_config():
 
 
 @router.put("/config")
-async def update_unified_config(request: Request):
+async def update_unified_config(request: Request, _: bool = Depends(verify_admin_api_key)):
     """更新统一配置 - 对应 Gateway 的 POST /api/config"""
     from config.settings import settings
 
@@ -120,8 +129,8 @@ async def update_unified_config(request: Request):
                 try:
                     with open(config_file, "r", encoding="utf-8") as f:
                         config_data = json.load(f)
-                except Exception:
-                    pass
+                except Exception as e:
+                    logger.warning(f"读取服务配置失败: {e}")
 
             if "tts" not in config_data:
                 config_data["tts"] = {}
@@ -224,7 +233,7 @@ async def update_unified_config(request: Request):
 
 
 @router.post("/config")
-async def update_config_post(request: Request):
+async def update_config_post(request: Request, _: bool = Depends(verify_admin_api_key)):
     """POST 方法的更新配置 - 兼容某些前端调用"""
     return await update_unified_config(request)
 
@@ -456,7 +465,7 @@ async def get_audio_config():
 
 
 @router.post("/config/audio")
-async def update_audio_config(request: Request):
+async def update_audio_config(request: Request, _: bool = Depends(verify_admin_api_key)):
     """更新音频配置 - 对应 Gateway 的 POST /api/config/audio"""
     try:
         data = await request.json()
@@ -466,8 +475,8 @@ async def update_audio_config(request: Request):
             try:
                 with open(config_file, "r", encoding="utf-8") as f:
                     config_data = json.load(f)
-            except Exception:
-                pass
+            except Exception as e:
+                logger.warning(f"读取服务配置失败: {e}")
         if "tts" not in config_data:
             config_data["tts"] = {}
         tts_config = config_data["tts"]
@@ -493,7 +502,7 @@ async def get_services_config():
 
 
 @router.post("/config/services")
-async def update_services_config(request: Request):
+async def update_services_config(request: Request, _: bool = Depends(verify_admin_api_key)):
     """更新服务配置 - 对应 Gateway 的 POST /api/config/services"""
     try:
         data = await request.json()
@@ -527,7 +536,7 @@ async def update_services_config(request: Request):
 
 
 @router.post("/config/llm")
-async def update_llm_config(request: Request):
+async def update_llm_config(request: Request, _: bool = Depends(verify_admin_api_key)):
     """更新LLM配置 - 对应 Gateway 的 POST /api/config/llm"""
     from config.settings import settings
     try:

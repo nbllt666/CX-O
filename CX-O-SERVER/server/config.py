@@ -176,7 +176,7 @@ class LLMConfig(BaseModel):
     host: str = "http://localhost:11434"
     model: str = "qwen3:latest"
     temperature: float = 0.7
-    max_tokens: int = 4096
+    max_tokens: int = 32768
     stream: bool = True
     api_key: Optional[str] = None
 
@@ -316,6 +316,16 @@ class ASRConfig(BaseModel):
     language: str = "auto"
 
 
+class OrpheusConfig(BaseModel):
+    """Orpheus TTS（基于 vLLM 的 OpenAI 兼容 API）配置。"""
+    url: str = "http://127.0.0.1:5060"
+    model: str = "canopylabs/orpheus-multilingual-research-release"
+    voice: str = "tara"
+    timeout: int = 60
+    flashinfer_enabled: bool = True
+    sample_rate: int = 24000
+
+
 class TTSConfig(BaseModel):
     mode: str = "remote"
     model_dir: str = "F5TTS_v1_Base"
@@ -331,6 +341,8 @@ class TTSConfig(BaseModel):
     transitions_dir: str = "data/voice_refs/transitions"
     transition_enabled: bool = True
     transition_text: str = "嗯，"
+    # Orpheus TTS 配置段（mode == "orpheus" 时生效）
+    orpheus: OrpheusConfig = Field(default_factory=OrpheusConfig)
 
 
 class VoiceWorkstationConfig(BaseModel):
@@ -379,6 +391,62 @@ class CXFCConfig(BaseModel):
     storage_path: str = "data/cxfc_plugins.db"
 
 
+class MemoryLimitsConfig(BaseModel):
+    max_memories: int = 30
+    min_score_threshold: float = 0.15
+    hybrid_search_limit: int = 30
+    hybrid_search_min_score: float = 0.15
+    vector_min_score: float = 0.3
+    inject_memories_count: int = 20
+    rag_search_limit: int = 20
+    entity_extract_max_content: int = 8000
+    max_entities: int = 50
+    max_relationships: int = 100
+    entity_candidates: int = 50
+    search_memories_limit: int = 10
+    search_similar_threshold: float = 0.5
+    search_similar_limit: int = 10
+    chat_history_limit: int = 50
+    memory_logs_limit: int = 100
+    search_all_limit: int = 10
+
+
+class ContextLimitsConfig(BaseModel):
+    max_messages: int = 500
+    window_size: int = 50
+    summary_threshold: int = 100
+    max_history: int = 500
+    conversation_max_messages: int = 100
+    conversation_recent_window: int = 20
+    summarizer_max_topics: int = 15
+    summarizer_max_key_points: int = 15
+    chat_context_limit: int = 10
+
+
+class FirewallLimitsConfig(BaseModel):
+    max_message_length: int = 10000
+    max_messages_per_second: float = 5.0
+    max_messages_per_minute: int = 100
+    duplicate_threshold: int = 3
+    duplicate_window_seconds: int = 30
+
+
+class FrontendLimitsConfig(BaseModel):
+    max_upload_size_mb: int = 500
+    max_chat_images: int = 20
+    avatar_min_width: int = 100
+    avatar_max_width: int = 1200
+    temperature_max: int = 5
+    speed_max: int = 3
+
+
+class LimitsConfig(BaseModel):
+    memory: MemoryLimitsConfig = Field(default_factory=MemoryLimitsConfig)
+    context: ContextLimitsConfig = Field(default_factory=ContextLimitsConfig)
+    firewall: FirewallLimitsConfig = Field(default_factory=FirewallLimitsConfig)
+    frontend: FrontendLimitsConfig = Field(default_factory=FrontendLimitsConfig)
+
+
 class UnifiedConfig(BaseModel):
     model_config = ConfigDict(protected_namespaces=())
 
@@ -400,6 +468,7 @@ class UnifiedConfig(BaseModel):
     graph: GraphConfigSection = Field(default_factory=GraphConfigSection)
     rate_limit: RateLimitConfig = Field(default_factory=RateLimitConfig)
     cxfc: CXFCConfig = Field(default_factory=CXFCConfig)
+    limits: LimitsConfig = Field(default_factory=LimitsConfig)
 
 
 class Settings:

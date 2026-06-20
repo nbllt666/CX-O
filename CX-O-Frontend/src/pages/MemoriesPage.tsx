@@ -67,7 +67,7 @@ export function MemoriesPage() {
     queryFn: async () => {
       const result = await api.getMemories({
         type: filterType === 'all' ? undefined : filterType,
-        limit: 1000,
+        limit: 100000,
         agent_id: currentAgentId,
       });
       return result;

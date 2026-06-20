@@ -22,6 +22,7 @@
 - [四、虚拟形象与直播](#四虚拟形象与直播)
   - [4.1 虚拟形象驱动系统](#41-虚拟形象驱动系统)
   - [4.2 直播舞台与 OBS 分层输出](#42-直播舞台与-obs-分层输出)
+  - [4.3 桌面宠物系统](#43-桌面宠物系统)
 - [五、多智能体与扩展](#五多智能体与扩展)
   - [5.1 ACP 多智能体协作协议](#51-acp-多智能体协作协议)
   - [5.2 CXFC 插件联邦协议](#52-cxfc-插件联邦协议)
@@ -161,6 +162,11 @@ class HybridSearchOptions:
 | **DeduplicationEngine** | 去重引擎，Jaccard 相似度 + 并查集算法检测重复组 |
 | **EmbeddingFactory** | 嵌入模型工厂，支持 Ollama 和 SentenceTransformers |
 | **VectorizationQueue** | 异步向量化队列，优先级队列 + 工作线程，避免阻塞主线程 |
+| **SecondaryModelRouter** | 副模型路由器，为记忆管理 Agent 提供独立模型路由 |
+| **DecayBatchProcessor** | 批量衰减处理器，定期批量更新记忆衰减值 |
+| **GraphStore** | 图存储桥接，连接记忆系统与知识图谱 |
+| **MilvusLiteStore** | Milvus Lite 向量存储，轻量级本地向量数据库 |
+| **ChromaStore** | ChromaDB 向量存储，本地向量数据库备选方案 |
 
 ### 记忆类型
 
@@ -332,6 +338,22 @@ class VLLMClient(LLMClient)      # vLLM 后端
 #### LLMTools - 工具调用辅助
 
 负责格式化工具定义、解析 LLM 返回的工具调用、执行工具调用循环。
+
+#### SecondaryModelRouter - 副模型路由器
+
+为记忆管理 Agent 提供独立的模型路由，支持执行预定义命令：
+
+```python
+class SecondaryModelRouter:
+    async def execute_command(command, arguments)  # 执行副模型命令
+    async def list_commands() -> List[Dict]        # 列出可用命令
+    async def get_history() -> List[Dict]          # 获取执行历史
+```
+
+**API 端点**：
+- `POST /api/memories/secondary/execute` — 执行副模型命令
+- `GET /api/memories/secondary/commands` — 获取命令列表
+- `GET /api/memories/secondary/history` — 获取执行历史
 
 ### 核心设计亮点
 
@@ -563,6 +585,15 @@ class InterruptManager:
 3. 支持冷却时间和最小语音时长限制
 4. 避免频繁打断影响体验
 
+### 双流式语音模式
+
+除了传统的半双工模式外，系统支持 `voice.dual_stream` 双流式语音交互：
+
+- **边说边推**：用户语音和 Agent 回复可同时进行
+- **实时 ASR**：VAD 检测到语音即开始 ASR 识别
+- **流式 TTS**：LLM 生成文本即开始 TTS 合成
+- **WebSocket Actions**：`voice.dual_stream`（发送音频）、`voice.partial`（ASR 部分结果）、`voice.tts_chunk`（TTS 音频块）、`voice.prefill_started`（TTS 预填充开始）
+
 ### 核心设计亮点
 
 1. **双向全双工**: 支持用户打断 Agent 和 Agent 打断用户两个方向
@@ -653,12 +684,13 @@ class ASRService:
 
 核心代码位于 `server/services/tts_service.py`。
 
-### 双模式架构
+### 三模式架构
 
 | 模式 | 说明 | 适用场景 |
 |------|------|---------|
 | **embedded** | 直接调用 F5-TTS 模型 | 本地部署 |
 | **remote** | HTTP 调用远程 TTS 服务 | 分布式部署 |
+| **orpheus** | 通过 Orpheus TTS Bridge 调用 vLLM 推理 | 流式情感语音，13 种语音 |
 
 ### 核心能力
 
@@ -683,6 +715,27 @@ class TTSService:
 2. **音效混合**: 文本中可嵌入音效标记，TTS 自动插入音效
 3. **流式输出**: 按句分割流式合成，降低首字延迟
 4. **Triton 加速**: 支持 GPU 推理加速
+
+### Orpheus TTS - 流式情感语音合成
+
+Orpheus TTS 是基于 vLLM + SNAC 解码的流式情感语音合成引擎，核心代码位于 `orpheus-tts/api_server.py`。
+
+**架构**：客户端 → FastAPI Bridge (:5060) → vLLM (:8000) → SNAC 解码 → 24kHz WAV
+
+**核心组件**：
+- `VLLMClient`：异步 vLLM 客户端，调用 `/v1/completions`
+- `SnacTokenParser`：流式解析 SNAC 码
+- `SnacDecoder`：7 层量化码本解码
+
+**支持的语音**：tara, leah, leo, dan, mia, jess, lily, zoe, zac, river, charlotte, james, matthew（共 13 种）
+
+**情感标签**：`<laugh>`, `<giggle>`, `<sigh>`, `<cough>`, `<yawn>`, `<gasp>`, `<groan>`
+
+**关键特性**：
+- 流式首包延迟目标 < 300ms
+- RTF 约 0.08-0.15（RTX 3080）
+- OpenAI 兼容 API（`/v1/audio/speech`）
+- 24kHz 采样率输出
 
 ---
 
@@ -882,6 +935,7 @@ function createAvatarDriver(avatarType: 'live2d' | 'vrm', ...): IAvatarDriver
 | 动作触发 | 情绪动作映射 + 说话点头 | 预设动作 + 骨骼动画 |
 | 音频分析 | Web Audio API AnalyserNode | 同左 + VowelAnalyzer 元音分析 |
 | 模型格式 | Live2D Cubism 4 (.model.json/.zip) | VRM (.vrm) |
+| 风场效果 | — | VRMWindField 风力驱动骨骼摆动 |
 
 ### 核心设计亮点
 
@@ -950,6 +1004,44 @@ function createAvatarDriver(avatarType: 'live2d' | 'vrm', ...): IAvatarDriver
 2. **弹幕轨道分配**: 智能轨道分配算法，避免弹幕重叠
 3. **打字机字幕**: 流式 AI 回复以打字机效果逐字显示
 4. **AEC 回声消除**: 多种回声消除模式，适配不同场景
+
+---
+
+## 4.3 桌面宠物系统
+
+前端核心代码位于 `CX-O-Frontend/src/pages/PetPage.tsx` 和 `CX-O-Frontend/src/components/Pet*.tsx`。
+
+### 架构概览
+
+```
+CX-O-Frontend/src/
+├── pages/
+│   └── PetPage.tsx          # 桌面宠物页面
+├── components/
+│   ├── PetAvatar.tsx        # 宠物虚拟形象
+│   ├── PetChat.tsx          # 宠物聊天窗口
+│   └── PetAudioPanel.tsx    # 宠物音频面板
+└── hooks/
+    └── usePetMousePassthrough.ts  # 鼠标穿透 Hook
+```
+
+### 核心功能
+
+| 功能 | 说明 |
+|------|------|
+| **独立窗口** | Electron BrowserWindow，可调大小，始终置顶 |
+| **虚拟形象** | 复用 Live2D/VRM 引擎，支持口型同步和表情 |
+| **聊天功能** | 迷你聊天窗口，WebSocket 实时对话 |
+| **音频控制** | 麦克风输入和 TTS 输出控制 |
+| **鼠标穿透** | 非模型区域鼠标穿透到桌面，支持几何+像素双策略检测 |
+
+### 鼠标穿透机制
+
+`usePetMousePassthrough` Hook 实现智能鼠标穿透：
+
+1. **几何椭圆检测**：快速判断鼠标是否在虚拟形象区域内
+2. **像素 Alpha 检测**：精确检测鼠标位置是否在透明像素上
+3. **组合策略**：椭圆内再精确检测像素，椭圆外直接穿透
 
 ---
 

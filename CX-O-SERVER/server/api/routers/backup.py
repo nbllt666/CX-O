@@ -2,13 +2,15 @@
 备份管理路由 - 提供数据备份和恢复 API
 """
 
+from pathlib import Path
 from typing import List, Optional
 
-from fastapi import APIRouter, File, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from pydantic import BaseModel
 
 from server.core.backup import BackupType, get_backup_manager
 from server.core.logging_config import get_contextual_logger
+from server.api.routers.admin import verify_admin_api_key
 
 logger = get_contextual_logger(__name__)
 router = APIRouter()
@@ -58,15 +60,15 @@ class BackupStatsResponse(BaseModel):
 def _backup_to_response(backup) -> BackupResponse:
     """转换备份信息为响应"""
     return BackupResponse(
-        id=backup.id,
-        backup_type=backup.backup_type.value,
-        status=backup.status.value,
-        created_at=backup.created_at.isoformat(),
-        completed_at=backup.completed_at.isoformat() if backup.completed_at else None,
-        description=backup.description,
-        total_size=backup.total_size,
-        compressed_size=backup.compressed_size,
-        file_count=backup.file_count,
+        id=backup.get("id", ""),
+        backup_type=backup.get("backup_type", "full"),
+        status=backup.get("status", "completed"),
+        created_at=backup.get("created_at", ""),
+        completed_at=backup.get("completed_at"),
+        description=backup.get("description"),
+        total_size=backup.get("size_bytes", 0),
+        compressed_size=backup.get("compressed_size", 0),
+        file_count=backup.get("file_count", 0),
     )
 
 
@@ -75,7 +77,7 @@ async def list_backups():
     """获取所有备份列表"""
     try:
         manager = get_backup_manager()
-        backups = manager.get_all_backups()
+        backups = manager.list_backups()
         return [_backup_to_response(b) for b in backups]
     except Exception as e:
         logger.error(f"获取备份列表失败: {e}")
@@ -83,7 +85,7 @@ async def list_backups():
 
 
 @router.post("/backups", response_model=BackupResponse)
-async def create_backup(request: CreateBackupRequest):
+async def create_backup(request: CreateBackupRequest, _: bool = Depends(verify_admin_api_key)):
     """创建新备份"""
     try:
         manager = get_backup_manager()
@@ -94,7 +96,7 @@ async def create_backup(request: CreateBackupRequest):
         elif request.backup_type == "differential":
             backup_type = BackupType.DIFFERENTIAL
 
-        backup = await manager.create_backup(
+        backup = manager.create_backup(
             backup_type=backup_type, description=request.description
         )
 
@@ -123,7 +125,7 @@ async def get_backup(backup_id: str):
 
 
 @router.post("/backups/{backup_id}/restore", response_model=RestoreResponse)
-async def restore_backup(backup_id: str):
+async def restore_backup(backup_id: str, _: bool = Depends(verify_admin_api_key)):
     """恢复备份"""
     try:
         manager = get_backup_manager()
@@ -132,13 +134,13 @@ async def restore_backup(backup_id: str):
         if not backup:
             raise HTTPException(status_code=404, detail=f"备份不存在: {backup_id}")
 
-        result = await manager.restore_backup(backup_id)
+        result = manager.restore_backup(backup_id)
 
         return RestoreResponse(
-            success=result.success,
-            restored_files=result.restored_files,
-            failed_files=result.failed_files,
-            error_message=result.error_message,
+            success=result.get("status") == "success",
+            restored_files=result.get("restored_files", 0),
+            failed_files=result.get("failed_files", 0),
+            error_message=result.get("error_message"),
         )
     except HTTPException:
         raise
@@ -148,7 +150,7 @@ async def restore_backup(backup_id: str):
 
 
 @router.delete("/backups/{backup_id}")
-async def delete_backup(backup_id: str):
+async def delete_backup(backup_id: str, _: bool = Depends(verify_admin_api_key)):
     """删除备份"""
     try:
         manager = get_backup_manager()
@@ -175,15 +177,19 @@ async def get_backup_stats():
     """获取备份统计"""
     try:
         manager = get_backup_manager()
-        stats = manager.get_stats()
+        stats = manager.get_status()
+
+        backups = manager.list_backups()
+        full_backups = sum(1 for b in backups if b.get("backup_type") == "full")
+        incremental_backups = sum(1 for b in backups if b.get("backup_type") == "incremental")
 
         return BackupStatsResponse(
-            total_backups=stats.total_backups,
-            full_backups=stats.full_backups,
-            incremental_backups=stats.incremental_backups,
-            total_size=stats.total_size,
-            oldest_backup=stats.oldest_backup.isoformat() if stats.oldest_backup else None,
-            latest_backup=stats.latest_backup.isoformat() if stats.latest_backup else None,
+            total_backups=stats.get("total_backups", 0),
+            full_backups=full_backups,
+            incremental_backups=incremental_backups,
+            total_size=sum(b.get("size_bytes", 0) for b in backups),
+            oldest_backup=min((b.get("created_at") for b in backups if b.get("created_at")), default=None),
+            latest_backup=max((b.get("created_at") for b in backups if b.get("created_at")), default=None),
         )
     except Exception as e:
         logger.error(f"获取备份统计失败: {e}")
@@ -191,7 +197,7 @@ async def get_backup_stats():
 
 
 @router.post("/backups/import")
-async def import_backup(file: UploadFile = File(...)):
+async def import_backup(file: UploadFile = File(...), _: bool = Depends(verify_admin_api_key)):
     """导入备份文件"""
     try:
         manager = get_backup_manager()
@@ -236,7 +242,7 @@ async def export_backup(backup_id: str):
         if not backup:
             raise HTTPException(status_code=404, detail=f"备份不存在: {backup_id}")
 
-        backup_path = backup.path
+        backup_path = Path(backup.get("path", "")) if backup.get("path") else None
         if not backup_path or not backup_path.exists():
             raise HTTPException(status_code=404, detail="备份文件不存在")
 

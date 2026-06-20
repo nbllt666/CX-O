@@ -17,6 +17,36 @@ logger = logging.getLogger(__name__)
 
 _OUTPUT_NAME_PATTERN = re.compile(r"^[A-Za-z0-9_-]+$")
 
+# 训练监控超时（秒）：F5-TTS 训练通常耗时数小时甚至数天，需远大于子步骤超时
+_TRAIN_MONITOR_TIMEOUT = 7 * 24 * 3600.0  # 7 days for training monitor
+_TRAIN_STOP_WAIT_TIMEOUT = 10.0
+
+
+async def _wait_for_subprocess_exit(process: asyncio.subprocess.Process, timeout: float) -> bool:
+    """等待子进程退出；超时则先 terminate 再 kill，返回是否主动 kill。"""
+    try:
+        await asyncio.wait_for(process.wait(), timeout=timeout)
+        return False
+    except asyncio.TimeoutError:
+        logger.warning(f"Subprocess (pid={process.pid}) did not exit within {timeout}s; terminating")
+        try:
+            process.terminate()
+        except ProcessLookupError:
+            return True
+        try:
+            await asyncio.wait_for(process.wait(), timeout=5.0)
+        except asyncio.TimeoutError:
+            logger.error(f"Subprocess (pid={process.pid}) did not exit after terminate; killing")
+            try:
+                process.kill()
+            except ProcessLookupError:
+                pass
+            try:
+                await asyncio.wait_for(process.wait(), timeout=5.0)
+            except asyncio.TimeoutError:
+                pass
+        return True
+
 
 def _sanitize_output_name(name: str) -> str:
     """校验 output_name 仅由字母/数字/下划线/连字符组成，防止目录穿越。"""
@@ -121,7 +151,14 @@ class F5TTSFinetuneService:
         stderr_task = asyncio.create_task(self._read_stream(process.stderr, self._log_stderr))
         await asyncio.gather(stdout_task, stderr_task)
 
-        await process.wait()
+        # 等到子进程退出，超时则主动 kill（按子进程句柄所对应的进程）。
+        try:
+            await asyncio.wait_for(process.wait(), timeout=_TRAIN_MONITOR_TIMEOUT)
+        except asyncio.TimeoutError:
+            logger.error(
+                f"Training monitor wait timeout after {_TRAIN_MONITOR_TIMEOUT}s; killing process"
+            )
+            await _wait_for_subprocess_exit(process, _TRAIN_STOP_WAIT_TIMEOUT)
 
         if progress_callback:
             try:
@@ -156,6 +193,7 @@ class F5TTSFinetuneService:
                     models.append({
                         "name": d.name,
                         "path": str(d),
-                        "created": d.stat().st_ctime,
+                        "created": d.stat().st_mtime,
                     })
+        models.sort(key=lambda m: m["created"], reverse=True)
         return models

@@ -180,6 +180,7 @@ export function SettingsPage() {
   const [showConnectDialog, setShowConnectDialog] = useState(false);
   const [connectHost, setConnectHost] = useState('localhost');
   const [connectPort, setConnectPort] = useState(8081);
+  const [speedMax, setSpeedMax] = useState(3);
 
   const loadPlugins = async () => {
     try {
@@ -235,7 +236,7 @@ export function SettingsPage() {
   };
 
   // 虚拟形象设置
-  const { avatarType, setAvatarType } = useSettingsStore();
+  const { avatarType, setAvatarType, limits } = useSettingsStore();
   const [backendStatus, setBackendStatus] = useState<{
     pid?: number;
     uptime?: number;
@@ -339,18 +340,6 @@ export function SettingsPage() {
     };
     loadGatewayConfig();
   }, [isBackendRunning]);
-
-  const handleUpdateGatewayServices = async () => {
-    try {
-      await api.updateServiceConfig(gatewayServicesConfig);
-      alert('Gateway 服务配置已保存，需要重启服务生效');
-    } catch (error) {
-      console.error('Failed to update Gateway config:', error);
-      alert('保存失败');
-    }
-  };
-
-  void handleUpdateGatewayServices;
 
   const [vectorConfig, setVectorConfig] = useState({
     backend: 'weaviate',
@@ -557,6 +546,12 @@ export function SettingsPage() {
     };
     loadAudioConfig();
   }, []);
+
+  useEffect(() => {
+    if (limits?.speed_max) {
+      setSpeedMax(limits.speed_max);
+    }
+  }, [limits]);
 
   useEffect(() => {
     const loadAudioFiles = async () => {
@@ -1950,9 +1945,7 @@ export function SettingsPage() {
                         <input
                           type="range"
                           min="0.5"
-                          max="2"
-                          step="0.1"
-                          value={audioConfig.speed}
+                          max={speedMax}
                           onChange={(e) =>
                             setAudioConfig({ ...audioConfig, speed: parseFloat(e.target.value) })
                           }

@@ -3,6 +3,7 @@ Avatar 模型管理路由 - 提供 VRM/Live2D 模型上传、下载、管理 API
 """
 
 import os
+import re
 import uuid
 from datetime import datetime
 from pathlib import Path
@@ -39,7 +40,7 @@ def _get_avatar_dir(avatar_type: str) -> Path:
     elif avatar_type == "live2d":
         return LIVE2D_DIR
     else:
-        raise ValueError(f"不支持的模型类型: {avatar_type}")
+        raise HTTPException(status_code=400, detail=f"不支持的模型类型: {avatar_type}")
 
 
 def _validate_file(filename: str, avatar_type: str) -> bool:
@@ -50,6 +51,26 @@ def _validate_file(filename: str, avatar_type: str) -> bool:
     elif avatar_type == "live2d":
         return any(name_lower.endswith(ext) for ext in ALLOWED_LIVE2D_EXTENSIONS)
     return False
+
+
+def _validate_avatar_id(avatar_id: str, avatar_type: str) -> None:
+    """验证 avatar_id 防止路径遍历攻击
+
+    Args:
+        avatar_id: Avatar 唯一标识
+        avatar_type: 模型类型 (vrm/live2d)
+
+    Raises:
+        HTTPException: 如果 avatar_id 包含非法字符或试图路径遍历
+    """
+    if not avatar_id or not re.match(r'^[A-Za-z0-9_-]+$', avatar_id):
+        raise HTTPException(status_code=400, detail="无效的 avatar_id")
+
+    avatar_dir = _get_avatar_dir(avatar_type)
+    # 二次检查：确保拼接后的路径仍在 avatar_dir 内
+    test_path = (avatar_dir / f"{avatar_id}.json").resolve()
+    if not test_path.is_relative_to(avatar_dir.resolve()):
+        raise HTTPException(status_code=400, detail="无效的 avatar_id")
 
 
 class AvatarMetadata(BaseModel):
@@ -83,6 +104,7 @@ class AvatarUpdateRequest(BaseModel):
 
 def _load_avatar_metadata(avatar_id: str, avatar_type: str) -> Optional[AvatarMetadata]:
     """从 JSON 文件加载 avatar 元数据"""
+    _validate_avatar_id(avatar_id, avatar_type)
     avatar_dir = _get_avatar_dir(avatar_type)
     meta_path = avatar_dir / f"{avatar_id}.json"
     
@@ -115,6 +137,7 @@ def _save_avatar_metadata(metadata: AvatarMetadata):
 
 def _delete_avatar_files(avatar_id: str, avatar_type: str):
     """删除 avatar 的文件和元数据"""
+    _validate_avatar_id(avatar_id, avatar_type)
     avatar_dir = _get_avatar_dir(avatar_type)
     
     # 删除元数据文件
@@ -132,6 +155,7 @@ def _delete_avatar_files(avatar_id: str, avatar_type: str):
 
 def _get_model_file_path(avatar_id: str, avatar_type: str) -> Optional[Path]:
     """获取模型文件路径"""
+    _validate_avatar_id(avatar_id, avatar_type)
     avatar_dir = _get_avatar_dir(avatar_type)
     
     for ext in [".vrm", ".zip", ".model.json", ".model3.json"]:

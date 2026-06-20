@@ -1,6 +1,7 @@
 import json
 from typing import Dict, List, Optional
 
+from server.config import Settings
 from server.core.logging_config import get_contextual_logger
 
 logger = get_contextual_logger(__name__)
@@ -78,7 +79,7 @@ class ContextSummarizer:
             if content:
                 topics.append(content)
 
-        key_points = topics[:5] if topics else []
+        key_points = topics[:Settings().config.limits.context.summarizer_max_key_points] if topics else []
 
         if style == "concise":
             summary = f"对话共{total_messages}轮，包含{user_count}次用户提问和{assistant_count}次助手回复。"
@@ -86,7 +87,7 @@ class ContextSummarizer:
             summary = f"这是一个包含{total_messages}轮对话的会话，其中用户发起了{user_count}次对话，助手做出了{assistant_count}次回应。"
 
         if key_points:
-            summary += f" 讨论的话题包括：{'; '.join(key_points[:3])}。"
+            summary += f" 讨论的话题包括：{'; '.join(key_points[:Settings().config.limits.context.summarizer_max_key_points])}。"
 
         if len(summary) > max_length:
             summary = summary[: max_length - 3] + "..."
@@ -128,7 +129,7 @@ class ContextSummarizer:
             key_points = json_parser.loads(response.content)
 
             if isinstance(key_points, list):
-                return key_points[:5]
+                return key_points[:Settings().config.limits.context.summarizer_max_key_points]
             return []
 
         except Exception as e:
@@ -144,4 +145,4 @@ class ContextSummarizer:
                 if len(content) > 10:
                     key_points.append(content[:100])
 
-        return key_points[:5]
+        return key_points[:Settings().config.limits.context.summarizer_max_key_points]

@@ -1,5 +1,6 @@
 import asyncio
 import json
+import threading
 from datetime import datetime
 from typing import Any, Callable, Dict, Optional, Set
 
@@ -71,6 +72,9 @@ class WebSocketManager:
         # BUG-B07 修复: 使用 asyncio.Lock 保护共享可变 dict 的并发读写
         # 避免在 FastAPI 多请求并发访问时出现数据竞争
         self._lock = asyncio.Lock()
+        # BUG-B-M4 修复: 同步方法 subscribe_to_channel / unsubscribe_from_channel
+        # 修改共享 dict/set,使用 threading.Lock 保护,避免多线程并发调用时数据竞争
+        self._sync_lock = threading.Lock()
 
     def _track_background_task(self, task: asyncio.Task) -> asyncio.Task:
         """追踪后台任务，防止被GC回收；任务完成后自动从集合中移除"""
@@ -216,36 +220,32 @@ class WebSocketManager:
     def subscribe_to_channel(self, client_id: str, channel: str):
         """订阅频道
 
-        BUG-B07 修复: 在锁内完成 ``self.channels`` / 连接订阅集合的写入。
-
-        注意:``asyncio.Lock`` 只能用于异步上下文,但此方法在项目其它位置被
-        同步调用,因此实现为:在协程调度间隙以 ``try_acquire`` 风格避免阻塞,
-        即用单一原子操作直接完成对 dict 的修改,并接受在 CPython 单线程
-        事件循环下 ``dict.__setitem__`` / ``set.add`` 不会被打断的事实。
-        实际并发破坏点(``self.connections[client_id]``)只在事件循环
-        切走时存在,而该方法在事件循环线程内运行,不会切走。
+        BUG-B-M4 修复: 使用 threading.Lock 保护对共享 self.channels /
+        self.connections 的读写,避免多线程并发调用时数据竞争。
         """
-        if client_id not in self.connections:
-            return
+        with self._sync_lock:
+            if client_id not in self.connections:
+                return
 
-        if channel not in self.channels:
-            self.channels[channel] = set()
+            if channel not in self.channels:
+                self.channels[channel] = set()
 
-        self.channels[channel].add(client_id)
-        self.connections[client_id].subscribe(channel)
+            self.channels[channel].add(client_id)
+            self.connections[client_id].subscribe(channel)
 
         logger.debug(f"客户端 {client_id} 订阅频道: {channel}")
 
     def unsubscribe_from_channel(self, client_id: str, channel: str):
         """取消订阅频道
 
-        BUG-B07 修复: 与 ``subscribe_to_channel`` 一致,此方法在事件循环
-        线程内同步执行,字典修改是原子的,无需异步锁。
+        BUG-B-M4 修复: 使用 threading.Lock 保护对共享 self.channels /
+        self.connections 的读写,避免多线程并发调用时数据竞争。
         """
-        if client_id in self.connections:
-            self.connections[client_id].unsubscribe(channel)
+        with self._sync_lock:
+            if client_id in self.connections:
+                self.connections[client_id].unsubscribe(channel)
 
-        self._remove_from_channel(channel, client_id)
+            self._remove_from_channel(channel, client_id)
 
         logger.debug(f"客户端 {client_id} 取消订阅频道: {channel}")
 

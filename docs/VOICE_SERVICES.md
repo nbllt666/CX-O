@@ -15,6 +15,7 @@
 - [7. 语音工作站](#7-语音工作站)
 - [8. 前端音频控制](#8-前端音频控制)
 - [9. 配置参考](#9-配置参考)
+- [10. Orpheus TTS 流式情感语音合成](#10-orpheus-tts-流式情感语音合成)
 
 ---
 
@@ -182,6 +183,7 @@ TTS（Text-to-Speech）服务负责将文本转换为语音，支持情感语音
 | `embedded` | 本地直接调用 F5-TTS 模型推理 | F5-TTS |
 | `remote` | 通过 HTTP 调用远程 TTS 服务 | 远程 F5-TTS 服务 |
 | `triton` | 通过 Triton Inference Server 推理加速 | Triton + F5-TTS |
+| `orpheus` | 通过 Orpheus TTS Bridge 调用 vLLM 推理 | Orpheus (vLLM + SNAC) |
 
 ### 2.3 合成接口
 
@@ -604,6 +606,39 @@ manager.set_interrupt_callback(lambda source, text: handle_interrupt(source, tex
 
 # 触发打断
 await manager.handle_interrupt(source="user", text="等一下")
+```
+
+### 4.5 双流式语音模式
+
+除了传统的半双工模式外，系统支持 `voice.dual_stream` 双流式语音交互模式：
+
+**与半双工模式的区别**：
+
+| 特性 | 半双工模式 | 双流式模式 |
+|------|-----------|-----------|
+| 音频发送 | VAD 静默后才发送 | 边说边推，不等 VAD 判定 |
+| ASR 识别 | 静默后整段识别 | 实时增量识别 |
+| TTS 合成 | 完整回复后合成 | LLM 生成即合成（流式） |
+| 打断方式 | ASR 结果后 LLM 判断 | 实时 VAD + ASR 判断 |
+
+**WebSocket Actions**：
+
+| Action | 方向 | 说明 |
+|--------|------|------|
+| `voice.dual_stream` | 客户端 → 服务端 | 发送音频数据（双流式） |
+| `voice.partial` | 服务端 → 客户端 | ASR 部分识别结果 |
+| `voice.tts_chunk` | 服务端 → 客户端 | TTS 音频块推送 |
+| `voice.prefill_started` | 服务端 → 客户端 | TTS 预填充开始通知 |
+
+**前端使用**：
+
+```typescript
+const { startDualStream, stopDualStream } = useAudioStream({
+  wsSend: (data) => websocket.send(JSON.stringify(data)),
+  onASRResult: (result) => console.log(result.text),
+  onTTSChunk: (chunk) => playAudio(chunk),
+  config: { sampleRate: 16000, channelCount: 1 },
+});
 ```
 
 ---
@@ -1205,6 +1240,14 @@ lipSync.resetAllExpressions();
       "chunk_size": 1600,
       "hop_size": 800,
       "look_back": 8000
+    },
+    "orpheus": {
+      "url": "http://127.0.0.1:5060",
+      "model": "canopylabs/orpheus-multilingual-research-release",
+      "voice": "tara",
+      "timeout": 60,
+      "flashinfer_enabled": true,
+      "sample_rate": 24000
     }
   },
   "voice_workstation": {
@@ -1268,3 +1311,140 @@ data/voice_refs/
 | `CXO_ASR_URL` | `services.asr.url` |
 | `CXO_TTS_URL` | `services.tts.url` |
 | `CXO_INDEX_TTS_URL` | `services.index_tts.url` |
+| `CXO_TTS_ORPHEUS_URL` | `tts.orpheus.url` |
+
+---
+
+## 10. Orpheus TTS 流式情感语音合成
+
+### 10.1 概述
+
+Orpheus TTS 是基于 vLLM + SNAC 解码的流式情感语音合成引擎，提供 OpenAI 兼容的 TTS API，支持 13 种语音和情感标签。
+
+**核心代码：** [api_server.py](../orpheus-tts/api_server.py)
+
+**服务端口：** 5060（Bridge），8000（vLLM 后端）
+
+### 10.2 架构
+
+```
+客户端 → FastAPI Bridge (:5060) → vLLM (:8000) → SNAC 解码 → 24kHz WAV
+```
+
+**核心组件**：
+
+| 组件 | 说明 |
+|------|------|
+| `VLLMClient` | 异步 vLLM 客户端，调用 `/v1/completions`，保留 custom tokens |
+| `SnacTokenParser` | 流式解析 `<custom_token_N>` 格式的 SNAC 码 |
+| `SnacDecoder` | 7 层量化码本解码，每帧 7 码 → 480 样本 (20ms @ 24kHz) |
+
+### 10.3 API 端点
+
+| 端点 | 方法 | 功能 |
+|------|------|------|
+| `/` | GET | 服务信息 |
+| `/health` | GET | 健康检查（vLLM + SNAC 均就绪返回 200） |
+| `/v1/models` | GET | OpenAI 兼容模型列表 |
+| `/v1/audio/speech` | POST | OpenAI 兼容 TTS 端点，支持流式/非流式 |
+
+### 10.4 语音合成请求
+
+```bash
+curl -X POST http://localhost:5060/v1/audio/speech \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "canopylabs/orpheus-multilingual-research-release",
+    "input": "你好，世界！",
+    "voice": "tara",
+    "response_format": "wav",
+    "stream": true
+  }'
+```
+
+**参数说明：**
+
+| 参数 | 类型 | 默认值 | 说明 |
+|------|------|--------|------|
+| `model` | `str` | 必填 | 模型名称 |
+| `input` | `str` | 必填 | 待合成文本 |
+| `voice` | `str` | `"tara"` | 语音名称 |
+| `response_format` | `str` | `"wav"` | 输出格式：wav / mp3 / pcm / opus |
+| `stream` | `bool` | `False` | 是否流式输出 |
+
+### 10.5 支持的语音
+
+| 语音 | 语音 | 语音 |
+|------|------|------|
+| tara | leah | leo |
+| dan | mia | jess |
+| lily | zoe | zac |
+| river | charlotte | james |
+| matthew | | |
+
+### 10.6 情感标签
+
+在文本中嵌入情感标签控制语音情感表达：
+
+| 标签 | 说明 |
+|------|------|
+| `<laugh>` | 笑声 |
+| `<giggle>` | 咯咯笑 |
+| `<sigh>` | 叹气 |
+| `<cough>` | 咳嗽 |
+| `<yawn>` | 打哈欠 |
+| `<gasp>` | 倒吸气 |
+| `<groan>` | 呻吟 |
+
+**使用示例：**
+
+```python
+text = "今天真是太开心了 <laugh> 让我告诉你为什么"
+```
+
+### 10.7 性能指标
+
+| 指标 | 值 |
+|------|-----|
+| 流式首包延迟 | < 300ms（目标） |
+| RTF | 0.08-0.15（RTX 3080） |
+| 采样率 | 24kHz |
+| 生成速度 | 约为音频时长的 7-10 倍 |
+| 批量大小 | 5 帧 = 100ms |
+
+### 10.8 配置项
+
+```json
+{
+  "tts": {
+    "orpheus": {
+      "url": "http://127.0.0.1:5060",
+      "model": "canopylabs/orpheus-multilingual-research-release",
+      "voice": "tara",
+      "timeout": 60,
+      "flashinfer_enabled": true,
+      "sample_rate": 24000
+    }
+  }
+}
+```
+
+| 配置项 | 类型 | 默认值 | 说明 |
+|--------|------|--------|------|
+| `url` | `str` | `"http://127.0.0.1:5060"` | Orpheus TTS Bridge 地址 |
+| `model` | `str` | `"canopylabs/orpheus-multilingual-research-release"` | 模型名称 |
+| `voice` | `str` | `"tara"` | 默认语音 |
+| `timeout` | `int` | `60` | 请求超时（秒） |
+| `flashinfer_enabled` | `bool` | `True` | 是否启用 FlashInfer 加速 |
+| `sample_rate` | `int` | `24000` | 输出采样率 |
+
+### 10.9 Docker 部署
+
+```bash
+cd orpheus-tts
+docker-compose up -d
+```
+
+Docker Compose 启动两个服务：
+- `vllm`：vLLM 推理引擎（端口 8000，GPU 0）
+- `orpheus-bridge`：FastAPI Bridge（端口 5060，CPU）

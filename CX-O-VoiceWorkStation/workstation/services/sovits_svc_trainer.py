@@ -20,6 +20,8 @@ _SPEAKER_NAME_PATTERN = re.compile(r"[^A-Za-z0-9_-]")
 
 # 训练 / 预处理子步骤默认超时（秒）
 _TRAIN_SUBPROCESS_TIMEOUT = 3600.0  # 1 小时
+# 训练监控超时（秒）：So-VITS-SVC 训练通常耗时数小时甚至数天，需远大于预处理超时
+_TRAIN_MONITOR_TIMEOUT = 7 * 24 * 3600.0  # 7 days for training monitor
 _TRAIN_STOP_WAIT_TIMEOUT = 10.0
 
 
@@ -69,6 +71,29 @@ def _sanitize_speaker_name(name: str) -> str:
     return cleaned
 
 
+# 训练数据目录允许的根目录，training_data_dir 必须位于其下
+_TRAINING_DATA_ROOT = Path("data/training").resolve()
+
+
+def _validate_training_data_dir(path: str) -> Path:
+    """校验 training_data_dir 必须位于 data/training 根目录之下，
+    拒绝绝对路径与 .. 目录穿越，防止创建/读取任意目录。"""
+    if not path:
+        raise ValueError("training_data_dir must not be empty")
+    candidate = Path(path)
+    if candidate.is_absolute():
+        raise ValueError(
+            f"training_data_dir must be a relative path under {_TRAINING_DATA_ROOT}, "
+            f"got absolute path: {path}"
+        )
+    resolved = candidate.resolve()
+    if not resolved.is_relative_to(_TRAINING_DATA_ROOT):
+        raise ValueError(
+            f"training_data_dir must be located under {_TRAINING_DATA_ROOT}, got: {resolved}"
+        )
+    return resolved
+
+
 class SoVITSSVCTrainer:
     def __init__(
         self,
@@ -85,6 +110,11 @@ class SoVITSSVCTrainer:
         self._task_id: Optional[str] = None
         self._preprocessed: set[str] = set()
         self._monitor_task: Optional[asyncio.Task] = None
+
+    @property
+    def training_data_dir(self) -> Path:
+        """训练数据目录（公开访问接口）。"""
+        return self._training_data_dir
 
     async def _run_subprocess(self, args: list[str]) -> tuple[int, str, str]:
         logger.info(f"Running subprocess: {' '.join(args)} (cwd={self._so_vits_svc_dir})")
@@ -112,7 +142,9 @@ class SoVITSSVCTrainer:
     async def preprocess(self, training_data_dir: str, speaker_name: str = "speaker") -> dict:
         # 清洗 speaker_name，移除所有非白名单字符避免路径穿越
         speaker_name = _sanitize_speaker_name(speaker_name)
-        raw_dir = Path(training_data_dir) / "raw" / speaker_name
+        # 校验 training_data_dir 必须位于允许的根目录之下，防止目录穿越
+        training_data_dir = _validate_training_data_dir(training_data_dir)
+        raw_dir = training_data_dir / "raw" / speaker_name
         raw_dir.mkdir(parents=True, exist_ok=True)
 
         results = {}
@@ -259,10 +291,10 @@ class SoVITSSVCTrainer:
 
         # 等到子进程退出，超时则主动 kill（按子进程句柄所对应的进程）。
         try:
-            await asyncio.wait_for(process.wait(), timeout=_TRAIN_SUBPROCESS_TIMEOUT)
+            await asyncio.wait_for(process.wait(), timeout=_TRAIN_MONITOR_TIMEOUT)
         except asyncio.TimeoutError:
             logger.error(
-                f"Training monitor wait timeout after {_TRAIN_SUBPROCESS_TIMEOUT}s; killing process"
+                f"Training monitor wait timeout after {_TRAIN_MONITOR_TIMEOUT}s; killing process"
             )
             await _wait_for_subprocess_exit(process, _TRAIN_STOP_WAIT_TIMEOUT)
 
@@ -319,14 +351,15 @@ class SoVITSSVCTrainer:
         if self._output_dir.exists():
             for d in self._output_dir.iterdir():
                 if d.is_dir():
-                    g_files = list(d.glob("G_*.pth"))
-                    d_files = list(d.glob("D_*.pth"))
+                    g_files = sorted(d.glob("G_*.pth"), key=lambda p: p.stat().st_mtime)
+                    d_files = sorted(d.glob("D_*.pth"), key=lambda p: p.stat().st_mtime)
                     if g_files or d_files:
                         models.append({
                             "name": d.name,
                             "path": str(d),
-                            "created": d.stat().st_ctime,
+                            "created": d.stat().st_mtime,
                             "g_model": str(g_files[-1]) if g_files else None,
                             "d_model": str(d_files[-1]) if d_files else None,
                         })
+        models.sort(key=lambda m: m["created"], reverse=True)
         return models

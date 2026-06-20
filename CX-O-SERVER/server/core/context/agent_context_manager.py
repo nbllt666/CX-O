@@ -4,8 +4,8 @@ Agent上下文管理器
 """
 
 import json
-import sqlite3
 import threading
+from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -13,6 +13,19 @@ from typing import Any, Dict, List, Optional
 from server.core.logging_config import get_contextual_logger
 
 logger = get_contextual_logger(__name__)
+
+
+@dataclass
+class AgentContextData:
+    """Agent上下文数据结构"""
+
+    agent_id: str
+    session_id: Optional[str] = None
+    messages: List[Dict[str, Any]] = field(default_factory=list)
+    memory_state: Optional[Dict[str, Any]] = None
+    last_active: Optional[str] = None
+    created_at: Optional[str] = None
+    updated_at: Optional[str] = None
 
 
 class AgentContextManager:
@@ -24,138 +37,106 @@ class AgentContextManager:
     3. 支持上下文压缩和摘要
     4. 跨会话保持Agent状态
 
+    使用模块级单例，通过 get_agent_context_manager() 获取实例。
+
     Attributes:
-        db_path: 数据库文件路径
+        storage_dir: JSON文件存储目录
         _lock: 线程锁，保证线程安全
+        _cache: 内存缓存
     """
 
-    _instance = None
-    _lock = threading.Lock()
-
-    def __new__(cls, db_path: str = "data/memories.db") -> "AgentContextManager":
-        """创建单例实例"""
-        if cls._instance is None:
-            with cls._lock:
-                if cls._instance is None:
-                    cls._instance = super().__new__(cls)
-                    cls._instance._initialized = False
-        return cls._instance
-
-    def __init__(self, db_path: str = "data/memories.db") -> None:
+    def __init__(self, storage_dir: str = "data/agent_contexts") -> None:
         """初始化Agent上下文管理器
 
         Args:
-            db_path: 数据库文件路径
+            storage_dir: JSON文件存储目录
         """
-        if self._initialized:
-            return
+        self.storage_dir = Path(storage_dir)
+        self.storage_dir.mkdir(parents=True, exist_ok=True)
+        self._lock = threading.Lock()
+        self._cache: Dict[str, AgentContextData] = {}
 
-        self.db_path = Path(db_path)
-        self.db_path.parent.mkdir(parents=True, exist_ok=True)
-        self._local = threading.local()
-        # BUG-B10 修复: 增加 max_size 上限和实例级 _conn_lock,
-        # 保护 _connection_pool 的并发读写并避免线程数爆炸时连接数无限增长
-        self._max_pool_size: int = 32
-        self._conn_lock = threading.Lock()
-        self._connection_pool: Dict[int, sqlite3.Connection] = {}
+        logger.info(f"Agent上下文管理器初始化完成: storage_dir={storage_dir}")
 
-        self._init_db()
+    def _get_file_path(self, agent_id: str) -> Path:
+        """获取Agent对应的JSON文件路径
 
-        logger.info(f"Agent上下文管理器初始化完成: db={db_path}")
-        self._initialized = True
+        Args:
+            agent_id: Agent唯一标识
 
-    def _init_db(self):
-        """初始化数据库表"""
-        conn = sqlite3.connect(str(self.db_path), timeout=20.0)
-        cursor = conn.cursor()
+        Returns:
+            JSON文件路径
+        """
+        return self.storage_dir / f"{agent_id}.json"
 
-        # agent_contexts 表 - 存储Agent的上下文状态
-        cursor.execute(
-            """
-            CREATE TABLE IF NOT EXISTS agent_contexts (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                agent_id VARCHAR(100) NOT NULL UNIQUE,
-                session_id VARCHAR(36),
-                context_data TEXT,
-                memory_state TEXT,
-                last_active TIMESTAMP,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                updated_at TIMESTAMP
+    def _load_from_file(self, agent_id: str) -> Optional[AgentContextData]:
+        """从文件加载上下文数据
+
+        Args:
+            agent_id: Agent唯一标识
+
+        Returns:
+            AgentContextData 或 None
+        """
+        file_path = self._get_file_path(agent_id)
+        if not file_path.exists():
+            return None
+        try:
+            with open(file_path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            return AgentContextData(
+                agent_id=data["agent_id"],
+                session_id=data.get("session_id"),
+                messages=data.get("messages", []),
+                memory_state=data.get("memory_state"),
+                last_active=data.get("last_active"),
+                created_at=data.get("created_at"),
+                updated_at=data.get("updated_at"),
             )
+        except Exception as e:
+            logger.error(f"从文件加载Agent上下文失败: {e}")
+            return None
+
+    def _save_to_file(self, context_data: AgentContextData):
+        """将上下文数据保存到文件
+
+        Args:
+            context_data: Agent上下文数据
         """
-        )
+        file_path = self._get_file_path(context_data.agent_id)
+        try:
+            data = {
+                "agent_id": context_data.agent_id,
+                "session_id": context_data.session_id,
+                "messages": context_data.messages,
+                "memory_state": context_data.memory_state,
+                "last_active": context_data.last_active,
+                "created_at": context_data.created_at,
+                "updated_at": context_data.updated_at,
+            }
+            with open(file_path, "w", encoding="utf-8") as f:
+                json.dump(data, f, ensure_ascii=False, indent=2)
+        except Exception as e:
+            logger.error(f"保存Agent上下文到文件失败: {e}")
+            raise
 
-        # agent_context_messages 表 - 存储Agent的消息历史
-        cursor.execute(
-            """
-            CREATE TABLE IF NOT EXISTS agent_context_messages (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                agent_id VARCHAR(100) NOT NULL,
-                role VARCHAR(20) NOT NULL,
-                content TEXT NOT NULL,
-                metadata TEXT,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            )
+    def _get_or_load(self, agent_id: str) -> AgentContextData:
+        """从缓存获取或从文件加载上下文数据
+
+        Args:
+            agent_id: Agent唯一标识
+
+        Returns:
+            AgentContextData
         """
-        )
-
-        # 创建索引
-        cursor.execute(
-            """
-            CREATE INDEX IF NOT EXISTS idx_agent_contexts_agent_id 
-            ON agent_contexts(agent_id)
-        """
-        )
-        cursor.execute(
-            """
-            CREATE INDEX IF NOT EXISTS idx_agent_context_messages_agent_id 
-            ON agent_context_messages(agent_id)
-        """
-        )
-        cursor.execute(
-            """
-            CREATE INDEX IF NOT EXISTS idx_agent_context_messages_created 
-            ON agent_context_messages(created_at)
-        """
-        )
-
-        conn.commit()
-        conn.close()
-        logger.info("Agent上下文表初始化完成")
-
-    def _get_connection(self) -> sqlite3.Connection:
-        """获取数据库连接（线程安全）
-
-        BUG-B10 修复: 增加 ``_conn_lock`` 保护 ``_connection_pool`` 的并发读写;
-        当缓存中线程数达到 ``_max_pool_size`` 上限时,直接创建新连接(用完关闭)
-        而不写入缓存,避免缓存无限增长。
-        """
-        thread_id = threading.get_ident()
-
-        with self._conn_lock:
-            conn = self._connection_pool.get(thread_id)
-            if conn is not None:
-                try:
-                    conn.execute("SELECT 1")
-                    return conn
-                except Exception:
-                    try:
-                        conn.close()
-                    except Exception:
-                        pass
-                    self._connection_pool.pop(thread_id, None)
-            # 池未满,创建并缓存;已满则不缓存
-            should_cache = len(self._connection_pool) < self._max_pool_size
-
-        new_conn = sqlite3.connect(str(self.db_path), timeout=20.0, check_same_thread=False)
-        new_conn.row_factory = sqlite3.Row
-
-        if should_cache:
-            with self._conn_lock:
-                # 双重检查:并发场景下,池可能已满
-                if len(self._connection_pool) < self._max_pool_size:
-                    self._connection_pool[thread_id] = new_conn
-        return new_conn
+        if agent_id in self._cache:
+            return self._cache[agent_id]
+        context_data = self._load_from_file(agent_id)
+        if context_data is not None:
+            self._cache[agent_id] = context_data
+            return context_data
+        # 返回空的上下文数据（不缓存空数据）
+        return AgentContextData(agent_id=agent_id)
 
     def save_context(
         self,
@@ -173,31 +154,21 @@ class AgentContextManager:
             session_id: 关联的会话ID（可选）
         """
         try:
-            conn = self._get_connection()
-            cursor = conn.cursor()
+            with self._lock:
+                now = datetime.now().isoformat()
+                context_data = self._get_or_load(agent_id)
 
-            now = datetime.now().isoformat()
-            context_data = json.dumps(messages, ensure_ascii=False)
-            memory_state_json = (
-                json.dumps(memory_state, ensure_ascii=False) if memory_state else None
-            )
+                context_data.messages = messages
+                context_data.memory_state = memory_state
+                context_data.session_id = session_id
+                context_data.last_active = now
+                context_data.updated_at = now
+                if context_data.created_at is None:
+                    context_data.created_at = now
 
-            cursor.execute(
-                """
-                INSERT INTO agent_contexts 
-                (agent_id, session_id, context_data, memory_state, last_active, updated_at)
-                VALUES (?, ?, ?, ?, ?, ?)
-                ON CONFLICT(agent_id) DO UPDATE SET
-                    session_id = excluded.session_id,
-                    context_data = excluded.context_data,
-                    memory_state = excluded.memory_state,
-                    last_active = excluded.last_active,
-                    updated_at = excluded.updated_at
-            """,
-                (agent_id, session_id, context_data, memory_state_json, now, now),
-            )
+                self._cache[agent_id] = context_data
+                self._save_to_file(context_data)
 
-            conn.commit()
             logger.debug(f"Agent '{agent_id}' 上下文已保存")
         except Exception as e:
             logger.error(f"保存Agent上下文失败: {e}")
@@ -214,26 +185,14 @@ class AgentContextManager:
             消息列表
         """
         try:
-            conn = self._get_connection()
-            cursor = conn.cursor()
+            with self._lock:
+                context_data = self._get_or_load(agent_id)
 
-            cursor.execute(
-                """
-                SELECT context_data FROM agent_contexts 
-                WHERE agent_id = ?
-            """,
-                (agent_id,),
-            )
-
-            row = cursor.fetchone()
-
-            if row and row[0]:
-                messages = json.loads(row[0])
-                # 限制返回数量
-                if len(messages) > limit:
-                    messages = messages[-limit:]
-                return messages
-            return []
+            messages = context_data.messages
+            if len(messages) > limit:
+                messages = messages[-limit:]
+            # 只返回 role 和 content
+            return [{"role": m.get("role"), "content": m.get("content")} for m in messages]
         except Exception as e:
             logger.error(f"加载Agent上下文失败: {e}")
             return []
@@ -250,21 +209,25 @@ class AgentContextManager:
             metadata: 额外元数据（可选）
         """
         try:
-            conn = self._get_connection()
-            cursor = conn.cursor()
+            with self._lock:
+                now = datetime.now().isoformat()
+                context_data = self._get_or_load(agent_id)
 
-            metadata_json = json.dumps(metadata, ensure_ascii=False) if metadata else None
+                message = {
+                    "role": role,
+                    "content": content,
+                    "metadata": metadata,
+                    "created_at": now,
+                }
+                context_data.messages.append(message)
+                context_data.last_active = now
+                context_data.updated_at = now
+                if context_data.created_at is None:
+                    context_data.created_at = now
 
-            cursor.execute(
-                """
-                INSERT INTO agent_context_messages 
-                (agent_id, role, content, metadata)
-                VALUES (?, ?, ?, ?)
-            """,
-                (agent_id, role, content, metadata_json),
-            )
+                self._cache[agent_id] = context_data
+                self._save_to_file(context_data)
 
-            conn.commit()
             logger.debug(f"Agent '{agent_id}' 消息已追加: role={role}")
         except Exception as e:
             logger.error(f"追加Agent消息失败: {e}")
@@ -281,30 +244,22 @@ class AgentContextManager:
             消息历史列表
         """
         try:
-            conn = self._get_connection()
-            cursor = conn.cursor()
+            with self._lock:
+                context_data = self._get_or_load(agent_id)
 
-            cursor.execute(
-                """
-                SELECT role, content, metadata, created_at 
-                FROM agent_context_messages 
-                WHERE agent_id = ?
-                ORDER BY created_at DESC
-                LIMIT ?
-            """,
-                (agent_id, limit),
-            )
+            messages = context_data.messages
+            if len(messages) > limit:
+                messages = messages[-limit:]
 
-            rows = cursor.fetchall()
-
+            # 返回完整消息（含 role, content, metadata, created_at）
             return [
                 {
-                    "role": row[0],
-                    "content": row[1],
-                    "metadata": json.loads(row[2]) if row[2] else None,
-                    "created_at": row[3],
+                    "role": m.get("role"),
+                    "content": m.get("content"),
+                    "metadata": m.get("metadata"),
+                    "created_at": m.get("created_at"),
                 }
-                for row in reversed(rows)  # 按时间正序返回
+                for m in messages
             ]
         except Exception as e:
             logger.error(f"获取Agent消息历史失败: {e}")
@@ -317,13 +272,14 @@ class AgentContextManager:
             agent_id: Agent唯一标识
         """
         try:
-            conn = self._get_connection()
-            cursor = conn.cursor()
+            with self._lock:
+                # 清空缓存
+                self._cache.pop(agent_id, None)
+                # 删除文件
+                file_path = self._get_file_path(agent_id)
+                if file_path.exists():
+                    file_path.unlink()
 
-            cursor.execute("DELETE FROM agent_contexts WHERE agent_id = ?", (agent_id,))
-            cursor.execute("DELETE FROM agent_context_messages WHERE agent_id = ?", (agent_id,))
-
-            conn.commit()
             logger.info(f"Agent '{agent_id}' 上下文已清空")
         except Exception as e:
             logger.error(f"清空Agent上下文失败: {e}")
@@ -339,42 +295,26 @@ class AgentContextManager:
             上下文摘要信息
         """
         try:
-            conn = self._get_connection()
-            cursor = conn.cursor()
+            with self._lock:
+                context_data = self._get_or_load(agent_id)
 
-            # 获取上下文数据
-            cursor.execute(
-                """
-                SELECT session_id, last_active, created_at, updated_at 
-                FROM agent_contexts 
-                WHERE agent_id = ?
-            """,
-                (agent_id,),
+            role_counts: Dict[str, int] = {}
+            for msg in context_data.messages:
+                role = msg.get("role", "unknown")
+                role_counts[role] = role_counts.get(role, 0) + 1
+
+            has_context = (
+                context_data.created_at is not None or len(context_data.messages) > 0
             )
-
-            context_row = cursor.fetchone()
-
-            # 获取消息统计
-            cursor.execute(
-                """
-                SELECT COUNT(*), role 
-                FROM agent_context_messages 
-                WHERE agent_id = ?
-                GROUP BY role
-            """,
-                (agent_id,),
-            )
-
-            role_counts = {row[1]: row[0] for row in cursor.fetchall()}
 
             return {
                 "agent_id": agent_id,
-                "has_context": context_row is not None,
-                "session_id": context_row[0] if context_row else None,
-                "last_active": context_row[1] if context_row else None,
-                "created_at": context_row[2] if context_row else None,
-                "updated_at": context_row[3] if context_row else None,
-                "total_messages": sum(role_counts.values()),
+                "has_context": has_context,
+                "session_id": context_data.session_id,
+                "last_active": context_data.last_active,
+                "created_at": context_data.created_at,
+                "updated_at": context_data.updated_at,
+                "total_messages": len(context_data.messages),
                 "role_counts": role_counts,
             }
         except Exception as e:
@@ -388,21 +328,18 @@ class AgentContextManager:
             agent_id: Agent唯一标识
         """
         try:
-            conn = self._get_connection()
-            cursor = conn.cursor()
+            with self._lock:
+                now = datetime.now().isoformat()
+                context_data = self._get_or_load(agent_id)
 
-            now = datetime.now().isoformat()
+                context_data.last_active = now
+                context_data.updated_at = now
+                if context_data.created_at is None:
+                    context_data.created_at = now
 
-            cursor.execute(
-                """
-                UPDATE agent_contexts 
-                SET last_active = ?, updated_at = ?
-                WHERE agent_id = ?
-            """,
-                (now, now, agent_id),
-            )
+                self._cache[agent_id] = context_data
+                self._save_to_file(context_data)
 
-            conn.commit()
         except Exception as e:
             logger.error(f"更新Agent最后活跃时间失败: {e}")
 
@@ -414,49 +351,33 @@ class AgentContextManager:
             keep_count: 保留的消息数量
         """
         try:
-            conn = self._get_connection()
-            cursor = conn.cursor()
+            with self._lock:
+                context_data = self._get_or_load(agent_id)
 
-            # 获取需要删除的消息ID
-            cursor.execute(
-                """
-                SELECT id FROM agent_context_messages 
-                WHERE agent_id = ?
-                ORDER BY created_at DESC
-                LIMIT -1 OFFSET ?
-            """,
-                (agent_id, keep_count),
-            )
+                if len(context_data.messages) > keep_count:
+                    context_data.messages = context_data.messages[-keep_count:]
+                    context_data.updated_at = datetime.now().isoformat()
 
-            ids_to_delete = [row[0] for row in cursor.fetchall()]
+                    self._cache[agent_id] = context_data
+                    self._save_to_file(context_data)
 
-            if ids_to_delete:
-                placeholders = ",".join("?" * len(ids_to_delete))
-                cursor.execute(
-                    f"""
-                    DELETE FROM agent_context_messages 
-                    WHERE id IN ({placeholders})
-                """,
-                    ids_to_delete,
-                )
-
-                conn.commit()
-                logger.info(f"Agent '{agent_id}' 已清理 {len(ids_to_delete)} 条旧消息")
+                    logger.info(
+                        f"Agent '{agent_id}' 已清理旧消息，保留最近 {keep_count} 条"
+                    )
         except Exception as e:
             logger.error(f"清理Agent旧消息失败: {e}")
 
-    def close_all_connections(self):
-        """关闭所有数据库连接
 
-        BUG-B10 修复: 在 ``_conn_lock`` 内完成对池的清空,避免与其他线程并发
-        创建连接时出现 race。
-        """
-        with self._conn_lock:
-            connections_snapshot = list(self._connection_pool.values())
-            self._connection_pool.clear()
-        for thread_id, conn in enumerate(connections_snapshot):
-            try:
-                conn.close()
-                logger.debug(f"已关闭连接: thread={thread_id}")
-            except Exception as e:
-                logger.warning(f"关闭连接失败: thread={thread_id}, error={e}")
+# 模块级单例
+_instance: Optional[AgentContextManager] = None
+_instance_lock = threading.Lock()
+
+
+def get_agent_context_manager() -> AgentContextManager:
+    """获取AgentContextManager单例"""
+    global _instance
+    if _instance is None:
+        with _instance_lock:
+            if _instance is None:
+                _instance = AgentContextManager()
+    return _instance

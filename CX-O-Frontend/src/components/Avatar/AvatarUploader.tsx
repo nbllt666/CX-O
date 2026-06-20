@@ -1,20 +1,24 @@
 import { useState, useCallback, useRef } from 'react';
 import { saveAvatar } from '../../services/avatarStorage';
 import type { AvatarRecord } from '../../services/avatarStorage';
+import { useSettingsStore } from '../../store/settingsStore';
 
 interface AvatarUploaderProps {
   type: 'live2d' | 'vrm';
   onUploadSuccess?: (avatar: AvatarRecord) => void;
   onError?: (error: string) => void;
+  maxFileSizeMb?: number;
 }
 
-const MAX_FILE_SIZE = 50 * 1024 * 1024;
-
-export function AvatarUploader({ type, onUploadSuccess, onError }: AvatarUploaderProps) {
+export function AvatarUploader({ type, onUploadSuccess, onError, maxFileSizeMb }: AvatarUploaderProps) {
   const [isDragging, setIsDragging] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
   const [uploadProgress, setUploadProgress] = useState(0);
   const inputRef = useRef<HTMLInputElement>(null);
+
+  const { limits } = useSettingsStore();
+  const effectiveMaxFileSizeMb = maxFileSizeMb ?? limits?.max_upload_size_mb ?? 500;
+  const MAX_FILE_SIZE = effectiveMaxFileSizeMb * 1024 * 1024;
 
   const validateFile = useCallback((file: File): string | null => {
     if (type === 'live2d') {
@@ -32,11 +36,11 @@ export function AvatarUploader({ type, onUploadSuccess, onError }: AvatarUploade
     }
 
     if (file.size > MAX_FILE_SIZE) {
-      return '文件大小不能超过 50MB';
+      return `文件大小不能超过 ${effectiveMaxFileSizeMb}MB`;
     }
 
     return null;
-  }, [type]);
+  }, [type, MAX_FILE_SIZE, effectiveMaxFileSizeMb]);
 
   const processFile = useCallback(async (file: File) => {
     const validationError = validateFile(file);
@@ -155,7 +159,7 @@ export function AvatarUploader({ type, onUploadSuccess, onError }: AvatarUploade
             拖拽文件到此处或点击上传
           </p>
           <p className="text-xs text-[var(--color-text-tertiary)]">
-            {type === 'live2d' ? '支持 .model.json 或 .zip 文件' : '支持 .vrm 文件'}，最大 50MB
+            {type === 'live2d' ? '支持 .model.json/.model3.json/.zip/.moc3 文件' : '支持 .vrm 文件'}，最大 {effectiveMaxFileSizeMb}MB
           </p>
         </>
       )}

@@ -15,6 +15,7 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 from server.api.routers.agents import _load_agents
+from server.config import get_settings
 from server.core.logging_config import get_contextual_logger
 
 logger = get_contextual_logger(__name__)
@@ -138,7 +139,7 @@ def build_messages(
         messages.append({"role": "system", "content": f"相关记忆:\n{memory_context}"})
 
     # 5. 历史消息（最近10条）
-    history = context_mgr.get_messages(session_id, limit=10)
+    history = context_mgr.get_messages(session_id, limit=get_settings().config.limits.context.chat_context_limit)
     for msg in history:
         if msg.get("role") in ["user", "assistant"]:
             messages.append({"role": msg["role"], "content": msg.get("content", "")})
@@ -243,7 +244,7 @@ async def chat(request: Request):
             )
             if routing_result.memories:
                 memory_context = "\n".join(
-                    [f"- {m['content']}" for m in routing_result.memories[:5]]
+                    [f"- {m['content']}" for m in routing_result.memories[:get_settings().config.limits.memory.inject_memories_count]]
                 )
 
         messages = build_messages(
@@ -383,7 +384,7 @@ async def chat_stream(request: ChatRequest):
             )
             if routing_result.memories:
                 memory_context = "\n".join(
-                    [f"- {m['content']}" for m in routing_result.memories[:5]]
+                    [f"- {m['content']}" for m in routing_result.memories[:get_settings().config.limits.memory.inject_memories_count]]
                 )
 
         # 6. 构建消息列表
@@ -654,7 +655,7 @@ async def memory_agent_chat_stream(request: MemoryAgentChatRequest):
     记忆管理Agent只有一个固定会话
     """
     from server.dependencies import get_context_manager, get_memory_manager, get_model_router
-    from server.core.context.agent_context_manager import AgentContextManager
+    from server.core.context.agent_context_manager import get_agent_context_manager
 
     try:
         # 1. 获取记忆管理Agent配置
@@ -665,7 +666,7 @@ async def memory_agent_chat_stream(request: MemoryAgentChatRequest):
         # 2. 获取管理器
         memory_mgr = get_memory_manager()
         context_mgr = get_context_manager()
-        agent_context_mgr = AgentContextManager()
+        agent_context_mgr = get_agent_context_manager()
 
         # 3. 获取记忆管理模型客户端
         model_router = get_model_router()
@@ -675,11 +676,14 @@ async def memory_agent_chat_stream(request: MemoryAgentChatRequest):
 
         # 4. 获取/创建固定会话（记忆管理Agent只有一个会话）
         session_id = "memory-agent-default"
+        existing = None
         try:
-            context_mgr.get_session(session_id)
-        except Exception:
-            session_id = context_mgr.create_session(
-                workspace_id="memory-agent", title="记忆管理对话"
+            existing = context_mgr.get_session(session_id)
+        except (KeyError, LookupError):
+            pass
+        if existing is None:
+            context_mgr.create_session(
+                workspace_id="memory-agent", title="记忆管理对话", session_id=session_id
             )
 
         # 5. 加载历史上下文（从数据库）
@@ -862,4 +866,7 @@ async def memory_agent_chat_stream(request: MemoryAgentChatRequest):
     except HTTPException:
         raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        # BUG-B-M6 修复: 不向客户端返回内部异常信息(可能泄露文件路径/SQL/内部结构),
+        # 仅记录日志,返回通用错误消息。
+        logger.error(f"聊天接口内部错误: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="聊天处理失败,请稍后重试")

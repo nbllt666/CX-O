@@ -10,6 +10,8 @@ from collections import deque
 from dataclasses import dataclass, field
 from typing import Any, Callable, Optional
 
+from server.config import Settings
+
 logger = logging.getLogger(__name__)
 
 
@@ -21,7 +23,7 @@ class FirewallConfig:
     duplicate_threshold: int = 3
     duplicate_window_seconds: int = 30
     min_message_length: int = 1
-    max_message_length: int = 500
+    max_message_length: int = None
     blocked_patterns: list[str] = field(default_factory=list)
     blocked_users: list[str] = field(default_factory=list)
     keyword_filter_enabled: bool = True
@@ -45,6 +47,14 @@ class FirewallService:
 
     def __init__(self):
         self.config = FirewallConfig()
+        if self.config.max_message_length is None:
+            self.config.max_message_length = Settings().config.limits.firewall.max_message_length
+        # 从 Settings 覆盖防火墙限制配置
+        limits = Settings().config.limits.firewall
+        self.config.max_messages_per_second = limits.max_messages_per_second
+        self.config.max_messages_per_minute = limits.max_messages_per_minute
+        self.config.duplicate_threshold = limits.duplicate_threshold
+        self.config.duplicate_window_seconds = limits.duplicate_window_seconds
         self._context_manager: Any = None
         self._message_timestamps: deque = deque(maxlen=1000)
         self._user_message_counts: dict[str, deque] = {}

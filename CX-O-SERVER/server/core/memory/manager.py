@@ -8,6 +8,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple, TYPE_CHECKING
 
+from server.config import Settings
 from server.core.exceptions import DatabaseError, MemoryOperationError, VectorStoreError
 from server.core.logging_config import get_contextual_logger
 
@@ -86,6 +87,7 @@ class MemoryManager:
         self._vector_store = None
         self._embedding_model = None
         self._hybrid_search = None
+        self._llm_client = None
         self.archiver = None
         self.deduplication_engine = None
         self.vectorization_queue = None
@@ -211,7 +213,7 @@ class MemoryManager:
                     is_deleted BOOLEAN DEFAULT FALSE,
                     source VARCHAR(50) DEFAULT 'user',
                     workspace_id VARCHAR(100) DEFAULT 'default',
-                    agent_id VARCHAR(100) DEFAULT '{agent_id}'
+                    agent_id VARCHAR(100) DEFAULT 'default'
                 )
             """
             )
@@ -377,7 +379,7 @@ class MemoryManager:
 格式示例：[{{"name": "张三", "type": "person"}}, {{"name": "北京", "type": "location"}}]
 
 文本：
-{content[:2000]}
+{content[:Settings().config.limits.memory.entity_extract_max_content]}
 
 JSON响应："""
 
@@ -467,7 +469,7 @@ JSON响应："""
                 seen.add(key)
                 unique_entities.append(entity)
 
-        return unique_entities[:10]
+        return unique_entities[:Settings().config.limits.memory.max_entities]
 
     def _update_graph_on_delete(self, memory_id: int) -> None:
         if not self._graph_enabled or not self._graph_stores:
@@ -2849,7 +2851,7 @@ JSON响应："""
             return {
                 "status": "success",
                 "memory_id": memory_id,
-                "relationships": relationships[:20],  # 限制返回数量
+                "relationships": relationships[:Settings().config.limits.memory.max_relationships],
                 "total_relationships": len(relationships),
             }
 

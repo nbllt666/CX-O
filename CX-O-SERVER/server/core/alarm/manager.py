@@ -12,6 +12,9 @@ from typing import Any, Dict, List, Optional
 
 logger = logging.getLogger(__name__)
 
+MAX_DELAY = 86400 * 30  # 最大延迟 30 天（秒）
+MAX_MESSAGE_LENGTH = 1000  # 提醒消息最大长度
+
 
 class _SilentHandler(logging.NullHandler):
     """A handler that silently ignores all log records."""
@@ -141,6 +144,12 @@ class AlarmManager:
         self._on_trigger_callback = callback
 
     def create_alarm(self, agent_id: str, seconds: int, message: str) -> str:
+        if not isinstance(agent_id, str) or not agent_id.strip():
+            raise ValueError("agent_id 必须是非空字符串")
+        if not isinstance(seconds, (int, float)) or seconds <= 0 or seconds > MAX_DELAY:
+            raise ValueError(f"seconds 必须在 (0, {MAX_DELAY}] 范围内")
+        if not isinstance(message, str) or len(message) > MAX_MESSAGE_LENGTH:
+            raise ValueError(f"message 长度不能超过 {MAX_MESSAGE_LENGTH} 字符")
         alarm_id = str(uuid.uuid4())
         now = datetime.now()
         trigger_time = now + timedelta(seconds=seconds)

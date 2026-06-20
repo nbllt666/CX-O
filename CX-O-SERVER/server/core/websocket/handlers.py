@@ -2,6 +2,7 @@ import asyncio
 from datetime import datetime
 from typing import Any, Dict, Optional
 
+from server.config import Settings
 from server.core.logging_config import get_contextual_logger
 
 from .manager import get_websocket_manager
@@ -89,7 +90,7 @@ class ChatWebSocketHandler:
                 )
                 if routing_result.memories:
                     memory_context = "\n".join(
-                        [f"- {m['content']}" for m in routing_result.memories[:5]]
+                        [f"- {m['content']}" for m in routing_result.memories[:Settings().config.limits.memory.inject_memories_count]]
                     )
 
             messages = build_messages(
@@ -191,7 +192,7 @@ class ChatWebSocketHandler:
                 )
                 if routing_result.memories:
                     memory_context = "\n".join(
-                        [f"- {m['content']}" for m in routing_result.memories[:5]]
+                        [f"- {m['content']}" for m in routing_result.memories[:Settings().config.limits.memory.inject_memories_count]]
                     )
 
             # 构建消息列表

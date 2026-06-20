@@ -1,0 +1,106 @@
+# CX-O 统一推理服务 Docker Compose 编排
+# 包含 F5-TTS (Triton+TRT-LLM) 和 LLM (vLLM/TRT-LLM) 服务
+#
+# 使用方式:
+#   启动所有服务:   docker compose up
+#   仅启动 TTS:     docker compose up f5-tts-triton
+#   仅启动 LLM:     docker compose up llm
+#   指定 LLM 后端:  LLM_BACKEND=vllm docker compose up llm
+#                    LLM_BACKEND=trtllm docker compose up llm
+
+services:
+  # ============================================================
+  # F5-TTS Triton Inference Server (TRT-LLM 加速)
+  # ============================================================
+  f5-tts-triton:
+    build:
+      context: ./F5-TTS/src/f5_tts/runtime/triton_trtllm
+      dockerfile: Dockerfile.server
+    shm_size: '4gb'
+    ports:
+      - "${F5TTS_PORT_HTTP:-8000}:8000"
+      - "${F5TTS_PORT_GRPC:-8001}:8001"
+      - "${F5TTS_PORT_METRICS:-8002}:8002"
+    environment:
+      - PYTHONIOENCODING=utf-8
+      - MODEL=${F5TTS_MODEL:-F5TTS_v1_Base}
+      - CUDA_VISIBLE_DEVICES=${F5TTS_GPU:-0}
+    volumes:
+      - f5tts-models:/workspace/ckpts
+      - f5tts-engines:/workspace/engines
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              device_ids: ['${F5TTS_GPU_ID:-0}']
+              capabilities: [gpu]
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/v2/health/ready"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 120s
+    restart: unless-stopped
+    networks:
+      - cxo-inference
+
+  # ============================================================
+  # LLM 推理服务 (vLLM + GGUF 或 TRT-LLM)
+  # ============================================================
+  llm:
+    build:
+      context: ./docker/llm
+      dockerfile: Dockerfile.${LLM_BACKEND:-vllm}
+      args:
+        - BUILDKIT_INLINE_CACHE=1
+    shm_size: '4gb'
+    ports:
+      - "${LLM_PORT:-8080}:8080"
+    environment:
+      # vLLM 模式
+      - MODEL_PATH=${LLM_MODEL_PATH:-/workspace/models/model.gguf}
+      - HOST=0.0.0.0
+      - PORT=8080
+      - MAX_MODEL_LEN=${LLM_MAX_MODEL_LEN:-4096}
+      - GPU_MEMORY_UTILIZATION=${LLM_GPU_MEM_UTIL:-0.9}
+      - DTYPE=${LLM_DTYPE:-auto}
+      - MAX_NUM_SEQS=${LLM_MAX_NUM_SEQS:-256}
+      - ENABLE_PREFIX_CACHING=${LLM_PREFIX_CACHING:-true}
+      # TRT-LLM 模式
+      - ENGINE_PATH=${LLM_ENGINE_PATH:-/workspace/engines}
+      - MAX_BATCH_SIZE=${LLM_MAX_BATCH_SIZE:-256}
+      - MAX_NUM_TOKENS=${LLM_MAX_NUM_TOKENS:-8192}
+    volumes:
+      - ${LLM_MODELS_DIR:-./models}:/workspace/models:ro
+      - llm-engines:/workspace/engines:ro
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              device_ids: ['${LLM_GPU_ID:-0}']
+              capabilities: [gpu]
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 120s
+    restart: unless-stopped
+    networks:
+      - cxo-inference
+    profiles:
+      - llm
+
+volumes:
+  f5tts-models:
+    driver: local
+  f5tts-engines:
+    driver: local
+  llm-engines:
+    driver: local
+
+networks:
+  cxo-inference:
+    driver: bridge

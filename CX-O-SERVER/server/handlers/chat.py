@@ -7,6 +7,7 @@ import time
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Optional
 
+from server.config import Settings
 from server.protocol.message import create_response, create_error, create_stream
 from server.protocol.actions import ChatActions
 
@@ -70,7 +71,7 @@ async def _build_chat_context(
             scene_type=agent_config.get("memory_scene", "chat"),
         )
         if routing_result.memories:
-            memory_context = "\n".join([f"- {m['content']}" for m in routing_result.memories[:5]])
+            memory_context = "\n".join([f"- {m['content']}" for m in routing_result.memories[:Settings().config.limits.memory.inject_memories_count]])
 
     return ChatContext(
         agent_config=agent_config,
@@ -116,7 +117,34 @@ def _get_llm_client_for_agent(agent_config: dict):
     return get_llm_client()
 
 
-def _build_messages(agent_config, context_mgr, session_id, user_message, memory_context=None, images=None):
+def _build_messages(
+    agent_config,
+    context_mgr,
+    session_id,
+    user_message,
+    memory_context=None,
+    images=None,
+    is_realtime_voice: bool = False,
+    tts_engine: str = "f5-tts",
+):
+    """构建发送给 LLM 的消息列表。
+
+    Args:
+        agent_config: Agent 配置字典，包含 system_prompt / model / use_memory 等。
+        context_mgr: 上下文管理器，用于读取对话历史。
+        session_id: 会话 ID。
+        user_message: 当前用户输入文本。
+        memory_context: 记忆检索结果（可选）。
+        images: 多模态图像列表（可选）。
+        is_realtime_voice: 是否为实时语音模式。True 时走瘦身分支，
+            跳过重型隐藏提示词，仅保留核心人设 + voice_prompt + 最近 2 轮对话。
+        tts_engine: TTS 引擎名称，决定实时模式下注入哪个 voice_prompt。
+            "orpheus" → orpheus_voice_prompt（含情感标签指南）；
+            其他值 → realtime_voice_prompt（默认）。
+
+    Returns:
+        list[dict]: OpenAI 格式的消息列表。
+    """
     import yaml
     from pathlib import Path
     from server.config import get_settings
@@ -135,8 +163,50 @@ def _build_messages(agent_config, context_mgr, session_id, user_message, memory_
         hidden_prompts = {}
 
     system_prompt = agent_config.get("system_prompt", "")
+    # 核心人设 System Prompt：实时与非实时模式均保留，确保 LLM 不丢失基础人设和能力。
+    # 前 spec（optimize-ttfa-sub-300ms）曾在此处对实时模式跳过 system_prompt，导致 LLM
+    # 丢失人设；本 task 修复为：实时模式同样注入 system_prompt（约 ~100 tokens）。
     if system_prompt:
         messages.append({"role": "system", "content": system_prompt})
+
+    # ====================================================================
+    # 实时语音模式：瘦身 Prompt，确保 Tokens < 600，锁死 80ms TTFT
+    # --------------------------------------------------------------------
+    # 保留：核心人设 system_prompt（上方已注入）+ 对应 voice_prompt + 最近 2 轮对话
+    # 跳过：MemoryRouter 深度图检索、HybridSearch、技能注入、tool_instructions、
+    #       effect_prompts、emotion_prompts 等重型提示词（合计约 1500 tokens）
+    # ====================================================================
+    if is_realtime_voice:
+        # 根据 TTS 引擎选择对应的 voice_prompt：
+        # - orpheus：注入 orpheus_voice_prompt（含 Orpheus 情感标签使用指南，~200 tokens）
+        # - 其他（f5-tts 等）：注入 realtime_voice_prompt（默认实时语音规则，~100 tokens）
+        if tts_engine == "orpheus":
+            voice_prompt = hidden_prompts.get("orpheus_voice_prompt", "")
+        else:
+            voice_prompt = hidden_prompts.get("realtime_voice_prompt", "")
+        if voice_prompt:
+            messages.append({"role": "system", "content": voice_prompt})
+
+        # 跳过 memory_context 注入：避免 MemoryRouter 深度图检索的 50-100ms
+        # 跳过 cxfc_mgr 技能注入：避免 skill_registry 关键词匹配 + 模板渲染的 10-30ms
+        # 跳过 tool_instructions / emotion_prompts / effect_prompts 等重型隐藏提示词
+
+        # 仅保留最近 2 轮对话历史（limit=4，即 2 user + 2 assistant，~200 tokens）
+        # 每多 1K tokens 历史约增加 20-40ms Prefill，裁剪到 4 条可省 60-120ms
+        history = context_mgr.get_messages(session_id, limit=4)
+        for msg in history:
+            if msg.get("role") in ["user", "assistant"]:
+                messages.append({"role": msg["role"], "content": msg.get("content", "")})
+
+        # 实时语音模式不支持多模态图像注入，直接送文本
+        messages.append({"role": "user", "content": user_message})
+
+        # Token 预算：核心人设 ~100 + voice_prompt ~200 + 2 轮对话 ~200 = ~500 tokens < 600
+        return messages
+
+    # ====================================================================
+    # 以下为非实时模式（默认）：行为与改造前完全一致，保持向后兼容
+    # ====================================================================
 
     model_type = agent_config.get("model", "main").lower()
     hidden_parts = []
@@ -185,7 +255,7 @@ def _build_messages(agent_config, context_mgr, session_id, user_message, memory_
     except Exception as e:
         logger.warning(f"Skills injection failed: {e}")
 
-    history = context_mgr.get_messages(session_id, limit=10)
+    history = context_mgr.get_messages(session_id, limit=Settings().config.limits.context.chat_context_limit)
     for msg in history:
         if msg.get("role") in ["user", "assistant"]:
             messages.append({"role": msg["role"], "content": msg.get("content", "")})

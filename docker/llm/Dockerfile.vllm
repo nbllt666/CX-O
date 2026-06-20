@@ -1,0 +1,35 @@
+FROM vllm/vllm-openai:latest
+
+# Install additional tools
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    curl wget && \
+    rm -rf /var/lib/apt/lists/*
+
+WORKDIR /workspace
+
+# Default model path (can be overridden)
+ENV MODEL_PATH=/workspace/models/model.gguf
+ENV HOST=0.0.0.0
+ENV PORT=8080
+ENV MAX_MODEL_LEN=4096
+ENV GPU_MEMORY_UTILIZATION=0.9
+ENV DTYPE=auto
+ENV MAX_NUM_SEQS=256
+ENV ENABLE_PREFIX_CACHING=true
+
+EXPOSE 8080
+
+# Health check
+HEALTHCHECK --interval=30s --timeout=10s --start-period=120s --retries=5 \
+    CMD curl -f http://localhost:8080/health || exit 1
+
+# vLLM natively supports GGUF loading
+CMD ["sh", "-c", "python -m vllm.entrypoints.openai.api_server \
+    --model ${MODEL_PATH} \
+    --host ${HOST} \
+    --port ${PORT} \
+    --max-model-len ${MAX_MODEL_LEN} \
+    --gpu-memory-utilization ${GPU_MEMORY_UTILIZATION} \
+    --dtype ${DTYPE} \
+    --max-num-seqs ${MAX_NUM_SEQS} \
+    ${ENABLE_PREFIX_CACHING:+--enable-prefix-caching}"]

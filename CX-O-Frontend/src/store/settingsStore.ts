@@ -1,6 +1,8 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 import { createStorage } from '../lib/createStorage';
+import { api } from '../api/client';
+import type { FrontendLimits } from '../api/client';
 
 export interface Live2DSettings {
   enabled: boolean;
@@ -138,6 +140,7 @@ interface SettingsState {
   live2d: Live2DSettings;
   vrm: VRMSettings;
   layout: LayoutSettings;
+  limits: FrontendLimits | null;
   setAvatarType: (type: AvatarType) => void;
   setLive2DSettings: (settings: Partial<Live2DSettings>) => void;
   setVRMSettings: (settings: Partial<VRMSettings>) => void;
@@ -151,14 +154,15 @@ interface SettingsState {
   toggleVRMCollapsed: () => void;
   setLive2DWidth: (width: number) => void;
   setVRMWidth: (width: number) => void;
+  fetchLimits: () => Promise<void>;
 }
 
 const defaultLive2DSettings: Live2DSettings = {
   enabled: false,
   modelPath: '/models/shizuku/shizuku.model.json',
   width: 300,
-  minWidth: 200,
-  maxWidth: 400,
+  minWidth: 100,
+  maxWidth: 1200,
   position: 'left',
   lipSync: true,
   idleMotion: true,
@@ -212,6 +216,7 @@ export const useSettingsStore = create<SettingsState>()(
       live2d: defaultLive2DSettings,
       vrm: defaultVRMSettings,
       layout: defaultLayoutSettings,
+      limits: null,
 
       setAvatarType: (type) =>
         set((state) => ({
@@ -281,20 +286,37 @@ export const useSettingsStore = create<SettingsState>()(
         })),
 
       setLive2DWidth: (width) =>
-        set((state) => ({
-          layout: {
-            ...state.layout,
-            live2dWidth: Math.max(state.live2d.minWidth, Math.min(state.live2d.maxWidth, width)),
-          },
-        })),
+        set((state) => {
+          const minW = state.limits?.avatar_min_width ?? state.live2d.minWidth;
+          const maxW = state.limits?.avatar_max_width ?? state.live2d.maxWidth;
+          return {
+            layout: {
+              ...state.layout,
+              live2dWidth: Math.max(minW, Math.min(maxW, width)),
+            },
+          };
+        }),
 
       setVRMWidth: (width) =>
-        set((state) => ({
-          layout: {
-            ...state.layout,
-            vrmWidth: Math.max(state.vrm.minWidth, Math.min(state.vrm.maxWidth, width)),
-          },
-        })),
+        set((state) => {
+          const minW = state.limits?.avatar_min_width ?? state.vrm.minWidth;
+          const maxW = state.limits?.avatar_max_width ?? state.vrm.maxWidth;
+          return {
+            layout: {
+              ...state.layout,
+              vrmWidth: Math.max(minW, Math.min(maxW, width)),
+            },
+          };
+        }),
+
+      fetchLimits: async () => {
+        try {
+          const limits = await api.getLimits();
+          set({ limits });
+        } catch {
+          // fallback to defaults (already null)
+        }
+      },
     }),
     {
       name: 'cxhms-settings',

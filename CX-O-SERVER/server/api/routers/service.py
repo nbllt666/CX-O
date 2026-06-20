@@ -255,7 +255,7 @@ async def get_service_status():
                 if (
                     cmdline
                     and "uvicorn" in " ".join(cmdline)
-                    and "backend.api.app:app" in " ".join(cmdline)
+                    and "server.main:app" in " ".join(cmdline)
                 ):
                     # 找到已运行的进程，直接使用其PID
                     process = proc
@@ -291,10 +291,15 @@ def validate_service_config(config: ServiceConfig) -> None:
     # 验证 host
     allowed_hosts = ["0.0.0.0", "127.0.0.1", "localhost"]
     if config.host not in allowed_hosts:
-        # 验证 IP 地址格式
-        import re
+        # 验证 IP 地址格式及范围
+        # BUG-B-M10 修复: 原正则 ^(\d{1,3}\.){3}\d{1,3}$ 仅校验格式,
+        # 不校验 octet 范围(0-255),999.999.999.999 也能通过。
+        # 改用 ipaddress.ip_address() 进行严格校验。
+        import ipaddress
 
-        if not re.match(r"^(\d{1,3}\.){3}\d{1,3}$", config.host):
+        try:
+            ipaddress.ip_address(config.host)
+        except ValueError:
             raise HTTPException(status_code=400, detail=f"Invalid host: {config.host}")
 
     # 验证端口
@@ -353,7 +358,7 @@ async def start_service(config: ServiceConfig):
             cmd = [
                 "cmd",
                 "/c",
-                f'"{conda_activate}" base && python -m uvicorn backend.api.app:app '
+                f'"{conda_activate}" base && python -m uvicorn server.main:app '
                 f"--host {config.host} --port {config.port} --log-level {config.log_level}",
             ]
             if config.reload:
@@ -377,7 +382,7 @@ async def start_service(config: ServiceConfig):
                 conda_python,
                 "-m",
                 "uvicorn",
-                "backend.api.app:app",
+                "server.main:app",
                 "--host",
                 config.host,
                 "--port",
@@ -405,7 +410,7 @@ async def start_service(config: ServiceConfig):
                 sys.executable,
                 "-m",
                 "uvicorn",
-                "backend.api.app:app",
+                "server.main:app",
                 "--host",
                 config.host,
                 "--port",
@@ -639,6 +644,9 @@ async def update_service_config_put(config: dict):
         except Exception as e:
             logger.warning(f"reload config 失败, 下次重启生效: {e}")
 
+        # BUG-B-M11 修复: 原函数无 return 语句,FastAPI 返回 null 响应体。
+        return {"status": "success"}
+
     except Exception as e:
         logger.error(f"Failed to save config: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail="保存配置失败")
@@ -721,7 +729,7 @@ async def get_startup_command(use_conda: bool = True):
         startup_info["args"] = [
             "-m",
             "uvicorn",
-            "backend.api.app:app",
+            "server.main:app",
             "--host",
             config["host"],
             "--port",
@@ -734,7 +742,7 @@ async def get_startup_command(use_conda: bool = True):
         startup_info["args"] = [
             "-m",
             "uvicorn",
-            "backend.api.app:app",
+            "server.main:app",
             "--host",
             config["host"],
             "--port",

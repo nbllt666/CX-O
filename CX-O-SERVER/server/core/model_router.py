@@ -12,7 +12,7 @@ from typing import Any, Dict, List, Optional
 
 import httpx
 
-from server.core.llm.client import LLMClient, OllamaClient, VLLMClient
+from server.core.llm.client import LLMClient, OllamaClient, VLLMClient, TRTLLMClient
 from server.config import ModelConfig, get_settings
 
 logger = logging.getLogger(__name__)
@@ -110,6 +110,14 @@ class ModelRouter:
                 temperature=config.temperature,
                 max_tokens=config.max_tokens,
             )
+        elif provider == "trtllm":
+            return TRTLLMClient(
+                host=config.host,
+                model=config.model,
+                temperature=config.temperature,
+                max_tokens=config.max_tokens,
+                api_key=getattr(config, "api_key", None),
+            )
         else:
             logger.warning(f"不支持的模型提供商: {provider}")
             return None
@@ -183,6 +191,13 @@ class ModelRouter:
                         error_msg = f"HTTP {response.status_code}"
 
             elif provider == "vllm":
+                async with httpx.AsyncClient(timeout=10.0) as client:
+                    response = await client.get(f"{config.host}/health")
+                    available = response.status_code == 200
+                    if not available:
+                        error_msg = f"HTTP {response.status_code}"
+
+            elif provider == "trtllm":
                 async with httpx.AsyncClient(timeout=10.0) as client:
                     response = await client.get(f"{config.host}/health")
                     available = response.status_code == 200

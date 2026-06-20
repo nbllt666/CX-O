@@ -24,6 +24,10 @@ class Database:
         self.timeout = self.config.timeout
         self._lock = threading.Lock()
         self._init_lock = threading.Lock()
+        # BUG-B-M2 修复: 记录所有线程创建的连接,close() 时统一关闭,
+        # 避免仅关闭当前线程的 thread-local 连接导致其他线程连接泄漏。
+        self._all_connections: List[sqlite3.Connection] = []
+        self._connections_lock = threading.Lock()
 
     def _get_connection(self) -> sqlite3.Connection:
         """获取线程本地的数据库连接"""
@@ -31,10 +35,11 @@ class Database:
             conn = sqlite3.connect(
                 self.db_path,
                 timeout=self.timeout,
-                check_same_thread=False,
             )
             conn.row_factory = sqlite3.Row
             self._local.connection = conn
+            with self._connections_lock:
+                self._all_connections.append(conn)
         return self._local.connection
 
     @contextmanager
@@ -117,14 +122,21 @@ class Database:
             return False
 
     def close(self) -> None:
-        """关闭数据库连接"""
-        if hasattr(self._local, 'connection') and self._local.connection:
+        """关闭数据库连接
+
+        BUG-B-M2 修复: 关闭所有线程创建的连接,而不仅仅是当前线程的
+        thread-local 连接,避免多线程场景下其他线程连接泄漏。
+        """
+        with self._connections_lock:
+            connections_to_close = list(self._all_connections)
+            self._all_connections.clear()
+        for conn in connections_to_close:
             try:
-                self._local.connection.close()
+                conn.close()
             except Exception as e:
                 logger.warning(f"关闭数据库连接失败: {e}")
-            finally:
-                self._local.connection = None
+        if hasattr(self._local, 'connection'):
+            self._local.connection = None
 
     def execute(self, query: str, params: tuple = ()) -> List[Dict[str, Any]]:
         """执行查询并返回结果"""

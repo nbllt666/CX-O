@@ -6,10 +6,11 @@ from __future__ import annotations
 import base64
 import logging
 import asyncio
-from typing import TYPE_CHECKING
+import time
+from typing import TYPE_CHECKING, Optional
 
 from server.protocol.message import create_response, create_error, create_stream
-from server.protocol.actions import ASRActions, TTSActions, EmotionActions, EffectActions
+from server.protocol.actions import ASRActions, TTSActions, EmotionActions, EffectActions, VoiceActions
 from server.services.emotion_parser import get_supported_emotions, parse_text_with_emotions
 from server.services.effect_parser import EffectParser
 
@@ -22,6 +23,10 @@ logger = logging.getLogger(__name__)
 
 _tts_playing_clients: set = set()
 _tts_playing_lock = asyncio.Lock()
+
+# 双流式会话存储：client_id -> DualStreamSession
+# 每个客户端独立维护流水线状态，避免跨客户端干扰
+_dual_stream_sessions: dict[str, "DualStreamSession"] = {}
 
 
 async def set_tts_playing(client_id: str, playing: bool):
@@ -42,6 +47,430 @@ async def set_tts_playing(client_id: str, playing: bool):
 async def is_tts_playing() -> bool:
     async with _tts_playing_lock:
         return len(_tts_playing_clients) > 0
+
+
+class DualStreamSession:
+    """双流式语音会话状态管理器（per-client）
+
+    核心设计：ASR Partial Result 是主驱动器，VAD 仅作兜底。
+    - Partial Result 立即触发 LLM Speculative Prefill，省去等待 VAD on_end 的 ~500ms 静默判定
+    - VAD on_end 仅修正 Final 文本用于上下文记录，不重启已由 Partial 启动的 LLM 流程
+    - 用户开口（VAD speech_start）时立即打断 TTS 播放，实现毫秒级全双工打断
+
+    上下文整合策略（避免上下文爆炸）：
+    - 未触发 LLM 回复的 utterance 合并到 _pending_user_text
+    - 触发回复的 utterance 记为完整轮次（user+assistant 对）
+    - 上下文记录数 = 实际对话轮次数，不因 Partial 数量增加而膨胀
+    """
+
+    def __init__(
+        self,
+        client_id: str,
+        agent_id: str,
+        request_id: str,
+        manager: "WebSocketManager",
+        tts_service: "TTSService",
+        ref_audio_path: Optional[str] = None,
+        ref_text: Optional[str] = None,
+        engine: str = "f5-tts",
+        voice: Optional[str] = None,
+    ):
+        self.client_id = client_id
+        self.agent_id = agent_id
+        self.request_id = request_id
+        self.manager = manager
+        self.tts_service = tts_service
+        self._ref_audio_path = ref_audio_path
+        self._ref_text = ref_text
+        # TTS 引擎类型（"f5-tts" / "orpheus"），决定合成参数与 voice_prompt 注入
+        # 默认 "f5-tts" 保持向后兼容，不传 engine 字段时行为与改造前一致
+        self._engine = engine
+        # Orpheus 预设音色（如 "tara"/"leo"），仅 orpheus 引擎生效
+        # Orpheus 使用预设音色而非参考音频克隆，故不需要 ref_audio/ref_text
+        self._voice = voice
+
+        # 上下文管理 session_id（与 chat.py 保持一致）
+        self.session_id = f"agent-{agent_id}"
+
+        # ---- 上下文整合状态 ----
+        # 累积未触发 LLM 回复的 utterance 文本，供下一轮合并为单条 user 上下文
+        self._pending_user_text: str = ""
+        # 当前触发 LLM 的用户文本（Partial 驱动）
+        self._current_user_text: str = ""
+        # 当前 LLM 回复累积文本
+        self._current_assistant_text: str = ""
+        # VAD on_end 修正后的 Final 文本（比 Partial 更准确）
+        self._final_user_text: str = ""
+
+        # ---- 流水线状态 ----
+        self._pipeline_task: Optional[asyncio.Task] = None
+        self._tts_chunk_index: int = 0
+        # 当前 utterance 是否已触发 LLM（避免同一 utterance 内重复触发）
+        self._has_triggered_this_utterance: bool = False
+        # 流水线是否正常完成（区分完成 vs 被打断）
+        self._pipeline_completed: bool = False
+        self._is_active: bool = True
+
+        # 触发阈值：Partial 文本达到此字数才触发 LLM Speculative Prefill
+        # 设为 2：用户说出 2 个字即触发，省去等待 VAD on_end 的 ~500ms 静默判定
+        self._trigger_char_threshold: int = 2
+
+    async def on_vad_speech_start(self) -> None:
+        """VAD 检测到用户开始说话 —— 全双工打断触发点
+
+        用户开口即立即停止 TTS 播放，无需等待 ASR 识别出完整文本，
+        省去 ASR 识别延迟（~200ms），实现毫秒级全双工打断。
+        """
+        # 如果 TTS 正在播放（Agent 在说话），立即打断当前流水线
+        if self._pipeline_task and not self._pipeline_task.done():
+            await self._interrupt_pipeline()
+        # 重置当前 utterance 的触发标志，允许新 utterance 触发 LLM
+        self._has_triggered_this_utterance = False
+
+    async def on_partial_result(self, asr_result: dict) -> None:
+        """ASR Partial Result 主驱动：立即触发 LLM Speculative Prefill
+
+        这是双流式模式的核心：Partial Result（is_final=False）产出即触发 LLM，
+        不等 VAD on_end 的 500ms 静默判定，可省下约 500ms 端到端延迟。
+        每个 utterance 仅触发一次（由 _has_triggered_this_utterance 控制），
+        避免同一 utterance 内多个 Partial 重复触发 LLM。
+        """
+        text = asr_result.get("text", "").strip()
+        if not text:
+            return
+
+        # 推送 Partial 文本给前端（实时显示用户正在说什么）
+        await self._send_partial(text)
+
+        # 同一 utterance 内仅触发一次 LLM，避免 Partial 增量导致重复 Prefill
+        if self._has_triggered_this_utterance:
+            return
+
+        # 触发条件：文本达到阈值字数（2 字），避免单字误触发
+        if len(text) < self._trigger_char_threshold:
+            return
+
+        self._has_triggered_this_utterance = True
+
+        # 上下文整合：合并未触发 LLM 的 pending 文本 + 当前 Partial 文本
+        # 这样前几句未触发回复的话不会丢失，也不会膨胀上下文轮次数
+        if self._pending_user_text:
+            full_user_text = f"{self._pending_user_text} {text}"
+            self._pending_user_text = ""
+        else:
+            full_user_text = text
+
+        self._current_user_text = full_user_text
+
+        # 通知前端 LLM Prefill 已启动（前端可显示"正在思考"状态）
+        await self._send_prefill_started(full_user_text)
+
+        # 异步启动 LLM → TextSmoother → TTS 流水线，不阻塞音频帧接收
+        self._pipeline_task = asyncio.create_task(self._run_pipeline(full_user_text))
+
+    async def on_vad_speech_end(self, asr_result: Optional[dict]) -> None:
+        """VAD 兜底：修正 Final 文本用于上下文记录
+
+        双流式模式下主流程已由 ASR Partial Result 驱动，此处仅做收尾：
+        - 用 VAD on_end 后的 Final 文本修正上下文记录（比 Partial 更准确）
+        - 不重启已由 Partial 启动的 LLM 流程
+        - 若当前 utterance 未触发 LLM，将 Final 文本累积到 pending 供下一轮合并
+        """
+        final_text = ""
+        if asr_result:
+            final_text = asr_result.get("text", "").strip()
+
+        if self._has_triggered_this_utterance:
+            # 当前 utterance 已触发 LLM：用 Final 文本修正上下文记录
+            # Final 文本比 Partial 更准确（VAD on_end 后 ASR 有完整上下文）
+            self._final_user_text = final_text or self._current_user_text
+
+            # 调度后台任务：等待流水线完成后记录上下文
+            # 不阻塞音频帧接收，流水线可能仍在生成 TTS
+            pipeline_task = self._pipeline_task
+            if pipeline_task is not None:
+                asyncio.create_task(self._finalize_turn(pipeline_task))
+        else:
+            # 当前 utterance 未触发 LLM：将 Final 文本累积到 pending
+            # 这样多句未触发回复的话会合并为单条 user 上下文，避免上下文膨胀
+            if final_text:
+                if self._pending_user_text:
+                    self._pending_user_text = f"{self._pending_user_text} {final_text}"
+                else:
+                    self._pending_user_text = final_text
+
+        self._has_triggered_this_utterance = False
+
+    async def _run_pipeline(self, user_text: str) -> None:
+        """运行 LLM → TextSmoother → TTS 全链路流水线
+
+        数据流向：
+          LLM stream_chat() → TextSmoother.smooth() → TTS synthesize_stream_fine()
+          → voice.tts_chunk 流式返回前端
+
+        每一环都是 async generator，形成流水线并行：
+        LLM 吐出第一个 token 即开始平滑缓冲，平滑缓冲输出第一个词组即开始 TTS 合成，
+        TTS 合成出第一个音频块即推送给前端。全链路首包音频延迟 < 300ms。
+        """
+        try:
+            # 延迟导入避免循环依赖
+            from server.handlers.chat import _build_messages, _get_agent_config, _get_llm_client_for_agent
+            from server.dependencies import get_context_manager
+            from server.services.text_smoother import TextSmoother
+
+            # 1. 获取 Agent 配置
+            agent_config = _get_agent_config(self.agent_id)
+            if not agent_config:
+                await self.manager.send_message(self.client_id, create_error(
+                    request_id=self.request_id,
+                    action=VoiceActions.DUAL_STREAM,
+                    code="AGENT_NOT_FOUND",
+                    message=f"Agent '{self.agent_id}' 不存在"
+                ))
+                return
+
+            context_mgr = get_context_manager()
+
+            # 2. 构建 messages（实时语音模式，Prompt Tokens < 500，锁死 80ms TTFT）
+            # is_realtime_voice=True 跳过 MemoryRouter/HybridSearch/重型隐藏提示词，
+            # 仅保留核心 System Prompt + 最近 2 轮对话，省去 ~1500 tokens Prefill（100-200ms）
+            # tts_engine 透传：orpheus 引擎时注入 orpheus_voice_prompt（含情感标签指南）
+            messages = _build_messages(
+                agent_config, context_mgr, self.session_id,
+                user_text, is_realtime_voice=True,
+                tts_engine=self._engine,
+            )
+
+            # 3. 获取 LLM client
+            llm = _get_llm_client_for_agent(agent_config)
+
+            # 4. LLM 流式输出（vLLM 90 tokens/s, TTFT ~80ms）
+            llm_stream = llm.stream_chat(
+                messages=messages,
+                temperature=agent_config.get("temperature", 0.7),
+                max_tokens=agent_config.get("max_tokens", 4096),
+            )
+
+            # 5. TextSmoother 平滑缓冲（40ms 滑动窗口聚合碎片 Token）
+            # LLM 吐出的 token 往往只有 1~2 字，直接喂 TTS 会导致发音诡异。
+            # TextSmoother 以 40ms 窗口聚合为 3~5 字词组块，用 50ms 延迟换取音质提升。
+            # 50ms 远小于 300ms 总预算，且 TTS 合成与播放可流水线并行，用户无感。
+            smoothed_stream = TextSmoother.smooth(
+                llm_stream, window_ms=40, char_threshold=4
+            )
+
+            # 6. TTS 细粒度流式合成（边收边切边合成）
+            # synthesize_stream_fine 接受 token 流，4 字即切片送 TTS，
+            # 不必等整句，首包音频延迟压缩数百毫秒
+            await set_tts_playing(self.client_id, True)
+            self._tts_chunk_index = 0
+            self._current_assistant_text = ""
+
+            # 根据 TTS 引擎构建合成参数：
+            # - orpheus 引擎：使用预设音色（tara/leo 等），不传 ref_audio/ref_text
+            #   Orpheus 通过 voice 参数选择音色，无需参考音频克隆
+            # - f5-tts/cosyvoice 等引擎：使用参考音频克隆，传 ref_audio_path/ref_text
+            tts_kwargs: dict = {}
+            if self._engine == "orpheus":
+                # Orpheus 使用预设音色，不需要 ref_audio/ref_text
+                if self._voice:
+                    tts_kwargs["voice"] = self._voice
+            else:
+                # F5-TTS/CosyVoice 使用参考音频克隆
+                if self._ref_audio_path:
+                    tts_kwargs["ref_audio_path"] = self._ref_audio_path
+                if self._ref_text:
+                    tts_kwargs["ref_text"] = self._ref_text
+
+            async for chunk in self.tts_service.synthesize_stream_fine(
+                token_stream=smoothed_stream,
+                **tts_kwargs
+            ):
+                # 流结束标记
+                if chunk.get("is_final"):
+                    await self._send_tts_chunk(chunk, is_final=True)
+                    break
+
+                # 累积助手回复文本（用于上下文记录）
+                text_segment = chunk.get("text_segment", "")
+                if text_segment:
+                    self._current_assistant_text += text_segment
+
+                # 有音频数据则推送给前端，不等整句合成完毕
+                audio_data = chunk.get("audio_data")
+                if audio_data:
+                    await self._send_tts_chunk(chunk, is_final=False)
+
+            self._pipeline_completed = True
+
+        except asyncio.CancelledError:
+            # 被打断（用户开口触发全双工打断）：将当前用户文本累积到 pending
+            # 供下一轮合并，不丢失用户已说的内容
+            self._pipeline_completed = False
+            if user_text:
+                if self._pending_user_text:
+                    self._pending_user_text = f"{self._pending_user_text} {user_text}"
+                else:
+                    self._pending_user_text = user_text
+            raise
+        except Exception as e:
+            logger.error(f"双流式流水线错误: {e}", exc_info=True)
+            self._pipeline_completed = False
+            await self.manager.send_message(self.client_id, create_error(
+                request_id=self.request_id,
+                action=VoiceActions.DUAL_STREAM,
+                code="PIPELINE_ERROR",
+                message=str(e)
+            ))
+        finally:
+            try:
+                await set_tts_playing(self.client_id, False)
+            except Exception as e:
+                logger.error(f"重置 TTS 播放状态失败: {e}")
+
+    async def _interrupt_pipeline(self) -> None:
+        """打断当前流水线（毫秒级全双工打断）
+
+        用户开口说话时立即取消正在运行的 LLM+TTS 流水线，
+        停止 TTS 播放。CancelledError 处理器会将当前用户文本累积到 pending。
+        """
+        if self._pipeline_task and not self._pipeline_task.done():
+            self._pipeline_task.cancel()
+            try:
+                await self._pipeline_task
+            except asyncio.CancelledError:
+                pass
+        # 通知前端 TTS 已被打断
+        await self.manager.send_message(self.client_id, {
+            "type": "voice.interrupted",
+            "data": {"reason": "user_speech"}
+        })
+
+    async def _finalize_turn(self, pipeline_task: asyncio.Task) -> None:
+        """等待流水线完成后记录上下文（使用 VAD 修正后的 Final 文本）
+
+        后台任务：不阻塞音频帧接收。等待 _pipeline_task 完成后，
+        使用 _final_user_text（VAD on_end 修正后的 Final 文本）记录上下文。
+        若流水线被新 utterance 打断（_pipeline_task is not self._pipeline_task），
+        则跳过记录（用户文本已由 CancelledError 处理器累积到 pending）。
+        """
+        try:
+            await pipeline_task
+        except asyncio.CancelledError:
+            pass
+        except Exception:
+            pass
+
+        # 仅当此 task 仍是当前流水线时才记录上下文
+        # （若已被新 utterance 的 pipeline 替换，则跳过，避免覆盖新轮次状态）
+        if self._pipeline_task is pipeline_task and self._pipeline_completed:
+            # 使用 VAD 修正后的 Final 文本记录上下文（比 Partial 更准确）
+            user_text = self._final_user_text or self._current_user_text
+            await self._record_context(user_text, self._current_assistant_text)
+
+        # 重置状态（仅当此 task 仍是当前流水线时）
+        if self._pipeline_task is pipeline_task:
+            self._current_user_text = ""
+            self._current_assistant_text = ""
+            self._final_user_text = ""
+            self._pipeline_completed = False
+            self._pipeline_task = None
+
+    async def _send_partial(self, text: str) -> None:
+        """发送 ASR Partial 识别文本给前端（实时显示用户正在说什么）"""
+        await self.manager.send_message(self.client_id, {
+            "type": VoiceActions.PARTIAL,
+            "data": {
+                "text": text,
+                "is_final": False
+            }
+        })
+
+    async def _send_prefill_started(self, text: str) -> None:
+        """发送 LLM Prefill 已启动信号给前端
+
+        前端收到此信号可显示"正在思考"状态，并准备接收 TTS 音频流。
+        这比等 LLM 第一个 token 到达再通知前端快 ~80ms（TTFT）。
+        """
+        await self.manager.send_message(self.client_id, {
+            "type": VoiceActions.PREFILL_STARTED,
+            "data": {
+                "partial_text": text,
+                "timestamp": time.time()
+            }
+        })
+
+    async def _send_tts_chunk(self, chunk: dict, is_final: bool) -> None:
+        """发送 TTS 音频块给前端（流式推送，不等整句）"""
+        audio_data = chunk.get("audio_data")
+        audio_base64 = None
+        if audio_data:
+            audio_base64 = base64.b64encode(audio_data).decode("utf-8")
+
+        stream_msg = create_stream(
+            request_id=self.request_id,
+            action=VoiceActions.TTS_CHUNK,
+            chunk_index=self._tts_chunk_index,
+            data={
+                "text_segment": chunk.get("text_segment", ""),
+                "audio_data": audio_base64,
+            },
+            is_final=is_final
+        )
+
+        await self.manager.send_message(self.client_id, stream_msg)
+        self._tts_chunk_index += 1
+
+    async def _record_context(self, user_text: str, assistant_text: str) -> None:
+        """记录上下文（合并未触发 LLM 的 partial 为单条 user 上下文）
+
+        上下文整合核心逻辑：
+        - 一轮对话 = 一条 user + 一条 assistant
+        - 未触发 LLM 回复的 utterance 已在 on_partial_result 中合并到 user_text
+        - 上下文记录数 = 实际对话轮次数，不因 Partial 数量增加而膨胀
+        """
+        if not user_text or not assistant_text:
+            return
+
+        try:
+            from server.dependencies import get_context_manager
+            context_mgr = get_context_manager()
+
+            # 确保 session 存在
+            existing = context_mgr.get_session(self.session_id)
+            if not existing:
+                context_mgr.create_session(
+                    workspace_id="agent-chats",
+                    title=f"双流式对话",
+                    session_id=self.session_id,
+                    metadata={"agent_id": self.agent_id},
+                )
+
+            # 记录完整轮次：user + assistant
+            context_mgr.add_message(
+                session_id=self.session_id, role="user", content=user_text
+            )
+            context_mgr.add_message(
+                session_id=self.session_id, role="assistant", content=assistant_text
+            )
+        except Exception as e:
+            logger.error(f"记录双流式上下文失败: {e}")
+
+    async def finish(self) -> None:
+        """结束会话，清理资源"""
+        self._is_active = False
+        # 取消正在运行的流水线
+        if self._pipeline_task and not self._pipeline_task.done():
+            self._pipeline_task.cancel()
+            try:
+                await self._pipeline_task
+            except asyncio.CancelledError:
+                pass
+        # 重置 TTS 播放状态
+        try:
+            await set_tts_playing(self.client_id, False)
+        except Exception:
+            pass
 
 
 def init_interrupt_module():
@@ -491,6 +920,161 @@ def register_audio_handlers(
                 message=str(e)
             ))
 
+    async def handle_voice_dual_stream(websocket, message, client_id):
+        """双流式语音 handler：编排 ASR → LLM → TTS 全链路流水线
+
+        消息协议（前端 → 后端，均使用 voice.dual_stream action）：
+        - init: {"data": {"init": true, "agent_id": "default", "ref_audio_path": "...", "ref_text": "...", "engine": "orpheus", "voice": "tara"}}
+        - audio: {"data": {"audio": "<base64>"}}
+        - end:   {"data": {"end": true}}
+
+        消息协议（后端 → 前端）：
+        - voice.partial: ASR Partial 识别文本（实时显示）
+        - voice.prefill_started: LLM Prefill 已启动信号
+        - voice.tts_chunk: TTS 音频块（流式推送）
+        - voice.interrupted: TTS 被用户打断通知
+        - vad_status / vad_frame: VAD 状态（与半双工模式一致）
+        """
+        request_id = message.get("request_id", "")
+        data = message.get("data", {})
+
+        # ---- 初始化会话 ----
+        if data.get("init"):
+            # 清理同 client_id 的旧会话（避免资源泄漏）
+            old_session = _dual_stream_sessions.pop(client_id, None)
+            if old_session:
+                await old_session.finish()
+
+            agent_id = data.get("agent_id", "default")
+            ref_audio_path = data.get("ref_audio_path")
+            ref_text = data.get("ref_text")
+            # 解析 TTS 引擎与音色（向后兼容：未传 engine 时默认 "f5-tts"）
+            engine = data.get("engine", "f5-tts")
+            voice = data.get("voice")
+
+            # 方案 A：根据 engine 字段获取对应的 TTSService 实例
+            # - orpheus 引擎：创建独立的 orpheus 模式 TTSService，使用预设音色，
+            #   与 f5-tts 单例隔离，确保两种引擎可共存（线程安全）
+            # - 非 orpheus 引擎：复用现有 f5-tts TTSService 单例（闭包变量）
+            if engine == "orpheus":
+                from server.services.tts_service import TTSService
+                from server.config import get_settings
+                settings = get_settings()
+                session_tts_service = TTSService(
+                    mode="orpheus",
+                    orpheus_url=settings.tts.orpheus.url,
+                    orpheus_voice=voice or settings.tts.orpheus.voice,
+                    orpheus_timeout=settings.tts.orpheus.timeout,
+                )
+            else:
+                session_tts_service = tts_service
+
+            session = DualStreamSession(
+                client_id=client_id,
+                agent_id=agent_id,
+                request_id=request_id,
+                manager=manager,
+                tts_service=session_tts_service,
+                ref_audio_path=ref_audio_path,
+                ref_text=ref_text,
+                engine=engine,
+                voice=voice,
+            )
+            _dual_stream_sessions[client_id] = session
+
+            await manager.send_message(client_id, create_response(
+                request_id=request_id,
+                action=VoiceActions.DUAL_STREAM,
+                data={"status": "initialized", "session_id": session.session_id}
+            ))
+            return
+
+        # 获取会话
+        session = _dual_stream_sessions.get(client_id)
+        if not session:
+            await manager.send_message(client_id, create_error(
+                request_id=request_id,
+                action=VoiceActions.DUAL_STREAM,
+                code="SESSION_NOT_FOUND",
+                message="双流式会话未初始化，请先发送 init 信号"
+            ))
+            return
+
+        # ---- 结束会话 ----
+        if data.get("end"):
+            _dual_stream_sessions.pop(client_id, None)
+            await session.finish()
+            await manager.send_message(client_id, create_response(
+                request_id=request_id,
+                action=VoiceActions.DUAL_STREAM,
+                data={"status": "ended"}
+            ))
+            return
+
+        # ---- 处理音频帧 ----
+        audio_base64 = data.get("audio")
+        if not audio_base64:
+            return
+
+        try:
+            audio_data = base64.b64decode(audio_base64)
+
+            from server.services.vad_processor import get_audio_stream_processor
+            stream_processor = get_audio_stream_processor()
+
+            # 复用现有 AudioStreamProcessor 进行 VAD + ASR 处理
+            # 不设置 on_partial_result 回调，避免单例跨客户端干扰
+            # 直接从返回值中检查 asr_result 判断是否为 Partial
+            result = await stream_processor.process_audio_chunk(audio_data)
+
+            vad_result = result.get("vad", {})
+            asr_result = result.get("asr")
+
+            # VAD 状态变化处理
+            if vad_result.get("state_changed"):
+                if vad_result["is_speaking"]:
+                    # 用户开始说话 → 全双工打断触发点
+                    # 用户开口即停止 TTS，省去等待 ASR 识别的 ~200ms
+                    await session.on_vad_speech_start()
+                else:
+                    # 用户说话结束 → VAD 兜底修正 Final 文本
+                    # 不重启已由 Partial 启动的 LLM 流程
+                    await session.on_vad_speech_end(asr_result)
+
+                # 发送 VAD 状态给前端（与半双工模式格式一致，保持兼容）
+                status = "speech_start" if vad_result["is_speaking"] else "speech_end"
+                await manager.send_message(client_id, {
+                    "type": "vad_status",
+                    "data": {
+                        "status": status,
+                        "speech_duration_ms": vad_result.get("speech_duration_ms", 0)
+                    }
+                })
+
+            # ASR Partial Result 主驱动：立即触发 LLM Speculative Prefill
+            # is_final=False 即为 Partial，不等 VAD on_end，省下 ~500ms
+            if asr_result and not asr_result.get("is_final", True):
+                await session.on_partial_result(asr_result)
+
+            # 发送 VAD 帧状态给前端（与半双工模式格式一致）
+            await manager.send_message(client_id, {
+                "type": "vad_frame",
+                "data": {
+                    "is_speaking": vad_result.get("is_speaking", False),
+                    "speech_probability": vad_result.get("speech_probability", 0),
+                    "speech_duration_ms": vad_result.get("speech_duration_ms", 0)
+                }
+            })
+
+        except Exception as e:
+            logger.error(f"双流式音频处理错误: {e}", exc_info=True)
+            await manager.send_message(client_id, create_error(
+                request_id=request_id,
+                action=VoiceActions.DUAL_STREAM,
+                code="DUAL_STREAM_ERROR",
+                message=str(e)
+            ))
+
     manager.register_handler(ASRActions.RECOGNIZE, handle_asr_recognize)
     manager.register_handler(ASRActions.RECOGNIZE_BASE64, handle_asr_recognize)
     manager.register_handler(TTSActions.SYNTHESIZE, handle_tts_synthesize)
@@ -500,3 +1084,4 @@ def register_audio_handlers(
     manager.register_handler(EffectActions.LIST, handle_effects_list)
     manager.register_handler(EffectActions.PARSE, handle_effects_parse)
     manager.register_handler(ASRActions.STREAM, handle_asr_stream)
+    manager.register_handler(VoiceActions.DUAL_STREAM, handle_voice_dual_stream)

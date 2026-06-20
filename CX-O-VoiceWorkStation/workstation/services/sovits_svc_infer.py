@@ -77,6 +77,25 @@ class SoVITSSVCInferer:
             )
         return resolved
 
+    def _validate_model_path(self, model_path: str) -> Path:
+        """校验 model_path 解析后必须位于允许的模型根目录之内
+        （data/models/sovits_svc 或 so-vits-svc/logs），防止任意本地文件传入子进程。"""
+        path = Path(model_path)
+        try:
+            resolved = path.resolve()
+        except Exception as e:
+            raise ValueError(f"Invalid model path: {model_path}: {e}")
+        allowed_roots = [
+            self._output_dir.resolve(),
+            (self._so_vits_svc_dir / "logs").resolve(),
+        ]
+        for root in allowed_roots:
+            if resolved.is_relative_to(root):
+                return resolved
+        raise ValueError(
+            f"model_path must be located under one of {allowed_roots}, got: {resolved}"
+        )
+
     async def infer(
         self,
         audio_path: str,
@@ -92,6 +111,7 @@ class SoVITSSVCInferer:
         effective_model_path = model_path or self._model_path
         if not effective_model_path:
             raise ValueError("Model path must be provided either via constructor or infer() argument")
+        validated_model_path = self._validate_model_path(effective_model_path)
 
         self._output_dir.mkdir(parents=True, exist_ok=True)
         output_path = self._output_dir / f"converted_{audio.stem}.wav"
@@ -99,7 +119,7 @@ class SoVITSSVCInferer:
         args = [
             self._python_path,
             "inference_main.py",
-            "-n", str(effective_model_path),
+            "-n", str(validated_model_path),
             "-t", str(transpose),
             "-s", str(speaker_id),
             "-i", str(audio),
@@ -107,7 +127,8 @@ class SoVITSSVCInferer:
         ]
 
         if cluster_model_path:
-            args.extend(["-c", str(cluster_model_path)])
+            validated_cluster_path = self._validate_model_path(cluster_model_path)
+            args.extend(["-c", str(validated_cluster_path)])
 
         logger.info(f"So-VITS-SVC inference: {audio_path}, speaker={speaker_id}, transpose={transpose}")
 

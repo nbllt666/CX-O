@@ -1,8 +1,9 @@
 from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, HTTPException
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
+from server.config import Settings
 from server.core.exceptions import MemoryOperationError
 from server.core.logging_config import get_contextual_logger
 from server.core.memory.secondary_router import SecondaryInstruction
@@ -17,8 +18,8 @@ class MemoryCreateRequest(BaseModel):
     content: str
     type: str = "long_term"
     importance: int = 3
-    tags: List[str] = []
-    metadata: Dict = {}
+    tags: List[str] = Field(default_factory=list)
+    metadata: Dict = Field(default_factory=dict)
     permanent: bool = False
     workspace_id: str = "default"
 
@@ -65,7 +66,6 @@ async def list_agent_memory_tables():
         """
         )
         rows = cursor.fetchall()
-        conn.close()
 
         agents = []
         for row in rows:
@@ -263,8 +263,10 @@ async def search_memories(request: MemorySearchRequest):
 
 
 @router.post("/memories/rag")
-async def rag_search(query: str, workspace_id: str = "default", limit: int = 5):
+async def rag_search(query: str, workspace_id: str = "default", limit: int = None):
     """RAG搜索"""
+    if limit is None:
+        limit = Settings().config.limits.memory.rag_search_limit
     from server.dependencies import get_memory_manager
     from server.core.exceptions import VectorStoreError
 

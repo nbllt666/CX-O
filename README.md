@@ -50,6 +50,10 @@ CX-O 是一个基于单体应用架构的智能语音对话系统，集成语音
 - **混合搜索**：向量搜索 + 关键词搜索
 - **多 Agent 隔离**：支持多租户架构，每个 Agent 独立记忆空间
 - **直播模式**：虚拟形象 (Live2D/VRM)、弹幕叠加、字幕显示
+- **Orpheus TTS**：流式情感语音合成，vLLM + SNAC 解码，13 种语音，情感标签支持
+- **桌面宠物**：Electron 桌面宠物窗口，鼠标穿透，虚拟形象 + 聊天
+- **双流式语音**：voice.dual_stream 全双工实时语音交互
+- **副模型路由**：SecondaryModelRouter 支持记忆管理副模型
 
 ## 快速开始
 
@@ -100,12 +104,14 @@ npm run dev
 | CX-O Frontend     | 5173 | HTTP           | Web 前端      |
 | Voice WorkStation | 8200 | HTTP           | 语音工作站 (可选)  |
 | Weaviate          | 8090 | HTTP/gRPC      | 向量数据库 (可选)  |
+| Orpheus TTS       | 5060 | HTTP           | 流式情感语音合成 (可选) |
+| vLLM              | 8080 | HTTP           | LLM 推理加速 (可选) |
 
 ## 项目结构
 
 ```
 CX-O/
-├── CX-O-Frontend/              # 前端服务 (React + TypeScript)
+├── CX-O-Frontend/              # 前端服务 (React + TypeScript + Electron 桌面应用)
 │   ├── src/
 │   │   ├── api/               # API 客户端
 │   │   ├── components/        # React 组件
@@ -113,12 +119,28 @@ CX-O/
 │   │   │   ├── Live/          # 直播组件
 │   │   │   ├── Live2D/        # Live2D 组件
 │   │   │   ├── VRM/           # VRM 组件
+│   │   │   ├── PetAudioPanel/ # 宠物音频面板
+│   │   │   ├── PetAvatar/     # 宠物虚拟形象
+│   │   │   ├── PetChat/       # 宠物聊天组件
 │   │   │   ├── layout/        # 布局组件
-│   │   │   └── ui/            # UI 组件
+│   │   │   ├── ui/            # UI 组件
+│   │   │   └── VRMWindField.ts # VRM 风场效果
 │   │   ├── hooks/             # React Hooks
+│   │   │   ├── useAudioStream      # 音频流 Hook
+│   │   │   ├── useAudioAnalyzer    # 音频分析 Hook
+│   │   │   ├── useLiveWebSocket    # 直播 WebSocket Hook
+│   │   │   └── usePetMousePassthrough # 宠物鼠标穿透 Hook
 │   │   ├── i18n/              # 国际化
 │   │   ├── pages/             # 页面组件
+│   │   │   ├── PetPage             # 桌面宠物页面
+│   │   │   ├── AudioTestPage       # 音频测试页面
+│   │   │   ├── VoiceWorkstationPage # 语音工作站页面
+│   │   │   ├── GraphDataPage       # 图谱数据页面
+│   │   │   ├── VectorDataPage      # 向量数据页面
+│   │   │   ├── PluginsPage         # 插件管理页面
+│   │   │   └── LiveSplitPage       # 直播拆分页面
 │   │   ├── store/             # 状态管理 (Zustand)
+│   │   │   └── settingsStore.ts    # 设置状态管理
 │   │   └── styles/            # 样式文件
 │   ├── public/                # 静态资源
 │   └── package.json           # 前端依赖配置
@@ -157,19 +179,24 @@ CX-O/
 │   │   └── tools/             # 工具集
 │   └── pyproject.toml         # Python 项目配置
 │
+├── orpheus-tts/                # Orpheus TTS 服务 (可选)
+│   ├── api_server.py          # 服务入口
+│   ├── Dockerfile             # Docker 配置
+│   └── docker-compose.yml     # Docker Compose 配置
+│
+├── vllm-speedtest/             # vLLM 性能基准测试 (可选)
+│   └── benchmark.py           # 基准测试脚本
+│
 ├── cosyvoice/                  # CosyVoice 语音合成 (可选)
 │   ├── cosyvoice/             # 核心模块
 │   ├── runtime/               # 运行时
 │   └── examples/              # 示例代码
 │
-├── f5-fast/                    # F5-TTS 快速推理 (可选)
-│   ├── inference_service/     # 推理服务
-│   ├── gateway/               # 网关
-│   └── model_repo/            # 模型仓库
+├── .github/                    # CI 工作流
+│   └── workflows/             # GitHub Actions 配置
 │
-├── weaviate-embeddings/        # Weaviate 向量嵌入服务 (可选)
-│   ├── server.py              # 服务入口
-│   └── Dockerfile             # Docker 配置
+├── docker/                     # LLM Docker 配置
+│   └── ...                    # Docker 相关文件
 │
 ├── config/                     # 配置文件
 │   ├── default.yaml           # 主配置
@@ -247,20 +274,21 @@ CX-O/
 ### 后端
 
 - **框架**: Python 3.10+, FastAPI, uvicorn, WebSocket
-- **AI 服务**: SenseVoice (ASR), F5-TTS (TTS), CosyVoice (可选)
+- **AI 服务**: SenseVoice (ASR), F5-TTS (TTS), CosyVoice (可选), Orpheus TTS (vLLM + SNAC)
 - **LLM**: Ollama, VLLM
 - **数据库**: SQLite, Milvus Lite, ChromaDB, Weaviate
 - **协议**: MCP (Model Context Protocol), ACP
 
 ### 前端
 
-- **框架**: React 18+, TypeScript, Vite
+- **框架**: React 18+, TypeScript, Vite, Electron
 - **UI**: Tailwind CSS, Framer Motion, Lucide Icons
-- **状态管理**: Zustand
+- **状态管理**: Zustand, @tanstack/react-query
 - **路由**: React Router v6
 - **国际化**: i18next
 - **虚拟形象**: @pixiv/three-vrm, pixi-live2d-display
 - **图表**: Recharts, React Force Graph
+- **内容渲染**: react-markdown, remark-gfm
 
 ## 配置说明
 
@@ -288,6 +316,10 @@ tts:
   mode: remote          # embedded | remote
   engine: f5-tts
   emotion_enabled: true
+  orpheus:
+    url: http://127.0.0.1:5060
+    model: canopylabs/orpheus-multilingual-research-release
+    voice: tara
 
 asr:
   mode: remote          # embedded | remote
@@ -307,6 +339,7 @@ live:
 | `WEAVIATE_HOST`      | `localhost`        | Weaviate 服务地址    |
 | `WEAVIATE_PORT`      | `8090`             | Weaviate HTTP 端口 |
 | `EMBEDDING_PROVIDER` | `ollama`           | 嵌入模型提供者          |
+| `CXO_TTS_ORPHEUS_URL` | `http://127.0.0.1:5060` | Orpheus TTS 服务地址 |
 
 ## API 文档
 

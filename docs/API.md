@@ -419,6 +419,72 @@ data: {"type": "done", "session_id": "agent-default"}
 #### 批量恢复
 **POST** `/api/memories/batch/restore`
 
+#### 批量标签更新
+**POST** `/api/memories/batch/tags`
+批量更新记忆标签。
+**请求体：**
+```json
+{
+  "ids": [1, 2, 3],
+  "tags": ["updated_tag"],
+  "agent_id": "default"
+}
+```
+
+#### 按查询批量标签更新
+**POST** `/api/memories/batch/tag-by-query`
+根据查询条件批量更新标签。
+**请求体：**
+```json
+{
+  "query": "咖啡",
+  "tags": ["beverage"],
+  "memory_type": "long_term"
+}
+```
+
+#### 按查询批量删除
+**POST** `/api/memories/batch/delete-by-query`
+根据查询条件批量删除记忆。
+
+#### 按查询批量归档
+**POST** `/api/memories/batch/archive-by-query`
+根据查询条件批量归档记忆。
+
+#### 按类型获取记忆
+**GET** `/api/memories/type/{memory_type}`
+按记忆类型获取记忆列表。
+**路径参数：** memory_type: short_term / long_term / permanent
+
+#### 按标签搜索
+**GET** `/api/memories/search-by-tag`
+**查询参数：** tag: 标签名
+
+#### 同步衰减值
+**POST** `/api/memories/sync-decay`
+同步所有记忆的衰减值。
+
+#### 衰减统计
+**GET** `/api/memories/decay-stats`
+获取记忆衰减统计信息。
+
+#### 执行副模型命令
+**POST** `/api/memories/secondary/execute`
+执行记忆管理副模型命令。
+**请求体：**
+```json
+{
+  "command": "search",
+  "arguments": {"query": "咖啡"}
+}
+```
+
+#### 获取副模型命令列表
+**GET** `/api/memories/secondary/commands`
+
+#### 获取副模型执行历史
+**GET** `/api/memories/secondary/history`
+
 ### 12. 永久记忆
 
 #### 创建永久记忆
@@ -1008,35 +1074,69 @@ ACP (Agent Communication Protocol) 用于 Agent 之间的互联和通信。
 **查询参数：**
 - `method`: 算法 (lpa/louvain)，默认 lpa
 
+#### 22. 社区统计
+
+**GET** `/api/graph/algorithm/community-stats`
+获取社区发现统计信息。
+
 ### 其他
 
-#### 22. 健康检查
+#### 23. 健康检查
 
 **GET** `/api/graph/health`
 
-#### 23. 性能指标
+#### 24. 性能指标
 
 **GET** `/api/graph/metrics`
 
-#### 24. 图统计
+#### 25. 图统计
 
 **GET** `/api/graph/stats`
 
-#### 25. 导出 JSON
+#### 26. 导出 JSON
 
 **GET** `/api/graph/export/json`
 
-#### 26. 导出 GraphML
+#### 27. 导出 GraphML
 
 **GET** `/api/graph/export/graphml`
 
-#### 27. 导出 DOT
+#### 28. 导出 DOT
 
 **GET** `/api/graph/export/dot`
 
-#### 28. 获取配置
+#### 29. 获取配置
 
 **GET** `/api/graph/config`
+
+### 语义扩展查询
+
+#### 30. 多跳语义查询
+
+**POST** `/api/graph/semantic/query-hops`
+多跳语义查询，支持跨多跳的语义搜索。
+**请求体：**
+```json
+{
+  "query": "软件工程师",
+  "max_hops": 3,
+  "limit": 10
+}
+```
+
+#### 31. 路径约束语义搜索
+
+**POST** `/api/graph/semantic/path-constrained`
+路径约束语义搜索。
+**请求体：**
+```json
+{
+  "query": "工程师",
+  "relation_types": ["knows", "colleague"],
+  "max_depth": 3,
+  "limit": 10
+}
+```
 
 ---
 
@@ -1249,6 +1349,11 @@ ACP (Agent Communication Protocol) 用于 Agent 之间的互联和通信。
 
 **POST** `/api/tools/mcp/sync`
 
+### 21. 获取插件工具
+
+**GET** `/api/tools/plugins`
+获取 CXFC 插件提供的工具列表。
+
 ---
 
 ## 音频处理 API
@@ -1353,6 +1458,41 @@ ACP (Agent Communication Protocol) 用于 Agent 之间的互联和通信。
 }
 ```
 
+### Orpheus TTS API
+
+Orpheus TTS 是独立的流式情感语音合成服务，基于 vLLM + SNAC 解码。
+
+**基础URL**: `http://localhost:5060`
+
+#### 1. 服务信息
+**GET** `/`
+
+#### 2. 健康检查
+**GET** `/health`
+
+#### 3. 模型列表
+**GET** `/v1/models`
+OpenAI 兼容模型列表。
+
+#### 4. 语音合成
+**POST** `/v1/audio/speech`
+OpenAI 兼容 TTS 端点，支持流式和非流式响应。
+
+**请求体：**
+```json
+{
+  "model": "canopylabs/orpheus-multilingual-research-release",
+  "input": "你好，世界！",
+  "voice": "tara",
+  "response_format": "wav",
+  "stream": true
+}
+```
+
+**支持的语音**: tara, leah, leo, dan, mia, jess, lily, zoe, zac, river, charlotte, james, matthew
+
+**情感标签**: `<laugh>`, `<giggle>`, `<sigh>`, `<cough>`, `<yawn>`, `<gasp>`, `<groan>`
+
 ---
 
 ## 配置管理 API
@@ -1450,6 +1590,26 @@ ACP (Agent Communication Protocol) 用于 Agent 之间的互联和通信。
 ### 14. 更新 Adaptive Polling 配置
 
 **POST** `/api/config/adaptive-polling`
+
+### 15. 获取前端限制配置
+
+**GET** `/api/config/limits`
+获取前端限制配置（如虚拟形象最小/最大宽度等）。
+
+### 16. 获取网关配置
+
+**GET** `/api/config/gateway`
+获取单体架构网关配置。
+
+### 17. 获取 V3 防火墙配置
+
+**GET** `/api/firewall/v3/config`
+获取 V3 防火墙配置（含 ASR 打断配置）。
+
+### 18. 获取直播客户端状态
+
+**GET** `/api/live/client/status`
+获取直播客户端连接状态。
 
 ---
 
@@ -1781,6 +1941,23 @@ WebSocket 消息中可通过 `action` 字段指定操作类型，以下是完整
   }
 }
 ```
+
+#### 语音 Actions
+
+| Action | 说明 |
+|--------|------|
+| voice.dual_stream | 双流式语音交互（全双工） |
+| voice.partial | ASR 部分识别结果 |
+| voice.tts_chunk | TTS 音频块推送 |
+| voice.prefill_started | TTS 预填充开始通知 |
+
+#### 外部事件 Actions
+
+| Action | 说明 |
+|--------|------|
+| external_event | 外部事件推送 |
+| events.subscribe | 订阅事件 |
+| events.unsubscribe | 取消订阅事件 |
 
 ---
 

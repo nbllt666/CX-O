@@ -115,12 +115,13 @@ async def websocket_handler(websocket: WebSocket, client_id: str):
                 try:
                     await handler(websocket, message, client_id)
                 except Exception as e:
-                    logger.error(f"Handler error for {action}: {e}")
+                    logger.error(f"Handler error for {action}: {e}", exc_info=True)
                     await ws_manager.send_message(client_id, create_error(
                         request_id=request_id,
                         action=action,
                         code="HANDLER_ERROR",
-                        message=str(e)
+                        # BUG-B-M7 修复: 不向客户端返回内部异常信息,仅返回通用错误消息
+                        message="处理请求时发生内部错误"
                     ))
             elif msg_type:
                 await ws_manager.handle_message(client_id, message)
@@ -214,6 +215,9 @@ def register_gateway_routes(app: FastAPI):
     @app.api_route("/control/{path:path}", methods=["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"])
     async def proxy_control(request: Request, path: str):
         import httpx
+        import ipaddress
+        import socket
+        from urllib.parse import urlparse
 
         if not control_service_url or not control_service_url.startswith('http'):
             return Response(
@@ -228,7 +232,38 @@ def register_gateway_routes(app: FastAPI):
         if query_params:
             target_url += f"?{query_params}"
 
-        headers = dict(request.headers)
+        # SSRF 防护：验证目标 URL 主机与配置的 control_service_url 一致（白名单）
+        parsed_config = urlparse(control_service_url)
+        parsed_target = urlparse(target_url)
+        target_host = parsed_target.hostname
+
+        if parsed_target.hostname != parsed_config.hostname:
+            return Response(
+                content=json.dumps({"error": "Target host not allowed"}),
+                status_code=403,
+                media_type="application/json",
+            )
+
+        # SSRF 防护：阻止访问内部/保留 IP 地址范围（防止访问云元数据端点等）
+        # 允许的主机白名单（localhost 用于本地开发默认配置）
+        allowed_hosts = {"localhost", "127.0.0.1", "::1"}
+        if target_host and target_host not in allowed_hosts:
+            try:
+                infos = socket.getaddrinfo(target_host, None)
+                for info in infos:
+                    ip = ipaddress.ip_address(info[4][0])
+                    if ip.is_link_local or ip.is_private or ip.is_reserved:
+                        return Response(
+                            content=json.dumps({"error": "Access to internal addresses is blocked"}),
+                            status_code=403,
+                            media_type="application/json",
+                        )
+            except Exception:
+                pass
+
+        # SSRF 防护：过滤敏感请求头，防止凭据泄露到代理目标
+        sensitive_headers = {"authorization", "cookie", "set-cookie", "x-api-key"}
+        headers = {k: v for k, v in request.headers.items() if k.lower() not in sensitive_headers}
         headers.pop("host", None)
 
         body = await request.body()

@@ -118,8 +118,6 @@ def register_summary_tools():
                     "type": "integer",
                     "description": "摘要最大长度（字符数）",
                     "default": 200,
-                    "minimum": 50,
-                    "maximum": 1000,
                 },
             },
             "required": ["content"],

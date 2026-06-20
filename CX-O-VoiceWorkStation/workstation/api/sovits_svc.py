@@ -13,13 +13,36 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+from pathlib import Path
 from typing import Optional
 
 from fastapi import APIRouter, HTTPException, Request
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
+
+# 训练数据目录允许的根目录，用户输入的 training_data_dir 必须位于其下
+_TRAINING_DATA_ROOT = Path("data/training").resolve()
+
+
+def _validate_training_data_dir(path: str) -> Path:
+    """校验 training_data_dir 必须位于 data/training 根目录之下，
+    拒绝绝对路径与 .. 目录穿越，防止创建/读取任意目录。"""
+    if not path:
+        raise ValueError("training_data_dir must not be empty")
+    candidate = Path(path)
+    if candidate.is_absolute():
+        raise ValueError(
+            f"training_data_dir must be a relative path under {_TRAINING_DATA_ROOT}, "
+            f"got absolute path: {path}"
+        )
+    resolved = candidate.resolve()
+    if not resolved.is_relative_to(_TRAINING_DATA_ROOT):
+        raise ValueError(
+            f"training_data_dir must be located under {_TRAINING_DATA_ROOT}, got: {resolved}"
+        )
+    return resolved
 
 
 class SVCPreprocessRequest(BaseModel):
@@ -29,9 +52,9 @@ class SVCPreprocessRequest(BaseModel):
 
 class SVCTrainRequest(BaseModel):
     training_data_dir: Optional[str] = None
-    epochs: int = 10000
-    batch_size: int = 4
-    learning_rate: float = 1e-4
+    epochs: int = Field(10000, ge=1, le=100000)
+    batch_size: int = Field(4, ge=1)
+    learning_rate: float = Field(1e-4, gt=0)
     output_name: Optional[str] = None
 
 
@@ -62,13 +85,15 @@ def _hash_kwargs(kwargs: dict) -> str:
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
 
-def _get_trainer() -> "SoVITSSVCTrainer":
+def _get_trainer(rebuild: bool = False) -> "SoVITSSVCTrainer":
     """
     获取 SoVITSSVCTrainer 稳定单例。
 
     模块级单例：复用同一个实例，保留 `_preprocessed` 已预处理 speaker 集合
     以及运行中的训练进程状态。workflow.py 等其它模块也通过 get_sovits_trainer()
     复用同一实例，避免跨接口因状态不共享误报 "Preprocessing must be completed"。
+
+    仅当 rebuild=True 且配置发生变化时才重建实例，以支持用新配置启动训练。
     """
     global _trainer_instance, _trainer_kwargs_hash
     from workstation.services.sovits_svc_trainer import SoVITSSVCTrainer
@@ -82,7 +107,7 @@ def _get_trainer() -> "SoVITSSVCTrainer":
         "python_path": settings.sovits_svc.python_path,
     }
     new_hash = _hash_kwargs(kwargs)
-    if _trainer_instance is None:
+    if _trainer_instance is None or (rebuild and _trainer_kwargs_hash != new_hash):
         _trainer_instance = SoVITSSVCTrainer(**kwargs)
         _trainer_kwargs_hash = new_hash
     return _trainer_instance
@@ -98,8 +123,9 @@ async def preprocess(request: SVCPreprocessRequest):
     """So-VITS-SVC 数据预处理"""
     try:
         trainer = _get_trainer()
+        training_data_dir = _validate_training_data_dir(request.training_data_dir)
         results = await trainer.preprocess(
-            training_data_dir=request.training_data_dir,
+            training_data_dir=str(training_data_dir),
             speaker_name=request.speaker_name,
         )
         all_success = all(v.get("success", False) for v in results.values())
@@ -115,10 +141,9 @@ async def preprocess(request: SVCPreprocessRequest):
 @router.post("/train")
 async def start_training(request: SVCTrainRequest):
     """启动 So-VITS-SVC 训练"""
-    global _train_status
 
     if _train_status["status"] == "running":
-        return {"status": "error", "message": "训练任务正在进行中"}
+        raise HTTPException(status_code=409, detail="训练任务正在进行中")
 
     try:
         trainer = _get_trainer()
@@ -156,7 +181,8 @@ async def stop_training():
         _train_status["status"] = "stopped"
         return {"status": "success", "message": "训练已停止"}
     except Exception as e:
-        return {"status": "error", "message": str(e)}
+        logger.error(f"Failed to stop So-VITS-SVC training: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @router.post("/infer")
@@ -190,11 +216,11 @@ async def infer(request: SVCInferRequest):
             "status": "success",
             "audio_data": base64.b64encode(audio_data).decode("utf-8"),
             "format": "wav",
-            "output_path": str(result_path),
+            "output_filename": result_path.name,
         }
     except Exception as e:
         logger.error(f"So-VITS-SVC infer error: {e}")
-        return {"status": "error", "message": str(e)}
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @router.get("/models")
@@ -205,11 +231,11 @@ async def list_models():
         models = trainer.list_models()
         return {"status": "success", "models": models}
     except Exception as e:
-        return {"status": "error", "message": str(e)}
+        logger.error(f"Failed to list So-VITS-SVC models: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 def _update_train_status(**kwargs):
-    global _train_status
     for k, v in kwargs.items():
         if k in _train_status:
             _train_status[k] = v

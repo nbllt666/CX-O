@@ -371,7 +371,7 @@ async def get_agent_context(agent_id: str, limit: int = 20):
         agent_id: Agent唯一标识
         limit: 返回的最大消息数量
     """
-    from server.core.context.agent_context_manager import AgentContextManager
+    from server.core.context.agent_context_manager import get_agent_context_manager
 
     try:
         agents = _load_agents()
@@ -380,7 +380,7 @@ async def get_agent_context(agent_id: str, limit: int = 20):
         if not agent:
             raise HTTPException(status_code=404, detail=f"Agent '{agent_id}' 不存在")
 
-        context_mgr = AgentContextManager()
+        context_mgr = get_agent_context_manager()
         summary = context_mgr.get_context_summary(agent_id)
         messages = context_mgr.get_message_history(agent_id, limit=limit)
 
@@ -410,7 +410,7 @@ async def clear_agent_context(agent_id: str):
     Args:
         agent_id: Agent唯一标识
     """
-    from server.core.context.agent_context_manager import AgentContextManager
+    from server.core.context.agent_context_manager import get_agent_context_manager
 
     try:
         agents = _load_agents()
@@ -419,7 +419,7 @@ async def clear_agent_context(agent_id: str):
         if not agent:
             raise HTTPException(status_code=404, detail=f"Agent '{agent_id}' 不存在")
 
-        context_mgr = AgentContextManager()
+        context_mgr = get_agent_context_manager()
         context_mgr.clear_context(agent_id)
 
         return {"status": "success", "message": f"Agent '{agent_id}' 的上下文已清空"}

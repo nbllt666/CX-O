@@ -29,6 +29,9 @@ class ContextManager:
         self.db_path = db_path
         self._local = threading.local()
         self._connection_lock = threading.Lock()
+        # BUG-B-M3 修复: 记录所有线程创建的连接,shutdown() 时统一关闭,
+        # 避免仅关闭当前线程连接导致其他线程连接泄漏。
+        self._all_connections: List = []
         self._init_db()
 
     def _get_connection(self):
@@ -45,6 +48,8 @@ class ContextManager:
             conn.execute("PRAGMA mmap_size=268435456")
             conn.execute("PRAGMA busy_timeout=30000")
             self._local.connection = conn
+            with self._connection_lock:
+                self._all_connections.append(conn)
         return self._local.connection
 
     def close_connection(self):
@@ -57,8 +62,21 @@ class ContextManager:
             self._local.connection = None
 
     def shutdown(self):
-        """关闭所有连接"""
-        self.close_connection()
+        """关闭所有连接
+
+        BUG-B-M3 修复: 关闭所有线程创建的连接,而不仅仅是当前线程的连接,
+        避免多线程场景下其他线程连接泄漏。
+        """
+        with self._connection_lock:
+            connections_to_close = list(self._all_connections)
+            self._all_connections.clear()
+        for conn in connections_to_close:
+            try:
+                conn.close()
+            except Exception as e:
+                logger.warning(f"关闭数据库连接失败: {e}")
+        if hasattr(self._local, "connection"):
+            self._local.connection = None
         logger.info("上下文管理器已关闭")
 
     def clear_cache(self):
@@ -270,6 +288,9 @@ class ContextManager:
         metadata: Dict = None,
         tokens: int = 0,
     ) -> str:
+        valid_roles = {"system", "user", "assistant", "tool"}
+        if role not in valid_roles:
+            raise ValueError(f"无效的 role: {role}, 必须是 {valid_roles} 之一")
         message_id = str(uuid.uuid4())
         conn = self._get_connection()
         cursor = conn.cursor()

@@ -145,7 +145,7 @@ class EmotionRefGenerator:
             "transitions": transitions_meta,
         }
 
-        zip_path = self._output_dir / "emotion_refs.zip"
+        zip_path = self._output_dir / f"emotion_refs_{uuid.uuid4().hex}.zip"
 
         with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zf:
             for emotion in ALL_EMOTIONS:

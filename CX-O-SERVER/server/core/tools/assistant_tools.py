@@ -6,6 +6,7 @@ import json
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 
+from server.config import Settings
 from .registry import tool_registry
 from .graph_tools import (
     user_graph_update_entity, user_graph_delete_entity, user_graph_update_relation, user_graph_delete_relation, user_graph_get_stats, user_graph_export,
@@ -80,7 +81,6 @@ def register_assistant_tools():
                     "description": "返回数量限制",
                     "default": 10,
                     "minimum": 1,
-                    "maximum": 100,
                 },
             },
             "required": ["query"],
@@ -267,8 +267,8 @@ def register_assistant_tools():
                 "memory_id": {"type": "string", "description": "参考记忆ID"},
                 "threshold": {
                     "type": "number",
-                    "description": "相似度阈值（0-1），默认0.7",
-                    "default": 0.7,
+                    "description": "相似度阈值（0-1），默认0.5",
+                    "default": 0.5,
                     "minimum": 0.0,
                     "maximum": 1.0,
                 },
@@ -277,7 +277,6 @@ def register_assistant_tools():
                     "description": "返回数量限制",
                     "default": 10,
                     "minimum": 1,
-                    "maximum": 50,
                 },
             },
             "required": ["memory_id"],
@@ -301,7 +300,6 @@ def register_assistant_tools():
                     "description": "返回消息数量限制",
                     "default": 50,
                     "minimum": 1,
-                    "maximum": 200,
                 },
             },
             "required": ["session_id"],
@@ -325,7 +323,6 @@ def register_assistant_tools():
                     "description": "返回数量限制",
                     "default": 10,
                     "minimum": 1,
-                    "maximum": 50,
                 },
             },
             "required": ["content"],
@@ -352,7 +349,6 @@ def register_assistant_tools():
                     "description": "返回数量限制",
                     "default": 100,
                     "minimum": 1,
-                    "maximum": 1000,
                 },
             },
         },
@@ -803,8 +799,10 @@ def update_memory_node(memory_id: str, new_content: str) -> Dict[str, Any]:
         return {"error": f"修改记忆失败: {str(e)}"}
 
 
-def search_memories(query: str, time_range: str = None, limit: int = 10) -> Dict[str, Any]:
+def search_memories(query: str, time_range: str = None, limit: int = None) -> Dict[str, Any]:
     """搜索记忆"""
+    if limit is None:
+        limit = Settings().config.limits.memory.search_memories_limit
     mm = get_memory_manager()
     if not mm:
         return {"error": "记忆管理器不可用"}
@@ -964,9 +962,13 @@ def restore_memory(memory_id: str) -> Dict[str, Any]:
 
 
 def search_similar_memories(
-    memory_id: str, threshold: float = 0.7, limit: int = 10
+    memory_id: str, threshold: float = None, limit: int = None
 ) -> Dict[str, Any]:
     """搜索相似记忆"""
+    if threshold is None:
+        threshold = Settings().config.limits.memory.search_similar_threshold
+    if limit is None:
+        limit = Settings().config.limits.memory.search_similar_limit
     mm = get_memory_manager()
     if not mm:
         return {"error": "记忆管理器不可用"}
@@ -977,8 +979,10 @@ def search_similar_memories(
         return {"error": f"搜索相似记忆失败: {str(e)}"}
 
 
-def get_chat_history(session_id: str, limit: int = 50) -> Dict[str, Any]:
+def get_chat_history(session_id: str, limit: int = None) -> Dict[str, Any]:
     """读取聊天记录"""
+    if limit is None:
+        limit = Settings().config.limits.memory.chat_history_limit
     cm = get_context_manager()
     if not cm:
         return {"error": "上下文管理器不可用"}
@@ -1002,8 +1006,10 @@ def get_similar_memories(content: str, limit: int = 10) -> Dict[str, Any]:
         return {"error": f"搜索相似记忆失败: {str(e)}"}
 
 
-def get_memory_logs(memory_id: str = None, limit: int = 100) -> Dict[str, Any]:
+def get_memory_logs(memory_id: str = None, limit: int = None) -> Dict[str, Any]:
     """记忆管理日志"""
+    if limit is None:
+        limit = Settings().config.limits.memory.memory_logs_limit
     mm = get_memory_manager()
     if not mm:
         return {"error": "记忆管理器不可用"}

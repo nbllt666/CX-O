@@ -86,6 +86,8 @@ export function Live2DViewer({
     offsetX: 0,
     offsetY: 0,
   });
+  const allOverridesRef = useRef<ParameterOverride[]>([]);
+  const effectiveExpressionMixRef = useRef<ExpressionLayer[]>([]);
 
   onModelLoadedRef.current = onModelLoaded;
   onErrorRef.current = onError;
@@ -130,6 +132,9 @@ export function Live2DViewer({
     return expressionMix ?? [];
   }, [expressionMix]);
 
+  allOverridesRef.current = allOverrides;
+  effectiveExpressionMixRef.current = effectiveExpressionMix;
+
   useEffect(() => {
     const container = containerRef.current;
     if (!container || !effectiveModelPath) {
@@ -144,7 +149,7 @@ export function Live2DViewer({
     setIsLoading(true);
     setLoadError(null);
 
-    const initialMix = effectiveExpressionMix.length > 0 ? effectiveExpressionMix : [{ key: 'neutral', weight: 1 }];
+    const initialMix = effectiveExpressionMixRef.current.length > 0 ? effectiveExpressionMixRef.current : [{ key: 'neutral', weight: 1 }];
 
     void createLive2DRuntime(container, avatar)
       .then(async (runtime) => {
@@ -158,7 +163,7 @@ export function Live2DViewer({
           (driver as Live2DAvatarDriver).bindRuntime(runtime);
         }
         await applyExpressionMix(runtime, avatar, initialMix);
-        await setParameterOverrides(runtime, avatar, allOverrides);
+        await setParameterOverrides(runtime, avatar, allOverridesRef.current);
         updateStageTransform(runtime, container, transformRef.current);
         setIsLoading(false);
         onModelLoadedRef.current?.();
@@ -193,7 +198,7 @@ export function Live2DViewer({
         runtimeRef.current = null;
       }
     };
-  }, [avatar, effectiveModelPath, allOverrides, effectiveExpressionMix]);
+  }, [avatar, effectiveModelPath]);
 
   useEffect(() => {
     if (!runtimeRef.current) return;

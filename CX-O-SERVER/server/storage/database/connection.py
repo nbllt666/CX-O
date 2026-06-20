@@ -142,14 +142,14 @@ class SyncConnectionPool:
         Path(self.db_path).parent.mkdir(parents=True, exist_ok=True)
 
         with self._lock:
-            for _ in range(self.pool_size):
+            # BUG-B-M1 修复: 使用递增整数索引作为 key,而不是 threading.get_ident()。
+            # 原实现中 initialize() 在同一线程执行,所有连接都以同一个 thread_id 为 key,
+            # 后者覆盖前者,最终只保留 1 个连接,pool_size 失效。
+            for i in range(self.pool_size):
                 conn = self._create_connection()
                 if conn:
-                    import threading
-
-                    thread_id = threading.get_ident()
-                    self._connections[thread_id] = conn
-                    self._last_used[thread_id] = 0
+                    self._connections[i] = conn
+                    self._last_used[i] = 0
             self._initialized = True
         logger.info(f"同步连接池初始化完成: {len(self._connections)} 个连接")
 

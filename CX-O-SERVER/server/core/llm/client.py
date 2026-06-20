@@ -42,6 +42,7 @@ class LLMResponse:
     error: str = None
     error_details: Dict = field(default_factory=dict)
     tool_calls: List[Dict] = field(default_factory=list)
+    thinking: Optional[str] = None
 
 
 class LLMClient(ABC):
@@ -274,6 +275,7 @@ class OllamaClient(LLMClient):
                                 continue
         except Exception as e:
             logger.error(f"Ollama流式调用失败: {e}")
+            yield {"type": "error", "content": f"流式调用失败: {e}"}
 
     @property
     def model_name(self) -> str:
@@ -513,6 +515,204 @@ class VLLMClient(LLMClient):
             return None
 
 
+class TRTLLMClient(LLMClient):
+    def __init__(
+        self,
+        host: str = "http://localhost:8000",
+        model: str = "default",
+        temperature: float = 0.7,
+        max_tokens: int = 4096,
+        dimension: int = 768,
+        api_key: str = None,
+    ):
+        self.host = host.rstrip("/")
+        self.model = model
+        self.temperature = temperature
+        self.max_tokens = max_tokens
+        self.dimension = dimension
+        self.api_key = api_key
+
+    def _validate_messages(self, messages: List[Dict]) -> None:
+        if not messages:
+            raise ValueError("消息列表不能为空")
+        for i, msg in enumerate(messages):
+            if not isinstance(msg, dict):
+                raise ValueError(f"消息 {i} 必须是字典类型")
+            if "role" not in msg:
+                raise ValueError(f"消息 {i} 缺少 'role' 字段")
+            if "content" not in msg:
+                raise ValueError(f"消息 {i} 缺少 'content' 字段")
+            if msg["role"] not in ["system", "user", "assistant", "tool"]:
+                raise ValueError(f"消息 {i} 的 role 必须是 'system', 'user', 'assistant' 或 'tool'")
+
+    async def chat(self, messages: List[Dict], stream: bool = False, **kwargs) -> LLMResponse:
+        try:
+            self._validate_messages(messages)
+
+            headers = {"Content-Type": "application/json"}
+            if self.api_key:
+                headers["Authorization"] = f"Bearer {self.api_key}"
+
+            async with httpx.AsyncClient(timeout=120.0, proxy=None) as client:
+                response = await client.post(
+                    f"{self.host}/v1/chat/completions",
+                    json={
+                        "model": self.model,
+                        "messages": messages,
+                        "stream": stream,
+                        "temperature": kwargs.get("temperature", self.temperature),
+                        "max_tokens": kwargs.get("max_tokens", self.max_tokens),
+                    },
+                    headers=headers,
+                )
+
+                if response.status_code == 200:
+                    result = response.json()
+                    choice = result["choices"][0]
+                    return LLMResponse(
+                        content=choice["message"]["content"],
+                        finish_reason=choice.get("finish_reason", "stop"),
+                        usage=result.get("usage", {}),
+                    )
+                else:
+                    error_text = response.text[:500] if response.text else "无响应内容"
+                    logger.error(f"TRT-LLM错误: HTTP {response.status_code}, {error_text}")
+                    return LLMResponse(
+                        content="",
+                        finish_reason="error",
+                        error=f"HTTP {response.status_code}",
+                        error_details={
+                            "status_code": response.status_code,
+                            "response_text": error_text,
+                            "model": self.model,
+                            "host": self.host,
+                        },
+                    )
+
+        except httpx.ConnectError as e:
+            error_msg = f"无法连接到TRT-LLM服务器: {self.host}"
+            logger.error(f"{error_msg}, {e}")
+            return LLMResponse(
+                content="",
+                finish_reason="error",
+                error=error_msg,
+                error_details={"exception": str(e), "host": self.host},
+            )
+        except httpx.TimeoutException as e:
+            error_msg = "TRT-LLM服务器响应超时"
+            logger.error(f"{error_msg}, {e}")
+            return LLMResponse(
+                content="",
+                finish_reason="error",
+                error=error_msg,
+                error_details={"exception": str(e)},
+            )
+        except (KeyError, IndexError) as e:
+            error_msg = f"响应格式错误: {e}"
+            logger.error(error_msg)
+            return LLMResponse(
+                content="",
+                finish_reason="error",
+                error=error_msg,
+                error_details={"exception": str(e)},
+            )
+        except ValueError as e:
+            error_msg = f"请求参数错误: {e}"
+            logger.error(error_msg)
+            return LLMResponse(
+                content="",
+                finish_reason="error",
+                error=error_msg,
+                error_details={"exception": str(e)},
+            )
+        except Exception as e:
+            error_msg = f"TRT-LLM调用失败: {e}"
+            logger.error(error_msg)
+            return LLMResponse(
+                content="",
+                finish_reason="error",
+                error=error_msg,
+                error_details={"exception": str(e)},
+            )
+
+    async def stream_chat(self, messages: List[Dict], **kwargs):
+        try:
+            request_body = {
+                "model": self.model,
+                "messages": messages,
+                "stream": True,
+                "temperature": kwargs.get("temperature", self.temperature),
+                "max_tokens": kwargs.get("max_tokens", self.max_tokens),
+            }
+
+            if "tools" in kwargs and kwargs["tools"]:
+                request_body["tools"] = kwargs["tools"]
+
+            headers = {"Content-Type": "application/json"}
+            if self.api_key:
+                headers["Authorization"] = f"Bearer {self.api_key}"
+
+            async with httpx.AsyncClient(timeout=120.0, proxy=None) as client:
+                async with client.stream(
+                    "POST", f"{self.host}/v1/chat/completions", json=request_body, headers=headers
+                ) as response:
+                    async for line in response.aiter_lines():
+                        if line and line.startswith("data: "):
+                            data = line[6:]
+                            if data != "[DONE]":
+                                try:
+                                    chunk = json.loads(data)
+                                    content = chunk["choices"][0]["delta"].get("content", "")
+                                    if content:
+                                        yield content
+
+                                    delta = chunk["choices"][0].get("delta", {})
+                                    tool_calls = delta.get("tool_calls")
+                                    if tool_calls:
+                                        yield {"tool_calls": tool_calls}
+                                except json.JSONDecodeError:
+                                    continue
+        except Exception as e:
+            logger.error(f"TRT-LLM流式调用失败: {e}")
+
+    @property
+    def model_name(self) -> str:
+        return f"trtllm/{self.model}"
+
+    async def is_available(self) -> bool:
+        try:
+            async with httpx.AsyncClient(timeout=10.0, proxy=None) as client:
+                response = await client.get(f"{self.host}/health")
+                return response.status_code == 200
+        except Exception:
+            return False
+
+    async def get_embedding(self, text: str) -> Optional[List[float]]:
+        try:
+            headers = {"Content-Type": "application/json"}
+            if self.api_key:
+                headers["Authorization"] = f"Bearer {self.api_key}"
+
+            async with httpx.AsyncClient(timeout=30.0, proxy=None) as client:
+                response = await client.post(
+                    f"{self.host}/v1/embeddings",
+                    json={"model": self.model, "input": text},
+                    headers=headers,
+                )
+
+                if response.status_code == 200:
+                    result = response.json()
+                    if "data" in result and len(result["data"]) > 0:
+                        return result["data"][0].get("embedding")
+                    return None
+                else:
+                    logger.warning(f"TRT-LLM获取embedding失败: HTTP {response.status_code}")
+                    return None
+        except Exception as e:
+            logger.error(f"TRT-LLM获取embedding失败: {e}")
+            return None
+
+
 class LLMFactory:
     _clients: Dict[str, LLMClient] = {}
 
@@ -527,6 +727,8 @@ class LLMFactory:
             client = OllamaClient(**kwargs)
         elif provider == "vllm":
             client = VLLMClient(**kwargs)
+        elif provider == "trtllm":
+            client = TRTLLMClient(**kwargs)
         else:
             raise ValueError(f"不支持的LLM提供商: {provider}")
 

@@ -7,6 +7,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import shlex
 import subprocess
 import sys
 import threading
@@ -53,7 +54,7 @@ class IndexTTSManager:
         start_command: str = "",
         working_dir: str = "IndexTTS",
         auto_stop_delay: int = 300,
-        startup_timeout: int = 60,
+        startup_timeout: int = 180,
         root_dir: Optional[Path] = None
     ):
         if self._initialized:
@@ -154,12 +155,12 @@ class IndexTTSManager:
 
                 if sys.platform == "win32":
                     python_exe = str(self._root_dir / "Miniconda3" / "python.exe")
-                    cmd_parts = self._start_command.split()
-                    if cmd_parts[0] == "python":
+                    cmd_parts = shlex.split(self._start_command, posix=False)
+                    if cmd_parts and cmd_parts[0] == "python":
                         cmd_parts[0] = python_exe
                     cmd = cmd_parts
                 else:
-                    cmd = self._start_command.split()
+                    cmd = shlex.split(self._start_command, posix=True)
 
                 self._process = subprocess.Popen(
                     cmd,
@@ -213,18 +214,11 @@ class IndexTTSManager:
 
             try:
                 if self._process:
-                    if sys.platform == "win32":
-                        self._process.terminate()
-                        try:
-                            self._process.wait(timeout=5)
-                        except subprocess.TimeoutExpired:
-                            self._process.kill()
-                    else:
-                        self._process.terminate()
-                        try:
-                            self._process.wait(timeout=5)
-                        except subprocess.TimeoutExpired:
-                            self._process.kill()
+                    self._process.terminate()
+                    try:
+                        self._process.wait(timeout=5)
+                    except subprocess.TimeoutExpired:
+                        self._process.kill()
 
                     self._process = None
 
@@ -239,25 +233,30 @@ class IndexTTSManager:
                 return {"status": "error", "message": str(e)}
 
     async def ensure_running(self) -> bool:
-        if self._status == ServiceStatus.RUNNING:
+        async with self._lock:
+            status = self._status
+
+        if status == ServiceStatus.RUNNING:
             if await self._check_service_health():
-                self._last_activity = asyncio.get_event_loop().time()
+                async with self._lock:
+                    self._last_activity = asyncio.get_event_loop().time()
                 return True
 
-        if self._status == ServiceStatus.STARTING:
+        if status == ServiceStatus.STARTING:
             return await self._wait_for_ready(self._startup_timeout)
 
         result = await self.start()
         return result.get("status") == "success"
 
-    def reset_auto_stop_timer(self):
-        self._last_activity = asyncio.get_event_loop().time()
+    async def reset_auto_stop_timer(self):
+        async with self._lock:
+            self._last_activity = asyncio.get_event_loop().time()
 
-        if self._auto_stop_task:
-            self._auto_stop_task.cancel()
+            if self._auto_stop_task:
+                self._auto_stop_task.cancel()
 
-        if self._auto_stop_delay > 0:
-            self._auto_stop_task = asyncio.create_task(self._auto_stop_callback())
+            if self._auto_stop_delay > 0:
+                self._auto_stop_task = asyncio.create_task(self._auto_stop_callback())
 
     async def _auto_stop_callback(self):
         try:
@@ -273,20 +272,21 @@ class IndexTTSManager:
             logger.error(f"Auto-stop callback error: {e}")
 
     async def get_status(self) -> dict:
-        is_healthy = False
-        if self._status == ServiceStatus.RUNNING:
-            is_healthy = await self._check_service_health()
-            if not is_healthy:
-                self._status = ServiceStatus.ERROR
-                self._error_message = "Service not responding"
+        async with self._lock:
+            is_healthy = False
+            if self._status == ServiceStatus.RUNNING:
+                is_healthy = await self._check_service_health()
+                if not is_healthy:
+                    self._status = ServiceStatus.ERROR
+                    self._error_message = "Service not responding"
 
-        return {
-            "status": self._status.value,
-            "url": self._base_url,
-            "message": self._error_message,
-            "healthy": is_healthy,
-            "pid": self._process.pid if self._process else None
-        }
+            return {
+                "status": self._status.value,
+                "url": self._base_url,
+                "message": self._error_message,
+                "healthy": is_healthy,
+                "pid": self._process.pid if self._process else None
+            }
 
 
 def get_emotion_templates() -> dict[str, list[tuple[str, float]]]:

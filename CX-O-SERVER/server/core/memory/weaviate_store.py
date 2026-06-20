@@ -9,6 +9,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
+from server.config import Settings
 from server.core.logging_config import get_contextual_logger
 
 if TYPE_CHECKING:
@@ -176,10 +177,12 @@ class WeaviateVectorStore:
         query_embedding: List[float],
         limit: int = 10,
         memory_type: str = None,
-        min_score: float = 0.5,
+        min_score: float = None,
         filters: Dict = None,
     ) -> List[Dict]:
         """搜索相似向量"""
+        if min_score is None:
+            min_score = Settings().config.limits.memory.vector_min_score
         if not self._client:
             return []
 

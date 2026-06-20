@@ -9,6 +9,7 @@ import { SummaryModal } from '../components/SummaryModal';
 import { Button, Textarea, Card } from '../components/ui';
 import { PageHeader } from '../components/layout';
 import { useWebSocket } from '../hooks/useWebSocket';
+import { useAudioStream } from '../hooks/useAudioStream';
 import { AvatarPanel, AvatarTypeSelector } from '../components/Avatar';
 import type { IAvatarDriver } from '../components/Avatar/AvatarDriver';
 import { createAvatarDriver } from '../components/Avatar/AvatarDriver';
@@ -298,6 +299,7 @@ export function ChatPage() {
   const [autoStartSummary, setAutoStartSummary] = useState(false);
   const [selectedImages, setSelectedImages] = useState<string[]>([]);
   const [alarms, setAlarms] = useState<{ message: string; triggeredAt: string }[]>([]);
+  const [maxChatImages, setMaxChatImages] = useState(20);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const tempAssistantIdRef = useRef<string>('');
   const lastDoneContentRef = useRef<string | null>(null);
@@ -316,11 +318,27 @@ export function ChatPage() {
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const playAudioRef = useRef<(audioData: ArrayBuffer, isLastSegment?: boolean) => Promise<void>>();
 
+  // ========== 双流式实时语音模式状态 ==========
+  // 双流式：ASR Partial 主驱动，TTS 边收边播，全双工可打断
+  const [isDualStreamMode, setIsDualStreamMode] = useState(false);
+  // 用户实时识别字幕（interim subtitle），随 Partial 修正更新
+  const [partialSubtitle, setPartialSubtitle] = useState('');
+  // LLM Prefill 已启动、等待首个 TTS 音频块的"正在思考"状态
+  const [dualThinking, setDualThinking] = useState(false);
+  // 当前双流式 assistant 消息 id（用于流式追加 text_segment）
+  const dualAssistantIdRef = useRef<string>('');
+  // TTS 播放状态 ref：供 barge-in 回调读取最新值，避免闭包捕获过期 state
+  const isTTSPlayingRef = useRef(false);
+  // 双流式 TTS 引擎选择：f5-tts（默认，向后兼容）或 orpheus
+  const [dualStreamEngine, setDualStreamEngine] = useState<'f5-tts' | 'orpheus'>('f5-tts');
+  // Orpheus 音色名（仅 orpheus 引擎使用），默认 tara
+  const [orpheusVoice, setOrpheusVoice] = useState<string>('tara');
+
   const driverRef = useRef<IAvatarDriver | null>(null);
   const [activeDriver, setActiveDriver] = useState<IAvatarDriver | null>(null);
 
   // 虚拟形象和布局状态
-  const { layout, toggleChatCollapsed } = useSettingsStore();
+  const { layout, toggleChatCollapsed, limits } = useSettingsStore();
   const { avatarType, live2d, vrm } = useSettingsStore();
 
   const { agents, currentAgentId, fetchAgents } = useChatStore();
@@ -535,11 +553,11 @@ export function ChatPage() {
         );
       } else {
         api.textToSpeech(cleanText).then((audioBlob: Blob) => {
-          audioBlob.arrayBuffer().then((arrayBuffer: ArrayBuffer) => {
+          return audioBlob.arrayBuffer().then((arrayBuffer: ArrayBuffer) => {
             playAudioRef.current?.(arrayBuffer);
           });
         }).catch((error: Error) => {
-          console.error('语音合成失败:', error);
+          console.error('TTS failed:', error);
         });
       }
     }
@@ -568,10 +586,67 @@ export function ChatPage() {
     }, 5000);
   }, []);
 
+  // ========== 双流式回调 ==========
+  // 通过 ref 读取 useWebSocket 返回的 interruptTTS，打破"回调定义在 useWebSocket 之前"的循环依赖
+  const interruptTTSRef = useRef<() => void>(() => {});
+
+  // ASR Partial：实时更新用户字幕；同时作为全双工打断触发点
+  const handleDualPartial = useCallback((text: string) => {
+    // 全双工打断（SubTask 6.4）：用户开口（Partial 到来）且 TTS 正在播放时，
+    // 立即停止播放、清空队列。省去等待整句播放完毕的延迟，实现毫秒级 barge-in。
+    if (isTTSPlayingRef.current) {
+      interruptTTSRef.current();
+      setDualThinking(false);
+    }
+    setPartialSubtitle(text);
+  }, []);
+
+  // LLM Prefill 已启动：用户文本已确认，落为 user 消息，清空 interim 字幕
+  const handleDualPrefillStarted = useCallback((text: string) => {
+    setPartialSubtitle('');
+    setDualThinking(true);
+    const userMsgId = `dual-user-${Date.now()}`;
+    const assistantMsgId = `dual-asst-${Date.now() + 1}`;
+    dualAssistantIdRef.current = assistantMsgId;
+    setMessages(prev => [
+      ...prev,
+      { id: userMsgId, role: 'user' as const, content: text, timestamp: new Date().toISOString() },
+      { id: assistantMsgId, role: 'assistant' as const, content: '', timestamp: new Date().toISOString() },
+    ]);
+    setShouldAutoScroll(true);
+  }, []);
+
+  // TTS 音频块：音频由 useWebSocket 内部队列自动播放，这里只负责累积助手文本用于显示
+  const handleDualTTSChunk = useCallback((_audio: string, _isFinal: boolean, textSegment?: string) => {
+    setDualThinking(false);
+    if (textSegment) {
+      const seg = textSegment;
+      setMessages(prev => {
+        const id = dualAssistantIdRef.current;
+        const idx = prev.findIndex(m => m.id === id);
+        if (idx === -1) return prev;
+        const updated = [...prev];
+        updated[idx] = { ...updated[idx], content: (updated[idx].content || '') + seg };
+        return updated;
+      });
+    }
+  }, []);
+
+  // TTS 播放状态变化：同步 ref（供 barge-in 读取）+ 口型同步
+  const handleTTSPlayingChange = useCallback((playing: boolean) => {
+    isTTSPlayingRef.current = playing;
+    // 双流式 TTS 经 AudioContext 播放，不走 HTMLAudioElement，
+    // 故 AvatarPanel 的口型同步失效，这里直接驱动口型
+    driverRef.current?.setMouthOpen(playing ? 0.6 : 0);
+  }, []);
+
   const {
     isConnected,
     sendMessage: wsSendMessage,
     cancelGeneration,
+    isTTSPlaying,
+    interruptTTS,
+    sendRaw,
   } = useWebSocket({
     agentId: currentAgentId || '',
     timeout: 60,
@@ -581,11 +656,36 @@ export function ChatPage() {
       console.error('WebSocket error:', error);
       setIsLoading(false);
     },
+    onPartial: handleDualPartial,
+    onTTSChunk: handleDualTTSChunk,
+    onPrefillStarted: handleDualPrefillStarted,
+    onTTSPlayingChange: handleTTSPlayingChange,
+  });
+
+  // 将 interruptTTS 注入 ref，供 handleDualPartial 在 barge-in 时调用
+  useEffect(() => {
+    interruptTTSRef.current = interruptTTS;
+  }, [interruptTTS]);
+
+  // 双流式音频采集 hook：持续推送音频流（不等 VAD on_end），通过 sendRaw 复用同一 WS 连接
+  const {
+    isDualStreaming,
+    startDualStream,
+    stopDualStream,
+  } = useAudioStream({
+    wsSend: sendRaw,
+    chunkInterval: 100,
   });
 
   useEffect(() => {
     fetchAgents();
   }, [fetchAgents]);
+
+  useEffect(() => {
+    if (limits?.max_chat_images) {
+      setMaxChatImages(limits.max_chat_images);
+    }
+  }, [limits]);
 
   useEffect(() => {
     return () => {
@@ -626,13 +726,13 @@ export function ChatPage() {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   };
 
-  const handleScroll = () => {
+  const handleScroll = useCallback(() => {
     if (!chatContainerRef.current) return;
-    
+
     const { scrollTop, scrollHeight, clientHeight } = chatContainerRef.current;
     const threshold = 200; // 距离底部200px以内视为接近底部
     setIsNearBottom(scrollHeight - scrollTop - clientHeight < threshold);
-  };
+  }, []);
 
   // 监听滚动事件
   useEffect(() => {
@@ -641,7 +741,7 @@ export function ChatPage() {
       chatContainer.addEventListener('scroll', handleScroll);
       return () => chatContainer.removeEventListener('scroll', handleScroll);
     }
-  }, []);
+  }, [handleScroll]);
 
   // 当消息更新且接近底部时自动滚动
   useEffect(() => {
@@ -698,15 +798,14 @@ export function ChatPage() {
 
     Array.from(files).forEach((file) => {
       if (!file.type.startsWith('image/')) return;
-      if (selectedImages.length >= 4) {
-        alert('最多只能上传4张图片');
-        return;
-      }
 
       const reader = new FileReader();
       reader.onload = (event) => {
         const base64 = event.target?.result as string;
-        setSelectedImages((prev) => [...prev, base64]);
+        setSelectedImages((prev) => {
+          if (prev.length >= maxChatImages) return prev;
+          return [...prev, base64];
+        });
       };
       reader.readAsDataURL(file);
     });
@@ -880,7 +979,113 @@ export function ChatPage() {
   };
 
   // 设置 playAudioRef，使 WebSocket 回调可以使用
-  playAudioRef.current = playAudio;
+  useEffect(() => {
+    playAudioRef.current = playAudio;
+  }, [playAudio]);
+
+  // ========== 双流式实时语音模式切换 ==========
+  const toggleDualStreamMode = async () => {
+    if (isDualStreamMode) {
+      // 停止双流式：结束会话、停止 TTS、清理字幕
+      stopDualStream();
+      interruptTTS();
+      setIsDualStreamMode(false);
+      setPartialSubtitle('');
+      setDualThinking(false);
+      driverRef.current?.setMouthOpen(0);
+    } else {
+      if (!currentAgentId) {
+        alert('请先选择一个 Agent');
+        return;
+      }
+      if (!isConnected) {
+        alert('WebSocket 未连接，无法启动双流式语音');
+        return;
+      }
+      // 生成会话标识：session_id 锚定后端流水线状态，request_id 追踪单轮请求
+      const sessionId = `dual-${currentAgentId}-${Date.now()}`;
+      const requestId = `req-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+      try {
+        // 传入当前选中的引擎与音色：orpheus 引擎需携带 voice，f5-tts 仅传 engine
+        await startDualStream(sessionId, currentAgentId, requestId, {
+          engine: dualStreamEngine,
+          voice: dualStreamEngine === 'orpheus' ? orpheusVoice : undefined,
+        });
+        setIsDualStreamMode(true);
+        setPartialSubtitle('');
+        setDualThinking(false);
+      } catch (error) {
+        console.error('启动双流式语音失败:', error);
+        alert('启动双流式语音失败，请检查麦克风权限');
+      }
+    }
+  };
+
+  /**
+   * 以指定引擎/音色重启双流式会话（先 stop 再 start）。
+   * 引擎或音色变更需重建后端流水线（不同引擎对应不同 TTSService 实例），
+   * 故切换时必须重启会话而非热更新。
+   * 参数直接使用传入值，避免闭包捕获过期 state。
+   */
+  const restartDualStreamWithEngine = async (
+    engine: 'f5-tts' | 'orpheus',
+    voice: string,
+  ) => {
+    // 先停止当前会话：发送 end、释放麦克风、清理前端状态
+    stopDualStream();
+    interruptTTS();
+    setPartialSubtitle('');
+    setDualThinking(false);
+    driverRef.current?.setMouthOpen(0);
+
+    if (!currentAgentId || !isConnected) return;
+
+    // 生成新会话标识（不复用旧 session_id，确保后端创建全新流水线）
+    const sessionId = `dual-${currentAgentId}-${Date.now()}`;
+    const requestId = `req-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    try {
+      await startDualStream(sessionId, currentAgentId, requestId, {
+        engine,
+        voice: engine === 'orpheus' ? voice : undefined,
+      });
+    } catch (error) {
+      console.error('切换引擎重启双流式语音失败:', error);
+      setIsDualStreamMode(false);
+      alert('切换引擎失败，已退出双流式模式');
+    }
+  };
+
+  // 引擎切换：更新 state 并在会话激活时重启以应用新引擎
+  const handleDualStreamEngineChange = (newEngine: 'f5-tts' | 'orpheus') => {
+    setDualStreamEngine(newEngine);
+    if (isDualStreamMode) {
+      void restartDualStreamWithEngine(newEngine, orpheusVoice);
+    }
+  };
+
+  // 音色切换：仅 orpheus 引擎生效，会话激活时同样需重启
+  const handleOrpheusVoiceChange = (newVoice: string) => {
+    setOrpheusVoice(newVoice);
+    if (isDualStreamMode && dualStreamEngine === 'orpheus') {
+      void restartDualStreamWithEngine(dualStreamEngine, newVoice);
+    }
+  };
+
+  // 双流式模式或 TTS 播放状态变化时，同步 isAudioPlaying 以驱动 AvatarPanel
+  useEffect(() => {
+    if (isDualStreamMode) {
+      setIsAudioPlaying(isTTSPlaying);
+    }
+  }, [isTTSPlaying, isDualStreamMode]);
+
+  // 退出双流式模式时确保停止采集（组件卸载或切换 Agent）
+  useEffect(() => {
+    return () => {
+      if (isDualStreaming) {
+        stopDualStream();
+      }
+    };
+  }, [isDualStreaming, stopDualStream]);
 
   const handleSendWithText = async (text: string) => {
     if ((!text.trim() && selectedImages.length === 0) || isLoading) return;
@@ -1174,6 +1379,38 @@ export function ChatPage() {
         }
       />
 
+      {/* 双流式实时语音状态栏：Partial 字幕 + 思考/播放指示 */}
+      {isDualStreamMode && (
+        <div className="mb-3 rounded-xl border border-[var(--color-accent)] bg-[var(--color-accent-light)] px-4 py-2.5">
+          <div className="flex items-center gap-2 mb-1">
+            <span className="flex items-center gap-1.5 text-xs font-medium text-[var(--color-accent)]">
+              <span className="relative flex h-2 w-2">
+                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-[var(--color-accent)] opacity-75" />
+                <span className="relative inline-flex rounded-full h-2 w-2 bg-[var(--color-accent)]" />
+              </span>
+              双流式实时语音
+            </span>
+            {dualThinking && (
+              <span className="text-xs text-[var(--color-text-secondary)] animate-pulse">正在思考…</span>
+            )}
+            {isTTSPlaying && !dualThinking && (
+              <span className="text-xs text-[var(--color-text-secondary)]">正在播报…</span>
+            )}
+          </div>
+          {/* interim subtitle：随 ASR Partial 修正实时更新 */}
+          {partialSubtitle ? (
+            <p className="text-sm text-[var(--color-text-primary)]">
+              <span className="text-[var(--color-text-tertiary)] mr-1">你：</span>
+              {partialSubtitle}
+            </p>
+          ) : (
+            !dualThinking && !isTTSPlaying && (
+              <p className="text-xs text-[var(--color-text-tertiary)]">请开口说话…</p>
+            )
+          )}
+        </div>
+      )}
+
       <div className="flex-1 overflow-y-auto space-y-4 mb-4" ref={chatContainerRef}>
         {messages.length === 0 ? (
           <div className="flex flex-col items-center justify-center h-full text-center py-12">
@@ -1342,9 +1579,9 @@ export function ChatPage() {
             <Button
               variant="secondary"
               onClick={() => fileInputRef.current?.click()}
-              disabled={isLoading || selectedImages.length >= 4}
+              disabled={isLoading || selectedImages.length >= maxChatImages}
               className="self-end"
-              title="上传图片（最多4张）"
+              title={`上传图片（最多${maxChatImages}张）`}
             >
               <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                 <path
@@ -1473,9 +1710,10 @@ export function ChatPage() {
               </svg>
               <span>{enableVoiceOutput ? '语音输出开' : '语音输出关'}</span>
             </button>
-            {/* 语音对话模式切换 */}
+            {/* 语音对话模式切换（半双工，双流式激活时禁用以避免冲突） */}
             <button
               onClick={() => setIsVoiceMode(!isVoiceMode)}
+              disabled={isDualStreamMode}
               className={`flex items-center gap-1 text-xs px-2 py-1 rounded transition-colors ${
                 isVoiceMode
                   ? 'bg-[var(--color-accent-light)] text-[var(--color-accent)]'
@@ -1493,6 +1731,60 @@ export function ChatPage() {
               </svg>
               <span>{isVoiceMode ? '语音模式' : '文本模式'}</span>
             </button>
+            {/* 双流式实时语音模式切换（区别于半双工"语音模式"）：
+                ASR Partial 主驱动 + TTS 边收边播 + 全双工可打断，TTFA < 300ms */}
+            <button
+              onClick={toggleDualStreamMode}
+              disabled={isVoiceMode || isLoading}
+              className={`flex items-center gap-1 text-xs px-2 py-1 rounded transition-colors ${
+                isDualStreamMode
+                  ? 'bg-green-100 text-green-700 dark:bg-green-900/40 dark:text-green-300'
+                  : 'text-[var(--color-text-tertiary)] hover:text-[var(--color-text-secondary)]'
+              } ${isVoiceMode ? 'opacity-40 cursor-not-allowed' : ''}`}
+              title={isDualStreamMode ? '退出双流式实时语音' : '进入双流式实时语音（全双工）'}
+            >
+              <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  strokeWidth={2}
+                  d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z"
+                />
+              </svg>
+              <span>{isDualStreamMode ? '双流式开' : '双流式语音'}</span>
+            </button>
+            {/* 双流式 TTS 引擎切换：仅双流式激活时显示，切换时重启会话以应用新引擎 */}
+            {isDualStreamMode && (
+              <>
+                <select
+                  value={dualStreamEngine}
+                  onChange={(e) => handleDualStreamEngineChange(e.target.value as 'f5-tts' | 'orpheus')}
+                  className="text-xs px-2 py-1 rounded border border-[var(--color-border)] bg-[var(--color-bg-secondary)] text-[var(--color-text-secondary)] cursor-pointer outline-none"
+                  title="选择 TTS 引擎"
+                >
+                  <option value="f5-tts">F5-TTS</option>
+                  <option value="orpheus">Orpheus</option>
+                </select>
+                {/* Orpheus 音色选择：仅 orpheus 引擎显示（F5-TTS 使用 ref_audio，不需要音色） */}
+                {dualStreamEngine === 'orpheus' && (
+                  <select
+                    value={orpheusVoice}
+                    onChange={(e) => handleOrpheusVoiceChange(e.target.value)}
+                    className="text-xs px-2 py-1 rounded border border-[var(--color-border)] bg-[var(--color-bg-secondary)] text-[var(--color-text-secondary)] cursor-pointer outline-none"
+                    title="选择 Orpheus 音色"
+                  >
+                    <option value="tara">tara</option>
+                    <option value="leah">leah</option>
+                    <option value="jess">jess</option>
+                    <option value="leo">leo</option>
+                    <option value="dan">dan</option>
+                    <option value="mia">mia</option>
+                    <option value="zac">zac</option>
+                    <option value="zoe">zoe</option>
+                  </select>
+                )}
+              </>
+            )}
           </div>
           <div className="flex items-center gap-1 text-xs">
             <span

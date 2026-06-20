@@ -217,6 +217,15 @@ export interface CxfcDiscoveredPlugin {
   version?: string;
 }
 
+export interface FrontendLimits {
+  max_upload_size_mb: number;
+  max_chat_images: number;
+  avatar_min_width: number;
+  avatar_max_width: number;
+  temperature_max: number;
+  speed_max: number;
+}
+
 export interface GraphEntity {
   id: string;
   type: string;
@@ -651,6 +660,21 @@ class ApiClient {
 
   async getConfig(): Promise<Record<string, unknown>> {
     return this.request<Record<string, unknown>>({ url: '/api/config' });
+  }
+
+  async getLimits(): Promise<FrontendLimits> {
+    try {
+      return await this.request<FrontendLimits>({ url: '/api/config/limits' });
+    } catch {
+      return {
+        max_upload_size_mb: 500,
+        max_chat_images: 20,
+        avatar_min_width: 100,
+        avatar_max_width: 1200,
+        temperature_max: 5,
+        speed_max: 3,
+      };
+    }
   }
 
   async updateConfig(section: string, data: Record<string, unknown>): Promise<void> {

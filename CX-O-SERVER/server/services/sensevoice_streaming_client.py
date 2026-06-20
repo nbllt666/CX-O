@@ -7,7 +7,7 @@ from __future__ import annotations
 import asyncio
 import base64
 import logging
-from typing import Any, AsyncGenerator
+from typing import Any, AsyncGenerator, Awaitable, Callable
 
 import httpx
 
@@ -15,10 +15,18 @@ logger = logging.getLogger(__name__)
 
 
 class SenseVoiceStreamingClient:
-    def __init__(self, base_url: str, timeout: float = 60.0):
+    def __init__(
+        self,
+        base_url: str,
+        timeout: float = 60.0,
+        on_partial_result: Callable[[dict[str, Any]], Awaitable[None]] | None = None
+    ):
         self._base_url = base_url.rstrip("/")
         self._timeout = timeout
         self._client: httpx.AsyncClient | None = None
+        # 双流式模式主驱动回调：ASR Partial Result 产出即触发 LLM Speculative Prefill，
+        # 不必等待 VAD on_end（原 silence_threshold_ms=500ms），可省下约 500ms 端到端延迟
+        self._on_partial_result: Callable[[dict[str, Any]], Awaitable[None]] | None = on_partial_result
 
     async def _get_client(self) -> httpx.AsyncClient:
         if self._client is None:
@@ -66,11 +74,22 @@ class SenseVoiceStreamingClient:
                     result = response.json()
 
                     if result.get("text"):
-                        yield {
+                        is_final = result.get("is_final", False)
+                        partial = {
                             "text": result.get("text", ""),
-                            "is_final": result.get("is_final", False),
+                            "is_final": is_final,
                             "offset": total_offset
                         }
+
+                        # Partial Result 主驱动：is_final=False 时立即触发 LLM Speculative Prefill，
+                        # 省去等待 VAD on_end 的 500ms 静默判定，实现低延迟首字响应
+                        if not is_final and self._on_partial_result is not None:
+                            try:
+                                await self._on_partial_result(partial)
+                            except Exception as e:
+                                logger.error(f"on_partial_result callback error at offset {total_offset}: {e}")
+
+                        yield partial
 
                 except Exception as e:
                     logger.error(f"Streaming ASR error at offset {total_offset}: {e}")
@@ -122,4 +141,15 @@ class SenseVoiceStreamingClient:
             }
         )
         response.raise_for_status()
-        return response.json()
+        result = response.json()
+
+        # Partial Result 主驱动：响应标记 is_final=False 时立即触发 LLM Speculative Prefill，
+        # 不阻塞等待 VAD on_end 兜底，省下约 500ms 静默等待延迟
+        result_is_final = result.get("is_final", is_final)
+        if not result_is_final and self._on_partial_result is not None and result.get("text"):
+            try:
+                await self._on_partial_result(result)
+            except Exception as e:
+                logger.error(f"on_partial_result callback error at offset {offset}: {e}")
+
+        return result

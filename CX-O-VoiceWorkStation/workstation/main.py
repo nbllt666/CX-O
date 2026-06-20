@@ -23,7 +23,49 @@ async def lifespan(app: FastAPI):
     logger.info("CX-O-VoiceWorkStation started successfully")
     yield
     logger.info("Shutting down CX-O-VoiceWorkStation...")
+    await _shutdown_resources()
     logger.info("CX-O-VoiceWorkStation shutdown complete")
+
+
+async def _shutdown_resources():
+    """关闭/停止所有后台训练子进程、HTTP 客户端单例与 IndexTTS 服务，
+    避免服务重启后残留孤儿进程与 GPU 显存占用。每个清理步骤独立
+    try/except，确保单点失败不阻塞后续清理。"""
+    # 1. 停止 F5-TTS 训练子进程
+    try:
+        from workstation.api import f5tts_finetune as f5tts_api
+        service = f5tts_api._service_instance
+        if service is not None:
+            await service.stop_training()
+    except Exception as e:
+        logger.warning(f"Shutdown: failed to stop F5-TTS training: {e}")
+
+    # 2. 停止 So-VITS-SVC 训练子进程
+    try:
+        from workstation.api import sovits_svc as sovits_api
+        trainer = sovits_api._trainer_instance
+        if trainer is not None:
+            await trainer.stop_training()
+    except Exception as e:
+        logger.warning(f"Shutdown: failed to stop So-VITS-SVC training: {e}")
+
+    # 3. 关闭 CosyVoice HTTP 客户端单例
+    try:
+        from workstation.services import cosyvoice_client
+        client = cosyvoice_client._client_instance
+        if client is not None:
+            await client.close()
+    except Exception as e:
+        logger.warning(f"Shutdown: failed to close CosyVoice client: {e}")
+
+    # 4. 停止 IndexTTS 服务子进程
+    try:
+        from workstation.services import index_tts_manager
+        manager = index_tts_manager._manager_instance
+        if manager is not None:
+            await manager.stop()
+    except Exception as e:
+        logger.warning(f"Shutdown: failed to stop IndexTTS manager: {e}")
 
 
 def create_app() -> FastAPI:

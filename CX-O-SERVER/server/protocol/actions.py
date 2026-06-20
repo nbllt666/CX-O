@@ -78,6 +78,22 @@ class ASRActions:
     STREAM = "asr.stream"
 
 
+class VoiceActions:
+    """双流式语音 action 常量
+
+    双流式模式核心：ASR Partial Result 是主驱动器，VAD 仅作兜底。
+    这些 action 用于 voice.dual_stream handler 与前端的双向通信：
+    - DUAL_STREAM: 前端发起双流式会话（init/audio/end 三类消息复用此 action）
+    - PARTIAL: 后端 → 前端，推送 ASR Partial 识别文本（实时显示）
+    - TTS_CHUNK: 后端 → 前端，流式推送 TTS 音频块（不等整句）
+    - PREFILL_STARTED: 后端 → 前端，通知 LLM Speculative Prefill 已启动
+    """
+    DUAL_STREAM = "voice.dual_stream"
+    PARTIAL = "voice.partial"
+    TTS_CHUNK = "voice.tts_chunk"
+    PREFILL_STARTED = "voice.prefill_started"
+
+
 class TTSActions:
     SYNTHESIZE = "tts.synthesize"
     SYNTHESIZE_STREAM = "tts.synthesize_stream"
@@ -153,6 +169,7 @@ ACTION_HANDLERS = {
     ASRActions.RECOGNIZE: "audio",
     ASRActions.RECOGNIZE_BASE64: "audio",
     ASRActions.STREAM: "audio",
+    VoiceActions.DUAL_STREAM: "audio",
     TTSActions.SYNTHESIZE: "audio",
     TTSActions.SYNTHESIZE_STREAM: "audio",
     TTSActions.VOICES: "audio",

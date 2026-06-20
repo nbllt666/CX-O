@@ -5,6 +5,7 @@ import { PageHeader } from '../components/layout';
 import { Button, Card, CardBody, Modal, Input, Textarea, Badge } from '../components/ui';
 import { AnimatedList } from '../components/AnimatedList';
 import { useHotkey } from '../hooks';
+import { useSettingsStore } from '../store/settingsStore';
 
 interface AgentTemplate {
   id: string;
@@ -85,6 +86,9 @@ export function AgentsPage() {
   const [showTemplateModal, setShowTemplateModal] = useState(false);
   const [editingAgent, setEditingAgent] = useState<Agent | null>(null);
   const [availableModels, setAvailableModels] = useState<{ name: string }[]>([]);
+  const [tempMax, setTempMax] = useState(5);
+
+  const { limits } = useSettingsStore();
 
   const [formData, setFormData] = useState({
     name: '',
@@ -110,6 +114,12 @@ export function AgentsPage() {
     loadAgents();
     loadModels();
   }, []);
+
+  useEffect(() => {
+    if (limits?.temperature_max) {
+      setTempMax(limits.temperature_max);
+    }
+  }, [limits]);
 
   const loadModels = async () => {
     try {
@@ -547,7 +557,7 @@ export function AgentsPage() {
               <input
                 type="range"
                 min="0"
-                max="2"
+                max={tempMax}
                 step="0.1"
                 value={formData.temperature}
                 onChange={(e) =>

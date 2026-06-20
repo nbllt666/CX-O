@@ -97,7 +97,7 @@ class VoxCPMClient:
             args.extend(["--zipenhancer-path", self._zipenhancer_model_path])
         return args
 
-    async def _run_subprocess(self, args: list[str]) -> tuple[int, str, str]:
+    async def _run_subprocess(self, args: list[str], timeout: float = _VOXCPM_SUBPROCESS_TIMEOUT) -> tuple[int, str, str]:
         process = await asyncio.create_subprocess_exec(
             *args,
             stdout=asyncio.subprocess.PIPE,
@@ -106,13 +106,13 @@ class VoxCPMClient:
             creationflags=subprocess.CREATE_NEW_PROCESS_GROUP if sys.platform == "win32" else 0,
         )
         try:
-            stdout, stderr = await _communicate_with_timeout(process, _VOXCPM_SUBPROCESS_TIMEOUT)
+            stdout, stderr = await _communicate_with_timeout(process, timeout)
         except asyncio.TimeoutError:
             raise VoxCPMError(
-                f"VoxCPM subprocess timed out after {_VOXCPM_SUBPROCESS_TIMEOUT}s",
+                f"VoxCPM subprocess timed out after {timeout}s",
                 returncode=None,
             )
-        return process.returncode or 0, stdout.decode(errors="replace"), stderr.decode(errors="replace")
+        return process.returncode if process.returncode is not None else 0, stdout.decode(errors="replace"), stderr.decode(errors="replace")
 
     async def design(self, text: str, control: str, output_path: str, **kwargs: Any) -> Path:
         output = Path(output_path)
@@ -249,7 +249,7 @@ class VoxCPMClient:
             args = [
                 sys.executable, "-m", "voxcpm", "--help",
             ]
-            returncode, _stdout, _stderr = await self._run_subprocess(args)
+            returncode, _stdout, _stderr = await self._run_subprocess(args, timeout=10.0)
             return returncode == 0
         except Exception as e:
             logger.error(f"VoxCPM health check failed: {e}")

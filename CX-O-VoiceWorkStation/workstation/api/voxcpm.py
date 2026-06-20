@@ -84,7 +84,7 @@ async def generate(request: VoxCPMGenerateRequest):
                 **kwargs,
             )
 
-        return {"status": "success", "output_path": str(result_path)}
+        return {"status": "success", "output_filename": result_path.name}
 
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))

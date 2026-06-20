@@ -1,4 +1,5 @@
 import os
+import secrets
 from datetime import datetime
 from typing import Dict, Optional
 
@@ -15,7 +16,7 @@ ADMIN_API_KEY = os.environ.get("ADMIN_API_KEY", "")
 def verify_admin_api_key(x_api_key: Optional[str] = Header(None)) -> bool:
     if not ADMIN_API_KEY:
         raise HTTPException(status_code=403, detail="Admin API key not configured")
-    if not x_api_key or x_api_key != ADMIN_API_KEY:
+    if not x_api_key or not secrets.compare_digest(x_api_key, ADMIN_API_KEY):
         raise HTTPException(status_code=403, detail="Invalid API key")
     return True
 
@@ -101,8 +102,10 @@ async def health_check():
 
     try:
         acp_mgr = get_acp_manager()
-        acp_stats = await acp_mgr.get_statistics()
-        health["acp"] = "healthy" if acp_stats.get("total_agents", 0) >= 0 else "unhealthy"
+        await acp_mgr.get_statistics()
+        # BUG-B-M9 修复: 原判断 acp_stats.get("total_agents", 0) >= 0 恒为 True
+        # (数量不可能为负),无意义。能成功获取统计信息即说明 ACP 健康。
+        health["acp"] = "healthy"
     except Exception:
         health["acp"] = "unhealthy"
 
@@ -210,6 +213,7 @@ async def create_backup(x_api_key: Optional[str] = Header(None)):
 
     import os
     import shutil
+    import zipfile
 
     try:
         data_dir = "data"
@@ -223,15 +227,26 @@ async def create_backup(x_api_key: Optional[str] = Header(None)):
 
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         backup_name = f"backup_{timestamp}"
-        backup_path = f"{backup_dir}/{backup_name}"
+        backup_path = f"{backup_dir}/{backup_name}.zip"
 
-        shutil.make_archive(backup_path, "zip", data_dir)
+        # BUG-B-M8 修复: 排除 data/backups 目录,避免备份嵌套导致体积指数增长。
+        # 原实现使用 shutil.make_archive 打包整个 data 目录,其中包含 data/backups,
+        # 导致每次备份都包含历史备份,体积指数增长。
+        with zipfile.ZipFile(backup_path, "w", zipfile.ZIP_DEFLATED) as zipf:
+            for root, dirs, files in os.walk(data_dir):
+                # 排除 backups 子目录,避免递归打包历史备份
+                if "backups" in dirs:
+                    dirs.remove("backups")
+                for file in files:
+                    file_path = os.path.join(root, file)
+                    arcname = os.path.relpath(file_path, data_dir)
+                    zipf.write(file_path, arcname)
 
-        logger.info(f"创建备份: {backup_path}.zip")
+        logger.info(f"创建备份: {backup_path}")
 
         return {
             "status": "success",
-            "path": f"{backup_path}.zip",
+            "path": backup_path,
             "message": f"备份已创建: {backup_name}.zip",
         }
     except HTTPException:

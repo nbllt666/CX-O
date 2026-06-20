@@ -6,6 +6,7 @@ import json
 from datetime import datetime, timedelta
 from typing import Any, Dict, List, Optional
 
+from server.config import Settings
 from .registry import tool_registry
 from .graph_tools import (
     user_graph_create_entity, user_graph_create_relation, user_graph_query_entities, user_graph_find_paths, user_graph_search_related_memories,
@@ -111,7 +112,6 @@ def register_master_tools():
                     "description": "返回结果数量限制",
                     "default": 10,
                     "minimum": 1,
-                    "maximum": 50,
                 },
             },
             "required": ["query"],
@@ -151,7 +151,7 @@ def register_master_tools():
             "properties": {
                 "seconds": {
                     "type": "integer",
-                    "description": "多少秒后提醒（最小1秒，最大86400秒即24小时）",
+                    "description": "多少秒后提醒（最小1秒）",
                 },
                 "message": {"type": "string", "description": "提醒消息内容"},
                 "agent_id": {
@@ -226,7 +226,6 @@ def register_master_tools():
                     "description": "保持的对话轮数（默认1轮）",
                     "default": 1,
                     "minimum": 1,
-                    "maximum": 10,
                 },
             },
             "required": ["content"],
@@ -868,9 +867,11 @@ def write_long_term_memory(
 
 
 def search_all_memories(
-    query: str, memory_type: str = "all", time_range: str = None, limit: int = 10
+    query: str, memory_type: str = "all", time_range: str = None, limit: int = None
 ) -> Dict[str, Any]:
     """搜索所有记忆"""
+    if limit is None:
+        limit = Settings().config.limits.memory.search_all_limit
     mm = get_memory_manager()
     if not mm:
         return {"error": "记忆管理器不可用"}
@@ -936,8 +937,8 @@ def set_alarm(seconds: int, message: str, agent_id: str = "default") -> Dict[str
     Returns:
         包含 alarm_id 和 scheduled_time 的字典
     """
-    if not (1 <= seconds <= 86400):
-        return {"error": "秒数必须在1-86400之间（24小时内）"}
+    if not (1 <= seconds):
+        return {"error": "秒数必须大于等于1"}
 
     try:
         from server.core.alarm import get_alarm_manager

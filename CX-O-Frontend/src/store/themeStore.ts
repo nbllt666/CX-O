@@ -61,4 +61,15 @@ if (typeof window !== 'undefined') {
       applyTheme('system');
     }
   }
+
+  // Listen for system theme changes when theme is set to 'system'
+  if (window.matchMedia) {
+    const mediaQuery = window.matchMedia('(prefers-color-scheme: dark)');
+    mediaQuery.addEventListener('change', () => {
+      const currentTheme = useThemeStore.getState().theme;
+      if (currentTheme === 'system') {
+        applyTheme('system');
+      }
+    });
+  }
 }

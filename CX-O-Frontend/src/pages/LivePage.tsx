@@ -32,7 +32,6 @@ function applyAvatarTags(driver: IAvatarDriver, tags: AvatarTag[]) {
         driver.setWind(tag);
         break;
       case 'sleep':
-        console.log('[avatar] sleep tag:', tag.ms, 'ms');
         break;
     }
   }
@@ -59,10 +58,18 @@ export function LivePage() {
           avatar.data.arrayBuffer().then((buffer) => {
             if (cancelled) return;
             setModelData(buffer);
+          }).catch((error) => {
+            if (cancelled) return;
+            console.error('Failed to load avatar:', error);
+            setModelData(undefined);
           });
         } else {
           setModelData(undefined);
         }
+      }).catch((error) => {
+        if (cancelled) return;
+        console.error('Failed to load avatar:', error);
+        setModelData(undefined);
       });
     } else {
       setModelData(undefined);

@@ -9,6 +9,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any, Callable, Dict, List, Optional
 
+from server.config import Settings
 from server.core.logging_config import get_contextual_logger
 
 logger = get_contextual_logger(__name__)
@@ -69,6 +70,10 @@ class MemoryConversationEngine:
             "stats": self._handle_stats,
             "help": self._handle_help,
         }
+        # 缓存配置值，避免每次调用都访问 Settings
+        _limits = Settings().config.limits.context
+        self._conversation_max_messages = _limits.conversation_max_messages
+        self._conversation_recent_window = _limits.conversation_recent_window
 
     def get_or_create_session(self, session_id: str) -> ConversationContext:
         """获取或创建对话会话"""
@@ -113,8 +118,8 @@ class MemoryConversationEngine:
         )
 
         # 限制上下文长度
-        if len(context.messages) > 20:
-            context.messages = context.messages[-20:]
+        if len(context.messages) > self._conversation_max_messages:
+            context.messages = context.messages[-self._conversation_max_messages:]
 
         return response
 
@@ -565,7 +570,7 @@ class MemoryConversationEngine:
         try:
             # 构建提示
             recent_messages = (
-                context.messages[-6:] if len(context.messages) > 6 else context.messages
+                context.messages[-self._conversation_max_messages:] if len(context.messages) > self._conversation_max_messages else context.messages
             )
             conversation_history = "\n".join(
                 [

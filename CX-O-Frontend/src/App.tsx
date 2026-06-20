@@ -27,6 +27,7 @@ import { ErrorBoundary } from './components/ErrorBoundary';
 import { ConnectionSetup } from './components/ConnectionSetup';
 import { initBackendUrl } from './api/client';
 import { initElectronStorage } from './lib/electronStorage';
+import { useSettingsStore } from './store/settingsStore';
 
 function NotFound() {
   return (
@@ -75,6 +76,8 @@ function App() {
       if (cancelledRef.current) return;
       if (response.ok) {
         setIsConnected(true);
+        // 连接成功后获取后端限制配置
+        useSettingsStore.getState().fetchLimits();
       } else {
         setIsConnected(false);
       }

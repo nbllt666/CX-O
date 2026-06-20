@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useMemo } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
 import { motion } from 'framer-motion';
@@ -90,7 +90,11 @@ const QuickAction: React.FC<{ to: string; icon: React.ReactNode; label: string }
 );
 
 export const DashboardPage: React.FC = () => {
-  const { data: stats, isLoading: statsLoading } = useQuery<Stats>({
+  const { data: rawData, isLoading: statsLoading } = useQuery<{
+    statsResponse: ServiceStats;
+    sessionsResponse: unknown[];
+    agentsResponse: { id: string }[];
+  }>({
     queryKey: ['dashboard-stats'],
     queryFn: async () => {
       const [statsResponse, sessionsResponse, agentsResponse] = await Promise.all([
@@ -99,34 +103,42 @@ export const DashboardPage: React.FC = () => {
         api.getAgents(),
       ]);
 
-      const sessions = Array.isArray(sessionsResponse) ? sessionsResponse : [];
-      const sessionsTotal = sessions.length;
-
-      const agents = Array.isArray(agentsResponse) ? agentsResponse : [];
-
-      const today = new Date();
-      today.setHours(0, 0, 0, 0);
-      const todaySessions = sessions.filter((s: { updated_at?: string }) => {
-        if (!s.updated_at) return false;
-        const sessionDate = new Date(s.updated_at);
-        return sessionDate >= today;
-      });
-
       return {
-        memoryCount: statsResponse.total_memories || 0,
-        sessionCount: sessionsTotal,
-        agentCount: agents.filter((a: { id: string }) => a.id !== 'memory-agent').length || 0,
-        todayMessages: todaySessions.length || 0,
+        statsResponse: statsResponse as ServiceStats,
+        sessionsResponse: Array.isArray(sessionsResponse) ? sessionsResponse : [],
+        agentsResponse: Array.isArray(agentsResponse) ? agentsResponse : [],
       };
     },
   });
 
-  const { data: serviceStats, isLoading: serviceStatsLoading } = useQuery<ServiceStats>({
-    queryKey: ['service-stats'],
-    queryFn: async () => {
-      return await api.getStats();
-    },
-  });
+  const stats = useMemo<Stats | undefined>(() => {
+    if (!rawData) return undefined;
+    const { statsResponse, sessionsResponse, agentsResponse } = rawData;
+    const sessions = sessionsResponse as Array<{ updated_at?: string }>;
+    const sessionsTotal = sessions.length;
+
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const todaySessions = sessions.filter((s) => {
+      if (!s.updated_at) return false;
+      const sessionDate = new Date(s.updated_at);
+      return sessionDate >= today;
+    });
+
+    return {
+      memoryCount: statsResponse.total_memories || 0,
+      sessionCount: sessionsTotal,
+      agentCount: agentsResponse.filter((a) => a.id !== 'memory-agent').length || 0,
+      todayMessages: todaySessions.length || 0,
+    };
+  }, [rawData]);
+
+  const serviceStats = useMemo<ServiceStats | undefined>(() => {
+    if (!rawData) return undefined;
+    return rawData.statsResponse;
+  }, [rawData]);
+
+  const serviceStatsLoading = statsLoading;
 
   const statCardsData = [
     {
@@ -272,7 +284,7 @@ export const DashboardPage: React.FC = () => {
                     className="p-4 bg-[var(--color-bg-tertiary)] rounded-[var(--radius-md)]"
                   >
                     <p className="text-sm text-[var(--color-text-secondary)]">{item.label}</p>
-                    <p className={`text-2xl font-bold text-[var(--color-${item.color})]`}>
+                    <p className="text-2xl font-bold" style={{ color: `var(--color-${item.color})` }}>
                       <CountUp end={item.value} />
                     </p>
                   </motion.div>

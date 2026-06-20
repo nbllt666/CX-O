@@ -143,6 +143,8 @@ export class Live2DAvatarDriver implements IAvatarDriver {
 
   setBlendShapes(entries: Array<{ name: string; weight: number }>): void {
     const overrides = entries.map((entry) => ({ id: entry.name, value: entry.weight }));
+    const newIds = new Set(overrides.map((o) => o.id));
+    this._parameterOverrides = this._parameterOverrides.filter((o) => !newIds.has(o.id));
     this._parameterOverrides.push(...overrides);
     if (this.runtime) {
       live2dSetParameterOverrides(this.runtime as never, this._avatar, this._parameterOverrides);

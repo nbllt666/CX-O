@@ -102,6 +102,35 @@ function DriverLive2DViewer({
   );
 }
 
+function DriverVRMViewer({
+  modelDataRef,
+  dataVersion,
+  driverKey,
+  driver,
+}: {
+  modelDataRef: React.RefObject<ArrayBuffer | undefined>;
+  dataVersion: number;
+  driverKey: number;
+  driver: IAvatarDriver;
+}) {
+  const state = useDriverState(driver);
+
+  return (
+    <VRMViewer
+      key={`vrm-${driverKey}`}
+      modelPath=""
+      modelDataRef={modelDataRef}
+      dataVersion={dataVersion}
+      scale={1.0}
+      position={[0, -0.3, 0]}
+      lipSyncEnabled
+      lookAtMouse
+      mouthOpenY={state.mouthOpen}
+      driver={driver}
+    />
+  );
+}
+
 export function LiveStage({
   avatarType = 'live2d',
   modelData,
@@ -128,16 +157,8 @@ export function LiveStage({
 
   useEffect(() => {
     if (prevDriverRef.current !== driver) {
-      const oldDriver = prevDriverRef.current;
       prevDriverRef.current = driver;
       setDriverKey((k) => k + 1);
-      if (oldDriver && typeof (oldDriver as unknown as { destroy?: () => void }).destroy === 'function') {
-        try {
-          (oldDriver as unknown as { destroy: () => void }).destroy();
-        } catch {
-          /* ignore destroy errors during driver switch */
-        }
-      }
     }
     return () => {
       const d = prevDriverRef.current;
@@ -165,18 +186,26 @@ export function LiveStage({
         >
           {modelData ? (
             avatarType === 'vrm' ? (
-              <VRMViewer
-                key={`vrm-${driverKey}`}
-                modelPath=""
-                modelDataRef={modelDataRef}
-                dataVersion={dataVersion}
-                scale={1.0}
-                position={[0, -0.3, 0]}
-                lipSyncEnabled
-                lookAtMouse
-                mouthOpenY={driver ? driver.mouthOpen : mouthOpenY}
-                driver={driver}
-              />
+              driver ? (
+                <DriverVRMViewer
+                  modelDataRef={modelDataRef}
+                  dataVersion={dataVersion}
+                  driverKey={driverKey}
+                  driver={driver}
+                />
+              ) : (
+                <VRMViewer
+                  key={`vrm-${driverKey}`}
+                  modelPath=""
+                  modelDataRef={modelDataRef}
+                  dataVersion={dataVersion}
+                  scale={1.0}
+                  position={[0, -0.3, 0]}
+                  lipSyncEnabled
+                  lookAtMouse
+                  mouthOpenY={mouthOpenY}
+                />
+              )
             ) : driver ? (
               <DriverLive2DViewer
                 key={`live2d-${driverKey}`}

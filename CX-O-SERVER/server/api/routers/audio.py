@@ -13,6 +13,7 @@ from pydantic import BaseModel
 from server.core.logging_config import get_contextual_logger
 from server.dependencies import get_asr_service, get_tts_service
 from server.services.asr_service import ASRService
+from server.services.tts_service import TTSService
 
 router = APIRouter()
 logger = get_contextual_logger(__name__)

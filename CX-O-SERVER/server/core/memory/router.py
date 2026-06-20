@@ -3,6 +3,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Dict, List, Optional
 
+from server.config import Settings
 from server.core.logging_config import get_contextual_logger
 
 logger = get_contextual_logger(__name__)
@@ -25,8 +26,8 @@ class RoutingConfig:
     relevance_weight: float = 0.4
     hard_rules_enabled: bool = True
     scene_awareness_enabled: bool = True
-    max_memories: int = 10
-    min_score_threshold: float = 0.3
+    max_memories: int = None
+    min_score_threshold: float = None
     high_priority_threshold: float = 0.8
 
 
@@ -83,6 +84,13 @@ class MemoryRouter:
         self.vector_store = vector_store
         self.embedding_model = embedding_model
         self.config = config or RoutingConfig()
+
+        # 如果 RoutingConfig 的 max_memories/min_score_threshold 为 None，从 Settings 读取默认值
+        limits = Settings().config.limits.memory
+        if self.config.max_memories is None:
+            self.config.max_memories = limits.max_memories
+        if self.config.min_score_threshold is None:
+            self.config.min_score_threshold = limits.min_score_threshold
 
         from server.core.memory.decay import DecayCalculator
 
@@ -187,7 +195,7 @@ class MemoryRouter:
             max_iterations = 10
             iteration = 0
 
-            while recent_count < 50 and iteration < max_iterations:
+            while recent_count < 200 and iteration < max_iterations:
                 iteration += 1
                 results = self.memory_manager.search_memories(
                     query=None,
@@ -206,7 +214,7 @@ class MemoryRouter:
 
                 page += 1
 
-            return memories[:30]
+            return memories[:100]
 
         except Exception as e:
             logger.error(f"获取最近记忆失败: {e}")

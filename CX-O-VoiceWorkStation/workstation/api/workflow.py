@@ -70,43 +70,53 @@ async def get_workflow_status():
 
 @router.post("/step/{step_id}/execute")
 async def execute_step(step_id: str, request: Request):
+    body = await request.json() if request.headers.get("content-type", "").startswith("application/json") else {}
+
     async with _workflow_lock:
         step = _find_step(step_id)
         if step is None:
             raise HTTPException(status_code=404, detail=f"Step not found: {step_id}")
-
-        body = await request.json() if request.headers.get("content-type", "").startswith("application/json") else {}
-
         step["status"] = "running"
 
-        try:
-            if step_id == "ref_audio":
-                output = await _execute_ref_audio(body)
-            elif step_id == "emotion_refs":
-                output = await _execute_emotion_refs(body)
-            elif step_id == "train_prep":
-                output = await _execute_train_prep(body)
-            elif step_id == "training":
-                output = await _execute_training(body)
-            elif step_id == "inference":
-                output = await _execute_inference(body)
-            else:
-                raise HTTPException(status_code=400, detail=f"Unknown step: {step_id}")
+    try:
+        if step_id == "ref_audio":
+            output = await _execute_ref_audio(body)
+        elif step_id == "emotion_refs":
+            output = await _execute_emotion_refs(body)
+        elif step_id == "train_prep":
+            output = await _execute_train_prep(body)
+        elif step_id == "training":
+            output = await _execute_training(body)
+        elif step_id == "inference":
+            output = await _execute_inference(body)
+        else:
+            raise HTTPException(status_code=400, detail=f"Unknown step: {step_id}")
+    except Exception as e:
+        logger.error(f"Workflow step {step_id} failed: {e}")
+        async with _workflow_lock:
+            step = _find_step(step_id)
+            if step is not None:
+                step["status"] = "error"
+                step["output"] = {"error": str(e)}
+        raise HTTPException(status_code=500, detail=str(e))
 
+    async with _workflow_lock:
+        step = _find_step(step_id)
+        if step is not None:
             step["status"] = "completed"
             step["output"] = output
 
-            idx = _step_index(step_id)
-            if idx >= 0 and _workflow_state["current_step"] <= idx:
-                _workflow_state["current_step"] = idx + 1
+            if step_id == "training":
+                # 训练在后台异步进行：start_training 仅启动监控任务后立即返回 task_id，
+                # 训练并未完成。保持 status="running"，前端通过 /api/sovits-svc/status
+                # 轮询真实进度，待训练真正结束后再标记为 completed。
+                step["status"] = "running"
+            else:
+                idx = _step_index(step_id)
+                if idx >= 0 and _workflow_state["current_step"] <= idx:
+                    _workflow_state["current_step"] = idx + 1
 
-            return copy.deepcopy(_workflow_state)
-
-        except Exception as e:
-            logger.error(f"Workflow step {step_id} failed: {e}")
-            step["status"] = "error"
-            step["output"] = {"error": str(e)}
-            raise HTTPException(status_code=500, detail=str(e))
+        return copy.deepcopy(_workflow_state)
 
 
 async def _execute_ref_audio(body: dict) -> dict:
@@ -162,7 +172,7 @@ async def _execute_ref_audio(body: dict) -> dict:
     else:
         raise ValueError(f"Unknown VoxCPM mode: {mode}")
 
-    return {"output_path": str(result_path), "mode": mode}
+    return {"output_filename": result_path.name, "mode": mode}
 
 
 async def _execute_emotion_refs(body: dict) -> dict:
@@ -202,7 +212,7 @@ async def _execute_emotion_refs(body: dict) -> dict:
 async def _execute_train_prep(body: dict) -> dict:
     trainer = _get_sovits_trainer()
 
-    training_data_dir = body.get("training_data_dir") or str(trainer._training_data_dir)
+    training_data_dir = body.get("training_data_dir") or str(trainer.training_data_dir)
     speaker_name = body.get("speaker_name", "speaker")
 
     results = await trainer.preprocess(
@@ -260,7 +270,7 @@ async def _execute_inference(body: dict) -> dict:
         cluster_model_path=cluster_model_path,
     )
 
-    return {"output_path": str(result_path)}
+    return {"output_filename": result_path.name}
 
 
 @router.post("/reset")

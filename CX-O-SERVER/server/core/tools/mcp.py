@@ -185,7 +185,7 @@ class MCPManager:
                 raise MCPError(f"无效的命令: {server.command}")
 
             # 检查命令是否包含危险字符
-            dangerous_chars = ["|", "&", ";", "$", "`", "(", ")", "<", ">"]
+            dangerous_chars = ["|", "&", ";", "$", "`", "(", ")", "<", ">", "\n", "\r"]
             if any(char in server.command for char in dangerous_chars):
                 raise MCPError(f"命令包含危险字符: {server.command}")
 
@@ -274,7 +274,9 @@ class MCPManager:
         if server.process:
             try:
                 server.process.terminate()
-                server.process.wait(timeout=5)
+                # BUG-B-M5 修复: process.wait() 是同步阻塞调用,在 async 函数中
+                # 会阻塞事件循环最多 5 秒。改用 asyncio.to_thread 在独立线程执行。
+                await asyncio.to_thread(server.process.wait, timeout=5)
                 server.status = "disconnected"
                 server.last_check = datetime.now().isoformat()
                 logger.info(f"MCP服务器已停止: {name}")

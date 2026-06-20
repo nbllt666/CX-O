@@ -141,6 +141,8 @@ export function useAudioAnalyzer({
     audioContextRef.current = audioContext;
 
     const analyser = audioContext.createAnalyser();
+    analyser.fftSize = fftSize;
+    analyser.smoothingTimeConstant = smoothingTimeConstant;
     analyserRef.current = analyser;
 
     const source = audioContext.createMediaElementSource(audioElement);
@@ -162,15 +164,6 @@ export function useAudioAnalyzer({
       sourceAudioElRef.current = null;
     };
   }, [audioElement, enabled]);
-
-  // 第二个 effect: 管理 analyser 节点参数，依赖 [audioContext, fftSize, smoothingTimeConstant]
-  useEffect(() => {
-    const audioContext = audioContextRef.current;
-    const analyser = analyserRef.current;
-    if (!audioContext || !analyser) return;
-    analyser.fftSize = fftSize;
-    analyser.smoothingTimeConstant = smoothingTimeConstant;
-  }, [audioContextRef.current, fftSize, smoothingTimeConstant]);
 
   useEffect(() => {
     if (!audioElement || !isPlaying || !enabled) {

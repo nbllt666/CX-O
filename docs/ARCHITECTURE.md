@@ -14,7 +14,7 @@
 
 ## 1. 系统总览
 
-CX-O 是一个 AI 虚拟主播/助手平台，采用前后端分离的微服务架构，由四个核心子项目组成：
+CX-O 是一个 AI 虚拟主播/助手平台，采用前后端分离的微服务架构，由五个核心子项目组成：
 
 | 子项目 | 技术栈 | 端口 | 职责 |
 |--------|--------|------|------|
@@ -22,6 +22,7 @@ CX-O 是一个 AI 虚拟主播/助手平台，采用前后端分离的微服务�
 | CX-O-Gateway | Python / FastAPI | 8100 | 轻量级独立网关（可选部署） |
 | CX-O-VoiceWorkStation | Python / FastAPI | 8200 | 语音工作站（训练/微调/推理） |
 | CX-O-Frontend | React / TypeScript | 5173 | 前端界面 |
+| Orpheus TTS | Python / FastAPI | 5060 | 流式情感语音合成（vLLM + SNAC 解码） |
 
 CX-O-SERVER 采用单体架构整合了网关、后端业务、ASR、TTS 四大模块，通过 `lifespan` 管理所有服务的生命周期。CX-O-Gateway 可在需要独立部署网关时使用。
 
@@ -45,6 +46,11 @@ CX-O-SERVER 采用单体架构整合了网关、后端业务、ASR、TTS 四大�
 | `graph/` | 知识图谱 — SQLite + Weaviate 存储、四类图谱（实体/关系/事件/概念）、图算法 |
 | `llm/` | LLM 客户端 — Ollama/vLLM 后端适配、工具调用 |
 | `memory/` | 智能记忆系统 — 衰减模型、混合搜索（向量+关键词）、场景路由、去重 |
+| `memory/secondary_router.py` | 副模型路由 — 记忆管理副模型命令分发 |
+| `memory/decay_batch.py` | 批量衰减处理器 — 定期批量更新记忆衰减值 |
+| `memory/graph_store.py` | 图存储桥接 — 记忆系统与知识图谱的桥接层 |
+| `memory/milvus_lite_store.py` | Milvus Lite 向量存储 — 轻量级本地向量数据库 |
+| `memory/chroma_store.py` | ChromaDB 向量存储 — 本地向量数据库备选方案 |
 | `model_router.py` | 多模型路由 — main/summary/memory 三角色路由、跟随机制、预热 |
 | `plugins/` | 插件系统 — 生命周期管理、Hook 机制、API 注入 |
 | `session/` | 会话持久化 — SQLite 存储、自动清理 |
@@ -65,6 +71,10 @@ CX-O-SERVER 采用单体架构整合了网关、后端业务、ASR、TTS 四大�
 | `hidden_prompt.py` | 隐藏提示词注入 |
 | `live_client.py` | 直播客户端处理 |
 | `firewall.py` | 三档防火墙 — block / passive / reply |
+| `adaptive_polling.py` | 自适应轮询 — 根据负载动态调整轮询间隔 |
+| `text_smoother.py` | 文本平滑器 — 流式文本去重和平滑处理 |
+| `frontend_marker.py` | 前端标记适配 — 内部标记转前端格式 |
+| `marker_adapter.py` | 标记适配器 — 情感/音效/动作标记统一适配 |
 
 **API 层**
 
@@ -108,10 +118,16 @@ CX-O-SERVER 采用单体架构整合了网关、后端业务、ASR、TTS 四大�
 React + TypeScript 前端应用：
 
 - **构建工具**：Vite
-- **核心页面**：ChatPage, LivePage, DashboardPage, AgentsPage, MemoriesPage 等
+- **桌面应用**：Electron（electron/ 目录：main.ts, preload.ts, config.ts, store.ts）
+- **核心页面**：ChatPage, LivePage, DashboardPage, AgentsPage, MemoriesPage, PetPage（桌面宠物）, AudioTestPage（音频测试）, VoiceWorkstationPage（语音工作站）, GraphDataPage（图谱数据）, VectorDataPage（向量数据）, PluginsPage（插件管理）, LiveSplitPage（直播拆分）
 - **虚拟形象**：Live2D（PIXI.js）+ VRM（Three.js）
+- **桌面宠物组件**：PetAudioPanel, PetAvatar, PetChat
+- **特效组件**：VRMWindField（VRM 风场效果）
 - **直播**：LiveStage + OBS 分层输出
+- **Hooks**：useAudioStream, useAudioAnalyzer, useLiveWebSocket, usePetMousePassthrough
+- **Store**：settingsStore（虚拟形象/布局/限制配置）
 - **国际化**：i18n（中文/英文）
+- **依赖**：@tanstack/react-query, react-markdown, remark-gfm, electron
 
 ---
 
@@ -190,6 +206,11 @@ React + TypeScript 前端应用：
 │  │  │ Ollama/  │  │ Weaviate │  │ CosyVoice│  │  MCP      │ │     │
 │  │  │ vLLM     │  │ 向量数据库│  │ Server   │  │  Servers  │ │     │
 │  │  └──────────┘  └──────────┘  └──────────┘  └───────────┘ │     │
+│  │  ┌──────────┐                                             │     │
+│  │  │ Orpheus  │                                             │     │
+│  │  │ TTS      │                                             │     │
+│  │  │(:5060)   │                                             │     │
+│  │  └──────────┘                                             │     │
 │  └────────────────────────────────────────────────────────────┘     │
 └─────────────────────────────────────────────────────────────────────┘
 ```
@@ -598,6 +619,15 @@ React + TypeScript 前端应用：
   │  tts.*              tts.synthesize           audio          │
   │                     tts.synthesize_stream                   │
   │                                                             │
+  │  voice.*            voice.dual_stream        audio          │
+  │                     voice.partial                           │
+  │                     voice.tts_chunk                         │
+  │                     voice.prefill_started                   │
+  │                                                             │
+  │  external_event.*   external_event           events         │
+  │                     events.subscribe                        │
+  │                     events.unsubscribe                      │
+  │                                                             │
   │  config.*           config.get               config         │
   │                                                             │
   │  metrics.*          metrics.get              metrics        │
@@ -672,17 +702,17 @@ React + TypeScript 前端应用：
 
 | 层级 | 技术 |
 |------|------|
-| **前端框架** | React 18 + TypeScript |
+| **前端框架** | React 18 + TypeScript + Electron |
 | **前端构建** | Vite |
 | **前端样式** | Tailwind CSS |
 | **虚拟形象** | PIXI.js (Live2D) + Three.js (VRM) |
 | **后端框架** | FastAPI (Python) |
 | **ASGI 服务器** | Uvicorn |
 | **LLM 后端** | Ollama / vLLM |
-| **向量数据库** | Weaviate (含 Embedded 模式) |
+| **向量数据库** | Weaviate (含 Embedded 模式) / Milvus Lite / ChromaDB |
 | **关系数据库** | SQLite |
 | **语音识别** | SenseVoice (Embedded) / Remote |
-| **语音合成** | F5-TTS (Embedded) / Remote |
+| **语音合成** | F5-TTS (Embedded) / Remote / Orpheus TTS (vLLM + SNAC) |
 | **语音转换** | So-VITS-SVC |
 | **情感语音** | CosyVoice + IndexTTS 2 |
 | **语音生成** | VoxCPM |

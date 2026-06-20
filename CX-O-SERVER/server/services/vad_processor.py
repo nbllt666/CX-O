@@ -39,6 +39,10 @@ class VADProcessor:
         self.energy_threshold = 500
         self.silence_threshold_ms = 500
         self.speech_threshold_ms = 300
+        # 双流式模式下 VAD 仅作兜底，不阻塞 ASR Partial 驱动的主流程。
+        # min_silence_duration_ms 默认 150ms（Silero 模式句尾判定阈值），
+        # 相比原 silence_threshold_ms=500ms 大幅降低，加速兜底修正约 350ms
+        self.min_silence_duration_ms: float = 150.0
         self._state = VADState()
         self._vad: Any = None
         self._on_speech_start_callback: Optional[Callable] = None
@@ -61,6 +65,9 @@ class VADProcessor:
         self.energy_threshold = config.get("energy_threshold", 500)
         self.silence_threshold_ms = config.get("silence_threshold_ms", 500)
         self.speech_threshold_ms = config.get("speech_threshold_ms", 300)
+        # 双流式模式下 VAD 仅作兜底：min_silence_duration_ms 默认 150ms，
+        # 仅 Silero 模式用于句尾判定，加速兜底修正（不阻塞 ASR Partial 主驱动）
+        self.min_silence_duration_ms = config.get("min_silence_duration_ms", 150.0)
 
         self._init_vad()
         self._initialized = True
@@ -138,7 +145,17 @@ class VADProcessor:
                 silence_ms = (current_time - self._state.last_speech_time) * 1000
                 self._state.silence_duration_ms = silence_ms
 
-                if silence_ms > self.silence_threshold_ms:
+                # 双流式模式下 VAD 仅作兜底，不阻塞 ASR Partial 驱动的主流程。
+                # Silero 模式优先使用 min_silence_duration_ms（默认 150ms）判定句尾，
+                # 相比原 silence_threshold_ms=500ms 加速兜底约 350ms；
+                # WebRTC/Energy 模式继续使用 silence_threshold_ms 保持向后兼容
+                silence_threshold = (
+                    self.min_silence_duration_ms
+                    if self.mode == VADMode.SILERO
+                    else self.silence_threshold_ms
+                )
+
+                if silence_ms > silence_threshold:
                     self._state.is_speaking = False
                     state_changed = True
                     self._state.speech_duration_ms = 0
@@ -231,6 +248,9 @@ class AudioStreamProcessor:
         self._audio_buffer: bytearray = bytearray()
         self._buffer_duration_ms = 0
         self._on_result_callback: Optional[Callable] = None
+        # 双流式模式主驱动回调：ASR Partial Result 产出即触发 LLM Speculative Prefill，
+        # 省去等待 VAD on_end 的 500ms 静默判定，实现毫秒级首字响应
+        self._on_partial_result_callback: Optional[Callable] = None
 
     @classmethod
     def get_instance(cls):
@@ -252,10 +272,13 @@ class AudioStreamProcessor:
         self,
         on_speech_start: Optional[Callable] = None,
         on_speech_end: Optional[Callable] = None,
-        on_result: Optional[Callable] = None
+        on_result: Optional[Callable] = None,
+        on_partial_result: Optional[Callable] = None
     ):
         self.vad.set_callbacks(on_speech_start=on_speech_start, on_speech_end=on_speech_end)
         self._on_result_callback = on_result
+        # 主驱动回调：Partial Result 立即触发 LLM Speculative Prefill，不等 VAD on_end
+        self._on_partial_result_callback = on_partial_result
 
     async def process_audio_chunk(self, audio_data: bytes) -> dict:
         vad_result = self.vad.process_audio(audio_data)
@@ -298,6 +321,18 @@ class AudioStreamProcessor:
                 }
                 result["asr"] = asr_result
 
+                # 主驱动：Partial Result (is_final=False) 立即触发 LLM Speculative Prefill，
+                # 省去等待 VAD on_end 的 500ms 静默判定，实现低延迟首字响应。
+                # 此回调不等 VAD，是双流式模式的主流程驱动器
+                if not streaming_result.is_final and self._on_partial_result_callback is not None:
+                    try:
+                        await self._on_partial_result_callback(asr_result)
+                    except Exception as e:
+                        logger.error(f"on_partial_result callback error: {e}")
+
+                # 配合 interrupt_manager 实现毫秒级全双工打断：
+                # 当检测到用户在 Agent 说话期间开口（Partial Result 含有效文本），
+                # 立即触发打断判定，无需等待 VAD on_end 兜底
                 if self._agent_interrupt and streaming_result.text:
                     interrupt_result = await self._agent_interrupt.on_asr_partial_result(
                         streaming_result.text,
@@ -314,6 +349,9 @@ class AudioStreamProcessor:
                     await self._on_result_callback(result)
 
             if is_last:
+                # VAD on_end 兜底：仅修正 Final 文本，不重启已由 Partial 启动的 LLM 流程。
+                # 双流式模式下主流程已由 ASR Partial Result 驱动，此处只做收尾与状态复位，
+                # 避免阻塞或重复触发 LLM Prefill
                 await self._streaming_client.reset()
                 self._audio_buffer.clear()
                 self._buffer_duration_ms = 0

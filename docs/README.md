@@ -17,6 +17,7 @@
 1. 阅读 [FEATURES.md](FEATURES.md) 了解项目核心特色
 2. 查看 [ARCHITECTURE.md](ARCHITECTURE.md) 理解系统架构
 3. 参考 [DEPLOYMENT.md](DEPLOYMENT.md) 进行部署
+4. 构建 Electron 桌面应用请参考 [DEPLOYMENT.md](DEPLOYMENT.md) 的桌面端构建章节
 
 ### API 开发
 
@@ -27,6 +28,7 @@
 ### 语音功能
 
 - ASR/TTS/VAD 配置: 参考 [VOICE_SERVICES.md](VOICE_SERVICES.md)
+- Orpheus TTS: 参考 [VOICE_SERVICES.md](VOICE_SERVICES.md) 的 Orpheus TTS 章节
 - 全双工打断: 参考 [VOICE_SERVICES.md](VOICE_SERVICES.md) 的打断系统章节
 - 语音克隆工作流: 参考 [VOICE_SERVICES.md](VOICE_SERVICES.md) 的语音工作站章节
 
@@ -52,6 +54,10 @@
 | 🎙️ 语音工作站 | VoxCPM/CosyVoice/IndexTTS/F5-TTS/So-VITS-SVC | [FEATURES.md](FEATURES.md#34-语音工作站) |
 | 🔄 全双工打断 | 用户打断 Agent + Agent 打断用户 | [FEATURES.md](FEATURES.md#22-全双工打断系统) |
 | 💬 情感与音效 | 15 种情感标记 + 音效标记，驱动 TTS 和表情 | [FEATURES.md](FEATURES.md#23-情感与音效解析引擎) |
+| 🎵 Orpheus TTS | 流式情感语音合成，vLLM + SNAC 解码，13 种语音 | [VOICE_SERVICES.md](VOICE_SERVICES.md) |
+| 🐾 桌面宠物 | Electron 桌面宠物窗口，鼠标穿透，虚拟形象 + 聊天 | [FEATURES.md](FEATURES.md) |
+| 🔁 双流式语音 | voice.dual_stream 全双工实时语音交互 | [VOICE_SERVICES.md](VOICE_SERVICES.md) |
+| 🖥️ Electron 桌面应用 | 跨平台桌面端，系统托盘，自动更新 | [DEPLOYMENT.md](DEPLOYMENT.md) |
 
 ## 子项目概览
 
@@ -60,7 +66,8 @@
 | CX-O-SERVER | Python / FastAPI | 8000 | 核心后端服务（LLM路由、记忆、图谱、工具、WebSocket） |
 | CX-O-Gateway | Python / FastAPI | 8100 | 轻量网关（已整合进 CX-O-SERVER，可独立部署） |
 | CX-O-VoiceWorkStation | Python / FastAPI | 8200 | 语音工作站（声音克隆、情感参考、模型训练） |
-| CX-O-Frontend | React / TypeScript / Vite | 5173 | 前端界面（对话、直播、管理、虚拟形象） |
+| Orpheus TTS | Python / FastAPI | 5060 | 流式情感语音合成（vLLM + SNAC 解码） |
+| CX-O-Frontend | React / TypeScript / Vite / Electron | 5173 | 前端界面（对话、直播、管理、虚拟形象、Electron 桌面应用） |
 
 ---
 

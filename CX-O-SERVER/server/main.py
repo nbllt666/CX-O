@@ -8,6 +8,7 @@ import sys
 import os
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
 import asyncio
 import logging
@@ -510,7 +511,7 @@ async def lifespan(app: FastAPI):
         await shutdown_service("异步记忆管理器", services.async_memory_manager.close, logger_=lifespan_logger)
 
     async def _shutdown_backup():
-        from server.core.backup.manager import get_backup_manager
+        from server.core.backup import get_backup_manager
         get_backup_manager().shutdown()
 
     await shutdown_service("BackupManager", _shutdown_backup, logger_=lifespan_logger)

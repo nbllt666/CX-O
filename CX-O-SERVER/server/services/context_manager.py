@@ -4,12 +4,16 @@
 import logging
 from typing import List, Dict, Any, Optional
 
+from server.config import Settings
+
 logger = logging.getLogger(__name__)
 
 
 class ContextManager:
 
-    def __init__(self, max_history: int = 100):
+    def __init__(self, max_history: int = None):
+        if max_history is None:
+            max_history = Settings().config.limits.context.max_history
         self.max_history = max_history
         self.contexts: Dict[str, List[Dict]] = {}
         self.system_prompts: Dict[str, str] = {}

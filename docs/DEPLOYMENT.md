@@ -35,6 +35,7 @@
 | 本地 TTS（F5-TTS） | NVIDIA GPU, 8GB+ VRAM | CUDA 12.1+ |
 | CosyVoice 语音合成 | NVIDIA GPU, 8GB+ VRAM | CUDA 12.1+ |
 | F5-TTS TensorRT 加速推理 | NVIDIA GPU, 16GB+ VRAM | TensorRT-LLM, CUDA 12.x |
+| Orpheus TTS | NVIDIA GPU, 8GB+ VRAM | vLLM + SNAC 解码 |
 
 > **提示**：无 GPU 环境可将 ASR/TTS 配置为 `mode: remote`，由远程服务提供语音能力。
 
@@ -54,6 +55,7 @@
 | ASR 模型（SenseVoiceSmall） | ~1 GB |
 | TTS 模型（F5TTS_v1_Base） | ~1.5 GB |
 | CosyVoice 模型 | ~2 GB |
+| Orpheus TTS 模型 | ~6 GB |
 | Weaviate 数据 | 视使用量增长 |
 
 **建议总磁盘空间**：50 GB 以上（含模型文件）。
@@ -237,6 +239,22 @@ npm run build
 ```
 
 构建产物输出到 `dist/` 目录，可使用 Nginx 等静态服务器托管。
+
+**Electron 桌面应用构建**：
+
+```bash
+# 开发模式（同时启动 Vite 和 Electron）
+npm run dev
+
+# 构建桌面应用
+npm run build
+```
+
+构建产物输出到 `dist/` 和 `release/` 目录。Electron 配置位于 `electron/` 目录：
+- `main.ts` — Electron 主进程
+- `preload.ts` — 预加载脚本
+- `config.ts` — Electron 配置
+- `store.ts` — Electron Store 持久化
 
 **环境变量**：复制 `.env.example` 为 `.env` 并修改：
 
@@ -476,6 +494,55 @@ services:
 
 当 `enabled: true` 时，CX-O-SERVER 会在需要时自动启动 IndexTTS 进程，空闲 `auto_stop_delay` 秒后自动停止。
 
+### 4.6 Orpheus TTS（流式情感语音合成，可选）
+
+Orpheus TTS 是基于 vLLM + SNAC 解码的流式情感语音合成服务，支持 13 种语音和情感标签。
+
+**端口**：5060（默认）
+
+**部署步骤**：
+
+```bash
+cd orpheus-tts
+
+# 安装依赖
+pip install -r requirements.txt
+
+# 配置环境变量
+cp .env.example .env
+# 编辑 .env 设置 VLLM_HOST, VLLM_PORT, BRIDGE_PORT 等
+```
+
+**Docker 部署（推荐）**：
+
+```bash
+cd orpheus-tts
+docker-compose up -d
+```
+
+Docker Compose 会启动两个服务：
+- `vllm`: vLLM 推理引擎（端口 8000，GPU 0）
+- `orpheus-bridge`: FastAPI Bridge（端口 5060，CPU）
+
+**配置**：
+
+在 `config/default.yaml` 中：
+
+```yaml
+tts:
+  orpheus:
+    url: http://127.0.0.1:5060
+    model: canopylabs/orpheus-multilingual-research-release
+    voice: tara
+    timeout: 60
+    flashinfer_enabled: true
+    sample_rate: 24000
+```
+
+**支持的语音**：tara, leah, leo, dan, mia, jess, lily, zoe, zac, river, charlotte, james, matthew
+
+**情感标签**：`<laugh>`, `<giggle>`, `<sigh>`, `<cough>`, `<yawn>`, `<gasp>`, `<groan>`
+
 ---
 
 ## 5. 配置说明
@@ -516,6 +583,7 @@ CX-O 采用 **配置文件 + 环境变量** 的混合配置方式，环境变量
 | `CXO_TTS_MODEL_DIR` | `tts.model_dir` | TTS 模型目录 |
 | `CXO_TTS_DEVICE` | `tts.device` | TTS 设备 |
 | `CXO_TTS_REMOTE_URL` | `tts.remote_url` | 远程 TTS 服务地址 |
+| `CXO_TTS_ORPHEUS_URL` | `tts.orpheus.url` | Orpheus TTS 服务地址 |
 | `CXO_DATABASE_PATH` | `database.path` | 主数据库路径 |
 | `CXO_MEMORY_VECTOR_BACKEND` | `memory.vector_backend` | 向量存储后端 |
 | `CXO_LOG_LEVEL` | `logging.level` | 日志级别 |
@@ -589,6 +657,13 @@ tts:
   cross_fade_duration: 0.15  # 交叉淡化时长
   emotion_enabled: true      # 情感语音
   effects_enabled: true      # 音效
+  orpheus:
+    url: http://127.0.0.1:5060
+    model: canopylabs/orpheus-multilingual-research-release
+    voice: tara
+    timeout: 60
+    flashinfer_enabled: true
+    sample_rate: 24000
 ```
 
 #### 记忆配置
@@ -781,6 +856,8 @@ A: 尝试：
 | 50000 | CosyVoice 服务 |
 | 8001 | 远程 ASR 服务 |
 | 8004 | IndexTTS 服务 |
+| 5060 | Orpheus TTS Bridge |
+| 8080 | vLLM LLM 推理 |
 | 8765 | Control 服务 |
 | 9996 | CXFC 发现端口 |
 | 9997 | CXFC 广播端口 |
@@ -857,4 +934,13 @@ data/
               │CosyVoice │ │F5-TTS  │ │IndexTTS │
               │(:50000)  │ │(:5000) │ │(:8004)  │
               └──────────┘ └────────┘ └─────────┘
+                    │
+                    ▼
+              ┌──────────────────────────┐
+              │     Orpheus TTS          │
+              │  ┌────────┐ ┌─────────┐  │
+              │  │  vLLM  │ │ Bridge  │  │
+              │  │(:8080) │ │(:5060)  │  │
+              │  └────────┘ └─────────┘  │
+              └──────────────────────────┘
 ```

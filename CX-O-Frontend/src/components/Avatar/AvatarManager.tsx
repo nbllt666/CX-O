@@ -311,8 +311,8 @@ export function AvatarManager({ type, onClose }: AvatarManagerProps) {
                       }
                       setIsUploading(true);
                       try {
-                        await api.uploadAvatar(file, type, file.name.replace(/\.[^.]+$/, ''), (progress) => {
-                          console.log(`Upload progress: ${progress}%`);
+                        await api.uploadAvatar(file, type, file.name.replace(/\.[^.]+$/, ''), () => {
+                          // progress callback intentionally empty
                         });
                         loadAvatars();
                       } catch (error) {

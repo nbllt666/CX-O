@@ -130,7 +130,10 @@ class NodeManager:
             query = "SELECT * FROM nodes ORDER BY created_at DESC LIMIT ? OFFSET ?"
             query_params = (limit, offset)
 
-        total = self.db.execute_one(count_query, count_params)["cnt"]
+        # BUG-B-M13 修复: execute_one 查询失败时返回 None,
+        # 原实现直接 ["cnt"] 索引会抛出 TypeError。
+        result = self.db.execute_one(count_query, count_params)
+        total = result["cnt"] if result else 0
         rows = self.db.execute(query, query_params)
 
         nodes = [GraphNode.from_dict(dict(row)) for row in rows]
@@ -202,7 +205,15 @@ class NodeManager:
             for key, value in properties_filter.items():
                 _validate_property_key(key)
                 conditions.append(f"json_extract(properties, '$.{key}') = ?")
-                params.append(json.dumps(value))
+                # BUG-B-M12 修复: json_extract 返回带类型的值(int/bool 等),
+                # 原实现统一用 json.dumps(value) 序列化为 JSON 字符串,
+                # 导致非字符串类型(int/bool/float)永远无法匹配,过滤失效。
+                # 修复: 仅对字符串和对象(dict/list)做 json.dumps,
+                # 标量类型直接使用原始值进行参数化比较。
+                if isinstance(value, (str, dict, list)):
+                    params.append(json.dumps(value))
+                else:
+                    params.append(value)
 
         where_clause = " AND ".join(conditions) if conditions else "1=1"
 

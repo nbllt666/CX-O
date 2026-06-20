@@ -55,7 +55,6 @@ _pregenerate_status: dict = {
 @router.post("/pregenerate")
 async def pregenerate_refs(request: PregenerateRequest):
     """预生成所有 64 个参考音频（8 情感 + 56 过渡）"""
-    global _pregenerate_status
 
     if _pregenerate_status["is_running"]:
         return {"status": "error", "message": "生成任务正在进行中"}
@@ -103,8 +102,9 @@ async def pregenerate_refs(request: PregenerateRequest):
             logger.error(f"Failed to pregenerate refs: {e}")
         _pregenerate_status["is_running"] = False
         _pregenerate_status["error"] = str(e) if e else "cancelled"
-        if isinstance(e, asyncio.CancelledError):
-            # 不将 CancelledError 转换为 HTTPException，重新抛出由上层处理
+        # CancelledError / KeyboardInterrupt / SystemExit 不转换为 HTTPException，
+        # 重新抛出由上层处理，避免阻断进程正常中断。
+        if isinstance(e, (asyncio.CancelledError, KeyboardInterrupt, SystemExit)):
             raise
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -191,7 +191,7 @@ async def index_tts_synthesize(request: Request):
         }
     except Exception as e:
         logger.error(f"IndexTTS synthesize error: {e}")
-        return {"status": "error", "message": str(e)}
+        raise HTTPException(status_code=500, detail=str(e))
     finally:
         if client is not None:
             try:
@@ -298,7 +298,6 @@ async def import_zip(file: UploadFile = File(...)):
 
 
 def _update_progress(current: int, total: int, message: str):
-    global _pregenerate_status
     _pregenerate_status["progress"] = {
         "current": current,
         "total": total,

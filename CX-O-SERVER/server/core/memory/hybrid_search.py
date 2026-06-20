@@ -1,6 +1,7 @@
 from dataclasses import dataclass
 from typing import Dict, List, Optional, Tuple
 
+from server.config import Settings
 from server.core.logging_config import get_contextual_logger
 
 logger = get_contextual_logger(__name__)
@@ -20,10 +21,10 @@ class HybridSearchOptions:
     query: str
     memory_type: str = None
     tags: List[str] = None
-    limit: int = 10
+    limit: int = None
     vector_weight: float = 0.6
     keyword_weight: float = 0.4
-    min_score: float = 0.3
+    min_score: float = None
     use_vector: bool = True
     use_keyword: bool = True
     workspace_id: str = None
@@ -36,6 +37,13 @@ class HybridSearch:
         self.embedding_model = embedding_model
 
     async def search(self, options: HybridSearchOptions) -> List[SearchResult]:
+        # 如果 limit 或 min_score 为 None，从 Settings 读取默认值
+        limits = Settings().config.limits.memory
+        if options.limit is None:
+            options.limit = limits.hybrid_search_limit
+        if options.min_score is None:
+            options.min_score = limits.hybrid_search_min_score
+
         results: List[SearchResult] = []
 
         vector_results = []

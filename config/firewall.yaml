@@ -4,10 +4,8 @@ llm:
   default_model: "qwen2.5:latest"
   
 blocking:
-  blacklist:
-    - "123456"
-    - "789012"
-  blacklist_enabled: true
+  blacklist: []
+  blacklist_enabled: false
 
 decision:
   timeout_ms: 5000

@@ -135,7 +135,7 @@ export function useLiveWebSocket(options: UseLiveWebSocketOptions = {}): UseLive
       reconnectTimeoutRef.current = null;
     }
     if (wsRef.current) {
-      isUnmountedRef.current = true;
+      wsRef.current.onclose = null;
       wsRef.current.close();
       wsRef.current = null;
     }
@@ -146,7 +146,6 @@ export function useLiveWebSocket(options: UseLiveWebSocketOptions = {}): UseLive
     if (wsRef.current?.readyState === WebSocket.OPEN) return;
 
     const url = `${getWS_BASE_URL()}/ws/live${sessionId ? `?session_id=${sessionId}` : ''}`;
-    console.log('[LiveWS] Connecting to:', url);
 
     try {
       const ws = new WebSocket(url);
@@ -156,7 +155,6 @@ export function useLiveWebSocket(options: UseLiveWebSocketOptions = {}): UseLive
 
       ws.onopen = () => {
         if (isUnmountedRef.current) return;
-        console.log('[LiveWS] Connected');
         setIsConnected(true);
         reconnectAttemptsRef.current = 0;
         setConnectionCount((prev) => prev + 1);
@@ -167,14 +165,12 @@ export function useLiveWebSocket(options: UseLiveWebSocketOptions = {}): UseLive
 
       ws.onclose = () => {
         if (isUnmountedRef.current) return;
-        console.log('[LiveWS] Disconnected');
         setIsConnected(false);
         setConnectionCount((prev) => Math.max(0, prev - 1));
         onDisconnectRef.current?.();
 
         const delay = getReconnectDelay();
         reconnectAttemptsRef.current++;
-        console.log(`[LiveWS] Reconnecting in ${delay}ms (attempt ${reconnectAttemptsRef.current})`);
         reconnectTimeoutRef.current = window.setTimeout(connect, delay);
       };
 
@@ -297,6 +293,7 @@ export function useLiveWebSocket(options: UseLiveWebSocketOptions = {}): UseLive
     isUnmountedRef.current = false;
     connect();
     return () => {
+      isUnmountedRef.current = true;
       disconnect();
     };
   }, [connect, disconnect]);

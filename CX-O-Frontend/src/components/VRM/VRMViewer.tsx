@@ -78,6 +78,10 @@ export function VRMViewer({
   const [modelSize, setModelSize] = useState<{ height: number; width: number }>({ height: 1.6, width: 0.8 });
 
   const propsRef = useRef({ scale, position, onModelLoaded, onError, renderScale, devicePixelRatio });
+  useEffect(() => {
+    propsRef.current.renderScale = renderScale;
+    propsRef.current.devicePixelRatio = devicePixelRatio;
+  }, [renderScale, devicePixelRatio]);
   const lastVersionRef = useRef(-1);
   const renderIdRef = useRef(0);
 

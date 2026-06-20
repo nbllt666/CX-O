@@ -209,6 +209,13 @@ tts:
   emotion_enabled: true
   effects_enabled: true
   emotion_voices: {}
+  orpheus:
+    url: http://127.0.0.1:5060
+    model: canopylabs/orpheus-multilingual-research-release
+    voice: tara
+    timeout: 60
+    flashinfer_enabled: true
+    sample_rate: 24000
 avatar:
   type: "live2d"
   live2d:
@@ -302,3 +309,45 @@ live:
     avatar_resolution: "1920x1080"
     danmaku_resolution: "1920x1080"
     subtitle_resolution: "1920x1080"
+limits:
+  memory:
+    max_memories: 30
+    min_score_threshold: 0.15
+    hybrid_search_limit: 30
+    hybrid_search_min_score: 0.15
+    vector_min_score: 0.3
+    inject_memories_count: 20
+    rag_search_limit: 20
+    entity_extract_max_content: 8000
+    max_entities: 50
+    max_relationships: 100
+    entity_candidates: 50
+    search_memories_limit: 10
+    search_similar_threshold: 0.5
+    search_similar_limit: 10
+    chat_history_limit: 50
+    memory_logs_limit: 100
+    search_all_limit: 10
+  context:
+    max_messages: 500
+    window_size: 50
+    summary_threshold: 100
+    max_history: 500
+    conversation_max_messages: 100
+    conversation_recent_window: 20
+    summarizer_max_topics: 15
+    summarizer_max_key_points: 15
+    chat_context_limit: 10
+  firewall:
+    max_message_length: 10000
+    max_messages_per_second: 5.0
+    max_messages_per_minute: 100
+    duplicate_threshold: 3
+    duplicate_window_seconds: 30
+  frontend:
+    max_upload_size_mb: 500
+    max_chat_images: 20
+    avatar_min_width: 100
+    avatar_max_width: 1200
+    temperature_max: 5
+    speed_max: 3

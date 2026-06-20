@@ -4,6 +4,7 @@
 
 from typing import Any, Dict, List, Optional
 
+from server.config import Settings
 from server.core.memory.graph_store import (
     GraphStoreBase,
     GraphLibrary,
@@ -196,7 +197,7 @@ def user_graph_find_paths(from_entity: str, to_entity: str, max_depth: int = 3) 
         return {"error": f"查找用户图路径失败: {str(e)}"}
 
 
-def user_graph_search_related_memories(entity_name: str, memory_query: str, limit: int = 10) -> Dict[str, Any]:
+def user_graph_search_related_memories(entity_name: str, memory_query: str, limit: int = None) -> Dict[str, Any]:
     """用户图增强搜索 - 结合图结构和记忆查询
 
     Args:
@@ -207,6 +208,8 @@ def user_graph_search_related_memories(entity_name: str, memory_query: str, limi
     Returns:
         相关的实体和记忆信息
     """
+    if limit is None:
+        limit = Settings().config.limits.memory.search_memories_limit
     if not _check_graph_store():
         return {"error": "图存储未初始化，请先调用 set_graph_dependencies()"}
     try:
@@ -242,8 +245,9 @@ def user_graph_extract_entities(content: str) -> Dict[str, Any]:
         return {"error": "图存储未初始化，请先调用 set_graph_dependencies()"}
     try:
         import re
+        entity_candidates = Settings().config.limits.memory.entity_candidates
         words = re.findall(r'\b[A-Z][a-z]+(?:\s+[A-Z][a-z]+)*\b', content)
-        person_names = [w for w in words if len(w.split()) >= 1][:10]
+        person_names = [w for w in words if len(w.split()) >= 1][:entity_candidates]
         return {
             "status": "success",
             "content_preview": content[:200],
@@ -548,7 +552,7 @@ def thing_graph_find_paths(from_entity: str, to_entity: str, max_depth: int = 3)
         return {"error": f"查找物品图路径失败: {str(e)}"}
 
 
-def thing_graph_search_related_memories(entity_name: str, memory_query: str, limit: int = 10) -> Dict[str, Any]:
+def thing_graph_search_related_memories(entity_name: str, memory_query: str, limit: int = None) -> Dict[str, Any]:
     """物品图增强搜索 - 结合图结构和记忆查询
 
     Args:
@@ -559,6 +563,8 @@ def thing_graph_search_related_memories(entity_name: str, memory_query: str, lim
     Returns:
         相关的实体和记忆信息
     """
+    if limit is None:
+        limit = Settings().config.limits.memory.search_memories_limit
     if not _check_graph_store():
         return {"error": "图存储未初始化，请先调用 set_graph_dependencies()"}
     try:
@@ -594,9 +600,10 @@ def thing_graph_extract_entities(content: str) -> Dict[str, Any]:
         return {"error": "图存储未初始化，请先调用 set_graph_dependencies()"}
     try:
         import re
+        entity_candidates = Settings().config.limits.memory.entity_candidates
         words = re.findall(r'\b[a-z]+(?:\s+[a-z]+)*\b', content.lower())
         thing_keywords = ["phone", "computer", "car", "book", "table", "chair", "house", "device", "tool", "product"]
-        found_things = [w for w in set(words) if w in thing_keywords][:10]
+        found_things = [w for w in set(words) if w in thing_keywords][:entity_candidates]
         return {
             "status": "success",
             "content_preview": content[:200],
@@ -901,7 +908,7 @@ def concept_graph_find_paths(from_entity: str, to_entity: str, max_depth: int = 
         return {"error": f"查找概念图路径失败: {str(e)}"}
 
 
-def concept_graph_search_related_memories(entity_name: str, memory_query: str, limit: int = 10) -> Dict[str, Any]:
+def concept_graph_search_related_memories(entity_name: str, memory_query: str, limit: int = None) -> Dict[str, Any]:
     """概念图增强搜索 - 结合图结构和记忆查询
 
     Args:
@@ -912,6 +919,8 @@ def concept_graph_search_related_memories(entity_name: str, memory_query: str, l
     Returns:
         相关的实体和记忆信息
     """
+    if limit is None:
+        limit = Settings().config.limits.memory.search_memories_limit
     if not _check_graph_store():
         return {"error": "图存储未初始化，请先调用 set_graph_dependencies()"}
     try:
@@ -947,8 +956,9 @@ def concept_graph_extract_entities(content: str) -> Dict[str, Any]:
         return {"error": "图存储未初始化，请先调用 set_graph_dependencies()"}
     try:
         import re
+        entity_candidates = Settings().config.limits.memory.entity_candidates
         words = re.findall(r'\b[A-Z][a-z]+(?:\s+[A-Z][a-z]+)*\b', content)
-        concept_candidates = [w for w in set(words) if len(w) > 4][:10]
+        concept_candidates = [w for w in set(words) if len(w) > 4][:entity_candidates]
         return {
             "status": "success",
             "content_preview": content[:200],
@@ -1253,7 +1263,7 @@ def event_graph_find_paths(from_entity: str, to_entity: str, max_depth: int = 3)
         return {"error": f"查找事件图路径失败: {str(e)}"}
 
 
-def event_graph_search_related_memories(entity_name: str, memory_query: str, limit: int = 10) -> Dict[str, Any]:
+def event_graph_search_related_memories(entity_name: str, memory_query: str, limit: int = None) -> Dict[str, Any]:
     """事件图增强搜索 - 结合图结构和记忆查询
 
     Args:
@@ -1264,6 +1274,8 @@ def event_graph_search_related_memories(entity_name: str, memory_query: str, lim
     Returns:
         相关的实体和记忆信息
     """
+    if limit is None:
+        limit = Settings().config.limits.memory.search_memories_limit
     if not _check_graph_store():
         return {"error": "图存储未初始化，请先调用 set_graph_dependencies()"}
     try:
@@ -1299,10 +1311,11 @@ def event_graph_extract_entities(content: str) -> Dict[str, Any]:
         return {"error": "图存储未初始化，请先调用 set_graph_dependencies()"}
     try:
         import re
+        entity_candidates = Settings().config.limits.memory.entity_candidates
         time_patterns = re.findall(r'\b(?:\d{4}[-/]\d{2}[-/]\d{2}|\d{2}[-/]\d{2}[-/]\d{4}|(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\s+\d{1,2},?\s+\d{4})\b', content, re.IGNORECASE)
         event_keywords = ["meeting", "conference", "party", "wedding", "birthday", "holiday", "vacation", "trip", "launch", "release"]
         words = content.lower().split()
-        found_events = list(set(time_patterns + [w for w in words if w in event_keywords]))[:10]
+        found_events = list(set(time_patterns + [w for w in words if w in event_keywords]))[:entity_candidates]
         return {
             "status": "success",
             "content_preview": content[:200],

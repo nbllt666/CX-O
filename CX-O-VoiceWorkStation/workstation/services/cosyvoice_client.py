@@ -374,11 +374,12 @@ class CosyVoiceClient:
         output_dir: str | Path,
         sample_text: str = "这是参考音频样本。",
         progress_callback: Optional[Callable[[int, int, str], None]] = None
-    ) -> dict[str, Path]:
+    ) -> tuple[dict[str, Path], list[str]]:
         output_path = Path(output_dir)
         output_path.mkdir(parents=True, exist_ok=True)
 
         results: dict[str, Path] = {}
+        failed: list[str] = []
         total = len(ALL_EMOTIONS)
 
         for i, emotion in enumerate(ALL_EMOTIONS):
@@ -407,8 +408,9 @@ class CosyVoiceClient:
 
             except Exception as e:
                 logger.error(f"Failed to generate emotion ref {emotion}: {e}")
+                failed.append(emotion)
 
-        return results
+        return results, failed
 
     async def generate_all_transition_refs(
         self,
@@ -416,11 +418,12 @@ class CosyVoiceClient:
         output_dir: str | Path,
         sample_text: str = "嗯，",
         progress_callback: Optional[Callable[[int, int, str], None]] = None
-    ) -> dict[tuple[str, str], Path]:
+    ) -> tuple[dict[tuple[str, str], Path], list[str]]:
         output_path = Path(output_dir)
         output_path.mkdir(parents=True, exist_ok=True)
 
         results: dict[tuple[str, str], Path] = {}
+        failed: list[str] = []
         transitions: list[tuple[str, str]] = []
 
         for from_emotion in ALL_EMOTIONS:
@@ -457,8 +460,9 @@ class CosyVoiceClient:
 
             except Exception as e:
                 logger.error(f"Failed to generate transition ref {from_emotion} -> {to_emotion}: {e}")
+                failed.append(f"{from_emotion}_to_{to_emotion}")
 
-        return results
+        return results, failed
 
     async def generate_all_refs(
         self,
@@ -469,14 +473,14 @@ class CosyVoiceClient:
         transition_text: str = "嗯，",
         progress_callback: Optional[Callable[[int, int, str], None]] = None
     ) -> dict:
-        emotion_results = await self.generate_all_emotion_refs(
+        emotion_results, emotion_failed = await self.generate_all_emotion_refs(
             ref_audio=ref_audio,
             output_dir=emotions_dir,
             sample_text=sample_text,
             progress_callback=lambda c, t, m: progress_callback(c, t, m) if progress_callback else None
         )
 
-        transition_results = await self.generate_all_transition_refs(
+        transition_results, transition_failed = await self.generate_all_transition_refs(
             ref_audio=ref_audio,
             output_dir=transitions_dir,
             sample_text=transition_text,
@@ -486,7 +490,8 @@ class CosyVoiceClient:
         return {
             "emotions": emotion_results,
             "transitions": transition_results,
-            "total": len(emotion_results) + len(transition_results)
+            "total": len(emotion_results) + len(transition_results),
+            "failed": emotion_failed + transition_failed,
         }
 
 
