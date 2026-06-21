@@ -1,18 +1,30 @@
 # ============================================================
 # Orpheus TTS FastAPI Bridge Dockerfile
-# 基于 PyTorch CUDA 镜像，内置 SNAC 解码器
+# 轻量级镜像：Python 3.11 + CUDA + SNAC 解码器
 # ============================================================
 
-FROM pytorch/pytorch:2.4.1-cuda12.4-cudnn9-runtime
+FROM nvidia/cuda:12.4.1-runtime-ubuntu22.04
 
-# 安装系统依赖
+# 避免 tzdata 交互提示
+ENV DEBIAN_FRONTEND=noninteractive
+
+# 安装系统依赖 + Python 3.11
 RUN apt-get update && apt-get install -y --no-install-recommends \
     curl \
-    && rm -rf /var/lib/apt/lists/*
+    software-properties-common \
+    && add-apt-repository ppa:deadsnakes/ppa \
+    && apt-get update && apt-get install -y --no-install-recommends \
+    python3.11 \
+    python3.11-venv \
+    python3.11-dev \
+    python3-pip \
+    && rm -rf /var/lib/apt/lists/* \
+    && update-alternatives --install /usr/bin/python3 python3 /usr/bin/python3.11 1 \
+    && update-alternatives --install /usr/bin/python python /usr/bin/python3.11 1
 
 WORKDIR /app
 
-# 安装 Python 依赖
+# 安装 Python 依赖（先复制 requirements.txt 利用 Docker 缓存层）
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 

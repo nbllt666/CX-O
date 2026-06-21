@@ -1,900 +1,1215 @@
 <!DOCTYPE html>
 <html lang="zh-CN">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>CX-O - 智能语音对话系统</title>
-    <style>
-        :root {
-            --primary: #6c5ce7;
-            --primary-light: #a29bfe;
-            --accent: #00cec9;
-            --bg-dark: #0f0f1a;
-            --bg-card: #1a1a2e;
-            --bg-card-hover: #222240;
-            --text-primary: #ffffff;
-            --text-secondary: #b2b2d0;
-            --text-muted: #7f7fa0;
-            --border: #2d2d50;
-            --gradient-1: linear-gradient(135deg, #6c5ce7, #00cec9);
-            --shadow: 0 8px 32px rgba(0,0,0,0.3);
-        }
-        * { margin: 0; padding: 0; box-sizing: border-box; }
-        html { scroll-behavior: smooth; }
-        body {
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', sans-serif;
-            background: var(--bg-dark);
-            color: var(--text-primary);
-            line-height: 1.7;
-            overflow-x: hidden;
-        }
-        nav {
-            position: fixed; top: 0; left: 0; right: 0; z-index: 1000;
-            background: rgba(15,15,26,0.85); backdrop-filter: blur(20px);
-            border-bottom: 1px solid var(--border); padding: 0 2rem;
-        }
-        nav .nav-inner { max-width: 1400px; margin: 0 auto; display: flex; align-items: center; justify-content: space-between; height: 64px; }
-        nav .logo { font-size: 1.5rem; font-weight: 800; background: var(--gradient-1); -webkit-background-clip: text; -webkit-text-fill-color: transparent; }
-        nav .nav-links { display: flex; gap: 0.5rem; list-style: none; }
-        nav .nav-links a { color: var(--text-secondary); text-decoration: none; padding: 0.5rem 1rem; border-radius: 8px; font-size: 0.9rem; transition: all 0.2s; }
-        nav .nav-links a:hover { color: var(--text-primary); background: rgba(108,92,231,0.15); }
-        .hero {
-            min-height: 100vh; display: flex; align-items: center; justify-content: center;
-            text-align: center; padding: 6rem 2rem 4rem; position: relative; overflow: hidden;
-        }
-        .hero::before {
-            content: ''; position: absolute; top: -50%; left: -50%; width: 200%; height: 200%;
-            background: radial-gradient(ellipse at 30% 50%, rgba(108,92,231,0.12) 0%, transparent 50%),
-                        radial-gradient(ellipse at 70% 50%, rgba(0,206,201,0.08) 0%, transparent 50%);
-            animation: heroGlow 15s ease-in-out infinite alternate;
-        }
-        @keyframes heroGlow { 0% { transform: translate(0,0) rotate(0deg); } 100% { transform: translate(-2%,2%) rotate(3deg); } }
-        .hero-content { position: relative; z-index: 1; max-width: 900px; }
-        .hero-badge {
-            display: inline-flex; align-items: center; gap: 0.5rem; padding: 0.5rem 1.2rem;
-            border-radius: 50px; background: rgba(108,92,231,0.15); border: 1px solid rgba(108,92,231,0.3);
-            color: var(--primary-light); font-size: 0.85rem; margin-bottom: 2rem;
-        }
-        .hero h1 { font-size: clamp(2.5rem,6vw,4.5rem); font-weight: 900; line-height: 1.1; margin-bottom: 1.5rem; letter-spacing: -1px; }
-        .hero h1 .gradient-text { background: var(--gradient-1); -webkit-background-clip: text; -webkit-text-fill-color: transparent; }
-        .hero .subtitle { font-size: 1.25rem; color: var(--text-secondary); max-width: 700px; margin: 0 auto 2.5rem; }
-        .hero-stats { display: flex; justify-content: center; gap: 3rem; flex-wrap: wrap; }
-        .hero-stat { text-align: center; }
-        .hero-stat .num { font-size: 2rem; font-weight: 800; background: var(--gradient-1); -webkit-background-clip: text; -webkit-text-fill-color: transparent; }
-        .hero-stat .label { font-size: 0.85rem; color: var(--text-muted); margin-top: 0.25rem; }
-        section { padding: 5rem 2rem; max-width: 1400px; margin: 0 auto; }
-        .section-header { text-align: center; margin-bottom: 4rem; }
-        .section-header .tag {
-            display: inline-block; padding: 0.35rem 1rem; border-radius: 50px;
-            background: rgba(108,92,231,0.15); border: 1px solid rgba(108,92,231,0.3);
-            color: var(--primary-light); font-size: 0.8rem; font-weight: 600; text-transform: uppercase; letter-spacing: 1px; margin-bottom: 1rem;
-        }
-        .section-header h2 { font-size: 2.5rem; font-weight: 800; margin-bottom: 1rem; letter-spacing: -0.5px; }
-        .section-header p { color: var(--text-secondary); max-width: 600px; margin: 0 auto; font-size: 1.05rem; }
-        .arch-diagram { background: var(--bg-card); border-radius: 20px; padding: 2.5rem; border: 1px solid var(--border); box-shadow: var(--shadow); overflow-x: auto; }
-        .arch-diagram pre { font-family: 'Cascadia Code','Fira Code','Consolas',monospace; font-size: 0.78rem; line-height: 1.5; color: var(--text-secondary); white-space: pre; min-width: 700px; }
-        .cards-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(340px, 1fr)); gap: 1.5rem; }
-        .card {
-            background: var(--bg-card); border-radius: 16px; padding: 2rem; border: 1px solid var(--border);
-            transition: all 0.3s; position: relative; overflow: hidden;
-        }
-        .card::before { content: ''; position: absolute; top: 0; left: 0; right: 0; height: 3px; background: var(--gradient-1); opacity: 0; transition: opacity 0.3s; }
-        .card:hover { background: var(--bg-card-hover); border-color: rgba(108,92,231,0.3); transform: translateY(-4px); box-shadow: var(--shadow); }
-        .card:hover::before { opacity: 1; }
-        .card-icon { width: 48px; height: 48px; border-radius: 12px; display: flex; align-items: center; justify-content: center; font-size: 1.5rem; margin-bottom: 1.25rem; }
-        .card-icon.purple { background: rgba(108,92,231,0.15); color: var(--primary-light); }
-        .card-icon.teal { background: rgba(0,206,201,0.15); color: var(--accent); }
-        .card-icon.pink { background: rgba(253,121,168,0.15); color: #fd79a8; }
-        .card-icon.green { background: rgba(85,239,196,0.15); color: #55efc4; }
-        .card-icon.orange { background: rgba(253,150,68,0.15); color: #fd9644; }
-        .card-icon.blue { background: rgba(116,185,255,0.15); color: #74b9ff; }
-        .card h3 { font-size: 1.2rem; font-weight: 700; margin-bottom: 0.75rem; }
-        .card p { color: var(--text-secondary); font-size: 0.92rem; line-height: 1.6; }
-        .card .tech-tags { display: flex; flex-wrap: wrap; gap: 0.4rem; margin-top: 1rem; }
-        .card .tech-tag { padding: 0.2rem 0.6rem; border-radius: 6px; background: rgba(108,92,231,0.1); border: 1px solid rgba(108,92,231,0.2); color: var(--primary-light); font-size: 0.75rem; font-weight: 500; }
-        .feature-list { list-style: none; margin-top: 1rem; }
-        .feature-list li { padding: 0.4rem 0; color: var(--text-secondary); font-size: 0.9rem; display: flex; align-items: flex-start; gap: 0.6rem; }
-        .feature-list li::before { content: '\25B8'; color: var(--accent); font-weight: 700; flex-shrink: 0; margin-top: 1px; }
-        .flow-steps { display: flex; flex-direction: column; gap: 0; }
-        .flow-step { display: flex; align-items: stretch; gap: 1.5rem; }
-        .flow-line { display: flex; flex-direction: column; align-items: center; width: 40px; flex-shrink: 0; }
-        .flow-dot { width: 16px; height: 16px; border-radius: 50%; background: var(--primary); border: 3px solid var(--bg-dark); box-shadow: 0 0 0 3px var(--primary); flex-shrink: 0; z-index: 1; }
-        .flow-connector { width: 2px; flex-grow: 1; background: linear-gradient(to bottom, var(--primary), var(--accent)); min-height: 20px; }
-        .flow-content { background: var(--bg-card); border-radius: 12px; padding: 1.5rem; border: 1px solid var(--border); flex: 1; margin-bottom: 1rem; transition: all 0.3s; }
-        .flow-content:hover { border-color: rgba(108,92,231,0.3); background: var(--bg-card-hover); }
-        .flow-content h4 { font-size: 1.05rem; font-weight: 700; margin-bottom: 0.5rem; }
-        .flow-content p { color: var(--text-secondary); font-size: 0.88rem; }
-        .flow-step-num { font-size: 0.75rem; font-weight: 700; color: var(--accent); text-transform: uppercase; letter-spacing: 1px; }
-        .data-table { width: 100%; border-collapse: separate; border-spacing: 0; background: var(--bg-card); border-radius: 16px; overflow: hidden; border: 1px solid var(--border); }
-        .data-table thead { background: rgba(108,92,231,0.1); }
-        .data-table th { padding: 1rem 1.25rem; text-align: left; font-size: 0.85rem; font-weight: 700; color: var(--primary-light); text-transform: uppercase; letter-spacing: 0.5px; }
-        .data-table td { padding: 0.85rem 1.25rem; font-size: 0.9rem; color: var(--text-secondary); border-top: 1px solid var(--border); }
-        .data-table tbody tr:hover { background: rgba(108,92,231,0.05); }
-        .data-table code { background: rgba(108,92,231,0.15); padding: 0.15rem 0.5rem; border-radius: 4px; font-size: 0.82rem; color: var(--accent); }
-        .tech-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 1.5rem; }
-        .tech-group { background: var(--bg-card); border-radius: 16px; padding: 1.75rem; border: 1px solid var(--border); }
-        .tech-group h4 { font-size: 1rem; font-weight: 700; margin-bottom: 1rem; display: flex; align-items: center; gap: 0.5rem; }
-        .tech-items { display: flex; flex-wrap: wrap; gap: 0.5rem; }
-        .tech-item { padding: 0.4rem 0.85rem; border-radius: 8px; background: rgba(108,92,231,0.08); border: 1px solid rgba(108,92,231,0.15); font-size: 0.82rem; color: var(--text-secondary); transition: all 0.2s; }
-        .tech-item:hover { background: rgba(108,92,231,0.15); color: var(--text-primary); border-color: rgba(108,92,231,0.3); }
-        .port-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 1rem; }
-        .port-card { background: var(--bg-card); border-radius: 12px; padding: 1.25rem; border: 1px solid var(--border); text-align: center; transition: all 0.3s; }
-        .port-card:hover { border-color: rgba(108,92,231,0.3); transform: translateY(-2px); }
-        .port-card .port-num { font-size: 1.5rem; font-weight: 800; background: var(--gradient-1); -webkit-background-clip: text; -webkit-text-fill-color: transparent; }
-        .port-card .port-name { font-size: 0.85rem; color: var(--text-secondary); margin-top: 0.25rem; }
-        .port-card .port-proto { font-size: 0.72rem; color: var(--text-muted); margin-top: 0.15rem; }
-        .code-block { background: #12121f; border-radius: 12px; padding: 1.5rem; border: 1px solid var(--border); overflow-x: auto; margin: 1rem 0; }
-        .code-block code { font-family: 'Cascadia Code','Fira Code','Consolas',monospace; font-size: 0.85rem; line-height: 1.7; color: var(--text-secondary); }
-        .code-block .comment { color: #5a5a80; }
-        .code-block .keyword { color: #c792ea; }
-        .code-block .string { color: #c3e88d; }
-        .code-block .command { color: #82aaff; }
-        .formula-box { background: var(--bg-card); border-radius: 16px; padding: 2rem; border: 1px solid var(--border); text-align: center; margin: 2rem 0; }
-        .formula-box .formula { font-family: 'Cascadia Code','Fira Code','Consolas',monospace; font-size: 1.2rem; color: var(--accent); padding: 1rem; background: rgba(0,206,201,0.05); border-radius: 8px; border: 1px solid rgba(0,206,201,0.15); display: inline-block; }
-        .formula-box .formula-desc { color: var(--text-secondary); font-size: 0.9rem; margin-top: 1rem; }
-        .emotion-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(120px, 1fr)); gap: 0.75rem; }
-        .emotion-chip { background: var(--bg-card); border-radius: 10px; padding: 0.75rem; border: 1px solid var(--border); text-align: center; transition: all 0.2s; }
-        .emotion-chip:hover { border-color: rgba(108,92,231,0.3); transform: scale(1.05); }
-        .emotion-chip .emo-name { font-size: 0.85rem; font-weight: 600; }
-        .emotion-chip .emo-tag { font-size: 0.7rem; color: var(--text-muted); margin-top: 0.2rem; font-family: 'Cascadia Code',monospace; }
-        footer { text-align: center; padding: 3rem 2rem; border-top: 1px solid var(--border); color: var(--text-muted); font-size: 0.85rem; }
-        .divider { height: 1px; background: linear-gradient(to right, transparent, var(--border), transparent); margin: 0 auto; max-width: 800px; }
-        .fade-in { opacity: 0; transform: translateY(30px); transition: opacity 0.6s ease, transform 0.6s ease; }
-        .fade-in.visible { opacity: 1; transform: translateY(0); }
-        @media (max-width: 768px) {
-            nav .nav-links { display: none; }
-            .hero h1 { font-size: 2rem; }
-            .hero-stats { gap: 1.5rem; }
-            section { padding: 3rem 1rem; }
-            .cards-grid { grid-template-columns: 1fr; }
-            .section-header h2 { font-size: 1.8rem; }
-        }
-    </style>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>CX-O · 智能语音对话与虚拟主播平台</title>
+<style>
+:root{
+  --primary:#6c5ce7; --primary-light:#a29bfe; --accent:#00cec9; --accent-2:#fd79a8;
+  --warn:#fdcb6e; --ok:#55efc4;
+  --bg:#0b0b14; --bg-2:#12121f; --card:#171728; --card-2:#1e1e34; --card-hover:#262642;
+  --text:#f4f4ff; --text-2:#b2b2d0; --muted:#7f7fa0;
+  --border:#2a2a48; --border-light:#3a3a5c;
+  --grad:linear-gradient(135deg,#6c5ce7 0%,#00cec9 100%);
+  --grad-2:linear-gradient(135deg,#fd79a8 0%,#6c5ce7 100%);
+  --grad-3:linear-gradient(135deg,#00cec9 0%,#55efc4 100%);
+  --shadow:0 10px 40px rgba(0,0,0,.35);
+  --shadow-glow:0 0 60px rgba(108,92,231,.25);
+}
+*{margin:0;padding:0;box-sizing:border-box}
+html{scroll-behavior:smooth}
+body{
+  font-family:-apple-system,BlinkMacSystemFont,'Segoe UI','PingFang SC','Microsoft YaHei',sans-serif;
+  background:var(--bg);color:var(--text);line-height:1.7;overflow-x:hidden;
+  -webkit-font-smoothing:antialiased;
+}
+::selection{background:rgba(108,92,231,.4)}
+a{color:inherit;text-decoration:none}
+code{font-family:'JetBrains Mono','Fira Code','Consolas',monospace;font-size:.88em;
+  background:rgba(108,92,231,.15);padding:.12em .45em;border-radius:5px;color:var(--primary-light)}
+.code-block{background:#0a0a14;border:1px solid var(--border);border-radius:12px;padding:1.2rem 1.4rem;
+  font-family:'JetBrains Mono','Consolas',monospace;font-size:.82rem;color:#c8c8e8;overflow-x:auto;
+  line-height:1.65;white-space:pre}
+.code-block .c-key{color:#c792ea}.code-block .c-str{color:#c3e88d}
+.code-block .c-num{color:#f78c6c}.code-block .c-com{color:#637777;font-style:italic}
+.code-block .c-fn{color:#82aaff}
+
+/* ---------- NAV ---------- */
+nav{position:fixed;top:0;left:0;right:0;z-index:1000;
+  background:rgba(11,11,20,.78);backdrop-filter:blur(20px) saturate(160%);
+  border-bottom:1px solid var(--border);transition:all .3s}
+nav .inner{max-width:1320px;margin:0 auto;display:flex;align-items:center;justify-content:space-between;height:62px;padding:0 1.5rem}
+nav .brand{display:flex;align-items:center;gap:.6rem;font-size:1.35rem;font-weight:800}
+nav .brand .dot{width:30px;height:30px;border-radius:9px;background:var(--grad);
+  display:flex;align-items:center;justify-content:center;font-size:.95rem;color:#fff;font-weight:900;
+  box-shadow:0 4px 14px rgba(108,92,231,.5)}
+nav .brand .name{background:var(--grad);-webkit-background-clip:text;-webkit-text-fill-color:transparent}
+nav .links{display:flex;gap:.2rem;list-style:none}
+nav .links a{color:var(--text-2);padding:.5rem .85rem;border-radius:8px;font-size:.86rem;transition:all .2s;font-weight:500}
+nav .links a:hover{color:var(--text);background:rgba(108,92,231,.14)}
+nav .cta{background:var(--grad);color:#fff;padding:.5rem 1.1rem;border-radius:9px;font-size:.85rem;font-weight:600;
+  transition:transform .2s,box-shadow .2s}
+nav .cta:hover{transform:translateY(-1px);box-shadow:0 6px 20px rgba(108,92,231,.45)}
+@media(max-width:900px){nav .links{display:none}}
+
+/* ---------- HERO ---------- */
+.hero{min-height:100vh;display:flex;align-items:center;justify-content:center;text-align:center;
+  padding:7rem 1.5rem 4rem;position:relative;overflow:hidden}
+.hero::before{content:'';position:absolute;inset:-50%;
+  background:
+    radial-gradient(ellipse at 25% 40%,rgba(108,92,231,.20) 0%,transparent 45%),
+    radial-gradient(ellipse at 75% 60%,rgba(0,206,201,.14) 0%,transparent 45%),
+    radial-gradient(ellipse at 50% 90%,rgba(253,121,168,.10) 0%,transparent 50%);
+  animation:heroGlow 16s ease-in-out infinite alternate}
+@keyframes heroGlow{0%{transform:translate(0,0) scale(1)}100%{transform:translate(3%,-2%) scale(1.08)}}
+.hero .grid-bg{position:absolute;inset:0;opacity:.35;
+  background-image:linear-gradient(rgba(108,92,231,.06) 1px,transparent 1px),linear-gradient(90deg,rgba(108,92,231,.06) 1px,transparent 1px);
+  background-size:54px 54px;mask-image:radial-gradient(ellipse at center,#000 30%,transparent 75%)}
+.hero .content{position:relative;z-index:2;max-width:920px}
+.hero .badge{display:inline-flex;align-items:center;gap:.5rem;background:rgba(108,92,231,.12);
+  border:1px solid rgba(108,92,231,.35);padding:.4rem 1rem;border-radius:99px;font-size:.82rem;
+  color:var(--primary-light);margin-bottom:1.8rem;font-weight:500}
+.hero .badge .pulse{width:7px;height:7px;border-radius:50%;background:var(--ok);
+  box-shadow:0 0 0 0 rgba(85,239,196,.6);animation:pulse 2s infinite}
+@keyframes pulse{0%{box-shadow:0 0 0 0 rgba(85,239,196,.6)}70%{box-shadow:0 0 0 8px rgba(85,239,196,0)}100%{box-shadow:0 0 0 0 rgba(85,239,196,0)}}
+.hero h1{font-size:clamp(2.6rem,7vw,5.2rem);font-weight:900;line-height:1.05;letter-spacing:-.02em;margin-bottom:1.4rem}
+.hero h1 .grad{background:var(--grad);-webkit-background-clip:text;-webkit-text-fill-color:transparent}
+.hero h1 .grad2{background:var(--grad-2);-webkit-background-clip:text;-webkit-text-fill-color:transparent}
+.hero p.lead{font-size:clamp(1rem,2vw,1.25rem);color:var(--text-2);max-width:720px;margin:0 auto 2.4rem}
+.hero .actions{display:flex;gap:1rem;justify-content:center;flex-wrap:wrap}
+.hero .btn{padding:.9rem 1.8rem;border-radius:11px;font-weight:600;font-size:.95rem;transition:all .25s;cursor:pointer;border:none}
+.hero .btn-primary{background:var(--grad);color:#fff;box-shadow:0 8px 28px rgba(108,92,231,.4)}
+.hero .btn-primary:hover{transform:translateY(-2px);box-shadow:0 12px 36px rgba(108,92,231,.55)}
+.hero .btn-ghost{background:rgba(255,255,255,.04);color:var(--text);border:1px solid var(--border-light)}
+.hero .btn-ghost:hover{background:rgba(255,255,255,.08);border-color:var(--primary-light)}
+.hero .stats{display:flex;gap:2.5rem;justify-content:center;margin-top:3.5rem;flex-wrap:wrap}
+.hero .stat{text-align:center}
+.hero .stat .num{font-size:1.9rem;font-weight:800;background:var(--grad);-webkit-background-clip:text;-webkit-text-fill-color:transparent}
+.hero .stat .lbl{font-size:.78rem;color:var(--muted);text-transform:uppercase;letter-spacing:.08em;margin-top:.2rem}
+
+/* ---------- SECTION ---------- */
+section{padding:5.5rem 1.5rem;position:relative}
+.wrap{max-width:1200px;margin:0 auto}
+.section-head{text-align:center;margin-bottom:3.5rem}
+.section-head .tag{display:inline-block;font-size:.78rem;font-weight:700;letter-spacing:.14em;
+  text-transform:uppercase;color:var(--accent);margin-bottom:.8rem}
+.section-head h2{font-size:clamp(1.9rem,4vw,2.8rem);font-weight:800;letter-spacing:-.01em;margin-bottom:.8rem}
+.section-head p{color:var(--text-2);max-width:680px;margin:0 auto;font-size:1.02rem}
+
+/* ---------- CARDS ---------- */
+.grid{display:grid;gap:1.4rem}
+.grid-2{grid-template-columns:repeat(auto-fit,minmax(340px,1fr))}
+.grid-3{grid-template-columns:repeat(auto-fit,minmax(280px,1fr))}
+.grid-4{grid-template-columns:repeat(auto-fit,minmax(220px,1fr))}
+.card{background:var(--card);border:1px solid var(--border);border-radius:16px;padding:1.6rem;
+  transition:all .28s;position:relative;overflow:hidden}
+.card:hover{transform:translateY(-4px);border-color:var(--border-light);background:var(--card-2);box-shadow:var(--shadow)}
+.card .ic{width:46px;height:46px;border-radius:12px;display:flex;align-items:center;justify-content:center;
+  font-size:1.4rem;margin-bottom:1rem;background:rgba(108,92,231,.14)}
+.card h3{font-size:1.12rem;font-weight:700;margin-bottom:.5rem}
+.card p{color:var(--text-2);font-size:.92rem}
+.card .pill{display:inline-block;font-size:.72rem;padding:.18rem .6rem;border-radius:99px;
+  background:rgba(0,206,201,.12);color:var(--accent);font-weight:600;margin-top:.8rem}
+.card .feat-list{list-style:none;margin-top:.9rem}
+.card .feat-list li{font-size:.86rem;color:var(--text-2);padding:.22rem 0;padding-left:1.2rem;position:relative}
+.card .feat-list li::before{content:'▸';position:absolute;left:0;color:var(--accent)}
+
+/* gradient accent bar on cards */
+.card.g1::before{content:'';position:absolute;top:0;left:0;right:0;height:3px;background:var(--grad)}
+.card.g2::before{content:'';position:absolute;top:0;left:0;right:0;height:3px;background:var(--grad-2)}
+.card.g3::before{content:'';position:absolute;top:0;left:0;right:0;height:3px;background:var(--grad-3)}
+
+/* ---------- SUBPROJECT TABLE ---------- */
+.sub-table{background:var(--card);border:1px solid var(--border);border-radius:16px;overflow:hidden}
+.sub-row{display:grid;grid-template-columns:1.4fr 1.6fr .7fr 2fr;gap:1rem;padding:1.3rem 1.5rem;
+  border-bottom:1px solid var(--border);align-items:center;transition:background .2s}
+.sub-row:last-child{border-bottom:none}
+.sub-row:hover{background:var(--card-2)}
+.sub-row .nm{font-weight:700;font-size:1rem}
+.sub-row .nm .port{display:block;font-size:.78rem;color:var(--accent);font-weight:600;margin-top:.15rem}
+.sub-row .stk{font-size:.82rem;color:var(--text-2)}
+.sub-row .opt{font-size:.72rem;color:var(--muted);text-transform:uppercase;letter-spacing:.06em}
+.sub-row .desc{font-size:.86rem;color:var(--text-2)}
+@media(max-width:820px){.sub-row{grid-template-columns:1fr;gap:.4rem}.sub-row .opt{display:none}}
+
+/* ---------- ARCH DIAGRAM ---------- */
+.arch{background:var(--card);border:1px solid var(--border);border-radius:18px;padding:2rem;overflow-x:auto}
+.arch-box{border:1.5px solid var(--border-light);border-radius:12px;padding:1rem 1.2rem;background:var(--bg-2);
+  text-align:center;font-size:.86rem;font-weight:600}
+.arch-box .sub{display:block;font-size:.72rem;color:var(--muted);font-weight:400;margin-top:.2rem}
+.arch-layer{display:flex;gap:.6rem;justify-content:center;flex-wrap:wrap;margin:.7rem 0}
+.arch-arrow{text-align:center;color:var(--accent);font-size:1.1rem;margin:.3rem 0}
+.arch-core{display:grid;grid-template-columns:repeat(auto-fit,minmax(110px,1fr));gap:.6rem;margin:.7rem 0}
+.arch-core .arch-box{padding:.7rem .5rem;font-size:.8rem}
+.arch-flow{font-family:'JetBrains Mono','Consolas',monospace;font-size:.78rem;color:var(--text-2);
+  background:#0a0a14;border:1px solid var(--border);border-radius:12px;padding:1.2rem;overflow-x:auto;line-height:1.6;white-space:pre}
+
+/* ---------- FEATURE BLOCK ---------- */
+.feature{background:var(--card);border:1px solid var(--border);border-radius:18px;padding:2rem;margin-bottom:1.6rem;position:relative;overflow:hidden}
+.feature .head{display:flex;align-items:center;gap:1rem;margin-bottom:1.2rem;flex-wrap:wrap}
+.feature .head .num{width:42px;height:42px;border-radius:11px;background:var(--grad);color:#fff;
+  display:flex;align-items:center;justify-content:center;font-weight:800;font-size:1.05rem;flex-shrink:0}
+.feature .head h3{font-size:1.3rem;font-weight:800}
+.feature .head .meta{font-size:.78rem;color:var(--muted);font-family:'JetBrains Mono','Consolas',monospace}
+.feature .body{display:grid;grid-template-columns:1.3fr 1fr;gap:1.8rem}
+@media(max-width:860px){.feature .body{grid-template-columns:1fr}}
+.feature .desc{color:var(--text-2);font-size:.95rem}
+.feature .desc p{margin-bottom:.7rem}
+.feature .desc ul{margin:.6rem 0 .6rem 1.2rem}
+.feature .desc li{margin-bottom:.3rem}
+.feature .side{background:var(--bg-2);border:1px solid var(--border);border-radius:12px;padding:1.2rem}
+.feature .side h4{font-size:.82rem;text-transform:uppercase;letter-spacing:.1em;color:var(--accent);margin-bottom:.7rem}
+.feature .side .kv{display:flex;justify-content:space-between;padding:.35rem 0;border-bottom:1px dashed var(--border);font-size:.84rem}
+.feature .side .kv:last-child{border-bottom:none}
+.feature .side .kv .k{color:var(--muted)}
+.feature .side .kv .v{color:var(--text);font-weight:600;font-family:'JetBrains Mono','Consolas',monospace}
+
+/* ---------- TECH STACK ---------- */
+.tech-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:1.2rem}
+.tech-card{background:var(--card);border:1px solid var(--border);border-radius:14px;padding:1.4rem}
+.tech-card h4{font-size:.78rem;text-transform:uppercase;letter-spacing:.1em;color:var(--accent);margin-bottom:.9rem}
+.tech-card .chips{display:flex;flex-wrap:wrap;gap:.4rem}
+.chip{font-size:.78rem;padding:.3rem .7rem;border-radius:7px;background:rgba(255,255,255,.05);
+  border:1px solid var(--border);color:var(--text-2);font-weight:500}
+.chip.hl{background:rgba(108,92,231,.16);border-color:rgba(108,92,231,.4);color:var(--primary-light)}
+
+/* ---------- PORT TABLE ---------- */
+.port-table{width:100%;border-collapse:collapse;background:var(--card);border-radius:14px;overflow:hidden;
+  border:1px solid var(--border)}
+.port-table th,.port-table td{padding:.85rem 1.1rem;text-align:left;border-bottom:1px solid var(--border);font-size:.88rem}
+.port-table th{background:var(--bg-2);color:var(--accent);font-size:.78rem;text-transform:uppercase;letter-spacing:.08em}
+.port-table tr:last-child td{border-bottom:none}
+.port-table tr:hover{background:var(--card-2)}
+.port-table .pnum{font-family:'JetBrains Mono','Consolas',monospace;color:var(--accent);font-weight:700}
+
+/* ---------- QUICK START ---------- */
+.qs{display:grid;grid-template-columns:1fr 1fr;gap:1.4rem}
+@media(max-width:820px){.qs{grid-template-columns:1fr}}
+.qs-card{background:var(--card);border:1px solid var(--border);border-radius:14px;padding:1.5rem}
+.qs-card h4{font-size:.95rem;margin-bottom:.9rem;display:flex;align-items:center;gap:.5rem}
+.qs-card h4 .step{width:26px;height:26px;border-radius:7px;background:var(--grad);color:#fff;
+  display:flex;align-items:center;justify-content:center;font-size:.8rem;font-weight:800}
+
+/* ---------- FOOTER ---------- */
+footer{padding:3rem 1.5rem 2.5rem;border-top:1px solid var(--border);text-align:center;color:var(--muted);font-size:.86rem}
+footer .grad-name{background:var(--grad);-webkit-background-clip:text;-webkit-text-fill-color:transparent;font-weight:800}
+
+/* misc */
+.kbd{font-family:'JetBrains Mono','Consolas',monospace;font-size:.8rem;background:var(--bg-2);
+  border:1px solid var(--border);border-bottom-width:2px;border-radius:6px;padding:.1rem .45rem;color:var(--accent)}
+.divider{height:1px;background:linear-gradient(90deg,transparent,var(--border),transparent);margin:1.5rem 0}
+.note{background:rgba(0,206,201,.07);border-left:3px solid var(--accent);border-radius:0 10px 10px 0;
+  padding:.8rem 1.1rem;font-size:.86rem;color:var(--text-2);margin:1rem 0}
+
+/* ============ 呼吸感动效 ============ */
+/* 全局背景流光 */
+body::before{content:'';position:fixed;inset:0;z-index:-1;pointer-events:none;
+  background:
+    radial-gradient(circle at 15% 20%,rgba(108,92,231,.10) 0%,transparent 35%),
+    radial-gradient(circle at 85% 30%,rgba(0,206,201,.08) 0%,transparent 35%),
+    radial-gradient(circle at 50% 80%,rgba(253,121,168,.06) 0%,transparent 40%);
+  animation:bgFlow 22s ease-in-out infinite alternate}
+@keyframes bgFlow{
+  0%{transform:translate(0,0) scale(1);opacity:.7}
+  50%{transform:translate(2%,-1%) scale(1.05);opacity:1}
+  100%{transform:translate(-2%,2%) scale(1);opacity:.8}
+}
+
+/* 卡片呼吸光晕 */
+.card{position:relative}
+.card::after{content:'';position:absolute;inset:-1px;border-radius:16px;padding:1px;
+  background:linear-gradient(135deg,rgba(108,92,231,0),rgba(0,206,201,0),rgba(108,92,231,0));
+  -webkit-mask:linear-gradient(#000 0 0) content-box,linear-gradient(#000 0 0);
+  -webkit-mask-composite:xor;mask-composite:exclude;pointer-events:none;
+  opacity:0;transition:opacity .5s}
+.card:hover::after{opacity:1;
+  background:linear-gradient(135deg,rgba(108,92,231,.6),rgba(0,206,201,.4),rgba(253,121,168,.3));
+  animation:borderFlow 4s linear infinite}
+@keyframes borderFlow{0%{filter:hue-rotate(0)}100%{filter:hue-rotate(360deg)}}
+
+/* 卡片图标呼吸 */
+.card .ic{animation:icBreathe 4s ease-in-out infinite}
+@keyframes icBreathe{
+  0%,100%{transform:scale(1);box-shadow:0 0 0 0 rgba(108,92,231,0)}
+  50%{transform:scale(1.06);box-shadow:0 0 18px 2px rgba(108,92,231,.25)}
+}
+.card:nth-child(2) .ic{animation-delay:.5s}
+.card:nth-child(3) .ic{animation-delay:1s}
+.card:nth-child(4) .ic{animation-delay:1.5s}
+.card:nth-child(5) .ic{animation-delay:2s}
+.card:nth-child(6) .ic{animation-delay:2.5s}
+
+/* Hero 标题渐入 */
+.hero h1 .grad,.hero h1 .grad2{background-size:200% auto;animation:titleShine 6s linear infinite}
+@keyframes titleShine{0%{background-position:0% center}100%{background-position:200% center}}
+
+/* 滚动入场 */
+.reveal{opacity:0;transform:translateY(28px);transition:opacity .9s cubic-bezier(.2,.7,.2,1),transform .9s cubic-bezier(.2,.7,.2,1)}
+.reveal.in{opacity:1;transform:translateY(0)}
+.reveal.d1{transition-delay:.08s}.reveal.d2{transition-delay:.16s}
+.reveal.d3{transition-delay:.24s}.reveal.d4{transition-delay:.32s}
+.reveal.d5{transition-delay:.4s}.reveal.d6{transition-delay:.48s}
+
+/* 数字计数脉动 */
+.hero .stat .num{animation:numPulse 3.5s ease-in-out infinite}
+@keyframes numPulse{0%,100%{filter:brightness(1)}50%{filter:brightness(1.25)}}
+.hero .stat:nth-child(2) .num{animation-delay:.4s}
+.hero .stat:nth-child(3) .num{animation-delay:.8s}
+.hero .stat:nth-child(4) .num{animation-delay:1.2s}
+.hero .stat:nth-child(5) .num{animation-delay:1.6s}
+
+/* 架构图箭头流动 */
+.arch-arrow{animation:arrowFlow 2.4s ease-in-out infinite}
+@keyframes arrowFlow{0%,100%{opacity:.4;transform:translateY(0)}50%{opacity:1;transform:translateY(2px)}}
+
+/* 架构盒子呼吸 */
+.arch-box{transition:all .4s}
+.arch-core .arch-box{animation:boxBreathe 5s ease-in-out infinite}
+.arch-core .arch-box:nth-child(odd){animation-delay:1s}
+.arch-core .arch-box:nth-child(3n){animation-delay:2s}
+@keyframes boxBreathe{0%,100%{border-color:var(--border-light)}50%{border-color:rgba(108,92,231,.5)}}
+.arch-box:hover{transform:translateY(-2px);border-color:var(--primary-light)!important;
+  box-shadow:0 6px 20px rgba(108,92,231,.25)}
+
+/* 章节标题渐入下划线 */
+.section-head h2{position:relative;display:inline-block}
+.section-head h2::after{content:'';position:absolute;left:50%;bottom:-.5rem;transform:translateX(-50%);
+  width:0;height:3px;border-radius:2px;background:var(--grad);transition:width 1.2s ease .3s}
+.reveal.in .section-head h2::after{width:60px}
+
+/* pill 标签呼吸 */
+.card .pill{animation:pillGlow 3s ease-in-out infinite}
+@keyframes pillGlow{0%,100%{box-shadow:0 0 0 0 rgba(0,206,201,0)}50%{box-shadow:0 0 12px 1px rgba(0,206,201,.35)}}
+
+/* 特性编号呼吸 */
+.feature .head .num{animation:numBreathe 3s ease-in-out infinite;
+  box-shadow:0 4px 14px rgba(108,92,231,.4)}
+@keyframes numBreathe{
+  0%,100%{box-shadow:0 4px 14px rgba(108,92,231,.4);transform:scale(1)}
+  50%{box-shadow:0 6px 22px rgba(108,92,231,.65);transform:scale(1.05)}
+}
+.feature:nth-child(2) .head .num{animation-delay:.6s}
+.feature:nth-child(3) .head .num{animation-delay:1.2s}
+.feature:nth-child(4) .head .num{animation-delay:1.8s}
+
+/* 导航栏滚动后增强 */
+nav.scrolled{background:rgba(11,11,20,.92);box-shadow:0 4px 30px rgba(0,0,0,.4)}
+
+/* 代码块光标闪烁 */
+.code-block::after{content:'';display:inline-block;width:8px;height:1em;background:var(--accent);
+  vertical-align:text-bottom;margin-left:2px;animation:cursorBlink 1.1s steps(2) infinite}
+@keyframes cursorBlink{0%,50%{opacity:1}51%,100%{opacity:0}}
+
+/* 端口表行流光 */
+.port-table tbody tr{position:relative;overflow:hidden}
+.port-table tbody tr::before{content:'';position:absolute;left:-100%;top:0;width:100%;height:100%;
+  background:linear-gradient(90deg,transparent,rgba(0,206,201,.08),transparent);
+  transition:left .8s}
+.port-table tbody tr:hover::before{left:100%}
+
+/* 减少动画偏好 */
+@media(prefers-reduced-motion:reduce){
+  *{animation:none!important;transition:none!important}
+  .reveal{opacity:1;transform:none}
+}
+</style>
 </head>
 <body>
 
+<!-- ============ NAV ============ -->
 <nav>
-    <div class="nav-inner">
-        <div class="logo">CX-O</div>
-        <ul class="nav-links">
-            <li><a href="#overview">概览</a></li>
-            <li><a href="#architecture">架构</a></li>
-            <li><a href="#features">功能</a></li>
-            <li><a href="#voice">语音</a></li>
-            <li><a href="#avatar">虚拟形象</a></li>
-            <li><a href="#protocols">协议</a></li>
-            <li><a href="#techstack">技术栈</a></li>
-            <li><a href="#quickstart">快速开始</a></li>
-        </ul>
-    </div>
+  <div class="inner">
+    <a href="#top" class="brand"><span class="dot">CX</span><span class="name">CX-O</span></a>
+    <ul class="links">
+      <li><a href="#overview">概览</a></li>
+      <li><a href="#architecture">架构</a></li>
+      <li><a href="#subprojects">子项目</a></li>
+      <li><a href="#core">核心智能</a></li>
+      <li><a href="#voice">语音</a></li>
+      <li><a href="#avatar">形象/直播</a></li>
+      <li><a href="#extend">扩展</a></li>
+      <li><a href="#stack">技术栈</a></li>
+      <li><a href="#start">快速开始</a></li>
+    </ul>
+    <a href="#start" class="cta">快速开始</a>
+  </div>
 </nav>
 
-<section class="hero" id="overview">
-    <div class="hero-content">
-        <div class="hero-badge">&#9670; AI Virtual Streamer Platform</div>
-        <h1><span class="gradient-text">CX-O</span> 智能语音对话系统</h1>
-        <p class="subtitle">基于 ASR + LLM + TTS 全流程的 AI 虚拟主播/助手平台，支持双向全双工语音交互、智能记忆、知识图谱、虚拟形象驱动与直播弹幕互动</p>
-        <div class="hero-stats">
-            <div class="hero-stat"><div class="num">15+</div><div class="label">情感类型</div></div>
-            <div class="hero-stat"><div class="num">56</div><div class="label">图数据库工具</div></div>
-            <div class="hero-stat"><div class="num">19</div><div class="label">API 模块</div></div>
-            <div class="hero-stat"><div class="num">5</div><div class="label">语音引擎</div></div>
-        </div>
+<!-- ============ HERO ============ -->
+<header class="hero" id="top">
+  <div class="grid-bg"></div>
+  <div class="content">
+    <span class="badge"><span class="pulse"></span> 单体架构 · 全双工语音 · 虚拟主播平台</span>
+    <h1>
+      <span class="grad">CX-O</span> 智能语音对话<br>
+      与 <span class="grad2">虚拟主播</span> 一体化平台
+    </h1>
+    <p class="lead">
+      基于 Python FastAPI + React + Electron 构建的单体应用，集成语音识别、大语言模型、语音合成、
+      智能记忆、知识图谱、虚拟形象驱动与直播能力，支持双向全双工语音交互。
+    </p>
+    <div class="actions">
+      <a href="#architecture" class="btn btn-primary">查看系统架构</a>
+      <a href="#core" class="btn btn-ghost">探索核心功能</a>
     </div>
+    <div class="stats">
+      <div class="stat"><div class="num">5</div><div class="lbl">子项目</div></div>
+      <div class="stat"><div class="num">18</div><div class="lbl">REST 路由</div></div>
+      <div class="stat"><div class="num">56</div><div class="lbl">图谱工具</div></div>
+      <div class="stat"><div class="num">15</div><div class="lbl">情感标记</div></div>
+      <div class="stat"><div class="num">13</div><div class="lbl">Orpheus 音色</div></div>
+    </div>
+  </div>
+</header>
+
+<!-- ============ OVERVIEW ============ -->
+<section id="overview">
+  <div class="wrap">
+    <div class="section-head reveal">
+      <span class="tag">Project Overview</span>
+      <h2>项目概览</h2>
+      <p>CX-O 是一个 AI 虚拟主播 / 助手平台，由五个核心子项目组成，采用前后端分离 + 单体后端架构，通过 WebSocket 与 HTTP 双通道实现实时通信。</p>
+    </div>
+    <div class="grid grid-3">
+      <div class="card g1 reveal d1">
+        <div class="ic">🗣️</div>
+        <h3>端到端语音对话</h3>
+        <p>ASR → LLM → TTS 全流程闭环，支持用户打断 Agent 与 Agent 打断用户的双向全双工交互，双流式语音实时推流。</p>
+        <span class="pill">voice.dual_stream</span>
+      </div>
+      <div class="card g2 reveal d2">
+        <div class="ic">🧠</div>
+        <h3>认知科学记忆系统</h3>
+        <p>模拟艾宾浩斯遗忘曲线的双阶段指数衰减，三维评分（重要性 + 时间 + 相关性），场景感知路由，混合搜索。</p>
+        <span class="pill">SQLite + Weaviate</span>
+      </div>
+      <div class="card g3 reveal d3">
+        <div class="ic">🔗</div>
+        <h3>四类知识图谱</h3>
+        <p>用户 / 事物 / 概念 / 事件四大图谱，BFS/DFS/Dijkstra/PageRank/社区发现算法，为 LLM 注册 56 个图操作工具。</p>
+        <span class="pill">56 graph tools</span>
+      </div>
+      <div class="card g1 reveal d4">
+        <div class="ic">🛡️</div>
+        <h3>三档防火墙</h3>
+        <p>直播弹幕内容审核：block 拦截 / passive 放行 / reply 回复，规则过滤 + LLM 智能决策双层防护，容错优先。</p>
+        <span class="pill">block / passive / reply</span>
+      </div>
+      <div class="card g2 reveal d5">
+        <div class="ic">🎭</div>
+        <h3>双引擎虚拟形象</h3>
+        <p>Live2D (PIXI.js) + VRM (Three.js) 双引擎，统一 IAvatarDriver 抽象层，实时口型同步、表情混合、动作触发。</p>
+        <span class="pill">IAvatarDriver</span>
+      </div>
+      <div class="card g3 reveal d6">
+        <div class="ic">🤝</div>
+        <h3>多智能体协作</h3>
+        <p>ACP 协议局域网自动发现、群组协同；CXFC 插件联邦心跳检测、技能注册；MCP 标准工具协议接入。</p>
+        <span class="pill">ACP + CXFC + MCP</span>
+      </div>
+    </div>
+  </div>
 </section>
 
-<section id="architecture">
-    <div class="section-header fade-in">
-        <div class="tag">Architecture</div>
-        <h2>系统架构</h2>
-        <p>前后端分离的单体应用架构，四大核心子项目协同工作</p>
+<!-- ============ ARCHITECTURE ============ -->
+<section id="architecture" style="background:var(--bg-2)">
+  <div class="wrap">
+    <div class="section-head reveal">
+      <span class="tag">System Architecture</span>
+      <h2>系统架构</h2>
+      <p>CX-O-SERVER 采用单体架构，通过 FastAPI <code>lifespan</code> 统一管理网关、后端业务、ASR、TTS 四大模块的生命周期。</p>
     </div>
-    <div class="arch-diagram fade-in">
-<pre>
-+=====================================================================+
-|                         CX-O Platform                               |
-|                                                                     |
-|  +--------------------------------------------------------------+   |
-|  |                    CX-O-Frontend (:5173)                     |   |
-|  |  +----------+ +----------+ +-----------+ +--------------+   |   |
-|  |  | ChatPage | | LivePage | |DashboardPg| | MemoriesPage |   |   |
-|  |  +----+-----+ +----+-----+ +-----+-----+ +------+-------+   |   |
-|  |       +-----------+-----------+------------+                 |   |
-|  |                API / WebSocket Hooks                          |   |
-|  |  +----------------------------------------------------------+|   |
-|  |  |  Live2D (PIXI.js)  |  VRM (Three.js)  |  OBS Output    ||   |
-|  |  +----------------------------------------------------------+|   |
-|  +------------------------------+-------------------------------+   |
-|                                 | HTTP / WebSocket                   |
-|  +------------------------------+-------------------------------+   |
-|  |                    CX-O-SERVER (:8000)                       |   |
-|  |  +-------------+  +--------------+  +-------------------+   |   |
-|  |  |   Gateway    |  |  REST API    |  |   WebSocket       |   |   |
-|  |  +------+------+  +------+-------+  +--------+----------+   |   |
-|  |         +----------------+------------------+                |   |
-|  |  +-----------------------+--------------------------------+|   |
-|  |  |                    Core Modules                       ||   |
-|  |  |  +------+ +-------+ +------+ +------+ +-----------+ ||   |
-|  |  |  | LLM  | |Memory | |Graph | | ACP  | |  Tools     ||   |
-|  |  |  +------+ +-------+ +------+ +------+ +-----------+ ||   |
-|  |  +-------------------------------------------------------+|   |
-|  |  +-------------------------------------------------------+|   |
-|  |  |  ASR (SenseVoice) | TTS (F5-TTS) | VAD | Firewall   ||   |
-|  |  +-------------------------------------------------------+|   |
-|  +-------------------------------------------------------------+   |
-|                                                                     |
-|  +-------------------------------------------------------------+   |
-|  |              CX-O-VoiceWorkStation (:8200)                  |   |
-|  |  F5-TTS 微调 | So-VITS-SVC | CosyVoice | IndexTTS | VoxCPM |   |
-|  +-------------------------------------------------------------+   |
-|                                                                     |
-|  +-------------------------------------------------------------+   |
-|  |                    External Services                        |   |
-|  |  +----------+  +----------+  +----------+  +-----------+   |   |
-|  |  | Ollama/  |  | Weaviate |  |CosyVoice |  |  MCP      |   |   |
-|  |  | vLLM     |  | 向量数据库|  | Server   |  |  Servers  |   |   |
-|  |  +----------+  +----------+  +----------+  +-----------+   |   |
-|  +-------------------------------------------------------------+   |
-+=====================================================================+
-        </pre>
+    <div class="arch reveal">
+      <div class="arch-layer">
+        <div class="arch-box" style="border-color:var(--primary-light);background:rgba(108,92,231,.08)">
+          CX-O-Frontend <span class="sub">React + TypeScript + Electron · :5173</span>
+        </div>
+      </div>
+      <div class="arch-arrow">▼ HTTP / WebSocket</div>
+      <div class="arch-box" style="border-color:var(--accent);background:rgba(0,206,201,.06)">
+        CX-O-SERVER <span class="sub">单体应用 · :8000 · Gateway + REST API + WebSocket</span>
+      </div>
+      <div class="arch-arrow">▼</div>
+      <div style="border:1.5px dashed var(--border-light);border-radius:14px;padding:1rem">
+        <div style="text-align:center;font-size:.78rem;color:var(--muted);text-transform:uppercase;letter-spacing:.1em;margin-bottom:.6rem">Core Modules · server/core/</div>
+        <div class="arch-core">
+          <div class="arch-box">LLM<div class="sub">Ollama / vLLM</div></div>
+          <div class="arch-box">Memory<div class="sub">衰减 + 混合搜索</div></div>
+          <div class="arch-box">Context<div class="sub">Mono + 摘要</div></div>
+          <div class="arch-box">Graph<div class="sub">四类图谱</div></div>
+          <div class="arch-box">ACP<div class="sub">多智能体</div></div>
+          <div class="arch-box">CXFC<div class="sub">插件联邦</div></div>
+          <div class="arch-box">Tools<div class="sub">注册表 + MCP</div></div>
+          <div class="arch-box">Plugins<div class="sub">Hook 系统</div></div>
+          <div class="arch-box">WebSocket<div class="sub">频道订阅</div></div>
+          <div class="arch-box">Alarm<div class="sub">定时提醒</div></div>
+          <div class="arch-box">Session<div class="sub">会话持久化</div></div>
+          <div class="arch-box">Cache<div class="sub">LRU + TTL</div></div>
+        </div>
+      </div>
+      <div class="arch-arrow">▼</div>
+      <div style="border:1.5px dashed var(--border-light);border-radius:14px;padding:1rem">
+        <div style="text-align:center;font-size:.78rem;color:var(--muted);text-transform:uppercase;letter-spacing:.1em;margin-bottom:.6rem">Services · server/services/</div>
+        <div class="arch-core">
+          <div class="arch-box">ASR<div class="sub">SenseVoice</div></div>
+          <div class="arch-box">TTS<div class="sub">F5 / Orpheus</div></div>
+          <div class="arch-box">VAD<div class="sub">Energy/WebRTC/Silero</div></div>
+          <div class="arch-box">Interrupt<div class="sub">双向全双工</div></div>
+          <div class="arch-box">Firewall<div class="sub">三档审核</div></div>
+          <div class="arch-box">Emotion<div class="sub">15 情感</div></div>
+          <div class="arch-box">Effect<div class="sub">音效解析</div></div>
+          <div class="arch-box">PromptBuilder<div class="sub">隐藏注入</div></div>
+        </div>
+      </div>
+      <div class="arch-arrow">▼</div>
+      <div class="arch-layer">
+        <div class="arch-box" style="border-color:var(--accent-2);background:rgba(253,121,168,.06)">
+          External Services <span class="sub">Ollama · vLLM · Weaviate · CosyVoice · Orpheus TTS · MCP Servers</span>
+        </div>
+      </div>
     </div>
-    <div class="cards-grid" style="margin-top: 2rem;">
-        <div class="card fade-in">
-            <div class="card-icon purple">&#9881;</div>
-            <h3>CX-O-SERVER</h3>
-            <p>核心后端服务，整合 Gateway、业务逻辑、ASR、TTS 为单体应用，基于 FastAPI + Uvicorn</p>
-            <div class="tech-tags">
-                <span class="tech-tag">Python</span>
-                <span class="tech-tag">FastAPI</span>
-                <span class="tech-tag">WebSocket</span>
-                <span class="tech-tag">:8000</span>
-            </div>
-        </div>
-        <div class="card fade-in">
-            <div class="card-icon teal">&#9878;</div>
-            <h3>CX-O-Frontend</h3>
-            <p>React + TypeScript 前端应用，支持 Live2D/VRM 虚拟形象、直播模式、OBS 分层输出</p>
-            <div class="tech-tags">
-                <span class="tech-tag">React 18</span>
-                <span class="tech-tag">TypeScript</span>
-                <span class="tech-tag">Vite</span>
-                <span class="tech-tag">:5173</span>
-            </div>
-        </div>
-        <div class="card fade-in">
-            <div class="card-icon pink">&#9835;</div>
-            <h3>CX-O-VoiceWorkStation</h3>
-            <p>语音工作站，提供从参考音频生成到模型训练的完整五步工作流</p>
-            <div class="tech-tags">
-                <span class="tech-tag">F5-TTS</span>
-                <span class="tech-tag">So-VITS-SVC</span>
-                <span class="tech-tag">CosyVoice</span>
-                <span class="tech-tag">:8200</span>
-            </div>
-        </div>
+
+    <div class="note" style="margin-top:1.6rem">
+      <strong>对话数据流：</strong> 用户输入 → WebSocket <code>/ws</code> → Chat Handler → 加载 Agent 配置 / Context / Memory Router → PromptBuilder（system + hidden + memory + CXFC skill + 历史）→ ModelRouter（main/summary/memory）→ LLM → 文本流 / Tool Calls / 思考流 → Emotion/Effect Parser → 文本响应 + 流式 TTS + 情感表情指令 → 前端 ChatPage + Live2D/VRM。
     </div>
+  </div>
 </section>
 
-<div class="divider"></div>
-
-<section id="features">
-    <div class="section-header fade-in">
-        <div class="tag">Core Intelligence</div>
-        <h2>核心智能</h2>
-        <p>认知科学驱动的智能记忆、知识图谱与多模型路由系统</p>
+<!-- ============ SUBPROJECTS ============ -->
+<section id="subprojects">
+  <div class="wrap">
+    <div class="section-head reveal">
+      <span class="tag">Subprojects</span>
+      <h2>五大子项目</h2>
+      <p>从核心后端到桌面应用，从语音工作站到流式情感合成，各子项目各司其职、可独立部署。</p>
     </div>
-    <div class="cards-grid">
-        <div class="card fade-in">
-            <div class="card-icon purple">&#9883;</div>
-            <h3>智能记忆系统</h3>
-            <p>模拟人类记忆机制的对话记忆管理方案，采用 SQLite + Weaviate + LLM 混合架构</p>
-            <ul class="feature-list">
-                <li>双阶段指数衰减模型，模拟艾宾浩斯遗忘曲线</li>
-                <li>三维评分：重要性 + 时间 + 相关性</li>
-                <li>7 种场景感知路由策略</li>
-                <li>混合搜索：向量搜索 + 关键词搜索</li>
-                <li>多 Agent 隔离，独立记忆空间</li>
-                <li>智能去重与再激活机制</li>
-            </ul>
-            <div class="tech-tags">
-                <span class="tech-tag">MemoryManager</span>
-                <span class="tech-tag">DecayCalculator</span>
-                <span class="tech-tag">HybridSearch</span>
-                <span class="tech-tag">MemoryRouter</span>
-            </div>
-        </div>
-        <div class="card fade-in">
-            <div class="card-icon teal">&#9861;</div>
-            <h3>知识图谱系统</h3>
-            <p>语义图数据库系统，SQLite + Weaviate 混合架构，为 LLM 提供 56 个图操作工具</p>
-            <ul class="feature-list">
-                <li>四类图谱：用户 / 事物 / 概念 / 事件</li>
-                <li>图算法：BFS、DFS、Dijkstra、PageRank、社区发现</li>
-                <li>语义搜索与混合查询</li>
-                <li>56 个图工具供 LLM 调用</li>
-                <li>轻量级 SQLite 替代 Neo4j</li>
-            </ul>
-            <div class="tech-tags">
-                <span class="tech-tag">GraphDatabase</span>
-                <span class="tech-tag">SemanticSearch</span>
-                <span class="tech-tag">Traversal</span>
-                <span class="tech-tag">PageRank</span>
-            </div>
-        </div>
-        <div class="card fade-in">
-            <div class="card-icon orange">&#9881;</div>
-            <h3>多模型路由</h3>
-            <p>统一管理多 LLM 模型，支持 main / summary / memory 三种角色路由</p>
-            <ul class="feature-list">
-                <li>Ollama / vLLM / OpenAI / Anthropic / DeepSeek</li>
-                <li>模型预热，减少首次响应延迟</li>
-                <li>模型跟随机制，灵活复用</li>
-                <li>实时状态检测与延迟监控</li>
-            </ul>
-            <div class="tech-tags">
-                <span class="tech-tag">ModelRouter</span>
-                <span class="tech-tag">OllamaClient</span>
-                <span class="tech-tag">VLLMClient</span>
-            </div>
-        </div>
-        <div class="card fade-in">
-            <div class="card-icon blue">&#9783;</div>
-            <h3>对话上下文管理</h3>
-            <p>管理对话会话和消息历史，支持 Mono 临时上下文和双模式摘要</p>
-            <ul class="feature-list">
-                <li>Mono 临时上下文机制，按轮次过期</li>
-                <li>LLM 摘要 + 规则摘要双模式</li>
-                <li>多工作空间隔离</li>
-                <li>自动过期清理</li>
-            </ul>
-            <div class="tech-tags">
-                <span class="tech-tag">ContextManager</span>
-                <span class="tech-tag">ContextSummarizer</span>
-                <span class="tech-tag">Mono</span>
-            </div>
-        </div>
-        <div class="card fade-in">
-            <div class="card-icon pink">&#9998;</div>
-            <h3>提示词构建与隐藏注入</h3>
-            <p>分离提示词构建与业务逻辑，支持系统级指令对用户不可见的隐藏注入</p>
-            <ul class="feature-list">
-                <li>系统提示词 + Agent 性格设定</li>
-                <li>情感/音效标记自动清理</li>
-                <li>隐藏提示词注入，对用户透明</li>
-                <li>CXFC Skill 注入</li>
-            </ul>
-            <div class="tech-tags">
-                <span class="tech-tag">PromptBuilder</span>
-                <span class="tech-tag">HiddenPromptManager</span>
-            </div>
-        </div>
-        <div class="card fade-in">
-            <div class="card-icon green">&#9888;</div>
-            <h3>三档防火墙</h3>
-            <p>直播弹幕内容审核与决策系统，规则过滤 + LLM 智能决策的混合架构</p>
-            <ul class="feature-list">
-                <li>第一档 block：违规内容直接拦截</li>
-                <li>第二档 passive：正常弹幕通过不回复</li>
-                <li>第三档 reply：优质弹幕互动回复</li>
-                <li>LLM 不可用时默认放行，避免误伤</li>
-            </ul>
-            <div class="tech-tags">
-                <span class="tech-tag">Firewall</span>
-                <span class="tech-tag">BlacklistFilter</span>
-                <span class="tech-tag">LLMDecision</span>
-            </div>
-        </div>
+    <div class="sub-table reveal">
+      <div class="sub-row" style="background:var(--bg-2);font-weight:700;color:var(--accent);font-size:.78rem;text-transform:uppercase;letter-spacing:.08em">
+        <div>子项目</div><div>技术栈</div><div>端口</div><div>职责</div>
+      </div>
+      <div class="sub-row">
+        <div class="nm">CX-O-SERVER<span class="port">:8000</span></div>
+        <div class="stk">Python · FastAPI · Uvicorn · WebSocket</div>
+        <div class="opt">核心</div>
+        <div class="desc">单体后端，整合网关、REST API、WebSocket、ASR、TTS、LLM 路由、记忆、图谱、工具、ACP、CXFC</div>
+      </div>
+      <div class="sub-row">
+        <div class="nm">CX-O-Frontend<span class="port">:5173</span></div>
+        <div class="stk">React 18 · TypeScript · Vite · Electron 42</div>
+        <div class="opt">核心</div>
+        <div class="desc">Web/桌面端，对话、直播、管理、Live2D/VRM 形象、桌面宠物、OBS 分层输出</div>
+      </div>
+      <div class="sub-row">
+        <div class="nm">CX-O-VoiceWorkStation<span class="port">:8200</span></div>
+        <div class="stk">Python · FastAPI · CLI 子进程</div>
+        <div class="opt">可选</div>
+        <div class="desc">语音工作站：VoxCPM / CosyVoice / IndexTTS 2 / F5-TTS / So-VITS-SVC 五步工作流</div>
+      </div>
+      <div class="sub-row">
+        <div class="nm">Orpheus TTS<span class="port">:5060</span></div>
+        <div class="stk">Python · FastAPI · vLLM · SNAC</div>
+        <div class="opt">可选</div>
+        <div class="desc">流式情感语音合成，OpenAI 兼容 API，13 种音色，首包延迟 &lt; 300ms，24kHz 输出</div>
+      </div>
+      <div class="sub-row">
+        <div class="nm">CX-O-Gateway<span class="port">:8100</span></div>
+        <div class="stk">Python · FastAPI</div>
+        <div class="opt">可选</div>
+        <div class="desc">轻量级独立网关，反向代理 + 独立 WebSocket 端点（已整合进 SERVER，可独立部署）</div>
+      </div>
     </div>
-    <div class="formula-box fade-in">
-        <h3 style="margin-bottom: 1rem; font-size: 1.1rem;">记忆衰减公式 &mdash; 双阶段指数衰减模型</h3>
-        <div class="formula">T(t) = a &middot; e<sup>-k1&middot;dt</sup> + (1-a) &middot; e<sup>-k2&middot;dt</sup></div>
-        <p class="formula-desc">a 控制短期/长期衰减比例，k1 和 k2 分别为短期和长期衰减速率<br>重要性分数 &ge; 0.95 的记忆为永久记忆，永不衰减</p>
-    </div>
+  </div>
 </section>
 
-<div class="divider"></div>
+<!-- ============ CORE INTELLIGENCE ============ -->
+<section id="core" style="background:var(--bg-2)">
+  <div class="wrap">
+    <div class="section-head reveal">
+      <span class="tag">Core Intelligence</span>
+      <h2>核心智能</h2>
+      <p>记忆、图谱、多模型路由、上下文管理与提示词构建，构成 CX-O 的智能底座。</p>
+    </div>
 
-<section id="voice">
-    <div class="section-header fade-in">
-        <div class="tag">Voice</div>
-        <h2>语音能力</h2>
-        <p>ASR 语音识别、TTS 语音合成、VAD 检测与全双工打断系统</p>
+    <!-- Memory -->
+    <div class="feature reveal">
+      <div class="head">
+        <div class="num">1</div>
+        <h3>智能记忆系统</h3>
+        <span class="meta">server/core/memory/</span>
+      </div>
+      <div class="body">
+        <div class="desc">
+          <p>模拟人类记忆机制的对话记忆管理解决方案，采用 <strong>SQLite + Weaviate + LLM</strong> 混合架构。<code>MemoryManager</code> 为单例模式，统一管理记忆生命周期。</p>
+          <ul>
+            <li><strong>双阶段指数衰减</strong>：<code>T(t) = α·e^(-λ₁·Δt) + (1-α)·e^(-λ₂·Δt)</code>，模拟艾宾浩斯遗忘曲线</li>
+            <li><strong>三维评分</strong>：重要性 × 权重 + 时间 × 权重 + 相关性 × 权重</li>
+            <li><strong>场景感知路由</strong>：7 种场景（task/chat/recall/learning…）动态调整权重</li>
+            <li><strong>混合搜索</strong>：向量搜索（0.6）+ 关键词搜索（0.4）</li>
+            <li><strong>再激活加成</strong>：召回时提升时间分数，模拟记忆强化</li>
+            <li><strong>多 Agent 隔离</strong>：每个 Agent 独立记忆空间（agent_id）</li>
+          </ul>
+        </div>
+        <div class="side">
+          <h4>记忆类型与衰减</h4>
+          <div class="kv"><span class="k">short_term</span><span class="v">快速衰减</span></div>
+          <div class="kv"><span class="k">long_term</span><span class="v">正常衰减</span></div>
+          <div class="kv"><span class="k">permanent</span><span class="v">不衰减 · 1.0</span></div>
+          <h4 style="margin-top:1rem">关键组件</h4>
+          <div class="kv"><span class="k">DecayCalculator</span><span class="v">衰减</span></div>
+          <div class="kv"><span class="k">HybridSearch</span><span class="v">混合搜索</span></div>
+          <div class="kv"><span class="k">MemoryRouter</span><span class="v">场景路由</span></div>
+          <div class="kv"><span class="k">DeduplicationEngine</span><span class="v">Jaccard 去重</span></div>
+          <div class="kv"><span class="k">VectorizationQueue</span><span class="v">异步向量化</span></div>
+          <div class="kv"><span class="k">SecondaryModelRouter</span><span class="v">副模型路由</span></div>
+        </div>
+      </div>
     </div>
-    <div class="cards-grid">
-        <div class="card fade-in">
-            <div class="card-icon teal">&#127908;</div>
-            <h3>ASR 语音识别</h3>
-            <p>SenseVoice 双模式架构，embedded 本地推理 + remote 远程服务，支持流式增量识别</p>
-            <ul class="feature-list">
-                <li>自动降级：embedded 失败自动切换 remote</li>
-                <li>流式 ASR：增量识别，适配实时对话</li>
-                <li>情感检测：HAPPY / SAD / ANGRY 等 7 种</li>
-                <li>语音事件：Speech / Laughter / Cry 等 10 种</li>
-            </ul>
-            <div class="tech-tags">
-                <span class="tech-tag">SenseVoice</span>
-                <span class="tech-tag">StreamingClient</span>
-                <span class="tech-tag">16kHz</span>
-            </div>
+
+    <!-- Graph -->
+    <div class="feature reveal">
+      <div class="head">
+        <div class="num">2</div>
+        <h3>知识图谱集成</h3>
+        <span class="meta">server/core/graph/</span>
+      </div>
+      <div class="body">
+        <div class="desc">
+          <p>语义图数据库系统，<strong>SQLite + Weaviate</strong> 混合架构，<code>GraphDatabase</code> 为主入口，集成 NodeManager / EdgeManager / TraversalManager / SemanticSearch。</p>
+          <ul>
+            <li><strong>四类图谱</strong>：User（用户关系）、Thing（事物关系）、Concept（概念知识）、Event（事件关系）</li>
+            <li><strong>图算法</strong>：BFS、DFS、Dijkstra 最短路径、PageRank、LPA/Louvain 社区发现</li>
+            <li><strong>混合查询</strong>：<code>(1-w)·结构分 + w·语义分</code></li>
+            <li><strong>56 个图工具</strong>：每类图谱 14 个工具，供主模型/摘要模型/记忆 Agent 调用</li>
+          </ul>
         </div>
-        <div class="card fade-in">
-            <div class="card-icon pink">&#127925;</div>
-            <h3>TTS 语音合成</h3>
-            <p>F5-TTS 双模式架构，支持情感语音切换、音效插入、流式合成与 Triton 加速</p>
-            <ul class="feature-list">
-                <li>情感语音：根据 [emotion:name] 自动切换参考音频</li>
-                <li>音效插入：[effect:name] 标记自动插入音效</li>
-                <li>流式合成：按句分割，逐句返回</li>
-                <li>过渡音效：情感切换时自动插入过渡</li>
-            </ul>
-            <div class="tech-tags">
-                <span class="tech-tag">F5-TTS</span>
-                <span class="tech-tag">CosyVoice</span>
-                <span class="tech-tag">IndexTTS</span>
-                <span class="tech-tag">Triton</span>
-            </div>
+        <div class="side">
+          <h4>每类图谱 14 工具</h4>
+          <div class="code-block" style="font-size:.72rem;padding:.9rem">create_entity
+create_relation
+query_entities
+find_paths
+search_related_memories
+extract_entities
+merge_entities
+get_entity_summary
+update / delete
+update / delete_relation
+get_stats · export</div>
         </div>
-        <div class="card fade-in">
-            <div class="card-icon purple">&#128266;</div>
-            <h3>VAD 语音活动检测</h3>
-            <p>三种检测模式，支持回调机制驱动打断和口型同步</p>
-            <ul class="feature-list">
-                <li>Energy：基于音量阈值，最简单</li>
-                <li>WebRTC VAD：轻量高效，默认模式</li>
-                <li>Silero VAD：神经网络，精度最高</li>
-                <li>自动降级：高级模式不可用自动降级</li>
-            </ul>
-            <div class="tech-tags">
-                <span class="tech-tag">VADProcessor</span>
-                <span class="tech-tag">AudioStreamProcessor</span>
-            </div>
-        </div>
-        <div class="card fade-in">
-            <div class="card-icon orange">&#128257;</div>
-            <h3>全双工打断</h3>
-            <p>双向打断能力，用户可打断 Agent TTS，Agent 也可在用户说话时插话</p>
-            <ul class="feature-list">
-                <li>用户打断 Agent：VAD - ASR - LLM 判断 - 停止 TTS</li>
-                <li>Agent 打断用户：ASR 部分识别 - LLM 判断 - 插话</li>
-                <li>冷却机制防止频繁打断</li>
-                <li>LLM 智能判断，非简单规则</li>
-            </ul>
-            <div class="tech-tags">
-                <span class="tech-tag">InterruptManager</span>
-                <span class="tech-tag">ASRInterrupt</span>
-                <span class="tech-tag">AgentInterrupt</span>
-            </div>
-        </div>
+      </div>
     </div>
-    <h3 style="text-align: center; margin: 3rem 0 1.5rem; font-size: 1.3rem;" class="fade-in">15 种情感类型</h3>
-    <div class="emotion-grid fade-in">
-        <div class="emotion-chip"><div class="emo-name">开心</div><div class="emo-tag">happy</div></div>
-        <div class="emotion-chip"><div class="emo-name">悲伤</div><div class="emo-tag">sad</div></div>
-        <div class="emotion-chip"><div class="emo-name">愤怒</div><div class="emo-tag">angry</div></div>
-        <div class="emotion-chip"><div class="emo-name">惊讶</div><div class="emo-tag">surprised</div></div>
-        <div class="emotion-chip"><div class="emo-name">恐惧</div><div class="emo-tag">fear</div></div>
-        <div class="emotion-chip"><div class="emo-name">厌恶</div><div class="emo-tag">disgust</div></div>
-        <div class="emotion-chip"><div class="emo-name">中性</div><div class="emo-tag">neutral</div></div>
-        <div class="emotion-chip"><div class="emo-name">兴奋</div><div class="emo-tag">excited</div></div>
-        <div class="emotion-chip"><div class="emo-name">平静</div><div class="emo-tag">calm</div></div>
-        <div class="emotion-chip"><div class="emo-name">低语</div><div class="emo-tag">whisper</div></div>
-        <div class="emotion-chip"><div class="emo-name">呼喊</div><div class="emo-tag">shout</div></div>
-        <div class="emotion-chip"><div class="emo-name">大笑</div><div class="emo-tag">laugh</div></div>
-        <div class="emotion-chip"><div class="emo-name">哭泣</div><div class="emo-tag">cry</div></div>
-        <div class="emotion-chip"><div class="emo-name">叹气</div><div class="emo-tag">sigh</div></div>
-        <div class="emotion-chip"><div class="emo-name">咯笑</div><div class="emo-tag">giggle</div></div>
+
+    <!-- Model Router -->
+    <div class="feature reveal">
+      <div class="head">
+        <div class="num">3</div>
+        <h3>多模型路由与 LLM 客户端</h3>
+        <span class="meta">server/core/model_router.py · server/core/llm/</span>
+      </div>
+      <div class="body">
+        <div class="desc">
+          <p>统一管理多 LLM 模型的路由分发，支持 <strong>Ollama</strong> 与 <strong>vLLM</strong> 两种后端。</p>
+          <ul>
+            <li><strong>三种角色</strong>：main（核心对话）/ summary（摘要）/ memory（记忆管理）</li>
+            <li><strong>模型跟随</strong>：summary/memory 可跟随 main，避免重复加载</li>
+            <li><strong>模型预热</strong>：启动时自动预热，减少首次响应延迟</li>
+            <li><strong>状态检测</strong>：实时检测模型可用性与延迟</li>
+          </ul>
+        </div>
+        <div class="side">
+          <h4>默认模型配置</h4>
+          <div class="kv"><span class="k">provider</span><span class="v">ollama</span></div>
+          <div class="kv"><span class="k">model</span><span class="v">qwen3-vl:8b</span></div>
+          <div class="kv"><span class="k">temperature</span><span class="v">0.7</span></div>
+          <div class="kv"><span class="k">summary 跟随</span><span class="v">main</span></div>
+          <div class="kv"><span class="k">memory 跟随</span><span class="v">main</span></div>
+        </div>
+      </div>
     </div>
-    <h3 style="text-align: center; margin: 3rem 0 1.5rem; font-size: 1.3rem;" class="fade-in">语音工作站 &mdash; 五步工作流</h3>
-    <div class="flow-steps fade-in">
-        <div class="flow-step">
-            <div class="flow-line"><div class="flow-dot"></div><div class="flow-connector"></div></div>
-            <div class="flow-content">
-                <div class="flow-step-num">Step 1</div>
-                <h4>参考音频生成 (VoxCPM)</h4>
-                <p>三种模式：Voice Design（文本到语音）、Controllable Clone（参考音+控制）、Ultimate Clone（音频克隆）</p>
-            </div>
+
+    <!-- Context & Prompt -->
+    <div class="feature reveal">
+      <div class="head">
+        <div class="num">4</div>
+        <h3>上下文管理 & 提示词构建</h3>
+        <span class="meta">server/core/context/ · server/services/prompt_builder.py</span>
+      </div>
+      <div class="body">
+        <div class="desc">
+          <p><strong>ContextManager</strong> 管理会话与消息历史，支持工作空间级隔离；<strong>Mono 上下文</strong>机制允许信息在指定轮次内保持，自动过期清理。</p>
+          <ul>
+            <li><strong>Mono 上下文</strong>：临时性上下文保持，按 <code>rounds</code> 过期</li>
+            <li><strong>双模式摘要</strong>：LLM 摘要 + 规则摘要（降级方案）</li>
+            <li><strong>PromptBuilder</strong>：system + hidden + memory + CXFC skill + 历史 + 用户消息</li>
+            <li><strong>HiddenPromptManager</strong>：系统级指令对用户不可见，自动追加到 system 消息</li>
+            <li><strong>标记清理</strong>：发送给 LLM 前自动去除情感/音效标记</li>
+          </ul>
         </div>
-        <div class="flow-step">
-            <div class="flow-line"><div class="flow-dot"></div><div class="flow-connector"></div></div>
-            <div class="flow-content">
-                <div class="flow-step-num">Step 2</div>
-                <h4>情感参考音频生成 (CosyVoice)</h4>
-                <p>8 种情感参考 + 56 种过渡参考 = 64 个参考音频，Instruct2 模式生成</p>
-            </div>
+        <div class="side">
+          <h4>Prompt 组装顺序</h4>
+          <div class="kv"><span class="k">1</span><span class="v">system_prompt</span></div>
+          <div class="kv"><span class="k">2</span><span class="v">hidden_prompt</span></div>
+          <div class="kv"><span class="k">3</span><span class="v">memory_context</span></div>
+          <div class="kv"><span class="k">4</span><span class="v">CXFC skill</span></div>
+          <div class="kv"><span class="k">5</span><span class="v">对话历史</span></div>
+          <div class="kv"><span class="k">6</span><span class="v">用户消息</span></div>
         </div>
-        <div class="flow-step">
-            <div class="flow-line"><div class="flow-dot"></div><div class="flow-connector"></div></div>
-            <div class="flow-content">
-                <div class="flow-step-num">Step 3</div>
-                <h4>训练数据准备 (So-VITS-SVC)</h4>
-                <p>音频切片、语音标注、特征提取，为模型训练准备数据集</p>
-            </div>
-        </div>
-        <div class="flow-step">
-            <div class="flow-line"><div class="flow-dot"></div><div class="flow-connector"></div></div>
-            <div class="flow-content">
-                <div class="flow-step-num">Step 4</div>
-                <h4>模型训练 (So-VITS-SVC + F5-TTS)</h4>
-                <p>可配置 epochs/batch_size/lr，异步训练任务，同时支持 F5-TTS 微调</p>
-            </div>
-        </div>
-        <div class="flow-step">
-            <div class="flow-line"><div class="flow-dot"></div></div>
-            <div class="flow-content">
-                <div class="flow-step-num">Step 5</div>
-                <h4>推理 (So-VITS-SVC + IndexTTS 2)</h4>
-                <p>音色转换推理，IndexTTS 2 支持 8 情感 x 5 强度 = 40 组合，按需启停节省 GPU</p>
-            </div>
-        </div>
+      </div>
     </div>
+  </div>
 </section>
 
-<div class="divider"></div>
+<!-- ============ CONTENT SAFETY ============ -->
+<section id="safety">
+  <div class="wrap">
+    <div class="section-head reveal">
+      <span class="tag">Safety & Interaction</span>
+      <h2>内容安全与交互控制</h2>
+      <p>三档防火墙、双向全双工打断、情感与音效解析引擎，保障直播与对话的安全与表现力。</p>
+    </div>
+    <div class="grid grid-3">
+      <div class="card g1 reveal d1">
+        <div class="ic">🛡️</div>
+        <h3>三档防火墙</h3>
+        <p>直播弹幕审核决策系统，规则过滤 + LLM 智能决策双层防护。</p>
+        <ul class="feat-list">
+          <li><strong>block</strong>：违规内容直接拦截</li>
+          <li><strong>passive</strong>：正常弹幕放行不回复</li>
+          <li><strong>reply</strong>：优质弹幕互动回复</li>
+          <li>LLM 不可用时默认放行，避免误伤</li>
+          <li>V3 支持 ASR 打断（main_llm / independent_llm）</li>
+        </ul>
+      </div>
+      <div class="card g2 reveal d2">
+        <div class="ic">🔄</div>
+        <h3>全双工打断系统</h3>
+        <p>双向打断能力，<code>InterruptManager</code> 单例统一管理。</p>
+        <ul class="feat-list">
+          <li><strong>用户打断 Agent</strong>：ASRInterruptModule 停止 TTS</li>
+          <li><strong>Agent 打断用户</strong>：AgentInterruptUser 智能插话</li>
+          <li>LLM 判断是否需要打断（非简单规则）</li>
+          <li>冷却时间 + 最小语音时长限制</li>
+          <li><code>voice.dual_stream</code> 双流式语音</li>
+        </ul>
+      </div>
+      <div class="card g3 reveal d3">
+        <div class="ic">💬</div>
+        <h3>情感与音效解析</h3>
+        <p>统一标记语法，多端联动驱动 TTS 与虚拟形象表情。</p>
+        <ul class="feat-list">
+          <li><code>[emotion:name]</code> 15 种情感标记</li>
+          <li><code>[effect:name]</code> 音效标记（wav/mp3/ogg/flac）</li>
+          <li>happy/sad/angry/surprised/fear/disgust/excited…</li>
+          <li>FrontendMarker + MarkerAdapter 前端适配</li>
+          <li>情感标记同时驱动 TTS 与表情</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+</section>
 
+<!-- ============ VOICE ============ -->
+<section id="voice" style="background:var(--bg-2)">
+  <div class="wrap">
+    <div class="section-head reveal">
+      <span class="tag">Voice Capabilities</span>
+      <h2>语音能力</h2>
+      <p>从识别到合成，从检测到工作站，构建完整的语音定制流水线。</p>
+    </div>
+    <div class="grid grid-2">
+      <div class="card g1 reveal d1">
+        <div class="ic">🎙️</div>
+        <h3>ASR 语音识别</h3>
+        <p><strong>双模式架构</strong>：embedded（SenseVoice 本地推理）/ remote（HTTP 远程），embedded 加载失败自动降级为 remote。<code>SenseVoiceStreamingClient</code> 支持增量流式识别，适配实时对话。</p>
+        <span class="pill">SenseVoice · 自动降级</span>
+      </div>
+      <div class="card g2 reveal d2">
+        <div class="ic">🔊</div>
+        <h3>TTS 语音合成</h3>
+        <p><strong>三模式</strong>：embedded（F5-TTS）/ remote（HTTP）/ orpheus（vLLM + SNAC）。情感语音切换、音效插入、按句分割流式合成、Triton 推理加速。</p>
+        <span class="pill">F5-TTS · Orpheus · Triton</span>
+      </div>
+      <div class="card g3 reveal d3">
+        <div class="ic">📡</div>
+        <h3>VAD 语音活动检测</h3>
+        <p><strong>三种模式</strong>：Energy（能量阈值）/ WebRTC（轻量高效，默认）/ Silero（神经网络，最准确）。高级模式不可用时自动降级，语音开始/结束事件回调驱动打断与口型同步。</p>
+        <span class="pill">Energy · WebRTC · Silero</span>
+      </div>
+      <div class="card g1 reveal d4">
+        <div class="ic">🎵</div>
+        <h3>Orpheus TTS 流式情感合成</h3>
+        <p>基于 <strong>vLLM + SNAC 解码</strong>，OpenAI 兼容 API（<code>/v1/audio/speech</code>）。客户端 → FastAPI Bridge (:5060) → vLLM → SNAC 7 层码本解码 → 24kHz WAV。首包延迟 &lt; 300ms，RTF 约 0.08-0.15。</p>
+        <p style="margin-top:.6rem"><strong>13 种音色</strong>：tara/leah/leo/dan/mia/jess/zoe/zac/river/charlotte/james/matthew…<br><strong>情感标签</strong>：<code>&lt;laugh&gt;</code> <code>&lt;sigh&gt;</code> <code>&lt;giggle&gt;</code> <code>&lt;cough&gt;</code> <code>&lt;gasp&gt;</code> 等</p>
+        <span class="pill">vLLM · SNAC · 24kHz</span>
+      </div>
+    </div>
+
+    <div class="feature reveal" style="margin-top:1.6rem">
+      <div class="head">
+        <div class="num">5</div>
+        <h3>语音工作站 · 五步工作流</h3>
+        <span class="meta">CX-O-VoiceWorkStation · :8200</span>
+      </div>
+      <div class="body">
+        <div class="desc">
+          <p>独立的语音工作站服务，提供从参考音频到最终推理的端到端语音克隆流水线，多引擎互补。</p>
+          <ul>
+            <li><strong>① VoxCPM</strong>：参考音频生成（design / controllable_clone / ultimate_clone）</li>
+            <li><strong>② CosyVoice</strong>：情感参考音频（8 情感 + 56 过渡 = 64 参考音频，Instruct2 模式）</li>
+            <li><strong>③ So-VITS-SVC 预处理</strong>：音频切片、语音标注、特征提取</li>
+            <li><strong>④ So-VITS-SVC 训练</strong>：可配置 epochs/batch_size/lr，异步训练，支持 F5-TTS 微调</li>
+            <li><strong>⑤ So-VITS-SVC 推理 + IndexTTS 2</strong>：8 情感 × 5 强度 = 40 组合</li>
+          </ul>
+          <p style="margin-top:.6rem"><strong>IndexTTS 按需启停</strong>：<code>IndexTTSManager</code> 单例，空闲超时（默认 300s）自动停止，节省 GPU 资源。</p>
+        </div>
+        <div class="side">
+          <h4>多引擎支持</h4>
+          <div class="kv"><span class="k">VoxCPM</span><span class="v">CLI 子进程</span></div>
+          <div class="kv"><span class="k">CosyVoice</span><span class="v">HTTP API</span></div>
+          <div class="kv"><span class="k">IndexTTS 2</span><span class="v">HTTP API</span></div>
+          <div class="kv"><span class="k">F5-TTS</span><span class="v">CLI 子进程</span></div>
+          <div class="kv"><span class="k">So-VITS-SVC</span><span class="v">CLI 子进程</span></div>
+          <h4 style="margin-top:1rem">情感参考</h4>
+          <div class="kv"><span class="k">情感数</span><span class="v">8</span></div>
+          <div class="kv"><span class="k">过渡数</span><span class="v">56</span></div>
+          <div class="kv"><span class="k">参考总数</span><span class="v">64</span></div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ============ AVATAR & LIVE ============ -->
 <section id="avatar">
-    <div class="section-header fade-in">
-        <div class="tag">Avatar &amp; Live</div>
-        <h2>虚拟形象与直播</h2>
-        <p>Live2D / VRM 双引擎驱动，OBS 分层输出，弹幕互动与实时字幕</p>
+  <div class="wrap">
+    <div class="section-head reveal">
+      <span class="tag">Avatar & Live</span>
+      <h2>虚拟形象与直播</h2>
+      <p>双引擎形象驱动、OBS 分层直播输出、桌面宠物系统，构建完整的虚拟主播体验。</p>
     </div>
-    <div class="cards-grid">
-        <div class="card fade-in">
-            <div class="card-icon purple">&#127912;</div>
-            <h3>Live2D 引擎</h3>
-            <p>基于 PIXI.js + pixi-live2d-display 的 2D 虚拟形象渲染</p>
-            <ul class="feature-list">
-                <li>元音权重平滑插值实现口型同步</li>
-                <li>EmotionType 到表情计时 + 权重过渡</li>
-                <li>情绪动作映射 + 说话点头</li>
-                <li>Cubism 4 模型格式</li>
-            </ul>
-            <div class="tech-tags">
-                <span class="tech-tag">PIXI.js</span>
-                <span class="tech-tag">pixi-live2d-display</span>
-                <span class="tech-tag">Live2DLipSync</span>
-            </div>
-        </div>
-        <div class="card fade-in">
-            <div class="card-icon teal">&#127912;</div>
-            <h3>VRM 引擎</h3>
-            <p>基于 Three.js + @pixiv/three-vrm 的 3D 虚拟形象渲染</p>
-            <ul class="feature-list">
-                <li>BlendShape 预设映射 (Aa/Ih/Ou/Ee/Oh)</li>
-                <li>LLM_EMOTION_MAP 到 BlendShape 表情</li>
-                <li>预设动作 + 骨骼动画</li>
-                <li>鼠标视线追踪</li>
-            </ul>
-            <div class="tech-tags">
-                <span class="tech-tag">Three.js</span>
-                <span class="tech-tag">@pixiv/three-vrm</span>
-                <span class="tech-tag">VRMLipSync</span>
-            </div>
-        </div>
-        <div class="card fade-in">
-            <div class="card-icon pink">&#127909;</div>
-            <h3>直播舞台</h3>
-            <p>整合虚拟形象、弹幕叠加、字幕显示的直播场景</p>
-            <ul class="feature-list">
-                <li>DanmakuOverlay：CSS 动画弹幕，轨道分配</li>
-                <li>SubtitleDisplay：打字机效果字幕</li>
-                <li>OBS 分层：形象/弹幕/字幕/音频独立透明层</li>
-                <li>AEC 回声消除：4 种模式</li>
-            </ul>
-            <div class="tech-tags">
-                <span class="tech-tag">LiveStage</span>
-                <span class="tech-tag">DanmakuOverlay</span>
-                <span class="tech-tag">OBS Split</span>
-            </div>
-        </div>
-    </div>
-    <div class="card fade-in" style="margin-top: 2rem; max-width: 800px; margin-left: auto; margin-right: auto;">
-        <div class="card-icon green">&#128065;</div>
-        <h3>IAvatarDriver &mdash; 统一驱动抽象层</h3>
-        <p>模型无关的驱动接口，上层代码无需关心底层是 Live2D 还是 VRM</p>
-        <div class="code-block" style="margin-top: 1rem;">
-            <code><span class="keyword">interface</span> IAvatarDriver {
-    <span class="comment">// 设置表情混合</span>
-    expressionMix(emotion: EmotionType, intensity: number): <span class="keyword">void</span>
-    <span class="comment">// 参数覆盖</span>
-    parameterOverrides(params: Record&lt;string, number&gt;): <span class="keyword">void</span>
-    <span class="comment">// 口型控制</span>
-    mouthOpen(value: number): <span class="keyword">void</span>
-    <span class="comment">// 变换控制</span>
-    transform(transform: StageTransform): <span class="keyword">void</span>
-}
 
-<span class="comment">// 工厂函数</span>
-createAvatarDriver(avatarType: <span class="string">'live2d'</span> | <span class="string">'vrm'</span>, ...): IAvatarDriver</code>
+    <div class="feature reveal">
+      <div class="head">
+        <div class="num">6</div>
+        <h3>虚拟形象驱动系统</h3>
+        <span class="meta">CX-O-Frontend/src/components/Avatar/ · Live2D/ · VRM/</span>
+      </div>
+      <div class="body">
+        <div class="desc">
+          <p>统一虚拟形象驱动系统，同时支持 <strong>Live2D</strong>（2D）与 <strong>VRM</strong>（3D）两种模型格式，通过 <code>IAvatarDriver</code> 抽象层实现模型无关驱动。</p>
+          <ul>
+            <li><strong>IAvatarDriver</strong>：expressionMix / parameterOverrides / mouthOpen / transform / watermark</li>
+            <li><strong>AvatarManifest</strong>：声明式管理，自动发现表情与参数，异步丰富 + 缓存</li>
+            <li><strong>实时口型同步</strong>：Web Audio API AnalyserNode + 元音权重平滑插值</li>
+            <li><strong>表情混合</strong>：多层表情叠加，平滑权重过渡</li>
+            <li><strong>VRM 风场效果</strong>：VRMWindField 风力驱动骨骼摆动</li>
+            <li><strong>鼠标视线追踪</strong>：VRM 模型支持鼠标位置追踪</li>
+          </ul>
         </div>
+        <div class="side">
+          <h4>双引擎对比</h4>
+          <div class="kv"><span class="k">Live2D 引擎</span><span class="v">PIXI.js</span></div>
+          <div class="kv"><span class="k">VRM 引擎</span><span class="v">Three.js</span></div>
+          <div class="kv"><span class="k">Live2D 格式</span><span class="v">.model.json</span></div>
+          <div class="kv"><span class="k">VRM 格式</span><span class="v">.vrm</span></div>
+          <div class="kv"><span class="k">口型同步</span><span class="v">元音权重</span></div>
+          <div class="kv"><span class="k">表情控制</span><span class="v">BlendShape</span></div>
+        </div>
+      </div>
     </div>
+
+    <div class="grid grid-2">
+      <div class="card g2 reveal d1">
+        <div class="ic">📺</div>
+        <h3>直播舞台 & OBS 分层</h3>
+        <p><code>LiveStage</code> 整合虚拟形象 + 弹幕叠加 + 字幕显示，为 OBS 提供分层透明背景浏览器源输出。</p>
+        <ul class="feat-list">
+          <li>虚拟形象层 1920×1080 透明背景</li>
+          <li>弹幕层：滚动/顶部/底部，轨道分配算法</li>
+          <li>字幕层：打字机效果（requestAnimationFrame）</li>
+          <li>音频控制层：AEC 回声消除多模式</li>
+          <li>WebSocket TTS 同步播放</li>
+        </ul>
+      </div>
+      <div class="card g3 reveal d2">
+        <div class="ic">🐾</div>
+        <h3>桌面宠物系统</h3>
+        <p>Electron BrowserWindow 独立窗口，始终置顶，复用 Live2D/VRM 引擎，迷你聊天 + 音频控制。</p>
+        <ul class="feat-list">
+          <li><strong>鼠标穿透</strong>：usePetMousePassthrough Hook</li>
+          <li>几何椭圆检测（快速判断）</li>
+          <li>像素 Alpha 检测（精确透明像素）</li>
+          <li>组合策略：椭圆内再像素检测</li>
+          <li>WebSocket 实时对话</li>
+        </ul>
+      </div>
+    </div>
+  </div>
 </section>
 
-<div class="divider"></div>
-
-<section id="protocols">
-    <div class="section-header fade-in">
-        <div class="tag">Protocols</div>
-        <h2>多智能体与扩展协议</h2>
-        <p>ACP 多智能体协作、CXFC 插件联邦、MCP 工具协议与插件系统</p>
+<!-- ============ EXTEND ============ -->
+<section id="extend" style="background:var(--bg-2)">
+  <div class="wrap">
+    <div class="section-head reveal">
+      <span class="tag">Multi-Agent & Extension</span>
+      <h2>多智能体与扩展</h2>
+      <p>ACP 协议、CXFC 插件联邦、插件系统与工具注册，构建开放的智能体生态。</p>
     </div>
-    <div class="cards-grid">
-        <div class="card fade-in">
-            <div class="card-icon blue">&#128279;</div>
-            <h3>ACP 多智能体协作</h3>
-            <p>UDP 广播局域网自动发现、Agent 注册、群组通信</p>
-            <ul class="feature-list">
-                <li>局域网自动发现其他 Agent</li>
-                <li>能力声明与匹配</li>
-                <li>群组广播消息</li>
-                <li>YAML 持久化</li>
-            </ul>
-            <div class="tech-tags">
-                <span class="tech-tag">ACPManager</span>
-                <span class="tech-tag">ACPLanDiscovery</span>
-                <span class="tech-tag">UDP Broadcast</span>
-            </div>
-        </div>
-        <div class="card fade-in">
-            <div class="card-icon purple">&#128268;</div>
-            <h3>CXFC 插件联邦</h3>
-            <p>统一插件接入协议，自动发现、心跳检测、Skill 注册与匹配</p>
-            <ul class="feature-list">
-                <li>插件暴露 /health /tools /skills API</li>
-                <li>心跳检测，断线自动标记</li>
-                <li>关键词 + 事件双重触发</li>
-                <li>工具自动注册到 ToolRegistry</li>
-            </ul>
-            <div class="tech-tags">
-                <span class="tech-tag">CXFCManager</span>
-                <span class="tech-tag">SkillRegistry</span>
-                <span class="tech-tag">PluginDiscovery</span>
-            </div>
-        </div>
-        <div class="card fade-in">
-            <div class="card-icon green">&#128295;</div>
-            <h3>工具注册与调用</h3>
-            <p>统一工具注册表，内置/MCP/CXFC/自定义工具统一管理，OpenAI 格式兼容</p>
-            <ul class="feature-list">
-                <li>内置工具：calculator、datetime、random 等</li>
-                <li>主模型工具：write_memory、set_alarm、mono 等</li>
-                <li>56 个图数据库工具</li>
-                <li>MCP 协议外部工具接入</li>
-            </ul>
-            <div class="tech-tags">
-                <span class="tech-tag">ToolRegistry</span>
-                <span class="tech-tag">MCPManager</span>
-                <span class="tech-tag">OpenAI Format</span>
-            </div>
-        </div>
-        <div class="card fade-in">
-            <div class="card-icon orange">&#128736;</div>
-            <h3>插件系统</h3>
-            <p>完整生命周期管理，系统 API 注入，6 种钩子类型</p>
-            <ul class="feature-list">
-                <li>系统 API 注入：记忆、上下文、LLM、工具、WebSocket</li>
-                <li>6 种钩子：on_message / on_response / on_memory_write / on_tool_call / on_startup / on_shutdown</li>
-                <li>异步任务追踪，防止资源泄漏</li>
-            </ul>
-            <div class="tech-tags">
-                <span class="tech-tag">PluginManager</span>
-                <span class="tech-tag">PluginContext</span>
-                <span class="tech-tag">Hook System</span>
-            </div>
-        </div>
+    <div class="grid grid-2">
+      <div class="card g1 reveal d1">
+        <div class="ic">🤝</div>
+        <h3>ACP 多智能体协作协议</h3>
+        <p><code>server/core/acp/</code> — UDP 广播局域网自动发现、Agent 注册、群组管理、点对点通信。</p>
+        <ul class="feat-list">
+          <li>ACPLanDiscovery：UDP 广播自动发现局域网 Agent</li>
+          <li>能力声明：Agent 声明 capabilities，支持能力匹配</li>
+          <li>群组通信：创建群组、群组广播消息</li>
+          <li>YAML 持久化：agents / connections / groups</li>
+        </ul>
+      </div>
+      <div class="card g2 reveal d2">
+        <div class="ic">🔌</div>
+        <h3>CXFC 插件联邦协议</h3>
+        <p><code>server/core/cxfc/</code> — 插件自动发现、心跳检测、Skill 注册与模板渲染。</p>
+        <ul class="feat-list">
+          <li>插件暴露 /health /tools /skills HTTP API</li>
+          <li>心跳检测循环，断线自动标记 DISCONNECTED</li>
+          <li>SkillRegistry：关键词匹配 + 事件触发</li>
+          <li>插件工具自动注册到 ToolRegistry</li>
+        </ul>
+      </div>
+      <div class="card g3 reveal d3">
+        <div class="ic">🧩</div>
+        <h3>插件系统</h3>
+        <p><code>server/core/plugins/</code> — 完整生命周期管理，系统 API 注入。</p>
+        <ul class="feat-list">
+          <li>PluginContext 注入：memory / context / llm / tools / ws</li>
+          <li>6 种 Hook：on_message / on_response / on_memory_write / on_tool_call / on_startup / on_shutdown</li>
+          <li>异步任务追踪，防止资源泄漏</li>
+          <li>发现 → 加载 → 启用 → 禁用 → 卸载</li>
+        </ul>
+      </div>
+      <div class="card g1 reveal d4">
+        <div class="ic">🔧</div>
+        <h3>工具注册与调用系统</h3>
+        <p><code>server/core/tools/</code> — <code>ToolRegistry</code> 单例，统一注册表，OpenAI Function 格式兼容。</p>
+        <ul class="feat-list">
+          <li>内置工具：calculator / datetime / random / json_format</li>
+          <li>主模型工具：write_long_term_memory / set_alarm / mono / call_assistant</li>
+          <li>56 个图工具 + 摘要工具 + 助手工具</li>
+          <li>MCPManager：连接外部 MCP 服务器</li>
+          <li>调用统计：次数 + 最后调用时间</li>
+        </ul>
+      </div>
     </div>
+  </div>
 </section>
 
-<div class="divider"></div>
-
-<section id="websocket">
-    <div class="section-header fade-in">
-        <div class="tag">Real-time</div>
-        <h2>WebSocket 实时通信</h2>
-        <p>频道订阅/发布模型，支持点对点、广播、频道广播和离线回调</p>
+<!-- ============ INFRASTRUCTURE ============ -->
+<section id="infra">
+  <div class="wrap">
+    <div class="section-head reveal">
+      <span class="tag">Infrastructure</span>
+      <h2>基础设施</h2>
+      <p>WebSocket 实时通信、闹钟定时提醒、会话持久化，支撑系统稳定运行。</p>
     </div>
-    <div class="cards-grid" style="grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));">
-        <div class="card fade-in">
-            <div class="card-icon teal">&#128225;</div>
-            <h3>连接端点</h3>
-            <ul class="feature-list">
-                <li>/api/ws &mdash; 通用连接</li>
-                <li>/api/ws/{agent_id} &mdash; Agent 连接</li>
-                <li>/api/ws/chat &mdash; 聊天专用</li>
-                <li>/api/ws/live &mdash; 直播专用</li>
-            </ul>
-        </div>
-        <div class="card fade-in">
-            <div class="card-icon purple">&#128232;</div>
-            <h3>通信模式</h3>
-            <ul class="feature-list">
-                <li>点对点：send_to_client()</li>
-                <li>广播：broadcast()</li>
-                <li>频道广播：broadcast_to_channel()</li>
-                <li>外部事件广播</li>
-            </ul>
-        </div>
-        <div class="card fade-in">
-            <div class="card-icon pink">&#128260;</div>
-            <h3>连接生命周期</h3>
-            <ul class="feature-list">
-                <li>连接建立 - 分配 client_id</li>
-                <li>活跃通信 - 更新 last_activity</li>
-                <li>超时检测 - 30 分钟无活动</li>
-                <li>离线保存 - 上下文到长期记忆</li>
-            </ul>
-        </div>
+    <div class="grid grid-3">
+      <div class="card g1 reveal d1">
+        <div class="ic">📡</div>
+        <h3>WebSocket 实时通信网关</h3>
+        <p><code>WebSocketManager</code> 连接管理，频道订阅/发布模型，支持点对点、广播、频道广播、外部事件广播。Action Handler 路由：chat.* / memory.* / tools.* / voice.* / asr.* / tts.* / acp.* / mcp.* 等。离线回调保存上下文到长期记忆，30 分钟无活动自动断开。</p>
+      </div>
+      <div class="card g2 reveal d2">
+        <div class="ic">⏰</div>
+        <h3>闹钟/定时提醒系统</h3>
+        <p><code>AlarmManager</code> 基于 SQLite 持久化 + <code>threading.Timer</code> 精确触发。重启后自动恢复待触发闹钟，过期闹钟立即触发。状态机：pending → triggered / cancelled。shutdown 时取消所有定时器，防止回调异常。</p>
+      </div>
+      <div class="card g3 reveal d3">
+        <div class="ic">💾</div>
+        <h3>会话持久化存储</h3>
+        <p><code>SessionStore</code> SQLite 持久化会话与消息，通过 <code>workspace_id</code> 实现工作空间级隔离。<code>cleanup.py</code> 提供过期自动清理，支持配置过期时间与清理间隔。提供会话与消息统计查询。</p>
+      </div>
     </div>
-    <h3 style="text-align: center; margin: 2.5rem 0 1rem; font-size: 1.1rem;" class="fade-in">Action 处理器映射</h3>
-    <div style="overflow-x: auto;" class="fade-in">
-        <table class="data-table">
-            <thead><tr><th>Action 域</th><th>示例</th><th>Handler</th></tr></thead>
-            <tbody>
-                <tr><td><code>chat.*</code></td><td>chat.message, chat.stream</td><td>chat</td></tr>
-                <tr><td><code>memory.*</code></td><td>memory.list, memory.create, memory.search</td><td>memory</td></tr>
-                <tr><td><code>tools.*</code></td><td>tools.list, tools.call</td><td>tools</td></tr>
-                <tr><td><code>plugin.*</code></td><td>plugin.register, plugin.heartbeat</td><td>plugin</td></tr>
-                <tr><td><code>acp.*</code></td><td>acp.connect, acp.disconnect</td><td>acp</td></tr>
-                <tr><td><code>mcp.*</code></td><td>mcp.connect, mcp.call</td><td>mcp</td></tr>
-                <tr><td><code>asr.*</code></td><td>asr.recognize, asr.stream</td><td>audio</td></tr>
-                <tr><td><code>tts.*</code></td><td>tts.synthesize, tts.synthesize_stream</td><td>audio</td></tr>
-                <tr><td><code>config.*</code></td><td>config.get</td><td>config</td></tr>
-                <tr><td><code>system.*</code></td><td>system.health</td><td>system</td></tr>
-                <tr><td><code>danmaku.*</code></td><td>danmaku.list</td><td>danmaku</td></tr>
-            </tbody>
-        </table>
-    </div>
+  </div>
 </section>
 
-<div class="divider"></div>
-
-<section id="techstack">
-    <div class="section-header fade-in">
-        <div class="tag">Tech Stack</div>
-        <h2>技术栈</h2>
-        <p>前后端完整技术选型</p>
+<!-- ============ TECH STACK ============ -->
+<section id="stack" style="background:var(--bg-2)">
+  <div class="wrap">
+    <div class="section-head reveal">
+      <span class="tag">Tech Stack</span>
+      <h2>技术栈</h2>
+      <p>前后端分离，AI 服务深度集成，多向量数据库可选，多 LLM 后端兼容。</p>
     </div>
-    <div class="tech-grid">
-        <div class="tech-group fade-in">
-            <h4>&#127912; 前端框架</h4>
-            <div class="tech-items">
-                <span class="tech-item">React 18</span><span class="tech-item">TypeScript</span><span class="tech-item">Vite</span>
-                <span class="tech-item">Tailwind CSS</span><span class="tech-item">Framer Motion</span><span class="tech-item">Zustand</span>
-                <span class="tech-item">React Router v6</span><span class="tech-item">i18next</span>
-            </div>
+    <div class="tech-grid reveal">
+      <div class="tech-card">
+        <h4>后端框架</h4>
+        <div class="chips">
+          <span class="chip hl">Python 3.10+</span>
+          <span class="chip hl">FastAPI</span>
+          <span class="chip">Uvicorn</span>
+          <span class="chip">WebSocket</span>
+          <span class="chip">Pydantic</span>
         </div>
-        <div class="tech-group fade-in">
-            <h4>&#127912; 虚拟形象</h4>
-            <div class="tech-items">
-                <span class="tech-item">PIXI.js</span><span class="tech-item">pixi-live2d-display</span><span class="tech-item">Three.js</span>
-                <span class="tech-item">@pixiv/three-vrm</span><span class="tech-item">Web Audio API</span>
-            </div>
+      </div>
+      <div class="tech-card">
+        <h4>AI 语音服务</h4>
+        <div class="chips">
+          <span class="chip hl">SenseVoice ASR</span>
+          <span class="chip hl">F5-TTS</span>
+          <span class="chip hl">Orpheus TTS</span>
+          <span class="chip">CosyVoice</span>
+          <span class="chip">So-VITS-SVC</span>
+          <span class="chip">VoxCPM</span>
+          <span class="chip">IndexTTS 2</span>
         </div>
-        <div class="tech-group fade-in">
-            <h4>&#9881; 后端框架</h4>
-            <div class="tech-items">
-                <span class="tech-item">Python 3.11+</span><span class="tech-item">FastAPI</span><span class="tech-item">Uvicorn</span>
-                <span class="tech-item">WebSocket</span><span class="tech-item">Pydantic</span>
-            </div>
+      </div>
+      <div class="tech-card">
+        <h4>LLM 推理</h4>
+        <div class="chips">
+          <span class="chip hl">Ollama</span>
+          <span class="chip hl">vLLM</span>
+          <span class="chip">qwen3-vl:8b</span>
+          <span class="chip">Triton</span>
         </div>
-        <div class="tech-group fade-in">
-            <h4>&#129302; LLM 推理</h4>
-            <div class="tech-items">
-                <span class="tech-item">Ollama</span><span class="tech-item">vLLM</span><span class="tech-item">OpenAI API</span>
-                <span class="tech-item">Anthropic</span><span class="tech-item">DeepSeek</span><span class="tech-item">TensorRT-LLM</span>
-            </div>
+      </div>
+      <div class="tech-card">
+        <h4>数据库 / 向量</h4>
+        <div class="chips">
+          <span class="chip hl">SQLite</span>
+          <span class="chip hl">Weaviate</span>
+          <span class="chip">Milvus Lite</span>
+          <span class="chip">ChromaDB</span>
         </div>
-        <div class="tech-group fade-in">
-            <h4>&#127908; 语音引擎</h4>
-            <div class="tech-items">
-                <span class="tech-item">SenseVoice (ASR)</span><span class="tech-item">F5-TTS (TTS)</span><span class="tech-item">CosyVoice (TTS)</span>
-                <span class="tech-item">IndexTTS 2 (TTS)</span><span class="tech-item">So-VITS-SVC (VC)</span><span class="tech-item">VoxCPM (TTS)</span>
-                <span class="tech-item">Orpheus (TTS)</span>
-            </div>
+      </div>
+      <div class="tech-card">
+        <h4>前端框架</h4>
+        <div class="chips">
+          <span class="chip hl">React 18</span>
+          <span class="chip hl">TypeScript</span>
+          <span class="chip hl">Vite 6</span>
+          <span class="chip hl">Electron 42</span>
+          <span class="chip">Tailwind CSS</span>
+          <span class="chip">Framer Motion</span>
         </div>
-        <div class="tech-group fade-in">
-            <h4>&#128451; 数据库</h4>
-            <div class="tech-items">
-                <span class="tech-item">SQLite</span><span class="tech-item">Weaviate</span><span class="tech-item">ChromaDB</span><span class="tech-item">Milvus Lite</span>
-            </div>
+      </div>
+      <div class="tech-card">
+        <h4>虚拟形象</h4>
+        <div class="chips">
+          <span class="chip hl">PIXI.js 8</span>
+          <span class="chip hl">pixi-live2d-display</span>
+          <span class="chip hl">Three.js</span>
+          <span class="chip hl">@pixiv/three-vrm</span>
         </div>
-        <div class="tech-group fade-in">
-            <h4>&#128279; 协议</h4>
-            <div class="tech-items">
-                <span class="tech-item">MCP</span><span class="tech-item">ACP</span><span class="tech-item">CXFC</span>
-                <span class="tech-item">WebSocket</span><span class="tech-item">REST API</span><span class="tech-item">SSE</span>
-            </div>
+      </div>
+      <div class="tech-card">
+        <h4>状态 / 数据 / 路由</h4>
+        <div class="chips">
+          <span class="chip hl">Zustand</span>
+          <span class="chip hl">@tanstack/react-query</span>
+          <span class="chip">React Router v6</span>
+          <span class="chip">i18next</span>
+          <span class="chip">Recharts</span>
+          <span class="chip">react-force-graph</span>
         </div>
-        <div class="tech-group fade-in">
-            <h4>&#128230; 部署</h4>
-            <div class="tech-items">
-                <span class="tech-item">Docker</span><span class="tech-item">Docker Compose</span><span class="tech-item">Electron</span>
-                <span class="tech-item">Nginx</span><span class="tech-item">Triton IS</span>
-            </div>
+      </div>
+      <div class="tech-card">
+        <h4>协议 / 扩展</h4>
+        <div class="chips">
+          <span class="chip hl">MCP</span>
+          <span class="chip hl">ACP</span>
+          <span class="chip hl">CXFC</span>
+          <span class="chip">OpenAI Function Calling</span>
         </div>
+      </div>
     </div>
+  </div>
 </section>
 
-<div class="divider"></div>
-
+<!-- ============ API & PORTS ============ -->
 <section id="ports">
-    <div class="section-header fade-in">
-        <div class="tag">Network</div>
-        <h2>服务端口</h2>
-        <p>各服务默认端口映射</p>
+  <div class="wrap">
+    <div class="section-head reveal">
+      <span class="tag">Services & Ports</span>
+      <h2>服务端口与 API</h2>
+      <p>18 个 REST 路由模块，WebSocket 双端点（/ws 通用、/ws/live 直播），完整覆盖对话、记忆、图谱、Agent、工具、ACP、CXFC。</p>
     </div>
-    <div class="port-grid fade-in">
-        <div class="port-card"><div class="port-num">8000</div><div class="port-name">CX-O-SERVER</div><div class="port-proto">WebSocket / HTTP</div></div>
-        <div class="port-card"><div class="port-num">5173</div><div class="port-name">CX-O-Frontend</div><div class="port-proto">HTTP (Vite Dev)</div></div>
-        <div class="port-card"><div class="port-num">8200</div><div class="port-name">VoiceWorkStation</div><div class="port-proto">HTTP</div></div>
-        <div class="port-card"><div class="port-num">11434</div><div class="port-name">Ollama</div><div class="port-proto">HTTP</div></div>
-        <div class="port-card"><div class="port-num">8090</div><div class="port-name">Weaviate REST</div><div class="port-proto">HTTP</div></div>
-        <div class="port-card"><div class="port-num">50061</div><div class="port-name">Weaviate gRPC</div><div class="port-proto">gRPC</div></div>
-        <div class="port-card"><div class="port-num">5000</div><div class="port-name">F5-TTS</div><div class="port-proto">HTTP</div></div>
-        <div class="port-card"><div class="port-num">50000</div><div class="port-name">CosyVoice</div><div class="port-proto">HTTP</div></div>
-        <div class="port-card"><div class="port-num">8001</div><div class="port-name">ASR Remote</div><div class="port-proto">HTTP</div></div>
-        <div class="port-card"><div class="port-num">8004</div><div class="port-name">IndexTTS</div><div class="port-proto">HTTP</div></div>
-        <div class="port-card"><div class="port-num">9998-9999</div><div class="port-name">ACP Discovery</div><div class="port-proto">UDP</div></div>
-        <div class="port-card"><div class="port-num">9996-9997</div><div class="port-name">CXFC Discovery</div><div class="port-proto">UDP</div></div>
+    <table class="port-table reveal">
+      <thead><tr><th>服务</th><th>端口</th><th>协议</th><th>说明</th></tr></thead>
+      <tbody>
+        <tr><td>CX-O-SERVER</td><td class="pnum">8000</td><td>WebSocket / HTTP</td><td>单体应用，集成所有功能</td></tr>
+        <tr><td>CX-O-Frontend</td><td class="pnum">5173</td><td>HTTP</td><td>Web 前端 / Electron 桌面应用</td></tr>
+        <tr><td>CX-O-Gateway</td><td class="pnum">8100</td><td>HTTP</td><td>轻量网关（可选独立部署）</td></tr>
+        <tr><td>VoiceWorkStation</td><td class="pnum">8200</td><td>HTTP</td><td>语音工作站（可选）</td></tr>
+        <tr><td>Weaviate</td><td class="pnum">8090</td><td>HTTP / gRPC</td><td>向量数据库（可选）</td></tr>
+        <tr><td>Orpheus TTS</td><td class="pnum">5060</td><td>HTTP</td><td>流式情感语音合成（可选）</td></tr>
+        <tr><td>vLLM</td><td class="pnum">8080</td><td>HTTP</td><td>LLM 推理加速（可选）</td></tr>
+      </tbody>
+    </table>
+
+    <div class="grid grid-3" style="margin-top:1.6rem">
+      <div class="card">
+        <h3 style="font-size:1rem;margin-bottom:.6rem">主要 REST 端点</h3>
+        <div class="code-block" style="font-size:.74rem">POST /api/chat
+POST /api/chat/stream
+GET/POST /api/memories
+POST /api/memories/hybrid-search
+GET/POST /api/agents
+GET/POST /api/graph/nodes
+GET/POST /api/tools
+POST /api/acp/discover</div>
+      </div>
+      <div class="card">
+        <h3 style="font-size:1rem;margin-bottom:.6rem">WebSocket 端点</h3>
+        <div class="code-block" style="font-size:.74rem">ws://localhost:8000/api/ws/{agent_id}
+ws://localhost:8000/api/ws/live
+
+消息格式:
+{ "action": "...", "data": {...} }
+{ "type": "...", "data": {...} }</div>
+      </div>
+      <div class="card">
+        <h3 style="font-size:1rem;margin-bottom:.6rem">18 个路由模块</h3>
+        <p style="font-size:.82rem;color:var(--text-2)">chat · config · memory · memory_chat · context · tools · acp · service · agents · graph · archive · audio · avatars · backup · admin · stats · vector · websocket</p>
+      </div>
     </div>
+  </div>
 </section>
 
-<div class="divider"></div>
-
-<section id="quickstart">
-    <div class="section-header fade-in">
-        <div class="tag">Quick Start</div>
-        <h2>快速开始</h2>
-        <p>最小化部署仅需 Python 3.11+、Node.js 18+ 和 Ollama</p>
+<!-- ============ QUICK START ============ -->
+<section id="start" style="background:var(--bg-2)">
+  <div class="wrap">
+    <div class="section-head reveal">
+      <span class="tag">Quick Start</span>
+      <h2>快速开始</h2>
+      <p>Windows 一键启动或手动启动前后端，访问 Web 界面与 API 文档。</p>
     </div>
-    <div class="card fade-in" style="max-width: 800px; margin: 0 auto;">
-        <h3 style="margin-bottom: 1rem;">Windows 一键启动</h3>
-        <div class="code-block">
-            <code><span class="comment"># 一键启动所有服务</span>
-<span class="command">start-all.bat</span></code>
-        </div>
-        <h3 style="margin: 1.5rem 0 1rem;">手动启动</h3>
-        <div class="code-block">
-            <code><span class="comment"># 1. 启动后端服务</span>
-<span class="keyword">cd</span> CX-O-SERVER
-<span class="keyword">set</span> PYTHONPATH=%CD%\..
-<span class="command">python</span> -m server.main
-
-<span class="comment"># 2. 新终端：启动前端</span>
-<span class="keyword">cd</span> CX-O-Frontend
-<span class="command">npm</span> install
-<span class="command">npm</span> run dev</code>
-        </div>
-        <h3 style="margin: 1.5rem 0 1rem;">访问界面</h3>
-        <ul class="feature-list">
-            <li>前端界面：http://127.0.0.1:5173</li>
-            <li>API 文档：http://127.0.0.1:8000/docs</li>
-            <li>健康检查：http://127.0.0.1:8000/health</li>
+    <div class="qs reveal">
+      <div class="qs-card">
+        <h4><span class="step">1</span>环境要求</h4>
+        <ul style="color:var(--text-2);font-size:.88rem;padding-left:1.2rem;line-height:2">
+          <li>Windows 10/11 或 Linux</li>
+          <li>Python 3.10+</li>
+          <li>Node.js 18+</li>
+          <li>CUDA 11.8+（GPU 支持）</li>
+          <li>Miniconda3</li>
         </ul>
-        <h3 style="margin: 1.5rem 0 1rem;">环境要求</h3>
-        <ul class="feature-list">
-            <li>Windows 10/11 或 Linux</li>
-            <li>Python 3.11+</li>
-            <li>Node.js 18+</li>
-            <li>CUDA 11.8+ (GPU 支持，可选)</li>
-            <li>Ollama + 模型 (如 qwen3:latest)</li>
-        </ul>
+      </div>
+      <div class="qs-card">
+        <h4><span class="step">2</span>Windows 一键启动</h4>
+        <div class="code-block">.\start-all.bat</div>
+      </div>
+      <div class="qs-card">
+        <h4><span class="step">3</span>手动启动后端</h4>
+        <div class="code-block">cd CX-O-SERVER
+python server/main.py</div>
+      </div>
+      <div class="qs-card">
+        <h4><span class="step">4</span>手动启动前端</h4>
+        <div class="code-block">cd CX-O-Frontend
+npm install
+npm run dev</div>
+      </div>
     </div>
+
+    <div class="grid grid-3" style="margin-top:1.6rem">
+      <div class="card" style="text-align:center">
+        <h3 style="font-size:1rem">前端界面</h3>
+        <p style="font-family:'JetBrains Mono','Consolas',monospace;color:var(--accent);margin-top:.5rem">http://127.0.0.1:5173</p>
+      </div>
+      <div class="card" style="text-align:center">
+        <h3 style="font-size:1rem">API 文档</h3>
+        <p style="font-family:'JetBrains Mono','Consolas',monospace;color:var(--accent);margin-top:.5rem">http://127.0.0.1:8000/docs</p>
+      </div>
+      <div class="card" style="text-align:center">
+        <h3 style="font-size:1rem">健康检查</h3>
+        <p style="font-family:'JetBrains Mono','Consolas',monospace;color:var(--accent);margin-top:.5rem">http://127.0.0.1:8000/health</p>
+      </div>
+    </div>
+
+    <div class="note" style="margin-top:1.6rem">
+      <strong>开发命令：</strong> 前端 <span class="kbd">npm run dev</span> · <span class="kbd">npm run build</span> · <span class="kbd">npm run test</span> · <span class="kbd">npm run lint</span> · <span class="kbd">npm run package:win</span>（Electron 打包）　|　后端 <span class="kbd">pip install -e .</span> · <span class="kbd">python server/main.py</span>　|　代码规范：Python (Black/isort/mypy) · TypeScript (ESLint/Prettier) · Conventional Commits
+    </div>
+  </div>
 </section>
 
+<!-- ============ FOOTER ============ -->
 <footer>
-    <p>CX-O 智能语音对话系统 &mdash; MIT License</p>
-    <p style="margin-top: 0.5rem;">如有问题或建议，请通过 GitHub Issues 联系</p>
+  <div class="grad-name">CX-O</div>
+  <p style="margin-top:.5rem">智能语音对话与虚拟主播一体化平台 · MIT License</p>
+  <p style="margin-top:.3rem;font-size:.8rem">单体架构 · 全双工语音 · 认知记忆 · 知识图谱 · 双引擎形象 · 多智能体协作</p>
 </footer>
 
 <script>
-    var observer = new IntersectionObserver(function(entries) {
-        entries.forEach(function(entry) {
-            if (entry.isIntersecting) {
-                entry.target.classList.add('visible');
-            }
-        });
-    }, { threshold: 0.1, rootMargin: '0px 0px -50px 0px' });
-    document.querySelectorAll('.fade-in').forEach(function(el) { observer.observe(el); });
+(function(){
+  'use strict';
+  var prefersReduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+  // ---------- 滚动入场 ----------
+  var revealEls = document.querySelectorAll('.reveal');
+  if (prefersReduced || !('IntersectionObserver' in window)) {
+    revealEls.forEach(function(el){ el.classList.add('in'); });
+  } else {
+    var io = new IntersectionObserver(function(entries){
+      entries.forEach(function(e){
+        if (e.isIntersecting) {
+          e.target.classList.add('in');
+          io.unobserve(e.target);
+        }
+      });
+    }, { threshold: 0.12, rootMargin: '0px 0px -8% 0px' });
+    revealEls.forEach(function(el){ io.observe(el); });
+  }
+
+  // ---------- 导航栏滚动增强 ----------
+  var nav = document.querySelector('nav');
+  function onScroll(){
+    if (!nav) return;
+    if (window.scrollY > 40) nav.classList.add('scrolled');
+    else nav.classList.remove('scrolled');
+  }
+  window.addEventListener('scroll', onScroll, { passive: true });
+  onScroll();
+
+  // ---------- Hero 数字计数 ----------
+  var statNums = document.querySelectorAll('.hero .stat .num');
+  statNums.forEach(function(el){
+    var target = parseInt(el.textContent, 10);
+    if (isNaN(target) || prefersReduced) return;
+    el.textContent = '0';
+    var started = false;
+    var obs = new IntersectionObserver(function(entries){
+      entries.forEach(function(e){
+        if (e.isIntersecting && !started) {
+          started = true;
+          var dur = 1400, start = performance.now();
+          function tick(now){
+            var p = Math.min((now - start) / dur, 1);
+            var eased = 1 - Math.pow(1 - p, 3);
+            el.textContent = Math.round(target * eased).toString();
+            if (p < 1) requestAnimationFrame(tick);
+          }
+          requestAnimationFrame(tick);
+          obs.disconnect();
+        }
+      });
+    }, { threshold: 0.5 });
+    obs.observe(el);
+  });
+
+  // ---------- 平滑锚点滚动 ----------
+  document.querySelectorAll('a[href^="#"]').forEach(function(a){
+    a.addEventListener('click', function(ev){
+      var id = a.getAttribute('href');
+      if (id.length < 2) return;
+      var target = document.querySelector(id);
+      if (!target) return;
+      ev.preventDefault();
+      target.scrollIntoView({ behavior: prefersReduced ? 'auto' : 'smooth', block: 'start' });
+    });
+  });
+})();
 </script>
 
 </body>

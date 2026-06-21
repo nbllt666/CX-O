@@ -8,18 +8,21 @@ Orpheus TTS FastAPI Bridge
 
 核心流程:
     1. 接收 /v1/audio/speech 请求（OpenAI 兼容格式）
-    2. 构造 Orpheus prompt（voice + text + emotion tags）
+    2. 使用 tokenizer 格式化 prompt（添加 start/end 特殊 token）
     3. 调用 vLLM /v1/completions 生成 SNAC tokens（skip_special_tokens=False）
     4. 解析 <custom_token_N> 并通过 SNAC 解码器转为 24kHz PCM
     5. 返回完整 WAV 或流式 WAV（首包延迟 < 300ms）
 
 环境变量:
-    VLLM_BASE_URL          vLLM 后端地址（默认 http://orpheus-vllm:8000）
-    VLLM_MODEL             模型名称（默认 canopylabs/orpheus-multilingual-research-release）
+    VLLM_BASE_URL          vLLM 后端地址（默认 http://127.0.0.1:8000）
+    VLLM_MODEL             模型名称（默认 /workspace/models）
+    SNAC_MODEL_PATH        SNAC 解码器本地路径（默认 /workspace/snac）
     SNAC_DEVICE            SNAC 解码器设备（cpu/cuda，默认 cpu）
     ORPHEUS_TEMPERATURE    采样温度（默认 0.6）
-    ORPHEUS_TOP_P          Top-P 采样（默认 0.95）
-    ORPHEUS_MAX_TOKENS     最大生成 token 数（默认 8192）
+    ORPHEUS_TOP_P          Top-P 采样（默认 0.8）
+    ORPHEUS_MAX_TOKENS     最大生成 token 数（默认 1200）
+    ORPHEUS_REP_PENALTY    重复惩罚（默认 1.3）
+    TOKENIZER_PATH         tokenizer 路径（默认 /workspace/models）
 """
 from __future__ import annotations
 
@@ -45,10 +48,11 @@ from pydantic import BaseModel, Field
 # ============================================================
 
 # vLLM 后端地址与模型
-VLLM_BASE_URL: str = os.environ.get("VLLM_BASE_URL", "http://orpheus-vllm:8000")
-VLLM_MODEL: str = os.environ.get(
-    "VLLM_MODEL", "canopylabs/orpheus-multilingual-research-release"
-)
+VLLM_BASE_URL: str = os.environ.get("VLLM_BASE_URL", "http://127.0.0.1:8000")
+VLLM_MODEL: str = os.environ.get("VLLM_MODEL", "/workspace/models")
+
+# Tokenizer 路径（与模型同目录）
+TOKENIZER_PATH: str = os.environ.get("TOKENIZER_PATH", "/workspace/models")
 
 # 音频参数（Orpheus 固定输出 24kHz 单声道）
 SAMPLE_RATE: int = 24000
@@ -63,10 +67,16 @@ SNAC_CODES_PER_FRAME: int = 7
 # 流式解码批量大小（帧数），5 帧 = 100ms 音频，平衡延迟与效率
 STREAM_BATCH_FRAMES: int = 5
 
-# Orpheus 生成参数
+# Orpheus 生成参数（与官方 orpheus-speech 一致）
 ORPHEUS_TEMPERATURE: float = float(os.environ.get("ORPHEUS_TEMPERATURE", "0.6"))
-ORPHEUS_TOP_P: float = float(os.environ.get("ORPHEUS_TOP_P", "0.95"))
-ORPHEUS_MAX_TOKENS: int = int(os.environ.get("ORPHEUS_MAX_TOKENS", "8192"))
+ORPHEUS_TOP_P: float = float(os.environ.get("ORPHEUS_TOP_P", "0.8"))
+ORPHEUS_MAX_TOKENS: int = int(os.environ.get("ORPHEUS_MAX_TOKENS", "1200"))
+ORPHEUS_REP_PENALTY: float = float(os.environ.get("ORPHEUS_REP_PENALTY", "1.3"))
+ORPHEUS_STOP_TOKEN_IDS: list[int] = [128258, 49158]
+
+# Orpheus prompt 格式化特殊 token ID
+ORPHEUS_START_TOKEN_ID: int = 128259
+ORPHEUS_END_TOKEN_IDS: list[int] = [128009, 128260, 128261, 128257]
 
 # SNAC 解码器设备（cpu 避免 GPU 争抢；cuda 延迟更低）
 SNAC_DEVICE: str = os.environ.get("SNAC_DEVICE", "cpu")
@@ -90,6 +100,65 @@ logger = logging.getLogger("orpheus_tts")
 
 
 # ============================================================
+# Orpheus Prompt 格式化器 — 使用 tokenizer 添加特殊 token
+# ============================================================
+
+class OrpheusPromptFormatter:
+    """
+    Orpheus TTS prompt 格式化器。
+
+    3B 模型需要特定的 token 序列才能生成 SNAC 音频 token：
+    - Start Token: ID 128259（前置）
+    - End Tokens: IDs [128009, 128260, 128261, 128257]（后置）
+
+    格式化流程（与官方 orpheus-speech 一致）：
+    1. 拼接 voice 前缀: "{voice}: {text}"
+    2. 使用 tokenizer 编码为 token IDs
+    3. 前置 128259，后置 [128009, 128260, 128261, 128257]
+    4. 解码回字符串，作为 completions API 的 prompt
+    """
+
+    def __init__(self, tokenizer_path: str) -> None:
+        from transformers import AutoTokenizer
+        import torch
+
+        self._torch = torch
+        logger.info(f"正在加载 tokenizer: {tokenizer_path}")
+        self._tokenizer = AutoTokenizer.from_pretrained(tokenizer_path)
+        logger.info(f"Tokenizer 加载完成，词表大小: {self._tokenizer.vocab_size}")
+
+    def format_prompt(self, text: str, voice: str = "tara") -> str:
+        """
+        格式化 Orpheus TTS prompt。
+
+        参数:
+            text: 要合成的文本（可包含情感标签如 <laugh>）
+            voice: 语音名称
+
+        返回:
+            格式化后的 prompt 字符串，包含特殊 token
+        """
+        # 拼接 voice 前缀
+        adapted_prompt = f"{voice}: {text}"
+
+        # 使用 tokenizer 编码
+        prompt_tokens = self._tokenizer(adapted_prompt, return_tensors="pt")
+
+        # 构造特殊 token 张量
+        start_token = self._torch.tensor([[ORPHEUS_START_TOKEN_ID]], dtype=self._torch.int64)
+        end_tokens = self._torch.tensor([ORPHEUS_END_TOKEN_IDS], dtype=self._torch.int64)
+
+        # 拼接: [start] + [prompt_tokens] + [end_tokens]
+        all_input_ids = self._torch.cat(
+            [start_token, prompt_tokens.input_ids, end_tokens], dim=1
+        )
+
+        # 解码回字符串
+        prompt_string = self._tokenizer.decode(all_input_ids[0])
+        return prompt_string
+
+
+# ============================================================
 # SNAC Token 解析器 — 从 vLLM 输出文本中提取 <custom_token_N>
 # ============================================================
 
@@ -100,27 +169,41 @@ class SnacTokenParser:
     vLLM 在 skip_special_tokens=False 时输出形如 <custom_token_42> 的特殊 token，
     本解析器从文本流中提取这些 token ID，供 SNAC 解码器使用。
 
+    关键: Orpheus 的 SNAC 码映射公式为:
+        code = token_id - 10 - ((index % 7) * 4096)
+    其中 index 是 token 在序列中的位置（0-based）。
+    不同位置的 token 映射到不同的 SNAC codebook 层级。
+
     支持流式输入：可跨 SSE chunk 缓冲不完整的 token 文本。
     """
 
     def __init__(self) -> None:
         self._buffer: str = ""
         self._pattern: re.Pattern[str] = re.compile(r"<custom_token_(\d+)>")
+        self._index: int = 0  # 全局 token 计数器
 
     def feed(self, text: str) -> list[int]:
         """
-        输入一段文本，返回其中包含的完整 custom token ID 列表。
+        输入一段文本，返回其中包含的 SNAC 码列表。
+
+        每个匹配的 <custom_token_N> 会根据其在序列中的位置应用偏移公式:
+            code = N - 10 - ((index % 7) * 4096)
 
         不完整的 token（如被 SSE chunk 截断的 <custom_tok）会保留在内部缓冲区，
         等待后续 feed 补全后一并返回。
         """
         self._buffer += text
-        token_ids: list[int] = []
+        codes: list[int] = []
 
         # 逐个匹配完整的 <custom_token_N> 模式
         pos = 0
         for match in self._pattern.finditer(self._buffer):
-            token_ids.append(int(match.group(1)))
+            token_id = int(match.group(1))
+            # 应用 Orpheus SNAC 码映射公式
+            code = token_id - SNAC_TOKEN_OFFSET - ((self._index % SNAC_CODES_PER_FRAME) * 4096)
+            if 0 <= code <= 4096:
+                codes.append(code)
+            self._index += 1
             pos = match.end()
 
         # 保留最后一个匹配之后的内容（可能是不完整 token 的前缀）
@@ -133,7 +216,7 @@ class SnacTokenParser:
         else:
             self._buffer = ""
 
-        return token_ids
+        return codes
 
 
 # ============================================================
@@ -154,13 +237,25 @@ class SnacDecoder:
         self._torch: Any = None
 
     def load(self) -> None:
-        """加载 SNAC 模型（从 HuggingFace 下载 hubertsiuzdak/snac_24khz）"""
+        """加载 SNAC 模型（优先从本地路径，否则从 HuggingFace 下载）"""
         import torch
         from snac import SNAC
 
         self._torch = torch
+        # 优先从本地路径加载（容器内 /workspace/snac 或宿主机挂载）
+        local_snac_path = os.environ.get("SNAC_MODEL_PATH", "/workspace/snac")
         logger.info(f"正在加载 SNAC 解码器（设备: {self._device}）...")
-        self._model = SNAC.from_pretrained("hubertsiuzdak/snac_24khz").to(self._device)
+        try:
+            if os.path.isdir(local_snac_path) and os.listdir(local_snac_path):
+                logger.info(f"从本地路径加载 SNAC: {local_snac_path}")
+                self._model = SNAC.from_pretrained(local_snac_path).to(self._device)
+            else:
+                logger.info("从 HuggingFace 下载 SNAC: hubertsiuzdak/snac_24khz")
+                self._model = SNAC.from_pretrained("hubertsiuzdak/snac_24khz").to(self._device)
+        except Exception as e:
+            logger.error(f"SNAC 解码器加载失败: {e}")
+            logger.warning("服务将以降级模式运行（无 SNAC 解码），TTS 请求将返回 503")
+            return
         self._model.eval()
         logger.info("SNAC 解码器加载完成")
 
@@ -168,26 +263,26 @@ class SnacDecoder:
     def is_ready(self) -> bool:
         return self._model is not None
 
-    def decode_tokens(self, token_ids: list[int]) -> np.ndarray:
+    def decode_tokens(self, codes: list[int]) -> np.ndarray:
         """
-        将 Orpheus custom token ID 列表解码为音频波形。
+        将 Orpheus SNAC 码列表解码为音频波形。
 
         参数:
-            token_ids: Orpheus 生成的 <custom_token_N> 中的 N 值列表
+            codes: 已应用偏移公式的 SNAC 码列表（范围 0-4096）
 
         返回:
             float32 numpy 数组，范围 [-1, 1]，采样率 24000Hz
 
         说明:
-            - 减去偏移量 10 得到 SNAC 码
-            - 每 7 个码为一帧，不足一帧的尾部丢弃（< 20ms，可忽略）
-            - SNAC decode 期望输入形状 (batch, n_q, frames) = (1, 7, n_frames)
+            - 每 7 个码为一帧
+            - SNAC 24kHz 使用 3 层码本，需将 7 个码重组为 3 个张量:
+              - codes_0: 位置 0（每帧 1 个码，粗粒度）
+              - codes_1: 位置 1, 4（每帧 2 个码，中粒度）
+              - codes_2: 位置 2, 3, 5, 6（每帧 4 个码，细粒度）
         """
-        if not token_ids or self._model is None:
+        if not codes or self._model is None:
             return np.array([], dtype=np.float32)
 
-        # 减去偏移量，过滤无效码
-        codes = [t - SNAC_TOKEN_OFFSET for t in token_ids if t >= SNAC_TOKEN_OFFSET]
         n_frames = len(codes) // SNAC_CODES_PER_FRAME
         if n_frames == 0:
             return np.array([], dtype=np.float32)
@@ -196,14 +291,26 @@ class SnacDecoder:
         codes = codes[: n_frames * SNAC_CODES_PER_FRAME]
 
         torch = self._torch
-        # 构造张量: (n_frames * 7,) → (n_frames, 7) → (7, n_frames) → (1, 7, n_frames)
-        codes_tensor = torch.tensor(codes, dtype=torch.long, device=self._device)
+
+        # 重组为 (n_frames, 7) 矩阵
+        codes_tensor = torch.tensor(codes, dtype=torch.int32, device=self._device)
         codes_tensor = codes_tensor.reshape(n_frames, SNAC_CODES_PER_FRAME)
-        codes_tensor = codes_tensor.T  # (7, n_frames)
-        codes_tensor = codes_tensor.unsqueeze(0)  # (1, 7, n_frames)
+
+        # 按位置分离为 3 层码本
+        # codes_0: 位置 0 → shape (1, n_frames)
+        codes_0 = codes_tensor[:, 0].unsqueeze(0)
+        # codes_1: 位置 1, 4 → 交错排列 → shape (1, 2*n_frames)
+        codes_1 = torch.stack((codes_tensor[:, 1], codes_tensor[:, 4])).t().flatten().unsqueeze(0)
+        # codes_2: 位置 2, 3, 5, 6 → 交错排列 → shape (1, 4*n_frames)
+        codes_2 = (
+            torch.stack((codes_tensor[:, 2], codes_tensor[:, 3], codes_tensor[:, 5], codes_tensor[:, 6]))
+            .t()
+            .flatten()
+            .unsqueeze(0)
+        )
 
         with torch.no_grad():
-            audio = self._model.decode(codes_tensor)
+            audio = self._model.decode([codes_0, codes_1, codes_2])
 
         # (1, 1, samples) → (samples,)
         audio_np = audio.squeeze().cpu().numpy().astype(np.float32)
@@ -287,6 +394,9 @@ class VLLMClient:
 
     关键: 必须设置 skip_special_tokens=False，否则 <custom_token_N> 会被
     vLLM 当作特殊 token 过滤掉，导致无法获取 SNAC 码。
+
+    使用 completions API（非 chat completions），因为 Orpheus prompt 已包含
+    特殊 token 格式化，不需要 chat template 处理。
     """
 
     def __init__(self, base_url: str, model: str) -> None:
@@ -320,10 +430,11 @@ class VLLMClient:
             "max_tokens": ORPHEUS_MAX_TOKENS,
             "temperature": ORPHEUS_TEMPERATURE,
             "top_p": ORPHEUS_TOP_P,
+            "repetition_penalty": ORPHEUS_REP_PENALTY,
+            "stop_token_ids": ORPHEUS_STOP_TOKEN_IDS,
             "stream": stream,
             # 关键: 保留特殊 token，否则 custom_token 会被过滤
             "skip_special_tokens": False,
-            "stop": ["<|endoftext|>"],
         }
 
     async def complete(self, prompt: str) -> str:
@@ -403,14 +514,19 @@ class VLLMClient:
     async def health_check(self) -> bool:
         """检查 vLLM 后端是否就绪"""
         if not self._client:
-            return False
+            # 客户端未初始化，尝试重新创建
+            await self.start()
         try:
             resp = await self._client.get(
                 f"{self._base_url}/health",
-                timeout=httpx.Timeout(connect=5.0, read=5.0),
+                timeout=httpx.Timeout(5.0),
             )
+            logger.debug(f"vLLM health check: status={resp.status_code}")
             return resp.status_code == 200
-        except Exception:
+        except Exception as e:
+            logger.debug(f"vLLM health check failed: {e}, recreating client")
+            # 连接失败时重建客户端，避免连接池缓存失败状态
+            await self.start()
             return False
 
 
@@ -420,22 +536,22 @@ class VLLMClient:
 
 def build_orpheus_prompt(text: str, voice: str) -> str:
     """
-    构造 Orpheus TTS prompt。
+    构造 Orpheus TTS prompt（使用 tokenizer 格式化）。
 
-    Orpheus 期望输入格式: "{voice}: {text}"
-    支持情感标签: <laugh>、</laugh>、<giggle>、<sigh> 等（原样传递给模型）
+    使用 OrpheusPromptFormatter 添加特殊 token（128259 start,
+    [128009, 128260, 128261, 128257] end），使模型生成 SNAC 音频 token。
 
-    若 input 已包含 voice 前缀（如 "tara: 你好"），则直接使用，避免重复。
+    若 input 已包含 voice 前缀（如 "tara: 你好"），则去除重复前缀。
     """
     text = text.strip()
     voice = voice.strip().lower()
 
-    # 检查是否已包含 voice 前缀
+    # 检查是否已包含 voice 前缀，避免重复
     prefix = f"{voice}:"
     if text.lower().startswith(prefix):
-        return text
+        text = text[len(prefix):].strip()
 
-    return f"{voice}: {text}"
+    return prompt_formatter.format_prompt(text, voice)
 
 
 # ============================================================
@@ -451,6 +567,7 @@ app = FastAPI(
 # 全局实例
 snac_decoder = SnacDecoder(device=SNAC_DEVICE)
 vllm_client = VLLMClient(base_url=VLLM_BASE_URL, model=VLLM_MODEL)
+prompt_formatter: OrpheusPromptFormatter = None  # type: ignore[assignment]
 
 
 # ---- 请求/响应模型 ----
@@ -476,17 +593,29 @@ class HealthResponse(BaseModel):
 
 @app.on_event("startup")
 async def startup() -> None:
-    """应用启动: 加载 SNAC 解码器 + 初始化 vLLM 客户端"""
+    """应用启动: 加载 tokenizer + SNAC 解码器 + 初始化 vLLM 客户端"""
+    global prompt_formatter
+
     logger.info("=" * 60)
     logger.info("  Orpheus TTS Bridge 启动中")
     logger.info(f"  vLLM 后端: {VLLM_BASE_URL}")
     logger.info(f"  模型:      {VLLM_MODEL}")
+    logger.info(f"  Tokenizer: {TOKENIZER_PATH}")
     logger.info(f"  SNAC 设备: {SNAC_DEVICE}")
     logger.info(f"  监听端口:  5060")
     logger.info("=" * 60)
 
     # 初始化 vLLM HTTP 客户端
     await vllm_client.start()
+
+    # 加载 Orpheus prompt 格式化器（需要 tokenizer）
+    try:
+        prompt_formatter = await asyncio.to_thread(
+            OrpheusPromptFormatter, TOKENIZER_PATH
+        )
+    except Exception as e:
+        logger.error(f"Prompt 格式化器加载失败: {e}")
+        logger.warning("TTS 请求将无法正常工作")
 
     # 异步加载 SNAC 解码器（在线程池中执行，避免阻塞事件循环）
     try:
@@ -620,19 +749,19 @@ async def _handle_sync_speech(prompt: str) -> Response:
     vllm_time = time.time() - start_time
     logger.info(f"vLLM 生成完成: {len(text)} 字符, 耗时 {vllm_time:.3f}s")
 
-    # 2. 解析 SNAC tokens
+    # 2. 解析 SNAC tokens（parser 已应用偏移公式，返回 SNAC 码）
     parser = SnacTokenParser()
-    token_ids = parser.feed(text)
-    logger.info(f"解析到 {len(token_ids)} 个 SNAC tokens")
+    snac_codes = parser.feed(text)
+    logger.info(f"解析到 {len(snac_codes)} 个 SNAC 码（{len(snac_codes) // SNAC_CODES_PER_FRAME} 帧）")
 
-    if not token_ids:
+    if not snac_codes:
         raise HTTPException(
             status_code=500,
             detail="vLLM 未生成有效的 SNAC tokens，请检查模型配置",
         )
 
     # 3. SNAC 解码为音频（在线程池中执行，避免阻塞事件循环）
-    pcm = await asyncio.to_thread(snac_decoder.decode_tokens, token_ids)
+    pcm = await asyncio.to_thread(snac_decoder.decode_tokens, snac_codes)
     decode_time = time.time() - start_time - vllm_time
     logger.info(
         f"SNAC 解码完成: {len(pcm)} 样本 ({len(pcm) / SAMPLE_RATE:.2f}s 音频), "
@@ -680,21 +809,21 @@ async def _handle_streaming_speech(prompt: str) -> StreamingResponse:
 
         # 2. 流式接收 vLLM 输出
         parser = SnacTokenParser()
-        token_buffer: list[int] = []
+        code_buffer: list[int] = []
         batch_size = STREAM_BATCH_FRAMES * SNAC_CODES_PER_FRAME  # 35 tokens = 100ms
-        total_tokens = 0
+        total_codes = 0
 
         async for text in vllm_client.stream_complete(prompt):
-            tokens = parser.feed(text)
-            if not tokens:
+            codes = parser.feed(text)
+            if not codes:
                 continue
-            token_buffer.extend(tokens)
-            total_tokens += len(tokens)
+            code_buffer.extend(codes)
+            total_codes += len(codes)
 
             # 3. 累积足够帧数后解码并返回
-            while len(token_buffer) >= batch_size:
-                batch = token_buffer[:batch_size]
-                token_buffer = token_buffer[batch_size:]
+            while len(code_buffer) >= batch_size:
+                batch = code_buffer[:batch_size]
+                code_buffer = code_buffer[batch_size:]
 
                 pcm = await asyncio.to_thread(
                     snac_decoder.decode_tokens, batch
@@ -710,11 +839,11 @@ async def _handle_streaming_speech(prompt: str) -> StreamingResponse:
                         first_chunk_sent = True
                     yield pcm_bytes
 
-        # 4. 解码剩余 tokens（不足一个 batch 的尾部）
-        if token_buffer:
-            n_frames = len(token_buffer) // SNAC_CODES_PER_FRAME
+        # 4. 解码剩余 codes（不足一个 batch 的尾部）
+        if code_buffer:
+            n_frames = len(code_buffer) // SNAC_CODES_PER_FRAME
             if n_frames > 0:
-                batch = token_buffer[: n_frames * SNAC_CODES_PER_FRAME]
+                batch = code_buffer[: n_frames * SNAC_CODES_PER_FRAME]
                 pcm = await asyncio.to_thread(
                     snac_decoder.decode_tokens, batch
                 )
@@ -723,11 +852,9 @@ async def _handle_streaming_speech(prompt: str) -> StreamingResponse:
                     yield pcm_bytes
 
         total_time = time.time() - start_time
-        audio_duration = total_tokens * SNAC_CODES_PER_FRAME / (
-            SNAC_CODES_PER_FRAME * SAMPLE_RATE / SNAC_CODES_PER_FRAME
-        )
+        audio_duration = total_codes / SNAC_CODES_PER_FRAME * 480 / SAMPLE_RATE
         logger.info(
-            f"流式 TTS 完成: {total_tokens} tokens, "
+            f"流式 TTS 完成: {total_codes} SNAC 码, "
             f"总耗时 {total_time:.3f}s"
         )
 
