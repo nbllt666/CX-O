@@ -203,6 +203,12 @@ async def lifespan(app: FastAPI):
 
     assistant_tools_registered = await init_service("记忆管理模型工具", _register_assistant, logger_=lifespan_logger) is not None
 
+    def _register_task_tools():
+        from server.core.tools import register_task_tools
+        register_task_tools()
+
+    await init_service("任务辅助工具", _register_task_tools, logger_=lifespan_logger)
+
     from server.core.tools import tool_registry
     tools_stats = tool_registry.get_tool_stats()
     lifespan_logger.info(
@@ -216,10 +222,25 @@ async def lifespan(app: FastAPI):
 
     if services.memory_manager and services.llm_client and settings.config.memory.vector_enabled:
         async def _init_vector_search():
+            from server.core.memory import EmbeddingFactory
+
+            embedding_provider = getattr(settings.config.memory, "embedding_provider", "ollama")
+            if embedding_provider == "vllm":
+                embedding_model = EmbeddingFactory.create(
+                    provider="vllm",
+                    model=settings.config.memory.embedding_model,
+                    api_base=settings.config.memory.embedding_api_base,
+                    api_key=settings.config.memory.embedding_api_key or "",
+                    dimension=settings.config.memory.weaviate.vector_size,
+                )
+                lifespan_logger.info(f"使用 vLLM 嵌入模型: {settings.config.memory.embedding_model}")
+            else:
+                embedding_model = services.llm_client
+
             vector_backend = settings.config.memory.vector_backend
             if vector_backend == "weaviate":
                 services.memory_manager.enable_vector_search(
-                    embedding_model=services.llm_client,
+                    embedding_model=embedding_model,
                     vector_backend="weaviate",
                     weaviate_host=settings.config.memory.weaviate.host,
                     weaviate_port=settings.config.memory.weaviate.port,
@@ -228,7 +249,7 @@ async def lifespan(app: FastAPI):
                 )
             elif vector_backend == "weaviate_embedded":
                 services.memory_manager.enable_vector_search(
-                    embedding_model=services.llm_client,
+                    embedding_model=embedding_model,
                     vector_backend="weaviate_embedded",
                     vector_size=settings.config.memory.weaviate.vector_size,
                 )
@@ -328,6 +349,18 @@ async def lifespan(app: FastAPI):
             return processor
 
         services.decay_batch_processor = await init_service("批量衰减处理器", _init_decay_batch, logger_=lifespan_logger)
+
+    async def _init_task_services():
+        from server.core.tasks import get_task_manager, TaskScheduler
+
+        task_manager = get_task_manager()
+        scheduler = TaskScheduler(task_manager, interval_seconds=60)
+        await scheduler.start()
+        services.task_scheduler = scheduler
+        lifespan_logger.info("任务调度服务已启动 (间隔 60s)")
+        return scheduler
+
+    services.task_scheduler = await init_service("任务调度服务", _init_task_services, logger_=lifespan_logger)
 
     async def _init_cxfc():
         from server.core.cxfc.manager import CXFCManager
@@ -500,6 +533,9 @@ async def lifespan(app: FastAPI):
 
     if services.decay_batch_processor:
         await shutdown_service("批量衰减处理器", services.decay_batch_processor.stop, logger_=lifespan_logger)
+
+    if hasattr(services, 'task_scheduler') and services.task_scheduler:
+        await shutdown_service("任务调度服务", services.task_scheduler.stop, logger_=lifespan_logger)
 
     if services.acp_manager:
         await shutdown_service("ACP管理器", services.acp_manager.stop, logger_=lifespan_logger)

@@ -20,6 +20,7 @@ from .assistant_tools import set_dependencies as set_assistant_dependencies
 from .assistant_tools import (
     update_memory_node,
 )
+from .task_tools import register_task_tools
 from .builtin import register_builtin_tools
 from .master_tools import (
     acp_connect,
@@ -143,6 +144,7 @@ __all__ = [
     "set_summary_dependencies",
     # Assistant tools
     "register_assistant_tools",
+    "register_task_tools",
     "update_memory_node",
     "search_memories",
     "delete_memory",

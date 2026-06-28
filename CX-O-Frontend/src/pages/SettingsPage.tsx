@@ -350,6 +350,10 @@ export function SettingsPage() {
     weaviatePort: 8090,
     qdrantHost: 'localhost',
     qdrantPort: 6333,
+    embeddingProvider: 'ollama',
+    embeddingModel: 'nomic-embed-text',
+    embeddingApiBase: '',
+    embeddingApiKey: '',
   });
 
   const [modelsConfig, setModelsConfig] = useState({
@@ -732,6 +736,10 @@ export function SettingsPage() {
           weaviatePort: (vec.port as number) ?? (vec.weaviate_port as number) ?? 8090,
           qdrantHost: (vec.qdrant_host as string) ?? 'localhost',
           qdrantPort: (vec.qdrant_port as number) ?? 6333,
+          embeddingProvider: (vec.embedding_provider as string) ?? 'ollama',
+          embeddingModel: (vec.embedding_model as string) ?? 'nomic-embed-text',
+          embeddingApiBase: (vec.embedding_api_base as string) ?? '',
+          embeddingApiKey: (vec.embedding_api_key as string) ?? '',
         });
       }
       if (cfg.models && typeof cfg.models === 'object') {
@@ -830,7 +838,16 @@ export function SettingsPage() {
           });
           break;
         case 'vector':
-          await api.updateConfig('vector', vectorConfig);
+          await api.updateConfig('vector', {
+            backend: vectorConfig.backend,
+            vector_size: vectorConfig.vectorSize,
+            weaviate_host: vectorConfig.weaviateHost,
+            weaviate_port: vectorConfig.weaviatePort,
+            embedding_provider: vectorConfig.embeddingProvider,
+            embedding_model: vectorConfig.embeddingModel,
+            embedding_api_base: vectorConfig.embeddingApiBase,
+            embedding_api_key: vectorConfig.embeddingApiKey,
+          });
           break;
         case 'graph':
           await api.updateConfig('graph', graphConfig);
@@ -1179,6 +1196,100 @@ export function SettingsPage() {
                       <div className="p-3 bg-[var(--color-bg-tertiary)] rounded-[var(--radius-md)] text-sm text-[var(--color-text-secondary)]">
                         Weaviate Embedded 模式将使用内置向量引擎，无需配置主机和端口。
                       </div>
+                    )}
+                  </div>
+                  <div className="flex justify-end mt-6">
+                    <Button
+                      onClick={handleSave}
+                      loading={saveStatus === 'saving'}
+                      disabled={!isBackendRunning}
+                    >
+                      {saveStatus === 'saved' ? '已保存' : '保存配置'}
+                    </Button>
+                  </div>
+                </CardBody>
+              </Card>
+              <Card>
+                <CardBody>
+                  <h3 className="text-lg font-semibold mb-4">嵌入模型配置</h3>
+                  <p className="text-sm text-[var(--color-text-secondary)] mb-4">
+                    选择用于生成向量的嵌入模型提供方
+                  </p>
+                  <div className="space-y-4">
+                    <div>
+                      <label className="text-sm font-medium mb-2 block">嵌入提供方</label>
+                      <select
+                        value={vectorConfig.embeddingProvider}
+                        onChange={(e) =>
+                          setVectorConfig({ ...vectorConfig, embeddingProvider: e.target.value })
+                        }
+                        className="w-full px-3 py-2 bg-[var(--color-bg-primary)] border border-[var(--color-border)] rounded-[var(--radius-md)]"
+                      >
+                        <option value="ollama">Ollama</option>
+                        <option value="sentence-transformers">Sentence Transformers</option>
+                        <option value="vllm">vLLM (OpenAI 兼容)</option>
+                      </select>
+                      <p className="text-xs text-[var(--color-text-tertiary)] mt-1">
+                        vLLM 通过 /v1/embeddings 接口提供嵌入；Ollama 与 Sentence Transformers 走默认 LLM 客户端。
+                      </p>
+                    </div>
+                    <div>
+                      <label className="text-sm font-medium mb-2 block">嵌入模型名称</label>
+                      <input
+                        type="text"
+                        value={vectorConfig.embeddingModel}
+                        onChange={(e) =>
+                          setVectorConfig({ ...vectorConfig, embeddingModel: e.target.value })
+                        }
+                        className="w-full px-3 py-2 bg-[var(--color-bg-primary)] border border-[var(--color-border)] rounded-[var(--radius-md)]"
+                        placeholder="nomic-embed-text / bge-m3 / ..."
+                      />
+                    </div>
+                    {vectorConfig.embeddingProvider === 'vllm' && (
+                      <>
+                        <div>
+                          <label className="text-sm font-medium mb-2 block">嵌入维度</label>
+                          <input
+                            type="number"
+                            value={vectorConfig.vectorSize}
+                            onChange={(e) =>
+                              setVectorConfig({
+                                ...vectorConfig,
+                                vectorSize: parseInt(e.target.value) || 768,
+                              })
+                            }
+                            className="w-full px-3 py-2 bg-[var(--color-bg-primary)] border border-[var(--color-border)] rounded-[var(--radius-md)]"
+                            placeholder="1024"
+                          />
+                          <p className="text-xs text-[var(--color-text-tertiary)] mt-1">
+                            与上方「向量维度」共用，需与 vLLM 嵌入模型实际输出维度一致。
+                          </p>
+                        </div>
+                        <div>
+                          <label className="text-sm font-medium mb-2 block">vLLM API Base</label>
+                          <input
+                            type="text"
+                            value={vectorConfig.embeddingApiBase}
+                            onChange={(e) =>
+                              setVectorConfig({ ...vectorConfig, embeddingApiBase: e.target.value })
+                            }
+                            className="w-full px-3 py-2 bg-[var(--color-bg-primary)] border border-[var(--color-border)] rounded-[var(--radius-md)]"
+                            placeholder="http://localhost:8000"
+                          />
+                        </div>
+                        <div>
+                          <label className="text-sm font-medium mb-2 block">vLLM API Key (可选)</label>
+                          <input
+                            type="password"
+                            value={vectorConfig.embeddingApiKey}
+                            onChange={(e) =>
+                              setVectorConfig({ ...vectorConfig, embeddingApiKey: e.target.value })
+                            }
+                            className="w-full px-3 py-2 bg-[var(--color-bg-primary)] border border-[var(--color-border)] rounded-[var(--radius-md)]"
+                            placeholder="sk-..."
+                          />
+                        </div>
+                      </>
                     )}
                   </div>
                   <div className="flex justify-end mt-6">

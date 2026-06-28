@@ -1,32 +1,20 @@
 # ============================================================
 # Orpheus TTS FastAPI Bridge Dockerfile
-# 轻量级镜像：Python 3.11 + CUDA + SNAC 解码器
+# 复用 vllm/vllm-openai 镜像（已含 Python + PyTorch + CUDA）
 # ============================================================
 
-FROM nvidia/cuda:12.4.1-runtime-ubuntu22.04
-
-# 避免 tzdata 交互提示
-ENV DEBIAN_FRONTEND=noninteractive
-
-# 安装系统依赖 + Python 3.11
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    curl \
-    software-properties-common \
-    && add-apt-repository ppa:deadsnakes/ppa \
-    && apt-get update && apt-get install -y --no-install-recommends \
-    python3.11 \
-    python3.11-venv \
-    python3.11-dev \
-    python3-pip \
-    && rm -rf /var/lib/apt/lists/* \
-    && update-alternatives --install /usr/bin/python3 python3 /usr/bin/python3.11 1 \
-    && update-alternatives --install /usr/bin/python python /usr/bin/python3.11 1
+FROM vllm/vllm-openai:latest
 
 WORKDIR /app
 
-# 安装 Python 依赖（先复制 requirements.txt 利用 Docker 缓存层）
-COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+# 安装额外依赖（FastAPI + httpx + snac；PyTorch 已在基础镜像中）
+RUN pip install --no-cache-dir \
+    fastapi>=0.110.0 \
+    uvicorn[standard]>=0.29.0 \
+    pydantic>=2.6.0 \
+    httpx>=0.27.0 \
+    snac>=1.2.0 \
+    numpy>=1.24.0
 
 # 复制应用代码
 COPY api_server.py .

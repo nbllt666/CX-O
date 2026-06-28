@@ -1,0 +1,22 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.egg-info/
+.pytest_cache/
+
+# C++ 编译产物（token_router pybind11 模块）
+scheduler/*.so
+scheduler/*.pyd
+scheduler/build/
+
+# Docker
+.docker/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+
+# 诊断脚本（临时）
+diag_docker.py

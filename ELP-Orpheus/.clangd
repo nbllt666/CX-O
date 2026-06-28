@@ -1,0 +1,8 @@
+CompileFlags:
+  Add:
+    - -IC:\Program Files (x86)\Microsoft Visual Studio\18\BuildTools\VC\Tools\MSVC\14.50.35717\include
+    - -IC:\Users\NBLLT666\AppData\Roaming\Python\Python314\site-packages\pybind11\include
+    - -IC:\Python314\Include
+    - -std=c++17
+    - -nocudainc
+    - -nocudalib

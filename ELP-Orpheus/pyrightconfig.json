@@ -1,0 +1,17 @@
+{
+  "include": [
+    "audio_head",
+    "ft_engine",
+    "ipc",
+    "kernels",
+    "profiler",
+    "scheduler",
+    "scripts",
+    "snac_decoder",
+    "tests"
+  ],
+  "pythonVersion": "3.11",
+  "typeCheckingMode": "basic",
+  "reportMissingImports": false,
+  "reportMissingModuleSource": false
+}

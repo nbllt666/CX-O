@@ -44,6 +44,10 @@ def get_env_config() -> Dict[str, Any]:
         "CXO_LLM_API_KEY": ["llm", "api_key"],
         "CXO_DATABASE_PATH": ["database", "path"],
         "CXO_MEMORY_VECTOR_BACKEND": ["memory", "vector_backend"],
+        "CXO_MEMORY_EMBEDDING_PROVIDER": ["memory", "embedding_provider"],
+        "CXO_MEMORY_EMBEDDING_MODEL": ["memory", "embedding_model"],
+        "CXO_MEMORY_EMBEDDING_API_BASE": ["memory", "embedding_api_base"],
+        "CXO_MEMORY_EMBEDDING_API_KEY": ["memory", "embedding_api_key"],
         "CXO_ASR_URL": ["services", "asr", "url"],
         "CXO_TTS_URL": ["services", "tts", "url"],
         "CXO_INDEX_TTS_URL": ["services", "index_tts", "url"],
@@ -239,6 +243,10 @@ class MemoryConfig(BaseModel):
     vector_enabled: bool = True
     vector_backend: str = "weaviate"
     weaviate: WeaviateConfig = Field(default_factory=WeaviateConfig)
+    embedding_provider: str = "ollama"
+    embedding_model: str = "nomic-embed-text"
+    embedding_api_base: str = ""
+    embedding_api_key: Optional[str] = None
     archive_enabled: bool = True
     dedup_threshold: float = 0.85
     archive_compression_enabled: bool = True

@@ -117,6 +117,70 @@ class SentenceTransformersEmbedding(EmbeddingModel):
         return f"sentence-transformers/{self._model_name}"
 
 
+class VLLMEmbedding(EmbeddingModel):
+    def __init__(self, model: str = "bge-m3", api_base: str = "http://localhost:8000", api_key: str = "", dimension: int = 1024):
+        self.model = model
+        self.api_base = api_base.rstrip("/")
+        self.api_key = api_key
+        self._dimension = dimension
+
+    def _get_client(self):
+        import httpx
+        headers = {}
+        if self.api_key:
+            headers["Authorization"] = f"Bearer {self.api_key}"
+        return httpx.AsyncClient(timeout=60.0, headers=headers)
+
+    async def get_embedding(self, text: str) -> List[float]:
+        try:
+            async with self._get_client() as client:
+                response = await client.post(
+                    f"{self.api_base}/v1/embeddings",
+                    json={"model": self.model, "input": text},
+                )
+                if response.status_code == 200:
+                    result = response.json()
+                    data = result.get("data", [])
+                    if data and "embedding" in data[0]:
+                        return data[0]["embedding"]
+                    return []
+                else:
+                    logger.error(f"vLLM 嵌入失败: {response.status_code} {response.text}")
+                    return []
+        except Exception as e:
+            logger.error(f"获取 vLLM 嵌入失败: {e}")
+            return []
+
+    async def get_embeddings(self, texts: List[str]) -> List[List[float]]:
+        # batch request: send all texts in one request, map by index
+        try:
+            async with self._get_client() as client:
+                response = await client.post(
+                    f"{self.api_base}/v1/embeddings",
+                    json={"model": self.model, "input": texts},
+                )
+                if response.status_code == 200:
+                    result = response.json()
+                    data = result.get("data", [])
+                    # data is a list of {"index": i, "embedding": [...]}; sort by index
+                    data_sorted = sorted(data, key=lambda x: x.get("index", 0))
+                    return [d.get("embedding", []) for d in data_sorted]
+                else:
+                    logger.error(f"vLLM 批量嵌入失败: {response.status_code}")
+                    return [[0.0] * self._dimension for _ in texts]
+        except Exception as e:
+            logger.error(f"获取 vLLM 批量嵌入失败: {e}")
+            return [[0.0] * self._dimension for _ in texts]
+
+    @property
+    def dimension(self) -> int:
+        return self._dimension
+
+    @property
+    def name(self) -> str:
+        return f"vllm/{self.model}"
+
+
 class EmbeddingFactory:
     _models: dict = {}
     _lock = threading.Lock()
@@ -133,6 +197,8 @@ class EmbeddingFactory:
                 model = OllamaEmbedding(**kwargs)
             elif provider == "sentence-transformers":
                 model = SentenceTransformersEmbedding(**kwargs)
+            elif provider == "vllm":
+                model = VLLMEmbedding(**kwargs)
             else:
                 raise ValueError(f"不支持的嵌入模型: {provider}")
 
@@ -150,4 +216,4 @@ class EmbeddingFactory:
 
     @classmethod
     def list_available_providers(cls) -> List[str]:
-        return ["ollama", "sentence-transformers"]
+        return ["ollama", "sentence-transformers", "vllm"]

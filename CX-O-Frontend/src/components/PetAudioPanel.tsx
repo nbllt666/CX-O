@@ -1,23 +1,16 @@
-import { useState, useRef, useCallback, useEffect } from 'react';
+import { useState, useCallback } from 'react';
 import { useLiveWebSocket } from '../hooks/useLiveWebSocket';
 import type { TTSSyncData, TTSTickData } from '../hooks/useLiveWebSocket';
 import { useAudioAnalyzer } from '../hooks/useAudioAnalyzer';
+import { useMicrophone } from '../hooks/useMicrophone';
 
 interface PetAudioPanelProps {
   onMouthOpenYChange: (value: number) => void;
 }
 
 export function PetAudioPanel({ onMouthOpenYChange }: PetAudioPanelProps) {
-  const [micEnabled, setMicEnabled] = useState(false);
-  const [currentLevel, setCurrentLevel] = useState(0);
   const [ttsAudioElement, setTtsAudioElement] = useState<HTMLAudioElement | null>(null);
   const [isTTSPlaying, setIsTTSPlaying] = useState(false);
-
-  const streamRef = useRef<MediaStream | null>(null);
-  const audioContextRef = useRef<AudioContext | null>(null);
-  const analyserRef = useRef<AnalyserNode | null>(null);
-  const rafRef = useRef<number>(0);
-  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
 
   // Audio analyzer for TTS lip sync
   useAudioAnalyzer({
@@ -45,94 +38,15 @@ export function PetAudioPanel({ onMouthOpenYChange }: PetAudioPanelProps) {
     },
   });
 
-  useEffect(() => {
-    return () => {
-      if (rafRef.current) cancelAnimationFrame(rafRef.current);
-      cleanupAudio();
-    };
-  }, []);
-
-  const cleanupAudio = useCallback(() => {
-    if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
-      mediaRecorderRef.current.stop();
-      mediaRecorderRef.current = null;
-    }
-    if (streamRef.current) {
-      streamRef.current.getTracks().forEach((t) => t.stop());
-      streamRef.current = null;
-    }
-    if (audioContextRef.current) {
-      audioContextRef.current.close().catch(() => {});
-      audioContextRef.current = null;
-    }
-    if (rafRef.current) cancelAnimationFrame(rafRef.current);
-    setCurrentLevel(0);
-  }, []);
-
-  const startMonitoring = useCallback(() => {
-    if (!analyserRef.current) return;
-    const dataArray = new Uint8Array(analyserRef.current.frequencyBinCount);
-    const updateLevel = () => {
-      if (analyserRef.current) {
-        analyserRef.current.getByteFrequencyData(dataArray);
-        const avg = dataArray.reduce((a, b) => a + b, 0) / dataArray.length;
-        setCurrentLevel(Math.min(avg / 128, 1));
-      }
-      rafRef.current = requestAnimationFrame(updateLevel);
-    };
-    updateLevel();
-  }, []);
-
-  const toggleMicrophone = useCallback(async () => {
-    if (micEnabled) {
-      cleanupAudio();
-      setMicEnabled(false);
-      return;
-    }
-
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia({
-        audio: {
-          echoCancellation: true,
-          noiseSuppression: true,
-          autoGainControl: true,
-        },
-      });
-      streamRef.current = stream;
-
-      const ctx = new AudioContext({ latencyHint: 'interactive' });
-      audioContextRef.current = ctx;
-
-      const source = ctx.createMediaStreamSource(stream);
-      const analyser = ctx.createAnalyser();
-      analyser.fftSize = 256;
-      analyser.smoothingTimeConstant = 0.8;
-      analyserRef.current = analyser;
-
-      const dest = ctx.createMediaStreamDestination();
-      source.connect(analyser);
-      source.connect(dest);
-
-      const processor = new MediaRecorder(dest.stream, { mimeType: 'audio/webm;codecs=opus' });
-      mediaRecorderRef.current = processor;
-      processor.ondataavailable = (e) => {
-        if (e.data.size > 0 && sendAudio) {
-          try {
-            e.data.arrayBuffer().then((buf) => sendAudio(buf));
-          } catch (err) {
-            console.error('[PetAudioPanel] Failed to process audio data:', err);
-          }
-        }
-      };
-      processor.start(100);
-
-      startMonitoring();
-      setMicEnabled(true);
-    } catch (e) {
-      console.error('[PetAudioPanel] Failed to start microphone:', e);
-      setMicEnabled(false);
-    }
-  }, [micEnabled, cleanupAudio, startMonitoring, sendAudio]);
+  const {
+    isEnabled: micEnabled,
+    currentLevel,
+    toggle: toggleMicrophone,
+  } = useMicrophone({
+    onDataAvailable: (buf) => {
+      if (sendAudio) sendAudio(buf);
+    },
+  });
 
   const handleTTSSync = useCallback((data: TTSSyncData) => {
     // Create audio element for TTS playback with lip sync

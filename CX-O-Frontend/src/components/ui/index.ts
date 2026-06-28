@@ -9,3 +9,5 @@ export { Tooltip } from './Tooltip';
 export { Skeleton, SkeletonText, SkeletonCard } from './Skeleton';
 export { EmptyState, EmptyStateIcon } from './EmptyState';
 export { Badge, Tag } from './Badge';
+export { Slider, type SliderProps } from './Slider';
+export { Toggle, type ToggleProps } from './Toggle';

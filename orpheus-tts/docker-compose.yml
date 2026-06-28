@@ -37,15 +37,15 @@ services:
       - HUGGING_FACE_HUB_TOKEN=${HF_TOKEN:-}
     volumes:
       - orpheus-hf-cache:/workspace/hf_cache
-      # 如已预下载模型，可挂载本地模型目录（取消下行注释并修改路径）
-      # - ${ORPHEUS_MODEL_DIR:-./models}:/workspace/models:ro
+      # 本地预下载模型挂载
+      - ../models/orpheus-multilingual:/workspace/models:ro
     deploy:
       resources:
         reservations:
           devices:
             - driver: nvidia
               # 物理 GPU ID（默认 1，即第二张卡）
-              device_ids: ['${ORPHEUS_GPU_ID:-1}']
+              device_ids: ['${ORPHEUS_GPU_ID:-0}']
               capabilities: [gpu]
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
@@ -55,8 +55,7 @@ services:
       start_period: 180s
     restart: unless-stopped
     command: >
-      sh -c "python -m vllm.entrypoints.openai.api_server
-      --model ${ORPHEUS_MODEL:-canopylabs/orpheus-multilingual-research-release}
+      vllm serve /workspace/models
       --host 0.0.0.0
       --port 8000
       --max-model-len ${ORPHEUS_MAX_MODEL_LEN:-4096}
@@ -64,7 +63,7 @@ services:
       --dtype ${ORPHEUS_DTYPE:-auto}
       --max-num-seqs ${ORPHEUS_MAX_NUM_SEQS:-8}
       --trust-remote-code
-      --enable-prefix-caching"
+      --enable-prefix-caching
     networks:
       - orpheus-net
 
@@ -83,9 +82,11 @@ services:
       - PYTHONIOENCODING=utf-8
       # vLLM 后端地址（Docker 网络内通过服务名访问）
       - VLLM_BASE_URL=http://orpheus-vllm:8000
-      - VLLM_MODEL=${ORPHEUS_MODEL:-canopylabs/orpheus-multilingual-research-release}
+      - VLLM_MODEL=/workspace/models
       # SNAC 解码器设备（cuda 或 cpu；cpu 可避免与 vLLM 争抢 GPU）
-      - SNAC_DEVICE=${ORPHEUS_SNAC_DEVICE:-cpu}
+      - SNAC_DEVICE=${ORPHEUS_SNAC_DEVICE:-cuda}
+      # SNAC 解码器模型路径
+      - SNAC_MODEL_PATH=/workspace/snac
       # Orpheus 生成参数
       - ORPHEUS_TEMPERATURE=${ORPHEUS_TEMPERATURE:-0.6}
       - ORPHEUS_TOP_P=${ORPHEUS_TOP_P:-0.95}
@@ -94,12 +95,16 @@ services:
       - CUDA_VISIBLE_DEVICES=${ORPHEUS_CUDA_VISIBLE:-0}
     volumes:
       - orpheus-snac-cache:/root/.cache/huggingface
+      # SNAC 解码器模型
+      - ../models/snac_24khz:/workspace/snac:ro
+      # 本地 Orpheus 模型（tokenizer 用）
+      - ../models/orpheus-multilingual:/workspace/models:ro
     deploy:
       resources:
         reservations:
           devices:
             - driver: nvidia
-              device_ids: ['${ORPHEUS_GPU_ID:-1}']
+              device_ids: ['${ORPHEUS_GPU_ID:-0}']
               capabilities: [gpu]
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:5060/health"]

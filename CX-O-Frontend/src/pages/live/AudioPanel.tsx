@@ -1,6 +1,7 @@
 import { useState, useRef, useCallback, useEffect } from 'react';
 import { useLiveWebSocket } from '../../hooks/useLiveWebSocket';
 import type { TTSSyncData, TTSTickData } from '../../hooks/useLiveWebSocket';
+import { useMicrophone } from '../../hooks/useMicrophone';
 
 interface AudioDeviceInfo {
   deviceId: string;
@@ -12,7 +13,6 @@ interface AudioPanelProps {
 }
 
 export function AudioPanel({ standalone = false }: AudioPanelProps) {
-  const [micEnabled, setMicEnabled] = useState(false);
   const [selectedDevice, setSelectedDevice] = useState('');
   const [devices, setDevices] = useState<AudioDeviceInfo[]>([]);
   const [micVolume, setMicVolume] = useState(1.0);
@@ -21,19 +21,12 @@ export function AudioPanel({ standalone = false }: AudioPanelProps) {
   const [aecEnabled, setAecEnabled] = useState(true);
   const [aecMode, setAecMode] = useState<'auto' | 'browser' | 'worklet' | 'manual'>('auto');
   const [aecStatus, setAecStatus] = useState<'active' | 'unavailable' | 'manual'>('unavailable');
-  const [currentLevel, setCurrentLevel] = useState(0);
   const [syncStatus, setSyncStatus] = useState<string>('等待连接');
   const [playbackText, setPlaybackText] = useState('');
 
-  const streamRef = useRef<MediaStream | null>(null);
-  const audioContextRef = useRef<AudioContext | null>(null);
-  const analyserRef = useRef<AnalyserNode | null>(null);
-  const micSourceRef = useRef<MediaStreamAudioSourceNode | null>(null);
   const micGainRef = useRef<GainNode | null>(null);
   const outputGainRef = useRef<GainNode | null>(null);
   const ttsGainRef = useRef<GainNode | null>(null);
-  const rafRef = useRef<number>(0);
-  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
 
   const playbackIdRef = useRef<string>('');
   const clockOffsetRef = useRef(0);
@@ -45,13 +38,6 @@ export function AudioPanel({ standalone = false }: AudioPanelProps) {
     onConnect: () => setSyncStatus('已同步'),
     onDisconnect: () => setSyncStatus('断开'),
   });
-
-  useEffect(() => {
-    return () => {
-      if (rafRef.current) cancelAnimationFrame(rafRef.current);
-      cleanupAudio();
-    };
-  }, []);
 
   const enumerateDevices = useCallback(async () => {
     try {
@@ -69,23 +55,6 @@ export function AudioPanel({ standalone = false }: AudioPanelProps) {
       console.error('[AudioPanel] Cannot enumerate devices:', e);
     }
   }, [selectedDevice]);
-
-  const cleanupAudio = useCallback(() => {
-    if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
-      mediaRecorderRef.current.stop();
-      mediaRecorderRef.current = null;
-    }
-    if (streamRef.current) {
-      streamRef.current.getTracks().forEach((t) => t.stop());
-      streamRef.current = null;
-    }
-    if (audioContextRef.current) {
-      audioContextRef.current.close().catch(() => {});
-      audioContextRef.current = null;
-    }
-    if (rafRef.current) cancelAnimationFrame(rafRef.current);
-    setCurrentLevel(0);
-  }, []);
 
   const setupAEC = useCallback(async (): Promise<'browser' | 'worklet' | 'manual'> => {
     if (!aecEnabled) return 'manual';
@@ -129,53 +98,23 @@ export function AudioPanel({ standalone = false }: AudioPanelProps) {
     return 'manual';
   }, [aecEnabled, aecMode]);
 
-  const startMonitoring = useCallback(() => {
-    if (!analyserRef.current) return;
-
-    const dataArray = new Uint8Array(analyserRef.current.frequencyBinCount);
-
-    const updateLevel = () => {
-      if (analyserRef.current) {
-        analyserRef.current.getByteFrequencyData(dataArray);
-        const avg = dataArray.reduce((a, b) => a + b, 0) / dataArray.length;
-        setCurrentLevel(Math.min(avg / 128, 1));
-      }
-      rafRef.current = requestAnimationFrame(updateLevel);
-    };
-
-    updateLevel();
-  }, []);
-
-  const toggleMicrophone = useCallback(async () => {
-    if (micEnabled) {
-      cleanupAudio();
-      setMicEnabled(false);
-      return;
-    }
-
-    try {
+  const {
+    isEnabled: micEnabled,
+    currentLevel,
+    toggle: toggleMicrophone,
+  } = useMicrophone({
+    constraints: {
+      deviceId: selectedDevice ? { exact: selectedDevice } : undefined,
+    },
+    onBeforeStart: async () => {
       await enumerateDevices();
-
       const mode = await setupAEC();
-
-      const constraints: MediaStreamConstraints = {
-        audio: {
-          deviceId: selectedDevice ? { exact: selectedDevice } : undefined,
-          echoCancellation: mode === 'browser',
-          noiseSuppression: true,
-          autoGainControl: true,
-        },
-      };
-
-      const stream = await navigator.mediaDevices.getUserMedia(constraints);
-      streamRef.current = stream;
-
-      const ctx = new AudioContext({ latencyHint: 'interactive' });
-      audioContextRef.current = ctx;
-
-      const source = ctx.createMediaStreamSource(stream);
-      micSourceRef.current = source;
-
+      return { echoCancellation: mode === 'browser' };
+    },
+    onDataAvailable: (buf) => {
+      if (sendAudio) sendAudio(buf);
+    },
+    createExtraNodes: (ctx, source) => {
       const gain = ctx.createGain();
       gain.gain.value = micVolume;
       micGainRef.current = gain;
@@ -188,39 +127,32 @@ export function AudioPanel({ standalone = false }: AudioPanelProps) {
       ttsG.gain.value = ttsVolume;
       ttsGainRef.current = ttsG;
 
-      const analyser = ctx.createAnalyser();
-      analyser.fftSize = 256;
-      analyser.smoothingTimeConstant = 0.8;
-      analyserRef.current = analyser;
+      source.connect(gain);
+      gain.connect(outGain);
+      outGain.connect(ctx.destination);
 
-      source.connect(gain).connect(analyser).connect(outGain).connect(ctx.destination);
+      return { lastNode: gain, outputNode: outGain };
+    },
+  });
 
-      const dest = ctx.createMediaStreamDestination();
-      outGain.connect(dest);
-
-      const processor = new MediaRecorder(dest.stream, { mimeType: 'audio/webm;codecs=opus' });
-      mediaRecorderRef.current = processor;
-      processor.ondataavailable = (e) => {
-        if (e.data.size > 0 && sendAudio) {
-          try {
-            e.data.arrayBuffer().then((buf) => sendAudio(buf));
-          } catch (err) {
-            console.error('[AudioPanel] Failed to process audio data:', err);
-          }
-        }
-      };
-      processor.start(100);
-
-      startMonitoring();
-      setMicEnabled(true);
-    } catch (e) {
-      console.error('[AudioPanel] Failed to start microphone:', e);
-      setMicEnabled(false);
+  // 增益实时更新
+  useEffect(() => {
+    if (micGainRef.current) {
+      micGainRef.current.gain.value = micVolume;
     }
-  }, [
-    micEnabled, selectedDevice, micVolume, outputVolume, ttsVolume,
-    enumerateDevices, setupAEC, cleanupAudio, startMonitoring, sendAudio,
-  ]);
+  }, [micVolume]);
+
+  useEffect(() => {
+    if (outputGainRef.current) {
+      outputGainRef.current.gain.value = outputVolume;
+    }
+  }, [outputVolume]);
+
+  useEffect(() => {
+    if (ttsGainRef.current) {
+      ttsGainRef.current.gain.value = ttsVolume;
+    }
+  }, [ttsVolume]);
 
   const handleTTSSync = useCallback((data: TTSSyncData) => {
     playbackIdRef.current = data.playback_id;
@@ -240,24 +172,6 @@ export function AudioPanel({ standalone = false }: AudioPanelProps) {
     setPlaybackText('');
     setSyncStatus('就绪');
   }, []);
-
-  useEffect(() => {
-    if (micGainRef.current) {
-      micGainRef.current.gain.value = micVolume;
-    }
-  }, [micVolume]);
-
-  useEffect(() => {
-    if (outputGainRef.current) {
-      outputGainRef.current.gain.value = outputVolume;
-    }
-  }, [outputVolume]);
-
-  useEffect(() => {
-    if (ttsGainRef.current) {
-      ttsGainRef.current.gain.value = ttsVolume;
-    }
-  }, [ttsVolume]);
 
   return (
     <div className={`min-h-screen ${standalone ? 'p-3' : 'bg-[var(--color-bg-primary)] p-8'}`} style={standalone ? { backgroundColor: 'transparent' } : {}}>

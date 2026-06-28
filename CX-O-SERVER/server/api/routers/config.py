@@ -87,6 +87,10 @@ async def get_unified_config():
         "weaviate_port": settings.config.memory.weaviate.port,
         "db_path": "data/chroma_db",
         "collection_name": "memory_vectors",
+        "embedding_provider": settings.config.memory.embedding_provider,
+        "embedding_model": settings.config.memory.embedding_model,
+        "embedding_api_base": settings.config.memory.embedding_api_base,
+        "embedding_api_key": settings.config.memory.embedding_api_key or "",
     }
 
     return {
@@ -195,6 +199,14 @@ async def update_unified_config(request: Request, _: bool = Depends(verify_admin
                 settings.config.memory.vector_backend = section_data["backend"]
             if "vector_size" in section_data:
                 settings.config.memory.weaviate.vector_size = section_data["vector_size"]
+            if "embedding_provider" in section_data:
+                settings.config.memory.embedding_provider = section_data["embedding_provider"]
+            if "embedding_model" in section_data:
+                settings.config.memory.embedding_model = section_data["embedding_model"]
+            if "embedding_api_base" in section_data:
+                settings.config.memory.embedding_api_base = section_data["embedding_api_base"]
+            if "embedding_api_key" in section_data:
+                settings.config.memory.embedding_api_key = section_data["embedding_api_key"]
 
             settings.save_config()
             logger.info("向量配置已更新")
