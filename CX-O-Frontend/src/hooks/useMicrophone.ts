@@ -138,10 +138,7 @@ export function useMicrophone(options: UseMicrophoneOptions = {}): UseMicrophone
 
   // 组件卸载时自动清理
   useEffect(() => {
-    return () => {
-      if (rafRef.current) cancelAnimationFrame(rafRef.current);
-      cleanup();
-    };
+    return cleanup;
   }, [cleanup]);
 
   return {
