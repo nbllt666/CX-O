@@ -165,6 +165,8 @@ coverage.xml
 .pytest_cache/
 vitest.config.*.ts
 vitest.config.*.js
+test-results/
+playwright-report/
 
 # ----------------------------------------
 # Jupyter Notebook
