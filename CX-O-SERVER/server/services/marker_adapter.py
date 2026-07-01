@@ -3,9 +3,15 @@
 将内部标记格式转换为统一的消息格式
 """
 import logging
+import re
 from typing import Any
 
+from server.services.emotion_parser import EMOTION_PATTERN
+from server.services.effect_parser import EFFECT_PATTERN
+
 logger = logging.getLogger(__name__)
+
+ACTION_PATTERN = re.compile(r'\[action:([^\]]+)\]')
 
 
 class MarkerAdapter:
@@ -27,18 +33,14 @@ class MarkerAdapter:
         content = result["content"]
 
         if "[" in content and "]" in content:
-            import re
-            emotion_pattern = re.compile(r'\[emotion:([^\]]+)\]')
-            effect_pattern = re.compile(r'\[effect:([^\]]+)\]')
-
-            for match in emotion_pattern.finditer(content):
+            for match in EMOTION_PATTERN.finditer(content):
                 result["markers"].append({
                     "type": "emotion",
                     "name": match.group(1),
                     "position": match.start()
                 })
 
-            for match in effect_pattern.finditer(content):
+            for match in EFFECT_PATTERN.finditer(content):
                 result["markers"].append({
                     "type": "effect",
                     "name": match.group(1),
@@ -58,26 +60,21 @@ class MarkerAdapter:
         }
 
         if "[" in content and "]" in content:
-            import re
-            emotion_pattern = re.compile(r'\[emotion:([^\]]+)\]')
-            effect_pattern = re.compile(r'\[effect:([^\]]+)\]')
-            action_pattern = re.compile(r'\[action:([^\]]+)\]')
-
-            for match in emotion_pattern.finditer(content):
+            for match in EMOTION_PATTERN.finditer(content):
                 result["markers"].append({
                     "type": "emotion",
                     "name": match.group(1),
                     "position": match.start()
                 })
 
-            for match in effect_pattern.finditer(content):
+            for match in EFFECT_PATTERN.finditer(content):
                 result["markers"].append({
                     "type": "effect",
                     "name": match.group(1),
                     "position": match.start()
                 })
 
-            for match in action_pattern.finditer(content):
+            for match in ACTION_PATTERN.finditer(content):
                 result["markers"].append({
                     "type": "action",
                     "name": match.group(1),

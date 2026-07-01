@@ -5,6 +5,8 @@
 import logging
 from typing import Any, Optional
 
+from server.services.emotion_parser import SUPPORTED_EMOTIONS
+
 logger = logging.getLogger(__name__)
 
 
@@ -27,6 +29,9 @@ class FrontendMarker:
         return result
 
     def _convert_emotion(self, emotion: str) -> dict:
+        if emotion not in SUPPORTED_EMOTIONS:
+            logger.warning(f"Unknown emotion not in SUPPORTED_EMOTIONS: {emotion}")
+            return {"type": "neutral", "intensity": 0.3}
         emotion_map = {
             "happy": {"type": "positive", "intensity": 0.8},
             "sad": {"type": "negative", "intensity": 0.6},
