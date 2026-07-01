@@ -130,10 +130,6 @@ class TTSServiceConfig(BaseModel):
     emotion_templates: Optional[Dict[str, Any]] = None
 
 
-class AudioConfig(BaseModel):
-    effects_dir: str = "data/effects"
-
-
 class IndexTTSConfig(BaseModel):
     url: str = "http://127.0.0.1:8004"
     timeout: int = 180
@@ -160,7 +156,6 @@ class SenseVoiceStreamingConfig(BaseModel):
 class ServicesConfig(BaseModel):
     asr: ServiceConfig = Field(default_factory=ServiceConfig)
     tts: TTSServiceConfig = Field(default_factory=TTSServiceConfig)
-    audio: Optional[AudioConfig] = None
     index_tts: Optional[IndexTTSConfig] = None
     control_service_url: Optional[str] = None
     adaptive_polling: Optional[AdaptivePollingConfig] = None
@@ -299,13 +294,6 @@ class CORSConfig(BaseModel):
     allow_credentials: bool = True
 
 
-class ContextConfig(BaseModel):
-    max_messages: int = 100
-    summary_threshold: int = 20
-    window_size: int = 10
-    enable_summary: bool = True
-
-
 class VectorConfig(BaseModel):
     enabled: bool = True
     host: str = "localhost"
@@ -351,15 +339,6 @@ class TTSConfig(BaseModel):
     transition_text: str = "嗯，"
     # Orpheus TTS 配置段（mode == "orpheus" 时生效）
     orpheus: OrpheusConfig = Field(default_factory=OrpheusConfig)
-
-
-class VoiceWorkstationConfig(BaseModel):
-    url: str = "http://127.0.0.1:8200"
-    enabled: bool = True
-
-
-class RateLimitConfig(BaseModel):
-    enabled: bool = True
 
 
 class GraphWeaviateConfig(BaseModel):
@@ -468,13 +447,10 @@ class UnifiedConfig(BaseModel):
     database: DatabaseConfig = Field(default_factory=DatabaseConfig)
     acp: ACPConfig = Field(default_factory=ACPConfig)
     cors: CORSConfig = Field(default_factory=CORSConfig)
-    context: ContextConfig = Field(default_factory=ContextConfig)
     vector: VectorConfig = Field(default_factory=VectorConfig)
     asr: ASRConfig = Field(default_factory=ASRConfig)
     tts: TTSConfig = Field(default_factory=TTSConfig)
-    voice_workstation: VoiceWorkstationConfig = Field(default_factory=VoiceWorkstationConfig)
     graph: GraphConfigSection = Field(default_factory=GraphConfigSection)
-    rate_limit: RateLimitConfig = Field(default_factory=RateLimitConfig)
     cxfc: CXFCConfig = Field(default_factory=CXFCConfig)
     limits: LimitsConfig = Field(default_factory=LimitsConfig)
 
