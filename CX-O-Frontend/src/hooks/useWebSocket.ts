@@ -1,6 +1,7 @@
 import { useEffect, useRef, useCallback, useState } from 'react';
 
 import { getWS_BASE_URL } from '../api/client';
+import { VoiceActions, ChatActions } from '../constants/actions';
 
 export interface WebSocketMessage {
   type: string;
@@ -207,7 +208,7 @@ export function useWebSocket(options: WebSocketOptions): UseWebSocketReturn {
           case 'stream': {
             // 双流式 TTS 音频块：后端通过 create_stream 发送，type 为 "stream"，
             // action 为 "voice.tts_chunk"。需与普通聊天 content 流区分。
-            if (data.action === 'voice.tts_chunk') {
+            if (data.action === VoiceActions.TTS_CHUNK) {
               const audioBase64 = (data.data?.audio_data as string) || '';
               const textSegment = (data.data?.text_segment as string) || '';
               const sessionId = data.data?.session_id as string | undefined;
@@ -225,14 +226,14 @@ export function useWebSocket(options: WebSocketOptions): UseWebSocketReturn {
             }
             break;
           }
-          case 'voice.partial': {
+          case VoiceActions.PARTIAL: {
             // ASR Partial 实时识别文本：用户正在说什么（interim subtitle）
             const text = (data.data?.text as string) || '';
             const sessionId = data.data?.session_id as string | undefined;
             onPartialRef.current?.(text, sessionId);
             break;
           }
-          case 'voice.prefill_started': {
+          case VoiceActions.PREFILL_STARTED: {
             // LLM Prefill 已启动：后端字段为 partial_text，兼容 text
             const text = (data.data?.partial_text as string) || (data.data?.text as string) || '';
             const sessionId = data.data?.session_id as string | undefined;
@@ -312,7 +313,7 @@ export function useWebSocket(options: WebSocketOptions): UseWebSocketReturn {
       const requestId = `${Date.now()}-${Math.random().toString(36).slice(2, 11)}`;
       wsRef.current.send(
         JSON.stringify({
-          action: 'chat.stream',
+          action: ChatActions.STREAM,
           request_id: requestId,
           data: {
             text: message,
@@ -357,7 +358,7 @@ export function useWebSocket(options: WebSocketOptions): UseWebSocketReturn {
     // 复用 voice.dual_stream action，通过 type 字段区分 init/audio/end
     wsRef.current.send(
       JSON.stringify({
-        action: 'voice.dual_stream',
+        action: VoiceActions.DUAL_STREAM,
         data: payload,
       })
     );

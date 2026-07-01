@@ -1,5 +1,7 @@
 import { useRef, useState, useCallback, useEffect } from 'react';
 
+import { VoiceActions, VoiceActionType } from '../constants/actions';
+
 export interface AudioStreamConfig {
   sampleRate?: number;
   channelCount?: number;
@@ -50,7 +52,7 @@ export interface DualStreamStartOptions {
  * 但这里统一为 voice 消息视图，由 useWebSocket 路由后传入 handleVoiceMessage。
  */
 export interface VoiceMessage {
-  type: 'voice.partial' | 'voice.tts_chunk' | 'voice.prefill_started';
+  type: VoiceActionType;
   data?: {
     text?: string;
     partial_text?: string;
@@ -183,7 +185,7 @@ export function useAudioStream(options: UseAudioStreamOptions): UseAudioStreamRe
       // 双流式边说边推，省下这 ~500ms 端到端延迟。
       const s = dualStreamSessionRef.current;
       wsSend({
-        action: 'voice.dual_stream',
+        action: VoiceActions.DUAL_STREAM,
         data: {
           type: 'audio',
           audio: base64,
@@ -316,7 +318,7 @@ export function useAudioStream(options: UseAudioStreamOptions): UseAudioStreamRe
       // 后端协议要求 data.init === true 触发初始化分支。
       // engine/voice 仅在传入时携带：未传 engine 时后端默认使用 f5-tts（向后兼容）。
       wsSend({
-        action: 'voice.dual_stream',
+        action: VoiceActions.DUAL_STREAM,
         data: {
           init: true,
           session_id: sessionId,
@@ -342,7 +344,7 @@ export function useAudioStream(options: UseAudioStreamOptions): UseAudioStreamRe
     if (dualStreamSessionRef.current) {
       const s = dualStreamSessionRef.current;
       wsSend({
-        action: 'voice.dual_stream',
+        action: VoiceActions.DUAL_STREAM,
         data: {
           end: true,
           session_id: s.sessionId,
@@ -384,15 +386,15 @@ export function useAudioStream(options: UseAudioStreamOptions): UseAudioStreamRe
     const sessionId = data.session_id;
 
     switch (message.type) {
-      case 'voice.partial':
+      case VoiceActions.PARTIAL:
         // ASR Partial 实时识别文本：用户正在说什么（interim subtitle）
         onPartialRef.current?.(data.text || '', sessionId);
         break;
-      case 'voice.prefill_started':
+      case VoiceActions.PREFILL_STARTED:
         // LLM Prefill 已启动：后端字段为 partial_text，兼容 text
         onPrefillStartedRef.current?.(data.partial_text || data.text || '', sessionId);
         break;
-      case 'voice.tts_chunk':
+      case VoiceActions.TTS_CHUNK:
         // TTS 流式音频块：边收边播，is_final 标记整句结束
         onTTSChunkRef.current?.(
           data.audio_data || '',
