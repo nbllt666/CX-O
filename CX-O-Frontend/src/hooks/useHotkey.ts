@@ -10,12 +10,6 @@ export interface HotkeyOptions {
   enabled?: boolean;
 }
 
-export interface HotkeyConfig extends HotkeyOptions {
-  key: string;
-  callback: () => void;
-  description?: string;
-}
-
 function normalizeKey(key: string): string {
   const keyMap: Record<string, string> = {
     esc: 'Escape',
@@ -75,76 +69,3 @@ export function useHotkey(key: string, callback: () => void, options: HotkeyOpti
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [key]);
 }
-
-export function useHotkeys(hotkeys: HotkeyConfig[]): void {
-  const hotkeysRef = useRef(hotkeys);
-
-  useEffect(() => {
-    hotkeysRef.current = hotkeys;
-  }, [hotkeys]);
-
-  useEffect(() => {
-    const handleKeyDown = (event: KeyboardEvent) => {
-      for (const config of hotkeysRef.current) {
-        const {
-          key,
-          callback,
-          enabled = true,
-          preventDefault = true,
-          stopPropagation = false,
-          ctrl = false,
-          alt = false,
-          shift = false,
-          meta = false,
-        } = config;
-
-        if (!enabled) continue;
-
-        const normalizedKey = normalizeKey(key);
-
-        if (
-          normalizedKey === normalizeKey(event.key) &&
-          event.ctrlKey === ctrl &&
-          event.altKey === alt &&
-          event.shiftKey === shift &&
-          event.metaKey === meta
-        ) {
-          if (preventDefault) {
-            event.preventDefault();
-          }
-          if (stopPropagation) {
-            event.stopPropagation();
-          }
-          callback();
-          break;
-        }
-      }
-    };
-
-    window.addEventListener('keydown', handleKeyDown);
-    return () => window.removeEventListener('keydown', handleKeyDown);
-  }, []);
-}
-
-export function formatHotkey(config: HotkeyOptions & { key: string }): string {
-  const parts: string[] = [];
-
-  if (config.ctrl) parts.push('Ctrl');
-  if (config.alt) parts.push('Alt');
-  if (config.shift) parts.push('Shift');
-  if (config.meta) parts.push('⌘');
-
-  parts.push(config.key.toUpperCase());
-
-  return parts.join('+');
-}
-
-export const commonHotkeys = {
-  search: { key: 'k', ctrl: true, description: '搜索' },
-  newChat: { key: 'n', ctrl: true, description: '新建对话' },
-  save: { key: 's', ctrl: true, description: '保存' },
-  close: { key: 'Escape', description: '关闭/取消' },
-  confirm: { key: 'Enter', description: '确认' },
-  theme: { key: 'd', ctrl: true, shift: true, description: '切换主题' },
-  help: { key: '/', ctrl: true, description: '显示帮助' },
-};
