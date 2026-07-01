@@ -455,377 +455,173 @@ def register_master_tools():
         examples=["离开协作群组"],
     )
 
-    # 图数据库工具 - 用户图
-    tool_registry.register(
-        name="user_graph_create_entity",
-        description="在用户图中创建一个新实体。用户图用于存储人物关系、联系人等信息。",
-        parameters={
-            "type": "object",
-            "properties": {
-                "name": {"type": "string", "description": "实体名称"},
-                "entity_type": {"type": "string", "description": "实体类型（如 person, user, contact）"},
-                "properties": {"type": "object", "description": "实体属性", "default": {}},
-                "memory_ids": {"type": "array", "items": {"type": "string"}, "description": "关联的记忆ID列表", "default": []},
-            },
-            "required": ["name", "entity_type"],
-        },
-        function=user_graph_create_entity,
-        category="graph",
-        tags=["graph", "user", "entity", "create"],
-        examples=["创建用户图实体：张三，类型为 person"],
-    )
+    # 图数据库工具（5 操作 × 4 库 = 20 工具，数据驱动注册）
+    _register_graph_master_tools()
 
-    tool_registry.register(
-        name="user_graph_create_relation",
-        description="在用户图中创建实体之间的关系。",
-        parameters={
-            "type": "object",
-            "properties": {
-                "from_entity": {"type": "string", "description": "起始实体ID"},
-                "to_entity": {"type": "string", "description": "目标实体ID"},
-                "relation_type": {"type": "string", "description": "关系类型（如 knows, friend, family, colleague, enemy）"},
-                "strength": {"type": "number", "description": "关系强度（0-1）", "default": 1.0},
-                "evidence_memory_ids": {"type": "array", "items": {"type": "string"}, "description": "支持该关系的记忆ID列表", "default": []},
-            },
-            "required": ["from_entity", "to_entity", "relation_type"],
-        },
-        function=user_graph_create_relation,
-        category="graph",
-        tags=["graph", "user", "relation", "create"],
-        examples=["创建用户图关系：实体A 认识 实体B"],
-    )
 
-    tool_registry.register(
-        name="user_graph_query_entities",
-        description="查询用户图中某个实体的关联实体。",
-        parameters={
-            "type": "object",
-            "properties": {
-                "entity_name_or_id": {"type": "string", "description": "实体名称或ID"},
-                "depth": {"type": "integer", "description": "查询深度，默认为1", "default": 1},
+def _register_graph_master_tools():
+    """注册主模型的图工具 - 数据驱动，避免 4 倍重复"""
+    _LIBS = [
+        {
+            "prefix": "user",
+            "label": "用户",
+            "usage": "人物关系、联系人等信息",
+            "entity_types": "person, user, contact",
+            "relation_types": "knows, friend, family, colleague, enemy",
+            "examples": {
+                "create_entity": "创建用户图实体：张三，类型为 person",
+                "create_relation": "创建用户图关系：实体A 认识 实体B",
+                "query_entities": "查询用户张三的关联实体",
+                "find_paths": "查找从实体A到实体B的路径",
+                "search_related_memories": "搜索与实体张三相关的记忆",
             },
-            "required": ["entity_name_or_id"],
         },
-        function=user_graph_query_entities,
-        category="graph",
-        tags=["graph", "user", "query", "entity"],
-        examples=["查询用户张三的关联实体"],
-    )
+        {
+            "prefix": "thing",
+            "label": "物品",
+            "usage": "物品、产品等对象信息",
+            "entity_types": "object, item, product",
+            "relation_types": "owns, part_of, similar_to, located_at, made_of",
+            "examples": {
+                "create_entity": "创建物品图实体：手机，类型为 product",
+                "create_relation": "创建物品图关系：实体A 拥有 实体B",
+                "query_entities": "查询物品手机的关联实体",
+                "find_paths": "查找从物品A到物品B的路径",
+                "search_related_memories": "搜索与物品手机相关的记忆",
+            },
+        },
+        {
+            "prefix": "concept",
+            "label": "概念",
+            "usage": "概念、想法、主题等信息",
+            "entity_types": "concept, idea, topic",
+            "relation_types": "related_to, subtopic_of, opposite_of, implies",
+            "examples": {
+                "create_entity": "创建概念图实体：人工智能，类型为 concept",
+                "create_relation": "创建概念图关系：概念A 关联 概念B",
+                "query_entities": "查询概念人工智能的关联实体",
+                "find_paths": "查找从概念A到概念B的路径",
+                "search_related_memories": "搜索与概念人工智能相关的记忆",
+            },
+        },
+        {
+            "prefix": "event",
+            "label": "事件",
+            "usage": "事件、活动、发生的事等信息",
+            "entity_types": "event, activity, occurrence",
+            "relation_types": "caused, followed_by, concurrent_with, prevents",
+            "examples": {
+                "create_entity": "创建事件图实体：产品发布会，类型为 event",
+                "create_relation": "创建事件图关系：事件A 导致 事件B",
+                "query_entities": "查询事件发布会的关联实体",
+                "find_paths": "查找从事件A到事件B的路径",
+                "search_related_memories": "搜索与事件产品发布会相关的记忆",
+            },
+        },
+    ]
 
-    tool_registry.register(
-        name="user_graph_find_paths",
-        description="查找用户图中两个实体之间的路径。",
-        parameters={
-            "type": "object",
-            "properties": {
-                "from_entity": {"type": "string", "description": "起始实体ID"},
-                "to_entity": {"type": "string", "description": "目标实体ID"},
-                "max_depth": {"type": "integer", "description": "最大路径深度，默认为3", "default": 3},
-            },
-            "required": ["from_entity", "to_entity"],
-        },
-        function=user_graph_find_paths,
-        category="graph",
-        tags=["graph", "user", "path", "find"],
-        examples=["查找从实体A到实体B的路径"],
-    )
+    for lib in _LIBS:
+        prefix = lib["prefix"]
+        label = lib["label"]
+        func_ns = globals()
+        ex = lib["examples"]
 
-    tool_registry.register(
-        name="user_graph_search_related_memories",
-        description="用户图增强搜索 - 结合图结构和记忆查询。",
-        parameters={
-            "type": "object",
-            "properties": {
-                "entity_name": {"type": "string", "description": "实体名称"},
-                "memory_query": {"type": "string", "description": "记忆查询字符串"},
-                "limit": {"type": "integer", "description": "返回结果数量限制", "default": 10},
+        # 1. create_entity
+        tool_registry.register(
+            name=f"{prefix}_graph_create_entity",
+            description=f"在{label}图中创建一个新实体。{label}图用于存储{lib['usage']}。",
+            parameters={
+                "type": "object",
+                "properties": {
+                    "name": {"type": "string", "description": "实体名称"},
+                    "entity_type": {"type": "string", "description": f"实体类型（如 {lib['entity_types']}）"},
+                    "properties": {"type": "object", "description": "实体属性", "default": {}},
+                    "memory_ids": {"type": "array", "items": {"type": "string"}, "description": "关联的记忆ID列表", "default": []},
+                },
+                "required": ["name", "entity_type"],
             },
-            "required": ["entity_name", "memory_query"],
-        },
-        function=user_graph_search_related_memories,
-        category="graph",
-        tags=["graph", "user", "memory", "search"],
-        examples=["搜索与实体张三相关的记忆"],
-    )
+            function=func_ns[f"{prefix}_graph_create_entity"],
+            category="graph",
+            tags=["graph", prefix, "entity", "create"],
+            examples=[ex["create_entity"]],
+        )
 
-    # 图数据库工具 - 物品图
-    tool_registry.register(
-        name="thing_graph_create_entity",
-        description="在物品图中创建一个新实体。物品图用于存储物品、产品等对象信息。",
-        parameters={
-            "type": "object",
-            "properties": {
-                "name": {"type": "string", "description": "实体名称"},
-                "entity_type": {"type": "string", "description": "实体类型（如 object, item, product）"},
-                "properties": {"type": "object", "description": "实体属性", "default": {}},
-                "memory_ids": {"type": "array", "items": {"type": "string"}, "description": "关联的记忆ID列表", "default": []},
+        # 2. create_relation
+        tool_registry.register(
+            name=f"{prefix}_graph_create_relation",
+            description=f"在{label}图中创建实体之间的关系。",
+            parameters={
+                "type": "object",
+                "properties": {
+                    "from_entity": {"type": "string", "description": "起始实体ID"},
+                    "to_entity": {"type": "string", "description": "目标实体ID"},
+                    "relation_type": {"type": "string", "description": f"关系类型（如 {lib['relation_types']}）"},
+                    "strength": {"type": "number", "description": "关系强度（0-1）", "default": 1.0},
+                    "evidence_memory_ids": {"type": "array", "items": {"type": "string"}, "description": "支持该关系的记忆ID列表", "default": []},
+                },
+                "required": ["from_entity", "to_entity", "relation_type"],
             },
-            "required": ["name", "entity_type"],
-        },
-        function=thing_graph_create_entity,
-        category="graph",
-        tags=["graph", "thing", "entity", "create"],
-        examples=["创建物品图实体：手机，类型为 product"],
-    )
+            function=func_ns[f"{prefix}_graph_create_relation"],
+            category="graph",
+            tags=["graph", prefix, "relation", "create"],
+            examples=[ex["create_relation"]],
+        )
 
-    tool_registry.register(
-        name="thing_graph_create_relation",
-        description="在物品图中创建实体之间的关系。",
-        parameters={
-            "type": "object",
-            "properties": {
-                "from_entity": {"type": "string", "description": "起始实体ID"},
-                "to_entity": {"type": "string", "description": "目标实体ID"},
-                "relation_type": {"type": "string", "description": "关系类型（如 owns, part_of, similar_to, located_at, made_of）"},
-                "strength": {"type": "number", "description": "关系强度（0-1）", "default": 1.0},
-                "evidence_memory_ids": {"type": "array", "items": {"type": "string"}, "description": "支持该关系的记忆ID列表", "default": []},
+        # 3. query_entities
+        tool_registry.register(
+            name=f"{prefix}_graph_query_entities",
+            description=f"查询{label}图中某个实体的关联实体。",
+            parameters={
+                "type": "object",
+                "properties": {
+                    "entity_name_or_id": {"type": "string", "description": "实体名称或ID"},
+                    "depth": {"type": "integer", "description": "查询深度，默认为1", "default": 1},
+                },
+                "required": ["entity_name_or_id"],
             },
-            "required": ["from_entity", "to_entity", "relation_type"],
-        },
-        function=thing_graph_create_relation,
-        category="graph",
-        tags=["graph", "thing", "relation", "create"],
-        examples=["创建物品图关系：实体A 拥有 实体B"],
-    )
+            function=func_ns[f"{prefix}_graph_query_entities"],
+            category="graph",
+            tags=["graph", prefix, "query", "entity"],
+            examples=[ex["query_entities"]],
+        )
 
-    tool_registry.register(
-        name="thing_graph_query_entities",
-        description="查询物品图中某个实体的关联实体。",
-        parameters={
-            "type": "object",
-            "properties": {
-                "entity_name_or_id": {"type": "string", "description": "实体名称或ID"},
-                "depth": {"type": "integer", "description": "查询深度，默认为1", "default": 1},
+        # 4. find_paths
+        tool_registry.register(
+            name=f"{prefix}_graph_find_paths",
+            description=f"查找{label}图中两个实体之间的路径。",
+            parameters={
+                "type": "object",
+                "properties": {
+                    "from_entity": {"type": "string", "description": "起始实体ID"},
+                    "to_entity": {"type": "string", "description": "目标实体ID"},
+                    "max_depth": {"type": "integer", "description": "最大路径深度，默认为3", "default": 3},
+                },
+                "required": ["from_entity", "to_entity"],
             },
-            "required": ["entity_name_or_id"],
-        },
-        function=thing_graph_query_entities,
-        category="graph",
-        tags=["graph", "thing", "query", "entity"],
-        examples=["查询物品手机的关联实体"],
-    )
+            function=func_ns[f"{prefix}_graph_find_paths"],
+            category="graph",
+            tags=["graph", prefix, "path", "find"],
+            examples=[ex["find_paths"]],
+        )
 
-    tool_registry.register(
-        name="thing_graph_find_paths",
-        description="查找物品图中两个实体之间的路径。",
-        parameters={
-            "type": "object",
-            "properties": {
-                "from_entity": {"type": "string", "description": "起始实体ID"},
-                "to_entity": {"type": "string", "description": "目标实体ID"},
-                "max_depth": {"type": "integer", "description": "最大路径深度，默认为3", "default": 3},
+        # 5. search_related_memories
+        tool_registry.register(
+            name=f"{prefix}_graph_search_related_memories",
+            description=f"{label}图增强搜索 - 结合图结构和记忆查询。",
+            parameters={
+                "type": "object",
+                "properties": {
+                    "entity_name": {"type": "string", "description": "实体名称"},
+                    "memory_query": {"type": "string", "description": "记忆查询字符串"},
+                    "limit": {"type": "integer", "description": "返回结果数量限制", "default": 10},
+                },
+                "required": ["entity_name", "memory_query"],
             },
-            "required": ["from_entity", "to_entity"],
-        },
-        function=thing_graph_find_paths,
-        category="graph",
-        tags=["graph", "thing", "path", "find"],
-        examples=["查找从物品A到物品B的路径"],
-    )
-
-    tool_registry.register(
-        name="thing_graph_search_related_memories",
-        description="物品图增强搜索 - 结合图结构和记忆查询。",
-        parameters={
-            "type": "object",
-            "properties": {
-                "entity_name": {"type": "string", "description": "实体名称"},
-                "memory_query": {"type": "string", "description": "记忆查询字符串"},
-                "limit": {"type": "integer", "description": "返回结果数量限制", "default": 10},
-            },
-            "required": ["entity_name", "memory_query"],
-        },
-        function=thing_graph_search_related_memories,
-        category="graph",
-        tags=["graph", "thing", "memory", "search"],
-        examples=["搜索与物品手机相关的记忆"],
-    )
-
-    # 图数据库工具 - 概念图
-    tool_registry.register(
-        name="concept_graph_create_entity",
-        description="在概念图中创建一个新实体。概念图用于存储概念、想法、主题等信息。",
-        parameters={
-            "type": "object",
-            "properties": {
-                "name": {"type": "string", "description": "实体名称"},
-                "entity_type": {"type": "string", "description": "实体类型（如 concept, idea, topic）"},
-                "properties": {"type": "object", "description": "实体属性", "default": {}},
-                "memory_ids": {"type": "array", "items": {"type": "string"}, "description": "关联的记忆ID列表", "default": []},
-            },
-            "required": ["name", "entity_type"],
-        },
-        function=concept_graph_create_entity,
-        category="graph",
-        tags=["graph", "concept", "entity", "create"],
-        examples=["创建概念图实体：人工智能，类型为 concept"],
-    )
-
-    tool_registry.register(
-        name="concept_graph_create_relation",
-        description="在概念图中创建实体之间的关系。",
-        parameters={
-            "type": "object",
-            "properties": {
-                "from_entity": {"type": "string", "description": "起始实体ID"},
-                "to_entity": {"type": "string", "description": "目标实体ID"},
-                "relation_type": {"type": "string", "description": "关系类型（如 related_to, subtopic_of, opposite_of, implies）"},
-                "strength": {"type": "number", "description": "关系强度（0-1）", "default": 1.0},
-                "evidence_memory_ids": {"type": "array", "items": {"type": "string"}, "description": "支持该关系的记忆ID列表", "default": []},
-            },
-            "required": ["from_entity", "to_entity", "relation_type"],
-        },
-        function=concept_graph_create_relation,
-        category="graph",
-        tags=["graph", "concept", "relation", "create"],
-        examples=["创建概念图关系：概念A 关联 概念B"],
-    )
-
-    tool_registry.register(
-        name="concept_graph_query_entities",
-        description="查询概念图中某个实体的关联实体。",
-        parameters={
-            "type": "object",
-            "properties": {
-                "entity_name_or_id": {"type": "string", "description": "实体名称或ID"},
-                "depth": {"type": "integer", "description": "查询深度，默认为1", "default": 1},
-            },
-            "required": ["entity_name_or_id"],
-        },
-        function=concept_graph_query_entities,
-        category="graph",
-        tags=["graph", "concept", "query", "entity"],
-        examples=["查询概念人工智能的关联实体"],
-    )
-
-    tool_registry.register(
-        name="concept_graph_find_paths",
-        description="查找概念图中两个实体之间的路径。",
-        parameters={
-            "type": "object",
-            "properties": {
-                "from_entity": {"type": "string", "description": "起始实体ID"},
-                "to_entity": {"type": "string", "description": "目标实体ID"},
-                "max_depth": {"type": "integer", "description": "最大路径深度，默认为3", "default": 3},
-            },
-            "required": ["from_entity", "to_entity"],
-        },
-        function=concept_graph_find_paths,
-        category="graph",
-        tags=["graph", "concept", "path", "find"],
-        examples=["查找从概念A到概念B的路径"],
-    )
-
-    tool_registry.register(
-        name="concept_graph_search_related_memories",
-        description="概念图增强搜索 - 结合图结构和记忆查询。",
-        parameters={
-            "type": "object",
-            "properties": {
-                "entity_name": {"type": "string", "description": "实体名称"},
-                "memory_query": {"type": "string", "description": "记忆查询字符串"},
-                "limit": {"type": "integer", "description": "返回结果数量限制", "default": 10},
-            },
-            "required": ["entity_name", "memory_query"],
-        },
-        function=concept_graph_search_related_memories,
-        category="graph",
-        tags=["graph", "concept", "memory", "search"],
-        examples=["搜索与概念人工智能相关的记忆"],
-    )
-
-    # 图数据库工具 - 事件图
-    tool_registry.register(
-        name="event_graph_create_entity",
-        description="在事件图中创建一个新实体。事件图用于存储事件、活动、发生的事等信息。",
-        parameters={
-            "type": "object",
-            "properties": {
-                "name": {"type": "string", "description": "实体名称"},
-                "entity_type": {"type": "string", "description": "实体类型（如 event, activity, occurrence）"},
-                "properties": {"type": "object", "description": "实体属性", "default": {}},
-                "memory_ids": {"type": "array", "items": {"type": "string"}, "description": "关联的记忆ID列表", "default": []},
-            },
-            "required": ["name", "entity_type"],
-        },
-        function=event_graph_create_entity,
-        category="graph",
-        tags=["graph", "event", "entity", "create"],
-        examples=["创建事件图实体：产品发布会，类型为 event"],
-    )
-
-    tool_registry.register(
-        name="event_graph_create_relation",
-        description="在事件图中创建实体之间的关系。",
-        parameters={
-            "type": "object",
-            "properties": {
-                "from_entity": {"type": "string", "description": "起始实体ID"},
-                "to_entity": {"type": "string", "description": "目标实体ID"},
-                "relation_type": {"type": "string", "description": "关系类型（如 caused, followed_by, concurrent_with, prevents）"},
-                "strength": {"type": "number", "description": "关系强度（0-1）", "default": 1.0},
-                "evidence_memory_ids": {"type": "array", "items": {"type": "string"}, "description": "支持该关系的记忆ID列表", "default": []},
-            },
-            "required": ["from_entity", "to_entity", "relation_type"],
-        },
-        function=event_graph_create_relation,
-        category="graph",
-        tags=["graph", "event", "relation", "create"],
-        examples=["创建事件图关系：事件A 导致 事件B"],
-    )
-
-    tool_registry.register(
-        name="event_graph_query_entities",
-        description="查询事件图中某个实体的关联实体。",
-        parameters={
-            "type": "object",
-            "properties": {
-                "entity_name_or_id": {"type": "string", "description": "实体名称或ID"},
-                "depth": {"type": "integer", "description": "查询深度，默认为1", "default": 1},
-            },
-            "required": ["entity_name_or_id"],
-        },
-        function=event_graph_query_entities,
-        category="graph",
-        tags=["graph", "event", "query", "entity"],
-        examples=["查询事件发布会的关联实体"],
-    )
-
-    tool_registry.register(
-        name="event_graph_find_paths",
-        description="查找事件图中两个实体之间的路径。",
-        parameters={
-            "type": "object",
-            "properties": {
-                "from_entity": {"type": "string", "description": "起始实体ID"},
-                "to_entity": {"type": "string", "description": "目标实体ID"},
-                "max_depth": {"type": "integer", "description": "最大路径深度，默认为3", "default": 3},
-            },
-            "required": ["from_entity", "to_entity"],
-        },
-        function=event_graph_find_paths,
-        category="graph",
-        tags=["graph", "event", "path", "find"],
-        examples=["查找从事件A到事件B的路径"],
-    )
-
-    tool_registry.register(
-        name="event_graph_search_related_memories",
-        description="事件图增强搜索 - 结合图结构和记忆查询。",
-        parameters={
-            "type": "object",
-            "properties": {
-                "entity_name": {"type": "string", "description": "实体名称"},
-                "memory_query": {"type": "string", "description": "记忆查询字符串"},
-                "limit": {"type": "integer", "description": "返回结果数量限制", "default": 10},
-            },
-            "required": ["entity_name", "memory_query"],
-        },
-        function=event_graph_search_related_memories,
-        category="graph",
-        tags=["graph", "event", "memory", "search"],
-        examples=["搜索与事件产品发布会相关的记忆"],
-    )
+            function=func_ns[f"{prefix}_graph_search_related_memories"],
+            category="graph",
+            tags=["graph", prefix, "memory", "search"],
+            examples=[ex["search_related_memories"]],
+        )
 
 
 def write_long_term_memory(
