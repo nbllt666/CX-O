@@ -109,63 +109,7 @@ def register_assistant_tools():
         examples=["删除过时或错误的信息"],
     )
 
-    # 4. merge_memories - 合并记忆
-    tool_registry.register(
-        name="merge_memories",
-        description="将多个相似记忆合并为一个记忆。",
-        parameters={
-            "type": "object",
-            "properties": {
-                "memory_ids": {
-                    "type": "array",
-                    "items": {"type": "string"},
-                    "description": "要合并的记忆ID列表",
-                    "minItems": 2,
-                },
-                "merged_content": {"type": "string", "description": "合并后的记忆内容"},
-            },
-            "required": ["memory_ids", "merged_content"],
-        },
-        function=merge_memories,
-        category="assistant",
-        tags=["memory", "merge", "combine"],
-        examples=["合并多条关于同一主题的记忆"],
-    )
-
-    # 5. clean_expired - 清理过期记忆
-    tool_registry.register(
-        name="clean_expired",
-        description="清理已软删除超过7天的记忆。",
-        parameters={"type": "object", "properties": {}},
-        function=clean_expired,
-        category="assistant",
-        tags=["memory", "cleanup", "expired"],
-        examples=["清理过期的已删除记忆"],
-    )
-
-    # 6. export_memories - 导出记忆
-    tool_registry.register(
-        name="export_memories",
-        description="导出记忆数据为指定格式。",
-        parameters={
-            "type": "object",
-            "properties": {
-                "format": {"type": "string", "enum": ["json", "csv"], "description": "导出格式"},
-                "memory_type": {
-                    "type": "string",
-                    "enum": ["permanent", "long_term", "all"],
-                    "description": "导出的记忆类型",
-                },
-            },
-            "required": ["format"],
-        },
-        function=export_memories,
-        category="assistant",
-        tags=["memory", "export", "backup"],
-        examples=["导出所有记忆为JSON格式"],
-    )
-
-    # 7. get_memory_stats - 获取记忆统计
+    # 4. get_memory_stats - 获取记忆统计
     tool_registry.register(
         name="get_memory_stats",
         description="获取记忆库统计信息，包括数量、大小、各类型分布等。",
@@ -176,28 +120,7 @@ def register_assistant_tools():
         examples=["查看当前记忆库状态"],
     )
 
-    # 8. search_by_time - 按时间搜索
-    tool_registry.register(
-        name="search_by_time",
-        description="按时间范围检索记忆。",
-        parameters={
-            "type": "object",
-            "properties": {
-                "start_time": {
-                    "type": "string",
-                    "description": "开始时间（ISO格式，如 2024-01-01T00:00:00）",
-                },
-                "end_time": {"type": "string", "description": "结束时间（ISO格式）"},
-            },
-            "required": ["start_time", "end_time"],
-        },
-        function=search_by_time,
-        category="assistant",
-        tags=["memory", "search", "time"],
-        examples=["查找2024年1月的所有记忆"],
-    )
-
-    # 9. search_by_tag - 按标签搜索
+    # 5. search_by_tag - 按标签搜索
     tool_registry.register(
         name="search_by_tag",
         description="按标签检索记忆。",
@@ -219,7 +142,7 @@ def register_assistant_tools():
         examples=["查找带有'重要'标签的记忆"],
     )
 
-    # 10. bulk_delete - 批量删除（软删除）
+    # 6. bulk_delete - 批量删除（软删除）
     tool_registry.register(
         name="bulk_delete",
         description="批量删除记忆（软删除）。",
@@ -242,7 +165,7 @@ def register_assistant_tools():
         examples=["批量删除多条过时记忆"],
     )
 
-    # 11. restore_memory - 恢复记忆
+    # 7. restore_memory - 恢复记忆
     tool_registry.register(
         name="restore_memory",
         description="恢复软删除的记忆。",
@@ -257,37 +180,7 @@ def register_assistant_tools():
         examples=["恢复误删的记忆"],
     )
 
-    # 12. search_similar_memories - 搜索相似记忆
-    tool_registry.register(
-        name="search_similar_memories",
-        description="搜索与指定记忆相似的其他记忆。",
-        parameters={
-            "type": "object",
-            "properties": {
-                "memory_id": {"type": "string", "description": "参考记忆ID"},
-                "threshold": {
-                    "type": "number",
-                    "description": "相似度阈值（0-1），默认0.5",
-                    "default": 0.5,
-                    "minimum": 0.0,
-                    "maximum": 1.0,
-                },
-                "limit": {
-                    "type": "integer",
-                    "description": "返回数量限制",
-                    "default": 10,
-                    "minimum": 1,
-                },
-            },
-            "required": ["memory_id"],
-        },
-        function=search_similar_memories,
-        category="assistant",
-        tags=["memory", "similar", "search"],
-        examples=["查找与某条记忆相似的其他记忆"],
-    )
-
-    # 13. get_chat_history - 读取聊天记录
+    # 8. get_chat_history - 读取聊天记录
     tool_registry.register(
         name="get_chat_history",
         description="读取指定会话的聊天历史。",
@@ -310,55 +203,7 @@ def register_assistant_tools():
         examples=["读取某个会话的聊天记录"],
     )
 
-    # 14. get_similar_memories - 相似记忆
-    tool_registry.register(
-        name="get_similar_memories",
-        description="获取与给定内容相似的记忆。",
-        parameters={
-            "type": "object",
-            "properties": {
-                "content": {"type": "string", "description": "参考内容"},
-                "limit": {
-                    "type": "integer",
-                    "description": "返回数量限制",
-                    "default": 10,
-                    "minimum": 1,
-                },
-            },
-            "required": ["content"],
-        },
-        function=get_similar_memories,
-        category="assistant",
-        tags=["memory", "similar", "search"],
-        examples=["查找与给定内容相似的记忆"],
-    )
-
-    # 15. get_memory_logs - 记忆管理日志
-    tool_registry.register(
-        name="get_memory_logs",
-        description="获取记忆管理操作日志。",
-        parameters={
-            "type": "object",
-            "properties": {
-                "memory_id": {
-                    "type": "string",
-                    "description": "特定记忆的日志，不传则返回所有日志",
-                },
-                "limit": {
-                    "type": "integer",
-                    "description": "返回数量限制",
-                    "default": 100,
-                    "minimum": 1,
-                },
-            },
-        },
-        function=get_memory_logs,
-        category="assistant",
-        tags=["memory", "log", "history"],
-        examples=["查看记忆操作日志"],
-    )
-
-    # 16. get_available_commands - 获取可用命令
+    # 9. get_available_commands - 获取可用命令
     tool_registry.register(
         name="get_available_commands",
         description="获取所有可用的记忆管理命令列表及其描述。",
@@ -844,42 +689,6 @@ def delete_memory(memory_id: str, reason: str) -> Dict[str, Any]:
         return {"error": f"删除记忆失败: {str(e)}"}
 
 
-def merge_memories(memory_ids: List[str], merged_content: str) -> Dict[str, Any]:
-    """合并记忆"""
-    mm = get_memory_manager()
-    if not mm:
-        return {"error": "记忆管理器不可用"}
-
-    try:
-        return {"error": "This feature is not yet implemented"}
-    except Exception as e:
-        return {"error": f"合并记忆失败: {str(e)}"}
-
-
-def clean_expired() -> Dict[str, Any]:
-    """清理过期记忆"""
-    mm = get_memory_manager()
-    if not mm:
-        return {"error": "记忆管理器不可用"}
-
-    try:
-        return {"error": "This feature is not yet implemented"}
-    except Exception as e:
-        return {"error": f"清理过期记忆失败: {str(e)}"}
-
-
-def export_memories(format: str, memory_type: str = "all") -> Dict[str, Any]:
-    """导出记忆"""
-    mm = get_memory_manager()
-    if not mm:
-        return {"error": "记忆管理器不可用"}
-
-    try:
-        return {"error": "This feature is not yet implemented"}
-    except Exception as e:
-        return {"error": f"导出记忆失败: {str(e)}"}
-
-
 def get_memory_stats() -> Dict[str, Any]:
     """获取记忆统计"""
     mm = get_memory_manager()
@@ -891,18 +700,6 @@ def get_memory_stats() -> Dict[str, Any]:
         return stats
     except Exception as e:
         return {"error": f"获取统计失败: {str(e)}"}
-
-
-def search_by_time(start_time: str, end_time: str) -> Dict[str, Any]:
-    """按时间搜索"""
-    mm = get_memory_manager()
-    if not mm:
-        return {"error": "记忆管理器不可用"}
-
-    try:
-        return {"error": "This feature is not yet implemented"}
-    except Exception as e:
-        return {"error": f"按时间搜索失败: {str(e)}"}
 
 
 def search_by_tag(tags: List[str]) -> Dict[str, Any]:
@@ -961,24 +758,6 @@ def restore_memory(memory_id: str) -> Dict[str, Any]:
         return {"error": f"恢复记忆失败: {str(e)}"}
 
 
-def search_similar_memories(
-    memory_id: str, threshold: float = None, limit: int = None
-) -> Dict[str, Any]:
-    """搜索相似记忆"""
-    if threshold is None:
-        threshold = Settings().config.limits.memory.search_similar_threshold
-    if limit is None:
-        limit = Settings().config.limits.memory.search_similar_limit
-    mm = get_memory_manager()
-    if not mm:
-        return {"error": "记忆管理器不可用"}
-
-    try:
-        return {"error": "This feature is not yet implemented"}
-    except Exception as e:
-        return {"error": f"搜索相似记忆失败: {str(e)}"}
-
-
 def get_chat_history(session_id: str, limit: int = None) -> Dict[str, Any]:
     """读取聊天记录"""
     if limit is None:
@@ -992,32 +771,6 @@ def get_chat_history(session_id: str, limit: int = None) -> Dict[str, Any]:
         return {"session_id": session_id, "count": len(messages), "messages": messages}
     except Exception as e:
         return {"error": f"读取聊天记录失败: {str(e)}"}
-
-
-def get_similar_memories(content: str, limit: int = 10) -> Dict[str, Any]:
-    """相似记忆"""
-    mm = get_memory_manager()
-    if not mm:
-        return {"error": "记忆管理器不可用"}
-
-    try:
-        return {"error": "This feature is not yet implemented"}
-    except Exception as e:
-        return {"error": f"搜索相似记忆失败: {str(e)}"}
-
-
-def get_memory_logs(memory_id: str = None, limit: int = None) -> Dict[str, Any]:
-    """记忆管理日志"""
-    if limit is None:
-        limit = Settings().config.limits.memory.memory_logs_limit
-    mm = get_memory_manager()
-    if not mm:
-        return {"error": "记忆管理器不可用"}
-
-    try:
-        return {"error": "This feature is not yet implemented"}
-    except Exception as e:
-        return {"error": f"获取日志失败: {str(e)}"}
 
 
 def get_available_commands() -> Dict[str, Any]:

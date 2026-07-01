@@ -37,18 +37,11 @@ BUILTIN_TOOL_NAMES = {
     "update_memory_node",
     "search_memories",
     "delete_memory",
-    "merge_memories",
-    "clean_expired",
-    "export_memories",
     "get_memory_stats",
-    "search_by_time",
     "search_by_tag",
     "bulk_delete",
     "restore_memory",
-    "search_similar_memories",
     "get_chat_history",
-    "get_similar_memories",
-    "get_memory_logs",
     "get_available_commands",
 }
 
