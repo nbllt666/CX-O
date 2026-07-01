@@ -606,10 +606,6 @@ class ApiClient {
     return this.request<HealthStatus>({ url: '/health' });
   }
 
-  async getBackendStatus(): Promise<{ running: boolean; version?: string }> {
-    return this.request<{ running: boolean; version?: string }>({ url: '/api/status' });
-  }
-
   async getGraphHealth(): Promise<{ connected: boolean; message?: string }> {
     return this.request<{ connected: boolean; message?: string }>({ url: '/api/graph/health' });
   }
@@ -1150,49 +1146,6 @@ class ApiClient {
       headers: { 'Content-Type': 'multipart/form-data' },
     });
     return response.data;
-  }
-
-  async getWorkflowStatus(): Promise<{
-    current_step: number;
-    steps: Array<{ id: string; name: string; status: string; output: unknown }>;
-  }> {
-    return this.voiceWorkstationRequest<{
-      current_step: number;
-      steps: Array<{ id: string; name: string; status: string; output: unknown }>;
-    }>({ url: '/api/workflow/status' });
-  }
-
-  async executeWorkflowStep(stepId: string, params: Record<string, unknown>): Promise<{
-    current_step: number;
-    steps: Array<{ id: string; name: string; status: string; output: unknown }>;
-  }> {
-    return this.voiceWorkstationRequest<{
-      current_step: number;
-      steps: Array<{ id: string; name: string; status: string; output: unknown }>;
-    }>({
-      url: `/api/workflow/step/${stepId}/execute`,
-      method: 'POST',
-      data: params,
-    });
-  }
-
-  async resetWorkflow(): Promise<{
-    current_step: number;
-    steps: Array<{ id: string; name: string; status: string; output: unknown }>;
-  }> {
-    return this.voiceWorkstationRequest<{
-      current_step: number;
-      steps: Array<{ id: string; name: string; status: string; output: unknown }>;
-    }>({
-      url: '/api/workflow/reset',
-      method: 'POST',
-    });
-  }
-
-  async getWorkflowStepOutput(stepId: string): Promise<{ output: unknown }> {
-    return this.voiceWorkstationRequest<{ output: unknown }>({
-      url: `/api/workflow/step/${stepId}/output`,
-    });
   }
 
   async sovitsSVCPreprocess(data: {

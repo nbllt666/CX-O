@@ -531,14 +531,6 @@ describe('API Client', () => {
       expect(result.status).toBe('healthy');
     });
 
-    it('should get main backend status', async () => {
-      const mockStatus = { running: true, uptime: 7200 };
-      mockGet.mockResolvedValueOnce({ data: mockStatus });
-
-      const result = await api.getMainBackendStatus();
-      expect(result.running).toBe(true);
-    });
-
     it('should start main backend', async () => {
       const mockResult = { status: 'started' };
       mockPost.mockResolvedValueOnce({ data: mockResult });
