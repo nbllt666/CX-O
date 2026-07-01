@@ -7,6 +7,7 @@ from pathlib import Path
 from server.core.logging_config import get_contextual_logger
 from server.config import Settings
 from server.api.routers.admin import verify_admin_api_key
+from server.core.websocket import get_websocket_manager
 
 router = APIRouter()
 logger = get_contextual_logger(__name__)
@@ -466,6 +467,14 @@ async def get_vad_config():
 async def get_live_client_status():
     """获取直播客户端状态"""
     return {"status": "success", "config": {"status": "disabled"}}
+
+
+@router.post("/live/client/{client_id}/disconnect")
+async def disconnect_live_client(client_id: str):
+    """断开直播客户端 WebSocket 连接"""
+    ws_manager = get_websocket_manager()
+    await ws_manager.disconnect(client_id)
+    return {"status": "success", "message": f"客户端 {client_id} 已断开"}
 
 
 @router.get("/config/audio")
