@@ -62,37 +62,6 @@ class PongMessage(BaseModel):
     timestamp: float = Field(default_factory=time.time)
 
 
-class TTSStreamMessage(BaseMessage):
-    type: MessageType = MessageType.STREAM
-    action: str = "tts.synthesize_stream"
-    chunk_index: int = 0
-    data: dict[str, Any] = Field(default_factory=dict)
-    is_final: bool = False
-
-    class Config:
-        json_schema_extra = {
-            "example": {
-                "type": "stream",
-                "request_id": "uuid-string",
-                "action": "tts.synthesize_stream",
-                "chunk_index": 0,
-                "data": {
-                    "text_segment": "第一句话。",
-                    "audio_data": "base64-encoded-audio"
-                },
-                "is_final": False
-            }
-        }
-
-
-def create_request(action: str, data: dict[str, Any], request_id: Optional[str] = None) -> dict:
-    return RequestMessage(
-        request_id=request_id or str(uuid.uuid4()),
-        action=action,
-        data=data
-    ).model_dump()
-
-
 def create_response(request_id: str, action: str, data: dict[str, Any], status: str = "success") -> dict:
     return ResponseMessage(
         request_id=request_id,
@@ -118,10 +87,6 @@ def create_error(request_id: str, action: str, code: str, message: str) -> dict:
         action=action,
         error={"code": code, "message": message}
     ).model_dump()
-
-
-def create_ping() -> dict:
-    return PingMessage().model_dump()
 
 
 def create_pong(timestamp: float) -> dict:
