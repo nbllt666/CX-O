@@ -1,0 +1,22 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://cx-o/public/schema/memory.schema.json",
+  "title": "Memory",
+  "description": "记忆数据契约（种子阶段，待 s0201 补全）",
+  "_sourceOfTruth": {
+    "primary": "c:/CX-O/CX-O-SERVER/server/core/memory/",
+    "secondary": ["c:/CX-O/CX-O-Frontend/src/api/clients/_types.ts"],
+    "note": "后端记忆模型在 server/core/memory/；前端 Memory 接口在 _types.ts；数据存储于 data/memories.db（SQLite）"
+  },
+  "_seedStage": true,
+  "_completionSkill": "s0201",
+  "type": "object",
+  "properties": {},
+  "required": [],
+  "_todo": [
+    "s0201: 从 server/core/memory/ 提取记忆模型 Schema",
+    "s0201: 与前端 Memory 接口对齐",
+    "s0201: 补全三维评分（重要性+时间+相关性）字段",
+    "s0201: 补全双阶段指数衰减模型字段"
+  ]
+}

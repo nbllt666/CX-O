@@ -1,0 +1,22 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://cx-o/public/schema/graph_entity.schema.json",
+  "title": "GraphEntity",
+  "description": "图谱实体数据契约（种子阶段，待 s0201 补全）",
+  "_sourceOfTruth": {
+    "primary": "c:/CX-O/CX-O-SERVER/server/core/graph/models.py",
+    "secondary": ["c:/CX-O/CX-O-Frontend/src/api/clients/_types.ts"],
+    "note": "后端 9 个 graph 模型（GraphNode/GraphEdge 等，dataclass 非 BaseModel）；前端 GraphEntity/GraphRelation 接口在 _types.ts；四类图谱：用户/事物/概念/事件"
+  },
+  "_seedStage": true,
+  "_completionSkill": "s0201",
+  "type": "object",
+  "properties": {},
+  "required": [],
+  "_todo": [
+    "s0201: 从 server/core/graph/models.py 提取 9 个 dataclass 转 Schema",
+    "s0201: 与前端 GraphEntity/GraphRelation 接口对齐",
+    "s0201: 补全四类图谱（用户/事物/概念/事件）分类字段",
+    "s0201: 补全图算法（BFS/DFS/Dijkstra/PageRank）输入输出 Schema"
+  ]
+}

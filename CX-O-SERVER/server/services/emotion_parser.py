@@ -13,6 +13,9 @@ logger = logging.getLogger(__name__)
 EMOTION_PATTERN = re.compile(r'\[emotion:([^\]]+)\]')
 SLEEP_PATTERN = re.compile(r'\[sleep:(\d+)\]')
 COMBINED_PATTERN = re.compile(r'\[(?:emotion:([^\]]+)|sleep:(\d+))\]')
+AVATAR_TAG_PATTERN = re.compile(
+    r'\[(?:emotion|blend|bone|pose|release|wind|sleep)(?::[^\]]+)?\]'
+)
 
 SUPPORTED_EMOTIONS = {
     "happy", "sad", "angry", "surprised", "fear",
@@ -78,8 +81,12 @@ def parse_text_with_emotions(text: str) -> list[dict[str, Any]]:
     return extract_emotions_with_text(text)
 
 
+def strip_avatar_tags(text: str) -> str:
+    return AVATAR_TAG_PATTERN.sub('', text).strip()
+
+
 def strip_emotion_tags(text: str) -> str:
-    return COMBINED_PATTERN.sub('', text).strip()
+    return strip_avatar_tags(text)
 
 
 def get_emotion_at_position(text: str, position: int) -> str | None:

@@ -27,7 +27,7 @@ export function applyAvatarTags(driver: IAvatarDriver, tags: AvatarTag[]) {
   for (const tag of tags) {
     switch (tag.type) {
       case 'emotion':
-        driver.setEmotion(tag.name, 1.0);
+        driver.setEmotion(tag.emotion, 1.0);
         break;
       case 'blend':
         driver.setBlendShapes([{ name: tag.name, weight: tag.weight }]);

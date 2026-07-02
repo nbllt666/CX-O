@@ -1,0 +1,21 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://cx-o/public/schema/agent.schema.json",
+  "title": "Agent",
+  "description": "Agent 配置数据契约（种子阶段，待 s0201 补全完整字段定义）",
+  "_sourceOfTruth": {
+    "primary": "c:/CX-O/data/agents.json",
+    "secondary": [],
+    "note": "Agent 数据以 data/agents.json 为源真理，14 字段：id/name/description/system_prompt/model/temperature/max_tokens/use_memory/use_tools/memory_scene/decay_model/vision_enabled/is_default/created_at/updated_at"
+  },
+  "_seedStage": true,
+  "_completionSkill": "s0201",
+  "type": "object",
+  "properties": {},
+  "required": [],
+  "_todo": [
+    "s0201: 从 data/agents.json 提取 14 字段完整 Schema",
+    "s0201: 补全字段类型、取值范围、必填性、默认值、字段描述",
+    "s0201: 生成数据契约校验用例 + 合规 rubric"
+  ]
+}

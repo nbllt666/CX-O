@@ -75,7 +75,9 @@ class SystemActions:
 class ASRActions:
     RECOGNIZE = "asr.recognize"
     RECOGNIZE_BASE64 = "asr.recognize_base64"
-    STREAM = "asr.stream"
+    STREAM = "asr_stream"
+    STATUS = "asr_stream_status"
+    RESULT = "asr_stream_result"
 
 
 class VoiceActions:

@@ -11,7 +11,7 @@ export function applyAvatarTags(driver: IAvatarDriver, tags: AvatarTag[]): void 
   for (const tag of tags) {
     switch (tag.type) {
       case 'emotion':
-        driver.setEmotion(tag.name, 1.0);
+        driver.setEmotion(tag.emotion, 1.0);
         break;
       case 'blend':
         driver.setBlendShapes([{ name: tag.name, weight: tag.weight }]);
@@ -29,7 +29,7 @@ export function applyAvatarTags(driver: IAvatarDriver, tags: AvatarTag[]): void 
         driver.setWind(tag);
         break;
       case 'sleep':
-        console.log('[avatar] sleep tag:', tag.ms, 'ms');
+        console.log('[avatar] sleep tag:', tag.duration_ms, 'ms');
         break;
     }
   }
@@ -60,11 +60,11 @@ export function groupTtsSegments(segments: Segment[]): TtsGroup[] {
       textBuffer += segment.content;
     } else if (segment.type === 'tag' && segment.tag.type === 'sleep') {
       if (textBuffer.trim()) {
-        groups.push({ text: textBuffer, sleepAfterMs: segment.tag.ms });
+        groups.push({ text: textBuffer, sleepAfterMs: segment.tag.duration_ms });
         textBuffer = '';
       } else if (groups.length > 0) {
         const last = groups[groups.length - 1];
-        last.sleepAfterMs = (last.sleepAfterMs || 0) + segment.tag.ms;
+        last.sleepAfterMs = (last.sleepAfterMs || 0) + segment.tag.duration_ms;
       }
     }
   }

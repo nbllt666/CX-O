@@ -1,0 +1,22 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://cx-o/public/config_template/unified_config.schema.json",
+  "title": "UnifiedConfig",
+  "description": "后端统一配置契约（种子阶段，待 s0201 补全）",
+  "_sourceOfTruth": {
+    "primary": "c:/CX-O/CX-O-SERVER/server/config.py",
+    "secondary": ["c:/CX-O/CX-O-SERVER/config.json"],
+    "note": "30+ Pydantic BaseModel 汇聚为 UnifiedConfig（line 437）。运行时 config.json 15 顶层节：system/gateway/services/logging/llm/models/memory/database/acp/cors/context/vector/asr/tts/voice_workstation/rate_limit"
+  },
+  "_seedStage": true,
+  "_completionSkill": "s0201",
+  "type": "object",
+  "properties": {},
+  "required": [],
+  "_todo": [
+    "s0201: 从 server/config.py 提取 30+ BaseModel 完整 Schema",
+    "s0201: 补全 15 顶层节的字段类型、取值范围、必填性、默认值",
+    "s0201: 与 config.json 运行时配置对齐",
+    "s0201: 生成配置加载自动填充缺失字段用例"
+  ]
+}

@@ -1,0 +1,21 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://cx-o/public/schema/error_codes.schema.json",
+  "title": "ErrorCodes",
+  "description": "全局错误码契约（种子阶段，待定义）",
+  "_sourceOfTruth": {
+    "primary": null,
+    "secondary": [],
+    "note": "全局错误码待定义。当前后端无统一错误码枚举，散落在各 router 的 HTTPException 与 WS ErrorMessage 中。s0201 阶段需统一定义全局错误码，避免模块间异常拦截歧义。"
+  },
+  "_seedStage": true,
+  "_completionSkill": "s0201",
+  "type": "object",
+  "properties": {},
+  "required": [],
+  "_todo": [
+    "s0201: 扫描 server/api/routers/ 与 server/protocol/message.py ErrorMessage，提取现有错误码",
+    "s0201: 统一定义全局错误码枚举（按模块分组）",
+    "s0201: 补全错误码与异常契约，确保调用方必须处理约定的异常"
+  ]
+}

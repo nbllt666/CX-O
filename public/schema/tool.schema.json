@@ -1,0 +1,22 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://cx-o/public/schema/tool.schema.json",
+  "title": "Tool",
+  "description": "工具数据契约（种子阶段，待 s0201 补全）",
+  "_sourceOfTruth": {
+    "primary": "c:/CX-O/CX-O-Frontend/src/api/clients/_types.ts",
+    "secondary": ["c:/CX-O/CX-O-SERVER/server/core/tools/"],
+    "note": "前端 Tool 接口在 _types.ts；后端工具系统在 server/core/tools/；含 56 个图工具"
+  },
+  "_seedStage": true,
+  "_completionSkill": "s0201",
+  "type": "object",
+  "properties": {},
+  "required": [],
+  "_todo": [
+    "s0201: 从前端 _types.ts 提取 Tool 接口 Schema",
+    "s0201: 与后端 server/core/tools/ 对齐",
+    "s0201: 补全工具调用参数/返回值/异常 Schema",
+    "s0201: 补全 MCP（Model Context Protocol）工具协议字段"
+  ]
+}

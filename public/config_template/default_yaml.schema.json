@@ -1,0 +1,21 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://cx-o/public/config_template/default_yaml.schema.json",
+  "title": "DefaultYamlConfig",
+  "description": "默认 YAML 配置契约（种子阶段，待 s0201 补全）",
+  "_sourceOfTruth": {
+    "primary": "c:/CX-O/config/default.yaml",
+    "secondary": ["c:/CX-O/config/validation.py"],
+    "note": "default.yaml 21 顶层键：server/cors/logging/database/models/model_defaults/agent/memory/context/tools/acp/security/monitoring/llm_params/tts/avatar/asr/voice_workstation/live/limits。validation.py 含 REQUIRED_FIELDS + VALID_VALUES 枚举集"
+  },
+  "_seedStage": true,
+  "_completionSkill": "s0201",
+  "type": "object",
+  "properties": {},
+  "required": [],
+  "_todo": [
+    "s0201: 从 config/default.yaml 提取 21 顶层键完整 Schema",
+    "s0201: 从 config/validation.py 提取 REQUIRED_FIELDS + VALID_VALUES 转 Schema enum",
+    "s0201: 补全字段类型、取值范围、必填性、默认值"
+  ]
+}

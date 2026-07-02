@@ -1,0 +1,22 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://cx-o/public/schema/chat_message.schema.json",
+  "title": "ChatMessage",
+  "description": "聊天消息数据契约（种子阶段，待 s0201 补全）",
+  "_sourceOfTruth": {
+    "primary": "c:/CX-O/CX-O-SERVER/server/protocol/message.py",
+    "secondary": ["c:/CX-O/CX-O-Frontend/src/api/clients/_types.ts"],
+    "note": "后端 6 种 WS 消息类型（BaseMessage/RequestMessage/ResponseMessage/StreamMessage/ErrorMessage/Ping/Pong）+ 4 工厂函数；前端 ChatMessage 接口在 _types.ts"
+  },
+  "_seedStage": true,
+  "_completionSkill": "s0201",
+  "type": "object",
+  "properties": {},
+  "required": [],
+  "_todo": [
+    "s0201: 从 server/protocol/message.py 提取 6 消息类型 Schema",
+    "s0201: 与前端 _types.ts ChatMessage 接口对齐",
+    "s0201: 补全 MessageType enum、字段类型、必填性",
+    "s0201: 生成 WS 信封校验用例"
+  ]
+}

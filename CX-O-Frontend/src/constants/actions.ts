@@ -17,7 +17,15 @@ export const VoiceActions = {
   PREFILL_STARTED: 'voice.prefill_started',
 } as const;
 
+export const ASRActions = {
+  STREAM: 'asr_stream',
+  STATUS: 'asr_stream_status',
+  RESULT: 'asr_stream_result',
+} as const;
+
 export type VoiceActionType =
   | typeof VoiceActions.PARTIAL
   | typeof VoiceActions.TTS_CHUNK
   | typeof VoiceActions.PREFILL_STARTED;
+
+export type ASRActionType = typeof ASRActions[keyof typeof ASRActions];

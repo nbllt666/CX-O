@@ -856,7 +856,7 @@ def register_audio_handlers(
                 stream_processor.reset()
                 await manager.send_message(client_id, create_response(
                     request_id=request_id,
-                    action="asr_stream_status",
+                    action=ASRActions.STATUS,
                     data={"status": "reset"}
                 ))
                 return
@@ -885,7 +885,7 @@ def register_audio_handlers(
             if asr_result:
                 await manager.send_message(client_id, create_response(
                     request_id=request_id,
-                    action="asr_stream_result",
+                    action=ASRActions.RESULT,
                     data={
                         "text": asr_result.get("text", ""),
                         "is_final": not vad_result.get("is_speaking", False)

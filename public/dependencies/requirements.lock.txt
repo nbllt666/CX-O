@@ -1,0 +1,11 @@
+# 依赖锁定快照（种子阶段）
+#
+# 源真理: c:/CX-O/requirements.txt
+# 后端依赖: c:/CX-O/CX-O-SERVER/pyproject.toml（仅含工具配置，无 [project] 元数据）
+# 前端依赖: c:/CX-O/CX-O-Frontend/package.json（name="cxhms-frontend", version="1.0.0"）
+#
+# 当前状态: 占位——待 s0201/s0202 阶段从 requirements.txt 完整快照
+# 完整快照应包含: pip freeze 输出 + npm shrinkwrap 锁定版本
+#
+# TODO s0201: 从 c:/CX-O/requirements.txt 复制完整依赖清单
+# TODO s0201: 标注 AC 范式运行所需最小依赖集（jsonschema/pydantic/streamlit 等）

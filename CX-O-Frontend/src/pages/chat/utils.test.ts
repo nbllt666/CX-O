@@ -36,7 +36,7 @@ function makeMockDriver(): IAvatarDriver & { calls: string[] } {
 describe('applyAvatarTags', () => {
   it('emotion tag 调用 driver.setEmotion(name, 1.0)', () => {
     const driver = makeMockDriver();
-    applyAvatarTags(driver, [{ type: 'emotion', name: 'happy' }]);
+    applyAvatarTags(driver, [{ type: 'emotion', emotion: 'happy' }]);
     expect(driver.setEmotion).toHaveBeenCalledWith('happy', 1.0);
     expect(driver.calls).toEqual(['setEmotion:happy:1']);
   });
@@ -83,7 +83,7 @@ describe('applyAvatarTags', () => {
   it('sleep tag 仅 console.log，不调用 driver 方法', () => {
     const driver = makeMockDriver();
     const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
-    applyAvatarTags(driver, [{ type: 'sleep', ms: 500 }]);
+    applyAvatarTags(driver, [{ type: 'sleep', duration_ms: 500 }]);
     expect(logSpy).toHaveBeenCalledWith('[avatar] sleep tag:', 500, 'ms');
     expect(driver.calls).toEqual([]);
     logSpy.mockRestore();
@@ -98,7 +98,7 @@ describe('applyAvatarTags', () => {
   it('多 tag 按顺序调用', () => {
     const driver = makeMockDriver();
     applyAvatarTags(driver, [
-      { type: 'emotion', name: 'happy' },
+      { type: 'emotion', emotion: 'happy' },
       { type: 'pose', durationMs: 1000 },
       { type: 'release' },
     ]);

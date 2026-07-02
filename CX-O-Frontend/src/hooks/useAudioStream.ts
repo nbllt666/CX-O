@@ -1,6 +1,6 @@
 import { useRef, useState, useCallback, useEffect } from 'react';
 
-import { VoiceActions, VoiceActionType } from '../constants/actions';
+import { VoiceActions, VoiceActionType, ASRActions } from '../constants/actions';
 import { useAudioPipeline } from './audio/pipeline';
 
 export interface AudioStreamConfig {
@@ -209,7 +209,7 @@ export function useAudioStream(options: UseAudioStreamOptions): UseAudioStreamRe
     } else {
       // 半双工（向后兼容）：沿用原 asr_stream action
       wsSend({
-        action: 'asr_stream',
+        action: ASRActions.STREAM,
         data: {
           audio: base64,
         },
@@ -294,7 +294,7 @@ export function useAudioStream(options: UseAudioStreamOptions): UseAudioStreamRe
 
   const resetStream = useCallback(() => {
     wsSend({
-      action: 'asr_stream',
+      action: ASRActions.STREAM,
       data: { reset: true },
     });
     audioBufferRef.current = [];
