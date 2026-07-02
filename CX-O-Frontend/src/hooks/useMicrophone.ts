@@ -1,5 +1,7 @@
 import { useState, useRef, useCallback, useEffect } from 'react';
 
+import { useAudioPipeline } from './audio/pipeline';
+
 export interface UseMicrophoneOptions {
   /** 额外的音频约束（如 deviceId、echoCancellation 等） */
   constraints?: MediaTrackConstraints;
@@ -35,10 +37,17 @@ export function useMicrophone(options: UseMicrophoneOptions = {}): UseMicrophone
   const [currentLevel, setCurrentLevel] = useState(0);
 
   const streamRef = useRef<MediaStream | null>(null);
-  const audioContextRef = useRef<AudioContext | null>(null);
-  const analyserRef = useRef<AnalyserNode | null>(null);
   const rafRef = useRef<number>(0);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+
+  const {
+    audioContextRef,
+    analyserRef,
+    init: initPipeline,
+    close: closePipeline,
+    createStreamSource,
+    createStreamDestination,
+  } = useAudioPipeline({ audioContextOptions: { latencyHint: 'interactive' } });
 
   const cleanup = useCallback(() => {
     if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
@@ -49,13 +58,10 @@ export function useMicrophone(options: UseMicrophoneOptions = {}): UseMicrophone
       streamRef.current.getTracks().forEach((t) => t.stop());
       streamRef.current = null;
     }
-    if (audioContextRef.current) {
-      audioContextRef.current.close().catch(() => {});
-      audioContextRef.current = null;
-    }
+    closePipeline();
     if (rafRef.current) cancelAnimationFrame(rafRef.current);
     setCurrentLevel(0);
-  }, []);
+  }, [closePipeline]);
 
   const startMonitoring = useCallback(() => {
     if (!analyserRef.current) return;
@@ -94,30 +100,24 @@ export function useMicrophone(options: UseMicrophoneOptions = {}): UseMicrophone
       });
       streamRef.current = stream;
 
-      const ctx = new AudioContext({ latencyHint: 'interactive' });
-      audioContextRef.current = ctx;
-
-      const source = ctx.createMediaStreamSource(stream);
-      const analyser = ctx.createAnalyser();
-      analyser.fftSize = 256;
-      analyser.smoothingTimeConstant = 0.8;
-      analyserRef.current = analyser;
-
-      const dest = ctx.createMediaStreamDestination();
+      initPipeline();
+      const ctx = audioContextRef.current!;
+      const source = createStreamSource(stream)!;
+      const dest = createStreamDestination()!;
 
       // 允许调用方插入额外音频节点（如增益节点）
       if (createExtraNodes) {
         const { lastNode, outputNode } = createExtraNodes(ctx, source);
-        lastNode.connect(analyser);
+        lastNode.connect(analyserRef.current!);
         if (outputNode) {
-          analyser.connect(outputNode);
+          analyserRef.current!.connect(outputNode);
           outputNode.connect(ctx.destination);
         }
       } else {
-        source.connect(analyser);
+        source.connect(analyserRef.current!);
       }
 
-      analyser.connect(dest);
+      analyserRef.current!.connect(dest);
 
       const processor = new MediaRecorder(dest.stream, { mimeType: 'audio/webm;codecs=opus' });
       mediaRecorderRef.current = processor;
@@ -134,7 +134,20 @@ export function useMicrophone(options: UseMicrophoneOptions = {}): UseMicrophone
       console.error('[useMicrophone] Failed to start microphone:', e);
       setIsEnabled(false);
     }
-  }, [isEnabled, constraints, onDataAvailable, onBeforeStart, createExtraNodes, cleanup, startMonitoring]);
+  }, [
+    isEnabled,
+    constraints,
+    onDataAvailable,
+    onBeforeStart,
+    createExtraNodes,
+    cleanup,
+    startMonitoring,
+    initPipeline,
+    audioContextRef,
+    createStreamSource,
+    createStreamDestination,
+    analyserRef,
+  ]);
 
   // 组件卸载时自动清理
   useEffect(() => {

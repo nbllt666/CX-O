@@ -1,6 +1,7 @@
 import { useRef, useState, useCallback, useEffect } from 'react';
 
 import { VoiceActions, VoiceActionType } from '../constants/actions';
+import { useAudioPipeline } from './audio/pipeline';
 
 export interface AudioStreamConfig {
   sampleRate?: number;
@@ -154,11 +155,22 @@ export function useAudioStream(options: UseAudioStreamOptions): UseAudioStreamRe
   const [isDualStreaming, setIsDualStreaming] = useState(false);
 
   const mediaStreamRef = useRef<MediaStream | null>(null);
-  const audioContextRef = useRef<AudioContext | null>(null);
   const workletNodeRef = useRef<AudioWorkletNode | null>(null);
-  const analyserRef = useRef<AnalyserNode | null>(null);
   const chunkIntervalRef = useRef<NodeJS.Timeout | null>(null);
   const audioBufferRef = useRef<Int16Array[]>([]);
+
+  // 音频管线工厂：统一管理 AudioContext/Analyser 生命周期与节点工厂
+  const {
+    analyserRef,
+    init: initPipeline,
+    close: closePipeline,
+    createStreamSource,
+    createScriptProcessor,
+    createStreamDestination,
+  } = useAudioPipeline({
+    audioContextOptions: { sampleRate: config.sampleRate || 16000 },
+    fftSize: 256,
+  });
 
   // 双流式模式标志：决定 processAudioChunk 走 voice.dual_stream 还是 asr_stream
   // 用 ref 而非 state，避免闭包捕获过期值，且不触发额外渲染
@@ -219,19 +231,11 @@ export function useAudioStream(options: UseAudioStreamOptions): UseAudioStreamRe
 
     mediaStreamRef.current = stream;
 
-    const audioContext = new AudioContext({
-      sampleRate: config.sampleRate || 16000,
-    });
-    audioContextRef.current = audioContext;
-
-    const source = audioContext.createMediaStreamSource(stream);
-
-    const analyser = audioContext.createAnalyser();
-    analyser.fftSize = 256;
-    analyserRef.current = analyser;
-
+    // 通过工厂初始化 AudioContext + Analyser（工厂保证单例与配置一致性）
+    initPipeline();
+    const source = createStreamSource(stream)!;
     const bufferSize = 4096;
-    const scriptProcessor = audioContext.createScriptProcessor(bufferSize, 1, 1);
+    const scriptProcessor = createScriptProcessor(bufferSize, 1, 1)!;
 
     scriptProcessor.onaudioprocess = (event) => {
       const inputData = event.inputBuffer.getChannelData(0);
@@ -242,12 +246,12 @@ export function useAudioStream(options: UseAudioStreamOptions): UseAudioStreamRe
       audioBufferRef.current.push(int16Data);
     };
 
-    const mediaStreamDestination = audioContext.createMediaStreamDestination();
+    const mediaStreamDestination = createStreamDestination()!;
 
-    source.connect(analyser);
-    analyser.connect(scriptProcessor);
+    source.connect(analyserRef.current!);
+    analyserRef.current!.connect(scriptProcessor);
     scriptProcessor.connect(mediaStreamDestination);
-  }, [config]);
+  }, [config, initPipeline, createStreamSource, createScriptProcessor, createStreamDestination, analyserRef]);
 
   const startStreaming = useCallback(async () => {
     try {
@@ -276,21 +280,17 @@ export function useAudioStream(options: UseAudioStreamOptions): UseAudioStreamRe
       workletNodeRef.current = null;
     }
 
-    if (audioContextRef.current) {
-      audioContextRef.current.close();
-      audioContextRef.current = null;
-    }
+    closePipeline();
 
     if (mediaStreamRef.current) {
       mediaStreamRef.current.getTracks().forEach(track => track.stop());
       mediaStreamRef.current = null;
     }
 
-    analyserRef.current = null;
     audioBufferRef.current = [];
     setIsStreaming(false);
     setIsSpeaking(false);
-  }, [processAudioChunk]);
+  }, [processAudioChunk, closePipeline]);
 
   const resetStream = useCallback(() => {
     wsSend({
@@ -359,22 +359,18 @@ export function useAudioStream(options: UseAudioStreamOptions): UseAudioStreamRe
       chunkIntervalRef.current = null;
     }
 
-    if (audioContextRef.current) {
-      audioContextRef.current.close();
-      audioContextRef.current = null;
-    }
+    closePipeline();
 
     if (mediaStreamRef.current) {
       mediaStreamRef.current.getTracks().forEach(track => track.stop());
       mediaStreamRef.current = null;
     }
 
-    analyserRef.current = null;
     audioBufferRef.current = [];
     dualStreamModeRef.current = false;
     dualStreamSessionRef.current = null;
     setIsDualStreaming(false);
-  }, [wsSend]);
+  }, [wsSend, closePipeline]);
 
   /**
    * 分发后端 voice.* 消息到对应回调。

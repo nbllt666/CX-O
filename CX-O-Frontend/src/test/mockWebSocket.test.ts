@@ -11,7 +11,17 @@
  * 不测试 hook 行为本身——那是 useWebSocket.test.ts / useLiveWebSocket.test.ts 的职责。
  */
 import { describe, it, expect, beforeEach, vi } from 'vitest';
-import { MockWebSocket, MockAudioContext } from './mockWebSocket';
+import {
+  MockWebSocket,
+  MockAudioContext,
+  MockAnalyserNode,
+  MockMediaStreamAudioSourceNode,
+  MockMediaElementAudioSourceNode,
+  MockScriptProcessorNode,
+  MockMediaStreamAudioDestinationNode,
+  MockMediaRecorder,
+  MockMediaStream,
+} from './mockWebSocket';
 
 describe('MockWebSocket', () => {
   beforeEach(() => MockWebSocket.reset());
@@ -210,5 +220,223 @@ describe('MockAudioContext', () => {
 
     source.stop();
     expect(ended).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('MockAudioContext extensions (M6)', () => {
+  beforeEach(() => MockAudioContext.reset());
+
+  it('constructor captures options for assertions', () => {
+    const ctx = new MockAudioContext({ latencyHint: 'interactive' });
+    expect(ctx.ctorOptions).toEqual({ latencyHint: 'interactive' });
+  });
+
+  it('constructor captures sampleRate option and applies to context', () => {
+    const ctx = new MockAudioContext({ sampleRate: 16000 });
+    expect(ctx.sampleRate).toBe(16000);
+  });
+
+  it('static instances and LAST track created contexts', () => {
+    expect(MockAudioContext.instances).toHaveLength(0);
+    expect(MockAudioContext.LAST).toBeNull();
+    const a = new MockAudioContext();
+    const b = new MockAudioContext();
+    expect(MockAudioContext.instances).toEqual([a, b]);
+    expect(MockAudioContext.LAST).toBe(b);
+  });
+
+  it('reset clears instances and LAST', () => {
+    new MockAudioContext();
+    MockAudioContext.reset();
+    expect(MockAudioContext.instances).toHaveLength(0);
+    expect(MockAudioContext.LAST).toBeNull();
+  });
+
+  it('createAnalyser returns MockAnalyserNode and increments counter', () => {
+    const ctx = new MockAudioContext();
+    const analyser = ctx.createAnalyser();
+    expect(analyser).toBeInstanceOf(MockAnalyserNode);
+    expect(ctx.analysersCreated).toBe(1);
+  });
+
+  it('createMediaStreamSource returns source bound to stream', () => {
+    const ctx = new MockAudioContext();
+    const stream = new MockMediaStream() as unknown as MediaStream;
+    const source = ctx.createMediaStreamSource(stream);
+    expect(source).toBeInstanceOf(MockMediaStreamAudioSourceNode);
+    expect(source.stream).toBe(stream);
+    expect(ctx.streamSourcesCreated).toBe(1);
+  });
+
+  it('createMediaElementSource returns source bound to element', () => {
+    const ctx = new MockAudioContext();
+    const el = document.createElement('audio');
+    const source = ctx.createMediaElementSource(el);
+    expect(source).toBeInstanceOf(MockMediaElementAudioSourceNode);
+    expect(source.mediaElement).toBe(el);
+    expect(ctx.elementSourcesCreated).toBe(1);
+  });
+
+  it('createScriptProcessor returns processor with bufferSize', () => {
+    const ctx = new MockAudioContext({ sampleRate: 16000 });
+    const proc = ctx.createScriptProcessor(4096, 1, 1);
+    expect(proc).toBeInstanceOf(MockScriptProcessorNode);
+    expect(proc.bufferSize).toBe(4096);
+    expect(ctx.scriptProcessorsCreated).toBe(1);
+  });
+
+  it('createMediaStreamDestination returns node with stream', () => {
+    const ctx = new MockAudioContext();
+    const dest = ctx.createMediaStreamDestination();
+    expect(dest).toBeInstanceOf(MockMediaStreamAudioDestinationNode);
+    expect(dest.stream).toBeDefined();
+    expect(dest.stream.getTracks()).toHaveLength(1);
+    expect(ctx.streamDestinationsCreated).toBe(1);
+  });
+
+  it('close sets closed flag', async () => {
+    const ctx = new MockAudioContext();
+    expect(ctx.closed).toBe(false);
+    await ctx.close();
+    expect(ctx.closed).toBe(true);
+    expect(ctx.state).toBe('closed');
+  });
+});
+
+describe('MockAnalyserNode', () => {
+  it('frequencyBinCount is fftSize / 2', () => {
+    const analyser = new MockAnalyserNode();
+    analyser.fftSize = 256;
+    expect(analyser.frequencyBinCount).toBe(128);
+    analyser.fftSize = 512;
+    expect(analyser.frequencyBinCount).toBe(256);
+  });
+
+  it('getByteFrequencyData fills provided array from internal data', () => {
+    const analyser = new MockAnalyserNode();
+    analyser.fftSize = 256;
+    analyser.setFrequencyData([10, 20, 30, 40]);
+    const array = new Uint8Array(4);
+    analyser.getByteFrequencyData(array);
+    expect(Array.from(array)).toEqual([10, 20, 30, 40]);
+  });
+
+  it('getByteFrequencyData does not overflow when array is larger than internal data', () => {
+    const analyser = new MockAnalyserNode();
+    analyser.setFrequencyData([1, 2]);
+    const array = new Uint8Array(5);
+    analyser.getByteFrequencyData(array);
+    expect(array[0]).toBe(1);
+    expect(array[1]).toBe(2);
+  });
+
+  it('connect tracks destination and disconnect resets', () => {
+    const analyser = new MockAnalyserNode();
+    const dest = { name: 'dest' };
+    analyser.connect(dest);
+    expect(analyser.connectedTo).toContain(dest);
+    analyser.disconnect();
+    expect(analyser.disconnected).toBe(true);
+    expect(analyser.connectedTo).toHaveLength(0);
+  });
+});
+
+describe('MockScriptProcessorNode', () => {
+  it('triggerAudioProcess fires onaudioprocess with input buffer', () => {
+    const proc = new MockScriptProcessorNode(4096, 16000);
+    const handler = vi.fn();
+    proc.onaudioprocess = handler;
+    proc.triggerAudioProcess();
+    expect(handler).toHaveBeenCalledTimes(1);
+    expect(handler.mock.calls[0][0].inputBuffer).toBeDefined();
+    expect(handler.mock.calls[0][0].outputBuffer).toBeDefined();
+    expect(typeof handler.mock.calls[0][0].inputBuffer.getChannelData).toBe('function');
+  });
+
+  it('triggerAudioProcess injects custom input data', () => {
+    const proc = new MockScriptProcessorNode(4096, 16000);
+    const received: Float32Array[] = [];
+    proc.onaudioprocess = (event) => {
+      received.push(event.inputBuffer.getChannelData(0));
+    };
+    const customData = new Float32Array([0.1, 0.2, 0.3]);
+    proc.triggerAudioProcess(customData);
+    expect(received[0]).toBe(customData);
+  });
+
+  it('connect/disconnect tracks destinations', () => {
+    const proc = new MockScriptProcessorNode(4096, 16000);
+    const dest = { name: 'dest' };
+    proc.connect(dest);
+    expect(proc.connectedTo).toContain(dest);
+    proc.disconnect();
+    expect(proc.disconnected).toBe(true);
+  });
+});
+
+describe('MockMediaRecorder', () => {
+  beforeEach(() => MockMediaRecorder.reset());
+
+  it('constructor records instance and captures mimeType', () => {
+    const stream = new MockMediaStream() as unknown as MediaStream;
+    const rec = new MockMediaRecorder(stream, { mimeType: 'audio/webm;codecs=opus' });
+    expect(MockMediaRecorder.instances).toContain(rec);
+    expect(MockMediaRecorder.LAST).toBe(rec);
+    expect(rec.mimeType).toBe('audio/webm;codecs=opus');
+    expect(rec.state).toBe('inactive');
+  });
+
+  it('start sets state to recording', () => {
+    const rec = new MockMediaRecorder(new MockMediaStream() as unknown as MediaStream);
+    rec.start(100);
+    expect(rec.state).toBe('recording');
+  });
+
+  it('stop sets state to inactive and fires onstop', () => {
+    const rec = new MockMediaRecorder(new MockMediaStream() as unknown as MediaStream);
+    const stopHandler = vi.fn();
+    rec.onstop = stopHandler;
+    rec.start();
+    rec.stop();
+    expect(rec.state).toBe('inactive');
+    expect(stopHandler).toHaveBeenCalledTimes(1);
+  });
+
+  it('triggerDataAvailable fires ondataavailable with data', () => {
+    const rec = new MockMediaRecorder(new MockMediaStream() as unknown as MediaStream);
+    const handler = vi.fn();
+    rec.ondataavailable = handler;
+    const blob = new Blob([new Uint8Array([1, 2, 3])]);
+    rec.triggerDataAvailable(blob);
+    expect(handler).toHaveBeenCalledTimes(1);
+    expect(handler.mock.calls[0][0].data).toBe(blob);
+  });
+
+  it('reset clears instances and LAST', () => {
+    new MockMediaRecorder(new MockMediaStream() as unknown as MediaStream);
+    MockMediaRecorder.reset();
+    expect(MockMediaRecorder.instances).toHaveLength(0);
+    expect(MockMediaRecorder.LAST).toBeNull();
+  });
+});
+
+describe('MockMediaStream', () => {
+  it('getTracks returns tracks with stop', () => {
+    const stream = new MockMediaStream(2);
+    expect(stream.getTracks()).toHaveLength(2);
+    expect(typeof stream.getTracks()[0].stop).toBe('function');
+    expect(stream.active).toBe(true);
+  });
+
+  it('stop on one track marks stream inactive', () => {
+    const stream = new MockMediaStream(1);
+    stream.getTracks()[0].stop();
+    expect(stream.active).toBe(false);
+  });
+
+  it('getAudioTracks returns audio-kind tracks', () => {
+    const stream = new MockMediaStream(2);
+    expect(stream.getAudioTracks()).toHaveLength(2);
+    expect(stream.getVideoTracks()).toHaveLength(0);
   });
 });

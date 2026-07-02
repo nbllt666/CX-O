@@ -1,5 +1,7 @@
 import { useEffect, useRef, useState, useCallback } from 'react';
 
+import { useAudioPipeline } from './audio/pipeline';
+
 export interface UseAudioAnalyzerOptions {
   audioElement: HTMLAudioElement | null;
   isPlaying: boolean;
@@ -81,12 +83,18 @@ export function useAudioAnalyzer({
     o: 0,
   });
 
-  const audioContextRef = useRef<AudioContext | null>(null);
-  const analyserRef = useRef<AnalyserNode | null>(null);
   const sourceRef = useRef<MediaElementAudioSourceNode | null>(null);
   const sourceAudioElRef = useRef<HTMLAudioElement | null>(null);
   const animationFrameRef = useRef<number | null>(null);
   const lastStateUpdateRef = useRef(0);
+
+  const {
+    audioContextRef,
+    analyserRef,
+    init: initPipeline,
+    close: closePipeline,
+    createElementSource,
+  } = useAudioPipeline({ fftSize, smoothingTimeConstant });
 
   const throttledSetState = useCallback(
     (newVolume: number, newVoiceBand: number, newVowels: { a: number; i: number; u: number; e: number; o: number }) => {
@@ -111,11 +119,7 @@ export function useAudioAnalyzer({
         sourceRef.current.disconnect();
         sourceRef.current = null;
       }
-      if (audioContextRef.current) {
-        audioContextRef.current.close().catch(() => {});
-        audioContextRef.current = null;
-      }
-      analyserRef.current = null;
+      closePipeline();
       sourceAudioElRef.current = null;
       return;
     }
@@ -128,42 +132,24 @@ export function useAudioAnalyzer({
       sourceRef.current.disconnect();
       sourceRef.current = null;
     }
-    if (audioContextRef.current) {
-      audioContextRef.current.close().catch(() => {});
-      audioContextRef.current = null;
-    }
-    analyserRef.current = null;
+    closePipeline();
 
-    const AudioContextClass =
-      window.AudioContext ||
-      (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
-    const audioContext = new AudioContextClass();
-    audioContextRef.current = audioContext;
-
-    const analyser = audioContext.createAnalyser();
-    analyser.fftSize = fftSize;
-    analyser.smoothingTimeConstant = smoothingTimeConstant;
-    analyserRef.current = analyser;
-
-    const source = audioContext.createMediaElementSource(audioElement);
+    initPipeline();
+    const source = createElementSource(audioElement)!;
     sourceRef.current = source;
     sourceAudioElRef.current = audioElement;
-    source.connect(analyser);
-    analyser.connect(audioContext.destination);
+    source.connect(analyserRef.current!);
+    analyserRef.current!.connect(audioContextRef.current!.destination);
 
     return () => {
       if (sourceRef.current) {
         sourceRef.current.disconnect();
         sourceRef.current = null;
       }
-      if (audioContextRef.current) {
-        audioContextRef.current.close().catch(() => {});
-        audioContextRef.current = null;
-      }
-      analyserRef.current = null;
+      closePipeline();
       sourceAudioElRef.current = null;
     };
-  }, [audioElement, enabled]);
+  }, [audioElement, enabled, initPipeline, closePipeline, createElementSource, audioContextRef, analyserRef]);
 
   useEffect(() => {
     if (!audioElement || !isPlaying || !enabled) {
@@ -213,7 +199,7 @@ export function useAudioAnalyzer({
         animationFrameRef.current = null;
       }
     };
-  }, [audioElement, isPlaying, enabled, normalizationFactor, throttledSetState]);
+  }, [audioElement, isPlaying, enabled, normalizationFactor, throttledSetState, analyserRef]);
 
   return { volume, voiceBandVolume, vowelWeights, volumeRef, vowelWeightsRef };
 }
