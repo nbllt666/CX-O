@@ -247,8 +247,10 @@ export function useWebSocket(options: WebSocketOptions): UseWebSocketReturn {
 
   // Transport：负责 URL 构造 + WebSocket 实例化 + connect/disconnect/reconnect 生命周期。
   // useWebSocket 在 onOpen/onClose/onError/onMessage 回调中注入业务逻辑（ping、config、消息路由）。
+  // enabled: !!agentId 保留原 `if (!agentIdRef.current) return;` 守卫 — 空 agentId 时不连接。
   const { wsRef, isConnected, disconnect: transportDisconnect, reconnect: transportReconnect } = useWSTransport({
     urlBuilder: () => `${getWS_BASE_URL()}/ws`,
+    enabled: !!agentId,
     onOpen: (ws) => {
       startPingInterval(ws);
       // 同步最新的 agentId 和 timeout 到服务端
@@ -370,15 +372,18 @@ export function useWebSocket(options: WebSocketOptions): UseWebSocketReturn {
     };
   }, []);
 
-  // agentId 变更触发断开重连
+  // agentId 变更处理：
+  // - 两个非空 agentId 之间切换 → transportReconnect()（发新 config）
+  // - agentId 变为空 → transportDisconnect()（停止连接）
+  // - 空→非空 → 由 transport 的 enabled-transition effect 自动 connect()，此处不干预避免双连
   useEffect(() => {
     const prevAgentId = agentIdRef.current;
     agentIdRef.current = agentId;
 
     if (prevAgentId !== agentId) {
-      if (agentId) {
+      if (prevAgentId && agentId) {
         transportReconnect();
-      } else {
+      } else if (!agentId) {
         transportDisconnect();
       }
     }

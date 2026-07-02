@@ -414,6 +414,28 @@ describe('useWebSocket', () => {
     expect(MockWebSocket.LAST).not.toBe(first);
   });
 
+  it('empty agentId does NOT connect on mount (preserves original guard)', () => {
+    renderWs({ agentId: '' });
+    expect(MockWebSocket.instances).toHaveLength(0);
+  });
+
+  it('agentId empty→non-empty triggers connect (enabled transition)', () => {
+    const { rerender } = renderWs({ agentId: '' });
+    expect(MockWebSocket.instances).toHaveLength(0);
+
+    rerender({ agentId: 'agent-new' });
+    expect(MockWebSocket.instances).toHaveLength(1);
+  });
+
+  it('agentId non-empty→empty triggers disconnect', () => {
+    const { rerender, result } = renderWs({ agentId: 'agent-x' });
+    act(() => MockWebSocket.LAST!.triggerOpen());
+    expect(result.current.isConnected).toBe(true);
+
+    rerender({ agentId: '' });
+    expect(result.current.isConnected).toBe(false);
+  });
+
   it('partial ASR message triggers onPartial', () => {
     const onPartial = vi.fn();
     renderWs({ onPartial });

@@ -242,6 +242,28 @@ describe('useWSTransport', () => {
     expect(MockWebSocket.LAST).not.toBe(first);
   });
 
+  it('enabled=false does NOT connect on mount', () => {
+    renderTransport({ enabled: false });
+    expect(MockWebSocket.instances).toHaveLength(0);
+  });
+
+  it('enabled transition false→true connects', () => {
+    const { rerender } = renderTransport({ enabled: false });
+    expect(MockWebSocket.instances).toHaveLength(0);
+
+    rerender({ urlBuilder: () => 'ws://test/ws', enabled: true });
+    expect(MockWebSocket.instances).toHaveLength(1);
+  });
+
+  it('enabled=true→false does NOT auto-disconnect (caller controls)', () => {
+    const { rerender, result } = renderTransport({ enabled: true });
+    act(() => MockWebSocket.LAST!.triggerOpen());
+    expect(result.current.isConnected).toBe(true);
+
+    rerender({ urlBuilder: () => 'ws://test/ws', enabled: false });
+    expect(result.current.isConnected).toBe(true);
+  });
+
   it('reconnect() resets attempts to 0', () => {
     const { result } = renderTransport({
       reconnect: { strategy: 'exponential', delays: [100, 200, 500] },

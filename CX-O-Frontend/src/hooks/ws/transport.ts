@@ -33,6 +33,8 @@ export interface UseWSTransportOptions {
   urlBuilder: WsUrlBuilder;
   binaryType?: 'arraybuffer' | 'blob';
   reconnect?: ReconnectStrategy;
+  /** When false, transport does not auto-connect on mount. Caller can flip to true later to connect. Default: true. */
+  enabled?: boolean;
   onOpen?: (ws: WebSocket) => void;
   onClose?: () => void;
   onError?: (error: string) => void;
@@ -53,6 +55,7 @@ export function useWSTransport(options: UseWSTransportOptions): UseWSTransportRe
     urlBuilder,
     binaryType = 'arraybuffer',
     reconnect: reconnectStrategy = { strategy: 'none' },
+    enabled = true,
     onOpen,
     onClose,
     onError,
@@ -80,11 +83,13 @@ export function useWSTransport(options: UseWSTransportOptions): UseWSTransportRe
   const urlBuilderRef = useRef(urlBuilder);
   const binaryTypeRef = useRef(binaryType);
   const reconnectRef = useRef(reconnectStrategy);
+  const enabledRef = useRef(enabled);
 
   useEffect(() => {
     urlBuilderRef.current = urlBuilder;
     binaryTypeRef.current = binaryType;
     reconnectRef.current = reconnectStrategy;
+    enabledRef.current = enabled;
   });
 
   const getReconnectDelay = useCallback((): number | null => {
@@ -167,14 +172,27 @@ export function useWSTransport(options: UseWSTransportOptions): UseWSTransportRe
     return false;
   }, []);
 
+  // Mount/unmount: auto-connect when enabled, always disconnect on unmount.
+  // enabledRef.current gates the initial connect — callers like useWebSocket
+  // pass `enabled: !!agentId` to avoid connecting with an empty agentId.
   useEffect(() => {
     isUnmountedRef.current = false;
-    connect();
+    if (enabledRef.current) {
+      connect();
+    }
     return () => {
       isUnmountedRef.current = true;
       disconnect();
     };
   }, [connect, disconnect]);
+
+  // enabled transitions false→true: connect if not already connected.
+  // (true→false does NOT auto-disconnect; caller controls disconnect explicitly.)
+  useEffect(() => {
+    if (enabled && wsRef.current === null && !isUnmountedRef.current) {
+      connect();
+    }
+  }, [enabled, connect]);
 
   return {
     wsRef,
