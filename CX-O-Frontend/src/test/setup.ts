@@ -1,6 +1,8 @@
 import '@testing-library/jest-dom';
 import { vi, afterEach } from 'vitest';
 
+import { installWebSocketMocks, resetWebSocketMocks } from './mockWebSocket';
+
 // Mock localStorage
 const localStorageMock = {
   getItem: vi.fn(),
@@ -11,6 +13,10 @@ const localStorageMock = {
 Object.defineProperty(window, 'localStorage', {
   value: localStorageMock,
 });
+
+// Install WebSocket + AudioContext mocks globally for all tests.
+// Individual tests can import MockWebSocket / MockAudioContext to drive events.
+installWebSocketMocks();
 
 // Mock matchMedia
 Object.defineProperty(window, 'matchMedia', {
@@ -55,4 +61,5 @@ global.fetch = vi.fn();
 // Cleanup after each test
 afterEach(() => {
   vi.clearAllMocks();
+  resetWebSocketMocks();
 });
