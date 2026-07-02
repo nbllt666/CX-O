@@ -68,5 +68,26 @@ describe('Test3: Mock Regression - Phase 1 Governance', () => {
       const response = await fetch('http://localhost/api/agents');
       expect(response.status).toBe(200);
     });
+
+    it('chat history endpoint is mocked (H4 prep)', async () => {
+      const response = await fetch('http://localhost/api/chat/history/agent-default');
+      const data = await response.json();
+      expect(response.status).toBe(200);
+      expect(data.status).toBe('success');
+      expect(Array.isArray(data.messages)).toBe(true);
+    });
+
+    it('chat stream endpoint returns SSE (H4 prep)', async () => {
+      const response = await fetch('http://localhost/api/chat/stream', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ message: 'hello', agent_id: 'default' }),
+      });
+      expect(response.status).toBe(200);
+      const text = await response.text();
+      expect(text).toContain('data: ');
+      expect(text).toContain('[DONE]');
+      expect(text).toContain('mock-stream-1');
+    });
   });
 });

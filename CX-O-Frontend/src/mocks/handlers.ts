@@ -39,4 +39,35 @@ export const handlers = [
       total: 0,
     });
   }),
+
+  http.get(`${BASE}/api/chat/history/:sessionId`, ({ params }) => {
+    return HttpResponse.json({
+      status: 'success',
+      messages: [
+        {
+          id: 'mock-msg-1',
+          role: 'user',
+          content: `Mocked history for ${params.sessionId}`,
+          timestamp: new Date().toISOString(),
+        },
+      ],
+    });
+  }),
+
+  http.post(`${BASE}/api/chat/stream`, async ({ request }) => {
+    const body = await request.json().catch(() => ({}));
+    const userMsg = (body as { message?: string })?.message || '';
+    const sseLines = [
+      'data: {"type":"start","message_id":"mock-stream-1"}',
+      'data: {"type":"partial","content":"Mocked reply to: "}',
+      `data: {"type":"partial","content":${JSON.stringify(userMsg.slice(0, 50))}}`,
+      'data: {"type":"done","message_id":"mock-stream-1"}',
+      'data: [DONE]',
+      '',
+    ];
+    return new HttpResponse(sseLines.join('\n'), {
+      status: 200,
+      headers: { 'Content-Type': 'text/event-stream' },
+    });
+  }),
 ];
