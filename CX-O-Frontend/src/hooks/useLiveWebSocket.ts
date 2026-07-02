@@ -1,6 +1,7 @@
 import { useEffect, useRef, useCallback, useState } from 'react';
 
 import { getWS_BASE_URL } from '../api/client';
+import { useWSTransport } from './ws/transport';
 
 export interface LiveDanmakuData {
   id: string;
@@ -85,13 +86,9 @@ export function useLiveWebSocket(options: UseLiveWebSocketOptions = {}): UseLive
     onExternalEvent,
   } = options;
 
-  const wsRef = useRef<WebSocket | null>(null);
-  const reconnectTimeoutRef = useRef<number | null>(null);
-  const reconnectAttemptsRef = useRef(0);
-  const isUnmountedRef = useRef(false);
-  const [isConnected, setIsConnected] = useState(false);
   const [connectionCount, setConnectionCount] = useState(0);
 
+  const sessionIdRef = useRef(sessionId);
   const onDanmakuRef = useRef(onDanmaku);
   const onStreamContentRef = useRef(onStreamContent);
   const onGiftRef = useRef(onGift);
@@ -107,6 +104,7 @@ export function useLiveWebSocket(options: UseLiveWebSocketOptions = {}): UseLive
   const onExternalEventRef = useRef(onExternalEvent);
 
   useEffect(() => {
+    sessionIdRef.current = sessionId;
     onDanmakuRef.current = onDanmaku;
     onStreamContentRef.current = onStreamContent;
     onGiftRef.current = onGift;
@@ -122,159 +120,127 @@ export function useLiveWebSocket(options: UseLiveWebSocketOptions = {}): UseLive
     onExternalEventRef.current = onExternalEvent;
   });
 
-  const RECONNECT_DELAYS = [100, 200, 500, 1000, 2000];
-
-  const getReconnectDelay = useCallback(() => {
-    const idx = Math.min(reconnectAttemptsRef.current, RECONNECT_DELAYS.length - 1);
-    return RECONNECT_DELAYS[idx];
-  }, []);
-
-  const disconnect = useCallback(() => {
-    if (reconnectTimeoutRef.current) {
-      clearTimeout(reconnectTimeoutRef.current);
-      reconnectTimeoutRef.current = null;
-    }
-    if (wsRef.current) {
-      wsRef.current.onclose = null;
-      wsRef.current.close();
-      wsRef.current = null;
-    }
-    setIsConnected(false);
-  }, []);
-
-  const connect = useCallback(() => {
-    if (wsRef.current?.readyState === WebSocket.OPEN) return;
-
-    const url = `${getWS_BASE_URL()}/ws/live${sessionId ? `?session_id=${sessionId}` : ''}`;
-
+  // 消息路由：从 ws.onmessage 抽出，由 transport 的 onMessage 回调驱动。
+  // transport 不解析 JSON，caller 负责解析 + 路由。ArrayBuffer 消息忽略。
+  const handleMessage = useCallback((event: MessageEvent) => {
     try {
-      const ws = new WebSocket(url);
-      wsRef.current = ws;
-
-      ws.binaryType = 'arraybuffer';
-
-      ws.onopen = () => {
-        if (isUnmountedRef.current) return;
-        setIsConnected(true);
-        reconnectAttemptsRef.current = 0;
-        setConnectionCount((prev) => prev + 1);
-        onConnectRef.current?.();
-
-        ws.send(JSON.stringify({ type: 'init', data: { session_id: sessionId } }));
-      };
-
-      ws.onclose = () => {
-        if (isUnmountedRef.current) return;
-        setIsConnected(false);
-        setConnectionCount((prev) => Math.max(0, prev - 1));
-        onDisconnectRef.current?.();
-
-        const delay = getReconnectDelay();
-        reconnectAttemptsRef.current++;
-        reconnectTimeoutRef.current = window.setTimeout(connect, delay);
-      };
-
-      ws.onerror = () => {
-        if (isUnmountedRef.current) return;
-        console.error('[LiveWS] Error');
-        onErrorRef.current?.('WebSocket connection error');
-      };
-
-      ws.onmessage = (event) => {
-        if (isUnmountedRef.current) return;
-        try {
-          if (event.data instanceof ArrayBuffer) {
-            return;
-          }
-
-          const data: LiveMessage = JSON.parse(event.data as string);
-
-          switch (data.type) {
-            case 'danmaku':
-              if (data.data && onDanmakuRef.current) {
-                onDanmakuRef.current(data.data as unknown as LiveDanmakuData);
-              }
-              break;
-            case 'stream':
-              if (data.data?.content && onStreamContentRef.current) {
-                onStreamContentRef.current(data.data.content);
-              }
-              break;
-            case 'response':
-              if (data.data?.content && onStreamContentRef.current) {
-                onStreamContentRef.current(data.data.content as string);
-              }
-              break;
-            case 'gift':
-              if (data.data && onGiftRef.current) {
-                onGiftRef.current(data.data as unknown as Record<string, unknown>);
-              }
-              break;
-            case 'enter':
-              if (onEnterRef.current) {
-                onEnterRef.current((data.data || {}) as unknown as Record<string, unknown>);
-              }
-              break;
-            case 'vad_status':
-              if (data.data && onVadStatusRef.current) {
-                onVadStatusRef.current({
-                  status: String(data.data.status || ''),
-                  speech_duration_ms: Number(data.data.speech_duration_ms || 0),
-                  speech_probability: Number(data.data.speech_probability || 0),
-                });
-              }
-              break;
-            case 'asr_result':
-              if (data.data && onASRResultRef.current) {
-                onASRResultRef.current({
-                  text: String(data.data.text || ''),
-                  is_final: Boolean(!data.data.is_speaking),
-                });
-              }
-              break;
-            case 'tts_sync':
-              if (data.data && onTTSSyncRef.current) {
-                onTTSSyncRef.current(data.data as unknown as TTSSyncData);
-              }
-              break;
-            case 'tts_tick':
-              if (data.data && onTTSTickRef.current) {
-                onTTSTickRef.current(data.data as unknown as TTSTickData);
-              }
-              break;
-            case 'tts_end':
-              if (data.data && onTTSEndRef.current) {
-                onTTSEndRef.current(data.data as unknown as TTSEndData);
-              }
-              break;
-            case 'external_event':
-              if (onExternalEventRef.current && data.data) {
-                onExternalEventRef.current(data.data as { source: string; type: string; title: string; body: string });
-              }
-              break;
-            default:
-              break;
-          }
-        } catch (e) {
-          console.error('[LiveWS] Failed to parse message:', e);
-        }
-      };
-    } catch (e) {
-      console.error('[LiveWS] Failed to create WebSocket:', e);
-      onErrorRef.current?.('Failed to create WebSocket connection');
-    }
-  }, [sessionId, getReconnectDelay]);
-
-  const sendMessage = useCallback(
-    (message: Record<string, unknown>) => {
-      if (wsRef.current?.readyState === WebSocket.OPEN) {
-        wsRef.current.send(JSON.stringify(message));
-      } else {
-        console.warn('[LiveWS] Cannot send: not connected');
+      if (event.data instanceof ArrayBuffer) {
+        return;
       }
+
+      const data: LiveMessage = JSON.parse(event.data as string);
+
+      switch (data.type) {
+        case 'danmaku':
+          if (data.data && onDanmakuRef.current) {
+            onDanmakuRef.current(data.data as unknown as LiveDanmakuData);
+          }
+          break;
+        case 'stream':
+          if (data.data?.content && onStreamContentRef.current) {
+            onStreamContentRef.current(data.data.content);
+          }
+          break;
+        case 'response':
+          if (data.data?.content && onStreamContentRef.current) {
+            onStreamContentRef.current(data.data.content as string);
+          }
+          break;
+        case 'gift':
+          if (data.data && onGiftRef.current) {
+            onGiftRef.current(data.data as unknown as Record<string, unknown>);
+          }
+          break;
+        case 'enter':
+          if (onEnterRef.current) {
+            onEnterRef.current((data.data || {}) as unknown as Record<string, unknown>);
+          }
+          break;
+        case 'vad_status':
+          if (data.data && onVadStatusRef.current) {
+            onVadStatusRef.current({
+              status: String(data.data.status || ''),
+              speech_duration_ms: Number(data.data.speech_duration_ms || 0),
+              speech_probability: Number(data.data.speech_probability || 0),
+            });
+          }
+          break;
+        case 'asr_result':
+          if (data.data && onASRResultRef.current) {
+            onASRResultRef.current({
+              text: String(data.data.text || ''),
+              is_final: Boolean(!data.data.is_speaking),
+            });
+          }
+          break;
+        case 'tts_sync':
+          if (data.data && onTTSSyncRef.current) {
+            onTTSSyncRef.current(data.data as unknown as TTSSyncData);
+          }
+          break;
+        case 'tts_tick':
+          if (data.data && onTTSTickRef.current) {
+            onTTSTickRef.current(data.data as unknown as TTSTickData);
+          }
+          break;
+        case 'tts_end':
+          if (data.data && onTTSEndRef.current) {
+            onTTSEndRef.current(data.data as unknown as TTSEndData);
+          }
+          break;
+        case 'external_event':
+          if (onExternalEventRef.current && data.data) {
+            onExternalEventRef.current(data.data as { source: string; type: string; title: string; body: string });
+          }
+          break;
+        default:
+          break;
+      }
+    } catch (e) {
+      console.error('[LiveWS] Failed to parse message:', e);
+    }
+  }, []);
+
+  // Transport：负责 URL 构造 + WebSocket 实例化 + 指数退避重连。
+  // useLiveWebSocket 在 onOpen/onClose/onError/onMessage 回调中注入业务逻辑（init 消息、connectionCount、消息路由）。
+  const { wsRef, isConnected, disconnect: transportDisconnect, reconnect: transportReconnect } = useWSTransport({
+    urlBuilder: () => `${getWS_BASE_URL()}/ws/live${sessionId ? `?session_id=${sessionId}` : ''}`,
+    binaryType: 'arraybuffer',
+    reconnect: { strategy: 'exponential', delays: [100, 200, 500, 1000, 2000] },
+    onOpen: (ws) => {
+      setConnectionCount((prev) => prev + 1);
+      onConnectRef.current?.();
+      ws.send(JSON.stringify({ type: 'init', data: { session_id: sessionIdRef.current } }));
     },
-    []
-  );
+    onClose: () => {
+      // 服务端主动关闭时清理（手动 disconnect 走 wrapper 的 cleanup）
+      setConnectionCount((prev) => Math.max(0, prev - 1));
+      onDisconnectRef.current?.();
+    },
+    onError: (error) => {
+      console.error('[LiveWS] Error:', error);
+      onErrorRef.current?.(error);
+    },
+    onMessage: handleMessage,
+  });
+
+  // 手动 disconnect：transport 会 null 化 onclose（防止自动重连），
+  // 所以 onClose 回调不会触发，需在此显式清理业务状态。
+  const disconnect = useCallback(() => {
+    transportDisconnect();
+  }, [transportDisconnect]);
+
+  const reconnect = useCallback(() => {
+    transportReconnect();
+  }, [transportReconnect]);
+
+  const sendMessage = useCallback((message: Record<string, unknown>) => {
+    if (wsRef.current?.readyState === WebSocket.OPEN) {
+      wsRef.current.send(JSON.stringify(message));
+    } else {
+      console.warn('[LiveWS] Cannot send: not connected');
+    }
+  }, []);
 
   const sendAudio = useCallback((audioData: ArrayBuffer) => {
     if (wsRef.current?.readyState === WebSocket.OPEN) {
@@ -282,21 +248,13 @@ export function useLiveWebSocket(options: UseLiveWebSocketOptions = {}): UseLive
     }
   }, []);
 
-  const reconnect = useCallback(() => {
-    disconnect();
-    reconnectAttemptsRef.current = 0;
-    isUnmountedRef.current = false;
-    reconnectTimeoutRef.current = window.setTimeout(connect, 50);
-  }, [disconnect, connect]);
-
+  // sessionId 变更触发断开重连（transport 的 urlBuilder ref 已通过 transport 自身的 ref sync 更新）
   useEffect(() => {
-    isUnmountedRef.current = false;
-    connect();
-    return () => {
-      isUnmountedRef.current = true;
-      disconnect();
-    };
-  }, [connect, disconnect]);
+    if (sessionIdRef.current !== sessionId) {
+      sessionIdRef.current = sessionId;
+      transportReconnect();
+    }
+  }, [sessionId, transportReconnect]);
 
   return {
     isConnected,

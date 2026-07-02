@@ -2,6 +2,7 @@ import { useEffect, useRef, useCallback, useState } from 'react';
 
 import { getWS_BASE_URL } from '../api/client';
 import { VoiceActions, ChatActions } from '../constants/actions';
+import { useWSTransport } from './ws/transport';
 
 export interface WebSocketMessage {
   type: string;
@@ -86,10 +87,7 @@ export function useWebSocket(options: WebSocketOptions): UseWebSocketReturn {
 
   const [timeout, setTimeoutState] = useState(propTimeout || getStoredTimeout());
 
-  const wsRef = useRef<WebSocket | null>(null);
   const pingIntervalRef = useRef<NodeJS.Timeout | null>(null);
-  const reconnectTimeoutRef = useRef<number | null>(null);
-  const [isConnected, setIsConnected] = useState(false);
   const [isGenerating, setIsGenerating] = useState(false);
   const agentIdRef = useRef(agentId);
   const timeoutRef = useRef(timeout);
@@ -137,41 +135,122 @@ export function useWebSocket(options: WebSocketOptions): UseWebSocketReturn {
     }
   }, []);
 
-  const startPingInterval = useCallback(() => {
+  const startPingInterval = useCallback((ws: WebSocket) => {
     clearPingInterval();
     pingIntervalRef.current = setInterval(() => {
-      if (wsRef.current?.readyState === WebSocket.OPEN) {
-        wsRef.current.send(JSON.stringify({ type: 'ping' }));
+      if (ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({ type: 'ping' }));
       }
     }, 30000);
   }, [clearPingInterval]);
 
-  const disconnect = useCallback(() => {
-    if (reconnectTimeoutRef.current) {
-      clearTimeout(reconnectTimeoutRef.current);
-      reconnectTimeoutRef.current = null;
-    }
-    clearPingInterval();
-    if (wsRef.current) {
-      wsRef.current.close();
-      wsRef.current = null;
-    }
-  }, [clearPingInterval]);
+  // 消息路由：从 ws.onmessage 抽出，由 transport 的 onMessage 回调驱动。
+  // transport 不解析 JSON，caller 负责解析 + 路由。
+  const handleMessage = useCallback((event: MessageEvent) => {
+    try {
+      const data: WebSocketMessage = JSON.parse(event.data);
 
-  const connect = useCallback(() => {
-    if (!agentIdRef.current) {
-      return;
+      switch (data.type) {
+        case 'pong':
+          break;
+        case 'alarm':
+          onAlarmRef.current?.(data.message || '', data.triggered_at || '');
+          break;
+        case 'stream': {
+          // 双流式 TTS 音频块：后端通过 create_stream 发送，type 为 "stream"，
+          // action 为 "voice.tts_chunk"。需与普通聊天 content 流区分。
+          if (data.action === VoiceActions.TTS_CHUNK) {
+            const audioBase64 = (data.data?.audio_data as string) || '';
+            const textSegment = (data.data?.text_segment as string) || '';
+            const sessionId = data.data?.session_id as string | undefined;
+            const isFinal = data.is_final ?? false;
+            // 首包优先：立即入队播放，不等整句合成完成
+            getTTSPlayerRef.current?.().enqueue(audioBase64, isFinal);
+            onTTSChunkRef.current?.(audioBase64, isFinal, textSegment, sessionId);
+            break;
+          }
+          if (data.is_final) {
+            setIsGenerating(false);
+            onMessageRef.current?.({ type: 'done' });
+          } else if (data.data?.content) {
+            onMessageRef.current?.({ type: 'content', content: data.data.content });
+          }
+          break;
+        }
+        case VoiceActions.PARTIAL: {
+          // ASR Partial 实时识别文本：用户正在说什么（interim subtitle）
+          const text = (data.data?.text as string) || '';
+          const sessionId = data.data?.session_id as string | undefined;
+          onPartialRef.current?.(text, sessionId);
+          break;
+        }
+        case VoiceActions.PREFILL_STARTED: {
+          // LLM Prefill 已启动：后端字段为 partial_text，兼容 text
+          const text = (data.data?.partial_text as string) || (data.data?.text as string) || '';
+          const sessionId = data.data?.session_id as string | undefined;
+          onPrefillStartedRef.current?.(text, sessionId);
+          break;
+        }
+        case 'response':
+          if (data.status === 'error') {
+            setIsGenerating(false);
+            const errorMsg = typeof data.error === 'object' ? data.error?.message : data.error;
+            onErrorRef.current?.(errorMsg || 'Unknown error');
+          }
+          break;
+        case 'error': {
+          setIsGenerating(false);
+          const errMsg = typeof data.error === 'object' ? data.error?.message : data.error;
+          onErrorRef.current?.(errMsg || 'Unknown error');
+          break;
+        }
+        case 'content':
+        case 'tool_call':
+        case 'tool_result':
+          onMessageRef.current?.(data);
+          break;
+        case 'done':
+          setIsGenerating(false);
+          onMessageRef.current?.(data);
+          break;
+        case 'cancelled':
+          setIsGenerating(false);
+          onMessageRef.current?.(data);
+          break;
+        case 'thinking':
+          onMessageRef.current?.(data);
+          break;
+        case 'tool_start':
+          onMessageRef.current?.(data);
+          break;
+        case 'vad_status':
+        case 'vad_frame':
+        case 'asr_stream_result':
+        case 'asr_stream_status':
+        case 'agent_interrupt_user':
+        case 'agent_reply':
+          onMessageRef.current?.(data);
+          break;
+        case 'external_event':
+          if (onExternalEventRef.current && data.data) {
+            onExternalEventRef.current(data.data as Record<string, unknown>);
+          }
+          onMessageRef.current?.(data);
+          break;
+        default:
+          onMessageRef.current?.(data);
+      }
+    } catch (e: unknown) {
+      console.error('Failed to parse WebSocket message:', e);
     }
-    if (wsRef.current?.readyState === WebSocket.OPEN) {
-      return;
-    }
+  }, []);
 
-    const wsUrl = `${getWS_BASE_URL()}/ws`;
-    const ws = new WebSocket(wsUrl);
-
-    ws.onopen = () => {
-      setIsConnected(true);
-      startPingInterval();
+  // Transport：负责 URL 构造 + WebSocket 实例化 + connect/disconnect/reconnect 生命周期。
+  // useWebSocket 在 onOpen/onClose/onError/onMessage 回调中注入业务逻辑（ping、config、消息路由）。
+  const { wsRef, isConnected, disconnect: transportDisconnect, reconnect: transportReconnect } = useWSTransport({
+    urlBuilder: () => `${getWS_BASE_URL()}/ws`,
+    onOpen: (ws) => {
+      startPingInterval(ws);
       // 同步最新的 agentId 和 timeout 到服务端
       ws.send(
         JSON.stringify({
@@ -181,126 +260,32 @@ export function useWebSocket(options: WebSocketOptions): UseWebSocketReturn {
         })
       );
       onConnectRef.current?.();
-    };
-
-    ws.onclose = () => {
-      setIsConnected(false);
+    },
+    onClose: () => {
+      // 服务端主动关闭时清理（手动 disconnect 走 wrapper 的 cleanup）
       setIsGenerating(false);
       clearPingInterval();
       onDisconnectRef.current?.();
-    };
+    },
+    onError: (error) => {
+      console.error('WebSocket error:', error);
+      onErrorRef.current?.(error);
+    },
+    onMessage: handleMessage,
+  });
 
-    ws.onerror = (event) => {
-      console.error('WebSocket error:', event);
-      onErrorRef.current?.('WebSocket connection error');
-    };
-
-    ws.onmessage = (event) => {
-      try {
-        const data: WebSocketMessage = JSON.parse(event.data);
-
-        switch (data.type) {
-          case 'pong':
-            break;
-          case 'alarm':
-            onAlarmRef.current?.(data.message || '', data.triggered_at || '');
-            break;
-          case 'stream': {
-            // 双流式 TTS 音频块：后端通过 create_stream 发送，type 为 "stream"，
-            // action 为 "voice.tts_chunk"。需与普通聊天 content 流区分。
-            if (data.action === VoiceActions.TTS_CHUNK) {
-              const audioBase64 = (data.data?.audio_data as string) || '';
-              const textSegment = (data.data?.text_segment as string) || '';
-              const sessionId = data.data?.session_id as string | undefined;
-              const isFinal = data.is_final ?? false;
-              // 首包优先：立即入队播放，不等整句合成完成
-              getTTSPlayerRef.current?.().enqueue(audioBase64, isFinal);
-              onTTSChunkRef.current?.(audioBase64, isFinal, textSegment, sessionId);
-              break;
-            }
-            if (data.is_final) {
-              setIsGenerating(false);
-              onMessageRef.current?.({ type: 'done' });
-            } else if (data.data?.content) {
-              onMessageRef.current?.({ type: 'content', content: data.data.content });
-            }
-            break;
-          }
-          case VoiceActions.PARTIAL: {
-            // ASR Partial 实时识别文本：用户正在说什么（interim subtitle）
-            const text = (data.data?.text as string) || '';
-            const sessionId = data.data?.session_id as string | undefined;
-            onPartialRef.current?.(text, sessionId);
-            break;
-          }
-          case VoiceActions.PREFILL_STARTED: {
-            // LLM Prefill 已启动：后端字段为 partial_text，兼容 text
-            const text = (data.data?.partial_text as string) || (data.data?.text as string) || '';
-            const sessionId = data.data?.session_id as string | undefined;
-            onPrefillStartedRef.current?.(text, sessionId);
-            break;
-          }
-          case 'response':
-            if (data.status === 'error') {
-              setIsGenerating(false);
-              const errorMsg = typeof data.error === 'object' ? data.error?.message : data.error;
-              onErrorRef.current?.(errorMsg || 'Unknown error');
-            }
-            break;
-          case 'error': {
-            setIsGenerating(false);
-            const errMsg = typeof data.error === 'object' ? data.error?.message : data.error;
-            onErrorRef.current?.(errMsg || 'Unknown error');
-            break;
-          }
-          case 'content':
-          case 'tool_call':
-          case 'tool_result':
-            onMessageRef.current?.(data);
-            break;
-          case 'done':
-            setIsGenerating(false);
-            onMessageRef.current?.(data);
-            break;
-          case 'cancelled':
-            setIsGenerating(false);
-            onMessageRef.current?.(data);
-            break;
-          case 'thinking':
-            onMessageRef.current?.(data);
-            break;
-          case 'tool_start':
-            onMessageRef.current?.(data);
-            break;
-          case 'vad_status':
-          case 'vad_frame':
-          case 'asr_stream_result':
-          case 'asr_stream_status':
-          case 'agent_interrupt_user':
-          case 'agent_reply':
-            onMessageRef.current?.(data);
-            break;
-          case 'external_event':
-            if (onExternalEventRef.current && data.data) {
-              onExternalEventRef.current(data.data as Record<string, unknown>);
-            }
-            onMessageRef.current?.(data);
-            break;
-          default:
-            onMessageRef.current?.(data);
-        }
-      } catch (e: unknown) {
-        console.error('Failed to parse WebSocket message:', e);
-      }
-    };
-
-    wsRef.current = ws;
-  }, [startPingInterval, clearPingInterval]);
+  // 手动 disconnect：transport 会 null 化 onclose（防止自动重连），
+  // 所以 onClose 回调不会触发，需在此显式清理业务状态。
+  const disconnect = useCallback(() => {
+    transportDisconnect();
+    setIsGenerating(false);
+    clearPingInterval();
+    onDisconnectRef.current?.();
+  }, [transportDisconnect, clearPingInterval]);
 
   const reconnect = useCallback(() => {
-    disconnect();
-    reconnectTimeoutRef.current = window.setTimeout(connect, 100);
-  }, [connect, disconnect]);
+    transportReconnect();
+  }, [transportReconnect]);
 
   const sendMessage = useCallback(
     (message: string, images?: string[]) => {
@@ -345,7 +330,7 @@ export function useWebSocket(options: WebSocketOptions): UseWebSocketReturn {
     }
     return ttsPlayerRef.current;
   }, []);
-  // 注入到 ref，供 ws.onmessage（定义在 getTTSPlayer 之前）调用
+  // 注入到 ref，供 handleMessage（定义在 getTTSPlayer 之前）调用
   useEffect(() => {
     getTTSPlayerRef.current = getTTSPlayer;
   }, [getTTSPlayer]);
@@ -385,23 +370,22 @@ export function useWebSocket(options: WebSocketOptions): UseWebSocketReturn {
     };
   }, []);
 
+  // agentId 变更触发断开重连
   useEffect(() => {
     const prevAgentId = agentIdRef.current;
     agentIdRef.current = agentId;
 
     if (prevAgentId !== agentId) {
-      if (wsRef.current) {
-        disconnect();
-      }
       if (agentId) {
-        connect();
+        transportReconnect();
+      } else {
+        transportDisconnect();
       }
     }
-  }, [agentId, disconnect, connect]);
+  }, [agentId, transportReconnect, transportDisconnect]);
 
+  // offline-timeout 自定义事件监听（transport 负责 mount/unmount 的 connect/disconnect）
   useEffect(() => {
-    connect();
-
     const handleTimeoutChange = (e: Event) => {
       const customEvent = e as CustomEvent<string>;
       const newTimeout = parseInt(customEvent.detail, 10);
@@ -413,11 +397,11 @@ export function useWebSocket(options: WebSocketOptions): UseWebSocketReturn {
     window.addEventListener('offline-timeout-change', handleTimeoutChange);
 
     return () => {
-      disconnect();
       window.removeEventListener('offline-timeout-change', handleTimeoutChange);
     };
-  }, [connect, disconnect]);
+  }, []);
 
+  // timeout 变更时同步 config 到服务端
   useEffect(() => {
     if (wsRef.current?.readyState === WebSocket.OPEN) {
       wsRef.current.send(
