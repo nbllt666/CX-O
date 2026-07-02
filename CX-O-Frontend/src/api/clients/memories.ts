@@ -2,12 +2,10 @@
  * ApiClient mixin: memories & archive
  * Extracted from client.ts as part of M16 split.
  */
-import type { _ApiClientBase } from './_common';
+import { _ApiClientBase } from './_common';
 import type { Memory, ArchiveStats, DuplicateGroup, ArchiveResult } from './_types';
 
-export interface _MemoriesClientMixin extends _ApiClientBase {}
-
-export class _MemoriesClientMixin {
+export class _MemoriesClientMixin extends _ApiClientBase {
   async getMemories(params?: {
     type?: string;
     memory_type?: string;

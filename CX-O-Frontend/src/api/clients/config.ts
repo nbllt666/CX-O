@@ -2,13 +2,10 @@
  * ApiClient mixin: Config domain operations.
  * Extracted from client.ts as part of M16 split.
  */
-import type { _ApiClientBase } from './_common';
+import { _ApiClientBase } from './_common';
 import type { FrontendLimits } from './_types';
 
-// Declaration merging: let TypeScript know _ConfigClientMixin can access _ApiClientBase's methods
-export interface _ConfigClientMixin extends _ApiClientBase {}
-
-export class _ConfigClientMixin {
+export class _ConfigClientMixin extends _ApiClientBase {
   async getConfig(): Promise<Record<string, unknown>> {
     return this.request<Record<string, unknown>>({ url: '/api/config' });
   }

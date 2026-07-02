@@ -2,12 +2,10 @@
  * ApiClient mixin: health & status 查询
  * Extracted from client.ts as part of M16 split.
  */
-import type { _ApiClientBase } from './_common';
+import { _ApiClientBase } from './_common';
 import type { HealthStatus, GraphStats } from './_types';
 
-export interface _HealthClientMixin extends _ApiClientBase {}
-
-export class _HealthClientMixin {
+export class _HealthClientMixin extends _ApiClientBase {
   async getHealth(): Promise<HealthStatus> {
     return this.request<HealthStatus>({ url: '/health' });
   }

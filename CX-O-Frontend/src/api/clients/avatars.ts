@@ -2,13 +2,9 @@
  * ApiClient mixin: Avatars domain operations.
  * Extracted from client.ts as part of M16 split.
  */
-import type { _ApiClientBase } from './_common';
-import { getApiBaseUrl } from './_common';
+import { _ApiClientBase, getApiBaseUrl } from './_common';
 
-// Declaration merging: let TypeScript know _AvatarsClientMixin can access _ApiClientBase's methods
-export interface _AvatarsClientMixin extends _ApiClientBase {}
-
-export class _AvatarsClientMixin {
+export class _AvatarsClientMixin extends _ApiClientBase {
   async listAvatars(type?: 'vrm' | 'live2d'): Promise<{ avatars: Array<{
     id: string;
     name: string;

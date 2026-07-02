@@ -2,13 +2,10 @@
  * ApiClient mixin: CXFC plugin/skill domain operations.
  * Extracted from client.ts as part of M16 split.
  */
-import type { _ApiClientBase } from './_common';
+import { _ApiClientBase } from './_common';
 import type { CxfcPlugin, CxfcSkill, CxfcDiscoveredPlugin } from './_types';
 
-// Declaration merging: let TypeScript know _CxfcClientMixin can access _ApiClientBase's methods
-export interface _CxfcClientMixin extends _ApiClientBase {}
-
-export class _CxfcClientMixin {
+export class _CxfcClientMixin extends _ApiClientBase {
   async getCxfcPlugins(): Promise<CxfcPlugin[]> {
     const response = await this.request<{ plugins: CxfcPlugin[] }>({ url: '/api/cxfc/plugins' });
     return response.plugins || [];

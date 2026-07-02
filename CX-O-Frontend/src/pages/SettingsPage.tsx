@@ -308,7 +308,10 @@ export function SettingsPage() {
     enabled: isBackendRunning,
   });
 
-  const [gatewayServicesConfig, setGatewayServicesConfig] = useState({
+  type GatewayServicesConfig = {
+    monolith: { url: string; http_url: string; timeout: number; status: string };
+  };
+  const [, setGatewayServicesConfig] = useState<GatewayServicesConfig>({
     monolith: { url: 'ws://127.0.0.1:8000/ws', http_url: 'http://127.0.0.1:8000', timeout: 30, status: '集成' },
   });
 
@@ -316,7 +319,7 @@ export function SettingsPage() {
     const loadGatewayConfig = async () => {
       if (!isBackendRunning) return;
       try {
-        const data = await api.getServiceConfig() as { status?: string; config?: typeof gatewayServicesConfig };
+        const data = await api.getServiceConfig() as { status?: string; config?: GatewayServicesConfig };
         if (data.status === 'success' && data.config) {
           setGatewayServicesConfig(data.config);
         }

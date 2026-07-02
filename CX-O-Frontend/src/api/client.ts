@@ -64,25 +64,10 @@ export type {
 } from './clients/_types';
 
 // Compose ApiClient: base class + all domain mixins via applyMixins pattern
-class ApiClient extends _ApiClientBase {}
+class _ApiClient extends _ApiClientBase {}
 
-// Declaration merging: tell TypeScript that ApiClient has all mixin methods
-interface ApiClient
-  extends _HealthClientMixin,
-    _ChatClientMixin,
-    _AgentsClientMixin,
-    _MemoriesClientMixin,
-    _ToolsClientMixin,
-    _VectorClientMixin,
-    _GraphClientMixin,
-    _AudioClientMixin,
-    _AvatarsClientMixin,
-    _CxfcClientMixin,
-    _ServiceClientMixin,
-    _ConfigClientMixin {}
-
-// Copy methods from mixin classes to ApiClient prototype
-applyMixins(ApiClient, [
+// Copy methods from mixin classes to _ApiClient prototype
+applyMixins(_ApiClient, [
   _HealthClientMixin,
   _ChatClientMixin,
   _AgentsClientMixin,
@@ -97,7 +82,22 @@ applyMixins(ApiClient, [
   _ConfigClientMixin,
 ]);
 
-export const api = new ApiClient();
+// Type: ApiClient is the base + all mixin instance types
+type ApiClient = _ApiClientBase &
+  InstanceType<typeof _HealthClientMixin> &
+  InstanceType<typeof _ChatClientMixin> &
+  InstanceType<typeof _AgentsClientMixin> &
+  InstanceType<typeof _MemoriesClientMixin> &
+  InstanceType<typeof _ToolsClientMixin> &
+  InstanceType<typeof _VectorClientMixin> &
+  InstanceType<typeof _GraphClientMixin> &
+  InstanceType<typeof _AudioClientMixin> &
+  InstanceType<typeof _AvatarsClientMixin> &
+  InstanceType<typeof _CxfcClientMixin> &
+  InstanceType<typeof _ServiceClientMixin> &
+  InstanceType<typeof _ConfigClientMixin>;
+
+export const api: ApiClient = new _ApiClient() as unknown as ApiClient;
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 function applyMixins(derivedCtor: any, baseCtors: any[]) {

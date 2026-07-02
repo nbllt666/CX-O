@@ -6,7 +6,7 @@ export interface AppearanceCardProps {
   onThemeChange: (theme: 'light' | 'dark' | 'system') => void;
   selectedAccent: string;
   onSelectedAccentChange: (accent: string) => void;
-  cn: (...args: any[]) => string;
+  cn: (...args: Array<string | undefined | null | false>) => string;
 }
 
 export function AppearanceCard(props: AppearanceCardProps) {

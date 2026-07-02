@@ -1,6 +1,7 @@
 import { Button, Card, CardBody } from '../../../components/ui';
 import { SaveStatus } from '../types';
 import type { AvatarType } from '../../../store/settingsStore';
+import type { FrontendLimits } from '../../../api/clients/_types';
 
 export interface Live2DCardProps {
   showAvatarManager: 'live2d' | 'vrm' | null;
@@ -9,7 +10,7 @@ export interface Live2DCardProps {
   onSpeedMaxChange: (speed: number) => void;
   avatarType: AvatarType;
   onAvatarTypeChange: (type: AvatarType) => void;
-  limits: any;
+  limits: FrontendLimits | null;
   onSave: () => void;
   saveStatus: SaveStatus;
 }

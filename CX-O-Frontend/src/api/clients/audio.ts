@@ -2,13 +2,9 @@
  * ApiClient mixin: Audio domain operations.
  * Extracted from client.ts as part of M16 split.
  */
-import type { _ApiClientBase } from './_common';
-import { getApiBaseUrl } from './_common';
+import { _ApiClientBase, getApiBaseUrl } from './_common';
 
-// Declaration merging: let TypeScript know _AudioClientMixin can access _ApiClientBase's methods
-export interface _AudioClientMixin extends _ApiClientBase {}
-
-export class _AudioClientMixin {
+export class _AudioClientMixin extends _ApiClientBase {
   async getAudioConfig(): Promise<Record<string, unknown>> {
     return this.request<Record<string, unknown>>({ url: '/api/audio/config' });
   }
@@ -94,5 +90,68 @@ export class _AudioClientMixin {
 
   getAudioFileUrl(filename: string): string {
     return `${getApiBaseUrl()}/api/audio/files/${filename}`;
+  }
+
+  async generateVoxCPM(data: {
+    mode: string;
+    text: string;
+    control?: string;
+    reference_audio_path?: string;
+    prompt_audio_path?: string;
+    prompt_text?: string;
+  }): Promise<{ output_path: string }> {
+    return this.voiceWorkstationRequest<{ output_path: string }>({
+      url: '/api/voxcpm/generate',
+      method: 'POST',
+      data,
+    });
+  }
+
+  async exportEmotionRefsZip(data: {
+    base_audio_path: string;
+    sample_text?: string;
+    transition_text?: string;
+  }): Promise<Blob> {
+    const axiosInstance = this.voiceWorkstationClient;
+    const response = await axiosInstance.post('/api/ref-audio/export-zip', data, {
+      responseType: 'arraybuffer',
+    });
+    return new Blob([response.data], { type: 'application/zip' });
+  }
+
+  async sovitsSVCPreprocess(data: {
+    training_data_dir: string;
+    speaker_name: string;
+  }): Promise<void> {
+    await this.voiceWorkstationRequest({
+      url: '/api/sovits-svc/preprocess',
+      method: 'POST',
+      data,
+    });
+  }
+
+  async startSoVITSSVCTrain(data: {
+    training_data_dir: string;
+    model_name?: string;
+    epochs: number;
+    batch_size: number;
+    learning_rate: number;
+  }): Promise<void> {
+    await this.voiceWorkstationRequest({
+      url: '/api/sovits-svc/train',
+      method: 'POST',
+      data,
+    });
+  }
+
+  async sovitsSVCInfer(data: {
+    input_audio_path: string;
+    ref_audio_path?: string;
+  }): Promise<{ output_path: string }> {
+    return this.voiceWorkstationRequest<{ output_path: string }>({
+      url: '/api/sovits-svc/infer',
+      method: 'POST',
+      data,
+    });
   }
 }

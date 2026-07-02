@@ -2,12 +2,10 @@
  * ApiClient mixin: vectors
  * Extracted from client.ts as part of M16 split.
  */
-import type { _ApiClientBase } from './_common';
+import { _ApiClientBase } from './_common';
 import type { VectorData } from './_types';
 
-export interface _VectorClientMixin extends _ApiClientBase {}
-
-export class _VectorClientMixin {
+export class _VectorClientMixin extends _ApiClientBase {
   async getVectorStats(): Promise<{ total: number; by_type: Record<string, number> }> {
     return this.request<{ total: number; by_type: Record<string, number> }>({ url: '/api/vector/stats' });
   }

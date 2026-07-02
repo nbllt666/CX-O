@@ -2,12 +2,10 @@
  * ApiClient mixin: agents & ACP agents
  * Extracted from client.ts as part of M16 split.
  */
-import type { _ApiClientBase } from './_common';
+import { _ApiClientBase } from './_common';
 import type { Agent, AcpStats, AcpAgentRow } from './_types';
 
-export interface _AgentsClientMixin extends _ApiClientBase {}
-
-export class _AgentsClientMixin {
+export class _AgentsClientMixin extends _ApiClientBase {
   async getAgents(): Promise<Agent[]> {
     const response = await this.request<{ status: string; agents: Agent[]; total: number }>({ url: '/api/agents' }, true);
     return response.agents || [];

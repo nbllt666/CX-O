@@ -2,12 +2,10 @@
  * ApiClient mixin: chat & session
  * Extracted from client.ts as part of M16 split.
  */
-import { getApiBaseUrl, type _ApiClientBase } from './_common';
+import { getApiBaseUrl, _ApiClientBase } from './_common';
 import type { ChatMessage, Session } from './_types';
 
-export interface _ChatClientMixin extends _ApiClientBase {}
-
-export class _ChatClientMixin {
+export class _ChatClientMixin extends _ApiClientBase {
   async sendMessage(message: string, agentId: string = 'default', sessionId?: string): Promise<{ response: string; session_id: string }> {
     const response = await this.request<{ status: string; response: string; session_id: string }>({
       url: '/api/chat',

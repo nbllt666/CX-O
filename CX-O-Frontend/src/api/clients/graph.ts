@@ -2,13 +2,10 @@
  * ApiClient mixin: Graph domain operations.
  * Extracted from client.ts as part of M16 split.
  */
-import type { _ApiClientBase } from './_common';
+import { _ApiClientBase } from './_common';
 import type { GraphEntity, GraphRelation } from './_types';
 
-// Declaration merging: let TypeScript know _GraphClientMixin can access _ApiClientBase's methods
-export interface _GraphClientMixin extends _ApiClientBase {}
-
-export class _GraphClientMixin {
+export class _GraphClientMixin extends _ApiClientBase {
   async getGraphEntityTypes(library: string = 'thing'): Promise<{ types: string[]; entity_types?: string[] }> {
     return this.request<{ types: string[]; entity_types?: string[] }>({ url: `/api/graph/${library}/entity-types` });
   }

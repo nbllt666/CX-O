@@ -2,12 +2,9 @@
  * ApiClient mixin: Service control domain operations.
  * Extracted from client.ts as part of M16 split.
  */
-import type { _ApiClientBase } from './_common';
+import { _ApiClientBase } from './_common';
 
-// Declaration merging: let TypeScript know _ServiceClientMixin can access _ApiClientBase's methods
-export interface _ServiceClientMixin extends _ApiClientBase {}
-
-export class _ServiceClientMixin {
+export class _ServiceClientMixin extends _ApiClientBase {
   async getServiceStatus(): Promise<{ status: string }> {
     return this.request<{ status: string }>({ url: '/api/service/status' });
   }

@@ -2,12 +2,10 @@
  * ApiClient mixin: tools
  * Extracted from client.ts as part of M16 split.
  */
-import type { _ApiClientBase } from './_common';
+import { _ApiClientBase } from './_common';
 import type { Tool, ToolStats } from './_types';
 
-export interface _ToolsClientMixin extends _ApiClientBase {}
-
-export class _ToolsClientMixin {
+export class _ToolsClientMixin extends _ApiClientBase {
   async getTools(filter?: string): Promise<{ tools: Record<string, Tool> }> {
     return this.request<{ tools: Record<string, Tool> }>({ url: '/api/tools', params: filter ? { category: filter } : undefined });
   }
