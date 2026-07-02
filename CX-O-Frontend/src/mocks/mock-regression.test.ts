@@ -90,4 +90,82 @@ describe('Test3: Mock Regression - Phase 1 Governance', () => {
       expect(text).toContain('mock-stream-1');
     });
   });
+
+  describe('Mock API Contract - Tools & Memories (M19 prep)', () => {
+    it('tools list endpoint returns tools map', async () => {
+      const response = await fetch('http://localhost/api/tools');
+      const data = await response.json();
+      expect(response.status).toBe(200);
+      expect(data.tools).toBeDefined();
+      expect(typeof data.tools).toBe('object');
+      expect(data.tools['tool-search']).toBeDefined();
+      expect(data.tools['tool-search'].name).toBe('search_web');
+    });
+
+    it('tools stats endpoint returns statistics', async () => {
+      const response = await fetch('http://localhost/api/tools/stats');
+      const data = await response.json();
+      expect(response.status).toBe(200);
+      expect(data.status).toBe('success');
+      expect(data.statistics.total_tools).toBe(2);
+      expect(data.statistics.builtin_tools).toBe(2);
+    });
+
+    it('create tool endpoint returns new tool', async () => {
+      const response = await fetch('http://localhost/api/tools', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: 'new_tool', description: 'test' }),
+      });
+      const data = await response.json();
+      expect(response.status).toBe(200);
+      expect(data.id).toBe('tool-new-mock');
+      expect(data.type).toBe('custom');
+    });
+
+    it('delete tool endpoint returns 204', async () => {
+      const response = await fetch('http://localhost/api/tools/tool-1', {
+        method: 'DELETE',
+      });
+      expect(response.status).toBe(204);
+    });
+
+    it('memories list endpoint returns memories array', async () => {
+      const response = await fetch('http://localhost/api/memories');
+      const data = await response.json();
+      expect(response.status).toBe(200);
+      expect(Array.isArray(data.memories)).toBe(true);
+      expect(data.memories.length).toBe(2);
+      expect(data.memories[0].content).toContain('Mocked');
+    });
+
+    it('memories agents endpoint returns agent tables', async () => {
+      const response = await fetch('http://localhost/api/memories/agents');
+      const data = await response.json();
+      expect(response.status).toBe(200);
+      expect(data.agents).toBeDefined();
+      expect(data.agents[0].agent_id).toBe('default');
+    });
+
+    it('create memory endpoint returns new memory', async () => {
+      const response = await fetch('http://localhost/api/memories', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ content: 'test memory', type: 'long_term' }),
+      });
+      const data = await response.json();
+      expect(response.status).toBe(200);
+      expect(data.id).toBe(999);
+      expect(data.content).toBe('test memory');
+    });
+
+    it('archive memory endpoint returns 204', async () => {
+      const response = await fetch('http://localhost/api/archive/memory', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ memory_id: 1, target_level: 1 }),
+      });
+      expect(response.status).toBe(204);
+    });
+  });
 });
