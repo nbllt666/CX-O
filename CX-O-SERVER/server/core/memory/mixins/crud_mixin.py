@@ -136,12 +136,19 @@ class _MemoryCRUDMixin:
             logger.error(f"写入记忆失败: {e}", exc_info=True)
             raise
 
-    def get_memory(self, memory_id: int, include_deleted: bool = False) -> Optional[Dict]:
+    def get_memory(
+        self,
+        memory_id: int,
+        include_deleted: bool = False,
+        agent_id: Optional[str] = None,
+    ) -> Optional[Dict]:
         """获取记忆
 
         Args:
             memory_id: 记忆ID
             include_deleted: 是否包含已删除的记忆
+            agent_id: Agent唯一标识，指定时从Agent专属记忆表读取；
+                None 时从默认 memories 表读取（保持向后兼容）
 
         Returns:
             记忆字典，如果不存在则返回None
@@ -150,7 +157,10 @@ class _MemoryCRUDMixin:
         cursor = conn.cursor()
 
         try:
-            query = "SELECT * FROM memories WHERE id = ?"
+            # agent_id 为 None 时保持原行为读 memories 表；
+            # 否则按 _get_table_name 解析 Agent 专属表名（与 _ensure_agent_table 创建的表一致）
+            table_name = self._get_table_name(agent_id) if agent_id else "memories"
+            query = f"SELECT * FROM {table_name} WHERE id = ?"
             if not include_deleted:
                 query += " AND is_deleted = FALSE"
 

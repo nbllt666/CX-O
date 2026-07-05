@@ -77,9 +77,9 @@ class _MemoryDBMixin:
         safe_agent_id = re.sub(r"[^a-zA-Z0-9_]", "_", agent_id)
         if not re.match(r"^[a-zA-Z_]", safe_agent_id):
             safe_agent_id = "agent_" + safe_agent_id
-        if not re.match(r"^[a-zA-Z_][a-zA-Z0-9_]*$", safe_agent_id):
-            logger.warning(f"非法的agent_id: {agent_id}，回退到默认表名")
-            return "memories"
+        # 注：原第二道 regex 回退分支已移除——经第一道 re.sub 清洗后 safe_agent_id
+        # 仅含 [a-zA-Z0-9_]，再经上面的前缀补全，必满足 ^[a-zA-Z_][a-zA-Z0-9_]*$，
+        # 故回退分支不可达，属死代码
         return f"memories_{safe_agent_id}"
 
     def _ensure_agent_table(self, agent_id: str):

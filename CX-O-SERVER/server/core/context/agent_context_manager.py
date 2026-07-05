@@ -188,6 +188,10 @@ class AgentContextManager:
             with self._lock:
                 context_data = self._get_or_load(agent_id)
 
+            # limit=0 特殊处理：messages[-0:] 等价于 messages[0:]（返回全部），
+            # 需显式返回空列表
+            if limit == 0:
+                return []
             messages = context_data.messages
             if len(messages) > limit:
                 messages = messages[-limit:]
@@ -248,7 +252,9 @@ class AgentContextManager:
                 context_data = self._get_or_load(agent_id)
 
             messages = context_data.messages
-            if len(messages) > limit:
+            if limit == 0:
+                messages = []
+            elif len(messages) > limit:
                 messages = messages[-limit:]
 
             # 返回完整消息（含 role, content, metadata, created_at）
@@ -354,7 +360,18 @@ class AgentContextManager:
             with self._lock:
                 context_data = self._get_or_load(agent_id)
 
-                if len(context_data.messages) > keep_count:
+                # keep_count=0 特殊处理：messages[-0:] 等价于 messages[0:]（保留全部），
+                # 需显式清空全部消息
+                if keep_count == 0:
+                    if context_data.messages:
+                        context_data.messages = []
+                        context_data.updated_at = datetime.now().isoformat()
+                        self._cache[agent_id] = context_data
+                        self._save_to_file(context_data)
+                        logger.info(
+                            f"Agent '{agent_id}' 已清空全部消息（keep_count=0）"
+                        )
+                elif len(context_data.messages) > keep_count:
                     context_data.messages = context_data.messages[-keep_count:]
                     context_data.updated_at = datetime.now().isoformat()
 
@@ -370,6 +387,17 @@ class AgentContextManager:
 
 # 模块级单例
 _instance: Optional[AgentContextManager] = None
+_instance_lock = threading.Lock()
+
+
+def get_agent_context_manager() -> AgentContextManager:
+    """获取AgentContextManager单例"""
+    global _instance
+    if _instance is None:
+        with _instance_lock:
+            if _instance is None:
+                _instance = AgentContextManager()
+    return _instance
 _instance_lock = threading.Lock()
 
 

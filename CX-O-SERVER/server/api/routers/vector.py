@@ -34,9 +34,10 @@ def get_vector_store():
 
 @router.get("/vector/config")
 async def get_vector_config():
-    from config.settings import settings
+    from server.config import get_settings
 
     try:
+        settings = get_settings()
         memory_config = settings.config.memory
 
         config = {
@@ -264,6 +265,8 @@ async def sync_vectors():
                 "errors": result.errors,
             },
         }
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"向量同步失败: {e}")
         raise HTTPException(status_code=500, detail=f"向量同步失败: {str(e)}")
@@ -295,6 +298,8 @@ async def rebuild_vectors():
                 "errors": result.errors,
             },
         }
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"向量重建失败: {e}")
         raise HTTPException(status_code=500, detail=f"向量重建失败: {str(e)}")

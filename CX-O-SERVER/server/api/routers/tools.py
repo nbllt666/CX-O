@@ -199,6 +199,8 @@ async def call_tool(request: ToolCallRequest):
         return result
     except ToolError as e:
         raise HTTPException(status_code=400, detail=str(e))
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"调用工具失败: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail="内部服务器错误")
@@ -233,6 +235,8 @@ async def test_tool(name: str, request: ToolTestRequest):
         }
     except ToolError as e:
         raise HTTPException(status_code=400, detail=str(e))
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"测试工具失败: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"测试失败: {str(e)}")
@@ -330,6 +334,8 @@ async def remove_mcp_server(name: str):
         return {"status": "success", "message": f"MCP服务器 {name} 已删除"}
     except ToolError as e:
         raise HTTPException(status_code=400, detail=str(e))
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"删除MCP服务器失败: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail="内部服务器错误")
@@ -347,6 +353,8 @@ async def start_mcp_server(request: MCPServerStartRequest):
         return {"status": "success", "message": f"MCP服务器 {request.name} 已启动"}
     except ToolError as e:
         raise HTTPException(status_code=400, detail=str(e))
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"启动MCP服务器失败: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail="内部服务器错误")
@@ -364,6 +372,8 @@ async def stop_mcp_server(request: MCPServerStopRequest):
         return {"status": "success", "message": f"MCP服务器 {request.name} 已停止"}
     except ToolError as e:
         raise HTTPException(status_code=400, detail=str(e))
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"停止MCP服务器失败: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail="内部服务器错误")
@@ -499,6 +509,8 @@ async def get_tool(name: str):
         return {"status": "success", "tool": tool.to_dict()}
     except ToolError as e:
         raise HTTPException(status_code=400, detail=str(e))
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"获取工具失败: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail="内部服务器错误")
@@ -516,6 +528,8 @@ async def delete_tool(name: str):
         return {"status": "success", "message": f"工具 {name} 已删除"}
     except ToolError as e:
         raise HTTPException(status_code=400, detail=str(e))
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"删除工具失败: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail="内部服务器错误")

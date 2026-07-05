@@ -173,6 +173,20 @@ async def create_memory(request: MemoryCreateRequest):
         raise HTTPException(status_code=500, detail="内部服务器错误")
 
 
+@router.get("/memories/stats")
+async def get_memory_stats(workspace_id: str = "default"):
+    from server.dependencies import get_memory_manager
+
+    try:
+        memory_mgr = get_memory_manager()
+        stats = memory_mgr.get_statistics(workspace_id)
+
+        return {"status": "success", "statistics": stats}
+    except Exception as e:
+        logger.error(f"获取记忆统计失败: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="获取记忆统计失败")
+
+
 @router.get("/memories/{memory_id}")
 async def get_memory(memory_id: int):
     from server.dependencies import get_memory_manager
@@ -288,20 +302,6 @@ async def rag_search(query: str, workspace_id: str = "default", limit: int = Non
     except Exception as e:
         logger.error(f"RAG搜索失败: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail="内部服务器错误")
-
-
-@router.get("/memories/stats")
-async def get_memory_stats(workspace_id: str = "default"):
-    from server.dependencies import get_memory_manager
-
-    try:
-        memory_mgr = get_memory_manager()
-        stats = memory_mgr.get_statistics(workspace_id)
-
-        return {"status": "success", "statistics": stats}
-    except Exception as e:
-        logger.error(f"获取记忆统计失败: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail="获取记忆统计失败")
 
 
 @router.post("/memories/permanent")
