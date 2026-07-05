@@ -21,7 +21,6 @@ SUPPORTED_EMOTIONS = {
     "happy", "sad", "angry", "surprised", "fear",
     "disgust", "neutral", "excited", "calm", "whisper",
     "shout", "laugh", "cry", "sigh", "giggle",
-    "normal", "fearful", "disgusted", "tender"
 }
 
 

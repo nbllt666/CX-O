@@ -2,9 +2,10 @@
 
 > 接口契约层，rules-3 §二定义。所有对外接口以 Python .pyi 存根文件定义，零实现逻辑，仅声明签名（方法名、参数类型、返回值类型、抛出异常）。
 
-## 当前状态：种子阶段
+## 当前状态：种子阶段 + s0601 部分补全
 
-本目录当前为种子阶段，仅含 4 个代表性 .pyi 种子（chat/agents/memory/websocket）。完整 19 个存根由后续 s0201 Skill 承接生成。
+- s0601 (Spec A) 已补全 `websocket.pyi`（7 消息模型 + 18 个独立 Action 类镜像 + 4 WS 端点签名 + 5 工厂函数签名）
+- 其余存根仍为种子阶段，待 s0201 完整补全
 
 ## 计划存根清单（19 个 FastAPI router + WS）
 
@@ -13,7 +14,7 @@
 | `chat.pyi` | `c:/CX-O/CX-O-SERVER/server/api/routers/chat.py` | P0 | 🟡 种子已建 |
 | `agents.pyi` | `c:/CX-O/CX-O-SERVER/server/api/routers/agents.py` | P0 | 🟡 种子已建 |
 | `memory.pyi` | `c:/CX-O/CX-O-SERVER/server/api/routers/memory.py` | P0 | 🟡 种子已建 |
-| `websocket.pyi` | `c:/CX-O/CX-O-SERVER/server/api/routers/websocket.py` + `server/protocol/` | P0 | 🟡 种子已建 |
+| `websocket.pyi` | `c:/CX-O/CX-O-SERVER/server/api/routers/websocket.py` + `server/protocol/` | P0 | ✅ s0601 补全 |
 | `graph.pyi` | `c:/CX-O/CX-O-SERVER/server/api/routers/graph.py` | P1 | ⬜ 待 s0201 |
 | `acp.pyi` | `c:/CX-O/CX-O-SERVER/server/api/routers/acp.py` | P1 | ⬜ 待 s0201 |
 | `cxfc.pyi` | `c:/CX-O/CX-O-SERVER/server/api/routers/cxfc.py` | P1 | ⬜ 待 s0201 |

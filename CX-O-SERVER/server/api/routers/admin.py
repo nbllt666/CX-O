@@ -119,7 +119,8 @@ async def get_config(x_api_key: Optional[str] = Header(None)):
     if not verify_admin_api_key(x_api_key):
         raise HTTPException(status_code=401, detail="未授权访问")
 
-    from config.settings import settings
+    from server.config import get_settings
+    settings = get_settings()
 
     return {
         "status": "success",
@@ -140,7 +141,8 @@ async def update_config(config: Dict, x_api_key: Optional[str] = Header(None)):
     if not verify_admin_api_key(x_api_key):
         raise HTTPException(status_code=401, detail="未授权访问")
 
-    from config.settings import settings
+    from server.config import get_settings
+    settings = get_settings()
 
     try:
         if not isinstance(config, dict):

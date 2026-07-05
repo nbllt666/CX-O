@@ -1,46 +1,35 @@
 import asyncio
 import json
-from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 import aiofiles
+from pydantic import BaseModel, Field
 
 from server.core.exceptions import ACPError
 from server.core.logging_config import get_contextual_logger
+from server.models.acp import ACPGroupMember
 
 logger = get_contextual_logger(__name__)
 
 
-@dataclass
-class ACPAgentInfo:
+class ACPAgentInfo(BaseModel):
     id: str = ""
     name: str = ""
     host: str = ""
     port: int = 0
     status: str = "offline"
     version: str = "1.0.0"
-    capabilities: List[str] = field(default_factory=list)
+    capabilities: List[str] = Field(default_factory=list)
     last_seen: str = ""
-    metadata: Dict = field(default_factory=dict)
+    metadata: Dict = Field(default_factory=dict)
 
     def to_dict(self) -> Dict:
-        return {
-            "id": self.id,
-            "name": self.name,
-            "host": self.host,
-            "port": self.port,
-            "status": self.status,
-            "version": self.version,
-            "capabilities": self.capabilities,
-            "last_seen": self.last_seen,
-            "metadata": self.metadata,
-        }
+        return self.model_dump()
 
 
-@dataclass
-class ACPConnectionInfo:
+class ACPConnectionInfo(BaseModel):
     id: str = ""
     local_agent_id: str = ""
     remote_agent_id: str = ""
@@ -52,88 +41,44 @@ class ACPConnectionInfo:
     last_activity: Optional[str] = None
     messages_sent: int = 0
     messages_received: int = 0
-    metadata: Dict = field(default_factory=dict)
+    metadata: Dict = Field(default_factory=dict)
 
     def to_dict(self) -> Dict:
-        return {
-            "id": self.id,
-            "local_agent_id": self.local_agent_id,
-            "remote_agent_id": self.remote_agent_id,
-            "remote_agent_name": self.remote_agent_name,
-            "host": self.host,
-            "port": self.port,
-            "status": self.status,
-            "connected_at": self.connected_at,
-            "last_activity": self.last_activity,
-            "messages_sent": self.messages_sent,
-            "messages_received": self.messages_received,
-            "metadata": self.metadata,
-        }
+        return self.model_dump()
 
 
-@dataclass
-class ACPGroupMember:
-    agent_id: str = ""
-    agent_name: str = ""
-    role: str = "member"
-    joined_at: str = ""
-    metadata: Dict = field(default_factory=dict)
-
-    def to_dict(self) -> Dict:
-        return {
-            "agent_id": self.agent_id,
-            "agent_name": self.agent_name,
-            "role": self.role,
-            "joined_at": self.joined_at,
-            "metadata": self.metadata,
-        }
-
-
-@dataclass
-class ACPGroupInfo:
+class ACPGroupInfo(BaseModel):
     id: str = ""
     name: str = ""
     description: str = ""
     creator_id: str = ""
     creator_name: str = ""
-    members: List[Dict] = field(default_factory=list)
+    members: List[Dict] = Field(default_factory=list)
     max_members: int = 50
     is_active: bool = True
     created_at: str = ""
     updated_at: str = ""
-    metadata: Dict = field(default_factory=dict)
+    metadata: Dict = Field(default_factory=dict)
 
     def to_dict(self) -> Dict:
-        return {
-            "id": self.id,
-            "name": self.name,
-            "description": self.description,
-            "creator_id": self.creator_id,
-            "creator_name": self.creator_name,
-            "members": self.members,
-            "max_members": self.max_members,
-            "is_active": self.is_active,
-            "created_at": self.created_at,
-            "updated_at": self.updated_at,
-            "metadata": self.metadata,
-        }
+        return self.model_dump()
 
 
-@dataclass
-class ACPMessageInfo:
+class ACPMessageInfo(BaseModel):
     id: str = ""
     msg_type: str = "chat"
     from_agent_id: str = ""
     from_agent_name: str = ""
     to_agent_id: Optional[str] = None
     to_group_id: Optional[str] = None
-    content: Dict = field(default_factory=dict)
+    content: Dict = Field(default_factory=dict)
     timestamp: str = ""
     is_read: bool = False
     is_sent: bool = False
-    metadata: Dict = field(default_factory=dict)
+    metadata: Dict = Field(default_factory=dict)
 
     def to_dict(self) -> Dict:
+        # 保持字段名映射：msg_type -> type（不可直接用 model_dump()）
         return {
             "id": self.id,
             "type": self.msg_type,
@@ -206,7 +151,8 @@ class ACPManager:
         self._load_data()
 
         from server.core.acp.discover import ACPLanDiscovery
-        from config.settings import settings
+        from server.config import get_settings
+        settings = get_settings()
 
         if settings.config.acp.discovery.enabled:
             self._discovery = ACPLanDiscovery(

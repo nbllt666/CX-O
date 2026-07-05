@@ -136,7 +136,8 @@ async def detect_duplicates(request: DeduplicateRequest):
 
         threshold = request.threshold
         if threshold is None:
-            from config.settings import settings
+            from server.config import get_settings
+            settings = get_settings()
 
             threshold = settings.config.memory.dedup_threshold
 
@@ -274,7 +275,8 @@ async def set_dedup_threshold(request: SetDedupThresholdRequest):
         if hasattr(memory_mgr, "deduplication_engine") and memory_mgr.deduplication_engine:
             memory_mgr.deduplication_engine.threshold = request.threshold
 
-        from config.settings import settings
+        from server.config import get_settings
+        settings = get_settings()
 
         settings.config.memory.dedup_threshold = request.threshold
 
@@ -294,7 +296,8 @@ async def set_dedup_threshold(request: SetDedupThresholdRequest):
 @router.get("/archive/threshold")
 async def get_dedup_threshold():
     """获取当前去重相似度阈值"""
-    from config.settings import settings
+    from server.config import get_settings
+    settings = get_settings()
 
     try:
         threshold = settings.config.memory.dedup_threshold
@@ -324,7 +327,8 @@ async def auto_archive_process(
         results = {"archived": [], "merged": [], "errors": []}
 
         if auto_merge:
-            from config.settings import settings
+            from server.config import get_settings
+            settings = get_settings()
 
             threshold = settings.config.memory.dedup_threshold
 

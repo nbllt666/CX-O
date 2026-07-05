@@ -71,6 +71,14 @@ def create_response(request_id: str, action: str, data: dict[str, Any], status: 
     ).model_dump()
 
 
+def create_request(action: str, data: dict[str, Any], request_id: Optional[str] = None) -> dict:
+    return RequestMessage(
+        request_id=request_id,
+        action=action,
+        data=data
+    ).model_dump()
+
+
 def create_stream(request_id: str, action: str, chunk_index: int, data: dict[str, Any], is_final: bool = False) -> dict:
     return StreamMessage(
         request_id=request_id,

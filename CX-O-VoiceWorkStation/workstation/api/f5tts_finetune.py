@@ -19,30 +19,10 @@ from typing import Optional
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
+from workstation.services.security_utils import validate_training_data_dir
+
 logger = logging.getLogger(__name__)
 router = APIRouter()
-
-# 训练数据目录允许的根目录，用户输入的 training_data_dir 必须位于其下
-_TRAINING_DATA_ROOT = Path("data/training").resolve()
-
-
-def _validate_training_data_dir(path: str) -> Path:
-    """校验 training_data_dir 必须位于 data/training 根目录之下，
-    拒绝绝对路径与 .. 目录穿越，防止创建/读取任意目录。"""
-    if not path:
-        raise ValueError("training_data_dir must not be empty")
-    candidate = Path(path)
-    if candidate.is_absolute():
-        raise ValueError(
-            f"training_data_dir must be a relative path under {_TRAINING_DATA_ROOT}, "
-            f"got absolute path: {path}"
-        )
-    resolved = candidate.resolve()
-    if not resolved.is_relative_to(_TRAINING_DATA_ROOT):
-        raise ValueError(
-            f"training_data_dir must be located under {_TRAINING_DATA_ROOT}, got: {resolved}"
-        )
-    return resolved
 
 
 class TrainRequest(BaseModel):
@@ -116,7 +96,7 @@ async def start_training(request: TrainRequest):
         from workstation.config import get_settings
 
         settings = get_settings()
-        training_data_dir = _validate_training_data_dir(
+        training_data_dir = validate_training_data_dir(
             request.training_data_dir or settings.f5tts_finetune.training_data_dir
         )
         service = _get_service(

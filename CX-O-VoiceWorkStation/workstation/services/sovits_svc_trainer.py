@@ -13,6 +13,8 @@ import uuid
 from pathlib import Path
 from typing import Callable, Optional
 
+from workstation.services.security_utils import validate_training_data_dir
+
 logger = logging.getLogger(__name__)
 
 _OUTPUT_NAME_PATTERN = re.compile(r"^[A-Za-z0-9_-]+$")
@@ -71,29 +73,6 @@ def _sanitize_speaker_name(name: str) -> str:
     return cleaned
 
 
-# 训练数据目录允许的根目录，training_data_dir 必须位于其下
-_TRAINING_DATA_ROOT = Path("data/training").resolve()
-
-
-def _validate_training_data_dir(path: str) -> Path:
-    """校验 training_data_dir 必须位于 data/training 根目录之下，
-    拒绝绝对路径与 .. 目录穿越，防止创建/读取任意目录。"""
-    if not path:
-        raise ValueError("training_data_dir must not be empty")
-    candidate = Path(path)
-    if candidate.is_absolute():
-        raise ValueError(
-            f"training_data_dir must be a relative path under {_TRAINING_DATA_ROOT}, "
-            f"got absolute path: {path}"
-        )
-    resolved = candidate.resolve()
-    if not resolved.is_relative_to(_TRAINING_DATA_ROOT):
-        raise ValueError(
-            f"training_data_dir must be located under {_TRAINING_DATA_ROOT}, got: {resolved}"
-        )
-    return resolved
-
-
 class SoVITSSVCTrainer:
     def __init__(
         self,
@@ -143,7 +122,7 @@ class SoVITSSVCTrainer:
         # 清洗 speaker_name，移除所有非白名单字符避免路径穿越
         speaker_name = _sanitize_speaker_name(speaker_name)
         # 校验 training_data_dir 必须位于允许的根目录之下，防止目录穿越
-        training_data_dir = _validate_training_data_dir(training_data_dir)
+        training_data_dir = validate_training_data_dir(training_data_dir)
         raw_dir = training_data_dir / "raw" / speaker_name
         raw_dir.mkdir(parents=True, exist_ok=True)
 

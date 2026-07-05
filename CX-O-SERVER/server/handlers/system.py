@@ -79,7 +79,7 @@ def register_system_handlers(manager: "WebSocketManager"):
             try:
                 from server.dependencies import get_model_router
                 mr = get_model_router()
-                status["services"]["model_router"] = {"available": True}
+                status["services"]["model_router"] = {"available": True, "stats": mr.get_all_models_info()}
             except Exception as e:
                 logger.warning("获取model router状态失败: %s", e, exc_info=True)
                 status["services"]["model_router"] = {"available": False}

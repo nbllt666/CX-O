@@ -64,7 +64,8 @@ async def get_frontend_limits():
 async def get_unified_config():
     """获取统一配置 - 对应 Gateway 的 GET /api/config"""
     from server.api.routers.audio import _load_tts_config
-    from config.settings import settings
+    from server.config import get_settings
+    settings = get_settings()
 
     try:
         audio_config = _load_tts_config()
@@ -116,7 +117,8 @@ async def get_unified_config():
 @router.put("/config")
 async def update_unified_config(request: Request, _: bool = Depends(verify_admin_api_key)):
     """更新统一配置 - 对应 Gateway 的 POST /api/config"""
-    from config.settings import settings
+    from server.config import get_settings
+    settings = get_settings()
 
     try:
         data = await request.json()
@@ -559,7 +561,8 @@ async def update_services_config(request: Request, _: bool = Depends(verify_admi
 @router.post("/config/llm")
 async def update_llm_config(request: Request, _: bool = Depends(verify_admin_api_key)):
     """更新LLM配置 - 对应 Gateway 的 POST /api/config/llm"""
-    from config.settings import settings
+    from server.config import get_settings
+    settings = get_settings()
     try:
         data = await request.json()
         if "provider" in data:

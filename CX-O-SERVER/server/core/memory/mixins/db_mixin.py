@@ -27,7 +27,8 @@ class _MemoryDBMixin:
     def _check_deprecated_config(self):
         """检查并警告已弃用的配置"""
         try:
-            from config.settings import settings
+            from server.config import get_settings
+            settings = get_settings()
             if hasattr(settings, 'config') and hasattr(settings.config, 'memory'):
                 memory_config = settings.config.memory
                 vector_backend = getattr(memory_config, 'vector_backend', None)

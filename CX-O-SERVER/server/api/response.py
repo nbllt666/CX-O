@@ -9,7 +9,7 @@ T = TypeVar("T")
 class APIResponse(BaseModel, Generic[T]):
     success: bool = True
     data: Optional[T] = None
-    error: Optional[str] = None
+    error_message: Optional[str] = None
     error_code: Optional[str] = None
     message: Optional[str] = None
     timestamp: str = Field(default_factory=lambda: datetime.now().isoformat())
@@ -23,8 +23,8 @@ class APIResponse(BaseModel, Generic[T]):
         return cls(success=True, data=data, message=message)
 
     @classmethod
-    def error(cls, error: str, error_code: str = None, data: T = None) -> "APIResponse[T]":
-        return cls(success=False, error=error, error_code=error_code, data=data)
+    def error(cls, error_message: str, error_code: str = None, data: T = None) -> "APIResponse[T]":
+        return cls(success=False, error_message=error_message, error_code=error_code, data=data)
 
 
 class PaginatedResponse(BaseModel, Generic[T]):
@@ -60,7 +60,7 @@ class HealthResponse(BaseModel):
 
 class ErrorResponse(BaseModel):
     success: bool = False
-    error: str
+    error_message: str
     error_code: Optional[str] = None
     details: Optional[Dict[str, Any]] = None
     timestamp: str = Field(default_factory=lambda: datetime.now().isoformat())

@@ -431,7 +431,8 @@ class MemoryConversationEngine:
         """处理去重检测命令"""
         try:
             if hasattr(self.memory_manager, "deduplication_engine"):
-                from config.settings import settings
+                from server.config import get_settings
+                settings = get_settings()
 
                 threshold = settings.config.memory.dedup_threshold
 

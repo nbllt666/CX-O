@@ -1,0 +1,126 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://cx-o/public/schema/message.schema.json",
+  "title": "Message",
+  "description": "WebSocket 消息协议数据契约。源真理：c:/CX-O/CX-O-SERVER/server/protocol/message.py 的 6 个 Pydantic BaseModel + 5 个工厂函数。s0601/A6 实现 create_request 后锁定字段契约。",
+  "_sourceOfTruth": {
+    "primary": "c:/CX-O/CX-O-SERVER/server/protocol/message.py",
+    "secondary": ["c:/CX-O/CX-O-SERVER/server/protocol/actions.py"],
+    "note": "BaseMessage/RequestMessage/ResponseMessage/StreamMessage/ErrorMessage/PingMessage/PongMessage 7 模型（注：Ping/Pong 在 message.py 中为 PingMessage/PongMessage）。create_response/create_request/create_stream/create_error/create_pong 5 工厂函数。s0601/A6 补全 create_request 实现，签名 (action, data, request_id=None) -> dict。"
+  },
+  "_seedStage": false,
+  "_completionSkill": "s0601",
+  "_version": "1.0.0",
+  "type": "object",
+  "oneOf": [
+    {"$ref": "#/$defs/BaseMessage"},
+    {"$ref": "#/$defs/RequestMessage"},
+    {"$ref": "#/$defs/ResponseMessage"},
+    {"$ref": "#/$defs/StreamMessage"},
+    {"$ref": "#/$defs/ErrorMessage"},
+    {"$ref": "#/$defs/PingMessage"},
+    {"$ref": "#/$defs/PongMessage"}
+  ],
+  "$defs": {
+    "MessageType": {
+      "type": "string",
+      "description": "WS 消息类型枚举",
+      "enum": ["request", "response", "stream", "error", "ping", "pong"]
+    },
+    "BaseMessage": {
+      "type": "object",
+      "description": "WS 消息基类。所有其他消息类型继承此类。",
+      "properties": {
+        "type": {"$ref": "#/$defs/MessageType"},
+        "request_id": {"type": ["string", "null"], "description": "请求追踪 ID，未设置时自动生成 uuid4", "default": null},
+        "action": {"type": ["string", "null"], "description": "Action 名称（如 chat.message/memory.list 等 18 类 Actions 之一）", "default": null},
+        "timestamp": {"type": "number", "description": "消息时间戳（Unix 时间戳秒，float）", "default": null}
+      },
+      "required": ["type"],
+      "additionalProperties": false
+    },
+    "RequestMessage": {
+      "type": "object",
+      "description": "请求消息。前端 → 网关 → 后端",
+      "properties": {
+        "type": {"type": "string", "const": "request"},
+        "request_id": {"type": ["string", "null"], "description": "请求 ID，未设置时自动生成 uuid4", "default": null},
+        "action": {"type": "string", "description": "Action 名称（必填）"},
+        "timestamp": {"type": "number", "description": "消息时间戳"},
+        "data": {"type": "object", "description": "请求数据，结构随 action 变化", "default": {}}
+      },
+      "required": ["type", "action"],
+      "additionalProperties": false
+    },
+    "ResponseMessage": {
+      "type": "object",
+      "description": "响应消息。后端 → 前端，对应 RequestMessage 的回复。",
+      "properties": {
+        "type": {"type": "string", "const": "response"},
+        "request_id": {"type": ["string", "null"], "description": "对应 RequestMessage 的 request_id"},
+        "action": {"type": "string", "description": "Action 名称（必填，与 RequestMessage.action 一致）"},
+        "timestamp": {"type": "number", "description": "消息时间戳"},
+        "status": {"type": "string", "description": "响应状态（success/error/partial 等）", "default": "success"},
+        "data": {"type": "object", "description": "响应数据", "default": {}}
+      },
+      "required": ["type", "action"],
+      "additionalProperties": false
+    },
+    "StreamMessage": {
+      "type": "object",
+      "description": "流式消息。用于流式响应（如 chat.stream/tts.synthesize_stream）。",
+      "properties": {
+        "type": {"type": "string", "const": "stream"},
+        "request_id": {"type": ["string", "null"], "description": "对应 RequestMessage 的 request_id"},
+        "action": {"type": "string", "description": "Action 名称（必填）"},
+        "timestamp": {"type": "number", "description": "消息时间戳"},
+        "chunk_index": {"type": "integer", "description": "块索引（从 0 递增）", "default": 0, "minimum": 0},
+        "data": {"type": "object", "description": "块数据", "default": {}},
+        "is_final": {"type": "boolean", "description": "是否为最后一块", "default": false}
+      },
+      "required": ["type", "action"],
+      "additionalProperties": false
+    },
+    "ErrorMessage": {
+      "type": "object",
+      "description": "错误消息。后端 → 前端，对应请求处理失败。",
+      "properties": {
+        "type": {"type": "string", "const": "error"},
+        "request_id": {"type": ["string", "null"], "description": "对应 RequestMessage 的 request_id"},
+        "action": {"type": ["string", "null"], "description": "Action 名称（可选）", "default": null},
+        "timestamp": {"type": "number", "description": "消息时间戳"},
+        "error": {"type": "object", "description": "错误详情，结构 {code: string, message: string}", "default": {}, "properties": {
+          "code": {"type": "string", "description": "错误码"},
+          "message": {"type": "string", "description": "错误消息"}
+        }}
+      },
+      "required": ["type"],
+      "additionalProperties": false
+    },
+    "PingMessage": {
+      "type": "object",
+      "description": "心跳请求。前端 → 后端，验证连接活跃。",
+      "properties": {
+        "type": {"type": "string", "const": "ping"},
+        "timestamp": {"type": "number", "description": "消息时间戳"}
+      },
+      "required": ["type"],
+      "additionalProperties": false
+    },
+    "PongMessage": {
+      "type": "object",
+      "description": "心跳响应。后端 → 前端，回复 PingMessage。",
+      "properties": {
+        "type": {"type": "string", "const": "pong"},
+        "timestamp": {"type": "number", "description": "消息时间戳"}
+      },
+      "required": ["type"],
+      "additionalProperties": false
+    }
+  },
+  "_contractVerifiability": {
+    "testSuite": "tests/test_router_websocket.py（契约签名匹配 + 端点行为）+ tests/test_protocol_message.py（如存在）",
+    "rubric": "7 模型字段完整性 + 5 工厂函数签名匹配 + MessageType 枚举值一致 + create_request 已实现（s0601/A6）",
+    "selfTest": "T15 全量回归 4900 passed 含 WS 相关测试"
+  }
+}

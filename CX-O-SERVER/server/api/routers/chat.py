@@ -94,7 +94,8 @@ def build_messages(
     messages = []
 
     # 1. 加载隐藏提示词配置
-    from config.settings import settings
+    from server.config import get_settings
+    settings = get_settings()
 
     config_dir = Path(settings._config_path).parent if settings._config_path else Path("config")
     hidden_prompt_path = config_dir / "hidden_prompt.yaml"

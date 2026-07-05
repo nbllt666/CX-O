@@ -1,0 +1,117 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://cx-o/public/schema/acp.schema.json",
+  "title": "ACP",
+  "description": "ACP（Agent Communication Protocol）数据契约。源真理：c:/CX-O/CX-O-SERVER/server/models/acp.py + c:/CX-O/CX-O-SERVER/server/core/acp/manager.py 的 5 个 Pydantic BaseModel。s0601/A3 Pydantic 迁移后锁定字段契约。",
+  "_sourceOfTruth": {
+    "primary": "c:/CX-O/CX-O-SERVER/server/models/acp.py",
+    "secondary": ["c:/CX-O/CX-O-SERVER/server/core/acp/manager.py"],
+    "note": "ACPGroupMember 定义于 server/models/acp.py（单一权威源）；ACPAgentInfo/ACPConnectionInfo/ACPGroupInfo/ACPMessageInfo 定义于 server/core/acp/manager.py。所有模型均为 Pydantic v2 BaseModel，可通过 model_validate() 自动校验。"
+  },
+  "_seedStage": false,
+  "_completionSkill": "s0601",
+  "_version": "1.0.0",
+  "type": "object",
+  "oneOf": [
+    {"$ref": "#/$defs/ACPGroupMember"},
+    {"$ref": "#/$defs/ACPAgentInfo"},
+    {"$ref": "#/$defs/ACPConnectionInfo"},
+    {"$ref": "#/$defs/ACPGroupInfo"},
+    {"$ref": "#/$defs/ACPMessageInfo"}
+  ],
+  "$defs": {
+    "ACPGroupMember": {
+      "type": "object",
+      "description": "ACP 群组成员。源真理：server/models/acp.py:ACPGroupMember",
+      "properties": {
+        "agent_id": {"type": "string", "description": "成员 Agent ID", "default": ""},
+        "agent_name": {"type": "string", "description": "成员显示名", "default": ""},
+        "role": {"type": "string", "description": "成员角色（member/admin 等）", "default": "member"},
+        "joined_at": {"type": ["string", "null"], "description": "加入时间 ISO8601 字符串，未设置时为 null", "default": null},
+        "metadata": {"type": "object", "description": "扩展元数据，必须为 object（拒绝 null）", "default": {}}
+      },
+      "required": [],
+      "additionalProperties": false
+    },
+    "ACPAgentInfo": {
+      "type": "object",
+      "description": "ACP Agent 注册信息。源真理：server/core/acp/manager.py:ACPAgentInfo",
+      "properties": {
+        "id": {"type": "string", "description": "Agent 唯一标识", "default": ""},
+        "name": {"type": "string", "description": "Agent 显示名", "default": ""},
+        "host": {"type": "string", "description": "Agent 主机地址", "default": ""},
+        "port": {"type": "integer", "description": "Agent 端口号", "default": 0, "minimum": 0, "maximum": 65535},
+        "status": {"type": "string", "description": "Agent 状态（offline/online）", "default": "offline"},
+        "version": {"type": "string", "description": "Agent 版本号", "default": "1.0.0"},
+        "capabilities": {"type": "array", "items": {"type": "string"}, "description": "Agent 能力列表", "default": []},
+        "last_seen": {"type": "string", "description": "最后在线时间 ISO8601 字符串", "default": ""},
+        "metadata": {"type": "object", "description": "扩展元数据", "default": {}}
+      },
+      "required": [],
+      "additionalProperties": false
+    },
+    "ACPConnectionInfo": {
+      "type": "object",
+      "description": "ACP 连接信息。源真理：server/core/acp/manager.py:ACPConnectionInfo",
+      "properties": {
+        "id": {"type": "string", "description": "连接唯一标识", "default": ""},
+        "local_agent_id": {"type": "string", "description": "本地 Agent ID", "default": ""},
+        "remote_agent_id": {"type": "string", "description": "远端 Agent ID", "default": ""},
+        "remote_agent_name": {"type": "string", "description": "远端 Agent 显示名", "default": ""},
+        "host": {"type": "string", "description": "远端主机地址", "default": ""},
+        "port": {"type": "integer", "description": "远端端口号", "default": 0, "minimum": 0, "maximum": 65535},
+        "status": {"type": "string", "description": "连接状态（disconnected/connected）", "default": "disconnected"},
+        "connected_at": {"type": ["string", "null"], "description": "连接建立时间 ISO8601，未连接时为 null", "default": null},
+        "last_activity": {"type": ["string", "null"], "description": "最后活动时间 ISO8601，无活动时为 null", "default": null},
+        "messages_sent": {"type": "integer", "description": "已发送消息数", "default": 0, "minimum": 0},
+        "messages_received": {"type": "integer", "description": "已接收消息数", "default": 0, "minimum": 0},
+        "metadata": {"type": "object", "description": "扩展元数据", "default": {}}
+      },
+      "required": [],
+      "additionalProperties": false
+    },
+    "ACPGroupInfo": {
+      "type": "object",
+      "description": "ACP 群组信息。源真理：server/core/acp/manager.py:ACPGroupInfo。members 字段为 List[Dict]（弱类型，运行时元素应匹配 ACPGroupMember schema）",
+      "properties": {
+        "id": {"type": "string", "description": "群组唯一标识", "default": ""},
+        "name": {"type": "string", "description": "群组显示名", "default": ""},
+        "description": {"type": "string", "description": "群组描述", "default": ""},
+        "creator_id": {"type": "string", "description": "创建者 Agent ID", "default": ""},
+        "creator_name": {"type": "string", "description": "创建者显示名", "default": ""},
+        "members": {"type": "array", "items": {"type": "object"}, "description": "群组成员列表，元素结构应匹配 ACPGroupMember", "default": []},
+        "max_members": {"type": "integer", "description": "群组成员上限", "default": 50, "minimum": 1},
+        "is_active": {"type": "boolean", "description": "群组是否活跃", "default": true},
+        "created_at": {"type": "string", "description": "创建时间 ISO8601 字符串", "default": ""},
+        "updated_at": {"type": "string", "description": "更新时间 ISO8601 字符串", "default": ""},
+        "metadata": {"type": "object", "description": "扩展元数据", "default": {}}
+      },
+      "required": [],
+      "additionalProperties": false
+    },
+    "ACPMessageInfo": {
+      "type": "object",
+      "description": "ACP 消息信息。源真理：server/core/acp/manager.py:ACPMessageInfo。注意：to_dict() 序列化时 msg_type 字段映射为 type（保持向后兼容），schema 反映序列化后的字段名 type。",
+      "properties": {
+        "id": {"type": "string", "description": "消息唯一标识", "default": ""},
+        "type": {"type": "string", "description": "消息类型（chat/system/notification 等）。序列化映射：Pydantic 字段 msg_type → dict 字段 type", "default": "chat"},
+        "from_agent_id": {"type": "string", "description": "发送者 Agent ID", "default": ""},
+        "from_agent_name": {"type": "string", "description": "发送者显示名", "default": ""},
+        "to_agent_id": {"type": ["string", "null"], "description": "接收者 Agent ID，群组消息时为 null", "default": null},
+        "to_group_id": {"type": ["string", "null"], "description": "接收群组 ID，私聊消息时为 null", "default": null},
+        "content": {"type": "object", "description": "消息内容，结构随 type 变化", "default": {}},
+        "timestamp": {"type": "string", "description": "消息时间戳 ISO8601 字符串", "default": ""},
+        "is_read": {"type": "boolean", "description": "是否已读", "default": false},
+        "is_sent": {"type": "boolean", "description": "是否已发送", "default": false},
+        "metadata": {"type": "object", "description": "扩展元数据", "default": {}}
+      },
+      "required": [],
+      "additionalProperties": false
+    }
+  },
+  "_contractVerifiability": {
+    "testSuite": "tests/test_models_acp.py + tests/test_acp_manager.py（共 ~150 测试，覆盖字段默认值/to_dict/from_dict/往返一致性/Pydantic 校验）",
+    "rubric": "5 模型字段完整性 + Pydantic ValidationError 拒绝 None/类型不匹配 + to_dict/from_dict 往返一致",
+    "selfTest": "T15 全量回归 4900 passed 含 ACP 相关 156 测试"
+  }
+}
