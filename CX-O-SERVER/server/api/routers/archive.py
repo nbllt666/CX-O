@@ -314,7 +314,7 @@ async def auto_archive_process(
     min_age_days: int = 30, target_level: int = 1, auto_merge: bool = True
 ):
     """自动归档处理 - 归档旧记忆并合并重复项"""
-    from datetime import datetime, timedelta
+    from datetime import datetime, timedelta, timezone
 
     from server.dependencies import get_memory_manager
 
@@ -351,14 +351,28 @@ async def auto_archive_process(
                                 }
                             )
 
-        cutoff_date = (datetime.now() - timedelta(days=min_age_days)).isoformat()
+        # B10 修复: 原实现用字符串比较 created_at < cutoff_date，
+        # 依赖 ISO8601 字符串字典序与时间序一致。若 created_at 含时区偏移或非
+        # ISO 格式将误判。改为 datetime 解析比较，统一时区处理。
+        cutoff = datetime.now(timezone.utc) - timedelta(days=min_age_days)
 
         old_memories = await memory_mgr.search_memories(
             memory_type=None, limit=1000, include_deleted=False
         )
 
         for memory in old_memories:
-            if memory.get("created_at", "") < cutoff_date:
+            created_at_str = memory.get("created_at", "")
+            if not created_at_str:
+                continue
+            try:
+                created_at = datetime.fromisoformat(created_at_str)
+            except (ValueError, TypeError):
+                logger.warning(f"无法解析 created_at 时间戳: {created_at_str}，跳过该记忆")
+                continue
+            # 统一为 aware datetime（UTC）进行比较
+            if created_at.tzinfo is None:
+                created_at = created_at.replace(tzinfo=timezone.utc)
+            if created_at < cutoff:
                 if not memory.get("archived_at"):
                     archive_result = await memory_mgr.archiver.archive_memory(
                         memory_id=memory["id"], target_level=target_level

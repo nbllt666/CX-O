@@ -197,7 +197,10 @@ class EdgeManager:
             for key, value in properties_filter.items():
                 _validate_property_key(key)
                 conditions.append(f"json_extract(properties, '$.{key}') = ?")
-                params.append(json.dumps(value))
+                if isinstance(value, (dict, list)):
+                    params.append(json.dumps(value))
+                else:
+                    params.append(value)
 
         where_clause = " AND ".join(conditions) if conditions else "1=1"
 

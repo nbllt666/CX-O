@@ -41,7 +41,8 @@ def get_env_config() -> Dict[str, Any]:
         env_config["logging"]["level"] = os.getenv(f"{ENV_PREFIX}LOG_LEVEL")
 
     env_config = {k: v for k, v in env_config.items() if v}
-    env_config["services"] = {k: v for k, v in env_config.get("services", {}).items() if v}
+    if "services" in env_config:
+        env_config["services"] = {k: v for k, v in env_config["services"].items() if v}
 
     return env_config
 

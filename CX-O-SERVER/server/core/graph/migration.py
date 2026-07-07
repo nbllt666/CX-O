@@ -29,6 +29,7 @@ class Neo4jExporter:
     ):
         self.uri = uri
         self.user = user
+        self.password = password
         self._driver = None
 
     def connect(self) -> bool:

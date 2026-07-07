@@ -106,6 +106,30 @@ async def create_backup(request: CreateBackupRequest, _: bool = Depends(verify_a
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@router.get("/backups/stats", response_model=BackupStatsResponse)
+async def get_backup_stats():
+    """获取备份统计"""
+    try:
+        manager = get_backup_manager()
+        stats = manager.get_status()
+
+        backups = manager.list_backups()
+        full_backups = sum(1 for b in backups if b.get("backup_type") == "full")
+        incremental_backups = sum(1 for b in backups if b.get("backup_type") == "incremental")
+
+        return BackupStatsResponse(
+            total_backups=stats.get("total_backups", 0),
+            full_backups=full_backups,
+            incremental_backups=incremental_backups,
+            total_size=sum(b.get("size_bytes", 0) for b in backups),
+            oldest_backup=min((b.get("created_at") for b in backups if b.get("created_at")), default=None),
+            latest_backup=max((b.get("created_at") for b in backups if b.get("created_at")), default=None),
+        )
+    except Exception as e:
+        logger.error(f"获取备份统计失败: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @router.get("/backups/{backup_id}", response_model=BackupResponse)
 async def get_backup(backup_id: str):
     """获取备份详情"""
@@ -169,30 +193,6 @@ async def delete_backup(backup_id: str, _: bool = Depends(verify_admin_api_key))
         raise
     except Exception as e:
         logger.error(f"删除备份失败: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-@router.get("/backups/stats", response_model=BackupStatsResponse)
-async def get_backup_stats():
-    """获取备份统计"""
-    try:
-        manager = get_backup_manager()
-        stats = manager.get_status()
-
-        backups = manager.list_backups()
-        full_backups = sum(1 for b in backups if b.get("backup_type") == "full")
-        incremental_backups = sum(1 for b in backups if b.get("backup_type") == "incremental")
-
-        return BackupStatsResponse(
-            total_backups=stats.get("total_backups", 0),
-            full_backups=full_backups,
-            incremental_backups=incremental_backups,
-            total_size=sum(b.get("size_bytes", 0) for b in backups),
-            oldest_backup=min((b.get("created_at") for b in backups if b.get("created_at")), default=None),
-            latest_backup=max((b.get("created_at") for b in backups if b.get("created_at")), default=None),
-        )
-    except Exception as e:
-        logger.error(f"获取备份统计失败: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 

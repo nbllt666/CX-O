@@ -71,7 +71,8 @@ def register_system_handlers(manager: "WebSocketManager"):
             try:
                 from server.dependencies import get_llm_client
                 llm = get_llm_client()
-                status["services"]["llm"] = {"available": True, "model": llm.model_name}
+                # 防御性访问 model_name，避免 llm 对象无此属性时 AttributeError
+                status["services"]["llm"] = {"available": True, "model": getattr(llm, "model_name", "unknown")}
             except Exception as e:
                 logger.warning("获取llm客户端状态失败: %s", e, exc_info=True)
                 status["services"]["llm"] = {"available": False}

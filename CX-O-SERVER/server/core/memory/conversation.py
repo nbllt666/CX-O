@@ -322,7 +322,7 @@ class MemoryConversationEngine:
                 return {"status": "error", "message": "请指定要归档的记忆ID"}
 
         try:
-            if hasattr(self.memory_manager, "archiver") and self.memory_manager.archiver:
+            if self.memory_manager.archiver:
                 result = await self.memory_manager.archiver.archive_memory(
                     memory_id=memory_id, target_level=target_level
                 )
@@ -358,7 +358,7 @@ class MemoryConversationEngine:
 
         if len(memory_ids) < 2:
             # 尝试从去重组获取
-            if hasattr(self.memory_manager, "deduplication_engine"):
+            if self.memory_manager.deduplication_engine:
                 groups = await self.memory_manager.deduplication_engine.detect_duplicates_batch()
                 if groups:
                     memory_ids = groups[0].memory_ids
@@ -367,7 +367,7 @@ class MemoryConversationEngine:
             return {"status": "error", "message": "至少需要两个记忆才能合并"}
 
         try:
-            if hasattr(self.memory_manager, "archiver") and self.memory_manager.archiver:
+            if self.memory_manager.archiver:
                 result = await self.memory_manager.archiver.merge_duplicate_memories(
                     memory_ids=memory_ids, strategy="smart"
                 )
@@ -430,7 +430,7 @@ class MemoryConversationEngine:
     ) -> Dict[str, Any]:
         """处理去重检测命令"""
         try:
-            if hasattr(self.memory_manager, "deduplication_engine"):
+            if self.memory_manager.deduplication_engine:
                 from server.config import get_settings
                 settings = get_settings()
 
@@ -492,7 +492,7 @@ class MemoryConversationEngine:
                 message += f"  {t}: {count}\n"
 
             # 获取归档统计
-            if hasattr(self.memory_manager, "archiver"):
+            if self.memory_manager.archiver:
                 archive_stats = self.memory_manager.archiver.get_archive_stats()
                 if archive_stats:
                     message += f"\n归档统计：\n"

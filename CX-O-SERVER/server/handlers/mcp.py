@@ -23,8 +23,20 @@ def register_mcp_handlers(manager: "WebSocketManager"):
             from server.dependencies import get_mcp_manager
 
             mcp_mgr = get_mcp_manager()
+            name = data.get("name", "")
+
+            # 空字符串 name 验证：避免创建无名 server
+            if not name:
+                await manager.send_message(client_id, create_error(
+                    request_id=request_id,
+                    action=MCPActions.CONNECT,
+                    code="INVALID_REQUEST",
+                    message="Missing server name"
+                ))
+                return
+
             server_info = await mcp_mgr.add_server(
-                name=data.get("name", ""),
+                name=name,
                 command=data.get("command", ""),
                 args=data.get("args", []),
                 env=data.get("env"),
@@ -32,7 +44,7 @@ def register_mcp_handlers(manager: "WebSocketManager"):
             )
 
             if data.get("auto_start", False):
-                await mcp_mgr.start_server(data.get("name", ""))
+                await mcp_mgr.start_server(name)
 
             await manager.send_message(client_id, create_response(
                 request_id=request_id,
@@ -64,7 +76,11 @@ def register_mcp_handlers(manager: "WebSocketManager"):
                 servers = await mcp_mgr.list_servers()
                 tools = []
                 for server in servers:
-                    server_tools = await mcp_mgr.get_tools(server["name"])
+                    # 防御性检查：避免 server 字典缺 "name" key 时触发 KeyError
+                    s_name = server.get("name")
+                    if not s_name:
+                        continue
+                    server_tools = await mcp_mgr.get_tools(s_name)
                     tools.extend(server_tools)
 
             await manager.send_message(client_id, create_response(

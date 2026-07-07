@@ -156,9 +156,11 @@ class SemanticSearch:
                 for item in nodes:
                     score = item.get("_additional", {}).get("certainty", 0.0)
                     results.append(SemanticSearchResult(
-                        node_id=item["node_id"],
-                        node_type=item["node_type"],
-                        text_content=item["text_content"],
+                        node=GraphNode(
+                            id=item["node_id"],
+                            type=item["node_type"],
+                            text_content=item["text_content"],
+                        ),
                         score=score,
                     ))
 
@@ -203,9 +205,7 @@ class SemanticSearch:
 
             if score > 0:
                 results.append(SemanticSearchResult(
-                    node_id=node.id,
-                    node_type=node.type,
-                    text_content=node.text_content,
+                    node=node,
                     score=score,
                 ))
 

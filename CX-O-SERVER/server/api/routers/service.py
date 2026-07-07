@@ -40,6 +40,53 @@ _backend_log_path: Optional[str] = None
 # 现在: 统一读写项目根目录下的 config.json, 与 server.config._get_config_path() 一致。
 # ---------------------------------------------------------------------------
 
+# ---------------------------------------------------------------------------
+# B10 修复: pidfile 支持
+# 原实现用 psutil.process_iter 遍历所有进程查找 uvicorn，性能差且 cmdline 匹配脆弱。
+# 改为 start_service 时写入 pidfile，get_service_status / stop_service 优先读 pidfile。
+# psutil.process_iter 保留为回退（pidfile 不存在或进程已死时）。
+# ---------------------------------------------------------------------------
+
+
+def _get_pidfile_path() -> str:
+    """获取 pidfile 绝对路径（项目根目录/logs/backend.pid）。"""
+    return os.path.join(get_project_root(), "logs", "backend.pid")
+
+
+def _write_pidfile(pid: int) -> None:
+    """将 PID 写入 pidfile。失败时仅 warning，不影响主流程。"""
+    try:
+        pidfile = _get_pidfile_path()
+        os.makedirs(os.path.dirname(pidfile), exist_ok=True)
+        with open(pidfile, "w", encoding="utf-8") as f:
+            f.write(str(pid))
+    except OSError as e:
+        logger.warning(f"写入 pidfile 失败: {e}")
+
+
+def _read_pidfile() -> Optional[int]:
+    """从 pidfile 读取 PID。文件不存在或格式无效时返回 None。"""
+    try:
+        pidfile = _get_pidfile_path()
+        if not os.path.exists(pidfile):
+            return None
+        with open(pidfile, "r", encoding="utf-8") as f:
+            pid_str = f.read().strip()
+            return int(pid_str) if pid_str else None
+    except (OSError, ValueError) as e:
+        logger.warning(f"读取 pidfile 失败: {e}")
+        return None
+
+
+def _remove_pidfile() -> None:
+    """删除 pidfile。失败时仅 warning。"""
+    try:
+        pidfile = _get_pidfile_path()
+        if os.path.exists(pidfile):
+            os.remove(pidfile)
+    except OSError as e:
+        logger.warning(f"删除 pidfile 失败: {e}")
+
 
 def _get_service_config_path() -> str:
     """获取项目根目录下的 config.json 绝对路径。
@@ -248,10 +295,22 @@ async def get_service_status():
     process = get_backend_process()
 
     if process is None:
-        # 尝试查找已存在的 uvicorn 进程
+        # B10 修复: 优先读 pidfile，避免遍历所有进程
+        pid = _read_pidfile()
+        if pid is not None:
+            try:
+                process = psutil.Process(pid)
+                if not process.is_running():
+                    process = None
+            except (psutil.NoSuchProcess, psutil.AccessDenied):
+                process = None
+
+    if process is None:
+        # 回退到 psutil.process_iter（pidfile 不存在或进程已死时）
         for proc in psutil.process_iter(["pid", "name", "cmdline"]):
             try:
-                cmdline = proc.info.get("cmdline", [])
+                # B10 修复: cmdline 可能为 None，用 `or []` 确保是列表
+                cmdline = proc.info.get("cmdline") or []
                 if (
                     cmdline
                     and "uvicorn" in " ".join(cmdline)
@@ -436,6 +495,9 @@ async def start_service(config: ServiceConfig):
         with _backend_process_lock:
             _backend_process = new_process
 
+        # B10 修复: 写入 pidfile，供后续 status/stop 端点快速定位进程
+        _write_pidfile(new_process.pid)
+
         logger.info(
             f"Backend service started: PID={new_process.pid}, Port={config.port}, Conda={use_conda}"
         )
@@ -465,11 +527,23 @@ async def stop_service():
     process = get_backend_process()
 
     if process is None:
-        # 尝试查找并停止 uvicorn 进程
+        # B10 修复: 优先读 pidfile 查找进程
+        pid = _read_pidfile()
+        if pid is not None:
+            try:
+                process = psutil.Process(pid)
+                if not process.is_running():
+                    process = None
+            except (psutil.NoSuchProcess, psutil.AccessDenied):
+                process = None
+
+    if process is None:
+        # 回退到 psutil.process_iter
         stopped = False
         for proc in psutil.process_iter(["pid", "name", "cmdline"]):
             try:
-                cmdline = proc.info.get("cmdline", [])
+                # B10 修复: cmdline 可能为 None，用 `or []` 确保是列表
+                cmdline = proc.info.get("cmdline") or []
                 if cmdline and "uvicorn" in " ".join(cmdline):
                     proc.terminate()
                     stopped = True
@@ -477,6 +551,8 @@ async def stop_service():
                 continue
 
         if stopped:
+            # B10 修复: 清理可能存在的 stale pidfile
+            _remove_pidfile()
             return {"status": "success", "message": "Service stopped"}
 
         raise HTTPException(status_code=400, detail="Service is not running")
@@ -497,6 +573,9 @@ async def stop_service():
 
         with _backend_process_lock:
             _backend_process = None
+
+        # B10 修复: 停止后删除 pidfile
+        _remove_pidfile()
 
         logger.info("Backend service stopped")
 
@@ -530,8 +609,12 @@ async def restart_service(config: ServiceConfig):
 async def get_service_logs(lines: int = 100):
     """获取服务日志"""
     try:
-        # 读取日志文件（如果配置了日志文件）
-        log_file = "logs/cxo.log"
+        # B10 修复: 原读相对路径 "logs/cxo.log"，与 _open_backend_log_file 写入的
+        # {root}/logs/cxo.log 在 CWD≠项目根时会错位。改为优先使用 _backend_log_path，
+        # 回退到项目根目录下的绝对路径。
+        log_file = _backend_log_path
+        if not log_file:
+            log_file = os.path.join(get_project_root(), "logs", "cxo.log")
         if os.path.exists(log_file):
             with open(log_file, "r", encoding="utf-8") as f:
                 all_lines = f.readlines()

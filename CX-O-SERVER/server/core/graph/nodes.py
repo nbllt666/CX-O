@@ -208,9 +208,9 @@ class NodeManager:
                 # BUG-B-M12 修复: json_extract 返回带类型的值(int/bool 等),
                 # 原实现统一用 json.dumps(value) 序列化为 JSON 字符串,
                 # 导致非字符串类型(int/bool/float)永远无法匹配,过滤失效。
-                # 修复: 仅对字符串和对象(dict/list)做 json.dumps,
-                # 标量类型直接使用原始值进行参数化比较。
-                if isinstance(value, (str, dict, list)):
+                # 修复: 仅对 dict/list 做 json.dumps,
+                # 字符串和标量类型直接使用原始值进行参数化比较。
+                if isinstance(value, (dict, list)):
                     params.append(json.dumps(value))
                 else:
                     params.append(value)

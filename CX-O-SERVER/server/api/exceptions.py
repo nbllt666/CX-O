@@ -77,7 +77,7 @@ async def service_exception_handler(request: Request, exc: ServiceError) -> JSON
         status_code=exc.status_code,
         content=ErrorResponse(
             error_message=exc.message, error_code=exc.error_code, details=exc.details
-        ).model_dump(),
+        ).model_dump(by_alias=True),
     )
 
 
@@ -86,7 +86,7 @@ async def http_exception_handler(request: Request, exc: HTTPException) -> JSONRe
         status_code=exc.status_code,
         content=ErrorResponse(
             error_message=str(exc.detail), error_code=f"HTTP_{exc.status_code}"
-        ).model_dump(),
+        ).model_dump(by_alias=True),
     )
 
 
@@ -107,7 +107,7 @@ async def validation_exception_handler(
         status_code=422,
         content=ErrorResponse(
             error_message="Validation failed", error_code="VALIDATION_ERROR", details={"errors": errors}
-        ).model_dump(),
+        ).model_dump(by_alias=True),
     )
 
 
@@ -118,5 +118,5 @@ async def generic_exception_handler(request: Request, exc: Exception) -> JSONRes
             error_message="Internal server error",
             error_code="INTERNAL_ERROR",
             details={"exception": str(exc)} if str(exc) else None,
-        ).model_dump(),
+        ).model_dump(by_alias=True),
     )

@@ -1,6 +1,6 @@
 import math
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Dict, List, Optional, Tuple
 
 import numpy as np
@@ -97,7 +97,13 @@ class DecayCalculator:
     def calculate_days_elapsed(self, created_at: str) -> float:
         try:
             created = datetime.fromisoformat(created_at.replace("Z", "+00:00"))
-            delta = self.current_time - created
+            current = self.current_time
+            # B7 修复: 统一时区——若一端 naive 一端 aware，将 naive 端视为 UTC
+            if created.tzinfo is None and current.tzinfo is not None:
+                created = created.replace(tzinfo=timezone.utc)
+            elif current.tzinfo is None and created.tzinfo is not None:
+                current = current.replace(tzinfo=timezone.utc)
+            delta = current - created
             return delta.total_seconds() / 86400.0
         except Exception as e:
             logger.error(f"计算时间差失败: {e}")

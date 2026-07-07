@@ -120,13 +120,24 @@ def register_memory_handlers(manager: "WebSocketManager"):
             memory_mgr = get_memory_manager()
 
             if data.get("semantic") and memory_mgr.is_vector_search_enabled():
-                result = await memory_mgr.hybrid_search(
-                    query=data.get("query", ""),
-                    memory_type=data.get("type"),
-                    tags=data.get("tags"),
-                    limit=data.get("limit", 10),
-                    workspace_id=data.get("workspace_id"),
-                )
+                # 向量检索单独 try/except，在错误消息中区分"向量检索失败"与"普通检索失败"
+                try:
+                    result = await memory_mgr.hybrid_search(
+                        query=data.get("query", ""),
+                        memory_type=data.get("type"),
+                        tags=data.get("tags"),
+                        limit=data.get("limit", 10),
+                        workspace_id=data.get("workspace_id"),
+                    )
+                except Exception as vector_e:
+                    logger.error(f"Memory vector search error: {vector_e}")
+                    await manager.send_message(client_id, create_error(
+                        request_id=request_id,
+                        action=MemoryActions.SEARCH,
+                        code="MEMORY_ERROR",
+                        message=f"Vector search failed: {vector_e}"
+                    ))
+                    return
             else:
                 result = memory_mgr.search_memories(
                     query=data.get("query"),

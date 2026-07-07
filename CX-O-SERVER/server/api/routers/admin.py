@@ -1,9 +1,10 @@
 import os
 import secrets
 from datetime import datetime
-from typing import Dict, Optional
+from typing import Optional
 
 from fastapi import APIRouter, Header, HTTPException
+from pydantic import BaseModel
 
 from server.core.logging_config import get_contextual_logger
 
@@ -11,6 +12,47 @@ router = APIRouter()
 logger = get_contextual_logger(__name__)
 
 ADMIN_API_KEY = os.environ.get("ADMIN_API_KEY", "")
+
+
+# ---------------------------------------------------------------------------
+# B10 修复: PUT /admin/config 添加 Pydantic schema 校验
+# 原实现接收 config: Dict，任意嵌套结构都会被写入 settings，缺少 schema 校验。
+# ---------------------------------------------------------------------------
+
+
+class LLMConfigUpdate(BaseModel):
+    """LLM 配置更新片段。"""
+
+    provider: Optional[str] = None
+    model: Optional[str] = None
+
+
+class VectorConfigUpdate(BaseModel):
+    """向量配置更新片段。"""
+
+    enabled: Optional[bool] = None
+
+
+class ACPConfigUpdate(BaseModel):
+    """ACP 配置更新片段。"""
+
+    enabled: Optional[bool] = None
+    agent_name: Optional[str] = None
+
+
+class SystemConfigUpdate(BaseModel):
+    """系统配置更新片段。"""
+
+    debug: Optional[bool] = None
+
+
+class AdminConfigUpdate(BaseModel):
+    """管理员配置更新请求体 schema。"""
+
+    llm: Optional[LLMConfigUpdate] = None
+    vector: Optional[VectorConfigUpdate] = None
+    acp: Optional[ACPConfigUpdate] = None
+    system: Optional[SystemConfigUpdate] = None
 
 
 def verify_admin_api_key(x_api_key: Optional[str] = Header(None)) -> bool:
@@ -23,8 +65,9 @@ def verify_admin_api_key(x_api_key: Optional[str] = Header(None)) -> bool:
 
 @router.get("/admin/dashboard")
 async def get_dashboard(x_api_key: Optional[str] = Header(None)):
-    if not verify_admin_api_key(x_api_key):
-        raise HTTPException(status_code=401, detail="未授权访问")
+    # B10 修复: verify_admin_api_key 在认证失败时已 raise 403，
+    # 永远不会返回 False，原 401 路径为死代码，已删除。
+    verify_admin_api_key(x_api_key)
 
     from server.dependencies import get_acp_manager, get_context_manager, get_memory_manager
 
@@ -53,8 +96,9 @@ async def get_dashboard(x_api_key: Optional[str] = Header(None)):
 
 @router.get("/admin/stats")
 async def get_stats(x_api_key: Optional[str] = Header(None)):
-    if not verify_admin_api_key(x_api_key):
-        raise HTTPException(status_code=401, detail="未授权访问")
+    # B10 修复: verify_admin_api_key 在认证失败时已 raise 403，
+    # 永远不会返回 False，原 401 路径为死代码，已删除。
+    verify_admin_api_key(x_api_key)
 
     from server.dependencies import get_context_manager, get_memory_manager
     from server.core.tools.registry import tool_registry
@@ -116,8 +160,9 @@ async def health_check():
 
 @router.get("/admin/config")
 async def get_config(x_api_key: Optional[str] = Header(None)):
-    if not verify_admin_api_key(x_api_key):
-        raise HTTPException(status_code=401, detail="未授权访问")
+    # B10 修复: verify_admin_api_key 在认证失败时已 raise 403，
+    # 永远不会返回 False，原 401 路径为死代码，已删除。
+    verify_admin_api_key(x_api_key)
 
     from server.config import get_settings
     settings = get_settings()
@@ -137,39 +182,38 @@ async def get_config(x_api_key: Optional[str] = Header(None)):
 
 
 @router.put("/admin/config")
-async def update_config(config: Dict, x_api_key: Optional[str] = Header(None)):
-    if not verify_admin_api_key(x_api_key):
-        raise HTTPException(status_code=401, detail="未授权访问")
+async def update_config(config: AdminConfigUpdate, x_api_key: Optional[str] = Header(None)):
+    # B10 修复: verify_admin_api_key 在认证失败时已 raise 403，
+    # 永远不会返回 False，原 401 路径为死代码，已删除。
+    # B10 修复: 参数类型从 Dict 改为 AdminConfigUpdate，添加 schema 校验。
+    verify_admin_api_key(x_api_key)
 
     from server.config import get_settings
     settings = get_settings()
 
     try:
-        if not isinstance(config, dict):
-            raise HTTPException(status_code=400, detail="配置必须是对象格式")
-
-        if "llm" in config:
-            if "provider" in config["llm"]:
-                provider = config["llm"]["provider"]
+        if config.llm:
+            if config.llm.provider is not None:
+                provider = config.llm.provider
                 if provider not in ["ollama", "vllm"]:
                     raise HTTPException(status_code=400, detail=f"不支持的LLM提供商: {provider}")
                 settings.config.llm.provider = provider
-            if "model" in config["llm"]:
-                settings.config.llm.model = config["llm"]["model"]
+            if config.llm.model is not None:
+                settings.config.llm.model = config.llm.model
 
-        if "vector" in config:
-            if "enabled" in config["vector"]:
-                settings.config.vector.enabled = bool(config["vector"]["enabled"])
+        if config.vector:
+            if config.vector.enabled is not None:
+                settings.config.vector.enabled = config.vector.enabled
 
-        if "acp" in config:
-            if "enabled" in config["acp"]:
-                settings.config.acp.enabled = bool(config["acp"]["enabled"])
-            if "agent_name" in config["acp"]:
-                settings.config.acp.agent_name = str(config["acp"]["agent_name"])
+        if config.acp:
+            if config.acp.enabled is not None:
+                settings.config.acp.enabled = config.acp.enabled
+            if config.acp.agent_name is not None:
+                settings.config.acp.agent_name = config.acp.agent_name
 
-        if "system" in config:
-            if "debug" in config["system"]:
-                settings.config.system.debug = bool(config["system"]["debug"])
+        if config.system:
+            if config.system.debug is not None:
+                settings.config.system.debug = config.system.debug
 
         settings.save_config()
 
@@ -185,10 +229,11 @@ async def update_config(config: Dict, x_api_key: Optional[str] = Header(None)):
 
 @router.get("/admin/logs")
 async def get_logs(level: str = "INFO", lines: int = 50, x_api_key: Optional[str] = Header(None)):
-    if not verify_admin_api_key(x_api_key):
-        raise HTTPException(status_code=401, detail="未授权访问")
-
-    import logging
+    # B10 修复: verify_admin_api_key 在认证失败时已 raise 403，
+    # 永远不会返回 False，原 401 路径为死代码，已删除。
+    # B10 修复: 原返回占位字符串（"日志功能通过服务端日志文件查看"），
+    # 前端误以为日志功能可用。改为明确提示"暂未实现"。
+    verify_admin_api_key(x_api_key)
 
     if lines > 1000:
         lines = 1000
@@ -201,8 +246,10 @@ async def get_logs(level: str = "INFO", lines: int = 50, x_api_key: Optional[str
 
     return {
         "status": "success",
-        "logs": ["日志功能通过服务端日志文件查看", f"当前日志级别: {level}", f"请求行数: {lines}"],
-        "total": 3,
+        "logs": [
+            f"[{level}] 日志查看功能暂未实现，请通过 logs/cxo.log 文件查看服务端日志",
+        ],
+        "total": 1,
         "level": level,
         "lines": lines,
     }
@@ -210,8 +257,9 @@ async def get_logs(level: str = "INFO", lines: int = 50, x_api_key: Optional[str
 
 @router.post("/admin/backup")
 async def create_backup(x_api_key: Optional[str] = Header(None)):
-    if not verify_admin_api_key(x_api_key):
-        raise HTTPException(status_code=401, detail="未授权访问")
+    # B10 修复: verify_admin_api_key 在认证失败时已 raise 403，
+    # 永远不会返回 False，原 401 路径为死代码，已删除。
+    verify_admin_api_key(x_api_key)
 
     import os
     import shutil

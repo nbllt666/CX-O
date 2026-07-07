@@ -34,12 +34,34 @@ def get_service_state(request: Request) -> ServiceState:
     return request.app.state.services
 
 
+def _is_depends_marker(obj) -> bool:
+    """检查 obj 是否是 FastAPI Depends 标记对象。
+
+    FastAPI 的 ``Depends`` 是函数，调用后返回 ``fastapi.dependencies.models.Depends``
+    类的实例。直接调用 getter（如 ``get_memory_manager()``）时，``state`` 默认参数
+    就是这个 Depends 实例，此时应回退到全局 ``_service_state``。
+
+    用类型名称检查避免直接导入内部类，保持跨 FastAPI 版本兼容。
+    """
+    return type(obj).__name__ == "Depends"
+
+
 def _resolve_state(state=None) -> ServiceState:
+    # state 为 None 或 FastAPI Depends 占位对象（直接调用 getter 时默认参数）
+    # → 从全局 _service_state 获取
+    if state is None or _is_depends_marker(state):
+        if _service_state is not None:
+            return _service_state
+        raise RuntimeError("Service state not initialized. Call set_service_state() first.")
+    # 正确类型 → 直接返回
     if isinstance(state, ServiceState):
         return state
-    if _service_state is not None:
-        return _service_state
-    raise RuntimeError("Service state not initialized. Call set_service_state() first.")
+    # 非 ServiceState 非 None 非 Depends → 类型错误，不应静默回退到全局
+    # B11 修复: 原实现将任意非 ServiceState 对象回退到全局，掩盖调用方传入错误类型的 bug
+    raise TypeError(
+        f"Expected ServiceState or None, got {type(state).__name__}. "
+        "Direct calls should pass state=None to use the global state."
+    )
 
 
 def get_memory_manager(state: ServiceState = Depends(get_service_state)):

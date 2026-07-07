@@ -660,7 +660,6 @@ def register_audio_handlers(
                     kwargs["ref_text"] = ref_text
 
             chunk_index = 0
-            tts_playing = True
             await set_tts_playing(client_id, True)
 
             try:
@@ -716,7 +715,6 @@ def register_audio_handlers(
             finally:
                 try:
                     await set_tts_playing(client_id, False)
-                    tts_playing = False
                 except Exception as reset_error:
                     logger.error(f"重置 TTS 播放状态失败：{reset_error}")
 
@@ -862,6 +860,13 @@ def register_audio_handlers(
                 return
 
             if not audio_base64:
+                # 静默返回改为明确错误，前端可区分"无音频数据"与"处理成功"
+                await manager.send_message(client_id, create_error(
+                    request_id=request_id,
+                    action=ASRActions.STREAM,
+                    code="INVALID_REQUEST",
+                    message="Missing audio data"
+                ))
                 return
 
             audio_data = base64.b64decode(audio_base64)
@@ -960,11 +965,21 @@ def register_audio_handlers(
                 from server.services.tts_service import TTSService
                 from server.config import get_settings
                 settings = get_settings()
+                # 防御性检查：确保 settings.tts.orpheus 配置存在，避免 AttributeError
+                orpheus_config = getattr(getattr(settings, 'tts', None), 'orpheus', None)
+                if not orpheus_config:
+                    await manager.send_message(client_id, create_error(
+                        request_id=request_id,
+                        action=VoiceActions.DUAL_STREAM,
+                        code="CONFIG_ERROR",
+                        message="Orpheus TTS 配置缺失，请检查 settings.tts.orpheus"
+                    ))
+                    return
                 session_tts_service = TTSService(
                     mode="orpheus",
-                    orpheus_url=settings.tts.orpheus.url,
-                    orpheus_voice=voice or settings.tts.orpheus.voice,
-                    orpheus_timeout=settings.tts.orpheus.timeout,
+                    orpheus_url=orpheus_config.url,
+                    orpheus_voice=voice or orpheus_config.voice,
+                    orpheus_timeout=orpheus_config.timeout,
                 )
             else:
                 session_tts_service = tts_service
@@ -1014,6 +1029,13 @@ def register_audio_handlers(
         # ---- 处理音频帧 ----
         audio_base64 = data.get("audio")
         if not audio_base64:
+            # 静默返回改为明确错误，前端可区分"无音频数据"与"处理成功"
+            await manager.send_message(client_id, create_error(
+                request_id=request_id,
+                action=VoiceActions.DUAL_STREAM,
+                code="INVALID_REQUEST",
+                message="Missing audio data"
+            ))
             return
 
         try:

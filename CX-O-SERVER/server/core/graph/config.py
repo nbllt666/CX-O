@@ -25,6 +25,7 @@ class EmbeddingConfig:
     batch_size: int = 32
     device: str = "cpu"
     cache_folder: Optional[str] = None
+    vector_dim: int = 384
 
 
 @dataclass
@@ -68,6 +69,7 @@ def get_graph_config() -> GraphConfig:
                     batch_size=gc.embedding.batch_size,
                     device=gc.embedding.device,
                     cache_folder=gc.embedding.cache_folder,
+                    vector_dim=gc.embedding.vector_dim,
                 ),
             )
     except Exception:
@@ -97,6 +99,7 @@ def _load_config_from_env() -> GraphConfig:
             batch_size=int(os.getenv("EMBEDDING_BATCH_SIZE", "32")),
             device=os.getenv("EMBEDDING_DEVICE", "cpu"),
             cache_folder=os.getenv("EMBEDDING_CACHE_FOLDER"),
+            vector_dim=int(os.getenv("EMBEDDING_VECTOR_DIM", "384")),
         ),
     )
 

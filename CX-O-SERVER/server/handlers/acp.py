@@ -71,11 +71,20 @@ def register_acp_handlers(manager: "WebSocketManager"):
 
             success = await acp_mgr.delete_connection(connection_id)
 
-            await manager.send_message(client_id, create_response(
-                request_id=request_id,
-                action=ACPActions.DISCONNECT,
-                data={"success": success}
-            ))
+            if not success:
+                # connection 不存在时返回明确错误，避免 success=True + data.success=False 的语义不一致
+                await manager.send_message(client_id, create_error(
+                    request_id=request_id,
+                    action=ACPActions.DISCONNECT,
+                    code="CONNECTION_NOT_FOUND",
+                    message=f"Connection '{connection_id}' not found"
+                ))
+            else:
+                await manager.send_message(client_id, create_response(
+                    request_id=request_id,
+                    action=ACPActions.DISCONNECT,
+                    data={"success": True}
+                ))
         except Exception as e:
             logger.error(f"ACP disconnect error: {e}")
             await manager.send_message(client_id, create_error(

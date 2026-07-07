@@ -33,6 +33,8 @@ class CXFCManager:
         self._heartbeat_task: Optional[asyncio.Task] = None
         self._ws_manager = None
         self._on_event_callback: Optional[Callable] = None
+        # B5 修复: 初始化 _background_tasks 集合，供 _track_background_task 使用
+        self._background_tasks: set = set()
 
     def _track_background_task(self, task: asyncio.Task) -> asyncio.Task:
         """追踪后台任务，防止被GC回收；任务完成后自动从集合中移除"""

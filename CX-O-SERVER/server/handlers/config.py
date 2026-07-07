@@ -61,24 +61,42 @@ def register_config_handlers(manager: "WebSocketManager"):
             section = data.get("section", "")
             section_data = data.get("data", {})
 
-            if section:
-                parts = section.split(".")
-                target = config
-                for part in parts[:-1]:
-                    target = getattr(target, part, None)
-                    if target is None:
-                        break
+            if not section:
+                # section 为空时返回明确错误，避免"静默成功"路径遮蔽
+                await manager.send_message(client_id, create_error(
+                    request_id=request_id,
+                    action=ConfigActions.SET,
+                    code="INVALID_REQUEST",
+                    message="Section cannot be empty"
+                ))
+                return
 
-                if target is not None:
-                    last_part = parts[-1]
-                    if hasattr(target, last_part):
-                        sub_config = getattr(target, last_part)
-                        if hasattr(sub_config, "model_dump"):
-                            for key, value in section_data.items():
-                                if hasattr(sub_config, key):
-                                    setattr(sub_config, key, value)
-                        else:
-                            setattr(target, last_part, section_data)
+            parts = section.split(".")
+            target = config
+            for part in parts[:-1]:
+                target = getattr(target, part, None)
+                if target is None:
+                    break
+
+            if target is not None:
+                last_part = parts[-1]
+                if hasattr(target, last_part):
+                    sub_config = getattr(target, last_part)
+                    if hasattr(sub_config, "model_dump"):
+                        for key, value in section_data.items():
+                            # 校验 key 类型，非字符串 key 返回明确错误
+                            if not isinstance(key, str):
+                                await manager.send_message(client_id, create_error(
+                                    request_id=request_id,
+                                    action=ConfigActions.SET,
+                                    code="INVALID_REQUEST",
+                                    message=f"Config key must be string, got {type(key).__name__}"
+                                ))
+                                return
+                            if hasattr(sub_config, key):
+                                setattr(sub_config, key, value)
+                    else:
+                        setattr(target, last_part, section_data)
 
             save_config(config)
 

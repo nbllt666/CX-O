@@ -2,7 +2,7 @@ import asyncio
 import uuid
 from datetime import datetime
 
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 
@@ -91,7 +91,7 @@ def register_api_routes(app: FastAPI):
     app.include_router(vector.router, prefix="/api")
 
     app.add_exception_handler(ServiceError, service_exception_handler)
-    app.add_exception_handler(Exception, http_exception_handler)
+    app.add_exception_handler(HTTPException, http_exception_handler)
     app.add_exception_handler(RequestValidationError, validation_exception_handler)
     app.add_exception_handler(Exception, generic_exception_handler)
 

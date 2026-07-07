@@ -1,22 +1,20 @@
 from datetime import datetime
 from typing import Any, Dict, Generic, List, Optional, TypeVar
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 T = TypeVar("T")
 
 
 class APIResponse(BaseModel, Generic[T]):
+    model_config = ConfigDict(arbitrary_types_allowed=True, populate_by_name=True)
     success: bool = True
     data: Optional[T] = None
-    error_message: Optional[str] = None
+    error_message: Optional[str] = Field(default=None, alias='error')
     error_code: Optional[str] = None
     message: Optional[str] = None
     timestamp: str = Field(default_factory=lambda: datetime.now().isoformat())
     request_id: Optional[str] = None
-
-    class Config:
-        arbitrary_types_allowed = True
 
     @classmethod
     def ok(cls, data: T = None, message: str = None) -> "APIResponse[T]":
@@ -59,8 +57,9 @@ class HealthResponse(BaseModel):
 
 
 class ErrorResponse(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
     success: bool = False
-    error_message: str
+    error_message: str = Field(alias='error')
     error_code: Optional[str] = None
     details: Optional[Dict[str, Any]] = None
     timestamp: str = Field(default_factory=lambda: datetime.now().isoformat())

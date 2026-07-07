@@ -116,7 +116,10 @@ class GraphExporter:
             data_type.set("key", "d1")
             data_type.text = node_data.get("type", "")
 
-            properties = json.dumps(node_data.get("properties", {}), ensure_ascii=False)
+            properties = node_data.get("properties", "{}")
+            if isinstance(properties, str):
+                properties = json.loads(properties) if properties else {}
+            properties = json.dumps(properties, ensure_ascii=False)
             data_props = ET.SubElement(node_elem, "data")
             data_props.set("key", "d2")
             data_props.text = properties
@@ -137,7 +140,7 @@ class GraphExporter:
             data_weight.set("key", "d3")
             data_weight.text = str(weight)
 
-            label = edge_data.get("type", "")
+            label = edge_data.get("relation_type", "")
             data_label = ET.SubElement(edge_elem, "data")
             data_label.set("key", "d4")
             data_label.text = label
@@ -183,6 +186,8 @@ class GraphExporter:
             label = node_data.get("name", node_id)
             node_type = node_data.get("type", "")
             properties = node_data.get("properties", {})
+            if isinstance(properties, str):
+                properties = json.loads(properties) if properties else {}
 
             escaped_label = label.replace('"', '\\"').replace("\n", "\\n")
             props_str = ", ".join(f'{k}="{v}"' for k, v in properties.items()) if properties else ""
@@ -200,7 +205,7 @@ class GraphExporter:
             edge_data = dict(row)
             source = edge_data["source_id"]
             target = edge_data["target_id"]
-            edge_type = edge_data.get("type", "")
+            edge_type = edge_data.get("relation_type", "")
             weight = edge_data.get("weight", 1.0)
 
             if source not in node_ids_seen or target not in node_ids_seen:
@@ -241,7 +246,7 @@ class GraphExporter:
             "id": row["id"],
             "source_id": row["source_id"],
             "target_id": row["target_id"],
-            "type": row.get("type", ""),
+            "type": row.get("relation_type", ""),
             "weight": row.get("weight", 1.0),
             "properties": json.loads(row["properties"]) if row.get("properties") else {},
             "created_at": row.get("created_at", ""),

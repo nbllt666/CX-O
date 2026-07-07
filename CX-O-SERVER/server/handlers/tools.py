@@ -79,10 +79,31 @@ def register_tools_handlers(manager: "WebSocketManager"):
         try:
             from server.core.tools import tool_registry
 
+            name = data.get("name", "")
+            parameters = data.get("parameters", {})
+
+            # 输入验证：name 和 parameters 不可为空
+            if not name:
+                await manager.send_message(client_id, create_error(
+                    request_id=request_id,
+                    action=ToolsActions.REGISTER,
+                    code="INVALID_REQUEST",
+                    message="Tool name cannot be empty"
+                ))
+                return
+            if not parameters:
+                await manager.send_message(client_id, create_error(
+                    request_id=request_id,
+                    action=ToolsActions.REGISTER,
+                    code="INVALID_REQUEST",
+                    message="Tool parameters cannot be empty"
+                ))
+                return
+
             tool = tool_registry.register(
-                name=data.get("name", ""),
+                name=name,
                 description=data.get("description", ""),
-                parameters=data.get("parameters", {}),
+                parameters=parameters,
                 enabled=data.get("enabled", True),
                 version=data.get("version", "1.0.0"),
                 category=data.get("category", "general"),

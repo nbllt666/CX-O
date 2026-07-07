@@ -91,7 +91,7 @@ class HybridQueryManager(BaseGraphRepository):
         if properties_filter:
             filtered = []
             for result in results:
-                node = self.get_node(result.node_id)
+                node = self.get_node(result.node.id)
                 if node and self._matches_filter(node, properties_filter):
                     filtered.append(result)
             results = filtered

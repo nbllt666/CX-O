@@ -7,7 +7,7 @@ import time
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Optional
 
-from server.config import Settings
+from server.config import Settings, get_settings
 from server.protocol.message import create_response, create_error, create_stream
 from server.protocol.actions import ChatActions
 
@@ -15,6 +15,10 @@ if TYPE_CHECKING:
     from server.core.websocket.manager import WebSocketManager
 
 logger = logging.getLogger(__name__)
+
+# 实时语音模式历史消息条数（2 user + 2 assistant = 4 条）
+# 提取为常量避免硬编码，便于后续配置化
+REALTIME_VOICE_HISTORY_LIMIT = 4
 
 
 @dataclass
@@ -71,7 +75,8 @@ async def _build_chat_context(
             scene_type=agent_config.get("memory_scene", "chat"),
         )
         if routing_result.memories:
-            memory_context = "\n".join([f"- {m['content']}" for m in routing_result.memories[:Settings().config.limits.memory.inject_memories_count]])
+            _settings = get_settings()
+            memory_context = "\n".join([f"- {m['content']}" for m in routing_result.memories[:_settings.config.limits.memory.inject_memories_count]])
 
     return ChatContext(
         agent_config=agent_config,
@@ -193,7 +198,7 @@ def _build_messages(
 
         # 仅保留最近 2 轮对话历史（limit=4，即 2 user + 2 assistant，~200 tokens）
         # 每多 1K tokens 历史约增加 20-40ms Prefill，裁剪到 4 条可省 60-120ms
-        history = context_mgr.get_messages(session_id, limit=4)
+        history = context_mgr.get_messages(session_id, limit=REALTIME_VOICE_HISTORY_LIMIT)
         for msg in history:
             if msg.get("role") in ["user", "assistant"]:
                 messages.append({"role": msg["role"], "content": msg.get("content", "")})
@@ -255,7 +260,7 @@ def _build_messages(
     except Exception as e:
         logger.warning(f"Skills injection failed: {e}")
 
-    history = context_mgr.get_messages(session_id, limit=Settings().config.limits.context.chat_context_limit)
+    history = context_mgr.get_messages(session_id, limit=get_settings().config.limits.context.chat_context_limit)
     for msg in history:
         if msg.get("role") in ["user", "assistant"]:
             messages.append({"role": msg["role"], "content": msg.get("content", "")})
@@ -382,7 +387,7 @@ def register_chat_handlers(manager: "WebSocketManager"):
                 data={
                     "content": final_response,
                     "session_id": ctx.session_id,
-                    "tokens_used": response.usage.get("total_tokens", 0) if response.usage else 0,
+                    "tokens_used": (response.usage or {}).get("total_tokens", 0),
                 }
             ))
         except Exception as e:
@@ -537,7 +542,7 @@ def register_chat_handlers(manager: "WebSocketManager"):
                 data={
                     "content": final_response,
                     "session_id": ctx.session_id,
-                    "tokens_used": response.usage.get("total_tokens", 0) if response.usage else 0,
+                    "tokens_used": (response.usage or {}).get("total_tokens", 0),
                 }
             ))
         except Exception as e:

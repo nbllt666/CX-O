@@ -55,7 +55,8 @@ def register_plugin_handlers(manager: "WebSocketManager"):
 
             plugin = plugin_mgr.get_plugin(plugin_id)
             if plugin:
-                plugin.hook_calls += 0
+                # hook_calls 仅用于存活检测，不执行无意义操作
+                pass
 
             await manager.send_message(client_id, create_response(
                 request_id=request_id,

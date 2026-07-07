@@ -2,15 +2,15 @@
   "$schema": "http://json-schema.org/draft-07/schema#",
   "$id": "https://cx-o/public/schema/api_response.schema.json",
   "title": "APIResponse",
-  "description": "API 响应数据契约。源真理：c:/CX-O/CX-O-SERVER/server/api/response.py 的 4 个 Pydantic BaseModel。s0601/A2 修复 error→error_message 字段名冲突后锁定字段契约。",
+  "description": "API 响应数据契约。源真理：c:/CX-O/CX-O-SERVER/server/api/response.py 的 4 个 Pydantic BaseModel。s0601/A2 修复 error→error_message 字段名冲突后锁定字段契约；v1.1.0 追加 Field(alias='error') 向后兼容机制（HTTP 响应 body 输出 'error' 字段名，Pydantic 模型字段名仍为 error_message）。",
   "_sourceOfTruth": {
     "primary": "c:/CX-O/CX-O-SERVER/server/api/response.py",
     "secondary": ["c:/CX-O/CX-O-SERVER/server/api/exceptions.py"],
-    "note": "APIResponse/PaginatedResponse/HealthResponse/ErrorResponse 4 模型。s0601/A2 修复：APIResponse.error 字段与 classmethod error() 同名导致 Pydantic v2 元类冲突，重命名为 error_message。"
+    "note": "APIResponse/PaginatedResponse/HealthResponse/ErrorResponse 4 模型。s0601/A2 修复：APIResponse.error 字段与 classmethod error() 同名导致 Pydantic v2 元类冲突，重命名为 error_message。v1.1.0 破坏性变更修复：APIResponse.error_message 与 ErrorResponse.error_message 添加 Field(alias='error') + ConfigDict(populate_by_name=True)，exceptions.py 4 处异常处理器改用 model_dump(by_alias=True)，HTTP 响应 body 实际输出 'error' 字段名以保持向后兼容；输入路径同时接受 'error'（alias）与 'error_message'（字段名）。"
   },
   "_seedStage": false,
   "_completionSkill": "s0601",
-  "_version": "1.0.0",
+  "_version": "1.1.0",
   "type": "object",
   "oneOf": [
     {"$ref": "#/$defs/APIResponse"},
@@ -25,7 +25,7 @@
       "properties": {
         "success": {"type": "boolean", "description": "操作是否成功", "default": true},
         "data": {"description": "响应数据，类型由泛型 T 决定；可为 null/任意类型", "default": null},
-        "error_message": {"type": ["string", "null"], "description": "错误消息。s0601/A2 修复：原 error 字段与 classmethod error() 同名冲突，重命名为 error_message", "default": null},
+        "error_message": {"type": ["string", "null"], "description": "错误消息。s0601/A2 修复：原 error 字段与 classmethod error() 同名冲突，重命名为 error_message。v1.1.0：通过 Field(alias='error') 保持向后兼容，HTTP 响应 body 序列化时输出 'error' 字段名（model_dump(by_alias=True)），输入时同时接受 'error' 与 'error_message'", "default": null, "_alias": "error", "_serialization": "HTTP 响应 body 输出 alias 名 'error'"},
         "error_code": {"type": ["string", "null"], "description": "错误码（如 INTERNAL_ERROR/AUTHENTICATION_ERROR 等）", "default": null},
         "message": {"type": ["string", "null"], "description": "操作结果描述（成功路径用）", "default": null},
         "timestamp": {"type": "string", "description": "响应时间戳 ISO8601 字符串（自动生成）"},
@@ -66,7 +66,7 @@
       "description": "错误响应。异常处理器（service_exception_handler/http_exception_handler/generic_exception_handler/validation_exception_handler）专用响应格式。",
       "properties": {
         "success": {"type": "boolean", "description": "固定为 false", "const": false, "default": false},
-        "error_message": {"type": "string", "description": "错误消息（必填，无默认值）"},
+        "error_message": {"type": "string", "description": "错误消息（必填，无默认值）。v1.1.0：通过 Field(alias='error') 保持向后兼容，HTTP 响应 body 序列化时输出 'error' 字段名（model_dump(by_alias=True)），输入时同时接受 'error' 与 'error_message'", "_alias": "error", "_serialization": "HTTP 响应 body 输出 alias 名 'error'"},
         "error_code": {"type": ["string", "null"], "description": "错误码", "default": null},
         "details": {"type": ["object", "null"], "description": "错误详情字典，可含任意结构化字段（如 retry_after/exception/sql 等）", "default": null},
         "timestamp": {"type": "string", "description": "响应时间戳 ISO8601 字符串（自动生成）"}
@@ -76,8 +76,8 @@
     }
   },
   "_contractVerifiability": {
-    "testSuite": "tests/test_api_response.py + tests/test_api_exceptions.py + tests/test_api_app.py（共 ~100 测试，覆盖字段默认值/classmethod 创建/异常处理器响应结构）",
-    "rubric": "4 模型字段完整性 + APIResponse.error() classmethod 可用 + ErrorResponse.error_message 必填校验 + 异常处理器输出匹配 ErrorResponse 结构",
-    "selfTest": "T15 全量回归 4900 passed 含 API 响应相关 100+ 测试"
+    "testSuite": "tests/test_api_response.py + tests/test_api_exceptions.py + tests/test_api_app.py（共 ~100 测试，覆盖字段默认值/classmethod 创建/异常处理器响应结构 + v1.1.0 alias 序列化行为）",
+    "rubric": "4 模型字段完整性 + APIResponse.error() classmethod 可用 + ErrorResponse.error_message 必填校验 + 异常处理器输出匹配 ErrorResponse 结构 + v1.1.0 HTTP 响应 body 输出 'error' 字段名（alias）+ 输入路径同时接受 'error' 与 'error_message'（populate_by_name）",
+    "selfTest": "T15 全量回归 4906 passed / 0 failed（含 v1.1.0 alias 修改后 test_api_exceptions.py 5 处 + test_api_app.py 3 处期望更新验证通过）"
   }
 }
