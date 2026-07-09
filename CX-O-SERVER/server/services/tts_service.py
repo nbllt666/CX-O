@@ -166,6 +166,10 @@ class TTSService:
         cross_fade_duration: float | None = None,
         **kwargs
     ) -> bytes:
+        # orpheus 模式：直接调用远程服务
+        if self._mode == "orpheus":
+            return await self._synthesize_orpheus(text, **kwargs)
+        
         # 入口校验：低延迟模型强制启用 Triton，避免首包延迟超标
         await self._validate_triton_for_low_latency(**kwargs)
 
@@ -374,7 +378,7 @@ class TTSService:
         - 健康检查失败仅记录警告日志，不阻塞服务启动（允许 Orpheus 后置启动）。
         """
         try:
-            async with httpx.AsyncClient(timeout=5.0) as client:
+            async with httpx.AsyncClient(timeout=5.0, trust_env=False) as client:
                 response = await client.get(f"{self._orpheus_url}/health")
                 if response.status_code == 200:
                     logger.info(

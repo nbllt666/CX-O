@@ -34,9 +34,9 @@ export function AvatarManager({ type, onClose }: AvatarManagerProps) {
   const previewTokenRef = useRef(0);
 
   const {
-    live2d, vrm,
+    live2d, vrm, autoSave,
     setLive2DModelId, setVRMModelId,
-    setLive2DSettings, setVRMSettings,
+    setLive2DSettings, setVRMSettings, setAutoSave,
   } = useSettingsStore();
 
   const currentModelId = type === 'live2d' ? live2d.modelId : vrm.modelId;
@@ -60,6 +60,12 @@ export function AvatarManager({ type, onClose }: AvatarManagerProps) {
   useEffect(() => {
     setTweakConfig(vrm.tweak || { ...DEFAULT_VRM_TWEAK });
   }, [vrm.tweak]);
+
+  // 同步 store animation 变化到本地 state
+  useEffect(() => {
+    const storeAnim = type === 'live2d' ? live2d.animation : vrm.animation;
+    setAnimConfig(storeAnim || { ...DEFAULT_ANIMATION_SETTINGS });
+  }, [type, live2d.animation, vrm.animation]);
 
   const loadAvatars = useCallback(async () => {
     setIsLoading(true);
@@ -151,24 +157,42 @@ export function AvatarManager({ type, onClose }: AvatarManagerProps) {
 
   const handleTweakChange = useCallback((tc: VRMTweakConfig) => {
     setTweakConfig(tc);
-    setVRMSettings({ tweak: tc });
-  }, [setVRMSettings]);
+    if (autoSave) setVRMSettings({ tweak: tc });
+  }, [autoSave, setVRMSettings]);
 
   const handleAnimChange = useCallback((ac: AnimationSettings) => {
     setAnimConfig(ac);
-    if (type === 'live2d') setLive2DSettings({ animation: ac });
-    else setVRMSettings({ animation: ac });
-  }, [type, setLive2DSettings, setVRMSettings]);
+    if (autoSave) {
+      if (type === 'live2d') setLive2DSettings({ animation: ac });
+      else setVRMSettings({ animation: ac });
+    }
+  }, [autoSave, type, setLive2DSettings, setVRMSettings]);
 
   const handleRenderScaleChange = useCallback((v: number) => {
     setRenderScale(v);
-    setVRMSettings({ renderScale: v });
-  }, [setVRMSettings]);
+    if (autoSave) setVRMSettings({ renderScale: v });
+  }, [autoSave, setVRMSettings]);
 
   const handleDprChange = useCallback((v: number | 'auto') => {
     setDevicePixelRatio(v);
-    setVRMSettings({ devicePixelRatio: v });
-  }, [setVRMSettings]);
+    if (autoSave) setVRMSettings({ devicePixelRatio: v });
+  }, [autoSave, setVRMSettings]);
+
+  const handleManualSave = useCallback(() => {
+    if (type === 'live2d') {
+      setLive2DSettings({ animation: animConfig, scale: live2dScale, xOffset: live2dXOffset, yOffset: live2dYOffset });
+    } else {
+      setVRMSettings({
+        tweak: tweakConfig,
+        animation: animConfig,
+        renderScale,
+        devicePixelRatio,
+        scale: vrmScale,
+        position3d: vrmPosition,
+      });
+    }
+  }, [type, animConfig, tweakConfig, renderScale, devicePixelRatio, vrmScale, vrmPosition,
+      live2dScale, live2dXOffset, live2dYOffset, setLive2DSettings, setVRMSettings]);
 
   const handleReset = useCallback(() => {
     const defaultTweak = { ...DEFAULT_VRM_TWEAK };
@@ -258,6 +282,9 @@ export function AvatarManager({ type, onClose }: AvatarManagerProps) {
                   animationConfig={animConfig}
                   renderScale={renderScale}
                   devicePixelRatio={devicePixelRatio}
+                  lookAtMouse={vrm.lookAtMouse}
+                  idleAnimation={vrm.idleAnimation}
+                  lipSyncEnabled={vrm.lipSync}
                 />
               )
             ) : (
@@ -497,6 +524,13 @@ export function AvatarManager({ type, onClose }: AvatarManagerProps) {
                   onChange={(v) => handleAnimChange({ ...ac, emotionDuration: v })} format={v => `${v.toFixed(1)}s`} />
                 <Slider label="恢复速度" value={ac.emotionRecoverSpeed} min={0.1} max={2} step={0.1}
                   onChange={(v) => handleAnimChange({ ...ac, emotionRecoverSpeed: v })} />
+                {type === 'vrm' && (
+                  <>
+                    <div className="text-[var(--color-text-secondary)] text-[10px] mt-1">空闲微表情</div>
+                    <Slider label="强度" value={ac.idleExpressionIntensity} min={0} max={0.3} step={0.01}
+                      onChange={(v) => handleAnimChange({ ...ac, idleExpressionIntensity: v })} format={v => v.toFixed(2)} />
+                  </>
+                )}
               </div>
             )}
 
@@ -509,20 +543,54 @@ export function AvatarManager({ type, onClose }: AvatarManagerProps) {
                       onChange={(v) => handleAnimChange({ ...ac, breathFrequency: v })} />
                     <Slider label="幅度" value={ac.breathAmplitude} min={0} max={0.1} step={0.005}
                       onChange={(v) => handleAnimChange({ ...ac, breathAmplitude: v })} />
+                    <Slider label="不规律度" value={ac.breathIrregularity} min={0} max={1} step={0.05}
+                      onChange={(v) => handleAnimChange({ ...ac, breathIrregularity: v })} format={v => v.toFixed(2)} />
                     <div className="text-[var(--color-text-secondary)] text-[10px] mt-1">眨眼</div>
                     <Slider label="间隔" value={ac.blinkInterval} min={1} max={8} step={0.5}
                       onChange={(v) => handleAnimChange({ ...ac, blinkInterval: v })} format={v => `${v.toFixed(1)}s`} />
                     <Slider label="持续时间" value={ac.blinkDuration} min={0.05} max={0.3} step={0.01}
                       onChange={(v) => handleAnimChange({ ...ac, blinkDuration: v })} format={v => `${(v * 1000).toFixed(0)}ms`} />
+                    <div className="text-[var(--color-text-secondary)] text-[10px] mt-1">摇摆</div>
+                    <Slider label="幅度" value={ac.swayAmplitude} min={0} max={0.05} step={0.001}
+                      onChange={(v) => handleAnimChange({ ...ac, swayAmplitude: v })} format={v => v.toFixed(3)} />
+                    <Slider label="频率" value={ac.swayFrequency} min={0} max={2} step={0.05}
+                      onChange={(v) => handleAnimChange({ ...ac, swayFrequency: v })} format={v => `${v.toFixed(2)}Hz`} />
+                    <Slider label="不规律度" value={ac.swayIrregularity} min={0} max={1} step={0.05}
+                      onChange={(v) => handleAnimChange({ ...ac, swayIrregularity: v })} format={v => v.toFixed(2)} />
                     <div className="text-[var(--color-text-secondary)] text-[10px] mt-1">跟随</div>
                     <Slider label="头部速度" value={ac.headFollowSpeed} min={0.5} max={5} step={0.1}
                       onChange={(v) => handleAnimChange({ ...ac, headFollowSpeed: v })} />
+                    <Slider label="跟踪限位" value={ac.headTrackingLimit} min={0.1} max={1.0} step={0.05}
+                      onChange={(v) => handleAnimChange({ ...ac, headTrackingLimit: v })} format={v => `${(v * 180 / Math.PI).toFixed(0)}°`} />
                     <Slider label="身体延迟" value={ac.bodyFollowDelay} min={0} max={1} step={0.05}
                       onChange={(v) => handleAnimChange({ ...ac, bodyFollowDelay: v })} />
+                    <Slider label="空闲漂移" value={ac.headIdleRange} min={0} max={0.1} step={0.005}
+                      onChange={(v) => handleAnimChange({ ...ac, headIdleRange: v })} format={v => v.toFixed(3)} />
+                    <Toggle label="眼球跟踪" value={ac.eyeTrackingEnabled}
+                      onChange={(v) => handleAnimChange({ ...ac, eyeTrackingEnabled: v })} />
                   </>
                 ) : (
                   <>
-                    <div className="text-[var(--color-text-secondary)] text-[10px]">动作</div>
+                    <div className="text-[var(--color-text-secondary)] text-[10px]">呼吸</div>
+                    <Slider label="频率" value={ac.breathFrequency} min={0.1} max={1} step={0.05}
+                      onChange={(v) => handleAnimChange({ ...ac, breathFrequency: v })} />
+                    <Slider label="幅度" value={ac.breathAmplitude} min={0} max={0.1} step={0.005}
+                      onChange={(v) => handleAnimChange({ ...ac, breathAmplitude: v })} />
+                    <Slider label="不规律度" value={ac.breathIrregularity} min={0} max={1} step={0.05}
+                      onChange={(v) => handleAnimChange({ ...ac, breathIrregularity: v })} format={v => v.toFixed(2)} />
+                    <div className="text-[var(--color-text-secondary)] text-[10px] mt-1">眨眼</div>
+                    <Slider label="间隔" value={ac.blinkInterval} min={1} max={8} step={0.5}
+                      onChange={(v) => handleAnimChange({ ...ac, blinkInterval: v })} format={v => `${v.toFixed(1)}s`} />
+                    <Slider label="持续时间" value={ac.blinkDuration} min={0.05} max={0.3} step={0.01}
+                      onChange={(v) => handleAnimChange({ ...ac, blinkDuration: v })} format={v => `${(v * 1000).toFixed(0)}ms`} />
+                    <div className="text-[var(--color-text-secondary)] text-[10px] mt-1">摇摆</div>
+                    <Slider label="幅度" value={ac.swayAmplitude} min={0} max={0.05} step={0.001}
+                      onChange={(v) => handleAnimChange({ ...ac, swayAmplitude: v })} format={v => v.toFixed(3)} />
+                    <Slider label="频率" value={ac.swayFrequency} min={0} max={2} step={0.05}
+                      onChange={(v) => handleAnimChange({ ...ac, swayFrequency: v })} format={v => `${v.toFixed(2)}Hz`} />
+                    <Slider label="不规律度" value={ac.swayIrregularity} min={0} max={1} step={0.05}
+                      onChange={(v) => handleAnimChange({ ...ac, swayIrregularity: v })} format={v => v.toFixed(2)} />
+                    <div className="text-[var(--color-text-secondary)] text-[10px] mt-1">动作</div>
                     <Slider label="触发概率" value={ac.motionTriggerProbability} min={0} max={1} step={0.05}
                       onChange={(v) => handleAnimChange({ ...ac, motionTriggerProbability: v })} />
                     <div className="text-[var(--color-text-secondary)] text-[10px] mt-1">视线</div>
@@ -573,7 +641,30 @@ export function AvatarManager({ type, onClose }: AvatarManagerProps) {
             )}
           </div>
 
-          <div className="px-3 py-2 border-t border-[var(--color-border)]">
+          <div className="px-3 py-2 border-t border-[var(--color-border)] space-y-2">
+            <div className="flex items-center justify-between p-2 bg-[var(--color-bg-tertiary)] rounded-lg">
+              <span className="text-xs">自动保存</span>
+              <button
+                onClick={() => setAutoSave(!autoSave)}
+                className={`w-9 h-5 rounded-full transition-colors ${
+                  autoSave ? 'bg-[var(--color-accent)]' : 'bg-[var(--color-border)]'
+                }`}
+              >
+                <div
+                  className={`w-3.5 h-3.5 rounded-full bg-white transition-transform ${
+                    autoSave ? 'translate-x-4' : 'translate-x-0.5'
+                  }`}
+                />
+              </button>
+            </div>
+            {!autoSave && (
+              <button
+                onClick={handleManualSave}
+                className="w-full px-3 py-1.5 text-xs rounded bg-[var(--color-accent)] text-white hover:opacity-90 transition-opacity"
+              >
+                保存当前配置
+              </button>
+            )}
             <button
               onClick={handleReset}
               className="w-full px-3 py-1.5 text-xs rounded bg-[var(--color-bg-secondary)] text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)] border border-[var(--color-border)] transition-colors"

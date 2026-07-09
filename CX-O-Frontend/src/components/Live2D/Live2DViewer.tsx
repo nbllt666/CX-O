@@ -9,6 +9,7 @@ import {
   destroyRuntime,
   resizeRuntime,
   setParameterOverrides,
+  setIdleAnimationConfig,
   updateStageTransform,
 } from './live2dEngine';
 import type { AnimationSettings } from '../../store/settingsStore';
@@ -70,6 +71,7 @@ export function Live2DViewer({
   mouthOpenY = 0,
   onModelLoaded,
   onError,
+  animationConfig,
   expressionMix,
   parameterOverrides: externalOverrides,
   driver,
@@ -162,6 +164,9 @@ export function Live2DViewer({
         if (driver) {
           (driver as Live2DAvatarDriver).bindRuntime(runtime);
         }
+        if (animationConfig) {
+          setIdleAnimationConfig(runtime, animationConfig);
+        }
         await applyExpressionMix(runtime, avatar, initialMix);
         await setParameterOverrides(runtime, avatar, allOverridesRef.current);
         updateStageTransform(runtime, container, transformRef.current);
@@ -210,6 +215,11 @@ export function Live2DViewer({
     if (!runtimeRef.current) return;
     void setParameterOverrides(runtimeRef.current, avatar, allOverrides).catch(console.error);
   }, [avatar, allOverrides]);
+
+  useEffect(() => {
+    if (!runtimeRef.current || !animationConfig) return;
+    setIdleAnimationConfig(runtimeRef.current, animationConfig);
+  }, [animationConfig]);
 
   useEffect(() => {
     if (!runtimeRef.current || !containerRef.current) return;

@@ -144,7 +144,7 @@ class OllamaClient(LLMClient):
             if tools:
                 request_body["tools"] = tools
 
-            async with httpx.AsyncClient(timeout=120.0, proxy=None) as client:
+            async with httpx.AsyncClient(timeout=120.0, trust_env=False) as client:
                 response = await client.post(f"{self.host}/api/chat", json=request_body)
 
                 if response.status_code == 200:
@@ -244,7 +244,7 @@ class OllamaClient(LLMClient):
             if self.api_key:
                 headers["Authorization"] = f"Bearer {self.api_key}"
 
-            async with httpx.AsyncClient(timeout=120.0, proxy=None) as client:
+            async with httpx.AsyncClient(timeout=120.0, trust_env=False) as client:
                 async with client.stream(
                     "POST", f"{self.host}/api/chat", json=request_body, headers=headers
                 ) as response:
@@ -355,7 +355,7 @@ class VLLMClient(LLMClient):
             # 验证输入
             self._validate_messages(messages)
 
-            async with httpx.AsyncClient(timeout=120.0, proxy=None) as client:
+            async with httpx.AsyncClient(timeout=120.0, trust_env=False) as client:
                 response = await client.post(
                     f"{self.host}/v1/chat/completions",
                     json={
@@ -451,7 +451,7 @@ class VLLMClient(LLMClient):
             if "tools" in kwargs and kwargs["tools"]:
                 request_body["tools"] = kwargs["tools"]
 
-            async with httpx.AsyncClient(timeout=120.0, proxy=None) as client:
+            async with httpx.AsyncClient(timeout=120.0, trust_env=False) as client:
                 async with client.stream(
                     "POST", f"{self.host}/v1/chat/completions", json=request_body
                 ) as response:
@@ -553,7 +553,7 @@ class TRTLLMClient(LLMClient):
             if self.api_key:
                 headers["Authorization"] = f"Bearer {self.api_key}"
 
-            async with httpx.AsyncClient(timeout=120.0, proxy=None) as client:
+            async with httpx.AsyncClient(timeout=120.0, trust_env=False) as client:
                 response = await client.post(
                     f"{self.host}/v1/chat/completions",
                     json={
@@ -652,7 +652,7 @@ class TRTLLMClient(LLMClient):
             if self.api_key:
                 headers["Authorization"] = f"Bearer {self.api_key}"
 
-            async with httpx.AsyncClient(timeout=120.0, proxy=None) as client:
+            async with httpx.AsyncClient(timeout=120.0, trust_env=False) as client:
                 async with client.stream(
                     "POST", f"{self.host}/v1/chat/completions", json=request_body, headers=headers
                 ) as response:

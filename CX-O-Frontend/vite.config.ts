@@ -8,37 +8,42 @@ import { fileURLToPath } from 'url';
 
 const __dirname = fileURLToPath(new URL('.', import.meta.url));
 
+// 禁用Electron插件以避免下载阻塞（浏览器模式）
+const enableElectron = process.env.ELECTRON === 'true';
+
 export default defineConfig({
   plugins: [
     react(),
-    electron([
-      {
-        entry: 'electron/main.ts',
-        vite: {
-          build: {
-            outDir: 'dist-electron',
-            rollupOptions: {
-              external: ['electron'],
+    ...(enableElectron ? [
+      electron([
+        {
+          entry: 'electron/main.ts',
+          vite: {
+            build: {
+              outDir: 'dist-electron',
+              rollupOptions: {
+                external: ['electron'],
+              },
             },
           },
         },
-      },
-      {
-        entry: 'electron/preload.ts',
-        onstart({ reload }) {
-          reload();
-        },
-        vite: {
-          build: {
-            outDir: 'dist-electron',
-            rollupOptions: {
-              external: ['electron'],
+        {
+          entry: 'electron/preload.ts',
+          onstart({ reload }) {
+            reload();
+          },
+          vite: {
+            build: {
+              outDir: 'dist-electron',
+              rollupOptions: {
+                external: ['electron'],
+              },
             },
           },
         },
-      },
-    ]),
-    electronRenderer(),
+      ]),
+      electronRenderer(),
+    ] : []),
   ],
   resolve: {
     alias: {
@@ -46,22 +51,23 @@ export default defineConfig({
     },
   },
   server: {
+    host: true,
     port: 3000,
     proxy: {
       '/api': {
-        target: 'http://127.0.0.1:8000',
+        target: 'http://127.0.0.1:8001',
         changeOrigin: true,
       },
       '/ws': {
-        target: 'ws://127.0.0.1:8000',
+        target: 'ws://127.0.0.1:8001',
         ws: true,
       },
       '/control': {
-        target: 'http://127.0.0.1:8000',
+        target: 'http://127.0.0.1:8001',
         changeOrigin: true,
       },
       '/health': {
-        target: 'http://127.0.0.1:8000',
+        target: 'http://127.0.0.1:8001',
         changeOrigin: true,
       },
       '/voice-station': {

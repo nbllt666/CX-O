@@ -114,7 +114,7 @@ export function AvatarPanel({ audioElement, isPlaying, driver }: AvatarPanelProp
 
   if (avatarType === 'vrm' && vrm.enabled) {
     return (
-      <div className="relative h-full">
+      <div className="relative self-stretch">
         <VRMPanel audioElement={audioElement} isPlaying={isPlaying} driver={driver} />
         {driver && <DriverExpressionOverlay driver={driver} />}
       </div>

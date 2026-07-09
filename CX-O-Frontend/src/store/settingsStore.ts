@@ -61,12 +61,20 @@ export interface AnimationSettings {
   emotionIntensity: number;
   emotionDuration: number;
   emotionRecoverSpeed: number;
+  idleExpressionIntensity: number;
   breathFrequency: number;
   breathAmplitude: number;
+  breathIrregularity: number;
   blinkInterval: number;
   blinkDuration: number;
+  swayAmplitude: number;
+  swayFrequency: number;
+  swayIrregularity: number;
   headFollowSpeed: number;
   bodyFollowDelay: number;
+  headIdleRange: number;
+  headTrackingLimit: number;
+  eyeTrackingEnabled: boolean;
   motionTriggerProbability: number;
   speechMotionInterval: number;
   focusSpeed: number;
@@ -83,12 +91,20 @@ export const DEFAULT_ANIMATION_SETTINGS: AnimationSettings = {
   emotionIntensity: 1.0,
   emotionDuration: 3.0,
   emotionRecoverSpeed: 0.5,
+  idleExpressionIntensity: 0.1,
   breathFrequency: 0.3,
   breathAmplitude: 0.02,
+  breathIrregularity: 0.2,
   blinkInterval: 3.0,
   blinkDuration: 0.15,
+  swayAmplitude: 0.02,
+  swayFrequency: 0.3,
+  swayIrregularity: 0.3,
   headFollowSpeed: 2.0,
   bodyFollowDelay: 0.3,
+  headIdleRange: 0.03,
+  headTrackingLimit: 0.5,
+  eyeTrackingEnabled: true,
   motionTriggerProbability: 0.5,
   speechMotionInterval: 1.5,
   focusSpeed: 3.0,
@@ -140,8 +156,10 @@ interface SettingsState {
   live2d: Live2DSettings;
   vrm: VRMSettings;
   layout: LayoutSettings;
+  autoSave: boolean;
   limits: FrontendLimits | null;
   setAvatarType: (type: AvatarType) => void;
+  setAutoSave: (v: boolean) => void;
   setLive2DSettings: (settings: Partial<Live2DSettings>) => void;
   setVRMSettings: (settings: Partial<VRMSettings>) => void;
   setLive2DModelId: (modelId: string | undefined) => void;
@@ -216,6 +234,7 @@ export const useSettingsStore = create<SettingsState>()(
       live2d: defaultLive2DSettings,
       vrm: defaultVRMSettings,
       layout: defaultLayoutSettings,
+      autoSave: true,
       limits: null,
 
       setAvatarType: (type) =>
@@ -224,6 +243,8 @@ export const useSettingsStore = create<SettingsState>()(
           live2d: { ...state.live2d, enabled: type === 'live2d' },
           vrm: { ...state.vrm, enabled: type === 'vrm' },
         })),
+
+      setAutoSave: (v) => set({ autoSave: v }),
 
       setLive2DSettings: (settings) =>
         set((state) => ({
@@ -326,7 +347,41 @@ export const useSettingsStore = create<SettingsState>()(
         live2d: state.live2d,
         vrm: state.vrm,
         layout: state.layout,
+        autoSave: state.autoSave,
       }),
+      merge: (persisted, current) => {
+        const p = (persisted as Partial<SettingsState>) || {};
+        const pv = p.vrm;
+        return {
+          ...current,
+          ...p,
+          autoSave: typeof p.autoSave === 'boolean' ? p.autoSave : current.autoSave,
+          vrm: {
+            ...current.vrm,
+            ...(pv || {}),
+            animation: {
+              ...current.vrm.animation,
+              ...(pv?.animation || {}),
+            } as AnimationSettings,
+            wind: {
+              ...current.vrm.wind,
+              ...(pv?.wind || {}),
+            } as VRMWindConfig,
+          },
+          live2d: {
+            ...current.live2d,
+            ...(p.live2d || {}),
+            animation: {
+              ...current.live2d.animation,
+              ...((p.live2d as Live2DSettings | undefined)?.animation || {}),
+            } as AnimationSettings,
+          },
+          layout: {
+            ...current.layout,
+            ...(p.layout || {}),
+          },
+        } as SettingsState;
+      },
     }
   )
 );

@@ -128,7 +128,7 @@ export function VRMPanel({ audioElement, isPlaying, driver }: VRMPanelProps) {
   return (
     <div
       ref={panelRef}
-      className="relative flex flex-col bg-[var(--color-bg-secondary)] border-r border-[var(--color-border)]"
+      className="relative flex flex-col h-full bg-[var(--color-bg-secondary)] border-r border-[var(--color-border)]"
       style={{ width: layout.vrmWidth }}
     >
       <div className="flex items-center justify-between px-2 py-1 border-b border-[var(--color-border)]">
@@ -302,6 +302,11 @@ export function VRMPanel({ audioElement, isPlaying, driver }: VRMPanelProps) {
           mouthOpenY={mouthOpenY}
           tweakConfig={vrm.tweak}
           driver={driver}
+          animationConfig={vrm.animation}
+          renderScale={vrm.renderScale}
+          devicePixelRatio={vrm.devicePixelRatio}
+          idleAnimation={vrm.idleAnimation}
+          windConfig={vrm.wind}
         />
       </div>
 

@@ -7,6 +7,7 @@ import type {
   ExpressionLayer,
   ParameterOverride,
 } from '../Avatar/avatarManifest';
+import type { AnimationSettings } from '../../store/settingsStore';
 
 declare global {
   interface Window {
@@ -14,6 +15,18 @@ declare global {
     Live2DCubismCore?: object;
   }
 }
+
+type IdleAnimationState = {
+  enabled: boolean;
+  config: Partial<AnimationSettings>;
+  time: number;
+  blinkTimer: number;
+  isBlinking: boolean;
+  blinkPhase: number;
+  swayRandomWalk: number;
+  breathFreqJitter: number;
+  breathFreqJitterTimer: number;
+};
 
 type RuntimeState = {
   model: Live2DModel;
@@ -31,6 +44,7 @@ type RuntimeState = {
   expressionMix: ExpressionLayer[];
   parameterOverrides: ParameterOverride[];
   watermarkVisible: boolean;
+  idle: IdleAnimationState;
 };
 
 export type StageTransform = {
@@ -359,30 +373,119 @@ export async function createLive2DRuntime(
     expressionMix: [],
     parameterOverrides: [],
     watermarkVisible: avatar.watermark?.enabledByDefault ?? false,
+    idle: {
+      enabled: true,
+      config: {},
+      time: 0,
+      blinkTimer: 3,
+      isBlinking: false,
+      blinkPhase: 0,
+      swayRandomWalk: 0,
+      breathFreqJitter: 0,
+      breathFreqJitterTimer: 0,
+    },
   };
 
   app.ticker.add(() => {
-    if (runtime.trackedParamIds.size === 0) {
-      return;
+    const coreModel = getCoreModel(runtime);
+    const dt = app.ticker.deltaMS / 1000;
+
+    if (runtime.trackedParamIds.size > 0) {
+      for (const paramId of runtime.trackedParamIds) {
+        const baseline = runtime.baselineParams.get(paramId) ?? 0;
+        const hasExplicitTarget = runtime.overlayTargetParams.has(paramId);
+        const target = runtime.overlayTargetParams.get(paramId) ?? baseline;
+        const current = runtime.overlayCurrentParams.get(paramId) ?? baseline;
+        const next = easeTowards(current, target, getOverlayFactor(paramId, hasExplicitTarget));
+
+        runtime.overlayCurrentParams.set(paramId, next);
+        coreModel.setParameterValueById(paramId, next);
+      }
     }
 
-    const coreModel = getCoreModel(runtime);
-
-    for (const paramId of runtime.trackedParamIds) {
-      const baseline = runtime.baselineParams.get(paramId) ?? 0;
-      const hasExplicitTarget = runtime.overlayTargetParams.has(paramId);
-      const target = runtime.overlayTargetParams.get(paramId) ?? baseline;
-      const current = runtime.overlayCurrentParams.get(paramId) ?? baseline;
-      const next = easeTowards(current, target, getOverlayFactor(paramId, hasExplicitTarget));
-
-      runtime.overlayCurrentParams.set(paramId, next);
-      coreModel.setParameterValueById(paramId, next);
+    if (runtime.idle.enabled) {
+      updateIdleAnimation(runtime, coreModel, dt);
     }
   });
 
   fitModel(runtime, container);
   getFocusController(runtime).focus(0, 0, true);
   return runtime;
+}
+
+function updateIdleAnimation(runtime: RuntimeState, coreModel: CubismCoreModel, dt: number): void {
+  const idle = runtime.idle;
+  const config = idle.config;
+  idle.time += dt;
+
+  const breathFrequency = config.breathFrequency ?? 0.3;
+  const breathAmplitude = config.breathAmplitude ?? 0.03;
+  const breathIrregularity = config.breathIrregularity ?? 0.2;
+  const swayAmplitude = config.swayAmplitude ?? 0.04;
+  const swayFrequency = config.swayFrequency ?? 0.5;
+  const swayIrregularity = config.swayIrregularity ?? 0.3;
+  const blinkInterval = config.blinkInterval ?? 3.0;
+  const blinkDuration = config.blinkDuration ?? 0.15;
+
+  // 呼吸频率微随机变化
+  idle.breathFreqJitterTimer -= dt;
+  if (idle.breathFreqJitterTimer <= 0) {
+    idle.breathFreqJitterTimer = 3 + Math.random() * 2;
+    idle.breathFreqJitter = (Math.random() - 0.5) * breathIrregularity * 0.1;
+  }
+
+  const effectiveBreathFreq = breathFrequency + idle.breathFreqJitter;
+  const breath = Math.sin(idle.time * effectiveBreathFreq * Math.PI * 2);
+  const breathValue = 0.5 + breath * 0.5 * (1 + breathAmplitude * 10);
+  trySetParam(coreModel, 'ParamBreath', breathValue);
+
+  // 双频率摇摆
+  const slowSway = Math.sin(idle.time * swayFrequency * Math.PI * 2);
+  const fastSway = Math.sin(idle.time * swayFrequency * Math.PI * 2 * 2.3) * 0.2;
+  const swayNoiseVal = (Math.random() - 0.5) * swayIrregularity * 0.5;
+  idle.swayRandomWalk += swayNoiseVal * dt;
+  idle.swayRandomWalk *= 0.95;
+  idle.swayRandomWalk = Math.max(-1, Math.min(1, idle.swayRandomWalk));
+
+  const irregularityFactor = 1 + idle.swayRandomWalk * swayIrregularity;
+  const sway = (slowSway + fastSway) * swayAmplitude * irregularityFactor;
+  // Live2D ParamBodyAngle 范围约 -30~30 度，将弧度转为度数
+  trySetParam(coreModel, 'ParamBodyAngleX', sway * 30);
+  trySetParam(coreModel, 'ParamBodyAngleZ', sway * 15);
+
+  // 眨眼
+  if (idle.isBlinking) {
+    idle.blinkPhase += dt / blinkDuration;
+    if (idle.blinkPhase >= 1) {
+      idle.isBlinking = false;
+      idle.blinkPhase = 0;
+      idle.blinkTimer = Math.random() * blinkInterval + blinkInterval * 0.5;
+    }
+  } else {
+    idle.blinkTimer -= dt;
+    if (idle.blinkTimer <= 0) {
+      idle.isBlinking = true;
+      idle.blinkPhase = 0;
+    }
+  }
+
+  let eyeOpen = 1;
+  if (idle.isBlinking) {
+    eyeOpen = 1 - Math.sin(idle.blinkPhase * Math.PI);
+  }
+  trySetParam(coreModel, 'ParamEyeLOpen', eyeOpen);
+  trySetParam(coreModel, 'ParamEyeROpen', eyeOpen);
+}
+
+function trySetParam(coreModel: CubismCoreModel, paramId: string, value: number): void {
+  try {
+    const current = coreModel.getParameterValueById(paramId);
+    if (current !== 0 || value !== 0) {
+      coreModel.setParameterValueById(paramId, value);
+    }
+  } catch {
+    // 参数不存在则跳过
+  }
 }
 
 export async function applyExpressionMix(
@@ -392,6 +495,20 @@ export async function applyExpressionMix(
 ) {
   runtime.expressionMix = expressionMix;
   await applyRuntimeState(runtime, avatar);
+}
+
+export function setIdleAnimationConfig(
+  runtime: RuntimeState,
+  config: Partial<AnimationSettings>,
+) {
+  runtime.idle.config = config;
+}
+
+export function setIdleAnimationEnabled(
+  runtime: RuntimeState,
+  enabled: boolean,
+) {
+  runtime.idle.enabled = enabled;
 }
 
 export async function setWatermarkVisibility(

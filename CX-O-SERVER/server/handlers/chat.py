@@ -554,6 +554,6 @@ def register_chat_handlers(manager: "WebSocketManager"):
                 message=str(e)
             ))
 
-    manager.register_handler(ChatActions.MESSAGE, handle_chat_message)
-    manager.register_handler(ChatActions.STREAM, handle_chat_stream)
-    manager.register_handler(ChatActions.MULTIMODAL, handle_chat_multimodal)
+    manager.register_action_handler(ChatActions.MESSAGE, handle_chat_message)
+    manager.register_action_handler(ChatActions.STREAM, handle_chat_stream)
+    manager.register_action_handler(ChatActions.MULTIMODAL, handle_chat_multimodal)

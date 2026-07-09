@@ -1,15 +1,49 @@
 # CX-O 统一推理服务 Docker Compose 编排
-# 包含 F5-TTS (Triton+TRT-LLM)、LLM (vLLM/TRT-LLM) 和 Orpheus TTS (vLLM+FlashInfer) 服务
+# 包含 F5-TTS (Triton+TRT-LLM)、LLM (vLLM/TRT-LLM)、Orpheus TTS (vLLM+FlashInfer) 和 ASR (FunASR+SenseVoice) 服务
 #
 # 使用方式:
 #   启动所有服务:   docker compose up
 #   仅启动 TTS:     docker compose up f5-tts-triton
 #   仅启动 LLM:     docker compose up llm
 #   仅启动 Orpheus: docker compose up orpheus-vllm orpheus-tts
+#   仅启动 ASR:     docker compose up asr-sensevoice
 #   指定 LLM 后端:  LLM_BACKEND=vllm docker compose up llm
 #                    LLM_BACKEND=trtllm docker compose up llm
 
 services:
+  # ============================================================
+  # ASR SenseVoice (FunASR) 语音识别服务
+  # ============================================================
+  asr-sensevoice:
+    build:
+      context: ./CX-O-SERVER
+      dockerfile: ../docker/asr/Dockerfile
+    shm_size: '2gb'
+    ports:
+      - "${ASR_PORT:-8005}:8005"
+    environment:
+      - PYTHONIOENCODING=utf-8
+      - CUDA_VISIBLE_DEVICES=${ASR_GPU:-0}
+    volumes:
+      - ./CX-O-SERVER/sensevoice:/app/sensevoice:ro
+      - asr-models:/root/.cache/modelscope
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              device_ids: ['${ASR_GPU_ID:-0}']
+              capabilities: [gpu]
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8005/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 120s
+    restart: unless-stopped
+    networks:
+      - cxo-inference
+
   # ============================================================
   # F5-TTS Triton Inference Server (TRT-LLM 加速)
   # ============================================================
@@ -152,16 +186,14 @@ services:
     command:
       - |
         pip install --no-cache-dir --trusted-host mirrors.aliyun.com -i http://mirrors.aliyun.com/pypi/simple/ snac httpx fastapi uvicorn soundfile
-        python3 -m vllm.entrypoints.openai.api_server \
-          --model /workspace/models \
+        vllm serve /workspace/models \
           --host 0.0.0.0 \
           --port 8000 \
           --max-model-len ${ORPHEUS_MAX_MODEL_LEN:-2048} \
           --gpu-memory-utilization ${ORPHEUS_GPU_MEM_UTIL:-0.85} \
           --dtype ${ORPHEUS_DTYPE:-auto} \
           --max-num-seqs ${ORPHEUS_MAX_NUM_SEQS:-4} \
-          --trust-remote-code \
-          --enable-prefix-caching &
+          --trust-remote-code &
         echo "Waiting for vLLM to start..."
         for i in $$(seq 1 120); do
           if curl -sf http://127.0.0.1:8000/health > /dev/null 2>&1; then
@@ -182,6 +214,8 @@ volumes:
   llm-engines:
     driver: local
   orpheus-hf-cache:
+    driver: local
+  asr-models:
     driver: local
 
 networks:

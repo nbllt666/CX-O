@@ -2,11 +2,12 @@ import { useEffect, useRef, useState } from 'react';
 import * as THREE from 'three';
 import { VRM, VRMLoaderPlugin, VRMExpressionPresetName } from '@pixiv/three-vrm';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
-import { VRMTweakConfig, DEFAULT_VRM_TWEAK, AnimationSettings, DEFAULT_ANIMATION_SETTINGS } from '../../store/settingsStore';
+import { VRMTweakConfig, DEFAULT_VRM_TWEAK, AnimationSettings, DEFAULT_ANIMATION_SETTINGS, VRMWindConfig } from '../../store/settingsStore';
 import { VRMLipSync } from './VRMLipSync';
 import { VRMExpression } from './VRMExpression';
 import { VRMAnimation } from './VRMAnimation';
 import { VRMMotionTrigger } from './VRMMotionTrigger';
+import { VRMWindField } from './VRMWindField';
 import { VowelAnalyzer } from './VowelAnalyzer';
 import { createVRMRuntime, destroyRuntime, resizeRuntime, applyExpressionMix, setParameterOverrides, type VRMRuntimeState } from './VRMEngine';
 import type { IAvatarDriver } from '../Avatar/AvatarDriver';
@@ -32,6 +33,8 @@ interface VRMViewerProps {
   animationConfig?: Partial<AnimationSettings>;
   renderScale?: number;
   devicePixelRatio?: number | 'auto';
+  idleAnimation?: boolean;
+  windConfig?: VRMWindConfig;
   driver?: IAvatarDriver;
   expressionMix?: ExpressionLayer[];
   parameterOverrides?: ParameterOverride[];
@@ -53,6 +56,8 @@ export function VRMViewer({
   animationConfig,
   renderScale = 1.0,
   devicePixelRatio = 'auto',
+  idleAnimation = true,
+  windConfig,
   driver,
   expressionMix,
   parameterOverrides,
@@ -66,6 +71,7 @@ export function VRMViewer({
   const expressionRef = useRef<VRMExpression | null>(null);
   const animationRef = useRef<VRMAnimation | null>(null);
   const motionTriggerRef = useRef<VRMMotionTrigger | null>(null);
+  const windFieldRef = useRef<VRMWindField | null>(null);
   const vowelAnalyzerRef = useRef<VowelAnalyzer | null>(null);
   const animationFrameRef = useRef<number | null>(null);
 
@@ -82,16 +88,20 @@ export function VRMViewer({
     propsRef.current.renderScale = renderScale;
     propsRef.current.devicePixelRatio = devicePixelRatio;
   }, [renderScale, devicePixelRatio]);
+  const idleAnimRef = useRef(idleAnimation);
+  useEffect(() => { idleAnimRef.current = idleAnimation; }, [idleAnimation]);
   const lastVersionRef = useRef(-1);
   const renderIdRef = useRef(0);
 
   const effectiveTweak = useRef<Partial<VRMTweakConfig>>(tweakConfig || {});
   useEffect(() => { effectiveTweak.current = tweakConfig || {}; }, [tweakConfig]);
-  const tc: VRMTweakConfig = { ...DEFAULT_VRM_TWEAK, ...effectiveTweak.current };
+  const tc: VRMTweakConfig = { ...DEFAULT_VRM_TWEAK, ...tweakConfig };
+  const tcRef = useRef<VRMTweakConfig>(tc);
+  useEffect(() => { tcRef.current = tc; }, [tc]);
 
-  const effectiveAnim = useRef<Partial<AnimationSettings>>(animationConfig || {});
-  useEffect(() => { effectiveAnim.current = animationConfig || {}; }, [animationConfig]);
-  const ac: AnimationSettings = { ...DEFAULT_ANIMATION_SETTINGS, ...effectiveAnim.current };
+  const ac: AnimationSettings = { ...DEFAULT_ANIMATION_SETTINGS, ...animationConfig };
+  const acRef = useRef<AnimationSettings>(ac);
+  useEffect(() => { acRef.current = ac; }, [ac]);
 
   useEffect(() => {
     if (dataVersion === lastVersionRef.current) return;
@@ -130,7 +140,8 @@ export function VRMViewer({
 
         vrmRef.current = vrm;
         vrm.scene.scale.setScalar(propsRef.current.scale);
-        vrm.scene.rotation.x = tc.modelRotationX; vrm.scene.rotation.y = tc.modelRotationY; vrm.scene.rotation.z = tc.modelRotationZ;
+        const tcLatest = tcRef.current;
+        vrm.scene.rotation.x = tcLatest.modelRotationX; vrm.scene.rotation.y = tcLatest.modelRotationY; vrm.scene.rotation.z = tcLatest.modelRotationZ;
 
         const humanoid = vrm.humanoid;
         if (humanoid) {
@@ -138,13 +149,13 @@ export function VRMViewer({
             const bone = humanoid.getNormalizedBoneNode(name as never);
             if (bone) bone.rotation.set(x, y, z);
           };
-          setRot('leftUpperArm', 0, 0, 0.3);
-          setRot('rightUpperArm', 0, 0, -0.3);
-          setRot('leftLowerArm', 0, 0, 0.1);
-          setRot('rightLowerArm', 0, 0, -0.1);
-          setRot('leftUpperLeg', 0.1, 0, 0);
-          setRot('rightUpperLeg', -0.1, 0, 0);
-          setRot('leftLowerLeg', 0.05, 0, 0);
+          setRot('leftUpperArm', 0, 0, 1.2);
+          setRot('rightUpperArm', 0, 0, -1.2);
+          setRot('leftLowerArm', 0, -0.2, 0.1);
+          setRot('rightLowerArm', 0, 0.2, -0.1);
+          setRot('leftUpperLeg', 0.05, 0, 0.05);
+          setRot('rightUpperLeg', 0.05, 0, -0.05);
+          setRot('leftLowerLeg', -0.05, 0, 0);
           setRot('rightLowerLeg', -0.05, 0, 0);
           setRot('spine', 0, 0, 0);
           setRot('chest', 0, 0, 0);
@@ -215,32 +226,53 @@ export function VRMViewer({
         setModelSize({ height, width });
 
         lipSyncRef.current = runtimeRef.current!.lipSync;
-        lipSyncRef.current.setSmoothing(ac.lipSyncSmoothing);
+        const acLatest = acRef.current;
+        lipSyncRef.current.setSmoothing(acLatest.lipSyncSmoothing);
 
         expressionRef.current = new VRMExpression();
         expressionRef.current.bindVRM(vrm);
         expressionRef.current.setConfig({
-          intensity: ac.emotionIntensity,
-          duration: ac.emotionDuration,
-          recoverSpeed: ac.emotionRecoverSpeed,
+          intensity: acLatest.emotionIntensity,
+          duration: acLatest.emotionDuration,
+          recoverSpeed: acLatest.emotionRecoverSpeed,
+          idleExpressionIntensity: acLatest.idleExpressionIntensity,
         });
 
         animationRef.current = runtimeRef.current!.animation;
         animationRef.current.setConfig({
-          breathFrequency: ac.breathFrequency,
-          breathAmplitude: ac.breathAmplitude,
-          blinkInterval: ac.blinkInterval,
-          blinkDuration: ac.blinkDuration,
-          headFollowSpeed: ac.headFollowSpeed,
-          bodyFollowDelay: ac.bodyFollowDelay,
+          breathFrequency: acLatest.breathFrequency,
+          breathAmplitude: acLatest.breathAmplitude,
+          breathIrregularity: acLatest.breathIrregularity,
+          blinkInterval: acLatest.blinkInterval,
+          blinkDuration: acLatest.blinkDuration,
+          swayAmplitude: acLatest.swayAmplitude,
+          swayFrequency: acLatest.swayFrequency,
+          swayIrregularity: acLatest.swayIrregularity,
+          headFollowSpeed: acLatest.headFollowSpeed,
+          bodyFollowDelay: acLatest.bodyFollowDelay,
+          headIdleRange: acLatest.headIdleRange,
+          headTrackingLimit: acLatest.headTrackingLimit,
         });
+
+        if (vrm.lookAt && !vrm.lookAt.target) {
+          const lookAtTarget = new THREE.Object3D();
+          lookAtTarget.position.set(0, 1.5, 1.5);
+          runtimeRef.current!.scene.add(lookAtTarget);
+          vrm.lookAt.target = lookAtTarget;
+        }
+
+        windFieldRef.current = new VRMWindField();
+        windFieldRef.current.bindVRM(vrm);
+        if (windConfig) {
+          windFieldRef.current.setWindParams(windConfig);
+        }
 
         motionTriggerRef.current = new VRMMotionTrigger();
         motionTriggerRef.current.bindVRM(vrm);
         motionTriggerRef.current.setConfig({
-          probability: ac.motionTriggerProbability,
+          probability: acLatest.motionTriggerProbability,
           speechRhythmInterval: 1.5,
-          transitionSpeed: ac.focusSpeed,
+          transitionSpeed: acLatest.focusSpeed,
         });
 
         setIsLoading(false);
@@ -252,13 +284,15 @@ export function VRMViewer({
 
         const animate = () => {
           if (renderIdRef.current !== myRenderId) return;
+          clockRef.current.update();
           const dt = clockRef.current.getDelta();
 
           if (driver) (driver as VRMDriver).update(dt);
           if (lipSyncRef.current) lipSyncRef.current.update(dt);
           if (!driver && expressionRef.current) expressionRef.current.update(dt);
-          if (animationRef.current) animationRef.current.update(dt);
+          if (idleAnimRef.current !== false && animationRef.current) animationRef.current.update(dt);
           if (!driver && motionTriggerRef.current) motionTriggerRef.current.update(dt);
+          if (windFieldRef.current) windFieldRef.current.update(dt);
 
           if (vrmRef.current) vrmRef.current.update(dt);
           if (renderer && scene && cam) renderer.render(scene, cam);
@@ -291,6 +325,7 @@ export function VRMViewer({
 
     return () => {
       if (animationFrameRef.current) cancelAnimationFrame(animationFrameRef.current);
+      if (windFieldRef.current) { windFieldRef.current.reset(); windFieldRef.current = null; }
       if (runtimeRef.current) {
         destroyRuntime(runtimeRef.current);
         runtimeRef.current = null;
@@ -304,10 +339,16 @@ export function VRMViewer({
       animationRef.current.setConfig({
         breathFrequency: ac.breathFrequency,
         breathAmplitude: ac.breathAmplitude,
+        breathIrregularity: ac.breathIrregularity,
         blinkInterval: ac.blinkInterval,
         blinkDuration: ac.blinkDuration,
+        swayAmplitude: ac.swayAmplitude,
+        swayFrequency: ac.swayFrequency,
+        swayIrregularity: ac.swayIrregularity,
         headFollowSpeed: ac.headFollowSpeed,
         bodyFollowDelay: ac.bodyFollowDelay,
+        headIdleRange: ac.headIdleRange,
+        headTrackingLimit: ac.headTrackingLimit,
       });
     }
     if (expressionRef.current) {
@@ -315,6 +356,7 @@ export function VRMViewer({
         intensity: ac.emotionIntensity,
         duration: ac.emotionDuration,
         recoverSpeed: ac.emotionRecoverSpeed,
+        idleExpressionIntensity: ac.idleExpressionIntensity,
       });
     }
     if (lipSyncRef.current) {
@@ -327,9 +369,41 @@ export function VRMViewer({
         transitionSpeed: ac.focusSpeed,
       });
     }
-  }, [ac.breathFrequency, ac.breathAmplitude, ac.blinkInterval, ac.blinkDuration,
-      ac.headFollowSpeed, ac.bodyFollowDelay, ac.emotionIntensity, ac.emotionDuration,
-      ac.emotionRecoverSpeed, ac.lipSyncSmoothing, ac.motionTriggerProbability, ac.focusSpeed]);
+  }, [ac.breathFrequency, ac.breathAmplitude, ac.breathIrregularity,
+      ac.blinkInterval, ac.blinkDuration,
+      ac.swayAmplitude, ac.swayFrequency, ac.swayIrregularity,
+      ac.headFollowSpeed, ac.bodyFollowDelay, ac.headIdleRange,
+      ac.headTrackingLimit,
+      ac.emotionIntensity, ac.emotionDuration,
+      ac.emotionRecoverSpeed, ac.idleExpressionIntensity,
+      ac.lipSyncSmoothing, ac.motionTriggerProbability, ac.focusSpeed]);
+
+  useEffect(() => {
+    if (windFieldRef.current && windConfig) {
+      windFieldRef.current.setWindParams(windConfig);
+    }
+  }, [windConfig]);
+
+  useEffect(() => {
+    if (idleAnimation === false && vrmRef.current && animationRef.current) {
+      animationRef.current.reset();
+      const humanoid = vrmRef.current.humanoid;
+      if (humanoid) {
+        const chest = humanoid.getNormalizedBoneNode('chest');
+        if (chest) chest.scale.setScalar(1);
+        const hips = humanoid.getNormalizedBoneNode('hips');
+        if (hips) hips.rotation.z = 0;
+        const head = humanoid.getNormalizedBoneNode('head');
+        if (head) { head.rotation.x = 0; head.rotation.y = 0; }
+        const neck = humanoid.getNormalizedBoneNode('neck');
+        if (neck) { neck.rotation.x = 0; neck.rotation.y = 0; }
+        const spine = humanoid.getNormalizedBoneNode('spine');
+        if (spine) spine.rotation.y = 0;
+      }
+      const em = vrmRef.current.expressionManager;
+      if (em) em.setValue('blink', 0);
+    }
+  }, [idleAnimation]);
 
   useEffect(() => {
     if (dirLightRef.current) dirLightRef.current.intensity = tc.light.directionalIntensity;
@@ -366,14 +440,19 @@ export function VRMViewer({
   }, [mouthOpenY, lipSyncEnabled, ac.vowelWeightA, ac.vowelWeightI, ac.vowelWeightU, ac.vowelWeightE, ac.vowelWeightO]);
 
   useEffect(() => {
-    if (!lookAtMouse || !vrmRef.current) return;
+    if (!lookAtMouse) {
+      if (animationRef.current) animationRef.current.setHeadTarget(0, 0, 0);
+      return;
+    }
     const h = (e: MouseEvent) => {
       if (!vrmRef.current || !canvasRef.current) return;
       const r = canvasRef.current.getBoundingClientRect();
       const x = ((e.clientX - r.left) / r.width) * 2 - 1;
       const y = -((e.clientY - r.top) / r.height) * 2 + 1;
-      const la = vrmRef.current.lookAt;
-      if (la?.target) la.target.position.set(x * 2, y * 1.5 + 1, 1.5);
+      if (acRef.current.eyeTrackingEnabled) {
+        const la = vrmRef.current.lookAt;
+        if (la?.target) la.target.position.set(x * 2, y * 1.5 + 1, 1.5);
+      }
       if (animationRef.current) {
         animationRef.current.setHeadTarget(x * 2, y * 1.5 + 1, 1.5);
       }
@@ -383,6 +462,12 @@ export function VRMViewer({
   }, [lookAtMouse]);
 
   useEffect(() => {
+    if (!ac.eyeTrackingEnabled && vrmRef.current?.lookAt?.target) {
+      vrmRef.current.lookAt.target.position.set(0, 1.5, 1.5);
+    }
+  }, [ac.eyeTrackingEnabled]);
+
+  useEffect(() => {
     const h = () => {
       if (!canvasRef.current || !runtimeRef.current) return;
       resizeRuntime(runtimeRef.current, canvasRef.current);
@@ -390,7 +475,16 @@ export function VRMViewer({
       runtimeRef.current.renderer.setPixelRatio(dpr * propsRef.current.renderScale);
     };
     window.addEventListener('resize', h);
-    return () => window.removeEventListener('resize', h);
+    let ro: ResizeObserver | null = null;
+    if (canvasRef.current?.parentElement && typeof ResizeObserver !== 'undefined') {
+      ro = new ResizeObserver(() => h());
+      ro.observe(canvasRef.current.parentElement);
+      h();
+    }
+    return () => {
+      window.removeEventListener('resize', h);
+      if (ro) ro.disconnect();
+    };
   }, []);
 
   useEffect(() => { if (vrmRef.current) vrmRef.current.scene.scale.setScalar(scale); }, [scale]);
