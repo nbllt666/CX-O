@@ -56,16 +56,44 @@ export function AvatarManager({ type, onClose }: AvatarManagerProps) {
   const [vrmScale, setVrmScale] = useState(vrm.scale);
   const [vrmPosition, setVrmPosition] = useState<[number, number, number]>(vrm.position3d);
 
-  // 同步 store tweak 变化到本地 state
+  // 标记是否由用户操作触发的 store 写入，避免同步 useEffect 回写导致反馈循环
+  const userActionRef = useRef(false);
+
+  // 同步 store tweak 变化到本地 state（仅非用户操作时）
   useEffect(() => {
-    setTweakConfig(vrm.tweak || { ...DEFAULT_VRM_TWEAK });
+    if (!userActionRef.current) setTweakConfig(vrm.tweak || { ...DEFAULT_VRM_TWEAK });
+    userActionRef.current = false;
   }, [vrm.tweak]);
 
-  // 同步 store animation 变化到本地 state
+  // 同步 store animation 变化到本地 state（仅非用户操作时）
   useEffect(() => {
-    const storeAnim = type === 'live2d' ? live2d.animation : vrm.animation;
-    setAnimConfig(storeAnim || { ...DEFAULT_ANIMATION_SETTINGS });
+    if (!userActionRef.current) {
+      const storeAnim = type === 'live2d' ? live2d.animation : vrm.animation;
+      setAnimConfig(storeAnim || { ...DEFAULT_ANIMATION_SETTINGS });
+    }
+    userActionRef.current = false;
   }, [type, live2d.animation, vrm.animation]);
+
+  // 同步 store VRM 位置/缩放/渲染参数变化到本地 state（仅非用户操作时）
+  useEffect(() => {
+    if (!userActionRef.current) {
+      setVrmScale(vrm.scale);
+      setVrmPosition(vrm.position3d);
+      setRenderScale(vrm.renderScale || 1.0);
+      setDevicePixelRatio(vrm.devicePixelRatio || 'auto');
+    }
+    userActionRef.current = false;
+  }, [vrm.scale, vrm.position3d, vrm.renderScale, vrm.devicePixelRatio]);
+
+  // 同步 store Live2D 位置/缩放变化到本地 state（仅非用户操作时）
+  useEffect(() => {
+    if (!userActionRef.current) {
+      setLive2dScale(live2d.scale);
+      setLive2dXOffset(live2d.xOffset);
+      setLive2dYOffset(live2d.yOffset);
+    }
+    userActionRef.current = false;
+  }, [live2d.scale, live2d.xOffset, live2d.yOffset]);
 
   const loadAvatars = useCallback(async () => {
     setIsLoading(true);
@@ -157,12 +185,16 @@ export function AvatarManager({ type, onClose }: AvatarManagerProps) {
 
   const handleTweakChange = useCallback((tc: VRMTweakConfig) => {
     setTweakConfig(tc);
-    if (autoSave) setVRMSettings({ tweak: tc });
+    if (autoSave) {
+      userActionRef.current = true;
+      setVRMSettings({ tweak: tc });
+    }
   }, [autoSave, setVRMSettings]);
 
   const handleAnimChange = useCallback((ac: AnimationSettings) => {
     setAnimConfig(ac);
     if (autoSave) {
+      userActionRef.current = true;
       if (type === 'live2d') setLive2DSettings({ animation: ac });
       else setVRMSettings({ animation: ac });
     }
@@ -170,12 +202,18 @@ export function AvatarManager({ type, onClose }: AvatarManagerProps) {
 
   const handleRenderScaleChange = useCallback((v: number) => {
     setRenderScale(v);
-    if (autoSave) setVRMSettings({ renderScale: v });
+    if (autoSave) {
+      userActionRef.current = true;
+      setVRMSettings({ renderScale: v });
+    }
   }, [autoSave, setVRMSettings]);
 
   const handleDprChange = useCallback((v: number | 'auto') => {
     setDevicePixelRatio(v);
-    if (autoSave) setVRMSettings({ devicePixelRatio: v });
+    if (autoSave) {
+      userActionRef.current = true;
+      setVRMSettings({ devicePixelRatio: v });
+    }
   }, [autoSave, setVRMSettings]);
 
   const handleManualSave = useCallback(() => {
@@ -471,20 +509,20 @@ export function AvatarManager({ type, onClose }: AvatarManagerProps) {
                   </>
                 ) : (
                   <>
-                    <Slider label="缩放" value={vrmScale} min={0.1} max={3} step={0.05}
+                    <Slider label="缩放" value={vrmScale} min={0.1} max={3} step={0.01}
                       onChange={(v) => { setVrmScale(v); setVRMSettings({ scale: v }); }} />
-                    <Slider label="X 位置" value={vrmPosition[0]} min={-5} max={5} step={0.1}
+                    <Slider label="X 位置" value={vrmPosition[0]} min={-5} max={5} step={0.01}
                       onChange={(v) => { const p: [number,number,number] = [v, vrmPosition[1], vrmPosition[2]]; setVrmPosition(p); setVRMSettings({ position3d: p }); }} />
-                    <Slider label="Y 位置" value={vrmPosition[1]} min={-5} max={5} step={0.1}
+                    <Slider label="Y 位置" value={vrmPosition[1]} min={-5} max={5} step={0.01}
                       onChange={(v) => { const p: [number,number,number] = [vrmPosition[0], v, vrmPosition[2]]; setVrmPosition(p); setVRMSettings({ position3d: p }); }} />
-                    <Slider label="Z 位置" value={vrmPosition[2]} min={-5} max={5} step={0.1}
+                    <Slider label="Z 位置" value={vrmPosition[2]} min={-5} max={5} step={0.01}
                       onChange={(v) => { const p: [number,number,number] = [vrmPosition[0], vrmPosition[1], v]; setVrmPosition(p); setVRMSettings({ position3d: p }); }} />
-                    <Slider label="X 轴旋转" value={tc.modelRotationX} min={-Math.PI} max={Math.PI} step={0.05}
-                      onChange={(v) => handleTweakChange({ ...tc, modelRotationX: v })} format={v => `${(v * 180 / Math.PI).toFixed(0)}°`} />
-                    <Slider label="Y 轴旋转" value={tc.modelRotationY} min={-Math.PI} max={Math.PI} step={0.05}
-                      onChange={(v) => handleTweakChange({ ...tc, modelRotationY: v })} format={v => `${(v * 180 / Math.PI).toFixed(0)}°`} />
-                    <Slider label="Z 轴旋转" value={tc.modelRotationZ} min={-Math.PI} max={Math.PI} step={0.05}
-                      onChange={(v) => handleTweakChange({ ...tc, modelRotationZ: v })} format={v => `${(v * 180 / Math.PI).toFixed(0)}°`} />
+                    <Slider label="X 轴旋转" value={tc.modelRotationX} min={-Math.PI} max={Math.PI} step={0.01}
+                      onChange={(v) => handleTweakChange({ ...tc, modelRotationX: v })} format={v => `${(v * 180 / Math.PI).toFixed(1)}°`} />
+                    <Slider label="Y 轴旋转" value={tc.modelRotationY} min={-Math.PI} max={Math.PI} step={0.01}
+                      onChange={(v) => handleTweakChange({ ...tc, modelRotationY: v })} format={v => `${(v * 180 / Math.PI).toFixed(1)}°`} />
+                    <Slider label="Z 轴旋转" value={tc.modelRotationZ} min={-Math.PI} max={Math.PI} step={0.01}
+                      onChange={(v) => handleTweakChange({ ...tc, modelRotationZ: v })} format={v => `${(v * 180 / Math.PI).toFixed(1)}°`} />
                     <Toggle label="口型同步" value={vrm.lipSync}
                       onChange={(v) => setVRMSettings({ lipSync: v })} />
                     <Toggle label="空闲动画" value={vrm.idleAnimation}
@@ -498,31 +536,31 @@ export function AvatarManager({ type, onClose }: AvatarManagerProps) {
 
             {activeTab === 'lipSync' && (
               <div className="space-y-3">
-                <Slider label="灵敏度" value={ac.lipSyncSensitivity} min={0} max={2} step={0.1}
+                <Slider label="灵敏度" value={ac.lipSyncSensitivity} min={0} max={2} step={0.01}
                   onChange={(v) => handleAnimChange({ ...ac, lipSyncSensitivity: v })} />
-                <Slider label="平滑度" value={ac.lipSyncSmoothing} min={0.01} max={1} step={0.05}
+                <Slider label="平滑度" value={ac.lipSyncSmoothing} min={0.01} max={1} step={0.01}
                   onChange={(v) => handleAnimChange({ ...ac, lipSyncSmoothing: v })} />
                 <div className="text-[var(--color-text-secondary)] text-[10px] mt-1">元音权重</div>
-                <Slider label="A" value={ac.vowelWeightA} min={0} max={2} step={0.1}
+                <Slider label="A" value={ac.vowelWeightA} min={0} max={2} step={0.01}
                   onChange={(v) => handleAnimChange({ ...ac, vowelWeightA: v })} />
-                <Slider label="I" value={ac.vowelWeightI} min={0} max={2} step={0.1}
+                <Slider label="I" value={ac.vowelWeightI} min={0} max={2} step={0.01}
                   onChange={(v) => handleAnimChange({ ...ac, vowelWeightI: v })} />
-                <Slider label="U" value={ac.vowelWeightU} min={0} max={2} step={0.1}
+                <Slider label="U" value={ac.vowelWeightU} min={0} max={2} step={0.01}
                   onChange={(v) => handleAnimChange({ ...ac, vowelWeightU: v })} />
-                <Slider label="E" value={ac.vowelWeightE} min={0} max={2} step={0.1}
+                <Slider label="E" value={ac.vowelWeightE} min={0} max={2} step={0.01}
                   onChange={(v) => handleAnimChange({ ...ac, vowelWeightE: v })} />
-                <Slider label="O" value={ac.vowelWeightO} min={0} max={2} step={0.1}
+                <Slider label="O" value={ac.vowelWeightO} min={0} max={2} step={0.01}
                   onChange={(v) => handleAnimChange({ ...ac, vowelWeightO: v })} />
               </div>
             )}
 
             {activeTab === 'emotion' && (
               <div className="space-y-3">
-                <Slider label="表情强度" value={ac.emotionIntensity} min={0} max={2} step={0.1}
+                <Slider label="表情强度" value={ac.emotionIntensity} min={0} max={2} step={0.01}
                   onChange={(v) => handleAnimChange({ ...ac, emotionIntensity: v })} />
-                <Slider label="持续时间" value={ac.emotionDuration} min={0.5} max={10} step={0.5}
+                <Slider label="持续时间" value={ac.emotionDuration} min={0.5} max={10} step={0.1}
                   onChange={(v) => handleAnimChange({ ...ac, emotionDuration: v })} format={v => `${v.toFixed(1)}s`} />
-                <Slider label="恢复速度" value={ac.emotionRecoverSpeed} min={0.1} max={2} step={0.1}
+                <Slider label="恢复速度" value={ac.emotionRecoverSpeed} min={0.1} max={2} step={0.01}
                   onChange={(v) => handleAnimChange({ ...ac, emotionRecoverSpeed: v })} />
                 {type === 'vrm' && (
                   <>
@@ -539,32 +577,32 @@ export function AvatarManager({ type, onClose }: AvatarManagerProps) {
                 {type === 'vrm' ? (
                   <>
                     <div className="text-[var(--color-text-secondary)] text-[10px]">呼吸</div>
-                    <Slider label="频率" value={ac.breathFrequency} min={0.1} max={1} step={0.05}
+                    <Slider label="频率" value={ac.breathFrequency} min={0.1} max={1} step={0.01}
                       onChange={(v) => handleAnimChange({ ...ac, breathFrequency: v })} />
-                    <Slider label="幅度" value={ac.breathAmplitude} min={0} max={0.1} step={0.005}
+                    <Slider label="幅度" value={ac.breathAmplitude} min={0} max={0.1} step={0.001}
                       onChange={(v) => handleAnimChange({ ...ac, breathAmplitude: v })} />
-                    <Slider label="不规律度" value={ac.breathIrregularity} min={0} max={1} step={0.05}
+                    <Slider label="不规律度" value={ac.breathIrregularity} min={0} max={1} step={0.01}
                       onChange={(v) => handleAnimChange({ ...ac, breathIrregularity: v })} format={v => v.toFixed(2)} />
                     <div className="text-[var(--color-text-secondary)] text-[10px] mt-1">眨眼</div>
-                    <Slider label="间隔" value={ac.blinkInterval} min={1} max={8} step={0.5}
+                    <Slider label="间隔" value={ac.blinkInterval} min={1} max={8} step={0.1}
                       onChange={(v) => handleAnimChange({ ...ac, blinkInterval: v })} format={v => `${v.toFixed(1)}s`} />
-                    <Slider label="持续时间" value={ac.blinkDuration} min={0.05} max={0.3} step={0.01}
+                    <Slider label="持续时间" value={ac.blinkDuration} min={0.05} max={0.3} step={0.005}
                       onChange={(v) => handleAnimChange({ ...ac, blinkDuration: v })} format={v => `${(v * 1000).toFixed(0)}ms`} />
                     <div className="text-[var(--color-text-secondary)] text-[10px] mt-1">摇摆</div>
                     <Slider label="幅度" value={ac.swayAmplitude} min={0} max={0.05} step={0.001}
                       onChange={(v) => handleAnimChange({ ...ac, swayAmplitude: v })} format={v => v.toFixed(3)} />
-                    <Slider label="频率" value={ac.swayFrequency} min={0} max={2} step={0.05}
+                    <Slider label="频率" value={ac.swayFrequency} min={0} max={2} step={0.01}
                       onChange={(v) => handleAnimChange({ ...ac, swayFrequency: v })} format={v => `${v.toFixed(2)}Hz`} />
-                    <Slider label="不规律度" value={ac.swayIrregularity} min={0} max={1} step={0.05}
+                    <Slider label="不规律度" value={ac.swayIrregularity} min={0} max={1} step={0.01}
                       onChange={(v) => handleAnimChange({ ...ac, swayIrregularity: v })} format={v => v.toFixed(2)} />
                     <div className="text-[var(--color-text-secondary)] text-[10px] mt-1">跟随</div>
-                    <Slider label="头部速度" value={ac.headFollowSpeed} min={0.5} max={5} step={0.1}
+                    <Slider label="头部速度" value={ac.headFollowSpeed} min={0.5} max={5} step={0.01}
                       onChange={(v) => handleAnimChange({ ...ac, headFollowSpeed: v })} />
-                    <Slider label="跟踪限位" value={ac.headTrackingLimit} min={0.1} max={1.0} step={0.05}
-                      onChange={(v) => handleAnimChange({ ...ac, headTrackingLimit: v })} format={v => `${(v * 180 / Math.PI).toFixed(0)}°`} />
-                    <Slider label="身体延迟" value={ac.bodyFollowDelay} min={0} max={1} step={0.05}
+                    <Slider label="跟踪限位" value={ac.headTrackingLimit} min={0.1} max={1.0} step={0.01}
+                      onChange={(v) => handleAnimChange({ ...ac, headTrackingLimit: v })} format={v => `${(v * 180 / Math.PI).toFixed(1)}°`} />
+                    <Slider label="身体延迟" value={ac.bodyFollowDelay} min={0} max={1} step={0.01}
                       onChange={(v) => handleAnimChange({ ...ac, bodyFollowDelay: v })} />
-                    <Slider label="空闲漂移" value={ac.headIdleRange} min={0} max={0.1} step={0.005}
+                    <Slider label="空闲漂移" value={ac.headIdleRange} min={0} max={0.1} step={0.001}
                       onChange={(v) => handleAnimChange({ ...ac, headIdleRange: v })} format={v => v.toFixed(3)} />
                     <Toggle label="眼球跟踪" value={ac.eyeTrackingEnabled}
                       onChange={(v) => handleAnimChange({ ...ac, eyeTrackingEnabled: v })} />
@@ -572,29 +610,29 @@ export function AvatarManager({ type, onClose }: AvatarManagerProps) {
                 ) : (
                   <>
                     <div className="text-[var(--color-text-secondary)] text-[10px]">呼吸</div>
-                    <Slider label="频率" value={ac.breathFrequency} min={0.1} max={1} step={0.05}
+                    <Slider label="频率" value={ac.breathFrequency} min={0.1} max={1} step={0.01}
                       onChange={(v) => handleAnimChange({ ...ac, breathFrequency: v })} />
-                    <Slider label="幅度" value={ac.breathAmplitude} min={0} max={0.1} step={0.005}
+                    <Slider label="幅度" value={ac.breathAmplitude} min={0} max={0.1} step={0.001}
                       onChange={(v) => handleAnimChange({ ...ac, breathAmplitude: v })} />
-                    <Slider label="不规律度" value={ac.breathIrregularity} min={0} max={1} step={0.05}
+                    <Slider label="不规律度" value={ac.breathIrregularity} min={0} max={1} step={0.01}
                       onChange={(v) => handleAnimChange({ ...ac, breathIrregularity: v })} format={v => v.toFixed(2)} />
                     <div className="text-[var(--color-text-secondary)] text-[10px] mt-1">眨眼</div>
-                    <Slider label="间隔" value={ac.blinkInterval} min={1} max={8} step={0.5}
+                    <Slider label="间隔" value={ac.blinkInterval} min={1} max={8} step={0.1}
                       onChange={(v) => handleAnimChange({ ...ac, blinkInterval: v })} format={v => `${v.toFixed(1)}s`} />
-                    <Slider label="持续时间" value={ac.blinkDuration} min={0.05} max={0.3} step={0.01}
+                    <Slider label="持续时间" value={ac.blinkDuration} min={0.05} max={0.3} step={0.005}
                       onChange={(v) => handleAnimChange({ ...ac, blinkDuration: v })} format={v => `${(v * 1000).toFixed(0)}ms`} />
                     <div className="text-[var(--color-text-secondary)] text-[10px] mt-1">摇摆</div>
                     <Slider label="幅度" value={ac.swayAmplitude} min={0} max={0.05} step={0.001}
                       onChange={(v) => handleAnimChange({ ...ac, swayAmplitude: v })} format={v => v.toFixed(3)} />
-                    <Slider label="频率" value={ac.swayFrequency} min={0} max={2} step={0.05}
+                    <Slider label="频率" value={ac.swayFrequency} min={0} max={2} step={0.01}
                       onChange={(v) => handleAnimChange({ ...ac, swayFrequency: v })} format={v => `${v.toFixed(2)}Hz`} />
-                    <Slider label="不规律度" value={ac.swayIrregularity} min={0} max={1} step={0.05}
+                    <Slider label="不规律度" value={ac.swayIrregularity} min={0} max={1} step={0.01}
                       onChange={(v) => handleAnimChange({ ...ac, swayIrregularity: v })} format={v => v.toFixed(2)} />
                     <div className="text-[var(--color-text-secondary)] text-[10px] mt-1">动作</div>
-                    <Slider label="触发概率" value={ac.motionTriggerProbability} min={0} max={1} step={0.05}
+                    <Slider label="触发概率" value={ac.motionTriggerProbability} min={0} max={1} step={0.01}
                       onChange={(v) => handleAnimChange({ ...ac, motionTriggerProbability: v })} />
                     <div className="text-[var(--color-text-secondary)] text-[10px] mt-1">视线</div>
-                    <Slider label="跟随速度" value={ac.focusSpeed} min={1} max={5} step={0.1}
+                    <Slider label="跟随速度" value={ac.focusSpeed} min={1} max={5} step={0.01}
                       onChange={(v) => handleAnimChange({ ...ac, focusSpeed: v })} />
                   </>
                 )}
@@ -603,8 +641,8 @@ export function AvatarManager({ type, onClose }: AvatarManagerProps) {
 
             {activeTab === 'render' && type === 'vrm' && (
               <div className="space-y-3">
-                <Slider label="渲染分辨率" value={renderScale} min={0.5} max={2} step={0.1}
-                  onChange={handleRenderScaleChange} format={v => `${v.toFixed(1)}x`} />
+                <Slider label="渲染分辨率" value={renderScale} min={0.5} max={2} step={0.01}
+                  onChange={handleRenderScaleChange} format={v => `${v.toFixed(2)}x`} />
                 <div className="text-[var(--color-text-secondary)] text-[10px] mt-1">设备像素比</div>
                 <div className="flex gap-1.5">
                   {(['auto', 1, 1.5, 2] as const).map((v) => (
@@ -622,20 +660,20 @@ export function AvatarManager({ type, onClose }: AvatarManagerProps) {
                   ))}
                 </div>
                 <div className="text-[var(--color-text-secondary)] text-[10px] mt-1">相机</div>
-                <Slider label="X 偏移" value={tc.camera.offsetX} min={-3} max={3} step={0.05}
+                <Slider label="X 偏移" value={tc.camera.offsetX} min={-3} max={3} step={0.01}
                   onChange={(v) => handleTweakChange({ ...tc, camera: { ...tc.camera, offsetX: v } })} />
-                <Slider label="Y 高度" value={tc.camera.offsetY} min={0} max={4} step={0.05}
+                <Slider label="Y 高度" value={tc.camera.offsetY} min={0} max={4} step={0.01}
                   onChange={(v) => handleTweakChange({ ...tc, camera: { ...tc.camera, offsetY: v } })} />
-                <Slider label="Z 距离" value={tc.camera.offsetZ} min={0.5} max={6} step={0.1}
+                <Slider label="Z 距离" value={tc.camera.offsetZ} min={0.5} max={6} step={0.01}
                   onChange={(v) => handleTweakChange({ ...tc, camera: { ...tc.camera, offsetZ: v } })} />
-                <Slider label="注视点 Y" value={tc.camera.lookAtY} min={0} max={1.5} step={0.02}
+                <Slider label="注视点 Y" value={tc.camera.lookAtY} min={0} max={1.5} step={0.01}
                   onChange={(v) => handleTweakChange({ ...tc, camera: { ...tc.camera, lookAtY: v } })} />
                 <div className="text-[var(--color-text-secondary)] text-[10px] mt-1">灯光</div>
-                <Slider label="主光强度" value={tc.light.directionalIntensity} min={0} max={5} step={0.1}
+                <Slider label="主光强度" value={tc.light.directionalIntensity} min={0} max={5} step={0.01}
                   onChange={(v) => handleTweakChange({ ...tc, light: { ...tc.light, directionalIntensity: v } })} />
-                <Slider label="环境光" value={tc.light.ambientIntensity} min={0} max={3} step={0.1}
+                <Slider label="环境光" value={tc.light.ambientIntensity} min={0} max={3} step={0.01}
                   onChange={(v) => handleTweakChange({ ...tc, light: { ...tc.light, ambientIntensity: v } })} />
-                <Slider label="补光" value={tc.light.pointIntensity} min={0} max={3} step={0.1}
+                <Slider label="补光" value={tc.light.pointIntensity} min={0} max={3} step={0.01}
                   onChange={(v) => handleTweakChange({ ...tc, light: { ...tc.light, pointIntensity: v } })} />
               </div>
             )}

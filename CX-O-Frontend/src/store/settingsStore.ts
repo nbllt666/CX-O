@@ -4,7 +4,7 @@ import { createStorage } from '../lib/createStorage';
 import { api } from '../api/client';
 import type { FrontendLimits } from '../api/client';
 
-export interface Live2DSettings {
+export interface BaseAvatarSettings {
   enabled: boolean;
   modelId?: string;
   modelPath: string;
@@ -13,12 +13,15 @@ export interface Live2DSettings {
   maxWidth: number;
   position: 'left' | 'right';
   lipSync: boolean;
-  idleMotion: boolean;
   scale: number;
-  xOffset: number;
-  yOffset: number;
   expressionMixEnabled: boolean;
   animation?: AnimationSettings;
+}
+
+export interface Live2DSettings extends BaseAvatarSettings {
+  idleMotion: boolean;
+  xOffset: number;
+  yOffset: number;
 }
 
 export interface VRMCameraTweak {
@@ -118,23 +121,12 @@ export interface VRMWindConfig {
   gustDuration: number | string;
 }
 
-export interface VRMSettings {
-  enabled: boolean;
-  modelId?: string;
-  modelPath: string;
-  width: number;
-  minWidth: number;
-  maxWidth: number;
-  position: 'left' | 'right';
-  lipSync: boolean;
+export interface VRMSettings extends BaseAvatarSettings {
   idleAnimation: boolean;
   lookAtMouse: boolean;
-  scale: number;
   position3d: [number, number, number];
   tweak?: VRMTweakConfig;
-  expressionMixEnabled: boolean;
   motionTriggerEnabled: boolean;
-  animation?: AnimationSettings;
   renderScale: number;
   devicePixelRatio: number | 'auto';
   wind: VRMWindConfig;

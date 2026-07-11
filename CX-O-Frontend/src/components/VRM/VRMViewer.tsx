@@ -78,16 +78,19 @@ export function VRMViewer({
   const dirLightRef = useRef<THREE.DirectionalLight | null>(null);
   const ambLightRef = useRef<THREE.AmbientLight | null>(null);
   const pntLightRef = useRef<THREE.PointLight | null>(null);
+  // 保存 fitVRMModel 自动计算的基准位置，用户 position 作为偏移量叠加
+  const basePositionRef = useRef(new THREE.Vector3());
 
   const [isLoading, setIsLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [modelSize, setModelSize] = useState<{ height: number; width: number }>({ height: 1.6, width: 0.8 });
 
   const propsRef = useRef({ scale, position, onModelLoaded, onError, renderScale, devicePixelRatio });
-  useEffect(() => {
-    propsRef.current.renderScale = renderScale;
-    propsRef.current.devicePixelRatio = devicePixelRatio;
-  }, [renderScale, devicePixelRatio]);
+  // 直接在渲染时更新 ref，确保 loadModel 和动画循环能获取最新值
+  propsRef.current.scale = scale;
+  propsRef.current.position = position;
+  propsRef.current.renderScale = renderScale;
+  propsRef.current.devicePixelRatio = devicePixelRatio;
   const idleAnimRef = useRef(idleAnimation);
   useEffect(() => { idleAnimRef.current = idleAnimation; }, [idleAnimation]);
   const lastVersionRef = useRef(-1);
@@ -101,7 +104,8 @@ export function VRMViewer({
 
   const ac: AnimationSettings = { ...DEFAULT_ANIMATION_SETTINGS, ...animationConfig };
   const acRef = useRef<AnimationSettings>(ac);
-  useEffect(() => { acRef.current = ac; }, [ac]);
+  // 直接在渲染时更新 ref，确保 loadModel 能获取最新值
+  acRef.current = ac;
 
   useEffect(() => {
     if (dataVersion === lastVersionRef.current) return;
@@ -140,6 +144,13 @@ export function VRMViewer({
 
         vrmRef.current = vrm;
         vrm.scene.scale.setScalar(propsRef.current.scale);
+        // position 作为偏移量叠加在 fitVRMModel 的基准位置上
+        const pos = propsRef.current.position;
+        vrm.scene.position.set(
+          basePositionRef.current.x + pos[0],
+          basePositionRef.current.y + pos[1],
+          basePositionRef.current.z + pos[2],
+        );
         const tcLatest = tcRef.current;
         vrm.scene.rotation.x = tcLatest.modelRotationX; vrm.scene.rotation.y = tcLatest.modelRotationY; vrm.scene.rotation.z = tcLatest.modelRotationZ;
 
@@ -211,6 +222,9 @@ export function VRMViewer({
           const runtime = createVRMRuntime(canvas, resolvedAvatar!, vrm);
           runtimeRef.current = runtime;
         }
+
+        // fitVRMModel 已在 createVRMRuntime 中调用，保存其计算的基准位置
+        basePositionRef.current.copy(vrm.scene.position);
 
         const scene = runtimeRef.current!.scene;
         const cam = runtimeRef.current!.camera;
@@ -285,7 +299,9 @@ export function VRMViewer({
         const animate = () => {
           if (renderIdRef.current !== myRenderId) return;
           clockRef.current.update();
-          const dt = clockRef.current.getDelta();
+          const rawDt = clockRef.current.getDelta();
+          // 限制 dt 上限，防止窗口最小化后恢复导致动画异常（过大 dt 会让旋转插值瞬间完成）
+          const dt = Math.min(rawDt, 0.1);
 
           if (driver) (driver as VRMDriver).update(dt);
           if (lipSyncRef.current) lipSyncRef.current.update(dt);
@@ -334,6 +350,7 @@ export function VRMViewer({
     };
   }, [dataVersion, modelPath]);
 
+  // 当 animationConfig 变化时应用配置（模型加载后 animationRef.current 才存在）
   useEffect(() => {
     if (animationRef.current) {
       animationRef.current.setConfig({
@@ -369,20 +386,28 @@ export function VRMViewer({
         transitionSpeed: ac.focusSpeed,
       });
     }
-  }, [ac.breathFrequency, ac.breathAmplitude, ac.breathIrregularity,
-      ac.blinkInterval, ac.blinkDuration,
-      ac.swayAmplitude, ac.swayFrequency, ac.swayIrregularity,
-      ac.headFollowSpeed, ac.bodyFollowDelay, ac.headIdleRange,
-      ac.headTrackingLimit,
-      ac.emotionIntensity, ac.emotionDuration,
-      ac.emotionRecoverSpeed, ac.idleExpressionIntensity,
-      ac.lipSyncSmoothing, ac.motionTriggerProbability, ac.focusSpeed]);
+  }, [animationConfig]);
+
+  // 当 scale/position/rotation 变化或模型加载完成时应用
+  useEffect(() => {
+    if (vrmRef.current) {
+      vrmRef.current.scene.scale.setScalar(scale);
+      vrmRef.current.scene.position.set(
+        basePositionRef.current.x + position[0],
+        basePositionRef.current.y + position[1],
+        basePositionRef.current.z + position[2],
+      );
+      vrmRef.current.scene.rotation.x = tc.modelRotationX;
+      vrmRef.current.scene.rotation.y = tc.modelRotationY;
+      vrmRef.current.scene.rotation.z = tc.modelRotationZ;
+    }
+  }, [scale, position, isLoading, tc.modelRotationX, tc.modelRotationY, tc.modelRotationZ]);
 
   useEffect(() => {
     if (windFieldRef.current && windConfig) {
       windFieldRef.current.setWindParams(windConfig);
     }
-  }, [windConfig]);
+  }, [windConfig, isLoading]);
 
   useEffect(() => {
     if (idleAnimation === false && vrmRef.current && animationRef.current) {
@@ -463,7 +488,9 @@ export function VRMViewer({
 
   useEffect(() => {
     if (!ac.eyeTrackingEnabled && vrmRef.current?.lookAt?.target) {
-      vrmRef.current.lookAt.target.position.set(0, 1.5, 1.5);
+      // 设置 target 在摄像机位置附近（模型高度约1.6m，摄像机在y≈1.12，z≈4）
+      // 使用固定值让视线看向摄像机方向
+      vrmRef.current.lookAt.target.position.set(0, 1.1, 4.0);
     }
   }, [ac.eyeTrackingEnabled]);
 
@@ -473,6 +500,19 @@ export function VRMViewer({
       resizeRuntime(runtimeRef.current, canvasRef.current);
       const dpr = propsRef.current.devicePixelRatio === 'auto' ? window.devicePixelRatio : propsRef.current.devicePixelRatio;
       runtimeRef.current.renderer.setPixelRatio(dpr * propsRef.current.renderScale);
+      // resizeRuntime 会重置 scale/position/rotation，保存新的基准位置后重新应用用户配置
+      if (vrmRef.current) {
+        basePositionRef.current.copy(vrmRef.current.scene.position);
+        vrmRef.current.scene.scale.setScalar(scale);
+        vrmRef.current.scene.position.set(
+          basePositionRef.current.x + position[0],
+          basePositionRef.current.y + position[1],
+          basePositionRef.current.z + position[2],
+        );
+        vrmRef.current.scene.rotation.x = tc.modelRotationX;
+        vrmRef.current.scene.rotation.y = tc.modelRotationY;
+        vrmRef.current.scene.rotation.z = tc.modelRotationZ;
+      }
     };
     window.addEventListener('resize', h);
     let ro: ResizeObserver | null = null;
@@ -485,10 +525,7 @@ export function VRMViewer({
       window.removeEventListener('resize', h);
       if (ro) ro.disconnect();
     };
-  }, []);
-
-  useEffect(() => { if (vrmRef.current) vrmRef.current.scene.scale.setScalar(scale); }, [scale]);
-  useEffect(() => { if (vrmRef.current) vrmRef.current.scene.position.set(position[0], position[1], position[2]); }, [position]);
+  }, [scale, position, tc.modelRotationX, tc.modelRotationY, tc.modelRotationZ]);
 
   useEffect(() => {
     if (!expressionMix || !runtimeRef.current || !avatar) return;
