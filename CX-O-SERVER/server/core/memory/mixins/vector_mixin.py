@@ -3,22 +3,13 @@
 Extracted from manager.py as part of H5 mixin split.
 """
 import asyncio
-import json
-import re
-import sqlite3
-import threading
-import time
-from datetime import datetime
-from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple, TYPE_CHECKING
+from typing import Dict, List, TYPE_CHECKING
 
-from server.config import Settings
-from server.core.exceptions import DatabaseError, MemoryOperationError, VectorStoreError
 
-from ._common import json_dumps, json_loads, logger
+from ._common import logger
 
 if TYPE_CHECKING:
-    from server.core.memory.graph_store import GraphStoreBase
+    pass
 
 
 class _VectorIntegrationMixin:

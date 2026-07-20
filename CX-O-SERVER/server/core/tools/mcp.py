@@ -1,11 +1,10 @@
 import asyncio
-import json
 import os
 import subprocess
 import threading
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import datetime
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List
 
 import httpx
 
@@ -48,7 +47,7 @@ class MCPServer:
         if not self.endpoint_url:
             # 默认使用本地端口，格式: http://localhost:{port}
             # 这里使用一个默认端口，实际应该在添加服务器时指定
-            self.endpoint_url = f"http://localhost:8001"
+            self.endpoint_url = "http://localhost:8600"
 
     def to_dict(self) -> Dict:
         """转换为字典"""
@@ -68,13 +67,11 @@ class MCPServer:
 class MCPConnectionError(Exception):
     """MCP连接错误"""
 
-    pass
 
 
 class MCPTimeoutError(Exception):
     """MCP超时错误"""
 
-    pass
 
 
 class MCPManager:
@@ -119,7 +116,7 @@ class MCPManager:
             command=command,
             args=args,
             env=env or {},
-            endpoint_url=endpoint_url or f"http://localhost:8001",
+            endpoint_url=endpoint_url or "http://localhost:8600",
         )
 
         self.servers[name] = server
@@ -439,7 +436,7 @@ class MCPManager:
             logger.error(f"MCP工具调用失败: {e}")
             return {"success": False, "error": error_msg}
         except httpx.TimeoutException as e:
-            error_msg = f"MCP服务器响应超时"
+            error_msg = "MCP服务器响应超时"
             logger.error(f"MCP工具调用超时: {e}")
             return {"success": False, "error": error_msg}
         except Exception as e:

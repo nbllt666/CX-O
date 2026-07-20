@@ -1,4 +1,4 @@
-from typing import Any, Dict, List
+from typing import Dict, List
 import json
 
 from server.core.logging_config import get_contextual_logger

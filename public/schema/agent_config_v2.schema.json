@@ -1,0 +1,211 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://cx-o.local/schema/agent_config_v2.schema.json",
+  "title": "AgentConfigV2",
+  "description": "RADIX-Lite AgentConfig 扩展版数据契约（CX-O 迁移版）。在原 AgentConfig（agent.schema.json）基础上新增 3 字段：tools_config（工具启用配置）、decision_rubric（决策 rubric）、distillation_enabled（蒸馏开关）。memory-agent 升级为管理 agent 时使用此契约。对应 agent_tools_v2.pyi 接口存根。",
+  "type": "object",
+  "required": [
+    "agent_id",
+    "name",
+    "tools_config",
+    "decision_rubric",
+    "distillation_enabled"
+  ],
+  "additionalProperties": true,
+  "properties": {
+    "agent_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Agent 唯一 ID。复用原 agent.schema.json 的 agent_id 字段。"
+    },
+    "name": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Agent 显示名。"
+    },
+    "tools_config": {
+      "type": "object",
+      "description": "工具启用配置。key=工具名，value=启用状态。新增 8 工具默认全部启用。",
+      "default": {},
+      "properties": {
+        "add_agent": {"type": "boolean", "default": true},
+        "update_agent": {"type": "boolean", "default": true},
+        "delete_agent": {"type": "boolean", "default": true},
+        "start_distillation": {"type": "boolean", "default": true},
+        "advance_distillation": {"type": "boolean", "default": true},
+        "finalize_distillation": {"type": "boolean", "default": true},
+        "render_template": {"type": "boolean", "default": true},
+        "decide_storage": {"type": "boolean", "default": true}
+      },
+      "additionalProperties": true
+    },
+    "decision_rubric": {
+      "type": "object",
+      "description": "决策 rubric。DecisionCore 6 决策点的阈值配置。rubric 不可被 LLM 自行修改，仅人类编辑 data/agents.json。",
+      "required": [
+        "importance_threshold_permanent",
+        "quality_reject_threshold",
+        "max_redistill_turns",
+        "ask_user_confidence_threshold"
+      ],
+      "properties": {
+        "importance_threshold_permanent": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1,
+          "default": 0.7,
+          "description": "永久记忆重要性阈值。importance >= 此值存入 permanent_memories，否则存入 memories。"
+        },
+        "quality_reject_threshold": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1,
+          "default": 0.3,
+          "description": "质量拒绝阈值。quality_score < 此值触发 D6_REJECT，内容存入 rejected_content 保留 30 天。"
+        },
+        "max_redistill_turns": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 6,
+          "default": 2,
+          "description": "最大再次蒸馏轮次。D4_REDISTILL 决策时使用。超过此值不再触发再次蒸馏。"
+        },
+        "ask_user_confidence_threshold": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1,
+          "default": 0.4,
+          "description": "追问置信度阈值。llm_confidence < 此值且 ask_user_on_ambiguity=true 时触发 D3_ASK_USER。"
+        },
+        "cross_validate_sources": {
+          "type": "array",
+          "items": {"type": "string"},
+          "default": [],
+          "description": "跨源验证的数据源列表。D5_CROSS_VALIDATE 决策时使用。"
+        },
+        "session_timeout_seconds": {
+          "type": "integer",
+          "minimum": 60,
+          "maximum": 7200,
+          "default": 1800,
+          "description": "会话超时（秒）。超过此时间未 advance 的会话自动标记为 S_REJECT。"
+        },
+        "rejected_content_retention_days": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 90,
+          "default": 30,
+          "description": "拒绝内容保留天数。超过此天数的 rejected_content 自动清理。"
+        }
+      },
+      "additionalProperties": false
+    },
+    "distillation_enabled": {
+      "type": "boolean",
+      "default": false,
+      "description": "是否启用蒸馏功能。true=管理 agent 可调用蒸馏工具，false=仅基础工具。memory-agent 升级时设为 true。"
+    },
+    "legacy_parser_enabled": {
+      "type": "boolean",
+      "default": true,
+      "description": "parser.py 回退开关。true=走原有解析逻辑，false=调用 MultimodalPipeline.preprocess。仅当 distillation_enabled=true 时有意义。"
+    }
+  },
+  "definitions": {
+    "error_codes": {
+      "type": "object",
+      "description": "AgentConfig 扩展错误码定义。",
+      "properties": {
+        "AGENT_NOT_FOUND": {
+          "const": 404,
+          "description": "Agent 不存在：add_agent/update_agent/delete_agent 时 agent_id 无效。"
+        },
+        "AGENT_ALREADY_EXISTS": {
+          "const": 409,
+          "description": "Agent 已存在：add_agent 时 agent_id 已被占用。"
+        },
+        "INVALID_RUBRIC": {
+          "const": 422,
+          "description": "rubric 无效：decision_rubric 缺少必需字段或值超出范围。"
+        },
+        "DISTILLATION_DISABLED": {
+          "const": 403,
+          "description": "蒸馏未启用：distillation_enabled=false 时调用蒸馏工具。"
+        },
+        "TOOL_DISABLED": {
+          "const": 403,
+          "description": "工具未启用：tools_config 中对应工具为 false。"
+        },
+        "INTERNAL_ERROR": {
+          "const": 500,
+          "description": "内部错误：agents.json 读写失败等。"
+        }
+      },
+      "additionalProperties": false
+    },
+    "exceptions": {
+      "type": "object",
+      "description": "AgentConfig 扩展异常契约。调用方（8 工具）必须处理以下异常。",
+      "properties": {
+        "KeyError_404": {
+          "type": "object",
+          "properties": {
+            "exception_type": {"const": "KeyError"},
+            "trigger_methods": {
+              "type": "array",
+              "items": {"type": "string"},
+              "enum": ["update_agent", "delete_agent", "get_agent"]
+            },
+            "reason": {"type": "string"}
+          }
+        },
+        "ValueError_422": {
+          "type": "object",
+          "properties": {
+            "exception_type": {"const": "ValueError"},
+            "trigger_methods": {
+              "type": "array",
+              "items": {"type": "string"},
+              "enum": ["add_agent", "update_agent", "_validate_rubric"]
+            },
+            "reason": {"type": "string"}
+          }
+        },
+        "PermissionError_403": {
+          "type": "object",
+          "description": "工具未启用或蒸馏未启用。",
+          "properties": {
+            "exception_type": {"const": "PermissionError"},
+            "trigger_methods": {
+              "type": "array",
+              "items": {"type": "string"},
+              "enum": ["start_distillation", "advance_distillation", "finalize_distillation", "decide_storage"]
+            },
+            "reason": {"type": "string"}
+          }
+        },
+        "FileExistsError_409": {
+          "type": "object",
+          "properties": {
+            "exception_type": {"const": "FileExistsError"},
+            "trigger_method": {"const": "add_agent"},
+            "reason": {"type": "string"}
+          }
+        },
+        "IOError_500": {
+          "type": "object",
+          "description": "agents.json 读写异常。",
+          "properties": {
+            "exception_type": {"const": "IOError"},
+            "trigger_methods": {
+              "type": "array",
+              "items": {"type": "string"},
+              "enum": ["_load_agents", "_save_agents"]
+            },
+            "reason": {"type": "string"}
+          }
+        }
+      },
+      "additionalProperties": false
+    }
+  }

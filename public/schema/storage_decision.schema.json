@@ -1,0 +1,161 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://cx-o.local/schema/storage_decision.schema.json",
+  "title": "StorageDecision",
+  "description": "RADIX-Lite 存储决策数据契约。DecisionCore 6 决策点（D1存入位置/D2元数据/D3追问/D4再次蒸馏/D5跨源验证/D6拒绝存储）的决策结果。rubric 驱动决策，支持人类 override_decision 覆盖。",
+  "type": "object",
+  "required": [
+    "decision_id",
+    "session_id",
+    "decision_point",
+    "location",
+    "reason",
+    "quality_score",
+    "created_at"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "decision_id": {
+      "type": "string",
+      "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$",
+      "description": "决策唯一 ID（UUID v4）。"
+    },
+    "session_id": {
+      "type": "string",
+      "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$",
+      "description": "关联的蒸馏会话 ID。"
+    },
+    "decision_point": {
+      "type": "string",
+      "enum": ["D1_LOCATION", "D2_METADATA", "D3_ASK_USER", "D4_REDISTILL", "D5_CROSS_VALIDATE", "D6_REJECT"],
+      "description": "决策点。D1=存入位置，D2=元数据，D3=追问，D4=再次蒸馏，D5=跨源验证，D6=拒绝存储。"
+    },
+    "location": {
+      "type": "string",
+      "enum": ["memories", "permanent_memories", "rejected"],
+      "description": "存储位置。memories=临时记忆（importance < rubric.importance_threshold_permanent），permanent_memories=永久记忆（importance >= 阈值），rejected=拒绝存储（quality_score < rubric.quality_reject_threshold）。"
+    },
+    "memory_id": {
+      "type": ["integer", "null"],
+      "minimum": 0,
+      "default": null,
+      "description": "关联的记忆 ID。location=memories 时为 memories 表 ID；location=permanent_memories 时为 permanent_memories 表 ID；location=rejected 时为 null。"
+    },
+    "metadata": {
+      "type": "object",
+      "default": {},
+      "description": "决策元数据（D2 决策产出）。包含 time（时间戳）、importance（0-1）、source（来源）、tags（标签数组）等。",
+      "additionalProperties": true
+    },
+    "reason": {
+      "type": "string",
+      "minLength": 1,
+      "description": "决策理由。LLM 推理摘要或 rubric 规则匹配说明。"
+    },
+    "quality_score": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 1,
+      "description": "质量评分。S_STORAGE_DECISION 阶段由 LLM 评估。低于 rubric.quality_reject_threshold 触发 D6_REJECT。"
+    },
+    "rubric_snapshot": {
+      "type": "object",
+      "description": "决策时使用的 rubric 快照（确保决策可审计）。",
+      "properties": {
+        "importance_threshold_permanent": {"type": "number", "minimum": 0, "maximum": 1},
+        "quality_reject_threshold": {"type": "number", "minimum": 0, "maximum": 1},
+        "max_redistill_turns": {"type": "integer", "minimum": 0, "maximum": 6},
+        "ask_user_confidence_threshold": {"type": "number", "minimum": 0, "maximum": 1}
+      }
+    },
+    "llm_confidence": {
+      "type": ["number", "null"],
+      "minimum": 0,
+      "maximum": 1,
+      "default": null,
+      "description": "LLM 决策置信度。低于 ask_user_confidence_threshold 时回退 system_prompt 规则或触发 D3_ASK_USER。"
+    },
+    "override_decision": {
+      "type": ["string", "null"],
+      "default": null,
+      "description": "人类覆盖决策。非 null 时表示人类通过 finalize_distillation(override_decision=...) 覆盖了 agent 的决策。"
+    },
+    "created_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "决策创建时间。"
+    }
+  },
+  "definitions": {
+    "error_codes": {
+      "type": "object",
+      "description": "DecisionCore 错误码定义。",
+      "properties": {
+        "SESSION_NOT_FOUND": {
+          "const": 404,
+          "description": "会话不存在：decide_storage 时 session_id 无效。"
+        },
+        "RUBRIC_NOT_FOUND": {
+          "const": 422,
+          "description": "rubric 缺失：data/agents.json 中未找到 decision_rubric 字段。"
+        },
+        "INVALID_DECISION_POINT": {
+          "const": 422,
+          "description": "无效决策点：decision_point 不在 D1-D6 枚举中。"
+        },
+        "LLM_UNAVAILABLE": {
+          "const": 503,
+          "description": "LLM 不可用：vLLM 端点无响应。触发 system_prompt 规则回退。"
+        },
+        "INTERNAL_ERROR": {
+          "const": 500,
+          "description": "内部错误：审计日志写入失败、rubric 解析异常等。"
+        }
+      },
+      "additionalProperties": false
+    },
+    "exceptions": {
+      "type": "object",
+      "description": "DecisionCore 异常契约。调用方（管理Agent工具 decide_storage）必须处理以下异常。",
+      "properties": {
+        "ValueError_422": {
+          "type": "object",
+          "properties": {
+            "exception_type": {"const": "ValueError"},
+            "trigger_methods": {
+              "type": "array",
+              "items": {"type": "string"},
+              "enum": ["decide_location", "decide_metadata", "decide_reject"]
+            },
+            "reason": {"type": "string"}
+          }
+        },
+        "KeyError_422": {
+          "type": "object",
+          "description": "rubric 字段缺失。",
+          "properties": {
+            "exception_type": {"const": "KeyError"},
+            "trigger_method": {"const": "_load_rubric"},
+            "reason": {"type": "string"}
+          }
+        },
+        "ConnectionError_503": {
+          "type": "object",
+          "description": "LLM 端点连接失败，触发 system_prompt 规则回退。",
+          "properties": {
+            "exception_type": {"const": "ConnectionError"},
+            "trigger_method": {"const": "_llm_decide"},
+            "fallback": {"const": "system_prompt_rule_based"},
+            "reason": {"type": "string"}
+          }
+        },
+        "RuntimeError_500": {
+          "type": "object",
+          "properties": {
+            "exception_type": {"const": "RuntimeError"},
+            "trigger_method": {"const": "_write_audit_log"},
+            "reason": {"type": "string"}
+          }
+        }
+      },
+      "additionalProperties": false

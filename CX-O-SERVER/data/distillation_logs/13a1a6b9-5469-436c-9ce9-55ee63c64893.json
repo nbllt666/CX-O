@@ -1,0 +1,20 @@
+[
+  {
+    "log_id": "00e22348-61f1-4d4a-b523-fc1303c0c31c",
+    "session_id": "13a1a6b9-5469-436c-9ce9-55ee63c64893",
+    "decision_point": "D6_REJECT",
+    "input": {},
+    "rubric_snapshot": {},
+    "llm_reasoning": null,
+    "llm_confidence": null,
+    "final_decision": {
+      "action": "reject",
+      "location": "rejected",
+      "details": {
+        "quality_score": 0.3,
+        "override_decision": "reject"
+      }
+    },
+    "timestamp": "2026-07-19T14:22:57.961426+00:00"
+  }
+]

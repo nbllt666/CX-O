@@ -4,13 +4,12 @@ Extracted from the original manager.py module-level definitions.
 All mixins import json_dumps, json_loads, and logger from here.
 """
 
-import re
 from typing import TYPE_CHECKING
 
 from server.core.logging_config import get_contextual_logger
 
 if TYPE_CHECKING:
-    from server.core.memory.graph_store import GraphStoreBase
+    pass
 
 try:
     import orjson

@@ -527,7 +527,7 @@ export function AvatarManager({ type, onClose }: AvatarManagerProps) {
                       onChange={(v) => setVRMSettings({ lipSync: v })} />
                     <Toggle label="空闲动画" value={vrm.idleAnimation}
                       onChange={(v) => setVRMSettings({ idleAnimation: v })} />
-                    <Toggle label="视线追踪" value={vrm.lookAtMouse}
+                    <Toggle label="头部追踪" value={vrm.lookAtMouse}
                       onChange={(v) => setVRMSettings({ lookAtMouse: v })} />
                   </>
                 )}

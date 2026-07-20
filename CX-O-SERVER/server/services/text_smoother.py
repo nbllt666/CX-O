@@ -64,7 +64,8 @@ class TextSmoother:
         # 窗口超时限制在 30~50ms：
         #   过小（<30ms）起不到聚合作用，碎片仍会漏到 TTS；
         #   过大（>50ms）突破 300ms 总预算，用户能感知到延迟。
-        # 40ms 是经验最优值：能聚合 ~3 个 90tokens/s 的碎片，又不至于让用户感知。
+        # 默认 40ms 是经验最优值；C4 P50<600ms 优化场景下调到 30（边界值），
+        # 节省 ~10ms 首块输出延迟，char_threshold=4 仍保证最小 4 字切片。
         self._window_ms = max(30, min(50, int(window_ms)))
         self._window_s = self._window_ms / 1000.0
 

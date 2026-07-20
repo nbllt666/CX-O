@@ -2,9 +2,7 @@
 记忆管理模型工具 - 供记忆管理模型（assistant）调用的工具
 """
 
-import json
-from datetime import datetime
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List
 
 from server.config import Settings
 from .registry import tool_registry

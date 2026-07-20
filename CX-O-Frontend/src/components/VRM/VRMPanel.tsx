@@ -108,7 +108,7 @@ export function VRMPanel({ audioElement, isPlaying, driver }: VRMPanelProps) {
 
   if (layout.vrmCollapsed) {
     return (
-      <div className="flex flex-col items-center py-2 bg-[var(--color-bg-secondary)] border-r border-[var(--color-border)]">
+      <div className={`flex flex-col items-center py-2 bg-[var(--color-bg-secondary)] ${vrm.position === 'left' ? 'border-r' : 'border-l'} border-[var(--color-border)]`}>
         <button
           onClick={toggleVRMCollapsed}
           className="p-2 rounded hover:bg-[var(--color-bg-hover)] transition-colors"
@@ -128,12 +128,21 @@ export function VRMPanel({ audioElement, isPlaying, driver }: VRMPanelProps) {
   return (
     <div
       ref={panelRef}
-      className="relative flex flex-col h-full bg-[var(--color-bg-secondary)] border-r border-[var(--color-border)]"
+      className={`relative flex flex-col h-full bg-[var(--color-bg-secondary)] ${vrm.position === 'left' ? 'border-r' : 'border-l'} border-[var(--color-border)]`}
       style={{ width: layout.vrmWidth }}
     >
       <div className="flex items-center justify-between px-2 py-1 border-b border-[var(--color-border)]">
         <span className="text-xs font-medium text-[var(--color-text-secondary)]">VRM 3D</span>
         <div className="flex items-center gap-1">
+          <button
+            onClick={() => setVRMSettings({ position: vrm.position === 'left' ? 'right' : 'left' })}
+            className="p-1 rounded hover:bg-[var(--color-bg-hover)] transition-colors text-[var(--color-text-tertiary)]"
+            title={vrm.position === 'left' ? '移到右侧' : '移到左侧'}
+          >
+            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7h12m0 0l-4-4m4 4l-4 4m0 6H4m0 0l4 4m-4-4l4-4" />
+            </svg>
+          </button>
           {driver && (
             <button
               onClick={() => setShowExpressionInfo(!showExpressionInfo)}

@@ -9,7 +9,18 @@ from server.core.logging_config import get_contextual_logger
 
 logger = get_contextual_logger(__name__)
 
-_TASKS_DIR = "data/tasks"
+
+# --------------------------------------------------------------------------- #
+# 路径锚点（rules-0 §三：os.path.dirname(os.path.abspath(__file__))，禁止相对路径）
+# CX-O 迁移版：_THIS_DIR     = c:\CX-O\CX-O-SERVER\server\core\tasks
+#   _PROJECT_ROOT = c:\CX-O\CX-O-SERVER（上 3 级）
+# 与 decision_core.py L35-37 路径锚点模式对齐。
+# D13 修复（20260719）：原 _TASKS_DIR = "data/tasks" 为相对路径，依赖 cwd 解析。
+#   修复为绝对路径，消除 cwd 依赖。
+# --------------------------------------------------------------------------- #
+_THIS_DIR = os.path.dirname(os.path.abspath(__file__))
+_PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(_THIS_DIR)))
+_TASKS_DIR = os.path.join(_PROJECT_ROOT, "data", "tasks")
 _TASK_LIST_FILE = os.path.join(_TASKS_DIR, "task_list.json")
 _SCHEDULED_TASKS_FILE = os.path.join(_TASKS_DIR, "scheduled_tasks.json")
 

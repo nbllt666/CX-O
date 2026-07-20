@@ -10,10 +10,9 @@ from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Request
 from fastapi.responses import Response
 
 from server.protocol.message import (
-    MessageType, create_response, create_error, create_pong,
-    PingMessage, RequestMessage
+    MessageType, create_response, create_error, create_pong
 )
-from server.protocol.actions import get_handler_name, SystemActions
+from server.protocol.actions import SystemActions
 from server.config import get_config
 from server.gateway.health import health_checker
 from server.core.websocket.manager import get_websocket_manager

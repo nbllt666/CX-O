@@ -369,4 +369,3 @@ def register_builtin_tools():
     内置工具现在强制开启，无需注册到注册表
     """
     # 内置工具不再注册到注册表，直接通过 BuiltinTools 类使用
-    pass

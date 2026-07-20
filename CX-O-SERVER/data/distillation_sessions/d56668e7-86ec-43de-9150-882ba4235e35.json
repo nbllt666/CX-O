@@ -1,0 +1,87 @@
+{
+  "session_id": "d56668e7-86ec-43de-9150-882ba4235e35",
+  "source_type": "text",
+  "source_ref": "啊啊啊呃呃呃嗯嗯嗯啊啊啊呃呃呃嗯嗯嗯啊啊啊呃呃呃嗯嗯嗯啊啊啊呃呃呃嗯嗯嗯啊啊啊呃呃呃嗯嗯嗯啊啊啊呃呃呃嗯嗯嗯啊啊啊呃呃呃嗯嗯嗯啊啊啊呃呃呃嗯嗯嗯啊啊啊呃呃呃嗯嗯嗯啊啊啊呃呃呃嗯嗯嗯",
+  "state": "S_FINALIZE",
+  "template_id": "default",
+  "max_turns": 4,
+  "ask_user_on_ambiguity": false,
+  "turns": [
+    {
+      "turn_index": 0,
+      "state": "S_INIT",
+      "agent_action": "proceed",
+      "agent_output": "[DistillationService] 初始化会话",
+      "user_response": null,
+      "timestamp": "2026-07-20T05:06:05.295114+00:00"
+    },
+    {
+      "turn_index": 1,
+      "state": "S_PREREAD",
+      "agent_action": "proceed",
+      "agent_output": "[S_PREREAD] 数据源类型=text, 模板=default。\n预读摘要: [MultimodalArtifact type=text native_decode=False vision_degraded=False] 啊啊啊呃呃呃嗯嗯嗯啊啊啊呃呃呃嗯嗯嗯啊啊啊呃呃呃嗯嗯嗯啊啊啊呃呃呃嗯嗯嗯啊啊啊呃呃呃嗯嗯嗯啊啊啊呃呃呃嗯嗯嗯啊啊啊呃呃呃嗯嗯嗯啊啊啊呃呃呃嗯嗯嗯啊啊啊呃呃呃嗯嗯嗯啊啊啊呃呃呃嗯嗯嗯",
+      "user_response": null,
+      "timestamp": "2026-07-20T05:06:05.295114+00:00"
+    },
+    {
+      "turn_index": 2,
+      "state": "S_QUESTION",
+      "agent_action": "proceed",
+      "agent_output": "[DistillationService] 进入 S_QUESTION 状态",
+      "user_response": "继续",
+      "timestamp": "2026-07-20T05:06:05.403715+00:00"
+    },
+    {
+      "turn_index": 3,
+      "state": "S_REFLECT",
+      "agent_action": "proceed",
+      "agent_output": "[DistillationService] 进入 S_REFLECT 状态",
+      "user_response": "继续",
+      "timestamp": "2026-07-20T05:06:05.512961+00:00"
+    },
+    {
+      "turn_index": 4,
+      "state": "S_CROSSVALIDATE",
+      "agent_action": "proceed",
+      "agent_output": "[DistillationService] D4 决策不回环，进入 S_CROSSVALIDATE (redistill_count=0, max_redistill_turns=2)",
+      "user_response": null,
+      "timestamp": "2026-07-20T05:06:05.621689+00:00"
+    },
+    {
+      "turn_index": 5,
+      "state": "S_EXTRACT",
+      "agent_action": "proceed",
+      "agent_output": "[DistillationService] D5 跳过跨源验证",
+      "user_response": null,
+      "timestamp": "2026-07-20T05:06:05.730423+00:00"
+    },
+    {
+      "turn_index": 6,
+      "state": "S_STORAGE_DECISION",
+      "agent_action": "extract",
+      "agent_output": "[DistillationService] 抽取结果: [S_EXTRACT] 结构化抽取结果:\n- source_type: text\n- template_id: default\n- preread_summary: [S_PREREAD] 数据源类型=text, 模板=default。\n预读摘要: [MultimodalArtifact type=text native_decode=False vision_degraded=False] 啊啊...",
+      "user_response": null,
+      "timestamp": "2026-07-20T05:06:05.839598+00:00"
+    },
+    {
+      "turn_index": 7,
+      "state": "S_FINALIZE",
+      "agent_action": "decide",
+      "agent_output": "[DistillationService] D1 决策存储位置 (quality_score=0.8)",
+      "user_response": null,
+      "timestamp": "2026-07-20T05:06:05.955537+00:00"
+    }
+  ],
+  "preread_summary": "[S_PREREAD] 数据源类型=text, 模板=default。\n预读摘要: [MultimodalArtifact type=text native_decode=False vision_degraded=False] 啊啊啊呃呃呃嗯嗯嗯啊啊啊呃呃呃嗯嗯嗯啊啊啊呃呃呃嗯嗯嗯啊啊啊呃呃呃嗯嗯嗯啊啊啊呃呃呃嗯嗯嗯啊啊啊呃呃呃嗯嗯嗯啊啊啊呃呃呃嗯嗯嗯啊啊啊呃呃呃嗯嗯嗯啊啊啊呃呃呃嗯嗯嗯啊啊啊呃呃呃嗯嗯嗯",
+  "ambiguity_questions": [
+    "1. 文本中的关键实体是否需要归一化？",
+    "2. 时间戳是否需要转换为 UTC？"
+  ],
+  "extracted_content": "[S_EXTRACT] 结构化抽取结果:\n- source_type: text\n- template_id: default\n- preread_summary: [S_PREREAD] 数据源类型=text, 模板=default。\n预读摘要: [MultimodalArtifact type=text native_decode=False vision_degraded=False] 啊啊啊呃呃呃嗯嗯嗯啊啊啊呃呃呃嗯嗯嗯啊啊啊呃呃呃嗯嗯嗯啊啊啊呃呃呃嗯嗯嗯啊啊啊呃呃呃嗯嗯嗯啊啊啊呃呃呃嗯嗯嗯啊啊啊呃呃呃嗯嗯嗯啊啊啊呃呃呃嗯嗯嗯啊啊啊呃呃呃嗯嗯嗯啊啊啊呃呃呃嗯嗯嗯\n- turns_count: 6\n",
+  "quality_score": 0.8,
+  "created_at": "2026-07-20T05:06:05.295114+00:00",
+  "updated_at": "2026-07-20T05:06:05.955537+00:00",
+  "finalized_at": null,
+  "is_finalized": false,
+  "error_message": null
+}

@@ -1,10 +1,10 @@
-from typing import Any, Dict, Optional
+from typing import Any, Dict
 
 from fastapi import HTTPException, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 
-from .response import APIResponse, ErrorResponse
+from .response import ErrorResponse
 
 
 class ServiceError(Exception):

@@ -1,0 +1,25 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://cx-o.local/schema/multimodal_artifact.schema.json",
+  "title": "MultimodalArtifact",
+  "description": "RADIX-Lite 多模态预处理产物数据契约（CX-O 扩展版）。MultimodalPipeline 5 模态（文本/角色卡/图片/视频/音频）预处理后产出统一的 MultimodalArtifact。图片模态支持 PaddleOCR + vLLM vision 双通道；视频/音频模态支持 vLLM 原生解码（仅当 LLM provider 为 vllm 时启用，否则降级）。vision 不可用时降级为仅 OCR。",
+  "type": "object",
+  "required": ["artifact_id", "type", "source", "text_content", "confidence", "vision_degraded", "created_at"],
+  "additionalProperties": false,
+  "properties": {
+    "artifact_id": {"type": "string", "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$", "description": "产物唯一 ID（UUID v4）。"},
+    "type": {"type": "string", "enum": ["text", "character_card", "image", "video", "audio"], "description": "模态类型。text/character_card/image/video/audio。"},
+    "source": {"type": "string", "minLength": 1, "description": "数据源描述（文件路径 / URL / 文本片段标识）。"},
+    "text_content": {"type": "string", "minLength": 0, "description": "预处理产出的纯文本内容。"},
+    "extra_metadata": {"type": "object", "default": {}, "description": "额外元数据（模态专属字段）。", "additionalProperties": true},
+    "confidence": {"type": "number", "minimum": 0, "maximum": 1, "default": 1.0, "description": "预处理置信度。"},
+    "vision_degraded": {"type": "boolean", "default": false, "description": "vision/vLLM 是否降级。"},
+    "native_decode_used": {"type": "boolean", "default": false, "description": "是否使用了 vLLM 原生解码（仅对 video/audio 模态有意义）。"},
+    "processing_time_ms": {"type": ["integer", "null"], "minimum": 0, "default": null, "description": "预处理耗时（毫秒）。"},
+    "created_at": {"type": "string", "format": "date-time", "description": "产物创建时间，ISO 8601 格式。"}
+  },
+  "definitions": {
+    "error_codes": {"type": "object", "description": "MultimodalPipeline 错误码定义。", "properties": {"UNSUPPORTED_SOURCE_TYPE": {"const": 422}, "FILE_NOT_FOUND": {"const": 404}, "PARSE_FAILED": {"const": 422}, "OCR_FAILED": {"const": 500}, "VISION_FAILED": {"const": 503}, "VLLM_NATIVE_UNAVAILABLE": {"const": 503}, "VIDEO_DECODE_FAILED": {"const": 422}, "AUDIO_DECODE_FAILED": {"const": 422}, "INTERNAL_ERROR": {"const": 500}}, "additionalProperties": false},
+    "exceptions": {"type": "object", "description": "MultimodalPipeline 异常契约。", "properties": {"ValueError_422": {"type": "object", "properties": {"exception_type": {"const": "ValueError"}, "trigger_method": {"const": "preprocess"}}}, "FileNotFoundError_404": {"type": "object", "properties": {"exception_type": {"const": "FileNotFoundError"}, "trigger_method": {"const": "preprocess"}}}, "RuntimeError_500": {"type": "object", "properties": {"exception_type": {"const": "RuntimeError"}, "trigger_methods": {"type": "array", "items": {"type": "string"}, "enum": ["preprocess", "_ocr_worker", "_vision_worker", "_vllm_native_worker"]}}}, "ConnectionError_503": {"type": "object", "properties": {"exception_type": {"const": "ConnectionError"}, "trigger_methods": {"type": "array", "items": {"type": "string"}, "enum": ["_vision_worker", "_vllm_native_worker"]}, "fallback": {"const": "vision_degraded=true"}}}}, "additionalProperties": false}
+  }
+}

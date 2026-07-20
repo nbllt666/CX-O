@@ -64,8 +64,10 @@ AUDIO_SAMPLE_WIDTH: int = 2  # 16-bit PCM = 2 bytes
 SNAC_TOKEN_OFFSET: int = 10
 # SNAC 24kHz: 7 codebooks，每帧 7 个码，解码为 480 样本（20ms）
 SNAC_CODES_PER_FRAME: int = 7
-# 流式解码批量大小（帧数），5 帧 = 100ms 音频，平衡延迟与效率
-STREAM_BATCH_FRAMES: int = 5
+# 流式解码批量大小（帧数），3 帧 = 60ms 音频，优先首包延迟（C4 P50<600ms 优化）
+# 原 5 帧 = 100ms，降到 3 帧 = 60ms 可节省 ~40ms 首包延迟
+# 权衡：batch 越小首包越快，但 SNAC 解码开销分摊到更小 chunk，吞吐略降
+STREAM_BATCH_FRAMES: int = 3
 
 # Orpheus 生成参数（与官方 orpheus-speech 一致）
 ORPHEUS_TEMPERATURE: float = float(os.environ.get("ORPHEUS_TEMPERATURE", "0.6"))

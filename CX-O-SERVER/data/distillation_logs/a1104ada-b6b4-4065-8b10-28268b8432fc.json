@@ -1,0 +1,33 @@
+[
+  {
+    "log_id": "a1506f73-44fc-43d6-abcc-4cb8a2787630",
+    "session_id": "a1104ada-b6b4-4065-8b10-28268b8432fc",
+    "decision_point": "D1_LOCATION",
+    "input": {
+      "artifact_summary": "[S_PREREAD] 数据源类型=text, 模板=default。\n预读摘要: [MultimodalArtifact type=text native_decode=False vision_degraded=False] E2E finalize 测试源",
+      "session_state": "S_CROSSVALIDATE",
+      "turn_history_summary": "['proceed', 'proceed', 'proceed', 'proceed', 'reflect', 'proceed', 'proceed']",
+      "extracted_content": null,
+      "quality_score": 0.931
+    },
+    "rubric_snapshot": {
+      "importance_threshold_permanent": 0.7,
+      "quality_reject_threshold": 0.3,
+      "max_redistill_turns": 2,
+      "ask_user_confidence_threshold": 0.4,
+      "cross_validate_sources": []
+    },
+    "llm_reasoning": null,
+    "llm_confidence": null,
+    "final_decision": {
+      "action": "store",
+      "location": "permanent_memories",
+      "details": {
+        "memory_id": 2,
+        "quality_score": 0.931,
+        "override_decision": null
+      }
+    },
+    "timestamp": "2026-07-18T14:58:31.627652+00:00"
+  }
+]

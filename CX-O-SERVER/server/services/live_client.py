@@ -4,11 +4,9 @@ Live 客户端处理器
 """
 from __future__ import annotations
 
-import asyncio
 import json
 import logging
-import time
-from typing import Any, Optional, TYPE_CHECKING
+from typing import Optional, TYPE_CHECKING
 
 from server.services.marker_adapter import MarkerAdapter
 from server.services.context_manager import get_context_manager
@@ -66,7 +64,7 @@ class LiveClientHandler:
 
             vad_result = result.get("vad", {})
             asr_result = result.get("asr")
-            interrupt_result = result.get("interrupt")
+            result.get("interrupt")
 
             if vad_result.get("state_changed"):
                 status = "speech_start" if vad_result["is_speaking"] else "speech_end"

@@ -1,0 +1,95 @@
+{
+  "session_id": "3764c9c1-4b49-4bbf-86f7-bf830f89f89f",
+  "source_type": "text",
+  "source_ref": "测试文本：用于验证蒸馏状态机正常推进的输入数据。",
+  "state": "S_FINALIZE",
+  "template_id": "default",
+  "max_turns": 4,
+  "ask_user_on_ambiguity": false,
+  "turns": [
+    {
+      "turn_index": 0,
+      "state": "S_INIT",
+      "agent_action": "proceed",
+      "agent_output": "[DistillationService] 初始化会话",
+      "user_response": null,
+      "timestamp": "2026-07-19T14:09:10.207461+00:00"
+    },
+    {
+      "turn_index": 1,
+      "state": "S_PREREAD",
+      "agent_action": "proceed",
+      "agent_output": "[S_PREREAD] 数据源类型=text, 模板=default。\n预读摘要: [MultimodalArtifact type=text native_decode=False vision_degraded=False] 测试文本:用于验证蒸馏状态机正常推进的输入数据。",
+      "user_response": null,
+      "timestamp": "2026-07-19T14:09:10.207461+00:00"
+    },
+    {
+      "turn_index": 2,
+      "state": "S_QUESTION",
+      "agent_action": "proceed",
+      "agent_output": "[DistillationService] 进入 S_QUESTION 状态",
+      "user_response": "继续",
+      "timestamp": "2026-07-19T14:09:10.316882+00:00"
+    },
+    {
+      "turn_index": 3,
+      "state": "S_REFLECT",
+      "agent_action": "proceed",
+      "agent_output": "[DistillationService] 进入 S_REFLECT 状态",
+      "user_response": "继续",
+      "timestamp": "2026-07-19T14:09:10.426598+00:00"
+    },
+    {
+      "turn_index": 4,
+      "state": "S_CROSSVALIDATE",
+      "agent_action": "proceed",
+      "agent_output": "[DistillationService] D4 决策不回环，进入 S_CROSSVALIDATE (redistill_count=0, max_redistill_turns=2)",
+      "user_response": null,
+      "timestamp": "2026-07-19T14:09:10.535887+00:00"
+    },
+    {
+      "turn_index": 5,
+      "state": "S_EXTRACT",
+      "agent_action": "proceed",
+      "agent_output": "[DistillationService] D5 跳过跨源验证",
+      "user_response": null,
+      "timestamp": "2026-07-19T14:09:10.644869+00:00"
+    },
+    {
+      "turn_index": 6,
+      "state": "S_STORAGE_DECISION",
+      "agent_action": "extract",
+      "agent_output": "[DistillationService] 抽取结果: [S_EXTRACT] 结构化抽取结果:\n- source_type: text\n- template_id: default\n- preread_summary: [S_PREREAD] 数据源类型=text, 模板=default。\n预读摘要: [MultimodalArtifact type=text native_decode=False vision_degraded=False] 测试...",
+      "user_response": null,
+      "timestamp": "2026-07-19T14:09:10.754360+00:00"
+    },
+    {
+      "turn_index": 7,
+      "state": "S_FINALIZE",
+      "agent_action": "decide",
+      "agent_output": "[DistillationService] D1 决策存储位置 (quality_score=0.3)",
+      "user_response": null,
+      "timestamp": "2026-07-19T14:09:11.901416+00:00"
+    },
+    {
+      "turn_index": 8,
+      "state": "S_FINALIZE",
+      "agent_action": "finalize",
+      "agent_output": "importance=0.75 >= importance_threshold_permanent=0.7，存入永久记忆",
+      "user_response": null,
+      "timestamp": "2026-07-19T14:09:12.071720+00:00"
+    }
+  ],
+  "preread_summary": "[S_PREREAD] 数据源类型=text, 模板=default。\n预读摘要: [MultimodalArtifact type=text native_decode=False vision_degraded=False] 测试文本:用于验证蒸馏状态机正常推进的输入数据。",
+  "ambiguity_questions": [
+    "1. 文本中的关键实体是否需要归一化？",
+    "2. 时间戳是否需要转换为 UTC？"
+  ],
+  "extracted_content": "[S_EXTRACT] 结构化抽取结果:\n- source_type: text\n- template_id: default\n- preread_summary: [S_PREREAD] 数据源类型=text, 模板=default。\n预读摘要: [MultimodalArtifact type=text native_decode=False vision_degraded=False] 测试文本:用于验证蒸馏状态机正常推进的输入数据。\n- turns_count: 6\n",
+  "quality_score": 0.3,
+  "created_at": "2026-07-19T14:09:10.207461+00:00",
+  "updated_at": "2026-07-19T14:09:12.071720+00:00",
+  "finalized_at": "2026-07-19T14:09:12.071720+00:00",
+  "is_finalized": true,
+  "error_message": null
+}

@@ -1,10 +1,6 @@
-import asyncio
-import uuid
-from datetime import datetime
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.exceptions import RequestValidationError
-from fastapi.responses import JSONResponse
 
 from server.api.exceptions import (
     ServiceError,
@@ -14,7 +10,7 @@ from server.api.exceptions import (
     validation_exception_handler,
 )
 from server.api.middleware.performance import PerformanceMiddleware
-from server.api.response import APIResponse, HealthResponse
+from server.api.response import HealthResponse
 from server.api.routers import (
     acp,
     admin,
@@ -24,12 +20,15 @@ from server.api.routers import (
     avatars,
     backup,
     chat,
+    decision,
     config,
     context,
     cxfc,
+    distillation,
     graph,
     memory,
     memory_chat,
+    multimodal,
     service,
     stats,
     tools,
@@ -39,7 +38,7 @@ from server.api.routers import (
 from server.config import get_settings
 from server.dependencies import ServiceState
 
-from server.core.logging_config import LogContext, get_contextual_logger, setup_logging
+from server.core.logging_config import get_contextual_logger, setup_logging
 
 settings = get_settings()
 
@@ -87,8 +86,12 @@ def register_api_routes(app: FastAPI):
     app.include_router(avatars.router, prefix="/api")
     app.include_router(admin.router, prefix="/api")
     app.include_router(backup.router, prefix="/api")
+    app.include_router(decision.router, prefix="/api")
     app.include_router(cxfc.router, prefix="/api")
     app.include_router(vector.router, prefix="/api")
+    app.include_router(multimodal.router, prefix="/api")
+    # distillation router 自带 /api/v1/distillation prefix，挂载时不加额外 prefix
+    app.include_router(distillation.router)
 
     app.add_exception_handler(ServiceError, service_exception_handler)
     app.add_exception_handler(HTTPException, http_exception_handler)

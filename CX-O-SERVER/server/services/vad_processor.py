@@ -7,7 +7,7 @@ import logging
 import struct
 import time
 from typing import Optional, Callable, Any
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from enum import Enum
 
 logger = logging.getLogger(__name__)
@@ -121,7 +121,7 @@ class VADProcessor:
             speech_probability = 0.5
 
         state_changed = False
-        previous_speaking = self._state.is_speaking
+        self._state.is_speaking
 
         if is_speech:
             self._state.last_speech_time = current_time
@@ -281,7 +281,9 @@ class AudioStreamProcessor:
         self._on_partial_result_callback = on_partial_result
 
     async def process_audio_chunk(self, audio_data: bytes) -> dict:
+        _diag_t0 = time.time()
         vad_result = self.vad.process_audio(audio_data)
+        _diag_t1 = time.time()
 
         self._audio_buffer.extend(audio_data)
         chunk_duration_ms = len(audio_data) / 32
@@ -301,6 +303,7 @@ class AudioStreamProcessor:
 
         try:
             is_last = not vad_result["is_speaking"]
+            _diag_t2 = time.time()
             send_success = await self._streaming_client.send_audio_chunk(
                 audio_data,
                 is_last=is_last
@@ -310,6 +313,8 @@ class AudioStreamProcessor:
                 logger.warning("Failed to send audio chunk to streaming ASR")
 
             streaming_result = await self._streaming_client.receive_result(timeout=0.1)
+            _diag_t3 = time.time()
+            logger.info(f"[DIAG-VAD] vad={(_diag_t1-_diag_t0)*1000:.1f}ms send+recv={(_diag_t3-_diag_t2)*1000:.1f}ms is_last={is_last} has_result={streaming_result is not None}")
 
             if streaming_result:
                 asr_result = {
@@ -333,17 +338,26 @@ class AudioStreamProcessor:
                 # 配合 interrupt_manager 实现毫秒级全双工打断：
                 # 当检测到用户在 Agent 说话期间开口（Partial Result 含有效文本），
                 # 立即触发打断判定，无需等待 VAD on_end 兜底
+                # 性能修复：on_asr_partial_result 内部调用 _check_can_interrupt → LLM chat（非流式，~8s），
+                # 若 await 会阻塞 process_audio_chunk 返回，导致 on_partial_result 延迟 8s，
+                # WS 端到端测试超时（spec 目标 < 800ms）。
+                # 改为 asyncio.create_task 非阻塞触发整个打断判定流程，主流程立即返回 result。
+                # interrupt 字段不再同步填充（调用方无需在 ASR 主路径上依赖此字段）。
                 if self._agent_interrupt and streaming_result.text:
-                    interrupt_result = await self._agent_interrupt.on_asr_partial_result(
-                        streaming_result.text,
-                        streaming_result.is_final
-                    )
-                    result["interrupt"] = interrupt_result
+                    async def _deferred_interrupt_check():
+                        try:
+                            interrupt_result = await self._agent_interrupt.on_asr_partial_result(
+                                streaming_result.text,
+                                streaming_result.is_final
+                            )
+                            if interrupt_result.get("should_interrupt"):
+                                await self._agent_interrupt.interrupt_user(
+                                    interrupt_result.get("reply_content", "")
+                                )
+                        except Exception as e:
+                            logger.error(f"Deferred agent interrupt check error: {e}")
 
-                    if interrupt_result.get("should_interrupt"):
-                        await self._agent_interrupt.interrupt_user(
-                            interrupt_result.get("reply_content", "")
-                        )
+                    asyncio.create_task(_deferred_interrupt_check())
 
                 if self._on_result_callback:
                     await self._on_result_callback(result)

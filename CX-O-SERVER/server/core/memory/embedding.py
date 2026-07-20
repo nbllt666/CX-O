@@ -1,7 +1,7 @@
 import os
 import threading
 from abc import ABC, abstractmethod
-from typing import Dict, List, Optional
+from typing import List
 
 from server.core.logging_config import get_contextual_logger
 
@@ -80,7 +80,7 @@ class OllamaEmbedding(EmbeddingModel):
 class SentenceTransformersEmbedding(EmbeddingModel):
     def __init__(self, model_name: str = "paraphrase-multilingual-MiniLM-L12-v2"):
         try:
-            import sys
+            pass
 
             from sentence_transformers import SentenceTransformer
 

@@ -5,7 +5,6 @@ ASR 打断模块 - 伪全双工实现
 import asyncio
 import json
 import logging
-import re
 from typing import Optional, Callable, Any, Tuple
 
 logger = logging.getLogger(__name__)

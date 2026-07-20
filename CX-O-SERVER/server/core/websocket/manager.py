@@ -137,7 +137,11 @@ class WebSocketManager:
         async with self._lock:
             connection = self.connections.get(client_id)
         if connection is not None:
+            logger.info(f"[DIAG-SEND] sending type={message.get('type')} to client_id={client_id}")
             await connection.send(message)
+            logger.info(f"[DIAG-SEND] sent type={message.get('type')} to client_id={client_id}")
+        else:
+            logger.warning(f"[DIAG-SEND] connection is None for client_id={client_id}, type={message.get('type')}")
 
     async def send_message(self, client_id: str, message: Dict[str, Any]):
         """发送消息给指定客户端（send_to_client 的别名）"""
@@ -290,7 +294,13 @@ class WebSocketManager:
         logger.debug(f"设置 Agent {agent_id} 离线超时: {timeout}秒")
 
     async def handle_message(self, client_id: str, message: Dict[str, Any]):
-        """处理收到的消息（基于 type 路由）"""
+        """处理收到的消息（基于 type 路由，action 回退）
+
+        路由优先级：
+        1. type 字段匹配 message_handlers → 走 type 路由（向后兼容）
+        2. action 字段存在 → 走 handle_action_message（voice.dual_stream 等）
+        3. 都不匹配 → 报错"未知消息类型"
+        """
         msg_type = message.get("type", "unknown")
 
         if msg_type in self.message_handlers:
@@ -301,6 +311,10 @@ class WebSocketManager:
                 await self.send_to_client(
                     client_id, {"type": "error", "error": f"处理消息失败: {str(e)}"}
                 )
+        elif "action" in message:
+            # action 回退：type 不匹配但有 action 字段，走 action 路由
+            # 支持 voice.dual_stream / chat.message / chat.stream 等 action-based 协议
+            await self.handle_action_message(client_id, message)
         else:
             logger.warning(f"未知消息类型: {msg_type}")
             await self.send_to_client(

@@ -4,7 +4,6 @@
 """
 import logging
 import re
-from typing import Any
 
 from server.services.emotion_parser import EMOTION_PATTERN
 from server.services.effect_parser import EFFECT_PATTERN

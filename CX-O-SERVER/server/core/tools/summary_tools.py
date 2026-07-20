@@ -2,7 +2,7 @@
 摘要模型工具 - 供摘要模型（summary）调用的工具
 """
 
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, Optional
 
 from .registry import tool_registry
 from .graph_tools import (
@@ -536,9 +536,9 @@ async def save_summary_memory(
 
         try:
             if len(timestamp) == 12:  # yyyymmddhhmm
-                dt = datetime.strptime(timestamp, "%Y%m%d%H%M")
+                datetime.strptime(timestamp, "%Y%m%d%H%M")
             elif len(timestamp) == 8:  # yyyymmdd
-                dt = datetime.strptime(timestamp, "%Y%m%d")
+                datetime.strptime(timestamp, "%Y%m%d")
             else:
                 return {"error": "时间戳格式错误，应为 yyyymmddhhmm 或 yyyymmdd"}
         except ValueError:
@@ -719,7 +719,7 @@ async def trigger_topic_summary(
 
         from datetime import datetime
 
-        timestamp = datetime.now().strftime("%Y%m%d%H%M")
+        datetime.now().strftime("%Y%m%d%H%M")
         importance = 7
 
         tags = ["topic_summary", "conversation_summary"]

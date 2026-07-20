@@ -73,6 +73,16 @@ class ACPAgentPatchRequest(BaseModel):
     status: Optional[str] = None
 
 
+class ACPAgentPortUpdateRequest(BaseModel):
+    """ACP agent 端口更新请求（v3.1.0 端口修复）
+
+    agent 重启使用新端口后，主系统通过此端点更新记录的端口，
+    后续消息投递将使用新端口。
+    """
+
+    port: int
+
+
 @router.post("/acp/discover")
 async def discover_agents(request: ACPDiscoverRequest = None):
     """发现Agents"""
@@ -360,6 +370,27 @@ async def send_message(request: ACPSendMessageRequest):
         raise HTTPException(status_code=500, detail="内部服务器错误")
 
 
+@router.post("/acp/receive")
+async def receive_external_message(payload: dict):
+    """接收外部 ACP Agent 通过 HTTP 投递的消息（移植自 CXHMS v3.1.0）
+
+    此端点供外部 ACP Agent 的 send_to_main_system 调用，
+    将消息存入本地历史并触发自动回复。
+    修复：20260719_模块0_CXFC路由注入修复.md 第十二章（端点原本缺失导致 404）
+    """
+    from server.dependencies import get_acp_manager
+    from server.core.acp.manager import ACPMessageInfo
+
+    try:
+        message = ACPMessageInfo(**payload)
+        acp_mgr = get_acp_manager()
+        result = await acp_mgr.receive_external_message(message)
+        return {"status": "success", "message": "消息已接收", "data": result.to_dict()}
+    except Exception as e:
+        logger.error(f"接收外部消息失败: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="内部服务器错误")
+
+
 @router.post("/acp/send/group")
 async def send_group_message(group_id: str, content: Dict):
     from server.dependencies import get_acp_manager
@@ -411,4 +442,66 @@ async def get_acp_stats():
         return {"status": "success", "statistics": stats}
     except Exception as e:
         logger.error(f"获取ACP统计失败: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="内部服务器错误")
+
+
+# ==================== v3.1.0 per-agent 资源隔离端点 ====================
+
+
+@router.delete("/acp/agents/{agent_id}/resources")
+async def cleanup_agent_resources(agent_id: str):
+    """清理 agent 资源（v3.1.0 per-agent 资源隔离）
+
+    删除 agent 的 per-agent 资源：
+    - per-agent Weaviate collection（CXHMSMemory_{agent_id}）
+    - per-agent SQLite graph 文件（data/graph_{agent_id}.db）
+
+    向后兼容：agent_id="default" 跳过共享资源清理（CXOMemory / data/graph.db），仅清缓存。
+    """
+    from server.dependencies import get_acp_manager
+
+    try:
+        acp_mgr = get_acp_manager()
+        # 检查 agent 是否存在（直接访问 agents 字典，不依赖可能不存在的 get_agent 方法）
+        if agent_id not in acp_mgr.agents:
+            raise HTTPException(status_code=404, detail="代理不存在")
+        ok = await acp_mgr.cleanup_agent_resources(agent_id)
+        if not ok:
+            raise HTTPException(status_code=500, detail="资源清理失败")
+        return {
+            "status": "success",
+            "agent_id": agent_id,
+            "message": "agent 资源已清理（Weaviate collection + SQLite graph）",
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"清理 agent 资源失败: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="内部服务器错误")
+
+
+@router.put("/acp/agents/{agent_id}/port")
+async def update_agent_port(agent_id: str, request: ACPAgentPortUpdateRequest):
+    """更新 agent 端口（v3.1.0 端口修复）
+
+    agent 重启使用新端口后，主系统记录的端口更新，新消息投递到新端口。
+    端口范围 1-65535，无效端口或 agent 不存在返回 404。
+    """
+    from server.dependencies import get_acp_manager
+
+    try:
+        acp_mgr = get_acp_manager()
+        ok = await acp_mgr.update_agent_port(agent_id, request.port)
+        if not ok:
+            raise HTTPException(status_code=404, detail="代理不存在或端口无效（1-65535）")
+        return {
+            "status": "success",
+            "agent_id": agent_id,
+            "port": request.port,
+            "message": "agent 端口已更新",
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"更新 agent 端口失败: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail="内部服务器错误")

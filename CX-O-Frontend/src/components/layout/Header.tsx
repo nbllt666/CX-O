@@ -38,6 +38,9 @@ export const Header: React.FC<HeaderProps> = ({ title, actions }) => {
         )}
       </div>
 
+      {/* 页面级内容插槽 - 由具体页面通过 Portal 注入标题和按钮 */}
+      <div id="header-page-slot" className="flex items-center justify-between flex-1 px-4 min-w-0 gap-4" />
+
       <div className="flex items-center gap-2">
         {actions}
 

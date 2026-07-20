@@ -6,7 +6,7 @@ import asyncio
 import json
 import logging
 import time
-from typing import Optional, Callable, Any, AsyncGenerator
+from typing import Optional, Callable, Any
 from dataclasses import dataclass, field
 
 logger = logging.getLogger(__name__)

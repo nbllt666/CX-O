@@ -5,7 +5,6 @@
 """
 from __future__ import annotations
 
-import asyncio
 import base64
 import logging
 import os
@@ -14,16 +13,13 @@ import time
 from pathlib import Path
 from typing import Any, AsyncGenerator, Callable, Optional
 
-import httpx
 
-from server.core.utils import get_shared_http_client, close_shared_http_client, retry_with_backoff
+from server.core.utils import get_shared_http_client, retry_with_backoff
 from server.services.emotion_parser import extract_emotions_with_text, parse_text_with_emotions
 from server.services.effect_parser import EffectParser
 from server.services.tts_audio_utils import (
     split_text_by_sentences,
-    generate_silence,
     concatenate_audio,
-    load_emotion_voices,
 )
 
 logger = logging.getLogger(__name__)
@@ -326,7 +322,7 @@ class TTSService:
         **kwargs
     ) -> bytes:
         """
-        调用 Orpheus TTS（vLLM OpenAI 兼容 API）合成音频。
+        调用 Orpheus TTS（vLLM OpenAI 兼容 API）合成音频（非流式，返回完整 WAV bytes）。
 
         设计说明：
         - Orpheus 使用预设音色（tara/leo 等），不传 ref_audio / ref_text，
@@ -336,6 +332,10 @@ class TTSService:
         - text 中的 <laugh>、<giggle> 等情感标签原样透传，由 Orpheus 模型自行解析，
           本方法不做任何解析或剥离，以保留 Orpheus 原生情感控制能力。
         - 返回完整 audio bytes（WAV 格式，24000Hz 16-bit PCM）。
+
+        注意：非流式模式会等待 Orpheus 完成全部合成（~3-8s）才返回，
+        无法利用 vLLM chunked prefill 带来的 505ms 首包优势。
+        需要低延迟首包请使用 `_synthesize_orpheus_stream`。
         """
         # 选定音色：优先使用调用方传入的 voice，否则回退到构造时配置的默认音色
         selected_voice = voice or self._orpheus_voice
@@ -345,21 +345,21 @@ class TTSService:
         orpheus_input = f"{selected_voice}: {text}"
 
         async def _make_request():
-            # 使用独立 httpx.AsyncClient 以便精确控制超时（Orpheus 合成可能较慢）
-            async with httpx.AsyncClient(
-                timeout=self._orpheus_timeout
-            ) as client:
-                response = await client.post(
-                    f"{self._orpheus_url}/v1/audio/speech",
-                    json={
-                        "input": orpheus_input,
-                        "voice": selected_voice,
-                        "stream": False,
-                    }
-                )
-                response.raise_for_status()
-                # 响应体为完整 audio/wav（24000Hz, 16-bit PCM），直接返回 bytes
-                return response.content
+            # 使用预热好的 shared HTTP client + per-request timeout 覆盖
+            # （Orpheus 合成较慢需要长超时；shared client 已预热避免每次 8s 构造延迟）
+            client = get_shared_http_client()
+            response = await client.post(
+                f"{self._orpheus_url}/v1/audio/speech",
+                json={
+                    "input": orpheus_input,
+                    "voice": selected_voice,
+                    "stream": False,
+                },
+                timeout=self._orpheus_timeout,
+            )
+            response.raise_for_status()
+            # 响应体为完整 audio/wav（24000Hz, 16-bit PCM），直接返回 bytes
+            return response.content
 
         return await retry_with_backoff(
             _make_request,
@@ -368,6 +368,83 @@ class TTSService:
             max_delay=30.0,
             service_name="TTS-Orpheus",
         )
+
+    async def _synthesize_orpheus_stream(
+        self,
+        text: str,
+        voice: str | None = None,
+        **kwargs
+    ) -> AsyncGenerator[bytes, None]:
+        """
+        流式调用 Orpheus TTS，边接收边 yield PCM chunks。
+
+        利用 vLLM chunked prefill + prefix caching 优化，首个 PCM chunk 在 ~500ms 内到达
+        （对比非流式 `_synthesize_orpheus` 需等待 ~3-8s 完整合成）。
+
+        设计说明：
+        - 请求体格式：{"input": "{voice}: {text}", "voice": voice, "stream": true,
+                       "response_format": "wav"}
+        - Orpheus 流式响应：第一块为 44 字节 WAV header（data_size=0），
+          后续为 raw PCM int16 bytes（24000Hz mono）。详见 orpheus-tts/api_server.py
+          `_handle_streaming_speech` 的 audio_stream 生成器。
+        - 本方法跳过 WAV header，仅 yield 后续 PCM bytes。
+        - 调用方应将每个 yield 的 PCM chunk 单独推送前端，实现真流式播放。
+
+        Args:
+            text: 待合成文本（含 <laugh> 等情感标签，原样透传）
+            voice: Orpheus 预设音色（tara/leo 等），None 则用构造时默认音色
+
+        Yields:
+            bytes: 24000Hz 16-bit mono PCM chunks（不含 WAV header）
+        """
+        # 选定音色：优先使用调用方传入的 voice，否则回退到构造时配置的默认音色
+        selected_voice = voice or self._orpheus_voice
+
+        # 拼接 Orpheus 约定的输入格式："{voice}: {text}"
+        # 情感标签原样保留在 text 中透传
+        orpheus_input = f"{selected_voice}: {text}"
+
+        # 使用预热好的 shared HTTP client，避免每次 8s 构造延迟
+        # trust_env=False + proxy=None 已在 get_shared_http_client 中设置，
+        # 不会被 Windows 系统代理拦截（127.0.0.1:7897）
+        client = get_shared_http_client()
+
+        # 流式 POST 请求：vLLM 边生成 SNAC tokens 边返回 PCM chunks
+        # timeout 为整体流式接收超时（含等待 vLLM prefill + 全部 PCM chunks）
+        try:
+            async with client.stream(
+                "POST",
+                f"{self._orpheus_url}/v1/audio/speech",
+                json={
+                    "input": orpheus_input,
+                    "voice": selected_voice,
+                    "stream": True,
+                    "response_format": "wav",
+                },
+                timeout=self._orpheus_timeout,
+            ) as response:
+                response.raise_for_status()
+
+                # 跳过 44 字节 WAV header，仅 yield PCM 数据
+                # httpx aiter_bytes 可能以任意边界切分，需用累积变量精确跳过 header
+                bytes_received = 0
+                WAV_HEADER_SIZE = 44
+
+                async for chunk in response.aiter_bytes():
+                    if bytes_received < WAV_HEADER_SIZE:
+                        # 当前 chunk 还在 header 范围内，跳过对应字节
+                        skip = min(WAV_HEADER_SIZE - bytes_received, len(chunk))
+                        chunk = chunk[skip:]
+                        bytes_received += skip
+                        if not chunk:
+                            continue
+
+                    bytes_received += len(chunk)
+                    if chunk:
+                        yield chunk
+        except Exception as e:
+            logger.error(f"Orpheus 流式合成失败: {e}", exc_info=True)
+            raise
 
     async def _validate_orpheus_service(self) -> None:
         """
@@ -378,17 +455,18 @@ class TTSService:
         - 健康检查失败仅记录警告日志，不阻塞服务启动（允许 Orpheus 后置启动）。
         """
         try:
-            async with httpx.AsyncClient(timeout=5.0, trust_env=False) as client:
-                response = await client.get(f"{self._orpheus_url}/health")
-                if response.status_code == 200:
-                    logger.info(
-                        f"Orpheus TTS 服务健康检查通过: {self._orpheus_url}/health"
-                    )
-                else:
-                    logger.warning(
-                        f"Orpheus TTS 服务健康检查返回非 200 状态码: "
-                        f"{response.status_code}，服务可能未完全就绪。"
-                    )
+            # 使用预热好的 shared HTTP client，避免每次调用都重新构造 httpx.AsyncClient
+            client = get_shared_http_client()
+            response = await client.get(f"{self._orpheus_url}/health", timeout=5.0)
+            if response.status_code == 200:
+                logger.info(
+                    f"Orpheus TTS 服务健康检查通过: {self._orpheus_url}/health"
+                )
+            else:
+                logger.warning(
+                    f"Orpheus TTS 服务健康检查返回非 200 状态码: "
+                    f"{response.status_code}，服务可能未完全就绪。"
+                )
         except Exception as e:
             # 健康检查失败不阻塞启动，仅记录警告（Orpheus 可随后启动）
             logger.warning(
@@ -638,29 +716,99 @@ class TTSService:
         chunk_index = 0
         # 对接 token 流与细粒度分块器：边收 LLM token 边切分，切出一段即送 TTS
         # 这是压缩首包延迟的核心：第一段 4 字即可触发 TTS，无需等整句
+        _diag_tts_start = time.monotonic()
+        _diag_tts_chunk_idx = 0
         async for text_segment in self.split_text_streaming(
             token_stream, char_threshold=char_threshold
         ):
             if not text_segment.strip():
                 continue
 
+            # [DIAG-TTS] 记录每个 TTS chunk 的开始/完成时间，定位串行排队延迟
+            _diag_chunk_start = time.monotonic()
+            if _diag_tts_chunk_idx == 0:
+                logger.info(
+                    f"[DIAG-TTS] first segment ready at {(_diag_chunk_start-_diag_tts_start)*1000:.1f}ms: '{text_segment[:30]}'"
+                )
+
             try:
                 # 根据模式分发到对应 TTS 引擎（orpheus / embedded / triton / remote）
                 if self._mode == "orpheus":
-                    # Orpheus 模式：使用预设音色，文本（含 <laugh> 等情感标签）原样透传
-                    # 不传 ref_audio_path / ref_text，由 Orpheus 模型按 voice 选择音色
-                    voice = kwargs.get("voice", self._orpheus_voice)
-                    audio_bytes = await self._synthesize_orpheus(
+                    # Orpheus 流式合成：每个 text_segment 拆分为多个 PCM chunks 分别 yield
+                    # 利用 vLLM chunked prefill，首个 PCM chunk 在 ~500ms 到达（对比非流式 ~3-8s）
+                    # 用 pop 取出 voice 后再展开 kwargs，避免 voice 既显式传又通过 **kwargs
+                    # 重复传入导致 "got multiple values for keyword argument 'voice'" 错误
+                    voice = kwargs.pop("voice", self._orpheus_voice)
+                    _first_pcm_sent = False
+                    async for pcm_chunk in self._synthesize_orpheus_stream(
                         text_segment, voice=voice, **kwargs
+                    ):
+                        if not pcm_chunk:
+                            continue
+                        # 首个 PCM chunk 到达时记录延迟（核心 KPI：T5 < 800ms）
+                        if not _first_pcm_sent:
+                            _first_pcm_dur = (time.monotonic() - _diag_chunk_start) * 1000
+                            logger.info(
+                                f"[DIAG-TTS] chunk {_diag_tts_chunk_idx} first PCM in {_first_pcm_dur:.1f}ms "
+                                f"(size={len(pcm_chunk)}, text='{text_segment[:30]}')"
+                            )
+                            _first_pcm_sent = True
+                        else:
+                            # 后续 PCM chunks 仅 debug 级别记录，避免日志爆炸
+                            logger.debug(
+                                f"[DIAG-TTS] chunk {_diag_tts_chunk_idx} PCM size={len(pcm_chunk)}"
+                            )
+
+                        chunk = {
+                            # 同一 text_segment 的多个 PCM chunks 共享 text_segment，
+                            # 前端按 chunk_index 顺序拼接 PCM 即可
+                            "text_segment": text_segment if not _first_pcm_sent or chunk_index == 0 else "",
+                            "audio_data": pcm_chunk,
+                            "chunk_index": chunk_index,
+                            "is_final": False,
+                        }
+
+                        if on_chunk:
+                            on_chunk(text_segment, pcm_chunk)
+
+                        yield chunk
+                        chunk_index += 1
+                        _diag_tts_chunk_idx += 1
+
+                    # 若该 text_segment 未产生任何 PCM chunk（异常情况），记录警告
+                    if not _first_pcm_sent:
+                        logger.warning(
+                            f"[DIAG-TTS] segment produced no PCM: text='{text_segment[:30]}'"
+                        )
+
+                    # 整个 text_segment 流式合成完成
+                    _diag_chunk_dur = (time.monotonic() - _diag_chunk_start) * 1000
+                    logger.info(
+                        f"[DIAG-TTS] segment done in {_diag_chunk_dur:.1f}ms "
+                        f"(text='{text_segment[:30]}')"
                     )
-                elif self._mode == "embedded":
-                    from f5_tts.api import get_f5tts
-                    if get_f5tts() is not None:
-                        audio_bytes = await self._synthesize_embedded(
-                            text_segment, audio_path, text_ref,
-                            kwargs.get("speed", self._speed),
-                            kwargs.get("cross_fade_duration", self._cross_fade_duration),
-                            **kwargs
+
+                else:
+                    # 非 orpheus 模式：保持原有逻辑，每个 text_segment 一个完整 audio_bytes
+                    if self._mode == "embedded":
+                        from f5_tts.api import get_f5tts
+                        if get_f5tts() is not None:
+                            audio_bytes = await self._synthesize_embedded(
+                                text_segment, audio_path, text_ref,
+                                kwargs.get("speed", self._speed),
+                                kwargs.get("cross_fade_duration", self._cross_fade_duration),
+                                **kwargs
+                            )
+                        else:
+                            audio_bytes = await self._make_tts_request(
+                                gen_text=text_segment,
+                                ref_text=text_ref,
+                                audio_data=audio_data,
+                                **kwargs
+                            )
+                    elif self._use_triton and self._gateway_url:
+                        audio_bytes = await self._synthesize_triton(
+                            text_segment, audio_data, text_ref, **kwargs
                         )
                     else:
                         audio_bytes = await self._make_tts_request(
@@ -669,31 +817,28 @@ class TTSService:
                             audio_data=audio_data,
                             **kwargs
                         )
-                elif self._use_triton and self._gateway_url:
-                    audio_bytes = await self._synthesize_triton(
-                        text_segment, audio_data, text_ref, **kwargs
+
+                    chunk = {
+                        "text_segment": text_segment,
+                        "audio_data": audio_bytes,
+                        "chunk_index": chunk_index,
+                        # 流式无法预知是否最后一块，结束时单独发 final 标记
+                        "is_final": False,
+                    }
+
+                    # [DIAG-TTS] 记录 TTS chunk 完成时间，定位串行排队延迟
+                    _diag_chunk_dur = (time.monotonic() - _diag_chunk_start) * 1000
+                    logger.info(
+                        f"[DIAG-TTS] chunk {_diag_tts_chunk_idx} done in {_diag_chunk_dur:.1f}ms "
+                        f"(size={len(audio_bytes) if audio_bytes else 0}, text='{text_segment[:30]}')"
                     )
-                else:
-                    audio_bytes = await self._make_tts_request(
-                        gen_text=text_segment,
-                        ref_text=text_ref,
-                        audio_data=audio_data,
-                        **kwargs
-                    )
+                    _diag_tts_chunk_idx += 1
 
-                chunk = {
-                    "text_segment": text_segment,
-                    "audio_data": audio_bytes,
-                    "chunk_index": chunk_index,
-                    # 流式无法预知是否最后一块，结束时单独发 final 标记
-                    "is_final": False,
-                }
+                    if on_chunk and audio_bytes:
+                        on_chunk(text_segment, audio_bytes)
 
-                if on_chunk and audio_bytes:
-                    on_chunk(text_segment, audio_bytes)
-
-                yield chunk
-                chunk_index += 1
+                    yield chunk
+                    chunk_index += 1
 
             except Exception as e:
                 logger.error(f"TTS fine stream error for chunk {chunk_index}: {e}")

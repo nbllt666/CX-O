@@ -23,10 +23,17 @@ RUN pip install --no-cache-dir \
     uvicorn \
     numpy \
     httpx \
-    pydantic
+    pydantic \
+    kaldi-native-fbank \
+    onnxruntime \
+    python-multipart
 
 # 复制 SenseVoice 模型代码和 API 服务
 COPY sensevoice/ /app/sensevoice/
+
+# 让 /app 加入 sys.path，使 `from sensevoice.model import` 在容器内可解析
+# 原因：CMD 用脚本绝对路径启动时 sys.path[0]=/app/sensevoice/，不含 /app/
+ENV PYTHONPATH=/app
 
 # 端口
 EXPOSE 8005

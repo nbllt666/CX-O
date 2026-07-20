@@ -2,9 +2,10 @@
 
 > 接口契约层，rules-3 §二定义。所有对外接口以 Python .pyi 存根文件定义，零实现逻辑，仅声明签名（方法名、参数类型、返回值类型、抛出异常）。
 
-## 当前状态：种子阶段 + s0601 部分补全
+## 当前状态：种子阶段 + s0601 部分补全 + RADIX-Lite 迁移补全
 
 - s0601 (Spec A) 已补全 `websocket.pyi`（7 消息模型 + 18 个独立 Action 类镜像 + 4 WS 端点签名 + 5 工厂函数签名）
+- spec `migrate-cxhms-radix-acp-multimodal` 已补全 RADIX-Lite 6 个 .pyi（template_engine / multimodal_pipeline / distillation_service / decision_core / agent_tools_v2 / memory_manager_v2）—— 见下方「RADIX-Lite 迁移存根清单」
 - 其余存根仍为种子阶段，待 s0201 完整补全
 
 ## 计划存根清单（19 个 FastAPI router + WS）
@@ -42,3 +43,29 @@
 - 接口契约必须包含异常说明（rules-3 §二）
 - 调用方必须处理约定的异常
 - 异常类型与错误码对应 `schema/error_codes.schema.json`
+
+## RADIX-Lite 迁移存根清单（spec `migrate-cxhms-radix-acp-multimodal`）
+
+> 从 CXHMS v1.2.0 迁移 6 个 .pyi，对应 RADIX-Lite 模块 7-10。CX-O 扩展：multimodal_pipeline.pyi 增加 `_vllm_native_worker` 方法支持 vLLM 原生视频/音频解码。
+
+| 存根文件 | 源真理（CXHMS 源码） | 对应 schema | 状态 |
+|---------|---------------------|------------|------|
+| `template_engine.pyi` | `c:/CX-O/CXHMS/modules/模块7_模板引擎/template_engine.py` | `public/schema/distillation_session.schema.json`（template_id 关联） | ✅ 迁移完成（7 方法，原样复制） |
+| `multimodal_pipeline.pyi` | `c:/CX-O/CXHMS/modules/模块8_多模态管线/multimodal_pipeline.py` | `public/schema/multimodal_artifact.schema.json` | ✅ 迁移完成（CX-O 扩展：5 模态 + `_vllm_native_worker`） |
+| `distillation_service.pyi` | `c:/CX-O/CXHMS/modules/模块9_蒸馏服务/distillation_service.py` | `public/schema/distillation_session.schema.json` + `distillation_log.schema.json` | ✅ 迁移完成（OBS-3 修正：7→9 状态机；端口 8011→8000） |
+| `decision_core.pyi` | `c:/CX-O/CXHMS/modules/模块10_管理Agent扩展/decision_core.py` | `public/schema/distillation_log.schema.json` + `storage_decision.schema.json` | ✅ 迁移完成（9 方法：6 决策点 + 3 内部方法，原样复制） |
+| `agent_tools_v2.pyi` | `c:/CX-O/CXHMS/modules/模块10_管理Agent扩展/agent_tools.py` | `public/schema/agent_config_v2.schema.json` | ✅ 迁移完成（8 工具方法，原样复制） |
+| `memory_manager_v2.pyi` | `c:/CX-O/CXHMS/backend/core/memory/manager.py`（V2 扩展部分） | `public/schema/storage_decision.schema.json` + `rejected_content.schema.json` | ✅ 迁移完成（3 方法：write_with_decision + get_rejected_content + cleanup_expired_rejected_content） |
+
+### CX-O 扩展点
+
+- **multimodal_pipeline.pyi**：新增 `_vllm_native_worker(source_ref, modality)` 方法
+  - 检测 LLM provider 配置：若 `provider=vllm` 则通过 vLLM OpenAI 兼容 API 直接投递原生视频/音频文件
+  - 若 `provider!=vllm` 或 vLLM 端点不可达：降级路径，返回占位文本 + `vision_degraded=True` + `native_decode_used=False`
+  - `MultimodalArtifact` 模型新增 `native_decode_used: bool = False` 字段
+
+### 契约可验证性（RADIX 部分）
+
+- **测试套件**：未闭合，Task A2 将生成 6 份 Mock 后由 Task D5 补 E2E
+- **signature_match 校验**：CX-O-SERVER 实现模块（B1/B2/B3/B4）必须严格匹配存根签名
+- **CX-O 扩展验证**：`_vllm_native_worker` 在 provider=vllm 与 provider!=vllm 两种场景下行为需通过单测

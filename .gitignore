@@ -277,7 +277,7 @@ so-vits-svc-4.1-Stable/
 VoxCPM-main/
 vllm-gemma4/
 weaviate-embeddings/
-
+CXHMS/
 # Weaviate Docker Compose 文件
 docker-compose.weaviate.yml
 docker-compose.weaviate-gpu.yml

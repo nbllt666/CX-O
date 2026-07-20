@@ -1,0 +1,39 @@
+{
+  "session_id": "3fb638f5-0a26-4e74-932d-01c4b94a9212",
+  "source_type": "image",
+  "source_ref": "test_image.png",
+  "state": "S_PREREAD",
+  "template_id": "default",
+  "max_turns": 4,
+  "ask_user_on_ambiguity": true,
+  "turns": [
+    {
+      "turn_index": 0,
+      "state": "S_INIT",
+      "agent_action": "proceed",
+      "agent_output": "[DistillationService] 初始化会话",
+      "user_response": null,
+      "timestamp": "2026-07-19T14:09:16.168109+00:00"
+    },
+    {
+      "turn_index": 1,
+      "state": "S_PREREAD",
+      "agent_action": "proceed",
+      "agent_output": "[S_PREREAD] 数据源类型=image, 模板=default。\n预读摘要: [DistillationService] MultimodalPipeline 预处理降级: source_type=image, source_ref=test_image.png, error=图片文件不存在（404）: test_image.png",
+      "user_response": null,
+      "timestamp": "2026-07-19T14:09:16.168109+00:00"
+    }
+  ],
+  "preread_summary": "[S_PREREAD] 数据源类型=image, 模板=default。\n预读摘要: [DistillationService] MultimodalPipeline 预处理降级: source_type=image, source_ref=test_image.png, error=图片文件不存在（404）: test_image.png",
+  "ambiguity_questions": [
+    "1. OCR 文本块的置信度阈值是多少？",
+    "2. 视觉描述是否需要单独存储？"
+  ],
+  "extracted_content": null,
+  "quality_score": null,
+  "created_at": "2026-07-19T14:09:16.168109+00:00",
+  "updated_at": "2026-07-19T14:09:16.168109+00:00",
+  "finalized_at": null,
+  "is_finalized": false,
+  "error_message": null
+}

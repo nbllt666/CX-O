@@ -6,7 +6,7 @@
 """
 
 import logging
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 
@@ -209,7 +209,7 @@ class ModelRouter:
         except httpx.ConnectError as e:
             error_msg = f"连接失败: {e}"
         except httpx.TimeoutException as e:
-            error_msg = f"连接超时"
+            error_msg = "连接超时"
         except Exception as e:
             error_msg = str(e)
 

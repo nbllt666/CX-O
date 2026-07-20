@@ -27,13 +27,13 @@ export const Layout: React.FC<LayoutProps> = ({ children, sidebar, header }) => 
   };
 
   return (
-    <div className="min-h-screen bg-[var(--color-bg-secondary)]">
+    <div className="h-screen bg-[var(--color-bg-secondary)] overflow-hidden">
       {header && (
         <header className="fixed top-0 left-0 right-0 h-[var(--header-height)] bg-[var(--color-bg-primary)] border-b border-[var(--color-border)] z-40">
           {header}
         </header>
       )}
-      <div className="flex pt-[var(--header-height)]">
+      <div className="flex h-[calc(100vh-var(--header-height))] mt-[var(--header-height)]">
         {sidebar && (
           <aside
             className={cn(
@@ -48,7 +48,7 @@ export const Layout: React.FC<LayoutProps> = ({ children, sidebar, header }) => 
         )}
         <main
           className={cn(
-            'flex-1 min-h-[calc(100vh-var(--header-height))]',
+            'flex-1 h-full',
             'transition-all duration-[var(--transition-normal)]',
             sidebar ? (sidebarCollapsed ? 'ml-[var(--sidebar-collapsed-width)]' : 'ml-[var(--sidebar-width)]') : false
           )}
@@ -60,6 +60,7 @@ export const Layout: React.FC<LayoutProps> = ({ children, sidebar, header }) => 
               animate={{ opacity: 1, y: 0 }}
               exit={{ opacity: 0, y: -8 }}
               transition={{ duration: 0.2, ease: [0.4, 0, 0.2, 1] }}
+              className="h-full"
             >
               {children}
             </motion.div>

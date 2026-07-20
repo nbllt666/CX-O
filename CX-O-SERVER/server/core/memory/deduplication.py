@@ -4,10 +4,9 @@
 """
 
 import hashlib
-import json
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Any, Dict, List, Optional, Set, Tuple
+from typing import Any, Dict, List, Optional, Set
 
 from server.core.logging_config import get_contextual_logger
 
@@ -271,7 +270,7 @@ class DeduplicationEngine:
         """记录搜索时发现的相似性"""
         if similarity_score >= self.threshold:
             logger.info(
-                f"搜索发现重复记忆",
+                "搜索发现重复记忆",
                 extra={
                     "query_memory_id": query_memory_id,
                     "result_memory_id": result_memory_id,

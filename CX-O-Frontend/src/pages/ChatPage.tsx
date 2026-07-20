@@ -1,4 +1,5 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
+import { createPortal } from 'react-dom';
 import { api } from '../api/client';
 import { useChatStore } from '../store/chatStore';
 import { useSettingsStore } from '../store/settingsStore';
@@ -64,11 +65,24 @@ export function ChatPage() {
   const driverRef = useRef<IAvatarDriver | null>(null);
   const [activeDriver, setActiveDriver] = useState<IAvatarDriver | null>(null);
 
+  // Header slot for ChatToolbar portal
+  const [headerSlot, setHeaderSlot] = useState<HTMLElement | null>(null);
+
   // 虚拟形象和布局状态
   const { layout, toggleChatCollapsed, limits } = useSettingsStore();
   const { avatarType, live2d, vrm } = useSettingsStore();
 
   const { agents, currentAgentId, fetchAgents } = useChatStore();
+
+  useEffect(() => {
+    const checkSlot = () => {
+      const slot = document.getElementById('header-page-slot');
+      if (slot) setHeaderSlot(slot);
+    };
+    checkSlot();
+    const timer = setTimeout(checkSlot, 100);
+    return () => clearTimeout(timer);
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -988,109 +1002,126 @@ export function ChatPage() {
     handleSendWithText(input);
   };
 
+  const avatarPosition = avatarType === 'live2d' ? live2d.position : vrm.position;
+  const avatarOnRight = avatarPosition === 'right';
+
   return (
-    <div className="flex h-full">
-      {/* 虚拟形象面板 */}
-      <AvatarPanel
-        audioElement={currentAudioElement}
-        isPlaying={isAudioPlaying}
-        driver={activeDriver ?? undefined}
-      />
+    <>
+      {/* ChatToolbar 通过 Portal 注入到全局 Header 的 slot 中 */}
+      {headerSlot && createPortal(
+        <ChatToolbar
+          currentAgent={currentAgent}
+          hasMessages={messages.length > 0}
+          onArchiveMemory={handleArchiveMemory}
+          onClearContext={handleClearContext}
+          onAutoSummary={handleAutoSummary}
+          onShowSummaryModal={() => setShowSummaryModal(true)}
+        />,
+        headerSlot
+      )}
 
-      {/* 聊天区域 */}
-      <div className={`flex flex-col h-full transition-all duration-300 ${layout.chatCollapsed ? 'w-16' : 'flex-1'}`}>
-        {/* 折叠/展开按钮 */}
-        <button
-          onClick={toggleChatCollapsed}
-          className="absolute top-2 right-2 z-10 p-1.5 rounded bg-[var(--color-bg-secondary)] hover:bg-[var(--color-bg-hover)] transition-colors"
-          title={layout.chatCollapsed ? '展开聊天' : '折叠聊天'}
-        >
-          <svg
-            className={`w-4 h-4 transition-transform ${layout.chatCollapsed ? 'rotate-180' : ''}`}
-            fill="none"
-            viewBox="0 0 24 24"
-            stroke="currentColor"
-          >
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 19l-7-7 7-7m8 14l-7-7 7-7" />
-          </svg>
-        </button>
+      <div className="flex flex-col h-full overflow-hidden">
+        {/* 双流式状态栏 - 仅在双流式模式下显示 */}
+        <div className="flex-shrink-0">
+          <DualStreamStatusBar
+            isDualStreamMode={isDualStreamMode}
+            dualThinking={dualThinking}
+            isTTSPlaying={isTTSPlaying}
+            partialSubtitle={partialSubtitle}
+          />
+        </div>
 
-        {layout.chatCollapsed ? (
-          <div className="flex flex-col items-center py-4 h-full">
-            <span className="text-xs text-[var(--color-text-tertiary)] writing-mode-vertical" style={{ writingMode: 'vertical-rl' }}>
-              聊天
-            </span>
+        {/* 下方：VRM + 聊天区域，共享剩余高度 */}
+        <div className={`flex flex-1 min-h-0 overflow-hidden ${avatarOnRight ? 'flex-row-reverse' : ''}`}>
+          {/* 虚拟形象面板 */}
+          <AvatarPanel
+            audioElement={currentAudioElement}
+            isPlaying={isAudioPlaying}
+            driver={activeDriver ?? undefined}
+          />
+
+          {/* 聊天区域 */}
+          <div className={`relative flex flex-col flex-1 min-h-0 transition-all duration-300 ${layout.chatCollapsed ? 'w-16' : ''}`}>
+            {/* 折叠/展开按钮 */}
+            <button
+              onClick={toggleChatCollapsed}
+              className="absolute top-2 right-2 z-10 p-1.5 rounded bg-[var(--color-bg-secondary)] hover:bg-[var(--color-bg-hover)] transition-colors"
+              title={layout.chatCollapsed ? '展开聊天' : '折叠聊天'}
+            >
+              <svg
+                className={`w-4 h-4 transition-transform ${layout.chatCollapsed ? 'rotate-180' : ''}`}
+                fill="none"
+                viewBox="0 0 24 24"
+                stroke="currentColor"
+              >
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 19l-7-7 7-7m8 14l-7-7 7-7" />
+              </svg>
+            </button>
+
+            {layout.chatCollapsed ? (
+              <div className="flex flex-col items-center py-4 h-full">
+                <span className="text-xs text-[var(--color-text-tertiary)] writing-mode-vertical" style={{ writingMode: 'vertical-rl' }}>
+                  聊天
+                </span>
+              </div>
+            ) : (
+              <div className="max-w-4xl mx-auto h-full w-full overflow-hidden flex flex-col">
+                <MessageList
+                  messages={messages}
+                  isLoading={isLoading}
+                  currentAgent={currentAgent}
+                  chatContainerRef={chatContainerRef}
+                  messagesEndRef={messagesEndRef}
+                />
+
+                <div className="flex-shrink-0">
+                  <ChatInput
+                    selectedImages={selectedImages}
+                    onRemoveImage={removeImage}
+                    currentAgent={currentAgent}
+                    fileInputRef={fileInputRef}
+                    maxChatImages={maxChatImages}
+                    onImageSelect={handleImageSelect}
+                    input={input}
+                    onInputChange={setInput}
+                    onKeyDown={handleKeyDown}
+                    isLoading={isLoading}
+                    isRecording={isRecording}
+                    onToggleRecording={toggleRecording}
+                    onCancelGeneration={cancelGeneration}
+                    onSend={handleSend}
+                    enableVoiceOutput={enableVoiceOutput}
+                    onToggleVoiceOutput={() => setEnableVoiceOutput(!enableVoiceOutput)}
+                    isVoiceMode={isVoiceMode}
+                    onToggleVoiceMode={() => setIsVoiceMode(!isVoiceMode)}
+                    isDualStreamMode={isDualStreamMode}
+                    onToggleDualStreamMode={toggleDualStreamMode}
+                    dualStreamEngine={dualStreamEngine}
+                    onDualStreamEngineChange={handleDualStreamEngineChange}
+                    orpheusVoice={orpheusVoice}
+                    onOrpheusVoiceChange={handleOrpheusVoiceChange}
+                    isConnected={isConnected}
+                  />
+
+                  <AlarmNotifications alarms={alarms} />
+                </div>
+              </div>
+            )}
           </div>
-        ) : (
-          <div className="max-w-4xl mx-auto h-full flex flex-col w-full">
-      <ChatToolbar
-        currentAgent={currentAgent}
-        hasMessages={messages.length > 0}
-        onArchiveMemory={handleArchiveMemory}
-        onClearContext={handleClearContext}
-        onAutoSummary={handleAutoSummary}
-        onShowSummaryModal={() => setShowSummaryModal(true)}
-      />
+        </div>
 
-      <DualStreamStatusBar
-        isDualStreamMode={isDualStreamMode}
-        dualThinking={dualThinking}
-        isTTSPlaying={isTTSPlaying}
-        partialSubtitle={partialSubtitle}
-      />
-
-      <MessageList
-        messages={messages}
-        isLoading={isLoading}
-        currentAgent={currentAgent}
-        chatContainerRef={chatContainerRef}
-        messagesEndRef={messagesEndRef}
-      />
-
-      <ChatInput
-        selectedImages={selectedImages}
-        onRemoveImage={removeImage}
-        currentAgent={currentAgent}
-        fileInputRef={fileInputRef}
-        maxChatImages={maxChatImages}
-        onImageSelect={handleImageSelect}
-        input={input}
-        onInputChange={setInput}
-        onKeyDown={handleKeyDown}
-        isLoading={isLoading}
-        isRecording={isRecording}
-        onToggleRecording={toggleRecording}
-        onCancelGeneration={cancelGeneration}
-        onSend={handleSend}
-        enableVoiceOutput={enableVoiceOutput}
-        onToggleVoiceOutput={() => setEnableVoiceOutput(!enableVoiceOutput)}
-        isVoiceMode={isVoiceMode}
-        onToggleVoiceMode={() => setIsVoiceMode(!isVoiceMode)}
-        isDualStreamMode={isDualStreamMode}
-        onToggleDualStreamMode={toggleDualStreamMode}
-        dualStreamEngine={dualStreamEngine}
-        onDualStreamEngineChange={handleDualStreamEngineChange}
-        orpheusVoice={orpheusVoice}
-        onOrpheusVoiceChange={handleOrpheusVoiceChange}
-        isConnected={isConnected}
-      />
-
-      <AlarmNotifications alarms={alarms} />
-
-      <SummaryModal
-        isOpen={showSummaryModal}
-        onClose={() => {
-          setShowSummaryModal(false);
-          setAutoStartSummary(false);
-        }}
-        contextText={getContextText()}
-        agentId={currentAgentId || 'default'}
-        sessionId={currentAgentId || 'default'}
-        autoStart={autoStartSummary}
-      />
-          </div>
-        )}
+        <SummaryModal
+          isOpen={showSummaryModal}
+          onClose={() => {
+            setShowSummaryModal(false);
+            setAutoStartSummary(false);
+          }}
+          contextText={getContextText()}
+          agentId={currentAgentId || 'default'}
+          sessionId={currentAgentId || 'default'}
+          autoStart={autoStartSummary}
+        />
       </div>
-    </div>
+    </>
   );
 }

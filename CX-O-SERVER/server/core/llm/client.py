@@ -1,13 +1,13 @@
-import asyncio
 import json
 import time
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional
+from typing import Dict, List, Optional
 
 import httpx
 
 from server.core.logging_config import get_contextual_logger
+from server.core.utils import get_shared_http_client
 
 logger = get_contextual_logger(__name__)
 
@@ -66,7 +66,6 @@ class LLMClient(ABC):
         Returns:
             是否可用
         """
-        pass
 
     @abstractmethod
     async def get_embedding(self, text: str) -> Optional[List[float]]:
@@ -78,7 +77,6 @@ class LLMClient(ABC):
         Returns:
             向量列表或None
         """
-        pass
 
 
 class OllamaClient(LLMClient):
@@ -322,7 +320,11 @@ class VLLMClient(LLMClient):
         self.host = host.rstrip("/")
         self.model = model
         self.temperature = temperature
-        self.max_tokens = max_tokens
+        # 防御性 clamp：max_tokens 不能超过 vLLM 模型的 max_model_len（默认 32768）。
+        # 配置中若误设 131072 等超大值，vLLM 会返回 400 Bad Request，
+        # stream_chat 静默吞掉错误导致 TTS 发空结束标记、用户听不到回复。
+        # 32768 是 gemma4-e4b 等模型的常见上限，留余量给 input prompt。
+        self.max_tokens = min(int(max_tokens), 32768)
         self.dimension = dimension
 
     def _validate_messages(self, messages: List[Dict]) -> None:
@@ -355,42 +357,50 @@ class VLLMClient(LLMClient):
             # 验证输入
             self._validate_messages(messages)
 
-            async with httpx.AsyncClient(timeout=120.0, trust_env=False) as client:
-                response = await client.post(
-                    f"{self.host}/v1/chat/completions",
-                    json={
+            # 使用预热好的 shared HTTP client，避免每次调用都重新构造 httpx.AsyncClient
+            # （Windows 上首次构造耗 8s，会让 WS 端到端延迟从 ~10ms 飙到 ~8500ms）
+            client = get_shared_http_client()
+            # 防御性 clamp max_tokens：调用方可能传入配置中的大值（如 131072），
+            # 超过 vLLM 模型 max_model_len（32768）会触发 400 Bad Request
+            effective_max_tokens = min(
+                int(kwargs.get("max_tokens", self.max_tokens)), 32768
+            )
+            response = await client.post(
+                f"{self.host}/v1/chat/completions",
+                json={
+                    "model": self.model,
+                    "messages": messages,
+                    "stream": stream,
+                    "temperature": kwargs.get("temperature", self.temperature),
+                    "max_tokens": effective_max_tokens,
+                },
+                timeout=120.0,
+            )
+
+            if response.status_code == 200:
+                result = response.json()
+                choice = result["choices"][0]
+                return LLMResponse(
+                    content=choice["message"]["content"],
+                    finish_reason=choice.get("finish_reason", "stop"),
+                    usage=result.get("usage", {}),
+                )
+            else:
+                # 详细的错误处理
+                error_text = response.text[:500] if response.text else "无响应内容"
+                logger.error(f"VLLM错误: HTTP {response.status_code}, {error_text}")
+
+                return LLMResponse(
+                    content="",
+                    finish_reason="error",
+                    error=f"HTTP {response.status_code}",
+                    error_details={
+                        "status_code": response.status_code,
+                        "response_text": error_text,
                         "model": self.model,
-                        "messages": messages,
-                        "stream": stream,
-                        "temperature": kwargs.get("temperature", self.temperature),
-                        "max_tokens": kwargs.get("max_tokens", self.max_tokens),
+                        "host": self.host,
                     },
                 )
-
-                if response.status_code == 200:
-                    result = response.json()
-                    choice = result["choices"][0]
-                    return LLMResponse(
-                        content=choice["message"]["content"],
-                        finish_reason=choice.get("finish_reason", "stop"),
-                        usage=result.get("usage", {}),
-                    )
-                else:
-                    # 详细的错误处理
-                    error_text = response.text[:500] if response.text else "无响应内容"
-                    logger.error(f"VLLM错误: HTTP {response.status_code}, {error_text}")
-
-                    return LLMResponse(
-                        content="",
-                        finish_reason="error",
-                        error=f"HTTP {response.status_code}",
-                        error_details={
-                            "status_code": response.status_code,
-                            "response_text": error_text,
-                            "model": self.model,
-                            "host": self.host,
-                        },
-                    )
 
         except httpx.ConnectError as e:
             error_msg = f"无法连接到VLLM服务器: {self.host}"
@@ -440,38 +450,72 @@ class VLLMClient(LLMClient):
 
     async def stream_chat(self, messages: List[Dict], **kwargs):
         try:
+            # 防御性 clamp max_tokens：调用方可能传入配置中的大值（如 131072），
+            # 超过 vLLM 模型 max_model_len（32768）会触发 400 Bad Request，
+            # 此前 stream_chat 静默吞掉 400 导致 TTS 发空结束标记、用户听不到回复
+            effective_max_tokens = min(
+                int(kwargs.get("max_tokens", self.max_tokens)), 32768
+            )
             request_body = {
                 "model": self.model,
                 "messages": messages,
                 "stream": True,
                 "temperature": kwargs.get("temperature", self.temperature),
-                "max_tokens": kwargs.get("max_tokens", self.max_tokens),
+                "max_tokens": effective_max_tokens,
             }
 
             if "tools" in kwargs and kwargs["tools"]:
                 request_body["tools"] = kwargs["tools"]
 
-            async with httpx.AsyncClient(timeout=120.0, trust_env=False) as client:
-                async with client.stream(
-                    "POST", f"{self.host}/v1/chat/completions", json=request_body
-                ) as response:
-                    async for line in response.aiter_lines():
-                        if line and line.startswith("data: "):
-                            data = line[6:]
-                            if data != "[DONE]":
-                                try:
-                                    chunk = json.loads(data)
-                                    content = chunk["choices"][0]["delta"].get("content", "")
+            # 使用预热好的 shared HTTP client，避免每次调用都重新构造 httpx.AsyncClient
+            # （Windows 上首次构造耗 8s，会让 WS 端到端延迟从 ~10ms 飙到 ~8500ms）
+            client = get_shared_http_client()
+            async with client.stream(
+                "POST", f"{self.host}/v1/chat/completions", json=request_body, timeout=120.0
+            ) as response:
+                # 显式检查状态码：vLLM 在请求体格式错误、模型名不匹配、messages 字段缺失时返回 400
+                # 此前缺少此检查导致 400 被静默吞掉（aiter_lines() 不产出，smoother 无输出，TTS 发空结束标记）
+                if response.status_code != 200:
+                    error_body = await response.aread()
+                    error_text = error_body.decode("utf-8", errors="replace")[:1000]
+                    logger.error(
+                        f"VLLM stream_chat HTTP {response.status_code}: {error_text} | "
+                        f"request_body={json.dumps(request_body, ensure_ascii=False)[:500]}"
+                    )
+                    yield {"type": "error", "content": f"VLLM HTTP {response.status_code}: {error_text}"}
+                    return
 
-                                    if content:
-                                        yield content
+                # [DIAG-TTFT] 记录第一个 token 产出时间，用于定位 WS 端到端延迟
+                _diag_start = time.monotonic()
+                _diag_first_token_logged = False
+                _diag_token_count = 0
+                async for line in response.aiter_lines():
+                    if line and line.startswith("data: "):
+                        data = line[6:]
+                        if data != "[DONE]":
+                            try:
+                                chunk = json.loads(data)
+                                content = chunk["choices"][0]["delta"].get("content", "")
 
-                                    delta = chunk["choices"][0].get("delta", {})
-                                    tool_calls = delta.get("tool_calls")
-                                    if tool_calls:
-                                        yield {"tool_calls": tool_calls}
-                                except json.JSONDecodeError:
-                                    continue
+                                if content:
+                                    if not _diag_first_token_logged:
+                                        _diag_first_token_logged = True
+                                        logger.info(
+                                            f"[DIAG-TTFT] first token at {(time.monotonic()-_diag_start)*1000:.1f}ms: '{content[:20]}'"
+                                        )
+                                    _diag_token_count += 1
+                                    yield content
+
+                                delta = chunk["choices"][0].get("delta", {})
+                                tool_calls = delta.get("tool_calls")
+                                if tool_calls:
+                                    yield {"tool_calls": tool_calls}
+                            except json.JSONDecodeError:
+                                continue
+                logger.info(
+                    f"[DIAG-TTFT] stream done: {_diag_token_count} tokens, "
+                    f"total {(time.monotonic()-_diag_start)*1000:.1f}ms"
+                )
         except Exception as e:
             logger.error(f"VLLM流式调用失败: {e}")
 
@@ -482,10 +526,11 @@ class VLLMClient(LLMClient):
     async def is_available(self) -> bool:
         """检查VLLM模型是否可用"""
         try:
-            async with httpx.AsyncClient(timeout=10.0, proxy=None) as client:
-                # VLLM 使用 /health 端点检查健康状态
-                response = await client.get(f"{self.host}/health")
-                return response.status_code == 200
+            # 使用预热好的 shared HTTP client，避免每次调用都重新构造 httpx.AsyncClient
+            client = get_shared_http_client()
+            # VLLM 使用 /health 端点检查健康状态
+            response = await client.get(f"{self.host}/health", timeout=10.0)
+            return response.status_code == 200
         except Exception:
             return False
 
@@ -495,20 +540,22 @@ class VLLMClient(LLMClient):
         VLLM 支持通过 /v1/embeddings 端点获取 embedding
         """
         try:
-            async with httpx.AsyncClient(timeout=30.0, proxy=None) as client:
-                response = await client.post(
-                    f"{self.host}/v1/embeddings", json={"model": self.model, "input": text}
-                )
+            # 使用预热好的 shared HTTP client，避免每次调用都重新构造 httpx.AsyncClient
+            client = get_shared_http_client()
+            response = await client.post(
+                f"{self.host}/v1/embeddings", json={"model": self.model, "input": text},
+                timeout=30.0,
+            )
 
-                if response.status_code == 200:
-                    result = response.json()
-                    # OpenAI 格式返回 embedding 在 data[0].embedding
-                    if "data" in result and len(result["data"]) > 0:
-                        return result["data"][0].get("embedding")
-                    return None
-                else:
-                    logger.warning(f"VLLM获取embedding失败: HTTP {response.status_code}")
-                    return None
+            if response.status_code == 200:
+                result = response.json()
+                # OpenAI 格式返回 embedding 在 data[0].embedding
+                if "data" in result and len(result["data"]) > 0:
+                    return result["data"][0].get("embedding")
+                return None
+            else:
+                logger.warning(f"VLLM获取embedding失败: HTTP {response.status_code}")
+                return None
 
         except Exception as e:
             logger.error(f"VLLM获取embedding失败: {e}")

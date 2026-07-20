@@ -114,6 +114,30 @@ CX-O 是**多服务架构**，以下服务目录是独立服务，**非 AC 模�
 - 前端 UI 变更必须通过 s0402 前端三重测试闸门（单测→E2E→Mock 回归）
 - 契约测试由 LLM 按 rules-3 §五自主执行，结果由 GN-004 审查验证
 
+### 4.8 RADIX-Lite 迁移新模块（2026-07-19，spec migrate-cxhms-radix-acp-multimodal）
+
+CX-O-SERVER 在 spec `migrate-cxhms-radix-acp-multimodal` 下从 CXHMS 迁移了 4 个核心模块 + ACP 升级，均位于 `CX-O-SERVER/server/core/` 下：
+
+| 模块 | 路径 | 功能 | 契约 |
+|------|------|------|------|
+| template_engine | `server/core/template_engine/` | Jinja2 模板引擎，7 方法（_parse_frontmatter / create_template / get_template / update_template / delete_template / list_templates / render_template），auto_init 创建 default.j2 + distillation.j2 预设 | `public/interface_stub/template_engine.pyi` |
+| multimodal | `server/core/multimodal/` | 多模态管线，4 workers（text / character_card / image / vllm_native），vLLM provider 场景下视频/音频走原生 API，非 vLLM 走降级路径 | `public/interface_stub/multimodal_pipeline.pyi` |
+| distillation | `server/core/distillation/` | 蒸馏服务，9 状态机（S_INIT → S_PREREAD → S_QUESTION → S_REFLECT → S_CROSSVALIDATE → S_EXTRACT → S_STORAGE_DECISION → S_FINALIZE / S_REJECT）+ 9 API 端点（4 单次 + 5 批量）+ OBS-6 方案 C LLM 评估重构（QUALITY_ESTIMATE_PROMPT + _llm_estimate_quality_score + _estimate_quality_score LLM 优先+启发式回退基础分 0.6→0.4 + 3 配置项 quality_llm_enabled / quality_llm_model / quality_llm_timeout_seconds） | `public/interface_stub/distillation_service.pyi` |
+| decision | `server/core/decision/` | 管理 Agent 决策核心，6 决策点（D1_LOCATION / D2_METADATA / D3_ASK_USER / D4_REDISTILL / D5_CROSS_VALIDATE / D6_REJECT）+ write_with_decision / get_rejected_content / cleanup_expired_rejected_content | `public/interface_stub/decision_core.pyi` |
+| acp（升级） | `server/core/acp/manager.py` | ACP v3.1.0 per-agent 隔离升级（per-agent Weaviate collection + per-agent SQLite graph + 端口更新修复） | `public/interface_stub/agent_tools_v2.pyi` |
+
+**配置节扩展**（`server/config.py`）：4 新配置类（DistillationConfig / MultimodalPipelineConfig / RadixConfig / DecisionCoreConfig），auto_fill 默认值，越界回退。
+
+**API 路由扩展**（`server/api/routers/` + `server/api/app.py` 注册）：
+- `multimodal.py` — 多模态预处理 API
+- `distillation.py` — 蒸馏 9 路由聚合（4 单次 + 5 批量）
+- `decision.py` — 6 决策点 API
+- `acp.py` — 升级后 per-agent 隔离 + `/acp/receive` 端点
+
+**测试体系**（`tests/test_tools/e2e/`）：5 E2E 测试（test_distillation_e2e / test_decision_e2e / test_multimodal_vllm_native_e2e / test_acp_per_agent_isolation_e2e / test_asr_llm_tts_latency），`run_e2e_tests.py` ALL PASSED 8/8（2026-07-19 19:21:50，WS P95=599.54ms / HTTP P95=294.76ms < 800ms）。
+
+**变更追踪文档**（`.trae/documents/`）：6 个迁移文档（20260718_模块7/8/9/10 + 20260718_模块0_ACP隔离升级 + 20260719_模块0_ASRLLMTTS延迟验证）+ OBS-6 方案 C 重构文档（20260719_模块9_质量评分LLM评估重构）+ D5.6 复合根因修复文档（20260719_模块0_CXFC路由注入修复）。
+
 ---
 
 ## 五、关键文件路径速查

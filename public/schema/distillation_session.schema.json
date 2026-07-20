@@ -1,0 +1,261 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://cx-o.local/schema/distillation_session.schema.json",
+  "title": "DistillationSession",
+  "description": "RADIX-Lite 蒸馏会话数据契约。定义 9 状态机多轮蒸馏的会话结构、状态转移、轮次记录与异常契约。会话由 DistillationService（CX-O-SERVER 路由，端口 8000）管理，状态机：S_INIT → S_PREREAD → S_QUESTION → S_REFLECT → S_CROSSVALIDATE → S_EXTRACT → S_STORAGE_DECISION → S_FINALIZE / S_REJECT。",
+  "type": "object",
+  "required": [
+    "session_id",
+    "source_type",
+    "state",
+    "template_id",
+    "max_turns",
+    "ask_user_on_ambiguity",
+    "turns",
+    "created_at",
+    "is_finalized"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "session_id": {
+      "type": "string",
+      "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$",
+      "description": "会话唯一 ID（UUID v4，36 字符）。由 str(uuid.uuid4()) 生成。"
+    },
+    "source_type": {
+      "type": "string",
+      "enum": ["text", "character_card", "image", "video", "audio", "conversation_log"],
+      "description": "数据源类型。text=纯文本，character_card=角色卡（PNG/JSON），image=图片（OCR+vision），video=视频（vLLM 原生解码），audio=音频（vLLM 原生解码），conversation_log=外部对话记录。"
+    },
+    "source_ref": {
+      "type": ["string", "null"],
+      "default": null,
+      "description": "数据源引用（文件路径 / URL / 文本片段 hash）。可为 null。"
+    },
+    "state": {
+      "type": "string",
+      "enum": [
+        "S_INIT",
+        "S_PREREAD",
+        "S_QUESTION",
+        "S_REFLECT",
+        "S_CROSSVALIDATE",
+        "S_EXTRACT",
+        "S_STORAGE_DECISION",
+        "S_FINALIZE",
+        "S_REJECT"
+      ],
+      "description": "当前状态机状态（共 9 个）。S_REFLECT 可回环至 S_QUESTION；S_FINALIZE/S_REJECT 为终态。"
+    },
+    "template_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "关联的模板 ID（TemplateEngine 模板仓库中的 template_id）。"
+    },
+    "max_turns": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 6,
+      "default": 4,
+      "description": "最大蒸馏轮次上限。rubric.max_redistill_turns 限制回环次数，本字段限制总轮次。"
+    },
+    "ask_user_on_ambiguity": {
+      "type": "boolean",
+      "default": true,
+      "description": "是否在疑点清单非空时主动追问人类。true=拉起 AskUserQuestion，false=agent 自主决策。"
+    },
+    "turns": {
+      "type": "array",
+      "items": {"$ref": "#/definitions/turn"},
+      "default": [],
+      "description": "蒸馏轮次记录数组。每轮包含状态、agent 动作、用户响应（如有）。"
+    },
+    "preread_summary": {
+      "type": ["string", "null"],
+      "default": null,
+      "description": "S_PREREAD 产出的预读摘要。MultimodalPipeline 预处理后由 LLM 生成。"
+    },
+    "ambiguity_questions": {
+      "type": "array",
+      "items": {"type": "string"},
+      "default": [],
+      "description": "S_PREREAD 产出的疑点清单。非空且 ask_user_on_ambiguity=true 时触发主动追问。"
+    },
+    "extracted_content": {
+      "type": ["string", "null"],
+      "default": null,
+      "description": "S_EXTRACT 产出的结构化抽取内容。"
+    },
+    "quality_score": {
+      "type": ["number", "null"],
+      "minimum": 0,
+      "maximum": 1,
+      "default": null,
+      "description": "S_STORAGE_DECISION 阶段的质量评分。低于 rubric.quality_reject_threshold 触发 S_REJECT。"
+    },
+    "created_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "会话创建时间，ISO 8601 格式。"
+    },
+    "updated_at": {
+      "type": ["string", "null"],
+      "format": "date-time",
+      "default": null,
+      "description": "最后更新时间。"
+    },
+    "finalized_at": {
+      "type": ["string", "null"],
+      "format": "date-time",
+      "default": null,
+      "description": "会话终结时间（进入 S_FINALIZE 或 S_REJECT 时）。"
+    },
+    "is_finalized": {
+      "type": "boolean",
+      "default": false,
+      "description": "是否已终结。true 表示进入 S_FINALIZE 或 S_REJECT 终态。"
+    },
+    "error_message": {
+      "type": ["string", "null"],
+      "default": null,
+      "description": "错误信息（如状态机异常转移、预处理失败等）。"
+    }
+  },
+  "definitions": {
+    "turn": {
+      "type": "object",
+      "required": ["turn_index", "state", "agent_action", "timestamp"],
+      "additionalProperties": false,
+      "properties": {
+        "turn_index": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "轮次序号（从 0 开始）。"
+        },
+        "state": {
+          "type": "string",
+          "enum": [
+            "S_INIT", "S_PREREAD", "S_QUESTION", "S_REFLECT",
+            "S_CROSSVALIDATE", "S_EXTRACT", "S_STORAGE_DECISION",
+            "S_FINALIZE", "S_REJECT"
+          ],
+          "description": "该轮次所处的状态机状态。"
+        },
+        "agent_action": {
+          "type": "string",
+          "enum": ["ask_user", "proceed", "reflect", "cross_validate", "extract", "decide", "finalize", "reject"],
+          "description": "agent 在该轮次执行的动作。"
+        },
+        "agent_output": {
+          "type": ["string", "null"],
+          "default": null,
+          "description": "agent 输出内容（如生成的问题、反思摘要、抽取结果）。"
+        },
+        "user_response": {
+          "type": ["string", "null"],
+          "default": null,
+          "description": "用户对 ask_user 的响应（如无则为 null）。"
+        },
+        "timestamp": {
+          "type": "string",
+          "format": "date-time",
+          "description": "该轮次时间戳。"
+        }
+      }
+    },
+    "error_codes": {
+      "type": "object",
+      "description": "DistillationService API 错误码定义。",
+      "properties": {
+        "SESSION_NOT_FOUND": {
+          "const": 404,
+          "description": "会话不存在：advance/finalize/get 找不到对应 session_id。"
+        },
+        "INVALID_STATE_TRANSITION": {
+          "const": 409,
+          "description": "非法状态转移：当前状态不允许执行请求的操作。"
+        },
+        "SESSION_ALREADY_FINALIZED": {
+          "const": 409,
+          "description": "会话已终结：对已 finalize/reject 的会话执行 advance/finalize。"
+        },
+        "MAX_TURNS_EXCEEDED": {
+          "const": 409,
+          "description": "超过最大轮次：advance 时 turn_index 已达 max_turns 上限。"
+        },
+        "PREPROCESS_FAILED": {
+          "const": 422,
+          "description": "预处理失败：MultimodalPipeline 无法处理 source_type/source_ref。"
+        },
+        "INTERNAL_ERROR": {
+          "const": 500,
+          "description": "内部错误：状态机异常、LLM 调用失败、持久化失败等。"
+        }
+      },
+      "additionalProperties": false
+    },
+    "exceptions": {
+      "type": "object",
+      "description": "DistillationService 异常契约。调用方必须处理以下约定的异常。",
+      "properties": {
+        "HTTPException_404": {
+          "type": "object",
+          "properties": {
+            "status_code": {"const": 404},
+            "trigger_endpoints": {
+              "type": "array",
+              "items": {"type": "string"},
+              "enum": [
+                "POST /api/v1/distillation/{session_id}/advance",
+                "POST /api/v1/distillation/{session_id}/finalize",
+                "GET /api/v1/distillation/{session_id}"
+              ]
+            },
+            "reason": {"type": "string"}
+          }
+        },
+        "HTTPException_409": {
+          "type": "object",
+          "properties": {
+            "status_code": {"const": 409},
+            "trigger_endpoints": {
+              "type": "array",
+              "items": {"type": "string"},
+              "enum": [
+                "POST /api/v1/distillation/{session_id}/advance",
+                "POST /api/v1/distillation/{session_id}/finalize"
+              ]
+            },
+            "reason": {"type": "string"}
+          }
+        },
+        "HTTPException_422": {
+          "type": "object",
+          "properties": {
+            "status_code": {"const": 422},
+            "trigger_endpoints": {
+              "type": "array",
+              "items": {"type": "string"},
+              "enum": ["POST /api/v1/distillation/start"]
+            },
+            "reason": {"type": "string"}
+          }
+        },
+        "HTTPException_500": {
+          "type": "object",
+          "properties": {
+            "status_code": {"const": 500},
+            "trigger_endpoints": {
+              "type": "array",
+              "items": {"type": "string"},
+              "enum": [
+                "POST /api/v1/distillation/start",
+                "POST /api/v1/distillation/{session_id}/advance",
+                "POST /api/v1/distillation/{session_id}/finalize"
+              ]
+            },
+            "reason": {"type": "string"}
+          }
+        }
+      },
+      "

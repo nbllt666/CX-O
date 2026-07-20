@@ -11,15 +11,13 @@ import logging
 import os
 import re
 import tempfile
-import time
 from concurrent.futures import ThreadPoolExecutor
 from io import BytesIO
 from pathlib import Path
 from typing import Any, Optional
 
-import httpx
 
-from server.core.utils import get_shared_http_client, close_shared_http_client, retry_with_backoff
+from server.core.utils import get_shared_http_client, retry_with_backoff
 
 logger = logging.getLogger(__name__)
 
@@ -38,6 +36,10 @@ class ASRService:
         self._device = device
         self._remote_url = remote_url
         self._initialized = False
+        # Streaming 接口状态（vad_processor.AudioStreamProcessor 调用）
+        self._streaming_buffer: bytearray = bytearray()
+        self._streaming_is_last: bool = False
+        self._streaming_pending: bool = False
 
     @property
     def mode(self) -> str:
@@ -116,7 +118,7 @@ class ASRService:
         return await self.recognize(audio_data, language, use_itn)
 
     async def _recognize_embedded(self, audio_data: bytes, language: str = "auto", use_itn: bool = True) -> dict[str, Any]:
-        from funasr.utils.postprocess_utils import rich_transcription_postprocess
+        pass
 
         audio_tensor, success = self._process_audio(BytesIO(audio_data))
         if not success:
@@ -134,10 +136,16 @@ class ASRService:
 
     async def _recognize_remote(self, audio_data: bytes, language: str = "auto", use_itn: bool = True) -> dict[str, Any]:
         async def _make_request():
+            import time as _diag_time
+            _t0 = _diag_time.monotonic()
             client = get_shared_http_client()
+            _t1 = _diag_time.monotonic()
             files = {"file": ("audio.wav", audio_data, "audio/wav")}
             data = {"language": language, "use_itn": str(use_itn), "task": "rich"}
+            _t2 = _diag_time.monotonic()
             response = await client.post(f"{self._remote_url}/api/v1/asr", files=files, data=data)
+            _t3 = _diag_time.monotonic()
+            logger.info(f"[DIAG-ASR] get_client={(_t1-_t0)*1000:.1f}ms prep={(_t2-_t1)*1000:.1f}ms post={(_t3-_t2)*1000:.1f}ms url={self._remote_url}")
             if response.status_code == 200:
                 result = response.json()
                 if result.get("results"):
@@ -243,6 +251,110 @@ class ASRService:
                 "event": event_match.group(1) if event_match else "",
             }
         return {"text": "", "language": "", "emotion": "", "event": ""}
+
+    # ------------------------------------------------------------------ #
+    # Streaming 接口（vad_processor.AudioStreamProcessor 调用契约）
+    # ------------------------------------------------------------------ #
+    # 设计说明：
+    # - AudioStreamProcessor.process_audio_chunk 期望 _streaming_client 提供
+    #   send_audio_chunk / receive_result / reset 三个 async 方法
+    # - 真实 streaming 协议应基于 WebSocket（如 FunASR streaming server）
+    # - 当前实现是简化版：累积 audio chunk 到 buffer，is_last=True 时触发
+    #   批处理 recognize 调用，结果包装为 StreamingASRResult 返回
+    # - 该实现满足 vad_processor 调用契约，可让 WS voice.dual_stream 链路跑通
+    # - 真实 ASR 服务起来后，应替换为真正的 streaming 客户端实现
+    # ------------------------------------------------------------------ #
+
+    async def send_audio_chunk(self, audio_data: bytes, is_last: bool = False) -> bool:
+        """累积音频块到内部 buffer。
+
+        Args:
+            audio_data: PCM/WAV 音频字节
+            is_last: 是否为最后一帧（VAD speech_end 触发）
+
+        Returns:
+            True 表示成功接收，False 表示服务未就绪
+        """
+        if not self._initialized:
+            logger.warning("ASRService not initialized, skip send_audio_chunk")
+            return False
+        # 累积到 buffer（reset 时清空）
+        self._streaming_buffer.extend(audio_data)
+        self._streaming_is_last = is_last
+        if is_last:
+            # 标记下次 receive_result 应触发实际识别
+            self._streaming_pending = True
+        return True
+
+    async def receive_result(self, timeout: float = 0.1) -> Optional["StreamingASRResult"]:
+        """返回当前 buffer 的识别结果（如有）。
+
+        双流式模式契约：
+        - 语音期间（is_last=False）：返回 Partial 结果（is_final=False），
+          vad_processor.AudioStreamProcessor 据此触发 on_partial_result → LLM Speculative Prefill
+        - 语音结束（is_last=True，VAD speech_end 触发）：返回 Final 结果（is_final=True），
+          handler 据此调用 on_vad_speech_end 修正上下文
+
+        Args:
+            timeout: 等待超时（秒，当前简化版忽略，直接返回缓存或 None）
+
+        Returns:
+            StreamingASRResult 或 None（无音频数据可识别时）
+        """
+        # 无音频数据可识别
+        if not self._streaming_buffer:
+            return None
+
+        # 取出 buffer 并清空（避免同一音频被重复识别）
+        audio_data = bytes(self._streaming_buffer)
+        self._streaming_buffer = bytearray()
+
+        # is_final 由 VAD 的 is_last 标志决定：
+        # - is_last=True（VAD 检测到 speech_end）→ Final
+        # - is_last=False（语音持续中）→ Partial
+        is_final = self._streaming_is_last
+        self._streaming_is_last = False
+        self._streaming_pending = False
+
+        try:
+            result = await self.recognize(audio_data)
+            text = result.get("text", "")
+            language = result.get("language", "")
+            emotion = result.get("emotion", "")
+            return StreamingASRResult(
+                text=text,
+                clean_text=text,
+                language=language,
+                is_final=is_final,
+                emotion=emotion,
+            )
+        except Exception as e:
+            logger.error(f"Streaming ASR receive_result error: {e}")
+            return None
+
+    async def reset(self) -> None:
+        """清空 streaming buffer 和状态（vad_processor 在 is_last 后调用）。"""
+        self._streaming_buffer = bytearray()
+        self._streaming_is_last = False
+        self._streaming_pending = False
+
+
+class StreamingASRResult:
+    """Streaming ASR 结果数据类（vad_processor.AudioStreamProcessor 期望的契约）。"""
+
+    def __init__(
+        self,
+        text: str = "",
+        clean_text: str = "",
+        language: str = "",
+        is_final: bool = False,
+        emotion: str = "",
+    ):
+        self.text = text
+        self.clean_text = clean_text
+        self.language = language
+        self.is_final = is_final
+        self.emotion = emotion
 
 
 _asr_service: Optional[ASRService] = None

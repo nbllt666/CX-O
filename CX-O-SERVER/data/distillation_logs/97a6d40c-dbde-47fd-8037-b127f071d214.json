@@ -1,0 +1,63 @@
+[
+  {
+    "log_id": "0c76ad86-b092-4ae2-a875-1eef1a867254",
+    "session_id": "97a6d40c-dbde-47fd-8037-b127f071d214",
+    "decision_point": "D1_LOCATION",
+    "input": {
+      "artifact_summary": "[S_PREREAD] 数据源类型=text, 模板=default。\n预读摘要: [MultimodalArtifact type=text native_decode=False vision_degraded=False] 测试文本:用于验证蒸馏状态机正常推进的输入数据。",
+      "session_state": "S_FINALIZE",
+      "turn_history_summary": "['proceed', 'proceed', 'proceed', 'proceed', 'proceed', 'proceed', 'extract', 'decide']",
+      "extracted_content": "[S_EXTRACT] 结构化抽取结果:\n- source_type: text\n- template_id: default\n- preread_summary: [S_PREREAD] 数据源类型=text, 模板=default。\n预读摘要: [MultimodalArtifact type=text native_decode=False vision_degraded=False] 测试文本:用于验证蒸馏状态机正常推进的输入数据。\n- turns_count: 6\n",
+      "quality_score": 0.3
+    },
+    "rubric_snapshot": {
+      "importance_threshold_permanent": 0.7,
+      "quality_reject_threshold": 0.3,
+      "max_redistill_turns": 2,
+      "ask_user_confidence_threshold": 0.4,
+      "cross_validate_sources": []
+    },
+    "llm_reasoning": null,
+    "llm_confidence": null,
+    "final_decision": {
+      "action": "store",
+      "location": "permanent_memories",
+      "details": {
+        "importance": 0.75,
+        "memory_id": 1
+      }
+    },
+    "timestamp": "2026-07-19T15:00:37.316579+00:00"
+  },
+  {
+    "log_id": "c8850ba0-044d-4bba-a8ad-78431654872b",
+    "session_id": "97a6d40c-dbde-47fd-8037-b127f071d214",
+    "decision_point": "D1_LOCATION",
+    "input": {
+      "artifact_summary": "[S_PREREAD] 数据源类型=text, 模板=default。\n预读摘要: [MultimodalArtifact type=text native_decode=False vision_degraded=False] 测试文本:用于验证蒸馏状态机正常推进的输入数据。",
+      "session_state": "S_FINALIZE",
+      "turn_history_summary": "['proceed', 'proceed', 'proceed', 'proceed', 'proceed', 'proceed', 'extract', 'decide']",
+      "extracted_content": "[S_EXTRACT] 结构化抽取结果:\n- source_type: text\n- template_id: default\n- preread_summary: [S_PREREAD] 数据源类型=text, 模板=default。\n预读摘要: [MultimodalArtifact type=text native_decode=False vision_degraded=False] 测试文本:用于验证蒸馏状态机正常推进的输入数据。\n- turns_count: 6\n",
+      "quality_score": 0.3
+    },
+    "rubric_snapshot": {
+      "importance_threshold_permanent": 0.7,
+      "quality_reject_threshold": 0.3,
+      "max_redistill_turns": 2,
+      "ask_user_confidence_threshold": 0.4,
+      "cross_validate_sources": []
+    },
+    "llm_reasoning": null,
+    "llm_confidence": null,
+    "final_decision": {
+      "action": "store",
+      "location": "permanent_memories",
+      "details": {
+        "memory_id": 1,
+        "quality_score": 0.3,
+        "override_decision": null
+      }
+    },
+    "timestamp": "2026-07-19T15:00:37.340772+00:00"
+  }
+]

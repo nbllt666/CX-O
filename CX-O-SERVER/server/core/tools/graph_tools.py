@@ -272,7 +272,7 @@ def _make_graph_tools(library: GraphLibrary, label: str) -> Dict[str, Any]:
             updates = {"strength": strength}
             result = _graph_store.update_relation(from_entity, to_entity, relation_type, updates, library)
             if result is None:
-                return {"error": f"关系不存在或更新失败"}
+                return {"error": "关系不存在或更新失败"}
             return {"status": "success", "relation": _relation_to_dict(result)}
         except Exception as e:
             return {"error": f"更新{label}关系失败: {str(e)}"}

@@ -3,13 +3,10 @@
 """
 
 import asyncio
-import inspect
-import json
 import threading
-import uuid
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Any, Callable, Dict, List, Optional
+from typing import Callable, Dict, List, Optional
 
 from server.core.logging_config import get_contextual_logger
 
@@ -207,7 +204,7 @@ class ToolRegistry:
             if tool.function:
                 if asyncio.iscoroutinefunction(tool.function):
                     try:
-                        loop = asyncio.get_running_loop()
+                        asyncio.get_running_loop()
                         import concurrent.futures
 
                         with concurrent.futures.ThreadPoolExecutor() as executor:

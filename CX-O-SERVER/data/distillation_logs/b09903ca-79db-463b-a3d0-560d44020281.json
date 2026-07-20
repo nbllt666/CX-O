@@ -1,0 +1,32 @@
+[
+  {
+    "log_id": "8f1e109d-4113-4307-91fd-a9f8fe809e49",
+    "session_id": "b09903ca-79db-463b-a3d0-560d44020281",
+    "decision_point": "D1_LOCATION",
+    "input": {
+      "artifact_summary": null,
+      "session_state": "S_STORAGE_DECISION",
+      "turn_history_summary": null,
+      "extracted_content": "E2E write_with_decision accept 测试",
+      "quality_score": 0.85
+    },
+    "rubric_snapshot": {
+      "importance_threshold_permanent": 0.7,
+      "quality_reject_threshold": 0.4,
+      "max_redistill_turns": 3,
+      "ask_user_confidence_threshold": 0.6,
+      "cross_validate_sources": []
+    },
+    "llm_reasoning": null,
+    "llm_confidence": null,
+    "final_decision": {
+      "action": "store",
+      "location": "permanent_memories",
+      "details": {
+        "importance": 0.75,
+        "memory_id": 9
+      }
+    },
+    "timestamp": "2026-07-19T14:23:01.335036+00:00"
+  }
+]

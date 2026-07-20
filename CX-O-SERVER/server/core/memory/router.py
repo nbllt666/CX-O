@@ -1,7 +1,6 @@
-import json
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Dict, List, Optional
+from typing import Dict, List
 
 from server.config import Settings
 from server.core.logging_config import get_contextual_logger
@@ -96,7 +95,7 @@ class MemoryRouter:
 
         self.decay_calculator = DecayCalculator()
 
-        from server.core.memory.hybrid_search import HybridSearch, HybridSearchOptions
+        from server.core.memory.hybrid_search import HybridSearch
 
         self.hybrid_search = None
         if vector_store and embedding_model:

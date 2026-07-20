@@ -475,7 +475,7 @@ class AdvancedArchiver:
             for archive in archives:
                 archive_id = archive[0]
                 original_id = archive[1]
-                current_level = archive[2]
+                archive[2]
                 current_content = archive[3]
                 original_content = archive[4]
 

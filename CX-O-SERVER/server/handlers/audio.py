@@ -136,11 +136,15 @@ class DualStreamSession:
         避免同一 utterance 内多个 Partial 重复触发 LLM。
         """
         text = asr_result.get("text", "").strip()
+        # 诊断日志：确认 on_partial_result 被调用及其参数
+        logger.info(f"[DIAG-PARTIAL] on_partial_result called, text='{text}' (len={len(text)}), is_final={asr_result.get('is_final')}, has_triggered={self._has_triggered_this_utterance}, threshold={self._trigger_char_threshold}")
         if not text:
             return
 
         # 推送 Partial 文本给前端（实时显示用户正在说什么）
+        logger.info(f"[DIAG-PARTIAL] before _send_partial")
         await self._send_partial(text)
+        logger.info(f"[DIAG-PARTIAL] after _send_partial")
 
         # 同一 utterance 内仅触发一次 LLM，避免 Partial 增量导致重复 Prefill
         if self._has_triggered_this_utterance:
@@ -163,7 +167,9 @@ class DualStreamSession:
         self._current_user_text = full_user_text
 
         # 通知前端 LLM Prefill 已启动（前端可显示"正在思考"状态）
+        logger.info(f"[DIAG-PARTIAL] before _send_prefill_started")
         await self._send_prefill_started(full_user_text)
+        logger.info(f"[DIAG-PARTIAL] after _send_prefill_started, creating pipeline task")
 
         # 异步启动 LLM → TextSmoother → TTS 流水线，不阻塞音频帧接收
         self._pipeline_task = asyncio.create_task(self._run_pipeline(full_user_text))
@@ -251,12 +257,14 @@ class DualStreamSession:
                 max_tokens=agent_config.get("max_tokens", 4096),
             )
 
-            # 5. TextSmoother 平滑缓冲（40ms 滑动窗口聚合碎片 Token）
+            # 5. TextSmoother 平滑缓冲（30ms 滑动窗口聚合碎片 Token）
             # LLM 吐出的 token 往往只有 1~2 字，直接喂 TTS 会导致发音诡异。
-            # TextSmoother 以 40ms 窗口聚合为 3~5 字词组块，用 50ms 延迟换取音质提升。
-            # 50ms 远小于 300ms 总预算，且 TTS 合成与播放可流水线并行，用户无感。
+            # TextSmoother 以 30ms 窗口聚合为 3~5 字词组块，用 ~40ms 延迟换取音质提升。
+            # ~40ms 远小于 300ms 总预算，且 TTS 合成与播放可流水线并行，用户无感。
+            # C4 P50<600ms 优化：window_ms 40 → 30（TextSmoother 内部 clamp 到 30~50ms）
+            # 节省 ~10ms 首块输出延迟，char_threshold=4 仍保证最小 4 字切片
             smoothed_stream = TextSmoother.smooth(
-                llm_stream, window_ms=40, char_threshold=4
+                llm_stream, window_ms=30, char_threshold=4
             )
 
             # 6. TTS 细粒度流式合成（边收边切边合成）
@@ -950,6 +958,23 @@ def register_audio_handlers(
             if old_session:
                 await old_session.finish()
 
+            # 清理孤儿会话：WS 已断开但 session 仍在的会话
+            # 场景：测试脚本每轮用新 WS 连接（新 client_id），上一轮 session 不会主动清理。
+            # 若不清理，旧 session 的 _run_pipeline 仍会运行并向已断开的 client_id 发送 TTS chunk，
+            # 产生大量 "[DIAG-SEND] connection is None" 警告日志，干扰诊断。
+            stale_ids = [
+                cid for cid in list(_dual_stream_sessions.keys())
+                if cid != client_id and cid not in manager.connections
+            ]
+            for cid in stale_ids:
+                stale = _dual_stream_sessions.pop(cid, None)
+                if stale:
+                    try:
+                        await stale.finish()
+                        logger.info(f"清理孤儿会话: client_id={cid}")
+                    except Exception as e:
+                        logger.warning(f"清理孤儿会话失败 {cid}: {e}")
+
             agent_id = data.get("agent_id", "default")
             ref_audio_path = data.get("ref_audio_path")
             ref_text = data.get("ref_text")
@@ -1044,10 +1069,17 @@ def register_audio_handlers(
             from server.services.vad_processor import get_audio_stream_processor
             stream_processor = get_audio_stream_processor()
 
+            # 诊断计时：定位 WS 端到端延迟瓶颈
+            import time as _diag_time
+            _t0 = _diag_time.monotonic()
+
             # 复用现有 AudioStreamProcessor 进行 VAD + ASR 处理
             # 不设置 on_partial_result 回调，避免单例跨客户端干扰
             # 直接从返回值中检查 asr_result 判断是否为 Partial
             result = await stream_processor.process_audio_chunk(audio_data)
+
+            _t1 = _diag_time.monotonic()
+            logger.info(f"[DIAG] process_audio_chunk took {(_t1-_t0)*1000:.1f}ms, vad_state_changed={result.get('vad',{}).get('state_changed')}, has_asr={result.get('asr') is not None}")
 
             vad_result = result.get("vad", {})
             asr_result = result.get("asr")
@@ -1106,4 +1138,8 @@ def register_audio_handlers(
     manager.register_handler(EffectActions.LIST, handle_effects_list)
     manager.register_handler(EffectActions.PARSE, handle_effects_parse)
     manager.register_handler(ASRActions.STREAM, handle_asr_stream)
-    manager.register_handler(VoiceActions.DUAL_STREAM, handle_voice_dual_stream)
+    # 修复 WS action 路由错位：用 register_action_handler 注册到 _action_handlers
+    # gateway/server.py:113 用 get_handler(action) 从 _action_handlers 取
+    # 原 register_handler 注册到 message_handlers（type 路由），导致 voice.dual_stream 永远找不到
+    # 详见 .trae/documents/20260718_模块0_WS端到端ASR阻塞修复.md §1.3 根因3
+    manager.register_action_handler(VoiceActions.DUAL_STREAM, handle_voice_dual_stream)

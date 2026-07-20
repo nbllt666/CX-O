@@ -2,23 +2,14 @@
 
 Extracted from manager.py as part of H5 mixin split.
 """
-import asyncio
-import json
-import re
-import sqlite3
-import threading
-import time
-from datetime import datetime
-from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple, TYPE_CHECKING
+from typing import Dict, List, Optional, TYPE_CHECKING
 
 from server.config import Settings
-from server.core.exceptions import DatabaseError, MemoryOperationError, VectorStoreError
 
-from ._common import json_dumps, json_loads, logger
+from ._common import logger
 
 if TYPE_CHECKING:
-    from server.core.memory.graph_store import GraphStoreBase
+    pass
 
 
 class _GraphIntegrationMixin:
@@ -94,7 +85,6 @@ class _GraphIntegrationMixin:
                     if library_key not in self._graph_stores:
                         continue
 
-                    import hashlib
                     from server.core.memory.graph_store import Relation
 
                     entity_id_a = hashlib.md5(f"{entity_a['name']}:{entity_type_a}".encode()).hexdigest()[:16]

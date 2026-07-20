@@ -1,0 +1,32 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://cx-o.local/schema/rejected_content.schema.json",
+  "title": "RejectedContent",
+  "description": "RADIX-Lite 拒绝内容数据契约。D6_REJECT 决策触发时，质量评分低于 rubric.quality_reject_threshold 的内容存入 rejected_content 表，保留 rubric.rejected_content_retention_days 天（默认 30 天）后自动清理。",
+  "type": "object",
+  "required": ["rejected_id", "session_id", "original_content", "quality_score", "reject_reason", "rubric_snapshot", "created_at", "expires_at"],
+  "additionalProperties": false,
+  "properties": {
+    "rejected_id": {"type": "string", "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$", "description": "拒绝内容唯一 ID（UUID v4）。"},
+    "session_id": {"type": "string", "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$", "description": "关联的蒸馏会话 ID。"},
+    "original_content": {"type": "string", "minLength": 0, "description": "被拒绝的原始抽取内容。"},
+    "source_artifact_id": {"type": ["string", "null"], "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$", "default": null, "description": "关联的 MultimodalArtifact ID。"},
+    "source_type": {"type": ["string", "null"], "enum": ["text", "character_card", "image", "video", "audio", "conversation_log", null], "default": null, "description": "原始数据源类型。"},
+    "quality_score": {"type": "number", "minimum": 0, "maximum": 1, "description": "质量评分。低于 rubric.quality_reject_threshold 触发拒绝。"},
+    "reject_reason": {"type": "string", "minLength": 1, "description": "拒绝理由。"},
+    "decision_point": {"type": "string", "enum": ["D6_REJECT"], "default": "D6_REJECT", "description": "决策点。固定为 D6_REJECT。"},
+    "rubric_snapshot": {"type": "object", "description": "决策时使用的 rubric 快照。", "properties": {"importance_threshold_permanent": {"type": "number", "minimum": 0, "maximum": 1}, "quality_reject_threshold": {"type": "number", "minimum": 0, "maximum": 1}, "max_redistill_turns": {"type": "integer", "minimum": 0, "maximum": 6}, "ask_user_confidence_threshold": {"type": "number", "minimum": 0, "maximum": 1}, "rejected_content_retention_days": {"type": "integer", "minimum": 1, "maximum": 90, "default": 30}}},
+    "llm_reasoning": {"type": ["string", "null"], "default": null, "description": "LLM 推理摘要。"},
+    "llm_confidence": {"type": ["number", "null"], "minimum": 0, "maximum": 1, "default": null, "description": "LLM 决策置信度。"},
+    "metadata": {"type": "object", "default": {}, "description": "附加元数据。", "additionalProperties": true},
+    "created_at": {"type": "string", "format": "date-time", "description": "拒绝记录创建时间。"},
+    "expires_at": {"type": "string", "format": "date-time", "description": "过期时间。"},
+    "is_purged": {"type": "boolean", "default": false, "description": "是否已被清理。"},
+    "purged_at": {"type": ["string", "null"], "format": "date-time", "default": null, "description": "清理时间。"},
+    "human_overridden": {"type": "boolean", "default": false, "description": "是否被人类 override_decision 覆盖。"}
+  },
+  "definitions": {
+    "error_codes": {"type": "object", "description": "RejectedContent 错误码定义。", "properties": {"REJECTED_NOT_FOUND": {"const": 404}, "SESSION_REJECTED_NOT_FOUND": {"const": 404}, "CLEANUP_FAILED": {"const": 500}, "INTERNAL_ERROR": {"const": 500}}, "additionalProperties": false},
+    "exceptions": {"type": "object", "description": "RejectedContent 异常契约。", "properties": {"KeyError_404": {"type": "object", "properties": {"exception_type": {"const": "KeyError"}, "trigger_methods": {"type": "array", "items": {"type": "string"}, "enum": ["get_rejected_content"]}}}, "RuntimeError_500": {"type": "object", "properties": {"exception_type": {"const": "RuntimeError"}, "trigger_methods": {"type": "array", "items": {"type": "string"}, "enum": ["write_with_decision", "get_rejected_content", "cleanup_expired_rejected_content"]}}}, "IOError_500": {"type": "object", "properties": {"exception_type": {"const": "IOError"}, "trigger_methods": {"type": "array", "items": {"type": "string"}, "enum": ["write_with_decision", "get_rejected_content", "cleanup_expired_rejected_content"]}}}}, "additionalProperties": false}
+  }
+}

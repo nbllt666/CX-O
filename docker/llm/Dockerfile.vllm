@@ -1,5 +1,10 @@
 FROM vllm/vllm-openai:latest
 
+# 清空基础镜像的 ENTRYPOINT ["vllm serve"]
+# 否则 CMD 会被拼接成 "vllm serve sh -c python -m ..." 导致参数解析错误
+# (vLLM 0.22.0+ 的 vllm serve 子命令会把后续参数当作 model_tag 和 options)
+ENTRYPOINT []
+
 # Install additional tools
 RUN apt-get update && apt-get install -y --no-install-recommends \
     curl wget && \

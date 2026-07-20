@@ -1,0 +1,32 @@
+[
+  {
+    "log_id": "a0b7ac1b-8b20-4a3c-af66-de06e62ad580",
+    "session_id": "44f8daac-7cf4-4727-8c4d-436b86330fcc",
+    "decision_point": "D1_LOCATION",
+    "input": {
+      "artifact_summary": null,
+      "session_state": "S_STORAGE_DECISION",
+      "turn_history_summary": null,
+      "extracted_content": "E2E D1 memories 分支",
+      "quality_score": 0.8
+    },
+    "rubric_snapshot": {
+      "importance_threshold_permanent": 0.8,
+      "quality_reject_threshold": 0.4,
+      "max_redistill_turns": 3,
+      "ask_user_confidence_threshold": 0.6,
+      "cross_validate_sources": []
+    },
+    "llm_reasoning": null,
+    "llm_confidence": null,
+    "final_decision": {
+      "action": "store",
+      "location": "memories",
+      "details": {
+        "importance": 0.75,
+        "memory_id": 2
+      }
+    },
+    "timestamp": "2026-07-19T10:58:11.011488+00:00"
+  }
+]

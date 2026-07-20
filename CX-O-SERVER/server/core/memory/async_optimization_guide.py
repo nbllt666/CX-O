@@ -24,7 +24,6 @@ def init_vectorization_queue_example():
     def on_complete(memory_id, vector):
         """向量化完成回调"""
         # 这里调用 vector_store.add_memory_vector
-        pass
     
     def on_error(memory_id, error):
         """向量化失败回调"""

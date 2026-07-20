@@ -1,0 +1,32 @@
+[
+  {
+    "log_id": "9695f4bc-5c7a-48f8-aff6-99f64e8b6d93",
+    "session_id": "7cecfe45-b357-4b27-a843-a47478242a37",
+    "decision_point": "D1_LOCATION",
+    "input": {
+      "artifact_summary": null,
+      "session_state": "S_STORAGE_DECISION",
+      "turn_history_summary": null,
+      "extracted_content": "E2E D1 rejected 分支",
+      "quality_score": 0.2
+    },
+    "rubric_snapshot": {
+      "importance_threshold_permanent": 0.7,
+      "quality_reject_threshold": 0.4,
+      "max_redistill_turns": 3,
+      "ask_user_confidence_threshold": 0.6,
+      "cross_validate_sources": []
+    },
+    "llm_reasoning": null,
+    "llm_confidence": null,
+    "final_decision": {
+      "action": "reject",
+      "location": "rejected",
+      "details": {
+        "importance": 0.75,
+        "memory_id": null
+      }
+    },
+    "timestamp": "2026-07-19T14:35:07.522704+00:00"
+  }
+]

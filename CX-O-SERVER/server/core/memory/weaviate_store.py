@@ -3,11 +3,10 @@ Weaviate 向量存储实现
 支持 Embedded Weaviate 和普通 Weaviate 两种模式
 """
 
-import asyncio
 import threading
 from dataclasses import dataclass
-from datetime import datetime
-from typing import TYPE_CHECKING, Any, Dict, List, Optional
+from datetime import datetime, timezone
+from typing import TYPE_CHECKING, Dict, List, Optional
 
 from server.config import Settings
 from server.core.logging_config import get_contextual_logger
@@ -156,7 +155,7 @@ class WeaviateVectorStore:
                 "memory_type": metadata.get("type", "long_term") if metadata else "long_term",
                 "importance": metadata.get("importance_score", 0.6) if metadata else 0.6,
                 "tags": metadata.get("tags", []) if metadata else [],
-                "created_at": datetime.now().isoformat(),
+                "created_at": datetime.now(timezone.utc).isoformat(),
                 "workspace_id": metadata.get("workspace_id", "default") if metadata else "default",
                 "is_archived": metadata.get("is_archived", False) if metadata else False,
                 "emotion_score": metadata.get("emotion_score", 0.0) if metadata else 0.0,
@@ -440,7 +439,6 @@ class WeaviateVectorStore:
             collection = self._client.collections.get(self.schema_class)
 
             # 删除所有对象
-            from weaviate.classes.query import Filter
 
             result = collection.query.fetch_objects(limit=1000)
             for obj in result.objects:

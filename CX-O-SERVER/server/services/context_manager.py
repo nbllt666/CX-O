@@ -2,7 +2,7 @@
 上下文管理器 - 管理对话上下文
 """
 import logging
-from typing import List, Dict, Any, Optional
+from typing import List, Dict
 
 from server.config import Settings
 

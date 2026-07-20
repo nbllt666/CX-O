@@ -1,0 +1,87 @@
+{
+  "session_id": "d7464dad-7961-4f34-80e5-59bec2c57cc6",
+  "source_type": "text",
+  "source_ref": "拒绝分支测试：验证 S_REJECT 终态与 rejected 存储位置。",
+  "state": "S_REJECT",
+  "template_id": "default",
+  "max_turns": 4,
+  "ask_user_on_ambiguity": false,
+  "turns": [
+    {
+      "turn_index": 0,
+      "state": "S_INIT",
+      "agent_action": "proceed",
+      "agent_output": "[DistillationService] 初始化会话",
+      "user_response": null,
+      "timestamp": "2026-07-19T15:00:37.898288+00:00"
+    },
+    {
+      "turn_index": 1,
+      "state": "S_PREREAD",
+      "agent_action": "proceed",
+      "agent_output": "[S_PREREAD] 数据源类型=text, 模板=default。\n预读摘要: [MultimodalArtifact type=text native_decode=False vision_degraded=False] 拒绝分支测试:验证 S_REJECT 终态与 rejected 存储位置。",
+      "user_response": null,
+      "timestamp": "2026-07-19T15:00:37.898288+00:00"
+    },
+    {
+      "turn_index": 2,
+      "state": "S_QUESTION",
+      "agent_action": "proceed",
+      "agent_output": "[DistillationService] 进入 S_QUESTION 状态",
+      "user_response": "继续",
+      "timestamp": "2026-07-19T15:00:38.007281+00:00"
+    },
+    {
+      "turn_index": 3,
+      "state": "S_REFLECT",
+      "agent_action": "proceed",
+      "agent_output": "[DistillationService] 进入 S_REFLECT 状态",
+      "user_response": "继续",
+      "timestamp": "2026-07-19T15:00:38.116099+00:00"
+    },
+    {
+      "turn_index": 4,
+      "state": "S_CROSSVALIDATE",
+      "agent_action": "proceed",
+      "agent_output": "[DistillationService] D4 决策不回环，进入 S_CROSSVALIDATE (redistill_count=0, max_redistill_turns=2)",
+      "user_response": null,
+      "timestamp": "2026-07-19T15:00:38.224867+00:00"
+    },
+    {
+      "turn_index": 5,
+      "state": "S_EXTRACT",
+      "agent_action": "proceed",
+      "agent_output": "[DistillationService] D5 跳过跨源验证",
+      "user_response": null,
+      "timestamp": "2026-07-19T15:00:38.333957+00:00"
+    },
+    {
+      "turn_index": 6,
+      "state": "S_STORAGE_DECISION",
+      "agent_action": "extract",
+      "agent_output": "[DistillationService] 抽取结果: [S_EXTRACT] 结构化抽取结果:\n- source_type: text\n- template_id: default\n- preread_summary: [S_PREREAD] 数据源类型=text, 模板=default。\n预读摘要: [MultimodalArtifact type=text native_decode=False vision_degraded=False] 拒绝...",
+      "user_response": null,
+      "timestamp": "2026-07-19T15:00:38.442139+00:00"
+    },
+    {
+      "turn_index": 7,
+      "state": "S_REJECT",
+      "agent_action": "reject",
+      "agent_output": "[DistillationService] 人类 override=reject，拒绝存储",
+      "user_response": "reject",
+      "timestamp": "2026-07-19T15:00:39.323735+00:00"
+    }
+  ],
+  "preread_summary": "[S_PREREAD] 数据源类型=text, 模板=default。\n预读摘要: [MultimodalArtifact type=text native_decode=False vision_degraded=False] 拒绝分支测试:验证 S_REJECT 终态与 rejected 存储位置。",
+  "ambiguity_questions": [
+    "1. 文本中的关键实体是否需要归一化？",
+    "2. 时间戳是否需要转换为 UTC？"
+  ],
+  "extracted_content": "[S_EXTRACT] 结构化抽取结果:\n- source_type: text\n- template_id: default\n- preread_summary: [S_PREREAD] 数据源类型=text, 模板=default。\n预读摘要: [MultimodalArtifact type=text native_decode=False vision_degraded=False] 拒绝分支测试:验证 S_REJECT 终态与 rejected 存储位置。\n- turns_count: 6\n",
+  "quality_score": 0.3,
+  "created_at": "2026-07-19T15:00:37.898288+00:00",
+  "updated_at": "2026-07-19T15:00:39.323735+00:00",
+  "finalized_at": "2026-07-19T15:00:39.323735+00:00",
+  "is_finalized": true,
+  "error_message": null
+}

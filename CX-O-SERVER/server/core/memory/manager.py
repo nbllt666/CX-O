@@ -16,7 +16,7 @@ import threading
 from pathlib import Path
 from typing import Dict, Optional, TYPE_CHECKING
 
-from .mixins._common import json_dumps, json_loads, logger
+from .mixins._common import logger
 from .mixins.advanced_mixin import _AdvancedSearchMixin
 from .mixins.batch_mixin import _BatchOperationsMixin
 from .mixins.crud_mixin import _MemoryCRUDMixin
@@ -24,6 +24,7 @@ from .mixins.db_mixin import _MemoryDBMixin
 from .mixins.graph_mixin import _GraphIntegrationMixin
 from .mixins.permanent_mixin import _PermanentMemoryMixin
 from .mixins.query_mixin import _QueryHelpersMixin
+from .mixins.decision_mixin import _DecisionMixin
 from .mixins.vector_mixin import _VectorIntegrationMixin
 
 if TYPE_CHECKING:
@@ -39,6 +40,7 @@ class MemoryManager(
     _AdvancedSearchMixin,
     _BatchOperationsMixin,
     _QueryHelpersMixin,
+    _DecisionMixin,
 ):
     """记忆管理器
 
@@ -107,6 +109,9 @@ class MemoryManager(
         self._start_cleanup_task()
 
         self._check_deprecated_config()
+
+        # B4.3: 初始化 rejected_content 表（DecisionCore D6_REJECT 落地）
+        self._init_rejected_content_table()
 
         logger.info(f"记忆管理器初始化完成: db={db_path}")
         self._initialized = True

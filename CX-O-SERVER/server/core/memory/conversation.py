@@ -3,7 +3,6 @@
 支持通过自然语言与记忆管理模型交互
 """
 
-import json
 import re
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -278,7 +277,7 @@ class MemoryConversationEngine:
             if not results:
                 return {
                     "status": "success",
-                    "message": f"未找到匹配的记忆" + (f"：{query}" if query else ""),
+                    "message": "未找到匹配的记忆" + (f"：{query}" if query else ""),
                     "results": [],
                 }
 
@@ -334,7 +333,7 @@ class MemoryConversationEngine:
                         "archive": result.to_dict(),
                     }
                 else:
-                    return {"status": "error", "message": f"归档失败，记忆可能不存在"}
+                    return {"status": "error", "message": "归档失败，记忆可能不存在"}
             else:
                 return {"status": "error", "message": "归档功能未启用"}
 
@@ -410,7 +409,7 @@ class MemoryConversationEngine:
             if success:
                 return {"status": "success", "message": f"记忆 ID {memory_id} 已删除"}
             else:
-                return {"status": "error", "message": f"删除失败，记忆可能不存在"}
+                return {"status": "error", "message": "删除失败，记忆可能不存在"}
 
         except Exception as e:
             logger.error(f"删除记忆失败: {e}")
@@ -483,7 +482,7 @@ class MemoryConversationEngine:
                 t = m.get("type", "unknown")
                 by_type[t] = by_type.get(t, 0) + 1
 
-            message = f"记忆统计：\n\n"
+            message = "记忆统计：\n\n"
             message += f"总记忆数: {total}\n"
             message += f"永久记忆: {permanent}\n"
             message += f"已归档: {archived}\n\n"
@@ -495,7 +494,7 @@ class MemoryConversationEngine:
             if self.memory_manager.archiver:
                 archive_stats = self.memory_manager.archiver.get_archive_stats()
                 if archive_stats:
-                    message += f"\n归档统计：\n"
+                    message += "\n归档统计：\n"
                     message += f"  总归档数: {archive_stats.get('total_archived', 0)}\n"
                     message += f"  合并记录: {archive_stats.get('merge_count', 0)}\n"
                     message += f"  重复检测: {archive_stats.get('duplicate_count', 0)}\n"

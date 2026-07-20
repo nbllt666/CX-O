@@ -188,7 +188,7 @@ const defaultVRMSettings: VRMSettings = {
   modelPath: '/models/avatar.vrm',
   width: 300,
   minWidth: 200,
-  maxWidth: 400,
+  maxWidth: 1200,
   position: 'left',
   lipSync: true,
   idleAnimation: true,
@@ -351,6 +351,7 @@ export const useSettingsStore = create<SettingsState>()(
           vrm: {
             ...current.vrm,
             ...(pv || {}),
+            maxWidth: Math.max(pv?.maxWidth ?? 0, current.vrm.maxWidth),
             animation: {
               ...current.vrm.animation,
               ...(pv?.animation || {}),

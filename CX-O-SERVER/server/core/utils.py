@@ -32,9 +32,15 @@ _shared_http_client: Optional[httpx.AsyncClient] = None
 def get_shared_http_client() -> httpx.AsyncClient:
     global _shared_http_client
     if _shared_http_client is None:
+        # 显式禁用 Windows 系统代理检测（trust_env=False + proxy=None）
+        # 不依赖 main.py 的 monkey-patch（某些导入顺序下 patch 可能未生效）
+        # 实测：仅 trust_env=False 仍耗时 7.8s（httpx 内部代理检测残留）；
+        # 必须同时 proxy=None 才能降到 ~10ms（与 requests 一致）
         _shared_http_client = httpx.AsyncClient(
             timeout=httpx.Timeout(connect=10.0, read=120.0, write=120.0, pool=10.0),
-            limits=httpx.Limits(max_keepalive_connections=5, max_connections=10, keepalive_expiry=30.0)
+            limits=httpx.Limits(max_keepalive_connections=5, max_connections=10, keepalive_expiry=30.0),
+            trust_env=False,
+            proxy=None,
         )
     return _shared_http_client
 

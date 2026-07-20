@@ -1,0 +1,31 @@
+[
+  {
+    "log_id": "a4903cdc-850e-4ced-8a21-6c6b5bcee24c",
+    "session_id": "b74111fa-4eed-4190-a4e0-86a3efe59641",
+    "decision_point": "D6_REJECT",
+    "input": {
+      "artifact_summary": null,
+      "session_state": "S_STORAGE_DECISION",
+      "turn_history_summary": null,
+      "extracted_content": null,
+      "quality_score": 0.15
+    },
+    "rubric_snapshot": {
+      "importance_threshold_permanent": 0.7,
+      "quality_reject_threshold": 0.4,
+      "max_redistill_turns": 3,
+      "ask_user_confidence_threshold": 0.6,
+      "cross_validate_sources": []
+    },
+    "llm_reasoning": null,
+    "llm_confidence": null,
+    "final_decision": {
+      "action": "reject",
+      "location": "rejected",
+      "details": {
+        "quality_score": 0.15
+      }
+    },
+    "timestamp": "2026-07-19T11:21:55.118373+00:00"
+  }
+]

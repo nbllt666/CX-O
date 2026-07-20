@@ -1,0 +1,183 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://cx-o.local/schema/distillation_log.schema.json",
+  "title": "DistillationLog",
+  "description": "RADIX-Lite 决策审计日志数据契约。每个蒸馏会话的 6 决策点（D1-D6）独立记录输入、rubric 快照、LLM 推理摘要与最终决策。日志持久化到 data/distillation_logs/{session_id}.json，支持 GN-004 抽样审查。",
+  "type": "object",
+  "required": [
+    "log_id",
+    "session_id",
+    "decision_point",
+    "input",
+    "rubric_snapshot",
+    "final_decision",
+    "timestamp"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "log_id": {
+      "type": "string",
+      "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$",
+      "description": "日志条目唯一 ID（UUID v4）。"
+    },
+    "session_id": {
+      "type": "string",
+      "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$",
+      "description": "关联的蒸馏会话 ID。"
+    },
+    "decision_point": {
+      "type": "string",
+      "enum": ["D1_LOCATION", "D2_METADATA", "D3_ASK_USER", "D4_REDISTILL", "D5_CROSS_VALIDATE", "D6_REJECT"],
+      "description": "决策点。D1=存入位置，D2=元数据，D3=追问，D4=再次蒸馏，D5=跨源验证，D6=拒绝存储。"
+    },
+    "input": {
+      "type": "object",
+      "description": "决策输入快照。包含触发该决策的上下文信息。",
+      "properties": {
+        "artifact_summary": {
+          "type": ["string", "null"],
+          "default": null,
+          "description": "MultimodalArtifact 摘要（type + text_content 前 500 字符）。"
+        },
+        "session_state": {
+          "type": "string",
+          "description": "决策时的会话状态（S_STORAGE_DECISION 等）。"
+        },
+        "turn_history_summary": {
+          "type": ["string", "null"],
+          "default": null,
+          "description": "轮次历史摘要（agent_action 序列）。"
+        },
+        "extracted_content": {
+          "type": ["string", "null"],
+          "default": null,
+          "description": "S_EXTRACT 抽取内容摘要。"
+        },
+        "quality_score": {
+          "type": ["number", "null"],
+          "minimum": 0,
+          "maximum": 1,
+          "default": null,
+          "description": "质量评分（D6_REJECT 决策时使用）。"
+        }
+      },
+      "additionalProperties": true
+    },
+    "rubric_snapshot": {
+      "type": "object",
+      "description": "决策时使用的 rubric 快照。确保决策可审计——即使 data/agents.json 后续变更，历史决策仍可追溯。",
+      "properties": {
+        "importance_threshold_permanent": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1,
+          "description": "永久记忆重要性阈值。importance >= 此值存入 permanent_memories。"
+        },
+        "quality_reject_threshold": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1,
+          "description": "质量拒绝阈值。quality_score < 此值触发 D6_REJECT。"
+        },
+        "max_redistill_turns": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 6,
+          "description": "最大再次蒸馏轮次。D4_REDISTILL 决策时使用。"
+        },
+        "ask_user_confidence_threshold": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1,
+          "description": "追问置信度阈值。llm_confidence < 此值触发 D3_ASK_USER。"
+        },
+        "cross_validate_sources": {
+          "type": "array",
+          "items": {"type": "string"},
+          "default": [],
+          "description": "跨源验证的数据源列表。D5_CROSS_VALIDATE 决策时使用。"
+        }
+      },
+      "additionalProperties": true
+    },
+    "llm_reasoning": {
+      "type": ["string", "null"],
+      "default": null,
+      "description": "LLM 推理摘要（LLM 决策时的 reasoning chain 摘要）。回退 system_prompt 规则时为 null。"
+    },
+    "llm_confidence": {
+      "type": ["number", "null"],
+      "minimum": 0,
+      "maximum": 1,
+      "default": null,
+      "description": "LLM 决策置信度。回退 system_prompt 规则时为 null。"
+    },
+    "final_decision": {
+      "type": "object",
+      "description": "最终决策结果。",
+      "required": ["action", "details"],
+      "properties": {
+        "action": {
+          "type": "string",
+          "enum": ["store", "ask_user", "redistill", "cross_validate", "reject", "skip"],
+          "description": "决策动作。store=存储，ask_user=追问，redistill=再次蒸馏，cross_validate=跨源验证，reject=拒绝，skip=跳过。"
+        },
+        "location": {
+          "type": ["string", "null"],
+          "enum": ["memories", "permanent_memories", "rejected", null],
+          "default": null,
+          "description": "存储位置（action=store 时有效）。"
+        },
+        "details": {
+          "type": "object",
+          "description": "决策详情（元数据、拒绝理由、追问问题等）。",
+          "additionalProperties": true
+        }
+      },
+      "additionalProperties": false
+    },
+    "timestamp": {
+      "type": "string",
+      "format": "date-time",
+      "description": "日志记录时间。"
+    }
+  },
+  "definitions": {
+    "error_codes": {
+      "type": "object",
+      "description": "审计日志错误码定义。日志写入失败不阻断主流程（best-effort），但记录错误码供监控。",
+      "properties": {
+        "LOG_WRITE_FAILED": {
+          "const": 500,
+          "description": "日志写入失败：data/distillation_logs/ 目录不可写 / 磁盘空间不足。"
+        },
+        "LOG_CORRUPTED": {
+          "const": 500,
+          "description": "日志文件损坏：JSON 解析失败。"
+        },
+        "SESSION_LOG_NOT_FOUND": {
+          "const": 404,
+          "description": "会话日志不存在：查询的 session_id 无对应日志文件。"
+        }
+      },
+      "additionalProperties": false
+    },
+    "exceptions": {
+      "type": "object",
+      "description": "审计日志异常契约。日志写入为 best-effort，异常不阻断主流程。",
+      "properties": {
+        "IOError_500": {
+          "type": "object",
+          "description": "日志文件 IO 异常（非阻断）。",
+          "properties": {
+            "exception_type": {"const": "IOError"},
+            "trigger_method": {"const": "write_log"},
+            "behavior": {"const": "best-effort, non-blocking"},
+            "reason": {"type": "string"}
+          }
+        },
+        "json_JSONDecodeError_500": {
+          "type": "object",
+          "description": "日志文件 JSON 解析异常（查询时）。",
+          "properties": {
+            "exception_type": {"const": "json

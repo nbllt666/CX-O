@@ -10,6 +10,46 @@ import os
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
+# ============================================================================
+# httpx Windows 代理性能补丁（必须在任何 httpx 导入前执行）
+# ============================================================================
+# 问题：httpx 0.28.1 在 Windows 上默认读取系统代理（IE 注册表），
+#   对 127.0.0.1 请求会走代理返回 502 且耗时 23s；
+#   单独 trust_env=False 仍耗时 7.8s（httpx 内部代理检测残留）；
+#   必须 trust_env=False + proxy=None 同时设置才能降到 14ms（与 requests 一致）。
+# 修复：monkey-patch httpx.AsyncClient.__init__，强制注入两个参数。
+# 影响：所有 httpx.AsyncClient 调用（model_router/llm/client/tts_service 等）
+#   自动获得正确配置，无需逐处修改 13+ 处调用点。
+# 验证：requests 35ms / httpx patched 14ms / httpx 默认 23553ms(502)
+import httpx as _httpx_patch_target
+
+_orig_async_client_init = _httpx_patch_target.AsyncClient.__init__
+
+
+def _patched_async_client_init(self, *args, **kwargs):
+    # 强制禁用 Windows 系统代理检测，仅对本地回环和内网服务有意义
+    kwargs.setdefault("trust_env", False)
+    # httpx 0.28+ 用 proxy（单数），旧版用 proxies（复数）
+    if "proxy" not in kwargs and "proxies" not in kwargs:
+        kwargs["proxy"] = None
+    return _orig_async_client_init(self, *args, **kwargs)
+
+
+_httpx_patch_target.AsyncClient.__init__ = _patched_async_client_init
+# 同步客户端也补丁（httpx.Client）
+_orig_client_init = _httpx_patch_target.Client.__init__
+
+
+def _patched_client_init(self, *args, **kwargs):
+    kwargs.setdefault("trust_env", False)
+    if "proxy" not in kwargs and "proxies" not in kwargs:
+        kwargs["proxy"] = None
+    return _orig_client_init(self, *args, **kwargs)
+
+
+_httpx_patch_target.Client.__init__ = _patched_client_init
+# ============================================================================
+
 import asyncio
 import logging
 from contextlib import asynccontextmanager
@@ -37,7 +77,7 @@ async def lifespan(app: FastAPI):
     app.state.services = services
     set_service_state(services)
 
-    from server.core.logging_config import LogContext, get_contextual_logger, setup_logging
+    from server.core.logging_config import get_contextual_logger, setup_logging
 
     log_file_config = getattr(settings.config, "logging", {})
     log_file = (
@@ -121,6 +161,18 @@ async def lifespan(app: FastAPI):
 
     services.llm_client = await init_service("LLM客户端", _init_llm_client, logger_=lifespan_logger)
 
+    # DistillationService 初始化（B3 产物，RADIX-Lite 模块9 蒸馏服务）
+    # 路由从 app.state.distillation_service 获取实例（见 api/routes.py::_get_service）
+    def _init_distillation_service():
+        from server.core.distillation.distillation_service import DistillationService
+        return DistillationService()
+
+    distillation_service = await init_service(
+        "蒸馏服务", _init_distillation_service, logger_=lifespan_logger
+    )
+    if distillation_service is not None:
+        app.state.distillation_service = distillation_service
+
     if services.memory_manager:
         services.secondary_router = await init_service(
             "副模型路由器",
@@ -178,6 +230,7 @@ async def lifespan(app: FastAPI):
             acp_manager=services.acp_manager,
         )
         register_master_tools()
+        return True
 
     master_tools_registered = await init_service("主模型工具", _register_master, logger_=lifespan_logger) is not None
 
@@ -189,6 +242,7 @@ async def lifespan(app: FastAPI):
             context_manager=services.context_manager,
         )
         register_summary_tools()
+        return True
 
     summary_tools_registered = await init_service("摘要模型工具", _register_summary, logger_=lifespan_logger) is not None
 
@@ -200,6 +254,7 @@ async def lifespan(app: FastAPI):
             context_manager=services.context_manager,
         )
         register_assistant_tools()
+        return True
 
     assistant_tools_registered = await init_service("记忆管理模型工具", _register_assistant, logger_=lifespan_logger) is not None
 
@@ -415,6 +470,12 @@ async def lifespan(app: FastAPI):
             )
             services.cxfc_discovery = cxfc_discovery
 
+        # 注入到路由模块全局变量（修复 cxfc_manager 未注入 bug，20260719_模块0_CXFC路由注入修复）
+        from server.api.routers import cxfc as cxfc_router
+        cxfc_router.set_cxfc_manager(cxfc_manager)
+        if hasattr(services, 'cxfc_discovery') and services.cxfc_discovery:
+            cxfc_router.set_cxfc_discovery(services.cxfc_discovery)
+
         return cxfc_manager
 
     services.cxfc_manager = await init_service("CXFC管理器", _init_cxfc, logger_=lifespan_logger)
@@ -462,6 +523,13 @@ async def lifespan(app: FastAPI):
     else:
         try:
             asr_service = get_asr_service()
+            # 远程模式无需加载本地模型，直接标记 _initialized=True
+            # 否则 send_audio_chunk 会因 _initialized=False 直接 return False，
+            # 导致 vad_processor.AudioStreamProcessor 拿不到 ASR 结果，
+            # 双流式 voice.dual_stream 流水线无法启动（WS 端到端测试超时）
+            # 与上方 embedded fallback 分支（line 503-506）保持一致的初始化方式
+            asr_service._mode = "remote"
+            asr_service._initialized = True
             services.asr_service = asr_service
         except Exception:
             logger.warning("初始化ASR远程模式服务失败，回退到空实例", exc_info=True)
@@ -504,6 +572,52 @@ async def lifespan(app: FastAPI):
             logger.warning("初始化TTS远程模式服务失败，回退到空实例", exc_info=True)
         app.state.tts_status = "remote"
         health_checker.update_status("tts", "remote")
+
+    # 预热 shared HTTP client：httpx.AsyncClient 在 Windows 上首次构造可能耗时 ~8s
+    # （系统代理检测残留，即使 trust_env=False+proxy=None 仍可能慢）。
+    # 在启动时预热，避免首次 WS voice.dual_stream 请求承受 8s 延迟（端到端测试超时）。
+    import time as _warmup_t
+    _warmup_t0 = _warmup_t.monotonic()
+    from server.core.utils import get_shared_http_client as _warmup_get_client
+    _warmup_client = _warmup_get_client()
+    _warmup_dt = (_warmup_t.monotonic() - _warmup_t0) * 1000
+    lifespan_logger.info(f"Shared HTTP client 预热完成 ({_warmup_dt:.1f}ms)")
+
+    # Orpheus TTS 合成预热：首次合成请求会触发模型加载到 GPU（实测冷启动 11.9s）。
+    # 启动时发一个短文本合成请求预热模型，避免首次 WS voice.dual_stream 请求承受
+    # 11.9s 冷启动延迟（端到端延迟从 12.5s 降到 ~4s）。
+    # 仅在 tts_mode == "orpheus" 时执行；预热失败不阻塞启动（Orpheus 可后置启动）。
+    try:
+        from server.config import get_settings as _get_settings
+        _warmup_settings = _get_settings()
+        _warmup_tts_mode = getattr(_warmup_settings.config.tts, "mode", "")
+        if _warmup_tts_mode == "orpheus":
+            _orpheus_warmup_t0 = _warmup_t.monotonic()
+            _warmup_orpheus_url = getattr(_warmup_settings.config.tts.orpheus, "url", "http://127.0.0.1:5060")
+            _warmup_orpheus_voice = getattr(_warmup_settings.config.tts.orpheus, "voice", "tara")
+            _warmup_resp = await _warmup_client.post(
+                f"{_warmup_orpheus_url}/v1/audio/speech",
+                json={
+                    "input": f"{_warmup_orpheus_voice}: 你好",
+                    "voice": _warmup_orpheus_voice,
+                    "stream": False,
+                },
+                timeout=60.0,
+            )
+            _orpheus_warmup_dt = (_warmup_t.monotonic() - _orpheus_warmup_t0) * 1000
+            if _warmup_resp.status_code == 200:
+                lifespan_logger.info(
+                    f"Orpheus TTS 预热完成 ({_orpheus_warmup_dt:.1f}ms, "
+                    f"{len(_warmup_resp.content)} bytes) - 已加载模型到 GPU"
+                )
+            else:
+                lifespan_logger.warning(
+                    f"Orpheus TTS 预热返回 HTTP {_warmup_resp.status_code} ({_orpheus_warmup_dt:.1f}ms)"
+                )
+    except Exception as _warmup_e:
+        lifespan_logger.warning(
+            f"Orpheus TTS 预热失败（不阻塞启动）: {_warmup_e}"
+        )
 
     lifespan_logger.info(f"CX-O-SERVER started successfully (ASR: {app.state.asr_status}, TTS: {app.state.tts_status})")
 

@@ -14,15 +14,42 @@ interface Live2DPanelProps {
   driver?: IAvatarDriver;
 }
 
+interface DriverSnapshot {
+  avatar: IAvatarDriver['avatar'];
+  mouthOpen: number;
+  expressionMix: IAvatarDriver['expressionMix'];
+  parameterOverrides: IAvatarDriver['parameterOverrides'];
+  watermarkVisible: boolean;
+  transform: IAvatarDriver['transform'];
+}
+
 function useDriverState(driver: IAvatarDriver) {
-  const getSnapshot = useCallback(() => ({
-    avatar: driver.avatar,
-    mouthOpen: driver.mouthOpen,
-    expressionMix: driver.expressionMix,
-    parameterOverrides: driver.parameterOverrides,
-    watermarkVisible: driver.watermarkVisible,
-    transform: driver.transform,
-  }), [driver]);
+  const prevSnapshotRef = useRef<DriverSnapshot | null>(null);
+  const getSnapshot = useCallback(() => {
+    const newSnapshot: DriverSnapshot = {
+      avatar: driver.avatar,
+      mouthOpen: driver.mouthOpen,
+      expressionMix: driver.expressionMix,
+      parameterOverrides: driver.parameterOverrides,
+      watermarkVisible: driver.watermarkVisible,
+      transform: driver.transform,
+    };
+    if (prevSnapshotRef.current) {
+      const prev = prevSnapshotRef.current;
+      if (
+        prev.avatar === newSnapshot.avatar &&
+        prev.mouthOpen === newSnapshot.mouthOpen &&
+        prev.expressionMix === newSnapshot.expressionMix &&
+        prev.parameterOverrides === newSnapshot.parameterOverrides &&
+        prev.watermarkVisible === newSnapshot.watermarkVisible &&
+        prev.transform === newSnapshot.transform
+      ) {
+        return prev;
+      }
+    }
+    prevSnapshotRef.current = newSnapshot;
+    return newSnapshot;
+  }, [driver]);
   const subscribe = useCallback((listener: () => void) => driver.subscribe(listener), [driver]);
   return useSyncExternalStore(subscribe, getSnapshot);
 }
@@ -120,7 +147,7 @@ export function Live2DPanel({ audioElement, isPlaying, driver }: Live2DPanelProp
 
   if (layout.live2dCollapsed) {
     return (
-      <div className="flex flex-col items-center py-2 bg-[var(--color-bg-secondary)] border-r border-[var(--color-border)]">
+      <div className={`flex flex-col items-center py-2 bg-[var(--color-bg-secondary)] ${live2d.position === 'left' ? 'border-r' : 'border-l'} border-[var(--color-border)]`}>
         <button
           onClick={toggleLive2DCollapsed}
           className="p-2 rounded hover:bg-[var(--color-bg-hover)] transition-colors"
@@ -155,12 +182,21 @@ export function Live2DPanel({ audioElement, isPlaying, driver }: Live2DPanelProp
   return (
     <div
       ref={panelRef}
-      className="relative flex flex-col bg-[var(--color-bg-secondary)] border-r border-[var(--color-border)]"
+      className={`relative flex flex-col bg-[var(--color-bg-secondary)] ${live2d.position === 'left' ? 'border-r' : 'border-l'} border-[var(--color-border)]`}
       style={{ width: layout.live2dWidth }}
     >
       <div className="flex items-center justify-between px-2 py-1 border-b border-[var(--color-border)]">
         <span className="text-xs font-medium text-[var(--color-text-secondary)]">Live2D</span>
         <div className="flex items-center gap-1">
+          <button
+            onClick={() => setLive2DSettings({ position: live2d.position === 'left' ? 'right' : 'left' })}
+            className="p-1 rounded hover:bg-[var(--color-bg-hover)] transition-colors text-[var(--color-text-tertiary)]"
+            title={live2d.position === 'left' ? '移到右侧' : '移到左侧'}
+          >
+            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7h12m0 0l-4-4m4 4l-4 4m0 6H4m0 0l4 4m-4-4l4-4" />
+            </svg>
+          </button>
           <button
             onClick={() => setLive2DSettings({ lipSync: !live2d.lipSync })}
             className={`p-1 rounded transition-colors ${

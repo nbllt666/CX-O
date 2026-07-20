@@ -1,0 +1,316 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://cx-o.local/config_template/radix_config.json",
+  "title": "RADIX Config",
+  "description": "RADIX-Lite 全局配置契约（CX-O 适配版）。定义 3 子系统（DistillationService / MultimodalPipeline / TemplateEngine）+ DecisionCore + vLLM 的配置参数、默认值与自动补齐规则。MultimodalPipeline 扩展为 5 模态（含 video/audio 走 vLLM 原生解码）。配置加载时自动补充缺失字段（rules-3 §三 配置契约 auto_fill）。",
+  "type": "object",
+  "required": ["distillation_service", "multimodal_pipeline", "template_engine", "decision_core", "vllm"],
+  "additionalProperties": false,
+  "properties": {
+    "distillation_service": {
+      "type": "object",
+      "description": "DistillationService 子服务配置。CX-O-SERVER 主路由注册，端口 8000（不再独立 8011）。",
+      "required": ["host", "port", "max_turns", "session_timeout_seconds", "session_storage_dir"],
+      "additionalProperties": false,
+      "properties": {
+        "host": {
+          "type": "string",
+          "default": "127.0.0.1",
+          "description": "服务监听地址。默认 127.0.0.1（仅本地访问）。"
+        },
+        "port": {
+          "type": "integer",
+          "minimum": 1024,
+          "maximum": 65535,
+          "default": 8000,
+          "description": "CX-O-SERVER 主服务端口。默认 8000，distillation 作为子路由注册。"
+        },
+        "max_turns": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 6,
+          "default": 4,
+          "description": "默认最大蒸馏轮次。start_distillation 未指定 max_turns 时使用。rubric.max_redistill_turns 限制回环次数。"
+        },
+        "session_timeout_seconds": {
+          "type": "integer",
+          "minimum": 60,
+          "maximum": 7200,
+          "default": 1800,
+          "description": "会话超时（秒）。超过此时间未 advance 的会话自动标记为 S_REJECT。"
+        },
+        "session_storage_dir": {
+          "type": "string",
+          "default": "data/distillation_sessions",
+          "description": "会话状态持久化目录。每个会话存储为 {session_id}.json。"
+        },
+        "log_storage_dir": {
+          "type": "string",
+          "default": "data/distillation_logs",
+          "description": "决策审计日志目录。每个会话的 6 决策点日志存储为 {session_id}.json。"
+        },
+        "main_backend_url": {
+          "type": "string",
+          "default": "http://127.0.0.1:8000",
+          "description": "CX-O-SERVER 主后端 URL。DistillationService 调用主后端 API（如 MemoryManager.write_with_decision）时使用。"
+        }
+      }
+    },
+    "multimodal_pipeline": {
+      "type": "object",
+      "description": "MultimodalPipeline 多模态管线配置。worker 池，5 模态（文本/角色卡/图片/视频/音频）。CX-O 扩展：video/audio 走 vLLM 原生解码（仅当 LLM provider=vllm 时启用）。",
+      "required": ["worker_pool_size", "task_timeout_seconds", "enabled_modalities"],
+      "additionalProperties": false,
+      "properties": {
+        "worker_pool_size": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 16,
+          "default": 4,
+          "description": "worker 池大小。ProcessPoolExecutor 或 ThreadPoolExecutor 的 max_workers。"
+        },
+        "task_timeout_seconds": {
+          "type": "integer",
+          "minimum": 10,
+          "maximum": 600,
+          "default": 120,
+          "description": "单个预处理任务超时（秒）。OCR 和 vision 推理可能较慢。"
+        },
+        "enabled_modalities": {
+          "type": "array",
+          "items": {"type": "string", "enum": ["text", "character_card", "image", "video", "audio"]},
+          "default": ["text", "character_card", "image", "video", "audio"],
+          "description": "启用的模态列表。最小化模式可仅启用 ['text']。CX-O 扩展默认 5 模态。video/audio 仅当 vllm_native_enabled=true 且 LLM provider=vllm 时实际生效。"
+        },
+        "ocr_engine": {
+          "type": "string",
+          "default": "paddleocr",
+          "description": "OCR 引擎。默认 paddleocr。"
+        },
+        "ocr_language": {
+          "type": "string",
+          "default": "ch",
+          "description": "OCR 语言。ch=中英文，en=英文，japan=日文。"
+        },
+        "vision_degraded_fallback": {
+          "type": "boolean",
+          "default": true,
+          "description": "vision 不可用时是否降级为仅 OCR。true=降级（vision_degraded=true），false=报错。"
+        },
+        "vllm_native_enabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "CX-O 扩展：是否启用 vLLM 原生视频/音频解码。true=检测 LLM provider，若为 vllm 则通过 vLLM API 直接投递原生视频/音频；false=video/audio 模态走降级路径。"
+        }
+      }
+    },
+    "template_engine": {
+      "type": "object",
+      "description": "TemplateEngine 模板引擎配置。进程内引擎，YAML frontmatter + Jinja2 原生渲染。",
+      "required": ["templates_dir", "presets_dir", "custom_dir"],
+      "additionalProperties": false,
+      "properties": {
+        "templates_dir": {
+          "type": "string",
+          "default": "data/templates",
+          "description": "模板根目录。presets/ 和 custom/ 的父目录。"
+        },
+        "presets_dir": {
+          "type": "string",
+          "default": "data/templates/presets",
+          "description": "预设模板目录。系统预置，不可由 LLM 修改。"
+        },
+        "custom_dir": {
+          "type": "string",
+          "default": "data/templates/custom",
+          "description": "自定义模板目录。用户/agent 通过 create_template 创建。"
+        },
+        "autoescape": {
+          "type": "boolean",
+          "default": false,
+          "description": "Jinja2 autoescape。提示词模板默认 false（不转义 HTML）。"
+        },
+        "trim_blocks": {
+          "type": "boolean",
+          "default": true,
+          "description": "Jinja2 trim_blocks。去除块标签后的第一个换行。"
+        },
+        "lstrip_blocks": {
+          "type": "boolean",
+          "default": true,
+          "description": "Jinja2 lstrip_blocks。去除块标签前的空白。"
+        }
+      }
+    },
+    "decision_core": {
+      "type": "object",
+      "description": "DecisionCore 决策核心配置。6 决策点 rubric 默认值。",
+      "required": ["importance_threshold_permanent", "quality_reject_threshold", "max_redistill_turns", "ask_user_confidence_threshold"],
+      "additionalProperties": false,
+      "properties": {
+        "importance_threshold_permanent": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1,
+          "default": 0.7,
+          "description": "永久记忆重要性阈值。importance >= 此值存入 permanent_memories，否则存入 memories。"
+        },
+        "quality_reject_threshold": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1,
+          "default": 0.3,
+          "description": "质量拒绝阈值。quality_score < 此值触发 D6_REJECT，内容存入 rejected_content 保留 30 天。"
+        },
+        "max_redistill_turns": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 6,
+          "default": 2,
+          "description": "最大再次蒸馏轮次。D4_REDISTILL 决策时使用。超过此值不再触发再次蒸馏。"
+        },
+        "ask_user_confidence_threshold": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1,
+          "default": 0.4,
+          "description": "追问置信度阈值。llm_confidence < 此值且 ask_user_on_ambiguity=true 时触发 D3_ASK_USER。"
+        },
+        "cross_validate_sources": {
+          "type": "array",
+          "items": {"type": "string"},
+          "default": [],
+          "description": "跨源验证的数据源列表。D5_CROSS_VALIDATE 决策时使用。"
+        },
+        "rejected_content_retention_days": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 90,
+          "default": 30,
+          "description": "拒绝内容保留天数。超过此天数的 rejected_content 自动清理。"
+        },
+        "system_prompt_fallback_enabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "LLM 置信度极低时是否回退 system_prompt 规则。true=回退（互补融合项 3），false=报错。"
+        }
+      }
+    },
+    "vllm": {
+      "type": "object",
+      "description": "vLLM 推理服务配置。主模型 + vision 模型 + embedding 模型。",
+      "required": ["base_url", "timeout_seconds"],
+      "additionalProperties": false,
+      "properties": {
+        "base_url": {
+          "type": "string",
+          "default": "http://127.0.0.1:8080",
+          "description": "vLLM 主模型服务 URL。OpenAI 兼容 API。CX-O 默认 8080（docker/llm/）。"
+        },
+        "vision_model": {
+          "type": "string",
+          "default": "",
+          "description": "vision 模型名。空字符串表示不启用 vision（仅 OCR）。如 'Qwen/Qwen2-VL-7B-Instruct'。"
+        },
+        "vision_base_url": {
+          "type": "string",
+          "default": "http://127.0.0.1:8080",
+          "description": "vision 模型服务 URL。可与 base_url 相同（同一 vLLM 实例多模型）。CX-O 默认 8080。"
+        },
+        "embedding_base_url": {
+          "type": "string",
+          "default": "http://127.0.0.1:8101",
+          "description": "Embedding 模型服务 URL。"
+        },
+        "timeout_seconds": {
+          "type": "integer",
+          "minimum": 10,
+          "maximum": 600,
+          "default": 300,
+          "description": "LLM 调用超时（秒）。蒸馏多轮调用可能较慢。"
+        },
+        "max_tokens": {
+          "type": "integer",
+          "minimum": 256,
+          "maximum": 8192,
+          "default": 2048,
+          "description": "单次 LLM 调用最大 token 数。"
+        },
+        "temperature": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 2,
+          "default": 0.3,
+          "description": "LLM 温度参数。蒸馏决策建议低温（0.3）以保证一致性。"
+        }
+      }
+    },
+    "legacy_parser_enabled": {
+      "type": "boolean",
+      "default": true,
+      "description": "parser.py 回退开关。true=走原有解析逻辑，false=调用 MultimodalPipeline.preprocess。升级时设为 false 启用下沉路径。"
+    }
+  },
+  "definitions": {
+    "error_codes": {
+      "type": "object",
+      "description": "配置加载错误码定义。",
+      "properties": {
+        "CONFIG_FILE_NOT_FOUND": {
+          "const": 404,
+          "description": "配置文件不存在：radix_config.json 未找到，使用全默认值。"
+        },
+        "CONFIG_INVALID_JSON": {
+          "const": 422,
+          "description": "配置文件 JSON 解析失败。使用全默认值并记录警告。"
+        },
+        "CONFIG_FIELD_OUT_OF_RANGE": {
+          "const": 422,
+          "description": "配置字段值超出范围。使用默认值并记录警告。"
+        },
+        "CONFIG_AUTO_FILL_APPLIED": {
+          "const": 200,
+          "description": "配置自动补齐已应用（非错误，记录信息）。缺失字段已用默认值补齐。"
+        }
+      },
+      "additionalProperties": false
+    },
+    "exceptions": {
+      "type": "object",
+      "description": "配置加载异常契约。配置加载为 best-effort，异常不阻断启动。",
+      "properties": {
+        "FileNotFoundError_404": {
+          "type": "object",
+          "description": "配置文件不存在，使用全默认值。",
+          "properties": {
+            "exception_type": {"const": "FileNotFoundError"},
+            "trigger_method": {"const": "load_config"},
+            "behavior": {"const": "use defaults, log warning"},
+            "reason": {"type": "string"}
+          }
+        },
+        "json_JSONDecodeError_422": {
+          "type": "object",
+          "description": "配置文件 JSON 解析失败，使用全默认值。",
+          "properties": {
+            "exception_type": {"const": "json.JSONDecodeError"},
+            "trigger_method": {"const": "load_config"},
+            "behavior": {"const": "use defaults, log warning"},
+            "reason": {"type": "string"}
+          }
+        },
+        "ValueError_422": {
+          "type": "object",
+          "description": "配置字段值超出范围，使用默认值。",
+          "properties": {
+            "exception_type": {"const": "ValueError"},
+            "trigger_method": {"const": "_validate_field"},
+            "behavior": {"const": "use default, log warning"},
+            "reason": {"type": "string"}
+          }
+        }
+      },
+      "additionalProperties": false
+    }
+  }
+}

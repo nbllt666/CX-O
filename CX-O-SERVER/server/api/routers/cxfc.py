@@ -1,6 +1,7 @@
-from typing import List
+from typing import Any, Dict, List
 
 from fastapi import APIRouter, HTTPException
+from pydantic import BaseModel
 
 from server.core.cxfc.models import (
     CXFCRegisterRequest,
@@ -12,6 +13,13 @@ from server.core.logging_config import get_contextual_logger
 
 router = APIRouter()
 logger = get_contextual_logger(__name__)
+
+
+class CXFCCallToolRequest(BaseModel):
+    """CXFC 插件工具调用请求"""
+
+    tool: str
+    arguments: Dict[str, Any] = {}
 
 _cxfc_manager = None
 _discovery = None
@@ -147,4 +155,20 @@ async def refresh_plugin(plugin_id: str):
         raise
     except Exception as e:
         logger.error(f"刷新插件失败: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="内部服务器错误")
+
+
+@router.post("/cxfc/plugins/{plugin_id}/call")
+async def call_plugin_tool(plugin_id: str, request: CXFCCallToolRequest):
+    """调用指定插件的工具
+
+    通过主系统转发到插件侧的 POST /call 端点，实现工具调用。
+    用于测试工具验证端到端调用链路。
+    """
+    cxfc_manager = get_cxfc_manager()
+    try:
+        result = await cxfc_manager.call_tool(plugin_id, request.tool, request.arguments)
+        return {"status": "ok", "result": result}
+    except Exception as e:
+        logger.error(f"调用插件工具失败: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail="内部服务器错误")

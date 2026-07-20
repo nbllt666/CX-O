@@ -122,7 +122,6 @@ def setup_logging(
     Returns:
         根日志记录器
     """
-    import os
 
     # 获取日志级别
     log_level = getattr(logging, level.upper(), logging.INFO)

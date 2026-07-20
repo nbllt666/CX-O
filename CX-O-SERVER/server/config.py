@@ -434,6 +434,81 @@ class LimitsConfig(BaseModel):
     frontend: FrontendLimitsConfig = Field(default_factory=FrontendLimitsConfig)
 
 
+# ============================================================================
+# RADIX-Lite 配置节（v1.1.0 新增，对应 public/config_template/radix_config.json）
+# 蒸馏服务 / 多模态管线 / 决策核心 / 遗留兼容
+# ============================================================================
+
+
+class DistillationConfig(BaseModel):
+    """RADIX-Lite 蒸馏服务配置（9 状态机参数）。
+
+    对应 radix_config.json 的 distillation_service 节。
+    CX-O-SERVER 主路由注册，端口 8000（不再独立 8011）。
+    """
+    host: str = "127.0.0.1"
+    port: int = 8000  # CX-O-SERVER 主服务端口，distillation 作为子路由注册
+    max_turns: int = 4  # 默认最大蒸馏轮次，取值 1-6
+    session_timeout_seconds: int = 1800  # 会话超时（秒），60-7200
+    session_storage_dir: str = "data/distillation_sessions"
+    log_storage_dir: str = "data/distillation_logs"  # 决策审计日志目录
+    main_backend_url: str = "http://127.0.0.1:8000"  # 调用主后端 API（如 write_with_decision）
+    # OBS-6 方案 C：LLM 质量评估配置（自然 S_REJECT 可达性修复）
+    # 启用后 _estimate_quality_score 优先调用 LLM 评估；失败或禁用时回退启发式（基础分 0.4）
+    quality_llm_enabled: bool = True  # 是否启用 LLM 质量评估
+    quality_llm_model: str = ""  # LLM 模型名，空字符串表示从 llm 段继承默认模型
+    quality_llm_timeout_seconds: int = 30  # LLM 调用超时（秒），5-120
+
+
+class MultimodalPipelineConfig(BaseModel):
+    """MultimodalPipeline 多模态管线配置。
+
+    对应 radix_config.json 的 multimodal_pipeline 节。
+    CX-O 扩展：video/audio 走 vLLM 原生解码（仅当 LLM provider=vllm 时启用）。
+    """
+    model_config = ConfigDict(protected_namespaces=())
+
+    worker_pool_size: int = 4  # 1-16
+    task_timeout_seconds: int = 120  # 10-600，OCR/vision 推理可能较慢
+    enabled_modalities: List[str] = Field(
+        default_factory=lambda: ["text", "character_card", "image", "video", "audio"]
+    )
+    ocr_engine: str = "paddleocr"
+    ocr_language: str = "ch"  # ch=中英文，en=英文，japan=日文
+    vision_degraded_fallback: bool = True  # vision 不可用时降级为仅 OCR
+    vision_base_url: str = "http://127.0.0.1:8080"  # vision 模型服务 URL（可与 vLLM 主模型同实例）
+    vision_model: str = ""  # vision 模型名，空字符串表示不启用 vision（仅 OCR）
+    vision_timeout_seconds: int = 300  # vision 推理超时
+    vllm_native_enabled: bool = True  # CX-O 扩展：是否启用 vLLM 原生视频/音频解码
+
+
+class RadixConfig(BaseModel):
+    """RADIX-Lite 遗留配置兼容（端口 8011 等历史参数）。
+
+    CX-O 已将 RADIX 子服务合并到主后端 8000，此配置节仅保留兼容字段，
+    用于读取旧版配置文件或控制 legacy_parser 回退开关。
+    """
+    legacy_parser_enabled: bool = True  # parser.py 回退开关，true=走原有解析逻辑
+    legacy_port: int = 8011  # CXHMS 历史 RADIX 端口，CX-O 已合并到 8000，仅保留兼容字段
+
+
+class DecisionCoreConfig(BaseModel):
+    """DecisionCore 决策核心配置（6 决策点 rubric 默认值）。
+
+    对应 radix_config.json 的 decision_core 节。
+    D1_LOCATION / D2_METADATA / D3_ASK_USER / D4_REDISTILL / D5_CROSS_VALIDATE / D6_REJECT
+    """
+    importance_threshold_permanent: float = 0.7  # 0-1，永久记忆重要性阈值
+    quality_reject_threshold: float = 0.3  # 0-1，质量拒绝阈值，低于此值触发 D6_REJECT
+    max_redistill_turns: int = 2  # 0-6，最大再次蒸馏轮次
+    ask_user_confidence_threshold: float = 0.4  # 0-1，追问置信度阈值
+    cross_validate_sources: List[str] = Field(default_factory=list)  # 跨源验证数据源列表
+    rejected_content_retention_days: int = 30  # 1-90，拒绝内容保留天数
+    system_prompt_fallback_enabled: bool = True  # LLM 置信度极低时回退 system_prompt
+    rubric_path: str = "data/agents.json"  # 决策 rubric 路径
+    audit_log_path: str = "data/distillation_logs/"  # 审计日志路径
+
+
 class UnifiedConfig(BaseModel):
     model_config = ConfigDict(protected_namespaces=())
 
@@ -453,6 +528,11 @@ class UnifiedConfig(BaseModel):
     graph: GraphConfigSection = Field(default_factory=GraphConfigSection)
     cxfc: CXFCConfig = Field(default_factory=CXFCConfig)
     limits: LimitsConfig = Field(default_factory=LimitsConfig)
+    # RADIX-Lite 新增 4 配置节（v1.1.0）
+    distillation: DistillationConfig = Field(default_factory=DistillationConfig)
+    multimodal_pipeline: MultimodalPipelineConfig = Field(default_factory=MultimodalPipelineConfig)
+    radix: RadixConfig = Field(default_factory=RadixConfig)
+    decision_core: DecisionCoreConfig = Field(default_factory=DecisionCoreConfig)
 
 
 class Settings:
@@ -496,6 +576,9 @@ class Settings:
 
         env_config = get_env_config()
         merged_config = deep_merge(file_config, env_config)
+
+        # RADIX-Lite 配置 auto_fill + 越界回退（rules-3 §三 配置契约 auto_fill）
+        merged_config = _auto_fill_radix_config(merged_config)
 
         return UnifiedConfig(**merged_config)
 
@@ -546,3 +629,106 @@ def get_service_url(service_name: str) -> str:
     if service_config is None:
         raise ValueError(f"Unknown service: {service_name}")
     return service_config.url
+
+
+# ============================================================================
+# RADIX-Lite 配置 auto_fill + 越界回退（rules-3 §三 配置契约 auto_fill）
+# ============================================================================
+
+
+def _auto_fill_radix_config(user_config: Dict[str, Any]) -> Dict[str, Any]:
+    """RADIX-Lite 配置 auto_fill 默认值 + 越界字段回退默认值。
+
+    对应 public/config_template/radix_config.json 的 auto_fill 契约：
+      - 缺失字段：Pydantic BaseModel 的 Field(default_factory=...) 已自然补齐，
+        本函数不重复补齐，仅在日志中标记 CONFIG_AUTO_FILL_APPLIED（信息级）
+      - 越界字段：检查取值范围，越界则回退默认值并 log warning（CONFIG_FIELD_OUT_OF_RANGE）
+      - JSON 解析失败：由 _load_config 上游 try-except 处理，本函数不介入
+
+    调用时机：Settings._load_config 中 deep_merge 后、UnifiedConfig 实例化前。
+
+    Args:
+        user_config: 合并 env + file 后的配置 dict
+
+    Returns:
+        处理后的配置 dict（原 dict 被原地修改并返回）
+    """
+    import logging
+    logger = logging.getLogger(__name__)
+
+    # ---- distillation 节越界检查 ----
+    distillation = user_config.setdefault("distillation", {})
+    if "max_turns" in distillation:
+        mt = distillation["max_turns"]
+        if not isinstance(mt, int) or mt < 1 or mt > 6:
+            logger.warning(f"CONFIG_FIELD_OUT_OF_RANGE: distillation.max_turns={mt} 越界（1-6），回退默认值 4")
+            distillation["max_turns"] = 4
+    if "session_timeout_seconds" in distillation:
+        s = distillation["session_timeout_seconds"]
+        if not isinstance(s, int) or s < 60 or s > 7200:
+            logger.warning(f"CONFIG_FIELD_OUT_OF_RANGE: distillation.session_timeout_seconds={s} 越界（60-7200），回退默认值 1800")
+            distillation["session_timeout_seconds"] = 1800
+    if "port" in distillation:
+        p = distillation["port"]
+        if not isinstance(p, int) or p < 1024 or p > 65535:
+            logger.warning(f"CONFIG_FIELD_OUT_OF_RANGE: distillation.port={p} 越界（1024-65535），回退默认值 8000")
+            distillation["port"] = 8000
+
+    # ---- multimodal_pipeline 节越界检查 ----
+    mm = user_config.setdefault("multimodal_pipeline", {})
+    if "worker_pool_size" in mm:
+        w = mm["worker_pool_size"]
+        if not isinstance(w, int) or w < 1 or w > 16:
+            logger.warning(f"CONFIG_FIELD_OUT_OF_RANGE: multimodal_pipeline.worker_pool_size={w} 越界（1-16），回退默认值 4")
+            mm["worker_pool_size"] = 4
+    if "task_timeout_seconds" in mm:
+        t = mm["task_timeout_seconds"]
+        if not isinstance(t, int) or t < 10 or t > 600:
+            logger.warning(f"CONFIG_FIELD_OUT_OF_RANGE: multimodal_pipeline.task_timeout_seconds={t} 越界（10-600），回退默认值 120")
+            mm["task_timeout_seconds"] = 120
+    if "enabled_modalities" in mm:
+        valid_modalities = {"text", "character_card", "image", "video", "audio"}
+        em = mm["enabled_modalities"]
+        if not isinstance(em, list) or not all(isinstance(x, str) for x in em):
+            logger.warning(f"CONFIG_FIELD_OUT_OF_RANGE: multimodal_pipeline.enabled_modalities={em} 非字符串列表，回退默认值 5 模态")
+            mm["enabled_modalities"] = ["text", "character_card", "image", "video", "audio"]
+        else:
+            invalid = set(em) - valid_modalities
+            if invalid:
+                logger.warning(f"CONFIG_FIELD_OUT_OF_RANGE: multimodal_pipeline.enabled_modalities 含未知模态 {invalid}，过滤掉")
+                mm["enabled_modalities"] = [x for x in em if x in valid_modalities] or ["text"]
+
+    # ---- decision_core 节越界检查 ----
+    dc = user_config.setdefault("decision_core", {})
+    if "importance_threshold_permanent" in dc:
+        v = dc["importance_threshold_permanent"]
+        if not isinstance(v, (int, float)) or v < 0 or v > 1:
+            logger.warning(f"CONFIG_FIELD_OUT_OF_RANGE: decision_core.importance_threshold_permanent={v} 越界（0-1），回退默认值 0.7")
+            dc["importance_threshold_permanent"] = 0.7
+    if "quality_reject_threshold" in dc:
+        v = dc["quality_reject_threshold"]
+        if not isinstance(v, (int, float)) or v < 0 or v > 1:
+            logger.warning(f"CONFIG_FIELD_OUT_OF_RANGE: decision_core.quality_reject_threshold={v} 越界（0-1），回退默认值 0.3")
+            dc["quality_reject_threshold"] = 0.3
+    if "max_redistill_turns" in dc:
+        v = dc["max_redistill_turns"]
+        if not isinstance(v, int) or v < 0 or v > 6:
+            logger.warning(f"CONFIG_FIELD_OUT_OF_RANGE: decision_core.max_redistill_turns={v} 越界（0-6），回退默认值 2")
+            dc["max_redistill_turns"] = 2
+    if "ask_user_confidence_threshold" in dc:
+        v = dc["ask_user_confidence_threshold"]
+        if not isinstance(v, (int, float)) or v < 0 or v > 1:
+            logger.warning(f"CONFIG_FIELD_OUT_OF_RANGE: decision_core.ask_user_confidence_threshold={v} 越界（0-1），回退默认值 0.4")
+            dc["ask_user_confidence_threshold"] = 0.4
+    if "rejected_content_retention_days" in dc:
+        v = dc["rejected_content_retention_days"]
+        if not isinstance(v, int) or v < 1 or v > 90:
+            logger.warning(f"CONFIG_FIELD_OUT_OF_RANGE: decision_core.rejected_content_retention_days={v} 越界（1-90），回退默认值 30")
+            dc["rejected_content_retention_days"] = 30
+
+    # ---- radix 节（遗留兼容，无越界检查，仅记录 auto_fill）----
+    user_config.setdefault("radix", {})
+
+    logger.info("CONFIG_AUTO_FILL_APPLIED: RADIX-Lite 配置 auto_fill + 越界检查完成")
+
+    return user_config

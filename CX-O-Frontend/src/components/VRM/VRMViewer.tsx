@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, useCallback } from 'react';
 import * as THREE from 'three';
 import { VRM, VRMLoaderPlugin, VRMExpressionPresetName } from '@pixiv/three-vrm';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
@@ -67,6 +67,10 @@ export function VRMViewer({
   const runtimeRef = useRef<VRMRuntimeState | null>(null);
   const vrmRef = useRef<VRM | null>(null);
   const clockRef = useRef(new THREE.Timer());
+  const smoothLookAtRef = useRef(new THREE.Vector3(0, 1.5, 1.5));
+  const mouseTargetRef = useRef(new THREE.Vector3(0, 1.5, 1.5));
+  const lookAtMouseRef = useRef(lookAtMouse);
+  lookAtMouseRef.current = lookAtMouse;
   const lipSyncRef = useRef<VRMLipSync | null>(null);
   const expressionRef = useRef<VRMExpression | null>(null);
   const animationRef = useRef<VRMAnimation | null>(null);
@@ -78,12 +82,9 @@ export function VRMViewer({
   const dirLightRef = useRef<THREE.DirectionalLight | null>(null);
   const ambLightRef = useRef<THREE.AmbientLight | null>(null);
   const pntLightRef = useRef<THREE.PointLight | null>(null);
-  // 保存 fitVRMModel 自动计算的基准位置，用户 position 作为偏移量叠加
-  const basePositionRef = useRef(new THREE.Vector3());
 
   const [isLoading, setIsLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
-  const [modelSize, setModelSize] = useState<{ height: number; width: number }>({ height: 1.6, width: 0.8 });
 
   const propsRef = useRef({ scale, position, onModelLoaded, onError, renderScale, devicePixelRatio });
   // 直接在渲染时更新 ref，确保 loadModel 和动画循环能获取最新值
@@ -97,10 +98,10 @@ export function VRMViewer({
   const renderIdRef = useRef(0);
 
   const effectiveTweak = useRef<Partial<VRMTweakConfig>>(tweakConfig || {});
-  useEffect(() => { effectiveTweak.current = tweakConfig || {}; }, [tweakConfig]);
+  effectiveTweak.current = tweakConfig || {};
   const tc: VRMTweakConfig = { ...DEFAULT_VRM_TWEAK, ...tweakConfig };
   const tcRef = useRef<VRMTweakConfig>(tc);
-  useEffect(() => { tcRef.current = tc; }, [tc]);
+  tcRef.current = tc;
 
   const ac: AnimationSettings = { ...DEFAULT_ANIMATION_SETTINGS, ...animationConfig };
   const acRef = useRef<AnimationSettings>(ac);
@@ -143,14 +144,7 @@ export function VRMViewer({
         if (!vrm) throw new Error('Not a VRM model');
 
         vrmRef.current = vrm;
-        vrm.scene.scale.setScalar(propsRef.current.scale);
-        // position 作为偏移量叠加在 fitVRMModel 的基准位置上
-        const pos = propsRef.current.position;
-        vrm.scene.position.set(
-          basePositionRef.current.x + pos[0],
-          basePositionRef.current.y + pos[1],
-          basePositionRef.current.z + pos[2],
-        );
+        // 统一通过 applyTransform 设置 scale/position/rotation（在模型加载完成后由 useEffect 触发）
         const tcLatest = tcRef.current;
         vrm.scene.rotation.x = tcLatest.modelRotationX; vrm.scene.rotation.y = tcLatest.modelRotationY; vrm.scene.rotation.z = tcLatest.modelRotationZ;
 
@@ -223,9 +217,7 @@ export function VRMViewer({
           runtimeRef.current = runtime;
         }
 
-        // fitVRMModel 已在 createVRMRuntime 中调用，保存其计算的基准位置
-        basePositionRef.current.copy(vrm.scene.position);
-
+        // fitVRMModel 已在 createVRMRuntime 中调用，基准位置由 applyTransform 重新计算
         const scene = runtimeRef.current!.scene;
         const cam = runtimeRef.current!.camera;
         const renderer = runtimeRef.current!.renderer;
@@ -233,11 +225,6 @@ export function VRMViewer({
         dirLightRef.current = scene.children.find((c): c is THREE.DirectionalLight => c instanceof THREE.DirectionalLight) ?? null;
         ambLightRef.current = scene.children.find((c): c is THREE.AmbientLight => c instanceof THREE.AmbientLight) ?? null;
         pntLightRef.current = scene.children.find((c): c is THREE.PointLight => c instanceof THREE.PointLight) ?? null;
-
-        const box = new THREE.Box3().setFromObject(vrm.scene);
-        const size = box.getSize(new THREE.Vector3());
-        const height = Math.max(size.y, 0.1), width = Math.max(size.x, 0.1);
-        setModelSize({ height, width });
 
         lipSyncRef.current = runtimeRef.current!.lipSync;
         const acLatest = acRef.current;
@@ -268,11 +255,16 @@ export function VRMViewer({
           headTrackingLimit: acLatest.headTrackingLimit,
         });
 
-        if (vrm.lookAt && !vrm.lookAt.target) {
-          const lookAtTarget = new THREE.Object3D();
-          lookAtTarget.position.set(0, 1.5, 1.5);
-          runtimeRef.current!.scene.add(lookAtTarget);
-          vrm.lookAt.target = lookAtTarget;
+        if (vrm.lookAt) {
+          // 禁用 VRM 的自动 lookAt target 跟踪，改为手动设置 yaw/pitch
+          // 避免 target 系统在中线附近的不连续性（表情/骨骼切换导致跳变）
+          vrm.lookAt.autoUpdate = false;
+          if (!vrm.lookAt.target) {
+            const lookAtTarget = new THREE.Object3D();
+            lookAtTarget.position.set(0, 1.5, 1.5);
+            runtimeRef.current!.scene.add(lookAtTarget);
+            vrm.lookAt.target = lookAtTarget;
+          }
         }
 
         windFieldRef.current = new VRMWindField();
@@ -302,6 +294,37 @@ export function VRMViewer({
           const rawDt = clockRef.current.getDelta();
           // 限制 dt 上限，防止窗口最小化后恢复导致动画异常（过大 dt 会让旋转插值瞬间完成）
           const dt = Math.min(rawDt, 0.1);
+
+          // 头部追踪与眼球跟踪为两个正交独立开关：
+          // - lookAtMouse（头部追踪）：控制头部跟随鼠标转动
+          // - eyeTrackingEnabled（眼球跟踪）：控制眼球 yaw/pitch 跟随鼠标
+          // 两者各自独立判断，关闭任一不影响另一个
+          const mouseActive = lookAtMouseRef.current || acRef.current.eyeTrackingEnabled;
+          if (mouseActive) {
+            smoothLookAtRef.current.copy(mouseTargetRef.current);
+            // 眼球跟踪分支：独立于头部追踪
+            if (acRef.current.eyeTrackingEnabled && vrmRef.current?.lookAt) {
+              const nx = smoothLookAtRef.current.x / 2;
+              const ny = (smoothLookAtRef.current.y - 1.5) / 1.0;
+              const maxYaw = 45;
+              const maxPitch = 45;
+              const targetYaw = Math.sign(nx) * Math.min(Math.abs(nx) ** 0.8, 1) * maxYaw;
+              const targetPitch = -Math.sign(ny) * Math.min(Math.abs(ny) ** 0.8, 1) * maxPitch;
+              const headRot = animationRef.current?.getHeadRotation();
+              const headYawDeg = headRot ? headRot.y * (180 / Math.PI) : 0;
+              const headPitchDeg = headRot ? headRot.x * (180 / Math.PI) : 0;
+              vrmRef.current.lookAt.yaw = targetYaw + headYawDeg;
+              vrmRef.current.lookAt.pitch = targetPitch + headPitchDeg;
+            }
+            // 头部追踪分支：独立于眼球跟踪
+            if (lookAtMouseRef.current && animationRef.current) {
+              animationRef.current.setHeadTarget(
+                smoothLookAtRef.current.x,
+                smoothLookAtRef.current.y,
+                smoothLookAtRef.current.z
+              );
+            }
+          }
 
           if (driver) (driver as VRMDriver).update(dt);
           if (lipSyncRef.current) lipSyncRef.current.update(dt);
@@ -388,20 +411,47 @@ export function VRMViewer({
     }
   }, [animationConfig]);
 
-  // 当 scale/position/rotation 变化或模型加载完成时应用
+  // 统一的变换应用函数：设置 scale/rotation/position，并根据 tc.camera 调整相机（不随 canvas 尺寸缩放）
+  const applyTransform = useCallback(() => {
+    if (!vrmRef.current || !runtimeRef.current) return;
+    const vrm = vrmRef.current;
+    const cam = runtimeRef.current.camera;
+    const pos = propsRef.current.position;
+    const tcLatest = tcRef.current;
+
+    // 1. 先重置 position 到原点，确保包围盒计算不受历史 position 残留影响（避免位置/角度跳变）
+    vrm.scene.position.set(0, 0, 0);
+    // 2. 设置用户 scale 和 rotation
+    vrm.scene.scale.setScalar(propsRef.current.scale);
+    vrm.scene.rotation.x = tcLatest.modelRotationX;
+    vrm.scene.rotation.y = tcLatest.modelRotationY;
+    vrm.scene.rotation.z = tcLatest.modelRotationZ;
+    vrm.scene.updateMatrixWorld(true);
+
+    // 3. 重新计算包围盒（scale/rotation 变化后包围盒也变化）
+    const box = new THREE.Box3().setFromObject(vrm.scene);
+    const size = box.getSize(new THREE.Vector3());
+    const modelHeight = Math.max(size.y, 0.1);
+
+    // 4. 设置位置：X/Z 用用户偏移，Y 让脚部对齐地面 + 用户偏移
+    vrm.scene.position.set(pos[0], -box.min.y + pos[1], pos[2]);
+    vrm.scene.updateMatrixWorld(true);
+
+    // 5. 使用固定相机距离（基于模型高度 + tc.camera.offsetZ），不随 canvas 尺寸缩放
+    const camZ = Math.max(modelHeight * 2, tcLatest.camera.offsetZ);
+    cam.position.set(
+      tcLatest.camera.offsetX,
+      modelHeight * 0.7 + tcLatest.camera.offsetY,
+      camZ,
+    );
+    cam.lookAt(0, modelHeight * tcLatest.camera.lookAtY, 0);
+  }, []);
+
+  // 当 scale/position/rotation/camera 变化或模型加载完成时应用
   useEffect(() => {
-    if (vrmRef.current) {
-      vrmRef.current.scene.scale.setScalar(scale);
-      vrmRef.current.scene.position.set(
-        basePositionRef.current.x + position[0],
-        basePositionRef.current.y + position[1],
-        basePositionRef.current.z + position[2],
-      );
-      vrmRef.current.scene.rotation.x = tc.modelRotationX;
-      vrmRef.current.scene.rotation.y = tc.modelRotationY;
-      vrmRef.current.scene.rotation.z = tc.modelRotationZ;
-    }
-  }, [scale, position, isLoading, tc.modelRotationX, tc.modelRotationY, tc.modelRotationZ]);
+    if (vrmRef.current) applyTransform();
+  }, [scale, position, isLoading, tc.modelRotationX, tc.modelRotationY, tc.modelRotationZ,
+      tc.camera.offsetX, tc.camera.offsetY, tc.camera.offsetZ, tc.camera.lookAtY, applyTransform]);
 
   useEffect(() => {
     if (windFieldRef.current && windConfig) {
@@ -436,21 +486,7 @@ export function VRMViewer({
     if (pntLightRef.current) pntLightRef.current.intensity = tc.light.pointIntensity;
   }, [tc.light.directionalIntensity, tc.light.ambientIntensity, tc.light.pointIntensity]);
 
-  useEffect(() => {
-    if (vrmRef.current) {
-      vrmRef.current.scene.rotation.x = tc.modelRotationX;
-      vrmRef.current.scene.rotation.y = tc.modelRotationY;
-      vrmRef.current.scene.rotation.z = tc.modelRotationZ;
-    }
-  }, [tc.modelRotationX, tc.modelRotationY, tc.modelRotationZ]);
-
-  useEffect(() => {
-    const cam = runtimeRef.current?.camera;
-    if (!cam) return;
-    const { height } = modelSize;
-    cam.position.set(tc.camera.offsetX, height * 0.7 + tc.camera.offsetY, Math.max(modelSize.width * 2.5, tc.camera.offsetZ));
-    cam.lookAt(0, height * tc.camera.lookAtY, 0);
-  }, [tc.camera.offsetX, tc.camera.offsetY, tc.camera.offsetZ, tc.camera.lookAtY, modelSize]);
+  // rotation 和 camera 由 applyTransform 统一处理，删除重复的 useEffect
 
   useEffect(() => {
     if (!lipSyncEnabled || !vrmRef.current) return;
@@ -465,32 +501,31 @@ export function VRMViewer({
   }, [mouthOpenY, lipSyncEnabled, ac.vowelWeightA, ac.vowelWeightI, ac.vowelWeightU, ac.vowelWeightE, ac.vowelWeightO]);
 
   useEffect(() => {
-    if (!lookAtMouse) {
+    // 任一开关开启时都需注册鼠标监听，保证眼球跟踪独立于头部追踪拿到输入
+    if (!lookAtMouse && !ac.eyeTrackingEnabled) {
       if (animationRef.current) animationRef.current.setHeadTarget(0, 0, 0);
       return;
     }
     const h = (e: MouseEvent) => {
-      if (!vrmRef.current || !canvasRef.current) return;
+      if (!canvasRef.current) return;
       const r = canvasRef.current.getBoundingClientRect();
-      const x = ((e.clientX - r.left) / r.width) * 2 - 1;
-      const y = -((e.clientY - r.top) / r.height) * 2 + 1;
-      if (acRef.current.eyeTrackingEnabled) {
-        const la = vrmRef.current.lookAt;
-        if (la?.target) la.target.position.set(x * 2, y * 1.5 + 1, 1.5);
-      }
-      if (animationRef.current) {
-        animationRef.current.setHeadTarget(x * 2, y * 1.5 + 1, 1.5);
-      }
+      const rawX = ((e.clientX - r.left) / r.width) * 2 - 1;
+      const rawY = -((e.clientY - r.top) / r.height) * 2 + 1;
+      // Clamp 到合理范围
+      const x = Math.max(-1, Math.min(1, rawX));
+      const y = Math.max(-1, Math.min(1, rawY));
+      // target 位置：鼠标在中心时 target 在头部正前方 (0, 1.5, 1.5)
+      mouseTargetRef.current.set(x * 2, 1.5 + y * 1.0, 1.5);
     };
     window.addEventListener('mousemove', h);
     return () => window.removeEventListener('mousemove', h);
-  }, [lookAtMouse]);
+  }, [lookAtMouse, ac.eyeTrackingEnabled]);
 
   useEffect(() => {
-    if (!ac.eyeTrackingEnabled && vrmRef.current?.lookAt?.target) {
-      // 设置 target 在摄像机位置附近（模型高度约1.6m，摄像机在y≈1.12，z≈4）
-      // 使用固定值让视线看向摄像机方向
-      vrmRef.current.lookAt.target.position.set(0, 1.1, 4.0);
+    if (!ac.eyeTrackingEnabled && vrmRef.current?.lookAt) {
+      // 眼球归位：看向正前方（yaw=0, pitch=0）
+      vrmRef.current.lookAt.yaw = 0;
+      vrmRef.current.lookAt.pitch = 0;
     }
   }, [ac.eyeTrackingEnabled]);
 
@@ -500,19 +535,8 @@ export function VRMViewer({
       resizeRuntime(runtimeRef.current, canvasRef.current);
       const dpr = propsRef.current.devicePixelRatio === 'auto' ? window.devicePixelRatio : propsRef.current.devicePixelRatio;
       runtimeRef.current.renderer.setPixelRatio(dpr * propsRef.current.renderScale);
-      // resizeRuntime 会重置 scale/position/rotation，保存新的基准位置后重新应用用户配置
-      if (vrmRef.current) {
-        basePositionRef.current.copy(vrmRef.current.scene.position);
-        vrmRef.current.scene.scale.setScalar(scale);
-        vrmRef.current.scene.position.set(
-          basePositionRef.current.x + position[0],
-          basePositionRef.current.y + position[1],
-          basePositionRef.current.z + position[2],
-        );
-        vrmRef.current.scene.rotation.x = tc.modelRotationX;
-        vrmRef.current.scene.rotation.y = tc.modelRotationY;
-        vrmRef.current.scene.rotation.z = tc.modelRotationZ;
-      }
+      // resize 后重新应用用户变换（包括根据 canvas 宽高比调整相机距离）
+      applyTransform();
     };
     window.addEventListener('resize', h);
     let ro: ResizeObserver | null = null;
@@ -525,7 +549,7 @@ export function VRMViewer({
       window.removeEventListener('resize', h);
       if (ro) ro.disconnect();
     };
-  }, [scale, position, tc.modelRotationX, tc.modelRotationY, tc.modelRotationZ]);
+  }, [applyTransform]);
 
   useEffect(() => {
     if (!expressionMix || !runtimeRef.current || !avatar) return;

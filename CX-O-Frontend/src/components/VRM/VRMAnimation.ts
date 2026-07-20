@@ -88,6 +88,10 @@ export class VRMAnimation {
     this.headTarget.set(x, y, z);
   }
 
+  getHeadRotation(): { x: number; y: number } {
+    return { x: this.currentHeadRot.x, y: this.currentHeadRot.y };
+  }
+
   setBreathingAmplitude(factor: number): void {
     this.breathingAmplitude = Math.min(Math.max(factor, 0), 1);
   }
