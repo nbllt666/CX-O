@@ -1599,3 +1599,58 @@ ASR 8005 服务修复任务**已闭合**。从 CX-O-SERVER app.log 发现 `POST 
 3. **SenseVoiceSmall.inference 调用契约**：返回嵌套 list `[[{"text": "..."}]]`，需通过 `res[0][0]["text"]` 提取；必须用 `data_in=[audio]` + `key=[...]` + `fs=16000` 参数
 4. **FastAPI multipart 强依赖**：`File(...)` + `Form(...)` 处理 multipart/form-data 时强制要求 python-multipart 包，Dockerfile 必须显式安装
 5. **修复叠加问题需逐层验证**：本次修复 6 个叠加问题（PYTHONPATH + kaldi-native-fbank + onnxruntime + 模型路径 + python-multipart + torchcodec + inference 调用契约），每修一个都重建镜像验证，避免遗漏根因
+
+## 段落 28：WS E2E 延迟优化 P50 745ms → 465.61ms（2026-07-20 16:18）
+
+### 做到哪了
+
+WS E2E `asr_llm_tts_latency` 延迟优化任务**已闭合**（达 600ms 主目标）。三轮激进优化全部完成：二轮优化（char_threshold 4→3 + STREAM_BATCH_FRAMES 3→2）已达 600ms 目标（P50=552ms）；三轮激进优化（char_threshold 3→2 + STREAM_BATCH_FRAMES 2→1 + TextSmoother 硬下限 3→2）进一步降到 P50=465.61ms，Min=409.44ms（接近 400ms 进阶目标）。10/10 valid，全部样本 <800ms，spec 硬性验收通过。
+
+### 为什么
+
+- **延迟分解（基于 [DIAG-TTS]/[DIAG-PARTIAL] 日志）**：T5 = ASR partial(190ms) + LLM 首 segment ready(100-466ms) + TTS first PCM(295ms) ≈ 745ms
+- **优化1（audio.py）**：[audio.py](file:///c:/CX-O/CX-O-SERVER/server/handlers/audio.py#L267) L267 `char_threshold=4` → `3` → `2`，让 LLM 吐 2 字即触发 TTS，省 ~60-100ms 首字等待
+- **优化2（text_smoother.py + tts_service.py）**：硬下限 `max(3, min(5, ...))` → `max(2, min(5, ...))`，允许 2 字切片；默认 `char_threshold: int = 4` → `3`，与 TextSmoother 对齐
+- **优化3（orpheus-tts/api_server.py）**：[api_server.py](file:///c:/CX-O/orpheus-tts/api_server.py#L70) L70 `STREAM_BATCH_FRAMES=3` → `2` → `1`，让首块 PCM 在 7 个 SNAC tokens（1 帧 = 20ms 音频）时返回，省 ~60-100ms
+- **未达 400ms 进阶目标的原因**：剩余瓶颈为 ASR partial ~190ms（SenseVoice 服务端延迟，客户端无法优化），即使 LLM+TTS 部分降到 220ms，P50 也只能到 410ms 量级；进一步优化需 ASR 服务端改造或架构级 pipeline 重构（ASR partial → LLM prefill 流水线化）
+
+### 未闭合项
+
+- **400ms 进阶目标**：P50=465.61ms 差 65ms，Min=409.44ms 接近 400ms。**未启动方案 D（vLLM 服务端优化）**：用户原指令为"目标 600ms，如果可能，继续优化到 400ms"，600ms 主目标已达成，400ms 为 best-effort 进阶目标，未达可接受
+- **音质回归测试**：本轮仅验证延迟指标，未做正式音质主观评测。char_threshold=2 + STREAM_BATCH_FRAMES=1 可能影响音质，回滚方案已写入文档（改回 char_threshold=3 + STREAM_BATCH_FRAMES=2，P50=552ms 仍达 600ms 目标）
+
+### 接续入口
+
+- **当前断点**：600ms 主目标 ✅ 达成（P50=465.61ms）；400ms 进阶目标 ❌ 未达（差 65ms）
+- **候选后续方向**：
+  1. **若用户接受当前结果**：闭合 goal，结束本轮优化
+  2. **若用户要求继续优化到 400ms**：启动方案 D（ASR 服务端优化 / SenseVoice 流式分块 / ASR partial → LLM prefill 流水线化）
+  3. **若用户要求音质验证**：安排主观听音测试，验证 char_threshold=2 + STREAM_BATCH_FRAMES=1 的音质是否可接受，不可接受则回退到二轮配置
+
+### 工程过程
+
+写分析文档（`.trae/documents/20260720_模块0_优化WSE2E延迟至600ms.md`，rules-6 §三 修复前必写）→ 二轮优化：audio.py char_threshold 4→3 + text_smoother.py 硬下限 3→2 + tts_service.py 硬下限 3→2 + 默认 4→3 + orpheus-tts/api_server.py STREAM_BATCH_FRAMES 3→2 → 重启 CX-O-SERVER + orpheus-tts 容器（Orpheus 健康检查耗时 ~2 分钟）→ 重测 WS E2E 10 轮 P50=552ms ✅ 达 600ms 目标 → 三轮激进优化：audio.py char_threshold 3→2 + text_smoother.py 硬下限 3→2 + orpheus-tts/api_server.py STREAM_BATCH_FRAMES 2→1 → 重启服务 → 重测 WS E2E 10 轮 P50=465.61ms Min=409.44ms ✅ 全部样本 <800ms → 文档 status="已完成" + 第五章最终结果 → 追加本 note 七字段段
+
+### 交接状态
+
+- WS E2E 延迟优化 600ms 主目标 = **已闭合**（P50=465.61ms < 600ms）
+- 400ms 进阶目标 = **当前不可判定**（P50=465.61ms 差 65ms；Min=409.44ms 接近但未达；用户原指令为 best-effort）
+- P95/P99 spec 验收 = **已闭合**（P95=793.58ms < 800ms, P99=793.58ms < 1200ms, 10/10 valid 全部 <800ms）
+- 文档归档 = **已闭合**（`.trae/documents/20260720_模块0_优化WSE2E延迟至600ms.md` status="已完成"，含完整 5 章 + 修改清单 + 测试对比 + 经验沉淀 + 回滚方案）
+- 音质回归测试 = **未开始**（非阻断，本轮仅验证延迟指标）
+
+### 最终结果（验证结论）
+
+- 代码修改：3 个文件 5 处修改（[audio.py](file:///c:/CX-O/CX-O-SERVER/server/handlers/audio.py#L267) L267 char_threshold=2、[text_smoother.py](file:///c:/CX-O/CX-O-SERVER/server/services/text_smoother.py#L75) L75 硬下限 2、[tts_service.py](file:///c:/CX-O/CX-O-SERVER/server/services/tts_service.py#L601) L601 硬下限 2 + [L662](file:///c:/CX-O/CX-O-SERVER/server/services/tts_service.py#L662) 默认 3、[orpheus-tts/api_server.py](file:///c:/CX-O/orpheus-tts/api_server.py#L70) L70 STREAM_BATCH_FRAMES=1）✅
+- 服务状态：CX-O-SERVER / LLM vLLM / TTS Orpheus / ASR SenseVoice 全部 ✅ healthy
+- WS E2E 10 轮测试报告：[latency_report_ws_20260720_161802.md](file:///c:/CX-O/tests/.trae/test_reports/latency_report_ws_20260720_161802.md)（10/10 valid, P50=465.61ms, P95=793.58ms, P99=793.58ms, Min=409.44ms, 全部 <800ms）
+- 优化对比：P50 从 745ms → 552ms（二轮）→ 465.61ms（三轮），总改善 -37.5%；P95 从 1579ms → 857ms → 793.58ms，总改善 -49.7%
+- 产出物清单见 `.trae/documents/20260720_模块0_优化WSE2E延迟至600ms.md`
+
+### 经验教训
+
+1. **TextSmoother + TTS 切片粒度是首块延迟关键**：char_threshold 从 4→3→2，每降 1 字节省 30-50ms；需联动修改 TextSmoother + tts_service.py 两处硬下限
+2. **STREAM_BATCH_FRAMES 是 TTS 首块 PCM 关键**：从 3→2→1，每降 1 帧节省 30-50ms（vLLM 生成 7 个 SNAC tokens 的时间）；权衡是 SNAC 解码开销分摊到更小 chunk，吞吐略降
+3. **激进优化需同步放宽硬下限**：TextSmoother 和 tts_service.py 都有 `max(3, min(5, ...))` 硬下限保护，激进优化到 2 字切片时必须同步放宽到 `max(2, ...)`
+4. **剩余瓶颈识别**：ASR partial ~190ms 占主导，进一步优化需 ASR 服务端改造或架构级 pipeline 重构，不在本轮客户端+TTS 优化范围
+5. **best-effort 目标的工程边界**：用户原指令"如果可能继续优化到 400ms"为 best-effort 进阶目标，未达时应在 note 中明确未达原因 + 剩余瓶颈 + 后续优化路径，而非无限制尝试激进改动

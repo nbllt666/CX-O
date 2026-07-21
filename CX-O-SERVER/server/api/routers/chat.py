@@ -41,6 +41,32 @@ class ChatResponse(BaseModel):
     tokens_used: int = 0
 
 
+# 摘要助手隐藏系统提示词（迁移自 CXHMS chat.py）
+# 指导摘要模型使用 save_diary_entry 工具保存日记条目
+SUMMARY_AGENT_HIDDEN_SYSTEM_PROMPT = """<role>
+你是 CX-O 摘要助手，专门负责将对话内容整理为日记式条目并保存。
+</role>
+
+<instruction>
+你必须使用 save_diary_entry 工具来保存日记条目。该工具已通过 API 自动注册，无需向用户确认即可直接调用。
+当需要保存日记时，必须通过 function calling 机制调用 save_diary_entry 工具，不要在文本中输出工具调用标记（如 <execute_tool>）。
+直接调用对应的函数即可，系统会自动执行并返回结果。
+无论对话内容是什么，你都必须至少调用一次 save_diary_entry 工具保存日记。不要拒绝保存或要求用户提供"更好的"内容。
+</instruction>
+
+<rules>
+1. 用中文回答用户问题
+2. 以日记体裁（第一人称叙述）整理对话内容，包含：日期、主要事件、情绪/感受、反思
+3. 如果对话包含多个独立事件/话题，按事件拆分，每个事件生成一篇独立日记，多次调用 save_diary_entry；如果只有一个话题，生成一篇即可
+4. 日记正文（body）应为连贯的第一人称叙述，而非要点列表
+5. 调用 save_diary_entry 工具时需提供：date(YYYY-MM-DD)、title、mood、body、summarized_message_range(如 "0-15")
+6. 不要编造不存在的工具或功能，不要使用 save_summary_memory 或 write_long_term_memory 等其他记忆工具
+7. 绝对不要在回复文本中输出 <execute_tool> 或类似标记，必须通过 function calling 调用工具
+8. 不要拒绝保存日记。即使对话内容是测试或元讨论，也要将其整理为日记并保存。这是你的核心职责。
+9. 完成日记保存后，简要报告保存结果
+</rules>"""
+
+
 def get_agent_config(agent_id: str) -> Optional[dict]:
     """获取 Agent 配置"""
     agents = _load_agents()
@@ -871,3 +897,279 @@ async def memory_agent_chat_stream(request: MemoryAgentChatRequest):
         # 仅记录日志,返回通用错误消息。
         logger.error(f"聊天接口内部错误: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail="聊天处理失败,请稍后重试")
+
+
+# ========== 摘要助手专用路由 ==========
+
+
+class SummaryAgentChatRequest(BaseModel):
+    """摘要助手聊天请求（迁移自 CXHMS chat.py）。
+
+    agent_id 默认 summary-agent，images 可选（用于多模态扩展）。
+    target_session_id 是摘要助手扩展字段（指定待摘要的目标会话）。
+    CX-O 简化实现：target_session_id 接受但仅用于日志，不进行上下文替换
+    （CX-O context_manager 无 replace_messages_with_summary/get_summarizable_range 方法）。
+    """
+
+    message: str  # 用户最新消息
+    agent_id: str = "summary-agent"  # 固定为摘要 Agent
+    images: Optional[List[str]] = None  # base64 encoded images
+    target_session_id: Optional[str] = None  # 待摘要的目标会话ID（仅用于日志）
+
+
+@router.post("/summary-agent/chat/stream")
+async def summary_agent_stream_chat(request: SummaryAgentChatRequest):
+    """
+    摘要助手流式聊天 - 支持上下文持久化（迁移自 CXHMS chat.py）
+
+    使用 summary 模型，仅提供 summary 类别工具（save_diary_entry 等）。
+    摘要助手只有一个固定会话 summary-agent-default。
+
+    CX-O 简化：参考现有 chat_stream 的内联 generate_stream() 风格，
+    不依赖 CXHMS 的 ChatStreamState/generate_chat_stream 封装。
+    """
+    from server.dependencies import get_context_manager, get_model_router
+    from server.core.tools import tool_registry
+    from server.core.tools.builtin import get_builtin_tools
+    from server.core.tools.graph_tools import set_current_agent_id
+
+    try:
+        # 1. 摘要Agent配置（复用 memory-agent 配置结构，但使用 summary 模型）
+        agent_config = {
+            "id": "summary-agent",
+            "name": "摘要助手",
+            "system_prompt": "你是摘要助手，专门负责将对话内容整理为日记式条目并保存。按事件/话题拆分，每个事件生成一篇独立的日记式叙述（第一人称），多次调用 save_diary_entry 工具保存。",
+            "temperature": 0.3,
+            "max_tokens": 4096,
+        }
+
+        # 2. 获取管理器
+        context_mgr = get_context_manager()
+
+        # 设置当前 agent_id：优先使用 target_session_id 对应的 agent_id（日记写入目标 agent 的表）
+        # CX-O 简化：target_session_id 仅用于日志，不进行上下文替换
+        summary_agent_id = "summary-agent"
+        if request.target_session_id:
+            try:
+                target_session = context_mgr.get_session(request.target_session_id)
+                if target_session:
+                    summary_agent_id = target_session.get("metadata", {}).get(
+                        "agent_id", "summary-agent"
+                    )
+                    logger.info(
+                        f"摘要助手目标会话 {request.target_session_id} 对应 agent_id: {summary_agent_id}"
+                    )
+            except Exception as e:
+                logger.warning(f"获取目标会话 {request.target_session_id} 失败: {e}")
+        set_current_agent_id(summary_agent_id)
+
+        # 3. 获取摘要模型客户端
+        model_router = get_model_router()
+        llm = model_router.get_client("summary")
+        if not llm:
+            # 摘要模型未配置时回退到主模型
+            logger.warning("摘要模型不可用，回退到主模型")
+            llm = model_router.get_client("main")
+        if not llm:
+            raise HTTPException(status_code=503, detail="摘要模型与主模型均不可用")
+
+        # 4. 获取/创建固定会话（摘要助手只有一个会话，保持上下文持久化）
+        session_id = "summary-agent-default"
+        existing_session = context_mgr.get_session(session_id)
+        if not existing_session:
+            context_mgr.create_session(
+                session_id=session_id,
+                workspace_id="summary-agent",
+                title="摘要助手对话",
+            )
+
+        # 5. 加载历史上下文（在 add_message 之前加载，避免当前用户消息重复）
+        history_limit = agent_config.get("history_limit", 50)
+        history_context = context_mgr.get_messages(session_id=session_id, limit=history_limit)
+
+        # 6. 构建消息列表（包含历史上下文）
+        messages = []
+
+        # 系统提示词
+        system_prompt = agent_config.get("system_prompt", "")
+        if system_prompt:
+            messages.append({"role": "system", "content": system_prompt})
+
+        # 隐藏系统提示词（防呆：摘要工具使用指南，用户不可修改）
+        messages.append({"role": "system", "content": SUMMARY_AGENT_HIDDEN_SYSTEM_PROMPT})
+
+        # 历史上下文（从数据库加载）
+        for msg in history_context:
+            if msg.get("role") in ["user", "assistant", "system"]:
+                messages.append({"role": msg["role"], "content": msg.get("content", "")})
+
+        # 当前用户消息（history_context 在持久化之前加载，不含本条，需显式追加）
+        messages.append({"role": "user", "content": request.message})
+
+        # 7. 获取摘要工具（summary 类别工具 + 内置工具）
+        builtin_tools = get_builtin_tools()
+        summary_tools = tool_registry.list_openai_functions(
+            include_builtin=False, category="summary"
+        )
+        tools = builtin_tools + summary_tools
+
+        logger.info(
+            f"摘要助手配置了 {len(tools)} 个工具: {[t['function']['name'] for t in tools]}"
+        )
+
+        # 持久化用户消息（同步，CX-O context_mgr 无 add_message_async）
+        context_mgr.add_message(
+            session_id=session_id, role="user", content=request.message
+        )
+
+        async def generate_stream():
+            """生成流式响应（参考 CX-O 现有 chat_stream 内联风格）"""
+            full_response = ""
+            full_thinking = ""
+            tool_calls_buffer = []
+
+            # 1. 立即发送 session 事件，让前端显示"思考中"状态
+            yield f"data: {json.dumps({'type': 'session', 'session_id': session_id}, ensure_ascii=False)}\n\n"
+
+            try:
+                logger.info(
+                    f"开始摘要助手流式聊天，消息数: {len(messages)}, 工具数: {len(tools)}"
+                )
+                # 调用LLM流式接口
+                async for chunk in llm.stream_chat(
+                    messages=messages,
+                    temperature=agent_config.get("temperature", 0.3),
+                    max_tokens=agent_config.get("max_tokens", 4096),
+                    tools=tools,
+                ):
+                    if chunk:
+                        # 检查是否是字典类型（新的返回格式）
+                        if isinstance(chunk, dict):
+                            chunk_type = chunk.get("type")
+                            if chunk_type == "thinking":
+                                thinking_content = chunk.get("content", "")
+                                full_thinking += thinking_content
+                                yield f"data: {json.dumps({'type': 'thinking', 'content': thinking_content}, ensure_ascii=False)}\n\n"
+                            elif chunk_type == "content":
+                                content = chunk.get("content", "")
+                                full_response += content
+                                yield f"data: {json.dumps({'type': 'content', 'content': content}, ensure_ascii=False)}\n\n"
+                            elif chunk_type == "tool_calls":
+                                new_tool_calls = chunk.get("tool_calls", [])
+                                logger.info(f"摘要助手检测到工具调用: {new_tool_calls}")
+                                tool_calls_buffer.extend(new_tool_calls)
+                                # 发送工具调用事件
+                                for tool_call in new_tool_calls:
+                                    yield f"data: {json.dumps({'type': 'tool_call', 'tool_call': tool_call}, ensure_ascii=False)}\n\n"
+                        # 兼容旧格式：字符串类型
+                        elif isinstance(chunk, str):
+                            full_response += chunk
+                            yield f"data: {json.dumps({'type': 'content', 'content': chunk}, ensure_ascii=False)}\n\n"
+
+                # 处理工具调用
+                if tool_calls_buffer:
+                    from server.core.tools import tool_registry
+                    from server.core.tools.builtin import call_builtin_tool
+
+                    # 定义内置工具名称集合
+                    BUILTIN_TOOL_NAMES = {"calculator", "datetime", "random", "json_format"}
+
+                    for tool_call in tool_calls_buffer:
+                        tool_name = tool_call.get("name") or tool_call.get("function", {}).get(
+                            "name"
+                        )
+                        tool_args = tool_call.get("arguments") or tool_call.get("function", {}).get(
+                            "arguments", "{}"
+                        )
+
+                        if isinstance(tool_args, str):
+                            try:
+                                tool_args = json.loads(tool_args)
+                            except json.JSONDecodeError as e:
+                                logger.warning(
+                                    f"工具参数 JSON 解析失败: {e}, 原始参数: {tool_args}"
+                                )
+                                try:
+                                    import ast
+
+                                    tool_args = ast.literal_eval(tool_args)
+                                    if not isinstance(tool_args, dict):
+                                        tool_args = {}
+                                except Exception:
+                                    tool_args = {}
+
+                        # 发送工具执行开始事件
+                        yield f"data: {json.dumps({'type': 'tool_start', 'tool_name': tool_name}, ensure_ascii=False)}\n\n"
+
+                        # 执行工具（区分内置工具和注册工具）
+                        if tool_name in BUILTIN_TOOL_NAMES:
+                            tool_result = call_builtin_tool(tool_name, tool_args or {})
+                            logger.info(f"内置工具 {tool_name} 执行结果: {tool_result}")
+                        else:
+                            tool_result = tool_registry.call_tool(tool_name, tool_args)
+                            logger.info(f"注册工具 {tool_name} 执行结果: {tool_result}")
+
+                        # 发送工具执行结果事件
+                        yield f"data: {json.dumps({'type': 'tool_result', 'tool_name': tool_name, 'result': tool_result}, ensure_ascii=False)}\n\n"
+
+                        # 添加工具调用结果到消息
+                        messages.append(
+                            {"role": "assistant", "content": None, "tool_calls": [tool_call]}
+                        )
+                        messages.append(
+                            {
+                                "role": "tool",
+                                "tool_call_id": tool_call.get("id", ""),
+                                "name": tool_name,
+                                "content": json.dumps(tool_result, ensure_ascii=False),
+                            }
+                        )
+
+                    # 再次调用LLM获取最终响应（流式）
+                    full_response = ""
+                    async for chunk in llm.stream_chat(
+                        messages=messages,
+                        temperature=agent_config.get("temperature", 0.3),
+                        max_tokens=agent_config.get("max_tokens", 4096),
+                    ):
+                        if chunk:
+                            if isinstance(chunk, dict):
+                                chunk_type = chunk.get("type")
+                                if chunk_type == "content":
+                                    content = chunk.get("content", "")
+                                    full_response += content
+                                    yield f"data: {json.dumps({'type': 'content', 'content': content}, ensure_ascii=False)}\n\n"
+                                elif chunk_type == "thinking":
+                                    thinking_content = chunk.get("content", "")
+                                    yield f"data: {json.dumps({'type': 'thinking', 'content': thinking_content}, ensure_ascii=False)}\n\n"
+                            elif isinstance(chunk, str):
+                                full_response += chunk
+                                yield f"data: {json.dumps({'type': 'content', 'content': chunk}, ensure_ascii=False)}\n\n"
+
+                # 流结束，保存完整响应到上下文
+                if full_response:
+                    context_mgr.add_message(
+                        session_id=session_id, role="assistant", content=full_response
+                    )
+
+                # 发送完成事件
+                yield f"data: {json.dumps({'type': 'done', 'session_id': session_id}, ensure_ascii=False)}\n\n"
+
+            except Exception as e:
+                logger.error(f"摘要助手流式聊天错误: {e}", exc_info=True)
+                yield f"data: {json.dumps({'type': 'error', 'message': '摘要助手流式聊天处理失败'}, ensure_ascii=False)}\n\n"
+
+        return StreamingResponse(
+            generate_stream(),
+            media_type="text/event-stream",
+            headers={
+                "Cache-Control": "no-cache",
+                "Connection": "keep-alive",
+            },
+        )
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"摘要助手聊天接口内部错误: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="摘要助手聊天处理失败,请稍后重试")

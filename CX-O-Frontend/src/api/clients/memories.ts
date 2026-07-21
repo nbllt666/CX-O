@@ -128,4 +128,60 @@ export class _MemoriesClientMixin extends _ApiClientBase {
   async autoArchiveProcess(): Promise<ArchiveResult> {
     return this.request<ArchiveResult>({ url: '/api/archive/auto-process', method: 'post' });
   }
+
+  /**
+   * 获取日记条目（按日期分组）
+   * 迁移自 CXHMS: 用于 MemoriesPage 日记 Tab 视图
+   */
+  async getDiaryEntries(params?: {
+    limit?: number;
+    agent_id?: string;
+    workspace_id?: string;
+  }): Promise<{
+    diary_groups: Array<{
+      date: string;
+      entries: Array<{
+        id: number;
+        content: string;
+        metadata?: {
+          date?: string;
+          title?: string;
+          mood?: string;
+          body?: string;
+          summarized_message_range?: string;
+          source?: string;
+        };
+        created_at: string;
+      }>;
+    }>;
+    count?: number;
+  }> {
+    return this.request<{
+      diary_groups: Array<{
+        date: string;
+        entries: Array<{
+          id: number;
+          content: string;
+          metadata?: {
+            date?: string;
+            title?: string;
+            mood?: string;
+            body?: string;
+            summarized_message_range?: string;
+            source?: string;
+          };
+          created_at: string;
+        }>;
+      }>;
+      count?: number;
+    }>({
+      url: '/api/memories/diary',
+      method: 'get',
+      params: {
+        limit: params?.limit ?? 100,
+        agent_id: params?.agent_id ?? 'default',
+        workspace_id: params?.workspace_id ?? 'default',
+      },
+    });
+  }
 }

@@ -15,6 +15,7 @@ from server.api.routers import (
     acp,
     admin,
     agents,
+    anythingllm,
     archive,
     audio,
     avatars,
@@ -90,6 +91,9 @@ def register_api_routes(app: FastAPI):
     app.include_router(cxfc.router, prefix="/api")
     app.include_router(vector.router, prefix="/api")
     app.include_router(multimodal.router, prefix="/api")
+    # AnythingLLM 兼容 API（迁移自 CXHMS）：路由自带 /v1/* prefix，挂载时不加额外 prefix
+    # 端点：/v1/auth, /v1/openai/*, /v1/workspaces, /v1/workspace/*, /v1/document/*
+    app.include_router(anythingllm.router)
     # distillation router 自带 /api/v1/distillation prefix，挂载时不加额外 prefix
     app.include_router(distillation.router)
 

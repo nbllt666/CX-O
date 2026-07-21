@@ -134,13 +134,6 @@ export interface AdaptivePollingStats {
 export interface GraphConfig {
   graph_enabled: boolean;
   graph_backend: string;
-  neo4j: {
-    uri: string;
-    user: string;
-    password: string;
-    database: string;
-    max_connection_pool_size: number;
-  };
   graph_libraries: Record<string, { enabled: boolean; label_prefix: string }>;
 }
 
@@ -155,6 +148,7 @@ export interface GraphStats {
   graph_enabled: boolean;
   connected: boolean;
   libraries: Record<string, { entity_count: number; relation_count: number }>;
+  database_path?: string;
 }
 
 export interface LiveClientStatus {

@@ -11,7 +11,6 @@ import PluginsPage from './pages/PluginsPage';
 import { ToolsPage } from './pages/ToolsPage';
 import { AgentsPage } from './pages/AgentsPage';
 import { MemoryAgentPage } from './pages/MemoryAgentPage';
-import { GraphDataPage } from './pages/GraphDataPage';
 import { VectorDataPage } from './pages/VectorDataPage';
 import { LivePage } from './pages/LivePage';
 import { LiveSplitPage } from './pages/LiveSplitPage';
@@ -125,7 +124,6 @@ function App() {
           <Route path="voice-workstation" element={<VoiceWorkstationPage />} />
           <Route path="settings" element={<SettingsPage />} />
           <Route path="memory-agent" element={<MemoryAgentPage />} />
-          <Route path="graph-data" element={<GraphDataPage />} />
           <Route path="vector-data" element={<VectorDataPage />} />
           <Route path="live" element={<LivePage />} />
           <Route path="live/split" element={<LiveSplitPage />} />

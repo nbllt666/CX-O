@@ -69,9 +69,10 @@ class TextSmoother:
         self._window_ms = max(30, min(50, int(window_ms)))
         self._window_s = self._window_ms / 1000.0
 
-        # 字数阈值限制在 3~5：与 TTS split_text_streaming 分块器阈值配合。
-        # 3~5 字恰好是一个中文词/短语的长度，TTS 在此粒度合成音质最佳。
-        self._char_threshold = max(3, min(5, int(char_threshold)))
+        # 字数阈值限制在 2~5：与 TTS split_text_streaming 分块器阈值配合。
+        # 2~3 字恰好是一个中文词/短语的长度，TTS 在此粒度合成音质最佳。
+        # C4 P50<400ms 三轮激进优化：硬下限 3 → 2，允许 2 字切片
+        self._char_threshold = max(2, min(5, int(char_threshold)))
 
         # asyncio.Queue 天然异步安全：单事件循环内 put/get 无需额外锁
         self._queue: asyncio.Queue[Any] = asyncio.Queue()

@@ -1,0 +1,29 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://cx-o.local/config_template/anythingllm_document_config.json",
+  "title": "AnythingLLM Document Config",
+  "description": "DocumentMemoryManager 配置契约（迁移自 CXHMS）。定义 Document API 兼容端点的配置参数、默认值与自动补齐规则。配置加载时自动补充缺失字段（rules-3 §三 配置契约 auto_fill）。",
+  "type": "object",
+  "required": ["db_path", "max_file_size", "default_folder"],
+  "additionalProperties": false,
+  "properties": {
+    "db_path": {
+      "type": "string",
+      "minLength": 1,
+      "default": "data/documents.db",
+      "description": "SQLite 数据库路径（相对项目根目录或绝对路径）。存储 documents 与 workspace_documents 关联表。默认 'data/documents.db'。"
+    },
+    "max_file_size": {
+      "type": "integer",
+      "minimum": 1,
+      "default": 10485760,
+      "description": "单文件大小上限（字节），默认 10MB（10485760 字节）。超过此大小返回 HTTP 413。"
+    },
+    "default_folder": {
+      "type": "string",
+      "minLength": 1,
+      "default": "custom-documents",
+      "description": "默认文档文件夹名。新建文档未指定 folder 时使用此值。默认 'custom-documents'。"
+    }
+  }
+}

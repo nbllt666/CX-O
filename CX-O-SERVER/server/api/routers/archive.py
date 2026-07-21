@@ -48,6 +48,33 @@ class SetDedupThresholdRequest(BaseModel):
     threshold: float
 
 
+@router.get("/archive/list")
+async def list_archived_memories(
+    limit: int = 20,
+    offset: int = 0,
+    memory_type: Optional[str] = None,
+):
+    """列出归档记忆
+
+    迁移自 CXHMS: backend/api/routers/archive.py:L51-L71
+    """
+    from server.dependencies import get_memory_manager
+
+    try:
+        memory_mgr = get_memory_manager()
+        memories = memory_mgr.search_memories(
+            memory_type=memory_type,
+            limit=limit,
+            offset=offset,
+            include_deleted=False,
+        )
+        archived = [m for m in memories if m.get("archived_at")]
+        return {"status": "success", "memories": archived, "total": len(archived)}
+    except Exception as e:
+        logger.error(f"获取归档记忆列表失败: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"获取失败: {str(e)}")
+
+
 @router.post("/archive/memory")
 async def archive_memory(request: ArchiveRequest):
     """归档单个记忆"""

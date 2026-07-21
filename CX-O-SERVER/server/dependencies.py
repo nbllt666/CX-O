@@ -1,4 +1,5 @@
-from typing import Optional, Any
+import threading
+from typing import Optional, Any, Dict
 
 from fastapi import HTTPException, Request
 from fastapi import Depends
@@ -20,6 +21,8 @@ class ServiceState:
         self.graph_database = None
         self.graph_store = None
         self.cxfc_manager: Optional[Any] = None
+        # DocumentMemoryManager（迁移自 CXHMS Phase 2：AnythingLLM Document API 兼容端点）
+        self.document_memory_manager: Optional[Any] = None
 
 
 _service_state: Optional[ServiceState] = None
@@ -141,19 +144,119 @@ def get_tts_service(state: ServiceState = Depends(get_service_state)):
     return state.tts_service
 
 
-def get_graph_database(state: ServiceState = Depends(get_service_state)):
-    state = _resolve_state(state)
-    if state.graph_database is None:
-        raise HTTPException(status_code=503, detail="图数据库服务不可用")
-    return state.graph_database
+def get_graph_database(agent_id: str = "default", state: ServiceState = Depends(get_service_state)):
+    """按 agent_id 获取图数据库实例（按需创建）。
+
+    迁移自 CXHMS：使用 per-agent 注册表 + 双重检查锁实现线程安全的按需创建。
+    - agent_id="default" 时返回默认实例
+    - 其他 agent_id 时返回该 agent 专属实例
+    - 首次访问触发 GraphDatabase.initialize()
+    - 保留 CX-O 原有 state.graph_database 兼容性（默认 agent 写回 state）
+
+    详见 .trae/documents/20260720_模块0_从CXHMS迁移图数据库.md
+    """
+    _resolve_state(state)
+    gdb = _get_or_create_graph_database(agent_id)
+    # 默认 agent 同步写入 state.graph_database 以兼容旧调用方
+    if agent_id == "default" and state.graph_database is None:
+        state.graph_database = gdb
+    return gdb
 
 
-def get_graph_store(state: ServiceState = Depends(get_service_state)):
-    state = _resolve_state(state)
-    if state.graph_store is None:
-        raise HTTPException(status_code=503, detail="图存储服务不可用")
-    return state.graph_store
+def get_graph_store(agent_id: str = "default", state: ServiceState = Depends(get_service_state)):
+    """按 agent_id 获取图存储实例（按需创建）。
+
+    迁移自 CXHMS：依赖 _get_or_create_graph_store 实现 per-agent 隔离。
+    默认 agent 同步写入 state.graph_store 以兼容旧调用方。
+    """
+    _resolve_state(state)
+    store = _get_or_create_graph_store(agent_id)
+    # 默认 agent 同步写入 state.graph_store 以兼容旧调用方
+    if agent_id == "default" and state.graph_store is None:
+        state.graph_store = store
+    return store
+
+
+# ---- per-agent 图数据库/图存储注册表（迁移自 CXHMS） ----
+_graph_databases: Dict[str, Any] = {}
+_graph_stores: Dict[str, Any] = {}
+_graph_registry_lock = threading.Lock()
+
+
+def _get_or_create_graph_database(agent_id: str = "default"):
+    """按 agent_id 获取或按需创建 GraphDatabase 实例。
+
+    使用双重检查锁（double-checked locking）避免并发请求时重复初始化。
+    GraphDatabase 构造时通过 agent_id 隔离底层 SQLite 文件与 Weaviate collection。
+    """
+    if agent_id not in _graph_databases:
+        with _graph_registry_lock:
+            if agent_id not in _graph_databases:
+                from server.core.graph import GraphDatabase
+
+                gdb = GraphDatabase(agent_id=agent_id)
+                gdb.initialize()
+                _graph_databases[agent_id] = gdb
+    return _graph_databases[agent_id]
+
+
+def _get_or_create_graph_store(agent_id: str = "default"):
+    """按 agent_id 获取或按需创建 GraphStore 实例。
+
+    依赖对应 agent_id 的 GraphDatabase 实例。
+    """
+    if agent_id not in _graph_stores:
+        with _graph_registry_lock:
+            if agent_id not in _graph_stores:
+                from server.core.memory.graph_store import SQLiteGraphStore
+
+                gdb = _get_or_create_graph_database(agent_id)
+                _graph_stores[agent_id] = SQLiteGraphStore(gdb)
+    return _graph_stores[agent_id]
+
+
+def get_graph_database_if_exists(agent_id: str = "default"):
+    """返回已注册的 GraphDatabase 实例，不存在时返回 None（不创建）。"""
+    return _graph_databases.get(agent_id)
+
+
+def get_graph_store_if_exists(agent_id: str = "default"):
+    """返回已注册的 GraphStore 实例，不存在时返回 None（不创建）。"""
+    return _graph_stores.get(agent_id)
+
+
+def remove_graph_database(agent_id: str) -> None:
+    """从注册表移除并关闭对应 agent 的图数据库及图存储实例。
+
+    迁移自 CXHMS：用于 agent 删除或重置时清理对应图数据库资源。
+    底层 Database 由 server.core.graph.database 的 remove_database 同步移除。
+    """
+    with _graph_registry_lock:
+        store = _graph_stores.pop(agent_id, None)
+        gdb = _graph_databases.pop(agent_id, None)
+    if gdb is not None:
+        try:
+            gdb.close()
+        except Exception:
+            pass
+    try:
+        from server.core.graph.database import remove_database
+
+        remove_database(agent_id)
+    except Exception:
+        pass
 
 
 def get_cxfc_manager(state: ServiceState = Depends(get_service_state)) -> Optional[Any]:
     return _resolve_state(state).cxfc_manager
+
+
+def get_document_memory_manager(state: ServiceState = Depends(get_service_state)):
+    """获取 DocumentMemoryManager 实例（迁移自 CXHMS）。
+
+    用于 AnythingLLM Document API 兼容端点（/v1/document/*, /v1/workspace/{slug}/update-embeddings）。
+    """
+    state = _resolve_state(state)
+    if state.document_memory_manager is None:
+        raise HTTPException(status_code=503, detail="文档记忆服务不可用")
+    return state.document_memory_manager

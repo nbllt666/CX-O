@@ -7,10 +7,12 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import json
 import logging
 import os
 import re
 import tempfile
+import websockets
 from concurrent.futures import ThreadPoolExecutor
 from io import BytesIO
 from pathlib import Path
@@ -30,16 +32,22 @@ _executor: Optional[ThreadPoolExecutor] = None
 
 
 class ASRService:
-    def __init__(self, mode: str = "remote", model_dir: str = "", device: str = "cuda", remote_url: str = "http://127.0.0.1:8001"):
+    def __init__(self, mode: str = "remote", model_dir: str = "", device: str = "cuda",
+                 remote_url: str = "http://127.0.0.1:8001",
+                 ws_url: str = "ws://127.0.0.1:8005/ws/asr/stream"):
         self._mode = mode
         self._model_dir = model_dir
         self._device = device
         self._remote_url = remote_url
+        self._ws_url = ws_url
         self._initialized = False
         # Streaming 接口状态（vad_processor.AudioStreamProcessor 调用）
-        self._streaming_buffer: bytearray = bytearray()
-        self._streaming_is_last: bool = False
-        self._streaming_pending: bool = False
+        # 方案B：WebSocket 流式接口
+        self._ws: Any = None  # websockets.WebSocketClientProtocol
+        self._ws_lock: asyncio.Lock = asyncio.Lock()
+        self._ws_recv_queue: asyncio.Queue = asyncio.Queue()
+        self._ws_recv_task: Optional[asyncio.Task] = None
+        self._ws_final_received: bool = False  # 是否已收到 final 结果（避免 final 后继续读 queue）
 
     @property
     def mode(self) -> str:
@@ -255,39 +263,77 @@ class ASRService:
     # ------------------------------------------------------------------ #
     # Streaming 接口（vad_processor.AudioStreamProcessor 调用契约）
     # ------------------------------------------------------------------ #
-    # 设计说明：
-    # - AudioStreamProcessor.process_audio_chunk 期望 _streaming_client 提供
-    #   send_audio_chunk / receive_result / reset 三个 async 方法
-    # - 真实 streaming 协议应基于 WebSocket（如 FunASR streaming server）
-    # - 当前实现是简化版：累积 audio chunk 到 buffer，is_last=True 时触发
-    #   批处理 recognize 调用，结果包装为 StreamingASRResult 返回
-    # - 该实现满足 vad_processor 调用契约，可让 WS voice.dual_stream 链路跑通
-    # - 真实 ASR 服务起来后，应替换为真正的 streaming 客户端实现
+    # 方案B：WebSocket 流式接口
+    # - send_audio_chunk: 通过 WS 发送二进制 PCM 音频；is_last=True 发送 {"action":"final"}
+    # - receive_result: 非阻塞从 queue 读取服务端返回的 JSON，解析为 StreamingASRResult
+    # - reset: 清空本地 queue（服务端 final 后自动清空 buffer）
+    # - 懒加载 WS 连接，后台接收任务把消息放入 queue
     # ------------------------------------------------------------------ #
 
+    async def _ensure_ws(self) -> bool:
+        """懒加载 WebSocket 连接，启动后台接收任务。"""
+        if self._ws is not None:
+            return True
+        async with self._ws_lock:
+            if self._ws is not None:
+                return True
+            try:
+                logger.info(f"[ASR-WS] Connecting to {self._ws_url}")
+                self._ws = await websockets.connect(
+                    self._ws_url,
+                    max_size=None,  # 不限制单帧大小（音频 chunk 可能大）
+                    ping_interval=20,
+                    ping_timeout=10,
+                )
+                # 启动后台接收任务
+                self._ws_recv_task = asyncio.create_task(self._ws_recv_loop())
+                logger.info("[ASR-WS] Connected, recv task started")
+                return True
+            except Exception as e:
+                logger.error(f"[ASR-WS] Connect failed: {e}")
+                self._ws = None
+                return False
+
+    async def _ws_recv_loop(self) -> None:
+        """后台接收 WS 消息，放入 queue。连接断开时清理状态。"""
+        try:
+            async for message in self._ws:
+                await self._ws_recv_queue.put(message)
+        except Exception as e:
+            logger.error(f"[ASR-WS] Recv loop error: {e}")
+        finally:
+            self._ws = None
+            logger.info("[ASR-WS] Recv loop ended, ws cleared")
+
     async def send_audio_chunk(self, audio_data: bytes, is_last: bool = False) -> bool:
-        """累积音频块到内部 buffer。
+        """通过 WebSocket 发送音频 chunk。
 
         Args:
-            audio_data: PCM/WAV 音频字节
+            audio_data: PCM 16kHz mono int16 LE 音频字节
             is_last: 是否为最后一帧（VAD speech_end 触发）
 
         Returns:
-            True 表示成功接收，False 表示服务未就绪
+            True 表示成功发送，False 表示服务未就绪或发送失败
         """
         if not self._initialized:
             logger.warning("ASRService not initialized, skip send_audio_chunk")
             return False
-        # 累积到 buffer（reset 时清空）
-        self._streaming_buffer.extend(audio_data)
-        self._streaming_is_last = is_last
-        if is_last:
-            # 标记下次 receive_result 应触发实际识别
-            self._streaming_pending = True
+        if not await self._ensure_ws():
+            return False
+        try:
+            # 发送二进制音频
+            await self._ws.send(audio_data)
+            if is_last:
+                # 发送 final 信号，触发服务端识别剩余 buffer
+                await self._ws.send(json.dumps({"action": "final"}))
+        except Exception as e:
+            logger.error(f"[ASR-WS] Send error: {e}")
+            self._ws = None
+            return False
         return True
 
     async def receive_result(self, timeout: float = 0.1) -> Optional["StreamingASRResult"]:
-        """返回当前 buffer 的识别结果（如有）。
+        """从 WebSocket 接收识别结果。
 
         双流式模式契约：
         - 语音期间（is_last=False）：返回 Partial 结果（is_final=False），
@@ -296,47 +342,54 @@ class ASRService:
           handler 据此调用 on_vad_speech_end 修正上下文
 
         Args:
-            timeout: 等待超时（秒，当前简化版忽略，直接返回缓存或 None）
+            timeout: 等待超时（秒），超时返回 None
 
         Returns:
-            StreamingASRResult 或 None（无音频数据可识别时）
+            StreamingASRResult 或 None（无消息时）
         """
-        # 无音频数据可识别
-        if not self._streaming_buffer:
+        if self._ws is None and self._ws_recv_queue.empty():
+            return None
+        try:
+            message = await asyncio.wait_for(
+                self._ws_recv_queue.get(), timeout=timeout
+            )
+        except asyncio.TimeoutError:
             return None
 
-        # 取出 buffer 并清空（避免同一音频被重复识别）
-        audio_data = bytes(self._streaming_buffer)
-        self._streaming_buffer = bytearray()
-
-        # is_final 由 VAD 的 is_last 标志决定：
-        # - is_last=True（VAD 检测到 speech_end）→ Final
-        # - is_last=False（语音持续中）→ Partial
-        is_final = self._streaming_is_last
-        self._streaming_is_last = False
-        self._streaming_pending = False
-
+        if isinstance(message, bytes):
+            # 忽略二进制消息（服务端只发 JSON 文本）
+            return None
         try:
-            result = await self.recognize(audio_data)
-            text = result.get("text", "")
-            language = result.get("language", "")
-            emotion = result.get("emotion", "")
+            data = json.loads(message)
+            text = data.get("text", "")
+            is_final = data.get("is_final", False)
+            if is_final:
+                self._ws_final_received = True
             return StreamingASRResult(
                 text=text,
                 clean_text=text,
-                language=language,
+                language=data.get("language", ""),
                 is_final=is_final,
-                emotion=emotion,
+                emotion=data.get("emotion", ""),
             )
         except Exception as e:
-            logger.error(f"Streaming ASR receive_result error: {e}")
+            logger.error(f"[ASR-WS] Parse result error: {e}, raw={message[:200]}")
             return None
 
     async def reset(self) -> None:
-        """清空 streaming buffer 和状态（vad_processor 在 is_last 后调用）。"""
-        self._streaming_buffer = bytearray()
-        self._streaming_is_last = False
-        self._streaming_pending = False
+        """清空 streaming 状态（vad_processor 在 is_last 后调用）。
+
+        不发送 reset 信号给服务端——服务端在 final 后自动清空 buffer。
+        只清空本地 queue，准备下一轮语音。
+        """
+        # 清空 queue
+        while not self._ws_recv_queue.empty():
+            try:
+                self._ws_recv_queue.get_nowait()
+            except asyncio.QueueEmpty:
+                break
+        self._ws_final_received = False
+        # 不关闭 WS 连接，复用给下一轮
 
 
 class StreamingASRResult:
@@ -370,5 +423,6 @@ def get_asr_service() -> ASRService:
             model_dir=settings.asr.model_dir,
             device=settings.asr.device,
             remote_url=settings.asr.remote_url,
+            ws_url=settings.asr.ws_url,
         )
     return _asr_service

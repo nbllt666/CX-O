@@ -97,15 +97,18 @@ class _AdvancedSearchMixin:
 
         return scored_memories[:limit]
 
-    def recall_memory(self, memory_id: int, emotion_intensity: float = 0.0) -> Optional[Dict]:
+    def recall_memory(self, memory_id: int, emotion_intensity: float = 0.0, agent_id: str = "default") -> Optional[Dict]:
         from server.core.memory.decay import DecayCalculator
+
+        # B4: 按 agent 表查询，避免跨 agent 记忆串扰（迁移自 CXHMS）
+        table_name = self._get_table_name(agent_id)
 
         conn = self._get_connection()
         cursor = conn.cursor()
 
         try:
             cursor.execute(
-                "SELECT * FROM memories WHERE id = ? AND is_deleted = FALSE", (memory_id,)
+                f"SELECT * FROM {table_name} WHERE id = ? AND is_deleted = FALSE", (memory_id,)
             )
             row = cursor.fetchone()
 
@@ -126,8 +129,8 @@ class _AdvancedSearchMixin:
             new_emotion_score = (memory.get("emotion_score", 0.0) + abs(emotion_intensity)) / 2
 
             cursor.execute(
-                """
-                UPDATE memories
+                f"""
+                UPDATE {table_name}
                 SET reactivation_count = ?, emotion_score = ?, updated_at = ?
                 WHERE id = ?
             """,
@@ -151,6 +154,7 @@ class _AdvancedSearchMixin:
                             "old_time_score": old_time_score,
                             "new_time_score": new_time_score,
                             "memory_type": memory.get("type"),
+                            "agent_id": agent_id,
                         }
                     ),
                 ),
@@ -158,9 +162,9 @@ class _AdvancedSearchMixin:
 
             conn.commit()
 
-            logger.info(f"记忆已召回: id={memory_id}, reactivation_count={new_reactivation_count}")
+            logger.info(f"记忆已召回: id={memory_id}, agent_id={agent_id}, reactivation_count={new_reactivation_count}")
 
-            updated_memory = self.get_memory(memory_id)
+            updated_memory = self.get_memory(memory_id, agent_id=agent_id)
             if updated_memory:
                 updated_memory["reactivation_details"] = {
                     "old_time_score": old_time_score,

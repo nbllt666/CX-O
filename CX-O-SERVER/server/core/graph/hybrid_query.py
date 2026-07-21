@@ -30,22 +30,13 @@ class HybridQueryManager(BaseGraphRepository):
         node_id: str,
         limit: int = 10,
         depth: int = 1,
+        agent_id: str = "default",
     ) -> List[SemanticSearchResult]:
-        """找到与指定节点语义最相似的邻居
-
-        Args:
-            node_id: 节点 ID
-            limit: 返回数量
-            depth: 邻居深度
-
-        Returns:
-            语义相似的邻居节点列表
-        """
-        node = self.get_node(node_id)
+        node = self.get_node(node_id, agent_id=agent_id)
         if not node or not node.text_content:
             return []
 
-        neighbors = self.traversal.get_neighbors(node_id, max_depth=depth)
+        neighbors = self.traversal.get_neighbors(node_id, max_depth=depth, agent_id=agent_id)
         neighbor_texts = [
             (n.id, n.text_content or "", n.type)
             for n, _ in neighbors if n.text_content
@@ -60,6 +51,7 @@ class HybridQueryManager(BaseGraphRepository):
             node_type=None,
             limit=limit,
             node_filter=lambda nid: nid in [n[0] for n in neighbor_texts],
+            agent_id=agent_id,
         )
 
         return results
@@ -70,28 +62,19 @@ class HybridQueryManager(BaseGraphRepository):
         node_type: Optional[str] = None,
         properties_filter: Optional[Dict[str, Any]] = None,
         limit: int = 10,
+        agent_id: str = "default",
     ) -> List[SemanticSearchResult]:
-        """带属性过滤的语义搜索
-
-        Args:
-            query: 查询文本
-            node_type: 节点类型
-            properties_filter: 属性过滤器
-            limit: 返回数量
-
-        Returns:
-            匹配的节点列表
-        """
         results = self.semantic.search(
             query=query,
             node_type=node_type,
             limit=limit * 2,
+            agent_id=agent_id,
         )
 
         if properties_filter:
             filtered = []
             for result in results:
-                node = self.get_node(result.node.id)
+                node = self.get_node(result.node.id, agent_id=agent_id)
                 if node and self._matches_filter(node, properties_filter):
                     filtered.append(result)
             results = filtered
@@ -105,17 +88,6 @@ class HybridQueryManager(BaseGraphRepository):
         semantic_weight: float = 0.3,
         max_length: int = 5,
     ) -> List[Dict[str, Any]]:
-        """语义路径发现（在路径搜索中融入语义相似度）
-
-        Args:
-            start_id: 起始节点
-            end_id: 目标节点
-            semantic_weight: 语义权重 (0-1)
-            max_length: 最大路径长度
-
-        Returns:
-            包含语义相似度的路径列表
-        """
         from server.core.graph.models import PathResult
 
         all_paths = self.traversal.all_paths(start_id, end_id, max_length)
@@ -141,7 +113,6 @@ class HybridQueryManager(BaseGraphRepository):
         return scored_paths
 
     def _calculate_path_semantic_score(self, path_result) -> float:
-        """计算路径的语义相似度"""
         if not path_result.path:
             return 0.0
 
@@ -163,7 +134,6 @@ class HybridQueryManager(BaseGraphRepository):
         return sum(similarities) / len(similarities) if similarities else 0.0
 
     def _matches_filter(self, node: GraphNode, filter_dict: Dict[str, Any]) -> bool:
-        """检查节点是否匹配过滤器"""
         for key, value in filter_dict.items():
             if key not in node.properties:
                 return False

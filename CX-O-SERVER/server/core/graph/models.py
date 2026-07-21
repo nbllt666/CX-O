@@ -19,6 +19,7 @@ class GraphNode:
     vector_id: Optional[str] = None
     created_at: datetime = field(default_factory=datetime.now)
     updated_at: datetime = field(default_factory=datetime.now)
+    agent_id: str = "default"
 
     @classmethod
     def create(
@@ -26,8 +27,8 @@ class GraphNode:
         type: str,
         properties: Dict[str, Any] = None,
         text_content: Optional[str] = None,
+        agent_id: str = "default",
     ) -> "GraphNode":
-        """创建新节点（自动生成 ID）"""
         now = datetime.now()
         return cls(
             id=str(uuid.uuid4()),
@@ -37,10 +38,10 @@ class GraphNode:
             vector_id=None,
             created_at=now,
             updated_at=now,
+            agent_id=agent_id,
         )
 
     def to_dict(self) -> Dict[str, Any]:
-        """转换为字典"""
         return {
             "id": self.id,
             "type": self.type,
@@ -49,11 +50,11 @@ class GraphNode:
             "vector_id": self.vector_id,
             "created_at": self.created_at.isoformat() if isinstance(self.created_at, datetime) else self.created_at,
             "updated_at": self.updated_at.isoformat() if isinstance(self.updated_at, datetime) else self.updated_at,
+            "agent_id": self.agent_id,
         }
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "GraphNode":
-        """从字典创建"""
         created_at = data.get("created_at")
         if isinstance(created_at, str):
             created_at = datetime.fromisoformat(created_at)
@@ -74,6 +75,7 @@ class GraphNode:
             vector_id=data.get("vector_id"),
             created_at=created_at or datetime.now(),
             updated_at=updated_at or datetime.now(),
+            agent_id=data.get("agent_id", "default"),
         )
 
 
@@ -88,6 +90,7 @@ class GraphEdge:
     text_content: Optional[str] = None
     vector_id: Optional[str] = None
     created_at: datetime = field(default_factory=datetime.now)
+    agent_id: str = "default"
 
     @classmethod
     def create(
@@ -97,8 +100,8 @@ class GraphEdge:
         relation_type: str,
         properties: Dict[str, Any] = None,
         text_content: Optional[str] = None,
+        agent_id: str = "default",
     ) -> "GraphEdge":
-        """创建新边（自动生成 ID）"""
         return cls(
             id=str(uuid.uuid4()),
             source_id=source_id,
@@ -108,10 +111,10 @@ class GraphEdge:
             text_content=text_content,
             vector_id=None,
             created_at=datetime.now(),
+            agent_id=agent_id,
         )
 
     def to_dict(self) -> Dict[str, Any]:
-        """转换为字典"""
         return {
             "id": self.id,
             "source_id": self.source_id,
@@ -121,11 +124,11 @@ class GraphEdge:
             "text_content": self.text_content,
             "vector_id": self.vector_id,
             "created_at": self.created_at.isoformat() if isinstance(self.created_at, datetime) else self.created_at,
+            "agent_id": self.agent_id,
         }
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "GraphEdge":
-        """从字典创建"""
         created_at = data.get("created_at")
         if isinstance(created_at, str):
             created_at = datetime.fromisoformat(created_at)
@@ -143,20 +146,20 @@ class GraphEdge:
             text_content=data.get("text_content"),
             vector_id=data.get("vector_id"),
             created_at=created_at or datetime.now(),
+            agent_id=data.get("agent_id", "default"),
         )
 
 
 @dataclass
 class NodeCreate:
-    """创建节点的输入"""
     type: str
     properties: Dict[str, Any] = field(default_factory=dict)
     text_content: Optional[str] = None
+    agent_id: str = "default"
 
 
 @dataclass
 class NodeUpdate:
-    """更新节点的输入"""
     type: Optional[str] = None
     properties: Optional[Dict[str, Any]] = None
     text_content: Optional[str] = None
@@ -164,17 +167,16 @@ class NodeUpdate:
 
 @dataclass
 class EdgeCreate:
-    """创建边的输入"""
     source_id: str
     target_id: str
     relation_type: str
     properties: Dict[str, Any] = field(default_factory=dict)
     text_content: Optional[str] = None
+    agent_id: str = "default"
 
 
 @dataclass
 class EdgeUpdate:
-    """更新边的输入"""
     relation_type: Optional[str] = None
     properties: Optional[Dict[str, Any]] = None
     text_content: Optional[str] = None
@@ -182,7 +184,6 @@ class EdgeUpdate:
 
 @dataclass
 class SearchResult:
-    """搜索结果"""
     items: List[Any]
     total: int
     offset: int
@@ -195,14 +196,12 @@ class SearchResult:
 
 @dataclass
 class SemanticSearchResult:
-    """语义搜索结果"""
     node: GraphNode
     score: float
 
 
 @dataclass
 class PathResult:
-    """路径查询结果"""
     path: List[str]
     edges: List[GraphEdge]
     length: int

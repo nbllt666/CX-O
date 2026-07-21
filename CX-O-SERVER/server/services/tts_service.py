@@ -20,6 +20,7 @@ from server.services.effect_parser import EffectParser
 from server.services.tts_audio_utils import (
     split_text_by_sentences,
     concatenate_audio,
+    CrossRequestSilenceFilter,
 )
 
 logger = logging.getLogger(__name__)
@@ -595,9 +596,10 @@ class TTSService:
         - 停顿标点（，、；：）：遇到即切片，利用自然语义边界，
           保证切片位置在可朗读的停顿处，避免语音割裂感。
         """
-        # 阈值范围保护：限制在 3~5 之间，过小会导致切片过碎增加 TTS 调用开销，
+        # 阈值范围保护：限制在 2~5 之间，过小会导致切片过碎增加 TTS 调用开销，
         # 过大则失去细粒度优势、退化为接近整句分割
-        char_threshold = max(3, min(5, int(char_threshold)))
+        # C4 P50<600ms 二轮优化：硬下限 3 → 2，允许更激进的 2 字切片（本次仍用 3）
+        char_threshold = max(2, min(5, int(char_threshold)))
 
         # 停顿标点集合：中文逗号/顿号/分号/冒号 + 英文兼容写法
         pause_punctuation = "，、；：,;:"
@@ -658,7 +660,7 @@ class TTSService:
         token_stream: AsyncGenerator[str, None],
         ref_audio_path: str | None = None,
         ref_text: str | None = None,
-        char_threshold: int = 4,
+        char_threshold: int = 3,
         on_chunk: Callable[[str, bytes], None] | None = None,
         **kwargs
     ) -> AsyncGenerator[dict[str, Any], None]:
@@ -718,6 +720,10 @@ class TTSService:
         # 这是压缩首包延迟的核心：第一段 4 字即可触发 TTS，无需等整句
         _diag_tts_start = time.monotonic()
         _diag_tts_chunk_idx = 0
+        # 跨请求静音过滤器：仅 orpheus 模式启用
+        # 维护跨 text_segment 的连续静音计数器，过滤段间边界静音
+        # （每次请求 trailing silence + 下次请求 leading silence 合并 400ms）
+        _silence_filter = CrossRequestSilenceFilter() if self._mode == "orpheus" else None
         async for text_segment in self.split_text_streaming(
             token_stream, char_threshold=char_threshold
         ):
@@ -745,31 +751,42 @@ class TTSService:
                     ):
                         if not pcm_chunk:
                             continue
-                        # 首个 PCM chunk 到达时记录延迟（核心 KPI：T5 < 800ms）
+                        # 跨请求静音过滤：过滤段间边界静音（trailing + leading 合并 400ms）
+                        # 过滤器维护跨 text_segment 状态，连续静音 > 5 帧（100ms）则跳过
+                        if _silence_filter is not None:
+                            filtered_pcm = _silence_filter.feed(pcm_chunk)
+                            if not filtered_pcm:
+                                # 全静音且超过阈值，跳过 yield
+                                continue
+                        else:
+                            filtered_pcm = pcm_chunk
+                        # 首个非静音 PCM chunk 到达时记录延迟（核心 KPI：T5 < 800ms）
+                        # 注意：T5 现在测量首个非静音 chunk，比原测量晚 0-200ms（跳过 leading silence）
+                        # 但更准确反映用户感知的音频开始时间
                         if not _first_pcm_sent:
                             _first_pcm_dur = (time.monotonic() - _diag_chunk_start) * 1000
                             logger.info(
                                 f"[DIAG-TTS] chunk {_diag_tts_chunk_idx} first PCM in {_first_pcm_dur:.1f}ms "
-                                f"(size={len(pcm_chunk)}, text='{text_segment[:30]}')"
+                                f"(size={len(filtered_pcm)}, raw={len(pcm_chunk)}, text='{text_segment[:30]}')"
                             )
                             _first_pcm_sent = True
                         else:
                             # 后续 PCM chunks 仅 debug 级别记录，避免日志爆炸
                             logger.debug(
-                                f"[DIAG-TTS] chunk {_diag_tts_chunk_idx} PCM size={len(pcm_chunk)}"
+                                f"[DIAG-TTS] chunk {_diag_tts_chunk_idx} PCM size={len(filtered_pcm)}"
                             )
 
                         chunk = {
                             # 同一 text_segment 的多个 PCM chunks 共享 text_segment，
                             # 前端按 chunk_index 顺序拼接 PCM 即可
                             "text_segment": text_segment if not _first_pcm_sent or chunk_index == 0 else "",
-                            "audio_data": pcm_chunk,
+                            "audio_data": filtered_pcm,
                             "chunk_index": chunk_index,
                             "is_final": False,
                         }
 
                         if on_chunk:
-                            on_chunk(text_segment, pcm_chunk)
+                            on_chunk(text_segment, filtered_pcm)
 
                         yield chunk
                         chunk_index += 1
@@ -850,6 +867,26 @@ class TTSService:
                     "error": str(e),
                 }
                 chunk_index += 1
+
+        # token 流结束，flush 静音过滤器中残余的字节（不足一帧的尾部 PCM）
+        if _silence_filter is not None:
+            remaining = _silence_filter.flush()
+            if remaining:
+                yield {
+                    "text_segment": "",
+                    "audio_data": remaining,
+                    "chunk_index": chunk_index,
+                    "is_final": False,
+                }
+                chunk_index += 1
+            # 输出过滤统计，便于调优阈值
+            stats = _silence_filter.get_stats()
+            logger.info(
+                f"[DIAG-TTS] silence filter stats: "
+                f"total_frames={stats['total_frames']}, "
+                f"silence_skipped={stats['silence_skipped']}, "
+                f"silence_ratio={stats['silence_ratio']:.2%}"
+            )
 
         # token 流结束，发送最终标记，通知下游音频流已完结
         yield {

@@ -226,6 +226,13 @@ export function VRMViewer({
         ambLightRef.current = scene.children.find((c): c is THREE.AmbientLight => c instanceof THREE.AmbientLight) ?? null;
         pntLightRef.current = scene.children.find((c): c is THREE.PointLight => c instanceof THREE.PointLight) ?? null;
 
+        // 立即应用光照 tweak（修复：初始挂载时 L483 useEffect 在 ref 赋值前执行，导致 tweak 不生效）
+        // 使用 tcRef.current 获取最新 tweak 值（避免闭包捕获旧值）
+        const initTweak = tcRef.current;
+        if (dirLightRef.current) dirLightRef.current.intensity = initTweak.light.directionalIntensity;
+        if (ambLightRef.current) ambLightRef.current.intensity = initTweak.light.ambientIntensity;
+        if (pntLightRef.current) pntLightRef.current.intensity = initTweak.light.pointIntensity;
+
         lipSyncRef.current = runtimeRef.current!.lipSync;
         const acLatest = acRef.current;
         lipSyncRef.current.setSmoothing(acLatest.lipSyncSmoothing);

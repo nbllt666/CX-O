@@ -16,35 +16,27 @@ logger = logging.getLogger(__name__)
 class Database:
     """SQLite 数据库连接管理器"""
 
-    _local = threading.local()
-
     def __init__(self, config: GraphConfig = None):
         self.config = config or get_graph_config()
         self.db_path = self.config.database_path
         self.timeout = self.config.timeout
         self._lock = threading.Lock()
         self._init_lock = threading.Lock()
-        # BUG-B-M2 修复: 记录所有线程创建的连接,close() 时统一关闭,
-        # 避免仅关闭当前线程的 thread-local 连接导致其他线程连接泄漏。
-        self._all_connections: List[sqlite3.Connection] = []
-        self._connections_lock = threading.Lock()
+        self._local = threading.local()
 
     def _get_connection(self) -> sqlite3.Connection:
-        """获取线程本地的数据库连接"""
         if not hasattr(self._local, 'connection') or self._local.connection is None:
             conn = sqlite3.connect(
                 self.db_path,
                 timeout=self.timeout,
+                check_same_thread=False,
             )
             conn.row_factory = sqlite3.Row
             self._local.connection = conn
-            with self._connections_lock:
-                self._all_connections.append(conn)
         return self._local.connection
 
     @contextmanager
     def get_cursor(self):
-        """获取数据库游标的上下文管理器"""
         conn = self._get_connection()
         cursor = conn.cursor()
         try:
@@ -58,15 +50,16 @@ class Database:
             cursor.close()
 
     def initialize(self) -> None:
-        """初始化数据库（创建表结构）"""
         with self._init_lock:
             self._create_tables()
 
     def _create_tables(self) -> None:
-        """创建图数据库表结构"""
+        # 注意：CREATE INDEX ... ON nodes(agent_id) 必须在 agent_id 列存在之后才能执行。
+        # 旧版 schema 没有 agent_id 列，CREATE TABLE IF NOT EXISTS 会跳过现有表，
+        # 此时 CREATE INDEX agent_id 会报 "no such column"。
+        # 因此先 CREATE TABLE（不含 agent_id 索引），再迁移补列，最后统一建索引。
         with self.get_cursor() as cursor:
             cursor.executescript("""
-                -- 节点表
                 CREATE TABLE IF NOT EXISTS nodes (
                     id TEXT PRIMARY KEY,
                     type TEXT NOT NULL,
@@ -74,14 +67,13 @@ class Database:
                     text_content TEXT,
                     vector_id TEXT,
                     created_at TEXT NOT NULL,
-                    updated_at TEXT NOT NULL
+                    updated_at TEXT NOT NULL,
+                    agent_id VARCHAR(100) DEFAULT 'default'
                 );
 
-                -- 创建索引
                 CREATE INDEX IF NOT EXISTS idx_nodes_type ON nodes(type);
                 CREATE INDEX IF NOT EXISTS idx_nodes_created_at ON nodes(created_at);
 
-                -- 边表
                 CREATE TABLE IF NOT EXISTS edges (
                     id TEXT PRIMARY KEY,
                     source_id TEXT NOT NULL,
@@ -91,16 +83,15 @@ class Database:
                     text_content TEXT,
                     vector_id TEXT,
                     created_at TEXT NOT NULL,
+                    agent_id VARCHAR(100) DEFAULT 'default',
                     FOREIGN KEY (source_id) REFERENCES nodes(id) ON DELETE CASCADE,
                     FOREIGN KEY (target_id) REFERENCES nodes(id) ON DELETE CASCADE
                 );
 
-                -- 创建索引
                 CREATE INDEX IF NOT EXISTS idx_edges_source ON edges(source_id);
                 CREATE INDEX IF NOT EXISTS idx_edges_target ON edges(target_id);
                 CREATE INDEX IF NOT EXISTS idx_edges_relation_type ON edges(relation_type);
 
-                -- 图遍历辅助表（用于存储遍历路径）
                 CREATE TABLE IF NOT EXISTS traversal_paths (
                     path_id TEXT PRIMARY KEY,
                     node_ids TEXT NOT NULL,
@@ -111,8 +102,25 @@ class Database:
             """)
             logger.info("图数据库表结构创建完成")
 
+        # 迁移：为旧版 schema（无 agent_id 列）补充字段 + 建索引。
+        # 注意：原 CXHMS 代码用 try/except SELECT agent_id 检测，但 get_cursor 的 except 会
+        # 重新抛出异常，导致迁移逻辑永远不执行。改用 PRAGMA table_info 反射式检测列是否存在。
+        self._migrate_add_agent_id_column()
+
+    def _migrate_add_agent_id_column(self) -> None:
+        """检测并补充 nodes/edges 的 agent_id 列 + 索引（CXHMS 旧版 schema 兼容）。"""
+        for table in ("nodes", "edges"):
+            with self.get_cursor() as cursor:
+                cursor.execute(f"PRAGMA table_info({table})")
+                columns = [row["name"] for row in cursor.fetchall()]
+            if "agent_id" not in columns:
+                with self.get_cursor() as cursor:
+                    cursor.execute(f"ALTER TABLE {table} ADD COLUMN agent_id VARCHAR(100) DEFAULT 'default'")
+                logger.info(f"图数据库迁移：{table} 表添加 agent_id 字段")
+            with self.get_cursor() as cursor:
+                cursor.execute(f"CREATE INDEX IF NOT EXISTS idx_{table}_agent_id ON {table}(agent_id)")
+
     def health_check(self) -> bool:
-        """检查数据库健康状态"""
         try:
             with self.get_cursor() as cursor:
                 cursor.execute("SELECT 1")
@@ -122,59 +130,74 @@ class Database:
             return False
 
     def close(self) -> None:
-        """关闭数据库连接
-
-        BUG-B-M2 修复: 关闭所有线程创建的连接,而不仅仅是当前线程的
-        thread-local 连接,避免多线程场景下其他线程连接泄漏。
-        """
-        with self._connections_lock:
-            connections_to_close = list(self._all_connections)
-            self._all_connections.clear()
-        for conn in connections_to_close:
+        if hasattr(self._local, 'connection') and self._local.connection:
             try:
-                conn.close()
+                self._local.connection.close()
             except Exception as e:
                 logger.warning(f"关闭数据库连接失败: {e}")
-        if hasattr(self._local, 'connection'):
-            self._local.connection = None
+            finally:
+                self._local.connection = None
 
     def execute(self, query: str, params: tuple = ()) -> List[Dict[str, Any]]:
-        """执行查询并返回结果"""
         with self.get_cursor() as cursor:
             cursor.execute(query, params)
             rows = cursor.fetchall()
             return [dict(row) for row in rows]
 
     def execute_one(self, query: str, params: tuple = ()) -> Optional[Dict[str, Any]]:
-        """执行查询并返回单条结果"""
         results = self.execute(query, params)
         return results[0] if results else None
 
     def execute_modify(self, query: str, params: tuple = ()) -> int:
-        """执行修改操作（INSERT/UPDATE/DELETE）"""
         with self.get_cursor() as cursor:
             cursor.execute(query, params)
             return cursor.rowcount
 
     def execute_many(self, query: str, params_list: List[tuple]) -> int:
-        """批量执行修改操作"""
         with self.get_cursor() as cursor:
             cursor.executemany(query, params_list)
             return cursor.rowcount
 
     def transaction(self, operations: List[Tuple[str, tuple]]) -> None:
-        """执行事务（多个操作）"""
         with self.get_cursor() as cursor:
             for query, params in operations:
                 cursor.execute(query, params)
 
 
-_db_instance: Optional[Database] = None
+_db_instances: Dict[str, "Database"] = {}
+_db_lock = threading.Lock()
 
 
-def get_database(config: GraphConfig = None) -> Database:
-    """获取数据库单例实例"""
-    global _db_instance
-    if _db_instance is None:
-        _db_instance = Database(config)
-    return _db_instance
+def get_database(config: GraphConfig = None, agent_id: str = "default") -> Database:
+    """获取数据库实例（按 agent_id 注册表）。
+
+    当 ``agent_id`` 不在注册表中时，按需创建新的 :class:`Database`，
+    使用 per-agent 的 db_path，调用 :meth:`Database.initialize` 创建 schema，
+    存入注册表并返回。未提供 ``agent_id`` 时使用 ``'default'``。
+    """
+    if agent_id not in _db_instances:
+        with _db_lock:
+            if agent_id not in _db_instances:
+                agent_config = config or get_graph_config(agent_id=agent_id)
+                db = Database(agent_config)
+                db.initialize()
+                _db_instances[agent_id] = db
+                logger.info(f"图数据库已按需创建: agent_id={agent_id}, path={db.db_path}")
+    return _db_instances[agent_id]
+
+
+def get_database_if_exists(agent_id: str = "default") -> Optional[Database]:
+    """返回已注册的数据库实例，不存在时返回 None（不创建）。"""
+    return _db_instances.get(agent_id)
+
+
+def remove_database(agent_id: str) -> Optional[Database]:
+    """从注册表移除并关闭对应 agent 的数据库实例，返回被移除的实例。"""
+    with _db_lock:
+        db = _db_instances.pop(agent_id, None)
+    if db is not None:
+        try:
+            db.close()
+        except Exception as e:
+            logger.warning(f"关闭图数据库失败 (agent_id={agent_id}): {e}")
+    return db

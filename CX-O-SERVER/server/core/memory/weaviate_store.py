@@ -86,8 +86,10 @@ class WeaviateVectorStore:
                 )
                 logger.info(f"Weaviate 客户端已连接: {self.host}:{self.port}")
 
-            # 确保集合存在
-            self._ensure_collection()
+            # per-agent collection 懒创建：初始化时不预建 collection，
+            # 首次写入时由 _ensure_collection_for_agent(agent_id) 按需创建。
+            # 仅预建 default collection 以保持向后兼容。
+            self._ensure_collection_for_agent("default")
 
         except ImportError:
             logger.error("weaviate-client 未安装，请运行: pip install weaviate-client>=4.0.0")
@@ -96,19 +98,42 @@ class WeaviateVectorStore:
             logger.error(f"Weaviate 初始化失败: {e}")
             self._client = None
 
-    def _ensure_collection(self):
-        """确保集合存在"""
+    def _collection_name_for_agent(self, agent_id: str = "default") -> str:
+        """根据 agent_id 生成 per-agent collection 名。
+
+        - agent_id 为 "default" 时返回 ``self.schema_class``（默认 ``CXOMemory``），保持向后兼容
+        - 其他 agent_id 返回 ``{schema_class}_{agent_id}``（如 ``CXOMemory_abc123``）
+        - agent_id 中的非字母数字字符会被替换为 ``_`` 以满足 Weaviate collection 命名规范
+
+        迁移自 CXHMS: backend/core/memory/weaviate_store.py:L100-L112
+        """
+        if not agent_id or agent_id == "default":
+            return self.schema_class
+        import re
+
+        safe_id = re.sub(r"[^a-zA-Z0-9_]", "_", agent_id)
+        return f"{self.schema_class}_{safe_id}"
+
+    def _ensure_collection_for_agent(self, agent_id: str = "default") -> None:
+        """按需为指定 agent 创建 collection（懒创建）。
+
+        - agent_id="default" 时创建/检查 default collection（``self.schema_class``）
+        - 其他 agent_id 时创建/检查 per-agent collection
+        - 移除了 agent_id property（per-agent collection 已隔离，不再需要字段过滤）
+
+        迁移自 CXHMS: backend/core/memory/weaviate_store.py:L114-L150
+        """
         if not self._client:
             return
 
+        collection_name = self._collection_name_for_agent(agent_id)
+
         try:
-            # 检查集合是否已存在
-            if not self._client.collections.exists(self.schema_class):
-                # 创建新集合
+            if not self._client.collections.exists(collection_name):
                 from weaviate.classes.config import Configure, DataType, Property
 
                 self._client.collections.create(
-                    name=self.schema_class,
+                    name=collection_name,
                     vectorizer_config=Configure.Vectorizer.none(),
                     properties=[
                         Property(name="content", data_type=DataType.TEXT),
@@ -122,12 +147,12 @@ class WeaviateVectorStore:
                         Property(name="emotion_score", data_type=DataType.NUMBER),
                     ],
                 )
-                logger.info(f"Weaviate 集合已创建: {self.schema_class}")
+                logger.info(f"Weaviate per-agent 集合已创建: {collection_name} (agent_id={agent_id})")
             else:
-                logger.info(f"Weaviate 集合已存在: {self.schema_class}")
+                logger.debug(f"Weaviate per-agent 集合已存在: {collection_name}")
 
         except Exception as e:
-            logger.error(f"创建/检查 Weaviate 集合失败: {e}")
+            logger.error(f"创建/检查 Weaviate 集合失败 (agent_id={agent_id}): {e}")
 
     def is_available(self) -> bool:
         """检查向量存储是否可用"""
@@ -139,16 +164,29 @@ class WeaviateVectorStore:
             return False
 
     async def add_memory_vector(
-        self, memory_id: int, content: str, embedding: List[float], metadata: Dict = None
+        self, memory_id: int, content: str, embedding: List[float], metadata: Dict = None,
+        agent_id: str = "default",
     ) -> bool:
-        """添加记忆向量"""
+        """添加记忆向量到 per-agent collection
+
+        迁移自 CXHMS: backend/core/memory/weaviate_store.py:L161-L203
+        """
         if not self._client:
             return False
 
         try:
-            collection = self._client.collections.get(self.schema_class)
+            # 从 metadata 中获取 agent_id（优先使用参数）
+            effective_agent_id = agent_id
+            if effective_agent_id == "default" and metadata and metadata.get("agent_id"):
+                effective_agent_id = metadata["agent_id"]
 
-            # 准备数据对象
+            # 懒创建 per-agent collection
+            self._ensure_collection_for_agent(effective_agent_id)
+
+            collection_name = self._collection_name_for_agent(effective_agent_id)
+            collection = self._client.collections.get(collection_name)
+
+            # 准备数据对象（per-agent collection 已隔离，不再需要 agent_id property）
             data_object = {
                 "content": content,
                 "memory_id": memory_id,
@@ -164,7 +202,9 @@ class WeaviateVectorStore:
             # 插入数据
             collection.data.insert(properties=data_object, vector=embedding)
 
-            logger.debug(f"Weaviate 向量已添加: memory_id={memory_id}")
+            logger.debug(
+                f"Weaviate 向量已添加: memory_id={memory_id}, collection={collection_name}"
+            )
             return True
 
         except Exception as e:
@@ -178,22 +218,27 @@ class WeaviateVectorStore:
         memory_type: str = None,
         min_score: float = None,
         filters: Dict = None,
+        agent_id: str = "default",
     ) -> List[Dict]:
-        """搜索相似向量"""
+        """在 per-agent collection 中搜索相似向量
+
+        迁移自 CXHMS: backend/core/memory/weaviate_store.py:L205-L294
+        """
         if min_score is None:
             min_score = Settings().config.limits.memory.vector_min_score
         if not self._client:
             return []
 
         try:
-            collection = self._client.collections.get(self.schema_class)
+            collection_name = self._collection_name_for_agent(agent_id)
+            collection = self._client.collections.get(collection_name)
 
             # 构建查询
             query = collection.query.near_vector(
                 near_vector=query_embedding, limit=limit, return_metadata=["distance"]
             )
 
-            # 添加过滤器
+            # 添加过滤器（per-agent collection 已隔离，不再需要 agent_id 过滤）
             if memory_type or filters:
                 from weaviate.classes.query import Filter
 
@@ -220,7 +265,7 @@ class WeaviateVectorStore:
             filtered_results = []
             for obj in results:
                 # Weaviate 返回的是余弦距离，范围 [0, 2]
-                # 需要归一化到 [0, 1]: (2 - distance) / 2
+                # 归一化到 [0, 1]: (2 - distance) / 2 （与 CXHMS 1 - distance/2 等价）
                 distance = obj.metadata.distance if obj.metadata else 0
                 similarity_score = (2 - distance) / 2
 
@@ -237,6 +282,7 @@ class WeaviateVectorStore:
                                 "created_at": obj.properties.get("created_at"),
                                 "workspace_id": obj.properties.get("workspace_id"),
                                 "is_archived": obj.properties.get("is_archived"),
+                                "agent_id": agent_id,
                             },
                         }
                     )
@@ -247,13 +293,17 @@ class WeaviateVectorStore:
             logger.error(f"Weaviate 向量搜索失败: {e}")
             return []
 
-    async def delete_by_memory_id(self, memory_id: int) -> bool:
-        """根据记忆ID删除向量"""
+    async def delete_by_memory_id(self, memory_id: int, agent_id: str = "default") -> bool:
+        """根据记忆ID删除向量（在 per-agent collection 中）
+
+        迁移自 CXHMS: backend/core/memory/weaviate_store.py:L296-L324
+        """
         if not self._client:
             return False
 
         try:
-            collection = self._client.collections.get(self.schema_class)
+            collection_name = self._collection_name_for_agent(agent_id)
+            collection = self._client.collections.get(collection_name)
 
             # 查找并删除
             from weaviate.classes.query import Filter
@@ -265,7 +315,9 @@ class WeaviateVectorStore:
             if result.objects:
                 uuid = result.objects[0].uuid
                 collection.data.delete_by_id(uuid)
-                logger.debug(f"Weaviate 向量已删除: memory_id={memory_id}")
+                logger.debug(
+                    f"Weaviate 向量已删除: memory_id={memory_id}, collection={collection_name}"
+                )
                 return True
 
             return False
@@ -275,29 +327,44 @@ class WeaviateVectorStore:
             return False
 
     async def update_memory_vector(
-        self, memory_id: int, content: str, embedding: List[float], metadata: Dict = None
+        self, memory_id: int, content: str, embedding: List[float], metadata: Dict = None,
+        agent_id: str = "default",
     ) -> bool:
-        """更新记忆向量"""
+        """更新记忆向量（在 per-agent collection 中）
+
+        迁移自 CXHMS: backend/core/memory/weaviate_store.py:L326-L349
+        """
         if not self._client:
             return False
 
         try:
+            # 从 metadata 提取 agent_id（优先使用参数）
+            effective_agent_id = agent_id
+            if effective_agent_id == "default" and metadata and metadata.get("agent_id"):
+                effective_agent_id = metadata["agent_id"]
+
             # 先删除旧向量
-            await self.delete_by_memory_id(memory_id)
+            await self.delete_by_memory_id(memory_id, agent_id=effective_agent_id)
             # 添加新向量
-            return await self.add_memory_vector(memory_id, content, embedding, metadata)
+            return await self.add_memory_vector(
+                memory_id, content, embedding, metadata, agent_id=effective_agent_id
+            )
 
         except Exception as e:
             logger.error(f"Weaviate 更新向量失败: {e}")
             return False
 
-    async def get_vector_by_id(self, memory_id: int) -> Optional[Dict]:
-        """根据ID获取向量"""
+    async def get_vector_by_id(self, memory_id: int, agent_id: str = "default") -> Optional[Dict]:
+        """根据ID获取向量（在 per-agent collection 中）
+
+        迁移自 CXHMS: backend/core/memory/weaviate_store.py:L351-L389
+        """
         if not self._client:
             return None
 
         try:
-            collection = self._client.collections.get(self.schema_class)
+            collection_name = self._collection_name_for_agent(agent_id)
+            collection = self._client.collections.get(collection_name)
 
             from weaviate.classes.query import Filter
 
@@ -320,6 +387,7 @@ class WeaviateVectorStore:
                         "created_at": obj.properties.get("created_at"),
                         "workspace_id": obj.properties.get("workspace_id"),
                         "is_archived": obj.properties.get("is_archived"),
+                        "agent_id": agent_id,
                     },
                 }
 
@@ -329,13 +397,63 @@ class WeaviateVectorStore:
             logger.error(f"Weaviate 获取向量失败: {e}")
             return None
 
-    async def check_exists(self, memory_id: int) -> bool:
-        """检查向量是否存在"""
-        result = await self.get_vector_by_id(memory_id)
+    async def check_exists(self, memory_id: int, agent_id: str = "default") -> bool:
+        """检查向量是否存在（在 per-agent collection 中）"""
+        result = await self.get_vector_by_id(memory_id, agent_id=agent_id)
         return result is not None
 
+    def ensure_agent_collection(self, agent_id: str) -> bool:
+        """预创建 per-agent collection（供 agent 创建 API 调用）。
+
+        迁移自 CXHMS: backend/core/memory/weaviate_store.py:L396-L409
+
+        Returns:
+            True 如果创建成功或已存在；False 如果 Weaviate 不可用
+        """
+        if not self._client:
+            return False
+        try:
+            self._ensure_collection_for_agent(agent_id)
+            return True
+        except Exception as e:
+            logger.error(f"预创建 per-agent collection 失败 (agent_id={agent_id}): {e}")
+            return False
+
+    def delete_agent_collection(self, agent_id: str) -> bool:
+        """删除 per-agent collection（供 agent 删除 API 调用，清理 collection）。
+
+        迁移自 CXHMS: backend/core/memory/weaviate_store.py:L411-L437
+
+        - agent_id="default" 时跳过删除（保护 default collection）
+        - collection 不存在时返回 True（幂等）
+
+        Returns:
+            True 如果删除成功或不存在；False 如果 Weaviate 不可用或删除失败
+        """
+        if not self._client:
+            return False
+
+        if not agent_id or agent_id == "default":
+            logger.warning("跳过删除 default collection（保护默认 collection）")
+            return False
+
+        collection_name = self._collection_name_for_agent(agent_id)
+        try:
+            if self._client.collections.exists(collection_name):
+                self._client.collections.delete(collection_name)
+                logger.info(f"已删除 per-agent collection: {collection_name} (agent_id={agent_id})")
+            else:
+                logger.debug(f"per-agent collection 不存在，跳过删除: {collection_name}")
+            return True
+        except Exception as e:
+            logger.error(f"删除 per-agent collection 失败 (agent_id={agent_id}): {e}")
+            return False
+
     async def sync_with_sqlite(self, sqlite_manager, last_sync_time: str = None) -> "SyncResult":
-        """与 SQLite 同步数据"""
+        """与 SQLite 同步数据（按 memory 的 agent_id 分发到对应 per-agent collection）
+
+        迁移自 CXHMS: backend/core/memory/weaviate_store.py:L439-L538
+        """
         from .vector_store import SyncResult
 
         if not self._client:
@@ -366,12 +484,14 @@ class WeaviateVectorStore:
             for memory in memories:
                 memory_id = memory["id"]
                 content = memory["content"]
+                # 从 memory 提取 agent_id，分发到对应 per-agent collection
+                mem_agent_id = memory.get("agent_id", "default") if memory else "default"
 
                 try:
-                    existing = await self.get_vector_by_id(memory_id)
+                    existing = await self.get_vector_by_id(memory_id, agent_id=mem_agent_id)
 
                     if existing is None:
-                        logger.info(f"Weaviate 向量不存在，创建: memory_id={memory_id}")
+                        logger.info(f"Weaviate 向量不存在，创建: memory_id={memory_id}, agent_id={mem_agent_id}")
                         if self.embedding_model:
                             embedding = await self.embedding_model.get_embedding(content)
                             await self.add_memory_vector(
@@ -379,11 +499,12 @@ class WeaviateVectorStore:
                                 content=content,
                                 embedding=embedding,
                                 metadata=memory,
+                                agent_id=mem_agent_id,
                             )
                             result.synced += 1
-                            result.details.append(f"创建: {memory_id}")
+                            result.details.append(f"创建: {memory_id} (agent={mem_agent_id})")
                     elif existing.get("content") != content:
-                        logger.info(f"Weaviate 内容不一致，更新: memory_id={memory_id}")
+                        logger.info(f"Weaviate 内容不一致，更新: memory_id={memory_id}, agent_id={mem_agent_id}")
                         if self.embedding_model:
                             embedding = await self.embedding_model.get_embedding(content)
                             await self.update_memory_vector(
@@ -391,9 +512,10 @@ class WeaviateVectorStore:
                                 content=content,
                                 embedding=embedding,
                                 metadata=memory,
+                                agent_id=mem_agent_id,
                             )
                             result.synced += 1
-                            result.details.append(f"更新: {memory_id}")
+                            result.details.append(f"更新: {memory_id} (agent={mem_agent_id})")
 
                 except Exception as e:
                     result.errors += 1
@@ -410,17 +532,22 @@ class WeaviateVectorStore:
 
         return result
 
-    def get_collection_info(self) -> Dict:
-        """获取集合信息"""
+    def get_collection_info(self, agent_id: str = "default") -> Dict:
+        """获取 per-agent 集合信息
+
+        迁移自 CXHMS: backend/core/memory/weaviate_store.py:L540-L560
+        """
         if not self._client:
             return {"error": "Weaviate 不可用"}
 
+        collection_name = self._collection_name_for_agent(agent_id)
         try:
-            collection = self._client.collections.get(self.schema_class)
+            collection = self._client.collections.get(collection_name)
             count = collection.aggregate.over_all(total_count=True).total_count
 
             return {
-                "collection_name": self.schema_class,
+                "collection_name": collection_name,
+                "agent_id": agent_id,
                 "vectors_count": count,
                 "vector_size": self.vector_size,
                 "embedded": self.embedded,
@@ -430,25 +557,28 @@ class WeaviateVectorStore:
         except Exception as e:
             return {"error": str(e)}
 
-    def clear_collection(self) -> bool:
-        """清空集合"""
+    def clear_collection(self, agent_id: str = "default") -> bool:
+        """清空 per-agent 集合
+
+        迁移自 CXHMS: backend/core/memory/weaviate_store.py:L562-L583
+        """
         if not self._client:
             return False
 
+        collection_name = self._collection_name_for_agent(agent_id)
         try:
-            collection = self._client.collections.get(self.schema_class)
+            collection = self._client.collections.get(collection_name)
 
             # 删除所有对象
-
             result = collection.query.fetch_objects(limit=1000)
             for obj in result.objects:
                 collection.data.delete_by_id(obj.uuid)
 
-            logger.info(f"Weaviate 集合已清空: {self.schema_class}")
+            logger.info(f"Weaviate per-agent 集合已清空: {collection_name} (agent_id={agent_id})")
             return True
 
         except Exception as e:
-            logger.error(f"Weaviate 清空集合失败: {e}")
+            logger.error(f"Weaviate 清空集合失败 (agent_id={agent_id}): {e}")
             return False
 
     def close(self):

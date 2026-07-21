@@ -2,6 +2,7 @@
 文本向量化
 """
 
+import hashlib
 import logging
 from typing import List, Optional, Union
 import numpy as np
@@ -22,7 +23,6 @@ class TextVectorizer:
         self._device = self.config.device
 
     def _load_model(self):
-        """延迟加载模型"""
         if self._model is None:
             try:
                 from sentence_transformers import SentenceTransformer
@@ -37,7 +37,6 @@ class TextVectorizer:
                 self._model = None
 
     def encode(self, text: str) -> np.ndarray:
-        """将单个文本转为向量"""
         self._load_model()
 
         if self._model is None:
@@ -51,7 +50,6 @@ class TextVectorizer:
         return embeddings
 
     def encode_batch(self, texts: List[str], show_progress: bool = False) -> np.ndarray:
-        """批量将文本转为向量"""
         self._load_model()
 
         if self._model is None:
@@ -66,26 +64,22 @@ class TextVectorizer:
         return embeddings
 
     def _simple_encode(self, text: str) -> np.ndarray:
-        """简化向量化（使用词袋模型）"""
         words = text.split()
         vector = np.zeros(self.config.vector_dim, dtype=np.float32)
         for i, word in enumerate(words[:self.config.vector_dim]):
-            vector[i] = hash(word) % 1000 / 1000.0
+            vector[i] = int(hashlib.sha256(word.encode()).hexdigest(), 16) % 1000 / 1000.0
         return vector
 
     def get_dimension(self) -> int:
-        """获取向量维度"""
         return self.config.vector_dim
 
     def close(self):
-        """关闭向量化器"""
         if self._model:
             del self._model
             self._model = None
 
 
 def get_vectorizer() -> TextVectorizer:
-    """获取全局向量化器实例"""
     global _vectorizer
     if _vectorizer is None:
         _vectorizer = TextVectorizer()

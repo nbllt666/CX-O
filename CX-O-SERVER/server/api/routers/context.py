@@ -68,6 +68,26 @@ async def get_session(session_id: str):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@router.delete("/context/sessions/{session_id}/messages")
+async def clear_session_messages(session_id: str):
+    """清空会话消息（保留会话）
+
+    迁移自 CXHMS: backend/api/routers/context.py:L72-L86
+    """
+    from server.dependencies import get_context_manager
+
+    try:
+        context_mgr = get_context_manager()
+        success = context_mgr.clear_session_messages(session_id)
+        if not success:
+            raise HTTPException(status_code=404, detail="会话不存在")
+        return {"status": "success", "message": "会话消息已清空"}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @router.delete("/context/sessions/{session_id}")
 async def delete_session(session_id: str):
     from server.dependencies import get_context_manager

@@ -36,6 +36,7 @@ export function ChatPage() {
   const [doneTrigger, setDoneTrigger] = useState(0);
 
   const [isRecording, setIsRecording] = useState(false);
+  const [isRecognizing, setIsRecognizing] = useState(false);
   const [isVoiceMode, setIsVoiceMode] = useState(false);
   const [enableVoiceOutput, setEnableVoiceOutput] = useState(false);
   const [currentAudioElement, setCurrentAudioElement] = useState<HTMLAudioElement | null>(null);
@@ -395,6 +396,20 @@ export function ChatPage() {
     onAlarm: handleAlarm,
     onError: (error) => {
       console.error('WebSocket error:', error);
+      // 在 streamingMessage 中显示错误，让用户看到反馈（而不是空白无响应）
+      setMessages((prev) => {
+        const lastMsg = prev[prev.length - 1];
+        if (lastMsg && lastMsg.id === tempAssistantIdRef.current) {
+          return [
+            ...prev.slice(0, -1),
+            {
+              ...lastMsg,
+              content: `连接错误：${error}。请检查网络或刷新页面重试。`,
+            },
+          ];
+        }
+        return prev;
+      });
       setIsLoading(false);
     },
     onPartial: handleDualPartial,
@@ -503,7 +518,7 @@ export function ChatPage() {
 
   const loadAgentHistory = async (agentId: string, token: { cancelled: boolean }) => {
     try {
-      const data = await api.getChatHistory(`agent-${agentId}`);
+      const data = await api.getChatHistory(agentId);
       if (token.cancelled) return;
       if (data.messages) {
         const formattedMessages = data.messages.map(
@@ -621,6 +636,7 @@ export function ChatPage() {
 
       mediaRecorder.onstop = async () => {
         const audioBlob = new Blob(audioChunksRef.current, { type: 'audio/webm' });
+        setIsRecognizing(true);
         try {
           const result = await api.speechToText(audioBlob);
           if (result.text) {
@@ -635,6 +651,8 @@ export function ChatPage() {
         } catch (error) {
           console.error('语音识别失败:', error);
           alert('语音识别失败，请重试');
+        } finally {
+          setIsRecognizing(false);
         }
         // 停止所有轨道
         stream.getTracks().forEach(track => track.stop());
@@ -856,9 +874,11 @@ export function ChatPage() {
     setIsLoading(true);
     setShouldAutoScroll(true);
 
+    let sentViaWS = false;
     if (isConnected) {
-      wsSendMessage(userMessage.content, userMessage.images);
-    } else {
+      sentViaWS = wsSendMessage(userMessage.content, userMessage.images);
+    }
+    if (!sentViaWS) {
       try {
         await api.sendMessageStream(
           userMessage.content,
@@ -1087,6 +1107,7 @@ export function ChatPage() {
                     onKeyDown={handleKeyDown}
                     isLoading={isLoading}
                     isRecording={isRecording}
+                    isRecognizing={isRecognizing}
                     onToggleRecording={toggleRecording}
                     onCancelGeneration={cancelGeneration}
                     onSend={handleSend}

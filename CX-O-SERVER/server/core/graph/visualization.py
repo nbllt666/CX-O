@@ -21,14 +21,6 @@ class GraphExporter:
         self.db = db
 
     def export_json(self, file_path: Optional[str] = None) -> str:
-        """导出为 JSON 格式
-
-        Args:
-            file_path: 可选，导出文件路径
-
-        Returns:
-            JSON 字符串
-        """
         nodes = self.db.execute("SELECT * FROM nodes")
         edges = self.db.execute("SELECT * FROM edges")
 
@@ -52,14 +44,6 @@ class GraphExporter:
         return json_str
 
     def export_graphml(self, file_path: str) -> str:
-        """导出为 GraphML 格式
-
-        Args:
-            file_path: 导出文件路径
-
-        Returns:
-            GraphML 字符串
-        """
         nodes = self.db.execute("SELECT * FROM nodes")
         edges = self.db.execute("SELECT * FROM edges")
 
@@ -116,10 +100,7 @@ class GraphExporter:
             data_type.set("key", "d1")
             data_type.text = node_data.get("type", "")
 
-            properties = node_data.get("properties", "{}")
-            if isinstance(properties, str):
-                properties = json.loads(properties) if properties else {}
-            properties = json.dumps(properties, ensure_ascii=False)
+            properties = json.dumps(node_data.get("properties", {}), ensure_ascii=False)
             data_props = ET.SubElement(node_elem, "data")
             data_props.set("key", "d2")
             data_props.text = properties
@@ -155,14 +136,6 @@ class GraphExporter:
         return graphml_str
 
     def export_dot(self, file_path: str) -> str:
-        """导出为 DOT 格式（用于 GraphViz）
-
-        Args:
-            file_path: 导出文件路径
-
-        Returns:
-            DOT 字符串
-        """
         nodes = self.db.execute("SELECT * FROM nodes")
         edges = self.db.execute("SELECT * FROM edges")
 
@@ -185,9 +158,8 @@ class GraphExporter:
 
             label = node_data.get("name", node_id)
             node_type = node_data.get("type", "")
-            properties = node_data.get("properties", {})
-            if isinstance(properties, str):
-                properties = json.loads(properties) if properties else {}
+            props_raw = node_data.get("properties", "{}")
+            properties = json.loads(props_raw) if isinstance(props_raw, str) else (props_raw or {})
 
             escaped_label = label.replace('"', '\\"').replace("\n", "\\n")
             props_str = ", ".join(f'{k}="{v}"' for k, v in properties.items()) if properties else ""
@@ -230,7 +202,6 @@ class GraphExporter:
         return dot_str
 
     def _node_to_dict(self, row: Dict[str, Any]) -> Dict[str, Any]:
-        """将节点行转换为字典"""
         return {
             "id": row["id"],
             "name": row.get("name", ""),
@@ -241,7 +212,6 @@ class GraphExporter:
         }
 
     def _edge_to_dict(self, row: Dict[str, Any]) -> Dict[str, Any]:
-        """将边行转换为字典"""
         return {
             "id": row["id"],
             "source_id": row["source_id"],

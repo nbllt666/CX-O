@@ -192,28 +192,18 @@ async def lifespan(app: FastAPI):
 
     services.mcp_manager = await init_service("MCP管理器", _init_mcp_manager, logger_=lifespan_logger)
 
-    def _init_graph_database():
-        graph_config = get_graph_config()
-        graph_db = GraphDatabase(config=graph_config)
-        graph_db.initialize()
-        return graph_db
+    # 图数据库改为按需创建（lazy init）：
+    # - 启动时不预创建 default 数据库文件
+    # - graph_tools 内部 _check_graph_store 按需创建 default GraphDatabase + SQLiteGraphStore
+    # - API 路由通过 Depends(get_graph_database) 按需创建
+    # 详见 .trae/documents/20260720_模块0_图数据库按需创建.md
+    def _register_graph_tools():
+        # graph_tools 启动时注册工具签名，内部 _check_graph_store 按需初始化 graph_store。
+        # 不调用 set_graph_dependencies(None)，让 _check_graph_store 在首次调用时创建实例。
+        from server.core.tools.graph_tools import register_graph_tools
+        register_graph_tools()
 
-    services.graph_database = await init_service("图数据库", _init_graph_database, logger_=lifespan_logger)
-
-    if services.graph_database:
-        def _init_graph_store():
-            from server.core.memory.graph_store import SQLiteGraphStore
-            return SQLiteGraphStore(services.graph_database)
-
-        services.graph_store = await init_service("图存储桥接", _init_graph_store, logger_=lifespan_logger)
-
-    if services.graph_store:
-        def _register_graph_tools():
-            from server.core.tools.graph_tools import set_graph_dependencies, register_graph_tools
-            set_graph_dependencies(services.graph_store)
-            register_graph_tools()
-
-        await init_service("图工具", _register_graph_tools, logger_=lifespan_logger)
+    await init_service("图工具", _register_graph_tools, logger_=lifespan_logger)
 
     def _register_builtin():
         from server.core.tools import register_builtin_tools
@@ -595,7 +585,7 @@ async def lifespan(app: FastAPI):
             _orpheus_warmup_t0 = _warmup_t.monotonic()
             _warmup_orpheus_url = getattr(_warmup_settings.config.tts.orpheus, "url", "http://127.0.0.1:5060")
             _warmup_orpheus_voice = getattr(_warmup_settings.config.tts.orpheus, "voice", "tara")
-            _warmup_resp = await _warmup_client.post(
+            _orpheus_resp = await _warmup_client.post(
                 f"{_warmup_orpheus_url}/v1/audio/speech",
                 json={
                     "input": f"{_warmup_orpheus_voice}: 你好",
@@ -605,14 +595,43 @@ async def lifespan(app: FastAPI):
                 timeout=60.0,
             )
             _orpheus_warmup_dt = (_warmup_t.monotonic() - _orpheus_warmup_t0) * 1000
-            if _warmup_resp.status_code == 200:
+            if _orpheus_resp.status_code == 200:
                 lifespan_logger.info(
                     f"Orpheus TTS 预热完成 ({_orpheus_warmup_dt:.1f}ms, "
-                    f"{len(_warmup_resp.content)} bytes) - 已加载模型到 GPU"
+                    f"{len(_orpheus_resp.content)} bytes) - 已加载模型到 GPU"
                 )
             else:
                 lifespan_logger.warning(
-                    f"Orpheus TTS 预热返回 HTTP {_warmup_resp.status_code} ({_orpheus_warmup_dt:.1f}ms)"
+                    f"Orpheus TTS 预热返回 HTTP {_orpheus_resp.status_code} ({_orpheus_warmup_dt:.1f}ms)"
+                )
+
+            # B2: 流式预热 — 让 vLLM 流式生成路径完成首次 JIT 编译/张量分配
+            # 非流式预热已加载模型到 GPU + 预填 voice 前缀 KV cache，
+            # 但流式生成路径（SSE 编码器、异步任务调度）需独立预热。
+            # 首次 WS voice.dual_stream 请求走流式路径，未预热时承受 5-15ms 额外开销。
+            try:
+                _stream_warmup_t0 = _warmup_t.monotonic()
+                async with _warmup_client.stream(
+                    "POST",
+                    f"{_warmup_orpheus_url}/v1/audio/speech",
+                    json={
+                        "input": f"{_warmup_orpheus_voice}: 好",
+                        "voice": _warmup_orpheus_voice,
+                        "stream": True,
+                    },
+                    timeout=30.0,
+                ) as _stream_resp:
+                    # 只读取首块 SSE 数据即可触发流式路径初始化
+                    async for _chunk in _stream_resp.aiter_bytes():
+                        if _chunk:
+                            break
+                _stream_warmup_dt = (_warmup_t.monotonic() - _stream_warmup_t0) * 1000
+                lifespan_logger.info(
+                    f"Orpheus TTS 流式预热完成 ({_stream_warmup_dt:.1f}ms) - 流式生成路径已暖"
+                )
+            except Exception as _stream_warmup_e:
+                lifespan_logger.warning(
+                    f"Orpheus TTS 流式预热失败（不阻塞启动）: {_stream_warmup_e}"
                 )
     except Exception as _warmup_e:
         lifespan_logger.warning(
@@ -621,9 +640,32 @@ async def lifespan(app: FastAPI):
 
     lifespan_logger.info(f"CX-O-SERVER started successfully (ASR: {app.state.asr_status}, TTS: {app.state.tts_status})")
 
+    # DocumentMemoryManager 初始化（迁移自 CXHMS Phase 2：AnythingLLM Document API 兼容端点）
+    # 依赖 memory_manager，因此放在所有服务初始化完成之后
+    if services.memory_manager:
+        try:
+            from server.core.document.memory import DocumentMemoryManager
+            services.document_memory_manager = DocumentMemoryManager(
+                memory_manager=services.memory_manager
+            )
+            lifespan_logger.info("DocumentMemoryManager 已初始化（AnythingLLM Document API 兼容）")
+        except Exception as e:
+            lifespan_logger.error(f"DocumentMemoryManager 初始化失败: {e}", exc_info=True)
+            services.document_memory_manager = None
+    else:
+        lifespan_logger.warning("memory_manager 不可用，跳过 DocumentMemoryManager 初始化")
+
     yield
 
     lifespan_logger.info("正在关闭CX-O服务...")
+
+    # DocumentMemoryManager 关闭（迁移自 CXHMS）
+    if services.document_memory_manager:
+        try:
+            services.document_memory_manager.close()
+            lifespan_logger.info("DocumentMemoryManager 已关闭")
+        except Exception as e:
+            lifespan_logger.warning(f"DocumentMemoryManager 关闭失败: {e}")
 
     if hasattr(services, 'cxfc_manager') and services.cxfc_manager:
         await shutdown_service("CXFC管理器", services.cxfc_manager.shutdown, logger_=lifespan_logger)

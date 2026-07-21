@@ -28,6 +28,7 @@ class HybridSearchOptions:
     use_vector: bool = True
     use_keyword: bool = True
     workspace_id: str = None
+    agent_id: str = "default"
 
 
 class HybridSearch:
@@ -69,9 +70,21 @@ class HybridSearch:
         try:
             embedding = await self.embedding_model.get_embedding(options.query)
 
-            vector_results = await self.vector_store.search_similar(
-                query_embedding=embedding, limit=options.limit * 2, memory_type=options.memory_type
-            )
+            # agent_id 透传到 vector_store（步骤2 完成 weaviate per-agent collection 后生效）
+            try:
+                vector_results = await self.vector_store.search_similar(
+                    query_embedding=embedding,
+                    limit=options.limit * 2,
+                    memory_type=options.memory_type,
+                    agent_id=options.agent_id,
+                )
+            except TypeError:
+                # vector_store 尚未支持 agent_id 参数（步骤2 之前），回退到无 agent_id 调用
+                vector_results = await self.vector_store.search_similar(
+                    query_embedding=embedding,
+                    limit=options.limit * 2,
+                    memory_type=options.memory_type,
+                )
 
             return [
                 SearchResult(
@@ -89,12 +102,23 @@ class HybridSearch:
 
     async def _keyword_search(self, options: HybridSearchOptions) -> List[SearchResult]:
         try:
-            keyword_results = self.sqlite_manager.search_memories(
-                query=options.query,
-                memory_type=options.memory_type,
-                tags=options.tags,
-                limit=options.limit * 2,
-            )
+            # agent_id 透传到 sqlite_manager（crud_mixin 已支持 agent_id）
+            try:
+                keyword_results = self.sqlite_manager.search_memories(
+                    query=options.query,
+                    memory_type=options.memory_type,
+                    tags=options.tags,
+                    limit=options.limit * 2,
+                    agent_id=options.agent_id,
+                )
+            except TypeError:
+                # sqlite_manager.search_memories 不接受 agent_id 参数（签名差异），回退
+                keyword_results = self.sqlite_manager.search_memories(
+                    query=options.query,
+                    memory_type=options.memory_type,
+                    tags=options.tags,
+                    limit=options.limit * 2,
+                )
 
             return [
                 SearchResult(
@@ -168,10 +192,15 @@ class HybridSearch:
         return list(merged_dict.values())
 
     async def semantic_search(
-        self, query: str, memory_type: str = None, limit: int = 10
+        self, query: str, memory_type: str = None, limit: int = 10, agent_id: str = "default"
     ) -> List[Dict]:
         options = HybridSearchOptions(
-            query=query, memory_type=memory_type, limit=limit, use_vector=True, use_keyword=False
+            query=query,
+            memory_type=memory_type,
+            limit=limit,
+            use_vector=True,
+            use_keyword=False,
+            agent_id=agent_id,
         )
 
         results = await self.search(options)

@@ -185,6 +185,13 @@ def register_gateway_routes(app: FastAPI):
     register_metrics_handlers(ws_manager)
     register_system_handlers(ws_manager)
 
+    # 触发 ChatWebSocketHandler 单例初始化，注册 type-based handlers
+    # (chat/chat_stream/subscribe/unsubscribe/ping/cancel/config)
+    # 否则前端发送 type-based 消息会报"未知消息类型: config"
+    # 详见 .trae/documents/20260720_模块0_修复WS连接问题.md
+    from server.core.websocket.handlers import get_chat_handler
+    get_chat_handler()
+
     from server.handlers.audio import init_interrupt_module, init_audio_stream_processor
     init_interrupt_module()
     init_audio_stream_processor(asr_service)

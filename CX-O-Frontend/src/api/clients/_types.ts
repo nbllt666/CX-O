@@ -44,6 +44,8 @@ export interface GraphStats {
   edge_types?: string[];
   connected?: boolean;
   libraries?: Record<string, { entity_count: number; relation_count: number }>;
+  database_path?: string;
+  message?: string;
 }
 
 export interface AcpStats {

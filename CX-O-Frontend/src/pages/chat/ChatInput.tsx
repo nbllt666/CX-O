@@ -23,6 +23,7 @@ export interface ChatInputProps {
   onKeyDown: (e: KeyboardEvent<HTMLTextAreaElement>) => void;
   isLoading: boolean;
   isRecording: boolean;
+  isRecognizing: boolean;
   onToggleRecording: () => void;
   onCancelGeneration: () => void;
   onSend: () => void;
@@ -51,6 +52,7 @@ export function ChatInput({
   onKeyDown,
   isLoading,
   isRecording,
+  isRecognizing,
   onToggleRecording,
   onCancelGeneration,
   onSend,
@@ -135,10 +137,10 @@ export function ChatInput({
           <Button
             variant={isRecording ? 'primary' : 'secondary'}
             onClick={onToggleRecording}
-            disabled={isLoading}
+            disabled={isLoading || isRecognizing}
             size="sm"
-            className={`self-end ${isRecording ? 'animate-pulse bg-red-500 hover:bg-red-600' : ''}`}
-            title={isRecording ? '停止录音' : '语音输入'}
+            className={`self-end ${isRecording ? 'animate-pulse bg-red-500 hover:bg-red-600' : ''} ${isRecognizing ? 'opacity-60 cursor-wait' : ''}`}
+            title={isRecording ? '停止录音' : isRecognizing ? '识别中...' : '语音输入'}
           >
             {isRecording ? (
               <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -154,6 +156,11 @@ export function ChatInput({
                   strokeWidth={2}
                   d="M9 10a1 1 0 011-1h4a1 1 0 011 1v4a1 1 0 01-1 1h-4a1 1 0 01-1-1v-4z"
                 />
+              </svg>
+            ) : isRecognizing ? (
+              <svg className="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24">
+                <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
               </svg>
             ) : (
               <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">

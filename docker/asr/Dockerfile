@@ -26,7 +26,8 @@ RUN pip install --no-cache-dir \
     pydantic \
     kaldi-native-fbank \
     onnxruntime \
-    python-multipart
+    python-multipart \
+    websockets
 
 # 复制 SenseVoice 模型代码和 API 服务
 COPY sensevoice/ /app/sensevoice/

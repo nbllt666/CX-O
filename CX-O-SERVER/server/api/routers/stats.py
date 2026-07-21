@@ -10,6 +10,7 @@ logger = get_contextual_logger(__name__)
 async def get_system_stats():
     from server.dependencies import get_memory_manager
 
+    conn = None
     try:
         memory_mgr = get_memory_manager()
         conn = memory_mgr._get_connection()
@@ -36,8 +37,6 @@ async def get_system_stats():
         except Exception:
             archived_memories = 0
 
-        conn.close()
-
         return {
             "status": "success",
             "data": {
@@ -50,3 +49,9 @@ async def get_system_stats():
     except Exception as e:
         logger.error(f"获取系统统计数据失败: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        if conn is not None:
+            try:
+                conn.close()
+            except Exception:
+                pass

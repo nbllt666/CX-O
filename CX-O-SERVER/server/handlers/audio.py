@@ -262,9 +262,12 @@ class DualStreamSession:
             # TextSmoother 以 30ms 窗口聚合为 3~5 字词组块，用 ~40ms 延迟换取音质提升。
             # ~40ms 远小于 300ms 总预算，且 TTS 合成与播放可流水线并行，用户无感。
             # C4 P50<600ms 优化：window_ms 40 → 30（TextSmoother 内部 clamp 到 30~50ms）
-            # 节省 ~10ms 首块输出延迟，char_threshold=4 仍保证最小 4 字切片
+            # 节省 ~10ms 首块输出延迟
+            # C4 P50<400ms 三轮激进优化：char_threshold 3 → 2（绕过 TextSmoother 默认硬下限 3）
+            # 让 LLM 吐 2 字即触发 TTS，省额外 ~30-50ms
+            # 注意：2 字切片可能影响音质，TextSmoother 的 30ms 窗口会聚合部分碎片
             smoothed_stream = TextSmoother.smooth(
-                llm_stream, window_ms=30, char_threshold=4
+                llm_stream, window_ms=30, char_threshold=2
             )
 
             # 6. TTS 细粒度流式合成（边收边切边合成）

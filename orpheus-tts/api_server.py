@@ -64,10 +64,17 @@ AUDIO_SAMPLE_WIDTH: int = 2  # 16-bit PCM = 2 bytes
 SNAC_TOKEN_OFFSET: int = 10
 # SNAC 24kHz: 7 codebooks，每帧 7 个码，解码为 480 样本（20ms）
 SNAC_CODES_PER_FRAME: int = 7
-# 流式解码批量大小（帧数），3 帧 = 60ms 音频，优先首包延迟（C4 P50<600ms 优化）
-# 原 5 帧 = 100ms，降到 3 帧 = 60ms 可节省 ~40ms 首包延迟
-# 权衡：batch 越小首包越快，但 SNAC 解码开销分摊到更小 chunk，吞吐略降
-STREAM_BATCH_FRAMES: int = 3
+# 流式解码批量大小（帧数），1 帧 = 20ms 音频，激进首包延迟优化（C4 P50<400ms 三轮）
+# 原 2 帧 = 40ms，降到 1 帧 = 20ms 可节省 ~30-50ms 首包延迟（vLLM 生成 7 个 tokens 的时间）
+# 权衡：1 帧 batch SNAC 解码开销最大，但首块延迟最低
+STREAM_BATCH_FRAMES: int = 1
+
+# 静音过滤配置（解决 Orpheus 中文版生成大量段间静音 tokens 的问题）
+# 检测到 PCM 振幅绝对值低于 SILENCE_AMPLITUDE_THRESHOLD 视为静音帧
+# 连续静音帧数超过 MAX_CONSECUTIVE_SILENCE_FRAMES 时跳过 yield（不发送给客户端）
+# 默认 10 帧 = 200ms，保留自然停顿，过滤 >200ms 的段间长静音
+SILENCE_AMPLITUDE_THRESHOLD: int = int(os.environ.get("SILENCE_AMPLITUDE_THRESHOLD", "200"))
+MAX_CONSECUTIVE_SILENCE_FRAMES: int = int(os.environ.get("MAX_CONSECUTIVE_SILENCE_FRAMES", "10"))
 
 # Orpheus 生成参数（与官方 orpheus-speech 一致）
 ORPHEUS_TEMPERATURE: float = float(os.environ.get("ORPHEUS_TEMPERATURE", "0.6"))
@@ -88,9 +95,16 @@ HTTP_CONNECT_TIMEOUT: float = 10.0
 HTTP_READ_TIMEOUT: float = 300.0  # TTS 生成长序列，需较长超时
 
 # Orpheus 可用语音列表
+# 英文音色（来自 canopylabs/orpheus-3b-0.1-ft 训练集）
+# 中文音色（来自 canopylabs/orpheus-multilingual-research-release 多语言版）
+#   - 长乐：女声，温柔自然，适合对话场景
+#   - 白芷：女声，清晰明亮，适合播报场景
 AVAILABLE_VOICES: list[str] = [
+    # 英文音色
     "tara", "leah", "leo", "dan", "mia", "jess", "lily", "zoe",
-    "zac", "river", "charlotte", "james", "matthew", "lily",
+    "zac", "river", "charlotte", "james", "matthew",
+    # 中文音色（官方多语言版支持）
+    "长乐", "白芷",
 ]
 
 # 日志配置
@@ -384,6 +398,23 @@ def pcm_to_int16_bytes(pcm: np.ndarray) -> bytes:
         return b""
     pcm_int16 = (pcm * 32767.0).clip(-32768, 32767).astype(np.int16)
     return pcm_int16.tobytes()
+
+
+def is_silence_pcm(pcm_bytes: bytes, threshold: int = SILENCE_AMPLITUDE_THRESHOLD) -> bool:
+    """检测 PCM bytes（16-bit signed LE）是否为静音帧。
+
+    判据：所有样本的绝对值均低于 threshold（默认 200，约 0.6% 最大振幅）。
+
+    用于过滤 Orpheus 中文版生成的段间长静音，避免播放时出现明显间隔。
+    单帧 20ms，连续 10 帧 = 200ms 自然停顿已足够，超过则视为模型异常静音。
+    """
+    if len(pcm_bytes) < 4:
+        return True
+    # 用 numpy 批量计算，比 array.array + all() 快 5-10 倍
+    arr = np.frombuffer(pcm_bytes, dtype=np.int16)
+    if arr.size == 0:
+        return True
+    return bool(np.all(np.abs(arr) < threshold))
 
 
 # ============================================================
@@ -806,13 +837,18 @@ async def _handle_streaming_speech(prompt: str) -> StreamingResponse:
         start_time = time.time()
         first_chunk_sent = False
 
+        # 静音过滤状态
+        consecutive_silence = 0  # 连续静音帧计数
+        total_silence_skipped = 0  # 跳过的静音帧总数（用于日志统计）
+        total_frames = 0  # 总帧数（含静音）
+
         # 1. 发送 WAV 头部（data_size=0 表示流式，长度未知）
         yield wav_header_bytes(data_size=0)
 
         # 2. 流式接收 vLLM 输出
         parser = SnacTokenParser()
         code_buffer: list[int] = []
-        batch_size = STREAM_BATCH_FRAMES * SNAC_CODES_PER_FRAME  # 35 tokens = 100ms
+        batch_size = STREAM_BATCH_FRAMES * SNAC_CODES_PER_FRAME  # 7 tokens = 20ms
         total_codes = 0
 
         async for text in vllm_client.stream_complete(prompt):
@@ -831,15 +867,29 @@ async def _handle_streaming_speech(prompt: str) -> StreamingResponse:
                     snac_decoder.decode_tokens, batch
                 )
                 pcm_bytes = pcm_to_int16_bytes(pcm)
-                if pcm_bytes:
-                    if not first_chunk_sent:
-                        first_chunk_time = time.time() - start_time
-                        logger.info(
-                            f"首包发送: {first_chunk_time:.3f}s "
-                            f"(目标 < 300ms)"
-                        )
-                        first_chunk_sent = True
-                    yield pcm_bytes
+                if not pcm_bytes:
+                    continue
+
+                total_frames += 1
+
+                # 静音过滤：检测当前帧是否为静音
+                if is_silence_pcm(pcm_bytes):
+                    consecutive_silence += 1
+                    # 连续静音超过阈值则跳过（保留前 MAX_CONSECUTIVE_SILENCE_FRAMES 帧作为自然停顿）
+                    if consecutive_silence > MAX_CONSECUTIVE_SILENCE_FRAMES:
+                        total_silence_skipped += 1
+                        continue
+                else:
+                    consecutive_silence = 0
+
+                if not first_chunk_sent:
+                    first_chunk_time = time.time() - start_time
+                    logger.info(
+                        f"首包发送: {first_chunk_time:.3f}s "
+                        f"(目标 < 300ms)"
+                    )
+                    first_chunk_sent = True
+                yield pcm_bytes
 
         # 4. 解码剩余 codes（不足一个 batch 的尾部）
         if code_buffer:
@@ -851,12 +901,20 @@ async def _handle_streaming_speech(prompt: str) -> StreamingResponse:
                 )
                 pcm_bytes = pcm_to_int16_bytes(pcm)
                 if pcm_bytes:
-                    yield pcm_bytes
+                    # 尾部也应用静音过滤
+                    if not is_silence_pcm(pcm_bytes) or consecutive_silence <= MAX_CONSECUTIVE_SILENCE_FRAMES:
+                        if not first_chunk_sent:
+                            first_chunk_time = time.time() - start_time
+                            logger.info(f"首包发送(尾部): {first_chunk_time:.3f}s")
+                            first_chunk_sent = True
+                        yield pcm_bytes
 
         total_time = time.time() - start_time
         audio_duration = total_codes / SNAC_CODES_PER_FRAME * 480 / SAMPLE_RATE
+        silence_skipped_ms = total_silence_skipped * 20  # 每帧 20ms
         logger.info(
             f"流式 TTS 完成: {total_codes} SNAC 码, "
+            f"总帧数 {total_frames}, 跳过静音 {total_silence_skipped} 帧 ({silence_skipped_ms}ms), "
             f"总耗时 {total_time:.3f}s"
         )
 

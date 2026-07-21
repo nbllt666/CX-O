@@ -153,7 +153,7 @@ services:
       - VLLM_MODEL=/workspace/models
       - TOKENIZER_PATH=/workspace/models
       - SNAC_MODEL_PATH=/workspace/snac
-      - SNAC_DEVICE=${ORPHEUS_SNAC_DEVICE:-cpu}
+      - SNAC_DEVICE=${ORPHEUS_SNAC_DEVICE:-cuda}
       - ORPHEUS_TEMPERATURE=${ORPHEUS_TEMPERATURE:-0.6}
       - ORPHEUS_TOP_P=${ORPHEUS_TOP_P:-0.8}
       - ORPHEUS_MAX_TOKENS=${ORPHEUS_MAX_TOKENS:-1200}

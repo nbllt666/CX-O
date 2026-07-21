@@ -68,13 +68,18 @@ export class _AudioClientMixin extends _ApiClientBase {
 
   async speechToText(audioBlob: Blob): Promise<{ text: string }> {
     const formData = new FormData();
-    formData.append('audio', audioBlob);
+    formData.append('file', audioBlob);
 
     const axiosInstance = this.client;
-    const response = await axiosInstance.post<{ text: string }>('/api/asr', formData, {
-      headers: { 'Content-Type': 'multipart/form-data' },
-    });
-    return response.data;
+    const response = await axiosInstance.post<{ status: string; text?: string; message?: string; language?: string }>(
+      '/api/asr/speech-to-text',
+      formData,
+      { headers: { 'Content-Type': 'multipart/form-data' } },
+    );
+    if (response.data.status !== 'success') {
+      throw new Error(response.data.message || '语音识别失败');
+    }
+    return { text: response.data.text || '' };
   }
 
   async uploadAudioFile(file: File): Promise<{ filename: string; url: string }> {

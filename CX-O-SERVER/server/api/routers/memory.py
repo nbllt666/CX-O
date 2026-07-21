@@ -22,6 +22,7 @@ class MemoryCreateRequest(BaseModel):
     metadata: Dict = Field(default_factory=dict)
     permanent: bool = False
     workspace_id: str = "default"
+    agent_id: str = "default"
 
 
 class MemoryUpdateRequest(BaseModel):
@@ -31,6 +32,7 @@ class MemoryUpdateRequest(BaseModel):
     importance: Optional[int] = None
     tags: Optional[List[str]] = None
     metadata: Optional[Dict] = None
+    agent_id: str = "default"
 
 
 class MemorySearchRequest(BaseModel):
@@ -53,6 +55,7 @@ async def list_agent_memory_tables():
     """获取所有Agent的记忆表列表"""
     from server.dependencies import get_memory_manager
 
+    conn = None
     try:
         memory_mgr = get_memory_manager()
         conn = memory_mgr._get_connection()
@@ -60,8 +63,8 @@ async def list_agent_memory_tables():
 
         cursor.execute(
             """
-            SELECT agent_id, table_name, created_at 
-            FROM agent_memory_tables 
+            SELECT agent_id, table_name, created_at
+            FROM agent_memory_tables
             ORDER BY created_at DESC
         """
         )
@@ -78,6 +81,12 @@ async def list_agent_memory_tables():
     except Exception as e:
         logger.error(f"获取Agent记忆表列表失败: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail="获取Agent记忆表列表失败")
+    finally:
+        if conn is not None:
+            try:
+                conn.close()
+            except Exception:
+                pass
 
 
 @router.get("/memories")
@@ -159,6 +168,7 @@ async def create_memory(request: MemoryCreateRequest):
             permanent=request.permanent,
             emotion_score=emotion_score,
             workspace_id=request.workspace_id,
+            agent_id=request.agent_id,
         )
 
         return {"status": "success", "memory_id": memory_id, "message": "记忆创建成功"}
@@ -187,13 +197,51 @@ async def get_memory_stats(workspace_id: str = "default"):
         raise HTTPException(status_code=500, detail="获取记忆统计失败")
 
 
-@router.get("/memories/{memory_id}")
-async def get_memory(memory_id: int):
+@router.get("/memories/diary")
+async def get_diary_entries(
+    limit: int = 100, workspace_id: str = "default", agent_id: str = "default"
+):
+    """获取日记条目，按日期分组返回
+
+    迁移自 CXHMS: backend/api/routers/memory.py:L208-L240
+
+    Returns:
+        [{"date": "2026-06-20", "entries": [{...}, ...]}] 按日期降序
+    """
     from server.dependencies import get_memory_manager
 
     try:
         memory_mgr = get_memory_manager()
-        memory = memory_mgr.get_memory(memory_id)
+        memories = memory_mgr.search_memories(
+            memory_type="diary", limit=limit, workspace_id=workspace_id, agent_id=agent_id
+        )
+
+        grouped: Dict[str, list] = {}
+        for m in memories:
+            meta = m.get("metadata") or {}
+            date = meta.get("date") or "未知日期"
+            grouped.setdefault(date, []).append(m)
+
+        sorted_dates = sorted(grouped.keys(), reverse=True)
+        result = [{"date": d, "entries": grouped[d]} for d in sorted_dates]
+
+        return {
+            "status": "success",
+            "diary_groups": result,
+            "count": len(memories),
+        }
+    except Exception as e:
+        logger.error(f"获取日记条目失败: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/memories/{memory_id}")
+async def get_memory(memory_id: int, agent_id: str = "default"):
+    from server.dependencies import get_memory_manager
+
+    try:
+        memory_mgr = get_memory_manager()
+        memory = memory_mgr.get_memory(memory_id, agent_id=agent_id)
 
         if not memory:
             raise HTTPException(status_code=404, detail="记忆不存在")
@@ -218,6 +266,7 @@ async def update_memory(memory_id: int, request: MemoryUpdateRequest):
             new_importance=request.importance,
             new_tags=request.tags,
             new_metadata=request.metadata,
+            agent_id=request.agent_id,
         )
 
         if not success:
@@ -232,13 +281,19 @@ async def update_memory(memory_id: int, request: MemoryUpdateRequest):
 
 
 @router.delete("/memories/{memory_id}")
-async def delete_memory(memory_id: int, soft_delete: bool = False):
-    """删除记忆（默认硬删除）"""
+async def delete_memory(memory_id: int, soft_delete: bool = True, agent_id: str = "default"):
+    """删除记忆（默认软删除，对齐 CXHMS 行为）
+
+    统一为 soft_delete=True（软删除），更安全：
+    - 误删可恢复（restore_memory）
+    - 7 天后自动清理
+    - 如需硬删除，显式传 soft_delete=False
+    """
     from server.dependencies import get_memory_manager
 
     try:
         memory_mgr = get_memory_manager()
-        success = memory_mgr.delete_memory(memory_id, soft_delete=soft_delete)
+        success = memory_mgr.delete_memory(memory_id, soft_delete=soft_delete, agent_id=agent_id)
 
         if not success:
             raise HTTPException(status_code=404, detail="记忆不存在")
@@ -277,7 +332,7 @@ async def search_memories(request: MemorySearchRequest):
 
 
 @router.post("/memories/rag")
-async def rag_search(query: str, workspace_id: str = "default", limit: int = None):
+async def rag_search(query: str, workspace_id: str = "default", limit: int = None, agent_id: str = "default"):
     """RAG搜索"""
     if limit is None:
         limit = Settings().config.limits.memory.rag_search_limit
@@ -289,11 +344,11 @@ async def rag_search(query: str, workspace_id: str = "default", limit: int = Non
 
         if memory_mgr.is_vector_search_enabled():
             results = await memory_mgr.hybrid_search(
-                query=query, limit=limit, workspace_id=workspace_id
+                query=query, limit=limit, workspace_id=workspace_id, agent_id=agent_id
             )
         else:
             results = memory_mgr.search_memories(
-                query=query, limit=limit, workspace_id=workspace_id
+                query=query, limit=limit, workspace_id=workspace_id, agent_id=agent_id
             )
 
         return {"status": "success", "query": query, "results": results, "total": len(results)}
@@ -451,12 +506,12 @@ async def search_memories_3d(
 
 
 @router.post("/memories/recall/{memory_id}")
-async def recall_memory(memory_id: int, emotion_intensity: float = 0.0):
+async def recall_memory(memory_id: int, emotion_intensity: float = 0.0, agent_id: str = "default"):
     from server.dependencies import get_memory_manager
 
     try:
         memory_mgr = get_memory_manager()
-        memory = memory_mgr.recall_memory(memory_id, emotion_intensity)
+        memory = memory_mgr.recall_memory(memory_id, emotion_intensity, agent_id=agent_id)
 
         if not memory:
             raise HTTPException(status_code=404, detail="记忆不存在")
@@ -873,13 +928,18 @@ class SemanticSearchRequest(BaseModel):
 
     query: str
     limit: int = 10
-    threshold: float = 0.7
+    threshold: float = 0.3
     workspace_id: str = "default"
+    agent_id: str = "default"
 
 
 @router.post("/memories/semantic-search")
 async def semantic_search(request: SemanticSearchRequest):
-    """语义搜索 - 基于向量相似度的搜索"""
+    """语义搜索 - 基于向量相似度的搜索
+
+    迁移自 CXHMS：调用纯向量搜索 semantic_search（而非 hybrid_search），
+    保留 agent_id 以支持 per-agent 隔离。threshold 默认值改为 0.3（与 CXHMS 一致，更宽松）。
+    """
     from server.dependencies import get_memory_manager
     from server.core.exceptions import VectorStoreError
 
@@ -889,8 +949,9 @@ async def semantic_search(request: SemanticSearchRequest):
         if not memory_mgr.is_vector_search_enabled():
             raise HTTPException(status_code=503, detail="向量搜索未启用")
 
-        results = await memory_mgr.hybrid_search(
-            query=request.query, limit=request.limit, workspace_id=request.workspace_id
+        # 调用纯向量搜索（而非 hybrid_search），保留 agent_id 以支持 agent 隔离
+        results = await memory_mgr.semantic_search(
+            query=request.query, limit=request.limit, agent_id=request.agent_id
         )
 
         filtered_results = [r for r in results if r.get("score", 0) >= request.threshold]

@@ -222,6 +222,42 @@ async def create_agent(request: AgentCreateRequest):
         raise HTTPException(status_code=500, detail="内部服务器错误")
 
 
+@router.get(
+    "/agents/default",
+    summary="获取默认 Agent",
+    description="获取系统中标记为 is_default 的 Agent 配置。",
+)
+async def get_default_agent():
+    """获取默认 Agent 配置。
+
+    迁移自 CXHMS: backend/api/routers/agents.py:L280-L311
+
+    对齐 public/interface_stub/agent_service.pyi 的 get_default_agent() 契约。
+    优先返回 is_default=True 的 Agent；若无则回退到 id="default"；
+    均无则抛 404。
+
+    Returns:
+        dict: 包含 status 和 default agent 配置
+    """
+    try:
+        agents = _load_agents()
+        # 优先 is_default=True
+        default_agent = next((a for a in agents if a.get("is_default", False)), None)
+        # 回退到 id="default"
+        if default_agent is None:
+            default_agent = next((a for a in agents if a.get("id") == "default"), None)
+
+        if not default_agent:
+            raise HTTPException(status_code=404, detail="未配置默认 Agent")
+
+        return {"status": "success", "agent": default_agent}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"获取默认Agent失败: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="内部服务器错误")
+
+
 @router.get("/agents/{agent_id}")
 async def get_agent(agent_id: str):
     """获取单个 Agent"""
@@ -272,6 +308,144 @@ async def update_agent(agent_id: str, request: AgentUpdateRequest):
         raise HTTPException(status_code=500, detail="内部服务器错误")
 
 
+def _cleanup_agent_graph_db(agent_id: str) -> None:
+    """清理指定助手的图数据库实例及 db 文件。
+
+    迁移自 CXHMS: backend/api/routers/agents.py:L365-L382
+    """
+    # 从注册表移除并关闭实例（内部会调用 server.core.graph.database.remove_database）
+    try:
+        from server.dependencies import remove_graph_database
+        remove_graph_database(agent_id)
+    except Exception as e:
+        logger.warning(f"清理图数据库实例失败 (agent_id={agent_id}): {e}")
+
+    # 删除 per-agent db 文件
+    try:
+        from server.core.graph.config import get_graph_config
+        db_path = get_graph_config(agent_id=agent_id).database_path
+        if db_path and os.path.exists(db_path):
+            os.remove(db_path)
+            logger.info(f"已删除图数据库文件: {db_path}")
+    except Exception as e:
+        logger.warning(f"删除图数据库文件失败 (agent_id={agent_id}): {e}")
+
+
+def _cleanup_agent_weaviate_collection(agent_id: str) -> None:
+    """清理指定助手的 Weaviate per-agent collection。
+
+    迁移自 CXHMS: backend/api/routers/agents.py:L385-L416
+
+    通过 memory_manager._vector_store 获取 WeaviateVectorStore 实例，
+    调用 delete_agent_collection(agent_id) 删除 per-agent collection。
+    若向量存储未启用或不是 WeaviateVectorStore，则跳过（幂等）。
+    """
+    try:
+        from server.dependencies import _resolve_state
+
+        state = _resolve_state()
+        memory_manager = state.memory_manager
+        if memory_manager is None:
+            logger.debug(f"memory_manager 未就绪，跳过 Weaviate collection 清理 (agent_id={agent_id})")
+            return
+
+        vector_store = getattr(memory_manager, "_vector_store", None)
+        if vector_store is None:
+            logger.debug(f"向量存储未启用，跳过 Weaviate collection 清理 (agent_id={agent_id})")
+            return
+
+        # 仅 WeaviateVectorStore 支持 per-agent collection
+        delete_fn = getattr(vector_store, "delete_agent_collection", None)
+        if delete_fn is None:
+            logger.debug(
+                f"向量存储 {type(vector_store).__name__} 不支持 per-agent collection，跳过清理 (agent_id={agent_id})"
+            )
+            return
+
+        delete_fn(agent_id)
+    except Exception as e:
+        logger.warning(f"清理 Weaviate per-agent collection 失败 (agent_id={agent_id}): {e}")
+
+
+def _cleanup_agent_memory_tables(agent_id: str) -> None:
+    """清理指定助手的 per-agent 记忆表及映射记录。
+
+    迁移自 CXHMS: backend/api/routers/agents.py:L419-L485
+
+    - DROP TABLE memories_{safe_agent_id}（如果存在）
+    - DELETE FROM agent_memory_tables WHERE agent_id = ?
+    - DELETE FROM rejected_content WHERE session_id LIKE 'agent-{agent_id}%'
+    """
+    try:
+        from server.dependencies import _resolve_state
+
+        state = _resolve_state()
+        memory_manager = state.memory_manager
+        if memory_manager is None:
+            logger.debug(f"memory_manager 未就绪，跳过记忆表清理 (agent_id={agent_id})")
+            return
+
+        # 复用 MemoryManager 的表名生成逻辑，确保命名一致
+        table_name = memory_manager._get_table_name(agent_id)
+        if table_name == "memories":
+            # default agent 不清理主表
+            logger.debug(f"默认 agent 不清理主表 (agent_id={agent_id})")
+            return
+
+        conn = memory_manager._get_connection()
+        try:
+            cursor = conn.cursor()
+
+            # 1. 检查表是否存在，存在则 DROP
+            cursor.execute(
+                "SELECT name FROM sqlite_master WHERE type='table' AND name=?",
+                (table_name,),
+            )
+            if cursor.fetchone():
+                cursor.execute(f"DROP TABLE IF EXISTS {table_name}")
+                logger.info(f"已删除 agent 记忆表: {table_name} (agent_id={agent_id})")
+            else:
+                logger.debug(f"agent 记忆表不存在，跳过 DROP (agent_id={agent_id}, table={table_name})")
+
+            # 2. 删除 agent_memory_tables 中的映射记录
+            cursor.execute(
+                "DELETE FROM agent_memory_tables WHERE agent_id = ?",
+                (agent_id,),
+            )
+            deleted_rows = cursor.rowcount
+            if deleted_rows > 0:
+                logger.info(
+                    f"已删除 agent_memory_tables 映射记录: {deleted_rows} 条 (agent_id={agent_id})"
+                )
+
+            # 3. 删除 rejected_content 中该 agent 的记录（通过 session_id 前缀匹配）
+            cursor.execute(
+                "DELETE FROM rejected_content WHERE session_id LIKE ?",
+                (f"{agent_id}%",),
+            )
+            rejected_deleted = cursor.rowcount
+            if rejected_deleted > 0:
+                logger.info(
+                    f"已删除 rejected_content 记录: {rejected_deleted} 条 (agent_id={agent_id})"
+                )
+
+            conn.commit()
+        finally:
+            conn.close()
+    except Exception as e:
+        logger.warning(f"清理 agent 记忆表失败 (agent_id={agent_id}): {e}")
+
+
+def _cleanup_agent_resources(agent_id: str) -> None:
+    """清理指定助手的全部 per-agent 资源（图数据库 + Weaviate collection + 记忆表）。
+
+    迁移自 CXHMS: backend/api/routers/agents.py:L488-L492
+    """
+    _cleanup_agent_graph_db(agent_id)
+    _cleanup_agent_weaviate_collection(agent_id)
+    _cleanup_agent_memory_tables(agent_id)
+
+
 @router.delete("/agents/{agent_id}")
 async def delete_agent(agent_id: str):
     """删除 Agent"""
@@ -287,6 +461,9 @@ async def delete_agent(agent_id: str):
 
         agents = [a for a in agents if a["id"] != agent_id]
         _save_agents(agents)
+
+        # 清理该助手的全部 per-agent 资源（图数据库 + Weaviate collection + 记忆表）
+        _cleanup_agent_resources(agent_id)
 
         return {"status": "success", "message": f"Agent '{agent_id}' 已删除"}
     except HTTPException:

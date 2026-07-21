@@ -122,7 +122,7 @@ const sections: SettingSection[] = [
         />
       </svg>
     ),
-    description: '配置 Neo4j 图数据库',
+    description: '配置图数据库',
   },
   {
     id: 'llm',
@@ -465,14 +465,7 @@ export function SettingsPage() {
 
   const [graphConfig, setGraphConfig] = useState({
     graph_enabled: false,
-    graph_backend: 'neo4j',
-    neo4j: {
-      uri: 'bolt://localhost:7687',
-      user: 'neo4j',
-      password: 'password',
-      database: 'neo4j',
-      max_connection_pool_size: 50,
-    },
+    graph_backend: 'sqlite',
     graph_libraries: {
       user: { enabled: true, label_prefix: 'User' },
       thing: { enabled: true, label_prefix: 'Thing' },
@@ -644,23 +637,34 @@ export function SettingsPage() {
         const cfg = configData as { status?: string; config?: {
           graph_enabled?: boolean;
           graph_backend?: string;
-          neo4j?: typeof graphConfig.neo4j;
           graph_libraries?: typeof graphConfig.graph_libraries;
         } };
         if (cfg.status === 'success' && cfg.config) {
           setGraphConfig({
             graph_enabled: cfg.config.graph_enabled ?? false,
-            graph_backend: cfg.config.graph_backend ?? 'neo4j',
-            neo4j: cfg.config.neo4j ?? graphConfig.neo4j,
+            graph_backend: cfg.config.graph_backend ?? 'sqlite',
             graph_libraries: cfg.config.graph_libraries ?? graphConfig.graph_libraries,
           });
         }
         if (healthData && typeof healthData === 'object') {
-          setGraphHealth(healthData as typeof graphHealth);
+          // healthData 来自 /api/graph/health: {database, semantic, overall}
+          // 需转换为 GraphCard 期望的 {status, graph_enabled, connected, message}
+          // 详见 .trae/documents/20260720_模块0_图数据库按需创建.md §五
+          const health = healthData as { database?: string; semantic?: string; overall?: string };
+          if (health.overall) {
+            setGraphHealth({
+              status: health.overall,
+              graph_enabled: true,
+              connected: health.overall === 'healthy',
+              message: `database: ${health.database ?? 'unknown'}, semantic: ${health.semantic ?? 'unknown'}`,
+            });
+          }
         }
-        const st = statsData as { status?: string; graph_status?: typeof graphStats };
-        if (st.status === 'success' && st.graph_status) {
-          setGraphStats(st.graph_status);
+        // statsData 来自 /api/graph/status: {connected, graph_enabled, message, libraries, database_path}
+        // 直接是 GraphStats 格式，不再期望 {status, graph_status} 嵌套
+        const stats = statsData as typeof graphStats;
+        if (stats && stats.libraries) {
+          setGraphStats(stats);
         }
       } catch (error) {
         console.error('Failed to load graph config:', error);
@@ -874,7 +878,10 @@ export function SettingsPage() {
 
   const handleRefreshGraphStats = async () => {
     try {
-      const result = await api.getGraphStats() as unknown as typeof graphStats;
+      // 使用 getGraphStatus（而非 getGraphStats）：返回 GraphCard 期望的
+      // {connected, graph_enabled, message, libraries, database_path} 格式
+      // 详见 .trae/documents/20260720_模块0_图数据库按需创建.md §五
+      const result = await api.getGraphStatus() as unknown as typeof graphStats;
       if (result) setGraphStats(result);
     } catch {
       console.error('获取图统计失败');
@@ -883,8 +890,17 @@ export function SettingsPage() {
 
   const handleGraphHealthCheck = async () => {
     try {
-      const health = await api.getGraphHealth() as typeof graphHealth;
-      if (health) setGraphHealth(health);
+      // /api/graph/health 返回 {database, semantic, overall}，需转换为
+      // GraphCard 期望的 {status, graph_enabled, connected, message}
+      const raw = await api.getGraphHealth() as { database?: string; semantic?: string; overall?: string };
+      if (raw) {
+        setGraphHealth({
+          status: raw.overall ?? 'unknown',
+          graph_enabled: true,
+          connected: raw.overall === 'healthy',
+          message: `database: ${raw.database ?? 'unknown'}, semantic: ${raw.semantic ?? 'unknown'}`,
+        });
+      }
     } catch {
       console.error('获取图健康状态失败');
     }

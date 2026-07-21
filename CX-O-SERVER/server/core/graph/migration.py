@@ -33,7 +33,6 @@ class Neo4jExporter:
         self._driver = None
 
     def connect(self) -> bool:
-        """连接 Neo4j"""
         try:
             from neo4j import GraphDatabase
             self._driver = GraphDatabase.driver(self.uri, auth=(self.user, self.password))
@@ -46,7 +45,6 @@ class Neo4jExporter:
             return False
 
     def close(self) -> None:
-        """关闭连接"""
         if self._driver:
             self._driver.close()
 
@@ -55,15 +53,6 @@ class Neo4jExporter:
         labels: Optional[List[str]] = None,
         batch_size: int = 1000,
     ) -> Generator[List[Dict[str, Any]], None, None]:
-        """导出节点
-        
-        Args:
-            labels: 要导出的节点标签列表，None 表示所有
-            batch_size: 每批数量
-            
-        Yields:
-            每批节点数据
-        """
         if not self._driver:
             if not self.connect():
                 return
@@ -113,15 +102,6 @@ class Neo4jExporter:
         types: Optional[List[str]] = None,
         batch_size: int = 1000,
     ) -> Generator[List[Dict[str, Any]], None, None]:
-        """导出关系
-        
-        Args:
-            types: 要导出的关系类型列表，None 表示所有
-            batch_size: 每批数量
-            
-        Yields:
-            每批关系数据
-        """
         if not self._driver:
             if not self.connect():
                 return
@@ -158,7 +138,6 @@ class Neo4jExporter:
                 yield batch
 
     def get_stats(self) -> Dict[str, int]:
-        """获取数据库统计信息"""
         if not self._driver:
             if not self.connect():
                 return {"nodes": 0, "relationships": 0}
@@ -196,15 +175,6 @@ class Neo4jImporter:
         nodes_data: List[Dict[str, Any]],
         batch_size: int = 100,
     ) -> int:
-        """批量导入节点
-        
-        Args:
-            nodes_data: 节点数据列表
-            batch_size: 批处理大小
-            
-        Returns:
-            导入的节点数量
-        """
         count = 0
 
         for i in range(0, len(nodes_data), batch_size):
@@ -256,15 +226,6 @@ class Neo4jImporter:
         rels_data: List[Dict[str, Any]],
         batch_size: int = 100,
     ) -> int:
-        """批量导入关系
-        
-        Args:
-            rels_data: 关系数据列表
-            batch_size: 批处理大小
-            
-        Returns:
-            导入的关系数量
-        """
         count = 0
 
         for i in range(0, len(rels_data), batch_size):
@@ -305,11 +266,6 @@ class Neo4jImporter:
         exporter: Neo4jExporter,
         batch_size: int = 1000,
     ) -> Dict[str, int]:
-        """从导出器迁移所有数据
-        
-        Returns:
-            {"nodes": 节点数, "relationships": 关系数}
-        """
         stats = {"nodes": 0, "relationships": 0}
 
         logger.info("开始迁移节点...")
@@ -323,7 +279,6 @@ class Neo4jImporter:
         return stats
 
     def _extract_text_content(self, properties: Dict[str, Any]) -> str:
-        """从属性中提取文本内容"""
         text_fields = ["name", "title", "description", "text", "content"]
 
         for field in text_fields:
@@ -335,7 +290,6 @@ class Neo4jImporter:
         return json.dumps(properties, ensure_ascii=False)
 
     def clear_mapping(self) -> None:
-        """清除节点 ID 映射"""
         self._node_id_mapping.clear()
 
 
@@ -352,11 +306,6 @@ class MigrationManager:
         neo4j_password: str = "password",
         batch_size: int = 1000,
     ) -> Dict[str, Any]:
-        """执行完整的 Neo4j 迁移
-        
-        Returns:
-            迁移统计信息
-        """
         from server.core.graph.database import Database, get_database
         from server.core.graph.semantic_search import SemanticSearch
         from server.core.graph.vectorizer import TextVectorizer

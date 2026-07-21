@@ -86,7 +86,7 @@ export function GraphCard(props: GraphCardProps) {
                 <div>
                   <span className="text-sm font-medium">数据库路径</span>
                   <p className="text-xs text-[var(--color-text-tertiary)] mt-1">
-                    data/graph.db
+                    {graphStats?.database_path || '未初始化（首次访问时创建）'}
                   </p>
                 </div>
                 <div>

@@ -64,7 +64,7 @@ export interface UseWebSocketReturn {
   isConnected: boolean;
   isGenerating: boolean;
   isTTSPlaying: boolean;
-  sendMessage: (message: string, images?: string[]) => void;
+  sendMessage: (message: string, images?: string[]) => boolean;
   cancelGeneration: () => void;
   disconnect: () => void;
   reconnect: () => void;
@@ -251,6 +251,11 @@ export function useWebSocket(options: WebSocketOptions): UseWebSocketReturn {
   const { wsRef, isConnected, disconnect: transportDisconnect, reconnect: transportReconnect } = useWSTransport({
     urlBuilder: () => `${getWS_BASE_URL()}/ws`,
     enabled: !!agentId,
+    // 修复 HMR 残留/网络抖动/后端重启导致的 WS 连接失败：
+    // 默认 strategy='none' 不重连，HMR mount→unmount→remount 会导致首次连接失败且无法恢复。
+    // fixed 2s 重连可覆盖开发态 HMR 与运行态网络抖动两类场景。
+    // 详见 .trae/documents/20260720_模块0_修复WS连接问题.md §根因4
+    reconnect: { strategy: 'fixed', delay: 2000 },
     onOpen: (ws) => {
       startPingInterval(ws);
       // 同步最新的 agentId 和 timeout 到服务端
@@ -290,10 +295,11 @@ export function useWebSocket(options: WebSocketOptions): UseWebSocketReturn {
   }, [transportReconnect]);
 
   const sendMessage = useCallback(
-    (message: string, images?: string[]) => {
+    (message: string, images?: string[]): boolean => {
       if (wsRef.current?.readyState !== WebSocket.OPEN) {
-        onErrorRef.current?.('WebSocket is not connected');
-        return;
+        // 不调 onError：让 caller 根据返回值决定 fallback 或显示错误。
+        // 调 onError 会与 caller 的 fallback 逻辑冲突（onError setIsLoading(false) 然后立即 setIsLoading(true)）。
+        return false;
       }
 
       setIsGenerating(true);
@@ -309,6 +315,7 @@ export function useWebSocket(options: WebSocketOptions): UseWebSocketReturn {
           },
         })
       );
+      return true;
     },
     []
   );

@@ -375,7 +375,7 @@ class _MemoryCRUDMixin:
 
             if success:
                 try:
-                    self._delete_vector_for_memory(memory_id)
+                    self._delete_vector_for_memory(memory_id, agent_id=agent_id)
                 except Exception as vec_e:
                     logger.warning(
                         f"向量删除失败，不影响主操作: memory_id={memory_id}, error={vec_e}"

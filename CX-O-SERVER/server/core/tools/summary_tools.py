@@ -10,6 +10,7 @@ from .graph_tools import (
     thing_graph_extract_entities, thing_graph_merge_entities, thing_graph_get_entity_summary,
     concept_graph_extract_entities, concept_graph_merge_entities, concept_graph_get_entity_summary,
     event_graph_extract_entities, event_graph_merge_entities, event_graph_get_entity_summary,
+    get_current_agent_id,
 )
 from server.core.logging_config import get_contextual_logger
 
@@ -466,6 +467,44 @@ def register_summary_tools():
         examples=["获取事件'产品发布会'的实体摘要", "查询该事件实体的详细信息"],
     )
 
+    # 17. save_diary_entry - 保存日记条目（迁移自 CXHMS summary_tools.py）
+    tool_registry.register(
+        name="save_diary_entry",
+        description="将单个事件/话题整理为一篇日记条目并保存为日记类型记忆。一次摘要可按事件拆分多次调用，每次保存一篇独立日记，包含日期、标题、情绪和正文叙述。",
+        parameters={
+            "type": "object",
+            "properties": {
+                "date": {
+                    "type": "string",
+                    "description": "日记日期，格式 YYYY-MM-DD，如 2026-06-20",
+                },
+                "title": {
+                    "type": "string",
+                    "description": "日记标题，概括当天的主要话题",
+                },
+                "mood": {
+                    "type": "string",
+                    "description": "情绪/感受描述，如 愉快、平静、焦虑",
+                },
+                "body": {
+                    "type": "string",
+                    "description": "日记正文，第一人称叙述，包含主要事件和反思",
+                },
+                "summarized_message_range": {
+                    "type": "string",
+                    "description": "被摘要的消息索引范围，格式 '起-止'（不含止），如 '0-15'",
+                },
+            },
+            "required": ["date", "title", "mood", "body", "summarized_message_range"],
+        },
+        function=save_diary_entry,
+        category="summary",
+        tags=["summary", "diary", "save", "store"],
+        examples=[
+            "保存日记：2026-06-20，标题'讨论项目方案'，情绪'积极'",
+        ],
+    )
+
 
 async def summarize_content(content: str, max_length: int = 200) -> Dict[str, Any]:
     """生成摘要"""
@@ -582,6 +621,77 @@ async def save_summary_memory(
 
     except Exception as e:
         return {"error": f"保存记忆失败: {str(e)}"}
+
+
+async def save_diary_entry(
+    date: str,
+    title: str,
+    mood: str,
+    body: str,
+    summarized_message_range: str,
+) -> Dict[str, Any]:
+    """保存日记条目（迁移自 CXHMS summary_tools.py）
+
+    Args:
+        date: 日记日期 (格式: YYYY-MM-DD, 如 2026-06-20)
+        title: 日记标题
+        mood: 情绪/感受
+        body: 日记正文（第一人称叙述）
+        summarized_message_range: 被摘要的消息索引范围 (如 "0-15")
+
+    Returns:
+        保存结果
+    """
+    if not _MEMORY_MANAGER:
+        return {"error": "记忆管理器未初始化"}
+
+    try:
+        # 验证参数
+        if not body or len(body.strip()) == 0:
+            return {"error": "日记正文不能为空"}
+        if not date or len(date.strip()) == 0:
+            return {"error": "日记日期不能为空"}
+
+        # 验证日期格式
+        from datetime import datetime
+
+        try:
+            datetime.strptime(date, "%Y-%m-%d")
+        except ValueError:
+            return {"error": "日期格式错误，应为 YYYY-MM-DD，如 2026-06-20"}
+
+        # 获取当前 agent_id（由 chat 路由或自动摘要任务通过 contextvar 设置）
+        agent_id = get_current_agent_id()
+
+        # 保存日记记忆（write_memory 是同步方法，支持 agent_id 透传）
+        memory_id = _MEMORY_MANAGER.write_memory(
+            content=body,
+            memory_type="diary",
+            importance=3,
+            tags=["diary"],
+            metadata={
+                "date": date,
+                "title": title,
+                "mood": mood,
+                "body": body,
+                "summarized_message_range": summarized_message_range,
+                "source": "diary_summary",
+            },
+            agent_id=agent_id,
+        )
+
+        return {
+            "status": "success",
+            "memory_id": memory_id,
+            "date": date,
+            "title": title,
+            "mood": mood,
+            "summarized_message_range": summarized_message_range,
+            "message": f"日记已保存 (ID: {memory_id})",
+        }
+
+    except Exception as e:
+        return {"error": f"保存日记失败: {str(e)}"}
 
 
 def get_session_messages(session_id: str, limit: int = 50) -> Dict[str, Any]:

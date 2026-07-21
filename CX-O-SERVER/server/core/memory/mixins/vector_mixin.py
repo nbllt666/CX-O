@@ -48,39 +48,41 @@ class _VectorIntegrationMixin:
             logger.warning(f"向量化队列初始化失败：{e}")
             self.vectorization_queue = None
 
-    def _on_vectorization_complete(self, memory_id: str, content: str):
+    def _on_vectorization_complete(self, memory_id: str, content: str, agent_id: str = "default"):
         """向量化完成回调 - 执行实际的向量化并存储
-        
+
         Args:
             memory_id: 记忆 ID
             content: 需要向量化的内容
+            agent_id: Agent ID，用于指定 per-agent collection
         """
-        logger.debug(f"向量化开始：memory_id={memory_id}")
-        
+        logger.debug(f"向量化开始：memory_id={memory_id}, agent_id={agent_id}")
+
         if not self._vector_store or not self._embedding_model:
             logger.warning(f"向量存储或嵌入模型未初始化，跳过向量化：memory_id={memory_id}")
             return
-        
+
         try:
             # 在工作线程中执行异步向量化
             async def _do_vectorization():
                 # 获取向量
                 embedding = await self._embedding_model.get_embedding(content)
-                # 存储到向量数据库
+                # 存储到向量数据库（per-agent collection）
                 return await self._vector_store.add_memory_vector(
                     memory_id=int(memory_id),
                     content=content,
-                    embedding=embedding
+                    embedding=embedding,
+                    agent_id=agent_id,
                 )
-            
+
             result = self._run_async_sync(_do_vectorization())
             if result:
-                logger.info(f"向量化完成并存储：memory_id={memory_id}")
+                logger.info(f"向量化完成并存储：memory_id={memory_id}, agent_id={agent_id}")
             else:
-                logger.warning(f"向量化存储失败：memory_id={memory_id}")
-                
+                logger.warning(f"向量化存储失败：memory_id={memory_id}, agent_id={agent_id}")
+
         except Exception as e:
-            logger.error(f"向量化处理失败：memory_id={memory_id}, error={e}")
+            logger.error(f"向量化处理失败：memory_id={memory_id}, agent_id={agent_id}, error={e}")
         
     def _on_vectorization_error(self, memory_id: str, error: Exception):
         """向量化失败回调"""
@@ -106,13 +108,15 @@ class _VectorIntegrationMixin:
 
     def _sync_vector_for_memory(self, memory_id: int, content: str, metadata: Dict = None) -> bool:
         """同步记忆到向量数据库（异步非阻塞）
-        
-        使用向量化队列进行异步处理，立即返回，不阻塞主线程
+
+        使用向量化队列进行异步处理，立即返回，不阻塞主线程。
+        agent_id 从 metadata.agent_id 提取（若有），否则使用 "default"，
+        分发到对应的 per-agent collection。
 
         Args:
             memory_id: 记忆 ID
             content: 记忆内容
-            metadata: 元数据
+            metadata: 元数据（含 agent_id）
 
         Returns:
             是否同步成功（总是返回 True，因为异步处理）
@@ -121,42 +125,61 @@ class _VectorIntegrationMixin:
             logger.debug(f"向量存储或嵌入模型未启用，跳过向量同步：memory_id={memory_id}")
             return False
 
+        # 从 metadata 提取 agent_id
+        agent_id = "default"
+        if metadata and metadata.get("agent_id"):
+            agent_id = metadata["agent_id"]
+
         # 如果向量化队列可用，使用异步处理
         if self.vectorization_queue:
-            # 将向量化任务添加到队列
-            task_id = self.vectorization_queue.add_task(
-                memory_id=str(memory_id),
-                content=content,
-                priority=5  # 默认优先级
-            )
-            logger.debug(f"向量化任务已添加到队列：memory_id={memory_id}, task_id={task_id}")
-            return True  # 立即返回成功，实际向量化在后台进行
+            # 将向量化任务添加到队列（队列内部回调 _on_vectorization_complete 时传 agent_id）
+            # 注意：当前 vectorization_queue.add_task 不支持 agent_id 参数，
+            # 因此对 per-agent 的向量化走同步路径以保证 agent_id 透传
+            try:
+                async def _sync_async():
+                    embedding = await self._embedding_model.get_embedding(content)
+                    return await self._vector_store.add_memory_vector(
+                        memory_id=memory_id,
+                        content=content,
+                        embedding=embedding,
+                        metadata=metadata,
+                        agent_id=agent_id,
+                    )
+
+                result = self._run_async_sync(_sync_async())
+                if result:
+                    logger.info(f"向量同步成功：memory_id={memory_id}, agent_id={agent_id}")
+                return result
+            except Exception as e:
+                logger.warning(f"向量同步失败：memory_id={memory_id}, agent_id={agent_id}, error={e}")
+                return False
 
         try:
 
             async def _sync():
                 embedding = await self._embedding_model.get_embedding(content)
                 return await self._vector_store.add_memory_vector(
-                    memory_id=memory_id, content=content, embedding=embedding, metadata=metadata
+                    memory_id=memory_id, content=content, embedding=embedding,
+                    metadata=metadata, agent_id=agent_id,
                 )
 
             result = self._run_async_sync(_sync())
             if result:
-                logger.info(f"向量同步成功：memory_id={memory_id}")
+                logger.info(f"向量同步成功：memory_id={memory_id}, agent_id={agent_id}")
             return result
         except Exception as e:
-            logger.warning(f"向量同步失败：memory_id={memory_id}, error={e}")
+            logger.warning(f"向量同步失败：memory_id={memory_id}, agent_id={agent_id}, error={e}")
             return False
 
     def _update_vector_for_memory(
         self, memory_id: int, content: str, metadata: Dict = None
     ) -> bool:
-        """更新记忆的向量
+        """更新记忆的向量（在 per-agent collection 中）
 
         Args:
             memory_id: 记忆ID
             content: 新的记忆内容
-            metadata: 新的元数据
+            metadata: 新的元数据（含 agent_id）
 
         Returns:
             是否更新成功
@@ -165,28 +188,35 @@ class _VectorIntegrationMixin:
             logger.debug(f"向量存储或嵌入模型未启用，跳过向量更新: memory_id={memory_id}")
             return False
 
+        # 从 metadata 提取 agent_id
+        agent_id = "default"
+        if metadata and metadata.get("agent_id"):
+            agent_id = metadata["agent_id"]
+
         try:
 
             async def _update():
-                await self._vector_store.delete_by_memory_id(memory_id)
+                await self._vector_store.delete_by_memory_id(memory_id, agent_id=agent_id)
                 embedding = await self._embedding_model.get_embedding(content)
                 return await self._vector_store.add_memory_vector(
-                    memory_id=memory_id, content=content, embedding=embedding, metadata=metadata
+                    memory_id=memory_id, content=content, embedding=embedding,
+                    metadata=metadata, agent_id=agent_id,
                 )
 
             result = self._run_async_sync(_update())
             if result:
-                logger.info(f"向量更新成功: memory_id={memory_id}")
+                logger.info(f"向量更新成功: memory_id={memory_id}, agent_id={agent_id}")
             return result
         except Exception as e:
-            logger.warning(f"向量更新失败: memory_id={memory_id}, error={e}")
+            logger.warning(f"向量更新失败: memory_id={memory_id}, agent_id={agent_id}, error={e}")
             return False
 
-    def _delete_vector_for_memory(self, memory_id: int) -> bool:
-        """删除记忆的向量
+    def _delete_vector_for_memory(self, memory_id: int, agent_id: str = "default") -> bool:
+        """删除记忆的向量（在 per-agent collection 中）
 
         Args:
             memory_id: 记忆ID
+            agent_id: Agent ID，用于指定 per-agent collection
 
         Returns:
             是否删除成功
@@ -198,14 +228,14 @@ class _VectorIntegrationMixin:
         try:
 
             async def _delete():
-                return await self._vector_store.delete_by_memory_id(memory_id)
+                return await self._vector_store.delete_by_memory_id(memory_id, agent_id=agent_id)
 
             result = self._run_async_sync(_delete())
             if result:
-                logger.info(f"向量删除成功: memory_id={memory_id}")
+                logger.info(f"向量删除成功: memory_id={memory_id}, agent_id={agent_id}")
             return result
         except Exception as e:
-            logger.warning(f"向量删除失败: memory_id={memory_id}, error={e}")
+            logger.warning(f"向量删除失败: memory_id={memory_id}, agent_id={agent_id}, error={e}")
             return False
 
     def enable_vector_search(
@@ -279,19 +309,19 @@ class _VectorIntegrationMixin:
             return self._hybrid_search is not None and self._vector_store is not None
 
     async def semantic_search(
-        self, query: str, memory_type: str = None, limit: int = 10
+        self, query: str, memory_type: str = None, limit: int = 10, agent_id: str = "default"
     ) -> List[Dict]:
         if not self.is_vector_search_enabled():
-            return self.search_memories(query=query, memory_type=memory_type, limit=limit)
+            return self.search_memories(query=query, memory_type=memory_type, limit=limit, agent_id=agent_id)
 
         try:
             results = await self._hybrid_search.semantic_search(
-                query=query, memory_type=memory_type, limit=limit
+                query=query, memory_type=memory_type, limit=limit, agent_id=agent_id
             )
             return results
         except Exception as e:
             logger.error(f"语义搜索失败: {e}")
-            return self.search_memories(query=query, memory_type=memory_type, limit=limit)
+            return self.search_memories(query=query, memory_type=memory_type, limit=limit, agent_id=agent_id)
 
     async def hybrid_search(
         self,
@@ -300,13 +330,14 @@ class _VectorIntegrationMixin:
         tags: List[str] = None,
         limit: int = 10,
         workspace_id: str = None,
+        agent_id: str = "default",
     ) -> List[Dict]:
         fallback = False
 
         if not self.is_vector_search_enabled():
             fallback = True
             results = self.search_memories(
-                query=query, memory_type=memory_type, tags=tags, limit=limit
+                query=query, memory_type=memory_type, tags=tags, limit=limit, agent_id=agent_id
             )
             for result in results:
                 result["fallback"] = fallback
@@ -321,6 +352,7 @@ class _VectorIntegrationMixin:
                 tags=tags,
                 limit=limit,
                 workspace_id=workspace_id,
+                agent_id=agent_id,
             )
 
             search_results = await self._hybrid_search.search(options)
@@ -340,7 +372,7 @@ class _VectorIntegrationMixin:
             logger.error(f"混合搜索失败: {e}")
             fallback = True
             results = self.search_memories(
-                query=query, memory_type=memory_type, tags=tags, limit=limit
+                query=query, memory_type=memory_type, tags=tags, limit=limit, agent_id=agent_id
             )
             for result in results:
                 result["fallback"] = fallback

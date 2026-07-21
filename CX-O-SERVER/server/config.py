@@ -34,6 +34,7 @@ def get_env_config() -> Dict[str, Any]:
         "CXO_ASR_MODEL_DIR": ["asr", "model_dir"],
         "CXO_ASR_DEVICE": ["asr", "device"],
         "CXO_ASR_REMOTE_URL": ["asr", "remote_url"],
+        "CXO_ASR_WS_URL": ["asr", "ws_url"],
         "CXO_TTS_MODE": ["tts", "mode"],
         "CXO_TTS_MODEL_DIR": ["tts", "model_dir"],
         "CXO_TTS_DEVICE": ["tts", "device"],
@@ -309,6 +310,10 @@ class ASRConfig(BaseModel):
     model_dir: str = "SenseVoiceSmall"
     device: str = "cuda"
     remote_url: str = "http://127.0.0.1:8001"
+    # WebSocket streaming URL（方案B：SenseVoice 加 WS 接口）
+    # 当 mode="remote" 时，streaming 接口优先使用 ws_url 而非 remote_url
+    # 默认指向 sensevoice 容器映射的 8005 端口
+    ws_url: str = "ws://127.0.0.1:8005/ws/asr/stream"
     language: str = "auto"
 
 
@@ -316,7 +321,9 @@ class OrpheusConfig(BaseModel):
     """Orpheus TTS（基于 vLLM 的 OpenAI 兼容 API）配置。"""
     url: str = "http://127.0.0.1:5060"
     model: str = "canopylabs/orpheus-multilingual-research-release"
-    voice: str = "tara"
+    # 默认音色：长乐（官方多语言版中文女声，温柔自然）
+    # 备选：白芷（女声清晰）、tara（英文女声，仅英文场景）
+    voice: str = "长乐"
     timeout: int = 60
     flashinfer_enabled: bool = True
     sample_rate: int = 24000

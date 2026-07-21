@@ -5,6 +5,7 @@
 为 4 个图库（user/thing/concept/event）各自生成闭包实例。
 """
 
+import contextvars
 import re
 from typing import Any, Dict, List, Optional
 
@@ -18,6 +19,29 @@ from server.core.memory.graph_store import (
 
 _graph_store: Optional[GraphStoreBase] = None
 
+# 当前请求上下文的 agent_id（迁移自 CXHMS graph_tools.py）
+# 由 chat 路由在每次请求开始时 set_current_agent_id(agent_id)，
+# 工具函数通过 get_current_agent_id() 读取，用于 per-agent 资源访问。
+_current_agent_id: contextvars.ContextVar[str] = contextvars.ContextVar(
+    "_current_agent_id", default="default"
+)
+
+
+def set_current_agent_id(agent_id: str) -> None:
+    """设置当前请求上下文的 agent_id。
+
+    迁移自 CXHMS: backend/core/tools/graph_tools.py
+
+    在 chat 路由（主聊天/摘要助手/记忆管理助手）开始时调用，
+    工具函数通过 get_current_agent_id() 读取，实现 per-agent 资源隔离。
+    """
+    _current_agent_id.set(agent_id or "default")
+
+
+def get_current_agent_id() -> str:
+    """获取当前请求上下文的 agent_id。"""
+    return _current_agent_id.get()
+
 
 def set_graph_dependencies(graph_store: GraphStoreBase):
     """设置图存储依赖"""
@@ -26,10 +50,24 @@ def set_graph_dependencies(graph_store: GraphStoreBase):
 
 
 def _check_graph_store():
-    """检查图存储是否初始化"""
-    if _graph_store is None:
+    """检查图存储是否初始化，未初始化时按需创建 default 实例。
+
+    迁移自 CXHMS per-agent 注册表：复用 dependencies._get_or_create_graph_store
+    避免 default agent 的图数据库被重复构造。
+    详见 .trae/documents/20260720_模块0_从CXHMS迁移图数据库.md
+    """
+    global _graph_store
+    if _graph_store is not None:
+        return True
+    try:
+        from server.dependencies import _get_or_create_graph_store
+
+        _graph_store = _get_or_create_graph_store("default")
+        return True
+    except Exception as e:
+        import logging
+        logging.getLogger(__name__).error(f"按需创建图存储失败: {e}", exc_info=True)
         return False
-    return True
 
 
 def _get_library(lib_name: str) -> GraphLibrary:

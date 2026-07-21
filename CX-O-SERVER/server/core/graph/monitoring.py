@@ -16,7 +16,6 @@ logger = logging.getLogger(__name__)
 
 @dataclass
 class QueryMetrics:
-    """查询指标"""
     total_queries: int = 0
     total_searches: int = 0
     query_latencies: deque = field(default_factory=lambda: deque(maxlen=1000))
@@ -62,7 +61,6 @@ _global_metrics = QueryMetrics()
 
 
 def get_metrics() -> QueryMetrics:
-    """获取全局指标实例"""
     return _global_metrics
 
 
@@ -73,18 +71,6 @@ class GraphMonitor:
         self.db = db
 
     def health_check(self) -> Dict[str, Any]:
-        """健康检查
-
-        Returns:
-            {
-                "status": "healthy" | "degraded" | "unhealthy",
-                "database": {...},
-                "vector_store": {...},
-                "node_count": int,
-                "edge_count": int,
-                "timestamp": str
-            }
-        """
         db_status = self._check_database()
         vector_status = self._check_vector_store()
 
@@ -107,15 +93,6 @@ class GraphMonitor:
         }
 
     def get_metrics(self) -> Dict[str, Any]:
-        """获取性能指标
-
-        Returns:
-            {
-                "queries": {...},
-                "searches": {...},
-                "cache": {...}
-            }
-        """
         metrics = get_metrics()
 
         return {
@@ -135,29 +112,17 @@ class GraphMonitor:
             },
         }
 
-    def get_graph_stats(self) -> Dict[str, Any]:
-        """获取图统计信息
-
-        Returns:
-            {
-                "node_count": int,
-                "edge_count": int,
-                "avg_degree": float,
-                "graph_density": float,
-                "node_types": {...},
-                "edge_types": {...}
-            }
-        """
-        node_count = self._get_node_count()
-        edge_count = self._get_edge_count()
+    def get_graph_stats(self, agent_id: str = "default") -> Dict[str, Any]:
+        node_count = self._get_node_count(agent_id)
+        edge_count = self._get_edge_count(agent_id)
 
         avg_degree = (2 * edge_count / node_count) if node_count > 0 else 0.0
 
         max_possible_edges = node_count * (node_count - 1) / 2
         graph_density = (2 * edge_count / max_possible_edges) if max_possible_edges > 0 else 0.0
 
-        node_types = self._get_node_type_distribution()
-        edge_types = self._get_edge_type_distribution()
+        node_types = self._get_node_type_distribution(agent_id)
+        edge_types = self._get_edge_type_distribution(agent_id)
 
         return {
             "node_count": node_count,
@@ -169,7 +134,6 @@ class GraphMonitor:
         }
 
     def _check_database(self) -> Dict[str, Any]:
-        """检查数据库状态"""
         try:
             start = time.time()
             self.db.execute("SELECT 1")
@@ -187,7 +151,6 @@ class GraphMonitor:
             }
 
     def _check_vector_store(self) -> Dict[str, Any]:
-        """检查向量存储状态"""
         try:
             from server.core.graph.semantic_search import SemanticSearch
             from server.core.graph.config import GraphConfig
@@ -212,47 +175,43 @@ class GraphMonitor:
                 "reason": str(e),
             }
 
-    def _get_node_count(self) -> int:
-        """获取节点数量"""
+    def _get_node_count(self, agent_id: str = "default") -> int:
         try:
-            result = self.db.execute_one("SELECT COUNT(*) as cnt FROM nodes")
+            result = self.db.execute_one("SELECT COUNT(*) as cnt FROM nodes WHERE agent_id = ?", (agent_id,))
             return result["cnt"] if result else 0
         except Exception:
             return 0
 
-    def _get_edge_count(self) -> int:
-        """获取边数量"""
+    def _get_edge_count(self, agent_id: str = "default") -> int:
         try:
-            result = self.db.execute_one("SELECT COUNT(*) as cnt FROM edges")
+            result = self.db.execute_one("SELECT COUNT(*) as cnt FROM edges WHERE agent_id = ?", (agent_id,))
             return result["cnt"] if result else 0
         except Exception:
             return 0
 
-    def _get_node_type_distribution(self) -> Dict[str, int]:
-        """获取节点类型分布"""
+    def _get_node_type_distribution(self, agent_id: str = "default") -> Dict[str, int]:
         try:
             query = """
                 SELECT type, COUNT(*) as cnt
                 FROM nodes
-                WHERE type IS NOT NULL AND type != ''
+                WHERE type IS NOT NULL AND type != '' AND agent_id = ?
                 GROUP BY type
             """
-            rows = self.db.execute(query)
+            rows = self.db.execute(query, (agent_id,))
             return {row["type"]: row["cnt"] for row in rows}
         except Exception:
             return {}
 
-    def _get_edge_type_distribution(self) -> Dict[str, int]:
-        """获取边类型分布"""
+    def _get_edge_type_distribution(self, agent_id: str = "default") -> Dict[str, int]:
         try:
             query = """
-                SELECT type, COUNT(*) as cnt
+                SELECT relation_type, COUNT(*) as cnt
                 FROM edges
-                WHERE type IS NOT NULL AND type != ''
-                GROUP BY type
+                WHERE relation_type IS NOT NULL AND relation_type != '' AND agent_id = ?
+                GROUP BY relation_type
             """
-            rows = self.db.execute(query)
-            return {row["type"]: row["cnt"] for row in rows}
+            rows = self.db.execute(query, (agent_id,))
+            return {row["relation_type"]: row["cnt"] for row in rows}
         except Exception:
             return {}
 

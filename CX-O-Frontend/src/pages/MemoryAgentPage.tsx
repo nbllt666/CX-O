@@ -76,6 +76,24 @@ function ThinkingProcess({ thinking, toolCalls }: { thinking?: string; toolCalls
 
   if (!thinking && (!toolCalls || toolCalls.length === 0)) return null;
 
+  // 格式化 JSON 值：arguments/result 可能是 JSON 字符串（OpenAI 格式）或对象
+  // 迁移自 CXHMS: 增强 ThinkingProcess 显示
+  const formatJson = (value: unknown): string => {
+    if (typeof value === 'string') {
+      try {
+        return JSON.stringify(JSON.parse(value), null, 2);
+      } catch {
+        return value;
+      }
+    }
+    return JSON.stringify(value, null, 2);
+  };
+
+  // 根据内容类型决定标题
+  const hasThinking = Boolean(thinking);
+  const hasToolCalls = Boolean(toolCalls && toolCalls.length > 0);
+  const title = hasThinking ? '思考过程' : '工具调用';
+
   return (
     <div className="mt-2 border border-border/50 rounded-lg overflow-hidden">
       <button
@@ -84,10 +102,10 @@ function ThinkingProcess({ thinking, toolCalls }: { thinking?: string; toolCalls
       >
         <span className="flex items-center gap-2">
           <Brain className="w-3 h-3" />
-          思考过程
-          {toolCalls && toolCalls.length > 0 && (
+          {title}
+          {hasToolCalls && (
             <span className="px-1.5 py-0.5 bg-primary/10 text-primary rounded-full text-[10px]">
-              {toolCalls.length} 个工具调用
+              {toolCalls!.length} 个工具调用
             </span>
           )}
         </span>
@@ -96,11 +114,21 @@ function ThinkingProcess({ thinking, toolCalls }: { thinking?: string; toolCalls
 
       {isExpanded && (
         <div className="px-3 py-2 bg-muted/20 text-xs space-y-2">
-          {thinking && <div className="text-muted-foreground whitespace-pre-wrap">{thinking}</div>}
+          {hasThinking && (
+            <div>
+              {hasToolCalls && (
+                <div className="text-foreground font-medium mb-1">思考过程</div>
+              )}
+              <div className="text-muted-foreground whitespace-pre-wrap">{thinking}</div>
+            </div>
+          )}
 
-          {toolCalls && toolCalls.length > 0 && (
-            <div className="space-y-2">
-              {toolCalls.map((toolCall, idx) => (
+          {hasToolCalls && (
+            <div className={hasThinking ? 'space-y-2 mt-2' : 'space-y-2'}>
+              {hasThinking && (
+                <div className="text-foreground font-medium mb-1">工具调用</div>
+              )}
+              {toolCalls!.map((toolCall, idx) => (
                 <div key={idx} className="p-2 bg-muted/50 rounded border border-border/50">
                   <div className="flex items-center gap-2 mb-1">
                     <span className="font-medium text-foreground">🔧 {toolCall.name}</span>
@@ -112,14 +140,14 @@ function ThinkingProcess({ thinking, toolCalls }: { thinking?: string; toolCalls
                     )}
                     {toolCall.status === 'failed' && <span className="text-red-500">✗ 失败</span>}
                   </div>
-                  {toolCall.arguments && (
+                  {Boolean(toolCall.arguments) && (
                     <div className="text-muted-foreground font-mono text-[10px] mb-1">
-                      参数: {JSON.stringify(toolCall.arguments, null, 2)}
+                      参数: {formatJson(toolCall.arguments)}
                     </div>
                   )}
                   {toolCall.result !== undefined && (
                     <div className="text-muted-foreground font-mono text-[10px]">
-                      结果: {JSON.stringify(toolCall.result, null, 2)}
+                      结果: {formatJson(toolCall.result)}
                     </div>
                   )}
                 </div>
@@ -146,6 +174,30 @@ export function MemoryAgentPage() {
   useEffect(() => {
     scrollToBottom();
   }, [messages]);
+
+  // 页面加载时获取历史消息
+  // 迁移自 CXHMS: 用于在页面刷新后恢复对话上下文
+  useEffect(() => {
+    const loadHistory = async () => {
+      try {
+        const data = await api.getAgentContext('memory-agent');
+        if (data.recent_messages && data.recent_messages.length > 0) {
+          const formattedMessages = data.recent_messages
+            .filter((msg) => msg.role === 'user' || msg.role === 'assistant')
+            .map((msg, idx) => ({
+              id: `history-${idx}`,
+              role: msg.role as 'user' | 'assistant',
+              content: msg.content,
+              timestamp: msg.created_at || new Date().toISOString(),
+            }));
+          setMessages(formattedMessages);
+        }
+      } catch (error) {
+        console.error('加载历史消息失败:', error);
+      }
+    };
+    loadHistory();
+  }, []);
 
   const handleSend = async () => {
     if (!input.trim() || isLoading) return;
@@ -303,8 +355,15 @@ export function MemoryAgentPage() {
     }
   };
 
-  const clearChat = () => {
+  // 清空对话：前端状态 + 后端 agent 上下文
+  // 迁移自 CXHMS: 增强清空逻辑，同步清除后端历史
+  const clearChat = async () => {
     setMessages([]);
+    try {
+      await api.clearAgentContext('memory-agent');
+    } catch (error) {
+      console.error('清空后端对话数据失败:', error);
+    }
   };
 
   return (
