@@ -1,0 +1,3455 @@
+<!doctype html><html class="no-js" lang="en">
+    <head>
+        
+
+        <meta http-equiv="Content-Type" content="text/html; charset=utf-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no" />
+
+        
+        
+        
+    
+        
+        <script src="//a.fsdn.com/con/js/min/sf.sandiego-cmp-top.js?1784751811"></script>
+
+        
+    
+
+        
+
+
+            
+
+
+
+        <script>
+            /*global unescape, window, SF*/
+            // Setup our namespace
+            if (!window.SF) { window.SF = {}; }
+            if (!window.net) { window.net = {}; }
+            if (!window.net.sf) { window.net.sf = {}; }
+            SF.Ads = {};
+            SF.cdn = '//a.fsdn.com/con';
+            SF.alluracdn = '//a.fsdn.com/allura/cdn/allura/nf';
+            SF.deploy_time = '1784751811';
+            SF.sandiego = true;
+            SF.sandiego_chrome = true;
+            SF.variant = 'sf';
+            SF.fpid = '7eba40fd-7e4f-4a06-b728-e53e8df817e7';
+            SF.comm_billboard_route = '/software/product/$slug/';
+            SF.floatingSitewideOrigin = 'https://sourceforge.net';
+            
+            SF.Breakpoints = {
+              small: 0,
+              medium: 640,
+              leaderboard: 743,
+              billboard: 985,
+              large: 1053,
+              xlarge: 1295,
+              xxlarge: 1366
+            };
+            SF.initial_breakpoints_visible = {};
+            for (var bp in SF.Breakpoints) {
+                if (!SF.Breakpoints.hasOwnProperty(bp)) {
+                    continue;
+                }
+                SF.initial_breakpoints_visible[bp] = !window.matchMedia || window.matchMedia('(min-width: ' + SF.Breakpoints[bp] + 'px)').matches;
+            }
+            
+                
+                SF.Ads.viewportWidth = Math.max(document.documentElement.clientWidth, window.innerWidth || 0);
+                SF.Ads.viewportHeight = Math.max(document.documentElement.clientHeight, window.innerHeight || 0);
+            
+        </script>
+
+        
+        <script>
+            window.ID5EspConfig = {partnerId: 1787};
+        </script>
+        
+
+        
+<script>
+    bizx.uids.gatherAndClean({hem: null });
+</script>
+
+
+        
+            
+    
+    
+    
+    
+    
+    
+    
+    
+    <link rel="stylesheet" href="//a.fsdn.com/con/css/lato.css?1784751811">
+
+        
+        
+        
+        <link rel="stylesheet" href="//a.fsdn.com/con/css/sandiego.css?1784751811">
+        
+        <link rel="stylesheet" href="//a.fsdn.com/con/css/disallow.css?1784751811">
+
+        <meta name="description" content="Download libsdl-android GeneralUser-GS-v1.471.sf2.zip.xz. SDL library for Android, including several games.">
+<meta name="keywords" content="Download libsdl-android GeneralUser-GS-v1.471.sf2.zip.xz. SDL library for Android, including several games.">
+
+<noscript>
+    <meta http-equiv="refresh" content="5; url=https://downloads.sourceforge.net/project/libsdl-android/GeneralUser-GS-v1.471.sf2.zip.xz?ts=gAAAAABqYh7LIUX00OL6QDDKoPCmkDXtDbjuY64a-8oahyrMbb7qT5iRzikBl8V8IRE78edutD0g25IX1hoxceZ2QAdEIjpzaQ%3D%3D&amp;use_mirror=sf-west-interserver-2&amp;r=">
+</noscript>
+
+        <title>Download GeneralUser-GS-v1.471.sf2.zip.xz (libsdl-android)</title>
+        <link rel="icon" sizes="180x180" href="//a.fsdn.com/con/img/sandiego/logo-180x180.png" type="image/png">
+<link rel="icon" sizes="any" href="//a.fsdn.com/con/img/sandiego/svg/originals/sf-icon-orange-no_sf.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" sizes="180x180" href="//a.fsdn.com/con/img/sandiego/logo-180x180.png">
+<link rel="mask-icon" href="//a.fsdn.com/con/img/sandiego/svg/originals/sf-icon-orange-no_sf.svg" color="#FF6600">
+    
+        <link rel="canonical" href="https://sourceforge.net/projects/libsdl-android/">
+    
+        
+        <script>
+            /*global unescape, window, console, jQuery, $, net, SF, bizx  */
+            if (!window.SF) {
+                window.SF = {};
+            }SF.EU_country_codes = ["SI","NL","WF","FK","MS","HU","CY","PF","PN","JE","GP","GR","IS","GF","NC","BE","BL","PL","KY","PT","GL","FR","LV","RO","AW","GS","SH","LT","VG","LI","TF","CH","EE","HR","LU","RE","ES","DK","BG","YT","SX","TC","GG","SE","IT","IO","AT","DE","AX","NO","MQ","FI","MT","SK","PM","CW","BM","IE","GB","ME","CZ","MF","GI","AI"];
+            SF.unknown_country_codes = ["","A1","A2","O1"];
+        </script>
+        
+    
+        
+        <script src="//a.fsdn.com/con/js/min/sf.sandiego-head.js?1784751811"></script>
+
+        
+    
+
+
+        <style>.Pbf7eb4c9aad223ef5acd8a641ef52104bac0b193 { display: none !important; }</style>
+    <link rel="alternate" type="application/rss+xml" title="libsdl-android&#8230;Recent Activity" href="/p/libsdl-android/activity/feed" />
+    
+
+
+        
+<script>SF.adblock = true; SF.ubo = true;</script>  
+<script src="//a.fsdn.com/con/js/admanager.js?1784751811"></script>
+
+<script src="//a.fsdn.com/con/js/asg_embed.js?1784751811"></script>
+
+
+ 
+
+        
+
+        
+    <script>
+        function initPiwik(){
+            var _paq = window._paq = window._paq || [];
+            
+            _paq.push(['trackPageView', document.title, {
+                    dimension1: 'libsdl-android',
+                    dimension2: 'pg_dwnld',
+                
+                dimension3: SF.devicePixelRatio,
+                
+            }]);
+            _paq.push(['enableLinkTracking']);
+            
+                _paq.push(['enableHeartBeatTimer']);
+            
+            (function() {
+                var u="//analytics.slashdotmedia.com/";
+                _paq.push(['setTrackerUrl', u+'sf.php']);
+                _paq.push(['setSiteId', 39]);
+                 
+        // only execute if 'measurement' has been granted
+        bizx.cmp.ifConsent({ purposes: ['measurement'], vendors: 'sdm'}, function() {
+            var interval = 6 * 60 * 60 * 1000; // 6 hrs, expressed in ms
+            var vid_date = new Date(localStorage.getItem('vid_date'));
+            if (new Date() - vid_date >= interval) {
+                var data = {do_not_sell: false, is_commercial_page: "False" };
+                bizx.cmp.ifConsent({ purposes: ['ads'], vendors: 'sdm'}, function() {},
+                    function(){
+                        // no consent (opt-out)
+                        data.do_not_sell = true;
+                    },
+                    function(){
+                        //finally call api endpoint
+                        // push promise to pwik and set it run if pwik is allowed to run based on it's own ifConsent check
+                        _paq.push([ function() {
+                            data.matomo_id = this.getVisitorId();
+                            data.domain = "sourceforge.net";
+                            $.ajax({
+                                method: 'PUT',
+                                url: '/p/sfapi/push_vid',
+                                data:  JSON.stringify(data)
+                            })
+                            .done(function(response){
+                                if(response.result) {
+                                    localStorage.setItem('vid_date', new Date());
+                                }
+                            })
+                            .fail(function(){
+                                // Do nothing on failure
+                            });
+                        }]);
+                    }
+                    );
+                }
+            });
+    
+                var d=document, g=d.createElement('script'), s=d.getElementsByTagName('script')[0];
+                g.type='text/javascript'; g.async=true; g.defer=true; g.src=u+'sf.js'; s.parentNode.insertBefore(g,s);
+            })();
+        }
+        bizx.cmp.ifConsent({ purposes: ['storage', 'measurement'], vendors: 'sdm' }, initPiwik);
+    </script>
+<script>
+    SF.ShowProgressBar = true;
+</script>
+
+
+
+        
+
+        <script type="application/ld+json">
+            {
+                "@context": "http://schema.org",
+                "@type": "WebSite",
+                "name": "SourceForge",
+                "url": "https://sourceforge.net/"
+            }
+        </script>
+    </head>
+
+    <body id="pg_dwnld"
+          class="  anonymous  sandiego v-sf">
+        
+
+            
+        <div id="busy-spinner"></div>
+        
+        
+<div id="messages">
+    
+</div>
+
+
+        <div class="off-canvas position-right" id="offCanvas" data-off-canvas>
+    <!-- Menu -->
+    <ul class="header-nav-menulist">
+        <li class="highlight search">
+            
+                
+            
+            
+    <form method="get" action="/directory/" class="m-search-form">
+    
+        <input type="text" placeholder="Search for software or solutions" autocomplete="off" name="q" >
+        
+        <label >
+            <input type="submit" class="bt" value="">
+            
+
+
+<svg  data-name="search" viewBox="0 0 1792 1792" xmlns="http://www.w3.org/2000/svg"><path d="M1216 832q0-185-131.5-316.5t-316.5-131.5-316.5 131.5-131.5 316.5 131.5 316.5 316.5 131.5 316.5-131.5 131.5-316.5zm512 832q0 52-38 90t-90 38q-54 0-90-38l-343-342q-179 124-399 124-143 0-273.5-55.5t-225-150-150-225-55.5-273.5 55.5-273.5 150-225 225-150 273.5-55.5 273.5 55.5 225 150 150 225 55.5 273.5q0 220-124 399l343 343q37 37 37 90z"/></svg>
+        </label>
+    </form>
+    
+        </li>
+        
+        <li class="highlight"><a href="https://sourceforge.net/auth/">Join/Login</a></li>
+        
+        <li><a href="/software/">Business Software</a></li>
+        <li><a href="/directory/">Open Source Software</a></li>
+        <li><a  href="/software/vendors/" title="For Vendors">For Vendors</a></li>
+        <li><a href="/blog/" title="Blog">Blog</a></li>
+        <li><a href="/about">About</a></li>
+        <li><a id="header-nav-more" data-toggle="header-nav-more header-nav-more-content" data-toggler=".toggled">More</a></li>
+        <li>
+            <ul id="header-nav-more-content" class="toggled" data-toggler=".toggled">
+                
+    
+
+    
+    
+        <li><a href="/articles/">Articles</a></li>
+    
+    
+
+    
+ 
+                
+                <li><a href="/create">Create</a></li>
+                
+                <li><a href="https://sourceforge.net/articles/category/sourceforge-podcast/">SourceForge Podcast</a></li>
+                
+                    <li><a href="https://sourceforge.net/p/forge/documentation/Docs%20Home/">Site Documentation</a></li>
+                
+                <li><a href="/user/newsletters">Subscribe to our Newsletter</a></li>
+                <li><a href="/support">Support Request</a></li>
+            </ul>
+        </li>
+    </ul>
+</div>
+
+        <div class="off-canvas-content" data-off-canvas-content>
+            
+                
+
+
+<script>
+    SF.linkout_icon = '<svg  data-name="sf-linkout-icon" xmlns="http://www.w3.org/2000/svg" x="0px" y="0px" viewBox="0 0 300 300" style="enable-background:new 0 0 300 300;" xml:space="preserve"><polygon class="st0" points="243.2,243.2 56.8,243.2 56.8,56.8 123,56.8 123,9 9,9 9,291 291,291 291,179.4 243.2,179 "/><polygon class="st0" points="128.5,213 155,186.5 176,165.5 206.7,196.3 235.5,132.5 248.9,102.6 290.6,9.8 291,9 290.6,9.2 197.4,51.1 169.1,63.8 103.7,93.3 137,126.5 115.9,147.5 89.5,174 "/></svg>';
+</script>
+
+
+<div class="l-header-nav sticky sandiego">
+
+    <section class="sandiego l-header-nav-top show-for-large">
+        <div class="row">
+            <a href="/" title="Home" class="sf-logo">
+                
+    
+    <img src="//a.fsdn.com/con/images/sandiego/sf-logo-full.svg"  alt="SourceForge logo" class="sf-logo-full"/>
+            </a>
+            <nav class="links">
+                
+                    <a href="/user/newsletters" title="Subscribe to our newsletter"><span class="newsletter-icon">
+
+
+<svg  data-name="mmSF_11mail" xmlns="http://www.w3.org/2000/svg" x="0px" y="0px" viewBox="0 0 42 42" enable-background="new 0 0 42 42" xml:space="preserve"><path fill="#FFFFFF" d="M0,6v30h42V6H0z M24.2,21.2c-0.8,0.8-2.3,2-3.2,2c-0.9,0-2.4-1.2-3.2-2L5.8,9.7h30.3L24.2,21.2z M13.7,21l-9.9,9.4V11.6L13.7,21z M15.7,23L15.7,23c0.5,0.5,2.9,2.9,5.3,2.9c2.4,0,4.8-2.4,5.2-2.8l0.1-0.1l9.8,9.4H5.8L15.7,23z M28.3,21l9.9-9.5v18.9L28.3,21z"/></svg></span></a>
+                
+                <a href="/software/vendors/" title="For Vendors">For Vendors</a>
+                
+                
+                    <a href="/support" title="Help">Help</a>
+                    <a href="/create/" title="Create">Create</a>
+                
+
+                
+                <a href="/user/registration" title="Join" >Join</a>
+                <a href="https://sourceforge.net/auth/" title="Login">Login</a>
+                
+            </nav>
+        </div>
+    </section>
+
+    <section class="sandiego l-header-nav-top hide-for-large">
+        <div class="row">
+            <a href="/" title="Home" class="sf-logo">
+                
+    
+    <img src="//a.fsdn.com/con/images/sandiego/sf-logo-full.svg"  alt="SourceForge logo" class="sf-logo-full"/>
+            </a>
+            <div class="title-bar-right">
+                <button type="button" aria-label="Toggle Main Menu" class="menu-icon" data-toggle="offCanvas"></button>
+            </div>
+        </div>
+    </section>
+    <section class="sandiego l-header-nav-bottom">
+        <nav class="row">
+            <a href="/" title="Home" class="sf-logo">
+                <svg version="1.1" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" x="0px" y="0px" viewBox="0 0 653 102.6" style="enable-background:new 0 0 653 102.6;" xml:space="preserve"><path class="st0" d="M66.9,54.5c0-19.1-6.8-27.8-10.4-31.1c-0.7-0.6-1.8-0.1-1.7,0.9c0.7,10.8-12.9,13.5-12.9,30.4h0    c0,0,0,0.1,0,0.1c0,10.3,7.8,18.7,17.4,18.7c9.6,0,17.4-8.4,17.4-18.7c0,0,0-0.1,0-0.1h0c0-4.8-1.8-9.4-3.6-12.8    c-0.4-0.7-1.4-0.4-1.3,0.2C75.1,56.7,66.9,65.7,66.9,54.5z"></path><g>    <path class="st0" d="M46.2,94.8c-0.4,0-0.9-0.2-1.2-0.5L0.5,49.8c-0.6-0.6-0.6-1.7,0-2.4l47-47C47.8,0.2,48.2,0,48.6,0h13.5        c0.8,0,1.3,0.5,1.5,1c0.2,0.5,0.2,1.2-0.4,1.8L19.1,47c-0.9,0.9-0.9,2.3,0,3.2L54,85.2c0.6,0.6,0.6,1.7,0,2.4l-6.7,6.8        C47,94.6,46.6,94.8,46.2,94.8z"></path></g><g>    <path class="st0" d="M55.1,102.6c-0.8,0-1.3-0.5-1.5-1c-0.2-0.5-0.2-1.2,0.4-1.8l44.2-44.2c0.4-0.4,0.7-1,0.7-1.6        c0-0.6-0.2-1.2-0.7-1.6L63.2,17.4c-0.6-0.6-0.6-1.7,0-2.4l6.8-6.8c0.3-0.3,0.7-0.5,1.2-0.5S72,8,72.3,8.3l44.4,44.5        c0.3,0.3,0.5,0.7,0.5,1.2s-0.2,0.9-0.5,1.2l-47,47c-0.3,0.3-0.7,0.5-1.2,0.5H55.1z"></path></g><g>    <g>        <path class="st1" d="M167.2,32c-0.2,0.4-0.5,0.6-1,0.6c-0.3,0-0.7-0.2-1.2-0.7c-0.5-0.5-1.2-1-2-1.5c-0.9-0.6-1.9-1.1-3.2-1.5            c-1.3-0.5-2.9-0.7-4.8-0.7c-1.9,0-3.5,0.3-5,0.8c-1.4,0.5-2.6,1.3-3.6,2.2s-1.7,2-2.2,3.2c-0.5,1.2-0.8,2.5-0.8,3.8            c0,1.8,0.4,3.2,1.1,4.4c0.7,1.1,1.7,2.1,3,2.9c1.2,0.8,2.6,1.5,4.2,2c1.6,0.6,3.2,1.1,4.8,1.6c1.6,0.5,3.2,1.1,4.8,1.8            c1.6,0.6,2.9,1.5,4.2,2.4s2.2,2.2,3,3.6c0.7,1.4,1.1,3.2,1.1,5.3c0,2.2-0.4,4.2-1.1,6.1c-0.7,1.9-1.8,3.6-3.2,5            c-1.4,1.4-3.2,2.5-5.2,3.4c-2.1,0.8-4.4,1.2-7,1.2c-3.4,0-6.4-0.6-8.8-1.8c-2.5-1.2-4.6-2.9-6.5-5l1-1.6c0.3-0.4,0.6-0.5,1-0.5            c0.2,0,0.5,0.1,0.8,0.4c0.3,0.3,0.8,0.7,1.2,1.1c0.5,0.4,1.1,0.9,1.8,1.4c0.7,0.5,1.5,1,2.4,1.4c0.9,0.4,1.9,0.8,3.1,1.1            c1.2,0.3,2.5,0.4,4,0.4c2.1,0,3.9-0.3,5.5-0.9c1.6-0.6,3-1.5,4.1-2.5s2-2.4,2.6-3.8c0.6-1.5,0.9-3.1,0.9-4.7            c0-1.8-0.4-3.3-1.1-4.5c-0.7-1.2-1.7-2.2-3-3c-1.2-0.8-2.6-1.5-4.2-2c-1.6-0.5-3.2-1.1-4.8-1.6c-1.6-0.5-3.2-1.1-4.8-1.7            c-1.6-0.6-2.9-1.4-4.2-2.4c-1.2-1-2.2-2.2-3-3.7c-0.7-1.5-1.1-3.3-1.1-5.6c0-1.7,0.3-3.4,1-5c0.7-1.6,1.6-3,2.9-4.3            c1.3-1.2,2.8-2.2,4.7-3c1.9-0.7,4-1.1,6.4-1.1c2.7,0,5.1,0.4,7.3,1.3c2.1,0.9,4.1,2.2,5.9,3.9L167.2,32z"></path>        <path class="st2" d="M152.9,78.8c-3.5,0-6.6-0.6-9.1-1.9c-2.5-1.2-4.8-3-6.7-5.1l-0.3-0.3l1.3-2c0.6-0.7,1.1-0.8,1.5-0.8            c0.4,0,0.8,0.2,1.2,0.6c0.3,0.3,0.8,0.7,1.3,1.1c0.5,0.4,1.1,0.9,1.7,1.4c0.7,0.5,1.4,0.9,2.3,1.3c0.9,0.4,1.9,0.8,3,1            c1.1,0.3,2.4,0.4,3.9,0.4c2,0,3.8-0.3,5.3-0.9c1.5-0.6,2.8-1.4,3.9-2.4c1-1,1.9-2.2,2.4-3.6c0.6-1.4,0.8-2.9,0.8-4.5            c0-1.7-0.3-3.1-1-4.2c-0.7-1.1-1.6-2-2.8-2.8c-1.2-0.8-2.5-1.4-4-1.9c-1.5-0.5-3.1-1.1-4.8-1.6c-1.7-0.5-3.3-1.1-4.8-1.7            c-1.6-0.7-3.1-1.5-4.3-2.5c-1.3-1-2.3-2.4-3.1-3.9c-0.8-1.6-1.2-3.5-1.2-5.8c0-1.8,0.3-3.6,1-5.3c0.7-1.7,1.7-3.2,3-4.5            c1.3-1.3,3-2.3,4.9-3.1c1.9-0.8,4.2-1.2,6.6-1.2c2.8,0,5.3,0.4,7.5,1.3c2.2,0.9,4.2,2.3,6.1,4.1l0.3,0.3l-1.1,2.1            c-0.6,1.1-1.7,1.4-3.1,0.1c-0.5-0.4-1.1-0.9-2-1.4c-0.8-0.5-1.9-1-3.1-1.5c-1.2-0.4-2.7-0.7-4.6-0.7c-1.8,0-3.4,0.3-4.8,0.8            c-1.3,0.5-2.5,1.2-3.4,2.1c-0.9,0.9-1.6,1.9-2.1,3c-0.5,1.1-0.7,2.4-0.7,3.6c0,1.6,0.3,3,1,4c0.7,1.1,1.6,2,2.8,2.8            c1.2,0.8,2.5,1.4,4,2c1.5,0.5,3.1,1.1,4.8,1.6c1.6,0.5,3.3,1.1,4.8,1.8c1.6,0.7,3.1,1.5,4.3,2.5c1.3,1,2.3,2.3,3.1,3.8            c0.8,1.5,1.2,3.4,1.2,5.6c0,2.2-0.4,4.4-1.2,6.4c-0.8,2-1.9,3.7-3.4,5.2c-1.5,1.5-3.3,2.6-5.4,3.5            C158.1,78.3,155.6,78.8,152.9,78.8z M138.4,71.3c1.7,1.9,3.7,3.4,6,4.5c2.4,1.2,5.3,1.8,8.6,1.8c2.5,0,4.8-0.4,6.8-1.2            c2-0.8,3.6-1.9,5-3.2c1.3-1.3,2.4-3,3.1-4.8c0.7-1.8,1.1-3.8,1.1-5.9c0-2-0.4-3.7-1-5.1c-0.7-1.3-1.6-2.5-2.8-3.4            c-1.2-0.9-2.5-1.7-4-2.4c-1.5-0.6-3.1-1.2-4.7-1.8c-1.6-0.5-3.2-1.1-4.8-1.6c-1.6-0.6-3-1.3-4.3-2.1c-1.3-0.8-2.3-1.9-3.1-3.1            c-0.8-1.2-1.2-2.8-1.2-4.7c0-1.4,0.3-2.8,0.8-4.1c0.5-1.3,1.3-2.5,2.3-3.4c1-1,2.3-1.8,3.8-2.3c1.5-0.6,3.3-0.8,5.2-0.8            c1.9,0,3.6,0.2,5,0.7c1.3,0.5,2.5,1,3.3,1.6c0.9,0.6,1.6,1.1,2.1,1.6c0.6,0.5,0.8,0.5,0.8,0.5c0.1,0,0.3,0,0.4-0.3l0.7-1.3            c-1.6-1.5-3.4-2.7-5.3-3.5c-2.1-0.8-4.4-1.2-7-1.2c-2.3,0-4.4,0.4-6.2,1.1c-1.8,0.7-3.3,1.7-4.5,2.8c-1.2,1.2-2.1,2.5-2.8,4.1            c-0.6,1.5-0.9,3.1-0.9,4.8c0,2.1,0.4,3.9,1.1,5.3c0.7,1.4,1.6,2.6,2.8,3.5c1.2,0.9,2.5,1.7,4,2.3c1.5,0.6,3.1,1.2,4.7,1.7            c1.6,0.5,3.2,1,4.8,1.6c1.6,0.6,3,1.2,4.3,2.1c1.3,0.8,2.4,1.9,3.1,3.2c0.8,1.3,1.2,2.9,1.2,4.9c0,1.8-0.3,3.4-0.9,5            c-0.6,1.6-1.5,2.9-2.7,4c-1.2,1.1-2.6,2-4.3,2.7c-1.7,0.6-3.6,1-5.7,1c-1.5,0-2.9-0.2-4.2-0.5c-1.2-0.3-2.3-0.7-3.2-1.1            c-0.9-0.4-1.8-0.9-2.5-1.5c-0.7-0.5-1.3-1-1.8-1.4c-0.5-0.4-0.9-0.8-1.2-1.1c-0.3-0.3-0.5-0.3-0.5-0.3c-0.1,0-0.3,0-0.5,0.3            L138.4,71.3z"></path>    </g>    <g>        <path class="st1" d="M226.7,51.6c0,4-0.6,7.6-1.8,10.9c-1.2,3.3-2.9,6.1-5.1,8.4c-2.2,2.3-4.8,4.1-7.8,5.4            c-3,1.3-6.4,1.9-10.1,1.9c-3.6,0-7-0.6-10-1.9c-3-1.3-5.6-3-7.8-5.4c-2.2-2.3-3.9-5.1-5.1-8.4c-1.2-3.3-1.8-6.9-1.8-10.9            c0-4,0.6-7.6,1.8-10.9c1.2-3.3,2.9-6.1,5.1-8.4c2.2-2.3,4.8-4.1,7.8-5.4c3-1.3,6.4-1.9,10-1.9c3.7,0,7.1,0.6,10.1,1.9            c3,1.3,5.6,3,7.8,5.4c2.2,2.3,3.9,5.1,5.1,8.4C226.1,44,226.7,47.6,226.7,51.6z M222.8,51.6c0-3.6-0.5-6.9-1.5-9.8            c-1-2.9-2.4-5.3-4.2-7.3c-1.8-2-4-3.5-6.6-4.6c-2.6-1.1-5.4-1.6-8.5-1.6c-3.1,0-5.9,0.5-8.5,1.6c-2.6,1.1-4.8,2.6-6.6,4.6            c-1.8,2-3.3,4.4-4.3,7.3c-1,2.9-1.5,6.1-1.5,9.8c0,3.6,0.5,6.9,1.5,9.8c1,2.9,2.4,5.3,4.3,7.3c1.8,2,4,3.5,6.6,4.6            c2.6,1.1,5.4,1.6,8.5,1.6c3.1,0,6-0.5,8.5-1.6c2.6-1,4.8-2.6,6.6-4.6c1.8-2,3.2-4.4,4.2-7.3C222.3,58.5,222.8,55.3,222.8,51.6z"></path>        <path class="st2" d="M202,78.7c-3.7,0-7.2-0.7-10.2-1.9c-3.1-1.3-5.8-3.1-8-5.5c-2.2-2.4-4-5.2-5.2-8.6c-1.2-3.3-1.9-7.1-1.9-11.1            c0-4,0.6-7.8,1.9-11.1c1.2-3.3,3-6.2,5.2-8.6c2.2-2.4,4.9-4.2,8-5.5c3.1-1.3,6.5-2,10.2-2c3.8,0,7.2,0.7,10.3,1.9            c3.1,1.3,5.8,3.1,8,5.5c2.2,2.4,4,5.3,5.2,8.6c1.2,3.3,1.8,7,1.8,11.1c0,4.1-0.6,7.8-1.8,11.1c-1.2,3.3-3,6.2-5.2,8.6            c-2.2,2.4-4.9,4.2-8,5.5C209.2,78.1,205.7,78.7,202,78.7z M202,25.7c-3.5,0-6.8,0.6-9.8,1.9c-2.9,1.2-5.5,3-7.6,5.2            c-2.1,2.2-3.8,5-4.9,8.2c-1.2,3.2-1.8,6.8-1.8,10.7c0,3.9,0.6,7.5,1.8,10.7c1.2,3.2,2.8,5.9,4.9,8.2c2.1,2.2,4.7,4,7.6,5.2            c2.9,1.2,6.2,1.8,9.8,1.8c3.6,0,6.9-0.6,9.8-1.8c2.9-1.2,5.5-3,7.6-5.2c2.1-2.2,3.8-5,4.9-8.1c1.2-3.2,1.8-6.8,1.8-10.7            c0-3.9-0.6-7.5-1.8-10.7c-1.2-3.2-2.8-5.9-4.9-8.2c-2.1-2.2-4.7-4-7.6-5.2C208.9,26.3,205.6,25.7,202,25.7z"></path>    </g>    <g>        <path class="st1" d="M256.4,74.9c2.5,0,4.7-0.4,6.7-1.3c2-0.9,3.6-2.1,5-3.6c1.4-1.5,2.4-3.4,3.1-5.4c0.7-2.1,1.1-4.3,1.1-6.8            V25.7h3.7v32.1c0,2.9-0.5,5.5-1.4,8c-0.9,2.5-2.2,4.6-3.9,6.5c-1.7,1.8-3.8,3.3-6.2,4.3c-2.4,1-5.2,1.6-8.2,1.6            c-3,0-5.8-0.5-8.2-1.6c-2.4-1.1-4.5-2.5-6.2-4.3c-1.7-1.8-3-4-3.9-6.5c-0.9-2.5-1.4-5.2-1.4-8V25.7h3.8v32c0,2.4,0.4,4.7,1.1,6.8            c0.7,2.1,1.8,3.9,3.1,5.4c1.4,1.5,3,2.7,5,3.6C251.6,74.5,253.9,74.9,256.4,74.9z"></path>        <path class="st2" d="M256.4,78.8c-3.1,0-5.9-0.5-8.4-1.6c-2.5-1.1-4.7-2.6-6.4-4.5c-1.7-1.9-3.1-4.2-4-6.7            c-0.9-2.5-1.4-5.3-1.4-8.2V25.1h5v32.7c0,2.3,0.4,4.5,1,6.6c0.7,2,1.7,3.8,3,5.2c1.3,1.5,2.9,2.6,4.8,3.5c1.9,0.8,4,1.3,6.4,1.3            c2.4,0,4.6-0.4,6.4-1.2c1.9-0.8,3.5-2,4.8-3.5c1.3-1.5,2.3-3.2,3-5.2c0.7-2,1-4.2,1-6.6V25.1h5v32.7c0,2.9-0.5,5.7-1.4,8.2            c-0.9,2.5-2.3,4.8-4,6.7c-1.7,1.9-3.9,3.4-6.4,4.5C262.3,78.3,259.5,78.8,256.4,78.8z M237.3,26.3v31.5c0,2.8,0.4,5.4,1.3,7.8            c0.9,2.4,2.1,4.5,3.8,6.3c1.6,1.8,3.6,3.2,6,4.2c2.3,1,5,1.5,8,1.5c2.9,0,5.6-0.5,8-1.5c2.3-1,4.4-2.4,6-4.2            c1.6-1.8,2.9-3.9,3.8-6.3c0.9-2.4,1.3-5,1.3-7.8V26.3h-2.5v31.5c0,2.5-0.4,4.8-1.1,7c-0.7,2.2-1.8,4.1-3.3,5.7            c-1.4,1.6-3.2,2.9-5.2,3.8c-2,0.9-4.4,1.4-6.9,1.4c-2.6,0-4.9-0.5-6.9-1.4c-2-0.9-3.8-2.2-5.2-3.8c-1.4-1.6-2.5-3.5-3.2-5.7            c-0.7-2.1-1.1-4.5-1.1-7V26.3H237.3z"></path>    </g>    <g>        <path class="st1" d="M297.5,51.3c1,0,0.9,0,0.9,0l2.2,0c2.3,0,4.4-0.3,6.2-0.8c1.8-0.6,3.4-1.3,4.6-2.4c1.3-1,2.2-2.3,2.9-3.7            c0.7-1.4,1-3.1,1-4.9c0-3.7-1.2-6.4-3.6-8.2c-2.4-1.8-5.9-2.7-10.6-2.7h-9.5v22.7v2.8v23.5h-3.7V25.7h13.2c6,0,10.5,1.2,13.4,3.5            c3,2.3,4.4,5.7,4.4,10.2c0,2-0.3,3.8-1,5.4c-0.7,1.6-1.7,3.1-3,4.3c-1.3,1.2-2.8,2.3-4.6,3c-1.8,0.8-3.9,1.3-6.1,1.6            c0.6,0.4,1.1,0.9,1.6,1.5l17.9,22.4h-3.3c-0.4,0-0.7-0.1-1-0.2c-0.3-0.1-0.6-0.4-0.8-0.7l-16.6-21c-0.4-0.5-0.9-0.9-1.3-1.1            c-0.5-0.2-3.4-0.3-4.4-0.3C296.3,51.6,296.7,51.3,297.5,51.3z"></path>        <path class="st2" d="M325,78.2h-4.5c-0.5,0-0.9-0.1-1.3-0.3c-0.4-0.2-0.7-0.5-1-0.9l-16.6-21c-0.4-0.5-0.7-0.8-1.1-1            c-0.4-0.1-2.8-0.3-4.1-0.3h-0.6v-2.6c0-0.9,0.2-1.4,1.8-1.4c0.9,0,1,0,1,0l2.2,0c2.2,0,4.2-0.3,6-0.8c1.7-0.5,3.2-1.3,4.4-2.3            c1.2-1,2.1-2.1,2.7-3.5c0.6-1.4,0.9-2.9,0.9-4.6c0-3.5-1.1-6-3.4-7.7c-2.3-1.7-5.7-2.6-10.2-2.6h-8.9v48.9h-5V25.1h13.9            c6.1,0,10.7,1.2,13.8,3.6c3.1,2.4,4.7,6,4.7,10.7c0,2.1-0.4,4-1.1,5.7c-0.7,1.7-1.8,3.2-3.1,4.5c-1.3,1.3-3,2.3-4.8,3.2            c-1.5,0.6-3.1,1.1-4.9,1.4c0.2,0.2,0.4,0.4,0.6,0.7L325,78.2z M296.9,53.5c1.1,0,3.4,0.1,4,0.4c0.6,0.3,1.1,0.7,1.6,1.3l16.6,21            c0.2,0.3,0.4,0.5,0.6,0.6c0.2,0.1,0.4,0.2,0.7,0.2h2l-17.1-21.4c-0.4-0.6-0.9-1-1.4-1.3l-1.5-0.9l1.8-0.2c2.2-0.2,4.2-0.7,5.9-1.5            c1.7-0.8,3.2-1.7,4.5-2.9c1.2-1.2,2.2-2.5,2.8-4.1c0.6-1.6,1-3.3,1-5.2c0-4.3-1.4-7.5-4.2-9.7c-2.8-2.2-7.2-3.3-13-3.3h-12.6V77            h2.5V28h10.1c4.7,0,8.4,0.9,10.9,2.8c2.6,1.9,3.9,4.8,3.9,8.7c0,1.9-0.4,3.6-1,5.1c-0.7,1.5-1.7,2.8-3.1,3.9            c-1.3,1.1-2.9,1.9-4.8,2.5c-1.9,0.6-4,0.9-6.4,0.9l-2.2,0c-0.1,0-0.2,0-0.9,0C297.3,51.9,297,51.9,296.9,53.5z"></path>    </g>    <g>        <path class="st1" d="M367.6,68.8c0.2,0,0.5,0.1,0.6,0.3l1.5,1.6c-1.1,1.1-2.2,2.2-3.5,3.1c-1.3,0.9-2.7,1.7-4.2,2.3            c-1.5,0.6-3.2,1.1-4.9,1.5c-1.8,0.4-3.8,0.5-5.9,0.5c-3.6,0-6.9-0.6-9.9-1.9c-3-1.3-5.6-3-7.7-5.4c-2.1-2.3-3.8-5.1-5-8.4            c-1.2-3.3-1.8-6.9-1.8-10.9c0-3.9,0.6-7.5,1.9-10.8c1.2-3.3,3-6,5.2-8.4c2.2-2.3,4.9-4.1,8-5.4c3.1-1.3,6.6-1.9,10.3-1.9            c1.9,0,3.6,0.1,5.2,0.4c1.6,0.3,3,0.7,4.4,1.2c1.4,0.5,2.6,1.2,3.8,2c1.2,0.8,2.4,1.7,3.5,2.7l-1.1,1.6c-0.2,0.3-0.5,0.4-0.9,0.4            c-0.2,0-0.5-0.1-0.8-0.4c-0.3-0.3-0.8-0.6-1.3-1c-0.5-0.4-1.2-0.8-1.9-1.2c-0.7-0.5-1.6-0.9-2.7-1.2c-1-0.4-2.2-0.7-3.6-1            c-1.3-0.3-2.9-0.4-4.6-0.4c-3.2,0-6.1,0.5-8.7,1.6c-2.6,1.1-4.9,2.6-6.8,4.7c-1.9,2-3.4,4.5-4.5,7.3s-1.6,6.1-1.6,9.7            c0,3.7,0.5,6.9,1.6,9.8c1.1,2.9,2.5,5.3,4.4,7.3c1.9,2,4.1,3.5,6.6,4.6c2.5,1.1,5.3,1.6,8.2,1.6c1.9,0,3.5-0.1,5-0.4            c1.5-0.2,2.8-0.6,4-1.1c1.2-0.5,2.4-1.1,3.4-1.8c1.1-0.7,2.1-1.5,3.1-2.5c0.1-0.1,0.2-0.2,0.3-0.2            C367.3,68.9,367.5,68.8,367.6,68.8z"></path>        <path class="st2" d="M351.1,78.8c-3.7,0-7.1-0.7-10.1-1.9c-3.1-1.3-5.7-3.1-7.9-5.5c-2.2-2.4-3.9-5.2-5.1-8.6            c-1.2-3.3-1.8-7.1-1.8-11.1c0-4,0.6-7.7,1.9-11c1.3-3.3,3.1-6.2,5.3-8.6c2.3-2.4,5.1-4.3,8.2-5.6c3.2-1.3,6.7-2,10.6-2            c1.9,0,3.7,0.1,5.3,0.4c1.6,0.3,3.1,0.7,4.5,1.2c1.4,0.5,2.7,1.2,3.9,2c1.2,0.8,2.4,1.7,3.6,2.8l0.4,0.4l-1.4,2.1            c-0.2,0.3-0.6,0.7-1.4,0.7c-0.4,0-0.7-0.2-1.2-0.5c-0.3-0.3-0.8-0.6-1.3-0.9c-0.5-0.4-1.1-0.8-1.9-1.2c-0.7-0.4-1.6-0.8-2.6-1.2            c-1-0.4-2.2-0.7-3.5-0.9c-1.3-0.2-2.8-0.4-4.5-0.4c-3.1,0-5.9,0.5-8.5,1.6c-2.5,1.1-4.8,2.6-6.6,4.5c-1.8,1.9-3.3,4.3-4.3,7.1            c-1,2.8-1.6,6-1.6,9.4c0,3.6,0.5,6.8,1.5,9.6c1,2.8,2.4,5.2,4.2,7.1c1.8,1.9,3.9,3.4,6.4,4.4c2.4,1,5.1,1.5,8,1.5            c1.8,0,3.5-0.1,4.9-0.4c1.4-0.2,2.7-0.6,3.9-1.1c1.2-0.5,2.3-1.1,3.3-1.7c1-0.7,2-1.5,3-2.4c0.2-0.2,0.3-0.2,0.5-0.3            c0.5-0.3,1.3-0.2,1.7,0.3l1.9,2l-0.4,0.4c-1.1,1.2-2.3,2.2-3.6,3.2c-1.3,0.9-2.7,1.8-4.3,2.4c-1.5,0.7-3.2,1.2-5.1,1.5            C355.3,78.6,353.3,78.8,351.1,78.8z M352.2,25.7c-3.7,0-7.1,0.6-10.1,1.9c-3,1.2-5.7,3-7.8,5.3c-2.2,2.3-3.9,5-5.1,8.2            c-1.2,3.2-1.8,6.7-1.8,10.6c0,3.9,0.6,7.5,1.8,10.7c1.2,3.2,2.8,5.9,4.9,8.2c2.1,2.2,4.6,4,7.5,5.2c2.9,1.2,6.1,1.8,9.6,1.8            c2.1,0,4-0.2,5.8-0.5c1.7-0.3,3.4-0.8,4.8-1.5c1.5-0.6,2.8-1.4,4-2.3c1.1-0.8,2.1-1.7,3-2.6l-1.1-1.2c-0.1-0.1-0.2-0.1-0.3,0            c-0.1,0-0.2,0.1-0.3,0.2c-1,0.9-2.1,1.8-3.2,2.5c-1.1,0.7-2.3,1.4-3.5,1.9c-1.3,0.5-2.7,0.9-4.1,1.1c-1.5,0.2-3.2,0.4-5.1,0.4            c-3,0-5.9-0.6-8.5-1.6c-2.6-1.1-4.9-2.7-6.8-4.7c-1.9-2-3.4-4.6-4.5-7.5c-1.1-2.9-1.6-6.3-1.6-10c0-3.6,0.5-6.9,1.6-9.9            c1.1-2.9,2.6-5.5,4.6-7.5c2-2.1,4.3-3.7,7-4.8c2.7-1.1,5.7-1.7,8.9-1.7c1.7,0,3.3,0.1,4.7,0.4c1.4,0.3,2.6,0.6,3.7,1            c1.1,0.4,2,0.8,2.8,1.3c0.8,0.5,1.4,0.9,1.9,1.3c0.5,0.4,1,0.7,1.3,1c0.3,0.3,0.5,0.3,0.5,0.3c0.3,0,0.4-0.1,0.4-0.2l0.8-1.2            c-1-0.9-2-1.6-3-2.3c-1.2-0.8-2.4-1.4-3.7-1.9c-1.3-0.5-2.8-0.9-4.3-1.2C355.7,25.9,354,25.7,352.2,25.7z"></path>    </g>    <g>        <path class="st1" d="M410.3,25.7v3.1H383v21h22.7v3H383v21.6h27.3v3.1h-31.1V25.7H410.3z"></path>        <path class="st2" d="M410.9,78.2h-32.3V25.1h32.3v4.3h-27.3v19.7h22.7v4.3h-22.7v20.4h27.3V78.2z M379.8,77h29.9v-1.9h-27.3V52.2            h22.7v-1.8h-22.7V28.2h27.3v-1.9h-29.9V77z"></path>    </g>    <g>        <path class="st1" d="M456.8,25.1V33h-23.5v15.7h19.8v7.9h-19.8v21.6h-9.9v-53H456.8z"></path>    </g>    <g>        <path class="st1" d="M514.3,51.6c0,3.9-0.6,7.5-1.9,10.8c-1.3,3.3-3.1,6.2-5.5,8.6c-2.3,2.4-5.2,4.3-8.5,5.7c-3.3,1.4-7,2-11,2            c-4,0-7.7-0.7-11-2c-3.3-1.4-6.1-3.2-8.5-5.7c-2.4-2.4-4.2-5.3-5.5-8.6s-1.9-6.9-1.9-10.8s0.6-7.5,1.9-10.8            c1.3-3.3,3.1-6.2,5.5-8.6c2.4-2.4,5.2-4.3,8.5-5.7c3.3-1.4,7-2,11-2c4,0,7.7,0.7,11,2.1c3.3,1.4,6.1,3.3,8.5,5.7            c2.3,2.4,4.2,5.3,5.5,8.6C513.6,44.1,514.3,47.7,514.3,51.6z M504.2,51.6c0-2.9-0.4-5.5-1.2-7.8c-0.8-2.3-1.9-4.3-3.3-5.9            c-1.4-1.6-3.2-2.8-5.3-3.7c-2.1-0.9-4.4-1.3-7-1.3c-2.6,0-4.9,0.4-7,1.3c-2.1,0.9-3.8,2.1-5.3,3.7c-1.5,1.6-2.6,3.6-3.4,5.9            c-0.8,2.3-1.2,4.9-1.2,7.8s0.4,5.5,1.2,7.8c0.8,2.3,1.9,4.3,3.4,5.9c1.5,1.6,3.2,2.8,5.3,3.7c2.1,0.9,4.4,1.3,7,1.3            c2.6,0,4.9-0.4,7-1.3c2.1-0.9,3.8-2.1,5.3-3.7c1.4-1.6,2.5-3.6,3.3-5.9C503.8,57.1,504.2,54.5,504.2,51.6z"></path>    </g>    <g>        <path class="st1" d="M534.9,50.4l2.3,0c1.9,0,3.5-0.2,4.9-0.7c1.4-0.5,2.5-1.1,3.4-1.9c0.9-0.8,1.6-1.8,2-2.9            c0.4-1.1,0.7-2.4,0.7-3.7c0-2.7-0.9-4.8-2.7-6.2c-1.8-1.4-4.5-2.2-8.1-2.2H531v17.6v7.1v20.7h-9.9v-53h16.2c3.6,0,6.7,0.4,9.3,1.1            c2.6,0.7,4.7,1.8,6.3,3.1c1.6,1.3,2.9,3,3.6,4.8c0.8,1.9,1.2,3.9,1.2,6.2c0,1.8-0.3,3.5-0.8,5.1c-0.5,1.6-1.3,3-2.3,4.3            c-1,1.3-2.2,2.4-3.7,3.4c-1.5,1-3.1,1.8-5,2.3c1.2,0.7,2.3,1.7,3.2,3l13.3,19.6h-8.9c-0.9,0-1.6-0.2-2.2-0.5            c-0.6-0.3-1.1-0.8-1.5-1.5c0,0-11.1-17-11.1-17c-0.3-0.4-0.9-1.3-1.5-1.4c-1.2,0-2.4,0-3.5,0c0,0,0-6,0-6.4            C533.8,50.4,534.9,50.4,534.9,50.4z"></path>    </g>    <g>        <path class="st1" d="M591.4,70.9c2.2,0,4.2-0.2,5.8-0.6c1.6-0.4,3.2-1,4.7-1.7v-12h-6.6c-0.6,0-1.1-0.2-1.5-0.5            c-0.4-0.4-0.6-0.8-0.6-1.3v-5.6h17.6V73c-1.3,1-2.7,1.8-4.2,2.5c-1.5,0.7-3,1.3-4.7,1.8c-1.7,0.5-3.4,0.8-5.3,1            c-1.9,0.2-3.9,0.3-6.1,0.3c-3.9,0-7.4-0.7-10.7-2c-3.3-1.3-6.1-3.2-8.4-5.6c-2.4-2.4-4.2-5.3-5.6-8.6c-1.3-3.3-2-7-2-10.9            c0-4,0.6-7.6,1.9-11c1.3-3.3,3.1-6.2,5.5-8.6c2.4-2.4,5.3-4.3,8.7-5.6c3.4-1.3,7.2-2,11.4-2c4.3,0,8.1,0.6,11.2,1.9            c3.2,1.3,5.8,3,8,5l-2.9,4.5c-0.6,0.9-1.3,1.4-2.2,1.4c-0.6,0-1.2-0.2-1.8-0.6c-0.8-0.5-1.6-0.9-2.4-1.4c-0.8-0.5-1.7-0.9-2.7-1.2            c-1-0.3-2.1-0.6-3.3-0.8c-1.2-0.2-2.7-0.3-4.3-0.3c-2.6,0-5,0.4-7.1,1.3c-2.1,0.9-3.9,2.1-5.4,3.8c-1.5,1.6-2.6,3.6-3.4,5.9            c-0.8,2.3-1.2,4.9-1.2,7.7c0,3.1,0.4,5.8,1.3,8.2c0.9,2.4,2.1,4.4,3.6,6s3.4,2.9,5.5,3.8S588.9,70.9,591.4,70.9z"></path>    </g>    <g>        <path class="st1" d="M645.7,56.8h-16.1v13.4H653v7.9h-33.4v-53H653V33h-23.5v16.3H648v5.8C648,55.1,647.9,56.8,645.7,56.8z"></path>    </g></g></svg>
+            </a>
+            <div class="links">
+                
+    
+        <div class="nav-dropdown">
+            <a href="/software/">Business Software</a>
+            
+        </div>
+        <div class="nav-dropdown">
+            <a href="/directory/" title="Browse">Open Source Software</a>
+            
+        </div>
+        <div class="nav-dropdown">
+            <a href="https://sourceforge.net/articles/category/sourceforge-podcast/">SourceForge Podcast</a>
+        </div>
+        <div class="nav-dropdown">
+            <a>Resources</a>
+            <ul class="nav-dropdown-menu">
+                  <li><a href="/articles/">Articles</a></li>
+                  
+                  <li><a href="/software/case-studies/">Case Studies</a></li>
+                  
+                  <li><a href="/blog/">Blog</a></li>
+            </ul>
+        </div>
+    
+
+                <div class="dev-menu-when-stuck">
+                    Menu
+                    <ul class="dev-menu-dropdown header-nav-menulist">
+                        <li><a href="/support">Help</a></li>
+                        <li><a href="/create">Create</a></li>
+                        <li><a href="/user/registration/" title="Join" >Join</a></li>
+                        <li><a href="https://sourceforge.net/auth/" title="Login">Login</a></li>
+                    </ul>
+                </div>
+                <div class="search-toggle-when-stuck">
+                    <a class="search-toggle">
+                        
+
+
+<svg  data-name="search" viewBox="0 0 1792 1792" xmlns="http://www.w3.org/2000/svg"><path d="M1216 832q0-185-131.5-316.5t-316.5-131.5-316.5 131.5-131.5 316.5 131.5 316.5 316.5 131.5 316.5-131.5 131.5-316.5zm512 832q0 52-38 90t-90 38q-54 0-90-38l-343-342q-179 124-399 124-143 0-273.5-55.5t-225-150-150-225-55.5-273.5 55.5-273.5 150-225 225-150 273.5-55.5 273.5 55.5 225 150 150 225 55.5 273.5q0 220-124 399l343 343q37 37 37 90z"/></svg>
+                    </a>
+                </div>
+            </div>
+
+            <div class="search">
+                
+                    
+
+                
+                
+                    
+                
+                
+                
+                
+    <form method="get" action="/directory/" class="m-search-form">
+    
+    <div class="typeahead__container">
+      <div class="typeahead__field">
+        <div class="typeahead__query">
+        
+        <input type="text" placeholder="Search for software or solutions" autocomplete="off" name="q" >
+        
+        </div>
+        
+        <label >
+            <input type="submit" class="bt" value="">
+            
+
+
+<svg  data-name="search" viewBox="0 0 1792 1792" xmlns="http://www.w3.org/2000/svg"><path d="M1216 832q0-185-131.5-316.5t-316.5-131.5-316.5 131.5-131.5 316.5 131.5 316.5 316.5 131.5 316.5-131.5 131.5-316.5zm512 832q0 52-38 90t-90 38q-54 0-90-38l-343-342q-179 124-399 124-143 0-273.5-55.5t-225-150-150-225-55.5-273.5 55.5-273.5 150-225 225-150 273.5-55.5 273.5 55.5 225 150 150 225 55.5 273.5q0 220-124 399l343 343q37 37 37 90z"/></svg>
+        </label>
+      </div>
+    </div>
+    
+    </form>
+    
+                
+            </div>
+        </nav>
+        
+    </section>
+
+    
+</div>
+
+
+
+
+    
+        
+    
+    
+        
+        
+        <link rel="stylesheet" href="//a.fsdn.com/con/css/top.css?1784751811" />
+        
+        
+            
+    
+    
+    
+    
+    
+    
+    
+    
+    <link rel="stylesheet" href="//a.fsdn.com/con/css/inter-tight.css?1784751811">
+
+        
+        
+            
+                <div id="top-placeholder">
+                <div id="topbar-mount"></div>
+                </div>
+            
+        
+    
+
+    
+
+            
+
+            
+                
+
+                
+<div class="full-width-masthead project-masthead" id="downloading" >
+    
+<div class="backdrop" style="box-sizing: content-box; padding-bottom: 131px"></div>
+
+    <div class="content">
+        
+    <nav id="breadcrumbs" class="breadcrumbs rtl">
+        <ul itemscope itemtype="http://schema.org/BreadcrumbList">
+            
+            <li itemprop="itemListElement" itemscope itemtype="http://schema.org/ListItem">
+            <a itemprop="item" href="/"><span itemprop="name">Home</span></a>
+            <meta itemprop="position" content="1" />
+            </li>
+            
+            <li itemprop="itemListElement" itemscope itemtype="http://schema.org/ListItem">
+                
+                <a itemprop="item" href="/directory/">
+                    <span itemprop="name">Open Source Software</span>
+                </a>
+                
+                <meta itemprop="position" content="2" />
+            </li>
+            <li itemprop="itemListElement" itemscope itemtype="http://schema.org/ListItem">
+                
+                <a itemprop="item" href="/directory/games/">
+                    <span itemprop="name">Games</span>
+                </a>
+                
+                <meta itemprop="position" content="3" />
+            </li><li class="project" itemprop="itemListElement" itemscope itemtype="http://schema.org/ListItem"><span itemprop="name">libsdl-android</span><meta itemprop="position" content="4" />
+            </li>
+            
+        </ul>
+    </nav>
+
+
+        <div id="starting">
+            
+<div class="overview">
+    
+
+
+<div class="project-icon   " >
+    
+    
+    <img itemprop="image" alt="libsdl-android" title="libsdl-android" 
+src="//a.fsdn.com/allura/p/libsdl-android/icon?1422106499"
+    /></div>
+
+
+    
+    <div class="title "> 
+
+        
+        <h1  itemprop="name"><a href="/projects/libsdl-android/" itemprop="url">libsdl-android
+            </a>
+        </h1>
+        
+        <h2 class="as-h3 summary">
+            SDL library for Android, including several games.
+        </h2>
+         
+          
+        
+            
+            
+            <div class="as-h3 brought-by">
+                
+                Brought to you by:
+                
+                    <a href="/u/gerstrong/profile/">gerstrong</a>,
+                    
+                
+                    <a href="/u/pelya/profile/">pelya</a>
+                    
+                
+            </div>
+            
+        
+
+        
+
+        
+    </div>
+
+
+    
+
+</div>
+
+        </div>
+        <div class="buttons clearfix row">
+            <div id="buttons-group">
+                <div id="download-updates" class="column large-6">
+                    
+                    <div id="get-updates">
+    <img id="psp_newsletter_subscribe-icon" src="//a.fsdn.com/con/images/sandiego/sf_email_icon.svg"  alt="Email in envelope"  />
+    <div id="download-group">
+        <h4>Get an email when there's a new version of libsdl-android</h4>
+        <div id="get-updates-form">
+            <form>
+                <input type="email" name="email" placeholder="Enter your email address" value="">
+                <a id="get-updates-button" class="button blue" data-open="psp-newsletter-modal">Next</a>
+            </form>
+        </div>
+    </div>
+    </div>
+    <div class="psp_newsletter_subscribe reveal" data-reveal id="psp-newsletter-modal" data-v-offset="0" data-ajax-url="/projects/libsdl-android/get_updates?source=DLP">
+
+    </div>
+    <script>
+
+    $('#get-updates-form input[type="email"]').on('focus', function(){
+        if(SF.downloader) {
+            SF.downloader.cancelRedirect();
+        }
+        SF.noRedirect =  true;
+    });
+    $('#get-updates-button').click(function(){
+        if(SF.downloader) {
+            SF.downloader.cancelRedirect();
+        }
+        SF.noRedirect =  true;
+    });
+    $("#get-updates-form form").on("keydown", function(event) {
+        if(event.which === 13) {
+            if (SF.downloader) {
+                SF.downloader.cancelRedirect();
+            }
+            SF.noRedirect = true;
+            $('#get-updates-button').trigger('click');
+        }
+    });
+
+    </script>
+                    
+                </div>
+                <div id="remaining-buttons" class="column large-6 xlarge-5">
+                    <div>
+                        <p id="downloader" class="">
+        Your download will start shortly...
+</p>
+
+
+
+<div class="radial-progress">
+    <div class="circle">
+        <div class="mask full">
+            <div class="fill"></div>
+        </div>
+        <div class="mask half">
+            <div class="fill"></div>
+            <div class="fill fix"></div>
+        </div>
+    </div>
+    <div class="inset"></div>
+</div>
+
+
+                    </div>
+
+
+                    <div class="large-12">
+                         
+                        
+
+
+
+                        
+                        <a id="share-project-button" class="button default" href="#">Share This</a>
+                        
+                        
+
+<div class="social-sharing-buttons invisible hide">
+    
+    
+    
+    <a rel=nofollow class="social-media-icon twitter" href="https://x.com/share?url=https://sourceforge.net/projects/libsdl-android/files/GeneralUser-GS-v1.471.sf2.zip.xz/download&amp;text=Download%20libsdl-android%20on%20SourceForge%20for%20free%21%20SDL%20library%20for%20Android%2C%20including%20several%20games." title="Share libsdl-android on SourceForge on X">
+
+
+<svg  data-name="x-logo" viewBox="0 0 1200 1227" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M714.163 519.284L1160.89 0H1055.03L667.137 450.887L357.328 0H0L468.492 681.821L0 1226.37H105.866L515.491 750.218L842.672 1226.37H1200L714.137 519.284H714.163ZM569.165 687.828L521.697 619.934L144.011 79.6944H306.615L611.412 515.685L658.88 583.579L1055.08 1150.3H892.476L569.165 687.854V687.828Z" fill="white"/></svg></a>
+    <a rel=nofollow class="social-media-icon facebook" href="https://www.facebook.com/sharer/sharer.php?u=https://sourceforge.net/projects/libsdl-android/files/GeneralUser-GS-v1.471.sf2.zip.xz/download&title=libsdl-android%20on%20SourceForge" title="Share libsdl-android on SourceForge on facebook">
+
+
+<svg  data-name="facebook" viewBox="0 0 1792 1792" xmlns="http://www.w3.org/2000/svg"><path d="M1343 12v264h-157q-86 0-116 36t-30 108v189h293l-39 296h-254v759h-306v-759h-255v-296h255v-218q0-186 104-288.5t277-102.5q147 0 228 12z"/></svg></a>
+    <a rel=nofollow class="social-media-icon linkedin" href="https://www.linkedin.com/shareArticle?mini=true&url=https://sourceforge.net/projects/libsdl-android/files/GeneralUser-GS-v1.471.sf2.zip.xz/download&title=libsdl-android%20on%20SourceForge&source=SourceForge.net" title="Share libsdl-android on SourceForge on LinkedIn">
+
+
+<svg  data-name="linkedin" viewBox="0 0 1792 1792" xmlns="http://www.w3.org/2000/svg"><path d="M477 625v991h-330v-991h330zm21-306q1 73-50.5 122t-135.5 49h-2q-82 0-132-49t-50-122q0-74 51.5-122.5t134.5-48.5 133 48.5 51 122.5zm1166 729v568h-329v-530q0-105-40.5-164.5t-126.5-59.5q-63 0-105.5 34.5t-63.5 85.5q-11 30-11 81v553h-329q2-399 2-647t-1-296l-1-48h329v144h-2q20-32 41-56t56.5-52 87-43.5 114.5-15.5q171 0 275 113.5t104 332.5z"/></svg></a>
+</div>
+
+
+                        
+                            
+    
+    <div class="reveal" id="mirror-modal">
+        <div class="modal-content row">
+            <div class="column small-12 row modal-header">
+            </div>
+
+            <div id="mirror-drawer"></div>
+
+            <button class="close-button" data-close aria-label="Close modal" type="button">
+                <span aria-hidden="true">&times;</span>
+            </button>
+        </div>
+    </div>
+
+    <a class="button default mirror" id="btn-problems-downloading" data-release-url="https://downloads.sourceforge.net/project/libsdl-android/GeneralUser-GS-v1.471.sf2.zip.xz?ts=gAAAAABqYh7LIUX00OL6QDDKoPCmkDXtDbjuY64a-8oahyrMbb7qT5iRzikBl8V8IRE78edutD0g25IX1hoxceZ2QAdEIjpzaQ%3D%3D&amp;use_mirror=sf-west-interserver-2&amp;r=" rel="nofollow" href="/settings/mirror_choices?projectname=libsdl-android&amp;filename=GeneralUser-GS-v1.471.sf2.zip.xz&amp;selected=sf-west-interserver-2">Problems Downloading?</a>
+                        
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="file-info">
+            <div class="file-name">
+                    GeneralUser-GS-v1.471.sf2.zip.xz
+                
+            </div>
+
+            
+            
+            <div id="scanned_by">
+                <span>Scanned for malware ✔</span>
+            </div>
+        </div>
+    </div>
+    <div id="mirror">
+        <div class="mirror-title">Mirror Provided by</div><a id="provider_top" href="https://sourceforge.net/" title="SourceForge" target="_blank"><img class="mirror-logo" alt="SourceForge"
+                  src="https://a.fsdn.com/mirrorimages/sourceforge-xlarge.png" width="230" height="126" 
+                    srcset="https://a.fsdn.com/mirrorimages/sourceforge-hidpi.png 2x" /></a>
+          <div class="mirror-footer"><a href="https://sourceforge.net/" title="SourceForge" rel=nofollow target="_blank">Learn more about SourceForge</a></div>
+    </div>
+</div>
+
+                <div class="l-two-column-page">
+                    <div class="l-content-column l-has-sidebar">
+                        
+<div class="project-body">
+    <article class="main-content">
+
+        
+        
+
+        
+    
+
+<script>
+    if (!SF.wireOutboundZoneTrackingComplete) {  
+        $(SF.wireOutboundZoneTracking);
+        $('body').append('<iframe src="https://c.sf-syn.com/conversion_outbound_tracker/sf" id="frame-zone-outbound" style="display: none;"></iframe>');
+        SF.wireOutboundZoneTrackingComplete = true;
+    }
+</script>
+
+
+     
+        
+        <section id="nels" class="small-12 columns">
+            
+            
+    
+    
+    
+    
+     <div class="as-header">
+        <div class="as-h2">Other Useful Business Software</div>
+    </div>
+    
+    
+        
+        
+        
+
+    
+    
+        
+    
+
+    <div class="nel standard can-trunc  "
+        data-id="10360">
+
+        
+
+
+<span id="5a1d5b87-a776-4df0-a353-4f8f98839441"></span>
+<script>
+    /* globals bizx */
+    bizx.cmp.trackingPixel('publisher', ['storage', 'measurement'], '/software/tp3/?b=41718&amp;c=8145&amp;z=39013&amp;cb=82eb6ba550&amp;rand=5a1d5b87-a776-4df0-a353-4f8f98839441', "Get full visibility and control over your tasks and projects with Wrike.", '5a1d5b87-a776-4df0-a353-4f8f98839441');
+</script>
+
+
+        
+        <div class="application-image thumbnail"  data-dest="https://sourceforge.net/software/link?oaparams=2__bannerid=41718__zoneid=39013__cb=82eb6ba550__oadest=https%3A%2F%2Fwww.wrike.com%2F%3Futm_medium%3Dcpc%26utm_campaign%3Dprofile%26utm_content%3Dlisting%26utm_source%3Dsourceforge" data-newtab="true" data-target="_blank" rel="nofollow">
+            <img class="main-image" src="//a.fsdn.com/con/app/nel_img/10360" alt="Get full visibility and control over your tasks and projects with Wrike. Icon">
+            
+        </div>
+        <div class="wrapper">
+            <div class="heading">
+                <div class="heading-main">
+                    
+                    <span data-dest="https://sourceforge.net/software/link?oaparams=2__bannerid=41718__zoneid=39013__cb=82eb6ba550__oadest=https%3A%2F%2Fwww.wrike.com%2F%3Futm_medium%3Dcpc%26utm_campaign%3Dprofile%26utm_content%3Dlisting%26utm_source%3Dsourceforge" data-newtab="true" data-target="_blank" rel="nofollow" title="Find out more about Get full visibility and control over your tasks and projects with Wrike.">Get full visibility and control over your tasks and projects with Wrike.</span>
+
+                    
+                    <p class="teaser">A cloud-based collaboration, work management, and project management software</p>
+                </div>
+            </div>
+
+            
+            
+
+            <div class="tiles">
+                <div class="tile">
+                    
+                    <div class="description ">
+                        <div class="description-inner">
+                            Wrike offers world-class features that empower cross-functional, distributed, or growing teams take their projects from the initial request stage all the way to tracking work progress and reporting results.
+                        </div>
+                    </div>
+                </div>
+
+                
+            </div>
+
+        </div>
+
+        
+        <div class="download standard">
+            
+            
+
+            
+
+            
+        
+            
+        
+        <div class="button green wide sfdl sfdl-lite" data-target="_blank" data-newtab="true" data-dest="https://sourceforge.net/software/link?oaparams=2__bannerid=41718__zoneid=39013__cb=82eb6ba550__oadest=https%3A%2F%2Fwww.wrike.com%2F%3Futm_medium%3Dcpc%26utm_campaign%3Dprofile%26utm_content%3Dlisting%26utm_source%3Dsourceforge"
+                
+                    data-zone="39003" data-slug="Wrike"
+                >Learn More</div>
+        </div>
+
+        
+    </div>
+
+
+    
+        
+        
+        
+
+    
+    
+        
+    
+
+    <div class="nel standard can-trunc  "
+        data-id="19979">
+
+        
+
+
+<span id="f2c04b2f-ff74-4471-84d6-e197474be923"></span>
+<script>
+    /* globals bizx */
+    bizx.cmp.trackingPixel('publisher', ['storage', 'measurement'], '/software/tp3/?b=31708&amp;c=6441&amp;z=28922&amp;cb=2ea3e71e92&amp;rand=f2c04b2f-ff74-4471-84d6-e197474be923', "Accounting Software Built for Owners, and Their Clients", 'f2c04b2f-ff74-4471-84d6-e197474be923');
+</script>
+
+
+        
+        <div class="application-image thumbnail"  data-dest="https://sourceforge.net/software/link?oaparams=2__bannerid=31708__zoneid=28922__cb=2ea3e71e92__oadest=https%3A%2F%2Fwww.freshbooks.com%2F%3Fref%3D13311%26utm_source%3Dsourceforge%26utm_medium%3DMarketplace%26utm_campaign%3Dsourceforge" data-newtab="true" data-target="_blank" rel="nofollow">
+            <img class="main-image" src="//a.fsdn.com/con/app/nel_img/19979" alt="Accounting Software Built for Owners, and Their Clients Icon">
+            
+        </div>
+        <div class="wrapper">
+            <div class="heading">
+                <div class="heading-main">
+                    
+                    <span data-dest="https://sourceforge.net/software/link?oaparams=2__bannerid=31708__zoneid=28922__cb=2ea3e71e92__oadest=https%3A%2F%2Fwww.freshbooks.com%2F%3Fref%3D13311%26utm_source%3Dsourceforge%26utm_medium%3DMarketplace%26utm_campaign%3Dsourceforge" data-newtab="true" data-target="_blank" rel="nofollow" title="Find out more about Accounting Software Built for Owners, and Their Clients">Accounting Software Built for Owners, and Their Clients</span>
+
+                    
+                    <p class="teaser">Make invoicing and billing painless for your small business with FreshBooks.</p>
+                </div>
+            </div>
+
+            
+            
+
+            <div class="tiles">
+                <div class="tile">
+                    
+                    <div class="description ">
+                        <div class="description-inner">
+                            Balancing your books, client relationships, and business isn’t easy. FreshBooks gives you the info and time you need to focus on your big picture—your business, team, and clients.
+                        </div>
+                    </div>
+                </div>
+
+                
+            </div>
+
+        </div>
+
+        
+        <div class="download standard">
+            
+            
+
+            
+
+            
+        
+            
+        
+        <div class="button green wide sfdl sfdl-lite" data-target="_blank" data-newtab="true" data-dest="https://sourceforge.net/software/link?oaparams=2__bannerid=31708__zoneid=28922__cb=2ea3e71e92__oadest=https%3A%2F%2Fwww.freshbooks.com%2F%3Fref%3D13311%26utm_source%3Dsourceforge%26utm_medium%3DMarketplace%26utm_campaign%3Dsourceforge"
+                
+                    data-zone="28917" data-slug="FreshBooks"
+                >Learn More</div>
+        </div>
+
+        
+    </div>
+
+
+    
+        
+        
+        
+
+    
+    
+        
+    
+
+    <div class="nel standard can-trunc  "
+        data-id="7354">
+
+        
+
+
+<span id="c8550231-3063-4d5f-8d34-d880ba8e601e"></span>
+<script>
+    /* globals bizx */
+    bizx.cmp.trackingPixel('publisher', ['storage', 'measurement'], '/software/tp3/?b=31530&amp;c=6396&amp;z=28744&amp;cb=d81e1c8b61&amp;rand=c8550231-3063-4d5f-8d34-d880ba8e601e', "Odoo Business Applications", 'c8550231-3063-4d5f-8d34-d880ba8e601e');
+</script>
+
+
+        
+        <div class="application-image thumbnail"  data-dest="https://sourceforge.net/software/link?oaparams=2__bannerid=31530__zoneid=28744__cb=d81e1c8b61__oadest=https%3A%2F%2Fwww.odoo.com%2Ftrial%3Futm_campaign%3Derp%26utm_medium%3Dcpc-review%26utm_source%3DSourceForge" data-newtab="true" data-target="_blank" rel="nofollow">
+            <img class="main-image" src="//a.fsdn.com/con/app/nel_img/7354" alt="Odoo Business Applications Icon">
+            
+        </div>
+        <div class="wrapper">
+            <div class="heading">
+                <div class="heading-main">
+                    
+                    <span data-dest="https://sourceforge.net/software/link?oaparams=2__bannerid=31530__zoneid=28744__cb=d81e1c8b61__oadest=https%3A%2F%2Fwww.odoo.com%2Ftrial%3Futm_campaign%3Derp%26utm_medium%3Dcpc-review%26utm_source%3DSourceForge" data-newtab="true" data-target="_blank" rel="nofollow" title="Find out more about Odoo Business Applications">Odoo Business Applications</span>
+
+                    
+                    <p class="teaser">Odoo is a software suite to better manage and run your company.</p>
+                </div>
+            </div>
+
+            
+            
+
+            <div class="tiles">
+                <div class="tile">
+                    
+                    <div class="description ">
+                        <div class="description-inner">
+                            Odoo is a fully integrated, customizable, open-source software packed with hundreds of expertly designed business applications. Odoo’s intuitive database is able to meet a majority of business needs, such as: CRM, Sales, Project, Manufacturing, Inventory, and Accounting, just to name a few.
+                        </div>
+                    </div>
+                </div>
+
+                
+            </div>
+
+        </div>
+
+        
+        <div class="download standard">
+            
+            
+
+            
+
+            
+        
+            
+        
+        <div class="button green wide sfdl sfdl-lite" data-target="_blank" data-newtab="true" data-dest="https://sourceforge.net/software/link?oaparams=2__bannerid=31530__zoneid=28744__cb=d81e1c8b61__oadest=https%3A%2F%2Fwww.odoo.com%2Ftrial%3Futm_campaign%3Derp%26utm_medium%3Dcpc-review%26utm_source%3DSourceForge"
+                
+                    data-zone="28739" data-slug="Odoo"
+                >Get Started</div>
+        </div>
+
+        
+    </div>
+
+
+    
+        
+        
+        
+
+    
+    
+        
+    
+
+    <div class="nel standard can-trunc  "
+        data-id="20137">
+
+        
+
+
+<span id="2d024ef1-6041-4b9c-b501-55ec54163d82"></span>
+<script>
+    /* globals bizx */
+    bizx.cmp.trackingPixel('publisher', ['storage', 'measurement'], '/software/tp3/?b=44923&amp;c=8752&amp;z=42244&amp;cb=54b21c0ade&amp;rand=2d024ef1-6041-4b9c-b501-55ec54163d82', "Effortlessly manage macOS, iOS, iPadOS and tvOS devices across multiple clients and locations.", '2d024ef1-6041-4b9c-b501-55ec54163d82');
+</script>
+
+
+        
+        <div class="application-image thumbnail"  data-dest="https://sourceforge.net/software/link?oaparams=2__bannerid=44923__zoneid=42244__cb=54b21c0ade__oadest=https%3A%2F%2Faddigy.com%2F%3Futm_source%3Dsourceforge%26utm_medium%3Dreviewsite%26utm_campaign%3Daddigy" data-newtab="true" data-target="_blank" rel="nofollow">
+            <img class="main-image" src="//a.fsdn.com/con/app/nel_img/20137" alt="Effortlessly manage macOS, iOS, iPadOS and tvOS devices across multiple clients and locations. Icon">
+            
+        </div>
+        <div class="wrapper">
+            <div class="heading">
+                <div class="heading-main">
+                    
+                    <span data-dest="https://sourceforge.net/software/link?oaparams=2__bannerid=44923__zoneid=42244__cb=54b21c0ade__oadest=https%3A%2F%2Faddigy.com%2F%3Futm_source%3Dsourceforge%26utm_medium%3Dreviewsite%26utm_campaign%3Daddigy" data-newtab="true" data-target="_blank" rel="nofollow" title="Find out more about Effortlessly manage macOS, iOS, iPadOS and tvOS devices across multiple clients and locations.">Effortlessly manage macOS, iOS, iPadOS and tvOS devices across multiple clients and locations.</span>
+
+                    
+                    <p class="teaser">The Most Powerful Apple Device Management Tool for MSPs and IT Teams</p>
+                </div>
+            </div>
+
+            
+            
+
+            <div class="tiles">
+                <div class="tile">
+                    
+                    <div class="description ">
+                        <div class="description-inner">
+                            Addigy solutions accelerate Apple adoption in any environment.
+                        </div>
+                    </div>
+                </div>
+
+                
+            </div>
+
+        </div>
+
+        
+        <div class="download standard">
+            
+            
+
+            
+
+            
+        
+            
+        
+        <div class="button green wide sfdl sfdl-lite" data-target="_blank" data-newtab="true" data-dest="https://sourceforge.net/software/link?oaparams=2__bannerid=44923__zoneid=42244__cb=54b21c0ade__oadest=https%3A%2F%2Faddigy.com%2F%3Futm_source%3Dsourceforge%26utm_medium%3Dreviewsite%26utm_campaign%3Daddigy"
+                
+                    data-zone="42234" data-slug="Addigy"
+                >Learn More</div>
+        </div>
+
+        
+    </div>
+
+
+    
+        
+        
+        
+
+    
+    
+        
+    
+
+    <div class="nel standard can-trunc  "
+        data-id="19636">
+
+        
+
+
+<span id="4cb69959-7c2b-4b72-96f4-1b4cfb1ad3b2"></span>
+<script>
+    /* globals bizx */
+    bizx.cmp.trackingPixel('publisher', ['storage', 'measurement'], '/software/tp3/?b=33891&amp;c=7125&amp;z=31163&amp;cb=6ee66869b8&amp;rand=4cb69959-7c2b-4b72-96f4-1b4cfb1ad3b2', "Run your private office with the ONLYOFFICE", '4cb69959-7c2b-4b72-96f4-1b4cfb1ad3b2');
+</script>
+
+
+        
+        <div class="application-image thumbnail"  data-dest="https://sourceforge.net/software/link?oaparams=2__bannerid=33891__zoneid=31163__cb=6ee66869b8__oadest=https%3A%2F%2Fwww.onlyoffice.com%3Futm_source%3Dsourceforge%26utm_medium%3Dcpc%26utm_campaign%3Dsourceforge_2025%26utm_id%3D23051%26utm_content%3DVISIT-WEBSITE" data-newtab="true" data-target="_blank" rel="nofollow">
+            <img class="main-image" src="//a.fsdn.com/con/app/nel_img/19636" alt="Run your private office with the ONLYOFFICE Icon">
+            
+        </div>
+        <div class="wrapper">
+            <div class="heading">
+                <div class="heading-main">
+                    
+                    <span data-dest="https://sourceforge.net/software/link?oaparams=2__bannerid=33891__zoneid=31163__cb=6ee66869b8__oadest=https%3A%2F%2Fwww.onlyoffice.com%3Futm_source%3Dsourceforge%26utm_medium%3Dcpc%26utm_campaign%3Dsourceforge_2025%26utm_id%3D23051%26utm_content%3DVISIT-WEBSITE" data-newtab="true" data-target="_blank" rel="nofollow" title="Find out more about Run your private office with the ONLYOFFICE">Run your private office with the ONLYOFFICE</span>
+
+                    
+                    <p class="teaser">Secure office and productivity apps</p>
+                </div>
+            </div>
+
+            
+            
+
+            <div class="tiles">
+                <div class="tile">
+                    
+                    <div class="description ">
+                        <div class="description-inner">
+                            A Comprehensive Alternative to Office 365 for Business
+                        </div>
+                    </div>
+                </div>
+
+                
+            </div>
+
+        </div>
+
+        
+        <div class="download standard">
+            
+            
+
+            
+
+            
+        
+            
+        
+        <div class="button green wide sfdl sfdl-lite" data-target="_blank" data-newtab="true" data-dest="https://sourceforge.net/software/link?oaparams=2__bannerid=33891__zoneid=31163__cb=6ee66869b8__oadest=https%3A%2F%2Fwww.onlyoffice.com%3Futm_source%3Dsourceforge%26utm_medium%3Dcpc%26utm_campaign%3Dsourceforge_2025%26utm_id%3D23051%26utm_content%3DVISIT-WEBSITE"
+                
+                    data-zone="31158" data-slug="ONLYOFFICE"
+                >Learn More</div>
+        </div>
+
+        
+    </div>
+
+
+    
+        </section>
+        
+    
+
+
+        
+        <div class="small-12 columns hr-bottom">
+            <aside class="content-supplement">
+                <div class="as-header">
+                    <h3>libsdl-android Overview</h3>
+                </div>
+
+                <div class="project-container">
+                    
+                    <p id="summary">SDL library for Android, including several games.</p>
+                    
+                    <p id="description">Port of SDL library to Android mobile platform.<br>
+There are also several games inside the repository, along with their sources and build files.<br>
+Both SDL 1.2 and 1.3/2.0 versions are supported (1.3/2.0 support is experimental)<br>
+Sources are at <a href="https://github.com/pelya/commandergenius" rel="nofollow noopener">https://github.com/pelya/commandergenius</a></p>
+                </div>
+            </aside>
+        </div>
+        
+
+
+        
+
+
+        
+        <div class="small-12 columns hr-bottom">
+            
+<section id="project-additional-trove" class="content-supplement">
+    <div class="as-header">
+        <h2>Additional Details for libsdl-android</h2>
+    </div>
+    <div class="project-container">
+        
+
+        <section class="project-info">
+    <div class="as-header">
+        <h3>Operating Systems</h3>
+    </div>
+    <section class="content"><a href="/directory/android/">Android</a></section>
+</section>
+
+
+        
+
+        <section class="project-info">
+    <div class="as-header">
+        <h3>Intended Audience</h3>
+    </div>
+    <section class="content">Developers, End Users/Desktop</section>
+</section>
+
+
+        <section class="project-info">
+    <div class="as-header">
+        <h3>User Interface</h3>
+    </div>
+    <section class="content">Framebuffer, OpenGL</section>
+</section>
+
+
+        <section class="project-info">
+    <div class="as-header">
+        <h3>Programming Language</h3>
+    </div>
+    <section class="content"><a href="/directory/c/">C</a>, <a href="/directory/c-plus-plus/">C++</a>, <a href="/directory/java/">Java</a></section>
+</section>
+
+
+        <section class="project-info">
+            <div class="as-header">
+                <h4>Registered</h4>
+            </div>
+            <section class="content">
+                2010-09-03
+            </section>
+        </section>
+
+        
+        <section class="project-info">
+            <div class="as-header">
+                <h3>Last Updated</h3>
+            </div>
+            <section class="content">
+                <time itemprop="dateModified" class="dateUpdated" datetime="2026-07-20">3 days ago</time>
+            </section>
+        </section>
+        
+        <section class="project-info">
+            <div class="as-header">
+                <h3>Categories</h3>
+            </div><a href="/directory/games/" itemprop="applicationCategory">Games</a>, <a href="/directory/frameworks/" itemprop="applicationCategory">Frameworks</a>, <a href="/directory/mobile/" itemprop="applicationCategory">Mobile</a></section>
+        
+        
+        <section class="project-info">
+            <div class="as-header">
+            <h3>Maintainers</h3>
+            </div><a href="https://sourceforge.net/u/gerstrong/"><span>gerstrong</span></a>, <a href="https://sourceforge.net/u/pelya/"><span>pelya</span></a>
+        </section>
+        
+    </div>
+</section>
+
+        </div>
+        
+
+
+        
+            
+<aside class="m-wide-widget m-wide-projects-widget ">
+    <div class="as-header">
+        
+        Recommended Projects
+    </div>
+    <div class="body">
+        <ul>
+            
+            
+
+
+
+
+<li>
+    
+        
+
+
+<div class="project-icon   " >
+    
+    
+    <img alt="TombViewer" title="TombViewer" 
+src="//a.fsdn.com/allura/p/tombviewer/icon?1541233120?&amp;w=48"
+    srcset="//a.fsdn.com/allura/p/tombviewer/icon?1541233120?&amp;w=72 1.5x
+        ,
+            //a.fsdn.com/allura/p/tombviewer/icon?1541233120?&amp;w=96 2x" loading="lazy"/></div>
+
+    
+    <div class="project-info ">
+        <div class="result-heading-texts">
+            <a href="/projects/tombviewer/" title="Find out more about TombViewer">
+                
+                <strong>TombViewer</strong>
+            </a>
+            
+                <a href="/projects/tombviewer/" title="Find out more about TombViewer" class="summary-inline">TombViewer is a Windows application that enables you to freely navigate inside Tomb Raider series maps.
+Supported Tomb Raider games are I, II, III, The Last Revelation  &amp; Chronicles.
+
+Source code repository: https://github.com/jval1972/TombViewer
+
+Releases:
+Version 1.3 - (20181021)
+Version 1.2 - (20050915)
+Version 1.1 - (20040627)
+Version 1.03 - (20040623)
+Version 1.02 - (20040621)
+Version 1.01 - (20040620)
+Version 1.0 - (20040619)
+</a>
+            
+        </div>
+        
+        <div class="stats">
+            
+    
+    
+
+    
+    <strong class="">
+        <b class="label">Downloads:</b>
+        
+            0 This Week
+        
+    </strong>
+    
+
+    
+    <strong class="">
+        <b class="label">Last Update:</b>
+        
+            <time class="dateUpdated" datetime="2018-11-03">2018-11-03</time>
+        
+    </strong>
+    
+
+        </div>
+        
+    </div>
+    <div>
+        <a href="/projects/tombviewer/" title="Find out more about TombViewer" class="button green hollow see-project">See Project</a>
+    </div>
+</li>
+
+            
+            
+            
+
+
+
+
+<li>
+    
+        
+
+
+<div class="project-icon  default-project-icon " >
+    
+    
+    
+
+
+<svg  data-name="default-icon" xmlns="http://www.w3.org/2000/svg" x="0px" y="0px" viewBox="0 0 300 300" style="enable-background:new 0 0 300 300;" xml:space="preserve"><rect class="st0" width="300" height="300"/><g><path class="st1" d="M162.5,154.8c0-28.9-10.2-42-15.6-46.9c-1.1-1-2.7-0.1-2.6,1.3c1.1,16.3-19.4,20.3-19.4,45.9h0c0,0.1,0,0.1,0,0.2c0,15.6,11.8,28.3,26.3,28.3c14.5,0,26.3-12.7,26.3-28.3c0-0.1,0-0.1,0-0.2h0c0-7.2-2.7-14.1-5.5-19.3c-0.5-1-2.1-0.6-1.9,0.3C174.9,158.1,162.5,171.8,162.5,154.8z"/><g><path class="st1" d="M131.2,215.6c-0.7,0-1.3-0.3-1.8-0.7l-67.2-67.1c-1-1-1-2.6,0-3.6l70.9-70.9c0.5-0.5,1.1-0.7,1.8-0.7h20.4c1.2,0,2,0.8,2.3,1.6c0.3,0.7,0.3,1.9-0.5,2.7l-66.7,66.7c-1.3,1.3-1.3,3.5,0,4.9l52.7,52.7c1,1,1,2.6,0,3.6L133,214.9C132.5,215.4,131.9,215.6,131.2,215.6z"/></g><g><path class="st1" d="M144.7,227.4c-1.2,0-2-0.8-2.3-1.5c-0.3-0.7-0.3-1.9,0.5-2.7l66.7-66.7c0.7-0.6,1-1.5,1-2.4s-0.4-1.8-1-2.4l-52.7-52.7c-1-1-1-2.6,0-3.6l10.2-10.2c0.5-0.5,1.1-0.7,1.8-0.7c0.7,0,1.3,0.3,1.8,0.7l67,67.1c0.5,0.5,0.7,1.1,0.7,1.8s-0.3,1.3-0.7,1.8l-70.9,70.9c-0.5,0.5-1.1,0.7-1.8,0.7H144.7z"/></g></g></svg>
+    </div>
+
+    
+    <div class="project-info ">
+        <div class="result-heading-texts">
+            <a href="/projects/snake-hbios/" title="Find out more about Snake">
+                
+                <strong>Snake</strong>
+            </a>
+            
+                <a href="/projects/snake-hbios/" title="Find out more about Snake" class="summary-inline">This one-player Snake game is written in c++ using SDL. Eat food and avoid walls, to reach highscore ! Simple and entertaining.</a>
+            
+        </div>
+        
+        <div class="stats">
+            
+    
+    
+    <div class="rating">
+        
+
+
+
+
+
+
+<div class="m-stars" aria-hidden="true" >
+
+
+    
+    
+    
+    
+    
+    
+    
+    <div class="star responsive yellow">
+        
+<svg  data-name="sf_star_yellow" xmlns="http://www.w3.org/2000/svg" x="0px" y="0px" viewBox="0 0 300 285.8" style="enable-background:new 0 0 300 285.8;" xml:space="preserve"><polygon class="st0" fill="#ffcc00" points="150,0 185.4,109.2 300,109.2 207.3,176.6 242.7,285.8 150,218.3 57.3,285.8 92.7,176.6 0,109.2 114.6,109.2 "/></svg>
+    </div>
+
+
+    
+    
+    
+    
+    
+    
+    
+    <div class="star responsive yellow">
+        
+<svg  data-name="sf_star_yellow" xmlns="http://www.w3.org/2000/svg" x="0px" y="0px" viewBox="0 0 300 285.8" style="enable-background:new 0 0 300 285.8;" xml:space="preserve"><polygon class="st0" fill="#ffcc00" points="150,0 185.4,109.2 300,109.2 207.3,176.6 242.7,285.8 150,218.3 57.3,285.8 92.7,176.6 0,109.2 114.6,109.2 "/></svg>
+    </div>
+
+
+    
+    
+    
+    
+    
+    
+    
+    <div class="star responsive yellow">
+        
+<svg  data-name="sf_star_yellow" xmlns="http://www.w3.org/2000/svg" x="0px" y="0px" viewBox="0 0 300 285.8" style="enable-background:new 0 0 300 285.8;" xml:space="preserve"><polygon class="st0" fill="#ffcc00" points="150,0 185.4,109.2 300,109.2 207.3,176.6 242.7,285.8 150,218.3 57.3,285.8 92.7,176.6 0,109.2 114.6,109.2 "/></svg>
+    </div>
+
+
+    
+    
+    
+    
+    
+    
+    
+    <div class="star responsive yellow">
+        
+<svg  data-name="sf_star_yellow" xmlns="http://www.w3.org/2000/svg" x="0px" y="0px" viewBox="0 0 300 285.8" style="enable-background:new 0 0 300 285.8;" xml:space="preserve"><polygon class="st0" fill="#ffcc00" points="150,0 185.4,109.2 300,109.2 207.3,176.6 242.7,285.8 150,218.3 57.3,285.8 92.7,176.6 0,109.2 114.6,109.2 "/></svg>
+    </div>
+
+
+    
+    
+    
+    
+    
+    
+    
+    <div class="star responsive yellow">
+        
+<svg  data-name="sf_star_yellow" xmlns="http://www.w3.org/2000/svg" x="0px" y="0px" viewBox="0 0 300 285.8" style="enable-background:new 0 0 300 285.8;" xml:space="preserve"><polygon class="st0" fill="#ffcc00" points="150,0 185.4,109.2 300,109.2 207.3,176.6 242.7,285.8 150,218.3 57.3,285.8 92.7,176.6 0,109.2 114.6,109.2 "/></svg>
+    </div>
+
+
+</div>
+
+
+        <a href="/projects/snake-hbios/reviews/" class="count" title="Snake Reviews">
+            4 Reviews
+        </a>
+    </div>
+    
+
+    
+    <strong class="">
+        <b class="label">Downloads:</b>
+        
+            1 This Week
+        
+    </strong>
+    
+
+    
+    <strong class="">
+        <b class="label">Last Update:</b>
+        
+            <time class="dateUpdated" datetime="2016-03-05">2016-03-05</time>
+        
+    </strong>
+    
+
+        </div>
+        
+    </div>
+    <div>
+        <a href="/projects/snake-hbios/" title="Find out more about Snake" class="button green hollow see-project">See Project</a>
+    </div>
+</li>
+
+            
+            
+            
+
+
+
+
+<li>
+    
+        
+
+
+<div class="project-icon   " >
+    
+    
+    <img alt="Simple DirectMedia Layer" title="Simple DirectMedia Layer" 
+src="//a.fsdn.com/allura/mirror/simple-directmedia/icon?7b9edc740a7ae816839a8a38546b064b03af0660e57d1c79b842d9a0b0c51afb?&amp;w=48"
+    srcset="//a.fsdn.com/allura/mirror/simple-directmedia/icon?7b9edc740a7ae816839a8a38546b064b03af0660e57d1c79b842d9a0b0c51afb?&amp;w=72 1.5x
+        ,
+            //a.fsdn.com/allura/mirror/simple-directmedia/icon?7b9edc740a7ae816839a8a38546b064b03af0660e57d1c79b842d9a0b0c51afb?&amp;w=96 2x" loading="lazy"/></div>
+
+    
+    <div class="project-info ">
+        <div class="result-heading-texts">
+            <a href="/projects/simple-directmedia.mirror/" title="Find out more about Simple DirectMedia Layer">
+                
+                <strong>Simple DirectMedia Layer</strong>
+            </a>
+            
+                <a href="/projects/simple-directmedia.mirror/" title="Find out more about Simple DirectMedia Layer" class="summary-inline">Simple DirectMedia Layer is a cross-platform development library designed to provide low-level access to audio, keyboard, mouse, joystick, and graphics hardware via OpenGL and Direct3D. It is used by video playback software, emulators, and popular games including Valve&#39;s award-winning catalog and many Humble Bundle games. SDL officially supports Windows, macOS, Linux, iOS, and Android. Support for other platforms may be found in the source code. SDL is written in C, works natively with C++, and there are bindings available for several other languages, including C# and Python.
+
+
+
+
+
+</a>
+            
+        </div>
+        
+        <div class="stats">
+            
+    
+    
+
+    
+    <strong class="">
+        <b class="label">Downloads:</b>
+        
+            6 This Week
+        
+    </strong>
+    
+
+    
+    <strong class="">
+        <b class="label">Last Update:</b>
+        
+            <time class="dateUpdated" datetime="2026-07-01">2026-07-01</time>
+        
+    </strong>
+    
+
+        </div>
+        
+    </div>
+    <div>
+        <a href="/projects/simple-directmedia.mirror/" title="Find out more about Simple DirectMedia Layer" class="button green hollow see-project">See Project</a>
+    </div>
+</li>
+
+            
+            
+            
+
+
+
+
+<li>
+    
+        
+
+
+<div class="project-icon   " >
+    
+    
+    <img alt="DoomRL-Android" title="DoomRL-Android" 
+src="//a.fsdn.com/allura/p/doomrl-android/icon?1508070626"
+     loading="lazy"/></div>
+
+    
+    <div class="project-info ">
+        <div class="result-heading-texts">
+            <a href="/projects/doomrl-android/" title="Find out more about DoomRL-Android">
+                
+                <strong>DoomRL-Android</strong>
+            </a>
+            
+                <a href="/projects/doomrl-android/" title="Find out more about DoomRL-Android" class="summary-inline">DoomRL port to Android.
+
+https://drl.chaosforge.org/ -- DoomRL homepage
+https://sourceforge.net/projects/libsdl-android/ - SDL Android port
+https://github.com/rumly111/doomrl and https://github.com/rumly111/fpcvalkyrie -- modified DoomRL sources to run on Android</a>
+            
+        </div>
+        
+        <div class="stats">
+            
+    
+    
+
+    
+    <strong class="">
+        <b class="label">Downloads:</b>
+        
+            6 This Week
+        
+    </strong>
+    
+
+    
+    <strong class="">
+        <b class="label">Last Update:</b>
+        
+            <time class="dateUpdated" datetime="2017-10-15">2017-10-15</time>
+        
+    </strong>
+    
+
+        </div>
+        
+    </div>
+    <div>
+        <a href="/projects/doomrl-android/" title="Find out more about DoomRL-Android" class="button green hollow see-project">See Project</a>
+    </div>
+</li>
+
+            
+            
+            
+
+
+
+
+<li>
+    
+        
+
+
+<div class="project-icon  default-project-icon " >
+    
+    
+    
+
+
+<svg  data-name="default-icon" xmlns="http://www.w3.org/2000/svg" x="0px" y="0px" viewBox="0 0 300 300" style="enable-background:new 0 0 300 300;" xml:space="preserve"><rect class="st0" width="300" height="300"/><g><path class="st1" d="M162.5,154.8c0-28.9-10.2-42-15.6-46.9c-1.1-1-2.7-0.1-2.6,1.3c1.1,16.3-19.4,20.3-19.4,45.9h0c0,0.1,0,0.1,0,0.2c0,15.6,11.8,28.3,26.3,28.3c14.5,0,26.3-12.7,26.3-28.3c0-0.1,0-0.1,0-0.2h0c0-7.2-2.7-14.1-5.5-19.3c-0.5-1-2.1-0.6-1.9,0.3C174.9,158.1,162.5,171.8,162.5,154.8z"/><g><path class="st1" d="M131.2,215.6c-0.7,0-1.3-0.3-1.8-0.7l-67.2-67.1c-1-1-1-2.6,0-3.6l70.9-70.9c0.5-0.5,1.1-0.7,1.8-0.7h20.4c1.2,0,2,0.8,2.3,1.6c0.3,0.7,0.3,1.9-0.5,2.7l-66.7,66.7c-1.3,1.3-1.3,3.5,0,4.9l52.7,52.7c1,1,1,2.6,0,3.6L133,214.9C132.5,215.4,131.9,215.6,131.2,215.6z"/></g><g><path class="st1" d="M144.7,227.4c-1.2,0-2-0.8-2.3-1.5c-0.3-0.7-0.3-1.9,0.5-2.7l66.7-66.7c0.7-0.6,1-1.5,1-2.4s-0.4-1.8-1-2.4l-52.7-52.7c-1-1-1-2.6,0-3.6l10.2-10.2c0.5-0.5,1.1-0.7,1.8-0.7c0.7,0,1.3,0.3,1.8,0.7l67,67.1c0.5,0.5,0.7,1.1,0.7,1.8s-0.3,1.3-0.7,1.8l-70.9,70.9c-0.5,0.5-1.1,0.7-1.8,0.7H144.7z"/></g></g></svg>
+    </div>
+
+    
+    <div class="project-info ">
+        <div class="result-heading-texts">
+            <a href="/projects/clovisgrid/" title="Find out more about ClovisGrid">
+                
+                <strong>ClovisGrid</strong>
+            </a>
+            
+                <a href="/projects/clovisgrid/" title="Find out more about ClovisGrid" class="summary-inline">This program runs a simple grid that displays over SWTOR to allow you to more easily align your GUI with the new patch 1.2 interface editor.
+
+New with version 1.3:
+- Visibility-toggle hotkey (ctrl+shift+home)
+- Snap cursor to grid! (to toggle, hold ctrl+shift+tab)
+
+V 1.3.a
+- Fixed several problems occurring at certain resolutions.
+</a>
+            
+        </div>
+        
+        <div class="stats">
+            
+    
+    
+    <div class="rating">
+        
+
+
+
+
+
+
+<div class="m-stars" aria-hidden="true" >
+
+
+    
+    
+    
+    
+    
+    
+    
+    <div class="star responsive yellow">
+        
+<svg  data-name="sf_star_yellow" xmlns="http://www.w3.org/2000/svg" x="0px" y="0px" viewBox="0 0 300 285.8" style="enable-background:new 0 0 300 285.8;" xml:space="preserve"><polygon class="st0" fill="#ffcc00" points="150,0 185.4,109.2 300,109.2 207.3,176.6 242.7,285.8 150,218.3 57.3,285.8 92.7,176.6 0,109.2 114.6,109.2 "/></svg>
+    </div>
+
+
+    
+    
+    
+    
+    
+    
+    
+    <div class="star responsive yellow">
+        
+<svg  data-name="sf_star_yellow" xmlns="http://www.w3.org/2000/svg" x="0px" y="0px" viewBox="0 0 300 285.8" style="enable-background:new 0 0 300 285.8;" xml:space="preserve"><polygon class="st0" fill="#ffcc00" points="150,0 185.4,109.2 300,109.2 207.3,176.6 242.7,285.8 150,218.3 57.3,285.8 92.7,176.6 0,109.2 114.6,109.2 "/></svg>
+    </div>
+
+
+    
+    
+    
+    
+    
+    
+    
+    <div class="star responsive yellow">
+        
+<svg  data-name="sf_star_yellow" xmlns="http://www.w3.org/2000/svg" x="0px" y="0px" viewBox="0 0 300 285.8" style="enable-background:new 0 0 300 285.8;" xml:space="preserve"><polygon class="st0" fill="#ffcc00" points="150,0 185.4,109.2 300,109.2 207.3,176.6 242.7,285.8 150,218.3 57.3,285.8 92.7,176.6 0,109.2 114.6,109.2 "/></svg>
+    </div>
+
+
+    
+    
+    
+    
+    
+    
+    
+    <div class="star responsive yellow">
+        
+<svg  data-name="sf_star_yellow" xmlns="http://www.w3.org/2000/svg" x="0px" y="0px" viewBox="0 0 300 285.8" style="enable-background:new 0 0 300 285.8;" xml:space="preserve"><polygon class="st0" fill="#ffcc00" points="150,0 185.4,109.2 300,109.2 207.3,176.6 242.7,285.8 150,218.3 57.3,285.8 92.7,176.6 0,109.2 114.6,109.2 "/></svg>
+    </div>
+
+
+    
+    
+    
+    
+    
+    
+    
+    <div class="star responsive half">
+        
+<svg  data-name="sf_star_yellow_half" xmlns="http://www.w3.org/2000/svg" x="0px" y="0px" viewBox="0 0 300 300" style="enable-background:new 0 0 300 300;" xml:space="preserve"><path class="st1" fill="#CCCCCB" d="M148.8,223.4c-31.1,22.9-62.2,45.8-93.5,68.9c0.1-0.4,0.2-0.7,0.3-0.9c12.7-35.9,25.3-71.7,38-107.6c0.2-0.6,0.2-1-0.4-1.4c-30.8-21.4-61.6-42.8-92.4-64.2c-0.7-0.5-0.9-1-0.7-1.8c0.4,0,0.8,0,1.1,0c26.2,0.3,52.4,0.7,78.6,1c11.3,0.2,22.7,0.3,34,0.5c0.8,0,1.1-0.2,1.4-1c11.1-36.2,22.3-72.4,33.4-108.5c0.1-0.2,0.1-0.4,0.3-0.8c11.3,37.1,22.6,74,34,110.9c39-0.8,78-1.5,117.2-2.3c-0.3,0.3-0.5,0.4-0.7,0.6c-15.7,11-31.5,22.1-47.2,33.1c-15.5,10.8-30.9,21.7-46.4,32.5c-0.5,0.4-0.6,0.7-0.4,1.3c12.1,35.8,24.3,71.6,36.4,107.4c0.1,0.2,0.1,0.4,0.2,0.8C210.8,269.1,179.8,246.3,148.8,223.4z"/><path class="st0" fill="#ffcc00" d="M148.8,223.4c-31.1,22.9-62.2,45.8-93.5,68.9c0.1-0.4,0.2-0.7,0.3-0.9c12.7-35.9,25.3-71.7,38-107.6c0.2-0.6,0.2-1-0.4-1.4c-30.8-21.4-61.6-42.8-92.4-64.2c-0.7-0.5-0.9-1-0.7-1.8c0.4,0,0.8,0,1.1,0c26.2,0.3,52.4,0.7,78.6,1c11.3,0.2,22.7,0.3,34,0.5c0.8,0,1.1-0.2,1.4-1c11.1-36.2,22.3-72.4,33.4-108.5c0.1-0.2,0.1-0.4,0.3-0.8"/></svg>
+    </div>
+
+
+</div>
+
+
+        <a href="/projects/clovisgrid/reviews/" class="count" title="ClovisGrid Reviews">
+            3 Reviews
+        </a>
+    </div>
+    
+
+    
+    <strong class="">
+        <b class="label">Downloads:</b>
+        
+            3 This Week
+        
+    </strong>
+    
+
+    
+    <strong class="">
+        <b class="label">Last Update:</b>
+        
+            <time class="dateUpdated" datetime="2013-05-30">2013-05-30</time>
+        
+    </strong>
+    
+
+        </div>
+        
+    </div>
+    <div>
+        <a href="/projects/clovisgrid/" title="Find out more about ClovisGrid" class="button green hollow see-project">See Project</a>
+    </div>
+</li>
+
+            
+            
+        </ul>
+    </div>
+</aside>
+
+            <hr class="bottom">
+
+
+        
+        <div class="small-12 columns content-supplement">
+            
+
+        </div>
+        
+
+        
+            
+<aside class="m-wide-widget m-wide-projects-widget ">
+    <div class="as-header">
+        
+        Top 3 Projects in Games
+    </div>
+    <div class="body">
+        <ul>
+            
+            
+
+
+
+
+<li>
+    
+        
+
+
+<div class="project-icon   " >
+    
+    
+    <img alt="DOSBox" title="DOSBox" 
+src="//a.fsdn.com/allura/p/dosbox/icon?1522855276?&amp;w=48"
+    srcset="//a.fsdn.com/allura/p/dosbox/icon?1522855276?&amp;w=72 1.5x
+        ,
+            //a.fsdn.com/allura/p/dosbox/icon?1522855276?&amp;w=96 2x" loading="lazy"/></div>
+
+    
+    <div class="project-info ">
+        <div class="result-heading-texts">
+            <a href="/projects/dosbox/" title="Find out more about DOSBox">
+                
+                <strong>DOSBox</strong>
+            </a>
+            
+                <a href="/projects/dosbox/" title="Find out more about DOSBox" class="summary-inline">DOSBox emulates a full x86 pc with sound and DOS. Its main use is to run old DOS games on platforms which don&#39;t have DOS (Windows 7, 8, 8.1 and 10 / Linux / FreeBSD / Mac OS X)</a>
+            
+        </div>
+        
+        <div class="stats">
+            
+    
+    
+    <div class="rating">
+        
+
+
+
+
+
+
+<div class="m-stars" aria-hidden="true" >
+
+
+    
+    
+    
+    
+    
+    
+    
+    <div class="star responsive yellow">
+        
+<svg  data-name="sf_star_yellow" xmlns="http://www.w3.org/2000/svg" x="0px" y="0px" viewBox="0 0 300 285.8" style="enable-background:new 0 0 300 285.8;" xml:space="preserve"><polygon class="st0" fill="#ffcc00" points="150,0 185.4,109.2 300,109.2 207.3,176.6 242.7,285.8 150,218.3 57.3,285.8 92.7,176.6 0,109.2 114.6,109.2 "/></svg>
+    </div>
+
+
+    
+    
+    
+    
+    
+    
+    
+    <div class="star responsive yellow">
+        
+<svg  data-name="sf_star_yellow" xmlns="http://www.w3.org/2000/svg" x="0px" y="0px" viewBox="0 0 300 285.8" style="enable-background:new 0 0 300 285.8;" xml:space="preserve"><polygon class="st0" fill="#ffcc00" points="150,0 185.4,109.2 300,109.2 207.3,176.6 242.7,285.8 150,218.3 57.3,285.8 92.7,176.6 0,109.2 114.6,109.2 "/></svg>
+    </div>
+
+
+    
+    
+    
+    
+    
+    
+    
+    <div class="star responsive yellow">
+        
+<svg  data-name="sf_star_yellow" xmlns="http://www.w3.org/2000/svg" x="0px" y="0px" viewBox="0 0 300 285.8" style="enable-background:new 0 0 300 285.8;" xml:space="preserve"><polygon class="st0" fill="#ffcc00" points="150,0 185.4,109.2 300,109.2 207.3,176.6 242.7,285.8 150,218.3 57.3,285.8 92.7,176.6 0,109.2 114.6,109.2 "/></svg>
+    </div>
+
+
+    
+    
+    
+    
+    
+    
+    
+    <div class="star responsive yellow">
+        
+<svg  data-name="sf_star_yellow" xmlns="http://www.w3.org/2000/svg" x="0px" y="0px" viewBox="0 0 300 285.8" style="enable-background:new 0 0 300 285.8;" xml:space="preserve"><polygon class="st0" fill="#ffcc00" points="150,0 185.4,109.2 300,109.2 207.3,176.6 242.7,285.8 150,218.3 57.3,285.8 92.7,176.6 0,109.2 114.6,109.2 "/></svg>
+    </div>
+
+
+    
+    
+    
+    
+    
+    
+    
+    <div class="star responsive yellow">
+        
+<svg  data-name="sf_star_yellow" xmlns="http://www.w3.org/2000/svg" x="0px" y="0px" viewBox="0 0 300 285.8" style="enable-background:new 0 0 300 285.8;" xml:space="preserve"><polygon class="st0" fill="#ffcc00" points="150,0 185.4,109.2 300,109.2 207.3,176.6 242.7,285.8 150,218.3 57.3,285.8 92.7,176.6 0,109.2 114.6,109.2 "/></svg>
+    </div>
+
+
+</div>
+
+
+        <a href="/projects/dosbox/reviews/" class="count" title="DOSBox Reviews">
+            165 Reviews
+        </a>
+    </div>
+    
+
+    
+    <strong class="">
+        <b class="label">Downloads:</b>
+        
+            15,534 This Week
+        
+    </strong>
+    
+
+    
+    <strong class="">
+        <b class="label">Last Update:</b>
+        
+            <time class="dateUpdated" datetime="2025-08-25">2025-08-25</time>
+        
+    </strong>
+    
+
+        </div>
+        
+    </div>
+    <div>
+        <a href="/projects/dosbox/" title="Find out more about DOSBox" class="button green hollow see-project">See Project</a>
+    </div>
+</li>
+
+            
+            
+            
+
+
+
+
+<li>
+    
+        
+
+
+<div class="project-icon   " >
+    
+    
+    <img alt="Rigs of Rods 0.4+" title="Rigs of Rods 0.4+" 
+src="//a.fsdn.com/allura/p/rigs-of-rods/icon?1616519798?&amp;w=48"
+    srcset="//a.fsdn.com/allura/p/rigs-of-rods/icon?1616519798?&amp;w=72 1.5x
+        ,
+            //a.fsdn.com/allura/p/rigs-of-rods/icon?1616519798?&amp;w=96 2x" loading="lazy"/></div>
+
+    
+    <div class="project-info ">
+        <div class="result-heading-texts">
+            <a href="/projects/rigs-of-rods/" title="Find out more about Rigs of Rods 0.4+">
+                
+                <strong>Rigs of Rods 0.4+</strong>
+            </a>
+            
+                <a href="/projects/rigs-of-rods/" title="Find out more about Rigs of Rods 0.4+" class="summary-inline">Rigs of Rods is a free/libre soft-body physics simulator mainly targeted at simulating vehicle physics. The soft-body physics system is based on mass-spring-damper theory.
+
+This is a mirror of the Rigs of Rods GitHub repository: https://github.com/RigsOfRods/rigs-of-rods
+
+The old SourceForge project can be found here: https://sourceforge.net/projects/rigsofrods/
+
+
+</a>
+            
+        </div>
+        
+        <div class="stats">
+            
+    
+    
+    <div class="rating">
+        
+
+
+
+
+
+
+<div class="m-stars" aria-hidden="true" >
+
+
+    
+    
+    
+    
+    
+    
+    
+    <div class="star responsive yellow">
+        
+<svg  data-name="sf_star_yellow" xmlns="http://www.w3.org/2000/svg" x="0px" y="0px" viewBox="0 0 300 285.8" style="enable-background:new 0 0 300 285.8;" xml:space="preserve"><polygon class="st0" fill="#ffcc00" points="150,0 185.4,109.2 300,109.2 207.3,176.6 242.7,285.8 150,218.3 57.3,285.8 92.7,176.6 0,109.2 114.6,109.2 "/></svg>
+    </div>
+
+
+    
+    
+    
+    
+    
+    
+    
+    <div class="star responsive yellow">
+        
+<svg  data-name="sf_star_yellow" xmlns="http://www.w3.org/2000/svg" x="0px" y="0px" viewBox="0 0 300 285.8" style="enable-background:new 0 0 300 285.8;" xml:space="preserve"><polygon class="st0" fill="#ffcc00" points="150,0 185.4,109.2 300,109.2 207.3,176.6 242.7,285.8 150,218.3 57.3,285.8 92.7,176.6 0,109.2 114.6,109.2 "/></svg>
+    </div>
+
+
+    
+    
+    
+    
+    
+    
+    
+    <div class="star responsive yellow">
+        
+<svg  data-name="sf_star_yellow" xmlns="http://www.w3.org/2000/svg" x="0px" y="0px" viewBox="0 0 300 285.8" style="enable-background:new 0 0 300 285.8;" xml:space="preserve"><polygon class="st0" fill="#ffcc00" points="150,0 185.4,109.2 300,109.2 207.3,176.6 242.7,285.8 150,218.3 57.3,285.8 92.7,176.6 0,109.2 114.6,109.2 "/></svg>
+    </div>
+
+
+    
+    
+    
+    
+    
+    
+    
+    <div class="star responsive yellow">
+        
+<svg  data-name="sf_star_yellow" xmlns="http://www.w3.org/2000/svg" x="0px" y="0px" viewBox="0 0 300 285.8" style="enable-background:new 0 0 300 285.8;" xml:space="preserve"><polygon class="st0" fill="#ffcc00" points="150,0 185.4,109.2 300,109.2 207.3,176.6 242.7,285.8 150,218.3 57.3,285.8 92.7,176.6 0,109.2 114.6,109.2 "/></svg>
+    </div>
+
+
+    
+    
+    
+    
+    
+    
+    
+    <div class="star responsive yellow">
+        
+<svg  data-name="sf_star_yellow" xmlns="http://www.w3.org/2000/svg" x="0px" y="0px" viewBox="0 0 300 285.8" style="enable-background:new 0 0 300 285.8;" xml:space="preserve"><polygon class="st0" fill="#ffcc00" points="150,0 185.4,109.2 300,109.2 207.3,176.6 242.7,285.8 150,218.3 57.3,285.8 92.7,176.6 0,109.2 114.6,109.2 "/></svg>
+    </div>
+
+
+</div>
+
+
+        <a href="/projects/rigs-of-rods/reviews/" class="count" title="Rigs of Rods 0.4+ Reviews">
+            1 Review
+        </a>
+    </div>
+    
+
+    
+    <strong class="">
+        <b class="label">Downloads:</b>
+        
+            12,071 This Week
+        
+    </strong>
+    
+
+    
+    <strong class="">
+        <b class="label">Last Update:</b>
+        
+            <time class="dateUpdated" datetime="2026-01-04">2026-01-04</time>
+        
+    </strong>
+    
+
+        </div>
+        
+    </div>
+    <div>
+        <a href="/projects/rigs-of-rods/" title="Find out more about Rigs of Rods 0.4+" class="button green hollow see-project">See Project</a>
+    </div>
+</li>
+
+            
+            
+            
+
+
+
+
+<li>
+    
+        
+
+
+<div class="project-icon   " >
+    
+    
+    <img alt="VCMI Project" title="VCMI Project" 
+src="//a.fsdn.com/allura/mirror/vcmi-project/icon?89cb0948dd89a21f1e1a686bb777fe5f48735fd589edb7859e341a9439dcd3bf?&amp;w=48"
+    srcset="//a.fsdn.com/allura/mirror/vcmi-project/icon?89cb0948dd89a21f1e1a686bb777fe5f48735fd589edb7859e341a9439dcd3bf?&amp;w=72 1.5x
+        ,
+            //a.fsdn.com/allura/mirror/vcmi-project/icon?89cb0948dd89a21f1e1a686bb777fe5f48735fd589edb7859e341a9439dcd3bf?&amp;w=96 2x" loading="lazy"/></div>
+
+    
+    <div class="project-info ">
+        <div class="result-heading-texts">
+            <a href="/projects/vcmi-project.mirror/" title="Find out more about VCMI Project">
+                
+                <strong>VCMI Project</strong>
+            </a>
+            
+                <a href="/projects/vcmi-project.mirror/" title="Find out more about VCMI Project" class="summary-inline">VCMI is work-in-progress attempt to recreate engine for Heroes III, giving it new and extended possibilities. To use VCMI you need to own original data files. 
+
+</a>
+            
+        </div>
+        
+        <div class="stats">
+            
+    
+    
+    <div class="rating">
+        
+
+
+
+
+
+
+<div class="m-stars" aria-hidden="true" >
+
+
+    
+    
+    
+    
+    
+    
+    
+    <div class="star responsive yellow">
+        
+<svg  data-name="sf_star_yellow" xmlns="http://www.w3.org/2000/svg" x="0px" y="0px" viewBox="0 0 300 285.8" style="enable-background:new 0 0 300 285.8;" xml:space="preserve"><polygon class="st0" fill="#ffcc00" points="150,0 185.4,109.2 300,109.2 207.3,176.6 242.7,285.8 150,218.3 57.3,285.8 92.7,176.6 0,109.2 114.6,109.2 "/></svg>
+    </div>
+
+
+    
+    
+    
+    
+    
+    
+    
+    <div class="star responsive yellow">
+        
+<svg  data-name="sf_star_yellow" xmlns="http://www.w3.org/2000/svg" x="0px" y="0px" viewBox="0 0 300 285.8" style="enable-background:new 0 0 300 285.8;" xml:space="preserve"><polygon class="st0" fill="#ffcc00" points="150,0 185.4,109.2 300,109.2 207.3,176.6 242.7,285.8 150,218.3 57.3,285.8 92.7,176.6 0,109.2 114.6,109.2 "/></svg>
+    </div>
+
+
+    
+    
+    
+    
+    
+    
+    
+    <div class="star responsive yellow">
+        
+<svg  data-name="sf_star_yellow" xmlns="http://www.w3.org/2000/svg" x="0px" y="0px" viewBox="0 0 300 285.8" style="enable-background:new 0 0 300 285.8;" xml:space="preserve"><polygon class="st0" fill="#ffcc00" points="150,0 185.4,109.2 300,109.2 207.3,176.6 242.7,285.8 150,218.3 57.3,285.8 92.7,176.6 0,109.2 114.6,109.2 "/></svg>
+    </div>
+
+
+    
+    
+    
+    
+    
+    
+    
+    <div class="star responsive yellow">
+        
+<svg  data-name="sf_star_yellow" xmlns="http://www.w3.org/2000/svg" x="0px" y="0px" viewBox="0 0 300 285.8" style="enable-background:new 0 0 300 285.8;" xml:space="preserve"><polygon class="st0" fill="#ffcc00" points="150,0 185.4,109.2 300,109.2 207.3,176.6 242.7,285.8 150,218.3 57.3,285.8 92.7,176.6 0,109.2 114.6,109.2 "/></svg>
+    </div>
+
+
+    
+    
+    
+    
+    
+    
+    
+    <div class="star responsive yellow">
+        
+<svg  data-name="sf_star_yellow" xmlns="http://www.w3.org/2000/svg" x="0px" y="0px" viewBox="0 0 300 285.8" style="enable-background:new 0 0 300 285.8;" xml:space="preserve"><polygon class="st0" fill="#ffcc00" points="150,0 185.4,109.2 300,109.2 207.3,176.6 242.7,285.8 150,218.3 57.3,285.8 92.7,176.6 0,109.2 114.6,109.2 "/></svg>
+    </div>
+
+
+</div>
+
+
+        <a href="/projects/vcmi-project.mirror/reviews/" class="count" title="VCMI Project Reviews">
+            1 Review
+        </a>
+    </div>
+    
+
+    
+    <strong class="">
+        <b class="label">Downloads:</b>
+        
+            9,903 This Week
+        
+    </strong>
+    
+
+    
+    <strong class="">
+        <b class="label">Last Update:</b>
+        
+            <time class="dateUpdated" datetime="2026-05-19">2026-05-19</time>
+        
+    </strong>
+    
+
+        </div>
+        
+    </div>
+    <div>
+        <a href="/projects/vcmi-project.mirror/" title="Find out more about VCMI Project" class="button green hollow see-project">See Project</a>
+    </div>
+</li>
+
+            
+            
+        </ul>
+    </div>
+</aside>
+
+        
+
+        
+        <div class="dlp_newsletter_subscribe">
+            
+<div class="m-kmu row">
+    <div class="small-12 column">
+        <div class="row is-collapse-child">
+            <div class="small-12 column">
+                <h3 class="as-h1">Keep Me Updated!</h3>
+                <div class="subscribe-tagline">Get notified by email when libsdl-android releases a new version.</div>
+                
+
+<form action="/user/newsletters/subscribe" method="post"
+      class="newsletter-subscribe-form compliance-form optin-wide kmunl-subscribe-form"
+      data-shortname="libsdl-android" data-handler="KMUNSWidget">
+    <input type="hidden" name="country_code_source" value="user">
+    <input type="hidden" name="source" value="DLP">
+
+    <div class="row">
+        <div class="column small-12 large-6">
+            <input type="email" class="subscriber-email" name="email"  placeholder="Enter your email address" value="" required autocapitalize="none">
+            
+        </div>
+        
+        <label class="column ">
+            <span class="show-for-sr">Country</span><span class="input">
+<select id="country" name="country" required class=" use-placeholder-color"  autocomplete="country">
+    
+    <option value=""></option>
+    
+    <option value="AF">Afghanistan</option>
+    <option value="AX">Aland Islands</option>
+    <option value="AL">Albania</option>
+    <option value="DZ">Algeria</option>
+    <option value="AS">American Samoa</option>
+    <option value="AD">Andorra</option>
+    <option value="AO">Angola</option>
+    <option value="AI">Anguilla</option>
+    <option value="AQ">Antarctica</option>
+    <option value="AG">Antigua and Barbuda</option>
+    <option value="AR">Argentina</option>
+    <option value="AM">Armenia</option>
+    <option value="AW">Aruba</option>
+    <option value="AU">Australia</option>
+    <option value="AT">Austria</option>
+    <option value="AZ">Azerbaijan</option>
+    <option value="BS">Bahamas</option>
+    <option value="BH">Bahrain</option>
+    <option value="BD">Bangladesh</option>
+    <option value="BB">Barbados</option>
+    <option value="BY">Belarus</option>
+    <option value="BE">Belgium</option>
+    <option value="BZ">Belize</option>
+    <option value="BJ">Benin</option>
+    <option value="BM">Bermuda</option>
+    <option value="BT">Bhutan</option>
+    <option value="BO">Bolivia</option>
+    <option value="BQ">Bonaire, Sint Eustatius and Saba</option>
+    <option value="BA">Bosnia and Herzegovina</option>
+    <option value="BW">Botswana</option>
+    <option value="BV">Bouvet Island</option>
+    <option value="BR">Brazil</option>
+    <option value="IO">British Indian Ocean Territory</option>
+    <option value="BN">Brunei Darussalam</option>
+    <option value="BG">Bulgaria</option>
+    <option value="BF">Burkina Faso</option>
+    <option value="BI">Burundi</option>
+    <option value="KH">Cambodia</option>
+    <option value="CM">Cameroon</option>
+    <option value="CA">Canada</option>
+    <option value="CV">Cape Verde</option>
+    <option value="KY">Cayman Islands</option>
+    <option value="CF">Central African Republic</option>
+    <option value="TD">Chad</option>
+    <option value="CL">Chile</option>
+    <option value="CN">China</option>
+    <option value="CX">Christmas Island</option>
+    <option value="CC">Cocos (Keeling) Islands</option>
+    <option value="CO">Colombia</option>
+    <option value="KM">Comoros</option>
+    <option value="CG">Congo</option>
+    <option value="CD">Congo, The Democratic Republic of the</option>
+    <option value="CK">Cook Islands</option>
+    <option value="CR">Costa Rica</option>
+    <option value="CI">Cote D&#39;Ivoire</option>
+    <option value="HR">Croatia</option>
+    <option value="CU">Cuba</option>
+    <option value="CY">Cyprus</option>
+    <option value="CZ">Czech Republic</option>
+    <option value="DK">Denmark</option>
+    <option value="DJ">Djibouti</option>
+    <option value="DM">Dominica</option>
+    <option value="DO">Dominican Republic</option>
+    <option value="EC">Ecuador</option>
+    <option value="EG">Egypt</option>
+    <option value="SV">El Salvador</option>
+    <option value="GQ">Equatorial Guinea</option>
+    <option value="ER">Eritrea</option>
+    <option value="EE">Estonia</option>
+    <option value="ET">Ethiopia</option>
+    <option value="FK">Falkland Islands (Malvinas)</option>
+    <option value="FO">Faroe Islands</option>
+    <option value="FJ">Fiji</option>
+    <option value="FI">Finland</option>
+    <option value="FR">France</option>
+    <option value="GF">French Guiana</option>
+    <option value="PF">French Polynesia</option>
+    <option value="TF">French Southern Territories</option>
+    <option value="GA">Gabon</option>
+    <option value="GM">Gambia</option>
+    <option value="GE">Georgia</option>
+    <option value="DE">Germany</option>
+    <option value="GH">Ghana</option>
+    <option value="GI">Gibraltar</option>
+    <option value="GR">Greece</option>
+    <option value="GL">Greenland</option>
+    <option value="GD">Grenada</option>
+    <option value="GP">Guadeloupe</option>
+    <option value="GU">Guam</option>
+    <option value="GT">Guatemala</option>
+    <option value="GG">Guernsey</option>
+    <option value="GN">Guinea</option>
+    <option value="GW">Guinea-Bissau</option>
+    <option value="GY">Guyana</option>
+    <option value="HT">Haiti</option>
+    <option value="HM">Heard Island and McDonald Islands</option>
+    <option value="VA">Holy See (Vatican City State)</option>
+    <option value="HN">Honduras</option>
+    <option value="HK">Hong Kong</option>
+    <option value="HU">Hungary</option>
+    <option value="IS">Iceland</option>
+    <option value="IN">India</option>
+    <option value="ID">Indonesia</option>
+    <option value="IR">Iran, Islamic Republic of</option>
+    <option value="IQ">Iraq</option>
+    <option value="IE">Ireland</option>
+    <option value="IM">Isle of Man</option>
+    <option value="IL">Israel</option>
+    <option value="IT">Italy</option>
+    <option value="JM">Jamaica</option>
+    <option value="JP" selected>Japan</option>
+    <option value="JE">Jersey</option>
+    <option value="JO">Jordan</option>
+    <option value="KZ">Kazakhstan</option>
+    <option value="KE">Kenya</option>
+    <option value="KI">Kiribati</option>
+    <option value="KP">Korea, Democratic People&#39;s Republic of</option>
+    <option value="KR">Korea, Republic of</option>
+    <option value="XK">Kosovo</option>
+    <option value="KW">Kuwait</option>
+    <option value="KG">Kyrgyzstan</option>
+    <option value="LA">Lao People&#39;s Democratic Republic</option>
+    <option value="LV">Latvia</option>
+    <option value="LB">Lebanon</option>
+    <option value="LS">Lesotho</option>
+    <option value="LR">Liberia</option>
+    <option value="LY">Libyan Arab Jamahiriya</option>
+    <option value="LI">Liechtenstein</option>
+    <option value="LT">Lithuania</option>
+    <option value="LU">Luxembourg</option>
+    <option value="MO">Macau</option>
+    <option value="MK">Macedonia</option>
+    <option value="MG">Madagascar</option>
+    <option value="MW">Malawi</option>
+    <option value="MY">Malaysia</option>
+    <option value="MV">Maldives</option>
+    <option value="ML">Mali</option>
+    <option value="MT">Malta</option>
+    <option value="MH">Marshall Islands</option>
+    <option value="MQ">Martinique</option>
+    <option value="MR">Mauritania</option>
+    <option value="MU">Mauritius</option>
+    <option value="YT">Mayotte</option>
+    <option value="MX">Mexico</option>
+    <option value="FM">Micronesia, Federated States of</option>
+    <option value="MD">Moldova, Republic of</option>
+    <option value="MC">Monaco</option>
+    <option value="MN">Mongolia</option>
+    <option value="ME">Montenegro</option>
+    <option value="MS">Montserrat</option>
+    <option value="MA">Morocco</option>
+    <option value="MZ">Mozambique</option>
+    <option value="MM">Myanmar</option>
+    <option value="NA">Namibia</option>
+    <option value="NR">Nauru</option>
+    <option value="NP">Nepal</option>
+    <option value="NL">Netherlands</option>
+    <option value="AN">Netherlands Antilles</option>
+    <option value="NC">New Caledonia</option>
+    <option value="NZ">New Zealand</option>
+    <option value="NI">Nicaragua</option>
+    <option value="NE">Niger</option>
+    <option value="NG">Nigeria</option>
+    <option value="NU">Niue</option>
+    <option value="NF">Norfolk Island</option>
+    <option value="MP">Northern Mariana Islands</option>
+    <option value="NO">Norway</option>
+    <option value="OM">Oman</option>
+    <option value="PK">Pakistan</option>
+    <option value="PW">Palau</option>
+    <option value="PS">Palestinian Territory</option>
+    <option value="PA">Panama</option>
+    <option value="PG">Papua New Guinea</option>
+    <option value="PY">Paraguay</option>
+    <option value="PE">Peru</option>
+    <option value="PH">Philippines</option>
+    <option value="PN">Pitcairn Islands</option>
+    <option value="PL">Poland</option>
+    <option value="PT">Portugal</option>
+    <option value="PR">Puerto Rico</option>
+    <option value="QA">Qatar</option>
+    <option value="RE">Reunion</option>
+    <option value="RO">Romania</option>
+    <option value="RU">Russian Federation</option>
+    <option value="RW">Rwanda</option>
+    <option value="BL">Saint Barthelemy</option>
+    <option value="SH">Saint Helena</option>
+    <option value="KN">Saint Kitts and Nevis</option>
+    <option value="LC">Saint Lucia</option>
+    <option value="MF">Saint Martin</option>
+    <option value="PM">Saint Pierre and Miquelon</option>
+    <option value="VC">Saint Vincent and the Grenadines</option>
+    <option value="WS">Samoa</option>
+    <option value="SM">San Marino</option>
+    <option value="ST">Sao Tome and Principe</option>
+    <option value="SA">Saudi Arabia</option>
+    <option value="SN">Senegal</option>
+    <option value="RS">Serbia</option>
+    <option value="SC">Seychelles</option>
+    <option value="SL">Sierra Leone</option>
+    <option value="SG">Singapore</option>
+    <option value="SX">Sint Maarten</option>
+    <option value="SK">Slovakia</option>
+    <option value="SI">Slovenia</option>
+    <option value="SB">Solomon Islands</option>
+    <option value="SO">Somalia</option>
+    <option value="ZA">South Africa</option>
+    <option value="GS">South Georgia and the South Sandwich Islands</option>
+    <option value="SS">South Sudan</option>
+    <option value="ES">Spain</option>
+    <option value="LK">Sri Lanka</option>
+    <option value="SD">Sudan</option>
+    <option value="SR">Suriname</option>
+    <option value="SJ">Svalbard and Jan Mayen</option>
+    <option value="SZ">Swaziland</option>
+    <option value="SE">Sweden</option>
+    <option value="CH">Switzerland</option>
+    <option value="SY">Syrian Arab Republic</option>
+    <option value="TW">Taiwan</option>
+    <option value="TJ">Tajikistan</option>
+    <option value="TZ">Tanzania, United Republic of</option>
+    <option value="TH">Thailand</option>
+    <option value="TL">Timor-Leste</option>
+    <option value="TG">Togo</option>
+    <option value="TK">Tokelau</option>
+    <option value="TO">Tonga</option>
+    <option value="TT">Trinidad and Tobago</option>
+    <option value="TN">Tunisia</option>
+    <option value="TR">Turkey</option>
+    <option value="TM">Turkmenistan</option>
+    <option value="TC">Turks and Caicos Islands</option>
+    <option value="TV">Tuvalu</option>
+    <option value="UG">Uganda</option>
+    <option value="UA">Ukraine</option>
+    <option value="AE">United Arab Emirates</option>
+    <option value="GB">United Kingdom</option>
+    <option value="US">United States</option>
+    <option value="UM">United States Minor Outlying Islands</option>
+    <option value="UY">Uruguay</option>
+    <option value="UZ">Uzbekistan</option>
+    <option value="VU">Vanuatu</option>
+    <option value="VE">Venezuela</option>
+    <option value="VN">Vietnam</option>
+    <option value="VG">Virgin Islands, British</option>
+    <option value="VI">Virgin Islands, U.S.</option>
+    <option value="WF">Wallis and Futuna</option>
+    <option value="EH">Western Sahara</option>
+    <option value="YE">Yemen</option>
+    <option value="ZM">Zambia</option>
+    <option value="ZW">Zimbabwe</option>
+</select>
+</span>
+        </label>
+        <label class="input-set-state column small-6 large-3">
+            <span class="show-for-sr">State</span>
+            <span class="input">
+<select id="state" name="state" required class=" use-placeholder-color"  autocomplete="address-level1">
+    
+    <option value=""></option>
+    
+    <option value="AL">Alabama</option>
+    <option value="AK">Alaska</option>
+    <option value="AZ">Arizona</option>
+    <option value="AR">Arkansas</option>
+    <option value="CA">California</option>
+    <option value="CO">Colorado</option>
+    <option value="CT">Connecticut</option>
+    <option value="DE">Delaware</option>
+    <option value="DC">District of Columbia</option>
+    <option value="FL">Florida</option>
+    <option value="GA">Georgia</option>
+    <option value="HI">Hawaii</option>
+    <option value="ID">Idaho</option>
+    <option value="IL">Illinois</option>
+    <option value="IN">Indiana</option>
+    <option value="IA">Iowa</option>
+    <option value="KS">Kansas</option>
+    <option value="KY">Kentucky</option>
+    <option value="LA">Louisiana</option>
+    <option value="ME">Maine</option>
+    <option value="MD">Maryland</option>
+    <option value="MA">Massachusetts</option>
+    <option value="MI">Michigan</option>
+    <option value="MN">Minnesota</option>
+    <option value="MS">Mississippi</option>
+    <option value="MO">Missouri</option>
+    <option value="MT">Montana</option>
+    <option value="NE">Nebraska</option>
+    <option value="NV">Nevada</option>
+    <option value="NH">New Hampshire</option>
+    <option value="NJ">New Jersey</option>
+    <option value="NM">New Mexico</option>
+    <option value="NY">New York</option>
+    <option value="NC">North Carolina</option>
+    <option value="ND">North Dakota</option>
+    <option value="OH">Ohio</option>
+    <option value="OK">Oklahoma</option>
+    <option value="OR">Oregon</option>
+    <option value="PA">Pennsylvania</option>
+    <option value="PR">Puerto Rico</option>
+    <option value="RI">Rhode Island</option>
+    <option value="SC">South Carolina</option>
+    <option value="SD">South Dakota</option>
+    <option value="TN">Tennessee</option>
+    <option value="TX">Texas</option>
+    <option value="UT">Utah</option>
+    <option value="VT">Vermont</option>
+    <option value="VA">Virginia</option>
+    <option value="WA">Washington</option>
+    <option value="WV">West Virginia</option>
+    <option value="WI">Wisconsin</option>
+    <option value="WY">Wyoming</option>
+</select>
+</span>
+        </label>
+        
+    </div>
+    <div class="row">
+        
+            <div class="column small-12 large-4">
+                
+<label>
+    <span class="show-for-sr">Full Name</span>
+    <input name="name" type="text" value="" placeholder="Full name" required autocomplete="name" >
+</label>
+<span class="fielderror"></span>
+            </div>
+
+            <div class="column small-12 large-4 field-group-phone">
+                
+    
+    <span>
+    <input type="text" name="phone_ext" value="" placeholder="Ext" class="phone-ext" autocomplete="work tel-extension">
+    </span>
+    <label class="phone-label">
+        <span class="show-for-sr">Phone Number</span>
+        <input type="text" name="phone" value="" placeholder="Phone # " class="phone"  autocomplete="work tel-national">
+    </label>
+    <span class="fielderror"></span>
+    <span class="fielderror"></span>
+            </div>
+
+            
+    <div class="column small-12 large-4">
+    <label>
+        <span class="show-for-sr">Job Title</span>
+        <input type="text" name="job" value="" placeholder="Job Title " class="job"  autocomplete="organization-title">
+        <span class="fielderror"></span>
+    </label>
+    </div>
+    <div class="column small-12 large-4">
+    <label>
+        <span class="show-for-sr">Industry</span>
+        <input type="text" name="industry" value="" placeholder="Industry " class="industry" >
+        <span class="fielderror"></span>
+    </label>
+        </div>
+        <div class="column small-12 large-4">
+    <label>
+        <span class="show-for-sr">Company</span>
+        <input type="text" name="company" value="" placeholder="Company " class="company"  autocomplete="organization">
+        <span class="fielderror"></span>
+    </label>
+    </div>
+    <div class="column small-12 large-4">
+    <label>
+        <span class="show-for-sr">Company Size</span>
+        
+        
+<select id="employees-4419018" name="employees"  class="employees use-placeholder-color" >
+    
+    <option value="">Company Size:  </option>
+    
+    <option value="1 - 25">1 - 25</option>
+    <option value="26 - 99">26 - 99</option>
+    <option value="100 - 499">100 - 499</option>
+    <option value="500 - 999">500 - 999</option>
+    <option value="1,000 - 4,999">1,000 - 4,999</option>
+    <option value="5,000 - 9,999">5,000 - 9,999</option>
+    <option value="10,000 - 19,999">10,000 - 19,999</option>
+    <option value="20,000 or More">20,000 or More</option>
+</select>
+
+        <span class="fielderror"></span>
+    </label>
+    </div>
+        
+
+        <div class="column small-12">
+            
+                
+ 
+
+<label class="input-set input-set-kmu kmunl_consent allow-precheck ">
+    <span class="checkbox"> <input type="checkbox" name="kmu" value="libsdl-android"   data-consent-action data-consent-id=67c8e2504e339052243db488 ></span>
+    <span class="checkbox-label">Get an email when this software releases a new version (no other emails will be sent).</span>
+    
+
+</label>
+
+
+                
+                
+                
+ 
+
+<label class="input-set input-set-newsletters-optin-sitewide allow-precheck loose-consent-requirement kmunl_consent">
+    <span class="checkbox"> <input type="checkbox" name="newsletters" value="sitewide"   data-consent-action data-consent-id=59aed8e456585fa9603b60e9 ></span>
+    <span class="checkbox-label">Get the SourceForge newsletter.</span>
+    
+
+</label>
+
+
+                
+                
+ 
+
+<label class="input-set allow-precheck input-set-newsletters-optin-all kmunl_consent">
+    <span class="checkbox"> <input type="checkbox" name="newsletters" value="sitewide research"   data-consent-action data-consent-id=59aed8e456585fa9603b60ea ></span>
+    <span class="checkbox-label">Get newsletters and notices that include site news, special offers and exclusive discounts about IT products &amp; services.</span>
+    
+
+</label>
+
+
+                
+            
+
+            <input type="hidden" name="newsletters" class="input-assumed-newsletters" value="">
+            <input type="hidden" name="kmu" class="input-assumed-kmu" value="">
+        </div>
+
+        
+ 
+
+<label class="input-set input-set-agree-general allow-precheck column small-12">
+    <span class="checkbox"> <input type="checkbox" name="consent" value="consent"   data-consent-action data-consent-id=64a70e76edead243b8c89d55 ></span>
+    <span class="checkbox-label">I understand by clicking on "Subscribe" below I am agreeing to the SourceForge  <a href="https://slashdotmedia.com/terms-of-use">Terms of Use</a> and the <a href="https://slashdotmedia.com/privacy-statement/">Privacy Policy</a> which describe how we use and share your data. I agree to receive these communications from SourceForge.net. I understand that I can withdraw my consent at anytime.</span>
+    
+
+</label>
+
+
+        
+ 
+
+<label class="input-set input-set-agree-general-gdpr minimum-explicit-required column small-12">
+    <span class="checkbox"> <input type="checkbox" name="consent" value="consent"   data-consent-action data-consent-id=6287d2bc1f62e544cb66ca31 ></span>
+    <span class="checkbox-label">I understand by clicking below I am agreeing to the SourceForge <a href="https://slashdotmedia.com/terms-of-use">Terms and Conditions</a>.  I agree to receive these communications from SourceForge.net.  I understand that I can withdraw my consent at anytime. Please refer to our <a href="https://slashdotmedia.com/terms-of-use">Terms of Use</a> and <a href="https://slashdotmedia.com/privacy-statement/">Privacy Policy</a> or <a href="/support">Contact Us</a> for more details.</span>
+    
+
+</label>
+
+
+
+        <div class="subscriber-submit-wrapper column small-12">
+            
+
+    <div class="js-required fielderror">JavaScript is required for this form.</div>
+    <div class="g-recaptcha"
+          data-sitekey="6LeVgCEUAAAAACtawUTrPTBy0mTrGtjpPn_Xh-ZW"
+          data-badge="bottomleft"
+          data-size="invisible"
+          >
+    </div>
+    <script>
+        SF.recaptchaInUse = true;
+    </script>
+
+
+            <button type="submit" class="subscriber-submit  button">
+                <span>
+                    Subscribe
+                </span>
+            </button>
+        </div>
+    </div>
+    <input type="hidden" name="_visit_cookie" value="7eba40fd-7e4f-4a06-b728-e53e8df817e7"/>
+</form>
+
+
+            </div>
+        </div>
+    </div>
+</div>
+
+        </div>
+        
+    </article>
+</div>
+                    </div>
+                    <div class="l-gutter">
+                    </div>
+                    <div class="l-side-column">
+                        
+<div class="scroll-fixable">
+    
+        
+        <aside class="m-sidebar-widget">
+            <div class="as-header"></div>
+            <div class="body nel-vert">
+                
+
+<script>
+    if (!SF.wireOutboundZoneTrackingComplete) {  
+        $(SF.wireOutboundZoneTracking);
+        $('body').append('<iframe src="https://c.sf-syn.com/conversion_outbound_tracker/sf" id="frame-zone-outbound" style="display: none;"></iframe>');
+        SF.wireOutboundZoneTrackingComplete = true;
+    }
+</script>
+
+
+                
+
+    
+    
+        
+    
+
+    <div class="nel standard can-trunc  "
+        data-id="10360">
+
+        
+
+
+<span id="ff83d61e-8945-47f9-b71e-51019a34a11f"></span>
+<script>
+    /* globals bizx */
+    bizx.cmp.trackingPixel('publisher', ['storage', 'measurement'], '/software/tp3/?b=41718&amp;c=8145&amp;z=39013&amp;cb=82eb6ba550&amp;rand=ff83d61e-8945-47f9-b71e-51019a34a11f', "Get full visibility and control over your tasks and projects with Wrike.", 'ff83d61e-8945-47f9-b71e-51019a34a11f');
+</script>
+
+
+        
+        <div class="application-image thumbnail"  data-dest="https://sourceforge.net/software/link?oaparams=2__bannerid=41718__zoneid=39013__cb=82eb6ba550__oadest=https%3A%2F%2Fwww.wrike.com%2F%3Futm_medium%3Dcpc%26utm_campaign%3Dprofile%26utm_content%3Dlisting%26utm_source%3Dsourceforge" data-newtab="true" data-target="_blank" rel="nofollow">
+            <img class="main-image" src="//a.fsdn.com/con/app/nel_img/10360" alt="Get full visibility and control over your tasks and projects with Wrike. Icon">
+            
+        </div>
+        <div class="wrapper">
+            <div class="heading">
+                <div class="heading-main">
+                    
+                    <span data-dest="https://sourceforge.net/software/link?oaparams=2__bannerid=41718__zoneid=39013__cb=82eb6ba550__oadest=https%3A%2F%2Fwww.wrike.com%2F%3Futm_medium%3Dcpc%26utm_campaign%3Dprofile%26utm_content%3Dlisting%26utm_source%3Dsourceforge" data-newtab="true" data-target="_blank" rel="nofollow" title="Find out more about Get full visibility and control over your tasks and projects with Wrike.">Get full visibility and control over your tasks and projects with Wrike.</span>
+
+                    
+                    <p class="teaser">A cloud-based collaboration, work management, and project management software</p>
+                </div>
+            </div>
+
+            
+            
+
+            <div class="tiles">
+                <div class="tile">
+                    
+                    <div class="description ">
+                        <div class="description-inner">
+                            Wrike offers world-class features that empower cross-functional, distributed, or growing teams take their projects from the initial request stage all the way to tracking work progress and reporting results.
+                        </div>
+                    </div>
+                </div>
+
+                
+            </div>
+
+        </div>
+
+        
+        <div class="download standard">
+            
+            
+
+            
+
+            
+        
+            
+        
+        <div class="button green wide sfdl sfdl-lite" data-target="_blank" data-newtab="true" data-dest="https://sourceforge.net/software/link?oaparams=2__bannerid=41718__zoneid=39013__cb=82eb6ba550__oadest=https%3A%2F%2Fwww.wrike.com%2F%3Futm_medium%3Dcpc%26utm_campaign%3Dprofile%26utm_content%3Dlisting%26utm_source%3Dsourceforge"
+                
+                    data-zone="39003" data-slug="Wrike"
+                >Learn More</div>
+        </div>
+
+        
+    </div>
+
+
+            </div>
+        </aside>
+
+    
+    
+        <aside class="m-sidebar-widget">
+            <div class="as-header">
+                Related Business Categories
+            </div>
+            <div class="body">
+                <ul><li class="item"><a href="/software/development-frameworks/">Development Frameworks</a></li></ul>
+            </div>
+        </aside>
+    
+
+    
+    <aside class="m-sidebar-widget content-supplement" id="sidebar-features">
+    <div class="as-header">
+        libsdl-android Features
+    </div>
+    <ul ><li class="item odd">SDL</li><li class="item even">Android</li><li class="item odd last">Games</li>
+    </ul>
+    </aside>
+    
+</div>
+
+    
+
+
+                    </div>
+                </div>
+            
+
+            
+    <footer class="sandiego">
+    <div class="as-row">
+        <div class="footer-wrapper">
+            <nav aria-label="Site Links" role="navigation">
+                <section>
+                    <div class="as-h2">SourceForge</div>
+                    <ul>
+                    
+                        <li><a href="/create/" title="Create a Project">Create a Project</a></li>
+                    
+                        <li><a href="/directory/" title="Open Source Software Directory">Open Source Software</a></li>
+                        <li><a href="/software/" title="Business Software Directory">Business Software</a></li>
+                        
+                            
+                            <li><a href="/top" title="Top Open Source Projects">Top Downloaded Projects</a></li>
+                        
+
+                    </ul>
+                </section>
+            </nav>
+            <nav aria-label="Company Links" role="navigation">
+                <section>
+                    <div class="as-h2">Company</div>
+                    <ul>
+                        <li><a href="/about">About</a></li>
+                        <li><a href="/about/leadership" title="Open Source Software Directory">Team</a></li>
+                        <li class="h-card">
+                            <address>
+                                <span class="p-name p-org">SourceForge Headquarters</span><br>
+                                <span class="p-street-address">1320 Columbia Street Suite 310</span><br>
+                                <span class="p-locality">San Diego, CA <span class="p-postal-code">92101</span></span><br>
+                                <span class="p-tel">+1 (858) 422-6466</span><br>
+                            </address>
+                        </li>
+                        <li id="social">
+                            
+<span></span>
+<a href="https://x.com/sourceforge" class="twitter" rel="nofollow" target="_blank" title="SourceForge on X">
+
+
+<svg  class="vertical-icon-fix" data-name="x-logo" viewBox="0 0 1200 1227" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M714.163 519.284L1160.89 0H1055.03L667.137 450.887L357.328 0H0L468.492 681.821L0 1226.37H105.866L515.491 750.218L842.672 1226.37H1200L714.137 519.284H714.163ZM569.165 687.828L521.697 619.934L144.011 79.6944H306.615L611.412 515.685L658.88 583.579L1055.08 1150.3H892.476L569.165 687.854V687.828Z" fill="white"/></svg></a>
+<a href="https://fosstodon.org/@sourceforge" rel="me nofollow" target="_blank" title="SourceForge on Mastodon">
+
+
+<svg  class="vertical-icon-fix" data-name="mastodon" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><path d="M433 179.11c0-97.2-63.71-125.7-63.71-125.7-62.52-28.7-228.56-28.4-290.48 0 0 0-63.72 28.5-63.72 125.7 0 115.7-6.6 259.4 105.63 289.1 40.51 10.7 75.32 13 103.33 11.4 50.81-2.8 79.32-18.1 79.32-18.1l-1.7-36.9s-36.31 11.4-77.12 10.1c-40.41-1.4-83-4.4-89.63-54a102.54 102.54 0 0 1-.9-13.9c85.63 20.9 158.65 9.1 178.75 6.7 56.12-6.7 105-41.3 111.23-72.9 9.8-49.8 9-121.5 9-121.5zm-75.12 125.2h-46.63v-114.2c0-49.7-64-51.6-64 6.9v62.5h-46.33V197c0-58.5-64-56.6-64-6.9v114.2H90.19c0-122.1-5.2-147.9 18.41-175 25.9-28.9 79.82-30.8 103.83 6.1l11.6 19.5 11.6-19.5c24.11-37.1 78.12-34.8 103.83-6.1 23.71 27.3 18.4 53 18.4 175z"/></svg></a>
+<a href="https://www.facebook.com/sourceforgenet/" class="facebook" rel="nofollow" target="_blank" title="SourceForge on Facebook">
+
+
+<svg  data-name="facebook" viewBox="0 0 1792 1792" xmlns="http://www.w3.org/2000/svg"><path d="M1343 12v264h-157q-86 0-116 36t-30 108v189h293l-39 296h-254v759h-306v-759h-255v-296h255v-218q0-186 104-288.5t277-102.5q147 0 228 12z"/></svg></a>
+<a href="https://www.linkedin.com/company/sourceforge.net" class="linkedin" rel="nofollow" target="_blank" title="SourceForge on LinkedIn">
+
+
+<svg  data-name="linkedin" viewBox="0 0 1792 1792" xmlns="http://www.w3.org/2000/svg"><path d="M477 625v991h-330v-991h330zm21-306q1 73-50.5 122t-135.5 49h-2q-82 0-132-49t-50-122q0-74 51.5-122.5t134.5-48.5 133 48.5 51 122.5zm1166 729v568h-329v-530q0-105-40.5-164.5t-126.5-59.5q-63 0-105.5 34.5t-63.5 85.5q-11 30-11 81v553h-329q2-399 2-647t-1-296l-1-48h329v144h-2q20-32 41-56t56.5-52 87-43.5 114.5-15.5q171 0 275 113.5t104 332.5z"/></svg></a>
+
+<a href="/user/newsletters" rel=nofollow class="newsletter" title="Subscribe to our newsletter">
+
+
+<svg  class="vertical-icon-fix" data-name="mmSF_11mail" xmlns="http://www.w3.org/2000/svg" x="0px" y="0px" viewBox="0 0 42 42" enable-background="new 0 0 42 42" xml:space="preserve"><path fill="#FFFFFF" d="M0,6v30h42V6H0z M24.2,21.2c-0.8,0.8-2.3,2-3.2,2c-0.9,0-2.4-1.2-3.2-2L5.8,9.7h30.3L24.2,21.2z M13.7,21l-9.9,9.4V11.6L13.7,21z M15.7,23L15.7,23c0.5,0.5,2.9,2.9,5.3,2.9c2.4,0,4.8-2.4,5.2-2.8l0.1-0.1l9.8,9.4H5.8L15.7,23z M28.3,21l9.9-9.5v18.9L28.3,21z"/></svg></a>
+
+<span></span>
+                        </li>
+                    </ul>
+                </section>
+            </nav>
+             <nav aria-label="Resources Links" role="navigation">
+                <section>
+                    <div class="as-h2">Resources</div>
+                    <ul>
+                        
+                            <li><a href="/support" title="Support Section">Support</a></li>
+                            <li><a href="/p/forge/documentation/Docs%20Home/" title="Site Documentation">Site Documentation</a></li>
+                        
+                        <li><a href="https://fosstodon.org/@sourceforgestatus" title="Site Status" rel="me nofollow">Site Status</a></li>
+                        <li><a href="/reviews" title="Reviews" rel="me nofollow">SourceForge Reviews</a></li>
+
+                    </ul>
+                </section>
+            </nav>
+            <section class="footer-logo">
+                <a href="/" title="Home" class="sf-logo">
+                    
+    
+    <img src="//a.fsdn.com/con/images/sandiego/sf-logo-full.svg"  alt="SourceForge logo" class="sf-logo-full"/>
+                </a>
+            </section>
+        </div>
+    </div>
+    <section class="l-nav-bottom">
+        <nav class="row">
+            
+                
+            
+        
+    <div class="columns small-12 large-6 copyright-notice">
+        &copy; 2026 Slashdot Media. All Rights Reserved.
+    </div>
+    <div class="columns large-6 links links-right">
+        
+
+    
+
+    <a href="https://slashdotmedia.com/terms-of-use" target="_blank" title="Terms" rel="nofollow">Terms</a>
+    <a href="https://slashdotmedia.com/privacy-statement/" target="_blank" title="Privacy" rel="nofollow">Privacy</a>
+
+    
+    
+    
+
+    
+        <a href="https://slashdotmedia.com/opt-out-choices/" target="_blank" title="Opt Out" rel="nofollow">Opt Out</a>
+    
+
+    
+        <a href="https://slashdotmedia.com/contact/" target="_blank" title="Advertise" rel="nofollow">Advertise</a>
+    
+    </div>
+        </nav>
+    </section>
+
+    </footer>
+    
+
+
+    
+    
+    
+        
+        
+
+
+
+
+
+
+    
+    
+    
+    
+    
+
+
+<section id="retool-on-top" data-region="retool" data-nosnippet style="display:none">
+  <div class="row">
+    <div class="heading-wrapper">
+        
+    
+    <svg width="116" height="28" viewBox="0 0 321 63" fill="none" xmlns="http://www.w3.org/2000/svg"><g clip-path="url(#a)" fill="#E9EBDF"><path d="M136.776 61.537h-11.664l-25.49-26.056H94.87v26.056h-8.64V.739h28.945c12.183 0 19.441 6.514 19.441 17.371s-7.258 17.37-19.441 17.37h-4.32zm-10.8-43.427c0-6.166-3.457-9.988-10.801-9.988H94.87v19.976h20.305c7.344 0 10.801-3.821 10.801-9.988m32.923 44.73c-13.825 0-22.466-10.336-22.466-23.885s8.641-23.885 22.034-23.885c10.8 0 17.281 6.08 20.132 15.113 1.037 3.387 1.469 7.121 1.469 10.943v.869h-35.34c.259 7.295 5.617 14.33 14.171 14.33 7.344 0 10.714-4.255 11.405-7.382h8.9c-2.074 7.383-8.986 13.897-20.305 13.897m-14.171-27.36h27.045c-.432-7.816-4.579-13.896-13.306-13.896s-13.48 6.514-13.739 13.897m35.767-12.159v-6.948h10.801V5.95h8.295v10.423h11.664v6.948h-11.664V50.68c0 3.04.864 4.082 3.888 4.082h7.776v6.775h-9.504c-7.863 0-10.455-3.909-10.455-10.857V23.32zm54.609-8.252c13.825 0 22.897 10.336 22.897 23.885s-9.072 23.885-22.897 23.885-22.898-10.336-22.898-23.885 9.073-23.885 22.898-23.885m0 6.948c-9.418 0-14.603 7.817-14.603 16.937s5.185 16.936 14.603 16.936 14.602-7.817 14.602-16.936-5.184-16.937-14.602-16.937m49.458-6.948c13.825 0 22.897 10.336 22.897 23.885s-9.072 23.885-22.897 23.885-22.897-10.336-22.897-23.885 9.072-23.885 22.897-23.885m0 6.948c-9.418 0-14.603 7.817-14.603 16.937s5.185 16.936 14.603 16.936 14.603-7.817 14.603-16.936-5.185-16.937-14.603-16.937M320.554.74v60.797h-8.295V.739zM38.496 3.589a2.85 2.85 0 0 0-2.85-2.85H3.35A2.85 2.85 0 0 0 .5 3.59v13.299a2.85 2.85 0 0 0 2.85 2.85h32.297a2.85 2.85 0 0 1 2.85 2.85v3.799a2.85 2.85 0 0 1-2.85 2.85H14.749a2.85 2.85 0 0 0-2.85 2.85v13.298a2.85 2.85 0 0 0 2.85 2.85h20.898a2.85 2.85 0 0 1 2.85 2.85v7.599a2.85 2.85 0 0 0 2.849 2.85h13.299a2.85 2.85 0 0 0 2.85-2.85v-13.3a2.85 2.85 0 0 0-2.85-2.85H41.346a2.85 2.85 0 0 1-2.85-2.85v-3.8a2.85 2.85 0 0 1 2.85-2.849h13.299a2.85 2.85 0 0 0 2.85-2.85V16.888a2.85 2.85 0 0 0-2.85-2.85H41.346a2.85 2.85 0 0 1-2.85-2.85z"/></g><defs><clipPath id="a"><path fill="#fff" d="M.5.74h320v62.1H.5z"/></clipPath></defs></svg>
+    
+
+
+      <div class="vibe-heading"></div>
+    </div>
+    <div class="input-card jazzy">
+      <div class="vibe-glow"></div>
+      <div style="width:100%"> 
+          <form> 
+          <textarea
+            id="textarea-input"
+            rows="2"
+            placeholder="Describe the app or website or idea that you want to build" 
+            data-holder="Describe the app or website or idea that you want to build" 
+          ></textarea>
+          
+          </form>
+        </div>
+    </div>
+    
+        <span style="display:inline-flex; text-decoration:none;">
+          <button class="send-btn" title="Generate apps with AI" data-url="https://login.retool.com/auth/signup?utm_source=sourceforge&amp;utm_medium=display&amp;utm_content=r2_homepage_ad&amp;rcid=701Ql000011VSTbIAO&amp;redirect=assist-new&amp;assistPrompt=" type="button" style=""></button>
+        </span>
+    
+    <div id="retool-gradient-border"></div>
+  </div>
+  
+</section>
+<script>
+try{
+    if (SF.ubo) {
+        document.querySelector('[data-region]').remove();
+    }
+}catch(e){}
+</script>
+
+
+
+
+
+
+    
+
+            
+    
+        </div>
+            
+            
+            
+                
+                    
+    
+    
+    
+    
+    
+    
+    
+        
+        
+        
+        
+    
+    <link rel="stylesheet" href="//a.fsdn.com/con/css/high_impact.css?1784751811" />
+    <section id="auth0-ban" data-footer-name=monday data-nosnippet>
+      <div class="sticky-gradient"></div>
+      <button id="mdb-sticky-close" class="sticky-dismiss" aria-label="Close">✕</button>
+      <div class="sticky-wrapper" style="display: flex; align-items: center;">
+        <div class="sticky-left">
+          <div class="sticky-brand">
+              
+    
+        <img alt="Monday.com Logo" style="max-width: 240px; height: auto; width:100%;" src="//a.fsdn.com/con/img/monday-logo.png" />
+    
+
+          </div>
+        </div>
+        <div class="sticky-content">
+          <div class="sticky-headline"></div>
+          <div class="sticky-desc "></div>
+        </div>
+        <div class="sticky-right">
+          <span class="sticky-cta" data-label="monday-footer" data-url="https://try.monday.com/waeqs"></span>
+        </div>
+      </div>
+    </section>
+    <script>
+    if (SF.ubo || navigator?.brave?.isBrave()) {
+        document.getElementById('mdb-sticky-close').parentNode.remove();
+    }
+    </script>
+    
+
+                
+
+    
+        
+    
+        <script src="//a.fsdn.com/con/js/min/sf.sandiego-base.js?1784751811"></script>
+
+        
+    
+
+    <script>
+        /* global Dropzone */
+        Dropzone.options.blockthisForm = false;
+    </script>
+        
+    
+        <script src="//a.fsdn.com/con/js/min/sf.sandiego-foundation-base.js?1784751811"></script>
+
+        
+    
+
+
+    <script>
+        SF.pspRedirect = true;
+        SF.pdlpRedirect = true;
+
+        SF.downloadRedirectDelay = 10000;
+        SF.cantDownload = false;
+
+        $.extend(SF, {"shortname":"libsdl-android","noCountDown":false,"downloadDelay":5000});
+            SF.Ads.enableLeadgenResize = true;
+        SF.isExternal = false;
+    </script>
+
+
+        
+
+        <script>
+            /* global Foundation */
+            $(document).foundation();
+            Foundation.Triggers.forceListenersNow();
+        </script>
+
+
+        
+        <script>
+            bizx.cmp.ifConsent({purposes:'all', vendors:'google-ads'}, function () {
+                $('body').removeClass('no-ads-consent'); 
+            },
+            function () { 
+                $('body').addClass('no-ads-consent');
+            },
+            null,
+            function () { 
+                $('body').addClass('no-ads-consent');
+            });
+        
+        </script>
+
+        <noscript><p><img src="https://analytics.slashdotmedia.com/index.php?idsite=39" style="border:0;" alt="" /></p></noscript>
+
+        
+
+        
+            
+        
+        
+
+        <script>
+
+        function geturl(url, params) {
+            params = Object
+                .keys(params)
+                .map(function(key) {
+                    return key + "=" + encodeURIComponent(params[key]);
+                })
+                .join("&");
+            return url + "?" + params;
+        }
+
+        
+        function loadimg(params, dimension_prefix) {
+            params = Object.assign({"idsite":1,"rec":1,"rand":99118,"dimension2":"pg_dwnld","url":"https://sourceforge.net/projects/libsdl-android/files/GeneralUser-GS-v1.471.sf2.zip.xz/download?use_mirror=sf-west-interserver-2","action_name":"Download GeneralUser-GS-v1.471.sf2.zip.xz (libsdl-android)"}, params);
+            for (var key in params) {
+                if (params.hasOwnProperty(key) && key.indexOf('dimension') === 0 && params[key] !== undefined) {
+                    params[key] = (dimension_prefix||'') + params[key];
+                }
+            }
+            params.rand = Math.floor(Math.random() * 100000);
+            bizx.cmp.ifConsent('publisher', ['measurement'], function() {
+                var url = geturl("//sourceforge.net/software/visit", params);
+                if (!('sendBeacon' in navigator) || !navigator.sendBeacon(url)) {
+                    var img = document.createElement('img');
+                    img.src = url;
+                    img.style = "border:0;position:absolute;top:0;";
+                    img.alt = "";
+                    document.body.appendChild(img);
+                }
+            });
+        }
+
+        var $typeaheads = $('.typeahead__container input[name=q]');
+        $typeaheads.on('typeahead-item-clicked', function(ev, $typeahead, q, item){
+            var groupIndex = ($typeahead.data('groups') || []).indexOf(item.group);
+            if (groupIndex === 2 || groupIndex === 3) {
+                loadimg({
+                    'e_c': 'Search | Typeahead | ' + item.group,
+                    'e_a': "Typeahead Click | q=" + q,
+                    'e_n': item.href, 
+                 }, 'typeahead_on_');
+            }
+        });
+        </script>
+
+        
+
+        <script type="text/javascript">
+            bizx.cmp.ifConsent({purposes: 'all', vendors: '6sense'}, async() => {
+                
+                (function(){var s = document.getElementsByTagName("script")[0];
+                var b = document.createElement("script");
+                b.type = "text/javascript";b.async = true;b.defer=true;b.id='6senseWebTag';
+                b.src = "https://j.6sc.co/j/58729049-be80-466a-9abf-b3911430bbd8.js";
+                s.parentNode.insertBefore(b, s);})();
+            });
+            </script>
+    
+
+    <script>
+    SF.verbose = SF.verbose || {};
+    </script>
+
+    
+    
+        <script src="//a.fsdn.com/con/js/min/sf.sandiego-dwnld.js?1784751811"></script>
+
+        
+    
+
+
+        
+
+<script>
+    (function () {
+        function load_bombora() {
+            /*global _ml:true, window */
+            _ml = window._ml || {};
+            
+            _ml.eid = '771';
+            _ml.fp = '7eba40fd-7e4f-4a06-b728-e53e8df817e7';  
+            var s = document.getElementsByTagName('script')[0], cd = new Date(), mltag = document.createElement('script');
+            mltag.type = 'text/javascript';
+            mltag.async = true;
+            mltag.defer = true;
+            mltag.src = '//ml314.com/tag.aspx?' + cd.getDate() + cd.getMonth() + cd.getFullYear();
+            s.parentNode.insertBefore(mltag, s);
+        }
+        bizx.cmp.ifConsent({ purposes: 'all', vendors: 'bombora'}, load_bombora);
+    })();
+</script>
+
+
+        
+        
+<!-- Hubspot tracking -->
+
+
+        
+
+
+        
+
+        <script>
+            bizx.cmp.ifConsent('', ['all'], function () {
+                bizx.cmp.embedScript('//ads.pro-market.net/ads/scripts/site-143572.js');
+            });
+        </script><script>
+            bizx.cmp.ifConsent('', ['all'], function () {
+                try{(function(){ var cb = new Date().getTime(); var s = document.createElement("script"); s.defer = true; s.src = "//tag.crsspxl.com/s1.js?d=2396&cb="+cb; var s0 = document.getElementsByTagName('script')[0]; s0.parentNode.insertBefore(s, s0); })();}catch(e){}
+            });
+        </script>
+    
+    
+<script type="text/javascript">
+    bizx.cmp.ifConsent({ purposes: ['storage', 'measurement'], vendors: 'google-analytics'}, function () {
+        /* jshint ignore:start */
+        (function(i,s,o,g,r,a,m){i['GoogleAnalyticsObject']=r;i[r]=i[r]||function(){
+                (i[r].q=i[r].q||[]).push(arguments)},i[r].l=1*new Date();a=s.createElement(o),
+            m=s.getElementsByTagName(o)[0];a.async=1;a.src=g;m.parentNode.insertBefore(a,m)
+        })(window,document,'script','//www.google-analytics.com/analytics.js','ga');
+        /* jshint ignore:end */
+
+        window.dataLayer = window.dataLayer || [];
+        function gtag(){ window.dataLayer.push(arguments); }
+        window.gtag = window.gtag || gtag;
+        bizx.cmp.embedScript("https://www.googletagmanager.com/gtag/js");
+        gtag('js', new Date());
+        gtag('set', {
+            'page_location': 'https://sourceforge.net/projects/libsdl-android/files/GeneralUser-GS-v1.471.sf2.zip.xz/download?use_mirror=sf-west-interserver-2',
+        });
+    });
+</script>
+    <script>
+        /*global ga, gtag */
+        SF.devicePixelRatio = Math.round(window.getDevicePixelRatio()*10)/10;
+
+        
+
+        
+            bizx.cmp.ifConsent({ purposes: ['storage', 'measurement'], vendors: 'google-analytics'}, function () {
+                gtag('config', 'G-1H226E4E4L', {
+                    
+                    send_page_view: false,
+                    'SF_Project_Shortname': 'libsdl-android', 
+                    'SF_Page_Type': 'pg_dwnld', 
+                    user_properties: {
+                        'SF_Logged_in': 'Logged Out', 
+                    },
+                    'SF_Ads_Disabled': 'Yes',   
+                    'SF_Prebid_Load_Method': 'sync', 
+                    'devicePixelRatio': SF.devicePixelRatio, 
+                });
+                gtag('event', 'page_view', { send_to: 'G-1H226E4E4L' });
+            });
+        
+            
+            
+        
+        
+    </script>
+    
+
+        
+        
+        
+             <script>
+    $(function() {
+        bizx.cmp.ifConsent({ purposes: 'all' , vendors: 'narrative'}, function() {
+            var current_time = (new Date()).getTime();
+            let imageUrl = "https://io.narrative.io/?companyId=2440&id=first_party%3A7eba40fd-7e4f-4a06-b728-e53e8df817e7&id=site_name%3Asourceforge.net&id=url%3A%2Fprojects%2Flibsdl-android%2Ffiles%2FGeneralUser-GS-v1.471.sf2.zip.xz%2Fdownload&id=pagetitle%3ADownload+GeneralUser-GS-v1.471.sf2.zip.xz+%28libsdl-android%29&id=vertical%3AOpen+Source+Software&id=product%3Alibsdl-android&id=topics%3AGames%2CFrameworks%2CMobile&id=programming_language%3AC%2B%2B%2CC%2CJava&id=action%3ADownloaded+libsdl-android&id=action%3ADownloaded+Games+Software";
+            imageUrl = imageUrl.replace(encodeURIComponent("$PAGE_TITLE"), document.title);  
+
+            imageUrl = URL.parse(imageUrl);
+            let hem = bizx.uids.getHem();
+            if (hem) {
+                imageUrl.searchParams.append('id', 'hem:' + hem);
+            }
+            imageUrl.searchParams.append('rand', current_time);
+
+            var image = new Image();
+            image.src = imageUrl.toString();
+            image.style.display = "none";
+            image.style.height = 0;
+            image.style.width = 0;
+            document.body.appendChild(image);
+        });
+    });
+</script>
+        
+
+        
+            
+<script>
+    $(function() {
+        bizx.cmp.ifConsent({ purposes: 'all', vendors: 'xandr'}, function() {
+            /*jshint ignore:start*/
+            !function(e,i){if(!e.pixie){var n=e.pixie=function(e,i,a){n.actionQueue.push({action:e,actionValue:i,params:a})};n.actionQueue=[];var a=i.createElement("script");a.async=!0,a.src="//acdn.adnxs.com/dmp/up/pixie.js";var t=i.getElementsByTagName("head")[0];t.insertBefore(a,t.firstChild)}}(window,document);
+            pixie('init', '48d4c5e5-03de-40f8-81ab-b370a8860afa');
+            pixie('event', 'PageView');
+            /*jshint ignore:end*/
+
+        });
+    });
+</script>
+
+        
+
+        
+
+        
+        
+
+
+
+
+
+
+
+
+        
+        
+            
+            
+            
+        
+        
+
+        
+
+    </body>
+</html>

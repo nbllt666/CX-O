@@ -109,12 +109,20 @@ describe('useWebSocket', () => {
     expect(msg.data.images).toBeUndefined();
   });
 
-  it('sendMessage when not connected triggers onError', () => {
+  // 有意契约：未连接时 sendMessage 返回 false 且不触发 onError，
+  // 由 caller（ChatPage）依据返回值走 HTTP fallback；onError 会与 fallback 的
+  // loading 状态管理冲突（见 useWebSocket.ts sendMessage 注释）。
+  // 与 sendDualStream（未连接时触发 onError）属两条发送路径的不同契约。
+  it('sendMessage when not connected returns false without onError', () => {
     const onError = vi.fn();
     const { result } = renderWs({ onError });
 
-    act(() => result.current.sendMessage('foo'));
-    expect(onError).toHaveBeenCalledWith('WebSocket is not connected');
+    let sent: boolean | undefined;
+    act(() => {
+      sent = result.current.sendMessage('foo');
+    });
+    expect(sent).toBe(false);
+    expect(onError).not.toHaveBeenCalled();
     expect(result.current.isGenerating).toBe(false);
   });
 

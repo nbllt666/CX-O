@@ -22,6 +22,7 @@ import { _AvatarsClientMixin } from './clients/avatars';
 import { _CxfcClientMixin } from './clients/cxfc';
 import { _ServiceClientMixin } from './clients/service';
 import { _ConfigClientMixin } from './clients/config';
+import { _VoiceWorkstationClientMixin } from './clients/voiceworkstation';
 
 // Re-export URL utilities (originally exported from this module)
 export {
@@ -63,6 +64,39 @@ export type {
   ChatMessage,
 } from './clients/_types';
 
+// Re-export VoiceWorkStation client types & helpers
+export type {
+  VoiceWsAudioResult,
+  VoxCPMMode,
+  VoxCPMGenerateRequest,
+  VoxCPMStatus,
+  BatchDatasetTextItem,
+  BatchDatasetEngine,
+  BatchDatasetRequest,
+  BatchDatasetTask,
+  SVCModel,
+  SVCTrainStatus,
+  SVCPreprocessRequest,
+  SVCTrainRequest,
+  SVCInferRequest,
+  SVCDataset,
+  ScoreValidateResponse,
+  MusicSynthesizeRequest,
+  SongStep,
+  SongTask,
+  SongSummary,
+  RefAudioMode,
+  PregenerateRefsRequest,
+  PregenerateRefsResult,
+  RefAudioProgress,
+  RefAudioStatus,
+  ImportEmotionRefsResponse,
+  OrpheusSynthesizeRequest,
+  OrpheusSynthesizeResult,
+  OrpheusStatus,
+} from './clients/voiceworkstation';
+export { getVoiceWorkstationAudioUrl } from './clients/voiceworkstation';
+
 // Compose ApiClient: base class + all domain mixins via applyMixins pattern
 class _ApiClient extends _ApiClientBase {}
 
@@ -80,6 +114,7 @@ applyMixins(_ApiClient, [
   _CxfcClientMixin,
   _ServiceClientMixin,
   _ConfigClientMixin,
+  _VoiceWorkstationClientMixin,
 ]);
 
 // Type: ApiClient is the base + all mixin instance types
@@ -95,7 +130,8 @@ type ApiClient = _ApiClientBase &
   InstanceType<typeof _AvatarsClientMixin> &
   InstanceType<typeof _CxfcClientMixin> &
   InstanceType<typeof _ServiceClientMixin> &
-  InstanceType<typeof _ConfigClientMixin>;
+  InstanceType<typeof _ConfigClientMixin> &
+  InstanceType<typeof _VoiceWorkstationClientMixin>;
 
 export const api: ApiClient = new _ApiClient() as unknown as ApiClient;
 

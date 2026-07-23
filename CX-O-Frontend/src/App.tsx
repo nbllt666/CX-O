@@ -20,7 +20,7 @@ import { SubtitleSource } from './pages/live/SubtitleSource';
 import { AudioPanel } from './pages/live/AudioPanel';
 import { AudioPanelOBS } from './pages/live/AudioPanelOBS';
 import { AudioTestPage } from './pages/AudioTestPage';
-import { VoiceWorkstationPage } from './pages/VoiceWorkstationPage';
+import { AudioWorkstationPage } from './pages/AudioWorkstationPage';
 import { PetPage } from './pages/PetPage';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import { ConnectionSetup } from './components/ConnectionSetup';
@@ -121,7 +121,10 @@ function App() {
           <Route path="tools" element={<ToolsPage />} />
           <Route path="audio" element={<AudioPanel />} />
           <Route path="audio-test" element={<AudioTestPage />} />
-          <Route path="voice-workstation" element={<VoiceWorkstationPage />} />
+          <Route path="audio-workstation" element={<AudioWorkstationPage />} />
+          {/* 旧路由重定向兼容 */}
+          <Route path="voice-workstation" element={<Navigate to="/audio-workstation" replace />} />
+          <Route path="compose" element={<Navigate to="/audio-workstation?tab=compose" replace />} />
           <Route path="settings" element={<SettingsPage />} />
           <Route path="memory-agent" element={<MemoryAgentPage />} />
           <Route path="vector-data" element={<VectorDataPage />} />

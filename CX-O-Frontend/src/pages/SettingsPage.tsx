@@ -907,7 +907,7 @@ export function SettingsPage() {
   };
 
   return (
-    <div className={`max-w-6xl mx-auto ${themeTransition ? 'transition-colors duration-300' : ''}`}>
+    <div className={`max-w-6xl mx-auto h-full overflow-y-auto px-6 py-6 ${themeTransition ? 'transition-colors duration-300' : ''}`}>
       <PageHeader title="系统设置" description="配置系统外观、服务和行为" />
 
       <div className="flex gap-6">

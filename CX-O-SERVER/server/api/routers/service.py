@@ -701,7 +701,6 @@ async def get_gateway_config():
         "timeout": 30,
         "asr": {"status": "集成", "note": "已集成到主服务"},
         "tts": {"status": "集成", "note": "已集成到主服务"},
-        "index_tts": {"status": "可选", "enabled": True, "note": "可配置外部服务"},
     }
 
     return {"status": "success", "config": monolith_config}

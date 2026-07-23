@@ -280,14 +280,14 @@ class DualStreamSession:
             # 根据 TTS 引擎构建合成参数：
             # - orpheus 引擎：使用预设音色（tara/leo 等），不传 ref_audio/ref_text
             #   Orpheus 通过 voice 参数选择音色，无需参考音频克隆
-            # - f5-tts/cosyvoice 等引擎：使用参考音频克隆，传 ref_audio_path/ref_text
+            # - f5-tts 等引擎：使用参考音频克隆，传 ref_audio_path/ref_text
             tts_kwargs: dict = {}
             if self._engine == "orpheus":
                 # Orpheus 使用预设音色，不需要 ref_audio/ref_text
                 if self._voice:
                     tts_kwargs["voice"] = self._voice
             else:
-                # F5-TTS/CosyVoice 使用参考音频克隆
+                # F5-TTS 使用参考音频克隆
                 if self._ref_audio_path:
                     tts_kwargs["ref_audio_path"] = self._ref_audio_path
                 if self._ref_text:

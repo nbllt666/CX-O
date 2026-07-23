@@ -148,8 +148,15 @@ async def start_training(request: SVCTrainRequest):
 
 @router.get("/status")
 async def get_training_status():
-    """获取训练状态"""
-    return _train_status
+    """获取训练状态（附带已训练模型列表；models 获取失败时降级为空列表，
+    不影响训练状态本身的查询）"""
+    try:
+        trainer = _get_trainer()
+        models = trainer.list_models()
+    except Exception as e:
+        logger.warning(f"Failed to list So-VITS-SVC models for status: {e}")
+        models = []
+    return {**_train_status, "models": models}
 
 
 @router.post("/stop")
@@ -188,15 +195,10 @@ async def infer(request: SVCInferRequest):
             cluster_model_path=request.cluster_model_path,
         )
 
-        import base64
-        with open(result_path, "rb") as f:
-            audio_data = f.read()
-
         return {
             "status": "success",
-            "audio_data": base64.b64encode(audio_data).decode("utf-8"),
-            "format": "wav",
             "output_filename": result_path.name,
+            "audio_url": f"/api/audio-files/svc-results/{result_path.name}",
         }
     except Exception as e:
         logger.error(f"So-VITS-SVC infer error: {e}")

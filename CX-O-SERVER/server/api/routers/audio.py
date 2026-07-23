@@ -307,7 +307,7 @@ def _load_tts_config() -> dict:
     config_file = Path("config/settings.json")
 
     default_config = {
-        "engine": "cosyvoice",
+        "engine": "f5",
         "ref_audio_path": "",
         "ref_text": "",
         "speed": 1.0,
@@ -315,12 +315,6 @@ def _load_tts_config() -> dict:
         "emotion_enabled": True,
         "effects_enabled": True,
         "emotion_voices": {},
-        "cosyvoice": {
-            "url": "http://127.0.0.1:50000",
-            "model": "CosyVoice2-0.5B",
-            "default_mode": "instruct2",
-            "timeout": 120
-        },
         "transition": {
             "enabled": True,
             "duration": 0.5,
@@ -338,7 +332,7 @@ def _load_tts_config() -> dict:
         tts_config = config_data.get("tts", {})
 
         return {
-            "engine": tts_config.get("engine", "cosyvoice"),
+            "engine": tts_config.get("engine", "f5"),
             "ref_audio_path": tts_config.get("ref_audio_path", ""),
             "ref_text": tts_config.get("ref_text", ""),
             "speed": tts_config.get("speed", 1.0),
@@ -346,7 +340,6 @@ def _load_tts_config() -> dict:
             "emotion_enabled": tts_config.get("emotion_enabled", True),
             "effects_enabled": tts_config.get("effects_enabled", True),
             "emotion_voices": tts_config.get("emotion_voices", {}),
-            "cosyvoice": tts_config.get("cosyvoice", default_config["cosyvoice"]),
             "transition": tts_config.get("transition", default_config["transition"])
         }
     except Exception as e:

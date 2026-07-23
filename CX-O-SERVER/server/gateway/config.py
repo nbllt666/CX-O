@@ -33,10 +33,6 @@ def get_env_config() -> Dict[str, Any]:
         env_config["services"]["tts"] = env_config["services"].get("tts", {})
         env_config["services"]["tts"]["url"] = os.getenv(f"{ENV_PREFIX}TTS_URL")
 
-    if os.getenv(f"{ENV_PREFIX}INDEX_TTS_URL"):
-        env_config["services"]["index_tts"] = env_config["services"].get("index_tts", {})
-        env_config["services"]["index_tts"]["url"] = os.getenv(f"{ENV_PREFIX}INDEX_TTS_URL")
-
     if os.getenv(f"{ENV_PREFIX}LOG_LEVEL"):
         env_config["logging"]["level"] = os.getenv(f"{ENV_PREFIX}LOG_LEVEL")
 
@@ -100,15 +96,6 @@ class AudioConfig(BaseModel):
     effects_dir: str = "data/effects"
 
 
-class IndexTTSConfig(BaseModel):
-    url: str = "http://127.0.0.1:8004"
-    timeout: int = 180
-    enabled: bool = True
-    auto_stop_delay: int = 300
-    start_command: str = "python -m index_tts.app --port 8004 --host 0.0.0.0"
-    working_dir: str = "index-tts"
-
-
 class AdaptivePollingConfig(BaseModel):
     enabled: bool = True
     offset_ms: int = 0
@@ -127,7 +114,6 @@ class ServicesConfig(BaseModel):
     asr: ServiceConfig
     tts: TTSConfig
     audio: Optional[AudioConfig] = None
-    index_tts: Optional[IndexTTSConfig] = None
     control_service_url: Optional[str] = None
     adaptive_polling: Optional[AdaptivePollingConfig] = None
     sensevoice_streaming: Optional[SenseVoiceStreamingConfig] = None

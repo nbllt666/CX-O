@@ -20,34 +20,6 @@ class ServerConfig:
 
 
 @dataclass
-class CosyVoiceConfig:
-    url: str = "http://127.0.0.1:50000"
-    model: str = "CosyVoice2-0.5B"
-    default_mode: str = "instruct2"
-    timeout: float = 120.0
-    default_spk_id: str = "中文女"
-
-
-@dataclass
-class IndexTTSConfig:
-    url: str = "http://127.0.0.1:8004"
-    enabled: bool = True
-    timeout: float = 180.0
-    start_command: str = ""
-    working_dir: str = "IndexTTS"
-    auto_stop_delay: int = 300
-    startup_timeout: int = 180
-
-
-@dataclass
-class F5TTSFinetuneConfig:
-    enabled: bool = True
-    base_model: str = "F5TTS_v1_Base"
-    output_dir: str = str(_BASE_DIR / "data" / "models" / "f5tts")
-    training_data_dir: str = str(_BASE_DIR / "data" / "training" / "f5tts")
-
-
-@dataclass
 class SoVitSSVCConfig:
     enabled: bool = True
     output_dir: str = str(_BASE_DIR / "data" / "models" / "sovits_svc")
@@ -68,19 +40,63 @@ class VoxCPMConfig:
 
 
 @dataclass
+class OrpheusConfig:
+    """Orpheus TTS 配置（直调 docker vLLM 服务，OpenAI 兼容 API）。"""
+    url: str = "http://127.0.0.1:5060"
+    voice: str = "tara"
+    timeout: int = 60
+
+
+@dataclass
+class F5TTSConfig:
+    """F5-TTS 配置（通过 HTTP 调用 CX-O-SERVER 的 f5tts 合成能力，VoiceWorkStation 不自载模型）。
+
+    ref_audio_path / ref_text 为 SVC 训练数据生成（engine=f5tts）的默认参考音频与文本；
+    通常由批量数据集请求显式传入，配置项作为兜底默认值。
+    """
+    server_url: str = "http://127.0.0.1:8000"
+    timeout: int = 300
+    ref_audio_path: str = ""
+    ref_text: str = ""
+
+
+@dataclass
 class OutputConfig:
     voice_refs_dir: str = str(_BASE_DIR.parent / "CX-O-SERVER" / "data" / "voice_refs")
 
 
 @dataclass
+class MusicConfig:
+    songs_dir: str = str(_BASE_DIR / "data" / "songs")
+    soundfont_path: str = ""
+    # 默认接入真实 DiffSinger 引擎（spec「真实 DiffSinger 引擎接入」要求）；
+    # MockSingingEngine 保留为开发/CI 选项，显式配置 singing_engine="mock" 即可切回。
+    singing_engine: str = "diffsinger"
+    diffsinger_dir: str = str(_BASE_DIR.parent / "DiffSinger")
+    diffsinger_python: str = "python"
+    voice_bank: str = ""
+    default_svc_model: str = ""
+
+
+@dataclass
+class CXFCConfig:
+    enabled: bool = True
+    server_url: str = "http://127.0.0.1:8000"
+    auto_register: bool = True
+    heartbeat_interval: int = 15
+    plugin_name: str = "voiceworkstation-music"
+
+
+@dataclass
 class WorkstationSettings:
     server: ServerConfig = field(default_factory=ServerConfig)
-    cosyvoice: CosyVoiceConfig = field(default_factory=CosyVoiceConfig)
-    index_tts: IndexTTSConfig = field(default_factory=IndexTTSConfig)
-    f5tts_finetune: F5TTSFinetuneConfig = field(default_factory=F5TTSFinetuneConfig)
     sovits_svc: SoVitSSVCConfig = field(default_factory=SoVitSSVCConfig)
     voxcpm: VoxCPMConfig = field(default_factory=VoxCPMConfig)
+    orpheus: OrpheusConfig = field(default_factory=OrpheusConfig)
+    f5tts: F5TTSConfig = field(default_factory=F5TTSConfig)
     output: OutputConfig = field(default_factory=OutputConfig)
+    music: MusicConfig = field(default_factory=MusicConfig)
+    cxfc: CXFCConfig = field(default_factory=CXFCConfig)
 
 
 _settings: Optional[WorkstationSettings] = None

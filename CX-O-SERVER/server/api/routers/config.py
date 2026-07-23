@@ -533,7 +533,7 @@ async def update_services_config(request: Request, _: bool = Depends(verify_admi
         if "services" not in services_data:
             services_data["services"] = {}
         services = services_data["services"]
-        for key in ['danmaku', 'firewall', 'firewall_v3', 'vad', 'asr', 'tts', 'index_tts', 'audio']:
+        for key in ['danmaku', 'firewall', 'firewall_v3', 'vad', 'asr', 'tts', 'audio']:
             if key in data:
                 services[key] = data[key]
         if 'sensevoice_streaming' in data:

@@ -84,7 +84,11 @@ async def generate(request: VoxCPMGenerateRequest):
                 **kwargs,
             )
 
-        return {"status": "success", "output_filename": result_path.name}
+        return {
+            "status": "success",
+            "output_filename": result_path.name,
+            "audio_url": f"/api/audio-files/voxcpm/{result_path.name}",
+        }
 
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))

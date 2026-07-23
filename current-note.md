@@ -4,6 +4,12 @@
 
 ## 做到哪了
 
+- **add-voicews-music-cxfc-suite**（当前 spec）：Task 1~11 全部闭合，仅剩 Task 12 [V]（GN-004 交付审查 + 人类批准）
+  - Task 1~8 后端链路 ✅；Task 7.3 GN-004 检查点 CAUTION-PASS ✅（OBS-1/2/3 已修正）
+  - Task 9 前端客户端 + VoiceWorkstationPage ✅；Task 10 CompositionPage ✅
+  - Task 11 测试与验证 ✅：后端 161 passed / 1 skipped；前端 build 通过；三重闸门 PASSED（vitest 469/469、playwright 16/16、契约核对 21/21，证据 `frontend_gate_20260721_205305/`）；CXFC mock 链路 E2E PASSED（24+2 passed，final.wav 200+RIFF，证据 `cxfc_mock_e2e_20260721_205514.log`）
+  - Task 11 期间两次阻断修复均经人类裁决（选择修复而非豁免）：变更文档 -11（useWebSocket 过时测试断言修正至有意契约）、-12（chat E2E 注入 routeWebSocket 阻断 WS 解环境耦合）
+  - ⏳ 进行中：Task 12 [V] GN-004 交付前审查（OBS-4/OBS-6 届时一并提交人类裁决）
 - **fix-vrm-config-live-apply**（上一 spec）：核心修复已完成，变更文档已归档
 - **fix-vrm-animation-wind-idle**（当前 spec）：全部 6 个 Task 已完成
   - Task 1: settingsStore 扩展 swayAmplitude/swayFrequency ✅
@@ -85,6 +91,17 @@
 
 | 项 | 性质 | 状态 |
 |----|------|------|
+| 【当前 spec：add-voicews-music-cxfc-suite】 | | |
+| Task 1~8 后端链路 | 已完成 | ✅ 全部闭合（161 passed / 1 skipped） |
+| Task 7.3 GN-004 后端链路检查点 | 已完成 | ✅ 警示放行 CAUTION-PASS（无 SOFT_BLOCK，OBS-1/2/3 已修正） |
+| OBS-4 变更文档章节命名统一（4 份缺独立"最终结果"章节） | 观察项 | ⏳ 待 Task 12 [V] 节点提交人类裁决（本 spec 内处理或转运维批次） |
+| OBS-6 spec 数据集路径措辞（字面 data/training/sovits_svc/<speaker>/ vs 实现 raw/<speaker>/，实现已验证为正确方向） | 观察项 | ⏳ 待 Task 12 [V] 节点提交人类裁决（回写 spec 措辞方式） |
+| OBS-7 存量文件子线程 asyncio（index_tts_manager.py 等，非本 spec 引入） | 技术债 | ⏳ 已登记，转运维批次 |
+| Task 9 前端客户端与 VoiceWorkstationPage | 已完成 | ✅ |
+| Task 10 前端作曲页 CompositionPage | 已完成 | ✅ |
+| Task 11 测试与验证 | 已完成 | ✅ 三重闸门 PASSED + mock E2E PASSED（含 -11/-12 两份修复文档） |
+| Task 12 [V] 交付审查与批准 | 已完成 | ✅ GN-004 CAUTION-PASS 零 SOFT_BLOCK + 人类批准交付（2026-07-21）；OBS-4/OBS-6/OBS-A/B/C 全部处置，OBS-7 转运维批次 |
+| 【历史 spec：fix-vrm-animation-wind-idle】 | | |
 | Task 1~6 代码实施 | 已完成 | ✅ 全部闭合 |
 | typecheck + Playwright 验证 | 已完成 | ✅ 零错误 + 数据流验证通过 |
 | 变更文档 | 已归档 | ✅ status="已完成"（含五回退修复追加） |
@@ -102,9 +119,10 @@
 
 ## 接续入口
 
-- **当前断点**：第九轮微调修复已完成（视线开关 + 眼球归位 + 配置自动应用 + 自动保存/手动保存），typecheck 零错误，待用户重新确认
-- **确认通过后**：GN-004 复审第九轮微调 → 交付完成 → note 标注"吸收完毕"
-- **回退点**：若人类仍反馈视线开关/眼球归位/配置应用/自动保存问题，继续调整预览 props 传递/lookAt target 重置逻辑/autoSave 缓冲机制
+- **当前断点**（add-voicews-music-cxfc-suite）：**spec 全部 12 个 Task 闭合，交付完成**（2026-07-21 人类批准）。测试证据：frontend_gate_20260721_205305/ + cxfc_mock_e2e_20260721_205514.log；变更文档 -01~-12 齐备
+- **下一步**：本 spec 无后续。转运维批次事项：OBS-7 存量文件子线程 asyncio 技术债（index_tts_manager.py 等）
+- **回退点**：交付后变更走 s0601 契约变更流程 + rules-6 变更文档
+- **历史 spec 遗留**：fix-vrm-animation-wind-idle 的"VRM+Live2D 动画自然度确认"仍待用户确认（与当前 spec 独立）
 
 ---
 
@@ -134,6 +152,51 @@
 - Task 1/2/3 可并行（不同文件），Task 4 依赖 1/2 接口，Task 5/6 串行
 
 ## 审查记录
+
+### 2026-07-21 GN-004 交付前审查（add-voicews-music-cxfc-suite Task 12.1）
+
+- **审查 agent id**：缺失（Task 工具未回传拉起ID）
+- **总判定**：警示放行（CAUTION-PASS），SOFT_BLOCK 零项
+- **审查范围**：独立读取 spec 三件套全文、note 关键段、12 份变更文档全文、三重闸门五文件 + CXFC E2E 日志全文、源码抽检（config/audio_files/voxcpm/sovits_svc/cxfc_plugin/dataset_builder/main/App/voiceworkstation.ts/i18n）；独立复跑 pytest（161 passed / 1 skipped）与 tsc（exit 0），均与声称一致
+- **闭合真实性 PASS**：Task 1~11 全部 [x] 均有实体产物+证据，无假闭合；方向一致性 PASS；[V] 确认记录合规（2 次人类裁决均选修复而非豁免）
+- **5 观察项及处置**：
+  - OBS-4（扩展）：缺独立"最终结果"章节实为 6 份（-04/-05/-06/-07/-09/-10）→ 人类裁决本 spec 内补齐，已执行（6 份均追加该章节）
+  - OBS-6：spec L167 数据集路径措辞 vs 实现 raw/ → GN-004 独立核实实现正确，人类批准回写 spec（已执行，改为 `data/training/sovits_svc/raw/<speaker_name>/`）
+  - OBS-A（新）：issue_id `模块0-20260721-06` 跨 spec 撞号 → 已将迁移侧文档（修复预先存在的TS错误）改号为 -13
+  - OBS-B（新）：note 未闭合项表状态滞后 → 已同步
+  - OBS-C（新）：-11 文档中间态数字 + test3 checklist 尾部 FAILED 残留注记 → 已修正为最终态
+- **闸门 2（人类裁决）**：AskUserQuestion 三问——OBS-4 本 spec 内补齐 / OBS-6 批准回写 / 批准交付，全部按推荐项通过（2026-07-21）
+- **最终结论**：Task 12 [V] 双重闸门完成，spec add-voicews-music-cxfc-suite 全部 12 个 Task 闭合，交付批准
+
+### 2026-07-21 GN-004 后端链路检查点审查（add-voicews-music-cxfc-suite Task 7.3）
+- **审查 agent id**：缺失（Task 工具未回传拉起ID）
+- **总判定**：警示放行（CAUTION-PASS），SOFT_BLOCK 零项
+- **审查范围**：独立读取 spec 三件套、current-note.md、8 份 20260721 变更文档、main.py 全文及关键源码/测试抽查；独立复跑全量 pytest（161 passed / 1 skipped，与执行者声称一致）
+
+**6 项 rubric 全部 PASS**：
+
+| Rubric 项 | 结论 |
+|-----------|------|
+| Task 闭合真实性 | PASS — 实体文件齐全，无假闭合（附 OBS-1/2） |
+| 契约一致性 | PASS — voxcpm/sovits-svc/CXFC/audio-files/health 全部抽查对齐 |
+| 测试可验证性 | PASS — 独立复跑 161 passed；抽查 3 测试文件非空测试 |
+| 变更文档完整性 | PASS — 8 份命名规范、frontmatter 五字段齐全（附 OBS-3/4） |
+| 代码合规 | PASS — 无 public/ 触碰、无相对路径、无新增子线程 asyncio、训练目录集中校验 |
+| 已知声明项核对 | PASS — Task 8 raw/ 偏差声明属实可接受；Task 6 {"songs":[]} 包裹合理；main.py 并行合并无冲突残留 |
+
+**观察项处置**：
+
+| 编号 | 内容 | 处置 |
+|------|------|------|
+| OBS-1 | tasks.md Task 3/4/5/6 勾选与交接头滞后（并行写入竞争回滚所致） | ✅ 已修正并复核 |
+| OBS-2 | note 缺 Task 1~8 交接段 | ✅ 已补（本段 + 未闭合项 + 接续入口） |
+| OBS-3 | issue_id -08 重复（歌谱核心 vs 批量数据集）+ 契约对齐文档占位时间戳 | ✅ 已修正（歌谱核心→-02；时间戳→16:30:00） |
+| OBS-4 | 4 份文档章节命名与 s302 模板偏差 | ⏳ 转 Task 12 [V] 人类裁决 |
+| OBS-5 | checklist.md 后端项未勾选 | ⏳ Task 11 统一处理 |
+| OBS-6 | spec 数据集路径字面 vs 实现 raw/ 偏差 | ⏳ 转 Task 12 [V] 人类裁决（回写 spec 措辞方式） |
+| OBS-7 | 存量文件子线程 asyncio（非本 spec 引入） | ⏳ 技术债登记，转运维批次 |
+
+**未独立验证项**（GN-004 声明）：DiffSinger 真实部署路径、真实 fluidsynth 渲染、真实 CX-O-SERVER 注册链路（MockTransport 模拟）、SVC 真实变声链路、运行期真实落盘行为（测试均隔离 tmp_path）。
 
 ### 2026-07-08 GN-004 独立审查（spec 交付前闸门）
 
@@ -1654,3 +1717,258 @@ WS E2E `asr_llm_tts_latency` 延迟优化任务**已闭合**（达 600ms 主目�
 3. **激进优化需同步放宽硬下限**：TextSmoother 和 tts_service.py 都有 `max(3, min(5, ...))` 硬下限保护，激进优化到 2 字切片时必须同步放宽到 `max(2, ...)`
 4. **剩余瓶颈识别**：ASR partial ~190ms 占主导，进一步优化需 ASR 服务端改造或架构级 pipeline 重构，不在本轮客户端+TTS 优化范围
 5. **best-effort 目标的工程边界**：用户原指令"如果可能继续优化到 400ms"为 best-effort 进阶目标，未达时应在 note 中明确未达原因 + 剩余瓶颈 + 后续优化路径，而非无限制尝试激进改动
+
+---
+
+## 诊断草稿：add-voicews-music-cxfc-suite Spec GN-004 交付前审查（2026-07-21）
+
+### 做到哪了
+
+Spec 三件套（spec/tasks/checklist）撰写完成 → GN-004 交付前审查（T1）→ 结论**警示放行（CAUTION-PASS，无 SOFT_BLOCK）** → OBS-1/2/3 已修正入三件套，OBS-4~8 已转为 tasks.md 实施注记 → 待 NotifyUser 人类审批。
+
+### 为什么（关键决策）
+
+- 前端形态：并入现有 CX-O-Frontend（用户裁决），VoiceWorkstationPage 完整化 + 新增 CompositionPage（/compose）
+- 声库引擎：DiffSinger/SOFA 类外部部署 + Mock 降级（用户裁决），SingingEngine 适配层隔离
+- 歌谱格式：JSON（agent）+ MusicXML（人工导入，music21）；契约载体=workstation 内部 jsonschema + CXFC /tools parameters 发布，不入 public/schema/
+- 伴奏：SoundFont 渲染（fluidsynth），缺失时明确报错
+- CXFC：VoiceWorkStation 自身即插件（/tools /skills /call + 注册 + 15s 心跳）
+
+### GN-004 观察项处置记录
+
+| 编号 | 处置 |
+|------|------|
+| OBS-1（CosyVoice 步骤去留） | 已修：spec 新增「参考音频功能保留与修复」Requirement，Task 9 保留并修复端点 |
+| OBS-2（s0402 三重闸门缺失） | 已修：Task 11.3 补前端三重测试闸门（单测→E2E→Mock 回归） |
+| OBS-3（不匹配清单不完整） | 已修：spec Why 补齐 4 处已证实不匹配（status 缺 /api、running 徽标、models 字段、pregenerate 路径）；Task 9.1 闭合判据补全端点重对齐 |
+| OBS-4（歌谱契约载体） | 已修：spec 歌谱 Requirement 补载体声明 |
+| OBS-5（GN-004 检查点偏晚） | 已修：Task 7.3 插入后端链路检查点审查，台账补行 |
+| OBS-6（CXFC 协议形状） | 已修：Task 7.1 注记（{"tools":[]}/{"skills":[]}/{"tool","arguments"}；/health 补 name/version） |
+| OBS-7（audio-files 目录映射） | 已修：Task 1.2 实施注记钉住类别→目录映射表，Task 5.1 验证 |
+| OBS-8（格式类） | 已修：台账占位格式统一、补并行理由、infer base64 明确移除、datasets/import 定 multipart |
+
+### 未闭合项
+
+- Spec 三件套待人类审批（NotifyUser）
+- 实施期 GN-004 调用点：Task 7.3 检查点 + Task 12 交付前
+
+### 接续入口
+
+人类审批通过 → 按 tasks.md 从 [P-1]（Task 1 + Task 2）开始实现；审批有修正 → 改三件套后重走 GN-004。
+
+---
+
+## 诊断草稿：refactor-audiostation-engine-consolidation Spec 实现收束（2026-07-23）
+
+### 做到哪了
+
+- **spec**：`refactor-audiostation-engine-consolidation`（音频工作站引擎整合与重构）
+- **三件套**：spec.md / tasks.md / checklist.md 已冻结，GN-004 审查 CAUTION-PASS（7 观察项已处理），人类已批准进入实现
+- **Task 1-11 全部闭合**，仅剩 Task 12 [V]（GN-004 交付前审查 + 人类批准）
+  - Task 1 [P-1] cosyvoice 全项目移除 ✅（subagent c508dfeb）
+  - Task 2 [P-1] indextts 全项目移除 + OBS-7 子线程 asyncio 治理 ✅（subagent bd0f9f51）
+  - Task 3 [P-2] f5tts 微调移除（VoiceWorkStation 侧）✅（subagent 4b581456）
+  - Task 4 [P-2] orpheustts 音频工作站接入（orpheus_client + 路由 + OrpheusConfig）✅（subagent 35516e29）
+  - Task 5 voxcpm 参考音频改造（两模式 clone/design + 极致克隆 + 过渡音频）✅（subagent c3cca718，retry_count=1，前驱 3469982a 缺失）
+  - Task 6 [P-3] SVC 训练数据多来源（f5tts/orpheustts/voxcpm）✅（subagent e1d9d446）
+  - Task 7 [P-3] DiffSinger 真实接入（config 默认 mock→diffsinger，mock 保留）✅（subagent 24991cc4）
+  - Task 8 fluidsynth + SoundFont 伴奏接入 ✅（subagent de0f0d35）
+  - Task 9 前端音频工作站重构（5 Tab + 路由重定向 + i18n）✅（subagent f86cb9fb）
+  - Task 10 设置滑动修复 + 27 端点契约对齐 ✅（subagent c2346d9e）
+  - Task 11 测试与验证 ✅（后端 subagent 25947c38 + 前端主线程 s0402）
+
+### Task 11 测试证据汇总
+
+- **11.1 后端 pytest**（已闭合）：
+  - VoiceWorkStation 282 passed / 1 skipped / 1 failed（预存 test_validation.py，Task 4 已记录）
+  - CX-O-SERVER 4654 passed / 67 failed / 102 errors（全预存，graph/memory/stats/asr/acp/server_dependencies 域，与音频引擎 spec 无关）
+  - 无本次 spec 引入的回归
+- **11.2 前端三重闸门 s0402**（已闭合）：vitest 469p / playwright 16p / mock 20p；证据 `frontend_gate_20260723/` 四件齐全
+- **11.3 真实引擎 E2E**（当前不可判定-环境未部署）：DiffSinger 目录不存在 / fluidsynth 未安装 / Docker daemon 未运行；setup_singing_engine.py 正确报错；不阻断交付
+- **11.4 CXFC mock 链路 E2E**（已闭合）：test_cxfc_plugin TestFullFlow PASSED（/call music_sing 全链路）+ call_tool 4 用例 PASSED + CXFC 子集 147p
+- 证据路径：`.trae/documents/test_reports/frontend_gate_20260723/` + `.trae/documents/test_reports/backend_20260723/summary.md`
+
+### 为什么（关键决策）
+
+- **引擎收敛边界**：cosyvoice/indextts 全项目移除；f5tts 仅移除 VoiceWorkStation 侧微调，CX-O-SERVER 侧 f5tts 合成保留（情感参考音频消费者 + SVC 训练数据来源）
+- **orpheustts 来源**：音频工作站自带接入，直调 docker vLLM（OpenAI 兼容 /v1/audio/speech），复用 CX-O-SERVER 已验证协议形状
+- **voxcpm 参考音频两模式**：克隆模式（可控声音克隆：参考音频 + 风格指令，保持原始音色 48kHz）/ 提示词模式（音色设计：自然语言描述凭空创建）；两种模式情感参考音频均通过 controllable_clone 生成；极致克隆作为高级选项
+- **SVC 训练数据 3 来源**：f5tts / orpheustts / voxcpm 任选，按 engine 参数分发
+- **真实音乐引擎**：DiffSinger（config 默认 diffsinger，mock 保留为开发/CI）+ fluidsynth + SoundFont
+- **前端重构**：语音工作站 → 音频工作站（路由 /audio-workstation + 旧路由重定向）；CompositionPage 合并为 Tab；新增 orpheustts 合成 Tab；参考音频 UI 改为 voxcpm 两模式
+- **并行策略**：[P-1] Task 1+2、[P-2] Task 3+4、[P-3] Task 6+7，共享文件 config.py/main.py/tts_service.py 合并无冲突
+
+### 未闭合项
+
+- **Task 12 [V]**：GN-004 交付前独立审查 + 人类批准 — 待启动
+- **Task 11.3 真实引擎 E2E**：当前不可判定（环境未部署），按 rules-5 §2.4 须在交付前审查时由人类逐项确认是否放行
+- **预存问题（非本次 spec 引入）**：
+  1. VoiceWorkStation test_validation.py::TestSafeExtractZip::test_rejects_absolute_path（Task 4 已记录）
+  2. CX-O-SERVER test_acp_manager.py ACPGroupMember 导入失败（ACP 域）
+  3. CX-O-SERVER graph 模块 102 errors（_get_graph_database 已重命名为 _resolve_graph_database）
+  4. CX-O-SERVER memory/stats/server_dependencies/asr 模块预存失败
+  5. CX-O-SERVER test_handler_audio.py fake_manager fixture setup error
+
+### 接续入口
+
+主线程拉起 GN-004 交付前独立审查（读取 spec 三件套 + .trae/documents/ 全部变更记录 + 本 note）→ GN-004 结论处理（阻断→fix→rerun / 警示放行→AskUserQuestion / 通过→AskUserQuestion）→ [V] 节点 AskUserQuestion 人类批准（含 11.3 放行裁决）→ 交付。
+
+---
+
+## 审查记录：GN-004 交付前审查（Task 12.1，2026-07-23）
+
+### 审查结论
+
+- **等级**：警示放行（CAUTION-PASS）
+- **GN-004 agent id**：0fc71a22-5bab-4885-b6d4-d5f841c7d4cc
+- **无阻断**、**无 SOFT_BLOCK**
+- 1 项警示级（OBS-1）+ 7 项建议级（OBS-2~OBS-8）
+
+### 观察项处置
+
+| 编号 | 级别 | 处置状态 |
+|------|------|----------|
+| OBS-1（checklist 42 项全未勾选） | 警示 | 已处置：补勾功能项，11.3 标 `[~]`，Task 12 标 `[ ]` |
+| OBS-2（3 份文档缺独立结果段） | 建议 | 转运维（功能等价信息已存在） |
+| OBS-3（voiceworkstation.ts L471 过时注释） | 建议 | 转运维 |
+| OBS-4（Task 4 文档措辞不准确） | 建议 | 转运维 |
+| OBS-5（note 顶部主段未更新） | 建议 | 交付后更新 |
+| OBS-6（Task 1/2 SubTask 未勾选） | 建议 | 已处置：补勾 SubTask |
+| OBS-7（test_validation 安全缺陷 Python 3.14） | 建议 | 转运维（目录穿越防护仍有效） |
+| OBS-8（Task 5 前驱 ID 缺失） | 建议 | 已符合要求，无需处置 |
+
+### 11.3 放行建议
+
+GN-004 建议**放行**（标记为已知环境限制）：
+- 环境三项（DiffSinger 目录/fluidsynth 二进制/docker daemon）经独立验证确未部署
+- setup_singing_engine.py 退出码 1 并正确报告缺失项+安装指引（Task 7.3 闭合判据满足）
+- mock 引擎路径已通过 CXFC E2E 全链路验证
+- 真实引擎 E2E 属部署环境后另行验证项，不阻断代码交付
+
+### 预存问题确认（5 项均与本次 spec 无关）
+
+1. test_validation.py — Python 3.14 isabs 语义变化，git HEAD 已含
+2. test_acp_manager.py — ACP 域
+3. graph 模块 102 errors — _get_graph_database 重命名
+4. memory/stats/server_dependencies/asr 模块失败 — 独立复跑涉及文件 191 passed
+5. test_handler_audio.py fake_manager fixture — fixture 引用问题
+
+### handle_gn004 处置
+
+警示放行（无 SOFT_BLOCK）→ write_to_note（本段）→ proceed → 进入 [V] 第二道闸门 AskUserQuestion 人类批准
+
+### [V] 第二道闸门：人类裁决（2026-07-23）
+
+- **裁决**：暂停交付，先补验 11.3 真实引擎 E2E
+- **含义**：Task 11.3 从「当前不可判定」升级为「阻塞」（按 rules-5 §2.4，人类选择搁置=阻塞）；Task 11 降级为未闭合；Task 12 [V] 暂停
+- **下一步**：部署 DiffSinger/fluidsynth/orpheustts docker 环境 → 补验真实引擎 E2E → 通过后重新拉起 Task 12 [V] AskUserQuestion
+- **请示闭环**：本次 AskUserQuestion（交付批准）已获人类响应（暂停补验 11.3），请示已闭合
+
+### 11.3 真实引擎 E2E 补验进度（2026-07-23）
+
+**环境重检发现**：Docker daemon 已在运行（之前 subagent 报告过时），`cx-o-orpheus-tts-1` 容器已部署可用。
+
+**orpheustts docker 真实合成验证 — PASSED**：
+- 容器：`cx-o-orpheus-tts-1`（vllm/vllm-openai:v0.22.0，端口 5060，healthy）
+- 健康检查 GET /health → 200 `{"status":"healthy","vllm":"ready","snac":"ready","model":"/workspace/models"}`
+- 模型列表 GET /v1/models → 200，model id="/workspace/models"，owned_by="canopylabs"
+- 真实合成 POST /v1/audio/speech → 200，Content-Type: audio/wav，270380 bytes，RIFF 头验证通过
+- 证据：`c:\CX-O\.trae\documents\test_reports\backend_20260723\orpheustts_real_synth_test.wav`
+
+**DiffSinger 状态 — 完全未部署**：
+- `c:\CX-O\DiffSinger` 目录不存在
+- 无 .ckpt / dsconfig.yaml 文件
+- config: diffsinger_dir=父级/DiffSinger（不存在）/ voice_bank=""
+- 部署需求：Python 3.10+（当前 3.14.4 可能不兼容）+ PyTorch 2.4-2.8 + CUDA 11.8+ + 声库下载（社区声库）
+
+**fluidsynth + SoundFont 状态 — 完全未部署**：
+- fluidsynth 未安装
+- choco 有包 2.4.7 但标注 "Possibly broken"
+- 无 .sf2/.sf3 SoundFont 文件
+- config: soundfont_path=""
+
+---
+
+## 诊断草稿：refactor-audiostation-engine-consolidation 11.3 fluidsynth 补验收束（2026-07-23）
+
+### 做到哪了
+
+11.3 真实引擎 E2E 补验收束。人类裁决「fluidsynth 全自动 + DiffSinger 转运维」后：
+- **fluidsynth 路径已闭合**：fluidsynth 2.5.6 二进制部署 + Tabla.sf2 SoundFont 部署 + 参数顺序 bug 修复 + 真实 E2E PASS
+- **orpheustts docker 路径已闭合**（前序补验）：270,380 bytes WAV，RIFF 验证通过
+- **DiffSinger 转运维阻塞**：声库需手动下载（社区声库托管在夸克网盘等，无法脚本化）+ inference.py 包装器缺失（DiffSinger 仓库原生用 scripts/infer.py acoustic，与 VoiceWorkStation 期望的 `inference.py --score X --voice_bank Y --output Z` 契约不匹配）
+
+### 为什么（关键决策）
+
+1. **fluidsynth 全自动部署**：GitHub Releases 直接下载 v2.5.6 win10-x64 zip（2.66MB）+ GitHub Pages 托管 Tabla.sf2（4.06MB）。多源失败后（Cloudflare/连接超时/EOF），连通性测试发现仅 github.com 可达，改用 GitHub Pages 托管的 SoundFont 成功。
+2. **参数顺序 bug 发现与修复**：真实 E2E 测试发现 fluidsynth 2.5.x CLI 参数解析变严格，要求选项在位置参数之前。既有 accompaniment.py 代码把 `-F`/`-r` 放在 soundfont/midi 路径之后，触发 `'-F' is an illegal option at this place` 错误。34 个 mock 单测因仅校验字符串组成（用 `in cmd` 顺序无关）未发现此集成缺陷——正验证 11.3 真实 E2E 补验设计价值。按 rules-6 §三「修复前必写」先写变更文档 `20260723_模块0_fluidsynth参数顺序适配.md`，再修复代码（选项提前，向后兼容 2.4.x）。
+3. **DiffSinger 转运维**：两个非自动可解阻塞——(a) 声库需手动下载（社区声库在中文云盘，无脚本化下载路径）；(b) inference.py 包装器需新增集成代码（DiffSinger 仓库无此文件，原生用 scripts/infer.py acoustic 完全不同签名）。按 EC-7 drift_self_check 转化为 AskUserQuestion，人类裁决留待运维阶段处理，不在本次 spec 范围内写新集成代码。
+
+### 未闭合项
+
+- **Task 11.3 DiffSinger 路径**：转运维阻塞（依赖声库手动获取 + inference.py 包装器新增），非阻断交付。人类已裁决放行至运维阶段。
+- **Task 12 [V]**：待重新拉起 GN-004 复审（含新增变更文档 `20260723_模块0_fluidsynth参数顺序适配.md`）+ AskUserQuestion 人类批准交付。
+
+### 接续入口
+
+主线程拉起 GN-004 交付前复审（读取 spec 三件套 + .trae/documents/ 全部变更记录含新增 fluidsynth 参数顺序适配文档 + 本 note）→ GN-004 结论处理 → [V] 节点 AskUserQuestion 人类批准（fluidsynth 已闭合 + DiffSinger/orpheustts-docker 转运维放行裁决）→ 交付。
+
+### 工程过程
+
+人类裁决「fluidsynth 全自动 + DiffSinger 转运维」→ 下载 fluidsynth v2.5.6 zip（GitHub Releases）→ 解压到 `C:\CX-O\tools\fluidsynth\` → 下载 Tabla.sf2（GitHub Pages gleitz/midi-js-soundfonts）→ 写 E2E 测试脚本 `tools/test_fluidsynth_e2e.py` → 首跑失败发现 fluidsynth 2.5.x 参数顺序 bug → 写变更文档（rules-6 §三）→ 修复 accompaniment.py L265-277 cmd 构造顺序（选项提前）→ 同步更新 3 处 docstring/注释（accompaniment.py L9/L240 + test_accompaniment_mixer.py L356 + test_fluidsynth_e2e.py L6）→ 重跑 mock 单测 33p/1s 无回归 → 重跑真实 E2E PASS（710,700 bytes WAV, 4.03s, 2ch/16bit/44100Hz）→ 变更文档 status="已完成" + 第五章最终结果 → 更新 tasks.md/checklist.md 三段交接 → 追加本 note 段。
+
+### 交接状态（rules-5 §二 (2)）
+
+- Task 11.3 fluidsynth 路径 = **已闭合**（2.5.6 部署 + 参数顺序适配 + E2E PASS，710,700 字节 WAV）
+- Task 11.3 orpheustts docker 路径 = **已闭合**（前序补验，270,380 bytes WAV，RIFF 验证通过）
+- Task 11.3 DiffSinger 路径 = **阻塞**（转运维：声库手动下载 + inference.py 包装器新增，人类裁决放行至运维阶段，非阻断交付）
+- Task 11 整体 = **部分闭合**（11.1/11.2/11.4 已闭合；11.3 fluidsynth+orpheustts 已闭合 + DiffSinger 转运维阻塞）
+- Task 12 [V] = **未开始**（待 GN-004 复审 + 人类批准）
+
+### 最终结果（验证结论）
+
+- **代码修改**：[accompaniment.py L265-277](file:///C:/CX-O/CX-O-VoiceWorkStation/workstation/music/accompaniment.py#L265-L277) cmd 构造顺序改为「选项在前，位置参数在后」+ 3 处 docstring/注释同步 ✅
+- **mock 单测回归**：`py -3.14 -m pytest tests/test_accompaniment_mixer.py -v` → 33 passed, 1 skipped in 1.34s（无回归）✅
+- **真实 E2E**：`py -3.14 C:\CX-O\tools\test_fluidsynth_e2e.py` → 退出码 0，PASS；产出 `C:\CX-O\.trae\documents\test_reports\backend_20260723\fluidsynth_real_render_test.wav`（710,700 bytes, 4.03s, 2ch/16bit/44100Hz, RIFF/WAVE 合法）✅
+- **变更文档**：`C:\CX-O\.trae\documents\20260723_模块0_fluidsynth参数顺序适配.md` status="已完成"，含完整 5 章 + 修改清单 + 测试结果 + 经验教训 + 回滚方案 ✅
+- **产出物清单**：fluidsynth 2.5.6 二进制（`C:\CX-O\tools\fluidsynth\`）+ Tabla.sf2（`C:\CX-O\tools\soundfonts\`）+ E2E 测试脚本（`C:\CX-O\tools\test_fluidsynth_e2e.py`）+ 真实渲染 WAV 证据 + 变更文档
+
+### 经验教训
+
+1. **mock 测试覆盖盲区**：34 个 mock 单测全通过但未发现真实 fluidsynth 2.5.x 参数顺序兼容性问题——mock 只校验命令行字符串组成，不实际执行二进制。真实引擎 E2E 补验是发现集成缺陷的必要环节。
+2. **fluidsynth 2.5.x 破坏性变更未显式标注**：官方从 2.5.0 起收紧 CLI 参数解析，但变更日志未醒目标注。引入第三方二进制依赖时应在真实环境跑通后再标记集成完成。
+3. **向后兼容的修复方向优先**：选「选项在前」而非「降级二进制」，因新语法向后兼容 2.4.x 且避免旧版本 CVE 风险——一次性根治而非权宜之计。
+4. **EC-7 drift_self_check 实践**：发现 DiffSinger 存在实质性自动部署阻塞时，按 EC-7 转化为 AskUserQuestion 让人类裁决，而非自行决定写新集成代码或放弃——人类裁决「转运维」明确边界。
+
+---
+
+## 审查记录：GN-004 交付前复审（Task 12.1 复审，2026-07-23）
+
+### 审查结论
+
+- **等级**：警示放行（CAUTION-PASS）
+- **GN-004 agent id**：`gn004-review-refactor-audiostation-11.3-fluidsynth-recheck-20260723`（主线程拉起 agent 97509472-ba25-4bf2-8236-1cc9dac2f1a2）
+- **无阻断**、**无 SOFT_BLOCK**
+- 2 项警示级观察项（OBS-NEW-1 / OBS-NEW-2），均已处置
+
+### 观察项处置
+
+| 编号 | 级别 | 描述 | 处置状态 |
+|------|------|------|----------|
+| OBS-NEW-1 | 警示 | 变更文档第一章 WAV 参数描述错误（32-bit/2.0s → 实际 16-bit/4.03s） | ✅ 已修正：第一章第4点改为「16-bit stereo @ 44100Hz，4.03s」 |
+| OBS-NEW-2 | 警示 | tasks.md/checklist.md 把 orpheustts docker 误归「留待运维」（实际已闭合） | ✅ 已修正：tasks.md L78/L80 + checklist.md L56 同步为「orpheustts docker 已闭合（前序补验，270,380 字节 WAV）」 |
+
+### 独立验证项
+
+- mock 单测独立重跑：33 passed, 1 skipped in 1.26s（无回归）✅
+- WAV 头部字节独立校验：RIFF/WAVE 合法，2ch/16bit/44100Hz/4.03s，710,700 = data 710,656 + header 44 精确匹配 ✅
+- orpheustts_real_synth_test.wav 独立校验：RIFF/WAVE 合法，1ch/16bit/24000Hz, 270,380 bytes ✅
+- public/ 保护：git status 核查未触碰 public/ ✅
+
+### handle_gn004 处置
+
+警示放行（无 SOFT_BLOCK）→ write_to_note（本段）→ proceed → 进入 [V] 第二道闸门 AskUserQuestion 人类批准
+
+### 11.3 放行建议
+
+GN-004 建议放行：fluidsynth 路径已闭合（E2E PASS）+ orpheustts docker 路径已闭合（前序补验）+ DiffSinger 转运维阻塞（人类已裁决放行至运维阶段，非阻断）。请人类在 [V] 第二道闸门做最终批准裁决。

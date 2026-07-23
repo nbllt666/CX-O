@@ -1,434 +1,142 @@
-# CX-O&#x20;
+# CX-O
 
-CX-O 是一个基于单体应用架构的智能语音对话系统，集成语音识别 (ASR)、大语言模型 (LLM) 和语音合成 (TTS) 能力，支持双向全双工语音交互。
+> 你的二次元 AI 伙伴，能聊天、能记忆、能说话、能直播、能唱歌。
 
-## 系统架构
+CX-O 是一套面向二次元爱好者的 AI 人格化陪伴系统。它把虚拟形象、语音对话、记忆管理、直播推流、声音克隆、AI 作曲这些能力整合到一个桌面应用里，让你和纸片人老婆/老公的互动不再停留在打字聊天。
 
-```
-┌─────────────────────────────────────────────────────────────────┐
-│                      CX-O Frontend                              │
-│                   (React + TypeScript)                          │
-│                      http://127.0.0.1:5173                       │
-└──────────────────────────┬──────────────────────────────────────┘
-                           │ WebSocket / HTTP
-                           ▼
-┌─────────────────────────────────────────────────────────────────┐
-│                   CX-O Server (8000)                           │
-│              单体应用，集成所有功能                               │
-│  ┌─────────────────────────────────────────────────────────┐  │
-│  │  Gateway Layer: WebSocket、HTTP REST API                 │  │
-│  ├─────────────────────────────────────────────────────────┤  │
-│  │  Handlers Layer: 聊天、记忆、音频、工具、ACP、MCP         │  │
-│  ├─────────────────────────────────────────────────────────┤  │
-│  │  Services Layer: ASR、TTS、VAD、防火墙、打断管理          │  │
-│  ├─────────────────────────────────────────────────────────┤  │
-│  │  Core Layer: LLM、记忆、上下文、工具、ACP、图谱           │  │
-│  └─────────────────────────────────────────────────────────┘  │
-└─────────────────────────────────────────────────────────────────┘
-```
+---
 
-## 功能特性
+## 这个系统能做什么
 
-### 核心功能
+**和虚拟形象实时语音对话** — 加载 Live2D 或 VRM 模型，开口说话就能跟 AI 角色聊天。AI 边想边说，你随时能打断，就像在跟真人打电话。回复内容还能驱动角色做表情、做动作，聊天的时候她会笑、会生气、会歪头看你。
 
-- **语音对话**：端到端语音交互，ASR → LLM → TTS 全流程
-- **智能记忆**：长期记忆存储、语义搜索、自动遗忘衰减机制
-- **多模型支持**：Ollama 本地模型，可扩展支持 VLLM 等其他 LLM
-- **工具生态**：MCP (Model Context Protocol) 协议支持，内置多种工具
-- **ACP 协议**：局域网自动发现、点对点通信、群组协同
-- **弹幕系统**：B站/RDF 弹幕接入，三档防火墙 (block/passive/reply)
-- **双向全双工**：支持用户打断 Agent TTS、Agent 打断用户说话
-- **VAD 语音检测**：WebRTC/Energy/Silero 多种模式
-- **情感 TTS**：支持多种情感音色的语音合成
-- **知识图谱**：语义节点存储、关系管理、图遍历查询
+**记住你们之间发生过什么** — 三层记忆系统（短期/长期/永久），AI 会自己判断哪些事值得记住。聊得越久，她越了解你。还带向量语义搜索和知识图谱，能从海量记忆里精准召回相关内容。
 
-### 高级特性
+**多角色切换与协作** — 创建多个 AI 人格，每个有独立的人设、记忆和声音。角色之间还能通过 ACP 协议互相通信，让不同的 AI 伙伴合作完成任务。
 
-- **四类知识图谱**：用户图谱、事物图谱、概念图谱、事件图谱
-- **三维评分模型**：重要性 + 时间 + 相关性综合评估
-- **场景感知路由**：根据对话场景动态调整检索策略
-- **混合搜索**：向量搜索 + 关键词搜索
-- **多 Agent 隔离**：支持多租户架构，每个 Agent 独立记忆空间
-- **直播模式**：虚拟形象 (Live2D/VRM)、弹幕叠加、字幕显示
-- **Orpheus TTS**：流式情感语音合成，vLLM + SNAC 解码，13 种语音，情感标签支持
-- **桌面宠物**：Electron 桌面宠物窗口，鼠标穿透，虚拟形象 + 聊天
-- **双流式语音**：voice.dual_stream 全双工实时语音交互
-- **副模型路由**：SecondaryModelRouter 支持记忆管理副模型
+**虚拟主播直播** — 直接对接 OBS，拆分成形象源、弹幕源、字幕源、音频源四个独立浏览器源。开个直播间，让你的 AI 角色当主播，实时念弹幕、回观众消息。
 
-## 快速开始
+**声音克隆与训练** — 语音工作站提供从参考音频生成到 So-VITS-SVC 训练的完整流程。用你喜欢的声音素材训练专属音色，还能给 AI 角色用上。
 
-### 环境要求
+**AI 作曲与歌声合成** — 写个歌谱就能生成带人声的歌曲。支持旋律编辑、和弦编排、MusicXML 导入，选好声库和变调参数就能合成成品。
 
-- Windows 10/11 或 Linux
-- Python 3.10+
-- Node.js 18+
-- CUDA 11.8+ (GPU 支持)
-- Miniconda3
+**桌面宠物** — 透明悬浮窗趴在桌面上，鼠标穿透不挡操作，随时拖到屏幕角落。右键还能调出菜单，随时开始对话。
 
-### 启动服务
+---
 
-#### Windows 一键启动
+## 快速上手
 
-```batch
-.\start-all.bat
+### 你需要准备什么
+
+- 一张 NVIDIA 显卡（最低 16GB 显存，推荐 20GB 以上）
+- Python 3.11 或更高版本
+- Node.js 18 或更高版本
+- Docker 和 Docker Compose（用于跑语音和推理服务）
+- Ollama（用于跑对话大模型）
+
+### 三步启动
+
+**第一步：准备环境**
+
+```powershell
+# 在项目根目录运行，自动创建 Python 虚拟环境
+.\create-env.bat
+
+# 激活环境
+call py311\Scripts\activate.bat
 ```
 
-#### 手动启动
+**第二步：拉模型**
 
-1. **启动后端服务**
+```powershell
+# 对话模型（主模型 + 向量嵌入模型）
+ollama pull qwen3-vl:8b
+ollama pull nomic-embed-text
 
-```batch
+# 语音相关模型
+python download_voxcpm2.py
+python download_voxcpm_support.py
+python cosyvoice\download_models.py
+```
+
+**第三步：启动服务**
+
+```powershell
+# 1. 启动后端（端口 8000）
 cd CX-O-SERVER
-python server/main.py
-```
+.\start.bat
 
-1. **启动前端**
-
-```batch
+# 2. 启动前端（端口 5173）
 cd CX-O-Frontend
-npm install
-npm run dev
+.\start.bat
 ```
 
-### 访问界面
+浏览器打开 `http://localhost:5173`，第一次会引导你确认后端连接，连上就能开始用了。
 
-- 前端界面: <http://127.0.0.1:5173>
-- API 文档: <http://127.0.0.1:8000/docs>
-- 健康检查: <http://127.0.0.1:8000/health>
+> 语音对话功能还需要额外启动 ASR 和 TTS 服务，具体见部署文档。
 
-## 服务端口
+---
 
-| 服务                | 端口   | 协议             | 说明          |
-| ----------------- | ---- | -------------- | ----------- |
-| CX-O Server       | 8000 | WebSocket/HTTP | 单体应用，集成所有功能 |
-| CX-O Frontend     | 5173 | HTTP           | Web 前端      |
-| Voice WorkStation | 8200 | HTTP           | 语音工作站 (可选)  |
-| Weaviate          | 8090 | HTTP/gRPC      | 向量数据库 (可选)  |
-| Orpheus TTS       | 5060 | HTTP           | 流式情感语音合成 (可选) |
-| vLLM              | 8080 | HTTP           | LLM 推理加速 (可选) |
+## 核心功能一览
+
+| 功能 | 说明 |
+|------|------|
+| 实时语音对话 | 全双工通话，边听边说，随时打断，延迟可控在 300ms 内 |
+| 虚拟形象 | Live2D 和 VRM 双引擎，表情/动作/口型同步/风场/眼球追踪 |
+| 记忆系统 | 三层记忆 + 向量搜索 + 知识图谱 + 自动衰减 + 记忆蒸馏 |
+| 多 Agent | 多个人格独立管理，ACP 协议互通信，角色卡快速创建 |
+| 直播推流 | OBS 四源拆分（形象/弹幕/字幕/音频），弹幕实时互动 |
+| 声音克隆 | VoxCPM 音色设计 + CosyVoice 情感参考 + So-VITS-SVC 训练推理 |
+| AI 作曲 | 歌谱编辑 + MusicXML 导入 + 声库选择 + 歌声合成 |
+| 桌面宠物 | 透明悬浮窗，鼠标穿透，拖拽移动，右键菜单 |
+| 工具系统 | 数十个内置工具 + MCP 协议接入外部工具 + 插件系统 |
+
+---
+
+## 文档导航
+
+想深入了解某个方面，可以看这些文档：
+
+- [功能特性文档](./docs/features.html) — 每个功能的详细说明和使用方式
+- [部署文档](./docs/deployment.html) — 所有模型下载、配套服务、硬件要求、完整配置指南
+
+---
 
 ## 项目结构
 
 ```
 CX-O/
-├── CX-O-Frontend/              # 前端服务 (React + TypeScript + Electron 桌面应用)
-│   ├── src/
-│   │   ├── api/               # API 客户端
-│   │   ├── components/        # React 组件
-│   │   │   ├── Avatar/        # 虚拟形象组件
-│   │   │   ├── Live/          # 直播组件
-│   │   │   ├── Live2D/        # Live2D 组件
-│   │   │   ├── VRM/           # VRM 组件
-│   │   │   ├── PetAudioPanel/ # 宠物音频面板
-│   │   │   ├── PetAvatar/     # 宠物虚拟形象
-│   │   │   ├── PetChat/       # 宠物聊天组件
-│   │   │   ├── layout/        # 布局组件
-│   │   │   ├── ui/            # UI 组件
-│   │   │   └── VRMWindField.ts # VRM 风场效果
-│   │   ├── hooks/             # React Hooks
-│   │   │   ├── useAudioStream      # 音频流 Hook
-│   │   │   ├── useAudioAnalyzer    # 音频分析 Hook
-│   │   │   ├── useLiveWebSocket    # 直播 WebSocket Hook
-│   │   │   └── usePetMousePassthrough # 宠物鼠标穿透 Hook
-│   │   ├── i18n/              # 国际化
-│   │   ├── pages/             # 页面组件
-│   │   │   ├── PetPage             # 桌面宠物页面
-│   │   │   ├── AudioTestPage       # 音频测试页面
-│   │   │   ├── VoiceWorkstationPage # 语音工作站页面
-│   │   │   ├── GraphDataPage       # 图谱数据页面
-│   │   │   ├── VectorDataPage      # 向量数据页面
-│   │   │   ├── PluginsPage         # 插件管理页面
-│   │   │   └── LiveSplitPage       # 直播拆分页面
-│   │   ├── store/             # 状态管理 (Zustand)
-│   │   │   └── settingsStore.ts    # 设置状态管理
-│   │   └── styles/            # 样式文件
-│   ├── public/                # 静态资源
-│   └── package.json           # 前端依赖配置
-│
-├── CX-O-SERVER/                # 后端服务 (Python + FastAPI)
-│   ├── server/
-│   │   ├── api/               # API 路由
-│   │   │   ├── routers/       # REST API 路由
-│   │   │   └── middleware/    # 中间件
-│   │   ├── core/              # 核心模块
-│   │   │   ├── acp/           # ACP 协议
-│   │   │   ├── alarm/         # 闹钟系统
-│   │   │   ├── asr/           # ASR 服务
-│   │   │   ├── context/       # 上下文管理
-│   │   │   ├── graph/         # 知识图谱
-│   │   │   ├── llm/           # LLM 客户端
-│   │   │   ├── memory/        # 记忆系统
-│   │   │   ├── plugins/       # 插件系统
-│   │   │   ├── session/       # 会话管理
-│   │   │   ├── tools/         # 工具系统
-│   │   │   ├── tts/           # TTS 服务
-│   │   │   └── websocket/     # WebSocket 管理
-│   │   ├── gateway/           # 网关模块
-│   │   ├── handlers/          # 消息处理器
-│   │   ├── protocol/          # 协议定义
-│   │   ├── services/          # 业务服务
-│   │   └── storage/           # 存储层
-│   ├── f5_tts/                # F5-TTS 模型
-│   ├── sensevoice/            # SenseVoice 模型
-│   └── pyproject.toml         # Python 项目配置
-│
-├── CX-O-VoiceWorkStation/      # 语音工作站 (可选)
-│   ├── workstation/
-│   │   ├── api/               # API 接口
-│   │   ├── services/          # 服务层
-│   │   └── tools/             # 工具集
-│   └── pyproject.toml         # Python 项目配置
-│
-├── orpheus-tts/                # Orpheus TTS 服务 (可选)
-│   ├── api_server.py          # 服务入口
-│   ├── Dockerfile             # Docker 配置
-│   └── docker-compose.yml     # Docker Compose 配置
-│
-├── vllm-speedtest/             # vLLM 性能基准测试 (可选)
-│   └── benchmark.py           # 基准测试脚本
-│
-├── cosyvoice/                  # CosyVoice 语音合成 (可选)
-│   ├── cosyvoice/             # 核心模块
-│   ├── runtime/               # 运行时
-│   └── examples/              # 示例代码
-│
-├── .github/                    # CI 工作流
-│   └── workflows/             # GitHub Actions 配置
-│
-├── docker/                     # LLM Docker 配置
-│   └── ...                    # Docker 相关文件
-│
-├── config/                     # 配置文件
-│   ├── default.yaml           # 主配置
-│   ├── settings.py            # 配置加载
-│   ├── danmaku.yaml           # 弹幕配置
-│   ├── firewall.yaml          # 防火墙配置
-│   ├── firewall_v3.yaml       # 防火墙 V3 配置
-│   ├── vad.yaml               # VAD 配置
-│   └── hidden_prompt.yaml     # 隐藏提示词配置
-│
-├── data/                       # 数据目录
-│   ├── acp/                   # ACP 数据
-│   ├── agents.json            # Agent 配置
-│   └── memories.db            # 记忆数据库
-│
-├── docs/                       # 项目文档
-│   ├── API.md                 # API 文档
-│   └── FEATURES.md            # 功能特性文档
-│
-├── main.py                     # 旧版入口 (已废弃)
-├── start-all.bat              # Windows 一键启动脚本
-├── docker-compose.weaviate.yml # Weaviate Docker 配置
-└── requirements.txt           # Python 依赖
+├── CX-O-Frontend/          # 前端桌面应用（Electron）
+├── CX-O-SERVER/            # 后端服务（FastAPI + WebSocket）
+├── CX-O-VoiceWorkStation/  # 语音工作站（声音克隆与训练）
+├── cosyvoice/              # CosyVoice 语音合成引擎
+├── orpheus-tts/            # Orpheus TTS 服务
+├── ELP-Orpheus/            # 低延迟推理引擎（双卡部署）
+├── config/                 # 全局配置文件
+├── docker/                 # Docker 镜像构建文件
+├── docs/                   # 项目文档
+├── models/                 # 本地模型存放目录
+└── public/                 # 公共契约资源
 ```
 
-## 核心模块详解
-
-### 1. 智能记忆系统
-
-基于认知科学的记忆管理解决方案：
-
-- **双阶段指数衰减模型**：模拟艾宾浩斯遗忘曲线
-- **三维评分**：重要性 + 时间 + 相关性
-- **场景感知路由**：根据对话场景动态调整检索策略
-- **混合搜索**：向量搜索 + 关键词搜索
-- **多 Agent 隔离**：每个 Agent 独立记忆空间
-
-详见：[docs/FEATURES.md](docs/FEATURES.md#智能记忆系统)
-
-### 2. 知识图谱系统
-
-语义图数据库系统：
-
-- **四类图谱**：用户图谱、事物图谱、概念图谱、事件图谱
-- **混合架构**：SQLite + Weaviate
-- **图算法**：BFS、DFS、Dijkstra、PageRank、社区发现
-- **语义搜索**：基于向量的语义检索
-- **56 个图工具**：为 LLM 提供图操作能力
-
-详见：[docs/FEATURES.md](docs/FEATURES.md#知识图谱集成功能)
-
-### 3. 三档防火墙系统
-
-直播弹幕内容审核与决策系统：
-
-- **第一档 (block)**：违规内容，直接拦截
-- **第二档 (passive)**：正常弹幕，通过但不回复
-- **第三档 (reply)**：优质弹幕，值得互动回复
-- **双层防护**：规则过滤 + LLM 智能决策
-
-详见：[docs/FEATURES.md](docs/FEATURES.md#三档防火墙系统)
-
-### 4. 直播模式
-
-支持虚拟主播直播场景：
-
-- **虚拟形象**：Live2D / VRM 支持
-- **弹幕系统**：B站/RDF 弹幕接入
-- **字幕显示**：实时字幕叠加
-- **音频控制**：AEC 回声消除、音量控制
-- **拆分模式**：OBS 多源支持
-
-## 技术栈
-
-### 后端
-
-- **框架**: Python 3.10+, FastAPI, uvicorn, WebSocket
-- **AI 服务**: SenseVoice (ASR), F5-TTS (TTS), CosyVoice (可选), Orpheus TTS (vLLM + SNAC)
-- **LLM**: Ollama, VLLM
-- **数据库**: SQLite, Milvus Lite, ChromaDB, Weaviate
-- **协议**: MCP (Model Context Protocol), ACP
-
-### 前端
-
-- **框架**: React 18+, TypeScript, Vite, Electron
-- **UI**: Tailwind CSS, Framer Motion, Lucide Icons
-- **状态管理**: Zustand, @tanstack/react-query
-- **路由**: React Router v6
-- **国际化**: i18next
-- **虚拟形象**: @pixiv/three-vrm, pixi-live2d-display
-- **图表**: Recharts, React Force Graph
-- **内容渲染**: react-markdown, remark-gfm
-
-## 配置说明
-
-### 主配置文件 (config/default.yaml)
-
-```yaml
-server:
-  host: 0.0.0.0
-  port: 8000
-  debug: true
-
-models:
-  main:
-    provider: ollama
-    host: http://localhost:11434
-    model: qwen3-vl:8b
-    temperature: 0.7
-
-memory:
-  enabled: true
-  vector_backend: weaviate
-  graph_enabled: true
-
-tts:
-  mode: remote          # embedded | remote
-  engine: f5-tts
-  emotion_enabled: true
-  orpheus:
-    url: http://127.0.0.1:5060
-    model: canopylabs/orpheus-multilingual-research-release
-    voice: tara
-
-asr:
-  mode: remote          # embedded | remote
-  model_dir: SenseVoiceSmall
-
-live:
-  enabled: true
-  mode: "integrated"
-```
-
-### 环境变量
-
-| 变量名                  | 默认值                | 说明               |
-| -------------------- | ------------------ | ---------------- |
-| `MEMORY_DB_PATH`     | `data/memories.db` | 记忆数据库路径          |
-| `VECTOR_BACKEND`     | `weaviate`         | 向量存储后端           |
-| `WEAVIATE_HOST`      | `localhost`        | Weaviate 服务地址    |
-| `WEAVIATE_PORT`      | `8090`             | Weaviate HTTP 端口 |
-| `EMBEDDING_PROVIDER` | `ollama`           | 嵌入模型提供者          |
-| `CXO_TTS_ORPHEUS_URL` | `http://127.0.0.1:5060` | Orpheus TTS 服务地址 |
-
-## API 文档
-
-完整的 API 文档请参考：[docs/API.md](docs/API.md)
-
-### 主要 API 端点
-
-- **聊天**: `POST /api/chat`, `POST /api/chat/stream`
-- **记忆管理**: `GET/POST/PUT/DELETE /api/memories`
-- **Agent 管理**: `GET/POST/PUT/DELETE /api/agents`
-- **知识图谱**: `GET/POST/PUT/DELETE /api/graph/nodes`, `/api/graph/edges`
-- **工具管理**: `GET/POST /api/tools`
-- **ACP 协议**: `POST /api/acp/discover`, `/api/acp/send`
-- **WebSocket**: `ws://localhost:8000/api/ws/{agent_id}`
-
-## 开发指南
-
-### 前端开发
-
-```bash
-cd CX-O-Frontend
-npm install
-npm run dev          # 开发模式
-npm run build        # 生产构建
-npm run test         # 运行测试
-npm run lint         # 代码检查
-```
-
-### 后端开发
-
-```bash
-cd CX-O-SERVER
-pip install -e .
-python server/main.py
-```
-
-### 代码规范
-
-- **Python**: Black, isort, mypy
-- **TypeScript**: ESLint, Prettier
-- **提交规范**: Conventional Commits
-
-## 部署
-
-### Docker 部署
-
-```bash
-docker-compose up -d
-```
-
-### 生产环境
-
-1. 构建前端：`cd CX-O-Frontend && npm run build`
-2. 配置 Nginx 反向代理
-3. 使用 Gunicorn/Uvicorn 运行后端
-4. 配置 HTTPS 证书
+---
 
 ## 常见问题
 
-### 1. 后端无法启动
+**启动后端报错连不上 Ollama？**
+先确认 Ollama 服务在跑（`ollama serve`），默认地址 `http://localhost:11434`。模型没拉全也会报错，确保 `qwen3-vl:8b` 和 `nomic-embed-text` 都拉好了。
 
-检查端口 8000 是否被占用，或修改 `config/default.yaml` 中的端口配置。
+**语音对话没声音？**
+语音对话依赖 ASR 和 TTS 两个独立服务。默认配置走远程模式，需要用 Docker 启动 `asr-sensevoice` 和 TTS 服务。具体端口和启动方式见部署文档。
 
-### 2. 前端无法连接后端
+**Live2D 模型怎么加载？**
+在设置页面选择形象类型为 Live2D，然后上传 `.model3.json` 文件。VRM 模型同理，上传 `.vrm` 文件即可。
 
-检查后端是否正常运行，或在前端连接设置中修改后端 URL。
+**显存不够怎么办？**
+单卡 16GB 可以跑基础对话，但语音相关服务比较吃显存。可以关掉不用的服务，或者用 Orpheus 的 CPU SNAC 解码模式减轻显存压力。双卡部署效果最好。
 
-### 3. ASR/TTS 服务不可用
+---
 
-确保 SenseVoice 和 F5-TTS 模型已正确安装，或使用远程服务模式。
+## License
 
-### 4. 向量数据库连接失败
-
-确保 Weaviate 服务已启动，或使用本地向量存储 (ChromaDB/Milvus Lite)。
-
-## 贡献指南
-
-欢迎提交 Issue 和 Pull Request！
-
-1. Fork 本仓库
-2. 创建特性分支：`git checkout -b feature/your-feature`
-3. 提交更改：`git commit -m 'Add some feature'`
-4. 推送分支：`git push origin feature/your-feature`
-5. 提交 Pull Request
-
-## 许可证
-
-MIT License
-
-## 联系方式
-
-如有问题或建议，请通过 GitHub Issues 联系。
+本项目仅供学习和个人使用。第三方引擎（CosyVoice、Orpheus、So-VITS-SVC 等）请遵守各自的许可证。

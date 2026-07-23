@@ -51,7 +51,6 @@ def get_env_config() -> Dict[str, Any]:
         "CXO_MEMORY_EMBEDDING_API_KEY": ["memory", "embedding_api_key"],
         "CXO_ASR_URL": ["services", "asr", "url"],
         "CXO_TTS_URL": ["services", "tts", "url"],
-        "CXO_INDEX_TTS_URL": ["services", "index_tts", "url"],
         "CXO_LOG_LEVEL": ["logging", "level"],
         "CXO_GRAPH_DATABASE_PATH": ["graph", "database_path"],
         "CXO_GRAPH_ENABLED": ["graph", "enabled"],
@@ -131,15 +130,6 @@ class TTSServiceConfig(BaseModel):
     emotion_templates: Optional[Dict[str, Any]] = None
 
 
-class IndexTTSConfig(BaseModel):
-    url: str = "http://127.0.0.1:8004"
-    timeout: int = 180
-    enabled: bool = True
-    auto_stop_delay: int = 300
-    start_command: str = "python -m index_tts.app --port 8004 --host 0.0.0.0"
-    working_dir: str = "index-tts"
-
-
 class AdaptivePollingConfig(BaseModel):
     enabled: bool = True
     offset_ms: int = 0
@@ -157,7 +147,6 @@ class SenseVoiceStreamingConfig(BaseModel):
 class ServicesConfig(BaseModel):
     asr: ServiceConfig = Field(default_factory=ServiceConfig)
     tts: TTSServiceConfig = Field(default_factory=TTSServiceConfig)
-    index_tts: Optional[IndexTTSConfig] = None
     control_service_url: Optional[str] = None
     adaptive_polling: Optional[AdaptivePollingConfig] = None
     sensevoice_streaming: Optional[SenseVoiceStreamingConfig] = None

@@ -1,0 +1,806 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>CX-O 功能特性文档</title>
+<style>
+:root {
+  --bg: #0f0f1a;
+  --bg-card: #1a1a2e;
+  --bg-card-hover: #222240;
+  --accent: #a78bfa;
+  --accent-light: #c4b5fd;
+  --accent-pink: #f472b6;
+  --accent-cyan: #67e8f9;
+  --accent-green: #86efac;
+  --accent-orange: #fdba74;
+  --text: #e2e8f0;
+  --text-dim: #94a3b8;
+  --text-bright: #f1f5f9;
+  --border: #2d2d4a;
+  --radius: 12px;
+  --shadow: 0 4px 24px rgba(0,0,0,0.3);
+}
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body {
+  font-family: 'Noto Sans CJK SC', 'Microsoft YaHei', 'Segoe UI', sans-serif;
+  background: var(--bg);
+  color: var(--text);
+  line-height: 1.8;
+  font-size: 15px;
+}
+.hero {
+  background: linear-gradient(135deg, #1a1a2e 0%, #2d1b4e 50%, #1a1a2e 100%);
+  padding: 80px 24px 60px;
+  text-align: center;
+  border-bottom: 1px solid var(--border);
+}
+.hero h1 {
+  font-size: 2.6em;
+  font-weight: 800;
+  background: linear-gradient(135deg, var(--accent), var(--accent-pink));
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  margin-bottom: 12px;
+}
+.hero p { color: var(--text-dim); font-size: 1.15em; max-width: 640px; margin: 0 auto; }
+.hero .badge {
+  display: inline-block;
+  padding: 4px 14px;
+  border-radius: 20px;
+  background: rgba(167,139,250,0.15);
+  border: 1px solid rgba(167,139,250,0.3);
+  color: var(--accent-light);
+  font-size: 0.85em;
+  margin-top: 20px;
+}
+.container { max-width: 1100px; margin: 0 auto; padding: 40px 24px; }
+.nav {
+  position: sticky;
+  top: 0;
+  z-index: 100;
+  background: rgba(15,15,26,0.95);
+  backdrop-filter: blur(12px);
+  border-bottom: 1px solid var(--border);
+  padding: 12px 24px;
+}
+.nav-inner { max-width: 1100px; margin: 0 auto; display: flex; gap: 8px; flex-wrap: wrap; }
+.nav a {
+  color: var(--text-dim);
+  text-decoration: none;
+  padding: 6px 14px;
+  border-radius: 8px;
+  font-size: 0.88em;
+  transition: all 0.2s;
+}
+.nav a:hover { color: var(--accent-light); background: rgba(167,139,250,0.1); }
+.section { margin-bottom: 64px; scroll-margin-top: 60px; }
+.section-title {
+  font-size: 1.8em;
+  font-weight: 700;
+  margin-bottom: 8px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.section-title .icon { font-size: 1.1em; }
+.section-desc { color: var(--text-dim); margin-bottom: 28px; font-size: 1.02em; }
+.card-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 20px; }
+.card {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 24px;
+  transition: all 0.25s;
+}
+.card:hover { background: var(--bg-card-hover); border-color: var(--accent); transform: translateY(-2px); }
+.card h3 { font-size: 1.15em; margin-bottom: 10px; color: var(--text-bright); }
+.card p { color: var(--text-dim); font-size: 0.95em; }
+.card .tag {
+  display: inline-block;
+  padding: 2px 10px;
+  border-radius: 6px;
+  font-size: 0.78em;
+  margin-bottom: 12px;
+  font-weight: 600;
+}
+.tag-purple { background: rgba(167,139,250,0.15); color: var(--accent-light); }
+.tag-pink { background: rgba(244,114,182,0.15); color: var(--accent-pink); }
+.tag-cyan { background: rgba(103,232,249,0.15); color: var(--accent-cyan); }
+.tag-green { background: rgba(134,239,172,0.15); color: var(--accent-green); }
+.tag-orange { background: rgba(253,186,116,0.15); color: var(--accent-orange); }
+.feature-list { list-style: none; margin-top: 12px; }
+.feature-list li {
+  padding: 6px 0;
+  padding-left: 22px;
+  position: relative;
+  font-size: 0.93em;
+  color: var(--text);
+}
+.feature-list li::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 14px;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--accent);
+}
+.highlight-box {
+  background: linear-gradient(135deg, rgba(167,139,250,0.08), rgba(244,114,182,0.08));
+  border: 1px solid rgba(167,139,250,0.2);
+  border-radius: var(--radius);
+  padding: 24px;
+  margin: 20px 0;
+}
+.highlight-box h4 { color: var(--accent-light); margin-bottom: 8px; font-size: 1.05em; }
+.highlight-box p { color: var(--text); font-size: 0.95em; }
+table { width: 100%; border-collapse: collapse; margin: 16px 0; }
+th, td { padding: 10px 14px; text-align: left; border-bottom: 1px solid var(--border); font-size: 0.92em; }
+th { color: var(--accent-light); font-weight: 600; }
+td { color: var(--text-dim); }
+td:first-child { color: var(--text-bright); font-weight: 500; }
+.footer { text-align: center; padding: 40px 24px; color: var(--text-dim); font-size: 0.88em; border-top: 1px solid var(--border); }
+@media (max-width: 768px) {
+  .hero h1 { font-size: 1.8em; }
+  .card-grid { grid-template-columns: 1fr; }
+}
+</style>
+</head>
+<body>
+
+<div class="hero">
+  <h1>CX-O 功能特性文档</h1>
+  <p>从语音对话到 AI 作曲，从虚拟形象到记忆系统——这里是 CX-O 所有功能的完整说明</p>
+  <div class="badge">v1.0 &nbsp;|&nbsp; 2026-07</div>
+</div>
+
+<nav class="nav">
+  <div class="nav-inner">
+    <a href="#chat">对话系统</a>
+    <a href="#avatar">虚拟形象</a>
+    <a href="#memory">记忆系统</a>
+    <a href="#agents">多角色管理</a>
+    <a href="#live">直播推流</a>
+    <a href="#voice-ws">语音工作站</a>
+    <a href="#music">AI 作曲</a>
+    <a href="#pet">桌面宠物</a>
+    <a href="#tools">工具与插件</a>
+    <a href="#system">系统管理</a>
+  </div>
+</nav>
+
+<div class="container">
+
+<!-- 对话系统 -->
+<section class="section" id="chat">
+  <h2 class="section-title"><span class="icon">💬</span> 对话系统</h2>
+  <p class="section-desc">这是整个系统的核心——你和 AI 角色互动的主阵地。从打字聊天到实时语音通话，从文字到图片，全都能搞定。</p>
+
+  <div class="card-grid">
+    <div class="card">
+      <span class="tag tag-purple">基础</span>
+      <h3>文字对话</h3>
+      <p>流式逐字输出，AI 回复时能看到思考过程、工具调用过程。支持 Markdown 渲染，代码块有语法高亮。</p>
+      <ul class="feature-list">
+        <li>多消息类型：正文、思考链、工具调用、工具结果、外部事件</li>
+        <li>上下文管理：清空、追加、手动/自动总结</li>
+        <li>闹钟功能：AI 可以设闹钟，到点弹窗提醒</li>
+      </ul>
+    </div>
+
+    <div class="card">
+      <span class="tag tag-pink">多模态</span>
+      <h3>图片对话</h3>
+      <p>上传图片让 AI 看图说话。支持多张图片同时上传，AI 能理解图片内容并做出回应。</p>
+      <ul class="feature-list">
+        <li>可配置单次最大图片数量</li>
+        <li>图片与文字混合输入</li>
+        <li>视觉理解能力（依赖多模态模型）</li>
+      </ul>
+    </div>
+
+    <div class="card">
+      <span class="tag tag-cyan">语音输入</span>
+      <h3>语音转文字</h3>
+      <p>按住说话，松开后自动识别成文字填入输入框。不用打字，直接说话就行。</p>
+      <ul class="feature-list">
+        <li>录音后发送给后端 ASR 服务识别</li>
+        <li>识别结果附带语种、情绪、事件检测</li>
+        <li>支持笑声、掌声、咳嗽等非语言事件识别</li>
+      </ul>
+    </div>
+
+    <div class="card">
+      <span class="tag tag-green">语音输出</span>
+      <h3>文字转语音</h3>
+      <p>AI 的回复自动转成语音播放，播放时虚拟形象口型同步。支持情感语音和音效插入。</p>
+      <ul class="feature-list">
+        <li>流式合成：4 字即切片送合成，首包延迟低</li>
+        <li>情感语音：不同情绪用不同参考音色</li>
+        <li>音效标签：文本中插入标签即可触发音效</li>
+        <li>参考音频克隆：用参考音频定制音色</li>
+      </ul>
+    </div>
+
+    <div class="card">
+      <span class="tag tag-orange">连续对话</span>
+      <h3>语音对话模式</h3>
+      <p>开启后进入连续对话模式，AI 说完自动重新开始录音，不用反复按按钮。</p>
+    </div>
+
+    <div class="card">
+      <span class="tag tag-pink">核心亮点</span>
+      <h3>双流式实时语音</h3>
+      <p>这是整个语音系统最厉害的部分——全双工实时通话，就像跟真人打电话一样。</p>
+      <ul class="feature-list">
+        <li>边听边说：ASR 实时出字幕，LLM 边想边说，TTS 边收边播</li>
+        <li>毫秒级打断：你一开口就停掉 AI 的播放，不用等她说完</li>
+        <li>投机预填充：说出两个字就启动 AI 思考，省下约 500ms</li>
+        <li>首包延迟控制在 300ms 以内</li>
+        <li>双引擎切换：F5-TTS 和 Orpheus 两种 TTS 可选</li>
+        <li>Orpheus 支持多音色（默认 tara 音色）</li>
+      </ul>
+    </div>
+  </div>
+
+  <div class="highlight-box">
+    <h4>三种 TTS 引擎可选</h4>
+    <p>F5-TTS（默认，Triton 加速）、CosyVoice（多模式情感 TTS）、Orpheus（基于 vLLM 的多语言 TTS）。在设置页或会话初始化时切换，三种引擎各有特色，可以根据场景选择。</p>
+  </div>
+</section>
+
+<!-- 虚拟形象 -->
+<section class="section" id="avatar">
+  <h2 class="section-title"><span class="icon">🎭</span> 虚拟形象系统</h2>
+  <p class="section-desc">Live2D 和 VRM 双引擎，让你的 AI 角色活起来——会笑、会生气、会歪头看你，说话时口型同步，风吹过来头发会飘。</p>
+
+  <div class="card-grid">
+    <div class="card">
+      <span class="tag tag-purple">Live2D</span>
+      <h3>Live2D 引擎</h3>
+      <p>加载标准的 Live2D Cubism 模型（.model3.json），支持全套表情和动作系统。</p>
+      <ul class="feature-list">
+        <li>音频分析驱动的口型同步</li>
+        <li>表情混合（expressionMix）</li>
+        <li>动作播放（motion trigger）</li>
+        <li>待机动画（呼吸、身体摆动、眼睛眨动）</li>
+        <li>参数覆盖（精细控制每个参数）</li>
+      </ul>
+    </div>
+
+    <div class="card">
+      <span class="tag tag-pink">VRM</span>
+      <h3>VRM 引擎</h3>
+      <p>加载 VRM 3D 模型（.vrm），基于 Three.js 渲染，支持完整的 3D 骨骼动画。</p>
+      <ul class="feature-list">
+        <li>口型同步 + 元音分析</li>
+        <li>表情系统（BlendShape）</li>
+        <li>骨骼旋转与姿势控制</li>
+        <li>风场系统（头发和衣物物理飘动）</li>
+        <li>空闲微表情（基线放松 + 噪声微笑 + 偶尔惊讶）</li>
+        <li>眼球追踪（鼠标跟随，可开关）</li>
+        <li>头部跟踪限位（可调范围）</li>
+        <li>VTube Studio 风格的双频率叠加摇摆</li>
+      </ul>
+    </div>
+
+    <div class="card">
+      <span class="tag tag-cyan">统一接口</span>
+      <h3>双引擎统一抽象</h3>
+      <p>两种引擎通过统一接口管理，切换时无需改代码。工厂模式自动根据类型创建对应驱动。</p>
+      <ul class="feature-list">
+        <li>统一能力：表情、口型、动作、舞台变换、水印</li>
+        <li>快捷情绪按钮：开心/生气/悲伤/惊讶/放松/中性</li>
+        <li>底部交互面板：实时显示当前表情及权重</li>
+        <li>形象类型选择器：无 / Live2D / VRM 三选一</li>
+      </ul>
+    </div>
+
+    <div class="card">
+      <span class="tag tag-green">标签驱动</span>
+      <h3>对话内嵌标签驱动</h3>
+      <p>AI 回复中可以内嵌特殊标签，自动驱动虚拟形象做对应的表情和动作。让纸片人随对话内容做出反应。</p>
+      <ul class="feature-list">
+        <li>表情标签：触发指定表情和权重</li>
+        <li>BlendShape 标签：精细控制面部表情</li>
+        <li>骨骼旋转标签：驱动身体部位转动</li>
+        <li>姿势标签：保持或释放特定姿势</li>
+        <li>风场标签：调整风力参数</li>
+        <li>停顿标签：控制动作节奏</li>
+      </ul>
+    </div>
+
+    <div class="card">
+      <span class="tag tag-orange">动画调节</span>
+      <h3>动画参数面板</h3>
+      <p>在设置中可以精细调节虚拟形象的动画参数，找到最自然的呈现效果。</p>
+      <ul class="feature-list">
+        <li>摇摆幅度/频率/不规则度</li>
+        <li>呼吸幅度/频率/不规则度</li>
+        <li>头部空闲漂移范围</li>
+        <li>空闲微表情强度</li>
+        <li>头部跟踪限位</li>
+        <li>眼球跟踪开关</li>
+        <li>自动保存 / 手动保存配置</li>
+      </ul>
+    </div>
+  </div>
+</section>
+
+<!-- 记忆系统 -->
+<section class="section" id="memory">
+  <h2 class="section-title"><span class="icon">🧠</span> 记忆系统</h2>
+  <p class="section-desc">AI 会记住你们之间发生过的事。三层记忆 + 向量搜索 + 知识图谱，聊得越久她越了解你。</p>
+
+  <div class="card-grid">
+    <div class="card">
+      <span class="tag tag-purple">三层记忆</span>
+      <h3>短期 / 长期 / 永久</h3>
+      <p>记忆按重要性分三层管理，AI 会自动判断哪些值得记住。</p>
+      <ul class="feature-list">
+        <li>短期记忆：近期对话内容，会随时间淡化</li>
+        <li>长期记忆：重要信息，定期衰减但不轻易删除</li>
+        <li>永久记忆：关键信息，永不衰减</li>
+        <li>重要性达阈值自动转永久</li>
+        <li>工作记忆 / 情景记忆分类</li>
+      </ul>
+    </div>
+
+    <div class="card">
+      <span class="tag tag-cyan">向量搜索</span>
+      <h3>语义搜索</h3>
+      <p>用向量嵌入做语义搜索，不只是关键词匹配，而是理解意思来找相关记忆。</p>
+      <ul class="feature-list">
+        <li>支持 Weaviate（独立服务或嵌入式）</li>
+        <li>混合搜索：关键词 + 向量结合</li>
+        <li>时间轴可视化：按时间分布筛选记忆</li>
+        <li>向量同步 / 重建 / 索引率统计</li>
+      </ul>
+    </div>
+
+    <div class="card">
+      <span class="tag tag-pink">知识图谱</span>
+      <h3>图谱可视化</h3>
+      <p>四类图（用户/物品/概念/事件），力导向图展示实体与关系。管理知识就像看一张关系网。</p>
+      <ul class="feature-list">
+        <li>节点与关系可视化（力导向图）</li>
+        <li>路径查找与关联记忆检索</li>
+        <li>图数据库支持 Neo4j</li>
+        <li>记忆可与图谱实体联动</li>
+      </ul>
+    </div>
+
+    <div class="card">
+      <span class="tag tag-green">自动维护</span>
+      <h3>衰减与去重</h3>
+      <p>记忆不是只增不减，系统会自动维护，保持记忆库干净有效。</p>
+      <ul class="feature-list">
+        <li>自动衰减：每 24 小时跑一轮，老旧低价值记忆弱化</li>
+        <li>去重：相似度超 0.85 的记忆自动合并</li>
+        <li>归档：不重要的记忆压缩归档</li>
+        <li>情感分析：记忆带情感分数</li>
+      </ul>
+    </div>
+
+    <div class="card">
+      <span class="tag tag-orange">蒸馏提炼</span>
+      <h3>记忆蒸馏</h3>
+      <p>把杂乱的对话信息提炼成结构化记忆。9 个状态机步骤，从预读到交叉验证再到最终存储，每一步都有决策。</p>
+      <ul class="feature-list">
+        <li>单次蒸馏与批量蒸馏两种模式</li>
+        <li>LLM 评估质量分数（可配置模型）</li>
+        <li>6 个决策点控制流程走向</li>
+        <li>拒绝机制：低质量内容自动拒绝</li>
+      </ul>
+    </div>
+
+    <div class="card">
+      <span class="tag tag-purple">日记视图</span>
+      <h3>时间线日记</h3>
+      <p>按日期分组的时间线视图，展示每天的记忆摘要、心情和来源。像翻日记本一样回顾过去。</p>
+      <ul class="feature-list">
+        <li>按日期分组，可展开/折叠</li>
+        <li>显示标题、心情、来源、消息范围</li>
+        <li>批量管理：打标签、归档、删除</li>
+      </ul>
+    </div>
+
+    <div class="card">
+      <span class="tag tag-cyan">记忆助手</span>
+      <h3>自然语言管理</h3>
+      <p>专用记忆管理对话页，用自然语言操作记忆库——搜索、更新、删除、导出、统计，说句话就行。</p>
+      <ul class="feature-list">
+        <li>流式回复 + 思考过程折叠展示</li>
+        <li>工具调用可视化</li>
+        <li>Markdown 渲染（含代码高亮）</li>
+      </ul>
+    </div>
+  </div>
+</section>
+
+<!-- 多角色管理 -->
+<section class="section" id="agents">
+  <h2 class="section-title"><span class="icon">👥</span> 多角色管理</h2>
+  <p class="section-desc">创建多个 AI 人格，每个有独立的人设、记忆和声音。角色之间还能互相通信，合作完成任务。</p>
+
+  <div class="card-grid">
+    <div class="card">
+      <span class="tag tag-purple">Agent 管理</span>
+      <h3>创建与配置</h3>
+      <p>内置 6 个模板快速上手，也可以从零创建专属角色。</p>
+      <ul class="feature-list">
+        <li>6 个模板：通用助手、编程助手、写作助手、数据分析师、翻译助手、视觉助手</li>
+        <li>可配置：名称、描述、系统提示词、模型、温度、最大 Tokens</li>
+        <li>记忆场景配置：闲聊/任务/首次交互</li>
+        <li>衰减模型选择</li>
+        <li>支持编辑、克隆、删除</li>
+      </ul>
+    </div>
+
+    <div class="card">
+      <span class="tag tag-pink">ACP 协议</span>
+      <h3>角色间通信</h3>
+      <p>Agent Communication Protocol——让多个 AI 角色互相发消息、协作完成任务。</p>
+      <ul class="feature-list">
+        <li>选择目标 Agent 发送/接收消息</li>
+        <li>自动刷新拉取回复</li>
+        <li>连接/断开/查看状态</li>
+        <li>每个 Agent 独立记忆隔离（per-agent collection）</li>
+        <li>独立图数据库（per-agent SQLite graph）</li>
+      </ul>
+    </div>
+
+    <div class="card">
+      <span class="tag tag-cyan">角色卡</span>
+      <h3>从记忆生成角色</h3>
+      <p>从现有记忆中提取信息，一键生成角色卡，再从角色卡创建新 Agent。让记忆变成新角色的人设基础。</p>
+    </div>
+
+    <div class="card">
+      <span class="tag tag-green">多模型路由</span>
+      <h3>模型分配</h3>
+      <p>每个 Agent 可以指定使用不同的模型，系统会自动路由到对应模型并做健康检查。</p>
+      <ul class="feature-list">
+        <li>主模型（main）：日常对话</li>
+        <li>摘要模型（summary）：内容总结</li>
+        <li>记忆模型（memory）：记忆处理</li>
+        <li>支持 Ollama / vLLM / TRT-LLM 三种接入</li>
+      </ul>
+    </div>
+  </div>
+</section>
+
+<!-- 直播推流 -->
+<section class="section" id="live">
+  <h2 class="section-title"><span class="icon">📺</span> 直播推流</h2>
+  <p class="section-desc">让你的 AI 角色当虚拟主播。直接对接 OBS，弹幕实时互动，四个独立源灵活组合。</p>
+
+  <div class="card-grid">
+    <div class="card">
+      <span class="tag tag-purple">直播台</span>
+      <h3>虚拟主播舞台</h3>
+      <p>在一个页面里展示虚拟形象 + 弹幕 + 字幕，WebSocket 实时接收所有内容。</p>
+      <ul class="feature-list">
+        <li>虚拟形象 + 弹幕覆盖 + AI 回复字幕</li>
+        <li>实时弹幕滚动展示（用户名/内容/颜色）</li>
+        <li>流式内容带标签驱动形象动作表情</li>
+        <li>VAD 语音活动检测驱动口型</li>
+        <li>连接状态和在线客户端数显示</li>
+      </ul>
+    </div>
+
+    <div class="card">
+      <span class="tag tag-pink">OBS 拆分</span>
+      <h3>四源独立输出</h3>
+      <p>把直播画面拆成四个独立透明背景源，在 OBS 里分别添加为浏览器源，灵活排版。</p>
+      <ul class="feature-list">
+        <li>形象源：纯 Live2D/VRM 渲染，透明背景</li>
+        <li>弹幕源：纯弹幕 overlay，透明背景</li>
+        <li>字幕源：纯 AI 回复字幕，透明背景</li>
+        <li>音频源：OBS 专用音频控制面板</li>
+        <li>推荐设置：1920x1080，添加透明背景 CSS</li>
+      </ul>
+    </div>
+
+    <div class="card">
+      <span class="tag tag-cyan">音频中枢</span>
+      <h3>音频控制面板</h3>
+      <p>直播和对话的音频中枢，管理所有音频输入输出。</p>
+      <ul class="feature-list">
+        <li>麦克风选择 + 实时音量电平条 + 增益调节</li>
+        <li>TTS 音量 + 输出音量控制</li>
+        <li>回声消除 AEC：自动/浏览器原生/AudioWorklet/手动四种模式</li>
+        <li>WebSocket 同步状态</li>
+        <li>多客户端在线数显示</li>
+        <li>TTS 播放文本实时显示</li>
+      </ul>
+    </div>
+  </div>
+</section>
+
+<!-- 语音工作站 -->
+<section class="section" id="voice-ws">
+  <h2 class="section-title"><span class="icon">🎙️</span> 语音工作站</h2>
+  <p class="section-desc">专业级声音克隆与训练工作站。从参考音频生成到模型训练再到推理输出，完整流程一站搞定。</p>
+
+  <div class="card-grid">
+    <div class="card">
+      <span class="tag tag-purple">步骤一</span>
+      <h3>VoxCPM 参考音频生成</h3>
+      <p>用 VoxCPM 模型生成参考音频，为后续训练准备素材。三种模式覆盖不同需求。</p>
+      <ul class="feature-list">
+        <li>design 模式：设计全新音色</li>
+        <li>controllable_clone：可控克隆</li>
+        <li>ultimate_clone：终极克隆</li>
+        <li>可调 CFG 系数和推理步数</li>
+      </ul>
+    </div>
+
+    <div class="card">
+      <span class="tag tag-pink">步骤二</span>
+      <h3>CosyVoice 情感参考音频</h3>
+      <p>预生成带情感的参考音频，让 TTS 输出更有表现力。支持导入导出方便迁移。</p>
+      <ul class="feature-list">
+        <li>预生成情感参考音频</li>
+        <li>过渡参考音频生成</li>
+        <li>ZIP 格式导出/导入</li>
+      </ul>
+    </div>
+
+    <div class="card">
+      <span class="tag tag-cyan">步骤三</span>
+      <h3>So-VITS-SVC 训练</h3>
+      <p>用准备好的数据集训练专属音色模型。完整的数据集管理和训练参数控制。</p>
+      <ul class="feature-list">
+        <li>数据集管理：导入 wav/mp3/flac/ogg/zip</li>
+        <li>预处理流程</li>
+        <li>训练参数：epochs / batch size / learning rate</li>
+        <li>实时进度轮询</li>
+        <li>模型列表管理</li>
+      </ul>
+    </div>
+
+    <div class="card">
+      <span class="tag tag-green">步骤四</span>
+      <h3>So-VITS-SVC 推理</h3>
+      <p>用训练好的模型做变声推理，选好参数就能生成成品。</p>
+      <ul class="feature-list">
+        <li>选择训练好的模型</li>
+        <li>输入音频变声</li>
+        <li>变调范围：-12 到 +12 半音</li>
+        <li>聚类模型可选</li>
+        <li>生成并试听</li>
+      </ul>
+    </div>
+  </div>
+</section>
+
+<!-- AI 作曲 -->
+<section class="section" id="music">
+  <h2 class="section-title"><span class="icon">🎵</span> AI 作曲与歌声合成</h2>
+  <p class="section-desc">写个歌谱就能生成带人声的歌曲。旋律编辑、和弦编排、MusicXML 导入，选好声库就能合成。</p>
+
+  <div class="card-grid">
+    <div class="card">
+      <span class="tag tag-purple">歌谱编辑</span>
+      <h3>双模式编辑器</h3>
+      <p>表单模式和 JSON 直编模式双向同步，想怎么编就怎么编。</p>
+      <ul class="feature-list">
+        <li>表单模式：标题 / BPM / 拍号 / 调号 / 伴奏风格</li>
+        <li>旋律轨编辑</li>
+        <li>和弦轨编辑</li>
+        <li>JSON 直编模式：直接写 JSON</li>
+        <li>两种模式实时同步</li>
+      </ul>
+    </div>
+
+    <div class="card">
+      <span class="tag tag-pink">导入</span>
+      <h3>MusicXML 导入</h3>
+      <p>上传 MusicXML 乐谱文件，自动转换填充到编辑器。从现成的乐谱开始改，不用从零写。</p>
+    </div>
+
+    <div class="card">
+      <span class="tag tag-cyan">校验</span>
+      <h3>实时校验</h3>
+      <p>调用后端校验歌谱，逐条展示错误信息。写错了立刻知道哪里有问题。</p>
+    </div>
+
+    <div class="card">
+      <span class="tag tag-green">合成</span>
+      <h3>歌声合成</h3>
+      <p>选好声库和参数，一键合成带人声的歌曲。实时进度展示，合成完直接播放。</p>
+      <ul class="feature-list">
+        <li>voice_bank 声库选择</li>
+        <li>SVC 模型可选（可不变声）</li>
+        <li>变调参数</li>
+        <li>人声/伴奏增益调节</li>
+        <li>任务进度实时轮询 + 步骤展示</li>
+        <li>歌曲历史：播放/删除成品</li>
+      </ul>
+    </div>
+  </div>
+</section>
+
+<!-- 桌面宠物 -->
+<section class="section" id="pet">
+  <h2 class="section-title"><span class="icon">🐱</span> 桌面宠物</h2>
+  <p class="section-desc">透明悬浮窗趴在桌面上，鼠标穿透不挡操作，随时拖到屏幕角落。你的 AI 角色就在桌面上陪着你。</p>
+
+  <div class="card-grid">
+    <div class="card">
+      <span class="tag tag-purple">悬浮窗</span>
+      <h3>透明窗口</h3>
+      <p>Electron 透明悬浮窗，背景完全透明，只显示虚拟形象。鼠标穿透功能让你点击穿透到下方的窗口。</p>
+      <ul class="feature-list">
+        <li>透明背景 + 鼠标穿透（可开关）</li>
+        <li>拖拽移动窗口位置</li>
+        <li>双击返回主窗口</li>
+      </ul>
+    </div>
+
+    <div class="card">
+      <span class="tag tag-pink">交互</span>
+      <h3>右键菜单</h3>
+      <p>右键调出快捷菜单，常用操作一键直达。</p>
+      <ul class="feature-list">
+        <li>关闭悬浮窗</li>
+        <li>返回主窗口</li>
+        <li>窗口置顶切换</li>
+        <li>麦克风开关</li>
+      </ul>
+    </div>
+
+    <div class="card">
+      <span class="tag tag-cyan">功能</span>
+      <h3>完整对话能力</h3>
+      <p>桌面宠物不只是看，还能聊天和语音对话。上方虚拟形象 + 下方对话区 + 音频控制。</p>
+      <ul class="feature-list">
+        <li>PetAvatar 虚拟形象展示</li>
+        <li>PetChat 对话交互</li>
+        <li>PetAudioPanel 音频控制</li>
+      </ul>
+    </div>
+  </div>
+</section>
+
+<!-- 工具与插件 -->
+<section class="section" id="tools">
+  <h2 class="section-title"><span class="icon">🔧</span> 工具与插件系统</h2>
+  <p class="section-desc">AI 不只是聊天，还能调用工具完成任务。内置几十个工具，还支持接入外部服务。</p>
+
+  <div class="card-grid">
+    <div class="card">
+      <span class="tag tag-purple">内置工具</span>
+      <h3>数十个工具</h3>
+      <p>AI 可以自主调用这些工具来完成各种任务。</p>
+      <ul class="feature-list">
+        <li>计算器、时间查询等基础工具</li>
+        <li>记忆写入/搜索/管理工具</li>
+        <li>闹钟设置工具</li>
+        <li>图数据库操作工具</li>
+        <li>工具列表查看/调用/注册</li>
+      </ul>
+    </div>
+
+    <div class="card">
+      <span class="tag tag-pink">MCP 协议</span>
+      <h3>外部工具接入</h3>
+      <p>通过 MCP（Model Context Protocol）接入外部工具服务，扩展 AI 的能力边界。</p>
+      <ul class="feature-list">
+        <li>连接/断开 MCP 服务</li>
+        <li>查看可用工具列表</li>
+        <li>调用 MCP 工具</li>
+        <li>查看连接状态</li>
+      </ul>
+    </div>
+
+    <div class="card">
+      <span class="tag tag-cyan">插件系统</span>
+      <h3>插件管理</h3>
+      <p>注册和管理插件，让外部程序以插件形式接入系统。</p>
+      <ul class="feature-list">
+        <li>插件注册/注销</li>
+        <li>心跳保活</li>
+        <li>插件列表查看</li>
+        <li>CXFC 本机插件发现（自动发现并以技能形式调用）</li>
+      </ul>
+    </div>
+
+    <div class="card">
+      <span class="tag tag-green">多模态管线</span>
+      <h3>五种输入处理</h3>
+      <p>多模态管线能处理文本、角色卡、图片、视频、音频五种输入类型。</p>
+      <ul class="feature-list">
+        <li>文本处理 worker</li>
+        <li>角色卡处理 worker</li>
+        <li>图片处理 worker</li>
+        <li>vLLM 原生处理 worker（视频/音频走原生 API）</li>
+        <li>非 vLLM 场景走降级路径</li>
+      </ul>
+    </div>
+  </div>
+</section>
+
+<!-- 系统管理 -->
+<section class="section" id="system">
+  <h2 class="section-title"><span class="icon">⚙️</span> 系统管理</h2>
+  <p class="section-desc">仪表盘、设置、向量数据管理、备份——系统的管理和维护功能。</p>
+
+  <div class="card-grid">
+    <div class="card">
+      <span class="tag tag-purple">仪表盘</span>
+      <h3>数据总览</h3>
+      <p>系统首页，用数字动画展示核心数据，提供快捷操作入口。</p>
+      <ul class="feature-list">
+        <li>记忆总数、会话数、Agent 数、今日消息</li>
+        <li>快捷入口：新对话、新建记忆、新建 Agent、设置、直播间</li>
+      </ul>
+    </div>
+
+    <div class="card">
+      <span class="tag tag-pink">设置</span>
+      <h3>系统配置</h3>
+      <p>集中管理所有系统设置。</p>
+      <ul class="feature-list">
+        <li>虚拟形象类型选择与参数调节</li>
+        <li>后端连接配置</li>
+        <li>向量数据库配置</li>
+        <li>模型配置（主/摘要/记忆）</li>
+        <li>语音服务配置（ASR/TTS）</li>
+      </ul>
+    </div>
+
+    <div class="card">
+      <span class="tag tag-cyan">向量数据</span>
+      <h3>向量库管理</h3>
+      <p>管理向量数据库，用于语义搜索。</p>
+      <ul class="feature-list">
+        <li>统计卡片：向量总数/记忆总数/索引率/后端</li>
+        <li>时间轴筛选：按时间分布框选范围</li>
+        <li>语义搜索测试</li>
+        <li>向量同步/重建</li>
+        <li>按记忆类型筛选（短期/长期/工作/情景）</li>
+      </ul>
+    </div>
+
+    <div class="card">
+      <span class="tag tag-green">备份</span>
+      <h3>数据备份</h3>
+      <p>数据备份管理，防止数据丢失。</p>
+      <ul class="feature-list">
+        <li>备份管理界面</li>
+        <li>备份索引</li>
+      </ul>
+    </div>
+
+    <div class="card">
+      <span class="tag tag-orange">归档</span>
+      <h3>记忆归档</h3>
+      <p>管理已归档的记忆，需要时可以找回。</p>
+    </div>
+
+    <div class="card">
+      <span class="tag tag-purple">文档兼容</span>
+      <h3>AnythingLLM 兼容</h3>
+      <p>兼容 AnythingLLM 的文档 API，可以把文档纳入记忆体系。支持文档配置管理。</p>
+    </div>
+  </div>
+
+  <div class="highlight-box">
+    <h4>后台任务调度</h4>
+    <p>系统内置后台任务调度器，每 60 秒轮询一次，自动处理记忆衰减、闹钟提醒、离线上下文保存等任务。你不需要手动维护，系统会自己管理这些事情。</p>
+  </div>
+</section>
+
+</div>
+
+<div class="footer">
+  CX-O 功能特性文档 &nbsp;|&nbsp; 2026-07 &nbsp;|&nbsp; 配套 <a href="./deployment.html" style="color:var(--accent-light)">部署文档</a> 和 <a href="../README.md" style="color:var(--accent-light)">README</a>
+</div>
+
+</body>
+</html>

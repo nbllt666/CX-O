@@ -1,0 +1,989 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>CX-O 部署文档</title>
+<style>
+:root {
+  --bg: #0f0f1a;
+  --bg-card: #1a1a2e;
+  --bg-card-hover: #222240;
+  --bg-code: #12121f;
+  --accent: #a78bfa;
+  --accent-light: #c4b5fd;
+  --accent-pink: #f472b6;
+  --accent-cyan: #67e8f9;
+  --accent-green: #86efac;
+  --accent-orange: #fdba74;
+  --accent-red: #fca5a5;
+  --text: #e2e8f0;
+  --text-dim: #94a3b8;
+  --text-bright: #f1f5f9;
+  --border: #2d2d4a;
+  --radius: 12px;
+}
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body {
+  font-family: 'Noto Sans CJK SC', 'Microsoft YaHei', 'Segoe UI', sans-serif;
+  background: var(--bg);
+  color: var(--text);
+  line-height: 1.8;
+  font-size: 15px;
+}
+.hero {
+  background: linear-gradient(135deg, #1a1a2e 0%, #1b3a4b 50%, #1a1a2e 100%);
+  padding: 80px 24px 60px;
+  text-align: center;
+  border-bottom: 1px solid var(--border);
+}
+.hero h1 {
+  font-size: 2.6em;
+  font-weight: 800;
+  background: linear-gradient(135deg, var(--accent-cyan), var(--accent));
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  margin-bottom: 12px;
+}
+.hero p { color: var(--text-dim); font-size: 1.15em; max-width: 640px; margin: 0 auto; }
+.hero .badge {
+  display: inline-block;
+  padding: 4px 14px;
+  border-radius: 20px;
+  background: rgba(103,232,249,0.15);
+  border: 1px solid rgba(103,232,249,0.3);
+  color: var(--accent-cyan);
+  font-size: 0.85em;
+  margin-top: 20px;
+}
+.container { max-width: 1100px; margin: 0 auto; padding: 40px 24px; }
+.nav {
+  position: sticky;
+  top: 0;
+  z-index: 100;
+  background: rgba(15,15,26,0.95);
+  backdrop-filter: blur(12px);
+  border-bottom: 1px solid var(--border);
+  padding: 12px 24px;
+}
+.nav-inner { max-width: 1100px; margin: 0 auto; display: flex; gap: 8px; flex-wrap: wrap; }
+.nav a {
+  color: var(--text-dim);
+  text-decoration: none;
+  padding: 6px 14px;
+  border-radius: 8px;
+  font-size: 0.88em;
+  transition: all 0.2s;
+}
+.nav a:hover { color: var(--accent-cyan); background: rgba(103,232,249,0.1); }
+.section { margin-bottom: 64px; scroll-margin-top: 60px; }
+.section-title {
+  font-size: 1.8em;
+  font-weight: 700;
+  margin-bottom: 8px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.section-desc { color: var(--text-dim); margin-bottom: 28px; font-size: 1.02em; }
+.card {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 24px;
+  margin-bottom: 20px;
+  transition: all 0.25s;
+}
+.card:hover { background: var(--bg-card-hover); border-color: var(--accent); }
+.card h3 { font-size: 1.15em; margin-bottom: 10px; color: var(--text-bright); }
+.card p { color: var(--text-dim); font-size: 0.95em; margin-bottom: 8px; }
+.card .tag {
+  display: inline-block;
+  padding: 2px 10px;
+  border-radius: 6px;
+  font-size: 0.78em;
+  margin-bottom: 12px;
+  font-weight: 600;
+}
+.tag-purple { background: rgba(167,139,250,0.15); color: var(--accent-light); }
+.tag-pink { background: rgba(244,114,182,0.15); color: var(--accent-pink); }
+.tag-cyan { background: rgba(103,232,249,0.15); color: var(--accent-cyan); }
+.tag-green { background: rgba(134,239,172,0.15); color: var(--accent-green); }
+.tag-orange { background: rgba(253,186,116,0.15); color: var(--accent-orange); }
+.tag-red { background: rgba(252,165,165,0.15); color: var(--accent-red); }
+table { width: 100%; border-collapse: collapse; margin: 16px 0; }
+th, td { padding: 10px 14px; text-align: left; border-bottom: 1px solid var(--border); font-size: 0.9em; vertical-align: top; }
+th { color: var(--accent-light); font-weight: 600; white-space: nowrap; }
+td { color: var(--text-dim); }
+td:first-child { color: var(--text-bright); font-weight: 500; }
+td code { color: var(--accent-cyan); font-size: 0.88em; }
+pre {
+  background: var(--bg-code);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 16px 20px;
+  overflow-x: auto;
+  margin: 12px 0;
+  font-size: 0.88em;
+  line-height: 1.6;
+}
+code { font-family: 'Cascadia Code', 'Fira Code', 'Consolas', monospace; }
+pre code { color: var(--accent-green); }
+.inline-code {
+  background: var(--bg-code);
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-size: 0.9em;
+  color: var(--accent-cyan);
+  font-family: 'Cascadia Code', 'Fira Code', 'Consolas', monospace;
+}
+.highlight-box {
+  background: linear-gradient(135deg, rgba(103,232,249,0.08), rgba(167,139,250,0.08));
+  border: 1px solid rgba(103,232,249,0.2);
+  border-radius: var(--radius);
+  padding: 24px;
+  margin: 20px 0;
+}
+.highlight-box h4 { color: var(--accent-cyan); margin-bottom: 8px; font-size: 1.05em; }
+.highlight-box p { color: var(--text); font-size: 0.95em; }
+.warning-box {
+  background: linear-gradient(135deg, rgba(252,165,165,0.08), rgba(253,186,116,0.08));
+  border: 1px solid rgba(252,165,165,0.2);
+  border-radius: var(--radius);
+  padding: 20px 24px;
+  margin: 20px 0;
+}
+.warning-box h4 { color: var(--accent-red); margin-bottom: 8px; font-size: 1.05em; }
+.warning-box p { color: var(--text); font-size: 0.95em; }
+.step-list { counter-reset: step; list-style: none; margin: 16px 0; }
+.step-list li {
+  counter-increment: step;
+  padding: 12px 0 12px 48px;
+  position: relative;
+  border-left: 2px solid var(--border);
+  margin-left: 20px;
+  padding-left: 28px;
+  margin-bottom: 8px;
+}
+.step-list li::before {
+  content: counter(step);
+  position: absolute;
+  left: -14px;
+  top: 10px;
+  width: 26px;
+  height: 26px;
+  background: var(--accent);
+  color: var(--bg);
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 700;
+  font-size: 0.82em;
+}
+.step-list li strong { color: var(--text-bright); }
+.footer { text-align: center; padding: 40px 24px; color: var(--text-dim); font-size: 0.88em; border-top: 1px solid var(--border); }
+@media (max-width: 768px) { .hero h1 { font-size: 1.8em; } }
+</style>
+</head>
+<body>
+
+<div class="hero">
+  <h1>CX-O 部署文档</h1>
+  <p>从环境搭建到服务启动——所有需要下载的模型、配套服务、硬件要求和配置指南</p>
+  <div class="badge">v1.0 &nbsp;|&nbsp; 2026-07</div>
+</div>
+
+<nav class="nav">
+  <div class="nav-inner">
+    <a href="#prereq">环境要求</a>
+    <a href="#models">模型下载</a>
+    <a href="#services">配套服务</a>
+    <a href="#ports">端口分配</a>
+    <a href="#startup">启动顺序</a>
+    <a href="#config">配置指南</a>
+    <a href="#docker">Docker 部署</a>
+    <a href="#dualgpu">双卡部署</a>
+    <a href="#troubleshoot">常见问题</a>
+  </div>
+</nav>
+
+<div class="container">
+
+<!-- 环境要求 -->
+<section class="section" id="prereq">
+  <h2 class="section-title">🖥️ 环境要求</h2>
+  <p class="section-desc">跑起来 CX-O 需要什么硬件和软件。</p>
+
+  <div class="card">
+    <h3>硬件要求</h3>
+    <table>
+      <tr>
+        <th>组件</th>
+        <th>最低要求</th>
+        <th>推荐配置</th>
+      </tr>
+      <tr>
+        <td>显卡</td>
+        <td>1 × NVIDIA GPU，16GB 显存（如 RTX 4080）</td>
+        <td>2 × RTX 3080 20GB（双卡物理隔离）</td>
+      </tr>
+      <tr>
+        <td>CUDA</td>
+        <td>Ampere 架构及以上（sm_86 兼容）</td>
+        <td>同左</td>
+      </tr>
+      <tr>
+        <td>内存</td>
+        <td>32GB</td>
+        <td>64GB</td>
+      </tr>
+      <tr>
+        <td>磁盘</td>
+        <td>50GB（模型 + Docker 镜像 + 数据）</td>
+        <td>100GB+ SSD</td>
+      </tr>
+    </table>
+  </div>
+
+  <div class="card">
+    <h3>软件依赖</h3>
+    <table>
+      <tr>
+        <th>软件</th>
+        <th>版本要求</th>
+        <th>用途</th>
+      </tr>
+      <tr>
+        <td>Python</td>
+        <td>3.11+</td>
+        <td>后端服务 + 语音工作站</td>
+      </tr>
+      <tr>
+        <td>Node.js</td>
+        <td>18+</td>
+        <td>前端开发与构建</td>
+      </tr>
+      <tr>
+        <td>Docker</td>
+        <td>最新稳定版</td>
+        <td>推理服务容器化部署</td>
+      </tr>
+      <tr>
+        <td>Docker Compose</td>
+        <td>v2+</td>
+        <td>多容器编排</td>
+      </tr>
+      <tr>
+        <td>NVIDIA Container Toolkit</td>
+        <td>最新版</td>
+        <td>Docker 容器内 GPU 访问</td>
+      </tr>
+      <tr>
+        <td>CUDA Toolkit</td>
+        <td>sm_86 兼容版本</td>
+        <td>GPU 编译与推理（ELP-Orpheus 编译需要）</td>
+      </tr>
+      <tr>
+        <td>Ollama</td>
+        <td>最新版</td>
+        <td>本地 LLM 推理（对话大模型 + 嵌入模型）</td>
+      </tr>
+      <tr>
+        <td>Git</td>
+        <td>最新版</td>
+        <td>代码版本管理</td>
+      </tr>
+    </table>
+  </div>
+
+  <div class="highlight-box">
+    <h4>显存分配策略（单卡 20GB 场景）</h4>
+    <p>单卡跑全部服务时显存比较紧张。推荐策略：LLM 占 ~18GB（<span class="inline-code">gpu_memory_utilization=0.9</span>），Orpheus TTS 占 ~8-10GB（<span class="inline-code">gpu_memory_utilization=0.45</span>），SNAC 解码器走 CPU 避免争抢。如果显存不够，优先保证 LLM + ASR，TTS 可以用 F5-TTS 或 CosyVoice 替代。</p>
+  </div>
+</section>
+
+<!-- 模型下载 -->
+<section class="section" id="models">
+  <h2 class="section-title">📦 模型下载</h2>
+  <p class="section-desc">CX-O 依赖多个 AI 模型，按下面的清单逐一下载。分为对话模型、语音模型、向量嵌入模型三类。</p>
+
+  <div class="card">
+    <span class="tag tag-purple">对话模型</span>
+    <h3>LLM 大语言模型（通过 Ollama 拉取）</h3>
+    <p>这是 AI 角色对话的核心模型。通过 Ollama 拉取，默认配置使用 qwen3-vl:8b。</p>
+    <table>
+      <tr>
+        <th>模型</th>
+        <th>用途</th>
+        <th>下载命令</th>
+        <th>大小</th>
+      </tr>
+      <tr>
+        <td>qwen3-vl:8b</td>
+        <td>主对话 / 摘要 / 记忆处理（三个槽位默认都用它）</td>
+        <td><code>ollama pull qwen3-vl:8b</code></td>
+        <td>~5GB</td>
+      </tr>
+      <tr>
+        <td>nomic-embed-text</td>
+        <td>记忆向量嵌入（语义搜索）</td>
+        <td><code>ollama pull nomic-embed-text</code></td>
+        <td>~270MB</td>
+      </tr>
+    </table>
+    <div class="warning-box">
+      <h4>可选：使用 vLLM / TRT-LLM 替代 Ollama</h4>
+      <p>如果需要更高性能，可以用 vLLM 或 TRT-LLM 替代 Ollama。vLLM 支持 GGUF 格式模型直接加载，TRT-LLM 需要预构建引擎。配置方式见 <a href="#config" style="color:var(--accent-cyan)">配置指南</a>。</p>
+    </div>
+  </div>
+
+  <div class="card">
+    <span class="tag tag-cyan">语音模型</span>
+    <h3>ASR / TTS / 降噪模型（通过下载脚本）</h3>
+    <p>语音相关模型通过项目自带的下载脚本获取，默认下载到 <span class="inline-code">models/</span> 目录。</p>
+    <table>
+      <tr>
+        <th>模型</th>
+        <th>用途</th>
+        <th>下载命令</th>
+        <th>大小</th>
+        <th>目标路径</th>
+      </tr>
+      <tr>
+        <td>VoxCPM2<br><code>OpenBMB/VoxCPM2</code></td>
+        <td>VoxCPM 语音合成（语音工作站步骤一）</td>
+        <td><code>python download_voxcpm2.py</code></td>
+        <td>~1.5GB</td>
+        <td><code>models/VoxCPM2/</code></td>
+      </tr>
+      <tr>
+        <td>ZipEnhancer<br><code>iic/speech_zipenhancer_ans_multiloss_16k_base</code></td>
+        <td>语音降噪</td>
+        <td><code>python download_voxcpm_support.py</code></td>
+        <td>~200MB</td>
+        <td><code>models/zipenhancer_16k/</code></td>
+      </tr>
+      <tr>
+        <td>SenseVoiceSmall<br><code>iic/SenseVoiceSmall</code></td>
+        <td>ASR 语音识别（本地内置模式）</td>
+        <td><code>python download_voxcpm_support.py</code></td>
+        <td>~400MB</td>
+        <td><code>models/SenseVoiceSmall/</code></td>
+      </tr>
+      <tr>
+        <td>CosyVoice 系列（6 个）</td>
+        <td>多模式 TTS（含 instruct、SFT）</td>
+        <td><code>python cosyvoice/download_models.py</code></td>
+        <td>~5-8GB</td>
+        <td><code>cosyvoice/pretrained_models/</code></td>
+      </tr>
+    </table>
+
+    <p style="margin-top:16px"><strong>CosyVoice 系列 6 个模型明细：</strong></p>
+    <table>
+      <tr>
+        <th>ModelScope ID</th>
+        <th>本地目录名</th>
+      </tr>
+      <tr><td><code>FunAudioLLM/Fun-CosyVoice3-0.5B-2512</code></td><td>Fun-CosyVoice3-0.5B</td></tr>
+      <tr><td><code>iic/CosyVoice2-0.5B</code></td><td>CosyVoice2-0.5B（默认模型）</td></tr>
+      <tr><td><code>iic/CosyVoice-300M</code></td><td>CosyVoice-300M</td></tr>
+      <tr><td><code>iic/CosyVoice-300M-SFT</code></td><td>CosyVoice-300M-SFT</td></tr>
+      <tr><td><code>iic/CosyVoice-300M-Instruct</code></td><td>CosyVoice-300M-Instruct</td></tr>
+      <tr><td><code>iic/CosyVoice-ttsfrd</code></td><td>CosyVoice-ttsfrd（文本前端）</td></tr>
+    </table>
+  </div>
+
+  <div class="card">
+    <span class="tag tag-pink">Docker 模型</span>
+    <h3>Docker 容器自动拉取的模型</h3>
+    <p>以下模型在 Docker 容器启动时自动拉取，或需要手动预下载后挂载。</p>
+    <table>
+      <tr>
+        <th>模型</th>
+        <th>用途</th>
+        <th>获取方式</th>
+        <th>大小</th>
+      </tr>
+      <tr>
+        <td>Orpheus 多语言<br><code>canopylabs/orpheus-multilingual-research-release</code></td>
+        <td>流式 TTS（多语言含中文，3B 参数）</td>
+        <td>预下载到 <code>models/orpheus-multilingual/</code> 后挂载</td>
+        <td>~6GB</td>
+      </tr>
+      <tr>
+        <td>SNAC 24kHz<br><code>hubertsiuzdak/snac_24khz</code></td>
+        <td>音频 codec 解码器（Orpheus TTS 输出 PCM）</td>
+        <td>预下载到 <code>models/snac_24khz/</code> 后挂载</td>
+        <td>~50MB</td>
+      </tr>
+      <tr>
+        <td>F5-TTS v1 Base<br><code>F5TTS_v1_Base</code></td>
+        <td>F5-TTS 基础模型（Triton + TRT-LLM 加速）</td>
+        <td>Triton 容器启动时自动加载，存于 <code>f5tts-models</code> volume</td>
+        <td>~1.5GB</td>
+      </tr>
+      <tr>
+        <td>LLM GGUF 模型</td>
+        <td>主对话 LLM（vLLM 模式加载）</td>
+        <td>用户自备，挂载到 <code>./models:/workspace/models</code></td>
+        <td>4-20GB（视模型规模）</td>
+      </tr>
+    </table>
+
+    <p style="margin-top:16px"><strong>预下载 Orpheus 模型：</strong></p>
+    <pre><code># 方式一：huggingface-cli 预下载
+huggingface-cli download canopylabs/orpheus-multilingual-research-release \
+  --local-dir ./models/orpheus-multilingual
+
+# 方式二：容器启动时自动下载（需要 HuggingFace Token）
+# 在 .env 中设置 HF_TOKEN=hf_xxxxxxxxxxxxxxxxxxxx</code></pre>
+  </div>
+
+  <div class="highlight-box">
+    <h4>模型下载总量估算</h4>
+    <p>全部模型下载约需 20-30GB 磁盘空间：Ollama 模型 ~5GB + VoxCPM2 ~1.5GB + SenseVoice ~0.4GB + ZipEnhancer ~0.2GB + CosyVoice ~6GB + Orpheus ~6GB + SNAC ~0.05GB + F5-TTS ~1.5GB。首次部署建议预留 50GB。</p>
+  </div>
+</section>
+
+<!-- 配套服务 -->
+<section class="section" id="services">
+  <h2 class="section-title">🔌 配套服务</h2>
+  <p class="section-desc">CX-O 运行依赖以下外部服务。其中 Ollama 是必须的，Weaviate 和 Neo4j 按功能需求启用。</p>
+
+  <div class="card">
+    <span class="tag tag-red">必须</span>
+    <h3>Ollama — 本地 LLM 推理</h3>
+    <p>CX-O Server 启动时会连接 Ollama 加载对话模型和嵌入模型。不启动 Ollama，后端无法正常工作。</p>
+    <table>
+      <tr><th>默认地址</th><td><code>http://localhost:11434</code></td></tr>
+      <tr><th>端口</th><td>11434</td></tr>
+      <tr><th>安装方式</th><td>从 <code>ollama.com</code> 下载安装包</td></tr>
+      <tr><th>启动命令</th><td><code>ollama serve</code>（安装后默认作为服务运行）</td></tr>
+      <tr><th>配置位置</th><td><code>config/default.yaml</code> 第 30-31 行</td></tr>
+    </table>
+  </div>
+
+  <div class="card">
+    <span class="tag tag-orange">推荐</span>
+    <h3>Weaviate — 向量数据库</h3>
+    <p>记忆系统的语义搜索依赖向量数据库。支持两种模式：独立服务或嵌入式。</p>
+    <table>
+      <tr><th>默认端口</th><td>HTTP 8090 / gRPC 50061</td></tr>
+      <tr><th>独立服务启动</th><td>Docker: <code>docker run -p 8090:8090 semitechnologies/weaviate</code></td></tr>
+      <tr><th>嵌入式模式</th><td>配置 <code>vector_backend: weaviate_embedded</code>，无需独立服务，自动嵌入进程</td></tr>
+      <tr><th>配置位置</th><td><code>config/default.yaml</code> 第 100-107 行</td></tr>
+    </table>
+    <div class="warning-box">
+      <h4>注意</h4>
+      <p>虽然 <code>default.yaml</code> 中列出了 Chroma、Milvus Lite、Qdrant 等后端，但后端代码当前仅支持 <code>weaviate</code> 和 <code>weaviate_embedded</code> 两种。配置其他后端不会生效。</p>
+    </div>
+  </div>
+
+  <div class="card">
+    <span class="tag tag-purple">可选</span>
+    <h3>Neo4j — 图数据库</h3>
+    <p>知识图谱功能依赖图数据库。如果不使用图谱功能，可以关闭（<code>graph_enabled: false</code>），后端会跳过初始化。</p>
+    <table>
+      <tr><th>默认端口</th><td>bolt 7687</td></tr>
+      <tr><th>启动方式</th><td>Docker: <code>docker run -p 7687:7687 neo4j</code></td></tr>
+      <tr><th>配置位置</th><td><code>config/default.yaml</code> 第 110-115 行</td></tr>
+      <tr><th>关闭方式</th><td>设置 <code>graph_enabled: false</code></td></tr>
+    </table>
+  </div>
+
+  <div class="card">
+    <span class="tag tag-green">内置</span>
+    <h3>SQLite — 主业务数据库</h3>
+    <p>主业务数据存储在 SQLite 文件中，无需额外安装服务。包括 <code>data/cxhms.db</code>（主库）、<code>data/memories.db</code>（记忆库）、<code>data/sessions.db</code>（会话库）等。</p>
+  </div>
+</section>
+
+<!-- 端口分配 -->
+<section class="section" id="ports">
+  <h2 class="section-title">🌐 端口分配总表</h2>
+  <p class="section-desc">所有服务的端口一览，方便排查端口冲突。</p>
+
+  <div class="card">
+    <table>
+      <tr>
+        <th>端口</th>
+        <th>服务</th>
+        <th>说明</th>
+      </tr>
+      <tr><td>5173</td><td>CX-O Frontend</td><td>Vite 前端开发服务器</td></tr>
+      <tr><td>8000</td><td>CX-O Server</td><td>FastAPI 后端 + WebSocket</td></tr>
+      <tr><td>8000</td><td>F5-TTS Triton HTTP</td><td>⚠️ 与 CX-O Server 冲突，需通过环境变量调整</td></tr>
+      <tr><td>8001</td><td>F5-TTS Triton gRPC</td><td>也用于 ASR remote_url</td></tr>
+      <tr><td>8002</td><td>F5-TTS Metrics</td><td>监控指标</td></tr>
+      <tr><td>8003</td><td>Orpheus vLLM</td><td>OpenAI 兼容 API（调试用）</td></tr>
+      <tr><td>8005</td><td>ASR SenseVoice</td><td>语音识别服务</td></tr>
+      <tr><td>8080</td><td>LLM 推理服务</td><td>vLLM / TRT-LLM</td></tr>
+      <tr><td>8090</td><td>Weaviate HTTP</td><td>向量数据库</td></tr>
+      <tr><td>8200</td><td>CX-O VoiceWorkStation</td><td>语音工作站</td></tr>
+      <tr><td>11434</td><td>Ollama</td><td>本地 LLM 推理</td></tr>
+      <tr><td>50061</td><td>Weaviate gRPC</td><td>向量数据库 gRPC 通道</td></tr>
+      <tr><td>7687</td><td>Neo4j bolt</td><td>图数据库</td></tr>
+      <tr><td>5060</td><td>Orpheus TTS Bridge</td><td>OpenAI 兼容 TTS API</td></tr>
+      <tr><td>50000</td><td>CosyVoice</td><td>CosyVoice TTS 服务</td></tr>
+      <tr><td>9996/9997</td><td>CXFC</td><td>插件发现 / 广播</td></tr>
+      <tr><td>9998/9999</td><td>ACP</td><td>代理广播 / 发现</td></tr>
+    </table>
+
+    <div class="warning-box">
+      <h4>端口冲突警告</h4>
+      <p>F5-TTS 默认 HTTP 端口 8000 与 CX-O Server 的 8000 冲突。部署时必须通过 <span class="inline-code">.env</span> 中的 <span class="inline-code">F5TTS_PORT_HTTP</span> 修改 F5-TTS 的端口，或者不启动 F5-TTS 服务。</p>
+    </div>
+  </div>
+</section>
+
+<!-- 启动顺序 -->
+<section class="section" id="startup">
+  <h2 class="section-title">🚀 启动顺序</h2>
+  <p class="section-desc">服务有依赖关系，必须按正确顺序启动。下面是完整的启动流程。</p>
+
+  <div class="card">
+    <h3>完整启动流程</h3>
+    <ol class="step-list">
+      <li><strong>基础环境准备</strong><br>
+        <pre><code># 创建 Python 虚拟环境
+cd c:\CX-O
+.\create-env.bat
+call py311\Scripts\activate.bat
+
+# 前端依赖
+cd CX-O-Frontend
+npm install</code></pre>
+      </li>
+      <li><strong>拉取所有模型</strong><br>
+        <pre><code># Ollama 模型
+ollama pull qwen3-vl:8b
+ollama pull nomic-embed-text
+
+# 语音模型
+python download_voxcpm2.py
+python download_voxcpm_support.py
+python cosyvoice\download_models.py
+
+# Orpheus（如需使用）
+huggingface-cli download canopylabs/orpheus-multilingual-research-release \
+  --local-dir ./models/orpheus-multilingual</code></pre>
+      </li>
+      <li><strong>启动基础设施服务</strong><br>
+        <pre><code># Ollama（必须最先启动）
+ollama serve
+
+# Weaviate（如需向量搜索）
+docker run -d -p 8090:8090 -p 50051:50051 semitechnologies/weaviate
+
+# Neo4j（如需知识图谱）
+docker run -d -p 7687:7687 neo4j</code></pre>
+      </li>
+      <li><strong>启动 Docker 推理服务</strong>（可选，按需启动）<br>
+        <pre><code># ASR 语音识别
+docker compose up -d asr-sensevoice
+
+# Orpheus TTS
+docker compose up -d orpheus-tts
+
+# LLM（如不用 Ollama，用 vLLM 替代）
+docker compose up -d llm
+
+# F5-TTS（注意端口冲突，需调整 F5TTS_PORT_HTTP）
+F5TTS_PORT_HTTP=8500 docker compose up -d f5-tts-triton</code></pre>
+      </li>
+      <li><strong>启动 CX-O 应用服务</strong><br>
+        <pre><code># 语音工作站（如需声音克隆功能）
+cd CX-O-VoiceWorkStation
+.\start.bat
+
+# 后端服务（核心，必须启动）
+cd CX-O-SERVER
+.\start.bat
+
+# 前端服务（必须启动）
+cd CX-O-Frontend
+.\start.bat</code></pre>
+      </li>
+      <li><strong>访问应用</strong><br>
+        浏览器打开 <code>http://localhost:5173</code>，首次访问会引导确认后端连接。
+      </li>
+    </ol>
+  </div>
+
+  <div class="card">
+    <h3>关键依赖关系</h3>
+    <table>
+      <tr>
+        <th>服务</th>
+        <th>依赖</th>
+        <th>说明</th>
+      </tr>
+      <tr>
+        <td>CX-O Server</td>
+        <td>Ollama</td>
+        <td>启动时连接，失败则 LLM 客户端为空</td>
+      </tr>
+      <tr>
+        <td>CX-O Server</td>
+        <td>Weaviate</td>
+        <td><code>vector_enabled=true</code> 时连接，失败抛异常</td>
+      </tr>
+      <tr>
+        <td>CX-O Server</td>
+        <td>ASR / TTS Remote</td>
+        <td><code>asr.mode=remote</code> / <code>tts.mode=remote</code> 时不加载本地模型</td>
+      </tr>
+      <tr>
+        <td>CX-O Server</td>
+        <td>Orpheus TTS</td>
+        <td><code>tts.mode=orpheus</code> 时启动会发预热请求到 5060 端口</td>
+      </tr>
+      <tr>
+        <td>CX-O Frontend</td>
+        <td>CX-O Server</td>
+        <td>启动时请求 <code>/health</code> 检查后端连通性</td>
+      </tr>
+      <tr>
+        <td>Orpheus 容器内部</td>
+        <td>vLLM → Bridge</td>
+        <td>vLLM (8000) 先启动并 health check → 再启动 FastAPI Bridge (5060)</td>
+      </tr>
+    </table>
+  </div>
+</section>
+
+<!-- 配置指南 -->
+<section class="section" id="config">
+  <h2 class="section-title">⚙️ 配置指南</h2>
+  <p class="section-desc">CX-O 的配置分三层：配置文件、环境变量、前端设置。优先级从高到低。</p>
+
+  <div class="card">
+    <h3>配置文件：<code>config/default.yaml</code></h3>
+    <p>主配置文件，包含所有核心配置项。修改后重启后端生效。</p>
+    <table>
+      <tr>
+        <th>配置项</th>
+        <th>默认值</th>
+        <th>说明</th>
+      </tr>
+      <tr>
+        <td><code>server.port</code></td>
+        <td>8000</td>
+        <td>后端服务端口</td>
+      </tr>
+      <tr>
+        <td><code>models.main.model</code></td>
+        <td>qwen3-vl:8b</td>
+        <td>主对话模型</td>
+      </tr>
+      <tr>
+        <td><code>models.main.provider</code></td>
+        <td>ollama</td>
+        <td>模型接入方式（ollama / vllm / trtllm）</td>
+      </tr>
+      <tr>
+        <td><code>memory.vector_backend</code></td>
+        <td>weaviate</td>
+        <td>向量数据库后端</td>
+      </tr>
+      <tr>
+        <td><code>memory.vector_enabled</code></td>
+        <td>true</td>
+        <td>是否启用向量搜索</td>
+      </tr>
+      <tr>
+        <td><code>memory.graph_backend</code></td>
+        <td>neo4j</td>
+        <td>图数据库后端</td>
+      </tr>
+      <tr>
+        <td><code>memory.graph_enabled</code></td>
+        <td>true</td>
+        <td>是否启用知识图谱</td>
+      </tr>
+      <tr>
+        <td><code>asr.mode</code></td>
+        <td>remote</td>
+        <td>ASR 模式（embedded / remote）</td>
+      </tr>
+      <tr>
+        <td><code>tts.mode</code></td>
+        <td>remote</td>
+        <td>TTS 模式（embedded / remote / orpheus）</td>
+      </tr>
+      <tr>
+        <td><code>tts.engine</code></td>
+        <td>f5-tts</td>
+        <td>TTS 引擎（f5-tts / cosyvoice）</td>
+      </tr>
+      <tr>
+        <td><code>tts.orpheus.url</code></td>
+        <td>http://127.0.0.1:5060</td>
+        <td>Orpheus TTS Bridge 地址</td>
+      </tr>
+    </table>
+  </div>
+
+  <div class="card">
+    <h3>环境变量覆盖：<code>CXO_</code> 前缀</h3>
+    <p>所有配置项都支持通过环境变量覆盖，格式为 <span class="inline-code">CXO_</span> + 配置路径（大写下划线）。优先级高于配置文件。</p>
+    <table>
+      <tr>
+        <th>环境变量</th>
+        <th>对应配置</th>
+        <th>示例值</th>
+      </tr>
+      <tr><td><code>CXO_ASR_MODE</code></td><td>asr.mode</td><td>embedded / remote</td></tr>
+      <tr><td><code>CXO_TTS_MODE</code></td><td>tts.mode</td><td>embedded / remote / orpheus</td></tr>
+      <tr><td><code>CXO_ASR_REMOTE_URL</code></td><td>asr.remote_url</td><td>http://127.0.0.1:8005</td></tr>
+      <tr><td><code>CXO_TTS_REMOTE_URL</code></td><td>tts.remote_url</td><td>http://127.0.0.1:5000</td></tr>
+      <tr><td><code>CXO_LLM_PROVIDER</code></td><td>models.main.provider</td><td>ollama / vllm / trtllm</td></tr>
+      <tr><td><code>CXO_LLM_HOST</code></td><td>models.main.host</td><td>http://localhost:11434</td></tr>
+      <tr><td><code>CXO_LLM_MODEL</code></td><td>models.main.model</td><td>qwen3-vl:8b</td></tr>
+      <tr><td><code>CXO_LLM_API_KEY</code></td><td>models.main.api_key</td><td>（如有）</td></tr>
+      <tr><td><code>CXO_MEMORY_VECTOR_BACKEND</code></td><td>memory.vector_backend</td><td>weaviate / weaviate_embedded</td></tr>
+      <tr><td><code>CXO_MEMORY_EMBEDDING_PROVIDER</code></td><td>memory.embedding_provider</td><td>ollama / vllm</td></tr>
+      <tr><td><code>CXO_MEMORY_EMBEDDING_MODEL</code></td><td>memory.embedding_model</td><td>nomic-embed-text</td></tr>
+      <tr><td><code>CXO_GRAPH_ENABLED</code></td><td>memory.graph_enabled</td><td>true / false</td></tr>
+    </table>
+  </div>
+
+  <div class="card">
+    <h3>Docker 环境变量：<code>.env</code> 文件</h3>
+    <p>Docker Compose 使用的环境变量配置在项目根目录的 <span class="inline-code">.env</span> 文件中。从 <span class="inline-code">.env.example</span> 复制后修改。</p>
+    <pre><code># 复制模板
+cp .env.example .env</code></pre>
+    <p>关键配置项见 <a href="#ports">端口分配表</a> 和上面的模型下载章节。</p>
+  </div>
+
+  <div class="card">
+    <h3>前端环境变量：<code>CX-O-Frontend/.env</code></h3>
+    <table>
+      <tr>
+        <th>变量</th>
+        <th>默认值</th>
+        <th>说明</th>
+      </tr>
+      <tr><td><code>VITE_API_URL</code></td><td>http://127.0.0.1:8000</td><td>后端 API 地址</td></tr>
+    </table>
+  </div>
+
+  <div class="highlight-box">
+    <h4>三种 TTS 引擎配置</h4>
+    <p><strong>F5-TTS</strong>（默认）：<code>tts.engine: f5-tts</code> + <code>tts.remote_url: http://127.0.0.1:5000</code>，需要启动 F5-TTS 服务或 Docker 容器。</p>
+    <p style="margin-top:8px"><strong>CosyVoice</strong>：<code>tts.engine: cosyvoice</code> + <code>tts.remote_url: http://127.0.0.1:50000</code>，需要启动 CosyVoice 服务。</p>
+    <p style="margin-top:8px"><strong>Orpheus</strong>：<code>tts.mode: orpheus</code> + <code>tts.orpheus.url: http://127.0.0.1:5060</code>，需要启动 Orpheus Docker 容器。后端启动时会自动发预热请求。</p>
+  </div>
+</section>
+
+<!-- Docker 部署 -->
+<section class="section" id="docker">
+  <h2 class="section-title">🐳 Docker 部署</h2>
+  <p class="section-desc">推理服务通过 Docker Compose 编排，按需启动。</p>
+
+  <div class="card">
+    <h3>Docker Compose 服务一览</h3>
+    <table>
+      <tr>
+        <th>服务名</th>
+        <th>用途</th>
+        <th>容器端口 → 宿主端口</th>
+        <th>GPU</th>
+      </tr>
+      <tr>
+        <td><code>asr-sensevoice</code></td>
+        <td>ASR 语音识别（FunASR + SenseVoice）</td>
+        <td>8005 → 8005</td>
+        <td>GPU 0</td>
+      </tr>
+      <tr>
+        <td><code>f5-tts-triton</code></td>
+        <td>F5-TTS（Triton + TRT-LLM 加速）</td>
+        <td>8000/8001/8002 → 8000/8001/8002</td>
+        <td>GPU 0</td>
+      </tr>
+      <tr>
+        <td><code>llm</code></td>
+        <td>LLM 推理（vLLM 或 TRT-LLM）</td>
+        <td>8080 → 8080</td>
+        <td>GPU 0</td>
+      </tr>
+      <tr>
+        <td><code>orpheus-tts</code></td>
+        <td>Orpheus TTS（vLLM + SNAC Bridge 单容器）</td>
+        <td>vLLM 8000→8003，Bridge 5060→5060</td>
+        <td>GPU 0</td>
+      </tr>
+    </table>
+  </div>
+
+  <div class="card">
+    <h3>常用 Docker 命令</h3>
+    <pre><code># 启动所有推理服务
+docker compose up -d
+
+# 仅启动 ASR
+docker compose up -d asr-sensevoice
+
+# 仅启动 Orpheus TTS
+docker compose up -d orpheus-tts
+
+# 仅启动 LLM（指定后端）
+LLM_BACKEND=vllm docker compose up -d llm
+LLM_BACKEND=trtllm docker compose up -d llm
+
+# 查看服务状态
+docker compose ps
+
+# 查看日志
+docker compose logs -f orpheus-tts
+
+# 停止所有服务
+docker compose down</code></pre>
+  </div>
+
+  <div class="card">
+    <h3>Orpheus TTS 容器内部架构</h3>
+    <p>Orpheus 使用单容器双进程架构：vLLM 后端和 FastAPI Bridge 在同一个容器里运行。</p>
+    <ol class="step-list">
+      <li><strong>vLLM 启动</strong>：加载 Orpheus 3B 模型到 GPU，监听容器内 8000 端口</li>
+      <li><strong>健康检查等待</strong>：最多等 120 次（每次 5 秒）等 vLLM 就绪</li>
+      <li><strong>Bridge 启动</strong>：vLLM 就绪后启动 FastAPI Bridge，监听 5060 端口</li>
+    </ol>
+    <p>Bridge 负责把 OpenAI 兼容的 TTS 请求转成 vLLM 推理调用，再用 SNAC 解码器把 token 转成 24kHz PCM 音频。</p>
+  </div>
+</section>
+
+<!-- 双卡部署 -->
+<section class="section" id="dualgpu">
+  <h2 class="section-title">🎯 双卡部署（ELP-Orpheus）</h2>
+  <p class="section-desc">追求极致低延迟的高级部署方案。需要双卡 Linux 服务器 + FasterTransformer 编译环境。</p>
+
+  <div class="card">
+    <span class="tag tag-red">高级</span>
+    <h3>ELP-Orpheus 双卡架构</h3>
+    <p>ELP-Orpheus 是自研的低延迟推理引擎，通过双卡物理隔离实现 LLM 和 TTS 并行推理，目标首字延迟 <60ms。</p>
+    <table>
+      <tr>
+        <th>组件</th>
+        <th>GPU</th>
+        <th>模型</th>
+        <th>显存占用</th>
+      </tr>
+      <tr>
+        <td>LLM FT 引擎</td>
+        <td>GPU 0</td>
+        <td>Gemma 4 E4B（FasterTransformer 编译）</td>
+        <td>~18GB</td>
+      </tr>
+      <tr>
+        <td>Orpheus TTS</td>
+        <td>GPU 1</td>
+        <td>FT Llama-3B 骨干 + Audio Head + SNAC</td>
+        <td>~8-10GB</td>
+      </tr>
+      <tr>
+        <td>SenseVoice ASR</td>
+        <td>CPU 侧</td>
+        <td>SenseVoice Small</td>
+        <td>—</td>
+      </tr>
+    </table>
+  </div>
+
+  <div class="card">
+    <h3>双卡部署编译依赖</h3>
+    <ul style="margin-left:20px; color:var(--text-dim);">
+      <li>FasterTransformer（C++ 编译）</li>
+      <li>PyTorch、Triton (triton-lang)、pyzmq、pybind11</li>
+      <li>CUDA Toolkit (sm_86)、cuBLASLt、nvcc</li>
+      <li>Audio Head C++ 扩展：<code>cd ELP-Orpheus/ft_engine/decoding_cpp/ && python build_audio_head_cpp.py</code></li>
+    </ul>
+    <div class="warning-box">
+      <h4>Windows 限制</h4>
+      <p>ELP-Orpheus 的 FT 引擎需要 Linux 双卡服务器 + FasterTransformer 编译环境。Windows 开发环境会自动回退到 <code>MockFTLlama</code>，不提供真实推理能力。另外，Windows 下 IPC 的 <code>endpoint</code> 需改为 <code>tcp://127.0.0.1:5555</code>（不支持 Unix Domain Socket）。</p>
+    </div>
+  </div>
+
+  <div class="card">
+    <h3>双卡启动顺序</h3>
+    <ol class="step-list">
+      <li><strong>启动 Gemma（GPU 0）</strong>：FT 引擎加载 Gemma 4 E4B 模型</li>
+      <li><strong>启动 Orpheus（GPU 1）</strong>：FT Llama-3B + Audio Head + SNAC</li>
+      <li><strong>启动 SenseVoice ASR（CPU）</strong>：中央调度器</li>
+    </ol>
+    <div class="warning-box">
+      <h4>启动顺序不能颠倒</h4>
+      <p>必须先启动 Gemma (GPU 0) 再启动 Orpheus (GPU 1)，否则 Orpheus 会在 ZeroMQ 上空转等待。</p>
+    </div>
+  </div>
+</section>
+
+<!-- 常见问题 -->
+<section class="section" id="troubleshoot">
+  <h2 class="section-title">❓ 常见问题</h2>
+  <p class="section-desc">部署和运行中常见的问题排查。</p>
+
+  <div class="card">
+    <h3>后端启动报错连不上 Ollama</h3>
+    <p>确认 Ollama 服务在运行（<code>ollama serve</code> 或检查系统服务）。默认地址 <code>http://localhost:11434</code>。确保 <code>qwen3-vl:8b</code> 和 <code>nomic-embed-text</code> 都已拉取（<code>ollama list</code> 查看）。</p>
+  </div>
+
+  <div class="card">
+    <h3>语音对话没声音</h3>
+    <p>语音对话依赖 ASR 和 TTS 两个独立服务。默认配置走远程模式（<code>asr.mode=remote</code> + <code>tts.mode=remote</code>），需要：</p>
+    <ul style="margin-left:20px; color:var(--text-dim);">
+      <li>启动 ASR 服务：Docker <code>docker compose up -d asr-sensevoice</code>（端口 8005）</li>
+      <li>启动 TTS 服务：根据 <code>tts.engine</code> 配置启动对应服务</li>
+      <li>检查 <code>config/default.yaml</code> 中的 <code>asr.remote_url</code> 和 <code>tts.remote_url</code> 是否指向正确地址</li>
+    </ul>
+  </div>
+
+  <div class="card">
+    <h3>Orpheus TTS 首次请求很慢</h3>
+    <p>这是冷启动问题。后端启动时会自动发预热请求（非流式 + 流式双重预热），但如果 Orpheus 容器刚启动还没就绪，预热会失败。等待 Orpheus 容器 health check 通过（<code>docker compose ps</code> 查看）后重启后端即可。</p>
+  </div>
+
+  <div class="card">
+    <h3>显存不足（OOM）</h3>
+    <p>单卡跑全部服务时显存可能不够。解决方案：</p>
+    <ul style="margin-left:20px; color:var(--text-dim);">
+      <li>降低 LLM 的 <code>gpu_memory_utilization</code>（如 0.9 → 0.7）</li>
+      <li>降低 Orpheus 的 <code>ORPHEUS_GPU_MEM_UTIL</code>（如 0.45 → 0.2）</li>
+      <li>SNAC 解码器走 CPU（<code>ORPHEUS_SNAC_DEVICE=cpu</code>）</li>
+      <li>关闭不用的服务（如不直播就关 F5-TTS）</li>
+      <li>使用嵌入式 Weaviate 替代独立服务节省内存</li>
+    </ul>
+  </div>
+
+  <div class="card">
+    <h3>前端连接不上后端</h3>
+    <p>检查 <code>CX-O-Frontend/.env</code> 中的 <code>VITE_API_URL</code> 是否指向正确的后端地址。默认 <code>http://127.0.0.1:8000</code>。前端启动时会请求 <code>/health</code> 接口检查连通性，连不上会显示引导页。</p>
+  </div>
+
+  <div class="card">
+    <h3>端口冲突</h3>
+    <p>F5-TTS 默认端口 8000 与 CX-O Server 冲突。在 <code>.env</code> 中设置 <code>F5TTS_PORT_HTTP=8500</code>（或其他空闲端口）来避免冲突。同时更新 <code>config/default.yaml</code> 中 TTS 的 <code>remote_url</code> 指向新端口。</p>
+  </div>
+
+  <div class="card">
+    <h3>Weaviate 连接失败</h3>
+    <p>两种解决方案：1）启动独立 Weaviate 服务；2）改用嵌入式模式，设置 <code>memory.vector_backend: weaviate_embedded</code>，无需独立服务。如果不需要向量搜索，设置 <code>memory.vector_enabled: false</code> 关闭。</p>
+  </div>
+
+  <div class="card">
+    <h3>ModelScope 下载慢</h3>
+    <p>下载脚本使用 ModelScope（阿里云），国内网络通常较快。如果仍然慢，检查网络代理设置。CosyVoice 下载脚本支持 HuggingFace 回退，可以设置 <code>HF_ENDPOINT=https://hf-mirror.com</code> 使用镜像站。</p>
+  </div>
+</section>
+
+</div>
+
+<div class="footer">
+  CX-O 部署文档 &nbsp;|&nbsp; 2026-07 &nbsp;|&nbsp; 配套 <a href="./features.html" style="color:var(--accent-cyan)">功能特性文档</a> 和 <a href="../README.md" style="color:var(--accent-cyan)">README</a>
+</div>
+
+</body>
+</html>

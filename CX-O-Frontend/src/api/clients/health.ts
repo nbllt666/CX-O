@@ -50,45 +50,6 @@ export class _HealthClientMixin extends _ApiClientBase {
     }>({ url: '/refs-status' });
   }
 
-  async getF5TTSFinetuneStatus(): Promise<{
-    status: string;
-    progress?: number;
-    message?: string;
-  }> {
-    return this.voiceWorkstationRequest<{
-      status: string;
-      progress?: number;
-      message?: string;
-    }>({ url: '/f5tts/finetune/status' });
-  }
-
-  async stopSoVITSSVCTrain(): Promise<{ status: string }> {
-    return this.voiceWorkstationRequest<{ status: string }>({
-      url: '/sovits-svc/train/stop',
-      method: 'POST',
-    });
-  }
-
-  async getSoVITSSVCStatus(): Promise<{
-    status: string;
-    progress?: number;
-    message?: string;
-    models?: string[];
-  }> {
-    return this.voiceWorkstationRequest<{
-      status: string;
-      progress?: number;
-      message?: string;
-      models?: string[];
-    }>({ url: '/sovits-svc/status' });
-  }
-
-  async getVoxCPMStatus(): Promise<{ status: string; model_path: string }> {
-    return this.voiceWorkstationRequest<{ status: string; model_path: string }>({
-      url: '/api/voxcpm/status',
-    });
-  }
-
   async getLiveClientStatus(): Promise<{ status: string }> {
     return this.request<{ status: string }>({ url: '/api/live/client/status' });
   }

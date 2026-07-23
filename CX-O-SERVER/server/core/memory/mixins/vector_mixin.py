@@ -89,7 +89,13 @@ class _VectorIntegrationMixin:
         logger.error(f"向量化失败：memory_id={memory_id}, error={error}")
 
     def _run_async_sync(self, coro):
-        """在同步方法中运行异步协程
+        """在同步方法中运行异步协程。
+
+        rules-0 §三 禁止子线程 asyncio+aiohttp。
+        本函数在当前线程直接运行协程，不开 ThreadPoolExecutor 子线程。
+        若当前线程已有运行中的事件循环（async 上下文），则用
+        run_coroutine_threadsafe 向该循环提交并等待结果。
+        若当前线程无运行中的事件循环（同步上下文），直接 asyncio.run。
 
         Args:
             coro: 异步协程对象
@@ -97,14 +103,14 @@ class _VectorIntegrationMixin:
         Returns:
             协程的返回值
         """
-        import concurrent.futures
-
-        def run_in_new_loop():
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            # 当前线程没有运行中的事件循环，直接 asyncio.run
             return asyncio.run(coro)
-
-        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
-            future = executor.submit(run_in_new_loop)
-            return future.result()
+        # 当前有运行中的事件循环，提交协程并等待结果
+        future = asyncio.run_coroutine_threadsafe(coro, loop)
+        return future.result(timeout=30)
 
     def _sync_vector_for_memory(self, memory_id: int, content: str, metadata: Dict = None) -> bool:
         """同步记忆到向量数据库（异步非阻塞）

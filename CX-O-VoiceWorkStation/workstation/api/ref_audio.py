@@ -16,10 +16,9 @@ import os
 import tempfile
 from typing import Optional
 
-from fastapi import APIRouter, HTTPException, Request, UploadFile, File
-from fastapi.responses import StreamingResponse
+from fastapi import APIRouter, HTTPException, UploadFile, File
+from fastapi.responses import FileResponse
 from pydantic import BaseModel
-from starlette.background import BackgroundTask
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -35,6 +34,11 @@ class PregenerateRequest(BaseModel):
     sample_text: str = "这是参考音频样本。"
     transition_text: str = "嗯，"
     force: bool = False
+    # 生成模式：clone（克隆模式，默认）或 design（提示词模式）。
+    # 向后兼容：未传 mode 时默认 clone，与历史调用方行为一致。
+    mode: str = "clone"
+    # 克隆模式高级选项：启用极致克隆（参考音频 + 文本续写）。仅在 clone 模式下生效。
+    ultimate_clone: bool = False
 
 
 class PregenerateStatus(BaseModel):
@@ -54,59 +58,41 @@ _pregenerate_status: dict = {
 
 @router.post("/pregenerate")
 async def pregenerate_refs(request: PregenerateRequest):
-    """预生成所有 64 个参考音频（8 情感 + 56 过渡）"""
+    """预生成所有参考音频（8 情感 + 56 过渡，基于 VoxCPM）。
 
+    支持两种模式：
+    - clone（默认）：以 base_audio_path 为参考通过可控声音克隆生成情感参考音频；
+      ultimate_clone=True 时改用极致克隆。
+    - design：先用音色设计创建基础参考音频，再通过可控声音克隆生成情感参考音频。
+
+    生成在后台异步执行，通过 GET /status 轮询进度与结果。
+    """
+    global _pregenerate_status
     if _pregenerate_status["is_running"]:
-        return {"status": "error", "message": "生成任务正在进行中"}
+        raise HTTPException(
+            status_code=409,
+            detail="已有预生成任务正在运行，请通过 GET /status 查询进度",
+        )
 
-    # 使用 clear() + update() 在原 dict 上原地重置状态，避免 lambda 闭包/前端缓存
-    # 持有旧对象引用后出现数据不同步的问题。
-    _pregenerate_status.clear()
-    _pregenerate_status.update({
+    if request.mode not in ("clone", "design"):
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid mode: {request.mode!r}, expected 'clone' or 'design'",
+        )
+    if request.ultimate_clone and request.mode != "clone":
+        raise HTTPException(
+            status_code=400,
+            detail="ultimate_clone 仅在 clone 模式下可用",
+        )
+
+    _pregenerate_status = {
         "is_running": True,
-        "progress": {"current": 0, "total": 64, "message": "开始生成..."},
+        "progress": None,
         "result": None,
         "error": None,
-    })
-
-    try:
-        from workstation.services.emotion_ref_generator import EmotionRefGenerator
-        from workstation.config import get_settings
-
-        settings = get_settings()
-        generator = EmotionRefGenerator(
-            cosyvoice_url=settings.cosyvoice.url,
-            output_dir=settings.output.voice_refs_dir,
-        )
-
-        result = await generator.generate_all(
-            base_audio_path=request.base_audio_path,
-            sample_text=request.sample_text,
-            transition_text=request.transition_text,
-            force=request.force,
-            progress_callback=lambda c, t, m: _update_progress(c, t, m),
-        )
-
-        _pregenerate_status["is_running"] = False
-        _pregenerate_status["result"] = result
-        _pregenerate_status["progress"] = {"current": 64, "total": 64, "message": "生成完成"}
-
-        return {"status": "success", "result": result}
-
-    except BaseException as e:
-        # 捕获 BaseException 以确保 asyncio.CancelledError / KeyboardInterrupt 等
-        # 也会被处理，避免 _pregenerate_status["is_running"] 永远为 True 导致状态卡死。
-        if isinstance(e, asyncio.CancelledError):
-            logger.warning(f"pregenerate_refs cancelled: {e}")
-        else:
-            logger.error(f"Failed to pregenerate refs: {e}")
-        _pregenerate_status["is_running"] = False
-        _pregenerate_status["error"] = str(e) if e else "cancelled"
-        # CancelledError / KeyboardInterrupt / SystemExit 不转换为 HTTPException，
-        # 重新抛出由上层处理，避免阻断进程正常中断。
-        if isinstance(e, (asyncio.CancelledError, KeyboardInterrupt, SystemExit)):
-            raise
-        raise HTTPException(status_code=500, detail=str(e))
+    }
+    asyncio.create_task(_run_pregenerate(request))
+    return {"status": "running", "result": None}
 
 
 @router.get("/status")
@@ -115,141 +101,46 @@ async def get_pregenerate_status():
     return _pregenerate_status
 
 
-@router.get("/cosyvoice/status")
-async def get_cosyvoice_status():
-    """获取 CosyVoice 服务状态"""
-    client = None
-    try:
-        from workstation.services.cosyvoice_client import CosyVoiceClient
-        from workstation.config import get_settings
-
-        settings = get_settings()
-        client = CosyVoiceClient(base_url=settings.cosyvoice.url)
-        healthy = await client.health_check()
-        return {"status": "healthy" if healthy else "unhealthy", "url": settings.cosyvoice.url}
-    except Exception as e:
-        return {"status": "error", "message": str(e)}
-    finally:
-        if client is not None:
-            try:
-                await client.close()
-            except Exception as e:
-                logger.warning(f"Failed to close CosyVoice client: {e}")
-
-
-@router.get("/index-tts/status")
-async def get_index_tts_status():
-    """获取 IndexTTS 服务状态"""
-    client = None
-    try:
-        from workstation.services.index_tts_client import IndexTTSClient
-        from workstation.config import get_settings
-
-        settings = get_settings()
-        client = IndexTTSClient(base_url=settings.index_tts.url)
-        healthy = await client.health_check()
-        return {"status": "healthy" if healthy else "unhealthy", "url": settings.index_tts.url}
-    except Exception as e:
-        return {"status": "error", "message": str(e)}
-    finally:
-        if client is not None:
-            try:
-                await client.close()
-            except Exception as e:
-                logger.warning(f"Failed to close IndexTTS client: {e}")
-
-
-@router.post("/index-tts/synthesize")
-async def index_tts_synthesize(request: Request):
-    """使用 IndexTTS 合成音频"""
-    client = None
-    try:
-        data = await request.json()
-        text = data.get("text", "")
-        if not text:
-            return {"status": "error", "message": "Text is required"}
-
-        from workstation.services.index_tts_client import IndexTTSClient
-        from workstation.config import get_settings
-
-        settings = get_settings()
-        client = IndexTTSClient(base_url=settings.index_tts.url, timeout=settings.index_tts.timeout)
-
-        audio_bytes = await client.synthesize(
-            text=text,
-            emotion=data.get("emotion", "neutral"),
-            emotion_intensity=data.get("emotion_intensity", 0.5),
-            speed=data.get("speed", 1.0),
-            pitch=data.get("pitch", 0.0),
-        )
-
-        import base64
-        return {
-            "status": "success",
-            "audio_data": base64.b64encode(audio_bytes).decode("utf-8"),
-            "format": "wav"
-        }
-    except Exception as e:
-        logger.error(f"IndexTTS synthesize error: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
-    finally:
-        if client is not None:
-            try:
-                await client.close()
-            except Exception as e:
-                logger.warning(f"Failed to close IndexTTS client: {e}")
-
-
 @router.post("/export-zip")
 async def export_zip(request: PregenerateRequest):
-    zip_path: Optional[str] = None
-    try:
-        from workstation.services.emotion_ref_generator import EmotionRefGenerator
-        from workstation.config import get_settings
+    """生成全部参考音频并打包为 zip 下载。
 
-        settings = get_settings()
-        generator = EmotionRefGenerator(
-            cosyvoice_url=settings.cosyvoice.url,
-            output_dir=settings.output.voice_refs_dir,
+    复用已生成的参考音频（force=False 时跳过已存在文件），打包为 emotion_refs.zip 返回。
+    """
+    if request.mode not in ("clone", "design"):
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid mode: {request.mode!r}, expected 'clone' or 'design'",
+        )
+    if request.ultimate_clone and request.mode != "clone":
+        raise HTTPException(
+            status_code=400,
+            detail="ultimate_clone 仅在 clone 模式下可用",
         )
 
-        zip_path = await generator.generate_and_pack_zip(
+    from workstation.services.emotion_ref_generator import EmotionRefGenerator
+    from workstation.config import get_settings
+
+    settings = get_settings()
+    gen = EmotionRefGenerator(output_dir=settings.output.voice_refs_dir)
+    try:
+        zip_path = await gen.generate_and_pack_zip(
             base_audio_path=request.base_audio_path,
             sample_text=request.sample_text,
             transition_text=request.transition_text,
             force=request.force,
-        )
-
-        def iter_file():
-            with open(zip_path, "rb") as f:
-                while chunk := f.read(64 * 1024):
-                    yield chunk
-
-        def _cleanup_zip():
-            if zip_path and os.path.exists(zip_path):
-                try:
-                    os.unlink(zip_path)
-                    logger.debug(f"Cleaned up exported zip: {zip_path}")
-                except OSError as e:
-                    logger.warning(f"Failed to delete exported zip {zip_path}: {e}")
-
-        return StreamingResponse(
-            iter_file(),
-            media_type="application/zip",
-            headers={
-                "Content-Disposition": "attachment; filename=emotion_refs.zip",
-            },
-            background=BackgroundTask(_cleanup_zip),
+            mode=request.mode,
+            ultimate_clone=request.ultimate_clone,
         )
     except Exception as e:
-        # 若流式响应尚未开始，先主动清理临时 zip 文件
-        if zip_path and os.path.exists(zip_path):
-            try:
-                os.unlink(zip_path)
-            except OSError:
-                pass
-        logger.error(f"Failed to export zip: {e}")
+        logger.error(f"Failed to export emotion refs zip: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+    return FileResponse(
+        path=str(zip_path),
+        media_type="application/zip",
+        filename="emotion_refs.zip",
+    )
 
 
 @router.post("/import-zip")
@@ -303,3 +194,30 @@ def _update_progress(current: int, total: int, message: str):
         "total": total,
         "message": message,
     }
+
+
+async def _run_pregenerate(request: PregenerateRequest) -> None:
+    """后台执行预生成任务，更新模块级 _pregenerate_status。"""
+    global _pregenerate_status
+    try:
+        from workstation.services.emotion_ref_generator import EmotionRefGenerator
+        from workstation.config import get_settings
+
+        settings = get_settings()
+        gen = EmotionRefGenerator(output_dir=settings.output.voice_refs_dir)
+        result = await gen.generate_all(
+            base_audio_path=request.base_audio_path,
+            sample_text=request.sample_text,
+            transition_text=request.transition_text,
+            force=request.force,
+            mode=request.mode,
+            ultimate_clone=request.ultimate_clone,
+            progress_callback=_update_progress,
+        )
+        _pregenerate_status["result"] = result
+        _pregenerate_status["is_running"] = False
+        logger.info(f"Pregenerate completed: {result}")
+    except Exception as e:
+        _pregenerate_status["error"] = str(e)
+        _pregenerate_status["is_running"] = False
+        logger.error(f"Pregenerate failed: {e}", exc_info=True)

@@ -17,7 +17,7 @@ logger = logging.getLogger(__name__)
 
 _CXO_ROOT = Path(__file__).resolve().parents[3]
 
-# VoxCPM 子进程默认超时（秒），与 CosyVoice / SoVITS 保持数量级
+# VoxCPM 子进程默认超时（秒），与 SoVITS 保持数量级
 _VOXCPM_SUBPROCESS_TIMEOUT = 300.0
 _VOXCPM_STOP_WAIT_TIMEOUT = 10.0
 

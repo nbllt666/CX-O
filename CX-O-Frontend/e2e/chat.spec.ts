@@ -138,6 +138,10 @@ test.describe('Phase 1 Governance - Chat Page E2E (H4 prep)', () => {
     let streamCalled = false;
     let capturedBody = '';
 
+    // 环境密闭：阻断 WS 连接（在线后端会使聊天走 WS 直连，page.route 拦不到 WS），
+    // 强制 isConnected=false，使发送走本用例断言的 HTTP fallback 路径。
+    await page.routeWebSocket('**/ws', (ws) => ws.close());
+
     await page.route('**/api/chat/stream', (route) => {
       streamCalled = true;
       try {

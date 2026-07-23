@@ -205,14 +205,21 @@ class ToolRegistry:
                 if asyncio.iscoroutinefunction(tool.function):
                     try:
                         asyncio.get_running_loop()
-                        import concurrent.futures
-
-                        with concurrent.futures.ThreadPoolExecutor() as executor:
-                            future = executor.submit(
-                                asyncio.run, tool.function(**(arguments or {}))
-                            )
-                            result = future.result(timeout=120)
+                        # 在 async 上下文中调用同步方法。
+                        # rules-0 §三 禁止子线程 asyncio+aiohttp：
+                        # 不再开 ThreadPoolExecutor 子线程跑 asyncio.run。
+                        # 若当前线程即事件循环线程，子线程 asyncio 会造成资源竞争；
+                        # 提示调用方使用 call_tool_async() 替代。
+                        return {
+                            "success": False,
+                            "error": (
+                                f"异步工具 '{name}' 在异步上下文中请使用 "
+                                "call_tool_async() 方法调用，避免子线程 asyncio 违规"
+                            ),
+                            "tool_name": name,
+                        }
                     except RuntimeError:
+                        # 同步上下文（无运行中的事件循环），直接 asyncio.run
                         result = asyncio.run(tool.function(**(arguments or {})))
                 else:
                     result = tool.function(**(arguments or {}))

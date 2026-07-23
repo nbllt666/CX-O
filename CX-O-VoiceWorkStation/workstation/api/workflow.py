@@ -176,37 +176,8 @@ async def _execute_ref_audio(body: dict) -> dict:
 
 
 async def _execute_emotion_refs(body: dict) -> dict:
-    from workstation.services.emotion_ref_generator import EmotionRefGenerator
-    from workstation.config import get_settings
-
-    settings = get_settings()
-    generator = EmotionRefGenerator(
-        cosyvoice_url=settings.cosyvoice.url,
-        output_dir=settings.output.voice_refs_dir,
-    )
-
-    base_audio_path = body.get("base_audio_path", "")
-    sample_text = body.get("sample_text", "这是参考音频样本。")
-    transition_text = body.get("transition_text", "嗯，")
-    force = body.get("force", False)
-    pack_zip = body.get("pack_zip", False)
-
-    if pack_zip:
-        zip_path = await generator.generate_and_pack_zip(
-            base_audio_path=base_audio_path,
-            sample_text=sample_text,
-            transition_text=transition_text,
-            force=force,
-        )
-        return {"zip_path": str(zip_path), "packed": True}
-    else:
-        result = await generator.generate_all(
-            base_audio_path=base_audio_path,
-            sample_text=sample_text,
-            transition_text=transition_text,
-            force=force,
-        )
-        return {"result": result, "packed": False}
+    # TODO(Task 5): 重构为基于 voxcpm 的参考音频生成，恢复情感参考音频生成功能
+    raise RuntimeError("参考音频生成重构中：Task 5 将重构为 voxcpm")
 
 
 async def _execute_train_prep(body: dict) -> dict:

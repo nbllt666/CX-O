@@ -1,6 +1,6 @@
 """
 CX-O-VoiceWorkStation 语音工作站
-提供参考音频生成、F5-TTS 微调、So-VITS-SVC 训练/推理功能
+提供参考音频生成、So-VITS-SVC 训练/推理功能
 """
 from __future__ import annotations
 
@@ -20,6 +20,12 @@ logger = logging.getLogger(__name__)
 async def lifespan(app: FastAPI):
     settings = get_settings()
     logger.info("Starting CX-O-VoiceWorkStation...")
+    # CXFC 插件注册与心跳（cxfc.enabled=false 时内部空转，零副作用；失败不影响自身服务）
+    try:
+        from workstation.services import cxfc_registration
+        await cxfc_registration.start_registration()
+    except Exception as e:
+        logger.warning(f"Startup: CXFC 注册服务启动失败（不影响 VoiceWorkStation 自身服务）: {e}")
     logger.info("CX-O-VoiceWorkStation started successfully")
     yield
     logger.info("Shutting down CX-O-VoiceWorkStation...")
@@ -28,19 +34,10 @@ async def lifespan(app: FastAPI):
 
 
 async def _shutdown_resources():
-    """关闭/停止所有后台训练子进程、HTTP 客户端单例与 IndexTTS 服务，
+    """关闭/停止所有后台训练子进程与 HTTP 客户端单例，
     避免服务重启后残留孤儿进程与 GPU 显存占用。每个清理步骤独立
     try/except，确保单点失败不阻塞后续清理。"""
-    # 1. 停止 F5-TTS 训练子进程
-    try:
-        from workstation.api import f5tts_finetune as f5tts_api
-        service = f5tts_api._service_instance
-        if service is not None:
-            await service.stop_training()
-    except Exception as e:
-        logger.warning(f"Shutdown: failed to stop F5-TTS training: {e}")
-
-    # 2. 停止 So-VITS-SVC 训练子进程
+    # 1. 停止 So-VITS-SVC 训练子进程
     try:
         from workstation.api import sovits_svc as sovits_api
         trainer = sovits_api._trainer_instance
@@ -49,23 +46,12 @@ async def _shutdown_resources():
     except Exception as e:
         logger.warning(f"Shutdown: failed to stop So-VITS-SVC training: {e}")
 
-    # 3. 关闭 CosyVoice HTTP 客户端单例
+    # 2. 停止 CXFC 心跳并向 CX-O-SERVER 注销插件
     try:
-        from workstation.services import cosyvoice_client
-        client = cosyvoice_client._client_instance
-        if client is not None:
-            await client.close()
+        from workstation.services import cxfc_registration
+        await cxfc_registration.stop_registration()
     except Exception as e:
-        logger.warning(f"Shutdown: failed to close CosyVoice client: {e}")
-
-    # 4. 停止 IndexTTS 服务子进程
-    try:
-        from workstation.services import index_tts_manager
-        manager = index_tts_manager._manager_instance
-        if manager is not None:
-            await manager.stop()
-    except Exception as e:
-        logger.warning(f"Shutdown: failed to stop IndexTTS manager: {e}")
+        logger.warning(f"Shutdown: failed to stop CXFC registration: {e}")
 
 
 def create_app() -> FastAPI:
@@ -73,7 +59,7 @@ def create_app() -> FastAPI:
 
     app = FastAPI(
         title="CX-O-VoiceWorkStation",
-        description="CX-O 语音工作站 - 参考音频生成、F5-TTS 微调、So-VITS-SVC 训练/推理",
+        description="CX-O 语音工作站 - 参考音频生成、So-VITS-SVC 训练/推理",
         version="1.0.0",
         lifespan=lifespan,
     )
@@ -87,20 +73,36 @@ def create_app() -> FastAPI:
     )
 
     from workstation.api.ref_audio import router as ref_audio_router
-    from workstation.api.f5tts_finetune import router as f5tts_finetune_router
     from workstation.api.sovits_svc import router as sovits_svc_router
     from workstation.api.voxcpm import router as voxcpm_router
+    from workstation.api.orpheus import router as orpheus_router
     from workstation.api.workflow import router as workflow_router
+    from workstation.api.audio_files import router as audio_files_router
+    from workstation.api.music import router as music_router
+    from workstation.api.cxfc_plugin import router as cxfc_plugin_router
+    from workstation.api.datasets import batch_router as voxcpm_batch_router
+    from workstation.api.datasets import datasets_router as svc_datasets_router
 
     app.include_router(ref_audio_router, prefix="/api/ref-audio", tags=["参考音频生成"])
-    app.include_router(f5tts_finetune_router, prefix="/api/f5tts-finetune", tags=["F5-TTS 微调"])
     app.include_router(sovits_svc_router, prefix="/api/sovits-svc", tags=["So-VITS-SVC"])
     app.include_router(voxcpm_router, prefix="/api/voxcpm", tags=["VoxCPM 参考音频生成"])
+    app.include_router(orpheus_router, prefix="/api/orpheus", tags=["Orpheus TTS"])
     app.include_router(workflow_router, prefix="/api/workflow", tags=["工作流"])
+    app.include_router(audio_files_router, prefix="/api/audio-files", tags=["音频文件服务"])
+    app.include_router(music_router, prefix="/api/music", tags=["音乐作曲与演唱"])
+    app.include_router(voxcpm_batch_router, prefix="/api/voxcpm", tags=["VoxCPM 批量数据集"])
+    app.include_router(svc_datasets_router, prefix="/api/sovits-svc", tags=["SVC 数据集管理"])
+    # CXFC 插件端点挂在根路径（/tools、/skills、/call），CX-O-SERVER 按 host:port 直连抓取
+    app.include_router(cxfc_plugin_router, tags=["CXFC 插件"])
 
     @app.get("/health")
     async def health_check():
-        return {"status": "healthy", "service": "CX-O-VoiceWorkStation"}
+        return {
+            "status": "healthy",
+            "service": "CX-O-VoiceWorkStation",
+            "name": settings.cxfc.plugin_name,
+            "version": "1.0.0",
+        }
 
     return app
 

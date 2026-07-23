@@ -144,9 +144,9 @@ export function AudioCard(props: AudioCardProps) {
 
       <Card>
         <CardBody>
-          <h3 className="text-lg font-semibold mb-4">VoiceWorkStation 状态</h3>
+          <h3 className="text-lg font-semibold mb-4">音频工作站状态</h3>
           <p className="text-sm text-[var(--color-text-secondary)] mb-4">
-            语音工作站服务连接状态（端口 8200）
+            音频工作站服务连接状态（端口 8200）
           </p>
           <div className="flex items-center gap-3 p-3 bg-[var(--color-bg-tertiary)] rounded-[var(--radius-lg)]">
             <span
@@ -159,7 +159,7 @@ export function AudioCard(props: AudioCardProps) {
               }`}
             />
             <div>
-              <div className="text-sm font-medium">VoiceWorkStation 服务</div>
+              <div className="text-sm font-medium">音频工作站服务</div>
               <div className="text-xs text-[var(--color-text-tertiary)]">
                 {voiceWorkstationStatus === 'connected'
                   ? '已连接'
