@@ -285,3 +285,4 @@ docker-compose.weaviate-gpu.yml
 docker-compose.weaviate-gpu-custom.yml
 docker-compose.weaviate-gpu-full.yml
 docker-compose.weaviate-gpu-multilingual.yml
+DiffSinger
