@@ -9,7 +9,7 @@ import type { Message } from './types';
 import { MarkdownContent } from './MarkdownContent';
 import { ThinkingProcess } from './ThinkingProcess';
 import { formatRelativeTime } from '../../lib/utils';
-import { Card } from '../../components/ui';
+import { Card } from '@/components/ui-v2';
 import type { Agent } from '../../api/client';
 
 export interface MessageListProps {

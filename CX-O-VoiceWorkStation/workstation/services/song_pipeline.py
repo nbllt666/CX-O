@@ -287,15 +287,16 @@ class SongPipelineService:
             record.title = str(normalized.get("title") or record.title)
             self._end_step(record, "validate")
 
-            # 2. accompaniment：和弦轨渲染；无和弦轨时落等长静音兜底
+            # 2. accompaniment：多轨渲染（accompaniment_tracks 或 chords）；
+            #    无伴奏轨与和弦轨时落等长静音兜底
             self._begin_step(record, "accompaniment")
             acc_path = song_dir / "accompaniment.wav"
-            if normalized.get("chords"):
+            if normalized.get("accompaniment_tracks") or normalized.get("chords"):
                 await asyncio.to_thread(
                     render_accompaniment,
                     normalized,
-                    self._settings.music.soundfont_path,
-                    acc_path,
+                    str(acc_path),
+                    soundfont_path=self._settings.music.soundfont_path,
                 )
             else:
                 seconds = total_beats(normalized) * 60.0 / float(normalized["bpm"])

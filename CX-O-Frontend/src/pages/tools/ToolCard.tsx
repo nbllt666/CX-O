@@ -5,6 +5,7 @@ import {
   Edit3,
   Trash2,
 } from 'lucide-react';
+import { Button, Card } from '@/components/ui-v2';
 import type { Tool } from './types';
 import { toolIcons, toolFallbackIcon } from './types';
 import { cn } from '../../lib/utils';
@@ -20,7 +21,7 @@ interface ToolCardProps {
 export function ToolCard({ tool, onToggle, onTest, onEdit, onDelete }: ToolCardProps) {
   const IconComponent = toolIcons[tool.icon || ''] || toolFallbackIcon;
   return (
-    <div className="bg-card rounded-lg border border-border p-4 hover:shadow-md transition-shadow">
+    <Card className="p-4" hoverable>
       <div className="flex items-start justify-between">
         <div className="flex items-center gap-3">
           <div
@@ -45,9 +46,11 @@ export function ToolCard({ tool, onToggle, onTest, onEdit, onDelete }: ToolCardP
           </div>
         </div>
         <div className="flex items-center gap-1">
-          <button
+          <Button
+            variant="ghost"
+            size="sm"
             onClick={() => onToggle(tool)}
-            className="p-1.5 hover:bg-accent rounded-lg transition-colors"
+            className="p-1.5"
             title={tool.status === 'active' ? '停用' : '启用'}
           >
             {tool.status === 'active' ? (
@@ -55,7 +58,7 @@ export function ToolCard({ tool, onToggle, onTest, onEdit, onDelete }: ToolCardP
             ) : (
               <ToggleLeft className="w-5 h-5 text-[var(--color-text-muted)]" />
             )}
-          </button>
+          </Button>
         </div>
       </div>
 
@@ -71,27 +74,32 @@ export function ToolCard({ tool, onToggle, onTest, onEdit, onDelete }: ToolCardP
           )}
         </div>
         <div className="flex gap-2 mt-3">
-          <button
+          <Button
+            variant="secondary"
+            size="sm"
             onClick={() => onTest(tool)}
-            className="flex-1 flex items-center justify-center gap-1.5 px-3 py-1.5 text-sm bg-muted rounded-lg hover:bg-accent transition-colors"
+            className="flex-1"
           >
             <Play className="w-4 h-4" />
             测试
-          </button>
-          <button
+          </Button>
+          <Button
+            variant="secondary"
+            size="sm"
             onClick={() => onEdit(tool)}
-            className="flex items-center justify-center gap-1.5 px-3 py-1.5 text-sm bg-muted rounded-lg hover:bg-accent transition-colors"
           >
             <Edit3 className="w-4 h-4" />
-          </button>
-          <button
+          </Button>
+          <Button
+            variant="ghost"
+            size="sm"
             onClick={() => onDelete(tool)}
-            className="flex items-center justify-center gap-1.5 px-3 py-1.5 text-sm bg-muted rounded-lg hover:bg-red-500/10 hover:text-red-500 transition-colors"
+            className="hover:text-[var(--color-error)]"
           >
             <Trash2 className="w-4 h-4" />
-          </button>
+          </Button>
         </div>
       </div>
-    </div>
+    </Card>
   );
 }

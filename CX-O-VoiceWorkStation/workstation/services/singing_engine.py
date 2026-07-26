@@ -147,11 +147,16 @@ def _is_path_like(ref: str) -> bool:
 
 
 def _voice_bank_candidates(diffsinger_dir: Path, voice_bank: str) -> list[Path]:
-    """声库可能落点：绝对/含分隔符路径按原样检查；裸名称检查 DiffSinger 根目录与 voicebanks/ 子目录"""
+    """声库可能落点：绝对/含分隔符路径按原样检查；裸名称检查 DiffSinger 根目录、
+    voicebanks/ 子目录与 checkpoints/ 子目录（DiffSinger 预训练模型惯例位于 checkpoints/<exp>/）"""
     p = Path(voice_bank)
     if p.is_absolute() or _is_path_like(voice_bank):
         return [p]
-    return [diffsinger_dir / voice_bank, diffsinger_dir / "voicebanks" / voice_bank]
+    return [
+        diffsinger_dir / voice_bank,
+        diffsinger_dir / "voicebanks" / voice_bank,
+        diffsinger_dir / "checkpoints" / voice_bank,
+    ]
 
 
 def check_diffsinger_deployment(
@@ -251,7 +256,7 @@ class DiffSingerEngine(SingingEngine):
                 json.dump(score, score_file, ensure_ascii=False)
             args = [
                 self._diffsinger_python,
-                "inference.py",
+                "voicews_inference.py",
                 "--score",
                 score_file.name,
                 "--voice_bank",

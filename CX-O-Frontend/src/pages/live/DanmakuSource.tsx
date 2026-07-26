@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { DanmakuOverlay } from '../../components/Live/DanmakuOverlay';
+import { DanmakuOverlay } from '@/components/business/live';
 import { useLiveWebSocket } from '../../hooks/useLiveWebSocket';
 import type { LiveDanmakuData } from '../../hooks/useLiveWebSocket';
 

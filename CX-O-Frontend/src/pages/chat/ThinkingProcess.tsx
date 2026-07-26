@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { Button } from '@/components/ui-v2';
 import type { ToolCall } from './types';
 import { ToolCallItem } from './ToolCallItem';
 
@@ -9,7 +10,8 @@ export function ThinkingProcess({ thinking, toolCalls }: { thinking?: string; to
 
   return (
     <div className="mb-3 border border-[var(--color-border)] rounded-[var(--radius-md)] overflow-hidden">
-      <button
+      <Button
+        variant="ghost"
         onClick={() => setIsExpanded(!isExpanded)}
         className="w-full flex items-center justify-between px-3 py-2 bg-[var(--color-bg-tertiary)] hover:bg-[var(--color-bg-hover)] transition-colors text-xs text-[var(--color-text-secondary)]"
       >
@@ -37,7 +39,7 @@ export function ThinkingProcess({ thinking, toolCalls }: { thinking?: string; to
         >
           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
         </svg>
-      </button>
+      </Button>
 
       {isExpanded && (
         <div className="px-3 py-2 bg-[var(--color-bg-secondary)] text-xs space-y-3">

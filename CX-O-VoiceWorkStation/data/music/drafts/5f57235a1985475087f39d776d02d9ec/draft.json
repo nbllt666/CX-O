@@ -1,0 +1,109 @@
+{
+  "draft_id": "5f57235a1985475087f39d776d02d9ec",
+  "score": {
+    "title": "鼓",
+    "bpm": 120,
+    "melody": [
+      {
+        "pitch": "C4",
+        "beats": 4,
+        "lyric": ""
+      }
+    ],
+    "chords": [
+      {
+        "chord": "C",
+        "beats": 4
+      }
+    ],
+    "accompaniment_tracks": [
+      {
+        "id": "drum",
+        "name": "鼓",
+        "program": -1,
+        "mode": "auto",
+        "style": "rock_4beat",
+        "volume": 100,
+        "pan": 64,
+        "events": [
+          {
+            "pitch": "kick",
+            "beats": 1.0,
+            "offset": 0.0,
+            "velocity": 64
+          },
+          {
+            "pitch": "closed_hihat",
+            "beats": 0.5,
+            "offset": 0.0,
+            "velocity": 64
+          },
+          {
+            "pitch": "closed_hihat",
+            "beats": 0.5,
+            "offset": 0.5,
+            "velocity": 64
+          },
+          {
+            "pitch": "snare",
+            "beats": 1.0,
+            "offset": 1.0,
+            "velocity": 64
+          },
+          {
+            "pitch": "closed_hihat",
+            "beats": 0.5,
+            "offset": 1.0,
+            "velocity": 64
+          },
+          {
+            "pitch": "closed_hihat",
+            "beats": 0.5,
+            "offset": 1.5,
+            "velocity": 64
+          },
+          {
+            "pitch": "kick",
+            "beats": 1.0,
+            "offset": 2.0,
+            "velocity": 64
+          },
+          {
+            "pitch": "closed_hihat",
+            "beats": 0.5,
+            "offset": 2.0,
+            "velocity": 64
+          },
+          {
+            "pitch": "closed_hihat",
+            "beats": 0.5,
+            "offset": 2.5,
+            "velocity": 64
+          },
+          {
+            "pitch": "snare",
+            "beats": 1.0,
+            "offset": 3.0,
+            "velocity": 64
+          },
+          {
+            "pitch": "closed_hihat",
+            "beats": 0.5,
+            "offset": 3.0,
+            "velocity": 64
+          },
+          {
+            "pitch": "closed_hihat",
+            "beats": 0.5,
+            "offset": 3.5,
+            "velocity": 64
+          }
+        ]
+      }
+    ],
+    "time_signature": "4/4",
+    "key": "C"
+  },
+  "version": 1,
+  "updated_at": "2026-07-25T13:37:34+08:00"
+}

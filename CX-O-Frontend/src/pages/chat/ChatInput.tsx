@@ -6,7 +6,8 @@
  * 双流式实时语音切换、TTS 引擎与音色选择、连接状态。
  */
 import type { ChangeEvent, KeyboardEvent, RefObject } from 'react';
-import { Button, Textarea } from '../../components/ui';
+import { Button, Textarea } from '@/components/ui-v2';
+import { Select } from '@/components/ui-v2';
 import type { Agent } from '../../api/client';
 
 export type DualStreamEngine = 'f5-tts' | 'orpheus';
@@ -80,12 +81,13 @@ export function ChatInput({
                 alt={`预览 ${index + 1}`}
                 className="w-16 h-16 object-cover rounded border border-[var(--color-border)]"
               />
-              <button
+              <Button
+                variant="ghost"
                 onClick={() => onRemoveImage(index)}
                 className="absolute -top-1 -right-1 w-5 h-5 bg-red-500 text-white rounded-full text-xs flex items-center justify-center hover:bg-red-600"
               >
                 ×
-              </button>
+              </Button>
             </div>
           ))}
         </div>
@@ -224,7 +226,8 @@ export function ChatInput({
             {currentAgent?.vision_enabled && ' · 支持图片上传'}
           </p>
           {/* 语音输出开关 */}
-          <button
+          <Button
+            variant="ghost"
             onClick={onToggleVoiceOutput}
             className={`flex items-center gap-1 text-xs px-2 py-1 rounded transition-colors ${
               enableVoiceOutput
@@ -242,9 +245,10 @@ export function ChatInput({
               />
             </svg>
             <span>{enableVoiceOutput ? '语音输出开' : '语音输出关'}</span>
-          </button>
+          </Button>
           {/* 语音对话模式切换（半双工，双流式激活时禁用以避免冲突） */}
-          <button
+          <Button
+            variant="ghost"
             onClick={onToggleVoiceMode}
             disabled={isDualStreamMode}
             className={`flex items-center gap-1 text-xs px-2 py-1 rounded transition-colors ${
@@ -263,10 +267,11 @@ export function ChatInput({
               />
             </svg>
             <span>{isVoiceMode ? '语音模式' : '文本模式'}</span>
-          </button>
+          </Button>
           {/* 双流式实时语音模式切换（区别于半双工"语音模式"）：
               ASR Partial 主驱动 + TTS 边收边播 + 全双工可打断，TTFA < 300ms */}
-          <button
+          <Button
+            variant="ghost"
             onClick={onToggleDualStreamMode}
             disabled={isVoiceMode || isLoading}
             className={`flex items-center gap-1 text-xs px-2 py-1 rounded transition-colors ${
@@ -285,36 +290,38 @@ export function ChatInput({
               />
             </svg>
             <span>{isDualStreamMode ? '双流式开' : '双流式语音'}</span>
-          </button>
+          </Button>
           {/* 双流式 TTS 引擎切换：仅双流式激活时显示，切换时重启会话以应用新引擎 */}
           {isDualStreamMode && (
             <>
-              <select
+              <Select
                 value={dualStreamEngine}
-                onChange={(e) => onDualStreamEngineChange(e.target.value as DualStreamEngine)}
-                className="text-xs px-2 py-1 rounded border border-[var(--color-border)] bg-[var(--color-bg-secondary)] text-[var(--color-text-secondary)] cursor-pointer outline-none"
-                title="选择 TTS 引擎"
-              >
-                <option value="f5-tts">F5-TTS</option>
-                <option value="orpheus">Orpheus</option>
-              </select>
+                onValueChange={(value) => onDualStreamEngineChange(value as DualStreamEngine)}
+                options={[
+                  { label: 'F5-TTS', value: 'f5-tts' },
+                  { label: 'Orpheus', value: 'orpheus' },
+                ]}
+                className="text-xs"
+                aria-label="选择 TTS 引擎"
+              />
               {/* Orpheus 音色选择：仅 orpheus 引擎显示（F5-TTS 使用 ref_audio，不需要音色） */}
               {dualStreamEngine === 'orpheus' && (
-                <select
+                <Select
                   value={orpheusVoice}
-                  onChange={(e) => onOrpheusVoiceChange(e.target.value)}
-                  className="text-xs px-2 py-1 rounded border border-[var(--color-border)] bg-[var(--color-bg-secondary)] text-[var(--color-text-secondary)] cursor-pointer outline-none"
-                  title="选择 Orpheus 音色"
-                >
-                  <option value="tara">tara</option>
-                  <option value="leah">leah</option>
-                  <option value="jess">jess</option>
-                  <option value="leo">leo</option>
-                  <option value="dan">dan</option>
-                  <option value="mia">mia</option>
-                  <option value="zac">zac</option>
-                  <option value="zoe">zoe</option>
-                </select>
+                  onValueChange={(value) => onOrpheusVoiceChange(value)}
+                  options={[
+                    { label: 'tara', value: 'tara' },
+                    { label: 'leah', value: 'leah' },
+                    { label: 'jess', value: 'jess' },
+                    { label: 'leo', value: 'leo' },
+                    { label: 'dan', value: 'dan' },
+                    { label: 'mia', value: 'mia' },
+                    { label: 'zac', value: 'zac' },
+                    { label: 'zoe', value: 'zoe' },
+                  ]}
+                  className="text-xs"
+                  aria-label="选择 Orpheus 音色"
+                />
               )}
             </>
           )}

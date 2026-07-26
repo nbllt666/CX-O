@@ -10,7 +10,8 @@ import { useState, useEffect, useRef } from 'react';
 import { api } from '@/api/client';
 import type { RefAudioMode, RefAudioStatus } from '@/api/client';
 import { cn } from '@/lib/utils';
-import { Button, Card, CardBody, Input, Textarea, Badge, Toggle } from '@/components/ui';
+import { Button, Card, CardBody, Input, Textarea, Badge } from '@/components/ui-v2';
+import { Toggle } from '@/components/business/ui';
 import { useTranslation } from 'react-i18next';
 
 const modeOptions: { value: RefAudioMode; labelKey: string; descKey: string }[] = [
@@ -265,10 +266,10 @@ export function RefAudioPanel() {
         {/* 结果 */}
         {result && !running && (
           <div className="flex gap-4">
-            <Badge variant="info">
+            <Badge variant="secondary">
               {t('audioWorkstation.emotionCount')}: {result.emotions}
             </Badge>
-            <Badge variant="info">
+            <Badge variant="secondary">
               {t('audioWorkstation.transitionCount')}: {result.transitions}
             </Badge>
           </div>

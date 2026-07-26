@@ -1,19 +1,19 @@
 import { useState, useEffect } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { api } from '../api/client';
-import { PageHeader } from '../components/layout';
-import { Badge, Button, Card, CardBody } from '../components/ui';
-import { AnimatedList } from '../components/AnimatedList';
+import { PageHeader } from '@/components/business/layout';
+import { Badge, Button, Card, CardBody } from '@/components/ui-v2';
+import { AnimatedList } from '@/components/business';
 // 阶段4b: graph Tab 改用 GraphVisualization（CX-O 独有的力导向图）替换 GraphManager
 // 保留 GraphManager 文件本身，仅在 MemoriesPage 中不再使用
 import {
   GraphVisualization,
   type GraphNode as VizGraphNode,
   type GraphLink as VizGraphLink,
-} from '../components/GraphVisualization';
+} from '@/components/business/graph-visualization';
 // 阶段4b: 迁移 CXHMS 独有组件 DistillationModal / CharacterCardModal
-import { DistillationModal } from '../components/DistillationModal';
-import { CharacterCardModal } from '../components/CharacterCardModal';
+import { DistillationModal } from '@/components/business';
+import { CharacterCardModal } from '@/components/business';
 import { useHotkey } from '../hooks';
 import { formatDate, truncate } from '../lib/utils';
 import type { Memory, ViewMode } from './memories/types';
@@ -898,7 +898,7 @@ function DiaryView({ diaryData, isLoading }: DiaryViewProps) {
                       {entry.groupDate}
                     </span>
                     {meta.mood && (
-                      <Badge variant="primary" size="sm">
+                      <Badge variant="anime" size="sm">
                         {meta.mood}
                       </Badge>
                     )}

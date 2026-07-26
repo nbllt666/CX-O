@@ -22,6 +22,7 @@ downloads/
 eggs/
 .eggs/
 lib/
+!CX-O-Frontend/src/lib/
 lib64/
 parts/
 sdist/

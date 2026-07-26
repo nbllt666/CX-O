@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
-import { Live2DViewer } from '../../components/Live2D/Live2DViewer';
-import { VRMViewer } from '../../components/VRM/VRMViewer';
+import { Live2DViewer } from '@/components/business/live2d';
+import { VRMViewer } from '@/components/business/vrm';
 import { useLiveWebSocket } from '../../hooks/useLiveWebSocket';
 import { useSettingsStore } from '../../store/settingsStore';
 import { getAvatar } from '../../services/avatarStorage';

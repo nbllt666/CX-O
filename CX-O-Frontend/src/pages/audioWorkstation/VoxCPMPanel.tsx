@@ -7,7 +7,7 @@ import { useState, useEffect } from 'react';
 import { api, getVoiceWorkstationAudioUrl } from '@/api/client';
 import type { VoxCPMMode, VoiceWsAudioResult } from '@/api/client';
 import { cn } from '@/lib/utils';
-import { Button, Card, CardBody, Input, Textarea, Badge } from '@/components/ui';
+import { Button, Card, CardBody, Input, Textarea, Badge } from '@/components/ui-v2';
 import { useTranslation } from 'react-i18next';
 
 const modeOptions: { value: VoxCPMMode; labelKey: string }[] = [

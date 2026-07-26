@@ -73,8 +73,11 @@ class MusicConfig:
     # MockSingingEngine 保留为开发/CI 选项，显式配置 singing_engine="mock" 即可切回。
     singing_engine: str = "diffsinger"
     diffsinger_dir: str = str(_BASE_DIR.parent / "DiffSinger")
-    diffsinger_python: str = "python"
-    voice_bank: str = ""
+    # DiffSinger 依赖 torch/numpy<2/librosa/lightning 等，仅在 cx-o conda 环境中安装；
+    # 系统 Python 3.14 缺少这些依赖，必须指向 cx-o 环境解释器。
+    diffsinger_python: str = r"C:\Users\NBLLT666\.conda\envs\cx-o\python.exe"
+    # 默认声库：OpenCpop DS1000 声学模型（已部署于 checkpoints/0211_opencpop_ds1000_keyshift/）
+    voice_bank: str = "0211_opencpop_ds1000_keyshift"
     default_svc_model: str = ""
 
 

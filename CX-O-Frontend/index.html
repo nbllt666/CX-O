@@ -2,6 +2,8 @@
 <html lang="zh-CN">
   <head>
     <meta charset="UTF-8" />
+    <!-- ThemeBootstrap 防闪烁脚本（模块2 主题层，355B ≤ 1.5KB，SSR 前同步读取 localStorage 设置 data-theme，D3 executionTiming=synchronous-before-css） -->
+    <script>(function(){try{var k='cx-o-theme';var f='dark';var t=f;try{var r=localStorage.getItem(k);if(r){var p=JSON.parse(r);var v=p&&p.state&&p.state.theme?p.state.theme:p;if(v==='dark'||v==='light'){t=v;}}}catch(e){}document.documentElement.setAttribute('data-theme',t);}catch(e){document.documentElement.setAttribute('data-theme','dark');}})();</script>
     <link rel="icon" type="image/svg+xml" href="/logo.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="description" content="CX-O 智能记忆管理平台 - AI 记忆与对话系统" />

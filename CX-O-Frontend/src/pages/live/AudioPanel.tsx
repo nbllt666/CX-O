@@ -1,4 +1,5 @@
 import { useState, useRef, useCallback, useEffect } from 'react';
+import { Button, Select } from '@/components/ui-v2';
 import { useLiveWebSocket } from '../../hooks/useLiveWebSocket';
 import type { TTSSyncData, TTSTickData } from '../../hooks/useLiveWebSocket';
 import { useMicrophone } from '../../hooks/useMicrophone';
@@ -186,14 +187,20 @@ export function AudioPanel({ standalone = false }: AudioPanelProps) {
         <div className="flex items-center gap-3 p-4 rounded-xl bg-[var(--color-bg-secondary)] border border-[var(--color-border)]">
           <span
             className="w-3 h-3 rounded-full"
-            style={{ backgroundColor: isConnected ? '#4ade80' : '#f87171' }}
+            style={{ backgroundColor: isConnected ? 'var(--color-success)' : 'var(--color-error)' }}
           />
           <span className="text-sm text-[var(--color-text-secondary)]">
             WebSocket: {isConnected ? '已连接' : '未连接'}
           </span>
           <span className="text-[var(--color-text-tertiary)]">|</span>
           <span className="text-sm text-[var(--color-text-secondary)]">{connectionCount} 个客户端在线</span>
-          <span className="ml-auto text-xs px-2 py-1 rounded-full" style={{ background: 'rgba(99,102,241,0.15)', color: '#818cf8' }}>
+          <span
+            className="ml-auto text-xs px-2 py-1 rounded-full"
+            style={{
+              background: 'color-mix(in srgb, var(--color-info) 15%, transparent)',
+              color: 'var(--color-info)',
+            }}
+          >
             同步: {syncStatus}
           </span>
         </div>
@@ -207,28 +214,26 @@ export function AudioPanel({ standalone = false }: AudioPanelProps) {
           </h2>
 
           <div className="p-4 rounded-xl bg-[var(--color-bg-secondary)] border border-[var(--color-border)] space-y-4">
-            <button
+            <Button
+              variant="secondary"
               onClick={toggleMicrophone}
-              className={`px-5 py-2.5 rounded-lg text-sm font-medium transition-all ${
+              className={`px-5 py-2.5 rounded-lg text-sm font-medium transition-all border ${
                 micEnabled
-                  ? 'bg-red-500/20 text-red-400 border border-red-500/30 hover:bg-red-500/30'
-                  : 'bg-green-500/20 text-green-400 border border-green-500/30 hover:bg-green-500/30'
+                  ? 'bg-[color-mix(in_srgb,var(--color-error)_20%,transparent)] text-[var(--color-error)] border-[color-mix(in_srgb,var(--color-error)_30%,transparent)] hover:bg-[color-mix(in_srgb,var(--color-error)_30%,transparent)]'
+                  : 'bg-[color-mix(in_srgb,var(--color-success)_20%,transparent)] text-[var(--color-success)] border-[color-mix(in_srgb,var(--color-success)_30%,transparent)] hover:bg-[color-mix(in_srgb,var(--color-success)_30%,transparent)]'
               }`}
             >
               {micEnabled ? '🔴 停止麦克风' : '🎤 开启麦克风'}
-            </button>
+            </Button>
 
             {devices.length > 0 && (
-              <select
+              <Select
                 value={selectedDevice}
-                onChange={(e) => setSelectedDevice(e.target.value)}
+                onValueChange={(value) => setSelectedDevice(value)}
                 disabled={micEnabled}
-                className="w-full px-3 py-2 rounded-lg bg-[var(--color-bg-tertiary)] border border-[var(--color-border)] text-sm text-[var(--color-text-primary)]"
-              >
-                {devices.map((d) => (
-                  <option key={d.deviceId} value={d.deviceId}>{d.label}</option>
-                ))}
-              </select>
+                options={devices.map((d) => ({ label: d.label, value: d.deviceId }))}
+                className="w-full"
+              />
             )}
 
             <div className="space-y-2">
@@ -241,7 +246,7 @@ export function AudioPanel({ standalone = false }: AudioPanelProps) {
                   className="h-full rounded-full transition-all duration-75"
                   style={{
                     width: `${currentLevel * 100}%`,
-                    background: currentLevel > 0.7 ? '#ef4444' : currentLevel > 0.3 ? '#f59e0b' : '#22c55e',
+                    background: currentLevel > 0.7 ? 'var(--color-error)' : currentLevel > 0.3 ? 'var(--color-warning)' : 'var(--color-success)',
                   }}
                 />
               </div>
@@ -303,16 +308,17 @@ export function AudioPanel({ standalone = false }: AudioPanelProps) {
 
             <div className="space-y-2">
               <label className="text-sm text-[var(--color-text-secondary)]">模式</label>
-              <select
+              <Select
                 value={aecMode}
-                onChange={(e) => setAecMode(e.target.value as typeof aecMode)}
-                className="w-full px-3 py-2 rounded-lg bg-[var(--color-bg-tertiary)] border border-[var(--color-border)] text-sm text-[var(--color-text-primary)]"
-              >
-                <option value="auto">自动选择</option>
-                <option value="browser">浏览器原生</option>
-                <option value="worklet">AudioWorklet</option>
-                <option value="manual">手动调节</option>
-              </select>
+                onValueChange={(value) => setAecMode(value as typeof aecMode)}
+                options={[
+                  { label: '自动选择', value: 'auto' },
+                  { label: '浏览器原生', value: 'browser' },
+                  { label: 'AudioWorklet', value: 'worklet' },
+                  { label: '手动调节', value: 'manual' },
+                ]}
+                className="w-full"
+              />
             </div>
 
             <div className="flex items-center gap-2 text-xs">
@@ -320,8 +326,8 @@ export function AudioPanel({ standalone = false }: AudioPanelProps) {
                 className="w-2 h-2 rounded-full"
                 style={{
                   backgroundColor:
-                    aecStatus === 'active' ? '#22c55e' :
-                    aecStatus === 'manual' ? '#f59e0b' : '#6b7280',
+                    aecStatus === 'active' ? 'var(--color-success)' :
+                    aecStatus === 'manual' ? 'var(--color-warning)' : 'var(--color-text-muted)',
                 }}
               />
               <span className="text-[var(--color-text-secondary)]">
@@ -332,8 +338,8 @@ export function AudioPanel({ standalone = false }: AudioPanelProps) {
         </section>
 
         {playbackText && (
-          <div className="p-3 rounded-lg bg-indigo-500/10 border border-indigo-500/20">
-            <p className="text-xs text-indigo-400 mb-1">正在播放 TTS:</p>
+          <div className="p-3 rounded-lg bg-[color-mix(in_srgb,var(--color-info)_10%,transparent)] border border-[color-mix(in_srgb,var(--color-info)_20%,transparent)]">
+            <p className="text-xs text-[var(--color-info)] mb-1">正在播放 TTS:</p>
             <p className="text-sm text-[var(--color-text-primary)] truncate">{playbackText}</p>
           </div>
         )}

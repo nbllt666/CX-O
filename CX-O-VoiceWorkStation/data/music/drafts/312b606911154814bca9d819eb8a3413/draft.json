@@ -1,0 +1,40 @@
+{
+  "draft_id": "312b606911154814bca9d819eb8a3413",
+  "score": {
+    "title": "集成测试",
+    "bpm": 120,
+    "melody": [
+      {
+        "pitch": "C4",
+        "beats": 4,
+        "lyric": ""
+      }
+    ],
+    "chords": [
+      {
+        "chord": "C",
+        "beats": 4
+      },
+      {
+        "chord": "G",
+        "beats": 4
+      }
+    ],
+    "accompaniment_tracks": [
+      {
+        "id": "trk_0",
+        "name": "钢琴",
+        "program": 0,
+        "mode": "auto",
+        "style": "block_chords",
+        "volume": 100,
+        "pan": 64,
+        "events": []
+      }
+    ],
+    "time_signature": "4/4",
+    "key": "C"
+  },
+  "version": 0,
+  "updated_at": "2026-07-25T13:36:53+08:00"
+}

@@ -1,7 +1,7 @@
 import { useState, useRef } from 'react';
 import { api } from '../api/client';
-import { PageHeader } from '../components/layout';
-import { Button, Card, CardBody } from '../components/ui';
+import { PageHeader } from '@/components/business/layout';
+import { Button, Card, CardBody } from '@/components/ui-v2';
 
 export function AudioTestPage() {
   const [asrResult, setAsrResult] = useState('');

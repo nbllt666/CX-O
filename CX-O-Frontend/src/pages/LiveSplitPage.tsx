@@ -13,7 +13,7 @@ export function LiveSplitPage() {
           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
         </svg>
       ),
-      color: '#a78bfa',
+      color: 'var(--color-secondary)',
     },
     {
       name: '弹幕层',
@@ -24,7 +24,7 @@ export function LiveSplitPage() {
           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" />
         </svg>
       ),
-      color: '#60a5fa',
+      color: 'var(--color-info)',
     },
     {
       name: '字幕层',
@@ -35,7 +35,7 @@ export function LiveSplitPage() {
           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M7 8h10M7 12h4m1 8l-4-4H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-3l-4 4z" />
         </svg>
       ),
-      color: '#34d399',
+      color: 'var(--color-success)',
     },
     {
       name: '音频控制',
@@ -46,7 +46,7 @@ export function LiveSplitPage() {
           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M15.536 8.464a5 5 0 010 7.072m2.828-9.9a9 9 0 010 12.728M5.586 15H4a1 1 0 01-1-1v-4a1 1 0 011-1h1.586l4.707-4.707C10.923 3.663 12 4.109 12 5v14c0 .891-1.077 1.337-1.707.707L5.586 15z" />
         </svg>
       ),
-      color: '#fbbf24',
+      color: 'var(--color-warning)',
     },
   ];
 
@@ -68,7 +68,10 @@ export function LiveSplitPage() {
               <div className="flex items-start gap-4">
                 <div
                   className="flex-shrink-0 w-14 h-14 rounded-xl flex items-center justify-center transition-transform group-hover:scale-110"
-                  style={{ backgroundColor: `${source.color}20`, color: source.color }}
+                  style={{
+                    backgroundColor: `color-mix(in srgb, ${source.color} 12%, transparent)`,
+                    color: source.color,
+                  }}
                 >
                   {source.icon}
                 </div>

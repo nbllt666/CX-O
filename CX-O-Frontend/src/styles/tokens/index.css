@@ -1,0 +1,37 @@
+/*
+ * index.css — Design Token 统一导出入口
+ * ============================================================================
+ * 层级：入口文件（@import 所有 token 文件，按依赖顺序加载）
+ * 用途：统一导出三级 token 架构 + glass 专用 token + 双主题覆盖
+ * 加载顺序（严格依赖链，不可调整）：
+ *   1. primitive.css  — primitive 层原始 token（最底层，无依赖）
+ *   2. semantic.css   — semantic 层语义 token（引用 primitive）
+ *   3. glass.css      — Liquid Glass 专用 token（引用 primitive，被 component 引用）
+ *   4. component.css  — component 层组件 token（引用 semantic + glass）
+ *   5. dark-theme.css — 暗色主题覆盖（默认主题，覆盖 semantic）
+ *   6. light-theme.css — 亮色主题覆盖（覆盖 semantic）
+ * 依赖链：component → semantic → primitive（单向，禁止逆向引用）
+ * 主题切换：[data-theme="dark"]（默认） / [data-theme="light"]（覆盖）
+ * 对齐契约：D1 frontend_design_tokens.schema.json → fileOrganization
+ * 消费方式：下游模块通过 CSS var() 消费，无 JS 导入
+ * @version 1.0.0
+ * ============================================================================
+ */
+
+/* 1. primitive 层 — 原始色板/字号/间距/圆角/阴影/动效曲线 */
+@import './primitive.css';
+
+/* 2. semantic 层 — 语义映射，通过 var() 引用 primitive */
+@import './semantic.css';
+
+/* 3. glass 专用层 — Liquid Glass 材质 token + WebGL uniform 默认值 */
+@import './glass.css';
+
+/* 4. component 层 — 组件级 token，引用 semantic（禁止直接消费 primitive） */
+@import './component.css';
+
+/* 5. 暗色主题覆盖 — 默认主题，覆盖 semantic 层 token */
+@import './dark-theme.css';
+
+/* 6. 亮色主题覆盖 — 通过 [data-theme="light"] 属性切换 */
+@import './light-theme.css';

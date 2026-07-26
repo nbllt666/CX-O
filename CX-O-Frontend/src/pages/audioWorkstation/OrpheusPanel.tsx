@@ -10,7 +10,8 @@
 import { useState, useEffect, useRef } from 'react';
 import { api, getVoiceWorkstationAudioUrl } from '@/api/client';
 import type { OrpheusStatus } from '@/api/client';
-import { Button, Card, CardBody, Input, Textarea, Badge, Toggle } from '@/components/ui';
+import { Button, Card, CardBody, Input, Textarea, Badge } from '@/components/ui-v2';
+import { Toggle } from '@/components/business/ui';
 import { useTranslation } from 'react-i18next';
 
 const EMOTION_TAGS = ['<laugh>', '<giggle>', '<sigh>', '<cry>', '<whisper>', '<shout>', '<gasp>', '<groan>'];
@@ -139,7 +140,7 @@ export function OrpheusPanel() {
             {t('audioWorkstation.orpheusSynthesize')}
           </Button>
           {synthesizing && stream && receivedBytes > 0 && (
-            <Badge variant="info">
+            <Badge variant="secondary">
               {t('audioWorkstation.orpheusReceived', { kb: Math.round(receivedBytes / 1024) })}
             </Badge>
           )}

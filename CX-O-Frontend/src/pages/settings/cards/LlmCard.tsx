@@ -1,4 +1,4 @@
-import { Button, Card, CardBody } from '../../../components/ui';
+import { Button, Card, CardBody } from '@/components/ui-v2';
 import { ModelsConfig, LlmParams, SaveStatus } from '../types';
 
 export interface LlmCardProps {

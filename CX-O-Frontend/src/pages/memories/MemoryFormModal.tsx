@@ -1,5 +1,6 @@
 import { useState } from 'react';
-import { Modal, Textarea, Input, Button } from '../../components/ui';
+import { Textarea, Input, Button } from '@/components/ui-v2';
+import { Modal } from '@/components/business/ui';
 import type { Memory } from './types';
 
 interface MemoryFormModalProps {

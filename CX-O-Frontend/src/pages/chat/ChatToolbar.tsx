@@ -4,8 +4,8 @@
  * Presentational 组件 — 仅接收 props 与回调，不持有状态。
  * 设计为通过 Portal 注入到全局 Header 的 slot 中，使用紧凑水平布局。
  */
-import { Button } from '../../components/ui';
-import { AvatarTypeSelector } from '../../components/Avatar';
+import { Button } from '@/components/ui-v2';
+import { AvatarTypeSelector } from '@/components/business/avatar';
 import type { Agent } from '../../api/client';
 
 export interface ChatToolbarProps {

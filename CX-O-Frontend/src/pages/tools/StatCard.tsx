@@ -1,4 +1,5 @@
 import type { ElementType } from 'react';
+import { Card } from '@/components/ui-v2';
 
 interface StatCardProps {
   title: string;
@@ -10,7 +11,7 @@ interface StatCardProps {
 
 export function StatCard({ title, value, icon: Icon, loading, trend }: StatCardProps) {
   return (
-    <div className="bg-card rounded-lg border border-border p-4">
+    <Card className="p-4">
       <div className="flex items-center justify-between">
         <div>
           <p className="text-sm text-muted-foreground">{title}</p>
@@ -27,6 +28,6 @@ export function StatCard({ title, value, icon: Icon, loading, trend }: StatCardP
           <Icon className="w-5 h-5 text-primary" />
         </div>
       </div>
-    </div>
+    </Card>
   );
 }

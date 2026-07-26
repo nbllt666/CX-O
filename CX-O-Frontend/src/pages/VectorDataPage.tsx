@@ -1,9 +1,10 @@
 import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { api } from '../api/client';
-import { PageHeader } from '../components/layout';
-import { Button, Card, CardBody, Modal, Badge, Input } from '../components/ui';
-import { TimeAxis, TimeAxisDataPoint } from '../components/TimeAxis';
+import { PageHeader } from '@/components/business/layout';
+import { Button, Card, CardBody, Badge, Input } from '@/components/ui-v2';
+import { Modal } from '@/components/business/ui';
+import { TimeAxis, TimeAxisDataPoint } from '@/components/business/time-axis';
 
 interface Vector {
   memory_id: number;

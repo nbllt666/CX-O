@@ -1,4 +1,5 @@
-import { Button, Badge, Drawer } from '../../components/ui';
+import { Button, Badge } from '@/components/ui-v2';
+import { Drawer } from '@/components/business/ui';
 import { formatDate, getImportanceLabel } from '../../lib/utils';
 import type { Memory } from './types';
 import { typeLabels } from './types';
@@ -47,7 +48,7 @@ export function MemoryDetailDrawer({
           <h3 className="text-sm font-medium text-[var(--color-text-secondary)] mb-2">标签</h3>
           <div className="flex gap-2 flex-wrap">
             {memory.tags?.map((tag) => (
-              <Badge key={tag} variant="primary">
+              <Badge key={tag} variant="anime">
                 {tag}
               </Badge>
             ))}

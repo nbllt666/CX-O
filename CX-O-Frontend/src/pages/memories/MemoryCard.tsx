@@ -1,4 +1,4 @@
-import { Card, CardBody, Badge } from '../../components/ui';
+import { Card, CardBody, Badge } from '@/components/ui-v2';
 import {
   formatDate,
   truncate,
@@ -96,7 +96,7 @@ export function MemoryCard({
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-1 flex-wrap">
             {memory.tags?.slice(0, 3).map((tag) => (
-              <Badge key={tag} variant="primary" size="sm">
+              <Badge key={tag} variant="anime" size="sm">
                 {tag}
               </Badge>
             ))}

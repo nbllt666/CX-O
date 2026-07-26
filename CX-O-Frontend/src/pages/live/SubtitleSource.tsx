@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { SubtitleDisplay } from '../../components/Live/SubtitleDisplay';
+import { SubtitleDisplay } from '@/components/business/live';
 import { useLiveWebSocket } from '../../hooks/useLiveWebSocket';
 
 export function SubtitleSource() {
@@ -28,7 +28,7 @@ export function SubtitleSource() {
         position="bottom"
         maxLines={3}
         fontSize={32}
-        background="rgba(0,0,0,0.5)"
+        background="color-mix(in srgb, var(--color-neutral-900) 50%, transparent)"
         typingSpeed={40}
       />
     </div>

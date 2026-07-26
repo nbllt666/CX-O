@@ -1,8 +1,8 @@
 import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { Wrench, Plus, CheckCircle2, Loader2, Code, Terminal } from 'lucide-react';
+import { Button } from '@/components/ui-v2';
 import { api, type ToolStats } from '../api/client';
-import { cn } from '../lib/utils';
 import type { Tool } from './tools/types';
 import { StatCard } from './tools/StatCard';
 import { ToolCard } from './tools/ToolCard';
@@ -145,13 +145,13 @@ export function ToolsPage() {
           </h1>
           <p className="text-muted-foreground mt-1">管理 MCP 工具、原生工具和自定义工具</p>
         </div>
-        <button
+        <Button
+          variant="primary"
           onClick={() => setIsCreateModalOpen(true)}
-          className="flex items-center gap-2 px-4 py-2 bg-primary text-primary-foreground rounded-lg hover:bg-primary/90 transition-colors"
+          icon={<Plus className="w-4 h-4" />}
         >
-          <Plus className="w-4 h-4" />
           添加工具
-        </button>
+        </Button>
       </div>
 
       {/* Stats Cards */}
@@ -188,15 +188,11 @@ export function ToolsPage() {
       {/* Filter Tabs */}
       <div className="flex gap-2">
         {(['all', 'builtin', 'mcp', 'custom', 'cxfc'] as const).map((type) => (
-          <button
+          <Button
             key={type}
+            variant={filter === type ? 'primary' : 'secondary'}
+            size="sm"
             onClick={() => setFilter(type)}
-            className={cn(
-              'px-4 py-2 rounded-lg text-sm font-medium transition-colors',
-              filter === type
-                ? 'bg-primary text-primary-foreground'
-                : 'bg-muted text-muted-foreground hover:bg-accent'
-            )}
           >
             {type === 'all'
               ? '全部'
@@ -207,7 +203,7 @@ export function ToolsPage() {
                   : type === 'cxfc'
                     ? 'CXFC'
                     : '自定义'}
-          </button>
+          </Button>
         ))}
       </div>
 
@@ -232,12 +228,14 @@ export function ToolsPage() {
           <div className="col-span-full text-center py-12 text-muted-foreground">
             <Wrench className="w-12 h-12 mx-auto mb-3 opacity-50" />
             <p>暂无工具</p>
-            <button
+            <Button
+              variant="ghost"
+              size="sm"
               onClick={() => setIsCreateModalOpen(true)}
-              className="mt-4 text-primary hover:underline"
+              className="mt-4"
             >
               添加第一个工具
-            </button>
+            </Button>
           </div>
         )}
       </div>

@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { Button } from '@/components/ui-v2';
 import type { ToolCall } from './types';
 
 export function ToolCallItem({ toolCall }: { toolCall: ToolCall }) {
@@ -6,7 +7,8 @@ export function ToolCallItem({ toolCall }: { toolCall: ToolCall }) {
 
   return (
     <div className="p-2 bg-[var(--color-bg-tertiary)] rounded border border-[var(--color-border)] mb-2">
-      <button
+      <Button
+        variant="ghost"
         onClick={() => setIsExpanded(!isExpanded)}
         className="w-full flex items-center justify-between text-left"
       >
@@ -32,7 +34,7 @@ export function ToolCallItem({ toolCall }: { toolCall: ToolCall }) {
         >
           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
         </svg>
-      </button>
+      </Button>
 
       {isExpanded && (
         <div className="mt-2 space-y-1">

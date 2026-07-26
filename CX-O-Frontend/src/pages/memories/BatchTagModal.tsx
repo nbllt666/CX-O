@@ -1,4 +1,5 @@
-import { Modal, Input, Button } from '../../components/ui';
+import { Input, Button } from '@/components/ui-v2';
+import { Modal } from '@/components/business/ui';
 
 interface BatchTagModalProps {
   selectedCount: number;

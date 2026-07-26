@@ -1,4 +1,4 @@
-import { Button, Card, CardBody } from '../../../components/ui';
+import { Button, Card, CardBody } from '@/components/ui-v2';
 import { SaveStatus } from '../types';
 import type { AvatarType } from '../../../store/settingsStore';
 import type { FrontendLimits } from '../../../api/clients/_types';

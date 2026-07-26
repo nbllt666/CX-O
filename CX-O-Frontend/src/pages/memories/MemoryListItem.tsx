@@ -1,4 +1,4 @@
-import { Badge } from '../../components/ui';
+import { Badge } from '@/components/ui-v2';
 import {
   formatDate,
   truncate,
@@ -61,7 +61,7 @@ export function MemoryListItem({
       <td className="px-4 py-3">
         <div className="flex gap-1 flex-wrap">
           {memory.tags?.slice(0, 2).map((tag) => (
-            <Badge key={tag} variant="primary" size="sm">
+            <Badge key={tag} variant="anime" size="sm">
               {tag}
             </Badge>
           ))}

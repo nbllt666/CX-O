@@ -1,9 +1,10 @@
 import { useState, useEffect } from 'react';
 import { api, Agent } from '../api/client';
 import { formatRelativeTime } from '../lib/utils';
-import { PageHeader } from '../components/layout';
-import { Button, Card, CardBody, Modal, Input, Textarea, Badge } from '../components/ui';
-import { AnimatedList } from '../components/AnimatedList';
+import { PageHeader } from '@/components/business/layout';
+import { Button, Card, CardBody, Input, Textarea, Badge } from '@/components/ui-v2';
+import { Modal } from '@/components/business/ui';
+import { AnimatedList } from '@/components/business';
 import { useHotkey } from '../hooks';
 import { useSettingsStore } from '../store/settingsStore';
 
@@ -320,7 +321,7 @@ export function AgentsPage() {
                   <div>
                     <h3 className="font-semibold text-[var(--color-text-primary)]">{agent.name}</h3>
                     {agent.is_default && (
-                      <Badge variant="primary" size="sm">
+                      <Badge variant="anime" size="sm">
                         默认
                       </Badge>
                     )}

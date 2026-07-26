@@ -1,0 +1,148 @@
+/*
+ * component.css — Design Token Component Layer
+ * ============================================================================
+ * 层级：component（组件级，引用 semantic，禁止直接消费 primitive）
+ * 用途：特定组件消费的 token，聚合 semantic 层 token 为组件级预设
+ * 命名规范：--{component}-{property}-{state}（kebab-case，对齐 D1 契约）
+ * 引用约束：仅通过 var() 引用 semantic 层，禁止直接引用 primitive 层
+ *   违反触发 errorCodes.TOKEN_RAW_DIRECT_CONSUME (FE-TOK-004)
+ *   层级引用链：component → semantic → primitive（单向，禁止逆向）
+ * 对齐契约：D1 frontend_design_tokens.schema.json → component
+ *   - button: paddingX/paddingY/radius/fontSize/fontWeight
+ *   - card: padding/radius/shadow
+ *   - dialog: padding/radius/shadow/backdropBlur
+ *   - input: paddingX/paddingY/radius/fontSize/borderWidth
+ *   - glassPanel: tint/highlight/refraction/radius/shadow
+ * @version 1.0.0
+ * ============================================================================
+ */
+
+:root {
+  /* ==========================================================================
+   * 1. Button 组件级 token（引用 semantic）
+   * ========================================================================== */
+  --button-padding-x: var(--spacing-button-x);    /* 横向 padding 16px */
+  --button-padding-y: var(--spacing-button-y);    /* 纵向 padding 8px */
+  --button-radius: var(--radius-button);          /* 圆角 8px */
+  --button-font-size: var(--font-body-size);      /* 字号 16px */
+  --button-font-weight: var(--font-weight-medium); /* 字重 500 */
+  --button-line-height: var(--font-body-line-height); /* 行高 1.5 */
+
+  /* --- 1.1 Button 色彩（引用 semantic.color）---------------------------- */
+  --button-bg: var(--color-primary);              /* 背景色 樱花粉 */
+  --button-bg-hover: var(--color-primary-hover);  /* 悬停背景色 */
+  --button-bg-active: var(--color-primary-active); /* 激活背景色 */
+  --button-text: var(--color-foreground);         /* 文字色 */
+  --button-text-hover: var(--color-foreground);   /* 悬停文字色 */
+  --button-border: var(--color-border);           /* 边框色 */
+  --button-border-focus: var(--color-border-focus); /* 聚焦边框色 */
+
+  /* --- 1.2 Button 动效（引用 semantic.motion）-------------------------- */
+  --button-motion-hover: var(--motion-hover);     /* hover spring */
+  --button-motion-press: var(--motion-press);     /* press spring */
+
+  /* ==========================================================================
+   * 2. Card 组件级 token（引用 semantic）
+   * ========================================================================== */
+  --card-padding: var(--spacing-card);    /* padding 20px */
+  --card-radius: var(--radius-card);      /* 圆角 12px */
+  --card-shadow: var(--shadow-card);      /* 阴影 elevation2 */
+
+  /* --- 2.1 Card 色彩（引用 semantic.color）------------------------------ */
+  --card-bg: var(--color-surface);        /* 背景色 表面色 */
+  --card-border: var(--color-border);     /* 边框色 */
+  --card-text: var(--color-text-primary); /* 文字色 */
+
+  /* ==========================================================================
+   * 3. Dialog 组件级 token（引用 semantic）
+   * ========================================================================== */
+  --dialog-padding: var(--spacing-dialog); /* padding 24px */
+  --dialog-radius: var(--radius-dialog);   /* 圆角 24px */
+  --dialog-shadow: var(--shadow-dialog);   /* 阴影 elevation4 */
+  --dialog-backdrop-blur: var(--motion-blur-md); /* backdrop blur 16px */
+
+  /* --- 3.1 Dialog 色彩（引用 semantic.color）---------------------------- */
+  --dialog-bg: var(--color-surface);      /* 背景色 表面色 */
+  --dialog-border: var(--color-border);   /* 边框色 */
+  --dialog-text: var(--color-text-primary); /* 文字色 */
+  --dialog-overlay: var(--color-background); /* 遮罩层背景 */
+
+  /* ==========================================================================
+   * 4. Input 组件级 token（引用 semantic）
+   * ========================================================================== */
+  --input-padding-x: var(--spacing-input-x);  /* 横向 padding 12px */
+  --input-padding-y: var(--spacing-input-y);  /* 纵向 padding 8px */
+  --input-radius: var(--radius-input);        /* 圆角 8px */
+  --input-font-size: var(--font-body-size);   /* 字号 16px */
+  --input-border-width: 1px;                  /* 边框宽度（例外属性，允许具体值） */
+
+  /* --- 4.1 Input 色彩（引用 semantic.color）----------------------------- */
+  --input-bg: var(--color-surface);           /* 背景色 表面色 */
+  --input-border: var(--color-border);        /* 边框色 */
+  --input-border-hover: var(--color-border-hover);  /* 悬停边框色 */
+  --input-border-focus: var(--color-border-focus);  /* 聚焦边框色 */
+  --input-text: var(--color-text-primary);    /* 文字色 */
+  --input-placeholder: var(--color-text-muted); /* 占位文字色 */
+
+  /* ==========================================================================
+   * 5. GlassPanel 组件级 token（Liquid Glass 专用，引用 semantic + glass.css）
+   * ============================================================================
+   * 任务说明闭合判据第 5 条：glass-bg / glass-blur / glass-saturate / glass-border
+   *   在 component 层定义。
+   * D1 契约 component.glassPanel：tint/highlight/refraction/radius/shadow。
+   * glass.css 定义 primitive/semantic 级 glass token，此处为组件级聚合。
+   * ============================================================================
+   */
+  --glass-panel-radius: var(--radius-glass);    /* 圆角 24px */
+  --glass-panel-shadow: var(--shadow-glass);   /* 阴影 glassHighlight */
+  --glass-panel-highlight: var(--shadow-glass); /* 高光 glassHighlight */
+
+  /* --- 5.1 Glass 材质参数（任务说明要求：bg/blur/saturate/border）-------- */
+  --glass-bg: var(--color-surface);            /* 玻璃背景色（半透明，由主题层控制透明度） */
+  --glass-blur: var(--motion-blur-md);         /* 模糊度 16px（Tier 3 CSS 降级默认） */
+  --glass-saturate: var(--motion-saturate-md); /* 饱和度 1.8 */
+  --glass-border: var(--color-border);         /* 玻璃边框色 */
+
+  /* --- 5.2 Glass 着色（引用 semantic，glass.css 提供 primitive 级着色）---- */
+  --glass-tint: var(--color-glass-tint-sakura); /* 玻璃着色 樱花粉（默认） */
+  --glass-tint-lavender: var(--color-glass-tint-lavender); /* 梦境紫着色 */
+  --glass-tint-azure: var(--color-glass-tint-azure);       /* 星海青着色 */
+  --glass-tint-white: var(--color-glass-tint-white);       /* 月光白着色 */
+
+  /* --- 5.3 Glass 折射（WebGL uniform uRefractionStrength，引用 glass.css）- */
+  --glass-refraction: var(--glass-refraction-strength); /* 折射强度 0.08 */
+
+  /* ==========================================================================
+   * 6. Tooltip 组件级 token（引用 semantic）
+   * ========================================================================== */
+  --tooltip-padding-x: var(--spacing-inline);  /* 横向 padding 8px */
+  --tooltip-padding-y: var(--spacing-1);       /* 纵向 padding 4px */
+  --tooltip-radius: var(--radius-sm);          /* 圆角 4px */
+  --tooltip-font-size: var(--font-caption-size); /* 字号 14px */
+  --tooltip-bg: var(--color-neutral-900);      /* 背景色 深灰 */
+  --tooltip-text: var(--color-foreground);     /* 文字色 */
+  --tooltip-shadow: var(--shadow-sm);          /* 阴影 sm */
+
+  /* ==========================================================================
+   * 7. Badge 组件级 token（引用 semantic）
+   * ========================================================================== */
+  --badge-padding-x: var(--spacing-1);         /* 横向 padding 4px */
+  --badge-padding-y: var(--spacing-1);         /* 纵向 padding 4px */
+  --badge-radius: var(--radius-pill);          /* 圆角 胶囊 */
+  --badge-font-size: var(--font-size-xs);      /* 字号 12px */
+  --badge-font-weight: var(--font-weight-medium); /* 字重 500 */
+  --badge-bg: var(--color-primary);            /* 背景色 樱花粉 */
+  --badge-text: var(--color-foreground);       /* 文字色 */
+
+  /* ==========================================================================
+   * 8. Tabs 组件级 token（引用 semantic）
+   * ========================================================================== */
+  --tabs-padding-x: var(--spacing-component);  /* 横向 padding 16px */
+  --tabs-padding-y: var(--spacing-2);          /* 纵向 padding 8px */
+  --tabs-radius: var(--radius-button);         /* 圆角 8px */
+  --tabs-font-size: var(--font-body-size);     /* 字号 16px */
+  --tabs-bg: var(--color-surface);             /* 背景色 */
+  --tabs-text: var(--color-text-secondary);    /* 文字色 次要 */
+  --tabs-text-active: var(--color-primary);    /* 激活文字色 樱花粉 */
+  --tabs-border: var(--color-border);          /* 边框色 */
+}

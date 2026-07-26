@@ -15,6 +15,16 @@
 metadata 中的 audio_url 已含该路径。song_id 合法性复用流水线层的
 _SONG_ID_PATTERN 白名单正则（防路径穿越），非法 id 一律 404。
 
+草稿命令总线（spec redesign-composition-staff-editor §5 REST 端点冻结项）：
+- POST   /drafts                      创建草稿（空白或种子），返回 CommandResult
+- GET    /drafts                      列出草稿摘要（list_drafts() 原样返回）
+- GET    /drafts/{draft_id}           获取草稿快照，返回 CommandResult；不存在 404
+- DELETE /drafts/{draft_id}           删除草稿，返回 {success: bool}（幂等）
+- POST   /drafts/{draft_id}/commands  执行命令，返回 CommandResult
+请求/响应形状严格按 command-protocol.schema.json definitions.command_result；
+失败时响应体仍为 CommandResult（success=false + error），HTTP 状态码按
+x-error-codes 映射（DRAFT_NOT_FOUND→404、COMMAND_*→400、SUBMIT_FAILED→500）。
+
 部署要求与项目整体一致：单 worker 运行（uvicorn --workers 1），
 流水线单例与内存注册表不跨进程共享。
 """
@@ -26,9 +36,11 @@ from pathlib import Path
 from typing import Optional
 
 from fastapi import APIRouter, HTTPException, UploadFile
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
 from workstation.config import get_settings
+from workstation.music import draft_registry
 from workstation.music.musicxml_import import MusicXMLImportError, musicxml_to_score
 from workstation.music.score import validate_score
 from workstation.services.song_pipeline import (
@@ -206,3 +218,140 @@ async def delete_song(song_id: str):
     pipeline._tasks.pop(song_id, None)  # noqa: SLF001 - 流水线未提供删除接口，API 层同步清理
     logger.info("歌曲已删除: song_id=%s", song_id)
     return {"status": "success", "song_id": song_id}
+
+
+# ---------------------------------------------------------------------------
+# 草稿命令总线（spec redesign-composition-staff-editor §5 REST 端点冻结项）
+#
+# 对接 workstation.music.draft_registry 公开函数，不绕过 execute_command
+# 直接改草稿。请求/响应形状严格按 command-protocol.schema.json
+# definitions.command_result；失败时响应体仍为 CommandResult（success=false
+# + error），HTTP 状态码按 x-error-codes 映射。
+# ---------------------------------------------------------------------------
+
+# command-protocol.schema.json x-error-codes → HTTP 状态码
+_DRAFT_ERROR_STATUS: dict[str, int] = {
+    "DRAFT_NOT_FOUND": 404,
+    "COMMAND_UNKNOWN": 400,
+    "COMMAND_ARGS_INVALID": 400,
+    "SCORE_VALIDATION_FAILED": 400,
+    "NOTE_NOT_FOUND": 400,
+    "TRACK_NOT_FOUND": 400,
+    "CHORD_NOT_FOUND": 400,
+    "STYLE_UNKNOWN": 400,
+    "TRACK_MODE_INVALID": 400,
+    "SUBMIT_FAILED": 500,
+}
+
+
+class CreateDraftRequest(BaseModel):
+    """POST /drafts 请求体：score 缺省建空白草稿（C4 全音符占位）。
+
+    draft_id 字段为兼容预留——当前由服务端生成（draft_registry.create_draft
+    总返回新 uuid），传入将被忽略。契约 args_create_draft 仅声明 score。
+    """
+
+    score: Optional[dict] = Field(
+        None,
+        description="初始歌谱（v1 或 v2，v1 自动迁移）；缺省创建空白草稿",
+    )
+    draft_id: Optional[str] = Field(
+        None,
+        description="可选；当前由服务端生成，传入将被忽略",
+    )
+
+
+class CommandRequest(BaseModel):
+    """POST /drafts/{draft_id}/commands 请求体。
+
+    args 内需含 draft_id 字段（command-protocol x-notes：args_<command> schema
+    多数 required draft_id）。路径 draft_id 为寻址真源；args 内 draft_id 仅
+    满足 schema 校验，二者应一致。缺 draft_id 时 schema 校验失败 → 400。
+    """
+
+    command: str = Field(
+        ...,
+        description="命令名（command-protocol.schema.json properties.command.enum）",
+    )
+    args: dict = Field(
+        default_factory=dict,
+        description="命令参数（形状随 command 而变，见 definitions.args_<command>）",
+    )
+
+
+def _draft_failure_response(result: dict) -> JSONResponse:
+    """将 draft_registry success=false 结果转为 HTTP 错误响应。
+
+    响应体保持 CommandResult 形状（success=false + error{code, message, details?}），
+    HTTP 状态码按错误码映射；未知错误码兜底 400。
+    """
+    code = result.get("error", {}).get("code", "")
+    status = _DRAFT_ERROR_STATUS.get(code, 400)
+    return JSONResponse(status_code=status, content=result)
+
+
+@router.post("/drafts")
+async def create_draft_endpoint(request: CreateDraftRequest):
+    """
+    创建草稿。
+
+    - score 缺省 → 空白草稿（title=未命名、bpm=120、melody 置 C4 全音符占位）
+    - score 提供 → v1 输入自动迁移到 v2，校验失败 → 400（SCORE_VALIDATION_FAILED）
+    - 响应：CommandResult（success=true → 200；success=false → 映射状态码）
+    """
+    result = draft_registry.create_draft(request.score)
+    if not result.get("success"):
+        return _draft_failure_response(result)
+    return result
+
+
+@router.get("/drafts")
+async def list_drafts_endpoint():
+    """
+    列出草稿摘要（按 updated_at 倒序）。
+
+    响应：list[{draft_id, title, version, updated_at}]（list_drafts() 原样返回）。
+    """
+    return draft_registry.list_drafts()
+
+
+@router.get("/drafts/{draft_id}")
+async def get_draft_endpoint(draft_id: str):
+    """
+    获取草稿快照（不增 version）。
+
+    - 存在 → 200 + CommandResult（snapshot + version）
+    - 不存在 → 404 + CommandResult（DRAFT_NOT_FOUND）
+    """
+    result = draft_registry.get_draft(draft_id)
+    if not result.get("success"):
+        return _draft_failure_response(result)
+    return result
+
+
+@router.delete("/drafts/{draft_id}")
+async def delete_draft_endpoint(draft_id: str):
+    """
+    删除草稿（内存注册表 + 落盘文件）。
+
+    幂等：不存在返回 {success: false}（草稿本就不存在），HTTP 200。
+    存在则返回 {success: true}。
+    """
+    existed = draft_registry.delete_draft(draft_id)
+    return {"success": existed}
+
+
+@router.post("/drafts/{draft_id}/commands")
+async def execute_command_endpoint(draft_id: str, request: CommandRequest):
+    """
+    执行命令（命令执行器唯一入口，与 CXFC music_edit_score 共用）。
+
+    - 路径 draft_id 为寻址真源；args 原样传入 execute_command
+    - args 缺 draft_id（或其它必需字段）→ schema 校验失败 → 400（COMMAND_ARGS_INVALID）
+    - 未知命令 → 400（COMMAND_UNKNOWN）；草稿不存在 → 404（DRAFT_NOT_FOUND）
+    - 响应：CommandResult（success=true → 200；success=false → 映射状态码）
+    """
+    result = draft_registry.execute_command(draft_id, request.command, request.args)
+    if not result.get("success"):
+        return _draft_failure_response(result)
+    return result

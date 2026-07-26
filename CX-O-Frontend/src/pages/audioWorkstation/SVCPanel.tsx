@@ -13,7 +13,7 @@ import type {
   BatchDatasetTask,
   BatchDatasetEngine,
 } from '@/api/client';
-import { Button, Card, CardBody, Input, Badge } from '@/components/ui';
+import { Button, Card, CardBody, Input, Badge } from '@/components/ui-v2';
 import { useTranslation } from 'react-i18next';
 
 const engineOptions: { value: BatchDatasetEngine; labelKey: string }[] = [
@@ -270,7 +270,7 @@ export function SVCPanel() {
             <div className="p-3 rounded-lg bg-[var(--color-bg-tertiary)] space-y-2">
               <div className="flex items-center gap-2">
                 <Badge variant={trainBadgeVariant(batchTask.status)}>{batchTask.status}</Badge>
-                <Badge variant="info">{batchTask.engine}</Badge>
+                <Badge variant="secondary">{batchTask.engine}</Badge>
                 {batchTask.total > 0 && (
                   <span className="text-xs text-[var(--color-text-tertiary)]">
                     {batchTask.done} / {batchTask.total}
@@ -304,7 +304,7 @@ export function SVCPanel() {
                   >
                     <span className="text-sm font-mono text-[var(--color-text-primary)]">{ds.name}</span>
                     <div className="flex items-center gap-3">
-                      <Badge variant="info">
+                      <Badge variant="secondary">
                         {t('audioWorkstation.datasetFiles')}: {ds.file_count}
                       </Badge>
                       <Button variant="danger" size="sm" onClick={() => handleDeleteDataset(ds.name)}>

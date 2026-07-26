@@ -1,13 +1,13 @@
 import { useState, useCallback, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { LiveStage } from '../components/Live/LiveStage';
+import { LiveStage } from '@/components/business/live';
 import { useLiveWebSocket } from '../hooks/useLiveWebSocket';
 import { useSettingsStore } from '../store/settingsStore';
 import { getAvatar } from '../services/avatarStorage';
 import type { LiveDanmakuData } from '../hooks/useLiveWebSocket';
-import type { IAvatarDriver } from '../components/Avatar/AvatarDriver';
-import { createAvatarDriver } from '../components/Avatar/AvatarDriver';
-import { resolveAvatarManifestById, getAvatarById } from '../components/Avatar/avatarManifest';
+import { createAvatarDriver } from '@/components/business/avatar';
+import type { IAvatarDriver } from '@/components/business/avatar';
+import { resolveAvatarManifestById, getAvatarById } from '@/components/business/avatar/avatar-manifest';
 import { parseAvatarTags, type AvatarTag } from '../lib/avatarTagParser';
 
 function applyAvatarTags(driver: IAvatarDriver, tags: AvatarTag[]) {
@@ -158,18 +158,18 @@ export function LivePage() {
       <div
         className="absolute top-4 right-4 flex items-center gap-2 px-3 py-1.5 rounded-full text-xs z-40"
         style={{
-          background: 'rgba(0,0,0,0.5)',
-          color: isConnected ? '#4ade80' : '#f87171',
+          background: 'var(--color-bg-tertiary)',
+          color: isConnected ? 'var(--color-success)' : 'var(--color-error)',
           backdropFilter: 'blur(8px)',
         }}
       >
         <span
           className="w-2 h-2 rounded-full animate-pulse"
-          style={{ backgroundColor: isConnected ? '#4ade80' : '#f87171' }}
+          style={{ backgroundColor: isConnected ? 'var(--color-success)' : 'var(--color-error)' }}
         />
         {isConnected ? '已连接' : '未连接'}
-        <span className="text-white/50">|</span>
-        <span className="text-white/50">{connectionCount} 个客户端</span>
+        <span className="text-[var(--color-text-tertiary)]">|</span>
+        <span className="text-[var(--color-text-tertiary)]">{connectionCount} 个客户端</span>
       </div>
     </div>
   );

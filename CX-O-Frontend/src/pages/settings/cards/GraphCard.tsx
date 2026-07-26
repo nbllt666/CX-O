@@ -1,4 +1,4 @@
-import { Button, Card, CardBody } from '../../../components/ui';
+import { Button, Card, CardBody } from '@/components/ui-v2';
 import { GraphHealth, GraphStats, SaveStatus } from '../types';
 
 export interface GraphCardProps {

@@ -1,0 +1,25 @@
+{
+  "draft_id": "dd40009832634473bb3374b2c45df607",
+  "score": {
+    "title": "诊断",
+    "bpm": 120,
+    "melody": [
+      {
+        "pitch": "C4",
+        "beats": 4,
+        "lyric": "啦"
+      }
+    ],
+    "chords": [
+      {
+        "chord": "C",
+        "beats": 4
+      }
+    ],
+    "time_signature": "4/4",
+    "key": "C",
+    "accompaniment_tracks": []
+  },
+  "version": 0,
+  "updated_at": "2026-07-25T15:13:19+08:00"
+}

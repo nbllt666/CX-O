@@ -9,9 +9,10 @@ import {
   Loader2,
   Zap,
   Network,
-  X,
 } from 'lucide-react';
 import { api, type CxfcPlugin, type CxfcSkill, type CxfcDiscoveredPlugin } from '../api/client';
+import { Button, Input } from '@/components/ui-v2';
+import { Modal } from '@/components/business/ui';
 import { cn } from '../lib/utils';
 
 const PluginsPage: React.FC = () => {
@@ -105,27 +106,30 @@ const PluginsPage: React.FC = () => {
           <p className="text-muted-foreground mt-1">管理 CXFC 插件连接、Skills 和局域网发现</p>
         </div>
         <div className="flex gap-2">
-          <button
+          <Button
+            variant="secondary"
+            size="sm"
             onClick={handleScan}
-            className="flex items-center gap-2 px-4 py-2 bg-muted text-foreground rounded-lg hover:bg-accent transition-colors text-sm"
+            icon={<Search className="w-4 h-4" />}
           >
-            <Search className="w-4 h-4" />
             扫描局域网
-          </button>
-          <button
+          </Button>
+          <Button
+            variant="primary"
+            size="sm"
             onClick={() => setShowConnect(true)}
-            className="flex items-center gap-2 px-4 py-2 bg-primary text-primary-foreground rounded-lg hover:bg-primary/90 transition-colors text-sm"
+            icon={<Plus className="w-4 h-4" />}
           >
-            <Plus className="w-4 h-4" />
             连接插件
-          </button>
-          <button
+          </Button>
+          <Button
+            variant="secondary"
+            size="sm"
             onClick={loadData}
-            className="flex items-center gap-2 px-4 py-2 bg-muted text-foreground rounded-lg hover:bg-accent transition-colors text-sm"
+            icon={<RefreshCw className="w-4 h-4" />}
           >
-            <RefreshCw className="w-4 h-4" />
             刷新
-          </button>
+          </Button>
         </div>
       </div>
 
@@ -138,18 +142,14 @@ const PluginsPage: React.FC = () => {
 
       <div className="flex gap-2">
         {(['plugins', 'skills', 'discover'] as const).map(tab => (
-          <button
+          <Button
             key={tab}
+            variant={activeTab === tab ? 'primary' : 'secondary'}
+            size="sm"
             onClick={() => setActiveTab(tab)}
-            className={cn(
-              'px-4 py-2 rounded-lg text-sm font-medium transition-colors',
-              activeTab === tab
-                ? 'bg-primary text-primary-foreground'
-                : 'bg-muted text-muted-foreground hover:bg-accent'
-            )}
           >
             {tab === 'plugins' ? '插件列表' : tab === 'skills' ? 'Skills' : '局域网发现'}
-          </button>
+          </Button>
         ))}
       </div>
 
@@ -217,20 +217,24 @@ const PluginsPage: React.FC = () => {
                     </div>
                   </div>
                   <div className="flex gap-2">
-                    <button
+                    <Button
+                      variant="ghost"
+                      size="sm"
                       onClick={() => handleRefresh(plugin.plugin_id)}
-                      className="p-2 hover:bg-accent rounded-lg transition-colors"
+                      className="p-2"
                       title="刷新"
                     >
                       <RefreshCw className="w-4 h-4" />
-                    </button>
-                    <button
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      size="sm"
                       onClick={() => handleDisconnect(plugin.plugin_id)}
-                      className="p-2 hover:bg-red-500/10 hover:text-red-500 rounded-lg transition-colors"
+                      className="p-2 hover:text-[var(--color-error)]"
                       title="断开"
                     >
                       <WifiOff className="w-4 h-4" />
-                    </button>
+                    </Button>
                   </div>
                 </div>
                 {plugin.capabilities.length > 0 && (
@@ -329,13 +333,14 @@ const PluginsPage: React.FC = () => {
             <p className="text-sm text-muted-foreground">
               {showScan ? `发现 ${discovered.length} 个局域网插件` : '点击扫描按钮搜索局域网中的 CXFC 插件'}
             </p>
-            <button
+            <Button
+              variant="secondary"
+              size="sm"
               onClick={handleScan}
-              className="flex items-center gap-2 px-3 py-1.5 text-sm border border-border rounded-lg hover:bg-accent transition-colors"
+              icon={<Search className="w-4 h-4" />}
             >
-              <Search className="w-4 h-4" />
               重新扫描
-            </button>
+            </Button>
           </div>
           {discovered.length === 0 && showScan ? (
             <div className="text-center py-8 text-muted-foreground">
@@ -360,13 +365,14 @@ const PluginsPage: React.FC = () => {
                       </div>
                     )}
                   </div>
-                  <button
+                  <Button
+                    variant="primary"
+                    size="sm"
                     onClick={() => handleConnectDiscovered(plugin)}
-                    className="flex items-center gap-2 px-3 py-1.5 text-sm bg-primary text-primary-foreground rounded-lg hover:bg-primary/90 transition-colors"
+                    icon={<Wifi className="w-4 h-4" />}
                   >
-                    <Wifi className="w-4 h-4" />
                     连接
-                  </button>
+                  </Button>
                 </div>
               ))}
             </div>
@@ -375,52 +381,44 @@ const PluginsPage: React.FC = () => {
       )}
 
       {showConnect && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
-          <div className="bg-card rounded-lg border border-border w-full max-w-md p-6">
-            <div className="flex items-center justify-between mb-4">
-              <h2 className="text-xl font-semibold">连接插件</h2>
-              <button onClick={() => setShowConnect(false)} className="text-muted-foreground hover:text-foreground">
-                <X className="w-5 h-5" />
-              </button>
+        <Modal isOpen onClose={() => setShowConnect(false)} title="连接插件">
+          <div className="space-y-4">
+            <div>
+              <label className="block text-sm font-medium mb-1">主机地址</label>
+              <Input
+                type="text"
+                value={connectHost}
+                onChange={e => setConnectHost(e.target.value)}
+                className="w-full"
+                placeholder="localhost"
+              />
             </div>
-            <div className="space-y-4">
-              <div>
-                <label className="block text-sm font-medium mb-1">主机地址</label>
-                <input
-                  type="text"
-                  value={connectHost}
-                  onChange={e => setConnectHost(e.target.value)}
-                  className="w-full px-3 py-2 bg-muted rounded-lg focus:outline-none focus:ring-2 focus:ring-primary/50"
-                  placeholder="localhost"
-                />
-              </div>
-              <div>
-                <label className="block text-sm font-medium mb-1">端口</label>
-                <input
-                  type="number"
-                  value={connectPort}
-                  onChange={e => setConnectPort(Number(e.target.value))}
-                  className="w-full px-3 py-2 bg-muted rounded-lg focus:outline-none focus:ring-2 focus:ring-primary/50"
-                  placeholder="8081"
-                />
-              </div>
-            </div>
-            <div className="flex justify-end gap-3 pt-6 mt-6 border-t border-border">
-              <button
-                onClick={() => setShowConnect(false)}
-                className="px-4 py-2 text-muted-foreground hover:text-foreground transition-colors"
-              >
-                取消
-              </button>
-              <button
-                onClick={handleConnect}
-                className="px-4 py-2 bg-primary text-primary-foreground rounded-lg hover:bg-primary/90 transition-colors"
-              >
-                连接
-              </button>
+            <div>
+              <label className="block text-sm font-medium mb-1">端口</label>
+              <Input
+                type="number"
+                value={connectPort}
+                onChange={e => setConnectPort(Number(e.target.value))}
+                className="w-full"
+                placeholder="8081"
+              />
             </div>
           </div>
-        </div>
+          <div className="flex justify-end gap-3 pt-6 mt-6 border-t border-border">
+            <Button
+              variant="ghost"
+              onClick={() => setShowConnect(false)}
+            >
+              取消
+            </Button>
+            <Button
+              variant="primary"
+              onClick={handleConnect}
+            >
+              连接
+            </Button>
+          </div>
+        </Modal>
       )}
     </div>
   );

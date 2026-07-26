@@ -16,6 +16,7 @@ import {
 } from 'lucide-react';
 import { api, type AcpStats, type AcpAgentRow } from '../api/client';
 import { cn } from '../lib/utils';
+import { Button, Card, CardBody, Badge, Dialog, Input, Textarea, Select } from '@/components/ui-v2';
 
 export function AcpPage() {
   const queryClient = useQueryClient();
@@ -106,18 +107,15 @@ export function AcpPage() {
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-2xl font-bold flex items-center gap-2">
-            <Network className="w-6 h-6 text-primary" />
+            <Network className="w-6 h-6 text-[var(--color-accent)]" />
             ACP 管理
           </h1>
-          <p className="text-muted-foreground mt-1">管理 AI 代理和协调协议</p>
+          <p className="text-[var(--color-text-secondary)] mt-1">管理 AI 代理和协调协议</p>
         </div>
-        <button
-          onClick={() => setIsCreateModalOpen(true)}
-          className="flex items-center gap-2 px-4 py-2 bg-primary text-primary-foreground rounded-lg hover:bg-primary/90 transition-colors"
-        >
-          <Plus className="w-4 h-4" />
+        <Button onClick={() => setIsCreateModalOpen(true)}>
+          <Plus className="w-4 h-4 mr-2" />
           创建代理
-        </button>
+        </Button>
       </div>
 
       {/* Stats Cards */}
@@ -152,33 +150,34 @@ export function AcpPage() {
       </div>
 
       {/* Agents List */}
-      <div className="bg-card rounded-lg border border-border">
-        <div className="p-4 border-b border-border flex items-center justify-between">
+      <Card>
+        <div className="p-4 border-b border-[var(--color-border)] flex items-center justify-between">
           <h2 className="font-semibold flex items-center gap-2">
             <Users className="w-5 h-5" />
             代理列表
           </h2>
-          <button
+          <Button
+            variant="ghost"
+            size="sm"
             onClick={() => queryClient.invalidateQueries({ queryKey: ['acp-agents'] })}
-            className="p-2 hover:bg-accent rounded-lg transition-colors"
             title="刷新"
           >
             <RefreshCw className="w-4 h-4" />
-          </button>
+          </Button>
         </div>
 
         {agentsLoading ? (
           <div className="p-8 flex justify-center">
-            <Loader2 className="w-8 h-8 animate-spin text-primary" />
+            <Loader2 className="w-8 h-8 animate-spin text-[var(--color-accent)]" />
           </div>
         ) : agents && agents.length > 0 ? (
-          <div className="divide-y divide-border">
+          <div className="divide-y divide-[var(--color-border)]">
             {agents.map((agent) => (
               <div
                 key={agent.id}
                 className={cn(
-                  'p-4 hover:bg-accent/50 transition-colors cursor-pointer',
-                  selectedAgent?.id === agent.id && 'bg-accent'
+                  'p-4 hover:bg-[var(--color-bg-hover)] transition-colors cursor-pointer',
+                  selectedAgent?.id === agent.id && 'bg-[var(--color-bg-tertiary)]'
                 )}
                 onClick={() => setSelectedAgent(agent)}
               >
@@ -188,9 +187,9 @@ export function AcpPage() {
                       className={cn(
                         'w-10 h-10 rounded-lg flex items-center justify-center',
                         agent.status === 'active'
-                          ? 'bg-green-500/10'
+                          ? 'bg-[var(--color-success-light)]'
                           : agent.status === 'error'
-                            ? 'bg-red-500/10'
+                            ? 'bg-[var(--color-error-light)]'
                             : 'bg-[var(--color-bg-tertiary)]'
                       )}
                     >
@@ -198,55 +197,53 @@ export function AcpPage() {
                         className={cn(
                           'w-5 h-5',
                           agent.status === 'active'
-                            ? 'text-green-500'
+                            ? 'text-[var(--color-success)]'
                             : agent.status === 'error'
-                              ? 'text-red-500'
+                              ? 'text-[var(--color-error)]'
                               : 'text-[var(--color-text-tertiary)]'
                         )}
                       />
                     </div>
                     <div>
                       <h3 className="font-medium">{agent.name}</h3>
-                      <p className="text-sm text-muted-foreground">{agent.description}</p>
+                      <p className="text-sm text-[var(--color-text-secondary)]">{agent.description}</p>
                       <div className="flex items-center gap-2 mt-2">
-                        <span
-                          className={cn(
-                            'text-xs px-2 py-0.5 rounded-full',
+                        <Badge
+                          variant={
                             agent.status === 'active'
-                              ? 'bg-green-500/10 text-green-600'
+                              ? 'success'
                               : agent.status === 'error'
-                                ? 'bg-red-500/10 text-red-600'
-                                : 'bg-[var(--color-bg-tertiary)] text-[var(--color-text-tertiary)]'
-                          )}
+                                ? 'error'
+                                : 'secondary'
+                          }
+                          size="sm"
                         >
                           {agent.status === 'active'
                             ? '活跃'
                             : agent.status === 'error'
                               ? '错误'
                               : '停用'}
-                        </span>
+                        </Badge>
                         {agent.capabilities?.map((cap) => (
-                          <span
-                            key={cap}
-                            className="text-xs px-2 py-0.5 rounded-full bg-primary/10 text-primary"
-                          >
+                          <Badge key={cap} variant="anime" size="sm">
                             {cap}
-                          </span>
+                          </Badge>
                         ))}
                       </div>
                     </div>
                   </div>
                   <div className="flex items-center gap-2">
-                    <button
+                    <Button
+                      variant="ghost"
+                      size="sm"
                       onClick={(e) => {
                         e.stopPropagation();
                         toggleAgentStatus(agent);
                       }}
                       className={cn(
-                        'p-2 rounded-lg transition-colors',
                         agent.status === 'active'
-                          ? 'hover:bg-red-500/10 hover:text-red-500'
-                          : 'hover:bg-green-500/10 hover:text-green-500'
+                          ? 'hover:bg-[var(--color-error-light)] hover:text-[var(--color-error)]'
+                          : 'hover:bg-[var(--color-success-light)] hover:text-[var(--color-success)]'
                       )}
                       title={agent.status === 'active' ? '停用' : '启用'}
                     >
@@ -255,72 +252,73 @@ export function AcpPage() {
                       ) : (
                         <CheckCircle2 className="w-4 h-4" />
                       )}
-                    </button>
-                    <button
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      size="sm"
                       onClick={(e) => {
                         e.stopPropagation();
                         setSelectedAgent(agent);
                         setIsEditModalOpen(true);
                       }}
-                      className="p-2 hover:bg-accent rounded-lg transition-colors"
                       title="编辑"
                     >
                       <Edit3 className="w-4 h-4" />
-                    </button>
-                    <button
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      size="sm"
                       onClick={(e) => {
                         e.stopPropagation();
                         if (confirm('确定要删除此代理吗？')) {
                           deleteAgentMutation.mutate(agent.id);
                         }
                       }}
-                      className="p-2 hover:bg-red-500/10 hover:text-red-500 rounded-lg transition-colors"
+                      className="hover:bg-[var(--color-error-light)] hover:text-[var(--color-error)]"
                       title="删除"
                     >
                       <Trash2 className="w-4 h-4" />
-                    </button>
+                    </Button>
                   </div>
                 </div>
               </div>
             ))}
           </div>
         ) : (
-          <div className="p-8 text-center text-muted-foreground">
+          <div className="p-8 text-center text-[var(--color-text-secondary)]">
             <Bot className="w-12 h-12 mx-auto mb-3 opacity-50" />
             <p>暂无代理</p>
             <button
               onClick={() => setIsCreateModalOpen(true)}
-              className="mt-4 text-primary hover:underline"
+              className="mt-4 text-[var(--color-accent)] hover:underline"
             >
               创建第一个代理
             </button>
           </div>
         )}
-      </div>
+      </Card>
 
       {/* Create Modal */}
-      {isCreateModalOpen && (
-        <AgentModal
-          title="创建代理"
-          onClose={() => setIsCreateModalOpen(false)}
-          onSubmit={(data) => createAgentMutation.mutate(data)}
-          isLoading={createAgentMutation.isPending}
-        />
-      )}
+      <AgentModal
+        open={isCreateModalOpen}
+        title="创建代理"
+        onClose={() => setIsCreateModalOpen(false)}
+        onSubmit={(data) => createAgentMutation.mutate(data)}
+        isLoading={createAgentMutation.isPending}
+      />
 
       {/* Edit Modal */}
-      {isEditModalOpen && selectedAgent && (
-        <AgentModal
-          title="编辑代理"
-          agent={selectedAgent}
-          onClose={() => {
-            setIsEditModalOpen(false);
-            setSelectedAgent(null);
-          }}
-          onSubmit={(data) => updateAgentMutation.mutate({ id: selectedAgent.id, data })}
-          isLoading={updateAgentMutation.isPending}
-        />
-      )}
+      <AgentModal
+        open={isEditModalOpen && !!selectedAgent}
+        title="编辑代理"
+        agent={selectedAgent ?? undefined}
+        onClose={() => {
+          setIsEditModalOpen(false);
+          setSelectedAgent(null);
+        }}
+        onSubmit={(data) => updateAgentMutation.mutate({ id: selectedAgent!.id, data })}
+        isLoading={updateAgentMutation.isPending}
+      />
     </div>
   );
 }
@@ -340,29 +338,32 @@ function StatCard({
   trend?: string;
 }) {
   return (
-    <div className="bg-card p-4 rounded-lg border border-border">
-      <div className="flex items-start justify-between">
-        <div>
-          <p className="text-sm text-muted-foreground">{title}</p>
-          {loading ? (
-            <Loader2 className="w-6 h-6 animate-spin mt-2" />
-          ) : (
-            <div className="flex items-baseline gap-2">
-              <p className="text-2xl font-bold mt-1">{value}</p>
-              {trend && <span className="text-xs text-green-500">{trend}</span>}
-            </div>
-          )}
+    <Card>
+      <CardBody className="p-4">
+        <div className="flex items-start justify-between">
+          <div>
+            <p className="text-sm text-[var(--color-text-secondary)]">{title}</p>
+            {loading ? (
+              <Loader2 className="w-6 h-6 animate-spin mt-2" />
+            ) : (
+              <div className="flex items-baseline gap-2">
+                <p className="text-2xl font-bold mt-1">{value}</p>
+                {trend && <span className="text-xs text-[var(--color-success)]">{trend}</span>}
+              </div>
+            )}
+          </div>
+          <div className="p-2 bg-[var(--color-accent-light)] rounded-lg">
+            <Icon className="w-5 h-5 text-[var(--color-accent)]" />
+          </div>
         </div>
-        <div className="p-2 bg-primary/10 rounded-lg">
-          <Icon className="w-5 h-5 text-primary" />
-        </div>
-      </div>
-    </div>
+      </CardBody>
+    </Card>
   );
 }
 
 // Agent Modal Component
 interface AgentModalProps {
+  open: boolean;
   title: string;
   agent?: AcpAgentRow;
   onClose: () => void;
@@ -375,7 +376,7 @@ interface AgentModalProps {
   isLoading: boolean;
 }
 
-function AgentModal({ title, agent, onClose, onSubmit, isLoading }: AgentModalProps) {
+function AgentModal({ open, title, agent, onClose, onSubmit, isLoading }: AgentModalProps) {
   const [formData, setFormData] = useState({
     name: agent?.name || '',
     description: agent?.description || '',
@@ -397,71 +398,61 @@ function AgentModal({ title, agent, onClose, onSubmit, isLoading }: AgentModalPr
   };
 
   return (
-    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
-      <div className="bg-card rounded-lg border border-border w-full max-w-md p-6">
-        <h2 className="text-xl font-semibold mb-4">{title}</h2>
-        <form onSubmit={handleSubmit} className="space-y-4">
-          <div>
-            <label className="block text-sm font-medium mb-1">名称</label>
-            <input
-              type="text"
-              value={formData.name}
-              onChange={(e) => setFormData({ ...formData, name: e.target.value })}
-              className="w-full px-3 py-2 bg-muted rounded-lg focus:outline-none focus:ring-2 focus:ring-primary/50"
-              required
-            />
-          </div>
-          <div>
-            <label className="block text-sm font-medium mb-1">描述</label>
-            <textarea
-              value={formData.description}
-              onChange={(e) => setFormData({ ...formData, description: e.target.value })}
-              className="w-full px-3 py-2 bg-muted rounded-lg focus:outline-none focus:ring-2 focus:ring-primary/50"
-              rows={3}
-            />
-          </div>
-          <div>
-            <label className="block text-sm font-medium mb-1">能力（逗号分隔）</label>
-            <input
-              type="text"
-              value={formData.capabilities}
-              onChange={(e) => setFormData({ ...formData, capabilities: e.target.value })}
-              className="w-full px-3 py-2 bg-muted rounded-lg focus:outline-none focus:ring-2 focus:ring-primary/50"
-              placeholder="chat, memory, tool"
-            />
-          </div>
-          <div>
-            <label className="block text-sm font-medium mb-1">状态</label>
-            <select
-              value={formData.status}
-              onChange={(e) =>
-                setFormData({ ...formData, status: e.target.value as 'active' | 'inactive' })
-              }
-              className="w-full px-3 py-2 bg-muted rounded-lg focus:outline-none focus:ring-2 focus:ring-primary/50"
-            >
-              <option value="active">活跃</option>
-              <option value="inactive">停用</option>
-            </select>
-          </div>
-          <div className="flex justify-end gap-3 pt-4">
-            <button
-              type="button"
-              onClick={onClose}
-              className="px-4 py-2 text-muted-foreground hover:text-foreground transition-colors"
-            >
-              取消
-            </button>
-            <button
-              type="submit"
-              disabled={isLoading}
-              className="px-4 py-2 bg-primary text-primary-foreground rounded-lg hover:bg-primary/90 transition-colors disabled:opacity-50 flex items-center gap-2"
-            >
-              {isLoading && <Loader2 className="w-4 h-4 animate-spin" />}
-              {agent ? '保存' : '创建'}
-            </button>
-          </div>
-        </form>
-      </div>
-    </div>
+    <Dialog
+      open={open}
+      onOpenChange={(o) => { if (!o) onClose(); }}
+      title={title}
+      size="md"
+    >
+      <form onSubmit={handleSubmit} className="space-y-4">
+        <div>
+          <label className="block text-sm font-medium mb-1">名称</label>
+          <Input
+            type="text"
+            value={formData.name}
+            onChange={(e) => setFormData({ ...formData, name: e.target.value })}
+            required
+          />
+        </div>
+        <div>
+          <label className="block text-sm font-medium mb-1">描述</label>
+          <Textarea
+            value={formData.description}
+            onChange={(e) => setFormData({ ...formData, description: e.target.value })}
+            rows={3}
+          />
+        </div>
+        <div>
+          <label className="block text-sm font-medium mb-1">能力（逗号分隔）</label>
+          <Input
+            type="text"
+            value={formData.capabilities}
+            onChange={(e) => setFormData({ ...formData, capabilities: e.target.value })}
+            placeholder="chat, memory, tool"
+          />
+        </div>
+        <div>
+          <label className="block text-sm font-medium mb-1">状态</label>
+          <Select
+            value={formData.status}
+            onValueChange={(val) =>
+              setFormData({ ...formData, status: val as 'active' | 'inactive' })
+            }
+            options={[
+              { label: '活跃', value: 'active' },
+              { label: '停用', value: 'inactive' },
+            ]}
+          />
+        </div>
+        <div className="flex justify-end gap-3 pt-4">
+          <Button type="button" variant="secondary" onClick={onClose}>
+            取消
+          </Button>
+          <Button type="submit" disabled={isLoading} loading={isLoading}>
+            {agent ? '保存' : '创建'}
+          </Button>
+        </div>
+      </form>
+    </Dialog>
   );
 }

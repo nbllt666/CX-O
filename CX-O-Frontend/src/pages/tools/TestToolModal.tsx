@@ -1,5 +1,7 @@
 import { useState } from 'react';
 import { Loader2, Play, AlertCircle, ChevronDown, ChevronUp } from 'lucide-react';
+import { Button, Textarea } from '@/components/ui-v2';
+import { Modal } from '@/components/business/ui';
 import { api } from '../../api/client';
 import type { Tool } from './types';
 
@@ -67,19 +69,14 @@ export function TestToolModal({ tool, onClose }: TestToolModalProps) {
   };
 
   return (
-    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
-      <div className="bg-card rounded-lg border border-border w-full max-w-2xl p-6 max-h-[90vh] overflow-auto">
-        <div className="flex items-center justify-between mb-4">
-          <h2 className="text-xl font-semibold">测试工具: {tool.name}</h2>
-          <button onClick={onClose} className="text-muted-foreground hover:text-foreground">
-            ✕
-          </button>
-        </div>
+    <Modal isOpen onClose={onClose} title={`测试工具: ${tool.name}`} size="xl">
 
         <div className="space-y-4">
           {/* Parameters Help */}
           <div className="bg-muted rounded-lg p-3">
-            <button
+            <Button
+              variant="ghost"
+              size="sm"
               onClick={() => setShowParamsHelp(!showParamsHelp)}
               className="flex items-center justify-between w-full text-sm font-medium"
             >
@@ -89,7 +86,7 @@ export function TestToolModal({ tool, onClose }: TestToolModalProps) {
               ) : (
                 <ChevronDown className="w-4 h-4" />
               )}
-            </button>
+            </Button>
             {showParamsHelp && (
               <div className="mt-2 text-sm text-muted-foreground">
                 {tool.parameters && tool.parameters.properties ? (
@@ -129,26 +126,28 @@ export function TestToolModal({ tool, onClose }: TestToolModalProps) {
           <div>
             <div className="flex items-center justify-between mb-1">
               <label className="block text-sm font-medium">参数 (JSON)</label>
-              <button
+              <Button
+                variant="ghost"
+                size="sm"
                 onClick={() => setParams(generateExampleParams())}
-                className="text-xs text-primary hover:underline"
               >
                 填入示例
-              </button>
+              </Button>
             </div>
-            <textarea
+            <Textarea
               value={params}
               onChange={(e) => setParams(e.target.value)}
-              className="w-full px-3 py-2 bg-muted rounded-lg focus:outline-none focus:ring-2 focus:ring-primary/50 font-mono text-sm"
+              className="w-full font-mono text-sm"
               rows={6}
               placeholder='{"key": "value"}'
             />
           </div>
 
-          <button
+          <Button
+            variant="primary"
             onClick={handleTest}
-            disabled={isTesting}
-            className="w-full flex items-center justify-center gap-2 px-4 py-2 bg-primary text-primary-foreground rounded-lg hover:bg-primary/90 transition-colors disabled:opacity-50"
+            loading={isTesting}
+            className="w-full"
           >
             {isTesting ? (
               <Loader2 className="w-4 h-4 animate-spin" />
@@ -156,7 +155,7 @@ export function TestToolModal({ tool, onClose }: TestToolModalProps) {
               <Play className="w-4 h-4" />
             )}
             {isTesting ? '测试中...' : '执行测试'}
-          </button>
+          </Button>
 
           {error && (
             <div className="p-3 bg-red-500/10 border border-red-500/20 rounded-lg text-red-500 text-sm flex items-center gap-2">
@@ -174,7 +173,6 @@ export function TestToolModal({ tool, onClose }: TestToolModalProps) {
             </div>
           )}
         </div>
-      </div>
-    </div>
+    </Modal>
   );
 }

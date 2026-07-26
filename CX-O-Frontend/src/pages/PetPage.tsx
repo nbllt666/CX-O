@@ -1,11 +1,11 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
-import { PetAvatar, type PetAvatarHandle } from '../components/PetAvatar';
-import { PetChat, type PetChatHandle } from '../components/PetChat';
-import { PetAudioPanel } from '../components/PetAudioPanel';
+import { PetAvatar, type PetAvatarHandle } from '@/components/business';
+import { PetChat, type PetChatHandle } from '@/components/business';
+import { PetAudioPanel } from '@/components/business';
 import { usePetMousePassthrough } from '../hooks/usePetMousePassthrough';
 import { useWebSocket, type WebSocketMessage } from '../hooks/useWebSocket';
 import { useChatStore } from '../store/chatStore';
-import type { IAvatarDriver } from '../components/Avatar/AvatarDriver';
+import type { IAvatarDriver } from '@/components/business/avatar';
 
 interface ContextMenuItem {
   label: string;
@@ -269,7 +269,7 @@ export function PetPage() {
           style={{
             left: contextMenu.x,
             top: contextMenu.y,
-            backgroundColor: 'rgba(30, 30, 40, 0.9)',
+            backgroundColor: 'var(--color-bg-tertiary)',
             pointerEvents: 'auto',
           }}
         >

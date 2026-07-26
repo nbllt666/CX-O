@@ -1,4 +1,4 @@
-import { Input, Button } from '../../components/ui';
+import { Input, Button } from '@/components/ui-v2';
 import type { ViewMode } from './types';
 
 interface AgentOption {

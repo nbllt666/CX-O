@@ -2,11 +2,11 @@ import React, { useMemo } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
 import { motion } from 'framer-motion';
-import { PageHeader } from '../components/layout';
-import { Card, CardBody, Button, SkeletonCard } from '../components/ui';
+import { PageHeader } from '@/components/business/layout';
+import { Card, CardBody, Button } from '@/components/ui-v2';
+import { SkeletonCard } from '@/components/business/ui';
 import { api } from '../api/client';
-import { CountUp } from '../components/CountUp';
-import { AnimatedList } from '../components/AnimatedList';
+import { CountUp, AnimatedList } from '@/components/business';
 
 interface Stats {
   memoryCount: number;
@@ -263,7 +263,7 @@ export const DashboardPage: React.FC = () => {
             {serviceStatsLoading ? (
               <div className="grid grid-cols-2 gap-4">
                 {[1, 2, 3, 4].map((i) => (
-                  <div key={i} className="p-4 bg-[var(--color-bg-primary)] rounded-[var(--radius-md)] border border-[var(--color-border)] animate-shimmer relative overflow-hidden" style={{ backgroundImage: 'linear-gradient(90deg, transparent, rgba(255,255,255,0.06), transparent)', backgroundSize: '200% 100%' }}>
+                  <div key={i} className="p-4 bg-[var(--color-bg-primary)] rounded-[var(--radius-md)] border border-[var(--color-border)] animate-shimmer relative overflow-hidden" style={{ backgroundImage: 'linear-gradient(90deg, transparent, color-mix(in srgb, var(--color-foreground) 6%, transparent), transparent)', backgroundSize: '200% 100%' }}>
                     <div className="h-4 bg-[var(--color-bg-tertiary)] rounded w-1/2 mb-2" />
                     <div className="h-8 bg-[var(--color-bg-tertiary)] rounded w-3/4" />
                   </div>

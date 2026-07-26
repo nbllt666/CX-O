@@ -1,6 +1,7 @@
 import { useState } from 'react';
-import { Loader2, Copy, Check } from 'lucide-react';
-import { cn } from '../../lib/utils';
+import { Copy, Check } from 'lucide-react';
+import { Button, Input, Textarea, Select } from '@/components/ui-v2';
+import { Modal } from '@/components/business/ui';
 import { type Tool, toolTemplates } from './types';
 
 interface ToolModalProps {
@@ -88,14 +89,7 @@ export function ToolModal({ title, tool, onClose, onSubmit, isLoading }: ToolMod
   };
 
   return (
-    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
-      <div className="bg-card rounded-lg border border-border w-full max-w-2xl p-6 max-h-[90vh] overflow-auto">
-        <div className="flex items-center justify-between mb-4">
-          <h2 className="text-xl font-semibold">{title}</h2>
-          <button onClick={onClose} className="text-muted-foreground hover:text-foreground">
-            ✕
-          </button>
-        </div>
+    <Modal isOpen onClose={onClose} title={title} size="xl">
 
         {/* Template Selector */}
         {!tool && (
@@ -103,15 +97,11 @@ export function ToolModal({ title, tool, onClose, onSubmit, isLoading }: ToolMod
             <label className="block text-sm font-medium mb-2">选择模板</label>
             <div className="grid grid-cols-4 gap-2">
               {Object.keys(toolTemplates).map((key) => (
-                <button
+                <Button
                   key={key}
+                  variant={selectedTemplate === key ? 'primary' : 'secondary'}
+                  size="sm"
                   onClick={() => handleTemplateSelect(key)}
-                  className={cn(
-                    'px-3 py-2 text-sm rounded-lg border transition-colors',
-                    selectedTemplate === key
-                      ? 'border-primary bg-primary/10 text-primary'
-                      : 'border-border hover:border-primary/50'
-                  )}
                 >
                   {key === 'custom'
                     ? '自定义'
@@ -120,7 +110,7 @@ export function ToolModal({ title, tool, onClose, onSubmit, isLoading }: ToolMod
                       : key === 'calculator'
                         ? '计算器'
                         : '时间'}
-                </button>
+                </Button>
               ))}
             </div>
           </div>
@@ -129,18 +119,15 @@ export function ToolModal({ title, tool, onClose, onSubmit, isLoading }: ToolMod
         {/* Tabs */}
         <div className="flex gap-1 mb-4 bg-muted rounded-lg p-1">
           {(['basic', 'params', 'advanced'] as const).map((tab) => (
-            <button
+            <Button
               key={tab}
+              variant={activeTab === tab ? 'primary' : 'ghost'}
+              size="sm"
               onClick={() => setActiveTab(tab)}
-              className={cn(
-                'flex-1 px-3 py-1.5 text-sm font-medium rounded-md transition-colors',
-                activeTab === tab
-                  ? 'bg-card text-foreground shadow-sm'
-                  : 'text-muted-foreground hover:text-foreground'
-              )}
+              className="flex-1"
             >
               {tab === 'basic' ? '基本信息' : tab === 'params' ? '参数定义' : '高级配置'}
-            </button>
+            </Button>
           ))}
         </div>
 
@@ -152,21 +139,21 @@ export function ToolModal({ title, tool, onClose, onSubmit, isLoading }: ToolMod
                 <label className="block text-sm font-medium mb-1">
                   名称 <span className="text-red-500">*</span>
                 </label>
-                <input
+                <Input
                   type="text"
                   value={formData.name}
                   onChange={(e) => setFormData({ ...formData, name: e.target.value })}
-                  className="w-full px-3 py-2 bg-muted rounded-lg focus:outline-none focus:ring-2 focus:ring-primary/50"
+                  className="w-full"
                   placeholder="例如：calculator"
                   required
                 />
               </div>
               <div>
                 <label className="block text-sm font-medium mb-1">描述</label>
-                <textarea
+                <Textarea
                   value={formData.description}
                   onChange={(e) => setFormData({ ...formData, description: e.target.value })}
-                  className="w-full px-3 py-2 bg-muted rounded-lg focus:outline-none focus:ring-2 focus:ring-primary/50"
+                  className="w-full"
                   rows={2}
                   placeholder="描述这个工具的用途..."
                 />
@@ -174,45 +161,47 @@ export function ToolModal({ title, tool, onClose, onSubmit, isLoading }: ToolMod
               <div className="grid grid-cols-2 gap-4">
                 <div>
                   <label className="block text-sm font-medium mb-1">类型</label>
-                  <select
+                  <Select
                     value={formData.type}
-                    onChange={(e) =>
+                    onValueChange={(value) =>
                       setFormData({
                         ...formData,
-                        type: e.target.value as 'mcp' | 'native' | 'custom',
+                        type: value as 'mcp' | 'native' | 'custom',
                       })
                     }
-                    className="w-full px-3 py-2 bg-muted rounded-lg focus:outline-none focus:ring-2 focus:ring-primary/50"
-                  >
-                    <option value="custom">自定义</option>
-                    <option value="mcp">MCP</option>
-                    <option value="native">原生</option>
-                  </select>
+                    options={[
+                      { label: '自定义', value: 'custom' },
+                      { label: 'MCP', value: 'mcp' },
+                      { label: '原生', value: 'native' },
+                    ]}
+                    className="w-full"
+                  />
                 </div>
                 <div>
                   <label className="block text-sm font-medium mb-1">图标</label>
-                  <select
+                  <Select
                     value={formData.icon}
-                    onChange={(e) => setFormData({ ...formData, icon: e.target.value })}
-                    className="w-full px-3 py-2 bg-muted rounded-lg focus:outline-none focus:ring-2 focus:ring-primary/50"
-                  >
-                    <option value="wrench">工具</option>
-                    <option value="terminal">终端</option>
-                    <option value="globe">网络</option>
-                    <option value="database">数据库</option>
-                    <option value="file">文件</option>
-                    <option value="code">代码</option>
-                    <option value="settings">设置</option>
-                  </select>
+                    onValueChange={(value) => setFormData({ ...formData, icon: value })}
+                    options={[
+                      { label: '工具', value: 'wrench' },
+                      { label: '终端', value: 'terminal' },
+                      { label: '网络', value: 'globe' },
+                      { label: '数据库', value: 'database' },
+                      { label: '文件', value: 'file' },
+                      { label: '代码', value: 'code' },
+                      { label: '设置', value: 'settings' },
+                    ]}
+                    className="w-full"
+                  />
                 </div>
               </div>
               <div>
                 <label className="block text-sm font-medium mb-1">标签（用逗号分隔）</label>
-                <input
+                <Input
                   type="text"
                   value={formData.tags}
                   onChange={(e) => setFormData({ ...formData, tags: e.target.value })}
-                  className="w-full px-3 py-2 bg-muted rounded-lg focus:outline-none focus:ring-2 focus:ring-primary/50"
+                  className="w-full"
                   placeholder="math, calculation, utility"
                 />
               </div>
@@ -226,19 +215,20 @@ export function ToolModal({ title, tool, onClose, onSubmit, isLoading }: ToolMod
                 <label className="block text-sm font-medium">
                   参数定义 (JSON Schema) <span className="text-red-500">*</span>
                 </label>
-                <button
+                <Button
+                  variant="ghost"
+                  size="sm"
                   type="button"
                   onClick={() => copyToClipboard(formData.parameters)}
-                  className="text-xs flex items-center gap-1 text-muted-foreground hover:text-foreground"
                 >
                   {copied ? <Check className="w-3 h-3" /> : <Copy className="w-3 h-3" />}
                   {copied ? '已复制' : '复制'}
-                </button>
+                </Button>
               </div>
-              <textarea
+              <Textarea
                 value={formData.parameters}
                 onChange={(e) => setFormData({ ...formData, parameters: e.target.value })}
-                className="w-full px-3 py-2 bg-muted rounded-lg focus:outline-none focus:ring-2 focus:ring-primary/50 font-mono text-sm"
+                className="w-full font-mono text-sm"
                 rows={12}
                 placeholder={`{
   "type": "object",
@@ -253,10 +243,10 @@ export function ToolModal({ title, tool, onClose, onSubmit, isLoading }: ToolMod
               />
               <div>
                 <label className="block text-sm font-medium mb-1">示例（每行一个）</label>
-                <textarea
+                <Textarea
                   value={formData.examples}
                   onChange={(e) => setFormData({ ...formData, examples: e.target.value })}
-                  className="w-full px-3 py-2 bg-muted rounded-lg focus:outline-none focus:ring-2 focus:ring-primary/50 font-mono text-sm"
+                  className="w-full font-mono text-sm"
                   rows={4}
                   placeholder="1 + 2&#10;sin(30)&#10;log(100)"
                 />
@@ -269,10 +259,10 @@ export function ToolModal({ title, tool, onClose, onSubmit, isLoading }: ToolMod
             <div className="space-y-4">
               <div>
                 <label className="block text-sm font-medium mb-1">配置 (JSON)</label>
-                <textarea
+                <Textarea
                   value={formData.config}
                   onChange={(e) => setFormData({ ...formData, config: e.target.value })}
-                  className="w-full px-3 py-2 bg-muted rounded-lg focus:outline-none focus:ring-2 focus:ring-primary/50 font-mono text-sm"
+                  className="w-full font-mono text-sm"
                   rows={12}
                   placeholder='{"key": "value"}'
                 />
@@ -281,24 +271,22 @@ export function ToolModal({ title, tool, onClose, onSubmit, isLoading }: ToolMod
           )}
 
           <div className="flex justify-end gap-3 pt-6 mt-6 border-t border-border">
-            <button
+            <Button
+              variant="ghost"
               type="button"
               onClick={onClose}
-              className="px-4 py-2 text-muted-foreground hover:text-foreground transition-colors"
             >
               取消
-            </button>
-            <button
+            </Button>
+            <Button
+              variant="primary"
               type="submit"
-              disabled={isLoading}
-              className="px-4 py-2 bg-primary text-primary-foreground rounded-lg hover:bg-primary/90 transition-colors disabled:opacity-50 flex items-center gap-2"
+              loading={isLoading}
             >
-              {isLoading && <Loader2 className="w-4 h-4 animate-spin" />}
               {tool ? '保存' : '添加'}
-            </button>
+            </Button>
           </div>
         </form>
-      </div>
-    </div>
+    </Modal>
   );
 }

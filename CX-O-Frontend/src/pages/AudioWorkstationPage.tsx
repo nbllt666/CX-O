@@ -7,7 +7,7 @@
  */
 import { useMemo } from 'react';
 import { useSearchParams } from 'react-router-dom';
-import { PageHeader } from '../components/layout';
+import { PageHeader } from '@/components/business/layout';
 import { useTranslation } from 'react-i18next';
 import { VoxCPMPanel } from './audioWorkstation/VoxCPMPanel';
 import { SVCPanel } from './audioWorkstation/SVCPanel';
