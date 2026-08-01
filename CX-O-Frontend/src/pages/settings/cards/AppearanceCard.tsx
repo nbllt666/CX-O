@@ -23,10 +23,10 @@ export function AppearanceCard(props: AppearanceCardProps) {
                 key={option.value}
                 onClick={() => onThemeChange(option.value as 'light' | 'dark' | 'system')}
                 className={cn(
-                  'p-4 rounded-[var(--radius-lg)] border-2 transition-all text-left',
+                  'p-4 rounded-[var(--card-radius)] border transition-all text-left glass-panel-interactive bg-white/[0.04]',
                   theme === option.value
-                    ? 'border-[var(--color-accent)] bg-[var(--color-accent-light)]'
-                    : 'border-[var(--color-border)] hover:border-[var(--color-accent)]/50'
+                    ? 'border-[var(--color-accent)] ring-2 ring-[var(--color-accent)]/30 bg-[var(--color-accent)]/10'
+                    : 'border-transparent hover:border-transparent hover:bg-white/[0.02]'
                 )}
               >
                 <div className="text-2xl mb-2">{option.icon}</div>

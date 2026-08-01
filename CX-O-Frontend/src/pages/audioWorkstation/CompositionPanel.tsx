@@ -63,7 +63,7 @@ export interface CompositionPanelProps {
 
 // select 元素统一样式（保留原 CompositionPanel 风格）
 const selectClassName =
-  'w-full px-3 py-2 text-sm rounded-[var(--radius-md)] bg-[var(--color-bg-primary)] text-[var(--color-text-primary)] border border-[var(--color-border)] focus:outline-none focus:ring-2 focus:ring-[var(--color-accent)] focus:border-transparent';
+  'w-full px-3 py-2 text-sm rounded-[var(--radius-lg)] bg-[var(--glass-surface)] text-[var(--color-text-primary)] border border-[var(--glass-border)] focus:outline-none focus:ring-2 focus:ring-[var(--color-accent)] focus:border-transparent transition-all';
 
 export function CompositionPanel({
   initialDraftId,
@@ -174,6 +174,7 @@ export function CompositionPanel({
   useEffect(() => {
     if (!taskInfo?.songId) return;
     let stopped = false;
+    // eslint-disable-next-line prefer-const
     let timer: ReturnType<typeof setInterval>;
     const poll = async () => {
       try {
@@ -200,7 +201,7 @@ export function CompositionPanel({
       stopped = true;
       clearInterval(timer);
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+     
   }, [taskInfo?.songId, resolvedPollTask, refreshSongs, pollIntervalMs]);
 
   // ── 统一编辑入口 ──
@@ -286,7 +287,7 @@ export function CompositionPanel({
       setEditMoveOffset(String(ev.offset));
       setEditLyric('');
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+     
   }, [selectedNoteData]);
 
   // 2. 选中修改：update_note（pitch/beats/offset/velocity）
@@ -473,7 +474,7 @@ export function CompositionPanel({
 
             {error && (
               <div
-                className="p-3 rounded-lg bg-red-50 border border-red-200 text-sm text-red-700"
+                className="p-3 rounded-[var(--radius-lg)] bg-red-500/10 border border-red-500/30 text-sm text-red-500"
                 role="alert"
                 data-testid="error-banner"
               >
@@ -482,7 +483,7 @@ export function CompositionPanel({
             )}
             {info && (
               <div
-                className="p-3 rounded-lg bg-green-50 border border-green-200 text-sm text-green-700"
+                className="p-3 rounded-[var(--radius-lg)] bg-green-500/10 border border-green-500/30 text-sm text-green-500"
                 data-testid="info-banner"
               >
                 {info}
@@ -572,7 +573,7 @@ export function CompositionPanel({
               {/* 2/3/4. 选中音符属性面板 */}
               {selectedNoteData && (
                 <div
-                  className="space-y-3 p-3 rounded-lg bg-[var(--color-bg-tertiary)]"
+                  className="space-y-3 p-3 rounded-[var(--radius-lg)] bg-[var(--glass-surface)] border border-[var(--glass-border)]"
                   data-testid="note-prop-panel"
                 >
                   <div className="flex items-center justify-between">
@@ -722,7 +723,7 @@ export function CompositionPanel({
                 {draftList.map((d) => (
                   <div
                     key={d.draft_id}
-                    className="flex items-center justify-between px-2 py-1.5 rounded bg-[var(--color-bg-tertiary)]"
+                    className="flex items-center justify-between px-2 py-1.5 rounded-[var(--radius-md)] bg-[var(--glass-surface)] border border-[var(--glass-border)]"
                   >
                     <button
                       className="text-sm text-left truncate flex-1"
@@ -757,7 +758,7 @@ export function CompositionPanel({
                 {songs.map((song) => (
                   <div
                     key={song.song_id}
-                    className="px-2 py-1.5 rounded bg-[var(--color-bg-tertiary)] flex items-center justify-between gap-2"
+                    className="px-2 py-1.5 rounded-[var(--radius-md)] bg-[var(--glass-surface)] border border-[var(--glass-border)] flex items-center justify-between gap-2"
                   >
                     <div className="flex-1 min-w-0">
                       <div className="text-sm truncate">{song.title}</div>

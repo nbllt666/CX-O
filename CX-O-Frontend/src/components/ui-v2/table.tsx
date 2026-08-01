@@ -40,9 +40,8 @@ import React from 'react';
 import { motion, type Variants } from 'framer-motion';
 import { cn } from '@/lib/utils';
 import {
-  injectGlassClassName,
+  glassPanelClass,
   buildGlassDataAttributes,
-  isValidGlassTier,
 } from './inject-glass-style';
 import {
   getComponentMotionVariants,
@@ -126,14 +125,18 @@ type TableHTMLElementOmit =
 /**
  * TableHeader 组件 props（thead 容器）。
  */
-export interface TableHeaderProps
-  extends Omit<React.HTMLAttributes<HTMLTableSectionElement>, TableHTMLElementOmit> {}
+export type TableHeaderProps = Omit<
+  React.HTMLAttributes<HTMLTableSectionElement>,
+  TableHTMLElementOmit
+>;
 
 /**
  * TableBody 组件 props（tbody 容器）。
  */
-export interface TableBodyProps
-  extends Omit<React.HTMLAttributes<HTMLTableSectionElement>, TableHTMLElementOmit> {}
+export type TableBodyProps = Omit<
+  React.HTMLAttributes<HTMLTableSectionElement>,
+  TableHTMLElementOmit
+>;
 
 /**
  * TableRow 组件 props（tr 行，支持 hover/selected 交互态）。
@@ -242,9 +245,8 @@ export const Table = React.forwardRef<HTMLTableElement, TableProps>(
     },
     ref,
   ) {
-    // 构建 data-glass + data-glass-tier 属性（由 WebGL 层接管渲染）
-    const validTier = isValidGlassTier(glassTier) ? glassTier : undefined;
-    const glassAttributes = buildGlassDataAttributes(dataGlass, validTier);
+    // 构建 data-glass 属性（WebGL LiquidGlassHost 扫描 [data-glass="true"] 元素）
+    const glassAttributes = buildGlassDataAttributes(dataGlass);
 
     // 获取 Framer Motion variants（替换 shadcn 默认 Tailwind transition）
     // Table 使用 snappy spring；容器入场使用默认 variants（可选注入）
@@ -286,10 +288,8 @@ export const Table = React.forwardRef<HTMLTableElement, TableProps>(
       className,
     );
 
-    // 注入 glass 样式类（仅当调用方提供 glassTier 时注入 CSS 降级样式）
-    const composedClassName = validTier
-      ? injectGlassClassName(tableBaseClassName, validTier)
-      : tableBaseClassName;
+    // 注入 glass 样式类（v2: 直接拼接 glassPanelClass，不再区分 tier）
+    const composedClassName = cn(tableBaseClassName, glassPanelClass);
 
     // virtualized prop 本次仅做语义接收（未来接入 react-window）
     // 当 virtualized=true 且数据量大时由后续优化承接，当前走基础渲染路径
@@ -301,7 +301,6 @@ export const Table = React.forwardRef<HTMLTableElement, TableProps>(
         className={composedClassName}
         // data-glass 属性（由 WebGL 层 GlassRenderer 扫描接管渲染）
         data-glass={glassAttributes['data-glass'] ?? undefined}
-        data-glass-tier={glassAttributes['data-glass-tier'] ?? undefined}
         // Framer Motion variants（替换 shadcn 默认 Tailwind transition）
         {...(resolvedVariants ? { variants: resolvedVariants } : {})}
         aria-label={ariaLabel}

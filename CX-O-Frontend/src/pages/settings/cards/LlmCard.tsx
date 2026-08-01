@@ -37,7 +37,7 @@ export function LlmCard(props: LlmCardProps) {
                       main: { ...modelsConfig.main, provider: e.target.value },
                     })
                   }
-                  className="w-full px-3 py-2 bg-[var(--color-bg-primary)] border border-[var(--color-border)] rounded-[var(--radius-md)]"
+                  className="w-full px-3 py-2 bg-[var(--color-bg-primary)] border border-transparent rounded-[var(--radius-md)]"
                 >
                   <option value="ollama">Ollama (本地)</option>
                   <option value="vllm">vLLM</option>
@@ -55,7 +55,7 @@ export function LlmCard(props: LlmCardProps) {
                       main: { ...modelsConfig.main, model: e.target.value },
                     })
                   }
-                  className="w-full px-3 py-2 bg-[var(--color-bg-primary)] border border-[var(--color-border)] rounded-[var(--radius-md)]"
+                  className="w-full px-3 py-2 bg-[var(--color-bg-primary)] border border-transparent rounded-[var(--radius-md)]"
                   placeholder="llama3.2:3b"
                 />
               </div>
@@ -72,7 +72,7 @@ export function LlmCard(props: LlmCardProps) {
                       main: { ...modelsConfig.main, host: e.target.value },
                     })
                   }
-                  className="w-full px-3 py-2 bg-[var(--color-bg-primary)] border border-[var(--color-border)] rounded-[var(--radius-md)]"
+                  className="w-full px-3 py-2 bg-[var(--color-bg-primary)] border border-transparent rounded-[var(--radius-md)]"
                   placeholder="http://localhost:11434"
                 />
               </div>
@@ -87,7 +87,7 @@ export function LlmCard(props: LlmCardProps) {
                       main: { ...modelsConfig.main, apiKey: e.target.value },
                     })
                   }
-                  className="w-full px-3 py-2 bg-[var(--color-bg-primary)] border border-[var(--color-border)] rounded-[var(--radius-md)]"
+                  className="w-full px-3 py-2 bg-[var(--color-bg-primary)] border border-transparent rounded-[var(--radius-md)]"
                   placeholder="可选，用于 OpenAI 等需要认证的提供商"
                 />
               </div>
@@ -141,7 +141,7 @@ export function LlmCard(props: LlmCardProps) {
                       memory: { ...modelsConfig.memory, provider: e.target.value },
                     })
                   }
-                  className="w-full px-3 py-2 bg-[var(--color-bg-primary)] border border-[var(--color-border)] rounded-[var(--radius-md)]"
+                  className="w-full px-3 py-2 bg-[var(--color-bg-primary)] border border-transparent rounded-[var(--radius-md)]"
                 >
                   <option value="ollama">Ollama (本地)</option>
                   <option value="vllm">vLLM</option>
@@ -159,7 +159,7 @@ export function LlmCard(props: LlmCardProps) {
                       memory: { ...modelsConfig.memory, model: e.target.value },
                     })
                   }
-                  className="w-full px-3 py-2 bg-[var(--color-bg-primary)] border border-[var(--color-border)] rounded-[var(--radius-md)]"
+                  className="w-full px-3 py-2 bg-[var(--color-bg-primary)] border border-transparent rounded-[var(--radius-md)]"
                   placeholder="llama3.2:3b"
                 />
               </div>
@@ -176,7 +176,7 @@ export function LlmCard(props: LlmCardProps) {
                       memory: { ...modelsConfig.memory, host: e.target.value },
                     })
                   }
-                  className="w-full px-3 py-2 bg-[var(--color-bg-primary)] border border-[var(--color-border)] rounded-[var(--radius-md)]"
+                  className="w-full px-3 py-2 bg-[var(--color-bg-primary)] border border-transparent rounded-[var(--radius-md)]"
                   placeholder="http://localhost:11434"
                 />
               </div>
@@ -191,7 +191,7 @@ export function LlmCard(props: LlmCardProps) {
                       memory: { ...modelsConfig.memory, apiKey: e.target.value },
                     })
                   }
-                  className="w-full px-3 py-2 bg-[var(--color-bg-primary)] border border-[var(--color-border)] rounded-[var(--radius-md)]"
+                  className="w-full px-3 py-2 bg-[var(--color-bg-primary)] border border-transparent rounded-[var(--radius-md)]"
                   placeholder="可选，用于 OpenAI 等需要认证的提供商"
                 />
               </div>
@@ -245,7 +245,7 @@ export function LlmCard(props: LlmCardProps) {
                       summary: { ...modelsConfig.summary, provider: e.target.value },
                     })
                   }
-                  className="w-full px-3 py-2 bg-[var(--color-bg-primary)] border border-[var(--color-border)] rounded-[var(--radius-md)]"
+                  className="w-full px-3 py-2 bg-[var(--color-bg-primary)] border border-transparent rounded-[var(--radius-md)]"
                 >
                   <option value="ollama">Ollama (本地)</option>
                   <option value="vllm">vLLM</option>
@@ -263,7 +263,7 @@ export function LlmCard(props: LlmCardProps) {
                       summary: { ...modelsConfig.summary, model: e.target.value },
                     })
                   }
-                  className="w-full px-3 py-2 bg-[var(--color-bg-primary)] border border-[var(--color-border)] rounded-[var(--radius-md)]"
+                  className="w-full px-3 py-2 bg-[var(--color-bg-primary)] border border-transparent rounded-[var(--radius-md)]"
                   placeholder="llama3.2:3b"
                 />
               </div>
@@ -280,7 +280,7 @@ export function LlmCard(props: LlmCardProps) {
                       summary: { ...modelsConfig.summary, host: e.target.value },
                     })
                   }
-                  className="w-full px-3 py-2 bg-[var(--color-bg-primary)] border border-[var(--color-border)] rounded-[var(--radius-md)]"
+                  className="w-full px-3 py-2 bg-[var(--color-bg-primary)] border border-transparent rounded-[var(--radius-md)]"
                   placeholder="http://localhost:11434"
                 />
               </div>
@@ -295,7 +295,7 @@ export function LlmCard(props: LlmCardProps) {
                       summary: { ...modelsConfig.summary, apiKey: e.target.value },
                     })
                   }
-                  className="w-full px-3 py-2 bg-[var(--color-bg-primary)] border border-[var(--color-border)] rounded-[var(--radius-md)]"
+                  className="w-full px-3 py-2 bg-[var(--color-bg-primary)] border border-transparent rounded-[var(--radius-md)]"
                   placeholder="可选，用于 OpenAI 等需要认证的提供商"
                 />
               </div>

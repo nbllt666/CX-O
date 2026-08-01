@@ -335,7 +335,9 @@ export async function createLive2DRuntime(
 
   window.PIXI = PIXI;
 
-  const app = new PIXI.Application({
+  // PIXI v8: 使用 Application.init() 替代构造函数
+  const app = new PIXI.Application();
+  await app.init({
     autoStart: true,
     resizeTo: container,
     backgroundAlpha: 0,

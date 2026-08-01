@@ -41,8 +41,7 @@ const StatCard: React.FC<{
     <Card className="p-4">
       <div className="flex items-center gap-4">
         <div
-          className="w-12 h-12 rounded-[var(--radius-lg)] flex items-center justify-center"
-          style={{ backgroundColor: `var(--color-${color}-light)` }}
+          className="w-12 h-12 rounded-[var(--radius-lg)] flex items-center justify-center bg-white/[0.02] border border-transparent"
         >
           <span style={{ color: `var(--color-${color})` }}>{icon}</span>
         </div>
@@ -157,7 +156,7 @@ export const DashboardPage: React.FC = () => {
       ),
     },
     {
-      title: '会话数',
+      title: '会话总数',
       value: stats?.sessionCount || 0,
       color: 'success',
       icon: (
@@ -172,7 +171,7 @@ export const DashboardPage: React.FC = () => {
       ),
     },
     {
-      title: 'Agent数',
+      title: 'Agent总数',
       value: stats?.agentCount || 0,
       color: 'warning',
       icon: (
@@ -281,7 +280,7 @@ export const DashboardPage: React.FC = () => {
                       delay: 0.5 + index * 0.1,
                       ease: 'easeOut',
                     }}
-                    className="p-4 bg-[var(--color-bg-tertiary)] rounded-[var(--radius-md)]"
+                    className="p-4 rounded-[var(--radius-md)] bg-white/[0.02] border border-transparent"
                   >
                     <p className="text-sm text-[var(--color-text-secondary)]">{item.label}</p>
                     <p className="text-2xl font-bold" style={{ color: `var(--color-${item.color})` }}>

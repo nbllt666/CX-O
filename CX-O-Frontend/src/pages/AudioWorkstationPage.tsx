@@ -1,9 +1,6 @@
 /**
- * 音频工作站页（原「语音工作站」）。
- *
- * 5 个 Tab：VoxCPM 生成 / SVC 训练推理 / 作曲 / Orpheus 合成 / 参考音频管理。
- * 作曲 Tab 由原独立 /compose 路由合并而来。支持 ?tab= 查询参数直达指定 Tab。
- * Spec: refactor-audiostation-engine-consolidation Task 9.1 / 9.2
+ * 音频工作站页（原「语音工作站」）�? *
+ * 5 个Tab：VoxCPM 生成 / SVC 训练推理 / 作曲 / Orpheus 合成 / 参考音频管理。 * 作曲 Tab 由原独立 /compose 路由合并而来。支持tab= 查询参数直达指定 Tab。 * Spec: refactor-audiostation-engine-consolidation Task 9.1 / 9.2
  */
 import { useMemo } from 'react';
 import { useSearchParams } from 'react-router-dom';
@@ -48,16 +45,16 @@ export function AudioWorkstationPage() {
       </div>
 
       <div className="px-6 pb-4">
-        <div className="flex items-center gap-1 flex-wrap">
+        <div className="flex items-center gap-2 flex-wrap">
           {tabs.map((tab) => (
             <button
               key={tab.id}
               onClick={() => handleTabChange(tab.id)}
               className={cn(
-                'flex items-center gap-2 px-4 py-2.5 rounded-lg text-sm font-medium transition-colors',
+                'flex items-center gap-2 px-4 py-2.5 rounded-[var(--radius-lg)] text-sm font-medium transition-all',
                 activeTab === tab.id
-                  ? 'bg-[var(--color-accent)] text-white'
-                  : 'bg-[var(--color-bg-tertiary)] text-[var(--color-text-secondary)] hover:bg-[var(--color-bg-hover)]'
+                  ? 'bg-[var(--color-accent)] text-white shadow-lg shadow-[var(--color-accent)]/25'
+                  : 'bg-white/[0.02] text-[var(--color-text-secondary)] hover:bg-white/[0.03] border border-transparent'
               )}
             >
               {t(`audioWorkstation.${tab.labelKey}`)}

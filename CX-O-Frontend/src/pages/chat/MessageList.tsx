@@ -3,8 +3,9 @@
  *
  * Presentational 组件 — 仅接收 props，不持有状态。
  * 包含空状态提示和消息渲染（user/assistant/system 三种角色）。
+ * 使用 React.memo 优化，避免父组件状态变化导致的不必要重渲染。
  */
-import type { RefObject } from 'react';
+import { memo, type RefObject } from 'react';
 import type { Message } from './types';
 import { MarkdownContent } from './MarkdownContent';
 import { ThinkingProcess } from './ThinkingProcess';
@@ -20,7 +21,7 @@ export interface MessageListProps {
   messagesEndRef: RefObject<HTMLDivElement>;
 }
 
-export function MessageList({ messages, isLoading, currentAgent, chatContainerRef, messagesEndRef }: MessageListProps) {
+export const MessageList = memo(function MessageList({ messages, isLoading, currentAgent, chatContainerRef, messagesEndRef }: MessageListProps) {
   return (
     <div className="flex-1 min-h-0 overflow-y-auto space-y-4 mb-4" ref={chatContainerRef}>
       {messages.length === 0 ? (
@@ -152,4 +153,4 @@ export function MessageList({ messages, isLoading, currentAgent, chatContainerRe
       <div ref={messagesEndRef} />
     </div>
   );
-}
+});

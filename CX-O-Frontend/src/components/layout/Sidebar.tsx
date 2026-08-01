@@ -274,8 +274,8 @@ const navItemVariants = {
     },
   },
   active: {
-    backgroundColor: 'var(--color-accent-light)',
-    color: 'var(--color-accent)',
+    backgroundColor: 'var(--glass-active-bg)',
+    color: 'var(--color-text-primary)',
     transition: {
       duration: 0.2,
       ease: 'easeInOut',
@@ -413,7 +413,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ collapsed, setCollapsed }) => 
 
   return (
     <motion.aside
-      className="h-full flex flex-col py-4 bg-[var(--color-bg-primary)] border-r border-[var(--color-border)] overflow-hidden"
+      className="h-full flex flex-col py-4 overflow-hidden bg-transparent"
       variants={sidebarVariants}
       animate={collapsed ? 'collapsed' : 'expanded'}
       initial={false}
@@ -427,23 +427,22 @@ export const Sidebar: React.FC<SidebarProps> = ({ collapsed, setCollapsed }) => 
             return (
               <Tooltip key={item.path} content={item.label} position="right">
                 <NavLink to={item.path} className="block">
-                  <motion.div
-                    className="relative flex items-center justify-center pl-4 pr-3 py-2.5 rounded-[var(--radius-md)]"
-                    variants={navItemVariants}
-                    animate={isActive ? 'active' : 'inactive'}
-                    whileHover={{
-                      backgroundColor: isActive ? 'var(--color-accent-light)' : 'var(--color-bg-hover)',
-                      color: isActive ? 'var(--color-accent)' : 'var(--color-text-primary)',
-                      transition: { duration: 0.15 },
-                    }}
+                  <div
+                    className={cn(
+                      'relative flex items-center justify-center pl-4 pr-3 py-2.5 rounded-[var(--radius-lg)] transition-colors duration-150',
+                      isActive
+                        ? 'glass-panel text-[var(--color-text-primary)]'
+                        : 'text-[var(--color-text-secondary)] hover:bg-[var(--glass-hover-bg)] hover:text-[var(--color-text-primary)]'
+                    )}
                   >
                     <motion.div
-                      className="absolute left-0 inset-y-0 w-[5px] bg-[var(--color-accent)]/85 rounded-l-full origin-center"
-                      variants={indicatorVariants}
-                      animate={isActive ? 'active' : 'inactive'}
+                      className="absolute left-0 inset-y-0 w-[5px] bg-[var(--glass-indicator)] rounded-l-full origin-center"
+                      initial={{ scaleY: 0, opacity: 0 }}
+                      animate={isActive ? { scaleY: 1, opacity: 1 } : { scaleY: 0, opacity: 0 }}
+                      transition={{ duration: 0.2, ease: 'easeInOut' }}
                     />
                     <span className="flex-shrink-0">{item.icon}</span>
-                  </motion.div>
+                  </div>
                 </NavLink>
               </Tooltip>
             );
@@ -457,31 +456,23 @@ export const Sidebar: React.FC<SidebarProps> = ({ collapsed, setCollapsed }) => 
                     onClick={() => setIsChatExpanded(!isChatExpanded)}
                     className="w-full block"
                   >
-                    <motion.div
-                      className="relative flex items-center gap-3 pl-4 pr-3 py-2.5 rounded-[var(--radius-md)]"
-                      variants={navItemVariants}
-                      animate={isActive ? 'active' : 'inactive'}
-                      whileHover={{
-                        backgroundColor: isActive ? 'var(--color-accent-light)' : 'var(--color-bg-hover)',
-                        color: isActive ? 'var(--color-accent)' : 'var(--color-text-primary)',
-                        transition: { duration: 0.15 },
-                      }}
+                    <div
+                      className={cn(
+                        'relative flex items-center gap-3 pl-4 pr-3 py-2.5 rounded-[var(--radius-lg)] transition-colors duration-150',
+                        isActive
+                          ? 'glass-panel text-[var(--color-text-primary)]'
+                          : 'text-[var(--color-text-secondary)] hover:bg-[var(--glass-hover-bg)] hover:text-[var(--color-text-primary)]'
+                      )}
                     >
                       <motion.div
-                        className="absolute left-0 inset-y-0 w-[5px] bg-[var(--color-accent)]/85 rounded-l-full origin-center"
-                      variants={indicatorVariants}
-                      animate={isActive ? 'active' : 'inactive'}
-                    />
-                    <span className="flex-shrink-0">{item.icon}</span>
-                    <motion.span
-                      className="text-sm font-medium"
-                      variants={labelVariants}
-                      initial="visible"
-                      animate="visible"
-                    >
-                      {item.label}
-                    </motion.span>
-                    <motion.svg
+                        className="absolute left-0 inset-y-0 w-[5px] bg-[var(--glass-indicator)] rounded-l-full origin-center"
+                        initial={{ scaleY: 0, opacity: 0 }}
+                        animate={isActive ? { scaleY: 1, opacity: 1 } : { scaleY: 0, opacity: 0 }}
+                        transition={{ duration: 0.2, ease: 'easeInOut' }}
+                      />
+                      <span className="flex-shrink-0">{item.icon}</span>
+                      <span className="text-sm font-medium">{item.label}</span>
+                      <motion.svg
                         className="w-4 h-4 ml-auto"
                         variants={chevronVariants}
                         animate={isChatExpanded ? 'expanded' : 'collapsed'}
@@ -491,13 +482,13 @@ export const Sidebar: React.FC<SidebarProps> = ({ collapsed, setCollapsed }) => 
                       >
                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
                       </motion.svg>
-                    </motion.div>
+                    </div>
                   </button>
 
                   <AnimatePresence initial={false}>
                     {isChatExpanded && agents.length > 0 && (
                       <motion.ul
-                        className="mt-1 ml-4 pl-3 border-l border-[var(--color-border)] space-y-1 overflow-hidden"
+                        className="mt-1 ml-4 pl-3 border-l border-[var(--glass-border)] space-y-1 overflow-hidden"
                         variants={submenuVariants}
                         initial="hidden"
                         animate="visible"
@@ -508,7 +499,10 @@ export const Sidebar: React.FC<SidebarProps> = ({ collapsed, setCollapsed }) => 
                             <button
                               onClick={() => handleAgentClick(agent.id)}
                               className={cn(
-                                'w-full flex items-center gap-2 pl-3 pr-3 py-2 rounded-[var(--radius-md)] text-left relative'
+                                'w-full flex items-center gap-2 pl-3 pr-3 py-2 rounded-[var(--radius-md)] text-left relative transition-colors duration-200',
+                                currentAgentId === agent.id
+                                  ? 'text-[var(--color-accent)]'
+                                  : 'text-[var(--color-text-tertiary)] hover:text-[var(--color-text-primary)]'
                               )}
                             >
                               <motion.div
@@ -529,14 +523,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ collapsed, setCollapsed }) => 
                                     : 'bg-[var(--color-border)]'
                                 )}
                               />
-                              <span
-                                className={cn(
-                                  'text-sm truncate transition-colors duration-200',
-                                  currentAgentId === agent.id
-                                    ? 'text-[var(--color-accent)] font-medium'
-                                    : 'text-[var(--color-text-tertiary)] hover:text-[var(--color-text-primary)]'
-                                )}
-                              >
+                              <span className="text-sm truncate">
                                 {agent.name}
                               </span>
                             </button>
@@ -548,31 +535,23 @@ export const Sidebar: React.FC<SidebarProps> = ({ collapsed, setCollapsed }) => 
                 </>
               ) : (
                 <NavLink to={item.path} className="block">
-                  <motion.div
-                    className="relative flex items-center gap-3 pl-4 pr-3 py-2.5 rounded-[var(--radius-md)]"
-                    variants={navItemVariants}
-                    animate={isActive ? 'active' : 'inactive'}
-                    whileHover={{
-                      backgroundColor: isActive ? 'var(--color-accent-light)' : 'var(--color-bg-hover)',
-                      color: isActive ? 'var(--color-accent)' : 'var(--color-text-primary)',
-                      transition: { duration: 0.15 },
-                    }}
+                  <div
+                    className={cn(
+                      'relative flex items-center gap-3 pl-4 pr-3 py-2.5 rounded-[var(--radius-md)] transition-colors duration-150',
+                      isActive
+                        ? 'glass-panel text-[var(--color-text-primary)]'
+                        : 'text-[var(--color-text-secondary)] hover:bg-[var(--glass-hover-bg)] hover:text-[var(--color-text-primary)]'
+                    )}
                   >
                     <motion.div
                       className="absolute left-0 inset-y-0 w-[5px] bg-[var(--color-accent)]/85 rounded-l-full origin-center"
-                      variants={indicatorVariants}
-                      animate={isActive ? 'active' : 'inactive'}
+                      initial={{ scaleY: 0, opacity: 0 }}
+                      animate={isActive ? { scaleY: 1, opacity: 1 } : { scaleY: 0, opacity: 0 }}
+                      transition={{ duration: 0.2, ease: 'easeInOut' }}
                     />
                     <span className="flex-shrink-0">{item.icon}</span>
-                    <motion.span
-                      className="text-sm font-medium"
-                      variants={labelVariants}
-                      initial="visible"
-                      animate="visible"
-                    >
-                      {item.label}
-                    </motion.span>
-                  </motion.div>
+                    <span className="text-sm font-medium">{item.label}</span>
+                  </div>
                 </NavLink>
               )}
             </div>
@@ -581,17 +560,17 @@ export const Sidebar: React.FC<SidebarProps> = ({ collapsed, setCollapsed }) => 
       </div>
 
       {setCollapsed && (
-        <div className="px-3 pt-4 border-t border-[var(--color-border)]">
+        <div className="px-3 pt-4 border-t border-[var(--glass-border)]">
           <motion.button
             onClick={() => setCollapsed(!collapsed)}
             className={cn(
               'w-full flex items-center justify-center gap-2 px-3 py-2',
               'text-[var(--color-text-tertiary)] hover:text-[var(--color-text-primary)]',
-              'rounded-[var(--radius-md)] hover:bg-[var(--color-bg-hover)]'
+              'rounded-[var(--radius-lg)] hover:bg-white/10'
             )}
             whileHover={{
               scale: 1.02,
-              backgroundColor: 'var(--color-bg-hover)',
+              backgroundColor: 'var(--glass-hover-bg)',
               transition: { duration: 0.15 },
             }}
             whileTap={{ scale: 0.98 }}

@@ -241,7 +241,7 @@ export function VectorDataPage() {
                 <select
                   value={memoryTypeFilter}
                   onChange={(e) => setMemoryTypeFilter(e.target.value)}
-                  className="px-3 py-2 bg-[var(--color-bg-primary)] border border-[var(--color-border)] rounded-[var(--radius-md)]"
+                  className="px-3 py-2 bg-[var(--glass-surface)] border border-[var(--glass-border)] rounded-[var(--radius-md)] text-[var(--color-text-[var(--color-accent)])]"
                 >
                   <option value="">全部类型</option>
                   <option value="short_term">短期记忆</option>

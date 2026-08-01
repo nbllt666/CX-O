@@ -13,9 +13,7 @@ export const Card = React.forwardRef<HTMLDivElement, CardProps>(
       <motion.div
         ref={ref}
         className={cn(
-          'bg-[var(--color-bg-primary)] rounded-[var(--radius-lg)]',
-          'border border-[var(--color-border)]',
-          'shadow-[var(--shadow-sm)]',
+          'glass-panel overflow-hidden',
           selected && 'border-[var(--color-accent)] ring-2 ring-[var(--color-accent-light)]',
           className
         )}
@@ -43,7 +41,7 @@ export const CardHeader: React.FC<React.HTMLAttributes<HTMLDivElement>> = ({
   children,
   ...props
 }) => (
-  <div className={cn('px-4 py-3 border-b border-[var(--color-border)]', className)} {...props}>
+  <div className={cn('px-4 py-3 border-b border-transparent', className)} {...props}>
     {children}
   </div>
 );
@@ -65,7 +63,7 @@ export const CardFooter: React.FC<React.HTMLAttributes<HTMLDivElement>> = ({
 }) => (
   <div
     className={cn(
-      'px-4 py-3 border-t border-[var(--color-border)] bg-[var(--color-bg-secondary)] rounded-b-[var(--radius-lg)]',
+      'px-4 py-3 border-t border-transparent bg-white/[0.02] rounded-b-[var(--glass-radius)]',
       className
     )}
     {...props}

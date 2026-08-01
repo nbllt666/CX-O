@@ -51,6 +51,33 @@ export function LivePage() {
 
   useEffect(() => {
     let cancelled = false;
+
+    const loadFromManifest = async (avatarId: string) => {
+      const baseAvatar = getAvatarById(avatarId);
+      if (!baseAvatar) {
+        if (!cancelled) setModelData(undefined);
+        return;
+      }
+      try {
+        const manifest = await resolveAvatarManifestById(baseAvatar.id);
+        if (cancelled) return;
+        const response = await fetch(manifest.modelJson);
+        if (cancelled) return;
+        if (!response.ok) {
+          console.error(`[LivePage] manifest fetch failed: ${response.status} ${manifest.modelJson}`);
+          setModelData(undefined);
+          return;
+        }
+        const buffer = await response.arrayBuffer();
+        if (cancelled) return;
+        setModelData(buffer);
+      } catch (error) {
+        if (cancelled) return;
+        console.error('[LivePage] Failed to load model from manifest:', error);
+        setModelData(undefined);
+      }
+    };
+
     if (currentModelId) {
       getAvatar(currentModelId).then((avatar) => {
         if (cancelled) return;
@@ -61,23 +88,36 @@ export function LivePage() {
           }).catch((error) => {
             if (cancelled) return;
             console.error('Failed to load avatar:', error);
-            setModelData(undefined);
+            // fallback 到公开 manifest
+            const fallbackId = avatarType === 'live2d'
+              ? (live2d.modelId || 'yumi')
+              : (vrm.modelId || 'yumi');
+            void loadFromManifest(fallbackId);
           });
         } else {
-          setModelData(undefined);
+          // IndexedDB 无记录 → fallback 到公开 manifest
+          const fallbackId = avatarType === 'live2d'
+            ? (live2d.modelId || 'yumi')
+            : (vrm.modelId || 'yumi');
+          void loadFromManifest(fallbackId);
         }
       }).catch((error) => {
         if (cancelled) return;
         console.error('Failed to load avatar:', error);
-        setModelData(undefined);
+        const fallbackId = avatarType === 'live2d'
+          ? (live2d.modelId || 'yumi')
+          : (vrm.modelId || 'yumi');
+        void loadFromManifest(fallbackId);
       });
     } else {
-      setModelData(undefined);
+      // currentModelId 为空 → 直接 fallback 到默认公开模型 yumi
+      const fallbackId = avatarType === 'vrm' ? (vrm.modelId || 'yumi') : 'yumi';
+      void loadFromManifest(fallbackId);
     }
     return () => {
       cancelled = true;
     };
-  }, [currentModelId]);
+  }, [currentModelId, avatarType, live2d.modelId, vrm.modelId]);
 
   useEffect(() => {
     let cancelled = false;

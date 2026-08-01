@@ -11,14 +11,14 @@ interface BadgeProps extends React.HTMLAttributes<HTMLSpanElement> {
 }
 
 const variantStyles: Record<BadgeVariant, string> = {
-  default: 'bg-[var(--color-bg-tertiary)] text-[var(--color-text-secondary)]',
-  primary: 'bg-[var(--color-accent-light)] text-[var(--color-accent)]',
+  default: 'bg-white/[0.08] text-[var(--color-text-secondary)] border border-transparent',
+  primary: 'bg-[var(--color-accent)]/20 text-[var(--color-accent)] border border-[var(--color-accent)]/30',
   secondary:
-    'bg-[var(--color-bg-tertiary)] text-[var(--color-text-secondary)] border border-[var(--color-border)]',
-  success: 'bg-[var(--color-success-light)] text-[var(--color-success)]',
-  warning: 'bg-[var(--color-warning-light)] text-[var(--color-warning)]',
-  error: 'bg-[var(--color-error-light)] text-[var(--color-error)]',
-  info: 'bg-[var(--color-info-light)] text-[var(--color-info)]',
+    'bg-white/[0.06] text-[var(--color-text-secondary)] border border-transparent',
+  success: 'bg-[var(--color-success)]/20 text-[var(--color-success)] border border-[var(--color-success)]/30',
+  warning: 'bg-[var(--color-warning)]/20 text-[var(--color-warning)] border border-[var(--color-warning)]/30',
+  error: 'bg-[var(--color-error)]/20 text-[var(--color-error)] border border-[var(--color-error)]/30',
+  info: 'bg-[var(--color-info)]/20 text-[var(--color-info)] border border-[var(--color-info)]/30',
 };
 
 const sizeStyles: Record<BadgeSize, string> = {
@@ -58,8 +58,9 @@ export const Tag: React.FC<TagProps> = ({ children, onRemove, className }) => (
   <span
     className={cn(
       'inline-flex items-center gap-1 px-2 py-0.5 text-xs',
-      'bg-[var(--color-bg-tertiary)] text-[var(--color-text-secondary)]',
-      'rounded-[var(--radius-sm)]',
+      'bg-white/[0.06] text-[var(--color-text-secondary)]',
+      'border border-transparent',
+      'rounded-[var(--radius-md)]',
       className
     )}
   >

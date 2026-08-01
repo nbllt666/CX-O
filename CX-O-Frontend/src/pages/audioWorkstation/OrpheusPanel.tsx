@@ -111,7 +111,7 @@ export function OrpheusPanel() {
               <button
                 key={tag}
                 onClick={() => insertTag(tag)}
-                className="px-2.5 py-1 rounded-md text-xs font-mono bg-[var(--color-bg-tertiary)] text-[var(--color-text-secondary)] border border-[var(--color-border)] hover:border-[var(--color-accent)] hover:text-[var(--color-accent)] transition-colors"
+                className="px-2.5 py-1 rounded-[var(--radius-md)] text-xs font-mono bg-[var(--glass-surface)] text-[var(--color-text-secondary)] border border-[var(--glass-border)] hover:border-[var(--color-accent)] hover:text-[var(--color-accent)] transition-all"
               >
                 {tag}
               </button>

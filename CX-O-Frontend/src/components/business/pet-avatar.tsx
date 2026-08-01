@@ -89,27 +89,84 @@ export const PetAvatar = forwardRef<PetAvatarHandle, PetAvatarProps>(
     const currentModelId = avatarType === 'live2d' ? live2d.modelId : vrm.modelId;
 
     useEffect(() => {
-      if (currentModelId) {
-        setLoading(true);
-        getAvatar(currentModelId).then((avatar) => {
-          if (avatar?.data) {
-            avatar.data.arrayBuffer().then((buf) => {
-              modelDataRef.current = buf;
-              setDataVersion(v => v + 1);
-              setLoading(false);
-            });
-          } else {
+      let cancelled = false;
+
+      const loadFromManifest = async (avatarId: string) => {
+        const baseAvatar = getAvatarById(avatarId);
+        if (!baseAvatar) {
+          if (!cancelled) {
             modelDataRef.current = undefined;
             setDataVersion(v => v + 1);
             setLoading(false);
           }
+          return;
+        }
+        try {
+          const manifest = await resolveAvatarManifestById(baseAvatar.id);
+          if (cancelled) return;
+          const response = await fetch(manifest.modelJson);
+          if (cancelled) return;
+          if (!response.ok) {
+            console.error(`[PetAvatar] manifest fetch failed: ${response.status} ${manifest.modelJson}`);
+            modelDataRef.current = undefined;
+            setDataVersion(v => v + 1);
+            setLoading(false);
+            return;
+          }
+          const buffer = await response.arrayBuffer();
+          if (cancelled) return;
+          modelDataRef.current = buffer;
+          setDataVersion(v => v + 1);
+          setLoading(false);
+        } catch (error) {
+          if (cancelled) return;
+          console.error('[PetAvatar] Failed to load model from manifest:', error);
+          modelDataRef.current = undefined;
+          setDataVersion(v => v + 1);
+          setLoading(false);
+        }
+      };
+
+      if (currentModelId) {
+        setLoading(true);
+        getAvatar(currentModelId).then((avatar) => {
+          if (cancelled) return;
+          if (avatar?.data) {
+            avatar.data.arrayBuffer().then((buf) => {
+              if (cancelled) return;
+              modelDataRef.current = buf;
+              setDataVersion(v => v + 1);
+              setLoading(false);
+            }).catch(() => {
+              if (cancelled) return;
+              // IndexedDB 数据损坏 → fallback
+              const fallbackId = avatarType === 'live2d'
+                ? (live2d.modelId || 'yumi')
+                : (vrm.modelId || 'yumi');
+              void loadFromManifest(fallbackId);
+            });
+          } else {
+            // IndexedDB 无记录 → fallback 到公开 manifest
+            const fallbackId = avatarType === 'live2d'
+              ? (live2d.modelId || 'yumi')
+              : (vrm.modelId || 'yumi');
+            void loadFromManifest(fallbackId);
+          }
+        }).catch(() => {
+          if (cancelled) return;
+          const fallbackId = avatarType === 'live2d'
+            ? (live2d.modelId || 'yumi')
+            : (vrm.modelId || 'yumi');
+          void loadFromManifest(fallbackId);
         });
       } else {
-        modelDataRef.current = undefined;
-        setDataVersion(v => v + 1);
-        setLoading(false);
+        // currentModelId 为空 → 直接 fallback 到默认公开模型 yumi
+        const fallbackId = avatarType === 'vrm' ? (vrm.modelId || 'yumi') : 'yumi';
+        setLoading(true);
+        void loadFromManifest(fallbackId);
       }
-    }, [currentModelId]);
+      return () => { cancelled = true; };
+    }, [currentModelId, avatarType, live2d.modelId, vrm.modelId]);
 
     // Sync mouthOpenY to driver
     useEffect(() => {

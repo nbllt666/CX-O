@@ -35,7 +35,7 @@ export interface TrackManagerProps {
 }
 
 const selectClassName =
-  'w-full px-2 py-1.5 text-sm rounded-[var(--radius-md)] bg-[var(--color-bg-primary)] text-[var(--color-text-primary)] border border-[var(--color-border)] focus:outline-none focus:ring-2 focus:ring-[var(--color-accent)] focus:border-transparent';
+  'w-full px-2 py-1.5 text-sm rounded-[var(--radius-lg)] bg-[var(--glass-surface)] text-[var(--color-text-primary)] border border-[var(--glass-border)] focus:outline-none focus:ring-2 focus:ring-[var(--color-accent)] focus:border-transparent transition-all';
 
 export function TrackManager({ score, onDispatch, mixDebounceMs = 300 }: TrackManagerProps) {
   // 防抖 dispatch（set_track_mix 滑杆连续微调合并为一次）
@@ -123,7 +123,7 @@ export function TrackManager({ score, onDispatch, mixDebounceMs = 300 }: TrackMa
 
         {/* 主旋律（只读展示） */}
         <div
-          className="px-3 py-2 rounded bg-[var(--color-bg-tertiary)]"
+          className="px-3 py-2 rounded-[var(--radius-lg)] bg-[var(--glass-surface)] border border-[var(--glass-border)]"
           data-testid="track-melody"
         >
           <div className="flex items-center justify-between">
@@ -139,7 +139,7 @@ export function TrackManager({ score, onDispatch, mixDebounceMs = 300 }: TrackMa
         {score.accompaniment_tracks.map((track) => (
           <div
             key={track.id}
-            className="px-3 py-2 rounded bg-[var(--color-bg-tertiary)] space-y-2"
+            className="px-3 py-2 rounded-[var(--radius-lg)] bg-[var(--glass-surface)] border border-[var(--glass-border)] space-y-2"
             data-testid={`track-${track.id}`}
           >
             <div className="flex items-center justify-between gap-2">

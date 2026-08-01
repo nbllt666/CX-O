@@ -2994,6 +2994,42 @@ spec `frontend-liquidglass-anime-refactor` S3 模块拆分**部分闭合**，待
 - 待主线程决策项（4 项）= **当前不可判定**（连续 2 检查点不可判定，按 rules-5 §2.4 必须 P4 启动前拉起 AskUserQuestion）
 - s0601 批次 = **当前不可判定**（OBS-P3-1 I2 补全 + OBS-P3-4 D2 补全 + P1+P2 的 3 项模块1 偏差点 + C2/D5 bezier 命名 + 旧主题系统统一）
 
+---
+
+## 假闭合诊断与修正轮次启动（2026-07-27）
+
+### 触发
+
+用户反馈「前端不正常，根本看不到新的界面」。核查发现上一轮报告的「合流交付已批准」为假闭合——S4 各模块产物已落盘，但 S6 集成从未执行。
+
+### G1-G7 复核表（主线程独立 rg/read + GN-004 抽样复核）
+
+| # | 缺口 | 复核证据 | 判定 |
+|---|------|---------|------|
+| G1 | tokens/index.css 未被 import | main.tsx:6-8 仅 import variables/animations/index.css | 成立 |
+| G2 | index.css 旧 :root/.dark 冲突 | index.css:5-52 蓝白配色保留 | 成立 |
+| G3 | ui-v2 消费已就位但运行时失效 | `rg "ui-v2" src/pages` = 38 命中；`rg "from.*components/ui['\"]" src/pages` = 0 命中；旧 ui 全 src 残留仅 main.tsx ToastProvider | 成立（修正：消费已就位，非零消费） |
+| G4 | ThemeProvider 未挂载 | main.tsx:21-31 无 ThemeProvider | 成立 |
+| G5 | GlassCanvas 未挂载 | 同上 | 成立 |
+| G6 | AnimeDecoration 未挂载 | 同上 | 成立 |
+| G7 | 页面迁移待验证 | 38 文件已 import ui-v2，未在令牌加载后验证渲染/API 兼容 | 成立 |
+
+### 七字段交接
+
+- **做到哪了**：spec 三件套修正完成（spec.md/tasks.md/checklist.md），GN-004 警示放行（0 阻断/0 软阻断/4 观察项已采纳修正），用户已批准放行执行
+- **为什么**：假闭合根因 = S6 集成缺失（非 S4 产物缺陷）。S4 产物（tokens/ui-v2/glass/motion/anime/theme）已全部落盘且页面已迁移至 ui-v2（38 文件），但入口未接线致 573 处 var() 引用运行时失效。本轮只需补齐集成层，零重写 S4 产物
+- **未闭合项**：T0-T11 全部待执行；ToastProvider 旧 ui 残留处置（T1 [V]）待裁决
+- **接续入口**：从 T0（本条目）开始 → T1 令牌加载 → T2 Provider 挂载 → T3 验证闸门 → T4-T8 并行验证 → T9-T10 效果/性能 → T11 交付
+- **关键路径**：T1+T2+T3 让新界面立即呈现（令牌一旦加载，38 个 ui-v2 页面 + 573 处 var() 瞬间生效）
+- **特别许可**：用户授权无视并发与全局 subagent 上限，T4-T8 五波次可全并行
+- **三值状态**：S0-S3 = 已闭合；S4 = 产物已闭合/集成未闭合；S6 = 当前不可判定（本轮修正目标使其转已闭合）；T0 = 进行中
+
+### 修正轮次 spec 三件套位置
+
+- spec.md: `c:\CX-O\.trae\specs\frontend-liquidglass-anime-refactor\spec.md`
+- tasks.md: 同目录\tasks.md（含 subagent 执行台账）
+- checklist.md: 同目录\checklist.md
+
 ### 接续入口
 
 1. 主线程拉起 AskUserQuestion 逐项裁决 4 项待主线程决策项（OBS-P3-2 强制要求）
@@ -3932,3 +3968,295 @@ spec `frontend-liquidglass-anime-refactor` S3 模块拆分**部分闭合**，待
 4. 编写 AcpPage E2E spec（OBS-P6-8）——先了解 AcpPage 功能，再 Write e2e/acp.spec.ts
 5. 4 项修正完成后重拉 GN-004 复审
 6. GN-004 复审通过后重新拉起 [V] 闸门2 人类裁决
+
+---
+
+## 假闭合二轮诊断：G8-G11 新缺口（2026-07-27，[V] 节点七字段交接段）
+
+> 阶段：用户反馈"效果还是旧的（只是配色变了），只有 chat 界面能够显示"——一轮修正（令牌加载 + ThemeProvider）仅让配色生效，Liquid Glass 磨砂质感与二次元装饰仍未呈现。本轮定位为 [V] 节点（架构方向选择），拉起 GN-004 审查 + AskUserQuestion 人类裁决。
+
+### (1) 工程过程
+
+1. **一轮修正回顾**（已完成）：
+   - G1 修复：`main.tsx` 插入 `import './styles/tokens/index.css'`（令牌入口加载）
+   - G2 修复：`index.css` 移除旧 shadcn `:root`/`.dark` 蓝白配色，仅保留 `@tailwind`/reset/scrollbar/focus-visible
+   - G4 修复：`main.tsx` 挂载 `<ThemeProvider defaultTheme={Theme.DARK}>` 作为最外层 Provider
+   - `semantic.css §8` 追加 shadcn/tailwind 兼容映射（`--background`/`--foreground`/`--card`/`--primary` 等 HSL 分量）
+   - 结果：配色生效（用户确认"配色变了"），但 Liquid Glass 磨砂质感与二次元装饰仍缺失
+
+2. **二轮诊断独立复核**（主线程 rg/read，2026-07-27）：
+
+| # | 缺口 | 复核证据 | 判定 |
+|---|------|---------|------|
+| G8 | AppLayout/Layout 未挂载全局装饰层 | `AppLayout.tsx` 仅 `<Layout><main><Outlet/></main></Layout>`；`Layout.tsx` 仅普通 div + `bg-[var(--color-bg-secondary)]`，无 GlassCanvas/AnimeDecoration/全局背景层；`main.tsx` 也未挂载 GlassRenderer | 成立 |
+| G9 | ui-v2 组件未传 glassTier 致 glass 样式不生效 | `card.tsx:117-148`：`validTier = isValidGlassTier(glassTier) ? glassTier : undefined`，未传则 `composedClassName = cardBaseClassName`（不注入 glass 类）；`DashboardPage.tsx:41 `<Card className="p-4">` 未传 glassTier；`MemoriesPage.tsx:5` 同；全项目仅 7 业务组件传了 glassTier（connection-setup/graph-manager 等少量） | 成立 |
+| G10 | ChatPage "能显示" 真相 | `ChatPage.tsx` 全文未用 ui-v2 Card，直接用 div + `var(--color-bg-primary)` 等 token → 配色直接生效；DashboardPage 用 ui-v2 Card 但没传 glassTier → Card 是普通卡片背景，看起来跟旧版差不多 | 成立 |
+| G11 | GlassCanvas/AnimeDecoration API 不支持全局挂载 | `glass-canvas.tsx`：`GlassCanvasProps` 必填 `dataGlass`+`glassForm`，是区域化容器；`anime/index.ts`：`AnimeDecoration` 必填 `type`+`trigger`，是页面级装饰；两者均无法作为全局 Provider 挂载。spec T2 任务设计与实际组件 API 不匹配 | 成立 |
+
+### (2) 交接状态
+
+- 一轮修正（G1/G2/G4）：**已闭合**（配色生效）
+- 二轮诊断（G8-G11）：**进行中**（[V] 节点，待 GN-004 审查 + 人类裁决修正方向）
+- T2 任务（挂载全局 Provider）：**阻塞**（spec 设计与组件 API 不匹配，需裁决修正方向）
+- 三值状态：G1/G2/G4 = 已闭合；G8-G11 = 当前不可判定（[V] 节点待裁决）；T2 = 阻塞
+
+### (3) 最终结果（候选方案）
+
+**候选方案对比**（待 [V] 裁决）：
+
+| 方案 | 内容 | 优点 | 缺点 |
+|------|------|------|------|
+| A（推荐） | 新建 `GlobalDecorations` 组件（CSS 全局背景层 + ParticleField 二次元粒子）+ CSS 全局规则让 `[data-glass="true"]:not([data-glass-tier])` 默认 Tier 3 样式 | 零重写 ui-v2 源码；最快呈现效果；符合 spec 零重写原则 | CSS 全局规则属于运行时补丁，非契约化 |
+| B | 走 s0601 契约变更流程，修改 ui-v2 组件默认 `glassTier=3` + `main.tsx` 挂载 GlassRenderer 启用 WebGL Tier 1/2 | 契约化修改，可追溯；启用 WebGL 完整效果 | 流程重，时间长；WebGL 性能风险 |
+| C | 仅挂载全局背景层，不改 ui-v2 默认行为（接受 Card 无玻璃质感，但全局有 Liquid Glass 背景） | 最小改动；零风险 | Card 等组件仍无玻璃质感，效果不完整 |
+
+### 为什么
+
+- **一轮修正不充分**：令牌加载只让配色生效，但 Liquid Glass 磨砂质感需要 backdrop-filter（由 glassTier 触发）+ 全局背景层（提供磨砂背景）；二次元装饰需要全局挂载装饰组件。这两点一轮修正均未触及
+- **spec T2 设计缺陷**：spec 假设 GlassCanvas/AnimeDecoration 可作为全局 Provider 挂载，但实际组件 API 是区域化/页面级的。这是 spec 设计与实现的不匹配，需 [V] 裁决修正方向
+- **零重写原则约束**：spec §零重写要求 S4 产物仅消费不修改。方案 A 通过新建 GlobalDecorations 组件 + CSS 全局规则绕过 ui-v2 源码修改，符合零重写；方案 B 走 s0601 契约变更也是合规路径
+
+### 未闭合项
+
+| 项 | 性质 | 状态 |
+|----|------|------|
+| T2 修正方向裁决 | [V] 节点 | ⏳ 待 GN-004 审查 + AskUserQuestion 人类裁决 |
+| G8 全局装饰层挂载 | 执行项 | ⏳ 待方向裁决后执行 |
+| G9 ui-v2 glassTier 默认行为 | 执行项 | ⏳ 待方向裁决后执行 |
+| G11 spec T2 设计修正 | spec 修正 | ⏳ 待方向裁决后同步 spec/tasks/checklist |
+
+### 接续入口
+
+1. **拉起 GN-004 审查 [V] checkpoint**（rules-0 §四-5 闸门1）：审查 G8-G11 诊断准确性 + 候选方案 A/B/C 合理性 + 零重写原则合规性
+2. **拉起 AskUserQuestion [V] 闸门2**（rules-0 §四-5 闸门2）：呈现 GN-004 结论 + 候选方案，让人类裁决修正方向
+3. 人类裁决后：
+   - 选 A → 新建 GlobalDecorations 组件 + CSS 全局规则 + AppLayout 挂载
+   - 选 B → 启动 s0601 契约变更流程
+   - 选 C → 仅挂载全局背景层
+4. 同步 spec/tasks/checklist 反映裁决结果
+
+---
+
+## [V] 闸门2 人类裁决记录（2026-07-27）
+
+### 裁决结果
+
+- **人类裁决**：**方案 B（s0601 契约变更）**
+- **GN-004 闸门1 结论**：警示放行（0 阻断 / 0 软阻断 / 5 观察项 OBS-1~5）
+- **请示闭环**：本次 AskUserQuestion（T2 修正方向裁决）已获人类响应（方案 B），请示已闭合
+
+### 方案 B 执行路径（基于 GN-004 OBS-2 验证结果）
+
+GN-004 OBS-2 要求"先独立读取 glass/ 目录验证 GlassRenderer 存在性及挂载 API"。主线程已验证：
+
+- **GlassRenderer 存在**：[glass-renderer.ts](file:///c:/CX-O/CX-O-Frontend/src/lib/glass/glass-renderer.ts)（29839 字节）
+- **GlassRenderer API**：`class GlassRenderer { constructor(canvas: HTMLCanvasElement, options: GlassRendererOptions) }`——是 TypeScript 类，不是 React 组件
+- **挂载方式**：需包装成 `GlassRendererHost` React 组件（useEffect 实例化 + 全屏 canvas），在 main.tsx 挂载
+
+### 方案 B 涉及的 4 项变更
+
+| # | 变更内容 | 性质 | 影响范围 |
+|---|---------|------|---------|
+| 1 | I5 frontend_components_uiv2.pyi 中 `GlassComponentProps.glassTier` 默认值 `undefined → 3` | 契约变更（MAJOR） | 所有 ui-v2 组件 |
+| 2 | ui-v2 组件源码（Card/Button/Input/Dialog/Tooltip 等）glassTier 默认值改为 3 | S4 产物修改 | 模块6 全部组件 |
+| 3 | 新建 `GlassRendererHost` React 组件（包装 GlassRenderer 类） | 新建组件 | main.tsx 入口 |
+| 4 | main.tsx 挂载 GlassRendererHost（启用 WebGL Tier 1/2） | 入口修改 | main.tsx |
+
+### 待办（s0601 流程）
+
+1. **调用 s0601-adapting-contract-changes Skill**（rules-0 §四-9 Skill 强制调用——契约变更命中 s0601 语义域）
+2. s0601 引导：变更影响面识别 → 同步任务拆解 → 阻断条件 → 接续路径
+3. 验证 OBS-3（backdrop-filter 嵌套风险，glass.css:159 `--glass-nesting-prohibited: 1`）
+4. 同步修正 spec T2 / tasks.md T2 / checklist C2.2-C2.3（OBS-4）
+
+### 三值状态
+
+- G1/G2/G4（一轮修正）= 已闭合
+- G8-G11（二轮诊断）= 已闭合（诊断完成，[V] 闸门1+2 均已闭合）
+- T2（挂载全局 Provider）= 进行中（方案 B 启动 s0601 流程）
+- s0601 契约变更 = 待启动
+
+---
+
+## s0601 契约变更适配结论（2026-07-27，七字段交接段）
+
+> 阶段：s0601-adapting-contract-changes Skill 已加载并执行 Action Flow。本段为适配接续清单，状态=已闭合（影响面+阻断项+同步顺序+回退锚点齐备）。
+
+### (1) 工程过程
+
+1. **s0601 Skill 加载**（rules-0 §四-9 Skill 强制调用——契约变更命中 s0601 语义域）
+2. **Action Flow 步骤 1-2 执行**：
+   - 读取 I5 旧版契约（[frontend_components_uiv2.pyi:184-202](file:///c:/CX-O/.trae/specs/frontend-liquidglass-anime-refactor/contracts/interface_stub/frontend_components_uiv2.pyi#L184-L202)）：`GlassComponentProps.glassTier: Optional[GlassTier]`，注释明确"默认由 useGlassTier 自动检测"
+   - 读取 card.tsx 实现（[card.tsx:117-148](file:///c:/CX-O/CX-O-Frontend/src/components/ui-v2/card.tsx#L117-L148)）：未传 glassTier 时 `validTier = undefined`，**不调用 useGlassTier**，直接不注入 glass 样式
+   - 读取 useGlassTier hook（[use-glass-tier.ts:191-249](file:///c:/CX-O/CX-O-Frontend/src/lib/glass/use-glass-tier.ts#L191-L249)）：通过 `detectTier()` 独立检测浏览器能力，**不依赖 GlassRenderer 挂载**
+   - 读取 GlassRenderer（[glass-renderer.ts:285-417](file:///c:/CX-O/CX-O-Frontend/src/lib/glass/glass-renderer.ts#L285-L417)）：`class GlassRenderer { constructor(canvas, options) }`，TS 类非 React 组件
+
+3. **关键发现：实现偏离契约**
+   - I5 契约注释明确"默认由 useGlassTier 自动检测"
+   - card.tsx 实现是未传 glassTier 时 `validTier = undefined`（不调用 useGlassTier）
+   - 这是**实现偏离契约**的 bug，方案 B 性质从"契约变更"修正为"实现修正 + 新建组件"
+   - **I5 契约不需要修改**（契约注释已经正确）
+
+### (2) 交接状态
+
+- s0601 适配接续清单：**已闭合**（影响面+阻断项+同步顺序+回退锚点齐备）
+- I5 契约变更：**不需要**（契约注释已正确，仅实现偏离）
+- 实现修正：**待执行**（15 个 ui-v2 组件需修正）
+- GlassRendererHost 新建：**待执行**
+- main.tsx 挂载：**待执行**
+- AppLayout 全局装饰层：**待执行**
+
+### (3) 最终结果：适配接续清单
+
+#### 变更摘要
+
+| # | 变更内容 | 性质 | 影响范围 |
+|---|---------|------|---------|
+| 1 | 新建 `GlassRendererHost` React 组件（包装 GlassRenderer 类，useEffect 实例化 + 全屏 canvas） | 新建组件 | src/lib/glass/ |
+| 2 | `main.tsx` 挂载 GlassRendererHost（启用 WebGL Tier 1/2，自动降级到 Tier 3） | 入口修改 | main.tsx |
+| 3 | 修正 15 个 ui-v2 组件：未传 glassTier 时调用 useGlassTier 自动检测（符合 I5 契约注释） | 实现修正（S4 产物） | src/components/ui-v2/ |
+| 4 | `AppLayout` 挂载全局装饰层（ParticleField 二次元粒子，解决 G8） | 集成层修改 | AppLayout.tsx |
+
+#### 影响面分级
+
+| 资产 | 影响级别 | 同步动作 |
+|------|---------|---------|
+| I5 契约（frontend_components_uiv2.pyi） | 可延后复核 | 契约注释已正确，无需修改；仅需确认 useGlassTier 自动检测逻辑与契约一致 |
+| ui-v2 组件源码（15 个：Card/Button/Input/Dialog/Tooltip/Form/Select/Checkbox/RadioGroup/Table/Tabs/Badge/Avatar/ChatPanel/AudioTrack） | 必须同步更新 | 修正未传 glassTier 时调用 useGlassTier 自动检测 |
+| GlassRendererHost 组件（新建） | 必须同步更新 | 新建 React 组件包装 GlassRenderer 类 |
+| main.tsx | 必须同步更新 | 挂载 GlassRendererHost |
+| AppLayout | 必须同步更新 | 挂载全局装饰层（ParticleField） |
+| pre_generated_mock | 可延后复核 | 检查 Mock 是否依赖 glassTier 默认值（预期不影响，Mock 不渲染真实 glass） |
+| AGENTS.md（模块6） | 可延后复核 | 检查规则模板是否需要更新（预期不影响，规则模板已涵盖 useGlassTier） |
+| 测试入口 | 必须同步更新 | 新增 GlassRendererHost 挂载测试 + ui-v2 组件 useGlassTier 自动检测测试 |
+
+#### 阻断项
+
+| 阻断项 | 性质 | 处置 |
+|--------|------|------|
+| Tier 1/2 依赖 GlassRenderer 已挂载 | 顺序约束 | 同步顺序必须：先挂载 GlassRendererHost → 再修正 ui-v2 组件。若顺序反了，Card 注入 `bg-transparent`（Tier 1/2）但 WebGL 渲染器不存在，导致 Card 完全透明 |
+| OBS-3 backdrop-filter 嵌套风险 | 已验证不成立 | GlassRendererHost 渲染 WebGL canvas（独立层，不用 backdrop-filter），Card 用 CSS backdrop-filter，两者不嵌套。glass.css:159 `--glass-nesting-prohibited` 指 DOM 元素嵌套，不适用于 canvas+DOM |
+
+#### 同步顺序（强制）
+
+1. **新建 GlassRendererHost 组件**（包装 GlassRenderer 类，useEffect 实例化 + 全屏 canvas + z-index=GlassZIndex.GLASS=2）
+2. **main.tsx 挂载 GlassRendererHost**（位于 ThemeProvider 内、BrowserRouter 外，作为全局背景层）
+3. **修正 15 个 ui-v2 组件**：未传 glassTier 时调用 `useGlassTier()` 自动检测，使用返回的 tier 注入 glass 样式（符合 I5 契约注释）
+4. **AppLayout 挂载全局装饰层**：ParticleField 二次元粒子（z-index=GlassZIndex.DECORATION=4）
+5. **验证**：`npm run dev` 启动后浏览器可见 Liquid Glass 磨砂质感 + 二次元粒子装饰
+6. **测试**：typecheck + 单测 + E2E
+
+#### 回退锚点
+
+- **若 GlassRenderer 启用导致性能问题**：回退到 Tier 3 CSS 降级路径（useGlassTier 自动降级，或强制 forceTier=3）
+- **若 ui-v2 组件修正导致渲染异常**：回退到未传 glassTier 不注入 glass 样式的旧行为（card.tsx 当前实现）
+- **若 AppLayout 挂载装饰层导致性能问题**：移除 ParticleField，仅保留 GlassRendererHost
+
+### 为什么
+
+- **契约原意已正确**：I5 契约注释明确"默认由 useGlassTier 自动检测"，无需修改契约
+- **实现偏离契约是根因**：card.tsx 未遵循契约注释，未传 glassTier 时不调用 useGlassTier，直接 undefined。修正实现偏离即可让 Liquid Glass 生效
+- **GlassRenderer 是 TS 类非 React 组件**：需要包装成 GlassRendererHost 才能在 main.tsx 挂载
+- **同步顺序是阻断约束**：Tier 1/2 的 Card 注入 `bg-transparent`，依赖 GlassRenderer 已挂载渲染 WebGL，否则 Card 透明
+
+### 未闭合项
+
+| 项 | 性质 | 状态 |
+|----|------|------|
+| GlassRendererHost 新建 | 执行项 | ⏳ 待执行（同步顺序步骤 1） |
+| main.tsx 挂载 | 执行项 | ⏳ 待执行（同步顺序步骤 2） |
+| 15 个 ui-v2 组件修正 | 执行项 | ⏳ 待执行（同步顺序步骤 3） |
+| AppLayout 全局装饰层 | 执行项 | ⏳ 待执行（同步顺序步骤 4） |
+| GN-004 审查 s0601 适配结论 | GN-004 闸门 | ⏳ 待主线程拉起（s0601 Action Flow 步骤 9） |
+
+### 接续入口
+
+1. **主线程拉起 GN-004 审查 s0601 适配结论**（s0601 Action Flow 步骤 9 强制要求）：审查适配接续清单的完整性 + 同步顺序合理性 + 回退锚点可行性
+2. GN-004 通过后，按同步顺序执行步骤 1-6
+3. 执行完成后，进入 T3 关键路径验证闸门（typecheck+dev+lint）
+
+## GN-004 审查 s0601 适配结论 + 三项前置修正（2026-07-27，七字段交接段）
+
+> 阶段：s0601 Action Flow 步骤 9 强制要求——主线程拉起 GN-004 审查 s0601 适配结论。GN-004 已独立审查 9 个文件原文，结论=警示放行。
+
+### (1) 工程过程
+
+1. **GN-004 独立审查**（subagent_type='GN-004'）:
+   - 独立读取 9 个文件原文（current-note.md s0601 段 + 二轮诊断段 + I5 契约 + card.tsx + use-glass-tier.ts + glass-renderer.ts + AppLayout.tsx + main.tsx + spec 三件套）
+   - 审查范围：完整性核查（HC-1/HC-2）+ 同步顺序合理性（SC-2）+ 契约偏离判定准确性（HC-1）+ 风险点（EC-1/EC-2）
+   - 结论：**警示放行**（0 阻断 / 0 SOFT_BLOCK / 6 观察项）
+
+2. **GN-004 观察项处置**:
+   - 观察项 1 [警示]：spec T2 / tasks T2 / checklist C2.2-C2.3 同步修正未显式列入未闭合项表 → **已在本文档补入**（见下方"前置修正 1"）
+   - 观察项 2 [警示]：s0601 修正方案 B 性质（从"契约变更+glassTier=3"修正为"实现修正+useGlassTier 自动检测"）需 L2 信号告知人类 → **已通过主线程消息送达**（用户已知悉，未否决）
+   - 观察项 3 [观察]：步骤 3-4 可并行 → **已采纳**（4 个 parallel-sub-agent 并行修复 13 组件 + 主线程并行处理 AppLayout）
+   - 观察项 4 [观察]：tasks.md 台账未补充 s0601 适配后步骤 → **已在本文档补入**（见下方"前置修正 2"）
+   - 观察项 5 [观察]：I5 selfTest 重验证 → **列入 T3 验证闸门**
+   - 观察项 6 [观察]：GlassRendererHost 挂载后需运行 assertNoConflict → **已在 GlassRendererHost.tsx 实现**（开发模式自动调用）
+
+### (2) 交接状态
+
+- GN-004 审查结论：**警示放行**（已闭合）
+- 三项前置修正：**已闭合**（本文档补入 + L2 信号已送达 + 台账已补入）
+- s0601 适配接续清单执行：**进行中**
+  - 步骤 1（GlassRendererHost 新建）：✅ 已完成
+  - 步骤 2（main.tsx 挂载）：✅ 已完成
+  - 步骤 3（15 个 ui-v2 组件修正）：🔄 进行中（Card/Button 已完成 + 6 个已完成 + 7 个并行修复中）
+  - 步骤 4（AppLayout 装饰层）：✅ 已完成
+  - 步骤 5（验证）：⏳ 待执行（T3 验证闸门）
+  - 步骤 6（测试）：⏳ 待执行（T3 验证闸门）
+
+### (3) 最终结果
+
+#### 前置修正 1：spec/tasks/checklist 同步修正补入未闭合项表（GN-004 观察项 1）
+
+spec T2 / tasks T2 / checklist C2.2-C2.3 原写"挂载 GlassCanvas/AnimeDecoration"，s0601 适配后修正为：
+- 步骤 1：新建 GlassRendererHost（包装 GlassRenderer 类）
+- 步骤 2：main.tsx 挂载 GlassRendererHost
+- 步骤 3：修正 15 个 ui-v2 组件调用 useGlassTier
+- 步骤 4：AppLayout 挂载 ParticleField
+
+**处置**：spec/tasks/checklist 的具体文本修正延后到 T11 交付前 GN-004 审查时统一处理（避免逐文件分散修改）。本 note 段落作为权威接续记录，spec/tasks/checklist 引用本段落即可。
+
+#### 前置修正 2：tasks.md 台账表补充 s0601 适配后执行步骤（GN-004 观察项 4）
+
+| 阶段标签 | [P]组 | subagent_type | 预期产物 | actual agent id | 第二落点 | 失败回退点 | 状态 |
+|---------|-------|--------------|---------|----------------|---------|-----------|------|
+| T2.1 | — | 主线程（非subagent） | GlassRendererHost.tsx | 主线程 | src/lib/glass/GlassRendererHost.tsx | — | 已完成 |
+| T2.2 | — | 主线程（非subagent） | main.tsx 挂载 GlassRendererHost | 主线程 | src/main.tsx | 回退到无 GlassRendererHost（Tier 3 CSS 降级） | 已完成 |
+| T2.3a | [P] | parallel-sub-agent | input/dialog/tooltip/badge 修复 | 8dd76efa | src/components/ui-v2/*.tsx | 回退到未传 glassTier 不注入 glass 样式 | 已完成 |
+| T2.3b | [P] | parallel-sub-agent | form/select/checkbox 修复 | 92a037a4 | src/components/ui-v2/*.tsx | 同上 | 进行中 |
+| T2.3c | [P] | parallel-sub-agent | radio-group/table/tabs 修复 | 4c9b86c0 | src/components/ui-v2/*.tsx | 同上 | 进行中 |
+| T2.3d | [P] | parallel-sub-agent | badge/avatar/chat-panel/audio-track 修复 | 4228be5a | src/components/ui-v2/*.tsx | 同上 | 已完成 |
+| T2.4 | — | 主线程（非subagent） | AppLayout 挂载 ParticleField | 主线程 | src/components/AppLayout.tsx | 回退到无 ParticleField | 已完成 |
+| T3 | — | 主线程（非subagent） | typecheck+dev+lint 验证 | 待回填 | — | 回退到 T2 修正 | 待启动 |
+
+#### 前置修正 3：L2 信号告知人类方案 B 性质修正（GN-004 观察项 2）
+
+**已送达**：主线程在 GN-004 审查通过后、执行步骤 1 前，通过消息告知人类：
+> "s0601 修正了方案 B 的性质——从'契约变更+硬编码 glassTier=3'修正为'实现修正+调用 useGlassTier 自动检测'。技术上更符合 I5 契约注释（'默认由 useGlassTier 自动检测'），但改变了执行路径：原方案 B 强制 Tier 3 CSS 降级，修正后可能启用 Tier 1/2 WebGL（更高视觉质量但更高 GPU 风险）。回退锚点已备（forceTier=3 可强制降级）。"
+
+**人类响应**：未否决，继续执行。
+
+### 为什么
+
+- GN-004 审查是 s0601 Action Flow 步骤 9 的强制要求，确保适配接续清单的完整性、同步顺序合理性、回退锚点可行性
+- 三项前置修正（观察项 1/2/4）确保 spec/tasks/checklist 与执行路径一致，避免 T11 交付前审查假闭合
+- L2 信号送达确保人类知悉方案 B 性质修正，符合 EC-6/EC-7 信号协议
+
+### 未闭合项
+
+| 项 | 性质 | 状态 |
+|----|------|------|
+| T2.3b（form/select/checkbox） | 执行项 | 🔄 进行中（parallel-sub-agent） |
+| T2.3c（radio-group/table/tabs） | 执行项 | 🔄 进行中（parallel-sub-agent） |
+| T3 验证闸门（typecheck+dev+lint） | 验证 | ⏳ 待 T2.3 全部完成后启动 |
+| spec/tasks/checklist 文本修正 | 文档同步 | ⏳ 延后到 T11 交付前统一处理 |
+| I5 selfTest 重验证 | 测试 | ⏳ 列入 T3 验证闸门 |
+
+### 接续入口
+
+1. 等待 T2.3b/T2.3c 两个 parallel-sub-agent 完成
+2. 启动 T3 验证闸门：`npm run typecheck` + `npm run dev` + `npm run lint`
+3. T3 通过后，进入 T4-T10 页面验证 + 效果验证
+4. T11 三重测试闸门 + GN-004 交付审查

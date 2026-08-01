@@ -37,9 +37,8 @@ import React from 'react';
 import { motion, type Variants } from 'framer-motion';
 import { cn } from '@/lib/utils';
 import {
-  injectGlassClassName,
+  glassPanelClass,
   buildGlassDataAttributes,
-  isValidGlassTier,
 } from './inject-glass-style';
 import { getComponentMotionVariants } from './motion-variants';
 import type { GlassComponentProps } from './button';
@@ -103,9 +102,8 @@ export const Form = React.forwardRef<HTMLFormElement, FormProps>(
     },
     ref,
   ) {
-    // 构建 data-glass + data-glass-tier 属性（由 WebGL 层接管渲染）
-    const validTier = isValidGlassTier(glassTier) ? glassTier : undefined;
-    const glassAttributes = buildGlassDataAttributes(dataGlass, validTier);
+    // 构建 data-glass 属性（WebGL LiquidGlassHost 扫描 [data-glass="true"] 元素）
+    const glassAttributes = buildGlassDataAttributes(dataGlass);
 
     // 获取 Framer Motion variants（替换 shadcn 默认 Tailwind transition）
     // 若调用方提供 motionVariants 则直接使用，否则调用 getComponentMotionVariants 生成默认 variants
@@ -129,13 +127,8 @@ export const Form = React.forwardRef<HTMLFormElement, FormProps>(
       className,
     );
 
-    // 注入 glass 样式类（仅当调用方提供 glassTier 时注入 CSS 降级样式）
-    // Tier 1/2: bg-transparent（WebGL 层接管渲染）
-    // Tier 3: backdrop-filter + box-shadow（CSS 降级）
-    // Tier 4: background-color 半透明兜底
-    const composedClassName = validTier
-      ? injectGlassClassName(formBaseClassName, validTier)
-      : formBaseClassName;
+    // 注入 glass-panel 类（CSS 兜底 + WebGL 主体切换由 .webgl-active class 控制）
+    const composedClassName = cn(formBaseClassName, glassPanelClass);
 
     return (
       <motion.form
@@ -143,7 +136,6 @@ export const Form = React.forwardRef<HTMLFormElement, FormProps>(
         className={composedClassName}
         // data-glass 属性（由 WebGL 层 GlassRenderer 扫描接管渲染）
         data-glass={glassAttributes['data-glass'] ?? undefined}
-        data-glass-tier={glassAttributes['data-glass-tier'] ?? undefined}
         // Framer Motion variants（替换 shadcn 默认 Tailwind transition）
         // 仅当调用方提供 motionVariants 或 glassVariant 时注入 variants
         {...(resolvedVariants ? { variants: resolvedVariants } : {})}

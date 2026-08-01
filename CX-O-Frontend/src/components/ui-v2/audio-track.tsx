@@ -45,9 +45,8 @@ import { motion, type Variants } from 'framer-motion';
 import { cn } from '@/lib/utils';
 import type { GsapTimeline } from '@/lib/motion';
 import {
-  injectGlassClassName,
+  glassPanelClass,
   buildGlassDataAttributes,
-  isValidGlassTier,
 } from './inject-glass-style';
 import {
   getComponentSpringTransition,
@@ -211,6 +210,7 @@ export const AudioTrack = React.forwardRef<HTMLDivElement, AudioTrackProps>(
     },
     ref,
   ) {
+    void glassTier; // v2: glassTier 已废弃，保留解构以避免 spread 到 DOM
     // 获取 snappy spring 的 transition 参数（AudioTrack 默认 spring）
     // OBS-C 守护: snappy 非 character（character 仅用于角色立绘）
     const enterSpring = getComponentSpringTransition(
@@ -226,9 +226,7 @@ export const AudioTrack = React.forwardRef<HTMLDivElement, AudioTrackProps>(
         exit: { opacity: 0, y: 10, transition: enterSpring },
       } as Variants);
 
-    // 构建 data-glass + data-glass-tier 属性（由 WebGL 层接管渲染）
-    const validTier = isValidGlassTier(glassTier) ? glassTier : undefined;
-    const glassAttributes = buildGlassDataAttributes(dataGlass, validTier);
+    const glassAttributes = buildGlassDataAttributes(dataGlass);
 
     // 播放头位置百分比（基于 currentTime 与 duration）
     const progress =
@@ -257,10 +255,8 @@ export const AudioTrack = React.forwardRef<HTMLDivElement, AudioTrackProps>(
       className,
     );
 
-    // 注入 glass 样式类（仅当调用方提供 glassTier 时注入 CSS 降级样式）
-    const composedClassName = validTier
-      ? injectGlassClassName(trackBaseClassName, validTier)
-      : trackBaseClassName;
+    // 注入 glass 样式类（v2: 直接拼接 glassPanelClass，不再区分 tier）
+    const composedClassName = cn(trackBaseClassName, glassPanelClass);
 
     return (
       <motion.div
@@ -268,7 +264,6 @@ export const AudioTrack = React.forwardRef<HTMLDivElement, AudioTrackProps>(
         className={composedClassName}
         // data-glass 属性（由 WebGL 层 GlassRenderer 扫描接管渲染）
         data-glass={glassAttributes['data-glass'] ?? undefined}
-        data-glass-tier={glassAttributes['data-glass-tier'] ?? undefined}
         // Framer Motion variants（替换 shadcn 默认 Tailwind transition）
         variants={resolvedVariants}
         initial="initial"

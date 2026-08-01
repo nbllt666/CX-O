@@ -1,162 +1,143 @@
 /*
- * glass.css — Liquid Glass 专用 Token
+ * glass.css — Liquid Glass 专用 Token（v2 简化版）
  * ============================================================================
  * 层级：glass 专用层（跨 primitive/semantic 层，含 WebGL uniform 默认值）
- * 用途：Liquid Glass 材质专用 token，含折射率/模糊度/透明度/色散/高光参数
- * 命名规范：--glass-{property}（kebab-case，glass category 专用命名）
- * 引用约束：
- *   - glass primitive token：具体数值（允许，与 raw.css 同级例外）
- *   - glass semantic token：通过 var() 引用 primitive.color.glassTint
- * 对齐契约：
- *   - D1 frontend_design_tokens.schema.json → component.glassPanel
- *   - C1 frontend_glass_config（WebGL uniform 默认值 + tier 触发条件）
- *   - D2 glass_tier_config（四级 tier 降级参数）
- * WebGL uniform 字段（merged.md §2.2-2.4）：
- *   - uRefractionStrength（折射强度，默认 0.08）
- *   - uDispersionR/G/B（色散 RGB 通道折射系数，0.075/0.080/0.085）
- *   - uFresnelPower（Fresnel 高光指数，默认 2.5）
- *   - uGlassTintDark/uGlassTintLight（主题着色，引用 primitive.color.glassTint）
- *   - uScrollVelocity（滚动速度，JS 动态上传，默认 0）
- *   - uPointerPosition（鼠标位置，JS 动态上传，默认中心）
- *   - uTime（时间，JS 动态上传，默认 0）
- * 四级 tier 降级（merged.md §2.5）：
- *   - Tier 1: WebGL2（完整效果）
- *   - Tier 2: WebGL1（关闭色散层）
- *   - Tier 3: CSS backdrop-filter（blur 16px saturate 1.8）
- *   - Tier 4: background-color 半透明兜底
- * @version 1.0.0
+ * 用途：Liquid Glass 材质专用 token + CSS 兜底参数 + WebGL 着色默认值
+ *
+ * v2 改造要点（与原 v1 对比）:
+ *   - ✂️ 删除 4 级 tier 参数（tier1/tier2/tier3/tier4）→ 由 webgl-active class 切换
+ *   - ✂️ 删除旧 WebGL 架构参数（FBO/draw-call/frame-budget 等）→ 由 JS 内部管理
+ *   - ✂️ 删除 scroll-velocity/pointer/time 默认值 → JS 直接上传
+ *   - ✨ 新增 --glass-tint-r/g/b（LiquidGlassHost.getThemeTint() 读取）
+ *   - ✨ 新增 --glass-surface / --glass-surface-solid / --glass-radius / --glass-backdrop-filter
+ *   - ✨ 新增粉紫青鲜明配色体系（强烈二次元风格）
+ *
+ * 保留项（仍被外部引用）:
+ *   - --glass-refraction-strength（component.css 引用）
+ *   - --glass-tint-dark/light（dark/light-theme.css 引用）
+ *   - --glass-blur-md / --glass-saturate-md（dark/light-theme.css 引用）
+ *   - --glass-edge-highlight（inject-glass-style.ts 引用，波3清理后可删）
+ *
+ * @version 2.0.0
  * ============================================================================
  */
 
 :root {
   /* ==========================================================================
-   * 1. Glass 折射参数 Refraction（WebGL uniform uRefractionStrength）
-   * merged.md §2.2：折射层采样背景纹理，用 refract() 模拟光线偏折
+   * 1. Glass 折射参数 Refraction
+   * WebGL uniform uRefractionStrength 默认值（被 component.css 引用）
    * ========================================================================== */
-  --glass-refraction-strength: 0.08;  /* 折射强度默认值（对齐 C1） */
-  --glass-refraction-min: 0.0;        /* 折射强度最小值 */
-  --glass-refraction-max: 0.2;        /* 折射强度最大值（clamp 上限） */
+  --glass-refraction-strength: 0.08;
+  --glass-refraction-min: 0.0;
+  --glass-refraction-max: 0.2;
 
   /* ==========================================================================
-   * 2. Glass 色散参数 Dispersion（WebGL uniform uDispersionR/G/B）
-   * merged.md §2.2：RGB 通道分别用不同折射系数，模拟色差边缘
+   * 2. Glass 色散参数 Dispersion（shader 内硬编码，仅留文档）
    * ========================================================================== */
-  --glass-dispersion-r: 0.075;  /* R 通道折射系数 */
-  --glass-dispersion-g: 0.080;  /* G 通道折射系数 */
-  --glass-dispersion-b: 0.085;  /* B 通道折射系数 */
+  --glass-dispersion-r: 0.075;
+  --glass-dispersion-g: 0.080;
+  --glass-dispersion-b: 0.085;
 
   /* ==========================================================================
-   * 3. Glass 高光参数 Highlight（WebGL uniform uFresnelPower）
-   * merged.md §2.2：基于 Fresnel 方程 pow(1 - dot(N, V), 2.5) 计算边缘高光
+   * 3. Glass 高光参数 Highlight
    * ========================================================================== */
-  --glass-fresnel-power: 2.5;   /* Fresnel 高光指数 */
-  --glass-fresnel-intensity: 1.0; /* Fresnel 高光强度系数 */
+  --glass-fresnel-power: 2.5;
+  --glass-fresnel-intensity: 1.0;
 
   /* ==========================================================================
-   * 4. Glass 着色 Tint（引用 primitive.color.glassTint）
-   * merged.md §3.1：玻璃着色 4 阶 rgba（粉/紫/青/白）
-   * 主题相关：uGlassTintDark / uGlassTintLight（merged.md §1.3）
-   * ========================================================================== */
-
-  /* --- 4.1 玻璃着色原始值（引用 primitive.color.glassTint）------------- */
+   * 4. Glass 着色 Tint（粉紫青体系，强烈二次元风格）
+   * ============================================================================
+   * 4.1 玻璃着色原始值（引用 primitive.color.glassTint）
+   * ============================================================================
+   */
   --glass-tint-sakura: var(--color-glass-tint-sakura);   /* 樱花粉着色 */
   --glass-tint-lavender: var(--color-glass-tint-lavender); /* 梦境紫着色 */
   --glass-tint-azure: var(--color-glass-tint-azure);     /* 星海青着色 */
   --glass-tint-white: var(--color-glass-tint-white);     /* 月光白着色 */
 
-  /* --- 4.2 主题着色分组（uGlassTintDark / uGlassTintLight）--------------
-   * 暗色主题默认用梦境粉紫着色，亮色主题默认用月光白着色。
-   * theme-dark.css / theme-light.css 通过 [data-theme] 属性覆盖。
-   */
+  /* --- 4.2 主题着色分组（被 dark/light-theme.css 覆盖）------------------- */
   --glass-tint-dark: var(--glass-tint-lavender);  /* 暗色主题着色 梦境紫 */
   --glass-tint-light: var(--glass-tint-white);    /* 亮色主题着色 月光白 */
 
+  /* --- 4.3 WebGL uTint RGB（新增，LiquidGlassHost.getThemeTint() 读取）---
+   * 暗色主题默认樱花粉 (255, 183, 225)
+   * 亮色主题由 [data-theme="light"] 覆盖为梦境紫 (157, 124, 255)
+   */
+  --glass-tint-r: 255;
+  --glass-tint-g: 183;
+  --glass-tint-b: 225;
+
   /* ==========================================================================
-   * 5. Glass 模糊与饱和度 Blur & Saturate（Tier 3 CSS 降级路径）
-   * merged.md §2.5：Tier 3 使用 CSS backdrop-filter（blur 16px saturate 1.8）
-   * merged.md §6.3：移动端 backdrop-filter ≤ 16px
+   * 5. Glass 模糊与饱和度（CSS 兜底 backdrop-filter 用）
+   * 被 dark/light-theme.css 通过 --glass-blur / --glass-saturate 引用
    * ========================================================================== */
   --glass-blur-sm: 8px;     /* 轻度模糊（移动端） */
-  --glass-blur-md: 16px;    /* 中度模糊（Tier 3 默认 / 移动端上限） */
+  --glass-blur-md: 16px;    /* 中度模糊（默认 / 移动端上限） */
   --glass-blur-lg: 24px;    /* 重度模糊（桌面端） */
-  --glass-saturate-md: 1.8; /* 饱和度增强（Tier 3 默认） */
+  --glass-saturate-md: 1.8; /* 饱和度增强（默认） */
   --glass-saturate-lg: 2.0; /* 饱和度增强（桌面端） */
 
   /* ==========================================================================
    * 6. Glass 透明度 Opacity
-   * merged.md §3.5：装饰元素 opacity ≤ 0.4，单屏 alpha 总和 ≤ 0.4
    * ========================================================================== */
   --glass-opacity-rest: 0.08;   /* 玻璃面板默认透明度 */
   --glass-opacity-hover: 0.12;  /* 玻璃面板悬停透明度 */
   --glass-opacity-active: 0.16; /* 玻璃面板激活透明度 */
-  --glass-opacity-decor-max: 0.4; /* 装饰元素透明度上限（merged.md §3.5） */
+  --glass-opacity-decor-max: 0.4; /* 装饰元素透明度上限 */
 
   /* ==========================================================================
-   * 7. Glass 边缘高光 Edge Highlight（多层 box-shadow 叠加）
-   * merged.md §2.11：顶部高光 + 底部微光 + 主投影 + 近距投影
-   * 引用 primitive.shadow.glassHighlight
+   * 7. Glass 边缘高光（多层 box-shadow 叠加）
+   * 被 inject-glass-style.ts 引用（波3清理后可删）
    * ========================================================================== */
-  --glass-edge-highlight: var(--shadow-glass-highlight); /* 玻璃边缘高光（多层 box-shadow） */
+  --glass-edge-highlight: var(--shadow-glass-highlight);
 
   /* ==========================================================================
-   * 8. Glass 性能参数 Performance（对齐 D2 glass_tier_config）
-   * merged.md §2.4-2.7：GPU 性能预算 + 内存管理
-   * ========================================================================== */
-  --glass-max-elements-per-screen: 8;  /* 同屏 glass 元件上限（merged.md §2.12） */
-  --glass-fbo-memory-limit-mb: 48;     /* 双 FBO 显存上限（merged.md §2.7） */
-  --glass-draw-call-limit: 20;         /* draw call 上限（merged.md §7.5） */
-  --glass-frame-budget-desktop-ms: 12; /* 桌面端单帧预算 12ms */
-  --glass-frame-budget-mobile-ms: 20;  /* 移动端单帧预算 20ms */
-  --glass-fps-target-desktop: 60;      /* 桌面端目标帧率 60fps */
-  --glass-fps-target-mobile: 30;       /* 移动端目标帧率 30fps */
+   * 8. CSS 玻璃表面（v3.0：Apple iOS 26 风格）
+   * ============================================================================
+   * 液态玻璃质感的核心参数，被 .glass-panel 直接消费
+   * 设计要点：
+   *   - 更高的模糊度（40px+），Apple 标志性的极致模糊
+   *   - 更低的不透明度，更透亮
+   *   - 更强的饱和度增强，让透过来的颜色更鲜艳
+   *   - 更亮的内部光感
+   * ============================================================================
+   */
+  --glass-surface: rgba(255, 255, 255, 0.04);        /* 暗色：极透亮，几乎透明 */
+  --glass-surface-solid: rgba(45, 27, 78, 0.95);     /* reduced-transparency 兜底 */
+  --glass-border: rgba(255, 255, 255, 0.03);         /* 玻璃边框（v2.5 极淡，排查白框） */
+  --glass-radius: 28px;                              /* 玻璃圆角（更大更圆润） */
+
+  /* backdrop-filter 液态玻璃核心参数（Apple 级别的极致模糊 + 高饱和） */
+  --glass-backdrop-filter: blur(50px) saturate(3.5) brightness(1.2);
+  --glass-backdrop-filter-lg: blur(80px) saturate(4) brightness(1.2);
+  --glass-backdrop-filter-mobile: blur(24px) saturate(2.2);
 
   /* ==========================================================================
-   * 9. Glass Tier 降级参数（对齐 D2 glass_tier_config + C1）
-   * merged.md §2.5：四级 tier 降级策略
+   * 9. 强烈二次元渐变光带（新增，供装饰层使用）
    * ========================================================================== */
+  --anime-gradient-sakura: linear-gradient(135deg, #FFB7E1 0%, #9D7CFF 50%, #7CD8FF 100%);
+  --anime-gradient-glow: radial-gradient(circle, rgba(255, 183, 225, 0.4) 0%, transparent 70%);
+}
 
-  /* --- 9.1 Tier 1: WebGL2（完整效果：折射+色散+高光）------------------- */
-  --glass-tier1-enabled: 1;             /* Tier 1 启用标志 */
-  --glass-tier1-refraction: var(--glass-refraction-strength); /* 折射开启 */
-  --glass-tier1-dispersion: 1;          /* 色散开启 */
-  --glass-tier1-highlight: 1;           /* 高光开启 */
+/* ============================================================================
+ * 亮色主题覆盖（WebGL uTint 切换为梦境紫）
+ * ============================================================================
+ */
+[data-theme='light'] {
+  --glass-surface: rgba(255, 255, 255, 0.56);
+  --glass-surface-solid: rgba(255, 255, 255, 0.92);
+  --glass-border: rgba(0, 0, 0, 0.08);
+  --glass-tint-r: 157;
+  --glass-tint-g: 124;
+  --glass-tint-b: 255;
+}
 
-  /* --- 9.2 Tier 2: WebGL1（关闭色散层）-------------------------------- */
-  --glass-tier2-enabled: 1;             /* Tier 2 启用标志 */
-  --glass-tier2-refraction: var(--glass-refraction-strength); /* 折射开启 */
-  --glass-tier2-dispersion: 0;          /* 色散关闭 */
-  --glass-tier2-highlight: 1;           /* 高光开启 */
-
-  /* --- 9.3 Tier 3: CSS backdrop-filter（磨砂质感，无折射）-------------- */
-  --glass-tier3-enabled: 1;             /* Tier 3 启用标志 */
-  --glass-tier3-backdrop-filter: blur(var(--glass-blur-md)) saturate(var(--glass-saturate-md)); /* CSS 降级 */
-  --glass-tier3-refraction: 0;          /* 折射关闭 */
-  --glass-tier3-dispersion: 0;          /* 色散关闭 */
-  --glass-tier3-highlight: 1;           /* 高光开启（CSS box-shadow 模拟） */
-
-  /* --- 9.4 Tier 4: background-color 半透明兜底 ------------------------ */
-  --glass-tier4-enabled: 1;             /* Tier 4 启用标志 */
-  --glass-tier4-background-color: var(--color-surface); /* 纯色半透明兜底 */
-  --glass-tier4-refraction: 0;          /* 折射关闭 */
-  --glass-tier4-dispersion: 0;          /* 色散关闭 */
-  --glass-tier4-highlight: 0;           /* 高光关闭 */
-
-  /* ==========================================================================
-   * 10. Glass 动态光影参数 Dynamic Lighting（WebGL uniform）
-   * merged.md §2.9：环境光响应 + 滚动视差 + 内容穿透感
-   * JS 动态上传，此处为默认值
-   * ========================================================================== */
-  --glass-scroll-velocity-default: 0;    /* uScrollVelocity 默认值 */
-  --glass-pointer-x-default: 0.5;        /* uPointerPosition.x 默认值（归一化 0-1） */
-  --glass-pointer-y-default: 0.5;        /* uPointerPosition.y 默认值（归一化 0-1） */
-  --glass-time-default: 0;               /* uTime 默认值 */
-  --glass-highlight-offset-min: 8px;     /* 高光偏移最小值（merged.md §2.9） */
-  --glass-highlight-offset-max: 16px;    /* 高光偏移最大值（merged.md §2.9） */
-
-  /* ==========================================================================
-   * 11. Glass 限制规则 Limits（merged.md §2.12）
-   * ========================================================================== */
-  --glass-nesting-prohibited: 1;     /* 禁嵌套 backdrop-filter */
-  --glass-will-change-caution: 1;    /* will-change: backdrop-filter 慎用 */
-  --glass-mobile-default-tier: 3;    /* 移动端默认 Tier 3 */
+/* ============================================================================
+ * 移动端弱化模糊（性能优化）
+ * ============================================================================
+ */
+@media (max-width: 767px) {
+  :root {
+    --glass-backdrop-filter: var(--glass-backdrop-filter-mobile);
+  }
 }

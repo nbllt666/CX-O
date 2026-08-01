@@ -38,9 +38,8 @@ import React from 'react';
 import { motion, AnimatePresence, type Variants } from 'framer-motion';
 import { cn } from '@/lib/utils';
 import {
-  injectGlassClassName,
+  glassPanelClass,
   buildGlassDataAttributes,
-  isValidGlassTier,
 } from './inject-glass-style';
 import {
   getComponentMotionVariants,
@@ -320,9 +319,8 @@ export const Select = React.forwardRef<HTMLDivElement, SelectProps>(
       }
     };
 
-    // 构建 data-glass + data-glass-tier 属性（由 WebGL 层接管渲染）
-    const validTier = isValidGlassTier(glassTier) ? glassTier : undefined;
-    const glassAttributes = buildGlassDataAttributes(dataGlass, validTier);
+    // 构建 data-glass 属性（WebGL LiquidGlassHost 扫描 [data-glass="true"] 元素）
+    const glassAttributes = buildGlassDataAttributes(dataGlass);
 
     // option id 生成器（供 aria-activedescendant 关联）
     const optionId = (index: number) => `${reactId}-option-${index}`;
@@ -341,10 +339,8 @@ export const Select = React.forwardRef<HTMLDivElement, SelectProps>(
       className,
     );
 
-    // 注入 glass 样式类（仅当调用方提供 glassTier 时注入 CSS 降级样式）
-    const composedTriggerClassName = validTier
-      ? injectGlassClassName(triggerBaseClassName, validTier)
-      : triggerBaseClassName;
+    // 注入 glass-panel 类（CSS 兜底 + WebGL 主体切换由 .webgl-active class 控制）
+    const composedTriggerClassName = cn(triggerBaseClassName, glassPanelClass);
 
     // 下拉面板 className
     const dropdownClassName = cn(
@@ -366,7 +362,6 @@ export const Select = React.forwardRef<HTMLDivElement, SelectProps>(
           className={composedTriggerClassName}
           // data-glass 属性（由 WebGL 层 GlassRenderer 扫描接管渲染）
           data-glass={glassAttributes['data-glass'] ?? undefined}
-          data-glass-tier={glassAttributes['data-glass-tier'] ?? undefined}
           // Framer Motion variants（替换 shadcn 默认 Tailwind transition）
           variants={resolvedVariants}
           whileHover={disabled ? undefined : 'hover'}

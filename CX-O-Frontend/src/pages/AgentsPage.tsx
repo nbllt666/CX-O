@@ -319,7 +319,7 @@ export function AgentsPage() {
                     </svg>
                   </div>
                   <div>
-                    <h3 className="font-semibold text-[var(--color-text-primary)]">{agent.name}</h3>
+                    <h3 className="font-semibold text-[var(--color-text-[var(--color-accent)])]">{agent.name}</h3>
                     {agent.is_default && (
                       <Badge variant="anime" size="sm">
                         默认
@@ -487,7 +487,7 @@ export function AgentsPage() {
             >
               <div className="flex items-center gap-3 mb-2">
                 <span className="text-2xl">{template.icon}</span>
-                <h3 className="font-medium text-[var(--color-text-primary)]">{template.name}</h3>
+                <h3 className="font-medium text-[var(--color-text-[var(--color-accent)])]">{template.name}</h3>
               </div>
               <p className="text-sm text-[var(--color-text-secondary)]">{template.description}</p>
             </button>
@@ -515,7 +515,7 @@ export function AgentsPage() {
               <select
                 value={formData.model}
                 onChange={(e) => setFormData({ ...formData, model: e.target.value })}
-                className="w-full px-3 py-2 bg-[var(--color-bg-primary)] border border-[var(--color-border)] rounded-[var(--radius-md)]"
+                className="w-full px-3 py-2 bg-[var(--color-bg-[var(--color-accent)])] border border-[var(--color-border)] rounded-[var(--radius-md)]"
               >
                 <option value="">默认模型</option>
                 {availableModels.length > 0 && (
@@ -591,7 +591,7 @@ export function AgentsPage() {
             <select
               value={formData.memory_scene}
               onChange={(e) => setFormData({ ...formData, memory_scene: e.target.value })}
-              className="w-full px-3 py-2 bg-[var(--color-bg-primary)] border border-[var(--color-border)] rounded-[var(--radius-md)]"
+              className="w-full px-3 py-2 bg-[var(--color-bg-[var(--color-accent)])] border border-[var(--color-border)] rounded-[var(--radius-md)]"
             >
               <option value="chat">闲聊 (Chat)</option>
               <option value="task">任务 (Task)</option>

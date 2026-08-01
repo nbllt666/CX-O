@@ -40,9 +40,8 @@ import React from 'react';
 import { motion, AnimatePresence, type Variants } from 'framer-motion';
 import { cn } from '@/lib/utils';
 import {
-  injectGlassClassName,
+  glassPanelClass,
   buildGlassDataAttributes,
-  isValidGlassTier,
 } from './inject-glass-style';
 import {
   getComponentMotionVariants,
@@ -223,9 +222,8 @@ export const Tabs = React.forwardRef<HTMLDivElement, TabsProps>(
     const reactId = React.useId();
     const indicatorLayoutId = `tabs-indicator-${reactId}`;
 
-    // 构建 data-glass + data-glass-tier 属性（由 WebGL 层接管渲染）
-    const validTier = isValidGlassTier(glassTier) ? glassTier : undefined;
-    const glassAttributes = buildGlassDataAttributes(dataGlass, validTier);
+    // 构建 data-glass 属性（WebGL LiquidGlassHost 扫描 [data-glass="true"] 元素）
+    const glassAttributes = buildGlassDataAttributes(dataGlass);
 
     // 获取 Framer Motion variants（替换 shadcn 默认 Tailwind transition）
     const resolvedVariants: Variants | undefined =
@@ -246,10 +244,8 @@ export const Tabs = React.forwardRef<HTMLDivElement, TabsProps>(
       className,
     );
 
-    // 注入 glass 样式类（仅当调用方提供 glassTier 时注入 CSS 降级样式）
-    const composedClassName = validTier
-      ? injectGlassClassName(tabsBaseClassName, validTier)
-      : tabsBaseClassName;
+    // 注入 glass-panel 类（CSS 兜底 + WebGL 主体切换由 .webgl-active class 控制）
+    const composedClassName = cn(tabsBaseClassName, glassPanelClass);
 
     // 构造 TabsContext 值
     const contextValue: TabsContextValue = {
@@ -266,7 +262,6 @@ export const Tabs = React.forwardRef<HTMLDivElement, TabsProps>(
           className={composedClassName}
           // data-glass 属性（由 WebGL 层 GlassRenderer 扫描接管渲染）
           data-glass={glassAttributes['data-glass'] ?? undefined}
-          data-glass-tier={glassAttributes['data-glass-tier'] ?? undefined}
           {...(resolvedVariants ? { variants: resolvedVariants } : {})}
           {...props}
         >
@@ -305,9 +300,8 @@ export const TabsList = React.forwardRef<HTMLDivElement, TabsListProps>(
   ) {
     const context = React.useContext(TabsContext);
 
-    // 构建 data-glass + data-glass-tier 属性（由 WebGL 层接管渲染）
-    const validTier = isValidGlassTier(glassTier) ? glassTier : undefined;
-    const glassAttributes = buildGlassDataAttributes(dataGlass, validTier);
+    // 构建 data-glass 属性（WebGL LiquidGlassHost 扫描 [data-glass="true"] 元素）
+    const glassAttributes = buildGlassDataAttributes(dataGlass);
 
     // snappy spring transition（用于 indicator 滑动）
     const indicatorSpring = getComponentSpringTransition(
@@ -333,9 +327,7 @@ export const TabsList = React.forwardRef<HTMLDivElement, TabsListProps>(
       className,
     );
 
-    const composedClassName = validTier
-      ? injectGlassClassName(listBaseClassName, validTier)
-      : listBaseClassName;
+    const composedClassName = cn(listBaseClassName, glassPanelClass);
 
     // resolvedVariants 用于 TabsList 容器入场（可选）
     const resolvedVariants: Variants | undefined =
@@ -356,7 +348,6 @@ export const TabsList = React.forwardRef<HTMLDivElement, TabsListProps>(
         aria-labelledby={ariaLabelledBy}
         className={composedClassName}
         data-glass={glassAttributes['data-glass'] ?? undefined}
-        data-glass-tier={glassAttributes['data-glass-tier'] ?? undefined}
         {...(resolvedVariants ? { variants: resolvedVariants } : {})}
         {...props}
       >
@@ -422,9 +413,8 @@ export const TabsTrigger = React.forwardRef<HTMLButtonElement, TabsTriggerProps>
     const context = React.useContext(TabsContext);
     const selected = context.value === value;
 
-    // 构建 data-glass + data-glass-tier 属性（由 WebGL 层接管渲染）
-    const validTier = isValidGlassTier(glassTier) ? glassTier : undefined;
-    const glassAttributes = buildGlassDataAttributes(dataGlass, validTier);
+    // 构建 data-glass 属性（WebGL LiquidGlassHost 扫描 [data-glass="true"] 元素）
+    const glassAttributes = buildGlassDataAttributes(dataGlass);
 
     // snappy spring transition（用于 press 即时反馈）
     const pressSpring = getComponentSpringTransition(
@@ -474,9 +464,7 @@ export const TabsTrigger = React.forwardRef<HTMLButtonElement, TabsTriggerProps>
       className,
     );
 
-    const composedClassName = validTier
-      ? injectGlassClassName(triggerBaseClassName, validTier)
-      : triggerBaseClassName;
+    const composedClassName = cn(triggerBaseClassName, glassPanelClass);
 
     return (
       <motion.button
@@ -490,7 +478,6 @@ export const TabsTrigger = React.forwardRef<HTMLButtonElement, TabsTriggerProps>
         disabled={disabled}
         className={composedClassName}
         data-glass={glassAttributes['data-glass'] ?? undefined}
-        data-glass-tier={glassAttributes['data-glass-tier'] ?? undefined}
         variants={triggerVariants}
         initial={false}
         animate="default"
@@ -534,9 +521,8 @@ export const TabsContent = React.forwardRef<HTMLDivElement, TabsContentProps>(
     const context = React.useContext(TabsContext);
     const selected = context.value === value;
 
-    // 构建 data-glass + data-glass-tier 属性（由 WebGL 层接管渲染）
-    const validTier = isValidGlassTier(glassTier) ? glassTier : undefined;
-    const glassAttributes = buildGlassDataAttributes(dataGlass, validTier);
+    // 构建 data-glass 属性（WebGL LiquidGlassHost 扫描 [data-glass="true"] 元素）
+    const glassAttributes = buildGlassDataAttributes(dataGlass);
 
     // snappy spring transition（用于内容切换 fade + slide）
     const contentSpring = getComponentSpringTransition(
@@ -565,9 +551,7 @@ export const TabsContent = React.forwardRef<HTMLDivElement, TabsContentProps>(
       className,
     );
 
-    const composedClassName = validTier
-      ? injectGlassClassName(contentBaseClassName, validTier)
-      : contentBaseClassName;
+    const composedClassName = cn(contentBaseClassName, glassPanelClass);
 
     return (
       <AnimatePresence mode="wait">
@@ -580,7 +564,6 @@ export const TabsContent = React.forwardRef<HTMLDivElement, TabsContentProps>(
             tabIndex={0}
             className={composedClassName}
             data-glass={glassAttributes['data-glass'] ?? undefined}
-            data-glass-tier={glassAttributes['data-glass-tier'] ?? undefined}
             variants={contentVariants}
             initial="initial"
             animate="animate"

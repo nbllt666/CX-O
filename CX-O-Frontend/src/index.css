@@ -2,65 +2,80 @@
 @tailwind components;
 @tailwind utilities;
 
+/* 旧 shadcn :root/.dark 蓝白配色已移除（与 D1 token 体系冲突）。
+ * bg-background/text-foreground/border-border 等 utility 现由
+ * src/styles/tokens/semantic.css §8 shadcn/tailwind 兼容映射区块提供（HSL 分量）。
+ * 主题切换通过 [data-theme='dark'|'light'] 属性，由 ThemeProvider 驱动。 */
 @layer base {
-  :root {
-    /* 浅色模式 - 蓝白配色 */
-    --background: 210 100% 98%;
-    --foreground: 215 40% 15%;
-    --card: 0 0% 100%;
-    --card-foreground: 215 40% 15%;
-    --popover: 0 0% 100%;
-    --popover-foreground: 215 40% 15%;
-    --primary: 217 100% 50%;
-    --primary-foreground: 0 0% 100%;
-    --secondary: 210 100% 96%;
-    --secondary-foreground: 215 40% 15%;
-    --muted: 210 100% 96%;
-    --muted-foreground: 215 30% 45%;
-    --accent: 210 100% 96%;
-    --accent-foreground: 215 40% 15%;
-    --destructive: 0 100% 55%;
-    --destructive-foreground: 0 0% 100%;
-    --border: 210 100% 90%;
-    --input: 210 100% 90%;
-    --ring: 217 100% 50%;
-    --radius: 0.5rem;
-  }
-
-  .dark {
-    /* 深色模式 - 蓝黑配色 */
-    --background: 215 40% 10%;
-    --foreground: 0 0% 100%;
-    --card: 215 35% 14%;
-    --card-foreground: 0 0% 100%;
-    --popover: 215 35% 14%;
-    --popover-foreground: 0 0% 100%;
-    --primary: 217 90% 65%;
-    --primary-foreground: 215 40% 10%;
-    --secondary: 215 35% 20%;
-    --secondary-foreground: 0 0% 100%;
-    --muted: 215 35% 20%;
-    --muted-foreground: 215 30% 75%;
-    --accent: 215 35% 25%;
-    --accent-foreground: 0 0% 100%;
-    --destructive: 0 70% 60%;
-    --destructive-foreground: 0 0% 100%;
-    --border: 215 35% 25%;
-    --input: 215 35% 25%;
-    --ring: 217 90% 65%;
-  }
-}
-
-@layer base {
-  * {
-    @apply border-border;
-  }
+  /* 移除全局 border-border：会与 glass-panel 的半透明白色边框叠加形成白框。
+   * 需要边框的组件自行添加 border 类。 */
   body {
-    @apply bg-background text-foreground;
+    @apply text-foreground;
     font-feature-settings:
       'rlig' 1,
       'calt' 1;
   }
+}
+
+/* Apple 风格液态玻璃背景（v6 明亮版）
+ * 设计理念：模仿 iOS 18/26 壁纸的丰富色彩层次
+ * 核心原则：背景必须足够亮、色彩足够丰富，玻璃效果才能显现
+ * 玻璃效果 = 背景色彩 + 模糊 + 边缘高光 */
+body {
+  background-color: #1a1030;
+  background-image:
+    /* 左上：樱花粉大光晕（最亮，主光源） */
+    radial-gradient(ellipse 100% 80% at 0% 0%, rgba(255, 180, 220, 0.5) 0%, transparent 60%),
+    /* 右上：梦境紫 + 星海青混合光 */
+    radial-gradient(ellipse 80% 70% at 100% 0%, rgba(140, 120, 255, 0.45) 0%, transparent 55%),
+    /* 底部左：青绿光 */
+    radial-gradient(ellipse 70% 60% at 10% 100%, rgba(100, 200, 255, 0.35) 0%, transparent 55%),
+    /* 底部右：粉紫光 */
+    radial-gradient(ellipse 80% 60% at 100% 100%, rgba(200, 140, 255, 0.4) 0%, transparent 55%),
+    /* 中央：明亮的白色光晕，模拟环境光 */
+    radial-gradient(ellipse 60% 50% at 50% 30%, rgba(255, 255, 255, 0.1) 0%, transparent 70%),
+    /* 对角线渐变：增加色彩流动感 */
+    linear-gradient(
+      135deg,
+      rgba(255, 200, 230, 0.15) 0%,
+      transparent 25%,
+      rgba(150, 130, 255, 0.1) 50%,
+      transparent 75%,
+      rgba(100, 200, 255, 0.12) 100%
+    );
+  background-attachment: fixed;
+}
+
+/* #root 必须建立 stacking context，确保内容在 WebGL canvas（z-index: 0）之上 */
+#root {
+  position: relative;
+  z-index: 1;
+  min-height: 100vh;
+}
+
+/* 亮色主题背景 */
+[data-theme='light'] body,
+[data-theme='light'] #root {
+  background-color: #faf5ff;
+  background-image:
+    /* 左上：樱花粉大光晕 */
+    radial-gradient(ellipse 90% 70% at 0% 0%, rgba(255, 180, 220, 0.4) 0%, transparent 60%),
+    /* 右上：梦境紫光晕 */
+    radial-gradient(ellipse 80% 60% at 100% 0%, rgba(140, 120, 255, 0.35) 0%, transparent 55%),
+    /* 底部左：星海青光晕 */
+    radial-gradient(ellipse 70% 55% at 10% 100%, rgba(100, 200, 255, 0.3) 0%, transparent 55%),
+    /* 底部右：粉紫光晕 */
+    radial-gradient(ellipse 80% 50% at 100% 100%, rgba(200, 150, 255, 0.3) 0%, transparent 55%),
+    /* 中央：柔和白光 */
+    radial-gradient(ellipse 60% 40% at 50% 30%, rgba(255, 255, 255, 0.5) 0%, transparent 70%),
+    /* 对角线渐变 */
+    linear-gradient(
+      135deg,
+      rgba(255, 200, 230, 0.15) 0%,
+      transparent 30%,
+      rgba(150, 130, 255, 0.1) 60%,
+      transparent 80%
+    );
 }
 
 /* Reset and base styles */

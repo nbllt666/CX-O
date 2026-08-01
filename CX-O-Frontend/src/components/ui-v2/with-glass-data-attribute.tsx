@@ -32,8 +32,7 @@
  */
 
 import React from 'react';
-import type { GlassTier } from '@/lib/glass/tier-detector';
-import { buildGlassDataAttributes, isValidGlassTier } from './inject-glass-style';
+import { buildGlassDataAttributes, isValidGlassTier, type GlassTier } from './inject-glass-style';
 
 // =============================================================================
 // HOC props 扩展类型（对应 I5 §GlassComponentProps 的 dataGlass + glassTier 字段）

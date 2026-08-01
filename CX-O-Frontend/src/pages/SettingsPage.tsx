@@ -917,10 +917,10 @@ export function SettingsPage() {
               key={section.id}
               onClick={() => setActiveSection(section.id as typeof activeSection)}
               className={cn(
-                'w-full flex items-center gap-3 px-3 py-2.5 rounded-[var(--radius-lg)] text-sm font-medium transition-colors text-left',
+                'w-full flex items-center gap-3 px-3 py-2.5 rounded-[var(--radius-lg)] text-sm font-medium transition-all text-left',
                 activeSection === section.id
-                  ? 'bg-[var(--color-accent-light)] text-[var(--color-accent)]'
-                  : 'text-[var(--color-text-secondary)] hover:bg-[var(--color-bg-hover)] hover:text-[var(--color-text-primary)]'
+                  ? 'bg-[var(--glass-active-bg)] text-[var(--color-text-primary)]'
+                  : 'text-[var(--color-text-secondary)] hover:bg-[var(--glass-hover-bg)] hover:text-[var(--color-text-primary)]'
               )}
             >
               {section.icon}

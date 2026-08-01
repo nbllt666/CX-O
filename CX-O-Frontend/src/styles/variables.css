@@ -1,172 +1,84 @@
+/*
+ * variables.css — 旧变量兼容层（映射到新 D1 token 系统）
+ * ============================================================================
+ * 用途：为仍使用旧变量名的组件提供向后兼容
+ * 映射规则：旧变量 → 新 D1 token（通过 var() 引用）
+ * 注意：本文件仅做兼容映射，不定义任何独立样式
+ * 迁移方向：新组件请直接使用 semantic/component 层 token，逐步淘汰旧变量名
+ *
+ * ⚠️ 严禁自引用（--x: var(--x)）：CSS 循环引用会使变量在 computed-value 时
+ *    失效并清空该变量（连带覆盖 semantic/dark/light 层的正确定义），
+ *    曾导致全站圆角/文字色/强调色/阴影/间距全部归零（"直角满天飞"根因）。
+ * ============================================================================
+ */
+
 :root {
-  /* 蓝白配色 - 浅色模式 */
-  --color-bg-primary: #ffffff;
-  --color-bg-secondary: #ffffff;
-  --color-bg-tertiary: #f0f7ff;
-  --color-bg-hover: #e6f2ff;
-  --color-bg-active: #d0e8ff;
+  /* --- 背景色（旧蓝白 → 新粉紫青二次元体系）----------------------------- */
+  --color-bg-primary: var(--color-background);
+  --color-bg-secondary: var(--color-surface);
+  /* 旧三级背景：原为不透明 muted 灰（实色灰块元凶），改为半透明玻璃色 */
+  --color-bg-tertiary: rgba(255, 255, 255, 0.06);
+  --color-bg-hover: var(--color-primary-hover);
+  --color-bg-active: var(--color-primary-active);
 
-  --color-text-primary: #0a1a3a;
-  --color-text-secondary: #1e3a5f;
-  --color-text-tertiary: #4a6fa5;
-  --color-text-muted: #6b8cae;
+  /* --- 文字色 ---------------------------------------------------------- */
+  /* --color-text-primary / secondary / muted 已由 semantic 层定义，禁止自引用覆盖 */
+  --color-text-tertiary: var(--color-text-muted);
 
-  --color-border: #c5e0ff;
-  --color-border-hover: #a0c8ff;
-  --color-border-focus: #0066ff;
+  /* --- 边框色 ---------------------------------------------------------- */
+  /* --color-border / border-hover / border-focus 已由 semantic 层定义，禁止自引用覆盖 */
 
-  --color-accent: #0066ff;
-  --color-accent-hover: #0052cc;
-  --color-accent-active: #003d99;
-  --color-accent-light: #e6f2ff;
+  /* --- 强调色 ---------------------------------------------------------- */
+  /* --color-accent / accent-hover / accent-active 已由 dark/light 主题层定义，禁止自引用覆盖 */
+  --color-accent-light: var(--color-primary-100);
 
-  --color-success: #00c853;
-  --color-success-light: #e6fff0;
-  --color-warning: #ff9100;
-  --color-warning-light: #fff5e6;
-  --color-error: #ff1744;
-  --color-error-light: #ffe6eb;
-  --color-info: #0066ff;
-  --color-info-light: #e6f2ff;
+  /* --- 功能色 ---------------------------------------------------------- */
+  /* --color-success / warning / error / info 已由 semantic 层定义，禁止自引用覆盖 */
+  --color-success-light: var(--color-success-50);
+  --color-success-bg: var(--color-success-50);
+  --color-success-border: var(--color-success);
+  --color-warning-light: var(--color-warning-50);
+  --color-warning-bg: var(--color-warning-50);
+  --color-warning-border: var(--color-warning);
+  --color-error-light: var(--color-error-50);
+  --color-error-bg: var(--color-error-50);
+  --color-error-border: var(--color-error);
+  --color-info-light: var(--color-info-50);
 
-  --shadow-sm: 0 1px 2px 0 rgb(0 102 255 / 0.08);
-  --shadow-md: 0 4px 6px -1px rgb(0 102 255 / 0.12), 0 2px 4px -2px rgb(0 102 255 / 0.08);
-  --shadow-lg: 0 10px 15px -3px rgb(0 102 255 / 0.15), 0 4px 6px -4px rgb(0 102 255 / 0.1);
+  /* --- 阴影 ------------------------------------------------------------ */
+  /* --shadow-sm / md / lg 已由 semantic + 主题层定义，禁止自引用覆盖 */
 
-  --radius-sm: 6px;
-  --radius-md: 8px;
-  --radius-lg: 12px;
-  --radius-xl: 16px;
-  --radius-full: 9999px;
+  /* --- 圆角 ------------------------------------------------------------ */
+  /* --radius-* 已由 primitive 层定义，禁止自引用覆盖（直角根因） */
 
-  --transition-fast: 150ms ease-out;
-  --transition-normal: 200ms ease-in-out;
-  --transition-slow: 300ms ease-in-out;
+  /* --- 动效时长 -------------------------------------------------------- */
+  --transition-fast: var(--duration-fast);
+  --transition-normal: var(--duration-base);
+  --transition-slow: var(--duration-slow);
 
-  --font-sans:
-    ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto,
-    'Helvetica Neue', Arial, sans-serif;
-  --font-mono:
-    ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, 'Liberation Mono', monospace;
+  /* --- 字体 ------------------------------------------------------------ */
+  --font-sans: var(--font-body-family);
+  --font-mono: var(--font-code-family);
 
-  --text-xs: 0.75rem;
-  --text-sm: 0.875rem;
-  --text-base: 1rem;
-  --text-lg: 1.125rem;
-  --text-xl: 1.25rem;
-  --text-2xl: 1.5rem;
-  --text-3xl: 1.875rem;
+  /* --- 字号 ------------------------------------------------------------ */
+  --text-xs: var(--font-size-xs);
+  --text-sm: var(--font-size-sm);
+  --text-base: var(--font-size-base);
+  --text-lg: var(--font-size-lg);
+  --text-xl: var(--font-size-xl);
+  --text-2xl: var(--font-size-2xl);
+  --text-3xl: var(--font-size-2xl); /* 旧3xl 无对应，用2xl兜底 */
 
-  --spacing-1: 0.25rem;
-  --spacing-2: 0.5rem;
-  --spacing-3: 0.75rem;
-  --spacing-4: 1rem;
-  --spacing-5: 1.25rem;
-  --spacing-6: 1.5rem;
-  --spacing-8: 2rem;
-  --spacing-10: 2.5rem;
-  --spacing-12: 3rem;
+  /* --- 间距 ------------------------------------------------------------ */
+  /* --spacing-* 已由 primitive 层定义，禁止自引用覆盖 */
 
+  /* --- 布局常量 -------------------------------------------------------- */
   --sidebar-width: 260px;
   --sidebar-collapsed-width: 64px;
   --header-height: 56px;
 }
 
-[data-theme='dark'] {
-  /* 蓝黑配色 - 深色模式 */
-  --color-bg-primary: #0d1b2a;
-  --color-bg-secondary: #1b263b;
-  --color-bg-tertiary: #2d3f59;
-  --color-bg-hover: #415a77;
-  --color-bg-active: #4d6a8a;
-
-  --color-text-primary: #ffffff;
-  --color-text-secondary: #e0e6ed;
-  --color-text-tertiary: #b8c5d6;
-  --color-text-muted: #778da9;
-
-  --color-border: #1e3a5f;
-  --color-border-hover: #2d5a8f;
-  --color-border-focus: #60a5fa;
-
-  --color-accent: #60a5fa;
-  --color-accent-hover: #93c5fd;
-  --color-accent-active: #bfdbfe;
-  --color-accent-light: #1e3a5f;
-
-  --color-success: #4ade80;
-  --color-success-light: #14532d;
-  --color-warning: #fbbf24;
-  --color-warning-light: #713f12;
-  --color-error: #f87171;
-  --color-error-light: #7f1d1d;
-  --color-info: #60a5fa;
-  --color-info-light: #1e3a5f;
-
-  --shadow-sm: 0 1px 2px 0 rgb(0 0 0 / 0.4);
-  --shadow-md: 0 4px 6px -1px rgb(0 0 0 / 0.5), 0 2px 4px -2px rgb(0 0 0 / 0.4);
-  --shadow-lg: 0 10px 15px -3px rgb(0 0 0 / 0.5), 0 4px 6px -4px rgb(0 0 0 / 0.4);
-}
-
-* {
-  margin: 0;
-  padding: 0;
-  box-sizing: border-box;
-}
-
-html {
-  font-family: var(--font-sans);
-  font-size: 16px;
-  line-height: 1.5;
-  -webkit-font-smoothing: antialiased;
-  -moz-osx-font-smoothing: grayscale;
-}
-
-body {
-  background-color: var(--color-bg-secondary);
-  color: var(--color-text-primary);
-  transition:
-    background-color var(--transition-normal),
-    color var(--transition-normal);
-}
-
-button {
-  font-family: inherit;
-  cursor: pointer;
-  border: none;
-  background: none;
-}
-
-input,
-textarea,
-select {
-  font-family: inherit;
-  font-size: inherit;
-}
-
-a {
-  color: var(--color-accent);
-  text-decoration: none;
-}
-
-a:hover {
-  color: var(--color-accent-hover);
-}
-
-::-webkit-scrollbar {
-  width: 8px;
-  height: 8px;
-}
-
-::-webkit-scrollbar-track {
-  background: var(--color-bg-secondary);
-}
-
-::-webkit-scrollbar-thumb {
-  background: var(--color-border);
-  border-radius: var(--radius-full);
-}
-
-::-webkit-scrollbar-thumb:hover {
-  background: var(--color-border-hover);
+/* 亮色主题：三级背景改用半透明黑（白底上可见的极淡灰） */
+[data-theme='light'] {
+  --color-bg-tertiary: rgba(0, 0, 0, 0.04);
 }

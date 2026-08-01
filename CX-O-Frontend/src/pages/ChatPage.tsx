@@ -1060,12 +1060,13 @@ export function ChatPage() {
           />
 
           {/* 聊天区域 */}
-          <div className={`relative flex flex-col flex-1 min-h-0 transition-all duration-300 ${layout.chatCollapsed ? 'w-16' : ''}`}>
+          <div className={`relative flex flex-col flex-1 min-h-0 transition-all duration-300 p-4 ${layout.chatCollapsed ? 'w-16' : ''}`}>
             {/* 折叠/展开按钮 */}
             <button
               onClick={toggleChatCollapsed}
-              className="absolute top-2 right-2 z-10 p-1.5 rounded bg-[var(--color-bg-secondary)] hover:bg-[var(--color-bg-hover)] transition-colors"
+              className="absolute top-6 right-6 z-10 p-1.5 rounded glass-panel transition-all hover:scale-105"
               title={layout.chatCollapsed ? '展开聊天' : '折叠聊天'}
+              style={{ backdropFilter: 'var(--glass-backdrop-filter)' }}
             >
               <svg
                 className={`w-4 h-4 transition-transform ${layout.chatCollapsed ? 'rotate-180' : ''}`}
@@ -1084,16 +1085,20 @@ export function ChatPage() {
                 </span>
               </div>
             ) : (
-              <div className="max-w-4xl mx-auto h-full w-full overflow-hidden flex flex-col">
-                <MessageList
-                  messages={messages}
-                  isLoading={isLoading}
-                  currentAgent={currentAgent}
-                  chatContainerRef={chatContainerRef}
-                  messagesEndRef={messagesEndRef}
-                />
+              <div className="max-w-4xl mx-auto h-full w-full overflow-hidden flex flex-col gap-4">
+                {/* 消息列表区域 - 玻璃面板 */}
+                <div className="flex-1 min-h-0 glass-panel overflow-hidden">
+                  <MessageList
+                    messages={messages}
+                    isLoading={isLoading}
+                    currentAgent={currentAgent}
+                    chatContainerRef={chatContainerRef}
+                    messagesEndRef={messagesEndRef}
+                  />
+                </div>
 
-                <div className="flex-shrink-0">
+                {/* 输入框区域 - 玻璃面板 */}
+                <div className="flex-shrink-0 glass-panel p-4">
                   <ChatInput
                     selectedImages={selectedImages}
                     onRemoveImage={removeImage}

@@ -27,6 +27,9 @@
 /* 3. glass 专用层 — Liquid Glass 材质 token + WebGL uniform 默认值 */
 @import './glass.css';
 
+/* 3.1 glass 类定义层 — .glass-panel / .glass-panel-interactive（被组件 className 消费） */
+@import '../glass-classes.css';
+
 /* 4. component 层 — 组件级 token，引用 semantic（禁止直接消费 primitive） */
 @import './component.css';
 

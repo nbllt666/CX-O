@@ -48,17 +48,17 @@ function MarkdownContent({ content }: { content: string }) {
           const match = /language-(\w+)/.exec(className || '');
           return !inline && match ? (
             <div className="relative group">
-              <div className="absolute right-2 top-2 text-xs text-muted-foreground opacity-0 group-hover:opacity-100 transition-opacity">
+              <div className="absolute right-2 top-2 text-xs text-[var(--color-text-muted)] opacity-0 group-hover:opacity-100 transition-opacity">
                 {match[1]}
               </div>
-              <pre className="bg-muted/80 rounded-lg p-4 overflow-x-auto">
+              <pre className="bg-[var(--glass-surface)] rounded-lg p-4 overflow-x-auto">
                 <code className={className} {...props}>
                   {children}
                 </code>
               </pre>
             </div>
           ) : (
-            <code className="bg-muted/50 px-1.5 py-0.5 rounded text-sm" {...props}>
+            <code className="bg-[var(--glass-hover-bg)] px-1.5 py-0.5 rounded text-sm" {...props}>
               {children}
             </code>
           );
@@ -95,16 +95,16 @@ function ThinkingProcess({ thinking, toolCalls }: { thinking?: string; toolCalls
   const title = hasThinking ? '思考过程' : '工具调用';
 
   return (
-    <div className="mt-2 border border-border/50 rounded-lg overflow-hidden">
+    <div className="mt-2 border border-[var(--glass-border)] rounded-lg overflow-hidden">
       <button
         onClick={() => setIsExpanded(!isExpanded)}
-        className="w-full flex items-center justify-between px-3 py-2 bg-muted/30 hover:bg-muted/50 transition-colors text-xs text-muted-foreground"
+        className="w-full flex items-center justify-between px-3 py-2 bg-[var(--glass-surface)] hover:bg-[var(--glass-hover-bg)] transition-colors text-xs text-[var(--color-text-muted)]"
       >
         <span className="flex items-center gap-2">
           <Brain className="w-3 h-3" />
           {title}
           {hasToolCalls && (
-            <span className="px-1.5 py-0.5 bg-primary/10 text-primary rounded-full text-[10px]">
+            <span className="px-1.5 py-0.5 bg-[var(--color-accent)]/10 text-[var(--color-accent)] rounded-full text-[10px]">
               {toolCalls!.length} 个工具调用
             </span>
           )}
@@ -113,25 +113,25 @@ function ThinkingProcess({ thinking, toolCalls }: { thinking?: string; toolCalls
       </button>
 
       {isExpanded && (
-        <div className="px-3 py-2 bg-muted/20 text-xs space-y-2">
+        <div className="px-3 py-2 bg-[var(--glass-surface)] text-xs space-y-2">
           {hasThinking && (
             <div>
               {hasToolCalls && (
-                <div className="text-foreground font-medium mb-1">思考过程</div>
+                <div className="text-[var(--color-text-[var(--color-accent)])] font-medium mb-1">思考过程</div>
               )}
-              <div className="text-muted-foreground whitespace-pre-wrap">{thinking}</div>
+              <div className="text-[var(--color-text-muted)] whitespace-pre-wrap">{thinking}</div>
             </div>
           )}
 
           {hasToolCalls && (
             <div className={hasThinking ? 'space-y-2 mt-2' : 'space-y-2'}>
               {hasThinking && (
-                <div className="text-foreground font-medium mb-1">工具调用</div>
+                <div className="text-[var(--color-text-[var(--color-accent)])] font-medium mb-1">工具调用</div>
               )}
               {toolCalls!.map((toolCall, idx) => (
-                <div key={idx} className="p-2 bg-muted/50 rounded border border-border/50">
+                <div key={idx} className="p-2 bg-[var(--glass-hover-bg)] rounded border border-[var(--glass-border)]">
                   <div className="flex items-center gap-2 mb-1">
-                    <span className="font-medium text-foreground">🔧 {toolCall.name}</span>
+                    <span className="font-medium text-[var(--color-text-[var(--color-accent)])]">🔧 {toolCall.name}</span>
                     {toolCall.status === 'executing' && (
                       <span className="animate-pulse text-blue-500">执行中...</span>
                     )}
@@ -141,12 +141,12 @@ function ThinkingProcess({ thinking, toolCalls }: { thinking?: string; toolCalls
                     {toolCall.status === 'failed' && <span className="text-red-500">✗ 失败</span>}
                   </div>
                   {Boolean(toolCall.arguments) && (
-                    <div className="text-muted-foreground font-mono text-[10px] mb-1">
+                    <div className="text-[var(--color-text-muted)] font-mono text-[10px] mb-1">
                       参数: {formatJson(toolCall.arguments)}
                     </div>
                   )}
                   {toolCall.result !== undefined && (
-                    <div className="text-muted-foreground font-mono text-[10px]">
+                    <div className="text-[var(--color-text-muted)] font-mono text-[10px]">
                       结果: {formatJson(toolCall.result)}
                     </div>
                   )}
@@ -369,19 +369,19 @@ export function MemoryAgentPage() {
   return (
     <div className="flex flex-col h-full">
       {/* Header */}
-      <div className="flex items-center justify-between px-4 py-3 border-b border-border bg-muted/30">
+      <div className="flex items-center justify-between px-4 py-3 border-b border-[var(--glass-border)] bg-[var(--glass-surface)]">
         <div className="flex items-center gap-3">
-          <div className="w-8 h-8 rounded-lg bg-primary/10 flex items-center justify-center">
-            <Database className="w-4 h-4 text-primary" />
+          <div className="w-8 h-8 rounded-lg bg-[var(--color-accent)]/10 flex items-center justify-center">
+            <Database className="w-4 h-4 text-[var(--color-accent)]" />
           </div>
           <div>
             <h2 className="font-semibold">记忆管理助手</h2>
-            <p className="text-xs text-muted-foreground">通过自然语言管理记忆库</p>
+            <p className="text-xs text-[var(--color-text-muted)]">通过自然语言管理记忆库</p>
           </div>
         </div>
         <button
           onClick={clearChat}
-          className="flex items-center gap-2 px-3 py-1.5 text-sm text-muted-foreground hover:text-foreground hover:bg-muted rounded-lg transition-colors"
+          className="flex items-center gap-2 px-3 py-1.5 text-sm text-[var(--color-text-muted)] hover:text-[var(--color-text-[var(--color-accent)])] hover:bg-[var(--glass-surface)] rounded-lg transition-colors"
         >
           <X className="w-4 h-4" />
           清空对话
@@ -392,14 +392,14 @@ export function MemoryAgentPage() {
       <div className="flex-1 overflow-y-auto px-4 py-6 space-y-6">
         {messages.length === 0 ? (
           <div className="flex flex-col items-center justify-center h-full text-center">
-            <div className="w-16 h-16 rounded-2xl bg-primary/10 flex items-center justify-center mb-4">
-              <Database className="w-8 h-8 text-primary" />
+            <div className="w-16 h-16 rounded-2xl bg-[var(--color-accent)]/10 flex items-center justify-center mb-4">
+              <Database className="w-8 h-8 text-[var(--color-accent)]" />
             </div>
             <h3 className="text-xl font-semibold mb-2">记忆管理助手</h3>
-            <p className="text-muted-foreground max-w-md mb-4">
+            <p className="text-[var(--color-text-muted)] max-w-md mb-4">
               通过自然语言与记忆管理模型交流，执行搜索、更新、删除、导出等记忆管理操作。
             </p>
-            <div className="max-w-md p-4 bg-muted rounded-lg text-sm text-muted-foreground">
+            <div className="max-w-md p-4 glass-panel rounded-[var(--radius-lg)] text-sm text-[var(--color-text-muted)]">
               <div className="font-medium mb-2">示例指令：</div>
               <ul className="space-y-1 text-left">
                 <li>• "搜索关于工作的记忆"</li>
@@ -418,7 +418,7 @@ export function MemoryAgentPage() {
             >
               <div
                 className={`w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0 ${
-                  message.role === 'user' ? 'bg-primary text-primary-foreground' : 'bg-muted'
+                  message.role === 'user' ? 'bg-[var(--color-accent)] text-white' : 'bg-[var(--glass-surface)]'
                 }`}
               >
                 {message.role === 'user' ? (
@@ -432,7 +432,7 @@ export function MemoryAgentPage() {
               >
                 <div
                   className={`px-4 py-3 rounded-2xl ${
-                    message.role === 'user' ? 'bg-primary text-primary-foreground' : 'bg-muted'
+                    message.role === 'user' ? 'bg-[var(--color-accent)] text-white' : 'bg-[var(--glass-surface)]'
                   }`}
                 >
                   {message.role === 'user' ? (
@@ -443,10 +443,10 @@ export function MemoryAgentPage() {
                   {message.role === 'assistant' &&
                     isLoading &&
                     message.id === messages[messages.length - 1]?.id && (
-                      <span className="inline-block w-2 h-4 ml-1 bg-primary/60 animate-pulse" />
+                      <span className="inline-block w-2 h-4 ml-1 bg-[var(--color-accent)]/60 animate-pulse" />
                     )}
                 </div>
-                <span className="text-xs text-muted-foreground mt-1 px-1">
+                <span className="text-xs text-[var(--color-text-muted)] mt-1 px-1">
                   {formatRelativeTime(message.timestamp)}
                 </span>
 
@@ -462,26 +462,26 @@ export function MemoryAgentPage() {
       </div>
 
       {/* Input Area */}
-      <div className="border-t border-border p-4">
+      <div className="border-t border-[var(--glass-border)] p-4">
         <div className="flex gap-2">
           <textarea
             value={input}
             onChange={(e) => setInput(e.target.value)}
             onKeyDown={handleKeyDown}
             placeholder="输入记忆管理指令..."
-            className="flex-1 resize-none bg-muted rounded-lg px-4 py-3 focus:outline-none focus:ring-2 focus:ring-primary/50 min-h-[48px] max-h-[200px]"
+            className="flex-1 resize-none glass-panel rounded-[var(--radius-lg)] px-4 py-3 focus:outline-none focus:ring-2 focus:ring-[var(--color-accent)]/50 min-h-[48px] max-h-[200px] text-[var(--color-text-primary)] placeholder:text-[var(--color-text-muted)]"
             rows={1}
             disabled={isLoading}
           />
           <button
             onClick={handleSend}
             disabled={!input.trim() || isLoading}
-            className="px-4 py-2 bg-primary text-primary-foreground rounded-lg hover:bg-primary/90 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+            className="px-4 py-2 bg-[var(--color-accent)] text-white rounded-lg hover:bg-[var(--color-accent)]/90 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
           >
             <Send className="w-5 h-5" />
           </button>
         </div>
-        <p className="text-xs text-muted-foreground mt-2 text-center">
+        <p className="text-xs text-[var(--color-text-muted)] mt-2 text-center">
           按 Enter 发送，Shift + Enter 换行
         </p>
       </div>

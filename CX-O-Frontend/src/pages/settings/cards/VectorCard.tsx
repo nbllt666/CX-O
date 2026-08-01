@@ -28,13 +28,13 @@ export function VectorCard(props: VectorCardProps) {
                 onChange={(e) =>
                   onVectorConfigChange({ ...vectorConfig, backend: e.target.value })
                 }
-                className="w-full px-3 py-2 bg-[var(--color-bg-primary)] border border-[var(--color-border)] rounded-[var(--radius-md)]"
+                className="w-full px-3 py-2 bg-[var(--color-bg-primary)] border border-transparent rounded-[var(--radius-md)]"
               >
                 <option value="weaviate">Weaviate (独立服务)</option>
                 <option value="weaviate_embedded">Weaviate Embedded (内置)</option>
               </select>
               <p className="text-xs text-[var(--color-text-tertiary)] mt-1">
-                仅支持 Weaviate。Chroma、Milvus Lite、Qdrant 已不再支持。
+                仅支持Weaviate。Chroma、Milvus Lite、Qdrant 已不再支持。
               </p>
             </div>
             <div>
@@ -44,7 +44,7 @@ export function VectorCard(props: VectorCardProps) {
                 onChange={(e) =>
                   onVectorConfigChange({ ...vectorConfig, vectorSize: parseInt(e.target.value) })
                 }
-                className="w-full px-3 py-2 bg-[var(--color-bg-primary)] border border-[var(--color-border)] rounded-[var(--radius-md)]"
+                className="w-full px-3 py-2 bg-[var(--color-bg-primary)] border border-transparent rounded-[var(--radius-md)]"
               >
                 <option value={384}>384 (小型模型)</option>
                 <option value={768}>768 (中型模型)</option>
@@ -62,7 +62,7 @@ export function VectorCard(props: VectorCardProps) {
                     onChange={(e) =>
                       onVectorConfigChange({ ...vectorConfig, weaviateHost: e.target.value })
                     }
-                    className="w-full px-3 py-2 bg-[var(--color-bg-primary)] border border-[var(--color-border)] rounded-[var(--radius-md)]"
+                    className="w-full px-3 py-2 bg-[var(--color-bg-primary)] border border-transparent rounded-[var(--radius-md)]"
                     placeholder="localhost"
                   />
                 </div>
@@ -77,7 +77,7 @@ export function VectorCard(props: VectorCardProps) {
                         weaviatePort: parseInt(e.target.value),
                       })
                     }
-                    className="w-full px-3 py-2 bg-[var(--color-bg-primary)] border border-[var(--color-border)] rounded-[var(--radius-md)]"
+                    className="w-full px-3 py-2 bg-[var(--color-bg-primary)] border border-transparent rounded-[var(--radius-md)]"
                     placeholder="8090"
                   />
                 </div>
@@ -108,20 +108,20 @@ export function VectorCard(props: VectorCardProps) {
           </p>
           <div className="space-y-4">
             <div>
-              <label className="text-sm font-medium mb-2 block">嵌入提供方</label>
+              <label className="text-sm font-medium mb-2 block">嵌入提供商</label>
               <select
                 value={vectorConfig.embeddingProvider}
                 onChange={(e) =>
                   onVectorConfigChange({ ...vectorConfig, embeddingProvider: e.target.value })
                 }
-                className="w-full px-3 py-2 bg-[var(--color-bg-primary)] border border-[var(--color-border)] rounded-[var(--radius-md)]"
+                className="w-full px-3 py-2 bg-[var(--color-bg-primary)] border border-transparent rounded-[var(--radius-md)]"
               >
                 <option value="ollama">Ollama</option>
                 <option value="sentence-transformers">Sentence Transformers</option>
                 <option value="vllm">vLLM (OpenAI 兼容)</option>
               </select>
               <p className="text-xs text-[var(--color-text-tertiary)] mt-1">
-                vLLM 通过 /v1/embeddings 接口提供嵌入；Ollama 与 Sentence Transformers 走默认 LLM 客户端。
+                vLLM 通过 /v1/embeddings 接口提供嵌入；Ollama 和 Sentence Transformers 走默认LLM 客户端。
               </p>
             </div>
             <div>
@@ -132,7 +132,7 @@ export function VectorCard(props: VectorCardProps) {
                 onChange={(e) =>
                   onVectorConfigChange({ ...vectorConfig, embeddingModel: e.target.value })
                 }
-                className="w-full px-3 py-2 bg-[var(--color-bg-primary)] border border-[var(--color-border)] rounded-[var(--radius-md)]"
+                className="w-full px-3 py-2 bg-[var(--color-bg-primary)] border border-transparent rounded-[var(--radius-md)]"
                 placeholder="nomic-embed-text / bge-m3 / ..."
               />
             </div>
@@ -149,11 +149,11 @@ export function VectorCard(props: VectorCardProps) {
                         vectorSize: parseInt(e.target.value) || 768,
                       })
                     }
-                    className="w-full px-3 py-2 bg-[var(--color-bg-primary)] border border-[var(--color-border)] rounded-[var(--radius-md)]"
+                    className="w-full px-3 py-2 bg-[var(--color-bg-primary)] border border-transparent rounded-[var(--radius-md)]"
                     placeholder="1024"
                   />
                   <p className="text-xs text-[var(--color-text-tertiary)] mt-1">
-                    与上方「向量维度」共用，需与 vLLM 嵌入模型实际输出维度一致。
+                    与上方「向量维度」共用，需与vLLM 嵌入模型实际输出维度一致。
                   </p>
                 </div>
                 <div>
@@ -164,19 +164,19 @@ export function VectorCard(props: VectorCardProps) {
                     onChange={(e) =>
                       onVectorConfigChange({ ...vectorConfig, embeddingApiBase: e.target.value })
                     }
-                    className="w-full px-3 py-2 bg-[var(--color-bg-primary)] border border-[var(--color-border)] rounded-[var(--radius-md)]"
+                    className="w-full px-3 py-2 bg-[var(--color-bg-primary)] border border-transparent rounded-[var(--radius-md)]"
                     placeholder="http://localhost:8000"
                   />
                 </div>
                 <div>
-                  <label className="text-sm font-medium mb-2 block">vLLM API Key (可选)</label>
+                  <label className="text-sm font-medium mb-2 block">vLLM API Key (可选</label>
                   <input
                     type="password"
                     value={vectorConfig.embeddingApiKey}
                     onChange={(e) =>
                       onVectorConfigChange({ ...vectorConfig, embeddingApiKey: e.target.value })
                     }
-                    className="w-full px-3 py-2 bg-[var(--color-bg-primary)] border border-[var(--color-border)] rounded-[var(--radius-md)]"
+                    className="w-full px-3 py-2 bg-[var(--color-bg-primary)] border border-transparent rounded-[var(--radius-md)]"
                     placeholder="sk-..."
                   />
                 </div>

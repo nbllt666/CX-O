@@ -389,7 +389,7 @@ export function GraphManager() {
     if (activeTab === 'visualization') {
       loadVizData();
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+     
   }, [selectedAgentId, activeTab, offset]);
 
   useEffect(() => {

@@ -28,8 +28,8 @@ export const Dropdown: React.FC<DropdownProps> = ({ trigger, children, align = '
         <div
           className={cn(
             'absolute top-full mt-1 min-w-[160px]',
-            'bg-[var(--color-bg-primary)] rounded-[var(--radius-lg)]',
-            'border border-[var(--color-border)] shadow-[var(--shadow-lg)]',
+            'bg-white/[0.08] backdrop-blur-xl rounded-[var(--radius-xl)]',
+            'border border-transparent shadow-[var(--shadow-lg)]',
             'py-1 z-50 animate-scale-in',
             align === 'right' ? 'right-0' : 'left-0'
           )}
@@ -47,7 +47,7 @@ export const DropdownItem: React.FC<
   <button
     className={cn(
       'w-full px-4 py-2 text-sm text-left flex items-center gap-2',
-      'hover:bg-[var(--color-bg-hover)] transition-colors',
+      'hover:bg-white/10 transition-colors',
       danger && 'text-[var(--color-error)]',
       className
     )}
@@ -59,5 +59,5 @@ export const DropdownItem: React.FC<
 );
 
 export const DropdownDivider: React.FC = () => (
-  <div className="my-1 border-t border-[var(--color-border)]" />
+  <div className="my-1 border-t border-transparent" />
 );

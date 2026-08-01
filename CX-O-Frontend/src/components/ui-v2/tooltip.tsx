@@ -38,9 +38,8 @@ import { createPortal } from 'react-dom';
 import { motion, AnimatePresence, type Variants } from 'framer-motion';
 import { cn } from '@/lib/utils';
 import {
-  injectGlassClassName,
+  glassPanelClass,
   buildGlassDataAttributes,
-  isValidGlassTier,
 } from './inject-glass-style';
 import {
   getComponentMotionVariants,
@@ -103,15 +102,15 @@ export const Tooltip: React.FC<TooltipProps> = function Tooltip({
   glassVariant,
   motionVariants,
 }) {
+  void glassTier; // v2: glassTier 已废弃，保留解构以避免 spread 到 DOM
   const [isVisible, setIsVisible] = useState(false);
   const [coords, setCoords] = useState({ top: 0, left: 0 });
   const triggerRef = useRef<HTMLDivElement>(null);
   const tooltipRef = useRef<HTMLDivElement>(null);
   const timeoutRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
 
-  // 构建 data-glass + data-glass-tier 属性（由 WebGL 层接管渲染）
-  const validTier = isValidGlassTier(glassTier) ? glassTier : undefined;
-  const glassAttributes = buildGlassDataAttributes(dataGlass, validTier);
+  // 构建 data-glass 属性（WebGL LiquidGlassHost 扫描 [data-glass="true"] 元素）
+  const glassAttributes = buildGlassDataAttributes(dataGlass);
 
   // 获取 Framer Motion variants（替换 shadcn 默认 Tailwind transition）
   // 若调用方提供 motionVariants 则直接使用，否则调用 getComponentMotionVariants 生成默认 variants
@@ -195,10 +194,8 @@ export const Tooltip: React.FC<TooltipProps> = function Tooltip({
     className,
   );
 
-  // 注入 glass 样式类（仅当调用方提供 glassTier 时注入 CSS 降级样式）
-  const composedTooltipClassName = validTier
-    ? injectGlassClassName(tooltipBaseClassName, validTier)
-    : tooltipBaseClassName;
+  // 注入 glass-panel 类（CSS 兜底 + WebGL 主体切换由 .webgl-active class 控制）
+  const composedTooltipClassName = cn(tooltipBaseClassName, glassPanelClass);
 
   // SSR 安全：如果 document 不存在则不渲染 portal
   if (typeof document === 'undefined') {
@@ -235,7 +232,6 @@ export const Tooltip: React.FC<TooltipProps> = function Tooltip({
               style={{ top: coords.top, left: coords.left }}
               // data-glass 属性（由 WebGL 层 GlassRenderer 扫描接管渲染）
               data-glass={glassAttributes['data-glass'] ?? undefined}
-              data-glass-tier={glassAttributes['data-glass-tier'] ?? undefined}
               // Framer Motion variants（替换 shadcn 默认 Tailwind transition）
               variants={resolvedVariants}
               initial="initial"

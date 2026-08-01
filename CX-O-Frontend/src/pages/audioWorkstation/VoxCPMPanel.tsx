@@ -71,10 +71,10 @@ export function VoxCPMPanel() {
                 key={opt.value}
                 onClick={() => setVoxcpmMode(opt.value)}
                 className={cn(
-                  'px-4 py-2 rounded-lg text-sm font-medium transition-colors border',
+                  'px-4 py-2 rounded-[var(--radius-lg)] text-sm font-medium transition-all border',
                   voxcpmMode === opt.value
-                    ? 'bg-[var(--color-accent)] text-white border-[var(--color-accent)]'
-                    : 'bg-[var(--color-bg-primary)] text-[var(--color-text-secondary)] border-[var(--color-border)] hover:border-[var(--color-accent)]'
+                    ? 'bg-[var(--color-accent)] text-white border-[var(--color-accent)] shadow-lg shadow-[var(--color-accent)]/25'
+                    : 'bg-[var(--glass-surface)] text-[var(--color-text-secondary)] border-[var(--glass-border)] hover:bg-[var(--glass-border)] hover:text-[var(--color-text-primary)]'
                 )}
               >
                 {t(`audioWorkstation.${opt.labelKey}`)}
@@ -163,7 +163,7 @@ export function VoxCPMPanel() {
 
         {voxcpmResult && (
           <div className="space-y-3">
-            <div className="p-3 rounded-lg bg-[var(--color-bg-tertiary)]">
+            <div className="p-3 rounded-[var(--radius-lg)] bg-[var(--glass-surface)] border border-[var(--glass-border)]">
               <span className="text-sm text-[var(--color-text-secondary)]">{t('audioWorkstation.outputFileName')}:</span>
               <span className="ml-2 text-sm font-mono text-[var(--color-text-primary)]">{voxcpmResult.output_filename}</span>
             </div>

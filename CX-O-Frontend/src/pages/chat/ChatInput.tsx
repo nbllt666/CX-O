@@ -70,7 +70,7 @@ export function ChatInput({
   isConnected,
 }: ChatInputProps) {
   return (
-    <div className="border-t border-[var(--color-border)] pt-4">
+    <div className="pt-0">
       {/* 图片预览 */}
       {selectedImages.length > 0 && (
         <div className="flex gap-2 mb-2 flex-wrap">

@@ -48,8 +48,40 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
-// 模块4 契约接口（AGENTS.md §4.3 允许：仅限 tier 切换接口）
-import { GlassTier, useGlassTier } from '@/lib/glass';
+// ============================================================================
+// 本地 GlassTier 定义（原 @/lib/glass 旧 tier 系统已于波5删除）
+// 新架构（LiquidGlassHost）自身处理 WebGL 降级与移动端适配，
+// 此处保留 GlassTier/useGlassTier 仅用于 useMobileDegrade hook 的 API 兼容。
+// ============================================================================
+
+/**
+ * Liquid Glass 四级 tier 枚举（本地兼容定义）。
+ * 新架构不再使用 tier 降级，保留以维持 useMobileDegrade 返回值类型完整性。
+ */
+const GlassTier = {
+  TIER_1: 1,
+  TIER_2: 2,
+  TIER_3: 3,
+  TIER_4: 4,
+} as const;
+
+/** Tier 类型（1 | 2 | 3 | 4） */
+type GlassTier = (typeof GlassTier)[keyof typeof GlassTier];
+
+/**
+ * useGlassTier 本地兼容 stub（原 use-glass-tier.ts 已于波5删除）。
+ * 新架构由 LiquidGlassHost 自身处理降级，此 stub 仅提供 tier 状态读写，
+ * setTier 仅更新本地 state，不触发任何全局副作用。
+ */
+function useGlassTier(): {
+  tier: GlassTier;
+  setTier: (tier: GlassTier) => void;
+  degradeReason: string | null;
+  isDegrading: boolean;
+} {
+  const [tier, setTier] = useState<GlassTier>(GlassTier.TIER_1);
+  return { tier, setTier, degradeReason: null, isDegrading: false };
+}
 
 // 模块9a 产出（同模块内部）
 import { useBreakpoint } from './use-breakpoint';

@@ -38,9 +38,8 @@ import React from 'react';
 import { motion, type Variants } from 'framer-motion';
 import { cn } from '@/lib/utils';
 import {
-  injectGlassClassName,
+  glassPanelClass,
   buildGlassDataAttributes,
-  isValidGlassTier,
 } from './inject-glass-style';
 import {
   getComponentSpringTransition,
@@ -174,9 +173,8 @@ export const RadioGroup = React.forwardRef<HTMLDivElement, RadioGroupProps>(
     },
     ref,
   ) {
-    // 构建 data-glass + data-glass-tier 属性（由 WebGL 层接管渲染）
-    const validTier = isValidGlassTier(glassTier) ? glassTier : undefined;
-    const glassAttributes = buildGlassDataAttributes(dataGlass, validTier);
+    // 构建 data-glass 属性（WebGL LiquidGlassHost 扫描 [data-glass="true"] 元素）
+    const glassAttributes = buildGlassDataAttributes(dataGlass);
 
     // 获取 Framer Motion variants（替换 shadcn 默认 Tailwind transition）
     // RadioGroup 使用 snappy spring 作为默认入场/出场动画
@@ -198,10 +196,8 @@ export const RadioGroup = React.forwardRef<HTMLDivElement, RadioGroupProps>(
       className,
     );
 
-    // 注入 glass 样式类（仅当调用方提供 glassTier 时注入 CSS 降级样式）
-    const composedClassName = validTier
-      ? injectGlassClassName(groupBaseClassName, validTier)
-      : groupBaseClassName;
+    // 注入 glass-panel 类（CSS 兜底 + WebGL 主体切换由 .webgl-active class 控制）
+    const composedClassName = cn(groupBaseClassName, glassPanelClass);
 
     // 构造 RadioContext 值（向 RadioGroupItem 共享选中状态 + 变更回调 + name + disabled）
     const contextValue: RadioContextValue = {
@@ -219,7 +215,6 @@ export const RadioGroup = React.forwardRef<HTMLDivElement, RadioGroupProps>(
           className={composedClassName}
           // data-glass 属性（由 WebGL 层 GlassRenderer 扫描接管渲染）
           data-glass={glassAttributes['data-glass'] ?? undefined}
-          data-glass-tier={glassAttributes['data-glass-tier'] ?? undefined}
           aria-label={ariaLabel}
           aria-labelledby={ariaLabelledBy}
           // Framer Motion variants（替换 shadcn 默认 Tailwind transition）
@@ -273,9 +268,8 @@ export const RadioGroupItem = React.forwardRef<HTMLInputElement, RadioGroupItemP
     const selected = context.value === value;
     const disabled = itemDisabled || context.disabled;
 
-    // 构建 data-glass + data-glass-tier 属性（由 WebGL 层接管渲染）
-    const validTier = isValidGlassTier(glassTier) ? glassTier : undefined;
-    const glassAttributes = buildGlassDataAttributes(dataGlass, validTier);
+    // 构建 data-glass 属性（WebGL LiquidGlassHost 扫描 [data-glass="true"] 元素）
+    const glassAttributes = buildGlassDataAttributes(dataGlass);
 
     // 获取选中圆点动画的 snappy spring transition
     // RadioGroup 默认 spring 为 snappy（getDefaultComponentSpring('RadioGroup') => 'snappy'）
@@ -309,10 +303,8 @@ export const RadioGroupItem = React.forwardRef<HTMLInputElement, RadioGroupItemP
       className,
     );
 
-    // 注入 glass 样式类（仅当调用方提供 glassTier 时注入 CSS 降级样式）
-    const composedCircleClassName = validTier
-      ? injectGlassClassName(circleClassName, validTier)
-      : circleClassName;
+    // 注入 glass-panel 类（CSS 兜底 + WebGL 主体切换由 .webgl-active class 控制）
+    const composedCircleClassName = cn(circleClassName, glassPanelClass);
 
     return (
       <label
@@ -325,7 +317,6 @@ export const RadioGroupItem = React.forwardRef<HTMLInputElement, RadioGroupItemP
           className={composedCircleClassName}
           // data-glass 属性（由 WebGL 层 GlassRenderer 扫描接管渲染）
           data-glass={glassAttributes['data-glass'] ?? undefined}
-          data-glass-tier={glassAttributes['data-glass-tier'] ?? undefined}
         >
           {/* 隐藏原生 radio input（保留无障碍属性 + 表单提交能力） */}
           <input

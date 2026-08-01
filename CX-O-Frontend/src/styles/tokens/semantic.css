@@ -178,4 +178,64 @@
    * ========================================================================== */
   --gradient-primary: var(--gradient-sakura);      /* 主渐变 粉紫青 */
   --gradient-glass: var(--gradient-glass-inner);   /* 玻璃内层渐变 */
+
+  /* ==========================================================================
+   * 8. shadcn/tailwind 兼容映射（HSL 分量，供 tailwind.config.js hsl(var(--*)) 消费）
+   * ============================================================================
+   * 背景：tailwind.config.js 沿用 shadcn 命名约定（无 --color- 前缀，hsl(var(--*)) 包裹），
+   *   而 D1 契约 token 用 --color-* 前缀 + hex 值。命名与格式均不兼容。
+   *   移除 src/index.css 旧 :root/.dark 后，bg-background/text-foreground/border-border 等
+   *   utility 依赖的 CSS 变量须由此处提供。
+   * 约束妥协：本区块硬编码 HSL 分量（hex 的 HSL 等价），违反 semantic 层"禁止硬编码"约束。
+   *   这是 tailwind 兼容层的必要妥协，集中在独立区块，便于未来 s0601 契约变更时统一清理
+   *   （方向：tailwind.config.js 改用 var(--color-*) 直引，移除 hsl() 包裹，删除本区块）。
+   * 值来源：dark-theme.css / light-theme.css 覆盖后的 semantic token 对应 hex 的 HSL 等价。
+   * 主题切换：:root 为暗色默认（与 dark-theme.css 一致），[data-theme='light'] 覆盖亮色值。
+   * 加载顺序：semantic.css 先于 dark-theme.css/light-theme.css 加载，本区块不与主题层冲突
+   *   （主题层未定义 shadcn 别名，层叠后本区块值保留）。
+   * ============================================================================
+   */
+  --background: 261 49% 21%;         /* 暗色背景 #2D1B4E 夜空深紫 */
+  --foreground: 240 33% 97%;         /* 暗色前景 #F5F5FA 月光白 */
+  --card: 262 38% 27%;               /* 卡片背景 #3D2A5E 深紫调浅 */
+  --card-foreground: 240 33% 97%;    /* 卡片文字 月光白 */
+  --popover: 262 38% 27%;            /* 弹出层背景 #3D2A5E */
+  --popover-foreground: 240 33% 97%; /* 弹出层文字 月光白 */
+  --primary: 325 100% 86%;           /* 主色 #FFB7E1 樱花粉 */
+  --primary-foreground: 261 49% 21%; /* 主色文字 深紫（粉色背景配深色文字保证对比度） */
+  --secondary: 255 100% 74%;         /* 次色 #9D7CFF 梦境紫 */
+  --secondary-foreground: 240 33% 97%; /* 次色文字 月光白 */
+  --muted: 240 4% 46%;               /* 弱化色 #71717A 中深灰 */
+  --muted-foreground: 240 5% 65%;    /* 弱化文字 #A1A1AA 中浅灰 */
+  --accent: 255 100% 74%;            /* 强调色 #9D7CFF 梦境紫 */
+  --accent-foreground: 240 33% 97%;  /* 强调文字 月光白 */
+  --destructive: 0 84% 60%;          /* 危险色 #EF4444 */
+  --destructive-foreground: 240 33% 97%; /* 危险文字 月光白 */
+  --border: 240 5% 34%;              /* 边框 #52525B 中深灰 */
+  --input: 240 5% 34%;               /* 输入框边框 #52525B */
+  --ring: 325 100% 86%;              /* 聚焦环 #FFB7E1 樱花粉 */
+  --radius: 0.5rem;                  /* 基础圆角（与主题无关，仅定义一次） */
+}
+
+/* --- 8.1 亮色主题 shadcn 兼容覆盖（与 light-theme.css 同步）-------------- */
+[data-theme='light'] {
+  --background: 36 50% 96%;          /* 亮色背景 #FAF6F0 晨曦米白 */
+  --foreground: 240 6% 10%;          /* 亮色前景 #18181B 近黑 */
+  --card: 0 0% 100%;                 /* 卡片背景 #FFFFFF 纯白 */
+  --card-foreground: 240 6% 10%;     /* 卡片文字 近黑 */
+  --popover: 0 0% 100%;              /* 弹出层背景 #FFFFFF */
+  --popover-foreground: 240 6% 10%;  /* 弹出层文字 近黑 */
+  --primary: 325 100% 86%;           /* 主色 #FFB7E1 樱花粉（与暗色一致） */
+  --primary-foreground: 240 6% 10%;  /* 主色文字 近黑 */
+  --secondary: 255 100% 74%;         /* 次色 #9D7CFF（与暗色一致） */
+  --secondary-foreground: 240 6% 10%; /* 次色文字 近黑 */
+  --muted: 240 5% 65%;               /* 弱化色 #A1A1AA 中浅灰 */
+  --muted-foreground: 240 5% 34%;    /* 弱化文字 #52525B 中深灰 */
+  --accent: 255 64% 61%;             /* 强调色 #7B5CDB 深梦境紫（亮色加深保证对比度） */
+  --accent-foreground: 240 6% 10%;   /* 强调文字 近黑 */
+  --destructive: 0 84% 60%;          /* 危险色 #EF4444（与暗色一致） */
+  --destructive-foreground: 240 33% 97%; /* 危险文字 月光白 */
+  --border: 240 6% 90%;              /* 边框 #E4E4E7 淡灰 */
+  --input: 240 6% 90%;               /* 输入框边框 #E4E4E7 */
+  --ring: 325 100% 86%;              /* 聚焦环 #FFB7E1（与暗色一致） */
 }

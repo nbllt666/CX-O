@@ -20,10 +20,7 @@
 
 import { motion, type Variants } from 'framer-motion';
 import { cn } from '@/lib/utils';
-import {
-  buildGlassDataAttributes,
-  getComponentMotionVariants,
-} from '@/components/ui-v2';
+import { getComponentMotionVariants } from '@/components/ui-v2';
 
 interface PageHeaderProps {
   title: string;
@@ -52,8 +49,7 @@ export function PageHeader({
   breadcrumbs,
   className,
 }: PageHeaderProps) {
-  const glassAttributes = buildGlassDataAttributes(true, 3);
-
+  // 不挂 data-glass：标题区被 WebGL 渲染为深色玻璃块，视觉上是扎眼的实色横条
   return (
     <motion.div
       className={cn('mb-6', className)}
@@ -61,7 +57,6 @@ export function PageHeader({
       initial="initial"
       animate="animate"
       exit="exit"
-      {...glassAttributes}
     >
       {breadcrumbs && breadcrumbs.length > 0 && (
         <nav className="mb-2 text-sm text-[var(--color-text-tertiary)]">

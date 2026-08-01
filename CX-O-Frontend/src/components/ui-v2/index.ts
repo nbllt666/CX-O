@@ -32,24 +32,17 @@
 // 基础设施 3 文件导出
 // =============================================================================
 
-// inject-glass-style.ts — Liquid Glass 样式注入工具
+// inject-glass-style.ts — Liquid Glass 样式注入工具（v2 简化版）
 export {
-  // 主函数
-  injectGlassStyle,
+  // v2 新常量（推荐使用）
+  glassPanelClass,
+  glassPanelInteractiveClass,
+  glassPanelLgClass,
   // 运行时辅助函数
-  injectGlassClassName,
   buildGlassDataAttributes,
+  // 兼容性导出（波5 清理后删除）
+  injectGlassClassName,
   isValidGlassTier,
-  // 异常类
-  GlassInjectionError,
-  // 常量
-  COM_ERROR_CODES,
-} from './inject-glass-style';
-
-export type {
-  ComErrorCode,
-  ComErrorCodeDefinition,
-  GlassInjectionConfig,
 } from './inject-glass-style';
 
 // with-glass-data-attribute.tsx — data-glass 属性 HOC

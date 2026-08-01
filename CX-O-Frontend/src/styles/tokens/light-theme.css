@@ -30,9 +30,9 @@
   --color-text-secondary: var(--color-neutral-600);      /* 次要文字 中深灰 #52525B */
   --color-text-muted: var(--color-neutral-400);          /* 弱化文字 中浅灰 #A1A1AA */
 
-  /* --- 1.3 边框色（亮色主题下使用浅灰边框）----------------------------- */
-  --color-border: var(--color-neutral-200);        /* 边框色 淡灰 #E4E4E7 */
-  --color-border-hover: var(--color-neutral-300);  /* 悬停边框 #D4D4D8 */
+  /* --- 1.3 边框色（玻璃风格半透明边框）----------------------------- */
+  --color-border: rgba(0, 0, 0, 0.08);        /* 边框色 黑色半透明（玻璃风格） */
+  --color-border-hover: rgba(0, 0, 0, 0.12);  /* 悬停边框 稍深 */
   --color-border-focus: var(--color-primary-300);  /* 聚焦边框 樱花粉 #FFB7E1 */
 
   /* --- 1.4 弱化色与强调色（亮色主题调整）------------------------------- */

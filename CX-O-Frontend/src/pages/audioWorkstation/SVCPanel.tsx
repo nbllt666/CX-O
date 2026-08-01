@@ -23,7 +23,7 @@ const engineOptions: { value: BatchDatasetEngine; labelKey: string }[] = [
 ];
 
 const selectClassName =
-  'w-full px-4 py-2.5 text-sm rounded-[var(--radius-md)] bg-[var(--color-bg-primary)] text-[var(--color-text-primary)] border border-[var(--color-border)] focus:outline-none focus:ring-2 focus:ring-[var(--color-accent)] focus:border-transparent';
+  'w-full px-4 py-2.5 text-sm rounded-[var(--radius-lg)] bg-[var(--glass-surface)] text-[var(--color-text-primary)] border border-[var(--glass-border)] focus:outline-none focus:ring-2 focus:ring-[var(--color-accent)] focus:border-transparent transition-all';
 
 export function SVCPanel() {
   const { t } = useTranslation();
@@ -267,7 +267,7 @@ export function SVCPanel() {
           </Button>
 
           {batchTask && (
-            <div className="p-3 rounded-lg bg-[var(--color-bg-tertiary)] space-y-2">
+            <div className="p-3 rounded-[var(--radius-lg)] bg-[var(--glass-surface)] border border-[var(--glass-border)] space-y-2">
               <div className="flex items-center gap-2">
                 <Badge variant={trainBadgeVariant(batchTask.status)}>{batchTask.status}</Badge>
                 <Badge variant="secondary">{batchTask.engine}</Badge>
@@ -300,7 +300,7 @@ export function SVCPanel() {
                 {datasets.map((ds) => (
                   <div
                     key={ds.name}
-                    className="flex items-center justify-between px-3 py-2 rounded-lg bg-[var(--color-bg-tertiary)]"
+                    className="flex items-center justify-between px-3 py-2 rounded-[var(--radius-lg)] bg-[var(--glass-surface)] border border-[var(--glass-border)]"
                   >
                     <span className="text-sm font-mono text-[var(--color-text-primary)]">{ds.name}</span>
                     <div className="flex items-center gap-3">
@@ -405,7 +405,7 @@ export function SVCPanel() {
           </div>
 
           {trainStatus && (
-            <div className="p-3 rounded-lg bg-[var(--color-bg-tertiary)] space-y-2">
+            <div className="p-3 rounded-[var(--radius-lg)] bg-[var(--glass-surface)] border border-[var(--glass-border)] space-y-2">
               <div className="flex items-center gap-2">
                 <Badge variant={trainBadgeVariant(trainStatus.status)}>{trainStatus.status}</Badge>
                 {trainStatus.total_epochs > 0 && (
@@ -415,7 +415,7 @@ export function SVCPanel() {
                 )}
                 {trainStatus.status === 'running' && (
                   <div className="flex-1">
-                    <div className="w-full bg-[var(--color-bg-primary)] rounded-full h-2">
+                    <div className="w-full bg-[var(--glass-surface)] border border-[var(--glass-border)] rounded-full h-2">
                       <div
                         className="bg-[var(--color-accent)] h-2 rounded-full transition-all"
                         style={{ width: `${Math.round(trainStatus.progress * 100)}%` }}
@@ -442,7 +442,7 @@ export function SVCPanel() {
             ) : (
               <div className="space-y-1">
                 {trainModels.map((model) => (
-                  <div key={model.path} className="px-3 py-2 rounded-lg bg-[var(--color-bg-tertiary)] text-sm font-mono text-[var(--color-text-primary)]">
+                  <div key={model.path} className="px-3 py-2 rounded-[var(--radius-lg)] bg-[var(--glass-surface)] border border-[var(--glass-border)] text-sm font-mono text-[var(--color-text-primary)]">
                     {model.name}
                   </div>
                 ))}
@@ -518,7 +518,7 @@ export function SVCPanel() {
 
           {inferResult && (
             <div className="space-y-3">
-              <div className="p-3 rounded-lg bg-[var(--color-bg-tertiary)]">
+              <div className="p-3 rounded-[var(--radius-lg)] bg-[var(--glass-surface)] border border-[var(--glass-border)]">
                 <span className="text-sm text-[var(--color-text-secondary)]">{t('audioWorkstation.outputFileName')}:</span>
                 <span className="ml-2 text-sm font-mono text-[var(--color-text-primary)]">{inferResult.output_filename}</span>
               </div>

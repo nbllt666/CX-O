@@ -1,5 +1,7 @@
 import { useState, useEffect } from 'react';
+import { motion } from 'framer-motion';
 import { setCachedBackendUrl, setCachedWsUrl } from '../api/client';
+import { glassPanelClass } from './ui-v2/inject-glass-style';
 
 interface ConnectionSetupProps {
   onConnected: () => void;
@@ -49,8 +51,26 @@ export function ConnectionSetup({ onConnected }: ConnectionSetupProps) {
   };
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-[var(--color-bg-primary)]">
-      <div className="w-full max-w-md p-8 rounded-xl bg-[var(--color-bg-secondary)] border border-[var(--color-border)]">
+    <div className="min-h-screen flex items-center justify-center bg-[var(--color-bg-primary)] relative overflow-hidden">
+      {/* 二次元装饰背景光晕 */}
+      <div
+        aria-hidden="true"
+        style={{
+          position: 'absolute',
+          inset: 0,
+          background:
+            'radial-gradient(ellipse at 30% 20%, rgba(255, 183, 225, 0.15) 0%, transparent 50%), radial-gradient(ellipse at 70% 80%, rgba(124, 216, 255, 0.12) 0%, transparent 50%)',
+          pointerEvents: 'none',
+        }}
+      />
+      <motion.div
+        initial={{ opacity: 0, y: 20, scale: 0.96 }}
+        animate={{ opacity: 1, y: 0, scale: 1 }}
+        transition={{ duration: 0.6, ease: [0.34, 1.56, 0.64, 1] }}
+        className={`w-full max-w-md p-8 ${glassPanelClass} glass-panel-interactive`}
+        data-glass="true"
+        style={{ position: 'relative', zIndex: 10 }}
+      >
         <div className="text-center mb-6">
           <h1 className="text-2xl font-bold mb-2">连接设置</h1>
           <p className="text-sm text-[var(--color-text-secondary)]">
@@ -68,7 +88,7 @@ export function ConnectionSetup({ onConnected }: ConnectionSetupProps) {
               value={backendUrl}
               onChange={(e) => setBackendUrl(e.target.value)}
               placeholder="http://127.0.0.1:8000"
-              className="w-full px-4 py-2 rounded-lg bg-[var(--color-bg-primary)] border border-[var(--color-border)] focus:outline-none focus:border-[var(--color-accent)]"
+              className="w-full px-4 py-2 rounded-lg bg-[rgba(255,255,255,0.06)] border border-[var(--glass-border)] focus:outline-none focus:border-[rgba(255,183,225,0.4)] backdrop-blur-sm transition-colors"
               required
             />
           </div>
@@ -82,7 +102,7 @@ export function ConnectionSetup({ onConnected }: ConnectionSetupProps) {
               value={wsUrl}
               onChange={(e) => setWsUrl(e.target.value)}
               placeholder="ws://127.0.0.1:8000"
-              className="w-full px-4 py-2 rounded-lg bg-[var(--color-bg-primary)] border border-[var(--color-border)] focus:outline-none focus:border-[var(--color-accent)]"
+              className="w-full px-4 py-2 rounded-lg bg-[rgba(255,255,255,0.06)] border border-[var(--glass-border)] focus:outline-none focus:border-[rgba(255,183,225,0.4)] backdrop-blur-sm transition-colors"
               required
             />
           </div>
@@ -102,14 +122,14 @@ export function ConnectionSetup({ onConnected }: ConnectionSetupProps) {
           </button>
         </form>
 
-        <div className="mt-6 p-4 rounded-lg bg-[var(--color-bg-tertiary)] text-xs text-[var(--color-text-secondary)]">
+        <div className="mt-6 p-4 rounded-lg bg-[rgba(255,255,255,0.04)] text-xs text-[var(--color-text-secondary)] border border-[var(--glass-border)]">
           <p className="font-medium mb-2">默认配置:</p>
           <ul className="space-y-1">
             <li>• 后端地址: http://127.0.0.1:8000</li>
             <li>• WebSocket: ws://127.0.0.1:8000</li>
           </ul>
         </div>
-      </div>
+      </motion.div>
     </div>
   );
 }

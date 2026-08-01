@@ -35,12 +35,11 @@
 import React from 'react';
 import { motion, type Variants } from 'framer-motion';
 import { cn } from '@/lib/utils';
-import type { GlassTier } from '@/lib/glass/tier-detector';
+import type { GlassTier } from './inject-glass-style';
 import type { SpringKey } from '@/lib/motion';
 import {
-  injectGlassClassName,
+  glassPanelClass,
   buildGlassDataAttributes,
-  isValidGlassTier,
 } from './inject-glass-style';
 import {
   getComponentMotionVariants,
@@ -187,9 +186,8 @@ export const Button = React.forwardRef<HTMLButtonElement, ButtonProps>(
     },
     ref,
   ) {
-    // 构建 data-glass + data-glass-tier 属性（由 WebGL 层接管渲染）
-    const validTier = isValidGlassTier(glassTier) ? glassTier : undefined;
-    const glassAttributes = buildGlassDataAttributes(dataGlass, validTier);
+    // 构建 data-glass 属性（WebGL LiquidGlassHost 扫描 [data-glass="true"] 元素）
+    const glassAttributes = buildGlassDataAttributes(dataGlass);
 
     // 获取 Framer Motion variants（替换 shadcn 默认 Tailwind transition）
     // 若调用方提供 motionVariants 则直接使用，否则调用 getComponentMotionVariants 生成默认 variants
@@ -215,9 +213,8 @@ export const Button = React.forwardRef<HTMLButtonElement, ButtonProps>(
       className,
     );
 
-    const composedClassName = validTier
-      ? injectGlassClassName(baseClassName, validTier)
-      : baseClassName;
+    // 注入 glass-panel 类（CSS 兜底 + WebGL 主体切换由 .webgl-active class 控制）
+    const composedClassName = cn(baseClassName, glassPanelClass);
 
     return (
       <motion.button
@@ -225,7 +222,6 @@ export const Button = React.forwardRef<HTMLButtonElement, ButtonProps>(
         className={composedClassName}
         // data-glass 属性（由 WebGL 层 GlassRenderer 扫描接管渲染）
         data-glass={glassAttributes['data-glass'] ?? undefined}
-        data-glass-tier={glassAttributes['data-glass-tier'] ?? undefined}
         // Framer Motion variants（替换 shadcn 默认 Tailwind transition）
         variants={resolvedVariants}
         // Button 不需要入场/出场动画，仅使用 hover/press 交互态 variants

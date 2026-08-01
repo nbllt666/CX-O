@@ -46,7 +46,7 @@ export interface UsePerformanceResult {
 export function usePerformance(
   config: PerformanceMonitorConfig = DEFAULT_PERFORMANCE_CONFIG,
 ): UsePerformanceResult {
-  const monitor = useMemo(() => createPerformanceMonitor(config), []); // eslint-disable-line react-hooks/exhaustive-deps
+  const monitor = useMemo(() => createPerformanceMonitor(config), []);  
 
   const [snapshot, setSnapshot] = useState<PerformanceSnapshot>(() => monitor.getSnapshot());
 

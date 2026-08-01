@@ -68,7 +68,7 @@ export function RefAudioPanel() {
       }
     }).catch(() => {});
     return () => stopPolling();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+     
   }, []);
 
   const buildRequest = () => ({
@@ -151,10 +151,10 @@ export function RefAudioPanel() {
                 key={opt.value}
                 onClick={() => setMode(opt.value)}
                 className={cn(
-                  'px-4 py-2 rounded-lg text-sm font-medium transition-colors border',
+                  'px-4 py-2 rounded-[var(--radius-lg)] text-sm font-medium transition-all border',
                   mode === opt.value
-                    ? 'bg-[var(--color-accent)] text-white border-[var(--color-accent)]'
-                    : 'bg-[var(--color-bg-primary)] text-[var(--color-text-secondary)] border-[var(--color-border)] hover:border-[var(--color-accent)]'
+                    ? 'bg-[var(--color-accent)] text-white border-[var(--color-accent)] shadow-lg shadow-[var(--color-accent)]/25'
+                    : 'bg-[var(--glass-surface)] text-[var(--color-text-secondary)] border-[var(--glass-border)] hover:bg-[var(--glass-border)] hover:text-[var(--color-text-primary)]'
                 )}
               >
                 {t(`audioWorkstation.${opt.labelKey}`)}
@@ -233,7 +233,7 @@ export function RefAudioPanel() {
 
         {/* 进度 */}
         {running && (
-          <div className="p-3 rounded-lg bg-[var(--color-bg-tertiary)] space-y-2">
+          <div className="p-3 rounded-[var(--radius-lg)] bg-[var(--glass-surface)] border border-[var(--glass-border)] space-y-2">
             <div className="flex items-center gap-2">
               <Badge variant="warning">{t('audioWorkstation.refRunning')}</Badge>
               {progress && progress.total > 0 && (
@@ -246,7 +246,7 @@ export function RefAudioPanel() {
               <p className="text-sm text-[var(--color-text-secondary)]">{progress.message}</p>
             )}
             {progress && progress.total > 0 && (
-              <div className="w-full bg-[var(--color-bg-primary)] rounded-full h-2">
+              <div className="w-full bg-[var(--glass-surface)] border border-[var(--glass-border)] rounded-full h-2">
                 <div
                   className="bg-[var(--color-accent)] h-2 rounded-full transition-all"
                   style={{ width: `${Math.round((progress.current / progress.total) * 100)}%` }}
@@ -258,7 +258,7 @@ export function RefAudioPanel() {
 
         {/* 错误 */}
         {refStatus?.error && !running && (
-          <div className="p-3 rounded-lg bg-red-500/10">
+          <div className="p-3 rounded-[var(--radius-lg)] bg-red-500/10 border border-red-500/30">
             <p className="text-sm text-red-500">{t('audioWorkstation.refErrorMessage')}: {refStatus.error}</p>
           </div>
         )}

@@ -36,9 +36,8 @@ import React from 'react';
 import { motion, type Variants } from 'framer-motion';
 import { cn } from '@/lib/utils';
 import {
-  injectGlassClassName,
+  glassPanelClass,
   buildGlassDataAttributes,
-  isValidGlassTier,
 } from './inject-glass-style';
 import {
   getComponentMotionVariants,
@@ -126,9 +125,8 @@ export const Input = React.forwardRef<HTMLInputElement, InputProps>(
     },
     ref,
   ) {
-    // 构建 data-glass + data-glass-tier 属性（由 WebGL 层接管渲染）
-    const validTier = isValidGlassTier(glassTier) ? glassTier : undefined;
-    const glassAttributes = buildGlassDataAttributes(dataGlass, validTier);
+    // 构建 data-glass 属性（WebGL LiquidGlassHost 扫描 [data-glass="true"] 元素）
+    const glassAttributes = buildGlassDataAttributes(dataGlass);
 
     // 获取 Framer Motion variants（替换 shadcn 默认 Tailwind transition）
     // 若调用方提供 motionVariants 则直接使用，否则调用 getComponentMotionVariants 生成默认 variants
@@ -161,10 +159,8 @@ export const Input = React.forwardRef<HTMLInputElement, InputProps>(
       className,
     );
 
-    // 注入 glass 样式类（仅当调用方提供 glassTier 时注入 CSS 降级样式）
-    const composedInputClassName = validTier
-      ? injectGlassClassName(inputBaseClassName, validTier)
-      : inputBaseClassName;
+    // 注入 glass-panel 类（CSS 兜底 + WebGL 主体切换由 .webgl-active class 控制）
+    const composedInputClassName = cn(inputBaseClassName, glassPanelClass);
 
     return (
       <div className="w-full">
@@ -185,7 +181,6 @@ export const Input = React.forwardRef<HTMLInputElement, InputProps>(
             className={composedInputClassName}
             // data-glass 属性（由 WebGL 层 GlassRenderer 扫描接管渲染）
             data-glass={glassAttributes['data-glass'] ?? undefined}
-            data-glass-tier={glassAttributes['data-glass-tier'] ?? undefined}
             // Framer Motion variants（替换 shadcn 默认 Tailwind transition）
             // 仅当调用方提供 motionVariants 或 glassVariant 时注入 variants
             {...(resolvedVariants ? { variants: resolvedVariants } : {})}
@@ -256,9 +251,8 @@ export const Textarea = React.forwardRef<HTMLTextAreaElement, TextareaProps>(
     },
     ref,
   ) {
-    // 构建 data-glass + data-glass-tier 属性
-    const validTier = isValidGlassTier(glassTier) ? glassTier : undefined;
-    const glassAttributes = buildGlassDataAttributes(dataGlass, validTier);
+    // 构建 data-glass 属性（WebGL LiquidGlassHost 扫描 [data-glass="true"] 元素）
+    const glassAttributes = buildGlassDataAttributes(dataGlass);
 
     // 获取 Framer Motion variants（同 Input，核心交互元件禁装饰）
     const resolvedVariants: Variants | undefined =
@@ -285,9 +279,8 @@ export const Textarea = React.forwardRef<HTMLTextAreaElement, TextareaProps>(
       className,
     );
 
-    const composedTextareaClassName = validTier
-      ? injectGlassClassName(textareaBaseClassName, validTier)
-      : textareaBaseClassName;
+    // 注入 glass-panel 类（CSS 兜底 + WebGL 主体切换由 .webgl-active class 控制）
+    const composedTextareaClassName = cn(textareaBaseClassName, glassPanelClass);
 
     return (
       <div className="w-full">
@@ -300,7 +293,6 @@ export const Textarea = React.forwardRef<HTMLTextAreaElement, TextareaProps>(
           ref={ref}
           className={composedTextareaClassName}
           data-glass={glassAttributes['data-glass'] ?? undefined}
-          data-glass-tier={glassAttributes['data-glass-tier'] ?? undefined}
           {...(resolvedVariants ? { variants: resolvedVariants } : {})}
           {...props}
         />

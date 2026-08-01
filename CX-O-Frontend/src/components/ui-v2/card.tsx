@@ -37,9 +37,8 @@ import React from 'react';
 import { motion, type Variants } from 'framer-motion';
 import { cn } from '@/lib/utils';
 import {
-  injectGlassClassName,
+  glassPanelClass,
   buildGlassDataAttributes,
-  isValidGlassTier,
 } from './inject-glass-style';
 import {
   getComponentMotionVariants,
@@ -113,9 +112,8 @@ export const Card = React.forwardRef<HTMLDivElement, CardProps>(
     },
     ref,
   ) {
-    // 构建 data-glass + data-glass-tier 属性（由 WebGL 层接管渲染）
-    const validTier = isValidGlassTier(glassTier) ? glassTier : undefined;
-    const glassAttributes = buildGlassDataAttributes(dataGlass, validTier);
+    // 构建 data-glass 属性（WebGL LiquidGlassHost 扫描 [data-glass="true"] 元素）
+    const glassAttributes = buildGlassDataAttributes(dataGlass);
 
     // 获取 Framer Motion variants（替换 shadcn 默认 Tailwind transition）
     // 若调用方提供 motionVariants 则直接使用，否则调用 getComponentMotionVariants 生成默认 variants
@@ -129,31 +127,24 @@ export const Card = React.forwardRef<HTMLDivElement, CardProps>(
 
     // 构建 card 基础 className（通过 className 消费 token，不硬编码颜色）
     // 多层 box-shadow 叠加（merged.md §2.11）通过 --glass-edge-highlight token 实现
+    // 注意：移除 bg-[var(--card-bg)]，由 glass-panel 类提供玻璃背景
     const cardBaseClassName = cn(
-      'bg-[var(--card-bg)] rounded-[var(--card-radius)]',
-      'border border-[var(--card-border)]',
-      'shadow-[var(--card-shadow)]',
+      'rounded-[var(--card-radius)]',
       'text-[var(--card-text)]',
       'transition-none', // 移除 shadcn 默认 Tailwind transition，由 Framer Motion 接管
       selected && 'border-[var(--color-accent)] ring-2 ring-[var(--color-accent-light)]',
       className,
     );
 
-    // 注入 glass 样式类（仅当调用方提供 glassTier 时注入 CSS 降级样式）
-    // Tier 1/2: bg-transparent（WebGL 层接管渲染）
-    // Tier 3: backdrop-filter + box-shadow（CSS 降级，含多层 box-shadow 叠加）
-    // Tier 4: background-color 半透明兜底
-    const composedClassName = validTier
-      ? injectGlassClassName(cardBaseClassName, validTier)
-      : cardBaseClassName;
+    // 注入 glass-panel 类（CSS 兜底 + WebGL 主体切换由 .webgl-active class 控制）
+    const composedClassName = cn(cardBaseClassName, glassPanelClass);
 
     return (
       <motion.div
         ref={ref}
         className={composedClassName}
-        // data-glass 属性（由 WebGL 层 GlassRenderer 扫描接管渲染）
+        // data-glass 属性（由 WebGL 层 LiquidGlassHost 扫描接管渲染）
         data-glass={glassAttributes['data-glass'] ?? undefined}
-        data-glass-tier={glassAttributes['data-glass-tier'] ?? undefined}
         // Framer Motion variants（替换 shadcn 默认 Tailwind transition）
         variants={resolvedVariants}
         // Card 入场动画（initial → animate）
@@ -181,18 +172,17 @@ Card.displayName = 'Card';
  * 继承自 React.HTMLAttributes（保留 shadcn 原生 API）。
  * 不继承 GlassComponentProps（子组件不需要独立的 data-glass 属性，由 Card 父组件统一挂载）。
  */
-export interface CardHeaderProps
-  extends Omit<
-    React.HTMLAttributes<HTMLDivElement>,
-    | 'onDrag'
-    | 'onDragEnd'
-    | 'onAnimationStart'
-    | 'onDragStart'
-    | 'onDragOver'
-    | 'onDragEnter'
-    | 'onDragLeave'
-    | 'onDrop'
-  > {}
+export type CardHeaderProps = Omit<
+  React.HTMLAttributes<HTMLDivElement>,
+  | 'onDrag'
+  | 'onDragEnd'
+  | 'onAnimationStart'
+  | 'onDragStart'
+  | 'onDragOver'
+  | 'onDragEnter'
+  | 'onDragLeave'
+  | 'onDrop'
+>;
 
 /**
  * CardHeader 组件（Card 的头部区域，含底部边框分隔）。
@@ -205,7 +195,7 @@ export const CardHeader: React.FC<CardHeaderProps> = ({
   ...props
 }) => (
   <div
-    className={cn('px-4 py-3 border-b border-[var(--card-border)]', className)}
+    className={cn('px-4 py-3 border-b border-white/[0.02]', className)}
     {...props}
   >
     {children}
@@ -219,18 +209,17 @@ CardHeader.displayName = 'CardHeader';
  *
  * 继承自 React.HTMLAttributes（保留 shadcn 原生 API）。
  */
-export interface CardBodyProps
-  extends Omit<
-    React.HTMLAttributes<HTMLDivElement>,
-    | 'onDrag'
-    | 'onDragEnd'
-    | 'onAnimationStart'
-    | 'onDragStart'
-    | 'onDragOver'
-    | 'onDragEnter'
-    | 'onDragLeave'
-    | 'onDrop'
-  > {}
+export type CardBodyProps = Omit<
+  React.HTMLAttributes<HTMLDivElement>,
+  | 'onDrag'
+  | 'onDragEnd'
+  | 'onAnimationStart'
+  | 'onDragStart'
+  | 'onDragOver'
+  | 'onDragEnter'
+  | 'onDragLeave'
+  | 'onDrop'
+>;
 
 /**
  * CardBody 组件（Card 的主体内容区域）。
@@ -254,18 +243,17 @@ CardBody.displayName = 'CardBody';
  *
  * 继承自 React.HTMLAttributes（保留 shadcn 原生 API）。
  */
-export interface CardFooterProps
-  extends Omit<
-    React.HTMLAttributes<HTMLDivElement>,
-    | 'onDrag'
-    | 'onDragEnd'
-    | 'onAnimationStart'
-    | 'onDragStart'
-    | 'onDragOver'
-    | 'onDragEnter'
-    | 'onDragLeave'
-    | 'onDrop'
-  > {}
+export type CardFooterProps = Omit<
+  React.HTMLAttributes<HTMLDivElement>,
+  | 'onDrag'
+  | 'onDragEnd'
+  | 'onAnimationStart'
+  | 'onDragStart'
+  | 'onDragOver'
+  | 'onDragEnter'
+  | 'onDragLeave'
+  | 'onDrop'
+>;
 
 /**
  * CardFooter 组件（Card 的底部区域，含顶部边框分隔 + 背景色）。
@@ -279,8 +267,8 @@ export const CardFooter: React.FC<CardFooterProps> = ({
 }) => (
   <div
     className={cn(
-      'px-4 py-3 border-t border-[var(--card-border)]',
-      'bg-[var(--color-bg-secondary)] rounded-b-[var(--card-radius)]',
+      'px-4 py-3 border-t border-white/[0.02]',
+      'bg-white/[0.02] rounded-b-[var(--card-radius)]',
       className,
     )}
     {...props}

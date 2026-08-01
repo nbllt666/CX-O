@@ -25,18 +25,18 @@ export const Drawer: React.FC<DrawerProps> = ({
       <div className="fixed inset-0 bg-black/50 z-40 transition-opacity" onClick={onClose} />
       <div
         className={cn(
-          'fixed top-0 bottom-0 z-50 bg-[var(--color-bg-primary)] shadow-xl transition-transform duration-300',
+          'fixed top-0 bottom-0 z-50 glass-panel shadow-xl transition-transform duration-300',
           position === 'right' ? 'right-0' : 'left-0'
         )}
-        style={{ width }}
+        style={{ width, borderRadius: 0 }}
       >
-        <div className="flex items-center justify-between p-4 border-b border-[var(--color-border)]">
+        <div className="flex items-center justify-between p-4 border-b border-transparent">
           {title && (
             <h2 className="text-lg font-semibold text-[var(--color-text-primary)]">{title}</h2>
           )}
           <button
             onClick={onClose}
-            className="p-2 hover:bg-[var(--color-bg-hover)] rounded-[var(--radius-md)] transition-colors"
+            className="p-2 hover:bg-white/10 rounded-[var(--radius-lg)] transition-colors"
           >
             <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
               <path

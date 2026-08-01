@@ -38,9 +38,8 @@ import React from 'react';
 import { motion, type Variants } from 'framer-motion';
 import { cn } from '@/lib/utils';
 import {
-  injectGlassClassName,
+  glassPanelClass,
   buildGlassDataAttributes,
-  isValidGlassTier,
 } from './inject-glass-style';
 import {
   getComponentSpringTransition,
@@ -128,9 +127,8 @@ export const Checkbox = React.forwardRef<HTMLInputElement, CheckboxProps>(
     },
     ref,
   ) {
-    // 构建 data-glass + data-glass-tier 属性（由 WebGL 层接管渲染）
-    const validTier = isValidGlassTier(glassTier) ? glassTier : undefined;
-    const glassAttributes = buildGlassDataAttributes(dataGlass, validTier);
+    // 构建 data-glass 属性（WebGL LiquidGlassHost 扫描 [data-glass="true"] 元素）
+    const glassAttributes = buildGlassDataAttributes(dataGlass);
 
     // 获取勾选动画的 snappy spring transition（剥离元数据，供 Framer Motion transition 用）
     // Checkbox 默认 spring 为 snappy（getDefaultComponentSpring('Checkbox') => 'snappy'）
@@ -166,10 +164,8 @@ export const Checkbox = React.forwardRef<HTMLInputElement, CheckboxProps>(
       className,
     );
 
-    // 注入 glass 样式类（仅当调用方提供 glassTier 时注入 CSS 降级样式）
-    const composedBoxClassName = validTier
-      ? injectGlassClassName(boxClassName, validTier)
-      : boxClassName;
+    // 注入 glass-panel 类（CSS 兜底 + WebGL 主体切换由 .webgl-active class 控制）
+    const composedBoxClassName = cn(boxClassName, glassPanelClass);
 
     return (
       <label
@@ -182,7 +178,6 @@ export const Checkbox = React.forwardRef<HTMLInputElement, CheckboxProps>(
           className={composedBoxClassName}
           // data-glass 属性（由 WebGL 层 GlassRenderer 扫描接管渲染）
           data-glass={glassAttributes['data-glass'] ?? undefined}
-          data-glass-tier={glassAttributes['data-glass-tier'] ?? undefined}
         >
           {/* 隐藏原生 input（保留无障碍属性 + 表单提交能力） */}
           <input

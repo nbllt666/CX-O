@@ -38,9 +38,8 @@ import { createPortal } from 'react-dom';
 import { motion, AnimatePresence, type Variants } from 'framer-motion';
 import { cn } from '@/lib/utils';
 import {
-  injectGlassClassName,
+  glassPanelClass,
   buildGlassDataAttributes,
-  isValidGlassTier,
 } from './inject-glass-style';
 import {
   getComponentMotionVariants,
@@ -130,9 +129,9 @@ export const Dialog: React.FC<DialogProps> = function Dialog({
   glassVariant,
   motionVariants,
 }) {
-  // 构建 data-glass + data-glass-tier 属性（由 WebGL 层接管渲染）
-  const validTier = isValidGlassTier(glassTier) ? glassTier : undefined;
-  const glassAttributes = buildGlassDataAttributes(dataGlass, validTier);
+  void glassTier; // v2: glassTier 已废弃，保留解构以避免 spread 到 DOM
+  // 构建 data-glass 属性（WebGL LiquidGlassHost 扫描 [data-glass="true"] 元素）
+  const glassAttributes = buildGlassDataAttributes(dataGlass);
 
   // 获取 gentle spring 的 transition 参数（用于构建 overlay/content variants）
   // Dialog 默认使用 gentle spring（D5 §springs.gentle.useCase=modal-transition）
@@ -198,10 +197,8 @@ export const Dialog: React.FC<DialogProps> = function Dialog({
     className,
   );
 
-  // 注入 glass 样式类（仅当调用方提供 glassTier 时注入 CSS 降级样式）
-  const composedContentClassName = validTier
-    ? injectGlassClassName(contentBaseClassName, validTier)
-    : contentBaseClassName;
+  // 注入 glass-panel 类（CSS 兜底 + WebGL 主体切换由 .webgl-active class 控制）
+  const composedContentClassName = cn(contentBaseClassName, glassPanelClass);
 
   // SSR 安全：如果 document 不存在则返回 null
   if (typeof document === 'undefined') return null;
@@ -228,7 +225,6 @@ export const Dialog: React.FC<DialogProps> = function Dialog({
             className={composedContentClassName}
             // data-glass 属性（由 WebGL 层 GlassRenderer 扫描接管渲染）
             data-glass={glassAttributes['data-glass'] ?? undefined}
-            data-glass-tier={glassAttributes['data-glass-tier'] ?? undefined}
             variants={contentVariants}
             initial="initial"
             animate="animate"

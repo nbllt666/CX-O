@@ -51,12 +51,12 @@ export function useVexflowRenderer(
       draw(ctx);
     } catch (err) {
       // 受控渲染器不应因单次渲染异常崩溃宿主 UI；记录后留空容器
-      // eslint-disable-next-line no-console
+       
       console.error('[StaffScore] VexFlow render error:', err);
     }
     // deps 由调用方显式提供（受控重渲语义）；config.width/height 故意不并入 deps，
     // 调用方需把 width/height 作为deps 项传入以触发尺寸变化重渲。
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+     
   }, deps);
 
   return containerRef;

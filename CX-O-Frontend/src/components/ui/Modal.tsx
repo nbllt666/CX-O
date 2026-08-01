@@ -106,8 +106,7 @@ export const Modal: React.FC<ModalProps> = ({
           />
           <motion.div
             className={cn(
-              'relative w-full mx-4 bg-[var(--color-bg-primary)]',
-              'rounded-[var(--radius-xl)] shadow-[var(--shadow-lg)]',
+              'relative w-full mx-4 glass-panel overflow-hidden',
               sizeStyles[size]
             )}
             variants={modalVariants}
@@ -119,11 +118,11 @@ export const Modal: React.FC<ModalProps> = ({
             aria-labelledby={title ? 'modal-title' : undefined}
           >
             {title && (
-              <div className="px-6 py-4 border-b border-[var(--color-border)] flex items-center justify-between">
+              <div className="px-6 py-4 border-b border-transparent flex items-center justify-between">
                 <h2 id="modal-title" className="text-lg font-semibold text-[var(--color-text-primary)]">{title}</h2>
                 <button
                   onClick={onClose}
-                  className="p-1 rounded-[var(--radius-sm)] text-[var(--color-text-tertiary)] hover:bg-[var(--color-bg-hover)] hover:text-[var(--color-text-primary)] transition-colors"
+                  className="p-1 rounded-[var(--radius-md)] text-[var(--color-text-tertiary)] hover:bg-white/10 hover:text-[var(--color-text-primary)] transition-colors"
                 >
                   <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                     <path
@@ -138,7 +137,7 @@ export const Modal: React.FC<ModalProps> = ({
             )}
             <div className="px-6 py-4 max-h-[70vh] overflow-y-auto">{children}</div>
             {footer && (
-              <div className="px-6 py-4 border-t border-[var(--color-border)] flex justify-end gap-3">
+              <div className="px-6 py-4 border-t border-transparent flex justify-end gap-3">
                 {footer}
               </div>
             )}

@@ -45,7 +45,7 @@
    * 2. Card 组件级 token（引用 semantic）
    * ========================================================================== */
   --card-padding: var(--spacing-card);    /* padding 20px */
-  --card-radius: var(--radius-card);      /* 圆角 12px */
+  --card-radius: var(--radius-glass);      /* 圆角 24px，玻璃风格大圆角 */
   --card-shadow: var(--shadow-card);      /* 阴影 elevation2 */
 
   /* --- 2.1 Card 色彩（引用 semantic.color）------------------------------ */

@@ -45,9 +45,8 @@ import React from 'react';
 import { motion, type Variants } from 'framer-motion';
 import { cn } from '@/lib/utils';
 import {
-  injectGlassClassName,
+  glassPanelClass,
   buildGlassDataAttributes,
-  isValidGlassTier,
 } from './inject-glass-style';
 import {
   getComponentSpringTransition,
@@ -233,9 +232,8 @@ export const Avatar = React.forwardRef<HTMLSpanElement, AvatarProps>(
       }
     }, [src]);
 
-    // 构建 data-glass + data-glass-tier 属性（由 WebGL 层接管渲染）
-    const validTier = isValidGlassTier(glassTier) ? glassTier : undefined;
-    const glassAttributes = buildGlassDataAttributes(dataGlass, validTier);
+    // 构建 data-glass 属性（WebGL LiquidGlassHost 扫描 [data-glass="true"] 元素）
+    const glassAttributes = buildGlassDataAttributes(dataGlass);
 
     // 入场动画的 glass spring transition（Avatar 默认 spring）
     const enterSpring = getComponentSpringTransition(
@@ -266,10 +264,8 @@ export const Avatar = React.forwardRef<HTMLSpanElement, AvatarProps>(
       className,
     );
 
-    // 注入 glass 样式类（仅当调用方提供 glassTier 时注入 CSS 降级样式）
-    const composedClassName = validTier
-      ? injectGlassClassName(avatarBaseClassName, validTier)
-      : avatarBaseClassName;
+    // 注入 glass 样式类（v2: 直接拼接 glassPanelClass，不再区分 tier）
+    const composedClassName = cn(avatarBaseClassName, glassPanelClass);
 
     // 确定 fallback 内容（优先级: fallback prop > children > 默认首字母/图标）
     const fallbackContent = fallback ?? children ?? getDefaultFallback(alt);
@@ -283,7 +279,6 @@ export const Avatar = React.forwardRef<HTMLSpanElement, AvatarProps>(
         className={composedClassName}
         // data-glass 属性（由 WebGL 层 GlassRenderer 扫描接管渲染）
         data-glass={glassAttributes['data-glass'] ?? undefined}
-        data-glass-tier={glassAttributes['data-glass-tier'] ?? undefined}
         // Framer Motion variants（替换 shadcn 默认 Tailwind transition）
         variants={resolvedVariants}
         // Avatar 入场动画（initial → animate）
@@ -345,9 +340,8 @@ export const AvatarFallback = React.forwardRef<HTMLSpanElement, AvatarFallbackPr
     },
     ref,
   ) {
-    // 构建 data-glass + data-glass-tier 属性（默认 false，fallback 不独立挂载）
-    const validTier = isValidGlassTier(glassTier) ? glassTier : undefined;
-    const glassAttributes = buildGlassDataAttributes(dataGlass, validTier);
+    // 构建 data-glass 属性（WebGL LiquidGlassHost 扫描 [data-glass="true"] 元素）
+    const glassAttributes = buildGlassDataAttributes(dataGlass);
 
     // 入场动画的 glass spring transition（与 Avatar 一致）
     const enterSpring = getComponentSpringTransition(
@@ -372,16 +366,13 @@ export const AvatarFallback = React.forwardRef<HTMLSpanElement, AvatarFallbackPr
       className,
     );
 
-    const composedClassName = validTier
-      ? injectGlassClassName(fallbackBaseClassName, validTier)
-      : fallbackBaseClassName;
+    const composedClassName = cn(fallbackBaseClassName, glassPanelClass);
 
     return (
       <motion.span
         ref={ref}
         className={composedClassName}
         data-glass={glassAttributes['data-glass'] ?? undefined}
-        data-glass-tier={glassAttributes['data-glass-tier'] ?? undefined}
         variants={resolvedVariants}
         initial="initial"
         animate="animate"

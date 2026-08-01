@@ -36,7 +36,7 @@ export function MemoriesToolbar({
     <div className="flex items-center gap-4 mb-6">
       <div className="flex-1">
         <Input
-          placeholder="搜索记忆内容或标签..."
+          placeholder="搜索记忆内容或标签.."
           value={searchQuery}
           onChange={(e) => onSearchChange(e.target.value)}
           className="w-full"
@@ -46,7 +46,7 @@ export function MemoriesToolbar({
       <select
         value={filterType}
         onChange={(e) => onFilterTypeChange(e.target.value as MemoriesToolbarProps['filterType'])}
-        className="px-3 py-2 bg-[var(--color-bg-primary)] border border-[var(--color-border)] rounded-[var(--radius-md)] text-sm"
+        className="px-3 py-2 bg-white/[0.02] border border-transparent rounded-[var(--radius-lg)] text-sm text-[var(--color-text-primary)]"
       >
         <option value="all">全部类型</option>
         <option value="permanent">永久记忆</option>
@@ -57,7 +57,7 @@ export function MemoriesToolbar({
       <select
         value={currentAgentId}
         onChange={(e) => onAgentChange(e.target.value)}
-        className="px-3 py-2 bg-[var(--color-bg-primary)] border border-[var(--color-border)] rounded-[var(--radius-md)] text-sm"
+        className="px-3 py-2 bg-white/[0.02] border border-transparent rounded-[var(--radius-lg)] text-sm text-[var(--color-text-primary)]"
       >
         <option value="default">默认Agent</option>
         {agents
@@ -69,10 +69,10 @@ export function MemoriesToolbar({
           ))}
       </select>
 
-      <div className="flex items-center border border-[var(--color-border)] rounded-[var(--radius-md)] overflow-hidden">
+      <div className="flex items-center border border-transparent rounded-[var(--radius-lg)] overflow-hidden">
         <button
           onClick={() => onViewModeChange('card')}
-          className={`px-3 py-2 text-sm ${viewMode === 'card' ? 'bg-[var(--color-accent)] text-white' : 'bg-[var(--color-bg-primary)]'}`}
+          className={`px-3 py-2 text-sm transition-colors ${viewMode === 'card' ? 'bg-[var(--color-accent)] text-white' : 'bg-white/[0.04] text-[var(--color-text-secondary)] hover:bg-white/[0.08]'}`}
         >
           <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2V6zM14 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2V6zM4 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2v-2zM14 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2v-2z" />
@@ -80,7 +80,7 @@ export function MemoriesToolbar({
         </button>
         <button
           onClick={() => onViewModeChange('list')}
-          className={`px-3 py-2 text-sm ${viewMode === 'list' ? 'bg-[var(--color-accent)] text-white' : 'bg-[var(--color-bg-primary)]'}`}
+          className={`px-3 py-2 text-sm transition-colors ${viewMode === 'list' ? 'bg-[var(--color-accent)] text-white' : 'bg-white/[0.04] text-[var(--color-text-secondary)] hover:bg-white/[0.08]'}`}
         >
           <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 10h16M4 14h16M4 18h16" />
