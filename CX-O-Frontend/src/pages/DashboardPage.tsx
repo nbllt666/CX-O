@@ -226,7 +226,7 @@ export const DashboardPage: React.FC = () => {
   ];
 
   return (
-    <div className="max-w-6xl mx-auto">
+    <div className="max-w-6xl mx-auto px-6">
       <PageHeader title="仪表盘" description="系统概览与快捷操作" />
 
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-8">

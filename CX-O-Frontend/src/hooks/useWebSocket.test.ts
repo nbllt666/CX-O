@@ -3,7 +3,7 @@
  *
  * 覆盖：
  * - 初始连接（构造 WebSocket + onopen + 启动 ping）
- * - sendMessage 触发 chat.stream + request_id
+ * - sendMessage 发送 {type:'chat_stream', message, agent_id} 平铺格式；带图返回 false 强制 HTTP 回退
  * - cancelGeneration 发送 {type:'cancel'}
  * - onmessage 路由：pong/alarm/stream/tts_chunk/response/error/content/tool_call/done/cancelled/external_event
  * - TTS 双流式：onTTSChunk 触发 + onTTSPlayingChange 切换
@@ -24,7 +24,7 @@ import { renderHook, act } from '@testing-library/react';
 import { useWebSocket } from './useWebSocket';
 import type { WebSocketOptions } from './useWebSocket';
 import { MockWebSocket } from '../test/mockWebSocket';
-import { ChatActions, VoiceActions } from '../constants/actions';
+import { VoiceActions } from '../constants/actions';
 
 const DEFAULT_OPTS: WebSocketOptions = {
   agentId: 'agent-1',
@@ -79,34 +79,51 @@ describe('useWebSocket', () => {
     expect(ws.sentMessages.length).toBe(3);
   });
 
-  it('sendMessage triggers chat.stream with request_id and payload', () => {
+  // 后端协议（CXHMS backend/core/websocket/handlers.py）：平铺格式，handler 直接读 message 顶层字段
+  it('sendMessage sends flat {type:"chat_stream", message, agent_id} for plain text', () => {
     const { result } = renderWs();
     act(() => MockWebSocket.LAST!.triggerOpen());
 
+    let sent: boolean | undefined;
     act(() => {
-      result.current.sendMessage('hello', ['img1.png']);
+      sent = result.current.sendMessage('hello');
     });
 
+    expect(sent).toBe(true);
     const msg = MockWebSocket.LAST!.lastSentAsJson<{
-      action: string;
-      request_id: string;
-      data: { text: string; agent_id: string; images?: string[] };
+      type: string;
+      message: string;
+      agent_id: string;
+      action?: string;
+      request_id?: string;
+      data?: unknown;
     }>();
-    expect(msg.action).toBe(ChatActions.STREAM);
-    expect(msg.data.text).toBe('hello');
-    expect(msg.data.agent_id).toBe('agent-1');
-    expect(msg.data.images).toEqual(['img1.png']);
-    expect(msg.request_id).toBeTruthy();
+    expect(msg.type).toBe('chat_stream');
+    expect(msg.message).toBe('hello');
+    expect(msg.agent_id).toBe('agent-1');
+    // 平铺格式：不得再出现 action/request_id/data 包装
+    expect(msg.action).toBeUndefined();
+    expect(msg.request_id).toBeUndefined();
+    expect(msg.data).toBeUndefined();
     expect(result.current.isGenerating).toBe(true);
   });
 
-  it('sendMessage without images omits images field', () => {
+  // 带图片消息：WS 后端 chat_stream 不支持 images，sendMessage 返回 false，
+  // 由 caller（ChatPage）回退到 HTTP /api/chat/stream（该端点支持 images）。
+  // 必须在 setIsGenerating(true) 之前返回，否则 isGenerating 永久卡住。
+  it('sendMessage with images returns false without sending or setting isGenerating', () => {
     const { result } = renderWs();
     act(() => MockWebSocket.LAST!.triggerOpen());
 
-    act(() => result.current.sendMessage('plain'));
-    const msg = MockWebSocket.LAST!.lastSentAsJson<{ data: { images?: string[] } }>();
-    expect(msg.data.images).toBeUndefined();
+    const before = MockWebSocket.LAST!.sentMessages.length;
+    let sent: boolean | undefined;
+    act(() => {
+      sent = result.current.sendMessage('hello', ['img1.png']);
+    });
+
+    expect(sent).toBe(false);
+    expect(MockWebSocket.LAST!.sentMessages.length).toBe(before);
+    expect(result.current.isGenerating).toBe(false);
   });
 
   // 有意契约：未连接时 sendMessage 返回 false 且不触发 onError，

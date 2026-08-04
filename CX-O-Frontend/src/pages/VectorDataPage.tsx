@@ -33,6 +33,9 @@ export function VectorDataPage() {
   const [selectedVector, setSelectedVector] = useState<Vector | null>(null);
   const [searchResults, setSearchResults] = useState<unknown[]>([]);
   const [timeRange, setTimeRange] = useState<{ start: Date; end: Date } | null>(null);
+  const [page, setPage] = useState(0);
+  const [pageSize, setPageSize] = useState(50);
+  const [idLookup, setIdLookup] = useState('');
 
   const { data: vectorStatus, isLoading: statusLoading } = useQuery({
     queryKey: ['vectorStatus'],
@@ -45,8 +48,8 @@ export function VectorDataPage() {
   });
 
   const { data: vectors, isLoading: vectorsLoading } = useQuery({
-    queryKey: ['vectors', memoryTypeFilter, timeRange],
-    queryFn: () => api.listVectors(100),
+    queryKey: ['vectors', memoryTypeFilter, page, pageSize],
+    queryFn: () => api.listVectors(pageSize, page * pageSize, memoryTypeFilter || undefined),
     enabled: Boolean(vectorStatus?.connected),
     select: (data) => {
       if (!timeRange || !data.vectors) return data;
@@ -88,6 +91,8 @@ export function VectorDataPage() {
 
   const connected = vectorStatus?.connected;
   const stats = vectorStats as VectorStats | undefined;
+  const totalVectors = vectors?.total ?? 0;
+  const totalPages = Math.max(1, Math.ceil(totalVectors / pageSize));
 
   const handleSearch = async () => {
     if (!searchQuery.trim()) return;
@@ -100,8 +105,44 @@ export function VectorDataPage() {
     }
   };
 
+  /** 打开详情弹窗：行内详情传入当前行数据，ID 直达仅传 memoryId（字段从接口兜底） */
+  const openDetail = async (memoryId: number, baseRow?: Vector) => {
+    try {
+      const detail = (await api.getVector(memoryId)) as { vector?: Record<string, unknown> };
+      const extra = (detail.vector ?? {}) as Record<string, unknown>;
+      const mem = (extra.memory ?? {}) as Record<string, unknown>;
+      const fallback: Vector = baseRow ?? {
+        memory_id: memoryId,
+        content: String(mem.content || ''),
+        memory_type: String(mem.type || '-'),
+        importance: Number(mem.importance ?? 0),
+        created_at: String(mem.created_at || ''),
+        has_vector: true,
+      };
+      setSelectedVector({ ...fallback, ...extra });
+      setShowDetailModal(true);
+    } catch {
+      alert('获取详情失败或向量不存在');
+    }
+  };
+
+  const handleIdLookup = () => {
+    const id = parseInt(idLookup, 10);
+    if (!Number.isFinite(id) || id <= 0) {
+      alert('请输入有效的记忆 ID');
+      return;
+    }
+    openDetail(id);
+  };
+
+  const handleRefresh = () => {
+    queryClient.invalidateQueries({ queryKey: ['vectors'] });
+    queryClient.invalidateQueries({ queryKey: ['vectorStats'] });
+    queryClient.invalidateQueries({ queryKey: ['vectorStatus'] });
+  };
+
   return (
-    <div className="max-w-7xl mx-auto">
+    <div className="max-w-7xl mx-auto px-6 h-full overflow-y-auto pb-6">
       <PageHeader
         title="向量数据库管理"
         description="管理向量数据库中的嵌入向量"
@@ -201,8 +242,8 @@ export function VectorDataPage() {
               <div className="flex items-center justify-between mb-4">
                 <h3 className="text-lg font-semibold">向量操作</h3>
               </div>
-              <div className="flex items-center gap-4">
-                <div className="flex-1 flex items-center gap-2">
+              <div className="flex items-center gap-4 flex-wrap">
+                <div className="flex-1 flex items-center gap-2 min-w-[240px]">
                   <Input
                     placeholder="语义搜索..."
                     value={searchQuery}
@@ -212,6 +253,21 @@ export function VectorDataPage() {
                   />
                   <Button onClick={handleSearch}>搜索</Button>
                 </div>
+                <div className="flex items-center gap-2">
+                  <Input
+                    placeholder="记忆 ID"
+                    value={idLookup}
+                    onChange={(e) => setIdLookup(e.target.value.replace(/\D/g, ''))}
+                    onKeyDown={(e) => e.key === 'Enter' && handleIdLookup()}
+                    className="w-28"
+                  />
+                  <Button variant="secondary" onClick={handleIdLookup}>
+                    直达
+                  </Button>
+                </div>
+                <Button variant="secondary" onClick={handleRefresh}>
+                  刷新
+                </Button>
                 <Button
                   variant="secondary"
                   onClick={() => syncMutation.mutate()}
@@ -240,7 +296,10 @@ export function VectorDataPage() {
                 <h3 className="text-lg font-semibold">向量列表</h3>
                 <select
                   value={memoryTypeFilter}
-                  onChange={(e) => setMemoryTypeFilter(e.target.value)}
+                  onChange={(e) => {
+                    setMemoryTypeFilter(e.target.value);
+                    setPage(0);
+                  }}
                   className="px-3 py-2 bg-[var(--glass-surface)] border border-[var(--glass-border)] rounded-[var(--radius-md)] text-[var(--color-text-[var(--color-accent)])]"
                 >
                   <option value="">全部类型</option>
@@ -284,16 +343,7 @@ export function VectorDataPage() {
                           </td>
                           <td className="px-4 py-3 text-right">
                             <button
-                              onClick={async () => {
-                                try {
-                                  const detail = await api.getVector(vec.memory_id) as { vector?: Partial<Vector> };
-                                  const extra = (detail.vector ?? {}) as Partial<Vector>;
-                                  setSelectedVector({ ...vec, ...extra });
-                                  setShowDetailModal(true);
-                                } catch {
-                                  alert('获取详情失败');
-                                }
-                              }}
+                              onClick={() => openDetail(vec.memory_id, vec)}
                               className="text-[var(--color-accent)] hover:underline mr-3"
                             >
                               详情
@@ -315,6 +365,41 @@ export function VectorDataPage() {
                   </table>
                 </div>
               )}
+
+              {/* 分页栏 */}
+              <div className="flex items-center justify-between mt-4 text-sm text-[var(--color-text-secondary)]">
+                <span>
+                  共 {totalVectors} 条 · 第 {page + 1} / {totalPages} 页
+                </span>
+                <div className="flex items-center gap-2">
+                  <select
+                    value={pageSize}
+                    onChange={(e) => {
+                      setPageSize(Number(e.target.value));
+                      setPage(0);
+                    }}
+                    className="px-2 py-1.5 bg-[var(--glass-surface)] border border-[var(--glass-border)] rounded-[var(--radius-md)]"
+                  >
+                    <option value={20}>20 条/页</option>
+                    <option value={50}>50 条/页</option>
+                    <option value={100}>100 条/页</option>
+                  </select>
+                  <Button
+                    variant="secondary"
+                    disabled={page === 0}
+                    onClick={() => setPage((p) => Math.max(0, p - 1))}
+                  >
+                    上一页
+                  </Button>
+                  <Button
+                    variant="secondary"
+                    disabled={page + 1 >= totalPages}
+                    onClick={() => setPage((p) => Math.min(totalPages - 1, p + 1))}
+                  >
+                    下一页
+                  </Button>
+                </div>
+              </div>
             </CardBody>
           </Card>
 

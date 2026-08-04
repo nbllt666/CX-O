@@ -328,7 +328,7 @@ export function MemoriesPage() {
     }) || [];
 
   return (
-    <div className="max-w-6xl mx-auto">
+    <div className="max-w-6xl mx-auto px-6">
       <PageHeader
         title="记忆管理"
         description="管理和浏览系统存储的记忆"

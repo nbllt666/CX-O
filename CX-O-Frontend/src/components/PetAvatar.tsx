@@ -129,7 +129,7 @@ export const PetAvatar = forwardRef<PetAvatarHandle, PetAvatarProps>(
       >
         {effectiveAvatarType === 'vrm' ? (
           <VRMViewer
-            modelPath=""
+            modelPath={modelDataRef.current ? "" : vrm.modelPath}
             modelDataRef={modelDataRef}
             dataVersion={dataVersion}
             scale={1.3}

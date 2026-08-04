@@ -83,7 +83,7 @@ export function ArchivePage() {
   };
 
   return (
-    <div className="h-full flex flex-col">
+    <div className="max-w-6xl mx-auto px-6">
       {/* Tabs */}
       <div className="flex items-center gap-1 mb-6 border-b border-border">
         {[

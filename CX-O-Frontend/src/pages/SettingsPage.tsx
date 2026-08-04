@@ -907,11 +907,11 @@ export function SettingsPage() {
   };
 
   return (
-    <div className={`max-w-6xl mx-auto h-full overflow-y-auto px-6 py-6 ${themeTransition ? 'transition-colors duration-300' : ''}`}>
+    <div className={`max-w-6xl mx-auto h-full overflow-y-auto px-8 py-8 ${themeTransition ? 'transition-colors duration-300' : ''}`}>
       <PageHeader title="系统设置" description="配置系统外观、服务和行为" />
 
-      <div className="flex gap-6">
-        <nav className="w-56 flex-shrink-0 space-y-1">
+      <div className="flex gap-8">
+        <nav className="w-56 flex-shrink-0 space-y-2">
           {sections.map((section) => (
             <button
               key={section.id}

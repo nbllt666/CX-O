@@ -52,7 +52,7 @@ export function AudioTestPage() {
   };
 
   return (
-    <div className="max-w-4xl mx-auto">
+    <div className="max-w-4xl mx-auto px-6">
       <PageHeader
         title="音频测试"
         description="测试语音识别 (ASR) 和语音合成 (TTS) 功能"

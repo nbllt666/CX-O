@@ -1087,7 +1087,7 @@ export function ChatPage() {
             ) : (
               <div className="max-w-4xl mx-auto h-full w-full overflow-hidden flex flex-col gap-4">
                 {/* 消息列表区域 - 玻璃面板 */}
-                <div className="flex-1 min-h-0 glass-panel overflow-hidden">
+                <div className="flex-1 min-h-0 glass-panel overflow-hidden p-3">
                   <MessageList
                     messages={messages}
                     isLoading={isLoading}

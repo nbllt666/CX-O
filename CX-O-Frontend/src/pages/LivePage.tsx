@@ -47,7 +47,10 @@ export function LivePage() {
   const driverRef = useRef<IAvatarDriver | null>(null);
 
   const { live2d, vrm, avatarType } = useSettingsStore();
-  const currentModelId = avatarType === 'live2d' ? live2d.modelId : vrm.modelId;
+  // avatarType 为 'none'/'vrm' 时走 VRM：public/ 下无任何 Live2D 模型文件，
+  // 唯一可用模型是 vrm.modelPath（/models/avatar.vrm）
+  const effectiveAvatarType: 'live2d' | 'vrm' = avatarType === 'live2d' ? 'live2d' : 'vrm';
+  const currentModelId = effectiveAvatarType === 'live2d' ? live2d.modelId : vrm.modelId;
 
   useEffect(() => {
     let cancelled = false;
@@ -78,6 +81,26 @@ export function LivePage() {
       }
     };
 
+    // VRM 最终回退：直接读取本地 modelPath（/models/avatar.vrm）
+    const loadFromVrmPath = async () => {
+      try {
+        const response = await fetch(vrm.modelPath || '/models/avatar.vrm');
+        if (cancelled) return;
+        if (!response.ok) {
+          console.error(`[LivePage] vrm modelPath fetch failed: ${response.status}`);
+          setModelData(undefined);
+          return;
+        }
+        const buffer = await response.arrayBuffer();
+        if (cancelled) return;
+        setModelData(buffer);
+      } catch (error) {
+        if (cancelled) return;
+        console.error('[LivePage] Failed to load VRM from modelPath:', error);
+        setModelData(undefined);
+      }
+    };
+
     if (currentModelId) {
       getAvatar(currentModelId).then((avatar) => {
         if (cancelled) return;
@@ -88,40 +111,45 @@ export function LivePage() {
           }).catch((error) => {
             if (cancelled) return;
             console.error('Failed to load avatar:', error);
-            // fallback 到公开 manifest
-            const fallbackId = avatarType === 'live2d'
-              ? (live2d.modelId || 'yumi')
-              : (vrm.modelId || 'yumi');
-            void loadFromManifest(fallbackId);
+            // fallback：live2d 走公开 manifest；vrm 走本地 modelPath
+            if (effectiveAvatarType === 'vrm') {
+              void loadFromVrmPath();
+            } else {
+              void loadFromManifest(live2d.modelId || 'yumi');
+            }
           });
         } else {
-          // IndexedDB 无记录 → fallback 到公开 manifest
-          const fallbackId = avatarType === 'live2d'
-            ? (live2d.modelId || 'yumi')
-            : (vrm.modelId || 'yumi');
-          void loadFromManifest(fallbackId);
+          // IndexedDB 无记录 → fallback
+          if (effectiveAvatarType === 'vrm') {
+            void loadFromVrmPath();
+          } else {
+            void loadFromManifest(live2d.modelId || 'yumi');
+          }
         }
       }).catch((error) => {
         if (cancelled) return;
         console.error('Failed to load avatar:', error);
-        const fallbackId = avatarType === 'live2d'
-          ? (live2d.modelId || 'yumi')
-          : (vrm.modelId || 'yumi');
-        void loadFromManifest(fallbackId);
+        if (effectiveAvatarType === 'vrm') {
+          void loadFromVrmPath();
+        } else {
+          void loadFromManifest(live2d.modelId || 'yumi');
+        }
       });
+    } else if (effectiveAvatarType === 'vrm') {
+      // VRM 无 modelId → 直接读本地 modelPath
+      void loadFromVrmPath();
     } else {
-      // currentModelId 为空 → 直接 fallback 到默认公开模型 yumi
-      const fallbackId = avatarType === 'vrm' ? (vrm.modelId || 'yumi') : 'yumi';
-      void loadFromManifest(fallbackId);
+      // live2d 无 modelId → 默认公开模型 yumi
+      void loadFromManifest('yumi');
     }
     return () => {
       cancelled = true;
     };
-  }, [currentModelId, avatarType, live2d.modelId, vrm.modelId]);
+  }, [currentModelId, effectiveAvatarType, live2d.modelId, vrm.modelId, vrm.modelPath]);
 
   useEffect(() => {
     let cancelled = false;
-    const avatarId = avatarType === 'live2d' ? (live2d.modelId || 'yumi') : (vrm.modelId || undefined);
+    const avatarId = effectiveAvatarType === 'live2d' ? (live2d.modelId || 'yumi') : (vrm.modelId || undefined);
     const baseAvatar = avatarId ? getAvatarById(avatarId) : undefined;
     if (!baseAvatar) {
       driverRef.current = null;
@@ -142,7 +170,7 @@ export function LivePage() {
         setActiveDriver(driver);
       });
     return () => { cancelled = true; };
-  }, [avatarType, live2d.modelId, vrm.modelId]);
+  }, [effectiveAvatarType, live2d.modelId, vrm.modelId]);
 
   const handleDanmaku = useCallback((data: LiveDanmakuData) => {
     setDanmakuList((prev) => [
@@ -183,9 +211,9 @@ export function LivePage() {
   });
 
   return (
-    <div className="w-full h-screen">
+    <div className="w-full h-full">
       <LiveStage
-        avatarType={avatarType === 'none' ? 'live2d' : avatarType}
+        avatarType={effectiveAvatarType}
         modelData={modelData}
         danmakuList={danmakuList}
         subtitleText={subtitleText}

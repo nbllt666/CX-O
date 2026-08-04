@@ -104,31 +104,20 @@ void main() {
   float alpha = 1.0;
 
   if (inGlass) {
-    // 玻璃区域内：折射 + 色散 + 高光
-
-    // 折射：偏移背景采样坐标（中心偏折弱，边缘偏折强）
+    // 玻璃区域内：仅保留背景折射（液态感），不再叠加任何白色高光
+    // v2.8 修复：fresnel(≤0.6白) + topLight(≤0.3白) + alpha0.85 的白色叠加
+    // 被玻璃元素自身的 backdrop-filter 模糊放大后，形成"莫名其妙的白色半透明块"
     vec2 toCenter = (screenPos - elemCenter) / max(elemSize, vec2(0.01));
-    float distortion = 0.08 * (1.0 - length(toCenter));
+    float distortion = 0.05 * (1.0 - length(toCenter));
     vec2 refractUv = uv + toCenter * distortion;
 
     // 色散：RGB 通道不同偏移（模拟色差边缘）
-    float r = sampleBackground(refractUv + vec2(0.003, 0.0)).r;
+    float r = sampleBackground(refractUv + vec2(0.002, 0.0)).r;
     float g = sampleBackground(refractUv).g;
-    float b = sampleBackground(refractUv - vec2(0.003, 0.0)).b;
-    vec3 refractedColor = vec3(r, g, b);
+    float b = sampleBackground(refractUv - vec2(0.002, 0.0)).b;
 
-    // Fresnel 高光（边缘亮）
-    float edge = max(abs(toCenter.x), abs(toCenter.y));
-    float fresnel = pow(edge, 3.0) * 0.6;
-
-    // 顶部光带（光从上方洒下，iOS 26 标志性效果）
-    float topLight = pow(1.0 - (screenPos.y - (elemCenter.y - elemSize.y * 0.5)) / max(elemSize.y, 0.01), 4.0) * 0.3;
-
-    // 玻璃着色（粉紫青体系）
-    vec3 tinted = mix(refractedColor, uTint, 0.08);
-
-    finalColor = tinted + fresnel + topLight;
-    alpha = 0.85;
+    finalColor = vec3(r, g, b);
+    alpha = 1.0; // 与背景区域一致，不形成可见色块
   }
 
   // 3. 全局动态光影

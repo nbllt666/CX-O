@@ -22,8 +22,23 @@ export class _HealthClientMixin extends _ApiClientBase {
     return this.request<{ status: string; message: string }>({ url: '/api/graph/test' });
   }
 
-  async getVectorStatus(): Promise<{ status: string; backend: string; connected: boolean }> {
-    return this.request<{ status: string; backend: string; connected: boolean }>({ url: '/api/vector/status' });
+  async getVectorStatus(): Promise<{
+    vector_enabled: boolean;
+    vector_backend: string;
+    connected: boolean;
+    collection_info: Record<string, unknown>;
+  }> {
+    // 后端返回 { status: "success", vector_status: {...} }，解包后返回
+    const resp = await this.request<{
+      status: string;
+      vector_status: {
+        vector_enabled: boolean;
+        vector_backend: string;
+        connected: boolean;
+        collection_info: Record<string, unknown>;
+      };
+    }>({ url: '/api/vector/status' });
+    return resp.vector_status;
   }
 
   async getGraphStatus(): Promise<GraphStats> {

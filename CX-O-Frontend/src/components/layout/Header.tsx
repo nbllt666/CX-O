@@ -30,7 +30,7 @@ export const Header: React.FC<HeaderProps> = ({ title, actions }) => {
   const navigate = useNavigate();
 
   return (
-    <div className="h-full px-4 flex items-center justify-between">
+    <div className="h-full px-6 flex items-center justify-between">
       <div className="flex items-center gap-4">
         {!title && <Logo />}
         {title && (

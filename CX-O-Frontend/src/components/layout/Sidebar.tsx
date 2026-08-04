@@ -117,48 +117,6 @@ const navItems: NavItem[] = [
     ),
   },
   {
-    path: '/audio-test',
-    label: '音频测试',
-    icon: (
-      <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-        <path
-          strokeLinecap="round"
-          strokeLinejoin="round"
-          strokeWidth={2}
-          d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z"
-        />
-      </svg>
-    ),
-  },
-  {
-    path: '/audio-workstation',
-    label: '音频工作站',
-    icon: (
-      <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-        <path
-          strokeLinecap="round"
-          strokeLinejoin="round"
-          strokeWidth={2}
-          d="M12 18.75a6 6 0 006-6v-1.5m-6 7.5a6 6 0 01-6-6v-1.5m6 7.5v3.75m-3.75 0h7.5M12 15.75a3 3 0 01-3-3V4.5a3 3 0 116 0v8.25a3 3 0 01-3 3z"
-        />
-      </svg>
-    ),
-  },
-  {
-    path: '/archive',
-    label: '归档',
-    icon: (
-      <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-        <path
-          strokeLinecap="round"
-          strokeLinejoin="round"
-          strokeWidth={2}
-          d="M5 8h14M5 8a2 2 0 110-4h14a2 2 0 110 4M5 8v10a2 2 0 002 2h10a2 2 0 002-2V8m-9 4h4"
-        />
-      </svg>
-    ),
-  },
-  {
     path: '/acp',
     label: 'ACP',
     icon: (
@@ -199,6 +157,21 @@ const navItems: NavItem[] = [
     ),
   },
   {
+    path: '/widget-group',
+    label: '小工具',
+    icon: (
+      <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+        <path
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          strokeWidth={2}
+          d="M11 4a2 2 0 114 0v1a1 1 0 001 1h3a1 1 0 011 1v3a1 1 0 01-1 1h-1a2 2 0 100 4h1a1 1 0 011 1v3a1 1 0 01-1 1h-3a1 1 0 01-1-1v-1a2 2 0 10-4 0v1a1 1 0 01-1 1H7a1 1 0 01-1-1v-3a1 1 0 00-1-1H4a2 2 0 110-4h1a1 1 0 001-1V7a1 1 0 011-1h3a1 1 0 001-1V4z"
+        />
+      </svg>
+    ),
+    hasSubmenu: true,
+  },
+  {
     path: '/settings',
     label: '设置',
     icon: (
@@ -212,6 +185,10 @@ const navItems: NavItem[] = [
       </svg>
     ),
   },
+];
+
+/** 小工具分组的子项（从平铺列表收编） */
+const widgetItems: NavItem[] = [
   {
     path: '/vector-data',
     label: '向量数据',
@@ -222,6 +199,48 @@ const navItems: NavItem[] = [
           strokeLinejoin="round"
           strokeWidth={2}
           d="M4 7v10c0 2.21 3.582 4 8 4s8-1.79 8-4V7M4 7c0 2.21 3.582 4 8 4s8-1.79 8-4M4 7c0-2.21 3.582-4 8-4s8 1.79 8 4m0 5c0 2.21-3.582 4-8 4s-8-1.79-8-4"
+        />
+      </svg>
+    ),
+  },
+  {
+    path: '/archive',
+    label: '归档',
+    icon: (
+      <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+        <path
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          strokeWidth={2}
+          d="M5 8h14M5 8a2 2 0 110-4h14a2 2 0 110 4M5 8v10a2 2 0 002 2h10a2 2 0 002-2V8m-9 4h4"
+        />
+      </svg>
+    ),
+  },
+  {
+    path: '/audio-workstation',
+    label: '音频工作站',
+    icon: (
+      <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+        <path
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          strokeWidth={2}
+          d="M12 18.75a6 6 0 006-6v-1.5m-6 7.5a6 6 0 01-6-6v-1.5m6 7.5v3.75m-3.75 0h7.5M12 15.75a3 3 0 01-3-3V4.5a3 3 0 116 0v8.25a3 3 0 01-3 3z"
+        />
+      </svg>
+    ),
+  },
+  {
+    path: '/audio-test',
+    label: '音频测试',
+    icon: (
+      <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+        <path
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          strokeWidth={2}
+          d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z"
         />
       </svg>
     ),
@@ -384,6 +403,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ collapsed, setCollapsed }) => 
   const navigate = useNavigate();
   const [agents, setAgents] = useState<Agent[]>([]);
   const [isChatExpanded, setIsChatExpanded] = useState(false);
+  const [isWidgetsExpanded, setIsWidgetsExpanded] = useState(false);
   const { currentAgentId, setCurrentAgentId } = useChatStore();
 
   useEffect(() => {
@@ -406,6 +426,13 @@ export const Sidebar: React.FC<SidebarProps> = ({ collapsed, setCollapsed }) => 
     }
   }, [location.pathname]);
 
+  // 当前路由落在小工具子项时自动展开分组
+  useEffect(() => {
+    if (widgetItems.some((w) => w.path === location.pathname)) {
+      setIsWidgetsExpanded(true);
+    }
+  }, [location.pathname]);
+
   const handleAgentClick = (agentId: string) => {
     setCurrentAgentId(agentId);
     navigate('/chat');
@@ -413,7 +440,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ collapsed, setCollapsed }) => 
 
   return (
     <motion.aside
-      className="h-full flex flex-col py-4 overflow-hidden bg-transparent"
+      className="h-full flex flex-col p-4 overflow-hidden bg-transparent"
       variants={sidebarVariants}
       animate={collapsed ? 'collapsed' : 'expanded'}
       initial={false}
@@ -422,8 +449,43 @@ export const Sidebar: React.FC<SidebarProps> = ({ collapsed, setCollapsed }) => 
         {navItems.map((item) => {
           const isActive = location.pathname === item.path;
           const isChat = item.path === '/chat';
+          const isWidgetGroup = item.path === '/widget-group';
+          const isWidgetChildActive = isWidgetGroup && widgetItems.some((w) => w.path === location.pathname);
 
           if (collapsed) {
+            // 折叠态：小工具分组不占位，直接平铺渲染子项图标
+            if (isWidgetGroup) {
+              return (
+                <React.Fragment key={item.path}>
+                  {widgetItems.map((w) => {
+                    const isChildActive = location.pathname === w.path;
+                    return (
+                      <Tooltip key={w.path} content={w.label} position="right">
+                        <NavLink to={w.path} className="block">
+                          <div
+                            className={cn(
+                              'relative flex items-center justify-center pl-4 pr-3 py-2.5 rounded-[var(--radius-lg)] transition-colors duration-150',
+                              isChildActive
+                                ? 'glass-panel text-[var(--color-text-primary)]'
+                                : 'text-[var(--color-text-secondary)] hover:bg-[var(--glass-hover-bg)] hover:text-[var(--color-text-primary)]'
+                            )}
+                          >
+                            <motion.div
+                              className="absolute left-0 inset-y-0 w-[5px] bg-[var(--glass-indicator)] rounded-l-full origin-center"
+                              initial={{ scaleY: 0, opacity: 0 }}
+                              animate={isChildActive ? { scaleY: 1, opacity: 1 } : { scaleY: 0, opacity: 0 }}
+                              transition={{ duration: 0.2, ease: 'easeInOut' }}
+                            />
+                            <span className="flex-shrink-0">{w.icon}</span>
+                          </div>
+                        </NavLink>
+                      </Tooltip>
+                    );
+                  })}
+                </React.Fragment>
+              );
+            }
+
             return (
               <Tooltip key={item.path} content={item.label} position="right">
                 <NavLink to={item.path} className="block">
@@ -529,6 +591,80 @@ export const Sidebar: React.FC<SidebarProps> = ({ collapsed, setCollapsed }) => 
                             </button>
                           </motion.li>
                         ))}
+                      </motion.ul>
+                    )}
+                  </AnimatePresence>
+                </>
+              ) : isWidgetGroup ? (
+                <>
+                  <button
+                    onClick={() => setIsWidgetsExpanded(!isWidgetsExpanded)}
+                    className="w-full block"
+                  >
+                    <div
+                      className={cn(
+                        'relative flex items-center gap-3 pl-4 pr-3 py-2.5 rounded-[var(--radius-lg)] transition-colors duration-150',
+                        isWidgetChildActive
+                          ? 'glass-panel text-[var(--color-text-primary)]'
+                          : 'text-[var(--color-text-secondary)] hover:bg-[var(--glass-hover-bg)] hover:text-[var(--color-text-primary)]'
+                      )}
+                    >
+                      <motion.div
+                        className="absolute left-0 inset-y-0 w-[5px] bg-[var(--glass-indicator)] rounded-l-full origin-center"
+                        initial={{ scaleY: 0, opacity: 0 }}
+                        animate={isWidgetChildActive ? { scaleY: 1, opacity: 1 } : { scaleY: 0, opacity: 0 }}
+                        transition={{ duration: 0.2, ease: 'easeInOut' }}
+                      />
+                      <span className="flex-shrink-0">{item.icon}</span>
+                      <span className="text-sm font-medium">{item.label}</span>
+                      <motion.svg
+                        className="w-4 h-4 ml-auto"
+                        variants={chevronVariants}
+                        animate={isWidgetsExpanded ? 'expanded' : 'collapsed'}
+                        fill="none"
+                        viewBox="0 0 24 24"
+                        stroke="currentColor"
+                      >
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                      </motion.svg>
+                    </div>
+                  </button>
+
+                  <AnimatePresence initial={false}>
+                    {isWidgetsExpanded && (
+                      <motion.ul
+                        className="mt-1 ml-4 pl-3 border-l border-[var(--glass-border)] space-y-1 overflow-hidden"
+                        variants={submenuVariants}
+                        initial="hidden"
+                        animate="visible"
+                        exit="hidden"
+                      >
+                        {widgetItems.map((w) => {
+                          const isChildActive = location.pathname === w.path;
+                          return (
+                            <motion.li key={w.path} variants={submenuItemVariants}>
+                              <NavLink to={w.path} className="block">
+                                <div
+                                  className={cn(
+                                    'w-full flex items-center gap-2 pl-3 pr-3 py-2 rounded-[var(--radius-md)] text-left relative transition-colors duration-200',
+                                    isChildActive
+                                      ? 'text-[var(--color-accent)]'
+                                      : 'text-[var(--color-text-tertiary)] hover:text-[var(--color-text-primary)]'
+                                  )}
+                                >
+                                  <motion.div
+                                    className="absolute -left-[13px] inset-y-1 w-[2px] bg-[var(--color-accent)]/85 rounded-l-full origin-center"
+                                    initial={{ scaleY: 0, opacity: 0 }}
+                                    animate={isChildActive ? { scaleY: 1, opacity: 1 } : { scaleY: 0, opacity: 0 }}
+                                    transition={{ duration: 0.2, ease: 'easeInOut' }}
+                                  />
+                                  <span className="flex-shrink-0 [&>svg]:w-4 [&>svg]:h-4">{w.icon}</span>
+                                  <span className="text-sm truncate">{w.label}</span>
+                                </div>
+                              </NavLink>
+                            </motion.li>
+                          );
+                        })}
                       </motion.ul>
                     )}
                   </AnimatePresence>

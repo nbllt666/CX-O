@@ -71,7 +71,7 @@ export function Header({ title, actions }: HeaderProps) {
 
   return (
     <motion.div
-      className="h-full px-4 flex items-center justify-between"
+      className="h-full px-6 flex items-center justify-between"
       variants={headerVariants}
       initial="initial"
       animate="animate"

@@ -13,7 +13,7 @@ export function AppearanceCard(props: AppearanceCardProps) {
   const { theme, onThemeChange, selectedAccent, onSelectedAccentChange, cn } = props;
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-8">
       <Card>
         <CardBody>
           <h3 className="text-lg font-semibold mb-4">主题设置</h3>

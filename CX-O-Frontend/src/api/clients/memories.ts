@@ -103,13 +103,19 @@ export class _MemoriesClientMixin extends _ApiClientBase {
     total_sessions: number;
     total_agents: number;
     archived_memories: number;
+    total_messages: number;
   }> {
-    return this.request<{
-      total_memories: number;
-      total_sessions: number;
-      total_agents: number;
-      archived_memories: number;
+    const response = await this.request<{
+      status?: string;
+      data: {
+        total_memories: number;
+        total_sessions: number;
+        total_agents: number;
+        archived_memories: number;
+        total_messages: number;
+      };
     }>({ url: '/api/stats' });
+    return response.data;
   }
 
   async getArchiveStats(): Promise<ArchiveStats> {

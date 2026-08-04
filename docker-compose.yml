@@ -26,6 +26,7 @@ services:
       - CUDA_VISIBLE_DEVICES=${ASR_GPU:-0}
     volumes:
       - ./CX-O-SERVER/sensevoice:/app/sensevoice:ro
+      - ./CX-O-SERVER/api_server.py:/app/api_server.py:ro
       - asr-models:/root/.cache/modelscope
     deploy:
       resources:

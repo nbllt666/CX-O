@@ -1,7 +1,7 @@
 import { useEffect, useRef, useCallback, useState } from 'react';
 
 import { getWS_BASE_URL } from '../api/client';
-import { VoiceActions, ChatActions } from '../constants/actions';
+import { VoiceActions } from '../constants/actions';
 import { useWSTransport } from './ws/transport';
 
 export interface WebSocketMessage {
@@ -302,17 +302,19 @@ export function useWebSocket(options: WebSocketOptions): UseWebSocketReturn {
         return false;
       }
 
+      // 带图片消息：WS 后端 chat_stream 不支持 images，返回 false 让 caller 回退 HTTP /api/chat/stream。
+      // 必须在 setIsGenerating(true) 之前返回，否则 isGenerating 状态永久卡住。
+      if (images && images.length > 0) {
+        return false;
+      }
+
       setIsGenerating(true);
-      const requestId = `${Date.now()}-${Math.random().toString(36).slice(2, 11)}`;
+      // 后端协议（CXHMS backend/core/websocket/handlers.py）：平铺格式，handler 直接读 message 顶层字段
       wsRef.current.send(
         JSON.stringify({
-          action: ChatActions.STREAM,
-          request_id: requestId,
-          data: {
-            text: message,
-            agent_id: agentIdRef.current,
-            images: images && images.length > 0 ? images : undefined,
-          },
+          type: 'chat_stream',
+          message,
+          agent_id: agentIdRef.current,
         })
       );
       return true;

@@ -23,7 +23,7 @@ export interface MessageListProps {
 
 export const MessageList = memo(function MessageList({ messages, isLoading, currentAgent, chatContainerRef, messagesEndRef }: MessageListProps) {
   return (
-    <div className="flex-1 min-h-0 overflow-y-auto space-y-4 mb-4" ref={chatContainerRef}>
+    <div className="flex-1 min-h-0 overflow-y-auto space-y-4 mb-4 px-2" ref={chatContainerRef}>
       {messages.length === 0 ? (
         <div className="flex flex-col items-center justify-center h-full text-center py-12">
           <div className="w-16 h-16 rounded-2xl bg-[var(--color-accent-light)] flex items-center justify-center mb-4">
@@ -111,7 +111,7 @@ export const MessageList = memo(function MessageList({ messages, isLoading, curr
               )}
 
               <div
-                className={`px-4 py-3 rounded-2xl ${
+                className={`px-5 py-4 rounded-2xl overflow-hidden ${
                   message.role === 'user'
                     ? 'bg-[var(--color-accent)] text-white'
                     : 'bg-[var(--color-bg-primary)] border border-[var(--color-border)]'

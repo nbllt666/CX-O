@@ -53,6 +53,22 @@ export default defineConfig({
   server: {
     host: true,
     port: 3000,
+    configure(server) {
+      // 为 .vrm 文件设置正确的 MIME 类型
+      // 拦截 res.setHeader 来覆盖 Vite 的默认 MIME 类型
+      server.middlewares.use((req, res, next) => {
+        if (req.url?.endsWith('.vrm')) {
+          const originalSetHeader = res.setHeader.bind(res);
+          res.setHeader = (name: string, value: string | number | readonly string[]) => {
+            if (name.toLowerCase() === 'content-type') {
+              return originalSetHeader('Content-Type', 'model/gltf-binary');
+            }
+            return originalSetHeader(name, value);
+          };
+        }
+        next();
+      });
+    },
     proxy: {
       '/api': {
         target: 'http://127.0.0.1:8001',

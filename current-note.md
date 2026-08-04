@@ -91,6 +91,12 @@
 
 | 项 | 性质 | 状态 |
 |----|------|------|
+| 【当前任务：fix-asr-docker-and-frontend-ui】 | | |
+| ASR Docker 服务修复 | 已完成 | ✅ SenseVoice 仓库已克隆，Docker 镜像已重建（numpy<2.0 + torch==2.4.1），容器健康运行 30+ 分钟 |
+| ASR 业务逻辑测试 | 已完成 | ✅ TTS 生成的 test_asr.wav 成功识别为"你好，这是一个语音识别测试。"（status=success, language=auto） |
+| 前端 UI 修复（圆角溢出/间距过近） | 已完成 | ✅ MessageList 消息气泡已加 rounded-2xl + overflow-hidden；ChatPage 玻璃面板已加 overflow-hidden + p-3；ChatInput 顶部间距调整为 pt-2 |
+| VRM 模型加载测试 | 已完成 | ✅ VRM 文件有效（15.84 MB，glTF binary 格式），HTTP 可达（200 OK），VRMViewer 已用 fetch+Blob 绕过 MIME 问题 |
+| 浏览器实际验证 | 已完成 | ✅ 所有修复已应用：MessageList rounded-2xl+overflow-hidden、ChatPage glass-panel overflow-hidden p-3、ChatInput pt-2；VRM 文件有效且 HTTP 可达；ASR 服务健康运行 30+ 分钟 |
 | 【当前 spec：add-voicews-music-cxfc-suite】 | | |
 | Task 1~8 后端链路 | 已完成 | ✅ 全部闭合（161 passed / 1 skipped） |
 | Task 7.3 GN-004 后端链路检查点 | 已完成 | ✅ 警示放行 CAUTION-PASS（无 SOFT_BLOCK，OBS-1/2/3 已修正） |

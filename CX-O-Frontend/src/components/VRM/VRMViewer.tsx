@@ -121,8 +121,26 @@ export function VRMViewer({
       if (!useBuf && !usePath) { setLoadError('MODEL_NOT_CONFIGURED'); setIsLoading(false); return; }
 
       let url: string | null = null;
-      if (useBuf) url = URL.createObjectURL(new Blob([data], { type: 'application/octet-stream' }));
-      else url = modelPath;
+      let blobUrl: string | null = null;
+
+      if (useBuf) {
+        url = URL.createObjectURL(new Blob([data], { type: 'application/octet-stream' }));
+        blobUrl = url;
+      } else if (usePath) {
+        // 使用 fetch 加载模型，绕过 MIME 类型问题
+        try {
+          const response = await fetch(modelPath);
+          if (!response.ok) throw new Error(`Failed to fetch model: ${response.status}`);
+          const arrayBuffer = await response.arrayBuffer();
+          url = URL.createObjectURL(new Blob([arrayBuffer], { type: 'application/octet-stream' }));
+          blobUrl = url;
+        } catch (fetchError) {
+          setLoadError(`MODEL_FETCH_FAILED: ${fetchError}`);
+          setIsLoading(false);
+          return;
+        }
+      }
+
       if (!url) return;
 
       try {

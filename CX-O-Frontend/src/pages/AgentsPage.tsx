@@ -262,7 +262,7 @@ export function AgentsPage() {
   }
 
   return (
-    <div className="max-w-6xl mx-auto">
+    <div className="max-w-6xl mx-auto px-6">
       <PageHeader
         title="AI 助手管理"
         description="创建和管理不同的 AI 助手，每个助手可以有独立的系统提示词和配置"

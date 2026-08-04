@@ -640,11 +640,12 @@ describe('API Client', () => {
 
   describe('Admin API', () => {
     it('should get stats', async () => {
-      const mockStats = { total_memories: 100, total_sessions: 50 };
-      mockGet.mockResolvedValueOnce({ data: mockStats });
+      const mockStats = { total_memories: 100, total_sessions: 50, total_agents: 3, archived_memories: 10, total_messages: 500 };
+      mockGet.mockResolvedValueOnce({ data: { status: 'success', data: mockStats } });
 
       const result = await api.getStats();
       expect(result.total_memories).toBe(100);
+      expect(result.total_messages).toBe(500);
     });
   });
 

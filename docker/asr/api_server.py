@@ -123,3 +123,8 @@ async def recognize_audio(request: ASRRequest):
 @app.get("/health")
 async def health():
     return {"status": "healthy", "model_loaded": _model is not None}
+
+
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run(app, host="0.0.0.0", port=8005)
