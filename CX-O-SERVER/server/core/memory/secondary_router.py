@@ -638,7 +638,7 @@ class SecondaryModelRouter:
             )
 
         # 获取对话消息
-        messages = self.context_manager.get_messages(conversation_id, limit=100)
+        messages = self.context_manager.get_recent_messages(conversation_id, limit=100)
         if not messages:
             return SecondaryResult(
                 status="error",

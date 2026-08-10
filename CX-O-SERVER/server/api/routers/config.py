@@ -14,6 +14,9 @@ from server.core.websocket import get_websocket_manager
 router = APIRouter()
 logger = get_contextual_logger(__name__)
 
+# 项目根（CX-O-SERVER），基于文件位置解析，避免依赖运行时工作目录
+_PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent.parent
+
 
 class SenseVoiceStreamingConfigRequest(BaseModel):
     """SenseVoice Streaming 配置请求体"""
@@ -35,7 +38,7 @@ class AdaptivePollingConfigRequest(BaseModel):
 
 def _get_services_config() -> Dict[str, Any]:
     """从 config/settings.json 加载服务配置"""
-    config_file = Path("config/settings.json")
+    config_file = _PROJECT_ROOT / "config" / "settings.json"
     if config_file.exists():
         try:
             with open(config_file, "r", encoding="utf-8") as f:
@@ -47,7 +50,7 @@ def _get_services_config() -> Dict[str, Any]:
 
 def _save_services_config(config_data: Dict[str, Any]) -> None:
     """保存服务配置到 config/settings.json"""
-    config_file = Path("config/settings.json")
+    config_file = _PROJECT_ROOT / "config" / "settings.json"
     config_file.parent.mkdir(parents=True, exist_ok=True)
     with open(config_file, "w", encoding="utf-8") as f:
         json.dump(config_data, f, indent=2, ensure_ascii=False)
@@ -149,7 +152,7 @@ async def update_unified_config(request: Request, _: bool = Depends(verify_admin
             raise HTTPException(status_code=400, detail="Missing section")
 
         if section == "audio":
-            config_file = Path("config/settings.json")
+            config_file = _PROJECT_ROOT / "config" / "settings.json"
             config_data = {}
 
             if config_file.exists():
@@ -349,7 +352,7 @@ async def update_adaptive_polling_config(request: AdaptivePollingConfigRequest):
 
 def _load_yaml_config(filename: str) -> Dict[str, Any]:
     """加载 YAML 配置文件"""
-    config_file = Path(f"config/{filename}")
+    config_file = _PROJECT_ROOT / "config" / filename
     if config_file.exists():
         try:
             with open(config_file, "r", encoding="utf-8") as f:
@@ -512,7 +515,7 @@ async def update_audio_config(request: Request, _: bool = Depends(verify_admin_a
     """更新音频配置 - 对应 Gateway 的 POST /api/config/audio"""
     try:
         data = await request.json()
-        config_file = Path("config/settings.json")
+        config_file = _PROJECT_ROOT / "config" / "settings.json"
         config_data = {}
         if config_file.exists():
             try:

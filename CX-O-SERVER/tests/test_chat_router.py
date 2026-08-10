@@ -29,6 +29,12 @@ class FakeContextManager:
         self.calls.append(("create", session_id))
         self.sessions[session_id] = {"id": session_id, "title": title, "metadata": metadata or {}}
 
+    def ensure_session(self, session_id, workspace_id="default", title="", metadata=None):
+        self.calls.append(("ensure", session_id))
+        if session_id not in self.sessions:
+            self.sessions[session_id] = {"id": session_id, "title": title, "metadata": metadata or {}}
+        return session_id
+
     def update_session(self, session_id, metadata=None):
         self.calls.append(("update", session_id))
         if session_id in self.sessions:
@@ -40,6 +46,9 @@ class FakeContextManager:
 
     def get_messages(self, session_id, limit=50):
         return self.messages.get(session_id, [])[:limit]
+
+    def get_recent_messages(self, session_id, limit=50):
+        return self.messages.get(session_id, [])[-limit:]
 
 
 class FakeMemoryManager:

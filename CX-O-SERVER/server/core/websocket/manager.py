@@ -1,5 +1,4 @@
 import asyncio
-import json
 import threading
 from datetime import datetime
 from typing import Any, Callable, Dict, Optional, Set
@@ -146,9 +145,9 @@ class WebSocketManager:
         async with self._lock:
             connection = self.connections.get(client_id)
         if connection is not None:
-            logger.info(f"[DIAG-SEND] sending type={message.get('type')} to client_id={client_id}")
+            logger.debug("[DIAG-SEND] sending type=%s to client_id=%s", message.get('type'), client_id)
             await connection.send(message)
-            logger.info(f"[DIAG-SEND] sent type={message.get('type')} to client_id={client_id}")
+            logger.debug("[DIAG-SEND] sent type=%s to client_id=%s", message.get('type'), client_id)
         else:
             logger.warning(f"[DIAG-SEND] connection is None for client_id={client_id}, type={message.get('type')}")
 
@@ -380,7 +379,6 @@ class WebSocketManager:
         from datetime import timedelta
 
         now = datetime.now()
-        default_timeout = timedelta(minutes=30)
 
         async with self._lock:
             connections_snapshot = list(self.connections.items())

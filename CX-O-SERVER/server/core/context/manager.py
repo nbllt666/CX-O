@@ -1,11 +1,24 @@
+"""
+server/core/context/manager.py
+===============================
+对话会话与消息历史的上下文管理器。
+
+对外契约：
+  - ``ContextManager``：管理会话（sessions）与消息（messages）的持久化，
+    基于 SQLite（默认 ``data/sessions.db``），线程本地连接 + LRU 会话缓存。
+  - 关键方法：
+    - ``get_recent_messages(session_id, limit)``：取最近 N 条消息（LLM 上下文用，避免最旧 N 条缺陷）
+    - ``ensure_session(...)``：get-or-create 会话（消除调用方样板）
+    - ``create_session / get_session / add_message / get_messages``：会话与消息基础操作
+  - ``ContextManager`` 单例由 ``server.dependencies.get_context_manager`` 提供。
+"""
 import json
 import threading
 import uuid
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Dict, List, Optional
 
-from server.core.exceptions import ContextError, DatabaseError
 from server.core.logging_config import get_contextual_logger
 
 logger = get_contextual_logger(__name__)
@@ -182,6 +195,35 @@ class ContextManager:
         logger.info(f"会话已创建: id={session_id}")
         return session_id
 
+    def ensure_session(
+        self,
+        session_id: str,
+        workspace_id: str = "default",
+        title: str = "",
+        metadata: Optional[Dict] = None,
+    ) -> str:
+        """获取会话，不存在则创建（get-or-create）。
+
+        消除调用方重复的「get_session 为 None 再 create_session」样板代码。
+
+        Args:
+            session_id: 会话ID
+            workspace_id: 工作区ID
+            title: 会话标题
+            metadata: 元数据
+
+        Returns:
+            会话ID（已存在时原样返回，不存在时创建后返回）
+        """
+        if self.get_session(session_id) is None:
+            self.create_session(
+                workspace_id=workspace_id,
+                title=title,
+                session_id=session_id,
+                metadata=metadata,
+            )
+        return session_id
+
     def get_session(self, session_id: str) -> Optional[Dict]:
         conn = self._get_connection()
         cursor = conn.cursor()
@@ -342,6 +384,22 @@ class ContextManager:
         rows = cursor.fetchall()
 
         return [self._row_to_message(row) for row in rows]
+
+    def get_recent_messages(self, session_id: str, limit: int = 50) -> List[Dict]:
+        """获取最近 limit 条消息（按 created_at 升序返回）。
+
+        单次 SQL 查询（ORDER BY created_at DESC LIMIT）即可取最近 N 条，
+        避免 get_messages 的 count+offset 两次往返，用于实时语音等热路径。
+        """
+        conn = self._get_connection()
+        cursor = conn.cursor()
+
+        query = "SELECT * FROM messages WHERE session_id = ? AND is_deleted = FALSE ORDER BY created_at DESC LIMIT ?"
+        cursor.execute(query, (session_id, limit))
+        rows = cursor.fetchall()
+
+        # DESC 查询行序为 新→旧，反转回升序返回，与 get_messages 语义一致
+        return [self._row_to_message(row) for row in reversed(rows)]
 
     def delete_message(self, message_id: str) -> bool:
         conn = self._get_connection()

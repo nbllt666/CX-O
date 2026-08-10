@@ -7,7 +7,7 @@ import time
 from collections import deque
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict
 
 from server.core.graph.database import Database
 

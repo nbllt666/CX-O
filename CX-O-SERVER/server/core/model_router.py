@@ -209,7 +209,7 @@ class ModelRouter:
 
         except httpx.ConnectError as e:
             error_msg = f"连接失败: {e}"
-        except httpx.TimeoutException as e:
+        except httpx.TimeoutException:
             error_msg = "连接超时"
         except Exception as e:
             error_msg = str(e)

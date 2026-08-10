@@ -1,0 +1,22 @@
+{
+  "tts": {
+    "speed": 2.0
+  },
+  "services": {
+    "danmaku": {
+      "x": 1
+    },
+    "adaptive_polling": {
+      "enabled": false,
+      "offset_ms": 100,
+      "window_size": 5,
+      "min_interval_ms": 50,
+      "max_interval_ms": 800
+    },
+    "sensevoice_streaming": {
+      "chunk_size": 2048,
+      "hop_size": 256,
+      "look_back": 4
+    }
+  }
+}

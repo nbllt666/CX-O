@@ -13,15 +13,14 @@
 """
 
 import json
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, HTTPException, Query
 from typing import Optional, List, Dict, Any
 from pydantic import BaseModel, Field
 
-from server.core.graph import GraphDatabase, NodeManager, EdgeManager, TraversalManager, SemanticSearch
+from server.core.graph import GraphDatabase
 from server.core.graph.models import (
     GraphNode, GraphEdge,
-    NodeCreate, NodeUpdate, EdgeCreate, EdgeUpdate,
-    SemanticSearchResult, PathResult
+    NodeCreate, NodeUpdate, EdgeCreate, EdgeUpdate
 )
 from server.core.graph.visualization import GraphExporter
 from server.core.graph.semantic_query import SemanticQueryManager
@@ -449,7 +448,6 @@ async def get_graph_status(agent_id: str = Query("default")):
     monitor = GraphMonitor(graph.db)
     stats = monitor.get_graph_stats(agent_id=agent_id)
 
-    node_count = stats.get("node_count", 0)
     edge_count = stats.get("edge_count", 0)
     node_types = stats.get("node_types", {}) or {}
 

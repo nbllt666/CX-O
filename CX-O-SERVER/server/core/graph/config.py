@@ -6,7 +6,17 @@ import os
 import re
 import logging
 from dataclasses import dataclass, field, replace
-from typing import Optional, Dict, Any
+from pathlib import Path
+from typing import Optional
+
+# 项目根（CX-O-SERVER），基于文件位置解析，避免依赖运行时工作目录。
+_PROJECT_ROOT = Path(__file__).resolve().parents[3]
+
+
+def _resolve(db_path: str) -> str:
+    """将相对图数据库路径解析为项目根绝对路径（绝对路径原样返回）。"""
+    p = Path(db_path)
+    return str(_PROJECT_ROOT / p) if not p.is_absolute() else db_path
 
 
 @dataclass
@@ -62,6 +72,7 @@ def get_graph_config(agent_id: Optional[str] = None) -> GraphConfig:
                 gc = unified.graph
                 # CX-O 主配置字段名为 database_path（CXHMS 旧版为 db_path，做兼容）
                 db_path = getattr(gc, 'database_path', None) or getattr(gc, 'db_path', None) or 'data/graph.db'
+                db_path = _resolve(db_path)
                 # weaviate.grpc_port 在 CX-O 主配置未定义，用默认值 50061
                 grpc_port = getattr(gc.weaviate, 'grpc_port', 50061) if hasattr(gc, 'weaviate') else 50061
                 _config = GraphConfig(
@@ -94,13 +105,13 @@ def get_graph_config(agent_id: Optional[str] = None) -> GraphConfig:
     # 按助手情况：基于默认配置生成 per-agent db_path
     base = get_graph_config()
     safe_id = re.sub(r'[\\/:*?"<>|]', '_', agent_id)
-    per_agent_path = f"data/graph_{safe_id}.db"
+    per_agent_path = _resolve(f"data/graph_{safe_id}.db")
     return replace(base, database_path=per_agent_path)
 
 
 def _load_config_from_env() -> GraphConfig:
     return GraphConfig(
-        database_path=os.getenv("GRAPH_DATABASE_PATH", "data/graph.db"),
+        database_path=_resolve(os.getenv("GRAPH_DATABASE_PATH", "data/graph.db")),
         auto_create_schema=os.getenv("GRAPH_AUTO_CREATE", "true").lower() == "true",
         pool_size=int(os.getenv("GRAPH_POOL_SIZE", "10")),
         timeout=int(os.getenv("GRAPH_TIMEOUT", "30")),

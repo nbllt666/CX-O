@@ -5,10 +5,9 @@ Neo4j 数据迁移工具
 import json
 import logging
 from typing import Optional, List, Dict, Any, Generator
-from datetime import datetime
 
 from server.core.graph.database import Database
-from server.core.graph.models import GraphNode, GraphEdge, NodeCreate, EdgeCreate
+from server.core.graph.models import NodeCreate, EdgeCreate
 from server.core.graph.nodes import NodeManager
 from server.core.graph.edges import EdgeManager
 from server.core.graph.config import GraphConfig
@@ -306,7 +305,7 @@ class MigrationManager:
         neo4j_password: str = "password",
         batch_size: int = 1000,
     ) -> Dict[str, Any]:
-        from server.core.graph.database import Database, get_database
+        from server.core.graph.database import get_database
         from server.core.graph.semantic_search import SemanticSearch
         from server.core.graph.vectorizer import TextVectorizer
 

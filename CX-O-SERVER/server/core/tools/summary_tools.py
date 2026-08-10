@@ -701,7 +701,7 @@ def get_session_messages(session_id: str, limit: int = 50) -> Dict[str, Any]:
         return {"error": "上下文管理器不可用"}
 
     try:
-        messages = cm.get_messages(session_id, limit=limit)
+        messages = cm.get_recent_messages(session_id, limit=limit)
         return {
             "status": "success",
             "session_id": session_id,
@@ -752,7 +752,7 @@ async def trigger_topic_summary(
         return {"error": "记忆管理器未初始化"}
 
     try:
-        messages = cm.get_messages(session_id, limit=1000)
+        messages = cm.get_recent_messages(session_id, limit=1000)
 
         if not messages:
             return {"error": "没有可摘要的消息"}
@@ -815,7 +815,7 @@ async def trigger_topic_summary(
 
         max_history = _TOPIC_SUMMARY_CONFIG.get("max_history_topics")
         if max_history is not None:
-            all_messages = cm.get_messages(session_id, limit=1000)
+            all_messages = cm.get_recent_messages(session_id, limit=1000)
             topic_summaries = [
                 msg for msg in all_messages
                 if msg.get("content_type") == "topic_summary" or

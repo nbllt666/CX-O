@@ -39,6 +39,7 @@ class FakeASR:
 @pytest.fixture
 def client(monkeypatch, tmp_path):
     monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(audio_router_mod, "VOICE_REFS_DIR", tmp_path / "data" / "voice_refs")
     tts = FakeTTS()
     asr = FakeASR()
     app = FastAPI()

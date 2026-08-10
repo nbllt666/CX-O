@@ -208,18 +208,22 @@ class TestCreateBackup:
 
     def test_data_dir_missing_400(self, client, monkeypatch, tmp_path):
         c = client
-        monkeypatch.chdir(tmp_path)  # tmp 目录下无 data/
+        # 显式 patch 绝对路径到不存在的位置（替代原 chdir 相对路径手法）
+        monkeypatch.setattr(admin_router_mod, "_DATA_DIR", tmp_path / "data")
+        monkeypatch.setattr(admin_router_mod, "_BACKUP_DIR", tmp_path / "data" / "backups")
         r = c.post("/admin/backup", headers={"X-API-Key": "secret_key"})
         assert r.status_code == 400
 
     def test_success_creates_zip(self, client, monkeypatch, tmp_path):
         c = client
-        (tmp_path / "data").mkdir()
-        (tmp_path / "data" / "a.txt").write_text("hello")
-        monkeypatch.chdir(tmp_path)
+        data_dir = tmp_path / "data"
+        data_dir.mkdir()
+        (data_dir / "a.txt").write_text("hello")
+        monkeypatch.setattr(admin_router_mod, "_DATA_DIR", data_dir)
+        monkeypatch.setattr(admin_router_mod, "_BACKUP_DIR", data_dir / "backups")
         r = c.post("/admin/backup", headers={"X-API-Key": "secret_key"})
         assert r.status_code == 200
         assert r.json()["status"] == "success"
         # 备份 zip 已生成
-        backups = list((tmp_path / "data" / "backups").glob("*.zip"))
+        backups = list((data_dir / "backups").glob("*.zip"))
         assert len(backups) == 1

@@ -47,6 +47,9 @@ class FakeContextManager:
     def get_messages(self, session_id, limit):
         return self.messages
 
+    def get_recent_messages(self, session_id, limit):
+        return self.messages
+
     def clear_session_messages(self, session_id):
         del self.messages[:]
 

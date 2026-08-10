@@ -112,28 +112,21 @@ class TestNonRealtime:
 # ---------------------------------------------------------------------------
 
 class TestRealtime:
-    def test_f5_uses_realtime_voice_prompt_and_last_turns(self):
+    def test_realtime_keeps_system_prompt_and_last_turns(self):
         msgs = build_messages(
             _AGENT, _FakeContextMgr(_HISTORY), "s", "你好",
-            is_realtime_voice=True, tts_engine="f5-tts",
+            is_realtime_voice=True,
         )
         assert msgs[0]["content"] == "你是测试人设"
-        assert msgs[1]["content"].startswith("## 实时语音模式")
-        # 保留最近 2 轮（u2,a2），不含更早的 u1
+        # 不再注入语音隐藏提示词，直接进入最近 2 轮历史
         body = _contents(msgs)
         assert "u2" in body and "a2" in body
         assert "u1" not in body
+        assert not any(c.startswith("##") for c in body)
         # 不注入重型隐藏提示词
         assert "## 工具调用规则" not in body
         # 末尾当前用户
         assert msgs[-1] == {"role": "user", "content": "你好"}
-
-    def test_orpheus_uses_orpheus_voice_prompt(self):
-        msgs = build_messages(
-            _AGENT, _FakeContextMgr(_HISTORY), "s", "你好",
-            is_realtime_voice=True, tts_engine="orpheus",
-        )
-        assert msgs[1]["content"].startswith("## Orpheus 实时语音模式")
 
     def test_realtime_history_limit(self):
         # 10 条历史 → 实时模式只保留 REALTIME_VOICE_HISTORY_LIMIT 条
@@ -143,7 +136,7 @@ class TestRealtime:
         ]
         msgs = build_messages(
             _AGENT, _FakeContextMgr(long_history), "s", "你好",
-            is_realtime_voice=True, tts_engine="f5-tts",
+            is_realtime_voice=True,
         )
         # 取最近 REALTIME_VOICE_HISTORY_LIMIT 条历史（不含末尾的当前用户消息）
         history_msgs = [m for m in msgs[:-1] if m["role"] in ("user", "assistant")]
@@ -209,7 +202,6 @@ class TestPromptKeyIntegrity:
         "emotion_prompts", "effect_prompts", "tool_usage_prompts",
         "graph_tools", "master_model_prompt",
         "summary_model_prompt", "assistant_model_prompt",
-        "realtime_voice_prompt", "orpheus_voice_prompt",
     }
 
     def test_all_consumed_keys_exist_in_hidden_prompt_yaml(self):

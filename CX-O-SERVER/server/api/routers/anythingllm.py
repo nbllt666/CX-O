@@ -21,7 +21,6 @@ Phase 2 端点（7个 Document）：
 import hmac
 import json
 import os
-import secrets
 import time
 import uuid
 from datetime import datetime
@@ -31,8 +30,8 @@ from fastapi import APIRouter, Depends, File, Form, Header, HTTPException, Uploa
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
-from server.api.routers.agents import _generate_agent_id, _load_agents, _save_agents
-from server.chat_helpers import get_agent_config, get_llm_client_for_agent
+from server.api.routers.agents import _load_agents, _save_agents
+from server.chat_helpers import ensure_agent_session, get_llm_client_for_agent
 from server.core.logging_config import get_contextual_logger
 from server.dependencies import get_document_memory_manager
 
@@ -237,16 +236,7 @@ def _build_messages_for_chat(
 
 def _get_or_create_session(context_mgr, slug: str, agent_config: Dict[str, Any]) -> str:
     """获取或创建 workspace 对应的会话。"""
-    session_id = f"agent-{slug}"
-    existing = context_mgr.get_session(session_id)
-    if not existing:
-        context_mgr.create_session(
-            workspace_id="agent-chats",
-            title=f"{agent_config.get('name', slug)} 的对话",
-            session_id=session_id,
-            metadata={"agent_id": slug},
-        )
-    return session_id
+    return ensure_agent_session(context_mgr, slug, agent_config.get("name", slug))
 
 
 def _save_chat_message(context_mgr, session_id: str, role: str, content: str) -> None:
@@ -308,7 +298,7 @@ def _prepare_chat_context(slug: str, request: WorkspaceChatRequest, agent: Dict[
             logger.info(f"会话 {session_id} 历史已清空（reset=true）")
         else:
             # 加载历史
-            history = context_mgr.get_messages(session_id, limit=50)
+            history = context_mgr.get_recent_messages(session_id, limit=50)
 
     # 处理附件
     doc_text, image_urls = _process_attachments(request.attachments)
@@ -726,7 +716,7 @@ async def workspace_chats(slug: str, authorization: Optional[str] = Header(None)
         from server.dependencies import get_context_manager
         context_mgr = get_context_manager()
         session_id = f"agent-{slug}"
-        messages = context_mgr.get_messages(session_id, limit=50)
+        messages = context_mgr.get_recent_messages(session_id, limit=50)
         for msg in messages:
             if msg.get("role") in ["user", "assistant"]:
                 history.append({

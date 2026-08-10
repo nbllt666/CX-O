@@ -6,10 +6,9 @@ import json
 import logging
 import xml.etree.ElementTree as ET
 from datetime import datetime
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, Optional
 
 from server.core.graph.database import Database
-from server.core.graph.models import GraphNode, GraphEdge
 
 logger = logging.getLogger(__name__)
 

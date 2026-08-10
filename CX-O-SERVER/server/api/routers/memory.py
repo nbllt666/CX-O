@@ -865,10 +865,9 @@ async def execute_secondary_command(
     context: Dict = {},
     priority: int = 0,
 ):
-    from server.dependencies import get_memory_manager, get_secondary_router
+    from server.dependencies import get_secondary_router
 
     try:
-        memory_mgr = get_memory_manager()
         secondary_router = get_secondary_router()
 
         if not secondary_router:

@@ -275,7 +275,6 @@ async def sync_vectors():
 @router.post("/vector/rebuild")
 async def rebuild_vectors():
     from server.dependencies import get_memory_manager
-    from datetime import datetime
 
     try:
         mm = get_memory_manager()
@@ -312,7 +311,7 @@ async def search_vectors(
     min_score: float = Query(0.5, ge=0.0, le=1.0),
     memory_type: Optional[str] = Query(None, description="按记忆类型过滤"),
 ):
-    from server.dependencies import get_memory_manager, get_llm_client
+    from server.dependencies import get_memory_manager
 
     try:
         mm = get_memory_manager()

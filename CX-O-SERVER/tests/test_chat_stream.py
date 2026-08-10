@@ -27,11 +27,11 @@ if str(_PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(_PROJECT_ROOT))
 
 from server.core.chat.stream import (  # noqa: E402
-    BUILTIN_TOOL_NAMES,
     MAX_TOOL_ROUNDS,
     ChatStreamState,
     generate_chat_stream,
 )
+from server.core.tools.builtin import BUILTIN_TOOL_NAMES  # noqa: E402
 
 # 模块内同时含同步与异步测试，统一挂 asyncio 标记（同步测试在事件循环内运行无副作用）
 pytestmark = pytest.mark.asyncio

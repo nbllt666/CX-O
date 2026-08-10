@@ -61,8 +61,6 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from server.config import get_settings
 from server.dependencies import ServiceState, set_service_state
-from server.core.graph import GraphDatabase
-from server.core.graph.config import get_graph_config
 from server.core.lifecycle import init_service, shutdown_service
 
 logger = logging.getLogger(__name__)
@@ -254,7 +252,6 @@ async def lifespan(app: FastAPI):
 
     await init_service("任务辅助工具", _register_task_tools, logger_=lifespan_logger)
 
-    from server.core.tools import tool_registry
     tools_stats = tool_registry.get_tool_stats()
     lifespan_logger.info(
         f"工具注册统计: 总计{tools_stats['total_tools']}个, "

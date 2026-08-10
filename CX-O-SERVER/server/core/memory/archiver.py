@@ -246,7 +246,7 @@ class AdvancedArchiver:
                     original_content=original_content,
                     compression_metadata=compression_metadata,
                 )
-            except Exception as e:
+            except Exception:
                 if conn:
                     conn.rollback()
                 raise

@@ -4,7 +4,7 @@
 
 import json
 import uuid
-from dataclasses import dataclass, field, asdict
+from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Optional, Dict, Any, List
 

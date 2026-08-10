@@ -160,5 +160,3 @@ def cached(cache_name: str, key_func: Optional[Callable] = None, ttl: Optional[f
 
 
 agent_config_cache = CacheManager().get_cache("agent_configs", max_size=100, ttl=300)
-tool_list_cache = CacheManager().get_cache("tool_lists", max_size=50, ttl=60)
-session_cache = CacheManager().get_cache("sessions", max_size=500, ttl=600)

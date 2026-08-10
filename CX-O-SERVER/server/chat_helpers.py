@@ -4,6 +4,7 @@
 消除两个入口对 Agent 配置解析与 LLM 客户端选择的重复逻辑与行为漂移。
 """
 import logging
+from typing import Optional
 
 logger = logging.getLogger(__name__)
 
@@ -14,6 +15,52 @@ def get_agent_config(agent_id: str) -> dict:
 
     agents = _load_agents()
     return next((a for a in agents if a["id"] == agent_id), None)
+
+
+async def retrieve_memory_context(
+    agent_config: dict,
+    memory_mgr,
+    user_message: str,
+    session_id: str,
+) -> Optional[str]:
+    """按 Agent 配置检索记忆并格式化为上下文注入字符串。
+
+    收敛自 server/handlers/chat.py、server/api/routers/chat.py（chat/chat_stream）
+    与 server/core/websocket/handlers.py（chat/chat_stream）四处重复实现，消除
+    MemoryRouter 初始化与记忆注入格式化的重复逻辑。未启用记忆 / 无记忆时返回 None。
+    """
+    if not agent_config.get("use_memory", True) or not memory_mgr:
+        return None
+
+    from server.config import get_settings
+    from server.core.memory.router import MemoryRouter
+
+    router = MemoryRouter(memory_manager=memory_mgr)
+    routing_result = await router.route(
+        query=user_message,
+        session_id=session_id,
+        scene_type=agent_config.get("memory_scene", "chat"),
+    )
+    if not routing_result.memories:
+        return None
+
+    limit = get_settings().config.limits.memory.inject_memories_count
+    return "\n".join([f"- {m['content']}" for m in routing_result.memories[:limit]])
+
+
+def ensure_agent_session(context_mgr, agent_id: str, agent_name: str) -> str:
+    """为 Agent 获取或创建默认会话（agent-chats 工作区）。
+
+    会话 ID 约定为 ``agent-{agent_id}``。收敛自 server/handlers/chat.py、
+    server/api/routers/chat.py 与 server/api/routers/anythingllm.py 的重复
+    ensure_session 样板。返回会话 ID。
+    """
+    return context_mgr.ensure_session(
+        f"agent-{agent_id}",
+        workspace_id="agent-chats",
+        title=f"{agent_name} 的对话",
+        metadata={"agent_id": agent_id},
+    )
 
 
 def get_llm_client_for_agent(agent_config: dict):
@@ -51,11 +98,14 @@ def get_llm_client_for_agent(agent_config: dict):
     return get_llm_client()
 
 
-def get_tools_for_agent(agent_config) -> list:
-    """按 Agent 配置收集可注入 LLM 的工具列表（内置工具 + 主模型工具）。
+def get_tools_for_agent() -> list:
+    """收集可注入 LLM 的工具列表（内置工具 + 主模型工具）。
 
     收敛自 server/handlers/chat.py 的 _get_tools_for_agent，供 HTTP 聊天、WebSocket
     聊天与 ACP 自动回复共享，避免 core.acp.manager 对 handler 层的跨层依赖。
+    内置工具的 OpenAI 定义本身由 get_builtin_tools() 内部 lru_cache，此处不再整体
+    缓存——工具注册表是运行期可变状态，整体缓存会读入陈旧工具集，且单条消息仅
+    需 14 次 get_tool 查询，相对 LLM 调用耗时可忽略。
     """
     from server.core.tools import tool_registry
     from server.core.tools.builtin import get_builtin_tools

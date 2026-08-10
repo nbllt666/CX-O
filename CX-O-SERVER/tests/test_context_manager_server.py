@@ -63,6 +63,22 @@ class TestSessionCRUD:
         assert mgr.get_sessions() == []
 
 
+class TestSessionEnsure:
+    def test_ensure_session_creates(self, mgr):
+        sid = mgr.ensure_session("s-new", workspace_id="agent-chats", title="新会话")
+        assert sid == "s-new"
+        session = mgr.get_session("s-new")
+        assert session is not None
+        assert session["title"] == "新会话"
+
+    def test_ensure_session_existing_returns_same(self, mgr):
+        sid = _new_session(mgr, title="已有")
+        # 已存在时不应触发 create_session（标题不被覆盖）
+        ret = mgr.ensure_session(sid, workspace_id="agent-chats", title="不应覆盖")
+        assert ret == sid
+        assert mgr.get_session(sid)["title"] == "已有"
+
+
 class TestMessageCRUD:
     def test_add_and_get_message(self, mgr):
         sid = _new_session(mgr)
@@ -100,6 +116,19 @@ class TestMessageCRUD:
             mgr.add_message(sid, "user", f"m{i}")
         msgs = mgr.get_messages(sid, limit=5, offset=2)
         assert [m["content"] for m in msgs] == ["m2", "m3", "m4"]
+
+    def test_get_recent_messages(self, mgr):
+        """单次查询取最近 N 条，返回升序（与 get_messages 语义一致）。"""
+        sid = _new_session(mgr)
+        for i in range(5):
+            mgr.add_message(sid, "user", f"m{i}")
+        recent = mgr.get_recent_messages(sid, limit=3)
+        # 最近 3 条且按旧→新：m2, m3, m4
+        assert [m["content"] for m in recent] == ["m2", "m3", "m4"]
+        # limit ≥ 全部时返回全部
+        assert len(mgr.get_recent_messages(sid, limit=99)) == 5
+        # 空会话返回空
+        assert mgr.get_recent_messages(_new_session(mgr), limit=3) == []
 
     def test_get_message_count(self, mgr):
         sid = _new_session(mgr)

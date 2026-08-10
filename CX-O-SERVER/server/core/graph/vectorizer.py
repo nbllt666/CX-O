@@ -4,7 +4,7 @@
 
 import hashlib
 import logging
-from typing import List, Optional, Union
+from typing import List, Optional
 import numpy as np
 
 from server.core.graph.config import EmbeddingConfig, get_graph_config

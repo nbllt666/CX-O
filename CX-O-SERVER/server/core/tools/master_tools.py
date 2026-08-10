@@ -2,18 +2,11 @@
 主模型工具 - 供主模型（main）调用的工具
 """
 
-import json
 from datetime import datetime, timedelta
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List
 
 from server.config import Settings
 from .registry import tool_registry
-from .graph_tools import (
-    user_graph_create_entity, user_graph_create_relation, user_graph_query_entities, user_graph_find_paths, user_graph_search_related_memories,
-    thing_graph_create_entity, thing_graph_create_relation, thing_graph_query_entities, thing_graph_find_paths, thing_graph_search_related_memories,
-    concept_graph_create_entity, concept_graph_create_relation, concept_graph_query_entities, concept_graph_find_paths, concept_graph_search_related_memories,
-    event_graph_create_entity, event_graph_create_relation, event_graph_query_entities, event_graph_find_paths, event_graph_search_related_memories,
-)
 from . import summary_tools
 
 _MEMORY_MANAGER = None
@@ -485,7 +478,7 @@ def write_long_term_memory(
         )
         return {
             "status": "success",
-            "message": f"记忆已保存",
+            "message": "记忆已保存",
             "memory_id": memory_id,
             "content_preview": content[:100] + "..." if len(content) > 100 else content,
         }
@@ -535,7 +528,7 @@ async def call_assistant(message: str) -> Dict[str, Any]:
         return {"error": "记忆管理模型不可用"}
 
     try:
-        from server.core.memory.secondary_router import SecondaryCommand, SecondaryInstruction
+        from server.core.memory.secondary_router import SecondaryInstruction
 
         instruction = SecondaryInstruction(
             command="custom", parameters={"user_message": message}, priority=1  # 自定义指令

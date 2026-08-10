@@ -3,7 +3,7 @@
 提供与记忆管理模型的自然语言交互接口
 """
 
-from typing import Dict, List, Optional
+from typing import Dict, Optional
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel

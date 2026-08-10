@@ -234,7 +234,7 @@ def remove_graph_database(agent_id: str) -> None:
     底层 Database 由 server.core.graph.database 的 remove_database 同步移除。
     """
     with _graph_registry_lock:
-        store = _graph_stores.pop(agent_id, None)
+        _graph_stores.pop(agent_id, None)
         gdb = _graph_databases.pop(agent_id, None)
     if gdb is not None:
         try:

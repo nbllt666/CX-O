@@ -4,20 +4,8 @@ tools: |
   ## 工具调用规则
 
   ### 记忆系统
-  - write_long_term_memory: 用户告诉你重要信息时（名字、爱好等）
-  - search_all_memories: 用户询问之前聊过的内容时
-
-  ### 工具详细说明
-
-  #### write_long_term_memory
-  用途：保存重要信息到长期记忆
-  调用时机：用户告诉你他的名字、年龄、爱好等信息
-  参数：content
-  
-  #### search_all_memories
-  用途：从记忆库搜索相关内容
-  调用时机：用户询问之前聊过的内容
-  参数：query
+  - write_long_term_memory: 用户告知重要信息时（名字、年龄、爱好等），参数 content
+  - search_all_memories: 用户询问之前聊过的内容时，从记忆库检索，参数 query
 
 emotion_prompts: |
   ## 情感标记使用指南
@@ -34,16 +22,6 @@ emotion_prompts: |
   - fearful: 恐惧、紧张的语气，表达害怕情绪
   - disgusted: 厌恶、反感的语气，表达不喜欢情绪
   - tender: 温柔、柔和的语气，表达关爱情绪
-
-  ### 使用时机建议
-  - 用户表达喜悦 → 【happy】
-  - 用户表达悲伤 → 【sad】
-  - 用户表达愤怒 → 【angry】
-  - 用户表达惊讶 → 【surprised】
-  - 用户表达恐惧 → 【fearful】
-  - 用户表达厌恶 → 【disgusted】
-  - 用户表达温柔 → 【tender】
-  - 普通对话 → 【normal】
 
   ### 示例
   【happy】太棒了！今天天气真好！
@@ -142,40 +120,3 @@ assistant_model_prompt: |
   管理图数据时，使用 update/delete 系列工具（如 user_graph_update_entity）维护数据质量。
   定期使用各图库的统计工具（如 user_graph_get_stats）检查图库健康状态。
   响应用户的记忆管理请求时，要清晰说明操作结果。
-
-# 实时语音模式专用提示词
-# 仅在 is_realtime_voice=True 时注入，替代上方所有重型提示词
-# 目标：与核心 System Prompt 合计 < 500 tokens，锁死 80ms TTFT
-realtime_voice_prompt: |
-  ## 实时语音模式
-  你正在全双工语音对话中，请严格遵守：
-  - 单句优先：一句话说完就停，不要长篇大论。
-  - 快速响应：不重复上下文已有的信息，直接给结论或回应。
-  - 口语化：用日常说话的方式表达，禁止使用 markdown、列表、标题等书面格式。
-  - 可被打断：用户随时会插话，不要一次性输出过多内容。
-  - 适合播报：用短句和自然停顿，便于语音合成朗读。
-  - 不调用工具：除非用户明确要求，否则直接回答，避免工具调用带来的延迟。
-
-# Orpheus TTS 引擎专用实时语音提示词
-# 仅在 is_realtime_voice=True 且 tts_engine="orpheus" 时注入
-# 相比 realtime_voice_prompt 增加 Orpheus 情感标签使用指南
-# 目标：与核心 System Prompt 合计 < 600 tokens（核心人设 ~100 + 本提示词 ~200 + 2 轮对话 ~200）
-orpheus_voice_prompt: |
-  ## Orpheus 实时语音模式
-  你正在全双工语音对话中（Orpheus TTS），请遵守：
-
-  ### 情感标签
-  可在文本中融入以下标签表达情感/动作：
-  <laugh> <sigh> <giggle> <cough> <sniffle> <groan> <yawn> <gasp> <chuckle> <cry> <scream> <hiccup> <clears_throat>
-
-  ### 场景示例
-  - 有趣的事 → <laugh>，如：这个笑话太搞笑了 <laugh> 哈哈 </laugh>
-  - 疲惫无奈 → <sigh>，如：哎，又加班 <sigh>
-  - 惊讶 → <gasp>，如：什么？！真的吗 <gasp>
-
-  ### 对话规则
-  - 单句优先，快速响应；口语化，禁用 markdown/列表/标题。
-  - 可被打断：用户随时会插话，不要一次输出过多。
-  - 不重复上下文：不重复用户说过的话，直接给结论。
-  - 标签自然融入，不堆砌，每句最多 1-2 个。
-  - 不调用工具，除非用户明确要求。

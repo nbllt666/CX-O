@@ -17,7 +17,6 @@ def register_metrics_handlers(manager: "WebSocketManager"):
 
     async def handle_metrics_get(websocket, message, client_id):
         request_id = message.get("request_id", "")
-        data = message.get("data", {})
 
         try:
             from server.dependencies import get_memory_manager, get_acp_manager, get_mcp_manager

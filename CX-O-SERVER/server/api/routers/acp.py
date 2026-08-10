@@ -380,7 +380,6 @@ async def receive_external_message(message: ACPMessageInfo):
     修复：20260719_模块0_CXFC路由注入修复.md 第十二章（端点原本缺失导致 404）
     """
     from server.dependencies import get_acp_manager
-    from server.core.acp.manager import ACPMessageInfo
 
     try:
         acp_mgr = get_acp_manager()

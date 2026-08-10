@@ -63,6 +63,8 @@ class FakeWSManager:
 @pytest.fixture
 def client(monkeypatch, tmp_path):
     monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(config_router_mod, "_PROJECT_ROOT", tmp_path)
+    monkeypatch.setattr(audio_router_mod, "_PROJECT_ROOT", tmp_path)
     settings = FakeSettings()
     monkeypatch.setattr("server.config.get_settings", lambda: settings)
     # Settings 在 config.py 模块顶层 from-import 绑定，须 patch 该模块引用

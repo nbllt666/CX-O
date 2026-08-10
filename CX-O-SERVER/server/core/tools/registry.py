@@ -4,6 +4,7 @@
 
 import asyncio
 import inspect
+import json
 import threading
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -42,6 +43,29 @@ BUILTIN_TOOL_NAMES = {
     "get_chat_history",
     "get_available_commands",
 }
+
+
+def parse_tool_args(tool_call: dict) -> dict:
+    """解析工具调用参数（dict 直返 / JSON 解析 / ast.literal_eval 兜底）。
+
+    收敛自 handlers/chat.py、core/chat/stream.py 的 _parse_tool_args 与
+    api/routers/chat.py 的 4 处内联实现，统一工具参数解析逻辑。
+    """
+    args = tool_call.get("arguments") or tool_call.get("function", {}).get("arguments", "{}")
+    if isinstance(args, str):
+        try:
+            args = json.loads(args)
+        except json.JSONDecodeError as e:
+            logger.warning(f"工具参数 JSON 解析失败: {e}, 原始参数: {args}")
+            try:
+                import ast
+
+                args = ast.literal_eval(args)
+                if not isinstance(args, dict):
+                    args = {}
+            except Exception:
+                args = {}
+    return args if isinstance(args, dict) else {}
 
 
 @dataclass

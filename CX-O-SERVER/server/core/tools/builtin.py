@@ -7,7 +7,9 @@
 import json
 import math
 import random as random_module
+import time
 from datetime import datetime
+from functools import lru_cache
 from typing import Any, Dict, List
 
 
@@ -201,9 +203,14 @@ class BuiltinTools:
             return {"success": False, "error": str(e), "is_valid": False}
 
     @classmethod
+    @lru_cache(maxsize=1)
     def get_all_tools(cls) -> List[Dict[str, Any]]:
         """
         获取所有内置工具的 OpenAI 格式定义
+
+        返回静态工具定义列表。已整体缓存（@lru_cache）：工具定义在运行期视为
+        静态，聊天/ACP 热路径每消息调用直接命中缓存，避免重复构建大列表。
+        调用方均为只读使用（列表拼接或迭代查找），无共享可变风险。
 
         Returns:
             工具定义列表
@@ -361,6 +368,43 @@ def get_builtin_tools() -> List[Dict[str, Any]]:
 def call_builtin_tool(name: str, arguments: Dict[str, Any]) -> Dict[str, Any]:
     """调用内置工具"""
     return builtin_tools.call_tool(name, arguments)
+
+
+# 内置工具名称集合（无需注册表，直接执行）
+BUILTIN_TOOL_NAMES = {"calculator", "datetime", "random", "json_format"}
+
+
+def execute_tool_calls(tool_calls: List[Dict[str, Any]], messages: List[Dict[str, Any]]) -> None:
+    """执行工具调用并把 assistant+tool 消息追加到 ``messages``。
+
+    收敛自 ``handlers/chat.py`` 的 ``_process_tool_calls`` 与
+    ``core/chat/stream.py`` 的 ``_execute_tool_calls`` 的重复循环，
+    统一「解析参数 → 执行（内置/注册表） → 追加 assistant+tool 消息」逻辑。
+    内置工具直接执行，其余走工具注册表。
+    """
+    from server.core.tools import parse_tool_args, tool_registry
+
+    for tool_call in tool_calls:
+        tool_name = tool_call.get("name") or tool_call.get("function", {}).get("name")
+        tool_args = parse_tool_args(tool_call)
+
+        if tool_name in BUILTIN_TOOL_NAMES:
+            tool_result = call_builtin_tool(tool_name, tool_args or {})
+        else:
+            tool_result = tool_registry.call_tool(tool_name, tool_args)
+
+        messages.append({"role": "assistant", "content": None, "tool_calls": [tool_call]})
+        tool_call_id = tool_call.get("id") or (
+            f"call_{tool_name}_{int(time.time() * 1000)}_{id(tool_call)}"
+        )
+        messages.append(
+            {
+                "role": "tool",
+                "tool_call_id": tool_call_id,
+                "name": tool_name,
+                "content": json.dumps(tool_result, ensure_ascii=False),
+            }
+        )
 
 
 def register_builtin_tools():

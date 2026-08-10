@@ -354,8 +354,6 @@ class TestHiddenPromptKeyCompleteness:
             "master_model_prompt",
             "summary_model_prompt",
             "assistant_model_prompt",
-            "realtime_voice_prompt",
-            "orpheus_voice_prompt",
         ]:
             assert key in hidden and hidden[key], f"关键提示词段 {key} 缺失或为空"
 
@@ -408,15 +406,13 @@ class TestHiddenPromptToolNames:
         #   - json：格式关键字
         #   - SCHEMA_FIELDS：graph_tools 分段的图数据契约字段名（JSON 属性，如
         #     entity_type / relation_type / from_entity 等），非可调用工具名
-        #   - TTS_TAGS：orpheus_voice_prompt 的 Orpheus 情感标签（如 clears_throat），非工具名
         schema_fields = {
             "entity_type", "relation_type", "from_entity", "to_entity",
             "related_to", "part_of", "similar_to", "located_at", "made_of",
             "opposite_of", "subtopic_of", "followed_by", "concurrent_with",
             "memory_ids", "evidence_memory_ids",
         }
-        tts_tags = {"clears_throat"}
-        missing = referenced - real - {"json"} - schema_fields - tts_tags
+        missing = referenced - real - {"json"} - schema_fields
         assert not missing, f"hidden_prompt.yaml 引用了不存在的工具: {missing}"
 
     def test_no_stale_tool_names(self):

@@ -315,6 +315,32 @@ class TestMessage:
         assert len(msgs) == 1
         assert msgs[0]["id"] == "ext1"
 
+    @pytest.mark.asyncio
+    async def test_inject_into_chat_context_writes_to_context_manager(self, tmp_path, monkeypatch):
+        """回归：ACP 消息注入必须真正写入 ContextManager 的 session。
+
+        曾因误调用不存在的 add_message_async 被 except AttributeError 吞掉而静默失效，
+        现改用同步 add_message 后应实际落库。
+        """
+        from server.core.context.manager import ContextManager
+
+        cm = ContextManager(db_path=str(tmp_path / "sessions.db"))
+        monkeypatch.setattr("server.dependencies.get_context_manager", lambda: cm)
+        mgr = _make(tmp_path / "acp")
+        mgr.initialize("sys", "系统")
+
+        await mgr._inject_into_chat_context(
+            _msg("m1", from_agent_id="remote", content={"text": "你好"}),
+            target_agent_id="a1",
+        )
+
+        msgs = cm.get_messages("agent-a1")
+        assert len(msgs) == 1
+        assert msgs[0]["role"] == "user"
+        assert "[ACP 消息]" in msgs[0]["content"]
+        assert "你好" in msgs[0]["content"]
+        cm.shutdown()
+
 
 # ================================================================ 统计
 class TestStatistics:

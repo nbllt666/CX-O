@@ -45,8 +45,6 @@ class HybridSearch:
         if options.min_score is None:
             options.min_score = limits.hybrid_search_min_score
 
-        results: List[SearchResult] = []
-
         vector_results = []
         keyword_results = []
 

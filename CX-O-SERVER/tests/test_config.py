@@ -4,6 +4,8 @@ server/config.py 单元测试
 """
 import json
 
+from pathlib import Path
+
 import pytest
 
 import server.config as config_mod
@@ -22,10 +24,7 @@ from server.config import (
 @pytest.fixture(autouse=True)
 def _clean_settings(monkeypatch):
     """每个测试前重置 Settings 单例，避免跨测试污染。"""
-    monkeypatch.setattr(config_mod, "_settings", None)
-    Settings._instance = None
-    Settings._config = None
-    Settings._config_path = None
+    Settings.reset()
     yield
     Settings.reset()
 
@@ -146,7 +145,15 @@ class TestModelsConfig:
 
     def test_db_url(self):
         dc = config_mod.DatabaseConfig(path="data/x.db")
-        assert dc.url == "sqlite+aiosqlite:///data/x.db"
+        # 相对路径被归一化为项目根绝对路径
+        assert dc.url == f"sqlite+aiosqlite:///{config_mod._PROJECT_ROOT / 'data' / 'x.db'}"
+
+    def test_db_paths_resolved_to_absolute(self):
+        dc = config_mod.DatabaseConfig()
+        assert Path(dc.path).is_absolute()
+        assert Path(dc.memories_db).is_absolute()
+        assert Path(dc.sessions_db).is_absolute()
+        assert Path(dc.acp_db).is_absolute()
 
 
 # --------------------------------------------------------------------------- #

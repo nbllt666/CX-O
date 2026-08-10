@@ -765,7 +765,7 @@ def get_chat_history(session_id: str, limit: int = None) -> Dict[str, Any]:
         return {"error": "上下文管理器不可用"}
 
     try:
-        messages = cm.get_messages(session_id=session_id, limit=limit)
+        messages = cm.get_recent_messages(session_id=session_id, limit=limit)
         return {"session_id": session_id, "count": len(messages), "messages": messages}
     except Exception as e:
         return {"error": f"读取聊天记录失败: {str(e)}"}

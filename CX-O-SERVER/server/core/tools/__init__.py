@@ -95,7 +95,7 @@ from .graph_tools import (
     user_graph_update_relation,
 )
 from .mcp import MCPManager, MCPServer
-from .registry import Tool, ToolRegistry, tool_registry
+from .registry import Tool, ToolRegistry, parse_tool_args, tool_registry
 from .summary_tools import (
     clear_summary_context,
     get_session_messages,
@@ -110,6 +110,7 @@ __all__ = [
     "tool_registry",
     "Tool",
     "ToolRegistry",
+    "parse_tool_args",
     "MCPManager",
     "MCPServer",
     "register_builtin_tools",

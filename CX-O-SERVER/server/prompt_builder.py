@@ -14,7 +14,7 @@ server/prompt_builder.py
 支持：
   - 核心人设 system_prompt 注入（实时与非实时模式均保留）
   - 实时语音瘦身分支（is_realtime_voice=True）：
-    仅注入对应 voice_prompt + 最近 2 轮对话，锁死 Tokens < 600 / 80ms TTFT
+    核心人设 + 最近 2 轮对话，跳过重型隐藏提示词，锁死 Tokens < 600 / 80ms TTFT
   - 非实时默认分支：
     按 model_type 注入隐藏提示词 + memory_context + CXFC 技能注入 + 历史 + 多模态
   - history 透传：供调用方已自行加载历史时使用（否则从 context_mgr 读取）
@@ -51,8 +51,13 @@ def _load_hidden_prompts(path: str) -> dict:
         return {}
 
 
+@lru_cache(maxsize=1)
 def _get_hidden_prompts() -> dict:
-    """定位并加载 hidden_prompt.yaml（带缓存）。
+    """定位并加载 hidden_prompt.yaml（整体缓存）。
+
+    整个函数 lru_cache：隐藏提示词在运行期视为静态，路径解析 + settings 访问 +
+    文件 stat 均只在首次调用发生，消除每次 build_messages（含实时语音热路径，
+    目标 80ms TTFT）的重复开销。内部 _load_hidden_prompts 已按 path 缓存文件内容。
 
     优先项目根 config/（实际存放位置），回退到 settings._config_path 所在目录（旧布局）。
     """
@@ -96,12 +101,20 @@ def _resolve_history(context_mgr, session_id: str, history: Optional[List[dict]]
 
     注意：context_mgr.get_messages 按 created_at ASC（旧→新）返回，单纯的 limit
     只会截取最旧的消息，导致实时/非实时路径都取到陈旧上下文而非最近上下文。
-    此处通过 count+offset 取最近 limit 条，修正该潜在 bug。
+    本函数优先用单次查询 get_recent_messages 取最近 limit 条（消除 count+offset
+    两次往返，实时语音热路径受益），不可用时回退 count+offset；再退化首窗口截尾。
     """
     if history is not None:
         return history[-limit:]
     if context_mgr is None:
         return []
+    # 优先单次查询取最近 N 条（消除 count+offset 两次往返，实时语音热路径受益）
+    recent = getattr(context_mgr, "get_recent_messages", None)
+    if callable(recent):
+        try:
+            return recent(session_id, limit)
+        except Exception:
+            pass
     try:
         total = context_mgr.get_message_count(session_id)
         offset = max(0, total - limit)
@@ -145,7 +158,6 @@ def build_messages(
     memory_context: Optional[str] = None,
     images: Optional[List[str]] = None,
     is_realtime_voice: bool = False,
-    tts_engine: str = "f5-tts",
     history: Optional[List[dict]] = None,
     include_hidden_prompts: bool = True,
 ) -> List[dict]:
@@ -159,15 +171,12 @@ def build_messages(
         memory_context: 记忆检索结果（可选）。
         images: 多模态图像列表（可选）。
         is_realtime_voice: 是否为实时语音模式。True 时走瘦身分支，
-            跳过重型隐藏提示词，仅保留核心人设 + voice_prompt + 最近 2 轮对话。
-        tts_engine: TTS 引擎名称，决定实时模式下注入哪个 voice_prompt。
-            "orpheus" → orpheus_voice_prompt（含情感标签指南）；其他值 → realtime_voice_prompt（默认）。
+            跳过重型隐藏提示词，仅保留核心人设 + 最近 2 轮对话。
         history: 调用方已加载的历史消息（可选）。未提供时从 context_mgr 读取。
 
     Returns:
         list[dict]: OpenAI 格式的消息列表。
     """
-    hidden_prompts = _get_hidden_prompts()
     messages: List[dict] = []
 
     system_prompt = agent_config.get("system_prompt", "")
@@ -178,33 +187,29 @@ def build_messages(
     # ====================================================================
     # 实时语音模式：瘦身 Prompt，确保 Tokens < 600，锁死 80ms TTFT
     # --------------------------------------------------------------------
-    # 保留：核心人设 system_prompt + 对应 voice_prompt + 最近 2 轮对话
+    # 保留：核心人设 system_prompt + 最近 2 轮对话
     # 跳过：MemoryRouter 深度图检索、HybridSearch、技能注入、重型隐藏提示词
     #       （合计约 1500 tokens）
     # ====================================================================
     if is_realtime_voice:
-        if tts_engine == "orpheus":
-            voice_prompt = hidden_prompts.get("orpheus_voice_prompt", "")
-        else:
-            voice_prompt = hidden_prompts.get("realtime_voice_prompt", "")
-        if voice_prompt:
-            messages.append({"role": "system", "content": voice_prompt})
-
         realtime_history = _resolve_history(
             context_mgr, session_id, history, REALTIME_VOICE_HISTORY_LIMIT
         )
-        _append_history(messages, realtime_history[:REALTIME_VOICE_HISTORY_LIMIT])
+        # _resolve_history 已保证返回 ≤ REALTIME_VOICE_HISTORY_LIMIT 条，无需再切片
+        _append_history(messages, realtime_history)
 
         # 实时语音模式不支持多模态图像注入，直接送文本
         messages.append({"role": "user", "content": user_message})
 
-        # Token 预算：核心人设 ~100 + voice_prompt ~200 + 2 轮对话 ~200 = ~500 tokens < 600
+        # Token 预算：核心人设 ~100 + 2 轮对话 ~200 = ~300 tokens < 600
         return messages
 
     # ====================================================================
     # 以下为非实时模式（默认）：按模型类型注入隐藏提示词
     # include_hidden_prompts=False 用于 AnythingLLM 兼容路径，保持其最小化行为。
     # ====================================================================
+    # 隐藏提示词仅在非实时路径按需加载（实时语音早退分支不触碰，避免热路径触发 YAML 加载）
+    hidden_prompts = _get_hidden_prompts()
     if include_hidden_prompts:
         model_type = agent_config.get("model", "main").lower()
         hidden_parts = []
@@ -238,7 +243,12 @@ def build_messages(
     _append_history(messages, chat_history)
 
     if images and agent_config.get("vision_enabled", False):
-        _append_multimodal_user(messages, images, user_message)
+        try:
+            _append_multimodal_user(messages, images, user_message)
+        except Exception:
+            # 多模态组装失败（如图像格式异常）时降级为纯文本，避免整次对话报错
+            logger.warning("多模态图像组装失败，降级为纯文本用户消息")
+            messages.append({"role": "user", "content": user_message})
     else:
         messages.append({"role": "user", "content": user_message})
 

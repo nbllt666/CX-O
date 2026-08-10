@@ -47,6 +47,9 @@ class FakeContextManager:
     def get_messages(self, session_id, limit):
         return self.messages
 
+    def get_recent_messages(self, session_id, limit):
+        return self.messages
+
 
 class FakeRouter:
     def __init__(self):
@@ -280,6 +283,9 @@ class TestGetChatHistory:
     def test_exception(self, clean_deps):
         class Boom:
             def get_messages(self, session_id, limit):
+                raise RuntimeError("boom")
+
+            def get_recent_messages(self, session_id, limit):
                 raise RuntimeError("boom")
 
         _set_cm(Boom())

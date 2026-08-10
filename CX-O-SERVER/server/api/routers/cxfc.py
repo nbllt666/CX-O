@@ -1,4 +1,4 @@
-from typing import Any, Dict, List
+from typing import Any, Dict
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
@@ -26,7 +26,6 @@ _discovery = None
 
 
 def get_cxfc_manager():
-    global _cxfc_manager
     return _cxfc_manager
 
 

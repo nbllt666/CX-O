@@ -4,11 +4,10 @@
 
 import logging
 from typing import Optional, List, Dict, Any
-import numpy as np
 
 from server.core.graph.database import Database
 from server.core.graph.semantic_search import SemanticSearch
-from server.core.graph.models import GraphNode, GraphEdge, SemanticSearchResult, SearchResult
+from server.core.graph.models import GraphNode, SemanticSearchResult
 from server.core.graph.config import GraphConfig
 from server.core.graph.traversal import TraversalManager
 from server.core.graph.repository import BaseGraphRepository
@@ -88,8 +87,6 @@ class HybridQueryManager(BaseGraphRepository):
         semantic_weight: float = 0.3,
         max_length: int = 5,
     ) -> List[Dict[str, Any]]:
-        from server.core.graph.models import PathResult
-
         all_paths = self.traversal.all_paths(start_id, end_id, max_length)
 
         scored_paths = []

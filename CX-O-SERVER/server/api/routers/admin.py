@@ -1,6 +1,7 @@
 import os
 import secrets
 from datetime import datetime
+from pathlib import Path
 from typing import Optional
 
 from fastapi import APIRouter, Header, HTTPException
@@ -12,6 +13,12 @@ router = APIRouter()
 logger = get_contextual_logger(__name__)
 
 ADMIN_API_KEY = os.environ.get("ADMIN_API_KEY", "")
+
+# 项目根目录（c:\CX-O\CX-O-SERVER）：本文件位于 server/api/routers/ 下，向上 4 级即项目根。
+# 与 audio.py/config.py/avatars.py/agents.py 的 _PROJECT_ROOT 模式对齐（rules-0 §三：禁止相对路径）。
+_PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent.parent
+_DATA_DIR = _PROJECT_ROOT / "data"
+_BACKUP_DIR = _DATA_DIR / "backups"
 
 
 # ---------------------------------------------------------------------------
@@ -133,13 +140,13 @@ async def health_check():
     health = {"memory": "unknown", "context": "unknown", "acp": "unknown"}
 
     try:
-        memory_mgr = get_memory_manager()
+        get_memory_manager()
         health["memory"] = "healthy"
     except Exception:
         health["memory"] = "unhealthy"
 
     try:
-        context_mgr = get_context_manager()
+        get_context_manager()
         health["context"] = "healthy"
     except Exception:
         health["context"] = "unhealthy"
@@ -262,12 +269,12 @@ async def create_backup(x_api_key: Optional[str] = Header(None)):
     verify_admin_api_key(x_api_key)
 
     import os
-    import shutil
     import zipfile
 
     try:
-        data_dir = "data"
-        backup_dir = "data/backups"
+        # 使用基于文件位置的项目绝对路径（_DATA_DIR/_BACKUP_DIR），消除 CWD 依赖。
+        data_dir = str(_DATA_DIR)
+        backup_dir = str(_BACKUP_DIR)
 
         if not os.path.exists(data_dir):
             raise HTTPException(status_code=400, detail="数据目录不存在")

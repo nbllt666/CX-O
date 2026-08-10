@@ -2,7 +2,6 @@ import asyncio
 from datetime import datetime
 from typing import Any, Dict, Optional
 
-from server.config import Settings
 from server.core.logging_config import get_contextual_logger
 
 from .manager import get_websocket_manager
@@ -35,8 +34,8 @@ class ChatWebSocketHandler:
     async def _handle_chat(self, client_id: str, message: Dict[str, Any]):
         """处理普通聊天消息"""
         from server.dependencies import get_context_manager, get_memory_manager
-        from server.chat_helpers import get_agent_config, get_llm_client_for_agent
-        from server.api.routers.chat import build_messages
+        from server.chat_helpers import get_agent_config, get_llm_client_for_agent, retrieve_memory_context
+        from server.prompt_builder import build_messages
 
         try:
             agent_id = message.get("agent_id", "default")
@@ -75,20 +74,9 @@ class ChatWebSocketHandler:
 
             context_mgr.add_message(session_id=session_id, role="user", content=user_message)
 
-            memory_context = None
-            if agent_config.get("use_memory", True) and memory_mgr:
-                from server.core.memory.router import MemoryRouter
-
-                router = MemoryRouter(memory_manager=memory_mgr)
-                routing_result = await router.route(
-                    query=user_message,
-                    session_id=session_id,
-                    scene_type=agent_config.get("memory_scene", "chat"),
-                )
-                if routing_result.memories:
-                    memory_context = "\n".join(
-                        [f"- {m['content']}" for m in routing_result.memories[:Settings().config.limits.memory.inject_memories_count]]
-                    )
+            memory_context = await retrieve_memory_context(
+                agent_config, memory_mgr, user_message, session_id
+            )
 
             messages = build_messages(
                 agent_config=agent_config,
@@ -124,8 +112,8 @@ class ChatWebSocketHandler:
     async def _handle_chat_stream(self, client_id: str, message: Dict[str, Any]):
         """处理流式聊天消息"""
         from server.dependencies import get_context_manager, get_memory_manager
-        from server.chat_helpers import get_agent_config, get_llm_client_for_agent
-        from server.api.routers.chat import build_messages
+        from server.chat_helpers import get_agent_config, get_llm_client_for_agent, retrieve_memory_context
+        from server.prompt_builder import build_messages
 
         try:
             agent_id = message.get("agent_id", "default")
@@ -174,20 +162,9 @@ class ChatWebSocketHandler:
             context_mgr.add_message(session_id=session_id, role="user", content=user_message)
 
             # 检索记忆
-            memory_context = None
-            if agent_config.get("use_memory", True) and memory_mgr:
-                from server.core.memory.router import MemoryRouter
-
-                router = MemoryRouter(memory_manager=memory_mgr)
-                routing_result = await router.route(
-                    query=user_message,
-                    session_id=session_id,
-                    scene_type=agent_config.get("memory_scene", "chat"),
-                )
-                if routing_result.memories:
-                    memory_context = "\n".join(
-                        [f"- {m['content']}" for m in routing_result.memories[:Settings().config.limits.memory.inject_memories_count]]
-                    )
+            memory_context = await retrieve_memory_context(
+                agent_config, memory_mgr, user_message, session_id
+            )
 
             # 构建消息列表
             messages = build_messages(

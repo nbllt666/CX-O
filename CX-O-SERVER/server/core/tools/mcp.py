@@ -360,7 +360,7 @@ class MCPManager:
                 error_detail = response.text[:200] if response.text else "无详细错误"
                 logger.warning(f"获取MCP工具列表失败: {response.status_code}, {error_detail}")
                 server.error = f"HTTP {response.status_code}: {error_detail}"
-        except httpx.ConnectError as e:
+        except httpx.ConnectError:
             error_msg = f"无法连接到MCP服务器: {server.endpoint_url}"
             logger.error(f"同步MCP工具失败: {server_name}, {error_msg}")
             server.error = error_msg

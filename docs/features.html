@@ -234,21 +234,22 @@ td:first-child { color: var(--text-bright); font-weight: 500; }
     <div class="card">
       <span class="tag tag-pink">核心亮点</span>
       <h3>双流式实时语音</h3>
-      <p>这是整个语音系统最厉害的部分——全双工实时通话，就像跟真人打电话一样。</p>
+      <p>这是整个语音系统最厉害的部分——全双工实时通话，就像跟真人打电话一样。边听边说，还能互相插话。</p>
       <ul class="feature-list">
         <li>边听边说：ASR 实时出字幕，LLM 边想边说，TTS 边收边播</li>
-        <li>毫秒级打断：你一开口就停掉 AI 的播放，不用等她说完</li>
-        <li>投机预填充：说出两个字就启动 AI 思考，省下约 500ms</li>
+        <li>你打断 AI：你一开口就立刻停掉 AI 的播放，不用等她说完，毫秒级响应</li>
+        <li>AI 打断你：AI 会在你说话时判断要不要插话，时机一到就停掉自己、直接插一句回应</li>
+        <li>插话有分寸：CONTINUE/IGNORE/INTERRUPT 三态判定，你还没说完或只是自言自语时，AI 不会抢话</li>
+        <li>投机预填充：你说出两个字就启动 AI 思考，省下约 500ms</li>
         <li>首包延迟控制在 300ms 以内</li>
-        <li>双引擎切换：F5-TTS 和 Orpheus 两种 TTS 可选</li>
-        <li>Orpheus 支持多音色（默认 tara 音色）</li>
+        <li>双引擎切换：F5-TTS 和 Orpheus 两种 TTS 可选，Orpheus 支持多音色（默认 tara，另有 leah/leo/mia 等）</li>
       </ul>
     </div>
   </div>
 
   <div class="highlight-box">
-    <h4>三种 TTS 引擎可选</h4>
-    <p>F5-TTS（默认，Triton 加速）、CosyVoice（多模式情感 TTS）、Orpheus（基于 vLLM 的多语言 TTS）。在设置页或会话初始化时切换，三种引擎各有特色，可以根据场景选择。</p>
+    <h4>两种 TTS 引擎可选</h4>
+    <p>F5-TTS（默认，Triton 加速）和 Orpheus（基于 vLLM 的多语言 TTS）。在设置页或会话初始化时切换，两种引擎各有特色，可以根据场景选择。CosyVoice 则用于语音工作站的情感参考音频生成。</p>
   </div>
 </section>
 
@@ -430,9 +431,8 @@ td:first-child { color: var(--text-bright); font-weight: 500; }
     <div class="card">
       <span class="tag tag-purple">Agent 管理</span>
       <h3>创建与配置</h3>
-      <p>内置 6 个模板快速上手，也可以从零创建专属角色。</p>
+      <p>从零创建专属角色，每个角色都可以独立配置人设和参数。</p>
       <ul class="feature-list">
-        <li>6 个模板：通用助手、编程助手、写作助手、数据分析师、翻译助手、视觉助手</li>
         <li>可配置：名称、描述、系统提示词、模型、温度、最大 Tokens</li>
         <li>记忆场景配置：闲聊/任务/首次交互</li>
         <li>衰减模型选择</li>

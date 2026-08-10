@@ -126,7 +126,7 @@ class TestGetToolsForAgent:
         ])
         monkeypatch.setattr(tools_mod, "tool_registry", reg)
         monkeypatch.setattr(builtin_mod, "get_builtin_tools", lambda: [{"name": "builtin"}])
-        tools = get_tools_for_agent({})
+        tools = get_tools_for_agent()
         names = [t["name"] for t in tools]
         assert "builtin" in names
         assert "write_long_term_memory" in names

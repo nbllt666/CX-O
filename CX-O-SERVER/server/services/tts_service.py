@@ -83,7 +83,7 @@ class TTSService:
             self._initialized = True
             return
 
-        logger.info(f"Loading F5-TTS model...")
+        logger.info("Loading F5-TTS model...")
         if not load_model():
             raise RuntimeError("Failed to load F5-TTS model")
         self._initialized = True

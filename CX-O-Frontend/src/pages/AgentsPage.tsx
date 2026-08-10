@@ -8,83 +8,10 @@ import { AnimatedList } from '@/components/business';
 import { useHotkey } from '../hooks';
 import { useSettingsStore } from '../store/settingsStore';
 
-interface AgentTemplate {
-  id: string;
-  name: string;
-  description: string;
-  icon: string;
-  system_prompt: string;
-  temperature: number;
-  memory_scene: string;
-}
-
-const AGENT_TEMPLATES: AgentTemplate[] = [
-  {
-    id: 'general',
-    name: '通用助手',
-    description: '适合日常对话和一般问题解答',
-    icon: '🤖',
-    system_prompt: '你是一个有帮助的AI助手。请用中文回答用户的问题，保持友好和专业。',
-    temperature: 0.7,
-    memory_scene: 'chat',
-  },
-  {
-    id: 'coder',
-    name: '编程助手',
-    description: '专注于代码编写、调试和技术问题',
-    icon: '💻',
-    system_prompt:
-      '你是一个专业的编程助手。帮助用户编写、调试和优化代码。提供清晰的代码示例和解释，遵循最佳实践。',
-    temperature: 0.3,
-    memory_scene: 'task',
-  },
-  {
-    id: 'writer',
-    name: '写作助手',
-    description: '帮助撰写文章、文案和创意内容',
-    icon: '✍️',
-    system_prompt:
-      '你是一个专业的写作助手。帮助用户撰写各类文章、文案、故事等。注重文字的流畅性、逻辑性和创意表达。',
-    temperature: 0.8,
-    memory_scene: 'chat',
-  },
-  {
-    id: 'analyst',
-    name: '数据分析师',
-    description: '数据分析和可视化专家',
-    icon: '📊',
-    system_prompt:
-      '你是一个数据分析专家。帮助用户分析数据、生成报告、提供洞察。使用工具进行数据处理和可视化。',
-    temperature: 0.4,
-    memory_scene: 'task',
-  },
-  {
-    id: 'translator',
-    name: '翻译助手',
-    description: '多语言翻译和本地化专家',
-    icon: '🌐',
-    system_prompt:
-      '你是一个专业的翻译助手。准确翻译各种语言，保持原文的风格和语境。支持中文、英文、日文等多种语言。',
-    temperature: 0.5,
-    memory_scene: 'chat',
-  },
-  {
-    id: 'vision',
-    name: '视觉助手',
-    description: '支持图像理解和多模态交互',
-    icon: '👁️',
-    system_prompt:
-      '你是一个支持视觉理解的AI助手。可以分析图像内容，回答关于图片的问题，并提供视觉相关的建议。',
-    temperature: 0.7,
-    memory_scene: 'chat',
-  },
-];
-
 export function AgentsPage() {
   const [agents, setAgents] = useState<Agent[]>([]);
   const [loading, setLoading] = useState(true);
   const [showCreateModal, setShowCreateModal] = useState(false);
-  const [showTemplateModal, setShowTemplateModal] = useState(false);
   const [editingAgent, setEditingAgent] = useState<Agent | null>(null);
   const [availableModels, setAvailableModels] = useState<{ name: string }[]>([]);
   const [tempMax, setTempMax] = useState(5);
@@ -104,7 +31,6 @@ export function AgentsPage() {
 
   useHotkey('Escape', () => {
     if (showCreateModal) setShowCreateModal(false);
-    if (showTemplateModal) setShowTemplateModal(false);
     if (editingAgent) {
       setEditingAgent(null);
       resetForm();
@@ -205,21 +131,6 @@ export function AgentsPage() {
     }
   };
 
-  const handleSelectTemplate = (template: AgentTemplate) => {
-    setFormData({
-      name: template.name,
-      description: template.description,
-      system_prompt: template.system_prompt,
-      model: availableModels.length > 0 ? availableModels[0].name : '',
-      temperature: template.temperature,
-      max_tokens: 0,
-      memory_scene: template.memory_scene,
-      decay_model: 'exponential',
-    });
-    setShowTemplateModal(false);
-    setShowCreateModal(true);
-  };
-
   const startEdit = (agent: Agent) => {
     setEditingAgent(agent);
     setFormData({
@@ -268,17 +179,6 @@ export function AgentsPage() {
         description="创建和管理不同的 AI 助手，每个助手可以有独立的系统提示词和配置"
         actions={
           <div className="flex gap-2">
-            <Button variant="secondary" onClick={() => setShowTemplateModal(true)}>
-              <svg className="w-4 h-4 mr-2" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  strokeWidth={2}
-                  d="M4 5a1 1 0 011-1h14a1 1 0 011 1v2a1 1 0 01-1 1H5a1 1 0 01-1-1V5zM4 13a1 1 0 011-1h6a1 1 0 011 1v6a1 1 0 01-1 1H5a1 1 0 01-1-1v-6zM16 13a1 1 0 011-1h2a1 1 0 011 1v6a1 1 0 01-1 1h-2a1 1 0 01-1-1v-6z"
-                />
-              </svg>
-              从模板创建
-            </Button>
             <Button onClick={() => setShowCreateModal(true)}>
               <svg className="w-4 h-4 mr-2" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                 <path
@@ -472,28 +372,6 @@ export function AgentsPage() {
           </Card>
         ))}
       </AnimatedList>
-
-      <Modal
-        isOpen={showTemplateModal}
-        onClose={() => setShowTemplateModal(false)}
-        title="选择模板"
-      >
-        <div className="grid grid-cols-2 gap-3">
-          {AGENT_TEMPLATES.map((template) => (
-            <button
-              key={template.id}
-              onClick={() => handleSelectTemplate(template)}
-              className="p-4 text-left border border-[var(--color-border)] rounded-[var(--radius-lg)] hover:border-[var(--color-accent)] hover:bg-[var(--color-bg-hover)] transition-all"
-            >
-              <div className="flex items-center gap-3 mb-2">
-                <span className="text-2xl">{template.icon}</span>
-                <h3 className="font-medium text-[var(--color-text-[var(--color-accent)])]">{template.name}</h3>
-              </div>
-              <p className="text-sm text-[var(--color-text-secondary)]">{template.description}</p>
-            </button>
-          ))}
-        </div>
-      </Modal>
 
       <Modal
         isOpen={showCreateModal || !!editingAgent}

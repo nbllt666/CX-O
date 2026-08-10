@@ -1,6 +1,6 @@
 """
 server/handlers/chat.py 回归测试
-聊天处理器：_parse_tool_args 参数解析 / get_tools_for_agent 工具收集 /
+聊天处理器：parse_tool_args 参数解析 / get_tools_for_agent 工具收集 /
 _process_tool_calls 工具调用循环 / _build_chat_context 上下文构建 / MESSAGE 与 STREAM 处理器
 """
 import pytest
@@ -10,8 +10,8 @@ import server.chat_helpers as chat_helpers_mod
 from server.core import tools as tools_mod
 from server.core.tools import builtin as builtin_mod
 from server.handlers import chat as chat_mod
+from server.core.tools import parse_tool_args
 from server.handlers.chat import (
-    _parse_tool_args,
     _build_chat_context,
     register_chat_handlers,
 )
@@ -20,11 +20,11 @@ from server.protocol.actions import ChatActions
 
 
 # --------------------------------------------------------------------------- #
-# _parse_tool_args
+# parse_tool_args
 # --------------------------------------------------------------------------- #
 class TestParseToolArgs:
     def test_dict_passthrough(self):
-        assert _parse_tool_args({"arguments": {"a": 1}}) == {"a": 1}
+        assert parse_tool_args({"arguments": {"a": 1}}) == {"a": 1}
 
     @pytest.mark.parametrize("raw,expected", [
         ('{"a": 1, "b": [2, 3]}', {"a": 1, "b": [2, 3]}),
@@ -33,16 +33,16 @@ class TestParseToolArgs:
         ("", {}),
     ])
     def test_string_forms(self, raw, expected):
-        assert _parse_tool_args({"arguments": raw}) == expected
+        assert parse_tool_args({"arguments": raw}) == expected
 
     def test_function_wrapper(self):
-        assert _parse_tool_args({"function": {"arguments": '{"x": 1}'}}) == {"x": 1}
+        assert parse_tool_args({"function": {"arguments": '{"x": 1}'}}) == {"x": 1}
 
     def test_non_dict_fallback(self):
-        assert _parse_tool_args({"arguments": [1, 2]}) == {}
+        assert parse_tool_args({"arguments": [1, 2]}) == {}
 
     def test_no_arguments(self):
-        assert _parse_tool_args({}) == {}
+        assert parse_tool_args({}) == {}
 
 
 # --------------------------------------------------------------------------- #
@@ -85,6 +85,16 @@ class FakeContextMgr:
 
     def create_session(self, **kw):
         self.sessions[kw["session_id"]] = kw
+
+    def ensure_session(self, session_id, workspace_id="default", title="", metadata=None):
+        if self.get_session(session_id) is None:
+            self.create_session(
+                session_id=session_id,
+                workspace_id=workspace_id,
+                title=title,
+                metadata=metadata,
+            )
+        return session_id
 
     def add_message(self, **kw):
         self.messages.append(kw)
@@ -137,7 +147,7 @@ class TestGetToolsForAgent:
         # get_tools_for_agent 从 server.core.tools 与 builtin 延迟导入
         monkeypatch.setattr(tools_mod, "tool_registry", reg)
         monkeypatch.setattr(builtin_mod, "get_builtin_tools", lambda: [{"name": "builtin"}])
-        tools = get_tools_for_agent({})
+        tools = get_tools_for_agent()
         names = [t["name"] for t in tools]
         assert "builtin" in names
         assert "main-tool" in names          # write_long_term_memory 等主工具
@@ -162,7 +172,7 @@ class TestProcessToolCalls:
         resp = await chat_mod._process_tool_calls(
             [{"name": "calculator", "arguments": '{"a":1}', "id": "c1"},
              {"name": "set_alarm", "arguments": {"t": 1}, "id": "c2"}],
-            messages, llm, {}
+            messages, llm
         )
         assert resp.content == "done"
         # 两条 tool 消息被追加
@@ -178,7 +188,7 @@ class TestProcessToolCalls:
         llm = FakeLLM(content="ok")
         messages = []
         await chat_mod._process_tool_calls(
-            [{"name": "set_alarm", "arguments": {}}], messages, llm, {})
+            [{"name": "set_alarm", "arguments": {}}], messages, llm)
         tool_msg = [m for m in messages if m["role"] == "tool"][0]
         assert tool_msg["tool_call_id"].startswith("call_")
 
@@ -261,10 +271,10 @@ class TestChatMessageHandler:
         cm, llm = _setup_ctx(monkeypatch)
         llm.tool_calls = [{"name": "set_alarm", "arguments": '{"t":1}', "id": "c1"}]
         tool_llm = FakeLLM(content="工具后回复", tool_calls=None)
-        monkeypatch.setattr(chat_mod, "get_tools_for_agent", lambda cfg: [])
+        monkeypatch.setattr(chat_mod, "get_tools_for_agent", lambda: [])
         # 让 _process_tool_calls 的第 2 次 chat 返回 tool_llm
         monkeypatch.setattr(chat_mod, "_process_tool_calls",
-                            lambda calls, msgs, llm, cfg: _finish_tool_calls(
+                            lambda calls, msgs, llm: _finish_tool_calls(
                                 tool_llm, msgs))
         await handlers[ChatActions.MESSAGE](None, {"data": {"agent_id": "a1", "text": "hi"}}, "c1")
         msg = mgr.sent[-1][1]

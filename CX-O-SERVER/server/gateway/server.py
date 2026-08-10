@@ -16,6 +16,7 @@ from server.protocol.actions import SystemActions
 from server.config import get_config
 from server.gateway.health import health_checker
 from server.core.websocket.manager import get_websocket_manager
+from server.core.utils import get_shared_http_client
 
 logger = logging.getLogger(__name__)
 
@@ -274,37 +275,38 @@ def register_gateway_routes(app: FastAPI):
 
         body = await request.body()
 
-        async with httpx.AsyncClient(timeout=30.0) as client:
-            try:
-                response = await client.request(
-                    method=request.method,
-                    url=target_url,
-                    headers=headers,
-                    content=body if body else None,
-                )
+        client = get_shared_http_client()
+        try:
+            response = await client.request(
+                method=request.method,
+                url=target_url,
+                headers=headers,
+                content=body if body else None,
+                timeout=30.0,
+            )
 
-                excluded_headers = ["content-encoding", "content-length", "transfer-encoding", "connection"]
-                response_headers = {
-                    k: v for k, v in response.headers.items()
-                    if k.lower() not in excluded_headers
-                }
+            excluded_headers = ["content-encoding", "content-length", "transfer-encoding", "connection"]
+            response_headers = {
+                k: v for k, v in response.headers.items()
+                if k.lower() not in excluded_headers
+            }
 
-                return Response(
-                    content=response.content,
-                    status_code=response.status_code,
-                    headers=response_headers,
-                    media_type=response.headers.get("content-type"),
-                )
-            except httpx.ConnectError:
-                return Response(
-                    content=json.dumps({"error": "Control service not available", "running": False}),
-                    status_code=503,
-                    media_type="application/json",
-                )
-            except httpx.RequestError as e:
-                logger.error(f"Control proxy error: {e}")
-                return Response(
-                    content=json.dumps({"error": "Proxy error", "detail": str(e)}),
-                    status_code=502,
-                    media_type="application/json",
-                )
+            return Response(
+                content=response.content,
+                status_code=response.status_code,
+                headers=response_headers,
+                media_type=response.headers.get("content-type"),
+            )
+        except httpx.ConnectError:
+            return Response(
+                content=json.dumps({"error": "Control service not available", "running": False}),
+                status_code=503,
+                media_type="application/json",
+            )
+        except httpx.RequestError as e:
+            logger.error(f"Control proxy error: {e}")
+            return Response(
+                content=json.dumps({"error": "Proxy error", "detail": str(e)}),
+                status_code=502,
+                media_type="application/json",
+            )

@@ -59,6 +59,9 @@ class FakeContextManager:
     def get_messages(self, session_id, limit=50, offset=0):
         return self.messages.get(session_id, [])
 
+    def get_recent_messages(self, session_id, limit=50):
+        return self.messages.get(session_id, [])[-limit:]
+
     def add_message(self, session_id, role, content, content_type="text", metadata=None):
         self.messages.setdefault(session_id, []).append(
             {"role": role, "content": content, "content_type": content_type}

@@ -14,6 +14,11 @@ from server.core.logging_config import get_contextual_logger
 
 logger = get_contextual_logger(__name__)
 
+# 项目根（CX-O-SERVER）：本文件位于 server/core/context/ 下，向上 4 级即项目根。
+# 与 agents.py/admin.py 的 _PROJECT_ROOT 模式对齐（rules-0 §三：禁止相对路径）。
+_PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent.parent
+_DEFAULT_STORAGE_DIR = str(_PROJECT_ROOT / "data" / "agent_contexts")
+
 
 @dataclass
 class AgentContextData:
@@ -45,7 +50,7 @@ class AgentContextManager:
         _cache: 内存缓存
     """
 
-    def __init__(self, storage_dir: str = "data/agent_contexts") -> None:
+    def __init__(self, storage_dir: str = _DEFAULT_STORAGE_DIR) -> None:
         """初始化Agent上下文管理器
 
         Args:

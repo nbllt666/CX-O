@@ -1,5 +1,4 @@
-import json
-from typing import Dict, List, Optional
+from typing import Dict, List
 
 from server.config import Settings
 from server.core.logging_config import get_contextual_logger

@@ -1,6 +1,6 @@
 from typing import List, Optional, Dict, Any
 from datetime import datetime
-from pydantic import BaseModel, Field, field_serializer
+from pydantic import BaseModel, field_serializer
 from enum import Enum
 
 

@@ -220,7 +220,7 @@ class _QueryHelpersMixin:
                     tags = json.loads(tag_row[0]) if tag_row[0] else []
                     for tag in tags:
                         tag_counts[tag] = tag_counts.get(tag, 0) + 1
-                except Exception as e:
+                except Exception:
                     logger.warning("解析记忆标签失败，跳过该行: %s", tag_row, exc_info=True)
 
             # 获取热门标签

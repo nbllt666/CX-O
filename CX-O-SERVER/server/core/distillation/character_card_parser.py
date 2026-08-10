@@ -133,7 +133,7 @@ def _decode_card_json(raw: str) -> Dict[str, Any]:
         data = json.loads(decoded.decode("utf-8"))
         if isinstance(data, dict):
             return data
-    except (ValueError, json.JSONDecodeError, UnicodeDecodeError) as e:
+    except (ValueError, json.JSONDecodeError, UnicodeDecodeError):
         pass
 
     raise ValueError(

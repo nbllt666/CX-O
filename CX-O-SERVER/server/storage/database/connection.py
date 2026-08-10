@@ -1,9 +1,8 @@
 import asyncio
-import os
 import sqlite3
 from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Dict, List, Optional
 
 import aiosqlite
 

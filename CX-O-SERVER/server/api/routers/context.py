@@ -1,4 +1,4 @@
-from typing import Dict, List, Optional
+from typing import Dict
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
@@ -176,8 +176,8 @@ async def generate_summary(session_id: str, max_points: int = 5, save_as_memory:
         model_router = get_model_router()
         memory_manager = get_memory_manager()
 
-        # 获取对话消息
-        messages = context_mgr.get_messages(session_id, limit=100)
+        # 获取对话消息（取最近 100 条，避免 get_messages 返回最旧消息导致摘要陈旧）
+        messages = context_mgr.get_recent_messages(session_id, limit=100)
         if not messages:
             raise HTTPException(status_code=404, detail="会话不存在或为空")
 
@@ -264,7 +264,7 @@ async def generate_summary(session_id: str, max_points: int = 5, save_as_memory:
             result = json.loads(result_text)
             key_points = result.get("key_points", [])
             report = result.get("report", {})
-        except Exception as parse_error:
+        except Exception:
             # 解析失败时使用简化结果
             key_points = []
             report = {

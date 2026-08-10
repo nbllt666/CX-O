@@ -142,14 +142,16 @@ class ACPLanDiscovery:
                     )
 
                     if agent.id and agent.id != self.acp_manager._local_agent_id:
-                        await self.acp_manager.register_agent(agent)
+                        await self.acp_manager.register_agent(agent, persist=False)
                         found_agents.append(agent)
             except BlockingIOError:
                 continue
-            except Exception as e:
+            except Exception:
                 break
 
         if found_agents:
+            # 单次落盘：避免每发现一个 agent 触发一次全量 YAML 重写
+            await self.acp_manager._save_data()
             logger.info(f"发现 {len(found_agents)} 个Agents")
 
     async def discover_once(self, timeout: float = 5.0) -> List[Dict]:
@@ -167,9 +169,9 @@ class ACPLanDiscovery:
                 sock.bind(("", 0))
             sock.settimeout(timeout)
 
-            end_time = asyncio.get_event_loop().time() + timeout
+            end_time = asyncio.get_running_loop().time() + timeout
 
-            while asyncio.get_event_loop().time() < end_time:
+            while asyncio.get_running_loop().time() < end_time:
                 try:
                     data, addr = sock.recvfrom(4096)
                     message = json.loads(data.decode())
@@ -187,12 +189,16 @@ class ACPLanDiscovery:
                         )
 
                         if agent.id and agent.id != self.acp_manager._local_agent_id:
-                            await self.acp_manager.register_agent(agent)
+                            await self.acp_manager.register_agent(agent, persist=False)
                             found.append(agent.to_dict())
                 except socket.timeout:
                     break
-                except Exception as e:
+                except Exception:
                     break
+
+            if found:
+                # 单次落盘：避免每个 agent 触发一次全量 YAML 重写
+                await self.acp_manager._save_data()
 
             sock.close()
             return found

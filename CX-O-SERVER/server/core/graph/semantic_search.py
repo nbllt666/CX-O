@@ -3,12 +3,12 @@
 """
 
 import logging
-from typing import Optional, List, Dict, Any, Callable
+from typing import Optional, List, Callable
 from urllib.parse import urlparse
 import numpy as np
 
 from server.core.graph.config import GraphConfig, get_graph_config
-from server.core.graph.vectorizer import get_vectorizer, TextVectorizer
+from server.core.graph.vectorizer import get_vectorizer
 from server.core.graph.models import GraphNode, SemanticSearchResult
 
 logger = logging.getLogger(__name__)

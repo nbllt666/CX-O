@@ -118,7 +118,7 @@ _NO_AGENT = object()  # 哨兵：显式表示 agent 不存在
 def _patch_chat_deps(monkeypatch, agent_config=None, llm=None, context_mgr=None,
                      build_messages=None, memory_mgr=None):
     import server.dependencies as deps
-    import server.api.routers.chat as chat_router
+    import server.prompt_builder as prompt_builder_mod
     import server.chat_helpers as chat_helpers
 
     async def _async_chat(messages, stream=False):
@@ -140,7 +140,7 @@ def _patch_chat_deps(monkeypatch, agent_config=None, llm=None, context_mgr=None,
 
     monkeypatch.setattr(chat_helpers, "get_agent_config", lambda agent_id: agent_config)
     monkeypatch.setattr(chat_helpers, "get_llm_client_for_agent", lambda cfg: llm)
-    monkeypatch.setattr(chat_router, "build_messages", build_messages)
+    monkeypatch.setattr(prompt_builder_mod, "build_messages", build_messages)
     monkeypatch.setattr(deps, "get_context_manager", lambda: context_mgr)
     monkeypatch.setattr(deps, "get_memory_manager", lambda: memory_mgr)
     return llm, context_mgr

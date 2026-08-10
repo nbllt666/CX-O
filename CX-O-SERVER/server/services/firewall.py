@@ -197,7 +197,7 @@ class FirewallService:
                 if pattern.search(content):
                     return FilterResult(
                         allowed=False,
-                        reason=f"Blocked pattern matched",
+                        reason="Blocked pattern matched",
                         original_content=original_content
                     )
 

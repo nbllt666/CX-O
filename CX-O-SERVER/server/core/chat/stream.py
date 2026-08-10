@@ -17,9 +17,7 @@ CX-O 流式聊天管线（含工具调用循环）。
 """
 from __future__ import annotations
 
-import json
 import logging
-import time
 from dataclasses import dataclass, field
 from typing import Any, AsyncIterator, Dict, List, Optional
 
@@ -27,9 +25,6 @@ logger = logging.getLogger(__name__)
 
 # 工具调用最大轮数（防止 LLM 无限循环调用工具）
 MAX_TOOL_ROUNDS = 5
-
-# 内置工具（无需注册表，直接执行）
-BUILTIN_TOOL_NAMES = {"calculator", "datetime", "random", "json_format"}
 
 
 @dataclass
@@ -42,59 +37,6 @@ class ChatStreamState:
     chunk_count: int = 0
     llm_rounds: int = 0
     done: bool = False
-
-
-def _parse_tool_args(tool_call: dict) -> dict:
-    """解析工具调用参数（dict 直返 / JSON / ast.literal_eval 兜底）。"""
-    args = (
-        tool_call.get("arguments")
-        or tool_call.get("function", {}).get("arguments", "{}")
-    )
-    if isinstance(args, str):
-        try:
-            args = json.loads(args)
-        except json.JSONDecodeError:
-            try:
-                import ast
-
-                args = ast.literal_eval(args)
-            except Exception:
-                args = {}
-    return args if isinstance(args, dict) else {}
-
-
-async def _execute_tool_calls(
-    tool_calls: List[Dict[str, Any]],
-    messages: List[Dict[str, Any]],
-    llm: Any,
-) -> None:
-    """执行工具调用并把 assistant+tool 消息追加到 messages。"""
-    from server.core.tools import tool_registry
-    from server.core.tools.builtin import call_builtin_tool
-
-    for tool_call in tool_calls:
-        tool_name = tool_call.get("name") or tool_call.get("function", {}).get("name")
-        tool_args = _parse_tool_args(tool_call)
-
-        if tool_name in BUILTIN_TOOL_NAMES:
-            tool_result = call_builtin_tool(tool_name, tool_args or {})
-        else:
-            tool_result = tool_registry.call_tool(tool_name, tool_args)
-
-        messages.append(
-            {"role": "assistant", "content": None, "tool_calls": [tool_call]}
-        )
-        tool_call_id = tool_call.get("id") or (
-            f"call_{tool_name}_{int(time.time() * 1000)}_{id(tool_call)}"
-        )
-        messages.append(
-            {
-                "role": "tool",
-                "tool_call_id": tool_call_id,
-                "name": tool_name,
-                "content": json.dumps(tool_result, ensure_ascii=False),
-            }
-        )
 
 
 async def generate_chat_stream(
@@ -165,6 +107,8 @@ async def generate_chat_stream(
             break
 
         state.tool_calls.extend(tool_calls_buffer)
-        await _execute_tool_calls(tool_calls_buffer, messages, llm)
+        from server.core.tools.builtin import execute_tool_calls
+
+        execute_tool_calls(tool_calls_buffer, messages)
 
     state.done = True

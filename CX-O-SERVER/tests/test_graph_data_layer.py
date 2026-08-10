@@ -9,6 +9,7 @@ from datetime import datetime
 import pytest
 
 from server.core.graph.config import GraphConfig, set_graph_config, get_graph_config
+from server.core.graph.config import _PROJECT_ROOT as _GRAPH_PROJECT_ROOT
 from server.core.graph.database import Database, get_database, get_database_if_exists, remove_database
 from server.core.graph.models import GraphNode, GraphEdge, NodeCreate, NodeUpdate, EdgeCreate, EdgeUpdate, SearchResult
 from server.core.graph.repository import BaseGraphRepository
@@ -94,7 +95,7 @@ class TestGraphConfig:
     def test_per_agent_uses_default_base(self):
         set_graph_config(GraphConfig(database_path="base.db", timeout=7))
         per = get_graph_config("agent_1")
-        assert per.database_path == "data/graph_agent_1.db"
+        assert per.database_path == str(_GRAPH_PROJECT_ROOT / "data" / "graph_agent_1.db")
         assert per.timeout == 7  # 继承 base 其它字段
 
     def test_per_agent_sanitizes_special_chars(self):

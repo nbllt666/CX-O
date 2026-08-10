@@ -2,7 +2,6 @@
 Avatar 模型管理路由 - 提供 VRM/Live2D 模型上传、下载、管理 API
 """
 
-import os
 import re
 import uuid
 from datetime import datetime
@@ -18,7 +17,9 @@ from server.core.logging_config import get_contextual_logger
 logger = get_contextual_logger(__name__)
 router = APIRouter()
 
-AVATARS_DIR = Path("data/avatars")
+# 项目根（CX-O-SERVER），基于文件位置解析，避免依赖运行时工作目录
+_PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent.parent
+AVATARS_DIR = _PROJECT_ROOT / "data" / "avatars"
 VRM_DIR = AVATARS_DIR / "vrm"
 LIVE2D_DIR = AVATARS_DIR / "live2d"
 

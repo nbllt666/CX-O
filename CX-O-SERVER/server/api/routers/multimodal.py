@@ -21,7 +21,7 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
 from server.core.logging_config import get_contextual_logger
-from server.core.multimodal import MultimodalArtifact, MultimodalPipeline
+from server.core.multimodal import MultimodalPipeline
 
 router = APIRouter()
 logger = get_contextual_logger(__name__)

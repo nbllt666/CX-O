@@ -152,14 +152,14 @@ class DualStreamSession:
         """
         text = asr_result.get("text", "").strip()
         # 诊断日志：确认 on_partial_result 被调用及其参数
-        logger.info(f"[DIAG-PARTIAL] on_partial_result called, text='{text}' (len={len(text)}), is_final={asr_result.get('is_final')}, has_triggered={self._has_triggered_this_utterance}, threshold={self._trigger_char_threshold}")
+        logger.debug("[DIAG-PARTIAL] on_partial_result called, text='%s' (len=%d), is_final=%s, has_triggered=%s, threshold=%s", text, len(text), asr_result.get('is_final'), self._has_triggered_this_utterance, self._trigger_char_threshold)
         if not text:
             return
 
         # 推送 Partial 文本给前端（实时显示用户正在说什么）
-        logger.info(f"[DIAG-PARTIAL] before _send_partial")
+        logger.debug("[DIAG-PARTIAL] before _send_partial")
         await self._send_partial(text)
-        logger.info(f"[DIAG-PARTIAL] after _send_partial")
+        logger.debug("[DIAG-PARTIAL] after _send_partial")
 
         # 同一 utterance 内仅触发一次 LLM，避免 Partial 增量导致重复 Prefill
         if self._has_triggered_this_utterance:
@@ -182,9 +182,9 @@ class DualStreamSession:
         self._current_user_text = full_user_text
 
         # 通知前端 LLM Prefill 已启动（前端可显示"正在思考"状态）
-        logger.info(f"[DIAG-PARTIAL] before _send_prefill_started")
+        logger.debug("[DIAG-PARTIAL] before _send_prefill_started")
         await self._send_prefill_started(full_user_text)
-        logger.info(f"[DIAG-PARTIAL] after _send_prefill_started, creating pipeline task")
+        logger.debug("[DIAG-PARTIAL] after _send_prefill_started, creating pipeline task")
 
         # 异步启动 LLM → TextSmoother → TTS 流水线，不阻塞音频帧接收
         self._pipeline_task = asyncio.create_task(self._run_pipeline(full_user_text))
@@ -261,7 +261,7 @@ class DualStreamSession:
         self._current_user_text = full_user_text
         self._final_user_text = text  # Final 即最准确文本，直接用于上下文记录
 
-        logger.info(f"[DIAG-PARTIAL] on_final_result fallback trigger, text='{full_user_text}'")
+        logger.debug("[DIAG-PARTIAL] on_final_result fallback trigger, text='%s'", full_user_text)
         await self._send_prefill_started(full_user_text)
 
         # 异步启动 LLM → TextSmoother → TTS 流水线，不阻塞音频帧接收
@@ -282,13 +282,13 @@ class DualStreamSession:
         """
         try:
             # 延迟导入避免循环依赖
-            from server.handlers.chat import _get_agent_config, _get_llm_client_for_agent
+            from server.chat_helpers import get_agent_config, get_llm_client_for_agent
             from server.prompt_builder import build_messages
             from server.dependencies import get_context_manager
             from server.services.text_smoother import TextSmoother
 
             # 1. 获取 Agent 配置
-            agent_config = _get_agent_config(self.agent_id)
+            agent_config = get_agent_config(self.agent_id)
             if not agent_config:
                 await self.manager.send_message(self.client_id, create_error(
                     request_id=self.request_id,
@@ -303,15 +303,13 @@ class DualStreamSession:
             # 2. 构建 messages（实时语音模式，Prompt Tokens < 500，锁死 80ms TTFT）
             # is_realtime_voice=True 跳过 MemoryRouter/HybridSearch/重型隐藏提示词，
             # 仅保留核心 System Prompt + 最近 2 轮对话，省去 ~1500 tokens Prefill（100-200ms）
-            # tts_engine 透传：orpheus 引擎时注入 orpheus_voice_prompt（含情感标签指南）
             messages = build_messages(
                 agent_config, context_mgr, self.session_id,
                 user_text, is_realtime_voice=True,
-                tts_engine=self._engine,
             )
 
             # 3. 获取 LLM client
-            llm = _get_llm_client_for_agent(agent_config)
+            llm = get_llm_client_for_agent(agent_config)
 
             # 4. LLM 流式输出（vLLM 90 tokens/s, TTFT ~80ms）
             # 实时语音回复应为短口语（2~3 句），max_tokens 限制 150：
@@ -480,7 +478,7 @@ class DualStreamSession:
 
         # 有 reply_content 则立即播插话回应（直接合成，不经过 LLM）
         if reply_content:
-            logger.info(f"[DIAG-INTERRUPT] AI 插话播报: {reply_content[:40]}")
+            logger.debug("[DIAG-INTERRUPT] AI 插话播报: %s", reply_content[:40])
             # 插话回应作为新的 pipeline，后续用户开口可再次打断
             self._pipeline_task = asyncio.create_task(self._play_reply(reply_content))
 
@@ -580,14 +578,12 @@ class DualStreamSession:
             context_mgr = get_context_manager()
 
             # 确保 session 存在
-            existing = context_mgr.get_session(self.session_id)
-            if not existing:
-                context_mgr.create_session(
-                    workspace_id="agent-chats",
-                    title=f"双流式对话",
-                    session_id=self.session_id,
-                    metadata={"agent_id": self.agent_id},
-                )
+            context_mgr.ensure_session(
+                self.session_id,
+                workspace_id="agent-chats",
+                title="双流式对话",
+                metadata={"agent_id": self.agent_id},
+            )
 
             # 记录完整轮次：user + assistant
             context_mgr.add_message(
@@ -618,10 +614,10 @@ class DualStreamSession:
 
 def init_interrupt_module():
     from server.services.asr_interrupt import get_asr_interrupt_module
-    interrupt_module = get_asr_interrupt_module()
+    get_asr_interrupt_module()
 
     from server.services.agent_interrupt_user import get_agent_interrupt_module
-    agent_interrupt = get_agent_interrupt_module()
+    get_agent_interrupt_module()
 
 
 def init_audio_stream_processor(asr_client):
@@ -863,7 +859,6 @@ def register_audio_handlers(
 
                 if temp_file:
                     try:
-                        import os
                         os.unlink(temp_file)
                     except Exception as cleanup_error:
                         logger.warning(f"清理临时文件失败：{cleanup_error}")
@@ -990,7 +985,6 @@ def register_audio_handlers(
             stream_processor = get_audio_stream_processor()
 
             audio_base64 = data.get("audio")
-            language = data.get("language", "auto")
             reset = data.get("reset", False)
 
             if reset:
@@ -1227,9 +1221,11 @@ def register_audio_handlers(
             from server.services.vad_processor import get_audio_stream_processor
             stream_processor = get_audio_stream_processor()
 
-            # 诊断计时：定位 WS 端到端延迟瓶颈
+            # 诊断计时：定位 WS 端到端延迟瓶颈（DEBUG 模式才计时，热路径不产生开销）
             import time as _diag_time
-            _t0 = _diag_time.monotonic()
+            _diag_enabled = logger.isEnabledFor(logging.DEBUG)
+            if _diag_enabled:
+                _t0 = _diag_time.monotonic()
 
             # 复用现有 AudioStreamProcessor 进行 VAD + ASR 处理
             # 不设置 on_partial_result 回调，避免单例跨客户端干扰
@@ -1239,8 +1235,9 @@ def register_audio_handlers(
             # 且用非阻塞 create_task，避免主 LLM 判定阻塞帧处理）
             result = await stream_processor.process_audio_chunk(audio_data, skip_interrupt=True)
 
-            _t1 = _diag_time.monotonic()
-            logger.info(f"[DIAG] process_audio_chunk took {(_t1-_t0)*1000:.1f}ms, vad_state_changed={result.get('vad',{}).get('state_changed')}, has_asr={result.get('asr') is not None}")
+            if _diag_enabled:
+                _t1 = _diag_time.monotonic()
+                logger.debug("[DIAG] process_audio_chunk took %.1fms, vad_state_changed=%s, has_asr=%s", (_t1-_t0)*1000, result.get('vad',{}).get('state_changed'), result.get('asr') is not None)
 
             vad_result = result.get("vad", {})
             asr_result = result.get("asr")

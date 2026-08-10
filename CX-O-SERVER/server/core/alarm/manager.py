@@ -2,18 +2,22 @@ import asyncio
 import logging
 import os
 import sqlite3
-import sys
 import threading
-import time
 import uuid
-from dataclasses import asdict, dataclass
+from dataclasses import dataclass
 from datetime import datetime, timedelta
+from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 logger = logging.getLogger(__name__)
 
 MAX_DELAY = 86400 * 30  # 最大延迟 30 天（秒）
 MAX_MESSAGE_LENGTH = 1000  # 提醒消息最大长度
+
+# 项目根（CX-O-SERVER）：本文件位于 server/core/alarm/ 下，向上 4 级即项目根。
+# 与 agents.py/admin.py 的 _PROJECT_ROOT 模式对齐（rules-0 §三：禁止相对路径）。
+_PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent.parent
+_DEFAULT_DB_PATH = str(_PROJECT_ROOT / "data" / "alarms.db")
 
 
 class _SilentHandler(logging.NullHandler):
@@ -63,7 +67,7 @@ class Alarm:
 
 
 class AlarmManager:
-    def __init__(self, db_path: str = "data/alarms.db"):
+    def __init__(self, db_path: str = _DEFAULT_DB_PATH):
         self.db_path = db_path
         self._timers: Dict[str, threading.Timer] = {}
         self._lock = threading.Lock()

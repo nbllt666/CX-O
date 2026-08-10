@@ -121,7 +121,6 @@ class VADProcessor:
             speech_probability = 0.5
 
         state_changed = False
-        self._state.is_speaking
 
         if is_speech:
             self._state.last_speech_time = current_time
@@ -293,17 +292,18 @@ class AudioStreamProcessor:
         vad_result = self.vad.process_audio(audio_data)
         _diag_t1 = time.time()
 
-        self._audio_buffer.extend(audio_data)
-        chunk_duration_ms = len(audio_data) / 32
-        self._buffer_duration_ms += chunk_duration_ms
-
         result = {
             "vad": vad_result,
             "asr": None,
             "interrupt": None
         }
 
+        # 音频缓冲仅在「无流式 ASR 客户端」的兜底路径被读取（is_speaking 期间累积、
+        # 静默超 1s 清空）。双流式语音路径恒有 _streaming_client，缓冲累加是纯死写（每帧
+        # extend + len/32 + += 均被丢弃），故下移到兜底分支，避免占用热路径。
         if not self._streaming_client:
+            self._audio_buffer.extend(audio_data)
+            self._buffer_duration_ms += len(audio_data) / 32
             if not vad_result["is_speaking"] and self._buffer_duration_ms > 1000:
                 self._audio_buffer.clear()
                 self._buffer_duration_ms = 0
@@ -343,7 +343,7 @@ class AudioStreamProcessor:
             # 端到端延迟实测暴涨至 6.5~7.7s（目标 <800ms）。
             streaming_result = await self._streaming_client.receive_result(timeout=0)
             _diag_t3 = time.time()
-            logger.info(f"[DIAG-VAD] vad={(_diag_t1-_diag_t0)*1000:.1f}ms send+recv={(_diag_t3-_diag_t2)*1000:.1f}ms is_last={is_last} has_result={streaming_result is not None}")
+            logger.debug(f"[DIAG-VAD] vad={(_diag_t1-_diag_t0)*1000:.1f}ms send+recv={(_diag_t3-_diag_t2)*1000:.1f}ms is_last={is_last} has_result={streaming_result is not None}")
 
             if streaming_result:
                 asr_result = {

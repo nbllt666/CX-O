@@ -18,6 +18,7 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
 from server.core.logging_config import get_contextual_logger
+from server.core.utils import get_shared_http_client
 
 router = APIRouter()
 logger = get_contextual_logger(__name__)
@@ -423,7 +424,7 @@ async def start_service(config: ServiceConfig):
             if config.reload:
                 cmd[-1] += " --reload"
 
-            logger.info(f"Starting with Conda activate script")
+            logger.info("Starting with Conda activate script")
 
             # 使用 shell=False 执行命令
             new_process = subprocess.Popen(
@@ -690,10 +691,6 @@ async def get_service_config():
 @router.get("/config/gateway")
 async def get_gateway_config():
     """获取单体架构网关配置（简化版，供前端兼容）"""
-    from server.config import get_settings
-
-    settings = get_settings()
-
     monolith_config = {
         "status": "集成",
         "url": "ws://127.0.0.1:8000/ws",
@@ -782,7 +779,6 @@ async def get_environment_info():
 async def get_startup_command(use_conda: bool = True):
     """获取启动命令（供前端直接执行）"""
     conda_python = get_conda_python_path()
-    conda_activate = get_conda_activate_script()
     project_root = get_project_root()
 
     config = {"host": "0.0.0.0", "port": 8000, "log_level": "info"}
@@ -839,8 +835,6 @@ async def get_startup_command(use_conda: bool = True):
 @router.get("/service/models")
 async def get_available_models():
     """获取可用的模型列表"""
-    import httpx
-
     from server.config import get_settings
 
     settings = get_settings()
@@ -885,20 +879,19 @@ async def get_available_models():
 
     # 尝试从 Ollama 获取可用模型列表
     try:
-        async with httpx.AsyncClient(timeout=5.0) as client:
-            main_host = models_config.main.host
-            response = await client.get(f"{main_host}/api/tags")
-            if response.status_code == 200:
-                data = response.json()
-                for model in data.get("models", []):
-                    models.append(
-                        {
-                            "name": model.get("name", ""),
-                            "size": model.get("size", 0),
-                            "modified_at": model.get("modified_at", ""),
-                            "details": model.get("details", {}),
-                        }
-                    )
+        main_host = models_config.main.host
+        response = await get_shared_http_client().get(f"{main_host}/api/tags", timeout=5.0)
+        if response.status_code == 200:
+            data = response.json()
+            for model in data.get("models", []):
+                models.append(
+                    {
+                        "name": model.get("name", ""),
+                        "size": model.get("size", 0),
+                        "modified_at": model.get("modified_at", ""),
+                        "details": model.get("details", {}),
+                    }
+                )
     except Exception as e:
         logger.warning(f"无法获取 Ollama 模型列表: {e}")
 

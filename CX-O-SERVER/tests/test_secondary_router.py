@@ -124,6 +124,9 @@ class FakeContextManager:
     def get_messages(self, conversation_id, limit=100):
         return self.messages
 
+    def get_recent_messages(self, conversation_id, limit=100):
+        return self.messages
+
     def update_session(self, conversation_id, summary=None):
         self.updated.append((conversation_id, summary))
         return True

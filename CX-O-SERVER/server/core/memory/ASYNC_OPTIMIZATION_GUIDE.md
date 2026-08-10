@@ -7,7 +7,7 @@
 记忆创建现在自动使用异步向量化，无需修改任何代码：
 
 ```python
-from backend.core.memory.manager import MemoryManager
+from server.core.memory.manager import MemoryManager
 
 manager = MemoryManager()
 
@@ -24,7 +24,7 @@ memory_id = manager.write_memory(
 系统提示词现在每会话只发送一次：
 
 ```python
-from services.context_manager import get_context_manager
+from server.services.context_manager import get_context_manager
 
 context_mgr = get_context_manager()
 session_id = "my_session"
@@ -71,7 +71,7 @@ queue.add_task(
 ### 查看队列状态
 
 ```python
-from backend.core.memory.vectorization_queue import get_vectorization_queue
+from server.core.memory.vectorization_queue import get_vectorization_queue
 
 queue = get_vectorization_queue()
 stats = queue.get_stats()
@@ -94,7 +94,7 @@ print(f"重试次数：{task_status['retry_count']}")
 
 ```python
 import logging
-logging.getLogger("backend.core.memory").setLevel(logging.DEBUG)
+logging.getLogger("server.core.memory").setLevel(logging.DEBUG)
 ```
 
 ## 性能基准
@@ -195,9 +195,3 @@ for session_id in inactive_sessions:
 - 如果向量化队列不可用，自动降级到同步模式
 - API 接口保持不变，无需修改调用代码
 - 系统提示词优化不影响现有功能
-
-## 相关文档
-
-- [实施总结](../../../.trae/specs/async-memory-vectorization/IMPLEMENTATION_SUMMARY.md)
-- [规范文档](../../../.trae/specs/async-memory-vectorization/spec.md)
-- [任务列表](../../../.trae/specs/async-memory-vectorization/tasks.md)

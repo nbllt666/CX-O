@@ -18,7 +18,9 @@ from server.services.tts_service import TTSService
 router = APIRouter()
 logger = get_contextual_logger(__name__)
 
-VOICE_REFS_DIR = Path("data/voice_refs")
+# 项目根（CX-O-SERVER），基于文件位置解析，避免依赖运行时工作目录
+_PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent.parent
+VOICE_REFS_DIR = _PROJECT_ROOT / "data" / "voice_refs"
 ALLOWED_AUDIO_EXTENSIONS = {".wav", ".mp3", ".ogg", ".flac", ".m4a", ".aac"}
 
 
@@ -304,7 +306,7 @@ async def asr_speech_to_text(request: Request, asr_svc: ASRService = Depends(get
 
 
 def _load_tts_config() -> dict:
-    config_file = Path("config/settings.json")
+    config_file = _PROJECT_ROOT / "config" / "settings.json"
 
     default_config = {
         "engine": "f5",
@@ -348,7 +350,7 @@ def _load_tts_config() -> dict:
 
 
 def _load_asr_config() -> dict:
-    config_file = Path("config/settings.json")
+    config_file = _PROJECT_ROOT / "config" / "settings.json"
     default_config = {"url": "http://127.0.0.1:5001", "timeout": 60}
     if not config_file.exists():
         return default_config

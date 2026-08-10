@@ -1,6 +1,6 @@
 from datetime import datetime
 from enum import Enum
-from typing import Any, Awaitable, Callable, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional
 
 from pydantic import BaseModel, ConfigDict, Field, field_serializer
 

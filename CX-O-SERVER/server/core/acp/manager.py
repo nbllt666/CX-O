@@ -169,8 +169,10 @@ class ACPManager:
     DEFAULT_AGENT_ID = "default"
     DEFAULT_WEAVIATE_COLLECTION = "CXOMemory"  # CX-O 既有共享 collection（向后兼容）
     PER_AGENT_WEAVIATE_PREFIX = "CXHMSMemory_"  # per-agent collection 前缀（spec 要求）
-    DEFAULT_GRAPH_DB = "data/graph.db"  # CX-O 既有共享 graph（向后兼容）
-    PER_AGENT_GRAPH_PREFIX = "data/graph_"  # per-agent graph 文件前缀
+    # 图数据库路径基于 _PROJECT_ROOT 解析（rules-0 §三：禁止 CWD 相对路径）。
+    # 与 agents_file 等路径锚点保持一致，避免依赖运行时工作目录。
+    DEFAULT_GRAPH_DB = os.path.join(_PROJECT_ROOT, "data", "graph.db")  # CX-O 既有共享 graph（向后兼容）
+    PER_AGENT_GRAPH_PREFIX = os.path.join(_PROJECT_ROOT, "data", "graph_")  # per-agent graph 文件前缀
     LOCAL_AGENT_SOURCES = ("cxhms_local", "cxhms_main", "cxo_local", "cxo_main")
 
     def __init__(self, data_dir: str = "data/acp") -> None:
@@ -334,14 +336,14 @@ class ACPManager:
             logger.warning(f"注册本地 Agent 失败: {e}")
 
     def _load_data(self):
+        import yaml
+
         agents_file = self.data_dir / "agents.yaml"
         connections_file = self.data_dir / "connections.yaml"
         groups_file = self.data_dir / "groups.yaml"
 
         if agents_file.exists():
             try:
-                import yaml
-
                 with open(agents_file, "r", encoding="utf-8") as f:
                     data = yaml.safe_load(f)
                     for agent_data in data.get("agents", []):
@@ -352,8 +354,6 @@ class ACPManager:
 
         if connections_file.exists():
             try:
-                import yaml
-
                 with open(connections_file, "r", encoding="utf-8") as f:
                     data = yaml.safe_load(f)
                     for conn_data in data.get("connections", []):
@@ -364,8 +364,6 @@ class ACPManager:
 
         if groups_file.exists():
             try:
-                import yaml
-
                 with open(groups_file, "r", encoding="utf-8") as f:
                     data = yaml.safe_load(f)
                     for group_data in data.get("groups", []):
@@ -417,11 +415,19 @@ class ACPManager:
         """异步保存数据（通过 asyncio.to_thread 避免阻塞事件循环）"""
         await asyncio.to_thread(self._save_data_sync)
 
-    async def register_agent(self, agent: ACPAgentInfo) -> ACPAgentInfo:
+    async def register_agent(self, agent: ACPAgentInfo, persist: bool = True) -> ACPAgentInfo:
+        """注册/更新 agent。
+
+        Args:
+            agent: agent 信息。
+            persist: 是否立即落盘。批量发现场景传 False 以合并为一次落盘，
+                避免逐个 agent 触发全量 YAML 重写（见 discover.py）。
+        """
         async with self._lock:
             agent.last_seen = datetime.now().isoformat()
             self.agents[agent.id] = agent
-            await self._save_data()
+            if persist:
+                await self._save_data()
             return agent
 
     async def update_agent_status(self, agent_id: str, status: str) -> bool:
@@ -601,7 +607,8 @@ class ACPManager:
                     self.messages[agent_id] = []
                 self.messages[agent_id].append(message)
 
-            await self._save_data()
+            # 消息仅存内存（agents/connections/groups 才持久化），此处不触发 YAML 重写，
+            # 避免每条消息都产生 3 次冗余文件 I/O（ACP 自动回复热路径）。
 
         # v3.1.0: 若目标 Agent 是外部 Agent（有 host:port 且 port 不是发现端口 9999），通过 HTTP 投递
         if message.to_agent_id and not message.to_group_id:
@@ -638,9 +645,8 @@ class ACPManager:
 
         与 _deliver_to_external_agent 对称：外部 agent 走 HTTP，本地 agent 走内存。
 
-        适配 CX-O: chat stream 管线（generate_chat_stream）在 CX-O 中可能不存在，
-        _inject_into_chat_context / _trigger_auto_reply 内部用 try-except 守护延迟导入，
-        依赖缺失时静默跳过，不影响消息存储。
+        适配 CX-O: 自动回复依赖 server.core.chat.stream 管线（generate_chat_stream），
+        通过 try-except 守护延迟导入，依赖异常时静默跳过，不影响消息存储。
         """
         # 主系统 agent 映射到前端 default session
         if target.id == self._local_agent_id:
@@ -696,7 +702,8 @@ class ACPManager:
         """
         async with self._lock:
             self.messages.setdefault(message.from_agent_id, []).append(message)
-            await self._save_data()
+
+        # 消息仅存内存，不触发 YAML 重写（见 send_message 注释）。
 
         # 注入 system 消息到本地 Agent 聊天上下文
         try:
@@ -721,10 +728,9 @@ class ACPManager:
         session，本方法通过 generate_chat_stream 走正常聊天管线（含工具调用循环），
         agent 可自行决定是否调用 acp_send_message 工具回复。
 
-        适配 CX-O: CX-O 当前无 server.core.chat.stream 模块（generate_chat_stream/
-        ChatStreamState）及 server.core.tools.graph_tools.set_current_agent_id。
-        本方法用 try-except 守护延迟导入，依赖缺失时静默记 warning 并返回，
-        不影响 ACP 消息存储核心功能。待 CX-O 补齐 chat stream 管线后自动生效。
+        适配 CX-O: 依赖 server.core.chat.stream（generate_chat_stream/ChatStreamState）、
+        server.core.tools.graph_tools.set_current_agent_id 与 server.chat_helpers，
+        均通过 try-except 守护延迟导入，依赖异常时静默记 warning 并返回。
         """
         if not self._local_agent_id and not target_agent_id:
             return
@@ -776,7 +782,7 @@ class ACPManager:
                 )
                 return
 
-            tools = get_tools_for_agent(agent_config)
+            tools = get_tools_for_agent()
 
             session_id = f"agent-{effective_agent_id}"
 
@@ -788,17 +794,13 @@ class ACPManager:
             messages.append({"role": "system", "content": ACP_REPLY_HINT_PROMPT})
 
             history = await asyncio.to_thread(
-                context_mgr.get_messages, session_id, limit=50
+                context_mgr.get_recent_messages, session_id, limit=50
             )
             for m in history:
                 role = m.get("role")
                 content = m.get("content", "")
                 if role in ("user", "assistant") and content:
                     messages.append({"role": role, "content": content})
-
-            if not messages:
-                logger.warning("ACP 自动回复: 消息列表为空，跳过")
-                return
 
             messages.append({
                 "role": "system",
@@ -853,7 +855,7 @@ class ACPManager:
                 "from_agent_id": message.from_agent_id,
                 "tool_calls": state.tool_calls if state.tool_calls else None,
             }
-            await context_mgr.add_message_async(
+            context_mgr.add_message(
                 session_id=session_id,
                 role="assistant",
                 content=reply_text,
@@ -863,15 +865,13 @@ class ACPManager:
 
             # 外部消息场景：同时保存到本地系统 agent 的 ACP 协议级 session
             if not target_agent_id and self._local_agent_id:
-                acp_session_id = f"agent-{self._local_agent_id}"
-                if context_mgr.get_session(acp_session_id) is None:
-                    context_mgr.create_session(
-                        workspace_id="agent-chats",
-                        title=f"{self._local_agent_name} 的对话",
-                        session_id=acp_session_id,
-                        metadata={"agent_id": self._local_agent_id},
-                    )
-                await context_mgr.add_message_async(
+                acp_session_id = context_mgr.ensure_session(
+                    f"agent-{self._local_agent_id}",
+                    workspace_id="agent-chats",
+                    title=f"{self._local_agent_name} 的对话",
+                    metadata={"agent_id": self._local_agent_id},
+                )
+                context_mgr.add_message(
                     session_id=acp_session_id,
                     role="assistant",
                     content=reply_text,
@@ -895,8 +895,8 @@ class ACPManager:
         ACP 消息类似于用户消息——agent 收到后触发回复。因此注入为 user 角色，
         让 agent 通过正常聊天管线（含工具调用）处理。
 
-        适配 CX-O: context_manager 接口（add_message_async/get_messages/create_session/
-        get_session）若在 CX-O 中缺失或签名不一致，本方法记 warning 并跳过，
+        适配 CX-O: 使用 server.core.context.manager.ContextManager 的同步接口
+        （create_session/get_session/add_message）；若接口缺失，本方法记 warning 并跳过，
         不影响 ACP 消息存储核心功能。
         """
         if not self._local_agent_id and not target_agent_id:
@@ -942,14 +942,13 @@ class ACPManager:
                 target_info = self.agents.get(target_agent_id)
                 if target_info:
                     target_agent_name = target_info.name or target_agent_id
-                if context_mgr.get_session(session_id) is None:
-                    context_mgr.create_session(
-                        workspace_id="agent-chats",
-                        title=f"{target_agent_name} 的对话",
-                        session_id=session_id,
-                        metadata={"agent_id": target_agent_id},
-                    )
-                await context_mgr.add_message_async(
+                context_mgr.ensure_session(
+                    session_id,
+                    workspace_id="agent-chats",
+                    title=f"{target_agent_name} 的对话",
+                    metadata={"agent_id": target_agent_id},
+                )
+                context_mgr.add_message(
                     session_id=session_id,
                     role="user",
                     content=user_content,
@@ -959,15 +958,13 @@ class ACPManager:
                 return
 
             # 外部消息场景：注入到 ACP 协议级 session
-            session_id = f"agent-{self._local_agent_id}"
-            if context_mgr.get_session(session_id) is None:
-                context_mgr.create_session(
-                    workspace_id="agent-chats",
-                    title=f"{self._local_agent_name} 的对话",
-                    session_id=session_id,
-                    metadata={"agent_id": self._local_agent_id},
-                )
-            await context_mgr.add_message_async(
+            session_id = context_mgr.ensure_session(
+                f"agent-{self._local_agent_id}",
+                workspace_id="agent-chats",
+                title=f"{self._local_agent_name} 的对话",
+                metadata={"agent_id": self._local_agent_id},
+            )
+            context_mgr.add_message(
                 session_id=session_id,
                 role="user",
                 content=user_content,
@@ -976,15 +973,13 @@ class ACPManager:
             )
 
             # 同时注入到前端默认助手 session（agent-default），确保前端可见
-            default_session_id = f"agent-{self.DEFAULT_AGENT_ID}"
-            if context_mgr.get_session(default_session_id) is None:
-                context_mgr.create_session(
-                    workspace_id="agent-chats",
-                    title="默认助手的对话",
-                    session_id=default_session_id,
-                    metadata={"agent_id": self.DEFAULT_AGENT_ID},
-                )
-            await context_mgr.add_message_async(
+            default_session_id = context_mgr.ensure_session(
+                f"agent-{self.DEFAULT_AGENT_ID}",
+                workspace_id="agent-chats",
+                title="默认助手的对话",
+                metadata={"agent_id": self.DEFAULT_AGENT_ID},
+            )
+            context_mgr.add_message(
                 session_id=default_session_id,
                 role="user",
                 content=user_content,
@@ -992,7 +987,7 @@ class ACPManager:
                 metadata=msg_metadata,
             )
         except AttributeError as e:
-            # context_manager 接口缺失某些方法（如 add_message_async），记 warning 不阻断
+            # context_manager 接口缺失某些方法，记 warning 不阻断
             logger.warning(
                 f"ACP 消息注入: context_manager 接口不兼容,消息仅存于 ACP 历史: {e}"
             )
@@ -1013,14 +1008,14 @@ class ACPManager:
 
     async def mark_messages_read(self, message_ids: List[str]) -> int:
         marked = 0
+        id_set = set(message_ids)
         async with self._lock:
             for messages in self.messages.values():
                 for msg in messages:
-                    if msg.id in message_ids and not msg.is_read:
+                    if msg.id in id_set and not msg.is_read:
                         msg.is_read = True
                         marked += 1
-            if marked > 0:
-                await self._save_data()
+            # 消息仅存内存，不触发 YAML 重写（见 send_message 注释）。
         return marked
 
     async def get_statistics(self) -> Dict:

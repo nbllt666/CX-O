@@ -130,7 +130,7 @@ class ASRService:
         if not success:
             return {"text": "", "error": "Failed to process audio"}
 
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         result = await loop.run_in_executor(
             _executor,
             self._run_inference,
@@ -151,7 +151,7 @@ class ASRService:
             _t2 = _diag_time.monotonic()
             response = await client.post(f"{self._remote_url}/api/v1/asr", files=files, data=data)
             _t3 = _diag_time.monotonic()
-            logger.info(f"[DIAG-ASR] get_client={(_t1-_t0)*1000:.1f}ms prep={(_t2-_t1)*1000:.1f}ms post={(_t3-_t2)*1000:.1f}ms url={self._remote_url}")
+            logger.debug(f"[DIAG-ASR] get_client={(_t1-_t0)*1000:.1f}ms prep={(_t2-_t1)*1000:.1f}ms post={(_t3-_t2)*1000:.1f}ms url={self._remote_url}")
             if response.status_code == 200:
                 result = response.json()
                 if result.get("results"):
@@ -298,7 +298,8 @@ class ASRService:
         try:
             async for message in self._ws:
                 _n += 1
-                logger.info(f"[ASR-WS] Recv #{_n}: {str(message)[:80]}")
+                # % 式惰性格式化：消息仅在实际触发 DEBUG 时才做 % 拼接（参数仍会求值）
+                logger.debug("[ASR-WS] Recv #%d: %s", _n, str(message)[:80])
                 await self._ws_recv_queue.put(message)
         except Exception as e:
             logger.error(f"[ASR-WS] Recv loop error: {e}")
@@ -358,7 +359,7 @@ class ASRService:
         if timeout == 0:
             try:
                 message = self._ws_recv_queue.get_nowait()
-                logger.info(f"[ASR-WS] receive_result GOT: {str(message)[:60]} (qsize={self._ws_recv_queue.qsize()})")
+                logger.debug(f"[ASR-WS] receive_result GOT: {str(message)[:60]} (qsize={self._ws_recv_queue.qsize()})")
             except asyncio.QueueEmpty:
                 return None
         else:

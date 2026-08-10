@@ -10,12 +10,24 @@ import os
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from server.core.utils import deep_merge
 
 
 ENV_PREFIX = "CXO_"
+
+# 项目根（CX-O-SERVER），基于文件位置解析，避免依赖运行时工作目录。
+_PROJECT_ROOT = Path(__file__).resolve().parent.parent
+
+
+def _resolve_data_path(path: str) -> str:
+    """将相对数据路径解析为项目根绝对路径（绝对路径原样返回）。
+
+    供数据库/存储路径配置归一化使用，消除对运行时工作目录的依赖。
+    """
+    p = Path(path)
+    return str(_PROJECT_ROOT / p) if not p.is_absolute() else path
 
 
 def get_env_config() -> Dict[str, Any]:
@@ -245,6 +257,15 @@ class DatabaseConfig(BaseModel):
     pool_size: int = 10
     max_overflow: int = 20
 
+    @model_validator(mode="after")
+    def _resolve_absolute_paths(self):
+        """将数据库路径归一化为项目根绝对路径，消除 CWD 依赖。"""
+        for field in ("path", "memories_db", "sessions_db", "acp_db"):
+            value = getattr(self, field)
+            if value:
+                setattr(self, field, _resolve_data_path(value))
+        return self
+
     @property
     def url(self) -> str:
         return f"sqlite+aiosqlite:///{self.path}"
@@ -336,6 +357,14 @@ class TTSConfig(BaseModel):
     # Orpheus TTS 配置段（mode == "orpheus" 时生效）
     orpheus: OrpheusConfig = Field(default_factory=OrpheusConfig)
 
+    @model_validator(mode="after")
+    def _resolve_data_paths(self):
+        for field in ("emotion_refs_dir", "transitions_dir"):
+            value = getattr(self, field)
+            if value:
+                setattr(self, field, _resolve_data_path(value))
+        return self
+
 
 class GraphWeaviateConfig(BaseModel):
     url: str = "http://localhost:8080"
@@ -362,6 +391,12 @@ class GraphConfigSection(BaseModel):
     weaviate: GraphWeaviateConfig = Field(default_factory=GraphWeaviateConfig)
     embedding: GraphEmbeddingConfig = Field(default_factory=GraphEmbeddingConfig)
 
+    @model_validator(mode="after")
+    def _resolve_data_paths(self):
+        if self.database_path:
+            self.database_path = _resolve_data_path(self.database_path)
+        return self
+
 
 class CXFCConfig(BaseModel):
     enabled: bool = True
@@ -372,6 +407,12 @@ class CXFCConfig(BaseModel):
     broadcast_port: int = 9997
     auto_connect_on_startup: bool = True
     storage_path: str = "data/cxfc_plugins.db"
+
+    @model_validator(mode="after")
+    def _resolve_data_paths(self):
+        if self.storage_path:
+            self.storage_path = _resolve_data_path(self.storage_path)
+        return self
 
 
 class MemoryLimitsConfig(BaseModel):
@@ -455,6 +496,14 @@ class DistillationConfig(BaseModel):
     quality_llm_model: str = ""  # LLM 模型名，空字符串表示从 llm 段继承默认模型
     quality_llm_timeout_seconds: int = 30  # LLM 调用超时（秒），5-120
 
+    @model_validator(mode="after")
+    def _resolve_data_paths(self):
+        for field in ("session_storage_dir", "log_storage_dir"):
+            value = getattr(self, field)
+            if value:
+                setattr(self, field, _resolve_data_path(value))
+        return self
+
 
 class MultimodalPipelineConfig(BaseModel):
     """MultimodalPipeline 多模态管线配置。
@@ -503,6 +552,14 @@ class DecisionCoreConfig(BaseModel):
     system_prompt_fallback_enabled: bool = True  # LLM 置信度极低时回退 system_prompt
     rubric_path: str = "data/agents.json"  # 决策 rubric 路径
     audit_log_path: str = "data/distillation_logs/"  # 审计日志路径
+
+    @model_validator(mode="after")
+    def _resolve_data_paths(self):
+        for field in ("rubric_path", "audit_log_path"):
+            value = getattr(self, field)
+            if value:
+                setattr(self, field, _resolve_data_path(value))
+        return self
 
 
 class UnifiedConfig(BaseModel):
@@ -589,14 +646,16 @@ class Settings:
         raise AttributeError(f"'Settings' has no attribute '{name}'")
 
 
-_settings: Optional[Settings] = None
-
-
 def get_settings() -> Settings:
-    global _settings
-    if _settings is None:
-        _settings = Settings()
-    return _settings
+    """获取全局配置单例。
+
+    直接收敛到 ``Settings()`` 的类级单例（``_instance``），不维护第二份模块级缓存。
+    此前 ``get_settings()`` 用独立的模块全局 ``_settings`` 缓存，与 ``Settings()``
+    的类级 ``_instance`` 构成双缓存：``Settings.reset()`` 只清类级、不清模块级，
+    reset 后 ``get_settings()`` 会返回持有旧配置的过期实例，与 ``Settings()`` 分叉。
+    收敛后唯一真相源是类级单例，reset 即重建，二者永远一致。
+    """
+    return Settings()
 
 
 def get_config() -> UnifiedConfig:

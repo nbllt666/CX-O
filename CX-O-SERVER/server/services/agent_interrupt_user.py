@@ -2,12 +2,13 @@
 Agent 打断用户模块 - 双向全双工
 Agent 可以在用户说话过程中判断是否可以插话
 """
-import inspect
 import json
 import logging
 import time
 from typing import Optional, Callable, Any
 from dataclasses import dataclass, field
+
+from server.services.interrupt_llm import InterruptModuleBase
 
 logger = logging.getLogger(__name__)
 
@@ -21,10 +22,11 @@ class UserSpeechState:
     text_segments: list = field(default_factory=list)
 
 
-class AgentInterruptUser:
+class AgentInterruptUser(InterruptModuleBase):
     _instance = None
 
     def __init__(self):
+        super().__init__()
         self.enabled = True
         self.mode = "main_llm"  # main_llm / independent_llm
         self.interrupt_threshold_ms = 500
@@ -35,15 +37,8 @@ class AgentInterruptUser:
         self._asr_client: Any = None
         self._last_interrupt_time: float = 0
         self._interrupt_cooldown_ms = 3000
-        self._session_id: Optional[str] = None
-        self._context_manager: Any = None
         # 独立小模型判定：只输出 INTERRUPT/IGNORE/CONTINUE 标记，不生成回复内容
         # （回复内容由主 pipeline 生成），避免占用主 LLM 并发槽
-        self.independent_llm_config = {
-            "enabled": False,
-            "model": "qwen2.5:1.5b",
-            "endpoint": "http://localhost:11434",
-        }
 
     @classmethod
     def get_instance(cls):
@@ -68,22 +63,6 @@ class AgentInterruptUser:
 
     def set_asr_client(self, client: Any):
         self._asr_client = client
-
-    def set_session_id(self, session_id: str):
-        self._session_id = session_id
-
-    def set_context_manager(self, context_manager: Any):
-        self._context_manager = context_manager
-
-    def _get_context(self) -> list:
-        if self._context_manager and self._session_id:
-            return self._context_manager.get_context(self._session_id)
-        return []
-
-    def _get_context_with_system_prompt(self) -> list:
-        if self._context_manager and self._session_id:
-            return self._context_manager.get_context_with_system_prompt(self._session_id)
-        return []
 
     def set_callbacks(
         self,
@@ -154,27 +133,12 @@ class AgentInterruptUser:
             return await self._check_with_independent_llm(asr_text, is_final)
 
         try:
-            from server.dependencies import get_llm_client
-            llm = get_llm_client()
-        except Exception as e:
-            logger.warning(f"LLM client not available for agent interrupt: {e}")
-            return {"can_interrupt": False, "should_reply": False}
-
-        try:
-            messages = self._get_context_with_system_prompt()
             # 注入结构化判定指令：主 LLM 也输出三态标记（CONTINUE/IGNORE/INTERRUPT），
             # 打断时直接输出插话内容，不打断时只输出标记（符合"按模式区分"设计）
             judgment_prompt = self._build_interrupt_prompt(asr_text, is_final)
-            user_message = {"role": "user", "content": judgment_prompt}
-            messages.append(user_message)
-
-            response = await llm.chat(messages=messages, stream=False)
-
-            if not response or response.error:
+            response_text = await self._call_main_llm(judgment_prompt)
+            if response_text is None:
                 return {"can_interrupt": False, "should_reply": False}
-
-            response_text = response.content or ""
-
             return self._parse_interrupt_response(response_text, is_final)
 
         except Exception as e:
@@ -200,14 +164,9 @@ class AgentInterruptUser:
             return {"can_interrupt": False, "should_reply": False, "reply_content": ""}
         return {"can_interrupt": False, "should_reply": False, "reply_content": ""}
 
-    async def _call_independent_llm(self, asr_text: str) -> dict:
-        """调用独立小模型判断能否插话，返回 JSON decision。
-
-        复用共享助手 call_ollama_decision 统一 HTTP 调用、JSON 解析与兜底降级。
-        """
-        from server.services.interrupt_llm import call_ollama_decision
-
-        prompt = f"""你是一个语音插话判断助手。请根据规则判断用户的语音输入：
+    def _build_independent_prompt(self, asr_text: str) -> str:
+        """独立小模型判定 prompt：只输出 INTERRUPT/IGNORE/CONTINUE 标记，不生成回复内容。"""
+        return f"""你是一个语音插话判断助手。请根据规则判断用户的语音输入：
 
 【用户语音】
 {asr_text}
@@ -220,14 +179,7 @@ class AgentInterruptUser:
 请严格返回 JSON 格式：
 {{"decision": "CONTINUE|IGNORE|INTERRUPT", "reason": "判断原因"}}"""
 
-        return await call_ollama_decision(
-            endpoint=self.independent_llm_config["endpoint"],
-            model=self.independent_llm_config["model"],
-            prompt=prompt,
-            timeout=3.0,
-        )
-
-    def _build_interrupt_prompt(self, asr_text: str, is_final: bool, context: list = None) -> str:
+    def _build_interrupt_prompt(self, asr_text: str, is_final: bool) -> str:
         status = "用户说完了" if is_final else "用户正在说话"
 
         return f"""你是一个语音交互助手。{status}，你需要判断是否需要插话回复。
@@ -285,25 +237,12 @@ class AgentInterruptUser:
     async def interrupt_user(self, reply_content: str = "") -> bool:
         logger.info(f"Agent interrupting user with reply: {reply_content[:50]}...")
 
-        if self._interrupt_user_callback:
-            try:
-                if inspect.iscoroutinefunction(self._interrupt_user_callback):
-                    await self._interrupt_user_callback()
-                else:
-                    self._interrupt_user_callback()
-            except Exception as e:
-                logger.error(f"Interrupt user callback error: {e}")
+        await self._invoke_callback(self._interrupt_user_callback)
 
         self._user_state.is_speaking = False
 
-        if self._start_tts_callback and reply_content:
-            try:
-                if inspect.iscoroutinefunction(self._start_tts_callback):
-                    await self._start_tts_callback(reply_content)
-                else:
-                    self._start_tts_callback(reply_content)
-            except Exception as e:
-                logger.error(f"Start TTS callback error: {e}")
+        if reply_content:
+            await self._invoke_callback(self._start_tts_callback, reply_content)
 
         return True
 

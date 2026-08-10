@@ -9,7 +9,7 @@ from typing import Optional
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
 from server.core.logging_config import get_contextual_logger
-from server.core.websocket import get_chat_handler, get_websocket_manager
+from server.core.websocket import get_websocket_manager
 from server.services.live_client import LiveClientHandler
 
 logger = get_contextual_logger(__name__)
@@ -140,7 +140,6 @@ async def websocket_agent_endpoint(websocket: WebSocket, agent_id: str, timeout:
     - timeout: 离线超时时间（秒），默认 60
     """
     ws_manager = get_websocket_manager()
-    chat_handler = get_chat_handler()
 
     connection = await ws_manager.connect(
         websocket=websocket, metadata={"agent_id": agent_id, "timeout": timeout}
@@ -181,7 +180,6 @@ async def websocket_endpoint(
     - token: 认证令牌（可选）
     """
     ws_manager = get_websocket_manager()
-    chat_handler = get_chat_handler()
 
     # 建立连接
     connection = await ws_manager.connect(
@@ -221,7 +219,6 @@ async def websocket_chat_endpoint(
     - agent_id: Agent ID（可选，默认 default）
     """
     ws_manager = get_websocket_manager()
-    chat_handler = get_chat_handler()
 
     # 建立连接
     connection = await ws_manager.connect(
