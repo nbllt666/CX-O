@@ -4,7 +4,7 @@ from typing import Dict, List, Optional
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
-from server.core.exceptions import ToolError
+from server.core.exceptions import MCPError, ToolError
 from server.core.logging_config import get_contextual_logger
 
 logger = get_contextual_logger(__name__)
@@ -387,6 +387,8 @@ async def check_mcp_server_health(name: str):
         mcp_mgr = get_mcp_manager()
         health = await mcp_mgr.check_server_health(name)
         return {"status": "success", "server": name, "healthy": health}
+    except MCPError as e:
+        raise HTTPException(status_code=404, detail=str(e))
     except ToolError as e:
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:

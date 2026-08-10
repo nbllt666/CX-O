@@ -280,7 +280,15 @@ class AudioStreamProcessor:
         # 主驱动回调：Partial Result 立即触发 LLM Speculative Prefill，不等 VAD on_end
         self._on_partial_result_callback = on_partial_result
 
-    async def process_audio_chunk(self, audio_data: bytes) -> dict:
+    async def process_audio_chunk(self, audio_data: bytes, skip_interrupt: bool = False) -> dict:
+        """处理单帧音频
+
+        skip_interrupt: 双流式(voice.dual_stream)路径传 True。
+        双流式自身已有完整 ASR→LLM→TTS pipeline 与 VAD speech_start 全双工打断，
+        agent_interrupt 的"LLM 判断插话"在此场景完全冗余——每个 partial 额外触发
+        一次完整 LLM chat，与主 pipeline 争夺 vLLM 仅有的并发槽，实测把 LLM/TTS
+        饿死（chunk first PCM 47s）。半双工/live 路径保持默认 False 不变。
+        """
         _diag_t0 = time.time()
         vad_result = self.vad.process_audio(audio_data)
         _diag_t1 = time.time()
@@ -302,17 +310,38 @@ class AudioStreamProcessor:
             return result
 
         try:
-            is_last = not vad_result["is_speaking"]
+            # 仅在 VAD "说话→静默" 翻转的当帧发 final（每轮语音一次）。
+            # 严禁对所有静默帧发 final——ASR 服务端每次 final 都对全缓冲
+            # 跑完整推理并清空（api_server.py:295），静默帧刷屏会把服务端
+            # 推理队列打爆（帧速 16.7/s ≫ 推理吞吐），致 keepalive 断连、
+            # 本轮识别结果全丢（2026-08-05 18:19 实测复现）。
+            is_last = vad_result["state_changed"] and not vad_result["is_speaking"]
+
+            # VAD 门控：仅说话中（及翻转当帧）的音频送 ASR 服务端。
+            # 严禁转发纯静默帧——静默在服务端缓冲累积（final 清空后重新积满
+            # 48KB 阈值），触发对纯静默的 partial 推理，SenseVoice 在静默上
+            # 幻觉出乱码（实测产出韩文 '그.'/'아.'），且 speech_end 已重置
+            # 触发标志，幻觉 partial 会二次触发完整 LLM+TTS pipeline，
+            # 多轮累积致端到端延迟 4.7s→9.5s→14.3s 递增（2026-08-05 实测）。
+            should_send = vad_result["is_speaking"] or is_last
             _diag_t2 = time.time()
-            send_success = await self._streaming_client.send_audio_chunk(
-                audio_data,
-                is_last=is_last
-            )
+            if should_send:
+                send_success = await self._streaming_client.send_audio_chunk(
+                    audio_data,
+                    is_last=is_last
+                )
+            else:
+                send_success = True  # 静默帧本地消化，不转发 ASR
 
             if not send_success:
                 logger.warning("Failed to send audio chunk to streaming ASR")
 
-            streaming_result = await self._streaming_client.receive_result(timeout=0.1)
+            # 非阻塞轮询（timeout=0）：ASR 结果由后台 recv task 异步推入 queue，
+            # 有结果立即取走，无结果下一帧（≤60ms）再取。
+            # 严禁在此传入 >0 的 timeout——每帧阻塞等待会导致处理速度（~105ms/帧）
+            # 低于实时帧速（60ms/帧），队列持续积压，Partial 滞后 5~7s，
+            # 端到端延迟实测暴涨至 6.5~7.7s（目标 <800ms）。
+            streaming_result = await self._streaming_client.receive_result(timeout=0)
             _diag_t3 = time.time()
             logger.info(f"[DIAG-VAD] vad={(_diag_t1-_diag_t0)*1000:.1f}ms send+recv={(_diag_t3-_diag_t2)*1000:.1f}ms is_last={is_last} has_result={streaming_result is not None}")
 
@@ -343,7 +372,7 @@ class AudioStreamProcessor:
                 # WS 端到端测试超时（spec 目标 < 800ms）。
                 # 改为 asyncio.create_task 非阻塞触发整个打断判定流程，主流程立即返回 result。
                 # interrupt 字段不再同步填充（调用方无需在 ASR 主路径上依赖此字段）。
-                if self._agent_interrupt and streaming_result.text:
+                if self._agent_interrupt and streaming_result.text and not skip_interrupt:
                     async def _deferred_interrupt_check():
                         try:
                             interrupt_result = await self._agent_interrupt.on_asr_partial_result(

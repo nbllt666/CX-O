@@ -3,6 +3,7 @@ from typing import Dict, List, Optional
 
 from server.config import Settings
 from server.core.logging_config import get_contextual_logger
+from server.core.utils import extract_json
 
 logger = get_contextual_logger(__name__)
 
@@ -46,9 +47,7 @@ class ContextSummarizer:
                 messages=[{"role": "user", "content": prompt}], stream=False
             )
 
-            import json as json_parser
-
-            result = json_parser.loads(response.content)
+            result = extract_json(response.content, default={})
 
             return {
                 "summary": result.get("summary", ""),
@@ -124,9 +123,7 @@ class ContextSummarizer:
                 messages=[{"role": "user", "content": prompt}], stream=False
             )
 
-            import json as json_parser
-
-            key_points = json_parser.loads(response.content)
+            key_points = extract_json(response.content, default=[])
 
             if isinstance(key_points, list):
                 return key_points[:Settings().config.limits.context.summarizer_max_key_points]

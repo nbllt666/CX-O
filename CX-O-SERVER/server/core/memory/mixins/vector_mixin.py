@@ -3,6 +3,7 @@
 Extracted from manager.py as part of H5 mixin split.
 """
 import asyncio
+import threading
 from typing import Dict, List, TYPE_CHECKING
 
 
@@ -10,6 +11,52 @@ from ._common import logger
 
 if TYPE_CHECKING:
     pass
+
+
+# ---------------------------------------------------------------------------
+# 后台事件循环桥接器
+#
+# 背景：向量同步（embedding + Weaviate 写入）是异步操作，但 MemoryManager 的
+# write_memory/update_memory/delete_memory 是同步方法，被大量 loop 线程调用点
+# （FastAPI 路由 / WebSocket 处理器 / 工具函数 / 批量与决策 mixin）直接调用。
+#
+# 若在事件循环线程内同步阻塞（向当前线程的 loop 提交协程再 future.result()），
+# 必然死锁：get_running_loop() 返回的必然是本线程的循环，阻塞它就无法调度协程，
+# 曾导致记忆写入耗时 38 秒。
+#
+# 本桥接器维护【单一持久】后台事件循环（非每次调用新建线程），供 loop 线程中的
+# 同步向量操作复用。向量操作基于 httpx/weaviate 客户端（非 aiohttp），
+# 与 rules-0 §三「禁止子线程 asyncio+aiohttp」的初衷（避免多线程各自建循环的
+# 资源竞争）不冲突。真正的耗时路径更推荐走 *_async() 变体（to_thread 工作线程），
+# 让主事件循环始终空闲。
+# ---------------------------------------------------------------------------
+_BG_LOOP = None
+_BG_LOOP_READY = threading.Event()
+_BG_LOOP_LOCK = threading.Lock()
+
+
+def _get_background_loop():
+    """懒初始化并返回后台事件循环（线程安全）。"""
+    global _BG_LOOP, _BG_LOOP_READY
+    with _BG_LOOP_LOCK:
+        if _BG_LOOP is not None and _BG_LOOP.is_running():
+            return _BG_LOOP
+        # 旧的循环已停止，重建
+        _BG_LOOP = None
+        _BG_LOOP_READY = threading.Event()
+
+        def _loop_runner():
+            global _BG_LOOP
+            _BG_LOOP = asyncio.new_event_loop()
+            asyncio.set_event_loop(_BG_LOOP)
+            _BG_LOOP_READY.set()
+            _BG_LOOP.run_forever()
+
+        threading.Thread(
+            target=_loop_runner, name="vector-sync-bg-loop", daemon=True
+        ).start()
+        _BG_LOOP_READY.wait()
+        return _BG_LOOP
 
 
 class _VectorIntegrationMixin:
@@ -92,10 +139,10 @@ class _VectorIntegrationMixin:
         """在同步方法中运行异步协程。
 
         rules-0 §三 禁止子线程 asyncio+aiohttp。
-        本函数在当前线程直接运行协程，不开 ThreadPoolExecutor 子线程。
-        若当前线程已有运行中的事件循环（async 上下文），则用
-        run_coroutine_threadsafe 向该循环提交并等待结果。
-        若当前线程无运行中的事件循环（同步上下文），直接 asyncio.run。
+        - 无运行中事件循环的线程（同步/工作线程）：直接 asyncio.run。
+        - 事件循环线程：提交到【单一持久后台事件循环】执行并等待结果，
+          避免向当前线程的循环 run_coroutine_threadsafe 再阻塞导致死锁
+          （曾导致记忆写入耗时 38 秒）。后台循环由 _get_background_loop 懒启动。
 
         Args:
             coro: 异步协程对象
@@ -104,13 +151,14 @@ class _VectorIntegrationMixin:
             协程的返回值
         """
         try:
-            loop = asyncio.get_running_loop()
+            asyncio.get_running_loop()
         except RuntimeError:
-            # 当前线程没有运行中的事件循环，直接 asyncio.run
+            # 当前线程没有运行中的事件循环（同步/工作线程），直接 asyncio.run
             return asyncio.run(coro)
-        # 当前有运行中的事件循环，提交协程并等待结果
+        # 事件循环线程：提交到后台循环，避免死锁
+        loop = _get_background_loop()
         future = asyncio.run_coroutine_threadsafe(coro, loop)
-        return future.result(timeout=30)
+        return future.result(timeout=60)
 
     def _sync_vector_for_memory(self, memory_id: int, content: str, metadata: Dict = None) -> bool:
         """同步记忆到向量数据库（异步非阻塞）

@@ -22,11 +22,12 @@ class NodeManager:
         self.config = config
 
     def create(self, node_data: NodeCreate, agent_id: str = "default") -> GraphNode:
+        node_agent_id = node_data.agent_id or agent_id
         node = GraphNode.create(
             type=node_data.type,
             properties=node_data.properties,
             text_content=node_data.text_content,
-            agent_id=agent_id,
+            agent_id=node_agent_id,
         )
 
         query = """
@@ -195,7 +196,7 @@ class NodeManager:
                 if not re.match(r'^[a-zA-Z0-9_]+$', key):
                     continue
                 conditions.append(f"json_extract(properties, '$.{key}') = ?")
-                params.append(json.dumps(value))
+                params.append(value)
 
         where_clause = " AND ".join(conditions)
 
@@ -225,5 +226,4 @@ class NodeManager:
         else:
             query = "SELECT COUNT(*) as cnt FROM nodes WHERE agent_id = ?"
             result = self.db.execute_one(query, (agent_id,))
-        return result["cnt"] if result else 0
         return result["cnt"] if result else 0

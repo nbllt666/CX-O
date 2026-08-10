@@ -155,11 +155,14 @@ async def create_memory(request: MemoryCreateRequest):
     from server.dependencies import get_memory_manager
     from server.core.memory.emotion import get_emotion_for_decay
 
+    if not request.content or not request.content.strip():
+        raise HTTPException(status_code=400, detail="记忆内容不能为空")
+
     try:
         memory_mgr = get_memory_manager()
         emotion_score = get_emotion_for_decay(request.content)
 
-        memory_id = memory_mgr.write_memory(
+        memory_id = await memory_mgr.write_memory_async(
             content=request.content,
             memory_type=request.type,
             importance=request.importance,
@@ -235,6 +238,59 @@ async def get_diary_entries(
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@router.get("/memories/search-by-tag")
+async def search_by_tag(
+    tag: str, limit: int = 20, workspace_id: str = "default", agent_id: str = "default"
+):
+    """按标签搜索记忆"""
+    from server.dependencies import get_memory_manager
+
+    try:
+        memory_mgr = get_memory_manager()
+        memories = memory_mgr.search_memories(
+            tags=[tag], limit=limit, workspace_id=workspace_id, agent_id=agent_id
+        )
+
+        return {"status": "success", "memories": memories, "count": len(memories)}
+    except Exception as e:
+        logger.error(f"按标签搜索记忆失败: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="按标签搜索记忆失败")
+
+
+@router.get("/memories/decay-stats")
+async def get_decay_statistics(workspace_id: str = "default"):
+    from server.dependencies import get_memory_manager
+
+    try:
+        memory_mgr = get_memory_manager()
+        stats = memory_mgr.get_decay_statistics(workspace_id)
+
+        return {"status": "success", "statistics": stats}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/memories/permanent")
+async def list_permanent_memories(limit: int = 20, offset: int = 0, tags: List[str] = []):
+    """列出永久记忆。
+
+    注意：本路由必须声明在 ``/memories/{memory_id}`` 之前，否则单段路径
+    ``permanent`` 会被 ``memory_id`` 参数吞掉，导致本端点恒 422 不可达。
+    """
+    from server.dependencies import get_memory_manager
+
+    try:
+        memory_mgr = get_memory_manager()
+        memories = memory_mgr.get_permanent_memories(
+            limit=limit, offset=offset, tags=tags if tags else None
+        )
+
+        return {"status": "success", "memories": memories, "total": len(memories)}
+    except Exception as e:
+        logger.error(f"获取永久记忆列表失败: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="获取永久记忆列表失败")
+
+
 @router.get("/memories/{memory_id}")
 async def get_memory(memory_id: int, agent_id: str = "default"):
     from server.dependencies import get_memory_manager
@@ -260,7 +316,7 @@ async def update_memory(memory_id: int, request: MemoryUpdateRequest):
 
     try:
         memory_mgr = get_memory_manager()
-        success = memory_mgr.update_memory(
+        success = await memory_mgr.update_memory_async(
             memory_id=memory_id,
             new_content=request.content,
             new_importance=request.importance,
@@ -293,7 +349,7 @@ async def delete_memory(memory_id: int, soft_delete: bool = True, agent_id: str 
 
     try:
         memory_mgr = get_memory_manager()
-        success = memory_mgr.delete_memory(memory_id, soft_delete=soft_delete, agent_id=agent_id)
+        success = await memory_mgr.delete_memory_async(memory_id, soft_delete=soft_delete, agent_id=agent_id)
 
         if not success:
             raise HTTPException(status_code=404, detail="记忆不存在")
@@ -403,22 +459,6 @@ async def get_permanent_memory(memory_id: int):
     except Exception as e:
         logger.error(f"获取永久记忆失败: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail="获取永久记忆失败")
-
-
-@router.get("/memories/permanent")
-async def list_permanent_memories(limit: int = 20, offset: int = 0, tags: List[str] = []):
-    from server.dependencies import get_memory_manager
-
-    try:
-        memory_mgr = get_memory_manager()
-        memories = memory_mgr.get_permanent_memories(
-            limit=limit, offset=offset, tags=tags if tags else None
-        )
-
-        return {"status": "success", "memories": memories, "total": len(memories)}
-    except Exception as e:
-        logger.error(f"获取永久记忆列表失败: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail="获取永久记忆列表失败")
 
 
 @router.put("/memories/permanent/{memory_id}")
@@ -802,25 +842,6 @@ async def get_memories_by_type(
         raise HTTPException(status_code=500, detail="按类型获取记忆失败")
 
 
-@router.get("/memories/search-by-tag")
-async def search_by_tag(
-    tag: str, limit: int = 20, workspace_id: str = "default", agent_id: str = "default"
-):
-    """按标签搜索记忆"""
-    from server.dependencies import get_memory_manager
-
-    try:
-        memory_mgr = get_memory_manager()
-        memories = memory_mgr.search_memories(
-            tags=[tag], limit=limit, workspace_id=workspace_id, agent_id=agent_id
-        )
-
-        return {"status": "success", "memories": memories, "count": len(memories)}
-    except Exception as e:
-        logger.error(f"按标签搜索记忆失败: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail="按标签搜索记忆失败")
-
-
 @router.post("/memories/sync-decay")
 async def sync_decay_values(workspace_id: str = "default"):
     from server.dependencies import get_memory_manager
@@ -833,19 +854,6 @@ async def sync_decay_values(workspace_id: str = "default"):
     except Exception as e:
         logger.error(f"同步衰减值失败: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail="同步衰减值失败")
-
-
-@router.get("/memories/decay-stats")
-async def get_decay_statistics(workspace_id: str = "default"):
-    from server.dependencies import get_memory_manager
-
-    try:
-        memory_mgr = get_memory_manager()
-        stats = memory_mgr.get_decay_statistics(workspace_id)
-
-        return {"status": "success", "statistics": stats}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
 
 
 @router.post("/memories/secondary/execute")

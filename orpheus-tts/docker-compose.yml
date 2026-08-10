@@ -31,7 +31,7 @@ services:
       # FlashInfer 注意力后端（高性能，适合 Llama-3B 架构）
       - VLLM_ATTENTION_BACKEND=FLASHINFER
       # 指定单卡运行，避免与 LLM（GPU 0）争抢
-      - CUDA_VISIBLE_DEVICES=${ORPHEUS_CUDA_VISIBLE:-0}
+      - CUDA_VISIBLE_DEVICES=${ORPHEUS_CUDA_VISIBLE:-1}
       # HuggingFace 模型缓存目录
       - HF_HOME=/workspace/hf_cache
       - HUGGING_FACE_HUB_TOKEN=${HF_TOKEN:-}
@@ -45,7 +45,7 @@ services:
           devices:
             - driver: nvidia
               # 物理 GPU ID（默认 1，即第二张卡）
-              device_ids: ['${ORPHEUS_GPU_ID:-0}']
+              device_ids: ['${ORPHEUS_GPU_ID:-1}']
               capabilities: [gpu]
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
@@ -55,12 +55,14 @@ services:
       start_period: 180s
     restart: unless-stopped
     command: >
-      vllm serve /workspace/models
+      /workspace/models
       --host 0.0.0.0
       --port 8000
-      --max-model-len ${ORPHEUS_MAX_MODEL_LEN:-4096}
+      --max-model-len ${ORPHEUS_MAX_MODEL_LEN:-8192}
       --gpu-memory-utilization ${ORPHEUS_GPU_MEM_UTIL:-0.9}
-      --dtype ${ORPHEUS_DTYPE:-auto}
+      --dtype float16
+      --quantization bitsandbytes
+      --load-format bitsandbytes
       --max-num-seqs ${ORPHEUS_MAX_NUM_SEQS:-8}
       --trust-remote-code
       --enable-prefix-caching
@@ -90,7 +92,7 @@ services:
       # Orpheus 生成参数
       - ORPHEUS_TEMPERATURE=${ORPHEUS_TEMPERATURE:-0.6}
       - ORPHEUS_TOP_P=${ORPHEUS_TOP_P:-0.95}
-      - ORPHEUS_MAX_TOKENS=${ORPHEUS_MAX_TOKENS:-8192}
+      - ORPHEUS_MAX_TOKENS=${ORPHEUS_MAX_TOKENS:-4096}
       # 指定单卡（SNAC 解码器在 cuda 模式时使用）
       - CUDA_VISIBLE_DEVICES=${ORPHEUS_CUDA_VISIBLE:-0}
     volumes:

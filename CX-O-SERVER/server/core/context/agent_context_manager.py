@@ -398,14 +398,3 @@ def get_agent_context_manager() -> AgentContextManager:
             if _instance is None:
                 _instance = AgentContextManager()
     return _instance
-_instance_lock = threading.Lock()
-
-
-def get_agent_context_manager() -> AgentContextManager:
-    """获取AgentContextManager单例"""
-    global _instance
-    if _instance is None:
-        with _instance_lock:
-            if _instance is None:
-                _instance = AgentContextManager()
-    return _instance

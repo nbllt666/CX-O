@@ -31,6 +31,55 @@ class MemoryChatResponse(BaseModel):
     data: Optional[Dict] = None
 
 
+def _get_conversation_engine(memory_mgr):
+    """获取（必要时懒初始化）记忆管理对话引擎。
+
+    三个会话端点（chat / get_session / clear_session）共用同一套懒初始化逻辑，
+    避免出现"必须先调用 POST /memory-chat 才能读取会话"的时序不一致缺陷。
+
+    Returns:
+        MemoryConversationEngine 实例
+
+    Raises:
+        HTTPException: 记忆服务或 LLM 服务不可用时返回 503
+    """
+    from server.dependencies import get_model_router
+
+    if not memory_mgr:
+        raise HTTPException(status_code=503, detail="记忆服务不可用")
+
+    if hasattr(memory_mgr, "conversation_engine") and memory_mgr.conversation_engine is not None:
+        return memory_mgr.conversation_engine
+
+    from server.core.memory.conversation import MemoryConversationEngine
+
+    # B10 修复: LLM 不可用时应返回 503，而非以 llm_client=None 继续创建降级引擎
+    # 原实现吞掉异常并以降级引擎继续，前端无法感知 LLM 不可用
+    try:
+        model_router = get_model_router()
+        if model_router:
+            llm_client = model_router.get_client("memory")
+        else:
+            raise HTTPException(
+                status_code=503,
+                detail="LLM 服务不可用，无法初始化对话引擎",
+            )
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.warning(f"获取模型路由器失败: {e}")
+        raise HTTPException(
+            status_code=503,
+            detail="LLM 服务不可用，无法初始化对话引擎",
+        )
+
+    memory_mgr.conversation_engine = MemoryConversationEngine(
+        memory_manager=memory_mgr, llm_client=llm_client
+    )
+    logger.info("记忆管理对话引擎已初始化")
+    return memory_mgr.conversation_engine
+
+
 @router.post("/memory-chat", response_model=MemoryChatResponse)
 async def memory_chat(request: MemoryChatRequest):
     """
@@ -44,43 +93,12 @@ async def memory_chat(request: MemoryChatRequest):
     - 检测重复
     - 查看统计
     """
-    from server.dependencies import get_memory_manager, get_model_router
+    from server.dependencies import get_memory_manager
 
     try:
         memory_mgr = get_memory_manager()
-
-        if not memory_mgr:
-            raise HTTPException(status_code=503, detail="记忆服务不可用")
-
-        if not hasattr(memory_mgr, "conversation_engine") or memory_mgr.conversation_engine is None:
-            from server.core.memory.conversation import MemoryConversationEngine
-
-            # B10 修复: LLM 不可用时应返回 503，而非以 llm_client=None 继续创建降级引擎
-            # 原实现吞掉异常并以降级引擎继续，前端无法感知 LLM 不可用
-            try:
-                model_router = get_model_router()
-                if model_router:
-                    llm_client = model_router.get_client("memory")
-                else:
-                    raise HTTPException(
-                        status_code=503,
-                        detail="LLM 服务不可用，无法初始化对话引擎",
-                    )
-            except HTTPException:
-                raise
-            except Exception as e:
-                logger.warning(f"获取模型路由器失败: {e}")
-                raise HTTPException(
-                    status_code=503,
-                    detail="LLM 服务不可用，无法初始化对话引擎",
-                )
-
-            memory_mgr.conversation_engine = MemoryConversationEngine(
-                memory_manager=memory_mgr, llm_client=llm_client
-            )
-            logger.info("记忆管理对话引擎已初始化")
-
-        result = await memory_mgr.conversation_engine.process_message(
+        engine = _get_conversation_engine(memory_mgr)
+        result = await engine.process_message(
             user_message=request.message, session_id=request.session_id
         )
 
@@ -108,11 +126,8 @@ async def get_chat_session(session_id: str):
 
     try:
         memory_mgr = get_memory_manager()
-
-        if not memory_mgr or not hasattr(memory_mgr, "conversation_engine"):
-            raise HTTPException(status_code=503, detail="对话服务不可用")
-
-        context = memory_mgr.conversation_engine.get_or_create_session(session_id)
+        engine = _get_conversation_engine(memory_mgr)
+        context = engine.get_or_create_session(session_id)
 
         return {
             "status": "success",
@@ -143,12 +158,10 @@ async def clear_chat_session(session_id: str):
 
     try:
         memory_mgr = get_memory_manager()
+        engine = _get_conversation_engine(memory_mgr)
 
-        if not memory_mgr or not hasattr(memory_mgr, "conversation_engine"):
-            raise HTTPException(status_code=503, detail="对话服务不可用")
-
-        if session_id in memory_mgr.conversation_engine._sessions:
-            del memory_mgr.conversation_engine._sessions[session_id]
+        if session_id in engine._sessions:
+            del engine._sessions[session_id]
             return {"status": "success", "message": f"会话 {session_id} 已清除"}
 
         # B10 修复: 区分"已清除"（200）与"不存在"（404）

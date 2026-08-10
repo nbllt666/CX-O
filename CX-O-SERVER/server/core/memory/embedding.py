@@ -4,6 +4,7 @@ from abc import ABC, abstractmethod
 from typing import List
 
 from server.core.logging_config import get_contextual_logger
+from server.core.utils import get_shared_http_client
 
 os.environ["HF_HUB_DOWNLOAD_PROGRESS"] = "1"
 
@@ -34,25 +35,22 @@ class OllamaEmbedding(EmbeddingModel):
     def __init__(self, host: str = "http://localhost:11434", model: str = "nomic-embed-text"):
         self.host = host.rstrip("/")
         self.model = model
-        self._client = None
-
-    def _get_client(self):
-        import httpx
-
-        return httpx.AsyncClient(timeout=60.0)
 
     async def get_embedding(self, text: str) -> List[float]:
         try:
-            async with self._get_client() as client:
-                response = await client.post(
-                    f"{self.host}/api/embeddings", json={"model": self.model, "prompt": text}
-                )
-                if response.status_code == 200:
-                    result = response.json()
-                    return result.get("embedding", [])
-                else:
-                    logger.error(f"嵌入失败: {response.status_code}")
-                    return []
+            # 复用 shared HTTP 连接池，避免每次调用都构造 httpx.AsyncClient
+            client = get_shared_http_client()
+            response = await client.post(
+                f"{self.host}/api/embeddings",
+                json={"model": self.model, "prompt": text},
+                timeout=60.0,
+            )
+            if response.status_code == 200:
+                result = response.json()
+                return result.get("embedding", [])
+            else:
+                logger.error(f"嵌入失败: {response.status_code}")
+                return []
         except Exception as e:
             logger.error(f"获取嵌入失败: {e}")
             return []
@@ -97,14 +95,14 @@ class SentenceTransformersEmbedding(EmbeddingModel):
     async def get_embedding(self, text: str) -> List[float]:
         import asyncio
 
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         embedding = await loop.run_in_executor(None, lambda: self.model.encode(text).tolist())
         return embedding
 
     async def get_embeddings(self, texts: List[str]) -> List[List[float]]:
         import asyncio
 
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         embeddings = await loop.run_in_executor(None, lambda: self.model.encode(texts).tolist())
         return embeddings
 
@@ -124,29 +122,31 @@ class VLLMEmbedding(EmbeddingModel):
         self.api_key = api_key
         self._dimension = dimension
 
-    def _get_client(self):
-        import httpx
+    def _headers(self) -> dict:
         headers = {}
         if self.api_key:
             headers["Authorization"] = f"Bearer {self.api_key}"
-        return httpx.AsyncClient(timeout=60.0, headers=headers)
+        return headers
 
     async def get_embedding(self, text: str) -> List[float]:
         try:
-            async with self._get_client() as client:
-                response = await client.post(
-                    f"{self.api_base}/v1/embeddings",
-                    json={"model": self.model, "input": text},
-                )
-                if response.status_code == 200:
-                    result = response.json()
-                    data = result.get("data", [])
-                    if data and "embedding" in data[0]:
-                        return data[0]["embedding"]
-                    return []
-                else:
-                    logger.error(f"vLLM 嵌入失败: {response.status_code} {response.text}")
-                    return []
+            # 复用 shared HTTP 连接池，避免每次调用都构造 httpx.AsyncClient
+            client = get_shared_http_client()
+            response = await client.post(
+                f"{self.api_base}/v1/embeddings",
+                json={"model": self.model, "input": text},
+                headers=self._headers(),
+                timeout=60.0,
+            )
+            if response.status_code == 200:
+                result = response.json()
+                data = result.get("data", [])
+                if data and "embedding" in data[0]:
+                    return data[0]["embedding"]
+                return []
+            else:
+                logger.error(f"vLLM 嵌入失败: {response.status_code} {response.text}")
+                return []
         except Exception as e:
             logger.error(f"获取 vLLM 嵌入失败: {e}")
             return []
@@ -154,20 +154,23 @@ class VLLMEmbedding(EmbeddingModel):
     async def get_embeddings(self, texts: List[str]) -> List[List[float]]:
         # batch request: send all texts in one request, map by index
         try:
-            async with self._get_client() as client:
-                response = await client.post(
-                    f"{self.api_base}/v1/embeddings",
-                    json={"model": self.model, "input": texts},
-                )
-                if response.status_code == 200:
-                    result = response.json()
-                    data = result.get("data", [])
-                    # data is a list of {"index": i, "embedding": [...]}; sort by index
-                    data_sorted = sorted(data, key=lambda x: x.get("index", 0))
-                    return [d.get("embedding", []) for d in data_sorted]
-                else:
-                    logger.error(f"vLLM 批量嵌入失败: {response.status_code}")
-                    return [[0.0] * self._dimension for _ in texts]
+            # 复用 shared HTTP 连接池，避免每次调用都构造 httpx.AsyncClient
+            client = get_shared_http_client()
+            response = await client.post(
+                f"{self.api_base}/v1/embeddings",
+                json={"model": self.model, "input": texts},
+                headers=self._headers(),
+                timeout=60.0,
+            )
+            if response.status_code == 200:
+                result = response.json()
+                data = result.get("data", [])
+                # data is a list of {"index": i, "embedding": [...]}; sort by index
+                data_sorted = sorted(data, key=lambda x: x.get("index", 0))
+                return [d.get("embedding", []) for d in data_sorted]
+            else:
+                logger.error(f"vLLM 批量嵌入失败: {response.status_code}")
+                return [[0.0] * self._dimension for _ in texts]
         except Exception as e:
             logger.error(f"获取 vLLM 批量嵌入失败: {e}")
             return [[0.0] * self._dimension for _ in texts]

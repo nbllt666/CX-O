@@ -1,6 +1,6 @@
 from typing import List, Optional, Dict, Any
 from datetime import datetime
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_serializer
 from enum import Enum
 
 
@@ -23,8 +23,9 @@ class CXFCPluginInfo(BaseModel):
     created_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None
 
-    class Config:
-        json_encoders = {datetime: lambda v: v.isoformat() if v else None}
+    @field_serializer("last_seen", "created_at", "updated_at")
+    def _ser_dt(self, v: Optional[datetime]) -> Optional[str]:
+        return v.isoformat() if v else None
 
 
 class SkillDefinition(BaseModel):
@@ -43,8 +44,9 @@ class CXFCEvent(BaseModel):
     data: Dict[str, Any] = {}
     timestamp: Optional[datetime] = None
 
-    class Config:
-        json_encoders = {datetime: lambda v: v.isoformat() if v else None}
+    @field_serializer("timestamp")
+    def _ser_ts(self, v: Optional[datetime]) -> Optional[str]:
+        return v.isoformat() if v else None
 
 
 class CXFCHeartbeatRequest(BaseModel):

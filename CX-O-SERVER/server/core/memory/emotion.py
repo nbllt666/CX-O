@@ -1,4 +1,3 @@
-import re
 from dataclasses import dataclass
 from typing import List
 
@@ -93,6 +92,56 @@ class EmotionAnalyzer:
 
     NEGATION_WORDS = {"不", "没", "无", "非", "未", "别", "not", "no", "never"}
 
+    # 预构建的词典（按长度降序），用于贪心最长匹配切词
+    _VOCAB = None
+
+    @classmethod
+    def _build_vocab(cls) -> List[str]:
+        """构建并按长度降序排序的词典（最长匹配优先）。"""
+        if cls._VOCAB is not None:
+            return cls._VOCAB
+        vocab = set()
+        for d in (
+            cls.POSITIVE_PATTERNS,
+            cls.NEGATIVE_PATTERNS,
+            cls.NEUTRAL_PATTERNS,
+            cls.INTENSITY_WORDS,
+        ):
+            vocab.update(d.keys())
+        vocab.update(cls.NEGATION_WORDS)
+        cls._VOCAB = sorted(vocab, key=len, reverse=True)
+        return cls._VOCAB
+
+    def _tokenize(self, text: str) -> List[str]:
+        """词典贪心切词。
+
+        修复：原 `re.findall` 的「字母数字或中文字符连续匹配」会把连续中文
+        （如「非常开心」）当作单个 token，导致强度词/否定词对中文复合短语
+        永不生效。改为基于情感词典的贪心最长匹配 + 英文单词按字母数字切分。
+        """
+        text = text.lower()
+        tokens: List[str] = []
+        i = 0
+        n = len(text)
+        vocab = self._build_vocab()
+        while i < n:
+            ch = text[i]
+            if ch.isascii() and ch.isalnum():
+                j = i
+                while j < n and text[j].isascii() and text[j].isalnum():
+                    j += 1
+                tokens.append(text[i:j])
+                i = j
+                continue
+            for kw in vocab:
+                if text.startswith(kw, i):
+                    tokens.append(kw)
+                    i += len(kw)
+                    break
+            else:
+                i += 1
+        return tokens
+
     def __init__(self, use_llm: bool = False, llm_client=None):
         self.use_llm = use_llm
         self.llm_client = llm_client
@@ -122,7 +171,7 @@ class EmotionAnalyzer:
 
     def _analyze_with_rules(self, text: str) -> EmotionResult:
         text = text.lower()
-        words = re.findall(r"[\w\u4e00-\u9fff]+", text)
+        words = self._tokenize(text)
 
         total_score = 0.0
         matched_keywords = []

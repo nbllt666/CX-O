@@ -32,7 +32,7 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 from server.api.routers.agents import _generate_agent_id, _load_agents, _save_agents
-from server.api.routers.chat import get_agent_config, get_llm_client_for_agent
+from server.chat_helpers import get_agent_config, get_llm_client_for_agent
 from server.core.logging_config import get_contextual_logger
 from server.dependencies import get_document_memory_manager
 
@@ -222,26 +222,17 @@ def _build_messages_for_chat(
     user_message: str,
     history: Optional[List[Dict]] = None,
 ) -> List[Dict[str, str]]:
-    """构建 LLM 消息列表。"""
-    messages = []
+    """构建 LLM 消息列表（AnythingLLM 兼容路径：统一入口，保持最小化行为）。"""
+    from server.prompt_builder import build_messages
 
-    # 系统提示词
-    system_prompt = agent_config.get("system_prompt", "")
-    if system_prompt:
-        messages.append({"role": "system", "content": system_prompt})
-
-    # 历史消息
-    if history:
-        for msg in history:
-            role = msg.get("role", "")
-            content = msg.get("content", "")
-            if role in ["user", "assistant"] and content:
-                messages.append({"role": role, "content": content})
-
-    # 用户最新消息
-    messages.append({"role": "user", "content": user_message})
-
-    return messages
+    return build_messages(
+        agent_config,
+        context_mgr=None,
+        session_id=None,
+        user_message=user_message,
+        history=history if history else None,
+        include_hidden_prompts=False,  # 兼容路径不注入重型隐藏提示词
+    )
 
 
 def _get_or_create_session(context_mgr, slug: str, agent_config: Dict[str, Any]) -> str:

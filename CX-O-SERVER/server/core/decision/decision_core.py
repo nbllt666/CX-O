@@ -133,6 +133,9 @@ _REQUIRED_RUBRIC_FIELDS = (
 # system_prompt 规则回退时使用的默认 importance（rules-0 §三 fallback）
 _FALLBACK_IMPORTANCE = 0.75
 
+# D2 元数据 decision fallback 时使用的默认 importance（1-5 级，与 memory 写入路径语义一致）
+_DEFAULT_METADATA_IMPORTANCE = 3
+
 
 def _default_rubric_dict() -> Dict[str, Any]:
     """返回默认 rubric 字典（与 radix_config.json decision_core 段默认值一致）。"""
@@ -292,11 +295,13 @@ class DecisionCore:
 
         try:
             prompt = self._build_d1_prompt(decision_input, rubric)
-            decision_str, confidence = self._llm_decide(prompt, decision_input)
-            llm_reasoning = f"[LLM] D1 位置决策：{decision_str}（confidence={confidence}）"
-            llm_confidence = confidence
-            # LLM 推断 importance（回退值兜底）
-            importance = _FALLBACK_IMPORTANCE
+            # LLM 推断 importance（0-1），真正参与位置判断；解析失败回退默认值
+            content = self._llm_call(prompt)
+            parsed = self._parse_llm_output(content)
+            llm_confidence = parsed["confidence"]
+            if parsed.get("importance") is not None:
+                importance = parsed["importance"]
+            llm_reasoning = f"[LLM] D1 位置决策：importance={importance}（confidence={llm_confidence}）"
         except ConnectionError:
             # system_prompt 规则回退（rules-0 §三 fallback）
             llm_reasoning = None
@@ -388,17 +393,20 @@ class DecisionCore:
         # 尝试 LLM 决策元数据；不可用时回退规则
         try:
             prompt = self._build_d2_prompt(decision_input)
-            decision_str, confidence = self._llm_decide(prompt, decision_input)
-            source = decision_input.artifact_summary or f"[LLM] {decision_str}"
-            tags = ["radix", "d2_metadata", f"llm_{decision_str}"]
+            content = self._llm_call(prompt)
+            parsed = self._parse_metadata_output(content)
+            source = parsed.get("source") or decision_input.artifact_summary or "text"
+            tags = parsed.get("tags") or ["radix", "d2_metadata"]
+            importance = parsed.get("importance", _DEFAULT_METADATA_IMPORTANCE)
         except ConnectionError:
             # system_prompt 规则回退
             source = decision_input.artifact_summary or "text"
             tags = ["radix", "d2_metadata", "fallback"]
+            importance = _DEFAULT_METADATA_IMPORTANCE
 
         return {
             "time": _iso_now(),
-            "importance": _FALLBACK_IMPORTANCE,
+            "importance": importance,
             "source": source,
             "tags": tags,
         }
@@ -644,6 +652,25 @@ class DecisionCore:
         Raises:
             ConnectionError: LLM 端点不可用，触发 system_prompt 规则回退（503）
         """
+        content = self._llm_call(prompt)
+        parsed = self._parse_llm_output(content)
+        return parsed["decision"], parsed["confidence"]
+
+    def _llm_call(self, prompt: str) -> str:
+        """内部方法：调用 LLM 并返回原始输出文本。
+
+        通过 vLLM HTTP 接口（OpenAI 兼容）调用 LLM。
+        LLM 不可用时 raise ConnectionError，触发 system_prompt 规则回退。
+
+        Args:
+            prompt: 决策提示词
+
+        Returns:
+            LLM 原始输出文本
+
+        Raises:
+            ConnectionError: LLM 端点不可用，触发 system_prompt 规则回退（503）
+        """
         if not self._llm_available:
             raise ConnectionError(
                 "LLM 端点不可用（503），触发 system_prompt 规则回退"
@@ -681,9 +708,7 @@ class DecisionCore:
                 )
             data = resp.json()
             content = data.get("choices", [{}])[0].get("message", {}).get("content", "")
-            # 解析 LLM 输出：期望 "decision:store confidence:0.85" 格式
-            decision_str, confidence = self._parse_llm_output(content)
-            return decision_str, confidence
+            return content
         except (requests.RequestException, OSError) as exc:
             raise ConnectionError(
                 f"LLM 端点连接失败（503），触发 system_prompt 规则回退: {exc}"
@@ -833,45 +858,119 @@ class DecisionCore:
         decision_input: DecisionInput,
         rubric: RubricSnapshot,
     ) -> str:
-        """构造 D1 决策提示词。"""
+        """构造 D1 决策提示词（few-shot + 结构化输出）。"""
         return (
-            "请决策存入位置。\n"
+            "你是 CX-O 记忆归档系统的存储决策助手。请评估这段内容的重要性，"
+            "系统将根据 importance 与阈值决定存入永久或临时记忆。\n\n"
+            f"质量问题规则：质量评分 < {rubric.quality_reject_threshold} 时应给低 importance。\n"
+            f"重要性阈值：importance >= {rubric.importance_threshold_permanent} 倾向永久记忆。\n\n"
             f"会话状态: {decision_input.session_state}\n"
             f"质量评分: {decision_input.quality_score}\n"
-            f"重要性阈值: {rubric.importance_threshold_permanent}\n"
-            f"拒绝阈值: {rubric.quality_reject_threshold}\n"
-            "请输出格式: decision:<store|reject> confidence:<0-1>"
+            f"内容: {decision_input.artifact_summary or decision_input.extracted_content or 'N/A'}\n\n"
+            "判断要点：\n"
+            "- 内容空泛、重复、与用户无关 → importance 低\n"
+            "- 内容具体、对长期记忆有价值、质量达标 → importance 高\n\n"
+            "【示例】\n"
+            "输入: 用户提到喜欢在傍晚去海边散步\n"
+            "输出: importance:0.85 confidence:0.9\n"
+            "输入: 用户说了一句'今天天气不错'\n"
+            "输出: importance:0.2 confidence:0.95\n\n"
+            "必须只输出一行，严格使用格式: importance:<0-1> confidence:<0-1>"
         )
 
     def _build_d2_prompt(self, decision_input: DecisionInput) -> str:
-        """构造 D2 元数据决策提示词。"""
+        """构造 D2 元数据决策提示词（few-shot + 结构化 JSON 输出）。"""
         return (
-            "请决策记忆元数据（时间/重要性/来源/标签）。\n"
+            "你是 CX-O 记忆归档系统的元数据助手。请为已确定存入的记忆生成元数据，"
+            "包括重要性、来源与标签。\n\n"
             f"会话状态: {decision_input.session_state}\n"
-            f"内容摘要: {decision_input.artifact_summary or 'N/A'}\n"
-            "请输出格式: decision:<metadata_type> confidence:<0-1>"
+            f"内容摘要: {decision_input.artifact_summary or decision_input.extracted_content or 'N/A'}\n\n"
+            "判断要点：\n"
+            "- importance：根据内容对用户长期价值给出 1-5 分\n"
+            "- tags：提炼 2-5 个简短关键词，便于后续检索\n"
+            "- source：标注内容产出方（user/assistant/external）\n\n"
+            "【示例】\n"
+            "输入: 用户喜欢在傍晚去海边散步\n"
+            "输出: {\"importance\":4,\"tags\":[\"海边\",\"散步\",\"爱好\"],\"source\":\"user\",\"confidence\":0.9}\n\n"
+            "必须只输出一行 JSON，不要包含任何额外文字或 markdown 代码块标记："
+            '{"importance":<1-5>,"tags":[<2-5个标签>],"source":"<user|assistant|external>","confidence":<0-1>}'
         )
 
-    def _parse_llm_output(self, content: str) -> Tuple[str, float]:
-        """解析 LLM 输出，提取 decision 与 confidence。
+    def _parse_llm_output(self, content: str) -> Dict[str, Any]:
+        """解析 LLM D1 输出，提取 importance / decision / confidence。
 
-        期望格式: "decision:store confidence:0.85"
-        解析失败时回退 (store, 0.5)。
+        兼容两种格式:
+            - 新格式: "importance:0.85 confidence:0.9"
+            - 旧格式: "decision:store confidence:0.85"
+        解析失败时回退默认值。
+
+        Returns:
+            {"decision": str, "importance": Optional[float], "confidence": float}
         """
-        decision_str = "store"
-        confidence = 0.5
+        result: Dict[str, Any] = {"decision": "store", "importance": None, "confidence": 0.5}
         try:
             lower = content.lower()
+            if "importance:" in lower:
+                part = lower.split("importance:", 1)[1].split()[0]
+                imp = float(part.strip(",.;"))
+                result["importance"] = max(0.0, min(1.0, imp))
             if "decision:" in lower:
                 part = lower.split("decision:", 1)[1].split()[0]
-                decision_str = part.strip(",.;")
+                result["decision"] = part.strip(",.;")
             if "confidence:" in lower:
                 part = lower.split("confidence:", 1)[1].split()[0]
-                confidence = float(part.strip(",.;"))
-                confidence = max(0.0, min(1.0, confidence))
+                conf = float(part.strip(",.;"))
+                result["confidence"] = max(0.0, min(1.0, conf))
         except (ValueError, IndexError):
             pass
-        return decision_str, confidence
+        return result
+
+    def _parse_metadata_output(self, content: str) -> Dict[str, Any]:
+        """解析 LLM D2 元数据输出（JSON）。
+
+        剥 markdown 围栏 + 括号平衡提取 + json.loads 兜底。
+        解析失败时回退默认元数据。
+
+        Returns:
+            {"importance": float(1-5), "tags": List[str], "source": Optional[str],
+             "confidence": float}
+        """
+        result: Dict[str, Any] = {
+            "importance": _DEFAULT_METADATA_IMPORTANCE,
+            "tags": ["radix", "d2_metadata"],
+            "source": None,
+            "confidence": 0.5,
+        }
+        try:
+            text = content.strip()
+            # 剥 markdown 代码块围栏
+            if text.startswith("```"):
+                text = text.strip("`")
+                if text.startswith("json"):
+                    text = text[4:]
+            # 括号平衡提取最外层 JSON 对象
+            start = text.find("{")
+            end = text.rfind("}")
+            if start != -1 and end != -1 and end > start:
+                text = text[start : end + 1]
+            data = json.loads(text)
+            if not isinstance(data, dict):
+                return result
+            imp = data.get("importance")
+            if imp is not None:
+                result["importance"] = max(1.0, min(5.0, float(imp)))
+            tags = data.get("tags")
+            if isinstance(tags, list) and tags:
+                result["tags"] = [str(t) for t in tags][:5]
+            src = data.get("source")
+            if src:
+                result["source"] = str(src)
+            conf = data.get("confidence")
+            if conf is not None:
+                result["confidence"] = max(0.0, min(1.0, float(conf)))
+        except (ValueError, TypeError, json.JSONDecodeError):
+            pass
+        return result
 
     # ------------------------------------------------------------------ #
     # 测试辅助（非契约方法，仅供单元测试使用）

@@ -31,6 +31,12 @@ class ACPLanDiscovery:
         self._discovery_socket = None
         self._task = None
 
+        # 可注入的 socket 工厂：默认创建真实 UDP socket。
+        # 测试通过覆写为 FakeSocket 工厂实现隔离，避免 monkeypatch 全局
+        # socket.socket（Windows ProactorEventLoop 依赖该类型做 isinstance 判断，
+        # 全局替换会破坏事件循环自读通道导致协程悬挂）。
+        self._socket_factory = socket.socket
+
     async def start(self):
         if self._running:
             return
@@ -38,14 +44,14 @@ class ACPLanDiscovery:
         self._running = True
 
         try:
-            self._broadcast_socket = socket.socket(
+            self._broadcast_socket = self._socket_factory(
                 socket.AF_INET, socket.SOCK_DGRAM, socket.IPPROTO_UDP
             )
             self._broadcast_socket.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
             self._broadcast_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
             self._broadcast_socket.settimeout(1)
 
-            self._discovery_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            self._discovery_socket = self._socket_factory(socket.AF_INET, socket.SOCK_DGRAM)
             self._discovery_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
             self._discovery_socket.bind(("", self.discovery_port))
             self._discovery_socket.settimeout(1)
@@ -151,9 +157,14 @@ class ACPLanDiscovery:
 
         async def receive_with_timeout():
             found = []
-            sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            sock = self._socket_factory(socket.AF_INET, socket.SOCK_DGRAM)
             sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-            sock.bind(("", self.discovery_port))
+            try:
+                sock.bind(("", self.discovery_port))
+            except OSError:
+                # 固定端口已被占用（如发现服务已在运行）时，回退到随机端口，
+                # 避免整个发现过程因 bind 失败而 500。
+                sock.bind(("", 0))
             sock.settimeout(timeout)
 
             end_time = asyncio.get_event_loop().time() + timeout
@@ -191,7 +202,7 @@ class ACPLanDiscovery:
 
     async def get_local_ip(self) -> str:
         try:
-            s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            s = self._socket_factory(socket.AF_INET, socket.SOCK_DGRAM)
             s.connect(("8.8.8.8", 80))
             ip = s.getsockname()[0]
             s.close()

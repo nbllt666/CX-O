@@ -364,7 +364,7 @@ async def lifespan(app: FastAPI):
 
                 mm = services.memory_manager
                 if mm:
-                    mm.write_memory(
+                    await mm.write_memory_async(
                         content=summary_content,
                         memory_type="long_term",
                         importance=2,
@@ -637,6 +637,68 @@ async def lifespan(app: FastAPI):
         lifespan_logger.warning(
             f"Orpheus TTS 预热失败（不阻塞启动）: {_warmup_e}"
         )
+
+    # LLM / Embedding 推理预热（后台任务，不阻塞启动完成）：
+    # vLLM 冷启动后首个推理请求需完成 CUDA graph 捕获与张量分配，
+    # 实测 LLM 冷 TTFT 7.6s、Embedding 冷请求 1.6s；启动时后台预热消除首请求惩罚。
+    # 预热使用与生产一致的请求路径与模型名；失败仅告警不影响运行。
+    async def _warmup_inference_backends() -> None:
+        import asyncio as _asyncio
+
+        from server.config import get_settings as _bk_get_settings
+
+        _bk_settings = _bk_get_settings()
+        _llm_url = _bk_settings.config.llm.host.rstrip("/")
+        _llm_model = _bk_settings.config.llm.model
+        _emb_url = _bk_settings.config.memory.embedding_api_base.rstrip("/")
+        _emb_model = _bk_settings.config.memory.embedding_model
+
+        async def _warm_llm() -> None:
+            for _attempt in range(60):  # vLLM(BNB) 加载约 2-3 分钟，最长等 ~5 分钟
+                try:
+                    _resp = await _warmup_client.post(
+                        f"{_llm_url}/v1/chat/completions",
+                        json={
+                            "model": _llm_model,
+                            "messages": [{"role": "user", "content": "你好"}],
+                            "max_tokens": 1,
+                            "stream": False,
+                        },
+                        timeout=30.0,
+                    )
+                    if _resp.status_code == 200:
+                        lifespan_logger.info(f"LLM 推理预热完成 (第 {_attempt + 1} 次尝试)")
+                        return
+                except Exception:
+                    pass
+                await _asyncio.sleep(5)
+            lifespan_logger.warning("LLM 推理预热超时（不影响运行）")
+
+        async def _warm_embedding() -> None:
+            for _attempt in range(60):
+                try:
+                    _resp = await _warmup_client.post(
+                        f"{_emb_url}/v1/embeddings",
+                        json={"model": _emb_model, "input": "预热"},
+                        timeout=30.0,
+                    )
+                    if _resp.status_code == 200:
+                        lifespan_logger.info(f"Embedding 推理预热完成 (第 {_attempt + 1} 次尝试)")
+                        return
+                except Exception:
+                    pass
+                await _asyncio.sleep(5)
+            lifespan_logger.warning("Embedding 推理预热超时（不影响运行）")
+
+        await _asyncio.gather(_warm_llm(), _warm_embedding())
+
+    try:
+        import asyncio as _asyncio
+
+        _asyncio.create_task(_warmup_inference_backends())
+        lifespan_logger.info("LLM/Embedding 推理预热任务已启动（后台执行）")
+    except Exception as _bk_warmup_e:
+        lifespan_logger.warning(f"LLM/Embedding 预热任务启动失败（不阻塞启动）: {_bk_warmup_e}")
 
     lifespan_logger.info(f"CX-O-SERVER started successfully (ASR: {app.state.asr_status}, TTS: {app.state.tts_status})")
 

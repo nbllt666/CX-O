@@ -24,7 +24,6 @@ class FirewallConfig:
     max_message_length: int = None
     blocked_patterns: list[str] = field(default_factory=list)
     blocked_users: list[str] = field(default_factory=list)
-    keyword_filter_enabled: bool = True
     rate_limit_enabled: bool = True
     duplicate_filter_enabled: bool = True
     length_filter_enabled: bool = True
@@ -58,7 +57,6 @@ class FirewallService:
         self._user_message_counts: dict[str, deque] = {}
         self._recent_messages: deque = deque(maxlen=100)
         self._compiled_patterns: list[re.Pattern] = []
-        self._keyword_cache: set[str] = set()
         self._filter_callback: Optional[Callable] = None
 
     @classmethod
@@ -90,8 +88,6 @@ class FirewallService:
             self._compile_patterns()
         if "blocked_users" in config:
             self.config.blocked_users = config["blocked_users"]
-        if "keyword_filter_enabled" in config:
-            self.config.keyword_filter_enabled = config["keyword_filter_enabled"]
         if "rate_limit_enabled" in config:
             self.config.rate_limit_enabled = config["rate_limit_enabled"]
         if "duplicate_filter_enabled" in config:
@@ -205,31 +201,15 @@ class FirewallService:
                         original_content=original_content
                     )
 
-        if self.config.keyword_filter_enabled and self._keyword_cache:
-            for keyword in self._keyword_cache:
-                if keyword in content.lower():
-                    return FilterResult(
-                        allowed=False,
-                        reason=f"Blocked keyword: {keyword}",
-                        original_content=original_content
-                    )
-
         return FilterResult(
             allowed=True,
             filtered_content=content,
             original_content=original_content
         )
 
-    def add_keyword(self, keyword: str):
-        self._keyword_cache.add(keyword.lower())
-
-    def remove_keyword(self, keyword: str):
-        self._keyword_cache.discard(keyword.lower())
-
     def get_stats(self) -> dict:
         return {
             "enabled": self.config.enabled,
-            "keywords_count": len(self._keyword_cache),
             "patterns_count": len(self._compiled_patterns),
             "blocked_users_count": len(self.config.blocked_users),
             "recent_messages_tracked": len(self._recent_messages)

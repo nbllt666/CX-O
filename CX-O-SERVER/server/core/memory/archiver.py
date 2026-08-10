@@ -223,14 +223,15 @@ class AdvancedArchiver:
 
                 archive_id = cursor.lastrowid
 
-                # 更新记忆状态为已归档
+                # 更新记忆状态为已归档（设置 archived_at 与 updated_at）
+                now = datetime.now().isoformat()
                 cursor.execute(
                     """
                     UPDATE memories 
-                    SET is_archived = TRUE, archive_level = ?
+                    SET archived_at = ?, updated_at = ?
                     WHERE id = ?
                 """,
-                    (target_level, memory_id),
+                    (now, now, memory_id),
                 )
 
                 conn.commit()
@@ -341,7 +342,7 @@ class AdvancedArchiver:
             }
 
             # 更新主记忆
-            self.memory_manager.update_memory(
+            await self.memory_manager.update_memory_async(
                 memory_id=primary_id,
                 new_content=merged_content,
                 new_tags=list(all_tags),

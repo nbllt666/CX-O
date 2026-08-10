@@ -186,8 +186,10 @@ class MemoryConversationEngine:
                 parameters["limit"] = int(limit_match.group(1) or limit_match.group(2))
 
         elif command_type == "archive":
-            # 提取归档级别
-            level_match = re.search(r"(\d+)级|level\s*(\d+)", message, re.IGNORECASE)
+            # 提取归档级别（支持「N级」「级别 N」「level N」）
+            level_match = re.search(
+                r"(?:级别|level)\s*(\d+)|\b(\d+)\s*级", message, re.IGNORECASE
+            )
             if level_match:
                 parameters["target_level"] = int(level_match.group(1) or level_match.group(2))
             else:
@@ -404,7 +406,7 @@ class MemoryConversationEngine:
             return {"status": "error", "message": "请指定要删除的记忆ID"}
 
         try:
-            success = self.memory_manager.delete_memory(memory_id, soft_delete=True)
+            success = await self.memory_manager.delete_memory_async(memory_id, soft_delete=True)
 
             if success:
                 return {"status": "success", "message": f"记忆 ID {memory_id} 已删除"}

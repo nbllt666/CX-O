@@ -142,48 +142,50 @@ class OllamaClient(LLMClient):
             if tools:
                 request_body["tools"] = tools
 
-            async with httpx.AsyncClient(timeout=120.0, trust_env=False) as client:
-                response = await client.post(f"{self.host}/api/chat", json=request_body)
+            client = get_shared_http_client()
+            response = await client.post(
+                f"{self.host}/api/chat", json=request_body, timeout=120.0
+            )
 
-                if response.status_code == 200:
-                    result = response.json()
-                    message = result.get("message") or {}
+            if response.status_code == 200:
+                result = response.json()
+                message = result.get("message") or {}
 
-                    # 检查是否有工具调用
-                    tool_calls = []
-                    if message.get("tool_calls"):
-                        tool_calls = message["tool_calls"]
+                # 检查是否有工具调用
+                tool_calls = []
+                if message.get("tool_calls"):
+                    tool_calls = message["tool_calls"]
 
-                    # 优先使用 content，thinking 仅作为推理过程不返回
-                    content = message.get("content", "")
-                    # thinking 字段保留但不作为回复内容，仅用于调试
-                    thinking = message.get("thinking", "")
-                    if thinking and not content:
-                        logger.debug(f"模型返回 thinking 但无 content: {thinking[:100]}...")
+                # 优先使用 content，thinking 仅作为推理过程不返回
+                content = message.get("content", "")
+                # thinking 字段保留但不作为回复内容，仅用于调试
+                thinking = message.get("thinking", "")
+                if thinking and not content:
+                    logger.debug(f"模型返回 thinking 但无 content: {thinking[:100]}...")
 
-                    return LLMResponse(
-                        content=content,
-                        finish_reason=result.get("done_reason", "stop"),
-                        usage={"eval_count": result.get("eval_count", 0)},
-                        tool_calls=tool_calls,
-                        thinking=thinking if thinking else None,
-                    )
-                else:
-                    # 详细的错误处理
-                    error_text = response.text[:500] if response.text else "无响应内容"
-                    logger.error(f"Ollama错误: HTTP {response.status_code}, {error_text}")
+                return LLMResponse(
+                    content=content,
+                    finish_reason=result.get("done_reason", "stop"),
+                    usage={"eval_count": result.get("eval_count", 0)},
+                    tool_calls=tool_calls,
+                    thinking=thinking if thinking else None,
+                )
+            else:
+                # 详细的错误处理
+                error_text = response.text[:500] if response.text else "无响应内容"
+                logger.error(f"Ollama错误: HTTP {response.status_code}, {error_text}")
 
-                    return LLMResponse(
-                        content="",
-                        finish_reason="error",
-                        error=f"HTTP {response.status_code}",
-                        error_details={
-                            "status_code": response.status_code,
-                            "response_text": error_text,
-                            "model": self.model,
-                            "host": self.host,
-                        },
-                    )
+                return LLMResponse(
+                    content="",
+                    finish_reason="error",
+                    error=f"HTTP {response.status_code}",
+                    error_details={
+                        "status_code": response.status_code,
+                        "response_text": error_text,
+                        "model": self.model,
+                        "host": self.host,
+                    },
+                )
 
         except httpx.ConnectError as e:
             error_msg = f"无法连接到Ollama服务器: {self.host}"
@@ -242,35 +244,35 @@ class OllamaClient(LLMClient):
             if self.api_key:
                 headers["Authorization"] = f"Bearer {self.api_key}"
 
-            async with httpx.AsyncClient(timeout=120.0, trust_env=False) as client:
-                async with client.stream(
-                    "POST", f"{self.host}/api/chat", json=request_body, headers=headers
-                ) as response:
-                    async for line in response.aiter_lines():
-                        if line:
-                            try:
-                                data = json.loads(line)
-                                message = data.get("message", {})
+            client = get_shared_http_client()
+            async with client.stream(
+                "POST", f"{self.host}/api/chat", json=request_body, headers=headers
+            ) as response:
+                async for line in response.aiter_lines():
+                    if line:
+                        try:
+                            data = json.loads(line)
+                            message = data.get("message", {})
 
-                                # 根据 Ollama 文档正确处理 thinking 和 content
-                                thinking = message.get("thinking", "")
-                                content = message.get("content", "")
+                            # 根据 Ollama 文档正确处理 thinking 和 content
+                            thinking = message.get("thinking", "")
+                            content = message.get("content", "")
 
-                                # 如果 content 存在，作为最终回复
-                                if content:
-                                    yield {"type": "content", "content": content}
-                                # 如果 content 为空但 thinking 存在，作为思考过程
-                                elif thinking:
-                                    yield {"type": "thinking", "content": thinking}
+                            # 如果 content 存在，作为最终回复
+                            if content:
+                                yield {"type": "content", "content": content}
+                            # 如果 content 为空但 thinking 存在，作为思考过程
+                            elif thinking:
+                                yield {"type": "thinking", "content": thinking}
 
-                                if data.get("done", False):
-                                    break
+                            if data.get("done", False):
+                                break
 
-                                tool_calls = message.get("tool_calls")
-                                if tool_calls:
-                                    yield {"type": "tool_calls", "tool_calls": tool_calls}
-                            except json.JSONDecodeError:
-                                continue
+                            tool_calls = message.get("tool_calls")
+                            if tool_calls:
+                                yield {"type": "tool_calls", "tool_calls": tool_calls}
+                        except json.JSONDecodeError:
+                            continue
         except Exception as e:
             logger.error(f"Ollama流式调用失败: {e}")
             yield {"type": "error", "content": f"流式调用失败: {e}"}
@@ -282,26 +284,30 @@ class OllamaClient(LLMClient):
     async def is_available(self) -> bool:
         """检查Ollama模型是否可用"""
         try:
-            async with httpx.AsyncClient(timeout=10.0, proxy=None) as client:
-                response = await client.get(f"{self.host}/api/tags")
-                return response.status_code == 200
+            # 使用预热好的 shared HTTP client，避免每次调用都重新构造 httpx.AsyncClient
+            client = get_shared_http_client()
+            response = await client.get(f"{self.host}/api/tags", timeout=10.0)
+            return response.status_code == 200
         except Exception:
             return False
 
     async def get_embedding(self, text: str) -> Optional[List[float]]:
         """使用Ollama获取文本的向量嵌入"""
         try:
-            async with httpx.AsyncClient(timeout=30.0, proxy=None) as client:
-                response = await client.post(
-                    f"{self.host}/api/embeddings", json={"model": self.model, "prompt": text}
-                )
+            # 使用预热好的 shared HTTP client，避免每次调用都重新构造 httpx.AsyncClient
+            client = get_shared_http_client()
+            response = await client.post(
+                f"{self.host}/api/embeddings",
+                json={"model": self.model, "prompt": text},
+                timeout=30.0,
+            )
 
-                if response.status_code == 200:
-                    result = response.json()
-                    return result.get("embedding")
-                else:
-                    logger.warning(f"Ollama获取embedding失败: HTTP {response.status_code}")
-                    return None
+            if response.status_code == 200:
+                result = response.json()
+                return result.get("embedding")
+            else:
+                logger.warning(f"Ollama获取embedding失败: HTTP {response.status_code}")
+                return None
 
         except Exception as e:
             logger.error(f"Ollama获取embedding失败: {e}")
@@ -606,41 +612,43 @@ class TRTLLMClient(LLMClient):
             if self.api_key:
                 headers["Authorization"] = f"Bearer {self.api_key}"
 
-            async with httpx.AsyncClient(timeout=120.0, trust_env=False) as client:
-                response = await client.post(
-                    f"{self.host}/v1/chat/completions",
-                    json={
-                        "model": self.model,
-                        "messages": messages,
-                        "stream": stream,
-                        "temperature": kwargs.get("temperature", self.temperature),
-                        "max_tokens": kwargs.get("max_tokens", self.max_tokens),
-                    },
-                    headers=headers,
-                )
+            # 使用预热好的 shared HTTP client，避免每次调用都重新构造 httpx.AsyncClient
+            client = get_shared_http_client()
+            response = await client.post(
+                f"{self.host}/v1/chat/completions",
+                json={
+                    "model": self.model,
+                    "messages": messages,
+                    "stream": stream,
+                    "temperature": kwargs.get("temperature", self.temperature),
+                    "max_tokens": kwargs.get("max_tokens", self.max_tokens),
+                },
+                headers=headers,
+                timeout=120.0,
+            )
 
-                if response.status_code == 200:
-                    result = response.json()
-                    choice = result["choices"][0]
-                    return LLMResponse(
-                        content=choice["message"]["content"],
-                        finish_reason=choice.get("finish_reason", "stop"),
-                        usage=result.get("usage", {}),
-                    )
-                else:
-                    error_text = response.text[:500] if response.text else "无响应内容"
-                    logger.error(f"TRT-LLM错误: HTTP {response.status_code}, {error_text}")
-                    return LLMResponse(
-                        content="",
-                        finish_reason="error",
-                        error=f"HTTP {response.status_code}",
-                        error_details={
-                            "status_code": response.status_code,
-                            "response_text": error_text,
-                            "model": self.model,
-                            "host": self.host,
-                        },
-                    )
+            if response.status_code == 200:
+                result = response.json()
+                choice = result["choices"][0]
+                return LLMResponse(
+                    content=choice["message"]["content"],
+                    finish_reason=choice.get("finish_reason", "stop"),
+                    usage=result.get("usage", {}),
+                )
+            else:
+                error_text = response.text[:500] if response.text else "无响应内容"
+                logger.error(f"TRT-LLM错误: HTTP {response.status_code}, {error_text}")
+                return LLMResponse(
+                    content="",
+                    finish_reason="error",
+                    error=f"HTTP {response.status_code}",
+                    error_details={
+                        "status_code": response.status_code,
+                        "response_text": error_text,
+                        "model": self.model,
+                        "host": self.host,
+                    },
+                )
 
         except httpx.ConnectError as e:
             error_msg = f"无法连接到TRT-LLM服务器: {self.host}"
@@ -705,26 +713,27 @@ class TRTLLMClient(LLMClient):
             if self.api_key:
                 headers["Authorization"] = f"Bearer {self.api_key}"
 
-            async with httpx.AsyncClient(timeout=120.0, trust_env=False) as client:
-                async with client.stream(
-                    "POST", f"{self.host}/v1/chat/completions", json=request_body, headers=headers
-                ) as response:
-                    async for line in response.aiter_lines():
-                        if line and line.startswith("data: "):
-                            data = line[6:]
-                            if data != "[DONE]":
-                                try:
-                                    chunk = json.loads(data)
-                                    content = chunk["choices"][0]["delta"].get("content", "")
-                                    if content:
-                                        yield content
+            # 使用预热好的 shared HTTP client，避免每次调用都重新构造 httpx.AsyncClient
+            client = get_shared_http_client()
+            async with client.stream(
+                "POST", f"{self.host}/v1/chat/completions", json=request_body, headers=headers
+            ) as response:
+                async for line in response.aiter_lines():
+                    if line and line.startswith("data: "):
+                        data = line[6:]
+                        if data != "[DONE]":
+                            try:
+                                chunk = json.loads(data)
+                                content = chunk["choices"][0]["delta"].get("content", "")
+                                if content:
+                                    yield content
 
-                                    delta = chunk["choices"][0].get("delta", {})
-                                    tool_calls = delta.get("tool_calls")
-                                    if tool_calls:
-                                        yield {"tool_calls": tool_calls}
-                                except json.JSONDecodeError:
-                                    continue
+                                delta = chunk["choices"][0].get("delta", {})
+                                tool_calls = delta.get("tool_calls")
+                                if tool_calls:
+                                    yield {"tool_calls": tool_calls}
+                            except json.JSONDecodeError:
+                                continue
         except Exception as e:
             logger.error(f"TRT-LLM流式调用失败: {e}")
 
@@ -734,9 +743,10 @@ class TRTLLMClient(LLMClient):
 
     async def is_available(self) -> bool:
         try:
-            async with httpx.AsyncClient(timeout=10.0, proxy=None) as client:
-                response = await client.get(f"{self.host}/health")
-                return response.status_code == 200
+            # 使用预热好的 shared HTTP client，避免每次调用都重新构造 httpx.AsyncClient
+            client = get_shared_http_client()
+            response = await client.get(f"{self.host}/health", timeout=10.0)
+            return response.status_code == 200
         except Exception:
             return False
 
@@ -746,21 +756,23 @@ class TRTLLMClient(LLMClient):
             if self.api_key:
                 headers["Authorization"] = f"Bearer {self.api_key}"
 
-            async with httpx.AsyncClient(timeout=30.0, proxy=None) as client:
-                response = await client.post(
-                    f"{self.host}/v1/embeddings",
-                    json={"model": self.model, "input": text},
-                    headers=headers,
-                )
+            # 使用预热好的 shared HTTP client，避免每次调用都重新构造 httpx.AsyncClient
+            client = get_shared_http_client()
+            response = await client.post(
+                f"{self.host}/v1/embeddings",
+                json={"model": self.model, "input": text},
+                headers=headers,
+                timeout=30.0,
+            )
 
-                if response.status_code == 200:
-                    result = response.json()
-                    if "data" in result and len(result["data"]) > 0:
-                        return result["data"][0].get("embedding")
-                    return None
-                else:
-                    logger.warning(f"TRT-LLM获取embedding失败: HTTP {response.status_code}")
-                    return None
+            if response.status_code == 200:
+                result = response.json()
+                if "data" in result and len(result["data"]) > 0:
+                    return result["data"][0].get("embedding")
+                return None
+            else:
+                logger.warning(f"TRT-LLM获取embedding失败: HTTP {response.status_code}")
+                return None
         except Exception as e:
             logger.error(f"TRT-LLM获取embedding失败: {e}")
             return None

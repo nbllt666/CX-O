@@ -26,5 +26,6 @@ EXPOSE 5060
 HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=5 \
     CMD curl -f http://localhost:5060/health || exit 1
 
-# 启动 FastAPI 服务
+# 启动 FastAPI 服务（覆盖 vllm 镜像的 ENTRYPOINT）
+ENTRYPOINT []
 CMD ["uvicorn", "api_server:app", "--host", "0.0.0.0", "--port", "5060", "--workers", "1"]

@@ -23,7 +23,7 @@ def register_memory_handlers(manager: "WebSocketManager"):
             from server.dependencies import get_memory_manager
 
             memory_mgr = get_memory_manager()
-            result = memory_mgr.search_memories(
+            result = await memory_mgr.search_memories_async(
                 query=data.get("query"),
                 memory_type=data.get("type"),
                 tags=data.get("tags"),
@@ -56,7 +56,7 @@ def register_memory_handlers(manager: "WebSocketManager"):
             from server.dependencies import get_memory_manager
 
             memory_mgr = get_memory_manager()
-            memory_id = memory_mgr.write_memory(
+            memory_id = await memory_mgr.write_memory_async(
                 content=data.get("content", ""),
                 memory_type=data.get("type", "long_term"),
                 importance=data.get("importance", 3),
@@ -90,7 +90,7 @@ def register_memory_handlers(manager: "WebSocketManager"):
             from server.dependencies import get_memory_manager
 
             memory_mgr = get_memory_manager()
-            success = memory_mgr.delete_memory(
+            success = await memory_mgr.delete_memory_async(
                 memory_id=data.get("memory_id"),
                 soft_delete=data.get("soft_delete", True),
                 agent_id=data.get("agent_id", "default"),

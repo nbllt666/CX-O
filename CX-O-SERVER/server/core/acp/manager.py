@@ -695,9 +695,7 @@ class ACPManager:
         让主系统前端以系统消息形式显示，LLM 在下次对话时也能看到。
         """
         async with self._lock:
-            if message.from_agent_id and message.from_agent_id not in self.messages:
-                self.messages[message.from_agent_id] = []
-            self.messages[message.from_agent_id].append(message)
+            self.messages.setdefault(message.from_agent_id, []).append(message)
             await self._save_data()
 
         # 注入 system 消息到本地 Agent 聊天上下文
@@ -746,14 +744,11 @@ class ACPManager:
             return
 
         try:
-            from server.api.routers.chat import (
-                _get_tools_for_agent,
-                get_agent_config,
-                get_llm_client_for_agent,
-            )
+            from server.chat_helpers import get_agent_config, get_llm_client_for_agent
+            from server.chat_helpers import get_tools_for_agent
         except Exception as e:
             logger.warning(
-                f"ACP 自动回复跳过: chat 路由工具函数不可用: {e}"
+                f"ACP 自动回复跳过: chat 工具函数不可用: {e}"
             )
             return
 
@@ -781,7 +776,7 @@ class ACPManager:
                 )
                 return
 
-            tools = _get_tools_for_agent(effective_agent_id)
+            tools = get_tools_for_agent(agent_config)
 
             session_id = f"agent-{effective_agent_id}"
 

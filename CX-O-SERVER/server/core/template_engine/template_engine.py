@@ -367,10 +367,9 @@ class TemplateEngine:
             )
 
         # Jinja2 真实渲染（支持 extends/block/if/elif/else/for/include/filter）
-        # 模板文件名: {template_id}.j2，ChoiceLoader 会在 presets/ 和 custom/ 中查找
-        template_filename = f"{template_id}.j2"
+        # 使用解析后的 body 渲染，避免 YAML frontmatter 泄漏进 prompt
         try:
-            template = self._env.get_template(template_filename)
+            template = self._env.from_string(record.body)
             rendered_prompt = template.render(**variables)
         except TemplateNotFound as exc:
             # extends/include 引用的父模板不存在

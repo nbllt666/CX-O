@@ -90,6 +90,24 @@ class AsyncMemoryManager:
             for idx in indexes:
                 await self._pool.execute(idx)
             
+            await self._pool.execute(
+                """
+                CREATE TABLE IF NOT EXISTS permanent_memories (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    vector_id VARCHAR(100),
+                    content TEXT NOT NULL,
+                    importance_score FLOAT DEFAULT 1.0,
+                    emotion_score FLOAT DEFAULT 0.0,
+                    tags TEXT,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    updated_at TIMESTAMP,
+                    metadata TEXT,
+                    source VARCHAR(50) DEFAULT 'user',
+                    verified BOOLEAN DEFAULT TRUE
+                )
+                """
+            )
+            
             await self._pool.commit()
             logger.info("数据库表结构初始化完成")
 

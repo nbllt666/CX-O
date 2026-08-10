@@ -13,6 +13,7 @@ from typing import Any, Dict, List, Optional
 import httpx
 
 from server.core.llm.client import LLMClient, OllamaClient, VLLMClient, TRTLLMClient
+from server.core.utils import get_shared_http_client
 from server.config import ModelConfig, get_settings
 
 logger = logging.getLogger(__name__)
@@ -184,25 +185,25 @@ class ModelRouter:
             provider = config.provider.lower()
 
             if provider == "ollama":
-                async with httpx.AsyncClient(timeout=10.0) as client:
-                    response = await client.get(f"{config.host}/api/tags")
-                    available = response.status_code == 200
-                    if not available:
-                        error_msg = f"HTTP {response.status_code}"
+                client = get_shared_http_client()
+                response = await client.get(f"{config.host}/api/tags", timeout=10.0)
+                available = response.status_code == 200
+                if not available:
+                    error_msg = f"HTTP {response.status_code}"
 
             elif provider == "vllm":
-                async with httpx.AsyncClient(timeout=10.0) as client:
-                    response = await client.get(f"{config.host}/health")
-                    available = response.status_code == 200
-                    if not available:
-                        error_msg = f"HTTP {response.status_code}"
+                client = get_shared_http_client()
+                response = await client.get(f"{config.host}/health", timeout=10.0)
+                available = response.status_code == 200
+                if not available:
+                    error_msg = f"HTTP {response.status_code}"
 
             elif provider == "trtllm":
-                async with httpx.AsyncClient(timeout=10.0) as client:
-                    response = await client.get(f"{config.host}/health")
-                    available = response.status_code == 200
-                    if not available:
-                        error_msg = f"HTTP {response.status_code}"
+                client = get_shared_http_client()
+                response = await client.get(f"{config.host}/health", timeout=10.0)
+                available = response.status_code == 200
+                if not available:
+                    error_msg = f"HTTP {response.status_code}"
             else:
                 error_msg = f"不支持的提供商: {provider}"
 

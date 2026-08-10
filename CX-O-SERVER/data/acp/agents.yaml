@@ -3,11 +3,20 @@ agents:
   - memory
   - tools
   - chat
-  host: 192.168.0.101
+  host: 172.23.64.1
   id: cxhms-agent-001
-  last_seen: '2026-08-04T20:22:23.950417'
+  last_seen: '2026-08-06T14:10:09.405942'
   metadata: {}
   name: CXHMS Agent
   port: 8001
   status: online
+  version: 1.0.0
+- capabilities: []
+  host: 127.0.0.1
+  id: test_value
+  last_seen: '2026-08-06T16:03:51.834231'
+  metadata: {}
+  name: test_value
+  port: 0
+  status: offline
   version: 1.0.0

@@ -4,7 +4,7 @@
 """
 from __future__ import annotations
 
-import asyncio
+import inspect
 import logging
 from typing import Any, Callable, Optional, TypeVar
 
@@ -37,7 +37,7 @@ async def init_service(
     log = logger_ or logger
     kwargs = kwargs or {}
     try:
-        if asyncio.iscoroutinefunction(factory):
+        if inspect.iscoroutinefunction(factory):
             instance = await factory(*args, **kwargs)
         else:
             instance = factory(*args, **kwargs)
@@ -69,7 +69,7 @@ async def shutdown_service(
     log = logger_ or logger
     kwargs = kwargs or {}
     try:
-        if asyncio.iscoroutinefunction(coro_or_fn):
+        if inspect.iscoroutinefunction(coro_or_fn):
             await coro_or_fn(*args, **kwargs)
         else:
             coro_or_fn(*args, **kwargs)

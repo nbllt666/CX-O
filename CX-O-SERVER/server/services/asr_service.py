@@ -126,8 +126,6 @@ class ASRService:
         return await self.recognize(audio_data, language, use_itn)
 
     async def _recognize_embedded(self, audio_data: bytes, language: str = "auto", use_itn: bool = True) -> dict[str, Any]:
-        pass
-
         audio_tensor, success = self._process_audio(BytesIO(audio_data))
         if not success:
             return {"text": "", "error": "Failed to process audio"}
@@ -245,7 +243,7 @@ class ASRService:
         if len(res) > 0 and len(res[0]) > 0:
             item = res[0][0]
             raw_text = item.get("text", "")
-            clean_text = re.sub(regex, "", raw_text, 0, re.MULTILINE)
+            clean_text = re.sub(regex, "", raw_text, count=0, flags=re.MULTILINE)
             text = rich_transcription_postprocess(raw_text) if use_itn else clean_text
 
             lang_match = re.search(r"<\|(\w+)\|>", raw_text)
@@ -296,14 +294,17 @@ class ASRService:
 
     async def _ws_recv_loop(self) -> None:
         """后台接收 WS 消息，放入 queue。连接断开时清理状态。"""
+        _n = 0
         try:
             async for message in self._ws:
+                _n += 1
+                logger.info(f"[ASR-WS] Recv #{_n}: {str(message)[:80]}")
                 await self._ws_recv_queue.put(message)
         except Exception as e:
             logger.error(f"[ASR-WS] Recv loop error: {e}")
         finally:
             self._ws = None
-            logger.info("[ASR-WS] Recv loop ended, ws cleared")
+            logger.info(f"[ASR-WS] Recv loop ended (total {_n} msgs), ws cleared")
 
     async def send_audio_chunk(self, audio_data: bytes, is_last: bool = False) -> bool:
         """通过 WebSocket 发送音频 chunk。
@@ -349,12 +350,24 @@ class ASRService:
         """
         if self._ws is None and self._ws_recv_queue.empty():
             return None
-        try:
-            message = await asyncio.wait_for(
-                self._ws_recv_queue.get(), timeout=timeout
-            )
-        except asyncio.TimeoutError:
-            return None
+        # timeout=0 必须走 get_nowait() 同步路径：
+        # Python 3.12+ asyncio.wait_for 对 timeout<=0 有快速路径——
+        # ensure_future 后任务尚未运行即判定 not done 并直接取消，
+        # 导致 wait_for(get(), timeout=0) 永远 TimeoutError（即使队列非空），
+        # ASR 结果全部积压丢失（2026-08-05 实测复现，端到端延迟暴涨根因）。
+        if timeout == 0:
+            try:
+                message = self._ws_recv_queue.get_nowait()
+                logger.info(f"[ASR-WS] receive_result GOT: {str(message)[:60]} (qsize={self._ws_recv_queue.qsize()})")
+            except asyncio.QueueEmpty:
+                return None
+        else:
+            try:
+                message = await asyncio.wait_for(
+                    self._ws_recv_queue.get(), timeout=timeout
+                )
+            except asyncio.TimeoutError:
+                return None
 
         if isinstance(message, bytes):
             # 忽略二进制消息（服务端只发 JSON 文本）

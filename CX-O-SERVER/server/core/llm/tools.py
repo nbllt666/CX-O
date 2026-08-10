@@ -83,7 +83,11 @@ class LLMTools:
             if response.finish_reason == "error":
                 return {"content": response.content, "error": "LLM调用失败"}
 
-            response_message = {"role": "assistant", "content": response.content}
+            response_message = {
+                "role": "assistant",
+                "content": response.content,
+                "tool_calls": response.tool_calls or [],
+            }
 
             tool_calls = self.parse_tool_calls(response_message)
 

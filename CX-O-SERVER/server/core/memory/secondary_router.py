@@ -5,7 +5,13 @@ from enum import Enum
 from typing import Dict, List, Optional
 
 from server.core.logging_config import get_contextual_logger
-from server.core.utils import format_messages_for_summary
+from server.core.utils import extract_json, format_messages_for_summary
+
+# 记忆管理助手 system_prompt 单源常量的延迟加载（避免顶部循环导入 API 路由模块）
+def _get_memory_agent_prompt() -> str:
+    from server.api.routers.agents import MEMORY_AGENT_SYSTEM_PROMPT
+
+    return MEMORY_AGENT_SYSTEM_PROMPT
 
 logger = get_contextual_logger(__name__)
 
@@ -367,7 +373,7 @@ class SecondaryModelRouter:
             summary = content[:max_length] + "..." if len(content) > max_length else content
 
         # 更新记忆的摘要
-        self.memory_manager.update_memory(
+        await self.memory_manager.update_memory_async(
             memory_id=memory_id,
             new_metadata={"summary": summary, "summarized_at": datetime.now().isoformat()},
         )
@@ -389,7 +395,7 @@ class SecondaryModelRouter:
         memory_id = params.get("memory_id")
         reason = params.get("reason", "")
 
-        success = self.memory_manager.update_memory(
+        success = await self.memory_manager.update_memory_async(
             memory_id=memory_id,
             new_metadata={
                 "archived": True,
@@ -489,7 +495,7 @@ class SecondaryModelRouter:
                     else:
                         result_text = str(response)
 
-                    result = json.loads(result_text)
+                    result = extract_json(result_text, default={})
                     suggested_score = result.get("score", current_importance_level)
                     reason = result.get("reason", "")
                     suggested_tags = result.get("suggested_tags", [])
@@ -714,13 +720,8 @@ class SecondaryModelRouter:
                 else:
                     result_text = str(response)
 
-                # 尝试提取JSON部分
-                json_start = result_text.find("{")
-                json_end = result_text.rfind("}")
-                if json_start != -1 and json_end != -1:
-                    result_text = result_text[json_start : json_end + 1]
-
-                result = json.loads(result_text)
+                # 统一 JSON 提取（剥 markdown 围栏 + 括号平衡 + 兜底）
+                result = extract_json(result_text, default={})
                 key_points = result.get("key_points", [])
                 report = result.get("report", {})
             except Exception as e:
@@ -753,7 +754,7 @@ class SecondaryModelRouter:
         summary_memory_id = None
         if save_as_memory:
             try:
-                summary_memory_id = self.memory_manager.write_memory(
+                summary_memory_id = await self.memory_manager.write_memory_async(
                     content=summary_text,
                     memory_type="conversation_summary",
                     importance=4,
@@ -832,13 +833,8 @@ class SecondaryModelRouter:
                     else:
                         result_text = str(response)
 
-                    # 尝试提取JSON数组
-                    json_start = result_text.find("[")
-                    json_end = result_text.rfind("]")
-                    if json_start != -1 and json_end != -1:
-                        result_text = result_text[json_start : json_end + 1]
-
-                    key_points = json.loads(result_text)
+                    # 统一 JSON 提取（支持 markdown 围栏 / 数组夹带说明文字）
+                    key_points = extract_json(result_text, default=[])
                     if not isinstance(key_points, list):
                         key_points = []
                 except (json.JSONDecodeError, TypeError):
@@ -916,13 +912,10 @@ class SecondaryModelRouter:
                     else:
                         result_text = str(response)
 
-                    json_start = result_text.find("{")
-                    json_end = result_text.rfind("}")
-                    if json_start != -1 and json_end != -1:
-                        result_text = result_text[json_start : json_end + 1]
-
-                    analysis = json.loads(result_text)
-                    report["analysis"] = analysis
+                    # 统一 JSON 提取
+                    analysis = extract_json(result_text, default={})
+                    if isinstance(analysis, dict):
+                        report["analysis"] = analysis
                 except (json.JSONDecodeError, KeyError, TypeError):
                     pass
             except Exception as e:
@@ -962,22 +955,8 @@ class SecondaryModelRouter:
             )
 
         try:
-            # 构建系统提示词
-            system_prompt = """你是记忆管理助手，专门负责帮助用户管理和维护记忆库。你可以通过自然语言理解用户的需求，并调用相应的工具来执行记忆管理操作。
-
-你可以使用以下9个记忆管理工具：
-
-1. update_memory_node - 更新记忆节点内容
-2. search_memories - 搜索记忆（关键词搜索）
-3. delete_memory - 删除记忆（软删除，7天后自动清理）
-4. get_memory_stats - 获取记忆库统计信息
-5. search_by_tag - 按标签搜索记忆
-6. bulk_delete - 批量删除记忆
-7. restore_memory - 恢复软删除的记忆
-8. get_chat_history - 获取指定会话的聊天历史
-9. get_available_commands - 获取所有可用命令列表
-
-当用户需要管理记忆时，请主动使用这些工具。用中文回答用户的问题。"""
+            # 构建系统提示词（单源引用 agents.py 的 MEMORY_AGENT_SYSTEM_PROMPT常量）
+            system_prompt = _get_memory_agent_prompt()
 
             response = await memory_client.chat(
                 messages=[

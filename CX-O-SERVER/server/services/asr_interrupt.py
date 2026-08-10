@@ -2,8 +2,7 @@
 ASR 打断模块 - 伪全双工实现
 打断判断由 LLM 完成，使用系统提示词中的打断规则
 """
-import asyncio
-import json
+import inspect
 import logging
 from typing import Optional, Callable, Any, Tuple
 
@@ -162,7 +161,11 @@ class ASRInterruptModule:
             return "IGNORE", False
 
     async def _call_independent_llm(self, asr_text: str) -> dict:
-        import aiohttp
+        """调用独立小模型判断能否打断，返回 JSON decision。
+
+        复用共享助手 call_ollama_decision 统一 HTTP 调用、JSON 解析与兜底降级。
+        """
+        from server.services.interrupt_llm import call_ollama_decision
 
         prompt = f"""你是一个语音打断判断助手。请根据以下规则判断用户的语音输入：
 
@@ -177,40 +180,12 @@ class ASRInterruptModule:
 请返回 JSON 格式：
 {{"decision": "CONTINUE|IGNORE|INTERRUPT", "reason": "判断原因"}}"""
 
-        try:
-            async with aiohttp.ClientSession() as session:
-                async with session.post(
-                    f"{self.independent_llm_config['endpoint']}/api/generate",
-                    json={
-                        "model": self.independent_llm_config["model"],
-                        "prompt": prompt,
-                        "stream": False,
-                        "format": "json"
-                    },
-                    timeout=aiohttp.ClientTimeout(total=5)
-                ) as response:
-                    result = await response.json()
-                    text = result.get("response", "")
-
-                    try:
-                        parsed = json.loads(text)
-                        return {
-                            "decision": parsed.get("decision", "IGNORE"),
-                            "reason": parsed.get("reason", "")
-                        }
-                    except json.JSONDecodeError:
-                        if "INTERRUPT" in text:
-                            return {"decision": "INTERRUPT", "reason": "从文本解析"}
-                        elif "IGNORE" in text:
-                            return {"decision": "IGNORE", "reason": "从文本解析"}
-                        return {"decision": "CONTINUE", "reason": "JSON解析失败"}
-
-        except asyncio.TimeoutError:
-            logger.warning("Independent LLM timeout")
-            return {"decision": "CONTINUE", "reason": "超时"}
-        except Exception as e:
-            logger.error(f"Independent LLM error: {e}")
-            return {"decision": "IGNORE", "reason": str(e)}
+        return await call_ollama_decision(
+            endpoint=self.independent_llm_config["endpoint"],
+            model=self.independent_llm_config["model"],
+            prompt=prompt,
+            timeout=5.0,
+        )
 
     async def _trigger_interrupt(self, asr_text: str, llm_response: str = "") -> bool:
         self._is_interrupted = True
@@ -218,7 +193,7 @@ class ASRInterruptModule:
 
         if self._interrupt_callback:
             try:
-                if asyncio.iscoroutinefunction(self._interrupt_callback):
+                if inspect.iscoroutinefunction(self._interrupt_callback):
                     await self._interrupt_callback(asr_text, llm_response)
                 else:
                     self._interrupt_callback(asr_text, llm_response)

@@ -49,6 +49,21 @@ async def is_tts_playing() -> bool:
         return len(_tts_playing_clients) > 0
 
 
+async def cleanup_dual_stream_session(client_id: str) -> None:
+    """WS 断开时清理双流式会话，取消正在运行的 LLM+TTS 流水线
+
+    根治孤儿会话泄漏：客户端断开后若不清理，pipeline 会持续占用
+    LLM/TTS 资源并向空连接推流，多轮累积导致 TTS 服务被并发打爆。
+    """
+    session = _dual_stream_sessions.pop(client_id, None)
+    if session:
+        try:
+            await session.finish()
+            logger.info(f"WS 断开，已清理双流式会话: client_id={client_id}")
+        except Exception as e:
+            logger.warning(f"清理双流式会话失败 {client_id}: {e}")
+
+
 class DualStreamSession:
     """双流式语音会话状态管理器（per-client）
 
@@ -180,7 +195,8 @@ class DualStreamSession:
         双流式模式下主流程已由 ASR Partial Result 驱动，此处仅做收尾：
         - 用 VAD on_end 后的 Final 文本修正上下文记录（比 Partial 更准确）
         - 不重启已由 Partial 启动的 LLM 流程
-        - 若当前 utterance 未触发 LLM，将 Final 文本累积到 pending 供下一轮合并
+        - 未触发路径由 on_final_result 统一负责（final 在 speech_end 后
+          ~200-500ms 才到达，此处 asr_result 通常为空或 partial）
         """
         final_text = ""
         if asr_result:
@@ -196,16 +212,62 @@ class DualStreamSession:
             pipeline_task = self._pipeline_task
             if pipeline_task is not None:
                 asyncio.create_task(self._finalize_turn(pipeline_task))
-        else:
-            # 当前 utterance 未触发 LLM：将 Final 文本累积到 pending
-            # 这样多句未触发回复的话会合并为单条 user 上下文，避免上下文膨胀
-            if final_text:
-                if self._pending_user_text:
-                    self._pending_user_text = f"{self._pending_user_text} {final_text}"
-                else:
-                    self._pending_user_text = final_text
 
-        self._has_triggered_this_utterance = False
+        # 注意：不在此处重置 _has_triggered_this_utterance。
+        # final 结果在 speech_end 之后才到达，on_final_result 需要凭此 flag
+        # 判断该 utterance 是否已触发 pipeline；flag 由下一次 speech_start 重置。
+
+    async def on_final_result(self, asr_result: dict, is_speaking: bool = False) -> None:
+        """ASR Final Result 兜底驱动：短语音无 partial 时的 pipeline 触发入口
+
+        VAD 门控下语音段常被切到 <1.5s，短句可能全程无 partial（说话即结束），
+        若仅依赖 on_partial_result 触发，短语音永远得不到 LLM 响应（2026-08-05
+        实测：4 轮测试 pipeline 零启动）。此处兜底：
+        - 已触发：仅修正 Final 文本用于上下文记录（比 Partial 准确）
+        - 未触发且文本达阈值：合并 pending + final 直接触发 pipeline
+        - 未触发且文本过短：累积 pending，留待下一 utterance 合并
+        - is_speaking=True（final 迟到，用户已开说下一句）：仅合并 pending，
+          不得触发过时 pipeline 抢话（2026-08-05 实测 pending 重复合并复现）
+        """
+        text = asr_result.get("text", "").strip()
+        if not text:
+            return
+
+        # 推送 Final 转写文本给前端（语音识别的最终确认）
+        await self._send_partial(text, is_final=True)
+
+        if self._has_triggered_this_utterance:
+            # 已由 Partial 触发：仅修正 Final 文本
+            self._final_user_text = text
+            return
+
+        # 未触发：文本过短（<2 字）或 final 迟到（用户已在说下一句），
+        # 均只累积 pending，不单独触发
+        if len(text) < self._trigger_char_threshold or is_speaking:
+            if self._pending_user_text:
+                self._pending_user_text = f"{self._pending_user_text} {text}"
+            else:
+                self._pending_user_text = text
+            return
+
+        # 兜底触发：合并 pending + final，直接启动 pipeline
+        self._has_triggered_this_utterance = True
+        if self._pending_user_text:
+            full_user_text = f"{self._pending_user_text} {text}"
+            self._pending_user_text = ""
+        else:
+            full_user_text = text
+
+        self._current_user_text = full_user_text
+        self._final_user_text = text  # Final 即最准确文本，直接用于上下文记录
+
+        logger.info(f"[DIAG-PARTIAL] on_final_result fallback trigger, text='{full_user_text}'")
+        await self._send_prefill_started(full_user_text)
+
+        # 异步启动 LLM → TextSmoother → TTS 流水线，不阻塞音频帧接收
+        self._pipeline_task = asyncio.create_task(self._run_pipeline(full_user_text))
+        # 兜底路径 speech_end 已过，无人调度 _finalize_turn，此处自行调度记录上下文
+        asyncio.create_task(self._finalize_turn(self._pipeline_task))
 
     async def _run_pipeline(self, user_text: str) -> None:
         """运行 LLM → TextSmoother → TTS 全链路流水线
@@ -220,7 +282,8 @@ class DualStreamSession:
         """
         try:
             # 延迟导入避免循环依赖
-            from server.handlers.chat import _build_messages, _get_agent_config, _get_llm_client_for_agent
+            from server.handlers.chat import _get_agent_config, _get_llm_client_for_agent
+            from server.prompt_builder import build_messages
             from server.dependencies import get_context_manager
             from server.services.text_smoother import TextSmoother
 
@@ -241,7 +304,7 @@ class DualStreamSession:
             # is_realtime_voice=True 跳过 MemoryRouter/HybridSearch/重型隐藏提示词，
             # 仅保留核心 System Prompt + 最近 2 轮对话，省去 ~1500 tokens Prefill（100-200ms）
             # tts_engine 透传：orpheus 引擎时注入 orpheus_voice_prompt（含情感标签指南）
-            messages = _build_messages(
+            messages = build_messages(
                 agent_config, context_mgr, self.session_id,
                 user_text, is_realtime_voice=True,
                 tts_engine=self._engine,
@@ -251,10 +314,13 @@ class DualStreamSession:
             llm = _get_llm_client_for_agent(agent_config)
 
             # 4. LLM 流式输出（vLLM 90 tokens/s, TTFT ~80ms）
+            # 实时语音回复应为短口语（2~3 句），max_tokens 限制 150：
+            # 阻断多轮上下文污染后 LLM 进入长文总结模式（实测单轮 370+ chunk），
+            # 避免单 pipeline 长时间占用 TTS 导致并发排队、端到端延迟暴涨
             llm_stream = llm.stream_chat(
                 messages=messages,
                 temperature=agent_config.get("temperature", 0.7),
-                max_tokens=agent_config.get("max_tokens", 4096),
+                max_tokens=min(agent_config.get("max_tokens", 4096), 150),
             )
 
             # 5. TextSmoother 平滑缓冲（30ms 滑动窗口聚合碎片 Token）
@@ -277,21 +343,8 @@ class DualStreamSession:
             self._tts_chunk_index = 0
             self._current_assistant_text = ""
 
-            # 根据 TTS 引擎构建合成参数：
-            # - orpheus 引擎：使用预设音色（tara/leo 等），不传 ref_audio/ref_text
-            #   Orpheus 通过 voice 参数选择音色，无需参考音频克隆
-            # - f5-tts 等引擎：使用参考音频克隆，传 ref_audio_path/ref_text
-            tts_kwargs: dict = {}
-            if self._engine == "orpheus":
-                # Orpheus 使用预设音色，不需要 ref_audio/ref_text
-                if self._voice:
-                    tts_kwargs["voice"] = self._voice
-            else:
-                # F5-TTS 使用参考音频克隆
-                if self._ref_audio_path:
-                    tts_kwargs["ref_audio_path"] = self._ref_audio_path
-                if self._ref_text:
-                    tts_kwargs["ref_text"] = self._ref_text
+            # 根据 TTS 引擎构建合成参数（见 _build_tts_kwargs）
+            tts_kwargs: dict = self._build_tts_kwargs()
 
             async for chunk in self.tts_service.synthesize_stream_fine(
                 token_stream=smoothed_stream,
@@ -387,13 +440,92 @@ class DualStreamSession:
             self._pipeline_completed = False
             self._pipeline_task = None
 
-    async def _send_partial(self, text: str) -> None:
-        """发送 ASR Partial 识别文本给前端（实时显示用户正在说什么）"""
+    def _build_tts_kwargs(self) -> dict:
+        """根据 TTS 引擎构建合成参数：
+        - orpheus 引擎：使用预设音色（tara/leo 等），不传 ref_audio/ref_text
+        - f5-tts 等引擎：使用参考音频克隆，传 ref_audio_path/ref_text
+        """
+        tts_kwargs: dict = {}
+        if self._engine == "orpheus":
+            if self._voice:
+                tts_kwargs["voice"] = self._voice
+        else:
+            if self._ref_audio_path:
+                tts_kwargs["ref_audio_path"] = self._ref_audio_path
+            if self._ref_text:
+                tts_kwargs["ref_text"] = self._ref_text
+        return tts_kwargs
+
+    async def interrupt_and_reply(self, reply_content: str) -> None:
+        """AI 主动插话打断：停止当前 TTS 播放，并（若有 content）立即播一条插话回应。
+
+        由 LLM 打断判定（agent_interrupt_user）命中后调用，是"AI 打断人"的动作执行点。
+        - 无论当前是否有 Agent 的 TTS 在播，先 cancel 停播
+        - 主 LLM 模式：reply_content 由判定 LLM 直接给出，立即播报
+        - 独立 LLM 模式：reply_content 为空，仅让位，回复内容由主 pipeline 生成
+        """
+        # 停止当前正在播放的 TTS（若有）
+        if self._pipeline_task and not self._pipeline_task.done():
+            self._pipeline_task.cancel()
+            try:
+                await self._pipeline_task
+            except (asyncio.CancelledError, Exception):
+                pass
+
+        # 通知前端 TTS 已打断
+        await self.manager.send_message(self.client_id, {
+            "type": "voice.interrupted",
+            "data": {"reason": "agent_interrupt"}
+        })
+
+        # 有 reply_content 则立即播插话回应（直接合成，不经过 LLM）
+        if reply_content:
+            logger.info(f"[DIAG-INTERRUPT] AI 插话播报: {reply_content[:40]}")
+            # 插话回应作为新的 pipeline，后续用户开口可再次打断
+            self._pipeline_task = asyncio.create_task(self._play_reply(reply_content))
+
+    async def _play_reply(self, reply_content: str) -> None:
+        """直接合成并播报一段固定文本（AI 插话回应），不经过 LLM。
+
+        复用 TextSmoother + TTS 细粒度流式合成链路，与主 pipeline 一致。
+        """
+        if not reply_content:
+            return
+        from server.services.text_smoother import TextSmoother
+
+        async def _reply_tokens():
+            # 按字符产出，模拟 LLM token 流（TextSmoother 会按窗口聚合）
+            for ch in reply_content:
+                yield ch
+
+        await set_tts_playing(self.client_id, True)
+        self._tts_chunk_index = 0
+        self._current_assistant_text = ""
+        try:
+            async for chunk in self.tts_service.synthesize_stream_fine(
+                token_stream=TextSmoother.smooth(
+                    _reply_tokens(), window_ms=30, char_threshold=2
+                ),
+                **self._build_tts_kwargs(),
+            ):
+                if chunk.get("is_final"):
+                    await self._send_tts_chunk(chunk, is_final=True)
+                    break
+                text_segment = chunk.get("text_segment", "")
+                if text_segment:
+                    self._current_assistant_text += text_segment
+                if chunk.get("audio_data"):
+                    await self._send_tts_chunk(chunk, is_final=False)
+        finally:
+            await set_tts_playing(self.client_id, False)
+
+    async def _send_partial(self, text: str, is_final: bool = False) -> None:
+        """发送 ASR 识别文本给前端（Partial 实时显示 / Final 最终确认）"""
         await self.manager.send_message(self.client_id, {
             "type": VoiceActions.PARTIAL,
             "data": {
                 "text": text,
-                "is_final": False
+                "is_final": is_final
             }
         })
 
@@ -936,6 +1068,29 @@ def register_audio_handlers(
                 message=str(e)
             ))
 
+    async def _maybe_agent_interrupt(session, asr_result):
+        """非阻塞"AI 打断人"判定：命中后停当前 TTS 并播插话回应。
+
+        内部判定（agent_interrupt_user.on_asr_partial_result）可能调用 LLM（~8s），
+        因此必须由调用方以 create_task 异步发起，绝不阻塞音频帧处理。
+        """
+        try:
+            from server.services.agent_interrupt_user import get_agent_interrupt_module
+            agent_interrupt = get_agent_interrupt_module()
+            text = (asr_result.get("text") or "").strip()
+            if not text:
+                return
+            res = await agent_interrupt.on_asr_partial_result(
+                text,
+                is_final=bool(asr_result.get("is_final", False)),
+            )
+            if res.get("should_interrupt"):
+                await session.interrupt_and_reply(res.get("reply_content", ""))
+        except asyncio.CancelledError:
+            pass
+        except Exception as e:
+            logger.error(f"AI 插话判定错误: {e}")
+
     async def handle_voice_dual_stream(websocket, message, client_id):
         """双流式语音 handler：编排 ASR → LLM → TTS 全链路流水线
 
@@ -1079,7 +1234,10 @@ def register_audio_handlers(
             # 复用现有 AudioStreamProcessor 进行 VAD + ASR 处理
             # 不设置 on_partial_result 回调，避免单例跨客户端干扰
             # 直接从返回值中检查 asr_result 判断是否为 Partial
-            result = await stream_processor.process_audio_chunk(audio_data)
+            # skip_interrupt=True：vad_processor 内部的 agent_interrupt 判定不触发，
+            # 由下方 handler 层 _maybe_agent_interrupt 统一接管（可捕获当前 session，
+            # 且用非阻塞 create_task，避免主 LLM 判定阻塞帧处理）
+            result = await stream_processor.process_audio_chunk(audio_data, skip_interrupt=True)
 
             _t1 = _diag_time.monotonic()
             logger.info(f"[DIAG] process_audio_chunk took {(_t1-_t0)*1000:.1f}ms, vad_state_changed={result.get('vad',{}).get('state_changed')}, has_asr={result.get('asr') is not None}")
@@ -1093,10 +1251,22 @@ def register_audio_handlers(
                     # 用户开始说话 → 全双工打断触发点
                     # 用户开口即停止 TTS，省去等待 ASR 识别的 ~200ms
                     await session.on_vad_speech_start()
+                    # 通知插话判定模块：用户开始说话（用于正确计算说话时长）
+                    try:
+                        from server.services.agent_interrupt_user import get_agent_interrupt_module
+                        get_agent_interrupt_module().on_user_speech_start()
+                    except Exception:
+                        pass
                 else:
                     # 用户说话结束 → VAD 兜底修正 Final 文本
                     # 不重启已由 Partial 启动的 LLM 流程
                     await session.on_vad_speech_end(asr_result)
+                    # 通知插话判定模块：用户结束说话
+                    try:
+                        from server.services.agent_interrupt_user import get_agent_interrupt_module
+                        get_agent_interrupt_module().on_user_speech_end()
+                    except Exception:
+                        pass
 
                 # 发送 VAD 状态给前端（与半双工模式格式一致，保持兼容）
                 status = "speech_start" if vad_result["is_speaking"] else "speech_end"
@@ -1112,6 +1282,21 @@ def register_audio_handlers(
             # is_final=False 即为 Partial，不等 VAD on_end，省下 ~500ms
             if asr_result and not asr_result.get("is_final", True):
                 await session.on_partial_result(asr_result)
+            # ASR Final Result 兜底：短语音（VAD 段 < partial 阈值）全程无 partial，
+            # final 是唯一触发机会；已触发时仅修正上下文文本（详见 on_final_result）。
+            # 透传当前 VAD 状态：final 迟到且用户已开说下一句时仅合并 pending 不触发
+            elif asr_result and asr_result.get("is_final"):
+                await session.on_final_result(
+                    asr_result,
+                    is_speaking=vad_result.get("is_speaking", False),
+                )
+
+            # "AI 打断人"：任何时刻，只要 ASR 产出有效文本，就用非阻塞协程判定
+            # 是否要插话。判定内部有说话时长(1s)+冷却(3s)保护，频率受限；
+            # 命中后停当前 TTS 并播插话回应（主 LLM 模式带 reply_content）。
+            # 非阻塞 create_task：判定内部会调 LLM（可能 ~8s），绝不阻塞帧处理。
+            if asr_result and asr_result.get("text"):
+                asyncio.create_task(_maybe_agent_interrupt(session, asr_result))
 
             # 发送 VAD 帧状态给前端（与半双工模式格式一致）
             await manager.send_message(client_id, {

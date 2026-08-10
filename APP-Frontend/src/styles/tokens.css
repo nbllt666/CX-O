@@ -1,0 +1,117 @@
+/*
+ * tokens.css — CXO-Pet 设计 Token 体系
+ * ============================================================================
+ * 视觉基调：扁平化 + 二次元元素 + 液态玻璃质感（Apple Liquid Glass）
+ * 结构：
+ *   1. 原语层（primitive）：唯一允许出现具体数值的层
+ *   2. 语义层（semantic）：:root（浅色）+ [data-theme="dark"]（暗色）双套
+ * 消费方式：tailwind.config.js 映射语义变量；组件层也可直接 var() 引用
+ * ============================================================================
+ */
+
+:root {
+  /* ======================== 1. 原语层 primitive ======================== */
+
+  /* 1.1 二次元三主色：樱花粉 / 梦境紫 / 星海青 */
+  --pink-300: #ffb7e1;
+  --pink-400: #ff9ecf;
+  --pink-500: #ff7bba;
+  --purple-300: #c9b8ff;
+  --purple-500: #9d7cff;
+  --purple-700: #7b5cdb;
+  --cyan-300: #a5ecff;
+  --cyan-500: #7cd8ff;
+  --cyan-700: #4fb3e0;
+
+  /* 1.2 中性色 */
+  --white: #ffffff;
+  --gray-50: #fafafc;
+  --gray-100: #f3f3f8;
+  --gray-200: #e6e6ef;
+  --gray-400: #a0a0b4;
+  --gray-600: #5c5c70;
+  --gray-800: #26263a;
+  --gray-900: #12121a;
+
+  /* 1.3 间距（4px 基准） */
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-6: 24px;
+  --space-8: 32px;
+
+  /* 1.4 圆角（Apple 风格大圆角） */
+  --radius-sm: 8px;
+  --radius-md: 12px;
+  --radius-lg: 16px;
+  --radius-xl: 20px;
+  --radius-2xl: 28px;
+
+  /* 1.5 动效时长 */
+  --duration-fast: 150ms;
+  --duration-normal: 250ms;
+  --duration-slow: 400ms;
+  --ease-spring: cubic-bezier(0.34, 1.56, 0.64, 1);
+
+  /* 1.6 字体 */
+  --font-sans:
+    'HarmonyOS Sans SC', 'PingFang SC', 'Microsoft YaHei', 'Segoe UI',
+    system-ui, -apple-system, sans-serif;
+
+  /* ======================== 2. 语义层 semantic（浅色） ======================== */
+
+  /* 2.1 背景 / 文字 */
+  --bg-primary: var(--gray-50);
+  --bg-secondary: var(--white);
+  --bg-tertiary: var(--gray-100);
+  --text-primary: var(--gray-900);
+  --text-secondary: var(--gray-600);
+  --border-color: var(--gray-200);
+
+  /* 2.2 强调色 */
+  --color-primary: var(--pink-500);
+  --color-primary-foreground: var(--white);
+  --color-secondary: var(--purple-500);
+  --color-secondary-foreground: var(--white);
+  --color-accent: var(--cyan-500);
+  --color-accent-foreground: var(--gray-900);
+
+  /* 2.3 液态玻璃层级（Liquid Glass：半透明 + backdrop-blur + 细腻高光） */
+  --glass-bg: rgba(255, 255, 255, 0.55);
+  --glass-bg-strong: rgba(255, 255, 255, 0.75);
+  --glass-border: rgba(255, 255, 255, 0.65);
+  --glass-blur: 20px;
+  --glass-highlight: inset 0 1px 0 rgba(255, 255, 255, 0.8);
+  --glass-shadow:
+    var(--glass-highlight),
+    0 8px 32px rgba(157, 124, 255, 0.12),
+    0 2px 8px rgba(18, 18, 26, 0.06);
+}
+
+/* ======================== 2. 语义层 semantic（暗色） ======================== */
+[data-theme='dark'] {
+  --bg-primary: var(--gray-900);
+  --bg-secondary: #1a1a28;
+  --bg-tertiary: var(--gray-800);
+  --text-primary: var(--gray-50);
+  --text-secondary: var(--gray-400);
+  --border-color: rgba(255, 255, 255, 0.08);
+
+  --color-primary: var(--pink-300);
+  --color-primary-foreground: var(--gray-900);
+  --color-secondary: var(--purple-300);
+  --color-secondary-foreground: var(--gray-900);
+  --color-accent: var(--cyan-300);
+  --color-accent-foreground: var(--gray-900);
+
+  /* 暗色玻璃：更低不透明度 + 顶部细高光描边 */
+  --glass-bg: rgba(26, 26, 40, 0.55);
+  --glass-bg-strong: rgba(26, 26, 40, 0.78);
+  --glass-border: rgba(255, 255, 255, 0.12);
+  --glass-highlight: inset 0 1px 0 rgba(255, 255, 255, 0.14);
+  --glass-shadow:
+    var(--glass-highlight),
+    0 8px 32px rgba(0, 0, 0, 0.4),
+    0 2px 8px rgba(0, 0, 0, 0.24);
+}

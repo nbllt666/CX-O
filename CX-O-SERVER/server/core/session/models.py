@@ -2,7 +2,7 @@ from datetime import datetime
 from enum import Enum
 from typing import Any, Dict, List, Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_serializer
 
 
 class SessionType(str, Enum):
@@ -31,8 +31,9 @@ class Session(BaseModel):
     is_active: bool = Field(default=True, description="是否激活")
     expires_at: Optional[datetime] = Field(default=None, description="过期时间")
 
-    class Config:
-        json_encoders = {datetime: lambda v: v.isoformat()}
+    @field_serializer("created_at", "updated_at", "last_accessed_at", "expires_at")
+    def _ser_dt(self, v: Optional[datetime]) -> Optional[str]:
+        return v.isoformat() if v else None
 
 
 class SessionMessage(BaseModel):
@@ -48,8 +49,9 @@ class SessionMessage(BaseModel):
     created_at: datetime = Field(default_factory=datetime.now, description="创建时间")
     is_deleted: bool = Field(default=False, description="是否删除")
 
-    class Config:
-        json_encoders = {datetime: lambda v: v.isoformat()}
+    @field_serializer("created_at")
+    def _ser_created(self, v: datetime) -> str:
+        return v.isoformat()
 
 
 class SessionStats(BaseModel):

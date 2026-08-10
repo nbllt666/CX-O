@@ -253,7 +253,7 @@ async def get_archive_stats():
         if not hasattr(memory_mgr, "archiver") or memory_mgr.archiver is None:
             raise HTTPException(status_code=503, detail="归档功能未启用")
 
-        stats = await memory_mgr.archiver.get_archive_stats()
+        stats = memory_mgr.archiver.get_archive_stats()
 
         return {"status": "success", "statistics": stats}
 
@@ -383,7 +383,7 @@ async def auto_archive_process(
         # ISO 格式将误判。改为 datetime 解析比较，统一时区处理。
         cutoff = datetime.now(timezone.utc) - timedelta(days=min_age_days)
 
-        old_memories = await memory_mgr.search_memories(
+        old_memories = memory_mgr.search_memories(
             memory_type=None, limit=1000, include_deleted=False
         )
 

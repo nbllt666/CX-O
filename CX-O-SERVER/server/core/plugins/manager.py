@@ -1,6 +1,7 @@
 import asyncio
 import importlib
 import importlib.util
+import inspect
 import json
 import os
 import sys
@@ -241,7 +242,7 @@ class PluginManager:
 
             # 调用初始化
             if plugin.instance and hasattr(plugin.instance, "initialize"):
-                if asyncio.iscoroutinefunction(plugin.instance.initialize):
+                if inspect.iscoroutinefunction(plugin.instance.initialize):
                     self._create_plugin_task(plugin_id, plugin.instance.initialize(context))
                 else:
                     plugin.instance.initialize(context)
@@ -276,7 +277,7 @@ class PluginManager:
 
             # 调用关闭
             if plugin.instance and hasattr(plugin.instance, "shutdown"):
-                if asyncio.iscoroutinefunction(plugin.instance.shutdown):
+                if inspect.iscoroutinefunction(plugin.instance.shutdown):
                     await plugin.instance.shutdown()
                 else:
                     plugin.instance.shutdown()
@@ -327,7 +328,7 @@ class PluginManager:
                 continue
 
             try:
-                if asyncio.iscoroutinefunction(hook.handler):
+                if inspect.iscoroutinefunction(hook.handler):
                     result = await hook.handler(event)
                 else:
                     result = hook.handler(event)
@@ -376,7 +377,7 @@ class PluginManager:
         # 如果插件已启用，通知配置变更
         if plugin.enabled and plugin.instance and hasattr(plugin.instance, "on_config_change"):
             try:
-                if asyncio.iscoroutinefunction(plugin.instance.on_config_change):
+                if inspect.iscoroutinefunction(plugin.instance.on_config_change):
                     self._create_plugin_task(plugin_id, plugin.instance.on_config_change(config))
                 else:
                     plugin.instance.on_config_change(config)

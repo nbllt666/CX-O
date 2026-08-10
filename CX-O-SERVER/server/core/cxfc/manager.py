@@ -109,6 +109,11 @@ class CXFCManager:
         plugin.tools = tools
         plugin.skills = skills
 
+        self._register_catalog(plugin.plugin_id, tools, skills)
+        await self._storage.save_plugin(plugin)
+
+    def _register_catalog(self, plugin_id: str, tools: List[Dict], skills: List[Dict]):
+        """将插件声明的 tools/skills 注册进工具与技能注册表（DRY 共享）。"""
         if self._tool_registry:
             for tool in tools:
                 try:
@@ -117,7 +122,7 @@ class CXFCManager:
                         description=tool.get("description", ""),
                         parameters=tool.get("parameters", {}),
                         category="cxfc",
-                        tags=[plugin.plugin_id],
+                        tags=[plugin_id],
                         enabled=True,
                     )
                 except Exception as e:
@@ -132,13 +137,11 @@ class CXFCManager:
                     trigger_keywords=skill_data.get("trigger_keywords", []),
                     trigger_events=skill_data.get("trigger_events", []),
                     auto_inject=skill_data.get("auto_inject", True),
-                    source_plugin_id=plugin.plugin_id,
+                    source_plugin_id=plugin_id,
                 )
                 self._skill_registry.register_skill(skill)
             except Exception as e:
                 logger.warning(f"注册 Skill {skill_data.get('name')} 失败: {e}")
-
-        await self._storage.save_plugin(plugin)
 
     async def connect_to_plugin(self, host: str, port: int) -> Optional[CXFCPluginInfo]:
         alive = await self._check_alive(host, port)
@@ -189,40 +192,25 @@ class CXFCManager:
             updated_at=datetime.now(),
         )
 
-        if self._tool_registry:
-            for tool in request.tools:
-                try:
-                    self._tool_registry.register(
-                        name=tool.get("name", ""),
-                        description=tool.get("description", ""),
-                        parameters=tool.get("parameters", {}),
-                        category="cxfc",
-                        tags=[plugin_id],
-                        enabled=True,
-                    )
-                except Exception as e:
-                    logger.warning(f"注册工具 {tool.get('name')} 失败: {e}")
-
-        for skill_data in request.skills:
-            try:
-                skill = SkillDefinition(
-                    name=skill_data.get("name", ""),
-                    description=skill_data.get("description", ""),
-                    prompt_template=skill_data.get("prompt_template", ""),
-                    trigger_keywords=skill_data.get("trigger_keywords", []),
-                    trigger_events=skill_data.get("trigger_events", []),
-                    auto_inject=skill_data.get("auto_inject", True),
-                    source_plugin_id=plugin_id,
-                )
-                self._skill_registry.register_skill(skill)
-            except Exception as e:
-                logger.warning(f"注册 Skill {skill_data.get('name')} 失败: {e}")
+        self._register_catalog(plugin_id, request.tools, request.skills)
 
         await self._storage.save_plugin(plugin)
         # BUG-B07 修复: 在锁内完成 _plugins 写入
         async with self._plugins_lock:
             self._plugins[plugin_id] = plugin
         return plugin
+
+    def _clear_catalog(self, plugin_id: str, tools: List[Dict]):
+        """清理某插件已注册的 tools/skills（DRY 共享，供断开与刷新复用）。"""
+        if self._tool_registry:
+            for tool in tools:
+                try:
+                    tool_name = tool.get("name", "")
+                    if hasattr(self._tool_registry, "delete_tool"):
+                        self._tool_registry.delete_tool(tool_name)
+                except Exception:
+                    pass
+        self._skill_registry.unregister_skills(plugin_id)
 
     async def disconnect_plugin(self, plugin_id: str, remove_persistent: bool = True):
         # BUG-B07 修复: 在锁内获取并删除插件,避免与 connect_to_plugin / heartbeat 等并发
@@ -231,16 +219,7 @@ class CXFCManager:
         if not plugin:
             return
 
-        if self._tool_registry:
-            for tool in plugin.tools:
-                try:
-                    tool_name = tool.get("name", "")
-                    if hasattr(self._tool_registry, "delete_tool"):
-                        self._tool_registry.delete_tool(tool_name)
-                except Exception:
-                    pass
-
-        self._skill_registry.unregister_skills(plugin_id)
+        self._clear_catalog(plugin_id, plugin.tools)
 
         if remove_persistent:
             await self._storage.delete_plugin(plugin_id)
@@ -320,12 +299,7 @@ class CXFCManager:
         if not plugin or plugin.status != PluginStatus.CONNECTED:
             return None
 
-        if self._tool_registry:
-            for tool in plugin.tools:
-                tool_name = tool.get("name", "")
-                if hasattr(self._tool_registry, "delete_tool"):
-                    self._tool_registry.delete_tool(tool_name)
-        self._skill_registry.unregister_skills(plugin_id)
+        self._clear_catalog(plugin_id, plugin.tools)
 
         await self._register_plugin_tools_and_skills(plugin)
         return plugin

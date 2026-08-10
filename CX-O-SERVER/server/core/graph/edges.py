@@ -189,7 +189,7 @@ class EdgeManager:
                 if not re.match(r'^[a-zA-Z0-9_]+$', key):
                     continue
                 conditions.append(f"json_extract(properties, '$.{key}') = ?")
-                params.append(json.dumps(value))
+                params.append(value)
 
         where_clause = " AND ".join(conditions)
 

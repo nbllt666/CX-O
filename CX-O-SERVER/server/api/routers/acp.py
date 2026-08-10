@@ -6,6 +6,7 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
 from server.core.exceptions import ACPError
+from server.core.acp.manager import ACPMessageInfo
 from server.core.logging_config import get_contextual_logger
 
 router = APIRouter()
@@ -91,7 +92,7 @@ async def discover_agents(request: ACPDiscoverRequest = None):
 
     try:
         acp_mgr = get_acp_manager()
-        discovery = ACPLanDiscovery(acp_mgr=acp_mgr)
+        discovery = ACPLanDiscovery(acp_manager=acp_mgr)
         agents = await discovery.discover_once(timeout=request.timeout if request else 5.0)
         return {
             "status": "success",
@@ -371,7 +372,7 @@ async def send_message(request: ACPSendMessageRequest):
 
 
 @router.post("/acp/receive")
-async def receive_external_message(payload: dict):
+async def receive_external_message(message: ACPMessageInfo):
     """接收外部 ACP Agent 通过 HTTP 投递的消息（移植自 CXHMS v3.1.0）
 
     此端点供外部 ACP Agent 的 send_to_main_system 调用，
@@ -382,7 +383,6 @@ async def receive_external_message(payload: dict):
     from server.core.acp.manager import ACPMessageInfo
 
     try:
-        message = ACPMessageInfo(**payload)
         acp_mgr = get_acp_manager()
         result = await acp_mgr.receive_external_message(message)
         return {"status": "success", "message": "消息已接收", "data": result.to_dict()}

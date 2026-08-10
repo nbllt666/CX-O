@@ -63,7 +63,11 @@ class DecayBatchProcessor:
                 continue
 
     async def process_batch(
-        self, batch_size: int = 100, sync: bool = False, dry_run: bool = False
+        self,
+        batch_size: int = 100,
+        sync: bool = False,
+        dry_run: bool = False,
+        offset: int = 0,
     ) -> BatchDecayResult:
         from server.core.memory.decay import DecayCalculator
 
@@ -71,7 +75,7 @@ class DecayBatchProcessor:
             self._batch_size = batch_size
 
         decay_calculator = DecayCalculator()
-        memories = self.memory_manager.search_memories(limit=self._batch_size)
+        memories = self.memory_manager.search_memories(limit=self._batch_size, offset=offset)
 
         if not memories:
             return BatchDecayResult(total=0, updated=0, failed=0, details=[])
@@ -106,7 +110,7 @@ class DecayBatchProcessor:
 
                     new_importance = score_to_importance(decayed_value)
 
-                    success = self.memory_manager.update_memory(
+                    success = await self.memory_manager.update_memory_async(
                         memory_id=memory_id,
                         new_importance=new_importance,
                         new_metadata={
@@ -150,13 +154,15 @@ class DecayBatchProcessor:
         total_failed = 0
         all_details = []
         batch_count = 0
+        offset = 0
 
         while True:
             batch_result = await self.process_batch(
-                batch_size=batch_size, sync=False, dry_run=dry_run
+                batch_size=batch_size, sync=False, dry_run=dry_run, offset=offset
             )
 
             batch_count += 1
+            offset += batch_size
             total_updated += batch_result.updated
             total_failed += batch_result.failed
             all_details.extend(batch_result.details)

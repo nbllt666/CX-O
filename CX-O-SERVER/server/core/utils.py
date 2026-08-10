@@ -1,4 +1,5 @@
 import asyncio
+import json
 import logging
 from typing import Any, Dict, List, Optional
 
@@ -24,6 +25,117 @@ def format_messages_for_summary(messages: List[Dict], max_content_length: int = 
             content = content[:max_content_length] + "..."
         lines.append(f"[{i}] {role}: {content}")
     return "\n".join(lines)
+
+
+def _strip_trailing_commas(s: str) -> str:
+    """移除对象/数组中的尾随逗号（字符串感知，不破坏字符串内逗号）。
+
+    仅在 json.loads 直接失败时调用，用于处理 LLM 输出的 `{"a": 1,}` 这类噪声。
+    """
+    out = []
+    in_str = False
+    escape = False
+    i, n = 0, len(s)
+    while i < n:
+        ch = s[i]
+        if escape:
+            out.append(ch)
+            escape = False
+            i += 1
+            continue
+        if in_str:
+            out.append(ch)
+            if ch == "\\":
+                escape = True
+            elif ch == '"':
+                in_str = False
+            i += 1
+            continue
+        if ch == '"':
+            in_str = True
+            out.append(ch)
+            i += 1
+            continue
+        if ch == ",":
+            j = i + 1
+            while j < n and s[j].isspace():
+                j += 1
+            if j < n and s[j] in "}]":
+                i += 1  # 尾随逗号：跳过
+                continue
+        out.append(ch)
+        i += 1
+    return "".join(out)
+
+
+def extract_json(text: Any, default: Any = None) -> Any:
+    """从文本中提取并解析 JSON 对象或数组。
+
+    统一处理 LLM 输出的常见噪声：markdown 代码栅栏、前后缀说明文字、
+    括号不平衡、尾随逗号等。解析失败返回 default。
+
+    Args:
+        text: 含 JSON 的字符串（或已是可解析值）
+        default: 解析失败时的回退值
+
+    Returns:
+        解析后的 JSON 值；失败返回 default。
+    """
+    if text is None:
+        return default
+    if not isinstance(text, str):
+        return text
+    s = text.strip()
+    if not s:
+        return default
+
+    # 剥 markdown 代码栅栏
+    if s.startswith("```"):
+        s = s.strip("`")
+        s = s[4:].strip() if s[:4].lower() == "json" else s
+
+    # 直接解析
+    try:
+        return json.loads(s)
+    except (ValueError, TypeError):
+        pass
+
+    # 括号平衡提取最外层 JSON 对象/数组（逐字符扫描，正确处理字符串内括号）
+    for open_ch, close_ch in (("{", "}"), ("[", "]")):
+        start = s.find(open_ch)
+        if start == -1:
+            continue
+        depth = 0
+        in_str = False
+        escape = False
+        for i in range(start, len(s)):
+            ch = s[i]
+            if escape:
+                escape = False
+                continue
+            if in_str:
+                if ch == "\\":
+                    escape = True
+                elif ch == '"':
+                    in_str = False
+                continue
+            if ch == '"':
+                in_str = True
+            elif ch == open_ch:
+                depth += 1
+            elif ch == close_ch:
+                depth -= 1
+                if depth == 0:
+                    sub = s[start : i + 1]
+                    try:
+                        return json.loads(sub)
+                    except (ValueError, TypeError):
+                        # 尾随逗号等噪声：清理后重试
+                        try:
+                            return json.loads(_strip_trailing_commas(sub))
+                        except (ValueError, TypeError):
+                            break
+    return default
 
 
 _shared_http_client: Optional[httpx.AsyncClient] = None

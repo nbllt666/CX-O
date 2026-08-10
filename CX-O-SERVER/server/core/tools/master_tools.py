@@ -791,9 +791,8 @@ async def acp_send_message(
             id=str(uuid.uuid4()),
             from_agent_id=acp._local_agent_id,
             to_agent_id=agent_id,
-            message_type=message_type,
-            content=message,
-            created_at=datetime.now().isoformat(),
+            msg_type=message_type,
+            content={"text": message},
         )
 
         await acp.send_message(msg)

@@ -3,6 +3,7 @@
 """
 
 import asyncio
+import inspect
 import threading
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -202,7 +203,7 @@ class ToolRegistry:
             tool.last_called = datetime.now().isoformat()
 
             if tool.function:
-                if asyncio.iscoroutinefunction(tool.function):
+                if inspect.iscoroutinefunction(tool.function):
                     try:
                         asyncio.get_running_loop()
                         # 在 async 上下文中调用同步方法。
@@ -274,7 +275,7 @@ class ToolRegistry:
             tool.last_called = datetime.now().isoformat()
 
             if tool.function:
-                if asyncio.iscoroutinefunction(tool.function):
+                if inspect.iscoroutinefunction(tool.function):
                     result = await tool.function(**(arguments or {}))
                 else:
                     result = tool.function(**(arguments or {}))

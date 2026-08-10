@@ -215,7 +215,7 @@ async def delete_node(node_id: str, cascade: bool = True, agent_id: str = Query(
 async def get_neighbors(
     node_id: str,
     max_depth: int = Query(default=1, ge=1, le=10),
-    direction: str = Query(default="both", regex="^(outgoing|incoming|both)$"),
+    direction: str = Query(default="both", pattern="^(outgoing|incoming|both)$"),
     agent_id: str = Query("default"),
 ):
     """获取邻居节点"""
@@ -526,7 +526,7 @@ async def get_important_nodes(
 
 @router.get("/algorithm/communities")
 async def get_communities(
-    method: str = Query(default="lpa", regex="^(lpa|louvain)$"),
+    method: str = Query(default="lpa", pattern="^(lpa|louvain)$"),
     agent_id: str = Query("default"),
 ):
     """社区发现"""
@@ -540,7 +540,7 @@ async def get_communities(
 
 @router.get("/algorithm/community-stats")
 async def get_community_stats(
-    method: str = Query(default="lpa", regex="^(lpa|louvain)$"),
+    method: str = Query(default="lpa", pattern="^(lpa|louvain)$"),
     agent_id: str = Query("default"),
 ):
     """获取社区统计信息"""

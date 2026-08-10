@@ -1,8 +1,10 @@
 from fastapi import APIRouter, Depends, HTTPException, Request
-from typing import Dict, Any
+from typing import Any, Dict, Optional
 import json
 import yaml
 from pathlib import Path
+
+from pydantic import BaseModel
 
 from server.core.logging_config import get_contextual_logger
 from server.config import Settings
@@ -11,6 +13,24 @@ from server.core.websocket import get_websocket_manager
 
 router = APIRouter()
 logger = get_contextual_logger(__name__)
+
+
+class SenseVoiceStreamingConfigRequest(BaseModel):
+    """SenseVoice Streaming 配置请求体"""
+
+    chunk_size: Optional[int] = None
+    hop_size: Optional[int] = None
+    look_back: Optional[int] = None
+
+
+class AdaptivePollingConfigRequest(BaseModel):
+    """Adaptive Polling 配置请求体"""
+
+    enabled: Optional[bool] = None
+    offset_ms: Optional[int] = None
+    window_size: Optional[int] = None
+    min_interval_ms: Optional[int] = None
+    max_interval_ms: Optional[int] = None
 
 
 def _get_services_config() -> Dict[str, Any]:
@@ -267,10 +287,10 @@ async def get_sensevoice_streaming_config():
 
 
 @router.post("/config/sensevoice-streaming")
-async def update_sensevoice_streaming_config(request: Request):
+async def update_sensevoice_streaming_config(request: SenseVoiceStreamingConfigRequest):
     """更新 SenseVoice Streaming 配置"""
     try:
-        data = await request.json()
+        data = request.model_dump(exclude_none=True)
         services = _get_services_config()
         if "services" not in services:
             services["services"] = {}
@@ -304,10 +324,10 @@ async def get_adaptive_polling_config():
 
 
 @router.post("/config/adaptive-polling")
-async def update_adaptive_polling_config(request: Request):
+async def update_adaptive_polling_config(request: AdaptivePollingConfigRequest):
     """更新 Adaptive Polling 配置"""
     try:
-        data = await request.json()
+        data = request.model_dump(exclude_none=True)
         services = _get_services_config()
         if "services" not in services:
             services["services"] = {}

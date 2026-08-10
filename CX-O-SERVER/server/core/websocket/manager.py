@@ -128,6 +128,15 @@ class WebSocketManager:
 
         logger.info(f"WebSocket 连接已断开: {client_id}, 当前连接数: {len(self.connections)}")
 
+        # 清理该客户端的双流式语音会话（根治孤儿 pipeline 泄漏：
+        # 不清理则 LLM+TTS 流水线持续运行占用资源并向空连接推流，
+        # 多轮累积致 TTS 服务并发排队、端到端延迟暴涨）
+        try:
+            from server.handlers.audio import cleanup_dual_stream_session
+            await cleanup_dual_stream_session(client_id)
+        except Exception as e:
+            logger.warning(f"清理双流式会话失败 {client_id}: {e}")
+
     async def send_to_client(self, client_id: str, message: Dict[str, Any]):
         """发送消息给指定客户端
 

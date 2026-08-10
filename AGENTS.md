@@ -138,6 +138,20 @@ CX-O-SERVER 在 spec `migrate-cxhms-radix-acp-multimodal` 下从 CXHMS 迁移了
 
 **变更追踪文档**（`.trae/documents/`）：6 个迁移文档（20260718_模块7/8/9/10 + 20260718_模块0_ACP隔离升级 + 20260719_模块0_ASRLLMTTS延迟验证）+ OBS-6 方案 C 重构文档（20260719_模块9_质量评分LLM评估重构）+ D5.6 复合根因修复文档（20260719_模块0_CXFC路由注入修复）。
 
+### 4.9 聊天管线与提示词工程收敛（2026-08-09）
+
+> 深度测试与架构/提示词优化阶段对聊天链路做了「去重 + 单入口」收敛，新增/整并以下核心模块。**新增模块一律以其为唯一真相源，禁止在别处复制实现。**
+
+| 模块 | 路径 | 职责 | 关键符号 |
+|------|------|------|----------|
+| 提示词组装 | `server/prompt_builder.py` | 收敛 handler/chat、api/routers/chat、anythingllm 三份聊天消息组装为**单一入口**；实时语音瘦身、hidden_prompt 注入、history 透传、多模态、CXFC 技能注入 | `build_messages` |
+| 聊天助手 | `server/chat_helpers.py` | 跨 HTTP 路由与 WS 处理器共享的 Agent 解析、LLM 客户端选择、工具收集唯一规范实现 | `get_agent_config` / `get_llm_client_for_agent` / `get_tools_for_agent` |
+| 聊天流式管线 | `server/core/chat/stream.py` | 流式聊天状态机 + 工具调用循环（`MAX_TOOL_ROUNDS=5` 截断、工具仅首轮注入、工具后二次生成不带工具），供 ACP 自动回复复用 | `ChatStreamState` / `generate_chat_stream` |
+| 打断判定收敛 | `server/services/interrupt_llm.py` | 统一「HTTP 调用 + JSON 解析 + 兜底降级」的打断模块 Ollama 判定助手，消除 asr_interrupt 与 agent_interrupt_user 约 40 行重复 | `call_ollama_decision` |
+| 连接池化 | `server/core/utils.py` | 共享 keep-alive HTTP 客户端，被 Ollama/TRTLLM 客户端、嵌入客户端、模型路由健康检查复用，消除逐请求建连 | `get_shared_http_client` |
+
+**消费方约束**：所有聊天入口（HTTP `/chat`、WS chat handler、ACP 自动回复）必须经 `prompt_builder.build_messages` 组装消息、经 `chat_helpers.get_tools_for_agent` 收集工具；流式管线统一走 `core/chat/stream.py`。新增聊天相关实现不得绕过上述单入口。
+
 ---
 
 ## 五、关键文件路径速查
@@ -157,6 +171,11 @@ CX-O-SERVER 在 spec `migrate-cxhms-radix-acp-multimodal` 下从 CXHMS 迁移了
 | 前端 API 客户端 | `CX-O-Frontend/src/api/clients/` |
 | 前端类型 | `CX-O-Frontend/src/api/clients/_types.ts` |
 | WS 协议 | `CX-O-SERVER/server/protocol/message.py`、`actions.py` |
+| 提示词组装单入口 | `CX-O-SERVER/server/prompt_builder.py` |
+| 聊天助手单入口 | `CX-O-SERVER/server/chat_helpers.py` |
+| 聊天流式管线 | `CX-O-SERVER/server/core/chat/stream.py` |
+| 打断判定收敛 | `CX-O-SERVER/server/services/interrupt_llm.py` |
+| 共享 HTTP 连接池 | `CX-O-SERVER/server/core/utils.py` |
 
 ---
 

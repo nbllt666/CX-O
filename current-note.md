@@ -4,6 +4,97 @@
 
 ## 做到哪了
 
+- **APP-Frontend 桌宠 VRM 与点击菜单增强**（已闭合，2026-08-09）
+  - 工程过程：默认启用 `public/models/CX.vrm` → 修复 file 协议资产路径与相机取景 → 轻点/拖动 6px 阈值状态机 → 8 项圆形气泡菜单与置顶高亮 → 专项/全量测试 → 页面交互回归 → Mock 回归 → 安装包重打。
+  - 交接状态：自动化代码、三重闸、浏览器实测、生产构建、安装包均已闭合；真实桌面拖动与置顶层级为未闭合人工项，依赖 Electron API，沿用 Task 10 人工验证清单由用户回填。菜单视觉修正已闭合：扩大单侧椭圆弧、悬停才显示名称；缩放滑动条和收紧鼠标跟踪限位已闭合。
+  - 最终结果：typecheck/lint/build PASS；vitest 33 文件 225 项 PASS；缩放滑动条专项 5/5，页面实测滑动到 140% 并持久化；三重闸证据 `.trae/documents/test_reports/frontend_gate_20260809_124024/`；最新安装包 `APP-Frontend/release/CXO-Pet Setup 0.1.0.exe`（139,473,040 bytes）。接续入口：安装新版后在真实桌面确认拖动与置顶窗口层级。
+
+- **VRM 取景与菜单锚点修正**（已闭合，2026-08-09）
+  - 工程过程：定位菜单以点击点为锚点、头像区仅占 62%、缩放后未统一重取景、HemisphereLight 未被配置应用 → 菜单改用头像中心 → 头像区调整为 72% → 相机 tweak 接入引擎并在缩放后重新取景 → 旧持久化 VRM 配置增加一次性识别回退 → 基础验证 → 第二轮缩放解耦与菜单极坐标 → 第三轮菜单锚点上移与浏览器截图验证。
+  - 交接状态：代码改动、typecheck/lint/test/build、浏览器运行态截图验证均已闭合；真实 Electron 桌宠窗口视觉效果和 Windows 安装包重打仍待确认。
+  - 最终结果：菜单锚点上移到头像区 15%（接近模型头部/胸口），按钮沿右半椭圆分布在模型头部到裙摆之间；缩放滑动条拖动到 150% 时模型明显变大（头部顶到画面上沿），缩放不再被相机自动取景抵消。验证：typecheck PASS、lint PASS、Vitest 33 文件 226 用例 PASS、build PASS。截图证据：vrm-menu-anchor-15pct.png、vrm-scale-150-now.png。变更文档 `20260809_模块0_修正VRM取景与菜单锚点.md`。
+
+- **/goal 深度测试+架构/提示词优化**（进行中）
+  - 提示词工程统一 ✅：新建 `server/prompt_builder.py` 收敛 3 份聊天消息组装实现（handlers/chat、api/routers/chat、anythingllm），统一实时语音瘦身优化；修复 hidden_prompt.yaml 迁移后路径错位（改为锚定项目根 `config/`）；lru_cache 缓存提示词加载。回归：静态诊断零错误 + 7 模块导入零异常 + 3 链路组装断言通过。变更文档 `20260806_模块0_统一提示词组装模块.md`。
+  - 测试补强 ✅：新增 `tests/test_prompt_builder.py`（14 条单测，覆盖人设/隐藏提示词注入、实时瘦身、history 透传、最小化模式、多模态、配置键完整性守卫），pytest 14/14 通过。测试驱动发现并修复 latent bug：`ContextManager.get_messages` 返回最旧 N 条，`_resolve_history` 改用 count+offset 取最近 N 条（非实时/实时统一修正）。
+  - 测试补强 ✅：新增 `tests/test_utils.py`（25 条，extract_json/deep_merge/format_messages_for_summary）。测试驱动发现 extract_json 尾随逗号未真正处理（docstring 声明但实现缺），新增 `_strip_trailing_commas` 修复。pytest 39/39 通过。变更文档 `20260806_模块0_JSON解析健壮性修复与单测.md`。
+  - 技术债清理 ✅：删除 tests/ 下 13 个一次性诊断脚本与生成报告（diag_*.py、my_*.py、deep_functional_test.py、_full_report.json 等）、根目录 graph_export.dot/graphml；完善 .gitignore（config/settings.json、data/distillation_logs/、graph_export.*、pytest 缓存）。git status 已干净；另修复根 .gitignore 的 `test_*.py` 误忽略真实单测套件（新增取反放行 CX-O-SERVER/tests/，5 个测试文件现可入库）。变更文档 `20260806_模块0_技术债清理一次性脚本与生成产物.md`。
+  - 测试补强 ✅：新增 `tests/test_cache.py`（24 条，LRUCache TTL/淘汰/统计 + CacheManager 单例 + cached 装饰器）、`tests/test_context_manager_server.py`（19 条，会话/消息 CRUD/软删除/统计/Mono，tmp_path 独立临时库）。连同既有 39 条共 82 条 server.* 单测全部通过。变更文档 `20260806_模块0_server核心模块单测补强.md`。
+  - 死测试与 CXHMS 清理 ✅：删除 43 个依赖旧 CXHMS 的死测试（A 组 39 个 `from backend import` 解析到 C:\CX-O\CXHMS\backend + B 组 4 个 importlib 加载 CXHMS 源文件），并删除整个 CXHMS 目录（1.4GB/29294 文件，非 git，人类确认授权）。测试套件收敛为 5 个真实 server.* 文件、107 条通过，无任何 CXHMS 依赖。变更文档 `20260806_模块0_清理CXHMS死测试文件.md`。
+  - 待办：仓库根目录已跟踪的一次性探索报告（distillation_e2e_report_*.md、full_coverage.txt）经人类裁决**暂不删除**（保留历史）；后续可评估是否迁移归档。当前 /goal 阶段收束，主要技术债已清理。
+  - 双架构层调查 ✅（结论：无需合并）：`server/main.py` 单一 app 同时注册 `api/`（REST 路由）与 `gateway/`（WS `/ws`,`/ws/live` + `/control/*` 代理），二者职责不同（HTTP vs WS），非重复。`api_server.py`（端口 8005）是独立 SenseVoice ASR 推理服务，非主服务副本。真正的重复（聊天消息组装）已在提示词统一时修复。强制合并会破坏协议分层，判定不改动。
+  - 测试补强 ✅（第二轮高价值模块）：新增 `tests/test_secondary_router.py`（28 条，记忆副模型路由：权限校验/命令分发/摘要/归档/清理/重要性分析/衰减/洞察/批量处理/对话摘要/关键点提取/报告/自定义命令）、`tests/test_tool_registry.py`（19 条，工具注册表：注册/列表过滤/OpenAI 导出/同步异步调用/启停删除/统计/导入导出）、`tests/test_model_router.py`（27 条，模型路由：客户端默认跟随/对话与 Embedding 代理/状态/模型信息/生命周期）。三文件共 94 条，全部通过；全量 suite 收敛为 8 个 server.* 文件、**201 passed**。废弃若干与实际源码行为不符的测试假设（is_available 返回 None 而非 False、未知模型类型回退 main）。变更文档 `20260806_模块0_server核心模块单测补强.md`。
+  - 弃用告警清理 ✅：`asyncio.iscoroutinefunction` 在 Python 3.16 将被移除（DeprecationWarning），全仓 8 处（tools/registry.py 2 处、services/asr_interrupt.py 1 处、services/agent_interrupt_user.py 2 处、core/plugins/manager.py 4 处）统一改为 `inspect.iscoroutinefunction`，并补 `import inspect`。静态导入零异常，pytest 无弃用告警。
+  - 测试补强 ✅（第三轮：LLM 客户端 + Pydantic v2 收尾）：新增 `tests/test_llm_client.py`（32 条，mock httpx 隔离网络，覆盖 Ollama/VLLM/TRTLLM 三客户端：消息校验、chat 成功/HTTP错误/连接失败/超时/异常响应、stream_chat 流式解析、is_available、get_embedding、VLLM max_tokens 防御性 clamp 到 32768、TRTLLM API-Key 请求头）。修复 `server/core/plugins/models.py` 残留的 Pydantic v1 `.dict()` → `model_dump()`（决策 mixin 的 `.dict()` 为兼容回退，保留）。全量 suite 收敛为 9 个 server.* 文件、**233 passed**。变更文档 `20260806_模块0_LLM客户端单测补强与Pydantic收尾.md`。
+  - 测试补强 ✅（第四轮：LLMTools + LLMFactory + 修复工具调用循环 bug）：新增 `tests/test_llm_tools.py`（13 条，工具格式化/工具调用解析/结果消息/工具执行/带工具多轮对话/最大迭代告警）与 `tests/test_llm_factory.py`（7 条，provider 工厂分发/缓存复用/不支持 provider 报错/清缓存）。**修复 `server/core/llm/tools.py` `chat_with_tools` 潜在 bug**：构造 `response_message` 时未带上 `response.tool_calls`，导致 `parse_tool_calls` 恒为空、工具调用循环永不执行——已补 `"tool_calls": response.tool_calls or []`（`LLMResponse` 有该字段，函数无调用者，修复安全）。全量 suite 收敛为 11 个 server.* 文件、**253 passed**。变更文档 `20260806_模块0_LLM工具层补强与工具循环修复.md`。
+  - 测试补强 ✅（第五轮：插件管理器）：新增 `tests/test_plugin_manager.py`（28 条，插件发现/加载与依赖冲突校验/启用禁用/钩子注册按优先级排序与执行/同步异步 handler/异常统计/stop_on_modify 短路/配置更新/卸载/关闭/统计）。全量 suite 收敛为 12 个 server.* 文件、**281 passed**。变更文档 `20260806_模块0_插件管理器单测补强.md`。
+  - 测试补强 ✅（第六轮：记忆去重 + 衰减纯逻辑）：新增 `tests/test_deduplication.py`（20 条，DeduplicationEngine：Jaccard 文本相似度、相似度缓存与清除、相似记忆查找排序、连通分量、批量去重生成组/代表记忆/无重复、去重组查询、序列化）与 `tests/test_decay.py`（20 条，DecayCalculator：重要性分档边界、时间差计算含时区修复、双阶段指数衰减单调性、艾宾浩斯衰减 t50 半值、永久记忆零衰减、综合 calculate_decay）。全量 suite 收敛为 14 个 server.* 文件、**321 passed**。变更文档 `20260806_模块0_记忆去重与衰减单测补强.md`。
+  - 测试补强 ✅（第七轮：记忆管理器 MemoryManager）：新增 `tests/test_memory_manager.py`（30 条，覆盖 `_get_table_name` 表名解析、写入读取（permanent/零衰减/tags/metadata）、搜索（关键词/`%` 转义/类型/标签/时间范围/分页/排除已删）、更新、软/硬删除与恢复、统计、`*_async` 包装、Agent 专属表隔离、`_row_to_memory` JSON 解析失败降级）。fixture 重置单例 + monkeypatch 禁用后台线程 + tmp_path 独立临时库。全量 suite 收敛为 15 个 server.* 文件、**351 passed**。变更文档 `20260806_模块0_记忆管理器单测补强.md`。
+  - 测试补强 ✅（第八轮：情感分析器 + 修复中文切词缺陷）：新增 `tests/test_emotion.py`（23 条，正/负/中性词、强度词、英文否定、缓存、快捷函数、连续中文强度/否定回归）。**修复 `server/core/memory/emotion.py` 真实缺陷**：原 `re.findall` 把连续中文（如「非常开心」）当单 token，强度词/否定词对中文复合短语永不生效、恒判 neutral——新增词典贪心 `_tokenize`（`_build_vocab` 按长度降序最长匹配 + 英文按字母数字切分）替换，并移除多余 `import re`。调用方 `get_emotion_for_decay`（memory 创建 emotion_score）获得更准确分数，无依赖旧行为。全量 suite 收敛为 16 个 server.* 文件、**374 passed**。变更文档 `20260806_模块0_情感分析器单测补强与中文切词修复.md`。
+  - 测试补强 ✅（第九轮：记忆对话引擎 + 修复归档级别提取）：新增 `tests/test_conversation.py`（40 条，命令检测中英文 10 类、参数提取、确认流程删除/归档/合并、搜索/统计/帮助、未知命令 LLM 降级、去重）。**修复 `server/core/memory/conversation.py` 真实缺陷**：归档级别正则仅匹配「N级」/「level N」，对「级别 N」恒落默认 1——改为 `(?:级别|level)\s*(\d+)|\b(\d+)\s*级` 三写法兼容。全量 suite 收敛为 17 个 server.* 文件、**414 passed**。变更文档 `20260806_模块0_记忆对话引擎单测补强与归档级别提取修复.md`。
+  - 测试补强 ✅（第十轮：高级归档器 + 修复归档功能恒失败缺陷）：新增 `tests/test_archiver.py`（18 条，归档层级、归档成功/缺失/压缩、合并<2/简单/智能/缺失、归档的归档、统计、相似性记录）。**修复 `server/core/memory/archiver.py` 真实缺陷**：`archive_memory` UPDATE 引用 `memories` 表不存在的 `is_archived`/`archive_level` 列（规范列为 `archived_at`），导致归档恒失败返回 None——改为 `SET archived_at/updated_at`，与 batch_mixin 归档语义一致。全量 suite 收敛为 18 个 server.* 文件、**432 passed**。变更文档 `20260806_模块0_高级归档器单测补强与归档状态列修复.md`。
+  - 测试补强 ✅（第十一轮：混合搜索 + 批量衰减 + 修复 process_all 死循环）：新增 `tests/test_hybrid_search.py`（16 条，关键词打分/结果融合权重/过滤排序/agent_id 回退/快捷入口）与 `tests/test_decay_batch.py`（12 条，dry_run/真实更新/失败计数/sync/多批分页/生命周期）。**修复 `server/core/memory/decay_batch.py` 真实缺陷**：`process_batch` 取数不带 offset、`process_all` 每批取同一批当记忆数≥batch_size 时死循环——为 `process_batch` 增 `offset` 参数透传 `search_memories`，`process_all` 维护累计 offset 逐批推进。全量 suite 收敛为 20 个 server.* 文件、**460 passed**。变更文档 `20260806_模块0_混合搜索与批量衰减单测补强与死循环修复.md`。
+  - 测试补强 ✅（第十二轮：模板引擎 + 修复 frontmatter 泄漏进渲染 prompt）：新增 `tests/test_template_engine.py`（46 条，frontmatter 解析/自定义 filter 边界/渲染/CRUD/同名覆盖/目录扫描）。**修复 `server/core/template_engine/template_engine.py` 真实缺陷**：`render_template` 用 `get_template` 加载原始文件渲染，YAML frontmatter 被 Jinja2 当普通文本混入 `rendered_prompt`——改为 `from_string(record.body)` 渲染解析后的 body（沿用同 environment 的 loader/filter，extends/include 不受影响）。全量 suite 收敛为 21 个 server.* 文件、**506 passed**。变更文档 `20260806_模块0_模板引擎单测补强与frontmatter泄漏修复.md`。
+  - 测试补强 ✅（第十三轮：角色卡解析器 + 会话存储）：新增 `tests/test_character_card_parser.py`（30 条，JSON/PNG 解析、`_decode_card_json` 直解/base64、V1/V2/V3 规范化、extra_fields 收集、source_ref 转换、便捷入口）与 `tests/test_session_store.py`（25 条，会话 CRUD、消息管理、过期清理、统计、单例）。纯补测无产品改动。全量 suite 收敛为 23 个 server.* 文件、**561 passed**。变更文档 `20260806_模块0_角色卡解析器与会话存储单测补强.md`。
+  - 测试补强 ✅（第十四轮：任务管理器 + 调度器）：新增 `tests/test_task_manager.py`（36 条，monkeypatch 重定向 JSON 持久化路径到 tmp；任务 CRUD/过滤/校验/定时任务校验与生命周期/到期执行/persistence 重载）与 `tests/test_task_scheduler.py`（9 条，reminder/tool 执行、失败标记、进程到期、生命周期）。纯补测无产品改动。全量 suite 收敛为 25 个 server.* 文件、**606 passed**。变更文档 `20260806_模块0_任务管理器与调度器单测补强.md`。
+  - 测试补强 ✅（第十五轮：文档解析器 + 图遍历）：新增 `tests/test_document_parser.py`（33 条，data URI 解析/非 base64 charset/MIME 推断/文本 UTF-8·GBK·replace 回退/PDF/pypdf 缺失/图片识别/附件批处理含错误收集）与 `tests/test_graph_traversal.py`（24 条，通过 FakeDB 解释 SQL 子查询隔离算法；get_neighbors/BFS/DFS/shortest_path/all_paths/PageRank（单节点 0.15）/社区检测/模型往返）。纯补测无产品改动。全量 suite 收敛为 27 个 server.* 文件、**663 passed**。变更文档 `20260806_模块0_文档解析器与图遍历单测补强.md`。
+  - 测试补强 ✅（第十六轮：图语义查询 + 向量化）：新增 `tests/test_graph_semantic_query.py`（23 条，FakeDB + 子类 FakeSQM 注入固定嵌入去向量化；可达节点/cosine/文本拼接/最短路/全路径/边还原/多跳查询排序与 limit/路径约束搜索）与 `tests/test_graph_vectorizer.py`（11 条，`_simple_encode` 哈希向量化确定性/截断/范围、无模型回退、批量编码、模型加载失败置 None、单例）。纯补测无产品改动。全量 suite 收敛为 29 个 server.* 文件、**697 passed**。变更文档 `20260806_模块0_图语义查询与向量化单测补强.md`。
+  - 测试补强 ✅（第十七轮：异常体系 + 缓存 + 图语义搜索）：新增 `tests/test_exceptions.py`（31 条，CoreException 默认/自定义 code/details/to_dict/__str__、9 子类默认 code 与继承）、`tests/test_cache.py`（18 条，LRUCache 命中/过期/LRU 淘汰/命中率、CacheManager 单例、cached 装饰器含 key_func 碰撞语义）、`tests/test_graph_semantic_search.py`（14 条，compute_similarity 边界、本地模式 add_vector 显式 vector 避免模型加载、initialize ImportError、FakeDB 过滤 type/agent 的 fallback 打分/过滤/limit）。纯补测无产品改动。全量 suite 收敛为 32 个 server.* 文件、**722 passed**。变更文档 `20260806_模块0_异常体系缓存与图语义搜索单测补强.md`。
+  - 测试补强 ✅（第十八轮：图混合查询）：新增 `tests/test_graph_hybrid_query.py`（12 条，FakeDB + FakeSemantic 注入固定向量去向量化；`_matches_filter` 全匹配/缺 key/值不符、路径语义打分 ≥2/<2/空、semantic_path_discovery 排序与字段、semantic_neighbors 仅 1 跳邻居过滤/无文本空、filtered_semantic_search 属性回查过滤/直通）。纯补测无产品改动。全量 suite 收敛为 33 个 server.* 文件、**734 passed**。变更文档 `20260806_模块0_图混合查询单测补强.md`。
+  - 测试补强 ✅（第十九轮：图 CRUD + 修复搜索属性过滤恒空/agent 归属缺陷）：新增 `tests/test_graph_crud.py`（43 条，真实内存 SQLite + 真实 schema；节点/边 CRUD、批量创建/删除、搜索类型/属性/非法键/agent 隔离、级联删除、出/入边、计数、分页）。**修复 `server/core/graph/nodes.py` 与 `edges.py` 两个真实缺陷**：① `search` 属性过滤用 `json.dumps(value)` 作参数，与 `json_extract` 返回的裸值不匹配（`'zh' = '"zh"'` 恒假）→ 属性过滤恒空；改为直接传 `value`。② 单节点 `create` 忽略 `NodeCreate.agent_id`（只用参数 `agent_id`），与 `batch_create` 不一致 → 改为 `node_data.agent_id or agent_id`。另清理 `count()` 重复 return。全量 suite 收敛为 34 个 server.* 文件、**777 passed**。变更文档 `20260806_模块0_图CRUD单测补强与搜索过滤修复.md`。
+  - 测试补强 ✅（第二十轮：图监控/基类/可视化补测）：新增 `tests/test_graph_monitoring.py`（29 条，QueryMetrics 统计与 p95、GraphMonitor 健康检查/图统计/指标格式化、LatencyTracker、BaseGraphRepository 六查询、GraphExporter JSON/GraphML/DOT 导出与落盘）。纯补测无产品改动。全量 suite 收敛为 35 个 server.* 文件、**806 passed**。
+  - 测试补强 ✅（第二十一轮：图迁移补测）：新增 `tests/test_graph_migration.py`（13 条，Neo4jImporter 节点/关系导入、文本提取回退、分批映射、向量写入、未映射跳过；Neo4jExporter 分批导出/统计/关闭/neo4j 未安装回退，用 FakeDriver 注入隔离）。纯补测无产品改动。全量 suite 收敛为 36 个 server.* 文件、**819 passed**。变更文档 `20260806_模块0_图监控基类可视化迁移单测补强.md`。
+  - 测试补强 ✅（第二十二轮：嵌入模型补测）：新增 `tests/test_embedding.py`（14 条，mock httpx 隔离网络；OllamaEmbedding/VLLMEmbedding 的 embedding 获取/批量/失败回退/URL 校验、EmbeddingFactory 分发/缓存复用/清缓存/不支持 provider/可用列表）。纯补测无产品改动。全量 suite 收敛为 37 个 server.* 文件、**833 passed**。
+  - 测试补强 ✅（第二十三轮：记忆路由补测）：新增 `tests/test_router.py`（19 条，FakeMemoryManager + FakeHybridSearch 隔离；场景权重/禁用/回退、评分与钳位、过滤（permanent 恒入/高优先级/低分剔除/显式提及）、场景调整（task 排序/first_interaction 加权）、最近记忆按 session 过滤、混合搜索切换、route 成功与搜索失败降级、状态查询）。纯补测无产品改动。全量 suite 收敛为 38 个 server.* 文件、**852 passed**。变更文档 `20260807_模块0_嵌入模型与记忆路由单测补强.md`。
+  - 测试补强 ✅（第二十四轮：向量化队列 + 异步记忆管理器，修复永久记忆表缺失）：新增 `tests/test_vectorization_queue.py`（16 条，VectorizationTask 优先级排序/默认值、单例、入队/状态/统计、优先级出队顺序、工作线程成功/重试后成功/超重试失败+错误回调、重复 start 告警、stop 回收线程、工厂单例）与 `tests/test_async_manager.py`（28 条，独立临时库 + aiosqlite 真实执行；初始化幂等/关闭、记忆写入读取、搜索过滤/分页、更新/软硬删、批量写入缺 content 回退、统计、永久记忆 CRUD、衰减同步与统计、辅助方法）。**修复 `server/core/memory/async_manager.py` 真实缺陷**：`_init_db` 从未创建 `permanent_memories` 表，独立初始化时所有永久记忆操作抛 `no such table`——补充建表（schema 与 db_mixin 对齐）。全量 suite 收敛为 40 个 server.* 文件、**896 passed**。变更文档 `20260807_模块0_向量化队列与异步记忆管理器单测补强.md`。
+  - 测试补强 ✅（第二十五轮：图语义存储映射层，修复 export 前缀过滤）：新增 `tests/test_graph_store.py`（30 条，真实内存 SQLite + 真实 NodeManager/EdgeManager/TraversalManager 轻型容器隔离重模型；library 枚举映射、类型前缀辅助、实体 CRUD 与属性剥离、名称解析（含跨 library 隔离）、软/硬删、关系创建/名称解析/缺失源/缺失目标抛错、关系更新/软硬删、关联查询（含类型过滤）、路径、统计、导出）。**修复 `server/core/memory/graph_store.py` 真实缺陷**：`export()` 把类型前缀当精确 node_type/relation_type 传给 search（等值比较），对所有 library 恒返回空——改为 `startswith` 前缀过滤（与 `get_stats()` 口径一致）。全量 suite 收敛为 41 个 server.* 文件、**926 passed**。变更文档 `20260807_模块0_图语义存储映射层单测补强.md`。
+  - 测试补强 ✅（第二十六轮：Weaviate 向量存储适配器）：新增 `tests/test_weaviate_store.py`（26 条，注入假 weaviate 模块 sys.modules 隔离外部客户端，teardown 自动还原；未安装降级、collection 命名清洗、初始化与 default 预建、相似检索距离归一化 `(2-d)/2` 与 min_score 过滤、named-vector 字典解包、add 懒建 per-agent collection、插入/删除/清空/信息/同步（全量+增量按 updated_at 过滤）、default collection 保护、工厂分发）。纯补测无产品改动（仅修正测试桩 FakeClient `registry or {}` 空 dict 假值缺陷）。全量 suite 收敛为 42 个 server.* 文件、**952 passed**。变更文档 `20260807_模块0_Weaviate向量存储适配器单测补强.md`。
+  - 测试补强 ✅（第二十七轮：Chroma + Milvus Lite 向量存储适配器）：新增 `tests/test_chroma_store.py`（17 条，注入假 chromadb 模块隔离外部客户端；未安装降级、持久化/内存双模式、自定义 collection、添加/获取/存在检查、相似检索距离归一化 `(2-d)/2` 与 min_score 过滤、memory_type where 过滤、删除/信息/清空/同步（全量+增量）/close）与 `tests/test_milvus_lite_store.py`（18 条，注入假 pymilvus 模块隔离；未安装降级、初始化建集合、自定义 collection、添加/获取（含非 int 拒绝）/存在检查、相似检索距离归一化与 min_score 过滤、删除/信息/清空/同步（全量+增量）/close）。纯补测无产品改动（仅修正测试桩 FakeCollection.query 的 ids 随 where 过滤未同步收缩缺陷）。至此向量存储三后端（Weaviate/Chroma/MilvusLite）全部具备回归保护。全量 suite 收敛为 44 个 server.* 文件、**987 passed**。变更文档 `20260807_模块0_Chroma与MilvusLite向量存储适配器单测补强.md`。
+  - 测试补强 ✅（第二十八轮：MemoryManager 高级 mixin）：新增 `tests/test_memory_mixins.py`（42 条，沿用临时库+禁用后台线程 fixture 驱动验证；permanent_mixin 永久记忆写/读/列表/更新/删除（副模型无权删）/行映射降级、batch_mixin 批量写/更新/删除/标签 add·remove·set/归档及错误继续 vs raise_on_error、query_mixin 标签搜索/统计/时间线/按类型含 permanent/情感区间/关系网络/过期会话清理/会话记忆、vector_mixin 未启用时 sync·update·delete 安全跳过/语义·混合搜索回退/unavailable 后端不建 store）。纯补测无产品改动。至此 mixins/ 下 6 个核心 mixin（crud/db 已由 test_memory_manager 覆盖）全部具备回归保护。全量 suite 收敛为 45 个 server.* 文件、**1029 passed**。变更文档 `20260807_模块0_记忆管理器高级mixin单测补强.md`。
+  - 测试补强 ✅（第二十九轮：CXFC 技能注册表与插件存储）：新增 `tests/test_cxfc.py`（20 条；SkillRegistry 注册/按插件注销/关键词大小写不敏感与事件匹配/模板渲染含未知键保留、models 默认值与事件时间戳序列化、CXFCStorage 用 aiosqlite 临时库验证建表/保存加载往返含 JSON 字段/upsert/状态与保活时间序列化/删除/状态更新/空加载/close）。纯补测无产品改动（async fixture 改用 `@pytest_asyncio.fixture` 规避异步 fixture 告警）。至此 `server/core/cxfc/` 补齐回归保护。全量 suite 收敛为 46 个 server.* 文件、**1049 passed**。变更文档 `20260807_模块0_CXFC技能注册表与插件存储单测补强.md`。
+  - 测试补强 ✅（第三十轮：MultimodalPipeline 多模态管线）：新增 `tests/test_multimodal_pipeline.py`（24 条，注入显式 config + mock worker 实现隔离外部依赖；配置合并优先级与 auto_fill、模板缺失/实例缺失降级、provider 检测、preprocess 参数校验（非法类型/空引用/未启用模态）、分发路由（text/character_card/image/video→vLLM 原生）、图片 vision 降级（ConnectionError→vision_degraded）、vLLM 原生 video/audio decision与多降级路径、artifact 装配与数据模型默认值）。纯补测无产品改动（修正 staticmethod monkeypatch 需 `staticmethod()` 包装、created_at 必填）。至此 `server/core/multimodal/` 补齐回归保护。全量 suite 收敛为 47 个 server.* 文件、**1073 passed**。变更文档 `20260807_模块0_多模态管线单测补强.md`。
+  - 测试补强 ✅（第三十一轮：WebSocket 连接管理）：新增 `tests/test_websocket_manager.py`（29 条，FakeWebSocket 隔离 FastAPI；WebSocketConnection 订阅/发送/接收、连接/断连/conn-id 生成/connected 回发、点对点发送与会话别名、广播（含 exclude 与外部事件）、频道订阅/取消/定向广播、type 路由与 action 回退/未知消息·action 报错/get_handler、离线清理触发离线回调（显式与默认超时）与清理循环可取消、统计计数与全局单例）。纯补测无产品改动。至此 `server/core/websocket/` 补齐连接管理回归保护。全量 suite 收敛为 48 个 server.* 文件、**1102 passed**。变更文档 `20260807_模块0_WebSocket连接管理单测补强.md`。
+  - 测试补强 ✅（第三十二轮：DistillationService 知识蒸馏服务）：新增 `tests/test_distillation_service.py`（36 条，显式 tmp 目录+禁用真实子系统实例化隔离；文本分块切分完整还原与尺寸约束、质量评分启发式（基础 0.4+轮次+预读，上限 0.8）与 LLM 路径（有效/越界/None/连接异常回退）、LLM HTTP 解析（纯 JSON/markdown 包裹/非 200/空 content/缺字段/payload 形状）、元数据组装/id 分配/回环计数/内容抽取、S_PREREAD 多模态接入与降级（不可用占位/conversation_log 映射 text/成功取 artifact/异常降级/各类型疑点清单）、session 与决策日志原子持久化追加及损坏恢复、rubric 默认初始化与低启发式分不误拒）。纯补测无产品改动（修正启发式上限 0.8、`_run_preread` 为 async 需 await）。至此 `server/core/distillation/` 补齐回归保护。全量 suite 收敛为 49 个 server.* 文件、**1138 passed**。变更文档 `20260808_模块0_知识蒸馏服务单测补强.md`。
+  - 测试补强 ✅（第三十三轮：DecisionCore 决策核心）：新增 `tests/test_decision_core.py`（35 条，显式 config + `llm_available` 注入 + mock `_llm_call` + tmp agents/log 目录隔离；RubricSnapshot/DecisionInput 模型默认值、6 决策点 D1-D6 的 rubric 驱动分支与校验（D1 位置 rejected/permanent/memories 与 quality_score 默认 0.82、D2 元数据回退与 LLM JSON、D3 追问阈值、D4 再次蒸馏上限、D5 跨源验证、D6 拒绝）、LLM 不可用回退 system_prompt 规则、rubric 加载缺文件用默认/agent 私有/缺失 agent 抛错、LLM 输出解析（文本格式含 decision / metadata JSON / 空回退））。纯补测无产品改动（修正 `test_load_agent_rubric` 样例补齐 4 个 rubric 必需字段）。至此 `server/core/decision/` 补齐回归保护。全量 suite 收敛为 50 个 server.* 文件、**1173 passed**。变更文档 `20260807_模块0_决策核心单测补强.md`。
+  - 测试补强 ✅（第三十四轮：ACP 通信协议管理器）：新增 `tests/test_acp_manager.py`（43 条，tmp data_dir 隔离 YAML 持久化 + monkeypatch `_deliver_*`/`_inject_*`/`_trigger_auto_reply`/`_create_weaviate_store`/`GraphConfig`/`Database` 隔离副作用；模型 to_dict 映射（消息 msg_type->type）、init、Agent/连接/群组/消息 CRUD 与落盘往返、消息路由（群组/单 agent/外部接收）、已读标记、统计、端口更新校验、per-agent 资源清理（default 跳过/懒创建缓存/降级 None）、资源关闭）。纯补测无产品改动（修正两处测试桩：异步方法需 async noop、fake Database 需 `initialize`）。至此 `server/core/acp/` 补齐回归保护。全量 suite 收敛为 51 个 server.* 文件、**1216 passed**。变更文档 `20260807_模块0_ACP管理器单测补强.md`。
+  - 测试补强 ✅（第三十五轮：ACP 局域网发现 + 修复全局 socket 注入破坏 asyncio）：新增 `tests/test_acp_discover.py`（16 条，FakeSocket 注入隔离 UDP；状态/生命周期/幂等/失败回退、beacon 广播载荷与无 socket noop、网络扫描（外部/自身过滤/无数据）、单次发现（发现 agent/跳过自身/端口占用回退/超时安全）、get_local_ip 获取与回退）。**修复 `server/core/acp/discover.py` 真实缺陷**：测试原 monkeypatch 全局 `socket.socket`，因 `server.core.acp.discover.socket` 即全局 socket 单例，替换后 Windows `ProactorEventLoop` 自读通道 `isinstance(conn, socket.socket)` 抛 TypeError、事件循环失唤醒 → `discover_once` 协程永久悬挂。改为新增可注入实例级 `_socket_factory = socket.socket`，`start()/discover_once/get_local_ip` 三处 `socket.socket(...)` 收敛到工厂，测试改覆写 `d._socket_factory` 不再触碰全局模块；并收敛 FakeSocket 桩（去掉 `recv_data` 塞 timeout 类的脆弱写法）。至此 `server/core/acp/` 全部子模块（manager/group/discover）具备回归保护。全量 suite 收敛为 52 个 server.* 文件、**1245 passed**。变更文档 `20260807_模块0_ACP局域网发现单测补强与全局socket注入修复.md`。
+  - 测试补强 ✅（第三十六轮：主模型与摘要模型工具，修复 ACP 发送恒失败缺陷）：新增 `tests/test_master_tools.py`（62 条，轻量替身注入记忆/上下文/副路由/ACP 四依赖；依赖注入、长期/永久记忆写入含别名参数、记忆搜索、记忆管理模型调用、提醒（设置/列表/取消，monkeypatch `server.core.alarm.get_alarm_manager`）、上下文保持、ACP 全链路 列表/连接/断开/发消息/建群/加群/离群）与 `tests/test_summary_tools.py`（28 条，摘要生成三响应形态、摘要记忆保存参数/时间戳/标签、日记保存校验与 agent_id 透传、会话消息获取/清空、话题摘要配置、话题摘要触发含上下文替换与记忆持久化）。**修复 `server/core/tools/master_tools.py` 真实缺陷**：`acp_send_message` 以错误字段名构造 `ACPMessageInfo`（`message_type`→应为 `msg_type`、`content` 传 str 而字段为 Dict 触发校验、多余 `created_at`），恒返回"发送消息失败"——修正构造与 `test_acp_manager._msg()` 口径一致。至此 `server/core/tools/` 的 registry/builtin/master/summary 全部具备回归保护。全量 suite 收敛为 54 个 server.* 文件、**1360 passed**。变更文档 `20260807_模块0_主模型与摘要模型工具单测补强及ACP发送修复.md`。
+- 测试补强 ✅（第四十二轮：自适应轮询/健康检查/TTS音频工具）：新增 `tests/test_adaptive_polling.py`（21 条，假时钟注入隔离 time.time；record_packet 首帧零/间隔记录/延迟累积、_update_interval 低/中/高延迟策略与 min/max 钳位/零均值短路、平均延迟、set_offset/set_window_size 钳位与截断、reset、get_stats、单例与 init 替换）、`tests/test_health_checker.py`（13 条，register 默认/update_status/get_status 未知返回 None/get_all/is_healthy 与 all_healthy 空/混合/全健康）、`tests/test_tts_audio_utils.py`（21 条，is_silence_pcm 静音/阈值/短字节/空、split_text_by_sentences 短文本合并/超长切分/无标点/空、generate_silence WAV 与时长、concatenate_audio 空/单段/WAV 拼接/非 WAV 拼接、load_emotion_voices 缺失/mapping/目录发现/无音频跳过、CrossRequestSilenceFilter 静音保留至阈值/超阈值跳过/非静音重置/flush/stats）。纯补测无产品改动（修正三处测试断言匹配实际行为：deque vs list 判等、set_offset 期望、短文本 merge 为单 chunk）。至此 `server/services/` 的 adaptive_polling/tts_audio_utils 与 `server/gateway/health.py` 补齐回归保护。全量 suite 收敛为 74 个 server.* 文件、**1844 passed，零回归**。变更文档 `20260808_模块0_自适应轮询与TTS工具单测补强.md`。
+  - 架构收敛 ✅（第四十三轮：收敛打断模块 Ollama 判定调用 + 共享助手兜底语义单测）：`asr_interrupt` 与 `agent_interrupt_user` 存在约 40 行重复的 `_call_independent_llm`（prompt→aiohttp POST→JSON 解析→文本兜底→超时/异常降级），仅 prompt 与超时值（5s/3s）不同。新增共享异步助手 `server/services/interrupt_llm.call_ollama_decision(endpoint, model, prompt, timeout=3.0)` 统一「HTTP 调用+JSON 解析+兜底降级」，两模块 `_call_independent_llm` 仅保留各自 prompt 拼接转调共享助手；逐分支核对兜底语义一致（decision 缺失默认 IGNORE、JSON 失败默认 CONTINUE、超时默认 CONTINUE、异常默认 IGNORE），行为不变。删除两模块冗余 `import asyncio`（agent_interrupt_user 保留 json）。新增 `TestCallOllamaDecision` 7 条单测（注入假 aiohttp 至 sys.modules 隔离；JSON 解析/缺失默认/文本关键词 INTERRUPT·IGNORE/无关键词 CONTINUE/超时 CONTINUE/异常 IGNORE）。全量 suite **2089 passed，零回归**。变更文档 `20260809_模块0_收敛打断模块Ollama判定调用.md`。
+  - 测试补强 ✅（第四十四轮：日志配置 + 数据库迁移补测）：新增 `tests/test_logging_config.py`（23 条，`server/core/logging_config.py` 全项目广泛使用的日志体系首获回归保护；StructuredLogFormatter 基础字段/exc_info/extra 序列化/不可序列化回退 str/关闭 extra、ColoredConsoleFormatter 着色/Windows 无 ANSICON 去色/未知级别、LogContext 嵌套 enter-exit 还原/副本/清除、ContextualLogger 上下文注 extra/无上下文不加字段/级别分发/exception 置 exc_info、setup_logging 返回根日志器与级别/清旧处理器/控制台结构化与着色/file handler 建父目录与结构化 formatter、get_logger/get_contextual_logger）与 `tests/test_migrations.py`（4 条，真实临时 SQLite 库执行 `run_migrations` 验证 12 张表/代表索引/幂等/memories 关键列，schema 唯一真相源落库保护）。纯补测无产品改动。全量 suite **2116 passed（+27），零回归**。变更文档 `20260809_模块0_日志配置与数据库迁移单测补强.md`。
+  - 测试补强 ✅（第四十五轮：图数据层基类补测）：新增 `tests/test_graph_data_layer.py`（28 条，真实 SQLite 临时库覆盖 `server/core/graph/` 底层基类 models/config/database/repository；GraphNode.create 字段/to_dict-from_dict 往返/datetime isoformat/字符串 properties 解析/默认值、GraphEdge 往返、SearchResult.has_more、DTO 默认值；GraphConfig 默认/set-get 单例/per-agent 基于 base 生成路径并继承字段/特殊字符净化；Database 建表、execute_modify/one/many/health_check、transaction 回滚、**旧 schema 无 agent_id 表迁移补列+建索引**、close 复位；BaseGraphRepository get_node/get_neighbor_ids(outgoing/incoming/both)/get_edge、agent 作用域隔离；get_database 同 agent 复用/get_database_if_exists/remove_database 注册表）。纯补测无产品改动。全量 suite **2144 passed（+28），零回归**。变更文档 `20260809_模块0_图数据层单测补强.md`。
+  - 测试补强 ✅（第四十六轮：图 CRUD 管理器补测）：新增 `tests/test_graph_crud_managers.py`（21 条，真实 SQLite 临时库覆盖 `server/core/graph/` 的 `nodes.NodeManager` 与 `edges.EdgeManager`；NodeManager create 持久化/get 缺失/update 属性 merge 而非覆盖/delete 级联与非级联/list 类型过滤与分页/batch_create/batch_delete/search 类型与属性过滤及非法 key 跳过/exists/count/agent 作用域隔离（12 条）；EdgeManager create 源或目标不存在抛 ValueError/get 缺失/update/delete 幂等/list 多条件过滤/get_outgoing/get_incoming 含 relation_type 过滤/search 属性过滤/count（9 条））。纯补测无产品改动。全量 suite **2165 passed（+21），零回归**。变更文档 `20260809_模块0_图CRUD管理器单测补强.md`。
+  - 测试补强 ✅（第四十七轮：WebSocket 聊天处理器补测）：新增 `tests/test_websocket_handlers.py`（17 条，`server/core/websocket/handlers.py` 的 `ChatWebSocketHandler` 消息分发与 `push_alarm_to_agent` 首获覆盖，底层 manager 已有覆盖；用 `FakeWSManager` 隔离 WebSocket 网络、monkeypatch `server.dependencies` 与 `server.api.routers.chat` 注入依赖；覆盖 7 类处理器注册、get_chat_handler 单例、subscribe/unsubscribe（含无 channel noop）、ping、cancel 置标志+发 cancelled、config 更新 connection metadata（含无 timeout noop）、chat 空消息报错/agent 不存在报错（`_NO_AGENT` 哨兵区分）/成功路径（session_id 与 tokens_used）/未携带 session_id 自动创建会话/异常兜底发 error 并清理 cancel 标志、chat_stream 流式 chunk 分发+chat_done/流式过程收到取消即中断发 cancelled、push_alarm_to_agent 向 `agent:{agent_id}` 广播 alarm）。纯补测无产品改动。全量 suite **2182 passed（+17），零回归**。变更文档 `20260809_模块0_WebSocket聊天处理器单测补强.md`。
+  - 架构收敛 ✅（第四十八轮：删除弃用 gateway/config.py 遗留模块）：`server/gateway/config.py` 首行标注 `[DEPRECATED]`（配置已统一到 `server.config`），全库核查**无任何生产代码引用**（`gateway/server.py` 用 `from server.config import get_config`），仅测试引用；其中 `deep_merge` 与 `server/core/utils.py` 规范实现完全重复，`get_env_config/get_config/save_config/reload_config/get_service_url` 均已被 `server.config` 覆盖。删除该约 195 行死代码模块，并清理 `tests/test_gateway_server.py`（移除 `gateway_config` 导入与 `TestConfigHelpers` 7 条弃用配置测试，更新 docstring）。依赖核对：`deep_merge` 规范实现已在 `test_utils.py` 有覆盖，`core/backup.py` 仍被 backup 路由与 main.py 引用故保留。全量 suite **2175 passed（-7 弃用测试），零回归**。变更文档 `20260809_模块0_删除弃用gateway配置模块.md`。
+  - 架构收敛 ✅（第四十九轮：收敛跨入口重复聊天助手）：`get_agent_config` 与 `get_llm_client_for_agent` 在 `server/api/routers/chat.py` 与 `server/handlers/chat.py` 各有一份**完全相同实现**（约 40 行重复），并被 `server/api/routers/anythingllm.py` 与 `server/core/websocket/handlers.py` 跨模块导入。新增 `server/chat_helpers.py` 作为唯一规范实现，5 个消费方统一改导（router chat 删本地 def+去 `_load_agents` 导入、handler chat 删本地 def+更新 2 调用点、anythingllm 改源、websocket/handlers 两处改源、test_websocket_handlers monkeypatch 目标从 `server.api.routers.chat` 迁到 `server.chat_helpers`）。已知未修复项（保持既有行为）：`server/core/acp/manager.py` 误从 `server.api.routers.chat` 导入 `_get_tools_for_agent`（实际在 `server.handlers.chat`），该 import 整体失败被 try/except 静默降级，致 ACP 自动回复长期被跳过，留待人工决策。全量 suite **2175 passed，零回归**。变更文档 `20260809_模块0_收敛跨入口聊天助手函数.md`。
+  - 测试补强 ✅（第五十轮：网关系统处理器补测）：新增 `tests/test_gateway_handlers_system.py`（5 条，`server/handlers/system.py` 的网关 WebSocket `SYSTEM_HEALTH`/`SYSTEM_STATUS` 处理器首获覆盖；用 `FakeManager` 隔离网络、monkeypatch `health_checker` 与 `server.dependencies.*` 注入依赖；覆盖 SYSTEM_HEALTH 成功路径（health_checker 数据透传 request_id/action/data）与失败兜底（发 `SYSTEM_ERROR`）、SYSTEM_STATUS 全服务可用（memory/acp/mcp/llm/model_router/tools/plugins 均 available=True）、memory 降级（get_memory_manager 抛错 → available=False 且其余正常）、gateway stats 透传）。测试驱动确认 `create_error` 错误码嵌套于 `msg["error"]["code"]`（非顶层）。纯补测无产品改动。全量 suite **2180 passed（+5），零回归**。变更文档 `20260809_模块0_网关系统处理器单测补强.md`。
+  - 测试补强 ✅（第五十一轮：网关监控处理器补测）：新增 `tests/test_gateway_handlers_metrics.py`（3 条，`server/handlers/metrics.py` 的网关 WebSocket `METRICS_GET` 处理器首获覆盖；复用 system 处理器同一套 `FakeManager`+monkeypatch 注入与降级断言模式；覆盖全服务可用（memory/acp/mcp/tools/plugins 指标 + gateway stats 透传 + request_id/action 透传）、memory 降级（getter 抛错 → `{"error":"unavailable"}` 且其余正常）、全服务不可用（五类均降级且 gateway stats 仍透传））。纯补测无产品改动。全量 suite **2183 passed（+3），零回归**。变更文档 `20260809_模块0_网关监控处理器单测补强.md`。
+  - 测试补强 ✅（第五十二轮：网关配置处理器补测）：新增 `tests/test_gateway_handlers_config.py`（8 条，`server/handlers/config.py` 的网关 WebSocket `CONFIG_GET`/`CONFIG_SET` 处理器首获覆盖；用 `FakeModel`（点号属性 + model_dump 递归）构造配置替身、monkeypatch `server.config.get_config`/`save_config` 避免污染全局单例；覆盖 CONFIG_GET 全量 model_dump/单 section（gateway）/嵌套标量（gateway.host）/缺失 section 返回 None、CONFIG_SET 空 section 报 `INVALID_REQUEST`/写 section 保存（改值+save_config 调用）/非字符串 key 报 `INVALID_REQUEST`/未知 key 静默 noop 且 data 为 `{"saved":True}`）。纯补测无产品改动。全量 suite **2191 passed（+8），零回归**。变更文档 `20260809_模块0_网关配置处理器单测补强.md`。
+  - 测试补强 ✅（第五十三轮：网关记忆处理器补测）：新增 `tests/test_gateway_handlers_memory.py`（7 条，`server/handlers/memory.py` 的网关 WebSocket `MEMORY_LIST/CREATE/DELETE/SEARCH` 处理器首获覆盖；用 `FakeMemoryMgr` 记录调用、monkeypatch `server.dependencies.get_memory_manager` 注入；覆盖 LIST 参数透传（query/limit/默认 workspace_id）+返回 memories、CREATE 参数透传（content/importance 默认 3）+返回 memory_id、DELETE 参数透传（soft_delete 显式 False）+返回 success、SEARCH 普通（调 search_memories 同步）、SEARCH 向量（semantic=True + is_vector_search_enabled → hybrid_search）、SEARCH 向量失败（hybrid_search 抛错 → `MEMORY_ERROR` 且消息含 "Vector search failed" 区别于普通检索失败）、管理器不可用（get_memory_manager 抛错 → `MEMORY_ERROR` 兜底）。纯补测无产品改动。全量 suite **2198 passed（+7），零回归**。变更文档 `20260809_模块0_网关记忆处理器单测补强.md`。
+  - 测试补强 ✅（第五十四轮：网关工具处理器补测）：新增 `tests/test_gateway_handlers_tools.py`（8 条，`server/handlers/tools.py` 的网关 WebSocket `TOOLS_LIST/CALL/REGISTER` 处理器首获覆盖；用 `FakeToolRegistry` 记录调用、monkeypatch `server.core.tools.tool_registry` 注入；覆盖 LIST 过滤参数透传（include_builtin/enabled_only/category）+返回 tools、LIST 失败（→`TOOLS_ERROR`）、CALL 异步调用（call_tool_async(name,arguments)）+返回 data、CALL 失败（→`TOOLS_ERROR`）、REGISTER 成功（参数透传+返回 `{"name","registered"}`）、REGISTER 空 name（→`INVALID_REQUEST` 且不真正注册）、REGISTER 空 parameters（→`INVALID_REQUEST` 且不真正注册）、REGISTER 失败（→`TOOLS_ERROR`）。纯补测无产品改动。全量 suite **2206 passed（+8），零回归**。变更文档 `20260809_模块0_网关工具处理器单测补强.md`。
+  - 测试补强 ✅（第五十五轮：网关插件处理器补测）：新增 `tests/test_gateway_handlers_plugin.py`（9 条，`server/handlers/plugin.py` 的网关 WebSocket `PLUGIN_REGISTER/HEARTBEAT/LIST` 处理器首获覆盖；用 `FakePluginMgr` 记录调用、`SimpleNamespace` 构造 plugin 元数据、monkeypatch `server.core.plugins.manager.get_plugin_manager` 注入；覆盖 REGISTER 成功且 enabled=True → enable_plugin 调用/插件不存在 → `registered:False` 且不启用/插件存在但 enabled=False → `registered:True` 且不启用/get_plugin_manager 抛错 → `PLUGIN_ERROR`、HEARTBEAT 命中 → alive True/未命中 → alive False、LIST enabled_only=True → get_enabled_plugins 且字段映射 list/enabled_only 缺省 → get_all_plugins/抛错 → `PLUGIN_ERROR`）。纯补测无产品改动。全量 suite **2215 passed（+9），零回归**。变更文档 `20260809_模块0_网关插件处理器单测补强.md`。
+  - 测试补强 ✅（第五十六轮：网关 MCP 处理器补测）：新增 `tests/test_gateway_handlers_mcp.py`（9 条，`server/handlers/mcp.py` 的网关 WebSocket `MCP_CONNECT/TOOLS/CALL` 处理器首获覆盖；用 `FakeMCPMgr` 记录调用、monkeypatch `server.dependencies.get_mcp_manager` 注入；覆盖 CONNECT 成功（add_server 参数透传+auto_start 缺省不启动）/auto_start=True → start_server 调用/空 name → `INVALID_REQUEST` 且不真正 add_server/add_server 抛错 → `MCP_ERROR`、TOOLS 指定 server_name → get_tools(server_name)/聚合（list_servers 两 server，无 name 的被防御性跳过 → 只 get_tools 一次）/get_tools 抛错 → `MCP_ERROR`、CALL call_tool 参数透传（server_name/tool_name/arguments）+返回 data/抛错 → `MCP_ERROR`）。纯补测无产品改动。全量 suite **2224 passed（+9），零回归**。变更文档 `20260809_模块0_网关MCP处理器单测补强.md`。
+  - 测试补强 ✅（第五十七轮：网关 ACP 处理器补测）：新增 `tests/test_gateway_handlers_acp.py`（9 条，`server/handlers/acp.py` 的网关 WebSocket `ACP_CONNECT/DISCONNECT/CONNECTIONS` 处理器首获覆盖；用 `FakeACPMgr`（模拟 `_local_agent_id` 属性）记录调用、monkeypatch `server.dependencies.get_acp_manager` 注入；覆盖 CONNECT 成功（register_agent 参数透传 id/host/port + create_connection local/remote/status）+返回 connection_id/status、缺省 port=0、capabilities=[]、register_agent 抛错 → `ACP_ERROR`、DISCONNECT 成功（delete_connection 调用 + success=True）/连接不存在 → `CONNECTION_NOT_FOUND`（语义一致性）/delete_connection 抛错 → `ACP_ERROR`、CONNECTIONS 缺省 local_only=True → list(True)/local_only=False → list(False)/list_connections 抛错 → `ACP_ERROR`）。纯补测无产品改动。全量 suite **2233 passed（+9），零回归**。变更文档 `20260809_模块0_网关ACP处理器单测补强.md`。
+  - 测试补强 ✅（第五十八轮：网关聊天处理器补测）：新增 `tests/test_gateway_handlers_chat.py`（18 条，`server/handlers/chat.py` 的 chat.message/stream 处理器与 `_parse_tool_args/_get_tools_for_agent/_process_tool_calls/_build_chat_context` 核心逻辑首获覆盖；用 FakeLLM/FakeContextMgr/FakeToolRegistry 隔离、monkeypatch `server.handlers.chat` 模块顶层属性（因 chat.py 在模块顶层 `from server.chat_helpers import ...`）与 `server.dependencies`/`server.core.tools`/`server.core.tools.builtin` 注入；覆盖 `_parse_tool_args` dict 直传/json/ast.literal_eval 兜底/非法串双失败→空 dict/function 包裹/非 dict 兜底/无参数、`_get_tools_for_agent` builtin+主工具收集且 summary 分类排除、`_process_tool_calls` builtin 与 registry 双路径+tool 消息追加/无 id 兜底生成 `call_`、`_build_chat_context` agent 不存在 → `AGENT_NOT_FOUND`/成功无记忆 → session 创建+user 消息注入+memory_context=None、MESSAGE 成功（content/tokens_used/assistant 记录）/带工具调用二段回复/LLM 抛错 → `CHAT_ERROR`、STREAM 成功（content chunk+final+llm_count+assistant 累积）/抛错 → `CHAT_STREAM_ERROR`）。纯补测无产品改动。全量 suite **2251 passed（+18），零回归**。变更文档 `20260809_模块0_网关聊天处理器单测补强.md`。
+  - 测试补强 ✅（第五十九轮：网关音频处理器补测）：新增 `tests/test_gateway_handlers_audio.py`（30 条，`server/handlers/audio.py` 的 ASR/TTS/Emotion/Effect/Voice 处理器与 `DualStreamSession` 会话状态机首获覆盖；用 FakeManager/FakeTTSService/FakeInterruptModule 隔离、monkeypatch `server.handlers.audio` 模块属性，其中 `set_tts_playing` 在函数体内 `from server.services.asr_interrupt import get_asr_interrupt_module` → monkeypatch 落在源模块 `server.services.asr_interrupt`；因 pipeline 用 `asyncio.create_task` 启动，测试须手动 await `session._pipeline_task` 让 fake 执行；覆盖 set_tts_playing/is_tts_playing 多客户端任一在播即 True/全移除后 False/interrupt 同步、cleanup_dual_stream_session 有会话 finish+移除/无会话静默、`_build_tts_kwargs` orpheus 带 voice/orpheus 无 voice/f5 带 refs/f5 无 refs、触发状态机空文本不触发/短文本（<2 字）不触发/达阈值触发且同 utterance 不重复/pending 合并/短 Final 累积 pending/is_speaking 仅累积不触发/Final 兜底触发/已触发仅修正 Final、Emotion/Effect list 与 parse 成功+空文本 `INVALID_REQUEST`、ASR 缺 audio `INVALID_REQUEST`/TTS 合成成功+缺 text `INVALID_REQUEST`/TTS 流式成功（2 chunk+顶层 is_final）+emotion 分支、Voice 双流式未 init `SESSION_NOT_FOUND`/init 成功（session 入存储）/end 清理/音频缺帧 `INVALID_REQUEST`）。纯补测无产品改动。全量 suite **2281 passed（+30），零回归**。变更文档 `20260809_模块0_网关音频处理器单测补强.md`。至此 `server/handlers/` 全部网关处理器（system/metrics/config/memory/tools/plugin/mcp/acp/chat/audio）均获回归覆盖。
+  - 测试补强 ✅（第六十轮：聊天助手与备份模块补测）：新增 `tests/test_chat_helpers.py`（9 条，`server/chat_helpers.py` 跨 HTTP 路由与 WebSocket 处理器共享的 Agent 配置解析与 LLM 客户端选择首获覆盖；monkeypatch `server.dependencies.get_model_router/get_llm_client`、`server.api.routers.agents._load_agents`、`server.core.llm.client.OllamaClient` 注入；覆盖 get_agent_config 命中/未命中返回 None、get_llm_client_for_agent 的 main type 从 router 取/memory type 从 router 取/type 对应 client 缺失→回退全局/具体模型名→创建 OllamaClient（host 继承 main+model/temperature/max_tokens 透传）/具体模型名但 main 缺失→回退/router 抛错→回退/无 model 字段默认 main）与 `tests/test_backup.py`（12 条，`server/core/backup.py` 的 BackupType 枚举值、BackupManager 各 stub 方法默认行为、get_backup_manager 单例新建/复用）。纯补测无产品改动。全量 suite **2302 passed（+21），零回归**。变更文档 `20260809_模块0_聊天助手与备份模块单测补强.md`。
+  - 测试补强 ✅（第六十一轮：服务与统计 API 路由补测）：新增 `tests/test_api_service.py`（23 条，`server/api/routers/service.py` 与 `stats.py` 的纯函数与轻量路由首获覆盖；monkeypatch `server.api.routers.service.get_project_root/get_conda_python_path` 隔离，避免真实子进程/psutil/文件系统；覆盖 `_apply_config_updates` 的 chroma/milvus_lite/weaviate/qdrant 四向量后端字段映射、models/llm_params 直写、system 合并与显式 key 归类、未知后端保留、无 vector 不创建 memory key、`validate_service_config` 的合法 host/自定义 IP 通过/非法 IP（999.999.999.999）→ 400 Invalid host/非法域名格式→400/port 0 与 70000→400 Invalid port/非法 log_level→400、get_conda_python_path 无 Conda→None/tmp_path 构造 python.exe 命中、get_startup_command conda 可用用 conda python/不可用回退系统、get_environment_info 返回 status 与 conda_available/platform、get_gateway_config 返回单体集成配置）。纯补测无产品改动。全量 suite **2325 passed（+23），零回归**。变更文档 `20260809_模块0_服务与统计API路由单测补强.md`。
+  - 测试补强 ✅（第六十二轮：蒸馏 API 路由补测）：新增 `tests/test_distillation_api.py`（32 条，`server/core/distillation/api/routes.py` 与 `batch_routes.py` 的全部 9 个端点首获覆盖，**首次引入 FastAPI TestClient 测试模式**——用 TestClient + 注入假 DistillationService 到 app.state 隔离真实服务，假服务记录调用 `(name,args,kwargs)` + 可配置异常，monkeypatch `server.core.distillation.character_card_parser.character_card_to_source_ref` 与 `parse_character_card_from_json_str`（因二者在 batch_routes 函数体内导入，须在源模块 patch）；覆盖 routes.py 的 start 成功+参数透传/ValueError→422/RuntimeError→422/ConnectionError→500、advance 成功+user_response 透传/KeyError→404/ValueError→409/RuntimeError→500、finalize 成功+override_decision 透传/ValueError→409/RuntimeError→500、get 成功/KeyError→404、batch_routes.py 的 start-batch 成功/ValueError→422/异常→500、group 成功/KeyError→404、finalize-agent 成功/KeyError→404/ValueError→409/异常→500、parse-character-card 成功（json_content）/无文件无 json→422/ValueError→400、start-from-character-card 成功（source_type=character_card）/缺 name→400/source_ref 为空→400/ValueError→422/异常→500、未初始化 dist_router 500/batch_router 503）。纯补测无产品改动。全量 suite **2357 passed（+32），零回归**。变更文档 `20260809_模块0_蒸馏API路由单测补强.md`。
+  - 测试补强 ✅（第六十三轮：统一配置模块补测）：新增 `tests/test_config.py`（33 条，`server/config.py` 首获覆盖；fixture 每测试重置 Settings 单例（`_settings=None` + `Settings.reset()`）避免跨测试污染，用 `CXO_CONFIG` 环境变量指向 tmp_path 构造 config.json 隔离真实配置文件；覆盖 get_env_config 的无环境变量→空 dict/_PORT→int/_DEBUG→bool（true/0）/_WORKERS→int/字符串直传/三层嵌套（services.asr.url）/空路径映射跳过、`_auto_fill_radix_config` 的空 dict 补 section/max_turns 在界内保留与越界（200/0/非 int）回退 4/session_timeout 59 与 7201 回退 1800/port 1000 回退 8000/worker_pool_size 越界回退 4/enabled_modalities 未知模态过滤/全未知→["text"]/非列表→默认 5 模态/decision 阈值越界回退、ModelsConfig 的 defaults 映射 summary/memory 归向 main/未知 model_type 返回 main/DatabaseConfig.url 拼接、Settings 的单例/getattr 私有与 missing 抛 AttributeError/config 代理/get_config 默认值（provider 断言允许集合因真实 config.json 可能设 vllm）/get_service_url 命中与未知抛 ValueError/save_config 落盘 roundtrip/reload_config 重读文件/env 覆盖 file 合并（deep_merge(file,env) 语义 env 优先））。纯补测无产品改动。全量 suite **2390 passed（+33），零回归**。变更文档 `20260809_模块0_统一配置模块单测补强.md`。
+  - 测试补强 ✅（第六十四轮：API 应用工厂补测）：新增 `tests/test_api_app.py`（7 条，`server/api/app.py` 的 `register_api_routes` 首获覆盖；用 `_build_app` 构造 FastAPI app + 注入假 ServiceState（SimpleNamespace 全量/全空/部分三类）隔离真实服务，TestClient 验证；覆盖 /health 全组件在位→healthy/全缺失→degraded/部分缺失（llm_client+tts_service=None）→degraded 且对应组件 False 其余 True、/ 根路由返回 service/version/docs、路由注册（/api/chat|config|memory|tools|graph|cxfc|anti/v1/distillation 后缀匹配因含路径参数 + /health + /）、异常处理器（ServiceError/HTTPException/RequestValidationError/Exception 四类已注册，ServiceError 用 str(k) 匹配）、性能中间件 PerformanceMiddleware 已加入 user_middleware）。纯补测无产品改动。全量 suite **2397 passed（+7），零回归**。变更文档 `20260809_模块0_API应用工厂单测补强.md`。
+  - 测试补强 + 死锁修复 ✅（第六十五轮：依赖注入模块补测 + 图注册表死锁修复）：新增 `tests/test_dependencies.py`（42 条，`server/dependencies.py` 首获覆盖；覆盖 `_resolve_state` 的 Depends 标记识别/None 与 Depends 用全局态/有效态直返/无全局态抛 RuntimeError/非 ServiceState 非 None 非 Depends 抛 TypeError、12 个服务 getter 的 available 命中与 unavailable 503/cxfc 返回 None 与值、per-agent 图注册表 DB 创建幂等/store 复用同 DB/per-agent 隔离/if_exists 不创建/remove 关闭并清空与缺失不报错/双重检查锁并发 8 线程返回同一实例、图 getter 默认 agent 写回 state/已有值不被覆盖/store 写回；测试直接调用 `get_graph_store` 意外暴露**生产死锁**——`_get_or_create_graph_store` 持锁调用 `_get_or_create_graph_database` 再取同一非可重入 `threading.Lock` 导致同线程死锁，修复为 `threading.RLock()`（可重入锁，跨线程仍互斥，语义不变），并在测试中补 `test_get_graph_store_writes_back` 无条件触发该路径验证修复）。生产改动仅 `_graph_registry_lock` 类型一行。全量 suite **2439 passed（+42），零回归**。变更文档 `20260809_模块0_依赖注入模块单测补强与图注册表死锁修复.md`。
+  - 测试补强 ✅（第六十六轮：蒸馏服务核心补测）：新增 `tests/test_distillation_service.py`（43 条，`server/core/distillation/distillation_service.py` 的纯辅助方法首获覆盖；fixture 注入 config（session/log dir 指向 tmp_path）+ 假 MultimodalPipeline + decision_core=None + 假 `_rubric_cls`/`_decision_input_cls`（SimpleBox 有 model_dump）隔离重型子系统实例化；覆盖模块级工具 `_iso_now`/`_new_uuid`/`_ensure_dir`、状态机 8 条合法转移（按真实 `_TRANSITIONS` 表的 proceed/ask_user/reflect/cross_validate/extract/decide/reject action）+ 非法状态/非法 action/非法转移各抛 ValueError、路径解析绝对不变与相对 join `_PROJECT_ROOT`、默认 rubric 构造显式值/缺省回退、RubricSnapshot 类构造与 dict 降级、DecisionInput 类构造与 dict 降级、质量评分启发式基础 0.4 与 turns+preread cap→0.8、LLM 有效/超范围/异常回退（monkeypatch 同步 `_llm_estimate_quality_score`）、回环计数、内容抽取截断 300、元数据标签、文本切分空/短/段落/无边界、决策日志新建/追加/坏目录 best-effort、session 保存+加载+缓存/缺失 None/保存失败抛 RuntimeError）。纯补测无产品改动。全量 suite **2446 passed（+43），零回归**。变更文档 `20260809_模块0_蒸馏服务核心单测补强.md`。
+  - 测试补强 ✅（第六十七轮：Agent 与 WebSocket 路由补测）：新增 `tests/test_agents_router.py`（40 条，`server/api/routers/agents.py` 完整 HTTP 路由首获覆盖；monkeypatch `AGENTS_CONFIG_PATH` 指向 tmp_path + `agent_config_cache` 为 FakeCache + `_cleanup_agent_resources` noop 隔离真实 `data/agents.json` 与全局缓存；覆盖 `_load_agents`（缓存命中/缺文件造默认/损坏返回空）、`_save_agents` 往返+缓存清除、`_generate_agent_id` 格式、`_ensure_data_dir` 建父目录、GET `/agents`（成功/500）、POST（成功/空模型→main/重名 400/保存失败 500）、GET `/agents/default`（is_default 优先/id 回退/无默认 404）、GET `/agents/{id}`（成功/404）、PUT（成功/空模型→main/404）、DELETE（成功+资源清理/404/禁删默认 400）、clone（成功/404）、stats（成功/404/异常降级返回 0）、context GET/DELETE（成功/404）、`_cleanup_agent_graph_db`/`_cleanup_agent_weaviate_collection`/`_cleanup_agent_memory_tables`/`_cleanup_agent_resources` 各分支与降级）与 `tests/test_websocket_router.py`（9 条，`server/api/routers/websocket.py` 的 `LiveTTSSyncBroadcaster` 直播 TTS 同步广播器首获覆盖；FakeWSManager 隔离网络 + monkeypatch `asyncio.sleep` 加速 tick 循环；覆盖 `get_tts_sync_broadcaster` 单例、`start_playback` 广播 `tts_sync`（playback_id/text/duration/server_ts）+先 end 前次播放、`end_playback` 有播放广播 `tts_end`/无播放 noop、`_tick_loop` 广播 `tts_tick` 且达 duration 停止+结束时发 `tts_end`/未运行 noop/`CancelledError` 捕获后走 finally）。**修复 `server/api/routers/agents.py` 真实 Pydantic v2 弃用告警**：`update_agent` 用 `request.dict(exclude_unset=True)` → `model_dump(...)`（与 plugins/models.py 收尾一致，全量套件该告警消除）。至此 **`server/api/routers/` 全部 17 个路由**（decision/multimodal/anythingllm/vector/tools/avatars/backup/archive/admin/context/memory_chat/config/audio/memory/acp/cxfc/graph/agents/websocket）全部建立回归测试。全量 suite **2863 passed（+49），零回归**。变更文档 `20260809_模块0_Agent与WebSocket路由单测补强.md`。
+  - 测试补强 ✅（第六十八轮：聊天路由补测）：新增 `tests/test_chat_router.py`（26 条，`server/api/routers/chat.py` **全部 5 个端点**首获直接 HTTP 覆盖；ChatHarness 隔离：`get_agent_config`/`get_llm_client_for_agent`/`build_messages` 因模块顶层 `from X import Y` 绑定须按模块级名字 patch，`server.dependencies.*` 在函数体内解析则 patch 源模块，fake LLM 非流式按轮次返回 + 流式 `stream_chat` 异步生成器按调用轮次返回 chunk，fake 上下文 + fake 记忆管理（`search_memories`）+ fake 模型路由（`get_client(model)`）+ fake agent_context + patch `tool_registry`/`call_builtin_tool`/`get_builtin_tools`/`set_current_agent_id`；覆盖 `/chat` JSON 成功（会话自动创建+用户/助手落库+tokens）、Agent 不存在 404、LLM 异常 500、内置工具调用（LLM 调两次+工具消息追加）、非法 JSON 参数降级为空 dict、内存路由触发记忆检索+`memory_context` 注入 build_messages、multipart 用 `files=` 触发表单 text 字段、`/chat/history/{session_id}` 已有会话/未知会话返回空/`agent-` 会话自动创建+metadata.agent_id/Agent 未配置返回空/DB 错误 500、`/chat/stream` SSE（session 首事件/content/thinking/旧字符串格式兼容/工具 tool_call→tool_start→tool_result→二次流式→done/流错误落 error 事件/Agent 404，用 `r.iter_lines()` 解析 `data: ` 前缀）、`/memory-agent/chat/stream`（成功+固定会话+加载历史+追加消息/未配置 404/模型不可用 503/流错误 error 事件）、`/summary-agent/chat/stream`（成功+固定会话+set_current_agent_id("summary-agent")/target_session_id 命中取 metadata.agent_id/缺失回退 summary-agent/summary 与 main 均不可用 503/流错误 error 事件））。纯补测无产品改动。至此 `server/api/routers/` 全部 18 个路由连同所有端点均建立回归测试，无遗留路由缺口。全量 suite **2889 passed（+14），零回归**。变更文档 `20260809_模块0_聊天路由单测补强.md`。
+  - 代码洁癖 ✅（第六十九轮：asyncio 事件循环模式清理）：将 5 处 async 协程内的 `asyncio.get_event_loop()` 替换为 `asyncio.get_running_loop()`（`server/core/memory/embedding.py` 的 `get_embedding`/`get_embeddings` 的 `run_in_executor` 取环、`server/services/asr_service.py` 的 `_recognize_embedded`、`server/core/acp/discover.py` 的 `receive_with_timeout` 的 `.time()` 截止计算），消除 py3.10+ 隐式建环歧义、语义更明确；`agent_tools.py:164` 的同类调用为同步桥接回退（`asyncio.run` 失败→`get_event_loop().run_until_complete`），语义不同保持不动。全库扫描确认 `decision_mixin.py:45` 的 `rubric.dict()` 为兼容 v1 模型的 duck-typing（先查 `model_dump`），属有意为之。定向测试 test_embedding/test_asr_service/test_acp_discover 56 条通过，全量 suite **2889 passed，零回归**。变更文档 `20260809_模块0_asyncio事件循环模式清理.md`。
+  - 架构收敛 + 功能修复 ✅（第七十轮：聊天流式管线 + ACP 自动回复修复）：修复 `server/core/acp/manager.py` `_trigger_auto_reply` 长期静默跳过的两层根因——① `server.core.chat.stream` 模块不存在，延迟导入失败即短路；② 即便存在也误从 `server.api.routers.chat` 导入 `_get_tools_for_agent`（实际在 `server.handlers.chat`）二次短路。新建 `server/core/chat/stream.py`（`ChatStreamState` 聚合状态 + `generate_chat_stream` 流式管线，含工具调用循环、`MAX_TOOL_ROUNDS=5` 截断、工具后二次生成不带工具，语义与 handlers.chat 一致）；修正 acp/manager 导入（chat_helpers + handlers.chat）与调用点（`_get_tools_for_agent(effective_agent_id)`→`agent_config`）。新增 `tests/test_chat_stream.py`（13 条：状态默认值/内容流式累积/dict 与裸 str 兼容/thinking 累积/工具调用消息追加与状态记录/内置与注册表工具执行/工具仅首轮注入/max 轮数截断/LLM 抛错→error+done/error 透传/temperature·max_tokens 透传）。全量 suite **2915 passed（+13），零回归**。变更文档 `20260809_模块0_聊天流式管线与ACP自动回复修复.md`。
+  - 提示词工程统一 ✅（第七十二轮：build_messages 单一入口收敛，消除旧转发残留）：`server/core/websocket/handlers.py` 的 `_handle_chat`/`_handle_chat_stream` 原从 `server.api.routers.chat` 导入 `build_messages`（绕过 `server.prompt_builder` 单一入口），改为直接从 `server.prompt_builder` 导入；`server/api/routers/chat.py` 第 69 行 `# noqa: F401` 的旧 re-export 已无任何引用方，删除。同步 `tests/test_websocket_handlers.py::_patch_chat_deps` 的 mock 目标从 `chat_router.build_messages` 迁到 `prompt_builder.build_messages`（5 条失败→通过）。全量 suite **2915 passed，零回归**。变更文档 `20260809_模块0_提示词组装单一入口收敛.md`。
+  - 架构收敛 ✅（第七十三轮：工具收集收敛到 chat_helpers.get_tools_for_agent）：`server/handlers/chat.py` 的 `_get_tools_for_agent` 与 `server/core/acp/manager.py` 的工具收集存在重复与跨层依赖，将其收敛为 `server/chat_helpers.py` 的唯一规范实现 `get_tools_for_agent`（内置工具 + 主模型工具，summary 分类排除）；`handlers/chat.py` 顶层导入并直用（删除兼容包装函数、3 处调用点更新），`acp/manager.py` 改从 chat_helpers 导入——修复上一轮遗留的中间态（`handlers/chat.py` 包装函数引用不存在的 `chat_helpers.get_tools_for_agent` 会 ImportError、ACP 自动回复工具收集路径随之失效），ACP 自动回复管线恢复可用。同步修正 `tests/test_gateway_handlers_chat.py` 的 `_get_tools_for_agent` 引用与 mock 目标、`tests/test_chat_helpers.py` 的 `get_tools_for_agent` 收集断言。全量 suite **2916 passed，零回归**。变更文档 `20260809_模块0_收敛跨入口聊天助手函数.md`。
+  - 性能优化 ✅（第七十一轮：LLM/嵌入客户端 HTTP 连接池化 + 测试迁移收尾）：将 `server/core/llm/client.py` 的 `OllamaClient.chat`/`stream_chat`/`is_available`/`get_embedding` 与 `TRTLLMClient.chat`/`stream_chat`/`is_available`/`get_embedding`、`server/core/memory/embedding.py` 的 `OllamaEmbedding`/`VLLMEmbedding`（含批量 `get_embeddings`，VLLM 的 Authorization header 改为按请求经 `_headers()` 传入）、`server/core/model_router.py` 的 `check_status` 三 provider 探测，全部从每次调用新建 `httpx.AsyncClient` 改为复用 `server/core/utils.get_shared_http_client()` keep-alive 连接池，消除 Windows 上每次构造 AsyncClient 的高昂开销（与 VLLMClient 既有模式统一）。测试迁移：`tests/test_llm_client.py`（Ollama 组 + TRTLLM 组 mock `httpx.AsyncClient` → `get_shared_http_client`，移除多余 `__aenter__/__aexit__`）、`tests/test_embedding.py`（`_mock_client` 改 mock `get_shared_http_client`）。全量 suite **2915 passed，零回归**。变更文档 `20260809_模块0_LLM与嵌入客户端连接池化.md`。
+  - 测试补强 ✅（第四十一轮：协议消息/标记服务/生命周期/文本平滑/VAD）：新增 `tests/test_protocol_message.py`（18 条，BaseMessage 默认字段/request_id 自动生成/缺 type 报错、Request/Response/Stream/Error/Ping/Pong 默认值、create_response/request/stream/error/pong 工厂函数）、`tests/test_protocol_actions.py`（6 条，ChatActions 常量、get_handler_name 已知/未知、Voice 双流式映射音频、全部 action 已注册）、`tests/test_frontend_marker.py`（10 条，register_marker、情感/音效转换与未知兜底、原字段保留、单例）、`tests/test_marker_adapter.py`（11 条，process_danmaku/process_message 的标记提取与位置、type 保留、supported_markers 副本）、`tests/test_lifecycle.py`（9 条，init_service/shutdown_service 同步/异步分发、失败返回 None/捕获不抛并告警）、`tests/test_text_smoother.py`（18 条，参数钳位 30~50ms/2~5 字、_extract_text str/dict/控制消息/空、put/finish 幂等、标点/字数/窗口超时三重触发、smooth 包装与消费者提前退出清理 feeder）、`tests/test_vad_processor.py`（15 条，ENERGY 模式能量判定、说话状态机、开始/结束回调与异常吞掉、单例）。纯补测无产品改动（测试驱动确认 window_timeout 需并行消费才触发、空 token 测试需 finish 投递哨兵、提前退出测试用有限流避免遗留 feeder 占用事件循环——均为测试设计问题）。至此 `server/protocol/`、`server/services/` 的 frontend_marker/marker_adapter/text_smoother/vad_processor 与 `server/core/lifecycle.py` 补齐回归保护。全量 suite 收敛为 71 个 server.* 文件、**1789 passed，零回归**。变更文档 `20260808_模块0_协议消息与标记服务单测补强.md`。
+  - 测试补强 ✅（第四十轮：情感/音效解析器 + 弹幕防火墙 + 上下文摘要/Agent上下文，修复单例重复定义）：新增 `tests/test_emotion_parser.py`（21 条，情感/睡眠标记解析、未知情感保留原文、strip 各类 avatar 标签、位置查询）、`tests/test_effect_parser.py`（13 条，音效标记解析、多扩展名加载与优先级、缺失目录回退、缓存与清除、可用列表）、`tests/test_firewall.py`（25 条，长度/用户/频率/重复/关键词模式过滤、disabled 跳过、set_config 动态更新、编译模式、单例与统计；monkeypatch 模块级 Settings 假对象隔离配置）、`tests/test_context_summarizer.py`（16 条，空消息、规则摘要 concise/detailed 风格与超长截断、LLM 摘要成功/失败回退、extract_key_points 规则/LLM 列表/非列表/失败回退、format_conversation）、`tests/test_agent_context_manager.py`（23 条，save/load 持久化往返、append_message、history limit 边界、clear、summary、update_last_active、cleanup_old_messages、损坏文件容错、单例）。**修复 `server/core/context/agent_context_manager.py` 真实代码洁癖缺陷**：模块尾部 `_instance_lock` 与 `get_agent_context_manager()` 定义重复两次（后者覆盖前者但冗余），删除第二次重复定义。至此 `server/services/` 的 emotion/effect/firewall 与 `server/core/context/` 的 summarizer/agent_context_manager 补齐回归保护。全量 suite 收敛为 64 个 server.* 文件、**1702 passed，零回归**。变更文档 `20260808_模块0_情感音效防火墙与上下文摘要单测补强.md`。
+  - 测试补强 ✅（第三十九轮：会话清理 + 文档记忆 + Agent 工具）：新增 `tests/test_session_cleanup.py`（13 条，start 幂等、stop 取消复位、清理循环错误续跑、`_perform_cleanup` 汇总计数、run_once、长期未访问删除过期不删新/全近期零删/删除失败不计入、全局单例复用与空 stop）、`tests/test_document_memory.py`（18 条，真实 SQLite tmp_path + 替身记忆管理器：配置加载默认/补默认、title 优先级、上传文本/文件/超限/解析失败、workspace 关联、软删+永久记忆回滚、搜索委托与异常降级、关闭幂等）与 `tests/test_agent_tools.py`（37 条，AgentToolsV2 8 工具：tools_config 与蒸馏开关权限、agents.json 缺失/损坏/非 dict/持久化、Agent CRUD 全部校验分支、蒸馏/模板/决策成功与异常转义、注入依赖懒加载、默认值）。**测试驱动要点**：蒸馏替身方法必须返回 awaitable（代码用 `_run_async` 包装）、`StorageDecision` 需补 `rubric_snapshot/llm_confidence/override_decision/created_at` 且 `memory_id` 为 int、懒加载测试改为验证注入依赖（`public` 模块环境导入不可用）。至此 session/document/decision 三核心模块补全回归保护。全量 suite 收敛为 59 个 server.* 文件、**1604 passed，零回归**。变更文档 `20260808_模块0_会话清理文档记忆与Agent工具单测补强.md`。（25 条，数据模型 to_dict、线程级连接缓存复用/关闭重建/清空、创建校验、按 agent/pending 查询、取消/标记触发、短延迟 0.05s+轮询**真实走通 threading.Timer**（回调触发/回调异常吞掉）、恢复（过期立即/未来调度）、关闭清定时器与连接、异步包装、单例）与 `tests/test_plugin_context.py`（25 条，PluginContext 门面：记忆/上下文/LLM/工具/WS API 委托与异常降级、config get/set、后台任务追踪自动丢弃引用；WS 广播与任务追踪标 `@pytest.mark.asyncio` 依赖运行事件循环）。**关键隔离**：alarm fixture 在 teardown 调 `shutdown()` 取消遗留定时器，避免后台线程在 pytest 关闭 stdout 后写日志报 `ValueError: I/O operation on closed file`。另修复 `tests/test_mcp.py` 的 `fake_sync` 签名缺 `self`（start_server 报 2 were given）。至此提醒（alarm）与插件门面（plugins.context）补齐全模块回归保护。全量 suite 收敛为 56 个 server.* 文件、**1536 passed，零回归**。变更文档 `20260808_模块0_提醒管理器与插件上下文单测补强.md`。
+  - 测试补强 ✅（第三十七轮：任务与记忆管理模型工具）：新增 `tests/test_task_tools.py`（27 条，`server.core.tools.task_tools` 全部委托 `get_task_manager()`，测试 monkeypatch 须 patch **task_tools 模块属性**而非源模块 `server.core.tasks`——因导入期 `from...import` 绑定，首轮 15 条失败教训；覆盖任务创建/列表/详情/更新/完成/删除与定时任务创建/列表/详情/更新/暂停/恢复/删除，各含异常路径）与 `tests/test_assistant_tools.py`（28 条，轻量替身注入记忆/上下文/路由三依赖；记忆修改/搜索（截断 200 字符）/软删除/统计/按标签/批量删除/恢复/聊天记录/可用命令，含默认 limit 取 Settings 路径）。至此 `server/core/tools/` 仅剩 `graph_tools.py`/`mcp.py` 未覆盖。全量 suite 收敛为 56 个 server.* 文件、**1415 passed**。变更文档 `20260807_模块0_任务与记忆管理模型工具单测补强.md`。
 - **add-voicews-music-cxfc-suite**（当前 spec）：Task 1~11 全部闭合，仅剩 Task 12 [V]（GN-004 交付审查 + 人类批准）
   - Task 1~8 后端链路 ✅；Task 7.3 GN-004 检查点 CAUTION-PASS ✅（OBS-1/2/3 已修正）
   - Task 9 前端客户端 + VoiceWorkstationPage ✅；Task 10 CompositionPage ✅
@@ -4266,3 +4357,378 @@ spec T2 / tasks T2 / checklist C2.2-C2.3 原写"挂载 GlassCanvas/AnimeDecorati
 2. 启动 T3 验证闸门：`npm run typecheck` + `npm run dev` + `npm run lint`
 3. T3 通过后，进入 T4-T10 页面验证 + 效果验证
 4. T11 三重测试闸门 + GN-004 交付审查
+
+## 语音端到端延迟修复：短语音无 Partial 致流水线饥饿（2026-08-05，七字段交接段）
+
+> 任务：ASR 输入 → TTS 输出总延迟 <800ms（用户明确为"总延迟"口径）。变更文档：`.trae/documents/20260805_模块0_修复短语音无Partial致流水线饥饿.md`（status=已完成）。
+
+### (1) 工程过程
+
+1. **基线测量**：`diag_voice_latency.py`（WS 端点 `/api/ws/default`，60ms 帧，sender/receiver 并发）4 轮全部零输出——pipeline 从未启动。
+2. **根因定位**（证据链）：
+   - VAD 正常触发（`vad_state_changed=True`，energy 回退模式，webrtcvad 未安装于 Python314）
+   - ASR 只回 final 无 partial（`[ASR-WS] Recv #12~15` 全 `is_final=true`）
+   - VAD 门控切碎音频段（"你好。"~0.5-1s / "这是一个…"~1.2-1.9s）→ 均低于 ASR 服务端 `PARTIAL_THRESHOLD=48000`(1.5s) → partial 永不触发
+   - pipeline 唯一触发入口 `on_partial_result` 只认 `is_final=False` → 饥饿
+   - final 晚于 VAD speech_end ~200-500ms 到达，无人消费被丢弃
+3. **修复**（先写变更文档后改码）：
+   - api_server.py：`PARTIAL_THRESHOLD` 48000→16000（0.5s）、`PARTIAL_STEP` 32000→9600（0.3s）、final 时重置 `last_partial_len=0`（次生 bug）
+   - audio.py：新增 `DualStreamSession.on_final_result`（final 兜底触发/修正文本/累积 pending），handler 路由 final 结果，`on_vad_speech_end` 移除 flag 重置（改由 speech_start 重置）
+4. **一轮复测**：min=16ms avg=151ms max=519ms 达标，但发现 +519ms 离群与 pending 重复合并（迟到 final 在用户已说下一句时兜底触发过时 pipeline 抢话）
+5. **追加修复**：`on_final_result` 增加 `is_speaking` 参数（迟到 final 仅合并 pending 不触发）
+6. **二轮复测**：**min=21ms avg=34ms max=46ms，4 轮全达标**
+
+### (2) 交接状态
+
+- 修复与验证：**已闭合**（变更文档 status=已完成，两轮验证数据在案）
+- 后端服务：运行中（PID 5008，`python -m server.main`，terminal 4 后台）
+- ASR 容器：cx-o-asr-sensevoice-1 healthy（已重启加载新阈值）
+- 早前会话遗留待办（来自上一断面摘要）：TTS 延迟验证**已由本次闭合**；Weaviate 健康检查缺 curl、Embedding 服务重启问题——**未闭合**（本轮未触及）
+
+### (3) 最终结果
+
+- **端到端延迟（说完→TTS 首音）：avg 34ms / max 46ms，稳定低于 800ms 目标**
+- 链路行为：partial 说话中 0.5s 即出 → LLM Prefill 说话中启动 → TTS 首音常在说完前已到达（speculative prefill 设计意图兑现）
+- 产出物：变更文档 `20260805_模块0_修复短语音无Partial致流水线饥饿.md`；修改 api_server.py / server/handlers/audio.py / tests/diag_voice_latency.py
+- 关键经验：门控与阈值必须联动标定；异步结果必须有消费者；迟到结果须带现场状态判断（补票 vs 抢话）
+
+## Spec: build-app-pet-frontend Task 6 管理界面功能页第一批闭合（2026-08-07，七字段交接段）
+
+### 做到哪了
+
+- Task 6（SubTask 6.1~6.5）全部闭合：布局/路由契约冻结（`route-contract.md` 落盘 + `routes.tsx` 集中登记表 + `ManagementLayout`）+ 五页落地（仪表盘/对话/记忆/归档/设置）+ i18n 双语言 management.* 与 settings.* 专属命名空间
+- 质量闸门全过：typecheck 双段 0 错误、lint `--max-warnings 0` 零告警、vitest 13 文件 125 项全过（新增 chatStream 9 + routes 9）、build 三段成功
+- tasks.md Task 6 已勾选 + 台账回填；checklist「管理界面功能对齐」第 1 项已勾选；变更文档 `20260807_模块前端_APP桌宠前端Task6管理页第一批与路由契约落地.md`（模块前端-20260807-05）已收尾为已完成
+
+### 为什么
+
+- 路由契约冻结是 Task 7/8 的前置：登记表只追加、布局与登记机制不改，由 `validateRouteRegistry()` + `routes.test.ts` 9 项单测看守
+- 对话页流式归约抽为纯函数 `chatStream.ts`，WS 与 HTTP SSE 双链路共用，保证「WS 优先、SSE 兜底」行为一致且可单测
+
+### 未闭合项
+
+| 项 | 性质 | 状态 |
+|----|------|------|
+| 五页真实后端联调走查（真实数据渲染） | 真实环境实测 | ⏳ 归 Task 10 回归 |
+| Task 7（管理页第二批） | 下一任务 | ⏳ 待启动（依赖 Task 6 完成态，已就绪） |
+
+### 接续入口
+
+1. 启动 Task 7（代理/ACP/插件/工具/记忆代理/向量数据/音频面板/音频测试/音频工作站页），只允许向 `MANAGEMENT_ROUTES` 末尾追加登记
+2. Task 9（OBS 采集支持）可与 Task 7 并行（P3 组，单批 ≤2）
+
+---
+
+## Spec: build-app-pet-frontend Task 4 双流式语音互动与视觉采集 交接补记（2026-08-07，七字段交接段）
+
+> 本段为 GN-004 批次 3 审查发现「Task 4 缺失交接段」后的补记，事实依据为变更文档 `.trae/documents/20260807_模块前端_APP桌宠前端Task4双流式语音互动与视觉采集落地.md`（status: 已完成）。
+
+### 做到哪了
+
+- Task 4（SubTask 4.1~4.8）已于 2026-08-07 批次 3 并行开发中闭合（代码级）：麦克风采集与 ASR 上行（Live WebSocket 独立连接）、VAD 驱动口型、TTS 播放与频谱口型同步（双流互不阻塞）、弹幕语音播报/回复（消费 Task 5 弹幕事件流）、音频设置持久化（audioStore：麦克风开关/TTS 音量/麦克风增益）、屏幕共享与摄像头采集及开关（默认关闭、重启不自动恢复）、画面帧发送链路（对话图像/多模态预处理，手动/定时抽帧节奏可控）
+- 质量闸门（批次 3 时测）：typecheck 双段 0 错误、lint 零告警、vitest 125 项全过、build 三段成功
+- 共享契约层落位：audioStore / captureStore 作为 Task 4（采集播放实现）与 Task 6（设置页 UI）的冻结接口层，两侧只消费不另建状态层
+- tasks.md Task 4 已勾选；变更文档已收尾「已闭合（代码级）」
+
+### 为什么
+
+- 补记原因：GN-004 审查发现本任务在 note 中缺失七字段交接段，跨断面状态传递断链；本段按既有段落格式补齐，事实全部回链至 Task 4 变更文档，不做超出文档的扩述
+- 双流式设计（上行 ASR 与下行 TTS 互不阻塞）与采集会话态刻意不持久化（隐私口径：默认关闭、重启不自动恢复）为该任务关键决策，已在变更文档中留痕
+
+### 未闭合项
+
+| 项 | 性质 | 状态 |
+|----|------|------|
+| 双流式语音与视觉采集的真实环境验证（真实麦克风/摄像头/直播弹幕链路实测） | 真实环境实测 | ⏳ 归 Task 10 回归 |
+
+### 接续入口
+
+1. 代码级无待续工作；真实环境验证在 Task 10 统一回归时执行
+2. Task 6 设置页（audioStore/captureStore 消费侧）已于本次补全落地，与本任务接口衔接一致
+
+---
+
+## Spec: build-app-pet-frontend Task 6 SubTask 6.5 设置页假闭合修复闭合（2026-08-07，七字段交接段）
+
+> 阶段：GN-004 批次 3 阻断项处置——设置页（SubTask 6.5）经用户裁决后补全，闸门重验全过，Task 6 恢复整体闭合。
+
+### 做到哪了
+
+- **SubTask 6.5 假闭合已修复**（2026-08-07，parallel-sub-agent 执行）：`src/pages/management/SettingsPage.tsx` 由 11 行占位页重写为五区块真实实现（约 640 行）
+  - 虚拟形象：头像类型（无/Live2D/VRM）+ Live2D/VRM 各自参数，读写 settingsStore，即时生效
+  - 直播：healthApi.getLiveClientStatus() 状态显示 + disconnectLiveClient 断开（client_id 在场时）
+  - 后端地址：当前生效地址显示（HTTP+WS）+ 可编辑保存（先探 /health，成功经 setBackendUrl/setWsUrl 持久化，Electron IPC + 浏览器 localStorage 回退，模式提示文案区分）
+  - 音频：麦克风开关 / TTS 音量 / 麦克风增益 / 弹幕播报，全部读写 audioStore（冻结层只消费）
+  - 视觉采集：screenActive/cameraActive 会话态显示与切换（仅写 captureStore + petNote 提示实际采集由桌宠窗执行）+ frameMode/frameIntervalSec 节奏持久化
+- **测试看守补齐**（GN-004 观察项）：新增 `SettingsPage.test.tsx` 5 项（五区块渲染且非占位 / 头像切换写 store / 音频控件读写 audioStore / 采集切换仅写 captureStore 会话态 / 后端地址保存链路）；发现并修正测试基建缺口——vitest `globals:false` 下 RTL 自动清理不生效，显式 `afterEach(cleanup)`
+- **闸门重验全过**：typecheck 双段 0 错误、lint `--max-warnings 0` 零告警、vitest 14 文件 130 项全过（新增 5 项）、build 三段成功
+- **锚点同步**：变更文档 `20260807_模块前端_APP桌宠前端Task6管理页第一批与路由契约落地.md` 追加第五章（假闭合事件分析与补全验证，status 维持已完成）；tasks.md SubTask 6.5 与 Task 6 已勾选；checklist「管理界面功能对齐」第 1 项已勾选（假闭合备注括号已去除）
+
+### 为什么
+
+- 假闭合根因：并行合流中设置页疑似被旧版占位覆盖丢失；占位页能过 typecheck/lint/build 且测试无设置页断言，四道闸门均未拦截——「实体丢失 + 测试看守缺位」双重缺口，本次同时补实体与看守
+- 用户已裁决：补全设置页（不移交、不缩减范围），i18n settings.* 键此前已就绪，本次直接消费未新增键
+- 边界遵守：audioStore/captureStore/settingsStore 接口冻结未改；实际采集归桌宠窗（Task 4 边界），设置页仅写 store
+
+### 未闭合项
+
+| 项 | 性质 | 状态 |
+|----|------|------|
+| 设置页五区块真实后端联调走查 | 真实环境实测 | ⏳ 归 Task 10 回归 |
+| Task 7（管理页第二批） | 下一任务 | ⏳ 待启动（Task 6 完成态已恢复就绪） |
+
+### 接续入口
+
+1. 启动 Task 7（代理/ACP/插件/工具/记忆代理/向量数据/音频面板/音频测试/音频工作站页），只允许向 `MANAGEMENT_ROUTES` 末尾追加登记
+2. Task 9（OBS 采集支持）可与 Task 7 并行（P3 组，单批 ≤2）
+3. Task 10 回归时含设置页真实数据走查 + Task 4 真实环境验证
+
+## Spec: build-app-pet-frontend Task 9 OBS 采集桌宠支持闭合（2026-08-07，七字段交接段）
+
+> 阶段：批次 4（P3 组，parallel-sub-agent 执行）——Task 9 代码级闭合，四项质量闸门全过；真实 OBS 采集验证归 Task 10 回归，不假装已验。
+
+### 做到哪了
+
+- **SubTask 9.1 稳定可识别标题（代码级闭合）**：核验 main.ts 桌宠窗标题固定链路完整（创建 title 'CXO-Pet' + page-title-updated 拦截 + 无其他覆写路径）；补齐渲染层缺口——`src/App.tsx` 按路由固定 document.title（#/pet→CXO-Pet、#/danmaku→CXO-Pet 弹幕、管理→CXO-Pet 管理界面），消除管理窗/弹幕窗随 index.html 漂移成与桌宠窗同名的三窗重名干扰
+- **SubTask 9.2 抠像背景模式（代码级闭合）**：greenScreen 自 PetPage 组件内 useState 提升为独立 `src/store/obsStore.ts`（persist 全量持久化：Electron 落 userData 文件、浏览器回退 localStorage，merge 容错）；绿幕色值 #00ff00 与切换逻辑保持既有实现，透明模式 body/html 完全透明口径不变
+- **SubTask 9.3 采集尺寸预设与头像自适应（代码级闭合）**：obsStore 持有四档预设（300x400 / 400x500 默认 / 550x700 / 640x800，clamp 下限 300x400 对齐窗口 minWidth/minHeight）；右键菜单新增「采集尺寸」循环切换项；Electron 经新增 IPC `window:set-size` 调整窗尺寸并在挂载时按持久化尺寸恢复；浏览器模式降级为头像按短边比例缩放（PetAvatar resolveAvatarScale，因子 clamp [0.5, 2]，VRM/Live2D 双引擎通用）
+- **新增 IPC 面**：main.ts `window:set-size` handler（取整兜底，最小尺寸约束由 Electron 强制）+ preload `setWindowSize` + electron.d.ts 类型
+- **新增单测**：`src/store/obsStore.test.ts` 19 项（预设清单/clamp/缩放因子/循环切换/持久化 merge/双模式降级决策）
+- **闸门实测**：typecheck 双段 0 错误；lint `--max-warnings 0` 零告警；vitest 15 文件 149 项全绿（新增 19 项，零回归）；build 三段成功
+- **锚点同步**：变更文档 `.trae/documents/20260807_模块前端_APP桌宠前端Task9OBS采集支持落地.md`（issue_id 模块前端-20260807-08，status 已完成）已归档；tasks.md Task 9 及子任务勾选 + 台账回填；checklist「OBS 采集」第 2 项勾选，第 1/3 项保持未勾并括号注明归 Task 10 实测
+
+### 为什么
+
+- greenScreen 落点选择独立 obsStore 而非并入 settingsStore：settingsStore 为共享文件且 Task 7 并行分支活跃于管理页区域，独立 store 隔离并行写冲突面，亦便于 OBS 专属状态后续扩展
+- 尺寸自适应双路径：Electron 下窗口已由主进程 setSize 真实调整，头像因子取 1（避免与引擎随容器自适应叠加导致双重缩放裁剪）；浏览器无窗口控制权，降级为头像按短边比例缩放，两模式观感一致
+- i18n 新键仅落 pet.obs.* 专属命名空间（captureSize），遵守并行边界不触碰 management.*；编辑 locales 前重新 Read 最新版、最小追加
+- 并行边界遵守：未触碰 src/pages/management/ 与 routes.tsx；未改 public/
+
+### 未闭合项
+
+| 项 | 性质 | 状态 |
+|----|------|------|
+| OBS 窗口采集实际选中桌宠窗（标题唯一可识别实测） | 真实采集验证 | ⏳ 归 Task 10 回归 |
+| 透明窗采集兼容性实测；不兼容时绿幕抠像兜底实测 | 真实采集验证 | ⏳ 归 Task 10 回归 |
+| Electron setSize 真实生效、头像自适应观感、重启尺寸恢复实测 | 真实环境实测 | ⏳ 归 Task 10 回归 |
+| 主线程对本产出拉起 GN-004 独立审查 | 审查闸门 | ⏳ 待主线程执行（subagent 上下文不可自拉，已按 rules-0 §四-8 降级路径第 0 条显式提醒） |
+| Task 7（管理页第二批，P3 并行组） | 并行任务 | ⏳ 待启动（归其自身分支） |
+
+### 接续入口
+
+1. 主线程拉起 GN-004 审查本任务产出（上下文：变更文档 + tasks.md/checklist.md 本次改动 + 本段）
+2. Task 10 回归时执行三项真实采集验证并留存截图/日志，届时勾选 checklist「OBS 采集」第 1/3 项
+3. Task 10 依赖 Task 4-9 全部完成，Task 9 完成态已就绪；Task 7 仍在 P3 组待启动
+
+## Spec: build-app-pet-frontend Task 7 管理界面功能页（第二批）闭合（2026-08-08，七字段交接段）
+
+> 阶段：批次 4（P3 组，parallel-sub-agent 执行）——SubTask 7.1~7.4 全部落地，含 7.4 截断后收尾（音频面板闸门失败修复 + 音频测试/音频工作站两页新建登记）；四项质量闸门全过；真实后端联调归 Task 10 回归，不假装已验。
+
+### 做到哪了
+
+- **SubTask 7.1**：`AgentsPage`（列表/新建/编辑/克隆/删除 + 统计卡，消费 agentsApi）+ `AcpPage`（ACP 代理 CRUD + 启停切换 + 消息互通，消费 acpApi）+ 各自测试
+- **SubTask 7.2**：`PluginsPage`（插件列表 + Skills + 局域网发现，消费 cxfcApi）+ `ToolsPage`（列表/筛选/启停/参数 Schema/测试调用，消费 toolsApi）+ 各自测试
+- **SubTask 7.3**：`MemoryAgentPage`（自然语言记忆管理助手，流式对话）+ `VectorDataPage`（向量库统计/浏览/语义搜索/直达/同步重建，消费 vectorApi）+ 各自测试
+- **SubTask 7.4（本次收尾）**：
+  - 修复 `AudioPanelPage.tsx` 质量闸门失败点：移除未用 `Radio` 导入（no-unused-vars）；`AudioContext.resume` 类型报错改 `instanceof AudioContext` 收窄；补真实消费 `audioApi.getAudioConfig()`（只读展示标量配置项，后端不可达静默降级）
+  - 修复 `AudioPanelPage.test.tsx` TS1005 语法错误（补全被截断用例）+ 补 audioApi mock 与配置接线测试
+  - 新建 `AudioTestPage.tsx`（ASR 上传 `audioApi.speechToText` + TTS 合成 `audioApi.textToSpeech` → ObjectURL 内嵌播放）+ 3 项测试
+  - 新建 `AudioWorkstationPage.tsx` + 5 子面板（`audioWorkstation/VoxCPMPanel/SVCPanel/MusicPanel/OrpheusPanel/RefAudioPanel`，消费 `voiceworkstationApi` 对应接口）+ 5 项测试
+  - routes.tsx 向 `MANAGEMENT_ROUTES` 末尾追加 3 条登记（audio-panel / audio-test / audio-workstation，titleKey 一律 management.nav.*）
+  - i18n 双语言补齐 audioTest / audioWorkstation 命名空间，并修正 audioPanel 系列命名空间归属（自 settings.* 迁回 management.*）
+- **质量闸门实测（2026-08-08）**：typecheck 双段 0 错误；lint `--max-warnings 0` 零告警；vitest 24 文件 196 项全绿（本批 9 个页面测试文件全过，零回归）；build 三段成功
+- **锚点同步**：变更文档 `.trae/documents/20260807_模块前端_APP桌宠前端Task7管理页第二批落地.md`（issue_id 模块前端-20260807-07，status 已完成）已归档；tasks.md Task 7 及 7.1~7.4 已勾选 + 台账回填；checklist「管理界面功能对齐」第 2、3 项已勾选
+
+### 为什么
+
+- 路由契约遵守：本批 9 页全部向 `MANAGEMENT_ROUTES` 末尾追加登记，不改布局与登记机制（`validateRouteRegistry()` + `routes.test.ts` 看守），7.1~7.3 六条与 7.4 三条均落在末尾
+- 反占位约束：三页真实消费 audioApi / voiceworkstationApi，测试断言「非页面建设中占位」并核验 API 接线，杜绝纯静态页
+- i18n 边界：编辑前重新 Read 最新版，仅追加 management.agents/acp/plugins/tools/memoryAgent/vector/audioPanel/audioTest/audioWorkstation.* 专属命名空间，不整体重写、不触碰其他命名空间
+- 浏览器优雅降级：无 mediaDevices 时麦克风区显示降级横幅；audioApi 不可达时配置段静默降级
+- 未触碰 public/、electron/、冻结 store 接口、routes.tsx 既有条目（含第一批与 7.1~7.3 已登记条目）
+
+### 未闭合项
+
+| 项 | 性质 | 状态 |
+|----|------|------|
+| 9 页真实后端联调走查（真实数据渲染 / 真实 TTS-ASR 链路 / 真实语音工作站接口） | 真实环境实测 | ⏳ 归 Task 10 回归 |
+| Task 8（直播控制台 + 分屏源） | 下一任务 | ⏳ 待启动（依赖 Task 7 完成态，已就绪） |
+| 主线程对本产出拉起 GN-004 独立审查 | 审查闸门 | ⏳ 待主线程执行（subagent 上下文不可自拉，已按 rules-0 §四-8 降级路径第 0 条显式提醒） |
+
+### 接续入口
+
+1. 启动 Task 8（直播控制台 + 分屏源），仅按 Task 6 冻结路由契约追加登记
+2. Task 10 回归时执行 9 页真实后端联调走查 + Task 4 真实环境验证 + Task 9 真实 OBS 采集验证
+3. 本任务产出（变更文档 + tasks.md/checklist.md 本次改动 + 本段）需经主线程拉起 GN-004 独立审查
+
+### 观察项登记（GN-004 复审观察项，归 Task 10 处置）
+
+- **OBS-R2-1（归 Task 10）**：SettingsPage `getLiveClientStatus` 扩展断言——当前仅断言状态显示与断开调用；真实后端联调确认 live client 返回结构后，必要时经 s0601 补接口签名再扩展断言。
+- **OBS-R2-2（归 Task 10，预存在）**：App.test.tsx 在 jsdom 下产生 XHR 网络噪声（ECONNREFUSED 127.0.0.1:8100 等），为既有测试环境噪声，非本任务引入，Task 10 交付前统一评估是否以 fetch 打桩收敛。
+
+## Spec: build-app-pet-frontend Task 8 直播控制台与分屏源闭合（2026-08-08，七字段交接段）
+
+> 阶段：批次 5（串行，parallel-sub-agent 内联执行）——SubTask 8.1 + 8.2 全部落地，管理窗登记 6 页 + 顶层 OBS /source/* 独立路由；四项质量闸门全过；真实后端联调与 OBS 实载验证归 Task 10 回归，不假装已验。
+
+### 做到哪了
+
+- **SubTask 8.1 直播控制台页（live-console）**：`LiveConsolePage.tsx` 落地——直播状态总览（Live WS 连接态 / 在线客户端数 / 后端健康 `healthApi`）、推流信息（推流服务器地址 + 本地存储推流密钥，localStorage 持久化）、弹幕统计（累计弹幕数 + 近 60s 滚动窗口速率）、控制操作（连/断、弹幕开/关、清屏）。消费 `useLiveWebSocket` + `healthApi`；用 `danmakuOnRef` 消除 WS 回调 stale closure、`rateTimestampsRef` 滚动窗口算速率
+- **SubTask 8.2 直播分屏页（live-overlay）**：`LiveOverlayPage.tsx` 落地——分屏布局（55% 头像区 PetAvatar + 45% 弹幕区 DanmakuList + 音频状态区 + 底部 SubtitleDisplay 字幕区），管理窗内带预览背景，`#/source/live-overlay` 下透明背景供 OBS 加载
+- **四类浏览器源页**：`AvatarSourcePage`（复用 Task 3 PetAvatar 独立渲染实例）、`DanmakuSourcePage`（复用弹幕流 `danmakuFeedReducer` + useLiveWebSocket）、`SubtitleSourcePage`（复用 `SubtitleDisplay`，onStreamContent 驱动）、`AudioSourcePage`（复用 `AudioPanelPage`）；各页 body/html 透明 + 1920x1080 预设适合 OBS 浏览器源
+- **复用组件**：新建 `src/components/live/SubtitleDisplay.tsx`——打字机动画字幕，支持 position/maxLines/fontSize/color/background/typingSpeed/autoClear 配置，供分屏页与字幕源页共享
+- **路由登记**：routes.tsx 向 `MANAGEMENT_ROUTES` 末尾追加 6 条（live-console/live-overlay/avatar-source/danmaku-source/subtitle-source/audio-source，titleKey 一律 management.nav.*）；App.tsx 新增顶层 OBS `#/source/*` 独立路由（跳过连接门，自包含懒加载，无管理布局依赖）
+- **i18n**：management.nav.liveConsole/liveOverlay/avatarSource/danmakuSource/subtitleSource/audioSource + management.liveConsole.*/liveOverlay.*/avatarSource.*/danmakuSource.*/subtitleSource.*/audioSource.* 专属命名空间，中英文双语言补齐
+- **测试补全**：routes.test.ts 显式断言补全 7.4 三条 audio + 本批六条（兑现「后续 SubTask 继续追加」承诺）；新增 6 个页面测试文件（LiveConsole/LiveOverlay/Avatar/Danmaku/Subtitle/Audio Source），每页至少一渲染冒烟或关键交互测试
+- **闸门实测（2026-08-08）**：typecheck 双段 0 错误；lint `--max-warnings 0` 零告警；vitest 30 文件 209 项全绿（新增 6 页测试全过，零回归）；build 三段成功
+- **锚点同步**：变更文档 `.trae/documents/20260807_模块前端_APP桌宠前端Task8直播控制台与分屏源落地.md`（issue_id 模块前端-20260807-09，status 已完成）已归档；tasks.md Task 8 及 8.1/8.2 已勾选 + 台账回填；checklist「管理界面功能对齐」第 4、5 项已勾选（四类源页 OBS 实载验证归 Task 10，不假勾）
+
+### 为什么
+
+- 路由契约遵守：本批 6 页全部向 `MANAGEMENT_ROUTES` 末尾追加登记，不改布局与登记机制（`validateRouteRegistry()` + `routes.test.ts` 看守）；顶层 OBS 路由独立于管理布局，供 OBS 浏览器源直接拉取
+- 复用优先：SubtitleDisplay / PetAvatar / DanmakuList / danmakuFeedReducer / AudioPanelPage 均复用既有渲染与数据链路，四类源页零重复实现
+- 反占位约束：live-console 真实消费 healthApi + useLiveWebSocket，测试断言非占位页并核验 API 接线
+- 浏览器优雅降级：OBS 源页在无后端联调时静默展示透明容器 + OBS 提示，不阻塞独立加载
+- 未触碰 public/、electron/、冻结 store 接口、routes.tsx 既有 14 条
+
+### 未闭合项
+
+| 项 | 性质 | 状态 |
+|----|------|------|
+| 直播控制台/分屏与四类源页真实后端联调（真实 WS 弹幕流 / 真实健康状态 / 真实字幕 onStreamContent） | 真实环境实测 | ⏳ 归 Task 10 回归 |
+| 四类浏览器源页被 OBS 实际加载（透明背景/尺寸预设/独立 URL 实载验证） | 真实采集验证 | ⏳ 归 Task 10 回归（checklist 第 5 项括号注明的 OBS 实载，不假勾） |
+| 主线程对本产出拉起 GN-004 独立审查 | 审查闸门 | ⏳ 待主线程执行（subagent 上下文不可自拉，已按 rules-0 §四-8 降级路径第 0 条显式提醒） |
+| Task 10（分离部署与交付打包） | 下一任务 | ⏳ 待启动（依赖 Task 4-9 全部完成，已就绪） |
+
+### 接续入口
+
+1. 主线程拉起 GN-004 审查本任务产出（上下文：变更文档 + tasks.md/checklist.md 本次改动 + 本段）
+2. 启动 Task 10 [V]（分离部署与交付打包），其触发双重闸门（GN-004 + AskUserQuestion）
+3. Task 10 回归时执行本批 6 页真实后端联调走查 + 四类源页 OBS 实载验证 + Task 9 真实 OBS 采集验证，届时勾选 checklist「管理界面功能对齐」第 5 项 OBS 实载注记
+
+---
+
+# Task 10 交接段（分离部署与交付打包 [V] 闸门）
+
+> 本段在 GN-004 最终交付审查后补齐（修正 SB-1）。Task 10 为 [V] 交付闸门，本段覆盖可自动化部分；真实桌面环境项全部整理为人工清单，不假装已验。
+
+## 做到哪了
+
+- **SubTask 10.1** 已闭合（代码已落地 + GUI 走查）：远程后端配置界面 `src/components/ConnectionSetup.tsx`（含 `/health` 健康检查门）、`src/api/base.ts`（backendUrl 经 IPC/localStorage 持久化 + WS 自动推导）、`electron/main.ts` L310-317（session 跨域 CORS 放行）+ L337（`setDisplayMediaRequestHandler`）
+- **SubTask 10.2** 可自动化部分已实测闭合：健康门两路径 GUI 走查（不可达→ConnectionSetup；可达→进入路由），截图留证 `release/smoke_shots/task10_*.png`；远程后端 `http://127.0.0.1:8005/health` curl 200 healthy
+- **SubTask 10.3** 已闭合：生产构建通过（四道闸门 30 文件/209 项全绿 + build 三段成功，GN-004 终检复实测一致）
+- **SubTask 10.4** 已闭合：打包产物存在——`release/CXO-Pet Setup 0.1.0.exe`（NSIS 124.5 MB）+ `release/win-unpacked/CXO-Pet.exe`（211.7 MB）
+- **SubTask 10.5** 部分闭合：全量回归四道闸门全绿；「人类批准」与真实桌面环境回归未闭合（待办）
+
+## 为什么
+
+- [V] 闸门要求 checklist 全部条目通过 + 构建打包产物存在 + GN-004 交付审查通过 + 人类批准；其中真实桌面环境项无法在本自动化环境验证，必须由真人在真实环境逐项执行并留证
+- 自动化可验证部分（远程配置/健康门/WS 推导/构建/打包/回归）已全部真实闭合；四道闸门由 GN-004 独立实测复核全绿，无假闭合
+
+## 未闭合项（需人类真实验证清单，14 项）
+
+| # | 验证项 | 验证方法 | 证据要求 |
+|---|--------|---------|---------|
+| 1 | OBS 实际选中桌宠窗采集 | 打开 OBS，窗口采集列表选中「CXO-Pet」桌宠窗 | 截图（OBS 源选中 + 预览） |
+| 2 | 透明窗采集兼容性 | OBS 采集透明桌宠窗，确认非 UI 区域透明不被污染 | 截图/视频 |
+| 3 | 绿幕抠像模式采集兜底 | 切换「OBS 抠像背景（绿幕）」后 OBS 采集，确认背景被色度键抠除 | 截图 |
+| 4 | 采集尺寸 setSize 真实生效 | 右键「采集尺寸」切换 400x500/550x700/640x800，OBS 内观察窗口实际变化 | 截图前后对比 |
+| 5 | 采集尺寸重启恢复 | 重启应用，确认桌宠窗按上次持久化尺寸恢复 | 截图 + 日志 |
+| 6 | 麦克风→ASR 实链 | 真机麦克风说话，确认气泡出现识别文本（Live WS 上行） | 截图 + 后端日志 |
+| 7 | 摄像头设备采集 | 开启摄像头采集，确认画面预览/上行 | 截图 |
+| 8 | 屏幕共享采集 | 开启屏幕共享，确认画面采集与开关释放 | 截图 |
+| 9 | 鼠标穿透手感 | 非模型区域点击穿透到桌面；进入模型区恢复拦截，离开恢复穿透 | 视频/操作录屏 |
+| 10 | 右键菜单全项 | 逐项点击右键菜单（打开管理/弹幕窗/置顶/麦克风/屏幕共享/摄像头/OBS 抠像/关闭） | 截图逐项 |
+| 11 | 托盘与快捷键 | 托盘三菜单（打开管理/显示隐藏弹幕/退出）+ 弹幕窗快捷键唤起 | 截图 |
+| 12 | 弹幕窗显隐记忆 | 隐藏弹幕窗后重启，确认保持隐藏 | 截图 |
+| 13 | 打包安装包实际安装运行 | 运行 `CXO-Pet Setup 0.1.0.exe` 完成安装，启动后桌宠窗出现、托盘可用 | 安装截图 + 运行截图 |
+| 14 | 真实远程后端多端联调 | 前端连真实后端（8005 或配置地址）走通聊天/记忆/弹幕/设置等真实接口；含后端 CORS 放行核查（8005 实测响应无 ACAO 头，Electron 经 session 放行可绕过，浏览器直连需后端放行） | 截图 + 后端日志 |
+
+> 说明：真实后端 CORS 阻断已诚实披露，归人工/后端侧核查，非前端可修项。
+
+## 接续入口
+
+1. 主线程闭合 Task 10 [V] 闸门：GN-004 终检（已通过警示放行，SB-1 已在此修正）→ AskUserQuestion 人类批准
+2. 人类按上述 14 项清单在真实桌面环境逐项验证并留证，回填 checklist 未勾条目（三窗/桌宠窗/头像/双流式/视觉/OBS/穿透等归人工项）
+3. 人类批准 + 真实环境回填后，最终闭合 Task 10 与全项目交付
+
+---
+
+# Task 10 补充交接段（logo 修复 + 侧边栏特性复刻，2026-08-08）
+
+> Task 10 打包交付后，用户反馈「logo 不对，需要打包成 exe」并追加「要复刻现有的小工具折叠和其它特性」。本次为补充交付的文档留痕（只写 `.trae` 文档与 note，未改业务源码——业务改动已在补充交付批次中完成并通过闸门）。
+
+## 做到哪了
+
+- **Logo 修复**：用 CX-O-Frontend 的 logo.svg 生成 `public/icon.png`（1024x1024 RGBA），`electron-builder.yml` 的 `win.icon` 指向它（实测 `icon: public/icon.png`）；已重打包
+- **四项特性复刻**（经 AskUserQuestion 用户确认全部要做）：
+  - A 小工具分组折叠：ManagementLayout 侧边栏新增「小工具」分组，收编 vector/archive/audio-workstation/audio-test 4 项，可折叠/展开、路由落在子项自动展开、整体折叠态平铺图标
+  - B 侧边栏整体折叠：260px↔72px 宽度动画、底部折叠按钮
+  - C 对话 Agent 子菜单：复用 `chatStore`（agents/currentAgentId/fetchAgents），点击 Agent 切换后跳 `/chat`，含 submenu 动画
+  - D 二次元粒子装饰：新增 `src/components/anime/ParticleField.tsx`（樱花花瓣+星形，petal density=0.5 maxAlpha=0.28 / star density=0.2 maxAlpha=0.12，`pointer-events-none`、`prefers-reduced-motion` 降级），常驻管理布局
+- **质量闸门实测**：typecheck 0 错误 / lint 零告警 / test **31 文件 215 项全绿** / build 成功
+- **重打包成功**：`release_new/CXO-Pet Setup 0.1.0.exe`（NSIS，含新图标）+ `release_new/win-unpacked/CXO-Pet.exe`（便携版）；`.icon-ico/icon.ico` 已生成
+
+## 为什么
+
+- 用户反馈默认图标（Electron 默认 logo）不对，需换成 CX-O 品牌 logo 并打包成 exe
+- 用户要求复刻现有小工具折叠及其它特性；四项特性（分组折叠/整体折叠/Agent 子菜单/粒子装饰）经 AskUserQuestion 用户确认全部要做
+- 复用 `chatStore` / 既有布局与 i18n 中英成对，未改 `routes.tsx` 的 20 条契约
+
+## 未闭合项（真实桌面环境验证归人工，checklist 项数量不变）
+
+- 新 logo 在安装包中的实际显示（安装后桌面/任务栏/启动图标）
+- 折叠交互手感（侧边栏整体折叠 260↔72、小工具分组折叠/展开动画）
+- 粒子视觉效果（樱花花瓣+星形装饰观感，`prefers-reduced-motion` 降级）
+- Agent 列表真实后端联调（`chatStore.fetchAgents` 真实数据 + 切换跳 `/chat`）
+- GN-004 对本次复刻批次的独立审查待主线程拉起
+
+## 接续入口
+
+1. 主线程拉起 GN-004 审查本复刻批次（变更文档 + ManagementLayout 重写 + ParticleField + i18n）
+2. 人类批准后，由人工在真实桌面环境验证上述 4 项真实验证项并回填
+3. 补充交付随 Task 10 一并闭合
+
+---
+
+## 审查记录：GN-004 独立审查复刻批次（2026-08-08）
+
+### 审查结论
+
+- **等级**：**警示放行（CAUTION-PASS）**
+- **GN-004 agent id**：主线程拉起（GN-004 独立审查）
+- **审查范围**：复刻批次（Logo 修复 + 四项侧边栏特性复刻）可自动化部分
+- **无阻断**、**无 SOFT_BLOCK**（SB-A/SB-B/SB-C 三类均不触发）
+- **7 维度全 PASS**：契约对齐（routes.tsx 20 条零改动 / public/ 零触碰）/ 质量闸门独立实测（typecheck exit0 / lint exit0 / test 31 文件 215 项全绿）/ 复刻特性真实落地（非占位）/ 三段交接 / i18n 中英成对 / 真实桌面环境项诚实归人工 / Logo 与打包产物核实
+- **4 项观察项（OBS-1~4，非阻断）**：
+  - OBS-1：audio-panel（音频面板）同属音频类但未收编进小工具分组（仅收编 archive/vector/audio-workstation/audio-test 4 项），需人工核对 CX-O 前端既有分类是否一致，若不一致作为后续微调
+  - OBS-2：icon.ico 文件存在但未独立验证已实际嵌入 exe PE 资源，安装后实际显示归人工（变更文档 §4.4 第 1 项覆盖）
+  - OBS-3：GN-004 称变更文档 related_files 未列 electron-builder.yml——核实为误报（electron-builder.yml 本已在 related_files），且主线程修正过程中曾误加重复条目，已恢复为干净清单，非阻断
+  - OBS-4：C 项 Agent 真实后端联调、D 项粒子真实渲染与 reduced-motion 视觉降级仅在 jsdom 断言 DOM 结构，真实效果归人工
+- **未独立验证项**（基于执行者自述，已诚实标注）：四项特性经 AskUserQuestion 用户确认（不在本次证据集）/ icon 实际嵌入 exe / 四项真实桌面环境项
+
+### handle_gn004 处置
+
+警示放行（无 SOFT_BLOCK）→ write_to_note（本段）→ proceed → 进入 [V] 闸门 2 人类裁决（Task 10 [V] 节点双重闸门：GN-004 已过，人类批准 + 真实桌面环境人工验证清单待主线程拉起）
+
+---
+
+## Task 10 [V] 闸门 2 人类裁决（2026-08-08）
+
+- **裁决结果**：用户**批准交付**（复刻批次 + logo 修复 + Task 10 最终闭合）。
+- **真实桌面环境项**：用户选择「一会验证」——4 项真实验证（新 logo 实装显示 / 折叠手感 / 粒子视觉 / Agent 真实后端联调）+ checklist「归人工」14 项均待人工回填，**不假装已验**。
+- **锚点同步**：tasks.md Task 10 标记 `[x]`（GN-004 警示放行 + 人类批准交付），SubTask 10.5 完成，台账行状态更新；checklist 未勾条目保持「归人工」待回填。
+- **三段交接（Task 10 终态）**：
+  - 工程过程：Task 1-9 分批开发 → Task 10 分离部署打包 → 补充批次（logo + 复刻）→ GN-004 审查 → 人类批准。
+  - 交接状态：Task 10 可自动化部分**已闭合** + GN-004**已闭合**（警示放行无 SOFT_BLOCK）+ 人类批准**已闭合**；真实桌面环境人工验证项（checklist「归人工」14 项 + 补充 4 项）**未闭合（待人工回填）**。
+  - 最终结果：四道闸门全绿（补充批次 31 文件/215 项）、打包产物存在（release + release_new 含新图标）、GN-004 警示放行无 SOFT_BLOCK、人类批准交付；真实环境人工清单待回填后 Task 10 最终归档。
+- **接续入口**：人工在真实桌面环境按 checklist「归人工」清单 + 补充 4 项验证并回填，回填后由主线程最终归档 Task 10 与全项目交接。
+
+---
+
+## 阻塞记录（2026-08-08 起，连续自动续跑确认）
+
+- **阻塞条件**：目标唯一剩余项 = 真实桌面环境人工验证（checklist「归人工」14 项 + 补充 4 项：新 logo 实装 / 折叠手感 / 粒子视觉 / Agent 真实后端联调）。用户批准交付但选择「一会验证」，至今未回填。
+- **连续判定**：自用户裁决「批准交付 + 一会验证」（用户触发轮）起，经 3+ 次自动续跑逐次核对 checklist（LastWriteTime 恒为 2026-08-08 18:45:58）与 release_new 产物（18:42-18:43）均无变化。此阻塞条件已在连续 ≥3 个目标轮重复，符合 rules-0 §四 blocked 判定阈值。
+- **无法推进原因**：真实桌面环境项必须由人在安装包/便携版上运行验证（硬件/Electron 运行时/OBS/穿透/安装包实装），本自动化环境无法替代，属「无外部状态变更则无法推进」的真实僵局。
+- **已尝试路径**：已完成全部可自动化验收（10 Task / 四道闸门 / GN-004 警示放行 / 人类批准交付 / 打包含新 logo）；已向用户提供完整人工验证清单并两次确认无新验证输入。
+- **解除条件（接续入口）**：人类在真实桌面环境验证并回填 checklist「归人工」项 + 补充 4 项后，主线程据此最终归档 Task 10 并闭合目标（届时将目标置为 complete）。

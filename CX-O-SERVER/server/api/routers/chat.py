@@ -6,15 +6,13 @@
 import json
 import base64
 import time
-import yaml
-from pathlib import Path
 from typing import Dict, List, Optional
 
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
-from server.api.routers.agents import _load_agents
+from server.chat_helpers import get_agent_config, get_llm_client_for_agent
 from server.config import get_settings
 from server.core.logging_config import get_contextual_logger
 
@@ -67,133 +65,8 @@ SUMMARY_AGENT_HIDDEN_SYSTEM_PROMPT = """<role>
 </rules>"""
 
 
-def get_agent_config(agent_id: str) -> Optional[dict]:
-    """获取 Agent 配置"""
-    agents = _load_agents()
-    return next((a for a in agents if a["id"] == agent_id), None)
-
-
-def get_llm_client_for_agent(agent_config: dict):
-    """根据 Agent 配置获取 LLM 客户端"""
-    from server.dependencies import get_llm_client, get_model_router
-
-    model = agent_config.get("model", "main")
-
-    try:
-        model_router = get_model_router()
-
-        # 如果是模型类型 (main/summary/memory)，从 router 获取
-        if model.lower() in ["main", "summary", "memory"]:
-            client = model_router.get_client(model.lower())
-            if client:
-                return client
-        else:
-            # 具体模型名，创建新客户端
-            main_client = model_router.get_client("main")
-            if main_client:
-                from server.core.llm.client import OllamaClient
-
-                return OllamaClient(
-                    host=main_client.host,
-                    model=model,
-                    temperature=agent_config.get("temperature", 0.7),
-                    max_tokens=agent_config.get("max_tokens", 4096),
-                )
-    except Exception as e:
-        import logging
-
-        logging.getLogger(__name__).warning(f"Failed to create client for model {model}: {e}")
-
-    # 默认使用全局 llm_client
-    return get_llm_client()
-
-
-def build_messages(
-    agent_config: dict,
-    context_mgr,
-    session_id: str,
-    user_message: str,
-    memory_context: Optional[str] = None,
-    images: Optional[List[str]] = None,
-) -> List[Dict[str, str]]:
-    """构建消息列表"""
-    messages = []
-
-    # 1. 加载隐藏提示词配置
-    from server.config import get_settings
-    settings = get_settings()
-
-    config_dir = Path(settings._config_path).parent if settings._config_path else Path("config")
-    hidden_prompt_path = config_dir / "hidden_prompt.yaml"
-    hidden_prompts = {}
-    if hidden_prompt_path.exists():
-        with open(hidden_prompt_path, "r", encoding="utf-8") as f:
-            hidden_prompts = yaml.safe_load(f) or {}
-
-    # 2. 系统提示词
-    system_prompt = agent_config.get("system_prompt", "")
-    if system_prompt:
-        messages.append({"role": "system", "content": system_prompt})
-
-    # 3. 根据模型类型注入隐藏提示词
-    model_type = agent_config.get("model", "main").lower()
-    hidden_parts = []
-
-    # 3.1 注入基础工具说明（所有模型都需要）
-    for key in ["tool_instructions", "tools"]:
-        if key in hidden_prompts:
-            hidden_parts.append(hidden_prompts[key])
-
-    # 3.2 根据模型类型注入特定提示词
-    if model_type == "main":
-        for key in ["emotion_prompts", "effect_prompts", "tool_usage_prompts", "graph_tools", "master_model_prompt"]:
-            if key in hidden_prompts:
-                hidden_parts.append(hidden_prompts[key])
-    elif model_type == "summary":
-        for key in ["emotion_prompts", "effect_prompts", "graph_tools", "summary_model_prompt"]:
-            if key in hidden_prompts:
-                hidden_parts.append(hidden_prompts[key])
-    elif model_type in ["assistant", "memory"]:
-        for key in ["emotion_prompts", "effect_prompts", "tool_usage_prompts", "graph_tools", "assistant_model_prompt"]:
-            if key in hidden_prompts:
-                hidden_parts.append(hidden_prompts[key])
-
-    if hidden_parts:
-        messages.append({"role": "system", "content": "\n\n".join(hidden_parts)})
-
-    # 4. 记忆上下文（如果启用记忆且有相关记忆）
-    if memory_context and agent_config.get("use_memory", True):
-        messages.append({"role": "system", "content": f"相关记忆:\n{memory_context}"})
-
-    # 5. 历史消息（最近10条）
-    history = context_mgr.get_messages(session_id, limit=get_settings().config.limits.context.chat_context_limit)
-    for msg in history:
-        if msg.get("role") in ["user", "assistant"]:
-            messages.append({"role": msg["role"], "content": msg.get("content", "")})
-
-    # 6. 用户最新消息（支持多模态）
-    if images and agent_config.get("vision_enabled", False):
-        # 构建多模态消息
-        content = [{"type": "text", "text": user_message}]
-        for img_base64 in images:
-            # 提取 base64 数据部分（去掉 data:image/xxx;base64, 前缀）
-            if img_base64.startswith("data:"):
-                img_data = img_base64.split(",", 1)[1] if "," in img_base64 else img_base64
-                mime_type = (
-                    img_base64.split(";")[0].split(":")[1] if ":" in img_base64 else "image/jpeg"
-                )
-            else:
-                img_data = img_base64
-                mime_type = "image/jpeg"
-
-            content.append(
-                {"type": "image_url", "image_url": {"url": f"data:{mime_type};base64,{img_data}"}}
-            )
-        messages.append({"role": "user", "content": content})
-    else:
-        messages.append({"role": "user", "content": user_message})
-
-    return messages
+# 统一提示词组装入口（迁移自 server/prompt_builder.py，消除重复实现与行为漂移）
+from server.prompt_builder import build_messages  # noqa: F401
 
 
 @router.post("/chat")

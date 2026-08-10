@@ -88,6 +88,24 @@ async def clear_session_messages(session_id: str):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@router.delete("/context/sessions/all")
+async def clear_all_sessions():
+    """删除所有会话和消息。
+
+    注意：本路由必须在 /context/sessions/{session_id} 之前注册，
+    否则 /all 会被 {session_id} 路径参数吞掉导致本端点不可达。
+    """
+    from server.dependencies import get_context_manager
+
+    try:
+        context_mgr = get_context_manager()
+        count = context_mgr.clear_all_sessions()
+
+        return {"status": "success", "message": f"已删除 {count} 个会话", "deleted_count": count}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @router.delete("/context/sessions/{session_id}")
 async def delete_session(session_id: str):
     from server.dependencies import get_context_manager
@@ -102,20 +120,6 @@ async def delete_session(session_id: str):
         return {"status": "success", "message": "会话删除成功"}
     except HTTPException:
         raise
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-@router.delete("/context/sessions/all")
-async def clear_all_sessions():
-    """删除所有会话和消息"""
-    from server.dependencies import get_context_manager
-
-    try:
-        context_mgr = get_context_manager()
-        count = context_mgr.clear_all_sessions()
-
-        return {"status": "success", "message": f"已删除 {count} 个会话", "deleted_count": count}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -140,6 +144,13 @@ async def get_messages(session_id: str, limit: int = 50, offset: int = 0):
 @router.post("/context/messages")
 async def add_message(request: MessageCreateRequest):
     from server.dependencies import get_context_manager
+
+    valid_roles = {"system", "user", "assistant", "tool"}
+    if request.role not in valid_roles:
+        raise HTTPException(
+            status_code=400,
+            detail=f"无效的 role: {request.role}, 必须是 {sorted(valid_roles)} 之一",
+        )
 
     try:
         context_mgr = get_context_manager()

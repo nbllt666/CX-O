@@ -180,7 +180,9 @@ def get_graph_store(agent_id: str = "default", state: ServiceState = Depends(get
 # ---- per-agent 图数据库/图存储注册表（迁移自 CXHMS） ----
 _graph_databases: Dict[str, Any] = {}
 _graph_stores: Dict[str, Any] = {}
-_graph_registry_lock = threading.Lock()
+# 用可重入锁：_get_or_create_graph_store 持锁调用 _get_or_create_graph_database
+# 会再次获取同一锁，非可重入锁（threading.Lock）会导致同线程死锁。
+_graph_registry_lock = threading.RLock()
 
 
 def _get_or_create_graph_database(agent_id: str = "default"):

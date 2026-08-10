@@ -258,7 +258,20 @@ async def ws_asr_stream(websocket: WebSocket):
     logger.info("[WS-ASR] Client connected")
 
     pcm_buffer = bytearray()
-    PARTIAL_THRESHOLD = 48000  # ~1.5s at 16kHz int16
+    # 双流式模式由 ASR Partial 驱动 LLM Prefill，partial 越早出，端到端延迟越低。
+    # VAD 门控下语音段常被切到 1~2s，原 48000(1.5s)/32000(1s) 阈值导致短句
+    # 全程无 partial、pipeline 饥饿（2026-08-05 实测复现，详见
+    # .trae/documents/20260805_模块0_修复短语音无Partial致流水线饥饿.md）。
+    PARTIAL_THRESHOLD = 16000  # 首次 partial：~0.5s at 16kHz int16
+    PARTIAL_STEP = 9600        # 后续 partial 步进：每新增 ~0.3s 触发一次
+    MAX_BUFFER = 960000        # 缓冲上限 ~30s，防 VAD 漏检时无界增长
+    TRIM_TO = 128000           # 超限后保留尾部 ~4s
+    # 单飞推理标志：任一时刻至多 1 个 partial 推理在飞。
+    # 严禁每帧都提交全缓冲推理——帧速 16.7/s 下默认线程池会排入数十个
+    # 推理任务，GIL 挤占导致 uvicorn loop 无法应答 WS ping，客户端
+    # keepalive 超时断连、推理结果全部丢失（2026-08-05 实测复现）。
+    inference_running = False
+    last_partial_len = 0
 
     try:
         while True:
@@ -270,21 +283,39 @@ async def ws_asr_stream(websocket: WebSocket):
             if "bytes" in message and message["bytes"] is not None:
                 pcm_buffer.extend(message["bytes"])
 
-                if len(pcm_buffer) >= PARTIAL_THRESHOLD:
-                    audio_float = _pcm_bytes_to_float(bytes(pcm_buffer))
-                    try:
-                        result = await asyncio.get_event_loop().run_in_executor(
-                            None, _run_inference, audio_float, "auto", True
-                        )
-                        if result["text"]:
-                            await websocket.send_text(json.dumps({
-                                "text": result["text"],
-                                "is_final": False,
-                                "language": result.get("language", ""),
-                                "emotion": result.get("emotion", ""),
-                            }))
-                    except Exception as e:
-                        logger.error(f"[WS-ASR] Partial inference error: {e}")
+                # 缓冲安全上限：裁剪保留尾部，防止无界增长
+                if len(pcm_buffer) > MAX_BUFFER:
+                    del pcm_buffer[:-TRIM_TO]
+                    last_partial_len = min(last_partial_len, len(pcm_buffer))
+
+                # 步进触发 + 单飞：在飞期间音频继续入缓冲，
+                # 下一触发点自然携带最新数据，不丢信息
+                if (not inference_running
+                        and len(pcm_buffer) >= PARTIAL_THRESHOLD
+                        and len(pcm_buffer) - last_partial_len >= PARTIAL_STEP):
+                    inference_running = True
+                    last_partial_len = len(pcm_buffer)
+                    audio_snapshot = _pcm_bytes_to_float(bytes(pcm_buffer))
+
+                    async def _do_partial():
+                        nonlocal inference_running
+                        try:
+                            result = await asyncio.get_event_loop().run_in_executor(
+                                None, _run_inference, audio_snapshot, "auto", True
+                            )
+                            if result["text"]:
+                                await websocket.send_text(json.dumps({
+                                    "text": result["text"],
+                                    "is_final": False,
+                                    "language": result.get("language", ""),
+                                    "emotion": result.get("emotion", ""),
+                                }))
+                        except Exception as e:
+                            logger.error(f"[WS-ASR] Partial inference error: {e}")
+                        finally:
+                            inference_running = False
+
+                    asyncio.create_task(_do_partial())
 
             elif "text" in message and message["text"] is not None:
                 try:
@@ -314,7 +345,12 @@ async def ws_asr_stream(websocket: WebSocket):
                         await websocket.send_text(json.dumps({
                             "text": "", "is_final": True, "language": "", "emotion": "",
                         }))
+                    # 清空 buffer 准备下一轮
                     pcm_buffer.clear()
+                    # 必须重置 partial 步进锚点：否则下一轮 utterance 需
+                    # buffer >= last_partial_len + PARTIAL_STEP 才出首个 partial，
+                    # 相当于把首轮阈值越抬越高（次生 bug，随阈值下调一并修复）
+                    last_partial_len = 0
 
     except WebSocketDisconnect:
         logger.info("[WS-ASR] Client disconnected")

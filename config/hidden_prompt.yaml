@@ -1,32 +1,23 @@
 # 隐藏提示词配置（工具调用相关）
 
-tool_instructions: |
-  ## 工具调用规则
-  
-  ### 记忆系统
-  - write_memory: 用户告诉你重要信息时（名字、爱好等）
-  - search_memories: 用户询问之前聊过的内容时
-
-  ### 弹幕决策
-  - danmaku_decide: 收到弹幕时自动判断是否需要回复
-
 tools: |
-  ## 工具详细说明
-  
-  ### write_memory
+  ## 工具调用规则
+
+  ### 记忆系统
+  - write_long_term_memory: 用户告诉你重要信息时（名字、爱好等）
+  - search_all_memories: 用户询问之前聊过的内容时
+
+  ### 工具详细说明
+
+  #### write_long_term_memory
   用途：保存重要信息到长期记忆
   调用时机：用户告诉你他的名字、年龄、爱好等信息
   参数：content
   
-  ### search_memories
+  #### search_all_memories
   用途：从记忆库搜索相关内容
   调用时机：用户询问之前聊过的内容
   参数：query
-  
-  ### danmaku_decide
-  用途：判断弹幕是否需要回复
-  调用时机：收到新弹幕
-  返回：passive | reply
 
 emotion_prompts: |
   ## 情感标记使用指南
@@ -85,9 +76,8 @@ tool_usage_prompts: |
   ## 工具使用时机指南
 
   ### 记忆工具
-  - write_memory: 用户告诉你重要信息时（名字、爱好、计划等）
-  - search_memories: 用户询问之前聊过的内容时
-  - update_memory_node: 用户要求修正或补充记忆时
+  - write_long_term_memory: 用户告诉你重要信息时（名字、爱好、计划等）
+  - search_all_memories: 用户询问之前聊过的内容时
 
   ### 提醒工具
   - set_alarm: 用户要求在特定时间提醒时
@@ -139,19 +129,18 @@ graph_tools: |
 master_model_prompt: |
   ## 主模型操作指南
   当用户提及人物、事物、概念或事件时，主动使用对应的图工具记录实体和关系。
-  优先使用 search_related_memories 检索相关记忆。
+  优先使用各图库的相关记忆检索工具（如 user_graph_search_related_memories）检索相关记忆。
   情感表达要自然，音效使用要适度。
 
 summary_model_prompt: |
   ## 摘要模型操作指南
-  在摘要对话时，使用 extract_entities 抽取实体并存储到对应图库。
-  合并重复实体时使用 merge_entities。
+  在摘要对话时，使用各图库的实体抽取与合并系列工具（如 user_graph_extract_entities、user_graph_merge_entities）抽取并合并实体，存储到对应图库。
   保持摘要简洁，突出重点。
 
 assistant_model_prompt: |
   ## 记忆管理 Agent 操作指南
-  管理图数据时，使用 update/delete 操作维护数据质量。
-  定期使用 get_stats 检查图库健康状态。
+  管理图数据时，使用 update/delete 系列工具（如 user_graph_update_entity）维护数据质量。
+  定期使用各图库的统计工具（如 user_graph_get_stats）检查图库健康状态。
   响应用户的记忆管理请求时，要清晰说明操作结果。
 
 # 实时语音模式专用提示词

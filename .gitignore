@@ -225,8 +225,11 @@ old/
 # ----------------------------------------
 # 测试输出文件
 # ----------------------------------------
+# 忽略零散测试脚本/产物，但放行 CX-O-SERVER/tests/ 下的真实单测套件
 *_test.py
 test_*.py
+!CX-O-SERVER/tests/test_*.py
+!CX-O-SERVER/tests/*_test.py
 *_output.txt
 *_output.raw
 container_log.txt

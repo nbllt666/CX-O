@@ -664,7 +664,7 @@ async def save_diary_entry(
         agent_id = get_current_agent_id()
 
         # 保存日记记忆（write_memory 是同步方法，支持 agent_id 透传）
-        memory_id = _MEMORY_MANAGER.write_memory(
+        memory_id = await _MEMORY_MANAGER.write_memory_async(
             content=body,
             memory_type="diary",
             importance=3,

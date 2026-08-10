@@ -1,0 +1,294 @@
+"""server.core.websocket.manager (WebSocketManager) 单元测试。
+
+使用 FakeWebSocket 隔离 FastAPI WebSocket，覆盖：
+连接封装订阅、连接/断连、点对点发送、广播（含 exclude）、频道订阅/取消/广播、
+type 路由与 action 回退、未知消息/未知 action、离线清理与回调、统计计数。
+
+运行：python -m pytest tests/test_websocket_manager.py -v
+"""
+from datetime import datetime, timedelta
+
+import pytest
+
+from server.core.websocket.manager import (
+    WebSocketConnection,
+    WebSocketManager,
+    get_websocket_manager,
+)
+
+
+class FakeWebSocket:
+    def __init__(self):
+        self.accepted = False
+        self.sent = []
+        self.to_receive = []
+
+    async def accept(self):
+        self.accepted = True
+
+    async def send_json(self, data):
+        self.sent.append(data)
+
+    async def receive_json(self):
+        return self.to_receive.pop(0)
+
+
+# ================================================================ WebSocketConnection
+class TestConnection:
+    def test_subscribe_and_unsubscribe(self):
+        c = WebSocketConnection(FakeWebSocket(), "c1", {"k": "v"})
+        assert c.metadata == {"k": "v"}
+        assert c.is_subscribed("ch") is False
+        c.subscribe("ch")
+        assert c.is_subscribed("ch") is True
+        c.unsubscribe("ch")
+        assert c.is_subscribed("ch") is False
+
+    def test_unsubscribe_unknown_safe(self):
+        c = WebSocketConnection(FakeWebSocket(), "c1")
+        c.unsubscribe("nope")  # 不应抛错
+
+    @pytest.mark.asyncio
+    async def test_send_updates_activity(self):
+        ws = FakeWebSocket()
+        c = WebSocketConnection(ws, "c1")
+        before = c.last_activity
+        await c.send({"type": "ping"})
+        assert ws.sent == [{"type": "ping"}]
+        assert c.last_activity >= before
+
+    @pytest.mark.asyncio
+    async def test_receive(self):
+        ws = FakeWebSocket()
+        ws.to_receive = [{"type": "hello"}]
+        c = WebSocketConnection(ws, "c1")
+        assert await c.receive() == {"type": "hello"}
+
+
+# ================================================================ WebSocketManager
+@pytest.fixture
+def mgr():
+    return WebSocketManager()
+
+
+class TestConnectDisconnect:
+    @pytest.mark.asyncio
+    async def test_connect_generates_client_id_and_sends_connected(self, mgr):
+        ws = FakeWebSocket()
+        conn = await mgr.connect(ws)
+        assert ws.accepted is True
+        assert conn.client_id in mgr.connections
+        assert ws.sent[0]["type"] == "connected"
+
+    @pytest.mark.asyncio
+    async def test_connect_no_connected_message(self, mgr):
+        ws = FakeWebSocket()
+        conn = await mgr.connect(ws, client_id="fixed", send_connected=False)
+        assert conn.client_id == "fixed"
+        assert ws.sent == []
+
+    @pytest.mark.asyncio
+    async def test_disconnect_removes_and_cleans_subscriptions(self, mgr):
+        ws = FakeWebSocket()
+        conn = await mgr.connect(ws, client_id="a")
+        mgr.subscribe_to_channel("a", "room")
+        await mgr.disconnect("a")
+        assert "a" not in mgr.connections
+        assert "room" not in mgr.channels
+
+    @pytest.mark.asyncio
+    async def test_disconnect_unknown_is_noop(self, mgr):
+        await mgr.disconnect("ghost")  # 不应抛错
+
+
+class TestSend:
+    @pytest.mark.asyncio
+    async def test_send_to_client(self, mgr):
+        ws = FakeWebSocket()
+        await mgr.connect(ws, client_id="a", send_connected=False)
+        await mgr.send_to_client("a", {"type": "x"})
+        assert ws.sent == [{"type": "x"}]
+
+    @pytest.mark.asyncio
+    async def test_send_to_missing_client_noop(self, mgr):
+        await mgr.send_to_client("ghost", {"type": "x"})  # 不应抛错
+
+    @pytest.mark.asyncio
+    async def test_send_message_alias(self, mgr):
+        ws = FakeWebSocket()
+        await mgr.connect(ws, client_id="a", send_connected=False)
+        await mgr.send_message("a", {"type": "y"})
+        assert ws.sent[-1]["type"] == "y"
+
+
+class TestBroadcast:
+    @pytest.mark.asyncio
+    async def test_broadcast_to_all(self, mgr):
+        ws1, ws2 = FakeWebSocket(), FakeWebSocket()
+        await mgr.connect(ws1, client_id="a", send_connected=False)
+        await mgr.connect(ws2, client_id="b", send_connected=False)
+        await mgr.broadcast({"type": "z"}, exclude=None)
+        assert ws1.sent == ws2.sent == [{"type": "z"}]
+
+    @pytest.mark.asyncio
+    async def test_broadcast_exclude(self, mgr):
+        ws1, ws2 = FakeWebSocket(), FakeWebSocket()
+        await mgr.connect(ws1, client_id="a", send_connected=False)
+        await mgr.connect(ws2, client_id="b", send_connected=False)
+        await mgr.broadcast({"type": "z"}, exclude="b")
+        assert ws1.sent == [{"type": "z"}]
+        assert ws2.sent == []
+
+    @pytest.mark.asyncio
+    async def test_broadcast_external_event(self, mgr):
+        ws1 = FakeWebSocket()
+        await mgr.connect(ws1, client_id="a", send_connected=False)
+        await mgr.broadcast_external_event("sys", "alert", "标题", "正文")
+        assert ws1.sent[0]["event"] == "external_event"
+        assert ws1.sent[0]["data"]["title"] == "标题"
+
+
+class TestChannels:
+    @pytest.mark.asyncio
+    async def test_subscribe_requires_connection(self, mgr):
+        mgr.subscribe_to_channel("ghost", "ch")  # 无连接 → 不建频道
+        assert "ch" not in mgr.channels
+
+    @pytest.mark.asyncio
+    async def test_subscribe_and_unsubscribe(self, mgr):
+        ws = FakeWebSocket()
+        await mgr.connect(ws, client_id="a", send_connected=False)
+        mgr.subscribe_to_channel("a", "room")
+        assert mgr.connections["a"].is_subscribed("room")
+        assert mgr.channels["room"] == {"a"}
+        mgr.unsubscribe_from_channel("a", "room")
+        assert "room" not in mgr.channels
+
+    @pytest.mark.asyncio
+    async def test_broadcast_to_channel(self, mgr):
+        ws1, ws2 = FakeWebSocket(), FakeWebSocket()
+        await mgr.connect(ws1, client_id="a", send_connected=False)
+        await mgr.connect(ws2, client_id="b", send_connected=False)
+        mgr.subscribe_to_channel("a", "room")
+        await mgr.broadcast_to_channel("room", {"type": "m"})
+        assert ws1.sent == [{"type": "m"}]
+        assert ws2.sent == []
+
+
+class TestRouting:
+    @pytest.mark.asyncio
+    async def test_type_handler_called(self, mgr):
+        calls = []
+
+        async def handler(client_id, message):
+            calls.append((client_id, message))
+
+        mgr.register_handler("greet", handler)
+        await mgr.handle_message("a", {"type": "greet", "data": "hi"})
+        assert calls == [("a", {"type": "greet", "data": "hi"})]
+
+    @pytest.mark.asyncio
+    async def test_type_handler_error_sends_error(self, mgr):
+        ws = FakeWebSocket()
+        await mgr.connect(ws, client_id="a", send_connected=False)
+
+        async def bad_handler(client_id, message):
+            raise RuntimeError("boom")
+
+        mgr.register_handler("boom", bad_handler)
+        await mgr.handle_message("a", {"type": "boom"})
+        assert ws.sent[-1]["type"] == "error"
+
+    @pytest.mark.asyncio
+    async def test_action_fallback(self, mgr):
+        calls = []
+
+        async def action_handler(websocket, message, client_id):
+            calls.append((websocket, message, client_id))
+
+        mgr.register_action_handler("chat.message", action_handler)
+        await mgr.handle_message("a", {"action": "chat.message", "data": "x"})
+        assert calls[0][1]["action"] == "chat.message"
+        assert calls[0][2] == "a"
+
+    @pytest.mark.asyncio
+    async def test_unknown_message_type(self, mgr):
+        ws = FakeWebSocket()
+        await mgr.connect(ws, client_id="a", send_connected=False)
+        await mgr.handle_message("a", {"type": "nope"})
+        assert ws.sent[-1]["type"] == "error"
+
+    @pytest.mark.asyncio
+    async def test_unknown_action(self, mgr):
+        ws = FakeWebSocket()
+        await mgr.connect(ws, client_id="a", send_connected=False)
+        await mgr.handle_action_message("a", {"action": "nope"})
+        assert ws.sent[-1]["type"] == "error"
+
+    @pytest.mark.asyncio
+    async def test_handle_action_get_handler(self, mgr):
+        async def h(ws, msg, cid):
+            pass
+
+        mgr.register_action_handler("act", h)
+        assert mgr.get_handler("act") is h
+        assert mgr.get_handler("missing") is None
+
+
+class TestCleanup:
+    @pytest.mark.asyncio
+    async def test_cleanup_inactive_triggers_offline(self, mgr):
+        offline = []
+        mgr.set_offline_callback(lambda host_agent_id: offline.append(host_agent_id))
+        mgr.set_agent_timeout("agent1", 5)
+
+        ws = FakeWebSocket()
+        conn = await mgr.connect(ws, client_id="a", metadata={"agent_id": "agent1"},
+                                 send_connected=False)
+        conn.last_activity = datetime.now() - timedelta(hours=2)
+
+        await mgr._cleanup_inactive_connections()
+        assert "a" not in mgr.connections
+        assert offline == ["agent1"]
+
+    @pytest.mark.asyncio
+    async def test_cleanup_keeps_active(self, mgr):
+        ws = FakeWebSocket()
+        await mgr.connect(ws, client_id="a", send_connected=False)
+        await mgr._cleanup_inactive_connections()
+        assert "a" in mgr.connections
+
+    @pytest.mark.asyncio
+    async def test_cleanup_default_timeout(self, mgr):
+        ws = FakeWebSocket()
+        conn = await mgr.connect(ws, client_id="a", send_connected=False)
+        conn.last_activity = datetime.now() - timedelta(hours=2)
+        await mgr._cleanup_inactive_connections()
+        assert "a" not in mgr.connections
+
+    @pytest.mark.asyncio
+    async def test_cleanup_loop_cancellable(self, mgr):
+        mgr._running = True
+        task = mgr._track_background_task(__import__("asyncio").create_task(
+            mgr._cleanup_loop(interval_seconds=1)))
+        await mgr.stop_cleanup_task()
+        assert mgr._running is False
+
+
+class TestStats:
+    def test_get_stats_counts(self, mgr):
+        mgr.increment_tts_count()
+        mgr.increment_asr_count()
+        mgr.increment_llm_count()
+        mgr.increment_llm_count()
+        stats = mgr.get_stats()
+        assert stats["tts_count"] == 1
+        assert stats["asr_count"] == 1
+        assert stats["llm_count"] == 2
+        assert stats["total_connections"] == 0
+        assert stats["total_channels"] == 0
+
+    def test_get_websocket_manager_singleton(self):
+        a = get_websocket_manager()
+        b = get_websocket_manager()
+        assert a is b

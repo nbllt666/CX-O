@@ -380,14 +380,18 @@ class SQLiteGraphStore(GraphStoreBase):
 
     def export(self, library: GraphLibrary) -> dict:
         node_type_prefix = f"{library.value}_"
-        result = self._db.nodes.search(node_type=node_type_prefix, limit=10000)
+        result = self._db.nodes.search(node_type=None, limit=10000)
         entities = []
         for node in result.items:
+            if not node.type.startswith(node_type_prefix):
+                continue
             entities.append(self._entity_from_node(node, library))
         edge_type_prefix = f"{library.value}_"
-        edge_result = self._db.edges.search(relation_type=edge_type_prefix, limit=10000)
+        edge_result = self._db.edges.search(relation_type=None, limit=10000)
         relations = []
         for edge in edge_result.items:
+            if not edge.relation_type.startswith(edge_type_prefix):
+                continue
             relations.append(self._relation_from_edge(edge))
         return {
             "library": library.value,

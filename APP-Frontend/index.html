@@ -1,0 +1,19 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <!-- 主题防闪烁脚本：CSS 加载前同步读取 zustand persist（key: cxo-pet-theme）写入 data-theme -->
+    <script>(function(){try{var k='cxo-pet-theme';var t='dark';try{var r=localStorage.getItem(k);if(r){var p=JSON.parse(r);var v=p&&p.state&&p.state.theme?p.state.theme:p;if(v==='dark'||v==='light'){t=v;}}}catch(e){}document.documentElement.setAttribute('data-theme',t);}catch(e){document.documentElement.setAttribute('data-theme','dark');}})();</script>
+    <!-- Live2D Cubism 2.x Runtime（本地自包含，仅桌宠头像渲染消费） -->
+    <script src="/live2d.min.js"></script>
+    <!-- Live2D Cubism 4.x Runtime（本地自包含） -->
+    <script src="/live2dcubismcore.min.js"></script>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="description" content="CXO-Pet 桌宠应用" />
+    <title>CXO-Pet</title>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>
