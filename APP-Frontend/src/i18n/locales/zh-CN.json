@@ -741,6 +741,7 @@
       "userResponse": "用户答复",
       "advance": "推进",
       "finalize": "终结",
+      "chunkSize": "切分大小",
       "result": "蒸馏结果",
       "stored": "已存储",
       "location": "位置",

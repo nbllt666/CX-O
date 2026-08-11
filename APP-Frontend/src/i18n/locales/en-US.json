@@ -741,6 +741,7 @@
       "userResponse": "Your answer",
       "advance": "Advance",
       "finalize": "Finalize",
+      "chunkSize": "Chunk size",
       "result": "Result",
       "stored": "Stored",
       "location": "Location",

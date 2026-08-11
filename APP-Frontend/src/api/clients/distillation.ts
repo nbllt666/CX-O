@@ -61,6 +61,9 @@ export interface DistillationSession {
   quality_score?: number | null;
   created_at: string;
   updated_at?: string | null;
+  finalized_at?: string | null;
+  is_finalized?: boolean;
+  error_message?: string | null;
 }
 
 export interface BatchStartInput {
@@ -81,7 +84,7 @@ export interface BatchStartResult {
 }
 
 export interface BatchGroupStatus {
-  group_id: string;
+  session_group_id: string;
   sessions: Array<Record<string, unknown>>;
   completed_count: number;
   total_count: number;
