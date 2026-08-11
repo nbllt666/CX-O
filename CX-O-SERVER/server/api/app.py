@@ -26,6 +26,7 @@ from server.api.routers import (
     config,
     context,
     cxfc,
+    discovery,
     distillation,
     graph,
     memory,
@@ -90,6 +91,7 @@ def register_api_routes(app: FastAPI):
     app.include_router(backup.router, prefix="/api")
     app.include_router(decision.router, prefix="/api")
     app.include_router(cxfc.router, prefix="/api")
+    app.include_router(discovery.router, prefix="/api")
     app.include_router(vector.router, prefix="/api")
     app.include_router(multimodal.router, prefix="/api")
     # AnythingLLM 兼容 API（迁移自 CXHMS）：路由自带 /v1/* prefix，挂载时不加额外 prefix

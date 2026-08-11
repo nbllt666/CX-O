@@ -24,6 +24,7 @@ import {
   Plug,
   Radio,
   RefreshCw,
+  Search,
   Server,
   Share2,
   Sparkles,
@@ -40,6 +41,8 @@ import {
 import type { CaptureFrameMode } from '@/store/captureStore';
 import { healthApi } from '@/api/clients/health';
 import { configApi } from '@/api/clients/config';
+import { discoveryApi } from '@/api/clients/discovery';
+import type { DiscoveredBackend } from '@/api/clients/discovery';
 import { subscribeConfigChanged } from '@/lib/configEvents';
 import { serviceApi } from '@/api/clients/service';
 import { graphApi } from '@/api/clients/graph';
@@ -525,6 +528,68 @@ function BackendSection() {
   const [effectiveWs, setEffectiveWs] = useState(() => getWsBaseUrl());
   const [saving, setSaving] = useState(false);
   const [result, setResult] = useState<{ ok: boolean; message: string } | null>(null);
+  const [discovering, setDiscovering] = useState(false);
+  const [discovered, setDiscovered] = useState<DiscoveredBackend[]>([]);
+  const [selectedBackendUrl, setSelectedBackendUrl] = useState<string>('');
+  const [discoverError, setDiscoverError] = useState<string | null>(null);
+
+  /** 取当前生效端口的端口号（无显式端口时回退默认 8100） */
+  const currentPort = ((): number => {
+    try {
+      return Number(new URL(getApiBaseUrl()).port) || 8100;
+    } catch {
+      return 8100;
+    }
+  })();
+
+  const handleDiscover = async () => {
+    setDiscovering(true);
+    setDiscoverError(null);
+    setDiscovered([]);
+    try {
+      const res = await discoveryApi.discover(currentPort);
+      setDiscovered(res.backends);
+      setSelectedBackendUrl(res.backends[0]?.url ?? '');
+    } catch (err) {
+      setDiscoverError(err instanceof Error ? err.message : 'Unknown error');
+    } finally {
+      setDiscovering(false);
+    }
+  };
+
+  const handleConnect = async (backend: DiscoveredBackend) => {
+    setSaving(true);
+    setResult(null);
+    try {
+      const response = await fetch(`${backend.url}/health`, {
+        method: 'GET',
+        signal: AbortSignal.timeout(5000),
+      });
+      if (response.ok) {
+        setBackendUrl(backend.url);
+        setWsInput('');
+        setUrlInput(backend.url);
+        setEffectiveUrl(getApiBaseUrl());
+        setEffectiveWs(getWsBaseUrl());
+        setDiscovered([]);
+        setResult({ ok: true, message: t('settings.backend.saveOk') });
+      } else {
+        setResult({
+          ok: false,
+          message: t('settings.backend.serverError', { status: response.status }),
+        });
+      }
+    } catch (err) {
+      setResult({
+        ok: false,
+        message: t('settings.backend.saveFailed', {
+          message: err instanceof Error ? err.message : 'Unknown error',
+        }),
+      });
+    } finally {
+      setSaving(false);
+    }
+  };
 
   const handleSave = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -608,6 +673,52 @@ function BackendSection() {
           </div>
         </div>
       </form>
+      <div className="mt-2 flex items-center gap-2">
+        <button
+          type="button"
+          onClick={() => void handleDiscover()}
+          disabled={discovering}
+          className="flex items-center gap-1.5 rounded-lg border border-[var(--glass-border)] bg-[rgba(255,255,255,0.04)] px-3 py-1.5 text-xs text-muted-foreground transition-opacity hover:opacity-85 disabled:opacity-50"
+        >
+          <Search className="h-3.5 w-3.5" />
+          {discovering ? t('settings.backend.discovering') : t('settings.backend.discover')}
+        </button>
+        {discoverError && (
+          <span className="text-xs text-red-400">{t('settings.backend.discoverFailed')}</span>
+        )}
+      </div>
+      {discovered.length > 0 && (
+        <div className="mt-2 rounded-lg border border-[var(--glass-border)] bg-[rgba(255,255,255,0.04)] p-2">
+          <label className="mb-1 block text-xs text-muted-foreground">
+            {t('settings.backend.discoverResult', { count: discovered.length })}
+          </label>
+          <div className="flex items-center gap-2">
+            <select
+              aria-label={t('settings.backend.discoverResult', { count: discovered.length })}
+              value={selectedBackendUrl}
+              onChange={(e) => setSelectedBackendUrl(e.target.value)}
+              className="min-w-0 flex-1 rounded-lg border border-[var(--glass-border)] bg-[rgba(255,255,255,0.06)] px-2 py-1.5 font-mono text-xs text-muted-foreground focus:border-[rgba(255,183,225,0.4)] focus:outline-none"
+            >
+              {discovered.map((b) => (
+                <option key={b.url} value={b.url}>
+                  {b.url}
+                </option>
+              ))}
+            </select>
+            <button
+              type="button"
+              onClick={() => {
+                const backend = discovered.find((b) => b.url === selectedBackendUrl);
+                if (backend) void handleConnect(backend);
+              }}
+              disabled={saving || !selectedBackendUrl}
+              className="shrink-0 rounded-lg bg-primary px-3 py-1.5 text-xs font-medium text-primary-foreground transition-opacity hover:opacity-85 disabled:opacity-50"
+            >
+              {saving ? t('settings.backend.saving') : t('settings.backend.connect')}
+            </button>
+          </div>
+        </div>
+      )}
       <p className="text-xs text-muted-foreground">
         {window.electronAPI
           ? t('settings.backend.electronHint')

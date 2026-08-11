@@ -838,7 +838,12 @@
       "saveFailed": "Cannot reach backend: {{message}}",
       "serverError": "Server returned error: {{status}}",
       "electronHint": "In desktop mode the URL is persisted by the main process",
-      "browserHint": "In browser mode the URL is stored in localStorage"
+      "browserHint": "In browser mode the URL is stored in localStorage",
+      "discover": "Discover LAN backends",
+      "discovering": "Scanning...",
+      "discoverFailed": "Discovery failed. Make sure the current backend is reachable and retry.",
+      "discoverResult": "Found {{count}} backends. Select one to connect.",
+      "connect": "Connect"
     },
     "audio": {
       "sectionTitle": "Audio",

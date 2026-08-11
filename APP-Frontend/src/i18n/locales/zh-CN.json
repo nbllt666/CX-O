@@ -838,7 +838,12 @@
       "saveFailed": "无法连接到后端：{{message}}",
       "serverError": "服务器返回错误：{{status}}",
       "electronHint": "桌面模式下地址经主进程持久化，重启后保持",
-      "browserHint": "浏览器模式下地址保存在 localStorage"
+      "browserHint": "浏览器模式下地址保存在 localStorage",
+      "discover": "自动发现局域网后端",
+      "discovering": "扫描中...",
+      "discoverFailed": "发现失败，请确认当前后端可达后重试",
+      "discoverResult": "发现 {{count}} 个后端，请选择要连接的地址",
+      "connect": "连接"
     },
     "audio": {
       "sectionTitle": "音频",
