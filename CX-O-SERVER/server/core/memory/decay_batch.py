@@ -1,3 +1,4 @@
+"""批量记忆衰减——后台异步执行大规模记忆的衰减更新。"""
 import asyncio
 from dataclasses import dataclass
 from datetime import datetime

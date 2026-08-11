@@ -19,7 +19,7 @@
 - [11. 蒸馏服务与角色卡](#11-蒸馏服务与角色卡)
 - [12. 多模态管线与决策核心](#12-多模态管线与决策核心)
 - [13. 提醒与任务调度](#13-提醒与任务调度)
-- [14. 前端（CX-O-Frontend）](#14-前端cx-o-frontend)
+- [14. 前端（APP-Frontend）](#14-前端app-frontend)
 - [15. 语音工作站（CX-O-VoiceWorkStation）](#15-语音工作站cx-o-voiceworkstation)
 - [16. Docker 推理服务](#16-docker-推理服务)
 - [17. 配置系统](#17-配置系统)
@@ -53,13 +53,14 @@ CX-O 将虚拟形象、实时语音对话、记忆管理、直播推流、声音
 ```
 ┌─────────────────────────────────────────────────────────────────────┐
 │                           CX-O 桌面端                                │
-│  ┌────────────────┐   ┌──────────────────────────────┐              │
-│  │ CX-O-Frontend  │   │ APP-Frontend（Electron 宠物） │              │
-│  │ Web 前端(5173) │   └──────────────────────────────┘              │
-│  └───────┬────────┘                                                │
-│          │ HTTP / WebSocket                                         │
-├──────────┼──────────────────────────────────────────────────────────┤
-│  ┌───────┴──────────────────────────────────────────────────────┐  │
+│  ┌──────────────────────────────────────────────┐                   │
+│  │            APP-Frontend（统一前端）           │                   │
+│  │  管理界面 · 聊天 · 直播 · 录音作曲 · 桌宠     │                   │
+│  │  浏览器模式 :3100 / Electron 桌面模式         │                   │
+│  └───────────────────────┬──────────────────────┘                   │
+│                          │ HTTP / WebSocket                         │
+├──────────────────────────┼──────────────────────────────────────────┤
+│  ┌───────────────────────┴──────────────────────────────────────┐  │
 │  │              CX-O-SERVER（FastAPI，端口 8000）                 │  │
 │  │   Gateway(WS) + Backend(REST) + ASR + TTS 单体服务            │  │
 │  └───────┬───────────────┬────────────────────────┬─────────────┘  │
@@ -77,8 +78,7 @@ CX-O 将虚拟形象、实时语音对话、记忆管理、直播推流、声音
 | 组件 | 技术 | 端口 | 职责 |
 |------|------|------|------|
 | CX-O-SERVER | Python / FastAPI / uvicorn | 8000 | 统一后端：Gateway(WS) + REST + ASR + TTS 单体 |
-| CX-O-Frontend | React / TypeScript / Vite | 5173 | Web 管理界面、聊天、直播、录音作曲 |
-| APP-Frontend | Electron | — | 桌面宠物（透明悬浮窗） |
+| APP-Frontend | React / TypeScript / Vite / Electron | 3100（浏览器）/ Electron | 统一前端：管理界面、聊天、直播、录音作曲、桌面宠物 |
 | CX-O-VoiceWorkStation | Python / FastAPI | 8200 | 参考音频生成、SVC 训练/推理、AI 作曲 |
 | asr-sensevoice | Docker / FunASR+SenseVoice | 8005 | 语音识别服务 |
 | f5-tts-triton | Docker / Triton+TRT-LLM | 8000/8001/8002 | F5-TTS 合成（Triton 加速） |
@@ -232,10 +232,9 @@ CX-O 将虚拟形象、实时语音对话、记忆管理、直播推流、声音
 - 双流式下 VAD 仅作兜底，不阻塞 ASR Partial 驱动的主流程。
 - `min_silence_duration_ms=150` 判定句尾，加速兜底修正约 350ms。
 
-### 4.9 弹幕防火墙（`firewall.py`）与自适应轮询
+### 4.9 弹幕防火墙（`firewall.py`）
 
 - **防火墙**：三档过滤不当弹幕/内容，保障直播与对话安全。
-- **自适应轮询**（`adaptive_polling.py`）：动态调整轮询间隔（`min_interval_ms=50 ~ max_interval_ms=2000`），兼顾实时性与负载。
 
 ### 4.10 实时性能预算
 
@@ -524,26 +523,28 @@ T(t) = 1 / (1 + (Δt/T₅₀)^k)      # T₅₀=30, k=2
 
 ---
 
-## 14. 前端（CX-O-Frontend）
+## 14. 前端（APP-Frontend）
 
-> React + TypeScript + Vite，路由见 `src/App.tsx`。
+> React + TypeScript + Vite + Electron，管理界面路由见 `src/pages/management/routes.tsx`（HashRouter 管理窗）。
+> 支持两种形态：浏览器模式（`npm run dev:browser`，端口 3100）与 Electron 桌面模式（`npm run dev`）。
 
-### 14.1 页面路由
+### 14.1 管理界面路由
 
 | 路径 | 功能 |
 |------|------|
-| `/chat` | 聊天（含双流式语音） |
+| `/chat` | 聊天（含 Markdown / 工具调用 / 提醒通知） |
 | `/dashboard` | 仪表盘 |
-| `/memories` | 记忆管理 |
+| `/memories` | 记忆管理（批量操作 / 卡片·列表视图） |
 | `/archive` | 归档 |
 | `/agents` | Agent 管理（新建人设、配置参数） |
 | `/acp` | ACP 多 Agent 协作 |
 | `/plugins`、`/tools` | 插件 / 工具 |
-| `/audio-workstation` | 录音作曲 |
+| `/audio-workstation` | 录音作曲（五线谱 / 作曲 / SVC / VoxCPM / Orpheus） |
 | `/settings` | 设置 |
-| `/memory-agent`、`/vector-data` | 记忆 Agent / 向量数据 |
-| `/live`、`/live/split/*` | 直播（OBS 四源：avatar/danmaku/subtitle/audio） |
-| `/pet` | 桌面宠物 |
+| `/memory-agent`、`/vector` | 记忆 Agent / 向量数据 |
+| `/live-console`、`/live-overlay` | 直播控制台 / 直播分屏 |
+| `/avatar-source`、`/danmaku-source`、`/subtitle-source`、`/audio-source` | OBS 四类浏览器源 |
+| `/pet`、`/danmaku` | 桌面宠物 / 弹幕独立窗 |
 
 ### 14.2 语音管线（`src/hooks/`）
 
@@ -653,7 +654,7 @@ config.json 文件配置  →  deep_merge  →  环境变量（CXO_ 前缀）  �
 
 ```
 CX-O/
-├── CX-O-Frontend/          # 前端桌面应用（React + Electron）
+├── APP-Frontend/           # 前端（浏览器 :3100 / Electron 桌宠）
 ├── CX-O-SERVER/            # 后端服务（FastAPI + WebSocket 单体）
 │   └── server/
 │       ├── api/            # REST 路由

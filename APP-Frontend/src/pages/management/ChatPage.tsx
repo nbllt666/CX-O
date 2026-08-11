@@ -13,7 +13,7 @@
  */
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { Bot, Loader2, Send, Square, User, Wrench } from 'lucide-react';
+import { Bell, Bot, Send, Square, User, X } from 'lucide-react';
 import { useChatStore } from '@/store/chatStore';
 import { useWebSocket } from '@/hooks/useWebSocket';
 import type { WebSocketMessage } from '@/hooks/useWebSocket';
@@ -27,11 +27,12 @@ import {
   normalizeStreamChunk,
 } from './chatStream';
 import type { ChatMsg, StreamEvent } from './chatStream';
+import { MarkdownContent } from './MarkdownContent';
+import { ThinkingProcess } from './ThinkingProcess';
 
-/** 消息气泡（user 右 / assistant 左；thinking 折叠；工具调用链状态徽章） */
-function MessageBubble(props: { msg: ChatMsg }) {
-  const { t } = useTranslation();
-  const { msg } = props;
+/** 消息气泡（user 右 / assistant 左；thinking 折叠；工具调用链状态徽章；assistant 正文 Markdown 渲染） */
+function MessageBubble(props: { msg: ChatMsg; loading?: boolean }) {
+  const { msg, loading } = props;
   const isUser = msg.role === 'user';
 
   return (
@@ -46,40 +47,8 @@ function MessageBubble(props: { msg: ChatMsg }) {
       </div>
 
       <div className={cn('min-w-0 max-w-[75%] space-y-2', isUser && 'flex flex-col items-end')}>
-        {msg.thinking && (
-          <details className="rounded-lg border border-[var(--glass-border)] bg-[rgba(255,255,255,0.03)] px-3 py-2 text-xs text-muted-foreground">
-            <summary className="cursor-pointer select-none font-medium">
-              {t('management.chat.thinking')}
-            </summary>
-            <p className="mt-2 whitespace-pre-wrap break-words">{msg.thinking}</p>
-          </details>
-        )}
-
-        {msg.toolCalls && msg.toolCalls.length > 0 && (
-          <div className="space-y-1">
-            {msg.toolCalls.map((tc) => (
-              <div
-                key={tc.id}
-                className="flex items-center gap-2 rounded-lg border border-[var(--glass-border)] bg-[rgba(255,255,255,0.03)] px-3 py-1.5 text-xs"
-              >
-                <Wrench className="h-3 w-3 text-accent" />
-                <span className="font-medium">{tc.name}</span>
-                <span
-                  className={cn(
-                    'ml-auto flex items-center gap-1',
-                    tc.status === 'executing' && 'text-amber-400',
-                    tc.status === 'completed' && 'text-emerald-400',
-                    tc.status === 'pending' && 'text-muted-foreground',
-                  )}
-                >
-                  {tc.status === 'executing' && <Loader2 className="h-3 w-3 animate-spin" />}
-                  {tc.status === 'executing'
-                    ? t('management.chat.toolExecuting')
-                    : t('management.chat.toolCall')}
-                </span>
-              </div>
-            ))}
-          </div>
+        {!isUser && (
+          <ThinkingProcess thinking={msg.thinking} toolCalls={msg.toolCalls} loading={loading} />
         )}
 
         {(msg.content || !isUser) && (
@@ -93,7 +62,11 @@ function MessageBubble(props: { msg: ChatMsg }) {
                   : 'border border-[var(--glass-border)] bg-[var(--glass-bg)]',
             )}
           >
-            <p className="whitespace-pre-wrap break-words">{msg.content}</p>
+            {isUser ? (
+              <p className="whitespace-pre-wrap break-words">{msg.content}</p>
+            ) : (
+              <MarkdownContent content={msg.content} />
+            )}
           </div>
         )}
       </div>
@@ -115,10 +88,12 @@ export default function ChatPage() {
   const [input, setInput] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [historyError, setHistoryError] = useState(false);
+  const [alarms, setAlarms] = useState<{ message: string; triggeredAt: string }[]>([]);
 
   const tempAssistantIdRef = useRef('');
   const historyTokenRef = useRef<{ cancelled: boolean }>({ cancelled: false });
   const listRef = useRef<HTMLDivElement>(null);
+  const alarmTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Agent 列表
   useEffect(() => {
@@ -226,11 +201,28 @@ export default function ChatPage() {
     [applyEvent, t],
   );
 
+  /** 后端提醒（alarm）事件：追加到右上角 toast，5s 后自动收起 */
+  const handleAlarm = useCallback((message: string, triggeredAt: string) => {
+    setAlarms((prev) => [...prev, { message, triggeredAt }]);
+    if (alarmTimeoutRef.current) {
+      clearTimeout(alarmTimeoutRef.current);
+    }
+    alarmTimeoutRef.current = setTimeout(() => {
+      setAlarms((prev) => prev.slice(1));
+      alarmTimeoutRef.current = null;
+    }, 5000);
+  }, []);
+
+  const dismissAlarm = useCallback((index: number) => {
+    setAlarms((prev) => prev.filter((_, i) => i !== index));
+  }, []);
+
   const { isConnected, sendMessage: wsSendMessage, cancelGeneration } = useWebSocket({
     agentId: currentAgentId || '',
     timeout: 60,
     onMessage: handleWsMessage,
     onError: handleWsError,
+    onAlarm: handleAlarm,
   });
 
   const handleSend = useCallback(async () => {
@@ -300,6 +292,32 @@ export default function ChatPage() {
 
   return (
     <div className="mx-auto flex h-full max-w-4xl flex-col gap-4">
+      {/* 提醒通知 toast（右上角固定；alarm 事件驱动） */}
+      {alarms.length > 0 && (
+        <div className="fixed right-4 top-4 z-50 space-y-2">
+          {alarms.map((alarm, index) => (
+            <div
+              key={`${alarm.triggeredAt}-${index}`}
+              className="flex max-w-sm items-start gap-2 rounded-lg bg-primary px-4 py-3 text-primary-foreground shadow-lg"
+            >
+              <Bell className="mt-0.5 h-5 w-5 shrink-0" />
+              <div className="min-w-0 flex-1">
+                <p className="text-sm font-medium">{t('management.chat.alarmTitle')}</p>
+                <p className="text-sm opacity-90">{alarm.message}</p>
+              </div>
+              <button
+                type="button"
+                onClick={() => dismissAlarm(index)}
+                aria-label={t('management.chat.alarmClose')}
+                className="shrink-0 rounded p-0.5 transition-opacity hover:opacity-70"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
+
       {/* 工具行：Agent 选择 + 通道状态 */}
       <div className="flex shrink-0 items-center gap-3">
         <label className="flex items-center gap-2 text-sm text-muted-foreground">
@@ -357,7 +375,9 @@ export default function ChatPage() {
             {t('management.chat.empty')}
           </div>
         ) : (
-          messages.map((msg) => <MessageBubble key={msg.id} msg={msg} />)
+          messages.map((msg, i) => (
+            <MessageBubble key={msg.id} msg={msg} loading={isLoading && i === messages.length - 1} />
+          ))
         )}
       </div>
 

@@ -1,3 +1,4 @@
+"""会话存储——会话与消息的 SQLite 持久化读写。"""
 import json
 import sqlite3
 import uuid

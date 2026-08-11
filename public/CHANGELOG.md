@@ -23,6 +23,6 @@
 - **日期**：2026-07-02
 - **变更内容**：public/ 三层契约骨架初始化，创建 7 子目录 + 种子文件
 - **变更原因**：AC v6 治理层对齐（用户裁决 Option B），建立跨服务公共真相源
-- **影响范围**：CX-O-Frontend / CX-O-SERVER / CX-O-VoiceWorkStation
+- **影响范围**：APP-Frontend / CX-O-SERVER / CX-O-VoiceWorkStation
 - **当前状态**：种子文件仅含源真理指针，完整 Schema 待 s0201 承接
 - **契约可验证性**：未闭合（测试套件 + rubric 待补）

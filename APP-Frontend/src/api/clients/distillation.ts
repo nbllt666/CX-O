@@ -1,32 +1,20 @@
 /**
- * distillation 域客户端：RADIX-Lite 蒸馏服务（/api/v1/distillation/*）。
- * 端点面对齐 CX-O-Frontend clients/distillation.ts。
+ * distillation 域客户端：蒸馏会话 CRUD / 推进 / 终结 / 批量切分 / 角色卡导入。
+ * 端点对齐 server/core/distillation/api（/api/v1/distillation/*）。
  */
 import { request } from '../base';
 
-export type DistillationSourceType = 'text' | 'character_card' | 'image' | 'conversation_log';
-export type DistillationGoal = 'memory' | 'agent' | 'memory_and_agent';
-export type DistillationState =
-  | 'S_INIT'
-  | 'S_PREREAD'
-  | 'S_QUESTION'
-  | 'S_REFLECT'
-  | 'S_CROSSVALIDATE'
-  | 'S_EXTRACT'
-  | 'S_STORAGE_DECISION'
-  | 'S_FINALIZE'
-  | 'S_REJECT';
-export type AgentAction =
-  | 'ask_user'
-  | 'proceed'
-  | 'reflect'
-  | 'cross_validate'
-  | 'extract'
-  | 'decide'
-  | 'finalize'
-  | 'reject';
+// ── 类型（对齐后端 distillation_service.py 请求/响应模型） ──
 
-export interface StartDistillationRequest {
+export type DistillationSourceType =
+  | 'text'
+  | 'character_card'
+  | 'image'
+  | 'video'
+  | 'audio'
+  | 'conversation_log';
+
+export interface StartDistillationInput {
   source_type: DistillationSourceType;
   source_ref?: string;
   template_id: string;
@@ -34,218 +22,170 @@ export interface StartDistillationRequest {
   ask_user_on_ambiguity?: boolean;
 }
 
-export interface StartDistillationResponse {
+export interface StartDistillationResult {
   session_id: string;
   initial_state: string;
-  preread_summary: string | null;
-}
-
-export interface AdvanceDistillationRequest {
-  user_response?: string;
-}
-
-export interface AdvanceDistillationResponse {
-  session_id: string;
-  current_state: DistillationState;
-  agent_action: AgentAction;
-  next_needed: boolean;
   preread_summary?: string | null;
-  ambiguity_questions?: string[];
-  extracted_content?: string | null;
-  quality_score?: number | null;
-  turn_count?: number;
-  message?: string;
 }
 
-export interface FinalizeDistillationRequest {
-  override_decision?: string;
+export interface AdvanceDistillationResult {
+  session_id: string;
+  current_state: string;
+  agent_action: string;
+  next_needed: boolean;
 }
 
-export interface FinalizeDistillationResponse {
+export interface FinalizeDistillationResult {
   stored: boolean;
-  location: 'memories' | 'permanent_memories' | 'rejected';
-  memory_id: number | null;
+  location: string;
+  memory_id?: number | null;
   metadata: Record<string, unknown>;
   reason: string;
 }
 
-export interface SessionStatusResponse {
+export interface DistillationTurn {
+  [key: string]: unknown;
+}
+
+export interface DistillationSession {
   session_id: string;
-  source_type: DistillationSourceType;
-  state: DistillationState;
+  source_type: string;
+  state: string;
   template_id: string;
   max_turns: number;
   ask_user_on_ambiguity: boolean;
-  turns: Array<Record<string, unknown>>;
-  preread_summary: string | null;
+  turns: DistillationTurn[];
+  preread_summary?: string | null;
   ambiguity_questions: string[];
-  extracted_content: string | null;
-  quality_score: number | null;
+  extracted_content?: string | null;
+  quality_score?: number | null;
   created_at: string;
-  updated_at: string | null;
-  finalized_at: string | null;
-  is_finalized: boolean;
-  error_message: string | null;
+  updated_at?: string | null;
 }
 
-export interface BatchStartRequest {
+export interface BatchStartInput {
   source_type: DistillationSourceType;
   source_ref: string;
   template_id: string;
   max_turns?: number;
   ask_user_on_ambiguity?: boolean;
   chunk_size?: number;
-  distillation_goal: DistillationGoal;
-  target_agent_id?: string;
+  distillation_goal?: 'memory' | 'agent' | 'memory_and_agent';
+  target_agent_id?: string | null;
 }
 
-export interface BatchSessionItem {
-  session_id: string;
-  chunk_index: number;
-  chunk_preview: string;
-  initial_state: string;
-}
-
-export interface BatchStartResponse {
+export interface BatchStartResult {
   session_group_id: string;
+  sessions: Array<{ session_id: string; chunk_index: number }>;
   total_chunks: number;
-  sessions: BatchSessionItem[];
-  distillation_goal: DistillationGoal;
 }
 
-export interface GroupSessionStatus {
-  session_id: string;
-  chunk_index: number;
-  state: DistillationState;
-  is_finalized: boolean;
-  extracted_content: string | null;
-  quality_score: number | null;
-}
-
-export interface GroupStatusResponse {
+export interface BatchGroupStatus {
   group_id: string;
-  total_count: number;
+  sessions: Array<Record<string, unknown>>;
   completed_count: number;
-  sessions: GroupSessionStatus[];
-}
-
-export interface FinalizeAgentResponse {
-  stored: boolean;
-  location: string;
-  memory_id: number | null;
-  metadata: Record<string, unknown>;
-  reason: string;
-  agent_creation_result: {
-    success: boolean;
-    agent_id?: string;
-    agent_name?: string;
-    error?: string;
-    character_card?: {
-      name: string;
-      description?: string;
-    };
-  };
+  total_count: number;
 }
 
 export interface CharacterCardData {
-  spec?: string;
-  spec_version?: string;
   name: string;
   description?: string;
   personality?: string;
   scenario?: string;
   first_mes?: string;
   mes_example?: string;
-  alternate_greetings?: string[];
-  creator_notes?: string;
-  system_prompt?: string;
-  post_history_instructions?: string;
-  character_book?: Record<string, unknown>;
-  extensions?: Record<string, unknown>;
-  extra_fields?: Record<string, unknown>;
+  [key: string]: unknown;
 }
 
-export interface ParseCharacterCardResponse {
+export interface ParseCharacterCardResult {
   status: string;
   character_card_data: CharacterCardData;
   source_ref: string;
   source_ref_length: number;
 }
 
+export interface StartFromCharacterCardInput {
+  character_card_data: CharacterCardData;
+  template_id?: string;
+  max_turns?: number;
+  ask_user_on_ambiguity?: boolean;
+  chunk_size?: number;
+  distillation_goal?: 'memory' | 'agent' | 'memory_and_agent';
+}
+
+export interface StartFromCharacterCardResult {
+  status: string;
+  character_card_data: CharacterCardData;
+  distillation: BatchStartResult;
+}
+
 export const distillationApi = {
   /** 启动单次蒸馏会话 */
-  startDistillation(data: StartDistillationRequest): Promise<StartDistillationResponse> {
-    return request<StartDistillationResponse>({
+  start(input: StartDistillationInput): Promise<StartDistillationResult> {
+    return request<StartDistillationResult>({
       url: '/api/v1/distillation/start',
       method: 'post',
-      data,
+      data: input,
     });
   },
 
-  /** 推进蒸馏状态机 */
-  advanceDistillation(
-    sessionId: string,
-    data: AdvanceDistillationRequest,
-  ): Promise<AdvanceDistillationResponse> {
-    return request<AdvanceDistillationResponse>({
-      url: `/api/v1/distillation/${encodeURIComponent(sessionId)}/advance`,
+  /** 推进蒸馏状态机（支持回环与主动追问响应） */
+  advance(sessionId: string, userResponse?: string): Promise<AdvanceDistillationResult> {
+    return request<AdvanceDistillationResult>({
+      url: `/api/v1/distillation/${sessionId}/advance`,
       method: 'post',
-      data,
+      data: { user_response: userResponse },
     });
   },
 
-  /** 终结蒸馏会话（仅记忆蒸馏） */
-  finalizeDistillation(
-    sessionId: string,
-    data: FinalizeDistillationRequest = {},
-  ): Promise<FinalizeDistillationResponse> {
-    return request<FinalizeDistillationResponse>({
-      url: `/api/v1/distillation/${encodeURIComponent(sessionId)}/finalize`,
+  /** 终结蒸馏会话 */
+  finalize(sessionId: string, overrideDecision?: string): Promise<FinalizeDistillationResult> {
+    return request<FinalizeDistillationResult>({
+      url: `/api/v1/distillation/${sessionId}/finalize`,
       method: 'post',
-      data,
+      data: { override_decision: overrideDecision },
     });
   },
 
-  /** 查询会话状态 */
-  getSessionStatus(sessionId: string): Promise<SessionStatusResponse> {
-    return request<SessionStatusResponse>({
-      url: `/api/v1/distillation/${encodeURIComponent(sessionId)}`,
+  /** 终结蒸馏并创建角色卡 Agent */
+  finalizeAgent(sessionId: string, overrideDecision?: string): Promise<FinalizeDistillationResult> {
+    return request<FinalizeDistillationResult>({
+      url: `/api/v1/distillation/${sessionId}/finalize-agent`,
+      method: 'post',
+      data: { override_decision: overrideDecision },
     });
   },
 
-  /** 批量切分启动蒸馏（超长文本智能切分 + 多 session） */
-  startBatchDistillation(data: BatchStartRequest): Promise<BatchStartResponse> {
-    return request<BatchStartResponse>({
+  /** 查询蒸馏会话状态 */
+  getSession(sessionId: string): Promise<DistillationSession> {
+    return request<DistillationSession>({
+      url: `/api/v1/distillation/${sessionId}`,
+      method: 'get',
+    });
+  },
+
+  /** 批量切分启动蒸馏 */
+  startBatch(input: BatchStartInput): Promise<BatchStartResult> {
+    return request<BatchStartResult>({
       url: '/api/v1/distillation/start-batch',
       method: 'post',
-      data,
+      data: input,
     });
   },
 
   /** 查询批量切分组状态 */
-  getGroupStatus(groupId: string): Promise<GroupStatusResponse> {
-    return request<GroupStatusResponse>({
-      url: `/api/v1/distillation/group/${encodeURIComponent(groupId)}`,
+  getGroupStatus(groupId: string): Promise<BatchGroupStatus> {
+    return request<BatchGroupStatus>({
+      url: `/api/v1/distillation/group/${groupId}`,
+      method: 'get',
     });
   },
 
-  /** 终结并创建角色卡 agent */
-  finalizeWithAgentCreation(
-    sessionId: string,
-    data: FinalizeDistillationRequest = {},
-  ): Promise<FinalizeAgentResponse> {
-    return request<FinalizeAgentResponse>({
-      url: `/api/v1/distillation/${encodeURIComponent(sessionId)}/finalize-agent`,
-      method: 'post',
-      data,
-    });
-  },
-
-  /** 解析 PNG 角色卡（文件上传） */
-  parseCharacterCardFromFile(file: File): Promise<ParseCharacterCardResponse> {
+  /** 解析 PNG / JSON 角色卡（multipart 文件上传） */
+  async parseCharacterCard(file: File): Promise<ParseCharacterCardResult> {
     const formData = new FormData();
-    formData.append('file', file);
-    return request<ParseCharacterCardResponse>({
+    formData.append('file', file, file.name);
+    return request<ParseCharacterCardResult>({
       url: '/api/v1/distillation/parse-character-card',
       method: 'post',
       data: formData,
@@ -253,12 +193,12 @@ export const distillationApi = {
     });
   },
 
-  /** 解析 JSON 角色卡（JSON 内容） */
-  parseCharacterCardFromJson(jsonContent: string | object): Promise<ParseCharacterCardResponse> {
-    return request<ParseCharacterCardResponse>({
-      url: '/api/v1/distillation/parse-character-card',
+  /** 从角色卡解析结果启动蒸馏 */
+  startFromCharacterCard(input: StartFromCharacterCardInput): Promise<StartFromCharacterCardResult> {
+    return request<StartFromCharacterCardResult>({
+      url: '/api/v1/distillation/start-from-character-card',
       method: 'post',
-      data: { json_content: jsonContent },
+      data: input,
     });
   },
 };

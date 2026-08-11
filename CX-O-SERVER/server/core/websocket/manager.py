@@ -1,4 +1,6 @@
+"""WebSocket 连接与消息管理器——管理客户端连接生命周期、消息路由与广播。"""
 import asyncio
+import logging
 import threading
 from datetime import datetime
 from typing import Any, Callable, Dict, Optional, Set
@@ -145,9 +147,13 @@ class WebSocketManager:
         async with self._lock:
             connection = self.connections.get(client_id)
         if connection is not None:
-            logger.debug("[DIAG-SEND] sending type=%s to client_id=%s", message.get('type'), client_id)
+            # isEnabledFor 门控：send_to_client 每帧调用（voice.dual_stream 热路径），
+            # 避免每帧对 message.get('type') 急切求值；仅 DEBUG 才做 DIAG-SEND 诊断。
+            if logger.isEnabledFor(logging.DEBUG):
+                logger.debug("[DIAG-SEND] sending type=%s to client_id=%s", message.get('type'), client_id)
             await connection.send(message)
-            logger.debug("[DIAG-SEND] sent type=%s to client_id=%s", message.get('type'), client_id)
+            if logger.isEnabledFor(logging.DEBUG):
+                logger.debug("[DIAG-SEND] sent type=%s to client_id=%s", message.get('type'), client_id)
         else:
             logger.warning(f"[DIAG-SEND] connection is None for client_id={client_id}, type={message.get('type')}")
 

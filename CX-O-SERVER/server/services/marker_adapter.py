@@ -14,11 +14,27 @@ ACTION_PATTERN = re.compile(r'\[action:([^\]]+)\]')
 
 
 class MarkerAdapter:
-    def __init__(self):
-        self._supported_markers = [
-            "emotion", "effect", "action", "danmaku",
-            "gift", "enter", "system"
-        ]
+    def _extract_markers(self, content: str) -> list[dict]:
+        """提取文本内的情感/音效标记（含起止位置）。
+
+        process_danmaku 与 process_message 共用，消除重复的情感/音效遍历逻辑。
+        """
+        markers = []
+        if "[" not in content or "]" not in content:
+            return markers
+        for match in EMOTION_PATTERN.finditer(content):
+            markers.append({
+                "type": "emotion",
+                "name": match.group(1),
+                "position": match.start(),
+            })
+        for match in EFFECT_PATTERN.finditer(content):
+            markers.append({
+                "type": "effect",
+                "name": match.group(1),
+                "position": match.start(),
+            })
+        return markers
 
     def process_danmaku(self, danmaku_data: dict) -> dict:
         result = {
@@ -26,25 +42,8 @@ class MarkerAdapter:
             "user": danmaku_data.get("user", {}),
             "content": danmaku_data.get("content", ""),
             "timestamp": danmaku_data.get("timestamp", 0),
-            "markers": []
+            "markers": self._extract_markers(danmaku_data.get("content", "")),
         }
-
-        content = result["content"]
-
-        if "[" in content and "]" in content:
-            for match in EMOTION_PATTERN.finditer(content):
-                result["markers"].append({
-                    "type": "emotion",
-                    "name": match.group(1),
-                    "position": match.start()
-                })
-
-            for match in EFFECT_PATTERN.finditer(content):
-                result["markers"].append({
-                    "type": "effect",
-                    "name": match.group(1),
-                    "position": match.start()
-                })
 
         return result
 
@@ -55,24 +54,10 @@ class MarkerAdapter:
         result = {
             "type": msg_type,
             "content": content,
-            "markers": []
+            "markers": self._extract_markers(content),
         }
 
         if "[" in content and "]" in content:
-            for match in EMOTION_PATTERN.finditer(content):
-                result["markers"].append({
-                    "type": "emotion",
-                    "name": match.group(1),
-                    "position": match.start()
-                })
-
-            for match in EFFECT_PATTERN.finditer(content):
-                result["markers"].append({
-                    "type": "effect",
-                    "name": match.group(1),
-                    "position": match.start()
-                })
-
             for match in ACTION_PATTERN.finditer(content):
                 result["markers"].append({
                     "type": "action",
@@ -81,6 +66,3 @@ class MarkerAdapter:
                 })
 
         return result
-
-    def get_supported_markers(self) -> list[str]:
-        return self._supported_markers.copy()

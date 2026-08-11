@@ -15,12 +15,13 @@ from typing import Any, AsyncGenerator, Callable, Optional
 
 
 from server.core.utils import get_shared_http_client, retry_with_backoff
-from server.services.emotion_parser import extract_emotions_with_text, parse_text_with_emotions
+from server.services.emotion_parser import extract_emotions_with_text
 from server.services.effect_parser import EffectParser
 from server.services.tts_audio_utils import (
     split_text_by_sentences,
     concatenate_audio,
     CrossRequestSilenceFilter,
+    load_emotion_voices,
 )
 
 logger = logging.getLogger(__name__)
@@ -973,7 +974,7 @@ class TTSService:
         on_chunk: Callable[[str, bytes], None] | None = None,
         **kwargs
     ) -> AsyncGenerator[dict[str, Any], None]:
-        segments = parse_text_with_emotions(text)
+        segments = extract_emotions_with_text(text)
 
         effect_segments = []
         for seg in segments:
@@ -996,7 +997,7 @@ class TTSService:
                 current_emotion = segment["emotion"]
                 continue
 
-            if segment["type"] == "sound":
+            if segment["type"] == "effect":
                 effect_name = segment["name"]
                 audio_data = self._load_effect_audio(effect_name)
 
@@ -1153,8 +1154,12 @@ class TTSService:
     def get_emotion_voice(self, emotion: str) -> dict[str, str]:
         if emotion in self._emotion_voices:
             return self._emotion_voices[emotion]
-        if "normal" in self._emotion_voices:
-            return self._emotion_voices["normal"]
+        # 中性回退：同时识别 canonical "neutral"（解析器 SUPPORTED_EMOTIONS 与
+        # VoiceWorkStation 产出契约）与历史 "normal"（旧版音色键）。二者同义，
+        # 任一生效即用中性音色，否则回退默认参考音频。
+        for neutral_key in ("neutral", "normal"):
+            if neutral_key in self._emotion_voices:
+                return self._emotion_voices[neutral_key]
         return {
             "ref_audio": self._ref_audio_path,
             "ref_text": self._ref_text
@@ -1196,14 +1201,16 @@ class TTSService:
 
 
 def _load_emotion_voices(refs_dir: str) -> dict[str, dict[str, str]]:
-    """从情感参考音频目录加载音色映射（最小实现）。"""
-    result: dict[str, dict[str, str]] = {}
-    p = Path(refs_dir) if refs_dir else None
-    if p and p.is_dir():
-        for f in p.iterdir():
-            if f.suffix in (".wav", ".mp3", ".flac"):
-                result[f.stem] = {"ref_audio": str(f), "ref_text": ""}
-    return result
+    """从情感参考音频目录加载音色映射。
+
+    收敛到 tts_audio_utils.load_emotion_voices（唯一真相源）：
+    该实现与 VoiceWorkStation 产出契约对齐——优先读取 emotion_mapping.json，
+    否则扫描 {emotion}/ref.wav + ref.txt 子目录布局。历史扁平扫描版（遍历目录
+    下散落 wav）与产出布局不兼容，实际会加载不到任何音色，已废弃。
+    """
+    if not refs_dir:
+        return {}
+    return load_emotion_voices(refs_dir)
 
 
 _tts_service: Optional[TTSService] = None

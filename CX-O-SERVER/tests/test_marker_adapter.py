@@ -67,12 +67,3 @@ class TestProcessMessage:
     def test_no_brackets_no_markers(self, adapter):
         result = adapter.process_message({"content": "plain text"})
         assert result["markers"] == []
-
-
-class TestSupportedMarkers:
-    def test_returns_copy(self, adapter):
-        markers = adapter.get_supported_markers()
-        assert markers == ["emotion", "effect", "action", "danmaku", "gift", "enter", "system"]
-        # 返回副本，修改不影响内部状态
-        markers.append("x")
-        assert "x" not in adapter.get_supported_markers()

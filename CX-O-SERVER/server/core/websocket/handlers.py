@@ -1,3 +1,4 @@
+"""WebSocket 聊天处理器——通过 WebSocket 处理实时聊天消息。"""
 import asyncio
 from datetime import datetime
 from typing import Any, Dict, Optional

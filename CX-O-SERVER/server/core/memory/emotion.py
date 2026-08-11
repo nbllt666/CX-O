@@ -1,3 +1,4 @@
+"""记忆情感分析——基于文本的情感极性与强度分析。"""
 from dataclasses import dataclass
 from typing import List
 

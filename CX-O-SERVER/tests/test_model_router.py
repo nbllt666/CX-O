@@ -1,7 +1,7 @@
 """server.core.model_router (ModelRouter) 单元测试。
 
 通过 mock get_settings 与客户端，覆盖模型客户端获取/默认跟随、
-对话/Embedding 代理、状态查询、配置信息等核心逻辑，不发起真实网络请求。
+状态检查、配置信息等核心逻辑，不发起真实网络请求。
 
 运行：python -m pytest tests/test_model_router.py -v
 """
@@ -38,21 +38,14 @@ def router(monkeypatch):
     yield r
 
 
-def _fake_client(r, name="main", chat=None, embedding=None):
+def _fake_client(r, name="main"):
     """注册一个假客户端到 _clients。"""
 
     class FakeClient:
         model_name = name
 
         async def chat(self, messages, stream=False, **kwargs):
-            if chat:
-                return chat(messages, stream, **kwargs)
             return FakeLLMResponse(content="ok")
-
-        async def get_embedding(self, text):
-            if embedding:
-                return embedding(text)
-            return [0.1, 0.2]
 
     c = FakeClient()
     r._clients[name] = c
@@ -118,78 +111,8 @@ class TestCreateClient:
         assert isinstance(client, OllamaClient)
 
 
-# ---------------------------------------------------------------- chat
-class TestChat:
-    @pytest.mark.asyncio
-    async def test_chat_without_client(self, router):
-        result = await router.chat("main", [{"role": "user", "content": "hi"}])
-        assert result["success"] is False
-        assert "不存在" in result["error"]
-
-    @pytest.mark.asyncio
-    async def test_chat_success(self, router):
-        _fake_client(router, name="main")
-        result = await router.chat("main", [{"role": "user", "content": "hi"}])
-        assert result["success"] is True
-        assert result["content"] == "ok"
-        assert result["finish_reason"] == "stop"
-
-    @pytest.mark.asyncio
-    async def test_chat_success_false_on_error_finish(self, router):
-        def _chat(messages, stream, **kw):
-            return FakeLLMResponse(finish_reason="error")
-
-        _fake_client(router, name="main", chat=_chat)
-        result = await router.chat("main", [{"role": "user", "content": "hi"}])
-        assert result["success"] is False
-
-    @pytest.mark.asyncio
-    async def test_chat_exception_handled(self, router):
-        def _chat(messages, stream, **kw):
-            raise RuntimeError("boom")
-
-        _fake_client(router, name="main", chat=_chat)
-        result = await router.chat("main", [{"role": "user", "content": "hi"}])
-        assert result["success"] is False
-        assert result["error"] == "boom"
-
-
-# ---------------------------------------------------------------- get_embedding
-class TestGetEmbedding:
-    @pytest.mark.asyncio
-    async def test_without_client_returns_none(self, router):
-        assert await router.get_embedding("main", "text") is None
-
-    @pytest.mark.asyncio
-    async def test_with_client(self, router):
-        _fake_client(router, name="main")
-        embedding = await router.get_embedding("main", "text")
-        assert embedding == [0.1, 0.2]
-
-    @pytest.mark.asyncio
-    async def test_client_without_method_returns_none(self, router):
-        class NoEmbedClient:
-            model_name = "main"
-
-            async def chat(self, messages, stream=False, **kwargs):
-                return FakeLLMResponse()
-
-        router._clients["main"] = NoEmbedClient()
-        assert await router.get_embedding("main", "text") is None
-
-
 # ---------------------------------------------------------------- 状态
 class TestStatus:
-    def test_is_available_false_by_default(self, router):
-        assert not router.is_available("main")
-
-    def test_is_available_true(self, router):
-        router._status["main"] = SimpleNamespace(available=True)
-        assert router.is_available("main") is True
-
-    def test_get_all_status_empty(self, router):
-        assert router.get_all_status() == {}
-
     @pytest.mark.asyncio
     async def test_check_status_unsupported_provider(self, monkeypatch):
         """不支持 provider 时不发起网络，直接返回不可用。"""

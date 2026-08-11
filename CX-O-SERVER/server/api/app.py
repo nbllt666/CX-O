@@ -1,4 +1,5 @@
 
+"""FastAPI 应用工厂——组装路由、中间件与全局异常处理器。"""
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.exceptions import RequestValidationError
 

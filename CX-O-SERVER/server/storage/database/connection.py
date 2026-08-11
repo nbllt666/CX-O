@@ -1,3 +1,4 @@
+"""数据库连接池——SQLite/aiosqlite 连接的统一创建与复用。"""
 import asyncio
 import sqlite3
 from contextlib import asynccontextmanager

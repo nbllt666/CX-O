@@ -26,6 +26,7 @@ import {
   Brain,
   Captions,
   Database,
+  FlaskConical,
   LayoutDashboard,
   Layers,
   MessageSquareText,
@@ -186,6 +187,13 @@ export const MANAGEMENT_ROUTES: readonly ManagementRouteEntry[] = [
     titleKey: 'management.nav.audioSource',
     icon: Volume2,
     Component: lazy(() => import('./AudioSourcePage')),
+  },
+  // ── 蒸馏页（仅追加，不改既有条目） ──
+  {
+    path: 'distillation',
+    titleKey: 'management.nav.distillation',
+    icon: FlaskConical,
+    Component: lazy(() => import('./DistillationPage')),
   },
 ];
 

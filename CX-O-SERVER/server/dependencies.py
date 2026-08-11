@@ -1,3 +1,4 @@
+"""服务依赖容器——集中管理各服务单例的初始化、持有与访问，作为全局服务状态注册表。"""
 import threading
 from typing import Optional, Any, Dict
 

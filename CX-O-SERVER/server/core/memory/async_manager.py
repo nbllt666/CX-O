@@ -1,3 +1,4 @@
+"""异步记忆管理——基于 aiosqlite 的异步记忆读写与后台队列处理。"""
 import asyncio
 from datetime import datetime
 from pathlib import Path

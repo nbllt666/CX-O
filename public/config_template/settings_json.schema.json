@@ -6,7 +6,7 @@
   "_sourceOfTruth": {
     "primary": "c:/CX-O/config/settings.json",
     "secondary": [],
-    "note": "settings.json 顶层：services（danmaku/firewall/vad/sensevoice_streaming/adaptive_polling）+ tts"
+    "note": "settings.json 顶层：services（danmaku/firewall/vad/sensevoice_streaming）+ tts"
   },
   "_seedStage": true,
   "_completionSkill": "s0201",

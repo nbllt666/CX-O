@@ -1,3 +1,4 @@
+"""音频端点——ASR/TTS 音频处理与流式合成接口。"""
 import base64
 import json
 import os

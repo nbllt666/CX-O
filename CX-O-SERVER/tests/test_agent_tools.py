@@ -355,6 +355,17 @@ class TestLazyDependencies:
         t = _make_tools(tmp_path, distillation_service=svc)
         assert t._get_distillation_service() is svc
 
+    def test_lazy_load_resolves_real_distillation_module(self, tmp_path, monkeypatch):
+        """懒加载路径应解析到真实 distillation_service 模块（修复导入路径错误）。"""
+        import server.core.distillation.distillation_service as real_mod
+
+        fake_cls = type("FakeDistillation", (FakeService,), {})
+        monkeypatch.setattr(real_mod, "DistillationService", fake_cls)
+        t = _make_tools(tmp_path)
+        t._distillation_service = None
+        svc = t._get_distillation_service()
+        assert isinstance(svc, fake_cls)
+
     def test_injected_template_engine_returned(self, tmp_path):
         engine = FakeService(marker="y")
         t = _make_tools(tmp_path, template_engine=engine)

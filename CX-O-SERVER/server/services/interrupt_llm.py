@@ -46,9 +46,9 @@ class InterruptModuleBase:
     def set_context_manager(self, context_manager: Any):
         self._context_manager = context_manager
 
-    def _get_context_with_system_prompt(self) -> list:
+    def _get_context(self) -> list:
         if self._context_manager and self._session_id:
-            return self._context_manager.get_context_with_system_prompt(self._session_id)
+            return self._context_manager.get_context(self._session_id)
         return []
 
     def _build_independent_prompt(self, asr_text: str) -> str:
@@ -74,7 +74,7 @@ class InterruptModuleBase:
             from server.dependencies import get_llm_client
 
             llm = get_llm_client()
-            messages = self._get_context_with_system_prompt()
+            messages = self._get_context()
             messages.append({"role": "user", "content": user_content})
             response = await llm.chat(messages=messages, stream=False)
         except Exception as e:

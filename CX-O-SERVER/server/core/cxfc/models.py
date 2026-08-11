@@ -1,3 +1,4 @@
+"""CXFC 数据模型——插件、技能与事件的数据结构定义。"""
 from typing import List, Optional, Dict, Any
 from datetime import datetime
 from pydantic import BaseModel, field_serializer

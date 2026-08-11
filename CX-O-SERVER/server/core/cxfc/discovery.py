@@ -1,3 +1,4 @@
+"""CXFC 插件发现——探测局域网内可用的 CXFC 插件服务。"""
 import asyncio
 import json
 import socket

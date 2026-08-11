@@ -5,6 +5,7 @@
 
 import json
 import base64
+import logging
 from typing import List, Optional
 
 from fastapi import APIRouter, HTTPException, Request
@@ -236,7 +237,8 @@ async def chat_stream(request: ChatRequest):
                     tools=tools,
                 ):
                     if chunk:
-                        logger.debug(f"收到 chunk: {type(chunk)}, 内容: {chunk}")
+                        if logger.isEnabledFor(logging.DEBUG):
+                            logger.debug("收到 chunk: %s, 内容: %s", type(chunk), chunk)
                         # 检查是否是字典类型（新的返回格式）
                         if isinstance(chunk, dict):
                             chunk_type = chunk.get("type")
@@ -263,10 +265,7 @@ async def chat_stream(request: ChatRequest):
                 # 处理工具调用
                 if tool_calls_buffer:
                     from server.core.tools import parse_tool_args, tool_registry
-                    from server.core.tools.builtin import call_builtin_tool
-
-                    # 定义内置工具名称集合
-                    BUILTIN_TOOL_NAMES = {"calculator", "datetime", "random", "json_format"}
+                    from server.core.tools.builtin import call_builtin_tool, BUILTIN_TOOL_NAMES
 
                     for tool_call in tool_calls_buffer:
                         tool_name = tool_call.get("name") or tool_call.get("function", {}).get(
@@ -524,9 +523,7 @@ async def memory_agent_chat_stream(request: MemoryAgentChatRequest):
                 # 处理工具调用
                 if tool_calls_buffer:
                     from server.core.tools import parse_tool_args
-                    from server.core.tools.builtin import call_builtin_tool
-
-                    BUILTIN_TOOL_NAMES = {"calculator", "datetime", "random", "json_format"}
+                    from server.core.tools.builtin import call_builtin_tool, BUILTIN_TOOL_NAMES
 
                     for tool_call in tool_calls_buffer:
                         tool_name = tool_call.get("name") or tool_call.get("function", {}).get(
@@ -779,10 +776,7 @@ async def summary_agent_stream_chat(request: SummaryAgentChatRequest):
                 # 处理工具调用
                 if tool_calls_buffer:
                     from server.core.tools import parse_tool_args, tool_registry
-                    from server.core.tools.builtin import call_builtin_tool
-
-                    # 定义内置工具名称集合
-                    BUILTIN_TOOL_NAMES = {"calculator", "datetime", "random", "json_format"}
+                    from server.core.tools.builtin import call_builtin_tool, BUILTIN_TOOL_NAMES
 
                     for tool_call in tool_calls_buffer:
                         tool_name = tool_call.get("name") or tool_call.get("function", {}).get(

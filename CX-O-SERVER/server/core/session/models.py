@@ -1,3 +1,4 @@
+"""会话数据模型——会话与会话消息的数据结构定义。"""
 from datetime import datetime
 from enum import Enum
 from typing import Any, Dict, Optional

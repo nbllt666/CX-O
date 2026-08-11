@@ -1,6 +1,5 @@
 # Lazy imports to avoid circular imports:
 # server.config -> server.core.utils -> server.core.__init__ -> server.core.context -> server.config
-from server.core import utils as utils  # noqa: F401
 
 __all__ = ["memory", "context", "tools", "acp", "llm"]
 

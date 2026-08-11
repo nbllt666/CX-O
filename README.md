@@ -66,12 +66,12 @@ python cosyvoice\download_models.py
 cd CX-O-SERVER
 .\start.bat
 
-# 2. 启动前端（端口 5173）
-cd CX-O-Frontend
-.\start.bat
+# 2. 启动前端（端口 3100）
+cd APP-Frontend
+.\start.bat browser
 ```
 
-浏览器打开 `http://localhost:5173`，第一次会引导你确认后端连接，连上就能开始用了。
+浏览器打开 `http://localhost:3100`，第一次会引导你确认后端连接，连上就能开始用了。
 
 > 语音对话功能还需要额外启动 ASR 和 TTS 服务，具体见部署文档。
 
@@ -106,7 +106,7 @@ cd CX-O-Frontend
 
 ```
 CX-O/
-├── CX-O-Frontend/          # 前端桌面应用（Electron）
+├── APP-Frontend/           # 前端桌面应用（Electron，浏览器模式默认端口 3100）
 ├── CX-O-SERVER/            # 后端服务（FastAPI + WebSocket）
 ├── CX-O-VoiceWorkStation/  # 语音工作站（声音克隆与训练）
 ├── cosyvoice/              # CosyVoice 语音合成引擎

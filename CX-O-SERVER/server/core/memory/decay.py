@@ -1,3 +1,4 @@
+"""记忆衰减——基于时间与访问频率的记忆强度衰减计算。"""
 import math
 from dataclasses import dataclass
 from datetime import datetime, timezone

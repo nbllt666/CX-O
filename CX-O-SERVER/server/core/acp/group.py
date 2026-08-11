@@ -1,3 +1,4 @@
+"""ACP 分组管理——Agent 分组创建、加入与成员管理。"""
 import uuid
 from datetime import datetime
 from typing import Dict, List, Optional

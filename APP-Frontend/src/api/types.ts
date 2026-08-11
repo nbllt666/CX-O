@@ -1,6 +1,6 @@
 /**
  * API 公共类型：与 CX-O 后端响应契约对齐。
- * 域专属类型（graph 节点 / voiceworkstation / distillation）在各自客户端模块内定义。
+ * 域专属类型（graph 节点 / voiceworkstation）在各自客户端模块内定义。
  */
 
 export interface Agent {

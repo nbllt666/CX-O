@@ -43,15 +43,11 @@ class TestSubclasses:
     @pytest.mark.parametrize(
         "cls,code",
         [
-            (exc.DatabaseError, "DATABASE_ERROR"),
-            (exc.ValidationError, "VALIDATION_ERROR"),
             (exc.ACPError, "ACP_ERROR"),
             (exc.MemoryOperationError, "MEMORY_ERROR"),
             (exc.VectorStoreError, "VECTOR_STORE_ERROR"),
-            (exc.LLMError, "LLM_ERROR"),
             (exc.ToolError, "TOOL_ERROR"),
             (exc.MCPError, "MCP_ERROR"),
-            (exc.ContextError, "CONTEXT_ERROR"),
         ],
     )
     def test_default_code(self, cls, code):
@@ -59,22 +55,18 @@ class TestSubclasses:
 
     def test_inheritance(self):
         for cls in [
-            exc.DatabaseError,
-            exc.ValidationError,
             exc.ACPError,
             exc.MemoryOperationError,
             exc.VectorStoreError,
-            exc.LLMError,
             exc.ToolError,
             exc.MCPError,
-            exc.ContextError,
         ]:
             assert issubclass(cls, exc.CoreException)
 
     def test_subclass_custom_code_overrides(self):
-        e = exc.LLMError("x", code="CUSTOM")
+        e = exc.ToolError("x", code="CUSTOM")
         assert e.code == "CUSTOM"
 
     def test_subclass_to_dict_uses_own_name(self):
-        e = exc.DatabaseError("db")
-        assert e.to_dict()["error"] == "DatabaseError"
+        e = exc.VectorStoreError("vs")
+        assert e.to_dict()["error"] == "VectorStoreError"

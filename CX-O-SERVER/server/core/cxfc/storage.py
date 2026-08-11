@@ -1,3 +1,4 @@
+"""CXFC 存储——插件配置与状态的持久化读写。"""
 import json
 from datetime import datetime
 from pathlib import Path

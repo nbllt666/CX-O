@@ -30,11 +30,11 @@ public/
 
 ## 三、CX-O 契约映射
 
-CX-O 是多服务架构（CX-O-Frontend / CX-O-SERVER / CX-O-VoiceWorkStation），各服务原位不动，仅通过 `public/` 契约通信。
+CX-O 是多服务架构（APP-Frontend / CX-O-SERVER / CX-O-VoiceWorkStation），各服务原位不动，仅通过 `public/` 契约通信。
 
 | 契约层 | 源真理 | public/ 落点 |
 |--------|--------|--------------|
-| 数据契约 | `data/agents.json`、`server/protocol/message.py`、`server/core/*/models.py`、前端 `_types.ts` | `schema/` |
+| 数据契约 | `data/agents.json`、`server/protocol/message.py`、`server/core/*/models.py`、前端 `APP-Frontend/src/api/types.ts` | `schema/` |
 | 接口契约 | `CX-O-SERVER/server/api/routers/` 19 个 FastAPI router + WS Actions | `interface_stub/` |
 | 配置契约 | `server/config.py` UnifiedConfig、`config/*.yaml`、`.env.example` | `config_template/` |
 

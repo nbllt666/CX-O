@@ -1,3 +1,4 @@
+"""数据库迁移——schema 变更的幂等迁移执行。"""
 import logging
 
 logger = logging.getLogger(__name__)

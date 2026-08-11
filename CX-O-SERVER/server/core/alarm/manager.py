@@ -1,3 +1,4 @@
+"""提醒管理器——定时提醒的创建、调度、触发与持久化。"""
 import asyncio
 import logging
 import os

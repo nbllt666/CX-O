@@ -422,3 +422,78 @@ class TestHiddenPromptToolNames:
         text = "\n".join(str(hidden.get(k, "")) for k in hidden)
         assert "write_memory" not in text.replace("write_long_term_memory", "")
         assert "danmaku_decide" not in text
+
+
+# --------------------------------------------------------------------------- #
+# 6. build_messages ACP 自动回复模式（单入口收敛）
+# --------------------------------------------------------------------------- #
+class _FakeContextMgr:
+    def get_recent_messages(self, session_id, limit):
+        return [
+            {"role": "user", "content": "上一轮用户"},
+            {"role": "assistant", "content": "上一轮助手"},
+        ]
+
+
+class TestBuildMessagesAcpMode:
+    """回归：ACP 自动回复收敛到 build_messages 单入口（AGENTS.md §4.9）。
+
+    修正前 manager._trigger_auto_reply 手动拼 system_prompt + ACP_REPLY_HINT
+    + history + incoming_message，绕过了 build_messages。本类验证 acp_context
+    非 None 时 build_messages 产出的消息列表与历史 ACP 结构一致。
+    """
+
+    def _cfg(self):
+        return {"system_prompt": "你是小C。", "model": "main"}
+
+    def test_acp_mode_message_shape(self):
+        from server.prompt_builder import ACP_REPLY_HINT_PROMPT, build_messages
+
+        msgs = build_messages(
+            agent_config=self._cfg(),
+            context_mgr=_FakeContextMgr(),
+            session_id="agent-default",
+            user_message="",
+            acp_context={"from_agent_id": "agent-remote"},
+        )
+        # 1) 核心人设
+        assert msgs[0] == {"role": "system", "content": "你是小C。"}
+        # 2) ACP 专用提示
+        assert msgs[1]["role"] == "system"
+        assert msgs[1]["content"] == ACP_REPLY_HINT_PROMPT
+        # 3) 历史（user/assistant 透传）
+        assert {"role": "user", "content": "上一轮用户"} in msgs
+        assert {"role": "assistant", "content": "上一轮助手"} in msgs
+        # 4) incoming_message 上下文（携带发送方 ID）
+        tail = msgs[-1]
+        assert tail["role"] == "system"
+        assert "agent-remote" in tail["content"]
+        assert "<incoming_message>" in tail["content"]
+        # 5) 无新 user 轮次追加（Agent 通过工具决定是否回复）：末条为 incoming 系统块，
+        #    不在历史之后再追加 user_message 轮次。历史里的 user 消息属上一轮对话，正常存在。
+        assert msgs[-1]["role"] == "system"
+        assert msgs[-1]["content"].startswith("<incoming_message>")
+
+    def test_acp_mode_without_system_prompt(self):
+        from server.prompt_builder import ACP_REPLY_HINT_PROMPT, build_messages
+
+        msgs = build_messages(
+            agent_config={"model": "main"},
+            context_mgr=_FakeContextMgr(),
+            session_id="agent-default",
+            user_message="",
+            acp_context={"from_agent_id": "x"},
+        )
+        assert msgs[0]["content"] == ACP_REPLY_HINT_PROMPT
+
+    def test_acp_mode_default_from_agent_id(self):
+        from server.prompt_builder import build_messages
+
+        msgs = build_messages(
+            agent_config=self._cfg(),
+            context_mgr=_FakeContextMgr(),
+            session_id="agent-default",
+            user_message="",
+            acp_context={},
+        )
+        assert "unknown" in msgs[-1]["content"]

@@ -46,9 +46,6 @@ class BackupManager:
     def restore_backup(self, backup_id: str) -> Dict[str, Any]:
         return {"status": "not_implemented"}
 
-    def export_backup(self, backup_id: str) -> Optional[str]:
-        return None
-
     def import_backup(self, file_path: str) -> Dict[str, Any]:
         return {"status": "not_implemented"}
 

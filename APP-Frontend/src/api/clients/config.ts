@@ -53,10 +53,6 @@ export const configApi = {
     return request<Record<string, unknown>>({ url: '/api/config/sensevoice-streaming' });
   },
 
-  getAdaptivePollingConfig(): Promise<Record<string, unknown>> {
-    return request<Record<string, unknown>>({ url: '/api/config/adaptive-polling' });
-  },
-
   getGraphConfig(): Promise<Record<string, unknown>> {
     return request<Record<string, unknown>>({ url: '/api/graph/config' });
   },

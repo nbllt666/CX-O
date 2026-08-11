@@ -12,7 +12,7 @@
 
 | 服务 | 根级目录 | 技术栈 | 定位 |
 |------|---------|--------|------|
-| CX-O Frontend | `CX-O-Frontend/` | React + TypeScript + Vite + Electron | Web 前端 + 桌面宠物 |
+| CX-O Frontend | `APP-Frontend/` | React + TypeScript + Vite + Electron | Web 前端 + 桌面宠物 |
 | CX-O Server | `CX-O-SERVER/` | Python + FastAPI + WebSocket | 单体后端 |
 | CX-O VoiceWorkStation | `CX-O-VoiceWorkStation/` | Python | 语音工作站（可选） |
 

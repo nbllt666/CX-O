@@ -12,10 +12,10 @@
 | Schema 文件 | 源真理（真实契约源） | 优先级 | 状态 |
 |-------------|---------------------|--------|------|
 | `agent.schema.json` | `c:/CX-O/data/agents.json`（14 字段） | P0 | 🟡 种子 |
-| `chat_message.schema.json` | `c:/CX-O/CX-O-SERVER/server/protocol/message.py` + 前端 _types.ts | P0 | 🟡 种子 |
-| `memory.schema.json` | `c:/CX-O/CX-O-SERVER/server/core/memory/` + 前端 _types.ts | P1 | 🟡 种子 |
+| `chat_message.schema.json` | `c:/CX-O/CX-O-SERVER/server/protocol/message.py` + 前端 APP-Frontend/src/api/types.ts | P0 | 🟡 种子 |
+| `memory.schema.json` | `c:/CX-O/CX-O-SERVER/server/core/memory/` + 前端 APP-Frontend/src/api/types.ts | P1 | 🟡 种子 |
 | `graph_entity.schema.json` | `c:/CX-O/CX-O-SERVER/server/core/graph/models.py` | P1 | 🟡 种子 |
-| `tool.schema.json` | `c:/CX-O/CX-O-Frontend/src/api/clients/_types.ts` Tool 接口 | P1 | 🟡 种子 |
+| `tool.schema.json` | `c:/CX-O/APP-Frontend/src/api/types.ts` Tool 接口 | P1 | 🟡 种子 |
 | `error_codes.schema.json` | 全局错误码（待定义） | P2 | 🟡 种子 |
 | `acp.schema.json` | `c:/CX-O/CX-O-SERVER/server/models/acp.py` + `server/core/acp/manager.py`（5 Pydantic 模型） | P1 | ✅ s0601 补全 |
 | `api_response.schema.json` | `c:/CX-O/CX-O-SERVER/server/api/response.py`（4 Pydantic 模型） | P1 | ✅ s0601 补全 |

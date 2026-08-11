@@ -1,3 +1,4 @@
+"""CXFC 插件管理器——插件生命周期、事件分发与调用编排。"""
 import asyncio
 from datetime import datetime
 from typing import List, Optional, Dict, Any, Callable

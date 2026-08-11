@@ -79,6 +79,20 @@ class TestEmotionVoice:
         s = _svc(emotion_voices={"normal": {"ref_audio": "n.wav"}})
         assert s.get_emotion_voice("sad")["ref_audio"] == "n.wav"
 
+    def test_get_emotion_voice_fallback_neutral(self):
+        # canonical "neutral" 音色键（VoiceWorkStation 产出契约）可作中性回退，
+        # 修复前仅认历史 "normal"，[emotion:neutral] 无法命中生成的中性音色。
+        s = _svc(emotion_voices={"neutral": {"ref_audio": "nu.wav"}})
+        assert s.get_emotion_voice("sad")["ref_audio"] == "nu.wav"
+        assert s.get_emotion_voice("fear")["ref_audio"] == "nu.wav"
+
+    def test_get_emotion_voice_neutral_preferred_over_normal(self):
+        s = _svc(emotion_voices={
+            "neutral": {"ref_audio": "nu.wav"},
+            "normal": {"ref_audio": "no.wav"},
+        })
+        assert s.get_emotion_voice("sad")["ref_audio"] == "nu.wav"
+
     def test_get_emotion_voice_default(self):
         s = _svc(ref_audio_path="d.wav", ref_text="rt")
         v = s.get_emotion_voice("sad")
@@ -108,13 +122,33 @@ class TestResolveAudioPath:
 
 
 class TestLoadEmotionVoices:
-    def test_loads_audio_files(self, tmp_path):
-        (tmp_path / "a.wav").write_bytes(b"x")
-        (tmp_path / "b.mp3").write_bytes(b"x")
-        (tmp_path / "c.txt").write_text("x", encoding="utf-8")
+    """回归：_load_emotion_voices 收敛到 tts_audio_utils.load_emotion_voices。
+
+    修正前 tts_service 内扁平扫描（遍历目录下散落 wav）与 VoiceWorkStation
+    产出布局（{emotion}/ref.wav + ref.txt 子目录 / emotion_mapping.json）不兼容，
+    实际加载不到任何音色。本类验证子目录布局可被正确发现。
+    """
+
+    def test_mapping_file_used(self, tmp_path):
+        import json
+
+        (tmp_path / "emotion_mapping.json").write_text(
+            json.dumps({"happy": {"ref_audio": "a.wav", "ref_text": "haha"}}, ensure_ascii=False),
+            encoding="utf-8",
+        )
         result = _load_emotion_voices(str(tmp_path))
-        assert set(result) == {"a", "b"}
-        assert result["a"]["ref_audio"].endswith("a.wav")
+        assert result["happy"]["ref_audio"] == "a.wav"
+        assert result["happy"]["ref_text"] == "haha"
+
+    def test_subdir_layout_discovered(self, tmp_path):
+        happy = tmp_path / "happy"
+        happy.mkdir(parents=True)
+        (happy / "ref.wav").write_bytes(b"WAV")
+        (happy / "ref.txt").write_text("开开心心", encoding="utf-8")
+        result = _load_emotion_voices(str(tmp_path))
+        assert "happy" in result
+        assert result["happy"]["ref_audio"].endswith("ref.wav")
+        assert result["happy"]["ref_text"] == "开开心心"
 
     def test_empty_dir(self, tmp_path):
         assert _load_emotion_voices(str(tmp_path)) == {}
@@ -215,6 +249,56 @@ class TestSplitTextStreaming:
         s = _svc()
         chunks = await self._collect(s, ["  "])
         assert chunks == []  # 全空白不产出
+
+
+# ================================================================ 流式情感+音效合成
+class TestSynthesizeStreamWithEmotions:
+    """回归：效果分支必须用 EffectParser 产出的 type="effect" 匹配。
+
+    修正前循环误判 type == "sound"（EffectParser 从不产出该类型），导致
+    [effect:xxx] 音效段被静默跳过，音效 chunk 永不生成。本类验证修复。
+    """
+
+    async def _collect(self, s, text):
+        chunks = []
+        async for chunk in s.synthesize_stream_with_emotions(text):
+            chunks.append(chunk)
+        return chunks
+
+    @pytest.mark.asyncio
+    async def test_effect_marker_yields_effect_chunk(self, tmp_path):
+        p = tmp_path / "ref.wav"
+        p.write_bytes(b"DATA")
+        s = _svc(ref_audio_path=str(p), ref_text="rt")
+        # 文本段走 TTS 请求（mock），音效段走 _load_effect_audio（mock）
+        import unittest.mock as mock
+
+        s._make_tts_request = mock.AsyncMock(return_value=b"TTS")
+        s._load_effect_audio = mock.Mock(return_value=b"EFF")
+
+        chunks = await self._collect(s, "[effect:door]你好")
+
+        effect_chunks = [c for c in chunks if c.get("is_effect")]
+        assert effect_chunks, "音效段应产出 is_effect 的 chunk"
+        assert effect_chunks[0]["effect_name"] == "door"
+        assert effect_chunks[0]["audio_data"] == b"EFF"
+
+    @pytest.mark.asyncio
+    async def test_emotion_and_effect_mixed(self, tmp_path):
+        p = tmp_path / "ref.wav"
+        p.write_bytes(b"DATA")
+        s = _svc(ref_audio_path=str(p), ref_text="rt")
+        import unittest.mock as mock
+
+        s._make_tts_request = mock.AsyncMock(return_value=b"TTS")
+        s._load_effect_audio = mock.Mock(return_value=b"EFF")
+
+        chunks = await self._collect(s, "[emotion:happy]太棒了[effect:laugh]哈哈哈")
+
+        assert any(c.get("is_effect") and c["effect_name"] == "laugh" for c in chunks)
+        # 文本段携带正确情感
+        text_chunks = [c for c in chunks if c.get("is_effect") is False and c.get("is_sleep") is not True]
+        assert text_chunks and all(c.get("emotion") == "happy" for c in text_chunks)
 
 
 # ================================================================ 其他

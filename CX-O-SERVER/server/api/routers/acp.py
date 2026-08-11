@@ -1,3 +1,4 @@
+"""ACP REST 端点——Agent 消息、连接与分组管理接口。"""
 import uuid
 from datetime import datetime
 from typing import Dict, List, Optional

@@ -1,3 +1,4 @@
+"""通用工具函数——共享 HTTP 客户端、深度合并等跨模块复用能力。"""
 import asyncio
 import json
 import logging

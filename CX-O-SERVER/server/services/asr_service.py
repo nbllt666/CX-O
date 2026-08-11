@@ -142,16 +142,21 @@ class ASRService:
 
     async def _recognize_remote(self, audio_data: bytes, language: str = "auto", use_itn: bool = True) -> dict[str, Any]:
         async def _make_request():
-            import time as _diag_time
-            _t0 = _diag_time.monotonic()
+            _diag = logger.isEnabledFor(logging.DEBUG)
+            if _diag:
+                import time as _diag_time
+                _t0 = _diag_time.monotonic()
             client = get_shared_http_client()
-            _t1 = _diag_time.monotonic()
+            if _diag:
+                _t1 = _diag_time.monotonic()
             files = {"file": ("audio.wav", audio_data, "audio/wav")}
             data = {"language": language, "use_itn": str(use_itn), "task": "rich"}
-            _t2 = _diag_time.monotonic()
+            if _diag:
+                _t2 = _diag_time.monotonic()
             response = await client.post(f"{self._remote_url}/api/v1/asr", files=files, data=data)
-            _t3 = _diag_time.monotonic()
-            logger.debug(f"[DIAG-ASR] get_client={(_t1-_t0)*1000:.1f}ms prep={(_t2-_t1)*1000:.1f}ms post={(_t3-_t2)*1000:.1f}ms url={self._remote_url}")
+            if _diag:
+                _t3 = _diag_time.monotonic()
+                logger.debug(f"[DIAG-ASR] get_client={(_t1-_t0)*1000:.1f}ms prep={(_t2-_t1)*1000:.1f}ms post={(_t3-_t2)*1000:.1f}ms url={self._remote_url}")
             if response.status_code == 200:
                 result = response.json()
                 if result.get("results"):
@@ -295,11 +300,14 @@ class ASRService:
     async def _ws_recv_loop(self) -> None:
         """后台接收 WS 消息，放入 queue。连接断开时清理状态。"""
         _n = 0
+        _debug = logger.isEnabledFor(logging.DEBUG)
         try:
             async for message in self._ws:
                 _n += 1
-                # % 式惰性格式化：消息仅在实际触发 DEBUG 时才做 % 拼接（参数仍会求值）
-                logger.debug("[ASR-WS] Recv #%d: %s", _n, str(message)[:80])
+                # isEnabledFor 门控：避免每帧对 str(message)[:80] 急切求值（含 JSON 字符串切片）。
+                # 仅在实际触发 DEBUG 时才做 % 拼接与切片，消除热路径无谓开销。
+                if _debug:
+                    logger.debug("[ASR-WS] Recv #%d: %s", _n, str(message)[:80])
                 await self._ws_recv_queue.put(message)
         except Exception as e:
             logger.error(f"[ASR-WS] Recv loop error: {e}")
@@ -359,7 +367,8 @@ class ASRService:
         if timeout == 0:
             try:
                 message = self._ws_recv_queue.get_nowait()
-                logger.debug(f"[ASR-WS] receive_result GOT: {str(message)[:60]} (qsize={self._ws_recv_queue.qsize()})")
+                if logger.isEnabledFor(logging.DEBUG):
+                    logger.debug("[ASR-WS] receive_result GOT: %s (qsize=%d)", str(message)[:60], self._ws_recv_queue.qsize())
             except asyncio.QueueEmpty:
                 return None
         else:

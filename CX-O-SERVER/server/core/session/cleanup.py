@@ -1,3 +1,4 @@
+"""会话清理——过期会话的定时扫描与清除。"""
 import asyncio
 from datetime import datetime, timedelta
 from typing import Optional

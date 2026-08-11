@@ -1,12 +1,12 @@
 """server.services.live_client (LiveClientHandler) 单元测试。
 
 通过 monkeypatch 模块级单例 getter（get_context_manager / get_firewall_service /
-get_frontend_marker / get_adaptive_polling_manager / get_audio_stream_processor /
-get_asr_interrupt_module / get_agent_interrupt_module）注入假依赖，覆盖：
+get_frontend_marker / get_audio_stream_processor / get_asr_interrupt_module /
+get_agent_interrupt_module）注入假依赖，覆盖：
 
 - handle_message 消息路由（init/danmaku/gift/enter/config/text/interrupt/stop_tts/未知）
 - 各 _handle_* 方法：配置更新、弹幕过滤、上下文写入、ack 响应
-- handle_audio：VAD 状态变化、ASR 结果推送、打断判定、vad_frame、轮询记录
+- handle_audio：VAD 状态变化、ASR 结果推送、打断判定、vad_frame
 
 运行：python -m pytest tests/test_live_client.py -v
 """
@@ -54,14 +54,6 @@ class FakeFrontendMarker:
         return {"formatted": True, "source": marker_data}
 
 
-class FakePollingManager:
-    def __init__(self):
-        self.packets = 0
-
-    def record_packet(self):
-        self.packets += 1
-
-
 class FakeStreamProcessor:
     def __init__(self, vad=None, asr=None):
         self._vad = vad or {"is_speaking": False, "speech_probability": 0.0,
@@ -103,14 +95,12 @@ def handler(monkeypatch):
     fw = FakeFirewall()
     cm = FakeContextManager()
     fm = FakeFrontendMarker()
-    pm = FakePollingManager()
     im = FakeInterruptModule()
     ai = FakeAgentInterrupt()
 
     monkeypatch.setattr(lc, "get_context_manager", lambda: cm)
     monkeypatch.setattr(lc, "get_firewall_service", lambda: fw)
     monkeypatch.setattr(lc, "get_frontend_marker", lambda: fm)
-    monkeypatch.setattr(lc, "get_adaptive_polling_manager", lambda: pm)
     monkeypatch.setattr(lc, "get_asr_interrupt_module", lambda: im)
     monkeypatch.setattr(lc, "get_agent_interrupt_module", lambda: ai)
 
@@ -120,7 +110,6 @@ def handler(monkeypatch):
     h.firewall = fw
     h.context_manager = cm
     h.frontend_marker = fm
-    h._polling_manager = pm
     return h
 
 
@@ -263,7 +252,6 @@ class TestAudio:
         await handler.handle_audio(None, b"\x00", "c1")
         # 仅 vad_frame
         assert handler._manager.sent[0][1]["type"] == "vad_frame"
-        assert handler._polling_manager.packets == 1
 
     @pytest.mark.asyncio
     async def test_audio_vad_state_change_sends_status(self, handler, monkeypatch):

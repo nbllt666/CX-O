@@ -1,3 +1,4 @@
+"""插件管理器——插件动态加载、生命周期托管与事件分发。"""
 import asyncio
 import importlib
 import importlib.util

@@ -1,3 +1,4 @@
+"""上下文端点——对话上下文查询与历史格式化接口。"""
 from typing import Dict
 
 from fastapi import APIRouter, HTTPException

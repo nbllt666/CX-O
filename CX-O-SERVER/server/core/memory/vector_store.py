@@ -1,3 +1,4 @@
+"""向量存储适配层——统一向量库（Chroma/Weaviate/Milvus）的写入、同步与查询接口。"""
 from dataclasses import dataclass
 from typing import Dict, List, Optional
 

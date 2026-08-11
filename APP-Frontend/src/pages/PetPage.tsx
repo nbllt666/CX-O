@@ -99,6 +99,7 @@ export default function PetPage() {
   const setScreenActive = useCaptureStore((s) => s.setScreenActive);
   const cameraActive = useCaptureStore((s) => s.cameraActive);
   const setCameraActive = useCaptureStore((s) => s.setCameraActive);
+  const visionEnabled = useCaptureStore((s) => s.visionEnabled);
   const frameMode = useCaptureStore((s) => s.frameMode);
   const frameIntervalSec = useCaptureStore((s) => s.frameIntervalSec);
 
@@ -367,6 +368,8 @@ export default function PetPage() {
   const sendFrame = useCallback(
     (dataUrl: string, kind: CaptureSourceKind) => {
       if (isLoadingRef.current) return;
+      // 主动视觉总开关：关闭则不向 LLM 发送画面帧
+      if (!visionEnabled) return;
       const prompt = t(
         kind === 'screen' ? 'pet.capture.framePromptScreen' : 'pet.capture.framePromptCamera',
       );
@@ -409,7 +412,7 @@ export default function PetPage() {
           chatRef.current?.finalizeLastAssistantMessage(t('pet.chat.unreachable'));
         });
     },
-    [t, currentAgentId, handleAssistantStreamEvent],
+    [t, currentAgentId, handleAssistantStreamEvent, visionEnabled],
   );
 
   const { sendNow } = useFrameSender({
@@ -420,7 +423,7 @@ export default function PetPage() {
     mode: frameMode,
     intervalSec: frameIntervalSec,
     sendFrame,
-    canSend: () => !isLoadingRef.current,
+    canSend: () => visionEnabled && !isLoadingRef.current,
   });
 
   // ── 口型三路人混：tts > danmaku > mic，PetAvatar 直读混合输出 ──
@@ -636,9 +639,9 @@ export default function PetPage() {
     { on: cameraCapture.isCapturing, label: t('pet.capture.cameraOn'), icon: <Camera className="h-3 w-3 text-primary" /> },
   ].filter((item) => item.on);
 
-  // 发送画面入口：任一采集开关开启时出现在输入行左侧
+  // 发送画面入口：总开关开启且任一采集开关开启时出现在输入行左侧
   const frameSendAccessory =
-    screenActive || cameraActive ? (
+    visionEnabled && (screenActive || cameraActive) ? (
       <button
         type="button"
         onClick={() => sendNow()}

@@ -3,9 +3,9 @@
 提供高级归档、去重、合并等功能
 """
 
-from typing import Dict, List, Optional
+from typing import List, Optional
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
 from server.core.logging_config import get_contextual_logger

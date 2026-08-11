@@ -2,8 +2,6 @@
 server.core.backup 单元测试
 BackupManager 占位实现与单例 get_backup_manager
 """
-import pytest
-
 from server.core import backup as backup_mod
 from server.core.backup import BackupManager, BackupType, get_backup_manager
 
@@ -43,16 +41,12 @@ class TestBackupManager:
     def test_restore_stub(self):
         assert BackupManager().restore_backup("x") == {"status": "not_implemented"}
 
-    def test_export_none(self):
-        assert BackupManager().export_backup("x") is None
-
     def test_import_stub(self):
         assert BackupManager().import_backup("/tmp/x.zip") == {"status": "not_implemented"}
 
 
 class TestGetBackupManager:
     def test_singleton(self, monkeypatch):
-        sunny = backup_mod
         monkeypatch.setattr(backup_mod, "_manager", None)
         a = get_backup_manager()
         b = get_backup_manager()

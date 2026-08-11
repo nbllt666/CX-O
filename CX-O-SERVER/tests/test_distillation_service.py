@@ -17,7 +17,8 @@ from server.core.distillation.distillation_service import (
 
 
 class FakePipeline:
-    async def preprocess(self, source_type, source_ref):
+    # 契约（public/interface_stub/multimodal_pipeline.pyi）中 preprocess 为同步方法
+    def preprocess(self, source_type, source_ref):
         return {"source_type": source_type, "source_ref": source_ref}
 
 
@@ -222,6 +223,21 @@ class TestQuality:
         assert "p" * 300 in out
         assert "p" * 301 not in out
 
+    def test_preread_conversation_log_maps_to_text(self, service):
+        """聊天记录蒸馏：conversation_log 应映射到 text 模态并产出对话类疑点。"""
+        import asyncio
+
+        summary, questions = asyncio.run(
+            service._run_preread(
+                source_type="conversation_log",
+                source_ref="user: 你好\nassistant: 你好呀",
+                template_id="t1",
+            )
+        )
+        assert summary.startswith("[S_PREREAD]")
+        assert "conversation_log" in summary
+        assert any("角色" in q for q in questions)
+
     def test_estimate_quality_score_heuristic(self, service):
         # quality_llm_enabled=False → 纯启发式
         session = {"turns": [], "preread_summary": ""}
@@ -353,3 +369,75 @@ class TestPersistence:
         service._session_dir = "Z:/nonexistent/__bogus__"
         with pytest.raises(RuntimeError, match="session 持久化失败"):
             service._save_session({"session_id": "s1", "state": "S_INIT"})
+
+
+# --------------------------------------------------------------------------- #
+# finalize_with_agent_creation（批量蒸馏 agent 创建路径）
+# --------------------------------------------------------------------------- #
+class TestFinalizeWithAgentCreation:
+    def _make_session(self, session_id="sid-agent", goal="agent"):
+        return {
+            "session_id": session_id,
+            "source_type": "character_card",
+            "template_id": "default",
+            "max_turns": 4,
+            "ask_user_on_ambiguity": False,
+            "state": "S_EXTRACT",
+            "turns": [],
+            "preread_summary": "pre",
+            "ambiguity_questions": [],
+            "extracted_content": "性格: 活泼开朗\n喜欢和用户聊天",
+            "quality_score": 0.9,
+            "created_at": _iso_now(),
+            "updated_at": _iso_now(),
+            "finalized_at": None,
+            "is_finalized": False,
+            "error_message": None,
+            "distillation_goal": goal,
+            "chunk_index": 0,
+            "session_group_id": "grp1",
+        }
+
+    def test_create_agent_from_session_writes_agents_json(self, service, tmp_path, monkeypatch):
+        import server.core.distillation.distillation_service as dist_mod
+
+        monkeypatch.setattr(dist_mod, "_PROJECT_ROOT", str(tmp_path))
+        session = self._make_session()
+        agent = service._create_agent_from_session(session)
+
+        assert agent["id"].startswith("agent-")
+        assert agent["name"] == "性格: 活泼开朗"
+        assert "活泼开朗" in agent["system_prompt"]
+
+        agents_path = tmp_path / "data" / "agents.json"
+        assert agents_path.exists()
+        agents = json.loads(agents_path.read_text(encoding="utf-8"))
+        assert any(a["id"] == agent["id"] for a in agents)
+
+    def test_finalize_with_agent_creation_created(self, service, tmp_path, monkeypatch):
+        import server.core.distillation.distillation_service as dist_mod
+
+        monkeypatch.setattr(dist_mod, "_PROJECT_ROOT", str(tmp_path))
+        session = self._make_session()
+        service._save_session(session)
+
+        result = service.finalize_with_agent_creation(session_id="sid-agent")
+
+        assert result["stored"] is True
+        assert result["agent_creation_result"]["status"] == "created"
+        assert result["agent_creation_result"]["name"] == "性格: 活泼开朗"
+        assert (tmp_path / "data" / "agents.json").exists()
+
+    @pytest.mark.asyncio
+    async def test_finalize_with_agent_creation_skipped_for_memory(self, service, tmp_path, monkeypatch):
+        import server.core.distillation.distillation_service as dist_mod
+
+        monkeypatch.setattr(dist_mod, "_PROJECT_ROOT", str(tmp_path))
+        session = self._make_session(goal="memory")
+        service._save_session(session)
+
+        result = await service.finalize_with_agent_creation(session_id="sid-agent")
+
+        assert result["stored"] is True
+        assert result["agent_creation_result"]["status"] == "skipped"
+        assert not (tmp_path / "data" / "agents.json").exists()

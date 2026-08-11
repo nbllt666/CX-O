@@ -4,9 +4,9 @@
   "title": "Tool",
   "description": "工具数据契约（种子阶段，待 s0201 补全）",
   "_sourceOfTruth": {
-    "primary": "c:/CX-O/CX-O-Frontend/src/api/clients/_types.ts",
+    "primary": "c:/CX-O/APP-Frontend/src/api/types.ts",
     "secondary": ["c:/CX-O/CX-O-SERVER/server/core/tools/"],
-    "note": "前端 Tool 接口在 _types.ts；后端工具系统在 server/core/tools/；含 56 个图工具"
+    "note": "前端 Tool 接口在 APP-Frontend/src/api/types.ts；后端工具系统在 server/core/tools/；含 56 个图工具"
   },
   "_seedStage": true,
   "_completionSkill": "s0201",

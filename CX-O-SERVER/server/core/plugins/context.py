@@ -1,3 +1,4 @@
+"""插件上下文——为插件执行提供上下文与事件分发辅助。"""
 from dataclasses import dataclass, field
 from typing import Any, Callable, Dict, Optional, Set
 

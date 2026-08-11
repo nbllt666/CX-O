@@ -54,8 +54,6 @@
 
 ## 前端 Mock 现状
 
-CX-O-Frontend 已有 MSW（Mock Service Worker）基础设施：
-- `c:/CX-O/CX-O-Frontend/src/mocks/handlers.ts`（仅 5 个 handler，覆盖 /api/health、/api/live/client/status、/api/config、/api/agents 等极少端点）
-- `c:/CX-O/CX-O-Frontend/src/mocks/mock-regression.test.ts`
-
-s0202 阶段需大幅扩展 MSW handlers 以覆盖 12 个域 mixin 的全部端点。
+APP-Frontend 以 vitest + jsdom 为主（api/clients 直连，见 `APP-Frontend/src/api/`），MSW 基础设施待扩展：
+- `APP-Frontend/src/api/` 下的客户端直连测试（base.test.ts 等）
+- Mock 回归测试由 s0402 前端三重闸门承接

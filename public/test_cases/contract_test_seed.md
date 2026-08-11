@@ -41,8 +41,8 @@
 | 关卡 | 测试框架 | 覆盖范围 | 状态 |
 |------|---------|---------|------|
 | Test 1 | streamlit-testing 单元测试 | 组件级功能验证 | ⬜ CX-O 为 React 前端，需适配为 React Testing Library |
-| Test 2 | Playwright E2E | 全流程功能验证 | ⬜ CX-O-Frontend 已有 playwright.config.ts |
-| Test 3 | Mock 回归 | INPUT→MONITOR→REVIEW | ⬜ CX-O-Frontend 已有 MSW handlers（仅 5 个，需扩展） |
+| Test 2 | Playwright E2E | 全流程功能验证 | ⬜ APP-Frontend 待补 playwright 配置 |
+| Test 3 | Mock 回归 | INPUT→MONITOR→REVIEW | ⬜ APP-Frontend 以 vitest/jsdom + api/clients 直连测试为主，MSW 待扩展 |
 
 ## 契约可验证性状态
 

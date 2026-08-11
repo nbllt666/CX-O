@@ -34,34 +34,6 @@ class CoreException(Exception):
         }
 
 
-class DatabaseError(CoreException):
-    """数据库操作异常"""
-
-    ERROR_CODE = "DATABASE_ERROR"
-
-    def __init__(
-        self,
-        message: str = "Database operation failed",
-        code: Optional[str] = None,
-        details: Optional[Dict[str, Any]] = None,
-    ):
-        super().__init__(message, code, details)
-
-
-class ValidationError(CoreException):
-    """数据验证异常"""
-
-    ERROR_CODE = "VALIDATION_ERROR"
-
-    def __init__(
-        self,
-        message: str = "Validation failed",
-        code: Optional[str] = None,
-        details: Optional[Dict[str, Any]] = None,
-    ):
-        super().__init__(message, code, details)
-
-
 class ACPError(CoreException):
     """ACP相关异常"""
 
@@ -104,20 +76,6 @@ class VectorStoreError(CoreException):
         super().__init__(message, code, details)
 
 
-class LLMError(CoreException):
-    """LLM调用异常"""
-
-    ERROR_CODE = "LLM_ERROR"
-
-    def __init__(
-        self,
-        message: str = "LLM operation failed",
-        code: Optional[str] = None,
-        details: Optional[Dict[str, Any]] = None,
-    ):
-        super().__init__(message, code, details)
-
-
 class ToolError(CoreException):
     """工具调用异常"""
 
@@ -140,20 +98,6 @@ class MCPError(CoreException):
     def __init__(
         self,
         message: str = "MCP protocol error",
-        code: Optional[str] = None,
-        details: Optional[Dict[str, Any]] = None,
-    ):
-        super().__init__(message, code, details)
-
-
-class ContextError(CoreException):
-    """上下文管理异常"""
-
-    ERROR_CODE = "CONTEXT_ERROR"
-
-    def __init__(
-        self,
-        message: str = "Context operation failed",
         code: Optional[str] = None,
         details: Optional[Dict[str, Any]] = None,
     ):

@@ -1,3 +1,4 @@
+"""系统统计端点——运行状态与指标查询接口。"""
 from fastapi import APIRouter, HTTPException
 
 from server.core.logging_config import get_contextual_logger

@@ -15,7 +15,6 @@ from server.services.frontend_marker import get_frontend_marker
 from server.services.vad_processor import get_audio_stream_processor
 from server.services.asr_interrupt import get_asr_interrupt_module
 from server.services.agent_interrupt_user import get_agent_interrupt_module
-from server.services.adaptive_polling import get_adaptive_polling_manager
 
 if TYPE_CHECKING:
     from server.core.websocket.manager import WebSocketManager
@@ -33,7 +32,6 @@ class LiveClientHandler:
         self.firewall = get_firewall_service()
         self.frontend_marker = get_frontend_marker()
         self._session_id: Optional[str] = None
-        self._polling_manager = get_adaptive_polling_manager()
 
     async def handle_message(self, websocket, message: dict, client_id: str):
         msg_type = message.get("type")
@@ -64,7 +62,6 @@ class LiveClientHandler:
 
             vad_result = result.get("vad", {})
             asr_result = result.get("asr")
-            result.get("interrupt")
 
             if vad_result.get("state_changed"):
                 status = "speech_start" if vad_result["is_speaking"] else "speech_end"
@@ -102,8 +99,6 @@ class LiveClientHandler:
                                 }
                             })
 
-            self._polling_manager.record_packet()
-
             await self.manager.send_message(self.client_id, {
                 "type": "vad_frame",
                 "data": {
@@ -136,7 +131,7 @@ class LiveClientHandler:
 
         filter_result = self.firewall.filter_message(content, user_id, username)
         if not filter_result.allowed:
-            logger.debug(f"Danmaku filtered: {filter_result.reason}")
+            logger.debug("Danmaku filtered: %s", filter_result.reason)
             return
 
         if self._session_id:
@@ -152,7 +147,8 @@ class LiveClientHandler:
 
     async def _handle_gift(self, websocket, message: dict):
         data = message.get("data", {})
-        logger.info(f"Gift received: {data}")
+        # 每礼物事件触发；实录弹幕流下高频，降级 DEBUG 并惰性格式化避免热路径 eager f-string
+        logger.debug("Gift received: %s", data)
 
         if self._session_id:
             self.context_manager.add_message(self._session_id, {
@@ -167,7 +163,8 @@ class LiveClientHandler:
 
     async def _handle_enter(self, websocket, message: dict):
         data = message.get("data", {})
-        logger.info(f"User entered: {data}")
+        # 每进入事件触发；实录弹幕流下高频，降级 DEBUG 并惰性格式化避免热路径 eager f-string
+        logger.debug("User entered: %s", data)
 
         await self.manager.send_message(self.client_id, {
             "type": "enter_ack",

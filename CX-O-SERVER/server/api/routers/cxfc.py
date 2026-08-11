@@ -1,3 +1,4 @@
+"""CXFC 端点——插件注册、心跳与事件分发接口。"""
 from typing import Any, Dict
 
 from fastapi import APIRouter, HTTPException

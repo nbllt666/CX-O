@@ -87,6 +87,17 @@
     var(--glass-highlight),
     0 8px 32px rgba(157, 124, 255, 0.12),
     0 2px 8px rgba(18, 18, 26, 0.06);
+
+  /* ======================== 3. 兼容别名（CX-O-Frontend token 映射） ======================== */
+  /* 迁移组件沿用旧 token 名，渲染复用本体系视觉 */
+  --color-text-primary: var(--text-primary);
+  --color-text-secondary: var(--text-secondary);
+  --color-text-tertiary: var(--gray-400);
+  --color-border: var(--border-color);
+  --color-error: #ef4444;
+  --color-success: #22c55e;
+  --color-warning: #f59e0b;
+  --glass-surface: var(--glass-bg-strong);
 }
 
 /* ======================== 2. 语义层 semantic（暗色） ======================== */
@@ -114,4 +125,14 @@
     var(--glass-highlight),
     0 8px 32px rgba(0, 0, 0, 0.4),
     0 2px 8px rgba(0, 0, 0, 0.24);
+
+  /* 兼容别名（暗色） */
+  --color-text-primary: var(--text-primary);
+  --color-text-secondary: var(--text-secondary);
+  --color-text-tertiary: var(--gray-400);
+  --color-border: var(--border-color);
+  --color-error: #f87171;
+  --color-success: #4ade80;
+  --color-warning: #fbbf24;
+  --glass-surface: var(--glass-bg-strong);
 }

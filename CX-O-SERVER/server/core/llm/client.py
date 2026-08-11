@@ -1,3 +1,9 @@
+"""LLM 客户端抽象与 HTTP 实现。
+
+定义统一的 LLMClient 抽象基类、OpenAI 兼容 HTTP 客户端及请求/响应数据
+结构，供聊天管线与各类服务调用模型，通过 get_shared_http_client 复用连接池
+以避免逐请求建连。
+"""
 import json
 import time
 from abc import ABC, abstractmethod

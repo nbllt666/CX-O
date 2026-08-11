@@ -1,3 +1,4 @@
+"""Milvus Lite 向量存储适配器——基于 Milvus Lite 的向量读写与集合管理。"""
 import os
 import threading
 from dataclasses import dataclass

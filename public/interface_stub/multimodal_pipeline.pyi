@@ -21,12 +21,12 @@
 from typing import Any, Dict, List, Optional
 
 from pydantic import BaseModel
-（CX-O 扩展版）
+# CX-O 扩展版（新增 video/audio 模态）
 
-class MultimodalArtifact(BaseModel):e / vido / audio
+class MultimodalArtifact(BaseModel):
     """多模态预处理产物。字段与 multimodal_artifact.schema.json 一致。"""
     artifact_id: str
-    type: str  # enum: text / character_card / image
+    type: str  # enum: text / character_card / image / video / audio
     source: str
     text_content: str
     native_decode_used: bool = False  # 是否使用 vLLM 原生解码（仅 video/audio 模态有意义）

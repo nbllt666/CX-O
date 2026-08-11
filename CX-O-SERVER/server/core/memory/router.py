@@ -1,3 +1,4 @@
+"""记忆路由——多源记忆检索结果的评分合并与选优决策。"""
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Dict, List
@@ -187,32 +188,27 @@ class MemoryRouter:
             return []
 
         try:
-            recent_count = 0
+            # 分页拉取该会话记忆：search_memories 支持 offset，每页推进避免反复取同一批首 20 条
+            # （原实现 page += 1 但从未传 offset，导致每轮重复取首窗口并追加重复项）。
+            # 目标数为返回上限 100（无需多取 200 再截断），每页 20 条 → 至多 5 页。
             memories = []
             page = 1
             page_size = 20
-            max_iterations = 10
-            iteration = 0
-
-            while recent_count < 200 and iteration < max_iterations:
-                iteration += 1
+            max_iterations = 5
+            while len(memories) < 100 and page <= max_iterations:
                 results = self.memory_manager.search_memories(
                     query=None,
                     memory_type=None,
-                    tags=[session_id] if session_id else None,
+                    tags=[session_id],
                     limit=page_size,
+                    offset=(page - 1) * page_size,
                 )
-
                 if not results:
                     break
-
                 for mem in results:
                     if mem.get("session_id") == session_id:
                         memories.append(mem)
-                        recent_count += 1
-
                 page += 1
-
             return memories[:100]
 
         except Exception as e:

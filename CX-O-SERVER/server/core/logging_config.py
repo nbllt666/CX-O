@@ -249,6 +249,10 @@ class ContextualLogger:
     def debug(self, msg: str, *args, **kwargs):
         self._log_with_context(logging.DEBUG, msg, *args, **kwargs)
 
+    def isEnabledFor(self, level: int) -> bool:
+        """是否启用指定日志级别（委托底层 logger，供热路径守卫使用）。"""
+        return self.logger.isEnabledFor(level)
+
     def info(self, msg: str, *args, **kwargs):
         self._log_with_context(logging.INFO, msg, *args, **kwargs)
 

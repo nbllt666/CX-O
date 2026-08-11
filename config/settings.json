@@ -17,13 +17,6 @@
       "chunk_size": 2048,
       "hop_size": 512,
       "look_back": 4
-    },
-    "adaptive_polling": {
-      "enabled": true,
-      "offset_ms": 100,
-      "window_size": 5,
-      "min_interval_ms": 100,
-      "max_interval_ms": 500
     }
   },
   "tts": {

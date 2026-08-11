@@ -512,7 +512,7 @@ huggingface-cli download canopylabs/orpheus-multilingual-research-release \
         <th>服务</th>
         <th>说明</th>
       </tr>
-      <tr><td>5173</td><td>CX-O Frontend</td><td>Vite 前端开发服务器</td></tr>
+      <tr><td>3100</td><td>APP-Frontend</td><td>Vite 前端开发服务器（浏览器模式）</td></tr>
       <tr><td>8000</td><td>CX-O Server</td><td>FastAPI 后端 + WebSocket</td></tr>
       <tr><td>8000</td><td>F5-TTS Triton HTTP</td><td>⚠️ 与 CX-O Server 冲突，需通过环境变量调整</td></tr>
       <tr><td>8001</td><td>F5-TTS Triton gRPC</td><td>也用于 ASR remote_url</td></tr>
@@ -553,7 +553,7 @@ cd c:\CX-O
 call py311\Scripts\activate.bat
 
 # 前端依赖
-cd CX-O-Frontend
+cd APP-Frontend
 npm install</code></pre>
       </li>
       <li><strong>拉取所有模型</strong><br>
@@ -602,12 +602,12 @@ cd CX-O-VoiceWorkStation
 cd CX-O-SERVER
 .\start.bat
 
-# 前端服务（必须启动）
-cd CX-O-Frontend
-.\start.bat</code></pre>
+# 前端服务（必须启动，浏览器模式）
+cd APP-Frontend
+.\start.bat browser</code></pre>
       </li>
       <li><strong>访问应用</strong><br>
-        浏览器打开 <code>http://localhost:5173</code>，首次访问会引导确认后端连接。
+        浏览器打开 <code>http://localhost:3100</code>，首次访问会引导确认后端连接。
       </li>
     </ol>
   </div>
@@ -759,7 +759,7 @@ cp .env.example .env</code></pre>
   </div>
 
   <div class="card">
-    <h3>前端环境变量：<code>CX-O-Frontend/.env</code></h3>
+    <h3>前端环境变量：<code>APP-Frontend/.env</code></h3>
     <table>
       <tr>
         <th>变量</th>
@@ -960,7 +960,7 @@ docker compose down</code></pre>
 
   <div class="card">
     <h3>前端连接不上后端</h3>
-    <p>检查 <code>CX-O-Frontend/.env</code> 中的 <code>VITE_API_URL</code> 是否指向正确的后端地址。默认 <code>http://127.0.0.1:8000</code>。前端启动时会请求 <code>/health</code> 接口检查连通性，连不上会显示引导页。</p>
+    <p>检查 <code>APP-Frontend/.env</code> 中的 <code>VITE_API_URL</code> 是否指向正确的后端地址。默认 <code>http://127.0.0.1:8000</code>。前端启动时会请求 <code>/health</code> 接口检查连通性，连不上会显示引导页。</p>
   </div>
 
   <div class="card">

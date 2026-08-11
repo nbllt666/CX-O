@@ -8,7 +8,7 @@
 import logging
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, Optional
 
 import httpx
 
@@ -247,88 +247,6 @@ class ModelRouter:
             await self.check_status(model_type)
 
         return self._status
-
-    def get_all_status(self) -> Dict[str, ModelStatus]:
-        """获取所有模型的当前状态（不重新检查）
-
-        Returns:
-            所有模型状态字典
-        """
-        return self._status
-
-    def is_available(self, model_type: str = "main") -> bool:
-        """检查指定模型是否可用
-
-        Args:
-            model_type: 模型类型
-
-        Returns:
-            是否可用
-        """
-        status = self._status.get(model_type)
-        return status and status.available
-
-    async def chat(
-        self, model_type: str, messages: List[Dict], stream: bool = False, **kwargs
-    ) -> Dict[str, Any]:
-        """使用指定模型进行对话
-
-        Args:
-            model_type: 模型类型
-            messages: 消息列表
-            stream: 是否流式响应
-            **kwargs: 额外参数
-
-        Returns:
-            对话结果
-        """
-        client = self.get_client(model_type)
-
-        if not client:
-            return {"success": False, "error": f"模型客户端不存在: {model_type}", "content": ""}
-
-        try:
-            response = await client.chat(messages, stream, **kwargs)
-
-            return {
-                "success": response.finish_reason != "error",
-                "content": response.content,
-                "finish_reason": response.finish_reason,
-                "usage": response.usage,
-                "error": getattr(response, "error", None),
-                "error_details": getattr(response, "error_details", {}),
-            }
-
-        except Exception as e:
-            logger.error(f"模型对话失败 {model_type}: {e}")
-            return {"success": False, "error": str(e), "content": ""}
-
-    async def get_embedding(self, model_type: str, text: str) -> Optional[List[float]]:
-        """获取文本的向量嵌入
-
-        Args:
-            model_type: 模型类型（通常是memory模型）
-            text: 输入文本
-
-        Returns:
-            向量列表或None
-        """
-        client = self.get_client(model_type)
-
-        if not client:
-            logger.warning(f"无法获取embedding，模型客户端不存在: {model_type}")
-            return None
-
-        # 检查客户端是否支持get_embedding方法
-        if hasattr(client, "get_embedding"):
-            try:
-                return await client.get_embedding(text)
-            except Exception as e:
-                logger.error(f"获取embedding失败: {e}")
-                return None
-        else:
-            logger.warning(f"模型客户端不支持get_embedding: {model_type}")
-            return None
 
     def get_model_info(self, model_type: str = "main") -> Dict[str, Any]:
         """获取模型信息

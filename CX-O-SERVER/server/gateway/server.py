@@ -155,11 +155,6 @@ def register_gateway_routes(app: FastAPI):
     from server.services.tts_service import get_tts_service
     from server.services.asr_service import get_asr_service
 
-    from server.services.firewall import FirewallService
-    from server.services.context_manager import get_context_manager
-    firewall = FirewallService.get_instance()
-    firewall.set_context_manager(get_context_manager())
-
     tts_service = get_tts_service()
 
     asr_service = get_asr_service()

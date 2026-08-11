@@ -142,14 +142,6 @@ class TTSServiceConfig(BaseModel):
     emotion_templates: Optional[Dict[str, Any]] = None
 
 
-class AdaptivePollingConfig(BaseModel):
-    enabled: bool = True
-    offset_ms: int = 0
-    window_size: int = 3
-    min_interval_ms: int = 50
-    max_interval_ms: int = 2000
-
-
 class SenseVoiceStreamingConfig(BaseModel):
     chunk_size: int = 1600
     hop_size: int = 800
@@ -160,7 +152,6 @@ class ServicesConfig(BaseModel):
     asr: ServiceConfig = Field(default_factory=ServiceConfig)
     tts: TTSServiceConfig = Field(default_factory=TTSServiceConfig)
     control_service_url: Optional[str] = None
-    adaptive_polling: Optional[AdaptivePollingConfig] = None
     sensevoice_streaming: Optional[SenseVoiceStreamingConfig] = None
 
 

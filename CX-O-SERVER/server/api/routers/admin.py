@@ -1,3 +1,4 @@
+"""管理端点——API 密钥、运行时配置与数据管理接口。"""
 import os
 import secrets
 from datetime import datetime

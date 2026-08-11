@@ -1,3 +1,4 @@
+"""二次指令路由——基于对话历史生成并应用记忆二次指令。"""
 import json
 from dataclasses import dataclass, field
 from datetime import datetime

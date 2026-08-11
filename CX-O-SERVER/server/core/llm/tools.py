@@ -1,3 +1,4 @@
+"""LLM 工具辅助——模型调用场景下的工具定义与消息处理辅助。"""
 from typing import Dict, List
 import json
 

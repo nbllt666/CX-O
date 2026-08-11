@@ -1187,6 +1187,129 @@ class DistillationService:
             ],
         }
 
+    async def finalize_with_agent_creation(
+        self,
+        session_id: str,
+        override_decision: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """终结蒸馏会话并从抽取内容创建角色卡 Agent。
+
+        RADIX 批量蒸馏 agent 创建路径（batch_routes.py::finalize_with_agent_creation 调用）：
+            1. 先调用 finalize_distillation 完成存储决策（可能 S_REJECT）
+            2. 若存储成功且会话目标含 agent 创建，从 extracted_content 构建标准
+               Agent 配置并写入 data/agents.json（扁平 list，与 agents.py 一致）
+            3. 返回 finalize 响应 + agent_creation_result
+
+        Args:
+            session_id: 会话 ID
+            override_decision: 人类覆盖决策（非 None 时覆盖 agent 决策）
+
+        Returns:
+            dict: finalize 响应字段 + agent_creation_result
+
+        Raises:
+            KeyError: session_id 不存在（404）
+            ValueError: 会话已终结（409）
+        """
+        finalize_resp = await self.finalize_distillation(
+            session_id=session_id,
+            override_decision=override_decision,
+        )
+        base = finalize_resp.model_dump()
+
+        session = self._load_session(session_id)
+        goal = (session or {}).get("distillation_goal", "memory")
+        wants_agent = goal in ("agent", "memory_and_agent")
+
+        if not finalize_resp.stored or not wants_agent:
+            base["agent_creation_result"] = {
+                "status": "skipped",
+                "reason": "未存储或该会话目标不包含 agent 创建",
+            }
+            return base
+
+        try:
+            agent = self._create_agent_from_session(session)
+            base["agent_creation_result"] = {
+                "status": "created",
+                "agent_id": agent["id"],
+                "name": agent["name"],
+            }
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("finalize_with_agent_creation agent 创建失败: %s", exc)
+            base["agent_creation_result"] = {
+                "status": "error",
+                "error": str(exc),
+            }
+        return base
+
+    def _create_agent_from_session(self, session: Dict[str, Any]) -> Dict[str, Any]:
+        """从蒸馏会话抽取内容构建并写入标准 Agent 配置（best-effort）。
+
+        写入格式与 server/api/routers/agents.py 一致（扁平 list），
+        供前端 AgentsPage / ACP agent 管理读取。agent 创建失败不应阻断
+        finalize 结果，故由调用方捕获。
+
+        Args:
+            session: 蒸馏会话字典（含 extracted_content）
+
+        Returns:
+            dict: 写入的标准 Agent 配置
+
+        Raises:
+            OSError / json.JSONDecodeError: agents.json 读写失败（由调用方捕获）
+        """
+        import uuid
+
+        extracted = (session.get("extracted_content") or "").strip()
+        name_line = ""
+        for line in extracted.splitlines():
+            stripped = line.strip().lstrip("-#* ")
+            if stripped:
+                name_line = stripped
+                break
+        name = (name_line or "蒸馏角色")[:40]
+        description = extracted[:200] or ""
+        system_prompt = (
+            f"你是角色「{name}」。以下是该角色的设定与记忆蒸馏内容，请据此扮演：\n"
+            f"{extracted}"
+        )
+
+        agents_path = os.path.join(_PROJECT_ROOT, "data", "agents.json")
+        agents: List[Dict[str, Any]] = []
+        if os.path.exists(agents_path):
+            try:
+                with open(agents_path, "r", encoding="utf-8") as fh:
+                    loaded = json.load(fh)
+                if isinstance(loaded, list):
+                    agents = loaded
+            except (json.JSONDecodeError, OSError) as exc:
+                logger.warning("agents.json 读取失败（%s），将重建", exc)
+
+        now = _iso_now()
+        agent: Dict[str, Any] = {
+            "id": f"agent-{uuid.uuid4().hex[:8]}",
+            "name": name,
+            "description": description,
+            "system_prompt": system_prompt,
+            "model": "main",
+            "temperature": 0.7,
+            "max_tokens": 131072,
+            "use_memory": True,
+            "use_tools": True,
+            "memory_scene": "chat",
+            "decay_model": "exponential",
+            "vision_enabled": False,
+            "is_default": False,
+            "created_at": now,
+            "updated_at": now,
+        }
+        agents.append(agent)
+        _ensure_dir(os.path.dirname(agents_path))
+        with open(agents_path, "w", encoding="utf-8") as fh:
+            json.dump(agents, fh, ensure_ascii=False, indent=2)
+        return agent
+
     # ------------------------------------------------------------------ #
     # 内部方法（严格匹配 .pyi 签名）
     # ------------------------------------------------------------------ #

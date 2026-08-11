@@ -225,8 +225,3 @@ def test_singleton(monkeypatch):
     a = firewall_mod.get_firewall_service()
     b = firewall_mod.get_firewall_service()
     assert a is b
-
-
-def test_set_context_manager_accepts(svc):
-    svc.set_context_manager("ctx")
-    assert svc._context_manager == "ctx"

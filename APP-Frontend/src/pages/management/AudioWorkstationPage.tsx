@@ -15,7 +15,7 @@ import type { LucideIcon } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import VoxCPMPanel from './audioWorkstation/VoxCPMPanel';
 import SVCPanel from './audioWorkstation/SVCPanel';
-import MusicPanel from './audioWorkstation/MusicPanel';
+import { CompositionPanel } from './audioWorkstation/CompositionPanel';
 import OrpheusPanel from './audioWorkstation/OrpheusPanel';
 import RefAudioPanel from './audioWorkstation/RefAudioPanel';
 
@@ -75,7 +75,7 @@ export default function AudioWorkstationPage() {
       <div className="min-h-0 flex-1 space-y-5 overflow-y-auto">
         {activeTab === 'voxcpm' && <VoxCPMPanel />}
         {activeTab === 'svc' && <SVCPanel />}
-        {activeTab === 'music' && <MusicPanel />}
+        {activeTab === 'music' && <CompositionPanel />}
         {activeTab === 'orpheus' && <OrpheusPanel />}
         {activeTab === 'refaudio' && <RefAudioPanel />}
       </div>

@@ -14,11 +14,18 @@
 import { useCallback, useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import {
+  Activity,
+  Bot,
   Camera,
+  Database,
   Link2,
   Mic,
   MonitorPlay,
+  Plug,
   Radio,
+  RefreshCw,
+  Server,
+  Share2,
   Sparkles,
 } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
@@ -32,6 +39,11 @@ import {
 } from '@/store/captureStore';
 import type { CaptureFrameMode } from '@/store/captureStore';
 import { healthApi } from '@/api/clients/health';
+import { configApi } from '@/api/clients/config';
+import { serviceApi } from '@/api/clients/service';
+import { graphApi } from '@/api/clients/graph';
+import { cxfcApi } from '@/api/clients/cxfc';
+import type { CxfcPlugin, CxfcSkill } from '@/api/types';
 import {
   DEFAULT_BACKEND_URL,
   getApiBaseUrl,
@@ -173,6 +185,122 @@ function Segmented<T extends string>(props: {
       ))}
     </div>
   );
+}
+
+// ── 通用小部件（新配置区块追加） ──
+
+function TextField(props: {
+  label: string;
+  value: string;
+  type?: string;
+  placeholder?: string;
+  onChange: (v: string) => void;
+}) {
+  return (
+    <Row label={props.label}>
+      <input
+        type={props.type ?? 'text'}
+        aria-label={props.label}
+        value={props.value}
+        placeholder={props.placeholder}
+        onChange={(e) => props.onChange(e.target.value)}
+        className="w-60 rounded-lg border border-[var(--glass-border)] bg-[rgba(255,255,255,0.06)] px-2 py-1 text-sm placeholder:text-[rgba(255,255,255,0.3)] focus:border-[rgba(255,183,225,0.4)] focus:outline-none"
+      />
+    </Row>
+  );
+}
+
+function SelectField(props: {
+  label: string;
+  value: string;
+  options: Array<{ value: string; label: string }>;
+  onChange: (v: string) => void;
+}) {
+  return (
+    <Row label={props.label}>
+      <select
+        aria-label={props.label}
+        value={props.value}
+        onChange={(e) => props.onChange(e.target.value)}
+        className="w-44 rounded-lg border border-[var(--glass-border)] bg-[rgba(255,255,255,0.06)] px-2 py-1 text-sm focus:border-[rgba(255,183,225,0.4)] focus:outline-none"
+      >
+        {props.options.map((opt) => (
+          <option key={opt.value} value={opt.value}>
+            {opt.label}
+          </option>
+        ))}
+      </select>
+    </Row>
+  );
+}
+
+function TextAreaField(props: { value: string }) {
+  return (
+    <pre className="h-44 overflow-auto whitespace-pre-wrap rounded-lg border border-[var(--glass-border)] bg-[rgba(255,255,255,0.04)] p-3 font-mono text-xs text-muted-foreground">
+      {props.value}
+    </pre>
+  );
+}
+
+function SaveControl(props: {
+  onSave: () => Promise<void>;
+  disabled: boolean;
+  saveLabel: string;
+  savedLabel: string;
+  savingLabel: string;
+  errorLabel: string;
+  backendOffLabel: string;
+}) {
+  const [status, setStatus] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
+  const handleClick = async () => {
+    setStatus('saving');
+    try {
+      await props.onSave();
+      setStatus('saved');
+    } catch {
+      setStatus('error');
+    }
+    setTimeout(() => setStatus('idle'), 2000);
+  };
+  return (
+    <div className="flex items-center gap-2 pt-1">
+      <button
+        type="button"
+        disabled={props.disabled || status === 'saving'}
+        onClick={() => void handleClick()}
+        className="rounded-lg bg-primary px-3 py-1.5 text-xs font-medium text-primary-foreground transition-opacity hover:opacity-85 disabled:opacity-50"
+      >
+        {status === 'saving'
+          ? props.savingLabel
+          : status === 'saved'
+            ? props.savedLabel
+            : props.saveLabel}
+      </button>
+      {props.disabled && (
+        <span className="text-xs text-amber-400">{props.backendOffLabel}</span>
+      )}
+      {status === 'error' && <span className="text-xs text-red-400">{props.errorLabel}</span>}
+    </div>
+  );
+}
+
+/** 后端运行探测：getHealth 探活，8s 轮询。 */
+function useBackendRunning() {
+  const [isRunning, setIsRunning] = useState(false);
+  const refresh = useCallback(async () => {
+    try {
+      await healthApi.getHealth();
+      setIsRunning(true);
+    } catch {
+      setIsRunning(false);
+    }
+  }, []);
+  useEffect(() => {
+    void refresh();
+    const id = setInterval(() => void refresh(), 8000);
+    return () => clearInterval(id);
+  }, [refresh]);
+  return { isRunning, refresh };
 }
 
 // ── 区块 1：虚拟形象 ──
@@ -545,10 +673,12 @@ function CaptureSection() {
   const { t } = useTranslation();
   const screenActive = useCaptureStore((s) => s.screenActive);
   const cameraActive = useCaptureStore((s) => s.cameraActive);
+  const visionEnabled = useCaptureStore((s) => s.visionEnabled);
   const frameMode = useCaptureStore((s) => s.frameMode);
   const frameIntervalSec = useCaptureStore((s) => s.frameIntervalSec);
   const setScreenActive = useCaptureStore((s) => s.setScreenActive);
   const setCameraActive = useCaptureStore((s) => s.setCameraActive);
+  const setVisionEnabled = useCaptureStore((s) => s.setVisionEnabled);
   const setFrameMode = useCaptureStore((s) => s.setFrameMode);
   const setFrameIntervalSec = useCaptureStore((s) => s.setFrameIntervalSec);
 
@@ -598,6 +728,11 @@ function CaptureSection() {
       title={t('settings.capture.sectionTitle')}
       desc={t('settings.capture.sectionDesc')}
     >
+      {renderCaptureRow(t('settings.capture.visionMaster'), visionEnabled, setVisionEnabled)}
+      <p className="flex items-center gap-1.5 text-xs text-muted-foreground">
+        <MonitorPlay className="h-3.5 w-3.5" />
+        {t('settings.capture.visionMasterDesc')}
+      </p>
       {renderCaptureRow(t('settings.capture.screen'), screenActive, setScreenActive)}
       {renderCaptureRow(t('settings.capture.camera'), cameraActive, setCameraActive)}
       <p className="flex items-center gap-1.5 text-xs text-muted-foreground">
@@ -622,6 +757,926 @@ function CaptureSection() {
   );
 }
 
+// ── 区块 6：语言模型（LlmCard 对齐） ──
+
+interface ModelEntry {
+  provider: string;
+  host: string;
+  model: string;
+  apiKey: string;
+  enabled: boolean;
+}
+
+interface LlmModelsConfig {
+  main: ModelEntry;
+  summary: ModelEntry;
+  memory: ModelEntry;
+}
+
+interface LlmParamsConfig {
+  temperature: number;
+  maxTokens: number;
+  topP: number;
+  timeout: number;
+}
+
+const DEFAULT_MODEL_ENTRY: ModelEntry = {
+  provider: 'ollama',
+  host: 'http://localhost:11434',
+  model: 'llama3.2:3b',
+  apiKey: '',
+  enabled: false,
+};
+
+const DEFAULT_LLM_MODELS: LlmModelsConfig = {
+  main: { ...DEFAULT_MODEL_ENTRY, enabled: true },
+  summary: { ...DEFAULT_MODEL_ENTRY },
+  memory: { ...DEFAULT_MODEL_ENTRY },
+};
+
+const DEFAULT_LLM_PARAMS: LlmParamsConfig = {
+  temperature: 0.7,
+  maxTokens: 2048,
+  topP: 0.9,
+  timeout: 30,
+};
+
+const PROVIDER_OPTIONS = [
+  { value: 'ollama', label: 'Ollama (本地)' },
+  { value: 'vllm', label: 'vLLM' },
+  { value: 'openai', label: 'OpenAI' },
+];
+
+function ModelFields(props: {
+  title: string;
+  desc?: string;
+  entry: ModelEntry;
+  showEnabled: boolean;
+  onChange: (entry: ModelEntry) => void;
+}) {
+  const { t } = useTranslation();
+  const set = (patch: Partial<ModelEntry>) => props.onChange({ ...props.entry, ...patch });
+  return (
+    <div className="space-y-2 rounded-lg border border-[var(--glass-border)] bg-[rgba(255,255,255,0.02)] p-3">
+      <div className="flex items-center justify-between">
+        <div>
+          <h3 className="text-sm font-medium">{props.title}</h3>
+          {props.desc && <p className="text-xs text-muted-foreground">{props.desc}</p>}
+        </div>
+        {props.showEnabled && (
+          <div className="flex items-center gap-2">
+            <span className="text-xs text-muted-foreground">{t('settings.llm.enabled')}</span>
+            <Toggle
+              label={t('settings.llm.enabled')}
+              checked={props.entry.enabled}
+              onChange={(v) => set({ enabled: v })}
+            />
+          </div>
+        )}
+      </div>
+      <SelectField
+        label={t('settings.llm.provider')}
+        value={props.entry.provider}
+        options={PROVIDER_OPTIONS}
+        onChange={(v) => set({ provider: v })}
+      />
+      <TextField
+        label={t('settings.llm.model')}
+        value={props.entry.model}
+        onChange={(v) => set({ model: v })}
+      />
+      <TextField
+        label={t('settings.llm.host')}
+        value={props.entry.host}
+        onChange={(v) => set({ host: v })}
+      />
+      <TextField
+        label={t('settings.llm.apiKey')}
+        type="password"
+        value={props.entry.apiKey}
+        onChange={(v) => set({ apiKey: v })}
+      />
+    </div>
+  );
+}
+
+function LlmSection() {
+  const { t } = useTranslation();
+  const { isRunning } = useBackendRunning();
+  const [models, setModels] = useState<LlmModelsConfig>(DEFAULT_LLM_MODELS);
+  const [params, setParams] = useState<LlmParamsConfig>(DEFAULT_LLM_PARAMS);
+
+  useEffect(() => {
+    if (!isRunning) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const data = await configApi.getConfig();
+        const llm = (data as { config?: { llm?: Partial<ModelEntry> } }).config?.llm;
+        if (llm && !cancelled) {
+          setModels((prev) => ({
+            ...prev,
+            main: {
+              ...prev.main,
+              provider: llm.provider ?? prev.main.provider,
+              model: llm.model ?? prev.main.model,
+              host: llm.host ?? prev.main.host,
+            },
+          }));
+        }
+      } catch {
+        /* 后端不可达时保持默认 */
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [isRunning]);
+
+  const handleSave = async () => {
+    await configApi.updateConfig('llm', {
+      models,
+      model_defaults: {
+        summary: models.summary.enabled ? 'summary' : 'main',
+        memory: models.memory.enabled ? 'memory' : 'main',
+      },
+      llm_params: params,
+    });
+  };
+
+  return (
+    <Section
+      icon={Bot}
+      title={t('settings.llm.sectionTitle')}
+      desc={t('settings.llm.sectionDesc')}
+    >
+      <ModelFields
+        title={t('settings.llm.mainTitle')}
+        desc={t('settings.llm.mainDesc')}
+        entry={models.main}
+        showEnabled={false}
+        onChange={(e) => setModels((p) => ({ ...p, main: e }))}
+      />
+      <ModelFields
+        title={t('settings.llm.summaryTitle')}
+        desc={t('settings.llm.summaryDesc')}
+        entry={models.summary}
+        showEnabled
+        onChange={(e) => setModels((p) => ({ ...p, summary: e }))}
+      />
+      <ModelFields
+        title={t('settings.llm.memoryTitle')}
+        desc={t('settings.llm.memoryDesc')}
+        entry={models.memory}
+        showEnabled
+        onChange={(e) => setModels((p) => ({ ...p, memory: e }))}
+      />
+      <div className="space-y-2 rounded-lg border border-[var(--glass-border)] bg-[rgba(255,255,255,0.02)] p-3">
+        <h3 className="text-sm font-medium">{t('settings.llm.paramsTitle')}</h3>
+        <SliderField
+          label={t('settings.llm.temperature')}
+          value={params.temperature}
+          min={0}
+          max={2}
+          step={0.05}
+          format={(v) => v.toFixed(2)}
+          onChange={(v) => setParams((p) => ({ ...p, temperature: v }))}
+        />
+        <NumberField
+          label={t('settings.llm.maxTokens')}
+          value={params.maxTokens}
+          step={100}
+          onChange={(v) => setParams((p) => ({ ...p, maxTokens: v }))}
+        />
+        <SliderField
+          label={t('settings.llm.topP')}
+          value={params.topP}
+          min={0}
+          max={1}
+          step={0.01}
+          format={(v) => v.toFixed(2)}
+          onChange={(v) => setParams((p) => ({ ...p, topP: v }))}
+        />
+        <NumberField
+          label={t('settings.llm.timeout')}
+          value={params.timeout}
+          step={5}
+          onChange={(v) => setParams((p) => ({ ...p, timeout: v }))}
+        />
+      </div>
+      <SaveControl
+        onSave={handleSave}
+        disabled={!isRunning}
+        saveLabel={t('settings.llm.save')}
+        savedLabel={t('settings.llm.saved')}
+        savingLabel={t('settings.llm.saving')}
+        errorLabel={t('settings.saveError')}
+        backendOffLabel={t('settings.backendOff')}
+      />
+    </Section>
+  );
+}
+
+// ── 区块 7：向量存储（VectorCard 对齐） ──
+
+interface VectorConfigState {
+  backend: string;
+  vectorSize: number;
+  collectionName: string;
+  weaviateHost: string;
+  weaviatePort: number;
+  qdrantHost: string;
+  qdrantPort: number;
+  embeddingProvider: string;
+  embeddingModel: string;
+  embeddingApiBase: string;
+  embeddingApiKey: string;
+}
+
+const DEFAULT_VECTOR_CONFIG: VectorConfigState = {
+  backend: 'weaviate',
+  vectorSize: 768,
+  collectionName: 'memory_vectors',
+  weaviateHost: 'localhost',
+  weaviatePort: 8090,
+  qdrantHost: 'localhost',
+  qdrantPort: 6333,
+  embeddingProvider: 'ollama',
+  embeddingModel: 'nomic-embed-text',
+  embeddingApiBase: '',
+  embeddingApiKey: '',
+};
+
+const VECTOR_BACKEND_OPTIONS = [
+  { value: 'weaviate', label: 'Weaviate (独立服务)' },
+  { value: 'weaviate_embedded', label: 'Weaviate Embedded (内置)' },
+];
+
+const EMBEDDING_PROVIDER_OPTIONS = [
+  { value: 'ollama', label: 'Ollama' },
+  { value: 'sentence-transformers', label: 'Sentence Transformers' },
+  { value: 'vllm', label: 'vLLM (OpenAI 兼容)' },
+];
+
+function VectorSection() {
+  const { t } = useTranslation();
+  const { isRunning } = useBackendRunning();
+  const [config, setConfig] = useState<VectorConfigState>(DEFAULT_VECTOR_CONFIG);
+
+  useEffect(() => {
+    if (!isRunning) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const data = await configApi.getConfig();
+        const vec = (data as { config?: { vector?: Partial<VectorConfigState> } }).config?.vector;
+        if (vec && !cancelled) {
+          setConfig((prev) => ({
+            ...prev,
+            backend: vec.backend ?? prev.backend,
+            vectorSize: vec.vectorSize ?? prev.vectorSize,
+            collectionName: vec.collectionName ?? prev.collectionName,
+            weaviateHost: vec.weaviateHost ?? prev.weaviateHost,
+            weaviatePort: vec.weaviatePort ?? prev.weaviatePort,
+            qdrantHost: vec.qdrantHost ?? prev.qdrantHost,
+            qdrantPort: vec.qdrantPort ?? prev.qdrantPort,
+            embeddingProvider: vec.embeddingProvider ?? prev.embeddingProvider,
+            embeddingModel: vec.embeddingModel ?? prev.embeddingModel,
+            embeddingApiBase: vec.embeddingApiBase ?? prev.embeddingApiBase,
+            embeddingApiKey: vec.embeddingApiKey ?? prev.embeddingApiKey,
+          }));
+        }
+      } catch {
+        /* 后端不可达时保持默认 */
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [isRunning]);
+
+  const set = (patch: Partial<VectorConfigState>) => setConfig((prev) => ({ ...prev, ...patch }));
+
+  const handleSave = async () => {
+    await configApi.updateConfig('vector', {
+      backend: config.backend,
+      vector_size: config.vectorSize,
+      collection_name: config.collectionName,
+      weaviate_host: config.weaviateHost,
+      weaviate_port: config.weaviatePort,
+      qdrant_host: config.qdrantHost,
+      qdrant_port: config.qdrantPort,
+      embedding_provider: config.embeddingProvider,
+      embedding_model: config.embeddingModel,
+      embedding_api_base: config.embeddingApiBase,
+      embedding_api_key: config.embeddingApiKey,
+    });
+  };
+
+  return (
+    <Section
+      icon={Database}
+      title={t('settings.vector.sectionTitle')}
+      desc={t('settings.vector.sectionDesc')}
+    >
+      <SelectField
+        label={t('settings.vector.backend')}
+        value={config.backend}
+        options={VECTOR_BACKEND_OPTIONS}
+        onChange={(v) => set({ backend: v })}
+      />
+      <SelectField
+        label={t('settings.vector.vectorSize')}
+        value={String(config.vectorSize)}
+        options={[
+          { value: '384', label: '384' },
+          { value: '768', label: '768' },
+          { value: '1024', label: '1024' },
+          { value: '1536', label: '1536' },
+        ]}
+        onChange={(v) => set({ vectorSize: Number(v) })}
+      />
+      <TextField
+        label={t('settings.vector.collectionName')}
+        value={config.collectionName}
+        onChange={(v) => set({ collectionName: v })}
+      />
+      {config.backend === 'weaviate' && (
+        <>
+          <TextField
+            label={t('settings.vector.weaviateHost')}
+            value={config.weaviateHost}
+            onChange={(v) => set({ weaviateHost: v })}
+          />
+          <NumberField
+            label={t('settings.vector.weaviatePort')}
+            value={config.weaviatePort}
+            onChange={(v) => set({ weaviatePort: v })}
+          />
+          <TextField
+            label={t('settings.vector.qdrantHost')}
+            value={config.qdrantHost}
+            onChange={(v) => set({ qdrantHost: v })}
+          />
+          <NumberField
+            label={t('settings.vector.qdrantPort')}
+            value={config.qdrantPort}
+            onChange={(v) => set({ qdrantPort: v })}
+          />
+        </>
+      )}
+      <SelectField
+        label={t('settings.vector.embeddingProvider')}
+        value={config.embeddingProvider}
+        options={EMBEDDING_PROVIDER_OPTIONS}
+        onChange={(v) => set({ embeddingProvider: v })}
+      />
+      <TextField
+        label={t('settings.vector.embeddingModel')}
+        value={config.embeddingModel}
+        onChange={(v) => set({ embeddingModel: v })}
+      />
+      {config.embeddingProvider === 'vllm' && (
+        <>
+          <TextField
+            label={t('settings.vector.embeddingApiBase')}
+            value={config.embeddingApiBase}
+            onChange={(v) => set({ embeddingApiBase: v })}
+          />
+          <TextField
+            label={t('settings.vector.embeddingApiKey')}
+            type="password"
+            value={config.embeddingApiKey}
+            onChange={(v) => set({ embeddingApiKey: v })}
+          />
+        </>
+      )}
+      <SaveControl
+        onSave={handleSave}
+        disabled={!isRunning}
+        saveLabel={t('settings.vector.save')}
+        savedLabel={t('settings.vector.saved')}
+        savingLabel={t('settings.vector.saving')}
+        errorLabel={t('settings.saveError')}
+        backendOffLabel={t('settings.backendOff')}
+      />
+    </Section>
+  );
+}
+
+// ── 区块 8：图数据库（GraphCard 对齐） ──
+
+interface GraphLibraryConfig {
+  enabled: boolean;
+  label_prefix: string;
+}
+
+interface GraphConfigState {
+  graph_enabled: boolean;
+  graph_backend: string;
+  graph_libraries: Record<string, GraphLibraryConfig>;
+}
+
+const DEFAULT_GRAPH_CONFIG: GraphConfigState = {
+  graph_enabled: false,
+  graph_backend: 'sqlite',
+  graph_libraries: {
+    user: { enabled: true, label_prefix: 'User' },
+    thing: { enabled: true, label_prefix: 'Thing' },
+    concept: { enabled: true, label_prefix: 'Concept' },
+    event: { enabled: true, label_prefix: 'Event' },
+  },
+};
+
+interface GraphHealthState {
+  overall?: string;
+  database?: string;
+  semantic?: string;
+}
+
+function GraphSection() {
+  const { t } = useTranslation();
+  const { isRunning } = useBackendRunning();
+  const [config, setConfig] = useState<GraphConfigState>(DEFAULT_GRAPH_CONFIG);
+  const [health, setHealth] = useState<GraphHealthState | null>(null);
+  const [stats, setStats] = useState<{ node_count: number; edge_count: number } | null>(null);
+
+  const loadStats = useCallback(async () => {
+    try {
+      const [h, s] = await Promise.all([
+        graphApi.getGraphHealthV2(),
+        graphApi.getGraphStatsV2(),
+      ]);
+      setHealth(h);
+      setStats({ node_count: s.node_count, edge_count: s.edge_count });
+    } catch {
+      setHealth(null);
+      setStats(null);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!isRunning) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const data = await configApi.getGraphConfig();
+        const cfg = (data as { config?: Partial<GraphConfigState> }).config;
+        if (cfg && !cancelled) {
+          setConfig((prev) => ({
+            graph_enabled: cfg.graph_enabled ?? prev.graph_enabled,
+            graph_backend: cfg.graph_backend ?? prev.graph_backend,
+            graph_libraries: cfg.graph_libraries ?? prev.graph_libraries,
+          }));
+        }
+      } catch {
+        /* 后端不可达时保持默认 */
+      }
+      if (!cancelled) void loadStats();
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [isRunning, loadStats]);
+
+  const set = (patch: Partial<GraphConfigState>) => setConfig((prev) => ({ ...prev, ...patch }));
+
+  const handleSave = async () => {
+    await configApi.updateConfig('graph', config as unknown as Record<string, unknown>);
+    void loadStats();
+  };
+
+  const connected = health?.overall === 'healthy';
+  const graphEnabled = config.graph_enabled;
+
+  return (
+    <Section
+      icon={Share2}
+      title={t('settings.graph.sectionTitle')}
+      desc={t('settings.graph.sectionDesc')}
+    >
+      <Row label={t('settings.graph.enabled')}>
+        <Toggle
+          label={t('settings.graph.enabled')}
+          checked={graphEnabled}
+          onChange={(v) => set({ graph_enabled: v })}
+        />
+      </Row>
+      <TextField
+        label={t('settings.graph.backend')}
+        value={config.graph_backend}
+        onChange={(v) => set({ graph_backend: v })}
+      />
+
+      <div className="space-y-2 rounded-lg border border-[var(--glass-border)] bg-[rgba(255,255,255,0.02)] p-3">
+        <h3 className="text-sm font-medium text-muted-foreground">{t('settings.graph.libraries')}</h3>
+        {Object.entries(config.graph_libraries).map(([name, lib]) => (
+          <div
+            key={name}
+            className="space-y-2 rounded-lg border border-[var(--glass-border)] bg-[rgba(255,255,255,0.02)] p-2"
+          >
+            <Row label={name}>
+              <Toggle
+                label={name}
+                checked={lib.enabled}
+                onChange={(v) =>
+                  setConfig((prev) => ({
+                    ...prev,
+                    graph_libraries: {
+                      ...prev.graph_libraries,
+                      [name]: { ...lib, enabled: v },
+                    },
+                  }))
+                }
+              />
+            </Row>
+            <TextField
+              label={t('settings.graph.labelPrefix')}
+              value={lib.label_prefix}
+              onChange={(v) =>
+                setConfig((prev) => ({
+                  ...prev,
+                  graph_libraries: {
+                    ...prev.graph_libraries,
+                    [name]: { ...lib, label_prefix: v },
+                  },
+                }))
+              }
+            />
+          </div>
+        ))}
+      </div>
+
+      <div className="space-y-2 rounded-lg border border-[var(--glass-border)] bg-[rgba(255,255,255,0.02)] p-3">
+        <div className="flex items-center justify-between">
+          <h3 className="flex items-center gap-1.5 text-sm font-medium text-muted-foreground">
+            <Activity className="h-3.5 w-3.5" />
+            {t('settings.graph.healthTitle')}
+          </h3>
+          <button
+            type="button"
+            onClick={() => void loadStats()}
+            className="flex items-center gap-1 rounded-lg border border-primary/30 bg-primary/10 px-2 py-1 text-xs text-primary transition-opacity hover:opacity-85"
+          >
+            <RefreshCw className="h-3 w-3" />
+            {t('settings.graph.refresh')}
+          </button>
+        </div>
+        <Row label={t('settings.graph.status')}>
+          <span
+            className={cn(
+              'flex items-center gap-1.5 text-xs font-medium',
+              connected ? 'text-emerald-400' : graphEnabled ? 'text-red-400' : 'text-muted-foreground',
+            )}
+          >
+            <span
+              className={cn(
+                'h-1.5 w-1.5 rounded-full',
+                connected ? 'bg-emerald-400' : graphEnabled ? 'bg-red-400' : 'bg-[rgba(255,255,255,0.3)]',
+              )}
+            />
+            {connected
+              ? t('settings.graph.connected')
+              : graphEnabled
+                ? t('settings.graph.disconnected')
+                : t('settings.graph.notEnabled')}
+          </span>
+        </Row>
+        {health && (
+          <>
+            <Row label={t('settings.graph.database')}>
+              <span className="text-xs text-muted-foreground">{health.database ?? 'unknown'}</span>
+            </Row>
+            <Row label={t('settings.graph.semantic')}>
+              <span className="text-xs text-muted-foreground">{health.semantic ?? 'unknown'}</span>
+            </Row>
+          </>
+        )}
+        <Row label={t('settings.graph.nodes')}>
+          <span className="text-xs tabular-nums text-muted-foreground">{stats?.node_count ?? 0}</span>
+        </Row>
+        <Row label={t('settings.graph.edges')}>
+          <span className="text-xs tabular-nums text-muted-foreground">{stats?.edge_count ?? 0}</span>
+        </Row>
+      </div>
+
+      <SaveControl
+        onSave={handleSave}
+        disabled={!isRunning}
+        saveLabel={t('settings.graph.save')}
+        savedLabel={t('settings.graph.saved')}
+        savingLabel={t('settings.graph.saving')}
+        errorLabel={t('settings.saveError')}
+        backendOffLabel={t('settings.backendOff')}
+      />
+    </Section>
+  );
+}
+
+// ── 区块 9：后端服务（ServiceCard 对齐） ──
+
+function ServiceSection() {
+  const { t } = useTranslation();
+  const { isRunning, refresh } = useBackendRunning();
+  const [processing, setProcessing] = useState(false);
+  const [logs, setLogs] = useState('');
+
+  const loadLogs = useCallback(async () => {
+    try {
+      const data = await serviceApi.getServiceLogs(50);
+      setLogs(data.logs || t('settings.service.noLogs'));
+    } catch {
+      setLogs(t('settings.service.loadLogsFailed'));
+    }
+  }, [t]);
+
+  useEffect(() => {
+    if (isRunning) void loadLogs();
+    else setLogs(t('settings.service.noLogs'));
+  }, [isRunning, loadLogs, t]);
+
+  const run = async (fn: () => Promise<unknown>) => {
+    setProcessing(true);
+    try {
+      await fn();
+      await refresh();
+      if (isRunning) void loadLogs();
+    } finally {
+      setProcessing(false);
+    }
+  };
+
+  let port: string | undefined;
+  try {
+    port = new URL(getApiBaseUrl()).port;
+  } catch {
+    port = undefined;
+  }
+
+  return (
+    <Section
+      icon={Server}
+      title={t('settings.service.sectionTitle')}
+      desc={t('settings.service.sectionDesc')}
+    >
+      <Row label={t('settings.service.status')}>
+        <span
+          className={cn(
+            'flex items-center gap-1.5 text-xs font-medium',
+            isRunning ? 'text-emerald-400' : 'text-muted-foreground',
+          )}
+        >
+          <span
+            className={cn('h-1.5 w-1.5 rounded-full', isRunning ? 'bg-emerald-400' : 'bg-[rgba(255,255,255,0.3)]')}
+          />
+          {isRunning ? t('settings.service.running') : t('settings.service.stopped')}
+        </span>
+      </Row>
+      <Row label={t('settings.service.port')}>
+        <span className="font-mono text-xs text-muted-foreground">{port ?? '-'}</span>
+      </Row>
+      <Row label={t('settings.service.manage')}>
+        <div className="flex items-center gap-2">
+          {isRunning ? (
+            <>
+              <button
+                type="button"
+                disabled={processing}
+                onClick={() => void run(() => serviceApi.restartService())}
+                className="rounded-lg border border-primary/30 bg-primary/10 px-2.5 py-1 text-xs text-primary transition-opacity hover:opacity-85 disabled:opacity-50"
+              >
+                {t('settings.service.restart')}
+              </button>
+              <button
+                type="button"
+                disabled={processing}
+                onClick={() => void run(() => serviceApi.stopService())}
+                className="rounded-lg border border-red-500/30 bg-red-500/10 px-2.5 py-1 text-xs text-red-400 transition-opacity hover:opacity-85 disabled:opacity-50"
+              >
+                {t('settings.service.stop')}
+              </button>
+            </>
+          ) : (
+            <button
+              type="button"
+              disabled={processing}
+              onClick={() => void run(() => serviceApi.startService())}
+              className="rounded-lg bg-primary px-2.5 py-1 text-xs font-medium text-primary-foreground transition-opacity hover:opacity-85 disabled:opacity-50"
+            >
+              {t('settings.service.start')}
+            </button>
+          )}
+        </div>
+      </Row>
+      <div className="space-y-1">
+        <h3 className="text-sm font-medium text-muted-foreground">{t('settings.service.logs')}</h3>
+        <TextAreaField value={logs} />
+      </div>
+    </Section>
+  );
+}
+
+// ── 区块 10：CXFC 插件（PluginCard 对齐） ──
+
+function PluginSection() {
+  const { t } = useTranslation();
+  const [plugins, setPlugins] = useState<CxfcPlugin[]>([]);
+  const [skills, setSkills] = useState<CxfcSkill[]>([]);
+  const [showConnect, setShowConnect] = useState(false);
+  const [connectHost, setConnectHost] = useState('localhost');
+  const [connectPort, setConnectPort] = useState(8081);
+
+  const load = useCallback(async () => {
+    try {
+      const [p, s] = await Promise.all([cxfcApi.getCxfcPlugins(), cxfcApi.getCxfcSkills()]);
+      setPlugins(p);
+      setSkills(s);
+    } catch {
+      /* ignore */
+    }
+  }, []);
+
+  useEffect(() => {
+    void load();
+  }, [load]);
+
+  const handleScan = async () => {
+    try {
+      const result = await cxfcApi.discoverCxfcPlugins(true);
+      const count = result.remote?.length ?? 0;
+      window.alert(
+        count > 0 ? t('settings.plugin.scanResult', { count }) : t('settings.plugin.scanNone'),
+      );
+      void load();
+    } catch {
+      /* ignore */
+    }
+  };
+
+  const handleConnect = async () => {
+    try {
+      await cxfcApi.connectCxfcPlugin(connectHost, connectPort);
+      setShowConnect(false);
+      void load();
+    } catch {
+      window.alert(t('settings.plugin.connectFailed'));
+    }
+  };
+
+  const handleDisconnect = async (id: string) => {
+    try {
+      await cxfcApi.disconnectCxfcPlugin(id);
+      void load();
+    } catch {
+      /* ignore */
+    }
+  };
+
+  const handleRefresh = async (id: string) => {
+    try {
+      await cxfcApi.refreshCxfcPlugin(id);
+      void load();
+    } catch {
+      /* ignore */
+    }
+  };
+
+  return (
+    <Section
+      icon={Plug}
+      title={t('settings.plugin.sectionTitle')}
+      desc={t('settings.plugin.sectionDesc')}
+    >
+      <div className="flex items-center gap-2">
+        <button
+          type="button"
+          onClick={() => void handleScan()}
+          className="rounded-lg border border-primary/30 bg-primary/10 px-2.5 py-1 text-xs text-primary transition-opacity hover:opacity-85"
+        >
+          {t('settings.plugin.scan')}
+        </button>
+        <button
+          type="button"
+          onClick={() => setShowConnect(true)}
+          className="rounded-lg bg-primary px-2.5 py-1 text-xs font-medium text-primary-foreground transition-opacity hover:opacity-85"
+        >
+          {t('settings.plugin.connect')}
+        </button>
+      </div>
+
+      {plugins.length === 0 ? (
+        <p className="py-4 text-center text-xs text-muted-foreground">
+          {t('settings.plugin.noPlugins')}
+        </p>
+      ) : (
+        <div className="space-y-2">
+          {plugins.map((plugin) => {
+            const connected = plugin.status === 'connected';
+            return (
+              <div
+                key={plugin.plugin_id}
+                className="rounded-lg border border-[var(--glass-border)] bg-[rgba(255,255,255,0.02)] p-3"
+              >
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <span className="text-sm font-medium">{plugin.name || plugin.plugin_id}</span>
+                    <span
+                      className={cn(
+                        'rounded-full px-2 py-0.5 text-[10px] font-medium',
+                        connected ? 'bg-emerald-500/15 text-emerald-400' : 'bg-red-500/15 text-red-400',
+                      )}
+                    >
+                      {connected
+                        ? t('settings.plugin.connected')
+                        : t('settings.plugin.disconnected')}
+                    </span>
+                  </div>
+                  <div className="flex items-center gap-1">
+                    <button
+                      type="button"
+                      onClick={() => void handleRefresh(plugin.plugin_id)}
+                      className="rounded-lg border border-[var(--glass-border)] px-2 py-0.5 text-xs text-muted-foreground transition-opacity hover:opacity-85"
+                    >
+                      {t('settings.plugin.refresh')}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => void handleDisconnect(plugin.plugin_id)}
+                      className="rounded-lg border border-red-500/30 bg-red-500/10 px-2 py-0.5 text-xs text-red-400 transition-opacity hover:opacity-85"
+                    >
+                      {t('settings.plugin.disconnect')}
+                    </button>
+                  </div>
+                </div>
+                <p className="mt-1 font-mono text-xs text-muted-foreground">
+                  {plugin.host}:{plugin.port} · {t('settings.plugin.tools', { count: plugin.tools.length })} ·{' '}
+                  {t('settings.plugin.skills', { count: plugin.skills.length })}
+                </p>
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      {skills.length > 0 && (
+        <div className="space-y-1">
+          <h3 className="text-sm font-medium text-muted-foreground">{t('settings.plugin.skillsTitle')}</h3>
+          <div className="space-y-1">
+            {skills.map((skill) => (
+              <div
+                key={`${skill.source_plugin_id}:${skill.name}`}
+                className="rounded-lg border border-[var(--glass-border)] bg-[rgba(255,255,255,0.02)] p-2"
+              >
+                <div className="flex items-center justify-between">
+                  <span className="text-sm font-medium">{skill.name}</span>
+                  <span className="text-xs text-muted-foreground">
+                    {t('settings.plugin.fromPlugin', { plugin: skill.source_plugin_id })}
+                  </span>
+                </div>
+                {skill.description && (
+                  <p className="mt-0.5 text-xs text-muted-foreground">{skill.description}</p>
+                )}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {showConnect && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/50"
+          role="dialog"
+          aria-modal="true"
+        >
+          <div className="glass-panel w-80 p-4">
+            <h3 className="mb-3 text-base font-semibold">{t('settings.plugin.connectDialogTitle')}</h3>
+            <div className="space-y-2">
+              <TextField label={t('settings.plugin.host')} value={connectHost} onChange={setConnectHost} />
+              <NumberField label={t('settings.plugin.port')} value={connectPort} onChange={setConnectPort} />
+            </div>
+            <div className="mt-4 flex justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => setShowConnect(false)}
+                className="rounded-lg border border-[var(--glass-border)] px-3 py-1.5 text-xs text-muted-foreground transition-opacity hover:opacity-85"
+              >
+                {t('settings.plugin.cancel')}
+              </button>
+              <button
+                type="button"
+                onClick={() => void handleConnect()}
+                className="rounded-lg bg-primary px-3 py-1.5 text-xs font-medium text-primary-foreground transition-opacity hover:opacity-85"
+              >
+                {t('settings.plugin.connectBtn')}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </Section>
+  );
+}
+
 export default function SettingsPage() {
   const { t } = useTranslation();
   return (
@@ -632,6 +1687,11 @@ export default function SettingsPage() {
       <BackendSection />
       <AudioSection />
       <CaptureSection />
+      <LlmSection />
+      <VectorSection />
+      <GraphSection />
+      <ServiceSection />
+      <PluginSection />
     </div>
   );
 }

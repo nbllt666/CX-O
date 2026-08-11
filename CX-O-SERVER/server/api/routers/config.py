@@ -1,3 +1,4 @@
+"""配置管理 REST 端点——提供前端限制、运行时配置等查询与更新接口。"""
 from fastapi import APIRouter, Depends, HTTPException, Request
 from typing import Any, Dict, Optional
 import json
@@ -7,7 +8,7 @@ from pathlib import Path
 from pydantic import BaseModel
 
 from server.core.logging_config import get_contextual_logger
-from server.config import Settings
+from server.config import get_settings
 from server.api.routers.admin import verify_admin_api_key
 from server.core.websocket import get_websocket_manager
 
@@ -24,16 +25,6 @@ class SenseVoiceStreamingConfigRequest(BaseModel):
     chunk_size: Optional[int] = None
     hop_size: Optional[int] = None
     look_back: Optional[int] = None
-
-
-class AdaptivePollingConfigRequest(BaseModel):
-    """Adaptive Polling 配置请求体"""
-
-    enabled: Optional[bool] = None
-    offset_ms: Optional[int] = None
-    window_size: Optional[int] = None
-    min_interval_ms: Optional[int] = None
-    max_interval_ms: Optional[int] = None
 
 
 def _get_services_config() -> Dict[str, Any]:
@@ -65,21 +56,10 @@ def _get_default_sensevoice_config() -> Dict[str, Any]:
     }
 
 
-def _get_default_adaptive_polling_config() -> Dict[str, Any]:
-    """获取 Adaptive Polling 默认配置"""
-    return {
-        "enabled": True,
-        "offset_ms": 100,
-        "window_size": 5,
-        "min_interval_ms": 50,
-        "max_interval_ms": 500
-    }
-
-
 @router.get("/config/limits")
 async def get_frontend_limits():
     """获取前端限制配置"""
-    settings = Settings()
+    settings = get_settings()
     return settings.config.limits.frontend.model_dump()
 
 
@@ -208,14 +188,6 @@ async def update_unified_config(request: Request, _: bool = Depends(verify_admin
                     if key in sv_data:
                         services['sensevoice_streaming'][key] = sv_data[key]
 
-            if 'adaptive_polling' in section_data:
-                ap_data = section_data['adaptive_polling']
-                if 'adaptive_polling' not in services:
-                    services['adaptive_polling'] = _get_default_adaptive_polling_config()
-                for key in ['enabled', 'offset_ms', 'window_size', 'min_interval_ms', 'max_interval_ms']:
-                    if key in ap_data:
-                        services['adaptive_polling'][key] = ap_data[key]
-
             _save_services_config(services_data)
             logger.info("Live 配置已更新")
             return {"status": "success", "message": "Live config saved"}
@@ -310,43 +282,6 @@ async def update_sensevoice_streaming_config(request: SenseVoiceStreamingConfigR
         return {"status": "success", "message": "SenseVoice Streaming config saved"}
     except Exception as e:
         logger.error(f"更新 SenseVoice Streaming 配置失败: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-@router.get("/config/adaptive-polling")
-async def get_adaptive_polling_config():
-    """获取 Adaptive Polling 配置"""
-    services = _get_services_config()
-    polling_config = services.get("services", {}).get("adaptive_polling", None)
-    if polling_config is None:
-        polling_config = _get_default_adaptive_polling_config()
-    return {
-        "status": "success",
-        "config": polling_config
-    }
-
-
-@router.post("/config/adaptive-polling")
-async def update_adaptive_polling_config(request: AdaptivePollingConfigRequest):
-    """更新 Adaptive Polling 配置"""
-    try:
-        data = request.model_dump(exclude_none=True)
-        services = _get_services_config()
-        if "services" not in services:
-            services["services"] = {}
-        if "adaptive_polling" not in services["services"]:
-            services["services"]["adaptive_polling"] = _get_default_adaptive_polling_config()
-
-        ap_config = services["services"]["adaptive_polling"]
-        for key in ['enabled', 'offset_ms', 'window_size', 'min_interval_ms', 'max_interval_ms']:
-            if key in data:
-                ap_config[key] = data[key]
-
-        _save_services_config(services)
-        logger.info("Adaptive Polling 配置已更新")
-        return {"status": "success", "message": "Adaptive Polling config saved"}
-    except Exception as e:
-        logger.error(f"更新 Adaptive Polling 配置失败: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -490,8 +425,20 @@ async def get_vad_config():
 
 @router.get("/live/client/status")
 async def get_live_client_status():
-    """获取直播客户端状态"""
-    return {"status": "success", "config": {"status": "disabled"}}
+    """获取直播客户端状态
+
+    查询 `ws_manager.connections` 中标记为 ``type == "live"`` 的真实直播 WebSocket 连接
+    （由 /ws/live 端点建立），返回前端断线状态所需的 connected/client_id 字段。
+    """
+    ws_manager = get_websocket_manager()
+    live_clients = [
+        cid
+        for cid, conn in ws_manager.connections.items()
+        if conn.metadata.get("type") == "live"
+    ]
+    if live_clients:
+        return {"status": "connected", "connected": True, "client_id": live_clients[0]}
+    return {"status": "disconnected", "connected": False, "client_id": None}
 
 
 @router.post("/live/client/{client_id}/disconnect")
@@ -566,13 +513,6 @@ async def update_services_config(request: Request, _: bool = Depends(verify_admi
             for key in ['chunk_size', 'hop_size', 'look_back']:
                 if key in sv_data:
                     services['sensevoice_streaming'][key] = sv_data[key]
-        if 'adaptive_polling' in data:
-            ap_data = data['adaptive_polling']
-            if 'adaptive_polling' not in services:
-                services['adaptive_polling'] = _get_default_adaptive_polling_config()
-            for key in ['enabled', 'offset_ms', 'window_size', 'min_interval_ms', 'max_interval_ms']:
-                if key in ap_data:
-                    services['adaptive_polling'][key] = ap_data[key]
         _save_services_config(services_data)
         logger.info("服务配置已更新")
         return {"status": "success", "message": "服务配置已保存"}

@@ -4,6 +4,10 @@
  * 功能口径对齐 CX-O-Frontend MemoriesPage 的记忆列表面：
  * - 搜索（searchMemories，300ms 防抖；空词回退类型列表查询）
  * - 类型过滤（all / long_term / short_term / permanent）
+ * - Agent 选择器（getAgentMemoryTables，查询带上 agent_id）
+ * - 视图切换（card / list）
+ * - 批量选择模式（多选 / 全选 / 取消全选；标签 / 归档 / 删除）
+ * - 批量标签弹窗（batchUpdateTags：add / remove / set）
  * - 记忆列表（内容摘要 + 类型徽章 + 重要性 + 标签 + 归档标记）
  * - 详情弹窗（查看 / 编辑 / 删除 / 归档）
  * - 新建 / 编辑弹窗（内容、类型、1-5 重要性、逗号分隔标签）
@@ -16,18 +20,33 @@ import {
   Archive,
   Brain,
   CalendarClock,
+  CheckSquare,
+  LayoutGrid,
+  List,
   Pencil,
   Plus,
   Search,
+  Settings2,
+  Square,
   Star,
+  Tags,
   Trash2,
   X,
 } from 'lucide-react';
 import { memoriesApi } from '@/api/clients/memories';
 import type { Memory } from '@/api/types';
+import { Button } from '@/components/ui-v2';
 import { cn } from '@/lib/utils';
 
 type FilterType = 'all' | 'long_term' | 'short_term' | 'permanent';
+type ViewMode = 'card' | 'list';
+type BatchTagOperation = 'add' | 'remove' | 'set';
+
+interface AgentOption {
+  agent_id: string;
+  table_name: string;
+  created_at: string;
+}
 
 const TYPE_KEYS: Record<string, string> = {
   long_term: 'management.memories.typeLongTerm',
@@ -230,6 +249,86 @@ function MemoryFormModal(props: {
   );
 }
 
+/** 批量标签弹窗（add / remove / set） */
+function BatchTagModal(props: {
+  selectedCount: number;
+  operation: BatchTagOperation;
+  tags: string;
+  onOperationChange: (op: BatchTagOperation) => void;
+  onTagsChange: (tags: string) => void;
+  onConfirm: () => void;
+  onClose: () => void;
+}) {
+  const { t } = useTranslation();
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4 backdrop-blur-sm">
+      <div className="glass-panel w-full max-w-md space-y-4 p-6">
+        <div className="flex items-center justify-between">
+          <h2 className="text-base font-semibold">{t('management.memories.batchTagTitle')}</h2>
+          <button
+            type="button"
+            onClick={props.onClose}
+            aria-label={t('management.memories.close')}
+            className="rounded-lg p-1 text-muted-foreground transition-colors hover:bg-[rgba(255,255,255,0.08)]"
+          >
+            <X className="h-4 w-4" />
+          </button>
+        </div>
+
+        <p className="text-xs text-muted-foreground">
+          {t('management.memories.batchTagHint', { count: props.selectedCount })}
+        </p>
+
+        <div>
+          <label className="mb-1.5 block text-xs font-medium text-muted-foreground">
+            {t('management.memories.batchTagOperation')}
+          </label>
+          <select
+            value={props.operation}
+            onChange={(e) => props.onOperationChange(e.target.value as BatchTagOperation)}
+            className="w-full rounded-lg border border-[var(--glass-border)] bg-[rgba(255,255,255,0.06)] px-3 py-2 text-sm focus:border-[rgba(255,183,225,0.4)] focus:outline-none"
+          >
+            <option value="add">{t('management.memories.batchTagOperationAdd')}</option>
+            <option value="remove">{t('management.memories.batchTagOperationRemove')}</option>
+            <option value="set">{t('management.memories.batchTagOperationSet')}</option>
+          </select>
+        </div>
+
+        <div>
+          <label className="mb-1.5 block text-xs font-medium text-muted-foreground">
+            {t('management.memories.batchTagInput')}
+          </label>
+          <input
+            type="text"
+            value={props.tags}
+            onChange={(e) => props.onTagsChange(e.target.value)}
+            placeholder={t('management.memories.batchTagInputPlaceholder')}
+            className="w-full rounded-lg border border-[var(--glass-border)] bg-[rgba(255,255,255,0.06)] px-3 py-2 text-sm focus:border-[rgba(255,183,225,0.4)] focus:outline-none"
+          />
+        </div>
+
+        <div className="flex justify-end gap-2">
+          <button
+            type="button"
+            onClick={props.onClose}
+            className="rounded-lg px-4 py-2 text-sm text-muted-foreground transition-colors hover:bg-[rgba(255,255,255,0.08)]"
+          >
+            {t('management.memories.cancel')}
+          </button>
+          <button
+            type="button"
+            onClick={props.onConfirm}
+            disabled={!props.tags.trim()}
+            className="rounded-lg bg-primary/85 px-4 py-2 text-sm font-medium text-primary-foreground transition-opacity hover:opacity-90 disabled:opacity-40"
+          >
+            {t('management.memories.confirmTag')}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export default function MemoriesPage() {
   const { t } = useTranslation();
   const [memories, setMemories] = useState<Memory[]>([]);
@@ -237,6 +336,14 @@ export default function MemoriesPage() {
   const [loadError, setLoadError] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [filterType, setFilterType] = useState<FilterType>('all');
+  const [currentAgentId, setCurrentAgentId] = useState('default');
+  const [agents, setAgents] = useState<AgentOption[]>([]);
+  const [viewMode, setViewMode] = useState<ViewMode>('card');
+  const [isBatchMode, setIsBatchMode] = useState(false);
+  const [selectedMemories, setSelectedMemories] = useState<Set<number>>(new Set());
+  const [showBatchTagModal, setShowBatchTagModal] = useState(false);
+  const [batchTagOperation, setBatchTagOperation] = useState<BatchTagOperation>('add');
+  const [batchTags, setBatchTags] = useState('');
   const [selected, setSelected] = useState<Memory | null>(null);
   const [showForm, setShowForm] = useState(false);
   const [editing, setEditing] = useState<Memory | null>(null);
@@ -252,6 +359,7 @@ export default function MemoriesPage() {
         : await memoriesApi.getMemories({
             type: filterType === 'all' ? undefined : filterType,
             limit: 1000,
+            agent_id: currentAgentId,
           });
       setMemories(result.memories);
     } catch (error) {
@@ -260,7 +368,7 @@ export default function MemoriesPage() {
     } finally {
       setIsLoading(false);
     }
-  }, [searchQuery, filterType]);
+  }, [searchQuery, filterType, currentAgentId]);
 
   // 搜索词 300ms 防抖；类型切换立即刷新
   useEffect(() => {
@@ -272,6 +380,47 @@ export default function MemoriesPage() {
     );
     return () => clearTimeout(timer);
   }, [load, searchQuery]);
+
+  // 加载 Agent 列表
+  useEffect(() => {
+    let disposed = false;
+    memoriesApi
+      .getAgentMemoryTables()
+      .then((res) => {
+        if (!disposed) setAgents(res.agents ?? []);
+      })
+      .catch((error) => {
+        console.error('Agents load failed:', error);
+      });
+    return () => {
+      disposed = true;
+    };
+  }, []);
+
+  const clearSelection = () => {
+    setSelectedMemories(new Set());
+  };
+
+  const toggleMemorySelection = (id: number) => {
+    setSelectedMemories((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) {
+        next.delete(id);
+      } else {
+        next.add(id);
+      }
+      return next;
+    });
+  };
+
+  const selectAllMemories = () => {
+    setSelectedMemories((prev) => {
+      if (prev.size === memories.length) {
+        return new Set<number>();
+      }
+      return new Set(memories.map((m) => m.id));
+    });
+  };
 
   const handleDelete = async (memory: Memory) => {
     if (!window.confirm(t('management.memories.deleteConfirm'))) return;
@@ -298,15 +447,73 @@ export default function MemoriesPage() {
     }
   };
 
+  const handleBatchDelete = async () => {
+    if (selectedMemories.size === 0) return;
+    if (!window.confirm(t('management.memories.batchDeleteConfirm', { count: selectedMemories.size }))) return;
+    setActionError('');
+    try {
+      await memoriesApi.batchDeleteMemories(Array.from(selectedMemories));
+      clearSelection();
+      await load();
+    } catch (error) {
+      console.error('Batch delete failed:', error);
+      setActionError(t('management.memories.batchFailed'));
+    }
+  };
+
+  const handleBatchArchive = async () => {
+    if (selectedMemories.size === 0) return;
+    if (!window.confirm(t('management.memories.batchArchiveConfirm', { count: selectedMemories.size }))) return;
+    setActionError('');
+    try {
+      await memoriesApi.batchArchiveMemories(Array.from(selectedMemories));
+      clearSelection();
+      await load();
+    } catch (error) {
+      console.error('Batch archive failed:', error);
+      setActionError(t('management.memories.batchFailed'));
+    }
+  };
+
+  const handleBatchUpdateTags = async () => {
+    if (selectedMemories.size === 0) return;
+    const tags = batchTags
+      .split(/[,，]/)
+      .map((s) => s.trim())
+      .filter(Boolean);
+    if (tags.length === 0) return;
+    setActionError('');
+    try {
+      await memoriesApi.batchUpdateTags(Array.from(selectedMemories), tags, batchTagOperation);
+      setShowBatchTagModal(false);
+      setBatchTags('');
+      clearSelection();
+      await load();
+    } catch (error) {
+      console.error('Batch tag update failed:', error);
+      setActionError(t('management.memories.batchFailed'));
+    }
+  };
+
+  const handleItemClick = (memory: Memory) => {
+    if (isBatchMode) {
+      toggleMemorySelection(memory.id);
+    } else {
+      setSelected(memory);
+    }
+  };
+
+  const allSelected = memories.length > 0 && selectedMemories.size === memories.length;
+
   return (
     <div className="mx-auto flex h-full max-w-5xl flex-col gap-4">
       <p className="shrink-0 text-sm text-muted-foreground">
         {t('management.memories.subtitle')}
       </p>
 
-      {/* 工具行：搜索 + 类型过滤 + 新建 */}
-      <div className="flex shrink-0 items-center gap-3">
-        <div className="relative flex-1">
+      {/* 工具行：搜索 + 类型过滤 + Agent + 视图切换 + 批量 + 新建 */}
+      <div className="flex shrink-0 flex-wrap items-center gap-3">
+        <div className="relative min-w-[180px] flex-1">
           <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
           <input
             type="text"
@@ -326,17 +533,64 @@ export default function MemoriesPage() {
           <option value="short_term">{t('management.memories.typeShortTerm')}</option>
           <option value="permanent">{t('management.memories.typePermanent')}</option>
         </select>
-        <button
-          type="button"
-          onClick={() => {
-            setEditing(null);
-            setShowForm(true);
-          }}
-          className="flex items-center gap-1.5 rounded-lg bg-primary/85 px-3 py-2 text-sm font-medium text-primary-foreground transition-opacity hover:opacity-90"
+        <select
+          value={currentAgentId}
+          onChange={(e) => setCurrentAgentId(e.target.value)}
+          aria-label={t('management.memories.agent')}
+          className="rounded-lg border border-[var(--glass-border)] bg-[rgba(255,255,255,0.06)] px-3 py-2 text-sm focus:border-[rgba(255,183,225,0.4)] focus:outline-none"
         >
-          <Plus className="h-4 w-4" />
+          <option value="default">{t('management.memories.agentDefault')}</option>
+          {agents
+            .filter((a) => a.agent_id !== 'default')
+            .map((a) => (
+              <option key={a.agent_id} value={a.agent_id}>
+                {a.agent_id}
+              </option>
+            ))}
+        </select>
+        <div className="flex items-center overflow-hidden rounded-lg border border-[var(--glass-border)]">
+          <button
+            type="button"
+            onClick={() => setViewMode('card')}
+            aria-label={t('management.memories.viewCard')}
+            title={t('management.memories.viewCard')}
+            className={cn(
+              'flex items-center px-2.5 py-2 text-muted-foreground transition-colors',
+              viewMode === 'card' && 'bg-[rgba(255,255,255,0.12)] text-foreground',
+            )}
+          >
+            <LayoutGrid className="h-4 w-4" />
+          </button>
+          <button
+            type="button"
+            onClick={() => setViewMode('list')}
+            aria-label={t('management.memories.viewList')}
+            title={t('management.memories.viewList')}
+            className={cn(
+              'flex items-center px-2.5 py-2 text-muted-foreground transition-colors',
+              viewMode === 'list' && 'bg-[rgba(255,255,255,0.12)] text-primary',
+            )}
+          >
+            <List className="h-4 w-4" />
+          </button>
+        </div>
+        <Button
+          variant={isBatchMode ? 'primary' : 'secondary'}
+          size="sm"
+          icon={<Settings2 className="h-4 w-4" />}
+          onClick={() => {
+            if (isBatchMode) clearSelection();
+            setIsBatchMode((prev) => !prev);
+          }}
+        >
+          {t(isBatchMode ? 'management.memories.exitBatch' : 'management.memories.batchMode')}
+        </Button>
+        <Button size="sm" icon={<Plus className="h-4 w-4" />} onClick={() => {
+          setEditing(null);
+          setShowForm(true);
+        }}>
           {t('management.memories.newMemory')}
-        </button>
+        </Button>
       </div>
 
       {actionError && (
@@ -345,7 +599,50 @@ export default function MemoriesPage() {
         </div>
       )}
 
-      {/* 列表 */}
+      {/* 批量操作条 */}
+      {isBatchMode && (
+        <div className="flex shrink-0 items-center justify-between gap-3 rounded-lg border border-[var(--glass-border)] bg-[rgba(255,255,255,0.04)] px-4 py-2.5">
+          <div className="flex items-center gap-3">
+            <Button variant="ghost" size="sm" onClick={selectAllMemories}>
+              <CheckSquare className="h-4 w-4" />
+              {t(allSelected ? 'management.memories.cancelSelectAll' : 'management.memories.selectAll')}
+            </Button>
+            <span className="text-xs text-muted-foreground">
+              {t('management.memories.selectedCount', { count: selectedMemories.size })}
+            </span>
+          </div>
+          {selectedMemories.size > 0 && (
+            <div className="flex items-center gap-2">
+              <Button
+                variant="secondary"
+                size="sm"
+                icon={<Tags className="h-4 w-4" />}
+                onClick={() => setShowBatchTagModal(true)}
+              >
+                {t('management.memories.batchTag')}
+              </Button>
+              <Button
+                variant="secondary"
+                size="sm"
+                icon={<Archive className="h-4 w-4" />}
+                onClick={() => void handleBatchArchive()}
+              >
+                {t('management.memories.batchArchive')}
+              </Button>
+              <Button
+                variant="danger"
+                size="sm"
+                icon={<Trash2 className="h-4 w-4" />}
+                onClick={() => void handleBatchDelete()}
+              >
+                {t('management.memories.batchDelete')}
+              </Button>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* 列表 / 卡片 */}
       <div className="glass-panel min-h-0 flex-1 overflow-y-auto p-4">
         {isLoading ? (
           <div className="space-y-3">
@@ -378,37 +675,100 @@ export default function MemoriesPage() {
             <p className="mb-3 text-xs text-muted-foreground">
               {t('management.memories.total', { count: memories.length })}
             </p>
-            <div className="space-y-2">
-              {memories.map((m) => (
-                <button
-                  key={m.id}
-                  type="button"
-                  onClick={() => setSelected(m)}
-                  className="w-full rounded-lg border border-[var(--glass-border)] bg-[rgba(255,255,255,0.04)] p-3 text-left transition-all duration-fast hover:bg-[rgba(255,255,255,0.08)]"
-                >
-                  <p className="line-clamp-2 text-sm">{m.content}</p>
-                  <div className="mt-2 flex flex-wrap items-center gap-2 text-[10px] text-muted-foreground">
-                    <TypeBadge type={m.type} />
-                    <ImportanceStars value={m.importance} />
-                    {m.is_archived && (
-                      <span className="flex items-center gap-1 rounded bg-amber-400/15 px-1.5 py-0.5 font-medium text-amber-400">
-                        <Archive className="h-2.5 w-2.5" />
-                        {t('management.memories.archivedBadge')}
+            {viewMode === 'card' ? (
+              <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-3">
+                {memories.map((m) => {
+                  const isSelected = selectedMemories.has(m.id);
+                  return (
+                    <button
+                      key={m.id}
+                      type="button"
+                      onClick={() => handleItemClick(m)}
+                      className={cn(
+                        'relative rounded-lg border border-[var(--glass-border)] bg-[rgba(255,255,255,0.04)] p-3 text-left transition-all duration-fast hover:bg-[rgba(255,255,255,0.08)]',
+                        isBatchMode && isSelected && 'border-[rgba(255,183,225,0.6)] bg-[rgba(255,183,225,0.08)]',
+                      )}
+                    >
+                      {isBatchMode && (
+                        <span className="absolute right-2 top-2">
+                          {isSelected ? (
+                            <CheckSquare className="h-4 w-4 text-primary" />
+                          ) : (
+                            <Square className="h-4 w-4 text-muted-foreground/50" />
+                          )}
+                        </span>
+                      )}
+                      <p className="line-clamp-2 pr-5 text-sm">{m.content}</p>
+                      <div className="mt-2 flex flex-wrap items-center gap-2 text-[10px] text-muted-foreground">
+                        <TypeBadge type={m.type} />
+                        <ImportanceStars value={m.importance} />
+                        {m.is_archived && (
+                          <span className="flex items-center gap-1 rounded bg-amber-400/15 px-1.5 py-0.5 font-medium text-amber-400">
+                            <Archive className="h-2.5 w-2.5" />
+                            {t('management.memories.archivedBadge')}
+                          </span>
+                        )}
+                        {m.tags.slice(0, 4).map((tag) => (
+                          <span key={tag} className="rounded bg-[rgba(255,255,255,0.08)] px-1.5 py-0.5">
+                            #{tag}
+                          </span>
+                        ))}
+                        <span className="ml-auto flex items-center gap-1">
+                          <CalendarClock className="h-2.5 w-2.5" />
+                          {m.created_at ? new Date(m.created_at).toLocaleDateString() : ''}
+                        </span>
+                      </div>
+                    </button>
+                  );
+                })}
+              </div>
+            ) : (
+              <div className="space-y-2">
+                {memories.map((m) => {
+                  const isSelected = selectedMemories.has(m.id);
+                  return (
+                    <button
+                      key={m.id}
+                      type="button"
+                      onClick={() => handleItemClick(m)}
+                      className={cn(
+                        'flex w-full items-center gap-3 rounded-lg border border-[var(--glass-border)] bg-[rgba(255,255,255,0.04)] p-3 text-left transition-all duration-fast hover:bg-[rgba(255,255,255,0.08)]',
+                        isBatchMode && isSelected && 'border-[rgba(255,183,225,0.6)] bg-[rgba(255,183,225,0.08)]',
+                      )}
+                    >
+                      {isBatchMode &&
+                        (isSelected ? (
+                          <CheckSquare className="h-4 w-4 shrink-0 text-primary" />
+                        ) : (
+                          <Square className="h-4 w-4 shrink-0 text-muted-foreground/50" />
+                        ))}
+                      <div className="min-w-0 flex-1">
+                        <p className="line-clamp-2 text-sm">{m.content}</p>
+                        <div className="mt-2 flex flex-wrap items-center gap-2 text-[10px] text-muted-foreground">
+                          <TypeBadge type={m.type} />
+                          <ImportanceStars value={m.importance} />
+                          {m.is_archived && (
+                            <span className="flex items-center gap-1 rounded bg-amber-400/15 px-1.5 py-0.5 font-medium text-amber-400">
+                              <Archive className="h-2.5 w-2.5" />
+                              {t('management.memories.archivedBadge')}
+                            </span>
+                          )}
+                          {m.tags.slice(0, 4).map((tag) => (
+                            <span key={tag} className="rounded bg-[rgba(255,255,255,0.08)] px-1.5 py-0.5">
+                              #{tag}
+                            </span>
+                          ))}
+                        </div>
+                      </div>
+                      <span className="ml-auto flex shrink-0 items-center gap-1 text-[10px] text-muted-foreground">
+                        <CalendarClock className="h-2.5 w-2.5" />
+                        {m.created_at ? new Date(m.created_at).toLocaleDateString() : ''}
                       </span>
-                    )}
-                    {m.tags.slice(0, 4).map((tag) => (
-                      <span key={tag} className="rounded bg-[rgba(255,255,255,0.08)] px-1.5 py-0.5">
-                        #{tag}
-                      </span>
-                    ))}
-                    <span className="ml-auto flex items-center gap-1">
-                      <CalendarClock className="h-2.5 w-2.5" />
-                      {m.created_at ? new Date(m.created_at).toLocaleDateString() : ''}
-                    </span>
-                  </div>
-                </button>
-              ))}
-            </div>
+                    </button>
+                  );
+                })}
+              </div>
+            )}
           </>
         )}
       </div>
@@ -501,6 +861,19 @@ export default function MemoriesPage() {
             setEditing(null);
           }}
           onSaved={() => void load()}
+        />
+      )}
+
+      {/* 批量标签弹窗 */}
+      {showBatchTagModal && (
+        <BatchTagModal
+          selectedCount={selectedMemories.size}
+          operation={batchTagOperation}
+          tags={batchTags}
+          onOperationChange={setBatchTagOperation}
+          onTagsChange={setBatchTags}
+          onConfirm={() => void handleBatchUpdateTags()}
+          onClose={() => setShowBatchTagModal(false)}
         />
       )}
     </div>

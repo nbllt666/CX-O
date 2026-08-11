@@ -35,6 +35,41 @@ logger = logging.getLogger(__name__)
 # 实时语音模式历史消息条数（2 user + 2 assistant = 4 条）
 REALTIME_VOICE_HISTORY_LIMIT = 4
 
+# ACP 自动回复模式历史消息条数（与历史实现保持一致）
+ACP_HISTORY_LIMIT = 50
+
+# ACP 自动回复专用提示词（移植自 CXHMS v3.1.0，原定义于 server/core/acp/manager.py）
+# 替换通用隐藏提示词，避免压制角色设定；强制要求使用 acp_send_message 工具回复，
+# 形成真正的 agent-to-agent 互动链路。收敛至本文件作为唯一真相源。
+ACP_REPLY_HINT_PROMPT = """<acp_context>
+你收到了来自其他 Agent 的 ACP（Agent Communication Protocol）消息。请严格保持你的角色设定和语气风格。
+
+<reply_rule>
+**通常应使用 acp_send_message 工具回复对方 Agent，禁止直接在文本中写出回复内容。**
+
+工具调用方式：
+- 工具名：acp_send_message
+- 参数：
+  - agent_id：对方 Agent 的 ID（即消息发送方 from_agent_id）
+  - message：你的回复内容（以你的角色身份和语气风格撰写）
+
+示例：若收到来自 agent-xxx 的消息，应调用 acp_send_message(agent_id="agent-xxx", message="你的回复")
+
+调用工具后，可以附加简短的内心独白或动作描写（如角色卡风格），但主要对话内容必须通过工具发送。
+
+**允许不回复的情况**：如果对话已自然结束（如对方说了告别语、对话已无实质内容可回应、继续回复只会形成无意义的循环），你可以选择不调用工具，仅输出一句简短的内心独白即可，不需要强制回复。判断标准：这条消息是否真正需要你的回应？如果不需要，沉默也是一种回答。
+</reply_rule>
+
+<behavior>
+1. 以你的角色身份回应对方 Agent，保持角色的语言习惯、性格特征
+2. 不要以"通用 AI 助手"或"智能助手"自居——你是你，不是万能助手
+3. 若需要查询其他 Agent，可调用 acp_list_agents 工具
+4. 其他工具（如记忆、搜索）按需调用，但不要主动执行无关操作
+5. 回复应自然、有对话感，避免机械的"我随时准备协助您"式套话
+6. 避免无意义的循环回复——如果对话已经结束，不要为了回复而回复
+</behavior>
+</acp_context>"""
+
 # 项目根目录（c:\CX-O）：本文件位于 CX-O-SERVER/server/ 下，向上三级即项目根。
 # 隐藏提示词 hidden_prompt.yaml 位于项目根 config/ 下（CXHMS→CX-O 迁移后与配置分离）。
 _PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
@@ -160,6 +195,7 @@ def build_messages(
     is_realtime_voice: bool = False,
     history: Optional[List[dict]] = None,
     include_hidden_prompts: bool = True,
+    acp_context: Optional[dict] = None,
 ) -> List[dict]:
     """构建发送给 LLM 的消息列表。
 
@@ -173,6 +209,11 @@ def build_messages(
         is_realtime_voice: 是否为实时语音模式。True 时走瘦身分支，
             跳过重型隐藏提示词，仅保留核心人设 + 最近 2 轮对话。
         history: 调用方已加载的历史消息（可选）。未提供时从 context_mgr 读取。
+        include_hidden_prompts: 是否注入隐藏提示词（默认 True；AnythingLLM 兼容路径置 False）。
+        acp_context: 非 None 时进入 ACP 自动回复模式——Agent 通过工具调用决定是否回复，
+            无用户轮次。注入 ACP_REPLY_HINT_PROMPT + 历史 + incoming_message 上下文，
+            不追加 user 消息、不注入主聊天隐藏提示词（与历史 ACP 行为一致）。
+            字典需含 "from_agent_id"（消息发送方 ID）。
 
     Returns:
         list[dict]: OpenAI 格式的消息列表。
@@ -183,6 +224,30 @@ def build_messages(
     # 核心人设 System Prompt：实时与非实时模式均保留，确保 LLM 不丢失基础人设和能力。
     if system_prompt:
         messages.append({"role": "system", "content": system_prompt})
+
+    # ====================================================================
+    # ACP 自动回复模式：无用户轮次，Agent 通过工具调用决定是否回复。
+    # 注入 ACP 专用提示 + 历史 + 外来消息上下文，不追加 user 消息，
+    # 不注入主聊天隐藏提示词（与历史 ACP 行为一致）。
+    # ====================================================================
+    if acp_context is not None:
+        messages.append({"role": "system", "content": ACP_REPLY_HINT_PROMPT})
+
+        acp_history = _resolve_history(context_mgr, session_id, history, ACP_HISTORY_LIMIT)
+        _append_history(messages, acp_history)
+
+        from_agent_id = acp_context.get("from_agent_id", "unknown")
+        messages.append({
+            "role": "system",
+            "content": (
+                f"<incoming_message>\n"
+                f"本条消息来自 Agent（from_agent_id={from_agent_id}）。\n"
+                f"如需回复，按 <reply_rule> 调用 acp_send_message 发给该 Agent；"
+                f"对话已自然结束时可不回复。\n"
+                f"</incoming_message>"
+            ),
+        })
+        return messages
 
     # ====================================================================
     # 实时语音模式：瘦身 Prompt，确保 Tokens < 600，锁死 80ms TTFT

@@ -423,7 +423,7 @@ nav.scrolled{background:rgba(11,11,20,.92);box-shadow:0 4px 30px rgba(0,0,0,.4)}
     <div class="arch reveal">
       <div class="arch-layer">
         <div class="arch-box" style="border-color:var(--primary-light);background:rgba(108,92,231,.08)">
-          CX-O-Frontend <span class="sub">React + TypeScript + Electron · :5173</span>
+          APP-Frontend <span class="sub">React + TypeScript + Electron · :3100</span>
         </div>
       </div>
       <div class="arch-arrow">▼ HTTP / WebSocket</div>
@@ -495,7 +495,7 @@ nav.scrolled{background:rgba(11,11,20,.92);box-shadow:0 4px 30px rgba(0,0,0,.4)}
         <div class="desc">单体后端，整合网关、REST API、WebSocket、ASR、TTS、LLM 路由、记忆、图谱、工具、ACP、CXFC</div>
       </div>
       <div class="sub-row">
-        <div class="nm">CX-O-Frontend<span class="port">:5173</span></div>
+        <div class="nm">APP-Frontend<span class="port">:3100</span></div>
         <div class="stk">React 18 · TypeScript · Vite · Electron 42</div>
         <div class="opt">核心</div>
         <div class="desc">Web/桌面端，对话、直播、管理、Live2D/VRM 形象、桌面宠物、OBS 分层输出</div>
@@ -793,7 +793,7 @@ get_stats · export</div>
       <div class="head">
         <div class="num">6</div>
         <h3>虚拟形象驱动系统</h3>
-        <span class="meta">CX-O-Frontend/src/components/Avatar/ · Live2D/ · VRM/</span>
+        <span class="meta">APP-Frontend/src/avatar/ · Live2D/ · VRM/</span>
       </div>
       <div class="body">
         <div class="desc">
@@ -1039,7 +1039,7 @@ get_stats · export</div>
       <thead><tr><th>服务</th><th>端口</th><th>协议</th><th>说明</th></tr></thead>
       <tbody>
         <tr><td>CX-O-SERVER</td><td class="pnum">8000</td><td>WebSocket / HTTP</td><td>单体应用，集成所有功能</td></tr>
-        <tr><td>CX-O-Frontend</td><td class="pnum">5173</td><td>HTTP</td><td>Web 前端 / Electron 桌面应用</td></tr>
+        <tr><td>APP-Frontend</td><td class="pnum">3100</td><td>HTTP</td><td>Web 前端 / Electron 桌面应用</td></tr>
         <tr><td>CX-O-Gateway</td><td class="pnum">8100</td><td>HTTP</td><td>轻量网关（可选独立部署）</td></tr>
         <tr><td>VoiceWorkStation</td><td class="pnum">8200</td><td>HTTP</td><td>语音工作站（可选）</td></tr>
         <tr><td>Weaviate</td><td class="pnum">8090</td><td>HTTP / gRPC</td><td>向量数据库（可选）</td></tr>
@@ -1107,16 +1107,16 @@ python server/main.py</div>
       </div>
       <div class="qs-card">
         <h4><span class="step">4</span>手动启动前端</h4>
-        <div class="code-block">cd CX-O-Frontend
+        <div class="code-block">cd APP-Frontend
 npm install
-npm run dev</div>
+npm run dev:browser</div>
       </div>
     </div>
 
     <div class="grid grid-3" style="margin-top:1.6rem">
       <div class="card" style="text-align:center">
         <h3 style="font-size:1rem">前端界面</h3>
-        <p style="font-family:'JetBrains Mono','Consolas',monospace;color:var(--accent);margin-top:.5rem">http://127.0.0.1:5173</p>
+        <p style="font-family:'JetBrains Mono','Consolas',monospace;color:var(--accent);margin-top:.5rem">http://127.0.0.1:3100</p>
       </div>
       <div class="card" style="text-align:center">
         <h3 style="font-size:1rem">API 文档</h3>

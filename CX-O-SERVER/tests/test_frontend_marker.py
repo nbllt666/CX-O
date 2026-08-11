@@ -12,18 +12,10 @@ def marker():
     return FrontendMarker()
 
 
-class TestRegisterMarker:
-    def test_register_and_not_formatted_by_default(self, marker):
-        # 注册自定义 marker 不影响 emotion/effect 转换
-        marker.register_marker("custom", lambda: None)
-        assert "custom" in marker._markers
-
-
 class TestFormatForFrontend:
     def test_empty_data_returns_copy(self, marker):
         result = marker.format_for_frontend({})
         assert result == {}
-        assert result is not marker._markers
 
     def test_emotion_conversion(self, marker):
         result = marker.format_for_frontend({"emotion": "happy"})
@@ -38,6 +30,27 @@ class TestFormatForFrontend:
         result = marker.format_for_frontend({"emotion": "calm", "text": "hi"})
         assert result["text"] == "hi"
         assert result["frontend_emotion"] is not None
+
+    def test_markers_list_emotion_and_effect_decorated(self, marker):
+        # process_danmaku / process_message 的真实产出形态：markers 列表
+        data = {
+            "type": "danmaku",
+            "content": "[emotion:happy]（敲门声）",
+            "markers": [
+                {"type": "emotion", "name": "happy", "position": 0},
+                {"type": "effect", "name": "door", "position": 13},
+            ],
+        }
+        result = marker.format_for_frontend(data)
+        assert result["markers"][0]["frontend_emotion"] == {"type": "positive", "intensity": 0.8}
+        assert result["markers"][1]["frontend_effect"] == {"type": "ambient", "volume": 0.5}
+        # 原始 markers 不被原地污染
+        assert "frontend_emotion" not in data["markers"][0]
+
+    def test_markers_list_untouched_when_no_emotion_effect(self, marker):
+        data = {"type": "danmaku", "content": "普通弹幕", "markers": []}
+        result = marker.format_for_frontend(data)
+        assert result["markers"] == []
 
 
 class TestConvertEmotion:

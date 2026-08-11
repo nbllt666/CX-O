@@ -1,3 +1,4 @@
+"""MCP 工具管理——外部 MCP 服务器的连接、工具发现与调用。"""
 import asyncio
 import os
 import subprocess

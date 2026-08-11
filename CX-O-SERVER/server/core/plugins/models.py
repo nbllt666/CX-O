@@ -1,3 +1,4 @@
+"""插件数据模型——钩子、插件元信息的数据结构定义。"""
 from datetime import datetime
 from enum import Enum
 from typing import Any, Callable, Dict, List, Optional

@@ -31,6 +31,11 @@ vi.mock('@/api/clients/voiceworkstation', () => ({
     pregenerateRefs: vi.fn(),
     exportEmotionRefsZip: vi.fn(),
     importEmotionRefsZip: vi.fn(),
+    listSVCDatasets: vi.fn(),
+    importSVCDataset: vi.fn(),
+    deleteSVCDataset: vi.fn(),
+    submitVoxCPMBatchDataset: vi.fn(),
+    getVoxCPMBatchDatasetTask: vi.fn(),
   },
   getVoiceWorkstationAudioUrl: (url: string) => url,
 }));
@@ -58,6 +63,7 @@ describe('AudioWorkstationPage 音频工作站页', () => {
       models: [],
     });
     mocked.listSoVITSSVCModels.mockResolvedValue({ status: 'ok', models: [] });
+    mocked.listSVCDatasets.mockResolvedValue({ status: 'ok', datasets: [] });
     mocked.getOrpheusStatus.mockResolvedValue({ status: 'healthy', url: '', voice: '' });
     mocked.getRefAudioStatus.mockResolvedValue({ is_running: false, progress: null, result: null, error: null });
     mocked.musicListSongs.mockResolvedValue({ songs: [] });
@@ -84,16 +90,16 @@ describe('AudioWorkstationPage 音频工作站页', () => {
     renderPage();
     screen.getByRole('button', { name: 'SVC 训练推理' }).click();
 
-    expect(await screen.findByText('训练状态')).toBeInTheDocument();
+    expect(await screen.findByText('批量数据集生成')).toBeInTheDocument();
     expect(mocked.getSoVITSSVCStatus).toHaveBeenCalled();
-    expect(mocked.listSoVITSSVCModels).toHaveBeenCalled();
+    expect(mocked.listSVCDatasets).toHaveBeenCalled();
   });
 
   it('切到作曲合成 Tab 渲染歌曲列表并消费 musicListSongs', async () => {
     renderPage();
     screen.getByRole('button', { name: '作曲合成' }).click();
 
-    expect(await screen.findByText('新建合成')).toBeInTheDocument();
+    expect(await screen.findByText('五线谱总谱')).toBeInTheDocument();
     expect(mocked.musicListSongs).toHaveBeenCalled();
   });
 

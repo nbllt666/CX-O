@@ -1,3 +1,4 @@
+"""CXFC 技能注册表——插件技能的定义注册与查询。"""
 from typing import List, Dict, Any
 
 from .models import SkillDefinition

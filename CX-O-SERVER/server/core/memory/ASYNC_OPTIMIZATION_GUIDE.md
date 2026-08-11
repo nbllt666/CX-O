@@ -1,4 +1,4 @@
-# 异步向量化与系统提示词优化 - 使用指南
+# 异步向量化优化 - 使用指南
 
 ## 快速开始
 
@@ -17,28 +17,6 @@ memory_id = manager.write_memory(
     memory_type="long_term"
 )
 # 响应时间：<100ms（原来是 2-5 秒）
-```
-
-### 2. 系统提示词优化
-
-系统提示词现在每会话只发送一次：
-
-```python
-from server.services.context_manager import get_context_manager
-
-context_mgr = get_context_manager()
-session_id = "my_session"
-
-# 设置系统提示词
-context_mgr.set_system_prompt(session_id, "你是 AI 助手")
-
-# 第一次获取上下文（包含系统提示词）
-ctx1 = context_mgr.get_context_with_system_prompt(session_id)
-# 返回：[{"role": "system", "content": "..."}, ...]
-
-# 后续获取上下文（不包含系统提示词）
-ctx2 = context_mgr.get_context_with_system_prompt(session_id)
-# 返回：[...user messages...]
 ```
 
 ## 配置选项
@@ -107,14 +85,6 @@ logging.getLogger("server.core.memory").setLevel(logging.DEBUG)
 | 批量 10 条 | 20-50 秒 | <1 秒 | 20-50 倍 |
 | 批量 100 条 | 200-500 秒 | <10 秒 | 20-50 倍 |
 
-### Token 使用效率
-
-| 场景 | 优化前 | 优化后 | 节省 |
-|------|--------|--------|------|
-| 短对话（10 轮） | ~5000 tokens | ~4500 tokens | 10% |
-| 中对话（50 轮） | ~25000 tokens | ~20000 tokens | 20% |
-| 长对话（100 轮） | ~50000 tokens | ~35000 tokens | 30% |
-
 ## 故障排除
 
 ### 问题 1：向量化队列未初始化
@@ -134,15 +104,6 @@ logging.getLogger("server.core.memory").setLevel(logging.DEBUG)
 1. 检查 embedding model 是否正常
 2. 检查向量存储是否可用
 3. 查看错误日志：`task_status['error_message']`
-
-### 问题 3：系统提示词重复发送
-
-**症状**：每次请求都包含系统提示词
-
-**解决方案**：
-1. 确认使用 `get_context_with_system_prompt()` 方法
-2. 检查 `system_prompt_sent` 状态是否正确设置
-3. 确认没有频繁调用 `clear_context()`
 
 ## 最佳实践
 

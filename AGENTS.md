@@ -64,7 +64,7 @@ CX-O 是**多服务架构**，以下服务目录是独立服务，**非 AC 模�
 
 | 服务 | 根级目录 | 技术栈 | 端口 |
 |------|---------|--------|------|
-| CX-O Frontend | `CX-O-Frontend/` | React 18 + TypeScript + Vite + Electron | 5173 |
+| CX-O Frontend | `APP-Frontend/` | React 18 + TypeScript + Vite + Electron | 3100（浏览器模式）/ Electron 桌面模式 |
 | CX-O Server | `CX-O-SERVER/` | Python 3.10+ + FastAPI + WebSocket | 8000 |
 | CX-O VoiceWorkStation | `CX-O-VoiceWorkStation/` | Python（可选） | 8200 |
 
@@ -73,7 +73,7 @@ CX-O 是**多服务架构**，以下服务目录是独立服务，**非 AC 模�
 
 ### 4.2 目录策略
 
-- **现有源码目录留根级不迁移**：CX-O-Frontend/SERVER/VoiceWorkStation 保持根级，不迁移至 `modules/`
+- **现有源码目录留根级不迁移**：APP-Frontend/SERVER/VoiceWorkStation 保持根级，不迁移至 `modules/`
 - **`modules/` 为空容器**：预留给未来按 AC 规范（`模块N_xxx`）新增的后端模块，详见 [modules/README.md](./modules/README.md)
 - **`public/` 为跨服务公共真相源**：三层契约（schema/interface_stub/config_template）由各服务共同遵守
 - **`.trae/` 为 AC 资产区**：Rules/Skills/specs/documents/Pipeline，已 .gitignore 忽略（不入 git，本地 AC 资产）
@@ -82,11 +82,11 @@ CX-O 是**多服务架构**，以下服务目录是独立服务，**非 AC 模�
 
 | 契约层 | 源真理（真实契约源） | public/ 落点 | 当前状态 |
 |--------|---------------------|--------------|----------|
-| 数据契约 | `data/agents.json`、`CX-O-SERVER/server/protocol/message.py`、`server/core/*/models.py`、`CX-O-Frontend/src/api/clients/_types.ts` | `public/schema/` | 🟡 种子阶段，待 s0201 |
+| 数据契约 | `data/agents.json`、`CX-O-SERVER/server/protocol/message.py`、`server/core/*/models.py`、`APP-Frontend/src/api/types.ts` | `public/schema/` | 🟡 种子阶段，待 s0201 |
 | 接口契约 | `CX-O-SERVER/server/api/routers/` 19 个 FastAPI router + WS Actions | `public/interface_stub/` | 🟡 种子阶段，待 s0201 |
 | 配置契约 | `CX-O-SERVER/server/config.py` UnifiedConfig、`config/*.yaml`、`.env.example` | `public/config_template/` | 🟡 种子阶段，待 s0201 |
 
-**M16 前端 API 客户端结构**（2026-07-01 重构后）：`CX-O-Frontend/src/api/clients/` 下 12 域 mixin + 2 共享文件（_common.ts + _types.ts），所有 DTO 在 `_types.ts`（17 接口）。
+**前端 API 客户端结构**（前端迁移至 APP-Frontend 后）：`APP-Frontend/src/api/clients/` 下 12 域客户端（agents/audio/avatars/chat/config/cxfc/graph/health/memories/service/tools/vector）+ 2 共享文件（base.ts + types.ts），所有 DTO 在 `types.ts`。
 
 ### 4.4 全局错误码要求
 
@@ -110,7 +110,7 @@ CX-O 是**多服务架构**，以下服务目录是独立服务，**非 AC 模�
 ### 4.7 测试要求
 
 - 后端：`python -m pytest`（CX-O-SERVER 下）
-- 前端：`npm run test`（CX-O-Frontend 下，含 lint + test）
+- 前端：`npm run test`（APP-Frontend 下，含 lint + test）
 - 前端 UI 变更必须通过 s0402 前端三重测试闸门（单测→E2E→Mock 回归）
 - 契约测试由 LLM 按 rules-3 §五自主执行，结果由 GN-004 审查验证
 
@@ -166,10 +166,10 @@ CX-O-SERVER 在 spec `migrate-cxhms-radix-acp-multimodal` 下从 CXHMS 迁移了
 | 三层契约 | `public/` |
 | 模块容器 | `modules/` |
 | 后端入口 | `CX-O-SERVER/server/main.py` |
-| 前端入口 | `CX-O-Frontend/src/main.tsx` |
+| 前端入口 | `APP-Frontend/src/main.tsx` |
 | 后端配置 | `CX-O-SERVER/server/config.py`、`config/` |
-| 前端 API 客户端 | `CX-O-Frontend/src/api/clients/` |
-| 前端类型 | `CX-O-Frontend/src/api/clients/_types.ts` |
+| 前端 API 客户端 | `APP-Frontend/src/api/clients/` |
+| 前端类型 | `APP-Frontend/src/api/types.ts` |
 | WS 协议 | `CX-O-SERVER/server/protocol/message.py`、`actions.py` |
 | 提示词组装单入口 | `CX-O-SERVER/server/prompt_builder.py` |
 | 聊天助手单入口 | `CX-O-SERVER/server/chat_helpers.py` |

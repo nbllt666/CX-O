@@ -6,7 +6,6 @@ import re
 import time
 from collections import deque
 from dataclasses import dataclass, field
-from typing import Any, Callable, Optional
 
 from server.config import Settings
 
@@ -52,21 +51,16 @@ class FirewallService:
         self.config.max_messages_per_minute = limits.max_messages_per_minute
         self.config.duplicate_threshold = limits.duplicate_threshold
         self.config.duplicate_window_seconds = limits.duplicate_window_seconds
-        self._context_manager: Any = None
         self._message_timestamps: deque = deque(maxlen=1000)
         self._user_message_counts: dict[str, deque] = {}
         self._recent_messages: deque = deque(maxlen=100)
         self._compiled_patterns: list[re.Pattern] = []
-        self._filter_callback: Optional[Callable] = None
 
     @classmethod
     def get_instance(cls) -> "FirewallService":
         if cls._instance is None:
             cls._instance = cls()
         return cls._instance
-
-    def set_context_manager(self, context_manager: Any):
-        self._context_manager = context_manager
 
     def set_config(self, config: dict):
         if "enabled" in config:

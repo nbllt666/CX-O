@@ -5,8 +5,8 @@
   "description": "聊天消息数据契约（种子阶段，待 s0201 补全）",
   "_sourceOfTruth": {
     "primary": "c:/CX-O/CX-O-SERVER/server/protocol/message.py",
-    "secondary": ["c:/CX-O/CX-O-Frontend/src/api/clients/_types.ts"],
-    "note": "后端 6 种 WS 消息类型（BaseMessage/RequestMessage/ResponseMessage/StreamMessage/ErrorMessage/Ping/Pong）+ 4 工厂函数；前端 ChatMessage 接口在 _types.ts"
+    "secondary": ["c:/CX-O/APP-Frontend/src/api/types.ts"],
+    "note": "后端 6 种 WS 消息类型（BaseMessage/RequestMessage/ResponseMessage/StreamMessage/ErrorMessage/Ping/Pong）+ 4 工厂函数；前端 ChatMessage 接口在 APP-Frontend/src/api/types.ts"
   },
   "_seedStage": true,
   "_completionSkill": "s0201",

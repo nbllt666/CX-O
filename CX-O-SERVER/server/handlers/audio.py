@@ -11,8 +11,11 @@ from typing import TYPE_CHECKING, Optional
 
 from server.protocol.message import create_response, create_error, create_stream
 from server.protocol.actions import ASRActions, TTSActions, EmotionActions, EffectActions, VoiceActions
-from server.services.emotion_parser import get_supported_emotions, parse_text_with_emotions
+from server.services.emotion_parser import get_supported_emotions, extract_emotions_with_text
 from server.services.effect_parser import EffectParser
+# 模块级导入实时语音单例访问器：vad_processor 无对 audio 的反向依赖（无循环导入），
+# 消除双流式/流式 ASR handler 每帧重复执行函数级 import（16.7 帧/s 热路径）。
+from server.services.vad_processor import get_audio_stream_processor
 
 if TYPE_CHECKING:
     from server.core.websocket.manager import WebSocketManager
@@ -631,32 +634,6 @@ def init_audio_stream_processor(asr_client):
     stream_processor.set_agent_interrupt(agent_interrupt)
 
 
-def init_agent_interrupt_callbacks(manager, client_id: str):
-    from server.services.agent_interrupt_user import get_agent_interrupt_module
-    agent_interrupt = get_agent_interrupt_module()
-
-    async def interrupt_user_callback():
-        await manager.send_message(client_id, {
-            "type": "interrupt_user",
-            "data": {
-                "reason": "agent_wants_to_speak"
-            }
-        })
-
-    async def start_tts_callback(reply_content: str):
-        await manager.send_message(client_id, {
-            "type": "agent_reply",
-            "data": {
-                "content": reply_content
-            }
-        })
-
-    agent_interrupt.set_callbacks(
-        interrupt_user_callback=interrupt_user_callback,
-        start_tts_callback=start_tts_callback
-    )
-
-
 def register_audio_handlers(
     manager: "WebSocketManager",
     asr_service: "ASRService",
@@ -911,7 +888,7 @@ def register_audio_handlers(
                 ))
                 return
 
-            segments = parse_text_with_emotions(text)
+            segments = extract_emotions_with_text(text)
             await manager.send_message(client_id, create_response(
                 request_id=request_id,
                 action=EmotionActions.PARSE,
@@ -981,7 +958,6 @@ def register_audio_handlers(
         data = message.get("data", {})
 
         try:
-            from server.services.vad_processor import get_audio_stream_processor
             stream_processor = get_audio_stream_processor()
 
             audio_base64 = data.get("audio")
@@ -1012,7 +988,6 @@ def register_audio_handlers(
 
             vad_result = result.get("vad", {})
             asr_result = result.get("asr")
-            interrupt_result = result.get("interrupt")
 
             if vad_result.get("state_changed"):
                 status = "speech_start" if vad_result["is_speaking"] else "speech_end"
@@ -1033,16 +1008,6 @@ def register_audio_handlers(
                         "is_final": not vad_result.get("is_speaking", False)
                     }
                 ))
-
-            if interrupt_result and interrupt_result.get("should_interrupt"):
-                reply_content = interrupt_result.get("reply_content", "")
-                await manager.send_message(client_id, {
-                    "type": "agent_interrupt_user",
-                    "data": {
-                        "should_reply": interrupt_result.get("should_reply", True),
-                        "reply_content": reply_content
-                    }
-                })
 
             await manager.send_message(client_id, {
                 "type": "vad_frame",
@@ -1218,13 +1183,12 @@ def register_audio_handlers(
         try:
             audio_data = base64.b64decode(audio_base64)
 
-            from server.services.vad_processor import get_audio_stream_processor
             stream_processor = get_audio_stream_processor()
 
             # 诊断计时：定位 WS 端到端延迟瓶颈（DEBUG 模式才计时，热路径不产生开销）
-            import time as _diag_time
             _diag_enabled = logger.isEnabledFor(logging.DEBUG)
             if _diag_enabled:
+                import time as _diag_time
                 _t0 = _diag_time.monotonic()
 
             # 复用现有 AudioStreamProcessor 进行 VAD + ASR 处理

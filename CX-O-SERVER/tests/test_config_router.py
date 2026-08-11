@@ -4,15 +4,13 @@ monkeypatch.chdir 隔离 config/settings.json + monkeypatch server.config.get_se
 Server.config.Settings / audio._load_tts_config / websocket.get_websocket_manager +
 dependency_overrides 受保护依赖。覆盖：
 - limits / 统一 config（GET/PUT 各 section）/ POST 别名
-- sensevoice-streaming / adaptive-polling（GET 默认/POST 更新落盘）
+- sensevoice-streaming（GET 默认/POST 更新落盘）
 - danmaku / firewall / firewall_v3 / vad config（缺省默认）
 - live client status / disconnect
 - config/audio、config/services、config/llm
 
 运行：python -m pytest tests/test_config_router.py -v
 """
-from typing import Any, Dict, Optional
-
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
@@ -67,8 +65,8 @@ def client(monkeypatch, tmp_path):
     monkeypatch.setattr(audio_router_mod, "_PROJECT_ROOT", tmp_path)
     settings = FakeSettings()
     monkeypatch.setattr("server.config.get_settings", lambda: settings)
-    # Settings 在 config.py 模块顶层 from-import 绑定，须 patch 该模块引用
-    monkeypatch.setattr(config_router_mod, "Settings", lambda: settings)
+    # get_settings 在 config.py 模块顶层 from-import 绑定，须 patch 该模块引用
+    monkeypatch.setattr(config_router_mod, "get_settings", lambda: settings)
     monkeypatch.setattr(audio_router_mod, "_load_tts_config",
                         lambda: {"ref_audio_path": "", "speed": 1.0})
     monkeypatch.setattr(websocket_core, "get_websocket_manager", lambda: FakeWSManager())
@@ -119,8 +117,7 @@ class TestUnifiedConfig:
     def test_put_live(self, client, tmp_path):
         c, settings = client
         r = c.put("/config", json={"section": "live",
-                                   "data": {"danmaku": {"enabled": True},
-                                            "adaptive_polling": {"enabled": False}}})
+                                   "data": {"danmaku": {"enabled": True}}})
         assert r.status_code == 200
         f = tmp_path / "config" / "settings.json"
         assert f.exists()
@@ -170,20 +167,6 @@ class TestSenseVoiceStreaming:
         assert (tmp_path / "config" / "settings.json").exists()
 
 
-class TestAdaptivePolling:
-    def test_get_default(self, client):
-        c, settings = client
-        r = c.get("/config/adaptive-polling")
-        assert r.status_code == 200
-        assert r.json()["config"]["enabled"] is True
-
-    def test_post_update(self, client, tmp_path):
-        c, settings = client
-        r = c.post("/config/adaptive-polling", json={"enabled": False, "max_interval_ms": 800})
-        assert r.status_code == 200
-        assert (tmp_path / "config" / "settings.json").exists()
-
-
 class TestYamlConfigs:
     def test_danmaku_default(self, client):
         c, settings = client
@@ -208,11 +191,36 @@ class TestYamlConfigs:
 
 
 class TestLive:
-    def test_client_status(self, client):
+    def test_client_status_disconnected(self, client):
         c, settings = client
         r = c.get("/live/client/status")
         assert r.status_code == 200
-        assert r.json()["config"]["status"] == "disabled"
+        body = r.json()
+        assert body["status"] == "disconnected"
+        assert body["connected"] is False
+        assert body["client_id"] is None
+
+    def test_client_status_connected(self, client):
+        c, settings = client
+        # 向端点实际读取的 websocket manager 注入一个 type="live" 连接，
+        # 模拟 /ws/live 端点建立真实直播连接的场景。
+        from server.core.websocket.manager import WebSocketConnection
+
+        class _FakeWebSocket:
+            pass
+
+        ws_manager = config_router_mod.get_websocket_manager()
+        conn = WebSocketConnection(_FakeWebSocket(), "live-test-1", {"type": "live"})
+        ws_manager.connections[conn.client_id] = conn
+        try:
+            r = c.get("/live/client/status")
+            assert r.status_code == 200
+            body = r.json()
+            assert body["status"] == "connected"
+            assert body["connected"] is True
+            assert body["client_id"] == conn.client_id
+        finally:
+            ws_manager.connections.pop(conn.client_id, None)
 
     def test_disconnect(self, client):
         c, settings = client

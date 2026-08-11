@@ -778,10 +778,10 @@ class AgentToolsV2:
         """
         if self._distillation_service is None:
             try:
-                from server.core.distillation.service import DistillationService  # CX-O 迁移版：模块9 待迁移，fallback Mock
+                from server.core.distillation.distillation_service import DistillationService
                 self._distillation_service = DistillationService()
             except Exception:
-                # fallback Mock（rules-0 §三 fallback: try-except）
+                # fallback Mock（rules-0 §三 try-except fallback）
                 from public.pre_generated_mock.mock_distillation_service import MockDistillationService
                 self._distillation_service = MockDistillationService()
         return self._distillation_service

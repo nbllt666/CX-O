@@ -62,21 +62,21 @@ for /L %%i in (1,1,30) do (
 echo [警告] CX-O-VoiceWorkStation 启动超时，继续启动其他服务...
 
 REM ==========================================
-REM 启动 CX-O-Frontend
+REM 启动 APP-Frontend（浏览器模式，替代原 CX-O-Frontend）
 REM ==========================================
 :start_frontend
 echo.
-echo [启动 CX-O-Frontend - 端口 3000]
-cd CX-O-Frontend
-start "CX-O-Frontend" cmd /c "start.bat"
+echo [启动 APP-Frontend - 端口 3100]
+cd APP-Frontend
+start "APP-Frontend" cmd /c "start.bat browser"
 cd ..
 
-echo [等待 CX-O-Frontend 启动...]
+echo [等待 APP-Frontend 启动...]
 for /L %%i in (1,1,30) do (
     ping -n 2 127.0.0.1 > nul 2>&1
-    netstat -an | findstr ":3000" | findstr "LISTENING" > nul 2>&1
+    netstat -an | findstr ":3100" | findstr "LISTENING" > nul 2>&1
     if not errorlevel 1 (
-        echo [CX-O-Frontend 已启动]
+        echo [APP-Frontend 已启动]
         goto :check_complete
     )
 )
@@ -88,14 +88,14 @@ echo 所有服务已启动
 echo ========================================
 echo.
 echo 服务地址:
-echo   - 前端:             http://localhost:3000
+echo   - 前端:             http://localhost:3100
 echo   - CX-O-SERVER:      http://localhost:8000
 echo   - VoiceWorkStation: http://localhost:8200
 echo.
 echo 按任意键打开浏览器...
 pause > nul
 
-start http://localhost:3000
+start http://localhost:3100
 
 echo.
 echo 按任意键关闭所有服务...

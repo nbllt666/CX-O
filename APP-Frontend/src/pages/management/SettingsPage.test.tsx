@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeAll, beforeEach, afterEach, vi } from 'vitest';
-import { render, screen, fireEvent, cleanup } from '@testing-library/react';
+import { render, screen, fireEvent, cleanup, waitFor } from '@testing-library/react';
 import SettingsPage from './SettingsPage';
 import i18n from '../../i18n';
 import { useSettingsStore } from '@/store/settingsStore';
@@ -15,6 +15,42 @@ vi.mock('@/api/clients/health', () => ({
   healthApi: {
     getLiveClientStatus: vi.fn().mockResolvedValue({ status: 'disconnected', connected: false }),
     disconnectLiveClient: vi.fn().mockResolvedValue(undefined),
+    getHealth: vi.fn().mockResolvedValue({ status: 'ok' }),
+  },
+}));
+
+vi.mock('@/api/clients/config', () => ({
+  configApi: {
+    getConfig: vi.fn().mockResolvedValue({ status: 'success', config: {} }),
+    getGraphConfig: vi.fn().mockResolvedValue({ status: 'success', config: {} }),
+    updateConfig: vi.fn().mockResolvedValue(undefined),
+  },
+}));
+
+vi.mock('@/api/clients/graph', () => ({
+  graphApi: {
+    getGraphHealthV2: vi.fn().mockResolvedValue({ database: 'unknown', semantic: 'unknown', overall: 'unknown' }),
+    getGraphStatsV2: vi.fn().mockResolvedValue({ node_count: 0, edge_count: 0 }),
+  },
+}));
+
+vi.mock('@/api/clients/service', () => ({
+  serviceApi: {
+    getServiceLogs: vi.fn().mockResolvedValue({ logs: '' }),
+    startService: vi.fn().mockResolvedValue({ status: 'started' }),
+    stopService: vi.fn().mockResolvedValue({ status: 'stopped' }),
+    restartService: vi.fn().mockResolvedValue({ status: 'restarted' }),
+  },
+}));
+
+vi.mock('@/api/clients/cxfc', () => ({
+  cxfcApi: {
+    getCxfcPlugins: vi.fn().mockResolvedValue([]),
+    getCxfcSkills: vi.fn().mockResolvedValue([]),
+    discoverCxfcPlugins: vi.fn().mockResolvedValue({ remote: [] }),
+    connectCxfcPlugin: vi.fn().mockResolvedValue({ status: 'success', plugin_id: 'p1' }),
+    disconnectCxfcPlugin: vi.fn().mockResolvedValue({ status: 'success' }),
+    refreshCxfcPlugin: vi.fn().mockResolvedValue({ status: 'success' }),
   },
 }));
 
@@ -35,6 +71,7 @@ describe('SettingsPage 五区块', () => {
     useCaptureStore.setState({
       screenActive: false,
       cameraActive: false,
+      visionEnabled: false,
       frameMode: 'interval',
       frameIntervalSec: 5,
     });
@@ -45,7 +82,7 @@ describe('SettingsPage 五区块', () => {
     vi.unstubAllGlobals();
   });
 
-  it('渲染五区块标题且不含占位文案', async () => {
+  it('渲染五个配置区块标题且不含占位文案', async () => {
     render(<SettingsPage />);
     expect(screen.getByRole('heading', { name: '虚拟形象' })).toBeInTheDocument();
     expect(screen.getByRole('heading', { name: '直播' })).toBeInTheDocument();
@@ -55,6 +92,56 @@ describe('SettingsPage 五区块', () => {
     expect(screen.queryByText(/页面建设中/)).not.toBeInTheDocument();
     // 直播区块异步查询（已打桩）回落到未连接态
     expect(await screen.findByText('未连接')).toBeInTheDocument();
+  });
+
+  it('渲染新增五个配置区块（LLM/向量/图/服务/插件）标题', async () => {
+    render(<SettingsPage />);
+    expect(screen.getByRole('heading', { name: '语言模型' })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: '向量存储' })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: '图数据库' })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: '后端服务' })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'CXFC 插件' })).toBeInTheDocument();
+  });
+
+  it('LLM 区块展示默认模型与推理参数并支持保存', async () => {
+    const { configApi } = await import('@/api/clients/config');
+    render(<SettingsPage />);
+    // 默认模型区块存在
+    expect(screen.getByText('默认模型')).toBeInTheDocument();
+    expect(screen.getByText('模型参数')).toBeInTheDocument();
+    // 等待后端健康探测完成、保存按钮可用后触发保存
+    const saveBtn = (await screen.findAllByRole('button', { name: '保存配置' }))[0];
+    await waitFor(() => expect(saveBtn).toBeEnabled());
+    fireEvent.click(saveBtn);
+    await waitFor(() => expect(configApi.updateConfig).toHaveBeenCalled());
+  });
+
+  it('向量区块展示后端与嵌入字段并支持保存', async () => {
+    const { configApi } = await import('@/api/clients/config');
+    render(<SettingsPage />);
+    expect(screen.getByText('向量后端')).toBeInTheDocument();
+    expect(screen.getByText('集合名称')).toBeInTheDocument();
+    // 向量区块为第二个保存按钮（LLM/向量/图）
+    const saveBtn = (await screen.findAllByRole('button', { name: '保存配置' }))[1];
+    await waitFor(() => expect(saveBtn).toBeEnabled());
+    fireEvent.click(saveBtn);
+    await waitFor(() => expect(configApi.updateConfig).toHaveBeenCalled());
+  });
+
+  it('服务区块展示运行状态与管理按钮', async () => {
+    render(<SettingsPage />);
+    expect(screen.getByText('端口')).toBeInTheDocument();
+    expect(screen.getByText('服务日志')).toBeInTheDocument();
+    // 待后端健康探测完成后展示重启/停止而非启动
+    expect(await screen.findByRole('button', { name: '重启' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '停止' })).toBeInTheDocument();
+  });
+
+  it('插件区块展示空态提示', async () => {
+    render(<SettingsPage />);
+    expect(screen.getByText('暂无已连接的插件')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '扫描局域网' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '连接插件' })).toBeInTheDocument();
   });
 
   it('切换头像类型即时写入 settingsStore 并显示对应参数区', () => {
@@ -90,6 +177,17 @@ describe('SettingsPage 五区块', () => {
     expect(useAudioStore.getState().danmakuVoiceEnabled).toBe(true);
   });
 
+  it('视觉采集：主动视觉总开关默认关，切换后写入 captureStore', () => {
+    render(<SettingsPage />);
+    // 总开关默认关闭
+    expect(useCaptureStore.getState().visionEnabled).toBe(false);
+    expect(screen.getByText(/总开关/)).toBeInTheDocument();
+
+    const master = screen.getAllByRole('button', { name: '开启' })[0]; // 主动视觉总开关
+    fireEvent.click(master);
+    expect(useCaptureStore.getState().visionEnabled).toBe(true);
+  });
+
   it('视觉采集开关仅写 captureStore 会话态并展示 petNote 提示', () => {
     render(<SettingsPage />);
     expect(
@@ -97,8 +195,8 @@ describe('SettingsPage 五区块', () => {
     ).toBeInTheDocument();
 
     const turnOnButtons = screen.getAllByRole('button', { name: '开启' });
-    expect(turnOnButtons).toHaveLength(2);
-    fireEvent.click(turnOnButtons[0]); // 屏幕共享
+    expect(turnOnButtons).toHaveLength(3); // 主动视觉总开关 + 屏幕共享 + 摄像头
+    fireEvent.click(turnOnButtons[1]); // 屏幕共享
     expect(useCaptureStore.getState().screenActive).toBe(true);
     expect(useCaptureStore.getState().cameraActive).toBe(false);
 

@@ -30,12 +30,15 @@ interface CaptureState {
   screenActive: boolean;
   /** 摄像头采集中（会话内，不持久化） */
   cameraActive: boolean;
+  /** 主动视觉总开关：控制是否向后端发送画面帧（持久化，默认关） */
+  visionEnabled: boolean;
   /** 画面帧发送节奏：手动点发 / 定时抽帧（持久化） */
   frameMode: CaptureFrameMode;
   /** 定时抽帧间隔秒数 1~60（持久化） */
   frameIntervalSec: number;
   setScreenActive: (v: boolean) => void;
   setCameraActive: (v: boolean) => void;
+  setVisionEnabled: (v: boolean) => void;
   setFrameMode: (v: CaptureFrameMode) => void;
   setFrameIntervalSec: (v: number) => void;
 }
@@ -45,19 +48,22 @@ export const useCaptureStore = create<CaptureState>()(
     (set) => ({
       screenActive: false,
       cameraActive: false,
+      visionEnabled: false,
       frameMode: 'interval',
       frameIntervalSec: 5,
 
       setScreenActive: (v) => set({ screenActive: v }),
       setCameraActive: (v) => set({ cameraActive: v }),
+      setVisionEnabled: (v) => set({ visionEnabled: v }),
       setFrameMode: (v) => set({ frameMode: v }),
       setFrameIntervalSec: (v) => set({ frameIntervalSec: clampFrameIntervalSec(v) }),
     }),
     {
       name: CAPTURE_STORE_NAME,
       storage: createStorage(),
-      // 仅持久化节奏偏好；采集开启状态绝不落盘（重启不自动恢复）
+      // 持久化总开关与节奏偏好；采集开启状态绝不落盘（重启不自动恢复）
       partialize: (state) => ({
+        visionEnabled: state.visionEnabled,
         frameMode: state.frameMode,
         frameIntervalSec: state.frameIntervalSec,
       }),
@@ -65,6 +71,7 @@ export const useCaptureStore = create<CaptureState>()(
         const p = (persisted as Partial<CaptureState>) || {};
         return {
           ...current,
+          visionEnabled: p.visionEnabled ?? current.visionEnabled,
           frameMode: p.frameMode ?? current.frameMode,
           frameIntervalSec: clampFrameIntervalSec(p.frameIntervalSec ?? current.frameIntervalSec),
         };

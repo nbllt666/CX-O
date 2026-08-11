@@ -1,3 +1,4 @@
+"""图存储抽象——记忆图数据的节点/边读写接口定义。"""
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from datetime import datetime

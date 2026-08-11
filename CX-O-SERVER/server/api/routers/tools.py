@@ -1,3 +1,4 @@
+"""工具端点——工具列表、执行与 MCP 工具管理接口。"""
 from datetime import datetime
 from typing import Dict, List, Optional
 

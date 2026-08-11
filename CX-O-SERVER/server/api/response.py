@@ -1,3 +1,4 @@
+"""统一响应模型——泛型 API 响应与通用错误响应的数据结构定义。"""
 from datetime import datetime
 from typing import Any, Dict, Generic, List, Optional, TypeVar
 

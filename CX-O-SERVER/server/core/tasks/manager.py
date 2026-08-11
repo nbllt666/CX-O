@@ -1,3 +1,4 @@
+"""任务管理器——任务的创建、持久化、状态推进与调度接入。"""
 import json
 import os
 import threading

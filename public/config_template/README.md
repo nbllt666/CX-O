@@ -12,7 +12,7 @@
 |-------------|---------------------|--------|
 | `unified_config.schema.json` | `c:/CX-O/CX-O-SERVER/server/config.py` UnifiedConfig（line 437，30+ Pydantic BaseModel，15 顶层节） | P0 |
 | `default_yaml.schema.json` | `c:/CX-O/config/default.yaml`（21 顶层键：server/cors/logging/database/models/model_defaults/agent/memory/context/tools/acp/security/monitoring/llm_params/tts/avatar/asr/voice_workstation/live/limits） | P0 |
-| `settings_json.schema.json` | `c:/CX-O/config/settings.json`（services: danmaku/firewall/vad/sensevoice_streaming/adaptive_polling + tts） | P1 |
+| `settings_json.schema.json` | `c:/CX-O/config/settings.json`（services: danmaku/firewall/vad/sensevoice_streaming + tts） | P1 |
 | `env.schema.json` | `c:/CX-O/.env.example`（F5-TTS/LLM/Orpheus TTS 三组变量 + HF_TOKEN）+ `c:/CX-O/config/env.py` EnvConfig（CXHMS_ 前缀映射） | P1 |
 
 ## 配置契约强制要求（rules-3 §三）

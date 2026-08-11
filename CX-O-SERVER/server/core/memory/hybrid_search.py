@@ -1,3 +1,4 @@
+"""混合检索——向量与关键词等异构检索结果的融合打分与去重。"""
 from dataclasses import dataclass
 from typing import Dict, List
 

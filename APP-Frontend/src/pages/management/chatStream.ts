@@ -9,7 +9,11 @@
 export interface ToolCallItem {
   id: string;
   name: string;
-  status: 'pending' | 'executing' | 'completed';
+  status: 'pending' | 'executing' | 'completed' | 'failed';
+  /** 工具调用参数（来自 tool_call 事件，供参数摘要折叠展示） */
+  arguments?: unknown;
+  /** 工具调用结果（来自 tool_result 事件，供结果折叠展示） */
+  result?: unknown;
 }
 
 export interface ChatMsg {
@@ -92,6 +96,7 @@ export function applyStreamEvent(
         id: tc.id || `tc-${assistantId}-${last.toolCalls?.length ?? 0}`,
         name: tc.name || tc.function?.name || 'unknown',
         status: 'pending',
+        arguments: tc.arguments ?? tc.function?.arguments,
       };
       return replaceLast(messages, {
         ...last,
@@ -114,7 +119,9 @@ export function applyStreamEvent(
       return replaceLast(messages, {
         ...last,
         toolCalls: last.toolCalls.map((t) =>
-          t.name === event.tool_name ? { ...t, status: 'completed' as const } : t,
+          t.name === event.tool_name
+            ? { ...t, status: 'completed' as const, result: event.result }
+            : t,
         ),
       });
     }

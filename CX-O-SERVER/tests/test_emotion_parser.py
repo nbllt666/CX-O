@@ -1,17 +1,12 @@
 """server.services.emotion_parser 单元测试。
 
-覆盖情感标记解析纯函数：extract_emotions_with_text / parse_text_with_emotions /
-strip_avatar_tags / strip_emotion_tags / get_emotion_at_position / get_supported_emotions。
+覆盖情感标记解析纯函数：extract_emotions_with_text / get_supported_emotions。
 
 运行：python -m pytest tests/test_emotion_parser.py -v
 """
 from server.services.emotion_parser import (
-    get_emotion_at_position,
     get_supported_emotions,
     extract_emotions_with_text,
-    parse_text_with_emotions,
-    strip_avatar_tags,
-    strip_emotion_tags,
 )
 
 
@@ -85,49 +80,3 @@ def test_extract_whitespace_only():
 def test_extract_outside_text_preserved():
     segs = extract_emotions_with_text("[emotion:calm] 睡 觉 ")
     assert segs[-1] == {"type": "text", "content": "睡 觉"}
-
-
-def test_parse_text_with_emotions_alias():
-    assert parse_text_with_emotions("hi") == extract_emotions_with_text("hi")
-
-
-# ---------------------------------------------------------------- strip
-def test_strip_emotion_tag():
-    assert strip_emotion_tags("[emotion:happy]你好") == "你好"
-
-
-def test_strip_avatar_tags_all_kinds():
-    text = "[emotion:happy][blend:5][bone:head][pose:wave][release:left][wind:3]内容"
-    assert strip_avatar_tags(text) == "内容"
-
-
-def test_strip_avatar_tags_sleep():
-    assert strip_avatar_tags("a[sleep:100]b") == "ab"
-
-
-def test_strip_avatar_tags_no_tags():
-    assert strip_avatar_tags(" 纯文本 ") == "纯文本"
-
-
-def test_strip_avatar_tags_empty():
-    assert strip_avatar_tags("") == ""
-
-
-# ---------------------------------------------------------------- position
-def test_emotion_at_position_inside():
-    text = "[emotion:happy]x"
-    assert get_emotion_at_position(text, 1) == "happy"
-
-
-def test_emotion_at_position_outside():
-    text = "[emotion:happy]x"
-    # 'x' 位于标记之后
-    assert get_emotion_at_position(text, len(text) - 1) is None
-
-
-def test_emotion_at_position_no_match():
-    assert get_emotion_at_position("hello", 2) is None
-
-
-def test_emotion_at_position_empty():
-    assert get_emotion_at_position("", 0) is None

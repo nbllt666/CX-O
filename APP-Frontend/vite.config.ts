@@ -12,7 +12,7 @@ const __dirname = fileURLToPath(new URL('.', import.meta.url));
 // ELECTRON=true 时启用 Electron 插件（桌面模式）；否则为纯浏览器开发模式
 const enableElectron = process.env.ELECTRON === 'true';
 
-// 渲染层开发服务器端口（与 CX-O-Frontend 的 3000 错开，避免同机冲突）
+// 渲染层开发服务器端口（已取代原 CX-O-Frontend，前端唯一化后固定 3100）
 const DEV_PORT = 3100;
 
 export default defineConfig({

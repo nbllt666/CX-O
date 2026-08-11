@@ -2,8 +2,7 @@
 歌谱测试夹具加载器（s0202 预生成 Mock 后端侧）
 
 唯一真相源 = 同目录 score_fixtures.json（前后端同源：前端
-staff/__mocks__/fixtures.ts 由 CX-O-Frontend/scripts/gen_music_types.py
-从该 JSON 生成，禁止手改前端副本以外的漂移源）。
+staff/__mocks__/fixtures.ts 由该 JSON 生成，禁止手改前端副本以外的漂移源）。
 
 夹具清单：
 - minimal_v2: 最小样本（仅必填 + 占位单音符 melody）

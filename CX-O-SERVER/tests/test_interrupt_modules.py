@@ -106,7 +106,7 @@ class TestASRInterruptModule:
         m = ASRInterruptModule()
         m.set_tts_playing(True)
         cm = types.SimpleNamespace(
-            get_context_with_system_prompt=lambda sid: [],
+            get_context=lambda sid: [],
             add_message=lambda sid, msg: None,
         )
         m.set_session_id("s1")

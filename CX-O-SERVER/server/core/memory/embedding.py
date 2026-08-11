@@ -1,3 +1,9 @@
+"""文本嵌入抽象与实现。
+
+定义统一的 EmbeddingProvider 抽象基类及基于 HTTP/本地模型的实现，
+供记忆向量化（向量存储 / 混合检索）使用，通过 get_shared_http_client 复用
+连接池以避免逐请求建连。
+"""
 import os
 import threading
 from abc import ABC, abstractmethod

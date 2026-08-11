@@ -50,6 +50,7 @@ class VADProcessor:
         self._audio_buffer: bytearray = bytearray()
         self._buffer_duration_ms = 0
         self._initialized = False
+        self._frame_size = self._compute_frame_size()
 
     @classmethod
     def get_instance(cls):
@@ -68,9 +69,15 @@ class VADProcessor:
         # 双流式模式下 VAD 仅作兜底：min_silence_duration_ms 默认 150ms，
         # 仅 Silero 模式用于句尾判定，加速兜底修正（不阻塞 ASR Partial 主驱动）
         self.min_silence_duration_ms = config.get("min_silence_duration_ms", 150.0)
+        # sample_rate / frame_duration_ms 变化时同步刷新 WebRTC 帧大小（每帧复用）
+        self._frame_size = self._compute_frame_size()
 
         self._init_vad()
         self._initialized = True
+
+    def _compute_frame_size(self) -> int:
+        """计算 WebRTC VAD 单帧字节数（int16 PCM，每样本 2 字节）。"""
+        return int(self.sample_rate * self.frame_duration_ms / 1000) * 2
 
     def _init_vad(self):
         if self.mode == VADMode.WEBRTC:
@@ -192,7 +199,7 @@ class VADProcessor:
         if self._vad is None:
             return self._detect_energy(audio_data)
 
-        frame_size = int(self.sample_rate * self.frame_duration_ms / 1000) * 2
+        frame_size = self._frame_size
 
         if len(audio_data) < frame_size:
             return False
@@ -288,14 +295,16 @@ class AudioStreamProcessor:
         一次完整 LLM chat，与主 pipeline 争夺 vLLM 仅有的并发槽，实测把 LLM/TTS
         饿死（chunk first PCM 47s）。半双工/live 路径保持默认 False 不变。
         """
-        _diag_t0 = time.time()
+        _debug = logger.isEnabledFor(logging.DEBUG)
+        if _debug:
+            _diag_t0 = time.time()
         vad_result = self.vad.process_audio(audio_data)
-        _diag_t1 = time.time()
+        if _debug:
+            _diag_t1 = time.time()
 
         result = {
             "vad": vad_result,
             "asr": None,
-            "interrupt": None
         }
 
         # 音频缓冲仅在「无流式 ASR 客户端」的兜底路径被读取（is_speaking 期间累积、
@@ -324,7 +333,8 @@ class AudioStreamProcessor:
             # 触发标志，幻觉 partial 会二次触发完整 LLM+TTS pipeline，
             # 多轮累积致端到端延迟 4.7s→9.5s→14.3s 递增（2026-08-05 实测）。
             should_send = vad_result["is_speaking"] or is_last
-            _diag_t2 = time.time()
+            if _debug:
+                _diag_t2 = time.time()
             if should_send:
                 send_success = await self._streaming_client.send_audio_chunk(
                     audio_data,
@@ -342,8 +352,9 @@ class AudioStreamProcessor:
             # 低于实时帧速（60ms/帧），队列持续积压，Partial 滞后 5~7s，
             # 端到端延迟实测暴涨至 6.5~7.7s（目标 <800ms）。
             streaming_result = await self._streaming_client.receive_result(timeout=0)
-            _diag_t3 = time.time()
-            logger.debug(f"[DIAG-VAD] vad={(_diag_t1-_diag_t0)*1000:.1f}ms send+recv={(_diag_t3-_diag_t2)*1000:.1f}ms is_last={is_last} has_result={streaming_result is not None}")
+            if _debug:
+                _diag_t3 = time.time()
+                logger.debug(f"[DIAG-VAD] vad={(_diag_t1-_diag_t0)*1000:.1f}ms send+recv={(_diag_t3-_diag_t2)*1000:.1f}ms is_last={is_last} has_result={streaming_result is not None}")
 
             if streaming_result:
                 asr_result = {
@@ -371,7 +382,8 @@ class AudioStreamProcessor:
                 # 若 await 会阻塞 process_audio_chunk 返回，导致 on_partial_result 延迟 8s，
                 # WS 端到端测试超时（spec 目标 < 800ms）。
                 # 改为 asyncio.create_task 非阻塞触发整个打断判定流程，主流程立即返回 result。
-                # interrupt 字段不再同步填充（调用方无需在 ASR 主路径上依赖此字段）。
+                # 打断结果由 _deferred_interrupt_check 直接调用 interrupt_user 落地，
+                # 不再写入 process_audio_chunk 返回值（调用方无需在 ASR 主路径上依赖此字段）。
                 if self._agent_interrupt and streaming_result.text and not skip_interrupt:
                     async def _deferred_interrupt_check():
                         try:

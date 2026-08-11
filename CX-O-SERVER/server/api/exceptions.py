@@ -1,3 +1,4 @@
+"""统一异常体系——服务异常定义与全局异常处理器注册。"""
 from typing import Any, Dict
 
 from fastapi import HTTPException, Request

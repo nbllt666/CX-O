@@ -1,3 +1,4 @@
+"""上下文摘要器——对话历史的要点提取与摘要生成。"""
 from typing import Dict, List
 
 from server.config import Settings

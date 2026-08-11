@@ -1,3 +1,4 @@
+"""ACP 自动回复管线管理器——管理 Agent 间消息分发、连接与分组。"""
 import asyncio
 import json
 import os
@@ -24,37 +25,8 @@ _THIS_DIR = os.path.dirname(os.path.abspath(__file__))
 _PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(_THIS_DIR)))
 
 
-# ACP 自动回复专用提示词（移植自 CXHMS v3.1.0）
-# 替换通用 MAIN_HIDDEN_SYSTEM_PROMPT，避免压制角色设定；
-# 强制要求使用 acp_send_message 工具回复，形成真正的 agent-to-agent 互动链路。
-ACP_REPLY_HINT_PROMPT = """<acp_context>
-你收到了来自其他 Agent 的 ACP（Agent Communication Protocol）消息。请严格保持你的角色设定和语气风格。
-
-<reply_rule>
-**通常应使用 acp_send_message 工具回复对方 Agent，禁止直接在文本中写出回复内容。**
-
-工具调用方式：
-- 工具名：acp_send_message
-- 参数：
-  - agent_id：对方 Agent 的 ID（即消息发送方 from_agent_id）
-  - message：你的回复内容（以你的角色身份和语气风格撰写）
-
-示例：若收到来自 agent-xxx 的消息，应调用 acp_send_message(agent_id="agent-xxx", message="你的回复")
-
-调用工具后，可以附加简短的内心独白或动作描写（如角色卡风格），但主要对话内容必须通过工具发送。
-
-**允许不回复的情况**：如果对话已自然结束（如对方说了告别语、对话已无实质内容可回应、继续回复只会形成无意义的循环），你可以选择不调用工具，仅输出一句简短的内心独白即可，不需要强制回复。判断标准：这条消息是否真正需要你的回应？如果不需要，沉默也是一种回答。
-</reply_rule>
-
-<behavior>
-1. 以你的角色身份回应对方 Agent，保持角色的语言习惯、性格特征
-2. 不要以"通用 AI 助手"或"智能助手"自居——你是你，不是万能助手
-3. 若需要查询其他 Agent，可调用 acp_list_agents 工具
-4. 其他工具（如记忆、搜索）按需调用，但不要主动执行无关操作
-5. 回复应自然、有对话感，避免机械的"我随时准备协助您"式套话
-6. 避免无意义的循环回复——如果对话已经结束，不要为了回复而回复
-</behavior>
-</acp_context>"""
+# ACP 自动回复专用提示词已收敛至 server/prompt_builder.py（ACP_REPLY_HINT_PROMPT，
+# 单入口约束见 AGENTS.md §4.9）。本文件不再重复定义。
 
 
 class ACPAgentInfo(BaseModel):
@@ -668,8 +640,12 @@ class ACPManager:
         )
 
     async def _deliver_to_external_agent(self, target: ACPAgentInfo, message: ACPMessageInfo) -> None:
-        """通过 HTTP 向外部 Agent 投递消息（移植自 CXHMS v3.1.0）"""
-        import httpx
+        """通过 HTTP 向外部 Agent 投递消息（移植自 CXHMS v3.1.0）
+
+        复用预热好的 shared HTTP client（见 core/utils.get_shared_http_client），
+        避免每条外部消息都重新构造 httpx.AsyncClient（含连接池/系统代理探测开销）。
+        """
+        from server.core.utils import get_shared_http_client
 
         url = f"http://{target.host}:{target.port}/acp/message"
         payload = {
@@ -684,14 +660,14 @@ class ACPManager:
             "metadata": message.metadata,
         }
 
-        async with httpx.AsyncClient(timeout=5.0, verify=False) as client:
-            resp = await client.post(url, json=payload)
-            if 200 <= resp.status_code < 300:
-                logger.info(f"消息已投递到外部 Agent {target.id}@{target.host}:{target.port}")
-            else:
-                logger.warning(
-                    f"外部 Agent {target.id} 返回非 2xx: {resp.status_code} {resp.text[:200]}"
-                )
+        client = get_shared_http_client()
+        resp = await client.post(url, json=payload, timeout=5.0)
+        if 200 <= resp.status_code < 300:
+            logger.info(f"消息已投递到外部 Agent {target.id}@{target.host}:{target.port}")
+        else:
+            logger.warning(
+                f"外部 Agent {target.id} 返回非 2xx: {resp.status_code} {resp.text[:200]}"
+            )
 
     async def receive_external_message(self, message: ACPMessageInfo) -> ACPMessageInfo:
         """接收外部 ACP Agent 发来的消息（移植自 CXHMS v3.1.0）
@@ -752,6 +728,7 @@ class ACPManager:
         try:
             from server.chat_helpers import get_agent_config, get_llm_client_for_agent
             from server.chat_helpers import get_tools_for_agent
+            from server.prompt_builder import build_messages
         except Exception as e:
             logger.warning(
                 f"ACP 自动回复跳过: chat 工具函数不可用: {e}"
@@ -786,36 +763,21 @@ class ACPManager:
 
             session_id = f"agent-{effective_agent_id}"
 
-            # 构建消息列表：角色系统提示 + ACP 专用提示 + 历史
-            messages: List[Dict[str, Any]] = []
-            system_prompt = agent_config.get("system_prompt", "")
-            if system_prompt:
-                messages.append({"role": "system", "content": system_prompt})
-            messages.append({"role": "system", "content": ACP_REPLY_HINT_PROMPT})
-
+            # 收敛到 prompt_builder.build_messages 单入口（AGENTS.md §4.9）：
+            # acp_context 非 None 时进入 ACP 自动回复模式——注入 ACP_REPLY_HINT_PROMPT
+            # + 历史 + incoming_message，不追加 user 消息。历史在 to_thread 中预加载，
+            # 避免阻塞事件循环（get_recent_messages 为同步 DB 调用）。
             history = await asyncio.to_thread(
                 context_mgr.get_recent_messages, session_id, limit=50
             )
-            for m in history:
-                role = m.get("role")
-                content = m.get("content", "")
-                if role in ("user", "assistant") and content:
-                    messages.append({"role": role, "content": content})
-
-            messages.append({
-                "role": "system",
-                "content": (
-                    f"<force_tool_reply>\n"
-                    f"上面的消息来自其他 Agent（from_agent_id={message.from_agent_id}）。\n"
-                    f"你应该调用 acp_send_message 工具回复对方，参数：\n"
-                    f'- agent_id: "{message.from_agent_id}"\n'
-                    f"- message: <你的回复内容，以你的角色身份和语气风格撰写>\n\n"
-                    f"但如果对话已自然结束（对方说了告别语、继续回复只会形成无意义循环），"
-                    f"你可以选择不调用工具，仅输出一句简短的内心独白即可。\n\n"
-                    f"禁止直接在文本中写出回复内容——如需回复，必须通过 acp_send_message 工具发送。"
-                    f"</force_tool_reply>"
-                ),
-            })
+            messages = build_messages(
+                agent_config=agent_config,
+                context_mgr=context_mgr,
+                session_id=session_id,
+                user_message="",
+                history=history,
+                acp_context={"from_agent_id": message.from_agent_id},
+            )
 
             logger.info(
                 f"ACP 自动回复启动: from={message.from_agent_id}, "
