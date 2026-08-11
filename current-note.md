@@ -4,6 +4,11 @@
 
 ## 做到哪了
 
+- **配置热更新功能（后端 + 前端配套）**（已闭合，2026-08-11）
+  - 工程过程：`ModelRouter.reload_clients()` 重建 LLM 客户端 → 新增 `server/config_hot_reload.py`（`REQUIRES_RESTART` 声明 + `apply_section` + `broadcast_config_changed`）→ `/api/config` PUT 接入 apply+broadcast → 前端 `configEvents.ts` 事件总线 + `useConfigReload.ts` WS 订阅 + `ConfigToast.tsx` + `ManagementLayout` 挂载（刷新 limits + toast）→ `SettingsPage` LLM/Vector 区块订阅 config_changed 即时刷新 → i18n 词条。
+  - 交接状态：后端 pyflakes 零警告、`test_config_router`+`test_config` 59 passed、`test_model_router` 17 passed；前端 `npm run typecheck` 通过、`SettingsPage`+`ManagementLayout` 测试 17 passed。已闭合。
+  - 最终结果：可热更新节（llm/audio/live/system）保存后即时生效并广播；需重启节（vector）标记 `requires_restart=True` 由前端 toast 提示。变更文档 `.trae/documents/20260811_模块0_配置热更新.md`。
+
 - **APP-Frontend 桌宠 VRM 与点击菜单增强**（已闭合，2026-08-09）
   - 工程过程：默认启用 `public/models/CX.vrm` → 修复 file 协议资产路径与相机取景 → 轻点/拖动 6px 阈值状态机 → 8 项圆形气泡菜单与置顶高亮 → 专项/全量测试 → 页面交互回归 → Mock 回归 → 安装包重打。
   - 交接状态：自动化代码、三重闸、浏览器实测、生产构建、安装包均已闭合；真实桌面拖动与置顶层级为未闭合人工项，依赖 Electron API，沿用 Task 10 人工验证清单由用户回填。菜单视觉修正已闭合：扩大单侧椭圆弧、悬停才显示名称；缩放滑动条和收紧鼠标跟踪限位已闭合。

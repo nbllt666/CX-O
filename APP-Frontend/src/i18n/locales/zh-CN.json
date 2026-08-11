@@ -968,5 +968,9 @@
       "scanNone": "未发现局域网插件",
       "connectFailed": "连接失败"
     }
+  },
+  "configReload": {
+    "appliedTitle": "「{{section}}」配置已生效",
+    "restartTitle": "「{{section}}」配置已保存，需重启后生效"
   }
 }

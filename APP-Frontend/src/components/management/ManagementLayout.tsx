@@ -11,7 +11,7 @@
  *
  * 分组配置定义在本组件内，不改动 routes.tsx 的 20 条冻结契约。
  */
-import { Suspense, useEffect, useState, Fragment } from 'react';
+import { Suspense, useEffect, useRef, useState, Fragment } from 'react';
 import { NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useTranslation } from 'react-i18next';
@@ -34,10 +34,14 @@ import {
 import type { ManagementRouteEntry } from '@/pages/management/routes';
 import { useThemeStore } from '@/store/themeStore';
 import { useChatStore } from '@/store/chatStore';
+import { useSettingsStore } from '@/store/settingsStore';
 import { getApiBaseUrl } from '@/api/base';
 import { changeLanguage, getCurrentLanguage } from '@/i18n';
 import { cn } from '@/lib/utils';
 import { ParticleField } from '@/components/anime/ParticleField';
+import { useConfigReload } from '@/hooks/useConfigReload';
+import { subscribeConfigChanged } from '@/lib/configEvents';
+import ConfigToast, { type ConfigToastData } from './ConfigToast';
 
 type BackendStatus = 'checking' | 'connected' | 'disconnected';
 
@@ -89,6 +93,25 @@ export default function ManagementLayout() {
   const { theme, toggleTheme } = useThemeStore();
   const backendStatus = useBackendStatus();
   const [language, setLanguage] = useState(() => getCurrentLanguage());
+
+  // ── 配置热更新：订阅 /ws config_changed，刷新 limits 并展示通知 toast ──
+  useConfigReload();
+  const [configToast, setConfigToast] = useState<ConfigToastData | null>(null);
+  const toastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => {
+    const unsubscribe = subscribeConfigChanged(({ section, requiresRestart }) => {
+      // 前端限制配置随后端 limits 变更即时刷新
+      void useSettingsStore.getState().fetchLimits();
+      setConfigToast({ section, requiresRestart });
+      if (toastTimerRef.current) clearTimeout(toastTimerRef.current);
+      toastTimerRef.current = setTimeout(() => setConfigToast(null), 4000);
+    });
+    return () => {
+      unsubscribe();
+      if (toastTimerRef.current) clearTimeout(toastTimerRef.current);
+    };
+  }, []);
 
   // ── 侧边栏本地状态（整体折叠/小工具分组展开）──
   const [collapsed, setCollapsed] = useState(false);
@@ -417,6 +440,9 @@ export default function ManagementLayout() {
           </Suspense>
         </main>
       </div>
+
+      {/* 配置变更通知 toast */}
+      <ConfigToast toast={configToast} />
     </div>
   );
 }

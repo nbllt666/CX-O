@@ -117,6 +117,20 @@ async def get_unified_config():
     }
 
 
+async def _apply_and_broadcast(request: Request, section: str, section_data: Dict[str, Any]) -> Dict[str, Any]:
+    """配置节保存后：应用热更新并广播变更事件。
+
+    Returns:
+        {"applied": bool, "requires_restart": bool}
+    """
+    from server.config_hot_reload import apply_section, broadcast_config_changed
+
+    model_router = getattr(getattr(request.app.state, "services", None), "model_router", None)
+    result = await apply_section(section, section_data, model_router)
+    await broadcast_config_changed(get_websocket_manager(), section, result["requires_restart"])
+    return result
+
+
 @router.put("/config")
 async def update_unified_config(request: Request, _: bool = Depends(verify_admin_api_key)):
     """更新统一配置 - 对应 Gateway 的 POST /api/config"""
@@ -159,7 +173,8 @@ async def update_unified_config(request: Request, _: bool = Depends(verify_admin
                 logger.warning(f"保存音频配置到文件失败: {e}")
 
             logger.info("音频配置已更新")
-            return {"status": "success", "message": "Audio config saved"}
+            result = await _apply_and_broadcast(request, section, section_data)
+            return {"status": "success", "message": "Audio config saved", **result}
 
         elif section == "live":
             services_data = _get_services_config()
@@ -190,7 +205,8 @@ async def update_unified_config(request: Request, _: bool = Depends(verify_admin
 
             _save_services_config(services_data)
             logger.info("Live 配置已更新")
-            return {"status": "success", "message": "Live config saved"}
+            result = await _apply_and_broadcast(request, section, section_data)
+            return {"status": "success", "message": "Live config saved", **result}
 
         elif section == "vector":
             if "backend" in section_data:
@@ -208,9 +224,28 @@ async def update_unified_config(request: Request, _: bool = Depends(verify_admin
 
             settings.save_config()
             logger.info("向量配置已更新")
-            return {"status": "success", "message": "Vector config saved, restart required"}
+            result = await _apply_and_broadcast(request, section, section_data)
+            return {"status": "success", "message": "Vector config saved", **result}
 
         elif section == "llm":
+            # 前端提交的 models 结构（main/summary/memory）映射到 config.models，
+            # 使 ModelRouter.reload_clients() 能按新配置重建客户端（热更新真实生效）。
+            models_data = section_data.get("models")
+            if isinstance(models_data, dict):
+                for key in ("main", "summary", "memory"):
+                    entry = models_data.get(key)
+                    if not isinstance(entry, dict):
+                        continue
+                    model_cfg = getattr(settings.config.models, key, None)
+                    if model_cfg is None:
+                        continue
+                    if "provider" in entry:
+                        model_cfg.provider = entry["provider"]
+                    if "model" in entry:
+                        model_cfg.model = entry["model"]
+                    if "host" in entry:
+                        model_cfg.host = entry["host"]
+
             if "provider" in section_data:
                 settings.config.llm.provider = section_data["provider"]
             if "model" in section_data:
@@ -220,7 +255,8 @@ async def update_unified_config(request: Request, _: bool = Depends(verify_admin
 
             settings.save_config()
             logger.info("LLM配置已更新")
-            return {"status": "success", "message": "LLM config saved, restart required"}
+            result = await _apply_and_broadcast(request, section, section_data)
+            return {"status": "success", "message": "LLM config saved", **result}
 
         elif section == "system":
             if "debug" in section_data:
@@ -230,7 +266,8 @@ async def update_unified_config(request: Request, _: bool = Depends(verify_admin
 
             settings.save_config()
             logger.info("系统配置已更新")
-            return {"status": "success", "message": "System config saved"}
+            result = await _apply_and_broadcast(request, section, section_data)
+            return {"status": "success", "message": "System config saved", **result}
 
         else:
             raise HTTPException(status_code=400, detail=f"Unknown section: {section}")

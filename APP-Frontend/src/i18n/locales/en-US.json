@@ -968,5 +968,9 @@
       "scanNone": "No LAN plugins found",
       "connectFailed": "Connect failed"
     }
+  },
+  "configReload": {
+    "appliedTitle": "「{{section}}」config applied",
+    "restartTitle": "「{{section}}」config saved, restart required"
   }
 }

@@ -302,6 +302,34 @@ class ModelRouter:
             "memory": self.get_model_info("memory"),
         }
 
+    async def reload_clients(self):
+        """按当前配置重建所有模型客户端（配置热更新）。
+
+        用于 LLM 配置变更后即时生效，无需重启服务。逐节 try-except，
+        单节失败保留旧客户端可继续使用（尽力挽救），不中断整体重建。
+        """
+        model_types = ["main", "summary", "memory"]
+        new_clients: Dict[str, LLMClient] = {}
+
+        for model_type in model_types:
+            try:
+                client = self._create_client(model_type)
+                if client:
+                    new_clients[model_type] = client
+                    logger.info(f"模型客户端已重建: {model_type}")
+            except Exception as e:
+                logger.error(f"重建模型客户端失败 {model_type}: {e}")
+
+        # 保留旧客户端：仅替换成功重建的部分，避免重建失败导致完全不可用
+        for model_type in model_types:
+            if model_type not in new_clients and model_type in self._clients:
+                new_clients[model_type] = self._clients[model_type]
+
+        self._clients = new_clients
+        self._status.clear()
+        await self.check_all_status()
+        logger.info("模型客户端已按最新配置重建")
+
     async def close(self):
         """关闭模型路由器"""
         logger.info("关闭模型路由器...")

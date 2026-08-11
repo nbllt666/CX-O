@@ -40,6 +40,7 @@ import {
 import type { CaptureFrameMode } from '@/store/captureStore';
 import { healthApi } from '@/api/clients/health';
 import { configApi } from '@/api/clients/config';
+import { subscribeConfigChanged } from '@/lib/configEvents';
 import { serviceApi } from '@/api/clients/service';
 import { graphApi } from '@/api/clients/graph';
 import { cxfcApi } from '@/api/clients/cxfc';
@@ -866,32 +867,38 @@ function LlmSection() {
   const [models, setModels] = useState<LlmModelsConfig>(DEFAULT_LLM_MODELS);
   const [params, setParams] = useState<LlmParamsConfig>(DEFAULT_LLM_PARAMS);
 
+  const loadConfig = useCallback(async () => {
+    try {
+      const data = await configApi.getConfig();
+      const llm = (data as { config?: { llm?: Partial<ModelEntry> } }).config?.llm;
+      if (llm) {
+        setModels((prev) => ({
+          ...prev,
+          main: {
+            ...prev.main,
+            provider: llm.provider ?? prev.main.provider,
+            model: llm.model ?? prev.main.model,
+            host: llm.host ?? prev.main.host,
+          },
+        }));
+      }
+    } catch {
+      /* 后端不可达时保持当前表单 */
+    }
+  }, []);
+
   useEffect(() => {
     if (!isRunning) return;
-    let cancelled = false;
-    (async () => {
-      try {
-        const data = await configApi.getConfig();
-        const llm = (data as { config?: { llm?: Partial<ModelEntry> } }).config?.llm;
-        if (llm && !cancelled) {
-          setModels((prev) => ({
-            ...prev,
-            main: {
-              ...prev.main,
-              provider: llm.provider ?? prev.main.provider,
-              model: llm.model ?? prev.main.model,
-              host: llm.host ?? prev.main.host,
-            },
-          }));
-        }
-      } catch {
-        /* 后端不可达时保持默认 */
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [isRunning]);
+    void loadConfig();
+  }, [isRunning, loadConfig]);
+
+  // 配置热更新：LLM 节保存后即时刷新表单（需重启的节不刷新，等待页面重载）
+  useEffect(() => {
+    const unsubscribe = subscribeConfigChanged(({ section, requiresRestart }) => {
+      if (section === 'llm' && !requiresRestart && isRunning) void loadConfig();
+    });
+    return unsubscribe;
+  }, [isRunning, loadConfig]);
 
   const handleSave = async () => {
     await configApi.updateConfig('llm', {
@@ -1023,37 +1030,43 @@ function VectorSection() {
   const { isRunning } = useBackendRunning();
   const [config, setConfig] = useState<VectorConfigState>(DEFAULT_VECTOR_CONFIG);
 
+  const loadConfig = useCallback(async () => {
+    try {
+      const data = await configApi.getConfig();
+      const vec = (data as { config?: { vector?: Partial<VectorConfigState> } }).config?.vector;
+      if (vec) {
+        setConfig((prev) => ({
+          ...prev,
+          backend: vec.backend ?? prev.backend,
+          vectorSize: vec.vectorSize ?? prev.vectorSize,
+          collectionName: vec.collectionName ?? prev.collectionName,
+          weaviateHost: vec.weaviateHost ?? prev.weaviateHost,
+          weaviatePort: vec.weaviatePort ?? prev.weaviatePort,
+          qdrantHost: vec.qdrantHost ?? prev.qdrantHost,
+          qdrantPort: vec.qdrantPort ?? prev.qdrantPort,
+          embeddingProvider: vec.embeddingProvider ?? prev.embeddingProvider,
+          embeddingModel: vec.embeddingModel ?? prev.embeddingModel,
+          embeddingApiBase: vec.embeddingApiBase ?? prev.embeddingApiBase,
+          embeddingApiKey: vec.embeddingApiKey ?? prev.embeddingApiKey,
+        }));
+      }
+    } catch {
+      /* 后端不可达时保持当前表单 */
+    }
+  }, []);
+
   useEffect(() => {
     if (!isRunning) return;
-    let cancelled = false;
-    (async () => {
-      try {
-        const data = await configApi.getConfig();
-        const vec = (data as { config?: { vector?: Partial<VectorConfigState> } }).config?.vector;
-        if (vec && !cancelled) {
-          setConfig((prev) => ({
-            ...prev,
-            backend: vec.backend ?? prev.backend,
-            vectorSize: vec.vectorSize ?? prev.vectorSize,
-            collectionName: vec.collectionName ?? prev.collectionName,
-            weaviateHost: vec.weaviateHost ?? prev.weaviateHost,
-            weaviatePort: vec.weaviatePort ?? prev.weaviatePort,
-            qdrantHost: vec.qdrantHost ?? prev.qdrantHost,
-            qdrantPort: vec.qdrantPort ?? prev.qdrantPort,
-            embeddingProvider: vec.embeddingProvider ?? prev.embeddingProvider,
-            embeddingModel: vec.embeddingModel ?? prev.embeddingModel,
-            embeddingApiBase: vec.embeddingApiBase ?? prev.embeddingApiBase,
-            embeddingApiKey: vec.embeddingApiKey ?? prev.embeddingApiKey,
-          }));
-        }
-      } catch {
-        /* 后端不可达时保持默认 */
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [isRunning]);
+    void loadConfig();
+  }, [isRunning, loadConfig]);
+
+  // 配置热更新：Vector 节保存后即时刷新表单（需重启的节不刷新，等待页面重载）
+  useEffect(() => {
+    const unsubscribe = subscribeConfigChanged(({ section, requiresRestart }) => {
+      if (section === 'vector' && !requiresRestart && isRunning) void loadConfig();
+    });
+    return unsubscribe;
+  }, [isRunning, loadConfig]);
 
   const set = (patch: Partial<VectorConfigState>) => setConfig((prev) => ({ ...prev, ...patch }));
 
