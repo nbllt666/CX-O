@@ -1,4 +1,8 @@
-"""记忆情感分析——基于文本的情感极性与强度分析。"""
+"""记忆情感分析——基于文本的情感极性与强度分析。
+
+默认使用摘要模型（LLM）进行情感分析，LLM 不可用或解析失败时回退到本地规则词典。
+"""
+import json
 from dataclasses import dataclass
 from typing import List
 
@@ -9,6 +13,7 @@ logger = get_contextual_logger(__name__)
 
 @dataclass
 class EmotionResult:
+    """情感分析结果：极性、强度、类型、置信度与命中的关键词。"""
     polarity: float
     intensity: float
     emotion_type: str
@@ -17,6 +22,7 @@ class EmotionResult:
 
 
 class EmotionAnalyzer:
+    """文本情感分析器，基于内置的中/英文情感词典做贪心切词与极性/强度/类型判定，可选接入 LLM 模式。"""
     POSITIVE_PATTERNS = {
         "高兴": 0.9,
         "开心": 0.9,
@@ -144,15 +150,21 @@ class EmotionAnalyzer:
         return tokens
 
     def __init__(self, use_llm: bool = False, llm_client=None):
+        """初始化情感分析器（可选启用 LLM 模式）。"""
         self.use_llm = use_llm
         self.llm_client = llm_client
         self._cache = {}
 
     def set_llm_client(self, llm_client):
+        """注入摘要模型客户端并启用 LLM 情感分析模式。"""
         self.llm_client = llm_client
         self.use_llm = True
 
     async def analyze(self, text: str, context: str = "") -> EmotionResult:
+        """分析文本情感。
+
+        配置了 LLM 客户端时优先走摘要模型分析，否则或失败时回退规则词典。
+        """
         if not text or not text.strip():
             return EmotionResult(
                 polarity=0.0, intensity=0.0, emotion_type="neutral", confidence=0.5, keywords=[]
@@ -169,6 +181,57 @@ class EmotionAnalyzer:
 
         self._cache[cache_key] = result
         return result
+
+    async def _analyze_with_llm(self, text: str, context: str = "") -> EmotionResult:
+        """使用摘要模型（LLM）进行情感分析，输出结构化 JSON 结果。
+
+        LLM 调用或解析失败时回退到规则词典分析，保证分析流程稳定可用。
+        """
+        context_part = f"\n对话上下文（供参考）：\n{context}" if context.strip() else ""
+        prompt = (
+            "你是情感分析助手。请仅分析用户文本的情感倾向，输出严格 JSON 格式，不要输出任何额外文字。\n"
+            f"用户文本：{text}\n"
+            f"{context_part}\n"
+            '输出格式：{"polarity":浮点数(-1到1), "intensity":浮点数(0到1), '
+            '"emotion_type":"positive|negative|neutral", "confidence":浮点数(0到1), '
+            '"keywords":["关键词1","关键词2"]}\n'
+            "其中 polarity 为情感极性（正数积极、负数消极），intensity 为情感强度，"
+            "emotion_type 为情感类型，confidence 为分析置信度，keywords 为命中的情感关键词列表。"
+        )
+        try:
+            response = await self.llm_client.chat(
+                messages=[{"role": "user", "content": prompt}], stream=False
+            )
+            content = response.content if hasattr(response, "content") else str(response)
+            data = self._parse_llm_json(content)
+            raw_polarity = float(data.get("polarity") or 0.0)
+            confidence = float(data.get("confidence") or 0.5)
+            return EmotionResult(
+                polarity=max(-1.0, min(1.0, raw_polarity)),
+                intensity=float(data.get("intensity") or 0.0),
+                emotion_type=str(data.get("emotion_type") or "neutral"),
+                confidence=max(0.0, min(1.0, confidence)),
+                keywords=[str(k) for k in data.get("keywords", [])][:10],
+            )
+        except Exception as e:
+            logger.warning(f"LLM 情感分析失败，回退规则分析: {e}")
+            return self._analyze_with_rules(text)
+
+    @staticmethod
+    def _parse_llm_json(content: str) -> dict:
+        """从 LLM 输出中提取 JSON 对象（容忍 markdown 代码块等包裹）。"""
+        content = content.strip()
+        if content.startswith("```"):
+            content = content.strip("`").strip()
+            if content.startswith("json"):
+                content = content[4:].strip()
+        start, end = content.find("{"), content.rfind("}")
+        if start != -1 and end > start:
+            content = content[start : end + 1]
+        data = json.loads(content)
+        if not isinstance(data, dict):
+            raise ValueError("LLM 输出不是 JSON 对象")
+        return data
 
     def _analyze_with_rules(self, text: str) -> EmotionResult:
         text = text.lower()
@@ -235,15 +298,18 @@ class EmotionAnalyzer:
             keywords=matched_keywords[:10],
         )
 
-    def get_emotion_score(self, text: str) -> float:
-        result = self._analyze_with_rules(text)
+    async def get_emotion_score(self, text: str) -> float:
+        """返回文本情感极性分，即 polarity 与 intensity 的乘积。"""
+        result = await self.analyze(text)
         return result.polarity * result.intensity
 
-    def get_intensity_for_decay(self, text: str) -> float:
-        result = self._analyze_with_rules(text)
+    async def get_intensity_for_decay(self, text: str) -> float:
+        """返回用于记忆衰减的情感强度值，即情感极性绝对值的两倍。"""
+        result = await self.analyze(text)
         return abs(result.polarity) * 2.0
 
     def clear_cache(self):
+        """清空情感分析的文本缓存。"""
         self._cache.clear()
         logger.info("情感分析缓存已清除")
 
@@ -251,9 +317,11 @@ class EmotionAnalyzer:
 emotion_analyzer = EmotionAnalyzer()
 
 
-def get_emotion(text: str) -> float:
-    return emotion_analyzer.get_emotion_score(text)
+def set_emotion_llm_client(client) -> None:
+    """为全局情感分析器注入摘要模型客户端，启用 LLM 情感分析。"""
+    emotion_analyzer.set_llm_client(client)
 
 
-def get_emotion_for_decay(text: str) -> float:
-    return emotion_analyzer.get_intensity_for_decay(text)
+async def get_emotion_for_decay(text: str) -> float:
+    """分析文本的情感强度值，供记忆衰减流程使用。"""
+    return await emotion_analyzer.get_intensity_for_decay(text)

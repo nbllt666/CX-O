@@ -7,6 +7,7 @@ from server.config import Settings
 
 
 class ContextManager:
+    """对话上下文管理器——按会话维护消息历史并限制最大长度。"""
 
     def __init__(self, max_history: int = None):
         if max_history is None:
@@ -49,4 +50,5 @@ _context_manager = ContextManager()
 
 
 def get_context_manager() -> ContextManager:
+    """返回全局唯一的 ContextManager 单例。"""
     return _context_manager

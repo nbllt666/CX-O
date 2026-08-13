@@ -146,7 +146,11 @@ def client(monkeypatch):
     state.memory_manager = mm
     state.secondary_router = sr
     set_service_state(state)
-    monkeypatch.setattr(emotion_mod, "get_emotion_for_decay", lambda content: 2.5)
+
+    async def _fake_emotion(content):
+        return 2.5
+
+    monkeypatch.setattr(emotion_mod, "get_emotion_for_decay", _fake_emotion)
     app = FastAPI()
     app.include_router(memory_router_mod.router)
     app.dependency_overrides[get_memory_manager] = lambda: mm

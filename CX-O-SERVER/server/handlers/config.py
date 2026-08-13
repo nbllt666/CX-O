@@ -14,6 +14,7 @@ logger = logging.getLogger(__name__)
 
 
 def register_config_handlers(manager: "WebSocketManager"):
+    """将配置读取/写入处理器注册到 WebSocket 管理器。"""
 
     async def handle_config_get(websocket, message, client_id):
         request_id = message.get("request_id", "")

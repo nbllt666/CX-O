@@ -7,8 +7,6 @@
 
 运行：python -m pytest tests/test_master_tools.py -v
 """
-import asyncio
-
 import pytest
 
 import server.core.tools.master_tools as mt
@@ -169,9 +167,6 @@ class TestDependencies:
         assert mt.get_context_manager() is cm
         assert mt.get_secondary_router() is None
         assert mt.get_acp_manager() is None
-
-    def test_wrappers(self, clean_deps):
-        assert mt.get_topic_summary_config_wrapper() == st.get_topic_summary_config()
 
 
 # ---------------------------------------------------------------- 记忆写入

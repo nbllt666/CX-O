@@ -161,7 +161,7 @@ async def create_memory(request: MemoryCreateRequest):
 
     try:
         memory_mgr = get_memory_manager()
-        emotion_score = get_emotion_for_decay(request.content)
+        emotion_score = await get_emotion_for_decay(request.content)
 
         memory_id = await memory_mgr.write_memory_async(
             content=request.content,
@@ -189,6 +189,7 @@ async def create_memory(request: MemoryCreateRequest):
 
 @router.get("/memories/stats")
 async def get_memory_stats(workspace_id: str = "default"):
+    """获取记忆统计信息。"""
     from server.dependencies import get_memory_manager
 
     try:
@@ -260,6 +261,7 @@ async def search_by_tag(
 
 @router.get("/memories/decay-stats")
 async def get_decay_statistics(workspace_id: str = "default"):
+    """获取记忆衰减统计信息。"""
     from server.dependencies import get_memory_manager
 
     try:
@@ -466,6 +468,7 @@ async def get_permanent_memory(memory_id: int):
 async def update_permanent_memory(
     memory_id: int, content: str = None, tags: List[str] = None, metadata: Dict = None
 ):
+    """更新指定永久记忆的内容、标签或元数据。"""
     from server.dependencies import get_memory_manager
 
     try:
@@ -895,6 +898,7 @@ async def execute_secondary_command(
 
 @router.get("/memories/secondary/commands")
 async def get_secondary_commands():
+    """获取副模型可用命令列表。"""
     from server.dependencies import get_secondary_router
 
     try:
@@ -914,6 +918,7 @@ async def get_secondary_commands():
 
 @router.get("/memories/secondary/history")
 async def get_secondary_history(limit: int = 10):
+    """获取副模型指令执行历史。"""
     from server.dependencies import get_secondary_router
 
     try:

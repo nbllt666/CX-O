@@ -10,6 +10,7 @@ logger = get_contextual_logger(__name__)
 
 @dataclass
 class SyncResult:
+    """向量库与 SQLite 同步结果，统计检查总数、同步数、删除数与错误数及详情。"""
     total_checked: int = 0
     synced: int = 0
     removed: int = 0

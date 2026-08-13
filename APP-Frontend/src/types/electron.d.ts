@@ -20,6 +20,34 @@ declare global {
       // 后端地址配置
       getBackendUrl: () => Promise<string | null>;
       setBackendUrl: (url: string) => Promise<void>;
+      // 前端启动配置（Task 5）：自启动 / 管理员权限启动
+      getStartupSettings: () => Promise<{
+        supported: boolean;
+        autoStart: boolean;
+        runAsAdmin: boolean;
+        isAdmin: boolean;
+      }>;
+      setAutoStart: (enabled: boolean) => Promise<{
+        supported: boolean;
+        autoStart: boolean;
+        runAsAdmin: boolean;
+        isAdmin: boolean;
+      }>;
+      setRunAsAdmin: (enabled: boolean) => Promise<{
+        supported: boolean;
+        autoStart: boolean;
+        runAsAdmin: boolean;
+        isAdmin: boolean;
+      }>;
+      // 电脑控制插件：授权状态读写与运行信息
+      getComputerControlAuth: () => Promise<boolean>;
+      setComputerControlAuth: (value: boolean) => Promise<boolean>;
+      getComputerControlInfo: () => Promise<{
+        running: boolean;
+        port: number | null;
+        fingerprint: string | null;
+        authorized: boolean;
+      }>;
     };
   }
 }

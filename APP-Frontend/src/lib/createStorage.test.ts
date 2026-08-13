@@ -26,6 +26,32 @@ function mockElectronApi() {
     setWindowSize: vi.fn().mockResolvedValue(undefined),
     getBackendUrl: vi.fn().mockResolvedValue(null),
     setBackendUrl: vi.fn().mockResolvedValue(undefined),
+    getComputerControlAuth: vi.fn().mockResolvedValue(false),
+    setComputerControlAuth: vi.fn().mockResolvedValue(false),
+    getComputerControlInfo: vi.fn().mockResolvedValue({
+      running: false,
+      port: null,
+      fingerprint: null,
+      authorized: false,
+    }),
+    getStartupSettings: vi.fn().mockResolvedValue({
+      supported: false,
+      autoStart: false,
+      runAsAdmin: false,
+      isAdmin: false,
+    }),
+    setAutoStart: vi.fn().mockResolvedValue({
+      supported: false,
+      autoStart: false,
+      runAsAdmin: false,
+      isAdmin: false,
+    }),
+    setRunAsAdmin: vi.fn().mockResolvedValue({
+      supported: false,
+      autoStart: false,
+      runAsAdmin: false,
+      isAdmin: false,
+    }),
   };
   return { storeSave };
 }

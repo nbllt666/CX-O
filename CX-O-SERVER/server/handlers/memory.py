@@ -14,6 +14,7 @@ logger = logging.getLogger(__name__)
 
 
 def register_memory_handlers(manager: "WebSocketManager"):
+    """将记忆（列表/创建/删除/搜索）处理器注册到 WebSocket 管理器。"""
 
     async def handle_memory_list(websocket, message, client_id):
         request_id = message.get("request_id", "")

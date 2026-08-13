@@ -11,6 +11,7 @@ logger = get_contextual_logger(__name__)
 
 @dataclass
 class BatchDecayResult:
+    """单批衰减处理结果，统计处理总数、更新数、失败数及逐条详情。"""
     total: int
     updated: int
     failed: int
@@ -18,6 +19,8 @@ class BatchDecayResult:
 
 
 class DecayBatchProcessor:
+    """批量记忆衰减处理器，后台按固定间隔异步对记忆执行衰减计算与重要性更新。"""
+
     def __init__(self, memory_manager, interval_hours: int = 24):
         self.memory_manager = memory_manager
         self.interval_hours = interval_hours
@@ -70,6 +73,7 @@ class DecayBatchProcessor:
         dry_run: bool = False,
         offset: int = 0,
     ) -> BatchDecayResult:
+        """处理一批记忆的衰减更新，返回处理结果。"""
         from server.core.memory.decay import DecayCalculator
 
         if batch_size > 0:
@@ -151,6 +155,7 @@ class DecayBatchProcessor:
     async def process_all(
         self, batch_size: int = 100, sync: bool = False, dry_run: bool = False
     ) -> Dict:
+        """分批处理全部记忆直至取空，返回总批次、总更新/失败数与全部详情。"""
         total_updated = 0
         total_failed = 0
         all_details = []
@@ -188,6 +193,7 @@ class DecayBatchProcessor:
         }
 
     def get_batch_status(self) -> Dict:
+        """返回当前批次大小、记忆管理器与衰减计算器的可用状态。"""
         return {
             "batch_size": self._batch_size,
             "memory_manager": self.memory_manager is not None,

@@ -70,17 +70,6 @@ def _check_graph_store():
         return False
 
 
-def _get_library(lib_name: str) -> GraphLibrary:
-    """将库名转换为 GraphLibrary 枚举"""
-    mapping = {
-        "user": GraphLibrary.USER,
-        "thing": GraphLibrary.THING,
-        "concept": GraphLibrary.CONCEPT,
-        "event": GraphLibrary.EVENT,
-    }
-    return mapping.get(lib_name.lower(), GraphLibrary.USER)
-
-
 def _entity_to_dict(entity: Entity) -> Dict[str, Any]:
     """将实体转换为字典"""
     if entity is None:
@@ -133,6 +122,7 @@ def _make_graph_tools(library: GraphLibrary, label: str) -> Dict[str, Any]:
     def create_entity(
         name: str, entity_type: str, properties: Dict[str, Any] = None, memory_ids: List[str] = None
     ) -> Dict[str, Any]:
+        """创建实体。"""
         if not _check_graph_store():
             return {"error": "图存储未初始化，请先调用 set_graph_dependencies()"}
         try:
@@ -155,6 +145,7 @@ def _make_graph_tools(library: GraphLibrary, label: str) -> Dict[str, Any]:
         strength: float = 1.0,
         evidence_memory_ids: List[str] = None
     ) -> Dict[str, Any]:
+        """创建关系。"""
         if not _check_graph_store():
             return {"error": "图存储未初始化，请先调用 set_graph_dependencies()"}
         try:
@@ -171,6 +162,7 @@ def _make_graph_tools(library: GraphLibrary, label: str) -> Dict[str, Any]:
             return {"error": f"创建{label}关系失败: {str(e)}"}
 
     def query_entities(entity_name_or_id: str, depth: int = 1) -> Dict[str, Any]:
+        """查询关联实体。"""
         if not _check_graph_store():
             return {"error": "图存储未初始化，请先调用 set_graph_dependencies()"}
         try:
@@ -186,6 +178,7 @@ def _make_graph_tools(library: GraphLibrary, label: str) -> Dict[str, Any]:
             return {"error": f"查询{label}关联实体失败: {str(e)}"}
 
     def find_paths(from_entity: str, to_entity: str, max_depth: int = 3) -> Dict[str, Any]:
+        """查找两个实体之间的路径。"""
         if not _check_graph_store():
             return {"error": "图存储未初始化，请先调用 set_graph_dependencies()"}
         try:
@@ -202,6 +195,7 @@ def _make_graph_tools(library: GraphLibrary, label: str) -> Dict[str, Any]:
             return {"error": f"查找{label}路径失败: {str(e)}"}
 
     def search_related_memories(entity_name: str, memory_query: str, limit: int = None) -> Dict[str, Any]:
+        """搜索与实体相关的记忆。"""
         if limit is None:
             limit = Settings().config.limits.memory.search_memories_limit
         if not _check_graph_store():
@@ -226,6 +220,7 @@ def _make_graph_tools(library: GraphLibrary, label: str) -> Dict[str, Any]:
             return {"error": f"{label}增强搜索失败: {str(e)}"}
 
     def extract_entities(content: str) -> Dict[str, Any]:
+        """从内容中提取实体。"""
         if not _check_graph_store():
             return {"error": "图存储未初始化，请先调用 set_graph_dependencies()"}
         try:
@@ -265,6 +260,7 @@ def _make_graph_tools(library: GraphLibrary, label: str) -> Dict[str, Any]:
             return {"error": f"合并{label}实体失败: {str(e)}"}
 
     def get_entity_summary(entity_name_or_id: str) -> Dict[str, Any]:
+        """获取实体摘要。"""
         if not _check_graph_store():
             return {"error": "图存储未初始化，请先调用 set_graph_dependencies()"}
         try:
@@ -282,6 +278,7 @@ def _make_graph_tools(library: GraphLibrary, label: str) -> Dict[str, Any]:
             return {"error": f"获取{label}实体摘要失败: {str(e)}"}
 
     def update_entity(entity_id: str, properties: Dict[str, Any]) -> Dict[str, Any]:
+        """更新实体的属性。"""
         if not _check_graph_store():
             return {"error": "图存储未初始化，请先调用 set_graph_dependencies()"}
         try:
@@ -293,6 +290,7 @@ def _make_graph_tools(library: GraphLibrary, label: str) -> Dict[str, Any]:
             return {"error": f"更新{label}实体失败: {str(e)}"}
 
     def delete_entity(entity_id: str) -> Dict[str, Any]:
+        """删除实体（软删除）。"""
         if not _check_graph_store():
             return {"error": "图存储未初始化，请先调用 set_graph_dependencies()"}
         try:
@@ -304,6 +302,7 @@ def _make_graph_tools(library: GraphLibrary, label: str) -> Dict[str, Any]:
     def update_relation(
         from_entity: str, to_entity: str, relation_type: str, strength: float
     ) -> Dict[str, Any]:
+        """更新关系的强度属性。"""
         if not _check_graph_store():
             return {"error": "图存储未初始化，请先调用 set_graph_dependencies()"}
         try:
@@ -316,6 +315,7 @@ def _make_graph_tools(library: GraphLibrary, label: str) -> Dict[str, Any]:
             return {"error": f"更新{label}关系失败: {str(e)}"}
 
     def delete_relation(from_entity: str, to_entity: str, relation_type: str) -> Dict[str, Any]:
+        """删除关系（软删除）。"""
         if not _check_graph_store():
             return {"error": "图存储未初始化，请先调用 set_graph_dependencies()"}
         try:
@@ -325,6 +325,7 @@ def _make_graph_tools(library: GraphLibrary, label: str) -> Dict[str, Any]:
             return {"error": f"删除{label}关系失败: {str(e)}"}
 
     def get_stats() -> Dict[str, Any]:
+        """获取图库统计信息。"""
         if not _check_graph_store():
             return {"error": "图存储未初始化，请先调用 set_graph_dependencies()"}
         try:
@@ -334,6 +335,7 @@ def _make_graph_tools(library: GraphLibrary, label: str) -> Dict[str, Any]:
             return {"error": f"获取{label}统计失败: {str(e)}"}
 
     def export(format: str) -> Dict[str, Any]:
+        """导出图库数据。"""
         if not _check_graph_store():
             return {"error": "图存储未初始化，请先调用 set_graph_dependencies()"}
         try:

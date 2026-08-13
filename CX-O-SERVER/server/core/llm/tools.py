@@ -8,10 +8,13 @@ logger = get_contextual_logger(__name__)
 
 
 class LLMTools:
+    """LLM 工具辅助——工具定义格式化、工具调用解析与带工具的对话执行。"""
+
     def __init__(self, llm_client):
         self.client = llm_client
 
     def format_tools_for_llm(self, tools: List[Dict]) -> List[Dict]:
+        """将内部工具定义格式化为 LLM function calling 所需的 schema 列表。"""
         formatted = []
         for tool in tools:
             formatted.append(
@@ -27,6 +30,7 @@ class LLMTools:
         return formatted
 
     def parse_tool_calls(self, response_message: Dict) -> List[Dict]:
+        """从 LLM 响应消息中解析工具调用，标准化为统一的调用结构。"""
         tool_calls = response_message.get("tool_calls", [])
         parsed = []
 
@@ -46,9 +50,11 @@ class LLMTools:
         return parsed
 
     def create_tool_result_message(self, tool_call_id: str, tool_name: str, result: str) -> Dict:
+        """构造工具执行结果消息，回填给 LLM。"""
         return {"role": "tool", "content": result, "tool_call_id": tool_call_id, "name": tool_name}
 
     async def execute_tools(self, tool_calls: List[Dict], tool_registry) -> List[Dict]:
+        """执行一批工具调用，返回对应的工具结果消息列表。"""
         results = []
 
         for tool_call in tool_calls:
@@ -71,6 +77,7 @@ class LLMTools:
     async def chat_with_tools(
         self, messages: List[Dict], tools: List[Dict], tool_registry, max_iterations: int = 5
     ) -> Dict:
+        """循环对话并自动执行工具调用，直至无工具调用或达到最大迭代次数。"""
         current_messages = messages.copy()
         current_messages.append({"role": "system", "content": "请在适当时使用工具调用。"})
         iterations = 0

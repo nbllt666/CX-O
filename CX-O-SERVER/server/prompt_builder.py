@@ -274,8 +274,8 @@ def build_messages(
     # include_hidden_prompts=False 用于 AnythingLLM 兼容路径，保持其最小化行为。
     # ====================================================================
     # 隐藏提示词仅在非实时路径按需加载（实时语音早退分支不触碰，避免热路径触发 YAML 加载）
-    hidden_prompts = _get_hidden_prompts()
     if include_hidden_prompts:
+        hidden_prompts = _get_hidden_prompts()
         model_type = agent_config.get("model", "main").lower()
         hidden_parts = []
 

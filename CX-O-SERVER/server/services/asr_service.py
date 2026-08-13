@@ -32,6 +32,8 @@ _executor: Optional[ThreadPoolExecutor] = None
 
 
 class ASRService:
+    """统一 ASR 服务，支持 embedded 与 remote 两种识别模式，并提供 WebSocket 流式识别接口。"""
+
     def __init__(self, mode: str = "remote", model_dir: str = "", device: str = "cuda",
                  remote_url: str = "http://127.0.0.1:8001",
                  ws_url: str = "ws://127.0.0.1:8005/ws/asr/stream"):
@@ -437,6 +439,8 @@ _asr_service: Optional[ASRService] = None
 
 
 def get_asr_service() -> ASRService:
+    """获取全局唯一的 ASRService 单例，按配置惰性初始化。"""
+
     global _asr_service
     if _asr_service is None:
         from server.config import get_settings

@@ -10,6 +10,8 @@ logger = get_contextual_logger(__name__)
 
 
 class CXFCDiscovery:
+    """CXFC 插件发现器，通过 UDP 广播宣告自身存在并监听局域网内的插件信标，维护已发现插件列表。"""
+
     def __init__(
         self,
         broadcast_port: int = 9997,
@@ -145,9 +147,11 @@ class CXFCDiscovery:
         return found
 
     def get_discovered(self) -> List[Dict[str, Any]]:
+        """返回当前已发现的插件列表。"""
         return self._discovered
 
     async def stop_discovery(self):
+        """停止发现循环，取消后台任务并关闭广播与监听套接字。"""
         self._running = False
 
         if self._task:

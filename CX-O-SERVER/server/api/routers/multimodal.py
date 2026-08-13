@@ -38,12 +38,6 @@ def _get_pipeline() -> MultimodalPipeline:
     return _pipeline_instance
 
 
-def _reset_pipeline() -> None:
-    """重置 pipeline 单例（测试用）。"""
-    global _pipeline_instance
-    _pipeline_instance = None
-
-
 def _map_multimodal_exception(exc: Exception) -> None:
     """将 MultimodalPipeline 异常映射为 HTTP 异常。
 

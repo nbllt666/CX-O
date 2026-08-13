@@ -14,6 +14,7 @@ logger = logging.getLogger(__name__)
 
 
 def register_tools_handlers(manager: "WebSocketManager"):
+    """将工具（列表/调用/注册）处理器注册到 WebSocket 管理器。"""
 
     async def handle_tools_list(websocket, message, client_id):
         request_id = message.get("request_id", "")

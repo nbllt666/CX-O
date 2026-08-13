@@ -25,8 +25,6 @@ RADIX-Lite 管理 Agent 扩展工具：8 个新增工具。
 import asyncio
 import json
 import os
-import uuid
-from datetime import datetime, timezone
 from typing import Any, Dict, Optional
 
 from pydantic import BaseModel
@@ -41,16 +39,6 @@ _THIS_DIR = os.path.dirname(os.path.abspath(__file__))
 _PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(_THIS_DIR)))
 _DATA_DIR = os.path.join(_PROJECT_ROOT, "data")
 _AGENTS_FILE = os.path.join(_DATA_DIR, "agents.json")
-
-
-def _iso_now() -> str:
-    """返回 ISO 8601 带时区时间戳。"""
-    return datetime.now(timezone.utc).isoformat()
-
-
-def _new_uuid() -> str:
-    """生成 UUID v4 字符串。"""
-    return str(uuid.uuid4())
 
 
 # --------------------------------------------------------------------------- #

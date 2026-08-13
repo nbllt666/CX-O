@@ -96,13 +96,6 @@ class VectorizationQueue:
         self._initialized = True
         logger.info(f"VectorizationQueue initialized (workers={max_workers}, batch_size={batch_size})")
     
-    @classmethod
-    def get_instance(cls) -> "VectorizationQueue":
-        """获取单例实例"""
-        if cls._instance is None:
-            cls._instance = cls()
-        return cls._instance
-    
     def start(self):
         """启动工作线程"""
         if self._workers:
@@ -262,22 +255,3 @@ class VectorizationQueue:
         with self._status_lock:
             if memory_id in self._task_status:
                 self._task_status[memory_id].status = status
-
-
-# 全局实例
-_vectorization_queue = None
-
-
-def get_vectorization_queue() -> VectorizationQueue:
-    """获取向量化队列实例"""
-    global _vectorization_queue
-    if _vectorization_queue is None:
-        _vectorization_queue = VectorizationQueue()
-    return _vectorization_queue
-
-
-def init_vectorization_queue(max_workers: int = 2, batch_size: int = 5):
-    """初始化向量化队列"""
-    global _vectorization_queue
-    _vectorization_queue = VectorizationQueue(max_workers=max_workers, batch_size=batch_size)
-    return _vectorization_queue

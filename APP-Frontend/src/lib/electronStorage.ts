@@ -21,7 +21,13 @@ const cache = new Map<string, string>();
 // 需要预载/迁移的 zustand store 名称
 // 注：cxo-pet-danmaku 与 src/store/danmakuStore.ts 的 DANMAKU_STORE_NAME 保持一致
 // （此处不 import 以避免 lib → store 反向依赖）
-const STORE_NAMES = ['cxo-pet-theme', 'cxo-pet-settings', 'cxo-pet-chat', 'cxo-pet-danmaku'];
+const STORE_NAMES = [
+  'cxo-pet-theme',
+  'cxo-pet-settings',
+  'cxo-pet-chat',
+  'cxo-pet-danmaku',
+  'cxo-pet-computer-control-auth',
+];
 
 // 需要与 Electron 主进程 app-config 双向同步的配置键
 const CONFIG_SYNC_KEYS: string[] = [

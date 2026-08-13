@@ -110,6 +110,7 @@ class NodeManager:
         offset: int = 0,
         agent_id: str = "default",
     ) -> SearchResult:
+        """分页列出节点，支持按类型过滤。"""
         if node_type:
             count_query = "SELECT COUNT(*) as cnt FROM nodes WHERE type = ? AND agent_id = ?"
             count_params = (node_type, agent_id)
@@ -220,6 +221,7 @@ class NodeManager:
         return self.db.execute_one(query, (node_id, agent_id)) is not None
 
     def count(self, node_type: Optional[str] = None, agent_id: str = "default") -> int:
+        """统计节点数量，可按类型过滤。"""
         if node_type:
             query = "SELECT COUNT(*) as cnt FROM nodes WHERE type = ? AND agent_id = ?"
             result = self.db.execute_one(query, (node_type, agent_id))

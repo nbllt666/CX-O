@@ -698,7 +698,15 @@
       "camera": "摄像头",
       "greenScreen": "抠像绿幕",
       "closePet": "关闭桌宠",
-      "avatarScale": "头像缩放：{{scale}}"
+      "avatarScale": "头像缩放：{{scale}}",
+      "computerControl": "授权控制"
+    },
+    "computerControl": {
+      "authorized": "已授权",
+      "unauthorized": "未授权",
+      "notAvailable": "服务未运行",
+      "authorizeConfirm": "授权后，本应用可控制您的电脑（屏幕控制、键盘控制、运行命令）。此授权永久生效，可随时在桌宠菜单中撤销。是否授权？",
+      "revokeConfirm": "撤销后，本应用将无法再控制您的电脑。是否撤销授权？"
     },
     "obs": {
       "captureSize": "采集尺寸：{{size}}"
@@ -973,6 +981,17 @@
       "scanResult": "发现 {{count}} 个局域网插件",
       "scanNone": "未发现局域网插件",
       "connectFailed": "连接失败"
+    },
+    "startup": {
+      "sectionTitle": "前端启动设置",
+      "sectionDesc": "桌宠应用（Electron）的自启动与管理员权限启动（仅作用于前端，不控制后端进程）",
+      "autoStart": "前端自启动",
+      "autoStartDesc": "开机自动启动桌宠应用（Windows 登录项）",
+      "runAsAdmin": "管理员权限启动",
+      "runAsAdminDesc": "以管理员权限启动，遵循 Windows UAC 安全确认",
+      "browserUnavailable": "浏览器模式不可用，请在桌面（Electron）模式下启用",
+      "notEffective": "设置未生效：当前未以管理员权限运行（可能拒绝了 UAC，重启应用时再试）",
+      "pendingRestart": "已保存，重启应用后以管理员权限运行（会弹出 UAC 确认）"
     }
   },
   "configReload": {

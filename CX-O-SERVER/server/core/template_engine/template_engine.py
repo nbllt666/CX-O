@@ -35,6 +35,8 @@ from jinja2 import (
 )
 from pydantic import BaseModel
 
+from server.core.utils import iso_now as _iso_now
+
 
 # --------------------------------------------------------------------------- #
 # 路径锚点（rules-0 §三：os.path.dirname(os.path.abspath(__file__))）
@@ -45,8 +47,6 @@ _SERVER_ROOT = os.path.dirname(_SERVER_CORE)  # server
 _PROJECT_ROOT = os.path.dirname(_SERVER_ROOT)  # CX-O-SERVER root
 
 _DEFAULT_TEMPLATES_DIR = os.path.join(_PROJECT_ROOT, "data", "templates")
-_DEFAULT_PRESETS_DIR = os.path.join(_DEFAULT_TEMPLATES_DIR, "presets")
-_DEFAULT_CUSTOM_DIR = os.path.join(_DEFAULT_TEMPLATES_DIR, "custom")
 
 
 # --------------------------------------------------------------------------- #
@@ -58,11 +58,6 @@ _TEMPLATE_ID_PATTERN = re.compile(r"^[a-zA-Z0-9_-]+$")
 
 # frontmatter 正则（与 spike_jinja2.py 一致：^---\n(.*?)\n---\n(.*)$）
 _FRONTMATTER_RE = re.compile(r"^---\n(.*?)\n---\n(.*)$", re.DOTALL)
-
-
-def _iso_now() -> str:
-    """返回 ISO 8601 带时区时间戳。"""
-    return datetime.now(timezone.utc).isoformat()
 
 
 # --------------------------------------------------------------------------- #

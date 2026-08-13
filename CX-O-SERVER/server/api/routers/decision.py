@@ -19,7 +19,7 @@
 
 @version 1.0.0
 """
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, Optional
 
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
@@ -96,15 +96,6 @@ class DecisionInputModel(BaseModel):
     turn_history_summary: Optional[str] = None
     extracted_content: Optional[str] = None
     quality_score: Optional[float] = None
-
-
-class RubricSnapshotModel(BaseModel):
-    """rubric 快照（对应 decision_core.pyi RubricSnapshot）。"""
-    importance_threshold_permanent: float
-    quality_reject_threshold: float
-    max_redistill_turns: int
-    ask_user_confidence_threshold: float
-    cross_validate_sources: List[str] = []
 
 
 class D1LocationRequest(BaseModel):

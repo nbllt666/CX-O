@@ -2,12 +2,25 @@
 import asyncio
 import json
 import logging
+import uuid
+from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
 import httpx
 
 
+def iso_now() -> str:
+    """返回 ISO 8601 带时区（UTC）时间戳。"""
+    return datetime.now(timezone.utc).isoformat()
+
+
+def new_uuid() -> str:
+    """生成 UUID v4 字符串。"""
+    return str(uuid.uuid4())
+
+
 def deep_merge(base: Dict[str, Any], override: Dict[str, Any]) -> Dict[str, Any]:
+    """递归合并两个字典，嵌套字典按 key 逐层合并，override 覆盖 base。"""
     result = base.copy()
     for key, value in override.items():
         if key in result and isinstance(result[key], dict) and isinstance(value, dict):
@@ -18,6 +31,7 @@ def deep_merge(base: Dict[str, Any], override: Dict[str, Any]) -> Dict[str, Any]
 
 
 def format_messages_for_summary(messages: List[Dict], max_content_length: int = 500) -> str:
+    """将消息列表格式化为「序号 角色: 内容」多行文本，超长内容截断。"""
     lines = []
     for i, msg in enumerate(messages, 1):
         role = msg.get("role", "unknown")
@@ -143,6 +157,7 @@ _shared_http_client: Optional[httpx.AsyncClient] = None
 
 
 def get_shared_http_client() -> httpx.AsyncClient:
+    """获取模块级共享的 httpx.AsyncClient 单例（惰性创建，禁用系统代理）。"""
     global _shared_http_client
     if _shared_http_client is None:
         # 显式禁用 Windows 系统代理检测（trust_env=False + proxy=None）
@@ -159,6 +174,7 @@ def get_shared_http_client() -> httpx.AsyncClient:
 
 
 async def close_shared_http_client():
+    """关闭共享 HTTP 客户端并置空，供服务关闭时调用。"""
     global _shared_http_client
     if _shared_http_client:
         await _shared_http_client.aclose()
@@ -174,6 +190,7 @@ async def retry_with_backoff(
     *args,
     **kwargs
 ):
+    """带指数退避的异步请求重试包装器，对连接/超时/5xx 错误按约定次数重试。"""
     last_exception = None
     for attempt in range(max_retries):
         try:

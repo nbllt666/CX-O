@@ -14,7 +14,6 @@ import server.handlers.audio as audio_mod
 from server.handlers.audio import (
     DualStreamSession,
     set_tts_playing,
-    is_tts_playing,
     cleanup_dual_stream_session,
     register_audio_handlers,
 )
@@ -74,7 +73,7 @@ class FakeInterruptModule:
 
 
 # --------------------------------------------------------------------------- #
-# set_tts_playing / is_tts_playing
+# set_tts_playing
 # --------------------------------------------------------------------------- #
 class TestTTSPlayingState:
     @pytest.mark.asyncio
@@ -84,19 +83,20 @@ class TestTTSPlayingState:
         # set_tts_playing 在函数体内 from server.services.asr_interrupt import ...
         monkeypatch.setattr(asr_interrupt_mod, "get_asr_interrupt_module",
                             lambda: fake_interrupt)
-        assert await is_tts_playing() is False
+        assert len(audio_mod._tts_playing_clients) == 0
         await set_tts_playing("c1", True)
-        assert await is_tts_playing() is True
+        assert "c1" in audio_mod._tts_playing_clients
         assert fake_interrupt.tts_playing is True
         # 多客户端任一在播即为 True
         await set_tts_playing("c2", True)
-        assert await is_tts_playing() is True
+        assert {"c1", "c2"} <= audio_mod._tts_playing_clients
         # 移除一个后仍为 True
         await set_tts_playing("c1", False)
-        assert await is_tts_playing() is True
+        assert "c1" not in audio_mod._tts_playing_clients
+        assert "c2" in audio_mod._tts_playing_clients
         # 全部移除后为 False
         await set_tts_playing("c2", False)
-        assert await is_tts_playing() is False
+        assert len(audio_mod._tts_playing_clients) == 0
         assert fake_interrupt.tts_playing is False
 
 

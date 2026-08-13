@@ -26,6 +26,8 @@ ALLOWED_AUDIO_EXTENSIONS = {".wav", ".mp3", ".ogg", ".flac", ".m4a", ".aac"}
 
 
 class TTSSynthesizeRequest(BaseModel):
+    """TTS 合成请求参数"""
+
     text: str
     speed: float = 1.0
     cross_fade_duration: float = 0.15
@@ -69,6 +71,7 @@ async def get_audio_config():
     description="获取 voice_refs 目录下的所有音频文件列表。",
 )
 async def get_audio_files():
+    """获取 voice_refs 目录下的音频文件列表。"""
     try:
         _ensure_voice_refs_dir()
 
@@ -165,6 +168,7 @@ async def get_audio_file(filename: str):
     description="根据文件名删除指定的音频文件。",
 )
 async def delete_audio_file(filename: str):
+    """根据文件名删除指定的音频文件。"""
     try:
         _validate_filename(filename)
         _ensure_voice_refs_dir()
@@ -217,6 +221,7 @@ async def tts_synthesize(request: TTSSynthesizeRequest, tts_svc: TTSService = De
 
 @router.post("/tts/synthesize-stream", summary="TTS流式合成")
 async def tts_synthesize_stream(request: Request, tts_svc: TTSService = Depends(get_tts_service)):
+    """以 SSE 流式方式合成 TTS 音频。"""
     try:
         data = await request.json()
         text = data.get("text", "")
@@ -263,6 +268,7 @@ async def tts_synthesize_stream(request: Request, tts_svc: TTSService = Depends(
 
 @router.post("/asr/speech-to-text", summary="ASR语音识别")
 async def asr_speech_to_text(request: Request, asr_svc: ASRService = Depends(get_asr_service)):
+    """语音识别，将上传或 base64 编码的音频转为文本。"""
     temp_path = None
     try:
         content_type = request.headers.get("content-type", "")
@@ -347,22 +353,4 @@ def _load_tts_config() -> dict:
         }
     except Exception as e:
         logger.warning(f"加载 TTS 配置失败，使用默认配置: {e}")
-        return default_config
-
-
-def _load_asr_config() -> dict:
-    config_file = _PROJECT_ROOT / "config" / "settings.json"
-    default_config = {"url": "http://127.0.0.1:5001", "timeout": 60}
-    if not config_file.exists():
-        return default_config
-    try:
-        with open(config_file, "r", encoding="utf-8") as f:
-            config_data = json.load(f)
-        asr_config = config_data.get("asr", {})
-        return {
-            "url": asr_config.get("url", default_config["url"]),
-            "timeout": asr_config.get("timeout", default_config["timeout"])
-        }
-    except Exception as e:
-        logger.warning(f"加载 ASR 配置失败，使用默认配置: {e}")
         return default_config

@@ -13,9 +13,8 @@ import json
 import os
 import sys
 import tempfile
-from unittest.mock import AsyncMock, patch
+from unittest.mock import patch
 
-import pytest
 import yaml
 
 # 确保 server 包可导入
@@ -198,40 +197,6 @@ class TestExtractJson:
         from server.core.utils import extract_json
 
         assert extract_json({"already": "dict"}) == {"already": "dict"}
-
-
-# --------------------------------------------------------------------------- #
-# 5. summarizer 使用 extract_json
-# --------------------------------------------------------------------------- #
-class TestSummarizerExtractJson:
-    def _summarizer(self, raw_content):
-        from server.core.context.summarizer import ContextSummarizer
-
-        llm = AsyncMock()
-        llm.chat = AsyncMock(return_value=type("R", (), {"content": raw_content})())
-        return ContextSummarizer(llm_client=llm)
-
-    def test_summarize_parses_json(self):
-        s = self._summarizer('```json\n{"summary":"摘要","key_points":["点1","点2"]}\n```')
-        import asyncio
-
-        result = asyncio.run(s.summarize([{"role": "user", "content": "你好"}]))
-        assert result["summary"] == "摘要"
-        assert result["key_points"] == ["点1", "点2"]
-
-    def test_summarize_falls_back_on_bad_json(self):
-        s = self._summarizer("not json")
-        import asyncio
-
-        result = asyncio.run(s.summarize([{"role": "user", "content": "你好"}]))
-        assert result["success"] is True  # 走规则兜底，不抛异常
-
-    def test_extract_key_points_parses_array(self):
-        s = self._summarizer('["点1", "点2", "点3"]')
-        import asyncio
-
-        pts = asyncio.run(s.extract_key_points([{"role": "user", "content": "你好"}]))
-        assert pts == ["点1", "点2", "点3"]
 
 
 # --------------------------------------------------------------------------- #

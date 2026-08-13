@@ -9,6 +9,8 @@ from .response import ErrorResponse
 
 
 class ServiceError(Exception):
+    """业务服务异常基类——统一携带错误码、HTTP 状态码与附加详情。"""
+
     def __init__(
         self,
         message: str,
@@ -23,57 +25,9 @@ class ServiceError(Exception):
         super().__init__(self.message)
 
 
-class DatabaseError(ServiceError):
-    def __init__(self, message: str, details: Dict[str, Any] = None):
-        super().__init__(message, "DATABASE_ERROR", 500, details)
-
-
-class MemoryNotFoundError(ServiceError):
-    def __init__(self, memory_id: str):
-        super().__init__(f"Memory not found: {memory_id}", "MEMORY_NOT_FOUND", 404)
-
-
-class AgentNotFoundError(ServiceError):
-    def __init__(self, agent_id: str):
-        super().__init__(f"Agent not found: {agent_id}", "AGENT_NOT_FOUND", 404)
-
-
-class SessionNotFoundError(ServiceError):
-    def __init__(self, session_id: str):
-        super().__init__(f"Session not found: {session_id}", "SESSION_NOT_FOUND", 404)
-
-
-class LLMError(ServiceError):
-    def __init__(self, message: str, details: Dict[str, Any] = None):
-        super().__init__(message, "LLM_ERROR", 503, details)
-
-
-class VectorStoreError(ServiceError):
-    def __init__(self, message: str, details: Dict[str, Any] = None):
-        super().__init__(message, "VECTOR_STORE_ERROR", 503, details)
-
-
-class ValidationError(ServiceError):
-    def __init__(self, message: str, details: Dict[str, Any] = None):
-        super().__init__(message, "VALIDATION_ERROR", 400, details)
-
-
-class AuthenticationError(ServiceError):
-    def __init__(self, message: str = "Authentication required"):
-        super().__init__(message, "AUTHENTICATION_ERROR", 401)
-
-
-class RateLimitError(ServiceError):
-    def __init__(self, retry_after: int = 60):
-        super().__init__(
-            f"Rate limit exceeded. Retry after {retry_after} seconds",
-            "RATE_LIMIT_ERROR",
-            429,
-            {"retry_after": retry_after},
-        )
-
-
 async def service_exception_handler(request: Request, exc: ServiceError) -> JSONResponse:
+    """将 ServiceError 转换为统一的 JSON 错误响应。"""
+
     return JSONResponse(
         status_code=exc.status_code,
         content=ErrorResponse(
@@ -83,6 +37,8 @@ async def service_exception_handler(request: Request, exc: ServiceError) -> JSON
 
 
 async def http_exception_handler(request: Request, exc: HTTPException) -> JSONResponse:
+    """将 HTTPException 转换为统一的 JSON 错误响应。"""
+
     return JSONResponse(
         status_code=exc.status_code,
         content=ErrorResponse(
@@ -94,6 +50,7 @@ async def http_exception_handler(request: Request, exc: HTTPException) -> JSONRe
 async def validation_exception_handler(
     request: Request, exc: RequestValidationError
 ) -> JSONResponse:
+    """统一处理请求校验异常，返回 422 与字段错误详情。"""
     errors = []
     for error in exc.errors():
         errors.append(
@@ -113,6 +70,8 @@ async def validation_exception_handler(
 
 
 async def generic_exception_handler(request: Request, exc: Exception) -> JSONResponse:
+    """兜底异常处理器——将未捕获异常统一转换为 500 JSON 响应。"""
+
     return JSONResponse(
         status_code=500,
         content=ErrorResponse(

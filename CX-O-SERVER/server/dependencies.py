@@ -7,6 +7,8 @@ from fastapi import Depends
 
 
 class ServiceState:
+    """服务依赖容器——持有各服务单例引用，作为 FastAPI 应用全局状态注册表。"""
+
     def __init__(self):
         self.memory_manager = None
         self.async_memory_manager = None
@@ -30,11 +32,13 @@ _service_state: Optional[ServiceState] = None
 
 
 def set_service_state(state: ServiceState):
+    """设置全局服务状态（供应用启动时注入，供 getter 直接调用时回退）。"""
     global _service_state
     _service_state = state
 
 
 def get_service_state(request: Request) -> ServiceState:
+    """从 FastAPI 请求的 app.state services 获取服务状态。"""
     return request.app.state.services
 
 
@@ -69,6 +73,7 @@ def _resolve_state(state=None) -> ServiceState:
 
 
 def get_memory_manager(state: ServiceState = Depends(get_service_state)):
+    """获取记忆管理器实例，未初始化时返回 503。"""
     state = _resolve_state(state)
     if state.memory_manager is None:
         raise HTTPException(status_code=503, detail="记忆服务不可用")
@@ -76,6 +81,7 @@ def get_memory_manager(state: ServiceState = Depends(get_service_state)):
 
 
 def get_async_memory_manager(state: ServiceState = Depends(get_service_state)):
+    """获取异步记忆管理器实例，未初始化时返回 503。"""
     state = _resolve_state(state)
     if state.async_memory_manager is None:
         raise HTTPException(status_code=503, detail="异步记忆服务不可用")
@@ -83,6 +89,7 @@ def get_async_memory_manager(state: ServiceState = Depends(get_service_state)):
 
 
 def get_context_manager(state: ServiceState = Depends(get_service_state)):
+    """获取上下文管理器实例，未初始化时返回 503。"""
     state = _resolve_state(state)
     if state.context_manager is None:
         raise HTTPException(status_code=503, detail="上下文服务不可用")
@@ -90,6 +97,7 @@ def get_context_manager(state: ServiceState = Depends(get_service_state)):
 
 
 def get_acp_manager(state: ServiceState = Depends(get_service_state)):
+    """获取 ACP 管理器实例，未初始化时返回 503。"""
     state = _resolve_state(state)
     if state.acp_manager is None:
         raise HTTPException(status_code=503, detail="ACP服务不可用")
@@ -97,6 +105,7 @@ def get_acp_manager(state: ServiceState = Depends(get_service_state)):
 
 
 def get_llm_client(state: ServiceState = Depends(get_service_state)):
+    """获取 LLM 客户端实例，未初始化时返回 503。"""
     state = _resolve_state(state)
     if state.llm_client is None:
         raise HTTPException(status_code=503, detail="LLM服务不可用")
@@ -104,20 +113,15 @@ def get_llm_client(state: ServiceState = Depends(get_service_state)):
 
 
 def get_secondary_router(state: ServiceState = Depends(get_service_state)):
+    """获取副模型路由器实例，未初始化时返回 503。"""
     state = _resolve_state(state)
     if state.secondary_router is None:
         raise HTTPException(status_code=503, detail="副模型路由器不可用")
     return state.secondary_router
 
 
-def get_decay_batch_processor(state: ServiceState = Depends(get_service_state)):
-    state = _resolve_state(state)
-    if state.decay_batch_processor is None:
-        raise HTTPException(status_code=503, detail="批量衰减处理器不可用")
-    return state.decay_batch_processor
-
-
 def get_mcp_manager(state: ServiceState = Depends(get_service_state)):
+    """获取 MCP 管理器实例，未初始化时返回 503。"""
     state = _resolve_state(state)
     if state.mcp_manager is None:
         raise HTTPException(status_code=503, detail="MCP管理器不可用")
@@ -125,6 +129,7 @@ def get_mcp_manager(state: ServiceState = Depends(get_service_state)):
 
 
 def get_model_router(state: ServiceState = Depends(get_service_state)):
+    """获取模型路由器实例，未初始化时返回 503。"""
     state = _resolve_state(state)
     if state.model_router is None:
         raise HTTPException(status_code=503, detail="模型路由器不可用")
@@ -132,6 +137,7 @@ def get_model_router(state: ServiceState = Depends(get_service_state)):
 
 
 def get_asr_service(state: ServiceState = Depends(get_service_state)):
+    """获取 ASR 服务实例，未初始化时返回 503。"""
     state = _resolve_state(state)
     if state.asr_service is None:
         raise HTTPException(status_code=503, detail="ASR服务不可用")
@@ -139,43 +145,11 @@ def get_asr_service(state: ServiceState = Depends(get_service_state)):
 
 
 def get_tts_service(state: ServiceState = Depends(get_service_state)):
+    """获取 TTS 服务实例，未初始化时返回 503。"""
     state = _resolve_state(state)
     if state.tts_service is None:
         raise HTTPException(status_code=503, detail="TTS服务不可用")
     return state.tts_service
-
-
-def get_graph_database(agent_id: str = "default", state: ServiceState = Depends(get_service_state)):
-    """按 agent_id 获取图数据库实例（按需创建）。
-
-    迁移自 CXHMS：使用 per-agent 注册表 + 双重检查锁实现线程安全的按需创建。
-    - agent_id="default" 时返回默认实例
-    - 其他 agent_id 时返回该 agent 专属实例
-    - 首次访问触发 GraphDatabase.initialize()
-    - 保留 CX-O 原有 state.graph_database 兼容性（默认 agent 写回 state）
-
-    详见 .trae/documents/20260720_模块0_从CXHMS迁移图数据库.md
-    """
-    _resolve_state(state)
-    gdb = _get_or_create_graph_database(agent_id)
-    # 默认 agent 同步写入 state.graph_database 以兼容旧调用方
-    if agent_id == "default" and state.graph_database is None:
-        state.graph_database = gdb
-    return gdb
-
-
-def get_graph_store(agent_id: str = "default", state: ServiceState = Depends(get_service_state)):
-    """按 agent_id 获取图存储实例（按需创建）。
-
-    迁移自 CXHMS：依赖 _get_or_create_graph_store 实现 per-agent 隔离。
-    默认 agent 同步写入 state.graph_store 以兼容旧调用方。
-    """
-    _resolve_state(state)
-    store = _get_or_create_graph_store(agent_id)
-    # 默认 agent 同步写入 state.graph_store 以兼容旧调用方
-    if agent_id == "default" and state.graph_store is None:
-        state.graph_store = store
-    return store
 
 
 # ---- per-agent 图数据库/图存储注册表（迁移自 CXHMS） ----
@@ -218,16 +192,6 @@ def _get_or_create_graph_store(agent_id: str = "default"):
     return _graph_stores[agent_id]
 
 
-def get_graph_database_if_exists(agent_id: str = "default"):
-    """返回已注册的 GraphDatabase 实例，不存在时返回 None（不创建）。"""
-    return _graph_databases.get(agent_id)
-
-
-def get_graph_store_if_exists(agent_id: str = "default"):
-    """返回已注册的 GraphStore 实例，不存在时返回 None（不创建）。"""
-    return _graph_stores.get(agent_id)
-
-
 def remove_graph_database(agent_id: str) -> None:
     """从注册表移除并关闭对应 agent 的图数据库及图存储实例。
 
@@ -251,6 +215,7 @@ def remove_graph_database(agent_id: str) -> None:
 
 
 def get_cxfc_manager(state: ServiceState = Depends(get_service_state)) -> Optional[Any]:
+    """获取 CXFC 管理器实例，可能为 None。"""
     return _resolve_state(state).cxfc_manager
 
 

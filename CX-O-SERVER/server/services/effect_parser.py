@@ -15,6 +15,8 @@ EFFECT_PATTERN = re.compile(r'\[effect:([^\]]+)\]')
 
 
 class EffectParser:
+    """音效解析器——解析文本中的 [effect:name] 标记并加载对应音效数据。"""
+
     def __init__(self, effects_dir: str | None = None):
         self._effects_dir = Path(effects_dir) if effects_dir else None
         self._effects_cache: dict[str, bytes] = {}

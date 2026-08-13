@@ -32,6 +32,7 @@ class Neo4jExporter:
         self._driver = None
 
     def connect(self) -> bool:
+        """建立 Neo4j 驱动连接，返回是否成功。"""
         try:
             from neo4j import GraphDatabase
             self._driver = GraphDatabase.driver(self.uri, auth=(self.user, self.password))
@@ -174,6 +175,7 @@ class Neo4jImporter:
         nodes_data: List[Dict[str, Any]],
         batch_size: int = 100,
     ) -> int:
+        """将 Neo4j 节点数据批量导入 SQLite 图库，返回导入数量。"""
         count = 0
 
         for i in range(0, len(nodes_data), batch_size):
@@ -289,54 +291,5 @@ class Neo4jImporter:
         return json.dumps(properties, ensure_ascii=False)
 
     def clear_mapping(self) -> None:
+        """清空节点 id 映射表。"""
         self._node_id_mapping.clear()
-
-
-class MigrationManager:
-    """迁移管理器"""
-
-    def __init__(self, config: GraphConfig = None):
-        self.config = config or GraphConfig()
-
-    def migrate_from_neo4j(
-        self,
-        neo4j_uri: str = "bolt://localhost:7687",
-        neo4j_user: str = "neo4j",
-        neo4j_password: str = "password",
-        batch_size: int = 1000,
-    ) -> Dict[str, Any]:
-        from server.core.graph.database import get_database
-        from server.core.graph.semantic_search import SemanticSearch
-        from server.core.graph.vectorizer import TextVectorizer
-
-        db = get_database(self.config)
-        db.initialize()
-
-        semantic = SemanticSearch(self.config)
-        semantic.initialize()
-
-        vectorizer = TextVectorizer(self.config.embedding)
-
-        exporter = Neo4jExporter(neo4j_uri, neo4j_user, neo4j_password)
-        importer = Neo4jImporter(db, semantic, vectorizer, self.config)
-
-        try:
-            stats = exporter.get_stats()
-            logger.info(f"源数据库统计: {stats}")
-
-            result = importer.migrate_from_exporter(exporter, batch_size)
-
-            return {
-                "status": "success",
-                "imported_nodes": result["nodes"],
-                "imported_relationships": result["relationships"],
-            }
-        except Exception as e:
-            logger.error(f"迁移失败: {e}")
-            return {
-                "status": "error",
-                "error": str(e),
-            }
-        finally:
-            exporter.close()
-            semantic.close()

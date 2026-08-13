@@ -10,6 +10,7 @@ from dataclasses import dataclass
 
 @dataclass
 class ServiceHealth:
+    """单个服务的健康状态记录（名称、状态、最近检查时间、延迟与错误信息）。"""
     name: str
     status: str = "unknown"
     last_check: float = 0
@@ -18,6 +19,8 @@ class ServiceHealth:
 
 
 class HealthChecker:
+    """服务健康检查器——注册/更新各服务状态，并提供整体健康度查询。"""
+
     def __init__(self):
         self._services: dict[str, ServiceHealth] = {}
         self._check_interval = 30

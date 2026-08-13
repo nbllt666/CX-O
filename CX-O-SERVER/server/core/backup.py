@@ -10,6 +10,7 @@ from typing import Any, Dict, List, Optional
 
 
 class BackupType(enum.Enum):
+    """备份类型枚举，区分全量、增量和差异三种备份模式。"""
     FULL = "full"
     INCREMENTAL = "incremental"
     DIFFERENTIAL = "differential"
@@ -54,6 +55,7 @@ _manager: Optional[BackupManager] = None
 
 
 def get_backup_manager() -> BackupManager:
+    """返回 BackupManager 单例（惰性创建）。"""
     global _manager
     if _manager is None:
         _manager = BackupManager()

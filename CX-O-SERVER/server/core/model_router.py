@@ -133,15 +133,8 @@ class ModelRouter:
             LLMClient实例或None
         """
         model_type = model_type.lower()
-
-        settings = get_settings()
-        if model_type in settings.config.models.defaults:
-            target = settings.config.models.defaults[model_type]
-            if target in self._clients:
-                logger.debug(f"模型 {model_type} 跟随 {target}")
-                return self._clients[target]
-
-        # 返回指定类型的客户端
+        # 客户端在 initialize()/reload_clients() 时已按 get_model_config() 解析后的
+        # 配置逐类型创建，defaults 跟随已在创建阶段落地，此处直接返回对应客户端即可。
         return self._clients.get(model_type)
 
     def get_config(self, model_type: str = "main") -> Optional[ModelConfig]:
@@ -282,11 +275,10 @@ class ModelRouter:
                 "latency_ms": status.latency_ms,
             }
 
-        # 检查是否跟随其他模型
-        if model_type in get_settings().config.models.defaults:
-            target = get_settings().config.models.defaults[model_type]
-            if target != model_type:
-                info["follows"] = target
+        # 检查是否跟随其他模型（仅未显式配置的模型才标记 follows）
+        target = get_settings().config.models.resolve_target(model_type)
+        if target != model_type:
+            info["follows"] = target
 
         return info
 

@@ -193,7 +193,7 @@ async def lifespan(app: FastAPI):
     # 图数据库改为按需创建（lazy init）：
     # - 启动时不预创建 default 数据库文件
     # - graph_tools 内部 _check_graph_store 按需创建 default GraphDatabase + SQLiteGraphStore
-    # - API 路由通过 Depends(get_graph_database) 按需创建
+    # - API 路由经 dependencies._get_or_create_graph_database 按需创建
     # 详见 .trae/documents/20260720_模块0_图数据库按需创建.md
     def _register_graph_tools():
         # graph_tools 启动时注册工具签名，内部 _check_graph_store 按需初始化 graph_store。
@@ -223,12 +223,16 @@ async def lifespan(app: FastAPI):
     master_tools_registered = await init_service("主模型工具", _register_master, logger_=lifespan_logger) is not None
 
     def _register_summary():
+        from server.core.memory.emotion import set_emotion_llm_client
         from server.core.tools import register_summary_tools, set_summary_dependencies
         set_summary_dependencies(
             memory_manager=services.memory_manager,
             model_router=services.model_router,
             context_manager=services.context_manager,
         )
+        # 情感分析统一使用摘要模型
+        if services.model_router:
+            set_emotion_llm_client(services.model_router.get_client("summary"))
         register_summary_tools()
         return True
 
@@ -786,6 +790,7 @@ async def lifespan(app: FastAPI):
 
 
 def create_app() -> FastAPI:
+    """创建并配置 FastAPI 应用，注册 API 路由与网关路由，返回应用实例。"""
     settings = get_settings()
 
     app = FastAPI(
@@ -819,6 +824,7 @@ app = create_app()
 
 
 def main():
+    """读取配置并以 uvicorn 启动 CX-O-SERVER 服务（命令行入口）。"""
     settings = get_settings()
     host = getattr(settings.system, 'host', '0.0.0.0')
     port = getattr(settings.system, 'port', 8000)

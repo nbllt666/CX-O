@@ -13,6 +13,7 @@ logger = get_contextual_logger(__name__)
 
 @dataclass
 class SyncResult:
+    """向量库与 SQLite 同步结果，统计检查总数、同步数、删除数与错误数及详情。"""
     total_checked: int = 0
     synced: int = 0
     removed: int = 0
@@ -21,6 +22,8 @@ class SyncResult:
 
 
 class MilvusLiteVectorStore:
+    """基于 Milvus Lite 的向量存储实现，提供单文件数据库的向量读写、检索与集合管理。"""
+
     COLLECTION_NAME = "memory_vectors"
 
     def __init__(
@@ -30,6 +33,7 @@ class MilvusLiteVectorStore:
         collection_name: str = None,
         embedding_model=None,
     ):
+        """初始化 Milvus Lite 客户端与向量集合，按需创建集合并完成连接。"""
         self.db_path = db_path
         self.vector_size = vector_size
         self.collection_name = collection_name or self.COLLECTION_NAME
@@ -77,11 +81,13 @@ class MilvusLiteVectorStore:
             logger.error(f"检查/创建集合失败: {e}")
 
     def is_available(self) -> bool:
+        """检查 Milvus Lite 客户端是否可用。"""
         return self._client is not None
 
     async def add_memory_vector(
         self, memory_id: int, content: str, embedding: List[float], metadata: Dict = None
     ) -> bool:
+        """向 Milvus 集合插入一条记忆向量记录，成功返回 True。"""
         if not self._client:
             return False
 
@@ -111,6 +117,7 @@ class MilvusLiteVectorStore:
         memory_type: str = None,
         min_score: float = None,
     ) -> List[Dict]:
+        """按查询向量检索相似记忆，将余弦距离归一化为相似度并按 min_score 过滤后返回。"""
         if min_score is None:
             min_score = Settings().config.limits.memory.vector_min_score
         if not self._client:
@@ -148,6 +155,7 @@ class MilvusLiteVectorStore:
             return []
 
     async def delete_by_memory_id(self, memory_id: int) -> bool:
+        """按记忆 ID 从集合删除向量。"""
         if not self._client:
             return False
 
@@ -159,6 +167,7 @@ class MilvusLiteVectorStore:
             return False
 
     async def get_vector_by_id(self, memory_id: int) -> Optional[Dict]:
+        """按记忆 ID 查询向量条目，返回内容与元数据，不存在返回 None。"""
         if not self._client:
             return None
 
@@ -182,10 +191,12 @@ class MilvusLiteVectorStore:
             return None
 
     async def check_exists(self, memory_id: int) -> bool:
+        """检查指定记忆 ID 的向量是否已存在。"""
         result = await self.get_vector_by_id(memory_id)
         return result is not None
 
     async def sync_with_sqlite(self, sqlite_manager, last_sync_time: str = None) -> SyncResult:
+        """将 SQLite 记忆数据增量或全量同步到 Milvus Lite，返回同步统计结果。"""
         if not self._client:
             return SyncResult(errors=1, details=["Milvus Lite不可用"])
 
@@ -262,6 +273,7 @@ class MilvusLiteVectorStore:
         return result
 
     def get_collection_info(self) -> Dict:
+        """返回集合的行数、状态、名称与向量维度信息。"""
         if not self._client:
             return {"error": "Milvus Lite不可用"}
 
@@ -277,6 +289,7 @@ class MilvusLiteVectorStore:
             return {"error": str(e)}
 
     def clear_collection(self) -> bool:
+        """清空并重建集合。"""
         if not self._client:
             return False
 
@@ -290,6 +303,7 @@ class MilvusLiteVectorStore:
             return False
 
     def close(self):
+        """关闭 Milvus Lite 客户端连接。"""
         if self._client:
             try:
                 self._client.close()

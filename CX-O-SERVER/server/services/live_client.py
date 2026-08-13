@@ -23,6 +23,8 @@ logger = logging.getLogger(__name__)
 
 
 class LiveClientHandler:
+    """直播客户端处理器——处理直播弹幕、礼物、进入等实时消息与音频流。"""
+
     def __init__(self, manager: "WebSocketManager", client_id: str, client_config: dict):
         self.manager = manager
         self.client_id = client_id

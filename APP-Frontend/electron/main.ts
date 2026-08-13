@@ -21,6 +21,21 @@ import * as path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { loadStore, saveStore } from './store';
 import { getConfig, setConfig } from './config';
+import {
+  startComputerControlPlugin,
+  stopComputerControlPlugin,
+  getComputerControlAuthorization,
+  setComputerControlAuthorization,
+  getPluginInfo,
+  type ComputerControlPlugin,
+} from './plugins/computerControl/index';
+import { createCxfcClient, type CxfcClient, type PluginRuntimeInfo } from './cxfc/client';
+import {
+  applyStartupOnLaunch,
+  getStartupSettings,
+  setAutoStart,
+  setRunAsAdmin,
+} from './startup';
 
 // ESM 主进程下自行构造 __dirname（产物为 ESM 格式，Node 不注入该全局）
 const __filename = fileURLToPath(import.meta.url);
@@ -28,12 +43,14 @@ const __dirname = path.dirname(__filename);
 
 // vite-plugin-electron 在开发模式注入 dev server 地址；生产模式为 undefined
 const devServerUrl = process.env['VITE_DEV_SERVER_URL'];
+const appIconPath = path.join(__dirname, devServerUrl ? '../public/icon.png' : '../dist/icon.png');
 
 let petWindow: BrowserWindow | null = null;
 let managementWindow: BrowserWindow | null = null;
 let danmakuWindow: BrowserWindow | null = null;
 let tray: Tray | null = null;
 let isQuitting = false;
+let cxfcClient: CxfcClient | null = null;
 
 /** 渲染层路由加载：开发模式走 dev server + hash 路由，生产模式走静态文件 */
 function loadRoute(win: BrowserWindow, route: '/' | '/pet' | '/danmaku'): void {
@@ -77,6 +94,7 @@ function createPetWindow(): BrowserWindow {
     hasShadow: false,
     resizable: true,
     fullscreenable: false,
+    icon: appIconPath,
     webPreferences: sharedWebPreferences(),
   });
 
@@ -115,6 +133,7 @@ function openManagementWindow(): BrowserWindow {
     minHeight: 600,
     show: false,
     backgroundColor: '#12121a', // 与暗色主题底色一致，减少白闪
+    icon: appIconPath,
     webPreferences: sharedWebPreferences(),
   });
 
@@ -152,6 +171,7 @@ function createDanmakuWindow(): BrowserWindow {
     alwaysOnTop: true,
     skipTaskbar: true,
     hasShadow: false,
+    icon: appIconPath,
     webPreferences: sharedWebPreferences(),
   });
 
@@ -200,17 +220,8 @@ function toggleDanmakuWindow(): void {
 // 系统托盘
 // ---------------------------------------------------------------------------
 
-/** 运行时生成 16x16 樱花粉占位图标（BGRA 位图），后续可替换为 assets 下的真实 PNG */
 function createTrayIcon(): NativeImage {
-  const size = 16;
-  const buffer = Buffer.alloc(size * size * 4);
-  for (let i = 0; i < size * size; i++) {
-    buffer[i * 4 + 0] = 0xe1; // B
-    buffer[i * 4 + 1] = 0xb7; // G
-    buffer[i * 4 + 2] = 0xff; // R（#FFB7E1 樱花粉）
-    buffer[i * 4 + 3] = 0xff; // A
-  }
-  return nativeImage.createFromBitmap(buffer, { width: size, height: size });
+  return nativeImage.createFromPath(appIconPath).resize({ width: 16, height: 16 });
 }
 
 function createTray(): void {
@@ -309,6 +320,26 @@ function registerIpcHandlers(): void {
   ipcMain.handle('config:set-backend-url', (_event, url: string) => {
     setConfig('backendUrl', url);
   });
+
+  // 前端启动配置（Task 5）：自启动 / 管理员权限启动，仅作用于前端 Electron。
+  // 浏览器模式渲染层无 electronAPI，不会调用这些 IPC。
+  ipcMain.handle('startup:get-settings', () => getStartupSettings());
+  ipcMain.handle('startup:set-auto-start', (_event, enabled: boolean) => {
+    setAutoStart(!!enabled);
+    return getStartupSettings();
+  });
+  ipcMain.handle('startup:set-run-as-admin', (_event, enabled: boolean) => {
+    setRunAsAdmin(!!enabled);
+    return getStartupSettings();
+  });
+
+  // 电脑控制插件：授权状态读写 + 运行信息。
+  // 渲染层不得直接执行本机控制，只能经主进程校验授权后调用插件（插件服务内部仍校验授权）。
+  ipcMain.handle('computerControl:get-auth', () => getComputerControlAuthorization());
+  ipcMain.handle('computerControl:set-auth', (_event, value: boolean) =>
+    setComputerControlAuthorization(!!value),
+  );
+  ipcMain.handle('computerControl:get-info', () => getPluginInfo());
 }
 
 // ---------------------------------------------------------------------------
@@ -354,16 +385,93 @@ function configureDisplayMediaHandler(): void {
 }
 
 // ---------------------------------------------------------------------------
+// 电脑控制 CXFC 注册（Task 3）：插件服务启动后向后端注册并维持心跳
+// ---------------------------------------------------------------------------
+const CXFC_TOOLS = [
+  {
+    name: 'computer_screen_control',
+    description: '屏幕控制：capture/click/move/scroll',
+    parameters: { action: 'string', x: 'number', y: 'number' },
+    returns: {},
+  },
+  {
+    name: 'computer_keyboard_control',
+    description: '键盘控制：type/key/press/hotkey',
+    parameters: { action: 'string', text: 'string', key: 'string' },
+    returns: {},
+  },
+  {
+    name: 'computer_run_command',
+    description: '运行指令：结构化 command+args+cwd+timeout_ms+env 白名单',
+    parameters: { command: 'string', args: 'string[]', cwd: 'string', timeout_ms: 'number' },
+    returns: {},
+  },
+];
+
+function buildCxfcRuntimeInfo(plugin: ComputerControlPlugin): PluginRuntimeInfo {
+  return {
+    host: '127.0.0.1',
+    port: plugin.getPort(),
+    name: 'APP-Frontend 电脑控制插件',
+    version: '1.0.0',
+    capabilities: ['computer_control'],
+    tools: CXFC_TOOLS,
+    skills: [],
+    token: plugin.token,
+    tls_cert_fingerprint: plugin.getFingerprint(),
+    // B-1：注册载荷携带自签名证书 PEM 原文，供后端 TOFU 首次信任（证书固定）与 https 访问
+    tls_cert_pem: plugin.getTlsCertPem(),
+  };
+}
+
+/** 插件启动成功后调用：以后端地址为基址注册并维持心跳；后端不可用自动重连。 */
+function startCxfcRegistration(plugin: ComputerControlPlugin): void {
+  const backendUrl = getConfig('backendUrl') || 'http://127.0.0.1:8000';
+  cxfcClient = createCxfcClient({
+    backendUrl,
+    readPluginInfo: () => buildCxfcRuntimeInfo(plugin),
+    logger: (line) => console.log(line),
+  });
+  cxfcClient.start();
+}
+
+async function stopCxfcRegistration(): Promise<void> {
+  if (!cxfcClient) return;
+  try {
+    await cxfcClient.stop();
+  } finally {
+    cxfcClient = null;
+  }
+}
+
+// ---------------------------------------------------------------------------
 // 应用生命周期
 // ---------------------------------------------------------------------------
 app.whenReady().then(() => {
   Menu.setApplicationMenu(null);
   ensureDefaultConfig();
+  // 前端启动配置（Task 5）：若持久化 run_as_admin=true 且当前未提权，请求 UAC 提权 relaunch。
+  // 用户拒绝 UAC 时当前实例保持可用（不阻断后续窗口创建）。
+  try {
+    applyStartupOnLaunch();
+  } catch (err) {
+    console.error('[startup] 启动时应用提权配置失败:', err);
+  }
   registerIpcHandlers();
   configureCors();
   configureDisplayMediaHandler();
   createPetWindow();
   createTray();
+
+  // 电脑控制插件：随应用启动 HTTPS 插件服务（异步，失败不阻断主流程）
+  startComputerControlPlugin()
+    .then((plugin) => {
+      // Task 3：插件服务就绪后向后端注册并维持心跳/重连/注销
+      startCxfcRegistration(plugin);
+    })
+    .catch((err) => {
+      console.error('[computerControl] 插件启动失败:', err);
+    });
 
   // 全局快捷键：Ctrl/Cmd+Shift+D 切换弹幕窗
   globalShortcut.register('CommandOrControl+Shift+D', () => toggleDanmakuWindow());
@@ -391,6 +499,10 @@ app.whenReady().then(() => {
 
 app.on('will-quit', () => {
   globalShortcut.unregisterAll();
+  // 停止 CXFC 注册并注销插件（Task 3）
+  void stopCxfcRegistration();
+  // 停止电脑控制插件 HTTPS 服务，回收端口与连接
+  void stopComputerControlPlugin();
 });
 
 app.on('before-quit', () => {

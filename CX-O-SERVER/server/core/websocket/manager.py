@@ -67,8 +67,6 @@ class WebSocketManager:
         self._running = False
         self._offline_callback: Optional[Callable] = None
         self._agent_timeouts: Dict[str, int] = {}  # agent_id -> timeout seconds
-        self._tts_count: int = 0
-        self._asr_count: int = 0
         self._llm_count: int = 0
         # BUG-B07 修复: 使用 asyncio.Lock 保护共享可变 dict 的并发读写
         # 避免在 FastAPI 多请求并发访问时出现数据竞争
@@ -410,12 +408,6 @@ class WebSocketManager:
                 except Exception as e:
                     logger.error(f"离线回调失败 {agent_id}: {e}")
 
-    def increment_tts_count(self):
-        self._tts_count += 1
-
-    def increment_asr_count(self):
-        self._asr_count += 1
-
     def increment_llm_count(self):
         self._llm_count += 1
 
@@ -425,8 +417,6 @@ class WebSocketManager:
             "total_connections": len(self.connections),
             "total_channels": len(self.channels),
             "channels": {channel: len(clients) for channel, clients in self.channels.items()},
-            "tts_count": self._tts_count,
-            "asr_count": self._asr_count,
             "llm_count": self._llm_count,
             "client_count": len(self.connections),
         }

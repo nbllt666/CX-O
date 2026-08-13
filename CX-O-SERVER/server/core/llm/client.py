@@ -34,14 +34,9 @@ class LLMError(Exception):
 
 
 @dataclass
-class LLMMessage:
-    role: str
-    content: str
-    name: Optional[str] = None
-
-
-@dataclass
 class LLMResponse:
+    """LLM 调用结果数据类：封装响应内容、结束原因、用量与错误信息。"""
+
     content: str
     finish_reason: str
     usage: Dict = None
@@ -52,17 +47,22 @@ class LLMResponse:
 
 
 class LLMClient(ABC):
+    """LLM 客户端抽象基类：定义聊天、流式聊天、模型名、可用性与嵌入的统一接口。"""
+
     @abstractmethod
     async def chat(self, messages: List[Dict], stream: bool = False, **kwargs) -> LLMResponse:
+        """发送聊天请求并返回响应。"""
         pass
 
     @abstractmethod
     async def stream_chat(self, messages: List[Dict], **kwargs):
+        """流式聊天：逐块产出内容。"""
         pass
 
     @property
     @abstractmethod
     def model_name(self) -> str:
+        """返回当前模型的标识名称。"""
         pass
 
     @abstractmethod
@@ -86,6 +86,8 @@ class LLMClient(ABC):
 
 
 class OllamaClient(LLMClient):
+    """Ollama 客户端：通过 Ollama HTTP API 实现聊天、流式聊天与嵌入。"""
+
     def __init__(
         self,
         host: str = "http://localhost:11434",
@@ -95,6 +97,7 @@ class OllamaClient(LLMClient):
         dimension: int = 768,
         api_key: str = None,
     ):
+        """初始化 Ollama 客户端，保存服务地址与模型参数。"""
         self.host = host.rstrip("/")
         self.model = model
         self.temperature = temperature
@@ -231,6 +234,7 @@ class OllamaClient(LLMClient):
             )
 
     async def stream_chat(self, messages: List[Dict], **kwargs):
+        """流式聊天：逐块产出内容、思考过程或工具调用。"""
         try:
             request_body = {
                 "model": self.model,
@@ -285,6 +289,7 @@ class OllamaClient(LLMClient):
 
     @property
     def model_name(self) -> str:
+        """返回 Ollama 模型标识。"""
         return f"ollama/{self.model}"
 
     async def is_available(self) -> bool:
@@ -321,6 +326,8 @@ class OllamaClient(LLMClient):
 
 
 class VLLMClient(LLMClient):
+    """VLLM 客户端：通过 vLLM 的 OpenAI 兼容接口实现聊天、流式聊天与嵌入。"""
+
     def __init__(
         self,
         host: str = "http://localhost:8000",
@@ -329,6 +336,7 @@ class VLLMClient(LLMClient):
         max_tokens: int = 4096,
         dimension: int = 768,
     ):
+        """初始化 VLLM 客户端，并对 max_tokens 做防御性上限钳制。"""
         self.host = host.rstrip("/")
         self.model = model
         self.temperature = temperature
@@ -464,6 +472,7 @@ class VLLMClient(LLMClient):
             )
 
     async def stream_chat(self, messages: List[Dict], **kwargs):
+        """流式聊天：逐块产出内容或工具调用，并记录首 token 延迟。"""
         try:
             # 防御性 clamp max_tokens：调用方可能传入配置中的大值（如 131072），
             # 超过 vLLM 模型 max_model_len（32768）会触发 400 Bad Request，
@@ -539,6 +548,7 @@ class VLLMClient(LLMClient):
 
     @property
     def model_name(self) -> str:
+        """返回 VLLM 模型标识。"""
         return f"vllm/{self.model}"
 
     async def is_available(self) -> bool:
@@ -581,6 +591,8 @@ class VLLMClient(LLMClient):
 
 
 class TRTLLMClient(LLMClient):
+    """TRT-LLM 客户端：通过 TensorRT-LLM 的 OpenAI 兼容接口实现聊天、流式聊天与嵌入。"""
+
     def __init__(
         self,
         host: str = "http://localhost:8000",
@@ -590,6 +602,7 @@ class TRTLLMClient(LLMClient):
         dimension: int = 768,
         api_key: str = None,
     ):
+        """初始化 TRT-LLM 客户端，保存服务地址与模型参数。"""
         self.host = host.rstrip("/")
         self.model = model
         self.temperature = temperature
@@ -598,6 +611,7 @@ class TRTLLMClient(LLMClient):
         self.api_key = api_key
 
     def _validate_messages(self, messages: List[Dict]) -> None:
+        """验证消息列表的角色与必填字段格式。"""
         if not messages:
             raise ValueError("消息列表不能为空")
         for i, msg in enumerate(messages):
@@ -611,6 +625,7 @@ class TRTLLMClient(LLMClient):
                 raise ValueError(f"消息 {i} 的 role 必须是 'system', 'user', 'assistant' 或 'tool'")
 
     async def chat(self, messages: List[Dict], stream: bool = False, **kwargs) -> LLMResponse:
+        """发送聊天请求。"""
         try:
             self._validate_messages(messages)
 
@@ -703,6 +718,7 @@ class TRTLLMClient(LLMClient):
             )
 
     async def stream_chat(self, messages: List[Dict], **kwargs):
+        """流式聊天：逐块产出内容或工具调用。"""
         try:
             request_body = {
                 "model": self.model,
@@ -745,9 +761,11 @@ class TRTLLMClient(LLMClient):
 
     @property
     def model_name(self) -> str:
+        """返回 TRT-LLM 模型标识。"""
         return f"trtllm/{self.model}"
 
     async def is_available(self) -> bool:
+        """检查 TRT-LLM 模型是否可用。"""
         try:
             # 使用预热好的 shared HTTP client，避免每次调用都重新构造 httpx.AsyncClient
             client = get_shared_http_client()
@@ -757,6 +775,7 @@ class TRTLLMClient(LLMClient):
             return False
 
     async def get_embedding(self, text: str) -> Optional[List[float]]:
+        """使用 TRT-LLM 获取文本的向量嵌入。"""
         try:
             headers = {"Content-Type": "application/json"}
             if self.api_key:
@@ -785,10 +804,24 @@ class TRTLLMClient(LLMClient):
 
 
 class LLMFactory:
+    """LLM 客户端工厂：按 provider 创建并缓存客户端实例。"""
+
     _clients: Dict[str, LLMClient] = {}
 
     @classmethod
     def create_client(cls, provider: str = "ollama", **kwargs) -> LLMClient:
+        """按 provider 创建 LLM 客户端，命中缓存直接返回。
+
+        Args:
+            provider: 提供商（ollama / vllm / trtllm）
+            **kwargs: 客户端初始化参数（含 model 用于缓存键）
+
+        Returns:
+            LLMClient: 客户端实例
+
+        Raises:
+            ValueError: 不支持的提供商
+        """
         key = f"{provider}:{kwargs.get('model', 'default')}"
 
         if key in cls._clients:
@@ -807,9 +840,6 @@ class LLMFactory:
         return client
 
     @classmethod
-    def get_client(cls, provider: str = "ollama", **kwargs) -> LLMClient:
-        return cls.create_client(provider, **kwargs)
-
-    @classmethod
     def clear_cache(cls):
+        """清空已缓存的客户端实例。"""
         cls._clients.clear()

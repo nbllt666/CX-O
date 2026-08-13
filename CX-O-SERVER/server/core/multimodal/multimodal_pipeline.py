@@ -39,12 +39,13 @@ import os
 import time
 import uuid
 from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeoutError
-from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
 from pydantic import BaseModel
 
 from .workers import CharacterCardWorker, ImageWorker, TextWorker, VLLMNativeWorker
+
+from server.core.utils import iso_now as _iso_now
 
 logger = logging.getLogger(__name__)
 
@@ -88,11 +89,6 @@ _DEFAULT_CONFIG: Dict[str, Any] = {
     "vllm_base_url": "http://127.0.0.1:8080",
     "vllm_timeout_seconds": 300,
 }
-
-
-def _iso_now() -> str:
-    """返回 ISO 8601 带时区时间戳（schema created_at format=date-time）。"""
-    return datetime.now(timezone.utc).isoformat()
 
 
 # =========================================================================== #
@@ -640,40 +636,6 @@ class MultimodalPipeline:
         raw = self._image_worker_impl.merge(ocr_blocks_dicts, vision_description)
         return self._build_artifact("image", source_ref, raw)
 
-    def _ocr_worker(self, image_path: str) -> List[OCRBlock]:
-        """内部方法：PaddleOCR worker。
-
-        Args:
-            image_path: 图片路径
-
-        Returns:
-            OCR 文本块列表（OCRBlock 实例，含 text + bbox）
-
-        Raises:
-            FileNotFoundError: 图片不存在（404）
-            RuntimeError: PaddleOCR 引擎异常（500）
-        """
-        blocks_dicts, _avg_conf = self._image_worker_impl.ocr(image_path)
-        return [
-            OCRBlock(text=b["text"], bbox=b["bbox"]) for b in blocks_dicts
-        ]
-
-    def _vision_worker(self, image_path: str) -> str:
-        """内部方法：vLLM vision worker。
-
-        Args:
-            image_path: 图片路径
-
-        Returns:
-            视觉描述文本
-
-        Raises:
-            ConnectionError: vLLM vision 端点不可用 / 未配置（503）
-            RuntimeError: vision 推理失败（500）
-            FileNotFoundError: 图片不存在（404）
-        """
-        return self._image_worker_impl.vision(image_path)
-
     def _vllm_native_worker(
         self,
         source_ref: str,
@@ -735,28 +697,6 @@ class MultimodalPipeline:
             provider=provider,
         )
         return self._build_artifact(modality, source_ref, raw)
-
-    def _merge_ocr_vision(
-        self,
-        ocr_blocks: List[OCRBlock],
-        vision_description: str,
-    ) -> MultimodalArtifact:
-        """内部方法：合并 OCR + vision 通道结果。
-
-        Args:
-            ocr_blocks: OCR 文本块（OCRBlock 实例列表）
-            vision_description: vision 描述（降级时为空串）
-
-        Returns:
-            合并后的 MultimodalArtifact
-
-        Note:
-            若未先调用 _ocr_worker，ImageWorker._last_ocr_confidence 为默认 0.9，
-            confidence 取 min(0.9, 0.9)=0.9；降级时（vision 为空）confidence=0.7。
-        """
-        blocks_dicts = [b.model_dump() for b in ocr_blocks]
-        raw = self._image_worker_impl.merge(blocks_dicts, vision_description)
-        return self._build_artifact("image", "[merged_ocr_vision]", raw)
 
     # ------------------------------------------------------------------ #
     # 装配辅助

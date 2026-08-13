@@ -12,16 +12,9 @@ logger = get_contextual_logger(__name__)
 
 
 @dataclass
-class DecayParams:
-    alpha: float
-    lambda1: float
-    lambda2: float
-    min_score: float
-    permanent: bool
-
-
-@dataclass
 class ImportanceLevel:
+    """重要性等级数据模型：定义分数区间、衰减类型与衰减参数。"""
+
     score_range: Tuple[float, float]
     decay_type: str
     params: Dict
@@ -30,6 +23,8 @@ class ImportanceLevel:
 
 
 class DecayCalculator:
+    """记忆衰减计算器——基于时间与访问频率计算记忆强度的衰减与复原分数。"""
+
     IMPORTANCE_LEVELS = {
         1.0: ImportanceLevel(
             score_range=(1.0, 1.0),
@@ -76,12 +71,26 @@ class DecayCalculator:
     }
 
     def __init__(self):
+        """初始化衰减计算器，记录当前时间作为计算基准。"""
         self.current_time = datetime.now()
 
     def set_current_time(self, time: datetime):
+        """设置当前时间，用于时间差计算（测试用）。
+
+        Args:
+            time: 要设置的当前时间
+        """
         self.current_time = time
 
     def get_level_from_importance(self, importance: float) -> ImportanceLevel:
+        """根据重要性分数返回对应的衰减等级。
+
+        Args:
+            importance: 重要性分数（0-1）
+
+        Returns:
+            ImportanceLevel: 匹配的衰减等级
+        """
         if importance >= 0.95:
             return self.IMPORTANCE_LEVELS[1.0]
         elif importance >= 0.85:
@@ -96,6 +105,14 @@ class DecayCalculator:
             return self.IMPORTANCE_LEVELS[0.15]
 
     def calculate_days_elapsed(self, created_at: str) -> float:
+        """计算创建时间到当前时间经过的天数（统一时区处理）。
+
+        Args:
+            created_at: 创建时间（ISO 格式）
+
+        Returns:
+            float: 经过的天数，计算失败时返回 0.0
+        """
         try:
             created = datetime.fromisoformat(created_at.replace("Z", "+00:00"))
             current = self.current_time
@@ -170,6 +187,14 @@ class DecayCalculator:
         return min(importance * decay_factor, 1.0)
 
     def calculate_permanent_decay(self, importance: float) -> float:
+        """返回永久记忆的衰减分数（恒为 1.0，不随时间衰减）。
+
+        Args:
+            importance: 初始重要性分数
+
+        Returns:
+            float: 恒为 1.0
+        """
         return 1.0
 
     def calculate_decay(
@@ -180,6 +205,18 @@ class DecayCalculator:
         decay_params: Optional[Dict] = None,
         permanent: bool = False,
     ) -> float:
+        """按衰减类型计算经过时间衰减后的分数（统一入口）。
+
+        Args:
+            importance: 重要性分数
+            created_at: 创建时间（ISO 格式）
+            decay_type: 衰减类型（zero / exponential / ebbinghaus）
+            decay_params: 衰减参数
+            permanent: 是否永久记忆
+
+        Returns:
+            float: 衰减后的分数
+        """
         days_elapsed = self.calculate_days_elapsed(created_at)
 
         if decay_type == "zero" or importance >= 0.95 or permanent:
@@ -216,6 +253,16 @@ class DecayCalculator:
     def calculate_reactivation_score(
         self, base_score: float, reactivation_count: int, emotion_intensity: float = 0.0
     ) -> float:
+        """计算再激活加成后的分数（访问越频繁分数越高）。
+
+        Args:
+            base_score: 基础分数
+            reactivation_count: 再激活次数
+            emotion_intensity: 情感强度
+
+        Returns:
+            float: 增强后的分数（上限 1.0）
+        """
         if reactivation_count <= 0:
             return base_score
 
@@ -375,6 +422,14 @@ class DecayCalculator:
         return max(time_score, 0.0)
 
     def calculate_importance_score(self, memory: Dict) -> float:
+        """返回记忆的重要性分数（0-1）。
+
+        Args:
+            memory: 记忆数据
+
+        Returns:
+            float: 重要性分数
+        """
         return memory.get("importance_score", memory.get("importance", 3) / 5.0)
 
     def calculate_final_score(
@@ -385,6 +440,18 @@ class DecayCalculator:
         apply_reactivation: bool = True,
         apply_network: bool = False,
     ) -> float:
+        """综合重要性、时间与相关性维度计算最终记忆评分。
+
+        Args:
+            memory: 记忆数据
+            query_embedding: 查询向量嵌入
+            weights: 三维权重 (重要性, 时间, 相关性)
+            apply_reactivation: 是否应用再激活加成
+            apply_network: 是否应用网络效应
+
+        Returns:
+            float: 最终评分（上限 1.0）
+        """
         importance_w, time_w, relevance_w = weights
 
         importance_score = self.calculate_importance_score(memory)
@@ -406,20 +473,15 @@ class DecayCalculator:
         return min(base_score, 1.0)
 
 
-def importance_to_score(importance: int) -> float:
-    if importance >= 5:
-        return 0.95
-    elif importance >= 4:
-        return 0.77
-    elif importance >= 3:
-        return 0.60
-    elif importance >= 2:
-        return 0.40
-    else:
-        return 0.15
-
-
 def score_to_importance(score: float) -> int:
+    """将 0-1 分数映射为 1-5 的重要性等级。
+
+    Args:
+        score: 分数（0-1）
+
+    Returns:
+        int: 重要性等级（1-5）
+    """
     if score >= 0.9:
         return 5
     elif score >= 0.7:

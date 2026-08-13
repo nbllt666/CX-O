@@ -16,6 +16,8 @@ logger = logging.getLogger(__name__)
 
 @dataclass
 class QueryMetrics:
+    """查询与搜索的聚合指标，含延迟与缓存统计。"""
+
     total_queries: int = 0
     total_searches: int = 0
     query_latencies: deque = field(default_factory=lambda: deque(maxlen=1000))
@@ -24,17 +26,21 @@ class QueryMetrics:
     cache_misses: int = 0
 
     def add_query_latency(self, latency: float):
+        """记录一次查询延迟。"""
         self.query_latencies.append(latency)
         self.total_queries += 1
 
     def add_search_latency(self, latency: float):
+        """记录一次搜索延迟。"""
         self.search_latencies.append(latency)
         self.total_searches += 1
 
     def add_cache_hit(self):
+        """记录一次缓存命中。"""
         self.cache_hits += 1
 
     def add_cache_miss(self):
+        """记录一次缓存未命中。"""
         self.cache_misses += 1
 
     @property
@@ -43,6 +49,7 @@ class QueryMetrics:
         return self.cache_hits / total if total > 0 else 0.0
 
     def get_latency_p95(self) -> float:
+        """返回查询延迟的 P95 分位数。"""
         if not self.query_latencies:
             return 0.0
         sorted_latencies = sorted(self.query_latencies)
@@ -50,6 +57,7 @@ class QueryMetrics:
         return sorted_latencies[index] if index < len(sorted_latencies) else sorted_latencies[-1]
 
     def get_search_latency_p95(self) -> float:
+        """返回搜索延迟的 P95 分位数。"""
         if not self.search_latencies:
             return 0.0
         sorted_latencies = sorted(self.search_latencies)
@@ -61,6 +69,7 @@ _global_metrics = QueryMetrics()
 
 
 def get_metrics() -> QueryMetrics:
+    """返回模块级全局 QueryMetrics 单例。"""
     return _global_metrics
 
 
@@ -71,6 +80,7 @@ class GraphMonitor:
         self.db = db
 
     def health_check(self) -> Dict[str, Any]:
+        """执行图数据库与向量存储的健康检查。"""
         db_status = self._check_database()
         vector_status = self._check_vector_store()
 
@@ -93,6 +103,7 @@ class GraphMonitor:
         }
 
     def get_metrics(self) -> Dict[str, Any]:
+        """返回查询、搜索与缓存的聚合指标。"""
         metrics = get_metrics()
 
         return {
@@ -113,6 +124,7 @@ class GraphMonitor:
         }
 
     def get_graph_stats(self, agent_id: str = "default") -> Dict[str, Any]:
+        """获取图的规模与结构统计信息。"""
         node_count = self._get_node_count(agent_id)
         edge_count = self._get_edge_count(agent_id)
 

@@ -6,15 +6,12 @@ import json
 import logging
 import sys
 
-import pytest
-
 from server.core.logging_config import (
     ColoredConsoleFormatter,
     ContextualLogger,
     LogContext,
     StructuredLogFormatter,
     get_contextual_logger,
-    get_logger,
     setup_logging,
 )
 
@@ -210,10 +207,6 @@ class TestSetupLogging:
             None,
         )
         assert isinstance(file_handler.formatter, StructuredLogFormatter)
-
-
-def test_get_logger_returns_named_logger():
-    assert get_logger("my.logger").name == "my.logger"
 
 
 def test_get_contextual_logger_returns_contextual():

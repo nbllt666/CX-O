@@ -18,6 +18,7 @@ class TextVectorizer:
     """文本向量化器"""
 
     def __init__(self, config: EmbeddingConfig = None):
+        """初始化文本向量化器（缺省使用全局配置）。"""
         self.config = config or get_graph_config().embedding
         self._model = None
         self._device = self.config.device
@@ -74,12 +75,14 @@ class TextVectorizer:
         return self.config.vector_dim
 
     def close(self):
+        """释放模型资源。"""
         if self._model:
             del self._model
             self._model = None
 
 
 def get_vectorizer() -> TextVectorizer:
+    """获取全局单例向量化器实例。"""
     global _vectorizer
     if _vectorizer is None:
         _vectorizer = TextVectorizer()

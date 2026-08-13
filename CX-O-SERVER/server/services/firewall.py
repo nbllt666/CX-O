@@ -14,6 +14,7 @@ logger = logging.getLogger(__name__)
 
 @dataclass
 class FirewallConfig:
+    """弹幕防火墙配置项——定义各过滤规则的开关与阈值参数。"""
     enabled: bool = True
     max_messages_per_second: float = 5.0
     max_messages_per_minute: int = 100
@@ -32,6 +33,8 @@ class FirewallConfig:
 
 @dataclass
 class FilterResult:
+    """弹幕过滤结果——记录是否放行及命中的原因。"""
+
     allowed: bool
     reason: str = ""
     filtered_content: str = ""
@@ -39,6 +42,7 @@ class FilterResult:
 
 
 class FirewallService:
+    """弹幕防火墙服务——对弹幕执行限频、去重、长度、用户与关键词过滤。"""
     _instance = None
 
     def __init__(self):
@@ -211,4 +215,5 @@ class FirewallService:
 
 
 def get_firewall_service() -> FirewallService:
+    """返回全局唯一的 FirewallService 单例。"""
     return FirewallService.get_instance()

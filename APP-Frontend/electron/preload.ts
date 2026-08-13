@@ -32,4 +32,15 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // 后端地址配置
   getBackendUrl: () => ipcRenderer.invoke('config:get-backend-url'),
   setBackendUrl: (url: string) => ipcRenderer.invoke('config:set-backend-url', url),
+
+  // 前端启动配置（Task 5）：自启动 / 管理员权限启动
+  getStartupSettings: () => ipcRenderer.invoke('startup:get-settings'),
+  setAutoStart: (enabled: boolean) => ipcRenderer.invoke('startup:set-auto-start', enabled),
+  setRunAsAdmin: (enabled: boolean) => ipcRenderer.invoke('startup:set-run-as-admin', enabled),
+
+  // 电脑控制插件：授权状态读写与运行信息（渲染层仅能读/写授权开关，本机控制经主进程）
+  getComputerControlAuth: () => ipcRenderer.invoke('computerControl:get-auth'),
+  setComputerControlAuth: (value: boolean) =>
+    ipcRenderer.invoke('computerControl:set-auth', value),
+  getComputerControlInfo: () => ipcRenderer.invoke('computerControl:get-info'),
 });

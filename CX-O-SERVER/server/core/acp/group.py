@@ -12,6 +12,8 @@ logger = get_contextual_logger(__name__)
 
 
 class ACPGroupManager:
+    """ACP 群组管理器，封装群组的创建、查询、成员加入/退出/邀请/踢出及群消息广播，委托给 ACPManager 持久化。"""
+
     def __init__(self, acp_manager: ACPManager):
         self.acp_manager = acp_manager
 
@@ -24,6 +26,7 @@ class ACPGroupManager:
         max_members: int = 50,
         metadata: Dict = None,
     ) -> ACPGroupInfo:
+        """创建新群组，创建者作为管理员，返回群组信息。"""
         group_id = str(uuid.uuid4())
 
         creator = ACPGroupMember(agent_id=creator_id, agent_name=creator_name, role="admin")
@@ -48,18 +51,23 @@ class ACPGroupManager:
         return group
 
     async def get_group(self, group_id: str) -> Optional[ACPGroupInfo]:
+        """按 ID 查询群组，不存在时返回 None。"""
         return await self.acp_manager.get_group(group_id)
 
     async def list_groups(self) -> List[Dict]:
+        """返回全部群组的字典列表。"""
         return await self.acp_manager.list_groups()
 
     async def update_group(self, group_id: str, **kwargs) -> bool:
+        """按关键字更新群组字段，返回是否成功。"""
         return await self.acp_manager.update_group(group_id, **kwargs)
 
     async def delete_group(self, group_id: str) -> bool:
+        """删除指定群组，返回是否成功。"""
         return await self.acp_manager.delete_group(group_id)
 
     async def join_group(self, group_id: str, agent_id: str, agent_name: str) -> bool:
+        """将 Agent 加入指定群组，校验群组活跃状态与成员上限，成功时广播成员加入事件。"""
         group = await self.acp_manager.get_group(group_id)
         if not group:
             return False
@@ -87,6 +95,7 @@ class ACPGroupManager:
         return success
 
     async def leave_group(self, group_id: str, agent_id: str) -> bool:
+        """Agent 退出群组，群主不可退出，成功时广播成员离开事件。"""
         group = await self.acp_manager.get_group(group_id)
         if not group:
             return False
@@ -107,6 +116,7 @@ class ACPGroupManager:
         return success
 
     async def invite_member(self, group_id: str, inviter_id: str, invitee_agent_id: str) -> bool:
+        """由群组成员发起邀请，校验邀请者身份后返回是否允许邀请。"""
         group = await self.acp_manager.get_group(group_id)
         if not group:
             return False
@@ -122,6 +132,7 @@ class ACPGroupManager:
         return True
 
     async def kick_member(self, group_id: str, kicker_id: str, target_id: str) -> bool:
+        """管理员将成员移出群组，群主不可被移除，成功时广播成员被踢事件。"""
         group = await self.acp_manager.get_group(group_id)
         if not group:
             return False
@@ -159,6 +170,7 @@ class ACPGroupManager:
         content: Dict,
         msg_type: str = "group_message",
     ) -> ACPMessageInfo:
+        """向指定群组广播一条消息，群组不存在或停用时报错，返回构造并已发送的消息对象。"""
         group = await self.acp_manager.get_group(group_id)
         if not group or not group.is_active:
             raise ValueError(f"群组不存在或已停用: {group_id}")
@@ -180,9 +192,23 @@ class ACPGroupManager:
         return message
 
     async def get_group_messages(self, group_id: str, limit: int = 50) -> List[Dict]:
+        """获取指定群组的消息列表。
+
+        Args:
+            group_id: 群组 ID
+            limit: 返回的最大消息条数
+
+        Returns:
+            List[Dict]: 消息字典列表
+        """
         return await self.acp_manager.get_messages(group_id, group_id=group_id, limit=limit)
 
     async def get_member_groups(self, agent_id: str) -> List[Dict]:
+        """查询指定 agent 所在的所有群组。
+
+        Returns:
+            List[Dict]: 该 agent 所在的群组字典列表
+        """
         all_groups = await self.acp_manager.list_groups()
         member_groups = []
 
@@ -196,6 +222,7 @@ class ACPGroupManager:
         return member_groups
 
     async def _broadcast_group_event(self, group_id: str, event_type: str, event_data: Dict):
+        """向指定群组发送一条系统控制事件消息（成员加入/离开/被踢等）。"""
         message = ACPMessageInfo(
             id=str(uuid.uuid4()),
             msg_type="control",
@@ -210,4 +237,5 @@ class ACPGroupManager:
         await self.acp_manager.send_message(message)
 
     def get_status(self) -> Dict:
+        """返回分组管理功能的状态信息。"""
         return {"enabled": True, "max_groups_per_agent": 10}

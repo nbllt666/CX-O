@@ -24,11 +24,13 @@ ws_manager = get_websocket_manager()
 
 
 async def handle_ping(websocket: WebSocket, message: dict, client_id: str):
+    """处理 PING 协议消息，返回 PONG 响应。"""
     timestamp = message.get("timestamp", time.time())
     await ws_manager.send_message(client_id, create_pong(timestamp))
 
 
 async def handle_live_connection(websocket: WebSocket, client_id: str):
+    """处理实时语音客户端连接，接收并路由文本/音频消息。"""
     await ws_manager.connect(websocket, client_id, send_connected=False)
     logger.info(f"Live client connected: {client_id}")
 
@@ -71,6 +73,7 @@ async def handle_live_connection(websocket: WebSocket, client_id: str):
 
 
 async def handle_system_health(websocket: WebSocket, message: dict, client_id: str):
+    """处理系统健康查询请求，返回所有注册服务的健康状态。"""
     request_id = message.get("request_id", "")
     status = health_checker.get_all_status()
     await ws_manager.send_message(client_id, create_response(
@@ -81,6 +84,7 @@ async def handle_system_health(websocket: WebSocket, message: dict, client_id: s
 
 
 async def websocket_handler(websocket: WebSocket, client_id: str):
+    """主 WebSocket 消息处理器——解析 JSON 并按 action 分发到注册的处理器。"""
     await ws_manager.connect(websocket, client_id, send_connected=False)
 
     try:

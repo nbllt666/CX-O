@@ -14,6 +14,8 @@ logger = logging.getLogger(__name__)
 
 
 class VADMode(Enum):
+    """语音活动检测模式：能量阈值 / WebRTC / Silero。"""
+
     ENERGY = "energy"
     WEBRTC = "webrtc"
     SILERO = "silero"
@@ -21,6 +23,8 @@ class VADMode(Enum):
 
 @dataclass
 class VADState:
+    """VAD 状态数据类：记录说话中状态、起止时间与各类时长统计。"""
+
     is_speaking: bool = False
     speech_start_time: float = 0
     last_speech_time: float = 0
@@ -30,9 +34,12 @@ class VADState:
 
 
 class VADProcessor:
+    """语音活动检测处理器：按配置模式检测语音并触发起止回调。"""
+
     _instance = None
 
     def __init__(self):
+        """初始化 VAD 处理器，设置默认参数与检测状态。"""
         self.mode = VADMode.WEBRTC
         self.sample_rate = 16000
         self.frame_duration_ms = 30
@@ -54,11 +61,13 @@ class VADProcessor:
 
     @classmethod
     def get_instance(cls):
+        """获取全局 VAD 处理器单例。"""
         if cls._instance is None:
             cls._instance = cls()
         return cls._instance
 
     def set_config(self, config: dict):
+        """应用 VAD 配置并重新初始化检测器。"""
         mode_str = config.get("mode", "webrtc")
         self.mode = VADMode(mode_str)
         self.sample_rate = config.get("sample_rate", 16000)
@@ -109,10 +118,12 @@ class VADProcessor:
         on_speech_start: Optional[Callable] = None,
         on_speech_end: Optional[Callable] = None
     ):
+        """设置语音开始与结束的回调函数。"""
         self._on_speech_start_callback = on_speech_start
         self._on_speech_end_callback = on_speech_end
 
     def process_audio(self, audio_data: bytes) -> dict:
+        """处理一帧音频，更新说话状态并返回检测结果字典。"""
         current_time = time.time()
 
         if self.mode == VADMode.ENERGY:
@@ -233,21 +244,27 @@ class VADProcessor:
             return self._detect_energy(audio_data), 0.5
 
     def reset(self):
+        """重置 VAD 检测状态。"""
         self._state = VADState()
 
     @property
     def is_speaking(self) -> bool:
+        """当前是否处于说话状态。"""
         return self._state.is_speaking
 
     @property
     def speech_duration_ms(self) -> float:
+        """当前说话持续时长（毫秒）。"""
         return self._state.speech_duration_ms
 
 
 class AudioStreamProcessor:
+    """音频流处理器：结合 VAD 与流式 ASR 客户端处理实时音频并产出结果。"""
+
     _instance = None
 
     def __init__(self):
+        """初始化音频流处理器，创建 VAD 实例并重置缓冲状态。"""
         self.vad = VADProcessor()
         self._streaming_client: Any = None
         self._agent_interrupt: Any = None
@@ -257,21 +274,28 @@ class AudioStreamProcessor:
         # 双流式模式主驱动回调：ASR Partial Result 产出即触发 LLM Speculative Prefill，
         # 省去等待 VAD on_end 的 500ms 静默判定，实现毫秒级首字响应
         self._on_partial_result_callback: Optional[Callable] = None
+        # 后台任务引用集合：防止 _deferred_interrupt_check 等长任务被 GC 提前回收
+        # （asyncio 不持有裸 create_task 的引用，任务完成前被回收会静默中断）。
+        self._background_tasks: set = set()
 
     @classmethod
     def get_instance(cls):
+        """获取全局音频流处理器单例。"""
         if cls._instance is None:
             cls._instance = cls()
         return cls._instance
 
     def set_config(self, config: dict):
+        """应用配置并同步配置内部 VAD 处理器。"""
         vad_config = config.get("vad", {})
         self.vad.set_config(vad_config)
 
     def set_asr_client(self, client: Any):
+        """设置流式 ASR 客户端。"""
         self._streaming_client = client
 
     def set_agent_interrupt(self, agent_interrupt: Any):
+        """设置用于全双工打断判定的 agent interrupt 处理器。"""
         self._agent_interrupt = agent_interrupt
 
     def set_callbacks(
@@ -281,6 +305,7 @@ class AudioStreamProcessor:
         on_result: Optional[Callable] = None,
         on_partial_result: Optional[Callable] = None
     ):
+        """设置 VAD 及流式结果相关回调函数。"""
         self.vad.set_callbacks(on_speech_start=on_speech_start, on_speech_end=on_speech_end)
         self._on_result_callback = on_result
         # 主驱动回调：Partial Result 立即触发 LLM Speculative Prefill，不等 VAD on_end
@@ -398,7 +423,9 @@ class AudioStreamProcessor:
                         except Exception as e:
                             logger.error(f"Deferred agent interrupt check error: {e}")
 
-                    asyncio.create_task(_deferred_interrupt_check())
+                    self._track_background_task(
+                        asyncio.create_task(_deferred_interrupt_check())
+                    )
 
                 if self._on_result_callback:
                     await self._on_result_callback(result)
@@ -417,14 +444,17 @@ class AudioStreamProcessor:
         return result
 
     def reset(self):
+        """重置 VAD 状态并清空音频缓冲。"""
         self.vad.reset()
         self._audio_buffer.clear()
         self._buffer_duration_ms = 0
 
 
 def get_vad_processor() -> VADProcessor:
+    """获取全局 VAD 处理器单例。"""
     return VADProcessor.get_instance()
 
 
 def get_audio_stream_processor() -> AudioStreamProcessor:
+    """获取全局音频流处理器单例。"""
     return AudioStreamProcessor.get_instance()

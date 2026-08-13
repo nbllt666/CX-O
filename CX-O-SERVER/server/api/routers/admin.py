@@ -64,6 +64,7 @@ class AdminConfigUpdate(BaseModel):
 
 
 def verify_admin_api_key(x_api_key: Optional[str] = Header(None)) -> bool:
+    """校验管理端 API 密钥，未配置或校验失败时抛出 403。"""
     if not ADMIN_API_KEY:
         raise HTTPException(status_code=403, detail="Admin API key not configured")
     if not x_api_key or not secrets.compare_digest(x_api_key, ADMIN_API_KEY):
@@ -73,6 +74,7 @@ def verify_admin_api_key(x_api_key: Optional[str] = Header(None)) -> bool:
 
 @router.get("/admin/dashboard")
 async def get_dashboard(x_api_key: Optional[str] = Header(None)):
+    """获取管理后台仪表盘统计。"""
     # B10 修复: verify_admin_api_key 在认证失败时已 raise 403，
     # 永远不会返回 False，原 401 路径为死代码，已删除。
     verify_admin_api_key(x_api_key)
@@ -265,6 +267,7 @@ async def get_logs(level: str = "INFO", lines: int = 50, x_api_key: Optional[str
 
 @router.post("/admin/backup")
 async def create_backup(x_api_key: Optional[str] = Header(None)):
+    """创建数据目录的压缩备份。"""
     # B10 修复: verify_admin_api_key 在认证失败时已 raise 403，
     # 永远不会返回 False，原 401 路径为死代码，已删除。
     verify_admin_api_key(x_api_key)

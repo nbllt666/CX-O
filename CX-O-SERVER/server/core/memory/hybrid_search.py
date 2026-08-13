@@ -10,6 +10,7 @@ logger = get_contextual_logger(__name__)
 
 @dataclass
 class SearchResult:
+    """混合检索的单条结果，携带记忆 ID、内容、融合分数、来源（vector/keyword/hybrid）与元数据。"""
     memory_id: int
     content: str
     score: float
@@ -19,6 +20,7 @@ class SearchResult:
 
 @dataclass
 class HybridSearchOptions:
+    """混合检索参数，定义查询、类型/标签过滤、结果上限及各检索通道的权重与开关。"""
     query: str
     memory_type: str = None
     tags: List[str] = None
@@ -33,12 +35,16 @@ class HybridSearchOptions:
 
 
 class HybridSearch:
+    """向量与关键词混合检索的融合打分检索器。"""
+
     def __init__(self, vector_store, sqlite_manager, embedding_model=None):
+        """初始化混合检索器（向量存储、SQLite 管理器与嵌入模型）。"""
         self.vector_store = vector_store
         self.sqlite_manager = sqlite_manager
         self.embedding_model = embedding_model
 
     async def search(self, options: HybridSearchOptions) -> List[SearchResult]:
+        """执行混合检索，融合向量与关键词结果并按分数排序返回。"""
         # 如果 limit 或 min_score 为 None，从 Settings 读取默认值
         limits = Settings().config.limits.memory
         if options.limit is None:
@@ -101,23 +107,13 @@ class HybridSearch:
 
     async def _keyword_search(self, options: HybridSearchOptions) -> List[SearchResult]:
         try:
-            # agent_id 透传到 sqlite_manager（crud_mixin 已支持 agent_id）
-            try:
-                keyword_results = self.sqlite_manager.search_memories(
-                    query=options.query,
-                    memory_type=options.memory_type,
-                    tags=options.tags,
-                    limit=options.limit * 2,
-                    agent_id=options.agent_id,
-                )
-            except TypeError:
-                # sqlite_manager.search_memories 不接受 agent_id 参数（签名差异），回退
-                keyword_results = self.sqlite_manager.search_memories(
-                    query=options.query,
-                    memory_type=options.memory_type,
-                    tags=options.tags,
-                    limit=options.limit * 2,
-                )
+            keyword_results = self.sqlite_manager.search_memories(
+                query=options.query,
+                memory_type=options.memory_type,
+                tags=options.tags,
+                limit=options.limit * 2,
+                agent_id=options.agent_id,
+            )
 
             return [
                 SearchResult(
@@ -193,6 +189,7 @@ class HybridSearch:
     async def semantic_search(
         self, query: str, memory_type: str = None, limit: int = 10, agent_id: str = "default"
     ) -> List[Dict]:
+        """执行纯向量语义检索（关闭关键词通道），返回结果字典列表。"""
         options = HybridSearchOptions(
             query=query,
             memory_type=memory_type,
@@ -217,6 +214,7 @@ class HybridSearch:
     async def keyword_search(
         self, query: str, memory_type: str = None, tags: List[str] = None, limit: int = 10
     ) -> List[Dict]:
+        """执行纯关键词检索，返回结果字典列表。"""
         options = HybridSearchOptions(
             query=query,
             memory_type=memory_type,

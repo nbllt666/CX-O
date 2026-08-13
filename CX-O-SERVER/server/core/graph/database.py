@@ -130,6 +130,7 @@ class Database:
             return False
 
     def close(self) -> None:
+        """关闭当前线程的数据库连接。"""
         if hasattr(self._local, 'connection') and self._local.connection:
             try:
                 self._local.connection.close()
@@ -159,6 +160,7 @@ class Database:
             return cursor.rowcount
 
     def transaction(self, operations: List[Tuple[str, tuple]]) -> None:
+        """在单个事务中依次执行多条写入操作。"""
         with self.get_cursor() as cursor:
             for query, params in operations:
                 cursor.execute(query, params)

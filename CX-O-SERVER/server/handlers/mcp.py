@@ -14,6 +14,7 @@ logger = logging.getLogger(__name__)
 
 
 def register_mcp_handlers(manager: "WebSocketManager"):
+    """将 MCP（连接/工具列表/调用）处理器注册到 WebSocket 管理器。"""
 
     async def handle_mcp_connect(websocket, message, client_id):
         request_id = message.get("request_id", "")

@@ -94,15 +94,6 @@ class TestTopicSummaryConfig:
         assert cfg["auto_save_memory"] is True
         assert cfg["max_history_topics"] is None
 
-    def test_update_known_key(self, clean_deps):
-        r = st.update_topic_summary_config("auto_save_memory", False)
-        assert r["status"] == "success"
-        assert r["config"]["auto_save_memory"] is False
-
-    def test_update_unknown_key(self, clean_deps):
-        r = st.update_topic_summary_config("nope", 1)
-        assert "未知的配置项" in r["error"]
-
     def test_set_max_history_topics(self, clean_deps):
         st.set_max_history_topics(5)
         assert st._TOPIC_SUMMARY_CONFIG["max_history_topics"] == 5

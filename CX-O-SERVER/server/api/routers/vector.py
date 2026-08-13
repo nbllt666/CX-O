@@ -23,15 +23,6 @@ class VectorConfig(BaseModel):
     port: Optional[int] = None
 
 
-def get_vector_store():
-    from server.dependencies import get_memory_manager
-
-    mm = get_memory_manager()
-    if hasattr(mm, "_vector_store") and mm._vector_store:
-        return mm._vector_store
-    return None
-
-
 @router.get("/vector/config")
 async def get_vector_config():
     from server.config import get_settings
@@ -104,6 +95,7 @@ async def get_vector_status():
 
 @router.get("/vector/health")
 async def vector_health_check():
+    """向量数据库健康检查。"""
     from server.dependencies import get_memory_manager
 
     health = {
@@ -274,6 +266,7 @@ async def sync_vectors():
 
 @router.post("/vector/rebuild")
 async def rebuild_vectors():
+    """清空并重建向量数据库。"""
     from server.dependencies import get_memory_manager
 
     try:
@@ -354,6 +347,7 @@ async def search_vectors(
 
 @router.get("/vector/stats")
 async def get_vector_stats():
+    """获取向量数据库统计信息。"""
     from server.dependencies import get_memory_manager
 
     try:

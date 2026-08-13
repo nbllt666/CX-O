@@ -18,6 +18,7 @@ class SemanticSearch:
     """语义搜索"""
 
     def __init__(self, config: GraphConfig = None):
+        """初始化语义搜索（缺省使用全局图配置）。"""
         self.config = config or get_graph_config()
         self._client = None
         self._vectorizer = get_vectorizer()
@@ -216,6 +217,7 @@ class SemanticSearch:
         return results[:limit]
 
     def delete_vector(self, node_id: str) -> bool:
+        """删除指定节点的向量索引，返回是否删除成功。"""
         if self._client:
             try:
                 from weaviate.classes.query import Filter
@@ -251,6 +253,7 @@ class SemanticSearch:
         return float(dot_product / (norm1 * norm2))
 
     def close(self) -> None:
+        """关闭 Weaviate 客户端连接并重置初始化状态。"""
         if self._client:
             try:
                 self._client.close()

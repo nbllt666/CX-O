@@ -14,6 +14,7 @@ logger = logging.getLogger(__name__)
 
 
 def register_metrics_handlers(manager: "WebSocketManager"):
+    """将监控统计处理器注册到 WebSocket 管理器。"""
 
     async def handle_metrics_get(websocket, message, client_id):
         request_id = message.get("request_id", "")

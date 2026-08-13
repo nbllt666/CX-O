@@ -18,31 +18,41 @@ logger = get_contextual_logger(__name__)
 
 
 class EmbeddingModel(ABC):
+    """嵌入模型抽象基类：定义单条/批量嵌入、维度与名称的统一接口。"""
+
     @abstractmethod
     async def get_embedding(self, text: str) -> List[float]:
+        """计算单条文本的嵌入向量。"""
         pass
 
     @abstractmethod
     async def get_embeddings(self, texts: List[str]) -> List[List[float]]:
+        """批量计算多条文本的嵌入向量。"""
         pass
 
     @property
     @abstractmethod
     def dimension(self) -> int:
+        """返回嵌入向量维度。"""
         pass
 
     @property
     @abstractmethod
     def name(self) -> str:
+        """返回模型名称标识。"""
         pass
 
 
 class OllamaEmbedding(EmbeddingModel):
+    """基于 Ollama 文本嵌入接口的嵌入实现。"""
+
     def __init__(self, host: str = "http://localhost:11434", model: str = "nomic-embed-text"):
+        """初始化 Ollama 嵌入客户端，保存服务地址与模型名。"""
         self.host = host.rstrip("/")
         self.model = model
 
     async def get_embedding(self, text: str) -> List[float]:
+        """计算单条文本嵌入，失败时返回空列表。"""
         try:
             # 复用 shared HTTP 连接池，避免每次调用都构造 httpx.AsyncClient
             client = get_shared_http_client()
@@ -62,6 +72,7 @@ class OllamaEmbedding(EmbeddingModel):
             return []
 
     async def get_embeddings(self, texts: List[str]) -> List[List[float]]:
+        """批量计算文本嵌入，失败的条目用零向量占位。"""
         embeddings = []
         for text in texts:
             emb = await self.get_embedding(text)
@@ -74,15 +85,20 @@ class OllamaEmbedding(EmbeddingModel):
 
     @property
     def dimension(self) -> int:
+        """返回嵌入向量维度（固定 768）。"""
         return 768
 
     @property
     def name(self) -> str:
+        """返回模型名称标识（如 ollama/<model>）。"""
         return f"ollama/{self.model}"
 
 
 class SentenceTransformersEmbedding(EmbeddingModel):
+    """基于本地 sentence-transformers 模型的嵌入实现。"""
+
     def __init__(self, model_name: str = "paraphrase-multilingual-MiniLM-L12-v2"):
+        """初始化并加载本地 sentence-transformers 模型。"""
         try:
             pass
 
@@ -99,6 +115,7 @@ class SentenceTransformersEmbedding(EmbeddingModel):
             raise ImportError("请安装: pip install sentence-transformers")
 
     async def get_embedding(self, text: str) -> List[float]:
+        """在线程池中计算单条文本嵌入。"""
         import asyncio
 
         loop = asyncio.get_running_loop()
@@ -106,6 +123,7 @@ class SentenceTransformersEmbedding(EmbeddingModel):
         return embedding
 
     async def get_embeddings(self, texts: List[str]) -> List[List[float]]:
+        """在线程池中批量计算文本嵌入。"""
         import asyncio
 
         loop = asyncio.get_running_loop()
@@ -114,14 +132,18 @@ class SentenceTransformersEmbedding(EmbeddingModel):
 
     @property
     def dimension(self) -> int:
+        """返回模型嵌入维度。"""
         return self.model.get_sentence_embedding_dimension()
 
     @property
     def name(self) -> str:
+        """返回模型名称标识。"""
         return f"sentence-transformers/{self._model_name}"
 
 
 class VLLMEmbedding(EmbeddingModel):
+    """基于 vLLM OpenAI 兼容 /v1/embeddings 接口的嵌入实现。"""
+
     def __init__(self, model: str = "bge-m3", api_base: str = "http://localhost:8000", api_key: str = "", dimension: int = 1024):
         self.model = model
         self.api_base = api_base.rstrip("/")
@@ -135,6 +157,7 @@ class VLLMEmbedding(EmbeddingModel):
         return headers
 
     async def get_embedding(self, text: str) -> List[float]:
+        """计算单条文本嵌入，失败时返回空列表。"""
         try:
             # 复用 shared HTTP 连接池，避免每次调用都构造 httpx.AsyncClient
             client = get_shared_http_client()
@@ -158,6 +181,7 @@ class VLLMEmbedding(EmbeddingModel):
             return []
 
     async def get_embeddings(self, texts: List[str]) -> List[List[float]]:
+        """批量请求全部文本嵌入，按返回的 index 排序，失败时用零向量占位。"""
         # batch request: send all texts in one request, map by index
         try:
             # 复用 shared HTTP 连接池，避免每次调用都构造 httpx.AsyncClient
@@ -183,19 +207,24 @@ class VLLMEmbedding(EmbeddingModel):
 
     @property
     def dimension(self) -> int:
+        """返回嵌入向量维度。"""
         return self._dimension
 
     @property
     def name(self) -> str:
+        """返回模型名称标识（如 vllm/<model>）。"""
         return f"vllm/{self.model}"
 
 
 class EmbeddingFactory:
+    """嵌入模型工厂：按 provider 创建并缓存单例模型实例。"""
+
     _models: dict = {}
     _lock = threading.Lock()
 
     @classmethod
     def create(cls, provider: str = "ollama", **kwargs) -> EmbeddingModel:
+        """按 provider 创建嵌入模型实例，命中缓存直接返回。"""
         key = f"{provider}:{kwargs.get('model', 'default')}"
 
         with cls._lock:
@@ -215,14 +244,12 @@ class EmbeddingFactory:
             return model
 
     @classmethod
-    def get_model(cls, provider: str = "ollama", **kwargs) -> EmbeddingModel:
-        return cls.create(provider, **kwargs)
-
-    @classmethod
     def clear_cache(cls):
+        """清空已缓存的模型实例。"""
         with cls._lock:
             cls._models.clear()
 
     @classmethod
     def list_available_providers(cls) -> List[str]:
+        """返回当前支持的嵌入 provider 列表。"""
         return ["ollama", "sentence-transformers", "vllm"]

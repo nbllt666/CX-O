@@ -143,6 +143,32 @@ class TestModelsConfig:
         mc = config_mod.ModelsConfig()
         assert mc.get_model_config("other") is mc.main
 
+    def test_explicit_summary_overrides_defaults(self):
+        # 用户显式配置 models.summary → 不再跟随 main，返回独立配置
+        summary = config_mod.ModelConfig(provider="ollama", model="summary-model")
+        mc = config_mod.ModelsConfig(summary=summary)
+        mc._set_explicit(["summary"])
+        assert mc.resolve_target("summary") == "summary"
+        assert mc.get_model_config("summary") is summary
+        # memory 未显式配置，仍跟随 main
+        assert mc.get_model_config("memory") is mc.main
+
+    def test_explicit_memory_overrides_defaults(self):
+        memory = config_mod.ModelConfig(provider="vllm", model="memory-model")
+        mc = config_mod.ModelsConfig(memory=memory)
+        mc._set_explicit(["memory"])
+        assert mc.resolve_target("memory") == "memory"
+        assert mc.get_model_config("memory") is memory
+        # summary 未显式配置，仍跟随 main
+        assert mc.get_model_config("summary") is mc.main
+
+    def test_not_explicit_but_section_present_follows_defaults(self):
+        # 仅当 _set_explicit 记录后才解除跟随；未记录时即使传入独立配置仍跟随 main
+        summary = config_mod.ModelConfig(provider="ollama", model="summary-model")
+        mc = config_mod.ModelsConfig(summary=summary)
+        assert mc.resolve_target("summary") == "main"
+        assert mc.get_model_config("summary") is mc.main
+
     def test_db_url(self):
         dc = config_mod.DatabaseConfig(path="data/x.db")
         # 相对路径被归一化为项目根绝对路径

@@ -11,6 +11,8 @@ class ChatActions:
 
 
 class MemoryActions:
+    """记忆相关 action 常量。"""
+
     LIST = "memory.list"
     CREATE = "memory.create"
     DELETE = "memory.delete"
@@ -26,6 +28,8 @@ class ToolsActions:
 
 
 class PluginActions:
+    """插件生命周期相关 action 常量。"""
+
     REGISTER = "plugin.register"
     HEARTBEAT = "plugin.heartbeat"
     LIST = "plugin.list"
@@ -40,6 +44,7 @@ class ContextActions:
 
 
 class ACPActions:
+    """ACP 连接管理相关 action 常量。"""
     CONNECT = "acp.connect"
     DISCONNECT = "acp.disconnect"
     CONNECTIONS = "acp.connections"
@@ -47,6 +52,8 @@ class ACPActions:
 
 
 class MCPActions:
+    """MCP 服务器管理相关 action 常量。"""
+
     CONNECT = "mcp.connect"
     DISCONNECT = "mcp.disconnect"
     TOOLS = "mcp.tools"
@@ -67,6 +74,8 @@ class MetricsActions:
 
 
 class SystemActions:
+    """系统健康与状态相关 action 常量。"""
+
     HEALTH = "system.health"
     STATUS = "system.status"
     INFO = "system.info"
@@ -97,12 +106,15 @@ class VoiceActions:
 
 
 class TTSActions:
+    """语音合成相关 action 常量。"""
+
     SYNTHESIZE = "tts.synthesize"
     SYNTHESIZE_STREAM = "tts.synthesize_stream"
     VOICES = "tts.voices"
 
 
 class EmotionActions:
+    """情感识别相关 action 常量。"""
     LIST = "emotions.list"
     PARSE = "emotions.parse"
 
@@ -113,18 +125,16 @@ class EffectActions:
 
 
 class DanmakuActions:
+    """弹幕相关 action 常量。"""
+
     LIST = "danmaku.list"
     ADD = "danmaku.add"
     CLEAR = "danmaku.clear"
 
 
 class EventsActions:
-    SUBSCRIBE = "events.subscribe"
-    UNSUBSCRIBE = "events.unsubscribe"
+    """事件订阅相关 action 常量。"""
 
-
-class ExternalEventsActions:
-    EXTERNAL_EVENT = "external_event"
     SUBSCRIBE = "events.subscribe"
     UNSUBSCRIBE = "events.unsubscribe"
 
@@ -188,4 +198,5 @@ ACTION_HANDLERS = {
 
 
 def get_handler_name(action: str) -> str | None:
+    """根据 action 返回对应的处理器名称，未注册时返回 None。"""
     return ACTION_HANDLERS.get(action)

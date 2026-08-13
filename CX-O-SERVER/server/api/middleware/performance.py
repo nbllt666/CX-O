@@ -14,7 +14,10 @@ logger = get_contextual_logger(__name__)
 
 
 class PerformanceMiddleware(BaseHTTPMiddleware):
+    """性能监控中间件——记录每个请求的处理耗时并写入响应头与日志。"""
+
     async def dispatch(self, request: Request, call_next: Callable) -> Response:
+        """处理请求：计时、写 X-Process-Time-Ms 响应头，并按耗时分级记日志。"""
         start_time = time.perf_counter()
         
         response = await call_next(request)
@@ -27,64 +30,10 @@ class PerformanceMiddleware(BaseHTTPMiddleware):
         method = request.method
         
         if process_time > 100:
-            logger.warning(
-                f"慢请求: {method} {path} - {process_time:.2f}ms"
-            )
+            logger.warning("慢请求: %s %s - %.2fms", method, path, process_time)
         elif process_time > 50:
-            logger.info(
-                f"中等请求: {method} {path} - {process_time:.2f}ms"
-            )
+            logger.info("中等请求: %s %s - %.2fms", method, path, process_time)
         else:
-            logger.debug(
-                f"快速请求: {method} {path} - {process_time:.2f}ms"
-            )
+            logger.debug("快速请求: %s %s - %.2fms", method, path, process_time)
         
         return response
-
-
-api_stats = {
-    "total_requests": 0,
-    "total_time_ms": 0,
-    "slow_requests": 0,
-    "endpoints": {},
-}
-
-
-def record_api_call(endpoint: str, duration_ms: float):
-    api_stats["total_requests"] += 1
-    api_stats["total_time_ms"] += duration_ms
-    
-    if duration_ms > 100:
-        api_stats["slow_requests"] += 1
-    
-    if endpoint not in api_stats["endpoints"]:
-        api_stats["endpoints"][endpoint] = {
-            "count": 0,
-            "total_time_ms": 0,
-            "max_time_ms": 0,
-            "min_time_ms": float("inf"),
-        }
-    
-    stats = api_stats["endpoints"][endpoint]
-    stats["count"] += 1
-    stats["total_time_ms"] += duration_ms
-    stats["max_time_ms"] = max(stats["max_time_ms"], duration_ms)
-    stats["min_time_ms"] = min(stats["min_time_ms"], duration_ms)
-
-
-def get_api_stats() -> dict:
-    return {
-        "total_requests": api_stats["total_requests"],
-        "average_time_ms": (
-            api_stats["total_time_ms"] / api_stats["total_requests"]
-            if api_stats["total_requests"] > 0
-            else 0
-        ),
-        "slow_requests": api_stats["slow_requests"],
-        "slow_request_rate": (
-            api_stats["slow_requests"] / api_stats["total_requests"]
-            if api_stats["total_requests"] > 0
-            else 0
-        ),
-        "endpoints": api_stats["endpoints"],
-    }

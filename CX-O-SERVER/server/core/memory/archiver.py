@@ -77,6 +77,7 @@ class AdvancedArchiver:
     }
 
     def __init__(self, memory_manager, llm_client=None):
+        """初始化高级归档管理器（可选 LLM 客户端用于智能压缩/合并）。"""
         self.memory_manager = memory_manager
         self.llm_client = llm_client
         self._init_archive_db()

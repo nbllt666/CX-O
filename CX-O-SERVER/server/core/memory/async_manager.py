@@ -7,25 +7,7 @@ from typing import Any, Dict, List, Optional
 import aiosqlite
 
 from server.core.logging_config import get_contextual_logger
-
-try:
-    import orjson
-
-    def json_dumps(obj, **kwargs):
-        return orjson.dumps(obj).decode("utf-8")
-
-    def json_loads(s, **kwargs):
-        return orjson.loads(s)
-
-except ImportError:
-    import json
-
-    def json_dumps(obj, **kwargs):
-        return json.dumps(obj, **kwargs)
-
-    def json_loads(s, **kwargs):
-        return json.loads(s, **kwargs)
-
+from server.core.memory.mixins._common import json_dumps, json_loads
 
 logger = get_contextual_logger(__name__)
 
@@ -690,10 +672,3 @@ class AsyncMemoryManager:
                 self._pool = None
                 self._initialized = False
                 logger.info("AsyncMemoryManager 连接池已关闭")
-
-
-async def get_async_memory_manager(db_path: str = "data/memories.db") -> AsyncMemoryManager:
-    """获取异步记忆管理器单例"""
-    manager = AsyncMemoryManager(db_path=db_path)
-    await manager.initialize()
-    return manager

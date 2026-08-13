@@ -256,6 +256,7 @@ class ContextManager:
         return [self._row_to_session(row) for row in rows]
 
     def update_session(self, session_id: str, **kwargs) -> bool:
+        """更新会话的标题、摘要或激活状态，返回是否更新成功。"""
         conn = self._get_connection()
         cursor = conn.cursor()
 
@@ -368,6 +369,7 @@ class ContextManager:
     def get_messages(
         self, session_id: str, limit: int = 50, offset: int = 0, include_deleted: bool = False
     ) -> List[Dict]:
+        """分页获取会话消息列表（默认升序、排除已删除）。"""
         conn = self._get_connection()
         cursor = conn.cursor()
 
@@ -462,6 +464,7 @@ class ContextManager:
         }
 
     def get_statistics(self, workspace_id: str = "default") -> Dict:
+        """返回工作区的会话与消息统计信息。"""
         conn = self._get_connection()
         cursor = conn.cursor()
 

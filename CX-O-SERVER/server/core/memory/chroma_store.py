@@ -13,6 +13,7 @@ logger = get_contextual_logger(__name__)
 
 @dataclass
 class SyncResult:
+    """向量库与 SQLite 同步结果，统计检查总数、同步数、删除数与错误数及详情。"""
     total_checked: int = 0
     synced: int = 0
     removed: int = 0
@@ -33,6 +34,7 @@ class ChromaVectorStore:
         embedding_model=None,
         persistent: bool = True,
     ):
+        """初始化 Chroma 客户端与向量集合，支持持久化或内存模式。"""
         self.db_path = db_path
         self.vector_size = vector_size
         self.collection_name = collection_name or self.COLLECTION_NAME
@@ -83,11 +85,13 @@ class ChromaVectorStore:
             logger.error(f"检查/创建集合失败: {e}")
 
     def is_available(self) -> bool:
+        """检查 Chroma 客户端与集合是否可用。"""
         return self._client is not None and self._collection is not None
 
     async def add_memory_vector(
         self, memory_id: int, content: str, embedding: List[float], metadata: Dict = None
     ) -> bool:
+        """向集合添加一个记忆向量。"""
         if not self._collection:
             return False
 
@@ -117,6 +121,7 @@ class ChromaVectorStore:
         memory_type: str = None,
         min_score: float = None,
     ) -> List[Dict]:
+        """按查询向量检索相似记忆，余弦距离归一化为相似度并按 min_score 过滤后返回结果列表。"""
         if min_score is None:
             min_score = Settings().config.limits.memory.vector_min_score
         if not self._collection:
@@ -163,6 +168,7 @@ class ChromaVectorStore:
             return []
 
     async def delete_by_memory_id(self, memory_id: int) -> bool:
+        """按记忆 ID 从集合删除向量。"""
         if not self._collection:
             return False
 
@@ -175,6 +181,7 @@ class ChromaVectorStore:
             return False
 
     async def get_vector_by_id(self, memory_id: int) -> Optional[Dict]:
+        """按记忆 ID 获取向量条目，返回内容、元数据与嵌入向量，不存在返回 None。"""
         if not self._collection:
             return None
 
@@ -197,6 +204,7 @@ class ChromaVectorStore:
             return None
 
     async def check_exists(self, memory_id: int) -> bool:
+        """检查指定记忆 ID 的向量是否已存在。"""
         if not self._collection:
             return False
 
@@ -208,6 +216,7 @@ class ChromaVectorStore:
             return False
 
     async def sync_with_sqlite(self, sqlite_manager, last_sync_time: str = None) -> SyncResult:
+        """将 SQLite 记忆数据与向量库同步。"""
         result = SyncResult()
 
         if not self._collection or not sqlite_manager:
@@ -294,6 +303,7 @@ class ChromaVectorStore:
             return result
 
     def get_collection_info(self) -> Dict:
+        """返回集合的可用状态、名称、向量数量与存储路径。"""
         if not self._collection:
             return {"status": "unavailable"}
 
@@ -309,6 +319,7 @@ class ChromaVectorStore:
             return {"status": "error", "error": str(e)}
 
     def clear_collection(self) -> bool:
+        """删除并重建当前向量集合以清空全部向量，成功返回 True。"""
         if not self._client:
             return False
 
@@ -324,6 +335,7 @@ class ChromaVectorStore:
             return False
 
     def close(self):
+        """关闭 Chroma 连接并释放客户端与集合引用。"""
         self._client = None
         self._collection = None
         logger.info("Chroma连接已关闭")

@@ -79,7 +79,6 @@ class TestGetters:
         "acp_manager": "get_acp_manager",
         "llm_client": "get_llm_client",
         "secondary_router": "get_secondary_router",
-        "decay_batch_processor": "get_decay_batch_processor",
         "mcp_manager": "get_mcp_manager",
         "model_router": "get_model_router",
         "asr_service": "get_asr_service",
@@ -168,18 +167,14 @@ class TestGraphRegistry:
         assert g1.agent_id == "x"
         assert g2.agent_id == "y"
 
-    def test_if_exists_no_create(self):
-        assert deps.get_graph_database_if_exists("none") is None
-        assert deps.get_graph_store_if_exists("none") is None
-
     def test_remove_graph_database_clears_and_closes(self, monkeypatch):
         import server.core.graph as graph_mod
         monkeypatch.setattr(graph_mod, "GraphDatabase", FakeGraphDB)
 
         gdb = deps._get_or_create_graph_database("a1")
         deps.remove_graph_database("a1")
-        assert deps.get_graph_database_if_exists("a1") is None
-        assert deps.get_graph_store_if_exists("a1") is None
+        assert "a1" not in deps._graph_databases
+        assert "a1" not in deps._graph_stores
         assert gdb.closed is True
 
     def test_remove_graph_database_missing_no_error(self):
@@ -207,40 +202,3 @@ class TestGraphRegistry:
         assert len(results) == 8
         # 全部线程返回同一实例（双重检查锁保证单例）
         assert all(r is results[0] for r in results)
-
-
-# --------------------------------------------------------------------------- #
-# get_graph_database / get_graph_store（写回 state 兼容逻辑）
-# --------------------------------------------------------------------------- #
-class TestGraphGetters:
-    def test_get_graph_database_writes_back_to_state(self, monkeypatch):
-        st = _make_state()
-        deps.set_service_state(st)
-        import server.core.graph as graph_mod
-        monkeypatch.setattr(graph_mod, "GraphDatabase", FakeGraphDB)
-
-        gdb = deps.get_graph_database(state=st)
-        # 默认 agent 写回 state.graph_database
-        assert st.graph_database is gdb
-
-    def test_get_graph_database_does_not_override_existing(self, monkeypatch):
-        existing = object()
-        st = _make_state(graph_database=existing)
-        deps.set_service_state(st)
-        import server.core.graph as graph_mod
-        monkeypatch.setattr(graph_mod, "GraphDatabase", FakeGraphDB)
-
-        gdb = deps.get_graph_database(state=st)
-        assert gdb is not existing  # 返回新创建实例
-        assert st.graph_database is existing  # 已有值不被覆盖
-
-    def test_get_graph_store_writes_back(self, monkeypatch):
-        st = _make_state()
-        deps.set_service_state(st)
-        import server.core.graph as graph_mod
-        import server.core.memory.graph_store as gs_mod
-        monkeypatch.setattr(graph_mod, "GraphDatabase", FakeGraphDB)
-        monkeypatch.setattr(gs_mod, "SQLiteGraphStore", FakeGraphStore)
-
-        store = deps.get_graph_store(state=st)
-        assert st.graph_store is store

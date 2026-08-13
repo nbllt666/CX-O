@@ -127,6 +127,7 @@ async def delete_session(session_id: str):
 
 @router.get("/context/messages/{session_id}")
 async def get_messages(session_id: str, limit: int = 50, offset: int = 0):
+    """获取指定会话的消息列表。"""
     from server.dependencies import get_context_manager
 
     try:
@@ -329,6 +330,7 @@ async def generate_summary(session_id: str, max_points: int = 5, save_as_memory:
 
 @router.get("/context/stats")
 async def get_context_stats(workspace_id: str = "default"):
+    """获取上下文统计信息。"""
     from server.dependencies import get_context_manager
 
     try:

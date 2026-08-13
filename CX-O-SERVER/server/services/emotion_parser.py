@@ -21,10 +21,13 @@ SUPPORTED_EMOTIONS = {
 
 
 def get_supported_emotions() -> list[str]:
+    """返回全部受支持的情感名称（已排序）。"""
     return sorted(SUPPORTED_EMOTIONS)
 
 
 def extract_emotions_with_text(text: str) -> list[dict[str, Any]]:
+    """解析文本中的 [emotion:name] 与 [sleep:ms] 标记，返回文本与情感/停顿分段。"""
+
     segments: list[dict[str, Any]] = []
     last_end = 0
 

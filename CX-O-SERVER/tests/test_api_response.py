@@ -2,7 +2,7 @@
 
 覆盖：
 - APIResponse / PaginatedResponse / HealthResponse / ErrorResponse 的工厂与分页逻辑
-- PerformanceMiddleware 的 record_api_call / get_api_stats 指标聚合
+- PerformanceMiddleware 请求计时与慢请求日志
 
 运行：python -m pytest tests/test_api_response.py -v
 """
@@ -11,11 +11,6 @@ from server.api.response import (
     PaginatedResponse,
     HealthResponse,
     ErrorResponse,
-)
-from server.api.middleware.performance import (
-    api_stats,
-    record_api_call,
-    get_api_stats,
 )
 
 
@@ -80,43 +75,3 @@ class TestOtherResponses:
         e = ErrorResponse(error="fail")
         assert e.success is False
         assert e.error_message == "fail"
-
-
-# ================================================================ PerformanceMiddleware
-class TestPerformanceStats:
-    def setup_method(self):
-        api_stats["total_requests"] = 0
-        api_stats["total_time_ms"] = 0
-        api_stats["slow_requests"] = 0
-        api_stats["endpoints"] = {}
-
-    def test_record_single(self):
-        record_api_call("/api/a", 10.0)
-        assert api_stats["total_requests"] == 1
-        assert api_stats["total_time_ms"] == 10.0
-
-    def test_record_slow(self):
-        record_api_call("/api/slow", 150.0)
-        assert api_stats["slow_requests"] == 1
-
-    def test_endpoint_aggregation(self):
-        record_api_call("/api/x", 10.0)
-        record_api_call("/api/x", 30.0)
-        e = api_stats["endpoints"]["/api/x"]
-        assert e["count"] == 2
-        assert e["total_time_ms"] == 40.0
-        assert e["max_time_ms"] == 30.0
-        assert e["min_time_ms"] == 10.0
-
-    def test_get_api_stats_average(self):
-        record_api_call("/api/a", 10.0)
-        record_api_call("/api/b", 30.0)
-        stats = get_api_stats()
-        assert stats["total_requests"] == 2
-        assert stats["average_time_ms"] == 20.0
-        assert stats["slow_request_rate"] == 0.0
-
-    def test_get_api_stats_empty(self):
-        stats = get_api_stats()
-        assert stats["average_time_ms"] == 0
-        assert stats["slow_request_rate"] == 0

@@ -31,10 +31,11 @@
 | `backup.pyi` | `c:/CX-O/CX-O-SERVER/server/api/routers/backup.py` | P2 | ⬜ 待 s0201 |
 | `archive.pyi` | `c:/CX-O/CX-O-SERVER/server/api/routers/archive.py` | P2 | ⬜ 待 s0201 |
 | `memory_chat.pyi` | `c:/CX-O/CX-O-SERVER/server/api/routers/memory_chat.py` | P2 | ⬜ 待 s0201 |
+| `computer_control.pyi` | 电脑控制插件服务端/后端调用边界（spec `add-computer-control-cxfc` 冻结决策；源真理 `public/schema/computer_control_plugin.schema.json`） | P1 | ✅ s0201 补全（迁移自 contracts/plugin_interface.pyi） |
 
 ## 契约可验证性（rules-3 §五）
 
-- **测试套件**：未闭合，待 s0201 生成完整存根后补接口契约签名匹配用例
+- **测试套件**：未闭合，待 s0201 生成完整存根后补接口契约签名匹配用例；电脑控制部分已有 `tests/test_contracts_computer_control.py` 覆盖
 - **合规 rubric**：未闭合，待 s0201 生成后补签名匹配判据
 - **signature_match 校验**：模块实现必须严格匹配存根定义的签名，否则契约测试不通过
 

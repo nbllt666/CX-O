@@ -33,6 +33,7 @@ _dual_stream_sessions: dict[str, "DualStreamSession"] = {}
 
 
 async def set_tts_playing(client_id: str, playing: bool):
+    """更新指定客户端的 TTS 播放状态，并将聚合结果同步到 ASR 打断模块。"""
     from server.services.asr_interrupt import get_asr_interrupt_module
     interrupt_module = get_asr_interrupt_module()
 
@@ -45,11 +46,6 @@ async def set_tts_playing(client_id: str, playing: bool):
         has_tts_playing = len(_tts_playing_clients) > 0
 
     interrupt_module.set_tts_playing(has_tts_playing)
-
-
-async def is_tts_playing() -> bool:
-    async with _tts_playing_lock:
-        return len(_tts_playing_clients) > 0
 
 
 async def cleanup_dual_stream_session(client_id: str) -> None:
@@ -133,6 +129,16 @@ class DualStreamSession:
         # 设为 2：用户说出 2 个字即触发，省去等待 VAD on_end 的 ~500ms 静默判定
         self._trigger_char_threshold: int = 2
 
+        # 后台任务引用集合：防止 _finalize_turn / _maybe_agent_interrupt 等长任务
+        # 被 GC 提前回收（asyncio 不持有裸 create_task 的引用）。
+        self._background_tasks: set = set()
+
+    def _track_background_task(self, task: asyncio.Task) -> asyncio.Task:
+        """追踪后台任务，防止被 GC 回收；任务完成后自动从集合中移除。"""
+        self._background_tasks.add(task)
+        task.add_done_callback(self._background_tasks.discard)
+        return task
+
     async def on_vad_speech_start(self) -> None:
         """VAD 检测到用户开始说话 —— 全双工打断触发点
 
@@ -214,7 +220,9 @@ class DualStreamSession:
             # 不阻塞音频帧接收，流水线可能仍在生成 TTS
             pipeline_task = self._pipeline_task
             if pipeline_task is not None:
-                asyncio.create_task(self._finalize_turn(pipeline_task))
+                self._track_background_task(
+                    asyncio.create_task(self._finalize_turn(pipeline_task))
+                )
 
         # 注意：不在此处重置 _has_triggered_this_utterance。
         # final 结果在 speech_end 之后才到达，on_final_result 需要凭此 flag
@@ -270,7 +278,9 @@ class DualStreamSession:
         # 异步启动 LLM → TextSmoother → TTS 流水线，不阻塞音频帧接收
         self._pipeline_task = asyncio.create_task(self._run_pipeline(full_user_text))
         # 兜底路径 speech_end 已过，无人调度 _finalize_turn，此处自行调度记录上下文
-        asyncio.create_task(self._finalize_turn(self._pipeline_task))
+        self._track_background_task(
+            asyncio.create_task(self._finalize_turn(self._pipeline_task))
+        )
 
     async def _run_pipeline(self, user_text: str) -> None:
         """运行 LLM → TextSmoother → TTS 全链路流水线
@@ -616,6 +626,7 @@ class DualStreamSession:
 
 
 def init_interrupt_module():
+    """初始化 ASR 打断与 AI 插话打断模块单例。"""
     from server.services.asr_interrupt import get_asr_interrupt_module
     get_asr_interrupt_module()
 
@@ -640,6 +651,7 @@ def register_audio_handlers(
     tts_service: "TTSService",
     effects_dir: str | None = None
 ):
+    """将全部音频（ASR/TTS/情感/音效/双流式）处理器注册到 WebSocket 管理器。"""
     effect_parser = EffectParser(effects_dir)
 
     async def handle_asr_recognize(websocket, message, client_id):
@@ -1257,7 +1269,9 @@ def register_audio_handlers(
             # 命中后停当前 TTS 并播插话回应（主 LLM 模式带 reply_content）。
             # 非阻塞 create_task：判定内部会调 LLM（可能 ~8s），绝不阻塞帧处理。
             if asr_result and asr_result.get("text"):
-                asyncio.create_task(_maybe_agent_interrupt(session, asr_result))
+                session._track_background_task(
+                    asyncio.create_task(_maybe_agent_interrupt(session, asr_result))
+                )
 
             # 发送 VAD 帧状态给前端（与半双工模式格式一致）
             await manager.send_message(client_id, {

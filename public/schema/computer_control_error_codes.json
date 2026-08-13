@@ -1,0 +1,65 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://cx-o/public/schema/computer_control_error_codes.json",
+  "title": "ComputerControlErrorCodes",
+  "description": "电脑控制插件统一错误码枚举契约。每个错误码含 code、message、http_status，供插件 /call 响应、computer_control.pyi 异常与后端错误映射共用，避免模块间异常拦截歧义。源真理：.trae/specs/add-computer-control-cxfc/spec.md 冻结决策；迁移自 .trae/specs/add-computer-control-cxfc/contracts/error_codes.json。",
+  "type": "object",
+  "required": ["codes"],
+  "properties": {
+    "codes": {
+      "type": "array",
+      "description": "统一错误码枚举列表。",
+      "items": {
+        "type": "object",
+        "required": ["code", "message", "http_status"],
+        "properties": {
+          "code": { "type": "string" },
+          "message": { "type": "string" },
+          "http_status": { "type": "integer" }
+        }
+      }
+    }
+  },
+  "codes": [
+    {
+      "code": "UNAUTHORIZED",
+      "message": "认证失败：注册令牌缺失/错误或 TLS 证书指纹不匹配。不执行任何本机动作。",
+      "http_status": 401
+    },
+    {
+      "code": "NOT_AUTHORIZED",
+      "message": "本地授权未开启（授权被撤销或尚未授权）。不执行任何本机动作。",
+      "http_status": 403
+    },
+    {
+      "code": "REPLAY_DETECTED",
+      "message": "防重放拒绝：request_id 在当前时间窗内重复。不执行任何本机动作。",
+      "http_status": 409
+    },
+    {
+      "code": "INVALID_ARGUMENT",
+      "message": "参数错误：工具名或参数不符合对应工具请求契约。不执行本机动作。",
+      "http_status": 400
+    },
+    {
+      "code": "EXECUTION_FAILED",
+      "message": "执行失败：进程启动失败或系统权限不足。",
+      "http_status": 500
+    },
+    {
+      "code": "TIMEOUT",
+      "message": "执行超时：超出 timeout_ms，已回收整个进程树并停止执行。",
+      "http_status": 504
+    },
+    {
+      "code": "SYSTEM_ERROR",
+      "message": "系统失败：插件内部错误或配置缺失等系统级问题。",
+      "http_status": 500
+    },
+    {
+      "code": "PLUGIN_OFFLINE",
+      "message": "插件不可用：插件未注册、已断开或 /call 端点不可达。",
+      "http_status": 503
+    }
+  ]
+}

@@ -488,9 +488,6 @@ class _MemoryDBMixin:
 
         return conn
 
-    def _release_connection(self, conn=None):
-        """释放连接（线程本地保留，下次复用）"""
-
     def close_all_connections(self):
         with self._lock:
             for thread_id, conn_info in list(self._connection_pool.items()):

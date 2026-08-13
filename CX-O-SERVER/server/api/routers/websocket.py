@@ -2,8 +2,6 @@
 WebSocket 路由 - 提供实时双向通信
 """
 
-import asyncio
-import time
 from typing import Optional
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
@@ -14,116 +12,6 @@ from server.services.live_client import LiveClientHandler
 
 logger = get_contextual_logger(__name__)
 router = APIRouter()
-
-
-class LiveTTSSyncBroadcaster:
-    """TTS 播放同步广播器"""
-
-    def __init__(self):
-        self._ws_manager = None
-        self._current_playback_id = None
-        self._tick_task = None
-        self._start_time = None
-        self._duration = 0
-        self._text = ""
-        self._running = False
-
-    def _get_ws_manager(self):
-        if self._ws_manager is None:
-            self._ws_manager = get_websocket_manager()
-        return self._ws_manager
-
-    async def start_playback(self, text: str, duration_ms: int):
-        """开始 TTS 播放同步广播"""
-        await self.end_playback()
-
-        import uuid
-        self._current_playback_id = str(uuid.uuid4())[:12]
-        self._text = text
-        self._duration = duration_ms
-        self._start_time = time.monotonic()
-        self._running = True
-
-        server_ts = int(time.time() * 1000)
-        sync_msg = {
-            "type": "tts_sync",
-            "data": {
-                "playback_id": self._current_playback_id,
-                "server_ts": server_ts,
-                "text": text,
-                "duration": duration_ms,
-            },
-        }
-        ws_mgr = self._get_ws_manager()
-        await ws_mgr.broadcast_to_channel("live", sync_msg)
-
-        self._tick_task = asyncio.create_task(self._tick_loop())
-        logger.info(f"TTS sync started: {self._current_playback_id}, duration={duration_ms}ms")
-
-    async def _tick_loop(self):
-        """定时广播 tts_tick"""
-        try:
-            while self._running:
-                await asyncio.sleep(0.1)
-                if not self._running:
-                    break
-
-                elapsed = (time.monotonic() - self._start_time) * 1000
-                position = min(int(elapsed), self._duration)
-                server_ts = int(time.time() * 1000)
-
-                tick_msg = {
-                    "type": "tts_tick",
-                    "data": {
-                        "playback_id": self._current_playback_id,
-                        "server_ts": server_ts,
-                        "position": position,
-                    },
-                }
-                ws_mgr = self._get_ws_manager()
-                await ws_mgr.broadcast_to_channel("live", tick_msg)
-
-                if position >= self._duration:
-                    break
-        except asyncio.CancelledError:
-            pass
-        finally:
-            await self.end_playback()
-
-    async def end_playback(self):
-        """结束当前播放"""
-        self._running = False
-        if self._tick_task and not self._tick_task.done():
-            self._tick_task.cancel()
-            try:
-                await self._tick_task
-            except asyncio.CancelledError:
-                pass
-            self._tick_task = None
-
-        if self._current_playback_id:
-            server_ts = int(time.time() * 1000)
-            end_msg = {
-                "type": "tts_end",
-                "data": {
-                    "playback_id": self._current_playback_id,
-                    "server_ts": server_ts,
-                },
-            }
-            ws_mgr = self._get_ws_manager()
-            await ws_mgr.broadcast_to_channel("live", end_msg)
-            logger.info(f"TTS sync ended: {self._current_playback_id}")
-            self._current_playback_id = None
-
-
-_tts_sync_broadcaster: Optional[LiveTTSSyncBroadcaster] = None
-
-
-def get_tts_sync_broadcaster() -> LiveTTSSyncBroadcaster:
-    global _tts_sync_broadcaster
-    if _tts_sync_broadcaster is None:
-        _tts_sync_broadcaster = LiveTTSSyncBroadcaster()
-    return _tts_sync_broadcaster
 
 
 @router.websocket("/ws/{agent_id}")

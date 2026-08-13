@@ -27,15 +27,18 @@ _discovery = None
 
 
 def get_cxfc_manager():
+    """返回模块级 CXFC 管理器单例（未设置时为 None）。"""
     return _cxfc_manager
 
 
 def set_cxfc_manager(manager):
+    """设置 CXFC 管理器实例。"""
     global _cxfc_manager
     _cxfc_manager = manager
 
 
 def set_cxfc_discovery(d):
+    """设置网络发现器实例，用于局域网插件发现扫描。"""
     global _discovery
     _discovery = d
 
@@ -68,6 +71,7 @@ async def heartbeat(request: CXFCHeartbeatRequest):
 
 @router.post("/cxfc/event/push")
 async def push_event(event: CXFCEvent):
+    """推送一个 CXFC 事件。"""
     cxfc_manager = get_cxfc_manager()
     try:
         await cxfc_manager.push_event(event)
@@ -134,6 +138,7 @@ async def disconnect_plugin(plugin_id: str):
 
 @router.get("/cxfc/plugins")
 async def list_plugins():
+    """列出已注册的 CXFC 插件。"""
     cxfc_manager = get_cxfc_manager()
     try:
         plugins = cxfc_manager.get_plugins()
@@ -145,6 +150,7 @@ async def list_plugins():
 
 @router.post("/cxfc/plugins/{plugin_id}/refresh")
 async def refresh_plugin(plugin_id: str):
+    """刷新指定插件的信息。"""
     cxfc_manager = get_cxfc_manager()
     try:
         plugin = await cxfc_manager.refresh_plugin(plugin_id)

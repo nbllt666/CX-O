@@ -6,8 +6,7 @@ import threading
 import time
 from collections import OrderedDict
 from dataclasses import dataclass, field
-from typing import Any, Callable, Dict, Generic, Optional, TypeVar
-from functools import wraps
+from typing import Any, Dict, Generic, Optional, TypeVar
 
 T = TypeVar("T")
 K = TypeVar("K")
@@ -15,6 +14,7 @@ K = TypeVar("K")
 
 @dataclass
 class CacheEntry(Generic[T]):
+    """缓存条目数据类，记录缓存值、创建/过期时间、命中次数与最后访问时间，供 LRU 淘汰策略使用。"""
     value: T
     created_at: float
     expires_at: Optional[float] = None
@@ -23,6 +23,8 @@ class CacheEntry(Generic[T]):
 
 
 class LRUCache(Generic[K, T]):
+    """线程安全的 LRU 缓存容器，支持按容量淘汰最久未访问项与 TTL 过期，并统计命中/未命中次数。"""
+
     def __init__(self, max_size: int = 1000, default_ttl: Optional[float] = None):
         self.max_size = max_size
         self.default_ttl = default_ttl
@@ -32,6 +34,7 @@ class LRUCache(Generic[K, T]):
         self._misses = 0
 
     def get(self, key: K) -> Optional[T]:
+        """获取缓存值，不存在或已过期时返回 None。"""
         with self._lock:
             if key not in self._cache:
                 self._misses += 1
@@ -51,6 +54,7 @@ class LRUCache(Generic[K, T]):
             return entry.value
 
     def set(self, key: K, value: T, ttl: Optional[float] = None) -> None:
+        """写入缓存项，优先用传入 ttl，否则用默认 ttl；超出容量时淘汰最久未访问的条目。"""
         with self._lock:
             if key in self._cache:
                 del self._cache[key]
@@ -72,6 +76,7 @@ class LRUCache(Generic[K, T]):
                 self._cache.popitem(last=False)
 
     def delete(self, key: K) -> bool:
+        """删除指定键的缓存项，存在并删除成功返回 True，否则返回 False。"""
         with self._lock:
             if key in self._cache:
                 del self._cache[key]
@@ -79,12 +84,14 @@ class LRUCache(Generic[K, T]):
             return False
 
     def clear(self) -> None:
+        """清空缓存并重置统计计数。"""
         with self._lock:
             self._cache.clear()
             self._hits = 0
             self._misses = 0
 
     def get_stats(self) -> Dict[str, Any]:
+        """返回缓存大小、上限、命中/未命中次数、命中率与总请求数的统计字典。"""
         with self._lock:
             total_requests = self._hits + self._misses
             hit_rate = self._hits / total_requests if total_requests > 0 else 0
@@ -100,6 +107,7 @@ class LRUCache(Generic[K, T]):
 
 
 class CacheManager:
+    """全局缓存管理器单例，按名称维护多个 LRUCache 实例，用于集中管理各用途的命名缓存。"""
     _instance = None
     _lock = threading.Lock()
 
@@ -120,43 +128,11 @@ class CacheManager:
         self._initialized = True
 
     def get_cache(self, name: str, max_size: int = 1000, ttl: Optional[float] = None) -> LRUCache:
+        """按名称获取（或创建）一个 LRU 缓存实例。"""
         with self._global_lock:
             if name not in self._caches:
                 self._caches[name] = LRUCache(max_size=max_size, default_ttl=ttl)
             return self._caches[name]
-
-    def get_all_stats(self) -> Dict[str, Dict[str, Any]]:
-        with self._global_lock:
-            return {name: cache.get_stats() for name, cache in self._caches.items()}
-
-    def clear_all(self) -> None:
-        with self._global_lock:
-            for cache in self._caches.values():
-                cache.clear()
-
-
-def cached(cache_name: str, key_func: Optional[Callable] = None, ttl: Optional[float] = None):
-    def decorator(func: Callable[..., T]) -> Callable[..., T]:
-        @wraps(func)
-        def wrapper(*args, **kwargs) -> T:
-            cache_manager = CacheManager()
-            cache = cache_manager.get_cache(cache_name, ttl=ttl)
-            
-            if key_func:
-                cache_key = key_func(*args, **kwargs)
-            else:
-                cache_key = (args, frozenset(kwargs.items()))
-            
-            result = cache.get(cache_key)
-            if result is not None:
-                return result
-            
-            result = func(*args, **kwargs)
-            cache.set(cache_key, result, ttl=ttl)
-            return result
-        
-        return wrapper
-    return decorator
 
 
 agent_config_cache = CacheManager().get_cache("agent_configs", max_size=100, ttl=300)

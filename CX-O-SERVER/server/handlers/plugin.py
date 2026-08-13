@@ -14,6 +14,7 @@ logger = logging.getLogger(__name__)
 
 
 def register_plugin_handlers(manager: "WebSocketManager"):
+    """将插件（注册/心跳/列表）处理器注册到 WebSocket 管理器。"""
 
     async def handle_plugin_register(websocket, message, client_id):
         request_id = message.get("request_id", "")

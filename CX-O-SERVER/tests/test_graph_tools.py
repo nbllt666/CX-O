@@ -143,13 +143,6 @@ class TestHelpers:
         assert len(a) == 16
         assert a == hashlib.md5("张三:person".encode()).hexdigest()[:16]
 
-    def test_get_library_mapping(self):
-        assert gt._get_library("USER") == GraphLibrary.USER
-        assert gt._get_library("thing") == GraphLibrary.THING
-        assert gt._get_library("concept") == GraphLibrary.CONCEPT
-        assert gt._get_library("event") == GraphLibrary.EVENT
-        assert gt._get_library("unknown") == GraphLibrary.USER
-
     def test_factory_returns_14_ops(self):
         tools = _make()
         assert set(tools.keys()) == {

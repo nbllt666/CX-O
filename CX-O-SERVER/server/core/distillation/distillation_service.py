@@ -43,11 +43,12 @@ MultimodalPipeline 接入点:
 import json
 import logging
 import os
-import uuid
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Tuple
 
 from pydantic import BaseModel
+
+from server.core.utils import iso_now as _iso_now, new_uuid as _new_uuid
 
 logger = logging.getLogger(__name__)
 
@@ -64,22 +65,9 @@ logger = logging.getLogger(__name__)
 _THIS_DIR = os.path.dirname(os.path.abspath(__file__))
 _PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(_THIS_DIR)))
 _PUBLIC_ROOT = os.path.dirname(_PROJECT_ROOT)
-_DATA_DIR = os.path.join(_PROJECT_ROOT, "data")
-_DEFAULT_SESSION_DIR = os.path.join(_DATA_DIR, "distillation_sessions")
-_DEFAULT_LOG_DIR = os.path.join(_DATA_DIR, "distillation_logs")
 _CONFIG_PATH = os.path.join(
     _PUBLIC_ROOT, "public", "config_template", "radix_config.json"
 )
-
-
-def _iso_now() -> str:
-    """返回 ISO 8601 带时区时间戳（UTC）。"""
-    return datetime.now(timezone.utc).isoformat()
-
-
-def _new_uuid() -> str:
-    """生成 UUID v4 字符串。"""
-    return str(uuid.uuid4())
 
 
 def _ensure_dir(path: str) -> None:
@@ -181,9 +169,6 @@ _SOURCE_TYPES = {
     "conversation_log",
 }
 
-# MultimodalPipeline 原生支持的 5 模态（conversation_log 映射到 text）
-_MULTIMODAL_SOURCE_TYPES = {"text", "character_card", "image", "video", "audio"}
-
 _STATES = (
     "S_INIT",
     "S_PREREAD",
@@ -206,9 +191,6 @@ _AGENT_ACTIONS = (
     "finalize",
     "reject",
 )
-
-# 终态集合
-_TERMINAL_STATES = {"S_FINALIZE", "S_REJECT"}
 
 # 状态机转移表：(current_state, agent_action) -> next_state
 _TRANSITIONS: Dict[str, Dict[str, str]] = {

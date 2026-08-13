@@ -11,6 +11,8 @@ logger = logging.getLogger(__name__)
 
 
 class ASRInterruptModule(InterruptModuleBase):
+    """ASR 打断模块（伪全双工实现），由 LLM 依据系统提示词规则判断是否打断当前 TTS 播报。"""
+
     _instance = None
     _independent_timeout: float = 5.0
 
@@ -154,4 +156,6 @@ class ASRInterruptModule(InterruptModuleBase):
 
 
 def get_asr_interrupt_module() -> ASRInterruptModule:
+    """获取 ASRInterruptModule 单例实例。"""
+
     return ASRInterruptModule.get_instance()

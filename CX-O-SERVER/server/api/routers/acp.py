@@ -36,18 +36,6 @@ class ACPGroupCreateRequest(BaseModel):
     max_members: int = 50
 
 
-class ACPGroupJoinRequest(BaseModel):
-    """ACP群组加入请求"""
-
-    group_id: str
-
-
-class ACPGroupLeaveRequest(BaseModel):
-    """ACP群组退出请求"""
-
-    group_id: str
-
-
 class ACPSendMessageRequest(BaseModel):
     """ACP发送消息请求"""
 
@@ -110,6 +98,7 @@ async def discover_agents(request: ACPDiscoverRequest = None):
 
 @router.get("/acp/agents")
 async def list_agents(online_only: bool = False):
+    """列出 ACP 代理；online_only 为真时仅返回在线代理。"""
     from server.dependencies import get_acp_manager
 
     try:
@@ -123,6 +112,7 @@ async def list_agents(online_only: bool = False):
 
 @router.post("/acp/agents")
 async def register_agent(request: ACPAgentRegisterRequest):
+    """手动注册一个本地 ACP 代理条目。"""
     from server.dependencies import get_acp_manager
     from server.core.acp.manager import ACPAgentInfo
 
@@ -150,6 +140,7 @@ async def register_agent(request: ACPAgentRegisterRequest):
 
 @router.patch("/acp/agents/{agent_id}")
 async def patch_agent(agent_id: str, request: ACPAgentPatchRequest):
+    """更新指定代理的名称/描述/能力/状态等字段。"""
     from server.dependencies import get_acp_manager
 
     try:
@@ -173,6 +164,7 @@ async def patch_agent(agent_id: str, request: ACPAgentPatchRequest):
 
 @router.delete("/acp/agents/{agent_id}")
 async def delete_agent(agent_id: str):
+    """删除指定 ACP 代理。"""
     from server.dependencies import get_acp_manager
 
     try:
@@ -221,6 +213,7 @@ async def connect_to_agent(request: ACPConnectRequest):
 
 @router.delete("/acp/connect/{connection_id}")
 async def disconnect_from_agent(connection_id: str):
+    """断开指定 connection_id 的 ACP 连接。"""
     from server.dependencies import get_acp_manager
 
     try:
@@ -298,6 +291,7 @@ async def list_groups():
 
 @router.post("/acp/groups/{group_id}/join")
 async def join_group(group_id: str):
+    """让本地代理加入指定 ACP 群组。"""
     from server.dependencies import get_acp_manager
     from server.core.acp.group import ACPGroupManager
 
@@ -346,6 +340,7 @@ async def leave_group(group_id: str):
 
 @router.post("/acp/send")
 async def send_message(request: ACPSendMessageRequest):
+    """向指定代理或群组发送 ACP 消息。"""
     from server.dependencies import get_acp_manager
     from server.core.acp.manager import ACPMessageInfo
 
@@ -417,6 +412,7 @@ async def send_group_message(group_id: str, content: Dict):
 async def get_messages(
     agent_id: Optional[str] = None, group_id: Optional[str] = None, limit: int = 50
 ):
+    """获取与指定代理或群组的消息历史。"""
     from server.dependencies import get_acp_manager
 
     try:
@@ -433,6 +429,7 @@ async def get_messages(
 
 @router.get("/acp/stats")
 async def get_acp_stats():
+    """获取 ACP 系统统计信息。"""
     from server.dependencies import get_acp_manager
 
     try:

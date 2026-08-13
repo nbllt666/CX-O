@@ -109,13 +109,6 @@ class TraversalDFSRequest(BaseModel):
     agent_id: str = "default"
 
 
-class ShortestPathRequest(BaseModel):
-    """最短路径请求"""
-    start_id: str
-    end_id: str
-    max_length: int = 10
-
-
 class SemanticQueryHopsRequest(BaseModel):
     """多跳语义查询请求（CX-O 独有）"""
     start_node_id: str

@@ -21,6 +21,7 @@ def _resolve(db_path: str) -> str:
 
 @dataclass
 class WeaviateConfig:
+    """Weaviate 向量库连接与建库参数配置，含 url、api_key、向量维度及批量建索引参数。"""
     url: str = "http://localhost:8080"
     api_key: Optional[str] = None
     grpc_port: int = 50061
@@ -32,6 +33,7 @@ class WeaviateConfig:
 
 @dataclass
 class EmbeddingConfig:
+    """嵌入模型配置，指定模型名称、批大小、计算设备与模型缓存目录。"""
     model: str = "sentence-transformers/all-MiniLM-L6-v2"
     batch_size: int = 32
     device: str = "cpu"
@@ -40,6 +42,7 @@ class EmbeddingConfig:
 
 @dataclass
 class GraphConfig:
+    """图数据库总配置，聚合数据库路径、连接池参数及 weaviate/embedding 子配置。"""
     database_path: str = "data/graph.db"
     auto_create_schema: bool = True
     pool_size: int = 10
@@ -134,5 +137,6 @@ def _load_config_from_env() -> GraphConfig:
 
 
 def set_graph_config(config: GraphConfig) -> None:
+    """设置全局图数据库配置单例，供测试或运行时覆盖默认配置。"""
     global _config
     _config = config

@@ -27,6 +27,7 @@ class DuplicateGroup:
     merged_into: Optional[int] = None
 
     def to_dict(self) -> Dict[str, Any]:
+        """将去重组转换为可序列化的字典。"""
         return {
             "group_id": self.group_id,
             "memory_ids": self.memory_ids,
@@ -63,6 +64,7 @@ class DeduplicationEngine:
     """去重检测引擎"""
 
     def __init__(self, memory_manager, threshold: float = 0.85):
+        """初始化去重引擎（threshold 为判定重复的相似度阈值）。"""
         self.memory_manager = memory_manager
         self.threshold = threshold
         self._similarity_cache: Dict[str, float] = {}

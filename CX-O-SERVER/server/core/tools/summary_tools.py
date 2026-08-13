@@ -40,22 +40,6 @@ def get_topic_summary_config() -> Dict[str, Any]:
     return _TOPIC_SUMMARY_CONFIG.copy()
 
 
-def update_topic_summary_config(key: str, value: Any) -> Dict[str, Any]:
-    """更新话题摘要配置
-    
-    Args:
-        key: 配置项名称
-        value: 配置值
-    
-    Returns:
-        更新后的配置
-    """
-    if key in _TOPIC_SUMMARY_CONFIG:
-        _TOPIC_SUMMARY_CONFIG[key] = value
-        return {"status": "success", "config": _TOPIC_SUMMARY_CONFIG}
-    return {"error": f"未知的配置项: {key}"}
-
-
 def set_max_history_topics(max_topics: Optional[int] = None):
     """设置保持在上下文中的历史话题数量
 
@@ -829,7 +813,6 @@ async def trigger_topic_summary(
 
         from datetime import datetime
 
-        datetime.now().strftime("%Y%m%d%H%M")
         importance = 7
 
         tags = ["topic_summary", "conversation_summary"]

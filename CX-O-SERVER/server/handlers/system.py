@@ -15,6 +15,7 @@ logger = logging.getLogger(__name__)
 
 
 def register_system_handlers(manager: "WebSocketManager"):
+    """将系统（健康/状态）处理器注册到 WebSocket 管理器。"""
 
     async def handle_system_health(websocket, message, client_id):
         request_id = message.get("request_id", "")

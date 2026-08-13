@@ -8,6 +8,7 @@ from typing import Any, Dict, Optional
 
 
 class CoreException(Exception):
+    """核心业务异常基类——携带错误码与附加详情。"""
 
     ERROR_CODE = "CORE_ERROR"
 
@@ -26,6 +27,7 @@ class CoreException(Exception):
         return f"[{self.code}] {self.message}"
 
     def to_dict(self) -> Dict[str, Any]:
+        """返回异常的字典表示，供序列化与日志使用。"""
         return {
             "error": self.__class__.__name__,
             "code": self.code,

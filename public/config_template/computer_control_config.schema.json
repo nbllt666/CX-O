@@ -1,0 +1,148 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://cx-o/public/config_template/computer_control_config.schema.json",
+  "title": "ComputerControlConfigContract",
+  "description": "APP-Frontend（Electron）电脑控制插件配置契约。覆盖授权状态、注册令牌、监听地址端口、TLS 证书与指纹、run_command 护栏（超时/输出上限/脱敏/进程树回收）、自启动、管理员权限启动与后端地址。所有配置项均含默认值，配置加载时自动补齐缺失字段。对应冻结决策：授权=永久完整开放撤销即关闭；安全=注册令牌+TLS（不限制本地回环）+request_id 防重放；启动范围仅作用于前端 Electron。源真理：.trae/specs/add-computer-control-cxfc/spec.md 冻结决策；迁移自 .trae/specs/add-computer-control-cxfc/contracts/config_schema.json。",
+  "type": "object",
+  "properties": {
+    "authorized": {
+      "type": "boolean",
+      "description": "授权状态。永久授权，用户主动撤销后失效；撤销即立即关闭三个工具调用。未授权时不执行任何本机动作。",
+      "default": false
+    },
+    "token": {
+      "type": "string",
+      "description": "注册令牌，注册时签发并持久化于 Electron 本地配置；后端保存并在转发 /call 时以 Authorization: Bearer <token> 携带。",
+      "default": ""
+    },
+    "host": {
+      "type": "string",
+      "description": "插件 HTTPS 服务监听地址。按冻结决策不限制本地回环，可被后端触达的地址。",
+      "default": "0.0.0.0"
+    },
+    "port": {
+      "type": "integer",
+      "description": "插件 HTTPS 服务监听端口。端口冲突时自动重试分配并重注册。",
+      "minimum": 1,
+      "maximum": 65535,
+      "default": 18443
+    },
+    "tls_cert_path": {
+      "type": "string",
+      "description": "TLS 自签名证书文件路径（本地生成）。",
+      "default": ""
+    },
+    "tls_fingerprint": {
+      "type": "string",
+      "description": "TLS 自签名证书指纹（SHA-256 十六进制），注册时后端校验（首次信任）。",
+      "pattern": "^[a-fA-F0-9]{64}$",
+      "default": ""
+    },
+    "run_command": {
+      "type": "object",
+      "description": "运行指令工具护栏参数。指令范围不限（任意本机命令），但必须保留这些工程护栏。",
+      "properties": {
+        "timeout_ms": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "执行超时（毫秒），超时后回收整个进程树。",
+          "default": 30000
+        },
+        "max_output_bytes": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "输出捕获字节上限，达到后截断，防止内存与日志膨胀。",
+          "default": 65536
+        },
+        "max_output_chars": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "输出摘要字符上限，进一步限制返回的 stdout/stderr 摘要长度。",
+          "default": 16384
+        },
+        "redact_patterns": {
+          "type": "array",
+          "description": "敏感输出脱敏正则模式列表。默认内置常见密码/密钥/令牌赋值与 Authorization 头模式，使「敏感输出脱敏」在默认配置下成立；匹配内容在结果与日志中替换为掩码，密码/密钥/令牌不落明文审计日志。",
+          "items": { "type": "string" },
+          "default": [
+            "(passwd|password|pass|pwd|secret|apikey|api_key|token|access_token|auth_token|private_key)\\s*[=:]\\s*[^\\s,;]+",
+            "(?:authorization|proxy-authorization)\\s*:\\s*Bearer\\s+[^\\s,;]+",
+            "-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----[\\s\\S]*?-----END (?:RSA |EC |OPENSSH )?PRIVATE KEY-----"
+          ]
+        },
+        "kill_process_tree": {
+          "type": "boolean",
+          "description": "超时或失败时是否回收整个进程树。",
+          "default": true
+        }
+      },
+      "required": [
+        "timeout_ms",
+        "max_output_bytes",
+        "max_output_chars",
+        "redact_patterns",
+        "kill_process_tree"
+      ],
+      "default": {
+        "timeout_ms": 30000,
+        "max_output_bytes": 65536,
+        "max_output_chars": 16384,
+        "redact_patterns": [
+          "(passwd|password|pass|pwd|secret|apikey|api_key|token|access_token|auth_token|private_key)\\s*[=:]\\s*[^\\s,;]+",
+          "(?:authorization|proxy-authorization)\\s*:\\s*Bearer\\s+[^\\s,;]+",
+          "-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----[\\s\\S]*?-----END (?:RSA |EC |OPENSSH )?PRIVATE KEY-----"
+        ],
+        "kill_process_tree": true
+      }
+    },
+    "auto_start": {
+      "type": "boolean",
+      "description": "前端 Electron 自启动（Windows 登录项机制）。仅作用于前端 Electron，不自动启动/停止后端进程。",
+      "default": false
+    },
+    "run_as_admin": {
+      "type": "boolean",
+      "description": "管理员权限启动（遵循 Windows UAC，不绕过系统安全确认）。仅作用于前端 Electron。",
+      "default": false
+    },
+    "backend_url": {
+      "type": "string",
+      "description": "CX-O-SERVER 后端地址，Electron 据此完成 CXFC 注册、心跳与断开注销。",
+      "default": "https://127.0.0.1:8000"
+    }
+  },
+  "required": [
+    "authorized",
+    "token",
+    "host",
+    "port",
+    "tls_cert_path",
+    "tls_fingerprint",
+    "run_command",
+    "auto_start",
+    "run_as_admin",
+    "backend_url"
+  ],
+  "default": {
+    "authorized": false,
+    "token": "",
+    "host": "0.0.0.0",
+    "port": 18443,
+    "tls_cert_path": "",
+    "tls_fingerprint": "",
+    "run_command": {
+      "timeout_ms": 30000,
+      "max_output_bytes": 65536,
+      "max_output_chars": 16384,
+      "redact_patterns": [
+        "(passwd|password|pass|pwd|secret|apikey|api_key|token|access_token|auth_token|private_key)\\s*[=:]\\s*[^\\s,;]+",
+        "(?:authorization|proxy-authorization)\\s*:\\s*Bearer\\s+[^\\s,;]+",
+        "-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----[\\s\\S]*?-----END (?:RSA |EC |OPENSSH )?PRIVATE KEY-----"
+      ],
+      "kill_process_tree": true
+    },
+    "auto_start": false,
+    "run_as_admin": false,
+    "backend_url": "https://127.0.0.1:8000"
+  }
+}

@@ -23,6 +23,7 @@ class UserSpeechState:
 
 
 class AgentInterruptUser(InterruptModuleBase):
+    """Agent 打断用户模块——在用户说话过程中判定是否可插话并执行插话。"""
     _instance = None
 
     def __init__(self):
@@ -47,6 +48,7 @@ class AgentInterruptUser(InterruptModuleBase):
         return cls._instance
 
     def set_config(self, config: dict):
+        """从配置字典加载打断阈值、模式与冷却等参数。"""
         agent_interrupt = config.get("agent_interrupt", {})
         self.enabled = agent_interrupt.get("enabled", True)
         self.mode = agent_interrupt.get("mode", "main_llm")
@@ -69,6 +71,7 @@ class AgentInterruptUser(InterruptModuleBase):
         interrupt_user_callback: Optional[Callable] = None,
         start_tts_callback: Optional[Callable] = None
     ):
+        """设置打断用户与开启 TTS 的回调。"""
         self._interrupt_user_callback = interrupt_user_callback
         self._start_tts_callback = start_tts_callback
 
@@ -81,6 +84,7 @@ class AgentInterruptUser(InterruptModuleBase):
         logger.debug("User speech started")
 
     def on_user_speech_end(self):
+        """记录用户结束说话状态。"""
         if self._user_state.is_speaking:
             logger.debug(f"User speech ended: {self._user_state.current_text}")
             self._user_state.is_speaking = False
@@ -235,6 +239,7 @@ class AgentInterruptUser(InterruptModuleBase):
         }
 
     async def interrupt_user(self, reply_content: str = "") -> bool:
+        """执行打断用户动作：触发打断回调，可选播报插话回应。"""
         logger.info(f"Agent interrupting user with reply: {reply_content[:50]}...")
 
         await self._invoke_callback(self._interrupt_user_callback)
@@ -248,12 +253,15 @@ class AgentInterruptUser(InterruptModuleBase):
 
     @property
     def is_user_speaking(self) -> bool:
+        """返回用户当前是否正在说话。"""
         return self._user_state.is_speaking
 
     @property
     def user_current_text(self) -> str:
+        """返回用户当前说话文本。"""
         return self._user_state.current_text
 
 
 def get_agent_interrupt_module() -> AgentInterruptUser:
+    """返回 AgentInterruptUser 模块单例。"""
     return AgentInterruptUser.get_instance()

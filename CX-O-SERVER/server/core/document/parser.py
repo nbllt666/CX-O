@@ -21,17 +21,6 @@ logger = logging.getLogger(__name__)
 # 单文件大小上限（10MB），防止内存溢出
 MAX_DOCUMENT_SIZE = 10 * 1024 * 1024
 
-# 支持的文档 MIME 类型（AnythingLLM 统一使用 application/anythingllm-document）
-# 但 contentString 中的 data URI 包含真实 mime 类型
-SUPPORTED_DOC_MIMES = {
-    "application/pdf",
-    "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-    "application/msword",
-    "text/plain",
-    "text/markdown",
-    "application/anythingllm-document",  # AnythingLLM 统一标记，需从 data URI 推断真实格式
-}
-
 IMAGE_MIME_PREFIX = "image/"
 
 

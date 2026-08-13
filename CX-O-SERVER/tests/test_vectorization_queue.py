@@ -15,8 +15,6 @@ from server.core.memory.vectorization_queue import (
     TaskStatus,
     VectorizationQueue,
     VectorizationTask,
-    get_vectorization_queue,
-    init_vectorization_queue,
 )
 
 
@@ -54,9 +52,6 @@ class TestVectorizationTask:
 
 # ---------------------------------------------------------------- 入队与状态
 class TestTaskLifecycle:
-    def test_singleton(self, q):
-        assert VectorizationQueue.get_instance() is q
-
     def test_add_task_returns_id(self, q):
         assert q.add_task("m1", "内容") == "m1"
 
@@ -173,23 +168,3 @@ class TestWorker:
         q.stop()
         assert q._workers == []
         assert q._stop_event.is_set()
-
-
-# ---------------------------------------------------------------- 工厂函数
-class TestFactory:
-    def test_get_vectorization_queue_singleton(self, q, monkeypatch):
-        from server.core.memory import vectorization_queue as vq
-
-        monkeypatch.setattr(vq, "_vectorization_queue", None)
-        a = get_vectorization_queue()
-        b = get_vectorization_queue()
-        assert a is b
-
-    def test_init_vectorization_queue(self, monkeypatch):
-        from server.core.memory import vectorization_queue as vq
-
-        new_q = init_vectorization_queue(max_workers=3, batch_size=10)
-        assert vq._vectorization_queue is new_q
-        assert new_q.max_workers == 3
-        assert new_q.batch_size == 10
-        new_q.stop()

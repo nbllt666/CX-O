@@ -40,6 +40,8 @@ _CUSTOM_EFFECT: dict[str, Any] = {"type": "custom", "volume": 0.5}
 
 
 class FrontendMarker:
+    """前端标记适配器——将内部情感/音效标记转换为前端可识别的展示格式。"""
+
     def format_for_frontend(self, data: dict) -> dict:
         """将内部标记转换为前端可识别格式。
 
@@ -90,6 +92,7 @@ _frontend_marker: Optional[FrontendMarker] = None
 
 
 def get_frontend_marker() -> FrontendMarker:
+    """返回全局唯一的 FrontendMarker 单例。"""
     global _frontend_marker
     if _frontend_marker is None:
         _frontend_marker = FrontendMarker()

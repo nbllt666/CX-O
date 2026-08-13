@@ -14,6 +14,8 @@ ACTION_PATTERN = re.compile(r'\[action:([^\]]+)\]')
 
 
 class MarkerAdapter:
+    """标记适配器——将弹幕/消息中的情感、音效与动作标记提取为统一格式。"""
+
     def _extract_markers(self, content: str) -> list[dict]:
         """提取文本内的情感/音效标记（含起止位置）。
 

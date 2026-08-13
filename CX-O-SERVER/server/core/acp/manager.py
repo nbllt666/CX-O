@@ -30,6 +30,8 @@ _PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(_THIS_DIR)))
 
 
 class ACPAgentInfo(BaseModel):
+    """ACP Agent 信息数据模型。"""
+
     id: str = ""
     name: str = ""
     host: str = ""
@@ -41,10 +43,13 @@ class ACPAgentInfo(BaseModel):
     metadata: Dict = Field(default_factory=dict)
 
     def to_dict(self) -> Dict:
+        """转换为字典表示。"""
         return self.model_dump()
 
 
 class ACPConnectionInfo(BaseModel):
+    """ACP Agent 连接信息数据模型。"""
+
     id: str = ""
     local_agent_id: str = ""
     remote_agent_id: str = ""
@@ -59,10 +64,13 @@ class ACPConnectionInfo(BaseModel):
     metadata: Dict = Field(default_factory=dict)
 
     def to_dict(self) -> Dict:
+        """转换为字典表示。"""
         return self.model_dump()
 
 
 class ACPGroupInfo(BaseModel):
+    """ACP 群组信息数据模型。"""
+
     id: str = ""
     name: str = ""
     description: str = ""
@@ -76,10 +84,13 @@ class ACPGroupInfo(BaseModel):
     metadata: Dict = Field(default_factory=dict)
 
     def to_dict(self) -> Dict:
+        """转换为字典表示。"""
         return self.model_dump()
 
 
 class ACPMessageInfo(BaseModel):
+    """ACP 消息信息数据模型。"""
+
     id: str = ""
     msg_type: str = "chat"
     from_agent_id: str = ""
@@ -93,7 +104,7 @@ class ACPMessageInfo(BaseModel):
     metadata: Dict = Field(default_factory=dict)
 
     def to_dict(self) -> Dict:
-        # 保持字段名映射：msg_type -> type（不可直接用 model_dump()）
+        """转换为字典表示，保持字段名映射：msg_type -> type。"""
         return {
             "id": self.id,
             "type": self.msg_type,
@@ -163,6 +174,10 @@ class ACPManager:
 
         self._lock = asyncio.Lock()
 
+        # 后台任务引用集合：防止 _trigger_auto_reply 等长任务被 GC 提前回收
+        # （asyncio 不持有裸 create_task 的引用，任务完成前被回收会静默中断）。
+        self._background_tasks: set[asyncio.Task] = set()
+
         self._local_agent_id = ""
         self._local_agent_name = ""
 
@@ -196,6 +211,12 @@ class ACPManager:
         self._local_agent_id = agent_id
         self._local_agent_name = agent_name
         logger.info(f"ACP管理器初始化: agent_id={agent_id}, agent_name={agent_name}")
+
+    def _track_background_task(self, task: asyncio.Task) -> asyncio.Task:
+        """追踪后台任务，防止被 GC 回收；任务完成后自动从集合中移除。"""
+        self._background_tasks.add(task)
+        task.add_done_callback(self._background_tasks.discard)
+        return task
 
     async def start(self) -> None:
         """启动 ACP 管理器"""
@@ -403,6 +424,7 @@ class ACPManager:
             return agent
 
     async def update_agent_status(self, agent_id: str, status: str) -> bool:
+        """更新 agent 在线状态与最近活跃时间，并持久化。"""
         async with self._lock:
             if agent_id in self.agents:
                 self.agents[agent_id].status = status
@@ -412,9 +434,11 @@ class ACPManager:
             return False
 
     async def get_agent(self, agent_id: str) -> Optional[ACPAgentInfo]:
+        """按 ID 获取 agent，不存在时返回 None。"""
         return self.agents.get(agent_id)
 
     async def list_agents(self, online_only: bool = False) -> List[Dict]:
+        """列出全部（或仅在线）agent 的字典列表。"""
         async with self._lock:
             agents = list(self.agents.values())
             if online_only:
@@ -451,6 +475,7 @@ class ACPManager:
         capabilities: Optional[List[str]] = None,
         status: Optional[str] = None,
     ) -> bool:
+        """按提供的可选字段更新 agent 属性并持久化，agent 不存在时返回 False。"""
         async with self._lock:
             if agent_id not in self.agents:
                 return False
@@ -470,15 +495,18 @@ class ACPManager:
             return True
 
     async def create_connection(self, connection: ACPConnectionInfo) -> ACPConnectionInfo:
+        """创建一条新连接并持久化。"""
         async with self._lock:
             self.connections[connection.id] = connection
             await self._save_data()
             return connection
 
     async def get_connection(self, connection_id: str) -> Optional[ACPConnectionInfo]:
+        """按 ID 获取连接，不存在时返回 None。"""
         return self.connections.get(connection_id)
 
     async def list_connections(self, local_only: bool = True) -> List[Dict]:
+        """列出连接，local_only 为 True 时仅返回本地 agent 的连接。"""
         async with self._lock:
             connections = list(self.connections.values())
             if local_only:
@@ -486,6 +514,7 @@ class ACPManager:
             return [c.to_dict() for c in connections]
 
     async def update_connection(self, connection_id: str, **kwargs) -> bool:
+        """按 kwargs 更新连接字段并持久化，连接不存在时返回 False。"""
         async with self._lock:
             if connection_id in self.connections:
                 conn = self.connections[connection_id]
@@ -497,6 +526,7 @@ class ACPManager:
             return False
 
     async def delete_connection(self, connection_id: str) -> bool:
+        """删除连接并持久化，连接不存在时返回 False。"""
         async with self._lock:
             if connection_id in self.connections:
                 del self.connections[connection_id]
@@ -505,6 +535,7 @@ class ACPManager:
             return False
 
     async def create_group(self, group: ACPGroupInfo) -> ACPGroupInfo:
+        """创建新群组并初始化其消息槽，然后持久化。"""
         async with self._lock:
             self.groups[group.id] = group
             self.messages[group.id] = []
@@ -512,13 +543,16 @@ class ACPManager:
             return group
 
     async def get_group(self, group_id: str) -> Optional[ACPGroupInfo]:
+        """按 ID 获取群组，不存在时返回 None。"""
         return self.groups.get(group_id)
 
     async def list_groups(self) -> List[Dict]:
+        """列出全部群组的字典列表。"""
         async with self._lock:
             return [g.to_dict() for g in self.groups.values()]
 
     async def update_group(self, group_id: str, **kwargs) -> bool:
+        """按 kwargs 更新群组字段、刷新 updated_at 并持久化。"""
         async with self._lock:
             if group_id in self.groups:
                 group = self.groups[group_id]
@@ -531,6 +565,7 @@ class ACPManager:
             return False
 
     async def delete_group(self, group_id: str) -> bool:
+        """删除群组及其消息历史并持久化，不存在时返回 False。"""
         async with self._lock:
             if group_id in self.groups:
                 del self.groups[group_id]
@@ -541,6 +576,7 @@ class ACPManager:
             return False
 
     async def add_group_member(self, group_id: str, member: Dict) -> bool:
+        """向群组追加成员并持久化，群组不存在时返回 False。"""
         async with self._lock:
             if group_id in self.groups:
                 group = self.groups[group_id]
@@ -551,6 +587,7 @@ class ACPManager:
             return False
 
     async def remove_group_member(self, group_id: str, agent_id: str) -> bool:
+        """从群组移除指定 agent 成员并持久化，群组不存在时返回 False。"""
         async with self._lock:
             if group_id in self.groups:
                 group = self.groups[group_id]
@@ -630,8 +667,8 @@ class ACPManager:
         await self._inject_into_chat_context(message, target_agent_id=target_agent_id)
 
         # 2. 触发目标 agent 的自动回复（后台执行，不阻塞 send_message 返回）
-        asyncio.create_task(
-            self._trigger_auto_reply(message, target_agent_id=target_agent_id)
+        self._track_background_task(
+            asyncio.create_task(self._trigger_auto_reply(message, target_agent_id=target_agent_id))
         )
 
         logger.info(
@@ -688,7 +725,7 @@ class ACPManager:
             logger.warning(f"注入 ACP 消息到聊天上下文失败: {e}")
 
         # 立即触发 LLM 自动回复（后台任务，不阻塞接收端点返回）
-        asyncio.create_task(self._trigger_auto_reply(message))
+        self._track_background_task(asyncio.create_task(self._trigger_auto_reply(message)))
 
         logger.info(
             f"接收外部消息: from={message.from_agent_id}, type={message.msg_type}"
@@ -959,6 +996,7 @@ class ACPManager:
     async def get_messages(
         self, target_id: str, group_id: str = None, limit: int = 50, unread_only: bool = False
     ) -> List[Dict]:
+        """获取消息列表，可按群组/目标过滤，支持仅未读与最近 N 条截取。"""
         async with self._lock:
             key = group_id or target_id
             messages = self.messages.get(key, [])
@@ -969,6 +1007,7 @@ class ACPManager:
             return [m.to_dict() for m in messages[-limit:]]
 
     async def mark_messages_read(self, message_ids: List[str]) -> int:
+        """将指定消息标记为已读，返回本次实际标记的数量。"""
         marked = 0
         id_set = set(message_ids)
         async with self._lock:
@@ -981,6 +1020,7 @@ class ACPManager:
         return marked
 
     async def get_statistics(self) -> Dict:
+        """汇总 ACP 网络的统计信息（agent/连接/群组/消息/资源计数）。"""
         async with self._lock:
             online_agents = sum(1 for a in self.agents.values() if a.status == "online")
             active_connections = sum(

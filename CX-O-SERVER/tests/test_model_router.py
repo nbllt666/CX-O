@@ -62,21 +62,17 @@ class TestGetClient:
         assert router.get_client("memory") is not None
 
     def test_default_following(self, router):
-        """summary 默认跟随 main，应返回 main 客户端。"""
-        main = _fake_client(router, name="main")
-        client = router.get_client("summary")
-        assert client is main
+        """summary 客户端未注册时返回 None，由调用方自行回退 main。"""
+        _fake_client(router, name="main")
+        assert router.get_client("summary") is None
 
     def test_default_following_case_insensitive(self, router):
-        main = _fake_client(router, name="main")
-        assert router.get_client("SUMMARY") is main
+        comb = _fake_client(router, name="summary")
+        assert router.get_client("SUMMARY") is comb
 
     def test_default_follows_missing_target_falls_back(self, router):
-        """defaults 指向不存在的客户端时回退到类型自身。"""
-        _fake_client(router, name="summary")
-        # summary 默认跟随 main，但 main 不存在 → 回退 summary
-        client = router.get_client("summary")
-        assert client is router._clients["summary"]
+        """未注册的模型类型返回 None。"""
+        assert router.get_client("summary") is None
 
 
 # ---------------------------------------------------------------- get_config

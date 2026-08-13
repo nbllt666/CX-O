@@ -48,9 +48,6 @@ class TestLLMFactory:
         b = LLMFactory.create_client("ollama", model="m2")
         assert a is not b
 
-    def test_get_client_delegates(self):
-        assert LLMFactory.get_client("ollama") is LLMFactory.get_client("ollama")
-
     def test_clear_cache_invalidates(self):
         a = LLMFactory.create_client("ollama", model="m1")
         LLMFactory.clear_cache()

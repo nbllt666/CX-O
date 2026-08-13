@@ -40,12 +40,17 @@ import {
   ZoomIn,
   Scissors,
   Settings,
+  ShieldCheck,
 } from 'lucide-react';
 import { useChatStore } from '../store/chatStore';
 import { useAudioStore } from '../store/audioStore';
 import { useCaptureStore } from '../store/captureStore';
 import { useObsStore } from '../store/obsStore';
 import { CAPTURE_BASE_WIDTH, CAPTURE_BASE_HEIGHT } from '../store/obsStore';
+import {
+  useAuthorizationStore,
+  isComputerControlEnabled,
+} from '../store/authorizationStore';
 import { isElectron } from '../lib/isElectron';
 import { useSettingsStore } from '../store/settingsStore';
 import { useWebSocket } from '../hooks/useWebSocket';
@@ -111,6 +116,17 @@ export default function PetPage() {
   const cycleCaptureSize = useObsStore((s) => s.cycleCaptureSize);
   const setCaptureSize = useObsStore((s) => s.setCaptureSize);
 
+  // ── Task 4 电脑控制授权状态（授权为永久授权，撤销后不自动恢复） ──
+  const computerControlAuthorized = useAuthorizationStore((s) => s.authorized);
+  const computerControlRunning = useAuthorizationStore((s) => s.running);
+  const authorizeComputerControl = useAuthorizationStore((s) => s.authorize);
+  const revokeComputerControl = useAuthorizationStore((s) => s.revoke);
+  // 电脑控制工具可执行门禁：未授权（即使 CXFC 已注册）或服务未运行时均不可用
+  const computerControlEnabled = isComputerControlEnabled(
+    computerControlAuthorized,
+    computerControlRunning,
+  );
+
   const [isLoading, setIsLoading] = useState(false);
   const [menuPos, setMenuPos] = useState<{ x: number; y: number } | null>(null);
   // 主进程创建桌宠窗时 alwaysOnTop:true，本地初值与之对齐
@@ -154,6 +170,11 @@ export default function PetPage() {
     if (state.agents.length === 0) {
       void state.fetchAgents();
     }
+  }, []);
+
+  // 重启恢复电脑控制授权：启动时读主进程 getComputerControlAuth 权威值
+  useEffect(() => {
+    void useAuthorizationStore.getState().restore();
   }, []);
 
   // 透明窗体底色：绿幕模式铺标准抠像绿，其余保持透明
@@ -577,6 +598,31 @@ export default function PetPage() {
       checked: cameraActive,
       onSelect: () => {
         setCameraActive(!cameraActive);
+        closeMenu();
+      },
+    },
+    {
+      // Task 4 电脑控制授权入口：授权优先于工具可执行状态（未授权不得仅因注册成功即可用）。
+      // 授权为永久授权；授权/撤销均需用户确认，主动撤销后不自动恢复。
+      key: 'computer-control-auth',
+      label: `${t('pet.menu.computerControl')}：${
+        !computerControlRunning
+          ? t('pet.computerControl.notAvailable')
+          : computerControlAuthorized
+            ? t('pet.computerControl.authorized')
+            : t('pet.computerControl.unauthorized')
+      }`,
+      icon: <ShieldCheck className="h-3.5 w-3.5" />,
+      // 勾选态 = 工具可执行门禁（已授权且服务运行），注册失败时保持不虚高
+      checked: computerControlEnabled,
+      onSelect: () => {
+        if (computerControlAuthorized) {
+          if (window.confirm(t('pet.computerControl.revokeConfirm'))) {
+            void revokeComputerControl();
+          }
+        } else if (window.confirm(t('pet.computerControl.authorizeConfirm'))) {
+          void authorizeComputerControl();
+        }
         closeMenu();
       },
     },

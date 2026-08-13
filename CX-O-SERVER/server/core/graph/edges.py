@@ -22,6 +22,7 @@ class EdgeManager:
         self.config = config
 
     def create(self, edge_data: EdgeCreate, agent_id: str = "default") -> GraphEdge:
+        """创建一条新的图边，校验源/目标节点存在。"""
         if not self._node_exists(edge_data.source_id, agent_id):
             raise ValueError(f"源节点不存在: {edge_data.source_id}")
         if not self._node_exists(edge_data.target_id, agent_id):
@@ -110,6 +111,7 @@ class EdgeManager:
         offset: int = 0,
         agent_id: str = "default",
     ) -> SearchResult:
+        """分页列出边，支持按关系类型/源/目标节点过滤。"""
         conditions = ["agent_id = ?"]
         params = [agent_id]
 
@@ -142,6 +144,7 @@ class EdgeManager:
         return SearchResult(items=edges, total=total, offset=offset, limit=limit)
 
     def get_outgoing(self, node_id: str, relation_type: Optional[str] = None, agent_id: str = "default") -> List[GraphEdge]:
+        """获取指定节点为源的出边列表。"""
         if relation_type:
             query = "SELECT * FROM edges WHERE source_id = ? AND relation_type = ? AND agent_id = ?"
             rows = self.db.execute(query, (node_id, relation_type, agent_id))
@@ -171,6 +174,7 @@ class EdgeManager:
         offset: int = 0,
         agent_id: str = "default",
     ) -> SearchResult:
+        """分页搜索边，支持关系类型、端点与属性过滤。"""
         conditions = ["agent_id = ?"]
         params = [agent_id]
 
@@ -214,6 +218,7 @@ class EdgeManager:
         return self.db.execute_one(query, (node_id, agent_id)) is not None
 
     def count(self, relation_type: Optional[str] = None, agent_id: str = "default") -> int:
+        """统计边数量，可按关系类型过滤。"""
         if relation_type:
             query = "SELECT COUNT(*) as cnt FROM edges WHERE relation_type = ? AND agent_id = ?"
             result = self.db.execute_one(query, (relation_type, agent_id))

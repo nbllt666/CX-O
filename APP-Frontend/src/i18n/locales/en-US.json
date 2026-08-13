@@ -698,7 +698,15 @@
       "camera": "Camera",
       "greenScreen": "Green screen",
       "closePet": "Close pet",
-      "avatarScale": "Avatar scale: {{scale}}"
+      "avatarScale": "Avatar scale: {{scale}}",
+      "computerControl": "Authorize control"
+    },
+    "computerControl": {
+      "authorized": "Authorized",
+      "unauthorized": "Not authorized",
+      "notAvailable": "Service not running",
+      "authorizeConfirm": "After authorization, this app can control your computer (screen control, keyboard control, run commands). This authorization is permanent and can be revoked anytime from the pet menu. Authorize?",
+      "revokeConfirm": "After revocation, this app can no longer control your computer. Revoke authorization?"
     },
     "obs": {
       "captureSize": "Capture size: {{size}}"
@@ -973,6 +981,17 @@
       "scanResult": "Found {{count}} LAN plugins",
       "scanNone": "No LAN plugins found",
       "connectFailed": "Connect failed"
+    },
+    "startup": {
+      "sectionTitle": "Frontend Startup",
+      "sectionDesc": "Auto-start and admin launch for the desktop pet app (frontend only, does not control backend)",
+      "autoStart": "Auto-start on login",
+      "autoStartDesc": "Launch the desktop pet app automatically at login (Windows login item)",
+      "runAsAdmin": "Run as administrator",
+      "runAsAdminDesc": "Launch with administrator privileges, following Windows UAC confirmation",
+      "browserUnavailable": "Unavailable in browser mode. Enable it in desktop (Electron) mode",
+      "notEffective": "Not effective: current process is not running as administrator (UAC may have been declined; try again on next launch)",
+      "pendingRestart": "Saved. The app will request administrator privileges (UAC prompt) on next launch"
     }
   },
   "configReload": {

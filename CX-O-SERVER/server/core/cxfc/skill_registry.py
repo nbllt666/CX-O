@@ -5,6 +5,8 @@ from .models import SkillDefinition
 
 
 class SkillRegistry:
+    """技能注册表——按插件注册/注销技能，并支持按关键词或事件检索技能。"""
+
     def __init__(self):
         self._skills: Dict[str, SkillDefinition] = {}
 

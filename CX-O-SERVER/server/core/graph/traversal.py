@@ -62,6 +62,7 @@ class TraversalManager(BaseGraphRepository):
         node_type_filter: Optional[str] = None,
         agent_id: str = "default",
     ) -> List[GraphNode]:
+        """以广度优先遍历图，返回符合条件的节点。"""
         result = []
         visited: Set[str] = set()
         queue = deque([(start_id, 0)])
@@ -124,6 +125,7 @@ class TraversalManager(BaseGraphRepository):
         max_length: int = 10,
         agent_id: str = "default",
     ) -> Optional[PathResult]:
+        """计算两个节点之间的最短路径（Dijkstra）。"""
         if start_id == end_id:
             return PathResult(path=[start_id], edges=[], length=0)
 
@@ -193,6 +195,7 @@ class TraversalManager(BaseGraphRepository):
         max_length: int = 5,
         agent_id: str = "default",
     ) -> List[PathResult]:
+        """枚举两个节点之间的所有路径。"""
         results = []
 
         def dfs(current: str, path: List[str], edges: List[GraphEdge], depth: int):
@@ -240,6 +243,7 @@ class TraversalManager(BaseGraphRepository):
         tolerance: float = 1e-6,
         agent_id: str = "default",
     ) -> Dict[str, float]:
+        """计算图中各节点的 PageRank 分数。"""
         all_nodes = self.db.execute("SELECT id FROM nodes WHERE agent_id = ?", (agent_id,))
         node_ids = [row["id"] for row in all_nodes]
         n = len(node_ids)
@@ -306,6 +310,7 @@ class TraversalManager(BaseGraphRepository):
         method: str = "lpa",
         agent_id: str = "default",
     ) -> Dict[int, List[str]]:
+        """使用指定算法（lpa/louvain）进行社区发现。"""
         all_nodes = self.db.execute("SELECT id FROM nodes WHERE agent_id = ?", (agent_id,))
         node_ids = [row["id"] for row in all_nodes]
 
@@ -461,6 +466,7 @@ class TraversalManager(BaseGraphRepository):
         return remapped
 
     def get_community_stats(self, agent_id: str = "default") -> Dict[str, Any]:
+        """返回社区检测的统计信息。"""
         communities = self.community_detection(agent_id=agent_id)
 
         if not communities:

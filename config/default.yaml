@@ -335,8 +335,6 @@ limits:
     max_history: 500
     conversation_max_messages: 100
     conversation_recent_window: 20
-    summarizer_max_topics: 15
-    summarizer_max_key_points: 15
     chat_context_limit: 10
   firewall:
     max_message_length: 10000

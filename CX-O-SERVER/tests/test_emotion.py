@@ -1,14 +1,14 @@
 """server.core.memory.emotion (EmotionAnalyzer) 单元测试。
 
 覆盖规则规则型情感分析：正/负/中性词、强度词、否定词、混合文本、
-文本分档、缓存行为、快捷函数。
+文本分档、缓存行为、快捷函数；LLM 模式：结构化解析、回退、JSON 提取。
 运行：python -m pytest tests/test_emotion.py -v
 """
 import asyncio
 
 import pytest
 
-from server.core.memory.emotion import EmotionAnalyzer, get_emotion, get_emotion_for_decay
+from server.core.memory.emotion import EmotionAnalyzer, get_emotion_for_decay
 
 
 @pytest.fixture
@@ -113,15 +113,15 @@ class TestConfidenceAndIntensity:
 
 class TestScores:
     def test_get_emotion_score(self, analyzer):
-        score = analyzer.get_emotion_score("开心")
+        score = asyncio.run(analyzer.get_emotion_score("开心"))
         assert score > 0
         assert score == pytest.approx(_analyze(analyzer, "开心").polarity * _analyze(analyzer, "开心").intensity)
 
     def test_get_emotion_score_negative(self, analyzer):
-        assert analyzer.get_emotion_score("难过") < 0
+        assert asyncio.run(analyzer.get_emotion_score("难过")) < 0
 
     def test_get_emotion_for_decay(self, analyzer):
-        v = analyzer.get_intensity_for_decay("开心")
+        v = asyncio.run(analyzer.get_intensity_for_decay("开心"))
         assert v >= 0
         assert v == pytest.approx(abs(_analyze(analyzer, "开心").polarity) * 2.0)
 
@@ -140,8 +140,99 @@ class TestCache:
 
 
 class TestModuleFunctions:
-    def test_get_emotion_module_func(self):
-        assert get_emotion("难过") < 0
-
     def test_get_emotion_for_decay_module_func(self):
-        assert get_emotion_for_decay("开心") >= 0
+        assert asyncio.run(get_emotion_for_decay("开心")) >= 0
+
+
+class _FakeClient:
+    """记录调用并返回预设响应的假 LLM 客户端。"""
+
+    def __init__(self, content):
+        self.content = content
+        self.calls = []
+
+    async def chat(self, messages, stream=False):
+        self.calls.append(messages)
+        return _FakeResponse(self.content)
+
+
+class _FakeResponse:
+    def __init__(self, content):
+        self.content = content
+
+
+class TestLlmMode:
+    def test_llm_success_parses_json(self):
+        client = _FakeClient(
+            '{"polarity":0.8,"intensity":0.6,"emotion_type":"positive","confidence":0.9,"keywords":["高兴"]}'
+        )
+        analyzer = EmotionAnalyzer(use_llm=True, llm_client=client)
+        r = asyncio.run(analyzer.analyze("这段文本很积极"))
+        assert r.polarity == pytest.approx(0.8)
+        assert r.intensity == pytest.approx(0.6)
+        assert r.emotion_type == "positive"
+        assert r.confidence == pytest.approx(0.9)
+        assert r.keywords == ["高兴"]
+        assert len(client.calls) == 1
+
+    def test_llm_clamps_out_of_range(self):
+        client = _FakeClient(
+            '{"polarity":5.0,"intensity":9.0,"emotion_type":"positive","confidence":3.0,"keywords":[]}'
+        )
+        analyzer = EmotionAnalyzer(use_llm=True, llm_client=client)
+        r = asyncio.run(analyzer.analyze("任意文本"))
+        assert r.polarity == 1.0
+        assert r.confidence == 1.0
+
+    def test_llm_failure_falls_back_to_rules(self):
+        # 客户端抛异常 → 回退规则词典，不崩溃
+        class _BoomClient:
+            async def chat(self, messages, stream=False):
+                raise RuntimeError("llm down")
+
+        analyzer = EmotionAnalyzer(use_llm=True, llm_client=_BoomClient())
+        r = asyncio.run(analyzer.analyze("开心"))
+        assert r.emotion_type == "positive"
+        assert "开心" in r.keywords
+
+    def test_llm_invalid_json_falls_back_to_rules(self):
+        client = _FakeClient("抱歉，我无法回答")
+        analyzer = EmotionAnalyzer(use_llm=True, llm_client=client)
+        r = asyncio.run(analyzer.analyze("难过"))
+        assert r.emotion_type == "negative"
+
+    def test_use_llm_false_ignores_client(self):
+        client = _FakeClient("should not be called")
+        analyzer = EmotionAnalyzer(use_llm=False, llm_client=client)
+        r = asyncio.run(analyzer.analyze("开心"))
+        assert r.emotion_type == "positive"
+        assert client.calls == []
+
+    def test_set_llm_client_enables_llm(self):
+        client = _FakeClient(
+            '{"polarity":-0.7,"intensity":0.5,"emotion_type":"negative","confidence":0.8,"keywords":["生气"]}'
+        )
+        analyzer = EmotionAnalyzer()
+        assert analyzer.use_llm is False
+        analyzer.set_llm_client(client)
+        assert analyzer.use_llm is True
+        r = asyncio.run(analyzer.analyze("内容"))
+        assert r.emotion_type == "negative"
+        assert len(client.calls) == 1
+
+
+class TestParseLlmJson:
+    def test_plain_json(self):
+        assert EmotionAnalyzer._parse_llm_json('{"a":1}') == {"a": 1}
+
+    def test_markdown_block(self):
+        raw = '```json\n{"a":1}\n```'
+        assert EmotionAnalyzer._parse_llm_json(raw) == {"a": 1}
+
+    def test_extra_text_wrapped(self):
+        raw = '结果如下：{"a":1} 完毕'
+        assert EmotionAnalyzer._parse_llm_json(raw) == {"a": 1}
+
+    def test_non_dict_raises(self):
+        with pytest.raises(ValueError, match="JSON 对象"):
+            EmotionAnalyzer._parse_llm_json("[1,2,3]")

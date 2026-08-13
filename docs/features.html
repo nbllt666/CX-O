@@ -249,7 +249,7 @@ td:first-child { color: var(--text-bright); font-weight: 500; }
 
   <div class="highlight-box">
     <h4>两种 TTS 引擎可选</h4>
-    <p>F5-TTS（默认，Triton 加速）和 Orpheus（基于 vLLM 的多语言 TTS）。在设置页或会话初始化时切换，两种引擎各有特色，可以根据场景选择。CosyVoice 则用于语音工作站的情感参考音频生成。</p>
+    <p>F5-TTS（默认，Triton 加速）和 Orpheus（基于 vLLM 的多语言 TTS）。在设置页或会话初始化时切换，两种引擎各有特色，可以根据场景选择。</p>
   </div>
 </section>
 
@@ -369,7 +369,7 @@ td:first-child { color: var(--text-bright); font-weight: 500; }
       <ul class="feature-list">
         <li>节点与关系可视化（力导向图）</li>
         <li>路径查找与关联记忆检索</li>
-        <li>图数据库支持 Neo4j</li>
+        <li>图数据库基于 SQLite（可选 Weaviate 向量增强）</li>
         <li>记忆可与图谱实体联动</li>
       </ul>
     </div>
@@ -541,10 +541,10 @@ td:first-child { color: var(--text-bright); font-weight: 500; }
 
     <div class="card">
       <span class="tag tag-pink">步骤二</span>
-      <h3>CosyVoice 情感参考音频</h3>
-      <p>预生成带情感的参考音频，让 TTS 输出更有表现力。支持导入导出方便迁移。</p>
+      <h3>VoxCPM 情感参考音频</h3>
+      <p>用 VoxCPM 预生成带情感的参考音频（8 情感 + 56 过渡），让 TTS 输出更有表现力。支持导入导出方便迁移。</p>
       <ul class="feature-list">
-        <li>预生成情感参考音频</li>
+        <li>预生成情感参考音频（clone / design 两种模式）</li>
         <li>过渡参考音频生成</li>
         <li>ZIP 格式导出/导入</li>
       </ul>

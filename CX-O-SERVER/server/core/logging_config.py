@@ -178,18 +178,6 @@ def setup_logging(
     return root_logger
 
 
-def get_logger(name: str) -> logging.Logger:
-    """获取日志记录器
-
-    Args:
-        name: 日志记录器名称
-
-    Returns:
-        日志记录器
-    """
-    return logging.getLogger(name)
-
-
 class LogContext:
     """日志上下文管理器
 

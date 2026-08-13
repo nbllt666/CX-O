@@ -18,6 +18,7 @@ logger = logging.getLogger(__name__)
 
 @dataclass
 class ChatContext:
+    """一次聊天请求的上下文：agent 配置、上下文管理器、LLM 客户端与会话信息。"""
     agent_config: dict
     context_mgr: object
     llm: object
@@ -130,6 +131,7 @@ async def _consume_and_send_stream(
 
 
 def register_chat_handlers(manager: "WebSocketManager"):
+    """将聊天（普通/流式/多模态）处理器注册到 WebSocket 管理器。"""
     _manager = manager
 
     async def handle_chat_message(websocket, message, client_id):

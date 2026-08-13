@@ -56,7 +56,6 @@ ollama pull nomic-embed-text
 # 语音相关模型
 python download_voxcpm2.py
 python download_voxcpm_support.py
-python cosyvoice\download_models.py
 ```
 
 **第三步：启动服务**
@@ -86,7 +85,7 @@ cd APP-Frontend
 | 记忆系统 | 三层记忆 + 向量搜索 + 知识图谱 + 自动衰减 + 记忆蒸馏 |
 | 多 Agent | 多个人格独立管理，ACP 协议互通信，角色卡快速创建 |
 | 直播推流 | OBS 四源拆分（形象/弹幕/字幕/音频），弹幕实时互动 |
-| 声音克隆 | VoxCPM 音色设计 + CosyVoice 情感参考 + So-VITS-SVC 训练推理 |
+| 声音克隆 | VoxCPM 音色设计与情感参考 + So-VITS-SVC 训练推理 |
 | AI 作曲 | 歌谱编辑 + MusicXML 导入 + 声库选择 + 歌声合成 |
 | 桌面宠物 | 透明悬浮窗，鼠标穿透，拖拽移动，右键菜单 |
 | 工具系统 | 数十个内置工具 + MCP 协议接入外部工具 + 插件系统 |
@@ -109,7 +108,6 @@ CX-O/
 ├── APP-Frontend/           # 前端桌面应用（Electron，浏览器模式默认端口 3100）
 ├── CX-O-SERVER/            # 后端服务（FastAPI + WebSocket）
 ├── CX-O-VoiceWorkStation/  # 语音工作站（声音克隆与训练）
-├── cosyvoice/              # CosyVoice 语音合成引擎
 ├── orpheus-tts/            # Orpheus TTS 服务
 ├── ELP-Orpheus/            # 低延迟推理引擎（双卡部署）
 ├── config/                 # 全局配置文件
@@ -139,4 +137,4 @@ CX-O/
 
 ## License
 
-本项目仅供学习和个人使用。第三方引擎（CosyVoice、Orpheus、So-VITS-SVC 等）请遵守各自的许可证。
+本项目仅供学习和个人使用。第三方引擎（Orpheus、So-VITS-SVC、VoxCPM 等）请遵守各自的许可证。

@@ -2,6 +2,36 @@
 
 > 遵循 AC 范式 v6 rules-3 §六 契约版本化规则。所有契约变更必须记录版本号、变更内容、变更原因、影响范围。
 
+## [1.2.0] - 2026-08-13
+
+### 变更内容
+
+- **数据契约新增（MINOR）**：电脑控制插件三层契约正式落位 `public/` 公共契约区（spec `add-computer-control-cxfc` 冻结决策，迁移自 `.trae/specs/add-computer-control-cxfc/contracts/`）
+  - `schema/computer_control_plugin.schema.json`：插件注册数据契约（插件信息 + 三个工具 屏幕/键盘/运行指令 的请求/响应结构 + 统一错误码字段 + 授权状态）
+  - `schema/computer_control_error_codes.json`：电脑控制插件统一错误码枚举（8 个错误码，含 http_status 映射）
+  - `interface_stub/computer_control.pyi`：插件服务端/后端调用接口存根（health / list_tools / list_skills / call_tool + 8 异常类）
+  - `config_template/computer_control_config.schema.json`：插件配置契约（授权/令牌/TLS/run_command 护栏/自启动/管理员权限/后端地址，含默认值与 auto_fill）
+- **接口存根索引更新（PATCH）**：`public/interface_stub/STUB_INDEX.md` 追加 `computer_control.pyi` 登记
+- **README 更新（PATCH）**：`public/schema/README.md` 与 `public/config_template/README.md` 追加对应契约清单行
+
+### 变更原因
+
+- 用户通过 AskUserQuestion 显式授权「迁移到 public/ 公共区」——电脑控制三层契约从规格目录正式落位为跨角色公共真相源（rules-0 §四-10 + rules-4 §4.3 + s0601 契约变更适配）。
+- 测试入口 `tests/test_contracts_computer_control.py` 与 `errors.ts` 引用同步改为 public/ 路径。
+
+### 影响范围
+
+- **MINOR 新增**：4 份契约文件均为新增，不影响 CX-O 现有契约（chat/agents/memory/websocket/RADIX-Lite 等）。
+- 下游已同步：`tests/test_contracts_computer_control.py`（CONTRACTS_DIR → public/）、`APP-Frontend/electron/plugins/computerControl/errors.ts`（注释引用）。
+- 原 `.trae/specs/add-computer-control-cxfc/contracts/` 下 4 份旧契约文件已随迁移删除，避免双真相源。
+
+### 闭合判据
+
+- [x] 4 份契约实体落位 `public/` 对应目录（schema / interface_stub / config_template）
+- [x] `python -m pytest tests/test_contracts_computer_control.py` 通过（21 passed）
+- [x] 旧 `contracts/` 目录文件删除，无残留引用（仅保留「迁移自」溯源注释）
+- [x] 各 README 与 STUB_INDEX 已同步登记
+
 ## [1.1.0] - 2026-07-18
 
 ### 变更内容

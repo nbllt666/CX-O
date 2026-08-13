@@ -72,7 +72,8 @@ class FakeHttpClient:
     async def get(self, url, timeout=5.0):
         return self._route("get", url)
 
-    async def post(self, url, json=None, timeout=30.0):
+    async def post(self, url, json=None, headers=None, timeout=30.0):
+        self.last_headers = headers
         return self._route("post", url)
 
     def _route(self, method, url):

@@ -92,6 +92,7 @@ class TaskManager:
         tags: Optional[List[str]] = None,
         due_date: Optional[str] = None,
     ) -> dict:
+        """创建一条新任务并持久化，返回任务字典。"""
         if priority not in _VALID_PRIORITIES:
             raise ValueError(f"无效的优先级: {priority}")
         now = datetime.now().isoformat()
@@ -347,6 +348,7 @@ class TaskManager:
         return result
 
     def mark_executed(self, task_id: str, success: bool = True) -> None:
+        """记录定时任务已执行，并计算下次运行时间（一次性任务则置空）。"""
         with self._lock:
             for t in self._scheduled_tasks:
                 if t["id"] == task_id:

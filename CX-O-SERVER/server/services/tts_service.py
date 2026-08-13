@@ -28,6 +28,8 @@ logger = logging.getLogger(__name__)
 
 
 class TTSService:
+    """统一 TTS 服务，支持 embedded / remote / triton / orpheus 多种合成模式，并提供流式、情感与音效合成能力。"""
+
     def __init__(
         self,
         mode: str = "remote",
@@ -1217,6 +1219,8 @@ _tts_service: Optional[TTSService] = None
 
 
 def get_tts_service() -> TTSService:
+    """获取全局唯一的 TTSService 单例，按配置惰性初始化。"""
+
     global _tts_service
     if _tts_service is None:
         from server.config import get_settings

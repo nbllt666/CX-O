@@ -414,14 +414,15 @@ class TestFinalizeWithAgentCreation:
         agents = json.loads(agents_path.read_text(encoding="utf-8"))
         assert any(a["id"] == agent["id"] for a in agents)
 
-    def test_finalize_with_agent_creation_created(self, service, tmp_path, monkeypatch):
+    @pytest.mark.asyncio
+    async def test_finalize_with_agent_creation_created(self, service, tmp_path, monkeypatch):
         import server.core.distillation.distillation_service as dist_mod
 
         monkeypatch.setattr(dist_mod, "_PROJECT_ROOT", str(tmp_path))
         session = self._make_session()
         service._save_session(session)
 
-        result = service.finalize_with_agent_creation(session_id="sid-agent")
+        result = await service.finalize_with_agent_creation(session_id="sid-agent")
 
         assert result["stored"] is True
         assert result["agent_creation_result"]["status"] == "created"

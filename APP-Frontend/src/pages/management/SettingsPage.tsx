@@ -24,6 +24,7 @@ import {
   Plug,
   Radio,
   RefreshCw,
+  Rocket,
   Search,
   Server,
   Share2,
@@ -1801,6 +1802,116 @@ function PluginSection() {
   );
 }
 
+// ── 区块 11：前端启动设置（Task 5） ──
+// 自启动 / 管理员权限启动，仅作用于前端 Electron，不负责启动/停止后端进程。
+// 浏览器模式（window.electronAPI 缺失）下显示不可用且不调用 Electron API。
+
+interface StartupState {
+  supported: boolean;
+  autoStart: boolean;
+  runAsAdmin: boolean;
+  isAdmin: boolean;
+}
+
+const DESKTOP_UNAVAILABLE: StartupState = {
+  supported: false,
+  autoStart: false,
+  runAsAdmin: false,
+  isAdmin: false,
+};
+
+function StartupSection() {
+  const { t } = useTranslation();
+  // 浏览器模式下 window.electronAPI 为 undefined，桌面模式经 preload 暴露
+  const isDesktop = !!window.electronAPI;
+  const [state, setState] = useState<StartupState>(DESKTOP_UNAVAILABLE);
+  const [loaded, setLoaded] = useState(false);
+  const [notice, setNotice] = useState<string | null>(null);
+  const [pending, setPending] = useState(false);
+
+  // 桌面模式挂载时读取启动配置
+  useEffect(() => {
+    if (!isDesktop || !window.electronAPI) return;
+    let cancelled = false;
+    void window.electronAPI
+      .getStartupSettings()
+      .then((s) => {
+        if (!cancelled) {
+          setState(s);
+          setLoaded(true);
+        }
+      })
+      .catch(() => {
+        if (!cancelled) setLoaded(true);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [isDesktop]);
+
+  const handleToggle = async (key: 'autoStart' | 'runAsAdmin', value: boolean) => {
+    if (!isDesktop || !window.electronAPI || pending) return;
+    setPending(true);
+    setNotice(null);
+    try {
+      if (key === 'autoStart') {
+        const next = await window.electronAPI.setAutoStart(value);
+        setState(next);
+        setNotice(null);
+      } else {
+        const next = await window.electronAPI.setRunAsAdmin(value);
+        setState(next);
+        // 开启但当前未提权 → 提示重启生效；或曾开启但未提权 → 提示未生效
+        if (next.runAsAdmin && !next.isAdmin) {
+          setNotice(value ? t('settings.startup.pendingRestart') : t('settings.startup.notEffective'));
+        } else {
+          setNotice(null);
+        }
+      }
+    } catch {
+      setNotice(t('settings.saveError'));
+    } finally {
+      setPending(false);
+    }
+  };
+
+  // 管理员权限已开启但当前未以管理员运行 → 设置未生效提示
+  const adminNotEffective = state.runAsAdmin && !state.isAdmin;
+
+  return (
+    <Section
+      icon={Rocket}
+      title={t('settings.startup.sectionTitle')}
+      desc={t('settings.startup.sectionDesc')}
+    >
+      {!isDesktop && (
+        <p className="text-xs text-amber-400">{t('settings.startup.browserUnavailable')}</p>
+      )}
+      <Row label={t('settings.startup.autoStart')} desc={t('settings.startup.autoStartDesc')}>
+        <Toggle
+          label={t('settings.startup.autoStart')}
+          checked={state.autoStart}
+          onChange={(v) => void handleToggle('autoStart', v)}
+        />
+      </Row>
+      <Row label={t('settings.startup.runAsAdmin')} desc={t('settings.startup.runAsAdminDesc')}>
+        <Toggle
+          label={t('settings.startup.runAsAdmin')}
+          checked={state.runAsAdmin}
+          onChange={(v) => void handleToggle('runAsAdmin', v)}
+        />
+      </Row>
+      {isDesktop && adminNotEffective && !notice && (
+        <p className="text-xs text-amber-400">{t('settings.startup.notEffective')}</p>
+      )}
+      {notice && <p className="text-xs text-amber-400">{notice}</p>}
+      {isDesktop && !loaded && !pending && (
+        <p className="text-xs text-muted-foreground">{t('settings.backend.saving')}</p>
+      )}
+    </Section>
+  );
+}
+
 export default function SettingsPage() {
   const { t } = useTranslation();
   return (
@@ -1816,6 +1927,7 @@ export default function SettingsPage() {
       <GraphSection />
       <ServiceSection />
       <PluginSection />
+      <StartupSection />
     </div>
   );
 }

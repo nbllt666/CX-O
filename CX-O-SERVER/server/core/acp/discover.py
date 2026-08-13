@@ -13,6 +13,8 @@ logger = get_contextual_logger(__name__)
 
 
 class ACPLanDiscovery:
+    """ACP 局域网发现器，通过 UDP 广播宣告本机 Agent 并监听局域网信标，将发现的 Agent 注册到管理器中。"""
+
     def __init__(
         self,
         acp_manager: ACPManager,
@@ -39,6 +41,7 @@ class ACPLanDiscovery:
         self._socket_factory = socket.socket
 
     async def start(self):
+        """启动发现服务：创建广播/监听 UDP socket 并启动后台发现循环。"""
         if self._running:
             return
 
@@ -67,6 +70,7 @@ class ACPLanDiscovery:
             raise
 
     async def stop(self):
+        """停止发现服务：置停运行标记并取消后台发现循环任务。"""
         self._running = False
 
         if self._task:
@@ -156,9 +160,11 @@ class ACPLanDiscovery:
             logger.info(f"发现 {len(found_agents)} 个Agents")
 
     async def discover_once(self, timeout: float = 5.0) -> List[Dict]:
+        """执行一次主动发现：在指定超时窗口内监听局域网信标，返回发现的 Agent 字典列表。"""
         agents = []
 
         async def receive_with_timeout():
+            """在超时窗口内循环接收 ACP_BEACON 信标并注册发现的 Agent。"""
             found = []
             sock = self._socket_factory(socket.AF_INET, socket.SOCK_DGRAM)
             sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
@@ -208,6 +214,7 @@ class ACPLanDiscovery:
         return agents
 
     async def get_local_ip(self) -> str:
+        """获取本机局域网 IP，失败时回退到 127.0.0.1。"""
         try:
             s = self._socket_factory(socket.AF_INET, socket.SOCK_DGRAM)
             s.connect(("8.8.8.8", 80))
@@ -218,6 +225,7 @@ class ACPLanDiscovery:
             return "127.0.0.1"
 
     def get_status(self) -> Dict:
+        """返回发现服务的运行状态与网络端口配置。"""
         return {
             "running": self._running,
             "broadcast_port": self.broadcast_port,

@@ -299,7 +299,7 @@ pre code { color: var(--accent-green); }
 
   <div class="highlight-box">
     <h4>显存分配策略（单卡 20GB 场景）</h4>
-    <p>单卡跑全部服务时显存比较紧张。推荐策略：LLM 占 ~18GB（<span class="inline-code">gpu_memory_utilization=0.9</span>），Orpheus TTS 占 ~8-10GB（<span class="inline-code">gpu_memory_utilization=0.45</span>），SNAC 解码器走 CPU 避免争抢。如果显存不够，优先保证 LLM + ASR，TTS 可以用 F5-TTS 或 CosyVoice 替代。</p>
+    <p>单卡跑全部服务时显存比较紧张。推荐策略：LLM 占 ~18GB（<span class="inline-code">gpu_memory_utilization=0.9</span>），Orpheus TTS 占 ~8-10GB（<span class="inline-code">gpu_memory_utilization=0.45</span>），SNAC 解码器走 CPU 避免争抢。如果显存不够，优先保证 LLM + ASR，TTS 可以用 F5-TTS 替代。</p>
   </div>
 </section>
 
@@ -371,27 +371,6 @@ pre code { color: var(--accent-green); }
         <td>~400MB</td>
         <td><code>models/SenseVoiceSmall/</code></td>
       </tr>
-      <tr>
-        <td>CosyVoice 系列（6 个）</td>
-        <td>多模式 TTS（含 instruct、SFT）</td>
-        <td><code>python cosyvoice/download_models.py</code></td>
-        <td>~5-8GB</td>
-        <td><code>cosyvoice/pretrained_models/</code></td>
-      </tr>
-    </table>
-
-    <p style="margin-top:16px"><strong>CosyVoice 系列 6 个模型明细：</strong></p>
-    <table>
-      <tr>
-        <th>ModelScope ID</th>
-        <th>本地目录名</th>
-      </tr>
-      <tr><td><code>FunAudioLLM/Fun-CosyVoice3-0.5B-2512</code></td><td>Fun-CosyVoice3-0.5B</td></tr>
-      <tr><td><code>iic/CosyVoice2-0.5B</code></td><td>CosyVoice2-0.5B（默认模型）</td></tr>
-      <tr><td><code>iic/CosyVoice-300M</code></td><td>CosyVoice-300M</td></tr>
-      <tr><td><code>iic/CosyVoice-300M-SFT</code></td><td>CosyVoice-300M-SFT</td></tr>
-      <tr><td><code>iic/CosyVoice-300M-Instruct</code></td><td>CosyVoice-300M-Instruct</td></tr>
-      <tr><td><code>iic/CosyVoice-ttsfrd</code></td><td>CosyVoice-ttsfrd（文本前端）</td></tr>
     </table>
   </div>
 
@@ -443,14 +422,14 @@ huggingface-cli download canopylabs/orpheus-multilingual-research-release \
 
   <div class="highlight-box">
     <h4>模型下载总量估算</h4>
-    <p>全部模型下载约需 20-30GB 磁盘空间：Ollama 模型 ~5GB + VoxCPM2 ~1.5GB + SenseVoice ~0.4GB + ZipEnhancer ~0.2GB + CosyVoice ~6GB + Orpheus ~6GB + SNAC ~0.05GB + F5-TTS ~1.5GB。首次部署建议预留 50GB。</p>
+    <p>全部模型下载约需 14-24GB 磁盘空间：Ollama 模型 ~5GB + VoxCPM2 ~1.5GB + SenseVoice ~0.4GB + ZipEnhancer ~0.2GB + Orpheus ~6GB + SNAC ~0.05GB + F5-TTS ~1.5GB。首次部署建议预留 50GB。</p>
   </div>
 </section>
 
 <!-- 配套服务 -->
 <section class="section" id="services">
   <h2 class="section-title">🔌 配套服务</h2>
-  <p class="section-desc">CX-O 运行依赖以下外部服务。其中 Ollama 是必须的，Weaviate 和 Neo4j 按功能需求启用。</p>
+  <p class="section-desc">CX-O 运行依赖以下外部服务。其中 Ollama 是必须的，Weaviate 按功能需求启用。</p>
 
   <div class="card">
     <span class="tag tag-red">必须</span>
@@ -482,13 +461,12 @@ huggingface-cli download canopylabs/orpheus-multilingual-research-release \
   </div>
 
   <div class="card">
-    <span class="tag tag-purple">可选</span>
-    <h3>Neo4j — 图数据库</h3>
-    <p>知识图谱功能依赖图数据库。如果不使用图谱功能，可以关闭（<code>graph_enabled: false</code>），后端会跳过初始化。</p>
+    <span class="tag tag-green">内置</span>
+    <h3>知识图谱 — SQLite 图存储</h3>
+    <p>知识图谱基于内置 SQLite 图存储（<code>data/graph.db</code>），无需额外安装图数据库服务。可选接入 Weaviate 做向量增强。</p>
     <table>
-      <tr><th>默认端口</th><td>bolt 7687</td></tr>
-      <tr><th>启动方式</th><td>Docker: <code>docker run -p 7687:7687 neo4j</code></td></tr>
-      <tr><th>配置位置</th><td><code>config/default.yaml</code> 第 110-115 行</td></tr>
+      <tr><th>存储位置</th><td><code>data/graph.db</code></td></tr>
+      <tr><th>启动方式</th><td>内置，随后端自动初始化（图数据 lazy 初始化，首次调用时创建）</td></tr>
       <tr><th>关闭方式</th><td>设置 <code>graph_enabled: false</code></td></tr>
     </table>
   </div>
@@ -524,9 +502,7 @@ huggingface-cli download canopylabs/orpheus-multilingual-research-release \
       <tr><td>8200</td><td>CX-O VoiceWorkStation</td><td>语音工作站</td></tr>
       <tr><td>11434</td><td>Ollama</td><td>本地 LLM 推理</td></tr>
       <tr><td>50061</td><td>Weaviate gRPC</td><td>向量数据库 gRPC 通道</td></tr>
-      <tr><td>7687</td><td>Neo4j bolt</td><td>图数据库</td></tr>
       <tr><td>5060</td><td>Orpheus TTS Bridge</td><td>OpenAI 兼容 TTS API</td></tr>
-      <tr><td>50000</td><td>CosyVoice</td><td>CosyVoice TTS 服务</td></tr>
       <tr><td>9996/9997</td><td>CXFC</td><td>插件发现 / 广播</td></tr>
       <tr><td>9998/9999</td><td>ACP</td><td>代理广播 / 发现</td></tr>
     </table>
@@ -564,7 +540,6 @@ ollama pull nomic-embed-text
 # 语音模型
 python download_voxcpm2.py
 python download_voxcpm_support.py
-python cosyvoice\download_models.py
 
 # Orpheus（如需使用）
 huggingface-cli download canopylabs/orpheus-multilingual-research-release \
@@ -575,10 +550,7 @@ huggingface-cli download canopylabs/orpheus-multilingual-research-release \
 ollama serve
 
 # Weaviate（如需向量搜索）
-docker run -d -p 8090:8090 -p 50051:50051 semitechnologies/weaviate
-
-# Neo4j（如需知识图谱）
-docker run -d -p 7687:7687 neo4j</code></pre>
+docker run -d -p 8090:8090 -p 50051:50051 semitechnologies/weaviate</code></pre>
       </li>
       <li><strong>启动 Docker 推理服务</strong>（可选，按需启动）<br>
         <pre><code># ASR 语音识别
@@ -695,8 +667,8 @@ cd APP-Frontend
       </tr>
       <tr>
         <td><code>memory.graph_backend</code></td>
-        <td>neo4j</td>
-        <td>图数据库后端</td>
+        <td>sqlite</td>
+        <td>图数据库后端（sqlite / weaviate）</td>
       </tr>
       <tr>
         <td><code>memory.graph_enabled</code></td>
@@ -716,7 +688,7 @@ cd APP-Frontend
       <tr>
         <td><code>tts.engine</code></td>
         <td>f5-tts</td>
-        <td>TTS 引擎（f5-tts / cosyvoice）</td>
+        <td>TTS 引擎（f5-tts / orpheus）</td>
       </tr>
       <tr>
         <td><code>tts.orpheus.url</code></td>
@@ -771,9 +743,8 @@ cp .env.example .env</code></pre>
   </div>
 
   <div class="highlight-box">
-    <h4>三种 TTS 引擎配置</h4>
+    <h4>两种 TTS 引擎配置</h4>
     <p><strong>F5-TTS</strong>（默认）：<code>tts.engine: f5-tts</code> + <code>tts.remote_url: http://127.0.0.1:5000</code>，需要启动 F5-TTS 服务或 Docker 容器。</p>
-    <p style="margin-top:8px"><strong>CosyVoice</strong>：<code>tts.engine: cosyvoice</code> + <code>tts.remote_url: http://127.0.0.1:50000</code>，需要启动 CosyVoice 服务。</p>
     <p style="margin-top:8px"><strong>Orpheus</strong>：<code>tts.mode: orpheus</code> + <code>tts.orpheus.url: http://127.0.0.1:5060</code>，需要启动 Orpheus Docker 容器。后端启动时会自动发预热请求。</p>
   </div>
 </section>
@@ -975,7 +946,7 @@ docker compose down</code></pre>
 
   <div class="card">
     <h3>ModelScope 下载慢</h3>
-    <p>下载脚本使用 ModelScope（阿里云），国内网络通常较快。如果仍然慢，检查网络代理设置。CosyVoice 下载脚本支持 HuggingFace 回退，可以设置 <code>HF_ENDPOINT=https://hf-mirror.com</code> 使用镜像站。</p>
+    <p>下载脚本使用 ModelScope（阿里云），国内网络通常较快。如果仍然慢，检查网络代理设置。Orpheus 等模型若从 HuggingFace 下载，可以设置 <code>HF_ENDPOINT=https://hf-mirror.com</code> 使用镜像站。</p>
   </div>
 </section>
 

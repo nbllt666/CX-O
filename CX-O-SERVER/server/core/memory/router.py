@@ -11,6 +11,7 @@ logger = get_contextual_logger(__name__)
 
 @dataclass
 class RoutingResult:
+    """记忆路由的输出结果，封装选中的记忆列表、总分、各来源计数、实际权重与命中规则。"""
     memories: List[Dict]
     total_score: float
     source_counts: Dict[str, int]
@@ -21,6 +22,7 @@ class RoutingResult:
 
 @dataclass
 class RoutingConfig:
+    """记忆路由评分配置，定义重要性/时间/相关性权重、场景感知开关及数量与分数阈值。"""
     importance_weight: float = 0.35
     time_weight: float = 0.25
     relevance_weight: float = 0.4
@@ -32,6 +34,7 @@ class RoutingConfig:
 
 
 class MemoryRouter:
+    """记忆路由器，聚合近端记忆与向量/关键词检索结果，按场景权重评分、过滤并选出最终记忆。"""
     SCENE_CONFIGS = {
         "task": {
             "description": "任务型对话",
@@ -80,6 +83,7 @@ class MemoryRouter:
     def __init__(
         self, memory_manager, vector_store=None, embedding_model=None, config: RoutingConfig = None
     ):
+        """初始化记忆路由器（缺省使用默认配置）。"""
         self.memory_manager = memory_manager
         self.vector_store = vector_store
         self.embedding_model = embedding_model
@@ -103,6 +107,7 @@ class MemoryRouter:
             self.hybrid_search = HybridSearch(vector_store, memory_manager, embedding_model)
 
     def set_config(self, config: RoutingConfig):
+        """替换路由器的评分配置对象。"""
         self.config = config
 
     async def route(
@@ -113,6 +118,7 @@ class MemoryRouter:
         context: Dict = None,
         options: Dict = None,
     ) -> RoutingResult:
+        """执行一次记忆路由：聚合检索、评分、过滤、场景调整后返回最终记忆结果；失败时返回空结果并记录 error。"""
         options = options or {}
 
         applied_rules = []
@@ -326,6 +332,7 @@ class MemoryRouter:
         return memories
 
     def get_routing_status(self) -> Dict:
+        """返回路由器的启用状态与当前配置。"""
         return {
             "enabled": True,
             "config": {

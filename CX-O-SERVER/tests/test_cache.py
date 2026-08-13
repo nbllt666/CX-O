@@ -1,11 +1,9 @@
 """server.core.cache 单元测试。
 
-覆盖 LRUCache TTL/LRU 淘汰/统计、CacheManager 单例与 cached 装饰器。
+覆盖 LRUCache TTL/LRU 淘汰/统计 与 CacheManager 单例。
 运行：python -m pytest tests/test_cache.py -v
 """
-import pytest
-
-from server.core.cache import LRUCache, CacheManager, cached
+from server.core.cache import LRUCache, CacheManager
 
 
 class TestLRUCache:
@@ -82,54 +80,3 @@ class TestCacheManager:
         a = mgr.get_cache("c1")
         b = mgr.get_cache("c1")
         assert a is b
-
-    def test_get_all_stats(self):
-        mgr = CacheManager()
-        mgr.get_cache("s1").set("k", 1)
-        stats = mgr.get_all_stats()
-        assert "s1" in stats
-
-    def test_clear_all(self):
-        mgr = CacheManager()
-        cache = mgr.get_cache("s2")
-        cache.set("k", 1)
-        mgr.clear_all()
-        assert cache.get_stats()["size"] == 0
-
-
-class TestCachedDecorator:
-    def test_caches_result(self):
-        calls = []
-
-        @cached("deco_test_1")
-        def add(a, b):
-            calls.append(1)
-            return a + b
-
-        assert add(1, 2) == 3
-        assert add(1, 2) == 3
-        assert len(calls) == 1
-
-    def test_different_args_not_cached(self):
-        calls = []
-
-        @cached("deco_test_2")
-        def add(a, b):
-            calls.append(1)
-            return a + b
-
-        add(1, 2)
-        add(3, 4)
-        assert len(calls) == 2
-
-    def test_key_func(self):
-        calls = []
-
-        @cached("deco_test_3", key_func=lambda x: x % 2)
-        def f(x):
-            calls.append(1)
-            return x
-
-        assert f(1) == 1
-        assert f(3) == 1  # key_func(3)=key_func(1)=1，命中缓存返回缓存值
-        assert len(calls) == 1

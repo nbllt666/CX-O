@@ -45,6 +45,7 @@ def _safe_log(level, msg):
 
 @dataclass
 class Alarm:
+    """提醒数据类，描述一条提醒的归属、消息、触发时间、创建时间与状态。"""
     id: str
     agent_id: str
     message: str
@@ -54,6 +55,7 @@ class Alarm:
     triggered_at: Optional[datetime] = None
 
     def to_dict(self) -> Dict[str, Any]:
+        """将提醒转成字典（用于序列化输出）。"""
         result = {
             "id": self.id,
             "agent_id": self.agent_id,
@@ -68,6 +70,8 @@ class Alarm:
 
 
 class AlarmManager:
+    """定时提醒管理器——创建/取消/触发提醒，支持同步与异步接口。"""
+
     def __init__(self, db_path: str = _DEFAULT_DB_PATH):
         self.db_path = db_path
         self._timers: Dict[str, threading.Timer] = {}
@@ -146,9 +150,11 @@ class AlarmManager:
             self._connection_cache.clear()
 
     def set_trigger_callback(self, callback):
+        """注册提醒触发后的回调函数，调用时传入 (agent_id, message)。"""
         self._on_trigger_callback = callback
 
     def create_alarm(self, agent_id: str, seconds: int, message: str) -> str:
+        """创建一条定时提醒并调度触发，校验参数后返回生成的提醒 ID。"""
         if not isinstance(agent_id, str) or not agent_id.strip():
             raise ValueError("agent_id 必须是非空字符串")
         if not isinstance(seconds, (int, float)) or seconds <= 0 or seconds > MAX_DELAY:
@@ -198,6 +204,7 @@ class AlarmManager:
         return await asyncio.to_thread(self.create_alarm, agent_id, seconds, message)
 
     def get_alarm(self, alarm_id: str) -> Optional[Dict]:
+        """按 ID 查询提醒详情，不存在返回 None。"""
         conn = self._get_connection()
         cursor = conn.cursor()
         cursor.execute("SELECT * FROM alarms WHERE id = ?", (alarm_id,))
@@ -211,6 +218,7 @@ class AlarmManager:
         return await asyncio.to_thread(self.get_alarm, alarm_id)
 
     def get_alarms_by_agent(self, agent_id: str, include_triggered: bool = False) -> List[Dict]:
+        """查询某 agent 的提醒列表，默认仅返回待触发项并按触发时间排序。"""
         conn = self._get_connection()
         cursor = conn.cursor()
 
@@ -231,6 +239,7 @@ class AlarmManager:
         return await asyncio.to_thread(self.get_alarms_by_agent, agent_id, include_triggered)
 
     def cancel_alarm(self, alarm_id: str) -> bool:
+        """取消待触发的提醒：停止定时器并将状态置为 cancelled，返回是否生效。"""
         with self._lock:
             if alarm_id in self._timers:
                 self._timers[alarm_id].cancel()
@@ -255,6 +264,7 @@ class AlarmManager:
         return await asyncio.to_thread(self.cancel_alarm, alarm_id)
 
     def mark_triggered(self, alarm_id: str) -> bool:
+        """将提醒标记为已触发，记录触发时间并从定时器表移除。"""
         now = datetime.now()
         # BUG-B05 修复: 复用缓存连接
         conn = self._get_connection()
@@ -276,6 +286,7 @@ class AlarmManager:
         return await asyncio.to_thread(self.mark_triggered, alarm_id)
 
     def get_pending_alarms(self) -> List[Dict]:
+        """查询全部待触发提醒，按触发时间升序返回。"""
         conn = self._get_connection()
         cursor = conn.cursor()
         cursor.execute("SELECT * FROM alarms WHERE status = 'pending' ORDER BY trigger_time")
@@ -317,6 +328,7 @@ class AlarmManager:
                     _safe_log(logging.ERROR, f"提醒回调失败: {e}")
 
     def restore_pending_alarms(self):
+        """从数据库恢复待触发提醒：已到期的立即触发，未到期的重新调度。"""
         pending = self.get_pending_alarms()
         now = datetime.now()
 
@@ -343,6 +355,7 @@ class AlarmManager:
         await asyncio.to_thread(self.restore_pending_alarms)
 
     def shutdown(self):
+        """关闭管理器：取消全部定时器、关闭缓存的数据库连接并静默日志。"""
         self._shutdown = True
         with self._lock:
             for timer in self._timers.values():
@@ -357,6 +370,7 @@ _alarm_manager: Optional[AlarmManager] = None
 
 
 def get_alarm_manager() -> AlarmManager:
+    """获取全局提醒管理器单例，按需创建。"""
     global _alarm_manager
     if _alarm_manager is None:
         _alarm_manager = AlarmManager()

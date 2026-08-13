@@ -223,4 +223,49 @@ describe('SettingsPage 五区块', () => {
     expect(await screen.findByText('已保存，连接正常')).toBeInTheDocument();
     expect(localStorage.getItem(STORAGE_KEYS.backendUrl)).toBe('http://192.168.1.100:8100');
   });
+
+  it('前端启动设置：浏览器模式下显示不可用且不调用 Electron API', async () => {
+    delete (window as { electronAPI?: unknown }).electronAPI;
+    render(<SettingsPage />);
+    expect(screen.getByRole('heading', { name: '前端启动设置' })).toBeInTheDocument();
+    expect(screen.getByText(/浏览器模式不可用/)).toBeInTheDocument();
+
+    // 浏览器模式点击开关不触发任何 Electron IPC
+    const switchBtn = screen.getByRole('switch', { name: '前端自启动' });
+    fireEvent.click(switchBtn);
+    expect((window as { electronAPI?: unknown }).electronAPI).toBeUndefined();
+  });
+
+  it('前端启动设置：桌面模式下读取并更新自启动/管理员权限开关', async () => {
+    const electronApi = {
+      getStartupSettings: vi
+        .fn()
+        .mockResolvedValue({ supported: true, autoStart: false, runAsAdmin: false, isAdmin: true }),
+      setAutoStart: vi
+        .fn()
+        .mockResolvedValue({ supported: true, autoStart: true, runAsAdmin: false, isAdmin: true }),
+      setRunAsAdmin: vi
+        .fn()
+        .mockResolvedValue({ supported: true, autoStart: false, runAsAdmin: true, isAdmin: false }),
+    };
+    Object.defineProperty(window, 'electronAPI', { value: electronApi, configurable: true });
+    render(<SettingsPage />);
+
+    // 读取当前状态
+    await waitFor(() => expect(electronApi.getStartupSettings).toHaveBeenCalled());
+
+    // 切换自启动
+    const autoSwitch = screen.getByRole('switch', { name: '前端自启动' });
+    expect(autoSwitch).toHaveAttribute('aria-checked', 'false');
+    fireEvent.click(autoSwitch);
+    await waitFor(() => expect(electronApi.setAutoStart).toHaveBeenCalledWith(true));
+
+    // 切换管理员权限：返回未提权 → 提示重启生效
+    const adminSwitch = screen.getByRole('switch', { name: '管理员权限启动' });
+    fireEvent.click(adminSwitch);
+    await waitFor(() => expect(electronApi.setRunAsAdmin).toHaveBeenCalledWith(true));
+    expect(await screen.findByText(/重启应用后以管理员权限运行/)).toBeInTheDocument();
+
+    delete (window as { electronAPI?: unknown }).electronAPI;
+  });
 });

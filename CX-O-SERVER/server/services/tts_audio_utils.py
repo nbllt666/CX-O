@@ -154,6 +154,8 @@ class CrossRequestSilenceFilter:
 
 
 def split_text_by_sentences(text: str, max_length: int = 200) -> list[str]:
+    """按句末标点将文本切分为句子，并按 max_length 合并相邻短句。"""
+
     sentence_endings = re.compile(r'([。！？.!?]+)')
     parts = sentence_endings.split(text)
 
@@ -186,6 +188,8 @@ def split_text_by_sentences(text: str, max_length: int = 200) -> list[str]:
 
 
 def generate_silence(duration_ms: int) -> bytes:
+    """生成指定时长（毫秒）的静音 WAV 音频字节。"""
+
     sample_rate = 22050
     num_channels = 1
     sample_width = 2
@@ -200,6 +204,8 @@ def generate_silence(duration_ms: int) -> bytes:
 
 
 async def concatenate_audio(audio_segments: list[bytes]) -> bytes:
+    """将多个音频片段拼接为单个音频：全为 WAV 时合并 PCM 并重建头部，否则直接字节拼接。"""
+
     if not audio_segments:
         return b""
 
@@ -244,6 +250,8 @@ async def concatenate_audio(audio_segments: list[bytes]) -> bytes:
 
 
 def load_emotion_voices(emotion_refs_dir: str) -> dict:
+    """从情感参考音频目录加载音色映射（优先读取 emotion_mapping.json，否则扫描子目录的 ref 音频）。"""
+
     emotion_voices = {}
     refs_dir = Path(emotion_refs_dir)
     if not refs_dir.exists():

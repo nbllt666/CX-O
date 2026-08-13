@@ -19,11 +19,11 @@ LLM 置信度极低或不可用时回退 system_prompt 规则（rules-0 §三 fa
 
 import json
 import os
-import uuid
-from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional
 
 from pydantic import BaseModel
+
+from server.core.utils import iso_now as _iso_now, new_uuid as _new_uuid
 
 
 # --------------------------------------------------------------------------- #
@@ -41,16 +41,6 @@ _LOG_DIR = os.path.join(_DATA_DIR, "distillation_logs")
 _CONFIG_FILE = os.path.join(
     _PUBLIC_ROOT, "public", "config_template", "radix_config.json"
 )
-
-
-def _iso_now() -> str:
-    """返回 ISO 8601 带时区时间戳。"""
-    return datetime.now(timezone.utc).isoformat()
-
-
-def _new_uuid() -> str:
-    """生成 UUID v4 字符串。"""
-    return str(uuid.uuid4())
 
 
 # --------------------------------------------------------------------------- #
@@ -114,12 +104,6 @@ DECISION_POINTS = frozenset({
     "D4_REDISTILL",
     "D5_CROSS_VALIDATE",
     "D6_REJECT",
-})
-
-LOCATIONS = frozenset({"memories", "permanent_memories", "rejected"})
-
-FINAL_ACTIONS = frozenset({
-    "store", "ask_user", "redistill", "cross_validate", "reject", "skip",
 })
 
 # rubric 4 必需阈值字段（与 agent_config_v2.schema.json decision_rubric.required 一致）
@@ -632,30 +616,6 @@ class DecisionCore:
             f"agent_id 不存在或 decision_rubric 字段缺失（422）: {agent_id}"
         )
 
-    def _llm_decide(
-        self,
-        prompt: str,
-        decision_input: DecisionInput,
-    ) -> Tuple[str, float]:
-        """内部方法：LLM 决策。
-
-        通过 vLLM HTTP 接口（OpenAI 兼容）调用 LLM 进行决策。
-        LLM 不可用时 raise ConnectionError，触发 system_prompt 规则回退。
-
-        Args:
-            prompt: 决策提示词
-            decision_input: 决策输入
-
-        Returns:
-            (decision_str, confidence_float) 元组
-
-        Raises:
-            ConnectionError: LLM 端点不可用，触发 system_prompt 规则回退（503）
-        """
-        content = self._llm_call(prompt)
-        parsed = self._parse_llm_output(content)
-        return parsed["decision"], parsed["confidence"]
-
     def _llm_call(self, prompt: str) -> str:
         """内部方法：调用 LLM 并返回原始输出文本。
 
@@ -971,26 +931,3 @@ class DecisionCore:
         except (ValueError, TypeError, json.JSONDecodeError):
             pass
         return result
-
-    # ------------------------------------------------------------------ #
-    # 测试辅助（非契约方法，仅供单元测试使用）
-    # ------------------------------------------------------------------ #
-
-    def _read_audit_logs(self, session_id: str) -> List[Dict[str, Any]]:
-        """读取指定会话的审计日志（仅供测试使用）。
-
-        Args:
-            session_id: 会话 ID
-
-        Returns:
-            日志条目列表
-        """
-        log_path = os.path.join(self._log_dir, f"{session_id}.json")
-        if not os.path.isfile(log_path):
-            return []
-        try:
-            with open(log_path, "r", encoding="utf-8") as fh:
-                logs = json.load(fh)
-            return logs if isinstance(logs, list) else []
-        except (json.JSONDecodeError, OSError):
-            return []

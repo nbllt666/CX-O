@@ -14,6 +14,7 @@ logger = logging.getLogger(__name__)
 
 
 def register_acp_handlers(manager: "WebSocketManager"):
+    """将 ACP（连接/断开/列表）处理器注册到 WebSocket 管理器。"""
 
     async def handle_acp_connect(websocket, message, client_id):
         request_id = message.get("request_id", "")

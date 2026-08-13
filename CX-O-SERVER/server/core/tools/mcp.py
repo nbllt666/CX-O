@@ -65,16 +65,6 @@ class MCPServer:
         }
 
 
-class MCPConnectionError(Exception):
-    """MCP连接错误"""
-
-
-
-class MCPTimeoutError(Exception):
-    """MCP超时错误"""
-
-
-
 class MCPManager:
     """MCP管理器
 

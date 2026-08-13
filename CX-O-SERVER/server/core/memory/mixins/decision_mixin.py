@@ -9,21 +9,12 @@ CX-O 迁移版 B4.3：为 MemoryManager 新增 3 方法，支持 DecisionCore D6
 
 @version 1.0.0
 """
-import uuid
 from datetime import datetime, timezone, timedelta
 from typing import Any, Dict, List, Optional
 
 from ._common import json_dumps, json_loads, logger
 
-
-def _iso_now() -> str:
-    """返回 ISO 8601 带时区时间戳。"""
-    return datetime.now(timezone.utc).isoformat()
-
-
-def _new_uuid() -> str:
-    """生成 UUID v4 字符串。"""
-    return str(uuid.uuid4())
+from server.core.utils import new_uuid as _new_uuid
 
 
 def _decision_field(decision: Any, field: str, default: Any = None) -> Any:

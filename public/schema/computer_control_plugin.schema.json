@@ -1,0 +1,389 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://cx-o/public/schema/computer_control_plugin.schema.json",
+  "title": "ComputerControlPluginDataContract",
+  "description": "APP-Frontend（Electron）作为 CXFC 插件客户端注册电脑控制能力的插件注册数据契约，覆盖插件注册信息、三个电脑控制工具（屏幕/键盘/运行指令）的请求参数与返回结果结构、统一错误码字段与授权状态字段。对应冻结决策：授权=永久完整开放撤销即关闭；安全=注册令牌+TLS+request_id 防重放；指令范围=任意本机命令但保留工程护栏。源真理：.trae/specs/add-computer-control-cxfc/spec.md 冻结决策；迁移自 .trae/specs/add-computer-control-cxfc/contracts/plugin.json。",
+  "type": "object",
+  "properties": {
+    "name": {
+      "type": "string",
+      "description": "插件显示名称，例如 APP-Frontend 电脑控制插件。",
+      "minLength": 1
+    },
+    "version": {
+      "type": "string",
+      "description": "插件版本号（语义化版本，如 1.0.0）。",
+      "minLength": 1
+    },
+    "host": {
+      "type": "string",
+      "description": "插件 HTTPS 服务监听地址（按冻结决策：不限制本地回环，可被后端触达）。"
+    },
+    "port": {
+      "type": "integer",
+      "description": "插件 HTTPS 服务监听端口。端口冲突时自动重试分配并重注册。",
+      "minimum": 1,
+      "maximum": 65535
+    },
+    "capabilities": {
+      "type": "array",
+      "description": "插件声明的能力标识列表。",
+      "items": { "type": "string" }
+    },
+    "tools": {
+      "type": "array",
+      "description": "三个电脑控制工具的稳定定义：computer_screen_control、computer_keyboard_control、computer_run_command。",
+      "minItems": 3,
+      "maxItems": 3,
+      "uniqueItems": true,
+      "items": {
+        "oneOf": [
+          { "$ref": "#/definitions/screen_tool" },
+          { "$ref": "#/definitions/keyboard_tool" },
+          { "$ref": "#/definitions/command_tool" }
+        ]
+      }
+    },
+    "token": {
+      "type": "string",
+      "description": "注册令牌，注册时生成并签发，持久化于 Electron 本地配置；后端保存该令牌并在转发 /call 时以 Authorization: Bearer <token> 携带。该字段不会经插件元数据接口明文回传，仅用于后端注册/校验边界。",
+      "minLength": 1
+    },
+    "tls_cert_fingerprint": {
+      "type": "string",
+      "description": "插件 HTTPS 自签名证书指纹（SHA-256 十六进制），后端注册时校验（首次信任）。",
+      "pattern": "^[a-fA-F0-9]{64}$"
+    },
+    "tls_cert_pem": {
+      "type": "string",
+      "description": "插件 HTTPS 自签名证书 PEM 原文。后端注册时以其为 CA 做 TOFU 首次信任（证书固定），此后对该插件以 https 访问并校验证书；其指纹即注册指纹。"
+    },
+    "authorized": {
+      "type": "boolean",
+      "description": "当前授权状态。授权=永久完整开放，撤销即关闭；未授权时三个工具调用一律拒绝且不执行本机动作。默认 false。",
+      "default": false
+    }
+  },
+  "required": [
+    "name",
+    "version",
+    "host",
+    "port",
+    "capabilities",
+    "tools",
+    "token",
+    "tls_cert_fingerprint",
+    "tls_cert_pem"
+  ],
+  "definitions": {
+    "screen_action": {
+      "type": "string",
+      "enum": ["capture", "click", "move", "scroll"]
+    },
+    "screen_request": {
+      "type": "object",
+      "description": "屏幕控制请求参数。",
+      "required": ["action"],
+      "properties": {
+        "action": {
+          "$ref": "#/definitions/screen_action",
+          "description": "屏幕操作动作：capture 采集 / click 点击 / move 移动 / scroll 滚动。"
+        },
+        "x": {
+          "type": "integer",
+          "description": "动作目标横坐标（点击/移动/滚动时使用）。"
+        },
+        "y": {
+          "type": "integer",
+          "description": "动作目标纵坐标（点击/移动/滚动时使用）。"
+        },
+        "width": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "采集区域宽度（capture 时使用，可缺省表示全屏）。"
+        },
+        "height": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "采集区域高度（capture 时使用，可缺省表示全屏）。"
+        },
+        "scroll_dx": {
+          "type": "integer",
+          "description": "滚动水平增量（scroll 时使用）。"
+        },
+        "scroll_dy": {
+          "type": "integer",
+          "description": "滚动垂直增量（scroll 时使用）。"
+        },
+        "button": {
+          "type": "string",
+          "enum": ["left", "right", "middle"],
+          "description": "点击按钮类型（click 时使用），默认 left。"
+        }
+      },
+      "additionalProperties": false
+    },
+    "screen_response": {
+      "type": "object",
+      "description": "屏幕控制返回结果。",
+      "required": ["success", "action"],
+      "properties": {
+        "success": {
+          "type": "boolean",
+          "description": "是否执行成功。"
+        },
+        "action": {
+          "type": "string",
+          "description": "实际执行的屏幕动作标识，回显请求的 action。"
+        },
+        "result": {
+          "description": "动作结果数据（capture 时可为图像摘要/尺寸/路径引用；其余动作可为空对象）。",
+          "type": ["object", "string", "null"]
+        },
+        "error": {
+          "type": ["string", "null"],
+          "description": "失败原因的可读描述；成功时为 null。屏幕采集内容不得默认写入日志。"
+        },
+        "error_code": {
+          "type": ["string", "null"],
+          "description": "统一错误码字段，取值见 computer_control_error_codes.json；成功时为 null。",
+          "enum": ["UNAUTHORIZED", "REPLAY_DETECTED", "INVALID_ARGUMENT", "EXECUTION_FAILED", "TIMEOUT", "SYSTEM_ERROR", "PLUGIN_OFFLINE", "NOT_AUTHORIZED", null]
+        },
+        "authorized": {
+          "type": "boolean",
+          "description": "授权状态字段，回显本次调用时本地授权是否有效。"
+        }
+      }
+    },
+    "keyboard_action": {
+      "type": "string",
+      "enum": ["type", "key", "press", "hotkey"]
+    },
+    "keyboard_request": {
+      "type": "object",
+      "description": "键盘控制请求参数。密码、密钥等敏感输入不得由工具自动记录。",
+      "required": ["action"],
+      "properties": {
+        "action": {
+          "$ref": "#/definitions/keyboard_action",
+          "description": "键盘动作：type 输入文本 / key 单键 / press 按下并释放组合 / hotkey 快捷键组合。"
+        },
+        "text": {
+          "type": "string",
+          "description": "待输入文本（action=type 时使用）。"
+        },
+        "key": {
+          "type": "string",
+          "description": "单个按键名（action=key/press 时使用）。"
+        },
+        "keys": {
+          "type": "array",
+          "description": "按键或快捷键组合序列（action=hotkey 时使用）。",
+          "items": { "type": "string" }
+        },
+        "duration": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "按键按下持续时间（毫秒，可选）。"
+        }
+      },
+      "additionalProperties": false
+    },
+    "keyboard_response": {
+      "type": "object",
+      "description": "键盘控制返回结果。",
+      "required": ["success", "action"],
+      "properties": {
+        "success": {
+          "type": "boolean",
+          "description": "是否执行成功。"
+        },
+        "action": {
+          "type": "string",
+          "description": "实际执行的键盘动作标识，回显请求的 action。"
+        },
+        "result": {
+          "description": "动作结果数据（可为空对象）。",
+          "type": ["object", "string", "null"]
+        },
+        "error": {
+          "type": ["string", "null"],
+          "description": "失败原因可读描述；成功时为 null。敏感输入不进入日志。"
+        },
+        "error_code": {
+          "type": ["string", "null"],
+          "description": "统一错误码字段，取值见 computer_control_error_codes.json；成功时为 null。",
+          "enum": ["UNAUTHORIZED", "REPLAY_DETECTED", "INVALID_ARGUMENT", "EXECUTION_FAILED", "TIMEOUT", "SYSTEM_ERROR", "PLUGIN_OFFLINE", "NOT_AUTHORIZED", null]
+        },
+        "authorized": {
+          "type": "boolean",
+          "description": "授权状态字段，回显本次调用时本地授权是否有效。"
+        }
+      }
+    },
+    "command_request": {
+      "type": "object",
+      "description": "运行指令请求参数。按冻结决策指令范围不限（任意本机命令），但必须使用结构化参数启动进程，不得把未校验输入直接拼接到 shell 命令字符串；保留超时、进程树回收、输出截断与脱敏护栏。",
+      "required": ["command"],
+      "properties": {
+        "command": {
+          "type": "string",
+          "minLength": 1,
+          "description": "要执行的命令（可执行文件或脚本路径）。"
+        },
+        "args": {
+          "type": "array",
+          "description": "结构化参数数组，逐项透传给进程，禁止拼接进命令字符串。",
+          "items": { "type": "string" }
+        },
+        "cwd": {
+          "type": "string",
+          "description": "工作目录（可选）。"
+        },
+        "timeout_ms": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "执行超时（毫秒），缺省时使用配置契约 run_command.timeout_ms 默认值。"
+        },
+        "env": {
+          "type": "object",
+          "description": "环境变量白名单（键值对），仅透传名单内声明的变量，未列出的不注入。",
+          "additionalProperties": { "type": "string" }
+        }
+      },
+      "additionalProperties": false
+    },
+    "command_response": {
+      "type": "object",
+      "description": "运行指令返回结果。输出捕获设上限并截断，敏感输出在结果与日志中脱敏，不将 stdout/stderr 原文写入审计日志。",
+      "required": ["success"],
+      "properties": {
+        "success": {
+          "type": "boolean",
+          "description": "进程是否成功启动且未超时（仅代表执行链路状态，不代表退出码为 0）。"
+        },
+        "exit_code": {
+          "type": ["integer", "null"],
+          "description": "进程退出码；启动失败或超时回收后可为 null。"
+        },
+        "stdout": {
+          "type": "string",
+          "description": "标准输出截断摘要（受 max_output_bytes / max_output_chars 限制，敏感内容已脱敏）。"
+        },
+        "stderr": {
+          "type": "string",
+          "description": "标准错误摘要（同样截断并脱敏）。"
+        },
+        "timed_out": {
+          "type": "boolean",
+          "description": "是否超时；超时后回收整个进程树。"
+        },
+        "truncated": {
+          "type": "boolean",
+          "description": "输出是否因超过上限被截断。"
+        },
+        "error": {
+          "type": ["string", "null"],
+          "description": "失败原因可读描述；成功时为 null。"
+        },
+        "error_code": {
+          "type": ["string", "null"],
+          "description": "统一错误码字段，取值见 computer_control_error_codes.json；成功时为 null。",
+          "enum": ["UNAUTHORIZED", "REPLAY_DETECTED", "INVALID_ARGUMENT", "EXECUTION_FAILED", "TIMEOUT", "SYSTEM_ERROR", "PLUGIN_OFFLINE", "NOT_AUTHORIZED", null]
+        },
+        "authorized": {
+          "type": "boolean",
+          "description": "授权状态字段，回显本次调用时本地授权是否有效。"
+        }
+      }
+    },
+    "tool_descriptor": {
+      "type": "object",
+      "description": "通用工具描述骨架：name、description、parameters（请求参数 schema）、returns（返回 schema）。",
+      "required": ["name", "description", "parameters", "returns"],
+      "properties": {
+        "name": { "type": "string", "minLength": 1 },
+        "description": { "type": "string" },
+        "parameters": { "type": "object" },
+        "returns": { "type": "object" }
+      }
+    },
+    "screen_tool": {
+      "type": "object",
+      "description": "屏幕控制工具描述。",
+      "required": ["name", "description", "parameters", "returns"],
+      "properties": {
+        "name": { "const": "computer_screen_control" },
+        "description": { "type": "string" },
+        "parameters": { "$ref": "#/definitions/screen_request" },
+        "returns": { "$ref": "#/definitions/screen_response" }
+      }
+    },
+    "keyboard_tool": {
+      "type": "object",
+      "description": "键盘控制工具描述。",
+      "required": ["name", "description", "parameters", "returns"],
+      "properties": {
+        "name": { "const": "computer_keyboard_control" },
+        "description": { "type": "string" },
+        "parameters": { "$ref": "#/definitions/keyboard_request" },
+        "returns": { "$ref": "#/definitions/keyboard_response" }
+      }
+    },
+    "command_tool": {
+      "type": "object",
+      "description": "运行指令工具描述。",
+      "required": ["name", "description", "parameters", "returns"],
+      "properties": {
+        "name": { "const": "computer_run_command" },
+        "description": { "type": "string" },
+        "parameters": { "$ref": "#/definitions/command_request" },
+        "returns": { "$ref": "#/definitions/command_response" }
+      }
+    },
+    "call_request": {
+      "type": "object",
+      "description": "POST /call 请求体：携带工具名、结构化参数与唯一 request_id；认证经 Authorization: Bearer <token> 头传递，TLS 指纹在注册时已校验。",
+      "required": ["tool", "arguments", "request_id"],
+      "properties": {
+        "tool": {
+          "type": "string",
+          "enum": ["computer_screen_control", "computer_keyboard_control", "computer_run_command"]
+        },
+        "arguments": { "type": "object" },
+        "request_id": {
+          "type": "string",
+          "minLength": 1,
+          "description": "唯一调用标识，用于防重放；同一时间窗内重复 request_id 即拒绝。"
+        }
+      },
+      "additionalProperties": false
+    },
+    "call_response": {
+      "type": "object",
+      "description": "POST /call 统一响应：三工具返回结构的公共外壳，携带统一错误码与授权状态。",
+      "required": ["success", "tool"],
+      "properties": {
+        "success": { "type": "boolean" },
+        "tool": {
+          "type": "string",
+          "enum": ["computer_screen_control", "computer_keyboard_control", "computer_run_command"]
+        },
+        "result": {
+          "type": ["object", "string", "null"],
+          "description": "各工具返回结构（screen/keyboard/command_response 之一）。"
+        },
+        "error": { "type": ["string", "null"] },
+        "error_code": {
+          "type": ["string", "null"],
+          "description": "统一错误码字段。",
+          "enum": ["UNAUTHORIZED", "REPLAY_DETECTED", "INVALID_ARGUMENT", "EXECUTION_FAILED", "TIMEOUT", "SYSTEM_ERROR", "PLUGIN_OFFLINE", "NOT_AUTHORIZED", null]
+        },
+        "authorized": {
+          "type": "boolean",
+          "description": "授权状态字段，未授权时调用直接拒绝且不执行本机动作。"
+        }
+      }
+    }
+  }
+}

@@ -90,7 +90,7 @@ class TestConnectDisconnect:
     @pytest.mark.asyncio
     async def test_disconnect_removes_and_cleans_subscriptions(self, mgr):
         ws = FakeWebSocket()
-        conn = await mgr.connect(ws, client_id="a")
+        await mgr.connect(ws, client_id="a")
         mgr.subscribe_to_channel("a", "room")
         await mgr.disconnect("a")
         assert "a" not in mgr.connections
@@ -269,7 +269,7 @@ class TestCleanup:
     @pytest.mark.asyncio
     async def test_cleanup_loop_cancellable(self, mgr):
         mgr._running = True
-        task = mgr._track_background_task(__import__("asyncio").create_task(
+        mgr._track_background_task(__import__("asyncio").create_task(
             mgr._cleanup_loop(interval_seconds=1)))
         await mgr.stop_cleanup_task()
         assert mgr._running is False
@@ -277,13 +277,9 @@ class TestCleanup:
 
 class TestStats:
     def test_get_stats_counts(self, mgr):
-        mgr.increment_tts_count()
-        mgr.increment_asr_count()
         mgr.increment_llm_count()
         mgr.increment_llm_count()
         stats = mgr.get_stats()
-        assert stats["tts_count"] == 1
-        assert stats["asr_count"] == 1
         assert stats["llm_count"] == 2
         assert stats["total_connections"] == 0
         assert stats["total_channels"] == 0

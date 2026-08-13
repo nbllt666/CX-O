@@ -143,6 +143,7 @@ async def register_tool(request: ToolRegisterRequest):
 
 @router.get("/tools/stats")
 async def get_tool_stats():
+    """获取工具统计信息。"""
     from server.core.tools.registry import BUILTIN_TOOL_NAMES, tool_registry
 
     try:
@@ -304,6 +305,7 @@ async def get_mcp_servers():
 
 @router.post("/tools/mcp/servers")
 async def add_mcp_server(request: MCPServerAddRequest):
+    """添加一个 MCP 服务器。"""
     from server.dependencies import get_mcp_manager
 
     try:
@@ -399,6 +401,7 @@ async def check_mcp_server_health(name: str):
 
 @router.get("/tools/mcp/servers/{name}/tools")
 async def get_mcp_server_tools(name: str):
+    """获取指定 MCP 服务器暴露的工具列表。"""
     from server.dependencies import get_mcp_manager
 
     try:
@@ -502,6 +505,7 @@ async def patch_tool(name: str, request: ToolPatchRequest):
 # 这些路由必须放在最后，因为它们使用路径参数
 @router.get("/tools/{name}")
 async def get_tool(name: str):
+    """获取指定工具的详细信息。"""
     from server.core.tools.registry import tool_registry
 
     try:
@@ -521,6 +525,7 @@ async def get_tool(name: str):
 
 @router.delete("/tools/{name}")
 async def delete_tool(name: str):
+    """删除指定工具。"""
     from server.core.tools.registry import tool_registry
 
     try:

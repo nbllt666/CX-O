@@ -20,6 +20,8 @@
 | `acp.schema.json` | `c:/CX-O/CX-O-SERVER/server/models/acp.py` + `server/core/acp/manager.py`（5 Pydantic 模型） | P1 | ✅ s0601 补全 |
 | `api_response.schema.json` | `c:/CX-O/CX-O-SERVER/server/api/response.py`（4 Pydantic 模型） | P1 | ✅ s0601 补全 |
 | `message.schema.json` | `c:/CX-O/CX-O-SERVER/server/protocol/message.py`（7 Pydantic 模型 + 5 工厂） | P0 | ✅ s0601 补全 |
+| `computer_control_plugin.schema.json` | 电脑控制插件数据契约（spec `add-computer-control-cxfc` 冻结决策） | P1 | ✅ s0201 补全（迁移自 contracts/plugin.json） |
+| `computer_control_error_codes.json` | 电脑控制插件统一错误码枚举（spec `add-computer-control-cxfc` 冻结决策） | P1 | ✅ s0201 补全（迁移自 contracts/error_codes.json） |
 
 ## 契约可验证性（rules-3 §五）
 

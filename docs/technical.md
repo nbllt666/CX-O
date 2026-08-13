@@ -40,7 +40,7 @@ CX-O 将虚拟形象、实时语音对话、记忆管理、直播推流、声音
 | 记忆系统 | 三层记忆 + 向量检索 + 知识图谱 + 自动衰减 + 记忆蒸馏 |
 | 多 Agent 协作 | 多人格独立管理，ACP 协议互相通信 |
 | 直播推流 | OBS 四源拆分（形象/弹幕/字幕/音频），弹幕实时互动 |
-| 声音克隆与训练 | VoxCPM 音色设计 + CosyVoice 情感参考 + So-VITS-SVC 训练推理 |
+| 声音克隆与训练 | VoxCPM 音色设计与情感参考 + So-VITS-SVC 训练推理 |
 | AI 作曲与歌声 | 歌谱编辑 + MusicXML 导入 + 声库选择 + 歌声合成 |
 | 桌面宠物 | 透明悬浮窗、鼠标穿透、右键菜单 |
 
@@ -68,7 +68,7 @@ CX-O 将虚拟形象、实时语音对话、记忆管理、直播推流、声音
 │  ┌───────┴──────┐  ┌─────┴──────┐  ┌──────────────┴───────────┐   │
 │  │  Docker 推理  │  │ CX-O-Voice │  │  第三方引擎/服务           │   │
 │  │  asr/llm/tts │  │ WorkStation│  │  Ollama / vLLM / Weaviate│   │
-│  └──────────────┘  │ (8200)     │  │  CosyVoice / Orpheus ... │   │
+│  └──────────────┘  │ (8200)     │  │  Orpheus / F5-TTS ...     │   │
 │                    └────────────┘  └──────────────────────────┘   │
 └─────────────────────────────────────────────────────────────────────┘
 ```
@@ -426,10 +426,9 @@ T(t) = 1 / (1 + (Δt/T₅₀)^k)      # T₅₀=30, k=2
 > 位于 `server/core/context/`。
 
 - **上下文管理器**（`manager.py`）：维护会话消息历史，装配进入 LLM 的上下文。
-- **摘要器**（`summarizer.py`）：上下文超长时自动摘要压缩，控制 token 预算。
 - **Agent 上下文管理器**（`agent_context_manager.py`）：管理每个 Agent 的独立上下文。
 - **会话存储**（`core/session/`）：会话持久化。
-- **限额**（`ContextLimitsConfig`）：`max_messages=500`、`window_size=50`、`summary_threshold=100`、`summarizer_max_topics=15`、`summarizer_max_key_points=15`。
+- **限额**（`ContextLimitsConfig`）：`max_messages=500`、`window_size=50`、`summary_threshold=100`。
 
 ---
 
@@ -576,7 +575,7 @@ T(t) = 1 / (1 + (Δt/T₅₀)^k)      # T₅₀=30, k=2
 ### 15.1 参考音频生成
 
 - `ref_audio` / `voxcpm`：VoxCPM 音色设计。
-- `emotion_ref_generator`：CosyVoice 情感参考音频生成（8 情感 + 56 过渡 = 64 参考音频）。
+- `emotion_ref_generator` / `ref_audio`：基于 VoxCPM 的情感参考音频生成（8 情感 + 56 过渡 = 64 参考音频）。
 
 ### 15.2 SVC 训练与推理
 

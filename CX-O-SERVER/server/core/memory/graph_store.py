@@ -7,6 +7,7 @@ from typing import Optional
 
 
 class GraphLibrary(Enum):
+    """图库枚举，区分用户/事物/概念/事件四类记忆图，用于隔离各实体类型的存储命名空间。"""
     USER = "user"
     THING = "thing"
     CONCEPT = "concept"
@@ -14,57 +15,31 @@ class GraphLibrary(Enum):
 
 
 class UserEntityType(Enum):
+    """用户类实体类型枚举，其取值统一映射到 GraphLibrary.USER 图库。"""
     person = "person"
     user = "user"
     contact = "contact"
 
 
 class ThingEntityType(Enum):
+    """事物类实体类型枚举，其取值统一映射到 GraphLibrary.THING 图库。"""
     object = "object"
     item = "item"
     product = "product"
 
 
 class ConceptEntityType(Enum):
+    """概念类实体类型枚举，其取值统一映射到 GraphLibrary.CONCEPT 图库。"""
     concept = "concept"
     idea = "idea"
     topic = "topic"
 
 
 class EventEntityType(Enum):
+    """事件类实体类型枚举，其取值统一映射到 GraphLibrary.EVENT 图库。"""
     event = "event"
     activity = "activity"
     occurrence = "occurrence"
-
-
-class UserRelationType(Enum):
-    knows = "knows"
-    friend = "friend"
-    family = "family"
-    colleague = "colleague"
-    enemy = "enemy"
-
-
-class ThingRelationType(Enum):
-    owns = "owns"
-    part_of = "part_of"
-    similar_to = "similar_to"
-    located_at = "located_at"
-    made_of = "made_of"
-
-
-class ConceptRelationType(Enum):
-    related_to = "related_to"
-    subtopic_of = "subtopic_of"
-    opposite_of = "opposite_of"
-    implies = "implies"
-
-
-class EventRelationType(Enum):
-    caused = "caused"
-    followed_by = "followed_by"
-    concurrent_with = "concurrent_with"
-    prevents = "prevents"
 
 
 ENTITY_TYPE_TO_LIBRARY = {
@@ -77,6 +52,7 @@ ENTITY_TYPE_TO_LIBRARY = {
 
 @dataclass
 class Entity:
+    """图实体数据类，承载实体 ID、名称、类型、属性字典与其关联的记忆 ID 列表。"""
     entity_id: str
     name: str
     entity_type: str
@@ -89,6 +65,7 @@ class Entity:
 
 @dataclass
 class Relation:
+    """图关系数据类，描述两实体间的有向连接，含关系类型、强度与佐证记忆 ID 列表。"""
     from_entity: str
     to_entity: str
     relation_type: str
@@ -99,6 +76,7 @@ class Relation:
 
 
 class GraphStoreBase(ABC):
+    """图存储抽象基类，定义实体/关系的增删改查、路径查找、统计与导出接口，供各后端实现。"""
 
     @abstractmethod
     def create_entity(self, entity: Entity, library: GraphLibrary) -> Entity:
@@ -150,6 +128,7 @@ class GraphStoreBase(ABC):
 
 
 class SQLiteGraphStore(GraphStoreBase):
+    """基于 SQLite 图数据库实现的图存储，通过 GraphDatabase 的节点/边/遍历接口完成实体与关系的持久化。"""
 
     def __init__(self, graph_database):
         from server.core.graph import GraphDatabase
@@ -188,6 +167,7 @@ class SQLiteGraphStore(GraphStoreBase):
         return f"{library.value}_{relation_type}"
 
     def _entity_from_node(self, node, library: GraphLibrary) -> Entity:
+        # 将底层节点对象转换为 Entity 数据类
         props = node.properties or {}
         return Entity(
             entity_id=node.id,
@@ -211,6 +191,7 @@ class SQLiteGraphStore(GraphStoreBase):
         )
 
     def create_entity(self, entity: Entity, library: GraphLibrary) -> Entity:
+        """在指定库中创建实体节点并返回持久化结果。"""
         from server.core.graph.models import NodeCreate
         node_type = self._node_type(library, entity.entity_type)
         properties = {
@@ -229,6 +210,7 @@ class SQLiteGraphStore(GraphStoreBase):
         return self._entity_from_node(node, library)
 
     def create_relation(self, relation: Relation, library: GraphLibrary) -> Relation:
+        """在指定库中创建关系边并返回持久化结果。"""
         from server.core.graph.models import EdgeCreate
         # 解析实体名称到 ID
         from_id = self._resolve_entity_id(relation.from_entity, library)
@@ -254,6 +236,7 @@ class SQLiteGraphStore(GraphStoreBase):
         return self._relation_from_edge(edge)
 
     def get_entity(self, entity_id: str, library: GraphLibrary) -> Entity | None:
+        """按 ID（或名称）获取实体，不存在返回 None。"""
         resolved_id = self._resolve_entity_id(entity_id, library)
         if resolved_id is None:
             return None
@@ -265,6 +248,7 @@ class SQLiteGraphStore(GraphStoreBase):
     def find_related_entities(
         self, entity_id: str, relation_type: str | None, library: GraphLibrary, depth: int = 1
     ) -> list[Entity]:
+        """查找与指定实体关联的实体列表（可按关系类型过滤）。"""
         resolved_id = self._resolve_entity_id(entity_id, library)
         if resolved_id is None:
             return []
@@ -284,6 +268,7 @@ class SQLiteGraphStore(GraphStoreBase):
     def find_paths(
         self, start_entity_id: str, end_entity_id: str, library: GraphLibrary, max_depth: int = 3
     ) -> list[list[Entity]]:
+        """查找两个实体间所有可达路径的实体列表。"""
         start_id = self._resolve_entity_id(start_entity_id, library)
         end_id = self._resolve_entity_id(end_entity_id, library)
         if start_id is None or end_id is None:
@@ -301,6 +286,7 @@ class SQLiteGraphStore(GraphStoreBase):
         return result
 
     def delete_entity(self, entity_id: str, library: GraphLibrary, hard: bool = False) -> bool:
+        """删除实体（hard=True 物理删除，否则软删除）。"""
         resolved_id = self._resolve_entity_id(entity_id, library)
         if resolved_id is None:
             return False
@@ -316,6 +302,7 @@ class SQLiteGraphStore(GraphStoreBase):
         return True
 
     def delete_relation(self, from_entity: str, to_entity: str, relation_type: str, library: GraphLibrary, hard: bool = False) -> bool:
+        """删除两个实体间的指定关系（hard=True 物理删除）。"""
         from_id = self._resolve_entity_id(from_entity, library)
         to_id = self._resolve_entity_id(to_entity, library)
         if from_id is None or to_id is None:
@@ -335,6 +322,7 @@ class SQLiteGraphStore(GraphStoreBase):
         return False
 
     def update_entity(self, entity_id: str, updates: dict, library: GraphLibrary) -> Entity | None:
+        """更新实体属性并返回更新后的实体。"""
         resolved_id = self._resolve_entity_id(entity_id, library)
         if resolved_id is None:
             return None
@@ -350,6 +338,7 @@ class SQLiteGraphStore(GraphStoreBase):
         return self._entity_from_node(node, library)
 
     def update_relation(self, from_entity: str, to_entity: str, relation_type: str, updates: dict, library: GraphLibrary) -> Relation | None:
+        """更新两个实体间指定关系的属性并返回更新后的关系。"""
         from_id = self._resolve_entity_id(from_entity, library)
         to_id = self._resolve_entity_id(to_entity, library)
         if from_id is None or to_id is None:
@@ -367,6 +356,7 @@ class SQLiteGraphStore(GraphStoreBase):
         return None
 
     def get_stats(self, library: GraphLibrary) -> dict:
+        """统计指定图库的实体节点数与关系边数，返回含 library 标识的计数字典。"""
         node_type_prefix = f"{library.value}_"
         result = self._db.nodes.search(node_type=None, limit=10000)
         node_count = sum(1 for n in result.items if n.type.startswith(node_type_prefix))
@@ -380,6 +370,7 @@ class SQLiteGraphStore(GraphStoreBase):
         }
 
     def export(self, library: GraphLibrary) -> dict:
+        """导出指定图库的全部实体与关系，返回含 library、entities 与 relations 列表的字典。"""
         node_type_prefix = f"{library.value}_"
         result = self._db.nodes.search(node_type=None, limit=10000)
         entities = []

@@ -8,6 +8,8 @@ T = TypeVar("T")
 
 
 class APIResponse(BaseModel, Generic[T]):
+    """泛型 API 响应模型，含成功标志、数据与错误字段。"""
+
     model_config = ConfigDict(arbitrary_types_allowed=True, populate_by_name=True)
     success: bool = True
     data: Optional[T] = None
@@ -19,14 +21,18 @@ class APIResponse(BaseModel, Generic[T]):
 
     @classmethod
     def ok(cls, data: T = None, message: str = None) -> "APIResponse[T]":
+        """构造成功响应。"""
         return cls(success=True, data=data, message=message)
 
     @classmethod
     def error(cls, error_message: str, error_code: str = None, data: T = None) -> "APIResponse[T]":
+        """构造错误响应。"""
         return cls(success=False, error_message=error_message, error_code=error_code, data=data)
 
 
 class PaginatedResponse(BaseModel, Generic[T]):
+    """分页响应模型——携带数据列表与分页元信息。"""
+
     success: bool = True
     data: List[T] = Field(default_factory=list)
     total: int = 0
@@ -39,6 +45,7 @@ class PaginatedResponse(BaseModel, Generic[T]):
     def create(
         cls, data: List[T], total: int, page: int = 1, page_size: int = 20
     ) -> "PaginatedResponse[T]":
+        """根据数据与总数构造分页响应，自动计算总页数。"""
         total_pages = (total + page_size - 1) // page_size if page_size > 0 else 0
         return cls(
             success=True,
@@ -51,6 +58,8 @@ class PaginatedResponse(BaseModel, Generic[T]):
 
 
 class HealthResponse(BaseModel):
+    """健康检查响应模型——携带服务状态、版本与各组件状态。"""
+
     status: str = "ok"
     version: str = "1.0.0"
     components: Dict[str, Any] = Field(default_factory=dict)
@@ -58,6 +67,8 @@ class HealthResponse(BaseModel):
 
 
 class ErrorResponse(BaseModel):
+    """统一错误响应模型。"""
+
     model_config = ConfigDict(populate_by_name=True)
     success: bool = False
     error_message: str = Field(alias='error')

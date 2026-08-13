@@ -8,9 +8,9 @@ from __future__ import annotations
 import json
 import os
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, Iterable, List, Optional, Set
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, PrivateAttr, model_validator
 
 from server.core.utils import deep_merge
 
@@ -31,6 +31,10 @@ def _resolve_data_path(path: str) -> str:
 
 
 def get_env_config() -> Dict[str, Any]:
+    """从 CXO_ 前缀环境变量读取配置，生成按路径映射的配置字典。
+
+    用于合并到文件配置之上，支持 CXO_ 前缀环境变量覆盖。
+    """
     env_config: Dict[str, Any] = {}
 
     _env_mappings: Dict[str, List[str]] = {
@@ -91,6 +95,8 @@ def get_env_config() -> Dict[str, Any]:
 
 
 class SystemConfig(BaseModel):
+    """系统服务配置节：服务监听主机、端口、调试开关、日志级别与工作进程数。"""
+
     host: str = "0.0.0.0"
     port: int = 8000
     debug: bool = False
@@ -99,6 +105,8 @@ class SystemConfig(BaseModel):
 
 
 class CorsConfig(BaseModel):
+    """CORS 跨域配置节：允许的源、方法与请求头及凭据开关。"""
+
     allow_origins: List[str] = Field(default_factory=lambda: ["*"])
     allow_methods: List[str] = Field(default_factory=lambda: ["*"])
     allow_headers: List[str] = Field(default_factory=lambda: ["*"])
@@ -112,6 +120,8 @@ class GatewayConfig(BaseModel):
 
 
 class ServiceConfig(BaseModel):
+    """通用服务连接配置节：服务地址、超时、连接池与心跳间隔。"""
+
     url: str = ""
     http_url: Optional[str] = None
     timeout: int = 30
@@ -143,6 +153,8 @@ class TTSServiceConfig(BaseModel):
 
 
 class SenseVoiceStreamingConfig(BaseModel):
+    """SenseVoice 流式识别配置节：分块大小、跳跃长度与回看长度。"""
+
     chunk_size: int = 1600
     hop_size: int = 800
     look_back: int = 8000
@@ -164,6 +176,8 @@ class LoggingConfig(BaseModel):
 
 
 class LLMConfig(BaseModel):
+    """LLM 配置节：模型提供方、服务地址、模型名与采样参数。"""
+
     provider: str = "ollama"
     host: str = "http://localhost:11434"
     model: str = "qwen3:latest"
@@ -184,32 +198,44 @@ class ModelConfig(BaseModel):
     api_key: Optional[str] = None
 
     def get_model_config(self, model_type: str) -> "ModelConfig":
+        """按模型类型返回自身（单模型场景恒返回当前实例）。"""
         return self
 
 
 class ModelsConfig(BaseModel):
+    """多模型集合配置节：主/摘要/记忆模型及类型映射默认值。
+
+    显式配置优先：当 ``models.<type>`` 节在配置文件中显式存在时直接使用该节；
+    否则按 ``defaults`` 映射跟随（默认 summary/memory 跟随 main）。
+    """
+
     main: ModelConfig = Field(default_factory=ModelConfig)
     summary: ModelConfig = Field(default_factory=lambda: ModelConfig(max_tokens=131072))
     memory: ModelConfig = Field(default_factory=lambda: ModelConfig(max_tokens=131072))
     defaults: Dict[str, str] = Field(default_factory=lambda: {"summary": "main", "memory": "main"})
 
-    def get_model_config(self, model_type: str) -> ModelConfig:
+    _explicit: Set[str] = PrivateAttr(default_factory=set)
+
+    def _set_explicit(self, types: Iterable[str]) -> None:
+        """记录配置文件中显式存在的模型节（供 defaults 跟随降级判断）。"""
+        self._explicit = set(types)
+
+    def resolve_target(self, model_type: str) -> str:
+        """返回该模型类型实际使用的配置节名。
+
+        显式配置的模型返回自身；否则按 ``defaults`` 映射回退（未知类型回退到 main）。
+        """
         model_type = model_type.lower()
-        if model_type in self.defaults:
-            target = self.defaults[model_type]
-            if target == "main":
-                return self.main
-            elif target == "summary":
-                return self.summary
-            elif target == "memory":
-                return self.memory
-        if model_type == "main":
-            return self.main
-        elif model_type == "summary":
-            return self.summary
-        elif model_type == "memory":
-            return self.memory
-        return self.main
+        if model_type in ("main", "summary", "memory") and model_type not in self._explicit:
+            return self.defaults.get(model_type, "main")
+        return model_type
+
+    def get_model_config(self, model_type: str) -> ModelConfig:
+        """按模型类型返回对应的模型配置。
+
+        显式配置优先；未显式配置时遵循 ``defaults`` 映射，未知类型回退到主模型。
+        """
+        return getattr(self, self.resolve_target(model_type), self.main)
 
 
 class WeaviateConfig(BaseModel):
@@ -223,6 +249,8 @@ class WeaviateConfig(BaseModel):
 
 
 class MemoryConfig(BaseModel):
+    """记忆配置节：衰减策略、向量检索、嵌入模型与归档开关。"""
+
     decay_enabled: bool = True
     batch_interval: int = 3600
     permanent_threshold: float = 0.95
@@ -263,6 +291,8 @@ class DatabaseConfig(BaseModel):
 
 
 class ACPDiscoveryConfig(BaseModel):
+    """ACP 发现配置节：LAN 发现开关、发现/广播端口与广播间隔。"""
+
     enabled: bool = True
     discovery_port: int = 9999
     broadcast_port: int = 9998
@@ -277,6 +307,8 @@ class ACPConnectionConfig(BaseModel):
 
 
 class ACPGroupConfig(BaseModel):
+    """ACP 群组配置节：群组端口与最大成员数。"""
+
     port: int = 10001
     max_members: int = 50
 
@@ -297,6 +329,8 @@ class CORSConfig(BaseModel):
 
 
 class VectorConfig(BaseModel):
+    """向量检索配置节：启用开关、服务地址、集合名与嵌入参数。"""
+
     enabled: bool = True
     host: str = "localhost"
     port: int = 6333
@@ -331,6 +365,8 @@ class OrpheusConfig(BaseModel):
 
 
 class TTSConfig(BaseModel):
+    """TTS 配置节：合成模式、模型目录、远程地址、情感/音效与 Orpheus 子配置。"""
+
     mode: str = "remote"
     model_dir: str = "F5TTS_v1_Base"
     device: str = "cuda"
@@ -358,6 +394,8 @@ class TTSConfig(BaseModel):
 
 
 class GraphWeaviateConfig(BaseModel):
+    """图数据库 Weaviate 配置节：服务地址、向量维度与批量构建参数。"""
+
     url: str = "http://localhost:8080"
     api_key: Optional[str] = None
     vector_dim: int = 384
@@ -367,6 +405,8 @@ class GraphWeaviateConfig(BaseModel):
 
 
 class GraphEmbeddingConfig(BaseModel):
+    """图嵌入配置节：嵌入模型、批大小、设备与缓存目录。"""
+
     model: str = "sentence-transformers/all-MiniLM-L6-v2"
     batch_size: int = 32
     device: str = "cpu"
@@ -390,6 +430,8 @@ class GraphConfigSection(BaseModel):
 
 
 class CXFCConfig(BaseModel):
+    """CXFC 插件配置节：心跳、发现端口、启动自动连接与插件存储路径。"""
+
     enabled: bool = True
     heartbeat_timeout: int = 30
     heartbeat_check_interval: int = 10
@@ -427,14 +469,14 @@ class MemoryLimitsConfig(BaseModel):
 
 
 class ContextLimitsConfig(BaseModel):
+    """对话上下文相关的消息数量与窗口限制配置节。"""
+
     max_messages: int = 500
     window_size: int = 50
     summary_threshold: int = 100
     max_history: int = 500
     conversation_max_messages: int = 100
     conversation_recent_window: int = 20
-    summarizer_max_topics: int = 15
-    summarizer_max_key_points: int = 15
     chat_context_limit: int = 10
 
 
@@ -456,6 +498,8 @@ class FrontendLimitsConfig(BaseModel):
 
 
 class LimitsConfig(BaseModel):
+    """各类限制配置聚合节：记忆、上下文、防火墙与前端限制。"""
+
     memory: MemoryLimitsConfig = Field(default_factory=MemoryLimitsConfig)
     context: ContextLimitsConfig = Field(default_factory=ContextLimitsConfig)
     firewall: FirewallLimitsConfig = Field(default_factory=FirewallLimitsConfig)
@@ -595,6 +639,7 @@ class Settings:
 
     @classmethod
     def reset(cls):
+        """重置全局单例，清空已加载的配置（主要用于测试）。"""
         cls._instance = None
         cls._config = None
         cls._config_path = None
@@ -624,7 +669,16 @@ class Settings:
         # RADIX-Lite 配置 auto_fill + 越界回退（rules-3 §三 配置契约 auto_fill）
         merged_config = _auto_fill_radix_config(merged_config)
 
-        return UnifiedConfig(**merged_config)
+        config = UnifiedConfig(**merged_config)
+
+        # 记录显式配置的模型节：仅当 models.<type> 显式存在时才解除 defaults 跟随，
+        # 允许 summary/memory 独立配置不同模型（否则仍跟随 main）。
+        models_section = merged_config.get("models")
+        if isinstance(models_section, dict):
+            explicit = [k for k in ("main", "summary", "memory") if k in models_section]
+            config.models._set_explicit(explicit)
+
+        return config
 
     def reload_config(self):
         self._config = self._load_config()
@@ -654,6 +708,7 @@ def get_config() -> UnifiedConfig:
 
 
 def save_config(config: UnifiedConfig) -> None:
+    """将配置对象写入 config.json 并更新内存缓存。"""
     settings = get_settings()
     config_path = Path(settings._config_path or settings._get_config_path())
 
@@ -670,6 +725,7 @@ def reload_config() -> UnifiedConfig:
 
 
 def get_service_url(service_name: str) -> str:
+    """获取指定外部服务的 URL，未知服务名抛出 ValueError。"""
     config = get_config()
     service_config = getattr(config.services, service_name, None)
     if service_config is None:
