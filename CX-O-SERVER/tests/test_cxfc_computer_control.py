@@ -60,11 +60,12 @@ class FakeResp:
 
 
 class FakeHttp:
-    """伪造 httpx.AsyncClient，捕获 post/get 调用参数。"""
+    """伪造 httpx.AsyncClient，捕获 post/get 调用参数，并记录 aclose 关闭状态。"""
 
     def __init__(self):
         self.post_calls = []
         self.get_calls = []
+        self.closed = False
 
     async def post(self, url, json=None, headers=None, timeout=None):
         self.post_calls.append({"url": url, "json": json, "headers": headers, "timeout": timeout})
@@ -73,6 +74,9 @@ class FakeHttp:
     async def get(self, url, timeout=None):
         self.get_calls.append({"url": url, "timeout": timeout})
         return FakeResp(200, {"status": "ok"})
+
+    async def aclose(self):
+        self.closed = True
 
 
 class FakeTlsFactory:
@@ -196,16 +200,26 @@ def test_call_tool_no_token_plugin_compat(manager):
 
 
 def test_disconnect_plugin_cleans_up(manager, token_request):
+    # 注入工厂构建专用 TLS client，使 disconnect 时能断言其被 aclose 关闭（防连接泄漏）
+    factory = FakeTlsFactory()
+    manager._client_factory = factory
+
     plugin = run(manager.register_plugin(token_request))
     plugin_id = plugin.plugin_id
+    # 触发专用 TLS client 构建（同步方法），确保 disconnect 前其已存在
+    manager._ensure_tls_client(plugin)
+    assert plugin_id in manager._tls_clients
+    tls_client = manager._tls_clients[plugin_id]
+    assert tls_client.closed is False
 
     run(manager.disconnect_plugin(plugin_id, remove_persistent=True))
 
     assert manager.get_plugin(plugin_id) is None
     assert run(manager._storage.load_plugins()) == []
-    # 专用 TLS client 与 CA 文件已释放
+    # 专用 TLS client 已从字典移除并被 aclose 关闭，CA 文件已清理（防连接/文件泄漏）
     assert plugin_id not in manager._tls_clients
     assert plugin_id not in manager._tls_ca_paths
+    assert tls_client.closed is True
     # 后续 call_tool 返回不可用
     fake = FakeHttp()
     manager._http_client = fake
