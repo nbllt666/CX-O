@@ -2,7 +2,7 @@
  * SVC 训练推理 Tab（SubTask 7.4 · 音频工作站）
  *
  * 功能深度对齐 CX-O-Frontend SVCPanel：
- * - 批量数据集生成（多引擎：voxcpm / orpheustts / f5tts）+ 任务进度轮询
+ * - 批量数据集生成（VoxCPM 引擎，F5-TTS/Orpheus 已随 Qwen3 迁移移除）+ 任务进度轮询
  * - 数据集管理（列表 / 导入文件 / 删除）
  * - 数据预处理 + 训练多参数（output_name）+ 训练状态轮询（5s）
  * - 推理完整参数（speaker_id / cluster_model_path / transpose 滑杆）
@@ -18,15 +18,8 @@ import type {
   SVCModel,
   SVCDataset,
   BatchDatasetTask,
-  BatchDatasetEngine,
   VoiceWsAudioResult,
 } from '@/api/clients/voiceworkstation';
-
-const engineOptions: { value: BatchDatasetEngine; label: string }[] = [
-  { value: 'voxcpm', label: 'VoxCPM' },
-  { value: 'orpheustts', label: 'Orpheus TTS' },
-  { value: 'f5tts', label: 'F5TTS' },
-];
 
 const inputClassName =
   'w-full rounded-lg border border-[var(--glass-border)] bg-[rgba(255,255,255,0.06)] px-3 py-2 text-sm text-[var(--color-text-primary)] focus:border-[rgba(255,183,225,0.4)] focus:outline-none';
@@ -62,9 +55,8 @@ export default function SVCPanel() {
   const [inferClusterModelPath, setInferClusterModelPath] = useState('');
   const [inferResult, setInferResult] = useState<VoiceWsAudioResult | null>(null);
 
-  // ── 批量数据集生成（多引擎）──
+  // ── 批量数据集生成（VoxCPM 引擎）──
   const [batchSpeaker, setBatchSpeaker] = useState('');
-  const [batchEngine, setBatchEngine] = useState<BatchDatasetEngine>('voxcpm');
   const [batchTexts, setBatchTexts] = useState('');
   const [batchSubmitting, setBatchSubmitting] = useState(false);
   const [batchTask, setBatchTask] = useState<BatchDatasetTask | null>(null);
@@ -212,7 +204,6 @@ export default function SVCPanel() {
       const res = await voiceworkstationApi.submitVoxCPMBatchDataset({
         speaker_name: batchSpeaker.trim(),
         texts,
-        engine: batchEngine,
       });
       // 轮询批量任务进度
       const taskId = res.task_id;
@@ -255,15 +246,6 @@ export default function SVCPanel() {
               placeholder={t('management.audioWorkstation.svcSpeakerNamePlaceholder')}
               className={inputClassName}
             />
-          </Field>
-          <Field label={t('management.audioWorkstation.svcBatchEngine')}>
-            <select value={batchEngine} onChange={(e) => setBatchEngine(e.target.value as BatchDatasetEngine)} className={selectClassName}>
-              {engineOptions.map((opt) => (
-                <option key={opt.value} value={opt.value}>
-                  {opt.label}
-                </option>
-              ))}
-            </select>
           </Field>
         </div>
         <Field label={t('management.audioWorkstation.svcBatchTexts')}>

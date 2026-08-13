@@ -1,0 +1,36 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://cx-o/public/schema/speech_synthesis_request.schema.json",
+  "title": "SpeechSynthesisRequest",
+  "description": "统一 Qwen3 TTS 合成请求契约。将普通/流式/WebSocket/工作站合成归一为一个内部请求。text 必填；refs 为参考音频资源 ID 列表（prompt 或 file 来源解析为同一形状）；tts_instruction 为 LLM 生成的自然语言情感/韵律指令，可选；stream 与 output_format 决定响应形态。源真理：spec unify-qwen3-tts-migration 冻结决策。",
+  "type": "object",
+  "required": ["text"],
+  "properties": {
+    "text": { "type": "string", "minLength": 1, "description": "待合成文本。必须与 reply_text 分离，不含 [emotion:*]/Orpheus XML 等旧标签。" },
+    "refs": {
+      "type": "array",
+      "items": { "type": "string", "pattern": "^ref_[a-zA-Z0-9_-]+$" },
+      "uniqueItems": true,
+      "description": "参考音频资产 ID 列表（source=prompt 或 source=file 均可），经 RefAudioStore.resolve 解析为资产。禁止客户端传任意本地路径。"
+    },
+    "tts_instruction": { "$ref": "#/definitions/emotionInstruction", "description": "LLM 生成的自然语言情感/韵律指令（可选）。为独立 emotion_instruction 的降维投影，仅含 text 及可选 intensity/confidence/neutral，source/raw 不入 Provider 协议。" },
+    "voice": { "type": "string", "description": "预设音色名（如 vivian/ryan，仅 CustomVoice 任务类型）。" },
+    "language": { "type": "string", "enum": ["Chinese","English","Japanese","Korean","German","French","Russian","Portuguese","Spanish","Italian"], "description": "目标语言，缺省由模型 Auto 识别。" },
+    "stream": { "type": "boolean", "default": false, "description": "是否流式返回音频块。" },
+    "output_format": { "type": "string", "enum": ["wav","pcm","mp3","flac","opus","aac"], "default": "wav", "description": "输出音频格式。实时链路建议 pcm/wav。" },
+    "sample_rate": { "type": "integer", "const": 24000, "description": "Qwen3-TTS 固定 24kHz 输出。" },
+    "speed": { "type": "number", "minimum": 0.25, "maximum": 4.0, "default": 1.0, "description": "播放速度。Qwen3-TTS 官方运行时可能不支持，Provider 内按能力忽略或降级。" }
+  },
+  "definitions": {
+    "emotionInstruction": {
+      "type": "object",
+      "required": ["text"],
+      "properties": {
+        "text": { "type": "string", "minLength": 1, "maxLength": 200, "description": "自然语言情感/韵律指令（如「用特别愤怒的语气说」）。" },
+        "intensity": { "type": "number", "minimum": 0, "maximum": 1, "default": 0.5, "description": "情感强度 0-1。" },
+        "confidence": { "type": "number", "minimum": 0, "maximum": 1, "default": 0.5, "description": "LLM 生成置信度。" },
+        "neutral": { "type": "boolean", "default": false, "description": "true 表示回退中性指令（LLM 失败时）。" }
+      }
+    }
+  }
+}

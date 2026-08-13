@@ -4,11 +4,13 @@ import { MemoryRouter } from 'react-router-dom';
 import AudioWorkstationPage from './AudioWorkstationPage';
 import i18n from '../../i18n';
 import { voiceworkstationApi } from '@/api/clients/voiceworkstation';
+import { audioApi } from '@/api/clients/audio';
 
 /**
- * AudioWorkstationPage 冒烟 + Tab 切换 + API 接线测试（SubTask 7.4）：
- * voiceworkstationApi 整体打桩；默认渲染 VoxCPM 面板，
+ * AudioWorkstationPage 冒烟 + Tab 切换 + API 接线测试（SubTask 7.4，Qwen3 迁移后）：
+ * voiceworkstationApi 与 audioApi 整体打桩；默认渲染 VoxCPM 面板，
  * 逐 Tab 切换验证对应面板渲染并消费对应域接口；非占位校验。
+ * F5-TTS / Orpheus / 参考音频生成 Tab 已随 Qwen3 TTS 迁移移除。
  */
 vi.mock('@/api/clients/voiceworkstation', () => ({
   voiceworkstationApi: {
@@ -24,13 +26,6 @@ vi.mock('@/api/clients/voiceworkstation', () => ({
     musicValidateScore: vi.fn(),
     musicSynthesize: vi.fn(),
     musicDeleteSong: vi.fn(),
-    getOrpheusStatus: vi.fn(),
-    synthesizeOrpheus: vi.fn(),
-    synthesizeOrpheusStream: vi.fn(),
-    getRefAudioStatus: vi.fn(),
-    pregenerateRefs: vi.fn(),
-    exportEmotionRefsZip: vi.fn(),
-    importEmotionRefsZip: vi.fn(),
     listSVCDatasets: vi.fn(),
     importSVCDataset: vi.fn(),
     deleteSVCDataset: vi.fn(),
@@ -39,7 +34,20 @@ vi.mock('@/api/clients/voiceworkstation', () => ({
   },
   getVoiceWorkstationAudioUrl: (url: string) => url,
 }));
+
+vi.mock('@/api/clients/audio', () => ({
+  audioApi: {
+    listRefAudioAssets: vi.fn(),
+    uploadRefAudioAsset: vi.fn(),
+    generateRefAudioFromPrompt: vi.fn(),
+    updateRefAudioAssetNote: vi.fn(),
+    deleteRefAudioAsset: vi.fn(),
+    getRefAudioAssetAudioUrl: (id: string) => `/api/ref-audio-assets/${id}/audio`,
+  },
+}));
+
 const mocked = vi.mocked(voiceworkstationApi);
+const mockedAudio = vi.mocked(audioApi);
 
 function renderPage(initialPath = '/') {
   return render(
@@ -64,9 +72,8 @@ describe('AudioWorkstationPage 音频工作站页', () => {
     });
     mocked.listSoVITSSVCModels.mockResolvedValue({ status: 'ok', models: [] });
     mocked.listSVCDatasets.mockResolvedValue({ status: 'ok', datasets: [] });
-    mocked.getOrpheusStatus.mockResolvedValue({ status: 'healthy', url: '', voice: '' });
-    mocked.getRefAudioStatus.mockResolvedValue({ is_running: false, progress: null, result: null, error: null });
     mocked.musicListSongs.mockResolvedValue({ songs: [] });
+    mockedAudio.listRefAudioAssets.mockResolvedValue({ assets: [], current_asset_id: null });
   });
 
   afterEach(() => {
@@ -74,10 +81,10 @@ describe('AudioWorkstationPage 音频工作站页', () => {
     vi.clearAllMocks();
   });
 
-  it('渲染五个 Tab 按钮与默认 VoxCPM 面板，并消费 getVoxCPMStatus', () => {
+  it('渲染四个 Tab 按钮与默认 VoxCPM 面板，并消费 getVoxCPMStatus', () => {
     renderPage();
 
-    for (const name of ['VoxCPM 生成', 'SVC 训练推理', '作曲合成', 'Orpheus 合成', '参考音频']) {
+    for (const name of ['VoxCPM 生成', 'SVC 训练推理', '作曲合成', '参考音频资产']) {
       expect(screen.getByRole('button', { name })).toBeInTheDocument();
     }
     // 默认 VoxCPM 面板
@@ -103,19 +110,11 @@ describe('AudioWorkstationPage 音频工作站页', () => {
     expect(mocked.musicListSongs).toHaveBeenCalled();
   });
 
-  it('切到 Orpheus Tab 渲染合成面板并消费 getOrpheusStatus', async () => {
+  it('切到参考音频资产 Tab 渲染资产面板并消费 listRefAudioAssets', async () => {
     renderPage();
-    screen.getByRole('button', { name: 'Orpheus 合成' }).click();
+    screen.getByRole('button', { name: '参考音频资产' }).click();
 
-    expect(await screen.findByText('Orpheus 情感合成')).toBeInTheDocument();
-    expect(mocked.getOrpheusStatus).toHaveBeenCalled();
-  });
-
-  it('切到参考音频 Tab 渲染面板并消费 getRefAudioStatus', async () => {
-    renderPage();
-    screen.getByRole('button', { name: '参考音频' }).click();
-
-    expect(await screen.findByText('参考音频模式')).toBeInTheDocument();
-    expect(mocked.getRefAudioStatus).toHaveBeenCalled();
+    expect(await screen.findByText(/Qwen3 参考音频资产管理/)).toBeInTheDocument();
+    expect(mockedAudio.listRefAudioAssets).toHaveBeenCalled();
   });
 });

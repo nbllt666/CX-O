@@ -22,6 +22,25 @@
 | `message.schema.json` | `c:/CX-O/CX-O-SERVER/server/protocol/message.py`（7 Pydantic 模型 + 5 工厂） | P0 | ✅ s0601 补全 |
 | `computer_control_plugin.schema.json` | 电脑控制插件数据契约（spec `add-computer-control-cxfc` 冻结决策） | P1 | ✅ s0201 补全（迁移自 contracts/plugin.json） |
 | `computer_control_error_codes.json` | 电脑控制插件统一错误码枚举（spec `add-computer-control-cxfc` 冻结决策） | P1 | ✅ s0201 补全（迁移自 contracts/error_codes.json） |
+| `speech_synthesis_request.schema.json` | 统一 Qwen3 TTS 合成请求（spec `unify-qwen3-tts-migration` Task 1 冻结决策） | P0 | ✅ s0201 补全 |
+| `speech_synthesis_response.schema.json` | 统一 Qwen3 TTS 非流式响应（spec `unify-qwen3-tts-migration` Task 1 冻结决策） | P0 | ✅ s0201 补全 |
+| `speech_audio_chunk.schema.json` | 统一 Qwen3 TTS 流式音频块（spec `unify-qwen3-tts-migration` Task 1 冻结决策） | P0 | ✅ s0201 补全 |
+| `ref_audio_asset.schema.json` | 统一参考音频资产（双来源 prompt/file，spec `unify-qwen3-tts-migration` Task 1 冻结决策） | P0 | ✅ s0201 补全 |
+| `emotion_instruction.schema.json` | LLM 自然语言情感指令（spec `unify-qwen3-tts-migration` Task 1 冻结决策） | P0 | ✅ s0201 补全 |
+| `qwen3_tts_error_codes.json` | 统一 Qwen3 TTS 错误码枚举（spec `unify-qwen3-tts-migration` Task 1 冻结决策） | P0 | ✅ s0201 补全 |
+
+### Qwen3 TTS 数据契约清单（spec `unify-qwen3-tts-migration`）
+
+> 统一 Qwen3 TTS 三层契约的数据层，对应 Task 1 冻结。源真理为 spec `unify-qwen3-tts-migration` 冻结决策与 Qwen3-TTS/vLLM-Omni 官方协议（能力矩阵见 Task 0 基线盘点）。
+
+| Schema 文件 | 职责 | 关键约束 |
+|------------|------|---------|
+| `speech_synthesis_request.schema.json` | 归一合成请求（普通/流式/WS/工作站） | text 必填；refs 引用资产 ID，禁止本地路径；输出采样率 const 24000 |
+| `speech_synthesis_response.schema.json` | 非流式响应 | audio base64 + runtime 标识（vllm/official_qwen3） |
+| `speech_audio_chunk.schema.json` | 流式音频块 | 恰一个 start/一个 final，顺序稳定 |
+| `ref_audio_asset.schema.json` | 参考音频资产（source=prompt/file） | 稳定 ID、checksum 去重、输入采样率 [8000,48000] |
+| `emotion_instruction.schema.json` | LLM 自然语言情感指令 | 与 reply_text 分离；失败回退中性；禁止 [emotion:*]/Orpheus XML |
+| `qwen3_tts_error_codes.json` | 统一错误码 | 9 码含 http_status；LEGACY_ENGINE_REMOVED 标记旧引擎移除 |
 
 ## 契约可验证性（rules-3 §五）
 

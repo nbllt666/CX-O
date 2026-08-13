@@ -88,6 +88,9 @@ class DualStreamSession:
         ref_text: Optional[str] = None,
         engine: str = "f5-tts",
         voice: Optional[str] = None,
+        # Qwen3 统一编排：参考音频资产 ID（ref_ 前缀）与多参考音频列表
+        ref_asset_id: Optional[str] = None,
+        refs: Optional[list] = None,
     ):
         self.client_id = client_id
         self.agent_id = agent_id
@@ -96,6 +99,9 @@ class DualStreamSession:
         self.tts_service = tts_service
         self._ref_audio_path = ref_audio_path
         self._ref_text = ref_text
+        # Qwen3 统一编排状态
+        self._ref_asset_id = ref_asset_id
+        self._refs = refs
         # TTS 引擎类型（"f5-tts" / "orpheus"），决定合成参数与 voice_prompt 注入
         # 默认 "f5-tts" 保持向后兼容，不传 engine 字段时行为与改造前一致
         self._engine = engine
@@ -455,12 +461,17 @@ class DualStreamSession:
         """根据 TTS 引擎构建合成参数：
         - orpheus 引擎：使用预设音色（tara/leo 等），不传 ref_audio/ref_text
         - f5-tts 等引擎：使用参考音频克隆，传 ref_audio_path/ref_text
+        - Qwen3 统一编排：优先传 ref_asset_id/refs（参考音频资产），无则回退旧 ref_audio_path/ref_text
         """
         tts_kwargs: dict = {}
         if self._engine == "orpheus":
             if self._voice:
                 tts_kwargs["voice"] = self._voice
         else:
+            if self._ref_asset_id:
+                tts_kwargs["ref_asset_id"] = self._ref_asset_id
+            if self._refs:
+                tts_kwargs["refs"] = self._refs
             if self._ref_audio_path:
                 tts_kwargs["ref_audio_path"] = self._ref_audio_path
             if self._ref_text:
@@ -706,6 +717,9 @@ def register_audio_handlers(
             text = data.get("text", "")
             ref_audio_base64 = data.get("ref_audio")
             ref_text = data.get("ref_text", "")
+            # Qwen3 统一编排：参考音频资产 ID（ref_ 前缀）与多参考音频列表
+            ref_asset_id = data.get("ref_asset_id")
+            refs = data.get("refs")
 
             if not text:
                 await manager.send_message(client_id, create_error(
@@ -717,6 +731,10 @@ def register_audio_handlers(
                 return
 
             kwargs = {}
+            if ref_asset_id:
+                kwargs["ref_asset_id"] = ref_asset_id
+            if refs:
+                kwargs["refs"] = refs if isinstance(refs, list) else [refs]
             if ref_audio_base64:
                 import tempfile
                 import os
@@ -764,6 +782,9 @@ def register_audio_handlers(
             ref_text = data.get("ref_text", "")
             emotion_enabled = data.get("emotion_enabled", False)
             effects_enabled = data.get("effects_enabled", False)
+            # Qwen3 统一编排：参考音频资产 ID（ref_ 前缀）与多参考音频列表
+            ref_asset_id = data.get("ref_asset_id")
+            refs = data.get("refs")
 
             if not text:
                 await manager.send_message(client_id, create_error(
@@ -775,6 +796,10 @@ def register_audio_handlers(
                 return
 
             kwargs = {}
+            if ref_asset_id:
+                kwargs["ref_asset_id"] = ref_asset_id
+            if refs:
+                kwargs["refs"] = refs if isinstance(refs, list) else [refs]
             temp_file = None
             if ref_audio_base64:
                 import tempfile
@@ -1107,6 +1132,9 @@ def register_audio_handlers(
             agent_id = data.get("agent_id", "default")
             ref_audio_path = data.get("ref_audio_path")
             ref_text = data.get("ref_text")
+            # Qwen3 统一编排：参考音频资产 ID（ref_ 前缀）与多参考音频列表
+            ref_asset_id = data.get("ref_asset_id")
+            refs = data.get("refs")
             # 解析 TTS 引擎与音色（向后兼容：未传 engine 时默认 "f5-tts"）
             engine = data.get("engine", "f5-tts")
             voice = data.get("voice")
@@ -1148,6 +1176,8 @@ def register_audio_handlers(
                 ref_text=ref_text,
                 engine=engine,
                 voice=voice,
+                ref_asset_id=ref_asset_id,
+                refs=refs,
             )
             _dual_stream_sessions[client_id] = session
 

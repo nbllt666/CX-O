@@ -15,6 +15,10 @@ from typing import Any, AsyncGenerator, Callable, Optional
 
 
 from server.core.utils import get_shared_http_client, retry_with_backoff
+from server.services.emotion_instruction_service import (
+    generate_instruction,
+    strip_instruction,
+)
 from server.services.emotion_parser import extract_emotions_with_text
 from server.services.effect_parser import EffectParser
 from server.services.tts_audio_utils import (
@@ -48,6 +52,11 @@ class TTSService:
         orpheus_url: str = "http://127.0.0.1:5060",
         orpheus_voice: str = "tara",
         orpheus_timeout: int = 60,
+        # Qwen3 统一编排（Task 5）：enabled 时本服务优先走 Qwen3 Provider，
+        # 旧 F5/Orpheus 分支保留（Task 7 才删除）。qwen3_provider 可注入（测试用）。
+        qwen3_enabled: bool = False,
+        qwen3_provider: Any = None,
+        emotion_instruction_enabled: bool = True,
     ):
         self._mode = mode
         self._model_dir = model_dir
@@ -70,6 +79,10 @@ class TTSService:
         self._orpheus_url = orpheus_url.rstrip("/")
         self._orpheus_voice = orpheus_voice
         self._orpheus_timeout = orpheus_timeout
+        # Qwen3 统一编排状态
+        self._qwen3_enabled = bool(qwen3_enabled)
+        self._qwen3_provider = qwen3_provider
+        self._emotion_instruction_enabled = bool(emotion_instruction_enabled)
 
     @property
     def mode(self) -> str:
@@ -156,6 +169,162 @@ class TTSService:
 
         return None
 
+    # ================================================================ Qwen3 统一编排
+    def _qwen3_defaults(self) -> dict:
+        """读取 Qwen3 默认合成参数（voice/language/output_format/speed），失败回退内置默认。"""
+        try:
+            from server.config import get_settings
+            d = get_settings().config.qwen3_tts.default
+            return {
+                "voice": d.voice,
+                "language": d.language,
+                "output_format": d.output_format,
+                "speed": float(d.speed),
+            }
+        except Exception:  # noqa: BLE001 - 配置缺失时回退内置默认
+            return {"voice": None, "language": None, "output_format": "wav", "speed": 1.0}
+
+    def _register_file_asset(self, path: str, ref_text: str | None) -> str:
+        """旧协议 ref_audio_path + ref_text → 经 ref_audio_store 注册为资产，返回 ref_ 前缀 ID。"""
+        from server import ref_audio_store
+        asset = ref_audio_store.register_from_file(str(path), ref_text=ref_text)
+        return asset.id
+
+    def _register_base64_asset(self, b64: str, ref_text: str | None) -> str:
+        """旧协议 base64 ref_audio → 写入资产目录并注册为资产，返回 ref_ 前缀 ID。"""
+        audio_data = base64.b64decode(b64)
+        from server.config import get_settings
+        assets_dir = Path(get_settings().tts.ref_audio_assets_dir)
+        assets_dir.mkdir(parents=True, exist_ok=True)
+        fd, tmp = tempfile.mkstemp(suffix=".wav", dir=str(assets_dir))
+        try:
+            with os.fdopen(fd, "wb") as f:
+                f.write(audio_data)
+            return self._register_file_asset(tmp, ref_text)
+        finally:
+            try:
+                os.unlink(tmp)
+            except Exception:  # noqa: BLE001 - 清理尽力而为
+                pass
+
+    def _build_ref_ids(self, kwargs: dict) -> list[str]:
+        """把调用方传入的参考音频（refs / ref_asset_id / ref_audio 资产ID / 旧协议 path+base64）
+        归一化为 ref_ 前缀资产 ID 列表。无参考音频时回退当前默认资产；再无则空列表
+        （Qwen3 可无 refs 合成）。
+
+        旧协议（ref_audio_path / base64 ref_audio）尽量经 register_from_file 注册为资产再取 ID，
+        注册失败（非法音频/路径穿越）由 ref_audio_store 抛 InvalidRefAudioError。
+        """
+        ids: list[str] = []
+
+        refs = kwargs.get("refs")
+        if isinstance(refs, str):
+            refs = [refs]
+        if isinstance(refs, (list, tuple)):
+            for r in refs:
+                if r:
+                    ids.append(str(r))
+
+        ref_asset_id = kwargs.get("ref_asset_id")
+        if ref_asset_id:
+            ids.append(str(ref_asset_id))
+
+        ref_audio = kwargs.get("ref_audio")
+        if ref_audio:
+            if isinstance(ref_audio, str) and ref_audio.startswith("ref_"):
+                # ref_audio 作为资产 ID 传入（新协议）
+                ids.append(ref_audio)
+            else:
+                # 旧协议：base64 参考音频 → 注册为资产
+                ids.append(self._register_base64_asset(ref_audio, kwargs.get("ref_text")))
+
+        ref_audio_path = kwargs.get("ref_audio_path")
+        if ref_audio_path:
+            # 旧协议：磁盘路径 → 注册为资产
+            ids.append(self._register_file_asset(ref_audio_path, kwargs.get("ref_text")))
+
+        result: list[str] = []
+        for i in ids:
+            if i and i not in result:
+                result.append(i)
+
+        # 显式未指定任何参考音频时，回退到「当前默认资产」（用户可随时覆盖）
+        if not result:
+            from server import ref_audio_store
+            current = ref_audio_store.get_current()
+            if current is not None:
+                result.append(current.id)
+                logger.info(f"使用当前默认参考音频资产: {current.id}")
+
+        return result
+
+    async def _gen_instruction(self, text: str) -> str | None:
+        """生成 tts_instruction 自然语言文本；emotion_instruction 关闭时返回 None。"""
+        if not self._emotion_instruction_enabled:
+            return None
+        instruction = await generate_instruction(text)
+        return instruction.text or None
+
+    def _build_qwen3_request(self, text, ref_ids, instruction_text, stream, **kwargs):
+        """组装 Qwen3 SynthesisRequest（defaults 从配置读取，kwargs 可覆盖）。"""
+        from server.qwen3_tts_provider import SynthesisRequest
+        defaults = self._qwen3_defaults()
+        return SynthesisRequest(
+            text=text,
+            refs=ref_ids,
+            tts_instruction=instruction_text,
+            voice=kwargs.get("voice") or defaults.get("voice"),
+            language=(kwargs.get("language") or defaults.get("language")) or None,
+            stream=stream,
+            output_format=kwargs.get("output_format") or defaults.get("output_format") or "wav",
+            speed=float(kwargs.get("speed") if kwargs.get("speed") is not None else defaults.get("speed") or 1.0),
+        )
+
+    async def _synthesize_qwen3(self, text: str, **kwargs) -> bytes:
+        """Qwen3 非流式合成：剥离指令 → 生成指令 → 委托 Provider，返回完整音频 bytes。"""
+        clean = strip_instruction(text)
+        instruction = await self._gen_instruction(text)
+        ref_ids = self._build_ref_ids(kwargs)
+        req = self._build_qwen3_request(clean, ref_ids, instruction, stream=False, **kwargs)
+        resp = await self._qwen3_provider.synthesize(req)
+        return resp.audio
+
+    async def _synthesize_stream_qwen3(self, text: str, **kwargs):
+        """Qwen3 流式合成：直接委托 Provider 的 AudioChunk 流，保持 chunk 顺序与 is_final。"""
+        clean = strip_instruction(text)
+        instruction = await self._gen_instruction(text)
+        ref_ids = self._build_ref_ids(kwargs)
+        req = self._build_qwen3_request(clean, ref_ids, instruction, stream=True, **kwargs)
+        async for chunk in self._qwen3_provider.synthesize_stream(req):
+            yield {
+                "text_segment": clean if chunk.is_start else "",
+                "audio_data": chunk.data,
+                "chunk_index": chunk.index,
+                "is_final": chunk.is_final,
+            }
+
+    async def _synthesize_stream_fine_qwen3(self, token_stream, char_threshold: int = 3, **kwargs):
+        """Qwen3 细粒度流式合成：token 流 → 分块 → 逐段流式合成，末尾发 final 标记。"""
+        ref_ids = self._build_ref_ids(kwargs)
+        chunk_index = 0
+        async for text_segment in self.split_text_streaming(
+            token_stream, char_threshold=char_threshold
+        ):
+            if not text_segment.strip():
+                continue
+            clean = strip_instruction(text_segment)
+            instruction = await self._gen_instruction(text_segment)
+            req = self._build_qwen3_request(clean, ref_ids, instruction, stream=True, **kwargs)
+            async for chunk in self._qwen3_provider.synthesize_stream(req):
+                yield {
+                    "text_segment": text_segment if chunk.is_start else "",
+                    "audio_data": chunk.data,
+                    "chunk_index": chunk_index,
+                    "is_final": False,
+                }
+                chunk_index += 1
+        yield {"text_segment": "", "audio_data": None, "chunk_index": chunk_index, "is_final": True}
+
     async def synthesize(
         self,
         text: str,
@@ -166,6 +335,19 @@ class TTSService:
         cross_fade_duration: float | None = None,
         **kwargs
     ) -> bytes:
+        # Qwen3 统一编排优先（配置启用时），旧 F5/Orpheus 分支保留至 Task 7 删除
+        if self._qwen3_enabled:
+            combined = dict(kwargs)
+            if ref_audio_path:
+                combined["ref_audio_path"] = ref_audio_path
+            if ref_text:
+                combined["ref_text"] = ref_text
+            if ref_audio:
+                combined["ref_audio"] = ref_audio
+            if speed is not None:
+                combined["speed"] = speed
+            return await self._synthesize_qwen3(text, **combined)
+
         # orpheus 模式：直接调用远程服务
         if self._mode == "orpheus":
             return await self._synthesize_orpheus(text, **kwargs)
@@ -485,6 +667,17 @@ class TTSService:
         on_chunk: Callable[[str, bytes], None] | None = None,
         **kwargs
     ) -> AsyncGenerator[dict[str, Any], None]:
+        # Qwen3 统一编排优先
+        if self._qwen3_enabled:
+            combined = dict(kwargs)
+            if ref_audio_path:
+                combined["ref_audio_path"] = ref_audio_path
+            if ref_text:
+                combined["ref_text"] = ref_text
+            async for chunk in self._synthesize_stream_qwen3(text, **combined):
+                yield chunk
+            return
+
         # 入口校验：低延迟模型强制启用 Triton，避免首包延迟超标
         await self._validate_triton_for_low_latency(**kwargs)
 
@@ -674,8 +867,22 @@ class TTSService:
         LLM token 流 → split_text_streaming 细粒度切片 → 逐块调用 TTS 引擎 → yield 音频块
 
         支持 embedded / remote / triton / orpheus 四种模式（复用现有合成方法）。
+        Qwen3 启用时优先走统一 Qwen3 编排（_synthesize_stream_fine_qwen3）。
         每个 yield 的 dict 包含：text_segment, audio_data, chunk_index, is_final。
         """
+        # Qwen3 统一编排优先
+        if self._qwen3_enabled:
+            combined = dict(kwargs)
+            if ref_audio_path:
+                combined["ref_audio_path"] = ref_audio_path
+            if ref_text:
+                combined["ref_text"] = ref_text
+            async for chunk in self._synthesize_stream_fine_qwen3(
+                token_stream, char_threshold=char_threshold, **combined
+            ):
+                yield chunk
+            return
+
         # 入口校验：orpheus 模式跳过 Triton 校验（Orpheus 不使用 Triton，使用预设音色）
         if self._mode == "orpheus":
             await self._validate_orpheus_service()
@@ -904,6 +1111,10 @@ class TTSService:
         text: str,
         **kwargs
     ) -> bytes:
+        # Qwen3 统一编排优先：情感由 tts_instruction 承载，直接委托 Qwen3
+        if self._qwen3_enabled:
+            return await self._synthesize_qwen3(text, **kwargs)
+
         segments = extract_emotions_with_text(text)
 
         if not segments:
@@ -976,6 +1187,12 @@ class TTSService:
         on_chunk: Callable[[str, bytes], None] | None = None,
         **kwargs
     ) -> AsyncGenerator[dict[str, Any], None]:
+        # Qwen3 统一编排优先：情感由 tts_instruction 承载，直接委托 Qwen3 流式
+        if self._qwen3_enabled:
+            async for chunk in self._synthesize_stream_qwen3(text, **kwargs):
+                yield chunk
+            return
+
         segments = extract_emotions_with_text(text)
 
         effect_segments = []
@@ -1225,6 +1442,29 @@ def get_tts_service() -> TTSService:
     if _tts_service is None:
         from server.config import get_settings
         settings = get_settings()
+
+        # Qwen3 统一编排：配置启用时注入 Provider，ref_resolver 接到 ref_audio_store
+        qwen3_enabled = bool(settings.config.qwen3_tts.enabled)
+        qwen3_provider = None
+        emotion_instruction_enabled = bool(
+            settings.config.qwen3_tts.emotion_instruction.enabled
+        )
+        if qwen3_enabled:
+            from server import ref_audio_store
+            from server.qwen3_tts_provider import Qwen3TTSProvider
+
+            def _ref_resolver(asset_id):
+                asset = ref_audio_store.resolve(asset_id)
+                data = ref_audio_store.get_audio_path(asset_id).read_bytes()
+                return {
+                    "data": data,
+                    "sample_rate": asset.sample_rate or 24000,
+                    "ref_text": asset.ref_text or "",
+                    "channels": asset.channels or 1,
+                }
+
+            qwen3_provider = Qwen3TTSProvider(ref_resolver=_ref_resolver)
+
         _tts_service = TTSService(
             mode=settings.tts.mode,
             model_dir=settings.tts.model_dir,
@@ -1244,5 +1484,9 @@ def get_tts_service() -> TTSService:
             orpheus_url=settings.tts.orpheus.url,
             orpheus_voice=settings.tts.orpheus.voice,
             orpheus_timeout=settings.tts.orpheus.timeout,
+            # Qwen3 统一编排
+            qwen3_enabled=qwen3_enabled,
+            qwen3_provider=qwen3_provider,
+            emotion_instruction_enabled=emotion_instruction_enabled,
         )
     return _tts_service

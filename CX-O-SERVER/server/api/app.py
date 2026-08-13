@@ -32,6 +32,7 @@ from server.api.routers import (
     memory,
     memory_chat,
     multimodal,
+    ref_audio_assets,
     service,
     stats,
     tools,
@@ -86,6 +87,7 @@ def register_api_routes(app: FastAPI):
     app.include_router(agents.router, prefix="/api")
     app.include_router(archive.router, prefix="/api")
     app.include_router(audio.router, prefix="/api")
+    app.include_router(ref_audio_assets.router, prefix="/api")
     app.include_router(avatars.router, prefix="/api")
     app.include_router(admin.router, prefix="/api")
     app.include_router(backup.router, prefix="/api")

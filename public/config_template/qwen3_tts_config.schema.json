@@ -1,0 +1,56 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://cx-o/public/config_template/qwen3_tts_config.schema.json",
+  "title": "Qwen3TTSConfig",
+  "description": "统一 Qwen3 TTS 配置契约。含默认值、取值范围与缺失字段自动补齐(缺失字段按各属性 default 补齐，required 仅 enabled/runtime)。runtime 选择 vllm 首选、official_qwen3 临时兜底；旧引擎配置(f5_tts/orpheus/cosyvoice/emotion_refs)不再作为可选引擎，加载时映射 LEGACY_ENGINE_REMOVED。源真理：spec unify-qwen3-tts-migration 冻结决策。",
+  "type": "object",
+  "properties": {
+    "enabled": { "type": "boolean", "default": true },
+    "runtime": { "type": "string", "enum": ["vllm", "official_qwen3"], "default": "vllm", "description": "首选运行时。vllm 不支持的能力自动路由 official_qwen3 临时路径。" },
+    "vllm": {
+      "type": "object",
+      "properties": {
+        "base_url": { "type": "string", "default": "http://127.0.0.1:8091", "description": "vLLM-Omni /v1/audio/speech 基础地址。" },
+        "model": { "type": "string", "default": "Qwen/Qwen3-TTS-12Hz-1.7B-CustomVoice", "description": "模型名/路径。" },
+        "task_type": { "type": "string", "enum": ["CustomVoice", "VoiceDesign", "Base"], "default": "CustomVoice" },
+        "timeout_seconds": { "type": "number", "minimum": 1, "default": 60 },
+        "sample_rate": { "type": "integer", "const": 24000 }
+      },
+      "required": ["base_url", "model"]
+    },
+    "official_runtime": {
+      "type": "object",
+      "description": "官方 Qwen3 运行时临时兜底路径（vLLM 不支持的能力）。须有显式退出/固化判据，不得长期隐式常驻。退出/固化判据：当 vLLM 补齐该能力并通过 Task 0 探针验证后，移除本段或将其固化为一级运行时；否则在 Task 8 [V] 交付审查中作为未闭合项显式列出并由人类裁决。",
+      "properties": {
+        "base_url": { "type": "string", "default": "", "description": "官方运行时端点，为空则禁用兜底。" },
+        "model": { "type": "string", "default": "Qwen/Qwen3-TTS-12Hz-1.7B-Base" },
+        "timeout_seconds": { "type": "number", "minimum": 1, "default": 60 }
+      }
+    },
+    "default": {
+      "type": "object",
+      "properties": {
+        "voice": { "type": "string", "default": "vivian" },
+        "language": { "type": "string", "default": "" },
+        "output_format": { "type": "string", "enum": ["wav","pcm","mp3","flac","opus","aac"], "default": "wav" },
+        "speed": { "type": "number", "minimum": 0.25, "maximum": 4.0, "default": 1.0 }
+      }
+    },
+    "emotion_instruction": {
+      "type": "object",
+      "properties": {
+        "enabled": { "type": "boolean", "default": true },
+        "max_length": { "type": "integer", "default": 200 },
+        "fallback_neutral": { "type": "boolean", "default": true }
+      }
+    },
+    "legacy_engine_removed": {
+      "type": "object",
+      "description": "旧引擎配置不再作为可选引擎；加载含 f5_tts/orpheus/cosyvoice/emotion_refs 时映射 LEGACY_ENGINE_REMOVED。",
+      "properties": {
+        "return_removed_error": { "type": "boolean", "default": true }
+      }
+    }
+  },
+  "required": ["enabled", "runtime"]
+}

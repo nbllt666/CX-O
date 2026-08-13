@@ -32,6 +32,21 @@
 | `archive.pyi` | `c:/CX-O/CX-O-SERVER/server/api/routers/archive.py` | P2 | ⬜ 待 s0201 |
 | `memory_chat.pyi` | `c:/CX-O/CX-O-SERVER/server/api/routers/memory_chat.py` | P2 | ⬜ 待 s0201 |
 | `computer_control.pyi` | 电脑控制插件服务端/后端调用边界（spec `add-computer-control-cxfc` 冻结决策；源真理 `public/schema/computer_control_plugin.schema.json`） | P1 | ✅ s0201 补全（迁移自 contracts/plugin_interface.pyi） |
+| `qwen3_tts_provider.pyi` | 统一 Qwen3 TTS Provider（spec `unify-qwen3-tts-migration` Task 1 冻结决策；源真理 `public/schema/speech_synthesis_request.schema.json` + `qwen3_tts_error_codes.json`） | P0 | ✅ s0201 补全 |
+| `ref_audio_store.pyi` | 统一参考音频资产存储（spec `unify-qwen3-tts-migration` Task 1 冻结决策；源真理 `public/schema/ref_audio_asset.schema.json`） | P0 | ✅ s0201 补全 |
+| `emotion_instruction_service.pyi` | LLM 自然语言情感指令服务（spec `unify-qwen3-tts-migration` Task 1 冻结决策；源真理 `public/schema/emotion_instruction.schema.json`） | P0 | ✅ s0201 补全 |
+| `speech_orchestrator.pyi` | 统一 Qwen3 语音编排（spec `unify-qwen3-tts-migration` Task 1 冻结决策；源真理 `public/schema/speech_synthesis_request.schema.json` + `qwen3_tts_error_codes.json`） | P0 | ✅ s0201 补全 |
+
+### Qwen3 TTS 存根清单（spec `unify-qwen3-tts-migration`）
+
+> 统一 Qwen3 TTS 三层契约的接口层，对应 Task 1 冻结。源真理为 `public/schema/` 下同名数据契约与 `qwen3_tts_error_codes.json`。
+
+| 存根文件 | 源真理 schema | 异常契约 | 状态 |
+|---------|--------------|---------|------|
+| `qwen3_tts_provider.pyi` | `speech_synthesis_request.schema.json` + `qwen3_tts_error_codes.json` | 9 异常类（InvalidRequest/InvalidRefAudio/RefAudioNotFound/EmotionInstructionInvalid/RuntimeUnavailable/RuntimeUnsupported/StreamAborted/LegacyEngineRemoved/System） | ✅ 契约冻结 |
+| `ref_audio_store.pyi` | `ref_audio_asset.schema.json` | InvalidRefAudioError / RefAudioNotFoundError | ✅ 契约冻结 |
+| `emotion_instruction_service.pyi` | `emotion_instruction.schema.json` | EmotionInstructionInvalidError（生成路径回退 vs 显式校验抛错边界） | ✅ 契约冻结 |
+| `speech_orchestrator.pyi` | `speech_synthesis_request.schema.json` + `qwen3_tts_error_codes.json` | 复用 Provider 异常类 | ✅ 契约冻结 |
 
 ## 契约可验证性（rules-3 §五）
 

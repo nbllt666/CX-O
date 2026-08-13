@@ -46,8 +46,8 @@ class BatchDatasetRequest(BaseModel):
     mode: str = Field(default="design", pattern="^(design|controllable_clone|ultimate_clone)$")
     engine: str = Field(
         default="voxcpm",
-        pattern="^(f5tts|orpheustts|voxcpm)$",
-        description="SVC 训练数据生成引擎来源（默认 voxcpm，向后兼容）",
+        pattern="^(voxcpm)$",
+        description="SVC 训练数据生成引擎来源（voxcpm）",
     )
     control: str = ""
     reference_audio_path: Optional[str] = None

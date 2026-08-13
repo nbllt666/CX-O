@@ -122,12 +122,12 @@ describe('AudioPanelPage 音频面板页', () => {
   });
 
   it('挂载时消费 audioApi.getAudioConfig 并展示标量配置项', async () => {
-    mockedAudioApi.getAudioConfig.mockResolvedValue({ engine: 'f5tts', sampleRate: 16000 });
+    mockedAudioApi.getAudioConfig.mockResolvedValue({ engine: 'qwen3', sampleRate: 16000 });
     render(<AudioPanelPage />);
 
     expect(await screen.findByText('音频配置')).toBeInTheDocument();
     expect(screen.getByText('engine')).toBeInTheDocument();
-    expect(screen.getByText('f5tts')).toBeInTheDocument();
+    expect(screen.getByText('qwen3')).toBeInTheDocument();
     expect(screen.getByText('sampleRate')).toBeInTheDocument();
     expect(mockedAudioApi.getAudioConfig).toHaveBeenCalledTimes(1);
   });

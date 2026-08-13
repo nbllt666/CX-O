@@ -51,11 +51,9 @@ _SPEAKER_INVALID_CHARS = re.compile(r"[^A-Za-z0-9_-]")
 # 允许导入/统计的音频扩展名
 AUDIO_EXTENSIONS = (".wav", ".mp3", ".flac", ".ogg")
 
-# 支持的批量数据集生成引擎（SVC 训练数据多来源）
+# 支持的批量数据集生成引擎（SVC 训练数据来源）
 ENGINE_VOXCPM = "voxcpm"
-ENGINE_ORPHEUSTTS = "orpheustts"
-ENGINE_F5TTS = "f5tts"
-_SUPPORTED_ENGINES = (ENGINE_VOXCPM, ENGINE_ORPHEUSTTS, ENGINE_F5TTS)
+_SUPPORTED_ENGINES = (ENGINE_VOXCPM,)
 
 
 def _now_iso() -> str:
@@ -125,11 +123,9 @@ def _md5_file(path: Path, chunk_size: int = 1 << 20) -> str:
 def _entry_fingerprint(params: dict) -> str:
     """条目指纹：params 的稳定 MD5，用于重复提交去重。
 
-    调用方在 params 中按引擎构造去重维度：
+    调用方在 params 中构造去重维度：
     - voxcpm：沿用旧版字段集（text/mode/control/参考音频/参数），不含 engine，
       保持与既有 manifest 的 voxcpm 条目完全兼容（旧 fingerprint 命中跳过）。
-    - orpheustts / f5tts：在 params 中带 engine 维度，与 voxcpm 及彼此区分
-      （同文本用不同引擎生成视为不同条目，各保留一份）。
     """
     payload = json.dumps(params, ensure_ascii=False, sort_keys=True)
     return hashlib.md5(payload.encode("utf-8")).hexdigest()
@@ -145,7 +141,7 @@ class BatchDatasetTask:
     total: int
     mode: str
     created_at: str
-    engine: str = "voxcpm"  # 引擎来源（voxcpm / orpheustts / f5tts）
+    engine: str = "voxcpm"  # 引擎来源（voxcpm）
     status: str = "pending"  # pending / running / completed / failed
     done: int = 0  # 本次新生成的条数
     skipped: int = 0  # 指纹命中 manifest 跳过的条数
@@ -179,27 +175,19 @@ class DatasetBuilderService:
     """
     批量数据集构建服务：异步任务 + 内存注册表 + MD5 manifest 防重。
 
-    支持三引擎来源（SVC 训练数据多来源）：
-    - voxcpm（默认）：调用 VoxCPMClient，按 mode（design/controllable_clone/ultimate_clone）分发
-    - orpheustts：调用 OrpheusClient.synthesize，用预设音色生成（control 字段可覆盖 voice）
-    - f5tts：调用 F5TTSClient.synthesize，用参考音频 + ref_text 克隆音色生成
-              （reference_audio_path 作 ref_audio，prompt_text 作 ref_text）
+    引擎来源：voxcpm（默认），调用 VoxCPMClient，按 mode（design/controllable_clone/ultimate_clone）分发。
 
     client_factory 可注入自定义客户端工厂（测试用）；
-    默认工厂惰性复用各 engine 的单例（get_voxcpm_client / get_orpheus_client / get_f5tts_client）。
+    默认工厂惰性复用 voxcpm 引擎的单例（get_voxcpm_client）。
     """
 
     def __init__(
         self,
         settings: Optional[WorkstationSettings] = None,
         client_factory: Optional[Callable[[], Any]] = None,
-        orpheus_client_factory: Optional[Callable[[], Any]] = None,
-        f5tts_client_factory: Optional[Callable[[], Any]] = None,
     ):
         self._settings = settings if settings is not None else get_settings()
         self._client_factory = client_factory or _default_client_factory
-        self._orpheus_client_factory = orpheus_client_factory or _default_orpheus_client_factory
-        self._f5tts_client_factory = f5tts_client_factory or _default_f5tts_client_factory
         self._tasks: dict[str, BatchDatasetTask] = {}
         self._bg_tasks: dict[str, "asyncio.Task[None]"] = {}
 
@@ -247,13 +235,13 @@ class DatasetBuilderService:
             if not text or not str(text).strip():
                 raise ValueError(f"texts[{i}].text must not be empty")
 
-        # engine 校验：仅接受三引擎之一
+        # engine 校验：仅接受 voxcpm 引擎
         if engine not in _SUPPORTED_ENGINES:
             raise ValueError(
                 f"Unsupported engine: {engine!r} (allowed: {', '.join(_SUPPORTED_ENGINES)})"
             )
 
-        # mode 专属校验仅在 voxcpm 引擎下生效（orpheustts/f5tts 忽略 mode）
+        # mode 专属校验
         if engine == ENGINE_VOXCPM:
             if mode == "controllable_clone" and not reference_audio_path:
                 raise ValueError("reference_audio_path is required for controllable_clone mode")
@@ -262,14 +250,6 @@ class DatasetBuilderService:
                     raise ValueError("prompt_audio_path is required for ultimate_clone mode")
                 if not prompt_text:
                     raise ValueError("prompt_text is required for ultimate_clone mode")
-
-        # f5tts 是声音克隆型 TTS：必须提供参考音频（ref_audio）与参考文本（ref_text）
-        # reference_audio_path → ref_audio，prompt_text → ref_text
-        if engine == ENGINE_F5TTS:
-            if not reference_audio_path:
-                raise ValueError("reference_audio_path is required for f5tts engine (as ref_audio)")
-            if not prompt_text:
-                raise ValueError("prompt_text is required for f5tts engine (as ref_text)")
 
         speaker = sanitize_speaker_name(speaker_name)
         # 训练数据目录集中校验（拒绝绝对路径/目录穿越）
@@ -338,22 +318,15 @@ class DatasetBuilderService:
             entries: list[dict] = manifest.setdefault("entries", [])
             by_fingerprint = {e.get("fingerprint"): e for e in entries}
 
-            # 按引擎获取对应 client（各引擎工厂惰性构造）
-            engine = record.engine
-            if engine == ENGINE_VOXCPM:
-                client = self._client_factory()
-            elif engine == ENGINE_ORPHEUSTTS:
-                client = self._orpheus_client_factory()
-            else:  # ENGINE_F5TTS
-                client = self._f5tts_client_factory()
+            # 获取 voxcpm client（默认工厂惰性构造）
+            client = self._client_factory()
 
-            # voxcpm 推理参数覆盖（仅 voxcpm 引擎使用）
+            # voxcpm 推理参数覆盖
             kwargs: dict[str, Any] = {}
-            if engine == ENGINE_VOXCPM:
-                if cfg_value is not None:
-                    kwargs["cfg_value"] = cfg_value
-                if inference_timesteps is not None:
-                    kwargs["inference_timesteps"] = inference_timesteps
+            if cfg_value is not None:
+                kwargs["cfg_value"] = cfg_value
+            if inference_timesteps is not None:
+                kwargs["inference_timesteps"] = inference_timesteps
 
             for index, item in enumerate(texts):
                 text = str(item["text"])
@@ -361,33 +334,17 @@ class DatasetBuilderService:
                 effective_control = control if item_control is None else str(item_control)
                 record.current_text = text
 
-                # 各引擎的去重指纹参数（voxcpm 沿用旧字段集保持兼容；orpheus/f5tts 带 engine 维度）
-                if engine == ENGINE_VOXCPM:
-                    fp_params = {
-                        "text": text,
-                        "mode": record.mode,
-                        "control": effective_control,
-                        "reference_audio_path": reference_audio_path,
-                        "prompt_audio_path": prompt_audio_path,
-                        "prompt_text": prompt_text,
-                        "cfg_value": cfg_value,
-                        "inference_timesteps": inference_timesteps,
-                    }
-                elif engine == ENGINE_ORPHEUSTTS:
-                    # orpheustts 用预设音色生成；control 字段作为可选 voice 覆盖，空则用配置默认音色
-                    voice = effective_control or self._orpheus_default_voice()
-                    fp_params = {
-                        "engine": ENGINE_ORPHEUSTTS,
-                        "text": text,
-                        "voice": voice,
-                    }
-                else:  # ENGINE_F5TTS
-                    fp_params = {
-                        "engine": ENGINE_F5TTS,
-                        "text": text,
-                        "reference_audio_path": reference_audio_path,
-                        "prompt_text": prompt_text,
-                    }
+                # voxcpm 去重指纹参数（沿用旧字段集保持与既有 manifest 兼容）
+                fp_params = {
+                    "text": text,
+                    "mode": record.mode,
+                    "control": effective_control,
+                    "reference_audio_path": reference_audio_path,
+                    "prompt_audio_path": prompt_audio_path,
+                    "prompt_text": prompt_text,
+                    "cfg_value": cfg_value,
+                    "inference_timesteps": inference_timesteps,
+                }
                 fingerprint = _entry_fingerprint(fp_params)
 
                 existing = by_fingerprint.get(fingerprint)
@@ -402,7 +359,7 @@ class DatasetBuilderService:
                 output_path = dataset_dir / filename
                 try:
                     await self._generate_one(
-                        engine, client, record.mode, text, effective_control,
+                        record.engine, client, record.mode, text, effective_control,
                         reference_audio_path, prompt_audio_path, prompt_text,
                         output_path, kwargs,
                     )
@@ -423,7 +380,7 @@ class DatasetBuilderService:
                     "file": filename,
                     "md5": _md5_file(output_path),
                     "text": text,
-                    "engine": engine,
+                    "engine": record.engine,
                     "mode": record.mode,
                     "control": effective_control,
                     "created_at": _now_iso(),
@@ -475,10 +432,6 @@ class DatasetBuilderService:
 
         - voxcpm：按 mode（design/controllable_clone/ultimate_clone）调用 VoxCPMClient，
           由 client 直接写 output_path
-        - orpheustts：调用 OrpheusClient.synthesize(text, voice) 返回 WAV bytes，落盘 output_path
-          （voice 取 control，空则用配置默认音色）
-        - f5tts：调用 F5TTSClient.synthesize(text, ref_audio_path, ref_text) 返回 WAV bytes，落盘 output_path
-          （ref_audio=reference_audio_path, ref_text=prompt_text）
         """
         if engine == ENGINE_VOXCPM:
             if mode == "design":
@@ -496,25 +449,8 @@ class DatasetBuilderService:
                 )
             else:
                 raise ValueError(f"Unsupported VoxCPM mode: {mode!r}")
-        elif engine == ENGINE_ORPHEUSTTS:
-            voice = control or self._orpheus_default_voice()
-            wav_bytes = await client.synthesize(text=text, voice=voice)
-            output_path.parent.mkdir(parents=True, exist_ok=True)
-            output_path.write_bytes(wav_bytes)
-        elif engine == ENGINE_F5TTS:
-            wav_bytes = await client.synthesize(
-                text=text,
-                ref_audio_path=reference_audio_path,
-                ref_text=prompt_text,
-            )
-            output_path.parent.mkdir(parents=True, exist_ok=True)
-            output_path.write_bytes(wav_bytes)
         else:
             raise ValueError(f"Unsupported engine: {engine!r}")
-
-    def _orpheus_default_voice(self) -> str:
-        """读取 OrpheusConfig 默认音色（orpheustts 引擎在 control 为空时使用）。"""
-        return self._settings.orpheus.voice
 
     # ------------------------------------------------------------------
     # manifest 读写
@@ -555,29 +491,6 @@ def _default_client_factory():
     from workstation.services.voxcpm_client import get_voxcpm_client
 
     return get_voxcpm_client(config=get_settings().voxcpm)
-
-
-def _default_orpheus_client_factory():
-    """默认 Orpheus 客户端工厂：惰性查找 get_orpheus_client，支持测试 monkeypatch"""
-    from workstation.services.orpheus_client import get_orpheus_client
-
-    settings = get_settings()
-    return get_orpheus_client(
-        url=settings.orpheus.url,
-        voice=settings.orpheus.voice,
-        timeout=settings.orpheus.timeout,
-    )
-
-
-def _default_f5tts_client_factory():
-    """默认 F5-TTS 客户端工厂：惰性查找 get_f5tts_client，支持测试 monkeypatch"""
-    from workstation.services.f5tts_client import get_f5tts_client
-
-    settings = get_settings()
-    return get_f5tts_client(
-        url=settings.f5tts.server_url,
-        timeout=settings.f5tts.timeout,
-    )
 
 
 # ---------------------------------------------------------------------------

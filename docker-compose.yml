@@ -1,11 +1,9 @@
 # CX-O 统一推理服务 Docker Compose 编排
-# 包含 F5-TTS (Triton+TRT-LLM)、LLM (vLLM/TRT-LLM)、Orpheus TTS (vLLM+FlashInfer) 和 ASR (FunASR+SenseVoice) 服务
+# 包含 LLM (vLLM/TRT-LLM) 和 ASR (FunASR+SenseVoice) 服务
 #
 # 使用方式:
 #   启动所有服务:   docker compose up
-#   仅启动 TTS:     docker compose up f5-tts-triton
 #   仅启动 LLM:     docker compose up llm
-#   仅启动 Orpheus: docker compose up orpheus-vllm orpheus-tts
 #   仅启动 ASR:     docker compose up asr-sensevoice
 #   指定 LLM 后端:  LLM_BACKEND=vllm docker compose up llm
 #                    LLM_BACKEND=trtllm docker compose up llm
@@ -37,42 +35,6 @@ services:
               capabilities: [gpu]
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8005/health"]
-      interval: 30s
-      timeout: 10s
-      retries: 5
-      start_period: 120s
-    restart: unless-stopped
-    networks:
-      - cxo-inference
-
-  # ============================================================
-  # F5-TTS Triton Inference Server (TRT-LLM 加速)
-  # ============================================================
-  f5-tts-triton:
-    build:
-      context: ./F5-TTS/src/f5_tts/runtime/triton_trtllm
-      dockerfile: Dockerfile.server
-    shm_size: '4gb'
-    ports:
-      - "${F5TTS_PORT_HTTP:-8000}:8000"
-      - "${F5TTS_PORT_GRPC:-8001}:8001"
-      - "${F5TTS_PORT_METRICS:-8002}:8002"
-    environment:
-      - PYTHONIOENCODING=utf-8
-      - MODEL=${F5TTS_MODEL:-F5TTS_v1_Base}
-      - CUDA_VISIBLE_DEVICES=${F5TTS_GPU:-0}
-    volumes:
-      - f5tts-models:/workspace/ckpts
-      - f5tts-engines:/workspace/engines
-    deploy:
-      resources:
-        reservations:
-          devices:
-            - driver: nvidia
-              device_ids: ['${F5TTS_GPU_ID:-0}']
-              capabilities: [gpu]
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8000/v2/health/ready"]
       interval: 30s
       timeout: 10s
       retries: 5
@@ -129,95 +91,8 @@ services:
     profiles:
       - llm
 
-  # ============================================================
-  # Orpheus TTS (vLLM + SNAC Bridge)
-  # 单容器：vLLM 后端 (8000) + FastAPI Bridge (5060)
-  # 加载 canopylabs/orpheus-3b-0.1-ft 多语言微调模型
-  # ============================================================
-  orpheus-tts:
-    image: vllm/vllm-openai:v0.22.0
-    shm_size: '4gb'
-    ports:
-      # vLLM OpenAI 兼容 API（调试用）
-      - "${ORPHEUS_VLLM_PORT:-8003}:8000"
-      # FastAPI Bridge TTS HTTP API（CX-O-SERVER 调用）
-      - "${ORPHEUS_TTS_PORT:-5060}:5060"
-    environment:
-      - PYTHONIOENCODING=utf-8
-      # GPU 选择（默认 0 与 LLM 共享；可改为 1 独占第二张卡）
-      - CUDA_VISIBLE_DEVICES=${ORPHEUS_GPU_ID:-0}
-      # HuggingFace 模型缓存
-      - HF_HOME=/root/.cache/huggingface
-      - HUGGING_FACE_HUB_TOKEN=${HF_TOKEN:-}
-      # Bridge 配置
-      - VLLM_BASE_URL=http://127.0.0.1:8000
-      - VLLM_MODEL=/workspace/models
-      - TOKENIZER_PATH=/workspace/models
-      - SNAC_MODEL_PATH=/workspace/snac
-      - SNAC_DEVICE=${ORPHEUS_SNAC_DEVICE:-cuda}
-      - ORPHEUS_TEMPERATURE=${ORPHEUS_TEMPERATURE:-0.6}
-      - ORPHEUS_TOP_P=${ORPHEUS_TOP_P:-0.8}
-      - ORPHEUS_MAX_TOKENS=${ORPHEUS_MAX_TOKENS:-1200}
-      - ORPHEUS_REP_PENALTY=${ORPHEUS_REP_PENALTY:-1.3}
-    volumes:
-      - orpheus-hf-cache:/root/.cache/huggingface
-      # 挂载本地预下载模型
-      - ./models/orpheus-multilingual:/workspace/models:ro
-      # 挂载 SNAC 解码器模型
-      - ./models/snac_24khz:/workspace/snac:ro
-      # 挂载 Bridge 代码
-      - ./orpheus-tts/api_server.py:/app/orpheus/api_server.py:ro
-    deploy:
-      resources:
-        reservations:
-          devices:
-            - driver: nvidia
-              # 物理 GPU ID（默认 0 与 LLM 共享；可改为 1 独占第二张卡）
-              device_ids: ['${ORPHEUS_GPU_ID:-0}']
-              capabilities: [gpu]
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:5060/health"]
-      interval: 30s
-      timeout: 10s
-      retries: 5
-      start_period: 180s
-    restart: unless-stopped
-    # 启动脚本：先 pip install，再并行启动 vLLM + Bridge
-    entrypoint: ["sh", "-c"]
-    command:
-      - |
-        pip install --no-cache-dir --trusted-host mirrors.aliyun.com -i http://mirrors.aliyun.com/pypi/simple/ snac httpx fastapi uvicorn soundfile
-        vllm serve /workspace/models \
-          --host 0.0.0.0 \
-          --port 8000 \
-          --max-model-len ${ORPHEUS_MAX_MODEL_LEN:-2048} \
-          --gpu-memory-utilization ${ORPHEUS_GPU_MEM_UTIL:-0.2} \
-          --dtype ${ORPHEUS_DTYPE:-auto} \
-          --max-num-seqs ${ORPHEUS_MAX_NUM_SEQS:-4} \
-          --enable-chunked-prefill \
-          --enable-prefix-caching \
-          --max-num-batched-tokens ${ORPHEUS_MAX_NUM_BATCHED_TOKENS:-512} \
-          --trust-remote-code &
-        echo "Waiting for vLLM to start..."
-        for i in $$(seq 1 120); do
-          if curl -sf http://127.0.0.1:8000/health > /dev/null 2>&1; then
-            echo "vLLM is healthy, starting Bridge..."
-            break
-          fi
-          sleep 5
-        done
-        PYTHONPATH=/app/orpheus python3 -m uvicorn api_server:app --host 0.0.0.0 --port 5060 --workers 1
-    networks:
-      - cxo-inference
-
 volumes:
-  f5tts-models:
-    driver: local
-  f5tts-engines:
-    driver: local
   llm-engines:
-    driver: local
-  orpheus-hf-cache:
     driver: local
   asr-models:
     driver: local

@@ -54,7 +54,7 @@ class TestAudioConfig:
         c, tts, asr = client
         r = c.get("/audio/config")
         assert r.status_code == 200
-        assert r.json()["engine"] == "f5"
+        assert r.json()["engine"] == "qwen3"
         assert r.json()["speed"] == 1.0
 
 

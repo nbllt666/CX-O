@@ -33,6 +33,9 @@ class TTSSynthesizeRequest(BaseModel):
     cross_fade_duration: float = 0.15
     ref_audio: Optional[str] = None
     ref_text: Optional[str] = None
+    # Qwen3 统一编排：参考音频资产 ID（ref_ 前缀）与无参考音频合成
+    ref_asset_id: Optional[str] = None
+    refs: Optional[list[str]] = None
 
 
 def _validate_filename(filename: str) -> str:
@@ -201,6 +204,10 @@ async def tts_synthesize(request: TTSSynthesizeRequest, tts_svc: TTSService = De
             "speed": request.speed if request.speed != 1.0 else tts_svc._speed,
             "cross_fade_duration": request.cross_fade_duration if request.cross_fade_duration != 0.15 else tts_svc._cross_fade_duration,
         }
+        if request.ref_asset_id:
+            kwargs["ref_asset_id"] = request.ref_asset_id
+        if request.refs:
+            kwargs["refs"] = request.refs
         if request.ref_audio:
             kwargs["ref_audio"] = request.ref_audio
         if request.ref_text:
@@ -235,6 +242,15 @@ async def tts_synthesize_stream(request: Request, tts_svc: TTSService = Depends(
             "speed": data.get("speed", tts_svc._speed),
             "cross_fade_duration": data.get("cross_fade_duration", tts_svc._cross_fade_duration),
         }
+        # Qwen3 统一编排：参考音频资产 ID（ref_ 前缀）与多参考音频列表
+        if data.get("ref_asset_id"):
+            kwargs["ref_asset_id"] = data["ref_asset_id"]
+        if data.get("refs"):
+            kwargs["refs"] = data["refs"]
+        if data.get("ref_audio"):
+            kwargs["ref_audio"] = data["ref_audio"]
+        if data.get("ref_text"):
+            kwargs["ref_text"] = data["ref_text"]
 
         async def stream_generator():
             try:
@@ -316,7 +332,7 @@ def _load_tts_config() -> dict:
     config_file = _PROJECT_ROOT / "config" / "settings.json"
 
     default_config = {
-        "engine": "f5",
+        "engine": "qwen3",
         "ref_audio_path": "",
         "ref_text": "",
         "speed": 1.0,
@@ -341,7 +357,7 @@ def _load_tts_config() -> dict:
         tts_config = config_data.get("tts", {})
 
         return {
-            "engine": tts_config.get("engine", "f5"),
+            "engine": tts_config.get("engine", "qwen3"),
             "ref_audio_path": tts_config.get("ref_audio_path", ""),
             "ref_text": tts_config.get("ref_text", ""),
             "speed": tts_config.get("speed", 1.0),

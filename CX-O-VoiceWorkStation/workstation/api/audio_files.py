@@ -34,7 +34,6 @@ def _category_dirs() -> dict[str, Path]:
     """category 白名单 → 受控目录映射（每次请求取最新配置）。
 
     - voxcpm:      VoxCPM 生成结果目录 <voice_refs_dir>/voxcpm
-    - orpheus:     Orpheus TTS 合成结果目录 <voice_refs_dir>/orpheus
     - svc-results: So-VITS-SVC 推理结果目录（sovits_svc_infer 直接落盘在
                    output_dir 根目录，文件名为 converted_<stem>.wav，无子目录）
     - songs:       歌曲流水线成品目录 data/songs（允许 <song_id>/final.wav 子路径）
@@ -42,7 +41,6 @@ def _category_dirs() -> dict[str, Path]:
     settings = get_settings()
     return {
         "voxcpm": Path(settings.output.voice_refs_dir) / "voxcpm",
-        "orpheus": Path(settings.output.voice_refs_dir) / "orpheus",
         "svc-results": Path(settings.sovits_svc.output_dir),
         "songs": Path(settings.music.songs_dir),
     }

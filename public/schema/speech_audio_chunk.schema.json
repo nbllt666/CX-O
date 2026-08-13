@@ -1,0 +1,17 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://cx-o/public/schema/speech_audio_chunk.schema.json",
+  "title": "SpeechAudioChunk",
+  "description": "统一 Qwen3 TTS 流式音频块契约。chunk 顺序稳定，恰有一个 start 边界与一个 final 边界；format/sample_rate 声明一致。取消时由打断/取消通道清理，不通过本结构表达错误。源真理：spec unify-qwen3-tts-migration 冻结决策。",
+  "type": "object",
+  "required": ["index", "data", "format", "sample_rate"],
+  "properties": {
+    "index": { "type": "integer", "minimum": 0, "description": "chunk 序号，从 0 递增，保证顺序。" },
+    "data": { "type": "string", "description": "音频块 base64 编码。" },
+    "format": { "type": "string", "enum": ["wav","pcm","mp3","flac","opus","aac"] },
+    "sample_rate": { "type": "integer", "const": 24000 },
+    "channels": { "type": "integer", "default": 1 },
+    "is_start": { "type": "boolean", "default": false, "description": "true 表示首个音频边界（全局唯一）。" },
+    "is_final": { "type": "boolean", "default": false, "description": "true 表示最后一个音频边界（全局唯一）。" }
+  }
+}

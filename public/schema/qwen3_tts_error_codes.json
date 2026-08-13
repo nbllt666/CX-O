@@ -1,0 +1,33 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://cx-o/public/schema/qwen3_tts_error_codes.json",
+  "title": "Qwen3TTSErrorCodes",
+  "description": "统一 Qwen3 TTS 错误码枚举契约。每个错误码含 code、message、http_status，供 Provider 异常、后端错误映射与 .pyi 异常类共用。LEGACY_ENGINE_REMOVED 为旧引擎调用方的明确移除错误。源真理：spec unify-qwen3-tts-migration 冻结决策。",
+  "type": "object",
+  "required": ["codes"],
+  "properties": {
+    "codes": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["code", "message", "http_status"],
+        "properties": {
+          "code": { "type": "string" },
+          "message": { "type": "string" },
+          "http_status": { "type": "integer" }
+        }
+      }
+    }
+  },
+  "codes": [
+    { "code": "INVALID_REQUEST", "message": "请求参数非法：text 缺失/为空或字段不符合请求契约。", "http_status": 400 },
+    { "code": "INVALID_REF_AUDIO", "message": "参考音频资产非法：格式/大小/时长/采样率/路径不安全/元数据缺失。该资产不用于推理。", "http_status": 422 },
+    { "code": "REF_AUDIO_NOT_FOUND", "message": "参考音频资产 ID 不存在或已删除。", "http_status": 404 },
+    { "code": "EMOTION_INSTRUCTION_INVALID", "message": "情感指令非法：超长/敏感内容/非法字段/低置信度，已回退中性指令。", "http_status": 422 },
+    { "code": "RUNTIME_UNAVAILABLE", "message": "Qwen3 TTS 运行时不可用/超时/返回非法响应/模型加载失败。不静默调用旧引擎。", "http_status": 503 },
+    { "code": "RUNTIME_UNSUPPORTED", "message": "当前运行时(vLLM)不支持该能力，已路由官方 Qwen3 运行时并记录 runtime metadata。", "http_status": 200 },
+    { "code": "STREAM_ABORTED", "message": "流式合成被取消/打断，已清理资源。", "http_status": 499 },
+    { "code": "LEGACY_ENGINE_REMOVED", "message": "F5-TTS/Orpheus 已移除，不再作为可选 TTS 引擎。请改用 Qwen3 TTS。", "http_status": 501 },
+    { "code": "SYSTEM_ERROR", "message": "系统级失败：配置缺失或内部错误。", "http_status": 500 }
+  ]
+}

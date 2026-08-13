@@ -15,6 +15,7 @@
 | `settings_json.schema.json` | `c:/CX-O/config/settings.json`（services: danmaku/firewall/vad/sensevoice_streaming + tts） | P1 |
 | `env.schema.json` | `c:/CX-O/.env.example`（F5-TTS/LLM/Orpheus TTS 三组变量 + HF_TOKEN）+ `c:/CX-O/config/env.py` EnvConfig（CXHMS_ 前缀映射） | P1 |
 | `computer_control_config.schema.json` | 电脑控制插件配置契约（spec `add-computer-control-cxfc` 冻结决策；APP-Frontend Electron 本地配置，含授权/令牌/TLS/run_command 护栏/自启动/管理员权限） | P1 |
+| `qwen3_tts_config.schema.json` | 统一 Qwen3 TTS 配置契约（spec `unify-qwen3-tts-migration` Task 1 冻结决策；runtime vllm 首选 + official_qwen3 临时兜底，含默认值/范围/auto_fill；旧引擎配置映射 LEGACY_ENGINE_REMOVED） | P0 |
 
 ## 配置契约强制要求（rules-3 §三）
 

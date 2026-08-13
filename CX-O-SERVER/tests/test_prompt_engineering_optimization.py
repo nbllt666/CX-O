@@ -377,7 +377,9 @@ class TestHiddenPromptToolNames:
             "opposite_of", "subtopic_of", "followed_by", "concurrent_with",
             "memory_ids", "evidence_memory_ids",
         }
-        missing = referenced - real - {"json"} - schema_fields
+        # tts_instruction：Qwen3 TTS 语音情感/韵律指令标签（<tts_instruction>），
+        # 非工具名，属协议标签而非可调用工具，与 json/schema_fields 同类排除。
+        missing = referenced - real - {"json"} - {"tts_instruction"} - schema_fields
         assert not missing, f"hidden_prompt.yaml 引用了不存在的工具: {missing}"
 
     def test_no_stale_tool_names(self):

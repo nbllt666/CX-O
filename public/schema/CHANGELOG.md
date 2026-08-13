@@ -2,6 +2,42 @@
 
 > 遵循 AC 范式 v6 rules-3 §六 契约版本化规则。所有契约变更必须记录版本号、变更内容、变更原因、影响范围。
 
+## [1.3.0] - 2026-08-13
+
+### 变更内容
+
+- **数据契约新增（MINOR）**：统一 Qwen3 TTS 三层契约正式落位 `public/` 公共契约区（spec `unify-qwen3-tts-migration` Task 1 冻结决策，抽象层冻结，能力矩阵摘自 Qwen3-TTS/vLLM-Omni 官方协议，Task 0 探针验证待补）
+  - `schema/speech_synthesis_request.schema.json`：归一合成请求（普通/流式/WS/工作站；text 必填；refs 引用资产 ID 禁止本地路径；输出采样率 const 24000）
+  - `schema/speech_synthesis_response.schema.json`：非流式响应（audio base64 + runtime 标识 vllm/official_qwen3）
+  - `schema/speech_audio_chunk.schema.json`：流式音频块（恰一个 start/一个 final，顺序稳定）
+  - `schema/ref_audio_asset.schema.json`：统一参考音频资产（source=prompt/file 双来源，stable ID + checksum 去重，输入采样率 [8000,48000]）
+  - `schema/emotion_instruction.schema.json`：LLM 自然语言情感指令（与 reply_text 分离，失败回退中性，禁止 [emotion:*]/Orpheus XML）
+  - `schema/qwen3_tts_error_codes.json`：统一错误码枚举（9 码含 http_status，LEGACY_ENGINE_REMOVED 标记旧引擎移除）
+- **接口契约新增（MINOR）**：4 份 .pyi 存根
+  - `interface_stub/qwen3_tts_provider.pyi`：统一 Provider（synthesize/synthesize_stream/health_check/close + 9 异常类）
+  - `interface_stub/ref_audio_store.pyi`：统一参考音频资产存储（register_from_prompt/register_from_file/resolve/list/delete 等）
+  - `interface_stub/emotion_instruction_service.pyi`：LLM 情感指令服务（generate_instruction/convert_legacy_marker，含生成回退 vs 显式校验抛错边界）
+  - `interface_stub/speech_orchestrator.pyi`：统一语音编排（synthesize_text/synthesize_stream_text/interrupt/close）
+- **配置契约新增（MINOR）**：`config_template/qwen3_tts_config.schema.json`（runtime vllm 首选 + official_qwen3 临时兜底、默认值/范围/auto_fill、旧引擎配置映射 LEGACY_ENGINE_REMOVED）
+- **索引与 README 更新（PATCH）**：`STUB_INDEX.md`、`schema/README.md`、`config_template/README.md` 追加对应契约行
+
+### 变更原因
+
+- 用户通过 AskUserQuestion 显式授权「批准落位」——统一 Qwen3 TTS 三层契约从规格目录正式落位为跨角色公共真相源（rules-0 §四-10 + rules-4 §4.3）。GN-004 审查为警示放行（CAUTION-PASS），1 SOFT_BLOCK（§五 一致性自检与正文两处矛盾）+ 6 观察已全部修正并获人类确认接受。
+- 需求：放弃 F5-TTS/Orpheus、全面改用 Qwen3 TTS、情感改 LLM 自然语言指令、移除工作站参考音频生成、双来源参考音频（提示词生成 + 外部文件）。
+
+### 影响范围
+
+- **MINOR 新增**：11 份契约文件均为新增，不影响 CX-O 现有契约。
+- 下游实现待启动：Task 2（Provider）/ Task 3（资产存储）/ Task 4（情感指令）/ Task 5（语音编排）须严格匹配本契约签名。
+- 能力假设：`task_type`/`speed`/VoiceDesign/Base 能力基于官方协议，Task 0 部署探针验证后复核，未验证前不视为已部署证实。
+
+### 闭合判据
+
+- [x] 11 份契约实体落位 `public/` 对应目录（6 schema + 4 interface_stub + 1 config_template）
+- [ ] 契约测试（jsonschema 自校验 + .pyi 签名匹配）待 Task 1 后续补测试
+- [x] 各 README 与 STUB_INDEX 已同步登记
+
 ## [1.2.0] - 2026-08-13
 
 ### 变更内容

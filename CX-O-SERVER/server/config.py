@@ -52,7 +52,6 @@ def get_env_config() -> Dict[str, Any]:
         "CXO_ASR_REMOTE_URL": ["asr", "remote_url"],
         "CXO_ASR_WS_URL": ["asr", "ws_url"],
         "CXO_TTS_MODE": ["tts", "mode"],
-        "CXO_TTS_MODEL_DIR": ["tts", "model_dir"],
         "CXO_TTS_DEVICE": ["tts", "device"],
         "CXO_TTS_REMOTE_URL": ["tts", "remote_url"],
         "CXO_LLM_PROVIDER": ["llm", "provider"],
@@ -352,23 +351,14 @@ class ASRConfig(BaseModel):
     language: str = "auto"
 
 
-class OrpheusConfig(BaseModel):
-    """Orpheus TTS（基于 vLLM 的 OpenAI 兼容 API）配置。"""
-    url: str = "http://127.0.0.1:5060"
-    model: str = "canopylabs/orpheus-multilingual-research-release"
-    # 默认音色：长乐（官方多语言版中文女声，温柔自然）
-    # 备选：白芷（女声清晰）、tara（英文女声，仅英文场景）
-    voice: str = "长乐"
-    timeout: int = 60
-    flashinfer_enabled: bool = True
-    sample_rate: int = 24000
-
-
 class TTSConfig(BaseModel):
-    """TTS 配置节：合成模式、模型目录、远程地址、情感/音效与 Orpheus 子配置。"""
+    """TTS 配置节：Qwen3 统一编排的参数与参考音频资产目录。
+
+    F5-TTS / Orpheus 旧引擎已随 Qwen3 迁移彻底移除（Task 7），不再保留
+    mode/model_dir/orpheus 等旧字段。
+    """
 
     mode: str = "remote"
-    model_dir: str = "F5TTS_v1_Base"
     device: str = "cuda"
     remote_url: str = "http://127.0.0.1:5000"
     ref_audio_path: str = ""
@@ -381,16 +371,87 @@ class TTSConfig(BaseModel):
     transitions_dir: str = "data/voice_refs/transitions"
     transition_enabled: bool = True
     transition_text: str = "嗯，"
-    # Orpheus TTS 配置段（mode == "orpheus" 时生效）
-    orpheus: OrpheusConfig = Field(default_factory=OrpheusConfig)
+    # 统一参考音频资产存储（Task 3）：资产元数据索引与音频文件的持久化目录
+    ref_audio_assets_dir: str = "data/ref_audio_assets"
+    # 外部文件注册时允许读取的额外目录（相对项目根解析）。空列表时仅允许 assets_dir。
+    allowed_ref_audio_dirs: List[str] = Field(default_factory=list)
+    # 参考音频单文件大小上限（MB）
+    max_ref_audio_size_mb: int = 50
 
     @model_validator(mode="after")
     def _resolve_data_paths(self):
-        for field in ("emotion_refs_dir", "transitions_dir"):
+        for field in ("emotion_refs_dir", "transitions_dir", "ref_audio_assets_dir"):
             value = getattr(self, field)
             if value:
                 setattr(self, field, _resolve_data_path(value))
+        if self.allowed_ref_audio_dirs:
+            self.allowed_ref_audio_dirs = [
+                _resolve_data_path(d) for d in self.allowed_ref_audio_dirs
+            ]
         return self
+
+
+class Qwen3TTSVLLMConfig(BaseModel):
+    """Qwen3 TTS vLLM 运行时配置节（vLLM 首选，OpenAI 兼容 /v1/audio/speech）。
+
+    对应 qwen3_tts_config.schema.json 的 vllm 段。vLLM 私有参数（task_type 等）
+    仅存在于 Provider 与配置契约，不泄漏到前端 request/response 协议。
+    """
+
+    base_url: str = "http://127.0.0.1:8091"
+    model: str = "Qwen/Qwen3-TTS-12Hz-1.7B-CustomVoice"
+    task_type: str = "CustomVoice"
+    timeout_seconds: float = 60
+    sample_rate: int = 24000
+
+
+class Qwen3TTSServiceConfig(BaseModel):
+    """官方 Qwen3 运行时临时兜底配置节（vLLM 不支持的能力）。
+
+    对应 qwen3_tts_config.schema.json 的 official_runtime 段。base_url 为空则禁用兜底。
+    """
+
+    base_url: str = ""
+    model: str = "Qwen/Qwen3-TTS-12Hz-1.7B-Base"
+    timeout_seconds: float = 60
+
+
+class Qwen3TTSDefaultConfig(BaseModel):
+    """Qwen3 TTS 默认合成参数配置节（voice/language/output_format/speed）。"""
+
+    voice: str = "vivian"
+    language: str = ""
+    output_format: str = "wav"
+    speed: float = 1.0
+
+
+class Qwen3TTSEmotionConfig(BaseModel):
+    """Qwen3 TTS 情感指令配置节（开关、长度上限、中性回退）。"""
+
+    enabled: bool = True
+    max_length: int = 200
+    fallback_neutral: bool = True
+
+
+class Qwen3TTSLegacyConfig(BaseModel):
+    """旧引擎移除配置节：旧引擎配置不再作为可选引擎，命中时映射 LEGACY_ENGINE_REMOVED。"""
+
+    return_removed_error: bool = True
+
+
+class Qwen3TTSConfig(BaseModel):
+    """统一 Qwen3 TTS 配置节：运行时选择（vllm 首选/official_qwen3 临时兜底）与各子配置。
+
+    对应 qwen3_tts_config.schema.json。缺失字段由 Pydantic default 补齐。
+    """
+
+    enabled: bool = True
+    runtime: str = "vllm"
+    vllm: Qwen3TTSVLLMConfig = Field(default_factory=Qwen3TTSVLLMConfig)
+    official_runtime: Qwen3TTSServiceConfig = Field(default_factory=Qwen3TTSServiceConfig)
+    default: Qwen3TTSDefaultConfig = Field(default_factory=Qwen3TTSDefaultConfig)
+    emotion_instruction: Qwen3TTSEmotionConfig = Field(default_factory=Qwen3TTSEmotionConfig)
+    legacy_engine_removed: Qwen3TTSLegacyConfig = Field(default_factory=Qwen3TTSLegacyConfig)
 
 
 class GraphWeaviateConfig(BaseModel):
@@ -615,6 +676,7 @@ class UnifiedConfig(BaseModel):
     tts: TTSConfig = Field(default_factory=TTSConfig)
     graph: GraphConfigSection = Field(default_factory=GraphConfigSection)
     cxfc: CXFCConfig = Field(default_factory=CXFCConfig)
+    qwen3_tts: Qwen3TTSConfig = Field(default_factory=Qwen3TTSConfig)
     limits: LimitsConfig = Field(default_factory=LimitsConfig)
     # RADIX-Lite 新增 4 配置节（v1.1.0）
     distillation: DistillationConfig = Field(default_factory=DistillationConfig)

@@ -1,0 +1,24 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://cx-o/public/schema/ref_audio_asset.schema.json",
+  "title": "RefAudioAsset",
+  "description": "统一参考音频资产契约。source=prompt（Qwen3 根据提示词生成）与 source=file（外部音频文件）解析为同一内部形状，具有稳定 ID、来源元数据、checksum、格式元数据与生命周期状态。客户端禁止传任意本地路径读取文件。源真理：spec unify-qwen3-tts-migration 冻结决策。",
+  "type": "object",
+  "required": ["id", "source", "checksum", "status", "created_at"],
+  "properties": {
+    "id": { "type": "string", "pattern": "^ref_[a-zA-Z0-9_-]+$", "description": "资产稳定 ID，合成请求 refs 引用。" },
+    "source": { "type": "string", "enum": ["prompt", "file"], "description": "prompt=Qwen3 提示词生成；file=外部音频文件上传/选择。" },
+    "prompt": { "type": "string", "description": "source=prompt 时的提示词（VoiceDesign 自然语言描述）。" },
+    "file_name": { "type": "string", "description": "source=file 时的原始文件名。" },
+    "ref_text": { "type": "string", "description": "source=file 克隆时的参考音频转写（可选；x_vector_only_mode=True 时忽略）。" },
+    "checksum": { "type": "string", "description": "内容 MD5，用于去重与完整性校验。" },
+    "format": { "type": "string", "enum": ["wav","mp3","flac","opus","aac"], "description": "音频格式。" },
+    "sample_rate": { "type": "integer", "minimum": 8000, "maximum": 48000, "description": "参考音频输入采样率（范围）。与合成输出 24000 的差异由 Provider 在推理前重采样。" },
+    "channels": { "type": "integer", "minimum": 1 },
+    "duration_seconds": { "type": "number", "minimum": 1, "description": "参考音频时长（秒）。克隆建议 3 秒左右。" },
+    "size_bytes": { "type": "integer", "minimum": 1 },
+    "status": { "type": "string", "enum": ["registered", "failed", "deleted"], "description": "生命周期状态。" },
+    "note": { "type": "string", "description": "用户注释。" },
+    "created_at": { "type": "string", "format": "date-time" }
+  }
+}

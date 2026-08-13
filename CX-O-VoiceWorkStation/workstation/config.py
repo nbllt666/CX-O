@@ -3,7 +3,6 @@ CX-O-VoiceWorkStation 配置模块
 """
 from __future__ import annotations
 
-import os
 from pathlib import Path
 from typing import Optional
 from dataclasses import dataclass, field
@@ -37,27 +36,6 @@ class VoxCPMConfig:
     inference_timesteps: int = 10
     zipenhancer_model_path: str = "iic/speech_zipenhancer_ans_multiloss_16k_base"
     working_dir: str = "VoxCPM-main"
-
-
-@dataclass
-class OrpheusConfig:
-    """Orpheus TTS 配置（直调 docker vLLM 服务，OpenAI 兼容 API）。"""
-    url: str = "http://127.0.0.1:5060"
-    voice: str = "tara"
-    timeout: int = 60
-
-
-@dataclass
-class F5TTSConfig:
-    """F5-TTS 配置（通过 HTTP 调用 CX-O-SERVER 的 f5tts 合成能力，VoiceWorkStation 不自载模型）。
-
-    ref_audio_path / ref_text 为 SVC 训练数据生成（engine=f5tts）的默认参考音频与文本；
-    通常由批量数据集请求显式传入，配置项作为兜底默认值。
-    """
-    server_url: str = "http://127.0.0.1:8000"
-    timeout: int = 300
-    ref_audio_path: str = ""
-    ref_text: str = ""
 
 
 @dataclass
@@ -95,8 +73,6 @@ class WorkstationSettings:
     server: ServerConfig = field(default_factory=ServerConfig)
     sovits_svc: SoVitSSVCConfig = field(default_factory=SoVitSSVCConfig)
     voxcpm: VoxCPMConfig = field(default_factory=VoxCPMConfig)
-    orpheus: OrpheusConfig = field(default_factory=OrpheusConfig)
-    f5tts: F5TTSConfig = field(default_factory=F5TTSConfig)
     output: OutputConfig = field(default_factory=OutputConfig)
     music: MusicConfig = field(default_factory=MusicConfig)
     cxfc: CXFCConfig = field(default_factory=CXFCConfig)

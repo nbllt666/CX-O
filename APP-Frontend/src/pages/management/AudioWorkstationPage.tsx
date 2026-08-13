@@ -1,33 +1,32 @@
 /**
- * 音频工作站页（SubTask 7.4）
+ * 音频工作站页
  *
- * 功能口径对齐 CX-O-Frontend AudioWorkstationPage：5 个 Tab：
- * VoxCPM 生成 / SVC 训练推理 / 作曲合成 / Orpheus 合成 / 参考音频管理。
+ * 4 个 Tab：
+ * VoxCPM 生成 / SVC 训练推理 / 作曲合成 / Qwen3 参考音频资产。
  * 支持 tab= 查询参数直达指定 Tab。
  *
- * 各 Tab 分别消费 voiceworkstationApi 客户端对应域接口，非占位页。
+ * 各 Tab 分别消费 voiceworkstationApi 客户端（VoxCPM/SVC/作曲）
+ * 或 audioApi 客户端（参考音频资产）对应域接口，非占位页。
  */
 import { useMemo } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
-import { AudioWaveform, MicVocal, Music4, Sparkles, Wand2 } from 'lucide-react';
+import { AudioWaveform, MicVocal, Music4, Sparkles } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import VoxCPMPanel from './audioWorkstation/VoxCPMPanel';
 import SVCPanel from './audioWorkstation/SVCPanel';
 import { CompositionPanel } from './audioWorkstation/CompositionPanel';
-import OrpheusPanel from './audioWorkstation/OrpheusPanel';
-import RefAudioPanel from './audioWorkstation/RefAudioPanel';
+import RefAudioAssetsPanel from './audioWorkstation/RefAudioAssetsPanel';
 
-type TabId = 'voxcpm' | 'svc' | 'music' | 'orpheus' | 'refaudio';
-const VALID_TABS: TabId[] = ['voxcpm', 'svc', 'music', 'orpheus', 'refaudio'];
+type TabId = 'voxcpm' | 'svc' | 'music' | 'refaudio';
+const VALID_TABS: TabId[] = ['voxcpm', 'svc', 'music', 'refaudio'];
 
 const TAB_ICONS: Record<TabId, LucideIcon> = {
   voxcpm: Sparkles,
   svc: MicVocal,
   music: Music4,
-  orpheus: AudioWaveform,
-  refaudio: Wand2,
+  refaudio: AudioWaveform,
 };
 
 export default function AudioWorkstationPage() {
@@ -76,8 +75,7 @@ export default function AudioWorkstationPage() {
         {activeTab === 'voxcpm' && <VoxCPMPanel />}
         {activeTab === 'svc' && <SVCPanel />}
         {activeTab === 'music' && <CompositionPanel />}
-        {activeTab === 'orpheus' && <OrpheusPanel />}
-        {activeTab === 'refaudio' && <RefAudioPanel />}
+        {activeTab === 'refaudio' && <RefAudioAssetsPanel />}
       </div>
     </div>
   );

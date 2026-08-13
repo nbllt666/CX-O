@@ -1,0 +1,843 @@
+"""统一参考音频资产存储（source=prompt / source=file）。
+
+源真理: public/schema/ref_audio_asset.schema.json + public/interface_stub/ref_audio_store.pyi
+完成 Skill: s0201
+当前状态: Task 3 实现——资产存储层。
+
+职责：
+- 将 source=prompt（Qwen3 VoiceDesign 提示词生成）与 source=file（外部音频文件）统一为
+  同一内部形状（``RefAudioAsset``），具有稳定 ID、来源元数据、checksum、格式元数据与
+  生命周期状态（registered / failed / deleted）。
+- 提供注册、解析、列表、注释、删除（软删除）、checksum 去重等能力。
+- 禁止客户端传任意本地路径读取文件；非法文件/路径穿越抛 ``InvalidRefAudioError``，
+  不存在/已删除抛 ``RefAudioNotFoundError``。
+- 严格匹配 public/interface_stub/ref_audio_store.pyi 的签名。
+
+存储布局（基于 ``settings.tts.ref_audio_assets_dir``）：
+- ``index.json`` —— 资产元数据索引（JSON List，与既有 voice_refs JSON 风格一致）。
+- ``{asset_id}.{format}`` —— 每个资产的音频文件，文件路径由资产 ID 确定性推导，
+  无需在公开资产形状中暴露磁盘路径。
+
+说明：
+- ``register_from_prompt`` 依赖一个可注入的 prompt 音频生成器（Qwen3 VoiceDesign 任务）。
+  生产环境通过 ``set_prompt_generator`` 注入真实生成实现；未注入时抛
+  ``RuntimeUnavailableError``。测试注入 Mock 生成器即可无外部运行时验证注册链路。
+- 非 wav 格式的音频元数据解析优先尝试 soundfile；不可用时回退到内置的轻量头部解析
+  （flac/opus/aac/mp3）。wav 使用标准库 ``wave`` 全量解析。
+"""
+from __future__ import annotations
+
+import builtins
+import dataclasses
+import hashlib
+import io
+import json
+import logging
+import os
+import re
+import uuid
+import wave
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Any, Callable, Dict, List, Optional, Tuple
+
+from server.config import get_settings
+from server.qwen3_tts_provider import (
+    InvalidRefAudioError,
+    RefAudioNotFoundError,
+    RuntimeUnavailableError,
+)
+
+logger = logging.getLogger(__name__)
+
+__all__ = [
+    "RefAudioAsset",
+    "GeneratedAudio",
+    "register_from_prompt",
+    "register_from_file",
+    "resolve",
+    "get",
+    "list",
+    "update_note",
+    "delete",
+    "exists",
+    "set_current",
+    "get_current",
+    "clear_current",
+    "set_prompt_generator",
+    "get_audio_path",
+]
+
+# ============================================================================
+# 契约常量
+# ============================================================================
+
+_ASSET_ID_PATTERN = re.compile(r"^ref_[a-zA-Z0-9_-]+$")
+
+# 参考音频支持格式（ref_audio_asset.schema.json format enum）
+_FORMATS = ("wav", "mp3", "flac", "opus", "aac")
+_ALLOWED_EXTENSIONS = {f".{f}" for f in _FORMATS}
+
+# 输入采样率范围（ref_audio_asset.schema.json sample_rate minimum/maximum）
+_SAMPLE_RATE_MIN = 8000
+_SAMPLE_RATE_MAX = 48000
+
+# 最小参考音频时长（秒，契约 minimum: 1）
+_MIN_DURATION_SECONDS = 1.0
+
+# 索引文件名
+_INDEX_FILENAME = "index.json"
+# 当前默认参考音频指针文件名（独立于资产索引，存储 {"asset_id": ...}）
+_CURRENT_FILENAME = "current.json"
+
+
+@dataclasses.dataclass
+class GeneratedAudio:
+    """prompt 音频生成器返回结果（source=prompt 注册输入）。"""
+
+    audio: bytes
+    format: str
+    sample_rate: int
+    channels: int
+    duration_seconds: float
+
+
+# 模块级可注入生成器：由 Qwen3 VoiceDesign 任务 / 测试注入。
+_prompt_generator: Optional[Callable[..., Any]] = None
+# 模块级资产目录覆盖（测试隔离用）；None 时从配置惰性解析。
+_assets_dir_override: Optional[Path] = None
+
+
+# ============================================================================
+# 配置与目录解析
+# ============================================================================
+
+def _resolve_assets_dir() -> Path:
+    """解析资产持久化根目录（优先测试覆盖，否则读取统一配置）。"""
+    if _assets_dir_override is not None:
+        return _assets_dir_override
+    settings = get_settings()
+    return Path(settings.tts.ref_audio_assets_dir)
+
+
+def _allowed_dirs() -> List[Path]:
+    """返回允许 register_from_file 读取的目录集合（含资产目录）。"""
+    bases = [_resolve_assets_dir()]
+    settings = get_settings()
+    for d in settings.tts.allowed_ref_audio_dirs:
+        if d:
+            bases.append(Path(d))
+    return [b.resolve() for b in bases]
+
+
+def set_prompt_generator(fn: Optional[Callable[..., Any]]) -> None:
+    """注入/清除 prompt 音频生成器（Qwen3 VoiceDesign 任务接入点）。
+
+    fn 签名：``async fn(prompt: str, language: Optional[str]) -> GeneratedAudio``。
+    """
+    global _prompt_generator
+    _prompt_generator = fn
+
+
+def _set_assets_dir(path: Optional[Path]) -> None:
+    """覆盖资产根目录（仅供测试隔离使用）。"""
+    global _assets_dir_override
+    _assets_dir_override = Path(path) if path is not None else None
+
+
+# ============================================================================
+# RefAudioAsset
+# ============================================================================
+
+@dataclasses.dataclass
+class RefAudioAsset:
+    """参考音频资产（对应 ref_audio_asset.schema.json 的公开形状）。"""
+
+    id: str
+    source: str
+    checksum: str
+    status: str
+    created_at: str
+    prompt: Optional[str] = None
+    file_name: Optional[str] = None
+    ref_text: Optional[str] = None
+    format: Optional[str] = None
+    sample_rate: Optional[int] = None
+    channels: Optional[int] = None
+    duration_seconds: Optional[float] = None
+    size_bytes: Optional[int] = None
+    note: str = ""
+
+    def to_dict(self) -> Dict[str, Any]:
+        """序列化为公开资产形状（仅含非空字段，符合 schema）。"""
+        out: Dict[str, Any] = {
+            "id": self.id,
+            "source": self.source,
+            "checksum": self.checksum,
+            "status": self.status,
+            "created_at": self.created_at,
+        }
+        for field in (
+            "prompt", "file_name", "ref_text", "format", "sample_rate",
+            "channels", "duration_seconds", "size_bytes", "note",
+        ):
+            value = getattr(self, field, None)
+            if value is not None and value != "":
+                out[field] = value
+        return out
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> "RefAudioAsset":
+        """从字典构建资产（缺失可空字段自动补默认）。"""
+        return cls(**{k: v for k, v in data.items() if k in _ASSET_FIELDS})
+
+    @property
+    def is_deleted(self) -> bool:
+        return self.status == "deleted"
+
+
+_ASSET_FIELDS = set(RefAudioAsset.__dataclass_fields__)
+
+
+# ============================================================================
+# 持久化
+# ============================================================================
+
+def _index_path() -> Path:
+    return _resolve_assets_dir() / _INDEX_FILENAME
+
+
+def _audio_path_for(asset_id: str, fmt: str) -> Path:
+    """由资产 ID + 格式确定性推导音频文件路径。"""
+    return _resolve_assets_dir() / f"{asset_id}.{fmt}"
+
+
+def _load_index() -> List[Dict[str, Any]]:
+    """加载资产索引（文件不存在时返回空列表）。"""
+    path = _index_path()
+    if not path.exists():
+        return []
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+    except (json.JSONDecodeError, OSError) as e:
+        logger.error(f"读取参考音频资产索引失败: {path} - {e}")
+        return []
+    return data if isinstance(data, builtins.list) else []
+
+
+def _save_index(records: List[Dict[str, Any]]) -> None:
+    """原子写入资产索引。"""
+    _resolve_assets_dir().mkdir(parents=True, exist_ok=True)
+    tmp = _index_path().with_suffix(".json.tmp")
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(records, f, ensure_ascii=False, indent=2)
+    os.replace(tmp, _index_path())
+
+
+def _append_record(asset: RefAudioAsset) -> None:
+    """追加一条资产记录到索引。"""
+    records = _load_index()
+    records.append(asset.to_dict())
+    _save_index(records)
+
+
+def _current_path() -> Path:
+    """当前默认参考音频指针文件路径。"""
+    return _resolve_assets_dir() / _CURRENT_FILENAME
+
+
+def _load_current_id() -> Optional[str]:
+    """读取当前默认参考音频资产 ID；未设置或文件损坏返回 None。"""
+    path = _current_path()
+    if not path.exists():
+        return None
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+    except (json.JSONDecodeError, OSError) as e:
+        logger.error(f"读取当前参考音频指针失败: {path} - {e}")
+        return None
+    asset_id = data.get("asset_id") if isinstance(data, dict) else None
+    return asset_id if isinstance(asset_id, str) else None
+
+
+def _save_current_id(asset_id: Optional[str]) -> None:
+    """原子写入当前默认参考音频资产 ID（None 表示清除）。"""
+    _resolve_assets_dir().mkdir(parents=True, exist_ok=True)
+    tmp = _current_path().with_suffix(".json.tmp")
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump({"asset_id": asset_id}, f, ensure_ascii=False, indent=2)
+    os.replace(tmp, _current_path())
+
+
+def _clear_current_if_matches(asset_id: str) -> None:
+    """若指定资产恰为当前默认，则清除指针（删除/软删除资产后调用）。"""
+    if _load_current_id() == asset_id:
+        _save_current_id(None)
+
+
+# ============================================================================
+# 工具函数
+# ============================================================================
+
+def _new_id() -> str:
+    """生成唯一资产 ID（ref_ 前缀 + 随机 hex），碰撞时重试。"""
+    records = _load_index()
+    existing = {r.get("id") for r in records}
+    while True:
+        candidate = f"ref_{uuid.uuid4().hex[:16]}"
+        if candidate not in existing:
+            return candidate
+
+
+def _now_iso() -> str:
+    """生成 UTC ISO8601 时间戳。"""
+    return datetime.now(timezone.utc).isoformat()
+
+
+def _md5(data: bytes) -> str:
+    """计算内容 MD5（用于去重与完整性校验）。"""
+    return hashlib.md5(data).hexdigest()
+
+
+def _validate_asset_id(asset_id: str) -> None:
+    """校验资产 ID 符合契约 pattern。"""
+    if not isinstance(asset_id, str) or not _ASSET_ID_PATTERN.match(asset_id):
+        raise InvalidRefAudioError(
+            f"资产 ID 非法: {asset_id!r}，须匹配 ^ref_[a-zA-Z0-9_-]+$"
+        )
+
+
+def _find_by_checksum(checksum: str) -> Optional[RefAudioAsset]:
+    """在未删除资产中按 checksum 查找（去重）。"""
+    for rec in _load_index():
+        if rec.get("checksum") == checksum and rec.get("status") != "deleted":
+            return RefAudioAsset.from_dict(rec)
+    return None
+
+
+def _validate_audio_meta(
+    fmt: str,
+    sample_rate: int,
+    channels: int,
+    duration_seconds: float,
+    size_bytes: int,
+) -> None:
+    """校验音频元数据契约（格式/大小/时长/采样率/声道）。非法资产不用于推理。"""
+    if fmt not in _FORMATS:
+        raise InvalidRefAudioError(f"不支持的音频格式: {fmt}，仅支持 {_FORMATS}")
+    if not (_SAMPLE_RATE_MIN <= sample_rate <= _SAMPLE_RATE_MAX):
+        raise InvalidRefAudioError(
+            f"采样率越界: {sample_rate}Hz，须在 [{_SAMPLE_RATE_MIN}, {_SAMPLE_RATE_MAX}]Hz"
+        )
+    if not isinstance(channels, int) or channels < 1:
+        raise InvalidRefAudioError(f"声道数非法: {channels}")
+    if duration_seconds is None or duration_seconds < _MIN_DURATION_SECONDS:
+        raise InvalidRefAudioError(
+            f"参考音频时长非法: {duration_seconds}s，须 ≥ {_MIN_DURATION_SECONDS}s"
+        )
+    max_size = get_settings().tts.max_ref_audio_size_mb * 1024 * 1024
+    if size_bytes <= 0:
+        raise InvalidRefAudioError("音频文件为空")
+    if size_bytes > max_size:
+        raise InvalidRefAudioError(
+            f"音频文件过大: {size_bytes} 字节，上限 {max_size} 字节"
+        )
+
+
+# ============================================================================
+# 路径安全（禁止任意本地路径 / 路径穿越）
+# ============================================================================
+
+def _safe_resolve_file_path(file_path: str) -> Path:
+    """解析并校验外部文件路径，杜绝路径穿越与任意本地路径读取。
+
+    - 相对路径以允许目录为基准解析；绝对路径必须位于允许目录内。
+    - 解析后必须仍位于允许目录之前缀内，否则抛 InvalidRefAudioError。
+    """
+    if not isinstance(file_path, str) or not file_path.strip():
+        raise InvalidRefAudioError("缺少参考音频文件路径")
+
+    bases = _allowed_dirs()
+    p = Path(file_path)
+
+    if p.is_absolute():
+        candidate = p.resolve()
+    else:
+        candidate = (bases[0] / p).resolve()
+
+    for base in bases:
+        prefix = str(base) + os.sep
+        if str(candidate) == str(base) or str(candidate).startswith(prefix):
+            if candidate.exists() and candidate.is_file():
+                return candidate
+            raise InvalidRefAudioError(f"参考音频文件不存在: {file_path}")
+
+    raise InvalidRefAudioError("路径穿越或越出允许目录，拒绝读取")
+
+
+# ============================================================================
+# 音频格式探测与元数据解析
+# ============================================================================
+
+def _detect_format(path: Path, data: bytes) -> str:
+    """按扩展名 + 魔数识别音频格式。"""
+    ext = path.suffix.lower().lstrip(".")
+    if ext in _FORMATS:
+        return ext
+    magic_map = {
+        b"RIFF": "wav",
+        b"fLaC": "flac",
+        b"OggS": "opus",
+    }
+    for magic, fmt in magic_map.items():
+        if data.startswith(magic):
+            return fmt
+    raise InvalidRefAudioError("无法识别音频格式")
+
+
+def _probe_audio(data: bytes, fmt: str) -> Tuple[int, int, float]:
+    """返回 (sample_rate, channels, duration_seconds)。
+
+    优先尝试 soundfile（libsndfile 全覆盖）；不可用时回退内置轻量头部解析。
+    """
+    sf = _import_soundfile()
+    if sf is not None:
+        try:
+            info = sf.info(io.BytesIO(data))
+            return int(info.samplerate), int(info.channels), float(info.duration)
+        except Exception as e:  # noqa: BLE001
+            logger.warning(f"soundfile 解析失败，回退内置解析: {e}")
+
+    try:
+        if fmt == "wav":
+            return _probe_wav(data)
+        if fmt == "flac":
+            return _probe_flac(data)
+        if fmt == "opus":
+            return _probe_opus(data)
+        if fmt == "aac":
+            return _probe_aac(data)
+        if fmt == "mp3":
+            return _probe_mp3(data)
+    except InvalidRefAudioError:
+        raise
+    except Exception as e:  # noqa: BLE001
+        raise InvalidRefAudioError(f"音频元数据解析失败: {e}")
+
+    raise InvalidRefAudioError(f"不支持的音频格式: {fmt}")
+
+
+def _import_soundfile():
+    """可选导入 soundfile（libsndfile），不可用时返回 None。"""
+    try:
+        import soundfile  # noqa: F401
+        return soundfile
+    except ImportError:
+        return None
+
+
+def _probe_wav(data: bytes) -> Tuple[int, int, float]:
+    """WAV 元数据（标准库 wave 全量解析）。"""
+    if not data.startswith(b"RIFF") or data[8:12] != b"WAVE":
+        raise InvalidRefAudioError("非合法 WAV 文件")
+    with wave.open(io.BytesIO(data), "rb") as wf:
+        sample_rate = wf.getframerate()
+        channels = wf.getnchannels()
+        nframes = wf.getnframes()
+    if sample_rate <= 0:
+        raise InvalidRefAudioError("WAV 采样率非法")
+    return sample_rate, channels, nframes / sample_rate
+
+
+def _probe_flac(data: bytes) -> Tuple[int, int, float]:
+    """FLAC 元数据（解析 STREAMINFO 块）。"""
+    if not data.startswith(b"fLaC"):
+        raise InvalidRefAudioError("非合法 FLAC 文件")
+    offset = 4
+    while offset + 4 <= len(data):
+        header = data[offset:offset + 4]
+        block_type = header[0] & 0x7F
+        block_len = int.from_bytes(header[1:4], "big")
+        offset += 4
+        if block_type == 0:  # STREAMINFO
+            if offset + 18 > len(data):
+                raise InvalidRefAudioError("FLAC STREAMINFO 不完整")
+            si = data[offset:offset + 18]
+            sample_rate = (int.from_bytes(si[10:13], "big") >> 4) & 0xFFFFF
+            channels = ((si[12] >> 1) & 0x07) + 1
+            total_samples = int.from_bytes(si[13:18], "big") & ((1 << 36) - 1)
+            if sample_rate <= 0:
+                raise InvalidRefAudioError("FLAC 采样率非法")
+            return sample_rate, channels, total_samples / sample_rate
+        offset += block_len
+        if header[0] & 0x80:  # last-metadata-block
+            break
+    raise InvalidRefAudioError("FLAC 未找到 STREAMINFO")
+
+
+def _probe_opus(data: bytes) -> Tuple[int, int, float]:
+    """Opus 元数据（Ogg 页遍历 + OpusHead）。Opus 输出恒为 48kHz。"""
+    if not data.startswith(b"OggS"):
+        raise InvalidRefAudioError("非合法 Ogg/Opus 文件")
+    head_idx = data.find(b"OpusHead")
+    if head_idx < 0 or head_idx + 19 > len(data):
+        raise InvalidRefAudioError("Opus 缺少 OpusHead")
+    channels = data[head_idx + 9]
+    sample_rate = 48000
+    last_granule = 0
+    found = False
+    idx = 0
+    while idx + 27 <= len(data) and data[idx:idx + 4] == b"OggS":
+        granule = int.from_bytes(data[idx + 6:idx + 14], "little")
+        if granule:
+            last_granule = granule
+            found = True
+        seg_count = data[idx + 26]
+        seg_table = data[idx + 27:idx + 27 + seg_count]
+        payload_len = sum(seg_table)
+        idx += 27 + seg_count + payload_len
+    if not found or sample_rate <= 0:
+        raise InvalidRefAudioError("Opus 时长解析失败")
+    return sample_rate, channels, last_granule / sample_rate
+
+
+_AAC_SAMPLE_RATES = [
+    96000, 88200, 64000, 48000, 44100, 32000, 24000, 22050,
+    16000, 12000, 11025, 8000, 7350,
+]
+
+
+def _probe_aac(data: bytes) -> Tuple[int, int, float]:
+    """AAC(ADTS) 元数据（遍历 ADTS 帧头）。每帧 1024 采样。"""
+    if len(data) < 7 or data[0] != 0xFF or (data[1] & 0xF0) != 0xF0:
+        raise InvalidRefAudioError("非合法 AAC/ADTS 文件")
+    idx = 0
+    sample_rate = 0
+    channels = 1
+    frames = 0
+    while idx + 7 <= len(data):
+        if data[idx] != 0xFF or (data[idx + 1] & 0xF0) != 0xF0:
+            break
+        sf_index = (data[idx + 2] >> 2) & 0x0F
+        channels = ((data[idx + 2] & 0x01) << 2) | ((data[idx + 3] >> 6) & 0x03)
+        sample_rate = (
+            _AAC_SAMPLE_RATES[sf_index] if sf_index < len(_AAC_SAMPLE_RATES) else 0
+        )
+        frame_len = (
+            ((data[idx + 3] & 0x03) << 11)
+            | (data[idx + 4] << 3)
+            | ((data[idx + 5] >> 5) & 0x07)
+        )
+        if sample_rate == 0 or frame_len < 7:
+            break
+        frames += 1
+        idx += frame_len
+    if sample_rate == 0 or frames == 0:
+        raise InvalidRefAudioError("AAC 解析失败")
+    return sample_rate, channels, frames * 1024 / sample_rate
+
+
+# MP3 采样率表（按 version 分组）
+_MP3_SAMPLE_RATES = {
+    3: [44100, 48000, 32000],   # MPEG1
+    2: [22050, 24000, 16000],   # MPEG2
+    0: [11025, 12000, 8000],    # MPEG2.5
+}
+# MP3 每帧采样数（Layer I=384，Layer II/III 视版本）
+_MP3_SAMPLES_PER_FRAME = {
+    (3, 1): 384, (3, 2): 1152, (3, 3): 1152,
+    (2, 1): 384, (2, 2): 1152, (2, 3): 576,
+    (0, 1): 384, (0, 2): 1152, (0, 3): 576,
+}
+# MP3 比特率表（kbps），key=(version, layer)
+_MP3_BITRATES = {
+    (3, 1): [0, 32, 64, 96, 128, 160, 192, 224, 256, 288, 320, 352, 384, 416, 448],
+    (3, 2): [0, 32, 48, 56, 64, 80, 96, 112, 128, 160, 192, 224, 256, 320, 384],
+    (3, 3): [0, 32, 40, 48, 56, 64, 80, 96, 112, 128, 160, 192, 224, 256, 320],
+    (2, 1): [0, 32, 48, 56, 64, 80, 96, 112, 128, 144, 160, 176, 192, 224, 256],
+    (2, 2): [0, 8, 16, 24, 32, 40, 48, 56, 64, 80, 96, 112, 128, 144, 160],
+    (2, 3): [0, 8, 16, 24, 32, 40, 48, 56, 64, 80, 96, 112, 128, 144, 160],
+    (0, 1): [0, 32, 48, 56, 64, 80, 96, 112, 128, 144, 160, 176, 192, 224, 256],
+    (0, 2): [0, 8, 16, 24, 32, 40, 48, 56, 64, 80, 96, 112, 128, 144, 160],
+    (0, 3): [0, 8, 16, 24, 32, 40, 48, 56, 64, 80, 96, 112, 128, 144, 160],
+}
+
+
+def _probe_mp3(data: bytes) -> Tuple[int, int, float]:
+    """MP3 元数据（解析 ID3v2 + MPEG 帧头）。"""
+    offset = 0
+    # 跳过 ID3v2 标签
+    if data.startswith(b"ID3"):
+        if len(data) < 10:
+            raise InvalidRefAudioError("MP3 ID3 标签不完整")
+        size = ((data[6] & 0x7F) << 21) | ((data[7] & 0x7F) << 14) \
+            | ((data[8] & 0x7F) << 7) | (data[9] & 0x7F)
+        offset = 10 + size
+
+    sample_rate = 0
+    channels = 1
+    total_frames = 0
+    while offset + 4 <= len(data):
+        if data[offset] != 0xFF or (data[offset + 1] & 0xE0) != 0xE0:
+            offset += 1
+            continue
+        header = int.from_bytes(data[offset:offset + 4], "big")
+        version = (header >> 19) & 0x03
+        layer = (header >> 17) & 0x03
+        bitrate_idx = (header >> 12) & 0x0F
+        sr_idx = (header >> 10) & 0x03
+        channel_mode = (header >> 6) & 0x03
+        if version == 1 or layer == 0 or bitrate_idx == 0 or bitrate_idx == 15:
+            offset += 1
+            continue
+        sr = _MP3_SAMPLE_RATES.get(version)
+        if sr is None or sr_idx >= len(sr):
+            offset += 1
+            continue
+        sample_rate = sr[sr_idx]
+        channels = 2 if channel_mode != 3 else 1
+        bitrate = _MP3_BITRATES.get((version, layer), [0])[bitrate_idx] * 1000
+        spf_key = (version, layer)
+        samples = _MP3_SAMPLES_PER_FRAME.get(spf_key, 1152)
+        if bitrate <= 0 or sample_rate <= 0:
+            offset += 1
+            continue
+        frame_len = int(144 * bitrate / sample_rate) + (1 if header & 0x0001 else 0)
+        if frame_len < 4:
+            offset += 1
+            continue
+        total_frames += 1
+        offset += frame_len
+
+    if sample_rate == 0 or total_frames == 0:
+        raise InvalidRefAudioError("MP3 解析失败")
+    # 首帧可确定采样率/声道；时长用 file_size 估算（存在 ID3 时偏差可忽略）
+    duration = total_frames * samples / sample_rate
+    return sample_rate, channels, duration
+
+
+# ============================================================================
+# 公开 API（严格匹配 ref_audio_store.pyi）
+# ============================================================================
+
+async def register_from_prompt(
+    prompt: str, language: Optional[str] = None
+) -> RefAudioAsset:
+    """调用 Qwen3 VoiceDesign 根据自然语言提示词生成参考音频并持久化元数据（source=prompt）。
+
+    Args:
+        prompt: VoiceDesign 自然语言音色描述。
+        language: 目标语言（可空，交由生成器解析）。
+
+    Returns:
+        已注册的 RefAudioAsset（若 checksum 已存在则复用之）。
+
+    Raises:
+        RuntimeUnavailableError: 未注入 prompt 音频生成器（Qwen3 VoiceDesign 运行时未就绪）。
+        InvalidRefAudioError: 生成音频元数据非法。
+    """
+    if not isinstance(prompt, str) or not prompt.strip():
+        raise InvalidRefAudioError("prompt 提示词不能为空")
+
+    if _prompt_generator is None:
+        raise RuntimeUnavailableError(
+            "Qwen3 VoiceDesign 生成运行时未配置（register_from_prompt 依赖 prompt 音频生成器）"
+        )
+
+    generated = await _prompt_generator(prompt, language)
+    if not isinstance(generated, GeneratedAudio):
+        raise InvalidRefAudioError("prompt 生成器返回非 GeneratedAudio")
+    audio = generated.audio
+    if not audio:
+        raise InvalidRefAudioError("prompt 生成器返回空音频")
+
+    checksum = _md5(audio)
+    existing = _find_by_checksum(checksum)
+    if existing is not None:
+        logger.info(f"prompt 资产 checksum 去重命中，复用: {existing.id}")
+        return existing
+
+    _validate_audio_meta(
+        generated.format, generated.sample_rate, generated.channels,
+        generated.duration_seconds, len(audio),
+    )
+
+    asset = RefAudioAsset(
+        id=_new_id(),
+        source="prompt",
+        prompt=prompt,
+        checksum=checksum,
+        format=generated.format,
+        sample_rate=generated.sample_rate,
+        channels=generated.channels,
+        duration_seconds=generated.duration_seconds,
+        size_bytes=len(audio),
+        status="registered",
+        note="",
+        created_at=_now_iso(),
+    )
+    _audio_path_for(asset.id, asset.format).write_bytes(audio)
+    _append_record(asset)
+    logger.info(f"注册 prompt 参考音频资产: {asset.id}")
+    return asset
+
+
+def register_from_file(
+    file_path: str, ref_text: Optional[str] = None, note: str = ""
+) -> RefAudioAsset:
+    """注册外部音频文件为资产（source=file）。
+
+    校验格式/大小/时长/采样率/路径安全，非法抛 InvalidRefAudioError。
+    相似内容通过 checksum 去重复用已有资产。
+
+    Args:
+        file_path: 位于允许目录内的音频文件路径（相对允许目录或绝对路径）。
+        ref_text: 可选参考音频转写（克隆时使用）。
+        note: 可选用户注释。
+
+    Returns:
+        已注册的 RefAudioAsset（首次注册或 checksum 去重复用）。
+
+    Raises:
+        InvalidRefAudioError: 文件非法/路径穿越/元数据越界。
+    """
+    path = _safe_resolve_file_path(file_path)
+    data = path.read_bytes()
+    fmt = _detect_format(path, data)
+
+    sample_rate, channels, duration_seconds = _probe_audio(data, fmt)
+    _validate_audio_meta(fmt, sample_rate, channels, duration_seconds, len(data))
+
+    checksum = _md5(data)
+    existing = _find_by_checksum(checksum)
+    if existing is not None:
+        logger.info(f"外部文件 checksum 去重命中，复用: {existing.id}")
+        return existing
+
+    asset = RefAudioAsset(
+        id=_new_id(),
+        source="file",
+        file_name=path.name,
+        ref_text=ref_text or "",
+        checksum=checksum,
+        format=fmt,
+        sample_rate=sample_rate,
+        channels=channels,
+        duration_seconds=duration_seconds,
+        size_bytes=len(data),
+        status="registered",
+        note=note or "",
+        created_at=_now_iso(),
+    )
+    _audio_path_for(asset.id, asset.format).write_bytes(data)
+    _append_record(asset)
+    logger.info(f"注册外部参考音频资产: {asset.id}")
+    return asset
+
+
+def resolve(asset_id: str) -> RefAudioAsset:
+    """按 ID 解析资产。不存在或已删除抛 RefAudioNotFoundError。"""
+    asset = get(asset_id)
+    if asset is None or asset.is_deleted:
+        raise RefAudioNotFoundError(f"参考音频资产不存在或已删除: {asset_id}")
+    return asset
+
+
+def get(asset_id: str) -> Optional[RefAudioAsset]:
+    """按 ID 获取资产（含已删除），不存在返回 None。"""
+    _validate_asset_id(asset_id)
+    for rec in _load_index():
+        if rec.get("id") == asset_id:
+            return RefAudioAsset.from_dict(rec)
+    return None
+
+
+def list() -> List[RefAudioAsset]:
+    """列出全部可用资产（排除 deleted）。"""
+    return [
+        RefAudioAsset.from_dict(r)
+        for r in _load_index()
+        if r.get("status") != "deleted"
+    ]
+
+
+def update_note(asset_id: str, note: str) -> RefAudioAsset:
+    """更新资产注释。"""
+    records = _load_index()
+    for rec in records:
+        if rec.get("id") == asset_id:
+            rec["note"] = note
+            _save_index(records)
+            return RefAudioAsset.from_dict(rec)
+    raise RefAudioNotFoundError(f"参考音频资产不存在: {asset_id}")
+
+
+def delete(asset_id: str) -> None:
+    """删除资产（软删除，status=deleted）。若为当前默认资产，同时清除当前指针。"""
+    records = _load_index()
+    for rec in records:
+        if rec.get("id") == asset_id:
+            rec["status"] = "deleted"
+            _save_index(records)
+            _clear_current_if_matches(asset_id)
+            logger.info(f"软删除参考音频资产: {asset_id}")
+            return
+    raise RefAudioNotFoundError(f"参考音频资产不存在: {asset_id}")
+
+
+def set_current(asset_id: str) -> RefAudioAsset:
+    """将资产设为当前默认参考音频（仅 registered 资产）。
+
+    Args:
+        asset_id: 要设为默认的资产 ID。
+
+    Returns:
+        被设为当前的 RefAudioAsset。
+
+    Raises:
+        RefAudioNotFoundError: 资产不存在或已删除。
+    """
+    asset = resolve(asset_id)
+    _save_current_id(asset.id)
+    logger.info(f"设置当前默认参考音频资产: {asset.id}")
+    return asset
+
+
+def get_current() -> Optional[RefAudioAsset]:
+    """返回当前默认参考音频资产；未设置或已删除/指针非法返回 None。
+
+    删除当前资产时指针会被自动清除；若指针文件损坏或指向非法 ID，视为未设置。
+    """
+    asset_id = _load_current_id()
+    if not asset_id:
+        return None
+    try:
+        asset = get(asset_id)
+    except InvalidRefAudioError:
+        return None
+    if asset is None or asset.is_deleted:
+        return None
+    return asset
+
+
+def clear_current() -> None:
+    """清除当前默认参考音频设置（不删除资产本身）。"""
+    _save_current_id(None)
+    logger.info("清除当前默认参考音频资产")
+
+
+def exists(checksum: str) -> bool:
+    """按 checksum 判断是否已存在（去重，排除已删除）。"""
+    return _find_by_checksum(checksum) is not None
+
+
+def get_audio_path(asset_id: str) -> Path:
+    """返回资产音频文件磁盘路径（内部/下游 Provider 使用，不在公开契约）。
+
+    仅返回路径，不读取内容；供推理链路（Task 5 Provider）按需加载音频字节。
+    """
+    asset = resolve(asset_id)
+    fmt = asset.format or "wav"
+    return _audio_path_for(asset_id, fmt)
