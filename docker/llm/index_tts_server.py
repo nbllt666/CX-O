@@ -20,8 +20,11 @@
 响应: audio/wav（24kHz -> IndexTTS 输出 22050Hz，保留原样）
 
 运行:
+    # 需与 VoiceDesign 共置 GPU1 时，先设 CUDA_VISIBLE_DEVICES=1 隔离（避免 torch 在双卡都建 context），
+    # 此时 --device cuda:0 指物理 GPU1
+    set CUDA_VISIBLE_DEVICES=1
     <indextts25-venv>/python index_tts_server.py --model_dir C:\\CX-O\\models\\IndexTTS-2.5 \\
-        --host 127.0.0.1 --port 8092 --device cuda:1 --bf16
+        --host 127.0.0.1 --port 8092 --device cuda:0 --bf16
 """
 from __future__ import annotations
 

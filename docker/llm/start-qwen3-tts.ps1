@@ -31,7 +31,8 @@ $runArgs = @(
     "--shm-size=4g",
     $IMAGE,
     "vllm", "serve", $MODEL_CONTAINER, "--omni", "--port", $PORT,
-    "--gpu-memory-utilization", "0.5", "--trust-remote-code"
+    "--gpu-memory-utilization", "0.35", "--trust-remote-code",
+    "--served-model-name", "Qwen/Qwen3-TTS-12Hz-1.7B-VoiceDesign"
 )
 docker @runArgs
 

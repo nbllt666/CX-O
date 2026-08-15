@@ -1,0 +1,16 @@
+[
+  {
+    "id": "ref_8df9787c96124a5f",
+    "source": "file",
+    "checksum": "67bbcfd6fb0cccbfc137617f0ee71c92",
+    "status": "registered",
+    "created_at": "2026-08-15T05:04:39.765015+00:00",
+    "file_name": "tmp_sjdej5_.wav",
+    "ref_text": "参考音频转写文本。",
+    "format": "wav",
+    "sample_rate": 24000,
+    "channels": 1,
+    "duration_seconds": 3.0,
+    "size_bytes": 144044
+  }
+]

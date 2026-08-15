@@ -236,7 +236,7 @@ class WeaviateConfig(BaseModel):
     port: int = 8080
     grpc_port: int = 50051
     embedded: bool = False
-    vector_size: int = 768
+    vector_size: int = 1024
     schema_class: str = "CXOMemory"
     api_key: Optional[str] = None
 
@@ -329,7 +329,7 @@ class VectorConfig(BaseModel):
     port: int = 6333
     collection_name: str = "cxo_memories"
     embedding_model: str = "nomic-embed-text"
-    embedding_dimension: int = 768
+    embedding_dimension: int = 1024
     api_key: Optional[str] = None
 
 
