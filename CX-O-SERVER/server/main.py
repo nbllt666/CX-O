@@ -534,7 +534,7 @@ async def lifespan(app: FastAPI):
             services.tts_service = tts_service
             app.state.tts_status = "healthy"
             health_checker.update_status("tts", "healthy")
-            lifespan_logger.info("Embedded TTS (F5-TTS) initialized successfully")
+            lifespan_logger.info("Embedded TTS initialized successfully")
         except Exception as e:
             error_msg = f"Failed to initialize embedded TTS: {e}"
             lifespan_logger.error(error_msg)
@@ -573,71 +573,6 @@ async def lifespan(app: FastAPI):
     _warmup_client = _warmup_get_client()
     _warmup_dt = (_warmup_t.monotonic() - _warmup_t0) * 1000
     lifespan_logger.info(f"Shared HTTP client 预热完成 ({_warmup_dt:.1f}ms)")
-
-    # Orpheus TTS 合成预热：首次合成请求会触发模型加载到 GPU（实测冷启动 11.9s）。
-    # 启动时发一个短文本合成请求预热模型，避免首次 WS voice.dual_stream 请求承受
-    # 11.9s 冷启动延迟（端到端延迟从 12.5s 降到 ~4s）。
-    # 仅在 tts_mode == "orpheus" 时执行；预热失败不阻塞启动（Orpheus 可后置启动）。
-    try:
-        from server.config import get_settings as _get_settings
-        _warmup_settings = _get_settings()
-        _warmup_tts_mode = getattr(_warmup_settings.config.tts, "mode", "")
-        if _warmup_tts_mode == "orpheus":
-            _orpheus_warmup_t0 = _warmup_t.monotonic()
-            _warmup_orpheus_url = getattr(_warmup_settings.config.tts.orpheus, "url", "http://127.0.0.1:5060")
-            _warmup_orpheus_voice = getattr(_warmup_settings.config.tts.orpheus, "voice", "tara")
-            _orpheus_resp = await _warmup_client.post(
-                f"{_warmup_orpheus_url}/v1/audio/speech",
-                json={
-                    "input": f"{_warmup_orpheus_voice}: 你好",
-                    "voice": _warmup_orpheus_voice,
-                    "stream": False,
-                },
-                timeout=60.0,
-            )
-            _orpheus_warmup_dt = (_warmup_t.monotonic() - _orpheus_warmup_t0) * 1000
-            if _orpheus_resp.status_code == 200:
-                lifespan_logger.info(
-                    f"Orpheus TTS 预热完成 ({_orpheus_warmup_dt:.1f}ms, "
-                    f"{len(_orpheus_resp.content)} bytes) - 已加载模型到 GPU"
-                )
-            else:
-                lifespan_logger.warning(
-                    f"Orpheus TTS 预热返回 HTTP {_orpheus_resp.status_code} ({_orpheus_warmup_dt:.1f}ms)"
-                )
-
-            # B2: 流式预热 — 让 vLLM 流式生成路径完成首次 JIT 编译/张量分配
-            # 非流式预热已加载模型到 GPU + 预填 voice 前缀 KV cache，
-            # 但流式生成路径（SSE 编码器、异步任务调度）需独立预热。
-            # 首次 WS voice.dual_stream 请求走流式路径，未预热时承受 5-15ms 额外开销。
-            try:
-                _stream_warmup_t0 = _warmup_t.monotonic()
-                async with _warmup_client.stream(
-                    "POST",
-                    f"{_warmup_orpheus_url}/v1/audio/speech",
-                    json={
-                        "input": f"{_warmup_orpheus_voice}: 好",
-                        "voice": _warmup_orpheus_voice,
-                        "stream": True,
-                    },
-                    timeout=30.0,
-                ) as _stream_resp:
-                    # 只读取首块 SSE 数据即可触发流式路径初始化
-                    async for _chunk in _stream_resp.aiter_bytes():
-                        if _chunk:
-                            break
-                _stream_warmup_dt = (_warmup_t.monotonic() - _stream_warmup_t0) * 1000
-                lifespan_logger.info(
-                    f"Orpheus TTS 流式预热完成 ({_stream_warmup_dt:.1f}ms) - 流式生成路径已暖"
-                )
-            except Exception as _stream_warmup_e:
-                lifespan_logger.warning(
-                    f"Orpheus TTS 流式预热失败（不阻塞启动）: {_stream_warmup_e}"
-                )
-    except Exception as _warmup_e:
-        lifespan_logger.warning(
-            f"Orpheus TTS 预热失败（不阻塞启动）: {_warmup_e}"
-        )
 
     # LLM / Embedding 推理预热（后台任务，不阻塞启动完成）：
     # vLLM 冷启动后首个推理请求需完成 CUDA graph 捕获与张量分配，

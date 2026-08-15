@@ -80,7 +80,6 @@ async def get_unified_config():
             "cross_fade_duration": 0.15,
             "emotion_enabled": True,
             "effects_enabled": True,
-            "emotion_voices": {}
         }
 
     services_config = _get_services_config()
@@ -161,7 +160,7 @@ async def update_unified_config(request: Request, _: bool = Depends(verify_admin
 
             tts_config = config_data["tts"]
             for key in ['ref_audio_path', 'ref_text', 'speed', 'cross_fade_duration',
-                       'emotion_enabled', 'effects_enabled', 'emotion_voices']:
+                       'emotion_enabled', 'effects_enabled']:
                 if key in section_data:
                     tts_config[key] = section_data[key]
 
@@ -511,7 +510,7 @@ async def update_audio_config(request: Request, _: bool = Depends(verify_admin_a
             config_data["tts"] = {}
         tts_config = config_data["tts"]
         for key in ['ref_audio_path', 'ref_text', 'speed', 'cross_fade_duration',
-                     'emotion_enabled', 'effects_enabled', 'emotion_voices', 'engine']:
+                     'emotion_enabled', 'effects_enabled', 'engine']:
             if key in data:
                 tts_config[key] = data[key]
         config_file.parent.mkdir(parents=True, exist_ok=True)

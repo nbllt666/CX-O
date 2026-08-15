@@ -1,0 +1,50 @@
+{
+  "model": "Qwen/Qwen3-TTS-12Hz-1.7B-VoiceDesign",
+  "results": [
+    {
+      "name": "health",
+      "ok": true,
+      "detail": "HTTP 200"
+    },
+    {
+      "name": "v1/models",
+      "ok": true,
+      "detail": "models=['Qwen/Qwen3-TTS-12Hz-1.7B-VoiceDesign']"
+    },
+    {
+      "name": "voicedesign_wav",
+      "ok": true,
+      "detail": "HTTP 200 wav rate=24000 ch=1 dur=4.0s bytes=192044"
+    },
+    {
+      "name": "voicedesign_emotion",
+      "ok": true,
+      "detail": "HTTP 200 wav rate=24000 ch=1 dur=4.0s bytes=192044"
+    },
+    {
+      "name": "voicedesign_stream",
+      "ok": true,
+      "detail": "chunks=5 pcm bytes=111360"
+    },
+    {
+      "name": "voicedesign_speed",
+      "ok": true,
+      "detail": "HTTP 200 wav rate=24000 ch=1 dur=1.49s bytes=71724 (vLLM 支持 speed)"
+    },
+    {
+      "name": "voicedesign_mp3",
+      "ok": true,
+      "detail": "HTTP 200 mp3 bytes=17328"
+    },
+    {
+      "name": "voicedesign_flac",
+      "ok": true,
+      "detail": "HTTP 200 flac bytes=64392"
+    },
+    {
+      "name": "voicedesign_opus",
+      "ok": true,
+      "detail": "HTTP 200 opus bytes=10472"
+    }
+  ]
+}

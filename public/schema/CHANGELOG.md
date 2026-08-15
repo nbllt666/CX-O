@@ -2,6 +2,37 @@
 
 > 遵循 AC 范式 v6 rules-3 §六 契约版本化规则。所有契约变更必须记录版本号、变更内容、变更原因、影响范围。
 
+## [1.4.0] - 2026-08-14
+
+### 变更内容
+
+- **配置契约变更（MINOR）**：`config_template/qwen3_tts_config.schema.json` 落地 VoiceDesign + IndexTTS 双运行时架构（spec `unify-qwen3-tts-migration` + s0601 契约变更适配，人类显式批准）
+  - `vllm.model` 默认值 `Qwen/Qwen3-TTS-12Hz-1.7B-CustomVoice` → `Qwen/Qwen3-TTS-12Hz-1.7B-VoiceDesign`
+  - `vllm.task_type` 枚举/默认值收紧为 `VoiceDesign`（移除 CustomVoice/Base）
+  - `runtime` 枚举收紧为 `["vllm"]`（唯一首选）
+  - 删除 `official_runtime` 段（官方 Qwen3 Base 临时兜底，已被 IndexTTS 克隆运行时取代）
+  - 新增 `indextts` 段（base_url/model/timeout_seconds/sample_rate，承载带 refs 的语音克隆）
+- **数据契约变更（MINOR）**：`schema/speech_synthesis_response.schema.json` 的 `runtime` 枚举 `[vllm, official_qwen3]` → `[vllm, indextts]`
+- **数据契约变更（PATCH）**：`schema/speech_synthesis_request.schema.json` 的 `voice` 描述「仅 CustomVoice 任务类型」→「仅 vLLM VoiceDesign 任务类型」
+- **接口契约变更（PATCH）**：`interface_stub/qwen3_tts_provider.pyi` 职责注释同步 vllm（VoiceDesign）/ indextts（IndexTTS-2.5）
+
+### 变更原因
+
+- 用户裁决「同时需要情感语音克隆与 VoiceDesign，改用 qwen3tts 的 VoiceDesign + IndexTTS」：无参考音频的日常/情感合成由 vLLM VoiceDesign 承接，带参考音频的语音克隆由 IndexTTS-2.5 承接；CustomVoice/Base 模型及官方运行时临时兜底一并移除。
+- 通过 AskUserQuestion 显式授权「批准写入」public/ 契约（rules-0 §四-10 + rules-4 §4.3 + s0601）。
+
+### 影响范围
+
+- **MINOR 变更**：`runtime` 枚举值变化（official_qwen3 → indextts）通知依赖模块，不阻断；`vllm.task_type` 收紧为 VoiceDesign，CustomVoice/Base 配置不再合法。
+- 下游已同步：`CX-O-SERVER/server/config.py`（Qwen3TTSVLLMConfig 默认 VoiceDesign + 新增 Qwen3TTSIndexTTSConfig）、`CX-O-SERVER/config.json`、`CX-O-SERVER/server/qwen3_tts_provider.py`（indextts 运行时路由）、`tests/test_qwen3_tts_provider.py`（30 passed）、定向回归 144 passed。
+
+### 闭合判据
+
+- [x] 4 份契约实体已按 s0601 流程经人类批准更新
+- [x] `python -m pytest tests/test_contracts_qwen3_tts.py` 通过（配置契约 jsonschema 自校验）
+- [x] 代码侧 config/provider/tests 已同步并通过定向回归
+- [x] CHANGELOG 记录 v1.4.0 条目（本文件）
+
 ## [1.3.0] - 2026-08-13
 
 ### 变更内容

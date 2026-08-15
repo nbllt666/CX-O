@@ -1,11 +1,12 @@
 /**
  * voiceworkstation 域客户端：音频工作站统一客户端。
  * 端点面对齐 CX-O-Frontend clients/voiceworkstation.ts：
- * - VoxCPM：/api/voxcpm/generate、/status、/batch-dataset[/{task_id}]
+ * - VoxCPM：/api/voxcpm/batch-dataset[/{task_id}]（批量 SVC 训练数据生成）
  * - So-VITS-SVC：/api/sovits-svc/preprocess、/train、/stop、/status、/models、/infer、/datasets CRUD
  * - 音乐：/api/music/score/validate、/import-musicxml、/synthesize、/tasks/{id}、/songs[/{id}]
  *
- * 说明：F5-TTS / Orpheus 引擎已随 Qwen3 TTS 迁移移除，批量数据集生成仅保留 voxcpm 引擎。
+ * 说明：F5-TTS / Orpheus 引擎已随 Qwen3 TTS 迁移移除；VoxCPM 单条参考音频生成
+ * 亦随 Task 7 移除，仅保留 voxcpm 批量数据集引擎。
  */
 import { getVoiceWsClient, getVoiceWorkstationUrl, voiceWorkstationRequest } from '../base';
 
@@ -18,35 +19,20 @@ export interface VoiceWsAudioResult {
   audio_url: string;
 }
 
-// ── VoxCPM ──
-
-export type VoxCPMMode = 'design' | 'controllable_clone' | 'ultimate_clone';
-
-export interface VoxCPMGenerateRequest {
-  mode: VoxCPMMode;
-  text: string;
-  control?: string;
-  reference_audio_path?: string;
-  prompt_audio_path?: string;
-  prompt_text?: string;
-  cfg_value?: number;
-  inference_timesteps?: number;
-}
-
-export interface VoxCPMStatus {
-  status: string; // healthy / unhealthy
-  model_path: string;
-}
+// ── VoxCPM 批量数据集 ──
 
 export interface BatchDatasetTextItem {
   text: string;
   control?: string;
 }
 
+/** 批量数据集生成的 VoxCPM 模式（单条参考音频生成已随 Task 7 移除） */
+export type VoxCPMBatchMode = 'design' | 'controllable_clone' | 'ultimate_clone';
+
 export interface BatchDatasetRequest {
   speaker_name: string;
   texts: BatchDatasetTextItem[];
-  mode?: VoxCPMMode;
+  mode?: VoxCPMBatchMode;
   control?: string;
   reference_audio_path?: string;
   prompt_audio_path?: string;
@@ -184,15 +170,7 @@ export function getVoiceWorkstationAudioUrl(audioUrl: string): string {
 }
 
 export const voiceworkstationApi = {
-  // ── VoxCPM ──
-
-  generateVoxCPM(data: VoxCPMGenerateRequest): Promise<VoiceWsAudioResult> {
-    return voiceWorkstationRequest<VoiceWsAudioResult>({ url: '/api/voxcpm/generate', method: 'POST', data });
-  },
-
-  getVoxCPMStatus(): Promise<VoxCPMStatus> {
-    return voiceWorkstationRequest<VoxCPMStatus>({ url: '/api/voxcpm/status' });
-  },
+  // ── VoxCPM 批量数据集 ──
 
   submitVoxCPMBatchDataset(data: BatchDatasetRequest): Promise<{ status: string; task_id: string; total: number }> {
     return voiceWorkstationRequest({ url: '/api/voxcpm/batch-dataset', method: 'POST', data });

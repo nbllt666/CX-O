@@ -69,7 +69,8 @@ CX-O 是**多服务架构**，以下服务目录是独立服务，**非 AC 模�
 | CX-O VoiceWorkStation | `CX-O-VoiceWorkStation/` | Python（可选） | 8200 |
 
 **第三方独立仓库**（原位不动，不纳入 AC 模块管理）：
-- `orpheus-tts/`、`cosyvoice/`、`CosyVoice-main/`、`so-vits-svc-4.1-Stable/`、`VoxCPM-main/`、`LLM_Live2D-master/`
+- `so-vits-svc-4.1-Stable/`、`VoxCPM-main/`、`LLM_Live2D-master/`
+- 已移除（Qwen3 TTS 迁移 Task 7，2026-08-14）：`orpheus-tts/`、`cosyvoice/`、`CosyVoice-main/`（F5-TTS/Orpheus 旧引擎第三方目录，用户批准全删；TTS 已全面改用 Qwen3）
 
 ### 4.2 目录策略
 

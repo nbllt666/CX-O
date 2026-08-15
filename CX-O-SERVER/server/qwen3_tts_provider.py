@@ -15,8 +15,9 @@ qwen3_tts_config）。
 - 支持非流式（synthesize）与流式（synthesize_stream）合成，统一 PCM/WAV 格式与
   chunk 边界（恰一个 start、一个 final，顺序稳定）。
 - vLLM 私有参数（task_type 等）封装在 Provider 内，不泄漏到前端协议。
-- 对 vLLM 不支持的已确认能力（speed != 1.0）接入官方 Qwen3 运行时临时路径，
-  并在响应 runtime 元数据中记录（vllm / official_qwen3）。
+- 无参考音频的日常/情感合成走 vLLM VoiceDesign（task_type=VoiceDesign）；
+  带参考音频的语音克隆路由 IndexTTS-2.5（indextts 运行时），
+  并在响应 runtime 元数据中记录（vllm / indextts）。
 - 参考音频输入采样率 [8000,48000] 与合成输出 24000 的差异由 Provider 在推理前重采样。
 
 边界：本实现仅覆盖 Provider/异常层，不接 LLM 情感指令（Task 4）、不统一语音编排
@@ -81,16 +82,16 @@ REF_AUDIO_SAMPLE_RATE_MAX = 48000
 WAV_HEADER_SIZE = 44
 
 VALID_OUTPUT_FORMATS = {"wav", "pcm", "mp3", "flac", "opus", "aac"}
-VALID_RUNTIMES = {"vllm", "official_qwen3"}
+VALID_RUNTIMES = {"vllm", "indextts"}
 
-# vLLM 已确认不支持的请求能力集合（Task 0 探针未跑，按官方能力矩阵保守登记）。
-# 当前登记：speed != 1.0（vLLM 社区方案不支持调速，能力矩阵 ⚠️）。
-# Task 0 探针补齐后按实测增删本集合。
-VLLM_UNSUPPORTED_CAPABILITIES = {"speed_control"}
-
+# 能力矩阵（Task 0 探针实证 2026-08-14，见 .trae/documents/20260813_模块0_Qwen3TTS迁移基线盘点.md §2.5）：
+# - speed 变速：实测 vLLM 支持（probe speed=1.5 通过、时长缩短），直接支持无需兜底；
+# - ref_audio 克隆：CustomVoice/Base 已弃用，带 refs 的语音克隆由 IndexTTS-2.5（indextts 运行时）承接；
+# - 无 refs 的日常/情感合成由 vLLM VoiceDesign（task_type=VoiceDesign）承接。
 DEFAULT_VLLM_BASE_URL = "http://127.0.0.1:8091"
-DEFAULT_VLLM_MODEL = "Qwen/Qwen3-TTS-12Hz-1.7B-CustomVoice"
-DEFAULT_OFFICIAL_MODEL = "Qwen/Qwen3-TTS-12Hz-1.7B-Base"
+DEFAULT_VLLM_MODEL = "Qwen/Qwen3-TTS-12Hz-1.7B-VoiceDesign"
+DEFAULT_INDEXTTS_BASE_URL = "http://127.0.0.1:8092"
+DEFAULT_INDEXTTS_MODEL = "IndexTTS-2.5"
 
 # 旧引擎配置键（命中时映射 LEGACY_ENGINE_REMOVED）
 LEGACY_ENGINE_KEYS = ("f5_tts", "f5-tts", "f5tts", "orpheus", "cosyvoice", "cosy_voice", "emotion_refs")
@@ -149,7 +150,7 @@ class RuntimeUnavailableError(Qwen3TTSError):
 
 
 class RuntimeUnsupportedError(Qwen3TTSError):
-    """当前运行时(vLLM)不支持该能力，已路由官方 Qwen3 运行时并记录 runtime metadata。"""
+    """当前运行时(vLLM)不支持该能力，已路由 IndexTTS 克隆运行时并记录 runtime metadata。"""
 
     error_code: str = "RUNTIME_UNSUPPORTED"
     http_status: int = 200
@@ -184,7 +185,7 @@ class ProviderHealth:
     """轻量连通性健康检查结果（不做耗时生成/内容请求）。"""
 
     ok: bool
-    runtime: str  # vllm | official_qwen3
+    runtime: str  # vllm | indextts
     latency_ms: Optional[float] = None
     detail: str = ""
 
@@ -346,10 +347,11 @@ class Qwen3TTSProvider:
                 "timeout_seconds": cfg.vllm.timeout_seconds,
                 "sample_rate": cfg.vllm.sample_rate,
             },
-            "official_runtime": {
-                "base_url": cfg.official_runtime.base_url,
-                "model": cfg.official_runtime.model,
-                "timeout_seconds": cfg.official_runtime.timeout_seconds,
+            "indextts": {
+                "base_url": cfg.indextts.base_url,
+                "model": cfg.indextts.model,
+                "timeout_seconds": cfg.indextts.timeout_seconds,
+                "sample_rate": cfg.indextts.sample_rate,
             },
             "default": {
                 "voice": cfg.default.voice,
@@ -376,39 +378,46 @@ class Qwen3TTSProvider:
 
     def _base_url_for(self, runtime: str) -> str:
         """返回指定运行时的基础地址（去尾斜杠）。"""
-        if runtime == "official_qwen3":
-            url = self._cfg.get("official_runtime", {}).get("base_url", "") or ""
+        if runtime == "indextts":
+            url = self._cfg.get("indextts", {}).get("base_url", DEFAULT_INDEXTTS_BASE_URL) or DEFAULT_INDEXTTS_BASE_URL
         else:
             url = self._cfg.get("vllm", {}).get("base_url", DEFAULT_VLLM_BASE_URL) or DEFAULT_VLLM_BASE_URL
         return url.rstrip("/")
 
     def _timeout_for(self, runtime: str) -> float:
         """返回指定运行时的请求超时（秒）。"""
-        if runtime == "official_qwen3":
-            return float(self._cfg.get("official_runtime", {}).get("timeout_seconds", 60))
+        if runtime == "indextts":
+            return float(self._cfg.get("indextts", {}).get("timeout_seconds", 120))
         return float(self._cfg.get("vllm", {}).get("timeout_seconds", 60))
 
     # ------------------------------------------------------------ 能力/运行时
-    def _needs_fallback(self, req: SynthesisRequest) -> bool:
-        """判断当前请求是否需要 vLLM 不支持的已确认能力（路由 official runtime）。"""
-        # speed 控制：vLLM 社区方案不支持（能力矩阵 ⚠️）
-        if req.speed is not None and abs(req.speed - 1.0) > 1e-6:
-            return True
-        return False
+    def _needs_fallback(self, resolved: List[ResolvedRef]) -> bool:
+        """判断当前请求是否需要 vLLM 无法消费的能力（路由 indextts 克隆运行时）。
 
-    def _select_runtime(self, req: SynthesisRequest) -> str:
+        实测能力矩阵（2026-08-14 探针）：
+        - speed：vLLM 支持，不再兜底；
+        - ref_audio：vLLM VoiceDesign 任务不支持消费（已弃用 CustomVoice/Base 模型），
+          请求带参考音频时路由 IndexTTS-2.5（indextts 运行时）进行情感语音克隆。
+          若 indextts.base_url 为空则抛 RuntimeUnsupportedError。
+        """
+        if not resolved:
+            return False
+        return True  # VoiceDesign 不支持 ref_audio，有 refs 即路由 indextts
+
+    def _select_runtime(self, req: SynthesisRequest, resolved: List[ResolvedRef]) -> str:
         """选择本次请求的推理运行时。
 
-        vLLM 不支持的已确认能力 → 若配置 official_runtime.base_url 则路由 official_qwen3；
+        vLLM 无法消费的已确认能力（ref_audio）→ 若配置 indextts.base_url 则路由 indextts；
         否则抛 RuntimeUnsupportedError（不静默回退旧引擎）。
         """
         preferred = self._runtime
-        if preferred == "vllm" and self._needs_fallback(req):
-            official = self._cfg.get("official_runtime", {})
-            if official.get("base_url"):
-                return "official_qwen3"
+        if preferred == "vllm" and self._needs_fallback(resolved):
+            indextts = self._cfg.get("indextts", {})
+            if indextts.get("base_url"):
+                return "indextts"
             raise RuntimeUnsupportedError(
-                "vLLM 不支持该能力（speed 调速），且未配置 official_qwen3 兜底运行时。"
+                "请求携带参考音频，但 vLLM VoiceDesign 任务不支持 ref_audio 消费（需 IndexTTS-2.5 克隆运行时），"
+                "且未配置 indextts 兜底运行时。"
             )
         return preferred
 
@@ -422,7 +431,7 @@ class Qwen3TTSProvider:
             "response_format": req.output_format,
             "stream": req.stream,
             # vLLM 私有参数：task_type 仅存在于 Provider/配置契约，不泄漏前端协议
-            "task_type": cfg.get("task_type", "CustomVoice"),
+            "task_type": cfg.get("task_type", "VoiceDesign"),
         }
         if req.voice:
             body["voice"] = req.voice
@@ -437,11 +446,15 @@ class Qwen3TTSProvider:
             body["ref_text"] = [r.ref_text for r in resolved]
         return body
 
-    def _build_official_request(self, req: SynthesisRequest, resolved: List[ResolvedRef]) -> Dict[str, Any]:
-        """构建官方 Qwen3 运行时请求体（临时兜底路径）。"""
-        cfg = self._cfg.get("official_runtime", {})
+    def _build_indextts_request(self, req: SynthesisRequest, resolved: List[ResolvedRef]) -> Dict[str, Any]:
+        """构建 IndexTTS-2.5 克隆运行时请求体（OpenAI 兼容 + 扩展字段）。
+
+        ref_audio 以 data URL 形式发送（服务端 _decode_data_url 消费），并携带
+        instructions（情感指令）/ref_text（参考转写）提升克隆质量。
+        """
+        cfg = self._cfg.get("indextts", {})
         body: Dict[str, Any] = {
-            "model": cfg.get("model", DEFAULT_OFFICIAL_MODEL),
+            "model": cfg.get("model", DEFAULT_INDEXTTS_MODEL),
             "input": req.text,
             "response_format": req.output_format,
             "stream": req.stream,
@@ -453,16 +466,19 @@ class Qwen3TTSProvider:
         if req.tts_instruction:
             body["instructions"] = req.tts_instruction
         if req.speed is not None:
-            body["speed"] = req.speed  # 官方运行时可能不支持，Provider 内按能力忽略或降级
+            body["speed"] = req.speed
         if resolved:
-            body["ref_audio"] = [base64.b64encode(r.data).decode("ascii") for r in resolved]
+            body["ref_audio"] = [
+                "data:audio/wav;base64," + base64.b64encode(r.data).decode("ascii")
+                for r in resolved
+            ]
             body["ref_text"] = [r.ref_text for r in resolved]
         return body
 
     def _build_runtime_request(self, req: SynthesisRequest, runtime: str, resolved: List[ResolvedRef]) -> Dict[str, Any]:
         """按运行时构建请求体。"""
-        if runtime == "official_qwen3":
-            return self._build_official_request(req, resolved)
+        if runtime == "indextts":
+            return self._build_indextts_request(req, resolved)
         return self._build_vllm_request(req, resolved)
 
     # ------------------------------------------------------------ 参考音频
@@ -598,8 +614,8 @@ class Qwen3TTSProvider:
         """
         t0 = time.monotonic()
         self._validate_request(req)
-        runtime = self._select_runtime(req)
         resolved = await self._resolve_refs(req)
+        runtime = self._select_runtime(req, resolved)
         body = self._build_runtime_request(req, runtime, resolved)
         base_url = self._base_url_for(runtime)
         timeout = self._timeout_for(runtime)
@@ -646,8 +662,8 @@ class Qwen3TTSProvider:
         底层断流/超时/非法响应抛 RuntimeUnavailableError。
         """
         self._validate_request(req)
-        runtime = self._select_runtime(req)
         resolved = await self._resolve_refs(req)
+        runtime = self._select_runtime(req, resolved)
         body = self._build_runtime_request(req, runtime, resolved)
         base_url = self._base_url_for(runtime)
         timeout = self._timeout_for(runtime)

@@ -2,7 +2,7 @@
   "$schema": "http://json-schema.org/draft-07/schema#",
   "$id": "https://cx-o/public/schema/speech_synthesis_response.schema.json",
   "title": "SpeechSynthesisResponse",
-  "description": "统一 Qwen3 TTS 非流式合成响应契约。audio 为完整音频字节（base64），携带格式/采样率/时长元数据与 runtime（vLLM/官方运行时）标识。源真理：spec unify-qwen3-tts-migration 冻结决策。",
+  "description": "统一 Qwen3 TTS 非流式合成响应契约。audio 为完整音频字节（base64），携带格式/采样率/时长元数据与 runtime（vllm/IndexTTS 克隆运行时）标识。源真理：spec unify-qwen3-tts-migration 冻结决策 + s0601 契约变更(VoiceDesign+IndexTTS)。",
   "type": "object",
   "required": ["audio", "format", "sample_rate", "runtime"],
   "properties": {
@@ -12,7 +12,7 @@
     "channels": { "type": "integer", "default": 1 },
     "duration_seconds": { "type": "number", "description": "音频时长（秒）。" },
     "refs_used": { "type": "array", "items": { "type": "string" }, "description": "本次合成实际使用的参考音频资产 ID。" },
-    "runtime": { "type": "string", "enum": ["vllm","official_qwen3"], "description": "实际推理运行时。vllm 尚不支持的能力走 official_qwen3 临时路径，不得静默回退旧引擎。" },
+    "runtime": { "type": "string", "enum": ["vllm","indextts"], "description": "实际推理运行时。无 refs 的日常/情感合成走 vllm（VoiceDesign），带 refs 的语音克隆走 indextts（IndexTTS-2.5），不得静默回退旧引擎。" },
     "error": { "$ref": "#/definitions/errorInfo", "description": "失败时的错误信息（可选）。" }
   },
   "definitions": {

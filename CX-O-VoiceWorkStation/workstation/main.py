@@ -1,6 +1,6 @@
 """
 CX-O-VoiceWorkStation 语音工作站
-提供参考音频生成、So-VITS-SVC 训练/推理功能
+提供 So-VITS-SVC 训练/推理与 SVC 训练数据批量生成功能
 """
 from __future__ import annotations
 
@@ -58,7 +58,7 @@ def create_app() -> FastAPI:
 
     app = FastAPI(
         title="CX-O-VoiceWorkStation",
-        description="CX-O 语音工作站 - 参考音频生成、So-VITS-SVC 训练/推理",
+        description="CX-O 语音工作站 - So-VITS-SVC 训练/推理、SVC 训练数据批量生成",
         version="1.0.0",
         lifespan=lifespan,
     )
@@ -72,7 +72,6 @@ def create_app() -> FastAPI:
     )
 
     from workstation.api.sovits_svc import router as sovits_svc_router
-    from workstation.api.voxcpm import router as voxcpm_router
     from workstation.api.workflow import router as workflow_router
     from workstation.api.audio_files import router as audio_files_router
     from workstation.api.music import router as music_router
@@ -81,7 +80,6 @@ def create_app() -> FastAPI:
     from workstation.api.datasets import datasets_router as svc_datasets_router
 
     app.include_router(sovits_svc_router, prefix="/api/sovits-svc", tags=["So-VITS-SVC"])
-    app.include_router(voxcpm_router, prefix="/api/voxcpm", tags=["VoxCPM 参考音频生成"])
     app.include_router(workflow_router, prefix="/api/workflow", tags=["工作流"])
     app.include_router(audio_files_router, prefix="/api/audio-files", tags=["音频文件服务"])
     app.include_router(music_router, prefix="/api/music", tags=["音乐作曲与演唱"])

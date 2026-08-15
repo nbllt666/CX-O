@@ -4,6 +4,11 @@
 
 ## 做到哪了
 
+- **Qwen3 TTS 统一迁移 Task 7 旧引擎移除**（已闭合，2026-08-14；spec `unify-qwen3-tts-migration`）
+  - 工程过程：`/spec /goal` 目标——放弃 F5-TTS/Orpheus，全面改用 Qwen3 TTS，情感合成与标签适配 Qwen3，移除音频工作站参考音频生成，支持 Qwen3 双参考音频来源（提示词生成 / 外部文件）。Task 1-6 已闭合；本次 Task 7 按用户裁决「代码 + 第三方目录全删」执行：后端 config/tts_service/main/handlers 删 F5/Orpheus 分支与配置、VWS 删旧引擎客户端/生成器/路由、前端删旧入口/API/类型/i18n、删第三方目录 orpheus-tts/、ELP-Orpheus/、cosyvoice/、CosyVoice-main/ 与根 docker-compose 旧服务；再按用户裁决「仅删参考音频生成，保留批量数据集」删除 VWS VoxCPM 单条参考音频生成（VoxCPMPanel、/api/voxcpm/generate、workflow ref_audio/emotion_refs 两步、generate_emotion_refs.py），保留 /api/voxcpm/batch-dataset 批量 SVC 训练数据生成；一并清理历史数据目录与残留 pycache。
+  - 交接状态：Task 7 已闭合；Task 1/2/3/4/5/6/7 全闭合；Task 0 部署探针未闭合（GPU 显存阻塞，待停容器后执行）；Task 8 [V] 未开始。
+  - 最终结果：VWS 全量测试 424 passed + 1 skipped、前端 typecheck 零错误 + AudioWorkstationPage 3 passed、后端 TTS 定向回归 156 passed、`pyflakes server` 零警告；grep 确认生产代码/活跃配置/部署入口无 f5/orpheus/voxcpm 单条生成引用。变更文档 `.trae/documents/20260813_模块0_Task7移除F5与Orpheus旧引擎.md`。观察项：主后端 `tts_service.py` 的 `voice_refs_dir`/`_load_emotion_audio`/`get_emotion_voice` 为旧情感音色文件加载机制（Qwen3 情感已改 tts_instruction 承载，生产不再调用，仅测试引用），按「情感音色能力保留」暂未删，作为技术债观察项。
+
 - **配置热更新功能（后端 + 前端配套）**（已闭合，2026-08-11）
   - 工程过程：`ModelRouter.reload_clients()` 重建 LLM 客户端 → 新增 `server/config_hot_reload.py`（`REQUIRES_RESTART` 声明 + `apply_section` + `broadcast_config_changed`）→ `/api/config` PUT 接入 apply+broadcast → 前端 `configEvents.ts` 事件总线 + `useConfigReload.ts` WS 订阅 + `ConfigToast.tsx` + `ManagementLayout` 挂载（刷新 limits + toast）→ `SettingsPage` LLM/Vector 区块订阅 config_changed 即时刷新 → i18n 词条。
   - 交接状态：后端 pyflakes 零警告、`test_config_router`+`test_config` 59 passed、`test_model_router` 17 passed；前端 `npm run typecheck` 通过、`SettingsPage`+`ManagementLayout` 测试 17 passed。已闭合。

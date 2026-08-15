@@ -5,12 +5,10 @@ TTS 音频处理工具函数
 from __future__ import annotations
 
 import io
-import json
 import os
 import re
 import struct
 import wave
-from pathlib import Path
 
 
 # ============================================================
@@ -247,35 +245,3 @@ async def concatenate_audio(audio_segments: list[bytes]) -> bytes:
         return bytes(wav_header) + bytes(combined_data)
     else:
         return b"".join(audio_segments)
-
-
-def load_emotion_voices(emotion_refs_dir: str) -> dict:
-    """从情感参考音频目录加载音色映射（优先读取 emotion_mapping.json，否则扫描子目录的 ref 音频）。"""
-
-    emotion_voices = {}
-    refs_dir = Path(emotion_refs_dir)
-    if not refs_dir.exists():
-        return emotion_voices
-    mapping_file = refs_dir / "emotion_mapping.json"
-    if mapping_file.exists():
-        with open(mapping_file, "r", encoding="utf-8") as f:
-            emotion_voices = json.load(f)
-    else:
-        for emotion_dir in refs_dir.iterdir():
-            if emotion_dir.is_dir():
-                ref_audio = None
-                ref_text = ""
-                for ext in [".wav", ".mp3", ".flac"]:
-                    candidate = emotion_dir / f"ref{ext}"
-                    if candidate.exists():
-                        ref_audio = str(candidate)
-                        break
-                text_file = emotion_dir / "ref.txt"
-                if text_file.exists():
-                    ref_text = text_file.read_text(encoding="utf-8").strip()
-                if ref_audio:
-                    emotion_voices[emotion_dir.name] = {
-                        "ref_audio": ref_audio,
-                        "ref_text": ref_text,
-                    }
-    return emotion_voices

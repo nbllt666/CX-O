@@ -14,7 +14,7 @@
       "description": "参考音频资产 ID 列表（source=prompt 或 source=file 均可），经 RefAudioStore.resolve 解析为资产。禁止客户端传任意本地路径。"
     },
     "tts_instruction": { "$ref": "#/definitions/emotionInstruction", "description": "LLM 生成的自然语言情感/韵律指令（可选）。为独立 emotion_instruction 的降维投影，仅含 text 及可选 intensity/confidence/neutral，source/raw 不入 Provider 协议。" },
-    "voice": { "type": "string", "description": "预设音色名（如 vivian/ryan，仅 CustomVoice 任务类型）。" },
+    "voice": { "type": "string", "description": "预设音色名（如 vivian/ryan，仅 vLLM VoiceDesign 任务类型）。" },
     "language": { "type": "string", "enum": ["Chinese","English","Japanese","Korean","German","French","Russian","Portuguese","Spanish","Italian"], "description": "目标语言，缺省由模型 Auto 识别。" },
     "stream": { "type": "boolean", "default": false, "description": "是否流式返回音频块。" },
     "output_format": { "type": "string", "enum": ["wav","pcm","mp3","flac","opus","aac"], "default": "wav", "description": "输出音频格式。实时链路建议 pcm/wav。" },

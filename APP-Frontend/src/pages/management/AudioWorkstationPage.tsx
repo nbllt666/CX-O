@@ -1,29 +1,28 @@
 /**
  * 音频工作站页
  *
- * 4 个 Tab：
- * VoxCPM 生成 / SVC 训练推理 / 作曲合成 / Qwen3 参考音频资产。
+ * 3 个 Tab：
+ * SVC 训练推理 / 作曲合成 / Qwen3 参考音频资产。
  * 支持 tab= 查询参数直达指定 Tab。
  *
- * 各 Tab 分别消费 voiceworkstationApi 客户端（VoxCPM/SVC/作曲）
+ * 各 Tab 分别消费 voiceworkstationApi 客户端（SVC/作曲）
  * 或 audioApi 客户端（参考音频资产）对应域接口，非占位页。
+ * VoxCPM 单条参考音频生成已随 Qwen3 TTS 迁移移除（Task 7）。
  */
 import { useMemo } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
-import { AudioWaveform, MicVocal, Music4, Sparkles } from 'lucide-react';
+import { AudioWaveform, MicVocal, Music4 } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 import { cn } from '@/lib/utils';
-import VoxCPMPanel from './audioWorkstation/VoxCPMPanel';
 import SVCPanel from './audioWorkstation/SVCPanel';
 import { CompositionPanel } from './audioWorkstation/CompositionPanel';
 import RefAudioAssetsPanel from './audioWorkstation/RefAudioAssetsPanel';
 
-type TabId = 'voxcpm' | 'svc' | 'music' | 'refaudio';
-const VALID_TABS: TabId[] = ['voxcpm', 'svc', 'music', 'refaudio'];
+type TabId = 'svc' | 'music' | 'refaudio';
+const VALID_TABS: TabId[] = ['svc', 'music', 'refaudio'];
 
 const TAB_ICONS: Record<TabId, LucideIcon> = {
-  voxcpm: Sparkles,
   svc: MicVocal,
   music: Music4,
   refaudio: AudioWaveform,
@@ -35,11 +34,11 @@ export default function AudioWorkstationPage() {
 
   const activeTab: TabId = useMemo(() => {
     const param = searchParams.get('tab');
-    return param && VALID_TABS.includes(param as TabId) ? (param as TabId) : 'voxcpm';
+    return param && VALID_TABS.includes(param as TabId) ? (param as TabId) : 'svc';
   }, [searchParams]);
 
   const handleTabChange = (tab: TabId) => {
-    setSearchParams(tab === 'voxcpm' ? {} : { tab }, { replace: true });
+    setSearchParams(tab === 'svc' ? {} : { tab }, { replace: true });
   };
 
   return (
@@ -72,7 +71,6 @@ export default function AudioWorkstationPage() {
       </div>
 
       <div className="min-h-0 flex-1 space-y-5 overflow-y-auto">
-        {activeTab === 'voxcpm' && <VoxCPMPanel />}
         {activeTab === 'svc' && <SVCPanel />}
         {activeTab === 'music' && <CompositionPanel />}
         {activeTab === 'refaudio' && <RefAudioAssetsPanel />}

@@ -39,11 +39,6 @@ class VoxCPMConfig:
 
 
 @dataclass
-class OutputConfig:
-    voice_refs_dir: str = str(_BASE_DIR.parent / "CX-O-SERVER" / "data" / "voice_refs")
-
-
-@dataclass
 class MusicConfig:
     songs_dir: str = str(_BASE_DIR / "data" / "songs")
     soundfont_path: str = ""
@@ -73,7 +68,6 @@ class WorkstationSettings:
     server: ServerConfig = field(default_factory=ServerConfig)
     sovits_svc: SoVitSSVCConfig = field(default_factory=SoVitSSVCConfig)
     voxcpm: VoxCPMConfig = field(default_factory=VoxCPMConfig)
-    output: OutputConfig = field(default_factory=OutputConfig)
     music: MusicConfig = field(default_factory=MusicConfig)
     cxfc: CXFCConfig = field(default_factory=CXFCConfig)
 

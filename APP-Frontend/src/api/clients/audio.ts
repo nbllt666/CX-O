@@ -4,12 +4,6 @@
  */
 import { getApiBaseUrl, getHttpClient, request } from '../base';
 
-export interface AudioFileInfo {
-  name: string;
-  size: number;
-  modified: string;
-}
-
 /** Qwen3 参考音频资产（对应后端 ref_audio_asset.schema.json 公开形状） */
 export interface RefAudioAsset {
   id: string;
@@ -31,14 +25,6 @@ export interface RefAudioAsset {
 export const audioApi = {
   getAudioConfig(): Promise<Record<string, unknown>> {
     return request<Record<string, unknown>>({ url: '/api/audio/config' });
-  },
-
-  getAudioFiles(): Promise<{ files: AudioFileInfo[] }> {
-    return request<{ files: AudioFileInfo[] }>({ url: '/api/audio/files' });
-  },
-
-  async deleteAudioFile(filename: string): Promise<void> {
-    await request({ url: `/api/audio/files/${encodeURIComponent(filename)}`, method: 'delete' });
   },
 
   /** TTS：二进制音频返回，需 arraybuffer 响应类型 */
@@ -67,21 +53,6 @@ export const audioApi = {
       throw new Error(response.data.message || '语音识别失败');
     }
     return { text: response.data.text || '' };
-  },
-
-  async uploadAudioFile(file: File): Promise<{ filename: string; url: string }> {
-    const formData = new FormData();
-    formData.append('file', file);
-    const response = await getHttpClient().post<{ filename: string; url: string }>(
-      '/api/audio/upload',
-      formData,
-      { headers: { 'Content-Type': 'multipart/form-data' } },
-    );
-    return response.data;
-  },
-
-  getAudioFileUrl(filename: string): string {
-    return `${getApiBaseUrl()}/api/audio/files/${encodeURIComponent(filename)}`;
   },
 
   // ── Qwen3 参考音频资产（/api/ref-audio-assets） ──

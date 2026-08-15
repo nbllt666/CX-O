@@ -1,9 +1,9 @@
 """TTSService 统一 Qwen3 编排 Mock E2E 测试。
 
-Task 5 闭合判据：后端普通/实时/直播链路定向测试与 Qwen3 Mock E2E 通过。
+Task 7 闭合判据：Qwen3 TTS 为唯一合成路径，旧 F5/Orpheus 引擎已彻底移除。
 
 用 MockProvider 注入 Qwen3 Provider + monkeypatch 情感指令生成，验证统一编排入口
-在 qwen3_enabled 时优先走 Qwen3，覆盖：
+全部走 Qwen3，覆盖：
 
 - 非流式 synthesize：剥离指令、生成指令、refs 归一化、委托 Provider、返回音频
 - 无参考音频合成（refs 为空列表）
@@ -12,7 +12,6 @@ Task 5 闭合判据：后端普通/实时/直播链路定向测试与 Qwen3 Mock
 - 情感方法 synthesize_with_emotions / synthesize_stream_with_emotions 委托 Qwen3
 - _build_ref_ids 五来源归一化（refs / ref_asset_id / ref_audio 资产ID / base64 / path）
 - _build_qwen3_request defaults 读取与 kwargs 覆盖
-- 向后兼容：qwen3_enabled=False 时回退旧链路（orpheus 模式）
 
 运行：python -m pytest tests/test_tts_service_qwen3.py -q
 """
@@ -128,22 +127,6 @@ class TestSynthesizeQwen3:
         req = provider.requests[0][1]
         # refs 与 ref_asset_id 合并去重
         assert req.refs == ["ref_a", "ref_b", "ref_c"]
-
-    @pytest.mark.asyncio
-    async def test_qwen3_disabled_falls_through(self, mock_instruction):
-        """向后兼容：qwen3_enabled=False 时不走 Provider，回退旧链路。"""
-        provider = MockProvider()
-        svc = TTSService(
-            qwen3_enabled=False, qwen3_provider=provider,
-            mode="orpheus", orpheus_url="http://127.0.0.1:1",
-        )
-        # mode=orpheus 会尝试 HTTP 调用，此处用 monkeypatch 拦截 _synthesize_orpheus
-        async def _fake_orpheus(text, voice=None, **kw):
-            return b"orpheus-audio"
-        svc._synthesize_orpheus = _fake_orpheus
-        audio = await svc.synthesize("旧引擎")
-        assert audio == b"orpheus-audio"
-        assert provider.requests == []  # 未走 Qwen3
 
 
 # ================================================================== 流式
@@ -275,3 +258,59 @@ class TestBuildQwen3Request:
         assert req.voice == "nova"
         assert req.speed == 2.0
         assert req.stream is True
+
+
+# ================================================================== VoiceDesign prompt 生成器接线
+class TestPromptGeneratorWiring:
+    @pytest.mark.asyncio
+    async def test_get_tts_service_wires_prompt_generator(self, monkeypatch):
+        """get_tts_service 在 qwen3 启用时注入 VoiceDesign prompt 生成器。"""
+        from server.services.tts_service import get_tts_service
+
+        # 强制重建单例，验证接线
+        monkeypatch.setattr(tts_svc_mod, "_tts_service", None)
+        monkeypatch.setattr(ref_audio_store, "_prompt_generator", None)
+        get_tts_service()
+        gen = ref_audio_store._prompt_generator
+        assert gen is not None, "get_tts_service 应注入 prompt 生成器"
+        assert callable(gen)
+        # 清理单例，避免影响其他测试
+        monkeypatch.setattr(tts_svc_mod, "_tts_service", None)
+        monkeypatch.setattr(ref_audio_store, "_prompt_generator", None)
+
+    @pytest.mark.asyncio
+    async def test_prompt_generator_routes_to_voicedesign(self, monkeypatch):
+        """prompt 生成器：无 refs → VoiceDesign(vllm)，tts_instruction 承载音色描述。"""
+        from server.services.tts_service import get_tts_service
+        from server.qwen3_tts_provider import Qwen3TTSProvider, SynthesisResponse
+        from server.ref_audio_store import GeneratedAudio
+
+        audio_bytes = _wav_bytes()
+        calls = []
+
+        async def _fake_synth(self, req):
+            calls.append(req)
+            return SynthesisResponse(audio=audio_bytes, format="wav", sample_rate=24000,
+                                     channels=1, duration_seconds=3.0, refs_used=[])
+
+        # 闭包捕获真实 provider 实例，通过 patch 类方法拦截 synthesize
+        monkeypatch.setattr(Qwen3TTSProvider, "synthesize", _fake_synth)
+        monkeypatch.setattr(tts_svc_mod, "_tts_service", None)
+        monkeypatch.setattr(ref_audio_store, "_prompt_generator", None)
+        get_tts_service()
+        gen = ref_audio_store._prompt_generator
+        assert gen is not None
+
+        result = await gen("温柔可爱的少女音", "Chinese")
+        assert isinstance(result, GeneratedAudio)
+        assert result.audio == audio_bytes
+        assert result.sample_rate == 24000
+        assert result.channels == 1
+        # 请求无 refs、指令为音色描述
+        req = calls[0]
+        assert req.refs == []
+        assert req.tts_instruction == "温柔可爱的少女音"
+        assert req.language == "Chinese"
+        assert req.output_format == "wav"
+        monkeypatch.setattr(tts_svc_mod, "_tts_service", None)
+        monkeypatch.setattr(ref_audio_store, "_prompt_generator", None)

@@ -129,11 +129,6 @@ class ServiceConfig(BaseModel):
     heartbeat_interval: int = 30
 
 
-class EmotionVoiceConfig(BaseModel):
-    ref_audio: str = ""
-    ref_text: str = ""
-
-
 class TTSServiceConfig(BaseModel):
     model_config = ConfigDict(protected_namespaces=())
 
@@ -141,12 +136,11 @@ class TTSServiceConfig(BaseModel):
     timeout: int = 120
     ref_audio_path: str = ""
     ref_text: str = ""
-    model_type: str = "F5-TTS"
+    model_type: str = "qwen3"
     speed: float = 1.0
     cross_fade_duration: float = 0.15
     emotion_enabled: bool = True
     effects_enabled: bool = True
-    emotion_voices: Dict[str, EmotionVoiceConfig] = Field(default_factory=dict)
     default_emotion_intensity: float = 0.5
     emotion_templates: Optional[Dict[str, Any]] = None
 
@@ -367,7 +361,6 @@ class TTSConfig(BaseModel):
     cross_fade_duration: float = 0.15
     emotion_enabled: bool = True
     effects_enabled: bool = True
-    emotion_refs_dir: str = "data/voice_refs/emotions"
     transitions_dir: str = "data/voice_refs/transitions"
     transition_enabled: bool = True
     transition_text: str = "嗯，"
@@ -380,7 +373,7 @@ class TTSConfig(BaseModel):
 
     @model_validator(mode="after")
     def _resolve_data_paths(self):
-        for field in ("emotion_refs_dir", "transitions_dir", "ref_audio_assets_dir"):
+        for field in ("transitions_dir", "ref_audio_assets_dir"):
             value = getattr(self, field)
             if value:
                 setattr(self, field, _resolve_data_path(value))
@@ -396,24 +389,27 @@ class Qwen3TTSVLLMConfig(BaseModel):
 
     对应 qwen3_tts_config.schema.json 的 vllm 段。vLLM 私有参数（task_type 等）
     仅存在于 Provider 与配置契约，不泄漏到前端 request/response 协议。
+    vLLM 承载 VoiceDesign 任务（task_type=VoiceDesign）：无参考音频时的日常/情感合成。
     """
 
     base_url: str = "http://127.0.0.1:8091"
-    model: str = "Qwen/Qwen3-TTS-12Hz-1.7B-CustomVoice"
-    task_type: str = "CustomVoice"
+    model: str = "Qwen/Qwen3-TTS-12Hz-1.7B-VoiceDesign"
+    task_type: str = "VoiceDesign"
     timeout_seconds: float = 60
     sample_rate: int = 24000
 
 
-class Qwen3TTSServiceConfig(BaseModel):
-    """官方 Qwen3 运行时临时兜底配置节（vLLM 不支持的能力）。
+class Qwen3TTSIndexTTSConfig(BaseModel):
+    """IndexTTS-2.5 克隆运行时配置节（带参考音频的语音克隆）。
 
-    对应 qwen3_tts_config.schema.json 的 official_runtime 段。base_url 为空则禁用兜底。
+    对应 qwen3_tts_config.schema.json 的 indextts 段。base_url 为空则禁用克隆能力。
+    请求携带 refs 时 Provider 路由到本运行时进行情感语音克隆。
     """
 
-    base_url: str = ""
-    model: str = "Qwen/Qwen3-TTS-12Hz-1.7B-Base"
-    timeout_seconds: float = 60
+    base_url: str = "http://127.0.0.1:8092"
+    model: str = "IndexTTS-2.5"
+    timeout_seconds: float = 120
+    sample_rate: int = 24000
 
 
 class Qwen3TTSDefaultConfig(BaseModel):
@@ -440,7 +436,7 @@ class Qwen3TTSLegacyConfig(BaseModel):
 
 
 class Qwen3TTSConfig(BaseModel):
-    """统一 Qwen3 TTS 配置节：运行时选择（vllm 首选/official_qwen3 临时兜底）与各子配置。
+    """统一 Qwen3 TTS 配置节：运行时选择（vllm 首选/带 refs 时路由 indextts 克隆）与各子配置。
 
     对应 qwen3_tts_config.schema.json。缺失字段由 Pydantic default 补齐。
     """
@@ -448,7 +444,7 @@ class Qwen3TTSConfig(BaseModel):
     enabled: bool = True
     runtime: str = "vllm"
     vllm: Qwen3TTSVLLMConfig = Field(default_factory=Qwen3TTSVLLMConfig)
-    official_runtime: Qwen3TTSServiceConfig = Field(default_factory=Qwen3TTSServiceConfig)
+    indextts: Qwen3TTSIndexTTSConfig = Field(default_factory=Qwen3TTSIndexTTSConfig)
     default: Qwen3TTSDefaultConfig = Field(default_factory=Qwen3TTSDefaultConfig)
     emotion_instruction: Qwen3TTSEmotionConfig = Field(default_factory=Qwen3TTSEmotionConfig)
     legacy_engine_removed: Qwen3TTSLegacyConfig = Field(default_factory=Qwen3TTSLegacyConfig)

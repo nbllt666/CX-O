@@ -16,6 +16,20 @@
 
 ---
 
+## [0.1.1] - 2026-08-14
+
+### 配置契约描述同步（PATCH）
+- **变更内容**：`config_template/env.schema.json` 的 `_sourceOfTruth.note` 与 `config_template/README.md`（Schema 清单行 + 配置体系现状第 4 条）中 F5-TTS/Orpheus TTS 环境变量描述更新为当前真实状态（`.env.example` 现仅含 LLM 推理服务 + CX-O-SERVER 连接变量组）。种子阶段，无字段增删。
+- **变更原因**：spec `unify-qwen3-tts-migration` Task 7 已移除 F5-TTS/Orpheus 运行时与配置（`.env.example` 同步删除旧组），但 `public/` 契约描述未随迁移同步，属过期描述。GN-004 交付前审查观察项 ③，走 s0601 契约变更适配流程，人类已显式授权更新（AskUserQuestion 2026-08-14）。
+- **影响范围**：仅描述文本（PATCH），无字段/签名/默认值变化，不影响任何下游模块。env.schema.json 仍为种子占位（`_seedStage: true`、`properties` 空），完整 Schema 待 s0201 承接。
+- **变更来源**：s0601
+
+### 闭合判据
+- [x] env.schema.json 与 README 描述已同步为当前真实状态
+- [x] 全仓 grep 确认无旧引擎（F5-TTS/Orpheus）env 变量描述残留（public/ 内）
+
+---
+
 ## [Unreleased]
 
 ### 初始化

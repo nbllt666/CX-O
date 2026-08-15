@@ -86,8 +86,6 @@ class DualStreamSession:
         tts_service: "TTSService",
         ref_audio_path: Optional[str] = None,
         ref_text: Optional[str] = None,
-        engine: str = "f5-tts",
-        voice: Optional[str] = None,
         # Qwen3 统一编排：参考音频资产 ID（ref_ 前缀）与多参考音频列表
         ref_asset_id: Optional[str] = None,
         refs: Optional[list] = None,
@@ -102,12 +100,6 @@ class DualStreamSession:
         # Qwen3 统一编排状态
         self._ref_asset_id = ref_asset_id
         self._refs = refs
-        # TTS 引擎类型（"f5-tts" / "orpheus"），决定合成参数与 voice_prompt 注入
-        # 默认 "f5-tts" 保持向后兼容，不传 engine 字段时行为与改造前一致
-        self._engine = engine
-        # Orpheus 预设音色（如 "tara"/"leo"），仅 orpheus 引擎生效
-        # Orpheus 使用预设音色而非参考音频克隆，故不需要 ref_audio/ref_text
-        self._voice = voice
 
         # 上下文管理 session_id（与 chat.py 保持一致）
         self.session_id = f"agent-{agent_id}"
@@ -360,7 +352,7 @@ class DualStreamSession:
             self._tts_chunk_index = 0
             self._current_assistant_text = ""
 
-            # 根据 TTS 引擎构建合成参数（见 _build_tts_kwargs）
+            # 构建 Qwen3 统一编排合成参数（参考音频资产/路径）
             tts_kwargs: dict = self._build_tts_kwargs()
 
             async for chunk in self.tts_service.synthesize_stream_fine(
@@ -458,24 +450,18 @@ class DualStreamSession:
             self._pipeline_task = None
 
     def _build_tts_kwargs(self) -> dict:
-        """根据 TTS 引擎构建合成参数：
-        - orpheus 引擎：使用预设音色（tara/leo 等），不传 ref_audio/ref_text
-        - f5-tts 等引擎：使用参考音频克隆，传 ref_audio_path/ref_text
-        - Qwen3 统一编排：优先传 ref_asset_id/refs（参考音频资产），无则回退旧 ref_audio_path/ref_text
+        """构建 Qwen3 统一编排合成参数：
+        优先传 ref_asset_id/refs（参考音频资产），无则回退旧 ref_audio_path/ref_text。
         """
         tts_kwargs: dict = {}
-        if self._engine == "orpheus":
-            if self._voice:
-                tts_kwargs["voice"] = self._voice
-        else:
-            if self._ref_asset_id:
-                tts_kwargs["ref_asset_id"] = self._ref_asset_id
-            if self._refs:
-                tts_kwargs["refs"] = self._refs
-            if self._ref_audio_path:
-                tts_kwargs["ref_audio_path"] = self._ref_audio_path
-            if self._ref_text:
-                tts_kwargs["ref_text"] = self._ref_text
+        if self._ref_asset_id:
+            tts_kwargs["ref_asset_id"] = self._ref_asset_id
+        if self._refs:
+            tts_kwargs["refs"] = self._refs
+        if self._ref_audio_path:
+            tts_kwargs["ref_audio_path"] = self._ref_audio_path
+        if self._ref_text:
+            tts_kwargs["ref_text"] = self._ref_text
         return tts_kwargs
 
     async def interrupt_and_reply(self, reply_content: str) -> None:
@@ -1091,7 +1077,7 @@ def register_audio_handlers(
         """双流式语音 handler：编排 ASR → LLM → TTS 全链路流水线
 
         消息协议（前端 → 后端，均使用 voice.dual_stream action）：
-        - init: {"data": {"init": true, "agent_id": "default", "ref_audio_path": "...", "ref_text": "...", "engine": "orpheus", "voice": "tara"}}
+        - init: {"data": {"init": true, "agent_id": "default", "ref_audio_path": "...", "ref_text": "..."}}
         - audio: {"data": {"audio": "<base64>"}}
         - end:   {"data": {"end": true}}
 
@@ -1135,47 +1121,15 @@ def register_audio_handlers(
             # Qwen3 统一编排：参考音频资产 ID（ref_ 前缀）与多参考音频列表
             ref_asset_id = data.get("ref_asset_id")
             refs = data.get("refs")
-            # 解析 TTS 引擎与音色（向后兼容：未传 engine 时默认 "f5-tts"）
-            engine = data.get("engine", "f5-tts")
-            voice = data.get("voice")
-
-            # 方案 A：根据 engine 字段获取对应的 TTSService 实例
-            # - orpheus 引擎：创建独立的 orpheus 模式 TTSService，使用预设音色，
-            #   与 f5-tts 单例隔离，确保两种引擎可共存（线程安全）
-            # - 非 orpheus 引擎：复用现有 f5-tts TTSService 单例（闭包变量）
-            if engine == "orpheus":
-                from server.services.tts_service import TTSService
-                from server.config import get_settings
-                settings = get_settings()
-                # 防御性检查：确保 settings.tts.orpheus 配置存在，避免 AttributeError
-                orpheus_config = getattr(getattr(settings, 'tts', None), 'orpheus', None)
-                if not orpheus_config:
-                    await manager.send_message(client_id, create_error(
-                        request_id=request_id,
-                        action=VoiceActions.DUAL_STREAM,
-                        code="CONFIG_ERROR",
-                        message="Orpheus TTS 配置缺失，请检查 settings.tts.orpheus"
-                    ))
-                    return
-                session_tts_service = TTSService(
-                    mode="orpheus",
-                    orpheus_url=orpheus_config.url,
-                    orpheus_voice=voice or orpheus_config.voice,
-                    orpheus_timeout=orpheus_config.timeout,
-                )
-            else:
-                session_tts_service = tts_service
 
             session = DualStreamSession(
                 client_id=client_id,
                 agent_id=agent_id,
                 request_id=request_id,
                 manager=manager,
-                tts_service=session_tts_service,
+                tts_service=tts_service,
                 ref_audio_path=ref_audio_path,
                 ref_text=ref_text,
-                engine=engine,
-                voice=voice,
                 ref_asset_id=ref_asset_id,
                 refs=refs,
             )

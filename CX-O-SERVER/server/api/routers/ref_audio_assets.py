@@ -12,6 +12,7 @@ from typing import Optional
 
 from fastapi import APIRouter, File, Form, HTTPException, UploadFile
 from fastapi.responses import FileResponse
+from pydantic import BaseModel, Field
 
 from server.core.logging_config import get_contextual_logger
 from server.qwen3_tts_provider import (
@@ -26,6 +27,25 @@ router = APIRouter()
 
 # 外部文件上传大小上限（与配置 max_ref_audio_size_mb 对齐，默认 50MB）
 _MAX_UPLOAD_BYTES = 60 * 1024 * 1024
+
+
+class SetCurrentAssetRequest(BaseModel):
+    """设置当前默认参考音频请求。"""
+
+    asset_id: str = Field(..., min_length=1)
+
+
+class RegisterFromPromptRequest(BaseModel):
+    """提示词生成参考音频请求。"""
+
+    prompt: str = Field(..., min_length=1)
+    language: Optional[str] = None
+
+
+class UpdateNoteRequest(BaseModel):
+    """更新资产注释请求。"""
+
+    note: str = ""
 
 
 def _to_public(asset: store.RefAudioAsset) -> dict:
@@ -60,13 +80,10 @@ async def get_current_asset():
 
 
 @router.put("/ref-audio-assets/current", summary="设为当前默认参考音频")
-async def set_current_asset(payload: dict):
+async def set_current_asset(payload: SetCurrentAssetRequest):
     """将指定资产设为当前默认参考音频（TTS 编排默认使用，合成请求可覆盖）。"""
-    asset_id = (payload or {}).get("asset_id")
-    if not isinstance(asset_id, str) or not asset_id:
-        raise HTTPException(status_code=400, detail="缺少 asset_id")
     try:
-        asset = store.set_current(asset_id)
+        asset = store.set_current(payload.asset_id)
         return {"asset": _to_public(asset), "current_asset_id": asset.id}
     except RefAudioNotFoundError as e:
         raise HTTPException(status_code=404, detail=str(e))
@@ -124,14 +141,12 @@ async def register_from_file(
 
 
 @router.post("/ref-audio-assets/from-prompt", summary="提示词生成参考音频资产")
-async def register_from_prompt(payload: dict):
+async def register_from_prompt(payload: RegisterFromPromptRequest):
     """根据自然语言提示词调用 Qwen3 VoiceDesign 生成并注册 source=prompt 资产。"""
-    prompt = (payload or {}).get("prompt")
-    language = (payload or {}).get("language")
-    if not isinstance(prompt, str) or not prompt.strip():
+    if not payload.prompt.strip():
         raise HTTPException(status_code=400, detail="prompt 提示词不能为空")
     try:
-        asset = await store.register_from_prompt(prompt=prompt, language=language)
+        asset = await store.register_from_prompt(prompt=payload.prompt, language=payload.language)
         return {"asset": _to_public(asset)}
     except RuntimeUnavailableError as e:
         raise HTTPException(status_code=503, detail=str(e))
@@ -172,11 +187,10 @@ async def get_asset_audio(asset_id: str):
 
 
 @router.patch("/ref-audio-assets/{asset_id}/note", summary="更新资产注释")
-async def update_note(asset_id: str, payload: dict):
+async def update_note(asset_id: str, payload: UpdateNoteRequest):
     """更新资产注释。"""
-    note = (payload or {}).get("note", "")
     try:
-        asset = store.update_note(asset_id, note or "")
+        asset = store.update_note(asset_id, payload.note)
         return _to_public(asset)
     except RefAudioNotFoundError as e:
         raise HTTPException(status_code=404, detail=str(e))

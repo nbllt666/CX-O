@@ -9,7 +9,8 @@ Task 2 [P] 闭合判据：Provider 单测与 Mock 合成覆盖成功、超时、
 - 请求校验：非法 text/format/speed、情感指令超长、refs 前缀校验
 - 参考音频：ref_resolver 未接入(RefAudioNotFoundError)、采样率越界、
   双来源 refs 重采样到 24kHz 并进入请求体
-- 运行时：vLLM 首选、speed 能力官方运行时兜底、未配置兜底时 RuntimeUnsupportedError
+- 运行时：vLLM 首选（VoiceDesign 日常/情感），speed 由 vLLM 直接支持（探针实证，不再兜底）、
+  refs 携带时路由 indextts（IndexTTS-2.5 克隆运行时）；未配置 indextts 时 RuntimeUnsupportedError
 - health_check 轻量探活、close 资源清理、旧引擎检测(LegacyEngineRemovedError)
 
 运行：python -m pytest tests/test_qwen3_tts_provider.py -q
@@ -149,22 +150,23 @@ def _pcm16(nsamples: int, fill: int = 100) -> bytes:
     return a.tobytes()
 
 
-def _cfg(official_base_url: str = "", runtime: str = "vllm") -> dict:
+def _cfg(indextts_base_url: str = "http://127.0.0.1:8092", runtime: str = "vllm", task_type: str = "VoiceDesign") -> dict:
     """构造 Provider 配置 dict（直接注入，避免依赖真实 settings）。"""
     return {
         "enabled": True,
         "runtime": runtime,
         "vllm": {
             "base_url": "http://127.0.0.1:8091",
-            "model": "Qwen/Qwen3-TTS-12Hz-1.7B-CustomVoice",
-            "task_type": "CustomVoice",
+            "model": "Qwen/Qwen3-TTS-12Hz-1.7B-VoiceDesign",
+            "task_type": task_type,
             "timeout_seconds": 60,
             "sample_rate": 24000,
         },
-        "official_runtime": {
-            "base_url": official_base_url,
-            "model": "Qwen/Qwen3-TTS-12Hz-1.7B-Base",
-            "timeout_seconds": 60,
+        "indextts": {
+            "base_url": indextts_base_url,
+            "model": "IndexTTS-2.5",
+            "timeout_seconds": 120,
+            "sample_rate": 24000,
         },
         "default": {"voice": "vivian", "language": "", "output_format": "wav", "speed": 1.0},
         "emotion_instruction": {"enabled": True, "max_length": 200, "fallback_neutral": True},
@@ -199,7 +201,7 @@ class TestSynthesize:
         assert resp.channels == 1
         assert resp.runtime == "vllm"
         assert "v1/audio/speech" in client.last_url
-        assert client.last_json["task_type"] == "CustomVoice"  # vLLM 私有参数入口
+        assert client.last_json["task_type"] == "VoiceDesign"  # vLLM 私有参数入口
 
     @pytest.mark.asyncio
     async def test_timeout_raises_unavailable(self):
@@ -374,7 +376,7 @@ class TestRefs:
 
     @pytest.mark.asyncio
     async def test_dual_source_refs_resampled_to_24k(self):
-        # 双来源：a 为 48kHz，b 为 8kHz，均重采样到 24kHz 并进入请求体
+        # 双来源：a 为 48kHz，b 为 8kHz，均重采样到 24kHz 并以 data URL 进入 indextts 请求体
         resolver = {
             "ref_prompt": ResolvedRef(asset_id="ref_prompt", data=_pcm16(480), sample_rate=48000, ref_text="p"),
             "ref_file": ResolvedRef(asset_id="ref_file", data=_pcm16(80), sample_rate=8000, ref_text="f"),
@@ -384,9 +386,12 @@ class TestRefs:
         resp = await p.synthesize(_req(refs=["ref_prompt", "ref_file"]))
         assert resp.refs_used == ["ref_prompt", "ref_file"]
         body = client.last_json
+        assert resp.runtime == "indextts"
         # 48kHz 480 样本 -> 24kHz 240 样本；8kHz 80 样本 -> 24kHz 240 样本
-        assert len(base64.b64decode(body["ref_audio"][0])) == 240 * 2
-        assert len(base64.b64decode(body["ref_audio"][1])) == 240 * 2
+        def _b64(s: str) -> bytes:
+            return base64.b64decode(s.split(",", 1)[1] if "," in s else s)
+        assert len(_b64(body["ref_audio"][0])) == 240 * 2
+        assert len(_b64(body["ref_audio"][1])) == 240 * 2
         assert body["ref_text"] == ["p", "f"]
 
 
@@ -395,20 +400,36 @@ class TestRefs:
 # ============================================================================
 class TestRuntimeSelection:
     @pytest.mark.asyncio
-    async def test_speed_control_falls_back_to_official(self):
+    async def test_refs_routes_to_indextts(self):
+        # VoiceDesign 任务携带 refs → 路由 indextts（IndexTTS-2.5 克隆运行时）
         client = _make_client(post_response=FakeResponse(content=_pcm16(240)))
-        p = Qwen3TTSProvider(config=_cfg(official_base_url="http://127.0.0.1:8092"), http_client=client)
-        req = _req(speed=1.5)
-        resp = await p.synthesize(req)
-        assert resp.runtime == "official_qwen3"
+        p = Qwen3TTSProvider(
+            config=_cfg(indextts_base_url="http://127.0.0.1:8092"),
+            http_client=client, ref_resolver=lambda aid: ResolvedRef(asset_id=aid, data=_pcm16(240), sample_rate=24000))
+        resp = await p.synthesize(_req(refs=["ref_a"]))
+        assert resp.runtime == "indextts"
         assert "8092" in client.last_url
 
     @pytest.mark.asyncio
-    async def test_speed_control_no_official_raises_unsupported(self):
+    async def test_refs_no_indextts_raises_unsupported(self):
+        # VoiceDesign 任务携带 refs 且无 indextts 兜底 → 错误信息清晰
+        p = Qwen3TTSProvider(
+            config=_cfg(indextts_base_url=""),
+            http_client=_make_client(), ref_resolver=lambda aid: ResolvedRef(asset_id=aid, data=_pcm16(240), sample_rate=24000))
+        with pytest.raises(RuntimeUnsupportedError) as exc:
+            await p.synthesize(_req(refs=["ref_a"]))
+        assert "IndexTTS" in str(exc.value)
+
+    @pytest.mark.asyncio
+    async def test_no_refs_stays_vllm(self):
+        # 无 refs → VoiceDesign 日常合成，不走兜底
         client = _make_client(post_response=FakeResponse(content=_pcm16(240)))
-        p = Qwen3TTSProvider(config=_cfg(official_base_url=""), http_client=client)
-        with pytest.raises(RuntimeUnsupportedError):
-            await p.synthesize(_req(speed=1.5))
+        p = Qwen3TTSProvider(
+            config=_cfg(),
+            http_client=client)
+        resp = await p.synthesize(_req(refs=[]))
+        assert resp.runtime == "vllm"
+        assert "8091" in client.last_url
 
 
 # ============================================================================

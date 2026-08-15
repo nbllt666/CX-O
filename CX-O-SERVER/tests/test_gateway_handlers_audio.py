@@ -1,11 +1,10 @@
 """
 server/handlers/audio.py 回归测试
 音频处理器：set_tts_playing/is_tts_playing 播放状态、cleanup_dual_stream_session 清理、
-DualStreamSession 触发状态机（on_partial_result/on_final_result）、_build_tts_kwargs 引擎参数、
+DualStreamSession 触发状态机（on_partial_result/on_final_result）、_build_tts_kwargs 参考音频参数、
 emotion/effect 列表与解析处理器
 """
 import base64
-import asyncio
 
 import pytest
 
@@ -137,17 +136,13 @@ class TestBuildTTSKwargs:
             tts_service=FakeTTSService(),
             ref_audio_path=kw.get("ref_audio_path"),
             ref_text=kw.get("ref_text"),
-            engine=kw.get("engine", "f5-tts"),
-            voice=kw.get("voice"),
+            ref_asset_id=kw.get("ref_asset_id"),
+            refs=kw.get("refs"),
         )
 
-    def test_orpheus_voice(self):
-        s = self._session(engine="orpheus", voice="tara")
-        assert s._build_tts_kwargs() == {"voice": "tara"}
-
-    def test_orpheus_no_voice(self):
-        s = self._session(engine="orpheus")
-        assert s._build_tts_kwargs() == {}
+    def test_qwen3_asset(self):
+        s = self._session(ref_asset_id="ref_abc", refs=[{"asset_id": "ref_abc"}])
+        assert s._build_tts_kwargs() == {"ref_asset_id": "ref_abc", "refs": [{"asset_id": "ref_abc"}]}
 
     def test_f5_with_refs(self):
         s = self._session(ref_audio_path="/x/a.wav", ref_text="你好")

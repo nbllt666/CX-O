@@ -1,0 +1,35 @@
+{
+  "base": "http://127.0.0.1:8092",
+  "results": [
+    {
+      "name": "health",
+      "ok": true,
+      "detail": "HTTP 200"
+    },
+    {
+      "name": "models",
+      "ok": true,
+      "detail": "{'object': 'list', 'data': [{'id': 'IndexTTS-2.5', 'object': 'model'}]}"
+    },
+    {
+      "name": "basic_clone",
+      "ok": true,
+      "detail": "HTTP 200 wav rate=24000 ch=1 dur=4.31s bytes=206794"
+    },
+    {
+      "name": "emo_text_angry",
+      "ok": true,
+      "detail": "HTTP 200 wav rate=24000 ch=1 dur=3.34s bytes=160540"
+    },
+    {
+      "name": "emo_text_sad",
+      "ok": true,
+      "detail": "HTTP 200 wav rate=24000 ch=1 dur=4.14s bytes=198992"
+    },
+    {
+      "name": "english_clone",
+      "ok": true,
+      "detail": "HTTP 200 wav rate=24000 ch=1 dur=3.7s bytes=177816"
+    }
+  ]
+}

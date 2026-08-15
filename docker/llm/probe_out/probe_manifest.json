@@ -1,0 +1,72 @@
+{
+  "base": "http://127.0.0.1:8091",
+  "model": "Qwen/Qwen3-TTS-12Hz-1.7B-CustomVoice",
+  "ts": "2026-08-14 19:13:50",
+  "results": [
+    {
+      "name": "health",
+      "ok": true,
+      "detail": "HTTP 200"
+    },
+    {
+      "name": "v1/models",
+      "ok": true,
+      "detail": "HTTP 200 models=['Qwen/Qwen3-TTS-12Hz-1.7B-CustomVoice']"
+    },
+    {
+      "name": "v1/audio/voices",
+      "ok": true,
+      "detail": "HTTP 200 voices=['aiden', 'dylan', 'eric', 'ono_anna', 'ryan', 'serena', 'sohee', 'uncle_fu', 'vivian']"
+    },
+    {
+      "name": "synthesize_wav",
+      "ok": true,
+      "detail": "HTTP 200 wav rate=24000 ch=1 dur=4.24s bytes=203564"
+    },
+    {
+      "name": "synthesize_pcm",
+      "ok": true,
+      "detail": "HTTP 200 pcm bytes=172800 dur~3.6s"
+    },
+    {
+      "name": "synthesize_mp3",
+      "ok": true,
+      "detail": "HTTP 200 mp3 bytes=25632"
+    },
+    {
+      "name": "synthesize_flac",
+      "ok": true,
+      "detail": "HTTP 200 flac bytes=98089"
+    },
+    {
+      "name": "synthesize_opus",
+      "ok": true,
+      "detail": "HTTP 200 opus bytes=18462"
+    },
+    {
+      "name": "synthesize_instruction",
+      "ok": true,
+      "detail": "HTTP 200 wav rate=24000 ch=1 dur=2.32s bytes=111404"
+    },
+    {
+      "name": "stream_pcm",
+      "ok": true,
+      "detail": "HTTP 200 chunks=11 pcm bytes=280320 dur~5.84s"
+    },
+    {
+      "name": "stream_wav",
+      "ok": true,
+      "detail": "HTTP 200 chunks=13 wav rate=24000 ch=1 dur=89478.49s bytes=311084"
+    },
+    {
+      "name": "speed_control",
+      "ok": true,
+      "detail": "HTTP 200 wav rate=24000 ch=1 dur=2.08s bytes=99884 (vLLM 支持 speed)"
+    },
+    {
+      "name": "ref_audio_customvoice",
+      "ok": false,
+      "detail": "HTTP 500 {\"error\":{\"message\":\"EngineCore encountered an issue. See stack trace (above) for the root cause.\",\"type\":\"InternalServerError\",\"param\":null,\"code\":500,\"request_id\":\"speech-9cfc0c27c61158be\",\"error_stage_id\":0}} (CustomVoice 拒绝 ref_audio: 引擎崩溃 stage-0，声学克隆需 Base 模型)"
+    }
+  ]
+}

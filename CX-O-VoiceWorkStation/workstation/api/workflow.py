@@ -18,7 +18,6 @@ import logging
 from typing import Optional
 
 from fastapi import APIRouter, HTTPException, Request
-from pydantic import BaseModel
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -26,8 +25,6 @@ router = APIRouter()
 _workflow_state: dict = {
     "current_step": 0,
     "steps": [
-        {"id": "ref_audio", "name": "参考音频生成", "status": "pending", "output": None},
-        {"id": "emotion_refs", "name": "情感参考音频生成", "status": "pending", "output": None},
         {"id": "train_prep", "name": "训练数据准备", "status": "pending", "output": None},
         {"id": "training", "name": "模型训练", "status": "pending", "output": None},
         {"id": "inference", "name": "推理", "status": "pending", "output": None},
@@ -79,11 +76,7 @@ async def execute_step(step_id: str, request: Request):
         step["status"] = "running"
 
     try:
-        if step_id == "ref_audio":
-            output = await _execute_ref_audio(body)
-        elif step_id == "emotion_refs":
-            output = await _execute_emotion_refs(body)
-        elif step_id == "train_prep":
+        if step_id == "train_prep":
             output = await _execute_train_prep(body)
         elif step_id == "training":
             output = await _execute_training(body)
@@ -117,67 +110,6 @@ async def execute_step(step_id: str, request: Request):
                     _workflow_state["current_step"] = idx + 1
 
         return copy.deepcopy(_workflow_state)
-
-
-async def _execute_ref_audio(body: dict) -> dict:
-    from workstation.services.voxcpm_client import get_voxcpm_client
-    from workstation.config import get_settings
-
-    settings = get_settings()
-    client = get_voxcpm_client(config=settings.voxcpm)
-
-    mode = body.get("mode", "design")
-    text = body.get("text", "")
-    control = body.get("control", "")
-
-    # 忽略客户端传入的 output_path，统一由服务端生成 UUID 路径
-    from pathlib import Path
-    import uuid
-    output_dir = Path(settings.output.voice_refs_dir) / "voxcpm"
-    output_dir.mkdir(parents=True, exist_ok=True)
-    output_path = str(output_dir / f"{uuid.uuid4().hex}.wav")
-
-    kwargs = {}
-    if "cfg_value" in body:
-        kwargs["cfg_value"] = body["cfg_value"]
-    if "inference_timesteps" in body:
-        kwargs["inference_timesteps"] = body["inference_timesteps"]
-
-    if mode == "design":
-        result_path = await client.design(
-            text=text,
-            control=control,
-            output_path=output_path,
-            **kwargs,
-        )
-    elif mode == "controllable_clone":
-        reference_audio = body.get("reference_audio_path", "")
-        result_path = await client.controllable_clone(
-            text=text,
-            control=control,
-            reference_audio=reference_audio,
-            output_path=output_path,
-            **kwargs,
-        )
-    elif mode == "ultimate_clone":
-        prompt_audio = body.get("prompt_audio_path", "")
-        prompt_text = body.get("prompt_text", "")
-        result_path = await client.ultimate_clone(
-            text=text,
-            prompt_audio=prompt_audio,
-            prompt_text=prompt_text,
-            output_path=output_path,
-            **kwargs,
-        )
-    else:
-        raise ValueError(f"Unknown VoxCPM mode: {mode}")
-
-    return {"output_filename": result_path.name, "mode": mode}
-
-
-async def _execute_emotion_refs(body: dict) -> dict:
-    # TODO(Task 5): 重构为基于 voxcpm 的参考音频生成，恢复情感参考音频生成功能
-    raise RuntimeError("参考音频生成重构中：Task 5 将重构为 voxcpm")
 
 
 async def _execute_train_prep(body: dict) -> dict:

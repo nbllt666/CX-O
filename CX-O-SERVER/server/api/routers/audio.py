@@ -3,12 +3,11 @@ import base64
 import json
 import os
 import tempfile
-from datetime import datetime
 from pathlib import Path
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Request
-from fastapi.responses import FileResponse, StreamingResponse
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 from server.core.logging_config import get_contextual_logger
@@ -21,8 +20,6 @@ logger = get_contextual_logger(__name__)
 
 # 项目根（CX-O-SERVER），基于文件位置解析，避免依赖运行时工作目录
 _PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent.parent
-VOICE_REFS_DIR = _PROJECT_ROOT / "data" / "voice_refs"
-ALLOWED_AUDIO_EXTENSIONS = {".wav", ".mp3", ".ogg", ".flac", ".m4a", ".aac"}
 
 
 class TTSSynthesizeRequest(BaseModel):
@@ -38,22 +35,6 @@ class TTSSynthesizeRequest(BaseModel):
     refs: Optional[list[str]] = None
 
 
-def _validate_filename(filename: str) -> str:
-    if not filename:
-        raise HTTPException(status_code=400, detail="Filename is required")
-    if '..' in filename or '/' in filename or '\\' in filename:
-        raise HTTPException(status_code=400, detail="Invalid filename")
-    if os.path.isabs(filename):
-        raise HTTPException(status_code=400, detail="Absolute paths not allowed")
-    resolved = (VOICE_REFS_DIR / filename).resolve()
-    if not str(resolved).startswith(str(VOICE_REFS_DIR.resolve())):
-        raise HTTPException(status_code=400, detail="Path traversal not allowed")
-    return filename
-
-def _ensure_voice_refs_dir():
-    VOICE_REFS_DIR.mkdir(parents=True, exist_ok=True)
-
-
 @router.get(
     "/audio/config",
     summary="获取音频配置",
@@ -65,132 +46,6 @@ async def get_audio_config():
         return config
     except Exception as e:
         logger.error(f"获取音频配置失败: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail="内部服务器错误")
-
-
-@router.get(
-    "/audio/files",
-    summary="获取音频文件列表",
-    description="获取 voice_refs 目录下的所有音频文件列表。",
-)
-async def get_audio_files():
-    """获取 voice_refs 目录下的音频文件列表。"""
-    try:
-        _ensure_voice_refs_dir()
-
-        files = []
-        for f in VOICE_REFS_DIR.iterdir():
-            if f.is_file() and f.suffix.lower() in ALLOWED_AUDIO_EXTENSIONS:
-                stat = f.stat()
-                files.append({
-                    "name": f.name,
-                    "size": stat.st_size,
-                    "modified": datetime.fromtimestamp(stat.st_mtime).isoformat()
-                })
-
-        return {"files": files}
-    except Exception as e:
-        logger.error(f"获取音频文件列表失败: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail="内部服务器错误")
-
-
-@router.post(
-    "/audio/upload",
-    summary="上传音频文件",
-    description="上传音频文件到 voice_refs 目录。",
-)
-async def upload_audio_file(request: Request):
-    try:
-        _ensure_voice_refs_dir()
-
-        content_type = request.headers.get("content-type", "")
-        if "multipart/form-data" not in content_type:
-            raise HTTPException(status_code=400, detail="需要 multipart/form-data 请求")
-
-        form = await request.form()
-        audio_file = form.get("file")
-        if not audio_file:
-            raise HTTPException(status_code=400, detail="未提供音频文件")
-
-        filename = audio_file.filename
-        if not filename:
-            raise HTTPException(status_code=400, detail="文件名不能为空")
-
-        suffix = Path(filename).suffix.lower()
-        if suffix not in ALLOWED_AUDIO_EXTENSIONS:
-            raise HTTPException(status_code=400, detail=f"不支持的音频格式: {suffix}")
-
-        file_path = VOICE_REFS_DIR / filename
-        content = await audio_file.read()
-        with open(file_path, "wb") as f:
-            f.write(content)
-
-        return {"status": "success", "filename": filename, "size": len(content)}
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"上传音频文件失败: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail="内部服务器错误")
-
-
-@router.get(
-    "/audio/files/{filename}",
-    summary="获取音频文件",
-    description="根据文件名获取音频文件内容。",
-)
-async def get_audio_file(filename: str):
-    try:
-        _validate_filename(filename)
-        _ensure_voice_refs_dir()
-
-        file_path = VOICE_REFS_DIR / filename
-
-        if not file_path.exists():
-            raise HTTPException(status_code=404, detail=f"文件 '{filename}' 不存在")
-
-        if not file_path.is_file():
-            raise HTTPException(status_code=400, detail=f"'{filename}' 不是有效文件")
-
-        media_type = "audio/wav" if filename.endswith(".wav") else "audio/mpeg"
-
-        return FileResponse(
-            path=file_path,
-            media_type=media_type,
-            filename=filename
-        )
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"获取音频文件失败: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail="内部服务器错误")
-
-
-@router.delete(
-    "/audio/files/{filename}",
-    summary="删除音频文件",
-    description="根据文件名删除指定的音频文件。",
-)
-async def delete_audio_file(filename: str):
-    """根据文件名删除指定的音频文件。"""
-    try:
-        _validate_filename(filename)
-        _ensure_voice_refs_dir()
-
-        file_path = VOICE_REFS_DIR / filename
-
-        if not file_path.exists():
-            raise HTTPException(status_code=404, detail=f"文件 '{filename}' 不存在")
-
-        if not file_path.is_file():
-            raise HTTPException(status_code=400, detail=f"'{filename}' 不是有效文件")
-
-        file_path.unlink()
-
-        logger.info(f"已删除音频文件: {filename}")
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"删除音频文件失败: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail="内部服务器错误")
 
 
@@ -339,7 +194,6 @@ def _load_tts_config() -> dict:
         "cross_fade_duration": 0.15,
         "emotion_enabled": True,
         "effects_enabled": True,
-        "emotion_voices": {},
         "transition": {
             "enabled": True,
             "duration": 0.5,
@@ -364,7 +218,6 @@ def _load_tts_config() -> dict:
             "cross_fade_duration": tts_config.get("cross_fade_duration", 0.15),
             "emotion_enabled": tts_config.get("emotion_enabled", True),
             "effects_enabled": tts_config.get("effects_enabled", True),
-            "emotion_voices": tts_config.get("emotion_voices", {}),
             "transition": tts_config.get("transition", default_config["transition"])
         }
     except Exception as e:

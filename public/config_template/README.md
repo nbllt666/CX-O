@@ -13,9 +13,9 @@
 | `unified_config.schema.json` | `c:/CX-O/CX-O-SERVER/server/config.py` UnifiedConfig（line 437，30+ Pydantic BaseModel，15 顶层节） | P0 |
 | `default_yaml.schema.json` | `c:/CX-O/config/default.yaml`（21 顶层键：server/cors/logging/database/models/model_defaults/agent/memory/context/tools/acp/security/monitoring/llm_params/tts/avatar/asr/voice_workstation/live/limits） | P0 |
 | `settings_json.schema.json` | `c:/CX-O/config/settings.json`（services: danmaku/firewall/vad/sensevoice_streaming + tts） | P1 |
-| `env.schema.json` | `c:/CX-O/.env.example`（F5-TTS/LLM/Orpheus TTS 三组变量 + HF_TOKEN）+ `c:/CX-O/config/env.py` EnvConfig（CXHMS_ 前缀映射） | P1 |
+| `env.schema.json` | `c:/CX-O/.env.example`（LLM 推理服务 + CX-O-SERVER 连接变量组）+ `c:/CX-O/config/env.py` EnvConfig（CXHMS_ 前缀映射） | P1 |
 | `computer_control_config.schema.json` | 电脑控制插件配置契约（spec `add-computer-control-cxfc` 冻结决策；APP-Frontend Electron 本地配置，含授权/令牌/TLS/run_command 护栏/自启动/管理员权限） | P1 |
-| `qwen3_tts_config.schema.json` | 统一 Qwen3 TTS 配置契约（spec `unify-qwen3-tts-migration` Task 1 冻结决策；runtime vllm 首选 + official_qwen3 临时兜底，含默认值/范围/auto_fill；旧引擎配置映射 LEGACY_ENGINE_REMOVED） | P0 |
+| `qwen3_tts_config.schema.json` | 统一 Qwen3 TTS 配置契约（spec `unify-qwen3-tts-migration` 冻结决策 + s0601 契约变更；runtime vllm 首选，无 refs→VoiceDesign/带 refs→IndexTTS(indextts)，含默认值/范围/auto_fill；旧引擎配置映射 LEGACY_ENGINE_REMOVED） | P0 |
 
 ## 配置契约强制要求（rules-3 §三）
 
@@ -30,7 +30,7 @@ CX-O 存在多套配置体系，s0201 阶段需统一对齐：
 1. **Pydantic UnifiedConfig**（`server/config.py`）：后端运行时配置，30+ BaseModel，最终汇聚为 `UnifiedConfig`
 2. **YAML 配置**（`config/*.yaml`）：default/firewall/firewall_v3/vad/danmaku/hidden_prompt
 3. **JSON 配置**（`config/settings.json`）：服务运行时设置
-4. **环境变量**（`.env.example` + `config/env.py`）：CXHMS_ 前缀 + F5-TTS/LLM/Orpheus 变量
+4. **环境变量**（`.env.example` + `config/env.py`）：CXHMS_ 前缀 + LLM 推理服务/CX-O-SERVER 连接变量（F5-TTS/Orpheus 组已随 spec unify-qwen3-tts-migration Task 7 移除）
 5. **config/validation.py**：ConfigValidator 含 REQUIRED_FIELDS + VALID_VALUES 枚举集
 
 ## 契约可验证性（rules-3 §五）

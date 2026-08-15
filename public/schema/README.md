@@ -36,7 +36,7 @@
 | Schema 文件 | 职责 | 关键约束 |
 |------------|------|---------|
 | `speech_synthesis_request.schema.json` | 归一合成请求（普通/流式/WS/工作站） | text 必填；refs 引用资产 ID，禁止本地路径；输出采样率 const 24000 |
-| `speech_synthesis_response.schema.json` | 非流式响应 | audio base64 + runtime 标识（vllm/official_qwen3） |
+| `speech_synthesis_response.schema.json` | 非流式响应 | audio base64 + runtime 标识（vllm/indextts） |
 | `speech_audio_chunk.schema.json` | 流式音频块 | 恰一个 start/一个 final，顺序稳定 |
 | `ref_audio_asset.schema.json` | 参考音频资产（source=prompt/file） | 稳定 ID、checksum 去重、输入采样率 [8000,48000] |
 | `emotion_instruction.schema.json` | LLM 自然语言情感指令 | 与 reply_text 分离；失败回退中性；禁止 [emotion:*]/Orpheus XML |

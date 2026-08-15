@@ -20,36 +20,13 @@
     }
   },
   "tts": {
-    "engine": "f5-tts",
-    "f5_tts": {
-      "url": "http://127.0.0.1:5000",
-      "timeout": 120
-    },
-    "cosyvoice": {
-      "url": "http://127.0.0.1:50000",
-      "model": "CosyVoice2-0.5B",
-      "default_mode": "instruct2",
-      "timeout": 120,
-      "default_spk_id": "中文女"
-    },
-    "emotion_refs": {
-      "enabled": true,
-      "emotions_dir": "data/voice_refs/emotions",
-      "transitions_dir": "data/voice_refs/transitions",
-      "emotions": ["normal", "happy", "sad", "angry", "surprised", "tender", "fearful", "disgusted"]
-    },
-    "transition": {
-      "enabled": true,
-      "duration": 0.5,
-      "intensity": 0.7,
-      "transition_text": "嗯，"
-    },
-    "ref_audio_path": "",
-    "ref_text": "",
+    "engine": "qwen3",
+    "model": "qwen3-tts",
     "speed": 1.0,
     "cross_fade_duration": 0.15,
     "emotion_enabled": true,
     "effects_enabled": true,
-    "emotion_voices": {}
+    "ref_audio_path": "",
+    "ref_text": ""
   }
 }

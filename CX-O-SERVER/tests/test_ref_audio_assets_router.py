@@ -103,9 +103,17 @@ class TestCurrentAsset:
         r = client.put("/ref-audio-assets/current", json={"asset_id": "ref_nonexistent123"})
         assert r.status_code == 404
 
-    def test_set_missing_asset_id_raises_400(self, client):
+    def test_set_missing_asset_id_raises_422(self, client):
         r = client.put("/ref-audio-assets/current", json={})
-        assert r.status_code == 400
+        assert r.status_code == 422
+
+    def test_set_non_string_asset_id_raises_422(self, client):
+        r = client.put("/ref-audio-assets/current", json={"asset_id": 123})
+        assert r.status_code == 422
+
+    def test_set_empty_asset_id_raises_422(self, client):
+        r = client.put("/ref-audio-assets/current", json={"asset_id": ""})
+        assert r.status_code == 422
 
     def test_clear(self, client, tmp_path):
         src = tmp_path / "src_ref.wav"
@@ -167,6 +175,14 @@ class TestFromPrompt:
         r = client.post("/ref-audio-assets/from-prompt", json={"prompt": "  "})
         assert r.status_code == 400
 
+    def test_missing_prompt_raises_422(self, client):
+        r = client.post("/ref-audio-assets/from-prompt", json={})
+        assert r.status_code == 422
+
+    def test_non_string_prompt_raises_422(self, client):
+        r = client.post("/ref-audio-assets/from-prompt", json={"prompt": 123})
+        assert r.status_code == 422
+
     def test_runtime_unavailable(self, client):
         set_prompt_generator(None)
         r = client.post("/ref-audio-assets/from-prompt", json={"prompt": "少女音"})
@@ -213,6 +229,13 @@ class TestUpdateNote:
     def test_not_found(self, client):
         r = client.patch("/ref-audio-assets/ref_nonexistent123/note", json={"note": "x"})
         assert r.status_code == 404
+
+    def test_non_string_note_raises_422(self, client, tmp_path):
+        src = tmp_path / "src_ref.wav"
+        src.write_bytes(_wav_bytes())
+        asset = ref_audio_store.register_from_file(str(src))
+        r = client.patch(f"/ref-audio-assets/{asset.id}/note", json={"note": 123})
+        assert r.status_code == 422
 
 
 class TestDeleteAsset:

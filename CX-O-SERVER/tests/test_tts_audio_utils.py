@@ -1,8 +1,7 @@
 """
 server/services/tts_audio_utils.py 回归测试
-TTS 纯工具函数：静音检测/跨请求静音过滤/分句/静音生成/音频拼接/情感音色加载
+TTS 纯工具函数：静音检测/跨请求静音过滤/分句/静音生成/音频拼接
 """
-import json
 import struct
 
 import pytest
@@ -12,7 +11,6 @@ from server.services.tts_audio_utils import (
     concatenate_audio,
     generate_silence,
     is_silence_pcm,
-    load_emotion_voices,
     split_text_by_sentences,
 )
 
@@ -110,39 +108,6 @@ class TestConcatenateAudio:
         import asyncio
         result = asyncio.run(concatenate_audio([b"aaa", b"bbb"]))
         assert result == b"aaabbb"
-
-
-class TestLoadEmotionVoices:
-    def test_missing_dir_returns_empty(self, tmp_path):
-        assert load_emotion_voices(str(tmp_path / "nonexistent")) == {}
-
-    def test_mapping_file_used(self, tmp_path):
-        refs = tmp_path / "refs"
-        refs.mkdir()
-        (refs / "emotion_mapping.json").write_text(
-            json.dumps({"happy": {"ref_audio": "a.wav", "ref_text": "haha"}}, ensure_ascii=False),
-            encoding="utf-8",
-        )
-        voices = load_emotion_voices(str(refs))
-        assert voices["happy"]["ref_audio"] == "a.wav"
-
-    def test_discover_ref_audio_and_text(self, tmp_path):
-        refs = tmp_path / "refs"
-        happy = refs / "happy"
-        happy.mkdir(parents=True)
-        (happy / "ref.wav").write_bytes(b"WAV")
-        (happy / "ref.txt").write_text("开开心心", encoding="utf-8")
-        voices = load_emotion_voices(str(refs))
-        assert "happy" in voices
-        assert voices["happy"]["ref_audio"].endswith("ref.wav")
-        assert voices["happy"]["ref_text"] == "开开心心"
-
-    def test_no_audio_skipped(self, tmp_path):
-        refs = tmp_path / "refs"
-        empty = refs / "empty"
-        empty.mkdir(parents=True)
-        (empty / "ref.txt").write_text("x", encoding="utf-8")
-        assert load_emotion_voices(str(refs)) == {}
 
 
 @pytest.mark.skipif(not NUMPY, reason="numpy 未安装")

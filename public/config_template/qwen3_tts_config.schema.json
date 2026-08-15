@@ -2,30 +2,33 @@
   "$schema": "http://json-schema.org/draft-07/schema#",
   "$id": "https://cx-o/public/config_template/qwen3_tts_config.schema.json",
   "title": "Qwen3TTSConfig",
-  "description": "统一 Qwen3 TTS 配置契约。含默认值、取值范围与缺失字段自动补齐(缺失字段按各属性 default 补齐，required 仅 enabled/runtime)。runtime 选择 vllm 首选、official_qwen3 临时兜底；旧引擎配置(f5_tts/orpheus/cosyvoice/emotion_refs)不再作为可选引擎，加载时映射 LEGACY_ENGINE_REMOVED。源真理：spec unify-qwen3-tts-migration 冻结决策。",
+  "description": "统一 Qwen3 TTS 配置契约。含默认值、取值范围与缺失字段自动补齐(缺失字段按各属性 default 补齐，required 仅 enabled/runtime)。runtime 选择 vllm 首选；无参考音频的日常/情感合成由 vLLM VoiceDesign(task_type=VoiceDesign)承接，带参考音频的语音克隆由 IndexTTS-2.5(indextts 运行时)承接。旧引擎配置(f5_tts/orpheus/cosyvoice/emotion_refs)不再作为可选引擎，加载时映射 LEGACY_ENGINE_REMOVED。源真理：spec unify-qwen3-tts-migration 冻结决策 + s0601 契约变更(VoiceDesign+IndexTTS 架构)。",
   "type": "object",
   "properties": {
     "enabled": { "type": "boolean", "default": true },
-    "runtime": { "type": "string", "enum": ["vllm", "official_qwen3"], "default": "vllm", "description": "首选运行时。vllm 不支持的能力自动路由 official_qwen3 临时路径。" },
+    "runtime": { "type": "string", "enum": ["vllm"], "default": "vllm", "description": "首选运行时。vllm 为唯一首选；带 refs 时自动路由 indextts 克隆运行时。" },
     "vllm": {
       "type": "object",
+      "description": "vLLM-Omni VoiceDesign 运行时：无参考音频的日常/情感合成。",
       "properties": {
         "base_url": { "type": "string", "default": "http://127.0.0.1:8091", "description": "vLLM-Omni /v1/audio/speech 基础地址。" },
-        "model": { "type": "string", "default": "Qwen/Qwen3-TTS-12Hz-1.7B-CustomVoice", "description": "模型名/路径。" },
-        "task_type": { "type": "string", "enum": ["CustomVoice", "VoiceDesign", "Base"], "default": "CustomVoice" },
+        "model": { "type": "string", "default": "Qwen/Qwen3-TTS-12Hz-1.7B-VoiceDesign", "description": "模型名/路径。" },
+        "task_type": { "type": "string", "enum": ["VoiceDesign"], "default": "VoiceDesign" },
         "timeout_seconds": { "type": "number", "minimum": 1, "default": 60 },
         "sample_rate": { "type": "integer", "const": 24000 }
       },
       "required": ["base_url", "model"]
     },
-    "official_runtime": {
+    "indextts": {
       "type": "object",
-      "description": "官方 Qwen3 运行时临时兜底路径（vLLM 不支持的能力）。须有显式退出/固化判据，不得长期隐式常驻。退出/固化判据：当 vLLM 补齐该能力并通过 Task 0 探针验证后，移除本段或将其固化为一级运行时；否则在 Task 8 [V] 交付审查中作为未闭合项显式列出并由人类裁决。",
+      "description": "IndexTTS-2.5 克隆运行时：带参考音频的语音克隆。base_url 为空则禁用克隆能力，携带 refs 的请求抛 RuntimeUnsupportedError。",
       "properties": {
-        "base_url": { "type": "string", "default": "", "description": "官方运行时端点，为空则禁用兜底。" },
-        "model": { "type": "string", "default": "Qwen/Qwen3-TTS-12Hz-1.7B-Base" },
-        "timeout_seconds": { "type": "number", "minimum": 1, "default": 60 }
-      }
+        "base_url": { "type": "string", "default": "http://127.0.0.1:8092", "description": "IndexTTS-2.5 OpenAI 兼容 /v1/audio/speech 基础地址。" },
+        "model": { "type": "string", "default": "IndexTTS-2.5" },
+        "timeout_seconds": { "type": "number", "minimum": 1, "default": 120 },
+        "sample_rate": { "type": "integer", "const": 24000 }
+      },
+      "required": ["base_url", "model"]
     },
     "default": {
       "type": "object",

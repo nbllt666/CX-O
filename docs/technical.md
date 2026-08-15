@@ -217,12 +217,11 @@ CX-O 将虚拟形象、实时语音对话、记忆管理、直播推流、声音
 
 ### 4.7 TTS 服务（`tts_service.py`）
 
-- 模式：`embedded` / `remote` / `triton` / `orpheus`。
-- **双引擎**：
-  - **F5-TTS**（默认，Triton 加速，支持参考音频克隆，`model_type=F5-TTS`）。
-  - **Orpheus**（基于 vLLM 的多语言 TTS，不支持参考音频，用预设音色）。
+- 模式：`remote`（Qwen3 TTS 唯一合成路径，vLLM 优先，允许官方运行时临时兜底）。
+- **统一编排**：普通、流式、细粒度流式、情感路径全部收敛到 Qwen3 Provider（`qwen3_tts_provider.py`），`get_tts_service()` 单例统一 REST/gateway/main 链路。
 - 流式合成：`synthesize_stream_fine` 直接对接 token 流，边收边切边合成，每个 `text_segment` 对应一个 TTS chunk；`cross_fade_duration=0.15` 平滑过渡。
-- 情感语音：`emotion_enabled`，不同情绪用不同参考音色（`emotion_refs_dir`）。
+- 情感指令：`emotion_instruction_enabled`，由 LLM 生成自然语言指令（`tts_instruction`，与 `reply_text` 分离），经 `emotion_instruction_service.py` 解析与中性回退；旧 `[emotion:*]` / Orpheus XML 标签仅作迁移边界兼容输入。
+- 参考音频资产：统一 `ref_audio_store.py` 管理（`source=prompt` 按提示词生成 / `source=file` 外部文件双来源），当前资产默认使用、合成请求可覆盖。
 - 音效标签：`effects_enabled`，文本中插入标签触发音效。
 - 过渡词：`transition_enabled`，在开播前插入过渡词（`transition_text="嗯，"`），衔接自然。
 
