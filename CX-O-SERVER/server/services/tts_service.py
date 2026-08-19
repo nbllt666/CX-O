@@ -6,6 +6,7 @@ Qwen3 TTS 唯一合成入口，提供非流式、流式与细粒度流式合成�
 from __future__ import annotations
 
 import base64
+import json
 import logging
 import os
 import re
@@ -31,8 +32,6 @@ _VOLUME_KEY = "volume"
 
 def _has_json_key(text: str, key: str) -> bool:
     """判断文本内嵌 <tts_instruction> JSON 是否含 `key` 键（精确匹配，避免子串误匹配）。"""
-    import json as _json
-
     for tag_m in _TTAG_RE.finditer(text):
         stripped = tag_m.group(1).strip()
         _fence = _FENCE_RE.search(stripped)
@@ -42,7 +41,7 @@ def _has_json_key(text: str, key: str) -> bool:
             # 纯文本指令（非 JSON），不算显式结构化指定
             continue
         try:
-            data = _json.loads(stripped)
+            data = json.loads(stripped)
         except Exception:
             continue
         if isinstance(data, dict) and key in data:

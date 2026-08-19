@@ -62,6 +62,9 @@ from fastapi.middleware.cors import CORSMiddleware
 from server.config import get_settings
 from server.dependencies import ServiceState, set_service_state
 from server.core.lifecycle import init_service, shutdown_service
+# 预热后台任务使用（原函数内导入，上移避免首次调用导入开销）
+from server.chat_helpers import get_agent_config
+from server.prompt_builder import REALTIME_VOICE_PROMPT_PADDING
 
 logger = logging.getLogger(__name__)
 
@@ -579,11 +582,7 @@ async def lifespan(app: FastAPI):
     # 实测 LLM 冷 TTFT 7.6s、Embedding 冷请求 1.6s；启动时后台预热消除首请求惩罚。
     # 预热使用与生产一致的请求路径与模型名；失败仅告警不影响运行。
     async def _warmup_inference_backends() -> None:
-        import asyncio as _asyncio
-
-        from server.config import get_settings as _bk_get_settings
-
-        _bk_settings = _bk_get_settings()
+        _bk_settings = get_settings()
         _llm_url = _bk_settings.config.llm.host.rstrip("/")
         _llm_model = _bk_settings.config.llm.model
         _emb_url = _bk_settings.config.memory.embedding_api_base.rstrip("/")
@@ -607,7 +606,7 @@ async def lifespan(app: FastAPI):
                         break
                 except Exception:
                     pass
-                await _asyncio.sleep(5)
+                await asyncio.sleep(5)
             else:
                 lifespan_logger.warning("LLM 推理预热超时（不影响运行）")
                 return
@@ -619,12 +618,7 @@ async def lifespan(app: FastAPI):
             # （证据 .trae/documents/20260817_模块0_服务端语音前缀预热.md）。
             # 注意：仅预热缓存，绝不修改/精简生产 system_prompt 内容。
             try:
-                from server.chat_helpers import get_agent_config as _bk_get_agent_config
-                # 复用实时语音 padding 常量（Task A）：保证预热请求与生产
-                # build_messages(is_realtime_voice=True) 完全同构，命中 prefix cache。
-                from server.prompt_builder import REALTIME_VOICE_PROMPT_PADDING as _bk_voice_padding
-
-                _agent = _bk_get_agent_config("default") or {}
+                _agent = get_agent_config("default") or {}
                 _system_prompt = (_agent.get("system_prompt") or "").strip()
                 if not _system_prompt:
                     lifespan_logger.warning("语音前缀预热跳过：default agent 无 system_prompt")
@@ -633,7 +627,7 @@ async def lifespan(app: FastAPI):
                 # system 末尾追加无害 padding，使完整 prompt >=360 tokens，
                 # 满足 vLLM prefix cache 写入/命中长度（>=353 tokens）阈值。
                 _voice_msgs = [
-                    {"role": "system", "content": _system_prompt + _bk_voice_padding},
+                    {"role": "system", "content": _system_prompt + REALTIME_VOICE_PROMPT_PADDING},
                     {"role": "user", "content": "你好"},
                 ]
                 _warm_success = 0
@@ -659,7 +653,7 @@ async def lifespan(app: FastAPI):
                 if _warm_success > 0:
                     lifespan_logger.info(
                         f"语音前缀预热完成：{_warm_success}/10 轮（system_prompt {len(_system_prompt)} "
-                        f"+ padding {len(_bk_voice_padding)} 字符，已含 prefix-cache padding）"
+                        f"+ padding {len(REALTIME_VOICE_PROMPT_PADDING)} 字符，已含 prefix-cache padding）"
                     )
                 else:
                     lifespan_logger.warning("语音前缀预热全部失败（不影响运行）")
@@ -679,15 +673,13 @@ async def lifespan(app: FastAPI):
                         return
                 except Exception:
                     pass
-                await _asyncio.sleep(5)
+                await asyncio.sleep(5)
             lifespan_logger.warning("Embedding 推理预热超时（不影响运行）")
 
-        await _asyncio.gather(_warm_llm(), _warm_embedding())
+        await asyncio.gather(_warm_llm(), _warm_embedding())
 
     try:
-        import asyncio as _asyncio
-
-        _asyncio.create_task(_warmup_inference_backends())
+        asyncio.create_task(_warmup_inference_backends())
         lifespan_logger.info("LLM/Embedding 推理预热任务已启动（后台执行）")
     except Exception as _bk_warmup_e:
         lifespan_logger.warning(f"LLM/Embedding 预热任务启动失败（不阻塞启动）: {_bk_warmup_e}")
