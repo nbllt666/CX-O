@@ -668,13 +668,29 @@ def create_app():
         # .trae/documents/20260817_模块0_GPU保活增强消除降频.md）
         _active_request.set()
         try:
+            # CosyVoice3 的 LLM 会把 prompt_text + text 拼接后整体生成语音（llm.py concat）。
+            # 参考转写文本若进入 prompt_text 会被念出来（回声/前缀问题）。
+            # cross_lingual 模式改用「仅含 <|endofprompt|> 标记」的 prompt_text：
+            #   1) 满足 vLLM 引擎对 <|endofprompt|>（token 151646）的强制断言；
+            #   2) prompt_text 不含参考转写文本 → 模型只念目标文本，不再回声。
+            _spk_prompt = (
+                "You are a helpful assistant.<|endofprompt|>"
+                if args.zero_shot_mode == "cross_lingual"
+                else ref_text
+            )
             # speaker 嵌入缓存：同内容 ref 首次注册，后续命中 frontend.spk2info
             if zero_shot_spk_id not in cosyvoice.frontend.spk2info:
-                cosyvoice.add_zero_shot_spk(ref_text, prompt_wav, zero_shot_spk_id)
+                cosyvoice.add_zero_shot_spk(_spk_prompt, prompt_wav, zero_shot_spk_id)
             _t_spk_done = time.monotonic()
             if instruction:
                 gen = cosyvoice.inference_instruct2(
                     text, str(instruction), prompt_wav, zero_shot_spk_id=zero_shot_spk_id,
+                    stream=stream, speed=speed,
+                )
+            elif args.zero_shot_mode == "cross_lingual":
+                # 零样本 + 仅标记 prompt_text（等价于去掉参考转写的条件文本）
+                gen = cosyvoice.inference_zero_shot(
+                    text, _spk_prompt, prompt_wav, zero_shot_spk_id=zero_shot_spk_id,
                     stream=stream, speed=speed,
                 )
             else:
@@ -1000,6 +1016,10 @@ def main() -> None:
                     help="flow decoder classifier-free guidance rate（0 关闭 CFG：每 ODE 步只用 conditional 路径、计算减半，首块显著加速但音质可能略变；None 保持模型默认 0.7）")
     ap.add_argument("--vllm", action="store_true", default=False,
                     help="LLM 走 vLLM 进程内引擎（官方 load_vllm，Linux/Docker 下无 WDDM 开销，decode 显著提速；需 vllm 已安装且模型已导出 vllm 格式）")
+    ap.add_argument("--zero-shot-mode", choices=["cross_lingual", "zero_shot"], default="cross_lingual",
+                    help="零样本克隆模式：cross_lingual 使用仅含 <|endofprompt|> 标记的 prompt_text（不含参考转写），"
+                         "避免 CosyVoice3 LLM 把参考转写文本念出来（默认，修复回声前缀问题）；"
+                         "zero_shot 保留参考转写文本作为条件（可能回声参考转写文本）")
     args = ap.parse_args()
 
     # 把 torch 自带 CUDA 12.x DLL 目录加入 PATH，使 onnxruntime-gpu 的 CUDAExecutionProvider

@@ -15,7 +15,7 @@
  *   供 OBS 等采集端按窗口名稳定捕获。
  * ============================================================================
  */
-import { app, BrowserWindow, desktopCapturer, ipcMain, session, Menu, Tray, nativeImage, globalShortcut } from 'electron';
+import { app, BrowserWindow, desktopCapturer, ipcMain, session, Menu, Tray, nativeImage, globalShortcut, shell } from 'electron';
 import type { NativeImage } from 'electron';
 import * as path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -265,6 +265,14 @@ function registerIpcHandlers(): void {
   // 窗口控制
   ipcMain.handle('window:open-management', () => {
     openManagementWindow();
+  });
+
+  // 在系统默认浏览器打开外部 URL（OBS 源预览等；仅放行 http/https/file）
+  ipcMain.handle('shell:open-external', (_event, url: string) => {
+    if (typeof url !== 'string') return;
+    if (/^(https?:|file:)/i.test(url)) {
+      shell.openExternal(url);
+    }
   });
 
   ipcMain.handle('window:toggle-danmaku', () => {

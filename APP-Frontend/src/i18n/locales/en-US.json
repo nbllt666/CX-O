@@ -57,6 +57,7 @@
     "sidebar": {
       "widgets": "Widgets",
       "liveSources": "Live OBS Sources",
+      "openInBrowser": "Open in browser",
       "collapse": "Collapse sidebar",
       "expand": "Expand sidebar"
     },

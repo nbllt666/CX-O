@@ -1,0 +1,21 @@
+{
+  "tts_user": {
+    "sample_rate": 24000,
+    "channels": 1,
+    "duration_s": 3.44
+  },
+  "asr": {
+    "text": "你好，今天天气怎么样？",
+    "latency_ms": 4148
+  },
+  "dual_stream": {
+    "asr_first_partial_ms": 4285,
+    "first_tts_chunk_ms": 4287,
+    "prefill_ms": 4285,
+    "tts_bytes": 23040,
+    "partial_final": "你好。",
+    "reply_text": "哈哈",
+    "tts_duration_s": 0.48
+  },
+  "pass": true
+}

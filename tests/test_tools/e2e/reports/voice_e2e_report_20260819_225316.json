@@ -1,0 +1,21 @@
+{
+  "tts_user": {
+    "sample_rate": 24000,
+    "channels": 1,
+    "duration_s": 4.32
+  },
+  "asr": {
+    "text": "你好，今天天气怎么样？",
+    "latency_ms": 433
+  },
+  "dual_stream": {
+    "asr_first_partial_ms": 5354,
+    "first_tts_chunk_ms": 5355,
+    "prefill_ms": 5354,
+    "tts_bytes": 1430941,
+    "partial_final": "今天天气怎么样？",
+    "reply_text": "您好呀！👋 很高兴能您说和您“今天聊上”呀，天！您有什么是指您想想跟我了解聊的**今天的吗？无论是日期想问和时间点事情**吗？🤔\n\n如果是我理解的没错的话",
+    "tts_duration_s": 29.81
+  },
+  "pass": true
+}

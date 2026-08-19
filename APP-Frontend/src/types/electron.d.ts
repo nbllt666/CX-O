@@ -17,6 +17,8 @@ declare global {
       setIgnoreMouseEvents: (ignore: boolean) => Promise<void>;
       setAlwaysOnTop: (flag: boolean) => Promise<void>;
       setWindowSize: (width: number, height: number) => Promise<void>;
+      // 在系统默认浏览器打开外部 URL（OBS 源预览等）
+      openExternal: (url: string) => Promise<void>;
       // 后端地址配置
       getBackendUrl: () => Promise<string | null>;
       setBackendUrl: (url: string) => Promise<void>;

@@ -11,7 +11,7 @@
  *
  * 分组配置定义在本组件内，不改动 routes.tsx 的 20 条冻结契约。
  */
-import { Suspense, useEffect, useRef, useState, Fragment } from 'react';
+import { Suspense, useCallback, useEffect, useRef, useState, Fragment } from 'react';
 import { NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useTranslation } from 'react-i18next';
@@ -211,6 +211,36 @@ export default function ManagementLayout() {
     );
   };
 
+  /** 在系统默认浏览器打开 OBS 源（/source/<path>），Electron 走 IPC，浏览器回退 window.open */
+  const openSourceInBrowser = useCallback((path: string) => {
+    const url = `${window.location.origin}${window.location.pathname}#/source/${path}`;
+    if (window.electronAPI?.openExternal) {
+      void window.electronAPI.openExternal(url);
+    } else {
+      window.open(url, '_blank', 'noopener,noreferrer');
+    }
+  }, []);
+
+  /** 直播 OBS 源子项：点击跳系统浏览器打开对应 /source/* 页面（不应用内预览导航） */
+  const renderLiveSourceLink = (entry: ManagementRouteEntry) => {
+    const Icon = entry.icon;
+    return (
+      <button
+        type="button"
+        onClick={() => openSourceInBrowser(entry.path)}
+        title={collapsed ? `${t(entry.titleKey)} · ${t('management.sidebar.openInBrowser')}` : undefined}
+        className={cn(
+          'flex w-full items-center gap-3 rounded-lg py-2.5 text-sm transition-all duration-fast',
+          collapsed ? 'justify-center px-0' : 'px-3',
+          'text-muted-foreground hover:bg-[rgba(255,255,255,0.06)] hover:text-primary',
+        )}
+      >
+        <Icon className={cn('shrink-0', collapsed ? 'h-5 w-5' : 'h-4 w-4')} />
+        {!collapsed && <span className="whitespace-nowrap">{t(entry.titleKey)}</span>}
+      </button>
+    );
+  };
+
   /** 对话 Agent 子菜单项（折叠态退化为平铺图标，展开态为可折叠菜单） */
   const renderChatItem = () => {
     const isActive = location.pathname === '/chat';
@@ -384,7 +414,7 @@ export default function ManagementLayout() {
               transition={{ duration: 0.25, ease: [0.4, 0, 0.2, 1] }}
             >
               {liveSourceItems.map((s) => (
-                <li key={s.path}>{renderFlatLink(s)}</li>
+                <li key={s.path}>{renderLiveSourceLink(s)}</li>
               ))}
             </motion.ul>
           )}
@@ -397,7 +427,7 @@ export default function ManagementLayout() {
   const renderLiveSourcesCollapsed = () => (
     <Fragment key="live-sources-collapsed">
       {liveSourceItems.map((s) => (
-        <Fragment key={s.path}>{renderFlatLink(s)}</Fragment>
+        <Fragment key={s.path}>{renderLiveSourceLink(s)}</Fragment>
       ))}
     </Fragment>
   );

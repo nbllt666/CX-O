@@ -15,6 +15,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
   closePet: () => ipcRenderer.invoke('window:close-pet'),
   setDanmakuVisible: (visible: boolean) =>
     ipcRenderer.invoke('window:set-danmaku-visible', visible),
+  /** 在系统默认浏览器打开外部 URL（OBS 源预览等） */
+  openExternal: (url: string) => ipcRenderer.invoke('shell:open-external', url),
   /** 订阅弹幕窗显隐变化（托盘/快捷键触发时主进程回播）；返回取消订阅函数 */
   onDanmakuVisibility: (callback: (visible: boolean) => void) => {
     const listener = (_event: Electron.IpcRendererEvent, visible: boolean) => callback(visible);

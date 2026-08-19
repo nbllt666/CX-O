@@ -192,6 +192,10 @@ class TestDualStreamSessionTriggers:
     @pytest.mark.asyncio
     async def test_partial_reaches_threshold_triggers(self, monkeypatch):
         session, mgr, ran = self._session(monkeypatch)
+        # 延续性确认：首帧缓存候选不触发，需下一帧延续/复现才确认
+        await session.on_partial_result({"text": "你好", "is_final": False})
+        await self._flush_pipeline(session)
+        assert ran == []
         await session.on_partial_result({"text": "你好", "is_final": False})
         await self._flush_pipeline(session)
         assert ran == ["你好"]
@@ -205,6 +209,10 @@ class TestDualStreamSessionTriggers:
     async def test_partial_merges_pending(self, monkeypatch):
         session, mgr, ran = self._session(monkeypatch)
         session._pending_user_text = "前一句"
+        # 延续性确认：首帧缓存，第二帧延续/复现后确认并合并 pending
+        await session.on_partial_result({"text": "你好", "is_final": False})
+        await self._flush_pipeline(session)
+        assert ran == []
         await session.on_partial_result({"text": "你好", "is_final": False})
         await self._flush_pipeline(session)
         assert ran == ["前一句 你好"]

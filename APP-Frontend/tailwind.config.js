@@ -6,19 +6,21 @@ export default {
   theme: {
     extend: {
       colors: {
-        background: 'var(--bg-primary)',
+        // 说明：var 色需以「通道值 + <alpha-value>」定义，透明度修饰（bg-primary/80 等）
+        // 才能生效；全色值保留在 tokens.css 的 --color-* 供组件直接 var() 引用。
+        background: 'rgb(var(--bg-primary-channel) / <alpha-value>)',
         foreground: 'var(--text-primary)',
         surface: 'var(--bg-secondary)',
         primary: {
-          DEFAULT: 'var(--color-primary)',
+          DEFAULT: 'rgb(var(--color-primary-channel) / <alpha-value>)',
           foreground: 'var(--color-primary-foreground)',
         },
         secondary: {
-          DEFAULT: 'var(--color-secondary)',
+          DEFAULT: 'rgb(var(--color-secondary-channel) / <alpha-value>)',
           foreground: 'var(--color-secondary-foreground)',
         },
         accent: {
-          DEFAULT: 'var(--color-accent)',
+          DEFAULT: 'rgb(var(--color-accent-channel) / <alpha-value>)',
           foreground: 'var(--color-accent-foreground)',
         },
         muted: {

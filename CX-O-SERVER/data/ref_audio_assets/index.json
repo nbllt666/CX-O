@@ -12,5 +12,19 @@
     "channels": 1,
     "duration_seconds": 3.0,
     "size_bytes": 144044
+  },
+  {
+    "id": "ref_034ed0259d8043db",
+    "source": "file",
+    "checksum": "87b29a059aee532f58e2de9cb20c5740",
+    "status": "registered",
+    "created_at": "2026-08-19T12:07:41.123232+00:00",
+    "file_name": "_upload_edgetts_ref.wav",
+    "ref_text": "你好，我是一个AI助手，很高兴为您服务。您有什么需要我帮忙的吗？",
+    "format": "wav",
+    "sample_rate": 24000,
+    "channels": 1,
+    "duration_seconds": 7.032,
+    "size_bytes": 337580
   }
 ]

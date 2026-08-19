@@ -24,6 +24,7 @@ function mockElectronApi() {
     setIgnoreMouseEvents: vi.fn().mockResolvedValue(undefined),
     setAlwaysOnTop: vi.fn().mockResolvedValue(undefined),
     setWindowSize: vi.fn().mockResolvedValue(undefined),
+    openExternal: vi.fn().mockResolvedValue(undefined),
     getBackendUrl: vi.fn().mockResolvedValue(null),
     setBackendUrl: vi.fn().mockResolvedValue(undefined),
     getComputerControlAuth: vi.fn().mockResolvedValue(false),

@@ -27,6 +27,22 @@ logger = logging.getLogger(__name__)
 _tts_playing_clients: set = set()
 _tts_playing_lock = asyncio.Lock()
 
+
+def _is_continuation(prev: str, cur: str) -> bool:
+    """判断 cur 是否为 prev 的延续（同句复现 / 累积扩展）。
+
+    SenseVoice 流式对同一语音段会连续复现相同文本或递增扩展
+    （如 '你好' → '你好。'，'今天' → '今天天'），而音频起始边缘的幻觉
+    （如 'Yeah。'）只闪现一次即被后续真实文本替换、与前后无延续关系。
+    据此用"文本延续性"而非字符类型/长度区分真实输入与边缘幻觉：
+    真实输入（含 '好'、'how are you' 等短句/英文/单字）会被下一帧复现或
+    延续而确认；孤立无延续的片段判为幻觉丢弃，不误杀任何真实内容。
+    """
+    prev, cur = prev.strip(), cur.strip()
+    if not prev or not cur:
+        return False
+    return cur.startswith(prev) or prev.startswith(cur)
+
 # 双流式会话存储：client_id -> DualStreamSession
 # 每个客户端独立维护流水线状态，避免跨客户端干扰
 _dual_stream_sessions: dict[str, "DualStreamSession"] = {}
@@ -127,6 +143,22 @@ class DualStreamSession:
         # 设为 2：用户说出 2 个字即触发，省去等待 VAD on_end 的 ~500ms 静默判定
         self._trigger_char_threshold: int = 2
 
+        # ---- 首帧延续性确认状态（边缘幻觉防护）----
+        # _pending_partial: 未确认的候选 partial（延迟一拍等下一帧确认）
+        self._pending_partial: str = ""
+        # _partial_confirmed: 当前 utterance 是否已确认首帧真实；确认后直通，
+        # 后续 partial 不再做延续性校验，避免对稳定流引入额外延迟。
+        self._partial_confirmed: bool = False
+
+        # ---- VAD 打断保护状态 ----
+        # 用户语音结束时间（VAD speech_end 记录）。语音结束后短窗口内的 speech_start
+        # 多为 VAD 处理用户语音尾部残留帧的滞后误判（voice_e2e 实测：TTS 刚启动即被
+        # 假 speech_start 打断，回复输出为 0B）。该窗口内不打断，覆盖残留处理滞后；
+        # 窗口外（用户真正再次开口）仍正常打断。
+        self._last_speech_end_time: float = 0.0
+        # speech_end 后忽略 speech_start 打断的保护窗口（毫秒）
+        self._speech_end_guard_ms: float = 1000.0
+
         # 后台任务引用集合：防止 _finalize_turn / _maybe_agent_interrupt 等长任务
         # 被 GC 提前回收（asyncio 不持有裸 create_task 的引用）。
         self._background_tasks: set = set()
@@ -143,11 +175,25 @@ class DualStreamSession:
         用户开口即立即停止 TTS 播放，无需等待 ASR 识别出完整文本，
         省去 ASR 识别延迟（~200ms），实现毫秒级全双工打断。
         """
-        # 如果 TTS 正在播放（Agent 在说话），立即打断当前流水线
-        if self._pipeline_task and not self._pipeline_task.done():
-            await self._interrupt_pipeline()
+        # 仅当本客户端 TTS 确实在播放（Agent 正在说话）时才打断流水线。
+        # LLM 预填充/尚未出声阶段（_tts_playing_clients 未标记）触发打断会误伤
+        # 刚启动的回复——VAD 对语音尾部/静音边缘的假 speech_start 实测会取消
+        # 尚未输出的回复，导致双流无 TTS 输出（2026-08-19 复现）。
+        if self.client_id in _tts_playing_clients:
+            # 打断保护窗口：VAD 处理用户语音尾部残留帧存在滞后，用户语音结束
+            # （speech_end）后短窗口内的 speech_start 多为残留误判，跳过打断，
+            # 避免 TTS 刚启动即被取消（voice_e2e 实测回复 0B）。
+            in_guard_window = (
+                self._last_speech_end_time
+                and (time.monotonic() - self._last_speech_end_time) * 1000 < self._speech_end_guard_ms
+            )
+            if not in_guard_window and self._pipeline_task and not self._pipeline_task.done():
+                await self._interrupt_pipeline()
         # 重置当前 utterance 的触发标志，允许新 utterance 触发 LLM
         self._has_triggered_this_utterance = False
+        # 重置首帧延续性确认状态（新 utterance 重新做边缘幻觉确认）
+        self._pending_partial = ""
+        self._partial_confirmed = False
 
     async def on_partial_result(self, asr_result: dict) -> None:
         """ASR Partial Result 主驱动：立即触发 LLM Speculative Prefill
@@ -156,12 +202,39 @@ class DualStreamSession:
         不等 VAD on_end 的 500ms 静默判定，可省下约 500ms 端到端延迟。
         每个 utterance 仅触发一次（由 _has_triggered_this_utterance 控制），
         避免同一 utterance 内多个 Partial 重复触发 LLM。
+
+        边缘幻觉防护（首帧延续性确认，2026-08-19 重构）：
+        音频起始边缘的首个 partial 可能是 SenseVoice 幻觉（如 'Yeah。'），
+        但 'Yeah。'/'二？'/'好'/'how are you' 也可能是真实输入，不能按
+        字符类型/长度一刀切。改为延续性确认：未确认的候选 partial 延迟一拍，
+        若下一帧延续/复现它则确认为真实输入（推送+触发），否则丢弃
+        （幻觉只闪现一次即被真实内容替换、无延续关系）。已确认后直通，
+        对稳定流不引入额外延迟。
         """
         text = asr_result.get("text", "").strip()
         # 诊断日志：确认 on_partial_result 被调用及其参数
-        logger.debug("[DIAG-PARTIAL] on_partial_result called, text='%s' (len=%d), is_final=%s, has_triggered=%s, threshold=%s", text, len(text), asr_result.get('is_final'), self._has_triggered_this_utterance, self._trigger_char_threshold)
+        logger.debug("[DIAG-PARTIAL] on_partial_result called, text='%s' (len=%d), is_final=%s, has_triggered=%s, confirmed=%s, threshold=%s", text, len(text), asr_result.get('is_final'), self._has_triggered_this_utterance, self._partial_confirmed, self._trigger_char_threshold)
         if not text:
             return
+
+        # ---- 首帧延续性确认（仅未确认时启用，已确认后直通）----
+        if not self._partial_confirmed:
+            if not self._pending_partial:
+                # 尚无候选：暂存当前帧，等下一帧确认；不推送前端、不触发
+                self._pending_partial = text
+                logger.debug("[DIAG-PARTIAL] cache candidate partial for confirmation: %r", text)
+                return
+            if not _is_continuation(self._pending_partial, text):
+                # 候选未被延续/复现 → 判定为音频边缘幻觉，丢弃（不推送、不触发）
+                logger.debug("[DIAG-PARTIAL] drop unconfirmed edge partial: %r (replaced by %r)", self._pending_partial, text)
+                self._pending_partial = text
+                return
+            # 候选被下一帧延续/复现 → 确认为真实输入，用较完整的一帧继续
+            prev = self._pending_partial
+            self._partial_confirmed = True
+            self._pending_partial = ""
+            text = text if len(text) >= len(prev) else prev
+            logger.debug("[DIAG-PARTIAL] confirmed real input: %r (continued by %r)", prev, text)
 
         # 推送 Partial 文本给前端（实时显示用户正在说什么）
         logger.debug("[DIAG-PARTIAL] before _send_partial")
@@ -197,17 +270,23 @@ class DualStreamSession:
         self._pipeline_task = asyncio.create_task(self._run_pipeline(full_user_text))
 
     async def on_vad_speech_end(self, asr_result: Optional[dict]) -> None:
-        """VAD 兜底：修正 Final 文本用于上下文记录
+        """VAD 兜底：修正 Final 文本并兜底触发未启动的 pipeline
 
-        双流式模式下主流程已由 ASR Partial Result 驱动，此处仅做收尾：
-        - 用 VAD on_end 后的 Final 文本修正上下文记录（比 Partial 更准确）
-        - 不重启已由 Partial 启动的 LLM 流程
-        - 未触发路径由 on_final_result 统一负责（final 在 speech_end 后
-          ~200-500ms 才到达，此处 asr_result 通常为空或 partial）
+        双流式模式下主流程由 ASR Partial Result 驱动，此处做收尾：
+        - 已触发：用 VAD on_end 后的 Final 文本修正上下文记录（比 Partial 更准确）
+        - 未触发：兜底触发 pipeline（2026-08-19 新增）
+          实测 SenseVoice 对短音频常只产出 final（无 partial），且 final 可能在
+          VAD speech_end **之前**到达（此时 on_final_result 因 is_speaking=True
+          判定"final 迟到"而拦截触发，仅累积 pending）。若不在此兜底，该 utterance
+          的 pipeline 永不启动（无回复，voice_e2e 偶发复现）。VAD speech_end 是
+          语音结束的可靠信号，据此用 pending+final 兜底触发。
         """
         final_text = ""
         if asr_result:
             final_text = asr_result.get("text", "").strip()
+
+        # 记录语音结束时间：供 on_vad_speech_start 的打断保护窗口使用
+        self._last_speech_end_time = time.monotonic()
 
         if self._has_triggered_this_utterance:
             # 当前 utterance 已触发 LLM：用 Final 文本修正上下文记录
@@ -221,6 +300,33 @@ class DualStreamSession:
                 self._track_background_task(
                     asyncio.create_task(self._finalize_turn(pipeline_task))
                 )
+            return
+
+        # ---- 未触发：VAD speech_end 兜底触发 ----
+        # final 若已在 speech_end 前到达，会被 on_final_result 以 is_speaking=True
+        # 累积进 pending；此处合并 pending + final 触发（文本过短则留待合并）。
+        candidate = final_text or self._pending_user_text
+        if len(candidate) < self._trigger_char_threshold:
+            return
+
+        if self._pending_user_text and final_text and final_text not in self._pending_user_text:
+            full_user_text = f"{self._pending_user_text} {final_text}"
+        elif final_text:
+            full_user_text = final_text
+        else:
+            full_user_text = self._pending_user_text
+        self._pending_user_text = ""
+
+        self._has_triggered_this_utterance = True
+        self._current_user_text = full_user_text
+        self._final_user_text = final_text or full_user_text
+
+        logger.debug("[DIAG-PARTIAL] on_vad_speech_end fallback trigger, text='%s'", full_user_text)
+        await self._send_prefill_started(full_user_text)
+        self._pipeline_task = asyncio.create_task(self._run_pipeline(full_user_text))
+        self._track_background_task(
+            asyncio.create_task(self._finalize_turn(self._pipeline_task))
+        )
 
         # 注意：不在此处重置 _has_triggered_this_utterance。
         # final 结果在 speech_end 之后才到达，on_final_result 需要凭此 flag
@@ -627,12 +733,33 @@ class DualStreamSession:
 
 
 def init_interrupt_module():
-    """初始化 ASR 打断与 AI 插话打断模块单例。"""
+    """初始化 ASR 打断与 AI 插话打断模块单例，并加载 config.json 配置。
+
+    此前 agent_interrupt 的 set_config 仅在 live_client 的运行时 config 消息中
+    被调用，普通 WS 场景下单例保持默认 enabled=True——config.json 的
+    agent_interrupt.enabled=false 从未生效（UnifiedConfig 未声明该节，
+    config.json 的 agent_interrupt 键被 pydantic 静默丢弃）。此处启动时直接
+    读取 config.json 原始内容补齐配置，使禁用/阈值等全局生效。
+    """
+    import json as _json
+    from pathlib import Path
+
     from server.services.asr_interrupt import get_asr_interrupt_module
     get_asr_interrupt_module()
 
     from server.services.agent_interrupt_user import get_agent_interrupt_module
-    get_agent_interrupt_module()
+    agent_interrupt = get_agent_interrupt_module()
+
+    # UnifiedConfig 未声明 agent_interrupt 节，直接读 config.json 原始内容应用
+    try:
+        cfg_path = Path(__file__).resolve().parent.parent.parent / "config.json"
+        with open(cfg_path, "r", encoding="utf-8") as f:
+            raw_cfg = _json.load(f)
+        if "agent_interrupt" in raw_cfg:
+            agent_interrupt.set_config({"agent_interrupt": raw_cfg["agent_interrupt"]})
+            logger.info("已加载 agent_interrupt 配置: %s", raw_cfg["agent_interrupt"])
+    except Exception as e:
+        logger.warning(f"加载 agent_interrupt 配置失败: {e}")
 
 
 def init_audio_stream_processor(asr_client):

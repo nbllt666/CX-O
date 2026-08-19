@@ -1,0 +1,21 @@
+{
+  "tts_user": {
+    "sample_rate": 24000,
+    "channels": 1,
+    "duration_s": 1.92
+  },
+  "asr": {
+    "text": "你好，今天天气怎么样？",
+    "latency_ms": 215
+  },
+  "dual_stream": {
+    "asr_first_partial_ms": 2521,
+    "first_tts_chunk_ms": 2523,
+    "prefill_ms": 2521,
+    "tts_bytes": 459359,
+    "partial_final": "你好，今天天气怎么样？",
+    "reply_text": "您好呀！👋 很高兴能和您聊上天！\n\n您有什么想问我的",
+    "tts_duration_s": 9.57
+  },
+  "pass": true
+}

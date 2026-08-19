@@ -63,6 +63,7 @@
 
   /* 2.1 背景 / 文字 */
   --bg-primary: var(--gray-50);
+  --bg-primary-channel: 250 250 252; /* gray-50 通道值（供 Tailwind <alpha-value>，须与上方同步） */
   --bg-secondary: var(--white);
   --bg-tertiary: var(--gray-100);
   --text-primary: var(--gray-900);
@@ -70,11 +71,17 @@
   --border-color: var(--gray-200);
 
   /* 2.2 强调色 */
+  /* 注：--color-*-channel 为 RGB 通道值，仅供 Tailwind 透明度修饰（/80 等）使用，
+     --color-* 保留全色值供组件直接 var() 引用（如 focus:ring-[var(--color-accent)]）。
+     两者必须同步维护。 */
   --color-primary: var(--pink-500);
+  --color-primary-channel: 255 123 186; /* pink-500 */
   --color-primary-foreground: var(--white);
   --color-secondary: var(--purple-500);
+  --color-secondary-channel: 157 124 255; /* purple-500 */
   --color-secondary-foreground: var(--white);
   --color-accent: var(--cyan-500);
+  --color-accent-channel: 124 216 255; /* cyan-500 */
   --color-accent-foreground: var(--gray-900);
 
   /* 2.3 液态玻璃层级（Liquid Glass：半透明 + backdrop-blur + 细腻高光） */
@@ -103,17 +110,21 @@
 /* ======================== 2. 语义层 semantic（暗色） ======================== */
 [data-theme='dark'] {
   --bg-primary: var(--gray-900);
+  --bg-primary-channel: 18 18 26; /* gray-900 */
   --bg-secondary: #1a1a28;
   --bg-tertiary: var(--gray-800);
   --text-primary: var(--gray-50);
   --text-secondary: var(--gray-400);
   --border-color: rgba(255, 255, 255, 0.08);
 
-  --color-primary: var(--pink-300);
-  --color-primary-foreground: var(--gray-900);
+  --color-primary: var(--pink-500);
+  --color-primary-channel: 255 123 186; /* pink-500 */
+  --color-primary-foreground: var(--white);
   --color-secondary: var(--purple-300);
+  --color-secondary-channel: 201 184 255; /* purple-300 */
   --color-secondary-foreground: var(--gray-900);
   --color-accent: var(--cyan-300);
+  --color-accent-channel: 165 236 255; /* cyan-300 */
   --color-accent-foreground: var(--gray-900);
 
   /* 暗色玻璃：更低不透明度 + 顶部细高光描边 */

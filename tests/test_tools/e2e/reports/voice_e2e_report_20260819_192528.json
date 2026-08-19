@@ -1,0 +1,21 @@
+{
+  "tts_user": {
+    "sample_rate": 24000,
+    "channels": 1,
+    "duration_s": 3.64
+  },
+  "asr": {
+    "text": "参考音频转写文本。你好，今天天气怎么样？",
+    "latency_ms": 4888
+  },
+  "dual_stream": {
+    "asr_first_partial_ms": 4765,
+    "first_tts_chunk_ms": 7093,
+    "prefill_ms": 4765,
+    "tts_bytes": 817240,
+    "partial_final": "参考音频转写文本。你好，今天天气怎么样？",
+    "reply_text": "您说的是“さ”（sa）这个词呢？🤔 是日文的",
+    "tts_duration_s": 17.03
+  },
+  "pass": true
+}

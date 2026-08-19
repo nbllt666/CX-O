@@ -57,6 +57,7 @@
     "sidebar": {
       "widgets": "小工具",
       "liveSources": "直播 OBS 源",
+      "openInBrowser": "在浏览器打开",
       "collapse": "收起侧边栏",
       "expand": "展开侧边栏"
     },
