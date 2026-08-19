@@ -2,11 +2,11 @@
   "$schema": "http://json-schema.org/draft-07/schema#",
   "$id": "https://cx-o/public/config_template/qwen3_tts_config.schema.json",
   "title": "Qwen3TTSConfig",
-  "description": "统一 Qwen3 TTS 配置契约。含默认值、取值范围与缺失字段自动补齐(缺失字段按各属性 default 补齐，required 仅 enabled/runtime)。runtime 选择 vllm 首选；无参考音频的日常/情感合成由 vLLM VoiceDesign(task_type=VoiceDesign)承接，带参考音频的语音克隆由 IndexTTS-2.5(indextts 运行时)承接。旧引擎配置(f5_tts/orpheus/cosyvoice/emotion_refs)不再作为可选引擎，加载时映射 LEGACY_ENGINE_REMOVED。源真理：spec unify-qwen3-tts-migration 冻结决策 + s0601 契约变更(VoiceDesign+IndexTTS 架构)。",
+  "description": "统一 Qwen3 TTS 配置契约。含默认值、取值范围与缺失字段自动补齐(缺失字段按各属性 default 补齐，required 仅 enabled/runtime)。runtime 选择 vllm 首选（内部映射 voicedesign 运行时）；无参考音频的日常/情感合成由 vLLM VoiceDesign(task_type=VoiceDesign)承接，带参考音频的语音克隆由 CosyVoice3(cosyvoice 运行时)承接，CosyVoice/VoiceDesign 不可用时降级 Qwen3-TTS Base(qwen3_base 运行时)。旧引擎配置(f5_tts/orpheus/emotion_refs)不再作为可选引擎，加载时映射 LEGACY_ENGINE_REMOVED。源真理：spec cosyvoice2-primary-qwen3tts-base-fallback 冻结决策 + s0601 契约变更(v1.5.0 + v1.5.1 CosyVoice3 迁移授权 2026-08-16)。",
   "type": "object",
   "properties": {
     "enabled": { "type": "boolean", "default": true },
-    "runtime": { "type": "string", "enum": ["vllm"], "default": "vllm", "description": "首选运行时。vllm 为唯一首选；带 refs 时自动路由 indextts 克隆运行时。" },
+    "runtime": { "type": "string", "enum": ["vllm"], "default": "vllm", "description": "首选运行时。vllm 为唯一首选（内部映射 voicedesign 运行时）；带 refs 时自动路由 cosyvoice 克隆运行时，不可用时降级 qwen3_base。" },
     "vllm": {
       "type": "object",
       "description": "vLLM-Omni VoiceDesign 运行时：无参考音频的日常/情感合成。",
@@ -19,12 +19,23 @@
       },
       "required": ["base_url", "model"]
     },
-    "indextts": {
+    "cosyvoice": {
       "type": "object",
-      "description": "IndexTTS-2.5 克隆运行时：带参考音频的语音克隆。base_url 为空则禁用克隆能力，携带 refs 的请求抛 RuntimeUnsupportedError。",
+      "description": "CosyVoice3-0.5B 克隆运行时：带参考音频的语音克隆与情感合成。base_url 为空则禁用克隆能力，携带 refs 的请求抛 RuntimeUnsupportedError。",
       "properties": {
-        "base_url": { "type": "string", "default": "http://127.0.0.1:8092", "description": "IndexTTS-2.5 OpenAI 兼容 /v1/audio/speech 基础地址。" },
-        "model": { "type": "string", "default": "IndexTTS-2.5" },
+        "base_url": { "type": "string", "default": "http://127.0.0.1:8094", "description": "CosyVoice3-0.5B OpenAI 兼容 /v1/audio/speech 基础地址。" },
+        "model": { "type": "string", "default": "Fun-CosyVoice3-0.5B-2512" },
+        "timeout_seconds": { "type": "number", "minimum": 1, "default": 120 },
+        "sample_rate": { "type": "integer", "const": 24000 }
+      },
+      "required": ["base_url", "model"]
+    },
+    "qwen3_base": {
+      "type": "object",
+      "description": "Qwen3-TTS Base 降级运行时：CosyVoice/VoiceDesign 不可用、超时或非法响应时兜底。base_url 为空则禁用降级能力。",
+      "properties": {
+        "base_url": { "type": "string", "default": "http://127.0.0.1:8093", "description": "Qwen3-TTS Base vLLM OpenAI 兼容 /v1/audio/speech 基础地址。" },
+        "model": { "type": "string", "default": "Qwen/Qwen3-TTS-12Hz-1.7B-Base" },
         "timeout_seconds": { "type": "number", "minimum": 1, "default": 120 },
         "sample_rate": { "type": "integer", "const": 24000 }
       },
@@ -49,7 +60,7 @@
     },
     "legacy_engine_removed": {
       "type": "object",
-      "description": "旧引擎配置不再作为可选引擎；加载含 f5_tts/orpheus/cosyvoice/emotion_refs 时映射 LEGACY_ENGINE_REMOVED。",
+      "description": "旧引擎配置不再作为可选引擎；加载含 f5_tts/orpheus/emotion_refs 时映射 LEGACY_ENGINE_REMOVED。cosyvoice 已恢复为一级运行时（cosyvoice 段），不作旧引擎拒绝。",
       "properties": {
         "return_removed_error": { "type": "boolean", "default": true }
       }

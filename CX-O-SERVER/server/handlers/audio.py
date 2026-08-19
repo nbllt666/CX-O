@@ -357,6 +357,10 @@ class DualStreamSession:
 
             async for chunk in self.tts_service.synthesize_stream_fine(
                 token_stream=smoothed_stream,
+                # char_threshold 3→2（2026-08-18 WS 全链路 <800ms 优化）：首个 TTS 片段
+                # 在 2 字即触发，减少 LLM 生成等待 ~10-20ms。仅影响首片段触发时机，
+                # 后续片段仍按标点/窗口聚合，音质不受影响。
+                char_threshold=2,
                 **tts_kwargs
             ):
                 # 流结束标记

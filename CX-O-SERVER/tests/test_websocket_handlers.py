@@ -132,8 +132,9 @@ def _patch_chat_deps(monkeypatch, agent_config=None, llm=None, context_mgr=None,
         stream_chat=None,
     )
     context_mgr = context_mgr or SimpleNamespace(
-        get_session=lambda sid: None,
-        create_session=lambda workspace_id, title: "s1",
+        get_session=lambda sid: {"id": sid} if sid == "s1" else None,
+        create_session=lambda **kw: kw.get("session_id") or "s1",
+        update_session=lambda *a, **kw: True,
         add_message=lambda session_id, role, content: None,
     )
     build_messages = build_messages or (lambda **kw: [{"role": "user", "content": "hi"}])
@@ -170,17 +171,48 @@ class TestHandleChat:
         assert msg["tokens_used"] == 8
 
     @pytest.mark.asyncio
-    async def test_creates_session_when_missing(self, handler, fake_mgr, monkeypatch):
+    async def test_creates_agent_session_when_missing(self, handler, fake_mgr, monkeypatch):
         created = []
         context_mgr = SimpleNamespace(
             get_session=lambda sid: None,
-            create_session=lambda workspace_id, title: created.append(workspace_id) or "new_s1",
+            create_session=lambda **kw: created.append(kw.get("workspace_id"))
+            or kw.get("session_id", "new_s1"),
+            update_session=lambda *a, **kw: True,
             add_message=lambda session_id, role, content: None,
         )
         _patch_chat_deps(monkeypatch, context_mgr=context_mgr)
         await handler._handle_chat("c1", {"message": "hi"})
-        assert created == ["default"]  # 未携带 session_id → 自动创建
-        assert _last_sent(fake_mgr)["session_id"] == "new_s1"
+        # 未携带 session_id → 默认 agent-{id} 会话（对齐历史读取键）
+        assert created == ["agent-chats"]
+        assert _last_sent(fake_mgr)["session_id"] == "agent-default"
+
+    @pytest.mark.asyncio
+    async def test_agent_session_autocreate_when_provided_but_missing(
+        self, handler, fake_mgr, monkeypatch
+    ):
+        created = []
+        context_mgr = SimpleNamespace(
+            get_session=lambda sid: None,
+            create_session=lambda **kw: created.append(kw.get("session_id"))
+            or kw.get("session_id", "new_s1"),
+            update_session=lambda *a, **kw: True,
+            add_message=lambda session_id, role, content: None,
+        )
+        _patch_chat_deps(monkeypatch, context_mgr=context_mgr)
+        # 携带 agent-default 但会话不存在 → 自动创建而非报错
+        await handler._handle_chat("c1", {"message": "hi", "session_id": "agent-default"})
+        assert created == ["agent-default"]
+        assert _last_sent(fake_mgr)["type"] == "chat_response"
+        assert _last_sent(fake_mgr)["session_id"] == "agent-default"
+
+    @pytest.mark.asyncio
+    async def test_unknown_session_errors(self, handler, fake_mgr, monkeypatch):
+        _patch_chat_deps(monkeypatch)
+        # 携带不存在的非 agent-{id} 会话 → 报「会话不存在」
+        await handler._handle_chat("c1", {"message": "hi", "session_id": "nope"})
+        msg = _last_sent(fake_mgr)
+        assert msg["type"] == "error"
+        assert "不存在" in msg["error"]
 
     @pytest.mark.asyncio
     async def test_exception_sends_error(self, handler, fake_mgr, monkeypatch):

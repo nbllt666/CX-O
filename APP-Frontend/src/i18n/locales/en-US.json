@@ -56,6 +56,7 @@
     },
     "sidebar": {
       "widgets": "Widgets",
+      "liveSources": "Live OBS Sources",
       "collapse": "Collapse sidebar",
       "expand": "Expand sidebar"
     },
@@ -115,7 +116,15 @@
       "doneEmpty": "Response completed",
       "cancelled": "Generation stopped",
       "alarmTitle": "Reminder",
-      "alarmClose": "Dismiss"
+      "alarmClose": "Dismiss",
+      "autoSummary": "Auto Summary",
+      "customSummary": "Custom Summary",
+      "summaryModalTitle": "Dialogue Summary Assistant",
+      "summaryPromptIntro": "I am the summary assistant. I will analyze this conversation and generate summary memories.\n\nYou can:\n1. Ask me to auto summarize\n2. Tell me what aspects to focus on\n3. Specify importance and timestamp\n\nI will save summaries as structured memories with content, importance(1-10), and timestamp.",
+      "summaryInputPlaceholder": "Tell me how to summarize this conversation...",
+      "summaryInputHint": "Hint: Send 'Auto summarize' or specify custom requirements.",
+      "summaryAutoTrigger": "Please auto summarize the current conversation",
+      "summaryFailed": "Sorry, summary generation failed. Please retry."
     },
     "memories": {
       "subtitle": "Browse and manage system memories",
@@ -170,7 +179,9 @@
       "confirmTag": "Confirm",
       "batchArchiveConfirm": "Archive {{count}} selected memories?",
       "batchDeleteConfirm": "Delete {{count}} selected memories?",
-      "batchFailed": "Batch operation failed. Please retry."
+      "batchFailed": "Batch operation failed. Please retry.",
+      "openAssistant": "Memory Assistant",
+      "assistantDrawerTitle": "Memory Assistant"
     },
     "archive": {
       "subtitle": "Memory archiving and deduplication",
@@ -699,7 +710,41 @@
       "cardName": "Card name",
       "sourceRefLength": "Source ref length",
       "startFromCard": "Start from card",
-      "groupId": "Group ID"
+      "groupId": "Group ID",
+      "sourceTypes": {
+        "text": "Text",
+        "character_card": "Character card",
+        "image": "Image",
+        "video": "Video",
+        "audio": "Audio",
+        "conversation_log": "Conversation log"
+      },
+      "goals": {
+        "memory": "Memory",
+        "agent": "Agent",
+        "memory_and_agent": "Memory + Agent"
+      },
+      "states": {
+        "S_INIT": "Init",
+        "S_PREREAD": "Preread",
+        "S_QUESTION": "Clarify",
+        "S_REFLECT": "Reflect",
+        "S_CROSSVALIDATE": "Cross-validate",
+        "S_EXTRACT": "Extract",
+        "S_STORAGE_DECISION": "Storage decision",
+        "S_FINALIZE": "Finalize",
+        "S_REJECT": "Rejected"
+      },
+      "actions": {
+        "ask_user": "Ask user",
+        "proceed": "Proceed",
+        "reflect": "Reflect",
+        "cross_validate": "Cross-validate",
+        "extract": "Extract",
+        "decide": "Decide",
+        "finalize": "Finalize",
+        "reject": "Reject"
+      }
     }
   },
   "danmaku": {

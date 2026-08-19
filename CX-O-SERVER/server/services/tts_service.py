@@ -8,6 +8,7 @@ from __future__ import annotations
 import base64
 import logging
 import os
+import re
 import tempfile
 from pathlib import Path
 from typing import Any, AsyncGenerator, Callable, Optional
@@ -21,6 +22,66 @@ from server.services.emotion_instruction_service import (
 from server.services.effect_parser import EffectParser
 
 logger = logging.getLogger(__name__)
+
+
+# <tts_instruction> 结构化 JSON 内是否显式含 speed/volume 键的检测
+_SPEED_KEY = "speed"
+_VOLUME_KEY = "volume"
+
+
+def _has_json_key(text: str, key: str) -> bool:
+    """判断文本内嵌 <tts_instruction> JSON 是否含 `key` 键（精确匹配，避免子串误匹配）。"""
+    import json as _json
+
+    for tag_m in _TTAG_RE.finditer(text):
+        stripped = tag_m.group(1).strip()
+        _fence = _FENCE_RE.search(stripped)
+        if _fence:
+            stripped = _fence.group(1).strip()
+        if not stripped.startswith("{"):
+            # 纯文本指令（非 JSON），不算显式结构化指定
+            continue
+        try:
+            data = _json.loads(stripped)
+        except Exception:
+            continue
+        if isinstance(data, dict) and key in data:
+            return True
+    return False
+
+
+# <tts_instruction> 块提取正则（与 emotion_instruction_service._TTS_INSTRUCTION_RE 对齐）
+_TTAG_RE = re.compile(r"<tts_instruction\s*>([\s\S]*?)</tts_instruction>")
+# Markdown 围栏 JSON 提取
+_FENCE_RE = re.compile(r"```(?:json)?\s*([\s\S]*?)```")
+
+
+def _label_has_speed_volume(text: str) -> tuple[bool, bool]:
+    """检测一段文本内嵌 <tts_instruction> 结构化 JSON 是否显式指定 speed/volume。
+
+    仅当键存在且其值非默认可判定时才返回 True，避免标签缺省覆盖 config 层默认 speed。
+    返回 (has_speed, has_volume)。
+    """
+    has_speed = _has_json_key(text, _SPEED_KEY)
+    has_volume = _has_json_key(text, _VOLUME_KEY)
+    return has_speed, has_volume
+
+
+def _inject_label_params(base_kwargs: dict, text: str, instruction) -> dict:
+    """从内嵌标签将 speed/volume 注入合成参数；仅当标签显式指定对应键才覆盖。
+
+    instruction 缺省（None / 关闭 / 无标签）时保持 base_kwargs 不变，
+    不覆盖 config 层默认 speed。
+    """
+    out = dict(base_kwargs)
+    if instruction is None:
+        return out
+    has_speed, has_volume = _label_has_speed_volume(text)
+    if has_speed:
+        out["speed"] = instruction.speed
+    if has_volume:
+        out["volume"] = instruction.volume
+    return out
 
 
 class TTSService:
@@ -161,15 +222,57 @@ class TTSService:
 
     async def _gen_instruction(self, text: str) -> str | None:
         """生成 tts_instruction 自然语言文本；emotion_instruction 关闭时返回 None。"""
+        inst = await self._gen_instruction_full(text)
+        return inst.text or None if inst else None
+
+    async def _gen_instruction_full(self, text: str):
+        """生成完整 EmotionInstruction（含 speed/volume 真实参数），关闭时返回 None。
+
+        对 speed/volume 做防御性读取（兼容测试中仅实现 .text 的轻量替身）。
+        """
         if not self._emotion_instruction_enabled:
             return None
-        instruction = await generate_instruction(text)
-        return instruction.text or None
+        try:
+            instruction = await generate_instruction(text)
+        except Exception:
+            return None
+        if instruction is None:
+            return None
+        # 防御性读取：缺省时 speed/volume 保持 1.0（与 EmotionInstruction 默认值一致）
+        try:
+            speed = float(getattr(instruction, "speed", 1.0) or 1.0)
+        except (TypeError, ValueError):
+            speed = 1.0
+        try:
+            volume = float(getattr(instruction, "volume", 1.0) or 1.0)
+        except (TypeError, ValueError):
+            volume = 1.0
+        if speed <= 0:
+            speed = 1.0
+        if volume <= 0:
+            volume = 1.0
+        # 简单封装，统一 .text/.speed/.volume 访问
+        from types import SimpleNamespace
+        return SimpleNamespace(
+            text=(instruction.text or None) if getattr(instruction, "text", None) else None,
+            speed=speed,
+            volume=volume,
+        )
 
     def _build_qwen3_request(self, text, ref_ids, instruction_text, stream, **kwargs):
-        """组装 Qwen3 SynthesisRequest（defaults 从配置读取，kwargs 可覆盖）。"""
+        """组装 Qwen3 SynthesisRequest（defaults 从配置读取，kwargs 可覆盖）。
+
+        speed 优先级：kwargs.speed > defaults.speed > 1.0；
+        volume 优先级：kwargs.volume > 1.0（由 _synthesize_stream_fine 从标签注入）。
+        """
         from server.qwen3_tts_provider import SynthesisRequest
         defaults = self._qwen3_defaults()
+        speed = float(kwargs.get("speed") if kwargs.get("speed") is not None else defaults.get("speed") or 1.0)
+        volume = float(kwargs.get("volume") if kwargs.get("volume") is not None else 1.0)
+        if speed <= 0:
+            speed = 1.0
+        if volume <= 0:
+            volume = 1.0
         return SynthesisRequest(
             text=text,
             refs=ref_ids,
@@ -178,24 +281,29 @@ class TTSService:
             language=(kwargs.get("language") or defaults.get("language")) or None,
             stream=stream,
             output_format=kwargs.get("output_format") or defaults.get("output_format") or "wav",
-            speed=float(kwargs.get("speed") if kwargs.get("speed") is not None else defaults.get("speed") or 1.0),
+            speed=speed,
+            volume=volume,
         )
 
     async def _synthesize_qwen3(self, text: str, **kwargs) -> bytes:
         """Qwen3 非流式合成：剥离指令 → 生成指令 → 委托 Provider，返回完整音频 bytes。"""
         clean = strip_instruction(text)
-        instruction = await self._gen_instruction(text)
+        instruction = await self._gen_instruction_full(text)
         ref_ids = self._build_ref_ids(kwargs)
-        req = self._build_qwen3_request(clean, ref_ids, instruction, stream=False, **kwargs)
+        req_kwargs = _inject_label_params(kwargs, text, instruction)
+        req = self._build_qwen3_request(clean, ref_ids, instruction.text if instruction else None,
+                                        stream=False, **req_kwargs)
         resp = await self._qwen3_provider.synthesize(req)
         return resp.audio
 
     async def _synthesize_stream_qwen3(self, text: str, **kwargs):
         """Qwen3 流式合成：直接委托 Provider 的 AudioChunk 流，保持 chunk 顺序与 is_final。"""
         clean = strip_instruction(text)
-        instruction = await self._gen_instruction(text)
+        instruction = await self._gen_instruction_full(text)
         ref_ids = self._build_ref_ids(kwargs)
-        req = self._build_qwen3_request(clean, ref_ids, instruction, stream=True, **kwargs)
+        req_kwargs = _inject_label_params(kwargs, text, instruction)
+        req = self._build_qwen3_request(clean, ref_ids, instruction.text if instruction else None,
+                                        stream=True, **req_kwargs)
         async for chunk in self._qwen3_provider.synthesize_stream(req):
             yield {
                 "text_segment": clean if chunk.is_start else "",
@@ -205,7 +313,11 @@ class TTSService:
             }
 
     async def _synthesize_stream_fine_qwen3(self, token_stream, char_threshold: int = 3, **kwargs):
-        """Qwen3 细粒度流式合成：token 流 → 分块 → 逐段流式合成，末尾发 final 标记。"""
+        """Qwen3 细粒度流式合成：token 流 → 分块 → 逐段流式合成，末尾发 final 标记。
+
+        每段从内嵌 <tts_instruction> 解析出 speed/volume 后，仅当标签显式指定时才
+        覆盖本段真实合成参数（避免用标签缺省值覆盖 config 层默认 speed）。
+        """
         ref_ids = self._build_ref_ids(kwargs)
         chunk_index = 0
         async for text_segment in self.split_text_streaming(
@@ -214,8 +326,11 @@ class TTSService:
             if not text_segment.strip():
                 continue
             clean = strip_instruction(text_segment)
-            instruction = await self._gen_instruction(text_segment)
-            req = self._build_qwen3_request(clean, ref_ids, instruction, stream=True, **kwargs)
+            instruction = await self._gen_instruction_full(text_segment)
+            # 逐段标签覆盖：仅当标签显式包含 speed/volume 键才注入，不覆盖 config 默认
+            seg_kwargs = _inject_label_params(kwargs, text_segment, instruction)
+            req = self._build_qwen3_request(clean, ref_ids, instruction.text if instruction else None,
+                                            stream=True, **seg_kwargs)
             async for chunk in self._qwen3_provider.synthesize_stream(req):
                 yield {
                     "text_segment": text_segment if chunk.is_start else "",

@@ -52,7 +52,7 @@ export interface VRMTweakConfig {
 
 export const DEFAULT_VRM_TWEAK: VRMTweakConfig = {
   camera: { offsetX: 0, offsetY: 0, offsetZ: 0, lookAtY: 0 },
-  light: { directionalIntensity: 1.3, ambientIntensity: 0.9, pointIntensity: 0.5 },
+  light: { directionalIntensity: 1.6, ambientIntensity: 1.2, pointIntensity: 0.6 },
   modelRotationX: 0,
   modelRotationY: Math.PI,
   modelRotationZ: 0,

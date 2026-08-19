@@ -157,6 +157,7 @@ temp/
 *.temp
 *.bak
 *.orig
+*.obj
 
 # ----------------------------------------
 # 测试和覆盖率
@@ -266,6 +267,13 @@ CosyVoice/pretrained_models/
 # IndexTTS 模型和代码
 index-tts/
 
+# IndexTTS 加速缓存（torch.compile / triton 编译产物）
+docker/llm/compile_cache/
+docker/llm/triton_cache/
+
+# LLM 探针输出（测试生成，不入库）
+docker/llm/probe_out/
+
 # Docker 相关
 F5-fast/Docker Desktop Installer.exe
 
@@ -282,6 +290,7 @@ VoxCPM-main/
 vllm-gemma4/
 weaviate-embeddings/
 CXHMS/
+third_party/flash-attention/
 # Weaviate Docker Compose 文件
 docker-compose.weaviate.yml
 docker-compose.weaviate-gpu.yml

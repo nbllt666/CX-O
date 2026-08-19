@@ -63,6 +63,9 @@ class HealthResponse(BaseModel):
     status: str = "ok"
     version: str = "1.0.0"
     components: Dict[str, Any] = Field(default_factory=dict)
+    database: Optional[Dict[str, Any]] = None
+    memory: Optional[Dict[str, Any]] = None
+    vector_store: Optional[Dict[str, Any]] = None
     timestamp: str = Field(default_factory=lambda: datetime.now().isoformat())
 
 

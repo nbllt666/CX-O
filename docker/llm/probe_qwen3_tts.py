@@ -201,7 +201,7 @@ async def main() -> None:
         record("speed_control", False, f"exc: {exc}")
 
     # 7. 参考音频输入 (ref_audio+ref_text, data URL) —— 最后执行：vLLM VoiceDesign 不支持 ref_audio 消费
-    #    （带 refs 的语音克隆由 IndexTTS-2.5 indextts 运行时承接，不走 vLLM）
+    #    （带 refs 的语音克隆由 CosyVoice2 cosyvoice 运行时承接，不走 vLLM）
     ref_b64 = b64(args.ref) if args.ref and os.path.exists(args.ref) else ""
     body = {
         "model": args.model,
@@ -221,7 +221,7 @@ async def main() -> None:
         else:
             record("ref_audio_vllm", False,
                    f"HTTP {r.status_code} {r.text[:300]} "
-                   "(vLLM VoiceDesign 拒绝 ref_audio：语音克隆由 IndexTTS-2.5 承接)")
+                   "(vLLM VoiceDesign 拒绝 ref_audio：语音克隆由 CosyVoice2 承接)")
     except Exception as exc:
         record("ref_audio_vllm", False, f"exc: {exc}")
 

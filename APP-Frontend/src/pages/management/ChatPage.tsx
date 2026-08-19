@@ -13,11 +13,12 @@
  */
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { Bell, Bot, Send, Square, User, X } from 'lucide-react';
+import { Bell, Bot, Send, Sparkles, Square, User, X } from 'lucide-react';
 import { useChatStore } from '@/store/chatStore';
 import { useWebSocket } from '@/hooks/useWebSocket';
 import type { WebSocketMessage } from '@/hooks/useWebSocket';
 import { chatApi } from '@/api/clients/chat';
+import { Button } from '@/components/ui-v2/button';
 import { cn } from '@/lib/utils';
 import {
   applyStreamEvent,
@@ -29,6 +30,7 @@ import {
 import type { ChatMsg, StreamEvent } from './chatStream';
 import { MarkdownContent } from './MarkdownContent';
 import { ThinkingProcess } from './ThinkingProcess';
+import { SummaryModal } from './SummaryModal';
 
 /** 消息气泡（user 右 / assistant 左；thinking 折叠；工具调用链状态徽章；assistant 正文 Markdown 渲染） */
 function MessageBubble(props: { msg: ChatMsg; loading?: boolean }) {
@@ -89,6 +91,8 @@ export default function ChatPage() {
   const [isLoading, setIsLoading] = useState(false);
   const [historyError, setHistoryError] = useState(false);
   const [alarms, setAlarms] = useState<{ message: string; triggeredAt: string }[]>([]);
+  const [showSummaryModal, setShowSummaryModal] = useState(false);
+  const [autoStartSummary, setAutoStartSummary] = useState(false);
 
   const tempAssistantIdRef = useRef('');
   const historyTokenRef = useRef<{ cancelled: boolean }>({ cancelled: false });
@@ -165,8 +169,9 @@ export default function ChatPage() {
     (data: WebSocketMessage) => {
       switch (data.type) {
         case 'content':
+        case 'chat_chunk':
         case 'thinking':
-          applyEvent({ type: data.type, content: data.content });
+          applyEvent({ type: data.type === 'chat_chunk' ? 'content' : data.type, content: data.content });
           break;
         case 'tool_call':
           applyEvent({ type: 'tool_call', tool_call: data.tool_call as StreamEvent['tool_call'] });
@@ -178,6 +183,13 @@ export default function ChatPage() {
           applyEvent({ type: 'tool_result', tool_name: data.tool_name, result: data.result });
           break;
         case 'done':
+        case 'chat_done':
+          finalize('management.chat.doneEmpty');
+          break;
+        case 'chat_response':
+          if (data.content) {
+            applyEvent({ type: 'content', content: data.content });
+          }
           finalize('management.chat.doneEmpty');
           break;
         case 'cancelled':
@@ -357,6 +369,33 @@ export default function ChatPage() {
           />
           {isConnected ? t('management.chat.wsOnline') : t('management.chat.wsOffline')}
         </span>
+
+        {messages.length > 0 && (
+          <div className="flex items-center gap-2">
+            <Button
+              variant="secondary"
+              size="sm"
+              icon={<Sparkles className="h-3.5 w-3.5 text-primary" />}
+              onClick={() => {
+                setAutoStartSummary(true);
+                setShowSummaryModal(true);
+              }}
+            >
+              {t('management.chat.autoSummary')}
+            </Button>
+            <Button
+              variant="secondary"
+              size="sm"
+              icon={<Bot className="h-3.5 w-3.5 text-secondary" />}
+              onClick={() => {
+                setAutoStartSummary(false);
+                setShowSummaryModal(true);
+              }}
+            >
+              {t('management.chat.customSummary')}
+            </Button>
+          </div>
+        )}
       </div>
 
       {historyError && (
@@ -382,36 +421,48 @@ export default function ChatPage() {
       </div>
 
       {/* 输入区 */}
-      <div className="glass-panel flex shrink-0 items-end gap-3 p-4">
-        <textarea
-          value={input}
-          onChange={(e) => setInput(e.target.value)}
-          onKeyDown={handleKeyDown}
-          placeholder={t('management.chat.inputPlaceholder')}
-          rows={2}
-          className="min-h-[44px] flex-1 resize-none rounded-lg border border-[var(--glass-border)] bg-[rgba(255,255,255,0.06)] px-4 py-2.5 text-sm backdrop-blur-sm transition-colors focus:border-[rgba(255,183,225,0.4)] focus:outline-none"
+        <div className="glass-panel flex shrink-0 items-end gap-3 p-4">
+          <textarea
+            value={input}
+            onChange={(e) => setInput(e.target.value)}
+            onKeyDown={handleKeyDown}
+            placeholder={t('management.chat.inputPlaceholder')}
+            rows={2}
+            className="min-h-[44px] flex-1 resize-none rounded-lg border border-[var(--glass-border)] bg-[rgba(255,255,255,0.06)] px-4 py-2.5 text-sm backdrop-blur-sm transition-colors focus:border-[rgba(255,183,225,0.4)] focus:outline-none"
+          />
+          {isLoading ? (
+            <button
+              type="button"
+              onClick={cancelGeneration}
+              title={t('management.chat.stop')}
+              className="flex h-11 w-11 shrink-0 items-center justify-center rounded-lg bg-red-500/85 text-white transition-opacity hover:opacity-90"
+            >
+              <Square className="h-4 w-4" />
+            </button>
+          ) : (
+            <button
+              type="button"
+              onClick={() => void handleSend()}
+              disabled={!input.trim() || !currentAgentId}
+              title={t('management.chat.send')}
+              className="flex h-11 w-11 shrink-0 items-center justify-center rounded-lg bg-primary/85 text-primary-foreground transition-opacity hover:opacity-90 disabled:opacity-40"
+            >
+              <Send className="h-4 w-4" />
+            </button>
+          )}
+        </div>
+
+        {/* 摘要助手弹窗 */}
+        <SummaryModal
+          isOpen={showSummaryModal}
+          onClose={() => {
+            setShowSummaryModal(false);
+            setAutoStartSummary(false);
+          }}
+          contextText={messages.map((m) => `${m.role === 'user' ? '用户' : '助手'}: ${m.content}`).join('\n\n')}
+          agentId={currentAgentId || 'default'}
+          autoStart={autoStartSummary}
         />
-        {isLoading ? (
-          <button
-            type="button"
-            onClick={cancelGeneration}
-            title={t('management.chat.stop')}
-            className="flex h-11 w-11 shrink-0 items-center justify-center rounded-lg bg-red-500/85 text-white transition-opacity hover:opacity-90"
-          >
-            <Square className="h-4 w-4" />
-          </button>
-        ) : (
-          <button
-            type="button"
-            onClick={() => void handleSend()}
-            disabled={!input.trim() || !currentAgentId}
-            title={t('management.chat.send')}
-            className="flex h-11 w-11 shrink-0 items-center justify-center rounded-lg bg-primary/85 text-primary-foreground transition-opacity hover:opacity-90 disabled:opacity-40"
-          >
-            <Send className="h-4 w-4" />
-          </button>
-        )}
       </div>
-    </div>
   );
 }

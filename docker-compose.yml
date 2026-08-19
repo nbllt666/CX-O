@@ -21,7 +21,9 @@ services:
       - "${ASR_PORT:-8005}:8005"
     environment:
       - PYTHONIOENCODING=utf-8
-      - CUDA_VISIBLE_DEVICES=${ASR_GPU:-0}
+      - CUDA_VISIBLE_DEVICES=  # 2026-08-18 GPU 分配实验结论：GPU0/GPU1 各被 LLM/cosyvoice 占用，无空余 GPU；
+                               # ASR 用 GPU0 会挤爆（实测 GPU0 满 19.8GB → 全链路 P50 超 2.9s 退化）。
+                               # 回退纯 CPU 推理（T2~280ms），为全链路最稳。
     volumes:
       - ./CX-O-SERVER/sensevoice:/app/sensevoice:ro
       - ./CX-O-SERVER/api_server.py:/app/api_server.py:ro
@@ -29,10 +31,7 @@ services:
     deploy:
       resources:
         reservations:
-          devices:
-            - driver: nvidia
-              device_ids: ['${ASR_GPU_ID:-0}']
-              capabilities: [gpu]
+          devices: []
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8005/health"]
       interval: 30s

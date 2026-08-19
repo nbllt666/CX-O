@@ -2,6 +2,7 @@
 import asyncio
 import json
 import logging
+import socket
 import uuid
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
@@ -169,6 +170,9 @@ def get_shared_http_client() -> httpx.AsyncClient:
             limits=httpx.Limits(max_keepalive_connections=5, max_connections=10, keepalive_expiry=30.0),
             trust_env=False,
             proxy=None,
+            transport=httpx.AsyncHTTPTransport(
+                socket_options=[(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)],
+            ),
         )
     return _shared_http_client
 

@@ -314,3 +314,66 @@ class TestPromptGeneratorWiring:
         assert req.output_format == "wav"
         monkeypatch.setattr(tts_svc_mod, "_tts_service", None)
         monkeypatch.setattr(ref_audio_store, "_prompt_generator", None)
+
+
+# ================================================================== LLM 声音属性标签（speed/volume）结构化注入
+class TestStructuredVoiceLabel:
+    """LLM <tts_instruction> 结构化标签中的 speed/volume 需接入真实合成参数。
+
+    注意：不依赖 mock_instruction fixture（它把 generate_instruction 替换为固定文本），
+    而是走 emotion_instruction_service 真实解析路径。
+    """
+
+    async def _req_from(self, svc, text, **kwargs):
+        """走 _synthesize_stream_fine 的核心：对单段文本生成 SynthesisRequest 并返回。"""
+        instruction = await svc._gen_instruction_full(text)
+        clean = tts_svc_mod.strip_instruction(text)
+        seg_kwargs = tts_svc_mod._inject_label_params(kwargs, text, instruction)
+        return svc._build_qwen3_request(
+            clean, ["ref_a"], instruction.text if instruction else None,
+            stream=True, **seg_kwargs
+        )
+
+    @pytest.mark.asyncio
+    async def test_json_label_injects_speed_and_volume(self):
+        svc = TTSService(qwen3_enabled=True, qwen3_provider=MockProvider(),
+                         emotion_instruction_enabled=True)
+        text = '正文<tts_instruction>{"text":"轻声说","speed":0.7,"volume":0.4}</tts_instruction>'
+        req = await self._req_from(svc, text)
+        assert req.speed == 0.7
+        assert req.volume == 0.4
+        assert req.tts_instruction == "轻声说"
+        assert req.text == "正文"
+
+    @pytest.mark.asyncio
+    async def test_pure_text_label_keeps_defaults(self):
+        svc = TTSService(qwen3_enabled=True, qwen3_provider=MockProvider(),
+                         emotion_instruction_enabled=True)
+        text = '太棒了！<tts_instruction>用开心语气说</tts_instruction>'
+        req = await self._req_from(svc, text)
+        assert req.speed == 1.0  # 纯文本标签无 speed → 保持默认
+        assert req.volume == 1.0
+
+    @pytest.mark.asyncio
+    async def test_json_label_only_speed(self):
+        svc = TTSService(qwen3_enabled=True, qwen3_provider=MockProvider(),
+                         emotion_instruction_enabled=True)
+        text = '快一点<tts_instruction>{"text":"快速说","speed":1.6}</tts_instruction>'
+        req = await self._req_from(svc, text)
+        assert req.speed == 1.6
+        assert req.volume == 1.0  # 未显式指定 volume → 保持默认
+
+    @pytest.mark.asyncio
+    async def test_label_overrides_config_speed_but_keeps_volume_default(self, monkeypatch):
+        """标签显式指定 speed 覆盖 config 默认；未指定 volume 不引入、保持默认。"""
+        svc = TTSService(qwen3_enabled=True, qwen3_provider=MockProvider(),
+                         emotion_instruction_enabled=True)
+        monkeypatch.setattr(svc, "_qwen3_defaults", lambda: {
+            "voice": "vivian", "language": "", "output_format": "wav", "speed": 2.0
+        })
+        text = '轻声<tts_instruction>{"text":"小声说","speed":0.5}</tts_instruction>'
+        req = await self._req_from(svc, text, speed=2.0)
+        # 标签显式指定 speed=0.5 → 覆盖 config 默认
+        assert req.speed == 0.5
+        # 标签未指定 volume → 不引入 volume，保持默认 1.0
+        assert req.volume == 1.0

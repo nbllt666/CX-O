@@ -1,7 +1,7 @@
 appId: com.cxo.pet
 productName: CXO-Pet
 directories:
-  output: release-fresh7
+  output: release-fresh10
 files:
   - dist/**/*
   - dist-electron/**/*

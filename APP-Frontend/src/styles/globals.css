@@ -74,6 +74,43 @@
     backdrop-filter: blur(var(--glass-blur));
     -webkit-backdrop-filter: blur(var(--glass-blur));
   }
+
+  /* 原生 select 下拉菜单在暗色/浅色模式下的通用适配（防止系统默认白底+浅色文字造成白底白字） */
+  select {
+    color: var(--text-primary);
+  }
+
+  select option {
+    background-color: var(--bg-secondary);
+    color: var(--text-primary);
+  }
+
+  /* 优雅二次元液态玻璃自定义滚动条（替代系统粗糙死板原生滚动条） */
+  ::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+  }
+
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+
+  ::-webkit-scrollbar-thumb {
+    background: rgba(255, 183, 225, 0.22);
+    border-radius: 9999px;
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    transition: background 150ms ease-out;
+  }
+
+  ::-webkit-scrollbar-thumb:hover {
+    background: rgba(255, 183, 225, 0.45);
+  }
+
+  /* Firefox 滚动条细化 */
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: rgba(255, 183, 225, 0.25) transparent;
+  }
 }
 
 @keyframes pet-menu-bubble-in {

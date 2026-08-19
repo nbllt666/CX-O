@@ -125,6 +125,8 @@ class EmotionInstruction:
     neutral: bool = False
     source: str = "llm"  # llm | fallback | legacy_migration
     raw: Optional[str] = None
+    speed: float = 1.0    # 真实语速倍率（0.5~2.0，透传到 CosyVoice inference_instruct2 speed）
+    volume: float = 1.0   # 音量倍率（0.1~2.0，应用到 cosyvoice_server 归一化目标峰值）
 
     def to_dict(self) -> dict:
         """序列化为公开形状（仅含非空字段，符合 schema）。"""
@@ -178,6 +180,28 @@ def _clamp(value: Any, lo: float = 0.0, hi: float = 1.0, default: float = 0.5) -
     return max(lo, min(hi, f))
 
 
+def _clamp_speed(value: Any, default: float = 1.0) -> float:
+    """语速倍率收敛到 [0.5, 2.0]；非法/None 返回 default。"""
+    try:
+        f = float(value)
+    except (TypeError, ValueError):
+        return default
+    if f <= 0:
+        return default
+    return max(0.5, min(2.0, f))
+
+
+def _clamp_volume(value: Any, default: float = 1.0) -> float:
+    """音量倍率收敛到 [0.1, 2.0]；非法/None 返回 default。"""
+    try:
+        f = float(value)
+    except (TypeError, ValueError):
+        return default
+    if f <= 0:
+        return default
+    return max(0.1, min(2.0, f))
+
+
 def _is_sensitive(text: str) -> bool:
     """敏感/注入内容拦截。命中返回 True。"""
     lowered = text.lower()
@@ -208,8 +232,10 @@ def _build_instruction(
     neutral: bool = False,
     source: str = "llm",
     raw: Optional[str] = None,
+    speed: float = 1.0,
+    volume: float = 1.0,
 ) -> EmotionInstruction:
-    """按契约构建 EmotionInstruction，intensity/confidence 收敛到 [0,1]。"""
+    """按契约构建 EmotionInstruction，intensity/confidence 收敛到 [0,1]，speed/volume 收敛到合法区间。"""
     return EmotionInstruction(
         text=text,
         intensity=_clamp(intensity),
@@ -217,6 +243,8 @@ def _build_instruction(
         neutral=bool(neutral),
         source=source,
         raw=raw,
+        speed=_clamp_speed(speed),
+        volume=_clamp_volume(volume),
     )
 
 
@@ -229,10 +257,11 @@ def _neutral_fallback() -> EmotionInstruction:
 # 内嵌指令解析
 # ============================================================================
 
-def _parse_instruction_content(content: str) -> Optional[Tuple[str, float, float, float]]:
-    """解析 <tts_instruction> 块内容，返回 (text, intensity, confidence, neutral)。
+def _parse_instruction_content(content: str) -> Optional[Tuple[str, float, float, float, float, float]]:
+    """解析 <tts_instruction> 块内容，返回 (text, intensity, confidence, neutral, speed, volume)。
 
     支持纯文本 / Markdown 围栏 JSON / 裸 JSON。非法返回 None（触发中性回退）。
+    纯文本形态 speed/volume 保持默认 1.0。
     """
     content = content.strip()
     if not content:
@@ -252,7 +281,9 @@ def _parse_instruction_content(content: str) -> Optional[Tuple[str, float, float
             intensity = _clamp(data.get("intensity"), default=0.5)
             confidence = _clamp(data.get("confidence"), default=0.5)
             neutral = bool(data.get("neutral", False))
-            return (text, intensity, confidence, 1.0 if neutral else 0.0)
+            speed = _clamp_speed(data.get("speed"), default=1.0)
+            volume = _clamp_volume(data.get("volume"), default=1.0)
+            return (text, intensity, confidence, 1.0 if neutral else 0.0, speed, volume)
     except (json.JSONDecodeError, TypeError, ValueError):
         # JSON 形内容（以 { 或 [ 开头）解析失败 → 视为非法结构，回退中性，
         # 不得把残缺 JSON 当作纯文本指令。
@@ -263,10 +294,10 @@ def _parse_instruction_content(content: str) -> Optional[Tuple[str, float, float
     text = _validate_instruction_text(content)
     if text is None:
         return None
-    return (text, 0.5, 0.5, 0.0)
+    return (text, 0.5, 0.5, 0.0, 1.0, 1.0)
 
 
-def _extract_embedded_instruction(reply_text: str) -> Optional[Tuple[str, float, float, float]]:
+def _extract_embedded_instruction(reply_text: str) -> Optional[Tuple[str, float, float, float, float, float]]:
     """从回复文本中提取首个 <tts_instruction> 块并解析。"""
     match = _TTS_INSTRUCTION_RE.search(reply_text)
     if not match:
@@ -361,7 +392,7 @@ async def generate_instruction(
     # 1. 内嵌指令（LLM 与消息一起生成的默认路径）
     parsed = _extract_embedded_instruction(reply_text)
     if parsed is not None:
-        text, intensity, confidence, neutral_flag = parsed
+        text, intensity, confidence, neutral_flag, speed, volume = parsed
         return _build_instruction(
             text,
             intensity=intensity,
@@ -369,6 +400,8 @@ async def generate_instruction(
             neutral=(neutral_flag == 1.0),
             source="llm",
             raw=reply_text[:200],
+            speed=speed,
+            volume=volume,
         )
 
     # 2. 旧标签迁移边界

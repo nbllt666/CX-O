@@ -56,6 +56,7 @@
     },
     "sidebar": {
       "widgets": "小工具",
+      "liveSources": "直播 OBS 源",
       "collapse": "收起侧边栏",
       "expand": "展开侧边栏"
     },
@@ -115,7 +116,15 @@
       "doneEmpty": "响应已完成",
       "cancelled": "已停止生成",
       "alarmTitle": "提醒",
-      "alarmClose": "关闭提醒"
+      "alarmClose": "关闭提醒",
+      "autoSummary": "自动摘要",
+      "customSummary": "自定义摘要",
+      "summaryModalTitle": "对话摘要助手",
+      "summaryPromptIntro": "我是摘要助手。我会分析这段对话并生成摘要记忆。\n\n你可以：\n1. 直接让我自动摘要\n2. 告诉我需要关注哪些方面\n3. 指定每条记忆的重要性和时间\n\n我会将摘要保存为多条记忆，每条包含：内容、重要性(1-10)、时间(yyyymmddhhmm格式)。",
+      "summaryInputPlaceholder": "告诉我如何摘要这段对话...",
+      "summaryInputHint": "提示：可以直接发送「自动摘要」让我分析对话，或指定需要关注的内容",
+      "summaryAutoTrigger": "请自动摘要当前对话",
+      "summaryFailed": "抱歉，摘要生成失败，请重试。"
     },
     "memories": {
       "subtitle": "浏览与管理系统记忆",
@@ -170,7 +179,9 @@
       "confirmTag": "确认",
       "batchArchiveConfirm": "确定要归档选中的 {{count}} 条记忆吗？",
       "batchDeleteConfirm": "确定要删除选中的 {{count}} 条记忆吗？",
-      "batchFailed": "批量操作失败，请重试"
+      "batchFailed": "批量操作失败，请重试",
+      "openAssistant": "记忆管理助手",
+      "assistantDrawerTitle": "记忆管理助手"
     },
     "archive": {
       "subtitle": "记忆归档与去重",
@@ -699,7 +710,41 @@
       "cardName": "角色卡名",
       "sourceRefLength": "源引用长度",
       "startFromCard": "从角色卡启动蒸馏",
-      "groupId": "会话组 ID"
+      "groupId": "会话组 ID",
+      "sourceTypes": {
+        "text": "文本",
+        "character_card": "角色卡",
+        "image": "图片",
+        "video": "视频",
+        "audio": "音频",
+        "conversation_log": "聊天记录"
+      },
+      "goals": {
+        "memory": "记忆",
+        "agent": "角色卡 Agent",
+        "memory_and_agent": "记忆 + 角色卡 Agent"
+      },
+      "states": {
+        "S_INIT": "初始化",
+        "S_PREREAD": "预读取",
+        "S_QUESTION": "澄清追问",
+        "S_REFLECT": "反思",
+        "S_CROSSVALIDATE": "交叉验证",
+        "S_EXTRACT": "提取",
+        "S_STORAGE_DECISION": "存储决策",
+        "S_FINALIZE": "终结",
+        "S_REJECT": "已拒绝"
+      },
+      "actions": {
+        "ask_user": "追问用户",
+        "proceed": "推进",
+        "reflect": "反思",
+        "cross_validate": "交叉验证",
+        "extract": "提取",
+        "decide": "存储决策",
+        "finalize": "终结",
+        "reject": "拒绝"
+      }
     }
   },
   "danmaku": {

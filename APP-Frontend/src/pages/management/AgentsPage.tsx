@@ -258,7 +258,8 @@ export default function AgentsPage() {
         agentsApi.getAgents(),
         agentsApi.getAvailableModels().catch(() => ({ models: [] as string[] })),
       ]);
-      setAgents(agentList);
+      // 过滤系统内置的 memory-agent（记忆管理助手不在智能体列表中展示）
+      setAgents(agentList.filter((a) => a.id !== 'memory-agent'));
       setModels(modelResp.models || []);
     } catch (error) {
       console.error('Agents load failed:', error);

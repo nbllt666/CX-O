@@ -24,7 +24,7 @@ import {
   Moon,
   PanelLeftClose,
   PanelLeftOpen,
-  PawPrint,
+  Radio,
   Sun,
 } from 'lucide-react';
 import {
@@ -42,6 +42,7 @@ import { ParticleField } from '@/components/anime/ParticleField';
 import { useConfigReload } from '@/hooks/useConfigReload';
 import { subscribeConfigChanged } from '@/lib/configEvents';
 import ConfigToast, { type ConfigToastData } from './ConfigToast';
+import appIcon from '/icon.png';
 
 type BackendStatus = 'checking' | 'connected' | 'disconnected';
 
@@ -50,10 +51,22 @@ type BackendStatus = 'checking' | 'connected' | 'disconnected';
  * 对应 CX-O-Frontend Sidebar 的 widgetItems。
  */
 const WIDGET_GROUP_PATHS: ReadonlySet<string> = new Set([
+  'memory-agent',
   'vector',
   'archive',
   'audio-workstation',
   'audio-test',
+]);
+
+/**
+ * OBS 直播源子项收编集合（避免占满侧边栏扁平菜单）。
+ */
+const LIVE_SOURCE_GROUP_PATHS: ReadonlySet<string> = new Set([
+  'live-overlay',
+  'avatar-source',
+  'danmaku-source',
+  'subtitle-source',
+  'audio-source',
 ]);
 
 /** 顶栏后端连接状态：30s 轮询 /health（轻量探活，与连接检测门同端点） */
@@ -113,17 +126,21 @@ export default function ManagementLayout() {
     };
   }, []);
 
-  // ── 侧边栏本地状态（整体折叠/小工具分组展开）──
+  // ── 侧边栏本地状态（整体折叠/小工具分组展开/直播源分组展开）──
   const [collapsed, setCollapsed] = useState(false);
   const [isWidgetsExpanded, setIsWidgetsExpanded] = useState(false);
+  const [isLiveSourcesExpanded, setIsLiveSourcesExpanded] = useState(false);
 
   // ── 对话 Agent 子菜单（复用 chatStore 既有接口）──
   const { agents, currentAgentId, isChatExpanded, setIsChatExpanded, setCurrentAgentId, fetchAgents } =
     useChatStore();
 
   // 分组配置：从冻结登记表派生，不改契约
-  const flatItems = MANAGEMENT_ROUTES.filter((e) => !WIDGET_GROUP_PATHS.has(e.path));
+  const flatItems = MANAGEMENT_ROUTES.filter(
+    (e) => !WIDGET_GROUP_PATHS.has(e.path) && !LIVE_SOURCE_GROUP_PATHS.has(e.path),
+  );
   const widgetItems = MANAGEMENT_ROUTES.filter((e) => WIDGET_GROUP_PATHS.has(e.path));
+  const liveSourceItems = MANAGEMENT_ROUTES.filter((e) => LIVE_SOURCE_GROUP_PATHS.has(e.path));
 
   // 挂载即加载 Agent 列表（对齐 CX-O 的 handleAgentClick 数据源）
   useEffect(() => {
@@ -141,6 +158,13 @@ export default function ManagementLayout() {
       setIsWidgetsExpanded(true);
     }
   }, [location.pathname, widgetItems]);
+
+  // 路由落在直播源子项时自动展开直播源分组
+  useEffect(() => {
+    if (liveSourceItems.some((s) => `/${s.path}` === location.pathname)) {
+      setIsLiveSourcesExpanded(true);
+    }
+  }, [location.pathname, liveSourceItems]);
 
   const handleAgentClick = (agentId: string) => {
     setCurrentAgentId(agentId);
@@ -324,6 +348,60 @@ export default function ManagementLayout() {
     </Fragment>
   );
 
+  /** 直播源分组（展开态）：折叠分组按钮 + 可折叠 5 个 OBS 源子项 */
+  const renderLiveSourcesGroup = () => {
+    const isSourceActive = liveSourceItems.some((s) => `/${s.path}` === location.pathname);
+    return (
+      <div key="live-sources-group">
+        <button
+          type="button"
+          onClick={() => setIsLiveSourcesExpanded(!isLiveSourcesExpanded)}
+          className={cn(
+            'flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-sm transition-all duration-fast',
+            isSourceActive
+              ? 'bg-primary/15 font-medium text-primary shadow-[inset_0_1px_0_var(--glass-border)]'
+              : 'text-muted-foreground hover:bg-[rgba(255,255,255,0.06)] hover:text-foreground',
+          )}
+        >
+          <Radio className="h-4 w-4 shrink-0" />
+          <span className="whitespace-nowrap">{t('management.sidebar.liveSources')}</span>
+          <ChevronDown
+            className={cn(
+              'ml-auto h-4 w-4 transition-transform duration-fast',
+              isLiveSourcesExpanded && 'rotate-180',
+            )}
+          />
+        </button>
+
+        <AnimatePresence initial={false}>
+          {isLiveSourcesExpanded && (
+            <motion.ul
+              key="live-sources-submenu"
+              className="ml-4 mt-1 space-y-1 overflow-hidden border-l border-[var(--glass-border)] pl-3"
+              initial={{ opacity: 0, height: 0 }}
+              animate={{ opacity: 1, height: 'auto' }}
+              exit={{ opacity: 0, height: 0 }}
+              transition={{ duration: 0.25, ease: [0.4, 0, 0.2, 1] }}
+            >
+              {liveSourceItems.map((s) => (
+                <li key={s.path}>{renderFlatLink(s)}</li>
+              ))}
+            </motion.ul>
+          )}
+        </AnimatePresence>
+      </div>
+    );
+  };
+
+  /** 直播源分组（折叠态）：直接平铺渲染子项图标 */
+  const renderLiveSourcesCollapsed = () => (
+    <Fragment key="live-sources-collapsed">
+      {liveSourceItems.map((s) => (
+        <Fragment key={s.path}>{renderFlatLink(s)}</Fragment>
+      ))}
+    </Fragment>
+  );
+
   return (
     <div className="app-surface relative flex h-screen overflow-hidden">
       {/* 二次元粒子装饰层：常驻布局顶层，pointer-events-none，低于内容高于背景 */}
@@ -343,7 +421,11 @@ export default function ManagementLayout() {
         transition={{ duration: 0.3, ease: [0.4, 0, 0.2, 1] }}
       >
         <div className={cn('flex items-center gap-2 py-5', collapsed ? 'justify-center px-0' : 'px-5')}>
-          <PawPrint className="h-6 w-6 shrink-0 text-primary" />
+          <img
+            src={appIcon}
+            alt={t('management.title')}
+            className={cn('shrink-0 object-contain', collapsed ? 'h-8 w-8' : 'h-7 w-7')}
+          />
           {!collapsed && (
             <span className="text-gradient text-lg font-bold whitespace-nowrap">{t('management.title')}</span>
           )}
@@ -353,6 +435,7 @@ export default function ManagementLayout() {
           {flatItems.map((entry) =>
             entry.path === 'chat' ? renderChatItem() : <Fragment key={entry.path || '__index__'}>{renderFlatLink(entry)}</Fragment>,
           )}
+          {collapsed ? renderLiveSourcesCollapsed() : renderLiveSourcesGroup()}
           {collapsed ? renderWidgetsCollapsed() : renderWidgetGroup()}
         </nav>
 

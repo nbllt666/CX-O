@@ -18,6 +18,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import {
   Archive,
+  Bot,
   Brain,
   CalendarClock,
   CheckSquare,
@@ -33,6 +34,7 @@ import {
   Trash2,
   X,
 } from 'lucide-react';
+import MemoryAgentPage from './MemoryAgentPage';
 import { memoriesApi } from '@/api/clients/memories';
 import type { Memory } from '@/api/types';
 import { Button } from '@/components/ui-v2';
@@ -348,6 +350,7 @@ export default function MemoriesPage() {
   const [showForm, setShowForm] = useState(false);
   const [editing, setEditing] = useState<Memory | null>(null);
   const [actionError, setActionError] = useState('');
+  const [showAssistantModal, setShowAssistantModal] = useState(false);
 
   const load = useCallback(async () => {
     setIsLoading(true);
@@ -574,6 +577,14 @@ export default function MemoriesPage() {
             <List className="h-4 w-4" />
           </button>
         </div>
+        <Button
+          variant="secondary"
+          size="sm"
+          icon={<Bot className="h-4 w-4 text-primary" />}
+          onClick={() => setShowAssistantModal(true)}
+        >
+          {t('management.memories.openAssistant')}
+        </Button>
         <Button
           variant={isBatchMode ? 'primary' : 'secondary'}
           size="sm"
@@ -875,6 +886,38 @@ export default function MemoriesPage() {
           onConfirm={() => void handleBatchUpdateTags()}
           onClose={() => setShowBatchTagModal(false)}
         />
+      )}
+
+      {/* 记忆管理助手弹窗 / 抽屉 */}
+      {showAssistantModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 backdrop-blur-md">
+          <div className="glass-panel flex h-[85vh] w-full max-w-4xl flex-col p-6 shadow-2xl">
+            <div className="mb-3 flex shrink-0 items-center justify-between border-b border-[var(--glass-border)] pb-3">
+              <div className="flex items-center gap-2">
+                <div className="flex h-7 w-7 items-center justify-center rounded-lg bg-primary/15 text-primary">
+                  <Bot className="h-4 w-4" />
+                </div>
+                <h2 className="text-base font-semibold">
+                  {t('management.memories.assistantDrawerTitle')}
+                </h2>
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  setShowAssistantModal(false);
+                  void load(); // 对话修改记忆后自动刷新列表
+                }}
+                aria-label={t('management.memories.close')}
+                className="rounded-lg p-1.5 text-muted-foreground transition-colors hover:bg-[rgba(255,255,255,0.08)] hover:text-foreground"
+              >
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+            <div className="min-h-0 flex-1">
+              <MemoryAgentPage />
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );

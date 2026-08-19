@@ -117,8 +117,10 @@ class TestRealtime:
             _AGENT, _FakeContextMgr(_HISTORY), "s", "你好",
             is_realtime_voice=True,
         )
-        assert msgs[0]["content"] == "你是测试人设"
-        # 不再注入语音隐藏提示词，直接进入最近 2 轮历史
+        # 实时语音保留核心人设 system_prompt，并追加 REALTIME_VOICE_PROMPT_PADDING（token 补足 + 语音标签引导）
+        assert msgs[0]["content"].startswith("你是测试人设")
+        assert "<tts_instruction>" in msgs[0]["content"]
+        # 不再注入重型语音隐藏提示词，直接进入最近 2 轮历史
         body = _contents(msgs)
         assert "u2" in body and "a2" in body
         assert "u1" not in body

@@ -35,6 +35,30 @@ logger = logging.getLogger(__name__)
 # 实时语音模式历史消息条数（2 user + 2 assistant = 4 条）
 REALTIME_VOICE_HISTORY_LIMIT = 4
 
+# 实时语音模式 vLLM prefix cache 命中长度补足 padding。
+# ---------------------------------------------------------------------------
+# 背景：vLLM 0.22 + gemma-4-e4b-it（sliding attention，窗口 512）的 prefix cache
+# 对 <353 tokens 的 prompt 完全不写入/不命中（实测：341 tokens 恒 240ms TTFT；
+# 353 tokens 命中后 30-60ms）。生产实时语音新会话无历史时仅 [system+user] 2 条
+# 消息 ≈ 341-343 tokens < 353 → LLM TTFT 恒 ~240ms。
+# 方案：在 system 消息末尾追加一段固定、语义无害的对话引导语 padding，使完整
+# messages token 化后 >=360 tokens（保守余量），TTFT 从 ~240ms 降至 ~60ms。
+# 约束：
+#   - 不得精简/删除 system_prompt 原有内容（仅追加），不改变回答质量。
+#   - 不含任务性指令，仅引导自然对话。
+#   - 常量供 server/main.py 语音前缀预热复用，保证预热与生产请求完全同构，
+#     从而建立可命中的 prefix cache。
+# 实测（tokenize_check.py）：608 字符 system_prompt ≈ 341 tokens，约 1.78 字符/token；
+# 本 padding 约 76 字符 ≈ 42 tokens，追加后 341+42=383 >= 360（'你好'）与 343+42=385。
+REALTIME_VOICE_PROMPT_PADDING = (
+    "\n\n我们正在通过实时语音自然对话。我会认真倾听你的每一句话，"
+    "用亲切友好的方式回应，并尽我所能提供清晰、有帮助的内容。"
+    "你可以随时继续表达你的想法，我在这里。"
+    "如回复需带明显情绪/语速/音量变化，可在末尾加<tts_instruction>{\"text\":\"语气描述\","
+    "\"speed\":语速倍率,\"volume\":音量倍率}</tts_instruction>标签让语音更具表现力；"
+    "平淡回复则不加。"
+)
+
 # ACP 自动回复模式历史消息条数（与历史实现保持一致）
 ACP_HISTORY_LIMIT = 50
 
@@ -257,6 +281,15 @@ def build_messages(
     #       （合计约 1500 tokens）
     # ====================================================================
     if is_realtime_voice:
+        # vLLM prefix cache 命中长度补足：新会话无历史时 [system+user] 仅 ~341 tokens
+        # < 353（vLLM 写入/命中阈值），恒 miss → TTFT ~240ms。在 system 末尾追加
+        # 固定无害 padding（REALTIME_VOICE_PROMPT_PADDING）使完整 messages >=360 tokens。
+        # 仅追加、不精简 system_prompt 原有内容，语义无害不改变回答质量。
+        for _msg in messages:
+            if _msg.get("role") == "system":
+                _msg["content"] = _msg["content"] + REALTIME_VOICE_PROMPT_PADDING
+                break
+
         realtime_history = _resolve_history(
             context_mgr, session_id, history, REALTIME_VOICE_HISTORY_LIMIT
         )

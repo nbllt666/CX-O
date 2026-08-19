@@ -16,10 +16,12 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     curl \
     && rm -rf /var/lib/apt/lists/*
 
-# 先安装 CPU-only torch/torchaudio（使用 2.4+ 版本以兼容 transformers）
+# 先安装 CUDA torch/torchaudio（2026-08-18 ASR GPU 加速：原 CPU wheel 使 SenseVoice
+# 永远 CPU 推理、T2=280ms。改用 cu124 wheel 以启用 GPU 推理；驱动 610.88 兼容。
+# 容器挂 GPU1（见 compose ASR_GPU_ID=1），SenseVoice ~230MB 模型 GPU 推理峰值 ~1GB，GPU1 空闲 9.7GB 足够）
 RUN pip install --no-cache-dir \
     torch==2.4.1 torchaudio==2.4.1 \
-    --index-url https://download.pytorch.org/whl/cpu
+    --index-url https://download.pytorch.org/whl/cu124
 
 # 安装其余 Python 依赖（降级 numpy 到 < 2.0 以兼容旧模块）
 RUN pip install --no-cache-dir \

@@ -1,0 +1,12 @@
+[build-system]
+requires = ["setuptools", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "cv3-vllm-plugin"
+version = "0.1.0"
+description = "vLLM plugin to register CosyVoice2ForCausalLM in all vLLM processes"
+requires-python = ">=3.10"
+
+[project.entry-points."vllm.general_plugins"]
+cv3_vllm_plugin = "cv3_vllm_plugin:register"

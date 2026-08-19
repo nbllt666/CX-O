@@ -32,6 +32,23 @@ class ChatWebSocketHandler:
         self.ws_manager.register_handler("cancel", self._handle_cancel)
         self.ws_manager.register_handler("config", self._handle_config)
 
+    @staticmethod
+    def _ensure_agent_session(context_mgr, agent_id: str, agent_config: dict) -> str:
+        """确保 agent-{agent_id} 会话存在并返回其 ID。
+
+        与 GET /api/chat/history/agent-{id} 的历史读取键保持一致（workspace=agent-chats），
+        使 WS 聊天写入与前端历史读取落在同一会话，修复「前端不加载历史记录」。
+        """
+        session_id = f"agent-{agent_id}"
+        if not context_mgr.get_session(session_id):
+            context_mgr.create_session(
+                session_id=session_id,
+                workspace_id="agent-chats",
+                title=f"与 {agent_config.get('name', 'Agent')} 的对话",
+            )
+            context_mgr.update_session(session_id, metadata={"agent_id": agent_id})
+        return session_id
+
     async def _handle_chat(self, client_id: str, message: Dict[str, Any]):
         """处理普通聊天消息"""
         from server.dependencies import get_context_manager, get_memory_manager
@@ -61,17 +78,20 @@ class ChatWebSocketHandler:
             llm = get_llm_client_for_agent(agent_config)
 
             if session_id:
-                try:
-                    context_mgr.get_session(session_id)
-                except Exception:
-                    await self.ws_manager.send_to_client(
-                        client_id, {"type": "error", "error": f"会话 '{session_id}' 不存在"}
-                    )
-                    return
+                if not context_mgr.get_session(session_id):
+                    # 会话不存在：agent-{id} 模式自动创建（对齐历史读取键），否则报错
+                    if session_id == f"agent-{agent_id}":
+                        session_id = self._ensure_agent_session(
+                            context_mgr, agent_id, agent_config
+                        )
+                    else:
+                        await self.ws_manager.send_to_client(
+                            client_id, {"type": "error", "error": f"会话 '{session_id}' 不存在"}
+                        )
+                        return
             else:
-                session_id = context_mgr.create_session(
-                    workspace_id="default", title=f"与 {agent_config['name']} 的对话"
-                )
+                # 无 session_id 时默认使用 agent-{id} 会话，与前端历史读取键一致
+                session_id = self._ensure_agent_session(context_mgr, agent_id, agent_config)
 
             context_mgr.add_message(session_id=session_id, role="user", content=user_message)
 
@@ -142,17 +162,20 @@ class ChatWebSocketHandler:
 
             # 获取/创建会话
             if session_id:
-                try:
-                    context_mgr.get_session(session_id)
-                except Exception:
-                    await self.ws_manager.send_to_client(
-                        client_id, {"type": "error", "error": f"会话 '{session_id}' 不存在"}
-                    )
-                    return
+                if not context_mgr.get_session(session_id):
+                    # 会话不存在：agent-{id} 模式自动创建（对齐历史读取键），否则报错
+                    if session_id == f"agent-{agent_id}":
+                        session_id = self._ensure_agent_session(
+                            context_mgr, agent_id, agent_config
+                        )
+                    else:
+                        await self.ws_manager.send_to_client(
+                            client_id, {"type": "error", "error": f"会话 '{session_id}' 不存在"}
+                        )
+                        return
             else:
-                session_id = context_mgr.create_session(
-                    workspace_id="default", title=f"与 {agent_config['name']} 的对话"
-                )
+                # 无 session_id 时默认使用 agent-{id} 会话，与前端历史读取键一致
+                session_id = self._ensure_agent_session(context_mgr, agent_id, agent_config)
 
             # 发送会话ID
             await self.ws_manager.send_to_client(

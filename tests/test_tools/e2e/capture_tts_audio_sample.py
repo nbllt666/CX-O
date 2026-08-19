@@ -30,31 +30,48 @@ import numpy as np
 import websockets
 
 # 服务地址
-CXO_SERVER_WS = os.environ.get("CXO_SERVER_WS", "ws://127.0.0.1:8001/api/ws/{agent_id}")
+CXO_SERVER_WS = os.environ.get("CXO_SERVER_WS", "ws://127.0.0.1:8000/api/ws/{agent_id}")
 AGENT_ID = os.environ.get("AGENT_ID", "default")  # 与 test_asr_llm_tts_latency.py 对齐
 
-# 音频参数（与 test_asr_llm_tts_latency.py 对齐）
+# 音频参数（与 test_asr_llm_tts_latency.py 对齐：真实中文语音裁剪前 1.0s）
 AUDIO_SAMPLE_RATE = 16000
-AUDIO_DURATION_S = 1.0
-AUDIO_FREQUENCY = 440
+AUDIO_DURATION_S = 2.0
+SPEECH_REF_PATH = os.environ.get(
+    "SPEECH_REF_PATH",
+    r"C:\CX-O\.trae\test_reports\test_zh_changle.wav",
+)
 
-# TTS 输出音频参数（Orpheus 固定输出 24kHz 16-bit mono）
+# TTS 输出音频参数（CosyVoice3 固定输出 24kHz 16-bit mono）
 TTS_SAMPLE_RATE = 24000
 TTS_CHANNELS = 1
 TTS_SAMPLE_WIDTH = 2  # 16-bit
 
 # 输出文件
 OUTPUT_DIR = _PROJECT_ROOT / ".trae" / "test_reports"
-OUTPUT_FILE = OUTPUT_DIR / "audio_sample_orpheus_multilingual.wav"
+OUTPUT_FILE = OUTPUT_DIR / "audio_sample_cosyvoice3_ws.wav"
 
 
 def generate_test_audio(duration_s: float = AUDIO_DURATION_S, sample_rate: int = AUDIO_SAMPLE_RATE) -> bytes:
-    """生成 16kHz mono PCM 16-bit 测试音频（正弦波）。"""
+    """生成 16kHz mono PCM 16-bit 测试音频（从真实中文语音裁剪前 1.0s）。
+
+    正弦波/静音参考会被 SenseVoice 识别为单个 '.'（1 字），低于双流式语音
+    2 字触发阈值，流水线不启动；改用真实中文语音并归一化，驱动 ASR 产出
+    多字 Partial 文本触发 LLM→TTS 全链路（与 test_asr_llm_tts_latency.py 对齐）。
+    """
+    import wave as _wave
+
+    with _wave.open(SPEECH_REF_PATH, "rb") as wf:
+        sr = wf.getframerate()
+        pcm = wf.readframes(wf.getnframes())
+    x = np.frombuffer(pcm, dtype=np.int16).astype(np.float64)
+    if sr != sample_rate:
+        n_out = int(len(x) * sample_rate / sr)
+        x = np.interp(np.linspace(0, len(x) - 1, n_out), np.arange(len(x)), x)
+    peak = max(np.max(np.abs(x)), 1)
+    x = x / peak * 0.9
     n_samples = int(duration_s * sample_rate)
-    t = np.linspace(0, duration_s, n_samples, endpoint=False, dtype=np.float32)
-    wave_data = 0.5 * np.sin(2 * np.pi * AUDIO_FREQUENCY * t)
-    pcm = (wave_data * 32767).astype(np.int16)
-    return pcm.tobytes()
+    x = x[:n_samples] if len(x) > n_samples else x
+    return (x * 32767).astype(np.int16).tobytes()
 
 
 def generate_wav_bytes(pcm: bytes, sample_rate: int = AUDIO_SAMPLE_RATE) -> bytes:
@@ -82,7 +99,7 @@ def save_pcm_as_wav(pcm_bytes: bytes, output_path: Path, sample_rate: int = TTS_
 async def capture_audio_sample() -> None:
     """通过 WS 连接捕获 TTS 音频样本。"""
     print("=" * 60)
-    print("音质主观评测样本生成（官方多语言 Orpheus + 中文音色长乐）")
+    print("音质主观评测样本生成（CosyVoice3 + 真实参考资产 ref_8df9787c96124a5f）")
     print(f"  char_threshold=2 + STREAM_BATCH_FRAMES=1")
     print("=" * 60)
 
@@ -105,15 +122,15 @@ async def capture_audio_sample() -> None:
 
     async with websockets.connect(ws_url, max_size=2**24, open_timeout=10) as ws:
         # 3. 发送 init 消息
-        # voice=长乐：官方多语言版中文女声音色（之前 tara 是英文音色，已弃用）
+        # engine=cosyvoice3 + voice=真实参考资产（与 WS 全链路延迟测试一致）
         init_msg = {
             "action": "voice.dual_stream",
             "request_id": "audio-sample-capture",
             "data": {
                 "init": True,
                 "agent_id": AGENT_ID,
-                "engine": "orpheus",
-                "voice": "长乐",
+                "engine": "cosyvoice3",
+                "voice": "ref_8df9787c96124a5f",
             },
         }
         await ws.send(json.dumps(init_msg))

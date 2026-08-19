@@ -224,11 +224,25 @@ export function useWebSocket(options: WebSocketOptions): UseWebSocketReturn {
           break;
         }
         case 'content':
+        case 'chat_chunk':
+          onMessageRef.current?.({ type: 'content', content: data.content });
+          break;
+        case 'done':
+        case 'chat_done':
+          setIsGenerating(false);
+          onMessageRef.current?.({ type: 'done' });
+          break;
+        case 'chat_response':
+          setIsGenerating(false);
+          if (data.content) {
+            onMessageRef.current?.({ type: 'content', content: data.content });
+          }
+          onMessageRef.current?.({ type: 'done' });
+          break;
         case 'tool_call':
         case 'tool_result':
           onMessageRef.current?.(data);
           break;
-        case 'done':
         case 'cancelled':
           setIsGenerating(false);
           onMessageRef.current?.(data);
@@ -321,12 +335,15 @@ export function useWebSocket(options: WebSocketOptions): UseWebSocketReturn {
       }
 
       setIsGenerating(true);
-      // 后端协议：平铺格式，handler 直接读 message 顶层字段
+      // 后端协议：平铺格式，handler 直接读 message 顶层字段。
+      // session_id 固定为 agent-{agentId}，与 ChatPage 历史读取键（getChatHistory）
+      // 保持一致，确保 WS 消息写入与前端历史读取落在同一会话。
       wsRef.current.send(
         JSON.stringify({
           type: 'chat_stream',
           message,
           agent_id: agentIdRef.current,
+          session_id: `agent-${agentIdRef.current}`,
         }),
       );
       return true;

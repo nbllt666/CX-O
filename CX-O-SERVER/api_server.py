@@ -262,8 +262,12 @@ async def ws_asr_stream(websocket: WebSocket):
     # VAD 门控下语音段常被切到 1~2s，原 48000(1.5s)/32000(1s) 阈值导致短句
     # 全程无 partial、pipeline 饥饿（2026-08-05 实测复现，详见
     # .trae/documents/20260805_模块0_修复短语音无Partial致流水线饥饿.md）。
-    PARTIAL_THRESHOLD = 16000  # 首次 partial：~0.5s at 16kHz int16
-    PARTIAL_STEP = 9600        # 后续 partial 步进：每新增 ~0.3s 触发一次
+    # 2026-08-17 全链路延迟优化：为把 T5(ASR→LLM→TTS 首包) 压进 <800ms，
+    # 将首次 partial 阈值从 16000(0.5s) 下调到 4800(0.15s)。partial 是投机信号，
+    # 早出由 LLM 抢先 Prefill，后续 partial 逐轮修正，识别质量不受最终影响。
+    # 0.12s 阈值经实测回退：首 partial 过短（1 字）不触发，反而延迟 ≥2 字触发。
+    PARTIAL_THRESHOLD = 4800  # 首次 partial：~0.15s at 16kHz int16
+    PARTIAL_STEP = 3200        # 后续 partial 步进：每新增 ~0.1s 触发一次
     MAX_BUFFER = 960000        # 缓冲上限 ~30s，防 VAD 漏检时无界增长
     TRIM_TO = 128000           # 超限后保留尾部 ~4s
     # 单飞推理标志：任一时刻至多 1 个 partial 推理在飞。

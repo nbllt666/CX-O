@@ -296,18 +296,16 @@ export function createVRMRuntime(
   renderer.setPixelRatio(window.devicePixelRatio);
   renderer.setSize(width, height, false);
   renderer.outputColorSpace = THREE.SRGBColorSpace;
-  renderer.toneMapping = THREE.ACESFilmicToneMapping;
-  renderer.toneMappingExposure = 1.15;
+  // VRM MToon 材质对 ACESFilmic 会压暗暗部并压扁二次元色阶；改用 LinearToneMapping + 适度曝光
+  renderer.toneMapping = THREE.LinearToneMapping;
+  renderer.toneMappingExposure = 1.25;
 
-  // 光照：中性偏亮，避免偏蓝偏暗。
-  // - 方向光改纯白作主光（原 0xdbe8ff 偏蓝会让受光面发蓝）
-  // - 半球光地面色改中性浅灰（原 0x273248 深蓝会在暗部/下侧染蓝变黑）
-  // - 点光保留暖色作轮廓/氛围补光
-  const dirLight = new THREE.DirectionalLight(0xffffff, 1.3);
+  // 光照：通透二次元动漫光照（主光纯白 + 充裕半球漫射 + 暖点光）
+  const dirLight = new THREE.DirectionalLight(0xffffff, 1.6);
   dirLight.position.set(1.5, 2.5, 2);
   scene.add(dirLight);
-  scene.add(new THREE.HemisphereLight(0xffffff, 0x9a9a9a, 0.9));
-  const pointLight = new THREE.PointLight(0xffd4c2, 0.5, 10);
+  scene.add(new THREE.HemisphereLight(0xffffff, 0xc0c0c0, 1.2));
+  const pointLight = new THREE.PointLight(0xffecd9, 0.6, 10);
   pointLight.position.set(-1.5, 1.2, 2);
   scene.add(pointLight);
 

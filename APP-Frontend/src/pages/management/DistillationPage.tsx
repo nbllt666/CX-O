@@ -49,6 +49,29 @@ const SOURCE_TYPES: DistillationSourceType[] = [
 ];
 const GOALS = ['memory', 'agent', 'memory_and_agent'];
 
+/** 后端状态机 S_* 状态与 agent_action 动作的合法值（用于决定是否走国际化映射，未知值回退原文）。 */
+const KNOWN_STATES: ReadonlySet<string> = new Set([
+  'S_INIT',
+  'S_PREREAD',
+  'S_QUESTION',
+  'S_REFLECT',
+  'S_CROSSVALIDATE',
+  'S_EXTRACT',
+  'S_STORAGE_DECISION',
+  'S_FINALIZE',
+  'S_REJECT',
+]);
+const KNOWN_ACTIONS: ReadonlySet<string> = new Set([
+  'ask_user',
+  'proceed',
+  'reflect',
+  'cross_validate',
+  'extract',
+  'decide',
+  'finalize',
+  'reject',
+]);
+
 const selectCls =
   'w-full px-3 py-2 text-sm rounded-[var(--radius-lg)] bg-[rgba(255,255,255,0.06)] ' +
   'text-[var(--text-primary)] border border-[var(--glass-border)] focus:outline-none ' +
@@ -102,6 +125,10 @@ const MODE_META: Record<Mode, { icon: React.ReactNode }> = {
 // --------------------------------------------------------------------------- //
 function SingleDistillation() {
   const { t } = useTranslation();
+  const stateLabel = (val?: string) =>
+    val && KNOWN_STATES.has(val) ? t(`management.distillation.states.${val}`) : (val ?? '');
+  const actionLabel = (val?: string) =>
+    val && KNOWN_ACTIONS.has(val) ? t(`management.distillation.actions.${val}`) : (val ?? '');
   const [sourceType, setSourceType] = useState('text');
   const [sourceRef, setSourceRef] = useState('');
   const [templateId, setTemplateId] = useState('default');
@@ -207,7 +234,7 @@ function SingleDistillation() {
             >
               {SOURCE_TYPES.map((s) => (
                 <option key={s} value={s}>
-                  {s}
+                  {t(`management.distillation.sourceTypes.${s}`)}
                 </option>
               ))}
             </select>
@@ -261,8 +288,8 @@ function SingleDistillation() {
           <CardBody className="space-y-3">
             <div className="flex flex-wrap items-center gap-2 text-xs">
               <Badge>{session.session_id}</Badge>
-              <Badge variant="secondary">{status?.state ?? session.initial_state}</Badge>
-              {advanceResult?.agent_action && <Badge variant="anime">{advanceResult.agent_action}</Badge>}
+              <Badge variant="secondary">{status?.state ? stateLabel(status.state) : stateLabel(session.initial_state)}</Badge>
+              {advanceResult?.agent_action && <Badge variant="anime">{actionLabel(advanceResult.agent_action)}</Badge>}
             </div>
 
             {session.preread_summary && (
@@ -441,7 +468,7 @@ function BatchDistillation() {
             >
               {GOALS.map((g) => (
                 <option key={g} value={g}>
-                  {g}
+                  {t(`management.distillation.goals.${g}`)}
                 </option>
               ))}
             </select>

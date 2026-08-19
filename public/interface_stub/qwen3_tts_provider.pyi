@@ -6,8 +6,9 @@
 
 职责：统一 Provider 请求转换、健康检查、超时、取消、错误映射与关闭。
 vLLM 私有参数封装在 Provider 内，不泄漏到前端协议；无参考音频的日常/情感合成
-走 vLLM VoiceDesign（task_type=VoiceDesign），带参考音频的语音克隆路由
-IndexTTS-2.5（indextts 运行时），并在响应 runtime 元数据中记录（vllm / indextts）。
+走 vLLM VoiceDesign（voicedesign 运行时），带参考音频的语音克隆/情感路由
+CosyVoice3（cosyvoice 运行时），两者不可用/超时/非法响应时降级 Qwen3-TTS Base
+（qwen3_base 运行时），并在响应 runtime 元数据中记录（voicedesign / cosyvoice / qwen3_base）。
 """
 from __future__ import annotations
 
@@ -70,7 +71,7 @@ class SystemError(Qwen3TTSError):
 class ProviderHealth:
     """轻量连通性健康检查结果（不做耗时生成/内容请求）。"""
     ok: bool
-    runtime: str  # vllm | indextts
+    runtime: str  # voicedesign | cosyvoice | qwen3_base
     latency_ms: Optional[float]
     detail: str
 

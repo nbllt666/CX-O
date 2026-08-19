@@ -385,10 +385,11 @@ class TTSConfig(BaseModel):
 
 
 class Qwen3TTSVLLMConfig(BaseModel):
-    """Qwen3 TTS vLLM 运行时配置节（vLLM 首选，OpenAI 兼容 /v1/audio/speech）。
+    """Qwen3 TTS vLLM VoiceDesign 运行时配置节（voicedesign 运行时，OpenAI 兼容 /v1/audio/speech）。
 
-    对应 qwen3_tts_config.schema.json 的 vllm 段。vLLM 私有参数（task_type 等）
-    仅存在于 Provider 与配置契约，不泄漏到前端 request/response 协议。
+    对应 qwen3_tts_config.schema.json 的 vllm 段（配置段名保持 vllm，运行时名为
+    voicedesign，由 Provider 内部映射）。vLLM 私有参数（task_type 等）仅存在于
+    Provider 与配置契约，不泄漏到前端 request/response 协议。
     vLLM 承载 VoiceDesign 任务（task_type=VoiceDesign）：无参考音频时的日常/情感合成。
     """
 
@@ -397,17 +398,32 @@ class Qwen3TTSVLLMConfig(BaseModel):
     task_type: str = "VoiceDesign"
     timeout_seconds: float = 60
     sample_rate: int = 24000
+    # 该配置段对应的 Provider 运行时名（与 config.json 中 runtime 段保持一致口径）
+    runtime_name: str = "voicedesign"
 
 
-class Qwen3TTSIndexTTSConfig(BaseModel):
-    """IndexTTS-2.5 克隆运行时配置节（带参考音频的语音克隆）。
+class Qwen3TTSCosyVoiceConfig(BaseModel):
+    """CosyVoice3-0.5B 克隆运行时配置节（cosyvoice 运行时，带参考音频的语音克隆与情感合成）。
 
-    对应 qwen3_tts_config.schema.json 的 indextts 段。base_url 为空则禁用克隆能力。
-    请求携带 refs 时 Provider 路由到本运行时进行情感语音克隆。
+    对应 qwen3_tts_config.schema.json 的 cosyvoice 段。base_url 为空则禁用克隆能力。
+    请求携带 refs 时 Provider 首选路由本运行时；不可用/超时/非法响应时降级 qwen3_base。
     """
 
-    base_url: str = "http://127.0.0.1:8092"
-    model: str = "IndexTTS-2.5"
+    base_url: str = "http://127.0.0.1:8094"
+    model: str = "Fun-CosyVoice3-0.5B-2512"
+    timeout_seconds: float = 120
+    sample_rate: int = 24000
+
+
+class Qwen3TTSBaseConfig(BaseModel):
+    """Qwen3-TTS Base 降级运行时配置节（qwen3_base 运行时，主运行时不可用时的全局兜底）。
+
+    对应 qwen3_tts_config.schema.json 的 qwen3_base 段。CosyVoice/VoiceDesign
+    不可用/超时/非法响应时 Provider 降级到本运行时（vLLM，OpenAI 兼容）。
+    """
+
+    base_url: str = "http://127.0.0.1:8093"
+    model: str = "Qwen/Qwen3-TTS-12Hz-1.7B-Base"
     timeout_seconds: float = 120
     sample_rate: int = 24000
 
@@ -436,7 +452,8 @@ class Qwen3TTSLegacyConfig(BaseModel):
 
 
 class Qwen3TTSConfig(BaseModel):
-    """统一 Qwen3 TTS 配置节：运行时选择（vllm 首选/带 refs 时路由 indextts 克隆）与各子配置。
+    """统一 Qwen3 TTS 配置节：运行时选择（voicedesign 首选/带 refs 时路由 cosyvoice，
+    失败降级 qwen3_base）与各子配置。
 
     对应 qwen3_tts_config.schema.json。缺失字段由 Pydantic default 补齐。
     """
@@ -444,7 +461,8 @@ class Qwen3TTSConfig(BaseModel):
     enabled: bool = True
     runtime: str = "vllm"
     vllm: Qwen3TTSVLLMConfig = Field(default_factory=Qwen3TTSVLLMConfig)
-    indextts: Qwen3TTSIndexTTSConfig = Field(default_factory=Qwen3TTSIndexTTSConfig)
+    cosyvoice: Qwen3TTSCosyVoiceConfig = Field(default_factory=Qwen3TTSCosyVoiceConfig)
+    qwen3_base: Qwen3TTSBaseConfig = Field(default_factory=Qwen3TTSBaseConfig)
     default: Qwen3TTSDefaultConfig = Field(default_factory=Qwen3TTSDefaultConfig)
     emotion_instruction: Qwen3TTSEmotionConfig = Field(default_factory=Qwen3TTSEmotionConfig)
     legacy_engine_removed: Qwen3TTSLegacyConfig = Field(default_factory=Qwen3TTSLegacyConfig)

@@ -115,10 +115,16 @@ function HealthBadge(props: { ok: boolean; label: string }) {
   );
 }
 
-function isComponentOk(component?: { status: string }): boolean {
-  if (!component) return false;
-  const s = component.status.toLowerCase();
-  return s === 'ok' || s === 'healthy' || s === 'up' || s === 'connected';
+function isComponentOk(
+  component?: { status: string } | boolean,
+  fallbackBool?: boolean,
+): boolean {
+  if (typeof component === 'boolean') return component;
+  if (component && typeof component === 'object' && component.status) {
+    const s = component.status.toLowerCase();
+    return s === 'ok' || s === 'healthy' || s === 'up' || s === 'connected';
+  }
+  return fallbackBool ?? false;
 }
 
 export default function DashboardPage() {
@@ -244,15 +250,15 @@ export default function DashboardPage() {
                 <span className="font-mono text-xs">{data.health.version ?? '—'}</span>
               </div>
               <HealthBadge
-                ok={isComponentOk(data.health.database)}
+                ok={isComponentOk(data.health.database, data.health.components?.memory_manager)}
                 label={t('management.dashboard.health.database')}
               />
               <HealthBadge
-                ok={isComponentOk(data.health.memory)}
+                ok={isComponentOk(data.health.memory, data.health.components?.memory_manager)}
                 label={t('management.dashboard.health.memory')}
               />
               <HealthBadge
-                ok={isComponentOk(data.health.vector_store)}
+                ok={isComponentOk(data.health.vector_store, data.health.components?.memory_manager)}
                 label={t('management.dashboard.health.vectorStore')}
               />
             </div>

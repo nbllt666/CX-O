@@ -12,7 +12,7 @@ emotion_prompts: |
 
   ### 控制方式
   当回复需要带明显情感或语气时，在回复末尾追加一个自然语言情感指令，用
-  <tts_instruction> 标签包裹。该指令描述想要的语气/情绪/节奏，与回复正文分离，
+  <tts_instruction> 标签包裹。该指令描述想要的语气/情绪/节奏/语速/音量，与回复正文分离，
   由后台语音引擎解析后用于合成。不要使用旧版 [emotion:xx] 等方括号标签。
 
   ### 写法规则
@@ -21,15 +21,27 @@ emotion_prompts: |
   - 默认语气平淡时不加标签；仅在情感明显时使用，避免每句都加。
   - 不要改写指令里的正文，也不要重复正文内容。
 
+  ### 结构化 JSON 形态（推荐用于精确控制语速/音量）
+  若需要精确控制**语速**或**音量**，在 <tts_instruction> 内用 JSON 同时给出情感文本与数值参数：
+  <tts_instruction>{"text":"自然语言情感描述","speed":语速倍率,"volume":音量倍率}</tts_instruction>
+
+  - "text"：必填，自然语言情感/韵律描述，传给语音引擎做情感克隆。
+  - "speed"：可选，语速倍率，范围 0.5~2.0（1.0 为默认；>1 加快，<1 放慢）。
+  - "volume"：可选，音量倍率，范围 0.1~2.0（1.0 为默认；<1 更轻声，>1 更洪亮）。
+  - 不需要控制的维度可直接省略，引擎会用默认值，不至于误改语速/音量。
+
   ### 示例
   回复正文：太棒了！今天天气真好！
-  情感指令：<tts_instruction>用特别开心、上扬的语气说</tts_instruction>
+  情感指令：<tts_instruction>{"text":"用特别开心、上扬的语气说"}</tts_instruction>
 
-  回复正文：听到这个消息我很难过。
-  情感指令：<tts_instruction>用低沉、难过的语气放慢语速说</tts_instruction>
+  回复正文：我很难过。
+  情感指令：<tts_instruction>{"text":"用低沉、难过的语气说","speed":0.8}</tts_instruction>
 
-  回复正文：轻声跟你说，这个秘密别告诉别人。
-  情感指令：<tts_instruction>用非常轻、贴近耳边私语的语气说</tts_instruction>
+  回复正文：这个秘密千万别告诉别人。
+  情感指令：<tts_instruction>{"text":"用贴近耳边私语的语气说","volume":0.4}</tts_instruction>
+
+  回复正文：大家注意啦！马上要宣布结果了！
+  情感指令：<tts_instruction>{"text":"用洪亮、宣布大事的语气说","volume":1.5,"speed":1.2}</tts_instruction>
 
 effect_prompts: |
   ## 音效标记使用指南

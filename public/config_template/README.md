@@ -15,7 +15,7 @@
 | `settings_json.schema.json` | `c:/CX-O/config/settings.json`（services: danmaku/firewall/vad/sensevoice_streaming + tts） | P1 |
 | `env.schema.json` | `c:/CX-O/.env.example`（LLM 推理服务 + CX-O-SERVER 连接变量组）+ `c:/CX-O/config/env.py` EnvConfig（CXHMS_ 前缀映射） | P1 |
 | `computer_control_config.schema.json` | 电脑控制插件配置契约（spec `add-computer-control-cxfc` 冻结决策；APP-Frontend Electron 本地配置，含授权/令牌/TLS/run_command 护栏/自启动/管理员权限） | P1 |
-| `qwen3_tts_config.schema.json` | 统一 Qwen3 TTS 配置契约（spec `unify-qwen3-tts-migration` 冻结决策 + s0601 契约变更；runtime vllm 首选，无 refs→VoiceDesign/带 refs→IndexTTS(indextts)，含默认值/范围/auto_fill；旧引擎配置映射 LEGACY_ENGINE_REMOVED） | P0 |
+| `qwen3_tts_config.schema.json` | 统一 Qwen3 TTS 配置契约（spec `cosyvoice2-primary-qwen3tts-base-fallback` 冻结决策 + s0601 契约变更 v1.5.0；runtime vllm 首选，无 refs→VoiceDesign(voicedesign)/带 refs→CosyVoice3(cosyvoice)/降级→Qwen3-TTS Base(qwen3_base)，含默认值/范围/auto_fill；旧引擎配置映射 LEGACY_ENGINE_REMOVED） | P0 |
 
 ## 配置契约强制要求（rules-3 §三）
 

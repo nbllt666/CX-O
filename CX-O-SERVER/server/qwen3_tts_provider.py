@@ -15,9 +15,10 @@ qwen3_tts_config）。
 - 支持非流式（synthesize）与流式（synthesize_stream）合成，统一 PCM/WAV 格式与
   chunk 边界（恰一个 start、一个 final，顺序稳定）。
 - vLLM 私有参数（task_type 等）封装在 Provider 内，不泄漏到前端协议。
-- 无参考音频的日常/情感合成走 vLLM VoiceDesign（task_type=VoiceDesign）；
-  带参考音频的语音克隆路由 IndexTTS-2.5（indextts 运行时），
-  并在响应 runtime 元数据中记录（vllm / indextts）。
+- 无参考音频的日常/情感合成走 vLLM VoiceDesign（voicedesign 运行时）；
+  带参考音频的语音克隆路由 CosyVoice2（cosyvoice 运行时），
+  两者不可用/超时/非法响应时降级 Qwen3-TTS Base（qwen3_base 运行时），
+  并在响应 runtime 元数据中记录实际运行时（voicedesign / cosyvoice / qwen3_base）。
 - 参考音频输入采样率 [8000,48000] 与合成输出 24000 的差异由 Provider 在推理前重采样。
 
 边界：本实现仅覆盖 Provider/异常层，不接 LLM 情感指令（Task 4）、不统一语音编排
@@ -82,19 +83,77 @@ REF_AUDIO_SAMPLE_RATE_MAX = 48000
 WAV_HEADER_SIZE = 44
 
 VALID_OUTPUT_FORMATS = {"wav", "pcm", "mp3", "flac", "opus", "aac"}
-VALID_RUNTIMES = {"vllm", "indextts"}
+VALID_RUNTIMES = {"voicedesign", "cosyvoice", "qwen3_base"}
+# 配置层 runtime 旧值 → 运行时名映射（config.json runtime 段仍保留 "vllm"）
+RUNTIME_ALIASES = {"vllm": "voicedesign"}
 
 # 能力矩阵（Task 0 探针实证 2026-08-14，见 .trae/documents/20260813_模块0_Qwen3TTS迁移基线盘点.md §2.5）：
 # - speed 变速：实测 vLLM 支持（probe speed=1.5 通过、时长缩短），直接支持无需兜底；
-# - ref_audio 克隆：CustomVoice/Base 已弃用，带 refs 的语音克隆由 IndexTTS-2.5（indextts 运行时）承接；
-# - 无 refs 的日常/情感合成由 vLLM VoiceDesign（task_type=VoiceDesign）承接。
+# - ref_audio 克隆：CustomVoice/Base 已弃用，带 refs 的语音克隆由 CosyVoice3（cosyvoice 运行时）承接；
+# - 无 refs 的日常/情感合成由 vLLM VoiceDesign（voicedesign 运行时）承接；
+# - qwen3_base（Qwen3-TTS Base，vLLM）为全局降级运行时：cosyvoice/voicedesign 不可用/超时/非法响应时兜底。
 DEFAULT_VLLM_BASE_URL = "http://127.0.0.1:8091"
 DEFAULT_VLLM_MODEL = "Qwen/Qwen3-TTS-12Hz-1.7B-VoiceDesign"
-DEFAULT_INDEXTTS_BASE_URL = "http://127.0.0.1:8092"
-DEFAULT_INDEXTTS_MODEL = "IndexTTS-2.5"
+DEFAULT_COSYVOICE_BASE_URL = "http://127.0.0.1:8094"
+DEFAULT_COSYVOICE_MODEL = "Fun-CosyVoice3-0.5B-2512"
+DEFAULT_QWEN3_BASE_BASE_URL = "http://127.0.0.1:8093"
+DEFAULT_QWEN3_BASE_MODEL = "Qwen/Qwen3-TTS-12Hz-1.7B-Base"
 
-# 旧引擎配置键（命中时映射 LEGACY_ENGINE_REMOVED）
-LEGACY_ENGINE_KEYS = ("f5_tts", "f5-tts", "f5tts", "orpheus", "cosyvoice", "cosy_voice", "emotion_refs")
+# 旧引擎配置键（命中时映射 LEGACY_ENGINE_REMOVED）。
+# 注意：cosyvoice 已恢复为一级运行时（cosyvoice 运行时），不得再作为旧引擎拒绝。
+LEGACY_ENGINE_KEYS = ("f5_tts", "f5-tts", "f5tts", "orpheus", "cosy_voice", "emotion_refs")
+
+# 尾部静音剔除阈值（相对该块峰值，-50 dBFS≈0.00316）与最小保留时长
+_SILENCE_RATIO_THRESHOLD = 0.00316  # 10^(-50/20)
+_TRIM_MIN_RETAIN_S = 0.050  # 至少保留 50ms 语音尾音，保证自然收束
+
+
+def _trim_tail_silence(pcm: bytes, sample_rate: int) -> bytes:
+    """裁剪 PCM（16-bit 有符号小端单声道）末尾静音采样。
+
+    用途：消除 TTS 合成音频（CosyVoice3 等）尾部 ~100ms 静音，改善整段播放
+    结尾停顿感。仅对流式 final 块末尾裁剪，不改变 chunk 顺序与契约。
+
+    实现：从尾部回溯，跳过幅度低于 ``峰值 * _SILENCE_RATIO_THRESHOLD`` 的采样，
+    但至少保留 ``_TRIM_MIN_RETAIN_S`` 时长（保护真实弱语音尾音）。
+
+    Args:
+        pcm: 裸 PCM int16 字节（小端）。
+        sample_rate: 采样率（HZ），用于计算回退边界。
+    Returns:
+        裁剪尾部静音后的 PCM 字节；空输入返回原值。
+    """
+    if not pcm:
+        return pcm
+    step = 2  # int16 2 字节
+    n = len(pcm) // step
+    if n == 0:
+        return pcm
+
+    # 相对峰值（避免低音量音频误删真实语音）
+    peak = 0
+    for i in range(n):
+        v = int.from_bytes(pcm[i * step : i * step + step], "little", signed=True)
+        a = -v if v < 0 else v
+        if a > peak:
+            peak = a
+    if peak == 0:
+        return pcm  # 全静音块，原样返回（不裁剪，交由上层语义处理）
+
+    thr = peak * _SILENCE_RATIO_THRESHOLD
+    min_retain = int(sample_rate * _TRIM_MIN_RETAIN_S)  # 至少保留采样数
+    # 从尾部回溯，停在第一个非静音采样或达到最小保留边界
+    keep = n
+    stop = max(n - min_retain, 0)
+    for i in range(n - 1, stop - 1, -1):
+        v = int.from_bytes(pcm[i * step : i * step + step], "little", signed=True)
+        a = -v if v < 0 else v
+        if a > thr:
+            keep = i + 1
+            break
+    else:
+        keep = stop  # 全为尾部静音，退到最小保留边界
+    return pcm[: keep * step]
 
 
 # ============================================================================
@@ -150,7 +209,7 @@ class RuntimeUnavailableError(Qwen3TTSError):
 
 
 class RuntimeUnsupportedError(Qwen3TTSError):
-    """当前运行时(vLLM)不支持该能力，已路由 IndexTTS 克隆运行时并记录 runtime metadata。"""
+    """当前运行时(voicedesign)不支持该能力，已路由 CosyVoice2 克隆运行时并记录 runtime metadata。"""
 
     error_code: str = "RUNTIME_UNSUPPORTED"
     http_status: int = 200
@@ -185,7 +244,7 @@ class ProviderHealth:
     """轻量连通性健康检查结果（不做耗时生成/内容请求）。"""
 
     ok: bool
-    runtime: str  # vllm | indextts
+    runtime: str  # voicedesign | cosyvoice | qwen3_base
     latency_ms: Optional[float] = None
     detail: str = ""
 
@@ -205,6 +264,7 @@ class SynthesisRequest:
     stream: bool = False
     output_format: str = "wav"
     speed: float = 1.0
+    volume: float = 1.0
 
 
 @dataclass
@@ -217,7 +277,7 @@ class SynthesisResponse:
     channels: int = 1
     duration_seconds: Optional[float] = None
     refs_used: List[str] = field(default_factory=list)
-    runtime: str = "vllm"
+    runtime: str = "voicedesign"
 
 
 @dataclass
@@ -273,7 +333,7 @@ def detect_legacy_engine(raw_config: dict) -> None:
     """检查配置 dict 是否含旧引擎键，命中则抛 LegacyEngineRemovedError。
 
     对应 qwen3_tts_config.schema.json legacy_engine_removed 语义：
-    旧引擎配置不再作为可选引擎，加载含 f5_tts/orpheus/cosyvoice/emotion_refs
+    旧引擎配置不再作为可选引擎，加载含 f5_tts/orpheus/emotion_refs
     时映射 LEGACY_ENGINE_REMOVED，不得静默选择旧实现。
     """
     for key in LEGACY_ENGINE_KEYS:
@@ -288,7 +348,7 @@ def detect_legacy_engine_mode(mode: str) -> None:
 
     供迁移边界调用方在仍以旧模式配置时获得明确移除错误。
     """
-    legacy_modes = ("orpheus", "f5-tts", "f5", "embedded_f5", "cosyvoice")
+    legacy_modes = ("orpheus", "f5-tts", "f5", "embedded_f5")
     if mode in legacy_modes:
         raise LegacyEngineRemovedError(
             f"旧引擎模式 {mode} 已移除，不再作为可选 TTS 引擎。请改用 Qwen3 TTS。"
@@ -301,7 +361,7 @@ def detect_legacy_engine_mode(mode: str) -> None:
 class Qwen3TTSProvider:
     """统一 Qwen3 TTS Provider：请求转换、运行时适配、健康检查、超时、取消、错误映射。
 
-    支持 vLLM 首选运行时与官方 Qwen3 运行时临时兜底；vLLM 私有参数封装在本类内。
+    支持 cosyvoice/voicedesign 首选运行时与 qwen3_base 降级运行时；vLLM 私有参数封装在本类内。
     底层 HTTP 客户端可注入（测试用 Fake/Mock），默认使用共享 httpx.AsyncClient。
     """
 
@@ -326,8 +386,10 @@ class Qwen3TTSProvider:
         self._owns_client = False
         self._ref_resolver = ref_resolver
         self._closed = False
-        pref = self._cfg.get("runtime", "vllm")
-        self._runtime = pref if pref in VALID_RUNTIMES else "vllm"
+        pref = self._cfg.get("runtime", "voicedesign")
+        # 配置层 runtime 兼容历史值 "vllm"（Provider 内部映射为运行时名 voicedesign）
+        pref = RUNTIME_ALIASES.get(pref, pref)
+        self._runtime = pref if pref in VALID_RUNTIMES else "voicedesign"
 
     # ------------------------------------------------------------------ 配置
     def _load_cfg(self) -> Dict[str, Any]:
@@ -347,11 +409,17 @@ class Qwen3TTSProvider:
                 "timeout_seconds": cfg.vllm.timeout_seconds,
                 "sample_rate": cfg.vllm.sample_rate,
             },
-            "indextts": {
-                "base_url": cfg.indextts.base_url,
-                "model": cfg.indextts.model,
-                "timeout_seconds": cfg.indextts.timeout_seconds,
-                "sample_rate": cfg.indextts.sample_rate,
+            "cosyvoice": {
+                "base_url": cfg.cosyvoice.base_url,
+                "model": cfg.cosyvoice.model,
+                "timeout_seconds": cfg.cosyvoice.timeout_seconds,
+                "sample_rate": cfg.cosyvoice.sample_rate,
+            },
+            "qwen3_base": {
+                "base_url": cfg.qwen3_base.base_url,
+                "model": cfg.qwen3_base.model,
+                "timeout_seconds": cfg.qwen3_base.timeout_seconds,
+                "sample_rate": cfg.qwen3_base.sample_rate,
             },
             "default": {
                 "voice": cfg.default.voice,
@@ -377,53 +445,67 @@ class Qwen3TTSProvider:
         return self._client
 
     def _base_url_for(self, runtime: str) -> str:
-        """返回指定运行时的基础地址（去尾斜杠）。"""
-        if runtime == "indextts":
-            url = self._cfg.get("indextts", {}).get("base_url", DEFAULT_INDEXTTS_BASE_URL) or DEFAULT_INDEXTTS_BASE_URL
+        """返回指定运行时的基础地址（去尾斜杠）。
+
+        cosyvoice 读 cfg["cosyvoice"]（默认 8094）；qwen3_base 读 cfg["qwen3_base"]
+        （默认 8093）；其余（voicedesign）读 cfg["vllm"]（默认 8091，配置段名保持 vllm）。
+        """
+        if runtime == "cosyvoice":
+            url = self._cfg.get("cosyvoice", {}).get("base_url", DEFAULT_COSYVOICE_BASE_URL) or DEFAULT_COSYVOICE_BASE_URL
+        elif runtime == "qwen3_base":
+            url = self._cfg.get("qwen3_base", {}).get("base_url", DEFAULT_QWEN3_BASE_BASE_URL) or DEFAULT_QWEN3_BASE_BASE_URL
         else:
             url = self._cfg.get("vllm", {}).get("base_url", DEFAULT_VLLM_BASE_URL) or DEFAULT_VLLM_BASE_URL
         return url.rstrip("/")
 
     def _timeout_for(self, runtime: str) -> float:
         """返回指定运行时的请求超时（秒）。"""
-        if runtime == "indextts":
-            return float(self._cfg.get("indextts", {}).get("timeout_seconds", 120))
+        if runtime == "cosyvoice":
+            return float(self._cfg.get("cosyvoice", {}).get("timeout_seconds", 120))
+        if runtime == "qwen3_base":
+            return float(self._cfg.get("qwen3_base", {}).get("timeout_seconds", 120))
         return float(self._cfg.get("vllm", {}).get("timeout_seconds", 60))
 
     # ------------------------------------------------------------ 能力/运行时
     def _needs_fallback(self, resolved: List[ResolvedRef]) -> bool:
-        """判断当前请求是否需要 vLLM 无法消费的能力（路由 indextts 克隆运行时）。
+        """判断当前请求是否需要 VoiceDesign 无法消费的能力（路由 cosyvoice 克隆运行时）。
 
         实测能力矩阵（2026-08-14 探针）：
         - speed：vLLM 支持，不再兜底；
         - ref_audio：vLLM VoiceDesign 任务不支持消费（已弃用 CustomVoice/Base 模型），
-          请求带参考音频时路由 IndexTTS-2.5（indextts 运行时）进行情感语音克隆。
-          若 indextts.base_url 为空则抛 RuntimeUnsupportedError。
+          请求带参考音频时首选路由 CosyVoice2（cosyvoice 运行时）进行情感语音克隆；
+          CosyVoice2 不可用/超时/非法响应时降级 Qwen3-TTS Base（qwen3_base 运行时）。
+          若 cosyvoice.base_url 为空则抛 RuntimeUnsupportedError。
         """
         if not resolved:
             return False
-        return True  # VoiceDesign 不支持 ref_audio，有 refs 即路由 indextts
+        return True  # VoiceDesign 不支持 ref_audio，有 refs 即路由 cosyvoice
 
     def _select_runtime(self, req: SynthesisRequest, resolved: List[ResolvedRef]) -> str:
-        """选择本次请求的推理运行时。
+        """选择本次请求的首选推理运行时。
 
-        vLLM 无法消费的已确认能力（ref_audio）→ 若配置 indextts.base_url 则路由 indextts；
-        否则抛 RuntimeUnsupportedError（不静默回退旧引擎）。
+        - 带 refs（VoiceDesign 无法消费的 ref_audio 能力）→ 若配置 cosyvoice.base_url
+          则路由 cosyvoice；否则抛 RuntimeUnsupportedError（提示需配置 CosyVoice3）。
+        - 无 refs → 返回 preferred（voicedesign）。
         """
         preferred = self._runtime
-        if preferred == "vllm" and self._needs_fallback(resolved):
-            indextts = self._cfg.get("indextts", {})
-            if indextts.get("base_url"):
-                return "indextts"
+        if preferred == "voicedesign" and self._needs_fallback(resolved):
+            cosyvoice = self._cfg.get("cosyvoice", {})
+            if cosyvoice.get("base_url"):
+                return "cosyvoice"
             raise RuntimeUnsupportedError(
-                "请求携带参考音频，但 vLLM VoiceDesign 任务不支持 ref_audio 消费（需 IndexTTS-2.5 克隆运行时），"
-                "且未配置 indextts 兜底运行时。"
+                "请求携带参考音频，但 vLLM VoiceDesign 任务不支持 ref_audio 消费（需 CosyVoice3 克隆运行时），"
+                "且未配置 cosyvoice 运行时。"
             )
         return preferred
 
     # ------------------------------------------------------------ 请求构建
     def _build_vllm_request(self, req: SynthesisRequest, resolved: List[ResolvedRef]) -> Dict[str, Any]:
-        """构建 vLLM-Omni /v1/audio/speech 请求体（vLLM 私有参数封装在 Provider 内）。"""
+        """构建 vLLM VoiceDesign 请求体（voicedesign 运行时，OpenAI 兼容 /v1/audio/speech）。
+
+        vLLM 私有参数（task_type 等）封装在 Provider 内，不泄漏到前端协议。
+        ref_audio 以裸 base64 列表发送（vLLM 消费 base64 而非 data URL）。
+        """
         cfg = self._cfg.get("vllm", {})
         body: Dict[str, Any] = {
             "model": cfg.get("model", DEFAULT_VLLM_MODEL),
@@ -446,15 +528,16 @@ class Qwen3TTSProvider:
             body["ref_text"] = [r.ref_text for r in resolved]
         return body
 
-    def _build_indextts_request(self, req: SynthesisRequest, resolved: List[ResolvedRef]) -> Dict[str, Any]:
-        """构建 IndexTTS-2.5 克隆运行时请求体（OpenAI 兼容 + 扩展字段）。
+    def _build_cosyvoice_request(self, req: SynthesisRequest, resolved: List[ResolvedRef]) -> Dict[str, Any]:
+        """构建 CosyVoice3 克隆运行时请求体（cosyvoice 运行时，OpenAI 兼容 + 扩展字段）。
 
         ref_audio 以 data URL 形式发送（服务端 _decode_data_url 消费），并携带
         instructions（情感指令）/ref_text（参考转写）提升克隆质量。
+        Provider 层保证带 refs 才路由 cosyvoice，因此正常必有 ref_audio 字段。
         """
-        cfg = self._cfg.get("indextts", {})
+        cfg = self._cfg.get("cosyvoice", {})
         body: Dict[str, Any] = {
-            "model": cfg.get("model", DEFAULT_INDEXTTS_MODEL),
+            "model": cfg.get("model", DEFAULT_COSYVOICE_MODEL),
             "input": req.text,
             "response_format": req.output_format,
             "stream": req.stream,
@@ -467,6 +550,8 @@ class Qwen3TTSProvider:
             body["instructions"] = req.tts_instruction
         if req.speed is not None:
             body["speed"] = req.speed
+        if req.volume is not None:
+            body["volume"] = req.volume
         if resolved:
             body["ref_audio"] = [
                 "data:audio/wav;base64," + base64.b64encode(r.data).decode("ascii")
@@ -475,10 +560,44 @@ class Qwen3TTSProvider:
             body["ref_text"] = [r.ref_text for r in resolved]
         return body
 
+    def _build_qwen3_base_request(self, req: SynthesisRequest, resolved: List[ResolvedRef]) -> Dict[str, Any]:
+        """构建 Qwen3-TTS Base 降级运行时请求体（qwen3_base 运行时，vLLM OpenAI 兼容）。
+
+        vLLM 消费 ref_audio 为字符串 base64 data URL（如 data:audio/wav;base64,...）、
+        ref_text 为字符串——与 cosyvoice 的多 ref 列表格式不同（vLLM 仅接受单个 ref，
+        取首个解析后的参考音频）。裸 PCM16（重采样路径产出）先包裹 WAV 容器头；
+        wav/flac/opus/mp3/aac 容器原样透传（vLLM 按内容嗅探解码，不依赖 mime）。
+        """
+        cfg = self._cfg.get("qwen3_base", {})
+        body: Dict[str, Any] = {
+            "model": cfg.get("model", DEFAULT_QWEN3_BASE_MODEL),
+            "input": req.text,
+            "response_format": req.output_format,
+            "stream": req.stream,
+        }
+        if req.voice:
+            body["voice"] = req.voice
+        if req.language:
+            body["language"] = req.language
+        if req.tts_instruction:
+            body["instructions"] = req.tts_instruction
+        if req.speed is not None and abs(req.speed - 1.0) > 1e-6:
+            body["speed"] = req.speed
+        if resolved:
+            first = resolved[0]
+            audio = first.data
+            if not self._is_audio_container(audio):
+                audio = self._wrap_pcm16_wav(audio, first.sample_rate, first.channels)
+            body["ref_audio"] = "data:audio/wav;base64," + base64.b64encode(audio).decode("ascii")
+            body["ref_text"] = first.ref_text
+        return body
+
     def _build_runtime_request(self, req: SynthesisRequest, runtime: str, resolved: List[ResolvedRef]) -> Dict[str, Any]:
         """按运行时构建请求体。"""
-        if runtime == "indextts":
-            return self._build_indextts_request(req, resolved)
+        if runtime == "cosyvoice":
+            return self._build_cosyvoice_request(req, resolved)
+        if runtime == "qwen3_base":
+            return self._build_qwen3_base_request(req, resolved)
         return self._build_vllm_request(req, resolved)
 
     # ------------------------------------------------------------ 参考音频
@@ -556,6 +675,36 @@ class Qwen3TTSProvider:
             out[i] = int(round(samples[j] * (1 - frac) + samples[k] * frac))
         return out.tobytes()
 
+    @staticmethod
+    def _is_audio_container(data: bytes) -> bool:
+        """判断音频字节是否带容器头（wav/flac/opus/mp3/aac），而非裸 PCM16。"""
+        if not data:
+            return False
+        if data.startswith((b"RIFF", b"fLaC", b"OggS", b"ID3")):
+            return True
+        # MPEG 音频帧同步（mp3/aac）
+        if len(data) >= 2 and data[0] == 0xFF and (data[1] & 0xE0) == 0xE0:
+            return True
+        return False
+
+    @staticmethod
+    def _wrap_pcm16_wav(pcm: bytes, sample_rate: int, channels: int) -> bytes:
+        """将裸 16-bit PCM 包裹为合法 WAV 容器（供 vLLM 内容嗅探解码）。"""
+        import struct
+
+        n_channels = max(1, int(channels))
+        rate = max(1, int(sample_rate))
+        block_align = n_channels * 2
+        byte_rate = rate * block_align
+        header = struct.pack(
+            "<4sI4s4sIHHIIHH4sI",
+            b"RIFF", 36 + len(pcm), b"WAVE",
+            b"fmt ", 16, 1, n_channels,
+            rate, byte_rate, block_align, 16,
+            b"data", len(pcm),
+        )
+        return header + pcm
+
     # ------------------------------------------------------------ 请求校验
     def _validate_request(self, req: SynthesisRequest) -> None:
         """校验归一化请求契约，非法抛对应异常。"""
@@ -607,15 +756,24 @@ class Qwen3TTSProvider:
         return RuntimeUnavailableError(f"Qwen3 TTS 运行时错误 (HTTP {status}): {exc}")
 
     # ------------------------------------------------------------------ 合成
-    async def synthesize(self, req: SynthesisRequest) -> SynthesisResponse:
-        """非流式合成。
+    def _fallback_runtime(self, primary: str) -> Optional[str]:
+        """返回首选运行时的降级目标。
 
-        Qwen3 运行时不可用/非法响应/超时抛 RuntimeUnavailableError，不静默调旧引擎。
+        带 refs 首选 cosyvoice、无 refs 首选 voicedesign，两者均降级 qwen3_base；
+        qwen3_base 自身无降级目标。仅「运行时不可用」类错误触发降级，请求非法不降级。
         """
-        t0 = time.monotonic()
-        self._validate_request(req)
-        resolved = await self._resolve_refs(req)
-        runtime = self._select_runtime(req, resolved)
+        if primary == "qwen3_base":
+            return None
+        return "qwen3_base"
+
+    async def _synthesize_once(
+        self,
+        req: SynthesisRequest,
+        resolved: List[ResolvedRef],
+        runtime: str,
+        t0: float,
+    ) -> SynthesisResponse:
+        """单次非流式合成（供 synthesize 的首选/降级循环调用，最多执行 2 次）。"""
         body = self._build_runtime_request(req, runtime, resolved)
         base_url = self._base_url_for(runtime)
         timeout = self._timeout_for(runtime)
@@ -655,24 +813,46 @@ class Qwen3TTSProvider:
             runtime=runtime,
         )
 
-    async def synthesize_stream(self, req: SynthesisRequest) -> AsyncIterator[AudioChunk]:
-        """流式合成。
+    async def synthesize(self, req: SynthesisRequest) -> SynthesisResponse:
+        """非流式合成。
+
+        首选运行时（带 refs→cosyvoice，无 refs→voicedesign）不可用/超时/非法响应
+        （RuntimeUnavailableError）时降级 qwen3_base 重试一次；请求校验与 refs 解析
+        仅执行一次。请求非法（InvalidRequestError 等）不降级。
+        """
+        t0 = time.monotonic()
+        self._validate_request(req)
+        resolved = await self._resolve_refs(req)
+        primary = self._select_runtime(req, resolved)
+        fallback = self._fallback_runtime(primary)
+        try:
+            return await self._synthesize_once(req, resolved, primary, t0)
+        except RuntimeUnavailableError as exc:
+            if fallback is None:
+                raise
+            _log("synthesize", f"首选运行时 {primary} 不可用，降级 {fallback}（原因: {exc}）", t0, "ERROR")
+            return await self._synthesize_once(req, resolved, fallback, t0)
+
+    async def _synthesize_stream_once(
+        self,
+        req: SynthesisRequest,
+        resolved: List[ResolvedRef],
+        runtime: str,
+    ) -> AsyncIterator[AudioChunk]:
+        """单次流式合成（供 synthesize_stream 的首选/降级循环调用，最多执行 2 次）。
 
         chunk 顺序稳定（index 递增），恰一个 start/一个 final；取消抛 StreamAbortedError。
         底层断流/超时/非法响应抛 RuntimeUnavailableError。
         """
-        self._validate_request(req)
-        resolved = await self._resolve_refs(req)
-        runtime = self._select_runtime(req, resolved)
         body = self._build_runtime_request(req, runtime, resolved)
         base_url = self._base_url_for(runtime)
         timeout = self._timeout_for(runtime)
         client = self._get_client()
 
         index = 0
-        # 上一个已处理但尚未 yield 的 chunk（用于标记 final：最后一个数据块 is_final=True）
+        # 末块持有器（标记 final）：非末块在下块到达时立即下发
         pending: Optional[AudioChunk] = None
-        first = True
+        started = False
         bytes_received = 0
         skip = WAV_HEADER_SIZE if req.output_format == "wav" else 0
 
@@ -688,6 +868,20 @@ class Qwen3TTSProvider:
                             continue
                     if not raw:
                         continue
+                    if not started:
+                        # 首块立即下发（TTFT 关键：不等待下一 hop，降低首包可播放延迟）
+                        started = True
+                        yield AudioChunk(
+                            index=index,
+                            data=raw,
+                            format=req.output_format,
+                            sample_rate=SYNTH_SAMPLE_RATE,
+                            channels=1,
+                            is_start=True,
+                            is_final=False,
+                        )
+                        index += 1
+                        continue
                     if pending is not None:
                         yield pending
                     pending = AudioChunk(
@@ -696,10 +890,9 @@ class Qwen3TTSProvider:
                         format=req.output_format,
                         sample_rate=SYNTH_SAMPLE_RATE,
                         channels=1,
-                        is_start=first,
+                        is_start=False,
                         is_final=False,
                     )
-                    first = False
                     index += 1
         except asyncio.CancelledError:
             pending = None
@@ -719,11 +912,44 @@ class Qwen3TTSProvider:
 
         if pending is not None:
             pending.is_final = True
+            # 末尾静音剔除：仅末块裁剪尾部静音（改善整段播报结尾停顿感），
+            # 不改变中间块流式下发与首包延迟。
+            if pending.data:
+                pending.data = _trim_tail_silence(pending.data, SYNTH_SAMPLE_RATE)
             yield pending
             _log("synthesize_stream", f"成功 runtime={runtime} chunks={index}", 0)
+        elif started:
+            # 单块流：首块已立即下发，补发空 final 块闭合契约（恰一个 final）
+            yield AudioChunk(
+                index=index, data=b"", format=req.output_format,
+                sample_rate=SYNTH_SAMPLE_RATE, channels=1,
+                is_start=False, is_final=True,
+            )
+            _log("synthesize_stream", f"成功 runtime={runtime} chunks={index} (single-chunk)", 0)
         else:
             _log("synthesize_stream", f"运行时返回空/非法流 ({runtime})", 0, "ERROR")
             raise RuntimeUnavailableError("Qwen3 TTS 流式返回为空/非法响应")
+
+    async def synthesize_stream(self, req: SynthesisRequest) -> AsyncIterator[AudioChunk]:
+        """流式合成。
+
+        首选运行时（带 refs→cosyvoice，无 refs→voicedesign）不可用/超时/断流/非法响应
+        （RuntimeUnavailableError）时降级 qwen3_base 重试一次；请求校验与 refs 解析
+        仅执行一次。请求非法（InvalidRequestError 等）不降级。
+        """
+        self._validate_request(req)
+        resolved = await self._resolve_refs(req)
+        primary = self._select_runtime(req, resolved)
+        fallback = self._fallback_runtime(primary)
+        try:
+            async for chunk in self._synthesize_stream_once(req, resolved, primary):
+                yield chunk
+        except RuntimeUnavailableError as exc:
+            if fallback is None:
+                raise
+            _log("synthesize_stream", f"首选运行时 {primary} 不可用，降级 {fallback}（原因: {exc}）", 0, "ERROR")
+            async for chunk in self._synthesize_stream_once(req, resolved, fallback):
+                yield chunk
 
     # ------------------------------------------------------------ 健康检查
     async def health_check(self) -> ProviderHealth:

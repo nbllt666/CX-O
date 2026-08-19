@@ -2,6 +2,63 @@
 
 > 遵循 AC 范式 v6 rules-3 §六 契约版本化规则。所有契约变更必须记录版本号、变更内容、变更原因、影响范围。
 
+## [1.5.1] - 2026-08-16
+
+### 变更内容
+
+- **配置契约变更（PATCH）**：`config_template/qwen3_tts_config.schema.json` 的 `cosyvoice` 段默认模型名与描述同步 CosyVoice3（CosyVoice2-0.5B → Fun-CosyVoice3-0.5B-2512）
+  - `cosyvoice.model` 默认值 `CosyVoice2-0.5B` → `Fun-CosyVoice3-0.5B-2512`
+  - `cosyvoice` 段 description 与 `base_url` description 同步 CosyVoice3-0.5B
+  - 顶层 description 同步「带参考音频的语音克隆由 CosyVoice2 → CosyVoice3 承接」
+- **数据契约变更（PATCH）**：`schema/speech_synthesis_response.schema.json` 的 `runtime` 描述文本同步 cosyvoice（CosyVoice2-0.5B → CosyVoice3-0.5B）
+- **数据契约变更（PATCH）**：`schema/qwen3_tts_error_codes.json` 的 `RUNTIME_UNSUPPORTED` message 同步「需 CosyVoice3 克隆运行时」
+- **接口契约变更（PATCH）**：`interface_stub/qwen3_tts_provider.pyi` 职责注释同步 cosyvoice（CosyVoice2 → CosyVoice3）
+
+### 变更原因
+
+- 用户裁决将 CosyVoice 主运行时由 CosyVoice2-0.5B 升级为 CosyVoice3-0.5B（Fun-CosyVoice3-0.5B-2512，用户确认 QwenAudio/CosyVoice 来源），TTFT/RTF 更优。
+- 通过 AskUserQuestion 显式授权「授权同步」public/ 契约描述与默认值（rules-0 §四-10 + rules-4 §4.3 + s0601）。
+
+### 影响范围
+
+- **PATCH 变更**：仅默认值与描述文本更新，无字段增删/类型变更/枚举变更，不阻断下游。
+- 下游已同步：`CX-O-SERVER/server/config.py`（Qwen3TTSCosyVoiceConfig.model=Fun-CosyVoice3-0.5B-2512）、`CX-O-SERVER/config.json`（cosyvoice.model）、`CX-O-SERVER/server/qwen3_tts_provider.py`（DEFAULT_COSYVOICE_MODEL）、`tests/test_qwen3_tts_provider.py`（35 passed）。
+
+### 闭合判据
+
+- [x] 4 份契约实体已按 s0601 流程经人类批准更新（PATCH，无结构变更）
+- [x] 代码侧 config/provider/tests 已同步并通过定向回归（35 passed）
+- [x] CHANGELOG 记录 v1.5.1 条目（本文件）
+
+## [1.5.0] - 2026-08-16
+
+### 变更内容
+
+- **配置契约变更（MINOR）**：`config_template/qwen3_tts_config.schema.json` 落地 CosyVoice2 主 + Qwen3-TTS Base 降级架构（spec `cosyvoice2-primary-qwen3tts-base-fallback` + s0601 契约变更适配，人类显式批准）
+  - 删除 `indextts` 段（IndexTTS-2.5 克隆运行时移除）
+  - 新增 `cosyvoice` 段（base_url/model/timeout_seconds/sample_rate，承载带 refs 的语音克隆与情感合成，默认 8094/CosyVoice2-0.5B）
+  - 新增 `qwen3_base` 段（base_url/model/timeout_seconds/sample_rate，承载全局降级，默认 8093/Qwen/Qwen3-TTS-12Hz-1.7B-Base）
+  - `runtime` 保持 `["vllm"]`（配置层首选，内部映射 voicedesign 运行时）
+  - `legacy_engine_removed` 描述移除 cosyvoice 旧引擎语义（cosyvoice 已恢复为一级运行时）
+- **数据契约变更（MINOR）**：`schema/speech_synthesis_response.schema.json` 的 `runtime` 枚举 `[vllm, indextts]` → `[voicedesign, cosyvoice, qwen3_base]`
+- **接口契约变更（PATCH）**：`interface_stub/qwen3_tts_provider.pyi` 职责注释同步 voicedesign（vLLM VoiceDesign）/ cosyvoice（CosyVoice2）/ qwen3_base（Qwen3-TTS Base），`ProviderHealth.runtime` 注释更新
+
+### 变更原因
+
+- 用户裁决替换 IndexTTS 加速方案：IndexTTS-2.5 三阶段流水线复杂、QwenEmotion 10s 固有瓶颈、torch.compile 编译成本高；改用 CosyVoice2-0.5B 作为带 refs 克隆/情感主运行时（极端优化），VoiceDesign 保留（无 refs 音频设计），Qwen3-TTS Base 作全局降级，移除 IndexTTS。
+- 通过 AskUserQuestion 显式授权「批准落位 v1.5.0」public/ 契约（rules-0 §四-10 + rules-4 §4.3 + s0601）。
+
+### 影响范围
+
+- **MINOR 变更**：`runtime` 枚举值变化（vllm/indextts → voicedesign/cosyvoice/qwen3_base）通知依赖模块，不阻断；`indextts` 配置段不再合法，映射移除错误。
+- 下游已同步：`CX-O-SERVER/server/config.py`（Qwen3TTSCosyVoiceConfig + Qwen3TTSBaseConfig 替换 Qwen3TTSIndexTTSConfig）、`CX-O-SERVER/config.json`（indextts 段 → cosyvoice + qwen3_base 段）、`CX-O-SERVER/server/qwen3_tts_provider.py`（cosyvoice 主 + qwen3_base 降级路由）、`tests/test_qwen3_tts_provider.py`（35 passed 含降级链测试）。
+
+### 闭合判据
+
+- [x] 3 份契约实体已按 s0601 流程经人类批准更新
+- [x] 代码侧 config/provider/tests 已同步并通过定向回归
+- [x] CHANGELOG 记录 v1.5.0 条目（本文件）
+
 ## [1.4.0] - 2026-08-14
 
 ### 变更内容

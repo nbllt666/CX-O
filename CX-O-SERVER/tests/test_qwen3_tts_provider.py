@@ -9,8 +9,9 @@ Task 2 [P] 闭合判据：Provider 单测与 Mock 合成覆盖成功、超时、
 - 请求校验：非法 text/format/speed、情感指令超长、refs 前缀校验
 - 参考音频：ref_resolver 未接入(RefAudioNotFoundError)、采样率越界、
   双来源 refs 重采样到 24kHz 并进入请求体
-- 运行时：vLLM 首选（VoiceDesign 日常/情感），speed 由 vLLM 直接支持（探针实证，不再兜底）、
-  refs 携带时路由 indextts（IndexTTS-2.5 克隆运行时）；未配置 indextts 时 RuntimeUnsupportedError
+- 运行时：voicedesign 首选（VoiceDesign 日常/情感），speed 由 vLLM 直接支持（探针实证，不再兜底）、
+  refs 携带时路由 cosyvoice（CosyVoice2 克隆运行时）；未配置 cosyvoice 时 RuntimeUnsupportedError；
+  首选运行时不可用/超时/非法响应时降级 qwen3_base（Qwen3-TTS Base）
 - health_check 轻量探活、close 资源清理、旧引擎检测(LegacyEngineRemovedError)
 
 运行：python -m pytest tests/test_qwen3_tts_provider.py -q
@@ -144,13 +145,41 @@ class FakeClient:
         self.closed = True
 
 
+class FallbackClient(FakeClient):
+    """按 URL 区分行为的客户端：首选运行时 URL 抛「运行时不可用」错误，降级 URL 成功。
+
+    用于验证降级链：主运行时（如 8094/8091）不可达时 Provider 应降级 qwen3_base（8093）。
+    """
+
+    def __init__(self, fail_url_fragment: str = "8094", stream_chunks: list | None = None):
+        super().__init__(post_response=FakeResponse(content=_pcm16(240)))
+        self.fail_url_fragment = fail_url_fragment
+        self._stream_chunks = stream_chunks if stream_chunks is not None else [_pcm16(240)]
+
+    async def post(self, url, json=None, timeout=None):
+        self.last_url = url
+        self.last_json = json
+        if self.fail_url_fragment in url:
+            raise httpx.ConnectError("connection refused (primary unavailable)")
+        return self.post_response
+
+    def stream(self, method, url, json=None, timeout=None):
+        self.last_url = url
+        self.last_json = json
+        if self.fail_url_fragment in url:
+            resp = FakeStreamResp([], error=httpx.ConnectError("connection refused (primary unavailable)"))
+        else:
+            resp = FakeStreamResp(self._stream_chunks)
+        return FakeStreamCtx(resp)
+
+
 def _pcm16(nsamples: int, fill: int = 100) -> bytes:
     """构造 16-bit signed LE mono PCM 数据。"""
     a = array.array("h", [fill] * nsamples)
     return a.tobytes()
 
 
-def _cfg(indextts_base_url: str = "http://127.0.0.1:8092", runtime: str = "vllm", task_type: str = "VoiceDesign") -> dict:
+def _cfg(cosyvoice_base_url: str = "http://127.0.0.1:8094", runtime: str = "voicedesign", task_type: str = "VoiceDesign") -> dict:
     """构造 Provider 配置 dict（直接注入，避免依赖真实 settings）。"""
     return {
         "enabled": True,
@@ -162,9 +191,15 @@ def _cfg(indextts_base_url: str = "http://127.0.0.1:8092", runtime: str = "vllm"
             "timeout_seconds": 60,
             "sample_rate": 24000,
         },
-        "indextts": {
-            "base_url": indextts_base_url,
-            "model": "IndexTTS-2.5",
+        "cosyvoice": {
+            "base_url": cosyvoice_base_url,
+            "model": "Fun-CosyVoice3-0.5B-2512",
+            "timeout_seconds": 120,
+            "sample_rate": 24000,
+        },
+        "qwen3_base": {
+            "base_url": "http://127.0.0.1:8093",
+            "model": "Qwen/Qwen3-TTS-12Hz-1.7B-Base",
             "timeout_seconds": 120,
             "sample_rate": 24000,
         },
@@ -199,7 +234,7 @@ class TestSynthesize:
         assert resp.format == "pcm"
         assert resp.sample_rate == SYNTH_SAMPLE_RATE
         assert resp.channels == 1
-        assert resp.runtime == "vllm"
+        assert resp.runtime == "voicedesign"
         assert "v1/audio/speech" in client.last_url
         assert client.last_json["task_type"] == "VoiceDesign"  # vLLM 私有参数入口
 
@@ -376,7 +411,7 @@ class TestRefs:
 
     @pytest.mark.asyncio
     async def test_dual_source_refs_resampled_to_24k(self):
-        # 双来源：a 为 48kHz，b 为 8kHz，均重采样到 24kHz 并以 data URL 进入 indextts 请求体
+        # 双来源：a 为 48kHz，b 为 8kHz，均重采样到 24kHz 并以 data URL 进入 cosyvoice 请求体
         resolver = {
             "ref_prompt": ResolvedRef(asset_id="ref_prompt", data=_pcm16(480), sample_rate=48000, ref_text="p"),
             "ref_file": ResolvedRef(asset_id="ref_file", data=_pcm16(80), sample_rate=8000, ref_text="f"),
@@ -386,13 +421,16 @@ class TestRefs:
         resp = await p.synthesize(_req(refs=["ref_prompt", "ref_file"]))
         assert resp.refs_used == ["ref_prompt", "ref_file"]
         body = client.last_json
-        assert resp.runtime == "indextts"
+        assert resp.runtime == "cosyvoice"
+        assert body["model"] == "Fun-CosyVoice3-0.5B-2512"
         # 48kHz 480 样本 -> 24kHz 240 样本；8kHz 80 样本 -> 24kHz 240 样本
         def _b64(s: str) -> bytes:
             return base64.b64decode(s.split(",", 1)[1] if "," in s else s)
         assert len(_b64(body["ref_audio"][0])) == 240 * 2
         assert len(_b64(body["ref_audio"][1])) == 240 * 2
         assert body["ref_text"] == ["p", "f"]
+        # data URL 前缀（与 vLLM 裸 base64 区分）
+        assert body["ref_audio"][0].startswith("data:audio/wav;base64,")
 
 
 # ============================================================================
@@ -400,36 +438,100 @@ class TestRefs:
 # ============================================================================
 class TestRuntimeSelection:
     @pytest.mark.asyncio
-    async def test_refs_routes_to_indextts(self):
-        # VoiceDesign 任务携带 refs → 路由 indextts（IndexTTS-2.5 克隆运行时）
+    async def test_refs_routes_to_cosyvoice(self):
+        # VoiceDesign 任务携带 refs → 路由 cosyvoice（CosyVoice2 克隆运行时）
         client = _make_client(post_response=FakeResponse(content=_pcm16(240)))
         p = Qwen3TTSProvider(
-            config=_cfg(indextts_base_url="http://127.0.0.1:8092"),
+            config=_cfg(cosyvoice_base_url="http://127.0.0.1:8094"),
             http_client=client, ref_resolver=lambda aid: ResolvedRef(asset_id=aid, data=_pcm16(240), sample_rate=24000))
         resp = await p.synthesize(_req(refs=["ref_a"]))
-        assert resp.runtime == "indextts"
-        assert "8092" in client.last_url
+        assert resp.runtime == "cosyvoice"
+        assert "8094" in client.last_url
 
     @pytest.mark.asyncio
-    async def test_refs_no_indextts_raises_unsupported(self):
-        # VoiceDesign 任务携带 refs 且无 indextts 兜底 → 错误信息清晰
+    async def test_refs_no_cosyvoice_raises_unsupported(self):
+        # VoiceDesign 任务携带 refs 且无 cosyvoice 兜底 → 错误信息清晰
         p = Qwen3TTSProvider(
-            config=_cfg(indextts_base_url=""),
+            config=_cfg(cosyvoice_base_url=""),
             http_client=_make_client(), ref_resolver=lambda aid: ResolvedRef(asset_id=aid, data=_pcm16(240), sample_rate=24000))
         with pytest.raises(RuntimeUnsupportedError) as exc:
             await p.synthesize(_req(refs=["ref_a"]))
-        assert "IndexTTS" in str(exc.value)
+        assert "CosyVoice3" in str(exc.value)
 
     @pytest.mark.asyncio
-    async def test_no_refs_stays_vllm(self):
+    async def test_no_refs_stays_voicedesign(self):
         # 无 refs → VoiceDesign 日常合成，不走兜底
         client = _make_client(post_response=FakeResponse(content=_pcm16(240)))
         p = Qwen3TTSProvider(
             config=_cfg(),
             http_client=client)
         resp = await p.synthesize(_req(refs=[]))
-        assert resp.runtime == "vllm"
+        assert resp.runtime == "voicedesign"
         assert "8091" in client.last_url
+
+
+# ============================================================================
+# 降级链（首选运行时不可用 → qwen3_base）
+# ============================================================================
+class TestFallback:
+    @pytest.mark.asyncio
+    async def test_refs_cosyvoice_unavailable_falls_back_to_qwen3_base(self):
+        # cosyvoice(8094) 不可达 → 降级 qwen3_base(8093) 完成合成
+        client = FallbackClient(fail_url_fragment="8094")
+        p = Qwen3TTSProvider(
+            config=_cfg(),
+            http_client=client,
+            ref_resolver=lambda aid: ResolvedRef(asset_id=aid, data=_pcm16(240), sample_rate=24000))
+        resp = await p.synthesize(_req(refs=["ref_a"]))
+        assert resp.runtime == "qwen3_base"
+        assert "8093" in client.last_url
+        # 降级请求体使用 qwen3_base 模型与字符串 data URL ref_audio（vLLM 格式）
+        assert client.last_json["model"] == "Qwen/Qwen3-TTS-12Hz-1.7B-Base"
+        assert client.last_json["ref_audio"].startswith("data:audio/wav;base64,")
+        assert isinstance(client.last_json["ref_text"], str)
+
+    @pytest.mark.asyncio
+    async def test_voicedesign_unavailable_falls_back_to_qwen3_base(self):
+        # voicedesign(8091) 不可达 → 降级 qwen3_base(8093)
+        client = FallbackClient(fail_url_fragment="8091")
+        p = Qwen3TTSProvider(config=_cfg(), http_client=client)
+        resp = await p.synthesize(_req())
+        assert resp.runtime == "qwen3_base"
+        assert "8093" in client.last_url
+
+    @pytest.mark.asyncio
+    async def test_fallback_both_unavailable_raises(self):
+        # cosyvoice 与 qwen3_base 均不可达 → 最终抛 RuntimeUnavailableError
+        client = FallbackClient(fail_url_fragment="http://")
+        p = Qwen3TTSProvider(
+            config=_cfg(),
+            http_client=client,
+            ref_resolver=lambda aid: ResolvedRef(asset_id=aid, data=_pcm16(240), sample_rate=24000))
+        with pytest.raises(RuntimeUnavailableError):
+            await p.synthesize(_req(refs=["ref_a"]))
+
+    @pytest.mark.asyncio
+    async def test_http_400_does_not_fallback(self):
+        # 4xx 请求非法（InvalidRequestError）不触发降级
+        client = _make_client(post_response=FakeResponse(content=b"", status_code=400))
+        p = Qwen3TTSProvider(config=_cfg(), http_client=client)
+        with pytest.raises(InvalidRequestError):
+            await p.synthesize(_req(refs=[]))
+
+    @pytest.mark.asyncio
+    async def test_stream_cosyvoice_unavailable_falls_back_to_qwen3_base(self):
+        # 流式：cosyvoice(8094) 断流 → 降级 qwen3_base(8093) 完成流式合成
+        chunks = [_pcm16(240), _pcm16(240)]
+        client = FallbackClient(fail_url_fragment="8094", stream_chunks=chunks)
+        p = Qwen3TTSProvider(
+            config=_cfg(),
+            http_client=client,
+            ref_resolver=lambda aid: ResolvedRef(asset_id=aid, data=_pcm16(240), sample_rate=24000))
+        got = [c async for c in p.synthesize_stream(_req(refs=["ref_a"]))]
+        assert len(got) == 2
+        assert sum(1 for c in got if c.is_start) == 1
+        assert got[-1].is_final is True
+        assert "8093" in client.last_url
 
 
 # ============================================================================
@@ -442,7 +544,7 @@ class TestHealthCloseLegacy:
         p = Qwen3TTSProvider(config=_cfg(), http_client=client)
         h = await p.health_check()
         assert h.ok is True
-        assert h.runtime == "vllm"
+        assert h.runtime == "voicedesign"
         assert h.latency_ms is not None
 
     @pytest.mark.asyncio
@@ -451,7 +553,7 @@ class TestHealthCloseLegacy:
         p = Qwen3TTSProvider(config=_cfg(), http_client=client)
         h = await p.health_check()
         assert h.ok is False
-        assert h.runtime == "vllm"
+        assert h.runtime == "voicedesign"
 
     @pytest.mark.asyncio
     async def test_close_does_not_close_shared_client(self):

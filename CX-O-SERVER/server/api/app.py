@@ -93,6 +93,8 @@ def register_api_routes(app: FastAPI):
     app.include_router(backup.router, prefix="/api")
     app.include_router(decision.router, prefix="/api")
     app.include_router(cxfc.router, prefix="/api")
+    # 兼容直接向根路径发送注册/心跳/事件推送的外部 CXFC 插件（如 Sensordog 局域网广播上报）
+    app.include_router(cxfc.router)
     app.include_router(discovery.router, prefix="/api")
     app.include_router(vector.router, prefix="/api")
     app.include_router(multimodal.router, prefix="/api")
@@ -119,10 +121,17 @@ def register_api_routes(app: FastAPI):
             "asr_service": services.asr_service is not None,
             "tts_service": services.tts_service is not None,
         }
+        vector_ok = bool(
+            services.memory_manager
+            and getattr(services.memory_manager, "is_vector_search_enabled", lambda: False)()
+        )
         return HealthResponse(
             status="healthy" if all(components.values()) else "degraded",
             version="1.0.0",
             components=components,
+            database={"status": "healthy" if services.memory_manager is not None else "unhealthy"},
+            memory={"status": "healthy" if services.memory_manager is not None else "unhealthy"},
+            vector_store={"status": "healthy" if vector_ok else "unhealthy"},
         )
 
     @app.get("/")
