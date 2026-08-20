@@ -1,0 +1,379 @@
+{
+  "script": "test_llm_vad_accuracy",
+  "ts": "2026-08-20 14:37:07",
+  "admin_key_configured": true,
+  "services": {
+    "reachable": true,
+    "probed": [
+      "http://127.0.0.1:8000/api/stats"
+    ],
+    "base": "http://127.0.0.1:8000",
+    "ws_url": "ws://127.0.0.1:8000/api/ws/default"
+  },
+  "baseline": {
+    "ok": true,
+    "scenes": {
+      "complete_question": {
+        "scene": "complete_question",
+        "text": "今天天气怎么样？",
+        "agent_interrupt_count": 0,
+        "agent_interrupt_events": [],
+        "partial": "嗯，然后呢。",
+        "tts_chunk_count": 0
+      },
+      "paused_long": {
+        "scene": "paused_long",
+        "text": "我想问一下，明天下午的安排是什么 / 还有需要准备什么材料吗",
+        "agent_interrupt_count": 0,
+        "agent_interrupt_events": [],
+        "partial": "明天下午的安排是什么？",
+        "tts_chunk_count": 0
+      },
+      "self_talk": {
+        "scene": "self_talk",
+        "text": "唉，今天好累啊",
+        "agent_interrupt_count": 0,
+        "agent_interrupt_events": [],
+        "partial": "哎，今天好累呀。",
+        "tts_chunk_count": 0
+      },
+      "short_phrases": {
+        "scene": "short_phrases",
+        "text": "嗯…… / 然后呢？",
+        "agent_interrupt_count": 0,
+        "agent_interrupt_events": [],
+        "partial": "然后呢。",
+        "tts_chunk_count": 0
+      },
+      "noise": {
+        "scene": "noise",
+        "text": "[程序化环境噪音]",
+        "agent_interrupt_count": 0,
+        "agent_interrupt_events": [],
+        "partial": "아.",
+        "tts_chunk_count": 0
+      }
+    }
+  },
+  "scenes": [
+    {
+      "key": "complete_question",
+      "text": "今天天气怎么样？",
+      "should_interrupt": true,
+      "need_reply": true,
+      "stats_delta": {
+        "total_judgments": 13,
+        "decisions": {
+          "INTERRUPT": 12,
+          "CONTINUE": 1,
+          "IGNORE": 0
+        },
+        "interrupts_triggered": 12
+      },
+      "voice_interrupted": [
+        {
+          "reason": "agent_interrupt",
+          "time": 6.08
+        },
+        {
+          "reason": "agent_interrupt",
+          "time": 6.08
+        },
+        {
+          "reason": "agent_interrupt",
+          "time": 6.08
+        },
+        {
+          "reason": "agent_interrupt",
+          "time": 6.116
+        },
+        {
+          "reason": "agent_interrupt",
+          "time": 4.718
+        },
+        {
+          "reason": "agent_interrupt",
+          "time": 4.768
+        },
+        {
+          "reason": "agent_interrupt",
+          "time": 5.058
+        },
+        {
+          "reason": "agent_interrupt",
+          "time": 5.276
+        },
+        {
+          "reason": "agent_interrupt",
+          "time": 5.521
+        },
+        {
+          "reason": "agent_interrupt",
+          "time": 5.748
+        },
+        {
+          "reason": "agent_interrupt",
+          "time": 6.157
+        },
+        {
+          "reason": "agent_interrupt",
+          "time": 6.227
+        }
+      ],
+      "partial_text": "今天天气怎么样？",
+      "reply_text": "",
+      "early_reply": [],
+      "misinterrupt": false,
+      "correct_end": true,
+      "tts_chunk_count": 0,
+      "vad_event_count": 148
+    },
+    {
+      "key": "paused_long",
+      "text": "我想问一下，明天下午的安排是什么 / 还有需要准备什么材料吗",
+      "should_interrupt": false,
+      "need_reply": true,
+      "stats_delta": {
+        "total_judgments": 72,
+        "decisions": {
+          "INTERRUPT": 28,
+          "CONTINUE": 41,
+          "IGNORE": 3
+        },
+        "interrupts_triggered": 28
+      },
+      "voice_interrupted": [
+        {
+          "reason": "agent_interrupt",
+          "time": 10.926
+        },
+        {
+          "reason": "agent_interrupt",
+          "time": 12.036
+        },
+        {
+          "reason": "agent_interrupt",
+          "time": 13.152
+        },
+        {
+          "reason": "agent_interrupt",
+          "time": 13.903
+        },
+        {
+          "reason": "agent_interrupt",
+          "time": 15.33
+        },
+        {
+          "reason": "agent_interrupt",
+          "time": 18.988
+        },
+        {
+          "reason": "agent_interrupt",
+          "time": 20.155
+        },
+        {
+          "reason": "agent_interrupt",
+          "time": 20.244
+        },
+        {
+          "reason": "agent_interrupt",
+          "time": 20.514
+        },
+        {
+          "reason": "agent_interrupt",
+          "time": 20.768
+        },
+        {
+          "reason": "agent_interrupt",
+          "time": 10.943
+        },
+        {
+          "reason": "agent_interrupt",
+          "time": 13.647
+        },
+        {
+          "reason": "agent_interrupt",
+          "time": 15.341
+        },
+        {
+          "reason": "agent_interrupt",
+          "time": 15.61
+        },
+        {
+          "reason": "agent_interrupt",
+          "time": 15.883
+        },
+        {
+          "reason": "agent_interrupt",
+          "time": 16.142
+        },
+        {
+          "reason": "agent_interrupt",
+          "time": 18.971
+        },
+        {
+          "reason": "agent_interrupt",
+          "time": 19.223
+        },
+        {
+          "reason": "agent_interrupt",
+          "time": 19.817
+        },
+        {
+          "reason": "agent_interrupt",
+          "time": 19.948
+        },
+        {
+          "reason": "agent_interrupt",
+          "time": 20.004
+        },
+        {
+          "reason": "agent_interrupt",
+          "time": 6.817
+        },
+        {
+          "reason": "agent_interrupt",
+          "time": 8.229
+        },
+        {
+          "reason": "agent_interrupt",
+          "time": 9.049
+        },
+        {
+          "reason": "agent_interrupt",
+          "time": 9.382
+        },
+        {
+          "reason": "agent_interrupt",
+          "time": 10.405
+        },
+        {
+          "reason": "agent_interrupt",
+          "time": 11.73
+        },
+        {
+          "reason": "agent_interrupt",
+          "time": 11.804
+        }
+      ],
+      "partial_text": "我想问一下，明天下午的安排是什么？",
+      "reply_text": "",
+      "early_reply": [],
+      "misinterrupt": false,
+      "correct_end": true,
+      "tts_chunk_count": 0,
+      "vad_event_count": 776
+    },
+    {
+      "key": "self_talk",
+      "text": "唉，今天好累啊",
+      "should_interrupt": false,
+      "need_reply": false,
+      "stats_delta": {
+        "total_judgments": 15,
+        "decisions": {
+          "INTERRUPT": 5,
+          "CONTINUE": 2,
+          "IGNORE": 8
+        },
+        "interrupts_triggered": 5
+      },
+      "voice_interrupted": [
+        {
+          "reason": "agent_interrupt",
+          "time": 4.449
+        },
+        {
+          "reason": "agent_interrupt",
+          "time": 4.69
+        },
+        {
+          "reason": "agent_interrupt",
+          "time": 4.873
+        },
+        {
+          "reason": "agent_interrupt",
+          "time": 5.245
+        },
+        {
+          "reason": "agent_interrupt",
+          "time": 5.359
+        }
+      ],
+      "partial_text": "啊，今天好累呀。",
+      "reply_text": "",
+      "early_reply": [],
+      "misinterrupt": true,
+      "correct_end": false,
+      "tts_chunk_count": 0,
+      "vad_event_count": 167
+    },
+    {
+      "key": "short_phrases",
+      "text": "嗯…… / 然后呢？",
+      "should_interrupt": false,
+      "need_reply": true,
+      "stats_delta": {
+        "total_judgments": 18,
+        "decisions": {
+          "INTERRUPT": 0,
+          "CONTINUE": 17,
+          "IGNORE": 1
+        },
+        "interrupts_triggered": 0
+      },
+      "voice_interrupted": [],
+      "partial_text": "然后呢。",
+      "reply_text": "",
+      "early_reply": [],
+      "misinterrupt": false,
+      "correct_end": false,
+      "tts_chunk_count": 0,
+      "vad_event_count": 234
+    },
+    {
+      "key": "noise",
+      "text": "[程序化环境噪音]",
+      "should_interrupt": false,
+      "need_reply": false,
+      "stats_delta": {
+        "total_judgments": 16,
+        "decisions": {
+          "INTERRUPT": 0,
+          "CONTINUE": 16,
+          "IGNORE": 0
+        },
+        "interrupts_triggered": 0
+      },
+      "voice_interrupted": [],
+      "partial_text": "然后呢。",
+      "reply_text": "",
+      "early_reply": [],
+      "misinterrupt": false,
+      "correct_end": false,
+      "tts_chunk_count": 0,
+      "vad_event_count": 210
+    }
+  ],
+  "summary": {
+    "total_scenes": 5,
+    "misinterrupt_scenes": [
+      "self_talk"
+    ],
+    "misinterrupt_rate": 0.2,
+    "need_reply_scenes": [
+      "complete_question",
+      "paused_long",
+      "short_phrases"
+    ],
+    "correct_end_scenes": [
+      "complete_question",
+      "paused_long"
+    ],
+    "correct_end_rate": 0.6667
+  },
+  "enabled_reset": {
+    "enabled": false,
+    "speech_end_fallback": false
+  }
+}

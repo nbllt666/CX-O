@@ -418,7 +418,10 @@ def _get_default_vad_config() -> Dict[str, Any]:
             "enabled": True,
             "interrupt_threshold_ms": 500,
             "min_speech_duration_ms": 1000,
-            "interrupt_cooldown_ms": 3000
+            "interrupt_cooldown_ms": 3000,
+            "speech_end_fallback": False,
+            "question_intent_required": True,
+            "reply_on_final_question": True
         }
     }
 

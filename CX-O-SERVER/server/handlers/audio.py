@@ -135,6 +135,9 @@ class DualStreamSession:
         self._tts_chunk_index: int = 0
         # 当前 utterance 是否已触发 LLM（避免同一 utterance 内重复触发）
         self._has_triggered_this_utterance: bool = False
+        # 当前 utterance 是否已由 LLM 插话打断（interrupt_and_reply 置位，
+        # 供 speech_end_fallback 抑制 VAD speech_end 兜底触发、避免双路 TTS 并发）
+        self._agent_interrupt_triggered: bool = False
         # 流水线是否正常完成（区分完成 vs 被打断）
         self._pipeline_completed: bool = False
         self._is_active: bool = True
@@ -191,6 +194,8 @@ class DualStreamSession:
                 await self._interrupt_pipeline()
         # 重置当前 utterance 的触发标志，允许新 utterance 触发 LLM
         self._has_triggered_this_utterance = False
+        # 重置 LLM 插话打断标记（新 utterance 开始，speech_end_fallback 互斥失效）
+        self._agent_interrupt_triggered = False
         # 重置首帧延续性确认状态（新 utterance 重新做边缘幻觉确认）
         self._pending_partial = ""
         self._partial_confirmed = False
@@ -303,6 +308,15 @@ class DualStreamSession:
             return
 
         # ---- 未触发：VAD speech_end 兜底触发 ----
+        # 若本 utterance 已由 LLM 插话打断（interrupt_and_reply 置位）且配置启用
+        # speech_end_fallback，则跳过 VAD 兜底触发：插话回应（_play_reply）已作为
+        # 新 pipeline 在播，此刻再兜底触发主 pipeline 会形成双路 TTS 并发。此互斥
+        # 仅当 LLM 插话打断确实发生时生效，普通场景兜底行为与现状一致。
+        if self._agent_interrupt_triggered:
+            from server.services.agent_interrupt_user import get_agent_interrupt_module
+            if get_agent_interrupt_module().speech_end_fallback:
+                return
+
         # final 若已在 speech_end 前到达，会被 on_final_result 以 is_speaking=True
         # 累积进 pending；此处合并 pending + final 触发（文本过短则留待合并）。
         candidate = final_text or self._pending_user_text
@@ -582,6 +596,10 @@ class DualStreamSession:
         - 主 LLM 模式：reply_content 由判定 LLM 直接给出，立即播报
         - 独立 LLM 模式：reply_content 为空，仅让位，回复内容由主 pipeline 生成
         """
+        # 标记当前 utterance 已由 LLM 插话打断（供 speech_end_fallback 互斥使用：
+        # on_vad_speech_end 据此跳过 VAD 兜底触发，避免双路 TTS 并发）
+        self._agent_interrupt_triggered = True
+
         # 停止当前正在播放的 TTS（若有）
         if self._pipeline_task and not self._pipeline_task.done():
             self._pipeline_task.cancel()

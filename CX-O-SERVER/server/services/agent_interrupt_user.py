@@ -12,6 +12,17 @@ from server.services.interrupt_llm import InterruptModuleBase
 
 logger = logging.getLogger(__name__)
 
+# 提问/请求确定性意图闸门词表（Feature A/B 共享，O2）
+_QUESTION_WORDS = ("？", "?", "吗", "呢", "什么", "怎么", "为什么", "哪里", "谁", "多少", "啥", "嘛", "怎样", "怎么样")
+_REQUEST_WORDS = ("帮我", "告诉", "查", "搜索", "打开", "播放", "设", "提醒", "请")
+# 非问句固定搭配：虽含提问/请求字但为陈述、客套或情绪填充，命中即从文本剔除（不视作提问/请求）。
+# 硬性提问信号（？/?/吗）与不在表内的真正疑问词（为什么/多少/啥/谁 等）不受影响。
+_NON_QUESTION_PHRASES = (
+    "什么都不", "什么也没", "没什么", "这有什么", "有什么好", "不怎么",
+    "哪里哪里", "哪里话", "管他呢", "还没呢", "没办法嘛", "就是嘛",
+    "假设", "设备",
+)
+
 
 @dataclass
 class UserSpeechState:
@@ -38,6 +49,18 @@ class AgentInterruptUser(InterruptModuleBase):
         self._asr_client: Any = None
         self._last_interrupt_time: float = 0
         self._interrupt_cooldown_ms = 3000
+        self._interrupted_this_utterance = False  # 本 utterance 是否已触发打断（防 Feature B 重复回复）
+        self.speech_end_fallback = False  # 是否以打断标记抑制 VAD speech_end 兜底（不改变 enabled 的插话打断语义）
+        # Feature A/B 可配置开关（默认打开；置 false 时逐字回退到上一轮行为）
+        self.question_intent_required = True   # Feature A：LLM 判 INTERRUPT 后须经提问意图硬闸门二次确认
+        self.reply_on_final_question = True    # Feature B：is_final 且经意图闸门的完整请求可触发一次回复
+        # 判定统计：总判定数 / 三态 decision 计数 / 触发打断次数
+        # （误触发标记不在此模块计算，由评测脚本按场景标签判定）
+        self._stats = {
+            "total_judgments": 0,
+            "decisions": {"INTERRUPT": 0, "CONTINUE": 0, "IGNORE": 0},
+            "interrupts_triggered": 0,
+        }
         # 独立小模型判定：只输出 INTERRUPT/IGNORE/CONTINUE 标记，不生成回复内容
         # （回复内容由主 pipeline 生成），避免占用主 LLM 并发槽
 
@@ -55,6 +78,9 @@ class AgentInterruptUser(InterruptModuleBase):
         self.interrupt_threshold_ms = agent_interrupt.get("interrupt_threshold_ms", 500)
         self.min_speech_duration_ms = agent_interrupt.get("min_speech_duration_ms", 1000)
         self._interrupt_cooldown_ms = agent_interrupt.get("interrupt_cooldown_ms", 3000)
+        self.speech_end_fallback = agent_interrupt.get("speech_end_fallback", False)
+        self.question_intent_required = agent_interrupt.get("question_intent_required", True)
+        self.reply_on_final_question = agent_interrupt.get("reply_on_final_question", True)
         independent = agent_interrupt.get("independent_llm", {})
         if isinstance(independent, dict) and independent:
             self.independent_llm_config = {
@@ -75,12 +101,33 @@ class AgentInterruptUser(InterruptModuleBase):
         self._interrupt_user_callback = interrupt_user_callback
         self._start_tts_callback = start_tts_callback
 
+    def get_stats(self) -> dict:
+        """返回判定统计字典。
+
+        - total_judgments：真正执行判定（调用 _check_can_interrupt）的总次数
+        - decisions：INTERRUPT / CONTINUE / IGNORE 各 decision 计数
+        - interrupts_triggered：触发打断的次数（should_interrupt=True 分支累计，冷却天然防重复）
+        """
+        return {
+            "total_judgments": self._stats["total_judgments"],
+            "decisions": dict(self._stats["decisions"]),
+            "interrupts_triggered": self._stats["interrupts_triggered"],
+        }
+
+    def reset_stats(self):
+        """清零判定统计。"""
+        self._stats["total_judgments"] = 0
+        self._stats["interrupts_triggered"] = 0
+        for key in self._stats["decisions"]:
+            self._stats["decisions"][key] = 0
+
     def on_user_speech_start(self):
         self._user_state = UserSpeechState(
             is_speaking=True,
             start_time=time.time(),
             last_update_time=time.time()
         )
+        self._interrupted_this_utterance = False
         logger.debug("User speech started")
 
     def on_user_speech_end(self):
@@ -114,8 +161,34 @@ class AgentInterruptUser(InterruptModuleBase):
 
         result = await self._check_can_interrupt(text, is_final)
 
+        # Feature A：提问意图硬闸门——LLM 判 INTERRUPT 后经确定性提问/请求意图二次确认。
+        # 文本无提问词或祈使请求特征（如情绪独白"唉，今天好累啊"）时强制降级为 IGNORE 不打断。
+        if (
+            result.get("can_interrupt")
+            and self.question_intent_required
+            and not self._has_question_or_request(self._user_state.current_text)
+        ):
+            result = {
+                "decision": "IGNORE",
+                "can_interrupt": False,
+                "should_reply": False,
+                "reply_content": "",
+            }
+
+        # 判定统计：仅在真正调用 _check_can_interrupt 后累计
+        # （disabled / 时长不足 / 冷却早退不产生判定，不计入）。
+        # decision 计数按 Feature A 闸门降级后的【实际生效 decision】累计，避免统计语义漂移。
+        decision = result.get("decision", "IGNORE")
+        if decision not in ("INTERRUPT", "CONTINUE", "IGNORE"):
+            decision = "IGNORE"
+        self._stats["total_judgments"] += 1
+        self._stats["decisions"][decision] += 1
+
         if result.get("can_interrupt"):
             self._last_interrupt_time = current_time
+            self._interrupted_this_utterance = True
+            # 触发打断次数：仅在本分支累计；冷却已在 _check_can_interrupt 前拦截重复打断，天然防重复
+            self._stats["interrupts_triggered"] += 1
             return {
                 "should_interrupt": True,
                 "should_reply": result.get("should_reply", True),
@@ -123,6 +196,31 @@ class AgentInterruptUser(InterruptModuleBase):
             }
 
         if is_final:
+            # Feature B：最终完整请求回复触发——is_final 且经同一意图闸门（O2）确认为
+            # 需回复的完整请求、且本 utterance 尚未触发打断时，触发一次 INTERRUPT 以回复。
+            if (
+                self.reply_on_final_question
+                and not self._interrupted_this_utterance
+                and self._has_question_or_request(self._user_state.current_text)
+            ):
+                # [O1 时序标定] 记录 Feature B 触发时刻距 user speech 起始的相对耗时，
+                # 供评测侧比对 send_done_rel（完整音频 + 0.8s 尾静音发送完）基准顺序。
+                elapsed_ms = (current_time - self._user_state.start_time) * 1000
+                logger.info(
+                    "interrupt triggered at %dms since speech_start",
+                    elapsed_ms,
+                )
+                self._last_interrupt_time = current_time
+                self._interrupted_this_utterance = True
+                # [统计语义 O1] interrupts_triggered 累计所有打断动作（含 Feature B 补充触发）；
+                # decisions[INTERRUPT] 仅反映 LLM 自身三态判定分布，不折入 Feature B——
+                # 以免与 total_judgments（已在 LLM 判定路径计数一次）重复计数。
+                self._stats["interrupts_triggered"] += 1
+                return {
+                    "should_interrupt": True,
+                    "should_reply": True,
+                    "reply_content": "",
+                }
             return {
                 "should_interrupt": False,
                 "should_reply": result.get("should_reply", False),
@@ -142,12 +240,12 @@ class AgentInterruptUser(InterruptModuleBase):
             judgment_prompt = self._build_interrupt_prompt(asr_text, is_final)
             response_text = await self._call_main_llm(judgment_prompt)
             if response_text is None:
-                return {"can_interrupt": False, "should_reply": False}
+                return {"decision": "IGNORE", "can_interrupt": False, "should_reply": False}
             return self._parse_interrupt_response(response_text, is_final)
 
         except Exception as e:
             logger.error(f"Failed to check can interrupt: {e}")
-            return {"can_interrupt": False, "should_reply": False}
+            return {"decision": "IGNORE", "can_interrupt": False, "should_reply": False}
 
     async def _check_with_independent_llm(self, asr_text: str, is_final: bool) -> dict:
         """独立小模型判定：只输出 INTERRUPT/IGNORE/CONTINUE 标记，不生成回复内容。
@@ -156,17 +254,17 @@ class AgentInterruptUser(InterruptModuleBase):
         """
         if not self.independent_llm_config.get("enabled"):
             logger.info("independent_llm 未启用，跳过插话判定")
-            return {"can_interrupt": False, "should_reply": False, "reply_content": ""}
+            return {"decision": "IGNORE", "can_interrupt": False, "should_reply": False, "reply_content": ""}
 
         result = await self._call_independent_llm(asr_text)
         decision = result.get("decision", "IGNORE")
 
         if decision == "INTERRUPT":
-            return {"can_interrupt": True, "should_reply": True, "reply_content": ""}
+            return {"decision": "INTERRUPT", "can_interrupt": True, "should_reply": True, "reply_content": ""}
         if decision == "CONTINUE":
             # 用户还在组织语言：不打断，继续等待
-            return {"can_interrupt": False, "should_reply": False, "reply_content": ""}
-        return {"can_interrupt": False, "should_reply": False, "reply_content": ""}
+            return {"decision": "CONTINUE", "can_interrupt": False, "should_reply": False, "reply_content": ""}
+        return {"decision": "IGNORE", "can_interrupt": False, "should_reply": False, "reply_content": ""}
 
     def _build_independent_prompt(self, asr_text: str) -> str:
         """独立小模型判定 prompt：只输出 INTERRUPT/IGNORE/CONTINUE 标记，不生成回复内容。"""
@@ -192,9 +290,19 @@ class AgentInterruptUser(InterruptModuleBase):
 {asr_text}
 
 【判断规则】
-- CONTINUE：用户还在组织语言，没说完，继续等待，不要打断
-- IGNORE：用户在自言自语或情绪表达，不需要 Agent 插话
-- INTERRUPT：用户明确提问或需要 Agent 立即互动，可以立即插话
+- CONTINUE：用户还在组织语言、没说完，或正在思考、停顿中，继续等待，不要打断
+- IGNORE：用户自言自语、情绪表达、抱怨、感慨或发泄（如"唉，好累啊""今天真烦""累死了"），
+  纯属陈述或情感宣泄，不是对 Agent 的提问或请求——即使内容显得"需要安慰"，只要用户没有
+  直接向 Agent 提出请求，一律 IGNORE，不要插话
+- INTERRUPT：用户明确提问（含"吗/呢/什么/怎么/为什么/哪里/谁/？"）或明确请求
+  Agent 做某事（命令式、祈使句，如"帮我查一下""告诉我"），可以立即插话回复
+
+【边界提示（必须遵守）】
+- 感叹句 / 无主语感慨（"好累""真麻烦""天啊""累死了"）一律判 IGNORE，无论语气多强烈
+- 情绪倾诉（"我今天好累""我好难过"）是倾诉不是请求，判 IGNORE，除非用户明确问"你觉得呢"类
+- 停顿中的半句话（"我想问一下…""嗯…"）判 CONTINUE，等用户说完
+- 完整问句 / 祈使请求（"明天几点？""帮我查一下天气"）判 INTERRUPT
+- 拿不准时优先 IGNORE 或 CONTINUE，宁可等一等也不打断用户
 
 【输出格式】严格返回 JSON：
 {{"decision": "CONTINUE|IGNORE|INTERRUPT", "reply_content": "当 decision 为 INTERRUPT 时，这是你要插话说出的内容（简短口语）；否则为空字符串", "reason": "判断原因"}}"""
@@ -214,12 +322,14 @@ class AgentInterruptUser(InterruptModuleBase):
                 # 三态标记映射：INTERRUPT → 打断并播内容；CONTINUE/IGNORE → 不打断
                 if decision == "INTERRUPT":
                     return {
+                        "decision": "INTERRUPT",
                         "can_interrupt": True,
                         "should_reply": True,
                         "reply_content": reply_content,
                         "reason": result.get("reason", ""),
                     }
                 return {
+                    "decision": decision,  # CONTINUE / IGNORE
                     "can_interrupt": False,
                     "should_reply": False,
                     "reply_content": "",
@@ -232,11 +342,32 @@ class AgentInterruptUser(InterruptModuleBase):
         has_question = any(indicator in response_text for indicator in question_indicators)
 
         return {
+            "decision": "INTERRUPT" if has_question else "CONTINUE",
             "can_interrupt": has_question,
             "should_reply": has_question,
             "reply_content": "",
             "reason": "从文本推断"
         }
+
+    def _has_question_or_request(self, text: str) -> bool:
+        """确定性提问/请求意图闸门（Feature A，O2 共享）。
+
+        累计 utterance 文本含任一提问词或祈使请求模式即判定为 True。
+        先剔除"非问句固定搭配"（如"什么都不/没什么/还没呢/哪里哪里/没办法嘛"——
+        含疑问/请求字但实为陈述、客套或情绪填充），再作子串匹配，避免误判为需回复。
+        供 Feature A（LLM-INTERRUPT 二次确认）与
+        Feature B（is_final 完整请求回复触发）复用，避免两触发路径边界漂移。
+        """
+        normalized = (text or "").replace(" ", "").replace("\u3000", "")
+        if not normalized:
+            return False
+        for phrase in _NON_QUESTION_PHRASES:
+            normalized = normalized.replace(phrase, "")
+        if not normalized:
+            return False
+        return any(w in normalized for w in _QUESTION_WORDS) or any(
+            w in normalized for w in _REQUEST_WORDS
+        )
 
     async def interrupt_user(self, reply_content: str = "") -> bool:
         """执行打断用户动作：触发打断回调，可选播报插话回应。"""

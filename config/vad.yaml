@@ -17,3 +17,6 @@ agent_interrupt:
   interrupt_threshold_ms: 500
   min_speech_duration_ms: 1000
   interrupt_cooldown_ms: 3000
+  speech_end_fallback: false
+  question_intent_required: true
+  reply_on_final_question: true

@@ -112,7 +112,7 @@ class TestSynthesizeQwen3:
         assert req.stream is False
 
     @pytest.mark.asyncio
-    async def test_no_ref_synthesis(self, mock_instruction):
+    async def test_no_ref_synthesis(self, mock_instruction, isolated_store):
         provider = MockProvider()
         svc = _svc(provider)
         await svc.synthesize("无需参考音频")
@@ -210,7 +210,7 @@ class TestBuildRefIds:
         ids = svc._build_ref_ids({"refs": ["ref_a", "ref_a"], "ref_asset_id": "ref_a"})
         assert ids == ["ref_a"]
 
-    def test_empty(self):
+    def test_empty(self, isolated_store):
         svc = _svc()
         assert svc._build_ref_ids({}) == []
 

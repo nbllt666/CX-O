@@ -268,9 +268,11 @@ class TestHiddenPromptKeyCompleteness:
                         keys.add(_plain(seg.split("[")[1].split("]")[0]))
             # 2) 模型分支的隐藏提示词键列表字面量：
             #    for key in ["tool_instructions", "tools", ...]
+            # 仅当列表是 for 迭代源（for key in [...]）时才抽取，避免把 _msg["content"]
+            # / msg["role"] 等消息 dict 下标误判为 hidden_prompt 键。
             if ".load(" in line or "import" in line:
                 continue
-            if "[" in line and "]" in line and "hidden_prompts" not in line:
+            if " in [" in line and "hidden_prompts" not in line:
                 inner = line[line.index("[") + 1: line.index("]")]
                 for seg in inner.split(","):
                     token = _plain(seg)
