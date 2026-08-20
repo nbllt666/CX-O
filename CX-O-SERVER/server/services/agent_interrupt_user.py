@@ -54,12 +54,13 @@ class AgentInterruptUser(InterruptModuleBase):
         # Feature A/B 可配置开关（默认打开；置 false 时逐字回退到上一轮行为）
         self.question_intent_required = True   # Feature A：LLM 判 INTERRUPT 后须经提问意图硬闸门二次确认
         self.reply_on_final_question = True    # Feature B：is_final 且经意图闸门的完整请求可触发一次回复
-        # 判定统计：总判定数 / 三态 decision 计数 / 触发打断次数
+        # 判定统计：总判定数 / 三态 decision 计数 / 触发打断次数 / 触发回复次数
         # （误触发标记不在此模块计算，由评测脚本按场景标签判定）
         self._stats = {
             "total_judgments": 0,
             "decisions": {"INTERRUPT": 0, "CONTINUE": 0, "IGNORE": 0},
             "interrupts_triggered": 0,
+            "replies_triggered": 0,
         }
         # 独立小模型判定：只输出 INTERRUPT/IGNORE/CONTINUE 标记，不生成回复内容
         # （回复内容由主 pipeline 生成），避免占用主 LLM 并发槽
@@ -106,18 +107,21 @@ class AgentInterruptUser(InterruptModuleBase):
 
         - total_judgments：真正执行判定（调用 _check_can_interrupt）的总次数
         - decisions：INTERRUPT / CONTINUE / IGNORE 各 decision 计数
-        - interrupts_triggered：触发打断的次数（should_interrupt=True 分支累计，冷却天然防重复）
+        - interrupts_triggered：触发打断的次数（should_interrupt=True 真打断分支累计，冷却天然防重复）
+        - replies_triggered：触发回复的次数（should_reply=True Feature B 分支累计）
         """
         return {
             "total_judgments": self._stats["total_judgments"],
             "decisions": dict(self._stats["decisions"]),
             "interrupts_triggered": self._stats["interrupts_triggered"],
+            "replies_triggered": self._stats["replies_triggered"],
         }
 
     def reset_stats(self):
         """清零判定统计。"""
         self._stats["total_judgments"] = 0
         self._stats["interrupts_triggered"] = 0
+        self._stats["replies_triggered"] = 0
         for key in self._stats["decisions"]:
             self._stats["decisions"][key] = 0
 
@@ -197,7 +201,10 @@ class AgentInterruptUser(InterruptModuleBase):
 
         if is_final:
             # Feature B：最终完整请求回复触发——is_final 且经同一意图闸门（O2）确认为
-            # 需回复的完整请求、且本 utterance 尚未触发打断时，触发一次 INTERRUPT 以回复。
+            # 需回复的完整请求、且本 utterance 尚未触发打断时，触发一次"回复"。
+            # 【标签解耦】should_interrupt=False（用户已说完，非真打断），
+            # should_reply=True——下游走 ensure_reply 回复兜底，不 cancel 主管线、
+            # 不发 voice.interrupted、不置会话级 _agent_interrupt_triggered。
             if (
                 self.reply_on_final_question
                 and not self._interrupted_this_utterance
@@ -207,17 +214,18 @@ class AgentInterruptUser(InterruptModuleBase):
                 # 供评测侧比对 send_done_rel（完整音频 + 0.8s 尾静音发送完）基准顺序。
                 elapsed_ms = (current_time - self._user_state.start_time) * 1000
                 logger.info(
-                    "interrupt triggered at %dms since speech_start",
+                    "reply triggered at %dms since speech_start",
                     elapsed_ms,
                 )
-                self._last_interrupt_time = current_time
+                # 仅置模块内"本 utterance 已处理"守卫（防重复 final 再次触发），
+                # 不置 _last_interrupt_time（非打断，不占用打断冷却）。
                 self._interrupted_this_utterance = True
-                # [统计语义 O1] interrupts_triggered 累计所有打断动作（含 Feature B 补充触发）；
+                # [统计语义 O1] replies_triggered 独立计数 Feature B 补充回复；
                 # decisions[INTERRUPT] 仅反映 LLM 自身三态判定分布，不折入 Feature B——
                 # 以免与 total_judgments（已在 LLM 判定路径计数一次）重复计数。
-                self._stats["interrupts_triggered"] += 1
+                self._stats["replies_triggered"] += 1
                 return {
-                    "should_interrupt": True,
+                    "should_interrupt": False,
                     "should_reply": True,
                     "reply_content": "",
                 }

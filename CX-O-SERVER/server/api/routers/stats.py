@@ -72,7 +72,8 @@ class InterruptEnableRequest(BaseModel):
 async def get_interrupt_stats(_: bool = Depends(verify_admin_api_key)):
     """获取 AI 插话打断判定统计（admin API key 保护）。
 
-    返回 agent_interrupt_user 模块的 get_stats() 结果（总判定数 / 三态 decision 计数 / 触发打断次数）。
+    返回 agent_interrupt_user 模块的 get_stats() 结果（总判定数 / 三态 decision 计数 /
+    触发打断次数 / 触发回复次数）。
     """
     from server.services.agent_interrupt_user import get_agent_interrupt_module
     return {"status": "success", "data": get_agent_interrupt_module().get_stats()}

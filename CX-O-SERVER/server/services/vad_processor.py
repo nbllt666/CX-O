@@ -416,7 +416,10 @@ class AudioStreamProcessor:
                                 streaming_result.text,
                                 streaming_result.is_final
                             )
-                            if interrupt_result.get("should_interrupt"):
+                            # 【标签解耦】半双工路径无 ensure_reply 会话兜底，
+                            # should_reply（Feature B）沿用 interrupt_user 保持旧行为不回归；
+                            # 真打断路径（should_interrupt）行为不变。
+                            if interrupt_result.get("should_interrupt") or interrupt_result.get("should_reply"):
                                 await self._agent_interrupt.interrupt_user(
                                     interrupt_result.get("reply_content", "")
                                 )

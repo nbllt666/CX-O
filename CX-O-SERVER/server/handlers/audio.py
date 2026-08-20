@@ -27,6 +27,35 @@ logger = logging.getLogger(__name__)
 _tts_playing_clients: set = set()
 _tts_playing_lock = asyncio.Lock()
 
+# 【停顿续接确认窗口】Feature B 的 is_final 由 VAD speech_end 驱动，长句内部停顿
+# 也会产生中段 final。若立即 ensure_reply，会把"还没说完的停顿"当"说完"触发回复
+# （停顿即说完误判，长句被腰斩回复）。路由侧延迟该窗口：用户停顿后继续说时，新
+# partial 已启动主管线（基于完整文本），ensure_reply 因 _has_triggered_this_utterance
+# 守卫 no-op；确认说完后才兜底启动。仅影响 Feature B 兜底路径（主管线未启动时），
+# 不引入 partial 驱动主管线的额外延迟。
+REPLY_CONFIRM_S = 0.5
+
+
+async def route_agent_interrupt_result(session, res: dict) -> None:
+    """按打断/回复独立标签路由 AI 插话判定结果（标签解耦核心路由）。
+
+    - should_interrupt=True（真打断）：→ interrupt_and_reply（停 TTS/让位，带内容则直接播报）
+    - should_reply=True 且未打断（Feature B 回复）：→ 停顿续接确认后 ensure_reply
+      （主管线产出回复，不打断；窗口内用户继续说则 no-op，防"停顿即说完"误判）
+    - 二者皆真（LLM INTERRUPT 带内容）：先打断再播 reply_content
+    """
+    if res.get("should_interrupt"):
+        await session.interrupt_and_reply(res.get("reply_content", ""))
+    elif res.get("should_reply"):
+        # 【停顿续接确认】见 REPLY_CONFIRM_S 注释：延迟窗口让"停顿后继续说"的
+        # partial 先启动主管线，ensure_reply 随后因已触发守卫 no-op。
+        try:
+            await asyncio.sleep(REPLY_CONFIRM_S)
+            await session.ensure_reply()
+        except asyncio.CancelledError:
+            # 任务已取消（连接断开/会话终止），无需继续 ensure_reply 兜底回复
+            return
+
 
 def _is_continuation(prev: str, cur: str) -> bool:
     """判断 cur 是否为 prev 的延续（同句复现 / 累积扩展）。
@@ -400,6 +429,29 @@ class DualStreamSession:
             asyncio.create_task(self._finalize_turn(self._pipeline_task))
         )
 
+    async def ensure_reply(self) -> None:
+        """回复兜底（Feature B should_reply=True 专用）：确保主管线产出回复。
+
+        与 interrupt_and_reply 解耦：**不** cancel 主管线、**不**置
+        _agent_interrupt_triggered、**不**发送 voice.interrupted——回复由主
+        LLM 管线（LLM→TextSmoother→TTS）产出，保持 low-latency partial 驱动路径。
+        - 主管线已启动（_has_triggered_this_utterance=True）：no-op，防重复管线
+        - 未启动且候选文本达阈值：启动主管线（合并 pending/final 文本）
+        """
+        if self._has_triggered_this_utterance:
+            return
+        candidate = self._current_user_text or self._pending_user_text or self._final_user_text
+        if not candidate or len(candidate) < self._trigger_char_threshold:
+            return
+        self._has_triggered_this_utterance = True
+        self._current_user_text = candidate
+        self._final_user_text = candidate
+        await self._send_prefill_started(candidate)
+        self._pipeline_task = asyncio.create_task(self._run_pipeline(candidate))
+        self._track_background_task(
+            asyncio.create_task(self._finalize_turn(self._pipeline_task))
+        )
+
     async def _run_pipeline(self, user_text: str) -> None:
         """运行 LLM → TextSmoother → TTS 全链路流水线
 
@@ -592,33 +644,44 @@ class DualStreamSession:
         """AI 主动插话打断：停止当前 TTS 播放，并（若有 content）立即播一条插话回应。
 
         由 LLM 打断判定（agent_interrupt_user）命中后调用，是"AI 打断人"的动作执行点。
-        - 无论当前是否有 Agent 的 TTS 在播，先 cancel 停播
-        - 主 LLM 模式：reply_content 由判定 LLM 直接给出，立即播报
-        - 独立 LLM 模式：reply_content 为空，仅让位，回复内容由主 pipeline 生成
+        【标签解耦】打断与回复独立（用户裁决全量重构）：
+        - 有 reply_content（AI 插话回应）：真打断——cancel 主管线 + 置打断标记 +
+          发 voice.interrupted + _play_reply 直接播报（后续用户开口可再次打断）。
+        - 无 reply_content（仅让位，回复由主 pipeline 生成，对应独立 LLM 模式）：
+          **不** cancel 主管线、**不**置 _agent_interrupt_triggered，仅发打断事件
+          （保持 should_interrupt 场景归因信号）。避免"空打断"反复摧毁在途回复
+          ——paused_long 等长句场景实测根因：LLM 在用户组织语言中反复判 INTERRUPT，
+          空打断逐个 cancel 主管线，导致用户实际听不到任何回复。
         """
-        # 标记当前 utterance 已由 LLM 插话打断（供 speech_end_fallback 互斥使用：
-        # on_vad_speech_end 据此跳过 VAD 兜底触发，避免双路 TTS 并发）
-        self._agent_interrupt_triggered = True
-
-        # 停止当前正在播放的 TTS（若有）
-        if self._pipeline_task and not self._pipeline_task.done():
-            self._pipeline_task.cancel()
-            try:
-                await self._pipeline_task
-            except (asyncio.CancelledError, Exception):
-                pass
-
-        # 通知前端 TTS 已打断
-        await self.manager.send_message(self.client_id, {
-            "type": "voice.interrupted",
-            "data": {"reason": "agent_interrupt"}
-        })
-
-        # 有 reply_content 则立即播插话回应（直接合成，不经过 LLM）
         if reply_content:
+            # 标记当前 utterance 已由 LLM 插话打断（供 speech_end_fallback 互斥使用：
+            # on_vad_speech_end 据此跳过 VAD 兜底触发，避免双路 TTS 并发）
+            self._agent_interrupt_triggered = True
+
+            # 停止当前正在播放的 TTS（若有）
+            if self._pipeline_task and not self._pipeline_task.done():
+                self._pipeline_task.cancel()
+                try:
+                    await self._pipeline_task
+                except (asyncio.CancelledError, Exception):
+                    pass
+
+            # 通知前端 TTS 已打断
+            await self.manager.send_message(self.client_id, {
+                "type": "voice.interrupted",
+                "data": {"reason": "agent_interrupt"}
+            })
+
             logger.debug("[DIAG-INTERRUPT] AI 插话播报: %s", reply_content[:40])
             # 插话回应作为新的 pipeline，后续用户开口可再次打断
             self._pipeline_task = asyncio.create_task(self._play_reply(reply_content))
+        else:
+            # 仅让位：不 cancel 主管线、不置打断标记；仅发打断事件供 should_interrupt 场景归因。
+            # 回复由主 LLM 管线产出（partial/final/ensure_reply 已驱动），不被空打断摧毁。
+            await self.manager.send_message(self.client_id, {
+                "type": "voice.interrupted",
+                "data": {"reason": "agent_interrupt"}
+            })
 
     async def _play_reply(self, reply_content: str) -> None:
         """直接合成并播报一段固定文本（AI 插话回应），不经过 LLM。
@@ -1215,8 +1278,10 @@ def register_audio_handlers(
                 text,
                 is_final=bool(asr_result.get("is_final", False)),
             )
-            if res.get("should_interrupt"):
-                await session.interrupt_and_reply(res.get("reply_content", ""))
+            # 【标签解耦】路由决策收敛到 route_agent_interrupt_result：
+            # should_interrupt（真打断）→ interrupt_and_reply；
+            # should_reply（Feature B 回复）→ ensure_reply 回复兜底（不打断）。
+            await route_agent_interrupt_result(session, res)
         except asyncio.CancelledError:
             pass
         except Exception as e:

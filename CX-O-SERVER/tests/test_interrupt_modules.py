@@ -291,17 +291,20 @@ class TestAgentInterruptUser:
         assert stats["total_judgments"] == 4
         assert stats["decisions"] == {"INTERRUPT": 1, "CONTINUE": 2, "IGNORE": 1}
         assert stats["interrupts_triggered"] == 1
+        assert stats["replies_triggered"] == 0
 
     def test_reset_stats(self):
         a = AgentInterruptUser()
         a._stats["total_judgments"] = 5
         a._stats["decisions"]["INTERRUPT"] = 3
         a._stats["interrupts_triggered"] = 2
+        a._stats["replies_triggered"] = 4
         a.reset_stats()
         assert a.get_stats() == {
             "total_judgments": 0,
             "decisions": {"INTERRUPT": 0, "CONTINUE": 0, "IGNORE": 0},
             "interrupts_triggered": 0,
+            "replies_triggered": 0,
         }
 
     @pytest.mark.asyncio
@@ -401,7 +404,8 @@ class TestAgentInterruptUser:
 
     @pytest.mark.asyncio
     async def test_final_question_triggers_reply(self, monkeypatch, caplog):
-        # is_final 且累计文本经意图闸门 → 触发一次 INTERRUPT 回复（short_phrases 场景）
+        # is_final 且累计文本经意图闸门 → 触发一次回复（short_phrases 场景）
+        # 【标签解耦】should_interrupt=False（非真打断）、should_reply=True（需回复）
         a = AgentInterruptUser()
         a.min_speech_duration_ms = 0
         a._interrupt_cooldown_ms = 0
@@ -413,11 +417,12 @@ class TestAgentInterruptUser:
         monkeypatch.setattr(a, "_check_can_interrupt", fake_check)
         with caplog.at_level("INFO", logger="server.services.agent_interrupt_user"):
             r = await a.on_asr_partial_result("嗯……然后呢？", is_final=True)
-        assert r["should_interrupt"] is True
+        assert r["should_interrupt"] is False
         assert r["should_reply"] is True
-        assert a.get_stats()["interrupts_triggered"] == 1
+        assert a.get_stats()["replies_triggered"] == 1
+        assert a.get_stats()["interrupts_triggered"] == 0
         # [O1 时序标定] 触发日志带相对耗时，供评测侧比对 send_done_rel
-        assert any("interrupt triggered at" in rec.message and "since speech_start" in rec.message
+        assert any("reply triggered at" in rec.message and "since speech_start" in rec.message
                    for rec in caplog.records)
 
     @pytest.mark.asyncio
@@ -435,6 +440,7 @@ class TestAgentInterruptUser:
         r = await a.on_asr_partial_result("嗯……", is_final=True)
         assert r["should_interrupt"] is False
         assert a.get_stats()["interrupts_triggered"] == 0
+        assert a.get_stats()["replies_triggered"] == 0
 
     @pytest.mark.asyncio
     async def test_reply_on_final_question_disabled_no_trigger(self, monkeypatch):
@@ -451,7 +457,9 @@ class TestAgentInterruptUser:
         monkeypatch.setattr(a, "_check_can_interrupt", fake_check)
         r = await a.on_asr_partial_result("然后呢？", is_final=True)
         assert r["should_interrupt"] is False
+        assert r["should_reply"] is False
         assert a.get_stats()["interrupts_triggered"] == 0
+        assert a.get_stats()["replies_triggered"] == 0
 
     @pytest.mark.asyncio
     async def test_final_question_no_duplicate_after_interrupt(self, monkeypatch):
@@ -472,7 +480,9 @@ class TestAgentInterruptUser:
         # 同 utterance 后续 final：Feature B 因 _interrupted_this_utterance 守卫不再重复触发
         r2 = await a.on_asr_partial_result("然后呢？", is_final=True)
         assert r2["should_interrupt"] is False
+        assert r2["should_reply"] is False
         assert a.get_stats()["interrupts_triggered"] == 1
+        assert a.get_stats()["replies_triggered"] == 0
 
     # ================================================================ 边缘用例（人类裁决：测试边缘情况）
 
@@ -525,7 +535,9 @@ class TestAgentInterruptUser:
         monkeypatch.setattr(a, "_check_can_interrupt", fake_check)
         r = await a.on_asr_partial_result("唉，今天好累啊", is_final=True)
         assert r["should_interrupt"] is False
+        assert r["should_reply"] is False
         assert a.get_stats()["interrupts_triggered"] == 0
+        assert a.get_stats()["replies_triggered"] == 0
 
     @pytest.mark.asyncio
     async def test_final_empty_no_trigger(self, monkeypatch):
@@ -541,7 +553,9 @@ class TestAgentInterruptUser:
         monkeypatch.setattr(a, "_check_can_interrupt", fake_check)
         r = await a.on_asr_partial_result("嗯……", is_final=True)
         assert r["should_interrupt"] is False
+        assert r["should_reply"] is False
         assert a.get_stats()["interrupts_triggered"] == 0
+        assert a.get_stats()["replies_triggered"] == 0
 
     @pytest.mark.asyncio
     async def test_final_second_duplicate_blocked(self, monkeypatch):
@@ -556,10 +570,13 @@ class TestAgentInterruptUser:
 
         monkeypatch.setattr(a, "_check_can_interrupt", fake_check)
         r1 = await a.on_asr_partial_result("帮我查一下", is_final=True)
-        assert r1["should_interrupt"] is True
+        assert r1["should_interrupt"] is False
+        assert r1["should_reply"] is True
         r2 = await a.on_asr_partial_result("帮我查一下", is_final=True)
         assert r2["should_interrupt"] is False
-        assert a.get_stats()["interrupts_triggered"] == 1
+        assert r2["should_reply"] is False
+        assert a.get_stats()["replies_triggered"] == 1
+        assert a.get_stats()["interrupts_triggered"] == 0
 
     @pytest.mark.asyncio
     async def test_final_respects_cooldown(self, monkeypatch):
@@ -651,7 +668,8 @@ class TestAgentInterruptUser:
 
         monkeypatch.setattr(a, "_check_can_interrupt", fake_check)
         r = await a.on_asr_partial_result("明天几点?", is_final=True)
-        assert r["should_interrupt"] is True
+        assert r["should_interrupt"] is False
+        assert r["should_reply"] is True
 
     @pytest.mark.asyncio
     async def test_gate_long_nonintent_downgrade(self, monkeypatch):
@@ -760,8 +778,10 @@ class TestAgentInterruptUser:
 
         monkeypatch.setattr(a, "_check_can_interrupt", fake_check)
         r = await a.on_asr_partial_result("还没呢，几点开会？", is_final=True)
-        assert r["should_interrupt"] is True
-        assert a.get_stats()["interrupts_triggered"] == 1
+        assert r["should_interrupt"] is False
+        assert r["should_reply"] is True
+        assert a.get_stats()["replies_triggered"] == 1
+        assert a.get_stats()["interrupts_triggered"] == 0
 
     # ================================================================ 新开关 set_config 解析
 
@@ -845,6 +865,145 @@ class TestAgentInterruptUser:
         await asyncio.sleep(0)
 
         assert session._agent_interrupt_triggered is True
+
+    # ================================================================ 打断/回复独立标签（人类裁决"全量重构"）
+    @pytest.mark.asyncio
+    async def test_ensure_reply_starts_pipeline_when_not_triggered(self, monkeypatch):
+        # Feature B should_reply → ensure_reply：主管线未启动时启动主管线（真实回复）
+        session = self._make_dual_session()
+        session._current_user_text = "帮我查一下"
+        monkeypatch.setattr(session, "_send_prefill_started", async_noop)
+        monkeypatch.setattr(session, "_run_pipeline", async_noop)
+        monkeypatch.setattr(session, "_finalize_turn", async_noop)
+
+        await session.ensure_reply()
+        await asyncio.sleep(0)  # 让后台 task 跑完
+
+        assert session._has_triggered_this_utterance is True
+        assert session._pipeline_task is not None
+        # 与 interrupt_and_reply 解耦：不置打断标记（非打断，不互斥 VAD 兜底）
+        assert session._agent_interrupt_triggered is False
+
+    @pytest.mark.asyncio
+    async def test_ensure_reply_noop_when_already_triggered(self, monkeypatch):
+        # 主管线已启动（partial 驱动）→ ensure_reply no-op，防重复管线
+        session = self._make_dual_session()
+        session._has_triggered_this_utterance = True
+        session._current_user_text = "帮我查一下"
+
+        async def fail(*a, **k):
+            raise AssertionError("不应重复启动主管线")
+
+        monkeypatch.setattr(session, "_run_pipeline", fail)
+        monkeypatch.setattr(session, "_send_prefill_started", fail)
+
+        await session.ensure_reply()
+        assert session._pipeline_task is None
+
+    @pytest.mark.asyncio
+    async def test_ensure_reply_noop_when_text_too_short(self, monkeypatch):
+        # 候选文本 < 触发阈值 → no-op
+        session = self._make_dual_session()
+        session._current_user_text = "嗯"  # 1 字 < 2 字阈值
+
+        async def fail(*a, **k):
+            raise AssertionError("文本过短不应启动主管线")
+
+        monkeypatch.setattr(session, "_run_pipeline", fail)
+        await session.ensure_reply()
+        assert session._has_triggered_this_utterance is False
+
+    @pytest.mark.asyncio
+    async def test_maybe_agent_interrupt_routes_reply_to_ensure_reply(self, monkeypatch):
+        # 【标签解耦】should_reply=True 且 should_interrupt=False → 走 ensure_reply（不打断）
+        session = self._make_dual_session()
+        calls = []
+
+        async def fake_ensure_reply():
+            calls.append("ensure_reply")
+
+        async def fake_interrupt(reply):
+            calls.append(("interrupt", reply))
+
+        monkeypatch.setattr(session, "ensure_reply", fake_ensure_reply)
+        monkeypatch.setattr(session, "interrupt_and_reply", fake_interrupt)
+
+        from server.handlers.audio import route_agent_interrupt_result
+        await route_agent_interrupt_result(session, {
+            "should_interrupt": False, "should_reply": True, "reply_content": "",
+        })
+        assert calls == ["ensure_reply"]
+
+    @pytest.mark.asyncio
+    async def test_maybe_agent_interrupt_routes_interrupt_to_interrupt_and_reply(self, monkeypatch):
+        # should_interrupt=True（真打断带内容）→ 走 interrupt_and_reply（先打断再播 reply）
+        session = self._make_dual_session()
+        calls = []
+
+        async def fake_ensure_reply():
+            calls.append("ensure_reply")
+
+        async def fake_interrupt(reply):
+            calls.append(("interrupt", reply))
+
+        monkeypatch.setattr(session, "ensure_reply", fake_ensure_reply)
+        monkeypatch.setattr(session, "interrupt_and_reply", fake_interrupt)
+
+        from server.handlers.audio import route_agent_interrupt_result
+        await route_agent_interrupt_result(session, {
+            "should_interrupt": True, "should_reply": True, "reply_content": "好的",
+        })
+        assert calls == [("interrupt", "好的")]
+
+    @pytest.mark.asyncio
+    async def test_route_reply_confirmation_noop_when_already_triggered(self, monkeypatch):
+        # 【停顿续接确认】should_reply 后 0.5s 窗口内主管线已启动（用户继续说 →
+        # partial 触发 _has_triggered_this_utterance=True）→ ensure_reply 守卫 no-op
+        session = self._make_dual_session()
+        # 用真实 ensure_reply：其 _has_triggered_this_utterance 守卫决定 no-op
+        monkeypatch.setattr(session, "_send_prefill_started", async_noop)
+        monkeypatch.setattr(session, "_run_pipeline", async_noop)
+        monkeypatch.setattr(session, "_finalize_turn", async_noop)
+        # 在 route_agent_interrupt_result 的 0.5s sleep 期间模拟主管线被启动
+        from server.handlers.audio import REPLY_CONFIRM_S, route_agent_interrupt_result
+
+        async def _trigger():
+            await asyncio.sleep(REPLY_CONFIRM_S * 0.3)
+            session._has_triggered_this_utterance = True
+            session._current_user_text = "帮我查一下"
+
+        await asyncio.gather(
+            route_agent_interrupt_result(session, {
+                "should_interrupt": False, "should_reply": True, "reply_content": "",
+            }),
+            _trigger(),
+        )
+        # 主管线已触发 → ensure_reply no-op：不启动新 pipeline
+        assert session._pipeline_task is None
+
+    @pytest.mark.asyncio
+    async def test_route_reply_cancelled_during_confirm_window(self, monkeypatch):
+        # 【任务取消】REPLY_CONFIRM_S 窗口内任务被取消（连接断开/会话终止）→
+        # asyncio.sleep 抛 CancelledError 被捕获，不执行 ensure_reply、不残留异常
+        session = self._make_dual_session()
+        calls = []
+
+        async def fake_ensure_reply():
+            calls.append("ensure_reply")
+
+        monkeypatch.setattr(session, "ensure_reply", fake_ensure_reply)
+
+        from server.handlers.audio import REPLY_CONFIRM_S, route_agent_interrupt_result
+        task = asyncio.create_task(route_agent_interrupt_result(session, {
+            "should_interrupt": False, "should_reply": True, "reply_content": "",
+        }))
+        # 在睡眠窗口内取消任务
+        await asyncio.sleep(REPLY_CONFIRM_S * 0.3)
+        task.cancel()
+
+        # 取消后 await 不抛 CancelledError（已捕获），且 ensure_reply 未执行
+        await asyncio.gather(task, return_exceptions=True)
+        assert calls == []
 
 
 async def _should_not_be_called(text, is_final):

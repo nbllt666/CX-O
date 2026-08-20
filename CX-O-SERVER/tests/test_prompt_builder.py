@@ -148,6 +148,19 @@ class TestRealtime:
         assert "m6" in contents and "m9" in contents
         assert "m0" not in contents
 
+    def test_realtime_contains_ignore_rule(self):
+        # 【忽略传导】实时语音 system prompt 须含"回应边界（忽略规则）"：
+        # 主 LLM 对情绪/自言自语等非对话性输入可选择不回应，对提问/请求务必回答。
+        msgs = build_messages(
+            _AGENT, _FakeContextMgr(_HISTORY), "s", "你好",
+            is_realtime_voice=True,
+        )
+        system_content = msgs[0]["content"]
+        assert "回应边界" in system_content
+        assert "只是表达情绪" in system_content
+        assert "不回应" in system_content
+        assert "明确提问" in system_content
+
 
 # ---------------------------------------------------------------------------
 # history 透传 / 最小化模式
