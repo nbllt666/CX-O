@@ -704,6 +704,40 @@ class TestAgentInterruptUser:
         assert a._has_question_or_request("假设明天会下雨") is False
         assert a._has_question_or_request("设备已经装好了") is False
 
+    # ---- 反诘/反问句式（模拟场景"说话中途打断"实测暴露：反诘被误打断）----
+    def test_has_question_rhetorical_reverse(self):
+        a = AgentInterruptUser()
+        # 反诘/反问（含"什么"但属情绪宣泄，非对 Agent 的提问）→ 不触发
+        assert a._has_question_or_request("这有什么好问的，我真是服了") is False
+        assert a._has_question_or_request("什么好问的") is False       # ASR 缺前缀变体
+        assert a._has_question_or_request("什么好笑的") is False       # ASR 缺前缀变体
+        assert a._has_question_or_request("什么好奇怪的") is False     # ASR 缺前缀变体
+        assert a._has_question_or_request("有什么了不起的") is False
+        assert a._has_question_or_request("这有什么好笑的") is False
+        # 反诘剔除不误杀真问句（硬问号/吗/反诘外句式保留）
+        assert a._has_question_or_request("有什么好吃的吗？") is True
+        assert a._has_question_or_request("你觉得什么好？") is True
+        assert a._has_question_or_request("你说什么好？") is True
+        assert a._has_question_or_request("我该怎么办") is True
+
+    @pytest.mark.asyncio
+    async def test_question_gate_rhetorical_downgrade(self, monkeypatch):
+        # LLM 误判 INTERRUPT + 反诘/反问（"这有什么好问的"）→ 意图闸门降级不打断
+        a = AgentInterruptUser()
+        a.min_speech_duration_ms = 0
+        a._interrupt_cooldown_ms = 0
+        a.on_user_speech_start()
+
+        async def fake_check(text, is_final):
+            return {"decision": "INTERRUPT", "can_interrupt": True, "should_reply": True}
+
+        monkeypatch.setattr(a, "_check_can_interrupt", fake_check)
+        for t in ("这有什么好问的，我真是服了", "什么好笑的", "有什么了不起的"):
+            a.on_user_speech_start()  # 重置本 utterance 状态
+            r = await a.on_asr_partial_result(t)
+            assert r["should_interrupt"] is False, f"{t} 反诘应被闸门降级"
+            assert a.get_stats()["interrupts_triggered"] == 0
+
     def test_has_question_blocklist_does_not_kill_real_questions(self):
         a = AgentInterruptUser()
         # 剔除表不误杀真问句：硬性问号/吗/不在表内的疑问词仍触发

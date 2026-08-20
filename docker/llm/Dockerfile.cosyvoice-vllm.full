@@ -1,0 +1,88 @@
+# CosyVoice3 + vLLM 进程内引擎容器 —— 自包含版（模型已烤入镜像）
+# 基于 vllm-omni 镜像（已有 vLLM 0.26.0 + torch 2.11.0 + CUDA 13.0）
+#
+# 与挂载版 Dockerfile.cosyvoice-vllm 区别：
+#   - 通过命名构建上下文 "--build-context models=./models" 把模型 COPY 进镜像，
+#     运行时无需 -v 卷挂载，可移植到任意机器。
+#   - 前面依赖/源码层与原挂载版逐字一致，构建时复用 Docker 层缓存。
+#
+# 构建命令（在仓库根发起）:
+#   docker build \
+#       -f docker/llm/Dockerfile.cosyvoice-vllm.full \
+#       --build-context models=./models \
+#       -t cosyvoice-vllm-full:latest .
+FROM vllm/vllm-omni:latest
+
+# 清空入口点（基础镜像默认 "vllm serve"）
+ENTRYPOINT []
+
+# 基础镜像已含 curl/git，无需 apt-get
+
+WORKDIR /workspace
+
+# 先装依赖（不依赖源码，源码改动不触发 pip 层重建）
+# 基础镜像已含 numpy/einops/diffusers/onnxruntime/soundfile/pydantic/tqdm/whisper/tiktoken
+# 注：Matcha-TTS 由 PYTHONPATH 直接引用，不执行 pip -e install（避免构建依赖编译 failed）
+RUN pip install --no-cache-dir \
+    conformer==0.3.2 \
+    gdown \
+    hydra-core==1.3.2 \
+    HyperPyYAML==1.2.3 \
+    inflect==7.3.1 \
+    lightning \
+    librosa==0.10.2 \
+    matplotlib \
+    omegaconf \
+    onnx==1.16.0 \
+    protobuf \
+    pyarrow \
+    pyworld==0.3.4 \
+    tensorboard \
+    wetext \
+    wget
+
+# 预下载 wetext 模型（避免首次推理时远程下载）
+RUN python -c "import wetext; print('wetext ready')" 2>/dev/null
+
+# 复制 cosyvoice-official 源码（含内部 third_party/Matcha-TTS 子模块）
+COPY third_party/cosyvoice-official/ ./cosyvoice-official/
+
+# vLLM 插件：在 EngineCore 子进程内注册 CosyVoice2ForCausalLM（vLLM 0.26 多进程必需）
+COPY docker/llm/cv3plugin/ ./cv3plugin/
+RUN pip install --no-cache-dir -e ./cv3plugin
+
+# 注册 cosyvoice-official 到 Python 路径
+ENV PYTHONPATH="/workspace/cosyvoice-official:/workspace/cosyvoice-official/third_party/Matcha-TTS"
+
+# 部署脚本
+COPY docker/llm/cosyvoice_server.py /workspace/server.py
+
+# 模型层（自包含）：完整 9.77GB 模型从命名构建上下文 "models" 烤入镜像
+COPY --from=models /Fun-CosyVoice3-0.5B-2512 /workspace/models/Fun-CosyVoice3-0.5B-2512
+
+# 默认参数
+ENV MODEL_DIR=/workspace/models/Fun-CosyVoice3-0.5B-2512
+ENV HOST=0.0.0.0
+ENV PORT=8094
+ENV DEVICE=cuda:0
+ENV BF16=true
+ENV STREAM_HOP_LEN=10
+ENV FLOW_STEPS=3
+ENV VLLM=true
+ENV NO_WARMUP=false
+
+EXPOSE 8094
+
+HEALTHCHECK --interval=30s --timeout=10s --start-period=120s --retries=5 \
+    CMD curl -f http://localhost:8094/health || exit 1
+
+CMD ["sh", "-c", "python /workspace/server.py \
+    --model_dir ${MODEL_DIR} \
+    --host ${HOST} \
+    --port ${PORT} \
+    --device ${DEVICE} \
+    ${BF16:+--bf16} \
+    --stream-hop-len ${STREAM_HOP_LEN} \
+    --flow-steps ${FLOW_STEPS} \
+    ${VLLM:+--vllm} \
+    ${NO_WARMUP:+--no-warmup}"]
