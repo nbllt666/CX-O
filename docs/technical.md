@@ -68,7 +68,7 @@ CX-O 将虚拟形象、实时语音对话、记忆管理、直播推流、声音
 │  ┌───────┴──────┐  ┌─────┴──────┐  ┌──────────────┴───────────┐   │
 │  │  Docker 推理  │  │ CX-O-Voice │  │  第三方引擎/服务           │   │
 │  │  asr/llm/tts │  │ WorkStation│  │  Ollama / vLLM / Weaviate│   │
-│  └──────────────┘  │ (8200)     │  │  Orpheus / F5-TTS ...     │   │
+│  └──────────────┘  │ (8200)     │  │  CosyVoice3 / Qwen3-TTS  │   │
 │                    └────────────┘  └──────────────────────────┘   │
 └─────────────────────────────────────────────────────────────────────┘
 ```
@@ -79,11 +79,12 @@ CX-O 将虚拟形象、实时语音对话、记忆管理、直播推流、声音
 |------|------|------|------|
 | CX-O-SERVER | Python / FastAPI / uvicorn | 8000 | 统一后端：Gateway(WS) + REST + ASR + TTS 单体 |
 | APP-Frontend | React / TypeScript / Vite / Electron | 3100（浏览器）/ Electron | 统一前端：管理界面、聊天、直播、录音作曲、桌面宠物 |
-| CX-O-VoiceWorkStation | Python / FastAPI | 8200 | 参考音频生成、SVC 训练/推理、AI 作曲 |
+| CX-O-VoiceWorkStation | Python / FastAPI | 8200 | 数据集生成、SVC 训练/推理、AI 作曲 |
 | asr-sensevoice | Docker / FunASR+SenseVoice | 8005 | 语音识别服务 |
-| f5-tts-triton | Docker / Triton+TRT-LLM | 8000/8001/8002 | F5-TTS 合成（Triton 加速） |
+| cosyvoice-tts | 独立 conda 服务 | 8094 | CosyVoice3 主引擎（克隆与情感合成） |
+| voicedesign-tts | vLLM-Omni | 8091 | 无参考音频的音频设计 |
+| qwen3-tts-base | vLLM-Omni | 8093 | TTS 降级兜底 |
 | llm | Docker / vLLM 或 TRT-LLM | 8080 | 对话大模型推理 |
-| orpheus-tts | Docker / vLLM+SNAC | 5060 | Orpheus 多语言 TTS |
 | Ollama / vLLM | 外部 | 11434/... | 对话与嵌入模型 |
 | Weaviate | 外部 | 8080 | 向量数据库（可选） |
 
@@ -127,7 +128,7 @@ CX-O 将虚拟形象、实时语音对话、记忆管理、直播推流、声音
 12. 批量衰减处理器、任务调度器
 13. CXFC 插件管理器与自动发现
 14. ASR / TTS 服务（embedded / remote 模式，含降级回退）
-15. 预热：共享 HTTP 客户端、Orpheus TTS、LLM / Embedding 推理
+15. 预热：共享 HTTP 客户端、CosyVoice3 TTS、LLM / Embedding 推理
 
 ### 3.2 双网关（REST + WebSocket）
 
@@ -217,10 +218,12 @@ CX-O 将虚拟形象、实时语音对话、记忆管理、直播推流、声音
 
 ### 4.7 TTS 服务（`tts_service.py`）
 
-- 模式：`remote`（Qwen3 TTS 唯一合成路径，vLLM 优先，允许官方运行时临时兜底）。
-- **统一编排**：普通、流式、细粒度流式、情感路径全部收敛到 Qwen3 Provider（`qwen3_tts_provider.py`），`get_tts_service()` 单例统一 REST/gateway/main 链路。
+- 模式：`remote`（统一走 TTS Provider，`qwen3_tts_provider.py`），`get_tts_service()` 单例统一 REST/gateway/main 链路。
+- **多运行时路由**：配置段 `qwen3_tts.runtime` 枚举 `voicedesign / cosyvoice / qwen3_base`，当前主 runtime 为 `cosyvoice`（CosyVoice3）。Provider 自动路由——带参考音频（带 refs）走 `cosyvoice`（失败降级 `qwen3_base`）；无参考音频走 `voicedesign`（失败降级 `qwen3_base`）。
+- **CosyVoice3 主引擎**：`Fun-CosyVoice3-0.5B-2512`，`docker/llm/cosyvoice_server.py` + `start-cosyvoice.ps1`（独立 conda 环境），OpenAI 兼容 `/v1/audio/speech`，地址 `http://127.0.0.1:8094`，承接克隆与情感合成，支持流式合成 + CUDA graph 加速。
+- **VoiceDesign / Qwen3-TTS Base 备用**：`Qwen/Qwen3-TTS-12Hz-1.7B-VoiceDesign`（8091，无 refs 音频设计）、`Qwen/Qwen3-TTS-12Hz-1.7B-Base`（8093，降级兜底），基于 vLLM-Omni。
 - 流式合成：`synthesize_stream_fine` 直接对接 token 流，边收边切边合成，每个 `text_segment` 对应一个 TTS chunk；`cross_fade_duration=0.15` 平滑过渡。
-- 情感指令：`emotion_instruction_enabled`，由 LLM 生成自然语言指令（`tts_instruction`，与 `reply_text` 分离），经 `emotion_instruction_service.py` 解析与中性回退；旧 `[emotion:*]` / Orpheus XML 标签仅作迁移边界兼容输入。
+- 情感指令：`emotion_instruction_enabled`，由 LLM 生成自然语言指令（`tts_instruction`，与 `reply_text` 分离），经 `emotion_instruction_service.py` 解析与中性回退；`[emotion:*]` 标签仅作迁移边界兼容输入。
 - 参考音频资产：统一 `ref_audio_store.py` 管理（`source=prompt` 按提示词生成 / `source=file` 外部文件双来源），当前资产默认使用、合成请求可覆盖。
 - 音效标签：`effects_enabled`，文本中插入标签触发音效。
 - 过渡词：`transition_enabled`，在开播前插入过渡词（`transition_text="嗯，"`），衔接自然。
@@ -537,7 +540,7 @@ T(t) = 1 / (1 + (Δt/T₅₀)^k)      # T₅₀=30, k=2
 | `/agents` | Agent 管理（新建人设、配置参数） |
 | `/acp` | ACP 多 Agent 协作 |
 | `/plugins`、`/tools` | 插件 / 工具 |
-| `/audio-workstation` | 录音作曲（五线谱 / 作曲 / SVC / VoxCPM / Orpheus） |
+| `/audio-workstation` | 录音作曲（五线谱 / 作曲 / SVC / VoxCPM / 数据集） |
 | `/settings` | 设置 |
 | `/memory-agent`、`/vector` | 记忆 Agent / 向量数据 |
 | `/live-console`、`/live-overlay` | 直播控制台 / 直播分屏 |
@@ -571,10 +574,9 @@ T(t) = 1 / (1 + (Δt/T₅₀)^k)      # T₅₀=30, k=2
 
 > Python / FastAPI，端口 8200，提供声音克隆与训练、AI 作曲能力。
 
-### 15.1 参考音频生成
+### 15.1 数据集生成
 
-- `ref_audio` / `voxcpm`：VoxCPM 音色设计。
-- `emotion_ref_generator` / `ref_audio`：基于 VoxCPM 的情感参考音频生成（8 情感 + 56 过渡 = 64 参考音频）。
+- `voxcpm` / `batch-dataset`：基于 VoxCPM 的批量 SVC 训练数据集生成（单条参考音频生成已随 Qwen3 TTS 迁移移除）。
 
 ### 15.2 SVC 训练与推理
 
@@ -586,7 +588,7 @@ T(t) = 1 / (1 + (Δt/T₅₀)^k)      # T₅₀=30, k=2
 
 - `music/`：歌谱（score）、自动编排（arranger）、多轨伴奏（accompaniment）、混音（mixer）、MusicXML 导入。
 - `song_pipeline` / `singing_engine`：歌声合成。
-- 支持 VoxCPM / Orpheus / 参考音频等多种音源。
+- 支持 VoxCPM / 参考音频 / 歌声合成引擎等多种音源。
 
 ### 15.4 CXFC 集成
 
@@ -601,9 +603,9 @@ T(t) = 1 / (1 + (Δt/T₅₀)^k)      # T₅₀=30, k=2
 | 服务 | 说明 |
 |------|------|
 | `asr-sensevoice` | FunASR + SenseVoice 语音识别，端口 8005 |
-| `f5-tts-triton` | F5-TTS Triton + TRT-LLM 加速，端口 8000/8001/8002 |
 | `llm` | 对话大模型（vLLM + GGUF 或 TRT-LLM），端口 8080 |
-| `orpheus-tts` | Orpheus 多语言 TTS（vLLM 后端 + SNAC Bridge），端口 5060 |
+
+> Docker Compose 现仅编排 ASR 与 LLM 推理服务；TTS 语音合成走独立服务（CosyVoice3 8094 / VoiceDesign 8091 / Qwen3-TTS Base 8093，见 §4.7），不在此编排内。
 
 - 均支持 GPU 资源预留、健康检查、自动重启。
 - 另有 `docker-compose.weaviate*.yml` 用于 Weaviate 向量库部署。
@@ -631,8 +633,8 @@ config.json 文件配置  →  deep_merge  →  环境变量（CXO_ 前缀）  �
 | `llm` | provider `ollama`、host `http://localhost:11434`、model `qwen3:latest`、temp `0.7`、max_tokens `32768` |
 | `models` | main / summary(max_tokens 131072) / memory(max_tokens 131072)，defaults 指向 main |
 | `asr` | mode `remote`、model `SenseVoiceSmall`、device `cuda`、ws_url `:8005/ws/asr/stream` |
-| `tts` | mode `remote`、model `F5TTS_v1_Base`、remote_url `:5000`、cross_fade `0.15`、emotion/effects 开 |
-| `tts.orpheus` | url `:5060`、model `canopylabs/orpheus-multilingual-research-release`、voice `长乐`、sample_rate `24000` |
+| `tts` | mode `remote`、cross_fade `0.15`、emotion/effects 开 |
+| `qwen3_tts` | runtime `cosyvoice`（枚举 voicedesign/cosyvoice/qwen3_base）；cosyvoice `http://127.0.0.1:8094` / `Fun-CosyVoice3-0.5B-2512`；voicedesign `8091` / `Qwen3-TTS-12Hz-1.7B-VoiceDesign`；qwen3_base `8093` / `Qwen3-TTS-12Hz-1.7B-Base` |
 | `memory` | vector_backend `weaviate`、embedding `nomic-embed-text`、permanent_threshold `0.95`、dedup `0.85`、短期7天/长期365天 |
 | `database` | `data/cxo.db`、`memories.db`、`sessions.db`；`sqlite+aiosqlite` |
 | `graph` | `data/graph.db`、weaviate url `:8080`、embedding `all-MiniLM-L6-v2` |
@@ -661,7 +663,6 @@ CX-O/
 │       ├── services/       # 语音服务（asr/tts/vad/interrupt/...）
 │       ├── core/           # 领域核心（memory/graph/tools/acp/...）
 │       ├── protocol/       # 消息协议（action）
-│       └── storage/        # 数据库连接与迁移
 ├── CX-O-VoiceWorkStation/  # 语音工作站（声音克隆/训练/作曲）
 ├── docker/                 # 推理服务 Dockerfile
 ├── docs/                   # 项目文档
