@@ -105,6 +105,66 @@ export const DEFAULT_BONE_CONTROLS: AvatarBoneControl[] = [
     rotationRange: { x: [-0.6, 0.6], y: [-0.2, 0.2], z: [-0.3, 0.3] },
     prompt: '屈膝、踢腿、摆动',
   },
+  {
+    id: 'leftShoulder',
+    label: '左肩/锁骨',
+    rotationRange: { x: [-0.4, 0.4], y: [-0.4, 0.4], z: [-0.8, 0.8] },
+    prompt: '耸肩、抬肩、肩胛前送',
+  },
+  {
+    id: 'rightShoulder',
+    label: '右肩/锁骨',
+    rotationRange: { x: [-0.4, 0.4], y: [-0.4, 0.4], z: [-0.8, 0.8] },
+    prompt: '耸肩、抬肩、肩胛前送',
+  },
+  {
+    id: 'leftFoot',
+    label: '左脚',
+    rotationRange: { x: [-0.5, 0.5], y: [-0.3, 0.3], z: [-0.4, 0.4] },
+    prompt: '跺脚、垫脚、脚尖朝向',
+  },
+  {
+    id: 'rightFoot',
+    label: '右脚',
+    rotationRange: { x: [-0.5, 0.5], y: [-0.3, 0.3], z: [-0.4, 0.4] },
+    prompt: '跺脚、垫脚、脚尖朝向',
+  },
+  {
+    id: 'leftEye',
+    label: '左眼',
+    rotationRange: { x: [-0.15, 0.15], y: [-0.15, 0.15], z: [-0.15, 0.15] },
+    prompt: '眼球朝向、余光、转眼',
+  },
+  {
+    id: 'rightEye',
+    label: '右眼',
+    rotationRange: { x: [-0.15, 0.15], y: [-0.15, 0.15], z: [-0.15, 0.15] },
+    prompt: '眼球朝向、余光、转眼',
+  },
+  {
+    id: 'leftThumb',
+    label: '左拇指',
+    rotationRange: { x: [-0.5, 0.5], y: [-0.5, 0.5], z: [-0.5, 0.5] },
+    prompt: '拇指张开、竖起大拇指',
+  },
+  {
+    id: 'rightThumb',
+    label: '右拇指',
+    rotationRange: { x: [-0.5, 0.5], y: [-0.5, 0.5], z: [-0.5, 0.5] },
+    prompt: '拇指张开、竖起大拇指',
+  },
+  {
+    id: 'leftIndex',
+    label: '左食指',
+    rotationRange: { x: [-0.6, 0.6], y: [-0.6, 0.6], z: [-0.6, 0.6] },
+    prompt: '食指指向、轻戳、招手',
+  },
+  {
+    id: 'rightIndex',
+    label: '右食指',
+    rotationRange: { x: [-0.6, 0.6], y: [-0.6, 0.6], z: [-0.6, 0.6] },
+    prompt: '食指指向、轻戳、招手',
+  },
 ];
 
 const BONE_RANGE_MAP: Map<string, AvatarBoneControl['rotationRange']> = new Map(

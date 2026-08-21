@@ -135,7 +135,15 @@ export class Live2DDriver implements IAvatarDriver {
     this._notify();
   }
 
-  /** Live2D 无骨骼概念：骨骼旋转为 VRM 专属，空实现 */
+  /**
+   * Live2D 无骨骼概念：骨骼旋转为 VRM 专属，空实现。
+   * speed / holdMs 参数（VRM 骨骼动作速度与自动归中保持时长）在 Live2D 侧同样无实际作用——
+   * Live2D 没有可旋转/可归中的骨骼实体，故整体空实现，不实现自动归中。
+   *
+   * TODO(骨骼支持): 若后续 Live2D 模型接入可旋转骨骼（如 AdditionalParameters/自定义参数驱动），
+   * 应在持有期间按 holdMs 到期后把对应参数平滑归零，对齐 VRM 的自动归中口径。
+   * 当前接口签名与 VRM 保持一致，仅保证接口契约稳定。
+   */
   setBoneRotations(
     _entries: Array<{
       boneName: string;
