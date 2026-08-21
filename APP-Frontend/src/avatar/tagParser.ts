@@ -24,6 +24,8 @@ export type BoneTag = {
   boneName: string;
   rotation: { x: number; y: number; z: number };
   speed: number;
+  /** 保持时长（ms），省略时由引擎使用默认值并自动归中 */
+  holdMs?: number;
 };
 export type PoseTag = { type: 'pose'; durationMs: number };
 export type ReleaseTag = { type: 'release' };
@@ -122,6 +124,8 @@ function parseTag(type: string, paramsStr: string | undefined, _raw: string): Av
       if (rx === null || ry === null || rz === null) return null;
       const speed = params.length >= 5 ? parseNumber(params[4]) : 1.0;
       if (speed === null) return null;
+      const holdMs = params.length >= 6 ? parseNumber(params[5]) : undefined;
+      if (holdMs === null) return null;
       return {
         type: 'bone',
         boneName: params[0],
@@ -131,6 +135,9 @@ function parseTag(type: string, paramsStr: string | undefined, _raw: string): Av
           z: clamp(rz, -Math.PI, Math.PI),
         },
         speed: clamp(speed, 0.1, 5.0),
+        ...(holdMs !== undefined
+          ? { holdMs: clamp(holdMs, 200, 300000) }
+          : {}),
       };
     }
     case 'pose': {

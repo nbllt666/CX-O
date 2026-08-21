@@ -84,11 +84,14 @@ export const PetAvatar = forwardRef<PetAvatarHandle, PetAvatarProps>(function Pe
     }
     const driver = createAvatarDriver(manifest);
     driverRef.current = driver;
+    // 运行时调试：暴露驱动实例到 window（与 VRMViewer 的 __vrmRuntime 先例一致），便于外部触发标签验证动作
+    (window as unknown as { __cxoDriver?: IAvatarDriver | null }).__cxoDriver = driver;
     setActiveDriver(driver);
     return () => {
       driver.destroy();
       if (driverRef.current === driver) {
         driverRef.current = null;
+        (window as unknown as { __cxoDriver?: IAvatarDriver | null }).__cxoDriver = null;
       }
     };
   }, [manifest]);

@@ -141,6 +141,7 @@ export class Live2DDriver implements IAvatarDriver {
       boneName: string;
       rotation: { x: number; y: number; z: number };
       speed?: number;
+      holdMs?: number;
     }>,
   ): void {}
 

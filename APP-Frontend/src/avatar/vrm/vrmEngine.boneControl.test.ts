@@ -15,6 +15,7 @@ function makeRuntime() {
     boneTargetRotations: new Map(),
     boneTransitionSpeeds: new Map(),
     boneCurrentRotations: new Map(),
+    boneHoldTimers: new Map(),
     vrm: { humanoid: null },
   } as any;
 }
@@ -53,5 +54,27 @@ describe('setBoneRotations', () => {
     ]);
     // head 范围 x 上限 0.6，key 为传入的原始 boneName 'HEAD'
     expect(runtime.boneTargetRotations.get('HEAD').x).toBe(0.6);
+  });
+
+  it('E. 省略 holdMs 时设置默认 3s 自动归中计时器', () => {
+    const runtime = makeRuntime();
+    setBoneRotations(runtime, [{ boneName: 'head', rotation: { x: 0.3, y: 0, z: 0 } }]);
+    expect(runtime.boneHoldTimers.get('head')).toBeCloseTo(3.0, 5);
+  });
+
+  it('F. 显式 holdMs 转换秒数入计时器', () => {
+    const runtime = makeRuntime();
+    setBoneRotations(runtime, [
+      { boneName: 'neck', rotation: { x: 0.1, y: 0, z: 0 }, holdMs: 1500 },
+    ]);
+    expect(runtime.boneHoldTimers.get('neck')).toBeCloseTo(1.5, 5);
+  });
+
+  it('G. holdMs=0 表示不自动归中（清除计时器）', () => {
+    const runtime = makeRuntime();
+    setBoneRotations(runtime, [
+      { boneName: 'head', rotation: { x: 0.3, y: 0, z: 0 }, holdMs: 0 },
+    ]);
+    expect(runtime.boneHoldTimers.has('head')).toBe(false);
   });
 });

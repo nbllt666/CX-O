@@ -171,6 +171,8 @@ export class VRMDriver implements IAvatarDriver {
       boneName: string;
       rotation: { x: number; y: number; z: number };
       speed?: number;
+      /** 骨骼动作保持时长 ms；省略默认 3s 后自动归中，0 表示不自动归中 */
+      holdMs?: number;
     }>,
   ): void {
     if (this.runtime) {

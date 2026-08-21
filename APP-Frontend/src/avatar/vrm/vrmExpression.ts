@@ -148,6 +148,21 @@ export class VRMExpression {
     return ['happy', 'angry', 'sad', 'surprised', 'relaxed', 'neutral'].includes(value);
   }
 
+  private exprKey(em: NonNullable<VRM['expressionManager']>, name: string): string {
+    const map = (em as any)._expressionMap as Record<string, unknown> | undefined;
+    if (map && name in map) return name;
+    if (map) {
+      for (const key of Object.keys(map)) {
+        if (name.toLowerCase() === key.toLowerCase()) return key;
+      }
+    }
+    return name;
+  }
+
+  private setExpr(em: NonNullable<VRM['expressionManager']>, name: string, value: number): void {
+    em.setValue(this.exprKey(em, name) as keyof typeof VRMExpressionPresetName, value);
+  }
+
   private rebuildMixBlendShapes(): void {
     this.mixBlendShapeValues.clear();
     if (!this.vrm) return;
@@ -221,14 +236,14 @@ export class VRMExpression {
 
     Object.values(VRMExpressionPresetName).forEach((preset) => {
       if (ALL_EMOTION_PRESETS.includes(preset as VRMExpressionPresetName)) {
-        em.setValue(preset, 0);
+        this.setExpr(em, preset, 0);
       }
     });
 
     if (this.emotionWeight > 0.01 && this.targetEmotion !== 'neutral') {
       const presets = EMOTION_PRESET_MAP[this.targetEmotion];
       presets.forEach((preset) => {
-        em.setValue(preset, this.emotionWeight);
+        this.setExpr(em, preset, this.emotionWeight);
       });
     } else {
       this.applyIdleMicroExpressions(em);
@@ -239,7 +254,7 @@ export class VRMExpression {
       if (typeof current === 'number') {
         const isEmotionPreset = ALL_EMOTION_PRESETS.includes(name as VRMExpressionPresetName);
         if (!isEmotionPreset || this.emotionWeight < 0.01) {
-          em.setValue(name as keyof typeof VRMExpressionPresetName, value);
+          this.setExpr(em, name, value);
         }
       }
     }
@@ -250,18 +265,18 @@ export class VRMExpression {
     if (idleIntensity < 0.001) return;
 
     const relaxedWeight = idleIntensity * 0.4;
-    em.setValue(VRMExpressionPresetName.Relaxed, relaxedWeight);
+    this.setExpr(em, VRMExpressionPresetName.Relaxed, relaxedWeight);
 
     const smileNoise = this.idleSmileNoise.noise(this.idleTime * 0.07);
     const smileWeight = Math.max(0, smileNoise) * idleIntensity * 0.7;
     if (smileWeight > 0.001) {
-      em.setValue(VRMExpressionPresetName.Happy, smileWeight);
+      this.setExpr(em, VRMExpressionPresetName.Happy, smileWeight);
     }
 
     const browNoise = this.idleBrowNoise.noise(this.idleTime * 0.04);
     const browWeight = Math.max(0, browNoise - 0.6) * idleIntensity * 0.3;
     if (browWeight > 0.001) {
-      em.setValue(VRMExpressionPresetName.Surprised, browWeight);
+      this.setExpr(em, VRMExpressionPresetName.Surprised, browWeight);
     }
   }
 
@@ -277,7 +292,7 @@ export class VRMExpression {
     if (!em) return;
     Object.values(VRMExpressionPresetName).forEach((preset) => {
       if (ALL_EMOTION_PRESETS.includes(preset as VRMExpressionPresetName)) {
-        em.setValue(preset, 0);
+        this.setExpr(em, preset, 0);
       }
     });
   }

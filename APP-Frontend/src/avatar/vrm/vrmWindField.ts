@@ -59,7 +59,15 @@ export class VRMWindField {
     const manager = vrm.springBoneManager;
     if (!manager) return;
 
-    for (const joint of manager.joints) {
+    // three-vrm 3.x 新版弹簧骨集合为 `_joints`（Set），旧版为数组 `joints`；兼容两者。
+    const rawJoints = manager.joints ?? (manager as unknown as { _joints?: unknown })._joints;
+    const joints: VRMSpringBoneJoint[] = Array.isArray(rawJoints)
+      ? rawJoints
+      : rawJoints instanceof Set
+        ? Array.from(rawJoints)
+        : [];
+
+    for (const joint of joints) {
       const boneName = joint.bone.name.toLowerCase();
       const matchesKeyword = WIND_AFFECTED_KEYWORDS.some((kw) => boneName.includes(kw));
       if (matchesKeyword) {

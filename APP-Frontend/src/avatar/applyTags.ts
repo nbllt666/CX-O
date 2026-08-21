@@ -25,7 +25,12 @@ export function applyAvatarTags(driver: IAvatarDriver, tags: AvatarTag[]): void 
         break;
       case 'bone':
         driver.setBoneRotations([
-          { boneName: tag.boneName, rotation: tag.rotation, speed: tag.speed },
+          {
+            boneName: tag.boneName,
+            rotation: tag.rotation,
+            speed: tag.speed,
+            ...(tag.holdMs !== undefined ? { holdMs: tag.holdMs } : {}),
+          },
         ]);
         break;
       case 'pose':

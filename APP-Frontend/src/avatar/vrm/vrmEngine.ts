@@ -73,6 +73,8 @@ export type VRMRuntimeState = {
   boneTransitionSpeeds: Map<string, number>;
   boneCurrentRotations: Map<string, { x: number; y: number; z: number }>;
   boneTargetRotations: Map<string, { x: number; y: number; z: number }>;
+  /** 骨骼自动归中计时器：boneName → 剩余保持秒；<=0 时对应该骨骼目标归零回待机 */
+  boneHoldTimers: Map<string, number>;
   cameraTweak?: {
     offsetX: number;
     offsetY: number;
@@ -351,6 +353,7 @@ export function createVRMRuntime(
     boneTransitionSpeeds: new Map(),
     boneCurrentRotations: new Map(),
     boneTargetRotations: new Map(),
+    boneHoldTimers: new Map(),
     cameraTweak,
   };
 
@@ -419,6 +422,20 @@ export function startRuntimeLoop(
       }
     }
 
+    if (runtime.boneHoldTimers.size > 0) {
+      for (const [boneName, remain] of runtime.boneHoldTimers) {
+        const next = remain - dt;
+        if (next <= 0) {
+          // 保持到期 → 该骨骼目标归零，让插值器平滑回到待机；并移除计时器
+          runtime.boneHoldTimers.delete(boneName);
+          runtime.boneTargetRotations.set(boneName, { x: 0, y: 0, z: 0 });
+          runtime.boneTransitionSpeeds.set(boneName, 3.3);
+        } else {
+          runtime.boneHoldTimers.set(boneName, next);
+        }
+      }
+    }
+
     if (runtime.boneTargetRotations.size > 0) {
       const humanoid = runtime.vrm.humanoid;
       if (humanoid) {
@@ -475,8 +492,13 @@ export function setBoneRotations(
     boneName: string;
     rotation: { x: number; y: number; z: number };
     speed?: number;
+    /** 保持时长 ms；省略用引擎默认（3s）后自动归中；0 表示不自动归中 */
+    holdMs?: number;
   }>,
 ): void {
+  // 骨骼自动归中默认保持时长（秒）
+  const DEFAULT_BONE_HOLD_SEC = 3;
+
   // 真相源 = manifest 填充的运行时副本，勿直读 catalog 常量。
   const controls = runtime.avatar.boneControls ?? [];
   const controlsByName = new Map(controls.map((c) => [c.id.toLowerCase(), c]));
@@ -501,6 +523,16 @@ export function setBoneRotations(
 
     runtime.boneTargetRotations.set(entry.boneName, rotation);
     runtime.boneTransitionSpeeds.set(entry.boneName, entry.speed ?? 1.0);
+    // 自动归中：holdMs>0 → 设保持计时；holdMs=0 → 清除计时（保持不归中）；
+    // holdMs 省略 → 用默认 3s。
+    if (entry.holdMs === 0) {
+      runtime.boneHoldTimers.delete(entry.boneName);
+    } else {
+      runtime.boneHoldTimers.set(
+        entry.boneName,
+        (entry.holdMs ?? DEFAULT_BONE_HOLD_SEC * 1000) / 1000,
+      );
+    }
     if (!runtime.boneCurrentRotations.has(entry.boneName)) {
       const humanoid = runtime.vrm.humanoid;
       if (humanoid) {
@@ -529,6 +561,7 @@ export function holdPose(runtime: VRMRuntimeState, durationMs?: number): void {
 export function releasePose(runtime: VRMRuntimeState): void {
   runtime.heldBones.clear();
   runtime.poseHoldTimer = 0;
+  runtime.boneHoldTimers.clear();
   runtime.blendInterpolator.reset();
   for (const boneName of runtime.boneTargetRotations.keys()) {
     runtime.boneTargetRotations.set(boneName, { x: 0, y: 0, z: 0 });
@@ -616,6 +649,7 @@ export function destroyRuntime(runtime: VRMRuntimeState): void {
   runtime.resolvedBindingCache.clear();
   runtime.blendInterpolator.reset();
   runtime.heldBones.clear();
+  runtime.boneHoldTimers.clear();
   runtime.boneTransitionSpeeds.clear();
   runtime.boneCurrentRotations.clear();
   runtime.boneTargetRotations.clear();
