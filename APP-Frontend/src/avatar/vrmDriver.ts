@@ -6,6 +6,7 @@
  * - 姿态保持期间动作触发暂停、呼吸幅度压低
  * - 风场参数经 VRMWindField 作用于弹簧骨
  */
+import * as THREE from 'three';
 import type {
   AvatarManifest,
   EmotionType,
@@ -26,17 +27,29 @@ import {
   holdPose as engineHoldPose,
   releasePose as engineReleasePose,
 } from './vrm/vrmEngine';
+import { VRMActionController } from './vrm/vrmActionController';
 import { VRMExpression } from './vrm/vrmExpression';
 import { VRMMotionTrigger } from './vrm/vrmMotionTrigger';
 import { VRMWindField } from './vrm/vrmWindField';
 
 type DriverListener = () => void;
 
+/** 动作名 → 情绪动作回退映射：无匹配动画片段时降级触发情绪动作 */
+const ACTION_EMOTION_FALLBACK: Record<string, EmotionType> = {
+  wave: 'happy',
+  hi: 'happy',
+  hello: 'happy',
+  bye: 'happy',
+  greet: 'happy',
+  handwave: 'happy',
+};
+
 export class VRMDriver implements IAvatarDriver {
   private runtime: VRMRuntimeState | null = null;
   private expression: VRMExpression | null = null;
   private motionTrigger: VRMMotionTrigger | null = null;
   private windField: VRMWindField | null = null;
+  private actionController: VRMActionController | null = null;
   private _avatar: AvatarManifest;
   private _expressionMix: ExpressionLayer[] = [];
   private _parameterOverrides: ParameterOverride[] = [];
@@ -69,7 +82,7 @@ export class VRMDriver implements IAvatarDriver {
     return this._mouthOpen;
   }
 
-  bindRuntime(runtime: unknown): void {
+  bindRuntime(runtime: unknown, animations?: THREE.AnimationClip[]): void {
     this.runtime = runtime as VRMRuntimeState;
     this.expression = new VRMExpression();
     this.expression.bindVRM(this.runtime.vrm);
@@ -77,6 +90,11 @@ export class VRMDriver implements IAvatarDriver {
     this.motionTrigger.bindVRM(this.runtime.vrm);
     this.windField = new VRMWindField();
     this.windField.bindVRM(this.runtime.vrm);
+    // 动作控制器：绑定模型根节点与动画片段（动作交叉淡入）
+    if (this.runtime.vrm.scene) {
+      this.actionController = new VRMActionController();
+      this.actionController.bind(this.runtime.vrm.scene, animations ?? []);
+    }
   }
 
   setExpressionMix(mix: ExpressionLayer[]): void {
@@ -190,10 +208,28 @@ export class VRMDriver implements IAvatarDriver {
     this.motionTrigger?.setSpeaking(speaking);
   }
 
+  /** 触发指定动作：优先播放匹配动画片段（交叉淡入），无匹配片段时降级触发情绪动作，均不抛错 */
+  playAction(action: string, crossFadeTime?: number): void {
+    if (this.actionController?.hasAction(action)) {
+      this.actionController.playAction(action, crossFadeTime ?? 0.3);
+      return;
+    }
+    const emotion = ACTION_EMOTION_FALLBACK[action.toLowerCase()];
+    if (emotion) {
+      this.triggerEmotionMotion(emotion);
+    }
+  }
+
+  /** 触发一次交互风冲击（作用于弹簧骨） */
+  triggerInteractionWind(intensity: number): void {
+    this.windField?.triggerInteractionWind(intensity);
+  }
+
   update(dt: number): void {
     if (this.expression) this.expression.update(dt);
     if (this.motionTrigger) this.motionTrigger.update(dt);
     if (this.windField) this.windField.update(dt);
+    this.actionController?.update(dt);
   }
 
   destroy(): void {
@@ -205,6 +241,8 @@ export class VRMDriver implements IAvatarDriver {
     this.motionTrigger = null;
     this.windField?.reset();
     this.windField = null;
+    this.actionController?.reset();
+    this.actionController = null;
     this._expressionMix = [];
     this._parameterOverrides = [];
   }

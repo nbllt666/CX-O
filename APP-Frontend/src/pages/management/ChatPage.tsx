@@ -28,6 +28,7 @@ import {
   normalizeStreamChunk,
 } from './chatStream';
 import type { ChatMsg, StreamEvent } from './chatStream';
+import { stripAvatarTags } from '@/avatar/tagParser';
 import { MarkdownContent } from './MarkdownContent';
 import { ThinkingProcess } from './ThinkingProcess';
 import { SummaryModal } from './SummaryModal';
@@ -67,7 +68,7 @@ function MessageBubble(props: { msg: ChatMsg; loading?: boolean }) {
             {isUser ? (
               <p className="whitespace-pre-wrap break-words">{msg.content}</p>
             ) : (
-              <MarkdownContent content={msg.content} />
+              <MarkdownContent content={stripAvatarTags(msg.content)} />
             )}
           </div>
         )}

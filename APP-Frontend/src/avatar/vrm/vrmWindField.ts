@@ -49,6 +49,7 @@ export class VRMWindField {
   private gustTimer = 0;
   private gustActive = false;
   private gustRemainingDuration = 0;
+  private interactionStrength = 0;
   private customGroups: WindAffectedGroup[] = [];
 
   bindVRM(vrm: VRM): void {
@@ -85,6 +86,10 @@ export class VRMWindField {
     }
   }
 
+  triggerInteractionWind(intensity: number): void {
+    this.interactionStrength = Math.max(this.interactionStrength, intensity);
+  }
+
   update(dt: number): void {
     if (!this.vrm || this.affectedJoints.size === 0) return;
 
@@ -94,7 +99,10 @@ export class VRMWindField {
     const effectiveGustFrequency = this.params.gustFrequency ?? this.defaultParams.gustFrequency;
     const effectiveGustDuration = this.params.gustDuration ?? this.defaultParams.gustDuration;
 
-    if (effectiveStrength <= 0 && effectiveGustStrength <= 0) {
+    // 交互风力每帧衰减（峰值保持由 triggerInteractionWind 的 Math.max 保证）
+    this.interactionStrength *= 0.95;
+
+    if (effectiveStrength + this.interactionStrength <= 0 && effectiveGustStrength <= 0) {
       for (const joint of this.affectedJoints) {
         const original = this.originalGravities.get(joint);
         if (original) {
@@ -106,9 +114,9 @@ export class VRMWindField {
 
     const rad = (effectiveDirection * Math.PI) / 180;
     const windForce = new THREE.Vector3(
-      Math.sin(rad) * effectiveStrength,
+      Math.sin(rad) * (effectiveStrength + this.interactionStrength),
       0,
-      -Math.cos(rad) * effectiveStrength,
+      -Math.cos(rad) * (effectiveStrength + this.interactionStrength),
     );
 
     this.gustTimer += dt;
@@ -159,6 +167,7 @@ export class VRMWindField {
     this.gustTimer = 0;
     this.gustActive = false;
     this.gustRemainingDuration = 0;
+    this.interactionStrength = 0;
     this.params = { ...ZERO_WIND };
   }
 

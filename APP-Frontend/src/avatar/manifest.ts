@@ -5,6 +5,7 @@
  * 合成清单的 transform 字段口径对齐 CX-O-Frontend 各查看器的 createSyntheticManifest。
  */
 import type { AvatarManifest } from './types';
+import { DEFAULT_BONE_CONTROLS } from './vrm/boneControlCatalog';
 
 /** Live2D 合成清单（对齐参考查看器：modelTransform.scale 固定 8 倍基线） */
 export function createSyntheticLive2DManifest(
@@ -55,6 +56,7 @@ export function createSyntheticVRMManifest(
     transformDefaults: { scale: 1, offsetX: 0, offsetY: 0 },
     expressions: [],
     parameterControls: [],
+    boneControls: DEFAULT_BONE_CONTROLS,
     avatarType: 'vrm',
   };
 }

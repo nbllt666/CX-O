@@ -13,7 +13,7 @@
 import { useEffect, useReducer, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Eye, Layers, MonitorPlay } from 'lucide-react';
-import { PetAvatar } from '@/components/pet/PetAvatar';
+import { PetAvatar, type PetAvatarHandle } from '@/components/pet/PetAvatar';
 import DanmakuList from '@/components/danmaku/DanmakuList';
 import {
   danmakuFeedReducer,
@@ -38,6 +38,8 @@ export default function LiveOverlayPage() {
   const [feed, dispatch] = useReducer(danmakuFeedReducer, initialDanmakuFeedState);
   const [subtitleText, setSubtitleText] = useState('');
   const seqRef = useRef(0);
+  // 直播头像句柄：收到新弹幕时触发"读弹幕"视线（仅 VRM 头像生效，2s 后自动复位）
+  const petAvatarRef = useRef<PetAvatarHandle>(null);
 
   const ttsVolume = useAudioStore((s) => s.ttsVolume);
   const micEnabled = useAudioStore((s) => s.micEnabled);
@@ -57,6 +59,8 @@ export default function LiveOverlayPage() {
     onDanmaku: (data) => {
       const item = toDanmakuItem(data, Date.now(), seqRef.current++);
       if (item) dispatch({ type: 'append', item });
+      // 触发头像"读弹幕"视线（2s 后由 VRMViewer 自动复位）
+      petAvatarRef.current?.setReadingDanmaku();
     },
     onStreamContent: (content) => setSubtitleText(content),
   });
@@ -94,7 +98,7 @@ export default function LiveOverlayPage() {
       <div className="absolute inset-0 flex">
         {/* 头像区（左 55%） */}
         <div className="relative" style={{ width: '55%', height: '100%' }}>
-          <PetAvatar />
+          <PetAvatar ref={petAvatarRef} sceneMode="live" />
           <span className="pointer-events-none absolute left-3 top-3 rounded-md bg-black/25 px-2 py-0.5 text-[10px] text-white/60">
             {t('management.liveOverlay.avatarZone')}
           </span>

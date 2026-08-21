@@ -46,6 +46,7 @@ class SimpleNoise {
 
 export class VRMAnimation {
   private vrm: VRM | null = null;
+  private enabled = true;
   private time = 0;
   private blinkTimer = 0;
   private isBlinking = false;
@@ -84,6 +85,32 @@ export class VRMAnimation {
     this.vrm = vrm;
   }
 
+  /**
+   * 启停空闲动画。从 true 切到 false 时复位关键骨骼到中立姿态，
+   * 避免角色冻结在禁用前最后一帧。
+   */
+  setEnabled(enabled: boolean): void {
+    this.enabled = enabled;
+    if (enabled) {
+      return;
+    }
+    if (!this.vrm) return;
+    const humanoid = this.vrm.humanoid;
+    if (!humanoid) return;
+
+    const chest = humanoid.getNormalizedBoneNode('chest');
+    if (chest) {
+      chest.scale.setScalar(1);
+    }
+
+    for (const name of ['spine', 'neck', 'head', 'hips'] as const) {
+      const bone = humanoid.getNormalizedBoneNode(name);
+      if (bone) {
+        bone.rotation.set(0, 0, 0);
+      }
+    }
+  }
+
   setConfig(config: Partial<IdleConfig>): void {
     this.config = { ...this.config, ...config };
   }
@@ -102,6 +129,7 @@ export class VRMAnimation {
 
   update(deltaTime: number): void {
     if (!this.vrm) return;
+    if (!this.enabled) return;
     this.time += deltaTime;
 
     this.updateBreathing(deltaTime);
@@ -131,23 +159,11 @@ export class VRMAnimation {
     const effectiveAmplitude = this.config.breathAmplitude * this.breathingAmplitude * amplitudeNoise;
     const scale = 1 + breath * effectiveAmplitude;
 
+    // 呼吸收敛为胸腔深度（Z）方向的轻微起伏：仅前后厚度变化，不在 XYZ 整体膨胀、
+    // 不带动脊柱前倾、不带动肩膀，避免"整个模型晃动"的观感。
     const chest = humanoid.getNormalizedBoneNode('chest');
     if (chest) {
-      chest.scale.setScalar(scale);
-    }
-
-    const spine = humanoid.getNormalizedBoneNode('spine');
-    if (spine) {
-      spine.rotation.x = breath * effectiveAmplitude * 0.5;
-    }
-
-    const leftShoulder = humanoid.getNormalizedBoneNode('leftShoulder');
-    const rightShoulder = humanoid.getNormalizedBoneNode('rightShoulder');
-    if (leftShoulder) {
-      leftShoulder.rotation.z = breath * effectiveAmplitude * 0.3;
-    }
-    if (rightShoulder) {
-      rightShoulder.rotation.z = -breath * effectiveAmplitude * 0.3;
+      chest.scale.set(1, 1, scale);
     }
   }
 

@@ -199,6 +199,8 @@ export default function PetPage() {
         const finalContent = accumulatedRef.current;
         accumulatedRef.current = '';
         chatRef.current?.finalizeLastAssistantMessage(finalContent);
+        // 音画同步 Task3 兜底：文本流收尾后触发剩余全部标签并重置时间线
+        chatRef.current?.flushRemaining?.();
       } else if (type === 'error') {
         setIsLoading(false);
         accumulatedRef.current = '';
@@ -226,10 +228,16 @@ export default function PetPage() {
     [handleAssistantStreamEvent],
   );
 
+  // 音画同步 Task3：TTS 原文累计进度 → 推进 PetChat 内部标签时间线（标签随朗读逐步触发）
+  const handleTextProgress = useCallback((cumulativeRaw: string) => {
+    chatRef.current?.advanceTimeline?.(cumulativeRaw);
+  }, []);
+
   const { isConnected, isTTSPlaying, sendMessage, getTTSAnalyser, setTTSVolume } = useWebSocket({
     agentId: currentAgentId || 'default',
     timeout: 60,
     onMessage: handleWsMessage,
+    onTextProgress: handleTextProgress,
     onError: () => {
       setIsLoading(false);
     },
@@ -753,6 +761,7 @@ export default function PetPage() {
           isLoading={isLoading}
           isConnected={isConnected}
           inputAccessory={frameSendAccessory}
+          onTextProgress={handleTextProgress}
         />
       </div>
 

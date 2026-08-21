@@ -120,6 +120,23 @@ describe('sleep 标签', () => {
   });
 });
 
+describe('action 标签', () => {
+  it('解析动作名并小写归一，cleanText 剥离合法标签', () => {
+    expect(onlyTag('[action:wave]')).toEqual({ type: 'action', action: 'wave' });
+    expect(parseAvatarTags('[action:wave]').cleanText).toBe('');
+  });
+
+  it('动作名大小写归一为小写', () => {
+    expect(onlyTag('[action:Wave]')).toEqual({ type: 'action', action: 'wave' });
+  });
+
+  it('空参数 [action:] 不解析，保留为文本', () => {
+    const result = parseAvatarTags('[action:]');
+    expect(result.tags).toHaveLength(0);
+    expect(result.cleanText).toBe('[action:]');
+  });
+});
+
 describe('混合文本解析', () => {
   it('segments 保序、cleanText 剥离合法标签、非法标签原文保留', () => {
     const result = parseAvatarTags('你好[emotion:happy]世界[unknown:x]！');

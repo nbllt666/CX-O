@@ -142,6 +142,12 @@ export type EmotionType = 'happy' | 'angry' | 'sad' | 'surprised' | 'relaxed' | 
 // ── 驱动接口（avatar-driver.ts 接口部分） ──
 
 /**
+ * 驱动场景模式：pet = 桌面宠物常驻模式，live = 直播演出模式。
+ * 决定驱动在两种场景下的行为口径（表情强度、动作触发、交互风等）。
+ */
+export type SceneMode = 'pet' | 'live';
+
+/**
  * 头像驱动统一接口：Live2D / VRM 双引擎在 Task 3 各自实现本接口。
  * 标签驱动管线（applyTags）只依赖本接口，不感知具体引擎。
  */
@@ -162,6 +168,10 @@ export interface IAvatarDriver {
   setEmotion(emotion: string, weight: number): void;
   triggerEmotionMotion(emotion: EmotionType): void;
   triggerSpeechMotion(): void;
+  /** 触发指定动作（VRM 动作动画）；crossFadeTime 为动作切换交叉淡入时长（秒），省略时用引擎默认值 0.3s */
+  playAction(action: string, crossFadeTime?: number): void;
+  /** 触发一次交互风（interaction wind）冲击，intensity 为冲击强度（0~1 归一化） */
+  triggerInteractionWind(intensity: number): void;
   bindRuntime(runtime: unknown): void;
   update(dt: number): void;
   setBlendShapes(entries: Array<{ name: string; weight: number }>): void;

@@ -61,6 +61,8 @@ export interface WebSocketOptions {
   onPrefillStarted?: (text: string, sessionId?: string) => void;
   /** 双流式：TTS 播放状态变化（用于口型同步/打断反馈） */
   onTTSPlayingChange?: (playing: boolean) => void;
+  /** 音画同步：累计的原始含标签文本段拼接结果（供外部增量定位/字幕对齐） */
+  onTextProgress?: (cumulativeRaw: string) => void;
 }
 
 export interface DualStreamPayload {
@@ -120,6 +122,9 @@ export function useWebSocket(options: WebSocketOptions): UseWebSocketReturn {
   const onTTSChunkRef = useRef(options.onTTSChunk);
   const onPrefillStartedRef = useRef(options.onPrefillStarted);
   const onTTSPlayingChangeRef = useRef(options.onTTSPlayingChange);
+  const onTextProgressRef = useRef(options.onTextProgress);
+  // 跨 tts_chunk 累计的原始含标签文本段拼接结果；会话间需重置防污染
+  const textProgressRef = useRef('');
 
   useEffect(() => {
     onMessageRef.current = options.onMessage;
@@ -132,6 +137,7 @@ export function useWebSocket(options: WebSocketOptions): UseWebSocketReturn {
     onTTSChunkRef.current = options.onTTSChunk;
     onPrefillStartedRef.current = options.onPrefillStarted;
     onTTSPlayingChangeRef.current = options.onTTSPlayingChange;
+    onTextProgressRef.current = options.onTextProgress;
   });
 
   // TTS 流式播放器：收到第一个 tts_chunk 立即播放，不等整句合成完成。
@@ -186,6 +192,11 @@ export function useWebSocket(options: WebSocketOptions): UseWebSocketReturn {
             // 首包优先：立即入队播放，不等整句合成完成
             getTTSPlayerRef.current?.().enqueue(audioBase64, isFinal);
             onTTSChunkRef.current?.(audioBase64, isFinal, textSegment, sessionId);
+            // 音画同步：非空文本段累计拼接并回传（顺序在 onTTSChunk 之后，参数/行为不回退）
+            if (textSegment) {
+              textProgressRef.current += textSegment;
+              onTextProgressRef.current?.(textProgressRef.current);
+            }
             break;
           }
           if (data.is_final) {
@@ -230,6 +241,8 @@ export function useWebSocket(options: WebSocketOptions): UseWebSocketReturn {
         case 'done':
         case 'chat_done':
           setIsGenerating(false);
+          // 会话结束：清空累计文本段，避免跨会话污染
+          textProgressRef.current = '';
           onMessageRef.current?.({ type: 'done' });
           break;
         case 'chat_response':
@@ -299,6 +312,8 @@ export function useWebSocket(options: WebSocketOptions): UseWebSocketReturn {
       // 服务端主动关闭时清理（手动 disconnect 走 wrapper 的 cleanup）
       setIsGenerating(false);
       clearPingInterval();
+      // 断开时清空累计文本段，重连后不残留上一会话内容
+      textProgressRef.current = '';
       onDisconnectRef.current?.();
     },
     onError: (error) => {

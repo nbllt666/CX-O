@@ -152,6 +152,12 @@ export class Live2DDriver implements IAvatarDriver {
   /** 风场为 VRM 弹簧骨专属，空实现 */
   setWind(_params: Partial<WindParams>): void {}
 
+  /** 动作动画为 VRM 专属，Live2D 不支持，空实现 */
+  playAction(_action: string, _crossFadeTime?: number): void {}
+
+  /** 交互风为 VRM 专属，Live2D 不支持，空实现 */
+  triggerInteractionWind(_intensity: number): void {}
+
   setSpeaking(speaking: boolean): void {
     this.motion?.setSpeaking(speaking);
   }

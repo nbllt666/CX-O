@@ -325,7 +325,7 @@ def build_messages(
             hidden_parts.append(hidden_prompts["tools"])
 
         if model_type == "main":
-            for key in ["emotion_prompts", "effect_prompts", "tool_usage_prompts", "graph_tools", "master_model_prompt"]:
+            for key in ["emotion_prompts", "avatar_prompts", "effect_prompts", "tool_usage_prompts", "graph_tools", "master_model_prompt"]:
                 if key in hidden_prompts:
                     hidden_parts.append(hidden_prompts[key])
         elif model_type == "summary":

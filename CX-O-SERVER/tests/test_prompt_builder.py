@@ -214,7 +214,7 @@ class TestMultimodal:
 class TestPromptKeyIntegrity:
     _CONSUMED_KEYS = {
         "tools",
-        "emotion_prompts", "effect_prompts", "tool_usage_prompts",
+        "emotion_prompts", "avatar_prompts", "effect_prompts", "tool_usage_prompts",
         "graph_tools", "master_model_prompt",
         "summary_model_prompt", "assistant_model_prompt",
     }

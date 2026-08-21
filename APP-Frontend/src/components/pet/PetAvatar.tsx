@@ -9,14 +9,14 @@
  * 与 CX-O-Frontend pet-avatar 的差异：无 IndexedDB/服务端清单，
  * 模型固定走本地 public/models（settings 里的 modelPath 可覆盖默认值）。
  */
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { forwardRef, useEffect, useMemo, useRef, useState } from 'react';
 import type { MutableRefObject } from 'react';
 import { useTranslation } from 'react-i18next';
 import { PawPrint } from 'lucide-react';
 import { useSettingsStore } from '../../store/settingsStore';
 import { useObsStore, resolveAvatarScale } from '../../store/obsStore';
 import { isElectron } from '../../lib/isElectron';
-import type { IAvatarDriver } from '../../avatar/types';
+import type { IAvatarDriver, SceneMode } from '../../avatar/types';
 import { createAvatarDriver } from '../../avatar/createDriver';
 import { createSyntheticLive2DManifest, createSyntheticVRMManifest } from '../../avatar/manifest';
 import type { VowelWeights } from '../../hooks/useAudioAnalyzer';
@@ -28,9 +28,19 @@ interface PetAvatarProps {
   volumeRef?: MutableRefObject<number>;
   vowelWeightsRef?: MutableRefObject<VowelWeights>;
   onDriverReady?: (driver: IAvatarDriver | null) => void;
+  /** 场景模式：'live' 时透传给 VRMViewer 启用直播视线策略，默认 'pet' */
+  sceneMode?: SceneMode;
 }
 
-export function PetAvatar({ volumeRef, vowelWeightsRef, onDriverReady }: PetAvatarProps) {
+/** PetAvatar 命令式句柄（透传 VRMViewer 的读弹幕触发） */
+export interface PetAvatarHandle {
+  setReadingDanmaku: (state?: boolean) => void;
+}
+
+export const PetAvatar = forwardRef<PetAvatarHandle, PetAvatarProps>(function PetAvatar(
+  { volumeRef, vowelWeightsRef, onDriverReady, sceneMode = 'pet' },
+  ref,
+) {
   const { t } = useTranslation();
   const avatarType = useSettingsStore((s) => s.avatarType);
   const live2d = useSettingsStore((s) => s.live2d);
@@ -101,12 +111,14 @@ export function PetAvatar({ volumeRef, vowelWeightsRef, onDriverReady }: PetAvat
     <div className="h-full w-full" style={{ backgroundColor: 'transparent' }}>
       {avatarType === 'vrm' ? (
         <VRMViewer
+          ref={ref}
           modelPath={vrm.modelPath}
           avatar={manifest}
           driver={activeDriver}
           scale={vrm.scale * obsScale}
           position={vrm.position3d}
           lookAtMouse={vrm.lookAtMouse}
+          sceneMode={sceneMode}
           animationConfig={vrm.animation}
           tweakConfig={vrm.tweak}
           volumeRef={volumeRef}
@@ -124,4 +136,4 @@ export function PetAvatar({ volumeRef, vowelWeightsRef, onDriverReady }: PetAvat
       )}
     </div>
   );
-}
+});

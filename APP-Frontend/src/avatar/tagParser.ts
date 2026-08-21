@@ -3,11 +3,19 @@
  *
  * 行为口径对齐 CX-O-Frontend src/lib/avatarTagParser.ts（纯逻辑移植，零依赖）。
  * 支持标签：[emotion:x] [blend:name:w] [bone:name:x:y:z[:speed]] [pose[:ms]]
- *           [release] [wind:dir:str[:gust:freq[:dur]]] [sleep:ms]
+ *           [release] [wind:dir:str[:gust:freq[:dur]]] [sleep:ms] [action:name]
  * 非法标签按原文保留为文本，不产生异常。
  */
 
-export type TagType = 'emotion' | 'blend' | 'bone' | 'pose' | 'release' | 'wind' | 'sleep';
+export type TagType =
+  | 'emotion'
+  | 'blend'
+  | 'bone'
+  | 'pose'
+  | 'release'
+  | 'wind'
+  | 'sleep'
+  | 'action';
 
 export type EmotionTag = { type: 'emotion'; emotion: string };
 export type BlendTag = { type: 'blend'; name: string; weight: number };
@@ -28,6 +36,7 @@ export type WindTag = {
   gustDuration: number | string;
 };
 export type SleepTag = { type: 'sleep'; duration_ms: number };
+export type ActionTag = { type: 'action'; action: string };
 
 export type AvatarTag =
   | EmotionTag
@@ -36,7 +45,8 @@ export type AvatarTag =
   | PoseTag
   | ReleaseTag
   | WindTag
-  | SleepTag;
+  | SleepTag
+  | ActionTag;
 
 export type TextSegment = { type: 'text'; content: string };
 export type TagSegment = { type: 'tag'; tag: AvatarTag; raw: string };
@@ -58,6 +68,7 @@ const VALID_TYPES = new Set<TagType>([
   'release',
   'wind',
   'sleep',
+  'action',
 ]);
 
 const SUPPORTED_EMOTIONS = new Set<string>([
@@ -165,6 +176,10 @@ function parseTag(type: string, paramsStr: string | undefined, _raw: string): Av
       const ms = parseNumber(params[0]);
       if (ms === null) return null;
       return { type: 'sleep', duration_ms: clamp(ms, 100, 5000) };
+    }
+    case 'action': {
+      if (params.length < 1) return null;
+      return { type: 'action', action: params[0].toLowerCase() };
     }
     default:
       return null;

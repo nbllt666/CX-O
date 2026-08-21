@@ -23,6 +23,7 @@ import type {
 } from '../types';
 import { VRMAnimation } from './vrmAnimation';
 import { VRMLipSync } from './vrmLipSync';
+import { BlendShapeInterpolator } from './vrmBlendShapeInterpolator';
 
 type ResolvedBinding =
   | { mode: 'preset'; params: Record<string, number> }
@@ -65,7 +66,8 @@ export type VRMRuntimeState = {
   modelWidth: number;
   baseModelHeight: number;
   baseModelWidth: number;
-  directBlendShapes: Map<string, number>;
+  blendInterpolator: BlendShapeInterpolator;
+  springBoneEveryOtherFrame: boolean;
   heldBones: Map<string, { x: number; y: number; z: number }>;
   poseHoldTimer: number;
   boneTransitionSpeeds: Map<string, number>;
@@ -342,7 +344,8 @@ export function createVRMRuntime(
     modelWidth: Math.max(size.x, 0.1),
     baseModelHeight: Math.max(size.y, 0.1),
     baseModelWidth: Math.max(size.x, 0.1),
-    directBlendShapes: new Map(),
+    blendInterpolator: new BlendShapeInterpolator(),
+    springBoneEveryOtherFrame: false,
     heldBones: new Map(),
     poseHoldTimer: 0,
     boneTransitionSpeeds: new Map(),
@@ -364,17 +367,34 @@ export function startRuntimeLoop(
   onFrame?: (dt: number) => void,
 ): void {
   const clock = new THREE.Timer();
+  let frameCount = 0;
 
   const animate = () => {
     clock.update();
     const rawDt = clock.getDelta();
     const dt = Math.min(rawDt, 0.1);
 
-    onFrame?.(dt);
+    // ============ 分层管线 L0→L3 ============
+    // L0 物理：spring bone / 骨骼物理解算须在一切骨骼/BlendShape 写入之前执行，
+    //          保证后续各层写入建立在最新物理姿态之上。render 仍保留在循环末尾。
+    if (runtime.springBoneEveryOtherFrame) {
+      frameCount += 1;
+      if (frameCount % 2 === 1) {
+        runtime.vrm.update(dt);
+      }
+    } else {
+      runtime.vrm.update(dt);
+    }
 
+    // L1 程序化：骨骼动画 + 口型同步（程序化动画源，与用户指令解耦）
     runtime.animation.update(dt);
     runtime.lipSync.update(dt);
 
+    // L2 指令：查看器注入的 driver.update（视线/驱动/口型指令，写入 target 值）
+    onFrame?.(dt);
+
+    // L3 平滑：把各写入源（overlay 表情 + 直接 BlendShape 插值器 + 姿态保持 + 骨骼插值）
+    //          指数平滑收敛到表情/骨骼，避免指令瞬时跳变。
     const em = runtime.vrm.expressionManager;
     if (runtime.trackedBlendShapeNames.size > 0 && em) {
       for (const name of runtime.trackedBlendShapeNames) {
@@ -388,11 +408,8 @@ export function startRuntimeLoop(
       }
     }
 
-    if (runtime.directBlendShapes.size > 0 && em) {
-      for (const [name, weight] of runtime.directBlendShapes) {
-        em.setValue(name as BlendShapeName, weight);
-      }
-    }
+    // 直接 BlendShape（驱动指令经 setExpression 写入）走插值器平滑
+    runtime.blendInterpolator.update(dt, runtime.vrm);
 
     if (runtime.poseHoldTimer > 0) {
       runtime.poseHoldTimer -= dt;
@@ -431,7 +448,7 @@ export function startRuntimeLoop(
       }
     }
 
-    runtime.vrm.update(dt);
+    // render 始终在最后（L0 已负责 vrm.update 物理解算）
     runtime.renderer.render(runtime.scene, runtime.camera);
     runtime.animationFrameId = requestAnimationFrame(animate);
   };
@@ -443,9 +460,13 @@ export function setBlendShapes(
   runtime: VRMRuntimeState,
   entries: Array<{ name: string; weight: number }>,
 ): void {
+  // entries 视为"当前活跃直接表情集"：先逐条写入目标权重，再调用
+  // fadeOutUnusedExpressions 把不在当次批次的旧直接表情目标置 0，
+  // 由插值器的后续 update 平滑归零，避免切换表情时残留上一批次的权重。
   for (const entry of entries) {
-    runtime.directBlendShapes.set(entry.name, Math.min(Math.max(entry.weight, 0), 1));
+    runtime.blendInterpolator.setExpression(entry.name, entry.weight);
   }
+  runtime.blendInterpolator.fadeOutUnusedExpressions(entries.map((e) => e.name));
 }
 
 export function setBoneRotations(
@@ -456,8 +477,29 @@ export function setBoneRotations(
     speed?: number;
   }>,
 ): void {
+  // 真相源 = manifest 填充的运行时副本，勿直读 catalog 常量。
+  const controls = runtime.avatar.boneControls ?? [];
+  const controlsByName = new Map(controls.map((c) => [c.id.toLowerCase(), c]));
+
   for (const entry of entries) {
-    runtime.boneTargetRotations.set(entry.boneName, entry.rotation);
+    const control = controlsByName.get(entry.boneName.toLowerCase());
+    // 白名单过滤：目录中找不到大小写不敏感匹配的骨骼直接跳过
+    if (!control) {
+      continue;
+    }
+
+    // 按骨骼限幅：rotationRange 缺失时保持原值
+    let rotation = entry.rotation;
+    const range = control.rotationRange;
+    if (range) {
+      rotation = {
+        x: Math.min(range.x[1], Math.max(range.x[0], entry.rotation.x)),
+        y: Math.min(range.y[1], Math.max(range.y[0], entry.rotation.y)),
+        z: Math.min(range.z[1], Math.max(range.z[0], entry.rotation.z)),
+      };
+    }
+
+    runtime.boneTargetRotations.set(entry.boneName, rotation);
     runtime.boneTransitionSpeeds.set(entry.boneName, entry.speed ?? 1.0);
     if (!runtime.boneCurrentRotations.has(entry.boneName)) {
       const humanoid = runtime.vrm.humanoid;
@@ -487,7 +529,7 @@ export function holdPose(runtime: VRMRuntimeState, durationMs?: number): void {
 export function releasePose(runtime: VRMRuntimeState): void {
   runtime.heldBones.clear();
   runtime.poseHoldTimer = 0;
-  runtime.directBlendShapes.clear();
+  runtime.blendInterpolator.reset();
   for (const boneName of runtime.boneTargetRotations.keys()) {
     runtime.boneTargetRotations.set(boneName, { x: 0, y: 0, z: 0 });
     runtime.boneTransitionSpeeds.set(boneName, 3.3);
@@ -572,7 +614,7 @@ export function destroyRuntime(runtime: VRMRuntimeState): void {
   runtime.overlayTargetValues.clear();
   runtime.baselineValues.clear();
   runtime.resolvedBindingCache.clear();
-  runtime.directBlendShapes.clear();
+  runtime.blendInterpolator.reset();
   runtime.heldBones.clear();
   runtime.boneTransitionSpeeds.clear();
   runtime.boneCurrentRotations.clear();

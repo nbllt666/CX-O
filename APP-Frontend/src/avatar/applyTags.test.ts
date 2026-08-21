@@ -36,6 +36,8 @@ function createMockDriver() {
     holdPose: vi.fn(),
     releasePose: vi.fn(),
     setWind: vi.fn(),
+    playAction: vi.fn(),
+    triggerInteractionWind: vi.fn(),
     destroy: vi.fn(),
   };
   return driver;
@@ -52,6 +54,19 @@ describe('applyAvatarTags 分发', () => {
     const driver = createMockDriver();
     applyAvatarTags(driver, [{ type: 'blend', name: 'smile', weight: 0.7 }]);
     expect(driver.setBlendShapes).toHaveBeenCalledWith([{ name: 'smile', weight: 0.7 }]);
+  });
+
+  it('多个 blend 标签聚合为一次 setBlendShapes(batch)', () => {
+    const driver = createMockDriver();
+    applyAvatarTags(driver, [
+      { type: 'blend', name: 'smile', weight: 0.7 },
+      { type: 'blend', name: 'happy', weight: 0.5 },
+    ]);
+    expect(driver.setBlendShapes).toHaveBeenCalledTimes(1);
+    expect(driver.setBlendShapes).toHaveBeenCalledWith([
+      { name: 'smile', weight: 0.7 },
+      { name: 'happy', weight: 0.5 },
+    ]);
   });
 
   it('bone → setBoneRotations 透传旋转与速度', () => {
