@@ -11,6 +11,9 @@ import { describe, expect, it } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { DEFAULT_BONE_CONTROLS, getBoneRange, isControlledBone } from './boneControlCatalog';
 
+// vite.config 编译期注入的仓库根绝对路径（统一正斜杠），由 Node 加载 vite.config 时用 __dirname 推导
+declare const __CXO_PROJECT_ROOT__: string;
+
 describe('DEFAULT_BONE_CONTROLS 目录完整性', () => {
   it('骨骼数量应至少 12 项', () => {
     expect(DEFAULT_BONE_CONTROLS.length).toBeGreaterThanOrEqual(12);
@@ -85,10 +88,11 @@ describe('getBoneRange', () => {
 
 describe('GN-004 O1：catalog 与 hidden_prompt.yaml 受控骨骼清单一致', () => {
   it('catalog 全部骨骼 id 均应出现在 hidden_prompt.yaml 受控骨骼清单中', () => {
-    // config/hidden_prompt.yaml 位于项目根 CX-O 的 config/ 下（APP-Frontend 的上一级）。
-    // 注意：测试环境里 process 是被 process-polyfill 垫片（cwd='.'），import.meta.url 也不是
-    // file: scheme，无法相对推导；node:fs 为真实 Node fs，直接以冻结快照的绝对路径读取即可。
-    const yaml = readFileSync('C:/CX-O/config/hidden_prompt.yaml', 'utf-8');
+    // hidden_prompt.yaml 位于仓库根 config/ 下（APP-Frontend 的上一级 CX-O/）。
+    // 测试环境的 process 被 node-polyfills 垫片劫持（cwd='.'）、import.meta.url 非 file: scheme，
+    // 无法相对推导；改用 vite.config 编译期注入的仓库根绝对路径 __CXO_PROJECT_ROOT__
+    // （由 Node 加载 vite.config 时 __dirname 推导），兼容任意开发机/CI，无硬编码路径。
+    const yaml = readFileSync(`${__CXO_PROJECT_ROOT__}/config/hidden_prompt.yaml`, 'utf-8');
     const lower = yaml.toLowerCase();
 
     // hidden_prompt.yaml 应包含受控骨骼清单小节

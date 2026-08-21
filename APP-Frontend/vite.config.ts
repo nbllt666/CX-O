@@ -131,4 +131,9 @@ export default defineConfig({
     setupFiles: ['./src/test/setup.ts'],
     exclude: ['node_modules', 'dist', 'dist-electron', 'release', 'e2e', '**/e2e/**'],
   },
+  // 编译期注入仓库根绝对路径（统一正斜杠），供测试读取跨目录配置（如 config/hidden_prompt.yaml）。
+  // 由 Node 加载 vite.config 时 __dirname 真实可用，可跨机器/CI 推导，避免硬编码绝对路径。
+  define: {
+    __CXO_PROJECT_ROOT__: JSON.stringify(path.resolve(__dirname, '../').replace(/\\/g, '/')),
+  },
 });
