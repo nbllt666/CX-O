@@ -2,14 +2,14 @@
 # 基于 vllm-omni 镜像（已有 vLLM 0.26.0 + torch 2.11.0 + CUDA 13.0）
 #
 # 与挂载版 Dockerfile.cosyvoice-vllm 区别：
-#   - 通过命名构建上下文 "--build-context models=./models" 把模型 COPY 进镜像，
-#     运行时无需 -v 卷挂载，可移植到任意机器。
+#   - 通过命名构建上下文 "--build-context models=./models/Fun-CosyVoice3-0.5B-2512"
+#     把模型 COPY 进镜像，运行时无需 -v 卷挂载，可移植到任意机器。
 #   - 前面依赖/源码层与原挂载版逐字一致，构建时复用 Docker 层缓存。
 #
 # 构建命令（在仓库根发起）:
 #   docker build \
 #       -f docker/llm/Dockerfile.cosyvoice-vllm.full \
-#       --build-context models=./models \
+#       --build-context models=./models/Fun-CosyVoice3-0.5B-2512 \
 #       -t cosyvoice-vllm-full:latest .
 FROM vllm/vllm-omni:latest
 
@@ -58,7 +58,8 @@ ENV PYTHONPATH="/workspace/cosyvoice-official:/workspace/cosyvoice-official/thir
 COPY docker/llm/cosyvoice_server.py /workspace/server.py
 
 # 模型层（自包含）：完整 9.77GB 模型从命名构建上下文 "models" 烤入镜像
-COPY --from=models /Fun-CosyVoice3-0.5B-2512 /workspace/models/Fun-CosyVoice3-0.5B-2512
+# 构建上下文 "models" 指向 ./models/Fun-CosyVoice3-0.5B-2512，COPY 整棵模型树
+COPY --from=models . /workspace/models/Fun-CosyVoice3-0.5B-2512
 
 # 默认参数
 ENV MODEL_DIR=/workspace/models/Fun-CosyVoice3-0.5B-2512

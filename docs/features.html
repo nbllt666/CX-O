@@ -154,7 +154,7 @@ td:first-child { color: var(--text-bright); font-weight: 500; }
 <div class="hero">
   <h1>CX-O 功能特性文档</h1>
   <p>从语音对话到 AI 作曲，从虚拟形象到记忆系统——这里是 CX-O 所有功能的完整说明</p>
-  <div class="badge">v1.0 &nbsp;|&nbsp; 2026-07</div>
+  <div class="badge">v1.1 &nbsp;|&nbsp; 2026-08</div>
 </div>
 
 <nav class="nav">
@@ -242,14 +242,14 @@ td:first-child { color: var(--text-bright); font-weight: 500; }
         <li>插话有分寸：CONTINUE/IGNORE/INTERRUPT 三态判定，你还没说完或只是自言自语时，AI 不会抢话</li>
         <li>投机预填充：你说出两个字就启动 AI 思考，省下约 500ms</li>
         <li>首包延迟控制在 300ms 以内</li>
-        <li>双引擎切换：F5-TTS 和 Orpheus 两种 TTS 可选，Orpheus 支持多音色（默认 tara，另有 leah/leo/mia 等）</li>
+        <li>CosyVoice 主引擎：带参考音频克隆、情感表达，失败自动降级到备用 TTS</li>
       </ul>
     </div>
   </div>
 
   <div class="highlight-box">
-    <h4>两种 TTS 引擎可选</h4>
-    <p>F5-TTS（默认，Triton 加速）和 Orpheus（基于 vLLM 的多语言 TTS）。在设置页或会话初始化时切换，两种引擎各有特色，可以根据场景选择。</p>
+    <h4>TTS 智能降级</h4>
+    <p>语音合成以 CosyVoice 为主引擎（支持克隆与情感表达），主引擎不可用时自动降级到备用 TTS，保证对话不中断。无需手动切换。</p>
   </div>
 </section>
 
@@ -524,34 +524,21 @@ td:first-child { color: var(--text-bright); font-weight: 500; }
 <!-- 语音工作站 -->
 <section class="section" id="voice-ws">
   <h2 class="section-title"><span class="icon">🎙️</span> 语音工作站</h2>
-  <p class="section-desc">专业级声音克隆与训练工作站。从参考音频生成到模型训练再到推理输出，完整流程一站搞定。</p>
+  <p class="section-desc">专业级声音克隆与训练工作站。从数据集生成到模型训练再到推理输出，完整流程一站搞定。</p>
 
   <div class="card-grid">
     <div class="card">
       <span class="tag tag-purple">步骤一</span>
-      <h3>VoxCPM 参考音频生成</h3>
-      <p>用 VoxCPM 模型生成参考音频，为后续训练准备素材。三种模式覆盖不同需求。</p>
+      <h3>批量数据集生成</h3>
+      <p>用 VoxCPM 批量生成 SVC 训练数据集，为专属音色训练准备素材。</p>
       <ul class="feature-list">
-        <li>design 模式：设计全新音色</li>
-        <li>controllable_clone：可控克隆</li>
-        <li>ultimate_clone：终极克隆</li>
-        <li>可调 CFG 系数和推理步数</li>
+        <li>批量生成 SVC 训练数据集</li>
+        <li>数据可直接导入训练流程</li>
       </ul>
     </div>
 
     <div class="card">
-      <span class="tag tag-pink">步骤二</span>
-      <h3>VoxCPM 情感参考音频</h3>
-      <p>用 VoxCPM 预生成带情感的参考音频（8 情感 + 56 过渡），让 TTS 输出更有表现力。支持导入导出方便迁移。</p>
-      <ul class="feature-list">
-        <li>预生成情感参考音频（clone / design 两种模式）</li>
-        <li>过渡参考音频生成</li>
-        <li>ZIP 格式导出/导入</li>
-      </ul>
-    </div>
-
-    <div class="card">
-      <span class="tag tag-cyan">步骤三</span>
+      <span class="tag tag-cyan">步骤二</span>
       <h3>So-VITS-SVC 训练</h3>
       <p>用准备好的数据集训练专属音色模型。完整的数据集管理和训练参数控制。</p>
       <ul class="feature-list">
@@ -564,7 +551,7 @@ td:first-child { color: var(--text-bright); font-weight: 500; }
     </div>
 
     <div class="card">
-      <span class="tag tag-green">步骤四</span>
+      <span class="tag tag-green">步骤三</span>
       <h3>So-VITS-SVC 推理</h3>
       <p>用训练好的模型做变声推理，选好参数就能生成成品。</p>
       <ul class="feature-list">
@@ -799,7 +786,7 @@ td:first-child { color: var(--text-bright); font-weight: 500; }
 </div>
 
 <div class="footer">
-  CX-O 功能特性文档 &nbsp;|&nbsp; 2026-07 &nbsp;|&nbsp; 配套 <a href="./deployment.html" style="color:var(--accent-light)">部署文档</a> 和 <a href="../README.md" style="color:var(--accent-light)">README</a>
+  CX-O 功能特性文档 &nbsp;|&nbsp; 2026-08 &nbsp;|&nbsp; 配套 <a href="./deployment.html" style="color:var(--accent-light)">部署文档</a> 和 <a href="../README.md" style="color:var(--accent-light)">README</a>
 </div>
 
 </body>

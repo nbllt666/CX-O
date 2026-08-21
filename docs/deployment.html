@@ -191,7 +191,7 @@ pre code { color: var(--accent-green); }
 <div class="hero">
   <h1>CX-O 部署文档</h1>
   <p>从环境搭建到服务启动——所有需要下载的模型、配套服务、硬件要求和配置指南</p>
-  <div class="badge">v1.0 &nbsp;|&nbsp; 2026-07</div>
+  <div class="badge">v1.1 &nbsp;|&nbsp; 2026-08</div>
 </div>
 
 <nav class="nav">
@@ -203,7 +203,6 @@ pre code { color: var(--accent-green); }
     <a href="#startup">启动顺序</a>
     <a href="#config">配置指南</a>
     <a href="#docker">Docker 部署</a>
-    <a href="#dualgpu">双卡部署</a>
     <a href="#troubleshoot">常见问题</a>
   </div>
 </nav>
@@ -282,7 +281,7 @@ pre code { color: var(--accent-green); }
       <tr>
         <td>CUDA Toolkit</td>
         <td>sm_86 兼容版本</td>
-        <td>GPU 编译与推理（ELP-Orpheus 编译需要）</td>
+        <td>GPU 编译与推理</td>
       </tr>
       <tr>
         <td>Ollama</td>
@@ -299,7 +298,7 @@ pre code { color: var(--accent-green); }
 
   <div class="highlight-box">
     <h4>显存分配策略（单卡 20GB 场景）</h4>
-    <p>单卡跑全部服务时显存比较紧张。推荐策略：LLM 占 ~18GB（<span class="inline-code">gpu_memory_utilization=0.9</span>），Orpheus TTS 占 ~8-10GB（<span class="inline-code">gpu_memory_utilization=0.45</span>），SNAC 解码器走 CPU 避免争抢。如果显存不够，优先保证 LLM + ASR，TTS 可以用 F5-TTS 替代。</p>
+    <p>单卡跑全部服务时显存比较紧张。推荐策略：把 GPU 留给当前对话必须的模型，LLM 约 18GB、CosyVoice TTS 约 10GB。如果显存不够，优先保证 LLM + ASR，TTS 可走备用引擎兜底，或关掉暂时不用的服务。</p>
   </div>
 </section>
 
@@ -375,54 +374,36 @@ pre code { color: var(--accent-green); }
   </div>
 
   <div class="card">
-    <span class="tag tag-pink">Docker 模型</span>
-    <h3>Docker 容器自动拉取的模型</h3>
-    <p>以下模型在 Docker 容器启动时自动拉取，或需要手动预下载后挂载。</p>
+    <span class="tag tag-pink">TTS 语音合成模型</span>
+    <h3>语音合成模型（主引擎 CosyVoice3）</h3>
+    <p>TTS 以 CosyVoice3 为主引擎，VoiceDesign 与 Qwen3-TTS Base 作为备用与降级。主引擎需预下载模型后通过启动脚本加载。</p>
     <table>
       <tr>
         <th>模型</th>
         <th>用途</th>
         <th>获取方式</th>
-        <th>大小</th>
       </tr>
       <tr>
-        <td>Orpheus 多语言<br><code>canopylabs/orpheus-multilingual-research-release</code></td>
-        <td>流式 TTS（多语言含中文，3B 参数）</td>
-        <td>预下载到 <code>models/orpheus-multilingual/</code> 后挂载</td>
-        <td>~6GB</td>
+        <td>Fun-CosyVoice3-0.5B-2512</td>
+        <td>主引擎——克隆与情感合成</td>
+        <td>从 ModelScope 预下载到 <code>models/Fun-CosyVoice3-0.5B-2512</code>，用 <code>start-cosyvoice.ps1</code> 加载</td>
       </tr>
       <tr>
-        <td>SNAC 24kHz<br><code>hubertsiuzdak/snac_24khz</code></td>
-        <td>音频 codec 解码器（Orpheus TTS 输出 PCM）</td>
-        <td>预下载到 <code>models/snac_24khz/</code> 后挂载</td>
-        <td>~50MB</td>
+        <td>VoiceDesign（Qwen3-TTS vLLM）</td>
+        <td>无参考音频时的音频设计</td>
+        <td><code>start-qwen3-tts.ps1</code> 启动</td>
       </tr>
       <tr>
-        <td>F5-TTS v1 Base<br><code>F5TTS_v1_Base</code></td>
-        <td>F5-TTS 基础模型（Triton + TRT-LLM 加速）</td>
-        <td>Triton 容器启动时自动加载，存于 <code>f5tts-models</code> volume</td>
-        <td>~1.5GB</td>
-      </tr>
-      <tr>
-        <td>LLM GGUF 模型</td>
-        <td>主对话 LLM（vLLM 模式加载）</td>
-        <td>用户自备，挂载到 <code>./models:/workspace/models</code></td>
-        <td>4-20GB（视模型规模）</td>
+        <td>Qwen3-TTS Base</td>
+        <td>TTS 降级兜底</td>
+        <td><code>start-qwen3-base.ps1</code> + vLLM-Omni 启动</td>
       </tr>
     </table>
-
-    <p style="margin-top:16px"><strong>预下载 Orpheus 模型：</strong></p>
-    <pre><code># 方式一：huggingface-cli 预下载
-huggingface-cli download canopylabs/orpheus-multilingual-research-release \
-  --local-dir ./models/orpheus-multilingual
-
-# 方式二：容器启动时自动下载（需要 HuggingFace Token）
-# 在 .env 中设置 HF_TOKEN=hf_xxxxxxxxxxxxxxxxxxxx</code></pre>
   </div>
 
   <div class="highlight-box">
     <h4>模型下载总量估算</h4>
-    <p>全部模型下载约需 14-24GB 磁盘空间：Ollama 模型 ~5GB + VoxCPM2 ~1.5GB + SenseVoice ~0.4GB + ZipEnhancer ~0.2GB + Orpheus ~6GB + SNAC ~0.05GB + F5-TTS ~1.5GB。首次部署建议预留 50GB。</p>
+    <p>全部模型下载约占 15-25GB 磁盘空间：Ollama 对话/嵌入模型 + VoxCPM2 + SenseVoice + CosyVoice3 等 TTS 模型。首次部署建议预留 100GB 以上。</p>
   </div>
 </section>
 
@@ -492,25 +473,19 @@ huggingface-cli download canopylabs/orpheus-multilingual-research-release \
       </tr>
       <tr><td>3100</td><td>APP-Frontend</td><td>Vite 前端开发服务器（浏览器模式）</td></tr>
       <tr><td>8000</td><td>CX-O Server</td><td>FastAPI 后端 + WebSocket</td></tr>
-      <tr><td>8000</td><td>F5-TTS Triton HTTP</td><td>⚠️ 与 CX-O Server 冲突，需通过环境变量调整</td></tr>
-      <tr><td>8001</td><td>F5-TTS Triton gRPC</td><td>也用于 ASR remote_url</td></tr>
-      <tr><td>8002</td><td>F5-TTS Metrics</td><td>监控指标</td></tr>
-      <tr><td>8003</td><td>Orpheus vLLM</td><td>OpenAI 兼容 API（调试用）</td></tr>
       <tr><td>8005</td><td>ASR SenseVoice</td><td>语音识别服务</td></tr>
       <tr><td>8080</td><td>LLM 推理服务</td><td>vLLM / TRT-LLM</td></tr>
       <tr><td>8090</td><td>Weaviate HTTP</td><td>向量数据库</td></tr>
+      <tr><td>8091</td><td>VoiceDesign TTS</td><td>无参考音频时的音频设计</td></tr>
+      <tr><td>8093</td><td>Qwen3-TTS Base</td><td>TTS 降级兜底</td></tr>
+      <tr><td>8094</td><td>CosyVoice3 TTS</td><td>主引擎：克隆与情感合成</td></tr>
+      <tr><td>8101</td><td>Embedding</td><td>记忆向量嵌入推理</td></tr>
       <tr><td>8200</td><td>CX-O VoiceWorkStation</td><td>语音工作站</td></tr>
       <tr><td>11434</td><td>Ollama</td><td>本地 LLM 推理</td></tr>
       <tr><td>50061</td><td>Weaviate gRPC</td><td>向量数据库 gRPC 通道</td></tr>
-      <tr><td>5060</td><td>Orpheus TTS Bridge</td><td>OpenAI 兼容 TTS API</td></tr>
       <tr><td>9996/9997</td><td>CXFC</td><td>插件发现 / 广播</td></tr>
       <tr><td>9998/9999</td><td>ACP</td><td>代理广播 / 发现</td></tr>
     </table>
-
-    <div class="warning-box">
-      <h4>端口冲突警告</h4>
-      <p>F5-TTS 默认 HTTP 端口 8000 与 CX-O Server 的 8000 冲突。部署时必须通过 <span class="inline-code">.env</span> 中的 <span class="inline-code">F5TTS_PORT_HTTP</span> 修改 F5-TTS 的端口，或者不启动 F5-TTS 服务。</p>
-    </div>
   </div>
 </section>
 
@@ -541,9 +516,7 @@ ollama pull nomic-embed-text
 python download_voxcpm2.py
 python download_voxcpm_support.py
 
-# Orpheus（如需使用）
-huggingface-cli download canopylabs/orpheus-multilingual-research-release \
-  --local-dir ./models/orpheus-multilingual</code></pre>
+# TTS 主引擎模型（按部署文档「模型下载」章节准备 CosyVoice3 等）</code></pre>
       </li>
       <li><strong>启动基础设施服务</strong><br>
         <pre><code># Ollama（必须最先启动）
@@ -552,18 +525,16 @@ ollama serve
 # Weaviate（如需向量搜索）
 docker run -d -p 8090:8090 -p 50051:50051 semitechnologies/weaviate</code></pre>
       </li>
-      <li><strong>启动 Docker 推理服务</strong>（可选，按需启动）<br>
-        <pre><code># ASR 语音识别
+      <li><strong>启动推理服务</strong>（可选，按需启动）<br>
+        <pre><code># ASR 语音识别（Docker）
 docker compose up -d asr-sensevoice
 
-# Orpheus TTS
-docker compose up -d orpheus-tts
+# TTS 语音合成（主引擎 CosyVoice3，独立 conda 服务）
+cd docker\llm
+.\start-cosyvoice.ps1
 
 # LLM（如不用 Ollama，用 vLLM 替代）
-docker compose up -d llm
-
-# F5-TTS（注意端口冲突，需调整 F5TTS_PORT_HTTP）
-F5TTS_PORT_HTTP=8500 docker compose up -d f5-tts-triton</code></pre>
+docker compose up -d llm</code></pre>
       </li>
       <li><strong>启动 CX-O 应用服务</strong><br>
         <pre><code># 语音工作站（如需声音克隆功能）
@@ -609,18 +580,13 @@ cd APP-Frontend
       </tr>
       <tr>
         <td>CX-O Server</td>
-        <td>Orpheus TTS</td>
-        <td><code>tts.mode=orpheus</code> 时启动会发预热请求到 5060 端口</td>
+        <td>CosyVoice3 TTS</td>
+        <td><code>tts.mode=remote</code> 时启动会发预热请求到 8094 端口</td>
       </tr>
       <tr>
         <td>CX-O Frontend</td>
         <td>CX-O Server</td>
         <td>启动时请求 <code>/health</code> 检查后端连通性</td>
-      </tr>
-      <tr>
-        <td>Orpheus 容器内部</td>
-        <td>vLLM → Bridge</td>
-        <td>vLLM (8000) 先启动并 health check → 再启动 FastAPI Bridge (5060)</td>
       </tr>
     </table>
   </div>
@@ -683,17 +649,17 @@ cd APP-Frontend
       <tr>
         <td><code>tts.mode</code></td>
         <td>remote</td>
-        <td>TTS 模式（embedded / remote / orpheus）</td>
+        <td>TTS 模式（remote 远程合成）</td>
       </tr>
       <tr>
         <td><code>tts.engine</code></td>
-        <td>f5-tts</td>
-        <td>TTS 引擎（f5-tts / orpheus）</td>
+        <td>cosyvoice</td>
+        <td>TTS 引擎（cosyvoice 主 / voicedesign / qwen3_base 降级）</td>
       </tr>
       <tr>
-        <td><code>tts.orpheus.url</code></td>
-        <td>http://127.0.0.1:5060</td>
-        <td>Orpheus TTS Bridge 地址</td>
+        <td><code>tts.remote_url</code></td>
+        <td>http://127.0.0.1:8094</td>
+        <td>CosyVoice3 主引擎地址</td>
       </tr>
     </table>
   </div>
@@ -708,9 +674,9 @@ cd APP-Frontend
         <th>示例值</th>
       </tr>
       <tr><td><code>CXO_ASR_MODE</code></td><td>asr.mode</td><td>embedded / remote</td></tr>
-      <tr><td><code>CXO_TTS_MODE</code></td><td>tts.mode</td><td>embedded / remote / orpheus</td></tr>
+      <tr><td><code>CXO_TTS_MODE</code></td><td>tts.mode</td><td>remote</td></tr>
       <tr><td><code>CXO_ASR_REMOTE_URL</code></td><td>asr.remote_url</td><td>http://127.0.0.1:8005</td></tr>
-      <tr><td><code>CXO_TTS_REMOTE_URL</code></td><td>tts.remote_url</td><td>http://127.0.0.1:5000</td></tr>
+      <tr><td><code>CXO_TTS_REMOTE_URL</code></td><td>tts.remote_url</td><td>http://127.0.0.1:8094</td></tr>
       <tr><td><code>CXO_LLM_PROVIDER</code></td><td>models.main.provider</td><td>ollama / vllm / trtllm</td></tr>
       <tr><td><code>CXO_LLM_HOST</code></td><td>models.main.host</td><td>http://localhost:11434</td></tr>
       <tr><td><code>CXO_LLM_MODEL</code></td><td>models.main.model</td><td>qwen3-vl:8b</td></tr>
@@ -743,9 +709,9 @@ cp .env.example .env</code></pre>
   </div>
 
   <div class="highlight-box">
-    <h4>两种 TTS 引擎配置</h4>
-    <p><strong>F5-TTS</strong>（默认）：<code>tts.engine: f5-tts</code> + <code>tts.remote_url: http://127.0.0.1:5000</code>，需要启动 F5-TTS 服务或 Docker 容器。</p>
-    <p style="margin-top:8px"><strong>Orpheus</strong>：<code>tts.mode: orpheus</code> + <code>tts.orpheus.url: http://127.0.0.1:5060</code>，需要启动 Orpheus Docker 容器。后端启动时会自动发预热请求。</p>
+    <h4>TTS 引擎与降级</h4>
+    <p><strong>CosyVoice3</strong>（主引擎）：承接带参考音频的克隆与情感合成，地址 <code>http://127.0.0.1:8094</code>。</p>
+    <p style="margin-top:8px"><strong>VoiceDesign / Qwen3-TTS Base</strong>（备用与降级）：无参考音频走 VoiceDesign（<code>8091</code>），主引擎不可用时自动降级 Qwen3-TTS Base（<code>8093</code>）。后端启动时会自动发预热请求。</p>
   </div>
 </section>
 
@@ -767,27 +733,16 @@ cp .env.example .env</code></pre>
         <td><code>asr-sensevoice</code></td>
         <td>ASR 语音识别（FunASR + SenseVoice）</td>
         <td>8005 → 8005</td>
-        <td>GPU 0</td>
-      </tr>
-      <tr>
-        <td><code>f5-tts-triton</code></td>
-        <td>F5-TTS（Triton + TRT-LLM 加速）</td>
-        <td>8000/8001/8002 → 8000/8001/8002</td>
-        <td>GPU 0</td>
+        <td>CPU（无空余 GPU）</td>
       </tr>
       <tr>
         <td><code>llm</code></td>
         <td>LLM 推理（vLLM 或 TRT-LLM）</td>
         <td>8080 → 8080</td>
-        <td>GPU 0</td>
-      </tr>
-      <tr>
-        <td><code>orpheus-tts</code></td>
-        <td>Orpheus TTS（vLLM + SNAC Bridge 单容器）</td>
-        <td>vLLM 8000→8003，Bridge 5060→5060</td>
-        <td>GPU 0</td>
+        <td>GPU</td>
       </tr>
     </table>
+    <p style="margin-top:12px; color:var(--text-dim)">Docker Compose 现仅编排 ASR 与 LLM 推理服务；TTS 语音合成走独立服务（CosyVoice3 / VoiceDesign / Qwen3-TTS Base），不在此编排内。</p>
   </div>
 
   <div class="card">
@@ -798,9 +753,6 @@ docker compose up -d
 # 仅启动 ASR
 docker compose up -d asr-sensevoice
 
-# 仅启动 Orpheus TTS
-docker compose up -d orpheus-tts
-
 # 仅启动 LLM（指定后端）
 LLM_BACKEND=vllm docker compose up -d llm
 LLM_BACKEND=trtllm docker compose up -d llm
@@ -809,86 +761,10 @@ LLM_BACKEND=trtllm docker compose up -d llm
 docker compose ps
 
 # 查看日志
-docker compose logs -f orpheus-tts
+docker compose logs -f llm
 
 # 停止所有服务
 docker compose down</code></pre>
-  </div>
-
-  <div class="card">
-    <h3>Orpheus TTS 容器内部架构</h3>
-    <p>Orpheus 使用单容器双进程架构：vLLM 后端和 FastAPI Bridge 在同一个容器里运行。</p>
-    <ol class="step-list">
-      <li><strong>vLLM 启动</strong>：加载 Orpheus 3B 模型到 GPU，监听容器内 8000 端口</li>
-      <li><strong>健康检查等待</strong>：最多等 120 次（每次 5 秒）等 vLLM 就绪</li>
-      <li><strong>Bridge 启动</strong>：vLLM 就绪后启动 FastAPI Bridge，监听 5060 端口</li>
-    </ol>
-    <p>Bridge 负责把 OpenAI 兼容的 TTS 请求转成 vLLM 推理调用，再用 SNAC 解码器把 token 转成 24kHz PCM 音频。</p>
-  </div>
-</section>
-
-<!-- 双卡部署 -->
-<section class="section" id="dualgpu">
-  <h2 class="section-title">🎯 双卡部署（ELP-Orpheus）</h2>
-  <p class="section-desc">追求极致低延迟的高级部署方案。需要双卡 Linux 服务器 + FasterTransformer 编译环境。</p>
-
-  <div class="card">
-    <span class="tag tag-red">高级</span>
-    <h3>ELP-Orpheus 双卡架构</h3>
-    <p>ELP-Orpheus 是自研的低延迟推理引擎，通过双卡物理隔离实现 LLM 和 TTS 并行推理，目标首字延迟 <60ms。</p>
-    <table>
-      <tr>
-        <th>组件</th>
-        <th>GPU</th>
-        <th>模型</th>
-        <th>显存占用</th>
-      </tr>
-      <tr>
-        <td>LLM FT 引擎</td>
-        <td>GPU 0</td>
-        <td>Gemma 4 E4B（FasterTransformer 编译）</td>
-        <td>~18GB</td>
-      </tr>
-      <tr>
-        <td>Orpheus TTS</td>
-        <td>GPU 1</td>
-        <td>FT Llama-3B 骨干 + Audio Head + SNAC</td>
-        <td>~8-10GB</td>
-      </tr>
-      <tr>
-        <td>SenseVoice ASR</td>
-        <td>CPU 侧</td>
-        <td>SenseVoice Small</td>
-        <td>—</td>
-      </tr>
-    </table>
-  </div>
-
-  <div class="card">
-    <h3>双卡部署编译依赖</h3>
-    <ul style="margin-left:20px; color:var(--text-dim);">
-      <li>FasterTransformer（C++ 编译）</li>
-      <li>PyTorch、Triton (triton-lang)、pyzmq、pybind11</li>
-      <li>CUDA Toolkit (sm_86)、cuBLASLt、nvcc</li>
-      <li>Audio Head C++ 扩展：<code>cd ELP-Orpheus/ft_engine/decoding_cpp/ && python build_audio_head_cpp.py</code></li>
-    </ul>
-    <div class="warning-box">
-      <h4>Windows 限制</h4>
-      <p>ELP-Orpheus 的 FT 引擎需要 Linux 双卡服务器 + FasterTransformer 编译环境。Windows 开发环境会自动回退到 <code>MockFTLlama</code>，不提供真实推理能力。另外，Windows 下 IPC 的 <code>endpoint</code> 需改为 <code>tcp://127.0.0.1:5555</code>（不支持 Unix Domain Socket）。</p>
-    </div>
-  </div>
-
-  <div class="card">
-    <h3>双卡启动顺序</h3>
-    <ol class="step-list">
-      <li><strong>启动 Gemma（GPU 0）</strong>：FT 引擎加载 Gemma 4 E4B 模型</li>
-      <li><strong>启动 Orpheus（GPU 1）</strong>：FT Llama-3B + Audio Head + SNAC</li>
-      <li><strong>启动 SenseVoice ASR（CPU）</strong>：中央调度器</li>
-    </ol>
-    <div class="warning-box">
-      <h4>启动顺序不能颠倒</h4>
-      <p>必须先启动 Gemma (GPU 0) 再启动 Orpheus (GPU 1)，否则 Orpheus 会在 ZeroMQ 上空转等待。</p>
-    </div>
   </div>
 </section>
 
@@ -913,8 +789,8 @@ docker compose down</code></pre>
   </div>
 
   <div class="card">
-    <h3>Orpheus TTS 首次请求很慢</h3>
-    <p>这是冷启动问题。后端启动时会自动发预热请求（非流式 + 流式双重预热），但如果 Orpheus 容器刚启动还没就绪，预热会失败。等待 Orpheus 容器 health check 通过（<code>docker compose ps</code> 查看）后重启后端即可。</p>
+    <h3>CosyVoice TTS 首次请求很慢</h3>
+    <p>这是冷启动问题。后端启动时会自动发预热请求（非流式 + 流式双重预热），但如果 CosyVoice 服务刚启动还没就绪，预热会失败。等待 TTS 服务就绪（<code>http://127.0.0.1:8094</code> 可访问）后重启后端即可。</p>
   </div>
 
   <div class="card">
@@ -922,9 +798,8 @@ docker compose down</code></pre>
     <p>单卡跑全部服务时显存可能不够。解决方案：</p>
     <ul style="margin-left:20px; color:var(--text-dim);">
       <li>降低 LLM 的 <code>gpu_memory_utilization</code>（如 0.9 → 0.7）</li>
-      <li>降低 Orpheus 的 <code>ORPHEUS_GPU_MEM_UTIL</code>（如 0.45 → 0.2）</li>
-      <li>SNAC 解码器走 CPU（<code>ORPHEUS_SNAC_DEVICE=cpu</code>）</li>
-      <li>关闭不用的服务（如不直播就关 F5-TTS）</li>
+      <li>把 embedding 与 TTS 放到同一块 GPU、ASR 走 CPU，合理分卡</li>
+      <li>关闭不用的服务（如暂时不直播就关掉相关源）</li>
       <li>使用嵌入式 Weaviate 替代独立服务节省内存</li>
     </ul>
   </div>
@@ -936,7 +811,7 @@ docker compose down</code></pre>
 
   <div class="card">
     <h3>端口冲突</h3>
-    <p>F5-TTS 默认端口 8000 与 CX-O Server 冲突。在 <code>.env</code> 中设置 <code>F5TTS_PORT_HTTP=8500</code>（或其他空闲端口）来避免冲突。同时更新 <code>config/default.yaml</code> 中 TTS 的 <code>remote_url</code> 指向新端口。</p>
+    <p>如果某个服务端口被占用，可以在 <code>.env</code> 或 <code>config/default.yaml</code> 中调整对应端口，并同步更新其他服务的引用地址。主要服务端口见<a href="#ports" style="color:var(--accent-cyan)">端口分配表</a>。</p>
   </div>
 
   <div class="card">
@@ -946,14 +821,14 @@ docker compose down</code></pre>
 
   <div class="card">
     <h3>ModelScope 下载慢</h3>
-    <p>下载脚本使用 ModelScope（阿里云），国内网络通常较快。如果仍然慢，检查网络代理设置。Orpheus 等模型若从 HuggingFace 下载，可以设置 <code>HF_ENDPOINT=https://hf-mirror.com</code> 使用镜像站。</p>
+    <p>语音等模型下载脚本使用 ModelScope（阿里云），国内网络通常较快。如果仍然慢，检查网络代理设置；从 HuggingFace 下载时可设置 <code>HF_ENDPOINT=https://hf-mirror.com</code> 使用镜像站。</p>
   </div>
 </section>
 
 </div>
 
 <div class="footer">
-  CX-O 部署文档 &nbsp;|&nbsp; 2026-07 &nbsp;|&nbsp; 配套 <a href="./features.html" style="color:var(--accent-cyan)">功能特性文档</a> 和 <a href="../README.md" style="color:var(--accent-cyan)">README</a>
+  CX-O 部署文档 &nbsp;|&nbsp; 2026-08 &nbsp;|&nbsp; 配套 <a href="./features.html" style="color:var(--accent-cyan)">功能特性文档</a> 和 <a href="../README.md" style="color:var(--accent-cyan)">README</a>
 </div>
 
 </body>

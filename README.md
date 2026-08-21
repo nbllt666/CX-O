@@ -108,8 +108,6 @@ CX-O/
 ├── APP-Frontend/           # 前端桌面应用（Electron，浏览器模式默认端口 3100）
 ├── CX-O-SERVER/            # 后端服务（FastAPI + WebSocket）
 ├── CX-O-VoiceWorkStation/  # 语音工作站（声音克隆与训练）
-├── orpheus-tts/            # Orpheus TTS 服务
-├── ELP-Orpheus/            # 低延迟推理引擎（双卡部署）
 ├── config/                 # 全局配置文件
 ├── docker/                 # Docker 镜像构建文件
 ├── docs/                   # 项目文档
@@ -131,10 +129,10 @@ CX-O/
 在设置页面选择形象类型为 Live2D，然后上传 `.model3.json` 文件。VRM 模型同理，上传 `.vrm` 文件即可。
 
 **显存不够怎么办？**
-单卡 16GB 可以跑基础对话，但语音相关服务比较吃显存。可以关掉不用的服务，或者用 Orpheus 的 CPU SNAC 解码模式减轻显存压力。双卡部署效果最好。
+单卡 16GB 可以跑基础对话，但语音相关服务比较吃显存。可以关掉不用的服务，或按需只保留对话所需的 TTS 引擎来减轻压力。
 
 ---
 
 ## License
 
-本项目仅供学习和个人使用。第三方引擎（Orpheus、So-VITS-SVC、VoxCPM 等）请遵守各自的许可证。
+本项目仅供学习和个人使用。第三方引擎（CosyVoice、So-VITS-SVC、VoxCPM 等）请遵守各自的许可证。

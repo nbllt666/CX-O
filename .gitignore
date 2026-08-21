@@ -274,6 +274,12 @@ docker/llm/triton_cache/
 # LLM 探针输出（测试生成，不入库）
 docker/llm/probe_out/
 
+# 自包含 cosyvoice-vllm 镜像离线导出（大文件，不入库）
+docker/llm/cosyvoice-vllm-full.tar
+docker/llm/*.tmp-cosyvoice*
+docker/llm/cosyvoice-vllm-export.log
+docker/llm/cosyvoice-vllm-full-build.log
+
 # Docker 相关
 F5-fast/Docker Desktop Installer.exe
 
