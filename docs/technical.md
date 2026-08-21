@@ -23,6 +23,7 @@
 - [15. 语音工作站（CX-O-VoiceWorkStation）](#15-语音工作站cx-o-voiceworkstation)
 - [16. Docker 推理服务](#16-docker-推理服务)
 - [17. 配置系统](#17-配置系统)
+- [18. 主动视觉与电脑控制](#18-主动视觉与电脑控制)
 - [附录：目录速览](#附录目录速览)
 
 ---
@@ -196,6 +197,18 @@ CX-O 将虚拟形象、实时语音对话、记忆管理、直播推流、声音
   - `main_llm`：用主模型生成插入的回复内容（含情感/标点）。
   - `independent_llm`：用独立小模型只输出三态标记（不占用主 LLM 槽位），回复内容由主流水线生成。
 - 判定为 `INTERRUPT` 时：停掉当前 TTS，直接播放一句简短插话（`interrupt_and_reply`）。
+
+**打断判定收敛与智能化**（2026-08 演进）：
+
+- **判定收敛**：打断模块收敛到公共基类 `InterruptModuleBase`（`interrupt_llm.py`），`asr_interrupt.ASRInterruptModule` 与 `agent_interrupt_user.AgentInterruptUser` 继承复用；底层统一「HTTP 调用 + JSON 解析 + 关键词兜底 + 超时降级」的 Ollama 判定 `call_ollama_decision`。
+- **提问意图硬闸门（Feature A）**：LLM 判 `INTERRUPT` 后经确定性闸门 `_has_question_or_request`（提问词 + 祈使请求词）二次确认，无意图特征降级 `IGNORE`，消除情绪独白误打断（`question_intent_required` 开关，默认 true）。
+- **固定搭配剔除**：`_NON_QUESTION_PHRASES`（14 项）先剔除「含疑问字但实为陈述 / 客套 / 填充」的固定搭配再作子串匹配，避免误判。
+- **最终完整请求回复触发（Feature B）**：ASR `is_final`（真实「用户说完」信号）且累计文本通过意图闸门、本 utterance 未打断时，主动触发一次回复（`reply_on_final_question` 开关，默认 true），解决短句提问说完后无回复。
+- **打断 / 回复标签解耦**：`on_asr_partial_result` 返回 `should_interrupt`（仅真打断）/ `should_reply`（仅需回复）/ `reply_content` 三字段独立语义；Feature B 走 `should_reply` 路径，经 `DualStreamSession.ensure_reply()` 启动主管线产出真实回复（不 cancel、不置打断标记、不发 interrupted）；空打断（无插话内容）不摧毁在途主管线。
+- **停顿续接确认**：`REPLY_CONFIRM_S=0.5` 窗口确认用户确已说完再兜底启动回复，长句内部停顿不会被腰斩。
+- **忽略传导**：`REALTIME_VOICE_PROMPT_PADDING` 注入「回应边界（忽略规则）」，主 LLM 对情绪 / 自言自语等非对话输入可选择不回应，对明确提问 / 请求务必回答。
+- **VAD 兜底分层开关**：`speech_end_fallback`（默认 false）——true 时 LLM 打断标记 `_agent_interrupt_triggered` 抑制 VAD `speech_end` 兜底（避免双路 TTS 并发）。
+- **统计与热更新端点**：`replies_triggered` / `interrupts_triggered` 独立统计；受保护端点 `GET /api/stats/interrupt` 读统计、`POST /api/stats/interrupt/enable` 热更新 `enabled` / `speech_end_fallback`。
 
 ### 4.5 首包延迟优化（<300ms 的落地手段）
 
@@ -647,6 +660,41 @@ config.json 文件配置  →  deep_merge  →  环境变量（CXO_ 前缀）  �
 | `distillation` | port `8000`、max_turns `4`、session_timeout `1800`、quality_llm 开 |
 | `multimodal_pipeline` | worker_pool `4`、OCR `paddleocr`、vllm_native 开 |
 | `decision_core` | permanent `0.7`、quality_reject `0.3`、ask_user `0.4`、max_redistill `2` |
+
+### 17.3 配置热更新
+
+部分配置节保存后**无需重启后端**即时生效（`server/config_hot_reload.py`）：
+
+- `ModelRouter.reload_clients()` 按当前配置重建 main / summary / memory 三个 LLM 客户端，provider / model / host 变更即时生效；`apply_section()` 分发到对应运行时组件；`broadcast_config_changed()` 经 WebSocket 广播给前端。
+- `update_unified_config` 保存后按节返回 `applied` / `requires_restart`。可热更新节：`llm` / `audio` / `live` / `system`；需重启节：`vector`。
+- 前端 `configEvents.ts`（事件总线）+ `useConfigReload.ts`（WS 订阅）+ `ConfigToast.tsx`（通知）挂载于管理界面，收到 `config_changed` 事件后刷新 limits 并即时刷新 LLM / 向量区块；需重启节以 toast 提示。
+
+---
+
+## 18. 主动视觉与电脑控制
+
+### 18.1 主动视觉（Active Vision）
+
+桌宠 / 管理界面可采集屏幕或摄像头画面，周期性把帧经 `/api/chat/stream` 随聊天请求上行给 LLM，让 AI「看见」屏幕内容并据此回应。
+
+- **采集状态**：`captureStore` 维护 `screenActive` / `cameraActive`（会话内采集开关）与 `frameMode` / `frameIntervalSec`（节奏偏好，持久化）。
+- **总开关**：持久化 `visionEnabled`（默认 false）一键关闭画面上行；关闭时定时抽帧与手动点发均不发送（`useFrameSender` 注入闸门）。
+- **帧节流**：`frameThrottle` 控制发送频率，避免高频上行占用带宽与算力。
+- 依赖具备视觉能力的多模态 LLM 才能理解画面。
+
+### 18.2 电脑控制（CXFC Computer Control）
+
+桌宠（Electron）以 CXFC 插件形式向后端注册本机控制能力，让 AI 能操作你的电脑——需在悬浮窗显式授权。
+
+- **能力**：屏幕控制、键盘控制、运行指令三个工具，经 CXFC 注册为技能由 LLM 调用。
+- **安全**：
+  - HTTPS 自签名证书 + 首次指纹信任（TLS）；
+  - 注册时签发令牌，后端转发 `/call` 时携带 `Authorization` + 唯一 `request_id` 防重放；
+  - 运行指令保留结构化参数 / 超时 / 进程树回收 / 输出截断 / 脱敏护栏。
+- **授权**：悬浮窗「授权控制」按钮——永久授权、主动撤销（撤销即关闭）、重启恢复。
+- **启动设置**：桌宠自启动、管理员权限启动（Windows UAC）。
+- 浏览器模式降级不可用（不调用 Electron 专属 API）。
+- 契约：`public/schema/computer_control_plugin.schema.json`、`computer_control_error_codes.json`、`public/interface_stub/computer_control.pyi`。
 
 ---
 
