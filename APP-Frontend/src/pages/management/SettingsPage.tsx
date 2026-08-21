@@ -11,7 +11,7 @@
  *   （frameMode / frameIntervalSec）；实际采集由桌宠窗执行（settings.capture.petNote 提示）。
  * 主题/语言切换在 ManagementLayout 顶栏，本页不重复。
  */
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import {
   Activity,
@@ -58,6 +58,8 @@ import {
   STORAGE_KEYS,
 } from '@/api/base';
 import { cn } from '@/lib/utils';
+import { isElectron } from '@/lib/isElectron';
+import { DEFAULT_VRM_MODEL_PATH, pickModelFile } from '@/lib/vrmModelSource';
 
 // ── 通用小部件 ──
 
@@ -331,6 +333,28 @@ function AvatarSection() {
     setVRMSettings({ position3d: next });
   };
 
+  // VRM 模型文件：桌面模式经系统对话框选本地 .vrm；浏览器模式隐藏 file input（临时 blob URL）。
+  // 选中的本地路径持久化到 settingsStore，VRMViewer 经 IPC 读取加载；"恢复默认"回到打包内默认模型。
+  const vrmFileInputRef = useRef<HTMLInputElement>(null);
+  const handlePickVrmModel = async () => {
+    if (isElectron()) {
+      const filePath = await pickModelFile();
+      if (filePath) setVRMSettings({ modelPath: filePath });
+    } else {
+      vrmFileInputRef.current?.click();
+    }
+  };
+  const handleVrmFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setVRMSettings({ modelPath: URL.createObjectURL(file) });
+    e.target.value = '';
+  };
+  const handleResetVrmModel = () => {
+    setVRMSettings({ modelPath: DEFAULT_VRM_MODEL_PATH });
+  };
+  const vrmModelName = vrm.modelPath.split(/[\\/]/).pop() || vrm.modelPath;
+
   return (
     <Section
       icon={Sparkles}
@@ -387,6 +411,29 @@ function AvatarSection() {
           <h3 className="text-xs font-medium text-muted-foreground">
             {t('settings.avatar.vrmTitle')}
           </h3>
+          <Row label={t('settings.avatar.model')} desc={vrmModelName}>
+            <button
+              type="button"
+              onClick={() => void handlePickVrmModel()}
+              className="rounded-lg border border-primary/30 bg-primary/10 px-2.5 py-1 text-xs text-primary transition-opacity hover:opacity-85"
+            >
+              {t('settings.avatar.chooseModel')}
+            </button>
+            <button
+              type="button"
+              onClick={handleResetVrmModel}
+              className="rounded-lg border border-[var(--glass-border)] bg-[rgba(255,255,255,0.04)] px-2.5 py-1 text-xs text-muted-foreground transition-opacity hover:opacity-85"
+            >
+              {t('settings.avatar.resetModel')}
+            </button>
+            <input
+              ref={vrmFileInputRef}
+              type="file"
+              accept=".vrm"
+              className="hidden"
+              onChange={handleVrmFileChange}
+            />
+          </Row>
           <SliderField
             label={t('settings.avatar.scale')}
             value={vrm.scale}

@@ -75,6 +75,14 @@ export type VRMRuntimeState = {
   boneTargetRotations: Map<string, { x: number; y: number; z: number }>;
   /** 骨骼自动归中计时器：boneName → 剩余保持秒；<=0 时对应该骨骼目标归零回待机 */
   boneHoldTimers: Map<string, number>;
+  /**
+   * 刘海骨骼（短前发链）引用。springbone 物理会把刘海推到前倾翻起，
+   * 渲染循环在物理解算后对这批骨骼的 rotation.x 完全锁死为 0，
+   * 禁止前后翻起、仅保留侧向（y/z）摆动。
+   */
+  bangBones: THREE.Object3D[];
+  /** 刘海 rotation.x 钳制上限（弧度），默认 0（完全锁死） */
+  bangXClamp?: number;
   cameraTweak?: {
     offsetX: number;
     offsetY: number;
@@ -324,6 +332,42 @@ export function createVRMRuntime(
   const box = new THREE.Box3().setFromObject(vrm.scene);
   const size = box.getSize(new THREE.Vector3());
 
+  // 刘海（短前发链）处理：CX.vrm/avatar.vrm 的刘海骨骼 J_Sec_Hair1_* 挂在 head 下，
+  // springbone 物理会把刘海推到前倾翻起（模型本身绑定姿态并不翻起）。
+  // 根治方案：把刘海 joint 从 springbone 物理中移除（deleteJoint），物理不再作用于刘海，
+  // 刘海保持模型绑定姿态；渲染循环再对 bangBones 做 rotation.x 锁轴双重保障。
+  const bangBones: THREE.Object3D[] = [];
+  const manager = vrm.springBoneManager;
+  if (manager) {
+    const rawJoints = (manager as unknown as { joints?: unknown }).joints
+      ?? (manager as unknown as { _joints?: unknown })._joints;
+    const joints: Array<{ bone: THREE.Object3D; settings?: unknown }> = Array.isArray(rawJoints)
+      ? rawJoints
+      : rawJoints instanceof Set
+        ? Array.from(rawJoints)
+        : [];
+    const seen = new Set<THREE.Object3D>();
+    for (const joint of joints) {
+      const name = joint.bone?.name ?? '';
+      if (/hair1/i.test(name)) {
+        if (!seen.has(joint.bone)) {
+          seen.add(joint.bone);
+          bangBones.push(joint.bone);
+        }
+        // 从 springbone 物理移除刘海 joint：物理不再推翻刘海，保持绑定姿态。
+        try {
+          if (typeof manager.deleteJoint === 'function') {
+            manager.deleteJoint(joint as never);
+          } else if (rawJoints instanceof Set) {
+            rawJoints.delete(joint as never);
+          }
+        } catch {
+          // 忽略删除失败（不影响主流程）
+        }
+      }
+    }
+  }
+
   const runtime: VRMRuntimeState = {
     vrm,
     scene,
@@ -354,6 +398,7 @@ export function createVRMRuntime(
     boneCurrentRotations: new Map(),
     boneTargetRotations: new Map(),
     boneHoldTimers: new Map(),
+    bangBones,
     cameraTweak,
   };
 
@@ -387,6 +432,17 @@ export function startRuntimeLoop(
       }
     } else {
       runtime.vrm.update(dt);
+    }
+
+    // 刘海锁轴：springbone 物理解算后会重写刘海骨骼 rotation，这里把 rotation.x
+    // （前后俯仰）完全锁死为 0，彻底禁止刘海向上翻起；y/z（侧向摆动）保留自由。
+    // 刘海定义见 createVRMRuntime 的 bangBones 收集（J_Sec_Hair1_* 短前发链）。
+    if (runtime.bangBones.length > 0) {
+      const clampX = runtime.bangXClamp ?? 0;
+      for (const bone of runtime.bangBones) {
+        if (bone.rotation.x > clampX) bone.rotation.x = clampX;
+        else if (bone.rotation.x < -clampX) bone.rotation.x = -clampX;
+      }
     }
 
     // L1 程序化：骨骼动画 + 口型同步（程序化动画源，与用户指令解耦）

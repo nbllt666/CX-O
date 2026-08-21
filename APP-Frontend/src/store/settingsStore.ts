@@ -190,7 +190,7 @@ const defaultLive2DSettings: Live2DSettings = {
 
 const defaultVRMSettings: VRMSettings = {
   enabled: true,
-  modelPath: '/models/CX.vrm',
+  modelPath: '/models/CX-OPEN.vrm',
   width: 300,
   minWidth: 200,
   maxWidth: 1200,

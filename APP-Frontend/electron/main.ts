@@ -15,10 +15,11 @@
  *   供 OBS 等采集端按窗口名稳定捕获。
  * ============================================================================
  */
-import { app, BrowserWindow, desktopCapturer, ipcMain, session, Menu, Tray, nativeImage, globalShortcut, shell } from 'electron';
+import { app, BrowserWindow, desktopCapturer, dialog, ipcMain, session, Menu, Tray, nativeImage, globalShortcut, shell } from 'electron';
 import type { NativeImage } from 'electron';
 import * as path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { readFile } from 'node:fs/promises';
 import { loadStore, saveStore } from './store';
 import { getConfig, setConfig } from './config';
 import {
@@ -348,6 +349,32 @@ function registerIpcHandlers(): void {
     setComputerControlAuthorization(!!value),
   );
   ipcMain.handle('computerControl:get-info', () => getPluginInfo());
+
+  // VRM 模型：桌面模式模型选择（默认模型打包在包内，用户可选本地 .vrm 覆盖）。
+  // 安全边界：仅返回用户经系统对话框选中的 .vrm 路径；渲染层无法任意枚举文件系统。
+  ipcMain.handle('model:pick-file', async (event) => {
+    const win = BrowserWindow.fromWebContents(event.sender) ?? petWindow;
+    const result = await dialog.showOpenDialog(win!, {
+      title: '选择 VRM 模型',
+      filters: [{ name: 'VRM Model', extensions: ['vrm'] }],
+      properties: ['openFile'],
+    });
+    if (result.canceled || result.filePaths.length === 0) {
+      return { canceled: true, path: undefined };
+    }
+    return { canceled: false, path: result.filePaths[0] };
+  });
+
+  // VRM 模型：读取本地 .vrm 文件为字节流（仅放行 .vrm 后缀，读取失败返回 null）。
+  // 渲染层持 blob URL 交给 GLTFLoader，避免 file:// 跨域问题，dev(http) 与生产(file) 行为一致。
+  ipcMain.handle('model:read-file', async (_event, filePath: string) => {
+    try {
+      if (typeof filePath !== 'string' || !/\.vrm$/i.test(filePath)) return null;
+      return await readFile(filePath);
+    } catch {
+      return null;
+    }
+  });
 }
 
 // ---------------------------------------------------------------------------

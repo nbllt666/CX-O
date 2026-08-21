@@ -6,6 +6,11 @@ files:
   - dist/**/*
   - dist-electron/**/*
   - package.json
+  # 不开源模型不打包：dist/models 仅保留 CX-OPEN.vrm（默认模型），CX.vrm/avatar.vrm 及备份全部排除
+  - "!dist/models/CX.vrm"
+  - "!dist/models/CX.vrm.bak"
+  - "!dist/models/CX.vrm.modified.bak"
+  - "!dist/models/avatar.vrm"
 extraMetadata:
   main: dist-electron/main.js
 win:

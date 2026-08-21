@@ -30,6 +30,8 @@ function mockElectronApi(overrides: Partial<NonNullable<Window['electronAPI']>> 
     openExternal: vi.fn().mockResolvedValue(undefined),
     getBackendUrl: vi.fn().mockResolvedValue(null),
     setBackendUrl: vi.fn().mockResolvedValue(undefined),
+    pickModelFile: vi.fn().mockResolvedValue({ canceled: true, path: undefined }),
+    readModelFile: vi.fn().mockResolvedValue(null),
     getStartupSettings: vi.fn().mockResolvedValue({
       supported: false,
       autoStart: false,

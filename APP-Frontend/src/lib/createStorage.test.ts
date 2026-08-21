@@ -35,6 +35,8 @@ function mockElectronApi() {
       fingerprint: null,
       authorized: false,
     }),
+    pickModelFile: vi.fn().mockResolvedValue({ canceled: true, path: undefined }),
+    readModelFile: vi.fn().mockResolvedValue(null),
     getStartupSettings: vi.fn().mockResolvedValue({
       supported: false,
       autoStart: false,

@@ -50,6 +50,9 @@ declare global {
         fingerprint: string | null;
         authorized: boolean;
       }>;
+      // VRM 模型：选择/读取本地模型文件（桌面模式模型选择，默认模型打包在包内）
+      pickModelFile: () => Promise<{ canceled: boolean; path?: string }>;
+      readModelFile: (path: string) => Promise<ArrayBuffer | null>;
     };
   }
 }

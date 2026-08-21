@@ -804,7 +804,10 @@
       "posZ": "位置 Z",
       "lookAtMouse": "视线跟随鼠标",
       "idleAnimation": "待机动画",
-      "renderScale": "渲染精度"
+      "renderScale": "渲染精度",
+      "model": "模型文件",
+      "chooseModel": "选择模型",
+      "resetModel": "恢复默认"
     },
     "live": {
       "sectionTitle": "直播",

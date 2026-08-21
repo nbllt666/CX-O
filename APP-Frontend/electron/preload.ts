@@ -45,4 +45,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
   setComputerControlAuth: (value: boolean) =>
     ipcRenderer.invoke('computerControl:set-auth', value),
   getComputerControlInfo: () => ipcRenderer.invoke('computerControl:get-info'),
+
+  // VRM 模型：选择/读取本地模型文件（默认模型打包在包内，用户可选本地 .vrm 覆盖）
+  pickModelFile: () => ipcRenderer.invoke('model:pick-file'),
+  readModelFile: (path: string) => ipcRenderer.invoke('model:read-file', path),
 });

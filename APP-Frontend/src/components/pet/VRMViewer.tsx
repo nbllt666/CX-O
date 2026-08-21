@@ -31,7 +31,7 @@ import { PerformanceMonitor } from '../../avatar/vrm/vrmPerformanceMonitor';
 import type { VowelWeights } from '../../hooks/useAudioAnalyzer';
 import type { AnimationSettings, VRMTweakConfig } from '../../store/settingsStore';
 import { DEFAULT_ANIMATION_SETTINGS, DEFAULT_VRM_TWEAK } from '../../store/settingsStore';
-import { resolveAssetUrl } from '../../lib/assetUrl';
+import { resolveVrmModelUrl } from '../../lib/vrmModelSource';
 
 interface VRMViewerProps {
   modelPath: string;
@@ -134,6 +134,8 @@ export const VRMViewer = forwardRef<VRMViewerHandle, VRMViewerProps>(function VR
     let cancelled = false;
     // 性能监控订阅退订函数（loadModel 内赋值，effect 清理时调用）
     let unsubPerformance: (() => void) | null = null;
+    // 本地模型读取生成的 blob URL 释放函数（loadModel 内赋值，effect 清理时 revoke）
+    let blobRevoke: (() => void) | null = null;
     setIsLoading(true);
     setLoadError(null);
 
@@ -155,7 +157,10 @@ export const VRMViewer = forwardRef<VRMViewerHandle, VRMViewerProps>(function VR
 
       const loader = new GLTFLoader();
       loader.register((p) => new VRMLoaderPlugin(p));
-      const gltf = await loader.loadAsync(resolveAssetUrl(modelPath));
+      // 解析模型加载源：打包内资源直接走 URL；本地路径经 IPC 读为 blob URL（卸载时 revoke）
+      const source = await resolveVrmModelUrl(modelPath);
+      blobRevoke = source.revoke;
+      const gltf = await loader.loadAsync(source.url);
       if (cancelled) return;
 
       const vrm = gltf.userData.vrm as VRM | undefined;
@@ -296,7 +301,12 @@ export const VRMViewer = forwardRef<VRMViewerHandle, VRMViewerProps>(function VR
       if (cancelled) return;
       console.error('VRM: Failed to load model:', error);
       const msg = error instanceof Error ? error.message : '';
-      if (msg.includes('<!doctype') || msg.includes('Unexpected token')) {
+      if (
+        msg.includes('<!doctype') ||
+        msg.includes('Unexpected token') ||
+        msg.startsWith('MODEL_READ_FAILED') ||
+        msg.startsWith('LOCAL_MODEL_UNSUPPORTED')
+      ) {
         setLoadError('MODEL_FILE_NOT_FOUND');
       } else {
         setLoadError('LOAD_FAILED');
@@ -308,6 +318,7 @@ export const VRMViewer = forwardRef<VRMViewerHandle, VRMViewerProps>(function VR
     return () => {
       cancelled = true;
       unsubPerformance?.();
+      blobRevoke?.();
       if (runtimeRef.current) {
         destroyRuntime(runtimeRef.current);
         runtimeRef.current = null;

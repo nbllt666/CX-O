@@ -804,7 +804,10 @@
       "posZ": "Position Z",
       "lookAtMouse": "Look at mouse",
       "idleAnimation": "Idle animation",
-      "renderScale": "Render scale"
+      "renderScale": "Render scale",
+      "model": "Model file",
+      "chooseModel": "Choose model",
+      "resetModel": "Restore default"
     },
     "live": {
       "sectionTitle": "Live",
