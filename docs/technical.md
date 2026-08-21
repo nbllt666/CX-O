@@ -583,9 +583,20 @@ T(t) = 1 / (1 + (Δt/T₅₀)^k)      # T₅₀=30, k=2
 
 ### 14.3 虚拟形象
 
-- **Live2D**（`components/Live2D/`）：`live2dEngine` 加载 `.model3.json`，表情、口型（`Live2DLipSync`）、动作（`Live2DMotion`）、音频分析。
-- **VRM**（`components/VRM/`）：`VRMEngine` 加载 `.vrm`，表情、口型、动作触发、风场（`VRMWindField`）、眼球/元音分析（`VowelAnalyzer`）。
-- 统一由 `AvatarDriver` 抽象层驱动，模型无关。
+- **Live2D**：`live2dEngine` 加载 `.model3.json`，表情、口型（`Live2DLipSync`）、动作（`Live2DMotion`）、音频分析；`live2dDriver` 统一接入（Live2D 无骨骼）。
+- **VRM**（`src/avatar/vrm/`）：`vrmEngine` 加载 `.vrm`，渲染循环按 **L0 物理 → L1 程序化 → L2 LLM 指令 → L3 平滑** 四层组织：
+  - **L0 物理**：`VRMSpringBone` 弹簧骨物理（兼容 three-vrm 3.x 的 `_joints` 字段）、`VRMWindField` 风场 + `triggerInteractionWind` 交互风力（峰值保持 + 0.95 逐帧衰减 + reset 清零）。
+  - **L1 程序化待机**：`vrmAnimation` 呼吸 / 眨眼 / 摇摆 / 微表情（呼吸仅胸腔深度方向）；持续低帧（<30 & 2s）经 `vrmPerformanceMonitor` 触发 `setEnabled(false)` 关闭程序化待机 + `springBoneEveryOtherFrame` 降级，>50 & 2s 自动恢复（防抖动）。
+  - **L2 LLM 指令**：`tagParser` 解析 `[emotion:]/[blend:]/[bone:]/[wind:]/[pose:]/[action:]/[sleep:]` → `applyTags` 分发；`[action:]` 经 `vrmActionController` 的 `AnimationMixer` 交叉淡入模型内嵌动画片段，无内嵌片段回退程序化动作。
+  - **L3 平滑**：`vrmBlendShapeInterpolator` 对 `[blend:]` 权重做 Target/Current 分离 + Lerp 插值 + `fadeOutUnusedExpressions`，消除瞬时写入的抽搐感。
+  - **骨骼控制白名单**：`boneControlCatalog`（`DEFAULT_BONE_CONTROLS` 26 骨 + `isControlledBone` / `getBoneRange`）——`setBoneRotations` 过滤白名单外骨骼、受控骨骼按各轴 `rotationRange` 限幅，防生成不存在骨骼或极端旋转；白名单真相源在 `manifest.ts`。
+  - **骨骼动作保持时长**：`[bone:]` 第 6 参 `holdMs`（默认 3000ms）到期自动平滑归中，`holdMs=0` 保持不归中（`boneHoldTimers` 逐帧递减）。
+  - **视线策略**：`vrmLookAtStrategy` — `MouseFollowStrategy`（桌宠鼠标跟随）/ `LiveCameraStrategy`（直播含读弹幕态 + Perlin 游离），`sceneMode` 由 `PetAvatar` / `LiveOverlayPage` 传入。
+  - **表情键容错**：`vrmExpression` 大小写不敏感解析，兼容任意第三方 VRM。
+  - **模型自选**：默认打包 `CX-OPEN.vrm`（不开源模型不打包），设置页经 Electron 系统对话框 / 浏览器 file input 选本地 `.vrm`，`vrmModelSource` 解析 + blob revoke。
+- **音画同步**：`labelTimeline` 把标签序列与「含标签原文」建字符偏移 ↔ 触发点映射；`useWebSocket.onTextProgress` 每收一个流式 TTS chunk（`text_segment` 锚点）累加上游标，`PetChat.advanceTimeline` 随朗读逐步触发当前段标签，`flushRemaining` 收尾兜底——不再整句收尾一次性触发。
+- **avatar 标签驱动（与语音解耦）**：`config/hidden_prompt.yaml` 的 `avatar_prompts` 承载「方括号视觉标签（形象表现）+ `<tts_instruction>`（语音情感）」双轨指引；`prompt_builder` 向主模型注入，管理端 ChatPage `stripAvatarTags` 剥离标签正文。
+- 统一由 `AvatarDriver` 抽象层（`vrmDriver` / `live2dDriver`）驱动，模型无关。`VRMDriver` 暴露到 `window.__cxoDriver` 便于运行时调试。
 
 ### 14.4 UI 与动画
 
