@@ -496,10 +496,13 @@ T(t) = 1 / (1 + (Δt/T₅₀)^k)      # T₅₀=30, k=2
 > 位于 `server/core/cxfc/`，CXFC 是 CX-O 的插件/技能协议。
 
 - **发现**（`discovery.py`）：UDP 广播自动发现本地插件（`discovery_port=9996`、`broadcast_port=9997`）。
-- **管理器**（`manager.py`）：插件生命周期、心跳检测（`heartbeat_timeout=30`、`check_interval=10`）。
+- **管理器**（`manager.py`）：插件生命周期、心跳检测（`heartbeat_timeout=30`、`check_interval=10`），并支持三种传输（`transport`）：
+  - `direct`（默认）：插件自带 HTTP(S) 服务，主服务按 host:port 直连抓取 `/tools`、`/skills`、`/call`。
+  - `relay`（前端转接）：后端不直连，把调用投递到 APP 前端通道并等待回报；覆盖"前端作中转代理转发外部插件"与"前端自身承载工具后回报"两义，统一一种传输。`call_tool` relay 分支返回 `RELAY_UNREACHABLE` / `RELAY_TIMEOUT`。
+  - `embedded`（后端嵌入式）：工具以 Python Callable 直接登记进后端 `ToolRegistry`，进程内执行，不走网络、无 host/port；handler 缺失返回 `EMBEDDED_HANDLER_MISSING`。
 - **技能注册表**（`skill_registry.py`）：维护所有可用技能。
-- **存储**（`storage.py`）：插件数据持久化（`data/cxfc_plugins.db`）。
-- 插件通过标准端点（`/tools`、`/skills`、`/call`）暴露能力，主服务按 host:port 直连抓取。
+- **存储**（`storage.py`）：插件数据持久化（`data/cxfc_plugins.db`，含 `transport` 列）。
+- **后端新增路径**：`POST /cxfc/relay/register`、`GET /cxfc/relay/targets`、`POST /cxfc/relay/result`、`POST /cxfc/embedded`（`server/api/routers/cxfc.py`）。
 - 语音工作站启动时向主服务注册并保持心跳。
 
 ---

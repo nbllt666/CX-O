@@ -292,7 +292,11 @@ export default function PluginsPage() {
                           )}
                         </div>
                         <p className="mt-1 text-xs text-muted-foreground">
-                          {plugin.host}:{plugin.port}
+                          {plugin.host && plugin.port
+                            ? `${plugin.host}:${plugin.port}`
+                            : (t(`management.plugins.transport.${plugin.transport || 'direct'}`) ||
+                               plugin.transport ||
+                               'direct')}
                           {plugin.tools.length > 0 &&
                             ` · ${t('management.plugins.toolCount', { count: plugin.tools.length })}`}
                           {plugin.skills.length > 0 &&

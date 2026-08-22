@@ -691,12 +691,15 @@ td:first-child { color: var(--text-bright); font-weight: 500; }
     <div class="card">
       <span class="tag tag-cyan">插件系统</span>
       <h3>插件管理</h3>
-      <p>注册和管理插件，让外部程序以插件形式接入系统。</p>
+      <p>注册和管理插件，让外部程序以插件形式接入系统。插件支持三种接线方式，方便在不同网络环境下使用。</p>
       <ul class="feature-list">
         <li>插件注册/注销</li>
         <li>心跳保活</li>
         <li>插件列表查看</li>
         <li>CXFC 本机插件发现（自动发现并以技能形式调用）</li>
+        <li>直连：后端直接访问插件服务（默认方式）</li>
+        <li>前端转接：插件通过 APP 前端中转接入，适合后端无法直连插件的场景</li>
+        <li>后端嵌入式：插件直接跑在后端进程内，不走网络，适合本机轻量工具</li>
       </ul>
     </div>
 

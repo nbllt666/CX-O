@@ -44,4 +44,54 @@ export const cxfcApi = {
       params: scan ? { scan: true } : undefined,
     });
   },
+
+  // relay（前端转接）与 embedded（后端进程内嵌入式）扩展端点
+  relayRegister(payload: {
+    plugin_id?: string;
+    name?: string;
+    tools: Array<{ name: string; description?: string }>;
+    capabilities?: string[];
+    skills?: unknown[];
+    token?: string;
+  }): Promise<{ status: string; plugin_id: string }> {
+    return request<{ status: string; plugin_id: string }>({
+      url: '/api/cxfc/relay/register',
+      method: 'post',
+      data: payload,
+    });
+  },
+
+  relayTargets(): Promise<{ targets: Array<{ plugin_id: string; name: string; transport: string; active: boolean }> }> {
+    return request<{ targets: Array<{ plugin_id: string; name: string; transport: string; active: boolean }> }>({
+      url: '/api/cxfc/relay/targets',
+    });
+  },
+
+  relayResult(payload: {
+    plugin_id: string;
+    request_id: string;
+    success: boolean;
+    result?: unknown;
+    error?: string;
+  }): Promise<{ status: string }> {
+    return request<{ status: string }>({
+      url: '/api/cxfc/relay/result',
+      method: 'post',
+      data: payload,
+    });
+  },
+
+  embeddedRegister(payload: {
+    plugin_id: string;
+    name?: string;
+    tools: Array<{ name: string; description?: string; parameters?: object; handler?: string }>;
+    capabilities?: string[];
+    skills?: unknown[];
+  }): Promise<{ status: string; plugin_id: string }> {
+    return request<{ status: string; plugin_id: string }>({
+      url: '/api/cxfc/embedded',
+      method: 'post',
+      data: payload,
+    });
+  },
 };

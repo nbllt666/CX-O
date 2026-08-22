@@ -404,6 +404,11 @@
       "empty": "暂无插件，可扫描局域网或手动连接",
       "statusConnected": "已连接",
       "statusDisconnected": "已断开",
+      "transport": {
+        "direct": "直连",
+        "relay": "前端转接",
+        "embedded": "嵌入式"
+      },
       "toolCount": "{{count}} 个工具",
       "skillCount": "{{count}} 个技能",
       "providedTools": "提供的工具",

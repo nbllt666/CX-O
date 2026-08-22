@@ -7,17 +7,18 @@
 ## 目录
 
 - [1. 一句话原理](#1-一句话原理)
-- [2. 插件必须实现的 4 个端点（含完整字段）](#2-插件必须实现的-4-个端点含完整字段)
-- [3. 最小可用插件（完整可运行示例）](#3-最小可用插件完整可运行示例)
-- [4. 注册、心跳、注销（让主后端认识你）](#4-注册心跳注销让主后端认识你)
-- [5. 验证接入是否成功](#5-验证接入是否成功)
-- [6. 加更多工具](#6-加更多工具)
-- [7. 参考工具规格（屏幕 / 键盘 / 运行指令）](#7-参考工具规格屏幕--键盘--运行指令)
-- [8. 安全模型（完整细节）](#8-安全模型完整细节)
-- [9. 如何给插件加安全（分步）](#9-如何给插件加安全分步)
-- [10. 配置项](#10-配置项)
-- [11. 常见坑与要点](#11-常见坑与要点)
-- [12. 一分钟自检清单](#12-一分钟自检清单)
+- [2. 传输方式（直连 / 前端转接 / 后端嵌入式）](#2-传输方式直连--前端转接--后端嵌入式)
+- [3. 插件必须实现的 4 个端点（含完整字段）](#3-插件必须实现的-4-个端点含完整字段)
+- [4. 最小可用插件（完整可运行示例）](#4-最小可用插件完整可运行示例)
+- [5. 注册、心跳、注销（让主后端认识你）](#5-注册心跳注销让主后端认识你)
+- [6. 验证接入是否成功](#6-验证接入是否成功)
+- [7. 加更多工具](#7-加更多工具)
+- [8. 参考工具规格（屏幕 / 键盘 / 运行指令）](#8-参考工具规格屏幕--键盘--运行指令)
+- [9. 安全模型（完整细节）](#9-安全模型完整细节)
+- [10. 如何给插件加安全（分步）](#10-如何给插件加安全分步)
+- [11. 配置项](#11-配置项)
+- [12. 常见坑与要点](#12-常见坑与要点)
+- [13. 一分钟自检清单](#13-一分钟自检清单)
 - [参考现成实现](#参考现成实现)
 
 ---
@@ -40,7 +41,62 @@ Agent 需要某个能力
 
 ---
 
-## 2. 插件必须实现的 4 个端点（含完整字段）
+## 2. 传输方式（直连 / 前端转接 / 后端嵌入式）
+
+CXFC 支持三种**传输方式（transport）**，决定后端怎么把工具调用送到你的实现。写插件前先想清楚用哪种，因为注册字段和调用链不一样。
+
+| transport | 取值 | 后端如何调用 | 适合场景 |
+|-----------|------|--------------|----------|
+| **直连** | `direct`（默认） | 后端按 `host:port` 直连你的 HTTP(S) `/call` | 插件自己起服务，后端能连到你 |
+| **前端转接** | `relay` | 后端把调用投递到 **APP 前端通道**，由前端转发给你或你自己承载后又回报 | 后端连不到插件的地址（NAT/防火墙/浏览器模式），但前端能 |
+| **后端嵌入式** | `embedded` | 后端在其进程内直接执行你的 handler，**不走网络、无 host/port** | 本机轻量工具，直接写成后端可调用函数 |
+
+几个关键点：
+
+- **默认是 `direct`**：不声明 `transport` 就走既有直连，行为与你现在写的一样，完全不影响老插件。
+- **relay 是一套统一机制**：既当"前端作中转代理转发外部插件流量"，也当"前端自己承载工具后回报"，不再拆成两套。
+- **embedded 是进程内注册**：工具以可调用对象（Python `Callable`）直接登记进后端 `ToolRegistry`，LLM 可直接进程内执行；不需要你起 HTTP 服务、不需要端口。
+- 在后端插件列表/管理界面，你能看到每条插件的传输类型，方便区分。
+
+### 2.1 transport 字段
+
+注册（见第 5 章）时用可选字段 `transport` 声明，取值 `direct` / `relay` / `embedded`，缺省即 `direct`：
+
+```jsonc
+{
+  "name": "MyPlugin",
+  "transport": "relay"   // 可选：direct / relay / embedded，缺省 direct
+  // ...其余注册字段
+}
+```
+
+### 2.2 relay 的后端新端点
+
+relay 传输提供以下后端路径（`direct`/`embedded` 用不到，但了解便于排查）：
+
+| 端点 | 方法 | 作用 |
+|------|------|------|
+| `/cxfc/relay/register` | POST | 前端（或经前端代理的远端插件）注册一个 relay 目标与插件描述 |
+| `/cxfc/relay/targets` | GET | 列出已注册且已注入通道的 relay 目标 |
+| `/cxfc/relay/result` | POST | 前端把一次被转发的工具调用结果回报给后端 |
+
+调用链：后端 `POST /cxfc/plugins/{plugin_id}/call` → `call_tool` 发现 `transport=relay` → 投递 `{tool, arguments, request_id}` 到前端通道 → 前端执行/转发 → `POST /cxfc/relay/result` 回报 → 后端回填给调用方。前端通道不可达时返回稳定错误码 `RELAY_UNREACHABLE`；等待超时返回 `RELAY_TIMEOUT`。
+
+> relay 的令牌与 `request_id` 防重放语义与直连一致，前端侧需沿用既有护栏。
+
+### 2.3 embedded 的后端新端点与错误码
+
+| 端点 | 方法 | 作用 |
+|------|------|------|
+| `/cxfc/embedded` | POST | 登记后端进程内嵌入式工具描述（`transport=embedded`） |
+
+后端进程内用 `CXFCManager.register_embedded_plugin()` 注入 handler；嵌入式工具缺 handler 时返回稳定错误码 `EMBEDDED_HANDLER_MISSING`。
+
+> 你写的是"独立小服务"插件，通常用 `direct` 或 `relay`。`embedded` 更偏后端/系统内部集成，不是对外插件首选的常规形态——但知道它存在有助于理解管理界面里那条"嵌入式"标签从哪来。
+
+---
+
+## 3. 插件必须实现的 4 个端点（含完整字段）
 
 | 端点 | 方法 | 作用 | 返回 |
 |------|------|------|------|
@@ -49,18 +105,18 @@ Agent 需要某个能力
 | `/skills` | GET | 声明你提供的技能 | `{skills: [SkillDefinition]}` |
 | `/call` | POST | 收到一次工具调用，执行并返回 | `{success, result?, error?, ...}` |
 
-### 2.1 `/health` 完整返回
+### 3.1 `/health` 完整返回
 
 ```jsonc
 {
   "name": "MyFirstPlugin",   // 插件显示名，后端 /cxfc/plugins 里展示
   "version": "1.0.0",        // 语义化版本
   "status": "ok",            // 一般为 "ok"
-  "authorized": true         // 是否已授权（受控插件用，见第 8 章）
+  "authorized": true         // 是否已授权（受控插件用，见第 9 章）
 }
 ```
 
-### 2.2 `/tools` —— 每个工具的完整结构
+### 3.2 `/tools` —— 每个工具的完整结构
 
 ```jsonc
 {
@@ -78,7 +134,7 @@ Agent 需要某个能力
 
 > `description` 写得好不好，直接决定 Agent 会不会正确调用——尽量写明"每个参数是什么、什么时候用"。
 
-### 2.3 `/skills` —— 技能的完整结构
+### 3.3 `/skills` —— 技能的完整结构
 
 技能 = 告诉 Agent"收到什么话、按什么步骤做"。适合较复杂的流程（例如唱歌要"建草稿→加音符→校验→提交→轮询任务"）。
 
@@ -94,7 +150,7 @@ Agent 需要某个能力
 }
 ```
 
-### 2.4 `/call` —— 请求与统一返回外壳
+### 3.4 `/call` —— 请求与统一返回外壳
 
 后端调用你时发：
 
@@ -113,7 +169,7 @@ Agent 需要某个能力
 
 ---
 
-## 3. 最小可用插件（完整可运行示例）
+## 4. 最小可用插件（完整可运行示例）
 
 用 FastAPI + uvicorn 就能跑。把下面的代码存成 `plugin.py`：
 
@@ -171,7 +227,7 @@ uvicorn plugin:app --host 127.0.0.1 --port 18444
 
 ---
 
-## 4. 注册、心跳、注销（让主后端认识你）
+## 5. 注册、心跳、注销（让主后端认识你）
 
 服务起来≠被主后端认得。你需要一个"注册客户端"周期运行：注册 → 心跳 →（退出时）注销。**这段代码放在你接入端里写**（Electron 主进程 或 Python 服务启动逻辑），而不是放在插件 HTTP 服务里。
 
@@ -182,20 +238,21 @@ uvicorn plugin:app --host 127.0.0.1 --port 18444
 | Electron（桌宠） | `APP-Frontend/electron/cxfc/client.ts`（类 `CxfcClient`） |
 | Python 服务 | `CX-O-VoiceWorkStation/workstation/services/cxfc_registration.py`（类 `CXFCRegistrationService`） |
 
-### 4.1 三个请求的完整形状
+### 5.1 三个请求的完整形状
 
 ```text
 ① 注册    POST {后端}/cxfc/register
    请求体：
    {
      "host": "127.0.0.1",                 // 插件监听地址；0.0.0.0 要改回 127.0.0.1
-     "port": 18444,                       // ★ 插件实际监听端口，后端靠它回连你的 /call
+     "port": 18444,                       // ★ 插件实际监听端口（direct 时后端靠它回连 /call）
      "name": "MyFirstPlugin",
      "version": "1.0.0",
+     "transport": "direct",               // 可选：direct / relay / embedded，缺省 direct（见第 2 章）
      "capabilities": ["greeting"],        // 能力标识，随便写，作归类
-     "tools": [/* 和第 2.2 节同结构的工具数组 */],
+     "tools": [/* 和第 3 章同结构的工具数组 */],
      "skills": [/* 技能数组 */]
-     // 下面三个只有"受控插件"才带，见第 8 章：
+     // 下面三个只有"受控插件"才带，见第 9 章：
      // "token": "注册令牌",
      // "tls_cert_fingerprint": "证书指纹",
      // "tls_cert_pem": "证书PEM原文"
@@ -210,7 +267,7 @@ uvicorn plugin:app --host 127.0.0.1 --port 18444
 ③ 注销    DELETE {后端}/cxfc/plugins/{plugin_id}   （应用退出时，尽力而为，失败别阻断退出）
 ```
 
-### 4.2 注册客户端应有的行为（照做最稳）
+### 5.2 注册客户端应有的行为（照做最稳）
 
 - **启动**：先注册；注册成功前若后端没起，要**指数退避重试**（如 1s → 2s → 4s … 封顶 30s），后端起来后能自动连上。
 - **保活**：注册成功后，按固定间隔（约 10s）发心跳。
@@ -222,7 +279,7 @@ uvicorn plugin:app --host 127.0.0.1 --port 18444
 
 ---
 
-## 5. 验证接入是否成功
+## 6. 验证接入是否成功
 
 1. **看插件列表**：浏览器打开 `GET {后端}/cxfc/plugins`，应能看到 `MyFirstPlugin`，且状态为 `connected`。
 2. **触发一次调用**（验证全链路）：
@@ -236,7 +293,7 @@ uvicorn plugin:app --host 127.0.0.1 --port 18444
 
 ---
 
-## 6. 加更多工具
+## 7. 加更多工具
 
 每加一个工具只动两处，别改别处：
 
@@ -250,11 +307,11 @@ uvicorn plugin:app --host 127.0.0.1 --port 18444
 
 ---
 
-## 7. 参考工具规格（屏幕 / 键盘 / 运行指令）
+## 8. 参考工具规格（屏幕 / 键盘 / 运行指令）
 
 仓库里电脑控制插件已经做了一套"操作电脑"的完整工具，是做类似工具时的最佳模板。下面是三工具的**请求参数**规格（字段与 `public/schema/computer_control_plugin.schema.json` 一致），可直接抄。
 
-### 7.1 屏幕控制 `computer_screen_control`
+### 8.1 屏幕控制 `computer_screen_control`
 
 参数 `action` 必填：
 
@@ -268,7 +325,7 @@ uvicorn plugin:app --host 127.0.0.1 --port 18444
 
 > 屏幕采集内容**不得写入日志**。
 
-### 7.2 键盘控制 `computer_keyboard_control`
+### 8.2 键盘控制 `computer_keyboard_control`
 
 | 字段 | 类型 | 说明 |
 |------|------|------|
@@ -280,7 +337,7 @@ uvicorn plugin:app --host 127.0.0.1 --port 18444
 
 > 密码、密钥等敏感输入**不得由工具自动记录**。
 
-### 7.3 运行指令 `computer_run_command`
+### 8.3 运行指令 `computer_run_command`
 
 | 字段 | 类型 | 说明 |
 |------|------|------|
@@ -293,38 +350,38 @@ uvicorn plugin:app --host 127.0.0.1 --port 18444
 **返回**：`success / exit_code / stdout(截断) / stderr(截断) / timed_out / truncated / error`。
 `success` 只代表"进程成功启动且未超时"，**不代表退出码为 0**——判断是否成功要看 `exit_code`。
 
-> 运行指令这类工具，必须保留第 8 章 8.5 的完整护栏，否则一是危险、二是 GN 级审查不会放行。
+> 运行指令这类工具，必须保留第 9 章 9.5 的完整护栏，否则一是危险、二是 GN 级审查不会放行。
 
 ---
 
-## 8. 安全模型（完整细节）
+## 9. 安全模型（完整细节）
 
 安全按"你的工具会不会操作这台电脑"分两档。**会操作电脑（屏幕/键盘/运行命令/动文件）必须走完整安全**，参考 `APP-Frontend/electron/plugins/computerControl/`。四层叠加：
 
-### 8.1 本地授权（Authorization）
+### 9.1 本地授权（Authorization）
 
 - 语义：一次点击"授权"后**永久有效**，用户主动撤销即失效（撤销即关闭）。
 - 未授权时，三个工具一律拒绝且**不执行任何本机动作**。
 - 别把它和"认证"混：`NOT_AUTHORIZED` 是"认证过了但授权关着"，`UNAUTHORIZED` 是"认证就失败了"。
 
-### 8.2 认证（Authentication）
+### 9.2 认证（Authentication）
 
 - 注册时签发一个随机令牌（仓库做法：256-bit = 32 字节随机 hex），持久化在**主进程 userData**，权限 `0600`。
 - 后端转发 `/call` 时带 `Authorization: Bearer <token>`；你收到后校验，令牌缺失/错误 → 返回 `UNAUTHORIZED`。
 - 令牌**不要**经 `/tools`、`/health` 等元数据接口明文回传。
 
-### 8.3 防重放（Anti-Replay）
+### 9.3 防重放（Anti-Replay）
 
 - 每次 `/call` 带唯一 `request_id`（后端转发时用 `uuid4()` 生成）。
 - 你记录最近收到的 `request_id`，当前时间窗内重复 → 返回 `REPLAY_DETECTED`（409），不执行动作。
 
-### 8.4 TLS 首次信任 + 证书固定（TOFU）
+### 9.4 TLS 首次信任 + 证书固定（TOFU）
 
 - 插件生成自签名证书，注册时把**证书 PEM** 和它的 **SHA-256 指纹**都上报。
 - 后端会校验"指纹与 PEM 算出来的一致"，一致才收；并把这个 PEM 当 CA 保存，之后访问你只用这把证书。**后端只信任注册时保存的那一份证书**，换了证书就得重新注册。
 - 所以插件端要注意：`host` 最好用固定地址注册，`port` 若冲突自动换端口后要重新注册（绑定 Tls 证书也要跟着）。
 
-### 8.5 `run_command` 的护栏（做运行命令工具必备）
+### 9.5 `run_command` 的护栏（做运行命令工具必备）
 
 | 护栏 | 默认值 | 作用 |
 |------|--------|------|
@@ -338,7 +395,7 @@ uvicorn plugin:app --host 127.0.0.1 --port 18444
 - **结构化传参**：用 `command + args[]`，禁止把未校验输入拼接进 `shell` 命令行。
 - **env 白名单**：只透传 `env` 里声明过的变量，其余不注入。
 
-### 8.6 统一错误码
+### 9.6 统一错误码
 
 出错时在返回里带 `error_code`，取值固定（`public/schema/computer_control_error_codes.json`）：
 
@@ -355,7 +412,7 @@ uvicorn plugin:app --host 127.0.0.1 --port 18444
 
 ---
 
-## 9. 如何给插件加安全（分步）
+## 10. 如何给插件加安全（分步）
 
 给一个会"操作电脑"的插件上完整安全的落地清单：
 
@@ -365,15 +422,15 @@ uvicorn plugin:app --host 127.0.0.1 --port 18444
 4. **防重放**：记录最近 `request_id`（带时间窗），重复返回 `REPLAY_DETECTED`。
 5. **授权状态**：提供授权读写（放 IP 上的悬浮窗按钮 / 本地文件持久化），未授权返回 `NOT_AUTHORIZED`。
 6. **执行顺序固定**：认证 → 防重放 → 授权 → 参数校验 → 执行，任一不过立刻返回、不执行。
-7. **`run_command` 护栏**：如做运行命令，把 8.5 的五项护栏做进去。
+7. **`run_command` 护栏**：如做运行命令，把 9.5 的五项护栏做进去。
 
 认证、授权、TLS、三工具的完整实现可直接看/复用 `electron/plugins/computerControl/` 下的 `auth.ts`、`authorization.ts`、`tls.ts`、`runCommand.ts`。
 
 ---
 
-## 10. 配置项
+## 11. 配置项
 
-### 10.1 后端 CXFC 配置（`UnifiedConfig.cxfc`）
+### 11.1 后端 CXFC 配置（`UnifiedConfig.cxfc`）
 
 | 键 | 默认值 | 说明 |
 |----|--------|------|
@@ -385,7 +442,7 @@ uvicorn plugin:app --host 127.0.0.1 --port 18444
 | `auto_connect_on_startup` | true | 启动时自动连接已注册插件 |
 | `storage_path` | data/cxfc_plugins.db | 插件持久化库路径 |
 
-### 10.2 Electron 电脑控制插件配置
+### 11.2 Electron 电脑控制插件配置
 
 | 键 | 默认值 | 说明 |
 |----|--------|------|
@@ -394,7 +451,7 @@ uvicorn plugin:app --host 127.0.0.1 --port 18444
 | `host` | 0.0.0.0 | HTTPS 监听地址 |
 | `port` | 18443 | HTTPS 监听端口 |
 | `tls_cert_path` / `tls_fingerprint` | "" | TLS 证书 / 指纹 |
-| `run_command.*` | 见 8.5 | 运行指令护栏 |
+| `run_command.*` | 见 9.5 | 运行指令护栏 |
 | `auto_start` | false | Electron 随机启动（Windows 登录项） |
 | `run_as_admin` | false | 管理员权限启动（Windows UAC） |
 | `backend_url` | https://127.0.0.1:8000 | 主后端地址 |
@@ -402,7 +459,7 @@ uvicorn plugin:app --host 127.0.0.1 --port 18444
 
 ---
 
-## 11. 常见坑与要点
+## 12. 常见坑与要点
 
 - **`/call` 永远 200**：业务失败用 `success:false`，别用非 200 状态码表达业务错误。
 - **心跳 404 = 后端忘了你**：立即重置状态、下轮重新注册。
@@ -413,13 +470,15 @@ uvicorn plugin:app --host 127.0.0.1 --port 18444
 - **证书固定意味着换证要重注册**：换了自签名证书，得重新走一遍注册让后端学新证书。
 - **`_plugins` 并发**：这是后端内部的事，但你如果自己维护类似的内存表也记得加锁。
 - **别多开注册循环**：Electron / Python 端注册服务要幂等，重复 start 会开多个心跳任务。
+- **确认 `transport` 与调用链一致**：relay/embedded 插件的注册、调用方式与 direct 不同；后端连不到你时先查是不是该走 relay、且前端通道已注入。
 
 ---
 
-## 12. 一分钟自检清单
+## 13. 一分钟自检清单
 
 - [ ] 实现了 `/health /tools /skills /call` 四个端点（工具/技能可按需留空）
 - [ ] `/call` 永远返回 HTTP 200，业务失败用 `success:false`
+- [ ] 明确自己的 `transport`（direct / relay / embedded），注册字段与调用链一致
 - [ ] 有注册 + 心跳循环，心跳遇 404 会重新注册，注册失败会退避重试
 - [ ] 上报的 port 是实际监听端口，`0.0.0.0` 已改 `127.0.0.1`
 - [ ] 在 `/cxfc/plugins` 能看到插件且状态 connected

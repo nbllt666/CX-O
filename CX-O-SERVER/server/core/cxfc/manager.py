@@ -3,6 +3,7 @@ import asyncio
 import base64
 import hashlib
 import os
+import time
 import uuid
 from datetime import datetime
 from pathlib import Path
@@ -12,11 +13,29 @@ import httpx
 
 from server.core.logging_config import get_contextual_logger
 
-from .models import CXFCPluginInfo, PluginStatus, SkillDefinition, CXFCEvent, CXFCRegisterRequest
+from .models import (
+    CXFCPluginInfo,
+    PluginStatus,
+    PluginTransport,
+    SkillDefinition,
+    CXFCEvent,
+    CXFCRegisterRequest,
+)
 from .storage import CXFCStorage
 from .skill_registry import SkillRegistry
 
 logger = get_contextual_logger(__name__)
+
+
+# ---------------------------------------------------------------------------
+# 稳定错误码（relay / embedded 专用）。direct 沿用既有错误返回，不涉及改造。
+# ---------------------------------------------------------------------------
+# relay 插件已注册但无活跃前端通道，无法投递调用。
+ERROR_RELAY_UNREACHABLE = "RELAY_UNREACHABLE"
+# relay 调用已投递但等待前端回报超时。
+ERROR_RELAY_TIMEOUT = "RELAY_TIMEOUT"
+# 嵌入式工具已登记描述但缺少可用于执行的可调用 handler。
+ERROR_EMBEDDED_HANDLER_MISSING = "EMBEDDED_HANDLER_MISSING"
 
 
 class CXFCManager:
@@ -49,6 +68,13 @@ class CXFCManager:
         self._tls_clients: Dict[str, httpx.AsyncClient] = {}
         self._tls_ca_paths: Dict[str, str] = {}
         self._tls_dir: Optional[Path] = None
+        # relay 传输：可注入的前端通道投递回调（按 plugin_id 注入，返回 bool 表示通道可用）。
+        self._dispatch_relay: Dict[str, Callable[[Dict], bool]] = {}
+        # 待回报请求：request_id -> asyncio.Future，relay/result 回报时 resolve。
+        self._relay_waiter: Dict[str, "asyncio.Future"] = {}
+        # embedded 传输：插件 ID -> {tool_name: Callable} 进程内 handler 映射。
+        self._embedded_handlers: Dict[str, Dict[str, Callable]] = {}
+        self._relay_timeout: float = 30.0
 
     def _track_background_task(self, task: asyncio.Task) -> asyncio.Task:
         """追踪后台任务，防止被GC回收；任务完成后自动从集合中移除"""
@@ -203,8 +229,14 @@ class CXFCManager:
         self._register_catalog(plugin.plugin_id, tools, skills)
         await self._storage.save_plugin(plugin)
 
-    def _register_catalog(self, plugin_id: str, tools: List[Dict], skills: List[Dict]):
-        """将插件声明的 tools/skills 注册进工具与技能注册表（DRY 共享）。"""
+    def _register_catalog(self, plugin_id: str, tools: List[Dict], skills: List[Dict], handlers: Optional[Dict[str, Callable]] = None):
+        """将插件声明的 tools/skills 注册进工具与技能注册表（DRY 共享）。
+
+        嵌入式传输传入 handlers={tool_name: Callable} 时，工具连同 handler 一并写入
+        ToolRegistry，使 LLM 工具分发可直接进程内执行；direct/relay 不传则沿用既有
+        无 handler 注册（由 manager.call_tool 转发）。
+        """
+        handlers = handlers or {}
         if self._tool_registry:
             for tool in tools:
                 try:
@@ -212,6 +244,7 @@ class CXFCManager:
                         name=tool.get("name", ""),
                         description=tool.get("description", ""),
                         parameters=tool.get("parameters", {}),
+                        function=handlers.get(tool.get("name", "")),
                         category="cxfc",
                         tags=[plugin_id],
                         enabled=True,
@@ -287,6 +320,8 @@ class CXFCManager:
             capabilities=request.capabilities,
             skills=request.skills,
             status=PluginStatus.CONNECTED,
+            # 扩展：保留 transport 判别（默认 direct，不改变既有行为）
+            transport=request.transport,
             last_seen=datetime.now(),
             # Task3 电脑控制接入：保存注册令牌与 TLS 证书指纹，供后续转发 /call 认证
             token=request.token,
@@ -304,6 +339,115 @@ class CXFCManager:
         async with self._plugins_lock:
             self._plugins[plugin_id] = plugin
         return plugin
+
+    async def register_embedded_plugin(
+        self,
+        plugin_id: str,
+        name: str = "",
+        tools: Optional[List[Dict]] = None,
+        handlers: Optional[Dict[str, Callable]] = None,
+        skills: Optional[List[Dict]] = None,
+        capabilities: Optional[List[str]] = None,
+    ) -> CXFCPluginInfo:
+        """登记后端进程内嵌入式插件（transport=embedded，不走网络、无 host/port）。
+
+        工具连同进程内 handler 写入 ToolRegistry（category="cxfc"），使 LLM 工具分发
+        可直接执行；同时保留 CXFC 技能与事件语义。
+        """
+        tools = tools or []
+        skills = skills or []
+        handlers = handlers or {}
+        plugin = CXFCPluginInfo(
+            plugin_id=f"embedded_{plugin_id}",
+            host="",
+            port=0,
+            name=name or plugin_id,
+            tools=tools,
+            capabilities=capabilities or [],
+            skills=skills,
+            status=PluginStatus.CONNECTED,
+            transport=PluginTransport.EMBEDDED,
+            last_seen=datetime.now(),
+            created_at=datetime.now(),
+            updated_at=datetime.now(),
+        )
+        # 保存进程内可调用 handler 映射（供 call_tool embedded 分支与 ToolRegistry 使用）
+        self._embedded_handlers[plugin.plugin_id] = handlers
+
+        self._register_catalog(plugin.plugin_id, tools, skills, handlers)
+
+        await self._storage.save_plugin(plugin)
+        async with self._plugins_lock:
+            self._plugins[plugin.plugin_id] = plugin
+        return plugin
+
+    def register_relay_dispatcher(self, plugin_id: str, dispatcher: Callable[[Dict], bool]):
+        """为 relay 插件注入前端通道投递回调（推送一条工具调用消息，返回连通与否）。"""
+        self._dispatch_relay[plugin_id] = dispatcher
+
+    def unregister_relay_dispatcher(self, plugin_id: str):
+        self._dispatch_relay.pop(plugin_id, None)
+
+    async def register_relay_plugin(
+        self,
+        plugin_id: str,
+        name: str = "",
+        tools: Optional[List[Dict]] = None,
+        skills: Optional[List[Dict]] = None,
+        capabilities: Optional[List[str]] = None,
+        token: Optional[str] = None,
+    ) -> CXFCPluginInfo:
+        """登记 relay 插件（transport=relay）。后端不直连 host:port，改由前端通道投递。
+
+        注册后需注入对应 plugin_id 的 dispatcher（register_relay_dispatcher）才能投递；
+        未注入时 call_tool 返回 RELAY_UNREACHABLE。此方法登记到内存与存储。
+        """
+        tools = tools or []
+        skills = skills or []
+        plugin = CXFCPluginInfo(
+            plugin_id=f"relay_{plugin_id}",
+            host="",
+            port=0,
+            name=name or plugin_id,
+            tools=tools,
+            capabilities=capabilities or [],
+            skills=skills,
+            status=PluginStatus.CONNECTED,
+            transport=PluginTransport.RELAY,
+            token=token,
+            last_seen=datetime.now(),
+            created_at=datetime.now(),
+            updated_at=datetime.now(),
+        )
+        self._register_catalog(plugin.plugin_id, tools, skills)
+
+        await self._storage.save_plugin(plugin)
+        async with self._plugins_lock:
+            self._plugins[plugin.plugin_id] = plugin
+        return plugin
+
+    def get_relay_targets(self) -> List[Dict]:
+        """列出已注册且已注入通道的 relay 插件目标（含插件描述与通道活性）。"""
+        targets = []
+        for plugin_id, dispatcher in self._dispatch_relay.items():
+            plugin = self._plugins.get(plugin_id)
+            targets.append(
+                {
+                    "plugin_id": plugin_id,
+                    "name": plugin.name if plugin else plugin_id,
+                    "transport": PluginTransport.RELAY.value,
+                    "active": dispatcher is not None,
+                }
+            )
+        return targets
+
+    def complete_relay_result(self, plugin_id: str, request_id: str, payload: Dict):
+        """由 relay 结果回报入口调用，resolve 等待中的调用 Future。"""
+        future = self._relay_waiter.pop(request_id, None)
+        if future and not future.done():
+            future.set_result(payload)
+            return True
+        return False
 
     def _clear_catalog(self, plugin_id: str, tools: List[Dict]):
         """清理某插件已注册的 tools/skills（DRY 共享，供断开与刷新复用）。"""
@@ -326,6 +470,12 @@ class CXFCManager:
 
         self._clear_catalog(plugin_id, plugin.tools)
 
+        # 清理 relay / embedded 专属状态（通道回调、进程内 handler）
+        self._dispatch_relay.pop(plugin_id, None)
+        self._embedded_handlers.pop(plugin_id, None)
+        for rid in [k for k in self._relay_waiter if plugin_id in k]:
+            self._relay_waiter.pop(rid, None)
+
         # B-1 修复：释放该插件专用 TLS client 与 CA 文件，避免连接/文件泄漏
         await self._release_tls_client(plugin_id)
 
@@ -340,6 +490,14 @@ class CXFCManager:
             plugin = self._plugins.get(plugin_id)
         if not plugin or plugin.status != PluginStatus.CONNECTED:
             return {"success": False, "error": f"插件 {plugin_id} 不可用"}
+
+        # relay 传输：不经网络直连，把调用投递到前端通道并等待回报。
+        if plugin.transport == PluginTransport.RELAY:
+            return await self._call_tool_relay(plugin, tool_name, arguments or {})
+
+        # embedded 传输：进程内 handler 直接分发，不发起任何 HTTP 调用。
+        if plugin.transport == PluginTransport.EMBEDDED:
+            return await self._call_tool_embedded(plugin, tool_name, arguments or {})
 
         headers = {}
         body = {"tool": tool_name, "arguments": arguments or {}}
@@ -362,6 +520,68 @@ class CXFCManager:
             )
             return resp.json()
         except Exception as e:
+            return {"success": False, "error": str(e)}
+
+    async def _call_tool_embedded(self, plugin: CXFCPluginInfo, tool_name: str, arguments: Dict[str, Any]) -> Dict[str, Any]:
+        """嵌入式工具进程内分发。handler 缺失返回稳定错误码，不产生任何网络调用。"""
+        handler = self._embedded_handlers.get(plugin.plugin_id, {}).get(tool_name)
+        if handler is None:
+            return {
+                "success": False,
+                "error": (f"嵌入式工具 {tool_name} 缺少可调用 handler: "
+                          f"{ERROR_EMBEDDED_HANDLER_MISSING}"),
+            }
+        try:
+            result = handler(**(arguments or {}))
+            if asyncio.iscoroutine(result):
+                result = await result
+            return {"success": True, "result": result, "tool_name": tool_name}
+        except Exception as e:
+            logger.error(f"嵌入式工具 {tool_name} 调用失败: {e}")
+            return {"success": False, "error": str(e), "tool_name": tool_name}
+
+    async def _call_tool_relay(self, plugin: CXFCPluginInfo, tool_name: str, arguments: Dict[str, Any]) -> Dict[str, Any]:
+        """relay 调用投递——把 {tool, arguments, request_id} 投递到前端通道并等待结果。
+
+        未注入活跃通道返回 RELAY_UNREACHABLE；超时返回 RELAY_TIMEOUT；全程不发起
+        host:port 直连。request_id 与令牌语义沿袭 direct 的既有防重放护栏。
+        """
+        dispatcher = self._dispatch_relay.get(plugin.plugin_id)
+        if dispatcher is None:
+            return {"success": False, "error": f"{ERROR_RELAY_UNREACHABLE}: {plugin.plugin_id}"}
+
+        request_id = str(uuid.uuid4())
+        message = {
+            "plugin_id": plugin.plugin_id,
+            "tool": tool_name,
+            "arguments": arguments or {},
+            "request_id": request_id,
+            "token": plugin.token,
+        }
+        loop = asyncio.get_event_loop()
+        future = loop.create_future()
+        self._relay_waiter[request_id] = future
+
+        try:
+            delivered = dispatcher(message)
+            if asyncio.iscoroutine(delivered):
+                delivered = await delivered
+            if not delivered:
+                self._relay_waiter.pop(request_id, None)
+                return {"success": False, "error": f"{ERROR_RELAY_UNREACHABLE}: {plugin.plugin_id}"}
+            await asyncio.wait_for(future, timeout=self._relay_timeout)
+            payload = future.result()
+            return {
+                "success": bool(payload.get("success", True)),
+                "result": payload.get("result"),
+                "error": payload.get("error"),
+                "tool_name": tool_name,
+            }
+        except asyncio.TimeoutError:
+            self._relay_waiter.pop(request_id, None)
+            return {"success": False, "error": f"{ERROR_RELAY_TIMEOUT}: {plugin.plugin_id}"}
+        except Exception as e:
+            self._relay_waiter.pop(request_id, None)
             return {"success": False, "error": str(e)}
 
     async def update_heartbeat(self, plugin_id: str, port: int) -> bool:

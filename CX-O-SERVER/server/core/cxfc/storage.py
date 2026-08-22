@@ -8,7 +8,7 @@ import aiosqlite
 
 from server.core.logging_config import get_contextual_logger
 
-from .models import CXFCPluginInfo, PluginStatus
+from .models import CXFCPluginInfo, PluginStatus, PluginTransport
 
 logger = get_contextual_logger(__name__)
 
@@ -47,6 +47,7 @@ class CXFCStorage:
                 token TEXT,
                 tls_cert_fingerprint TEXT,
                 tls_cert_pem TEXT,
+                transport TEXT,
                 created_at TEXT,
                 updated_at TEXT
             )
@@ -56,6 +57,7 @@ class CXFCStorage:
         await self._ensure_column("token", "TEXT")
         await self._ensure_column("tls_cert_fingerprint", "TEXT")
         await self._ensure_column("tls_cert_pem", "TEXT")
+        await self._ensure_column("transport", "TEXT")
         await self._db.commit()
 
     async def _ensure_column(self, column: str, col_type: str):
@@ -77,8 +79,8 @@ class CXFCStorage:
         await self._db.execute(
             """
             INSERT OR REPLACE INTO cxfc_plugins
-            (plugin_id, host, port, name, version, capabilities, status, last_seen, tools, skills, token, tls_cert_fingerprint, tls_cert_pem, created_at, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            (plugin_id, host, port, name, version, capabilities, status, last_seen, tools, skills, token, tls_cert_fingerprint, tls_cert_pem, transport, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 plugin.plugin_id,
@@ -94,6 +96,7 @@ class CXFCStorage:
                 plugin.token,
                 plugin.tls_cert_fingerprint,
                 plugin.tls_cert_pem,
+                plugin.transport.value,
                 plugin.created_at.isoformat() if plugin.created_at else None,
                 plugin.updated_at.isoformat() if plugin.updated_at else None,
             ),
@@ -119,6 +122,11 @@ class CXFCStorage:
                 token=row["token"] if "token" in row.keys() else None,
                 tls_cert_fingerprint=row["tls_cert_fingerprint"] if "tls_cert_fingerprint" in row.keys() else None,
                 tls_cert_pem=row["tls_cert_pem"] if "tls_cert_pem" in row.keys() else None,
+                transport=(
+                    PluginTransport(row["transport"])
+                    if ("transport" in row.keys() and row["transport"])
+                    else PluginTransport.DIRECT
+                ),
                 created_at=datetime.fromisoformat(row["created_at"]) if row["created_at"] else None,
                 updated_at=datetime.fromisoformat(row["updated_at"]) if row["updated_at"] else None,
             )

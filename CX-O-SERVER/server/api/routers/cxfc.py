@@ -9,6 +9,9 @@ from server.core.cxfc.models import (
     CXFCHeartbeatRequest,
     CXFCEvent,
     CXFCConnectRequest,
+    CXFCRelayRegisterRequest,
+    CXFCRelayResultRequest,
+    CXFCEmbeddedRegisterRequest,
 )
 from server.core.logging_config import get_contextual_logger
 
@@ -177,4 +180,82 @@ async def call_plugin_tool(plugin_id: str, request: CXFCCallToolRequest):
         return {"status": "ok", "result": result}
     except Exception as e:
         logger.error(f"调用插件工具失败: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="内部服务器错误")
+
+
+@router.post("/cxfc/relay/register")
+async def relay_register(request: CXFCRelayRegisterRequest):
+    """注册一个 relay（前端转接）插件目标。
+
+    前端（或经前端代理的远端插件）登记插件描述与令牌；后端随后需为该 plugin_id
+    注入活跃通道（register_relay_dispatcher）才能投递调用。
+    """
+    cxfc_manager = get_cxfc_manager()
+    try:
+        plugin = await cxfc_manager.register_relay_plugin(
+            plugin_id=request.plugin_id or request.name,
+            name=request.name,
+            tools=request.tools,
+            skills=request.skills,
+            capabilities=request.capabilities,
+            token=request.token,
+        )
+        return {"status": "ok", "plugin_id": plugin.plugin_id}
+    except Exception as e:
+        logger.error(f"relay 注册失败: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="内部服务器错误")
+
+
+@router.get("/cxfc/relay/targets")
+async def relay_targets():
+    """列出已注册并注入通道的 relay 插件目标。"""
+    cxfc_manager = get_cxfc_manager()
+    try:
+        return {"targets": cxfc_manager.get_relay_targets()}
+    except Exception as e:
+        logger.error(f"获取 relay 目标失败: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="内部服务器错误")
+
+
+@router.post("/cxfc/relay/result")
+async def relay_result(request: CXFCRelayResultRequest):
+    """前端回报一次被转发的工具调用结果，回填给后端等待中的调用方。"""
+    cxfc_manager = get_cxfc_manager()
+    try:
+        payload = {
+            "success": request.success,
+            "result": request.result,
+            "error": request.error,
+        }
+        resolved = cxfc_manager.complete_relay_result(request.plugin_id, request.request_id, payload)
+        if not resolved:
+            raise HTTPException(status_code=404, detail="未找到对应待回报调用")
+        return {"status": "ok"}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"relay 结果回报失败: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="内部服务器错误")
+
+
+@router.post("/cxfc/embedded")
+async def embedded_register(request: CXFCEmbeddedRegisterRequest):
+    """登记后端进程内嵌入式工具描述（transport=embedded，不走网络）。
+
+    实际 handler 由 register_embedded_plugin() 以 Callable 在进程内注入；此处登记
+    描述供列出与管理时展示传输类型。handler 由调用方注入后，调用走进程内分发。
+    """
+    cxfc_manager = get_cxfc_manager()
+    try:
+        tools = [t.model_dump() for t in request.tools]
+        plugin = await cxfc_manager.register_embedded_plugin(
+            plugin_id=request.plugin_id,
+            name=request.name,
+            tools=tools,
+            skills=request.skills,
+            capabilities=request.capabilities,
+        )
+        return {"status": "ok", "plugin_id": plugin.plugin_id}
+    except Exception as e:
+        logger.error(f"嵌入式插件注册失败: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail="内部服务器错误")

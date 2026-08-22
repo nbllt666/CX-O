@@ -117,12 +117,13 @@ export interface Tool {
 
 export interface CxfcPlugin {
   plugin_id: string;
-  host: string;
-  port: number;
+  host?: string;
+  port?: number;
   name?: string;
   version?: string;
   capabilities: string[];
   status: 'connected' | 'disconnected';
+  transport?: 'direct' | 'relay' | 'embedded';
   last_seen?: string | null;
   tools: Array<{ name: string; description?: string }>;
   skills: Array<{ name: string; description?: string }>;
