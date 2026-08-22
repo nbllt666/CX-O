@@ -36,7 +36,8 @@
       "subtitleSource": "字幕源",
       "audioSource": "音频源",
       "distillation": "蒸馏",
-      "neko": "Neko 插件"
+      "neko": "Neko 插件",
+      "autonomy": "Agent 生活"
     },
     "neko": {
       "subtitle": "对接 neko 插件运行时与插件商店",
@@ -467,6 +468,65 @@
       "resultLabel": "返回结果",
       "run": "执行",
       "running": "执行中..."
+    },
+    "autonomy": {
+      "subtitle": "CX-O-Autonomy 自主系统：动机、预算与行为回放",
+      "refresh": "刷新",
+      "statusTitle": "当前状态",
+      "statusBadge": {
+        "running": "运行中",
+        "paused": "已暂停",
+        "sleeping": "休眠中",
+        "budgetLimited": "预算受限",
+        "error": "异常",
+        "disabled": "未启用"
+      },
+      "lastAction": "上次行动",
+      "lastCycleAt": "上次循环",
+      "budgetResetDate": "预算重置日",
+      "budgetUsedToday": "今日已用 tokens",
+      "emptyValue": "—",
+      "disabledTitle": "自主系统未启用",
+      "disabledHint": "自主系统未启用，点击「启用」开始自主生活",
+      "motivationsTitle": "四维动机",
+      "motivation": {
+        "curiosity": "好奇心",
+        "social_need": "社交需求",
+        "creative_drive": "创作欲",
+        "fatigue": "疲惫度"
+      },
+      "motivationsDisabledHint": "启用自主系统后展示实时动机状态",
+      "budgetTitle": "今日预算用量",
+      "budgetUsed": "已用 {{used}} / {{limit}} tokens",
+      "budgetNoLimit": "未设置每日预算上限",
+      "budgetOverThreshold": "已接近预算上限",
+      "budgetExceeded": "已超出每日预算",
+      "controlTitle": "控制",
+      "enable": "启用",
+      "disable": "禁用",
+      "pause": "暂停",
+      "resume": "恢复",
+      "emergencyStop": "紧急停止",
+      "emergencyConfirm": "确定要紧急停止自主系统吗？主循环将被立即停用。",
+      "autoStart": "随应用自动启动",
+      "actionFailed": "操作失败，请重试",
+      "auditTitle": "行为回放",
+      "auditTotal": "共 {{count}} 条",
+      "auditEmpty": "暂无行为记录",
+      "auditLoadFailed": "行为记录加载失败",
+      "loadMore": "加载更多",
+      "loadingMore": "加载中...",
+      "colTimestamp": "时间",
+      "colAction": "行为",
+      "colTarget": "目标",
+      "colResult": "结果",
+      "colTrigger": "触发原因",
+      "result": {
+        "success": "成功",
+        "failed": "失败",
+        "blocked": "被拦截",
+        "skipped": "已跳过"
+      }
     },
     "memoryAgent": {
       "subtitle": "记忆管理助手：用自然语言搜索、更新、删除、导出记忆",

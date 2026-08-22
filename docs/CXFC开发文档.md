@@ -84,6 +84,27 @@ relay 传输提供以下后端路径（`direct`/`embedded` 用不到，但了解
 
 > relay 的令牌与 `request_id` 防重放语义与直连一致，前端侧需沿用既有护栏。
 
+#### relay WS 推送通道（生产装配，P2-T2）
+
+生产环境下 relay 的"后端 → 前端"投递由 **WebSocketManager 广播**承载，链路如下：
+
+```
+后端 call_tool 命中 transport=relay
+  → CXFCManager._build_relay_ws_dispatcher()（基于 ws_manager.broadcast）
+  → 广播 {type: "cxfc_relay_call", plugin_id, tool, arguments, request_id, token}
+  → 前端 useWebSocket.ts 消息路由命中 cxfc_relay_call
+  → src/hooks/ws/cxfcRelay.ts handleCxfcRelayCall() 执行工具（本机能力经 IPC）
+  → 回报 POST /api/cxfc/relay/result {request_id, plugin_id, success, result/error}
+  → 后端回填给调用方
+```
+
+- 装配入口：`server/main.py` `_init_cxfc` 在 `set_ws_manager(ws_mgr)` 后调用
+  `cxfc_manager.enable_relay_ws_dispatch()`；装配后已注册及后续 relay 插件自动获得真实 WS dispatcher。
+- 无活跃连接 / 广播异常 → `RELAY_UNREACHABLE`；投递后无人回报 → `RELAY_TIMEOUT`；
+  全程不发起 host:port 直连，与 direct 路径隔离。
+- 前端执行入口：Electron 主进程 `computerControl:call-tool` IPC（校验本地授权，与 `/call` HTTP
+  端点同安全模型）；浏览器模式返回不可执行错误。
+
 ### 2.3 embedded 的后端新端点与错误码
 
 | 端点 | 方法 | 作用 |
@@ -93,6 +114,74 @@ relay 传输提供以下后端路径（`direct`/`embedded` 用不到，但了解
 后端进程内用 `CXFCManager.register_embedded_plugin()` 注入 handler；嵌入式工具缺 handler 时返回稳定错误码 `EMBEDDED_HANDLER_MISSING`。
 
 > 你写的是"独立小服务"插件，通常用 `direct` 或 `relay`。`embedded` 更偏后端/系统内部集成，不是对外插件首选的常规形态——但知道它存在有助于理解管理界面里那条"嵌入式"标签从哪来。
+
+#### embedded 生产用法（真实接线示例）
+
+后端进程内用 `CXFCManager.register_embedded_plugin()` 注入 handler。真实可运行范例见
+`server/autonomy/main.py` 的 `setup_autonomy()`（CX-O-Autonomy 自主系统即以此装配）：
+
+```python
+# server/autonomy/main.py（节选）
+AUTONOMY_PLUGIN_ID = "cxo-autonomy"
+AUTONOMY_CAPABILITIES = ["autonomy", "search", "memory", "post", "live"]
+
+TOOL_SPECS = [{
+    "name": "autonomy_get_status",
+    "description": "返回 CX-O-Autonomy 自主系统状态快照（状态/动机/预算/最近行动）",
+    "parameters": {"type": "object", "properties": {}},
+}, {
+    "name": "autonomy_write_memory",
+    "description": "写入自主经历到记忆库（直调 memory manager）。返回 memory_id。",
+    "parameters": {
+        "type": "object",
+        "required": ["content"],
+        "properties": {
+            "content": {"type": "string", "description": "记忆内容"},
+            "tags": {"type": "array", "items": {"type": "string"}},
+            "type": {"type": "string", "default": "long_term"},
+            "permanent": {"type": "boolean", "default": False},
+            "importance": {"type": "integer", "default": 3, "minimum": 0},
+            "metadata": {"type": "object"},
+        },
+    },
+}, ]
+
+# 每个工具对应一个进程内 handler（真实实现，返回/抛错都由后端直接执行）
+async def _autonomy_write_memory(content, tags=None, type="long_term", permanent=False,
+                                 importance=3, metadata=None) -> str:
+    result = await _memory_actions.write_memory(
+        content=content, tags=tags, type=type,
+        permanent=permanent, importance=importance, metadata=metadata)
+    if isinstance(result, dict):
+        raise AutonomyError(str(result.get("error") or "memory_write_failed"),
+                            error_code="AUTONOMY_PERSIST_ERROR")
+    return str(result)
+
+def get_handlers():
+    return {
+        "autonomy_get_status": _autonomy_get_status,
+        "autonomy_write_memory": _autonomy_write_memory,
+        # ... 其余 autonomy_* 工具
+    }
+
+# 装配：register_embedded_plugin(plugin_id, name, tools, handlers, ...)
+await cxfc.register_embedded_plugin(
+    plugin_id=AUTONOMY_PLUGIN_ID,          # 注册后 plugin_id = embedded_cxo-autonomy
+    name="CX-O-Autonomy",
+    tools=TOOL_SPECS,                       # 工具描述（JSON Schema 参数契约）
+    skills=SKILL_SPECS,
+    capabilities=AUTONOMY_CAPABILITIES,
+    handlers=get_handlers(),                # 进程内可调用 handler 映射
+)
+```
+
+要点：
+
+- `plugin_id` 由后端归一为 `embedded_{plugin_id}`，`transport=embedded`，无 host/port、不走网络。
+- `handlers` 与 `tools` 一并登记进后端 `ToolRegistry`（category=`cxfc`），LLM 工具分发可**进程内
+  直接执行**，无需自起 HTTP 服务。
+- 参数契约以 JSON Schema（`parameters`）声明，与 `/tools` 端点结构一致；实现侧只需提供同名 handler。
+- 嵌入式工具缺 handler 时 `call_tool` 返回稳定错误码 `EMBEDDED_HANDLER_MISSING`。
 
 ---
 

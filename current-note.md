@@ -4,6 +4,13 @@
 
 ## 做到哪了
 
+- **CX-O-Autonomy 自主系统**（已闭合，2026-08-22；spec `add-cxo-autonomy-embedded`）
+  - 工程过程：P0 骨架（config/manager/models 对齐 `autonomy_config.schema.json`、`autonomy_state.schema.json`、`autonomy_action.schema.json` 与 `cxo_autonomy.pyi`）→ P1 主循环（感知/动机/规划/行动/审计/反思 + CircadianScheduler 日程调度）→ P2（MCP 搜索接入 free-search-mcp + RSS 降级、发帖器经电脑控制浏览器自动化发布）→ P3（半自动直播 OBS、每日日记写 permanent 记忆、经历整合 Consolidator 注入真实蒸馏服务）→ P4（REST 端点 `/autonomy/status|control|audit|config` + 前端 AutonomyPage「Agent 生活」路由 `/autonomy`）→ 以 embedded CXFC 插件装配（`register_embedded_plugin`，plugin_id=`embedded_cxo-autonomy`，9 个 `autonomy_*` 工具 + 真实 handler 进 ToolRegistry）→ `server/main.py` `setup_autonomy(services)` 接线（enabled=false 或任何异常均隔离跳过）→ P6 GN-004 交付审查（CAUTION-PASS，预算熔断补齐 + 契约漂移修）→ [V] 人类批准合流交付 → 真实环境验证（free-search-mcp 搜索链路运行时 PASS，修复 3 个真实 bug：MCP httpx trust_env 502、provider 执行路径、tags 解析）。
+  - 交接状态：P0-P6 全部已闭合；checklist 全勾选；[V] 双闸门闭合；spec 待归档。
+  - 最终结果：后端全量 **3416 passed 零失败** + 前端 tsc/476 passed + 契约 27 passed + pyflakes 零告警；embedded 插件随主服务注册，9 工具真实 handler；变更文档 `20260822_模块0_新增CX-O-Autonomy自主系统.md`（含真实环境验证附录）。
+  - 未闭合项（需用户 onboard）：真实 OBS 直播、真实 Tuner 提交。**free-search-mcp 已闭环**（2026-08-22：克隆至 `third_party/free-search-mcp`、venv 安装 0.9.2、写简化 HTTP 适配器 `cxo_search_adapter.py`、注册进 `config.json` mcp_servers 端口 8720，真实多引擎搜索全链路运行时 PASS）；**真实社交平台发帖凭证已关闭**（人类确认不需要——发帖经 Agent 操作电脑浏览器自动化发布，Poster 实现即此路径，仅依赖既有电脑控制插件在线且已授权，无需平台 API 凭证）。历史 .trae/documents 命名遗留 15 项（模块前端_*/蒸馏系统_*）。
+  - 接续入口：spec `add-cxo-autonomy-embedded` 归档；用户 onboard 真实 free-search-mcp / OBS / Tuner 后闭合未闭合项（发帖无需凭证，电脑控制插件在线并授权即可）。
+
 - **Qwen3 TTS 统一迁移 + CosyVoice3 主引擎架构**（已闭合，2026-08-16；spec `cosyvoice2-primary-qwen3tts-base-fallback`）
   - 工程过程：用户裁决替换 IndexTTS 加速方案 → 新架构确认（CosyVoice2 主 + VoiceDesign 保留 + Qwen3-TTS Base 降级 + 移除 IndexTTS）→ spec 三件套 → 部署 CosyVoice2-0.5B（8094，独立 conda）与 Qwen3-TTS Base（8093，vLLM）→ Provider 路由/降级链重写（带 refs→cosyvoice、无 refs→voicedesign，失败降级 qwen3_base，runtime 记录实际运行时）→ 配置契约 v1.5.0（s0601 人类批准）→ 移除 IndexTTS（服务/脚本/第三方副本/生产引用零残留）→ CUDA graph + StaticCache 极端优化（LLM decode 82→23.8ms/token，RTF 2.47→0.55~0.78，[V] 采纳）→ 全量回归（2886 passed）+ E2E + GN-004 CAUTION-PASS → 用户升级要求 → CosyVoice3（Fun-CosyVoice3-0.5B-2512）迁移：服务层适配（模型名推断/`<|endofprompt|>` 补全/CUDA graph speech_embedding 分支/正弦波预热）+ Provider/契约模型名同步 → GN-004 CAUTION-PASS（SB-1/O2/O4 修复复验）→ 用户关注首包 → 流式 TTFT 深度优化四连（httpx TCP_NODELAY 传输首包 8.3s→0.02s + 流式预热消除 CUDA graph 流式 shape 重捕获 + flow-steps 5 + token_min_hop_len 100→10 消除首 hop 放大）→ Provider 级流式首包 12.6s→**1.5s 稳定**（复测 run1=1.70s/run2=1.39s）。双流式确认接线：CosyVoice tts() 流式循环中 LLM 解码在独立 CUDA stream（llm_context）与 token2wav 并发，逐 hop 下发。
   - 交接状态：Task 1-6 已闭合；Task 7 全量回归/E2E/变更记录已闭合；Task 8 CosyVoice3 迁移已闭合（GN-004 迁移审查 CAUTION-PASS + 观察项修复 + TTFT 1.5s 稳定复测 + 交付前终审 GN-004 CAUTION-PASS）；**待 [V] 人类批准交付（c5d）**。终审观察项处置：O3/O4 文本滞后已修复（Provider docstring 5 处 + 422 错误消息同步 CosyVoice3，pyflakes 零警告 + 35 passed）；O1 cxo-intro.html 过时介绍页、O2 .gitignore 历史 ignore 规则为历史残留/用户可见资产，无运行影响，送达人类知悉。变更文档：`20260816_模块0_CosyVoice2架构落地与优化.md`、`20260816_模块0_修复qwen3_base降级请求格式.md`、`20260816_模块0_CosyVoice2流式优化降低TTFT.md`、`20260816_模块0_CosyVoice3架构迁移与优化.md`、`20260816_模块0_CosyVoice3流式TTFT优化.md`。
@@ -333,7 +340,40 @@
 - 数据层→UI层→渲染层→传递层 顺序补齐
 - Task 1/2/3 可并行（不同文件），Task 4 依赖 1/2 接口，Task 5/6 串行
 
+### CX-O-Autonomy 自主生命系统 spec（2026-08-22，L1 静默记录）
+
+- **做到哪了**：需求闭合（AskUserQuestion 四项裁决：内嵌 embedded 形态 / 全覆盖路线图 / 统一主服务主模型 / 离开模式电脑控制直接授权不拦截）→ 探索现有 CXFC/记忆/Tuner/电脑控制/MCP/LLM 链路 → 产出三件套 `.trae/specs/add-cxo-autonomy-embedded/`（spec/tasks/checklist）→ GN-004 复审警示放行（无阻断、无 SOFT_BLOCK）。
+- **为什么**：CX-O 已有记忆/表达/感知/进化器官，缺"自主心跳"；内嵌插件形态由人类裁决替代独立服务方案（零网络、直调内部服务）。
+- **GN-004 观察项处置（均已修）**：①台账 P6-T1 actual agent id 改"待回填（由主线程拉起 GN-004 subagent 后回填真实 ID）"；②P0-T1 契约冻结补充 AskUserQuestion 人类裁决半闸门；③spec 裁决2 展开三阶段业务定义；④spec 澄清 ToolsPage cxfc 筛选漂移落 custom 分组的预期口径。
+- **未闭合项**：AskUserQuestion 四项裁决留痕未入 .trae/documents/（对话记录为会话上下文，未独立落盘）；free-search-mcp 外部依赖、真实直播/社交平台 onboard 为实施后未闭合项。
+- **接续入口**：NotifyUser 提请人类批准三件套；批准后按 tasks.md P0→P1→P2→P3→P4→P6 分阶段实施。
+
 ## 审查记录
+
+### 2026-08-22 GN-004 交付前审查（add-cxo-autonomy-embedded P6 S6 合流，闸门1）
+
+- **审查 agent id**：缺失（Task 工具未回传拉起ID）
+- **总判定**：警示放行（CAUTION-PASS），SOFT_BLOCK 零项，阻断零项
+- **实质缺口（已补齐）**：预算熔断降级 + 成本告警 WS 推送未接线 → 已接线（_apply_budget_gate/_sync_budget_date/_push_cost_alert，超支→budget_limited+skipped 审计；告警经 ws_manager.broadcast autonomy_cost_alert 当日一次；新日恢复 running），test_autonomy_budget_gate.py 5 passed
+- **观察项（已修正）**：契约异常类 AutonomyBudgetExceeded/ActionBlocked/Persist 补定义（7 类完整）；blocked_actions 黑名单消费（_validate_action 命中改写 wait）；tasks.md P1-T8 描述滞后、spec Handoff State 未更新、变更记录 issue_id 模块X→模块0
+- **仍登记未闭合项**：free-search-mcp 真实端到端、真实平台发帖/直播 onboard、Tuner 真实提交、真实 LLM 调用质量、前端 vitest 全量（仅定向 17 独立复跑）、台账 actual agent id 缺失（Task 工具不回传）
+- **需人类裁定（闸门2）**：是否批准 S6 合流交付
+
+### 2026-08-22 真实环境验证（free-search-mcp 搜索链路，用户要求"先做真实环境验证"后补）
+
+- **做法**：以真实运行时链路验证配置驱动 MCP 注册 + 自主搜索全链路——用 mock 搜索 MCP 服务（模拟 free-search-mcp 形态）经 `start_configured_servers` 子进程拉起 → 工具入 ToolRegistry(category=mcp) → `_build_mcp_search_provider` 发现并调用 → 归一化结果。
+- **发现并修复 3 个真实 bug**：①`server/core/tools/mcp.py` httpx 客户端默认 trust_env=True，Windows 系统代理把 localhost MCP 调用打成 502（已加 trust_env=False，两处）；②`server/autonomy/main.py` `_build_mcp_search_provider` 误用 `tool_registry.call_tool` 执行 MCP 工具（MCP 工具注册 function=None 不可经 registry 执行），改为经 `MCPManager.call_tool(server_name, tool, args)` 走真实端点；③provider 的 server_name 解析用 `_tool_attr` 把 tags 列表 str 化导致取到 `"["`，改为按 list 读取。
+- **验证结果**：运行时全链路 PASS（搜索工具入注册表 → provider 注入 → 调用真实 MCP 端点 → 归一化 [{title,link,snippet}]）；test_autonomy_mcp.py 更新为 async + 新增 mcp_manager 路径测试，111 passed。
+- **仍不可验证（外部资源缺失，登记未闭合）**：仅剩真实 Tuner 提交（需 Tuner 服务在线）。真实 OBS 直播已由人类确认关闭——Agent 经电脑控制自主启动 OBS 推流（Streamer `_build_start_script` 跑 `computer_run_command obs64 --startstreaming`），仅需电脑控制插件在线并授权。
+- **free-search-mcp 闭环（2026-08-22，用户"就克隆一下的事"）**：克隆 [sweetcornna/free-search-mcp](https://github.com/sweetcornna/free-search-mcp) 至 `c:\CX-O\third_party\free-search-mcp`，venv（Python 3.14）安装 0.9.2（curl-cffi/playwright/mcp 2.0 等全装好）；写简化 HTTP 适配器 `cxo_search_adapter.py`（直接 import `search_mcp.aggregator.aggregate_search`，暴露 GET /health+/tools、POST /call，因 free-search-mcp 是标准 MCP 服务而 CX-O MCPManager 用简化协议）；注册进 `CX-O-SERVER/config.json` 的 `mcp_servers`（venv python 拉起，端口 8720）；**真实多引擎搜索全链路运行时 PASS**（配置驱动注册→search 工具入注册表→provider 经 MCPManager 调用→真实结果归一化 [title/link/snippet]）。期间修 1 个适配器 bug（结果返回整个 payload dict 被二次包裹导致归一化失败，改为直接返回 results 列表）。主服务启动时自动拉起（start_configured_servers）。
+
+### 2026-08-22 GN-004 独立审查（add-cxo-autonomy-embedded 三件套，规划态）
+
+- **审查 agent id**：第一次误审历史 spec extend-cxfc-relay-embedded（已纠正，第二次重拉复审正确对象）
+- **总判定**：警示放行（CAUTION-PASS），SOFT_BLOCK 零项，阻断零项
+- **通过维度**：需求闭合（四项裁决全覆盖）、代码库事实一致性、契约可验证性（public/ 三层闸门）、锚点三段交接、checklist 覆盖、Spec 模式合规（仅三件套）、安全边界（public/ 保护/离开模式不拦截/内部过滤 vs 操作级拦截表述正确）
+- **观察项（均已落地修正）**：P6-T1 台账 ID 表述；P0-T1 [V] 人类裁决半闸门缺失；三阶段业务定义未展开；ToolsPage 可见性口径
+
 
 ### 2026-07-21 GN-004 交付前审查（add-voicews-music-cxfc-suite Task 12.1）
 

@@ -28,6 +28,7 @@ import {
   Cat,
   Database,
   FlaskConical,
+  HeartPulse,
   LayoutDashboard,
   Layers,
   MessageSquareText,
@@ -202,6 +203,13 @@ export const MANAGEMENT_ROUTES: readonly ManagementRouteEntry[] = [
     titleKey: 'management.nav.neko',
     icon: Cat,
     Component: lazy(() => import('./NekoPluginsPage')),
+  },
+  // ── Agent 生活页（P4-T1，仅追加，不改既有条目） ──
+  {
+    path: 'autonomy',
+    titleKey: 'management.nav.autonomy',
+    icon: HeartPulse,
+    Component: lazy(() => import('./AutonomyPage')),
   },
 ];
 

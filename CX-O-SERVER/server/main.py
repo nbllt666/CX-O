@@ -110,7 +110,7 @@ async def lifespan(app: FastAPI):
     from server.core.memory.async_manager import AsyncMemoryManager
     from server.core.memory.secondary_router import SecondaryModelRouter
     from server.core.model_router import model_router as mr
-    from server.core.tools.mcp import MCPManager
+    from server.core.tools.mcp import MCPManager, start_configured_servers
     from server.core.tools.registry import tool_registry
 
     db_config = settings.config.database
@@ -173,6 +173,8 @@ async def lifespan(app: FastAPI):
     )
     if distillation_service is not None:
         app.state.distillation_service = distillation_service
+        # P3-T2：同步到 services 容器，供 setup_autonomy 注入经历整合器真实蒸馏 provider
+        services.distillation_service = distillation_service
 
     if services.memory_manager:
         services.secondary_router = await init_service(
@@ -186,9 +188,15 @@ async def lifespan(app: FastAPI):
             logger_=lifespan_logger,
         )
 
-    def _init_mcp_manager():
+    async def _init_mcp_manager():
         mgr = MCPManager()
         mgr.set_tool_registry(tool_registry)
+        # P2-T1: 配置驱动的 MCP 工具源自注册/自启（仅新增入口，不改既有手动增删路径）。
+        # 读取 settings.mcp_servers，逐个 add_server + start_server + sync 工具；
+        # 单个失败异常隔离记录日志，不影响其余；disabled 的 server 跳过。
+        await start_configured_servers(
+            mgr, getattr(settings.config, "mcp_servers", []) or [], log=lifespan_logger
+        )
         return mgr
 
     services.mcp_manager = await init_service("MCP管理器", _init_mcp_manager, logger_=lifespan_logger)
@@ -434,6 +442,11 @@ async def lifespan(app: FastAPI):
         ws_mgr = get_websocket_manager()
         cxfc_manager.set_ws_manager(ws_mgr)
 
+        # P2-T2：为 relay 插件注入真实 WS dispatcher——把 {plugin_id,tool,arguments,request_id,token}
+        # 经 ws_mgr 广播 {type:"cxfc_relay_call"} 推送给前端执行并回报结果。
+        # 无活跃连接/广播异常时 dispatcher 返回 False，call_tool 侧保持 RELAY_UNREACHABLE 语义。
+        cxfc_manager.enable_relay_ws_dispatch()
+
         async def on_cxfc_event(skill, event):
             try:
                 if ws_mgr:
@@ -473,6 +486,21 @@ async def lifespan(app: FastAPI):
         return cxfc_manager
 
     services.cxfc_manager = await init_service("CXFC管理器", _init_cxfc, logger_=lifespan_logger)
+
+    # CX-O-Autonomy 自主系统（embedded CXFC 插件）——在 cxfc_manager 就绪后装配。
+    # enabled=False 时 setup_autonomy 返回 None，不占用服务槽位；任何异常被内部隔离。
+    async def _init_autonomy():
+        from server.autonomy.main import setup_autonomy
+        return await setup_autonomy(services)
+
+    services.autonomy_manager = await init_service("自主系统", _init_autonomy, logger_=lifespan_logger)
+
+    # 注入到路由模块全局变量（对齐 cxfc_router.set_cxfc_manager 模式）：autonomy REST
+    # 端点依赖模块级 _manager / _audit_store 单例。未装配时为 None，路由侧自动降级。
+    from server.api.routers import autonomy as autonomy_router
+    from server.autonomy.main import get_audit_store as _get_autonomy_audit_store
+    autonomy_router.set_autonomy_manager(services.autonomy_manager)
+    autonomy_router.set_audit_store(_get_autonomy_audit_store())
 
     from server.services.asr_service import get_asr_service
     from server.services.tts_service import get_tts_service

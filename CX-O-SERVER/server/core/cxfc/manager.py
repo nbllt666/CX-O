@@ -3,7 +3,6 @@ import asyncio
 import base64
 import hashlib
 import os
-import time
 import uuid
 from datetime import datetime
 from pathlib import Path
@@ -75,6 +74,9 @@ class CXFCManager:
         # embedded 传输：插件 ID -> {tool_name: Callable} 进程内 handler 映射。
         self._embedded_handlers: Dict[str, Dict[str, Callable]] = {}
         self._relay_timeout: float = 30.0
+        # P2-T2：生产 relay WS dispatcher（经 self._ws_manager 广播 cxfc_relay_call）。
+        # 由 enable_relay_ws_dispatch() 装配；未装配时为 None，保持既有"显式注入 dispatcher"语义。
+        self._relay_ws_dispatcher: Optional[Callable[[Dict], bool]] = None
 
     def _track_background_task(self, task: asyncio.Task) -> asyncio.Task:
         """追踪后台任务，防止被GC回收；任务完成后自动从集合中移除"""
@@ -388,6 +390,48 @@ class CXFCManager:
     def unregister_relay_dispatcher(self, plugin_id: str):
         self._dispatch_relay.pop(plugin_id, None)
 
+    def _build_relay_ws_dispatcher(self) -> Callable[[Dict], bool]:
+        """构建基于 self._ws_manager 的 relay 通道投递回调（P2-T2）。
+
+        广播消息 {type: "cxfc_relay_call", plugin_id, tool, arguments, request_id, token}；
+        无活跃连接或广播异常返回 False——call_tool 侧据此保持 RELAY_UNREACHABLE 语义，
+        全程不发起 host:port 直连（与 direct 路径隔离）。
+        """
+
+        async def dispatcher(message: Dict) -> bool:
+            try:
+                ws = self._ws_manager
+                if ws is None or not getattr(ws, "connections", None):
+                    return False
+                await ws.broadcast(
+                    {
+                        "type": "cxfc_relay_call",
+                        "plugin_id": message.get("plugin_id"),
+                        "tool": message.get("tool"),
+                        "arguments": message.get("arguments") or {},
+                        "request_id": message.get("request_id"),
+                        "token": message.get("token"),
+                    }
+                )
+                return True
+            except Exception as e:
+                logger.warning(f"relay WS 投递失败: {e}")
+                return False
+
+        return dispatcher
+
+    def enable_relay_ws_dispatch(self):
+        """生产装配：启用经 WebSocketManager 的 relay WS 推送（P2-T2）。
+
+        装配后，已注册及后续注册的 relay 插件自动获得真实 WS dispatcher（经 ws_manager
+        广播 cxfc_relay_call）；未装配时保持既有"显式 register_relay_dispatcher"语义，
+        便于单测注入替身与回归兼容。
+        """
+        self._relay_ws_dispatcher = self._build_relay_ws_dispatcher()
+        for plugin_id, plugin in list(self._plugins.items()):
+            if plugin.transport == PluginTransport.RELAY:
+                self._dispatch_relay[plugin_id] = self._relay_ws_dispatcher
+
     async def register_relay_plugin(
         self,
         plugin_id: str,
@@ -401,6 +445,8 @@ class CXFCManager:
 
         注册后需注入对应 plugin_id 的 dispatcher（register_relay_dispatcher）才能投递；
         未注入时 call_tool 返回 RELAY_UNREACHABLE。此方法登记到内存与存储。
+        P2-T2：若已 enable_relay_ws_dispatch() 装配 WS 通道，新注册 relay 插件自动注入真实
+        dispatcher，无需调用方显式 register_relay_dispatcher。
         """
         tools = tools or []
         skills = skills or []
@@ -424,6 +470,8 @@ class CXFCManager:
         await self._storage.save_plugin(plugin)
         async with self._plugins_lock:
             self._plugins[plugin.plugin_id] = plugin
+        if self._relay_ws_dispatcher is not None:
+            self._dispatch_relay[plugin.plugin_id] = self._relay_ws_dispatcher
         return plugin
 
     def get_relay_targets(self) -> List[Dict]:

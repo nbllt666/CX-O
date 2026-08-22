@@ -14,6 +14,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { getWsBaseUrl, STORAGE_KEYS } from '../api/base';
 import { VoiceActions } from '../constants/actions';
 import { useWSTransport } from './ws/transport';
+import { createDefaultRelayDeps, handleCxfcRelayCall, type CxfcRelayCallMessage } from './ws/cxfcRelay';
 
 export interface WebSocketMessage {
   type: string;
@@ -27,6 +28,11 @@ export interface WebSocketMessage {
   result?: unknown;
   triggered_at?: string;
   request_id?: string;
+  // CXFC relay（前端转接）推送字段（P2-T2）
+  plugin_id?: string;
+  tool?: string;
+  arguments?: Record<string, unknown>;
+  token?: string;
   action?: string;
   status?: string;
   data?: {
@@ -276,6 +282,11 @@ export function useWebSocket(options: WebSocketOptions): UseWebSocketReturn {
           }
           onMessageRef.current?.(data);
           break;
+        case 'cxfc_relay_call': {
+          // CXFC relay（前端转接）：收到后端推送的工具调用，本地执行电脑控制工具并回报结果（P2-T2）
+          void handleCxfcRelayCall(data as CxfcRelayCallMessage, createDefaultRelayDeps());
+          break;
+        }
         default:
           onMessageRef.current?.(data);
       }

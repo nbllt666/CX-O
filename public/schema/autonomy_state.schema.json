@@ -1,0 +1,15 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "AutonomyState",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "motivations": {"type": "object", "additionalProperties": false, "properties": {"curiosity": {"type": "number", "minimum": 0, "maximum": 1}, "social_need": {"type": "number", "minimum": 0, "maximum": 1}, "creative_drive": {"type": "number", "minimum": 0, "maximum": 1}, "fatigue": {"type": "number", "minimum": 0, "maximum": 1}}},
+    "status": {"type": "string", "enum": ["running", "paused", "sleeping", "budget_limited", "error"]},
+    "last_action": {"type": ["string", "null"]},
+    "last_cycle_at": {"type": ["string", "null"], "format": "date-time"},
+    "daily_budget_used_tokens": {"type": "integer", "minimum": 0},
+    "budget_reset_date": {"type": ["string", "null"], "description": "YYYY-MM-DD 预算重置日"},
+    "diary_last_at": {"type": ["string", "null"], "format": "date-time"}
+  }
+}

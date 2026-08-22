@@ -1,0 +1,14 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "AutonomyAction",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["action"],
+  "properties": {
+    "action": {"type": "string", "enum": ["sleep", "wait", "read_news", "search", "write_memory", "write_post", "start_live", "stop_live", "write_diary"], "description": "LLM 规划器输出的自主行动类型"},
+    "target": {"type": "string", "description": "目标对象（平台名/搜索关键词/记忆标签等）"},
+    "payload": {"type": "object", "description": "动作负载（发帖 draft / 记忆 content 等）"},
+    "reason": {"type": "string", "description": "决策理由"},
+    "expected_outcome": {"type": "string", "description": "预期效果"}
+  }
+}

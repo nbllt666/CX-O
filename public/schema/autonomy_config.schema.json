@@ -1,0 +1,42 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "AutonomyConfig",
+  "description": "CX-O-Autonomy 自主系统配置契约（含默认值与自动补齐规则）",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "enabled": {"type": "boolean", "default": false, "description": "自主循环总开关，默认关闭（用户显式开启）"},
+    "auto_start": {"type": "boolean", "default": false, "description": "主服务启动时自动启动自主循环（enabled 与 auto_start 同时为 true 才自启）"},
+    "agent_id": {"type": "string", "default": "default", "description": "自主系统使用的人设 Agent 标识"},
+    "loop_interval_minutes": {"type": "integer", "minimum": 1, "default": 15, "description": "主循环唤醒周期（分钟）"},
+    "rss_sources": {"type": "array", "default": [], "items": {"type": "string", "format": "uri"}, "description": "RSS 信息源列表"},
+    "search": {"type": "object", "additionalProperties": false, "properties": {"mcp_server_name": {"type": "string", "default": "free-search-mcp", "description": "搜索 MCP server 名"}, "fallback_rss": {"type": "boolean", "default": true, "description": "搜索不可用时降级 RSS"}}},
+    "schedule": {"type": "object", "additionalProperties": false, "properties": {
+      "wake_time": {"type": "string", "pattern": "^([01]?[0-9]|2[0-3]):[0-5][0-9]$", "default": "08:00", "description": "起床时间 HH:MM"},
+      "sleep_time": {"type": "string", "pattern": "^([01]?[0-9]|2[0-3]):[0-5][0-9]$", "default": "02:00", "description": "入睡时间 HH:MM（可跨午夜）"},
+      "golden_start": {"type": "string", "pattern": "^([01]?[0-9]|2[0-3]):[0-5][0-9]$", "default": "19:00", "description": "黄金档开始（适合开播/发帖）"},
+      "golden_end": {"type": "string", "pattern": "^([01]?[0-9]|2[0-3]):[0-5][0-9]$", "default": "23:00", "description": "黄金档结束"},
+      "diary_time": {"type": "string", "pattern": "^([01]?[0-9]|2[0-3]):[0-5][0-9]$", "default": "02:00", "description": "每日日记时刻"},
+      "quiet_windows": {"type": "array", "default": [], "items": {"type": "string", "pattern": "^([01]?[0-9]|2[0-3]):[0-5][0-9]-([01]?[0-9]|2[0-3]):[0-5][0-9]$"}, "description": "静默档窗口 HH:MM-HH:MM"}
+    }},
+    "budget": {"type": "object", "additionalProperties": false, "properties": {
+      "daily_token_limit": {"type": "integer", "minimum": 0, "default": 2000000, "description": "每日 LLM token 预算上限，0 表示不限制"},
+      "daily_llm_calls_limit": {"type": "integer", "minimum": 0, "default": 0, "description": "每日 LLM 调用次数上限，0 表示不限制"},
+      "cost_alert_threshold": {"type": "number", "minimum": 0, "maximum": 1, "default": 0.8, "description": "预算使用率达此比例经 WS 推送告警"},
+      "overspend_mode": {"type": "string", "enum": ["sleep", "low_cost"], "default": "sleep", "description": "超支降级模式"}
+    }},
+    "platforms": {"type": "array", "default": [], "items": {"type": "string"}, "description": "发帖白名单平台（如 weibo/x/bilibili/xiaohongshu）"},
+    "permissions": {"type": "object", "additionalProperties": false, "properties": {
+      "allowed_actions": {"type": "array", "default": ["sleep", "wait", "read_news", "search", "write_memory", "write_post", "start_live", "stop_live", "write_diary"], "items": {"type": "string"}, "description": "允许的自主行动集"},
+      "blocked_actions": {"type": "array", "default": [], "items": {"type": "string"}, "description": "即使 LLM 想调用也拒绝的高危动作（如 delete_content/transfer/account_settings）"}
+    }},
+    "safety": {"type": "object", "additionalProperties": false, "properties": {
+      "content_gate_enabled": {"type": "boolean", "default": true, "description": "对外输出经内容闸门（复用主服务防火墙）"},
+      "persona_check_enabled": {"type": "boolean", "default": true, "description": "人设一致性轻校验"},
+      "post_rate_per_hour": {"type": "integer", "minimum": 0, "default": 5, "description": "每小时最大发帖数"},
+      "user_online_sleep": {"type": "boolean", "default": true, "description": "用户在线时自动休眠/低优先级"},
+      "leave_mode_authorize": {"type": "boolean", "default": true, "description": "离开模式直接授权电脑控制不拦截（人类裁决）"}
+    }},
+    "store_path": {"type": "string", "default": "", "description": "状态/审计/日志存储目录（空则基于 __file__ 绝对路径解析到 server/autonomy/data/）"}
+  }
+}

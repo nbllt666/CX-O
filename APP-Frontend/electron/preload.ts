@@ -45,6 +45,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
   setComputerControlAuth: (value: boolean) =>
     ipcRenderer.invoke('computerControl:set-auth', value),
   getComputerControlInfo: () => ipcRenderer.invoke('computerControl:get-info'),
+  // P2-T2 relay 推送：渲染层经主进程执行电脑控制工具（本机动作由主进程校验授权后执行）
+  callComputerControlTool: (tool: string, args: Record<string, unknown>) =>
+    ipcRenderer.invoke('computerControl:call-tool', tool, args),
 
   // VRM 模型：选择/读取本地模型文件（默认模型打包在包内，用户可选本地 .vrm 覆盖）
   pickModelFile: () => ipcRenderer.invoke('model:pick-file'),

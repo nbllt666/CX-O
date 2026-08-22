@@ -17,6 +17,7 @@ import { AuthorizationStore, type AuthorizationPersistence } from './authorizati
 import { Authenticator } from './auth';
 import { ensureCertificate } from './tls';
 import { ComputerControlHttpServer, type PluginConfig, type SkillInfo, type ToolHandler } from './httpServer';
+import { ERROR_MESSAGES, errorResult, messageOf, type ToolResult } from './errors';
 import { createScreenTool } from './screen';
 import { createKeyboardTool } from './keyboard';
 import { createRunCommandTool } from './runCommand';
@@ -97,6 +98,11 @@ export interface ComputerControlPlugin {
   getFingerprint(): string;
   /** B-1：返回 TLS 自签名证书 PEM 原文，供注册载荷上报给后端做 TOFU 首次信任 */
   getTlsCertPem(): string;
+  /**
+   * P2-T2 relay 推送路径：进程内调用工具（与 /call HTTP 端点同源分发，共用同一批 ToolHandler，
+   * 但绕过 HTTP 认证/防重放——由 IPC 调用方（main.ts）承担授权校验）。
+   */
+  callTool(tool: string, params: Record<string, unknown>): Promise<ToolResult>;
 }
 
 export function createComputerControlPlugin(opts: ComputerControlOptions = {}): ComputerControlPlugin {
@@ -169,6 +175,17 @@ export function createComputerControlPlugin(opts: ComputerControlOptions = {}): 
     getTlsCertPem(): string {
       return tls.cert;
     },
+    async callTool(tool, params) {
+      const handler = tools[tool];
+      if (!handler) {
+        return errorResult('INVALID_ARGUMENT', '未知工具');
+      }
+      try {
+        return await handler(params);
+      } catch (err) {
+        return errorResult('SYSTEM_ERROR', `工具执行异常: ${messageOf(err)}`);
+      }
+    },
   };
 }
 
@@ -217,4 +234,19 @@ export function setComputerControlAuthorization(value: boolean): boolean {
   if (!currentPlugin) return false;
   currentPlugin.authorization.setAuthorized(value);
   return currentPlugin.authorization.isAuthorized();
+}
+
+/**
+ * P2-T2 relay 推送路径：经主进程进程内调用电脑控制工具。
+ * 插件未启动（未注册）时返回 PLUGIN_OFFLINE 稳定错误码，不执行任何本机动作；
+ * 授权校验由 IPC 调用方（electron/main.ts）承担，与 /call HTTP 端点授权语义一致。
+ */
+export async function callComputerControlTool(
+  tool: string,
+  params: Record<string, unknown>,
+): Promise<ToolResult> {
+  if (!currentPlugin) {
+    return errorResult('PLUGIN_OFFLINE', ERROR_MESSAGES.PLUGIN_OFFLINE);
+  }
+  return currentPlugin.callTool(tool, params ?? {});
 }

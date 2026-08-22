@@ -24,6 +24,8 @@
 - [16. Docker 推理服务](#16-docker-推理服务)
 - [17. 配置系统](#17-配置系统)
 - [18. 主动视觉与电脑控制](#18-主动视觉与电脑控制)
+- [19. 自我进化服务（CXO-Tuner）](#19-自我进化服务cxo-tuner)
+- [20. CX-O-Autonomy 自主系统](#20-cx-o-autonomy-自主系统)
 - [附录：目录速览](#附录目录速览)
 
 ---
@@ -505,6 +507,33 @@ T(t) = 1 / (1 + (Δt/T₅₀)^k)      # T₅₀=30, k=2
 - **后端新增路径**：`POST /cxfc/relay/register`、`GET /cxfc/relay/targets`、`POST /cxfc/relay/result`、`POST /cxfc/embedded`（`server/api/routers/cxfc.py`）。
 - 语音工作站启动时向主服务注册并保持心跳。
 
+### 10.1 内嵌 embedded 插件范式（进程内注册）
+
+`embedded` 是 CXFC 的进程内传输范式：工具以 Python `Callable` 直接登记进后端 `ToolRegistry`，
+无 HTTP 服务、无 host/port、不走网络。生产装配入口为 `CXFCManager.register_embedded_plugin()`：
+
+- 签名：`register_embedded_plugin(plugin_id, name, tools, handlers, skills, capabilities)`；
+- `plugin_id` 归一为 `embedded_{plugin_id}`，`transport=PluginTransport.EMBEDDED`；
+- `handlers` 保存到 `_embedded_handlers`，与 `tools` 一并经 `_register_catalog` 写入
+  `ToolRegistry`（category=`cxfc`），LLM 工具分发可直接进程内执行；
+- 引用示例：`server/autonomy/main.py` 的 `setup_autonomy()`——以 `embedded_cxo-autonomy`
+  注册 9 个 `autonomy_*` 工具 + 真实 handler（`get_handlers()`）；
+- `call_tool` embedded 分支缺 handler 时返回稳定错误码 `EMBEDDED_HANDLER_MISSING`。
+
+### 10.2 relay WS 推送通道
+
+`relay` 的"后端 → 前端通道"投递由 WebSocketManager 承载（P2-T2 生产装配）：
+
+- `CXFCManager._build_relay_ws_dispatcher()` 构造基于 `self._ws_manager.broadcast` 的投递回调，
+  广播消息 `{type: "cxfc_relay_call", plugin_id, tool, arguments, request_id, token}`；
+- `enable_relay_ws_dispatch()` 在 `server/main.py` `_init_cxfc` 装配处调用，装配后已注册及后续
+  relay 插件自动获得真实 WS dispatcher；未装配时保持"显式 `register_relay_dispatcher`"语义
+  （单测可注入替身）；
+- 无活跃连接 / 广播异常 → 返回 `False` → `call_tool` 保持 `RELAY_UNREACHABLE`；
+  投递后无人回报 → `RELAY_TIMEOUT`；全程不发起 host:port 直连，与 direct 路径隔离；
+- 前端侧：`useWebSocket.ts` 消息路由 `cxfc_relay_call` 分支 → `src/hooks/ws/cxfcRelay.ts`
+  `handleCxfcRelayCall()` 执行工具并回报 `POST /api/cxfc/relay/result {request_id, plugin_id, success, result/error}`。
+
 ---
 
 ## 11. 蒸馏服务与角色卡
@@ -768,6 +797,83 @@ docker compose --profile tuner up
 - 对应 `docker-compose.yml` 服务 `cxo-tuner`，`profiles: ["tuner"]`，GPU `count:1` reservation；
 - 数据 / 模型 / 角色卡目录卷挂载；`CXO_TUNER_PORT` 控制端口；
 - 默认 `docker compose up -d` 不含 cxo-tuner（可选性校验通过），不启用时主系统零受影响。
+
+---
+
+## 20. CX-O-Autonomy 自主系统
+
+> 位于 `server/autonomy/`，CX-O-Autonomy 是 CX-O 的"自主生命"能力：Agent 在用户离开期间
+> 自主感知、动机、规划、行动、审计与反思，沉淀经历并写日记，用户回来后经聊天召回。
+> 以 **embedded CXFC 插件**（`plugin_id=embedded_cxo-autonomy`）装配进主服务进程（spec
+> `add-cxo-autonomy-embedded`），`config.autonomy.enabled=false` 时整体跳过装配，零影响。
+
+### 20.1 架构五层
+
+| 层 | 模块 | 职责 |
+|----|------|------|
+| 感知 | `perception/`（`rss_fetcher` / `hotspot_monitor` / `context_sensor`） | RSS 新闻、社交热点、环境感知 |
+| 动机 | `core/motivation/state.py`（`MotivationState`） | 四维动机驱动 |
+| 规划 | `core/planner/action_planner.py`（`ActionPlanner`） | LLM 规划 + 记忆注入 + 动作白名单 |
+| 行动 | `action/`（`memory_actions` / `poster` / `streamer`） | 记忆写入、发帖、半自动直播 |
+| 反思 | `reflection/`（`diary/generator` / `feedback/evaluator` / `consolidator`） | 每日日记、反馈评估、经历整合 |
+
+调度：`core/scheduler/circadian.py`（`CircadianScheduler`，wake/sleep/golden/diary/quiet_windows）。
+主循环：`core/loop/autonomy_engine.py`（`AutonomyEngine`，感知→动机→规划→行动→审计→反思，
+节拍 `loop_interval_minutes`）。
+
+### 20.2 动机引擎与规划器
+
+- **动机**：`MotivationState` 维护四维动机（curiosity / social_need / creative_drive / fatigue），
+  随活动/休息动态更新，驱动自主行为的选择。
+- **规划器**：`ActionPlanner` 以主模型 LLM（`model_router.get_client("main")`）按人设 persona 规划
+  下一步动作；记忆注入 provider 检索最近相关记忆供规划上下文；`permissions.allowed_actions` /
+  `blocked_actions` 白名单约束动作空间（9 项动作枚举：sleep/wait/read_news/search/write_memory/
+  write_post/start_live/stop_live/write_diary）。
+
+### 20.3 预算、审计与安全
+
+- **预算** `safety/budget/token_ledger.py`（`TokenLedger`）：日 token 上限 / 日 LLM 调用上限 /
+  成本告警阈值 / 超支模式（`overspend_mode`：sleep / low_cost），状态持久化于
+  `server/autonomy/data/token_ledger.json`。
+- **审计** `safety/audit.py`（`AuditStore`）：每次行动写审计日志（`audit_logs.jsonl`），
+  供前端行为回放与用户追溯。
+- **安全**：`safety/gate/content_gate.py`（`ContentGate`，对接防火墙，内容闸门）；
+  `safety/ratelimit/limiter.py`（`RateLimiter`，发帖限速 `post_rate_per_hour`）；
+  `safety/killswitch.py`（`KillSwitch`，紧急停止持久化）。
+- **离开模式**：`safety.leave_mode_authorize=True` 时用户离开直接授权自主行动，无需逐次确认；
+  `user_online_sleep` 控制用户在线时是否休眠。
+
+### 20.4 行动能力与外部依赖
+
+- **发帖** `action/social/poster.py`：平台白名单 → LLM 生成 → 内容闸门 → 限速 → 经电脑控制
+  浏览器自动化发布（`_build_computer_control` 从已注册插件识别电脑控制插件并构造调用器）；
+  电脑控制插件未注册时返回 prepared 未执行态。
+- **直播** `action/live/streamer.py`：半自动直播——生成脚本 → 确认门 → OBS 开播 → 下播写回忆。
+- **日记与整合** `reflection/diary/generator.py`（第一人称日记写 permanent 记忆）、
+  `reflection/consolidator.py`（经历整合，注入真实蒸馏服务 provider）。
+- **搜索**：`search.mcp_server_name="free-search-mcp"`——`_build_mcp_search_provider` 从
+  ToolRegistry 定位 category=mcp 且工具名含 "search" 的工具（free-search-mcp 的 web_search）
+  调用并归一化为 `[{title, link, snippet}]`；不可用/无结果时 `HotspotMonitor` 降级 RSS。
+  **free-search-mcp 已落地（2026-08-22）**：克隆至 `third_party/free-search-mcp`（venv 安装
+  0.9.2），`cxo_search_adapter.py` 把标准 MCP 服务包装为 CX-O 简化 HTTP 协议（GET /health+/tools、
+  POST /call，直接调 `search_mcp.aggregator.aggregate_search`），注册于 `CX-O-SERVER/config.json`
+  `mcp_servers`（端口 8720），主服务启动时经 `start_configured_servers` 自动拉起；真实多引擎搜索
+  全链路已运行时验证通过。
+
+### 20.5 装配、REST 与前端控制页
+
+- **装配**：`server/main.py` 在 `cxfc_manager` 就绪后 `_init_autonomy()` → `setup_autonomy(services)`
+  （`server/autonomy/main.py`），注册 embedded 插件、注入路由单例并 `engine.start()`；任何异常被
+  捕获隔离，不影响主服务启动。
+- **REST** `server/api/routers/autonomy.py`（挂载 `/api`）：
+  `GET /autonomy/status`（未启用返回 `{"status":"disabled"}` 不抛错）、
+  `POST /autonomy/control`（enable/disable/pause/resume/emergency_stop）、
+  `GET /autonomy/audit`（分页）、`GET|PUT /autonomy/config`（深度合并 + model_validate 校验，
+  非法字段/枚举/时间格式返回 422）。
+- **前端控制页**：管理窗路由 `/autonomy` → `AutonomyPage`（"Agent 生活"）：状态徽章（
+  running/paused/sleeping/budget_limited/error/disabled）、四维动机进度条、日预算用量、
+  控制区（启用/禁用/暂停/恢复/紧急停止/自动启动）、行为回放（审计列表分页加载）。
+  前端降级口径：后端离线全页错误态；未启用展示"未启用"徽章；config/audit 独立容错。
 
 ---
 

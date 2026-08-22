@@ -316,7 +316,8 @@ class MCPManager:
 
         try:
             if server_name not in self._http_clients:
-                self._http_clients[server_name] = httpx.AsyncClient(timeout=30.0)
+                # trust_env=False 规避 Windows 系统代理对 localhost MCP 服务的 502 干扰
+                self._http_clients[server_name] = httpx.AsyncClient(timeout=30.0, trust_env=False)
 
             client = self._http_clients[server_name]
 
@@ -402,7 +403,8 @@ class MCPManager:
 
         try:
             if server_name not in self._http_clients:
-                self._http_clients[server_name] = httpx.AsyncClient(timeout=30.0)
+                # trust_env=False 规避 Windows 系统代理对 localhost MCP 服务的 502 干扰
+                self._http_clients[server_name] = httpx.AsyncClient(timeout=30.0, trust_env=False)
 
             # 使用 endpoint_url 而非 command
             url = f"{server.endpoint_url}/call"
@@ -466,3 +468,44 @@ class MCPManager:
 
         self.servers.clear()
         logger.info("MCP管理器已关闭")
+
+
+async def start_configured_servers(
+    mgr: "MCPManager", configs: List[Any], log=None
+) -> None:
+    """配置驱动的 MCP 服务器自注册/自启（P2-T1）。
+
+    仅新增"配置驱动"入口，不改既有手动增删路径（add_server / remove_server /
+    start_server / stop_server 保持原样）。对每个 enabled 的 server 依次执行
+    add_server + start_server（start_server 内部已同步工具，此处再显式
+    _sync_tools 一次兜底，幂等）；单个失败异常隔离并记录日志，不影响其余
+    server；disabled 的 server 跳过，不注册不启动。
+
+    Args:
+        mgr: MCPManager 实例
+        configs: 配置对象列表，每项须含 name/command/args/env/endpoint_url/enabled
+                属性（与 MCPServerConfig 字段对齐，本函数不依赖具体配置模型）
+        log: 日志记录器（缺省用模块 logger）
+
+    Returns:
+        None
+    """
+    log = log or logger
+    for cfg in configs or []:
+        name = getattr(cfg, "name", None) or getattr(cfg, "server_name", "") or ""
+        if not getattr(cfg, "enabled", True):
+            log.info("MCP 服务器 %s 配置为禁用，跳过自启", name)
+            continue
+        try:
+            await mgr.add_server(
+                name=name,
+                command=getattr(cfg, "command", "") or "",
+                args=list(getattr(cfg, "args", None) or []),
+                env=dict(getattr(cfg, "env", None) or {}),
+                endpoint_url=getattr(cfg, "endpoint_url", None),
+            )
+            await mgr.start_server(name)
+            # start_server 内部已调用 _sync_tools；此处显式再同步一次兜底（幂等）
+            await mgr._sync_tools(name)
+        except Exception as e:
+            log.error("配置驱动 MCP 服务器 %s 启动失败（已隔离，不影响其余）: %s", name, e)

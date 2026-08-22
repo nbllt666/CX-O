@@ -691,6 +691,23 @@ class CXOTunerConfig(BaseModel):
     model_config = ConfigDict(protected_namespaces=())
 
 
+class MCPServerConfig(BaseModel):
+    """MCP 服务器配置节（P2-T1）：供配置驱动的 MCP 工具源自注册/自启。
+
+    对应 config.json 的 ``mcp_servers`` 数组元素。字段与
+    ``server.core.tools.mcp.MCPManager.add_server`` 入参对齐：
+    name 必填；command/args/env/endpoint_url 可选；enabled 控制启动装配时
+    是否自动 add_server + start_server（false 则跳过，不注册不启动）。
+    """
+
+    name: str
+    command: str = ""
+    args: List[str] = Field(default_factory=list)
+    env: Dict[str, str] = Field(default_factory=dict)
+    endpoint_url: str = "http://localhost:8600"
+    enabled: bool = True
+
+
 class UnifiedConfig(BaseModel):
     model_config = ConfigDict(protected_namespaces=())
 
@@ -709,6 +726,8 @@ class UnifiedConfig(BaseModel):
     tts: TTSConfig = Field(default_factory=TTSConfig)
     graph: GraphConfigSection = Field(default_factory=GraphConfigSection)
     cxfc: CXFCConfig = Field(default_factory=CXFCConfig)
+    # P2-T1: 配置驱动的 MCP 工具源自注册/自启（元素为 MCPServerConfig）
+    mcp_servers: List[MCPServerConfig] = Field(default_factory=list)
     qwen3_tts: Qwen3TTSConfig = Field(default_factory=Qwen3TTSConfig)
     limits: LimitsConfig = Field(default_factory=LimitsConfig)
     # RADIX-Lite 新增 4 配置节（v1.1.0）

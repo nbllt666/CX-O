@@ -36,7 +36,8 @@
       "subtitleSource": "Subtitle Source",
       "audioSource": "Audio Source",
       "distillation": "Distillation",
-      "neko": "Neko Plugins"
+      "neko": "Neko Plugins",
+      "autonomy": "Agent Life"
     },
     "neko": {
       "subtitle": "Bridge to the neko plugin runtime and plugin store",
@@ -467,6 +468,65 @@
       "resultLabel": "Result",
       "run": "Run",
       "running": "Running..."
+    },
+    "autonomy": {
+      "subtitle": "CX-O-Autonomy: motivations, budget and behavior replay",
+      "refresh": "Refresh",
+      "statusTitle": "Current Status",
+      "statusBadge": {
+        "running": "Running",
+        "paused": "Paused",
+        "sleeping": "Sleeping",
+        "budgetLimited": "Budget Limited",
+        "error": "Error",
+        "disabled": "Disabled"
+      },
+      "lastAction": "Last action",
+      "lastCycleAt": "Last cycle",
+      "budgetResetDate": "Budget reset",
+      "budgetUsedToday": "Tokens used today",
+      "emptyValue": "—",
+      "disabledTitle": "Autonomy System Disabled",
+      "disabledHint": "The autonomy system is disabled. Click \"Enable\" to start its daily life.",
+      "motivationsTitle": "Motivations",
+      "motivation": {
+        "curiosity": "Curiosity",
+        "social_need": "Social need",
+        "creative_drive": "Creative drive",
+        "fatigue": "Fatigue"
+      },
+      "motivationsDisabledHint": "Enable the autonomy system to see live motivations",
+      "budgetTitle": "Daily Budget Usage",
+      "budgetUsed": "{{used}} / {{limit}} tokens used",
+      "budgetNoLimit": "No daily token limit configured",
+      "budgetOverThreshold": "Close to daily budget",
+      "budgetExceeded": "Daily budget exceeded",
+      "controlTitle": "Control",
+      "enable": "Enable",
+      "disable": "Disable",
+      "pause": "Pause",
+      "resume": "Resume",
+      "emergencyStop": "Emergency Stop",
+      "emergencyConfirm": "Emergency-stop the autonomy system? The main loop will be disabled immediately.",
+      "autoStart": "Auto-start with the app",
+      "actionFailed": "Action failed. Please retry.",
+      "auditTitle": "Behavior Replay",
+      "auditTotal": "{{count}} entries",
+      "auditEmpty": "No behavior records yet",
+      "auditLoadFailed": "Failed to load behavior records",
+      "loadMore": "Load more",
+      "loadingMore": "Loading...",
+      "colTimestamp": "Time",
+      "colAction": "Action",
+      "colTarget": "Target",
+      "colResult": "Result",
+      "colTrigger": "Trigger reason",
+      "result": {
+        "success": "Success",
+        "failed": "Failed",
+        "blocked": "Blocked",
+        "skipped": "Skipped"
+      }
     },
     "memoryAgent": {
       "subtitle": "Memory assistant: search, update, delete and export memories in natural language",

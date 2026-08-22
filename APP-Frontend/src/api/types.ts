@@ -240,3 +240,95 @@ export interface AvatarInfo {
   updated_at?: string;
   metadata?: Record<string, unknown>;
 }
+
+/** CX-O-Autonomy 四维动机（0-1，对齐 autonomy_state.schema.json / Motivations） */
+export interface AutonomyMotivations {
+  curiosity: number;
+  social_need: number;
+  creative_drive: number;
+  fatigue: number;
+}
+
+/** 自主系统状态快照（对齐 autonomy_state.schema.json） */
+export type AutonomyStatus = AutonomyStatusDisabled | AutonomyStatusActive;
+
+/** 未启用/未装配：后端返回 {"status": "disabled"}（HTTP 200，不抛错） */
+export interface AutonomyStatusDisabled {
+  status: 'disabled';
+}
+
+/** 已启用：含动机/状态/上次行动/预算等字段 */
+export interface AutonomyStatusActive {
+  status: 'running' | 'paused' | 'sleeping' | 'budget_limited' | 'error';
+  motivations?: AutonomyMotivations;
+  last_action?: string | null;
+  last_cycle_at?: string | null;
+  daily_budget_used_tokens?: number;
+  budget_reset_date?: string | null;
+  diary_last_at?: string | null;
+}
+
+/** 控制指令响应（POST /api/autonomy/control） */
+export interface AutonomyControlResult {
+  status: string;
+  state: {
+    enabled: boolean;
+    running: boolean;
+    status: string;
+  };
+}
+
+/** 审计日志条目（对齐 autonomy_audit.schema.json） */
+export interface AutonomyAuditEntry {
+  timestamp: string;
+  action: string;
+  target?: string;
+  payload?: Record<string, unknown>;
+  result?: 'success' | 'failed' | 'blocked' | 'skipped';
+  error?: string | null;
+  cost_tokens?: number;
+  trigger_reason?: string;
+  expected_outcome?: string;
+  motivations?: AutonomyMotivations;
+  [key: string]: unknown;
+}
+
+/** 自主系统配置（对齐 autonomy_config.schema.json / config.py AutonomyConfig） */
+export interface AutonomyConfig {
+  enabled: boolean;
+  auto_start: boolean;
+  agent_id: string;
+  loop_interval_minutes: number;
+  rss_sources: string[];
+  search: {
+    mcp_server_name: string;
+    fallback_rss: boolean;
+  };
+  schedule: {
+    wake_time: string;
+    sleep_time: string;
+    golden_start: string;
+    golden_end: string;
+    diary_time: string;
+    quiet_windows: string[];
+  };
+  budget: {
+    daily_token_limit: number;
+    daily_llm_calls_limit: number;
+    cost_alert_threshold: number;
+    overspend_mode: 'sleep' | 'low_cost';
+  };
+  platforms: string[];
+  permissions: {
+    allowed_actions: string[];
+    blocked_actions: string[];
+  };
+  safety: {
+    content_gate_enabled: boolean;
+    persona_check_enabled: boolean;
+    post_rate_per_hour: number;
+    user_online_sleep: boolean;
+    leave_mode_authorize: boolean;
+  };
+  store_path: string;
+}

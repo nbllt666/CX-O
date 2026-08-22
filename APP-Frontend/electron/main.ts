@@ -28,6 +28,7 @@ import {
   getComputerControlAuthorization,
   setComputerControlAuthorization,
   getPluginInfo,
+  callComputerControlTool,
   type ComputerControlPlugin,
 } from './plugins/computerControl/index';
 import { createCxfcClient, type CxfcClient, type PluginRuntimeInfo } from './cxfc/client';
@@ -351,6 +352,23 @@ function registerIpcHandlers(): void {
     setComputerControlAuthorization(!!value),
   );
   ipcMain.handle('computerControl:get-info', () => getPluginInfo());
+
+  // P2-T2 relay 推送路径：渲染层收到后端 cxfc_relay_call 后经主进程执行本机工具。
+  // 沿用"渲染层不得直接执行本机控制"安全边界：执行前校验本地授权（与 /call HTTP 端点一致），
+  // 未授权不执行任何本机动作。
+  ipcMain.handle(
+    'computerControl:call-tool',
+    (_event, tool: string, args: Record<string, unknown>) => {
+      if (!getComputerControlAuthorization()) {
+        return {
+          ok: false,
+          code: 'NOT_AUTHORIZED',
+          error: '本地授权未开启（授权被撤销或尚未授权）。不执行任何本机动作。',
+        };
+      }
+      return callComputerControlTool(tool, args ?? {});
+    },
+  );
 
   // VRM 模型：桌面模式模型选择（默认模型打包在包内，用户可选本地 .vrm 覆盖）。
   // 安全边界：仅返回用户经系统对话框选中的 .vrm 路径；渲染层无法任意枚举文件系统。

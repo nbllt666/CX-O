@@ -1,0 +1,19 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "AutonomyAuditEntry",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["timestamp", "action"],
+  "properties": {
+    "timestamp": {"type": "string", "format": "date-time"},
+    "motivations": {"type": "object", "additionalProperties": false, "properties": {"curiosity": {"type": "number", "minimum": 0, "maximum": 1}, "social_need": {"type": "number", "minimum": 0, "maximum": 1}, "creative_drive": {"type": "number", "minimum": 0, "maximum": 1}, "fatigue": {"type": "number", "minimum": 0, "maximum": 1}}},
+    "action": {"type": "string"},
+    "target": {"type": "string"},
+    "payload": {"type": "object"},
+    "result": {"type": "string", "enum": ["success", "failed", "blocked", "skipped"]},
+    "error": {"type": ["string", "null"]},
+    "cost_tokens": {"type": "integer", "minimum": 0},
+    "trigger_reason": {"type": "string"},
+    "expected_outcome": {"type": "string"}
+  }
+}

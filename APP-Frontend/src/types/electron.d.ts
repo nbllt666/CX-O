@@ -50,6 +50,17 @@ declare global {
         fingerprint: string | null;
         authorized: boolean;
       }>;
+      // P2-T2 relay 推送：渲染层经主进程执行电脑控制工具（本机动作由主进程校验授权后执行）。
+      // 可选字段：浏览器模式或旧 preload 产物可能未暴露；cxfcRelay 执行器据此回退为不可执行错误。
+      callComputerControlTool?: (
+        tool: string,
+        args: Record<string, unknown>,
+      ) => Promise<{
+        ok: boolean;
+        code?: string;
+        error?: string;
+        output?: unknown;
+      }>;
       // VRM 模型：选择/读取本地模型文件（桌面模式模型选择，默认模型打包在包内）
       pickModelFile: () => Promise<{ canceled: boolean; path?: string }>;
       readModelFile: (path: string) => Promise<ArrayBuffer | null>;
