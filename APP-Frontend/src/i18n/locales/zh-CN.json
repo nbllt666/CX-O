@@ -35,7 +35,94 @@
       "danmakuSource": "弹幕源",
       "subtitleSource": "字幕源",
       "audioSource": "音频源",
-      "distillation": "蒸馏"
+      "distillation": "蒸馏",
+      "neko": "Neko 插件"
+    },
+    "neko": {
+      "subtitle": "对接 neko 插件运行时与插件商店",
+      "tab": {
+        "plugins": "插件列表",
+        "store": "商店",
+        "install": "安装来源",
+        "logs": "日志",
+        "settings": "设置"
+      },
+      "runtime": {
+        "title": "Neko 插件运行时",
+        "running": "运行中",
+        "stopped": "未运行",
+        "start": "启动",
+        "stop": "停止",
+        "refresh": "刷新状态",
+        "bridge": "工具桥已启用（{{count}} 个工具）",
+        "bridgeOff": "工具桥未启用"
+      },
+      "plugins": {
+        "refresh": "刷新",
+        "empty": "暂无插件，可从「商店」或「安装来源」添加",
+        "running": "运行中",
+        "stopped": "已停止",
+        "market": "市场安装",
+        "start": "启动",
+        "stop": "停止",
+        "reload": "重载",
+        "openUi": "打开界面",
+        "openExternal": "在新窗口打开",
+        "close": "关闭",
+        "noDescription": "暂无描述",
+        "detail": "详情"
+      },
+      "detail": {
+        "lifecycle": "生命周期配置",
+        "enabled": "启用",
+        "autoStart": "自动启动",
+        "on": "开",
+        "off": "关",
+        "entries": "声明入口",
+        "noEntries": "该插件未声明快捷动作/事件入口",
+        "timeout": "超时 {{s}}s",
+        "messages": "事件 / 消息",
+        "noMessages": "暂无事件消息"
+      },
+      "store": {
+        "online": "商店在线",
+        "offline": "商店离线",
+        "refresh": "刷新目录",
+        "unreachable": "市场桥不可达，请确认插件服务器与网络",
+        "empty": "商店目录为空或未加载",
+        "install": "安装",
+        "embed": "内嵌官方 Market",
+        "embedUnavailable": "未获取到官方 Market 地址（market_web_url 为空）"
+      },
+      "install": {
+        "kind": {
+          "url": "URL 安装",
+          "local": "本地文件"
+        },
+        "packageUrl": "插件包下载地址（URL）",
+        "sha256": "SHA256（留空则跳过强校验）",
+        "sha256Placeholder": "64 位十六进制校验值",
+        "install": "开始安装",
+        "started": "已提交安装任务，正在下载...",
+        "localNote": "本地 zip 安装需先放到可访问的 HTTP 地址后走「URL 安装」。",
+        "localHint": "当前版本不直接支持本地文件包（市场桥需可下载 URL）；请用上方 URL 安装。"
+      },
+      "logs": {
+        "clear": "清空",
+        "empty": "暂无日志，启动运行时后在此实时显示输出"
+      },
+      "settings": {
+        "python": "Python 可执行路径",
+        "sourceDir": "neko 源码目录",
+        "port": "插件服务器端口",
+        "autoStart": "随应用自动启动",
+        "save": "保存",
+        "saved": "已保存",
+        "preconditionTitle": "运行前提",
+        "preconditionBody": "本机需安装 Python，且能 import neko 源码目录下的 plugin / config / utils 包（python -c \"import plugin, config, utils\" 通过）。neko 源码目录（默认 C:\\\\N.E.K.O-main）为只读依赖，本项目不改动其中内容。",
+        "boundaryTitle": "工具桥接（CXFC）",
+        "boundaryBody": "neko 插件的 LLM 工具经 CXFC 协议桥接到 CX-O 后端：后端调用时经 CXFC /call 回落到本机（Electron 工具桥）再转发到插件执行。前端与后端可分机部署；工具定义在本机注册接收器处捕获。前提：本机已启动插件运行时且插件已上报工具。"
+      }
     },
     "topbar": {
       "language": "语言",

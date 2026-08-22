@@ -54,5 +54,39 @@ declare global {
       pickModelFile: () => Promise<{ canceled: boolean; path?: string }>;
       readModelFile: (path: string) => Promise<ArrayBuffer | null>;
     };
+    /** 由 electron/preload.ts 通过 contextBridge 暴露的 Neko 插件运行时桥；浏览器模式下为 undefined */
+    neko?: {
+      getStatus: () => Promise<{
+        running: boolean;
+        port: number | null;
+        config: NekoRuntimeConfig;
+      }>;
+      start: () => Promise<{ ok: boolean; port?: number; error?: string }>;
+      stop: () => Promise<{ ok: boolean; error?: string }>;
+      restart: () => Promise<{ ok: boolean; port?: number; error?: string }>;
+      getConfig: () => Promise<NekoRuntimeConfig>;
+      setConfig: (partial: Partial<NekoRuntimeConfig>) => Promise<NekoRuntimeConfig>;
+      http: (req: {
+        method?: string;
+        path: string;
+        query?: Record<string, string | number | boolean>;
+        body?: unknown;
+      }) => Promise<{ ok: boolean; status?: number; body?: string; error?: string }>;
+      onLog: (callback: (line: string) => void) => () => void;
+      getBridgeStatus: () => Promise<{
+        registrarRunning: boolean;
+        bridgeRunning: boolean;
+        bridgePort: number | null;
+        tools: number;
+        cxfcRegistered: boolean;
+      }>;
+    };
+  }
+
+  interface NekoRuntimeConfig {
+    python: string;
+    sourceDir: string;
+    port: number;
+    autoStart: boolean;
   }
 }

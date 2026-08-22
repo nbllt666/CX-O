@@ -25,6 +25,7 @@ import {
   Bot,
   Brain,
   Captions,
+  Cat,
   Database,
   FlaskConical,
   LayoutDashboard,
@@ -194,6 +195,13 @@ export const MANAGEMENT_ROUTES: readonly ManagementRouteEntry[] = [
     titleKey: 'management.nav.distillation',
     icon: FlaskConical,
     Component: lazy(() => import('./DistillationPage')),
+  },
+  // ── Neko 插件兼容层页（仅追加，不改既有条目；物理读 neko 插件服务器） ──
+  {
+    path: 'neko',
+    titleKey: 'management.nav.neko',
+    icon: Cat,
+    Component: lazy(() => import('./NekoPluginsPage')),
   },
 ];
 

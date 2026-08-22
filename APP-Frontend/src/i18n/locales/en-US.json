@@ -35,7 +35,94 @@
       "danmakuSource": "Danmaku Source",
       "subtitleSource": "Subtitle Source",
       "audioSource": "Audio Source",
-      "distillation": "Distillation"
+      "distillation": "Distillation",
+      "neko": "Neko Plugins"
+    },
+    "neko": {
+      "subtitle": "Bridge to the neko plugin runtime and plugin store",
+      "tab": {
+        "plugins": "Plugins",
+        "store": "Store",
+        "install": "Install",
+        "logs": "Logs",
+        "settings": "Settings"
+      },
+      "runtime": {
+        "title": "Neko Plugin Runtime",
+        "running": "Running",
+        "stopped": "Stopped",
+        "start": "Start",
+        "stop": "Stop",
+        "refresh": "Refresh status",
+        "bridge": "Tool bridge on ({{count}} tools)",
+        "bridgeOff": "Tool bridge off"
+      },
+      "plugins": {
+        "refresh": "Refresh",
+        "empty": "No plugins yet. Add them from the Store or Install tabs.",
+        "running": "Running",
+        "stopped": "Stopped",
+        "market": "Market",
+        "start": "Start",
+        "stop": "Stop",
+        "reload": "Reload",
+        "openUi": "Open UI",
+        "openExternal": "Open in a new window",
+        "close": "Close",
+        "noDescription": "No description",
+        "detail": "Details"
+      },
+      "detail": {
+        "lifecycle": "Lifecycle",
+        "enabled": "Enabled",
+        "autoStart": "Auto start",
+        "on": "On",
+        "off": "Off",
+        "entries": "Declared entries",
+        "noEntries": "This plugin declares no quick actions / events",
+        "timeout": "Timeout {{s}}s",
+        "messages": "Events / Messages",
+        "noMessages": "No event messages"
+      },
+      "store": {
+        "online": "Store online",
+        "offline": "Store offline",
+        "refresh": "Refresh catalog",
+        "unreachable": "Market bridge unreachable. Check the plugin server and network.",
+        "empty": "Catalog is empty or not loaded",
+        "install": "Install",
+        "embed": "Embed official Market",
+        "embedUnavailable": "No official Market URL available (market_web_url is empty)"
+      },
+      "install": {
+        "kind": {
+          "url": "Install from URL",
+          "local": "Local file"
+        },
+        "packageUrl": "Plugin package URL",
+        "sha256": "SHA256 (leave blank to skip strict validation)",
+        "sha256Placeholder": "64 hex chars",
+        "install": "Install",
+        "started": "Install task submitted, downloading...",
+        "localNote": "To install a local zip, first host it at an accessible HTTP URL, then use Install from URL.",
+        "localHint": "This version does not install local file packages directly (the market bridge needs a downloadable URL); use URL install above."
+      },
+      "logs": {
+        "clear": "Clear",
+        "empty": "No logs yet. Output appears here in real time after the runtime is started."
+      },
+      "settings": {
+        "python": "Python executable",
+        "sourceDir": "neko source directory",
+        "port": "Plugin server port",
+        "autoStart": "Auto-start with the app",
+        "save": "Save",
+        "saved": "Saved",
+        "preconditionTitle": "Prerequisites",
+        "preconditionBody": "Python must be installed locally and able to import plugin / config / utils from the neko source directory (python -c \"import plugin, config, utils\" passes). The neko source directory (default C:\\\\N.E.K.O-main) is a read-only dependency; this project does not modify it.",
+        "boundaryTitle": "Tool bridging (CXFC)",
+        "boundaryBody": "Neko plugin LLM tools are bridged to the CX-O backend over the CXFC protocol: on invocation the backend calls the CXFC /call endpoint, which lands on this machine (Electron tool bridge) and forwards to the plugin for execution. Frontend and backend may run on different machines; tool definitions are captured by the local registration receiver. Prerequisite: the plugin runtime is running locally and plugins have reported their tools."
+      }
     },
     "topbar": {
       "language": "Language",

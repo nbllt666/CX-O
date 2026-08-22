@@ -37,6 +37,8 @@ import {
   setAutoStart,
   setRunAsAdmin,
 } from './startup';
+import { registerNekoIpc } from './neko/ipc';
+import { getNekoConfig, startNekoRuntime, stopNekoRuntime } from './neko/launcher';
 
 // ESM 主进程下自行构造 __dirname（产物为 ESM 格式，Node 不注入该全局）
 const __filename = fileURLToPath(import.meta.url);
@@ -493,10 +495,22 @@ app.whenReady().then(() => {
     console.error('[startup] 启动时应用提权配置失败:', err);
   }
   registerIpcHandlers();
+  registerNekoIpc();
   configureCors();
   configureDisplayMediaHandler();
   createPetWindow();
   createTray();
+
+  // Neko 插件运行时 + 工具→CXFC 桥：若配置了自动启动，异步拉起（不阻断主流程）
+  try {
+    if (getNekoConfig().autoStart) {
+      startNekoRuntime()
+        .then(({ port, bridge }) => console.log(`[neko] 插件服务器已自动启动，端口 ${port}，工具桥=${bridge}`))
+        .catch((err) => console.error('[neko] 自动启动失败:', err));
+    }
+  } catch (err) {
+    console.error('[neko] 自动启动检查失败:', err);
+  }
 
   // 电脑控制插件：随应用启动 HTTPS 插件服务（异步，失败不阻断主流程）
   startComputerControlPlugin()
@@ -538,6 +552,8 @@ app.on('will-quit', () => {
   void stopCxfcRegistration();
   // 停止电脑控制插件 HTTPS 服务，回收端口与连接
   void stopComputerControlPlugin();
+  // 停止 Neko 插件运行时 sidecar 与工具→CXFC 桥，回收子进程/接口
+  void stopNekoRuntime();
 });
 
 app.on('before-quit', () => {

@@ -50,3 +50,24 @@ contextBridge.exposeInMainWorld('electronAPI', {
   pickModelFile: () => ipcRenderer.invoke('model:pick-file'),
   readModelFile: (path: string) => ipcRenderer.invoke('model:read-file', path),
 });
+
+contextBridge.exposeInMainWorld('neko', {
+  // Neko 插件运行时 sidecar 生命周期
+  getStatus: () => ipcRenderer.invoke('neko:get-status'),
+  start: () => ipcRenderer.invoke('neko:start'),
+  stop: () => ipcRenderer.invoke('neko:stop'),
+  restart: () => ipcRenderer.invoke('neko:restart'),
+  getConfig: () => ipcRenderer.invoke('neko:get-config'),
+  setConfig: (partial: Record<string, unknown>) => ipcRenderer.invoke('neko:set-config', partial),
+  /** 经主进程 net.fetch 代理直连插件服务器（规避 file:// 下 CORS / Host 守卫） */
+  http: (req: { method?: string; path: string; query?: Record<string, string | number | boolean>; body?: unknown }) =>
+    ipcRenderer.invoke('neko:http', req),
+  /** 订阅 sidecar stdout/stderr；返回取消订阅函数 */
+  onLog: (callback: (line: string) => void) => {
+    const listener = (_event: Electron.IpcRendererEvent, line: string) => callback(line);
+    ipcRenderer.on('neko:stdout', listener);
+    return () => ipcRenderer.removeListener('neko:stdout', listener);
+  },
+  /** 工具→CXFC 桥状态（仅供管理页展示） */
+  getBridgeStatus: () => ipcRenderer.invoke('neko:get-bridge-status'),
+});
