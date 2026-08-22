@@ -33,6 +33,7 @@ from __future__ import annotations
 import logging
 import os
 import threading
+import traceback
 from typing import Any, Dict, List, Optional
 
 from tuner.core.collector.dataset import DatasetStore
@@ -153,7 +154,6 @@ class QLoRATrainer:
             self._fail(job, str(exc))
         except Exception:  # noqa: BLE001 —— 归一为可读失败，并保留完整堆栈
             logger.exception("训练过程异常，任务失败: job_id=%s", job.job_id)
-            import traceback
             detail = traceback.format_exc(limit=15)
             self._fail(job, f"训练过程中发生异常，详见日志。\n{detail}")
 
