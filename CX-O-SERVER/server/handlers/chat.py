@@ -130,6 +130,16 @@ async def _consume_and_send_stream(
     return full_response, tool_calls_buffer, chunk_index
 
 
+def _record_live_feedback(text: str, prompt: str, session_id: str) -> None:
+    """在 AI 回复产生处记录「上一轮回复」到隐式反馈追踪器（增量接入，静默降级）。"""
+    try:
+        from server.services.live_feedback import get_live_feedback_tracker
+
+        get_live_feedback_tracker().record_ai_response(text, prompt=prompt)
+    except Exception as e:  # 记录失败不影响聊天主路径
+        logger.warning(f"live_feedback 回复记录降级: {e}")
+
+
 def register_chat_handlers(manager: "WebSocketManager"):
     """将聊天（普通/流式/多模态）处理器注册到 WebSocket 管理器。"""
     _manager = manager
@@ -156,6 +166,8 @@ def register_chat_handlers(manager: "WebSocketManager"):
             if hasattr(response, "tool_calls") and response.tool_calls:
                 response = await _process_tool_calls(response.tool_calls, messages, ctx.llm)
                 final_response = response.content
+
+            _record_live_feedback(final_response, text, ctx.session_id)
 
             ctx.context_mgr.add_message(session_id=ctx.session_id, role="assistant", content=final_response)
 
@@ -204,6 +216,7 @@ def register_chat_handlers(manager: "WebSocketManager"):
                 )
 
             if full_response:
+                _record_live_feedback(full_response, text, ctx.session_id)
                 ctx.context_mgr.add_message(session_id=ctx.session_id, role="assistant", content=full_response)
 
             await _manager.send_message(client_id, create_stream(
@@ -246,6 +259,8 @@ def register_chat_handlers(manager: "WebSocketManager"):
             if hasattr(response, "tool_calls") and response.tool_calls:
                 response = await _process_tool_calls(response.tool_calls, messages, ctx.llm)
                 final_response = response.content
+
+            _record_live_feedback(final_response, text, ctx.session_id)
 
             ctx.context_mgr.add_message(session_id=ctx.session_id, role="assistant", content=final_response)
 

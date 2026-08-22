@@ -38,6 +38,7 @@ from server.api.routers import (
     tools,
     vector,
     websocket,
+    tuner,
 )
 from server.config import get_settings
 from server.dependencies import ServiceState
@@ -103,6 +104,8 @@ def register_api_routes(app: FastAPI):
     app.include_router(anythingllm.router)
     # distillation router 自带 /api/v1/distillation prefix，挂载时不加额外 prefix
     app.include_router(distillation.router)
+    # CXO-Tuner evolution 集成出口路由（/api/v1/tuner/*）
+    app.include_router(tuner.router, prefix="/api")
 
     app.add_exception_handler(ServiceError, service_exception_handler)
     app.add_exception_handler(HTTPException, http_exception_handler)

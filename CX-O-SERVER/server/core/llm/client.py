@@ -335,11 +335,19 @@ class VLLMClient(LLMClient):
         temperature: float = 0.7,
         max_tokens: int = 4096,
         dimension: int = 768,
+        lora_request: Optional[Dict] = None,
     ):
-        """初始化 VLLM 客户端，并对 max_tokens 做防御性上限钳制。"""
+        """初始化 VLLM 客户端，并对 max_tokens 做防御性上限钳制。
+
+        Args:
+            lora_request: 可选 vLLM /v1/chat/completions 的 lora_request 结构
+                （如 {"model": "adapter", "lora_weight": 1.0}）。为 None 或空时
+                恒不附加 lora_request 字段 → 向后兼容。
+        """
         self.host = host.rstrip("/")
         self.model = model
         self.temperature = temperature
+        self.lora_request = lora_request or None
         # 防御性 clamp：max_tokens 不能超过 vLLM 模型的 max_model_len（默认 32768）。
         # 配置中若误设 131072 等超大值，vLLM 会返回 400 Bad Request，
         # stream_chat 静默吞掉错误导致 TTS 发空结束标记、用户听不到回复。
@@ -388,15 +396,19 @@ class VLLMClient(LLMClient):
             )
             if effective_max_tokens <= 0:
                 effective_max_tokens = 32768
+            # 组装请求体；仅当配置了 lora_request 才附加该字段（向后兼容）
+            payload = {
+                "model": self.model,
+                "messages": messages,
+                "stream": stream,
+                "temperature": kwargs.get("temperature", self.temperature),
+                "max_tokens": effective_max_tokens,
+            }
+            if self.lora_request:
+                payload["lora_request"] = self.lora_request
             response = await client.post(
                 f"{self.host}/v1/chat/completions",
-                json={
-                    "model": self.model,
-                    "messages": messages,
-                    "stream": stream,
-                    "temperature": kwargs.get("temperature", self.temperature),
-                    "max_tokens": effective_max_tokens,
-                },
+                json=payload,
                 timeout=120.0,
             )
 
@@ -494,6 +506,10 @@ class VLLMClient(LLMClient):
             if "tools" in kwargs and kwargs["tools"]:
                 request_body["tools"] = kwargs["tools"]
 
+            # 仅当配置了 lora_request 才附加该字段（向后兼容）
+            if self.lora_request:
+                request_body["lora_request"] = self.lora_request
+
             # 使用预热好的 shared HTTP client，避免每次调用都重新构造 httpx.AsyncClient
             # （Windows 上首次构造耗 8s，会让 WS 端到端延迟从 ~10ms 飙到 ~8500ms）
             client = get_shared_http_client()
@@ -550,6 +566,43 @@ class VLLMClient(LLMClient):
     def model_name(self) -> str:
         """返回 VLLM 模型标识。"""
         return f"vllm/{self.model}"
+
+    async def load_lora_adapter(self, adapter_name: str, lora_path: str) -> Dict:
+        """调用 vLLM /load_lora_adapter 端点在运行时加载 LoRA adapter。
+
+        Args:
+            adapter_name: LoRA adapter 名称（在后续 lora_request.model 中引用）
+            lora_path: LoRA 权重目录/文件路径
+
+        Returns:
+            结果字典：{"ok": True, "adapter_name": ..., "status_code": 200} 表示成功；
+            失败返回 {"ok": False, "adapter_name": ..., "status_code"/"error": ...}，
+            超时/连接失败同样以可读 error 返回，不抛异常。
+        """
+        payload = {"lora_name": adapter_name, "lora_path": lora_path}
+        try:
+            # 预热好的 shared HTTP client；LoRA 加载通常耗时较长，放宽超时
+            client = get_shared_http_client()
+            response = await client.post(
+                f"{self.host}/load_lora_adapter", json=payload, timeout=300.0
+            )
+            if response.status_code == 200:
+                return {"ok": True, "adapter_name": adapter_name, "status_code": 200}
+            error_text = response.text[:500] if response.text else "load_lora_adapter failed"
+            logger.error(
+                f"VLLM load_lora_adapter HTTP {response.status_code}: {error_text}"
+            )
+            return {
+                "ok": False,
+                "adapter_name": adapter_name,
+                "status_code": response.status_code,
+                "error": f"HTTP {response.status_code}: {error_text}",
+            }
+        except httpx.TimeoutException as e:
+            return {"ok": False, "adapter_name": adapter_name, "error": f"加载超时: {e}"}
+        except Exception as e:
+            logger.error(f"VLLM load_lora_adapter 调用失败: {e}")
+            return {"ok": False, "adapter_name": adapter_name, "error": str(e)}
 
     async def is_available(self) -> bool:
         """检查VLLM模型是否可用"""

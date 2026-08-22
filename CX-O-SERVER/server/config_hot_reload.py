@@ -18,6 +18,7 @@ REQUIRES_RESTART: Dict[str, bool] = {
     "audio": False,
     "live": False,
     "system": False,
+    "evolution": False,  # CXO-Tuner evolution 节：可热更新，仅记录，不重建组件
 }
 
 
@@ -44,6 +45,12 @@ async def apply_section(
             await model_router.reload_clients()
         except Exception as e:
             logger.error(f"LLM 配置热更新失败: {e}")
+
+    if section == "evolution":
+        # CXO-Tuner evolution 节：不强制重建 Tuner 客户端（客户端按需惰性重建），
+        # 仅记录本次更新字段，标记 applied=True（requires_restart=False）。
+        logger.info(f"CXO-Tuner evolution 配置节热更新（仅记录）: {list(section_data.keys())}")
+        return {"applied": True, "requires_restart": False}
 
     return {"applied": not requires_restart, "requires_restart": requires_restart}
 

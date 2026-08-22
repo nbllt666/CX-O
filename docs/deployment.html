@@ -481,6 +481,7 @@ pre code { color: var(--accent-green); }
       <tr><td>8094</td><td>CosyVoice3 TTS</td><td>主引擎：克隆与情感合成</td></tr>
       <tr><td>8101</td><td>Embedding</td><td>记忆向量嵌入推理</td></tr>
       <tr><td>8200</td><td>CX-O VoiceWorkStation</td><td>语音工作站</td></tr>
+      <tr><td>8300</td><td>CXO-Tuner</td><td>进化实验室（自我进化，可选）</td></tr>
       <tr><td>11434</td><td>Ollama</td><td>本地 LLM 推理</td></tr>
       <tr><td>50061</td><td>Weaviate gRPC</td><td>向量数据库 gRPC 通道</td></tr>
       <tr><td>9996/9997</td><td>CXFC</td><td>插件发现 / 广播</td></tr>
@@ -743,6 +744,27 @@ cp .env.example .env</code></pre>
       </tr>
     </table>
     <p style="margin-top:12px; color:var(--text-dim)">Docker Compose 现仅编排 ASR 与 LLM 推理服务；TTS 语音合成走独立服务（CosyVoice3 / VoiceDesign / Qwen3-TTS Base），不在此编排内。</p>
+  </div>
+
+  <div class="card">
+    <span class="tag tag-green">可选 · 自我进化</span>
+    <h3>CXO-Tuner — 进化实验室（可选服务）</h3>
+    <p>CXO-Tuner 是"自我进化"能力的独立可选服务。AI 会从你们的日常对话里自动学习你的偏好，在离线闲时悄悄变聪明。不启用时对主系统零影响。</p>
+    <table>
+      <tr>
+        <th>项目</th>
+        <th>说明</th>
+      </tr>
+      <tr><td>启动方式</td><td><code>docker compose --profile tuner up</code>（默认 <code>docker compose up -d</code> 不含此服务）</td></tr>
+      <tr><td>端口</td><td><code>8300</code>（可用 <code>CXO_TUNER_PORT</code> 调整）</td></tr>
+      <tr><td>硬件</td><td>支持 GPU 与 CPU——训练默认走 CPU，注入 GPU 编号（<code>CUDA_VISIBLE_DEVICES</code>）即 GPU 加速。推荐有独立空余 GPU 时启用</td></tr>
+      <tr><td>挂载</td><td>数据 / 模型 / 角色卡目录卷挂载（对话数据、训练产物 LoRA adapter）</td></tr>
+      <tr><td>可选性</td><td>仅当启用 <code>tuner</code> profile 时才启动；关闭即完全隔离，主系统不依赖其任何产物</td></tr>
+    </table>
+    <div class="highlight-box">
+      <h4>怎么用</h4>
+      <p>在设置 → 进化实验室开启能力，然后用 <code>docker compose --profile tuner up</code> 拉起该可选服务。之后正常陪伴、正常聊天即可，系统会在闲时自动学习、不断优化。</p>
+    </div>
   </div>
 
   <div class="card">

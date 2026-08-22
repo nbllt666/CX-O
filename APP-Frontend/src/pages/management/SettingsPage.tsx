@@ -42,6 +42,8 @@ import {
 import type { CaptureFrameMode } from '@/store/captureStore';
 import { healthApi } from '@/api/clients/health';
 import { configApi } from '@/api/clients/config';
+import { tunerApi } from '@/api/clients/tuner';
+import type { TunerAdapter, TunerStats, TunerTrainStatus } from '@/api/clients/tuner';
 import { discoveryApi } from '@/api/clients/discovery';
 import type { DiscoveredBackend } from '@/api/clients/discovery';
 import { subscribeConfigChanged } from '@/lib/configEvents';
@@ -58,6 +60,7 @@ import {
   STORAGE_KEYS,
 } from '@/api/base';
 import { cn } from '@/lib/utils';
+import { Badge } from '@/components/ui-v2';
 import { isElectron } from '@/lib/isElectron';
 import { DEFAULT_VRM_MODEL_PATH, pickModelFile } from '@/lib/vrmModelSource';
 
@@ -1143,6 +1146,419 @@ function LlmSection() {
   );
 }
 
+// ── 区块 6.5：进化实验室（CXO-Tuner 自适应微调） ──
+
+const TRAIN_POLL_MS = 3000;
+
+/**
+ * 自动裁判可用性。CX-O-SERVER 当前未代理 POST /api/v1/judge/build（无对应出口路由），
+ * 故该入口禁用并注明；后续后端提供等价端点时改为 true 并接入触发逻辑。
+ */
+const JUDGE_AVAILABLE = false;
+
+function EvolutionSection() {
+  const { t } = useTranslation();
+  const { isRunning } = useBackendRunning();
+  const [tunerOnline, setTunerOnline] = useState(false);
+  const [stats, setStats] = useState<TunerStats | null>(null);
+  const [adapters, setAdapters] = useState<TunerAdapter[]>([]);
+  const [epochs, setEpochs] = useState(1);
+  const [sampleRatio, setSampleRatio] = useState(1);
+  const [train, setTrain] = useState<TunerTrainStatus | null>(null);
+  const [trainOffline, setTrainOffline] = useState(false);
+  const [triggering, setTriggering] = useState(false);
+  const [applyingId, setApplyingId] = useState<string | null>(null);
+  const [deletingId, setDeletingId] = useState<string | null>(null);
+  /** 应用成功的适配器 id 集合，用于展示「已应用」反馈 */
+  const [appliedIds, setAppliedIds] = useState<Set<string>>(new Set());
+  const [error, setError] = useState<string | null>(null);
+  const jobIdRef = useRef<string>('');
+
+  const load = useCallback(async () => {
+    try {
+      const [s, ads] = await Promise.all([tunerApi.getStats(), tunerApi.listAdapters()]);
+      setStats(s);
+      setTunerOnline(s !== null);
+      setAdapters(ads ?? []);
+    } catch {
+      setTunerOnline(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!isRunning) {
+      setTunerOnline(false);
+      return;
+    }
+    void load();
+  }, [isRunning, load]);
+
+  // 配置热更新：进化实验室配置变更后即时刷新 stats / adapters（卸载时清理订阅）
+  useEffect(() => {
+    if (!isRunning) return;
+    const unsubscribe = subscribeConfigChanged(({ section }) => {
+      if (section === 'evolution') void load();
+    });
+    return unsubscribe;
+  }, [isRunning, load]);
+
+  const pollTrain = useCallback(async () => {
+    const jobId = jobIdRef.current;
+    if (!jobId) return;
+    const status = await tunerApi.getTrainStatus(jobId);
+    if (status) {
+      setTrain(status);
+      setTrainOffline(false);
+    } else {
+      // 轮询失败 / 后端离线：不覆写既有状态，置离线降级标记
+      setTrainOffline(true);
+    }
+  }, []);
+
+  // 训练进行中轮询
+  useEffect(() => {
+    if (!train?.job_id || train.status === 'completed' || train.status === 'failed') return;
+    const id = setInterval(() => void pollTrain(), TRAIN_POLL_MS);
+    return () => clearInterval(id);
+  }, [train?.job_id, train?.status, pollTrain]);
+
+  const handleTrigger = async () => {
+    setTriggering(true);
+    setError(null);
+    try {
+      const result = await tunerApi.trigger(epochs, sampleRatio);
+      const jobId = result.job_id ?? '';
+      jobIdRef.current = jobId;
+      setTrain(result);
+      setTrainOffline(false);
+      setAppliedIds(new Set());
+      if (jobId) void pollTrain();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : t('settings.evolution.triggerFailed'));
+    } finally {
+      setTriggering(false);
+    }
+  };
+
+  const handleApply = async (id: string) => {
+    setApplyingId(id);
+    setError(null);
+    try {
+      const result = await tunerApi.applyAdapter(id);
+      if (result.applied) {
+        setAppliedIds((prev) => new Set(prev).add(id));
+      } else {
+        setError(t('settings.evolution.applyFailed'));
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : t('settings.evolution.applyFailed'));
+    } finally {
+      setApplyingId(null);
+    }
+  };
+
+  const handleDelete = async (id: string) => {
+    setDeletingId(id);
+    setError(null);
+    try {
+      const result = await tunerApi.deleteAdapter(id);
+      if (!result.deleted) {
+        setError(t('settings.evolution.deleteFailed'));
+        return;
+      }
+      // 删除成功：刷新列表，并清理该适配器的「已应用」标记
+      setAppliedIds((prev) => {
+        if (!prev.has(id)) return prev;
+        const next = new Set(prev);
+        next.delete(id);
+        return next;
+      });
+      // 删除后重取适配器列表
+      try {
+        const ads = await tunerApi.listAdapters();
+        setAdapters(ads ?? []);
+      } catch {
+        /* 刷新失败时保留原列表，下次 load 收敛 */
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : t('settings.evolution.deleteFailed'));
+    } finally {
+      setDeletingId(null);
+    }
+  };
+
+  // Loss 曲线：优先 loss_curve（CXO-Tuner 契约口径），回退 MVP 使用的 loss_history；
+  // 两者皆缺失（或非数值）时降级为文本展示。
+  const rawLoss = train?.loss_curve !== undefined ? train.loss_curve : train?.loss_history;
+  const lossHistory = Array.isArray(rawLoss)
+    ? rawLoss.filter((v): v is number => typeof v === 'number' && Number.isFinite(v))
+    : [];
+  const maxLoss = lossHistory.length ? Math.max(...lossHistory) : 0;
+  const progress = Math.round(train?.progress ?? 0);
+
+  // 显存占用展示：优先格式化字符串，否则回退 memory_usage_mb（MB）
+  const memoryText =
+    typeof train?.memory === 'string' && train.memory.trim() !== ''
+      ? train.memory
+      : train?.memory_usage_mb !== undefined && train.memory_usage_mb !== null
+        ? `${train.memory_usage_mb} MB`
+        : '';
+
+  /** 直播特化来源映射：base / streaming / intimate，无 scene 时返回 null */
+  const sceneLabel = (scene?: string): string | null => {
+    if (!scene) return null;
+    switch (scene) {
+      case 'base':
+        return t('settings.evolution.sceneBase');
+      case 'streaming':
+        return t('settings.evolution.sceneStreaming');
+      case 'intimate':
+        return t('settings.evolution.sceneIntimate');
+      default:
+        return scene;
+    }
+  };
+
+  return (
+    <Section
+      icon={Sparkles}
+      title={t('settings.evolution.sectionTitle')}
+      desc={t('settings.evolution.sectionDesc')}
+    >
+      {!isRunning || !tunerOnline ? (
+        <>
+          <Row label={t('settings.evolution.status')}>
+            <span className="flex items-center gap-1.5 text-xs font-medium text-amber-400">
+              <span className="h-1.5 w-1.5 rounded-full bg-amber-400" />
+              {t('settings.evolution.tunerOffline')}
+            </span>
+          </Row>
+          <p className="text-xs text-muted-foreground">{t('settings.evolution.tunerOfflineDesc')}</p>
+        </>
+      ) : (
+        <>
+          {/* 数据集统计 */}
+          <div className="space-y-2 rounded-lg border border-[var(--glass-border)] bg-[rgba(255,255,255,0.02)] p-3">
+            <h3 className="text-sm font-medium text-muted-foreground">{t('settings.evolution.dataset')}</h3>
+            <Row label={t('settings.evolution.total')}>
+              <span className="text-xs tabular-nums text-muted-foreground">{stats?.total ?? 0}</span>
+            </Row>
+            <Row label={t('settings.evolution.positiveRatio')}>
+              <span className="text-xs tabular-nums text-emerald-400">
+                {((stats?.positive_ratio ?? 0) * 100).toFixed(1)}%
+              </span>
+            </Row>
+            <Row label={t('settings.evolution.negativeRatio')}>
+              <span className="text-xs tabular-nums text-red-400">
+                {((stats?.negative_ratio ?? 0) * 100).toFixed(1)}%
+              </span>
+            </Row>
+            <Row label={t('settings.evolution.anchorCount')}>
+              <span className="text-xs tabular-nums text-muted-foreground">{stats?.anchor_count ?? 0}</span>
+            </Row>
+            {stats && Object.keys(stats.source_breakdown).length > 0 && (
+              <Row label={t('settings.evolution.sourceBreakdown')}>
+                <span className="text-xs text-muted-foreground">
+                  {Object.entries(stats.source_breakdown)
+                    .map(([k, v]) => `${k}: ${v}`)
+                    .join(' · ')}
+                </span>
+              </Row>
+            )}
+          </div>
+
+          {/* 训练触发 */}
+          <div className="space-y-2 rounded-lg border border-[var(--glass-border)] bg-[rgba(255,255,255,0.02)] p-3">
+            <h3 className="text-sm font-medium text-muted-foreground">{t('settings.evolution.trainTitle')}</h3>
+            <NumberField
+              label={t('settings.evolution.epochs')}
+              value={epochs}
+              step={1}
+              onChange={(v) => setEpochs(Math.max(0, Math.round(v)))}
+            />
+            <SliderField
+              label={t('settings.evolution.sampleRatio')}
+              value={sampleRatio}
+              min={0}
+              max={1}
+              step={0.05}
+              format={(v) => `${Math.round(v * 100)}%`}
+              onChange={setSampleRatio}
+            />
+            <div className="flex items-center gap-2 pt-1">
+              <button
+                type="button"
+                disabled={triggering}
+                onClick={() => void handleTrigger()}
+                className="rounded-lg bg-primary px-3 py-1.5 text-xs font-medium text-primary-foreground transition-opacity hover:opacity-85 disabled:opacity-50"
+              >
+                {triggering ? t('settings.evolution.triggering') : t('settings.evolution.trigger')}
+              </button>
+            </div>
+            {error && <p className="text-xs text-red-400">{error}</p>}
+          </div>
+
+          {/* 训练状态 */}
+          <div className="space-y-2 rounded-lg border border-[var(--glass-border)] bg-[rgba(255,255,255,0.02)] p-3">
+            <h3 className="text-sm font-medium text-muted-foreground">{t('settings.evolution.trainStatus')}</h3>
+            {!train ? (
+              <p className="text-xs text-muted-foreground">{t('settings.evolution.noStatus')}</p>
+            ) : (
+              <>
+                <Row label={t('settings.evolution.jobStatus')}>
+                  <Badge
+                    variant={
+                      train.status === 'completed'
+                        ? 'success'
+                        : train.status === 'failed'
+                          ? 'error'
+                          : 'anime'
+                    }
+                    size="sm"
+                  >
+                    {train.status ?? '-'}
+                  </Badge>
+                </Row>
+                <Row label={t('settings.evolution.progress')}>
+                  <div className="flex w-40 items-center gap-2">
+                    <div className="h-1.5 flex-1 overflow-hidden rounded-full bg-[rgba(255,255,255,0.1)]">
+                      <div
+                        className="h-full rounded-full bg-primary transition-all duration-fast"
+                        style={{ width: `${Math.min(100, progress)}%` }}
+                      />
+                    </div>
+                    <span className="w-9 text-right text-xs tabular-nums text-muted-foreground">{progress}%</span>
+                  </div>
+                </Row>
+                {memoryText && (
+                  <Row label={t('settings.evolution.memory')}>
+                    <span className="text-xs text-muted-foreground">{memoryText}</span>
+                  </Row>
+                )}
+                {lossHistory.length > 0 ? (
+                  <Row label={t('settings.evolution.loss')}>
+                    <div className="flex h-10 items-end gap-0.5">
+                      {lossHistory.slice(-24).map((v, i) => (
+                        <div
+                          key={`${i}-${v}`}
+                          className="w-2 rounded-sm bg-[rgba(255,183,225,0.6)]"
+                          style={{ height: maxLoss > 0 ? `${Math.max(8, (v / maxLoss) * 100)}%` : '8%' }}
+                        />
+                      ))}
+                    </div>
+                  </Row>
+                ) : (
+                  <Row label={t('settings.evolution.loss')}>
+                    <span className="text-xs text-muted-foreground">{t('settings.evolution.noLoss')}</span>
+                  </Row>
+                )}
+                {trainOffline && (
+                  <p className="text-xs text-amber-400">{t('settings.evolution.trainPollFailed')}</p>
+                )}
+                {train.error && <p className="text-xs text-red-400">{train.error}</p>}
+              </>
+            )}
+          </div>
+
+          {/* 适配器列表 */}
+          <div className="space-y-2 rounded-lg border border-[var(--glass-border)] bg-[rgba(255,255,255,0.02)] p-3">
+            <h3 className="text-sm font-medium text-muted-foreground">{t('settings.evolution.adaptersTitle')}</h3>
+            {adapters.length === 0 ? (
+              <p className="py-2 text-center text-xs text-muted-foreground">
+                {t('settings.evolution.noAdapters')}
+              </p>
+            ) : (
+              adapters.map((adapter) => {
+                const scene = sceneLabel(adapter.scene);
+                const applied = appliedIds.has(adapter.id);
+                // 训练时间：优先 created_at，解析失败回退展示原文
+                let trainingTime: string | null = null;
+                if (adapter.created_at) {
+                  const parsed = new Date(adapter.created_at);
+                  trainingTime = Number.isNaN(parsed.getTime())
+                    ? adapter.created_at
+                    : parsed.toLocaleString();
+                }
+                return (
+                  <div
+                    key={adapter.id}
+                    className="rounded-lg border border-[var(--glass-border)] bg-[rgba(255,255,255,0.02)] px-3 py-2"
+                  >
+                    <div className="flex items-center justify-between">
+                      <div className="flex min-w-0 items-center gap-2">
+                        <p className="truncate text-sm">{adapter.name || adapter.id}</p>
+                        {scene && (
+                          <span className="shrink-0 rounded-full bg-[rgba(255,183,225,0.18)] px-2 py-0.5 text-[10px] font-medium text-[var(--color-primary)]">
+                            {scene}
+                          </span>
+                        )}
+                      </div>
+                      <div className="flex shrink-0 items-center gap-2">
+                        {applied && (
+                          <span className="text-xs text-emerald-400">
+                            {t('settings.evolution.applied')}
+                          </span>
+                        )}
+                        <button
+                          type="button"
+                          disabled={applyingId === adapter.id}
+                          onClick={() => void handleApply(adapter.id)}
+                          className="rounded-lg border border-primary/30 bg-primary/10 px-2.5 py-1 text-xs text-primary transition-opacity hover:opacity-85 disabled:opacity-50"
+                        >
+                          {applyingId === adapter.id
+                            ? t('settings.evolution.applying')
+                            : t('settings.evolution.apply')}
+                        </button>
+                        <button
+                          type="button"
+                          disabled={deletingId === adapter.id}
+                          onClick={() => void handleDelete(adapter.id)}
+                          aria-label={t('settings.evolution.delete', { name: adapter.name || adapter.id })}
+                          className="rounded-lg border border-red-500/30 bg-red-500/10 px-2.5 py-1 text-xs text-red-400 transition-opacity hover:opacity-85 disabled:opacity-50"
+                        >
+                          {deletingId === adapter.id
+                            ? t('settings.evolution.deleting')
+                            : t('settings.evolution.delete')}
+                        </button>
+                      </div>
+                    </div>
+                    {(adapter.base_model || trainingTime) && (
+                      <p className="mt-1 text-xs text-muted-foreground">
+                        {adapter.base_model && <span className="font-mono">{adapter.base_model}</span>}
+                        {adapter.base_model && trainingTime && <span> · </span>}
+                        {trainingTime && (
+                          <>
+                            {t('settings.evolution.trainingTime')}：{trainingTime}
+                          </>
+                        )}
+                      </p>
+                    )}
+                  </div>
+                );
+              })
+            )}
+          </div>
+
+          {/* 自动裁判：从历史对话构建 DPO 偏好数据。
+              当前 CX-O-SERVER 未代理 /judge/build，入口禁用并注明不可用原因。 */}
+          <div className="space-y-2 rounded-lg border border-[var(--glass-border)] bg-[rgba(255,255,255,0.02)] p-3 opacity-80">
+            <div className="flex items-center justify-between">
+              <h3 className="text-sm font-medium text-muted-foreground">{t('settings.evolution.judgeTitle')}</h3>
+              <Badge variant="default" size="sm">
+                {t('settings.evolution.judgeUnavailable')}
+              </Badge>
+            </div>
+            <p className="text-xs text-muted-foreground">{t('settings.evolution.judgeDesc')}</p>
+            {!JUDGE_AVAILABLE && (
+              <p className="text-xs text-amber-400">{t('settings.evolution.judgeUnavailableDesc')}</p>
+            )}
+          </div>
+        </>
+      )}
+    </Section>
+  );
+}
+
 // ── 区块 7：向量存储（VectorCard 对齐） ──
 
 interface VectorConfigState {
@@ -1970,6 +2386,7 @@ export default function SettingsPage() {
       <AudioSection />
       <CaptureSection />
       <LlmSection />
+      <EvolutionSection />
       <VectorSection />
       <GraphSection />
       <ServiceSection />

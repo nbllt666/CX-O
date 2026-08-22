@@ -1,0 +1,30 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://cx-o/public/schema/cxo_tuner_feedback.schema.json",
+  "title": "CXOTunerFeedback",
+  "description": "CXO-Tuner 偏好反馈契约。描述一条用于偏好对齐（DPO/奖励学习）的单条偏好样本：给定同一 prompt，response_chosen 为更优回复，response_rejected 为较差回复。source 标识数据来源。timestamp 为收集时间。quality_score 为人类/裁判对样本的质量评分（0-1）。root 为单条记录契约，additionalProperties=false 禁止未知字段；metadata 为开放扩展容器（additionalProperties=true），可含 sentiment、keywords、scene_type、judge_model、judge_reasoning。源真理：CXO-Tuner spec。",
+  "type": "object",
+  "required": ["prompt", "response_chosen", "response_rejected", "source", "timestamp"],
+  "additionalProperties": false,
+  "properties": {
+    "prompt": { "type": "string", "minLength": 1, "description": "触发偏好判断的输入提示词。必填，不允许空串。" },
+    "response_chosen": { "type": "string", "minLength": 1, "description": "更优回复（偏好胜出方）。必填，不允许空串，与 response_rejected 内容不同。" },
+    "response_rejected": { "type": "string", "minLength": 1, "description": "较差回复（偏好落败方）。必填，不允许空串。" },
+    "source": { "type": "string", "enum": ["live_danmaku", "judge", "distillation"], "description": "偏好样本来源。live_danmaku=直播弹幕隐性偏好，judge=裁判模型显式排序，distillation=蒸馏回放偏好。" },
+    "timestamp": { "type": "string", "format": "date-time", "description": "样本收集时间。ISO 8601 格式（如 2026-08-22T02:00:00Z）。" },
+    "session_id": { "type": "string", "description": "来源会话 ID（可选）。用于溯源与去重。" },
+    "quality_score": { "type": "number", "minimum": 0, "maximum": 1, "description": "样本质量评分（可选）。0-1 浮点，越高代表样本质量越可靠。缺省时由下游按 0.5 中性处理。" },
+    "metadata": {
+      "type": "object",
+      "additionalProperties": true,
+      "description": "开放扩展元数据容器（可选）。可含 sentiment、keywords、scene_type、judge_model、judge_reasoning，且允许额外自定义键，不拒绝未知字段。",
+      "properties": {
+        "sentiment": { "type": "string", "description": "语义情感标签（如 positive/negative/neutral）或任意情感描述字符串。" },
+        "keywords": { "type": "array", "items": { "type": "string" }, "description": "关键词数组，描述 prompt / 回复中出现的主题词。" },
+        "scene_type": { "type": "string", "description": "场景类型标注（如 live_danmaku_topic、tool_call、roleplay），用于数据分桶。" },
+        "judge_model": { "type": "string", "description": "当 source=judge 时，输出排序的裁判模型标识。" },
+        "judge_reasoning": { "type": "string", "description": "裁判模型给出排序的推理说明文本。" }
+      }
+    }
+  }
+}

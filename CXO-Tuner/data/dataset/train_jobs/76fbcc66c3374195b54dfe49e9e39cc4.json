@@ -1,0 +1,13 @@
+{
+  "job_id": "76fbcc66c3374195b54dfe49e9e39cc4",
+  "status": "failed",
+  "progress": 0.0,
+  "loss_curve": [],
+  "memory_usage_mb": 0,
+  "error": "QLoRA 训练依赖未就绪：缺少 unsloth / trl / peft / transformers / torch。请执行 `pip install unsloth trl peft transformers torch` 后重试（CPU 环境将报 torch 相关错误）。",
+  "base_model": "",
+  "epochs": 1,
+  "sample_ratio": 1.0,
+  "anchor_ratio": 0.2,
+  "created_at": "2026-08-22T06:23:39.858661+00:00"
+}

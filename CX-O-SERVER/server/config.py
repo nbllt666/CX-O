@@ -672,6 +672,25 @@ class DecisionCoreConfig(BaseModel):
         return self
 
 
+class CXOTunerConfig(BaseModel):
+    """CXO-Tuner evolution 配置节：CX-O 主后端到 CXO-Tuner 自适应微调服务的集成出口。
+
+    对应 public/config_template/cxo_tuner_config.schema.json 中 CX-O 侧集成字段
+    （host / timeout / quality_reject_threshold / auto_push / lora_enabled）。
+    缺失字段由 Pydantic default 补齐；越界字段在 _auto_fill_radix_config 中
+    回退默认值（timeout 1-300、quality_reject_threshold 0-1）。
+    """
+
+    enabled: bool = False  # 是否启用（evolution 集成出口）
+    host: str = "http://127.0.0.1:8300"  # CXO-Tuner 服务基础 URL
+    timeout: int = 10  # 客户端请求超时（秒），取值范围 1-300
+    quality_reject_threshold: float = 0.3  # 反馈质量拒绝阈值，0-1（对照 decision_core）
+    auto_push: bool = False  # 是否自动推送反馈/会话历史到 Tuner
+    lora_enabled: bool = False  # 是否通过 vLLM LoRA 端点路由应用适配器
+
+    model_config = ConfigDict(protected_namespaces=())
+
+
 class UnifiedConfig(BaseModel):
     model_config = ConfigDict(protected_namespaces=())
 
@@ -697,6 +716,7 @@ class UnifiedConfig(BaseModel):
     multimodal_pipeline: MultimodalPipelineConfig = Field(default_factory=MultimodalPipelineConfig)
     radix: RadixConfig = Field(default_factory=RadixConfig)
     decision_core: DecisionCoreConfig = Field(default_factory=DecisionCoreConfig)
+    evolution: CXOTunerConfig = Field(default_factory=CXOTunerConfig)
 
 
 class Settings:
@@ -906,6 +926,19 @@ def _auto_fill_radix_config(user_config: Dict[str, Any]) -> Dict[str, Any]:
 
     # ---- radix 节（遗留兼容，无越界检查，仅记录 auto_fill）----
     user_config.setdefault("radix", {})
+
+    # ---- evolution 节（CXO-Tuner evolution 集成出口）越界检查 ----
+    ev = user_config.setdefault("evolution", {})
+    if "timeout" in ev:
+        t = ev["timeout"]
+        if not isinstance(t, int) or t < 1 or t > 300:
+            logger.warning(f"CONFIG_FIELD_OUT_OF_RANGE: evolution.timeout={t} 越界（1-300），回退默认值 10")
+            ev["timeout"] = 10
+    if "quality_reject_threshold" in ev:
+        v = ev["quality_reject_threshold"]
+        if not isinstance(v, (int, float)) or v < 0 or v > 1:
+            logger.warning(f"CONFIG_FIELD_OUT_OF_RANGE: evolution.quality_reject_threshold={v} 越界（0-1），回退默认值 0.3")
+            ev["quality_reject_threshold"] = 0.3
 
     logger.info("CONFIG_AUTO_FILL_APPLIED: RADIX-Lite 配置 auto_fill + 越界检查完成")
 

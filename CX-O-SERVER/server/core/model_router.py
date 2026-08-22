@@ -34,10 +34,90 @@ class ModelStatus:
 class ModelRouter:
     """模型路由器 - 管理多模型客户端"""
 
+    # scene_type → vLLM lora_request（对齐 /v1/chat/completions 的 lora_request 结构）。
+    # 真实实现可改为从 adapter_store / 部署端拉取；本表仅为可简单覆盖的落点。
+    #
+    # 多 adapter 语义（对应 vLLM 多 LoRA 装载的 adapter 名）：
+    #   base      日常/默认 → 基础 adapter
+    #   streaming 直播节目效果/直播 scene → 直播 adapter
+    #   intimate  深夜私密聊天 → 亲密 adapter
+    # 保留 P2-T3 的 roleplay / writing / chat 映射以保证向后兼容。
+    DEFAULT_SCENE_ADAPTERS: Dict[str, Dict] = {
+        "base": {"model": "base-adapter", "lora_weight": 1.0},
+        "streaming": {"model": "streaming-adapter", "lora_weight": 1.0},
+        "intimate": {"model": "intimate-adapter", "lora_weight": 1.0},
+        "roleplay": {"model": "roleplay-adapter", "lora_weight": 1.0},
+        "writing": {"model": "writing-adapter", "lora_weight": 1.0},
+        "chat": {"model": "chat-adapter", "lora_weight": 1.0},
+    }
+
     def __init__(self):
         self._clients: Dict[str, LLMClient] = {}
         self._status: Dict[str, ModelStatus] = {}
         self._initialized = False
+        self._scene_adapters: Dict[str, Dict] = dict(self.DEFAULT_SCENE_ADAPTERS)
+        # 可选覆盖：None 表示从 config.evolution.lora_enabled 判定；否则直接采用
+        self._lora_enabled_override: Optional[bool] = None
+
+    def resolve_lora_request(self, scene_type: str) -> Optional[Dict]:
+        """按 scene_type 解析 vLLM lora_request。
+
+        仅当 LoRA 已启用（config.evolution.lora_enabled=true 且无 override 覆盖）
+        且 scene 存在对应 adapter 时返回 lora_request；否则恒返回 None（向后兼容）。
+
+        映射来源优先级：配置覆盖 > DEFAULT_SCENE_ADAPTERS。配置覆盖从
+        config.evolution 的可选 adapter 映射节（adapter_mapping / scene_adapters）
+        读取；缺省时回退默认映射。
+
+        Args:
+            scene_type: 场景类型（如 base / streaming / intimate / roleplay /
+                writing / chat；未知 scene 恒返回 None）
+
+        Returns:
+            对应 adapter 的 lora_request 字典副本，或 None
+        """
+        if not self._lora_enabled():
+            return None
+        adapters = dict(self._scene_adapters)
+        adapters.update(self._config_scene_adapters())
+        adapter = adapters.get(scene_type)
+        if not adapter:
+            return None
+        return dict(adapter)
+
+    def _config_scene_adapters(self) -> Dict[str, Dict]:
+        """从配置读取 scene→adapter 覆盖映射。
+
+        - 优先读 config.evolution.adapter_mapping（独立 adapter 映射节）
+        - 其次读 config.evolution.scene_adapters
+        - 未配置或结构不符时返回空 dict（向后兼容，不抛异常、不影响默认映射）
+        """
+        try:
+            settings = get_settings()
+            evolution = getattr(settings.config, "evolution", None)
+            if evolution is None:
+                return {}
+            raw = getattr(evolution, "adapter_mapping", None) or getattr(
+                evolution, "scene_adapters", None
+            )
+            if not isinstance(raw, dict):
+                return {}
+            return {
+                str(k): dict(v)
+                for k, v in raw.items()
+                if isinstance(v, dict)
+            }
+        except Exception:
+            logger.warning("读取 scene→adapter 配置映射失败，回退默认映射", exc_info=True)
+            return {}
+
+    def _lora_enabled(self) -> bool:
+        """判定 LoRA 是否启用：优先 override，否则读取 config.evolution.lora_enabled。"""
+        if self._lora_enabled_override is not None:
+            return self._lora_enabled_override
+        settings = get_settings()
+        evolution = getattr(getattr(settings.config, "evolution", None), "lora_enabled", None)
+        return bool(evolution)
 
     async def initialize(self):
         """初始化模型路由器"""

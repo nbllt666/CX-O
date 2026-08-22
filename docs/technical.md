@@ -44,6 +44,7 @@ CX-O 将虚拟形象、实时语音对话、记忆管理、直播推流、声音
 | 声音克隆与训练 | VoxCPM 音色设计与情感参考 + So-VITS-SVC 训练推理 |
 | AI 作曲与歌声 | 歌谱编辑 + MusicXML 导入 + 声库选择 + 歌声合成 |
 | 桌面宠物 | 透明悬浮窗、鼠标穿透、右键菜单 |
+| 自我进化 | 可选独立服务，对话反馈驱动自动微调，越用越懂你 |
 
 ---
 
@@ -720,6 +721,50 @@ config.json 文件配置  →  deep_merge  →  环境变量（CXO_ 前缀）  �
 - **启动设置**：桌宠自启动、管理员权限启动（Windows UAC）。
 - 浏览器模式降级不可用（不调用 Electron 专属 API）。
 - 契约：`public/schema/computer_control_plugin.schema.json`、`computer_control_error_codes.json`、`public/interface_stub/computer_control.pyi`。
+
+---
+
+## 19. 自我进化服务（CXO-Tuner）
+
+> 位于 `CXO-Tuner/`，可选独立服务，提供"自我进化"能力——LLM 从自然对话中自动回收反馈、自动评判、自动微调，让 AI 越用越懂用户偏好。默认端口 **8300**。
+
+> 说明：本节为工程视角的能力范围说明。该服务**可选**，默认随 docker-compose 主配置不启用（`profiles: ["tuner"]`），不启动时对主系统零侵入。
+
+### 19.1 独立服务定位
+
+- 独立 FastAPI 应用（`tuner/main.py` 应用工厂 + lifespan 初始化），端口 `8300`，与 CX-O-SERVER 主服务解耦，可按需启停。
+- 通过 `CXO-Tuner/start-cxo-tuner.ps1` 启动脚本单独拉起。
+- 配置：`tuner/config.py` 对齐 `public/schema/cxo_tuner_config.schema.json`，`load_config()` 从 `CXO_TUNER_CONFIG`（JSON 环境变量）读取并自动补齐缺失字段（auto_fill）。
+- 集成：进化产物作为 LoRA adapter 供主系统 vLLM **动态 LoRA** 加载（`vllm_url` / `vllm_lora_enabled` 契约打通）；前端"进化实验室"连接其 API 做数据集 / 训练任务 / 进度可视化。
+
+### 19.2 架构四层模块
+
+| 层 | 模块 | 职责 |
+|----|------|------|
+| 数据采集 | `core/collector/`（`dataset.py` + `cleaner.py`） | 回收对话、清洗、按角色卡锚点切分数据集，校验 `min_dataset_size` 阈值 |
+| 评判 / 偏好 | `core/judge/`（`judge_engine.py` + `dpo_builder.py`） | judge 模型打分 + 基于收集数据构造 DPO 偏好对（`anchor_ratio` 控制锚点占比） |
+| 训练 | `core/trainer/`（`qlora_trainer.py` / `train_job.py` / `anchors.py` / `store.py`） | QLoRA + vLLM LoRA 兼容适配，`apply_resource_caps()` 依 config 设置 `CUDA_VISIBLE_DEVICES` 与显存上限；任务状态与 adapter 落盘 |
+| Adapter 管理 | `core/adapter_store/store.py` | 管理训练产物 adapter |
+
+### 19.3 关键机制
+
+- **自动数据回收**（无人工标注）：对话数据自动回收并沉淀为 **DPO 偏好对**，彻底移除对人类显式反馈标注的依赖。
+- **自动评判（judge）**：judge 模型对回放打分，为偏好构造提供好坏依据。
+- **在线 DPO 探索**：跟随互动节奏边用边学，在线采集-优化闭环；`dpo_builder` 依 `anchor_ratio` 平衡锚点样本与真实交互数据。
+- **闲时调度**：`scheduler` 以 `idle_start` / `idle_end` 窗口在空闲期自动触发训练，避免抢占对话主链路。
+- **QLoRA 微调 + vLLM LoRA**：训练产物为 LoRA adapter，主系统 vLLM 动态加载，训练完成实时可用。
+- **资源占位控制**：`CUDA_VISIBLE_DEVICES` 空值默认 CPU，注入 GPU 编号即 GPU 加速；`max_memory_fraction` 兜底防 OOM。
+
+### 19.4 部署
+
+```text
+# 仅启用 tuner profile 时才会启动 cxo-tuner 容器
+docker compose --profile tuner up
+```
+
+- 对应 `docker-compose.yml` 服务 `cxo-tuner`，`profiles: ["tuner"]`，GPU `count:1` reservation；
+- 数据 / 模型 / 角色卡目录卷挂载；`CXO_TUNER_PORT` 控制端口；
+- 默认 `docker compose up -d` 不含 cxo-tuner（可选性校验通过），不启用时主系统零受影响。
 
 ---
 

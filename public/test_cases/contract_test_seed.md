@@ -49,3 +49,17 @@
 - **整体状态**：未闭合
 - **阻塞项**：s0201 未生成完整 Schema/存根，测试用例无法编写
 - **接续入口**：s0201 完成契约生成后，按本计划逐类目编写用例
+
+## CXO-Tuner 契约登记（2026-08-22）
+
+CXO-Tuner 自适应微调服务三层契约，已生成的契约测试见
+`CX-O-SERVER/tests/test_contracts_cxo_tuner.py`。
+
+| 层 | 契约文件 | 状态 |
+|----|---------|------|
+| 数据契约 | `public/schema/cxo_tuner_feedback.schema.json`（偏好反馈） | ✅ 已登记 |
+| 数据契约 | `public/schema/cxo_tuner_dpo_dataset.schema.json`（DPO 数据集记录） | ✅ 已登记 |
+| 配置契约 | `public/schema/cxo_tuner_config.schema.json`（主 schema） | ✅ 已登记 |
+| 配置契约 | `public/config_template/cxo_tuner_config.schema.json`（config 模板镜像） | ✅ 已登记 |
+| 接口契约 | `public/interface_stub/cxo_tuner.pyi` | ✅ 已登记 |
+| 契约测试 | `CX-O-SERVER/tests/test_contracts_cxo_tuner.py` | ✅ 已登记 |

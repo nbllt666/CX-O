@@ -54,6 +54,18 @@ vi.mock('@/api/clients/cxfc', () => ({
   },
 }));
 
+// tuner 打桩为「未启用」：getStats 返回 null（Tuner 离线），确保进化节优雅降级而非崩溃
+vi.mock('@/api/clients/tuner', () => ({
+  tunerApi: {
+    health: vi.fn().mockResolvedValue(false),
+    getStats: vi.fn().mockResolvedValue(null),
+    getTrainStatus: vi.fn().mockResolvedValue(null),
+    listAdapters: vi.fn().mockResolvedValue(null),
+    trigger: vi.fn().mockRejectedValue(new Error('offline')),
+    applyAdapter: vi.fn().mockRejectedValue(new Error('offline')),
+  },
+}));
+
 describe('SettingsPage 五区块', () => {
   beforeAll(async () => {
     await i18n.changeLanguage('zh-CN');
@@ -101,6 +113,13 @@ describe('SettingsPage 五区块', () => {
     expect(screen.getByRole('heading', { name: '图数据库' })).toBeInTheDocument();
     expect(screen.getByRole('heading', { name: '后端服务' })).toBeInTheDocument();
     expect(screen.getByRole('heading', { name: 'CXFC 插件' })).toBeInTheDocument();
+  });
+
+  it('渲染进化实验室分区：Tuner 未启用时优雅降级展示而非崩溃', async () => {
+    render(<SettingsPage />);
+    expect(screen.getByRole('heading', { name: '进化实验室' })).toBeInTheDocument();
+    // getStats 打桩返回 null（Tuner 离线）→ 降级展示「Tuner 未在线」
+    expect(await screen.findByText('Tuner 未在线')).toBeInTheDocument();
   });
 
   it('LLM 区块展示默认模型与推理参数并支持保存', async () => {

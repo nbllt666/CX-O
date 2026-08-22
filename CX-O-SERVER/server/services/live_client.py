@@ -4,6 +4,7 @@ Live 客户端处理器
 """
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 from typing import Optional, TYPE_CHECKING
@@ -12,6 +13,7 @@ from server.services.marker_adapter import MarkerAdapter
 from server.services.context_manager import get_context_manager
 from server.services.firewall import get_firewall_service
 from server.services.frontend_marker import get_frontend_marker
+from server.services.live_feedback import LiveFeedbackTracker, get_live_feedback_tracker
 from server.services.vad_processor import get_audio_stream_processor
 from server.services.asr_interrupt import get_asr_interrupt_module
 from server.services.agent_interrupt_user import get_agent_interrupt_module
@@ -33,6 +35,7 @@ class LiveClientHandler:
         self.context_manager = get_context_manager()
         self.firewall = get_firewall_service()
         self.frontend_marker = get_frontend_marker()
+        self.feedback_tracker: LiveFeedbackTracker = get_live_feedback_tracker()
         self._session_id: Optional[str] = None
 
     async def handle_message(self, websocket, message: dict, client_id: str):
@@ -135,6 +138,8 @@ class LiveClientHandler:
         if not filter_result.allowed:
             logger.debug("Danmaku filtered: %s", filter_result.reason)
             return
+        # 弹幕反馈：过滤放行后喂给隐式反馈追踪器（fire-and-forget，不阻断主路径）
+        self._safe_feedback_danmaku(content, user_id)
 
         if self._session_id:
             self.context_manager.add_danmaku_message(self._session_id, data)
@@ -146,6 +151,28 @@ class LiveClientHandler:
             "type": "danmaku",
             "data": frontend_data
         })
+
+    def _safe_feedback_danmaku(self, content: str, user_id: str) -> None:
+        """将过滤放行后的弹幕喂给隐式反馈追踪器（fire-and-forget，静默降级）。
+
+        后台任务独立调度，不阻塞 danmaku 主路径；追踪器内部异常被吞掉。
+        """
+        try:
+            asyncio.create_task(
+                self.feedback_tracker.on_danmaku(
+                    text=content,
+                    user_id=user_id,
+                    session_id=self._session_id or "",
+                )
+            )
+        except Exception as e:  # 调度失败静默降级
+            logger.warning(f"live_feedback 弹幕反馈调度降级: {e}")
+
+    def record_ai_response(self, text: str, prompt: str = "", ts: Optional[float] = None) -> None:
+        """记录一轮 AI 回复，供后续弹幕窗口判定隐性反馈（增量接入点）。"""
+        import time as _time
+
+        self.feedback_tracker.record_ai_response(text, ts=ts if ts is not None else _time.time(), prompt=prompt)
 
     async def _handle_gift(self, websocket, message: dict):
         data = message.get("data", {})

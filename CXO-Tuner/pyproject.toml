@@ -1,0 +1,16 @@
+[project]
+name = "cxo-tuner"
+version = "1.0.0"
+description = "CXO-Tuner 独立后台微调服务（偏好收集 / DPO 数据集 / LoRA 适配器管理）"
+requires-python = ">=3.10"
+dependencies = []
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["tuner*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

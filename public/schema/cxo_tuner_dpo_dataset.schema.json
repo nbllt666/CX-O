@@ -1,0 +1,31 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://cx-o/public/schema/cxo_tuner_dpo_dataset.schema.json",
+  "title": "CXOTunerDpoDataset",
+  "description": "CXO-Tuner DPO 数据集记录契约。描述一条用于 DPO 训练的偏好记录：对同一 prompt，模型应优化 chosen（优）而抑制 rejected（差）。anchor 标记该记录是否作为锚点样本（固定参照，采样时优先保留）；anchor_ratio 为该记录所属数据集整体的锚点目标占比（可选，0-1）。root 为单条记录契约，additionalProperties=false 禁止未知字段；metadata 为开放扩展容器。必填：id/prompt/chosen/rejected/source/anchor/created_at。源真理：CXO-Tuner spec。",
+  "type": "object",
+  "required": ["id", "prompt", "chosen", "rejected", "source", "anchor", "created_at"],
+  "additionalProperties": false,
+  "properties": {
+    "id": { "type": "string", "minLength": 1, "description": "记录唯一 ID（如 hash 或 UUID）。用于去重与回放。" },
+    "prompt": { "type": "string", "minLength": 1, "description": "输入提示词。必填，不允许空串。" },
+    "chosen": { "type": "string", "minLength": 1, "description": "DPO 优选回复（训练目标正向）。必填，不允许空串。" },
+    "rejected": { "type": "string", "minLength": 1, "description": "DPO 落败回复（训练目标负向）。必填，不允许空串。" },
+    "source": { "type": "string", "enum": ["live_danmaku", "judge", "distillation"], "description": "偏好来源。live_danmaku=直播弹幕隐性偏好，judge=裁判排序，distillation=蒸馏偏好。" },
+    "anchor": { "type": "boolean", "description": "是否为锚点样本。true=固定参照，采样去重时优先保留以保证数据集结构稳定。" },
+    "created_at": { "type": "string", "format": "date-time", "description": "记录入库时间。ISO 8601 格式。" },
+    "anchor_ratio": { "type": "number", "minimum": 0, "maximum": 1, "description": "数据集整体锚点目标占比（可选）。0-1 浮点，用于训练时均衡采样的目标锚点比例。缺省时由配置 anchor_ratio 决定。" },
+    "session_id": { "type": "string", "description": "来源会话 ID（可选）。用于溯源。" },
+    "metadata": {
+      "type": "object",
+      "additionalProperties": true,
+      "description": "开放扩展元数据容器（可选）。允许自定义键，不拒绝未知字段。",
+      "properties": {
+        "sentiment": { "type": "string", "description": "语义情感标签或描述字符串。" },
+        "keywords": { "type": "array", "items": { "type": "string" }, "description": "话题关键词数组。" },
+        "scene_type": { "type": "string", "description": "场景类型标注。" }
+      }
+    },
+    "judge_model": { "type": "string", "description": "当 source=judge 时，产生该偏好的裁判模型标识（可选）。" }
+  }
+}

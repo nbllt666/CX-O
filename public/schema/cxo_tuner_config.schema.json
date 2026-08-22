@@ -1,0 +1,46 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://cx-o/public/schema/cxo_tuner_config.schema.json",
+  "title": "CXOTunerConfig",
+  "description": "CXO-Tuner 自适应微调服务自身配置契约。含默认值与取值范围；缺失字段按各属性 default 自动补齐（auto_fill）。trainer 段声明 GPU 可见性与显存上限；scheduler 段声明空闲窗口训练调度；online_dpo 段声明在线 DPO 训练参数开关（默认关闭）；vllm 相关段声明微调后模型的路由应用端点。源真理：CXO-Tuner spec。",
+  "type": "object",
+  "required": ["judge_model", "base_model", "anchor_ratio", "trainer", "scheduler", "online_dpo", "dataset_dir", "lora_dir", "vllm_url"],
+  "properties": {
+    "judge_model": { "type": "string", "description": "偏好排序裁判模型标识（模型名/路径）。用于为 live_danmaku 等隐性偏好生成 judge 排序。" },
+    "base_model": { "type": "string", "description": "待微调的基座模型标识（模型名/路径）。作为 LoRA 训练的基底与基线对照。" },
+    "anchor_ratio": { "type": "number", "minimum": 0, "maximum": 1, "default": 0.2, "description": "锚点样本目标占比（0-1）。训练采样时维持锚点样本的均衡比例，默认 0.2。" },
+    "trainer": {
+      "type": "object",
+      "description": "训练器运行环境配置。",
+      "properties": {
+        "CUDA_VISIBLE_DEVICES": { "type": "string", "pattern": "^(|[0-9]+(,[0-9]+)*)$", "default": "", "description": "CUDA 可见 GPU 列表。空串表示使用全部 GPU；逗号分隔数字列表表示限定哪些 GPU（如 \"0,1\"）。" },
+        "max_memory_fraction": { "type": "number", "minimum": 0, "maximum": 1, "default": 0.8, "description": "训练进程的显存占用上限比例（0-1）。默认 0.8，避免与 vLLM 常驻共享 GPU 时 OOM。" }
+      },
+      "required": ["CUDA_VISIBLE_DEVICES", "max_memory_fraction"]
+    },
+    "scheduler": {
+      "type": "object",
+      "description": "空闲窗口训练调度配置。",
+      "properties": {
+        "enabled": { "type": "boolean", "default": true, "description": "是否启用空闲窗口自动训练。" },
+        "idle_start": { "type": "string", "pattern": "^([01][0-9]|2[0-3]):[0-5][0-9]$", "default": "02:00", "description": "空闲窗口起始时间（HH:MM）。默认凌晨 02:00。" },
+        "idle_end": { "type": "string", "pattern": "^([01][0-9]|2[0-3]):[0-5][0-9]$", "default": "05:00", "description": "空闲窗口结束时间（HH:MM）。支持跨午夜（如 02:00-05:00）。默认 05:00。" },
+        "min_dataset_size": { "type": "integer", "minimum": 1, "default": 100, "description": "触发自动训练的数据集最小样本数。低于该值不启动自动训练。" }
+      },
+      "required": ["enabled", "idle_start", "idle_end", "min_dataset_size"]
+    },
+    "online_dpo": {
+      "type": "object",
+      "description": "在线 DPO 训练参数（默认关闭）。",
+      "properties": {
+        "enabled": { "type": "boolean", "default": false, "description": "是否启用在线 DPO 训练（随弹幕增量实时更新）。默认关闭。" },
+        "max_lr": { "type": "number", "minimum": 0, "default": 0.000001, "description": "在线 DPO 最大学习率上限。默认 1e-6，用于增量更新的安全上限。" }
+      },
+      "required": ["enabled", "max_lr"]
+    },
+    "dataset_dir": { "type": "string", "minLength": 1, "description": "偏好反馈 / DPO 数据集落盘目录的绝对路径。" },
+    "lora_dir": { "type": "string", "minLength": 1, "description": "训练产物（LoRA 适配器）输出目录的绝对路径。" },
+    "vllm_url": { "type": "string", "minLength": 1, "description": "vLLM 服务基础 URL。用于将训练产物路由应用为在线模型。" },
+    "vllm_lora_enabled": { "type": "boolean", "default": false, "description": "是否通过 vLLM LoRA 端点路由应用适配器。默认 false（使用控制面直接换装）。" }
+  }
+}

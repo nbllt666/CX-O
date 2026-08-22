@@ -64,6 +64,11 @@ services:
       - DTYPE=${LLM_DTYPE:-auto}
       - MAX_NUM_SEQS=${LLM_MAX_NUM_SEQS:-256}
       - ENABLE_PREFIX_CACHING=${LLM_PREFIX_CACHING:-true}
+      # Dynamic LoRA 支持（默认关闭，LLM_ENABLE_LORA=true 时启用）
+      - ENABLE_LORA=${LLM_ENABLE_LORA:-false}
+      - BASE_LORA_PATH=${LLM_BASE_LORA_PATH:-/workspace/models/base_lora}
+      - MAX_LORAS=${LLM_MAX_LORAS:-8}
+      - LORA_MODULES=${LLM_LORA_MODULES:-}
       # TRT-LLM 模式
       - ENGINE_PATH=${LLM_ENGINE_PATH:-/workspace/engines}
       - MAX_BATCH_SIZE=${LLM_MAX_BATCH_SIZE:-256}
@@ -89,6 +94,43 @@ services:
       - cxo-inference
     profiles:
       - llm
+
+  # ============================================================
+  # CXO-Tuner 进化服务（QLoRA 微调 / 在线 DPO 进化）
+  # ============================================================
+  # 可选 profile：仅 `docker compose --profile tuner up` 时才启动，
+  # 不启用时完全不影响主系统（asr-sensevoice / llm）。
+  # 镜像约定：cxo/tuner:latest 由 CXO-Tuner 目录下的 Dockerfile 构建（如尚未提供则直接拉取）。
+  cxo-tuner:
+    image: cxo/tuner:latest
+    profiles:
+      - tuner
+    ports:
+      - "${CXO_TUNER_PORT:-8300}:8300"
+    environment:
+      # tuner/config.py load_config() 从 CXO_TUNER_CONFIG(JSON) 读取全部配置；
+      # 此处由 compose 变量拼装 JSON，保证镜像内可直接解析，与 config.py 读取方式对齐。
+      # CUDA_VISIBLE_DEVICES 留空（默认）时 tuner 回退纯 CPU 推理；需 GPU 时注入如 "0"。
+      - CXO_TUNER_CONFIG={"judge_model":"${CXO_TUNER_JUDGE_MODEL:-}","base_model":"${CXO_TUNER_BASE_MODEL:-}","vllm_url":"${CXO_TUNER_VLLM_URL:-}","dataset_dir":"/app/data/dataset","lora_dir":"/app/models/lora","character_cards_dir":"/app/data/anchors","trainer":{"CUDA_VISIBLE_DEVICES":"${CXO_TUNER_CUDA_DEVICES:-}"}}
+      # 便于人为可读的独立变量（与台积约定对齐），实际取值以上述 CXO_TUNER_CONFIG 为准
+      - CXO_TUNER_JUDGE_MODEL=${CXO_TUNER_JUDGE_MODEL:-}
+      - CXO_TUNER_BASE_MODEL=${CXO_TUNER_BASE_MODEL:-}
+      - CUDA_VISIBLE_DEVICES=${CXO_TUNER_CUDA_DEVICES:-}
+      - NVIDIA_VISIBLE_DEVICES=all
+    volumes:
+      - ./data/tuner_dataset:/app/data/dataset
+      - ./models/lora:/app/models/lora
+      - ./config/character_cards:/app/data/anchors
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    restart: unless-stopped
+    networks:
+      - cxo-inference
 
 volumes:
   llm-engines:
