@@ -6,7 +6,7 @@ import os
 import uuid
 from datetime import datetime
 from pathlib import Path
-from typing import List, Optional, Dict, Any, Callable
+from typing import List, Optional, Dict, Any, Callable, Awaitable, Union
 
 import httpx
 
@@ -35,6 +35,13 @@ ERROR_RELAY_UNREACHABLE = "RELAY_UNREACHABLE"
 ERROR_RELAY_TIMEOUT = "RELAY_TIMEOUT"
 # 嵌入式工具已登记描述但缺少可用于执行的可调用 handler。
 ERROR_EMBEDDED_HANDLER_MISSING = "EMBEDDED_HANDLER_MISSING"
+
+
+# relay 通道投递回调类型：同步返回 bool 或异步返回 Awaitable[bool] 二选一。
+# WS dispatcher（_build_relay_ws_dispatcher）为 async；测试可注入同步替身
+# （如 lambda msg: True）。调用方必须 await（_call_tool_relay 以
+# asyncio.iscoroutine 判断后 await），不得把返回值当 bool 直接判断。
+RelayDispatcher = Callable[[Dict[str, Any]], Union[bool, Awaitable[bool]]]
 
 
 class CXFCManager:
@@ -68,7 +75,7 @@ class CXFCManager:
         self._tls_ca_paths: Dict[str, str] = {}
         self._tls_dir: Optional[Path] = None
         # relay 传输：可注入的前端通道投递回调（按 plugin_id 注入，返回 bool 表示通道可用）。
-        self._dispatch_relay: Dict[str, Callable[[Dict], bool]] = {}
+        self._dispatch_relay: Dict[str, RelayDispatcher] = {}
         # 待回报请求：request_id -> asyncio.Future，relay/result 回报时 resolve。
         self._relay_waiter: Dict[str, "asyncio.Future"] = {}
         # embedded 传输：插件 ID -> {tool_name: Callable} 进程内 handler 映射。
@@ -76,7 +83,7 @@ class CXFCManager:
         self._relay_timeout: float = 30.0
         # P2-T2：生产 relay WS dispatcher（经 self._ws_manager 广播 cxfc_relay_call）。
         # 由 enable_relay_ws_dispatch() 装配；未装配时为 None，保持既有"显式注入 dispatcher"语义。
-        self._relay_ws_dispatcher: Optional[Callable[[Dict], bool]] = None
+        self._relay_ws_dispatcher: Optional[RelayDispatcher] = None
 
     def _track_background_task(self, task: asyncio.Task) -> asyncio.Task:
         """追踪后台任务，防止被GC回收；任务完成后自动从集合中移除"""
@@ -383,19 +390,24 @@ class CXFCManager:
             self._plugins[plugin.plugin_id] = plugin
         return plugin
 
-    def register_relay_dispatcher(self, plugin_id: str, dispatcher: Callable[[Dict], bool]):
-        """为 relay 插件注入前端通道投递回调（推送一条工具调用消息，返回连通与否）。"""
+    def register_relay_dispatcher(self, plugin_id: str, dispatcher: RelayDispatcher):
+        """为 relay 插件注入前端通道投递回调（推送一条工具调用消息，返回连通与否）。
+
+        dispatcher 可为同步（返回 bool）或异步（返回 Awaitable[bool]）；调用方
+        （_call_tool_relay）必须 await 后再判断，不得直接当 bool 用。
+        """
         self._dispatch_relay[plugin_id] = dispatcher
 
     def unregister_relay_dispatcher(self, plugin_id: str):
         self._dispatch_relay.pop(plugin_id, None)
 
-    def _build_relay_ws_dispatcher(self) -> Callable[[Dict], bool]:
+    def _build_relay_ws_dispatcher(self) -> RelayDispatcher:
         """构建基于 self._ws_manager 的 relay 通道投递回调（P2-T2）。
 
         广播消息 {type: "cxfc_relay_call", plugin_id, tool, arguments, request_id, token}；
         无活跃连接或广播异常返回 False——call_tool 侧据此保持 RELAY_UNREACHABLE 语义，
         全程不发起 host:port 直连（与 direct 路径隔离）。
+        注意：本函数返回的 dispatcher 为 async（返回 Awaitable[bool]），调用方必须 await。
         """
 
         async def dispatcher(message: Dict) -> bool:
@@ -593,6 +605,8 @@ class CXFCManager:
 
         未注入活跃通道返回 RELAY_UNREACHABLE；超时返回 RELAY_TIMEOUT；全程不发起
         host:port 直连。request_id 与令牌语义沿袭 direct 的既有防重放护栏。
+        dispatcher 可能为同步（返回 bool）或异步（返回 Awaitable[bool]），此处
+        以 asyncio.iscoroutine 判断后 await，再对 bool 做连通性判断。
         """
         dispatcher = self._dispatch_relay.get(plugin.plugin_id)
         if dispatcher is None:
