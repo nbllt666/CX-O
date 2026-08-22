@@ -30,6 +30,7 @@
 """
 from __future__ import annotations
 
+import logging
 import os
 import threading
 from typing import Any, Dict, List, Optional
@@ -37,6 +38,8 @@ from typing import Any, Dict, List, Optional
 from tuner.core.collector.dataset import DatasetStore
 from tuner.core.trainer.anchors import load_anchor_samples, sample_anchor_subset
 from tuner.config import TunerConfig
+
+logger = logging.getLogger("cxo_tuner.trainer")
 
 # 预设 LoRA 目标模块（主流 Llama/Mistral/Qwen 通用）
 _TARGET_MODULES = [
@@ -69,8 +72,17 @@ def apply_resource_caps(config: TunerConfig) -> None:
         import torch
         frac = float(getattr(devices, "max_memory_fraction", 0.8) or 0.8)
         torch.cuda.set_per_process_memory_fraction(frac)
-    except Exception:
-        pass  # 无 CUDA / torch 缺失时静默
+        if torch.cuda.is_available():
+            logger.info(
+                "资源限制已应用: CUDA_VISIBLE_DEVICES=%r max_memory_fraction=%.2f devices=%d",
+                raw_dev or os.environ.get("CUDA_VISIBLE_DEVICES", "(all)"),
+                frac,
+                torch.cuda.device_count(),
+            )
+        else:
+            logger.warning("torch 可用但 CUDA 不可用（将退化为 CPU 训练）: max_memory_fraction=%.2f", frac)
+    except Exception as exc:  # noqa: BLE001 —— 无 CUDA / torch 缺失时静默但有日志
+        logger.warning("显存上限应用失败（torch/CUDA 缺失，忽略）: %s", exc)
 
 
 class QLoRATrainer:
@@ -115,29 +127,40 @@ class QLoRATrainer:
                 "TrainerCallback": TrainerCallback,
                 "LoraConfig": LoraConfig,
             }
-        except ImportError:
-            raise TrainRuntimeError(_MISSING_DEPS_MSG) from None
+        except ImportError as exc:
+            logger.exception("训练依赖懒加载失败（unsloth/trl/peft/transformers/torch）")
+            raise TrainRuntimeError(_MISSING_DEPS_MSG) from exc
 
     # -- 入口 -------------------------------------------------------------------
     def run(self, job_id: str) -> None:
         """后台线程入口：推进状态机并执行训练。任何异常归一为可读 failed。"""
         job = self.store.get(job_id)
         if job is None:
+            logger.error("训练线程启动但 job 不存在: job_id=%s", job_id)
             return
+        logger.info("训练任务开始: job_id=%s base_model=%r epochs=%d sample_ratio=%.2f anchor_ratio=%.2f",
+                    job.job_id, job.base_model, job.epochs, job.sample_ratio, job.anchor_ratio)
         job.start()
         self.store.update(job)
         try:
             self._train(job)
             job.complete(loss=job.loss_curve)
             self.store.update(job)
+            logger.info("训练任务完成: job_id=%s steps_loss=%d final_progress=1.0",
+                        job.job_id, len(job.loss_curve))
         except TrainRuntimeError as exc:
+            logger.error("训练依赖/配置错误，任务失败: job_id=%s error=%s", job.job_id, exc)
             self._fail(job, str(exc))
-        except Exception as exc:  # noqa: BLE001 —— 归一为可读失败，不裸抛
-            self._fail(job, f"训练过程中发生异常: {type(exc).__name__}: {exc}")
+        except Exception:  # noqa: BLE001 —— 归一为可读失败，并保留完整堆栈
+            logger.exception("训练过程异常，任务失败: job_id=%s", job.job_id)
+            import traceback
+            detail = traceback.format_exc(limit=15)
+            self._fail(job, f"训练过程中发生异常，详见日志。\n{detail}")
 
     def _fail(self, job: Any, message: str) -> None:
         job.fail(message)
         self.store.update(job)
+        logger.warning("训练任务已标记失败: job_id=%s status=%s", job.job_id, job.status)
 
     # -- 训练主流程 ----------------------------------------------------------------
     def _build_dataset(
@@ -149,6 +172,10 @@ class QLoRATrainer:
         anchors = load_anchor_samples(self.config.character_cards_dir)
         anchor_subset = sample_anchor_subset(
             max(len(dpo_rows), 1), job.anchor_ratio, anchors
+        )
+        logger.info(
+            "数据集组装: job_id=%s dpo_rows=%d anchors_loaded=%d anchor_sampled=%d anchor_ratio=%.2f",
+            job.job_id, len(dpo_rows), len(anchors), len(anchor_subset), job.anchor_ratio,
         )
         return {
             "dpo": dpo_rows,
@@ -180,11 +207,15 @@ class QLoRATrainer:
         TrainingArguments = deps["TrainingArguments"]
         TrainerCallback = deps["TrainerCallback"]
 
+        logger.info("开始加载基座模型: base_model=%r job_id=%s (4bit 量化, max_seq_length=2048)",
+                    self.config.base_model, job.job_id)
         model, tokenizer = FastLanguageModel.from_pretrained(
             model_name=self.config.base_model,
             max_seq_length=2048,
             load_in_4bit=True,
         )
+        logger.info("基座模型加载完成: job_id=%s (4bit). 开始装配 LoRA: r=16 alpha=16 dropout=0 target=%s",
+                    job.job_id, _TARGET_MODULES)
         model = FastLanguageModel.get_peft_model(
             model,
             r=16,
@@ -193,19 +224,25 @@ class QLoRATrainer:
             lora_dropout=0,
             use_gradient_checkpointing="unsloth",
         )
+        logger.info("LoRA 装配完成: job_id=%s", job.job_id)
 
         data = self._build_dataset(job)
         dpo_rows = data["dpo"]
         anchors = data["anchors"]
 
         if not dpo_rows:
+            logger.error("训练中止：DPO 数据集为空 job_id=%s", job.job_id)
             raise TrainRuntimeError("训练数据集为空（无 DPO 样本），已中止训练。")
 
         out_dir = os.path.join(self.config.lora_dir, job.job_id)
         os.makedirs(out_dir, exist_ok=True)
+        logger.info("训练输出目录已创建: job_id=%s out_dir=%r anchors=%d λ=%.2f",
+                    job.job_id, out_dir, len(anchors), self.loss_anchor_lambda)
 
         # 每条 DPO 样本一个训练步（batch=1），保证有真实梯度步可观测
         total_steps = max(1, job.epochs * len(dpo_rows))
+        logger.info("DPO 主体训练启动: job_id=%s dpo_samples=%d epochs=%d max_steps=%d",
+                    job.job_id, len(dpo_rows), job.epochs, total_steps)
 
         # ---- 阶段1：DPO 主体训练 --------------------------------------------------
         dpo_callback = self._make_loss_callback(
@@ -237,7 +274,9 @@ class QLoRATrainer:
             tokenizer=tokenizer,
             callbacks=[dpo_callback],
         )
+        logger.info("DPOTrainer 已构造: job_id=%s max_steps=%d", job.job_id, total_steps)
         dpo_trainer.train()
+        logger.info("DPO 主体训练完成: job_id=%s", job.job_id)
 
         # ---- 阶段2：锚点 SFT 回放（Experience Replay 防遗忘，λ 加权） -------------
         if anchors:
@@ -250,6 +289,8 @@ class QLoRATrainer:
                 for a in anchors
             ]
             sft_steps = max(1, len(sft_dataset))  # 每锚点一步，一次回放扫描
+            logger.info("锚点 SFT 回放启动: job_id=%s anchor_samples=%d max_steps=%d λ=%.2f",
+                        job.job_id, len(sft_dataset), sft_steps, self.loss_anchor_lambda)
             sft_args = TrainingArguments(
                 output_dir=out_dir,
                 per_device_train_batch_size=1,
@@ -272,11 +313,14 @@ class QLoRATrainer:
                 callbacks=[sft_callback],
             )
             sft_trainer.train()
+            logger.info("锚点 SFT 回放完成: job_id=%s (λ=%.2f)", job.job_id, self.loss_anchor_lambda)
 
         # 输出真实 LoRA 到 lora_dir/{job_id}/
+        logger.info("保存 LoRA 权重: job_id=%s out_dir=%r", job.job_id, out_dir)
         model.save_pretrained(out_dir)
         tokenizer.save_pretrained(out_dir)
         job.progress = 1.0
+        logger.info("LoRA 权重已保存: job_id=%s out_dir=%r", job.job_id, out_dir)
 
     @staticmethod
     def _make_loss_callback(
@@ -299,9 +343,11 @@ class QLoRATrainer:
 
             def on_log(self, args: Any, state: Any, control: Any, logs=None, **kwargs) -> None:
                 loss = None
+                loss_key = None
                 for key in ("dpo_loss", "sft_loss", "loss", "eval_loss"):
                     if logs and key in logs and logs[key] is not None:
                         loss = float(logs[key])
+                        loss_key = key
                         break
                 if loss is None:
                     return
@@ -314,6 +360,11 @@ class QLoRATrainer:
                     memory_usage_mb=memory_reader(),
                 )
                 store.update(job)
+                logger.debug(
+                    "训练 step 日志: job_id=%s global_step=%d/%d raw_loss_key=%r raw_loss=%.6f scale=%.2f recorded_loss=%.6f progress=%.3f",
+                    getattr(job, "job_id", "?"), getattr(state, "global_step", 0),
+                    total_steps, loss_key, loss, scale, recorded, progress,
+                )
 
         return _JobLossCallback()
 

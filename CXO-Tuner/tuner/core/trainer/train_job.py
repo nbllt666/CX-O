@@ -10,11 +10,14 @@
 """
 from __future__ import annotations
 
+import logging
 import threading
 import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import List, Optional
+
+logger = logging.getLogger("cxo_tuner.trainer.job")
 
 # 状态机允许的迁移：源状态 -> {目标状态们}
 _TRANSITIONS = {
@@ -75,6 +78,7 @@ class TrainJob:
     def start(self) -> None:
         """idle -> running。"""
         self._transition("running")
+        logger.info("训练状态迁移: job_id=%s -> running", self.job_id)
 
     def complete(self, loss: Optional[List[float]] = None) -> None:
         """running -> completed；可选追加最终 loss 曲线。"""
@@ -87,6 +91,7 @@ class TrainJob:
                     f"非法状态迁移: {self.status} -> completed"
                 )
             self.status = "completed"
+        logger.info("训练状态迁移: job_id=%s -> completed (loss_points=%d)", self.job_id, len(self.loss_curve))
 
     def fail(self, message: str) -> None:
         """idle/running -> failed。"""
@@ -95,6 +100,7 @@ class TrainJob:
             if "failed" not in _TRANSITIONS.get(self.status, set()):
                 raise InvalidTransitionError(f"非法状态迁移: {self.status} -> failed")
             self.status = "failed"
+        logger.error("训练状态迁移: job_id=%s -> failed. error=%s", self.job_id, message)
 
     # -- 训练过程更新 ---------------------------------------------------------
     def update(self, progress: float, loss: Optional[float] = None,

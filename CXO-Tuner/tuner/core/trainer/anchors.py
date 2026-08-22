@@ -13,8 +13,11 @@ sample_anchor_subset 按 config.anchor_ratio 与 DPO 样本量计算应采样的
 from __future__ import annotations
 
 import json
+import logging
 import os
 from typing import Any, Dict, List
+
+logger = logging.getLogger("cxo_tuner.trainer.anchors")
 
 _ANCHOR_EXTS = (".json", ".jsonl", ".md")
 _PROMPT_KEYS = ("prompt", "instruction", "input")
@@ -41,6 +44,7 @@ def _normalize(sample: Dict[str, Any]) -> Dict[str, str]:
 def load_anchor_samples(character_cards_dir: str) -> List[Dict[str, str]]:
     """从目录递归加载锚点样本，返回规整后的 {prompt, response} 列表。"""
     if not os.path.isdir(character_cards_dir):
+        logger.warning("锚点目录不存在，锚点为空: %r", character_cards_dir)
         return []
     samples: List[Dict[str, str]] = []
     for root, _dirs, files in os.walk(character_cards_dir):
@@ -48,7 +52,8 @@ def load_anchor_samples(character_cards_dir: str) -> List[Dict[str, str]]:
             if not name.lower().endswith(_ANCHOR_EXTS):
                 continue
             path = os.path.join(root, name)
-            samples.extend(_load_file(path, name))
+            loaded = _load_file(path, name)
+            samples.extend(loaded)
     # 去重（prompt+response 相同）
     seen: set = set()
     dedup: List[Dict[str, str]] = []
@@ -58,6 +63,9 @@ def load_anchor_samples(character_cards_dir: str) -> List[Dict[str, str]]:
             continue
         seen.add(key)
         dedup.append(s)
+    logger.info(
+        "锚点加载: dir=%r raw_samples=%d dedup=%d", character_cards_dir, len(samples), len(dedup)
+    )
     return dedup
 
 
@@ -112,7 +120,10 @@ def sample_anchor_subset(
         return []
     ratio = min(1.0, max(0.0, float(anchor_ratio)))
     if ratio >= 1.0:
+        logger.info("锚点采样: anchor_ratio=1.0 返回全部 %d 条", len(anchors))
         return list(anchors)
     target = num_dpo * ratio / (1.0 - ratio)
     count = min(int(target + 0.5), len(anchors))
+    logger.info("锚点采样: num_dpo=%d ratio=%.2f target=%.2f count=%d available=%d",
+                num_dpo, ratio, target, count, len(anchors))
     return list(anchors[:count])

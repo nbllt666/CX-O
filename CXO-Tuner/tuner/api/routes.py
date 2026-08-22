@@ -13,6 +13,7 @@
 """
 from __future__ import annotations
 
+import logging
 import threading
 from typing import List, Optional
 
@@ -37,6 +38,8 @@ from tuner.models import (
     TrainStatus,
     TrainTriggerRequest,
 )
+
+logger = logging.getLogger("cxo_tuner.api")
 
 router = APIRouter(prefix="/api/v1", tags=["cxo-tuner"])
 
@@ -133,10 +136,12 @@ def trigger_train(req: TrainTriggerRequest, request: Request) -> TrainStatus:
         )
 
     job_id = str(req.job_id or "").strip() or ""
+    base_model = req.base_model or cfg.base_model
+    dataset_size = _store(request).count()
     job = TrainJob(
         job_id=job_id,
         status="idle",
-        base_model=req.base_model or cfg.base_model,
+        base_model=base_model,
         epochs=epochs,
         sample_ratio=sample_ratio,
         anchor_ratio=anchor_ratio,
@@ -145,11 +150,16 @@ def trigger_train(req: TrainTriggerRequest, request: Request) -> TrainStatus:
     store.create(job)
     # 先快照初始 idle 状态，再启动后台线程，保证返回 status 恒为 idle
     initial_status = _to_status(job)
+    logger.info(
+        "训练触发: job_id=%s base_model=%r epochs=%d sample_ratio=%.2f anchor_ratio=%.2f dataset_size=%d",
+        job.job_id, base_model, epochs, sample_ratio, anchor_ratio, dataset_size,
+    )
 
     # 后台线程训练：不阻塞请求
     trainer = _trainer(request)
-    thread = threading.Thread(target=trainer.run, args=(job.job_id,), daemon=True)
+    thread = threading.Thread(target=trainer.run, args=(job.job_id,), daemon=True, name=f"train-{job.job_id}")
     thread.start()
+    logger.info("训练后台线程已启动: job_id=%s thread_name=%s", job.job_id, thread.name)
 
     return initial_status
 
