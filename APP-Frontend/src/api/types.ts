@@ -10,6 +10,7 @@ export interface Agent {
   is_default?: boolean;
   model?: string;
   memory_scene?: string;
+  voice_memory_fast?: boolean;
   tools?: string[];
   capabilities?: string[];
   system_prompt?: string;

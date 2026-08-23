@@ -334,6 +334,8 @@
       "fieldModel": "Model",
       "fieldScene": "Memory scene",
       "fieldTemperature": "Temperature",
+      "fieldVoiceMemoryFast": "Fast voice memory",
+      "voiceMemoryFastHint": "Skip per-turn memory retrieval; recall memory on demand via tool calls (faster, memory fetched only when needed)",
       "scene": {
         "chat": "Chat",
         "task": "Task",

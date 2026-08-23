@@ -655,6 +655,10 @@ async def lifespan(app: FastAPI):
             # 实测：无此预热时语音链路 LLM TTFT ~444ms；预热后 TTFT 降至 ~30ms
             # （证据 .trae/documents/20260817_模块0_服务端语音前缀预热.md）。
             # 注意：仅预热缓存，绝不修改/精简生产 system_prompt 内容。
+            # 2026-08-23 起实时语音额外注入记忆（独立 system 消息，位于 system(padded)
+            # 之后）。记忆是每次请求变化段，不参与前缀缓存；此处仍以
+            # system_prompt + padding + user 建立稳定前缀，vLLM 对 system 前缀 KV 保持
+            # partial 命中，仅记忆/历史变化段每次 prefill，缓存优化仍然有效。
             try:
                 _agent = get_agent_config("default") or {}
                 _system_prompt = (_agent.get("system_prompt") or "").strip()

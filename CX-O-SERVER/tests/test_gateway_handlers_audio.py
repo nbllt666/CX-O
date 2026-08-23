@@ -428,3 +428,81 @@ class TestVoiceDualStream:
 def _clean_sessions():
     yield
     audio_mod._dual_stream_sessions.clear()
+
+
+# --------------------------------------------------------------------------- #
+# 快速记忆模式（voice_memory_fast）：检索仅由工具调用触发
+# --------------------------------------------------------------------------- #
+class _FakeFastLLM:
+    def __init__(self, chat_text="我记得呢"):
+        self.chat_text = chat_text
+        self.chat_calls = []
+
+    async def chat(self, messages=None, stream=False, **kwargs):
+        self.chat_calls.append((messages, kwargs))
+        return type("Resp", (), {"content": self.chat_text})()
+
+
+class TestVoiceFastMemory:
+    def _session(self):
+        return DualStreamSession(
+            client_id="c1", agent_id="a1", request_id="r1",
+            manager=FakeManager(), tts_service=FakeTTSService(),
+        )
+
+    def test_resolve_tools_returns_full_tools(self, monkeypatch):
+        session = self._session()
+        fake_tools = [
+            {"function": {"name": "search_all_memories"}},
+            {"function": {"name": "search_web"}},
+            {"function": {"name": "call_assistant"}},
+            {"function": {"name": "acp_send_message"}},
+        ]
+        monkeypatch.setattr("server.chat_helpers.get_tools_for_agent", lambda: fake_tools)
+        tools = session._resolve_voice_tools()
+        # 与普通模式一致：全量透传，不做记忆类过滤
+        assert tools == fake_tools
+        names = [t["function"]["name"] for t in tools]
+        assert "search_all_memories" in names
+        assert "search_web" in names
+        assert "call_assistant" in names
+        assert "acp_send_message" in names
+
+    @pytest.mark.asyncio
+    async def test_voice_stream_passthrough_without_tool_calls(self):
+        session = self._session()
+        llm = _FakeFastLLM()
+
+        async def source():
+            yield "你"
+            yield "好"
+
+        out = []
+        async for c in session._voice_stream_with_tools(source(), [], llm, 0.7, 128):
+            out.append(c)
+        assert out == ["你", "好"]
+        assert llm.chat_calls == []  # 无需二次生成
+
+    @pytest.mark.asyncio
+    async def test_voice_stream_executes_tool_and_regenerates(self, monkeypatch):
+        session = self._session()
+        executed = []
+
+        def fake_execute(tool_calls, messages):
+            executed.append(tool_calls)
+            messages.append({"role": "assistant", "content": None, "tool_calls": tool_calls})
+            messages.append({"role": "tool", "tool_call_id": "c1", "name": "search_all_memories", "content": "[]"})
+
+        monkeypatch.setattr("server.core.tools.builtin.execute_tool_calls", fake_execute)
+        llm = _FakeFastLLM("刚刚聊过啊")
+
+        async def source():
+            yield {"type": "tool_calls", "tool_calls": [{"name": "search_all_memories"}]}
+
+        out = []
+        async for c in session._voice_stream_with_tools(source(), [], llm, 0.7, 128):
+            out.append(c)
+        assert executed, "应执行工具调用"
+        assert executed[0][0]["name"] == "search_all_memories"
+        assert llm.chat_calls, "工具后应二次生成文本"
+        assert "刚刚聊过啊" in out

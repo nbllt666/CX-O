@@ -837,6 +837,9 @@ async def setup_autonomy(services: Any, store_path: str = "") -> Optional[Autono
         except Exception as e:
             logger.warning("Dream 配置加载失败，梦境引擎跳过（不影响 autonomy 装配）: %s", e)
             dream_config = None
+        # 休眠前确认仲裁器：默认 None，仅 dream 启用时装配；在外层作用域初始化，
+        # 保证 dream 分支未进入时下方 `services.confirmation_arbiter` 也能安全引用（None）。
+        confirmation_arbiter = None
         if dream_config is not None and dream_config.enabled:
             try:
                 from server.autonomy.dream.buffer import DreamBuffer

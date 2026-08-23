@@ -14,7 +14,7 @@ server/prompt_builder.py
 支持：
   - 核心人设 system_prompt 注入（实时与非实时模式均保留）
   - 实时语音瘦身分支（is_realtime_voice=True）：
-    核心人设 + 最近 2 轮对话，跳过重型隐藏提示词，锁死 Tokens < 600 / 80ms TTFT
+    核心人设 + 记忆检索 + 最近 2 轮对话，跳过重型隐藏提示词
   - 非实时默认分支：
     按 model_type 注入隐藏提示词 + memory_context + CXFC 技能注入 + 历史 + 多模态
   - history 透传：供调用方已自行加载历史时使用（否则从 context_mgr 读取）
@@ -283,21 +283,28 @@ def build_messages(
         return messages
 
     # ====================================================================
-    # 实时语音模式：瘦身 Prompt，确保 Tokens < 600，锁死 80ms TTFT
+    # 实时语音模式：瘦身 Prompt，保留核心人设 + 记忆 + 最近 2 轮对话
     # --------------------------------------------------------------------
-    # 保留：核心人设 system_prompt + 最近 2 轮对话
-    # 跳过：MemoryRouter 深度图检索、HybridSearch、技能注入、重型隐藏提示词
-    #       （合计约 1500 tokens）
+    # 保留：核心人设 system_prompt + 记忆检索（memory_context）+ 最近 2 轮对话
+    # 跳过：技能注入、重型隐藏提示词（控制 token 膨胀，维持语音低延迟）
     # ====================================================================
     if is_realtime_voice:
         # vLLM prefix cache 命中长度补足：新会话无历史时 [system+user] 仅 ~341 tokens
         # < 353（vLLM 写入/命中阈值），恒 miss → TTFT ~240ms。在 system 末尾追加
         # 固定无害 padding（REALTIME_VOICE_PROMPT_PADDING）使完整 messages >=360 tokens。
         # 仅追加、不精简 system_prompt 原有内容，语义无害不改变回答质量。
+        # padding 同时承载【回应边界（忽略规则）】，不可删减精简。
         for _msg in messages:
             if _msg.get("role") == "system":
                 _msg["content"] = _msg["content"] + REALTIME_VOICE_PROMPT_PADDING
                 break
+
+        # 记忆注入：追加在稳定前缀 system(padded) 之后、历史之前，作为独立 system 消息。
+        # vLLM prefix cache 对 system 前缀 KV 仍 partial 命中；记忆属每次变化段，仅 prefill。
+        # receive from caller (audio.py 已通过 retrieve_memory_context 检索)；use_memory=False 或
+        # 检索结果为空时跳过。检索失败由调用方降级为 None，此处不影响语音主流程。
+        if memory_context and agent_config.get("use_memory", True):
+            messages.append({"role": "system", "content": f"相关记忆:\n{memory_context}"})
 
         realtime_history = _resolve_history(
             context_mgr, session_id, history, REALTIME_VOICE_HISTORY_LIMIT

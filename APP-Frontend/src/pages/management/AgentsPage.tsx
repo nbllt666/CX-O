@@ -36,6 +36,7 @@ interface AgentForm {
   model: string;
   temperature: number;
   memory_scene: MemoryScene;
+  voice_memory_fast: boolean;
 }
 
 const EMPTY_FORM: AgentForm = {
@@ -45,6 +46,7 @@ const EMPTY_FORM: AgentForm = {
   model: '',
   temperature: 0.7,
   memory_scene: 'chat',
+  voice_memory_fast: false,
 };
 
 const SCENES: MemoryScene[] = ['chat', 'task', 'first_interaction'];
@@ -67,6 +69,7 @@ function AgentFormModal(props: {
           model: props.agent.model ?? '',
           temperature: props.agent.temperature ?? 0.7,
           memory_scene: (props.agent.memory_scene as MemoryScene) ?? 'chat',
+          voice_memory_fast: props.agent.voice_memory_fast ?? false,
         }
       : { ...EMPTY_FORM, model: props.models[0] ?? '' },
   );
@@ -86,6 +89,7 @@ function AgentFormModal(props: {
       model: form.model || undefined,
       temperature: form.temperature,
       memory_scene: form.memory_scene,
+      voice_memory_fast: form.voice_memory_fast,
     };
     try {
       if (isEdit && props.agent) {
@@ -212,6 +216,35 @@ function AgentFormModal(props: {
             aria-label={t('management.agents.fieldTemperature')}
             className="w-full accent-primary"
           />
+        </div>
+
+        <div className="flex items-start justify-between gap-3 rounded-lg border border-[var(--glass-border)] bg-[rgba(255,255,255,0.06)] px-3 py-2.5">
+          <div>
+            <label className="block text-xs font-medium text-muted-foreground">
+              {t('management.agents.fieldVoiceMemoryFast')}
+            </label>
+            <p className="mt-0.5 text-[11px] opacity-60">
+              {t('management.agents.voiceMemoryFastHint')}
+            </p>
+          </div>
+          <button
+            type="button"
+            role="switch"
+            aria-checked={form.voice_memory_fast}
+            aria-label={t('management.agents.fieldVoiceMemoryFast')}
+            onClick={() => patch({ voice_memory_fast: !form.voice_memory_fast })}
+            className={cn(
+              'relative h-6 w-11 shrink-0 rounded-full transition-colors',
+              form.voice_memory_fast ? 'bg-primary' : 'bg-[rgba(255,255,255,0.15)]',
+            )}
+          >
+            <span
+              className={cn(
+                'absolute top-0.5 h-5 w-5 rounded-full bg-white transition-transform',
+                form.voice_memory_fast ? 'translate-x-[22px]' : 'translate-x-0.5',
+              )}
+            />
+          </button>
         </div>
 
         {saveError && (

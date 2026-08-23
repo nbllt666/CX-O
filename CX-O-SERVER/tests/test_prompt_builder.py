@@ -161,6 +161,36 @@ class TestRealtime:
         assert "不回应" in system_content
         assert "明确提问" in system_content
 
+    def test_realtime_injects_memory_when_enabled(self):
+        # 实时语音注入记忆：独立 system 消息，位于 system(padding) 之后、历史之前。
+        msgs = build_messages(
+            _AGENT, _FakeContextMgr(_HISTORY), "s", "你好",
+            memory_context="语音记忆内容", is_realtime_voice=True,
+        )
+        assert msgs[0]["role"] == "system"
+        assert "<tts_instruction>" in msgs[0]["content"]  # padding 已追加到 system
+        # 记忆段紧随其后，位于历史（user/assistant）之前
+        mem_idx = next(i for i, c in enumerate(_contents(msgs)) if c == "相关记忆:\n语音记忆内容")
+        assert mem_idx == 1
+        assert not any(m["role"] in ("user", "assistant") for m in msgs[1:mem_idx])
+        # 末尾仍为当前用户消息
+        assert msgs[-1] == {"role": "user", "content": "你好"}
+
+    def test_realtime_skips_memory_when_disabled(self):
+        agent = dict(_AGENT, use_memory=False)
+        msgs = build_messages(
+            agent, _FakeContextMgr(_HISTORY), "s", "你好",
+            memory_context="语音记忆内容", is_realtime_voice=True,
+        )
+        assert not any("相关记忆:\n语音记忆内容" in c for c in _contents(msgs))
+
+    def test_realtime_skips_memory_when_empty(self):
+        msgs = build_messages(
+            _AGENT, _FakeContextMgr(_HISTORY), "s", "你好",
+            memory_context=None, is_realtime_voice=True,
+        )
+        assert not any("相关记忆:\n" in c for c in _contents(msgs))
+
 
 # ---------------------------------------------------------------------------
 # history 透传 / 最小化模式

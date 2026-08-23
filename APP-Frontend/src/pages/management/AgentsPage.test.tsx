@@ -110,6 +110,32 @@ describe('AgentsPage 代理页', () => {
     });
   });
 
+  it('新建弹窗含语音快速记忆开关且随提交下发', async () => {
+    mocked.getAgents.mockResolvedValue([]);
+    mocked.getAvailableModels.mockResolvedValue({ models: ['main'] });
+    mocked.createAgent.mockResolvedValue(SAMPLE_AGENTS[0]);
+
+    render(<AgentsPage />);
+    await screen.findByText('暂无代理，点击右上角新建');
+    fireEvent.click(screen.getByRole('button', { name: /新建代理/ }));
+
+    // 开关默认关闭
+    const sw = screen.getByRole('switch', { name: '语音快速记忆' });
+    expect(sw.getAttribute('aria-checked')).toBe('false');
+    // 打开开关
+    fireEvent.click(sw);
+    expect(sw.getAttribute('aria-checked')).toBe('true');
+
+    fireEvent.change(screen.getByLabelText('名称'), { target: { value: '语音代理' } });
+    fireEvent.click(screen.getByRole('button', { name: '保存' }));
+
+    await waitFor(() => {
+      expect(mocked.createAgent).toHaveBeenCalledWith(
+        expect.objectContaining({ name: '语音代理', voice_memory_fast: true }),
+      );
+    });
+  });
+
   it('克隆与删除调用对应 API（删除需确认）', async () => {
     mocked.getAgents.mockResolvedValue(SAMPLE_AGENTS);
     mocked.getAvailableModels.mockResolvedValue({ models: [] });

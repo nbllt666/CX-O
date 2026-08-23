@@ -465,9 +465,13 @@ class DualStreamSession:
         """
         try:
             # 延迟导入避免循环依赖
-            from server.chat_helpers import get_agent_config, get_llm_client_for_agent
+            from server.chat_helpers import (
+                get_agent_config,
+                get_llm_client_for_agent,
+                retrieve_memory_context,
+            )
             from server.prompt_builder import build_messages
-            from server.dependencies import get_context_manager
+            from server.dependencies import get_context_manager, get_memory_manager
             from server.services.text_smoother import TextSmoother
 
             # 1. 获取 Agent 配置
@@ -483,28 +487,56 @@ class DualStreamSession:
 
             context_mgr = get_context_manager()
 
-            # 2. 构建 messages（实时语音模式，Prompt Tokens < 500，锁死 80ms TTFT）
-            # is_realtime_voice=True 跳过 MemoryRouter/HybridSearch/重型隐藏提示词，
-            # 仅保留核心 System Prompt + 最近 2 轮对话，省去 ~1500 tokens Prefill（100-200ms）
+            # 2. 记忆策略：voice_memory_fast 决定「每轮预检索」还是「仅工具触发」
+            #   - 默认(auto，voice_memory_fast=False)：每轮调用 retrieve_memory_context
+            #     （MemoryRouter 完整检索）预注入记忆——记忆强、首字微延迟（用户已裁定接受）。
+            #   - 快速模式(fast，voice_memory_fast=True)：不预检索，LLM 通过记忆工具按需召回，
+            #     省去每轮 Embedding 检索与大量记忆 token；代价是仅当用户话题触及历史时才触发检索。
+            fast_mode = bool(agent_config.get("voice_memory_fast", False))
+            memory_context = None
+            if not fast_mode:
+                try:
+                    memory_mgr = get_memory_manager()
+                    if memory_mgr is not None:
+                        memory_context = await retrieve_memory_context(
+                            agent_config, memory_mgr, user_text, self.session_id
+                        )
+                except Exception as _mem_e:
+                    logger.warning(f"双流式记忆检索失败，降级为无记忆: {_mem_e}")
+
+            # 3. 构建 messages（实时语音模式）
+            # 保留：核心 System Prompt(padded) + 记忆(auto 预注入) + 最近 2 轮对话
+            # 跳过：重型隐藏提示词、技能注入（控制 token 膨胀，维持语音低延迟）
             messages = build_messages(
                 agent_config, context_mgr, self.session_id,
-                user_text, is_realtime_voice=True,
+                user_text, memory_context=memory_context, is_realtime_voice=True,
             )
 
-            # 3. 获取 LLM client
+            # 4. 获取 LLM client
             llm = get_llm_client_for_agent(agent_config)
 
-            # 4. LLM 流式输出（vLLM 90 tokens/s, TTFT ~80ms）
+            # 5. LLM 流式输出（vLLM 90 tokens/s, TTFT ~80ms）
             # 实时语音回复应为短口语（2~3 句），max_tokens 限制 150：
             # 阻断多轮上下文污染后 LLM 进入长文总结模式（实测单轮 370+ chunk），
             # 避免单 pipeline 长时间占用 TTS 导致并发排队、端到端延迟暴涨
+            # 语音注入与普通模式一致的完整工具（get_tools_for_agent），使语音链路具备
+            # 相同的工具能力；工具调用经 _voice_stream_with_tools 执行并二次生成文本。
+            # 两种模式的工具能力相同，差异仅在记忆获取方式：
+            #   - auto：每轮预注入记忆 + 也可工具调用
+            #   - fast：不预检索，靠工具按需召回
             llm_stream = llm.stream_chat(
                 messages=messages,
                 temperature=agent_config.get("temperature", 0.7),
                 max_tokens=min(agent_config.get("max_tokens", 4096), 150),
+                tools=self._resolve_voice_tools(),
+            )
+            llm_stream = self._voice_stream_with_tools(
+                llm_stream, messages, llm,
+                temperature=agent_config.get("temperature", 0.7),
+                max_tokens=min(agent_config.get("max_tokens", 4096), 150),
             )
 
-            # 5. TextSmoother 平滑缓冲（30ms 滑动窗口聚合碎片 Token）
+            # 6. TextSmoother 平滑缓冲（30ms 滑动窗口聚合碎片 Token）
             # LLM 吐出的 token 往往只有 1~2 字，直接喂 TTS 会导致发音诡异。
             # TextSmoother 以 30ms 窗口聚合为 3~5 字词组块，用 ~40ms 延迟换取音质提升。
             # ~40ms 远小于 300ms 总预算，且 TTS 合成与播放可流水线并行，用户无感。
@@ -517,7 +549,7 @@ class DualStreamSession:
                 llm_stream, window_ms=30, char_threshold=2
             )
 
-            # 6. TTS 细粒度流式合成（边收边切边合成）
+            # 7. TTS 细粒度流式合成（边收边切边合成）
             # synthesize_stream_fine 接受 token 流，4 字即切片送 TTS，
             # 不必等整句，首包音频延迟压缩数百毫秒
             await set_tts_playing(self.client_id, True)
@@ -576,6 +608,57 @@ class DualStreamSession:
                 await set_tts_playing(self.client_id, False)
             except Exception as e:
                 logger.error(f"重置 TTS 播放状态失败: {e}")
+
+    def _resolve_voice_tools(self) -> Optional[list]:
+        """双流式语音的工具集：与普通模式一致的完整工具（get_tools_for_agent）。
+
+        直接透传全部工具（内置 + 主模型工具），使语音链路具备与普通聊天相同的
+        工具能力（记忆召回 / 搜索 / 助手 / 插件等）。工具调用经 _voice_stream_with_tools
+        执行并二次生成。失败时返回 None（等价于不注入工具，静默降级）。
+        """
+        from server.chat_helpers import get_tools_for_agent
+
+        try:
+            return get_tools_for_agent() or None
+        except Exception as e:
+            logger.warning(f"双流式工具解析失败: {e}")
+            return None
+
+    async def _voice_stream_with_tools(
+        self, llm_stream, messages, llm, temperature: float, max_tokens: int
+    ):
+        """快速模式：透传内容 token，若 LLM 发出记忆工具调用则执行并二次生成纯文本。
+
+        同一轮内内容与工具调用互斥（模型要么流文本、要么调工具），因此工具触发
+        时前面不会已有可误喂 TTS 的内容。工具执行后经 llm.chat 二次生成，把最终
+        文本作为单个 token 继续交给 TextSmoother 产出语音。
+        """
+        tool_calls = []
+        async for chunk in llm_stream:
+            if isinstance(chunk, dict) and chunk.get("tool_calls"):
+                tool_calls.extend(chunk["tool_calls"])
+                continue
+            yield chunk
+
+        if not tool_calls:
+            return
+
+        from server.core.tools.builtin import execute_tool_calls
+
+        try:
+            execute_tool_calls(tool_calls, messages)
+        except Exception as e:
+            logger.warning(f"双流式快速模式工具执行失败: {e}")
+
+        try:
+            resp = await llm.chat(
+                messages=messages, stream=False, temperature=temperature, max_tokens=max_tokens
+            )
+        except TypeError:
+            resp = await llm.chat(messages=messages, stream=False)
+        text = (getattr(resp, "content", None) or "").strip()
+        if text:
+            yield text
 
     async def _interrupt_pipeline(self) -> None:
         """打断当前流水线（毫秒级全双工打断）

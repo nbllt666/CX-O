@@ -334,6 +334,8 @@
       "fieldModel": "模型",
       "fieldScene": "记忆场景",
       "fieldTemperature": "温度",
+      "fieldVoiceMemoryFast": "语音快速记忆",
+      "voiceMemoryFastHint": "不每轮预检索记忆，对话中按需用工具召回（响应更快，记忆按需触发）",
       "scene": {
         "chat": "对话",
         "task": "任务",
