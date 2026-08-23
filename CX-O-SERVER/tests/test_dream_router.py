@@ -47,6 +47,12 @@ class FakeBuffer:
             items = [i for i in items if i["decision"] == decision]
         return items[offset:offset + limit]
 
+    def count(self, agent_id="default", decision=None):
+        items = [i for i in self.items if i["agent_id"] == agent_id]
+        if decision is not None:
+            items = [i for i in items if i["decision"] == decision]
+        return len(items)
+
 
 class FakeMemoryManager:
     def __init__(self, purged=2):
@@ -215,12 +221,14 @@ class TestList:
         assert body["total"] == 1
         assert body["items"][0]["decision"] == "pending"
 
-    def test_list_pagination(self, client, engine):
+    def test_list_pagination_total_is_full_match_count(self, client, engine):
+        """分页时 total 应为总匹配数（不受 limit/offset 影响），而非当前页条数。"""
         dream_router.set_dream_engine(engine)
         r = client.get("/api/dream/list", params={"limit": 1, "offset": 1})
         assert r.status_code == 200
         body = r.json()
-        assert body["total"] == 1
+        assert len(body["items"]) == 1          # 当前页 1 条
+        assert body["total"] == 2               # 总匹配 2 条（修复前误为 len(items)=1）
         assert body["items"][0]["id"] == 2
 
 

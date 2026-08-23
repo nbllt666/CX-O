@@ -258,3 +258,35 @@ class TestListDecisionFilter:
         assert len(buf.list(agent_id="default")) == 1
         assert len(buf.list(agent_id="alice")) == 1
         assert len(buf.list()) == 1
+
+
+# ================================================================ count 总匹配数（分页 total）
+class TestCount:
+    def test_count_all_matching(self, tmp_path):
+        buf = DreamBuffer(db_path=str(tmp_path / "dream_buffer.db"))
+        for i in range(5):
+            buf.put(_sample_candidate(candidate_content=f"候选{i}"))
+        assert buf.count() == 5
+        assert buf.count(agent_id="default") == 5
+        assert buf.count(agent_id="alice") == 0
+
+    def test_count_filters_by_decision(self, tmp_path):
+        buf = DreamBuffer(db_path=str(tmp_path / "dream_buffer.db"))
+        id_1 = buf.put(_sample_candidate(candidate_content="候选一"))
+        id_2 = buf.put(_sample_candidate(candidate_content="候选二"))
+        buf.put(_sample_candidate(candidate_content="候选三"))
+        buf.mark_decision(id_1, "approved", reason="确认")
+        buf.mark_decision(id_2, "rejected", reason="否定")
+        assert buf.count(decision="pending") == 1
+        assert buf.count(decision="approved") == 1
+        assert buf.count(decision="rejected") == 1
+        assert buf.count(decision="approved", agent_id="alice") == 0
+
+    def test_count_ignores_pagination_limits(self, tmp_path):
+        """count 是总匹配数，不受 list 的 limit/offset 影响（供分页 total 使用）。"""
+        buf = DreamBuffer(db_path=str(tmp_path / "dream_buffer.db"))
+        for i in range(25):
+            buf.put(_sample_candidate(candidate_content=f"候选{i}"))
+        page = buf.list(limit=10, offset=0)
+        assert len(page) == 10
+        assert buf.count() == 25

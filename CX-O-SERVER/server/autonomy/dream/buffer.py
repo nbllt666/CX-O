@@ -179,6 +179,25 @@ class DreamBuffer:
         finally:
             conn.close()
 
+    def count(
+        self,
+        agent_id: str = "default",
+        decision: Optional[str] = None,
+    ) -> int:
+        """按 agent（默认 default）统计缓冲候选总匹配数，可过滤 decision（供分页 total 使用）。"""
+        query = "SELECT COUNT(*) FROM dream_buffer WHERE agent_id = ?"
+        params: List[Any] = [agent_id]
+        if decision is not None:
+            query += " AND decision = ?"
+            params.append(decision)
+
+        conn = self._connect()
+        try:
+            row = conn.execute(query, params).fetchone()
+            return int(row[0]) if row else 0
+        finally:
+            conn.close()
+
     def get(self, buffer_id: int) -> Optional[Dict[str, Any]]:
         """按 id 查询缓冲候选，不存在返回 None。"""
         conn = self._connect()

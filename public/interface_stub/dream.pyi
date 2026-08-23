@@ -148,6 +148,14 @@ class DreamBuffer:
         """按 agent 列出缓冲候选（created_at DESC），可过滤 decision。"""
         ...
 
+    def count(
+        self,
+        agent_id: str = "default",
+        decision: Optional[str] = None,
+    ) -> int:
+        """按 agent 统计缓冲候选总匹配数，可过滤 decision（供分页 total 使用）。"""
+        ...
+
     def get(self, buffer_id: int) -> Optional[Dict[str, Any]]:
         """按 id 查询缓冲候选；不存在返回 None。"""
         ...

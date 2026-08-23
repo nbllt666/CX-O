@@ -96,7 +96,8 @@ def list_candidates(
     items = engine.buffer.list(
         agent_id=agent_id, decision=state, limit=limit, offset=offset
     )
-    return {"items": items, "total": len(items)}
+    total = engine.buffer.count(agent_id=agent_id, decision=state)
+    return {"items": items, "total": total}
 
 
 @router.post("/dream/{buffer_id}/confirm")
