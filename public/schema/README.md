@@ -28,6 +28,8 @@
 | `ref_audio_asset.schema.json` | 统一参考音频资产（双来源 prompt/file，spec `unify-qwen3-tts-migration` Task 1 冻结决策） | P0 | ✅ s0201 补全 |
 | `emotion_instruction.schema.json` | LLM 自然语言情感指令（spec `unify-qwen3-tts-migration` Task 1 冻结决策） | P0 | ✅ s0201 补全 |
 | `qwen3_tts_error_codes.json` | 统一 Qwen3 TTS 错误码枚举（spec `unify-qwen3-tts-migration` Task 1 冻结决策） | P0 | ✅ s0201 补全 |
+| `dream_config.schema.json` | CX-O-Dream 梦境引擎配置（spec `add-dream-engine-embedded` 冻结决策；源真理 `c:/CX-O/CX-O-SERVER/server/autonomy/dream/config.py` DreamConfig，默认值/枚举/时间格式一致） | P0 | ✅ s0201 补全 |
+| `dream_status.schema.json` | GET /dream/status 响应（spec `add-dream-engine-embedded` 冻结决策；disabled 仅 `{"status":"disabled"}`，启用后 status idle/dreaming/purge_scheduled + enabled + last_session_at + stats） | P0 | ✅ s0201 补全 |
 
 ### Qwen3 TTS 数据契约清单（spec `cosyvoice2-primary-qwen3tts-base-fallback`）
 

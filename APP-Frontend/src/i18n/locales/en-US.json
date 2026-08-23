@@ -37,7 +37,8 @@
       "audioSource": "Audio Source",
       "distillation": "Distillation",
       "neko": "Neko Plugins",
-      "autonomy": "Agent Life"
+      "autonomy": "Agent Life",
+      "dream": "Dream Log"
     },
     "neko": {
       "subtitle": "Bridge to the neko plugin runtime and plugin store",
@@ -526,6 +527,67 @@
         "failed": "Failed",
         "blocked": "Blocked",
         "skipped": "Skipped"
+      }
+    },
+    "dream": {
+      "subtitle": "CX-O-Dream dream engine: subconscious association, dream candidates and consolidation",
+      "refresh": "Refresh",
+      "statusTitle": "Current Status",
+      "statusBadge": {
+        "idle": "Idle",
+        "dreaming": "Dreaming",
+        "purgeScheduled": "Purge Scheduled",
+        "disabled": "Disabled"
+      },
+      "lastSessionAt": "Last session",
+      "emptyValue": "—",
+      "statSessions": "Sessions",
+      "statGenerated": "Generated",
+      "statPurges": "Purges",
+      "disabledTitle": "Dream Engine Disabled",
+      "disabledHint": "The dream engine is disabled. Enable it in the config section below. Once enabled, dream sessions run automatically during the sleep window.",
+      "operationsTitle": "Operations",
+      "trigger": "Trigger Now",
+      "purge": "Purge Now",
+      "actionFailed": "Action failed. Please retry.",
+      "listTitle": "Dream Candidates",
+      "listTotal": "{{count}} items",
+      "listEmpty": "No dream candidates yet",
+      "listLoadFailed": "Failed to load dream candidates",
+      "sessionTitle": "Dream Session",
+      "clearSession": "Clear Session",
+      "clearSessionConfirm": "Clear all memories in this dream session? All dream memories of this session will be soft-deleted.",
+      "confirm": "Confirm",
+      "reject": "Reject",
+      "rejectConfirm": "Reject this dream candidate? It will be cleared without writing to the main store.",
+      "lucidity": "Lucidity",
+      "decision": {
+        "pending": "Pending",
+        "approved": "Approved",
+        "rejected": "Rejected"
+      },
+      "associatedMemories": "Memories",
+      "associatedEntities": "Entities",
+      "configTitle": "Config",
+      "save": "Save",
+      "saved": "Config saved",
+      "configLoadFailed": "Failed to load config",
+      "field": {
+        "enabled": "Enable dream engine",
+        "model": "Model",
+        "dreamTemperature": "Temperature",
+        "candidatesPerSession": "Candidates per session",
+        "materialWindowDays": "Material window (days)",
+        "maxMaterialItems": "Max materials",
+        "minLucidity": "Min lucidity",
+        "dreamTtlHours": "Candidate TTL (hours)",
+        "purgeThreshold": "Purge threshold",
+        "confirmedImportance": "Confirmed importance",
+        "surfaceOnWake": "Surface on wake",
+        "surfaceProbability": "Surface probability",
+        "maxSurfacePerDay": "Max surfaces per day",
+        "wakeTime": "Wake time",
+        "sleepTime": "Sleep time"
       }
     },
     "memoryAgent": {

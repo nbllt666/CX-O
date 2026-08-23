@@ -36,6 +36,7 @@
 | `ref_audio_store.pyi` | 统一参考音频资产存储（spec `unify-qwen3-tts-migration` Task 1 冻结决策；源真理 `public/schema/ref_audio_asset.schema.json`） | P0 | ✅ s0201 补全 |
 | `emotion_instruction_service.pyi` | LLM 自然语言情感指令服务（spec `unify-qwen3-tts-migration` Task 1 冻结决策；源真理 `public/schema/emotion_instruction.schema.json`） | P0 | ✅ s0201 补全 |
 | `speech_orchestrator.pyi` | 统一 Qwen3 语音编排（spec `unify-qwen3-tts-migration` Task 1 冻结决策；源真理 `public/schema/speech_synthesis_request.schema.json` + `qwen3_tts_error_codes.json`） | P0 | ✅ s0201 补全 |
+| `dream.pyi` | CX-O-Dream 梦境引擎（spec `add-dream-engine-embedded` 冻结决策；源真理 `c:/CX-O/CX-O-SERVER/server/autonomy/dream/`（config/engine/buffer/consolidator/purge）+ `server/core/memory/mixins/dream_mixin.py`（_DreamMixin）+ `public/schema/dream_config.schema.json` + `dream_status.schema.json`） | P0 | ✅ s0201 补全 |
 
 ### Qwen3 TTS 存根清单（spec `unify-qwen3-tts-migration`）
 

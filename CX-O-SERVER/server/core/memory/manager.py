@@ -9,6 +9,7 @@
 - _AdvancedSearchMixin: 高级搜索（3D 搜索、回忆、衰减、上下文）
 - _BatchOperationsMixin: 批量操作
 - _QueryHelpersMixin: 查询辅助
+- _DreamMixin: 梦境记忆写入与生命周期（type='dream' 软隔离）
 
 本文件仅保留单例 (__new__) 和初始化 (__init__) 逻辑，所有方法由 mixin 提供。
 """
@@ -21,6 +22,7 @@ from .mixins.advanced_mixin import _AdvancedSearchMixin
 from .mixins.batch_mixin import _BatchOperationsMixin
 from .mixins.crud_mixin import _MemoryCRUDMixin
 from .mixins.db_mixin import _MemoryDBMixin
+from .mixins.dream_mixin import _DreamMixin
 from .mixins.graph_mixin import _GraphIntegrationMixin
 from .mixins.permanent_mixin import _PermanentMemoryMixin
 from .mixins.query_mixin import _QueryHelpersMixin
@@ -41,6 +43,7 @@ class MemoryManager(
     _BatchOperationsMixin,
     _QueryHelpersMixin,
     _DecisionMixin,
+    _DreamMixin,
 ):
     """记忆管理器
 

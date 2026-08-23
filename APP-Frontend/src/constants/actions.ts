@@ -23,6 +23,15 @@ export const ASRActions = {
   RESULT: 'asr_stream_result',
 } as const;
 
+export const DreamActions = {
+  SESSION_STARTED: 'dream.session_started',
+  SESSION_COMPLETED: 'dream.session_completed',
+  SURFACE: 'dream.surface',
+  CONFIRM: 'dream.confirm',
+  REJECT: 'dream.reject',
+  PURGED: 'dream.purged',
+} as const;
+
 export type VoiceActionType =
   | typeof VoiceActions.PARTIAL
   | typeof VoiceActions.TTS_CHUNK

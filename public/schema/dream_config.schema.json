@@ -1,0 +1,30 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "DreamConfig",
+  "description": "CX-O-Dream 梦境引擎配置契约（含默认值与自动补齐规则，对齐 server/autonomy/dream/config.py DreamConfig）",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "enabled": {"type": "boolean", "default": false, "description": "梦境引擎总开关，默认关闭（用户显式开启）"},
+    "model": {"type": "string", "default": "summary", "description": "联想生成所用模型（不用主模型，避免占用主链路槽位）"},
+    "dream_temperature": {"type": "number", "minimum": 0, "maximum": 2, "default": 0.9, "description": "联想生成温度"},
+    "candidates_per_session": {"type": "integer", "minimum": 0, "default": 3, "description": "单次会话产出候选条数，0 表示本次会话跳过生成"},
+    "material_window_days": {"type": "integer", "minimum": 0, "default": 7, "description": "素材采集时间窗（天），只读近 N 天边缘记忆"},
+    "max_material_items": {"type": "integer", "minimum": 0, "default": 20, "description": "边缘记忆采集上限，0 表示不采集"},
+    "min_lucidity": {"type": "number", "minimum": 0, "maximum": 1, "default": 0.3, "description": "清醒度下限，低于此值候选被 D7 闸门拦截（low_lucidity）"},
+    "dream_ttl_hours": {"type": "integer", "minimum": 0, "default": 72, "description": "未确认梦境保留时长（小时），超期且未确认由 purge 软删"},
+    "purge_threshold": {"type": "number", "minimum": 0, "maximum": 1, "default": 0.1, "description": "梦境 importance_score 低于此值触发自动清除（purged_low_importance）"},
+    "confirmed_importance": {"type": "number", "minimum": 0, "maximum": 1, "default": 0.4, "description": "固化确认后梦境记忆的 importance_score"},
+    "surface_on_wake": {"type": "boolean", "default": true, "description": "唤醒窗口是否主动提起梦境候选"},
+    "surface_probability": {"type": "number", "minimum": 0, "maximum": 1, "default": 0.5, "description": "主动提起概率门，random() 低于此值才推送"},
+    "max_surface_per_day": {"type": "integer", "minimum": 0, "default": 1, "description": "每日主动提起次数上限，跨日自动重置"},
+    "schedule": {"type": "object", "additionalProperties": false, "properties": {
+      "wake_time": {"type": "string", "pattern": "^([01]?[0-9]|2[0-3]):[0-5][0-9]$", "default": "08:00", "description": "起床时间 HH:MM"},
+      "sleep_time": {"type": "string", "pattern": "^([01]?[0-9]|2[0-3]):[0-5][0-9]$", "default": "02:00", "description": "入睡时间 HH:MM（可跨午夜，睡眠窗口默认 02:00-08:00）"},
+      "golden_start": {"type": "string", "pattern": "^([01]?[0-9]|2[0-3]):[0-5][0-9]$", "default": "19:00", "description": "黄金档开始 HH:MM"},
+      "golden_end": {"type": "string", "pattern": "^([01]?[0-9]|2[0-3]):[0-5][0-9]$", "default": "23:00", "description": "黄金档结束 HH:MM"},
+      "diary_time": {"type": "string", "pattern": "^([01]?[0-9]|2[0-3]):[0-5][0-9]$", "default": "02:00", "description": "每日日记时刻 HH:MM"},
+      "quiet_windows": {"type": "array", "default": [], "items": {"type": "string", "pattern": "^([01]?[0-9]|2[0-3]):[0-5][0-9]-([01]?[0-9]|2[0-3]):[0-5][0-9]$"}, "description": "静默档窗口 HH:MM-HH:MM"}
+    }}
+  }
+}

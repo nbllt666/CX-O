@@ -411,6 +411,10 @@ class _MemoryDBMixin:
             "CREATE INDEX IF NOT EXISTS idx_memories_permanent ON memories(permanent)",
             "CREATE INDEX IF NOT EXISTS idx_memories_importance ON memories(importance)",
             "CREATE INDEX IF NOT EXISTS idx_memories_workspace ON memories(workspace_id)",
+            # 梦境会话索引：部分索引（WHERE json_valid）避免对历史/异常 malformed JSON
+            # 行的写入报错（表达式索引会在写路径求值 json_extract），保住 test_memory_manager
+            # 的畸形 JSON 容错行为；梦境写入方始终写合法 JSON，因此正常梦境仍被索引。
+            "CREATE INDEX IF NOT EXISTS idx_memories_dream_session ON memories(json_extract(metadata, '$.dream_session_id')) WHERE json_valid(metadata)",
         ]
         for idx in indexes:
             cursor.execute(idx)

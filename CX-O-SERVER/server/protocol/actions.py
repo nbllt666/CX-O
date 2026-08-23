@@ -139,6 +139,23 @@ class EventsActions:
     UNSUBSCRIBE = "events.unsubscribe"
 
 
+class DreamActions:
+    """梦境引擎 WebSocket action 常量（spec "WebSocket 协议"）。
+
+    S→C 推送（type 即 action，直发 {"type": "dream.xxx", "data": {...}}）：
+    session_started / session_completed / surface / purged。
+    C→S 入向（{action, request_id, data} 约定，经 ACTION_HANDLERS 分发并
+    委托 DreamConsolidator）：confirm / reject。
+    """
+
+    SESSION_STARTED = "dream.session_started"
+    SESSION_COMPLETED = "dream.session_completed"
+    SURFACE = "dream.surface"
+    CONFIRM = "dream.confirm"
+    REJECT = "dream.reject"
+    PURGED = "dream.purged"
+
+
 ACTION_HANDLERS = {
     ChatActions.MESSAGE: "chat",
     ChatActions.STREAM: "chat",
@@ -194,6 +211,8 @@ ACTION_HANDLERS = {
     DanmakuActions.CLEAR: "danmaku",
     EventsActions.SUBSCRIBE: "events",
     EventsActions.UNSUBSCRIBE: "events",
+    DreamActions.CONFIRM: "dream",
+    DreamActions.REJECT: "dream",
 }
 
 

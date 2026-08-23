@@ -204,15 +204,18 @@ class DecayCalculator:
         decay_type: str = "exponential",
         decay_params: Optional[Dict] = None,
         permanent: bool = False,
+        metadata: Optional[Dict] = None,
     ) -> float:
         """按衰减类型计算经过时间衰减后的分数（统一入口）。
 
         Args:
             importance: 重要性分数
             created_at: 创建时间（ISO 格式）
-            decay_type: 衰减类型（zero / exponential / ebbinghaus）
+            decay_type: 衰减类型（zero / exponential / ebbinghaus / dream）
             decay_params: 衰减参数
             permanent: 是否永久记忆
+            metadata: 记忆元数据（dream 衰减读取 consolidation_state：
+                pending/surfaced→λ=0.8，confirmed→λ=0.25，默认 pending）
 
         Returns:
             float: 衰减后的分数
@@ -229,6 +232,27 @@ class DecayCalculator:
                 days_elapsed=days_elapsed,
                 t50=decay_params.get("t50", 30.0) if decay_params else 30.0,
                 k=decay_params.get("k", 2.0) if decay_params else 2.0,
+            )
+
+        # 梦境衰减（dream）：单阶段指数 T(t)=e^(-λ·Δt)
+        # λ 取 metadata.consolidation_state（pending/surfaced→0.8，confirmed→0.25），默认 pending；
+        # 无 metadata 时回退到 decay_params.lambda1。
+        # alpha=1.0 时双阶段公式退化为单阶段指数，复用既有 calculate_exponential_decay。
+        if decay_type == "dream":
+            dream_lambda = 0.8
+            state = metadata.get("consolidation_state") if metadata else None
+            if state == "confirmed":
+                dream_lambda = 0.25
+            elif state in ("pending", "surfaced"):
+                dream_lambda = 0.8
+            elif decay_params and decay_params.get("lambda1") is not None:
+                dream_lambda = decay_params["lambda1"]
+            return self.calculate_exponential_decay(
+                importance=importance,
+                days_elapsed=days_elapsed,
+                alpha=1.0,
+                lambda1=dream_lambda,
+                lambda2=0.0,
             )
 
         # 双阶段指数衰减（默认）
@@ -363,6 +387,7 @@ class DecayCalculator:
             created_at=created_at,
             decay_type=decay_type,
             decay_params=decay_params,
+            metadata=memory.get("metadata"),
         )
 
         if apply_reactivation:
@@ -385,6 +410,7 @@ class DecayCalculator:
         permanent: bool = False,
         reactivation_count: int = 0,
         emotion_score: float = 0.0,
+        metadata: Optional[Dict] = None,
     ) -> float:
         """实时计算时间分数（纯函数，不依赖内存状态）
 
@@ -396,6 +422,7 @@ class DecayCalculator:
             permanent: 是否永久记忆
             reactivation_count: 再激活次数
             emotion_score: 情感分数
+            metadata: 记忆元数据（dream 衰减读取 consolidation_state）
 
         Returns:
             实时计算的时间分数 (0-1)
@@ -409,6 +436,7 @@ class DecayCalculator:
             created_at=created_at,
             decay_type=decay_type,
             decay_params=decay_params,
+            metadata=metadata,
         )
 
         # 应用再激活加成

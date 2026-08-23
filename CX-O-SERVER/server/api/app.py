@@ -24,6 +24,7 @@ from server.api.routers import (
     backup,
     chat,
     decision,
+    dream,
     config,
     context,
     cxfc,
@@ -99,6 +100,8 @@ def register_api_routes(app: FastAPI):
     app.include_router(cxfc.router)
     # CX-O-Autonomy 自主系统 REST 端点（前端 Agent 生活控制页依赖），仅挂 /api 前缀
     app.include_router(autonomy.router, prefix="/api")
+    # CX-O-Dream 梦境引擎 REST 端点（前端 DreamPage 管理页依赖），仅挂 /api 前缀
+    app.include_router(dream.router, prefix="/api")
     app.include_router(discovery.router, prefix="/api")
     app.include_router(vector.router, prefix="/api")
     app.include_router(multimodal.router, prefix="/api")

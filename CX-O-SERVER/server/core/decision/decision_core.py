@@ -104,6 +104,7 @@ DECISION_POINTS = frozenset({
     "D4_REDISTILL",
     "D5_CROSS_VALIDATE",
     "D6_REJECT",
+    "D7_DREAM_FILTER",
 })
 
 # rubric 4 必需阈值字段（与 agent_config_v2.schema.json decision_rubric.required 一致）

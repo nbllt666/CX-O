@@ -33,6 +33,7 @@ import {
   Layers,
   MessageSquareText,
   MonitorPlay,
+  Moon,
   Network,
   Puzzle,
   Settings,
@@ -210,6 +211,13 @@ export const MANAGEMENT_ROUTES: readonly ManagementRouteEntry[] = [
     titleKey: 'management.nav.autonomy',
     icon: HeartPulse,
     Component: lazy(() => import('./AutonomyPage')),
+  },
+  // ── 梦境日志页（DreamPage，仅追加，不改既有条目） ──
+  {
+    path: 'dream',
+    titleKey: 'management.nav.dream',
+    icon: Moon,
+    Component: lazy(() => import('./DreamPage')),
   },
 ];
 

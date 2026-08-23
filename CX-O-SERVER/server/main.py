@@ -502,6 +502,11 @@ async def lifespan(app: FastAPI):
     autonomy_router.set_autonomy_manager(services.autonomy_manager)
     autonomy_router.set_audit_store(_get_autonomy_audit_store())
 
+    # CX-O-Dream 梦境引擎 REST 端点依赖模块级 _engine 单例；未装配（dream.enabled=False
+    # 或 autonomy 未启用）时为 None，路由侧按 disabled 口径自动降级。
+    from server.api.routers import dream as dream_router
+    dream_router.set_dream_engine(getattr(services, "dream_engine", None))
+
     from server.services.asr_service import get_asr_service
     from server.services.tts_service import get_tts_service
     from server.gateway.health import health_checker

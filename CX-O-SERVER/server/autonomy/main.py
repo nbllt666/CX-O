@@ -38,6 +38,8 @@ _poster: Optional[Any] = None
 _consolidator: Optional[Any] = None
 # P3-T1：直播器单例（由 setup_autonomy 装配，供 get_handlers 的 start_live/stop_live handler 使用）
 _streamer: Optional[Any] = None
+# Dream 梦境引擎单例（由 setup_autonomy 在 dream.enabled 时装配，供 dream 工具 handler 使用）
+_dream_engine: Optional[Any] = None
 
 
 def get_autonomy_manager() -> Optional[AutonomyManager]:
@@ -153,6 +155,49 @@ TOOL_SPECS: List[Dict[str, Any]] = [
         "name": "autonomy_write_diary",
         "description": "生成每日第一人称日记并写记忆（permanent）。返回 {diary, memory_id}。",
         "parameters": {"type": "object", "properties": {}},
+    },
+]
+
+
+# ---------------------------------------------------------------------------
+# Dream 工具描述（dream.enabled 时并入 cxo-autonomy 插件 ToolRegistry，参数为 JSON Schema object）
+# ---------------------------------------------------------------------------
+DREAM_TOOL_SPECS: List[Dict[str, Any]] = [
+    {
+        "name": "dream_get_status",
+        "description": (
+            "返回 CX-O-Dream 梦境引擎运行状态快照（status/enabled/last_session_at/stats）。"
+            "未启用返回 {\"status\": \"disabled\"}，不抛错。"
+        ),
+        "parameters": {"type": "object", "properties": {}},
+    },
+    {
+        "name": "dream_trigger",
+        "description": (
+            "手动触发一轮梦境会话（采集边缘记忆→summary 模型低温联想生成→D7 确定性闸门"
+            "过滤→缓冲隔离）。返回 {status, last_session_at, result} 统计；未启用不抛错。"
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "agent_id": {"type": "string", "default": "default", "description": "Agent ID"},
+            },
+        },
+    },
+    {
+        "name": "dream_list",
+        "description": (
+            "分页列出梦境候选缓冲（按 decision 过滤：pending/approved/rejected，缺省全部）。"
+            "返回缓冲候选列表；未启用返回空列表。"
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "decision": {"type": "string", "description": "过滤决策（pending/approved/rejected），缺省全部"},
+                "limit": {"type": "integer", "default": 50, "minimum": 1},
+                "offset": {"type": "integer", "default": 0, "minimum": 0},
+            },
+        },
     },
 ]
 
@@ -382,15 +427,87 @@ async def _autonomy_stop_live() -> Dict[str, Any]:
     return await streamer.stop_live()
 
 
+def _build_dream_ws_sender(ws_manager: Any) -> Optional[Callable]:
+    """构造梦境主动提起推送回调（DreamConsolidator.ws_sender）。
+
+    经 ws_manager.broadcast 推送完整 WS 消息（type=dream.surface 等，对齐
+    server/protocol/actions.py 的 DreamActions 约定）；ws_manager 缺失或无
+    broadcast 方法时返回 None（surface 仅记日志，不阻断）。
+    """
+    if ws_manager is None:
+        return None
+    broadcast = getattr(ws_manager, "broadcast", None)
+    if not callable(broadcast):
+        return None
+
+    async def _sender(message: Dict[str, Any]) -> None:
+        await broadcast(message)
+
+    return _sender
+
+
+# ---------------------------------------------------------------------------
+# Dream 工具 handlers（并入 cxo-autonomy 插件；未启用时优雅返回 disabled，不抛错）
+# ---------------------------------------------------------------------------
+def _dream_get_status() -> Dict[str, Any]:
+    """真实实现：返回梦境引擎状态快照（未启用返回 disabled，不抛错）。"""
+    engine = _dream_engine
+    if engine is None:
+        return {
+            "status": "disabled",
+            "enabled": False,
+            "last_session_at": None,
+            "stats": {},
+        }
+    return engine.get_status()
+
+
+async def _dream_trigger(agent_id: str = "default") -> Dict[str, Any]:
+    """真实实现：手动触发一轮梦境会话（采集→联想生成→D7 闸门过滤→缓冲隔离）。"""
+    engine = _dream_engine
+    if engine is None:
+        return {"status": "disabled", "detail": "梦境引擎未启用"}
+    result = await engine.run_session(agent_id=agent_id or "default")
+    status = engine.get_status()
+    return {
+        "status": status.get("status", "idle"),
+        "last_session_at": status.get("last_session_at"),
+        "result": result,
+    }
+
+
+def _dream_list(
+    decision: Optional[str] = None, limit: int = 50, offset: int = 0
+) -> List[Dict[str, Any]]:
+    """真实实现：读取梦境候选缓冲（未启用返回空列表，不抛错）。"""
+    engine = _dream_engine
+    if engine is None:
+        return []
+    buffer = getattr(engine, "_buffer", None)
+    if buffer is None:
+        return []
+    try:
+        return buffer.list(
+            agent_id="default",
+            decision=decision,
+            limit=max(int(limit or 50), 1),
+            offset=max(int(offset or 0), 0),
+        )
+    except Exception as e:
+        logger.warning("梦境候选缓冲读取失败: %s", e)
+        return []
+
+
 def get_handlers() -> Dict[str, Callable]:
     """返回 {工具名: handler} 映射。
 
     P1 已接线：autonomy_get_status / autonomy_read_news / autonomy_search /
     autonomy_write_memory / autonomy_retrieve_memory / autonomy_write_diary；
     P2-T3 已接线：autonomy_write_post（经 Poster 发帖）；
-    P3-T1 已接线：autonomy_start_live / autonomy_stop_live（经 Streamer 半自动直播）。
+    P3-T1 已接线：autonomy_start_live / autonomy_stop_live（经 Streamer 半自动直播）；
+    Dream（dream.enabled 时）已接线：dream_get_status / dream_trigger / dream_list。
     """
-    return {
+    handlers: Dict[str, Callable] = {
         "autonomy_get_status": _autonomy_get_status,
         "autonomy_read_news": _autonomy_read_news,
         "autonomy_search": _autonomy_search,
@@ -401,6 +518,12 @@ def get_handlers() -> Dict[str, Callable]:
         "autonomy_start_live": _autonomy_start_live,
         "autonomy_stop_live": _autonomy_stop_live,
     }
+    # Dream 引擎启用时合并 dream 工具 handler（dream disabled 零侵入）
+    if _dream_engine is not None:
+        handlers["dream_get_status"] = _dream_get_status
+        handlers["dream_trigger"] = _dream_trigger
+        handlers["dream_list"] = _dream_list
+    return handlers
 
 
 # ---------------------------------------------------------------------------
@@ -523,7 +646,7 @@ async def setup_autonomy(services: Any, store_path: str = "") -> Optional[Autono
     """
     global _autonomy_manager, _autonomy_engine, _rss_fetcher, _memory_actions
     global _diary_generator, _search_monitor, _audit_store, _poster, _streamer
-    global _consolidator
+    global _consolidator, _dream_engine
     _autonomy_manager = None
     _autonomy_engine = None
     _rss_fetcher = None
@@ -534,6 +657,7 @@ async def setup_autonomy(services: Any, store_path: str = "") -> Optional[Autono
     _poster = None
     _streamer = None
     _consolidator = None
+    _dream_engine = None
     try:
         config = load_config(store_path=store_path)
         if not config.enabled:
@@ -699,6 +823,68 @@ async def setup_autonomy(services: Any, store_path: str = "") -> Optional[Autono
         circadian = CircadianScheduler(config.schedule.model_dump())
         manager = AutonomyManager(config)
 
+        # ---- CX-O-Dream 梦境引擎（并入 cxo-autonomy 插件；dream.enabled=false 零侵入） ----
+        # 加载独立 DreamConfig（不并入 UnifiedConfig / config_hot_reload，见 spec Frozen
+        # Decision 2）；enabled 时延迟 import dream 模块，构建引擎组件并挂载模块级单例
+        # 供 dream 工具 handler 使用。任何异常被捕获隔离，不影响 autonomy 插件装配。
+        dream_config = None
+        dream_engine = None
+        try:
+            from server.autonomy.dream.config import load_config as _dream_load_config
+
+            dream_config = _dream_load_config(store_path=store_path)
+        except Exception as e:
+            logger.warning("Dream 配置加载失败，梦境引擎跳过（不影响 autonomy 装配）: %s", e)
+            dream_config = None
+        if dream_config is not None and dream_config.enabled:
+            try:
+                from server.autonomy.dream.buffer import DreamBuffer
+                from server.autonomy.dream.collector import DreamMaterialCollector
+                from server.autonomy.dream.consolidator import DreamConsolidator
+                from server.autonomy.dream.engine import DreamEngine
+                from server.autonomy.dream.filter import DreamFilter
+                from server.autonomy.dream.generator import DreamGenerator
+                from server.autonomy.dream.purge import DreamPurgeJob
+
+                ws_manager = getattr(services, "ws_manager", None) or get_websocket_manager()
+                dream_buffer = DreamBuffer(config=dream_config)
+                dream_engine = DreamEngine(
+                    collector=DreamMaterialCollector(
+                        memory_manager=memory_manager,
+                        graph_repo=getattr(services, "graph_repo", None),
+                        config=dream_config,
+                    ),
+                    generator=DreamGenerator(
+                        model_router=model_router, config=dream_config
+                    ),
+                    dream_filter=DreamFilter(),
+                    buffer=dream_buffer,
+                    consolidator=DreamConsolidator(
+                        buffer=dream_buffer,
+                        memory_manager=memory_manager,
+                        config=dream_config,
+                        ws_sender=_build_dream_ws_sender(ws_manager),
+                    ),
+                    purge_job=DreamPurgeJob(
+                        memory_manager=memory_manager,
+                        buffer=dream_buffer,
+                        config=dream_config,
+                        ws_manager=ws_manager,
+                    ),
+                    config=dream_config,
+                    ws_manager=ws_manager,
+                )
+                _dream_engine = dream_engine
+                logger.info(
+                    "CX-O-Dream 梦境引擎组件已装配（enabled=True，将并入 cxo-autonomy 插件）"
+                )
+            except Exception as e:
+                logger.exception(
+                    "CX-O-Dream 梦境引擎装配失败，已隔离（不影响 autonomy 装配）: %s", e
+                )
+                dream_engine = None
+                _dream_engine = None
+
         engine = AutonomyEngine(
             manager=manager,
             motivation=MotivationState(),
@@ -721,12 +907,19 @@ async def setup_autonomy(services: Any, store_path: str = "") -> Optional[Autono
             loop_interval_minutes=config.loop_interval_minutes,
         )
 
+        # ---- Dream 工具/能力/处理器并入 cxo-autonomy 插件（dream.enabled 时追加） ----
+        plugin_tools: List[Dict[str, Any]] = TOOL_SPECS
+        plugin_capabilities: List[str] = AUTONOMY_CAPABILITIES
+        if dream_config is not None and dream_config.enabled:
+            plugin_tools = TOOL_SPECS + DREAM_TOOL_SPECS
+            plugin_capabilities = AUTONOMY_CAPABILITIES + ["dream"]
+
         await cxfc.register_embedded_plugin(
             plugin_id=AUTONOMY_PLUGIN_ID,
             name=AUTONOMY_PLUGIN_NAME,
-            tools=TOOL_SPECS,
+            tools=plugin_tools,
             skills=SKILL_SPECS,
-            capabilities=AUTONOMY_CAPABILITIES,
+            capabilities=plugin_capabilities,
             handlers=get_handlers(),
         )
         manager.enable()
@@ -735,6 +928,11 @@ async def setup_autonomy(services: Any, store_path: str = "") -> Optional[Autono
         manager.engine = engine  # 运行时附加，便于停止（不改 manager.py）
         services.autonomy_manager = manager
         services.autonomy_engine = engine
+        # Dream 引擎启动与挂载（dream.enabled 时；start() 为同步创建后台昼夜循环任务）
+        if dream_engine is not None:
+            dream_engine.start()
+            services.dream_engine = dream_engine
+            logger.info("CX-O-Dream 梦境引擎已挂载为 embedded 插件能力并启动后台循环")
         await engine.start()
         logger.info(
             "CX-O-Autonomy 已装配为 embedded CXFC 插件（%s）并启动主循环",

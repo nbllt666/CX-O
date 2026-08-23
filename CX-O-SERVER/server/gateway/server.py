@@ -173,6 +173,7 @@ def register_gateway_routes(app: FastAPI):
     from server.handlers.config import register_config_handlers
     from server.handlers.metrics import register_metrics_handlers
     from server.handlers.system import register_system_handlers
+    from server.handlers.dream import register_dream_handlers
 
     register_chat_handlers(ws_manager)
     register_memory_handlers(ws_manager)
@@ -184,6 +185,7 @@ def register_gateway_routes(app: FastAPI):
     register_config_handlers(ws_manager)
     register_metrics_handlers(ws_manager)
     register_system_handlers(ws_manager)
+    register_dream_handlers(ws_manager)
 
     # 触发 ChatWebSocketHandler 单例初始化，注册 type-based handlers
     # (chat/chat_stream/subscribe/unsubscribe/ping/cancel/config)

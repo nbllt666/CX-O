@@ -332,3 +332,104 @@ export interface AutonomyConfig {
   };
   store_path: string;
 }
+
+// ── CX-O-Dream 梦境引擎类型（对齐 server/autonomy/dream/ 契约） ──
+
+/** 梦境引擎状态快照（对齐 dream_status 契约） */
+export type DreamStatus = DreamStatusDisabled | DreamStatusActive;
+
+/** 未启用/未装配：后端返回 {"status": "disabled"}（HTTP 200，不抛错） */
+export interface DreamStatusDisabled {
+  status: 'disabled';
+}
+
+/** 已启用：含运行态/启用标记/上次会话/会话统计 */
+export interface DreamStatusActive {
+  status: 'idle' | 'dreaming' | 'purge_scheduled';
+  enabled: boolean;
+  last_session_at?: string | null;
+  stats?: DreamStats;
+}
+
+/** 梦境会话统计（engine._stats：sessions/generated/approved/rejected/purges） */
+export interface DreamStats {
+  sessions: number;
+  generated: number;
+  approved: number;
+  rejected: number;
+  purges: number;
+}
+
+/** 梦境缓冲候选（对齐 dream_buffer 行，固化前只进缓冲不写主库） */
+export interface DreamBufferEntry {
+  id: number;
+  dream_session_id: string;
+  candidate_content: string;
+  lucidity_score: number;
+  decision: 'pending' | 'approved' | 'rejected';
+  associated_entities?: string[] | null;
+  associated_memories?: string[] | null;
+  created_at: string;
+  expires_at: string;
+  decision_reason?: string | null;
+  emotion_shift?: Record<string, unknown> | null;
+  agent_id?: string;
+}
+
+/** 梦境候选列表分页响应：{"items": [...], "total": int} */
+export interface DreamListResult {
+  items: DreamBufferEntry[];
+  total: number;
+}
+
+/** 梦境会话触发结果（POST /api/dream/trigger；未启用返回 {"status": "disabled"}） */
+export type DreamTriggerResult =
+  | { status: 'disabled' }
+  | { generated: number; approved: number; rejected: number };
+
+/** 梦境确认结果（POST /api/dream/{id}/confirm → 固化主库） */
+export interface DreamConfirmResult {
+  memory_id: number;
+}
+
+/** 梦境否定结果（POST /api/dream/{id}/reject → 缓冲置 rejected，不写主库） */
+export interface DreamRejectResult {
+  status: string;
+  buffer_id: number;
+}
+
+/** 按会话回滚结果（DELETE /api/dream/session/{session_id}，红线 R5） */
+export interface DreamPurgeSessionResult {
+  purged: number;
+}
+
+/** 手动清除任务结果（POST /api/dream/purge） */
+export interface DreamPurgeResult {
+  purged_memories: number;
+  purged_buffer: number;
+}
+
+/** 梦境引擎配置（对齐 DreamConfig / dream_config.schema.json；schedule 复用 ScheduleConfig） */
+export interface DreamConfig {
+  enabled: boolean;
+  model: string;
+  dream_temperature: number;
+  candidates_per_session: number;
+  material_window_days: number;
+  max_material_items: number;
+  min_lucidity: number;
+  dream_ttl_hours: number;
+  purge_threshold: number;
+  confirmed_importance: number;
+  surface_on_wake: boolean;
+  surface_probability: number;
+  max_surface_per_day: number;
+  schedule: {
+    wake_time: string;
+    sleep_time: string;
+    golden_start: string;
+    golden_end: string;
+    diary_time: string;
+    quiet_windows: string[];
+  };
+}

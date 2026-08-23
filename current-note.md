@@ -4,6 +4,12 @@
 
 ## 做到哪了
 
+- **CX-O-Dream 梦境引擎**（已闭合，2026-08-23；spec `add-dream-engine-embedded`）
+  - 工程过程：需求闭合（AskUserQuestion 裁决 4 项：并入 cxo-autonomy 插件 / 独立配置模块 / D7 引擎内确定性闸门 / 梦境本地拒绝记录）→ 探索（4 并行 search subagent）→ 三件套 → GN-004 T1 审查（CAUTION-PASS，发现-1/2 契约缺口按人类裁决修正）→ S2 契约冻结人类批准 → P0（DreamConfig + DreamBuffer + decay/router 隔离 + _DreamMixin 第 10 Mixin + D7 闸门）→ P1（Collector/Generator + DreamEngine 昼夜挂点 + Consolidator/PurgeJob）→ P2（并入 cxo-autonomy 插件装配 + REST /dream + WS DreamActions + 服务端推送）→ P3（前端 DreamPage + 聊天页 surface 气泡）→ S5（public 契约 dream.pyi + 2 schema）→ GN-004 T3 交付审查（CAUTION-PASS，O1-O7 回填）。
+  - 交接状态：**已闭合**（P0-P3 + 契约 + 全量回归完成；GN-004 T3 警示放行已处理；[V] 人类批准已由 spec 批准覆盖）。
+  - 最终结果：后端 pytest 全量 **3627 passed 零失败** + pyflakes 33 改动文件零告警（含测试文件 3 处修正）+ 前端 tsc/lint/476 passed + Dream 专项 217 passed。五条红线 R1-R5 落地（is_ground_truth 恒 false / permanent=FALSE 断言 / dream_session_id 强制 / decay_type='dream' + PurgeJob / purge_dream_session 会话回滚）。变更文档 `.trae/documents/20260823_模块0_新增梦境引擎内嵌插件.md`。已登记口径偏差（GN-004 O4/O7）：purge 复用 reject_dream 审计（reason 标注）、用户否定经缓冲 30 天记录、`PUT /dream/config` 仅 enabled 热生效。
+  - 接续入口：spec `add-dream-engine-embedded` 待归档；用户在前端 DreamPage 置 `dream.enabled=true` 后观察睡眠窗口梦境会话；真实 summary 模型生成质量待用户 onboard 观察。
+
 - **CX-O-Autonomy 自主系统**（已闭合，2026-08-22；spec `add-cxo-autonomy-embedded`）
   - 工程过程：P0 骨架（config/manager/models 对齐 `autonomy_config.schema.json`、`autonomy_state.schema.json`、`autonomy_action.schema.json` 与 `cxo_autonomy.pyi`）→ P1 主循环（感知/动机/规划/行动/审计/反思 + CircadianScheduler 日程调度）→ P2（MCP 搜索接入 free-search-mcp + RSS 降级、发帖器经电脑控制浏览器自动化发布）→ P3（半自动直播 OBS、每日日记写 permanent 记忆、经历整合 Consolidator 注入真实蒸馏服务）→ P4（REST 端点 `/autonomy/status|control|audit|config` + 前端 AutonomyPage「Agent 生活」路由 `/autonomy`）→ 以 embedded CXFC 插件装配（`register_embedded_plugin`，plugin_id=`embedded_cxo-autonomy`，9 个 `autonomy_*` 工具 + 真实 handler 进 ToolRegistry）→ `server/main.py` `setup_autonomy(services)` 接线（enabled=false 或任何异常均隔离跳过）→ P6 GN-004 交付审查（CAUTION-PASS，预算熔断补齐 + 契约漂移修）→ [V] 人类批准合流交付 → 真实环境验证（free-search-mcp 搜索链路运行时 PASS，修复 3 个真实 bug：MCP httpx trust_env 502、provider 执行路径、tags 解析）。
   - 交接状态：P0-P6 全部已闭合；checklist 全勾选；[V] 双闸门闭合；spec 待归档。

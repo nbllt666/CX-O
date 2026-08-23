@@ -37,7 +37,8 @@
       "audioSource": "音频源",
       "distillation": "蒸馏",
       "neko": "Neko 插件",
-      "autonomy": "Agent 生活"
+      "autonomy": "Agent 生活",
+      "dream": "梦境日志"
     },
     "neko": {
       "subtitle": "对接 neko 插件运行时与插件商店",
@@ -526,6 +527,67 @@
         "failed": "失败",
         "blocked": "被拦截",
         "skipped": "已跳过"
+      }
+    },
+    "dream": {
+      "subtitle": "CX-O-Dream 梦境引擎：潜意识联想、梦境候选与固化",
+      "refresh": "刷新",
+      "statusTitle": "当前状态",
+      "statusBadge": {
+        "idle": "待命中",
+        "dreaming": "梦境生成中",
+        "purgeScheduled": "清除已调度",
+        "disabled": "未启用"
+      },
+      "lastSessionAt": "上次会话",
+      "emptyValue": "—",
+      "statSessions": "会话次数",
+      "statGenerated": "生成候选",
+      "statPurges": "清除任务",
+      "disabledTitle": "梦境引擎未启用",
+      "disabledHint": "梦境引擎未启用，可在下方配置区开启。开启后在睡眠窗口自动进行梦境联想。",
+      "operationsTitle": "操作",
+      "trigger": "手动触发",
+      "purge": "手动清除",
+      "actionFailed": "操作失败，请重试",
+      "listTitle": "梦境候选",
+      "listTotal": "共 {{count}} 条",
+      "listEmpty": "暂无梦境候选",
+      "listLoadFailed": "梦境列表加载失败",
+      "sessionTitle": "梦境会话",
+      "clearSession": "清除会话",
+      "clearSessionConfirm": "确定要清除该梦境会话的全部记忆吗？该会话下所有梦境记忆将被软删。",
+      "confirm": "确认",
+      "reject": "否定",
+      "rejectConfirm": "确定要否定该梦境候选吗？该候选将被清除且不写入主库。",
+      "lucidity": "清醒度",
+      "decision": {
+        "pending": "待处理",
+        "approved": "已确认",
+        "rejected": "已否定"
+      },
+      "associatedMemories": "关联记忆",
+      "associatedEntities": "关联实体",
+      "configTitle": "配置",
+      "save": "保存",
+      "saved": "配置已保存",
+      "configLoadFailed": "配置加载失败",
+      "field": {
+        "enabled": "启用梦境引擎",
+        "model": "模型",
+        "dreamTemperature": "生成温度",
+        "candidatesPerSession": "每会话候选数",
+        "materialWindowDays": "素材窗口（天）",
+        "maxMaterialItems": "素材上限",
+        "minLucidity": "最低清醒度",
+        "dreamTtlHours": "候选保留时长（小时）",
+        "purgeThreshold": "清除阈值",
+        "confirmedImportance": "确认后重要性",
+        "surfaceOnWake": "唤醒时主动提起",
+        "surfaceProbability": "提起概率",
+        "maxSurfacePerDay": "每日提起上限",
+        "wakeTime": "唤醒时间",
+        "sleepTime": "睡眠时间"
       }
     },
     "memoryAgent": {

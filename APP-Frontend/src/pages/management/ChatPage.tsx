@@ -18,6 +18,7 @@ import { useChatStore } from '@/store/chatStore';
 import { useWebSocket } from '@/hooks/useWebSocket';
 import type { WebSocketMessage } from '@/hooks/useWebSocket';
 import { chatApi } from '@/api/clients/chat';
+import { DreamActions } from '@/constants/actions';
 import { Button } from '@/components/ui-v2/button';
 import { cn } from '@/lib/utils';
 import {
@@ -32,6 +33,9 @@ import { stripAvatarTags } from '@/avatar/tagParser';
 import { MarkdownContent } from './MarkdownContent';
 import { ThinkingProcess } from './ThinkingProcess';
 import { SummaryModal } from './SummaryModal';
+
+/** 梦境提起气泡文案前缀（i18n 词条归另一任务，先用字符串常量） */
+const DREAM_SURFACE_PREFIX = '（梦境）';
 
 /** 消息气泡（user 右 / assistant 左；thinking 折叠；工具调用链状态徽章；assistant 正文 Markdown 渲染） */
 function MessageBubble(props: { msg: ChatMsg; loading?: boolean }) {
@@ -196,6 +200,20 @@ export default function ChatPage() {
         case 'cancelled':
           finalize('management.chat.cancelled');
           break;
+        case DreamActions.SURFACE: {
+          // 梦境提起：后端推送 dream.surface，追加独立 assistant 气泡。
+          // 仅追加、不 touch 临时 assistantId，applyStreamEvent 的 id 守卫保证不干扰进行中的流式消息。
+          const dreamContent = data.data?.content || '';
+          if (!dreamContent) break;
+          setMessages((prev) => [
+            ...prev,
+            {
+              ...createAssistantMessage(`d-${Date.now()}`),
+              content: `${DREAM_SURFACE_PREFIX}${dreamContent}`,
+            },
+          ]);
+          break;
+        }
         default:
           break;
       }

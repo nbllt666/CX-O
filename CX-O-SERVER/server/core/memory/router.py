@@ -80,6 +80,9 @@ class MemoryRouter:
         },
     }
 
+    # 梦境召回触发词（大小写不敏感）
+    DREAM_TRIGGER_WORDS = ("梦", "昨晚", "梦见", "梦到", "dream")
+
     def __init__(
         self, memory_manager, vector_store=None, embedding_model=None, config: RoutingConfig = None
     ):
@@ -123,7 +126,7 @@ class MemoryRouter:
 
         applied_rules = []
         applied_weights = self._get_weights(scene_type)
-        source_counts = {"permanent": 0, "long_term": 0, "short_term": 0}
+        source_counts = {"permanent": 0, "long_term": 0, "short_term": 0, "dream": 0}
 
         all_memories = []
 
@@ -139,7 +142,9 @@ class MemoryRouter:
                 search_results, query, applied_weights, context or {}
             )
 
-            filtered = self._apply_filters(scored_memories)
+            dream_filtered = self._apply_dream_filter(scored_memories, query, scene_type)
+
+            filtered = self._apply_filters(dream_filtered)
 
             final_memories = self._apply_scene_adjustment(filtered, scene_type, applied_weights)
 
@@ -274,6 +279,10 @@ class MemoryRouter:
                 time_score = self.decay_calculator.calculate_time_score(memory)
                 relevance_score = memory.get("score", 0.5)
 
+                # 梦境召回隔离（红线 R1）：梦境 relevance 降权，避免联想内容抢占真实记忆排序
+                if memory.get("type") == "dream" or (memory.get("metadata") or {}).get("type") == "dream":
+                    relevance_score = relevance_score * 0.7
+
                 final_score = (
                     importance_score * weights["importance"]
                     + time_score * weights["time"]
@@ -317,6 +326,37 @@ class MemoryRouter:
 
     def _is_explicitly_mentioned(self, memory: Dict) -> bool:
         return memory.get("explicitly_mentioned", False)
+
+    def _is_dream_recall_scene(self, query: str, scene_type: str) -> bool:
+        """判断当前是否为梦境召回场景：scene_type=='dream_recall' 或查询命中梦境触发词（大小写不敏感）。"""
+        if scene_type == "dream_recall":
+            return True
+        if not query:
+            return False
+        lowered = query.lower()
+        return any(word in lowered for word in self.DREAM_TRIGGER_WORDS)
+
+    def _apply_dream_filter(
+        self, memories: List[Dict], query: str, scene_type: str
+    ) -> List[Dict]:
+        """梦境召回隔离（红线 R1）：默认排除 type='dream' 记忆（不进常规召回结果）；
+        仅 dream_recall 场景或查询命中梦境触发词时放行，且仅放行 consolidation_state=='confirmed' 的梦境。
+        """
+        dream_recall = self._is_dream_recall_scene(query, scene_type)
+        filtered = []
+        for memory in memories:
+            if memory.get("type") == "dream" or (
+                (memory.get("metadata") or {}).get("type") == "dream"
+            ):
+                if not dream_recall:
+                    continue
+                metadata = memory.get("metadata") or {}
+                if metadata.get("consolidation_state") != "confirmed":
+                    continue
+                # confirmed 梦境在梦境召回场景下视为被显式提起，保证不被分数阈值误伤
+                memory["explicitly_mentioned"] = True
+            filtered.append(memory)
+        return filtered
 
     def _apply_scene_adjustment(
         self, memories: List[Dict], scene_type: str, weights: Dict[str, float]

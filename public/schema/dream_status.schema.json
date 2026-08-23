@@ -1,0 +1,23 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "DreamStatus",
+  "description": "GET /dream/status 响应契约。未启用（disabled）时仅返回 {\"status\":\"disabled\"}（HTTP 200 不抛错）；启用后返回 status ∈ idle/dreaming/purge_scheduled + enabled + last_session_at + stats",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["status"],
+  "properties": {
+    "status": {"type": "string", "enum": ["disabled", "idle", "dreaming", "purge_scheduled"], "description": "引擎运行状态；disabled 为未装配或未启用，idle/dreaming/purge_scheduled 为启用后状态"},
+    "enabled": {"type": "boolean", "description": "config.enabled，仅启用后返回"},
+    "last_session_at": {"type": ["string", "null"], "format": "date-time", "description": "最近一次梦境会话时间（ISO 8601），从未会话时为 null；仅启用后返回"},
+    "stats": {"type": "object", "additionalProperties": false, "description": "累计运行统计（自引擎构建起），仅启用后返回", "properties": {
+      "sessions": {"type": "integer", "minimum": 0, "description": "梦境会话轮数"},
+      "generated": {"type": "integer", "minimum": 0, "description": "累计生成候选条数"},
+      "approved": {"type": "integer", "minimum": 0, "description": "累计通过 D7 闸门进入缓冲的候选条数"},
+      "rejected": {"type": "integer", "minimum": 0, "description": "累计被 D7 闸门拒绝的候选条数"},
+      "purges": {"type": "integer", "minimum": 0, "description": "累计清除任务执行次数"}
+    }}
+  },
+  "if": {"properties": {"status": {"const": "disabled"}}, "required": ["status"]},
+  "then": {"description": "未启用：仅 status 字段，返回 {\"status\":\"disabled\"}", "required": ["status"]},
+  "else": {"description": "启用后：status 必为 idle/dreaming/purge_scheduled，enabled 与 stats 必填", "required": ["status", "enabled", "stats"]}
+}
