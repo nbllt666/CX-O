@@ -285,8 +285,7 @@ export class BleHeartRateCollector {
         // 停止扫描失败可忽略
       }
     }
-    this.noble.off?.('discover', listener);
-    this.discoverListener = null;
+    this.removeDiscoverListener();
 
     const all = [...this.devices.values()];
     const hrCount = all.filter((d) => d.hasHeartRate).length;
@@ -318,6 +317,7 @@ export class BleHeartRateCollector {
           // 忽略
         }
       }
+      this.removeDiscoverListener();
     }
 
     this.lastDeviceId = deviceId;
@@ -385,6 +385,7 @@ export class BleHeartRateCollector {
         // 忽略
       }
     }
+    this.removeDiscoverListener();
 
     await this.unsubscribeCharacteristic();
 
@@ -396,6 +397,18 @@ export class BleHeartRateCollector {
 
     this.setState('idle', '已断开连接');
     return { ok: true, status: this.state };
+  }
+
+  /**
+   * 移除 discover 监听器并清引用。startScan 的任一终止路径（启动失败 / 正常收尾 /
+   * 扫描中被 connect / disconnect 打断）都必须调用，否则监听器累积导致内存泄漏
+   * 与后续扫描重复处理 discover 事件。
+   */
+  private removeDiscoverListener(): void {
+    if (this.noble && this.discoverListener) {
+      this.noble.off?.('discover', this.discoverListener);
+    }
+    this.discoverListener = null;
   }
 
   // -------------------------------------------------------------------------
