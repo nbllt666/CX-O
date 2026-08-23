@@ -4,6 +4,12 @@
 
 ## 做到哪了
 
+- **CX-O-Dream 生理信号接入（手环心率广播，前端 BLE）**（已闭合，2026-08-23；spec `add-dream-physio-heartrate`）
+  - 工程过程：需求闭合（AskUserQuestion 裁决 4 项：完整 S1-S9 重建 / Electron 主进程 noble+BLE IPC / 后端跑估计器 / 不接云端 API 全做 P0-P2）→ 三件套 → GN-004 T1（阻断 B1-B3+B4-B16 修正）→ T1 复审（CAUTION-PASS，N1-N4 收口、N5 契约基线偏离 S2 批准确认）→ P0（PhysioConfig + physio 后端 estimator/store + REST 8 端点）→ P1（SleepSensor 完整 S1-S9 融合状态机 + DreamEngine 入睡触发升级 + PhysioRuntime 装配）→ P2（Electron noble BLE 采集 5 通道 IPC + HR/静默上送 + DreamPage 生理区块）→ S5（public 契约 physio.pyi + 2 schema + dream_config.schema.json 修改）→ GN-004 T3 交付审查（CAUTION-PASS，F1 时序缺陷[前端毫秒 vs 后端秒→S9 链路失效] + F2 S4 睡眠语接线 + F3 梦境禁读断言 修正）→ T3 复审（CAUTION-PASS，全部到位）。
+  - 交接状态：**已闭合**（P0-P2 + 契约 + 全量回归完成；GN-004 T3 复审通过/警示已处理；[V] 由 S2 spec 批准覆盖）。
+  - 最终结果：后端 pytest 全量 **3725 passed / 0 failed** + pyflakes 零告警 + 前端 tsc/lint（本次改动零告警）/vitest **496 passed** + Dream/physio 专项全绿。S9 心率链路 F1 修复后真实可用（前端秒上送 + 后端 _parse_ts 四类兼容）；S4 显式睡眠语已接真实聊天源（"睡了/晚安"→窗口外提前触发）。变更文档 `.trae/documents/20260823_模块0_新增梦境生理信号接入.md`（含裁决留痕 + public/ 授权 + GN-004 审查记录存档）。已登记未闭合项：noble 真机验证（无 BLE 硬件，"当前不可判定"，需人工真机验收）、S2 语音静默待源（ASR 最近活动未接生产装配，available=False 接口就绪）、S3/S5/S8 无源（weight 0 + set_source 接口就绪）、P3 云端官方睡眠分期未接入（可选）、前端全量 eslint 3 项 vrm 既有 error（非本次引入）。
+  - 接续入口：用户在前端 DreamPage 生理区块开启 `physio.enabled=true` 并配对真机手环后，观察 S9 心率入睡判定与梦境触发；真机验收 noble 采集链路。
+
 - **CX-O-Dream 梦境引擎**（已闭合，2026-08-23；spec `add-dream-engine-embedded`）
   - 工程过程：需求闭合（AskUserQuestion 裁决 4 项：并入 cxo-autonomy 插件 / 独立配置模块 / D7 引擎内确定性闸门 / 梦境本地拒绝记录）→ 探索（4 并行 search subagent）→ 三件套 → GN-004 T1 审查（CAUTION-PASS，发现-1/2 契约缺口按人类裁决修正）→ S2 契约冻结人类批准 → P0（DreamConfig + DreamBuffer + decay/router 隔离 + _DreamMixin 第 10 Mixin + D7 闸门）→ P1（Collector/Generator + DreamEngine 昼夜挂点 + Consolidator/PurgeJob）→ P2（并入 cxo-autonomy 插件装配 + REST /dream + WS DreamActions + 服务端推送）→ P3（前端 DreamPage + 聊天页 surface 气泡）→ S5（public 契约 dream.pyi + 2 schema）→ GN-004 T3 交付审查（CAUTION-PASS，O1-O7 回填）。
   - 交接状态：**已闭合**（P0-P3 + 契约 + 全量回归完成；GN-004 T3 警示放行已处理；[V] 人类批准已由 spec 批准覆盖）。

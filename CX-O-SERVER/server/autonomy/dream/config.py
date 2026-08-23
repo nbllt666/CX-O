@@ -10,10 +10,40 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from typing import Optional
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from server.autonomy.config import ScheduleConfig
+
+
+class PhysioConfig(BaseModel):
+    """CX-O-Dream 生理信号接入配置（对齐 dream_physio_config.schema.json）。
+
+    - backend="noble" 为**信息性登记键**：标注采集路线由前端 Electron 主进程
+      noble 承担，后端无对应实现、不参与任何逻辑（spec Frozen Decision 5）
+    - store_raw_hr 强制 False：隐私红线 R6——原始心率禁止落盘，写 True 抛 ValueError
+    """
+
+    model_config = ConfigDict(extra="forbid")
+    enabled: bool = False
+    backend: str = "noble"  # 信息性登记键（前端 Electron noble 采集，后端无对应实现）
+    device_name_hint: str = ""
+    device_fingerprint: Optional[str] = None
+    scan_timeout_sec: int = 15
+    reconnect_interval_sec: int = 30
+    base_drop_ratio: float = 0.88
+    base_drop_confirm_min: int = 5
+    hr_stability_threshold: float = 6.0
+    base_hr_learning: bool = True
+    store_raw_hr: bool = False
+
+    @model_validator(mode="after")
+    def _check_store_raw_hr(self) -> "PhysioConfig":
+        """store_raw_hr 强制 False（隐私红线 R6：原始心率禁止落盘）。"""
+        if self.store_raw_hr:
+            raise ValueError("store_raw_hr 必须为 False：原始心率禁止落盘（隐私红线 R6）")
+        return self
 
 
 class DreamConfig(BaseModel):
@@ -37,6 +67,7 @@ class DreamConfig(BaseModel):
     surface_probability: float = 0.5
     max_surface_per_day: int = 1
     schedule: ScheduleConfig = Field(default_factory=ScheduleConfig)
+    physio: PhysioConfig = Field(default_factory=PhysioConfig)
 
 
 def resolve_store_dir(store_path: str = "") -> str:

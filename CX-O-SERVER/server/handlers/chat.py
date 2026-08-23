@@ -15,6 +15,38 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+# S4 显式睡眠语关键词（对齐 spec：聊天消息命中即短时触发入睡确认，窗口外短路梦境）
+SLEEP_SPEECH_KEYWORDS = ("睡了", "困了", "去睡了", "好困", "晚安", "睡觉", "要睡了")
+
+
+def _signal_sleep_speech(text: str) -> None:
+    """S4 显式睡眠语接线：用户聊天文本命中关键词时注入 sleep_sensor。
+
+    命中且 physio runtime 已装配且 enabled → sleep_sensor.set_sleep_speech(True)
+    （短时保持 s4_hold_min 分钟）。任何异常被捕获隔离并记日志，绝不阻断聊天
+    主流程（隐私红线 R6：不携带任何 HR 数据，仅布尔信号）。
+    """
+    if not text:
+        return
+    try:
+        from server.dependencies import _service_state
+
+        runtime = getattr(_service_state, "physio_runtime", None)
+        if runtime is None:
+            return
+        is_enabled = getattr(runtime, "is_enabled", None)
+        if callable(is_enabled) and not is_enabled():
+            return
+        if not any(kw in text for kw in SLEEP_SPEECH_KEYWORDS):
+            return
+        sensor = getattr(runtime, "sleep_sensor", None)
+        if sensor is None or not hasattr(sensor, "set_sleep_speech"):
+            return
+        sensor.set_sleep_speech(True)
+        logger.debug("S4 显式睡眠语命中（聊天关键词），已注入 sleep_sensor")
+    except Exception as e:
+        logger.warning("S4 睡眠语信号注入降级（不影响聊天主流程）: %s", e)
+
 
 @dataclass
 class ChatContext:
@@ -34,6 +66,9 @@ async def _build_chat_context(
     request_id: str,
     action: str,
 ) -> Optional[ChatContext]:
+    # S4 显式睡眠语接线：所有聊天消息（MESSAGE/STREAM/MULTIMODAL）的共同入口，
+    # 在用户文本进入后端的第一时间检测睡眠关键词（异常隔离，绝不阻断主流程）
+    _signal_sleep_speech(user_message)
     from server.dependencies import get_context_manager, get_memory_manager
 
     agent_config = get_agent_config(agent_id)

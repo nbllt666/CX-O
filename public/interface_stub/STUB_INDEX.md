@@ -37,6 +37,7 @@
 | `emotion_instruction_service.pyi` | LLM 自然语言情感指令服务（spec `unify-qwen3-tts-migration` Task 1 冻结决策；源真理 `public/schema/emotion_instruction.schema.json`） | P0 | ✅ s0201 补全 |
 | `speech_orchestrator.pyi` | 统一 Qwen3 语音编排（spec `unify-qwen3-tts-migration` Task 1 冻结决策；源真理 `public/schema/speech_synthesis_request.schema.json` + `qwen3_tts_error_codes.json`） | P0 | ✅ s0201 补全 |
 | `dream.pyi` | CX-O-Dream 梦境引擎（spec `add-dream-engine-embedded` 冻结决策；源真理 `c:/CX-O/CX-O-SERVER/server/autonomy/dream/`（config/engine/buffer/consolidator/purge）+ `server/core/memory/mixins/dream_mixin.py`（_DreamMixin）+ `public/schema/dream_config.schema.json` + `dream_status.schema.json`） | P0 | ✅ s0201 补全 |
+| `physio.pyi` | CX-O-Dream 生理信号（spec `add-dream-physio-heartrate` 冻结决策；源真理 `c:/CX-O/CX-O-SERVER/server/autonomy/dream/physio/`（estimator/store/runtime）+ `sleep_sensor.py` + `config.py` + `public/schema/dream_physio_config.schema.json` + `sleep_sensor_state.schema.json`） | P0 | ✅ s0201 补全 |
 
 ### Qwen3 TTS 存根清单（spec `unify-qwen3-tts-migration`）
 

@@ -19,6 +19,7 @@
     "package:win": "npm run build && electron-builder --win"
   },
   "dependencies": {
+    "@abandonware/noble": "^1.9.2-24",
     "@pixi/constants": "^6.5.10",
     "@pixi/core": "^6.5.10",
     "@pixi/display": "^6.5.10",

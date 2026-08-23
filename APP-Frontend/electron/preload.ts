@@ -3,6 +3,13 @@
  * 通过 contextBridge 暴露类型安全的 electronAPI；渲染层类型声明见 src/types/electron.d.ts
  */
 import { contextBridge, ipcRenderer } from 'electron';
+import type { BleStatus } from './ble/ble_collector';
+
+/** ble:notify 推送载荷（主进程 → 渲染层实时 HR/状态/错误） */
+export type BleNotifyPayload =
+  | { type: 'hr'; bpm: number; ts: number }
+  | { type: 'status'; status: BleStatus; detail?: string }
+  | { type: 'error'; context?: string; message: string };
 
 contextBridge.exposeInMainWorld('electronAPI', {
   // 持久化存储
@@ -73,4 +80,29 @@ contextBridge.exposeInMainWorld('neko', {
   },
   /** 工具→CXFC 桥状态（仅供管理页展示） */
   getBridgeStatus: () => ipcRenderer.invoke('neko:get-bridge-status'),
+});
+
+contextBridge.exposeInMainWorld('ble', {
+  // 手环心率 BLE 采集（Task 5 / spec：前端 Electron BLE 采集）
+  scan: () => ipcRenderer.invoke('ble:scan'),
+  connect: (deviceId: string) => ipcRenderer.invoke('ble:connect', deviceId),
+  disconnect: () => ipcRenderer.invoke('ble:disconnect'),
+  getStatus: () => ipcRenderer.invoke('ble:status'),
+  /** 订阅主进程 ble:notify 推送（hr/status/error）；返回取消订阅函数 */
+  onNotify: (callback: (payload: BleNotifyPayload) => void) => {
+    const listener = (_event: Electron.IpcRendererEvent, payload: BleNotifyPayload) =>
+      callback(payload);
+    ipcRenderer.on('ble:notify', listener);
+    return () => ipcRenderer.removeListener('ble:notify', listener);
+  },
+  /** 仅订阅状态变化（从 ble:notify 过滤 type=status）；返回取消订阅函数 */
+  onStatus: (callback: (status: BleStatus, detail?: string) => void) => {
+    const listener = (_event: Electron.IpcRendererEvent, payload: BleNotifyPayload) => {
+      if (payload?.type === 'status') {
+        callback(payload.status, payload.detail);
+      }
+    };
+    ipcRenderer.on('ble:notify', listener);
+    return () => ipcRenderer.removeListener('ble:notify', listener);
+  },
 });

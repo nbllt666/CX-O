@@ -25,6 +25,19 @@
       "golden_end": {"type": "string", "pattern": "^([01]?[0-9]|2[0-3]):[0-5][0-9]$", "default": "23:00", "description": "黄金档结束 HH:MM"},
       "diary_time": {"type": "string", "pattern": "^([01]?[0-9]|2[0-3]):[0-5][0-9]$", "default": "02:00", "description": "每日日记时刻 HH:MM"},
       "quiet_windows": {"type": "array", "default": [], "items": {"type": "string", "pattern": "^([01]?[0-9]|2[0-3]):[0-5][0-9]-([01]?[0-9]|2[0-3]):[0-5][0-9]$"}, "description": "静默档窗口 HH:MM-HH:MM"}
+    }},
+    "physio": {"type": "object", "additionalProperties": false, "description": "生理信号接入配置（对齐 dream_physio_config.schema.json，Task 7 补全）", "properties": {
+      "enabled": {"type": "boolean", "default": false, "description": "生理信号总开关，默认关闭（用户显式开启）"},
+      "backend": {"type": "string", "default": "noble", "description": "采集路线登记键：标注由前端 Electron 主进程 noble 承担，后端无对应实现、不参与任何逻辑（信息性登记键）"},
+      "device_name_hint": {"type": "string", "default": "", "description": "设备名称提示（扫描过滤与展示）"},
+      "device_fingerprint": {"type": ["string", "null"], "default": null, "description": "已配对设备真实指纹（仅存配置；GET /physio/devices 脱敏展示 fingerprint，真实指纹经 id 字段返回仅供 forget 使用）"},
+      "scan_timeout_sec": {"type": "integer", "minimum": 0, "default": 15, "description": "BLE 扫描超时（秒）"},
+      "reconnect_interval_sec": {"type": "integer", "minimum": 0, "default": 30, "description": "断线重连间隔（秒）"},
+      "base_drop_ratio": {"type": "number", "minimum": 0, "maximum": 1, "default": 0.88, "description": "入睡判定心率下降比例（窗口均值 < base_hr × ratio 视为下降）"},
+      "base_drop_confirm_min": {"type": "integer", "minimum": 0, "default": 5, "description": "心率下降持续确认时长（分钟）"},
+      "hr_stability_threshold": {"type": "number", "minimum": 0, "default": 6.0, "description": "窗口心率标准差上限（稳定判定）"},
+      "base_hr_learning": {"type": "boolean", "default": true, "description": "清醒基线自学习开关（窗口高百分位缓慢更新，持久化于 store）"},
+      "store_raw_hr": {"type": "boolean", "enum": [false], "default": false, "description": "原始心率是否落盘（隐私红线 R6：强制 false，写 true 抛校验错误，拒绝保存）"}
     }}
   }
 }

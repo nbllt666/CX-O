@@ -7,32 +7,45 @@
  * - 梦境候选列表：按会话分组，卡片展示内容 / lucidity_score / decision / 关联素材，
  *   含确认 / 否定（按 id）与按会话清除（红线 R5）
  * - 配置编辑区：含 enabled 开关与主要参数，保存调 updateConfig 后刷新
+ * - 生理信号区块：手环心率 BLE 配对（扫描/连接/断开/解除）、状态徽章
+ *   （未启用/未配对/已连接/采集失败/断线重连中）、physio 配置编辑、一键清除基线
  *
- * 数据全部来自 dreamApi。降级口径（对齐 AutonomyPage）：
+ * 数据全部来自 dreamApi / physioApi / window.ble。降级口径（对齐 AutonomyPage）：
  * - getStatus 返回 null（后端离线）→ 全页错误态 + 重试
  * - getStatus 返回 {status:"disabled"}（未启用）→ 状态卡「未启用」徽章 + 引导提示
  * - config / list 独立容错，失败不影响主状态展示
+ * - window.ble 缺失（非 Electron 浏览器模式）→ 生理信号区块显示「不可用」提示，
+ *   配置编辑与一键清除仍可用（走后端 REST）
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import {
   AlertTriangle,
   Ban,
+  Bluetooth,
   Check,
+  HeartPulse,
   Moon,
   Play,
   RefreshCw,
   Save,
+  Smartphone,
   Trash2,
+  WifiOff,
   X,
 } from 'lucide-react';
 import { dreamApi } from '@/api/clients/dream';
+import { physioApi } from '@/api/clients/physio';
 import type {
   DreamBufferEntry,
   DreamConfig,
   DreamStats,
   DreamStatus,
   DreamStatusActive,
+  PhysioConfig,
+  PhysioDevice,
+  PhysioStatus,
+  PhysioStatusActive,
 } from '@/api/types';
 import { cn } from '@/lib/utils';
 
@@ -53,9 +66,29 @@ type DreamBusyAction =
   | 'clear-session'
   | 'save-config';
 
+/** 生理信号区块忙碌动作标记（独立于梦境操作，避免互相干扰） */
+type PhysioBusyAction =
+  | 'scan'
+  | 'connect'
+  | 'disconnect'
+  | 'forget'
+  | 'save-config'
+  | 'clear';
+
 function isActiveStatus(s: DreamStatus | null): s is DreamStatusActive {
   return !!s && s.status !== 'disabled';
 }
+
+function isPhysioActive(s: PhysioStatus | null): s is PhysioStatusActive {
+  return !!s && s.status !== 'disabled';
+}
+
+/** BLE 状态快照（对齐 electron.d.ts BleStatus） */
+type BleInfoSnapshot = {
+  status: BleStatus;
+  fingerprint: string | null;
+  deviceName: string | null;
+};
 
 /** 文本输入字段 */
 function TextField({
@@ -152,8 +185,22 @@ export default function DreamPage() {
   const [saved, setSaved] = useState(false);
   // 配置草稿同步标记：仅初始加载与保存成功后从服务端回填，用户编辑不被刷新覆盖
   const draftSyncedRef = useRef(false);
+  // ── 生理信号（physio）状态 ──
+  const [physioStatus, setPhysioStatus] = useState<PhysioStatus | null>(null);
+  const [physioConfig, setPhysioConfig] = useState<PhysioConfig | null>(null);
+  const [physioDraft, setPhysioDraft] = useState<PhysioConfig | null>(null);
+  const physioDraftSyncedRef = useRef(false);
+  const [pairedDevices, setPairedDevices] = useState<PhysioDevice[]>([]);
+  const [scannedDevices, setScannedDevices] = useState<BleDeviceInfo[]>([]);
+  const [bleInfo, setBleInfo] = useState<BleInfoSnapshot | null>(null);
+  const [bleError, setBleError] = useState<string | null>(null);
+  const [physioBusy, setPhysioBusy] = useState<PhysioBusyAction | null>(null);
+  const [physioActionError, setPhysioActionError] = useState(false);
+  const [physioSaved, setPhysioSaved] = useState(false);
 
   const active = isActiveStatus(status);
+  const bleAvailable = typeof window !== 'undefined' && !!window.ble;
+  const physioActive = isPhysioActive(physioStatus);
 
   const fetchStatusAndConfig = useCallback(async () => {
     const [statusData, configData] = await Promise.all([
@@ -164,6 +211,37 @@ export default function DreamPage() {
     if (configData && !draftSyncedRef.current) {
       setDraft(configData);
       draftSyncedRef.current = true;
+    }
+    return statusData;
+  }, []);
+
+  /** 刷新 BLE 采集器状态（window.ble.getStatus；非 Electron 下直接跳过） */
+  const refreshBleStatus = useCallback(async () => {
+    if (!window.ble) return;
+    try {
+      setBleInfo(await window.ble.getStatus());
+    } catch (error) {
+      console.error('BLE status failed:', error);
+    }
+  }, []);
+
+  /** 刷新生理信号后端数据（status/config/devices）；getStatus 为 null（后端离线）时上层转全页错误态 */
+  const refreshPhysio = useCallback(async () => {
+    const [statusData, configData, devicesData] = await Promise.all([
+      physioApi.getStatus(),
+      physioApi.getConfig().catch(() => null),
+      physioApi.getDevices().catch(() => null),
+    ]);
+    setPhysioStatus(statusData);
+    if (configData) {
+      setPhysioConfig(configData);
+      if (!physioDraftSyncedRef.current) {
+        setPhysioDraft(configData);
+        physioDraftSyncedRef.current = true;
+      }
+    }
+    if (devicesData) {
+      setPairedDevices(devicesData.devices);
     }
     return statusData;
   }, []);
@@ -190,6 +268,12 @@ export default function DreamPage() {
         // 后端离线：getStatus 返回 null → 全页错误态
         setLoadError(true);
       }
+      const physioStatusData = await refreshPhysio();
+      if (physioStatusData === null) {
+        // 后端离线（生理信号端点不可达）→ 全页错误态 + 重试（对齐既有 loadError 模式）
+        setLoadError(true);
+      }
+      await refreshBleStatus();
       await loadList();
     } catch (error) {
       console.error('Dream load failed:', error);
@@ -197,7 +281,20 @@ export default function DreamPage() {
     } finally {
       setIsLoading(false);
     }
-  }, [fetchStatusAndConfig, loadList]);
+  }, [fetchStatusAndConfig, refreshPhysio, refreshBleStatus, loadList]);
+
+  // 订阅主进程 BLE 状态推送（断线重连中等状态即时回显徽章）；非 Electron 下跳过
+  useEffect(() => {
+    if (!window.ble) return;
+    const unsubscribe = window.ble.onStatus((status) => {
+      setBleInfo((prev) => ({
+        status,
+        fingerprint: prev?.fingerprint ?? null,
+        deviceName: prev?.deviceName ?? null,
+      }));
+    });
+    return unsubscribe;
+  }, []);
 
   useEffect(() => {
     void load();
@@ -258,6 +355,185 @@ export default function DreamPage() {
       setBusyAction(null);
     }
   };
+
+  // ── 生理信号（physio）操作 ──
+
+  const updatePhysioDraft = (patch: Partial<PhysioConfig>) => {
+    setPhysioDraft((prev) => (prev ? { ...prev, ...patch } : prev));
+    setPhysioSaved(false);
+  };
+
+  const handleScan = async () => {
+    if (!window.ble || physioBusy) return;
+    setPhysioBusy('scan');
+    setPhysioActionError(false);
+    setBleError(null);
+    try {
+      const result = await window.ble.scan();
+      setScannedDevices(result.devices ?? []);
+      setBleInfo((prev) => ({
+        status: result.status,
+        fingerprint: prev?.fingerprint ?? null,
+        deviceName: prev?.deviceName ?? null,
+      }));
+      if (!result.ok) {
+        setBleError(result.error ?? t('management.dream.physio.unsupportedHint'));
+      }
+    } catch (error) {
+      console.error('BLE scan failed:', error);
+      setPhysioActionError(true);
+    } finally {
+      setPhysioBusy(null);
+    }
+  };
+
+  const handleConnect = async (device: BleDeviceInfo) => {
+    if (!window.ble || physioBusy) return;
+    setPhysioBusy('connect');
+    setPhysioActionError(false);
+    setBleError(null);
+    try {
+      const result = await window.ble.connect(device.deviceId);
+      setBleInfo((prev) => ({
+        status: result.status,
+        fingerprint: prev?.fingerprint ?? null,
+        deviceName: prev?.deviceName ?? null,
+      }));
+      if (result.ok) {
+        // 持久化配对：连接后 device_fingerprint 写入配置（尽力而为，失败仅记录）
+        await physioApi
+          .updateConfig({
+            device_fingerprint: device.fingerprint,
+            device_name_hint: device.name || physioConfig?.device_name_hint || '',
+          })
+          .catch((err) => console.error('持久化配对失败（尽力而为）:', err));
+        await refreshPhysio();
+      } else if (result.error) {
+        setBleError(result.error);
+      }
+    } catch (error) {
+      console.error('BLE connect failed:', error);
+      setPhysioActionError(true);
+    } finally {
+      setPhysioBusy(null);
+    }
+  };
+
+  const handleDisconnect = async () => {
+    if (!window.ble || physioBusy) return;
+    setPhysioBusy('disconnect');
+    setPhysioActionError(false);
+    setBleError(null);
+    try {
+      const result = await window.ble.disconnect();
+      setBleInfo((prev) => ({
+        status: result.status,
+        fingerprint: prev?.fingerprint ?? null,
+        deviceName: prev?.deviceName ?? null,
+      }));
+      if (!result.ok && result.error) {
+        setBleError(result.error);
+      }
+    } catch (error) {
+      console.error('BLE disconnect failed:', error);
+      setPhysioActionError(true);
+    } finally {
+      setPhysioBusy(null);
+    }
+  };
+
+  const handleForget = async (device: PhysioDevice) => {
+    if (physioBusy) return;
+    if (!window.confirm(t('management.dream.physio.forgetConfirm'))) return;
+    setPhysioBusy('forget');
+    setPhysioActionError(false);
+    setBleError(null);
+    try {
+      // forget 必须传真实指纹 id（GET /physio/devices 返回；脱敏 fingerprint 必 404）
+      await physioApi.forgetDevice(device.id ?? device.fingerprint);
+      await refreshPhysio();
+    } catch (error) {
+      console.error('Physio forget failed:', error);
+      setPhysioActionError(true);
+    } finally {
+      setPhysioBusy(null);
+    }
+  };
+
+  const handleSavePhysioConfig = async () => {
+    if (!physioDraft || physioBusy) return;
+    setPhysioBusy('save-config');
+    setPhysioActionError(false);
+    setPhysioSaved(false);
+    try {
+      const next = await physioApi.updateConfig({
+        ...physioDraft,
+        // 草稿加载早于配对写入时，保留后端已持久化的指纹，避免覆盖配对
+        device_fingerprint:
+          physioDraft.device_fingerprint ?? physioConfig?.device_fingerprint ?? null,
+        store_raw_hr: false, // 隐私红线 R6：原始心率强制不落盘
+      });
+      setPhysioDraft(next);
+      setPhysioSaved(true);
+      await refreshPhysio();
+    } catch (error) {
+      console.error('Physio config save failed:', error);
+      setPhysioActionError(true);
+    } finally {
+      setPhysioBusy(null);
+    }
+  };
+
+  const handleClearBaseline = () => {
+    if (!window.confirm(t('management.dream.physio.clearConfirm'))) return;
+    void (async () => {
+      setPhysioBusy('clear');
+      setPhysioActionError(false);
+      try {
+        await physioApi.clear();
+        await refreshPhysio();
+      } catch (error) {
+        console.error('Physio clear failed:', error);
+        setPhysioActionError(true);
+      } finally {
+        setPhysioBusy(null);
+      }
+    })();
+  };
+
+  /** 已配对设备：后端 /devices 直接返回 {name, fingerprint(脱敏), id(真实指纹)}，
+   *  forget 使用真实 id，无需再按扫描结果还原指纹（Task 6 修复后移除旧 workaround，
+   *  渲染处直接使用 pairedDevices 状态） */
+
+  /** 生理信号状态徽章（未启用/不可用/未配对/扫描中/连接中/已连接/断线重连中/采集失败） */
+  const physioBadge = (() => {
+    if (!physioActive) {
+      return { key: 'disabled', cls: 'bg-[rgba(255,255,255,0.08)] text-muted-foreground' };
+    }
+    if (!bleAvailable) {
+      return { key: 'unavailable', cls: 'bg-[rgba(255,255,255,0.08)] text-muted-foreground' };
+    }
+    switch (bleInfo?.status) {
+      case 'connected':
+        return { key: 'connected', cls: 'bg-emerald-500/15 text-emerald-400' };
+      case 'reconnecting':
+        return { key: 'reconnecting', cls: 'bg-amber-500/15 text-amber-400' };
+      case 'unsupported':
+      case 'unavailable':
+        return { key: 'failed', cls: 'bg-red-500/15 text-red-400' };
+      case 'scanning':
+        return { key: 'scanning', cls: 'bg-sky-500/15 text-sky-400' };
+      case 'connecting':
+        return { key: 'connecting', cls: 'bg-sky-500/15 text-sky-400' };
+      case 'idle':
+      case 'disconnected':
+      default:
+        return { key: 'notPaired', cls: 'bg-[rgba(255,255,255,0.08)] text-muted-foreground' };
+    }
+  })();
+
+  /** 已启用时的估计器状态（未启用/离线为 null；独立变量避免 JSX 内窄化丢失） */
+  const physioEstimator = isPhysioActive(physioStatus) ? physioStatus.estimator : null;
 
   const statusMeta = (() => {
     if (!active) {
@@ -647,6 +923,272 @@ export default function DreamPage() {
                 )}
               </div>
             )}
+          </div>
+
+          {/* ── 生理信号区块（手环心率 BLE + SleepSensor 融合） ── */}
+          <div className="glass-panel space-y-3 p-4">
+            <div className="flex items-center gap-2">
+              <HeartPulse className="h-4 w-4 text-primary" />
+              <h3 className="text-sm font-semibold">{t('management.dream.physio.title')}</h3>
+              <span className={cn('rounded px-2 py-0.5 text-[10px] font-medium', physioBadge.cls)}>
+                {t(`management.dream.physio.badge.${physioBadge.key}`)}
+              </span>
+            </div>
+
+            {physioActionError && (
+              <p className="text-xs text-red-400">{t('management.dream.physio.actionFailed')}</p>
+            )}
+
+            {!physioActive && (
+              <div className="flex items-center gap-3 rounded-lg bg-[rgba(255,255,255,0.04)] p-4">
+                <Ban className="h-5 w-5 shrink-0 text-muted-foreground" />
+                <div className="min-w-0">
+                  <p className="text-sm font-medium">{t('management.dream.physio.disabledTitle')}</p>
+                  <p className="text-xs text-muted-foreground">
+                    {t('management.dream.physio.disabledHint')}
+                  </p>
+                </div>
+              </div>
+            )}
+
+            {!bleAvailable && (
+              <div className="flex items-center gap-3 rounded-lg bg-[rgba(255,255,255,0.04)] p-4">
+                <Smartphone className="h-5 w-5 shrink-0 text-muted-foreground" />
+                <p className="text-xs text-muted-foreground">
+                  {t('management.dream.physio.bleUnavailable')}
+                </p>
+              </div>
+            )}
+
+            {physioActive && bleAvailable && (
+              <div className="space-y-3">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <p className="text-xs text-muted-foreground">
+                    {t('management.dream.physio.pairingTitle')}
+                  </p>
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => void handleScan()}
+                      disabled={!!physioBusy}
+                      className="flex items-center gap-1.5 rounded-lg border border-[var(--glass-border)] px-3 py-1.5 text-xs text-muted-foreground transition-colors hover:bg-[rgba(255,255,255,0.06)] disabled:opacity-50"
+                    >
+                      <Bluetooth className="h-3.5 w-3.5" />
+                      {t('management.dream.physio.scan')}
+                    </button>
+                    {(bleInfo?.status === 'connected' || bleInfo?.status === 'reconnecting') && (
+                      <button
+                        type="button"
+                        onClick={() => void handleDisconnect()}
+                        disabled={!!physioBusy}
+                        className="flex items-center gap-1.5 rounded-lg border border-[var(--glass-border)] px-3 py-1.5 text-xs text-muted-foreground transition-colors hover:bg-[rgba(255,255,255,0.06)] disabled:opacity-50"
+                      >
+                        <WifiOff className="h-3.5 w-3.5" />
+                        {t('management.dream.physio.disconnect')}
+                      </button>
+                    )}
+                  </div>
+                </div>
+
+                {bleError && <p className="text-xs text-amber-400">{bleError}</p>}
+
+                {scannedDevices.length > 0 && (
+                  <div className="rounded-lg bg-[rgba(255,255,255,0.04)] p-3">
+                    <p className="mb-2 text-[10px] text-muted-foreground">
+                      {t('management.dream.physio.scannedTitle')}（{scannedDevices.length}）
+                    </p>
+                    <ul className="space-y-1">
+                      {scannedDevices.map((device) => (
+                        <li
+                          key={device.deviceId}
+                          className="flex items-center justify-between gap-2 text-xs"
+                        >
+                          <span className="min-w-0 truncate">
+                            {device.name || device.address || device.deviceId}
+                            {device.hasHeartRate && (
+                              <span className="ml-1.5 rounded bg-emerald-500/15 px-1 py-0.5 text-[10px] text-emerald-400">
+                                {t('management.dream.physio.deviceHeartRate')}
+                              </span>
+                            )}
+                          </span>
+                          <button
+                            type="button"
+                            onClick={() => void handleConnect(device)}
+                            disabled={!!physioBusy}
+                            className="shrink-0 rounded-lg bg-sky-500/15 px-2.5 py-1 text-[10px] font-medium text-sky-400 transition-colors hover:bg-sky-500/25 disabled:opacity-50"
+                          >
+                            {t('management.dream.physio.connect')}
+                          </button>
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+
+                {pairedDevices.length > 0 && (
+                  <div className="rounded-lg bg-[rgba(255,255,255,0.04)] p-3">
+                    <p className="mb-2 text-[10px] text-muted-foreground">
+                      {t('management.dream.physio.pairedTitle')}
+                    </p>
+                    <ul className="space-y-1">
+                      {pairedDevices.map((device) => (
+                        <li
+                          key={device.id ?? device.fingerprint}
+                          className="flex items-center justify-between gap-2 text-xs"
+                        >
+                          <span className="min-w-0 truncate">
+                            {device.name || device.fingerprint}
+                          </span>
+                          <button
+                            type="button"
+                            onClick={() => void handleForget(device)}
+                            disabled={!!physioBusy}
+                            className="shrink-0 rounded-lg bg-red-500/15 px-2.5 py-1 text-[10px] font-medium text-red-400 transition-colors hover:bg-red-500/25 disabled:opacity-50"
+                          >
+                            {t('management.dream.physio.forget')}
+                          </button>
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+
+                {physioEstimator &&
+                  (physioEstimator.hr_sleep_confidence !== undefined ||
+                    physioEstimator.base_hr !== undefined) && (
+                    <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+                      {physioEstimator.hr_sleep_confidence !== undefined && (
+                        <div className="rounded-lg bg-[rgba(255,255,255,0.04)] p-3">
+                          <p className="text-[10px] text-muted-foreground">
+                            {t('management.dream.physio.hrSleepConfidence')}
+                          </p>
+                          <p className="mt-0.5 text-sm font-medium tabular-nums">
+                            {Math.round(physioEstimator.hr_sleep_confidence * 100)}%
+                          </p>
+                        </div>
+                      )}
+                      {physioEstimator.base_hr !== undefined && (
+                        <div className="rounded-lg bg-[rgba(255,255,255,0.04)] p-3">
+                          <p className="text-[10px] text-muted-foreground">
+                            {t('management.dream.physio.baseHr')}
+                          </p>
+                          <p className="mt-0.5 text-sm font-medium tabular-nums">
+                            {physioEstimator.base_hr} bpm
+                          </p>
+                        </div>
+                      )}
+                      {physioEstimator.window_size !== undefined && (
+                        <div className="rounded-lg bg-[rgba(255,255,255,0.04)] p-3">
+                          <p className="text-[10px] text-muted-foreground">
+                            {t('management.dream.physio.windowSize')}
+                          </p>
+                          <p className="mt-0.5 text-sm font-medium tabular-nums">
+                            {physioEstimator.window_size}
+                          </p>
+                        </div>
+                      )}
+                    </div>
+                  )}
+              </div>
+            )}
+
+            <div className="space-y-3">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <p className="text-xs text-muted-foreground">
+                  {t('management.dream.physio.configTitle')}
+                </p>
+                <div className="flex items-center gap-2">
+                  {physioSaved && (
+                    <span className="text-[10px] text-emerald-400">
+                      {t('management.dream.physio.saved')}
+                    </span>
+                  )}
+                  <button
+                    type="button"
+                    onClick={() => void handleSavePhysioConfig()}
+                    disabled={!physioDraft || !!physioBusy}
+                    className="flex items-center gap-1.5 rounded-lg bg-primary px-3 py-1.5 text-xs font-medium text-primary-foreground transition-opacity hover:opacity-85 disabled:opacity-50"
+                  >
+                    <Save className="h-3.5 w-3.5" />
+                    {t('management.dream.physio.save')}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleClearBaseline}
+                    disabled={!!physioBusy}
+                    className="flex items-center gap-1.5 rounded-lg border border-red-500/30 px-3 py-1.5 text-xs text-red-400 transition-colors hover:bg-red-500/10 disabled:opacity-50"
+                  >
+                    <Trash2 className="h-3.5 w-3.5" />
+                    {t('management.dream.physio.clearBaseline')}
+                  </button>
+                </div>
+              </div>
+
+              {!physioDraft ? (
+                <p className="text-xs text-muted-foreground">
+                  {t('management.dream.physio.configLoadFailed')}
+                </p>
+              ) : (
+                <div className="space-y-3">
+                  <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
+                    <CheckboxField
+                      label={t('management.dream.physio.field.enabled')}
+                      checked={physioDraft.enabled}
+                      onChange={(v) => updatePhysioDraft({ enabled: v })}
+                      testId="physio-config-enabled"
+                    />
+                    <TextField
+                      label={t('management.dream.physio.field.deviceNameHint')}
+                      value={physioDraft.device_name_hint}
+                      onChange={(v) => updatePhysioDraft({ device_name_hint: v })}
+                    />
+                    <NumberField
+                      label={t('management.dream.physio.field.scanTimeoutSec')}
+                      value={physioDraft.scan_timeout_sec}
+                      step={1}
+                      onChange={(v) => updatePhysioDraft({ scan_timeout_sec: v })}
+                    />
+                    <NumberField
+                      label={t('management.dream.physio.field.reconnectIntervalSec')}
+                      value={physioDraft.reconnect_interval_sec}
+                      step={1}
+                      onChange={(v) => updatePhysioDraft({ reconnect_interval_sec: v })}
+                    />
+                    <NumberField
+                      label={t('management.dream.physio.field.baseDropRatio')}
+                      value={physioDraft.base_drop_ratio}
+                      step={0.01}
+                      onChange={(v) => updatePhysioDraft({ base_drop_ratio: v })}
+                    />
+                    <NumberField
+                      label={t('management.dream.physio.field.baseDropConfirmMin')}
+                      value={physioDraft.base_drop_confirm_min}
+                      step={1}
+                      onChange={(v) => updatePhysioDraft({ base_drop_confirm_min: v })}
+                    />
+                    <NumberField
+                      label={t('management.dream.physio.field.hrStabilityThreshold')}
+                      value={physioDraft.hr_stability_threshold}
+                      step={0.5}
+                      onChange={(v) => updatePhysioDraft({ hr_stability_threshold: v })}
+                    />
+                    <CheckboxField
+                      label={t('management.dream.physio.field.baseHrLearning')}
+                      checked={physioDraft.base_hr_learning}
+                      onChange={(v) => updatePhysioDraft({ base_hr_learning: v })}
+                    />
+                  </div>
+                  <p className="text-[10px] text-muted-foreground">
+                    {t('management.dream.physio.storeRawHrNote')}
+                  </p>
+                  {physioActionError && (
+                    <p className="text-xs text-red-400">
+                      {t('management.dream.physio.actionFailed')}
+                    </p>
+                  )}
+                </div>
+              )}
+            </div>
           </div>
         </>
       )}

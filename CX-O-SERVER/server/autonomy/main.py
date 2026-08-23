@@ -829,6 +829,7 @@ async def setup_autonomy(services: Any, store_path: str = "") -> Optional[Autono
         # 供 dream 工具 handler 使用。任何异常被捕获隔离，不影响 autonomy 插件装配。
         dream_config = None
         dream_engine = None
+        physio_runtime = None
         try:
             from server.autonomy.dream.config import load_config as _dream_load_config
 
@@ -848,6 +849,74 @@ async def setup_autonomy(services: Any, store_path: str = "") -> Optional[Autono
 
                 ws_manager = getattr(services, "ws_manager", None) or get_websocket_manager()
                 dream_buffer = DreamBuffer(config=dream_config)
+
+                # ---- Physio 生理信号组件（Task 4：SleepSensor + 估计器 + 运行时容器） ----
+                # 装配 physio 组件并注入 DreamEngine（sleep_sensor 确认入睡触发）；任何
+                # physio 异常被捕获隔离，不影响 autonomy/dream 装配（引擎保持纯时间窗口）。
+                sleep_sensor = None
+                sleep_sensor_refresh = None
+                physio_runtime = None
+                try:
+                    from server.autonomy.dream.physio.estimator import (
+                        HeartRateSleepEstimator,
+                    )
+                    from server.autonomy.dream.physio.runtime import PhysioRuntime
+                    from server.autonomy.dream.physio.store import PhysioSignalStore
+                    from server.autonomy.dream.sleep_sensor import (
+                        SleepSensor,
+                        wire_sleep_sensor,
+                    )
+
+                    physio_store = PhysioSignalStore()
+                    physio_estimator = HeartRateSleepEstimator(
+                        config=dream_config.physio, store=physio_store
+                    )
+                    sleep_sensor = SleepSensor()
+                    # 初始接线：S7 时间先验 + S9 心率（估计器窗口有真实样本时刷新）
+                    wire_sleep_sensor(
+                        sensor=sleep_sensor,
+                        circadian=circadian,
+                        estimator=physio_estimator,
+                    )
+
+                    def _refresh_sleep_sensor(_now: Optional[datetime] = None) -> None:
+                        """每轮刷新 SleepSensor：S9 心率置信度 + S7 时间先验（异常隔离）。"""
+                        _now = _now or datetime.now()
+                        if physio_estimator is not None:
+                            try:
+                                est = physio_estimator.get_state()
+                                if est.get("window_size", 0) > 0:
+                                    sleep_sensor.set_hr_confidence(
+                                        est.get("hr_sleep_confidence", 0.0)
+                                    )
+                            except Exception as e:
+                                logger.warning("心率置信度刷新失败（S9 降级）: %s", e)
+                        if circadian is not None:
+                            try:
+                                sleep_sensor.set_time_prior(_now, circadian)
+                            except Exception as e:
+                                logger.warning("时间先验刷新失败（S7 降级）: %s", e)
+
+                    sleep_sensor_refresh = _refresh_sleep_sensor
+                    physio_runtime = PhysioRuntime(
+                        estimator=physio_estimator,
+                        store=physio_store,
+                        sleep_sensor=sleep_sensor,
+                        dream_config=dream_config,
+                    )
+                    logger.info(
+                        "CX-O-Dream 生理信号组件已装配（physio.enabled=%s）",
+                        dream_config.physio.enabled,
+                    )
+                except Exception as e:
+                    logger.exception(
+                        "CX-O-Dream 生理信号组件装配失败，已隔离（梦境引擎保持纯时间窗口）: %s",
+                        e,
+                    )
+                    sleep_sensor = None
+                    sleep_sensor_refresh = None
+                    physio_runtime = None
+
                 dream_engine = DreamEngine(
                     collector=DreamMaterialCollector(
                         memory_manager=memory_manager,
@@ -873,6 +942,8 @@ async def setup_autonomy(services: Any, store_path: str = "") -> Optional[Autono
                     ),
                     config=dream_config,
                     ws_manager=ws_manager,
+                    sleep_sensor=sleep_sensor,
+                    sleep_sensor_refresh=sleep_sensor_refresh,
                 )
                 _dream_engine = dream_engine
                 logger.info(
@@ -933,6 +1004,8 @@ async def setup_autonomy(services: Any, store_path: str = "") -> Optional[Autono
             dream_engine.start()
             services.dream_engine = dream_engine
             logger.info("CX-O-Dream 梦境引擎已挂载为 embedded 插件能力并启动后台循环")
+        # Physio 生理信号运行时容器挂载（供 /api/physio/* 路由注入；未装配时 None 降级）
+        services.physio_runtime = physio_runtime
         await engine.start()
         logger.info(
             "CX-O-Autonomy 已装配为 embedded CXFC 插件（%s）并启动主循环",

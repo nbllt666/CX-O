@@ -1,0 +1,28 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "SleepSensorState",
+  "description": "CX-O-Dream SleepSensor 融合状态（GET /physio/sleep 启用时返回，对齐 server/autonomy/dream/sleep_sensor.py SleepSensor.snapshot()；未启用返回 {\"status\":\"disabled\"}，不属于本契约主体）",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["state", "confidence", "signals"],
+  "properties": {
+    "state": {"type": "string", "enum": ["AWAKE", "DROWSY", "ASLEEP", "AWAY"], "description": "融合睡眠状态：AWAKE 清醒 / DROWSY 困倦 / ASLEEP 入睡 / AWAY 离开"},
+    "confidence": {"type": "number", "minimum": 0, "maximum": 1, "description": "融合置信度 [0,1]（可用信号权重归一后加权值）"},
+    "signals": {
+      "type": "array",
+      "description": "各路信号（S1-S9）的 value / weight / available 快照",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["name", "weight", "value", "available"],
+        "properties": {
+          "name": {"type": "string", "description": "信号编号（S1 输入静默 / S2 语音静默 / S3 呼吸鼾声 / S4 显式睡眠语 / S5 视觉闭眼 / S6 系统锁屏 / S7 时间先验 / S8 桌宠状态 / S9 生理心率）"},
+          "weight": {"type": "number", "minimum": 0, "maximum": 1, "description": "基础权重（可用信号动态归一；无源信号 weight 0）"},
+          "value": {"type": "number", "minimum": 0, "maximum": 1, "description": "当前信号值 [0,1]"},
+          "available": {"type": "boolean", "description": "是否有数据源接入（无源信号为 false）"}
+        }
+      }
+    },
+    "updated_at": {"type": ["string", "null"], "description": "最近状态更新时间（ISO 8601；无 sleep_sensor 时的默认清醒态快照无此字段）"}
+  }
+}

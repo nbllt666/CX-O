@@ -588,6 +588,53 @@
         "maxSurfacePerDay": "Max surfaces per day",
         "wakeTime": "Wake time",
         "sleepTime": "Sleep time"
+      },
+      "physio": {
+        "title": "Physiological Signals",
+        "badge": {
+          "disabled": "Disabled",
+          "unavailable": "Unavailable",
+          "notPaired": "Not paired",
+          "scanning": "Scanning",
+          "connecting": "Connecting",
+          "connected": "Connected",
+          "reconnecting": "Reconnecting",
+          "failed": "Collection failed"
+        },
+        "disabledTitle": "Physiological signals not enabled",
+        "disabledHint": "Physiological signal collection is disabled. Enable it in the config section below and pair a heart-rate band.",
+        "bleUnavailable": "Band collection is not supported in this environment (requires the Electron desktop app). Config editing still works.",
+        "pairingTitle": "Device pairing",
+        "scannedTitle": "Scan results",
+        "pairedTitle": "Paired devices",
+        "scan": "Scan devices",
+        "disconnect": "Disconnect",
+        "connect": "Connect",
+        "forget": "Forget",
+        "forgetConfirm": "Forget this band? Its pairing record will be removed.",
+        "deviceHeartRate": "HR",
+        "unsupportedHint": "No device with heart-rate broadcast (0x180D) found; the model may not be supported",
+        "hrSleepConfidence": "Sleep confidence",
+        "baseHr": "Baseline HR",
+        "windowSize": "Window samples",
+        "configTitle": "Config",
+        "save": "Save config",
+        "saved": "Config saved",
+        "configLoadFailed": "Failed to load config",
+        "storeRawHrNote": "Raw heart rate is never persisted (privacy R6): store_raw_hr is forced off.",
+        "clearBaseline": "Clear baseline",
+        "clearConfirm": "Clear all physiological baseline data (baseline HR and device fingerprint)? This cannot be undone.",
+        "actionFailed": "Action failed. Please retry.",
+        "field": {
+          "enabled": "Enable physiological signals",
+          "deviceNameHint": "Device name filter",
+          "scanTimeoutSec": "Scan timeout (sec)",
+          "reconnectIntervalSec": "Reconnect interval (sec)",
+          "baseDropRatio": "Sleep baseline drop",
+          "baseDropConfirmMin": "Confirm duration (min)",
+          "hrStabilityThreshold": "HR stability threshold",
+          "baseHrLearning": "Auto-learn baseline HR"
+        }
       }
     },
     "memoryAgent": {

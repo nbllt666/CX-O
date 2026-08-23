@@ -6,11 +6,15 @@ DreamEngine 串联 采集 → 联想生成 → D7 确定性闸门过滤 → 缓�
 
 相位挂点（_run_loop，独立后台任务，不并入自主主循环）：
 - 睡眠窗口进入 → asyncio.create_task(run_session)（状态 dreaming，结束后回 idle）
+- SleepSensor 生理/行为确认（注入 sleep_sensor 时）：睡眠窗口内状态 ASLEEP，
+  或窗口外 S4 显式睡眠语短路 ASLEEP → 触发 run_session（冷却 30min 防高频）
 - 唤醒窗口进入 → create_task(purge_job.run()) + 可选 consolidator.surface()（surface_on_wake）
 - 每 6 小时兜底 purge
 - 任何异常被捕获隔离并记日志，绝不影响主服务与语音链路
 
 循环间隔可注入（interval_seconds，默认 60s）便于测试；config.enabled 关闭后循环退出。
+sleep_sensor 未注入时入睡判定保持纯 circadian 时间窗口（零回归）；sleep_sensor
+调用异常被捕获隔离，不影响主循环。
 """
 
 from __future__ import annotations
@@ -28,6 +32,12 @@ logger = logging.getLogger(__name__)
 
 # 兜底清除周期：每 6 小时（秒）
 _FALLBACK_PURGE_SECONDS = 6 * 3600
+
+# SleepSensor 触发冷却：距上次触发不足该秒数不再触发（防高频）
+_SLEEP_SENSOR_COOLDOWN_SECONDS = 30 * 60
+
+# S4 显式睡眠语短路阈值（对齐 sleep_sensor._S4_FIRE_THRESHOLD=0.5）
+_S4_SHORTCUT_THRESHOLD = 0.5
 
 
 async def push_dream_event(ws_manager: Any, action: str, data: Dict[str, Any]) -> None:
@@ -76,6 +86,10 @@ class DreamEngine:
         config: DreamConfig；None 时使用全默认
         ws_manager: 可选 WebSocket 管理器（预留，会话事件推送；None 可）
         interval_seconds: 后台循环轮询间隔（秒），注入便于测试，默认 60s
+        sleep_sensor: 可选 SleepSensor 融合状态机（snapshot() -> {state, ...}）；
+            None 时入睡判定保持纯 circadian 时间窗口（零回归）
+        sleep_sensor_refresh: 可选每轮刷新回调（刷新 S9 心率置信度 / S7 时间先验），
+            调用异常被捕获隔离，不影响主循环
     """
 
     def __init__(
@@ -89,6 +103,8 @@ class DreamEngine:
         config: Optional[DreamConfig] = None,
         ws_manager=None,
         interval_seconds: float = _DEFAULT_INTERVAL_SECONDS,
+        sleep_sensor=None,
+        sleep_sensor_refresh=None,
     ):
         self._collector = collector
         self._generator = generator
@@ -100,6 +116,10 @@ class DreamEngine:
         self._ws_manager = ws_manager
         self._interval_seconds = max(float(interval_seconds), _MIN_INTERVAL_SECONDS)
         self._fallback_purge_seconds = float(_FALLBACK_PURGE_SECONDS)
+        # SleepSensor 生理/行为确认（可选；None 时保持纯时间窗口，零回归）
+        self._sleep_sensor = sleep_sensor
+        self._sleep_sensor_refresh = sleep_sensor_refresh
+        self._sleep_sensor_cooldown_seconds = float(_SLEEP_SENSOR_COOLDOWN_SECONDS)
         # 相位调度器：start() 时由 config.schedule.model_dump() 构造
         self._scheduler: Optional[CircadianScheduler] = None
         # 后台任务生命周期
@@ -107,6 +127,8 @@ class DreamEngine:
         self._task: Optional[asyncio.Task] = None
         self._status: str = _STATUS_IDLE
         self._last_session_at: Optional[str] = None
+        # 最近一次会话触发时刻（窗口边沿 / SleepSensor 确认均记录，供冷却判定）
+        self._last_trigger_at: Optional[datetime] = None
         self._stats: Dict[str, int] = {
             "sessions": 0,
             "generated": 0,
@@ -250,6 +272,8 @@ class DreamEngine:
         """后台昼夜循环：检测相位切换并触发对应动作（异常隔离）。
 
         - 睡眠窗口进入 → create_task(run_session)，状态 dreaming，结束后回 idle
+        - SleepSensor 生理/行为确认（注入时）：窗口内 ASLEEP 或 S4 短路 → 触发
+          run_session（冷却 30min 防高频）；无 sleep_sensor 时保持纯时间窗口
         - 唤醒窗口进入 → create_task(purge_job.run()) + 可选 consolidator.surface()
         - 每 6 小时兜底 purge
         - config.enabled 关闭后退出
@@ -262,10 +286,22 @@ class DreamEngine:
                 now = datetime.now()
                 sleeping = self._scheduler.is_sleep_time(now)
 
+                # 每轮刷新 SleepSensor（S9 心率置信度 / S7 时间先验），异常隔离
+                if self._sleep_sensor_refresh is not None:
+                    try:
+                        self._sleep_sensor_refresh(now)
+                    except Exception as e:
+                        logger.warning("SleepSensor 刷新异常（已隔离，跳过本轮刷新）: %s", e)
+
                 # 睡眠窗口进入 → 异步发起梦境会话（不阻塞循环）
                 if sleeping and prev_sleeping is not True:
                     self._status = _STATUS_DREAMING
+                    self._last_trigger_at = now
                     asyncio.create_task(self._safe_run_session())
+
+                # SleepSensor 生理/行为确认（窗口内 ASLEEP / 窗口外 S4 短路，冷却防高频）
+                if self._sleep_sensor is not None:
+                    self._maybe_trigger_by_sensor(now, sleeping)
 
                 # 唤醒窗口进入 → 清除 + 可选主动提起（surface_on_wake）
                 if not sleeping and prev_sleeping is True:
@@ -290,6 +326,60 @@ class DreamEngine:
             except asyncio.CancelledError:
                 break
         logger.info("梦境引擎后台循环退出")
+
+    # ================================================================ SleepSensor 触发
+    def _maybe_trigger_by_sensor(self, now: datetime, sleeping: bool) -> None:
+        """SleepSensor 生理/行为确认触发梦境会话（异常隔离，冷却防高频）。
+
+        - 状态非 ASLEEP / 正在 dreaming / 距上次触发不足冷却 → 不触发
+        - 睡眠窗口内 ASLEEP，或窗口外 S4 显式睡眠语短路 ASLEEP → 触发
+        - snapshot() 异常被捕获隔离，不影响主循环
+        """
+        if self._status == _STATUS_DREAMING:
+            return
+        if not self._cooldown_passed(now):
+            return
+        try:
+            snapshot = self._sleep_sensor.snapshot()
+        except Exception as e:
+            logger.warning("SleepSensor 快照读取失败（已隔离，跳过本轮触发）: %s", e)
+            return
+        if not isinstance(snapshot, dict) or snapshot.get("state") != "ASLEEP":
+            return
+        s4_shortcut = self._is_s4_shortcut(snapshot)
+        if not (sleeping or s4_shortcut):
+            return
+        self._last_trigger_at = now
+        self._status = _STATUS_DREAMING
+        asyncio.create_task(self._safe_run_session())
+        logger.info(
+            "SleepSensor 确认入睡，触发梦境会话（sleeping=%s, s4_shortcut=%s）",
+            sleeping,
+            s4_shortcut,
+        )
+
+    def _cooldown_passed(self, now: datetime) -> bool:
+        """距上次会话触发（窗口边沿或 SleepSensor 确认）是否已超过冷却。"""
+        last = self._last_trigger_at
+        if last is None:
+            return True
+        return (now - last).total_seconds() >= self._sleep_sensor_cooldown_seconds
+
+    @staticmethod
+    def _is_s4_shortcut(snapshot: Dict[str, Any]) -> bool:
+        """判定快照是否由 S4 显式睡眠语短路（窗口外也可触发的依据）。
+
+        对齐 SleepSensor：S4 available 且 value >= 0.5（_S4_FIRE_THRESHOLD）为短路命中。
+        """
+        for sig in snapshot.get("signals", []) or []:
+            if not isinstance(sig, dict) or sig.get("name") != "S4":
+                continue
+            try:
+                value = float(sig.get("value", 0.0))
+            except (TypeError, ValueError):
+                value = 0.0
+            return bool(sig.get("available")) and value >= _S4_SHORTCUT_THRESHOLD
+        return False
 
     # ================================================================ 后台任务包装
     async def _safe_run_session(self) -> None:

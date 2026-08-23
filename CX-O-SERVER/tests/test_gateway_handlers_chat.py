@@ -6,7 +6,6 @@ _process_tool_calls 工具调用循环 / _build_chat_context 上下文构建 / M
 import pytest
 
 import server.dependencies as deps
-import server.chat_helpers as chat_helpers_mod
 from server.core import tools as tools_mod
 from server.core.tools import builtin as builtin_mod
 from server.handlers import chat as chat_mod
@@ -223,6 +222,80 @@ class TestBuildChatContext:
         # session 已创建，user 消息已注入
         assert "agent-a1" in cm.sessions
         assert cm.messages[0]["role"] == "user"
+
+
+# --------------------------------------------------------------------------- #
+# S4 显式睡眠语接线（F2-S4 修复）
+# --------------------------------------------------------------------------- #
+class _FakeSleepSensor:
+    def __init__(self):
+        self.hits = []
+
+    def set_sleep_speech(self, hit):
+        self.hits.append(hit)
+
+
+class _FakePhysioRuntime:
+    def __init__(self, enabled=True, sensor=None):
+        self._enabled = enabled
+        self.sleep_sensor = sensor
+
+    def is_enabled(self):
+        return self._enabled
+
+
+class TestSleepSpeechWiring:
+    @pytest.mark.asyncio
+    async def test_sleep_keyword_injects_s4(self, monkeypatch):
+        """聊天文本命中睡眠关键词 → sleep_sensor.set_sleep_speech(True)（agent 缺失也注入）。"""
+        from types import SimpleNamespace
+
+        sensor = _FakeSleepSensor()
+        runtime = _FakePhysioRuntime(enabled=True, sensor=sensor)
+        monkeypatch.setattr(
+            deps, "_service_state", SimpleNamespace(physio_runtime=runtime)
+        )
+        monkeypatch.setattr(chat_mod, "get_agent_config", lambda aid: None)
+        mgr = FakeManager()
+        await _build_chat_context("a1", "我困了，先去睡了", mgr, "c1", "r1", ChatActions.MESSAGE)
+        assert sensor.hits == [True]
+
+    @pytest.mark.asyncio
+    async def test_no_keyword_does_not_inject(self, monkeypatch):
+        from types import SimpleNamespace
+
+        sensor = _FakeSleepSensor()
+        runtime = _FakePhysioRuntime(enabled=True, sensor=sensor)
+        monkeypatch.setattr(
+            deps, "_service_state", SimpleNamespace(physio_runtime=runtime)
+        )
+        monkeypatch.setattr(chat_mod, "get_agent_config", lambda aid: None)
+        mgr = FakeManager()
+        await _build_chat_context("a1", "今天天气不错", mgr, "c1", "r1", ChatActions.MESSAGE)
+        assert sensor.hits == []
+
+    @pytest.mark.asyncio
+    async def test_disabled_runtime_degrades(self, monkeypatch):
+        from types import SimpleNamespace
+
+        sensor = _FakeSleepSensor()
+        runtime = _FakePhysioRuntime(enabled=False, sensor=sensor)
+        monkeypatch.setattr(
+            deps, "_service_state", SimpleNamespace(physio_runtime=runtime)
+        )
+        monkeypatch.setattr(chat_mod, "get_agent_config", lambda aid: None)
+        mgr = FakeManager()
+        await _build_chat_context("a1", "我困了", mgr, "c1", "r1", ChatActions.MESSAGE)
+        assert sensor.hits == []
+
+    @pytest.mark.asyncio
+    async def test_missing_runtime_does_not_break_chat(self, monkeypatch):
+        """physio runtime 未装配 → S4 注入静默跳过，聊天主流程不受影响。"""
+        monkeypatch.setattr(deps, "_service_state", None)
+        monkeypatch.setattr(chat_mod, "get_agent_config", lambda aid: None)
+        mgr = FakeManager()
+        ctx = await _build_chat_context("a1", "晚安", mgr, "c1", "r1", ChatActions.MESSAGE)
+        assert ctx is None  # agent 缺失正常返回 None，S4 注入未抛异常
 
 
 # --------------------------------------------------------------------------- #

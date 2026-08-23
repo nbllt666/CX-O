@@ -507,6 +507,11 @@ async def lifespan(app: FastAPI):
     from server.api.routers import dream as dream_router
     dream_router.set_dream_engine(getattr(services, "dream_engine", None))
 
+    # CX-O-Dream 生理信号 REST 端点依赖模块级 _runtime 单例；未装配（physio_runtime
+    # 未由装配流程注入）时为 None，路由侧按 disabled 口径自动降级（Task 4 装配 runtime）。
+    from server.api.routers import physio as physio_router
+    physio_router.set_physio_runtime(getattr(services, "physio_runtime", None))
+
     from server.services.asr_service import get_asr_service
     from server.services.tts_service import get_tts_service
     from server.gateway.health import health_checker

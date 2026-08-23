@@ -25,6 +25,7 @@ from server.api.routers import (
     chat,
     decision,
     dream,
+    physio,
     config,
     context,
     cxfc,
@@ -102,6 +103,8 @@ def register_api_routes(app: FastAPI):
     app.include_router(autonomy.router, prefix="/api")
     # CX-O-Dream 梦境引擎 REST 端点（前端 DreamPage 管理页依赖），仅挂 /api 前缀
     app.include_router(dream.router, prefix="/api")
+    # CX-O-Dream 生理信号 REST 端点（前端 DreamPage 生理信号区块依赖），仅挂 /api 前缀
+    app.include_router(physio.router, prefix="/api")
     app.include_router(discovery.router, prefix="/api")
     app.include_router(vector.router, prefix="/api")
     app.include_router(multimodal.router, prefix="/api")

@@ -588,6 +588,53 @@
         "maxSurfacePerDay": "每日提起上限",
         "wakeTime": "唤醒时间",
         "sleepTime": "睡眠时间"
+      },
+      "physio": {
+        "title": "生理信号",
+        "badge": {
+          "disabled": "未启用",
+          "unavailable": "不可用",
+          "notPaired": "未配对",
+          "scanning": "扫描中",
+          "connecting": "连接中",
+          "connected": "已连接",
+          "reconnecting": "断线重连中",
+          "failed": "采集失败"
+        },
+        "disabledTitle": "生理信号未启用",
+        "disabledHint": "生理信号采集未启用，可在下方配置区开启，并连接手环心率广播。",
+        "bleUnavailable": "当前环境不支持手环采集（需 Electron 桌面端），仅可编辑配置。",
+        "pairingTitle": "设备配对",
+        "scannedTitle": "扫描结果",
+        "pairedTitle": "已配对设备",
+        "scan": "扫描设备",
+        "disconnect": "断开连接",
+        "connect": "连接",
+        "forget": "解除配对",
+        "forgetConfirm": "确定解除该手环的配对吗？配对记录将被移除。",
+        "deviceHeartRate": "心率",
+        "unsupportedHint": "未发现带心率广播（0x180D）的设备，型号可能不支持",
+        "hrSleepConfidence": "入睡置信度",
+        "baseHr": "清醒基线心率",
+        "windowSize": "窗口样本",
+        "configTitle": "配置",
+        "save": "保存配置",
+        "saved": "配置已保存",
+        "configLoadFailed": "配置加载失败",
+        "storeRawHrNote": "原始心率禁止落盘（隐私红线 R6）：store_raw_hr 强制关闭。",
+        "clearBaseline": "一键清除基线",
+        "clearConfirm": "确定清除全部生理基线数据（含清醒基线心率与设备指纹）吗？此操作不可恢复。",
+        "actionFailed": "操作失败，请重试",
+        "field": {
+          "enabled": "启用生理信号",
+          "deviceNameHint": "设备名过滤关键字",
+          "scanTimeoutSec": "扫描超时（秒）",
+          "reconnectIntervalSec": "重连间隔（秒）",
+          "baseDropRatio": "入睡基线降幅",
+          "baseDropConfirmMin": "确认持续（分钟）",
+          "hrStabilityThreshold": "心率稳定阈值",
+          "baseHrLearning": "自动学习清醒基线"
+        }
       }
     },
     "memoryAgent": {

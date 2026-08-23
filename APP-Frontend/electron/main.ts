@@ -15,13 +15,15 @@
  *   供 OBS 等采集端按窗口名稳定捕获。
  * ============================================================================
  */
-import { app, BrowserWindow, desktopCapturer, dialog, ipcMain, session, Menu, Tray, nativeImage, globalShortcut, shell } from 'electron';
+import { app, BrowserWindow, desktopCapturer, dialog, ipcMain, session, Menu, Tray, nativeImage, globalShortcut, shell, powerMonitor } from 'electron';
 import type { NativeImage } from 'electron';
 import * as path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { readFile } from 'node:fs/promises';
 import { loadStore, saveStore } from './store';
 import { getConfig, setConfig } from './config';
+import { BleHeartRateCollector } from './ble/ble_collector';
+import { PhysioUploader } from './ble/uploader';
 import {
   startComputerControlPlugin,
   stopComputerControlPlugin,
@@ -55,6 +57,81 @@ let danmakuWindow: BrowserWindow | null = null;
 let tray: Tray | null = null;
 let isQuitting = false;
 let cxfcClient: CxfcClient | null = null;
+
+// 手环心率 BLE 采集（Task 5 / spec：前端 Electron BLE 采集）
+// collector 懒加载：渲染层首次调用 ble:* IPC 才创建（noble 原生依赖缺失时 graceful 降级）
+let bleCollector: BleHeartRateCollector | null = null;
+let physioUploader: PhysioUploader | null = null;
+let physioBackgroundStarted = false;
+
+/** 向所有窗口广播（ble:notify 实时 HR/状态推送等）。 */
+function broadcastToAll(channel: string, payload: unknown): void {
+  for (const win of BrowserWindow.getAllWindows()) {
+    if (!win.isDestroyed()) {
+      win.webContents.send(channel, payload);
+    }
+  }
+}
+
+/** 懒创建 BLE 采集器（含 HR→IPC 广播 + ≤1Hz REST 上送接线）。 */
+function ensureBleCollector(): BleHeartRateCollector {
+  if (!bleCollector) {
+    bleCollector = new BleHeartRateCollector(
+      {
+        scanTimeoutSec: 15,
+        deviceNameHint: getConfig('physioDeviceNameHint') || '',
+        reconnectIntervalSec: 30,
+      },
+      {
+        onHr: (bpm) => {
+          // 实时 HR 推给渲染进程（ble:notify）
+          broadcastToAll('ble:notify', { type: 'hr', bpm, ts: Date.now() });
+          // 后台任务：≤1Hz 节流上送后端（PhysioUploader 内部节流；离线丢弃不积压）
+          const fingerprint = bleCollector?.getDeviceFingerprint();
+          if (fingerprint && physioUploader) {
+            // ts 上送 epoch 秒（对齐 HrSample 契约；后端 _parse_ts 兼容毫秒/秒）
+            void physioUploader.reportHr({ bpm, ts: Math.floor(Date.now() / 1000), device_fingerprint: fingerprint });
+          }
+        },
+        onStatus: (status, detail) =>
+          broadcastToAll('ble:notify', { type: 'status', status, detail }),
+        onError: (error, context) =>
+          broadcastToAll('ble:notify', { type: 'error', context, message: String(error) }),
+      },
+    );
+  }
+  return bleCollector;
+}
+
+/**
+ * 启动生理信号上送后台任务：
+ *  - HR 样本：由 onHr 接线经 PhysioUploader.reportHr（≤1Hz）上送
+ *  - 系统静默：≥30s 周期，powerMonitor.getSystemIdleTime() 构造载荷
+ */
+function startPhysioBackground(): void {
+  if (physioBackgroundStarted) return;
+  physioBackgroundStarted = true;
+  const backendUrl = getConfig('backendUrl') || 'http://127.0.0.1:8000';
+  physioUploader = new PhysioUploader({ backendUrl });
+  physioUploader.startIdleReport(() => {
+    const systemIdleSec = powerMonitor.getSystemIdleTime();
+    return { system_idle_sec: systemIdleSec, user_active: systemIdleSec < 60 };
+  });
+  console.log(`[physio] 生理信号上送后台任务已启动（后端 ${backendUrl}）`);
+}
+
+async function stopPhysioBackground(): Promise<void> {
+  physioBackgroundStarted = false;
+  physioUploader?.stop();
+  physioUploader = null;
+  if (bleCollector) {
+    try {
+      await bleCollector.disconnect();
+    } catch {
+      // 忽略退出时的断开异常
+    }
+  }
+}
 
 /** 渲染层路由加载：开发模式走 dev server + hash 路由，生产模式走静态文件 */
 function loadRoute(win: BrowserWindow, route: '/' | '/pet' | '/danmaku'): void {
@@ -395,6 +472,37 @@ function registerIpcHandlers(): void {
       return null;
     }
   });
+
+  // 手环心率 BLE 采集（Task 5 / spec：前端 Electron BLE 采集）。
+  // 实时 HR / 状态 / 错误经主进程 webContents.send('ble:notify') 推送（见 ensureBleCollector）。
+  ipcMain.handle('ble:scan', async () => {
+    try {
+      const result = await ensureBleCollector().startScan();
+      return { ok: result.ok, status: result.status, devices: result.devices ?? [], error: result.error };
+    } catch (err) {
+      return { ok: false, status: ensureBleCollector().getStatus().status, devices: [], error: String(err) };
+    }
+  });
+
+  ipcMain.handle('ble:connect', async (_event, deviceId: string) => {
+    try {
+      const result = await ensureBleCollector().connect(String(deviceId ?? ''));
+      return { ok: result.ok, status: result.status, error: result.error };
+    } catch (err) {
+      return { ok: false, status: ensureBleCollector().getStatus().status, error: String(err) };
+    }
+  });
+
+  ipcMain.handle('ble:disconnect', async () => {
+    try {
+      const result = await ensureBleCollector().disconnect();
+      return { ok: result.ok, status: result.status, error: result.error };
+    } catch (err) {
+      return { ok: false, status: ensureBleCollector().getStatus().status, error: String(err) };
+    }
+  });
+
+  ipcMain.handle('ble:status', () => ensureBleCollector().getStatus());
 }
 
 // ---------------------------------------------------------------------------
@@ -519,6 +627,14 @@ app.whenReady().then(() => {
   createPetWindow();
   createTray();
 
+  // 生理信号上送后台任务（Task 5）：系统静默 ≥30s 上送；HR 由 onHr 接线 ≤1Hz 上送。
+  // 后台任务失败不阻断主流程（PhysioUploader 内部已隔离异常）。
+  try {
+    startPhysioBackground();
+  } catch (err) {
+    console.error('[physio] 生理信号后台上送任务启动失败:', err);
+  }
+
   // Neko 插件运行时 + 工具→CXFC 桥：若配置了自动启动，异步拉起（不阻断主流程）
   try {
     if (getNekoConfig().autoStart) {
@@ -572,6 +688,8 @@ app.on('will-quit', () => {
   void stopComputerControlPlugin();
   // 停止 Neko 插件运行时 sidecar 与工具→CXFC 桥，回收子进程/接口
   void stopNekoRuntime();
+  // 停止生理信号上送后台任务并断开 BLE（Task 5）
+  void stopPhysioBackground();
 });
 
 app.on('before-quit', () => {

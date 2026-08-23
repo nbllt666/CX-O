@@ -92,7 +92,55 @@ declare global {
         cxfcRegistered: boolean;
       }>;
     };
+    /** 由 electron/preload.ts 通过 contextBridge 暴露的手环心率 BLE 采集桥；浏览器模式下为 undefined */
+    ble?: {
+      scan: () => Promise<{
+        ok: boolean;
+        status: BleStatus;
+        devices: BleDeviceInfo[];
+        error?: string;
+      }>;
+      connect: (deviceId: string) => Promise<{ ok: boolean; status: BleStatus; error?: string }>;
+      disconnect: () => Promise<{ ok: boolean; status: BleStatus; error?: string }>;
+      getStatus: () => Promise<{
+        status: BleStatus;
+        fingerprint: string | null;
+        deviceName: string | null;
+      }>;
+      /** 订阅主进程 ble:notify 推送（hr/status/error）；返回取消订阅函数 */
+      onNotify: (callback: (payload: BleNotifyPayload) => void) => () => void;
+      /** 仅订阅状态变化；返回取消订阅函数 */
+      onStatus: (callback: (status: BleStatus, detail?: string) => void) => () => void;
+    };
   }
+
+  /** 手环心率采集器状态（对齐 electron/ble/ble_collector.ts BleStatus） */
+  type BleStatus =
+    | 'idle'
+    | 'unavailable'
+    | 'scanning'
+    | 'unsupported'
+    | 'connecting'
+    | 'connected'
+    | 'reconnecting'
+    | 'disconnected';
+
+  /** 扫描结果设备（对齐 electron/ble/ble_collector.ts BleDeviceInfo） */
+  interface BleDeviceInfo {
+    deviceId: string;
+    name: string;
+    address: string;
+    fingerprint: string;
+    rssi: number | null;
+    serviceUuids: string[];
+    hasHeartRate: boolean;
+  }
+
+  /** ble:notify 推送载荷（对齐 electron/preload.ts BleNotifyPayload） */
+  type BleNotifyPayload =
+    | { type: 'hr'; bpm: number; ts: number }
+    | { type: 'status'; status: BleStatus; detail?: string }
+    | { type: 'error'; context?: string; message: string };
 
   interface NekoRuntimeConfig {
     python: string;

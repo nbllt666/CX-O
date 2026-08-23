@@ -433,3 +433,92 @@ export interface DreamConfig {
     quiet_windows: string[];
   };
 }
+
+// ── CX-O-Dream 生理信号（physio）类型（对齐 server/autonomy/dream/physio/ 契约） ──
+
+/** 生理信号状态快照（GET /api/physio/status） */
+export type PhysioStatus = PhysioStatusDisabled | PhysioStatusActive;
+
+/** 未启用/未装配：后端返回 {"status": "disabled"}（HTTP 200，不抛错） */
+export interface PhysioStatusDisabled {
+  status: 'disabled';
+}
+
+/** 已启用：含采集器/估计器状态快照 */
+export interface PhysioStatusActive {
+  status: string;
+  enabled: boolean;
+  collector: {
+    backend: string;
+    device_fingerprint?: string | null;
+    device_name_hint?: string;
+    [key: string]: unknown;
+  };
+  estimator: {
+    base_hr?: number;
+    hr_sleep_confidence?: number;
+    window_size?: number;
+    updated_at?: string | null;
+    [key: string]: unknown;
+  };
+}
+
+/** SleepSensor 融合信号之一（对齐 sleep_sensor 信号结构） */
+export interface PhysioSleepSignal {
+  name: string;
+  label?: string;
+  available: boolean;
+  weight: number;
+  value: number;
+}
+
+/** SleepSensor 融合状态（GET /api/physio/sleep）；未启用返回 {"status": "disabled"} */
+export type PhysioSleepState =
+  | { status: 'disabled' }
+  | {
+      state: 'AWAKE' | 'DROWSY' | 'ASLEEP' | 'AWAY';
+      confidence: number;
+      signals: PhysioSleepSignal[];
+    };
+
+/** 已配对设备（GET /api/physio/devices；fingerprint 已脱敏展示，id 为真实指纹仅供 forget 使用） */
+export interface PhysioDevice {
+  /** 设备名（device_name_hint），可能为 null */
+  name: string | null;
+  /** 脱敏展示指纹（前 8 位 + ****），**不可用于 forget** */
+  fingerprint: string;
+  /** 真实指纹，仅供 forget 端点使用（脱敏指纹 forget 必 404） */
+  id: string;
+}
+
+/** 已配对设备列表响应 */
+export interface PhysioDevicesResult {
+  devices: PhysioDevice[];
+}
+
+/** 解除配对结果（POST /api/physio/devices/{fp}/forget） */
+export interface PhysioForgetResult {
+  status: string;
+  fingerprint: string;
+}
+
+/** 一键清除基线结果（POST /api/physio/clear） */
+export interface PhysioClearResult {
+  ok: boolean;
+  cleared: boolean;
+}
+
+/** physio 配置（对齐 PhysioConfig / dream_physio_config.schema.json） */
+export interface PhysioConfig {
+  enabled: boolean;
+  backend: string;
+  device_name_hint: string;
+  device_fingerprint: string | null;
+  scan_timeout_sec: number;
+  reconnect_interval_sec: number;
+  base_drop_ratio: number;
+  base_drop_confirm_min: number;
+  hr_stability_threshold: number;
+  base_hr_learning: boolean;
+  store_raw_hr: boolean;
+}
