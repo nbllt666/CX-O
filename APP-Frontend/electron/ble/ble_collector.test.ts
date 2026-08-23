@@ -234,6 +234,63 @@ describe('BleHeartRateCollector', () => {
     expect(collector.getStatus().status).toBe('idle');
   });
 
+  it('扫描中 connect 打断 → discover 监听器移除（无泄漏）', async () => {
+    const noble = new MockNoble();
+    const collector = new BleHeartRateCollector(
+      { nobleLib: noble, scanTimeoutSec: 5, deviceNameHint: '' },
+      { onStatus: () => undefined },
+    );
+    // 不推进扫描定时器，保持 state='scanning'；emit discover 填充 devices/peripherals
+    const scanP = collector.startScan();
+    noble.emit('discover', makePeripheral());
+    expect(noble.listenerCount('discover')).toBe(1);
+    await collector.connect('dev-1'); // 扫描中 connect：清定时器+停扫+移除监听器
+    expect(noble.listenerCount('discover')).toBe(0);
+    expect(collector.getStatus().status).toBe('connected');
+    void scanP; // 孤儿 Promise（定时器被 clearScanTimer 取消，永不 settle），测试不等待
+  });
+
+  it('扫描中 disconnect 打断 → discover 监听器移除（无泄漏）', async () => {
+    const noble = new MockNoble();
+    const collector = new BleHeartRateCollector(
+      { nobleLib: noble, scanTimeoutSec: 5, deviceNameHint: '' },
+      { onStatus: () => undefined },
+    );
+    const scanP = collector.startScan();
+    noble.emit('discover', makePeripheral());
+    expect(noble.listenerCount('discover')).toBe(1);
+    await collector.disconnect(); // 扫描中 disconnect：清定时器+停扫+移除监听器
+    expect(noble.listenerCount('discover')).toBe(0);
+    void scanP;
+  });
+
+  it('重复 扫描→连接 循环不累积 discover 监听器', async () => {
+    const noble = new MockNoble();
+    const collector = new BleHeartRateCollector(
+      { nobleLib: noble, scanTimeoutSec: 5, deviceNameHint: '' },
+      { onStatus: () => undefined },
+    );
+    for (let i = 0; i < 3; i++) {
+      collector.startScan(); // 不等待（扫描定时器会被 connect 取消，孤儿 Promise）
+      noble.emit('discover', makePeripheral());
+      await collector.connect('dev-1'); // 打断扫描并移除监听器
+      expect(noble.listenerCount('discover')).toBe(0);
+      await collector.disconnect(); // 复位 state 供下一轮扫描
+    }
+    // 修复前每轮残留 1 个监听器 → 3 轮后 listenerCount===3；修复后恒为 0
+    expect(noble.listenerCount('discover')).toBe(0);
+  });
+
+  it('正常扫描收尾（推进定时器）同样移除 discover 监听器', async () => {
+    const noble = new MockNoble();
+    const collector = new BleHeartRateCollector(
+      { nobleLib: noble, scanTimeoutSec: 0.02, deviceNameHint: '' },
+      { onStatus: () => undefined },
+    );
+    await runScan(collector, noble, [makePeripheral()]);
+    expect(noble.listenerCount('discover')).toBe(0);
+  });
+
   it('能力探测：扫不到 0x180D → 状态 unsupported', async () => {
     const noble = new MockNoble();
     const statuses: string[] = [];
