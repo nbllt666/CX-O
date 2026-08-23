@@ -18,6 +18,60 @@ logger = logging.getLogger(__name__)
 # S4 显式睡眠语关键词（对齐 spec：聊天消息命中即短时触发入睡确认，窗口外短路梦境）
 SLEEP_SPEECH_KEYWORDS = ("睡了", "困了", "去睡了", "好困", "晚安", "睡觉", "要睡了")
 
+# 显式唤醒意图关键词（命中即视为用户要求从休眠中回到清醒）
+WAKE_KEYWORDS = ("在吗", "醒醒", "起来", "早上好", "早安", "在不在", "起床", "快醒", "你还在吗")
+
+# 可被用户文本终止的休眠态（snapshot.state 命中任一即触发唤醒）
+WAKEABLE_SLEEP_STATES = (
+    "PENDING_CONFIRMATION",
+    "ENTERING_SLEEP",
+    "ASLEEP",
+    "AWAY",
+    "DROWSY",
+)
+
+
+def _hit_wake_keyword(text: str) -> bool:
+    """用户文本是否命中显式唤醒意图关键词。"""
+    return any(kw in text for kw in WAKE_KEYWORDS)
+
+
+async def _maybe_wake_from_sleep(user_message: str, manager=None) -> None:
+    """用户唤醒意图检测：命中唤醒关键词 或 存在普通用户文本时的第一时间终止休眠。
+
+    若当前 sleep_sensor snapshot 状态为 PENDING_CONFIRMATION/ENTERING_SLEEP/
+    ASLEEP/AWAY/DROWSY 任一，则调用 sleep_sensor.wake_up() 强制回到 AWAKE，并
+    经 ws_manager.broadcast 推送 type=system.wake 事件（异常隔离，绝不阻断聊天
+    主流程，与 _signal_sleep_speech 并列）。
+    """
+    if not user_message or not user_message.strip():
+        return
+    try:
+        from server.dependencies import _service_state
+
+        runtime = getattr(_service_state, "physio_runtime", None)
+        if runtime is None:
+            return
+        sensor = getattr(runtime, "sleep_sensor", None)
+        if sensor is None or not hasattr(sensor, "snapshot") or not hasattr(sensor, "wake_up"):
+            return
+
+        # 状态在休眠/半休眠集内，且 命中唤醒关键词 或 存在有效用户文本 → 终止休眠
+        state = (sensor.snapshot() or {}).get("state", "AWAKE")
+        if state not in WAKEABLE_SLEEP_STATES:
+            return
+        if not (_hit_wake_keyword(user_message) or bool(user_message.strip())):
+            return
+
+        sensor.wake_up()
+        if manager is not None:
+            await manager.broadcast(
+                {"type": "system.wake", "data": {"source": "chat_wake", "previous_state": state}}
+            )
+        logger.info("用户文本触发睡眠终止，sleep_sensor 已强制回到 AWAKE（原状态=%s）", state)
+    except Exception as e:
+        logger.warning("睡眠唤醒检测降级（不影响聊天主流程）: %s", e)
+
 
 def _signal_sleep_speech(text: str) -> None:
     """S4 显式睡眠语接线：用户聊天文本命中关键词时注入 sleep_sensor。
@@ -69,6 +123,8 @@ async def _build_chat_context(
     # S4 显式睡眠语接线：所有聊天消息（MESSAGE/STREAM/MULTIMODAL）的共同入口，
     # 在用户文本进入后端的第一时间检测睡眠关键词（异常隔离，绝不阻断主流程）
     _signal_sleep_speech(user_message)
+    # 用户唤醒意图检测：与 _signal_sleep_speech 并列，第一时间终止休眠态并广播 system.wake
+    await _maybe_wake_from_sleep(user_message, manager)
     from server.dependencies import get_context_manager, get_memory_manager
 
     agent_config = get_agent_config(agent_id)

@@ -11,10 +11,13 @@
    （sleep→run_session、wake→purge+surface；surface_on_wake=false 跳过 surface）
 5. get_status 各态：disabled（未启动/已停止）、idle、dreaming、purge_scheduled
 6. 生命周期：start 幂等 / enabled=false 不启动 / stop 幂等
+7. 入睡流程（Task 3）：确认闸门通过/拒绝、首步自动摘要执行、摘要失败降级
+   仍不阻断并最终进入 run_session 的分支
 
 运行：python -m pytest tests/test_dream_engine.py -q
 """
 import asyncio
+from datetime import datetime
 
 import pytest
 
@@ -513,3 +516,192 @@ class TestLifecycle:
         engine = make_engine(config=DreamConfig(enabled=True))
         engine.stop()  # 不抛异常
         assert engine.get_status()["status"] == "disabled"
+
+
+# ================================================================ Task 3 入睡流程（确认闸门 + 首步摘要）
+class FakeSleepSensorTS:
+    """可跟踪 transition_state 调用的假 SleepSensor（snapshot 恒 ASLEEP）。"""
+
+    def __init__(self):
+        self.transitions = []
+        self.snapshots = 0
+
+    def snapshot(self):
+        self.snapshots += 1
+        return {"state": "ASLEEP", "confidence": 0.9, "signals": [], "updated_at": ""}
+
+    def transition_state(self, state, confidence=None, now=None):
+        self.transitions.append(state)
+        return {"state": state}
+
+
+class FakeConfirmArbiter:
+    """可配置确认结果的假 arbiter（记录调用次数）。"""
+
+    def __init__(self, confirmed=True, exc=None):
+        self.confirmed = confirmed
+        self.exc = exc
+        self.calls = 0
+
+    async def should_confirm(self, snapshot):
+        self.calls += 1
+        if self.exc:
+            raise self.exc
+        return self.confirmed
+
+
+class FakeAutoSummarizer:
+    """记录调用次数并可配置抛异常的假摘要组件。"""
+
+    def __init__(self, exc=None, result="自动摘要文本"):
+        self.exc = exc
+        self.result = result
+        self.calls = 0
+        self.last_agent = None
+
+    async def summarize(self, agent_id="default"):
+        self.calls += 1
+        self.last_agent = agent_id
+        if self.exc:
+            raise self.exc
+        return self.result
+
+
+def make_sleep_engine(*, sensor, arbiter, summarizer, collector=None):
+    """构造带 sleep_sensor + 确认闸门 + 自动摘要的 DreamEngine。"""
+    return DreamEngine(
+        collector=collector or FakeCollector(_snapshot()),
+        generator=FakeGenerator([_candidate()]),
+        dream_filter=FakeFilter(),
+        buffer=FakeBuffer(),
+        consolidator=FakeConsolidator(),
+        purge_job=FakePurgeJob(),
+        config=DreamConfig(enabled=True),
+        interval_seconds=0.05,
+        sleep_sensor=sensor,
+        sleep_confirm_arbiter=arbiter,
+        auto_summarizer=summarizer,
+    )
+
+
+@pytest.mark.asyncio
+class TestSleepSummaryFlow:
+    async def test_confirmed_runs_summary_then_session(self):
+        sensor = FakeSleepSensorTS()
+        arbiter = FakeConfirmArbiter(confirmed=True)
+        summarizer = FakeAutoSummarizer()
+        collector = FakeCollector(_snapshot())
+        engine = make_sleep_engine(
+            sensor=sensor, arbiter=arbiter, summarizer=summarizer, collector=collector
+        )
+        engine._maybe_trigger_by_sensor(datetime.now(), sleeping=True)
+        await asyncio.sleep(0.08)  # 等待入睡流程（摘要 + 会话）完成
+
+        # 确认通过 → 自动摘要执行 + run_session 进入（stats.sessions 累计）
+        assert arbiter.calls == 1
+        assert summarizer.calls == 1
+        assert summarizer.last_agent == "default"
+        assert collector.calls == 1
+        assert engine.get_status()["stats"]["sessions"] == 1
+        # 传感器先流转 ENTERING_SLEEP
+        assert "ENTERING_SLEEP" in sensor.transitions
+
+    async def test_confirmed_flow_called_after_returning_idle(self):
+        sensor = FakeSleepSensorTS()
+        arbiter = FakeConfirmArbiter(confirmed=True)
+        summarizer = FakeAutoSummarizer()
+        engine = make_sleep_engine(sensor=sensor, arbiter=arbiter, summarizer=summarizer)
+        engine._maybe_trigger_by_sensor(datetime.now(), sleeping=True)
+        await asyncio.sleep(0.08)
+        # 流程结束回到 idle（非 dreaming）；直调无后台循环，故断言内部 _status
+        assert engine._status == "idle"
+        assert sensor.transitions[-1] == "ENTERING_SLEEP"
+
+    async def test_rejected_skips_summary_and_session_and_returns_drowsy(self):
+        sensor = FakeSleepSensorTS()
+        arbiter = FakeConfirmArbiter(confirmed=False)
+        summarizer = FakeAutoSummarizer()
+        collector = FakeCollector(_snapshot())
+        engine = make_sleep_engine(
+            sensor=sensor, arbiter=arbiter, summarizer=summarizer, collector=collector
+        )
+        engine._maybe_trigger_by_sensor(datetime.now(), sleeping=True)
+        await asyncio.sleep(0.08)
+
+        # 确认拒绝 → 不执行摘要、不进入会话；传感器回退 DROWSY
+        assert arbiter.calls == 1
+        assert summarizer.calls == 0
+        assert collector.calls == 0
+        assert engine.get_status()["stats"]["sessions"] == 0
+        assert sensor.transitions and sensor.transitions[-1] == "DROWSY"
+        assert engine._status == "idle"
+
+    async def test_summary_exception_still_proceeds_to_session(self):
+        sensor = FakeSleepSensorTS()
+        arbiter = FakeConfirmArbiter(confirmed=True)
+        summarizer = FakeAutoSummarizer(exc=RuntimeError("summarizer down"))
+        collector = FakeCollector(_snapshot())
+        engine = make_sleep_engine(
+            sensor=sensor, arbiter=arbiter, summarizer=summarizer, collector=collector
+        )
+        engine._maybe_trigger_by_sensor(datetime.now(), sleeping=True)
+        await asyncio.sleep(0.08)
+
+        # 摘要失败降级：异常被隔离、不阻断，仍最终进入 run_session
+        assert summarizer.calls == 1
+        assert collector.calls == 1
+        assert engine.get_status()["stats"]["sessions"] == 1
+        assert engine._status == "idle"
+
+    async def test_no_auto_summarizer_zero_regression_direct_session(self):
+        # 未注入 auto_summarizer → 保持原有直接触发（不经确认闸门、不自带摘要）
+        sensor = FakeSleepSensorTS()
+        collector = FakeCollector(_snapshot())
+        engine = DreamEngine(
+            collector=collector,
+            generator=FakeGenerator([_candidate()]),
+            dream_filter=FakeFilter(),
+            buffer=FakeBuffer(),
+            consolidator=FakeConsolidator(),
+            purge_job=FakePurgeJob(),
+            config=DreamConfig(enabled=True),
+            interval_seconds=0.05,
+            sleep_sensor=sensor,
+            sleep_confirm_arbiter=FakeConfirmArbiter(confirmed=False),  # 即便拒绝也不走闸门
+            auto_summarizer=None,
+        )
+        engine._maybe_trigger_by_sensor(datetime.now(), sleeping=True)
+        await asyncio.sleep(0.05)
+        assert collector.calls == 1
+        assert engine.get_status()["stats"]["sessions"] == 1
+
+
+# ================================================================ Task 3 trigger_auto_summary
+@pytest.mark.asyncio
+class TestTriggerAutoSummary:
+    async def test_unused_summarizer_returns_none(self):
+        engine = make_engine()  # 未注入 auto_summarizer
+        result = await engine.trigger_auto_summary("default")
+        assert result is None
+
+    async def test_forwards_to_summarizer(self):
+        summarizer = FakeAutoSummarizer(result="引擎启动摘要")
+        engine = make_sleep_engine(
+            sensor=FakeSleepSensorTS(),
+            arbiter=FakeConfirmArbiter(confirmed=True),
+            summarizer=summarizer,
+        )
+        result = await engine.trigger_auto_summary("default")
+        assert result == "引擎启动摘要"
+        assert summarizer.calls == 1
+        assert summarizer.last_agent == "default"
+
+    async def test_summary_exception_isolated_for_trigger(self):
+        summarizer = FakeAutoSummarizer(exc=RuntimeError("down"))
+        engine = make_sleep_engine(
+            sensor=FakeSleepSensorTS(),
+            arbiter=FakeConfirmArbiter(confirmed=True),
+            summarizer=summarizer,
+        )
+        result = await engine.trigger_auto_summary("default")
+        assert result is None  # 异常被隔离

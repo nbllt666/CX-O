@@ -50,6 +50,10 @@ class TestDreamConfigDefaults:
         assert cfg.surface_on_wake is True
         assert cfg.surface_probability == 0.5
         assert cfg.max_surface_per_day == 1
+        assert cfg.sleep_confirmation.enabled is True
+        assert cfg.sleep_confirmation.model == "summary"
+        assert cfg.sleep_confirmation.timeout_sec == 10.0
+        assert cfg.sleep_confirmation.cooldown_seconds == 1800
 
     def test_schedule_reused_from_autonomy_config(self):
         cfg = DreamConfig()

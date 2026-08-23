@@ -917,6 +917,52 @@ async def setup_autonomy(services: Any, store_path: str = "") -> Optional[Autono
                     sleep_sensor_refresh = None
                     physio_runtime = None
 
+                # ---- 休眠前 LLM 确认仲裁器（入睡意图二次仲裁），异常隔离不影响睡眠体系 ----
+                # 注入 services.llm_client（chat(...) 返回带 .content 的对象）；未装配时
+                # approve_sleep 按 fail-open 放行。config 读 DreamConfig.sleep_confirmation。
+                confirmation_arbiter = None
+                try:
+                    from server.autonomy.dream.confirmation import (
+                        SleepConfirmationArbiter,
+                    )
+
+                    confirmation_arbiter = SleepConfirmationArbiter(
+                        llm_client=getattr(services, "llm_client", None) or None,
+                        config=dream_config.sleep_confirmation,
+                    )
+                    logger.info(
+                        "休眠前确认仲裁器已装配（enabled=%s, model=%s）",
+                        dream_config.sleep_confirmation.enabled,
+                        dream_config.sleep_confirmation.model,
+                    )
+                except Exception as e:
+                    logger.warning(
+                        "休眠前确认仲裁器装配失败，已隔离（approve_sleep 将 fail-open）: %s",
+                        e,
+                    )
+                    confirmation_arbiter = None
+
+                # ---- 入睡首步自动摘要（休眠确认通过后第一步固化；装配失败不影响主链路） ----
+                auto_summarizer = None
+                try:
+                    from server.autonomy.dream.summarizer import (
+                        SleepAutoSummarizer,
+                    )
+
+                    auto_summarizer = SleepAutoSummarizer(
+                        context_manager=getattr(services, "context_manager", None) or None,
+                        memory_manager=memory_manager,
+                        llm_client=getattr(services, "llm_client", None) or None,
+                        config=dream_config,
+                    )
+                    logger.info("入睡首步自动摘要组件已装配")
+                except Exception as e:
+                    logger.warning(
+                        "入睡首步自动摘要装配失败，已隔离（入睡直接进，零回归）: %s",
+                        e,
+                    )
+                    auto_summarizer = None
+
                 dream_engine = DreamEngine(
                     collector=DreamMaterialCollector(
                         memory_manager=memory_manager,
@@ -944,6 +990,8 @@ async def setup_autonomy(services: Any, store_path: str = "") -> Optional[Autono
                     ws_manager=ws_manager,
                     sleep_sensor=sleep_sensor,
                     sleep_sensor_refresh=sleep_sensor_refresh,
+                    sleep_confirm_arbiter=confirmation_arbiter,
+                    auto_summarizer=auto_summarizer,
                 )
                 _dream_engine = dream_engine
                 logger.info(
@@ -1006,6 +1054,10 @@ async def setup_autonomy(services: Any, store_path: str = "") -> Optional[Autono
             logger.info("CX-O-Dream 梦境引擎已挂载为 embedded 插件能力并启动后台循环")
         # Physio 生理信号运行时容器挂载（供 /api/physio/* 路由注入；未装配时 None 降级）
         services.physio_runtime = physio_runtime
+        # 休眠前确认仲裁器 + sleep_sensor 挂载到 services（供聊天唤醒检测等消费）
+        services.confirmation_arbiter = confirmation_arbiter
+        if physio_runtime is not None and getattr(physio_runtime, "sleep_sensor", None) is not None:
+            services.sleep_sensor = physio_runtime.sleep_sensor
         await engine.start()
         logger.info(
             "CX-O-Autonomy 已装配为 embedded CXFC 插件（%s）并启动主循环",

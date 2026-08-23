@@ -7,7 +7,9 @@ DreamEngine 串联 采集 → 联想生成 → D7 确定性闸门过滤 → 缓�
 相位挂点（_run_loop，独立后台任务，不并入自主主循环）：
 - 睡眠窗口进入 → asyncio.create_task(run_session)（状态 dreaming，结束后回 idle）
 - SleepSensor 生理/行为确认（注入 sleep_sensor 时）：睡眠窗口内状态 ASLEEP，
-  或窗口外 S4 显式睡眠语短路 ASLEEP → 触发 run_session（冷却 30min 防高频）
+  或窗口外 S4 显式睡眠语短路 ASLEEP → 触发 run_session（冷却 30min 防高频）；
+  Task 3：注入 auto_summarizer 时改走"入睡 LLM 确认闸门 → 首步自动摘要 →
+  梦境会话"的入睡流程（确认拒绝回退 DROWSY 并跳过本轮）
 - 唤醒窗口进入 → create_task(purge_job.run()) + 可选 consolidator.surface()（surface_on_wake）
 - 每 6 小时兜底 purge
 - 任何异常被捕获隔离并记日志，绝不影响主服务与语音链路
@@ -20,6 +22,7 @@ sleep_sensor 未注入时入睡判定保持纯 circadian 时间窗口（零回�
 from __future__ import annotations
 
 import asyncio
+import inspect
 import logging
 from datetime import datetime
 from typing import Any, Dict, List, Optional
@@ -90,6 +93,15 @@ class DreamEngine:
             None 时入睡判定保持纯 circadian 时间窗口（零回归）
         sleep_sensor_refresh: 可选每轮刷新回调（刷新 S9 心率置信度 / S7 时间先验），
             调用异常被捕获隔离，不影响主循环
+        sleep_confirm_arbiter: 可选入睡 LLM 确认闸门（Task 3；暴露
+            should_confirm/is_confirmed/confirm(snapshot) 之一的可调用对象，
+            可为 sync/async）。None 时跳过确认直接进入（零回归）
+        auto_summarizer: 可选入睡首步自动摘要组件（SleepAutoSummarizer，含
+            async summarize(agent_id)）。None 时不自带摘要（零回归）
+
+        注意：仅当 auto_summarizer 被注入时才走"确认闸门 + 首步自动摘要"入睡
+        流程；二者任一为 None 时保持原有直接触发行为（`run_session`/`_status`
+        语义不变）。
     """
 
     def __init__(
@@ -105,6 +117,8 @@ class DreamEngine:
         interval_seconds: float = _DEFAULT_INTERVAL_SECONDS,
         sleep_sensor=None,
         sleep_sensor_refresh=None,
+        sleep_confirm_arbiter=None,
+        auto_summarizer=None,
     ):
         self._collector = collector
         self._generator = generator
@@ -120,6 +134,9 @@ class DreamEngine:
         self._sleep_sensor = sleep_sensor
         self._sleep_sensor_refresh = sleep_sensor_refresh
         self._sleep_sensor_cooldown_seconds = float(_SLEEP_SENSOR_COOLDOWN_SECONDS)
+        # 入睡 LLM 确认闸门 / 首步自动摘要（Task 3；None 时零回归）
+        self._sleep_confirm_arbiter = sleep_confirm_arbiter
+        self._auto_summarizer = auto_summarizer
         # 相位调度器：start() 时由 config.schedule.model_dump() 构造
         self._scheduler: Optional[CircadianScheduler] = None
         # 后台任务生命周期
@@ -333,6 +350,10 @@ class DreamEngine:
 
         - 状态非 ASLEEP / 正在 dreaming / 距上次触发不足冷却 → 不触发
         - 睡眠窗口内 ASLEEP，或窗口外 S4 显式睡眠语短路 ASLEEP → 触发
+        - 未注入 auto_summarizer 时保持原有直接触发（零回归）
+        - 注入 auto_summarizer 时走"入睡 LLM 确认闸门 + 首步自动摘要"入睡流程：
+            确认拒绝 → sleep_sensor 回退非 ASLEEP（DROWSY）并跳过本轮；确认通过 →
+            ENTERING_SLEEP，先同步等待自动摘要，完毕后再进入梦境会话（置 dreaming）
         - snapshot() 异常被捕获隔离，不影响主循环
         """
         if self._status == _STATUS_DREAMING:
@@ -349,14 +370,125 @@ class DreamEngine:
         s4_shortcut = self._is_s4_shortcut(snapshot)
         if not (sleeping or s4_shortcut):
             return
+
+        # 未注入首步摘要 → 保持原有直接触发行为（零回归）
+        if self._auto_summarizer is None:
+            self._last_trigger_at = now
+            self._status = _STATUS_DREAMING
+            asyncio.create_task(self._safe_run_session())
+            logger.info(
+                "SleepSensor 确认入睡，触发梦境会话（sleeping=%s, s4_shortcut=%s）",
+                sleeping,
+                s4_shortcut,
+            )
+            return
+
+        # 带冷却的入睡流程：确认闸门 + 首步自动摘要 + 梦境会话（异常隔离，不阻塞循环）
         self._last_trigger_at = now
         self._status = _STATUS_DREAMING
-        asyncio.create_task(self._safe_run_session())
+        asyncio.create_task(self._safe_sleep_session(snapshot))
         logger.info(
-            "SleepSensor 确认入睡，触发梦境会话（sleeping=%s, s4_shortcut=%s）",
+            "SleepSensor 确认入睡候选，进入入睡流程（确认闸门+自动摘要+会话, sleeping=%s, s4_shortcut=%s）",
             sleeping,
             s4_shortcut,
         )
+
+    async def _safe_sleep_session(self, snapshot: Dict[str, Any]) -> None:
+        """入睡流程（任务内）：LLM 确认闸门 → ENTERING_SLEEP → 首步摘要 → 梦境会话。
+
+        任一环节异常被捕获隔离并记日志，绝不阻断休眠主链路；确认拒绝时回退
+        sleep_sensor 到非 ASLEEP（DROWSY）并跳过本会话，不进入 run_session。
+        """
+        try:
+            # 闸门1：入睡 LLM 确认；拒绝则回退并跳过本轮
+            confirmed = await self._sleep_confirmation_gate(snapshot)
+            if not confirmed:
+                logger.info("入睡 LLM 确认未通过，回退 DROWSY 并跳过本轮梦境会话")
+                self._reject_sleep(snapshot)
+                return
+            # 闸门2：状态流转 ENTERING_SLEEP（传感器侧），随后首步自动摘要
+            self._enter_sleep(snapshot)
+            if self._auto_summarizer is not None:
+                try:
+                    await self._auto_summarizer.summarize(_DEFAULT_AGENT_ID)
+                except Exception as e:
+                    logger.warning("入睡首步自动摘要异常（已隔离，仍继续进入梦境会话）: %s", e)
+            # 摘要完成后再调用 run_session（置 dreaming，由 _safe_run_session 管理）
+            await self._safe_run_session()
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.exception("入睡流程异常，已隔离")
+        finally:
+            if self._status == _STATUS_DREAMING:
+                self._status = _STATUS_IDLE
+
+    async def _sleep_confirmation_gate(self, snapshot: Dict[str, Any]) -> bool:
+        """入睡 LLM 确认闸门（可复用 sleep_confirm_arbiter，sync/async 均可）。
+
+        - 未注入 arbiter → 默认通过（True，保持无确认直接进）
+        - arbiter 暴露 should_confirm / is_confirmed / confirm 任一方法即调用
+          （传入 snapshot）；调用异常被隔离，按"未确认"处理（跳过本轮，防误判入睡）
+        - arbiter 无任何可用确认方法 → 记日志并按通过处理（不阻断）
+        """
+        arbiter = self._sleep_confirm_arbiter
+        if arbiter is None:
+            return True
+        for name in ("should_confirm", "is_confirmed", "confirm"):
+            method = getattr(arbiter, name, None)
+            if not callable(method):
+                continue
+            try:
+                result = method(snapshot)
+                if asyncio.iscoroutine(result) or inspect.isawaitable(result):
+                    result = await result
+                return bool(result)
+            except Exception as e:
+                logger.warning("入睡确认闸门调用失败（按未确认处理）: name=%s, %s", name, e)
+                return False
+        logger.warning("入睡确认闸门：arbiter 无可用确认方法，按通过处理")
+        return True
+
+    def _reject_sleep(self, snapshot: Dict[str, Any]) -> None:
+        """确认拒绝：将 sleep_sensor 回退到非 ASLEEP（DROWSY），跳过本轮会话。"""
+        self._status = _STATUS_IDLE
+        if self._sleep_sensor is None:
+            return
+        try:
+            self._sleep_sensor.transition_state("DROWSY")
+        except Exception as e:
+            logger.warning("SleepSensor 回退 DROWSY 失败（已隔离）: %s", e)
+
+    def _enter_sleep(self, snapshot: Dict[str, Any]) -> None:
+        """状态流转 ENTERING_SLEEP：将 sleep_sensor 置入浅睡中间态（异常隔离）。"""
+        if self._sleep_sensor is None:
+            return
+        try:
+            self._sleep_sensor.transition_state("ENTERING_SLEEP")
+        except Exception as e:
+            logger.warning("SleepSensor 置入 ENTERING_SLEEP 失败（已隔离）: %s", e)
+
+    async def trigger_auto_summary(self, agent_id: str = _DEFAULT_AGENT_ID) -> Optional[str]:
+        """外部入口：触发一次入睡首步自动摘要（physio runtime / 引擎启动可调用）。
+
+        未注入 auto_summarizer 或摘要异常时返回 None，绝不阻断调用方。
+
+        Args:
+            agent_id: Agent ID
+
+        Returns:
+            生成的摘要文本；无需执行/未注入/异常时返回 None
+        """
+        if self._auto_summarizer is None:
+            logger.info("入睡首步自动摘要未装配（auto_summarizer=None），跳过")
+            return None
+        try:
+            return await self._auto_summarizer.summarize(agent_id)
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:
+            logger.warning("触发入睡首步自动摘要异常（已隔离）: agent=%s, %s", agent_id, e)
+            return None
 
     def _cooldown_passed(self, now: datetime) -> bool:
         """距上次会话触发（窗口边沿或 SleepSensor 确认）是否已超过冷却。"""

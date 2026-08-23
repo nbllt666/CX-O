@@ -17,6 +17,17 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 from server.autonomy.config import ScheduleConfig
 
 
+class SleepConfirmationConfig(BaseModel):
+    """休眠前 LLM 意图确认配置。"""
+
+    model_config = ConfigDict(extra="forbid")
+    enabled: bool = True
+    model: str = "summary"
+    timeout_sec: float = 10.0
+    prompt_template: str = ""
+    cooldown_seconds: int = 1800
+
+
 class PhysioConfig(BaseModel):
     """CX-O-Dream 生理信号接入配置（对齐 dream_physio_config.schema.json）。
 
@@ -68,6 +79,7 @@ class DreamConfig(BaseModel):
     max_surface_per_day: int = 1
     schedule: ScheduleConfig = Field(default_factory=ScheduleConfig)
     physio: PhysioConfig = Field(default_factory=PhysioConfig)
+    sleep_confirmation: SleepConfirmationConfig = Field(default_factory=SleepConfirmationConfig)
 
 
 def resolve_store_dir(store_path: str = "") -> str:

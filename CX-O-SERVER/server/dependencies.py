@@ -26,6 +26,10 @@ class ServiceState:
         self.cxfc_manager: Optional[Any] = None
         # DocumentMemoryManager（迁移自 CXHMS Phase 2：AnythingLLM Document API 兼容端点）
         self.document_memory_manager: Optional[Any] = None
+        # CX-O-Dream 休眠体系运行时：physio_runtime 持有 sleep_sensor，
+        # confirmation_arbiter 为休眠前 LLM 确认仲裁器（未装配时 None 降级）
+        self.physio_runtime: Optional[Any] = None
+        self.confirmation_arbiter: Optional[Any] = None
 
 
 _service_state: Optional[ServiceState] = None

@@ -188,8 +188,30 @@ class TestUnavailableSignals:
         assert snap["state"] == "ASLEEP"
 
 
-# ================================================================ 状态机四态
+# ================================================================ 状态机四态与显式状态流转/唤醒
 class TestStateMachine:
+    def test_wake_up_resets_state_and_s4(self):
+        """测试 wake_up() 显式唤醒接口能够重置 S4 短路并切回 AWAKE 态。"""
+        sensor = _make_sensor()
+        sensor.set_sleep_speech(True)
+        assert sensor.snapshot()["state"] == "ASLEEP"
+        res = sensor.wake_up()
+        assert res["state"] == "AWAKE"
+        assert res["confidence"] == 0.0
+        snap = sensor.snapshot()
+        assert snap["state"] == "AWAKE"
+        assert _signals(snap)["S4"]["value"] == 0.0
+
+    def test_transition_state_supports_pre_sleep_states(self):
+        """测试 transition_state 支持 PENDING_CONFIRMATION 和 ENTERING_SLEEP 等中间态。"""
+        sensor = _make_sensor()
+        res1 = sensor.transition_state("PENDING_CONFIRMATION", confidence=0.85)
+        assert res1["state"] == "PENDING_CONFIRMATION"
+        assert res1["confidence"] == 0.85
+
+        res2 = sensor.transition_state("ENTERING_SLEEP")
+        assert res2["state"] == "ENTERING_SLEEP"
+
     def test_drowsy_at_threshold(self):
         sensor = _make_sensor()
         sensor.set_hr_confidence(0.5)

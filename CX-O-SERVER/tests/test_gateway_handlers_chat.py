@@ -125,7 +125,11 @@ class FakeManager:
     def __init__(self):
         self.handlers = {}
         self.sent = []
+        self.broadcasts = []
         self.llm_count = 0
+
+    async def broadcast(self, message, exclude=None):
+        self.broadcasts.append(message)
 
     def register_action_handler(self, action, handler):
         self.handlers[action] = handler
@@ -228,11 +232,21 @@ class TestBuildChatContext:
 # S4 显式睡眠语接线（F2-S4 修复）
 # --------------------------------------------------------------------------- #
 class _FakeSleepSensor:
-    def __init__(self):
+    def __init__(self, state="AWAKE"):
         self.hits = []
+        self.state = state
+        self.wake_calls = 0
 
     def set_sleep_speech(self, hit):
         self.hits.append(hit)
+
+    def snapshot(self):
+        return {"state": self.state}
+
+    def wake_up(self, now=None):
+        self.wake_calls += 1
+        self.state = "AWAKE"
+        return {"state": "AWAKE"}
 
 
 class _FakePhysioRuntime:
@@ -296,6 +310,88 @@ class TestSleepSpeechWiring:
         mgr = FakeManager()
         ctx = await _build_chat_context("a1", "晚安", mgr, "c1", "r1", ChatActions.MESSAGE)
         assert ctx is None  # agent 缺失正常返回 None，S4 注入未抛异常
+
+
+# --------------------------------------------------------------------------- #
+# 用户唤醒意图检测（Task 2：_maybe_wake_from_sleep）
+# --------------------------------------------------------------------------- #
+class TestWakeFromSleep:
+    @pytest.mark.asyncio
+    async def test_wake_keyword_returns_sensor_to_awake(self, monkeypatch):
+        """ASLEEP 状态命中唤醒关键词 → sleep_sensor 回到 AWAKE 并广播 system.wake。"""
+        from types import SimpleNamespace
+
+        sensor = _FakeSleepSensor(state="ASLEEP")
+        runtime = _FakePhysioRuntime(enabled=True, sensor=sensor)
+        monkeypatch.setattr(
+            deps, "_service_state", SimpleNamespace(physio_runtime=runtime)
+        )
+        monkeypatch.setattr(chat_mod, "get_agent_config", lambda aid: None)
+        mgr = FakeManager()
+        await _build_chat_context("a1", "在吗？快醒醒", mgr, "c1", "r1", ChatActions.MESSAGE)
+        assert sensor.wake_calls == 1
+        assert sensor.state == "AWAKE"
+        assert len(mgr.broadcasts) == 1
+        assert mgr.broadcasts[0]["type"] == "system.wake"
+        assert mgr.broadcasts[0]["data"]["previous_state"] == "ASLEEP"
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("state", ["PENDING_CONFIRMATION", "ENTERING_SLEEP", "ASLEEP", "AWAY", "DROWSY"])
+    async def test_sleep_states_plain_text_wakes(self, monkeypatch, state):
+        """任一可唤醒态 + 普通用户文本 → 强制回到 AWAKE。"""
+        from types import SimpleNamespace
+
+        sensor = _FakeSleepSensor(state=state)
+        runtime = _FakePhysioRuntime(enabled=True, sensor=sensor)
+        monkeypatch.setattr(
+            deps, "_service_state", SimpleNamespace(physio_runtime=runtime)
+        )
+        monkeypatch.setattr(chat_mod, "get_agent_config", lambda aid: None)
+        mgr = FakeManager()
+        await _build_chat_context("a1", "今天天气不错", mgr, "c1", "r1", ChatActions.MESSAGE)
+        assert sensor.wake_calls == 1
+        assert sensor.state == "AWAKE"
+
+    @pytest.mark.asyncio
+    async def test_awake_state_no_wake(self, monkeypatch):
+        """AWAKE 状态普通文本 → 不触发 wake_up、不广播。"""
+        from types import SimpleNamespace
+
+        sensor = _FakeSleepSensor(state="AWAKE")
+        runtime = _FakePhysioRuntime(enabled=True, sensor=sensor)
+        monkeypatch.setattr(
+            deps, "_service_state", SimpleNamespace(physio_runtime=runtime)
+        )
+        monkeypatch.setattr(chat_mod, "get_agent_config", lambda aid: None)
+        mgr = FakeManager()
+        await _build_chat_context("a1", "你好", mgr, "c1", "r1", ChatActions.MESSAGE)
+        assert sensor.wake_calls == 0
+        assert sensor.state == "AWAKE"
+        assert mgr.broadcasts == []
+
+    @pytest.mark.asyncio
+    async def test_empty_text_does_not_wake_even_in_sleep(self, monkeypatch):
+        """空文本（如多模态无图无文）不触发唤醒。"""
+        from types import SimpleNamespace
+
+        sensor = _FakeSleepSensor(state="ASLEEP")
+        runtime = _FakePhysioRuntime(enabled=True, sensor=sensor)
+        monkeypatch.setattr(
+            deps, "_service_state", SimpleNamespace(physio_runtime=runtime)
+        )
+        monkeypatch.setattr(chat_mod, "get_agent_config", lambda aid: None)
+        mgr = FakeManager()
+        await _build_chat_context("a1", "", mgr, "c1", "r1", ChatActions.MESSAGE)
+        assert sensor.wake_calls == 0
+
+    @pytest.mark.asyncio
+    async def test_missing_runtime_no_wake_no_crash(self, monkeypatch):
+        """physio runtime 未装配 → 唤醒检测静默跳过，不崩溃。"""
+        monkeypatch.setattr(deps, "_service_state", None)
+        monkeypatch.setattr(chat_mod, "get_agent_config", lambda aid: None)
+        mgr = FakeManager()
+        await _build_chat_context("a1", "在吗", mgr, "c1", "r1", ChatActions.MESSAGE)
+        assert mgr.broadcasts == []
 
 
 # --------------------------------------------------------------------------- #

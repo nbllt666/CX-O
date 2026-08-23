@@ -26,6 +26,16 @@ from typing import Any, Callable, Dict, List, Optional, Tuple
 
 logger = logging.getLogger(__name__)
 
+class SleepSensorState:
+    """SleepSensor 状态常量定义。"""
+    AWAKE = "AWAKE"
+    DROWSY = "DROWSY"
+    PENDING_CONFIRMATION = "PENDING_CONFIRMATION"
+    ENTERING_SLEEP = "ENTERING_SLEEP"
+    ASLEEP = "ASLEEP"
+    AWAY = "AWAY"
+
+
 # 信号注册表（spec §5 权重表）：(编号, 中文标签, 权重)。S4=1.0 为短路信号。
 _SIGNAL_WEIGHTS: Tuple[Tuple[str, str, float], ...] = (
     ("S1", "输入静默", 0.15),
@@ -135,6 +145,25 @@ class SleepSensor:
         self._state: str = "AWAKE"
         self._confidence: float = 0.0
         self._updated_at: Optional[datetime] = None
+
+    def wake_up(self, now: Optional[datetime] = None) -> Dict[str, Any]:
+        """显式唤醒接口：重置睡眠与短路状态，强制将状态切换为 AWAKE。
+
+        清除 S4 命中时刻、重置 S4 为 0，并将内部状态置为 AWAKE。
+        Returns:
+            {state: 'AWAKE', confidence: float, updated_at: str}
+        """
+        now = now or self._now_fn()
+        self._s4_hit_at = None
+        s4 = self._provider("S4")
+        s4.value = 0.0
+        return self._set_state(SleepSensorState.AWAKE, 0.0, now)
+
+    def transition_state(self, state: str, confidence: Optional[float] = None, now: Optional[datetime] = None) -> Dict[str, Any]:
+        """显式流转到指定状态（如 PENDING_CONFIRMATION / ENTERING_SLEEP / ASLEEP / AWAKE 等）。"""
+        now = now or self._now_fn()
+        conf = self._confidence if confidence is None else confidence
+        return self._set_state(state, conf, now)
 
     # -------------------------------------------------------------- 信号注入
     def set_hr_confidence(self, conf: float) -> None:
