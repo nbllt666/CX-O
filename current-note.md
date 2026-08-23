@@ -4,6 +4,12 @@
 
 ## 做到哪了
 
+- **记忆系统增强：事件未完成状态与摘要可回取/可修改**（已闭合，2026-08-23；spec `enhance-memory-unfinished-event-summary`）
+  - 工程过程：/spec /goal 提出需求（增加事件未完成状态；未完成事件摘要保留在摘要模型上下文；摘要模型可经工具调用回取原始数据；可修改摘要）→ 定位缺口（summary_prompt 只含当前话题、原文软删除不可回取、摘要为静态文本）→ 三件套 → 人类批准 → 实现（`trigger_topic_summary` 增强：status 参数/启发式判定、未完成旧摘要注入 `<未完成议题>`、raw_messages 快照、marker 结构化元数据、max_history 清理跳过未完成；新增 3 个 summary 工具 list_topic_summaries/get_topic_summary_raw/update_topic_summary；ContextManager 新增 update_message；更新摘要助手隐藏提示词；新增/更新单测）。
+  - 交接状态：**已闭合**（Task 1-5 + checklist 13 项全勾验通过；spec `enhance-memory-unfinished-event-summary` 待归档）。
+  - 最终结果：话题摘要标记携带 status/summary_id/raw_messages/memory_id 等元数据；未完成摘要永不被 max_history 清理；摘要助手可列示/回取原文/修改续写并可切换状态。`pytest tests/test_summary_tools.py -q` **51 passed**；相关回归 `test_master_tools/test_agent_tools/test_context_router/test_session_store` **130 passed**；pyflakes 修改文件零告警。变更文档 `.trae/documents/20260823_模块0_记忆事件未完成摘要增强.md`。经验沉淀：`set_dependencies` 整体覆写语义、summary_prompt 承载未完成事项注入（而非 build_messages 历史追加）。
+  - 接续入口：spec 待归档；用户在前端 oss 观察摘要助手使用新工具；后续如需让主模型 build_messages 历史也纳入 topic_summary 标记，可扩展 `_append_history`（本次未纳入，保持改动收敛）。
+
 - **CX-O-Dream 生理信号接入（手环心率广播，前端 BLE）**（已闭合，2026-08-23；spec `add-dream-physio-heartrate`）
   - 工程过程：需求闭合（AskUserQuestion 裁决 4 项：完整 S1-S9 重建 / Electron 主进程 noble+BLE IPC / 后端跑估计器 / 不接云端 API 全做 P0-P2）→ 三件套 → GN-004 T1（阻断 B1-B3+B4-B16 修正）→ T1 复审（CAUTION-PASS，N1-N4 收口、N5 契约基线偏离 S2 批准确认）→ P0（PhysioConfig + physio 后端 estimator/store + REST 8 端点）→ P1（SleepSensor 完整 S1-S9 融合状态机 + DreamEngine 入睡触发升级 + PhysioRuntime 装配）→ P2（Electron noble BLE 采集 5 通道 IPC + HR/静默上送 + DreamPage 生理区块）→ S5（public 契约 physio.pyi + 2 schema + dream_config.schema.json 修改）→ GN-004 T3 交付审查（CAUTION-PASS，F1 时序缺陷[前端毫秒 vs 后端秒→S9 链路失效] + F2 S4 睡眠语接线 + F3 梦境禁读断言 修正）→ T3 复审（CAUTION-PASS，全部到位）。
   - 交接状态：**已闭合**（P0-P2 + 契约 + 全量回归完成；GN-004 T3 复审通过/警示已处理；[V] 由 S2 spec 批准覆盖）。

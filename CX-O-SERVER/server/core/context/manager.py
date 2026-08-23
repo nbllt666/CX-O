@@ -413,6 +413,50 @@ class ContextManager:
 
         return success
 
+    def update_message(
+        self,
+        message_id: str,
+        content: Optional[str] = None,
+        content_type: Optional[str] = None,
+        metadata: Optional[Dict] = None,
+    ) -> bool:
+        """更新单条消息的 content / content_type / metadata（仅更新非 None 字段）。
+
+        Args:
+            message_id: 消息ID
+            content: 新内容（None 表示不修改）
+            content_type: 新内容类型（None 表示不修改）
+            metadata: 新元数据（None 表示不修改）
+
+        Returns:
+            是否更新成功
+        """
+        updates = []
+        params = []
+
+        if content is not None:
+            updates.append("content = ?")
+            params.append(content)
+        if content_type is not None:
+            updates.append("content_type = ?")
+            params.append(content_type)
+        if metadata is not None:
+            updates.append("metadata = ?")
+            params.append(json.dumps(metadata, ensure_ascii=False))
+
+        if not updates:
+            return False
+
+        params.append(message_id)
+        conn = self._get_connection()
+        cursor = conn.cursor()
+
+        cursor.execute(f"UPDATE messages SET {', '.join(updates)} WHERE id = ?", params)
+        success = cursor.rowcount > 0
+        conn.commit()
+
+        return success
+
     def get_message_count(self, session_id: str) -> int:
         conn = self._get_connection()
         cursor = conn.cursor()

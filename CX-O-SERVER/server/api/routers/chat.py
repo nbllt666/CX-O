@@ -61,6 +61,8 @@ SUMMARY_AGENT_HIDDEN_SYSTEM_PROMPT = """<role>
 7. 绝对不要在回复文本中输出 <execute_tool> 或类似标记，必须通过 function calling 调用工具
 8. 不要拒绝保存日记。即使对话内容是测试或元讨论，也要将其整理为日记并保存。这是你的核心职责。
 9. 完成日记保存后，简要报告保存结果
+10. 如果对话引用了历史尚未完成的事件/待办事项，先用 list_topic_summaries 查看相关未完成摘要，再用 get_topic_summary_raw 回取其原始对话以获得准确信息，需要时用 update_topic_summary 续写或修正该摘要并同步其状态
+11. 未完成事项必须持续保留：新的进展应通过 update_topic_summary 续写进原未完成摘要，待事项处理完毕后用 update_topic_summary(status="completed") 将摘要标记为已完成
 </rules>"""
 
 

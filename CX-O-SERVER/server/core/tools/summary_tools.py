@@ -26,6 +26,55 @@ _TOPIC_SUMMARY_CONFIG = {
     "topic_marker_enabled": True,
 }
 
+# 未完成状态自动判定用指示词（命中任一即判定为 unfinished）
+_UNFINISHED_INDICATORS = (
+    "未完成", "待办", "待处理", "待跟进", "待解决", "尚未", "未解决",
+    "待确认", "未决", "进行中", "后续", "未落实", "待讨论", "待定",
+    "pending", "todo", "tbd", "backlog", "in progress", "open issue",
+)
+
+# 话题摘要消息合法状态
+_SUMMARY_STATUSES = ("unfinished", "completed")
+
+
+def _detect_unfinished_status(summary: str) -> str:
+    """按摘要文本是否含未完成指示词自动判定状态。
+
+    未含指示词返回 "completed"，否则返回 "unfinished"。
+    """
+    if not summary:
+        return "completed"
+    lowered = summary.lower()
+    for word in _UNFINISHED_INDICATORS:
+        if word.lower() in lowered:
+            return "unfinished"
+    return "completed"
+
+
+def _is_topic_summary(msg: Dict[str, Any]) -> bool:
+    """判断消息是否为话题摘要标记（按 content_type 或 [话题摘要] 前缀）。"""
+    return msg.get("content_type") == "topic_summary" or str(
+        msg.get("content", "")
+    ).startswith("[话题摘要]")
+
+
+def _get_summary_marker(cm, session_id: str, summary_id: str):
+    """按 summary_id（标记消息 id 或其 metadata.summary_id）在会话中定位摘要标记消息。"""
+    if not cm:
+        return None
+    key = str(summary_id)
+    try:
+        messages = cm.get_recent_messages(session_id, limit=1000)
+    except Exception:
+        return None
+    for m in messages:
+        if key and str(m.get("id")) == key:
+            return m
+        md = m.get("metadata") or {}
+        if md.get("summary_id") is not None and str(md["summary_id"]) == key:
+            return m
+    return None
+
 
 def set_dependencies(memory_manager=None, model_router=None, context_manager=None):
     """设置依赖的组件"""
@@ -240,6 +289,68 @@ def register_summary_tools():
         category="summary",
         tags=["summary", "config", "topic", "limit"],
         examples=["设置历史话题数量为 5", "限制历史话题为 3 个"],
+    )
+
+    # 4.5 list_topic_summaries - 列出话题摘要
+    tool_registry.register(
+        name="list_topic_summaries",
+        description="列出当前会话的全部话题摘要及其未完成状态（unfinished/completed），用于感知历史中尚未完成的事件/待办事项。",
+        parameters={
+            "type": "object",
+            "properties": {
+                "session_id": {"type": "string", "description": "会话ID"},
+            },
+            "required": ["session_id"],
+        },
+        function=list_topic_summaries,
+        category="summary",
+        tags=["summary", "topic", "list", "unfinished"],
+        examples=["列出当前会话的历史话题摘要", "查看有哪些未完成的话题摘要"],
+    )
+
+    # 4.6 get_topic_summary_raw - 回取话题摘要原始数据
+    tool_registry.register(
+        name="get_topic_summary_raw",
+        description="获取指定话题摘要在被摘要前的原始消息快照。当摘要信息不足或需核对原始数据时调用。",
+        parameters={
+            "type": "object",
+            "properties": {
+                "session_id": {"type": "string", "description": "会话ID"},
+                "summary_id": {"type": "string", "description": "话题摘要标记 id"},
+            },
+            "required": ["session_id", "summary_id"],
+        },
+        function=get_topic_summary_raw,
+        category="summary",
+        tags=["summary", "topic", "raw", "messages"],
+        examples=["获取话题摘要的原始消息", "回取该摘要对应的对话原文"],
+    )
+
+    # 4.7 update_topic_summary - 修改/续写话题摘要
+    tool_registry.register(
+        name="update_topic_summary",
+        description="修改既有话题摘要的文本（new_content）或未完成状态（status，unfinished/completed）。未完成事项处理完毕后，用它把摘要标记为完成的摘要。",
+        parameters={
+            "type": "object",
+            "properties": {
+                "session_id": {"type": "string", "description": "会话ID"},
+                "summary_id": {"type": "string", "description": "话题摘要标记 id"},
+                "new_content": {
+                    "type": "string",
+                    "description": "新的摘要文本（可选）",
+                },
+                "status": {
+                    "type": "string",
+                    "enum": ["unfinished", "completed"],
+                    "description": "新的未完成状态（可选）",
+                },
+            },
+            "required": ["session_id", "summary_id"],
+        },
+        function=update_topic_summary,
+        category="summary",
+        tags=["summary", "topic", "update", "modify"],
+        examples=["将话题摘要标记为已完成", "续写或修正某条话题摘要"],
     )
 
     # 5-16. 图工具注册 (4库 × 3工具 = 12个)
@@ -709,21 +820,164 @@ def clear_summary_context(session_id: str) -> Dict[str, Any]:
         return {"error": f"清空上下文失败: {str(e)}"}
 
 
+def list_topic_summaries(session_id: str) -> Dict[str, Any]:
+    """列出会话内全部话题摘要（含未完成状态）。
+
+    供摘要模型感知未完成事项。
+
+    Args:
+        session_id: 会话ID
+
+    Returns:
+        摘要列表
+    """
+    cm = get_context_manager()
+    if not cm:
+        return {"error": "上下文管理器不可用"}
+
+    try:
+        messages = cm.get_recent_messages(session_id, limit=1000)
+        summaries = []
+        for m in messages:
+            if not _is_topic_summary(m):
+                continue
+            md = m.get("metadata") or {}
+            summaries.append(
+                {
+                    "summary_id": md.get("summary_id") or m.get("id"),
+                    "status": md.get("status", "completed"),
+                    "topic": md.get("topic"),
+                    "content": m.get("content", ""),
+                }
+            )
+        return {"status": "success", "session_id": session_id, "count": len(summaries), "summaries": summaries}
+    except Exception as e:
+        return {"error": f"列出话题摘要失败: {str(e)}"}
+
+
+def get_topic_summary_raw(session_id: str, summary_id: str) -> Dict[str, Any]:
+    """获取指定话题摘要被摘要前的原始消息快照。
+
+    供摘要模型通过工具调用回取原始数据。
+
+    Args:
+        session_id: 会话ID
+        summary_id: 摘要标记 id（或其 metadata.summary_id）
+
+    Returns:
+        原始消息列表
+    """
+    cm = get_context_manager()
+    if not cm:
+        return {"error": "上下文管理器不可用"}
+
+    try:
+        marker = _get_summary_marker(cm, session_id, summary_id)
+        if not marker:
+            return {"error": f"话题摘要不存在: {summary_id}"}
+        raw = (marker.get("metadata") or {}).get("raw_messages") or []
+        return {
+            "status": "success",
+            "summary_id": summary_id,
+            "session_id": session_id,
+            "raw_count": len(raw),
+            "raw_messages": raw,
+        }
+    except Exception as e:
+        return {"error": f"获取话题摘要原文失败: {str(e)}"}
+
+
+def update_topic_summary(
+    session_id: str, summary_id: str, new_content: str = None, status: str = None
+) -> Dict[str, Any]:
+    """更新既有话题摘要的文本与未完成状态。
+
+    供摘要模型修改/续写摘要；若有关联的 conversation_summary 记忆则尽力同步更新。
+
+    Args:
+        session_id: 会话ID
+        summary_id: 摘要标记 id（或其 metadata.summary_id）
+        new_content: 新的摘要文本（可选，覆盖标记 content 与 metadata.summary）
+        status: 新的未完成状态（"unfinished"/"completed"，可选）
+
+    Returns:
+        更新结果
+    """
+    cm = get_context_manager()
+    if not cm:
+        return {"error": "上下文管理器不可用"}
+
+    try:
+        marker = _get_summary_marker(cm, session_id, summary_id)
+        if not marker:
+            return {"error": f"话题摘要不存在: {summary_id}"}
+
+        md = dict(marker.get("metadata") or {})
+
+        if status is not None:
+            if status not in _SUMMARY_STATUSES:
+                return {"error": f"无效状态: {status}，应为 unfinished 或 completed"}
+            md["status"] = status
+
+        final_content = None
+        if new_content is not None:
+            text = str(new_content).strip()
+            if not text:
+                return {"error": "摘要内容不能为空"}
+            md["summary"] = text
+            final_content = f"[话题摘要] {text}"
+
+        if hasattr(cm, "update_message"):
+            cm.update_message(marker["id"], content=final_content, metadata=md or None)
+
+        # 尽力同步更新关联的 conversation_summary 记忆（不阻断主流程）
+        memory_id = md.get("memory_id")
+        if memory_id and _MEMORY_MANAGER and (new_content is not None or status is not None):
+            updater = getattr(_MEMORY_MANAGER, "update_memory", None)
+            if updater:
+                try:
+                    agent_id = get_current_agent_id() or "default"
+                    updater(
+                        memory_id=memory_id,
+                        new_content=final_content,
+                        new_metadata=md,
+                        agent_id=agent_id,
+                    )
+                except Exception as e:
+                    logger.warning(f"同步更新摘要记忆失败: memory_id={memory_id}, err={e}")
+
+        result = {
+            "status": "success",
+            "summary_id": summary_id,
+            "message": "话题摘要已更新",
+        }
+        if md.get("status"):
+            result["status_value"] = md["status"]
+        if md.get("summary"):
+            result["summary"] = md["summary"]
+        return result
+    except Exception as e:
+        return {"error": f"更新话题摘要失败: {str(e)}"}
+
+
 async def trigger_topic_summary(
-    session_id: str, topic: str = None, end_signal: str = None
+    session_id: str, topic: str = None, end_signal: str = None, status: str = None
 ) -> Dict[str, Any]:
     """触发当前话题的摘要生成
 
     流程：
     1. 提取当前话题的所有上下文消息（从最后一个话题摘要之后）
-    2. 调用摘要模型生成摘要（摘要模型自主决定内容）
-    3. 将当前话题上下文替换为摘要
+    2. 调用摘要模型生成摘要（摘要模型自主决定内容）；历史上未完成的话题摘要
+       会注入摘要模型上下文，使本次摘要能延续未完成事项
+    3. 将当前话题上下文替换为摘要（标记携带 status/原文快照等元数据）
     4. 保存摘要为长期记忆
 
     Args:
         session_id: 会话ID
         topic: 话题名称/主题（可选）
         end_signal: 结束信号（可选）
+        status: 摘要未完成状态（"unfinished"/"completed"）。未显式给出时按摘要
+            文本是否含未完成指示词自动判定。
 
     Returns:
         执行结果
@@ -758,7 +1012,23 @@ async def trigger_topic_summary(
             for msg in current_topic_messages
         )
 
-        summary_prompt = f"""请对以下对话内容进行摘要。
+        # 注入历史上未完成的话题摘要，使本次摘要能延续前序未完成事项
+        prior_unfinished = [
+            m for m in messages[:topic_start_idx]
+            if _is_topic_summary(m) and ((m.get("metadata") or {}).get("status") == "unfinished")
+        ]
+        injection = ""
+        if prior_unfinished:
+            unfinished_items = "\n".join(f"- {m.get('content', '')}" for m in prior_unfinished)
+            injection = (
+                "<未完成议题>\n"
+                "以下为本次对话之前尚未完成的话题摘要。请延续其中的未完成事项，"
+                "并将相关状态在主次分明地体现在新摘要中：\n"
+                f"{unfinished_items}\n"
+                "</未完成议题>\n\n"
+            )
+
+        summary_prompt = f"""{injection}请对以下对话内容进行摘要。
 
 对话内容：
 {context_text}
@@ -786,30 +1056,29 @@ async def trigger_topic_summary(
         else:
             summary = str(response)
 
+        # 未完成状态判定：显式 status 优先，否则按摘要文本启发式自动判定
+        if status not in _SUMMARY_STATUSES:
+            status = _detect_unfinished_status(summary)
+
+        # 原文快照：软删除前落盘，供后续 get_topic_summary_raw 回取
+        raw_messages = [
+            {
+                "role": msg.get("role", "unknown"),
+                "content": msg.get("content", ""),
+            }
+            for msg in current_topic_messages
+        ]
+
         for i in range(len(messages) - 1, topic_start_idx - 1, -1):
             cm.delete_message(messages[i]["id"])
 
         summary_marker = f"[话题摘要] {summary}"
-        cm.add_message(
+        marker_id = cm.add_message(
             session_id=session_id,
             role="topic_summary",
             content=summary_marker,
             content_type="topic_summary",
         )
-
-        max_history = _TOPIC_SUMMARY_CONFIG.get("max_history_topics")
-        if max_history is not None:
-            all_messages = cm.get_recent_messages(session_id, limit=1000)
-            topic_summaries = [
-                msg for msg in all_messages
-                if msg.get("content_type") == "topic_summary" or
-                   (msg.get("content", "").startswith("[话题摘要]"))
-            ]
-            if len(topic_summaries) > max_history:
-                summaries_to_delete = topic_summaries[:-max_history]
-                for msg in summaries_to_delete:
-                    cm.delete_message(msg["id"])
-                logger.info(f"已清理 {len(summaries_to_delete)} 条历史话题摘要")
 
         from datetime import datetime
 
@@ -832,6 +1101,34 @@ async def trigger_topic_summary(
                 "message_count": len(current_topic_messages),
             },
         )
+
+        # 标记附带完整结构化元数据（status/原文快照/memory_id 等）
+        marker_metadata = {
+            "summary_id": marker_id,
+            "status": status,
+            "topic": topic or "未知话题",
+            "summary": summary,
+            "raw_messages": raw_messages,
+            "memory_id": memory_id,
+            "summarized_at": datetime.now().isoformat(),
+        }
+        if hasattr(cm, "update_message"):
+            cm.update_message(marker_id, metadata=marker_metadata)
+
+        max_history = _TOPIC_SUMMARY_CONFIG.get("max_history_topics")
+        if max_history is not None:
+            all_messages = cm.get_recent_messages(session_id, limit=1000)
+            topic_summaries = [m for m in all_messages if _is_topic_summary(m)]
+            # 未完成摘要永不因历史数量限制被清理（始终保留在上下文）
+            completed_summaries = [
+                m for m in topic_summaries
+                if (m.get("metadata") or {}).get("status") != "unfinished"
+            ]
+            if len(completed_summaries) > max_history:
+                summaries_to_delete = completed_summaries[:-max_history]
+                for msg in summaries_to_delete:
+                    cm.delete_message(msg["id"])
+                logger.info(f"已清理 {len(summaries_to_delete)} 条历史话题摘要")
 
         logger.info(
             f"话题摘要已生成并保存: session_id={session_id}, memory_id={memory_id}"

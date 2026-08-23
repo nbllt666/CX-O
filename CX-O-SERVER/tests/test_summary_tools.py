@@ -43,6 +43,7 @@ class FakeContextManager:
         self.messages = messages or []
         self.deleted = []
         self.added = []
+        self._seq = 0
 
     def get_messages(self, session_id, limit):
         return self.messages
@@ -56,8 +57,33 @@ class FakeContextManager:
     def delete_message(self, msg_id):
         self.deleted.append(msg_id)
 
-    def add_message(self, session_id, role, content, content_type):
+    def add_message(self, session_id, role, content, content_type="text", metadata=None):
+        self._seq += 1
+        msg_id = f"new-{self._seq}"
+        self.messages.append(
+            {
+                "id": msg_id,
+                "session_id": session_id,
+                "role": role,
+                "content": content,
+                "content_type": content_type,
+                "metadata": metadata or {},
+            }
+        )
         self.added.append((session_id, role, content, content_type))
+        return msg_id
+
+    def update_message(self, message_id, content=None, content_type=None, metadata=None):
+        for m in self.messages:
+            if m.get("id") == message_id:
+                if content is not None:
+                    m["content"] = content
+                if content_type is not None:
+                    m["content_type"] = content_type
+                if metadata is not None:
+                    m["metadata"] = metadata
+                return True
+        return False
 
 
 class FakeModelRouter:
@@ -66,6 +92,18 @@ class FakeModelRouter:
 
     def get_client(self, name):
         return self.client if name == "summary" else None
+
+
+class CapturingSummaryClient:
+    """记录最后一次收到的 prompt，便于断言注入内容。"""
+
+    def __init__(self, response=None):
+        self.response = response or _Resp("摘要结果")
+        self.last_prompt = None
+
+    async def chat(self, messages, stream):
+        self.last_prompt = messages[0]["content"]
+        return self.response
 
 
 @pytest.fixture
@@ -368,3 +406,234 @@ class TestTriggerTopicSummary:
         st.set_dependencies(context_manager=Boom(), memory_manager=AsyncMemoryManager())
         r = await st.trigger_topic_summary("s1")
         assert "触发话题摘要失败" in r["error"]
+
+
+# ---------------------------------------------------------------- 事件未完成状态
+class TestTriggerUnfinishedStatus:
+    @pytest.mark.asyncio
+    async def test_auto_detect_unfinished(self, clean_deps):
+        cm = FakeContextManager([{"id": "m1", "role": "user", "content": "确定了方案，记得待办"}])
+        mm = AsyncMemoryManager()
+        cap = CapturingSummaryClient(_Resp("本次确定了方案，仍有待办事项未完成"))
+        st.set_dependencies(
+            context_manager=cm, memory_manager=mm, model_router=FakeModelRouter(cap)
+        )
+        r = await st.trigger_topic_summary("s1", topic="方案")
+        assert r["status"] == "success"
+        marker = cm.messages[-1]
+        # 自动判定为未完成 + 原文快照 + memory_id 落盘
+        assert marker["metadata"]["status"] == "unfinished"
+        assert marker["metadata"]["summary_id"] == marker["id"]
+        assert marker["metadata"]["raw_messages"] == [
+            {"role": "user", "content": "确定了方案，记得待办"}
+        ]
+        assert marker["metadata"]["memory_id"] is not None
+
+    @pytest.mark.asyncio
+    async def test_explicit_status(self, clean_deps):
+        cm = FakeContextManager([{"id": "m1", "role": "user", "content": "ok"}])
+        mm = AsyncMemoryManager()
+        st.set_dependencies(
+            context_manager=cm,
+            memory_manager=mm,
+            model_router=FakeModelRouter(FakeSummaryClient(_Resp("没有未完成"))),
+        )
+        await st.trigger_topic_summary("s1", status="completed")
+        assert cm.messages[-1]["metadata"]["status"] == "completed"
+
+    @pytest.mark.asyncio
+    async def test_default_completed_when_no_indicator(self, clean_deps):
+        cm = FakeContextManager([{"id": "m1", "role": "user", "content": "买咖啡"}])
+        mm = AsyncMemoryManager()
+        st.set_dependencies(
+            context_manager=cm,
+            memory_manager=mm,
+            model_router=FakeModelRouter(FakeSummaryClient(_Resp("用户买了一杯咖啡"))),
+        )
+        await st.trigger_topic_summary("s1")
+        assert cm.messages[-1]["metadata"]["status"] == "completed"
+
+    @pytest.mark.asyncio
+    async def test_inject_prior_unfinished(self, clean_deps):
+        prior = {
+            "id": "u1",
+            "role": "topic_summary",
+            "content": "[话题摘要] 讨论A，待办X未完成",
+            "content_type": "topic_summary",
+            "metadata": {"summary_id": "u1", "status": "unfinished"},
+        }
+        cm = FakeContextManager([prior, {"id": "m1", "role": "user", "content": "继续讨论"}])
+        mm = AsyncMemoryManager()
+        cap = CapturingSummaryClient(_Resp("延续了待办X"))
+        st.set_dependencies(
+            context_manager=cm, memory_manager=mm, model_router=FakeModelRouter(cap)
+        )
+        await st.trigger_topic_summary("s1")
+        # 未完成旧摘要被注入摘要模型上下文
+        assert "未完成议题" in cap.last_prompt
+        assert "讨论A" in cap.last_prompt
+
+    @pytest.mark.asyncio
+    async def test_pruning_skips_unfinished(self, clean_deps):
+        st.set_max_history_topics(1)
+        try:
+            completed = {
+                "id": "c1",
+                "role": "topic_summary",
+                "content": "[话题摘要] 旧完成",
+                "content_type": "topic_summary",
+                "metadata": {"summary_id": "c1", "status": "completed"},
+            }
+            unfinished = {
+                "id": "u1",
+                "role": "topic_summary",
+                "content": "[话题摘要] 未完成",
+                "content_type": "topic_summary",
+                "metadata": {"summary_id": "u1", "status": "unfinished"},
+            }
+            cm = FakeContextManager(
+                [completed, unfinished, {"id": "m1", "role": "user", "content": "新话题"}]
+            )
+            mm = AsyncMemoryManager()
+            st.set_dependencies(
+                context_manager=cm,
+                memory_manager=mm,
+                model_router=FakeModelRouter(FakeSummaryClient(_Resp("新摘要"))),
+            )
+            await st.trigger_topic_summary("s1")
+            # 完成摘要被清理、未完成摘要保留
+            assert "c1" in cm.deleted
+            assert "u1" not in cm.deleted
+        finally:
+            st.set_max_history_topics(None)
+
+
+# ---------------------------------------------------------------- 摘要维护工具
+class TestListTopicSummaries:
+    def test_no_cm(self, clean_deps):
+        r = st.list_topic_summaries("s1")
+        assert r == {"error": "上下文管理器不可用"}
+
+    def test_success(self, clean_deps):
+        cm = FakeContextManager(
+            [
+                {
+                    "id": "c1",
+                    "role": "topic_summary",
+                    "content": "[话题摘要] A",
+                    "content_type": "topic_summary",
+                    "metadata": {"summary_id": "c1", "status": "completed", "topic": "t1"},
+                },
+                {"id": "m1", "role": "user", "content": "x"},
+            ]
+        )
+        _set_cm(cm)
+        r = st.list_topic_summaries("s1")
+        assert r["status"] == "success"
+        assert r["count"] == 1
+        assert r["summaries"][0]["summary_id"] == "c1"
+        assert r["summaries"][0]["status"] == "completed"
+
+
+class TestGetTopicSummaryRaw:
+    def test_no_cm(self, clean_deps):
+        assert st.get_topic_summary_raw("s1", "a") == {"error": "上下文管理器不可用"}
+
+    def test_not_found(self, clean_deps):
+        _set_cm(FakeContextManager([]))
+        r = st.get_topic_summary_raw("s1", "none")
+        assert "不存在" in r["error"]
+
+    def test_success(self, clean_deps):
+        cm = FakeContextManager(
+            [
+                {
+                    "id": "c1",
+                    "role": "topic_summary",
+                    "content": "[话题摘要] A",
+                    "content_type": "topic_summary",
+                    "metadata": {
+                        "summary_id": "c1",
+                        "status": "unfinished",
+                        "raw_messages": [{"role": "user", "content": "原始"}],
+                        "memory_id": 5,
+                    },
+                }
+            ]
+        )
+        _set_cm(cm)
+        r = st.get_topic_summary_raw("s1", "c1")
+        assert r["status"] == "success"
+        assert r["raw_count"] == 1
+        assert r["raw_messages"][0]["content"] == "原始"
+
+
+class TestUpdateTopicSummary:
+    def test_no_cm(self, clean_deps):
+        assert st.update_topic_summary("s1", "a") == {"error": "上下文管理器不可用"}
+
+    def test_not_found(self, clean_deps):
+        _set_cm(FakeContextManager([]))
+        r = st.update_topic_summary("s1", "none")
+        assert "不存在" in r["error"]
+
+    def test_invalid_status(self, clean_deps):
+        cm = FakeContextManager(
+            [
+                {
+                    "id": "c1",
+                    "role": "topic_summary",
+                    "content": "[话题摘要] A",
+                    "content_type": "topic_summary",
+                    "metadata": {"summary_id": "c1", "status": "unfinished", "memory_id": 5},
+                }
+            ]
+        )
+        _set_cm(cm)
+        r = st.update_topic_summary("s1", "c1", status="bogus")
+        assert "无效状态" in r["error"]
+        assert cm.messages[0]["metadata"]["status"] == "unfinished"
+
+    def test_update_content_and_status(self, clean_deps):
+        cm = FakeContextManager(
+            [
+                {
+                    "id": "c1",
+                    "role": "topic_summary",
+                    "content": "[话题摘要] A",
+                    "content_type": "topic_summary",
+                    "metadata": {"summary_id": "c1", "status": "unfinished", "memory_id": 5},
+                }
+            ]
+        )
+        _set_cm(cm)
+        st.update_topic_summary("s1", "c1", new_content="已处理完", status="completed")
+        m = cm.messages[0]
+        assert m["content"] == "[话题摘要] 已处理完"
+        assert m["metadata"]["status"] == "completed"
+        assert m["metadata"]["summary"] == "已处理完"
+
+    def test_sync_memory_update(self, clean_deps):
+        class MM:
+            def __init__(self):
+                self.calls = []
+
+            def update_memory(self, **kw):
+                self.calls.append(kw)
+
+        mm = MM()
+        cm = FakeContextManager(
+            [
+                {
+                    "id": "c1",
+                    "role": "topic_summary",
+                    "content": "[话题摘要] A",
+                    "content_type": "topic_summary",
+                    "metadata": {"summary_id": "c1", "status": "unfinished", "memory_id": 5},
+                }
+            ]
+        )
+        st.set_dependencies(memory_manager=mm, context_manager=cm)
+        r = st.update_topic_summary("s1", "c1", status="completed")
+        assert r["status"] == "success"
+        assert mm.calls and mm.calls[0]["memory_id"] == 5

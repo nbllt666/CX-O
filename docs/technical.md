@@ -26,6 +26,8 @@
 - [18. 主动视觉与电脑控制](#18-主动视觉与电脑控制)
 - [19. 自我进化服务（CXO-Tuner）](#19-自我进化服务cxo-tuner)
 - [20. CX-O-Autonomy 自主系统](#20-cx-o-autonomy-自主系统)
+- [21. 梦境引擎（Dream）](#21-梦境引擎dream)
+- [22. 生理信号接入（Physio）](#22-生理信号接入physio)
 - [附录：目录速览](#附录目录速览)
 
 ---
@@ -308,13 +310,13 @@ CX-O 将虚拟形象、实时语音对话、记忆管理、直播推流、声音
 ```
 memories(
   id INTEGER PRIMARY KEY AUTOINCREMENT,
-  type VARCHAR(20) NOT NULL,          -- long_term / short_term / permanent
+  type VARCHAR(20) NOT NULL,          -- long_term / short_term / permanent / dream
   content TEXT NOT NULL,
   vector_id VARCHAR(100),             -- 关联向量库对象
   metadata TEXT,                      -- JSON
   importance INTEGER DEFAULT 3,       -- 1-5 等级
   importance_score FLOAT DEFAULT 0.6, -- 0-1 连续分
-  decay_type VARCHAR(20) DEFAULT 'exponential',  -- exponential/ebbinghaus/zero
+  decay_type VARCHAR(20) DEFAULT 'exponential',  -- exponential/ebbinghaus/zero/dream
   decay_params TEXT,                  -- JSON
   reactivation_count INTEGER DEFAULT 0,
   emotion_score FLOAT DEFAULT 0.0,
@@ -517,7 +519,8 @@ T(t) = 1 / (1 + (Δt/T₅₀)^k)      # T₅₀=30, k=2
 - `handlers` 保存到 `_embedded_handlers`，与 `tools` 一并经 `_register_catalog` 写入
   `ToolRegistry`（category=`cxfc`），LLM 工具分发可直接进程内执行；
 - 引用示例：`server/autonomy/main.py` 的 `setup_autonomy()`——以 `embedded_cxo-autonomy`
-  注册 9 个 `autonomy_*` 工具 + 真实 handler（`get_handlers()`）；
+  注册 9 个 `autonomy_*` 工具 + 真实 handler（`get_handlers()`）；`dream.enabled` 时
+  额外并入 `dream_get_status / dream_trigger / dream_list` 工具 + `"dream"` 能力（见 §21）；
 - `call_tool` embedded 分支缺 handler 时返回稳定错误码 `EMBEDDED_HANDLER_MISSING`。
 
 ### 10.2 relay WS 推送通道
@@ -603,6 +606,7 @@ T(t) = 1 / (1 + (Δt/T₅₀)^k)      # T₅₀=30, k=2
 | `/audio-workstation` | 录音作曲（五线谱 / 作曲 / SVC / VoxCPM / 数据集） |
 | `/settings` | 设置 |
 | `/memory-agent`、`/vector` | 记忆 Agent / 向量数据 |
+| `/dream` | 梦境日志（含生理信号区块，见 §21/§22） |
 | `/live-console`、`/live-overlay` | 直播控制台 / 直播分屏 |
 | `/avatar-source`、`/danmaku-source`、`/subtitle-source`、`/audio-source` | OBS 四类浏览器源 |
 | `/pet`、`/danmaku` | 桌面宠物 / 弹幕独立窗 |
@@ -874,6 +878,105 @@ docker compose --profile tuner up
   running/paused/sleeping/budget_limited/error/disabled）、四维动机进度条、日预算用量、
   控制区（启用/禁用/暂停/恢复/紧急停止/自动启动）、行为回放（审计列表分页加载）。
   前端降级口径：后端离线全页错误态；未启用展示"未启用"徽章；config/audit 独立容错。
+
+> 自主生命的「睡眠窗口」由梦境引擎承接（§21），其入睡 / 唤醒依据来自生理信号接入（§22）。
+
+---
+
+## 21. 梦境引擎（Dream）
+
+> 位于 `server/autonomy/dream/`（engine / collector / generator / filter / buffer / consolidator /
+> purge / config），梦境引擎是 CX-O-Autonomy「自主生命」的睡眠态能力：Agent 在睡眠窗口内把
+> 日内经历经「采集 → 生成 → 过滤 → 整合 → 清理」管线固化为梦境记忆，用户可经前端梦境日志
+> 查看、确认或拒绝。以 embedded cxo-autonomy 插件装配（`dream.enabled=false` 默认，未启用
+> 零装配零影响）。
+
+### 21.1 架构与组件
+
+| 组件 | 模块 | 职责 |
+|------|------|------|
+| 引擎 | `engine/` | 梦境引擎主流程（DreamEngine） |
+| 采集 | `collector/` | 收集日内经历 / 记忆素材 |
+| 生成 | `generator/` | LLM 生成梦境内容 |
+| 过滤 | `filter/` | 梦境内容过滤（安全红线） |
+| 缓冲 | `buffer/` | 梦境生成 / 呈现缓冲 |
+| 整合 | `consolidator/` | 梦境记忆整合沉淀 |
+| 清理 | `purge/` | 过期梦境清理（PurgeJob） |
+| 配置 | `config` | `server/autonomy/data/dream_config.json` |
+
+装配：`server/autonomy/main.py` `setup_autonomy()`——`dream.enabled` 时追加
+`dream_get_status` / `dream_trigger` / `dream_list` 工具 + `"dream"` 能力（见 §10.1）。
+
+### 21.2 记忆侧集成
+
+- `_DreamMixin` 为 `MemoryManager` 第 10 个 Mixin（`server/core/memory/mixins/dream_mixin.py`），
+  提供梦境记忆 CRUD + 会话回滚。
+- 新增 `decay_type='dream'`：pending / surfaced λ=0.8、confirmed λ=0.25；`type='dream'`
+  记忆枚举（见 §5.1 memories 表 schema 注释）。
+- `MemoryRouter` 默认排除梦境记忆，仅 `dream_recall` / 触发词放行 confirmed 梦境。
+- `D7_DREAM_FILTER` 登记进 `DecisionCore.DECISION_POINTS`（仅枚举登记，不参与决策路由）。
+
+### 21.3 REST 与 WS
+
+- **REST** `/api/dream/*`：`status` / `trigger` / `list` / `confirm` / `reject` /
+  session 回滚 / `purge` / `config`。
+- **WS** `DreamActions`：`dream.session_started` / `dream.session_completed` / `dream.surface` /
+  `dream.confirm` / `dream.reject` / `dream.purged`。
+
+### 21.4 前端
+
+- 管理窗路由 `/dream` → DreamPage「梦境日志」（含生理信号区块，见 §22）；
+  聊天页展示 `dream.surface` 气泡。
+
+### 21.5 安全红线
+
+1. `is_ground_truth` 恒为 `false`（梦境非真实经历，不污染事实记忆）。
+2. `permanent=FALSE` 断言（梦境禁止永久化）。
+3. `dream_session_id` 强制（每次梦境会话唯一标识）。
+4. `decay_type='dream'` + PurgeJob（按梦境衰减策略清理过期梦境）。
+5. `purge_dream_session` 会话回滚（清理动作可回退）。
+
+### 21.6 配置
+
+- `dream.enabled=false` 默认（`server/autonomy/data/dream_config.json`）；未启用时跳过
+  工具 / 能力装配与 REST / WS 挂载，对主系统零影响。
+
+---
+
+## 22. 生理信号接入（Physio）
+
+> 位于 `server/autonomy/dream/physio/`（`estimator` / `store` / `runtime`）+ `sleep_sensor.py`
+> （S1-S9 融合状态机 AWAKE / DROWSY / ASLEEP / AWAY），为梦境引擎提供入睡 / 唤醒依据。
+> 默认关闭（`dream.physio.enabled=false`），physio 缺席对现有链路零回归。
+
+### 22.1 采集链路（前端 Electron 主进程）
+
+- 采集走 Electron 主进程 **noble**（`APP-Frontend/electron/ble/ble_collector.ts`），
+  BLE IPC 5 通道；HR 上送 `POST /api/physio/hr`。
+
+### 22.2 后端组件
+
+- `HeartRateSleepEstimator`（`estimator`）：滑动窗口 / `base_hr` 自学习 / `hr_sleep_confidence`
+  睡眠置信度估计。
+- `store` / `runtime`：生理数据存储与运行时管理。
+- `SleepSensor` 融合状态机（S1-S9）：
+  - 权重：S9 心率=0.40（顶级）、S4 显式睡眠语=1.0（短路）、S3 / S5 / S8 无源 weight 0。
+- DreamEngine 入睡触发升级：窗口内 ASLEEP 确认 + S4 窗口外提前触发；physio 缺席零回归。
+
+### 22.3 REST
+
+- `/api/physio/*`：`hr` / `state` / `status` / `sleep` / `devices` / `forget` / `config` / `clear`。
+
+### 22.4 隐私 R6
+
+1. 原始 HR 不落盘、不入记忆 / LLM。
+2. 默认关闭（`dream.physio.enabled=false`），需显式开启。
+3. 配对授权、一键清除。
+
+### 22.5 已知未闭合
+
+- noble 真机验证（无硬件）。
+- S2 / S3 / S5 / S8 无源待接线。
 
 ---
 
