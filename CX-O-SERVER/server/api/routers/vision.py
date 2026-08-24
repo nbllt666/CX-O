@@ -12,6 +12,16 @@
     - ``source`` 非法 / ``ts`` 不可解析 / ``event_type`` 为空 → 422。
     - 上传文件过大 → 413（4xx），写入临时区/队列等异常 → 5xx。
 
+部署边界（**单进程**）：
+    本模块的限流/冷却状态（``_RATE_WINDOW`` / ``_COOLDOWN_STAMP``）与入队队列
+    （``vision_clip_queue``）均为**进程内内存态**，与整条视觉链路（消费者、临时文件
+    清理）及整服务（会话、缓存等）的**单进程架构一致**——服务以单 worker 运行
+    （``server.main:main`` / ``api_server.py`` 的 ``uvicorn.run`` 均不传 ``workers``）。
+    请勿以 ``uvicorn --workers N`` 多进程启动：多进程下各 worker 持有各自的限流/
+    冷却状态与队列，小时限流会被放大 N 倍、同类事件冷却失效，且上传的片段分散到
+    各进程队列、互不消费。若未来确需多 worker，须为**整条视觉链路**引入进程外共享
+    （如 Redis 共享限流状态 + 外部队列），而不仅是护栏状态。
+
 路由注册：见 ``server/api/app.py`` ``include_router(vision.router, prefix="/api")``。
 """
 from __future__ import annotations

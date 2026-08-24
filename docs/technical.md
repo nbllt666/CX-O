@@ -744,6 +744,8 @@ config.json 文件配置  →  deep_merge  →  环境变量（CXO_ 前缀）  �
 - **总开关**：持久化 `visionEnabled`（默认 false）一键关闭画面上行；关闭时定时抽帧与手动点发均不发送（`useFrameSender` 注入闸门）。
 - **帧节流**：`frameThrottle` 控制发送频率，避免高频上行占用带宽与算力。
 - 依赖具备视觉能力的多模态 LLM 才能理解画面。
+- **视频叙事管线**：事件驱动回溯打包的片段经 `POST /api/vision/clip` 入独立异步队列（`server/core/vision/clip_queue.py`），由 `VideoUnderstanding` 消费、`NarrativeVisionMemory` 沉淀为 `source='vision'` 记忆。
+- **护栏（单进程边界）**：路由侧小时限流（`_RATE_WINDOW`）与同类事件冷却（`_COOLDOWN_STAMP`）为**进程内内存态**，与整条视觉链路（`vision_clip_queue` 内存队列、消费者）及整服务单进程架构一致。服务以单 worker 运行（`server.main:main` / `api_server.py` 均不传 `workers`）；**勿用 `uvicorn --workers N` 多进程启动**，否则限流放大 N 倍、冷却失效、片段分散各进程互不消费。
 
 ### 18.2 电脑控制（CXFC Computer Control）
 
