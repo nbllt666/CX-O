@@ -26,7 +26,7 @@ from typing import Any, Dict, List, Optional
 
 import httpx
 from fastapi import APIRouter, HTTPException, Request
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
 
 from server.core.logging_config import get_contextual_logger
 from server.config import get_config
@@ -136,6 +136,10 @@ class TunerClient:
     async def apply_adapter(self, adapter_id: str) -> Optional[Dict[str, Any]]:
         """POST /api/v1/adapters/{id}/apply —— 应用适配器（预留，也可直接调用 Tuner）。"""
         return await self._request("POST", f"/api/v1/adapters/{adapter_id}/apply")
+
+    async def delete_adapter(self, adapter_id: str) -> Optional[Dict[str, Any]]:
+        """DELETE /api/v1/adapters/{id} —— 删除指定适配器。"""
+        return await self._request("DELETE", f"/api/v1/adapters/{adapter_id}")
 
     async def close(self) -> None:
         try:
@@ -284,6 +288,23 @@ async def list_adapters(request: Request):
     if result is None:
         return {"status": "degraded", "adapters": []}
     return {"status": "success", "adapters": result}
+
+
+@router.delete("/v1/tuner/adapters/{adapter_id}")
+async def delete_adapter(request: Request, adapter_id: str):
+    """删除指定适配器。Tuner 不可达时返回删失败（降级）。"""
+    client = _get_tuner_client(request)
+    try:
+        result = await client.delete_adapter(adapter_id)
+    finally:
+        await _safe_close(client)
+    if result is None:
+        return {"status": "degraded", "deleted": False, "adapter_id": adapter_id}
+    return {
+        "status": "success",
+        "deleted": bool(result.get("deleted", True)),
+        "adapter_id": adapter_id,
+    }
 
 
 @router.post("/v1/tuner/adapters/{adapter_id}/apply")

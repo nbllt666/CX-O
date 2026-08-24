@@ -552,7 +552,7 @@ class VLLMClient(LLMClient):
                                 delta = chunk["choices"][0].get("delta", {})
                                 tool_calls = delta.get("tool_calls")
                                 if tool_calls:
-                                    yield {"tool_calls": tool_calls}
+                                    yield {"type": "tool_calls", "tool_calls": tool_calls}
                             except json.JSONDecodeError:
                                 continue
                 logger.info(
@@ -806,7 +806,7 @@ class TRTLLMClient(LLMClient):
                                 delta = chunk["choices"][0].get("delta", {})
                                 tool_calls = delta.get("tool_calls")
                                 if tool_calls:
-                                    yield {"tool_calls": tool_calls}
+                                    yield {"type": "tool_calls", "tool_calls": tool_calls}
                             except json.JSONDecodeError:
                                 continue
         except Exception as e:

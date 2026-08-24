@@ -62,7 +62,12 @@ class LLMTools:
             arguments = tool_call.get("function", {}).get("arguments", {})
             tool_call_id = tool_call.get("id", "")
 
-            result = tool_registry.call_tool(tool_name, arguments)
+            # 优先 call_tool_async（支持 async handler）；缺失时回退同步 call_tool（兼容内联/测试注入的 registry）
+            call_async = getattr(tool_registry, "call_tool_async", None)
+            if call_async is not None:
+                result = await call_async(tool_name, arguments)
+            else:
+                result = tool_registry.call_tool(tool_name, arguments)
 
             message = self.create_tool_result_message(
                 tool_call_id=tool_call_id,

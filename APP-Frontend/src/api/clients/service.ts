@@ -38,7 +38,7 @@ export const serviceApi = {
   },
 
   getEnvironmentInfo(): Promise<Record<string, unknown>> {
-    return request<Record<string, unknown>>({ url: '/api/service/env' });
+    return request<Record<string, unknown>>({ url: '/api/service/environment' });
   },
 
   // ── 控制服务端点（control service） ──

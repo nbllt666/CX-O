@@ -284,9 +284,9 @@ export const graphApi = {
 
   findGraphPath(sourceId: string, targetId: string, maxDepth?: number): Promise<{ path: GraphEntity[] }> {
     const params = new URLSearchParams();
-    params.append('source_id', sourceId);
-    params.append('target_id', targetId);
-    if (maxDepth) params.append('max_depth', String(maxDepth));
-    return request({ url: `/api/graph/path?${params.toString()}` });
+    params.append('start_id', sourceId);
+    params.append('end_id', targetId);
+    if (maxDepth) params.append('max_length', String(maxDepth));
+    return request({ url: `/api/graph/paths/shortest?${params.toString()}` });
   },
 };

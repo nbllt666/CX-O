@@ -144,13 +144,18 @@ def _run_async(coro: Any) -> Any:
     """同步执行 async 协程（主线程，非子线程 asyncio+aiohttp）。
 
     rules-0 §三 async 禁止子线程 asyncio+aiohttp，本函数在主线程同步桥接。
+    仅当无运行中的事件循环时可同步执行；若已有运行中的事件循环（如在异步工具
+    执行路径内被调用），同步桥接无法阻塞该线程，明确报错引导改用 async 路径，
+    避免原先 asyncio.run → run_until_complete 的二次抛错掩盖真实原因。
     """
     try:
-        return asyncio.run(coro)
+        asyncio.get_running_loop()
     except RuntimeError:
-        # 已有事件循环时回退到 ensure_future
-        loop = asyncio.get_event_loop()
-        return loop.run_until_complete(coro)
+        # 无运行中的事件循环：主线程同步执行
+        return asyncio.run(coro)
+    raise RuntimeError(
+        "_run_async 不能在运行中的事件循环内同步执行，请改用 async 调用路径"
+    )
 
 
 def _make_default_agent() -> AgentRecord:

@@ -139,6 +139,24 @@ async def websocket_chat_endpoint(
         await ws_manager.disconnect(client_id)
 
 
+async def _reset_live_processor_if_last(ws_manager, client_id: str) -> None:
+    """直播最后一个连接断开后重置共享 VAD/AudioStream 处理器残留状态。
+
+    共享单例在聊到一半断开时会残留 is_speaking=True / 音频缓冲，可能让下一个
+    live 客户端漏判说话开始。仅当没有其他 live 连接残留时重置，避免影响并发直播会话。
+    """
+    try:
+        remaining = set(ws_manager.channels.get("live", set()) or set())
+        if remaining:
+            return
+        from server.services.vad_processor import get_vad_processor, get_audio_stream_processor
+
+        get_vad_processor().reset()
+        get_audio_stream_processor().reset()
+    except Exception as e:
+        logger.warning(f"重置 live 共享处理器失败: {e}")
+
+
 @router.websocket("/ws/live")
 async def websocket_live_endpoint(
     websocket: WebSocket, session_id: Optional[str] = None
@@ -182,6 +200,8 @@ async def websocket_live_endpoint(
     except WebSocketDisconnect:
         logger.info(f"直播客户端断开连接: {client_id}")
         await ws_manager.disconnect(client_id)
+        await _reset_live_processor_if_last(ws_manager, client_id)
     except Exception as e:
         logger.error(f"直播 WebSocket 错误 {client_id}: {e}")
         await ws_manager.disconnect(client_id)
+        await _reset_live_processor_if_last(ws_manager, client_id)

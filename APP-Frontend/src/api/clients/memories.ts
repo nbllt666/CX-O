@@ -110,14 +110,14 @@ export const memoriesApi = {
 
   searchByTag(tag: string, params?: { limit?: number }): Promise<{ memories: Memory[] }> {
     return request<{ memories: Memory[] }>({
-      url: '/api/memories/tag',
-      method: 'post',
-      data: { tag, ...params },
+      url: '/api/memories/search-by-tag',
+      method: 'get',
+      params: { tag, ...params },
     });
   },
 
   async batchDeleteMemories(memoryIds: number[]): Promise<void> {
-    await request({ url: '/api/memories/batch-delete', method: 'post', data: { ids: memoryIds } });
+    await request({ url: '/api/memories/batch/delete', method: 'post', data: { ids: memoryIds } });
   },
 
   async batchUpdateTags(
@@ -126,25 +126,25 @@ export const memoriesApi = {
     operation: 'add' | 'remove' | 'set',
   ): Promise<void> {
     await request({
-      url: '/api/memories/batch-update-tags',
+      url: '/api/memories/batch/tags',
       method: 'post',
       data: { ids: memoryIds, tags, operation },
     });
   },
 
   async batchArchiveMemories(memoryIds: number[]): Promise<void> {
-    await request({ url: '/api/memories/batch-archive', method: 'post', data: { ids: memoryIds } });
+    await request({ url: '/api/memories/batch/archive', method: 'post', data: { ids: memoryIds } });
   },
 
   async batchRestoreMemories(memoryIds: number[]): Promise<void> {
-    await request({ url: '/api/memories/batch-restore', method: 'post', data: { ids: memoryIds } });
+    await request({ url: '/api/memories/batch/restore', method: 'post', data: { ids: memoryIds } });
   },
 
   async batchUpdateMemories(memoryIds: number[], updates: Partial<Memory>): Promise<void> {
     await request({
-      url: '/api/memories/batch-update',
+      url: '/api/memories/batch/update',
       method: 'post',
-      data: { ids: memoryIds, updates },
+      data: { ids: memoryIds, data: updates },
     });
   },
 
@@ -154,7 +154,7 @@ export const memoriesApi = {
     operation: 'add' | 'remove' | 'set',
   ): Promise<{ updated: number }> {
     return request<{ updated: number }>({
-      url: '/api/memories/batch-tag-by-query',
+      url: '/api/memories/batch/tag-by-query',
       method: 'post',
       data: { query, tags, operation },
     });
@@ -162,7 +162,7 @@ export const memoriesApi = {
 
   batchDeleteByQuery(query: string): Promise<{ deleted: number }> {
     return request<{ deleted: number }>({
-      url: '/api/memories/batch-delete-by-query',
+      url: '/api/memories/batch/delete-by-query',
       method: 'post',
       data: { query },
     });
@@ -170,7 +170,7 @@ export const memoriesApi = {
 
   batchArchiveByQuery(query: string, targetLevel = 1): Promise<{ archived: number }> {
     return request<{ archived: number }>({
-      url: '/api/memories/batch-archive-by-query',
+      url: '/api/memories/batch/archive-by-query',
       method: 'post',
       data: { query, target_level: targetLevel },
     });

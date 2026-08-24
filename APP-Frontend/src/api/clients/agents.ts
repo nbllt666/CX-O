@@ -54,8 +54,22 @@ export const agentsApi = {
     return response.agent;
   },
 
-  getAvailableModels(): Promise<{ models: string[] }> {
-    return request<{ models: string[] }>({ url: '/api/models' });
+  async getAvailableModels(): Promise<{ models: string[] }> {
+    // 真实端点是 /api/service/models，返回 { providers[{id,name}], ollama_models[{name}] }；
+    // 映射为前端约定的 { models: string[] }（取各 provider 模型名 + ollama 模型名，去重）。
+    const data = await request<{
+      status: string;
+      providers: Array<{ id: string; name?: string }>;
+      ollama_models: Array<{ name: string }>;
+    }>({ url: '/api/service/models' });
+    const names: string[] = [];
+    for (const p of data.providers ?? []) {
+      if (p.name) names.push(p.name);
+    }
+    for (const m of data.ollama_models ?? []) {
+      if (m?.name) names.push(m.name);
+    }
+    return { models: Array.from(new Set(names)) };
   },
 
   /** 获取 Agent 上下文（历史消息） */

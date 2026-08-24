@@ -241,8 +241,7 @@ async def update_config(config: AdminConfigUpdate, x_api_key: Optional[str] = He
 async def get_logs(level: str = "INFO", lines: int = 50, x_api_key: Optional[str] = Header(None)):
     # B10 修复: verify_admin_api_key 在认证失败时已 raise 403，
     # 永远不会返回 False，原 401 路径为死代码，已删除。
-    # B10 修复: 原返回占位字符串（"日志功能通过服务端日志文件查看"），
-    # 前端误以为日志功能可用。改为明确提示"暂未实现"。
+    # 2026-08-23 修复: 取消占位实现，改为真实读取服务端日志（与 /service/logs 一致）。
     verify_admin_api_key(x_api_key)
 
     if lines > 1000:
@@ -254,15 +253,23 @@ async def get_logs(level: str = "INFO", lines: int = 50, x_api_key: Optional[str
     if level.upper() not in valid_levels:
         level = "INFO"
 
-    return {
-        "status": "success",
-        "logs": [
-            f"[{level}] 日志查看功能暂未实现，请通过 logs/cxo.log 文件查看服务端日志",
-        ],
-        "total": 1,
-        "level": level,
-        "lines": lines,
-    }
+    try:
+        from server.api.routers.service import _backend_log_path
+        import os
+
+        log_file = _backend_log_path
+        if not log_file:
+            from server.api.routers.service import get_project_root
+
+            log_file = os.path.join(get_project_root(), "logs", "cxo.log")
+        if os.path.exists(log_file):
+            with open(log_file, "r", encoding="utf-8") as f:
+                all_lines = f.readlines()
+            return {"status": "success", "logs": "".join(all_lines[-lines:]), "total": len(all_lines[-lines:]), "level": level, "lines": lines}
+        return {"status": "success", "logs": "No log file available", "total": 0, "level": level, "lines": lines}
+    except Exception as e:
+        logger.error(f"Failed to read logs: {e}", exc_info=True)
+        return {"status": "error", "logs": f"读取日志失败: {e}", "total": 0, "level": level, "lines": lines}
 
 
 @router.post("/admin/backup")

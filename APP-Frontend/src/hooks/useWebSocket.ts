@@ -176,6 +176,9 @@ export function useWebSocket(options: WebSocketOptions): UseWebSocketReturn {
     [clearPingInterval],
   );
 
+  // 卸载时清理心跳定时器，避免跨多次挂载累积残留心跳 interval（泄漏）
+  useEffect(() => clearPingInterval, [clearPingInterval]);
+
   // 消息路由：transport 不解析 JSON，caller 负责解析 + 路由。
   const handleMessage = useCallback((event: MessageEvent) => {
     try {

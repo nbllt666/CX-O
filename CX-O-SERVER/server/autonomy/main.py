@@ -623,7 +623,12 @@ def _build_mcp_search_provider(registry: Any, mcp_manager: Any = None) -> Option
             if mcp_manager is not None and server_name:
                 result = await mcp_manager.call_tool(server_name, tool_name, {"query": query})
             else:
-                result = registry.call_tool(tool_name, {"query": query})
+                # 回退路径：优先 call_tool_async（支持 async handler；缺失时回退同步 call_tool）
+                _call_async = getattr(registry, "call_tool_async", None)
+                if _call_async is not None:
+                    result = await _call_async(tool_name, {"query": query})
+                else:
+                    result = registry.call_tool(tool_name, {"query": query})
         except Exception as e:
             logger.warning("MCP 搜索调用失败 %s: %s", tool_name, e)
             return None

@@ -177,6 +177,8 @@ export class BleHeartRateCollector {
   private activeDeviceName: string | null = null;
 
   private scanTimer: ReturnType<typeof setTimeout> | null = null;
+  private scanResolver: (() => void) | null = null;
+  private scanInterrupted = false;
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   private discoverListener: ((peripheral: NoblePeripheral) => void) | null = null;
 
@@ -272,11 +274,21 @@ export class BleHeartRateCollector {
       return { ok: false, status: this.state, error: String(err) };
     }
 
-    // 等待扫描窗口
+    // 等待扫描窗口；connect/disconnect 打断时 clearScanTimer 会 resolve 该 Promise，
+    // 避免扫描协程永久悬挂。
     await new Promise<void>((resolve) => {
+      this.scanResolver = resolve;
       this.scanTimer = setTimeout(resolve, this.scanTimeoutMs);
     });
     this.scanTimer = null;
+    this.scanResolver = null;
+
+    // 被打断（connect/disconnect 已自行 stopScanning + removeDiscoverListener）
+    // → 在这里退出，不做正常扫描收尾，否则会覆盖打断流程的状态。
+    if (this.scanInterrupted) {
+      this.scanInterrupted = false;
+      return { ok: false, status: this.state, error: '扫描被 connect/disconnect 中断' };
+    }
 
     if (this.noble && typeof this.noble.stopScanning === 'function') {
       try {
@@ -596,6 +608,12 @@ export class BleHeartRateCollector {
     if (this.scanTimer) {
       clearTimeout(this.scanTimer);
       this.scanTimer = null;
+    }
+    // 被打断时标记并 resolve 扫描窗口 Promise，避免 startScan 协程永久悬挂
+    this.scanInterrupted = true;
+    if (this.scanResolver) {
+      this.scanResolver();
+      this.scanResolver = null;
     }
   }
 

@@ -34,8 +34,10 @@ export const healthApi = {
     return request<GraphStats>({ url: '/api/graph/stats' });
   },
 
-  testGraphConnection(): Promise<{ status: string; message: string }> {
-    return request<{ status: string; message: string }>({ url: '/api/graph/test' });
+  async testGraphConnection(): Promise<{ status: string; message: string }> {
+    const data = await request<Record<string, unknown>>({ url: '/api/graph/health' });
+    const overall = String(data.overall ?? 'unknown');
+    return { status: overall === 'healthy' ? 'connected' : 'error', message: overall };
   },
 
   /** 后端返回 { status, vector_status }，解包后返回 */

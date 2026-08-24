@@ -525,7 +525,7 @@ async def memory_agent_chat_stream(request: MemoryAgentChatRequest):
                 # 处理工具调用
                 if tool_calls_buffer:
                     from server.core.tools import parse_tool_args
-                    from server.core.tools.builtin import call_builtin_tool, BUILTIN_TOOL_NAMES
+                    from server.core.tools.builtin import call_builtin_tool, BUILTIN_TOOL_NAMES, _execute_single_tool_async
 
                     for tool_call in tool_calls_buffer:
                         tool_name = tool_call.get("name") or tool_call.get("function", {}).get(
@@ -536,11 +536,11 @@ async def memory_agent_chat_stream(request: MemoryAgentChatRequest):
                         # 发送工具执行开始事件
                         yield f"data: {json.dumps({'type': 'tool_start', 'tool_name': tool_name})}\n\n"
 
-                        # 执行工具（区分内置工具和注册工具）
+                        # 执行工具（内置同步工具直接调；CXFC/异步工具走统一异步执行器）
                         if tool_name in BUILTIN_TOOL_NAMES:
                             tool_result = call_builtin_tool(tool_name, tool_args or {})
                         else:
-                            tool_result = tool_registry.call_tool(tool_name, tool_args)
+                            tool_result = await _execute_single_tool_async(tool_name, tool_args or {})
 
                         # 发送工具执行结果事件
                         yield f"data: {json.dumps({'type': 'tool_result', 'tool_name': tool_name, 'result': tool_result})}\n\n"
@@ -777,8 +777,8 @@ async def summary_agent_stream_chat(request: SummaryAgentChatRequest):
 
                 # 处理工具调用
                 if tool_calls_buffer:
-                    from server.core.tools import parse_tool_args, tool_registry
-                    from server.core.tools.builtin import call_builtin_tool, BUILTIN_TOOL_NAMES
+                    from server.core.tools import parse_tool_args
+                    from server.core.tools.builtin import call_builtin_tool, BUILTIN_TOOL_NAMES, _execute_single_tool_async
 
                     for tool_call in tool_calls_buffer:
                         tool_name = tool_call.get("name") or tool_call.get("function", {}).get(
@@ -789,12 +789,12 @@ async def summary_agent_stream_chat(request: SummaryAgentChatRequest):
                         # 发送工具执行开始事件
                         yield f"data: {json.dumps({'type': 'tool_start', 'tool_name': tool_name}, ensure_ascii=False)}\n\n"
 
-                        # 执行工具（区分内置工具和注册工具）
+                        # 执行工具（内置同步工具直接调；CXFC/异步工具走统一异步执行器）
                         if tool_name in BUILTIN_TOOL_NAMES:
                             tool_result = call_builtin_tool(tool_name, tool_args or {})
                             logger.info(f"内置工具 {tool_name} 执行结果: {tool_result}")
                         else:
-                            tool_result = tool_registry.call_tool(tool_name, tool_args)
+                            tool_result = await _execute_single_tool_async(tool_name, tool_args or {})
                             logger.info(f"注册工具 {tool_name} 执行结果: {tool_result}")
 
                         # 发送工具执行结果事件

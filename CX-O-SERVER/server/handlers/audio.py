@@ -889,6 +889,11 @@ class DualStreamSession:
                 await self._pipeline_task
             except asyncio.CancelledError:
                 pass
+        # 取消所有追踪中的后台任务（打断判定/finalize 等），
+        # 防止断连后在途任务仍启动新的 LLM+TTS pipeline 向已死连接推流。
+        for task in list(self._background_tasks):
+            if not task.done():
+                task.cancel()
         # 重置 TTS 播放状态
         try:
             await set_tts_playing(self.client_id, False)
