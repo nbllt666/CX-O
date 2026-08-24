@@ -29,6 +29,9 @@ async def test_dirty_takeover_rejected_and_records_error():
     assert result["took_over"] is False
     assert result["error_code"] == CLUSTER_DIRTY_TAKEOVER
     assert failover.role == "standby"  # 拒绝后复位
+    # 仲裁失败不消耗 epoch：拒绝后仍为初始纪元，保证后续重试可用
+    assert failover.epoch == 0
+    assert result["epoch"] == 0
     topics = [t for (t, _) in events]
     assert "failover_started" in topics
 

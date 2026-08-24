@@ -75,7 +75,6 @@ class FailoverManager:
 
     async def maybe_takeover(self, dead_node_id: str) -> dict:
         new_epoch = self._epoch + 1
-        self._epoch = new_epoch
         self._role = "candidate"
 
         candidate_version, min_version = 0, 0
@@ -93,17 +92,21 @@ class FailoverManager:
                 epoch=new_epoch,
             )
         except ClusterError as e:
+            # 仲裁失败：恢复 standby。epoch 保持不变（仅在仲裁成功后才递增），
+            # 避免失败尝试导致 epoch 不可逆地被消耗。
             self._role = (getattr(self._config, "role", "standby") or "standby") if self._config else "standby"
             self._emit("failover_started", {"from_node": dead_node_id, "decision": "rejected", "reason": e.error_code})
             return {
                 "took_over": False,
                 "role": self._role,
                 "from_node_id": dead_node_id,
-                "epoch": new_epoch,
+                "epoch": self._epoch,
                 "error_code": e.error_code,
                 "message": e.message,
             }
 
+        # 仲裁成功后才递增 epoch，保证失败尝试不消耗纪元
+        self._epoch = new_epoch
         self._emit("failover_started", {"from_node": dead_node_id, "decision": "proceeding"})
         await self.adopt_inheritance(dead_node_id)
         self._role = "active"

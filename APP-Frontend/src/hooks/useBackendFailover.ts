@@ -62,7 +62,7 @@ export function useBackendFailover(options: UseBackendFailoverOptions = {}): voi
       cancelled = true;
       clearInterval(timer);
     };
-  }, [options.pollMs]);
+  }, [options.pollMs, options.consecutive]);
 }
 
 export { FAILOVER_CONSECUTIVE, FAILOVER_POLL_MS };
