@@ -488,12 +488,12 @@ class TestVoiceFastMemory:
         session = self._session()
         executed = []
 
-        def fake_execute(tool_calls, messages):
+        async def fake_execute_async(tool_calls, messages):
             executed.append(tool_calls)
             messages.append({"role": "assistant", "content": None, "tool_calls": tool_calls})
             messages.append({"role": "tool", "tool_call_id": "c1", "name": "search_all_memories", "content": "[]"})
 
-        monkeypatch.setattr("server.core.tools.builtin.execute_tool_calls", fake_execute)
+        monkeypatch.setattr("server.core.tools.builtin.execute_tool_calls_async", fake_execute_async)
         llm = _FakeFastLLM("刚刚聊过啊")
 
         async def source():

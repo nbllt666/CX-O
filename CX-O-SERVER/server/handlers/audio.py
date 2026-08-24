@@ -643,10 +643,10 @@ class DualStreamSession:
         if not tool_calls:
             return
 
-        from server.core.tools.builtin import execute_tool_calls
+        from server.core.tools.builtin import execute_tool_calls_async
 
         try:
-            execute_tool_calls(tool_calls, messages)
+            await execute_tool_calls_async(tool_calls, messages)
         except Exception as e:
             logger.warning(f"双流式快速模式工具执行失败: {e}")
 

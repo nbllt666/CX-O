@@ -107,8 +107,8 @@ async def generate_chat_stream(
             break
 
         state.tool_calls.extend(tool_calls_buffer)
-        from server.core.tools.builtin import execute_tool_calls
+        from server.core.tools.builtin import execute_tool_calls_async
 
-        execute_tool_calls(tool_calls_buffer, messages)
+        await execute_tool_calls_async(tool_calls_buffer, messages)
 
     state.done = True

@@ -407,6 +407,89 @@ def execute_tool_calls(tool_calls: List[Dict[str, Any]], messages: List[Dict[str
         )
 
 
+async def _execute_single_tool_async(name: str, arguments: Dict[str, Any]) -> Dict[str, Any]:
+    """异步执行单个工具并返回统一结果 dict。
+
+    - 内置同步工具（calculator/datetime/random/json_format）直接调用；
+    - CXFC 工具（category='cxfc'）优先经 cxfc_manager.call_tool 按 relay/direct/embedded
+      传输转发（正确执行电脑控制/自主工具；manager 缺失时回退注册表）；
+    - 其余注册表工具用 call_tool_async（支持 async handler，避免同步 call_tool
+      在异步上下文返回"请用 call_tool_async"错误）。
+    """
+    if name in BUILTIN_TOOL_NAMES:
+        try:
+            return call_builtin_tool(name, arguments or {})
+        except Exception as e:
+            return {"success": False, "error": str(e), "tool_name": name}
+
+    from server.core.tools import tool_registry
+
+    get_tool = getattr(tool_registry, "get_tool", None)
+    tool = get_tool(name) if get_tool else None
+    if tool is not None and getattr(tool, "category", None) == "cxfc":
+        result = await _call_cxfc_tool_async(tool, name, arguments or {})
+    else:
+        # 优先 call_tool_async（支持 async handler），缺失时回退同步 call_tool（兼容内联/测试注入的 registry）
+        call_async = getattr(tool_registry, "call_tool_async", None)
+        if call_async is not None:
+            result = await call_async(name, arguments or {})
+        else:
+            result = tool_registry.call_tool(name, arguments or {})
+
+    return result if isinstance(result, dict) else {"success": True, "result": result, "tool_name": name}
+
+
+async def _call_cxfc_tool_async(tool, name: str, arguments: Dict[str, Any]) -> Dict[str, Any]:
+    """优先经 cxfc_manager 按插件传输转发；manager 不可用或失败时回退注册表 call_tool_async。"""
+    try:
+        from server.dependencies import get_cxfc_manager
+
+        cxfc_mgr = get_cxfc_manager()
+        if cxfc_mgr is not None:
+            # 注册时 CXFC 工具 tags=[plugin_id]，用首 tag 定位插件做 manager 转发
+            plugin_id = (getattr(tool, "tags", None) or [""])[0]
+            if plugin_id:
+                try:
+                    return await cxfc_mgr.call_tool(plugin_id, name, arguments)
+                except Exception:
+                    pass
+    except Exception:
+        pass
+
+    from server.core.tools import tool_registry
+
+    return await tool_registry.call_tool_async(name, arguments)
+
+
+async def execute_tool_calls_async(
+    tool_calls: List[Dict[str, Any]], messages: List[Dict[str, Any]]
+) -> None:
+    """异步执行工具调用并把 assistant+tool 消息追加到 ``messages``。
+
+    与 :func:`execute_tool_calls` 等价，但异步执行：支持 async handler 与 CXFC
+    （relay/direct/embedded）工具。内置同步工具仍直接调用。
+    """
+    from server.core.tools import parse_tool_args
+
+    for tool_call in tool_calls:
+        tool_name = tool_call.get("name") or tool_call.get("function", {}).get("name")
+        tool_args = parse_tool_args(tool_call)
+        tool_result = await _execute_single_tool_async(tool_name, tool_args or {})
+
+        messages.append({"role": "assistant", "content": None, "tool_calls": [tool_call]})
+        tool_call_id = tool_call.get("id") or (
+            f"call_{tool_name}_{int(time.time() * 1000)}_{id(tool_call)}"
+        )
+        messages.append(
+            {
+                "role": "tool",
+                "tool_call_id": tool_call_id,
+                "name": tool_name,
+                "content": json.dumps(tool_result, ensure_ascii=False),
+            }
+        )
+
+
 def register_builtin_tools():
     """
     向后兼容的注册函数

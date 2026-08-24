@@ -146,9 +146,9 @@ async def chat(request: Request):
 
         final_response = response.content
         if hasattr(response, "tool_calls") and response.tool_calls:
-            from server.core.tools.builtin import execute_tool_calls
+            from server.core.tools.builtin import execute_tool_calls_async
 
-            execute_tool_calls(response.tool_calls, messages)
+            await execute_tool_calls_async(response.tool_calls, messages)
 
             response = await llm.chat(messages=messages, stream=False)
             final_response = response.content
@@ -266,8 +266,8 @@ async def chat_stream(request: ChatRequest):
 
                 # 处理工具调用
                 if tool_calls_buffer:
-                    from server.core.tools import parse_tool_args, tool_registry
-                    from server.core.tools.builtin import call_builtin_tool, BUILTIN_TOOL_NAMES
+                    from server.core.tools import parse_tool_args
+                    from server.core.tools.builtin import call_builtin_tool, BUILTIN_TOOL_NAMES, _execute_single_tool_async
 
                     for tool_call in tool_calls_buffer:
                         tool_name = tool_call.get("name") or tool_call.get("function", {}).get(
@@ -278,12 +278,12 @@ async def chat_stream(request: ChatRequest):
                         # 发送工具执行开始事件
                         yield f"data: {json.dumps({'type': 'tool_start', 'tool_name': tool_name})}\n\n"
 
-                        # 执行工具（区分内置工具和注册工具）
+                        # 执行工具（内置同步工具直接调用；CXFC/异步工具走统一异步执行器）
                         if tool_name in BUILTIN_TOOL_NAMES:
                             tool_result = call_builtin_tool(tool_name, tool_args or {})
                             logger.info(f"内置工具 {tool_name} 执行结果: {tool_result}")
                         else:
-                            tool_result = tool_registry.call_tool(tool_name, tool_args)
+                            tool_result = await _execute_single_tool_async(tool_name, tool_args or {})
                             logger.info(f"注册工具 {tool_name} 执行结果: {tool_result}")
 
                         # 发送工具执行结果事件

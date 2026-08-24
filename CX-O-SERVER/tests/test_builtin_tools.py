@@ -160,3 +160,63 @@ class TestRegister:
 class TestSingleton:
     def test_singleton_instance(self):
         assert builtin_tools is BuiltinTools()
+
+
+# --------------------------------------------------------------------------- #
+# 统一异步工具执行（_execute_single_tool_async / execute_tool_calls_async）
+# --------------------------------------------------------------------------- #
+class TestAsyncToolExecutor:
+    @pytest.mark.asyncio
+    async def test_builtin_sync_tool(self):
+        from server.core.tools.builtin import _execute_single_tool_async
+
+        r = await _execute_single_tool_async("calculator", {"expression": "1+1"})
+        assert r["success"] is True
+        assert r["result"] == 2
+
+    @pytest.mark.asyncio
+    async def test_registry_async_handler(self, monkeypatch):
+        from server.core.tools import tool_registry
+
+        ran = []
+
+        async def _async_handler(q=""):
+            ran.append(q)
+            return {"ok": True, "q": q}
+
+        tool_registry.register(
+            name="_test_async_helper", description="t", parameters={"type": "object"},
+            function=_async_handler, category="test", tags=[], enabled=True,
+        )
+        try:
+            from server.core.tools.builtin import _execute_single_tool_async
+
+            r = await _execute_single_tool_async("_test_async_helper", {"q": "hi"})
+            assert r["success"] is True and ran == ["hi"]
+        finally:
+            tool_registry._tools.pop("_test_async_helper", None)
+
+    @pytest.mark.asyncio
+    async def test_cxfc_tool_via_manager(self, monkeypatch):
+        from server.core.tools import tool_registry
+        from server.core.tools.builtin import _execute_single_tool_async
+
+        tool_registry.register(
+            name="_test_cxfc_tool", description="t", parameters={"type": "object"},
+            function=None, category="cxfc", tags=["plugin-1"], enabled=True,
+        )
+        calls = []
+
+        class _FakeManager:
+            async def call_tool(self, plugin_id, tool_name, arguments):
+                calls.append((plugin_id, tool_name, arguments))
+                return {"success": True, "result": "ran"}
+
+        monkeypatch.setattr("server.dependencies.get_cxfc_manager", lambda: _FakeManager())
+        try:
+            r = await _execute_single_tool_async("_test_cxfc_tool", {"x": 1})
+            assert r["success"] is True
+            assert calls == [("plugin-1", "_test_cxfc_tool", {"x": 1})]
+        finally:
+            tool_registry._tools.pop("_test_cxfc_tool", None)
+            monkeypatch.delattr("server.dependencies.get_cxfc_manager")

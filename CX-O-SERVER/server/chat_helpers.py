@@ -99,13 +99,16 @@ def get_llm_client_for_agent(agent_config: dict):
 
 
 def get_tools_for_agent() -> list:
-    """收集可注入 LLM 的工具列表（内置工具 + 主模型工具）。
+    """收集可注入 LLM 的工具列表（内置工具 + 主模型工具 + CXFC 插件工具）。
 
     收敛自 server/handlers/chat.py 的 _get_tools_for_agent，供 HTTP 聊天、WebSocket
     聊天与 ACP 自动回复共享，避免 core.acp.manager 对 handler 层的跨层依赖。
     内置工具的 OpenAI 定义本身由 get_builtin_tools() 内部 lru_cache，此处不再整体
     缓存——工具注册表是运行期可变状态，整体缓存会读入陈旧工具集，且单条消息仅
     需 14 次 get_tool 查询，相对 LLM 调用耗时可忽略。
+
+    额外追加 category='cxfc' 的已注册工具，使语音 / 普通聊天均能选择 CXFC 工具
+    （电脑控制、自主系统等），与"全部工具"口径一致。
     """
     from server.core.tools import tool_registry
     from server.core.tools.builtin import get_builtin_tools
@@ -125,4 +128,11 @@ def get_tools_for_agent() -> list:
         if tool and tool.enabled and tool.category not in EXCLUDED_CATEGORIES:
             main_tools.append(tool.to_openai_function())
 
-    return builtin_tools + main_tools
+    # CXFC 插件工具（category='cxfc'），如 computer_control / autonomy_*，
+    # 均在运行期由 CXFCManager 注册；此处全量透传，使 LLM 能选中并（经异步执行器）执行。
+    try:
+        cxfc_tools = tool_registry.list_openai_functions(category="cxfc")
+    except Exception:
+        cxfc_tools = []
+
+    return builtin_tools + main_tools + cxfc_tools

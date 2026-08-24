@@ -133,3 +133,28 @@ class TestGetToolsForAgent:
         # summary 分类与禁用工具均被排除
         assert "some_summary_tool" not in names
         assert "disabled_tool" not in names
+
+    def test_includes_cxfc_category_tools(self, monkeypatch):
+        import server.core.tools as tools_mod
+        from server.core.tools import builtin as builtin_mod
+        from server.chat_helpers import get_tools_for_agent
+
+        class _CXFCRegistry(_FakeRegistry):
+            def list_openai_functions(self, enabled_only=True, include_builtin=False, category=None):
+                if category == "cxfc":
+                    return [
+                        {"name": "computer_keyboard_control", "type": "function"},
+                        {"name": "autonomy_write_post", "type": "function"},
+                    ]
+                return []
+
+        reg = _CXFCRegistry([_FakeTool("write_long_term_memory", category="memory")])
+        monkeypatch.setattr(tools_mod, "tool_registry", reg)
+        monkeypatch.setattr(builtin_mod, "get_builtin_tools", lambda: [])
+        tools = get_tools_for_agent()
+        names = [t["name"] for t in tools]
+        # 主工具仍在
+        assert "write_long_term_memory" in names
+        # CXFC 插件工具（电脑控制/自主系统）被纳入"全部工具"
+        assert "computer_keyboard_control" in names
+        assert "autonomy_write_post" in names

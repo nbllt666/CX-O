@@ -160,9 +160,9 @@ async def _build_chat_context(
 
 
 async def _process_tool_calls(tool_calls_buffer, messages, llm):
-    from server.core.tools.builtin import execute_tool_calls
+    from server.core.tools.builtin import execute_tool_calls_async
 
-    execute_tool_calls(tool_calls_buffer, messages)
+    await execute_tool_calls_async(tool_calls_buffer, messages)
 
     response = await llm.chat(messages=messages, stream=False)
     return response
