@@ -1,0 +1,292 @@
+"""server.api.routers.vision 路由 + server.core.vision.clip_queue 队列测试。
+
+覆盖：
+- 路由护栏：enabled=False 已忽略且不排队不落盘；source/ts/event_type 非法 4xx；文件过大 413。
+- 路由收取合法片段：返回 accepted 并提交队列（含 pending）；真实队列端到端临时文件最终清理。
+- 队列 worker：consumer 抛出异常时文件仍被清洁、worker 不崩溃并继续处理后续条目。
+- 队列惰性启动安全失败（无运行中事件循环时 enqueue 返回 False）。
+
+运行：python -m pytest tests/test_vision_router.py -q
+"""
+import asyncio
+import time
+from pathlib import Path
+
+import pytest
+from fastapi import FastAPI
+from fastapi.testclient import TestClient
+
+from server.core.vision.clip_queue import VisionClipQueue
+from server.api.routers import vision as vision_router_mod
+
+
+# --------------------------------------------------------------------------- #
+# 假依赖（settings / 队列）
+# --------------------------------------------------------------------------- #
+class FakeVisionCfg:
+    def __init__(self, enabled):
+        self.enabled = enabled
+        self.clip_max_sec = 10
+
+
+class FakeConfig:
+    def __init__(self, enabled):
+        self.vision_enhanced = FakeVisionCfg(enabled)
+
+
+class FakeSettings:
+    def __init__(self, enabled):
+        self.config = FakeConfig(enabled)
+
+
+class FakeQueue:
+    """可注入路由的替身队列：记录入队、可配置 pending 值。"""
+
+    def __init__(self, pending=0, enqueue_result=True):
+        self.enqueued = []
+        self.pending = pending
+        self.enqueue_result = enqueue_result
+        self.consumer = None
+
+    def set_consumer(self, consumer):
+        self.consumer = consumer
+
+    def enqueue(self, item):
+        self.enqueued.append(item)
+        return self.enqueue_result
+
+    def pending_count(self):
+        return self.pending
+
+    def is_ready(self):
+        return self.consumer is not None
+
+
+# --------------------------------------------------------------------------- #
+# 路由测试（假队列，确定性）
+# --------------------------------------------------------------------------- #
+@pytest.fixture
+def enable_patches(monkeypatch, tmp_path):
+    """返回一个应用构造器，可注入 FakeSettings + FakeQueue + 临时区到 tmp_path。"""
+    queue = FakeQueue()
+
+    def _ctrl(enabled):
+        app = FastAPI()
+        app.include_router(vision_router_mod.router)
+        monkeypatch.setattr(vision_router_mod, "get_settings", lambda: FakeSettings(enabled))
+        monkeypatch.setattr(vision_router_mod, "vision_clip_queue", queue)
+        monkeypatch.setattr(vision_router_mod, "_vision_tmp_dir", lambda: tmp_path)
+        return TestClient(app), queue
+
+    return _ctrl
+
+
+def _post(client, *, pure=True, **overrides):
+    payload = {
+        "event_type": "object_motion",
+        "ts": "1234.5",
+        "source": "camera",
+    }
+    payload.update({k: v for k, v in overrides.items() if v is not None})
+    files = {
+        "clip": (overrides.get("filename", "fake.mp4"), b"fakevideodata", "video/mp4")
+        if pure
+        else overrides["clip_payload"]
+    }
+    return client.post("/vision/clip", files=files, data=payload)
+
+
+def test_disabled_returns_ignored_and_no_enqueue(enable_patches, tmp_path):
+    app, queue = enable_patches(enabled=False)
+    with app as c:
+        r = _post(c)
+        assert r.status_code == 200
+        body = r.json()
+        assert body["success"] is True
+        assert body["data"]["accepted"] is False
+        assert queue.enqueued == []
+        # 未落盘：临时区无文件
+        assert list(tmp_path.iterdir()) == []
+
+
+def test_valid_enqueue_accepted_and_pending(enable_patches):
+    app, queue = enable_patches(enabled=True)
+    queue.pending = 1
+    with app as c:
+        r = _post(c)
+        assert r.status_code == 200
+        body = r.json()
+        assert body["data"]["accepted"] is True
+        assert isinstance(body["data"]["clip_id"], str)
+        assert body["data"]["pending"] == 1
+        # 提交了队列条目，且临时文件确实被写入
+        assert len(queue.enqueued) == 1
+        item = queue.enqueued[0]
+        assert item["source"] == "camera"
+        assert item["ts"] == pytest.approx(1234.5)
+        assert item["event_meta"]["event_type"] == "object_motion"
+        clip_path = Path(item["clip_path"])
+        assert clip_path.exists()
+        assert clip_path.read_bytes() == b"fakevideodata"
+        # 清理测试假队列遗留的临时文件
+        clip_path.unlink(missing_ok=True)
+
+
+def test_invalid_source_422(enable_patches):
+    app, queue = enable_patches(enabled=True)
+    with app as c:
+        r = _post(c, source="unknown")
+        assert r.status_code == 422
+        assert queue.enqueued == []
+
+
+def test_missing_event_type_422(enable_patches):
+    app, queue = enable_patches(enabled=True)
+    with app as c:
+        # 缺省 event_type 由 Form 必填触发 422（FastAPI 校验）
+        payload = {"ts": "123.0", "source": "camera"}
+        files = {"clip": ("fake.mp4", b"data", "video/mp4")}
+        r = c.post("/vision/clip", files=files, data=payload)
+        assert r.status_code == 422
+        assert queue.enqueued == []
+
+
+def test_bad_number_only_field_semantics(enable_patches):
+    # ts 不可解析 → 422（Generated by 业务校验）
+    app, queue = enable_patches(enabled=True)
+    with app as c:
+        r = _post(c, ts="not-a-number")
+        assert r.status_code == 422
+        assert queue.enqueued == []
+
+
+def test_oversize_413(enable_patches):
+    app, queue = enable_patches(enabled=True)
+    big = b"x" * (100 * 1024 * 1024 + 1)
+    with app as c:
+        files = {"clip": ("big.mp4", big, "video/mp4")}
+        r = c.post(
+            "/vision/clip",
+            files=files,
+            data={"event_type": "motion", "ts": "1.0", "source": "camera"},
+        )
+        assert r.status_code == 413
+        assert queue.enqueued == []
+
+
+# --------------------------------------------------------------------------- #
+# 路由 + 真实队列端到端（临时文件终态清理）
+# --------------------------------------------------------------------------- #
+def test_real_queue_end_to_end_cleanup(monkeypatch, tmp_path):
+    """enabled=True + 合法片段 → accepted；真实 worker 在 finally 中清理临时文件。"""
+    queue = VisionClipQueue()
+    app = FastAPI()
+    app.include_router(vision_router_mod.router)
+    monkeypatch.setattr(vision_router_mod, "get_settings", lambda: FakeSettings(True))
+    monkeypatch.setattr(vision_router_mod, "vision_clip_queue", queue)
+    monkeypatch.setattr(vision_router_mod, "_vision_tmp_dir", lambda: tmp_path)
+
+    with TestClient(app) as c:
+        r = _post(c)
+        assert r.status_code == 200
+        assert r.json()["data"]["accepted"] is True
+
+        def cleaned():
+            return list(tmp_path.iterdir()) == []
+
+        assert _wait(cleaned, timeout=3.0), f"临时文件未在预期时间内被清理: {list(tmp_path.iterdir())}"
+    # 队列 worker 后台任务随 TestClient 关闭被取消，此处仅验证已清理
+    assert list(tmp_path.iterdir()) == []
+
+
+# --------------------------------------------------------------------------- #
+# 队列 worker 行为（纯异步，可控）
+# --------------------------------------------------------------------------- #
+@pytest.mark.asyncio
+async def test_queue_consumer_success_cleans_and_pending(tmp_path):
+    q = VisionClipQueue()
+    f = tmp_path / "clip1.mp4"
+    f.write_bytes(b"data")
+    processed = []
+
+    async def consumer(item):
+        processed.append(item["clip_path"])
+        # consumer 不做删除 —— 依赖队列 finally 兜底清理
+        await asyncio.sleep(0.001)
+
+    q.set_consumer(consumer)
+    assert q.enqueue({"clip_path": str(f), "event_meta": {}, "source": "camera", "ts": 1.0, "accepted_at": ""})
+    assert q.pending_count() == 1
+    await _async_wait(lambda: not f.exists())
+    assert not f.exists(), "临时文件应由队列 finally 清理"
+    assert processed == [str(f)]
+
+
+@pytest.mark.asyncio
+async def test_queue_consumer_exception_cleans_and_survives(tmp_path):
+    """consumer 抛异常：文件仍清理，worker 存活并继续处理后续条目。"""
+    q = VisionClipQueue()
+    calls = []
+
+    async def consumer(item):
+        calls.append(item["clip_path"])
+        if len(calls) == 1:
+            raise RuntimeError("理解后端 boom")
+
+    q.set_consumer(consumer)
+    f1 = tmp_path / "c1.mp4"
+    f2 = tmp_path / "c2.mp4"
+    f1.write_bytes(b"1")
+    f2.write_bytes(b"2")
+
+    assert q.enqueue({"clip_path": str(f1), "event_meta": {}, "source": "camera", "ts": 1.0, "accepted_at": ""})
+    assert q.enqueue({"clip_path": str(f2), "event_meta": {}, "source": "camera", "ts": 2.0, "accepted_at": ""})
+
+    await _async_wait(lambda: not f1.exists() and not f2.exists())
+    assert not f1.exists()
+    assert not f2.exists()
+    assert len(calls) == 2, "worker 处理第一条失败后应继续处理第二条"
+
+
+@pytest.mark.asyncio
+async def test_enqueue_safe_fail_no_running_loop(monkeypatch):
+    """无运行中事件循环时 enqueue 安全失败返回 False（不崩）。"""
+    q = VisionClipQueue()
+
+    def _no_loop():
+        raise RuntimeError("no running event loop")
+
+    monkeypatch.setattr(asyncio, "get_running_loop", _no_loop)
+    assert q.enqueue({"clip_path": "whatever.mp4"}) is False
+    assert q.pending_count() == 0
+
+
+@pytest.mark.asyncio
+async def test_is_ready_toggles():
+    q = VisionClipQueue()
+    assert q.is_ready() is False
+    q.set_consumer(lambda item: None)
+    assert q.is_ready() is True
+    q.set_consumer(None)
+    assert q.is_ready() is False
+
+
+# --------------------------------------------------------------------------- #
+# helpers
+# --------------------------------------------------------------------------- #
+def _wait(cond, timeout=3.0):
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        if cond():
+            return True
+        time.sleep(0.02)
+    return False
+
+
+async def _async_wait(cond, timeout=3.0):
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        if cond():
+            return True
+        await asyncio.sleep(0.01)
+    return False

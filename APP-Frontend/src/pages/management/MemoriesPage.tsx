@@ -14,7 +14,7 @@
  *
  * 数据全部来自 memoriesApi，无 react-query，本地 useState + useEffect。
  */
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import {
   Archive,
@@ -22,6 +22,7 @@ import {
   Brain,
   CalendarClock,
   CheckSquare,
+  Film,
   LayoutGrid,
   List,
   Pencil,
@@ -39,6 +40,8 @@ import { memoriesApi } from '@/api/clients/memories';
 import type { Memory } from '@/api/types';
 import { Button } from '@/components/ui-v2';
 import { cn } from '@/lib/utils';
+import { filterBySource, getVisionMeta, isVisionMemory } from './memoryFilter';
+import type { MemorySourceFilter } from './memoryFilter';
 
 type FilterType = 'all' | 'long_term' | 'short_term' | 'permanent';
 type ViewMode = 'card' | 'list';
@@ -92,6 +95,30 @@ function ImportanceStars(props: { value: number }) {
         />
       ))}
     </span>
+  );
+}
+
+/** 视觉叙事记忆徽章：来源 + 事件类型 + 情绪（元数据缺失则不展示） */
+function VisionBadges(props: { m: Memory }) {
+  const { t } = useTranslation();
+  const meta = getVisionMeta(props.m);
+  return (
+    <>
+      <span className="flex items-center gap-1 rounded bg-violet-500/15 px-1.5 py-0.5 font-medium text-violet-300">
+        <Film className="h-2.5 w-2.5" />
+        {t('management.memories.visionBadge')}
+      </span>
+      {meta.event_type && (
+        <span className="rounded bg-[rgba(255,255,255,0.08)] px-1.5 py-0.5">
+          {t('management.memories.eventType')}：{meta.event_type}
+        </span>
+      )}
+      {meta.emotion && (
+        <span className="rounded bg-[rgba(255,255,255,0.08)] px-1.5 py-0.5">
+          {t('management.memories.emotion')}：{meta.emotion}
+        </span>
+      )}
+    </>
   );
 }
 
@@ -338,6 +365,7 @@ export default function MemoriesPage() {
   const [loadError, setLoadError] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [filterType, setFilterType] = useState<FilterType>('all');
+  const [filterSource, setFilterSource] = useState<MemorySourceFilter>('all');
   const [currentAgentId, setCurrentAgentId] = useState('default');
   const [agents, setAgents] = useState<AgentOption[]>([]);
   const [viewMode, setViewMode] = useState<ViewMode>('card');
@@ -418,10 +446,10 @@ export default function MemoriesPage() {
 
   const selectAllMemories = () => {
     setSelectedMemories((prev) => {
-      if (prev.size === memories.length) {
+      if (prev.size === visibleMemories.length && visibleMemories.length > 0) {
         return new Set<number>();
       }
-      return new Set(memories.map((m) => m.id));
+      return new Set(visibleMemories.map((m) => m.id));
     });
   };
 
@@ -506,7 +534,13 @@ export default function MemoriesPage() {
     }
   };
 
-  const allSelected = memories.length > 0 && selectedMemories.size === memories.length;
+  // 来源过滤（'vision' 仅保留视觉叙事记忆）——前端侧过滤，按列级 source 字段判断
+  const visibleMemories = useMemo(
+    () => filterBySource(memories, filterSource),
+    [memories, filterSource],
+  );
+
+  const allSelected = visibleMemories.length > 0 && selectedMemories.size === visibleMemories.length;
 
   return (
     <div className="mx-auto flex h-full max-w-5xl flex-col gap-4">
@@ -536,6 +570,24 @@ export default function MemoriesPage() {
           <option value="short_term">{t('management.memories.typeShortTerm')}</option>
           <option value="permanent">{t('management.memories.typePermanent')}</option>
         </select>
+        {/* 来源过滤：全部 / 视觉记忆（前端侧过滤，依据列级 source==='vision'） */}
+        <select
+          value={filterSource}
+          onChange={(e) => setFilterSource(e.target.value as MemorySourceFilter)}
+          aria-label={t('management.memories.sourceFilter')}
+          title={t('management.memories.sourceFilter')}
+          className="rounded-lg border border-[var(--glass-border)] bg-[rgba(255,255,255,0.06)] px-3 py-2 text-sm focus:border-[rgba(255,183,225,0.4)] focus:outline-none"
+        >
+          <option value="all">{t('management.memories.sourceAll')}</option>
+          <option value="vision">{t('management.memories.sourceVision')}</option>
+        </select>
+        {/* 视觉叙事增强能力的中性提示徽章（仅指明来源，非错误态） */}
+        {filterSource === 'vision' && (
+          <span className="shrink-0 rounded-full border border-violet-400/30 bg-violet-400/10 px-2.5 py-0.5 text-[10px] font-medium text-violet-300">
+            <Film className="mr-1 inline h-3 w-3 align-[-1px]" />
+            {t('management.memories.sourceVisionHint')}
+          </span>
+        )}
         <select
           value={currentAgentId}
           onChange={(e) => setCurrentAgentId(e.target.value)}
@@ -675,7 +727,7 @@ export default function MemoriesPage() {
               {t('management.common.retry')}
             </button>
           </div>
-        ) : memories.length === 0 ? (
+        ) : visibleMemories.length === 0 ? (
           <div className="flex h-full flex-col items-center justify-center gap-2 text-muted-foreground">
             <Brain className="h-8 w-8 opacity-40" />
             <p className="text-sm font-medium">{t('management.memories.emptyTitle')}</p>
@@ -684,11 +736,11 @@ export default function MemoriesPage() {
         ) : (
           <>
             <p className="mb-3 text-xs text-muted-foreground">
-              {t('management.memories.total', { count: memories.length })}
+              {t('management.memories.total', { count: visibleMemories.length })}
             </p>
             {viewMode === 'card' ? (
               <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-3">
-                {memories.map((m) => {
+                {visibleMemories.map((m) => {
                   const isSelected = selectedMemories.has(m.id);
                   return (
                     <button
@@ -713,6 +765,7 @@ export default function MemoriesPage() {
                       <div className="mt-2 flex flex-wrap items-center gap-2 text-[10px] text-muted-foreground">
                         <TypeBadge type={m.type} />
                         <ImportanceStars value={m.importance} />
+                        {isVisionMemory(m) && <VisionBadges m={m} />}
                         {m.is_archived && (
                           <span className="flex items-center gap-1 rounded bg-amber-400/15 px-1.5 py-0.5 font-medium text-amber-400">
                             <Archive className="h-2.5 w-2.5" />
@@ -735,7 +788,7 @@ export default function MemoriesPage() {
               </div>
             ) : (
               <div className="space-y-2">
-                {memories.map((m) => {
+                {visibleMemories.map((m) => {
                   const isSelected = selectedMemories.has(m.id);
                   return (
                     <button
@@ -758,6 +811,7 @@ export default function MemoriesPage() {
                         <div className="mt-2 flex flex-wrap items-center gap-2 text-[10px] text-muted-foreground">
                           <TypeBadge type={m.type} />
                           <ImportanceStars value={m.importance} />
+                          {isVisionMemory(m) && <VisionBadges m={m} />}
                           {m.is_archived && (
                             <span className="flex items-center gap-1 rounded bg-amber-400/15 px-1.5 py-0.5 font-medium text-amber-400">
                               <Archive className="h-2.5 w-2.5" />

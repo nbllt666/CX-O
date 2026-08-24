@@ -837,18 +837,38 @@ function CaptureSection() {
   const screenActive = useCaptureStore((s) => s.screenActive);
   const cameraActive = useCaptureStore((s) => s.cameraActive);
   const visionEnabled = useCaptureStore((s) => s.visionEnabled);
+  const videoModeEnabled = useCaptureStore((s) => s.videoModeEnabled);
   const frameMode = useCaptureStore((s) => s.frameMode);
   const frameIntervalSec = useCaptureStore((s) => s.frameIntervalSec);
   const setScreenActive = useCaptureStore((s) => s.setScreenActive);
   const setCameraActive = useCaptureStore((s) => s.setCameraActive);
   const setVisionEnabled = useCaptureStore((s) => s.setVisionEnabled);
+  const setVideoModeEnabled = useCaptureStore((s) => s.setVideoModeEnabled);
   const setFrameMode = useCaptureStore((s) => s.setFrameMode);
   const setFrameIntervalSec = useCaptureStore((s) => s.setFrameIntervalSec);
 
   const modeOptions: Array<{ value: CaptureFrameMode; label: string }> = [
     { value: 'interval', label: t('settings.capture.modeInterval') },
+    { value: 'adaptive', label: t('settings.capture.modeAdaptive') },
     { value: 'manual', label: t('settings.capture.modeManual') },
   ];
+
+  // 视频模式开启时，尽力而为地把 vision_enhanced.enabled 同步到后端；
+  // 单向同步（关闭不回写 false）、失败静默，不弹错不阻塞 UI。
+  const syncVideoModeBackend = async (enabled: boolean) => {
+    if (!enabled) return;
+    try {
+      await configApi.updateConfig('vision_enhanced', { enabled: true });
+    } catch {
+      // 尽力而为：后端不可达/写入失败时忽略，不影响本地开关状态
+    }
+  };
+
+  // 本地先写入 store，再异步 best-effort 同步后端
+  const handleVideoModeChange = (v: boolean) => {
+    setVideoModeEnabled(v);
+    void syncVideoModeBackend(v);
+  };
 
   const renderCaptureRow = (
     label: string,
@@ -896,6 +916,11 @@ function CaptureSection() {
         <MonitorPlay className="h-3.5 w-3.5" />
         {t('settings.capture.visionMasterDesc')}
       </p>
+      {renderCaptureRow(t('settings.capture.videoMode'), videoModeEnabled, handleVideoModeChange)}
+      <p className="flex items-center gap-1.5 text-xs text-muted-foreground">
+        <MonitorPlay className="h-3.5 w-3.5" />
+        {t('settings.capture.videoModeDesc')}
+      </p>
       {renderCaptureRow(t('settings.capture.screen'), screenActive, setScreenActive)}
       {renderCaptureRow(t('settings.capture.camera'), cameraActive, setCameraActive)}
       <p className="flex items-center gap-1.5 text-xs text-muted-foreground">
@@ -905,7 +930,7 @@ function CaptureSection() {
       <Row label={t('settings.capture.frameMode')}>
         <Segmented options={modeOptions} value={frameMode} onChange={setFrameMode} />
       </Row>
-      {frameMode === 'interval' && (
+      {frameMode === 'interval' || frameMode === 'adaptive' ? (
         <SliderField
           label={t('settings.capture.intervalSec')}
           value={frameIntervalSec}
@@ -915,7 +940,7 @@ function CaptureSection() {
           format={(v) => `${v}s`}
           onChange={setFrameIntervalSec}
         />
-      )}
+      ) : null}
     </Section>
   );
 }

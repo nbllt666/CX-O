@@ -212,6 +212,8 @@ export interface Memory {
   is_archived: boolean;
   archived_at?: string;
   emotion_score?: number;
+  /** 来源标记（后端 memories 表列级字段；视觉叙事记忆为 'vision'，普通记忆为 'user'） */
+  source?: string;
   metadata?: Record<string, unknown>;
 }
 

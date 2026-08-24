@@ -105,6 +105,7 @@ class _DecisionMixin:
         content: str,
         decision: Any,
         metadata: Optional[Dict[str, Any]] = None,
+        source: Optional[str] = None,
     ) -> Dict[str, Any]:
         """按 decision.location 决定写入主库或 rejected_content 表。
 
@@ -118,6 +119,8 @@ class _DecisionMixin:
                       rubric_snapshot/decision_point/llm_reasoning/llm_confidence 等字段）
             metadata: 附加元数据（写入主库时合并到记忆 metadata；写入 rejected 时合并到
                       rejected_content.metadata）
+            source: 来源标记透传（'vision'/'user' 等）。memories 分支默认 'user'；
+                    permanent_memories 分支缺省维持原硬编码 'radix_decision'。
 
         Returns:
             {"location": str, "memory_id": Optional[int], "rejected_id": Optional[str]}
@@ -143,8 +146,10 @@ class _DecisionMixin:
                     content=content,
                     memory_type="long_term",
                     importance=3,
+                    tags=merged_metadata.get("tags"),
                     metadata=merged_metadata,
                     permanent=False,
+                    source=source or "user",
                 )
                 logger.info(f"write_with_decision → memories: memory_id={memory_id}")
                 return {"location": "memories", "memory_id": memory_id, "rejected_id": None}
@@ -152,8 +157,9 @@ class _DecisionMixin:
             if location == "permanent_memories":
                 memory_id = self.write_permanent_memory(
                     content=content,
+                    tags=merged_metadata.get("tags"),
                     metadata=merged_metadata,
-                    source="radix_decision",
+                    source=source or "radix_decision",
                 )
                 logger.info(f"write_with_decision → permanent_memories: memory_id={memory_id}")
                 return {

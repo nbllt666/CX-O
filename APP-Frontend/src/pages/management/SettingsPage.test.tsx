@@ -214,8 +214,8 @@ describe('SettingsPage 五区块', () => {
     ).toBeInTheDocument();
 
     const turnOnButtons = screen.getAllByRole('button', { name: '开启' });
-    expect(turnOnButtons).toHaveLength(3); // 主动视觉总开关 + 屏幕共享 + 摄像头
-    fireEvent.click(turnOnButtons[1]); // 屏幕共享
+    expect(turnOnButtons).toHaveLength(4); // 主动视觉总开关 + 视频模式 + 屏幕共享 + 摄像头
+    fireEvent.click(turnOnButtons[2]); // 屏幕共享
     expect(useCaptureStore.getState().screenActive).toBe(true);
     expect(useCaptureStore.getState().cameraActive).toBe(false);
 
@@ -228,6 +228,65 @@ describe('SettingsPage 五区块', () => {
       target: { value: '10' },
     });
     expect(useCaptureStore.getState().frameIntervalSec).toBe(10);
+  });
+
+  it('视频模式开关：开启写入 store 并 best-effort 同步后端，关闭不回写', async () => {
+    const { configApi } = await import('@/api/clients/config');
+    // 清空其它用例（如 LLM/向量保存）对 updateConfig 的调用，隔离断言
+    (configApi.updateConfig as ReturnType<typeof vi.fn>).mockClear();
+
+    render(<SettingsPage />);
+    expect(useCaptureStore.getState().videoModeEnabled).toBe(false);
+    // 视觉采集区块现含 4 个采集开关（主动视觉总开关 + 视频模式 + 屏幕共享 + 摄像头）
+    const turnOnButtons = screen.getAllByRole('button', { name: '开启' });
+    expect(turnOnButtons).toHaveLength(4);
+
+    // 开启视频模式：index 1（0=主动视觉总开关，1=视频模式，2=屏幕共享，3=摄像头）
+    fireEvent.click(turnOnButtons[1]);
+    expect(useCaptureStore.getState().videoModeEnabled).toBe(true);
+    // 开启时触发后端写入 vision_enhanced.enabled=true
+    await waitFor(() =>
+      expect(configApi.updateConfig).toHaveBeenCalledWith('vision_enhanced', { enabled: true }),
+    );
+
+    // 关闭视频模式：单向同步，不回写 false
+    (configApi.updateConfig as ReturnType<typeof vi.fn>).mockClear();
+    fireEvent.click(screen.getByRole('button', { name: '关闭' }));
+    expect(useCaptureStore.getState().videoModeEnabled).toBe(false);
+    expect(configApi.updateConfig).not.toHaveBeenCalledWith('vision_enhanced', {
+      enabled: false,
+    });
+  });
+
+  it('i18n：settings.capture.videoMode / videoModeDesc 键在中英文 locale 均存在且非原始 key 形态', () => {
+    const keys = ['settings.capture.videoMode', 'settings.capture.videoModeDesc'];
+    for (const lng of ['zh-CN', 'en-US']) {
+      for (const key of keys) {
+        const value = i18n.t(key, { lng });
+        expect(value).toBeTruthy();
+        // 键缺失时 i18next 回退显示原始 key，此断言可防 D1 复现
+        expect(value.startsWith('settings.capture.')).toBe(false);
+      }
+    }
+  });
+
+  it('帧节奏：自适应档展示，interval/adaptive 显示滑块、manual 隐藏', () => {
+    render(<SettingsPage />);
+    // 新增自适应档位
+    expect(screen.getByRole('button', { name: '自适应' })).toBeInTheDocument();
+
+    // 默认 interval：滑块显示
+    expect(screen.getByRole('slider', { name: '抽帧间隔（秒）' })).toBeInTheDocument();
+
+    // 切 adaptive：滑块仍显示（作为自适应基准）
+    fireEvent.click(screen.getByRole('button', { name: '自适应' }));
+    expect(useCaptureStore.getState().frameMode).toBe('adaptive');
+    expect(screen.getByRole('slider', { name: '抽帧间隔（秒）' })).toBeInTheDocument();
+
+    // 切 manual：滑块隐藏
+    fireEvent.click(screen.getByRole('button', { name: '手动点发' }));
+    expect(useCaptureStore.getState().frameMode).toBe('manual');
+    expect(screen.queryByRole('slider', { name: '抽帧间隔（秒）' })).not.toBeInTheDocument();
   });
 
   it('后端地址保存：探测通过后写入 localStorage 并提示生效', async () => {

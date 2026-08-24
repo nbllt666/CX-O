@@ -25,6 +25,7 @@ class _MemoryCRUDMixin:
         metadata: Optional[Dict] = None,
         permanent: bool = False,
         emotion_score: float = 0.0,
+        source: str = "user",
         workspace_id: str = "default",
         agent_id: str = "default",
     ) -> int:
@@ -38,6 +39,7 @@ class _MemoryCRUDMixin:
             metadata: 元数据
             permanent: 是否为永久记忆
             emotion_score: 情感分数
+            source: 记忆来源标记（'user'/'assistant'/'vision' 等），对应 memories.source 列
             workspace_id: 工作区ID
             agent_id: Agent ID，用于隔离不同Agent的记忆
 
@@ -61,8 +63,8 @@ class _MemoryCRUDMixin:
                     type, content, importance, importance_score,
                     decay_type, decay_params, reactivation_count,
                     emotion_score, permanent, psychological_age,
-                    tags, metadata, created_at, workspace_id, agent_id
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    tags, metadata, created_at, workspace_id, agent_id, source
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
                 (
                     memory_type,
@@ -80,6 +82,7 @@ class _MemoryCRUDMixin:
                     datetime.now().isoformat(),
                     workspace_id,
                     agent_id,
+                    source,
                 ),
             )
 

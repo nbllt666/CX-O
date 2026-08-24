@@ -245,6 +245,86 @@
         }
       }
     },
+    "vision_enhanced": {
+      "type": "object",
+      "description": "视觉增强视频叙事记忆配置段（新增后端功能，默认关闭，零侵入）。仅 enabled=true 时生效。字段缺失由 auto_fill 补齐默认值，越界数值回退默认值（buffer_retention_sec 5-300、clip_max_sec 2-120、diff_threshold 0.01-1、event_cooldown_sec 1-300、max_clips_per_hour 1-1000）。",
+      "required": ["enabled"],
+      "additionalProperties": false,
+      "properties": {
+        "enabled": {
+          "type": "boolean",
+          "default": false,
+          "description": "vision_enhanced 总开关。默认关闭，开启后视觉事件触发视频叙事记忆。"
+        },
+        "buffer_retention_sec": {
+          "type": "number",
+          "minimum": 5,
+          "maximum": 300,
+          "default": 30,
+          "description": "事件前缓冲池保留时长（秒）。5-300，默认 30。"
+        },
+        "diff_threshold": {
+          "type": "number",
+          "minimum": 0.01,
+          "maximum": 1,
+          "default": 0.08,
+          "description": "视觉差分变化阈值（0-1）。超过则判定为 scene_change。0.01-1，默认 0.08。"
+        },
+        "event_cooldown_sec": {
+          "type": "number",
+          "minimum": 1,
+          "maximum": 300,
+          "default": 15,
+          "description": "相邻事件最小间隔（秒）。冷却期内不重复触发。1-300，默认 15。"
+        },
+        "max_clips_per_hour": {
+          "type": "number",
+          "minimum": 1,
+          "maximum": 1000,
+          "default": 12,
+          "description": "每小时最大片段数。限流保护。1-1000，默认 12。"
+        },
+        "pre_roll_sec": {
+          "type": "number",
+          "minimum": 0,
+          "default": 3,
+          "description": "事件前预滚动缓冲（秒）。默认 3。"
+        },
+        "post_roll_sec": {
+          "type": "number",
+          "minimum": 0,
+          "default": 6,
+          "description": "事件后滚动缓冲（秒）。默认 6。"
+        },
+        "clip_max_sec": {
+          "type": "number",
+          "minimum": 2,
+          "maximum": 120,
+          "default": 10,
+          "description": "单片段最大时长（秒）。2-120，默认 10。"
+        },
+        "narrative_memory_enabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "是否启用叙事记忆回写。false 时仅裁剪不入叙事记忆。"
+        },
+        "temporal_fusion_enabled": {
+          "type": "boolean",
+          "default": false,
+          "description": "是否启用跨时段时间融合。默认关闭。"
+        },
+        "ocr_keyframe_enabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "是否对关键帧做 OCR 提取画面文本。默认开启。"
+        },
+        "require_vllm": {
+          "type": "boolean",
+          "default": true,
+          "description": "是否要求 vLLM 后端。true 时 vLLM 不可用则禁用该功能；false 可降级使用。"
+        }
+      }
+    },
     "legacy_parser_enabled": {
       "type": "boolean",
       "default": true,

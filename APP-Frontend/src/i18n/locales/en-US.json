@@ -273,7 +273,14 @@
       "batchDeleteConfirm": "Delete {{count}} selected memories?",
       "batchFailed": "Batch operation failed. Please retry.",
       "openAssistant": "Memory Assistant",
-      "assistantDrawerTitle": "Memory Assistant"
+      "assistantDrawerTitle": "Memory Assistant",
+      "sourceFilter": "Source",
+      "sourceAll": "All sources",
+      "sourceVision": "Vision memory",
+      "sourceVisionHint": "from active visual narrative enhancement (Plan 3)",
+      "visionBadge": "Visual narrative",
+      "eventType": "Event type",
+      "emotion": "Emotion"
     },
     "archive": {
       "subtitle": "Memory archiving and deduplication",
@@ -1186,6 +1193,8 @@
       "sectionDesc": "Screen / camera capture preferences",
       "visionMaster": "Active Vision",
       "visionMasterDesc": "Master switch: only when on does the pet send frames to the backend",
+      "videoMode": "Video Mode",
+      "videoModeDesc": "Records the session and distills it into video-narrative memory; heavy on performance, so enable only when needed. When on, synced to the backend on a best-effort basis",
       "screen": "Screen share",
       "camera": "Camera",
       "active": "On",
@@ -1195,6 +1204,7 @@
       "petNote": "Capture runs in the pet window; toggles here take effect once the pet-side pipeline is ready",
       "frameMode": "Frame send mode",
       "modeInterval": "Interval",
+      "modeAdaptive": "Adaptive",
       "modeManual": "Manual",
       "intervalSec": "Frame interval (sec)"
     },

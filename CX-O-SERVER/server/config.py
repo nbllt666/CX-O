@@ -80,6 +80,19 @@ def get_env_config() -> Dict[str, Any]:
         "CXO_CLUSTER_ROLE": ["cluster", "role"],
         "CXO_CLUSTER_TRANSPORT": ["cluster", "transport"],
         "CXO_CLUSTER_BIND": ["cluster", "bind"],
+        # vision_enhanced 节（视觉增强视频叙事记忆，默认关闭，零侵入）
+        "CXO_VISION_ENABLED": ["vision_enhanced", "enabled"],
+        "CXO_VISION_BUFFER_RETENTION_SEC": ["vision_enhanced", "buffer_retention_sec"],
+        "CXO_VISION_DIFF_THRESHOLD": ["vision_enhanced", "diff_threshold"],
+        "CXO_VISION_EVENT_COOLDOWN_SEC": ["vision_enhanced", "event_cooldown_sec"],
+        "CXO_VISION_MAX_CLIPS_PER_HOUR": ["vision_enhanced", "max_clips_per_hour"],
+        "CXO_VISION_PRE_ROLL_SEC": ["vision_enhanced", "pre_roll_sec"],
+        "CXO_VISION_POST_ROLL_SEC": ["vision_enhanced", "post_roll_sec"],
+        "CXO_VISION_CLIP_MAX_SEC": ["vision_enhanced", "clip_max_sec"],
+        "CXO_VISION_NARRATIVE_MEMORY_ENABLED": ["vision_enhanced", "narrative_memory_enabled"],
+        "CXO_VISION_TEMPORAL_FUSION_ENABLED": ["vision_enhanced", "temporal_fusion_enabled"],
+        "CXO_VISION_OCR_KEYFRAME_ENABLED": ["vision_enhanced", "ocr_keyframe_enabled"],
+        "CXO_VISION_REQUIRE_VLLM": ["vision_enhanced", "require_vllm"],
     }
 
     for env_key, path_parts in _env_mappings.items():
@@ -95,6 +108,19 @@ def get_env_config() -> Dict[str, Any]:
             value = value.lower() in ("true", "1", "yes")
         elif env_key.endswith("_WORKERS"):
             value = int(value)
+        # vision_enhanced 节类型转换：CXO_VISION_ 前缀键按目标字段名做 bool/int/float 转换
+        # （不落入上方的 _PORT/_DEBUG/_WORKERS 通用后缀逻辑，布尔默认 closed）
+        if env_key.startswith(f"{ENV_PREFIX}VISION_") and path_parts:
+            field = path_parts[-1]
+            if field == "enabled" or field.endswith("_enabled") or field == "require_vllm":
+                value = value.lower() in ("true", "1", "yes")
+            elif field == "diff_threshold":
+                value = float(value)
+            elif field in (
+                "buffer_retention_sec", "event_cooldown_sec", "max_clips_per_hour",
+                "pre_roll_sec", "post_roll_sec", "clip_max_sec",
+            ):
+                value = int(value)
 
         current = env_config
         for part in path_parts[:-1]:
@@ -754,6 +780,32 @@ class CXOTunerConfig(BaseModel):
     model_config = ConfigDict(protected_namespaces=())
 
 
+class VisionEnhancedConfig(BaseModel):
+    """视觉增强视频叙事记忆配置节（vision_enhanced，默认关闭，零侵入）。
+
+    对应 public/config_template/radix_config.json 的 vision_enhanced 段。
+    后端叙事记忆功能仅在 enabled=true 时生效；其余开关按下述默认值。缺失字段由
+    Pydantic default 补齐；越界数值字段在 _auto_fill_radix_config 中回退默认值
+    （buffer_retention_sec 5-300、clip_max_sec 2-120、diff_threshold 0.01-1、
+    event_cooldown_sec 1-300、max_clips_per_hour 1-1000）。
+    """
+
+    model_config = ConfigDict(protected_namespaces=())
+
+    enabled: bool = False  # 总开关，默认关闭
+    buffer_retention_sec: int = 30  # 事件前缓冲池保留时长（秒），5-300
+    diff_threshold: float = 0.08  # 视觉差分变化阈值，0.01-1
+    event_cooldown_sec: int = 15  # 相邻事件最小间隔（秒），1-300
+    max_clips_per_hour: int = 12  # 每小时最大片段数，1-1000
+    pre_roll_sec: int = 3  # 事件前预滚动缓冲（秒）
+    post_roll_sec: int = 6  # 事件后滚动缓冲（秒）
+    clip_max_sec: int = 10  # 单片段最大时长（秒），2-120
+    narrative_memory_enabled: bool = True  # 是否启用叙事记忆回写
+    temporal_fusion_enabled: bool = False  # 是否启用跨时段时间融合
+    ocr_keyframe_enabled: bool = True  # 是否对关键帧做 OCR
+    require_vllm: bool = True  # 是否要求 vLLM 后端（false 可用于降级/调试）
+
+
 class MCPServerConfig(BaseModel):
     """MCP 服务器配置节（P2-T1）：供配置驱动的 MCP 工具源自注册/自启。
 
@@ -799,6 +851,8 @@ class UnifiedConfig(BaseModel):
     radix: RadixConfig = Field(default_factory=RadixConfig)
     decision_core: DecisionCoreConfig = Field(default_factory=DecisionCoreConfig)
     evolution: CXOTunerConfig = Field(default_factory=CXOTunerConfig)
+    # 视觉增强视频叙事记忆（默认关闭，零侵入）
+    vision_enhanced: VisionEnhancedConfig = Field(default_factory=VisionEnhancedConfig)
     # CX-A 管理面 + 哨兵集群（默认 enabled=false，零侵入）
     admin: AdminConfig = Field(default_factory=AdminConfig)
     cluster: ClusterConfig = Field(default_factory=ClusterConfig)
@@ -1008,6 +1062,45 @@ def _auto_fill_radix_config(user_config: Dict[str, Any]) -> Dict[str, Any]:
         if not isinstance(v, int) or v < 1 or v > 90:
             logger.warning(f"CONFIG_FIELD_OUT_OF_RANGE: decision_core.rejected_content_retention_days={v} 越界（1-90），回退默认值 30")
             dc["rejected_content_retention_days"] = 30
+
+    # ---- vision_enhanced 节（视觉增强视频叙事记忆）越界检查 ----
+    ve = user_config.setdefault("vision_enhanced", {})
+    if "buffer_retention_sec" in ve:
+        v = ve["buffer_retention_sec"]
+        if not isinstance(v, (int, float)) or v < 5 or v > 300:
+            logger.warning(f"CONFIG_FIELD_OUT_OF_RANGE: vision_enhanced.buffer_retention_sec={v} 越界（5-300），回退默认值 30")
+            ve["buffer_retention_sec"] = 30
+    if "clip_max_sec" in ve:
+        v = ve["clip_max_sec"]
+        if not isinstance(v, (int, float)) or v < 2 or v > 120:
+            logger.warning(f"CONFIG_FIELD_OUT_OF_RANGE: vision_enhanced.clip_max_sec={v} 越界（2-120），回退默认值 10")
+            ve["clip_max_sec"] = 10
+    if "diff_threshold" in ve:
+        v = ve["diff_threshold"]
+        if not isinstance(v, (int, float)) or v < 0.01 or v > 1:
+            logger.warning(f"CONFIG_FIELD_OUT_OF_RANGE: vision_enhanced.diff_threshold={v} 越界（0.01-1），回退默认值 0.08")
+            ve["diff_threshold"] = 0.08
+    if "event_cooldown_sec" in ve:
+        v = ve["event_cooldown_sec"]
+        if not isinstance(v, (int, float)) or v < 1 or v > 300:
+            logger.warning(f"CONFIG_FIELD_OUT_OF_RANGE: vision_enhanced.event_cooldown_sec={v} 越界（1-300），回退默认值 15")
+            ve["event_cooldown_sec"] = 15
+    if "max_clips_per_hour" in ve:
+        v = ve["max_clips_per_hour"]
+        if not isinstance(v, (int, float)) or v < 1 or v > 1000:
+            logger.warning(f"CONFIG_FIELD_OUT_OF_RANGE: vision_enhanced.max_clips_per_hour={v} 越界（1-1000），回退默认值 12")
+            ve["max_clips_per_hour"] = 12
+    # pre_roll_sec / post_roll_sec：无硬性上限，仅校验为非负数值，非法回退默认 3 / 6
+    if "pre_roll_sec" in ve:
+        v = ve["pre_roll_sec"]
+        if not isinstance(v, (int, float)) or v < 0:
+            logger.warning(f"CONFIG_FIELD_OUT_OF_RANGE: vision_enhanced.pre_roll_sec={v} 非法，回退默认值 3")
+            ve["pre_roll_sec"] = 3
+    if "post_roll_sec" in ve:
+        v = ve["post_roll_sec"]
+        if not isinstance(v, (int, float)) or v < 0:
+            logger.warning(f"CONFIG_FIELD_OUT_OF_RANGE: vision_enhanced.post_roll_sec={v} 非法，回退默认值 6")
+            ve["post_roll_sec"] = 6
 
     # ---- radix 节（遗留兼容，无越界检查，仅记录 auto_fill）----
     user_config.setdefault("radix", {})

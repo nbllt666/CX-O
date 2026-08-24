@@ -49,6 +49,21 @@ class TestGetEnvConfig:
         monkeypatch.setenv("CXO_SYSTEM_DEBUG", "0")
         assert get_env_config()["system"]["debug"] is False
 
+    def test_vision_enabled_bool(self, monkeypatch):
+        monkeypatch.setenv("CXO_VISION_ENABLED", "true")
+        assert get_env_config()["vision_enhanced"]["enabled"] is True
+
+    def test_vision_numeric_conversion(self, monkeypatch):
+        monkeypatch.setenv("CXO_VISION_BUFFER_RETENTION_SEC", "120")
+        monkeypatch.setenv("CXO_VISION_DIFF_THRESHOLD", "0.5")
+        out = get_env_config()["vision_enhanced"]
+        assert out["buffer_retention_sec"] == 120
+        assert out["diff_threshold"] == 0.5
+
+    def test_vision_require_vllm_bool(self, monkeypatch):
+        monkeypatch.setenv("CXO_VISION_REQUIRE_VLLM", "1")
+        assert get_env_config()["vision_enhanced"]["require_vllm"] is True
+
     def test_workers_int(self, monkeypatch):
         monkeypatch.setenv("CXO_SYSTEM_WORKERS", "4")
         assert get_env_config()["system"]["workers"] == 4
@@ -127,6 +142,38 @@ class TestAutoFillRadix:
     def test_decision_int_field(self):
         out = _auto_fill_radix_config({"decision_core": {"max_redistill_turns": 99}})
         assert out["decision_core"]["max_redistill_turns"] == 2
+
+    def test_vision_enhanced_missing_added(self):
+        out = _auto_fill_radix_config({})
+        assert out["vision_enhanced"] == {}
+
+    def test_vision_buffer_retention_out_of_range(self):
+        out = _auto_fill_radix_config({"vision_enhanced": {"buffer_retention_sec": 99999}})
+        assert out["vision_enhanced"]["buffer_retention_sec"] == 30
+
+    def test_vision_clip_max_sec_out_of_range(self):
+        out = _auto_fill_radix_config({"vision_enhanced": {"clip_max_sec": 200}})
+        assert out["vision_enhanced"]["clip_max_sec"] == 10
+
+    def test_vision_diff_threshold_out_of_range(self):
+        out = _auto_fill_radix_config({"vision_enhanced": {"diff_threshold": 5.0}})
+        assert out["vision_enhanced"]["diff_threshold"] == 0.08
+
+    def test_vision_event_cooldown_out_of_range(self):
+        out = _auto_fill_radix_config({"vision_enhanced": {"event_cooldown_sec": 0}})
+        assert out["vision_enhanced"]["event_cooldown_sec"] == 15
+
+    def test_vision_max_clips_per_hour_out_of_range(self):
+        out = _auto_fill_radix_config({"vision_enhanced": {"max_clips_per_hour": 2000}})
+        assert out["vision_enhanced"]["max_clips_per_hour"] == 12
+
+    def test_vision_pre_roll_negative(self):
+        out = _auto_fill_radix_config({"vision_enhanced": {"pre_roll_sec": -5}})
+        assert out["vision_enhanced"]["pre_roll_sec"] == 3
+
+    def test_vision_in_clamps_missing_untouched(self):
+        out = _auto_fill_radix_config({"vision_enhanced": {"buffer_retention_sec": 60}})
+        assert out["vision_enhanced"]["buffer_retention_sec"] == 60
 
 
 # --------------------------------------------------------------------------- #
@@ -250,3 +297,50 @@ class TestSettings:
         # env 覆盖 file 的 port，host 保留 file 值
         assert c.system.port == 6000
         assert c.system.host == "1.2.3.4"
+
+
+# --------------------------------------------------------------------------- #
+# VisionEnhancedConfig —— 默认值 / 环境变量覆盖 / 越界钳制
+# --------------------------------------------------------------------------- #
+class TestVisionEnhancedConfig:
+    def test_defaults(self):
+        ve = config_mod.UnifiedConfig().vision_enhanced
+        assert ve.enabled is False
+        assert ve.buffer_retention_sec == 30
+        assert ve.diff_threshold == 0.08
+        assert ve.event_cooldown_sec == 15
+        assert ve.max_clips_per_hour == 12
+        assert ve.pre_roll_sec == 3
+        assert ve.post_roll_sec == 6
+        assert ve.clip_max_sec == 10
+        assert ve.narrative_memory_enabled is True
+        assert ve.temporal_fusion_enabled is False
+        assert ve.ocr_keyframe_enabled is True
+        assert ve.require_vllm is True
+
+    def test_env_override(self, tmp_path, monkeypatch):
+        cfg_path = tmp_path / "config.json"
+        cfg_path.write_text("{}", encoding="utf-8")
+        monkeypatch.setenv("CXO_CONFIG", str(cfg_path))
+        monkeypatch.setenv("CXO_VISION_ENABLED", "true")
+        monkeypatch.setenv("CXO_VISION_BUFFER_RETENTION_SEC", "120")
+        Settings.reset()
+        c = get_config()
+        assert c.vision_enhanced.enabled is True
+        assert c.vision_enhanced.buffer_retention_sec == 120
+
+    def test_out_of_range_clamped_on_load(self, tmp_path, monkeypatch):
+        cfg_path = tmp_path / "config.json"
+        cfg_path.write_text(json.dumps({
+            "vision_enhanced": {
+                "buffer_retention_sec": 99999,
+                "clip_max_sec": 200,
+                "diff_threshold": 5.0,
+            }
+        }), encoding="utf-8")
+        monkeypatch.setenv("CXO_CONFIG", str(cfg_path))
+        Settings.reset()
+        c = get_config()
+        assert c.vision_enhanced.buffer_retention_sec == 30
+        assert c.vision_enhanced.clip_max_sec == 10
+        assert c.vision_enhanced.diff_threshold == 0.08

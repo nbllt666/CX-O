@@ -273,7 +273,14 @@
       "batchDeleteConfirm": "确定要删除选中的 {{count}} 条记忆吗？",
       "batchFailed": "批量操作失败，请重试",
       "openAssistant": "记忆管理助手",
-      "assistantDrawerTitle": "记忆管理助手"
+      "assistantDrawerTitle": "记忆管理助手",
+      "sourceFilter": "来源",
+      "sourceAll": "全部来源",
+      "sourceVision": "视觉记忆",
+      "sourceVisionHint": "主动视觉叙事增强（方案三）产出",
+      "visionBadge": "视觉叙事",
+      "eventType": "事件类型",
+      "emotion": "情绪"
     },
     "archive": {
       "subtitle": "记忆归档与去重",
@@ -1186,6 +1193,8 @@
       "sectionDesc": "屏幕 / 摄像头画面采集偏好",
       "visionMaster": "主动视觉",
       "visionMasterDesc": "总开关：开启后桌宠才向后端发送画面帧（关闭则不发送）",
+      "videoMode": "视频模式",
+      "videoModeDesc": "开启后将录制画面过程并沉淀为视频叙事记忆；性能开销较高，建议需要时再开，开启时尽力同步后端",
       "screen": "屏幕共享",
       "camera": "摄像头",
       "active": "开启中",
@@ -1195,6 +1204,7 @@
       "petNote": "实际采集由桌宠窗执行；此处切换开关状态，桌宠窗采集链路就绪后生效",
       "frameMode": "帧发送节奏",
       "modeInterval": "定时抽帧",
+      "modeAdaptive": "自适应",
       "modeManual": "手动点发",
       "intervalSec": "抽帧间隔（秒）"
     },

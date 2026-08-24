@@ -60,6 +60,7 @@ import { useMicAsrUplink } from '../hooks/useMicAsrUplink';
 import { useVideoCapture } from '../hooks/capture/useVideoCapture';
 import type { CaptureSourceKind } from '../hooks/capture/useVideoCapture';
 import { useFrameSender } from '../hooks/capture/useFrameSender';
+import { useVisionPipeline } from '../hooks/useVisionPipeline';
 import { chatApi } from '../api/clients/chat';
 import type { IAvatarDriver } from '../avatar/types';
 import { PetAvatar } from '../components/pet/PetAvatar';
@@ -453,6 +454,16 @@ export default function PetPage() {
     intervalSec: frameIntervalSec,
     sendFrame,
     canSend: () => visionEnabled && !isLoadingRef.current,
+  });
+
+  // ── 视频叙事管线（主动视觉）接线：门为 videoModeEnabled（默认关闭，独立于图片轮询的 visionEnabled）。
+  // 经 cap 注入口复用上方 screenCapture/cameraCapture 两套既有采集实例采样，避免双份 getDisplayMedia/getUserMedia。
+  // videoModeEnabled=false 时内部节拍器不启动、注入的采集不额外拉起流 → 零开销；图片轮询链路完全不受影响。 ──
+  useVisionPipeline({
+    cap: {
+      screen: { captureFrame: screenCapture.captureFrame },
+      camera: { captureFrame: cameraCapture.captureFrame },
+    },
   });
 
   // ── 口型三路人混：tts > danmaku > mic，PetAvatar 直读混合输出 ──

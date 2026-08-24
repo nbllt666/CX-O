@@ -8,6 +8,8 @@
  * - interval 模式：每拍检查一次（1s 节拍），满 intervalSec 且非重复帧才发送；
  *   用 1s 节拍而非 intervalSec 长定时器——间隔改动即时生效，且无需为
  *   「上次发送时间」重建定时器。
+ * - adaptive 模式：每拍抽一帧按画面变化度动态算间隔（变化大→更频繁），
+ *   环境不支持像素差异计算时自动退化为 interval 行为（用 intervalSec 定时）。
  * - manual 模式：仅 sendNow() 触发；手动是显式意图，不做静止去重。
  *
  * 上行互斥：canSend 返回 false（如对话进行中）时本拍跳过，避免并发流式会话。
@@ -15,21 +17,65 @@
  */
 import { useCallback, useEffect, useRef, useState } from 'react';
 
-import { isDuplicateFrame, pickActiveFrameSource, shouldSendByInterval } from './frameThrottle';
+import {
+  computeAdaptiveIntervalSec,
+  computeChangeMagnitude,
+  isDuplicateFrame,
+  pickActiveFrameSource,
+  shouldSendByInterval,
+} from './frameThrottle';
 import type { FrameSource } from './frameThrottle';
 import type { CaptureSourceKind } from './useVideoCapture';
+
+/**
+ * adaptive 模式动态间隔的生产者。
+ *
+ * - 入参：当前帧 dataURL、上次成功发送帧 dataURL（可为 null）、基准间隔秒；
+ * - 返回：本拍应采用的最小发送间隔（秒），非正数表示每次放行；
+ * - 承诺：不抛错。任何异常/无法比对的降级都收敛为「返回 baseIntervalSec」，
+ *   即退化为 interval 行为；
+ * - 注入点：UseFrameSenderOptions.adaptiveIntervalProvider。真实现走
+ *   computeChangeMagnitude + computeAdaptiveIntervalSec；测试可注入确定性 producer。
+ */
+export type AdaptiveIntervalProvider = (
+  dataUrl: string,
+  prevDataUrl: string | null,
+  baseIntervalSec: number,
+) => Promise<number>;
+
+/** 默认生产者：随画面变化度动态调整间隔；变化度不可算（=0 或抛错）→ 退化固定间隔 */
+export async function defaultAdaptiveIntervalProvider(
+  dataUrl: string,
+  prevDataUrl: string | null,
+  baseIntervalSec: number,
+): Promise<number> {
+  let magnitude: number;
+  try {
+    magnitude = await computeChangeMagnitude(dataUrl, prevDataUrl);
+  } catch {
+    return baseIntervalSec; // 环境不支持像素差异计算 → 退化 interval
+  }
+  if (magnitude === 0) return baseIntervalSec; // 无从比较/降级 0 → 退化 interval
+  return computeAdaptiveIntervalSec({ baseIntervalSec, magnitude });
+}
 
 export interface UseFrameSenderOptions {
   /** 帧源列表，按优先级降序（屏幕 > 摄像头） */
   sources: FrameSource[];
-  /** 发送节奏模式（captureStore.frameMode） */
-  mode: 'manual' | 'interval';
+  /** 发送节奏模式（captureStore.frameMode，放开含 adaptive） */
+  mode: 'manual' | 'interval' | 'adaptive';
   /** 定时抽帧间隔秒（captureStore.frameIntervalSec，已被 store 钳制 1~60） */
   intervalSec: number;
   /** 实际上行出口：帧 dataURL + 来源（PetPage 注入对话图像链路） */
   sendFrame: (dataUrl: string, kind: CaptureSourceKind) => void;
   /** 上行互斥闸：返回 false 时本拍跳过（如对话流式进行中）；缺省恒可发 */
   canSend?: () => boolean;
+  /**
+   * adaptive 模式的动态间隔生产者（可选）。缺省用 defaultAdaptiveIntervalProvider
+   * （computeChangeMagnitude + computeAdaptiveIntervalSec）。测试可注入确定性实现，
+   * 以便不依赖 canvas/jsdom 也能验证 adaptive 分支的裁决行为。
+   */
+  adaptiveIntervalProvider?: AdaptiveIntervalProvider;
 }
 
 export interface UseFrameSenderReturn {
@@ -48,6 +94,7 @@ export function useFrameSender({
   intervalSec,
   sendFrame,
   canSend,
+  adaptiveIntervalProvider,
 }: UseFrameSenderOptions): UseFrameSenderReturn {
   const [lastSentAt, setLastSentAt] = useState<number | null>(null);
 
@@ -59,6 +106,8 @@ export function useFrameSender({
   canSendRef.current = canSend;
   const intervalSecRef = useRef(intervalSec);
   intervalSecRef.current = intervalSec;
+  const adaptiveIntervalProviderRef = useRef<AdaptiveIntervalProvider | undefined>(adaptiveIntervalProvider);
+  adaptiveIntervalProviderRef.current = adaptiveIntervalProvider;
   const lastSentAtRef = useRef<number | null>(null);
   const lastSentDataUrlRef = useRef<string | null>(null);
 
@@ -81,13 +130,41 @@ export function useFrameSender({
 
   const sendNow = useCallback((): boolean => grabAndSend(false), [grabAndSend]);
 
-  // 定时抽帧：仅 interval 模式启用节拍器；每拍做间隔 + 去重裁决
+  // 定时抽帧：interval/adaptive 模式均启用 1s 节拍器；manual 不启用。
+  // 每拍做间隔裁决；adaptive 额外按画面变化度算动态间隔。
   useEffect(() => {
-    if (mode !== 'interval') return;
+    if (mode === 'manual') return;
+
+    // interval：每拍满 intervalSec 且非重复帧才发送（回归：行为保持不变）
+    if (mode === 'interval') {
+      const timer = setInterval(() => {
+        const now = Date.now();
+        if (!shouldSendByInterval(now, lastSentAtRef.current, intervalSecRef.current)) return;
+        grabAndSend(true);
+      }, TICK_MS);
+      return () => clearInterval(timer);
+    }
+
+    // adaptive：每拍抽一帧，先算动态间隔再走与 interval 相同的间隔 + 去重裁决
     const timer = setInterval(() => {
+      const source = pickActiveFrameSource(sourcesRef.current);
+      if (!source) return; // 未激活/未就绪不硬采
+      const dataUrl = source.captureFrame();
+      if (!dataUrl) return;
       const now = Date.now();
-      if (!shouldSendByInterval(now, lastSentAtRef.current, intervalSecRef.current)) return;
-      grabAndSend(true);
+      // computeChangeMagnitude 是 async，环境不支持时可降级 0 或抛错；
+      // 生产者在 try/catch 内被防御，任何异常退化为 interval；fire-and-forget 不阻塞节拍
+      void (async () => {
+        const provider = adaptiveIntervalProviderRef.current ?? defaultAdaptiveIntervalProvider;
+        let adaptiveIntervalSec: number;
+        try {
+          adaptiveIntervalSec = await provider(dataUrl, lastSentDataUrlRef.current, intervalSecRef.current);
+        } catch {
+          adaptiveIntervalSec = intervalSecRef.current; // 生产者抛错/环境不支持 → 退化 interval
+        }
+        if (!shouldSendByInterval(now, lastSentAtRef.current, adaptiveIntervalSec)) return;
+        grabAndSend(true);
+      })();
     }, TICK_MS);
     return () => clearInterval(timer);
   }, [mode, grabAndSend]);

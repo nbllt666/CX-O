@@ -828,6 +828,17 @@ async def lifespan(app: FastAPI):
     if getattr(get_settings().config, "admin", None) and getattr(get_settings().config.admin, "enabled", False):
         await init_service("CX-A管理面", _init_admin, logger_=lifespan_logger)
 
+    # 主动视觉 —— 生产链接线（GN-004 阻断项 12.1）：enabled=true 时把 VideoUnderstanding
+    # 注册为 vision_clip_queue 的 consumer，产出 NarrativeSummary 后经
+    # NarrativeVisionMemory.sediment_from_consumer 落 source='vision' 记忆。
+    # 装配函数幂等、异常隔离（失败仅告警，不影响主服务启动）。
+    def _register_vision_pipeline():
+        from server.core.vision.pipeline import register_vision_pipeline
+
+        return register_vision_pipeline()
+
+    await init_service("主动视觉管线", _register_vision_pipeline, logger_=lifespan_logger)
+
     yield
 
     lifespan_logger.info("正在关闭CX-O服务...")
