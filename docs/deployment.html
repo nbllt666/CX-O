@@ -203,6 +203,7 @@ pre code { color: var(--accent-green); }
     <a href="#startup">启动顺序</a>
     <a href="#config">配置指南</a>
     <a href="#docker">Docker 部署</a>
+    <a href="#sentinel">哨兵集群</a>
     <a href="#troubleshoot">常见问题</a>
   </div>
 </nav>
@@ -819,6 +820,43 @@ docker compose logs -f llm
 
 # 停止所有服务
 docker compose down</code></pre>
+  </div>
+</section>
+
+<!-- 哨兵集群 -->
+<section class="section" id="sentinel">
+  <h2 class="section-title">🛡️ 哨兵集群（多机互备）</h2>
+  <p class="section-desc">让多台机器上的 CX-O 互为哨兵、实时备份彼此的"灵魂"（记忆、人设、状态）。任一节点陨落，守护它的那台会立刻接管复活；主后端断连时前端与桌宠自动切换。此能力默认关闭，不开不影响单机使用。</p>
+
+  <div class="card">
+    <h3>工作原理</h3>
+    <p>节点间通过互认的暗号（<code>cluster_secret</code>）互相发现并握手；彼此每 5 秒互发一次心跳探活；写入记忆/人设/配置时会实时增量备份到对端，并定期做一次全量快照对齐。检测到某节点失联、经多方确认后，守护节点用同步来的完整副本接管，保持己方身份、继承对方的一切记忆。</p>
+  </div>
+
+  <div class="card">
+    <h3>在每台机器上开启（最少两台）</h3>
+    <p>把 <code>cluster.enabled</code> 设为 <code>true</code>，让所有节点使用<strong>相同的</strong> <code>cluster_secret</code>（互认暗号），并在每台机器的 <code>cluster.peers</code> 里填上"其他节点"的访问地址。推荐用环境变量配置：</p>
+    <pre><code># 两台（或多台）都必须配，且值保持一致
+CXO_CLUSTER_ENABLED=true
+CXO_CLUSTER_SECRET=随便一串只有你们认识的暗号
+
+# 各台填"别的机器"的地址（互为对等）
+CXO_CLUSTER_PEERS=http://192.168.1.20:8000
+
+# 可选
+CXO_CLUSTER_NODE_NAME=主卧室
+CXO_CLUSTER_ROLE=standby</code></pre>
+    <p>提醒：<code>cluster_secret</code> 与 <code>peers</code> 属拓扑类配置，<strong>改动需重启后端</strong>；心跳间隔 / 超时等参数默认已合理，一般无需调整。所有机器要能互相 ping 通（跨网段请确认路由可达）。</p>
+  </div>
+
+  <div class="card">
+    <h3>安全须知</h3>
+    <p>节点间传输的是记忆与人设这类最高敏感数据，默认走加密传输，且只在互信节点间流动，绝不经过第三方或云端。跨机器部署时请给集群启用 TLS，并确认端口可路由、防火墙放行。</p>
+  </div>
+
+  <div class="card">
+    <h3>前端自动切换</h3>
+    <p>开启哨兵后，主后端断连时前端（桌面宠 / 管理界面 / 弹幕窗）会自动探测并切到守护它的那台机器，无需手动重连或另填地址。首次连接时前端会自动把集群里的对等节点记下来，断连时逐一探测并优先选择正在服务的那台。</p>
   </div>
 </section>
 

@@ -584,3 +584,18 @@ uvicorn plugin:app --host 127.0.0.1 --port 18444
 - Python 插件 + 注册服务：`CX-O-VoiceWorkStation/workstation/api/cxfc_plugin.py`、`workstation/services/cxfc_registration.py`
 - 联调 mock：`tests/test_tools/cxfc/mock_plugin_server.py`
 - 三工具 / 错误码 / 配置契约：`public/schema/computer_control_plugin.schema.json`、`public/schema/computer_control_error_codes.json`、`public/config_template/computer_control_config.schema.json`
+
+---
+
+## 附录：哨兵集群对本协议范式的复用
+
+本指南定义的心跳探活、令牌认证、`request_id` 防重放、TLS 首次信任等范式，也被
+CX-O 的「哨兵集群」（`server/core/cluster/`）在节点间连接时复用：
+
+- `PeerHeartbeat` 的对等心跳 / miss 判定对齐本指南 §5 的注册心跳范式。
+- `ClusterTransport` 的共享密钥 + `request_id` / `seq` 防重放、TLS 传输对齐本指南 §9。
+- 事件的幂等 / 断线补传复用「单调 seq + 已应用锚点」的思想。
+
+不同的是：哨兵集群是**后端节点 ↔ 后端节点**的对等互备（默认关闭，见
+`docs/technical.md` §23 与「功能特性 / 部署」文档），而非「外部插件接入主后端」，
+因此不直接参与本文档描述的 CXFC 插件注册流程，但共享同一套安全保障思路。

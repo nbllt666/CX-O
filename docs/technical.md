@@ -28,6 +28,7 @@
 - [20. CX-O-Autonomy 自主系统](#20-cx-o-autonomy-自主系统)
 - [21. 梦境引擎（Dream）](#21-梦境引擎dream)
 - [22. 生理信号接入（Physio）](#22-生理信号接入physio)
+- [23. 管理面（CX-A）与哨兵集群（多机互备）](#23-管理面cx-a与哨兵集群多机互备)
 - [附录：目录速览](#附录目录速览)
 
 ---
@@ -980,6 +981,62 @@ docker compose --profile tuner up
 
 ---
 
+## 23. 管理面（CX-A）与哨兵集群（多机互备）
+
+> 位于 `server/core/admin/`（管理面）+ `server/core/cluster/`（哨兵集群）+
+> `server/api/routers/{admin,cluster}.py` + `server/protocol/actions.py`。
+> 两者默认关闭（`admin.enabled=false` / `cluster.enabled=false`，空 `cluster_secret` 视为集群不启用），
+> 关闭时零侵入，不影响单机运行。
+
+### 23.1 角色与关系
+
+- **CX-O 节点**：单个运行在某机器上的实例（持久化 `data/cluster/node_identity.json` 的 `node_id`）。
+- **哨兵集群**：多个 CX-O 组成的对等互备网络，互为灵魂备份。
+- **CX-A**：站在其上的管理 Agent，经管理接口纵向管单节点 / 整个集群（经 `ClusterAdminBridge`）。
+
+### 23.2 管理面（Part A，`server/core/admin/`）
+
+- `auth.py`：多级 token（readonly / operator / superadmin）+ `request_id` 防重放（TTL）+ 限流；审计落 `data/admin_audit.jsonl`（对齐 `AuditStore`）。
+- `manifest.py`：`GET /api/admin/manifest` 运行时动态自描述（能力 / 动作 / agents / models / **cluster 块**：node_id/role/epoch/peers）。
+- `control_plane.py`：`POST /api/admin/control` 统一分发到 autonomy / voice / live / config / agent / tuner / instance / **cluster** 域；`request_id` 幂等、未知动作 400。
+- `batch.py`：`POST /api/admin/batch` sequential / parallel 编排。
+- `registry.py`：CX-A 多实例注册 / 心跳 / 发现。
+- `cluster_bridge.py`：把哨兵集群能力暴露给管理面；只读直接聚合，写操作需 superadmin + 审计；集群未启用统一返回 `{"status":"cluster_disabled"}`。
+
+### 23.3 哨兵集群（Part B，`server/core/cluster/`）
+
+- `identity.py`：`node_id` 首次生成后持久化不变（接管时靠它识别"这是谁的副本"）。
+- `discovery.py`：默认种子列表主动握手 + `cluster_secret` HMAC 信任校验；UDP 广播可选。
+- `transport.py`：节点间 TLS/HTTPS + 共享密钥 + `request_id`/`seq` 防重放 + 失败入待发队列（`data/cluster/pending/`）。
+- `heartbeat.py`：每 `peer_heartbeat_interval_sec` 向每个 peer 发心跳；超时 + 连续 miss → suspect → **多数派确认** → dead（对齐 CXFC 心跳范式）。
+- `replicator.py` + `units.py`：**增量事件流 + 定期快照双轨制**；`vector` **不跨机同步**（接收端本地重建）；按单调 `seq` 幂等重放、`last_applied_seq` 断线补传；异步推送不阻塞主链路。
+- `failover.py`：接管流程 candidate → 仲裁 → **继承遗产**（B 保持自身 identity、记录 `inherited_from`，不改 node_id）→ active；仲裁失败恢复 standby 且**不消耗 epoch**（仅在成功后递增）。
+- `consensus.py`：epoch 防双主 + 多数派 + **见证节点（tiebreaker）**；`state_version` 过旧抛 `ClusterDirtyTakeoverError`（严格红线：宁缺毋滥）。
+
+### 23.4 关键决策（已冻结）
+
+| 决策 | 落地 |
+|------|------|
+| 接管后身份 | B 保持自身身份、继承 A 记忆为遗产（`inherited_from`） |
+| 2 节点脑裂 | 无法形成多数派时由见证节点（tiebreaker）仲裁；无见证则拒绝升级并告警 |
+| 脏接管 | 数据不完整 / 过旧拒绝接管，严格红线 |
+| 一致性 | 异步最终一致，守护主链路 <300ms；接管时接受丢失最近少量变更 |
+| 传输安全 | 灵魂数据只在受信节点间经 TLS 流动，绝不经第三方 / 云端 |
+
+### 23.5 生命周期与前端
+
+- `main.py` lifespan：先 `_init_cluster()` 后 `_init_admin()`（`ClusterAdminBridge` 依赖 `SentinelCluster`）；关闭逆序（`replicator.flush` → `heartbeat.stop` 主动下线）；任一异常被捕获隔离，绝不影响主服务启动。
+- WS：`protocol/actions.py` 新增 `admin.*` / `cluster.*` action；集群事件经 `/ws` events 域广播（`cluster.node_joined` / `failover_*` / `sync_lag_alert` / `split_brain_risk`）。
+- 前端：`src/lib/backendFailover.ts` + `src/hooks/useBackendFailover.ts`——主后端断连时自动探测候选对等（cluster peers + 局域网发现 + 本地缓存），优先选 `role=active` 的健康节点，`setBackendUrl`+`setWsUrl` 后重载当前窗；带冷却（`SWITCH_COOLDOWN_MS`）防 A/B 震荡。挂载于 `App.tsx` 根部，覆盖桌宠 / 管理界面 / 弹幕窗。
+
+### 23.6 已知未闭合
+
+- 真机双机集群联调（心跳 / 同步 / 接管当前为 mock 单测覆盖）。
+- 备份单元数据源为骨架级适配（session / graph / autonomy 真实增量需强化）。
+- 管理面对外需显式配置 TLS（默认仅本机 `bind=127.0.0.1`）。
+
+---
+
 ## 附录：目录速览
 
 ```
@@ -991,7 +1048,9 @@ CX-O/
 │       ├── gateway/        # WebSocket 网关
 │       ├── handlers/       # WS 消息处理器（chat/audio/tools/...）
 │       ├── services/       # 语音服务（asr/tts/vad/interrupt/...）
-│       ├── core/           # 领域核心（memory/graph/tools/acp/...）
+│       ├── core/           # 领域核心（memory/graph/tools/acp/admin/cluster/...）
+│       │   ├── admin/      # 管理面（auth/manifest/control_plane/batch/registry/cluster_bridge）
+│       │   └── cluster/    # 哨兵集群（identity/discovery/transport/heartbeat/replicator/failover/consensus/manager）
 │       ├── protocol/       # 消息协议（action）
 ├── CX-O-VoiceWorkStation/  # 语音工作站（声音克隆/训练/作曲）
 ├── docker/                 # 推理服务 Dockerfile
