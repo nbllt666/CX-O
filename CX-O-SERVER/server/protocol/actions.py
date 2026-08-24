@@ -156,6 +156,34 @@ class DreamActions:
     PURGED = "dream.purged"
 
 
+class AdminActions:
+    """CX-A 管理面 WebSocket action 常量（spec admin-plane-sentinel-cluster Part A）。"""
+
+    MANIFEST = "admin.manifest"
+    STATUS = "admin.status"
+    CONTROL = "admin.control"
+    WATCH = "admin.events.subscribe"
+    STATE_CHANGED = "admin.state_changed"
+    ACTION_COMPLETED = "admin.action_completed"
+    ALERT = "admin.alert"
+    CONFIG_CHANGED = "admin.config_changed"
+
+
+class ClusterActions:
+    """哨兵集群 WebSocket action 常量（spec admin-plane-sentinel-cluster Part B/C）。"""
+
+    TOPOLOGY = "cluster.topology"
+    STATE = "cluster.state"
+    SYNC_STATUS = "cluster.sync_status"
+    EVENT = "cluster.event"
+    NODE_JOINED = "cluster.node_joined"
+    NODE_LEFT = "cluster.node_left"
+    FAILOVER_STARTED = "cluster.failover_started"
+    FAILOVER_COMPLETED = "cluster.failover_completed"
+    SYNC_LAG_ALERT = "cluster.sync_lag_alert"
+    SPLIT_BRAIN_RISK = "cluster.split_brain_risk"
+
+
 ACTION_HANDLERS = {
     ChatActions.MESSAGE: "chat",
     ChatActions.STREAM: "chat",
@@ -213,6 +241,13 @@ ACTION_HANDLERS = {
     EventsActions.UNSUBSCRIBE: "events",
     DreamActions.CONFIRM: "dream",
     DreamActions.REJECT: "dream",
+    AdminActions.MANIFEST: "admin",
+    AdminActions.STATUS: "admin",
+    AdminActions.CONTROL: "admin",
+    AdminActions.WATCH: "admin",
+    ClusterActions.TOPOLOGY: "cluster",
+    ClusterActions.STATE: "cluster",
+    ClusterActions.SYNC_STATUS: "cluster",
 }
 
 

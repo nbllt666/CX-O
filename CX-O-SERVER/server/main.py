@@ -743,9 +743,102 @@ async def lifespan(app: FastAPI):
     else:
         lifespan_logger.warning("memory_manager 不可用，跳过 DocumentMemoryManager 初始化")
 
+    # ------------------------------------------------------------------------
+    # CX-A 管理面 + 哨兵集群装配骨架（spec admin-plane-sentinel-cluster）
+    # 装配顺序：_init_cluster() 先（ClusterAdminBridge 依赖 SentinelCluster），
+    #           _init_admin() 后。任一异常被捕获隔离，绝不影响主服务启动。
+    # ------------------------------------------------------------------------
+    async def _init_cluster():
+        settings_cfg = get_settings().config
+        cluster_cfg = getattr(settings_cfg, "cluster", None)
+        # cluster_secret 为空 = 集群不启用（零侵入）
+        if not cluster_cfg or not getattr(cluster_cfg, "enabled", False) or not getattr(cluster_cfg, "cluster_secret", ""):
+            return None
+        try:
+            from server.core.cluster.manager import SentinelCluster
+
+            cluster_manager = SentinelCluster(config=cluster_cfg)
+            await cluster_manager.start()
+            services.cluster_manager = cluster_manager
+            # 集群事件 → /ws events 域广播（spec Part C：CX-A 实时感知集群动态）
+            try:
+                from server.core.websocket.manager import get_websocket_manager
+
+                ws_mgr = get_websocket_manager()
+
+                async def _broadcast_cluster_event(event: dict):
+                    try:
+                        if ws_mgr:
+                            await ws_mgr.broadcast({"type": "cluster_event", "data": event})
+                    except Exception as _wx:  # noqa: BLE001
+                        lifespan_logger.warning("广播集群事件失败: %s", _wx)
+
+                cluster_manager.set_event_callback(_broadcast_cluster_event)
+            except Exception as _wx:
+                lifespan_logger.warning("集群事件 WS 广播接线失败（不影响集群启动）: %s", _wx)
+            lifespan_logger.info("哨兵集群已装配（node_name=%s, peers=%d）", cluster_cfg.node_name, len(cluster_cfg.peers or []))
+            return cluster_manager
+        except Exception as _e:
+            lifespan_logger.error("哨兵集群装配失败，已隔离（不影响主服务启动）: %s", _e, exc_info=True)
+            return None
+
+    async def _init_admin():
+        settings_cfg = get_settings().config
+        admin_cfg = getattr(settings_cfg, "admin", None)
+        if not admin_cfg or not getattr(admin_cfg, "enabled", False):
+            return None
+        try:
+            from server.core.admin.auth import AdminAuth
+            from server.core.admin.control_plane import AdminControlPlane
+            from server.core.admin.manifest import AdminManifest
+            from server.core.admin.registry import InstanceRegistry
+            from server.core.admin.cluster_bridge import ClusterAdminBridge
+
+            admin_auth = AdminAuth(config=admin_cfg)
+            instance_registry = InstanceRegistry(register_interval_sec=admin_cfg.register_heartbeat_sec, admin_cfg=admin_cfg)
+            if getattr(admin_cfg, "cx_a_endpoint", ""):
+                instance_registry.start()
+            cluster_bridge = ClusterAdminBridge(
+                cluster_manager=getattr(services, "cluster_manager", None),
+                auth=admin_auth,
+            )
+            control_plane = AdminControlPlane(
+                services=services,
+                auth=admin_auth,
+                cluster_bridge=cluster_bridge,
+            )
+            manifest = AdminManifest(services=services, admin_cfg=admin_cfg)
+            services.admin_auth = admin_auth
+            services.instance_registry = instance_registry
+            services.admin_manager = control_plane
+            services.cluster_bridge = cluster_bridge
+            # 注入到路由模块（对齐 cxfc_router.set_cxfc_manager 模式）
+            from server.api.routers import admin as admin_router
+            from server.api.routers import cluster as cluster_router
+            admin_router.inject_admin_runtime(admin_auth, control_plane, manifest, instance_registry, cluster_bridge, services)
+            cluster_router.inject_cluster_runtime(getattr(services, "cluster_manager", None))
+            lifespan_logger.info("CX-A 管理面已装配（bind=%s, tls=%s）", admin_cfg.bind, admin_cfg.tls_enabled)
+            return control_plane
+        except Exception as _e:
+            lifespan_logger.error("CX-A 管理面装配失败，已隔离（不影响主服务启动）: %s", _e, exc_info=True)
+            return None
+
+    if getattr(get_settings().config, "cluster", None) and getattr(get_settings().config.cluster, "enabled", False):
+        await init_service("哨兵集群", _init_cluster, logger_=lifespan_logger)
+    if getattr(get_settings().config, "admin", None) and getattr(get_settings().config.admin, "enabled", False):
+        await init_service("CX-A管理面", _init_admin, logger_=lifespan_logger)
+
     yield
 
     lifespan_logger.info("正在关闭CX-O服务...")
+
+    # 哨兵集群优雅关闭（逆序：flush 未同步变更 → 广播主动下线 → 停客户端）
+    cluster_manager = getattr(services, "cluster_manager", None)
+    if cluster_manager is not None:
+        await shutdown_service("哨兵集群", cluster_manager.shutdown, logger_=lifespan_logger)
+    instance_registry = getattr(services, "instance_registry", None)
+    if instance_registry is not None:
+        await shutdown_service("实例注册表", instance_registry.shutdown, logger_=lifespan_logger)
 
     # DocumentMemoryManager 关闭（迁移自 CXHMS）
     if services.document_memory_manager:

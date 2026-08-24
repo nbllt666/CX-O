@@ -1,0 +1,27 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://cx-o/public/schema/admin_batch.schema.json",
+  "title": "AdminBatch",
+  "description": "管理面批量编排请求契约（POST /api/admin/batch）。每步为 {target, action, params}。返回每步 {step, ok, result, duration_ms}。",
+  "type": "object",
+  "required": ["request_id", "mode", "steps"],
+  "properties": {
+    "request_id": { "type": "string", "minLength": 1, "description": "幂等/防重放标识。" },
+    "mode": { "type": "string", "enum": ["sequential", "parallel"], "description": "sequential 按序执行；parallel 并行执行。" },
+    "stop_on_error": { "type": "boolean", "default": true, "description": "sequential 模式下任一失败是否中止。" },
+    "steps": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["target", "action"],
+        "properties": {
+          "target": { "type": "string", "description": "与 admin_control.target 一致。" },
+          "action": { "type": "string", "description": "与 admin_control.action 一致。" },
+          "agent_id": { "type": "string" },
+          "params": { "type": "object", "additionalProperties": true }
+        }
+      },
+      "minItems": 1
+    }
+  }
+}

@@ -1,0 +1,19 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://cx-o/public/schema/cluster_identity.schema.json",
+  "title": "ClusterNodeIdentity",
+  "description": "哨兵集群节点身份契约。持久化于 data/cluster/node_identity.json。node_id 首次生成后不变（接管时靠它识别‘这是谁的副本’）。",
+  "type": "object",
+  "required": ["node_id", "node_name", "endpoint", "created_at"],
+  "properties": {
+    "node_id": { "type": "string", "minLength": 1, "description": "节点唯一 ID，首次生成后持久化不变。" },
+    "node_name": { "type": "string", "description": "节点显示名。" },
+    "endpoint": { "type": "string", "minLength": 1, "description": "本节点可被 peer 访问的端点（https://host:port）。" },
+    "created_at": { "type": "string", "description": "ISO8601 首次创建时间。" },
+    "capabilities": {
+      "type": "object",
+      "additionalProperties": true,
+      "description": "节点能力（agents 列表、has_tuner 等）。"
+    }
+  }
+}

@@ -1,0 +1,7 @@
+{
+  "node_id": "cxo-node-af01c16639c24086887dd74c704ee3a3",
+  "node_name": "manager-node",
+  "endpoint": "https://10.0.0.5:8443",
+  "created_at": "2026-08-24T14:37:34.181038+08:00",
+  "capabilities": {}
+}

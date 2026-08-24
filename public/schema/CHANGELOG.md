@@ -2,6 +2,30 @@
 
 > 遵循 AC 范式 v6 rules-3 §六 契约版本化规则。所有契约变更必须记录版本号、变更内容、变更原因、影响范围。
 
+## [1.6.0] - 2026-08-24
+
+### 变更内容
+
+- **接口契约变更（MINOR）**：`interface_stub/cx_admin.pyi` 新增（管理面 CX-A 认证/能力清单/统一控制/批量/注册/集群桥，错误码 ADMIN_*）
+- **接口契约变更（MINOR）**：`interface_stub/cx_cluster.pyi` 新增（哨兵集群身份/发现/传输/心跳/复制/接管/仲裁/总控，错误码 CLUSTER_*）
+- **数据契约变更（MINOR）**：`schema/` 新增 10 份：`admin_manifest`、`admin_control`、`admin_batch`、`admin_audit`、`cluster_identity`、`cluster_node`、`cluster_heartbeat`、`cluster_backup_unit`、`cluster_transport`、`cluster_event`
+- **配置契约变更（MINOR）**：`config_template/admin_config.schema.json`、`config_template/cluster_config.schema.json` 新增（管理面与哨兵集群两段，默认 enabled=false）
+
+### 变更原因
+
+- 《CX-O 改造文档 · 管理面（CX-A）与哨兵集群（多机互备）》落地：为 CX-A 提供自描述/强认证/可编排控制面，并为多机 CX-O 互为哨兵实时备份"灵魂"提供契约。
+
+### 影响范围
+
+- **MINOR 变更**：纯新增（新 schema/pyi/模板），无既有字段删除/类型变更/必填性反转，不阻断既有下游。
+- 下游待实现：`server/core/admin/*`、`server/core/cluster/*`、`server/api/routers/cluster.py`、扩展 `router/admin.py`、`server/config.py`（admin/cluster 段）、`server/main.py`（装配）、前端 AdminPage/ClusterPage。
+
+### 闭合判据
+
+- [x] public/schema、public/interface_stub、public/config_template 契约落位
+- [x] CHANGELOG v1.6.0 记录本条目
+- [ ] 后端实现与前端页面经 spec `admin-plane-sentinel-cluster` 落地并回归
+
 ## [1.5.1] - 2026-08-16
 
 ### 变更内容

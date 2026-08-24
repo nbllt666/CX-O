@@ -30,6 +30,12 @@ class ServiceState:
         # confirmation_arbiter 为休眠前 LLM 确认仲裁器（未装配时 None 降级）
         self.physio_runtime: Optional[Any] = None
         self.confirmation_arbiter: Optional[Any] = None
+        # CX-A 管理面 + 哨兵集群（默认 disabled=False，装配后注入）
+        self.admin_manager: Optional[Any] = None
+        self.admin_auth: Optional[Any] = None
+        self.instance_registry: Optional[Any] = None
+        self.cluster_manager: Optional[Any] = None
+        self.cluster_bridge: Optional[Any] = None
 
 
 _service_state: Optional[ServiceState] = None

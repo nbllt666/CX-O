@@ -1,0 +1,18 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://cx-o/public/schema/cluster_node.schema.json",
+  "title": "ClusterNodeState",
+  "description": "集群节点运行时状态契约（InstanceRegistry / 拓扑查询返回项）。",
+  "type": "object",
+  "required": ["node_id", "endpoint", "role", "state", "last_heartbeat"],
+  "properties": {
+    "node_id": { "type": "string", "minLength": 1, "description": "节点 ID。" },
+    "endpoint": { "type": "string", "description": "节点端点。" },
+    "role": { "type": "string", "enum": ["active", "standby", "candidate"], "description": "节点角色。" },
+    "state": { "type": "string", "enum": ["healthy", "suspect", "dead", "unknown"], "description": "健康状态。" },
+    "last_heartbeat": { "type": "string", "nullable": true, "description": "最近心跳时间（ISO8601）。" },
+    "load_summary": { "type": "object", "additionalProperties": true, "description": "负载摘要（心跳载荷）。" },
+    "last_sync_seq": { "type": "integer", "minimum": 0, "description": "该节点已确认同步的最近 seq。" },
+    "state_version": { "type": "integer", "minimum": 0, "description": "数据状态版本（接管校验用）。" }
+  }
+}

@@ -1,0 +1,19 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://cx-o/public/schema/cluster_event.schema.json",
+  "title": "ClusterEvent",
+  "description": "集群事件契约。经 /ws events 域推送给 CX-A，主题为 cluster.*。",
+  "type": "object",
+  "required": ["topic", "node_id", "timestamp"],
+  "properties": {
+    "topic": {
+      "type": "string",
+      "enum": ["cluster.node_joined", "cluster.node_left", "cluster.failover_started", "cluster.failover_completed", "cluster.sync_lag_alert", "cluster.split_brain_risk"],
+      "description": "事件主题。"
+    },
+    "node_id": { "type": "string", "description": "相关节点。" },
+    "timestamp": { "type": "string", "description": "ISO8601 时间戳。" },
+    "epoch": { "type": "integer", "minimum": 0, "description": "相关纪元（failover/split_brain 存在时）。" },
+    "data": { "type": "object", "additionalProperties": true, "description": "事件详情（from_node/to_node/backlog 等）。" }
+  }
+}

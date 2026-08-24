@@ -1,0 +1,46 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://cx-o/public/schema/admin_manifest.schema.json",
+  "title": "AdminManifest",
+  "description": "管理面自描述能力清单契约（GET /api/admin/manifest 返回）。运行时动态生成；被禁用模块对应 capability 自动消失。含集群块（enabled/node_id/role/epoch/peers）。",
+  "type": "object",
+  "required": ["instance_id", "node_name", "version", "capabilities", "control_actions", "agents", "plugins", "models", "endpoints", "cluster"],
+  "properties": {
+    "instance_id": { "type": "string", "minLength": 1, "description": "本实例唯一 ID（兼容 node_id，单机未启用集群时同样唯一）。" },
+    "node_name": { "type": "string", "description": "实例显示名（未配置时为空串）。" },
+    "version": { "type": "string", "description": "服务版本号。" },
+    "capabilities": {
+      "type": "object",
+      "additionalProperties": { "type": "boolean" },
+      "description": "能力开关：realtime_voice/autonomy/tuner/live_stream/computer_control/vision。禁用模块的能力字段为 false 或缺失。"
+    },
+    "control_actions": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "本实例支持的统一控制动作列表（enable/disable/pause/resume/emergency_stop/restart/reload_config 等）。"
+    },
+    "agents": { "type": "array", "items": { "type": "string" }, "description": "已配置的 Agent 列表。" },
+    "plugins": { "type": "array", "items": { "type": "string" }, "description": "已注册插件列表。" },
+    "models": {
+      "type": "object",
+      "additionalProperties": { "type": "string" },
+      "description": "模型槽位到模型标识的映射（main/summary/memory）。"
+    },
+    "cluster": {
+      "type": "object",
+      "required": ["enabled"],
+      "properties": {
+        "enabled": { "type": "boolean", "description": "本节点是否已加入哨兵集群。" },
+        "node_id": { "type": "string", "description": "集群节点 ID（enabled 时存在）。" },
+        "role": { "type": "string", "enum": ["active", "standby", "candidate"], "description": "本节点集群角色。" },
+        "epoch": { "type": "integer", "minimum": 0, "description": "集群拓扑/主从关系版本号（防脑裂）。" },
+        "peers": { "type": "array", "items": { "type": "string" }, "description": "对等节点列表。" }
+      }
+    },
+    "endpoints": {
+      "type": "object",
+      "additionalProperties": { "type": "string" },
+      "description": "关键端点映射（ws/health/cluster 等）。"
+    }
+  }
+}

@@ -1,0 +1,16 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://cx-o/public/schema/cluster_heartbeat.schema.json",
+  "title": "ClusterHeartbeat",
+  "description": "对等心跳载荷契约。每 peer_heartbeat_interval_sec 向每个 peer 发送。用于故障检测（多数派确认）。",
+  "type": "object",
+  "required": ["node_id", "role", "epoch", "last_sync_seq", "state_version"],
+  "properties": {
+    "node_id": { "type": "string", "minLength": 1, "description": "发送方节点 ID。" },
+    "role": { "type": "string", "enum": ["active", "standby", "candidate"], "description": "发送方角色。" },
+    "epoch": { "type": "integer", "minimum": 0, "description": "发送方当前纪元。" },
+    "load_summary": { "type": "object", "additionalProperties": true, "description": "负载摘要。" },
+    "last_sync_seq": { "type": "integer", "minimum": 0, "description": "发送方已同步 seq。" },
+    "state_version": { "type": "integer", "minimum": 0, "description": "数据状态版本。" }
+  }
+}

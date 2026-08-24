@@ -9,6 +9,7 @@ import ConnectionSetup from '@/components/ConnectionSetup';
 import { useThemeStore } from '@/store/themeStore';
 import { useSettingsStore } from '@/store/settingsStore';
 import { getApiBaseUrl } from '@/api/base';
+import { useBackendFailover } from '@/hooks/useBackendFailover';
 
 // 顶层 OBS 浏览器源页（/source/*）：自包含、无管理布局依赖、懒加载，
 // 供 OBS 浏览器源独立拉取（透明背景 + 1920×1080）。
@@ -103,6 +104,10 @@ export default function App() {
       cancelledRef.current = true;
     };
   }, []);
+
+  // 后端集群感知故障转移：当前后端失联时自动切到健康对等节点（含桌宠可视化/弹幕窗）。
+  // 挂在根组件，所有窗口随 App 渲染均生效；切换成功后重载窗以新地址重连。
+  useBackendFailover();
 
   // 顶层 OBS 浏览器源路由：跳过后端连接门，自包含独立渲染（懒加载）。
   const sourceRoute = resolveSourceRoute();

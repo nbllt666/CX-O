@@ -1,0 +1,19 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://cx-o/public/schema/admin_audit.schema.json",
+  "title": "AdminAudit",
+  "description": "管理面审计日志条目契约。每次管理/集群操作落 audit_logs。分页查询返回 items 列表。",
+  "type": "object",
+  "required": ["id", "timestamp", "actor", "level", "action", "target", "summary"],
+  "properties": {
+    "id": { "type": "string", "description": "审计条目 ID。" },
+    "timestamp": { "type": "string", "description": "ISO8601 时间戳。" },
+    "actor": { "type": "string", "description": "操作者标识（token 名 / CX-A / failover 等）。" },
+    "level": { "type": "string", "enum": ["info", "warn", "error"], "description": "严重级别。" },
+    "action": { "type": "string", "description": "动作标识（control.trigger_failover / cluster.failover_completed 等）。" },
+    "target": { "type": "string", "description": "目标描述。" },
+    "summary": { "type": "string", "description": "操作摘要。" },
+    "request_id": { "type": "string", "description": "关联请求（存在时）。" },
+    "detail": { "type": "object", "additionalProperties": true, "description": "补充详情。" }
+  }
+}

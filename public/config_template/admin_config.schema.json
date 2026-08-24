@@ -1,0 +1,28 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://cx-o/public/config_template/admin_config.schema.json",
+  "title": "AdminConfig",
+  "description": "管理面（CX-A）配置段契约。enabled 默认 false（零侵入），bind 默认仅本机。tokens 元素为 {token, level}，level ∈ readonly/operator/superadmin。对外必须显式启用 TLS。",
+  "type": "object",
+  "properties": {
+    "enabled": { "type": "boolean", "default": false, "description": "管理面总开关。默认关。" },
+    "bind": { "type": "string", "default": "127.0.0.1", "description": "监听地址。默认仅本机。" },
+    "tls_enabled": { "type": "boolean", "default": false, "description": "对外必须开启 TLS。" },
+    "tokens": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["token", "level"],
+        "properties": {
+          "token": { "type": "string", "minLength": 1 },
+          "level": { "type": "string", "enum": ["readonly", "operator", "superadmin"] }
+        }
+      },
+      "default": []
+    },
+    "request_id_ttl_sec": { "type": "integer", "minimum": 1, "default": 300, "description": "防重放缓存窗口（秒）。" },
+    "rate_limit_per_sec": { "type": "number", "minimum": 1, "default": 20, "description": "管理面限流（req/s）。" },
+    "cx_a_endpoint": { "type": "string", "default": "", "description": "CX-A 地址；空=仅被动广播，不主动注册。" },
+    "register_heartbeat_sec": { "type": "integer", "minimum": 1, "default": 15, "description": "主动注册心跳间隔（秒）。" }
+  }
+}

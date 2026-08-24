@@ -19,6 +19,11 @@ REQUIRES_RESTART: Dict[str, bool] = {
     "live": False,
     "system": False,
     "evolution": False,  # CXO-Tuner evolution 节：可热更新，仅记录，不重建组件
+    # CX-A 管理面：可热更新（token/限流即时生效，重启才重建长连接组件）
+    "admin": False,
+    # 哨兵集群：拓扑类（cluster_secret/peers/bind/witness）需重启；心跳/快照参数可热更新。
+    # 保守起见整段标记需重启（SentinelCluster 持有传输连接与会话，不热重建）。
+    "cluster": True,
 }
 
 

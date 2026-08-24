@@ -69,6 +69,17 @@ def get_env_config() -> Dict[str, Any]:
         "CXO_LOG_LEVEL": ["logging", "level"],
         "CXO_GRAPH_DATABASE_PATH": ["graph", "database_path"],
         "CXO_GRAPH_ENABLED": ["graph", "enabled"],
+        "CXO_ADMIN_ENABLED": ["admin", "enabled"],
+        "CXO_ADMIN_BIND": ["admin", "bind"],
+        "CXO_ADMIN_TLS_ENABLED": ["admin", "tls_enabled"],
+        "CXO_ADMIN_RATE_LIMIT_PER_SEC": ["admin", "rate_limit_per_sec"],
+        "CXO_ADMIN_CX_A_ENDPOINT": ["admin", "cx_a_endpoint"],
+        "CXO_CLUSTER_ENABLED": ["cluster", "enabled"],
+        "CXO_CLUSTER_NODE_NAME": ["cluster", "node_name"],
+        "CXO_CLUSTER_SECRET": ["cluster", "cluster_secret"],
+        "CXO_CLUSTER_ROLE": ["cluster", "role"],
+        "CXO_CLUSTER_TRANSPORT": ["cluster", "transport"],
+        "CXO_CLUSTER_BIND": ["cluster", "bind"],
     }
 
     for env_key, path_parts in _env_mappings.items():
@@ -523,6 +534,58 @@ class CXFCConfig(BaseModel):
         return self
 
 
+class AdminTokenConfig(BaseModel):
+    """管理面令牌配置：token 与权限分级（readonly / operator / superadmin）。"""
+
+    token: str
+    level: str = "readonly"
+
+
+class AdminConfig(BaseModel):
+    """管理面（CX-A）配置节：总开关与监听地址、TLS、分级 token、防重放与限流、主动注册。"""
+
+    enabled: bool = False
+    bind: str = "127.0.0.1"
+    tls_enabled: bool = False
+    tokens: List[AdminTokenConfig] = Field(default_factory=list)
+    request_id_ttl_sec: int = 300
+    rate_limit_per_sec: float = 20
+    cx_a_endpoint: str = ""
+    register_heartbeat_sec: int = 15
+
+    def token_level(self, token: str) -> Optional[str]:
+        """返回匹配 token 的权限等级（不匹配返回 None）。"""
+        for t in self.tokens:
+            if t.token == token:
+                return t.level
+        return None
+
+
+class ClusterWitnessConfig(BaseModel):
+    """见证节点（tiebreaker）配置：2 节点集群无法形成多数派时仲裁，仅仲裁不承载灵魂。"""
+
+    endpoint: str = ""
+    secret: str = ""
+
+
+class ClusterConfig(BaseModel):
+    """哨兵集群配置节：节点身份、共享密钥、种子对等、心跳/快照参数与传输。"""
+
+    enabled: bool = False
+    node_name: str = ""
+    cluster_secret: str = ""
+    peers: List[str] = Field(default_factory=list)
+    role: str = "standby"
+    peer_heartbeat_interval_sec: int = 5
+    peer_timeout_sec: float = 15
+    miss_threshold: int = 3
+    snapshot_interval_sec: int = 300
+    sync_units: List[str] = Field(default_factory=lambda: ["memory", "persona", "config", "session"])
+    transport: str = "https"
+    bind: str = "0.0.0.0"
+    witness: ClusterWitnessConfig = Field(default_factory=ClusterWitnessConfig)
+
+
 class MemoryLimitsConfig(BaseModel):
     max_memories: int = 30
     min_score_threshold: float = 0.15
@@ -736,6 +799,9 @@ class UnifiedConfig(BaseModel):
     radix: RadixConfig = Field(default_factory=RadixConfig)
     decision_core: DecisionCoreConfig = Field(default_factory=DecisionCoreConfig)
     evolution: CXOTunerConfig = Field(default_factory=CXOTunerConfig)
+    # CX-A 管理面 + 哨兵集群（默认 enabled=false，零侵入）
+    admin: AdminConfig = Field(default_factory=AdminConfig)
+    cluster: ClusterConfig = Field(default_factory=ClusterConfig)
 
 
 class Settings:

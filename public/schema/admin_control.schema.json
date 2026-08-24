@@ -1,0 +1,24 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://cx-o/public/schema/admin_control.schema.json",
+  "title": "AdminControl",
+  "description": "管理面统一控制动作请求契约（POST /api/admin/control）。request_id 用于幂等/防重放。未知 action 或 target 返回 400+错误码。",
+  "type": "object",
+  "required": ["action", "target", "request_id"],
+  "properties": {
+    "action": {
+      "type": "string",
+      "enum": ["enable", "disable", "pause", "resume", "emergency_stop", "restart", "reload_config", "reload", "reset", "start", "stop", "shutdown", "create", "update", "delete", "topology", "state", "trigger_failover", "set_role", "add_peer", "remove_peer", "sync_status"],
+      "description": "控制动作。合法动作集合随 target 校验。"
+    },
+    "target": {
+      "type": "string",
+      "enum": ["autonomy", "voice", "live", "config", "agent", "tuner", "instance", "cluster"],
+      "description": "控制目标域。cluster 转发 ClusterAdminBridge。"
+    },
+    "agent_id": { "type": "string", "default": "default", "description": "目标 Agent ID。" },
+    "request_id": { "type": "string", "minLength": 1, "description": "幂等/防重放标识（服务端 TTL 去重）。" },
+    "params": { "type": "object", "additionalProperties": true, "description": "动作参数（如 cluster 的 from_node/to_node）。" },
+    "timeout_sec": { "type": "number", "minimum": 1, "default": 10, "description": "动作超时秒数。" }
+  }
+}

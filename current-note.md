@@ -4,6 +4,20 @@
 
 ## 做到哪了
 
+- **前端主后端断连自动切哨兵对等**（已闭合，2026-08-24；承接 spec `admin-plane-sentinel-cluster` 尾部从属需求）
+  - 工程过程：用户提问"前端能自动转接接管的后端吗"→ 核查前端连接模型（单后端 + 同址重试，无集群感知）→ 明确答复"不能，需补客户端故障转移"→ 用户拍板：主后端断连时自动切换，可视化部分也要 → 实现 `src/lib/backendFailover.ts`（候选集持久化 / /health 探测 / 集群角色读取 / `runBackendFailover` 切换 + 冷却防震荡 / 派发 `backend:switched`）+ `src/hooks/useBackendFailover.ts`（挂载收集 peers + 周期探测 + 连续失败阈值 + 切换后重载）+ `App.tsx` 根部挂载（覆盖管理界面/桌宠/弹幕/OBS 源）。
+  - 交接状态：**已闭合**（typecheck 通过；backendFailover.test 14 + base/App 回归 33 passed；`npm run build` 成功；变更文档 `.trae/documents/20260824_模块前端_主后端断连自动切哨兵.md`）。
+  - 最终结果：前端当前后端失联（连续 2 次失败）时，自动探测候选对等（cluster peers + 局域网发现），优先选 role=active 的健康节点，`setBackendUrl`+`setWsUrl` 后重载当前窗，桌宠可视化/管理界面/弹幕窗无缝转接管节点；带 `SWITCH_COOLDOWN_MS` 冷却防 A/B 震荡。
+  - 未闭合项（需真实部署验收）：真机双机集群 + peers 指向可路由主服务端点后的端到端接管切换（单测以 mock fetch 覆盖，未做真机联网验证）；切换伴随一次窗口重载（桌宠短暂重建）为已知取舍。
+  - 接续入口：配置 `cluster.enabled=true` + `cluster_secret` + `peers`，两台真机分别运行后观察前端在 A 关停时自动切到 B；如需"不重载平滑转接"可后续把切换收敛为仅重建连接而不整窗重载。
+
+- **CX-A 管理面 + 哨兵集群（多机互备）**（已闭合，2026-08-24；spec `admin-plane-sentinel-cluster`）
+  - 工程过程：输入《CX-O 改造文档 · 管理面（CX-A）与哨兵集群（多机互备）》→ 核对 `.trae/specs` 无匹配（Path C）→ AskUserQuestion 拍板 4 项决策（范围=全量 P0+P1+P2 含前端；接管后身份=B 保持自身身份继承 A 记忆为遗产；2 节点脑裂=见证节点 tiebreaker；脏接管=严格"宁可暂不接管"）→ 三件套 → 人类批准 → T1 三层契约落位 public/（schema×10 + pyi×2 + config_template×2 + CHANGELOG v1.6.0 MINOR）→ T2 配置扩展（AdminConfig/ClusterConfig + REQUIRES_RESTART）→ T3 生命周期骨架（main.py _init_cluster/_init_admin + dependencies 槽位）→ T4-T9 哨兵地基+备份核心（identity/discovery/transport/heartbeat/units/replicator）→ T10-T14 管理地基（auth/manifest/control_plane/batch/registry）→ T15-T16 容灾（failover/consensus：epoch 防双主+多数派+见证节点+脏接管拒绝）→ T17-T18 协同（cluster_bridge + cluster.* 事件 /ws 广播）→ T19 接口层（扩展 admin router 管理端点 + 新增 cluster router + protocol actions + app.py 注册）→ T20 装配收口（集群事件→WS broadcast、admin 运行时 inject）→ T21-T24 前端（admin/cluster API 客户端 + AdminPage/ClusterPage + 路由登记 + i18n）。
+  - 交接状态：**已闭合**（T1-T25 全部完成；后端 affected 集 pytest 164 通过 + schema/pyi 校验通过；前端 typecheck/build 通过、既有前端测试 501 通过[3 个为 Pre-Existing Electron BLE 失败]）。
+  - 最终结果：后端新增 `server/core/cluster/*`（9 模块+_common）与 `server/core/admin/*`（7 模块），`api/routers/cluster.py` 与 `api/routers/admin.py` 管理端点，`/api/admin/{manifest,status,control,batch,audit,register}`、`/api/cluster/{topology,state,sync,takeover}`，`protocol/actions.py` 增 admin.*/cluster.*，`config.py` 增 admin/cluster 段，`main.py` 装配（cluster 先 admin 后、关闭逆序、异常隔离）；前端 AdminPage/ClusterPage；三层契约 v1.6.0 落位。变更文档 `.trae/documents/20260824_模块0_新增CX-A管理面与哨兵集群.md`。
+  - 未闭合项（需用户 onboard）：真实跨机集群联调（心跳/同步/接管用 mock 单测覆盖，未做真机多节点验证）；备份单元数据源适配骨架级（真实机型对齐 session/graph/autonomy 增量需后续强化）；管理面对外需显式配置 TLS（默认仅本机 bind=127.0.0.1）。
+  - 接续入口：用户配置 `admin.enabled=true` + admin.tokens 后在前端 /admin 观察管理面/控制/审计；配置 `cluster.enabled=true` + cluster_secret/peers 后在前端 /cluster 观察拓扑/同步；真实多机验证心跳与接管需至少两台机器 + 可选见证节点。
+
 - **记忆系统增强：事件未完成状态与摘要可回取/可修改**（已闭合，2026-08-23；spec `enhance-memory-unfinished-event-summary`）
   - 工程过程：/spec /goal 提出需求（增加事件未完成状态；未完成事件摘要保留在摘要模型上下文；摘要模型可经工具调用回取原始数据；可修改摘要）→ 定位缺口（summary_prompt 只含当前话题、原文软删除不可回取、摘要为静态文本）→ 三件套 → 人类批准 → 实现（`trigger_topic_summary` 增强：status 参数/启发式判定、未完成旧摘要注入 `<未完成议题>`、raw_messages 快照、marker 结构化元数据、max_history 清理跳过未完成；新增 3 个 summary 工具 list_topic_summaries/get_topic_summary_raw/update_topic_summary；ContextManager 新增 update_message；更新摘要助手隐藏提示词；新增/更新单测）。
   - 交接状态：**已闭合**（Task 1-5 + checklist 13 项全勾验通过；spec `enhance-memory-unfinished-event-summary` 待归档）。

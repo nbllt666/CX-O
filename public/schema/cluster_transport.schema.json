@@ -1,0 +1,20 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://cx-o/public/schema/cluster_transport.schema.json",
+  "title": "ClusterTransport",
+  "description": "节点间传输请求契约。灵魂数据仅在受信节点间经 TLS/HTTPS 流动；共享密钥认证 + token + request_id/seq 防重放。",
+  "type": "object",
+  "required": ["op", "node_id", "request_id"],
+  "properties": {
+    "op": {
+      "type": "string",
+      "enum": ["handshake", "heartbeat", "sync_event", "snapshot", "gossip", "failover_vote", "failover_claim", "leave"],
+      "description": "传输操作类型。"
+    },
+    "node_id": { "type": "string", "minLength": 1, "description": "发送方节点 ID。" },
+    "request_id": { "type": "string", "minLength": 1, "description": "防重放标识。" },
+    "seq": { "type": "integer", "minimum": 0, "description": "事件序号（sync_event 必填）。" },
+    "epoch": { "type": "integer", "minimum": 0, "description": "纪元（failover_vote/claim 必填）。" },
+    "payload": { "type": "object", "additionalProperties": true, "description": "操作载荷（心跳/事件/快照）。" }
+  }
+}

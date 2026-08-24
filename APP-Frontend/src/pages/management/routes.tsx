@@ -42,6 +42,7 @@ import {
   User,
   Volume2,
   Wrench,
+  Server,
 } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 
@@ -218,6 +219,19 @@ export const MANAGEMENT_ROUTES: readonly ManagementRouteEntry[] = [
     titleKey: 'management.nav.dream',
     icon: Moon,
     Component: lazy(() => import('./DreamPage')),
+  },
+  // ── 管理面页（AdminPage） / 哨兵集群页（ClusterPage），仅追加，不改既有条目 ──
+  {
+    path: 'admin',
+    titleKey: 'management.nav.admin',
+    icon: Server,
+    Component: lazy(() => import('./AdminPage')),
+  },
+  {
+    path: 'cluster',
+    titleKey: 'management.nav.cluster',
+    icon: Network,
+    Component: lazy(() => import('./ClusterPage')),
   },
 ];
 

@@ -5,7 +5,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Optional
 
-from fastapi import APIRouter, Header, HTTPException
+from fastapi import APIRouter, Header, HTTPException, Request
 from pydantic import BaseModel
 
 from server.core.logging_config import get_contextual_logger
@@ -264,12 +264,13 @@ async def get_logs(level: str = "INFO", lines: int = 50, x_api_key: Optional[str
             log_file = os.path.join(get_project_root(), "logs", "cxo.log")
         if os.path.exists(log_file):
             with open(log_file, "r", encoding="utf-8") as f:
-                all_lines = f.readlines()
-            return {"status": "success", "logs": "".join(all_lines[-lines:]), "total": len(all_lines[-lines:]), "level": level, "lines": lines}
-        return {"status": "success", "logs": "No log file available", "total": 0, "level": level, "lines": lines}
+                all_lines = [ln.rstrip("\n") for ln in f.readlines()]
+            # 保持 logs 为数组类型（原接口契约），避免前端对返回类型变化解析失败
+            return {"status": "success", "logs": all_lines[-lines:], "total": len(all_lines[-lines:]), "level": level, "lines": lines}
+        return {"status": "success", "logs": ["No log file available"], "total": 0, "level": level, "lines": lines}
     except Exception as e:
         logger.error(f"Failed to read logs: {e}", exc_info=True)
-        return {"status": "error", "logs": f"读取日志失败: {e}", "total": 0, "level": level, "lines": lines}
+        return {"status": "error", "logs": [f"读取日志失败: {e}"], "total": 0, "level": level, "lines": lines}
 
 
 @router.post("/admin/backup")
@@ -322,3 +323,183 @@ async def create_backup(x_api_key: Optional[str] = Header(None)):
     except Exception as e:
         logger.error(f"创建备份失败: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail="创建备份失败")
+
+
+# ===========================================================================
+# CX-A 管理面（spec admin-plane-sentinel-cluster Part A）——新增端点
+# 依赖 admin.enabled=true 时由 main.py 注入模块级运行时；未注入时端点按 503 disabled。
+# 认证走 AdminAuth（Bearer token + request_id 防重放 + 限流）。
+# ===========================================================================
+_admin_auth = None
+_control_plane = None
+_manifest = None
+_instance_registry = None
+_cluster_bridge = None
+_services = None
+
+
+def inject_admin_runtime(auth, control_plane, manifest, instance_registry, cluster_bridge, services):
+    """注入 CX-A 管理面运行时（main.py lifespan 调用；admin.enabled=true 时）。"""
+    global _admin_auth, _control_plane, _manifest, _instance_registry, _cluster_bridge, _services
+    from server.core.admin.cluster_bridge import audit_now as _audit_impl
+    global audit_now
+    audit_now = _audit_impl
+    _admin_auth = auth
+    _control_plane = control_plane
+    _manifest = manifest
+    _instance_registry = instance_registry
+    _cluster_bridge = cluster_bridge
+    _services = services
+
+
+def _admin_unavailable():
+    raise HTTPException(status_code=503, detail="CX-A 管理面未启用（admin.enabled=false）")
+
+
+def _admin_guard(request: Request, required: str, request_id: str = None):
+    """校验 Bearer token 足够权限 + 可选防重放 + 限流。未注入/未启用抛 503。"""
+    if _admin_auth is None:
+        _admin_unavailable()
+    auth_header = (request.headers.get("Authorization") or "").strip()
+    token = auth_header[7:] if auth_header.startswith("Bearer ") else auth_header
+    try:
+        level = _admin_auth.authenticate(token)
+        _admin_auth.check_required_level(level, required)
+        if request_id:
+            _admin_auth.check_replay(request_id)
+        _admin_auth.check_rate_limit()
+    except HTTPException:
+        raise
+    except Exception as e:
+        # 权限不足/防重放 → 403（无 Authorization 或 429 限流已在异常内区分，统一 403 兜底）
+        raise HTTPException(status_code=403, detail=str(e))
+    return level
+
+
+@router.get("/admin/manifest")
+async def admin_manifest(request: Request):
+    _admin_guard(request, "readonly")
+    if _manifest is None:
+        _admin_unavailable()
+    cluster_state = None
+    if _cluster_bridge is not None:
+        raw = _cluster_bridge.read_state()
+        if isinstance(raw, dict) and raw.get("status") not in ("cluster_disabled", "error"):
+            cluster_state = raw
+        else:
+            cluster_state = {"enabled": False}
+    return _manifest.build(cluster_state)
+
+
+@router.get("/admin/status")
+async def admin_status(request: Request):
+    _admin_guard(request, "readonly")
+    snapshot = {
+        "models": (_manifest.detect_models() if _manifest else {}),
+        "capabilities": (_manifest.detect_capabilities() if _manifest else {}),
+        "cluster": _cluster_bridge.read_state() if _cluster_bridge is not None else {"enabled": False},
+    }
+    return {"status": "success", "snapshot": snapshot}
+
+
+class _ControlRequest(BaseModel):
+    action: str
+    target: str
+    agent_id: Optional[str] = "default"
+    request_id: str
+    params: dict = {}
+
+
+class _BatchRequest(BaseModel):
+    request_id: str
+    mode: str = "sequential"
+    stop_on_error: bool = True
+    steps: list = []
+
+
+class _StepItem(BaseModel):
+    target: str
+    action: str
+    agent_id: Optional[str] = "default"
+    params: dict = {}
+
+
+class _BatchRespStep(BaseModel):
+    step: int
+    ok: bool
+    result: dict = {}
+    duration_ms: float = 0
+
+
+@router.post("/admin/control")
+async def admin_control(request: Request, req: _ControlRequest):
+    _admin_guard(request, "operator", request_id=req.request_id)
+    if _control_plane is None:
+        _admin_unavailable()
+    try:
+        import time
+        t0 = time.monotonic()
+        result = _control_plane.dispatch(req.action, req.target, req.request_id, req.agent_id or "default", req.params or {})
+        from inspect import iscoroutine
+        if iscoroutine(result):
+            result = await result
+        audit_now("CX-A", "info", "control", f"{req.target}/{req.action}", "管理面控制动作完成",
+                  request_id=req.request_id, detail={"elapsed_ms": round((time.monotonic() - t0) * 1000, 1)})
+        return {"status": "success", "result": result}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@router.post("/admin/batch")
+async def admin_batch(request: Request, req: _BatchRequest):
+    _admin_guard(request, "operator", request_id=req.request_id)
+    if _control_plane is None:
+        _admin_unavailable()
+    if not req.steps:
+        raise HTTPException(status_code=400, detail="steps 不能为空")
+    steps: list = []
+    for i, st in enumerate(req.steps):
+        if not isinstance(st, dict):
+            raise HTTPException(status_code=400, detail=f"step[{i}] 必须是对象")
+        steps.append(_StepItem(**st))
+
+    async def _run_step(i: int, st: _StepItem):
+        import time
+        t0 = time.monotonic()
+        try:
+            result = _control_plane.dispatch(st.action, st.target, req.request_id, st.agent_id or "default", st.params or {})
+            from inspect import iscoroutine
+            if iscoroutine(result):
+                result = await result
+            return {"step": i, "ok": True, "result": result, "duration_ms": round((time.monotonic() - t0) * 1000, 1)}
+        except Exception as e:
+            return {"step": i, "ok": False, "result": {"error": str(e)}, "duration_ms": round((time.monotonic() - t0) * 1000, 1)}
+
+    if req.mode == "parallel":
+        import asyncio
+        out = await asyncio.gather(*[_run_step(i, st) for i, st in enumerate(steps)])
+    else:  # sequential
+        out = []
+        for i, st in enumerate(steps):
+            r = await _run_step(i, st)
+            out.append(r)
+            if req.stop_on_error and not r["ok"]:
+                break
+    audit_now("CX-A", "info", "batch", f"mode={req.mode}", "批量编排执行",
+              request_id=req.request_id, detail={"steps": len(steps), "completed": len(out)})
+    return {"status": "success", "mode": req.mode, "steps": out}
+
+
+@router.get("/admin/audit")
+async def admin_audit(request: Request, limit: int = 50, offset: int = 0):
+    _admin_guard(request, "readonly")
+    from server.core.admin.cluster_bridge import _audit_read
+    return {"status": "success", "items": _audit_read(limit, offset)}
+
+
+@router.post("/admin/register")
+async def admin_register():
+    """内部：CX-O 向 CX-A 注册（本机作为被注册方，仅记录；主动注册由 registry 承接）。"""
+    return {"status": "success", "message": "registered", "registered": True}

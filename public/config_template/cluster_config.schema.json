@@ -1,0 +1,29 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://cx-o/public/config_template/cluster_config.schema.json",
+  "title": "ClusterConfig",
+  "description": "哨兵集群配置段契约。enabled 默认 false 且 cluster_secret 为空视为集群不启用（零侵入）。cluster_secret/peers 属拓扑类，变更需重启。见证节点由 WitnessConfig（可选）声明。",
+  "type": "object",
+  "properties": {
+    "enabled": { "type": "boolean", "default": false, "description": "集群总开关。默认关。" },
+    "node_name": { "type": "string", "default": "", "description": "节点显示名。" },
+    "cluster_secret": { "type": "string", "default": "", "description": "集群共享密钥。为空则集群不启用。" },
+    "peers": { "type": "array", "items": { "type": "string" }, "default": [], "description": "种子节点 endpoint 列表。" },
+    "role": { "type": "string", "enum": ["active", "standby", "candidate"], "default": "standby", "description": "初始角色。" },
+    "peer_heartbeat_interval_sec": { "type": "integer", "minimum": 1, "default": 5, "description": "心跳间隔（秒）。" },
+    "peer_timeout_sec": { "type": "number", "minimum": 1, "default": 15, "description": "心跳超时（秒）。" },
+    "miss_threshold": { "type": "integer", "minimum": 1, "default": 3, "description": "连续丢失几次判疑似故障。" },
+    "snapshot_interval_sec": { "type": "integer", "minimum": 1, "default": 300, "description": "快照对齐间隔（秒）。" },
+    "sync_units": { "type": "array", "items": { "type": "string", "enum": ["memory", "persona", "config", "session"] }, "default": ["memory", "persona", "config", "session"], "description": "启用同步的备份单元。" },
+    "transport": { "type": "string", "enum": ["https", "http"], "default": "https", "description": "节点间传输协议。" },
+    "bind": { "type": "string", "default": "0.0.0.0", "description": "集群监听地址（跨机需可路由）。" },
+    "witness": {
+      "type": "object",
+      "description": "见证节点（tiebreaker）。2 节点集群无法形成多数派时仲裁，仅仲裁不承载灵魂。",
+      "properties": {
+        "endpoint": { "type": "string", "default": "", "description": "见证节点端点；空则 2 节点争主时拒绝升级并告警。" },
+        "secret": { "type": "string", "default": "", "description": "见证节点共享密钥。" }
+      }
+    }
+  }
+}
