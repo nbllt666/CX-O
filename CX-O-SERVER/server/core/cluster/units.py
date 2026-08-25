@@ -15,6 +15,7 @@ UNIT_REGISTRY: dict[str, str] = {
     "session": "incremental",
     "persona": "incremental",
     "config": "incremental",
+    "ref_audio": "incremental",
     "graph": "snapshot",
     "autonomy": "snapshot",
     "vector": "rebuild",

@@ -13,9 +13,10 @@ from server.protocol.message import create_response, create_error, create_stream
 from server.protocol.actions import ASRActions, TTSActions, EmotionActions, EffectActions, VoiceActions
 from server.services.emotion_parser import get_supported_emotions, extract_emotions_with_text
 from server.services.effect_parser import EffectParser
-# 模块级导入实时语音单例访问器：vad_processor 无对 audio 的反向依赖（无循环导入），
+# 模块级导入实时语音访问器：vad_processor 无对 audio 的反向依赖（无循环导入），
 # 消除双流式/流式 ASR handler 每帧重复执行函数级 import（16.7 帧/s 热路径）。
-from server.services.vad_processor import get_audio_stream_processor
+# per-client 并发化：ensure_stream_processor_configured 按 client_id 取独立实例。
+from server.services.vad_processor import get_audio_stream_processor, ensure_stream_processor_configured
 
 if TYPE_CHECKING:
     from server.core.websocket.manager import WebSocketManager
@@ -78,9 +79,14 @@ _dual_stream_sessions: dict[str, "DualStreamSession"] = {}
 
 
 async def set_tts_playing(client_id: str, playing: bool):
-    """更新指定客户端的 TTS 播放状态，并将聚合结果同步到 ASR 打断模块。"""
+    """更新指定客户端的 TTS 播放状态，并同步到该客户端的 ASR 打断模块。
+
+    per-client 并发化：A 播 TTS 只将该 client_id 对应的 ASR 打断模块置位，
+    不影响其它会话的打断判定（A 播 TTS 不触发 B 的打断）。
+    _tts_playing_clients 集合保留，供 DualStreamSession 的全双工打断检查使用。
+    """
     from server.services.asr_interrupt import get_asr_interrupt_module
-    interrupt_module = get_asr_interrupt_module()
+    interrupt_module = get_asr_interrupt_module(client_id)
 
     async with _tts_playing_lock:
         if playing:
@@ -88,9 +94,7 @@ async def set_tts_playing(client_id: str, playing: bool):
         else:
             _tts_playing_clients.discard(client_id)
 
-        has_tts_playing = len(_tts_playing_clients) > 0
-
-    interrupt_module.set_tts_playing(has_tts_playing)
+    interrupt_module.set_tts_playing(playing)
 
 
 async def cleanup_dual_stream_session(client_id: str) -> None:
@@ -343,7 +347,8 @@ class DualStreamSession:
         # 仅当 LLM 插话打断确实发生时生效，普通场景兜底行为与现状一致。
         if self._agent_interrupt_triggered:
             from server.services.agent_interrupt_user import get_agent_interrupt_module
-            if get_agent_interrupt_module().speech_end_fallback:
+            # per-client 并发化：使用当前会话的独立打断模块实例
+            if get_agent_interrupt_module(self.client_id).speech_end_fallback:
                 return
 
         # final 若已在 speech_end 前到达，会被 on_final_result 以 is_speaking=True
@@ -711,6 +716,7 @@ class DualStreamSession:
     def _build_tts_kwargs(self) -> dict:
         """构建 Qwen3 统一编排合成参数：
         优先传 ref_asset_id/refs（参考音频资产），无则回退旧 ref_audio_path/ref_text。
+        附带 agent_id，使 TTS 在无显式 refs 时按该 Agent 绑定参考音频选音色（A3）。
         """
         tts_kwargs: dict = {}
         if self._ref_asset_id:
@@ -721,6 +727,8 @@ class DualStreamSession:
             tts_kwargs["ref_audio_path"] = self._ref_audio_path
         if self._ref_text:
             tts_kwargs["ref_text"] = self._ref_text
+        if getattr(self, "agent_id", None):
+            tts_kwargs["agent_id"] = self.agent_id
         return tts_kwargs
 
     async def interrupt_and_reply(self, reply_content: str) -> None:
@@ -981,7 +989,8 @@ def register_audio_handlers(
             if asr_text:
                 try:
                     from server.services.asr_interrupt import get_asr_interrupt_module
-                    interrupt_module = get_asr_interrupt_module()
+                    # per-client 并发化：使用当前客户端的独立打断模块实例
+                    interrupt_module = get_asr_interrupt_module(client_id)
                     if interrupt_module.enabled:
                         await interrupt_module.on_asr_result(asr_text)
                 except Exception as e:
@@ -1281,7 +1290,8 @@ def register_audio_handlers(
         data = message.get("data", {})
 
         try:
-            stream_processor = get_audio_stream_processor()
+            # per-client 并发化：按 client_id 取独立处理器实例
+            stream_processor = ensure_stream_processor_configured(client_id)
 
             audio_base64 = data.get("audio")
             reset = data.get("reset", False)
@@ -1358,7 +1368,7 @@ def register_audio_handlers(
         """
         try:
             from server.services.agent_interrupt_user import get_agent_interrupt_module
-            agent_interrupt = get_agent_interrupt_module()
+            agent_interrupt = get_agent_interrupt_module(session.client_id)
             text = (asr_result.get("text") or "").strip()
             if not text:
                 return
@@ -1481,7 +1491,8 @@ def register_audio_handlers(
         try:
             audio_data = base64.b64decode(audio_base64)
 
-            stream_processor = get_audio_stream_processor()
+            # per-client 并发化：按 client_id 取独立处理器实例
+            stream_processor = ensure_stream_processor_configured(client_id)
 
             # 诊断计时：定位 WS 端到端延迟瓶颈（DEBUG 模式才计时，热路径不产生开销）
             _diag_enabled = logger.isEnabledFor(logging.DEBUG)
@@ -1511,9 +1522,10 @@ def register_audio_handlers(
                     # 用户开口即停止 TTS，省去等待 ASR 识别的 ~200ms
                     await session.on_vad_speech_start()
                     # 通知插话判定模块：用户开始说话（用于正确计算说话时长）
+                    # per-client 并发化：使用当前 client_id 的独立模块实例
                     try:
                         from server.services.agent_interrupt_user import get_agent_interrupt_module
-                        get_agent_interrupt_module().on_user_speech_start()
+                        get_agent_interrupt_module(client_id).on_user_speech_start()
                     except Exception:
                         pass
                 else:
@@ -1521,9 +1533,10 @@ def register_audio_handlers(
                     # 不重启已由 Partial 启动的 LLM 流程
                     await session.on_vad_speech_end(asr_result)
                     # 通知插话判定模块：用户结束说话
+                    # per-client 并发化：使用当前 client_id 的独立模块实例
                     try:
                         from server.services.agent_interrupt_user import get_agent_interrupt_module
-                        get_agent_interrupt_module().on_user_speech_end()
+                        get_agent_interrupt_module(client_id).on_user_speech_end()
                     except Exception:
                         pass
 

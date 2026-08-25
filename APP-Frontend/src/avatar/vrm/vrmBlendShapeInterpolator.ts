@@ -46,7 +46,7 @@ export class BlendShapeInterpolator {
       if (Math.abs(target - next) < 0.001) {
         next = target;
       }
-      em.setValue(name as any, next);
+      em.setValue(name as never, next);
       this.currentWeights[name] = next;
     }
   }

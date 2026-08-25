@@ -1,18 +1,18 @@
 /**
  * CXO-Pet Electron 主进程
  * ============================================================================
- * 三窗模型（桌宠优先）：
- *   1. petWindow        桌宠悬浮窗：默认创建；无边框透明、置顶、跳过任务栏
+ * 多窗模型（桌宠多开优先）：
+ *   1. petWindows       桌宠悬浮窗（多开，Map<agentId, BrowserWindow>）：按 agent 各一窗；
+ *                       无边框透明、置顶、跳过任务栏，加载 /pet?agentId=<id>
  *   2. managementWindow 管理窗：默认不创建，IPC 唤起；原生标题栏、可调整
  *   3. danmakuWindow    弹幕窗：默认不创建，IPC 切换显示/隐藏；透明无边框
  *
- * 生命周期策略（二选一，本工程选择 A）：
- *   A. 桌宠窗关闭 → 退出应用（当前实现）。桌宠是应用本体，关闭即退出语义最直观
- *   B. 托盘常驻：桌宠窗关闭仅隐藏。若后续需切换，仅需在 petWindow 'closed'
- *      回调中改为 petWindow = null 并移除 app.quit() 调用
+ * 生命周期策略：
+ *   桌宠窗 closed → 若为最后一个桌宠窗则退出应用；否则仅从 Map 移除。
+ *   桌宠窗是应用本体，全部关闭即退出语义最直观；管理窗/弹幕窗关闭不退出。
  *
- * 窗口标题：桌宠窗标题固定为 'CXO-Pet'（page-title-updated 拦截），
- *   供 OBS 等采集端按窗口名稳定捕获。
+ * 窗口标题：桌宠窗标题为 'CXO-Pet-<agentId>'（page-title-updated 拦截），
+ *   供 OBS 等采集端按窗口名区分多个桌宠。
  * ============================================================================
  */
 import { app, BrowserWindow, desktopCapturer, dialog, ipcMain, session, Menu, Tray, nativeImage, globalShortcut, shell, powerMonitor } from 'electron';
@@ -51,7 +51,9 @@ const __dirname = path.dirname(__filename);
 const devServerUrl = process.env['VITE_DEV_SERVER_URL'];
 const appIconPath = path.join(__dirname, devServerUrl ? '../public/icon.png' : '../dist/icon.png');
 
-let petWindow: BrowserWindow | null = null;
+// 桌宠多开：多 Agent 各自一个独立悬浮窗，键为 agentId（见 createPetWindow）。
+// `closed` 时若空（最后一个桌宠窗被关）才退出应用。
+const petWindows = new Map<string, BrowserWindow>();
 let managementWindow: BrowserWindow | null = null;
 let danmakuWindow: BrowserWindow | null = null;
 let tray: Tray | null = null;
@@ -134,13 +136,28 @@ async function stopPhysioBackground(): Promise<void> {
 }
 
 /** 渲染层路由加载：开发模式走 dev server + hash 路由，生产模式走静态文件 */
-function loadRoute(win: BrowserWindow, route: '/' | '/pet' | '/danmaku'): void {
+function loadRoute(win: BrowserWindow, route: string): void {
   if (devServerUrl) {
     win.loadURL(route === '/' ? devServerUrl : `${devServerUrl}#${route}`);
   } else {
     const filePath = path.join(__dirname, '../dist/index.html');
     win.loadFile(filePath, route === '/' ? {} : { hash: route });
   }
+}
+
+/** 启动/重建桌宠窗使用的默认 agentId（优先持久化的 chatStore.currentAgentId，缺省 'default'） */
+function getInitialPetAgentId(): string {
+  try {
+    const raw = loadStore('cxo-pet-chat');
+    if (raw) {
+      const parsed = JSON.parse(raw) as { state?: { currentAgentId?: string | null } };
+      const id = parsed.state?.currentAgentId;
+      if (id) return id;
+    }
+  } catch {
+    // 持久化数据损坏时忽略，回退默认
+  }
+  return 'default';
 }
 
 /**
@@ -158,11 +175,19 @@ function sharedWebPreferences(): Electron.WebPreferences {
 }
 
 // ---------------------------------------------------------------------------
-// 1. 桌宠悬浮窗（默认创建）
+// 1. 桌宠悬浮窗（多开：每 Agent 一窗，默认创建一个）
 // ---------------------------------------------------------------------------
-function createPetWindow(): BrowserWindow {
-  petWindow = new BrowserWindow({
-    title: 'CXO-Pet',
+function createPetWindow(agentId: string): BrowserWindow {
+  const normalized = String(agentId || 'default');
+  const existing = petWindows.get(normalized);
+  if (existing && !existing.isDestroyed()) {
+    existing.focus();
+    return existing;
+  }
+
+  const win = new BrowserWindow({
+    // 标题按 agent 命名（CXO-Pet-<agentId>）供 OBS 按窗名区分多桌宠
+    title: `CXO-Pet-${normalized}`,
     width: 400,
     height: 500,
     minWidth: 300,
@@ -179,22 +204,38 @@ function createPetWindow(): BrowserWindow {
     webPreferences: sharedWebPreferences(),
   });
 
-  // 固定窗口标题为 CXO-Pet：阻止 document.title 覆盖，保证 OBS 按名捕获稳定
-  petWindow.on('page-title-updated', (event) => {
+  // 固定窗口标题为 CXO-Pet-<agentId>：阻止 document.title 覆盖，保证 OBS 按名捕获稳定
+  win.on('page-title-updated', (event) => {
     event.preventDefault();
   });
 
-  loadRoute(petWindow, '/pet');
+  // 路由带 query 参数：HashRouter 下 /pet?agentId=<id> 仍落在 #/pet 段内，react-router 可从
+  // useSearchParams 读取 agentId。桌宠窗按 agentId 各自绑定独立的会话/WS/TTS。
+  loadRoute(win, `/pet?agentId=${encodeURIComponent(normalized)}`);
 
-  petWindow.on('closed', () => {
-    petWindow = null;
-    // 策略 A：桌宠窗关闭即退出应用（见文件头注释）
-    if (!isQuitting) {
+  win.on('closed', () => {
+    petWindows.delete(normalized);
+    // 最后一个桌宠窗关闭才退出应用（管理窗/弹幕窗关闭不触发）
+    if (petWindows.size === 0 && !isQuitting) {
       app.quit();
     }
   });
 
-  return petWindow;
+  petWindows.set(normalized, win);
+  return win;
+}
+
+/** 按 agentId 取对应桌宠窗；不存在或已销毁返回 null（供 IPC 幂等控制）。 */
+function getPetWindow(agentId: string): BrowserWindow | null {
+  const win = petWindows.get(agentId);
+  if (win && !win.isDestroyed()) return win;
+  return null;
+}
+
+/** 按 agentId 关闭对应桌宠窗；关闭最后一个桌宠窗会触发应用退出（见 closed 回调）。 */
+function closePetWindow(agentId: string): void {
+  const win = getPetWindow(agentId);
+  if (win) win.close();
 }
 
 // ---------------------------------------------------------------------------
@@ -348,6 +389,22 @@ function registerIpcHandlers(): void {
     openManagementWindow();
   });
 
+  // 桌宠多开：按 agentId 创建/聚焦对应桌宠窗（幂等）
+  ipcMain.handle('window:open-pet', (_event, agentId: string) => {
+    createPetWindow(String(agentId || 'default'));
+  });
+
+  // 桌宠多开：按 agentId 关闭对应桌宠窗（最后窗关闭触发应用退出）
+  ipcMain.handle('window:close-pet', (_event, agentId: string) => {
+    if (agentId) {
+      closePetWindow(String(agentId));
+      return;
+    }
+    // 兼容无参调用方：关闭发起窗
+    const win = BrowserWindow.fromWebContents(_event.sender);
+    if (win && !win.isDestroyed()) win.close();
+  });
+
   // 在系统默认浏览器打开外部 URL（OBS 源预览等；仅放行 http/https/file）
   ipcMain.handle('shell:open-external', (_event, url: string) => {
     if (typeof url !== 'string') return;
@@ -360,11 +417,6 @@ function registerIpcHandlers(): void {
     toggleDanmakuWindow();
   });
 
-  ipcMain.handle('window:close-pet', () => {
-    isQuitting = true;
-    app.quit();
-  });
-
   // 幂等显隐（启动恢复、托盘同步等场景语义确定）
   ipcMain.handle('window:set-danmaku-visible', (_event, visible: boolean) => {
     setDanmakuVisible(visible);
@@ -372,7 +424,7 @@ function registerIpcHandlers(): void {
 
   // 桌宠窗拖拽：增量坐标移动（渲染层记录按下点，逐帧回传 delta）
   ipcMain.handle('window:move', (event, dx: number, dy: number) => {
-    const win = BrowserWindow.fromWebContents(event.sender) ?? petWindow;
+    const win = BrowserWindow.fromWebContents(event.sender);
     if (win && !win.isDestroyed()) {
       const [currentX, currentY] = win.getPosition();
       win.setPosition(currentX + dx, currentY + dy);
@@ -381,14 +433,14 @@ function registerIpcHandlers(): void {
 
   // 鼠标穿透：保留 forward 以便窗口重新收到 mousemove，避免离开窗口后永久卡在穿透态
   ipcMain.handle('window:set-ignore-mouse-events', (event, ignore: boolean) => {
-    const win = BrowserWindow.fromWebContents(event.sender) ?? petWindow;
+    const win = BrowserWindow.fromWebContents(event.sender);
     if (win && !win.isDestroyed()) {
       win.setIgnoreMouseEvents(ignore, { forward: true });
     }
   });
 
   ipcMain.handle('window:set-always-on-top', (event, flag: boolean) => {
-    const win = BrowserWindow.fromWebContents(event.sender) ?? petWindow;
+    const win = BrowserWindow.fromWebContents(event.sender);
     if (win && !win.isDestroyed()) {
       win.setAlwaysOnTop(flag);
     }
@@ -398,7 +450,7 @@ function registerIpcHandlers(): void {
   // 尺寸合法化（下限 300x400 对齐窗口 minWidth/minHeight）在渲染层 obsStore 完成，
   // 此处仅取整兜底；窗口最小尺寸约束由 Electron 自身强制。
   ipcMain.handle('window:set-size', (event, width: number, height: number) => {
-    const win = BrowserWindow.fromWebContents(event.sender) ?? petWindow;
+    const win = BrowserWindow.fromWebContents(event.sender);
     if (win && !win.isDestroyed() && Number.isFinite(width) && Number.isFinite(height)) {
       win.setSize(Math.round(width), Math.round(height));
     }
@@ -450,7 +502,7 @@ function registerIpcHandlers(): void {
   // VRM 模型：桌面模式模型选择（默认模型打包在包内，用户可选本地 .vrm 覆盖）。
   // 安全边界：仅返回用户经系统对话框选中的 .vrm 路径；渲染层无法任意枚举文件系统。
   ipcMain.handle('model:pick-file', async (event) => {
-    const win = BrowserWindow.fromWebContents(event.sender) ?? petWindow;
+    const win = BrowserWindow.fromWebContents(event.sender);
     const result = await dialog.showOpenDialog(win!, {
       title: '选择 VRM 模型',
       filters: [{ name: 'VRM Model', extensions: ['vrm'] }],
@@ -624,7 +676,7 @@ app.whenReady().then(() => {
   registerNekoIpc();
   configureCors();
   configureDisplayMediaHandler();
-  createPetWindow();
+  createPetWindow(getInitialPetAgentId());
   createTray();
 
   // 生理信号上送后台任务（Task 5）：系统静默 ≥30s 上送；HR 由 onHr 接线 ≤1Hz 上送。
@@ -675,7 +727,7 @@ app.whenReady().then(() => {
   app.on('activate', () => {
     // macOS：点击 dock 图标时若无窗口则重建桌宠窗
     if (BrowserWindow.getAllWindows().length === 0) {
-      createPetWindow();
+      createPetWindow(getInitialPetAgentId());
     }
   });
 });

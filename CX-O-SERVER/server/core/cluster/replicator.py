@@ -8,9 +8,12 @@ from __future__ import annotations
 
 import asyncio
 import itertools
+import json
 import time
 import uuid
+from pathlib import Path
 
+from ._common import _SNAPSHOT_DIR
 from .units import UNIT_REGISTRY
 
 
@@ -42,6 +45,8 @@ class StateReplicator:
             or 300
         )
         self._pending_dir = pending_dir
+        self._snapshot_dir = Path(_SNAPSHOT_DIR)
+        self._snapshot_dir.mkdir(parents=True, exist_ok=True)
         # 本地状态
         self._last_applied: dict[str, int] = {u: 0 for u in self._units}
         self._last_snapshot_at: dict[str, str] = {}
@@ -151,12 +156,43 @@ class StateReplicator:
                     pass
 
     async def _try_snapshot(self):
+        """对每个已注册快照 provider 采集快照并真实落盘到 `data/cluster/snapshots`。
+
+        每个 provider 的 blob 序列化为 ``{unit}.json``，供对等对齐 / 接管恢复使用。
+        """
         for unit in list(self._snapshot_providers):
             try:
-                self._backup_provider(unit)
-                self._last_snapshot_at[unit] = _iso()
-            except Exception:  # noqa: BLE001
+                blob = self._backup_provider(unit)
+                if blob is not None:
+                    self._write_snapshot(unit, blob)
+                    self._last_snapshot_at[unit] = _iso()
+            except Exception:  # noqa: BLE001 - 快照失败不影响事件流
                 pass
+
+    def _write_snapshot(self, unit: str, blob: dict) -> None:
+        """原子写入单单元快照文件。"""
+        self._snapshot_dir.mkdir(parents=True, exist_ok=True)
+        tmp = self._snapshot_dir / f".{unit}.json.tmp"
+        target = self._snapshot_dir / f"{unit}.json"
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(blob, f, ensure_ascii=False, indent=2)
+        import os
+        os.replace(tmp, target)
+
+    def apply_snapshot(self, unit: str, blob: dict) -> bool:
+        """对等对齐/接管恢复：把远端单元快照应用到本机。
+
+        目前仅 ref_audio 有落盘接收端（解包写 ref_audio_assets）。其余单元返回 False。
+        """
+        if unit != "ref_audio":
+            return False
+        try:
+            from server import ref_audio_store
+
+            ref_audio_store.restore_snapshot(blob)
+            return True
+        except Exception:  # noqa: BLE001
+            return False
 
     # ---- 幂等重放 ----
     async def apply_event(self, event: dict) -> bool:
@@ -168,7 +204,39 @@ class StateReplicator:
         if seq <= last:
             return False  # 已应用，幂等跳过
         self._last_applied[unit] = int(seq)
+        if unit == "ref_audio":
+            self._apply_ref_audio(event.get("op"), event.get("payload") or {})
         return True
+
+    def _apply_ref_audio(self, op: str, payload: dict) -> None:
+        """接收端落盘 ref_audio 事件（资产元数据 / 绑定；音频文件走快照对齐）。
+
+        使用 ref_audio_store 内部幂等写入，不触发 emit hook（避免回环）。
+        """
+        try:
+            from server import ref_audio_store
+
+            if op == "asset_register":
+                asset = payload.get("asset")
+                if asset:
+                    ref_audio_store._apply_asset_register(asset)
+            elif op == "asset_delete":
+                ref_audio_store._apply_asset_delete(payload.get("asset_id") or "")
+            elif op == "binding_set":
+                ref_audio_store._apply_binding(
+                    payload.get("agent_id") or "",
+                    payload.get("asset_id"),
+                    tts_voice=payload.get("tts_voice"),
+                    emit=False,
+                )
+            elif op == "binding_clear":
+                ref_audio_store._apply_binding(
+                    payload.get("agent_id") or "",
+                    None,
+                    emit=False,
+                )
+        except Exception:  # noqa: BLE001 - 接收端落盘失败不阻断 last_applied 推进
+            pass
 
     def last_applied(self) -> dict:
         return dict(self._last_applied)

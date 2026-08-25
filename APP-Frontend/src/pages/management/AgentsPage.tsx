@@ -16,16 +16,23 @@ import { useTranslation } from 'react-i18next';
 import {
   Bot,
   Copy,
+  Laptop,
+  Mic,
   Pencil,
   Plus,
+  Power,
   RefreshCw,
   Sparkles,
   Trash2,
   X,
 } from 'lucide-react';
 import { agentsApi } from '@/api/clients/agents';
+import { audioApi } from '@/api/clients/audio';
+import type { RefAudioAsset } from '@/api/clients/audio';
 import type { Agent } from '@/api/types';
 import { cn } from '@/lib/utils';
+import { isElectron } from '@/lib/isElectron';
+import { usePetPanelStore } from '@/store/petPanelStore';
 
 type MemoryScene = 'chat' | 'task' | 'first_interaction';
 
@@ -273,6 +280,123 @@ function AgentFormModal(props: {
   );
 }
 
+/** 参考音频资产列表里取人类可读标签（提示词 > 文件名 > 注释 > id） */
+function assetLabel(asset: RefAudioAsset): string {
+  if (asset.source === 'prompt' && asset.prompt) return asset.prompt;
+  return asset.file_name || asset.note || asset.id;
+}
+
+/** 单 agent 的参考音频/音色绑定控件（下拉选资产 → 设为音色 / 清除） */
+function AgentRefAudioControl(props: {
+  agent: Agent;
+  assets: RefAudioAsset[];
+  assetsError: boolean;
+  onChanged: () => void;
+}) {
+  const { t } = useTranslation();
+  const [pending, setPending] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [feedback, setFeedback] = useState<{ kind: 'ok' | 'err'; text: string } | null>(null);
+  const bound = props.agent.ref_audio_asset_id ?? null;
+
+  const describeError = (error: unknown): string => {
+    const msg = error instanceof Error ? error.message : String(error);
+    const clean = msg.replace(/^请求失败:\s*/, '').trim();
+    // 后端 404：参考音频资产不存在或已删除 / Agent 不存在，统一按"资产不可用"提示
+    if (/不存在|已删除/i.test(clean)) return t('management.agents.refAudioAssetMissing');
+    return t('management.agents.refAudioSaveFailed');
+  };
+
+  const handleSet = async () => {
+    if (!pending || busy) return;
+    setBusy(true);
+    setFeedback(null);
+    try {
+      await audioApi.setAgentRefAudio(props.agent.id, { asset_id: pending });
+      setFeedback({ kind: 'ok', text: t('management.agents.refAudioSetSuccess') });
+      setPending('');
+      props.onChanged();
+    } catch (error) {
+      console.error('Set agent ref audio failed:', error);
+      setFeedback({ kind: 'err', text: describeError(error) });
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const handleClear = async () => {
+    if (!bound || busy) return;
+    setBusy(true);
+    setFeedback(null);
+    try {
+      await audioApi.clearAgentRefAudio(props.agent.id);
+      setFeedback({ kind: 'ok', text: t('management.agents.refAudioClearSuccess') });
+      props.onChanged();
+    } catch (error) {
+      console.error('Clear agent ref audio failed:', error);
+      setFeedback({ kind: 'err', text: describeError(error) });
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const showAssetsState = () => {
+    if (props.assetsError) return <p className="text-xs text-red-400">{t('management.agents.refAudioLoadFailed')}</p>;
+    if (props.assets.length === 0) return <p className="text-xs text-muted-foreground">{t('management.agents.refAudioNone')}</p>;
+    return (
+      <div className="flex flex-wrap items-center gap-1.5">
+        <select
+          value={pending}
+          onChange={(e) => setPending(e.target.value)}
+          aria-label={t('management.agents.refAudioTitle')}
+          className="min-w-0 flex-1 rounded-lg border border-[var(--glass-border)] bg-[rgba(255,255,255,0.06)] px-2 py-1.5 text-xs focus:border-[rgba(255,183,225,0.4)] focus:outline-none"
+        >
+          <option value="">{bound ? assetLabel(props.assets.find((a) => a.id === bound)!) : t('management.agents.refAudioNotBound')}</option>
+          {props.assets.map((a) => (
+            <option key={a.id} value={a.id}>
+              {assetLabel(a)}
+            </option>
+          ))}
+        </select>
+        <button
+          type="button"
+          onClick={() => void handleSet()}
+          disabled={!pending || busy}
+          className="rounded-lg bg-primary px-2.5 py-1.5 text-xs font-medium text-primary-foreground transition-opacity hover:opacity-85 disabled:opacity-50"
+        >
+          {t('management.agents.refAudioSet')}
+        </button>
+        <button
+          type="button"
+          onClick={() => void handleClear()}
+          disabled={!bound || busy}
+          className="rounded-lg border border-[var(--glass-border)] px-2.5 py-1.5 text-xs text-muted-foreground transition-colors hover:bg-[rgba(255,255,255,0.06)] disabled:opacity-50"
+        >
+          {t('management.agents.refAudioClear')}
+        </button>
+      </div>
+    );
+  };
+
+  return (
+    <div className="border-t border-[var(--glass-border)] pt-2">
+      <div className="mb-1.5 flex items-center gap-1.5">
+        <Mic className="h-3.5 w-3.5 text-primary" />
+        <span className="text-xs font-medium text-muted-foreground">{t('management.agents.refAudioTitle')}</span>
+        {bound && props.assets.some((a) => a.id === bound) && (
+          <span className="truncate text-xs text-primary">{assetLabel(props.assets.find((a) => a.id === bound)!)}</span>
+        )}
+      </div>
+      {showAssetsState()}
+      {feedback && (
+        <p className={cn('mt-1 text-xs', feedback.kind === 'ok' ? 'text-emerald-400' : 'text-red-400')}>
+          {feedback.text}
+        </p>
+      )}
+    </div>
+  );
+}
+
 export default function AgentsPage() {
   const { t } = useTranslation();
   const [agents, setAgents] = useState<Agent[]>([]);
@@ -282,18 +406,43 @@ export default function AgentsPage() {
   const [showCreate, setShowCreate] = useState(false);
   const [editing, setEditing] = useState<Agent | null>(null);
   const [actionError, setActionError] = useState(false);
+  const [refAssets, setRefAssets] = useState<RefAudioAsset[]>([]);
+  const [refAssetsError, setRefAssetsError] = useState(false);
+
+  // 桌宠多开：开启状态持久化记忆；开/关经 IPC 调主进程建/关对应桌宠窗
+  const petOpenIds = usePetPanelStore((s) => s.openAgentIds);
+  const petSetOpen = usePetPanelStore((s) => s.setOpen);
+
+  const handlePetToggle = (agent: Agent) => {
+    if (!isElectron()) return;
+    const currentlyOpen = petOpenIds.includes(agent.id);
+    if (currentlyOpen) {
+      void window.electronAPI?.closePet(agent.id);
+      petSetOpen(agent.id, false);
+    } else {
+      void window.electronAPI?.openPet(agent.id);
+      petSetOpen(agent.id, true);
+    }
+  };
 
   const load = useCallback(async () => {
     setIsLoading(true);
     setLoadError(false);
+    setRefAssetsError(false);
     try {
-      const [agentList, modelResp] = await Promise.all([
+      const [agentList, modelResp, assetResp] = await Promise.all([
         agentsApi.getAgents(),
         agentsApi.getAvailableModels().catch(() => ({ models: [] as string[] })),
+        audioApi.listRefAudioAssets().catch((error) => {
+          console.error('Ref audio assets load failed:', error);
+          setRefAssetsError(true);
+          return { assets: [] as RefAudioAsset[], current_asset_id: null };
+        }),
       ]);
       // 过滤系统内置的 memory-agent（记忆管理助手不在智能体列表中展示）
       setAgents(agentList.filter((a) => a.id !== 'memory-agent'));
       setModels(modelResp.models || []);
+      setRefAssets(assetResp.assets || []);
     } catch (error) {
       console.error('Agents load failed:', error);
       setLoadError(true);
@@ -354,6 +503,67 @@ export default function AgentsPage() {
             {t('management.agents.create')}
           </button>
         </div>
+      </div>
+
+      {/* 桌宠多开面板：列出全部 agent，显示各桌宠是否已开启，提供开/关（仅 Electron 生效） */}
+      <div className="glass-panel p-4">
+        <div className="mb-3 flex items-center justify-between gap-2">
+          <p className="flex items-center gap-1.5 text-sm font-semibold">
+            <Laptop className="h-4 w-4 text-primary" />
+            {t('management.petPanel.title')}
+          </p>
+          <span className="text-xs text-muted-foreground">{t('management.petPanel.hint')}</span>
+        </div>
+        {!isElectron() ? (
+          <p className="text-xs text-muted-foreground">{t('management.petPanel.browserOnly')}</p>
+        ) : agents.length === 0 ? (
+          <p className="text-xs text-muted-foreground">{t('management.petPanel.none')}</p>
+        ) : (
+          <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+            {agents.map((agent) => {
+              const open = petOpenIds.includes(agent.id);
+              return (
+                <div
+                  key={agent.id}
+                  className={cn(
+                    'flex items-center justify-between gap-2 rounded-lg border px-3 py-2',
+                    open
+                      ? 'border-[var(--color-primary)] bg-primary/10'
+                      : 'border-[var(--glass-border)]',
+                  )}
+                >
+                  <div className="flex min-w-0 items-center gap-2">
+                    <span className="truncate text-sm">{agent.name}</span>
+                    {open ? (
+                      <span className="shrink-0 rounded bg-primary/15 px-1.5 py-0.5 text-[10px] font-medium text-primary">
+                        {t('management.petPanel.running')}
+                      </span>
+                    ) : (
+                      <span className="shrink-0 rounded bg-[rgba(255,255,255,0.08)] px-1.5 py-0.5 text-[10px] text-muted-foreground">
+                        {t('management.petPanel.stopped')}
+                      </span>
+                    )}
+                  </div>
+                  <button
+                    type="button"
+                    aria-label={`${open ? t('management.petPanel.close') : t('management.petPanel.open')} ${agent.name}`}
+                    title={open ? t('management.petPanel.close') : t('management.petPanel.open')}
+                    onClick={() => handlePetToggle(agent)}
+                    className={cn(
+                      'flex shrink-0 items-center gap-1 rounded-lg px-2.5 py-1.5 text-xs transition-colors',
+                      open
+                        ? 'bg-primary/85 text-primary-foreground hover:opacity-85'
+                        : 'border border-[var(--glass-border)] text-muted-foreground hover:bg-[rgba(255,255,255,0.06)]',
+                    )}
+                  >
+                    <Power className="h-3.5 w-3.5" />
+                    {open ? t('management.petPanel.close') : t('management.petPanel.open')}
+                  </button>
+                </div>
+              );
+            })}
+          </div>
+        )}
       </div>
 
       {/* 统计行 */}
@@ -475,6 +685,13 @@ export default function AgentsPage() {
                   {t(`management.agents.scene.${agent.memory_scene ?? 'chat'}`)}
                 </span>
               </div>
+
+              <AgentRefAudioControl
+                agent={agent}
+                assets={refAssets}
+                assetsError={refAssetsError}
+                onChanged={() => void load()}
+              />
 
               {agent.updated_at && (
                 <p className="border-t border-[var(--glass-border)] pt-2 text-[10px] text-muted-foreground/70">

@@ -70,9 +70,13 @@ class FakeInterruptModule:
         self._tts_playing = tts_playing
         self.reset_count = 0
         self.configs = []
+        self.tts_playing_set = []
 
     async def on_asr_result(self, text, is_final=False):
         return "INTERRUPT", True
+
+    def set_tts_playing(self, playing):
+        self.tts_playing_set.append(playing)
 
     def reset_interrupt(self):
         self.reset_count += 1
@@ -101,8 +105,8 @@ def handler(monkeypatch):
     monkeypatch.setattr(lc, "get_context_manager", lambda: cm)
     monkeypatch.setattr(lc, "get_firewall_service", lambda: fw)
     monkeypatch.setattr(lc, "get_frontend_marker", lambda: fm)
-    monkeypatch.setattr(lc, "get_asr_interrupt_module", lambda: im)
-    monkeypatch.setattr(lc, "get_agent_interrupt_module", lambda: ai)
+    monkeypatch.setattr(lc, "get_asr_interrupt_module", lambda client_id=None: im)
+    monkeypatch.setattr(lc, "get_agent_interrupt_module", lambda client_id=None: ai)
 
     h = lc.LiveClientHandler(manager, "c1", {})
     # 重绑定 fixture 内可访问的依赖
@@ -195,8 +199,8 @@ class TestConfig:
         im = FakeInterruptModule()
         ai = FakeAgentInterrupt()
         monkeypatch.setattr(lc, "get_firewall_service", lambda: fw)
-        monkeypatch.setattr(lc, "get_asr_interrupt_module", lambda: im)
-        monkeypatch.setattr(lc, "get_agent_interrupt_module", lambda: ai)
+        monkeypatch.setattr(lc, "get_asr_interrupt_module", lambda client_id=None: im)
+        monkeypatch.setattr(lc, "get_agent_interrupt_module", lambda client_id=None: ai)
         handler.firewall = fw
         data = {"firewall": {"a": 1}, "interrupt": {"b": 2}, "agent_interrupt": {"c": 3}}
         await handler._handle_config(None, {"data": data})
@@ -247,8 +251,8 @@ class TestStopTts:
 class TestAudio:
     @pytest.mark.asyncio
     async def test_audio_no_vad_change_no_asr(self, handler, monkeypatch):
-        monkeypatch.setattr(lc, "get_audio_stream_processor",
-                            lambda: FakeStreamProcessor())
+        monkeypatch.setattr(lc, "ensure_stream_processor_configured",
+                            lambda client_id: FakeStreamProcessor())
         await handler.handle_audio(None, b"\x00", "c1")
         # 仅 vad_frame
         assert handler._manager.sent[0][1]["type"] == "vad_frame"
@@ -257,8 +261,8 @@ class TestAudio:
     async def test_audio_vad_state_change_sends_status(self, handler, monkeypatch):
         vad = {"is_speaking": True, "speech_probability": 0.9,
                "speech_duration_ms": 100, "state_changed": True}
-        monkeypatch.setattr(lc, "get_audio_stream_processor",
-                            lambda: FakeStreamProcessor(vad=vad))
+        monkeypatch.setattr(lc, "ensure_stream_processor_configured",
+                            lambda client_id: FakeStreamProcessor(vad=vad))
         await handler.handle_audio(None, b"\x00", "c1")
         types = [m[1]["type"] for m in handler._manager.sent]
         assert "vad_status" in types
@@ -270,9 +274,9 @@ class TestAudio:
                "speech_duration_ms": 0, "state_changed": False}
         asr = {"text": "你好"}
         im = FakeInterruptModule(enabled=True, tts_playing=True)
-        monkeypatch.setattr(lc, "get_audio_stream_processor",
-                            lambda: FakeStreamProcessor(vad=vad, asr=asr))
-        monkeypatch.setattr(lc, "get_asr_interrupt_module", lambda: im)
+        monkeypatch.setattr(lc, "ensure_stream_processor_configured",
+                            lambda client_id: FakeStreamProcessor(vad=vad, asr=asr))
+        monkeypatch.setattr(lc, "get_asr_interrupt_module", lambda client_id=None: im)
         await handler.handle_audio(None, b"\x00", "c1")
         types = [m[1]["type"] for m in handler._manager.sent]
         assert "asr_result" in types
@@ -288,9 +292,9 @@ class TestAudio:
                "speech_duration_ms": 0, "state_changed": False}
         asr = {"text": "hi"}
         im = FakeInterruptModule(enabled=False, tts_playing=True)
-        monkeypatch.setattr(lc, "get_audio_stream_processor",
-                            lambda: FakeStreamProcessor(vad=vad, asr=asr))
-        monkeypatch.setattr(lc, "get_asr_interrupt_module", lambda: im)
+        monkeypatch.setattr(lc, "ensure_stream_processor_configured",
+                            lambda client_id: FakeStreamProcessor(vad=vad, asr=asr))
+        monkeypatch.setattr(lc, "get_asr_interrupt_module", lambda client_id=None: im)
         await handler.handle_audio(None, b"\x00", "c1")
         types = [m[1]["type"] for m in handler._manager.sent]
         assert "asr_result" in types
@@ -301,7 +305,7 @@ class TestAudio:
         async def boom(audio):
             raise RuntimeError("bad")
 
-        monkeypatch.setattr(lc, "get_audio_stream_processor", lambda: type(
+        monkeypatch.setattr(lc, "ensure_stream_processor_configured", lambda client_id: type(
             "P", (), {"process_audio_chunk": boom})())
         await handler.handle_audio(None, b"\x00", "c1")
         assert handler._manager.sent == []  # 异常被捕获，无消息

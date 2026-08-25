@@ -5,7 +5,7 @@ from datetime import datetime
 from typing import List, Optional
 
 from fastapi import APIRouter, HTTPException
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from server.core.cache import agent_config_cache
 from server.core.logging_config import get_contextual_logger
@@ -80,6 +80,9 @@ class AgentConfig(BaseModel):
     is_default: bool = False
     created_at: Optional[str] = None
     updated_at: Optional[str] = None
+    # per-agent 参考音频绑定（A1.1 请求接受与响应透传；真源在 ref_audio_store，不持久化到 agents.json）
+    ref_audio_asset_id: Optional[str] = None
+    tts_voice: Optional[str] = None
 
 
 class AgentCreateRequest(BaseModel):
@@ -96,6 +99,9 @@ class AgentCreateRequest(BaseModel):
     memory_scene: str = "chat"
     decay_model: str = "exponential"
     vision_enabled: bool = False
+    # per-agent 参考音频绑定（请求接受；持久化走专用绑定端点，不落盘 agents.json）
+    ref_audio_asset_id: Optional[str] = None
+    tts_voice: Optional[str] = None
 
 
 class AgentUpdateRequest(BaseModel):
@@ -112,6 +118,9 @@ class AgentUpdateRequest(BaseModel):
     memory_scene: Optional[str] = None
     decay_model: Optional[str] = None
     vision_enabled: Optional[bool] = None
+    # per-agent 参考音频绑定（请求接受；持久化走专用绑定端点，不落盘 agents.json）
+    ref_audio_asset_id: Optional[str] = None
+    tts_voice: Optional[str] = None
 
 
 def _ensure_data_dir():
@@ -193,6 +202,33 @@ def _generate_agent_id() -> str:
     return f"agent-{uuid.uuid4().hex[:8]}"
 
 
+def _merge_ref_audio_binding(agent: dict) -> dict:
+    """读透传：把 ref_audio_store 中该 Agent 的参考音频绑定合并进 agent 对象展示。
+
+    从不写入 data/agents.json（持久化走专用绑定端点）。返回浅拷贝，不污染原始配置。
+    """
+    from server import ref_audio_store
+
+    out = dict(agent)
+    binding = {}
+    agent_id = agent.get("id")
+    if agent_id:
+        b = ref_audio_store.get_for_agent(agent_id) or {}
+        binding = {
+            "ref_audio_asset_id": b.get("asset_id"),
+            "tts_voice": b.get("tts_voice"),
+        }
+    out.update(binding)
+    return out
+
+
+class SetAgentRefAudioRequest(BaseModel):
+    """设置 Agent 参考音频绑定请求（A2）。"""
+
+    asset_id: str = Field(..., min_length=1)
+    tts_voice: Optional[str] = None
+
+
 @router.get(
     "/agents",
     summary="获取所有 Agent",
@@ -207,6 +243,7 @@ async def get_agents():
     """
     try:
         agents = _load_agents()
+        agents = [_merge_ref_audio_binding(a) for a in agents]
         return {"status": "success", "agents": agents, "total": len(agents)}
     except Exception as e:
         logger.error(f"获取Agent列表失败: {e}", exc_info=True)
@@ -314,7 +351,7 @@ async def get_agent(agent_id: str):
         if not agent:
             raise HTTPException(status_code=404, detail=f"Agent '{agent_id}' 不存在")
 
-        return {"status": "success", "agent": agent}
+        return {"status": "success", "agent": _merge_ref_audio_binding(agent)}
     except HTTPException:
         raise
     except Exception as e:
@@ -337,6 +374,9 @@ async def update_agent(agent_id: str, request: AgentUpdateRequest):
         # 更新字段
         update_data = request.model_dump(exclude_unset=True)
         for key, value in update_data.items():
+            # per-agent 参考音频绑定不落盘 agents.json（走专用绑定端点）
+            if key in ("ref_audio_asset_id", "tts_voice"):
+                continue
             if value is not None:
                 # 处理空模型字符串 - 空字符串表示使用默认模型
                 if key == "model" and value and isinstance(value, str) and not value.strip():
@@ -651,3 +691,93 @@ async def clear_agent_context(agent_id: str):
     except Exception as e:
         logger.error(f"清空Agent上下文失败: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"清空Agent上下文失败: {str(e)}")
+
+
+# --------------------------------------------------------------------------- #
+# A2. per-agent 参考音频绑定端点（运行真源在 ref_audio_store，不落盘 agents.json）
+# --------------------------------------------------------------------------- #
+
+def _get_agent_or_404(agent_id: str) -> dict:
+    """按 agent_id 取 Agent 配置，不存在抛 404。"""
+    agents = _load_agents()
+    agent = next((a for a in agents if a["id"] == agent_id), None)
+    if not agent:
+        raise HTTPException(status_code=404, detail=f"Agent '{agent_id}' 不存在")
+    return agent
+
+
+def _ref_binding_body(agent_id: str) -> dict:
+    """组装绑定返回体 {status, agent_id, asset_id, tts_voice}。"""
+    from server import ref_audio_store
+
+    b = ref_audio_store.get_for_agent(agent_id) or {}
+    return {
+        "status": "success",
+        "agent_id": agent_id,
+        "asset_id": b.get("asset_id"),
+        "tts_voice": b.get("tts_voice"),
+    }
+
+
+@router.get("/agents/{agent_id}/ref-audio", summary="查询 Agent 参考音频绑定")
+async def get_agent_ref_audio(agent_id: str):
+    """返回 Agent 绑定的参考音频 {asset_id, tts_voice}。"""
+    try:
+        _get_agent_or_404(agent_id)
+        return _ref_binding_body(agent_id)
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"查询Agent参考音频绑定失败: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="内部服务器错误")
+
+
+@router.put("/agents/{agent_id}/ref-audio", summary="设置 Agent 参考音频绑定")
+async def set_agent_ref_audio(agent_id: str, request: SetAgentRefAudioRequest):
+    """为 Agent 绑定参考音频资产。
+
+    - asset 必须存在（不存在/已删除返回 404 + 错误提示）。
+    - 成功返回更新后的绑定。
+    """
+    from server import ref_audio_store
+    from server.qwen3_tts_provider import RefAudioNotFoundError
+
+    try:
+        _get_agent_or_404(agent_id)
+        b = ref_audio_store.set_for_agent(
+            agent_id, request.asset_id, tts_voice=request.tts_voice
+        )
+        return {
+            "status": "success",
+            "agent_id": agent_id,
+            "asset_id": b.get("asset_id"),
+            "tts_voice": b.get("tts_voice"),
+        }
+    except RefAudioNotFoundError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"设置Agent参考音频绑定失败: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="内部服务器错误")
+
+
+@router.delete("/agents/{agent_id}/ref-audio", summary="清除 Agent 参考音频绑定")
+async def clear_agent_ref_audio(agent_id: str):
+    """清除 Agent 的参考音频绑定（不删除资产本身）。"""
+    from server import ref_audio_store
+
+    try:
+        _get_agent_or_404(agent_id)
+        ref_audio_store.clear_for_agent(agent_id)
+        return {
+            "status": "success",
+            "agent_id": agent_id,
+            "asset_id": None,
+            "tts_voice": None,
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"清除Agent参考音频绑定失败: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="内部服务器错误")

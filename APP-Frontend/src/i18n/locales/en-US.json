@@ -40,7 +40,8 @@
       "autonomy": "Agent Life",
       "dream": "Dream Log",
       "admin": "Admin",
-      "cluster": "Cluster"
+      "cluster": "Cluster",
+      "meeting": "Meeting Room"
     },
     "neko": {
       "subtitle": "Bridge to the neko plugin runtime and plugin store",
@@ -351,7 +352,61 @@
         "first_interaction": "First interaction"
       },
       "saveFailed": "Failed to save. Please retry.",
-      "actionFailed": "Action failed. Please retry."
+      "actionFailed": "Action failed. Please retry.",
+      "refAudioTitle": "Ref audio / voice",
+      "refAudioNotBound": "No voice bound",
+      "refAudioNone": "No ref audio assets available",
+      "refAudioLoadFailed": "Failed to load ref audio assets",
+      "refAudioSet": "Set voice",
+      "refAudioClear": "Clear voice",
+      "refAudioSetSuccess": "Set as voice",
+      "refAudioClearSuccess": "Voice cleared",
+      "refAudioAssetMissing": "Ref audio asset not found or deleted",
+      "refAudioSaveFailed": "Failed to save voice settings. Please retry."
+    },
+    "meeting": {
+      "subtitle": "Multi-agent voice meeting: create, arbitrate, and manage participants",
+      "browserMode": "browser mode",
+      "agentsLoadError": "Failed to load agents. Check backend connection.",
+      "pickTitle": "Select participants and start meeting",
+      "fieldUser": "User id",
+      "pickParticipants": "Participant agents (click to select)",
+      "noAgents": "No available agents",
+      "noParticipants": "Select at least one participant agent",
+      "start": "Start meeting",
+      "startFailed": "Failed to start meeting. Check backend.",
+      "liveTitle": "Meeting room",
+      "sync": "Syncing",
+      "state": {
+        "idle": "Idle",
+        "in_meeting": "In meeting",
+        "paused": "Paused"
+      },
+      "roomId": "Room id",
+      "currentSpeaker": "Current speaker",
+      "noSpeaker": "None",
+      "statePollError": "Meeting state sync failed. Check backend.",
+      "participantsTitle": "Participant agents",
+      "speaking": "Speaking",
+      "leave": "Remove",
+      "join": "Add",
+      "actionFailed": "Action failed. Please retry.",
+      "speakTitle": "Speak (triggers arbitration)",
+      "speakPlaceholder": "Type your words to trigger speaking arbitration...",
+      "speak": "Speak",
+      "speakFailed": "Failed to process speech",
+      "end": "End meeting",
+      "endFailed": "Failed to end meeting"
+    },
+    "petPanel": {
+      "title": "Multi-pet (one per agent)",
+      "hint": "Open one pet window per agent (OBS window name CXO-Pet-<id>)",
+      "browserOnly": "This is browser mode; multi-pet requires the Electron desktop app",
+      "none": "No available agents",
+      "running": "Running",
+      "stopped": "Stopped",
+      "open": "Open",
+      "close": "Close"
     },
     "acp": {
       "subtitle": "ACP multi-agent network: manage agents, toggle status and exchange messages",

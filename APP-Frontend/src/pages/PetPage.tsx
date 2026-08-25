@@ -28,6 +28,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { PointerEvent as ReactPointerEvent } from 'react';
 import { useTranslation } from 'react-i18next';
+import { useSearchParams } from 'react-router-dom';
 import {
   Camera,
   ImagePlus,
@@ -73,6 +74,7 @@ import {
   DEFAULT_HIT_ELLIPSE,
   type HitEllipse,
 } from './pet/hitGeometry';
+import { getMeetingHint } from '../lib/meetingHint';
 import { useTtsLipSync } from './pet/useTtsLipSync';
 import { useDanmakuVoice } from './pet/useDanmakuVoice';
 import { useLipSyncMixer } from './pet/useLipSyncMixer';
@@ -93,7 +95,12 @@ function nowIso(): string {
 
 export default function PetPage() {
   const { t } = useTranslation();
-  const currentAgentId = useChatStore((s) => s.currentAgentId);
+
+  // 桌宠多开：本窗自身的 agentId 来自路由 query（/pet?agentId=<id>，主进程多窗按 agent 建窗时下发）。
+  // 全窗共享的 chatStore.currentAgentId 不再作为对话依据，仅用于 agents 列表初始化拉取，
+  // 保证多桌宠窗的会话/WS/TTS 按各自 agentId 天然隔离。
+  const [searchParams] = useSearchParams();
+  const windowAgentId = searchParams.get('agentId') || 'default';
 
   // ── Task 4 状态存储绑定（audioStore 全持久化 / captureStore 开关不持久化） ──
   const micEnabled = useAudioStore((s) => s.micEnabled);
@@ -137,6 +144,8 @@ export default function PetPage() {
   const [driver, setDriver] = useState<IAvatarDriver | null>(null);
   // 服务端 VAD 说话状态（Live WS vad_status 驱动 mic 口型通道）
   const [micSpeaking, setMicSpeaking] = useState(false);
+  // 会议室视觉提示：本窗 agent 为当前会议发言者时高亮（跨窗经 localStorage 广播）
+  const [meetingSpeaking, setMeetingSpeaking] = useState(false);
   const avatarScale = useSettingsStore((s) => s.avatarType === 'vrm' ? s.vrm.scale : s.live2d.scale);
   const avatarType = useSettingsStore((s) => s.avatarType);
   const setVRMSettings = useSettingsStore((s) => s.setVRMSettings);
@@ -172,6 +181,17 @@ export default function PetPage() {
       void state.fetchAgents();
     }
   }, []);
+
+  // 会议室发言高亮：订阅跨窗 localStorage 广播，本窗 agent 为当前发言者时点亮
+  useEffect(() => {
+    const read = () => {
+      const hint = getMeetingHint();
+      setMeetingSpeaking(!!hint && hint.speaker === windowAgentId);
+    };
+    read();
+    window.addEventListener('storage', read);
+    return () => window.removeEventListener('storage', read);
+  }, [windowAgentId]);
 
   // 重启恢复电脑控制授权：启动时读主进程 getComputerControlAuth 权威值
   useEffect(() => {
@@ -235,7 +255,7 @@ export default function PetPage() {
   }, []);
 
   const { isConnected, isTTSPlaying, sendMessage, getTTSAnalyser, setTTSVolume } = useWebSocket({
-    agentId: currentAgentId || 'default',
+    agentId: windowAgentId,
     timeout: 60,
     onMessage: handleWsMessage,
     onTextProgress: handleTextProgress,
@@ -433,7 +453,7 @@ export default function PetPage() {
             }
             // session/thinking/tool_* 等分块在桌宠气泡从简忽略
           },
-          currentAgentId || 'default',
+          windowAgentId,
           [dataUrl],
         )
         .catch(() => {
@@ -442,7 +462,7 @@ export default function PetPage() {
           chatRef.current?.finalizeLastAssistantMessage(t('pet.chat.unreachable'));
         });
     },
-    [t, currentAgentId, handleAssistantStreamEvent, visionEnabled],
+    [t, windowAgentId, handleAssistantStreamEvent, visionEnabled],
   );
 
   const { sendNow } = useFrameSender({
@@ -691,7 +711,8 @@ export default function PetPage() {
       label: t('pet.menu.closePet'),
       icon: <Power className="h-3.5 w-3.5" />,
       onSelect: () => {
-        void window.electronAPI?.closePet();
+        // 多开场景：关闭本窗（按本窗 agentId 关对应桌宠窗；关最后一个窗才退出应用）
+        void window.electronAPI?.closePet(windowAgentId);
         closeMenu();
       },
     },
@@ -760,6 +781,14 @@ export default function PetPage() {
               </span>
             ))}
           </div>
+        )}
+
+        {/* 会议室发言高亮：本窗 agent 为当前会议发言者时描边提示 */}
+        {meetingSpeaking && (
+          <div
+            className="pointer-events-none absolute inset-x-4 top-3 bottom-[8%] z-10 rounded-2xl"
+            style={{ boxShadow: '0 0 28px 8px rgba(255,183,225,0.55)' }}
+          />
         )}
       </div>
 

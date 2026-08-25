@@ -17,6 +17,7 @@ function mockElectronApi() {
     storeSave,
     openManagementWindow: vi.fn().mockResolvedValue(undefined),
     toggleDanmakuWindow: vi.fn().mockResolvedValue(undefined),
+    openPet: vi.fn().mockResolvedValue(undefined),
     closePet: vi.fn().mockResolvedValue(undefined),
     setDanmakuVisible: vi.fn().mockResolvedValue(undefined),
     onDanmakuVisibility: vi.fn().mockReturnValue(() => undefined),

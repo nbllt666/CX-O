@@ -33,6 +33,8 @@ class TTSSynthesizeRequest(BaseModel):
     # Qwen3 统一编排：参考音频资产 ID（ref_ 前缀）与无参考音频合成
     ref_asset_id: Optional[str] = None
     refs: Optional[list[str]] = None
+    # per-agent 参考音频：未显式传 refs 时按 agent_id 取该 Agent 绑定资产（A3）
+    agent_id: Optional[str] = None
 
 
 @router.get(
@@ -67,6 +69,8 @@ async def tts_synthesize(request: TTSSynthesizeRequest, tts_svc: TTSService = De
             kwargs["ref_audio"] = request.ref_audio
         if request.ref_text:
             kwargs["ref_text"] = request.ref_text
+        if request.agent_id:
+            kwargs["agent_id"] = request.agent_id
 
         audio_bytes = await tts_svc.synthesize(request.text, **kwargs)
 
@@ -106,6 +110,8 @@ async def tts_synthesize_stream(request: Request, tts_svc: TTSService = Depends(
             kwargs["ref_audio"] = data["ref_audio"]
         if data.get("ref_text"):
             kwargs["ref_text"] = data["ref_text"]
+        if data.get("agent_id"):
+            kwargs["agent_id"] = data["agent_id"]
 
         async def stream_generator():
             try:

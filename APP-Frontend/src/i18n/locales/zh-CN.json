@@ -40,7 +40,8 @@
       "autonomy": "Agent 生活",
       "dream": "梦境日志",
       "admin": "管理面",
-      "cluster": "哨兵集群"
+      "cluster": "哨兵集群",
+      "meeting": "会议室"
     },
     "neko": {
       "subtitle": "对接 neko 插件运行时与插件商店",
@@ -351,7 +352,61 @@
         "first_interaction": "首次互动"
       },
       "saveFailed": "保存失败，请重试",
-      "actionFailed": "操作失败，请重试"
+      "actionFailed": "操作失败，请重试",
+      "refAudioTitle": "参考音频/音色",
+      "refAudioNotBound": "未绑定音色",
+      "refAudioNone": "暂无可用参考音频",
+      "refAudioLoadFailed": "参考音频加载失败",
+      "refAudioSet": "设为音色",
+      "refAudioClear": "清除音色",
+      "refAudioSetSuccess": "已设为音色",
+      "refAudioClearSuccess": "已清除音色",
+      "refAudioAssetMissing": "参考音频资产不存在或已删除",
+      "refAudioSaveFailed": "声音设置保存失败，请重试"
+    },
+    "meeting": {
+      "subtitle": "多 Agent 语音会议：建会、发言仲裁、参与者管理",
+      "browserMode": "浏览器模式",
+      "agentsLoadError": "Agent 列表加载失败，请检查后端连接",
+      "pickTitle": "选择参与者并开始会议",
+      "fieldUser": "用户标识",
+      "pickParticipants": "参会 Agent（点击勾选）",
+      "noAgents": "暂无可用 Agent",
+      "noParticipants": "请至少选择一位参会 Agent",
+      "start": "开始会议",
+      "startFailed": "会议开启失败，请检查后端",
+      "liveTitle": "会议直播室",
+      "sync": "状态同步中",
+      "state": {
+        "idle": "未开始",
+        "in_meeting": "进行中",
+        "paused": "已暂停"
+      },
+      "roomId": "房间号",
+      "currentSpeaker": "当前发言者",
+      "noSpeaker": "无",
+      "statePollError": "会议状态同步异常，请检查后端",
+      "participantsTitle": "参会 Agent",
+      "speaking": "发言中",
+      "leave": "移出",
+      "join": "并入",
+      "actionFailed": "操作失败，请稍后重试",
+      "speakTitle": "用户发言（触发仲裁）",
+      "speakPlaceholder": "输入你说的话，触发发言权仲裁...",
+      "speak": "发言",
+      "speakFailed": "发言处理失败",
+      "end": "结束会议",
+      "endFailed": "结束会议失败"
+    },
+    "petPanel": {
+      "title": "桌宠多开",
+      "hint": "按 Agent 多开桌宠窗（OBS 窗口名 CXO-Pet-<id>）",
+      "browserOnly": "当前为浏览器模式，桌宠多开需 Electron 桌面端",
+      "none": "暂无可用 Agent",
+      "running": "运行中",
+      "stopped": "未开启",
+      "open": "开启",
+      "close": "关闭"
     },
     "acp": {
       "subtitle": "ACP 多智能体互通：代理管理、启停切换与消息互通",

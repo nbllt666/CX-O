@@ -201,10 +201,12 @@ async def update_note(asset_id: str, payload: UpdateNoteRequest):
 
 @router.delete("/ref-audio-assets/{asset_id}", summary="删除参考音频资产")
 async def delete_asset(asset_id: str):
-    """删除参考音频资产（软删除）。"""
+    """删除参考音频资产（软删除）。被 Agent 绑定的资产拒绝删除，返回 409。"""
     try:
         store.delete(asset_id)
         return {"status": "success", "asset_id": asset_id}
+    except store.AssetBoundError as e:
+        raise HTTPException(status_code=409, detail=str(e))
     except RefAudioNotFoundError as e:
         raise HTTPException(status_code=404, detail=str(e))
     except Exception as e:  # noqa: BLE001

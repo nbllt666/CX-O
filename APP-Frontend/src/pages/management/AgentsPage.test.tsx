@@ -3,6 +3,7 @@ import { render, screen, fireEvent, cleanup, waitFor } from '@testing-library/re
 import AgentsPage from './AgentsPage';
 import i18n from '../../i18n';
 import { agentsApi } from '@/api/clients/agents';
+import { audioApi } from '@/api/clients/audio';
 import type { Agent } from '@/api/types';
 
 /**
@@ -21,7 +22,16 @@ vi.mock('@/api/clients/agents', () => ({
   },
 }));
 
+vi.mock('@/api/clients/audio', () => ({
+  audioApi: {
+    listRefAudioAssets: vi.fn(),
+    setAgentRefAudio: vi.fn(),
+    clearAgentRefAudio: vi.fn(),
+  },
+}));
+
 const mocked = vi.mocked(agentsApi);
+const mockedAudio = vi.mocked(audioApi);
 
 const SAMPLE_AGENTS: Agent[] = [
   {
@@ -49,6 +59,7 @@ const SAMPLE_AGENTS: Agent[] = [
 describe('AgentsPage 代理页', () => {
   beforeAll(async () => {
     await i18n.changeLanguage('zh-CN');
+    mockedAudio.listRefAudioAssets.mockResolvedValue({ assets: [], current_asset_id: null });
   });
 
   afterEach(() => {

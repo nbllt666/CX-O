@@ -19,7 +19,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // 窗口控制
   openManagementWindow: () => ipcRenderer.invoke('window:open-management'),
   toggleDanmakuWindow: () => ipcRenderer.invoke('window:toggle-danmaku'),
-  closePet: () => ipcRenderer.invoke('window:close-pet'),
+  // 桌宠多开：按 agentId 打开/关闭对应桌宠窗
+  openPet: (agentId: string) => ipcRenderer.invoke('window:open-pet', agentId),
+  closePet: (agentId: string) => ipcRenderer.invoke('window:close-pet', agentId),
   setDanmakuVisible: (visible: boolean) =>
     ipcRenderer.invoke('window:set-danmaku-visible', visible),
   /** 在系统默认浏览器打开外部 URL（OBS 源预览等） */

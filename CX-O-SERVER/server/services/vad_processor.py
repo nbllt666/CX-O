@@ -259,12 +259,23 @@ class VADProcessor:
 
 
 class AudioStreamProcessor:
-    """音频流处理器：结合 VAD 与流式 ASR 客户端处理实时音频并产出结果。"""
+    """音频流处理器：结合 VAD 与流式 ASR 客户端处理实时音频并产出结果。
+
+    per-client 并发化：每个客户端可持有独立实例（client_id 维度隔离），
+    使不同会话的 VAD 状态机与音频缓冲互不串扰。client_id 为 None 时表示
+    默认/向后兼容实例。
+    """
 
     _instance = None
 
-    def __init__(self):
-        """初始化音频流处理器，创建 VAD 实例并重置缓冲状态。"""
+    def __init__(self, client_id: Optional[str] = None):
+        """初始化音频流处理器，创建 VAD 实例并重置缓冲状态。
+
+        Args:
+            client_id: 所属客户端标识。None 表示默认实例（向后兼容）。
+        """
+        self.client_id = client_id
+        self._asr_configured = False
         self.vad = VADProcessor()
         self._streaming_client: Any = None
         self._agent_interrupt: Any = None
@@ -363,7 +374,8 @@ class AudioStreamProcessor:
             if should_send:
                 send_success = await self._streaming_client.send_audio_chunk(
                     audio_data,
-                    is_last=is_last
+                    is_last=is_last,
+                    client_id=self.client_id
                 )
             else:
                 send_success = True  # 静默帧本地消化，不转发 ASR
@@ -376,7 +388,9 @@ class AudioStreamProcessor:
             # 严禁在此传入 >0 的 timeout——每帧阻塞等待会导致处理速度（~105ms/帧）
             # 低于实时帧速（60ms/帧），队列持续积压，Partial 滞后 5~7s，
             # 端到端延迟实测暴涨至 6.5~7.7s（目标 <800ms）。
-            streaming_result = await self._streaming_client.receive_result(timeout=0)
+            streaming_result = await self._streaming_client.receive_result(
+                timeout=0, client_id=self.client_id
+            )
             if _debug:
                 _diag_t3 = time.time()
                 logger.debug(f"[DIAG-VAD] vad={(_diag_t1-_diag_t0)*1000:.1f}ms send+recv={(_diag_t3-_diag_t2)*1000:.1f}ms is_last={is_last} has_result={streaming_result is not None}")
@@ -437,7 +451,7 @@ class AudioStreamProcessor:
                 # VAD on_end 兜底：仅修正 Final 文本，不重启已由 Partial 启动的 LLM 流程。
                 # 双流式模式下主流程已由 ASR Partial Result 驱动，此处只做收尾与状态复位，
                 # 避免阻塞或重复触发 LLM Prefill
-                await self._streaming_client.reset()
+                await self._streaming_client.reset(client_id=self.client_id)
                 self._audio_buffer.clear()
                 self._buffer_duration_ms = 0
 
@@ -453,11 +467,61 @@ class AudioStreamProcessor:
         self._buffer_duration_ms = 0
 
 
-def get_vad_processor() -> VADProcessor:
-    """获取全局 VAD 处理器单例。"""
-    return VADProcessor.get_instance()
+def get_vad_processor(client_id: Optional[str] = None) -> VADProcessor:
+    """获取 VAD 处理器。
+
+    未指定 client_id：返回全局默认单例（向后兼容）。
+    指定 client_id：返回该客户端的独立实例（per-client 并发隔离，
+    状态机与音频缓冲互不串扰）。
+    """
+    if client_id is None:
+        return VADProcessor.get_instance()
+    if client_id not in _client_vad_processors:
+        _client_vad_processors[client_id] = VADProcessor()
+    return _client_vad_processors[client_id]
 
 
-def get_audio_stream_processor() -> AudioStreamProcessor:
-    """获取全局音频流处理器单例。"""
-    return AudioStreamProcessor.get_instance()
+def get_audio_stream_processor(client_id: Optional[str] = None) -> AudioStreamProcessor:
+    """获取音频流处理器。
+
+    未指定 client_id：返回全局默认单例（向后兼容）。
+    指定 client_id：返回该客户端的独立实例（per-client 并发隔离）。
+    """
+    if client_id is None:
+        return AudioStreamProcessor.get_instance()
+    if client_id not in _client_audio_stream_processors:
+        _client_audio_stream_processors[client_id] = AudioStreamProcessor(client_id=client_id)
+    return _client_audio_stream_processors[client_id]
+
+
+def ensure_stream_processor_configured(client_id: str) -> AudioStreamProcessor:
+    """获取指定客户端的音频流处理器，并在首次使用时注入 ASR 客户端
+   与 per-client 打断模块（懒配置，避免每次帧处理做重复工作）。
+
+    供实时语音 handler（handlers/audio.py / live_client.py）统一调用，
+    保证 per-client 处理器在使用前已绑定独立的 ASR 流式会话与打断模块。
+    """
+    processor = get_audio_stream_processor(client_id)
+    if getattr(processor, "_asr_configured", False):
+        return processor
+    from server.services.asr_service import get_asr_service
+    from server.services.agent_interrupt_user import get_agent_interrupt_module
+    processor.set_asr_client(get_asr_service())
+    processor.set_agent_interrupt(get_agent_interrupt_module(client_id))
+    processor._asr_configured = True
+    return processor
+
+
+def release_audio_stream_processor(client_id: str) -> None:
+    """释放指定客户端的 VAD/AudioStream 独立实例。
+
+    会话结束 / WS 断开时调用。仅移除该客户端的实例，不影响其它客户端
+    与默认单例。客户端再次建立连接时会按需重新懒创建。
+    """
+    _client_audio_stream_processors.pop(client_id, None)
+    _client_vad_processors.pop(client_id, None)
+
+
+# per-client 实例注册表（client_id -> 独立实例）
+_client_vad_processors: dict = {}
+_client_audio_stream_processors: dict = {}

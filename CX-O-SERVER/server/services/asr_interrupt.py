@@ -155,7 +155,33 @@ class ASRInterruptModule(InterruptModuleBase):
         return self._is_interrupted
 
 
-def get_asr_interrupt_module() -> ASRInterruptModule:
-    """获取 ASRInterruptModule 单例实例。"""
+def get_asr_interrupt_module(client_id: Optional[str] = None) -> ASRInterruptModule:
+    """获取 ASR 打断模块。
 
-    return ASRInterruptModule.get_instance()
+    未指定 client_id：返回全局默认单例（向后兼容）。
+    指定 client_id：返回该客户端的独立实例，使各会话的 _tts_playing /
+    _is_interrupted 等状态互不串扰（A 播 TTS 不影响 B 的打断判定）。
+    """
+    if client_id is None:
+        return ASRInterruptModule.get_instance()
+    if client_id not in _asr_interrupt_instances:
+        instance = ASRInterruptModule()
+        _inherit_asr_config(ASRInterruptModule.get_instance(), instance)
+        _asr_interrupt_instances[client_id] = instance
+    return _asr_interrupt_instances[client_id]
+
+
+def release_asr_interrupt_module(client_id: str) -> None:
+    """释放指定客户端的 ASR 打断模块实例（不影响其它客户端与默认单例）。"""
+    _asr_interrupt_instances.pop(client_id, None)
+
+
+def _inherit_asr_config(src: ASRInterruptModule, dst: ASRInterruptModule) -> None:
+    """从默认单例复制配置到新创建的 per-client 实例，保持全局配置一致。"""
+    dst.mode = src.mode
+    dst.enabled = src.enabled
+    dst.independent_llm_config = dict(src.independent_llm_config)
+
+
+# per-client 打断模块注册表（client_id -> 独立实例）
+_asr_interrupt_instances: dict = {}

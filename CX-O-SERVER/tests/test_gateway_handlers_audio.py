@@ -80,8 +80,9 @@ class TestTTSPlayingState:
         fake_interrupt = FakeInterruptModule()
         monkeypatch.setattr(audio_mod, "_tts_playing_clients", set())
         # set_tts_playing 在函数体内 from server.services.asr_interrupt import ...
+        # per-client 并发化：set_tts_playing 按 client_id 取对应打断模块实例
         monkeypatch.setattr(asr_interrupt_mod, "get_asr_interrupt_module",
-                            lambda: fake_interrupt)
+                            lambda client_id=None: fake_interrupt)
         assert len(audio_mod._tts_playing_clients) == 0
         await set_tts_playing("c1", True)
         assert "c1" in audio_mod._tts_playing_clients
@@ -142,15 +143,23 @@ class TestBuildTTSKwargs:
 
     def test_qwen3_asset(self):
         s = self._session(ref_asset_id="ref_abc", refs=[{"asset_id": "ref_abc"}])
-        assert s._build_tts_kwargs() == {"ref_asset_id": "ref_abc", "refs": [{"asset_id": "ref_abc"}]}
+        assert s._build_tts_kwargs() == {
+            "ref_asset_id": "ref_abc",
+            "refs": [{"asset_id": "ref_abc"}],
+            "agent_id": "a1",
+        }
 
     def test_f5_with_refs(self):
         s = self._session(ref_audio_path="/x/a.wav", ref_text="你好")
-        assert s._build_tts_kwargs() == {"ref_audio_path": "/x/a.wav", "ref_text": "你好"}
+        assert s._build_tts_kwargs() == {
+            "ref_audio_path": "/x/a.wav",
+            "ref_text": "你好",
+            "agent_id": "a1",
+        }
 
     def test_f5_no_refs(self):
         s = self._session()
-        assert s._build_tts_kwargs() == {}
+        assert s._build_tts_kwargs() == {"agent_id": "a1"}
 
 
 # --------------------------------------------------------------------------- #

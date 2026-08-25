@@ -61,25 +61,6 @@ export const audioApi = {
     return request<{ assets: RefAudioAsset[]; current_asset_id: string | null }>({ url: '/api/ref-audio-assets' });
   },
 
-  async getCurrentRefAudioAsset(): Promise<{ asset: RefAudioAsset | null }> {
-    return request<{ asset: RefAudioAsset | null }>({ url: '/api/ref-audio-assets/current' });
-  },
-
-  async setCurrentRefAudioAsset(assetId: string): Promise<{ asset: RefAudioAsset; current_asset_id: string }> {
-    return request<{ asset: RefAudioAsset; current_asset_id: string }>({
-      url: '/api/ref-audio-assets/current',
-      method: 'put',
-      data: { asset_id: assetId },
-    });
-  },
-
-  async clearCurrentRefAudioAsset(): Promise<{ status: string; current_asset_id: null }> {
-    return request<{ status: string; current_asset_id: null }>({
-      url: '/api/ref-audio-assets/current',
-      method: 'delete',
-    });
-  },
-
   async uploadRefAudioAsset(file: File, refText?: string, note?: string): Promise<{ asset: RefAudioAsset }> {
     const formData = new FormData();
     formData.append('file', file);
@@ -118,5 +99,38 @@ export const audioApi = {
 
   getRefAudioAssetAudioUrl(assetId: string): string {
     return `${getApiBaseUrl()}/api/ref-audio-assets/${encodeURIComponent(assetId)}/audio`;
+  },
+
+  // ── per-agent 参考音频绑定（/api/agents/{id}/ref-audio） ──
+
+  /** 查询指定 agent 的参考音频绑定（asset_id / tts_voice 可能为 null） */
+  getAgentRefAudio(
+    agentId: string,
+  ): Promise<{ status: string; agent_id?: string; asset_id: string | null; tts_voice: string | null }> {
+    return request<{ status: string; agent_id?: string; asset_id: string | null; tts_voice: string | null }>({
+      url: `/api/agents/${encodeURIComponent(agentId)}/ref-audio`,
+    });
+  },
+
+  /** 设置 agent 的参考音频音色（asset_id 必填，tts_voice 可选） */
+  setAgentRefAudio(
+    agentId: string,
+    data: { asset_id: string; tts_voice?: string },
+  ): Promise<{ status: string; agent_id?: string; asset_id: string | null; tts_voice: string | null }> {
+    return request<{ status: string; agent_id?: string; asset_id: string | null; tts_voice: string | null }>({
+      url: `/api/agents/${encodeURIComponent(agentId)}/ref-audio`,
+      method: 'put',
+      data,
+    });
+  },
+
+  /** 清除 agent 的参考音频音色绑定 */
+  clearAgentRefAudio(
+    agentId: string,
+  ): Promise<{ status: string; agent_id?: string; asset_id: null; tts_voice: null }> {
+    return request<{ status: string; agent_id?: string; asset_id: null; tts_voice: null }>({
+      url: `/api/agents/${encodeURIComponent(agentId)}/ref-audio`,
+      method: 'delete',
+    });
   },
 };

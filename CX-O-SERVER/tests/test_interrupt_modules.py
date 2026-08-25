@@ -857,7 +857,7 @@ class TestAgentInterruptUser:
         fake_mod = types.SimpleNamespace(speech_end_fallback=True)
         monkeypatch.setattr(
             "server.services.agent_interrupt_user.get_agent_interrupt_module",
-            lambda: fake_mod,
+            lambda client_id=None: fake_mod,
         )
         # 若兜底未被跳过会走到 create_task(_run_pipeline)；patch 为空便于断言未调用
         monkeypatch.setattr(session, "_run_pipeline", async_noop)
@@ -877,7 +877,7 @@ class TestAgentInterruptUser:
         fake_mod = types.SimpleNamespace(speech_end_fallback=False)
         monkeypatch.setattr(
             "server.services.agent_interrupt_user.get_agent_interrupt_module",
-            lambda: fake_mod,
+            lambda client_id=None: fake_mod,
         )
         monkeypatch.setattr(session, "_run_pipeline", async_noop)
         monkeypatch.setattr(session, "_finalize_turn", async_noop)

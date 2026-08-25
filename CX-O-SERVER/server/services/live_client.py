@@ -14,7 +14,7 @@ from server.services.context_manager import get_context_manager
 from server.services.firewall import get_firewall_service
 from server.services.frontend_marker import get_frontend_marker
 from server.services.live_feedback import LiveFeedbackTracker, get_live_feedback_tracker
-from server.services.vad_processor import get_audio_stream_processor
+from server.services.vad_processor import ensure_stream_processor_configured
 from server.services.asr_interrupt import get_asr_interrupt_module
 from server.services.agent_interrupt_user import get_agent_interrupt_module
 
@@ -62,7 +62,8 @@ class LiveClientHandler:
 
     async def handle_audio(self, websocket, audio_data: bytes, client_id: str):
         try:
-            stream_processor = get_audio_stream_processor()
+            # per-client 并发化：按 client_id 取独立处理器实例（会话间 VAD/ASR 不串扰）
+            stream_processor = ensure_stream_processor_configured(self.client_id)
             result = await stream_processor.process_audio_chunk(audio_data)
 
             vad_result = result.get("vad", {})
@@ -89,7 +90,8 @@ class LiveClientHandler:
                         }
                     })
 
-                    interrupt_module = get_asr_interrupt_module()
+                    # per-client 并发化：使用当前 client 打断模块（TTS 播放状态隔离）
+                    interrupt_module = get_asr_interrupt_module(self.client_id)
                     if interrupt_module.enabled and interrupt_module._tts_playing:
                         decision, should_interrupt = await interrupt_module.on_asr_result(
                             text, is_final=not vad_result.get("is_speaking", False)
@@ -208,11 +210,11 @@ class LiveClientHandler:
             self.firewall.set_config(data["firewall"])
 
         if "interrupt" in data:
-            interrupt_module = get_asr_interrupt_module()
+            interrupt_module = get_asr_interrupt_module(self.client_id)
             interrupt_module.set_config(data)
 
         if "agent_interrupt" in data:
-            agent_interrupt = get_agent_interrupt_module()
+            agent_interrupt = get_agent_interrupt_module(self.client_id)
             agent_interrupt.set_config(data)
 
         await self.manager.send_message(self.client_id, {
@@ -240,7 +242,7 @@ class LiveClientHandler:
         source = data.get("source", "user")
         logger.info(f"Interrupt request from {source}")
 
-        interrupt_module = get_asr_interrupt_module()
+        interrupt_module = get_asr_interrupt_module(self.client_id)
         interrupt_module.reset_interrupt()
 
         await self.manager.send_message(self.client_id, {

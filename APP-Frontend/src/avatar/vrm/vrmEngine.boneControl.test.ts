@@ -17,6 +17,7 @@ function makeRuntime() {
     boneCurrentRotations: new Map(),
     boneHoldTimers: new Map(),
     vrm: { humanoid: null },
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- 假 runtime 仅含被测字段，其余保持宽松
   } as any;
 }
 

@@ -209,13 +209,24 @@ class TTSService:
             if i and i not in result:
                 result.append(i)
 
-        # 显式未指定任何参考音频时，回退到「当前默认资产」（用户可随时覆盖）
+        # 显式未指定任何参考音频时，按优先级回退：
+        #   1) kwargs["agent_id"] 对应 Agent 的 per-agent 绑定资产（A3）
+        #   2) 当前默认资产（get_current）
         if not result:
             from server import ref_audio_store
-            current = ref_audio_store.get_current()
-            if current is not None:
-                result.append(current.id)
-                logger.info(f"使用当前默认参考音频资产: {current.id}")
+            agent_id = kwargs.get("agent_id")
+            if agent_id:
+                binding = ref_audio_store.get_for_agent(agent_id)
+                if binding and binding.get("asset_id"):
+                    result.append(binding["asset_id"])
+                    logger.info(
+                        f"使用 Agent {agent_id} 绑定参考音频资产: {binding['asset_id']}"
+                    )
+            if not result:
+                current = ref_audio_store.get_current()
+                if current is not None:
+                    result.append(current.id)
+                    logger.info(f"使用当前默认参考音频资产: {current.id}")
 
         return result
 

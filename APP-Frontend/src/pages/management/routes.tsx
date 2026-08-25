@@ -43,6 +43,7 @@ import {
   Volume2,
   Wrench,
   Server,
+  Users,
 } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 
@@ -232,6 +233,13 @@ export const MANAGEMENT_ROUTES: readonly ManagementRouteEntry[] = [
     titleKey: 'management.nav.cluster',
     icon: Network,
     Component: lazy(() => import('./ClusterPage')),
+  },
+  // ── 会议室视图（多 Agent 语音会议协调器，仅追加，不改既有条目） ──
+  {
+    path: 'meeting',
+    titleKey: 'management.nav.meeting',
+    icon: Users,
+    Component: lazy(() => import('../pet/MeetingRoomView')),
   },
 ];
 

@@ -404,6 +404,39 @@ class AgentInterruptUser(InterruptModuleBase):
         return self._user_state.current_text
 
 
-def get_agent_interrupt_module() -> AgentInterruptUser:
-    """返回 AgentInterruptUser 模块单例。"""
-    return AgentInterruptUser.get_instance()
+def get_agent_interrupt_module(client_id: Optional[str] = None) -> AgentInterruptUser:
+    """返回 AgentInterruptUser 模块单例。
+
+    未指定 client_id：返回全局默认单例（向后兼容）。
+    指定 client_id：返回该客户端的独立实例，使各会话的说话时序、冷却、
+    _user_state 等状态互不串扰（per-client 并发隔离）。
+    """
+    if client_id is None:
+        return AgentInterruptUser.get_instance()
+    if client_id not in _agent_interrupt_instances:
+        instance = AgentInterruptUser()
+        _inherit_agent_config(AgentInterruptUser.get_instance(), instance)
+        _agent_interrupt_instances[client_id] = instance
+    return _agent_interrupt_instances[client_id]
+
+
+def release_agent_interrupt_module(client_id: str) -> None:
+    """释放指定客户端的 AgentInterruptUser 实例（不影响其它客户端与默认单例）。"""
+    _agent_interrupt_instances.pop(client_id, None)
+
+
+def _inherit_agent_config(src: AgentInterruptUser, dst: AgentInterruptUser) -> None:
+    """从默认单例复制配置到新创建的 per-client 实例，保持全局配置一致。"""
+    dst.enabled = src.enabled
+    dst.mode = src.mode
+    dst.interrupt_threshold_ms = src.interrupt_threshold_ms
+    dst.min_speech_duration_ms = src.min_speech_duration_ms
+    dst._interrupt_cooldown_ms = src._interrupt_cooldown_ms
+    dst.speech_end_fallback = src.speech_end_fallback
+    dst.question_intent_required = src.question_intent_required
+    dst.reply_on_final_question = src.reply_on_final_question
+    dst.independent_llm_config = dict(src.independent_llm_config)
+
+
+# per-client 打断模块注册表（client_id -> 独立实例）
+_agent_interrupt_instances: dict = {}

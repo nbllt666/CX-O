@@ -8,13 +8,12 @@
  * - 列表/试听/注释/删除
  */
 import { useCallback, useEffect, useState } from 'react';
-import { Check, Download, Loader2, Pencil, Trash2, Upload, Wand2 } from 'lucide-react';
+import { Download, Loader2, Pencil, Trash2, Upload, Wand2 } from 'lucide-react';
 import { audioApi } from '@/api/clients/audio';
 import type { RefAudioAsset } from '@/api/clients/audio';
 
 export default function RefAudioAssetsPanel() {
   const [assets, setAssets] = useState<RefAudioAsset[]>([]);
-  const [currentAssetId, setCurrentAssetId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [uploading, setUploading] = useState(false);
   const [generating, setGenerating] = useState(false);
@@ -33,7 +32,6 @@ export default function RefAudioAssetsPanel() {
     try {
       const res = await audioApi.listRefAudioAssets();
       setAssets(res.assets);
-      setCurrentAssetId(res.current_asset_id ?? null);
     } catch (e) {
       setError('加载失败');
       console.error('[RefAudioAssetsPanel] list failed:', e);
@@ -95,17 +93,6 @@ export default function RefAudioAssetsPanel() {
     }
   };
 
-  const handleSetCurrent = async (assetId: string) => {
-    setError(null);
-    try {
-      await audioApi.setCurrentRefAudioAsset(assetId);
-      await loadAssets();
-    } catch (e) {
-      setError('设为当前失败');
-      console.error('[RefAudioAssetsPanel] set current failed:', e);
-    }
-  };
-
   const handleSaveNote = async (assetId: string) => {
     setError(null);
     try {
@@ -129,7 +116,7 @@ export default function RefAudioAssetsPanel() {
     <section className="glass-panel space-y-5 p-5">
       {/* 页头说明 */}
       <p className="text-xs text-muted-foreground/70">
-        Qwen3 参考音频资产管理 —— 上传外部音频文件或通过提示词生成参考音频，支持试听、注释、设为当前默认、删除。
+        Qwen3 参考音频资产管理 —— 上传外部音频文件或通过提示词生成参考音频，支持试听、注释、删除。音色改为在「Agent 管理 → 参考音频/音色」为每个 Agent 单独绑定（原全局「设为当前默认」已废弃）。
       </p>
 
       {/* 错误提示 */}
@@ -237,11 +224,6 @@ export default function RefAudioAssetsPanel() {
                     <span className="rounded bg-primary/10 px-1.5 py-0.5 text-xs font-medium text-primary">
                       {asset.source === 'prompt' ? '提示词' : '文件'}
                     </span>
-                    {currentAssetId === asset.id && (
-                      <span className="rounded bg-emerald-500/15 px-1.5 py-0.5 text-xs font-medium text-emerald-400">
-                        当前默认
-                      </span>
-                    )}
                     <span className="truncate text-xs font-mono text-muted-foreground" title={asset.id}>
                       {asset.id}
                     </span>
@@ -291,15 +273,6 @@ export default function RefAudioAssetsPanel() {
                   )}
                 </div>
                 <div className="flex shrink-0 items-center gap-1.5">
-                  <button
-                    type="button"
-                    onClick={() => void handleSetCurrent(asset.id)}
-                    disabled={currentAssetId === asset.id}
-                    title={currentAssetId === asset.id ? '已是当前默认' : '设为当前默认'}
-                    className="rounded p-1 text-muted-foreground transition-colors hover:text-primary disabled:opacity-40 disabled:hover:text-muted-foreground"
-                  >
-                    <Check className="h-3.5 w-3.5" />
-                  </button>
                   <button
                     type="button"
                     onClick={() => startEditNote(asset)}

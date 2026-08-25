@@ -93,6 +93,18 @@ def get_env_config() -> Dict[str, Any]:
         "CXO_VISION_TEMPORAL_FUSION_ENABLED": ["vision_enhanced", "temporal_fusion_enabled"],
         "CXO_VISION_OCR_KEYFRAME_ENABLED": ["vision_enhanced", "ocr_keyframe_enabled"],
         "CXO_VISION_REQUIRE_VLLM": ["vision_enhanced", "require_vllm"],
+        # meeting 节（多 Agent 语音会议协调器，默认关闭，零侵入）
+        "CXO_MEETING_ENABLED": ["meeting", "enabled"],
+        "CXO_MEETING_MAX_AGENTS": ["meeting", "max_agents"],
+        "CXO_MEETING_ARBITER_MODEL": ["meeting", "arbiter_model"],
+        "CXO_MEETING_DEFAULT_MODE": ["meeting", "default_mode"],
+        "CXO_MEETING_TOKEN_HOLD_TIMEOUT_SEC": ["meeting", "token_hold_timeout_sec"],
+        "CXO_MEETING_RELAY_PAUSE_SEC": ["meeting", "relay_pause_sec"],
+        "CXO_MEETING_BACKCHANNEL_ENABLED": ["meeting", "backchannel_enabled"],
+        "CXO_MEETING_BACKCHANNEL_VOLUME": ["meeting", "backchannel_volume"],
+        "CXO_MEETING_TRANSCRIPT_MAX_TURNS": ["meeting", "transcript_max_turns"],
+        "CXO_MEETING_TRANSCRIPT_SUMMARY": ["meeting", "transcript_summary"],
+        "CXO_MEETING_AGENT_INTERRUPT_ENABLED": ["meeting", "agent_interrupt_enabled"],
     }
 
     for env_key, path_parts in _env_mappings.items():
@@ -125,6 +137,15 @@ def get_env_config() -> Dict[str, Any]:
         current = env_config
         for part in path_parts[:-1]:
             current = current.setdefault(part, {})
+        # meeting 节类型转换（CXO_MEETING_ 前缀键按目标字段名做 bool/int/float 转换）
+        if env_key.startswith(f"{ENV_PREFIX}MEETING_") and path_parts:
+            field = path_parts[-1]
+            if field in ("enabled", "backchannel_enabled", "transcript_summary", "agent_interrupt_enabled"):
+                value = value.lower() in ("true", "1", "yes")
+            elif field in ("token_hold_timeout_sec", "relay_pause_sec", "backchannel_volume"):
+                value = float(value)
+            elif field in ("max_agents", "transcript_max_turns"):
+                value = int(value)
         current[path_parts[-1]] = value
 
     return env_config
@@ -606,7 +627,7 @@ class ClusterConfig(BaseModel):
     peer_timeout_sec: float = 15
     miss_threshold: int = 3
     snapshot_interval_sec: int = 300
-    sync_units: List[str] = Field(default_factory=lambda: ["memory", "persona", "config", "session"])
+    sync_units: List[str] = Field(default_factory=lambda: ["memory", "persona", "config", "session", "ref_audio"])
     transport: str = "https"
     bind: str = "0.0.0.0"
     witness: ClusterWitnessConfig = Field(default_factory=ClusterWitnessConfig)
@@ -806,6 +827,30 @@ class VisionEnhancedConfig(BaseModel):
     require_vllm: bool = True  # 是否要求 vLLM 后端（false 可用于降级/调试）
 
 
+class MeetingConfig(BaseModel):
+    """多 Agent 语音会议协调器配置节（meeting，默认 enabled=false，零侵入）。
+
+    对应《CX-O 多 Agent 语音会议协调器》§12 配置系统扩展。缺失字段由
+    Pydantic default 补齐；越界数值字段在 _auto_fill_meeting_config 中回退默认值
+    （max_agents 1-10、token_hold_timeout_sec 1-600、relay_pause_sec 0-5、
+    backchannel_volume 0-1、transcript_max_turns 1-200）。
+    """
+
+    model_config = ConfigDict(protected_namespaces=())
+
+    enabled: bool = False  # 总开关，默认关闭，零侵入
+    max_agents: int = 5  # 单房间 agent 上限
+    arbiter_model: str = "independent"  # 意图解析用独立小模型
+    default_mode: str = "moderator"  # 默认发言模式（moderator/relevance/round_robin）
+    token_hold_timeout_sec: float = 30.0  # 令牌持有超时，防霸麦
+    relay_pause_sec: float = 0.4  # agent 间接力停顿
+    backchannel_enabled: bool = True  # 附和低音量开关
+    backchannel_volume: float = 0.2  # 附和音量（主发言的 20%）
+    transcript_max_turns: int = 20  # 会议记录注入的最近轮数
+    transcript_summary: bool = True  # 更早记录是否摘要压缩
+    agent_interrupt_enabled: bool = False  # 是否允许 agent 打断 agent（进阶）
+
+
 class MCPServerConfig(BaseModel):
     """MCP 服务器配置节（P2-T1）：供配置驱动的 MCP 工具源自注册/自启。
 
@@ -856,6 +901,8 @@ class UnifiedConfig(BaseModel):
     # CX-A 管理面 + 哨兵集群（默认 enabled=false，零侵入）
     admin: AdminConfig = Field(default_factory=AdminConfig)
     cluster: ClusterConfig = Field(default_factory=ClusterConfig)
+    # 多 Agent 语音会议协调器（默认 enabled=false，零侵入）
+    meeting: MeetingConfig = Field(default_factory=MeetingConfig)
 
 
 class Settings:
@@ -1117,6 +1164,34 @@ def _auto_fill_radix_config(user_config: Dict[str, Any]) -> Dict[str, Any]:
         if not isinstance(v, (int, float)) or v < 0 or v > 1:
             logger.warning(f"CONFIG_FIELD_OUT_OF_RANGE: evolution.quality_reject_threshold={v} 越界（0-1），回退默认值 0.3")
             ev["quality_reject_threshold"] = 0.3
+
+    # ---- meeting 节（多 Agent 语音会议协调器）越界检查 ----
+    mt = user_config.setdefault("meeting", {})
+    if "max_agents" in mt:
+        v = mt["max_agents"]
+        if not isinstance(v, int) or v < 1 or v > 10:
+            logger.warning(f"CONFIG_FIELD_OUT_OF_RANGE: meeting.max_agents={v} 越界（1-10），回退默认值 5")
+            mt["max_agents"] = 5
+    if "token_hold_timeout_sec" in mt:
+        v = mt["token_hold_timeout_sec"]
+        if not isinstance(v, (int, float)) or v < 1 or v > 600:
+            logger.warning(f"CONFIG_FIELD_OUT_OF_RANGE: meeting.token_hold_timeout_sec={v} 越界（1-600），回退默认值 30")
+            mt["token_hold_timeout_sec"] = 30
+    if "relay_pause_sec" in mt:
+        v = mt["relay_pause_sec"]
+        if not isinstance(v, (int, float)) or v < 0 or v > 5:
+            logger.warning(f"CONFIG_FIELD_OUT_OF_RANGE: meeting.relay_pause_sec={v} 越界（0-5），回退默认值 0.4")
+            mt["relay_pause_sec"] = 0.4
+    if "backchannel_volume" in mt:
+        v = mt["backchannel_volume"]
+        if not isinstance(v, (int, float)) or v < 0 or v > 1:
+            logger.warning(f"CONFIG_FIELD_OUT_OF_RANGE: meeting.backchannel_volume={v} 越界（0-1），回退默认值 0.2")
+            mt["backchannel_volume"] = 0.2
+    if "transcript_max_turns" in mt:
+        v = mt["transcript_max_turns"]
+        if not isinstance(v, int) or v < 1 or v > 200:
+            logger.warning(f"CONFIG_FIELD_OUT_OF_RANGE: meeting.transcript_max_turns={v} 越界（1-200），回退默认值 20")
+            mt["transcript_max_turns"] = 20
 
     logger.info("CONFIG_AUTO_FILL_APPLIED: RADIX-Lite 配置 auto_fill + 越界检查完成")
 

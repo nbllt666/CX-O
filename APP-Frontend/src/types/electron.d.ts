@@ -10,7 +10,9 @@ declare global {
       // 窗口控制
       openManagementWindow: () => Promise<void>;
       toggleDanmakuWindow: () => Promise<void>;
-      closePet: () => Promise<void>;
+      // 桌宠多开：按 agentId 打开/关闭对应桌宠窗
+      openPet: (agentId: string) => Promise<void>;
+      closePet: (agentId: string) => Promise<void>;
       setDanmakuVisible: (visible: boolean) => Promise<void>;
       onDanmakuVisibility: (callback: (visible: boolean) => void) => () => void;
       moveWindow: (dx: number, dy: number) => Promise<void>;

@@ -106,10 +106,23 @@ class SentinelCluster:
             config=cfg, transport=transport, node_id=node_id,
             role=self.role, epoch=self._epoch, state_version=self._state_version,
         )
+        # B1: 按 config.sync_units 白名单过滤 UNIT_REGISTRY，不再硬编码全量。
+        sync_units = getattr(cfg, "sync_units", None) or list(UNIT_REGISTRY.keys())
+        active_units = {
+            u: UNIT_REGISTRY[u] for u in sync_units if u in UNIT_REGISTRY
+        }
         replicator = StateReplicator(
             config=cfg, transport=transport, node_id=node_id,
-            units=UNIT_REGISTRY, pending_dir=self.pending_dir,
+            units=active_units, pending_dir=self.pending_dir,
         )
+        # B1/B2: 注册 ref_audio 快照 provider（打包 ref_audio_assets）+ 接入 emit hook。
+        from server import ref_audio_store
+
+        def _ref_audio_snapshot(unit):
+            return ref_audio_store.build_snapshot()
+
+        replicator.register_backup_provider("ref_audio", _ref_audio_snapshot)
+        ref_audio_store.set_emit_hook(replicator.emit)
         failover = FailoverManager(
             config=cfg, consensus=consensus, node_id=node_id,
             transport=transport, current_epoch=self._epoch,
@@ -166,6 +179,13 @@ class SentinelCluster:
                 await self.heartbeat.stop()
             except Exception:  # noqa: BLE001
                 log.exception("heartbeat stop failed")
+        # 停用后断开 ref_audio emit hook（短路，单机零影响）
+        try:
+            from server import ref_audio_store
+
+            ref_audio_store.set_emit_hook(None)
+        except Exception:  # noqa: BLE001
+            pass
         self._started = False
 
     # ---- 查询 ----

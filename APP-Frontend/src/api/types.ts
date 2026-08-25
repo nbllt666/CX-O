@@ -20,6 +20,8 @@ export interface Agent {
   use_tools?: boolean;
   decay_model?: string;
   vision_enabled?: boolean;
+  ref_audio_asset_id?: string | null;
+  tts_voice?: string | null;
   created_at?: string;
   updated_at?: string;
 }

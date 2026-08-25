@@ -31,8 +31,89 @@ _model_kwargs = None
 _executor: Optional[ThreadPoolExecutor] = None
 
 
+class _StreamState:
+    """Per-client 流式会话状态。
+
+    每个客户端持有一条独立的 ASR WebSocket 连接 / 锁 / 接收队列 / 后台接收任务 /
+    final 标记，使并发会话各自上行、各自收结果，互不串扰。
+    """
+
+    __slots__ = ("ws", "lock", "recv_queue", "recv_task", "final_received")
+
+    def __init__(self):
+        self.ws: Any = None  # websockets.WebSocketClientProtocol
+        self.lock: asyncio.Lock = asyncio.Lock()
+        self.recv_queue: asyncio.Queue = asyncio.Queue()
+        self.recv_task: Optional[asyncio.Task] = None
+        self.final_received: bool = False
+
+
+class _StreamAccessor:
+    """统一读写默认（self 属性）或 per-client（_StreamState）的流式状态。
+
+    默认路径（client_id 为 None）沿用 ASRService 上的 _ws/_ws_lock/... 属性，
+    保持既有调用点与单会话测试向后兼容；per-client 路径读写独立的 _StreamState。
+    """
+
+    def __init__(self, svc: "ASRService", state: Optional[_StreamState]):
+        self._svc = svc
+        self._state = state
+
+    @property
+    def ws(self):
+        return self._svc._ws if self._state is None else self._state.ws
+
+    @ws.setter
+    def ws(self, value):
+        if self._state is None:
+            self._svc._ws = value
+        else:
+            self._state.ws = value
+
+    @property
+    def lock(self):
+        return self._svc._ws_lock if self._state is None else self._state.lock
+
+    @property
+    def recv_queue(self):
+        return self._svc._ws_recv_queue if self._state is None else self._state.recv_queue
+
+    @recv_queue.setter
+    def recv_queue(self, value):
+        if self._state is None:
+            self._svc._ws_recv_queue = value
+        else:
+            self._state.recv_queue = value
+
+    @property
+    def recv_task(self):
+        return self._svc._ws_recv_task if self._state is None else self._state.recv_task
+
+    @recv_task.setter
+    def recv_task(self, value):
+        if self._state is None:
+            self._svc._ws_recv_task = value
+        else:
+            self._state.recv_task = value
+
+    @property
+    def final_received(self):
+        return self._svc._ws_final_received if self._state is None else self._state.final_received
+
+    @final_received.setter
+    def final_received(self, value):
+        if self._state is None:
+            self._svc._ws_final_received = value
+        else:
+            self._state.final_received = value
+
+
 class ASRService:
-    """统一 ASR 服务，支持 embedded 与 remote 两种识别模式，并提供 WebSocket 流式识别接口。"""
+    """统一 ASR 服务，支持 embedded 与 remote 两种识别模式，并提供 WebSocket 流式识别接口。
+
+    流式识别支持 per-client 并发：带 client_id 的调用建立/复用独立的
+    ASR WebSocket 连接与接收队列，并发会话各自上行、各自收结果。
+    """
 
     def __init__(self, mode: str = "remote", model_dir: str = "", device: str = "cuda",
                  remote_url: str = "http://127.0.0.1:8001",
@@ -45,11 +126,21 @@ class ASRService:
         self._initialized = False
         # Streaming 接口状态（vad_processor.AudioStreamProcessor 调用）
         # 方案B：WebSocket 流式接口
-        self._ws: Any = None  # websockets.WebSocketClientProtocol
+        self._ws: Any = None  # websockets.WebSocketClientProtocol（默认会话向后兼容）
         self._ws_lock: asyncio.Lock = asyncio.Lock()
         self._ws_recv_queue: asyncio.Queue = asyncio.Queue()
         self._ws_recv_task: Optional[asyncio.Task] = None
         self._ws_final_received: bool = False  # 是否已收到 final 结果（避免 final 后继续读 queue）
+        # per-client 流式会话注册表（client_id -> _StreamState）
+        self._stream_sessions: dict = {}
+
+    def _stream_accessor(self, client_id: Optional[str]) -> "_StreamAccessor":
+        """按 client_id 解析流式会话访问器。client_id 为 None 时返回默认会话访问器。"""
+        if client_id is None:
+            return _StreamAccessor(self, None)
+        if client_id not in self._stream_sessions:
+            self._stream_sessions[client_id] = _StreamState()
+        return _StreamAccessor(self, self._stream_sessions[client_id])
 
     @property
     def mode(self) -> str:
@@ -275,54 +366,62 @@ class ASRService:
     # - 懒加载 WS 连接，后台接收任务把消息放入 queue
     # ------------------------------------------------------------------ #
 
-    async def _ensure_ws(self) -> bool:
-        """懒加载 WebSocket 连接，启动后台接收任务。"""
-        if self._ws is not None:
+    async def _ensure_ws(self, client_id: Optional[str] = None) -> bool:
+        """懒加载 WebSocket 连接，启动后台接收任务。
+
+        client_id: 指定客户端会话；None 表示默认会话（向后兼容）。
+        """
+        st = self._stream_accessor(client_id)
+        if st.ws is not None:
             return True
-        async with self._ws_lock:
-            if self._ws is not None:
+        async with st.lock:
+            if st.ws is not None:
                 return True
             try:
-                logger.info(f"[ASR-WS] Connecting to {self._ws_url}")
-                self._ws = await websockets.connect(
+                logger.info(f"[ASR-WS] Connecting to {self._ws_url} (client={client_id})")
+                ws = await websockets.connect(
                     self._ws_url,
                     max_size=None,  # 不限制单帧大小（音频 chunk 可能大）
                     ping_interval=20,
                     ping_timeout=10,
                 )
+                st.ws = ws
                 # 启动后台接收任务
-                self._ws_recv_task = asyncio.create_task(self._ws_recv_loop())
-                logger.info("[ASR-WS] Connected, recv task started")
+                st.recv_task = asyncio.create_task(self._ws_recv_loop(st))
+                logger.info("[ASR-WS] Connected, recv task started (client=%s)", client_id)
                 return True
             except Exception as e:
                 logger.error(f"[ASR-WS] Connect failed: {e}")
-                self._ws = None
+                st.ws = None
                 return False
 
-    async def _ws_recv_loop(self) -> None:
+    async def _ws_recv_loop(self, st: "_StreamAccessor") -> None:
         """后台接收 WS 消息，放入 queue。连接断开时清理状态。"""
         _n = 0
         _debug = logger.isEnabledFor(logging.DEBUG)
         try:
-            async for message in self._ws:
+            async for message in st.ws:
                 _n += 1
                 # isEnabledFor 门控：避免每帧对 str(message)[:80] 急切求值（含 JSON 字符串切片）。
                 # 仅在实际触发 DEBUG 时才做 % 拼接与切片，消除热路径无谓开销。
                 if _debug:
                     logger.debug("[ASR-WS] Recv #%d: %s", _n, str(message)[:80])
-                await self._ws_recv_queue.put(message)
+                await st.recv_queue.put(message)
         except Exception as e:
             logger.error(f"[ASR-WS] Recv loop error: {e}")
         finally:
-            self._ws = None
+            st.ws = None
             logger.info(f"[ASR-WS] Recv loop ended (total {_n} msgs), ws cleared")
 
-    async def send_audio_chunk(self, audio_data: bytes, is_last: bool = False) -> bool:
+    async def send_audio_chunk(self, audio_data: bytes, is_last: bool = False,
+                               client_id: Optional[str] = None) -> bool:
         """通过 WebSocket 发送音频 chunk。
 
         Args:
             audio_data: PCM 16kHz mono int16 LE 音频字节
             is_last: 是否为最后一帧（VAD speech_end 触发）
+            client_id: 所属客户端。None 走默认会话（向后兼容）；指定则走该客户端
+            独立流式连接，并发会话各自上行不串扰。
 
         Returns:
             True 表示成功发送，False 表示服务未就绪或发送失败
@@ -330,21 +429,23 @@ class ASRService:
         if not self._initialized:
             logger.warning("ASRService not initialized, skip send_audio_chunk")
             return False
-        if not await self._ensure_ws():
+        st = self._stream_accessor(client_id)
+        if not await self._ensure_ws(client_id):
             return False
         try:
             # 发送二进制音频
-            await self._ws.send(audio_data)
+            await st.ws.send(audio_data)
             if is_last:
                 # 发送 final 信号，触发服务端识别剩余 buffer
-                await self._ws.send(json.dumps({"action": "final"}))
+                await st.ws.send(json.dumps({"action": "final"}))
         except Exception as e:
             logger.error(f"[ASR-WS] Send error: {e}")
-            self._ws = None
+            st.ws = None
             return False
         return True
 
-    async def receive_result(self, timeout: float = 0.1) -> Optional["StreamingASRResult"]:
+    async def receive_result(self, timeout: float = 0.1,
+                             client_id: Optional[str] = None) -> Optional["StreamingASRResult"]:
         """从 WebSocket 接收识别结果。
 
         双流式模式契约：
@@ -355,11 +456,14 @@ class ASRService:
 
         Args:
             timeout: 等待超时（秒），超时返回 None
+            client_id: 所属客户端。None 走默认会话队列（向后兼容）；
+            指定则从该客户端独立接收队列取结果，并发会话互不混插。
 
         Returns:
             StreamingASRResult 或 None（无消息时）
         """
-        if self._ws is None and self._ws_recv_queue.empty():
+        st = self._stream_accessor(client_id)
+        if st.ws is None and st.recv_queue.empty():
             return None
         # timeout=0 必须走 get_nowait() 同步路径：
         # Python 3.12+ asyncio.wait_for 对 timeout<=0 有快速路径——
@@ -368,15 +472,15 @@ class ASRService:
         # ASR 结果全部积压丢失（2026-08-05 实测复现，端到端延迟暴涨根因）。
         if timeout == 0:
             try:
-                message = self._ws_recv_queue.get_nowait()
+                message = st.recv_queue.get_nowait()
                 if logger.isEnabledFor(logging.DEBUG):
-                    logger.debug("[ASR-WS] receive_result GOT: %s (qsize=%d)", str(message)[:60], self._ws_recv_queue.qsize())
+                    logger.debug("[ASR-WS] receive_result GOT: %s (qsize=%d)", str(message)[:60], st.recv_queue.qsize())
             except asyncio.QueueEmpty:
                 return None
         else:
             try:
                 message = await asyncio.wait_for(
-                    self._ws_recv_queue.get(), timeout=timeout
+                    st.recv_queue.get(), timeout=timeout
                 )
             except asyncio.TimeoutError:
                 return None
@@ -389,7 +493,7 @@ class ASRService:
             text = data.get("text", "")
             is_final = data.get("is_final", False)
             if is_final:
-                self._ws_final_received = True
+                st.final_received = True
             return StreamingASRResult(
                 text=text,
                 clean_text=text,
@@ -401,20 +505,46 @@ class ASRService:
             logger.error(f"[ASR-WS] Parse result error: {e}, raw={message[:200]}")
             return None
 
-    async def reset(self) -> None:
+    async def reset(self, client_id: Optional[str] = None) -> None:
         """清空 streaming 状态（vad_processor 在 is_last 后调用）。
 
         不发送 reset 信号给服务端——服务端在 final 后自动清空 buffer。
         只清空本地 queue，准备下一轮语音。
+
+        client_id: 指定客户端会话；None 表示默认会话（向后兼容）。
         """
+        st = self._stream_accessor(client_id)
         # 清空 queue
-        while not self._ws_recv_queue.empty():
+        while not st.recv_queue.empty():
             try:
-                self._ws_recv_queue.get_nowait()
+                st.recv_queue.get_nowait()
             except asyncio.QueueEmpty:
                 break
-        self._ws_final_received = False
+        st.final_received = False
         # 不关闭 WS 连接，复用给下一轮
+
+    async def release_streaming_session(self, client_id: str) -> None:
+        """释放指定客户端的流式会话：关闭其 ASR WS 连接并取消后台接收任务。
+
+        仅在客户端断开/会话结束时调用，不影响其它客户端会话。
+        """
+        state = self._stream_sessions.pop(client_id, None)
+        if state is None:
+            return
+        task = state.recv_task
+        if task is not None and not task.done():
+            task.cancel()
+            try:
+                await task
+            except (asyncio.CancelledError, Exception):
+                pass
+        ws = state.ws
+        state.ws = None
+        if ws is not None:
+            try:
+                await ws.close()
+            except Exception as e:
+                logger.debug("[ASR-WS] close error for %s: %s", client_id, e)
 
 
 class StreamingASRResult:

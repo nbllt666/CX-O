@@ -41,9 +41,11 @@ function makeSampleQueue(
 }
 
 /** 组装一份注入齐全的 deps；便于各用例覆盖单个依赖 */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any -- 依赖多为 mock，返回泛型 deps 便于用例覆盖
 function makeDeps(overrides: Record<string, unknown> = {}): any {
   const screenBuf = new RingFrameBuffer<string>('screen', { retentionMs: 60_000, maxFrames: 1000 });
   const cameraBuf = new RingFrameBuffer<string>('camera', { retentionMs: 60_000, maxFrames: 1000 });
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- detector mock 默认不触发
   const detector = { feed: vi.fn(() => null) } as any; // 默认不触发；用例可换真 detector
   const builder = new VideoClipBuilder<string>();
   const encode = vi.fn();

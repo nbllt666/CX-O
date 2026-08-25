@@ -27,6 +27,7 @@
 """
 from __future__ import annotations
 
+import base64
 import builtins
 import dataclasses
 import hashlib
@@ -50,7 +51,13 @@ from server.qwen3_tts_provider import (
 
 logger = logging.getLogger(__name__)
 
+
+class AssetBoundError(Exception):
+    """资产被某 Agent 绑定，拒绝删除（提示先解绑）。"""
+
+
 __all__ = [
+    "AssetBoundError",
     "RefAudioAsset",
     "GeneratedAudio",
     "register_from_prompt",
@@ -66,6 +73,17 @@ __all__ = [
     "clear_current",
     "set_prompt_generator",
     "get_audio_path",
+    # per-agent 绑定新增
+    "set_for_agent",
+    "get_for_agent",
+    "clear_for_agent",
+    "list_bindings",
+    "asset_used_by_any_agent",
+    # 集群接入
+    "set_emit_hook",
+    "build_snapshot",
+    "restore_snapshot",
+    "build_bindings",
 ]
 
 # ============================================================================
@@ -89,6 +107,11 @@ _MIN_DURATION_SECONDS = 1.0
 _INDEX_FILENAME = "index.json"
 # 当前默认参考音频指针文件名（独立于资产索引，存储 {"asset_id": ...}）
 _CURRENT_FILENAME = "current.json"
+# per-agent 绑定文件名（独立于资产索引，存储 {agent_id: {"asset_id":..., "tts_voice":...}}）
+_BINDINGS_FILENAME = "agent_bindings.json"
+
+# 快照字典版本
+_SNAPSHOT_VERSION = 1
 
 
 @dataclasses.dataclass
@@ -106,6 +129,8 @@ class GeneratedAudio:
 _prompt_generator: Optional[Callable[..., Any]] = None
 # 模块级资产目录覆盖（测试隔离用）；None 时从配置惰性解析。
 _assets_dir_override: Optional[Path] = None
+# 模块级集群事件 emit hook：既集群启用时注入 replicator.emit；未注入（None）时短路，单机零影响。
+_emit_hook: Optional[Callable[[str, str, dict], Any]] = None
 
 
 # ============================================================================
@@ -137,6 +162,26 @@ def set_prompt_generator(fn: Optional[Callable[..., Any]]) -> None:
     """
     global _prompt_generator
     _prompt_generator = fn
+
+
+def set_emit_hook(fn: Optional[Callable[["str", "str", "dict"], Any]]) -> None:
+    """注入/清除集群事件 emit hook（签名：``fn(unit, op, payload)``）。
+
+    集群启用装配时注入 ``replicator.emit``；停用/关闭时注入 None（短路，单机零影响）。
+    """
+    global _emit_hook
+    _emit_hook = fn
+
+
+def _emit(unit: str, op: str, payload: dict) -> None:
+    """触发集群事件（emit hook 为空时直接短路，不抛错）。"""
+    fn = _emit_hook
+    if fn is None:
+        return
+    try:
+        fn(unit, op, payload)
+    except Exception as e:  # noqa: BLE001 - 集群 emit 失败不回滚本地写变更
+        logger.warning(f"集群 emit 失败 (unit={unit}, op={op}): {e}")
 
 
 def _set_assets_dir(path: Optional[Path]) -> None:
@@ -275,6 +320,105 @@ def _clear_current_if_matches(asset_id: str) -> None:
     """若指定资产恰为当前默认，则清除指针（删除/软删除资产后调用）。"""
     if _load_current_id() == asset_id:
         _save_current_id(None)
+
+
+# ============================================================================
+# per-agent 参考音频绑定（独立于 current.json，落盘在资产目录下）
+# ============================================================================
+
+def _bindings_path() -> Path:
+    return _resolve_assets_dir() / _BINDINGS_FILENAME
+
+
+def _load_bindings() -> Dict[str, dict]:
+    """加载 per-agent 绑定表；文件缺失/损坏返回空表。"""
+    path = _bindings_path()
+    if not path.exists():
+        return {}
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+    except (json.JSONDecodeError, OSError) as e:
+        logger.error(f"读取 per-agent 绑定失败: {path} - {e}")
+        return {}
+    return data if isinstance(data, builtins.dict) else {}
+
+
+def _save_bindings(bindings: Dict[str, dict]) -> None:
+    """原子写入 per-agent 绑定表。"""
+    _resolve_assets_dir().mkdir(parents=True, exist_ok=True)
+    tmp = _bindings_path().with_suffix(".json.tmp")
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(bindings, f, ensure_ascii=False, indent=2)
+    os.replace(tmp, _bindings_path())
+
+
+def _apply_binding(
+    agent_id: str,
+    asset_id: Optional[str],
+    tts_voice: Optional[str] = None,
+    emit: bool = True,
+) -> Optional[dict]:
+    """底层写入绑定（不校验资产存在，供集合 replica/内部幂等落盘用）。
+
+    asset_id 为 None 时清除绑定（binding_clear）；否则设置绑定。
+    emit=True 时触发集群事件（默认）。集群回放时传 emit=False 避免形成回环。
+    """
+    bindings = _load_bindings()
+    if asset_id is None:
+        bindings.pop(agent_id, None)
+    else:
+        bindings[agent_id] = {"asset_id": asset_id, "tts_voice": tts_voice}
+    _save_bindings(bindings)
+    if emit:
+        op = "binding_set" if asset_id else "binding_clear"
+        _emit(
+            "ref_audio", op,
+            {"agent_id": agent_id, "asset_id": asset_id, "tts_voice": tts_voice},
+        )
+    return bindings.get(agent_id)
+
+
+def set_for_agent(
+    agent_id: str,
+    asset_id: str,
+    tts_voice: Optional[str] = None,
+) -> dict:
+    """为指定 Agent 绑定参考音频资产（运行真源，落盘 agent_bindings.json）。
+
+    Args:
+        agent_id: Agent 唯一标识。
+        asset_id: 要绑定的参考音频资产 ID（必须存在且未删除，否则抛 RefAudioNotFoundError）。
+        tts_voice: 可选音色标识。
+
+    Returns:
+        绑定后的 {asset_id, tts_voice} 字典。
+    """
+    resolve(asset_id)  # 不存在/已删除抛 RefAudioNotFoundError
+    binding = _apply_binding(agent_id, asset_id, tts_voice=tts_voice, emit=True)
+    logger.info(f"Agent {agent_id} 绑定参考音频资产: {asset_id}")
+    return binding or {"asset_id": asset_id, "tts_voice": tts_voice}
+
+
+def get_for_agent(agent_id: str) -> Optional[dict]:
+    """返回指定 Agent 的参考音频绑定；未绑定返回 None。"""
+    return _load_bindings().get(agent_id)
+
+
+def clear_for_agent(agent_id: str) -> None:
+    """清除指定 Agent 的参考音频绑定（不删除资产本身）。"""
+    _apply_binding(agent_id, None, emit=True)
+    logger.info(f"清除 Agent {agent_id} 的参考音频绑定")
+
+
+def list_bindings() -> Dict[str, dict]:
+    """返回全部 per-agent 绑定表副本。"""
+    return dict(_load_bindings())
+
+
+def asset_used_by_any_agent(asset_id: str) -> bool:
+    """判断资产是否被任一 Agent 绑定（删除保护）。"""
+    return any(b.get("asset_id") == asset_id for b in _load_bindings().values())
 
 
 # ============================================================================
@@ -680,6 +824,7 @@ async def register_from_prompt(
     )
     _audio_path_for(asset.id, asset.format).write_bytes(audio)
     _append_record(asset)
+    _emit("ref_audio", "asset_register", {"asset_id": asset.id, "asset": asset.to_dict()})
     logger.info(f"注册 prompt 参考音频资产: {asset.id}")
     return asset
 
@@ -733,6 +878,7 @@ def register_from_file(
     )
     _audio_path_for(asset.id, asset.format).write_bytes(data)
     _append_record(asset)
+    _emit("ref_audio", "asset_register", {"asset_id": asset.id, "asset": asset.to_dict()})
     logger.info(f"注册外部参考音频资产: {asset.id}")
     return asset
 
@@ -775,13 +921,21 @@ def update_note(asset_id: str, note: str) -> RefAudioAsset:
 
 
 def delete(asset_id: str) -> None:
-    """删除资产（软删除，status=deleted）。若为当前默认资产，同时清除当前指针。"""
+    """删除资产（软删除，status=deleted）。若为当前默认资产，同时清除当前指针。
+
+    被任一 Agent 绑定的资产拒绝删除（抛 AssetBoundError，提示先解绑）。
+    """
+    if asset_used_by_any_agent(asset_id):
+        raise AssetBoundError(
+            f"资产 {asset_id} 被 Agent 绑定，请先解绑再删除"
+        )
     records = _load_index()
     for rec in records:
         if rec.get("id") == asset_id:
             rec["status"] = "deleted"
             _save_index(records)
             _clear_current_if_matches(asset_id)
+            _emit("ref_audio", "asset_delete", {"asset_id": asset_id})
             logger.info(f"软删除参考音频资产: {asset_id}")
             return
     raise RefAudioNotFoundError(f"参考音频资产不存在: {asset_id}")
@@ -841,3 +995,77 @@ def get_audio_path(asset_id: str) -> Path:
     asset = resolve(asset_id)
     fmt = asset.format or "wav"
     return _audio_path_for(asset_id, fmt)
+
+
+# ============================================================================
+# 集群接入：replica 落盘接收端（幂等、不 emit，避免回环）
+# ============================================================================
+
+def _apply_asset_register(asset_data: dict) -> bool:
+    """按事件落盘资产元数据（asset_register）。已存在则跳过（幂等）。"""
+    if not isinstance(asset_data, dict) or not asset_data.get("id"):
+        return False
+    records = _load_index()
+    if any(r.get("id") == asset_data["id"] for r in records):
+        return False
+    records.append(asset_data)
+    _save_index(records)
+    return True
+
+
+def _apply_asset_delete(asset_id: str) -> bool:
+    """按事件落盘资产软删除（asset_delete）。不存在则跳过（幂等）。"""
+    records = _load_index()
+    for rec in records:
+        if rec.get("id") == asset_id and rec.get("status") != "deleted":
+            rec["status"] = "deleted"
+            _save_index(records)
+            return True
+    return False
+
+
+def build_bindings() -> dict:
+    """返回绑定表副本（供快照/对等对齐使用）。"""
+    return _load_bindings()
+
+
+def build_snapshot() -> dict:
+    """打包 ref_audio_assets 为可序列化快照 blob（供快照落盘/对等对齐）。
+
+    返回 dict：{version, checksum, assets(list), bindings(dict), audio{id: base64}}。
+    """
+    import copy
+
+    assets = copy.deepcopy([r for r in _load_index() if r.get("status") != "deleted"])
+    bindings = _load_bindings()
+    audio: dict = {}
+    for rec in _load_index():
+        aid = rec.get("id")
+        fmt = rec.get("format") or "wav"
+        path = _audio_path_for(aid, fmt)
+        if path.exists():
+            audio[aid] = base64.b64encode(path.read_bytes()).decode("ascii")
+    canon = json.dumps({"assets": assets, "bindings": bindings}, ensure_ascii=False, sort_keys=True)
+    return {
+        "version": _SNAPSHOT_VERSION,
+        "checksum": _md5(canon.encode("utf-8")),
+        "assets": assets,
+        "bindings": bindings,
+        "audio": audio,
+    }
+
+
+def restore_snapshot(blob: dict) -> None:
+    """从快照 blob 解包写入本机 ref_audio_assets（资产音频 + 索引 + 绑定）。"""
+    assets = blob.get("assets", [])
+    bindings = blob.get("bindings", {})
+    audio = blob.get("audio", {}) or {}
+    _save_index(builtins.list(assets))
+    _save_bindings(dict(bindings))
+    for aid, b64 in audio.items():
+        fmt = next((a.get("format", "wav") for a in assets if a.get("id") == aid), "wav")
+        try:
+            data = base64.b64decode(b64)
+        except Exception:  # noqa: BLE001
+            continue
+        _audio_path_for(aid, fmt).write_bytes(data)

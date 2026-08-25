@@ -149,7 +149,9 @@ export class VRMExpression {
   }
 
   private exprKey(em: NonNullable<VRM['expressionManager']>, name: string): string {
-    const map = (em as any)._expressionMap as Record<string, unknown> | undefined;
+    const map = (
+      em as unknown as { _expressionMap?: Record<string, unknown> | undefined }
+    )._expressionMap;
     if (map && name in map) return name;
     if (map) {
       for (const key of Object.keys(map)) {

@@ -101,6 +101,14 @@ class WebSocketManager:
         async with self._lock:
             self.connections[client_id] = connection
 
+        # per-client 并发化：懒创建该客户端的独立 VAD/AudioStream 处理器实例，
+        # 后续 /ws/live、dual_stream 会话按 client_id 取自己的实例，互不串扰。
+        try:
+            from server.services.vad_processor import get_audio_stream_processor
+            get_audio_stream_processor(client_id)
+        except Exception as e:
+            logger.warning(f"初始化客户端音频处理器失败 {client_id}: {e}")
+
         logger.info(f"WebSocket 连接已建立: {client_id}, 当前连接数: {len(self.connections)}")
 
         if send_connected:
@@ -135,6 +143,23 @@ class WebSocketManager:
             await cleanup_dual_stream_session(client_id)
         except Exception as e:
             logger.warning(f"清理双流式会话失败 {client_id}: {e}")
+
+        # 释放该客户端的 per-client 语音实例（VAD/AudioStream / ASR 流式会话 /
+        # 打断模块），仅清理当前客户端，不影响其它客户端与默认单例。
+        try:
+            from server.services.vad_processor import release_audio_stream_processor
+            from server.services.asr_interrupt import release_asr_interrupt_module
+            from server.services.agent_interrupt_user import release_agent_interrupt_module
+            release_audio_stream_processor(client_id)
+            try:
+                from server.services.asr_service import get_asr_service
+                await get_asr_service().release_streaming_session(client_id)
+            except Exception:
+                pass
+            release_asr_interrupt_module(client_id)
+            release_agent_interrupt_module(client_id)
+        except Exception as e:
+            logger.warning(f"释放客户端音频实例失败 {client_id}: {e}")
 
     async def send_to_client(self, client_id: str, message: Dict[str, Any]):
         """发送消息给指定客户端
