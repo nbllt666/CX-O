@@ -431,7 +431,7 @@ td:first-child { color: var(--text-bright); font-weight: 500; }
 <!-- 多角色管理 -->
 <section class="section" id="agents">
   <h2 class="section-title"><span class="icon">👥</span> 多角色管理</h2>
-  <p class="section-desc">创建多个 AI 人格，每个有独立的人设、记忆和声音。角色之间还能互相通信，合作完成任务。</p>
+  <p class="section-desc">创建多个 AI 人格，每个有独立的人设、记忆和属于自己的声音。角色之间还能互相通信，或拉上几位开一场圆桌会议，合作完成任务。</p>
 
   <div class="card-grid">
     <div class="card">
@@ -474,6 +474,29 @@ td:first-child { color: var(--text-bright); font-weight: 500; }
         <li>摘要模型（summary）：内容总结</li>
         <li>记忆模型（memory）：记忆处理</li>
         <li>支持 Ollama / vLLM / TRT-LLM 三种接入</li>
+      </ul>
+    </div>
+
+    <div class="card">
+      <span class="tag tag-pink">专属音色</span>
+      <h3>每个角色各有各的声音</h3>
+      <p>在 Agent 管理里给每个角色单独绑定一段参考音频，她说话、开会、语音通话都用这套声音。</p>
+      <ul class="feature-list">
+        <li>参考音频从语音工作站的音色资产里选</li>
+        <li>绑定后，该角色所有语音输出都用这份音色</li>
+        <li>没绑定的角色走全局默认音色</li>
+      </ul>
+    </div>
+
+    <div class="card">
+      <span class="tag tag-cyan">圆桌会议</span>
+      <h3>多 Agent 圆桌会议</h3>
+      <p>把几位角色拉进同一场共享语音会议，你坐主位，点谁谁接话，或抛个话题让大家抢答。</p>
+      <ul class="feature-list">
+        <li>一场会议多位角色同台，共享同一个语音会议房间</li>
+        <li>点名谁谁接话，或按话题让大家抢答</li>
+        <li>发言令牌保证同一时刻只有一个人开口，不抢麦、不乱哄哄</li>
+        <li>整场会议沉淀成记忆，之后还能回忆起来</li>
       </ul>
     </div>
   </div>
@@ -621,7 +644,7 @@ td:first-child { color: var(--text-bright); font-weight: 500; }
 <!-- 桌面宠物 -->
 <section class="section" id="pet">
   <h2 class="section-title"><span class="icon">🐱</span> 桌面宠物</h2>
-  <p class="section-desc">透明悬浮窗趴在桌面上，鼠标穿透不挡操作，随时拖到屏幕角落。你的 AI 角色就在桌面上陪着你。</p>
+  <p class="section-desc">透明悬浮窗趴在桌面上，鼠标穿透不挡操作，随时拖到屏幕角落。想让几位角色都来作伴？一次能开好几只，把她们全"养"在桌面上陪着你。</p>
 
   <div class="card-grid">
     <div class="card">
@@ -655,6 +678,17 @@ td:first-child { color: var(--text-bright); font-weight: 500; }
         <li>PetAvatar 虚拟形象展示</li>
         <li>PetChat 对话交互</li>
         <li>PetAudioPanel 音频控制</li>
+      </ul>
+    </div>
+
+    <div class="card">
+      <span class="tag tag-green">多开</span>
+      <h3>桌宠多开</h3>
+      <p>给任意角色都开一只桌宠，多只一起趴在桌面上，各绑各的角色，谁跟谁也不打扰谁。</p>
+      <ul class="feature-list">
+        <li>管理页里为任意角色一键开启/关闭对应的桌宠</li>
+        <li>每只桌宠绑定一个角色，个性、记忆、声音都各自独立</li>
+        <li>窗口标题带上角色名，录屏/OBS 一眼就能分清是哪一位</li>
       </ul>
     </div>
   </div>
