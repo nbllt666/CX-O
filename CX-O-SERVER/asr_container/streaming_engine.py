@@ -62,6 +62,8 @@ DECODER_LOOK_BACK = 1
 
 # 引擎行为阈值
 SPK_SIM_DEFAULT = "0.65"
+# 会话级声纹后台任务 in-flight 上限：超过上限丢弃该句（保持 pending，由后续更新），绝不阻塞
+SPK_INFLIGHT_MAX = 2
 
 # 缓冲上限（样本数），病理兜底：超出整体清空重置
 MAX_BUFFER = 960000
@@ -327,6 +329,9 @@ class StreamSession:
         self._spec_sent = False                       # 当前句是否已发过投机 partial
         self.session = clusterer.create_session()     # 说话人临时簇（跨 utterance 保留）
         self._speaker: Optional[Tuple[str, bool, float]] = None  # 最近发言判定缓存
+        self._spk_pending_count = 0        # 会话内 in-flight 声纹任务数
+        self._pending_spk_msgs: List[dict] = []  # 待下发的 spk 补充消息
+        self._classify_lock = asyncio.Lock()     # classify 并发互斥
 
     # ------------------------------------------------------------------ #
     # 消息构造
@@ -343,19 +348,15 @@ class StreamSession:
             "speaker_conf": 0.0,
         }
 
-    def _final_msg(self, text: str, spk_id: str, registered: bool, conf: float) -> dict:
-        """构造 final 消息；got 无有效说话人时回退最近发言判定缓存。"""
-        if not spk_id and self._speaker:
-            spk_id, registered, conf = self._speaker
-        elif spk_id:
-            self._speaker = (spk_id, registered, conf)
+    def _final_msg(self, text: str, status: str, spk_id: str = "", registered: bool = False, conf: float = 0.0) -> dict:
+        """status: "pending"（声纹计算中，前端显示"识别中"）| "ready"（本句声纹已就绪）。
+        仅 status=="ready" 且 spk_id 非空时才更新 self._speaker（最近已知）。"""
+        if status == "ready" and spk_id:
+            self._speaker = (spk_id, bool(registered), float(conf))
         return {
-            "text": text,
-            "is_final": True,
-            "language": "",
-            "emotion": "",
-            "speaker_id": spk_id,
-            "speaker_registered": bool(registered),
+            "text": text, "is_final": True, "language": "", "emotion": "",
+            "speaker_status": status,
+            "speaker_id": spk_id, "speaker_registered": bool(registered),
             "speaker_conf": float(conf),
         }
 
@@ -434,23 +435,73 @@ class StreamSession:
         msgs: List[dict] = []
         for start, end in new_sentences:
             audio_slice = self._audio[start:end]
-            # 并行提交 ASR(final) 与 SPK，两个线程同时执行
             asr_fut = loop.run_in_executor(_EXECUTOR, _run_asr_final, audio_slice)
             spk_fut = loop.run_in_executor(_EXECUTOR, _run_spk_embedding, audio_slice)
-            text = await asr_fut
-            emb = await spk_fut
-            if emb is not None:
-                spk_id, registered, conf = self.session.classify(emb)
+            text = await asr_fut                     # 唯一阻塞点
+            if spk_fut.done():
+                emb = spk_fut.result()               # 不阻塞：已完成直接取
+                if emb is not None:
+                    async with self._classify_lock:
+                        spk_id, registered, conf = self.session.classify(emb)
+                    msgs.append(self._final_msg(text, "ready", spk_id, registered, conf))
+                else:
+                    msgs.append(self._final_msg(text, "ready"))   # 声纹模型不可用
             else:
-                # 声纹不可用：走最近发言判定缓存（可能为空）
-                spk_id, registered, conf = "", False, 0.0
-            msgs.append(self._final_msg(text, spk_id, registered, conf))
+                msgs.append(self._final_msg(text, "pending"))     # "识别中"，后补
+                self._track_spk_pump(spk_fut, audio_slice)
 
         # 推进当前句起点到最后一句结束处，重置 ASR 增量状态
         self._cur_start = new_sentences[-1][1]
         self._asr_cache = {}
         self._last_asr_t = 0
         self._spec_sent = False
+        return msgs
+
+    def _track_spk_pump(self, spk_fut, audio_slice: np.ndarray) -> None:
+        """登记声纹后台任务（in-flight 上限控制）；超限丢弃该句，保持 pending。"""
+        if self._spk_pending_count >= SPK_INFLIGHT_MAX:
+            return
+        self._spk_pending_count += 1
+        loop = asyncio.get_running_loop()
+        task = loop.create_task(self._spk_pump(spk_fut, audio_slice))
+        task.add_done_callback(self._on_spk_pump_done)
+
+    def _on_spk_pump_done(self, task: asyncio.Task) -> None:
+        self._spk_pending_count -= 1
+        try:
+            task.result()      # 吞掉异常，不外抛
+        except Exception:
+            pass
+
+    async def _spk_pump(self, spk_fut, audio_slice: np.ndarray) -> None:
+        """后台完成声纹判定：classify → 更新最近已知 → push spk 补充消息。"""
+        try:
+            emb = await spk_fut
+        except Exception:
+            emb = None
+        if emb is None:
+            return
+        try:
+            async with self._classify_lock:
+                spk_id, registered, conf = self.session.classify(emb)
+            self._speaker = (spk_id, bool(registered), float(conf))
+        except Exception:
+            return
+        match = self.session.recent_match()
+        em_embedding = [float(x) for x in match[1]] if match else []
+        self._pending_spk_msgs.append({
+            "type": "spk",
+            "speaker_status": "ready",
+            "speaker_id": spk_id,
+            "speaker_registered": bool(registered),
+            "speaker_conf": float(conf),
+            "em_embedding": em_embedding,
+        })
+
+    def drain_spk_messages(self) -> List[dict]:
+        """取走并清空待发 spk 补充消息（供 WS 发送侧调用）。"""
+        msgs = self._pending_spk_msgs
+        self._pending_spk_msgs = []
         return msgs
 
     async def _maybe_partial(self, msgs: List[dict]) -> None:
@@ -492,14 +543,18 @@ class StreamSession:
         text_fut = loop.run_in_executor(_EXECUTOR, _run_asr_final, tail)
         emb_fut = loop.run_in_executor(_EXECUTOR, _run_spk_embedding, tail)
         text = await text_fut
-        emb = await emb_fut
-
-        if emb is not None:
-            spk_id, registered, conf = self.session.classify(emb)
+        # 只 await 文本；声纹就绪则快速路径带 ready，否则 pending 后补
+        if emb_fut.done():
+            emb = emb_fut.result()
+            if emb is not None:
+                async with self._classify_lock:
+                    spk_id, registered, conf = self.session.classify(emb)
+                msg = self._final_msg(text, "ready", spk_id, registered, conf)
+            else:
+                msg = self._final_msg(text, "ready")   # 声纹模型不可用
         else:
-            spk_id, registered, conf = "", False, 0.0
-
-        msg = self._final_msg(text, spk_id, registered, conf)
+            msg = self._final_msg(text, "pending")     # "识别中"，后补
+            self._track_spk_pump(emb_fut, tail)
 
         # 重置 utterance 缓冲与缓存（说话人临时簇 session 保留跨 utterance）
         self._reset_buffer(pathological=False)

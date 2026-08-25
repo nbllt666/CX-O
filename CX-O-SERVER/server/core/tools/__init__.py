@@ -114,6 +114,7 @@ __all__ = [
     "MCPManager",
     "MCPServer",
     "register_builtin_tools",
+    "register_voiceprint_tool",
     # Master tools
     "register_master_tools",
     "write_long_term_memory",

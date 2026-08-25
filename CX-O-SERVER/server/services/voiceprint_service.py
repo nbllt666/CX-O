@@ -181,6 +181,33 @@ class VoiceprintService:
         summary["updated"] = updated
         return summary
 
+    async def register_embedding(self, name: str, embedding: list) -> dict:
+        """基于实时聚类 embedding 注册/更新声纹档案（不重新提取音频特征）。
+
+        与 register() 的区别：不走容器 /extract（embedding 来自容器实时聚类，
+        容器必然已可用），仅本地落盘 + 同步容器。失败策略：落盘异常上抛
+        ValueError（参数非法）/ 落盘 IO 异常上抛，同步容器失败仅告警。
+        """
+        name = (name or "").strip()
+        if not name or len(name) > NAME_MAX_LEN:
+            raise ValueError("声纹档案名不能为空且长度不能超过 32")
+        if not isinstance(embedding, (list, tuple)) or not embedding:
+            raise ValueError("声纹特征 embedding 无效")
+        embeddings = [float(x) for x in embedding]
+        profiles = self._load_profiles()
+        target = next((p for p in profiles if p.get("name") == name), None)
+        if target is None:
+            target = {
+                "name": name,
+                "embeddings": [],
+                "created_at": time.strftime("%Y-%m-%dT%H:%M:%S"),
+            }
+            profiles.append(target)
+        target["embeddings"].append(embeddings)
+        self._save_profiles(profiles)
+        await self._sync_remote()          # 失败仅告警（_sync_remote 已内部捕获）
+        return _profile_summary(target)
+
     def list_profiles(self) -> List[dict]:
         """返回全部声纹档案摘要。"""
         return [_profile_summary(p) for p in self._load_profiles()]
@@ -222,6 +249,11 @@ async def extract(audio_bytes: bytes) -> List[float]:
 async def register(name: str, audio_bytes: bytes) -> dict:
     """模块级出口：注册/更新声纹档案。"""
     return await _service.register(name, audio_bytes)
+
+
+async def register_embedding(name: str, embedding: list) -> dict:
+    """模块级出口：基于 embedding 注册/更新声纹档案。"""
+    return await _service.register_embedding(name, embedding)
 
 
 def list_profiles() -> List[dict]:

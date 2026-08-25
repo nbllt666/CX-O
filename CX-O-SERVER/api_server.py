@@ -320,6 +320,10 @@ async def ws_asr_stream(websocket: WebSocket):
     degraded = not asr_loaded()
     degraded_warned = not degraded
 
+    async def _send_spk_drain(ws: WebSocket, sess: StreamSession) -> None:
+        for m in sess.drain_spk_messages():
+            await ws.send_text(json.dumps(m))
+
     try:
         while True:
             message = await websocket.receive()
@@ -337,6 +341,7 @@ async def ws_asr_stream(websocket: WebSocket):
                     results = await session.feed_pcm(message["bytes"])
                     for m in results:
                         await websocket.send_text(json.dumps(m))
+                    await _send_spk_drain(websocket, session)
                 except Exception as e:
                     logger.error(f"[WS-ASR] Feed inference error: {e}")
 
@@ -358,6 +363,7 @@ async def ws_asr_stream(websocket: WebSocket):
                             results = await session.finish()
                             for m in results:
                                 await websocket.send_text(json.dumps(m))
+                            await _send_spk_drain(websocket, session)
                     except Exception as e:
                         logger.error(f"[WS-ASR] Final inference error: {e}")
                         await websocket.send_text(json.dumps({

@@ -13,6 +13,7 @@ from server.protocol.message import create_response, create_error, create_stream
 from server.protocol.actions import ASRActions, TTSActions, EmotionActions, EffectActions, VoiceActions
 from server.services.emotion_parser import get_supported_emotions, extract_emotions_with_text
 from server.services.effect_parser import EffectParser
+from server.services.voice_context import set_active_client_id
 # 模块级导入实时语音访问器：vad_processor 无对 audio 的反向依赖（无循环导入），
 # 消除双流式/流式 ASR handler 每帧重复执行函数级 import（16.7 帧/s 热路径）。
 # per-client 并发化：ensure_stream_processor_configured 按 client_id 取独立实例。
@@ -93,6 +94,24 @@ def _registered_speaker_from(asr_result: Optional[dict]) -> str:
     if not asr_result.get("speaker_registered"):
         return ""
     return (asr_result.get("speaker_name") or asr_result.get("speaker_id") or "").strip()
+
+
+def _speaker_label_from(asr_result: Optional[dict]) -> str:
+    """根据 asr_result 返回前端气泡说话人标签。
+
+    - speaker_status=="pending" → "识别中"（临时态，不归属名字）
+    - 注册命中 → 注册名（与 _registered_speaker_from 一致）
+    - 其它 → ""
+    """
+    if not asr_result:
+        return ""
+    status = asr_result.get("speaker_status", "ready")
+    if status == "pending":
+        return "识别中"
+    registered = asr_result.get("speaker_registered")
+    if registered:
+        return (asr_result.get("speaker_name") or asr_result.get("speaker_id") or "").strip()
+    return ""
 
 
 def latest_registered_speaker_by_client(client_id: str) -> str:
@@ -227,6 +246,11 @@ class DualStreamSession:
         # 仅 registered 命中时非空，未注册伪名（spk_N）永不记录。
         self._last_speaker_name: str = ""
 
+        # 最近一次说话人标签（Task 说话人标签外发）：pending 态为"识别中"，
+        # 注册命中为注册名，缺字段为空串。由 _store_speaker 同步更新，
+        # 供 _send_partial 的 speaker_label 参数取用。
+        self._last_speaker_label: str = ""
+
     def _store_speaker(self, asr_result: Optional[dict]) -> None:
         """接收 asr_result 的入口统一调用：把注册说话人名存入 session 最近状态。
 
@@ -236,6 +260,8 @@ class DualStreamSession:
         name = _registered_speaker_from(asr_result)
         if name:
             self._last_speaker_name = name
+        # 说话人标签永远按当前 asr_result 刷新（含 pending 态"识别中"/空串）
+        self._last_speaker_label = _speaker_label_from(asr_result)
 
     def _track_background_task(self, task: asyncio.Task) -> asyncio.Task:
         """追踪后台任务，防止被 GC 回收；任务完成后自动从集合中移除。"""
@@ -315,7 +341,7 @@ class DualStreamSession:
         # 推送 Partial 文本给前端（实时显示用户正在说什么）
         logger.debug("[DIAG-PARTIAL] before _send_partial")
         self._store_speaker(asr_result)
-        await self._send_partial(text, speaker=self._last_speaker_name)
+        await self._send_partial(text, speaker=self._last_speaker_name, speaker_label=self._last_speaker_label)
         logger.debug("[DIAG-PARTIAL] after _send_partial")
 
         # 同一 utterance 内仅触发一次 LLM，避免 Partial 增量导致重复 Prefill
@@ -440,7 +466,7 @@ class DualStreamSession:
 
         self._store_speaker(asr_result)
         # 推送 Final 转写文本给前端（语音识别的最终确认）
-        await self._send_partial(text, is_final=True, speaker=self._last_speaker_name)
+        await self._send_partial(text, is_final=True, speaker=self._last_speaker_name, speaker_label=self._last_speaker_label)
 
         if self._has_triggered_this_utterance:
             # 已由 Partial 触发：仅修正 Final 文本
@@ -511,6 +537,8 @@ class DualStreamSession:
         LLM 吐出第一个 token 即开始平滑缓冲，平滑缓冲输出第一个词组即开始 TTS 合成，
         TTS 合成出第一个音频块即推送给前端。全链路首包音频延迟 < 300ms。
         """
+        # 注入当前语音会话 client_id 到 contextvars（工具执行读取）
+        set_active_client_id(self.client_id)
         try:
             # 延迟导入避免循环依赖
             from server.chat_helpers import (
@@ -852,14 +880,19 @@ class DualStreamSession:
         finally:
             await set_tts_playing(self.client_id, False)
 
-    async def _send_partial(self, text: str, is_final: bool = False, speaker: str = "") -> None:
+    async def _send_partial(self, text: str, is_final: bool = False, speaker: str = "", speaker_label: str = "") -> None:
         """发送 ASR 识别文本给前端（Partial 实时显示 / Final 最终确认）。
 
         speaker 唯一来源是注册说话人名（非空）：此时 data 附带
         speaker_id（=注册名）与 speaker_name 供前端气泡打标签；
         未注册/缺字段时（空串）data 不带 speaker 字段，伪名（spk_N）绝不外发。
+        speaker_label 用于前端气泡的临时态说话人标签（如 pending 态"识别中"，
+        此时 speaker 仍为空串，与 speaker_id/speaker_name 并存互不冲突）；
+        默认空串时 data 不带 speaker_label，不改变既有外发行为。
         """
         data: dict = {"text": text, "is_final": is_final}
+        if speaker_label:
+            data["speaker_label"] = speaker_label
         if speaker:
             data["speaker_id"] = speaker
             data["speaker_name"] = speaker
@@ -1400,6 +1433,28 @@ def register_audio_handlers(
                     result_data["speaker_registered"] = True
                     result_data["speaker_conf"] = asr_result.get("speaker_conf", 0.0)
                     _latest_speaker_by_client[client_id] = _reg_speaker
+                # 说话人标签外发（Task）：pending 态"识别中"随正文外发（与 speaker 并存）；
+                # spk 补充消息（text 空、非 final、speaker_status ready 且 speaker_id 非空）
+                # 单独推 voice.speaker 事件，把前端临时标签更新为实际说话人。
+                _speaker_label = _speaker_label_from(asr_result)
+                if _speaker_label and asr_result.get("text"):
+                    result_data["speaker_label"] = _speaker_label
+                if (
+                    not asr_result.get("text")
+                    and not asr_result.get("is_final", True)
+                    and asr_result.get("speaker_status") == "ready"
+                    and asr_result.get("speaker_id")
+                ):
+                    await manager.send_message(client_id, {
+                        "type": "voice.speaker",
+                        "data": {
+                            "speaker_status": "ready",
+                            "speaker_id": asr_result.get("speaker_id"),
+                            "speaker_name": asr_result.get("speaker_name", ""),
+                            "speaker_registered": asr_result.get("speaker_registered", False),
+                            "speaker_conf": asr_result.get("speaker_conf", 0.0),
+                        },
+                    })
                 await manager.send_message(client_id, create_response(
                     request_id=request_id,
                     action=ASRActions.RESULT,
@@ -1585,6 +1640,28 @@ def register_audio_handlers(
             _reg_speaker = _registered_speaker_from(asr_result)
             if _reg_speaker:
                 _latest_speaker_by_client[client_id] = _reg_speaker
+
+            # 说话人标签外发（Task）：spk 补充消息（text 空、is_final=False、
+            # speaker_status ready 且 speaker_id 非空）不携带正文，单独推一条
+            # voice.speaker 事件，用于把前端 pending 态"识别中"更新为实际说话人。
+            # 普通 partial/final（text 非空）不额外推：speaker 随正文外发即可。
+            if (
+                asr_result
+                and not asr_result.get("text")
+                and not asr_result.get("is_final", True)
+                and asr_result.get("speaker_status") == "ready"
+                and asr_result.get("speaker_id")
+            ):
+                await manager.send_message(client_id, {
+                    "type": "voice.speaker",
+                    "data": {
+                        "speaker_status": "ready",
+                        "speaker_id": asr_result.get("speaker_id"),
+                        "speaker_name": asr_result.get("speaker_name", ""),
+                        "speaker_registered": asr_result.get("speaker_registered", False),
+                        "speaker_conf": asr_result.get("speaker_conf", 0.0),
+                    },
+                })
 
             # VAD 状态变化处理
             if vad_result.get("state_changed"):

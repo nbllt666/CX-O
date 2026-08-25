@@ -121,6 +121,7 @@ def get_tools_for_agent() -> list:
         "set_alarm", "mono", "write_permanent_memory",
         "acp_list_agents", "acp_connect", "acp_disconnect",
         "acp_send_message", "acp_create_group", "acp_join_group", "acp_leave_group",
+        "register_voiceprint",
     }
     main_tools = []
     for tool_name in main_tool_names:

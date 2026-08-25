@@ -53,6 +53,7 @@ class SpeakerSession:
         self._clusters: List[np.ndarray] = []   # 临时簇质心（已 L2 归一化）
         self._counts: List[int] = []            # 临时簇累计归一化 embedding 条数
         self._next_id: int = 0                  # 下一个临时簇编号（会话内不复用）
+        self._last_match: Optional[list] = None  # 最近命中 [cluster_id, 质心 ndarray]
 
     def classify(self, embedding) -> Tuple[str, bool, float]:
         """对单个 embedding 分类。
@@ -80,6 +81,7 @@ class SpeakerSession:
         if conf >= self._clusterer.threshold:
             if registered_mask[idx]:
                 name = self._clusterer._profile_names[idx]
+                self._last_match = [name, self._clusterer._centroids[idx]]
                 return name, True, conf
             # 命中临时簇：滚动更新质心与 count
             c_idx = idx - len(self._clusterer._centroids)
@@ -87,6 +89,7 @@ class SpeakerSession:
             new_centroid = _l2_normalize((self._clusters[c_idx] * count + e) / float(count + 1))
             self._clusters[c_idx] = new_centroid
             self._counts[c_idx] = count + 1
+            self._last_match = [f"spk_{c_idx}", new_centroid.copy()]  # 克隆，防后续质心变动影响
             return f"spk_{c_idx}", False, conf
 
         # 新建临时簇
@@ -94,13 +97,21 @@ class SpeakerSession:
         self._clusters.append(e)
         self._counts.append(1)
         self._next_id += 1
+        self._last_match = [spk_id, e]
         return spk_id, False, conf
+
+    def recent_match(self) -> Optional[Tuple[str, List[float]]]:
+        """返回最近命中簇的 (cluster_id, 质心 embedding)。未 classify 时返回 None。"""
+        if self._last_match is None:
+            return None
+        return (self._last_match[0], np.asarray(self._last_match[1], dtype=np.float64).tolist())
 
     def reset(self) -> None:
         """清空临时簇与 next_id（连接断开 / 换人时调用）。"""
         self._clusters.clear()
         self._counts.clear()
         self._next_id = 0
+        self._last_match = None
 
 
 class SpeakerClusterer:

@@ -414,13 +414,16 @@ class AudioStreamProcessor:
                     "speaker_name": streaming_result.speaker_name,
                     "speaker_registered": streaming_result.speaker_registered,
                     "speaker_conf": streaming_result.speaker_conf,
+                    # 说话人识别状态（Task 说话人标签外发）：自 ASR 流式结果透传到回调 dict
+                    "speaker_status": streaming_result.speaker_status,
                 }
                 result["asr"] = asr_result
 
                 # 主驱动：Partial Result (is_final=False) 立即触发 LLM Speculative Prefill，
                 # 省去等待 VAD on_end 的 500ms 静默判定，实现低延迟首字响应。
                 # 此回调不等 VAD，是双流式模式的主流程驱动器
-                if not streaming_result.is_final and self._on_partial_result_callback is not None:
+                # 空文本不触发：spk 补充消息（text="" 仅更新说话人）不应触发无意义 prefill
+                if not streaming_result.is_final and streaming_result.text and self._on_partial_result_callback is not None:
                     try:
                         await self._on_partial_result_callback(asr_result)
                     except Exception as e:

@@ -154,3 +154,61 @@ def test_clear_profiles(orthogonal):
     assert clusterer.profile_names() == []
     s = clusterer.create_session()
     assert s.classify(vA)[0] == "spk_0"
+
+
+def test_recent_match_none_and_reset(orthogonal):
+    """未 classify 时 recent_match 返回 None；reset 后同样清空。"""
+    vB = orthogonal[1]
+    clusterer = SpeakerClusterer(threshold=0.65)
+    s = clusterer.create_session()
+    assert s.recent_match() is None  # 尚未 classify
+    s.classify(vB)
+    assert s.recent_match() is not None
+    s.reset()
+    assert s.recent_match() is None
+
+
+def test_recent_match_registered_pool(orthogonal):
+    """命中注册池时记录最近命中为注册名字 + 注册质心 embedding。"""
+    vA = orthogonal[0]
+    clusterer = SpeakerClusterer(threshold=0.65)
+    clusterer.upsert_profiles([{"name": "A", "embeddings": vA.tolist()}])
+    s = clusterer.create_session()
+    sid, reg, _ = s.classify(vA + 0.001)
+    assert sid == "A"
+    assert reg is True
+    m = s.recent_match()
+    assert m is not None
+    cid, centroid = m
+    assert cid == "A"
+    assert isinstance(centroid, list)
+    assert len(centroid) == DIM
+
+
+def test_recent_match_temp_cluster(orthogonal):
+    """多次命中临时簇滚动更新质心后，recent_match 记录 spk_{n} 与最新质心。"""
+    vB = orthogonal[1]
+    clusterer = SpeakerClusterer(threshold=0.65)
+    s = clusterer.create_session()
+    s.classify(vB)        # 新建 spk_0
+    s.classify(vB)        # 命中临时簇，滚动更新质心
+    m = s.recent_match()
+    assert m is not None
+    cid, centroid = m
+    assert cid == "spk_0"
+    assert isinstance(centroid, list)
+    assert len(centroid) == DIM
+
+
+def test_recent_match_new_cluster(orthogonal):
+    """首次未注册向量新建临时簇时，recent_match 记录 spk_{n} 与原始 embedding 克隆。"""
+    vC = orthogonal[2]
+    clusterer = SpeakerClusterer(threshold=0.65)
+    s = clusterer.create_session()
+    s.classify(vC)
+    m = s.recent_match()
+    assert m is not None
+    cid, centroid = m
+    assert cid == "spk_0"
+    assert isinstance(centroid, list)
+    assert len(centroid) == DIM

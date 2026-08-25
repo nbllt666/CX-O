@@ -7,10 +7,14 @@
 
 运行：python -m pytest tests/test_voice_audio_speaker.py -v
 """
+import struct
+
 import pytest
 
-from server.handlers.audio import DualStreamSession, _registered_speaker_from
+from server.handlers.audio import DualStreamSession, _registered_speaker_from, _speaker_label_from
 from server.protocol.actions import VoiceActions
+from server.services.asr_service import StreamingASRResult
+from server.services.vad_processor import AudioStreamProcessor
 
 
 class FakeManager:
@@ -139,3 +143,110 @@ def test_registered_speaker_from_never_exposes_pseudonym_fallback_ids():
     assert _registered_speaker_from({
         "speaker_registered": False, "speaker_id": "spk_2", "speaker_name": "",
     }) == ""
+
+
+# ---- 说话人标签外发（Task） ----
+
+
+def _speaker_energy_samples(amplitude: int, n: int = 480) -> bytes:
+    """构造能量为 amplitude^2 的 PCM 音频帧（16bit LE mono）。"""
+    return struct.pack(f"<{n}h", *([amplitude] * n))
+
+
+_HIGH_SAMPLES = _speaker_energy_samples(1000)
+
+
+class _FakeStream:
+    """返回带 speaker_status 字段的流式 ASR 假客户端。"""
+
+    def __init__(self, result):
+        self.result = result
+        self.sent = 0
+
+    async def send_audio_chunk(self, data, is_last=False, client_id=None):
+        self.sent += 1
+        return True
+
+    async def receive_result(self, timeout=0, client_id=None):
+        return self.result
+
+    async def reset(self, client_id=None):
+        pass
+
+
+def test_speaker_label_from():
+    """_speaker_label_from：pending → '识别中'；注册命中 → 注册名；其它 → ''。"""
+    # pending 态（无论文本是否为空）→ '识别中'
+    assert _speaker_label_from({"speaker_status": "pending", "text": "你好"}) == "识别中"
+    assert _speaker_label_from({"speaker_status": "pending", "text": ""}) == "识别中"
+    # 注册命中 → 注册名（受控 fallback 到 speaker_id）
+    assert _speaker_label_from({
+        "speaker_status": "ready", "speaker_registered": True, "speaker_name": "阿明",
+    }) == "阿明"
+    assert _speaker_label_from({
+        "speaker_status": "ready", "speaker_registered": True, "speaker_id": "spk-9",
+        "speaker_name": "",
+    }) == "spk-9"
+    # 未注册 / 缺字段 → ''
+    assert _speaker_label_from({
+        "speaker_status": "ready", "speaker_registered": False, "speaker_name": "",
+    }) == ""
+    assert _speaker_label_from({"speaker_registered": False}) == ""  # 缺 speaker_status 默认 ready
+    assert _speaker_label_from({}) == ""
+    assert _speaker_label_from(None) == ""
+
+
+@pytest.mark.asyncio
+async def test_partial_pending_speaker_label_identifying():
+    """pending 态：voice.partial data 附带 speaker_label='识别中'（speaker 字段保持为空）。"""
+    session, mgr = _session()
+    await session.on_partial_result({
+        "text": "你好", "is_final": False,
+        "speaker_status": "pending",
+        "speaker_id": "", "speaker_name": "",
+        "speaker_registered": False, "speaker_conf": 0.0,
+    })
+    payloads = _partial_payloads(mgr)
+    assert payloads, "应有 voice.partial 消息"
+    data = payloads[0]["data"]
+    assert data["speaker_label"] == "识别中"
+    # pending 态不归属名字：speaker_id/speaker_name 保持缺席
+    assert "speaker_id" not in data
+    assert "speaker_name" not in data
+
+
+@pytest.mark.asyncio
+async def test_empty_text_supplement_does_not_trigger_prefill():
+    """spk 补充消息（text='' is_final=False speaker_status ready + speaker_id）：
+    不应触发 prefill 回调 —— 仅用于更新说话人，不驱动无意义 LLM Speculative Prefill。
+    """
+    proc = AudioStreamProcessor(client_id="spk-empty")
+    proc.set_config({"vad": {"mode": "energy", "energy_threshold": 500, "sample_rate": 16000}})
+    called = []
+    proc.set_callbacks(on_partial_result=lambda asr_result: called.append(asr_result))
+    fake = _FakeStream(StreamingASRResult(
+        text="", is_final=False,
+        speaker_status="ready", speaker_id="spk-1", speaker_name="阿明",
+        speaker_registered=True, speaker_conf=0.9,
+    ))
+    proc.set_asr_client(fake)
+
+    await proc.process_audio_chunk(_HIGH_SAMPLES)
+    assert called == [], "空文本 spk 补充消息不应触发 prefill 回调"
+
+
+@pytest.mark.asyncio
+async def test_nonempty_text_triggers_prefill_control():
+    """对照：非空文本 partial 仍应触发 prefill，且透传 speaker_status（验证测试有效性与透传）。"""
+    proc = AudioStreamProcessor(client_id="spk-text")
+    proc.set_config({"vad": {"mode": "energy", "energy_threshold": 500, "sample_rate": 16000}})
+    called = []
+    proc.set_callbacks(on_partial_result=lambda asr_result: called.append(asr_result))
+    fake = _FakeStream(StreamingASRResult(
+        text="你好", is_final=False, speaker_status="pending",
+    ))
+    proc.set_asr_client(fake)
+
+    await proc.process_audio_chunk(_HIGH_SAMPLES)
+    assert called, "非空文本 partial 应触发 prefill 回调"
+    assert called[0]["speaker_status"] == "pending"

@@ -19,7 +19,11 @@ from types import SimpleNamespace
 import pytest
 
 from server.services import asr_service
-from server.services.asr_service import ASRService, StreamingASRResult
+from server.services.asr_service import (
+    ASRService,
+    StreamingASRResult,
+    get_recent_spk_embedding,
+)
 
 
 class FakeHttpResponse:
@@ -339,6 +343,108 @@ class TestRunInference:
         assert res["text"] == "你好"
         assert res["language"] == "zh"
         asr_service._model_instance = None
+
+
+# ================================================================ spk 补充消息 & speaker_status
+class TestSpeakerSpk:
+    @staticmethod
+    def _svc_with_msg(msg):
+        s = ASRService(mode="remote")
+        s._ws = FakeWS()
+        s._ws_recv_queue.put_nowait(json.dumps(msg))
+        return s
+
+    @pytest.mark.asyncio
+    async def test_spk_message_result_fields(self):
+        """spk 消息 → 返回空文本结果，speaker_status=ready，speaker 字段正确。"""
+        s = self._svc_with_msg({
+            "type": "spk", "speaker_id": "spk-9", "speaker_registered": True,
+            "speaker_conf": 0.95, "speaker_name": "阿明",
+            "em_embedding": [0.1, 0.2, 0.3],
+        })
+        r = await s.receive_result(timeout=0)
+        assert isinstance(r, StreamingASRResult)
+        assert r.text == ""
+        assert r.is_final is False
+        assert r.speaker_status == "ready"
+        assert r.speaker_id == "spk-9"
+        assert r.speaker_name == "阿明"
+        assert r.speaker_registered is True
+        assert r.speaker_conf == 0.95
+
+    @pytest.mark.asyncio
+    async def test_spk_message_backfills_recent(self):
+        """spk 消息回填 recent_speaker 与 recent_spk_embedding（per-client 路径）。"""
+        s = ASRService(mode="remote")
+        s._stream_accessor("c1").recv_queue.put_nowait(json.dumps({
+            "type": "spk", "speaker_id": "spk-1", "speaker_registered": False,
+            "speaker_conf": 0.6, "em_embedding": [0.5, -0.5],
+        }))
+        r = await s.receive_result(timeout=0, client_id="c1")
+        assert r.speaker_status == "ready"
+        st = s._stream_accessor("c1")
+        assert st.recent_speaker == ("spk-1", False, 0.6)
+        assert st.recent_spk_embedding == [0.5, -0.5]
+
+    @pytest.mark.asyncio
+    async def test_get_recent_spk_embedding_returns_list(self, monkeypatch):
+        """get_recent_spk_embedding(client_id) 返回最近 spk 消息的 embedding 列表。"""
+        s = ASRService(mode="remote")
+        s._stream_accessor("u-1").recv_queue.put_nowait(json.dumps({
+            "type": "spk", "speaker_id": "spk-1", "em_embedding": [1.0, 2.0, 3.0, 4.0],
+        }))
+        await s.receive_result(timeout=0, client_id="u-1")
+        monkeypatch.setattr(asr_service, "get_asr_service", lambda: s)
+        assert get_recent_spk_embedding("u-1") == [1.0, 2.0, 3.0, 4.0]
+        # 默认会话未收到过 spk 消息 → None
+        assert get_recent_spk_embedding(None) is None
+
+    @pytest.mark.asyncio
+    async def test_final_speaker_status_pending_passthrough(self):
+        """普通 final 消息带 speaker_status=pending → 透传 pending。"""
+        s = self._svc_with_msg({
+            "text": "你好", "is_final": True, "speaker_id": "spk-2",
+            "speaker_status": "pending",
+        })
+        r = await s.receive_result(timeout=0)
+        assert r.speaker_status == "pending"
+        assert r.text == "你好"
+        # pending 不回填 recent_speaker
+        assert s._recent_speaker == ()
+
+    @pytest.mark.asyncio
+    async def test_old_format_defaults(self):
+        """旧格式消息（无 type/speaker_status/em_embedding）→ 解析正常，speaker_status 缺省 ready。"""
+        s = self._svc_with_msg({"text": "hi", "is_final": True})
+        r = await s.receive_result(timeout=0)
+        assert r.text == "hi"
+        assert r.is_final is True
+        assert r.speaker_status == "ready"
+        assert r.speaker_id == ""
+        assert r.speaker_registered is False
+        assert r.speaker_conf == 0.0
+
+    @pytest.mark.asyncio
+    async def test_final_ready_backfills_recent(self):
+        """final 消息含非空 speaker_id 且 ready → 回填 recent_speaker。"""
+        s = self._svc_with_msg({
+            "text": "hi", "is_final": True, "speaker_id": "spk-3",
+            "speaker_registered": True, "speaker_conf": 0.88, "speaker_status": "ready",
+        })
+        await s.receive_result(timeout=0)
+        assert s._recent_speaker == ("spk-3", True, 0.88)
+
+    @pytest.mark.asyncio
+    async def test_per_client_embedding_isolation(self):
+        """per-client 隔离：不同 client_id 的 embedding 互不串扰。"""
+        s = ASRService(mode="remote")
+        s._stream_accessor("A").recv_queue.put_nowait(json.dumps({
+            "type": "spk", "speaker_id": "spk-A", "em_embedding": [0.1, 0.2],
+        }))
+        await s.receive_result(timeout=0, client_id="A")
+        assert s._stream_accessor("A").recent_spk_embedding == [0.1, 0.2]
+        # 客户端 B 未收到 spk 消息 → embedding 为 None
+        assert s._stream_accessor("B").recent_spk_embedding is None
 
 
 async def _raise_send(data):

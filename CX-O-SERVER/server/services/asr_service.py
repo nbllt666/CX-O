@@ -38,7 +38,8 @@ class _StreamState:
     final 标记，使并发会话各自上行、各自收结果，互不串扰。
     """
 
-    __slots__ = ("ws", "lock", "recv_queue", "recv_task", "final_received")
+    __slots__ = ("ws", "lock", "recv_queue", "recv_task", "final_received",
+                 "recent_speaker", "recent_spk_embedding")
 
     def __init__(self):
         self.ws: Any = None  # websockets.WebSocketClientProtocol
@@ -46,6 +47,8 @@ class _StreamState:
         self.recv_queue: asyncio.Queue = asyncio.Queue()
         self.recv_task: Optional[asyncio.Task] = None
         self.final_received: bool = False
+        self.recent_speaker: tuple = ()
+        self.recent_spk_embedding: Optional[list] = None
 
 
 class _StreamAccessor:
@@ -107,6 +110,28 @@ class _StreamAccessor:
         else:
             self._state.final_received = value
 
+    @property
+    def recent_speaker(self):
+        return self._svc._recent_speaker if self._state is None else self._state.recent_speaker
+
+    @recent_speaker.setter
+    def recent_speaker(self, value):
+        if self._state is None:
+            self._svc._recent_speaker = value
+        else:
+            self._state.recent_speaker = value
+
+    @property
+    def recent_spk_embedding(self):
+        return self._svc._recent_spk_embedding if self._state is None else self._state.recent_spk_embedding
+
+    @recent_spk_embedding.setter
+    def recent_spk_embedding(self, value):
+        if self._state is None:
+            self._svc._recent_spk_embedding = value
+        else:
+            self._state.recent_spk_embedding = value
+
 
 class ASRService:
     """统一 ASR 服务，支持 embedded 与 remote 两种识别模式，并提供 WebSocket 流式识别接口。
@@ -131,6 +156,9 @@ class ASRService:
         self._ws_recv_queue: asyncio.Queue = asyncio.Queue()
         self._ws_recv_task: Optional[asyncio.Task] = None
         self._ws_final_received: bool = False  # 是否已收到 final 结果（避免 final 后继续读 queue）
+        # 默认会话最近说话人状态（spk 补充消息 / final 回填）
+        self._recent_speaker: tuple = ()
+        self._recent_spk_embedding: Optional[list] = None
         # per-client 流式会话注册表（client_id -> _StreamState）
         self._stream_sessions: dict = {}
 
@@ -490,21 +518,44 @@ class ASRService:
             return None
         try:
             data = json.loads(message)
+            # spk 补充消息：无文本，仅带回 speaker 声纹元信息（含 embedding），
+            # 回填会话最近说话人状态后直接返回，不再走普通结果解析。
+            if data.get("type") == "spk":
+                speaker_id = data.get("speaker_id", "")
+                speaker_registered = bool(data.get("speaker_registered", False))
+                speaker_conf = float(data.get("speaker_conf", 0.0))
+                speaker_name = data.get("speaker_name") or (speaker_id if speaker_registered else "")
+                # 回填会话状态
+                st.recent_speaker = (speaker_id, speaker_registered, speaker_conf)
+                emb = data.get("em_embedding")
+                if isinstance(emb, list) and emb:
+                    st.recent_spk_embedding = [float(x) for x in emb]
+                return StreamingASRResult(
+                    text="", clean_text="", language=data.get("language", ""),
+                    is_final=False, emotion=data.get("emotion", ""),
+                    speaker_status="ready", speaker_id=speaker_id, speaker_name=speaker_name,
+                    speaker_registered=speaker_registered, speaker_conf=speaker_conf,
+                )
             text = data.get("text", "")
             is_final = data.get("is_final", False)
             if is_final:
                 st.final_received = True
+            speaker_status = data.get("speaker_status", "ready")
             # 声纹字段解析（兼容旧容器缺字段）：缺失时取默认值/空串
             speaker_id = data.get("speaker_id", "")
             speaker_registered = bool(data.get("speaker_registered", False))
             speaker_conf = float(data.get("speaker_conf", 0.0))
             speaker_name = data.get("speaker_name") or (speaker_id if speaker_registered else "")
+            # final 回填最近说话人：仅当本句含非空 speaker_id 且状态为 ready 时更新
+            if is_final and speaker_id and speaker_status == "ready":
+                st.recent_speaker = (speaker_id, speaker_registered, speaker_conf)
             return StreamingASRResult(
                 text=text,
                 clean_text=text,
                 language=data.get("language", ""),
                 is_final=is_final,
                 emotion=data.get("emotion", ""),
+                speaker_status=speaker_status,
                 speaker_id=speaker_id,
                 speaker_name=speaker_name,
                 speaker_registered=speaker_registered,
@@ -570,6 +621,7 @@ class StreamingASRResult:
         speaker_name: str = "",
         speaker_registered: bool = False,
         speaker_conf: float = 0.0,
+        speaker_status: str = "ready",
     ):
         self.text = text
         self.clean_text = clean_text
@@ -581,6 +633,8 @@ class StreamingASRResult:
         self.speaker_name = speaker_name
         self.speaker_registered = speaker_registered
         self.speaker_conf = speaker_conf
+        # 声纹注册状态：pending=待注册确认 / ready=已就绪（spk 补充消息恒为 ready）
+        self.speaker_status = speaker_status
 
 
 _asr_service: Optional[ASRService] = None
@@ -601,3 +655,13 @@ def get_asr_service() -> ASRService:
             ws_url=settings.asr.ws_url,
         )
     return _asr_service
+
+
+def get_recent_spk_embedding(client_id: Optional[str] = None) -> Optional[list]:
+    """返回指定客户端最近收到的 spk 补充消息中的说话人 embedding（192 float 列表）。
+
+    client_id 为 None 时读取默认会话的最近 embedding；未收到过 spk 补充消息时返回 None。
+    """
+    svc = get_asr_service()
+    st = svc._stream_accessor(client_id)
+    return st.recent_spk_embedding
