@@ -266,6 +266,16 @@ class TestAudio:
         assert handler._manager.sent[0][1]["type"] == "vad_frame"
 
     @pytest.mark.asyncio
+    async def test_audio_resets_voice_context(self, handler, monkeypatch):
+        """handle_audio 结束后应复位 voice_context，避免 client_id 残留串扰。"""
+        from server.services.voice_context import get_active_client_id
+        monkeypatch.setattr(lc, "ensure_stream_processor_configured",
+                            lambda client_id: FakeStreamProcessor())
+        assert get_active_client_id() == "default"
+        await handler.handle_audio(None, b"\x00", "c1")
+        assert get_active_client_id() == "default"
+
+    @pytest.mark.asyncio
     async def test_audio_vad_state_change_sends_status(self, handler, monkeypatch):
         vad = {"is_speaking": True, "speech_probability": 0.9,
                "speech_duration_ms": 100, "state_changed": True}

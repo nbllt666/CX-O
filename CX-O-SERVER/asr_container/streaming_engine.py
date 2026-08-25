@@ -488,7 +488,10 @@ class StreamSession:
         except Exception:
             return
         match = self.session.recent_match()
-        em_embedding = [float(x) for x in match[1]] if match else []
+        # 显式判空后再访问（条件表达式易误读为 None 时仍取 match[1] 的语义）
+        em_embedding = []
+        if match:
+            em_embedding = [float(x) for x in match[1]]
         self._pending_spk_msgs.append({
             "type": "spk",
             "speaker_status": "ready",

@@ -680,6 +680,8 @@ class DualStreamSession:
                 message=str(e)
             ))
         finally:
+            # 复位 contextvars，避免 task 复用/异常路径下 client_id 残留串扰
+            reset_active_client_id(token)
             try:
                 await set_tts_playing(self.client_id, False)
             except Exception as e:

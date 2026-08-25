@@ -3,13 +3,13 @@
   "running": true,
   "status": "running",
   "motivations": {
-    "curiosity": 0.6456672169166668,
-    "social_need": 0.5565337735333333,
-    "creative_drive": 0.02173311323333335,
+    "curiosity": 0.6706673080694445,
+    "social_need": 0.5765338464555556,
+    "creative_drive": 0.011733076772222236,
     "fatigue": 0.0
   },
   "last_action": "read_news",
-  "last_cycle_at": "2026-08-25T14:18:24.926339+00:00",
+  "last_cycle_at": "2026-08-25T14:49:13.628499+00:00",
   "daily_budget_used_tokens": 0,
   "budget_reset_date": "2026-08-25",
   "diary_last_at": null

@@ -17,7 +17,7 @@ from server.services.live_feedback import LiveFeedbackTracker, get_live_feedback
 from server.services.vad_processor import ensure_stream_processor_configured
 from server.services.asr_interrupt import get_asr_interrupt_module
 from server.services.agent_interrupt_user import get_agent_interrupt_module
-from server.services.voice_context import set_active_client_id
+from server.services.voice_context import reset_active_client_id, set_active_client_id
 
 if TYPE_CHECKING:
     from server.core.websocket.manager import WebSocketManager
@@ -63,7 +63,7 @@ class LiveClientHandler:
 
     async def handle_audio(self, websocket, audio_data: bytes, client_id: str):
         # 注入当前语音会话 client_id 到 contextvars（工具执行读取）
-        set_active_client_id(self.client_id)
+        token = set_active_client_id(self.client_id)
         try:
             # per-client 并发化：按 client_id 取独立处理器实例（会话间 VAD/ASR 不串扰）
             stream_processor = ensure_stream_processor_configured(self.client_id)
@@ -126,6 +126,9 @@ class LiveClientHandler:
 
         except Exception as e:
             logger.error(f"Live audio processing error: {e}")
+        finally:
+            # 复位 contextvars，避免异常路径下 client_id 残留串扰
+            reset_active_client_id(token)
 
     async def _handle_init(self, websocket, message: dict):
         data = message.get("data", {})

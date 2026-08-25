@@ -15,6 +15,7 @@ import asyncio
 import os
 import sys
 import threading
+import time
 import types
 
 import numpy as np
@@ -79,6 +80,16 @@ def _unit_emb():
     return np.ones(DIM, dtype=np.float32) * 0.01
 
 
+def _slow_asr_first(audio):
+    """ASR 线程让行 50ms，保证同时提交的 SPK 线程先行完成（快速路径确定性）。
+
+    否则快速路径用例依赖线程池调度时序（run_in_executor 的 done() 判定），
+    谁先完成随机，测试偶发 flaky。
+    """
+    time.sleep(0.05)
+    return "你好"
+
+
 async def _run_delayed_pending_then_supplement(monkeypatch):
     session = _make_session()
     _patch_vad(monkeypatch, session)
@@ -124,7 +135,9 @@ def test_delayed_embedding_pending_then_supplement(monkeypatch):
 async def _run_fast_path_ready_speaker(monkeypatch):
     session = _make_session()
     _patch_vad(monkeypatch, session)
-    _patch_asr(monkeypatch)
+    monkeypatch.setattr(engine, "_run_asr_final", _slow_asr_first)
+    monkeypatch.setattr(engine, "_run_asr_partial", lambda audio, cache: "")
+    monkeypatch.setattr(engine, "_run_asr_speculative", lambda audio: "")
     monkeypatch.setattr(engine, "_run_spk_embedding", lambda audio: _unit_emb())
 
     msgs = await session._vad_sweep()
@@ -178,9 +191,12 @@ def test_spk_inflight_limit_drops_third(monkeypatch):
 
 async def _run_finish_pending_and_ready(monkeypatch):
     session = _make_session()
-    _patch_asr(monkeypatch)
+    _patch_vad(monkeypatch, session)
 
-    # ready 快速路径
+    # ready 快速路径：SPK 线程先行完成，emb_fut.done() 为真
+    monkeypatch.setattr(engine, "_run_asr_final", _slow_asr_first)
+    monkeypatch.setattr(engine, "_run_asr_partial", lambda audio, cache: "")
+    monkeypatch.setattr(engine, "_run_asr_speculative", lambda audio: "")
     monkeypatch.setattr(engine, "_run_spk_embedding", lambda audio: _unit_emb())
     msgs = await session.finish()
     assert len(msgs) == 1
@@ -189,7 +205,10 @@ async def _run_finish_pending_and_ready(monkeypatch):
 
     # pending 路径（声纹慢）
     session2 = _make_session()
-    _patch_asr(monkeypatch)
+    _patch_vad(monkeypatch, session2)
+    monkeypatch.setattr(engine, "_run_asr_final", lambda audio: "你好")
+    monkeypatch.setattr(engine, "_run_asr_partial", lambda audio, cache: "")
+    monkeypatch.setattr(engine, "_run_asr_speculative", lambda audio: "")
     gate = threading.Event()
 
     def _slow_spk(audio):
