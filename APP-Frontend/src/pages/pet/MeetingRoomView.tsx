@@ -12,7 +12,10 @@
 import { useCallback, useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import {
+  AtSign,
   Bot,
+  Eye,
+  EyeOff,
   Loader2,
   MessageSquarePlus,
   Mic,
@@ -24,7 +27,7 @@ import {
 } from 'lucide-react';
 import { agentsApi } from '@/api/clients/agents';
 import type { Agent } from '@/api/types';
-import type { MeetingAgentSpec } from '@/api/clients/meeting';
+import type { MeetingAgentSpec, MeetingRecentMessage } from '@/api/clients/meeting';
 import { useMeetingWebSocket } from '@/hooks/useMeetingWebSocket';
 import { Button } from '@/components/ui-v2/button';
 import { Card, CardBody, CardHeader } from '@/components/ui-v2/card';
@@ -42,6 +45,10 @@ export default function MeetingRoomView() {
   const [actionError, setActionError] = useState<string | null>(null);
   const [speakResult, setSpeakResult] = useState<string | null>(null);
   const [activeRoomId, setActiveRoomId] = useState<string | null>(null);
+  // 建会面板：是否开启观众席（随 start 提交）
+  const [startWithAudience, setStartWithAudience] = useState(false);
+  // 输入框当前点名的 agent_id（@agent 快捷点名；发言时作为 speak.mention）
+  const [mentionTarget, setMentionTarget] = useState<string | null>(null);
 
   const loadAgents = useCallback(async () => {
     try {
@@ -77,7 +84,11 @@ export default function MeetingRoomView() {
       const a = agents.find((x) => x.id === id);
       return { agent_id: id, name: a?.name ?? id };
     });
-    const room = await meeting.start({ user: userName.trim() || 'user', agents: specs });
+    const room = await meeting.start({
+      user: userName.trim() || 'user',
+      agents: specs,
+      audience_enabled: startWithAudience,
+    });
     if (!room) {
       setActionError(t('management.meeting.startFailed'));
       return;
@@ -99,17 +110,53 @@ export default function MeetingRoomView() {
   const handleSpeak = async () => {
     if (!speakText.trim()) return;
     setActionError(null);
-    const res = await meeting.speak(speakText.trim());
+    const res = await meeting.speak(speakText.trim(), {
+      role: 'user',
+      username: userName.trim() || 'user',
+      mention: mentionTarget ?? undefined,
+    });
     if (res) {
       setSpeakResult(res.turns.map((tm) => `[${tm.speaker}] ${tm.text}`).join('\n'));
       setSpeakText('');
+      setMentionTarget(null);
     } else {
       setSpeakResult(t('management.meeting.speakFailed'));
     }
   };
 
+  // @agent 快捷点名：把 @名 插入输入框并记录点名目标（speak 时作为 mention）
+  const handleMention = (agent: MeetingAgentSpec) => {
+    setMentionTarget(agent.agent_id);
+    setSpeakText((prev) => {
+      const base = prev.trim() ? `${prev.trim()} ` : '';
+      return `${base}@${agent.name || agent.agent_id} `;
+    });
+  };
+
   const toggleSelected = (id: string) =>
     setSelected((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]));
+
+  // 互动空间派生数据：观众席开关状态 + 统一消息流 + 角色身份 meta
+  const audienceEnabled = snapshot?.audience_enabled ?? false;
+  const messages = snapshot?.recent_messages ?? [];
+
+  const roleMeta = (role: MeetingRecentMessage['role']): { label: string; className: string } => {
+    switch (role) {
+      case 'audience':
+        return { label: t('management.meeting.role.audience'), className: 'text-pink-400' };
+      case 'agent':
+        return { label: t('management.meeting.role.agent'), className: 'text-primary' };
+      default:
+        return { label: t('management.meeting.role.user'), className: 'text-sky-400' };
+    }
+  };
+
+  const handleToggleAudience = async () => {
+    setActionError(null);
+    const next = !audienceEnabled;
+    const s = await meeting.toggleAudience(next);
+    if (!s) setActionError(t('management.meeting.actionFailed'));
+  };
 
   return (
     <div className="mx-auto max-w-3xl space-y-6">
@@ -172,6 +219,29 @@ export default function MeetingRoomView() {
                 )}
               </div>
             </div>
+            <div className="flex items-center justify-between">
+              <span className="flex items-center gap-2 text-xs text-muted-foreground">
+                <Eye className="h-3.5 w-3.5" />
+                {t('management.meeting.startWithAudience')}
+              </span>
+              <button
+                type="button"
+                data-testid="audience-toggle-start"
+                aria-pressed={startWithAudience}
+                onClick={() => setStartWithAudience((v) => !v)}
+                className={cn(
+                  'flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs transition-colors',
+                  startWithAudience
+                    ? 'border-[var(--color-primary)] bg-primary/15 text-primary'
+                    : 'border-[var(--glass-border)] text-muted-foreground',
+                )}
+              >
+                <EyeOff className="h-3.5 w-3.5" />
+                {startWithAudience
+                  ? t('management.meeting.audienceOn')
+                  : t('management.meeting.audienceOff')}
+              </button>
+            </div>
             <div className="flex justify-end gap-2">
               <Button
                 size="sm"
@@ -216,6 +286,33 @@ export default function MeetingRoomView() {
                   {snapshot?.token_holder ?? t('management.meeting.noSpeaker')}
                 </span>
               </p>
+              {/* 观众席开关：绑定当前房间 audience_enabled（调 toggleAudience 启停弹幕通道） */}
+              <div className="flex items-center justify-between">
+                <span className="flex items-center gap-2">
+                  {audienceEnabled ? (
+                    <Eye className="h-3.5 w-3.5 text-primary" />
+                  ) : (
+                    <EyeOff className="h-3.5 w-3.5" />
+                  )}
+                  {t('management.meeting.audience')}
+                </span>
+                <button
+                  type="button"
+                  data-testid="audience-toggle-live"
+                  aria-pressed={audienceEnabled}
+                  onClick={() => void handleToggleAudience()}
+                  className={cn(
+                    'flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs transition-colors',
+                    audienceEnabled
+                      ? 'border-[var(--color-primary)] bg-primary/15 text-primary'
+                      : 'border-[var(--glass-border)] text-muted-foreground',
+                  )}
+                >
+                  {audienceEnabled
+                    ? t('management.meeting.audienceOn')
+                    : t('management.meeting.audienceOff')}
+                </button>
+              </div>
               {meeting.isError && (
                 <p className="text-xs text-red-400">{t('management.meeting.statePollError')}</p>
               )}
@@ -249,8 +346,10 @@ export default function MeetingRoomView() {
                         <span className="truncate text-sm text-foreground">
                           {p.name || p.agent_id}
                         </span>
-                        {isSpeaker && (
-                          <Badge variant="anime">{t('management.meeting.speaking')}</Badge>
+                        {isSpeaker &&
+                          <Badge variant="anime">{t('management.meeting.speaking')}</Badge>}
+                        {!isSpeaker && (
+                          <Badge variant="secondary">{t('management.meeting.standby')}</Badge>
                         )}
                       </div>
                       <Button
@@ -282,9 +381,64 @@ export default function MeetingRoomView() {
             </CardBody>
           </Card>
 
+          {/* 统一消息流：user/audience/agent 三态身份渲染（最近消息） */}
+          <Card>
+            <CardHeader>{t('management.meeting.recentMessages')}</CardHeader>
+            <CardBody className="space-y-2">
+              {messages.length === 0 ? (
+                <p className="text-xs text-muted-foreground">{t('management.meeting.messageEmpty')}</p>
+              ) : (
+                <ul className="space-y-2">
+                  {messages.map((m, i) => {
+                    const meta = roleMeta(m.role);
+                    const displayName =
+                      m.role === 'user' ? meta.label : m.speaker || meta.label;
+                    return (
+                      <li
+                        key={i}
+                        className="rounded-lg border border-[var(--glass-border)] px-3 py-2"
+                      >
+                        <span className={cn('text-xs font-medium', meta.className)}>
+                          {displayName}
+                        </span>
+                        <p className="mt-1 text-sm text-foreground">{m.text}</p>
+                      </li>
+                    );
+                  })}
+                </ul>
+              )}
+            </CardBody>
+          </Card>
+
           <Card>
             <CardHeader>{t('management.meeting.speakTitle')}</CardHeader>
             <CardBody className="space-y-3">
+              {/* @agent 快捷点名：点击插入 @名 到输入框并标记点名目标 */}
+              <div className="flex flex-wrap items-center gap-1.5">
+                <span className="flex items-center gap-1 text-xs text-muted-foreground">
+                  <AtSign className="h-3.5 w-3.5" />
+                  {t('management.meeting.mention')}
+                  {mentionTarget && (
+                    <span className="text-primary">@{participants.find((p) => p.agent_id === mentionTarget)?.name || mentionTarget}</span>
+                  )}
+                </span>
+                {participants.map((p) => (
+                  <button
+                    key={p.agent_id}
+                    type="button"
+                    data-testid={`mention-${p.agent_id}`}
+                    onClick={() => handleMention(p)}
+                    className={cn(
+                      'flex items-center gap-1 rounded-lg border px-2 py-1 text-xs transition-colors',
+                      mentionTarget === p.agent_id
+                        ? 'border-[var(--color-primary)] bg-primary/15 text-primary'
+                        : 'border-[var(--glass-border)] text-muted-foreground hover:bg-[rgba(255,255,255,0.06)]',
+                    )}
+                  >
+                    @{p.name || p.agent_id}
+                  </button>
+                ))}
+              </div>
               <textarea
                 value={speakText}
                 onChange={(e) => setSpeakText(e.target.value)}

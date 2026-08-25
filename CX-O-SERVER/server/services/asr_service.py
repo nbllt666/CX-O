@@ -494,12 +494,21 @@ class ASRService:
             is_final = data.get("is_final", False)
             if is_final:
                 st.final_received = True
+            # 声纹字段解析（兼容旧容器缺字段）：缺失时取默认值/空串
+            speaker_id = data.get("speaker_id", "")
+            speaker_registered = bool(data.get("speaker_registered", False))
+            speaker_conf = float(data.get("speaker_conf", 0.0))
+            speaker_name = data.get("speaker_name") or (speaker_id if speaker_registered else "")
             return StreamingASRResult(
                 text=text,
                 clean_text=text,
                 language=data.get("language", ""),
                 is_final=is_final,
                 emotion=data.get("emotion", ""),
+                speaker_id=speaker_id,
+                speaker_name=speaker_name,
+                speaker_registered=speaker_registered,
+                speaker_conf=speaker_conf,
             )
         except Exception as e:
             logger.error(f"[ASR-WS] Parse result error: {e}, raw={message[:200]}")
@@ -557,12 +566,21 @@ class StreamingASRResult:
         language: str = "",
         is_final: bool = False,
         emotion: str = "",
+        speaker_id: str = "",
+        speaker_name: str = "",
+        speaker_registered: bool = False,
+        speaker_conf: float = 0.0,
     ):
         self.text = text
         self.clean_text = clean_text
         self.language = language
         self.is_final = is_final
         self.emotion = emotion
+        # 声纹识别字段（Task 4）：说话人标识/姓名/是否已注册/相似度置信度
+        self.speaker_id = speaker_id
+        self.speaker_name = speaker_name
+        self.speaker_registered = speaker_registered
+        self.speaker_conf = speaker_conf
 
 
 _asr_service: Optional[ASRService] = None

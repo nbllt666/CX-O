@@ -36,13 +36,13 @@ import {
   Moon,
   Network,
   Puzzle,
+  Server,
   Settings,
   SlidersHorizontal,
   Sparkles,
   User,
   Volume2,
   Wrench,
-  Server,
   Users,
 } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
@@ -221,25 +221,25 @@ export const MANAGEMENT_ROUTES: readonly ManagementRouteEntry[] = [
     icon: Moon,
     Component: lazy(() => import('./DreamPage')),
   },
-  // ── 管理面页（AdminPage） / 哨兵集群页（ClusterPage），仅追加，不改既有条目 ──
-  {
-    path: 'admin',
-    titleKey: 'management.nav.admin',
-    icon: Server,
-    Component: lazy(() => import('./AdminPage')),
-  },
-  {
-    path: 'cluster',
-    titleKey: 'management.nav.cluster',
-    icon: Network,
-    Component: lazy(() => import('./ClusterPage')),
-  },
   // ── 会议室视图（多 Agent 语音会议协调器，仅追加，不改既有条目） ──
   {
     path: 'meeting',
     titleKey: 'management.nav.meeting',
     icon: Users,
     Component: lazy(() => import('../pet/MeetingRoomView')),
+  },
+  // ── 实验功能分组子页，仅追加（微调页 + 哨兵集群页，收编进侧边栏「实验功能」折叠组） ──
+  {
+    path: 'tuner',
+    titleKey: 'management.nav.tuner',
+    icon: FlaskConical,
+    Component: lazy(() => import('./TunerPage')),
+  },
+  {
+    path: 'cluster',
+    titleKey: 'management.nav.cluster',
+    icon: Server,
+    Component: lazy(() => import('./ClusterPage')),
   },
 ];
 

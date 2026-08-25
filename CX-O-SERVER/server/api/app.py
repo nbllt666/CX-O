@@ -45,6 +45,7 @@ from server.api.routers import (
     cluster,
     vision,
     meeting,
+    voiceprint,
 )
 from server.config import get_settings
 from server.dependencies import ServiceState
@@ -124,6 +125,8 @@ def register_api_routes(app: FastAPI):
     app.include_router(vision.router, prefix="/api")
     # 多 Agent 语音会议协调器 REST（/api/meeting/*）—— enabled=false 时零侵入
     app.include_router(meeting.router, prefix="/api")
+    # 声纹识别 REST（/api/voiceprint/*）
+    app.include_router(voiceprint.router, prefix="/api")
 
     app.add_exception_handler(ServiceError, service_exception_handler)
     app.add_exception_handler(HTTPException, http_exception_handler)

@@ -6,6 +6,7 @@
 - POST /api/meeting/{room_id}/join                    并入 Agent
 - POST /api/meeting/{room_id}/leave                   移除 Agent
 - POST /api/meeting/{room_id}/speak                   用户发言触发仲裁
+- POST /api/meeting/{room_id}/audience/toggle         开/关观众席
 
 装配方式对齐 cxfc.py / autonomy.py 模式：模块级 ``_coordinator`` 全局 +
 ``set_meeting_coordinator()`` 注入，由 server/main.py 装配时调用。
@@ -82,6 +83,7 @@ class StartRequest(BaseModel):
     agents: List[AgentSpec] = Field(default_factory=list)
     room_id: Optional[str] = None
     max_agents: Optional[int] = None
+    audience_enabled: bool = False
 
 
 class AgentIdRequest(BaseModel):
@@ -96,9 +98,19 @@ class AgentIdRequest(BaseModel):
 
 
 class SpeakRequest(BaseModel):
-    """用户发言请求体。"""
+    """用户/观众发言请求体。"""
 
     text: str = Field(..., min_length=1)
+    role: str = "user"  # 消息角色：user=用户/主播，audience=观众弹幕
+    userid: str = ""
+    username: str = ""
+    mention: str = ""
+
+
+class AudienceToggleRequest(BaseModel):
+    """观众席开关请求体。"""
+
+    enabled: bool = False
 
 
 # ================================================================ 端点
@@ -120,6 +132,7 @@ async def start_meeting(body: StartRequest):
             agents=[a.model_dump() for a in body.agents],
             room_id=body.room_id,
             max_agents=body.max_agents,
+            audience_enabled=body.audience_enabled,
         )
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
@@ -178,8 +191,33 @@ async def leave_meeting(room_id: str, body: AgentIdRequest):
 
 @router.post("/meeting/{room_id}/speak", response_model=APIResponse)
 async def speak(room_id: str, body: SpeakRequest):
-    """用户说话，触发发言权仲裁 → 令牌 → 转录 → TTS 全流程。"""
+    """用户/观众发言，触发仲裁 → 令牌 → 转录 → TTS 全流程。
+
+    role="audience" 时按观众身份进入互动空间消息流（meta 带 userid/username），
+    否则视为用户发言（保持既有行为）。
+    """
     coord = _require_coordinator()
     room = _room_or_404(coord, room_id)
-    result: Dict[str, Any] = await coord.process_user_speech(room.room_id, body.text)
-    return APIResponse.ok(data=result, message="已处理用户发言")
+    if body.role == "audience":
+        result: Dict[str, Any] = await coord.process_message(
+            room.room_id,
+            body.text,
+            role="audience",
+            meta={
+                "userid": body.userid,
+                "username": body.username,
+                "mention": body.mention,
+            },
+        )
+    else:
+        result = await coord.process_user_speech(room.room_id, body.text)
+    return APIResponse.ok(data=result, message="已处理发言")
+
+
+@router.post("/meeting/{room_id}/audience/toggle", response_model=APIResponse)
+async def toggle_audience(room_id: str, body: AudienceToggleRequest):
+    """开启/关闭观众席（互动空间弹幕通道）。"""
+    coord = _require_coordinator()
+    room = _room_or_404(coord, room_id)
+    await coord.toggle_audience(room.room_id, body.enabled)
+    return APIResponse.ok(data=room.to_dict(), message="观众席已切换")

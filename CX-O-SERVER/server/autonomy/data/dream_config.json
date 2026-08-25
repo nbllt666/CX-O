@@ -1,0 +1,43 @@
+{
+  "enabled": true,
+  "model": "summary",
+  "dream_temperature": 0.9,
+  "candidates_per_session": 3,
+  "material_window_days": 7,
+  "max_material_items": 20,
+  "min_lucidity": 0.3,
+  "dream_ttl_hours": 72,
+  "purge_threshold": 0.1,
+  "confirmed_importance": 0.4,
+  "surface_on_wake": true,
+  "surface_probability": 0.5,
+  "max_surface_per_day": 1,
+  "schedule": {
+    "wake_time": "08:00",
+    "sleep_time": "02:00",
+    "golden_start": "19:00",
+    "golden_end": "23:00",
+    "diary_time": "02:00",
+    "quiet_windows": []
+  },
+  "physio": {
+    "enabled": false,
+    "backend": "noble",
+    "device_name_hint": "",
+    "device_fingerprint": null,
+    "scan_timeout_sec": 15,
+    "reconnect_interval_sec": 30,
+    "base_drop_ratio": 0.88,
+    "base_drop_confirm_min": 5,
+    "hr_stability_threshold": 6.0,
+    "base_hr_learning": true,
+    "store_raw_hr": false
+  },
+  "sleep_confirmation": {
+    "enabled": true,
+    "model": "summary",
+    "timeout_sec": 10.0,
+    "prompt_template": "",
+    "cooldown_seconds": 1800
+  }
+}

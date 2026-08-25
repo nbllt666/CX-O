@@ -6,7 +6,13 @@ import struct
 
 import pytest
 
-from server.services.vad_processor import VADMode, VADProcessor, get_vad_processor
+from server.services.asr_service import StreamingASRResult
+from server.services.vad_processor import (
+    VADMode,
+    VADProcessor,
+    AudioStreamProcessor,
+    get_vad_processor,
+)
 
 
 def _samples_energy(amplitude: int, n: int = 480) -> bytes:
@@ -115,3 +121,66 @@ class TestCallbacks:
 class TestSingleton:
     def test_get_instance(self):
         assert get_vad_processor() is VADProcessor.get_instance()
+
+
+class _FakeSpeakerStream:
+    """返回带 speaker 字段的流式 ASR 假客户端。"""
+
+    def __init__(self, result):
+        self.result = result
+        self.sent = 0
+
+    async def send_audio_chunk(self, data, is_last=False, client_id=None):
+        self.sent += 1
+        return True
+
+    async def receive_result(self, timeout=0, client_id=None):
+        return self.result
+
+    async def reset(self, client_id=None):
+        pass
+
+
+class TestSpeakerPassthrough:
+    """AudioStreamProcessor.process_audio_chunk 对声纹字段的透传断言（Task 4）。"""
+
+    @pytest.mark.asyncio
+    async def test_speaker_fields_transduced(self):
+        proc = AudioStreamProcessor(client_id="spk-test")
+        proc.set_config({"vad": {"mode": "energy", "energy_threshold": 500, "sample_rate": 16000}})
+        fake = _FakeSpeakerStream(StreamingASRResult(
+            text="你好",
+            speaker_id="spk-1",
+            speaker_name="阿明",
+            speaker_registered=True,
+            speaker_conf=0.9,
+        ))
+        proc.set_asr_client(fake)
+
+        result = await proc.process_audio_chunk(HIGH_SAMPLES)
+        asr = result["asr"]
+        assert asr is not None
+        # 既有字段不受影响
+        assert asr["text"] == "你好"
+        # 声纹字段完整透传
+        assert asr["speaker_id"] == "spk-1"
+        assert asr["speaker_name"] == "阿明"
+        assert asr["speaker_registered"] is True
+        assert asr["speaker_conf"] == 0.9
+        # 确有触发发送与接收
+        assert fake.sent >= 1
+
+    @pytest.mark.asyncio
+    async def test_speaker_fields_defaults_when_absent(self):
+        """AppStream 结果缺声纹字段 → 透传默认值，向后兼容。"""
+        proc = AudioStreamProcessor(client_id="spk-test2")
+        proc.set_config({"vad": {"mode": "energy", "energy_threshold": 500, "sample_rate": 16000}})
+        fake = _FakeSpeakerStream(StreamingASRResult(text="你好"))
+        proc.set_asr_client(fake)
+
+        result = await proc.process_audio_chunk(HIGH_SAMPLES)
+        asr = result["asr"]
+        assert asr["speaker_id"] == ""
+        assert asr["speaker_name"] == ""
+        assert asr["speaker_registered"] is False
+        assert asr["speaker_conf"] == 0.0

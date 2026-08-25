@@ -4,6 +4,27 @@
 
 ## 做到哪了
 
+- **会议重定位为「多 Agent 互动空间」**（已闭合，2026-08-25；spec `refactor-meeting-to-interaction-room`、变更文档 `20260825_模块0_会议重定位互动空间.md`）
+  - 工程过程：用户指出「会议功能只是为了让多个 agent 一起和用户以及观众交互，现在的设计不合适」→ AskUserQuestion 三决策（场景=本地桌宠+直播观众都要；回应=群聊式多态；模块=重构演进）→ 侦查发现原 MeetingCoordinator 从未装配到主服务+广播悬空+弹幕仅回显本人 → T0 基线(35 passed) → T1 main.py 装配+广播接线 → T2 TurnArbiter 改主答选择/process_message/插话循环/audience 转录 → T3 danmaku_connector+live_client 全房间广播+协调器消费弹幕 → T4 MeetingConfig 重构+REST 扩展 → T5 前端事件订阅+轮询兜底 → T6 互动空间视图+i18n → T7 端到端。
+  - 交接状态：**已闭合**（服务端定向回归 265 passed；前端 typecheck/lint、vitest 目标 132 通过/全量 589 通过[3 electron/ble 存量失败与本次无关]；HTTP 端到端冒烟全链路成功：start→speak(user)→speak(audience 水友小明)→recent_messages 四态→toggle off→end(summary 393)）。spec 三件套与 checklist 全勾选。
+  - 最终结果：会议重定义为「互动空间」——用户在互动房间选 Agent 并可选开观众席；用户发言/观众弹幕进统一消息流，LLM/启发式选主答、其余按 speech_rate 插话、@点名优先、支持连续对话；弹幕经 live 频道全房间广播（DanmakuPage/danmaku-source 消费）；房间状态经 /ws 事件推送（前端事件订阅+轮询兜底）；会议结束记忆沉淀。
+  - 未闭合项：①真实 bilibili/zlib 弹幕协议未实现（rdf/通用文本源可用）；②被点名桌宠转向+表情为可选视觉（沿用 token_holder 高亮）；③后端已以新代码运行且冒烟验证后 config.json 已恢复默认（下次重启 meeting 默认关闭，要使用互动空间需在配置开启 `meeting.enabled=true`）；④前端未重新打包。
+  - 接续入口：配置开启 meeting.enabled → 重启后端 → 管理窗「实验功能→会议室」进入互动空间使用；如需分发重打安装包。
+
+- **「实验功能」侧边栏折叠组 + 新建微调页 + 恢复哨兵集群页**（已闭合，2026-08-25；issue `模块0-20260825-03`[20260825_模块前端_实验功能折叠组与微调页.md]）
+  - 工程过程：用户要求把 agent生活/哨兵集群/梦境等折叠到「实验功能」标签页，微调功能做个页面也放进去 → AskUserQuestion 拍板：侧边栏折叠组形态、恢复哨兵集群、收纳范围=Agent生活/梦境日志/微调(新建)/哨兵集群(恢复)/会议室/Neko插件（蒸馏保持独立；会议室实现问题下一轮改）→ 恢复 ClusterPage+cluster.ts+admin.ts（git HEAD 提取，AdminPage 保持删除）→ routes.tsx 末尾追加 tuner/cluster 登记 → ManagementLayout 新增 EXPERIMENT_GROUP_PATHS（autonomy/dream/tuner/cluster/neko/meeting）折叠组 → 新建 TunerPage（数据集统计/训练触发与 5s 轮询/适配器应用删除/离线降级）→ i18n 双语补键。
+  - 交接状态：**已闭合**（typecheck ✓、lint ✓、vitest src/pages/management 24 文件 183 用例全绿；i18n JSON 校验通过）。变更文档 `.trae/documents/20260825_模块前端_实验功能折叠组与微调页.md`。
+  - 最终结果：侧边栏出现「实验功能」可展开分组（烧瓶图标），内含 Agent生活/梦境日志/微调/哨兵集群/会议室/Neko插件；微调页对齐后端 /api/v1/tuner/*。
+  - 未闭合项：meeting 会议室视图实现 bug（用户指定下一轮改，本轮仅收纳）；前端未重打安装包。
+  - 接续入口：刷新管理窗侧边栏即可看到「实验功能」分组；如需分发重打安装包。
+
+- **移除前端管理面/集群界面（保留后端管理接口给 agent 调用）**（已闭合，2026-08-25；issue `模块0-20260825-02`[20260825_模块前端_移除管理面集群界面.md]）
+  - 工程过程：用户指出「管理面这玩意不应该出现在前端，它只是应该提供一个强大的管理接口，给另一个 agent 来管理这个项目」→ AskUserQuestion 拍板：前端彻底删除、后端 HTTP 接口保留、不注册 agent 工具通道 → 删除 4 文件（AdminPage/ClusterPage/api clients admin.ts/cluster.ts）+ routes.tsx 删 2 条登记 + i18n 双语清理 nav 键与页面级命名空间。
+  - 交接状态：**已闭合**（typecheck ✓、lint ✓、vitest src/pages/management 24 文件 183 用例全绿；残留 Grep 零命中；后端接口实测 /api/admin/manifest、/api/cluster/state、/api/cluster/topology 均 503「未启用」——端点在，agent 可经 HTTP 调用）。变更文档 `.trae/documents/20260825_模块前端_移除管理面集群界面.md`。
+  - 最终结果：前端侧边栏不再有「管理面」「哨兵集群」入口；后端管理接口原样保留，供另一个 agent 通过 HTTP 管理本项目。
+  - 未闭合项：管理接口对 agent 的文档化使用指引（URL/鉴权/示例）未做（用户未要求）；前端未重打安装包。
+  - 接续入口：外部 agent 通过 `/api/admin/manifest`、`/api/admin/control`、`/api/cluster/state` 等 HTTP 端点管理；如需分发重打安装包。
+
 - **修复前后端契约失配（设置界面等 17 处）**（已闭合，2026-08-25；issue `模块0-20260825-01`[20260825_模块0_修复前后端契约失配.md]）
   - 工程过程：用户要求「修复所有前后端不匹配问题」→ 三个并行探查代理全量比对前端 23 客户端 ~150 调用 vs 后端 32 router，确认 17 处失配 → 后端 7 项补齐（PUT /api/config 新增 graph/vision_enhanced 分支、llm 分支承接 api_key/model_defaults/llm_params、vector 分支承接 weaviate_host/port 与 embedded 映射、GET llm 节返回 models/defaults/params、cxfc 新增 POST .../disconnect、graph/config 补 graph_enabled、ModelConfig.top_p 全链路透传含 stream_chat）+ 前端 7 项对齐（normalizeError 回退链、vision 解包 .data、TTS 改 /api/tts/synthesize+base64 解码、ACP 解包修正、graph/service 死代码清理、SettingsPage 三区块 snake_case 读写+默认值对齐+temperature 上限消费 limits）→ GN-004 审查警示放行（文档滞后+stream top_p 缺失两项已修正）。
   - 交接状态：**已闭合**（后端 pytest 177 passed 含新增 13 用例；前端 typecheck/lint 通过、src/api+management vitest 26 文件 203 用例全绿[全量仅 electron/ble 3 例存量失败经 git stash 对照确认与本次无关]）。变更文档 `.trae/documents/20260825_模块0_修复前后端契约失配.md`。
@@ -4939,3 +4960,49 @@ spec T2 / tasks T2 / checklist C2.2-C2.3 原写"挂载 GlassCanvas/AnimeDecorati
 - **无法推进原因**：真实桌面环境项必须由人在安装包/便携版上运行验证（硬件/Electron 运行时/OBS/穿透/安装包实装），本自动化环境无法替代，属「无外部状态变更则无法推进」的真实僵局。
 - **已尝试路径**：已完成全部可自动化验收（10 Task / 四道闸门 / GN-004 警示放行 / 人类批准交付 / 打包含新 logo）；已向用户提供完整人工验证清单并两次确认无新验证输入。
 - **解除条件（接续入口）**：人类在真实桌面环境验证并回填 checklist「归人工」项 + 补充 4 项后，主线程据此最终归档 Task 10 并闭合目标（届时将目标置为 complete）。
+
+---
+
+# Spec: refactor-asr-container-streaming-voiceprint 交付交接段（2026-08-25，七字段交接段）
+
+> 阶段：ASR 容器流式改造 + 声纹识别接入全流程已实现并验证；待 GN-004 交付前审查（Task 9.6）。
+
+## (1) 工程过程
+
+1. **预研 gate（容器内实测，2026-08-25）**：`paraformer-zh-streaming`/`fsmn-vad`/`cam++(zh-cn)` 三独立 AutoModel 可加载并流式工作；⚠️ 关键坑=带 vad/punc 的 AutoModel 组合在流式 generate 触发 FunASR chunk 类型 bug（`list / int`），必须三实例分离；cam++ `zh_en` 模型在 ModelScope 404，用 `zh-cn` 版（192 维 embedding 实测正常）；纯噪声输出空文本（无幻觉）。
+2. **容器引擎（asr_container/）**：`speaker_cluster.py`（在线聚类：注册质心+会话临时簇，余弦≥0.65 归簇并滚动更新质心，未注册→spk_N）+ `streaming_engine.py`（per-connection：fsmn-vad 分句 → paraformer 增量 partial（首 partial 阈值 4800=0.15s 对齐旧行为）→ 句级 ASR(final)∥cam++ 并行 → 聚类判说话人）。
+3. **容器 api_server.py**：WS `/ws/asr/stream` 走引擎，结果新增 `speaker_id/speaker_registered/speaker_conf`（向后兼容）；新增声纹 REST `/api/v1/voiceprint/{status,extract,profiles/sync}`；单次识别 `/asr/recognize`、`/api/v1/asr` 保持 SenseVoice 零改动。
+4. **服务端接入**：`StreamingASRResult`/`receive_result`/`vad_processor` 透传 speaker 字段；新增 `voiceprint_service.py` + `/api/voiceprint/*` REST（注册/列表/删除/状态，服务端权威持久化 `CX-O-SERVER/data/voiceprint/speaker_profiles.json`，通过挂载与容器同步）；`ASRConfig` 增 `voiceprint_enabled/spk_sim_threshold/spk_model` + env 映射；handlers/live_client 说话人透传（仅注册命中带名）；前端 PetChat 说话人小标签。
+5. **验证**：单测 357 全绿（聚类 8/asr-ws 4/voiceprint-router 9/vad 透传 2/handler 7 等）；前端 typecheck/lint/build + 8 vitest 全绿；容器重建 healthy；**端到端联调 PASS**：注册"小明"→WS A=小明(conf0.999)/B=spk_0(conf0.166)/A-re=小明；单次识别零回归（"你好，这是一个语音识别测试。"+NEUTRAL）。
+
+## (2) 交接状态
+
+- 实现（Task 1/1.5/2/3/4/5/6/7/8/9）：**已闭合**（tasks.md 全部勾选；台账 Task1-9 状态=已完成，子代理实际 agent id 因 Task 工具未返回而标注"缺失"）
+- 服务端已用新代码重启：`python -m server.main`（terminal 3 后台，`/api/voiceprint/status` 实测 available:true/profiles:1）
+- ASR 容器：cx-o-asr-sensevoice-1 healthy（bind mount 加载新引擎 + asr_container 卷 + data/voiceprint 卷）
+- GN-004 交付前审查（Task 9.6）：**未开始（待拉起）**
+- 未判定项（诚实标注，不偷换完成）：**Task 9.7 全链延迟「当前不可判定」**——变更层（容器 ASR 首 partial）实测 0.25~0.33s（旧 ~0.19s，+~0.1s 预算内），但完整 E2E 工具链（test_asr_llm_tts_latency.py WS 模式）本机 0/10 valid（`voice.partial` 下发给前端链路在新/旧服务端均不工作，与历史 `asr_llm_tts_latency FAIL 是环境问题` 记录一致），待环境修复后补测。
+
+## (3) 最终结果
+
+- 产出物：`asr_container/{speaker_cluster,streaming_engine}.py`、`api_server.py` 改造、`server/services/voiceprint_service.py`、`server/api/routers/voiceprint.py`、`server/handlers/audio.py`/`live_client.py` 透传、`tests/test_tools/e2e/voiceprint_e2e.py`（联调脚本）、变更文档 `.trae/documents/20260825_模块0_ASR容器流式与声纹识别整合.md`。
+- 验证结论：单测 357 passed；前端 typecheck/lint/build + 8 vitest 通过；容器 healthy + 声纹 REST 实测；端到端声纹识别 PASS（注册名命中/新声音 spk_0/稳定性）；单次识别零回归；全程未触碰 `public/` 与 `.trae/rules/`。
+- 三值状态：实现与验证 = **已闭合**；全链延迟 = **当前不可判定**（变更层达标，待环境修复补测）；GN-004 交付前审查 = 未开始。
+
+### 为什么
+- 三独立模型实例是为规避 FunASR 组合模型的流式 chunk bug（预研实测，非猜测）。
+- 声纹 profiles 由服务端唯一权威写入挂载文件，容器只读消费（`/profiles/sync` 重载），避免双写冲突。
+- 说话人伪名（spk_N）绝不外发前端，仅注册命中带名，避免噪音。
+- 会议 user 输入走 REST 纯文本不经流式 ASR，声纹标注暂不生效（已留 speaker_label 占位）；宠物气泡经 live 链路透传注册说话人。
+
+### 未闭合项
+| 项 | 性质 | 状态 |
+|----|------|------|
+| GN-004 交付前审查（Task 9.6） | 审查闸门 | ⏳ 待主线程拉起 |
+| Task 9.7 全链延迟（P50≤465.61ms） | 当前不可判定 | ⏳ 待本机 `voice.partial 下发`环境问题修复后补测（已记变更文档观察项1） |
+| 会议声纹标注 | 已知不做（会议输入不走语音） | 留 speaker_label 占位 |
+
+### 接续入口
+1. 主线程拉起 GN-004 交付前审查（上下文：spec 三件套 + 变更文档 + 本段 + 联调脚本）
+2. handle_gn004 循环：阻断→fix→rerun / 警示放行(含SOFT_BLOCK)→AskUserQuestion / 通过→proceed
+3. GN-004 通过后向人类汇报交付结论（不再重复 NotifyUser）。

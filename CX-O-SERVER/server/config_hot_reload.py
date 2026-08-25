@@ -26,6 +26,7 @@ REQUIRES_RESTART: Dict[str, bool] = {
     "cluster": True,
     "graph": True,           # 图配置在进程启动时装配为单例
     "vision_enhanced": True,  # 视觉管线在装配期读取 enabled
+    "meeting": True,  # 互动协调器在装配期构建，需重启生效
 }
 
 

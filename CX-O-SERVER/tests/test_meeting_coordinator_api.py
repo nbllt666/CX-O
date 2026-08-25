@@ -179,3 +179,37 @@ class TestMeetingREST:
         meeting_router.set_meeting_coordinator(_make_coordinator())
         r = client.post("/api/meeting/start", json={"agents": []})  # 缺 user
         assert r.status_code == 422
+
+    def test_audience_toggle_and_speak(self, client, monkeypatch):
+        """观众席开关端点返回房间快照含 audience_enabled；speak role=audience 写入转录。"""
+        monkeypatch.setattr(meeting_router, "get_settings", lambda: FakeSettings())
+        coord = _make_coordinator(responder=_fake_responder)
+        meeting_router.set_meeting_coordinator(coord)
+
+        # 开会（默认观众席关）
+        r = client.post("/api/meeting/start", json={"user": "用户", "agents": [{"agent_id": "A"}]})
+        assert r.status_code == 200
+        room_id = r.json()["data"]["room_id"]
+        assert r.json()["data"]["audience_enabled"] is False
+
+        # toggle 开观众席 → 快照 audience_enabled=True
+        r = client.post(f"/api/meeting/{room_id}/audience/toggle", json={"enabled": True})
+        assert r.status_code == 200
+        assert r.json()["data"]["audience_enabled"] is True
+
+        # speak role=audience → 转录出现 audience: 条目
+        r = client.post(
+            f"/api/meeting/{room_id}/speak",
+            json={"text": "主播好", "role": "audience", "username": "水友", "userid": "u1", "mention": "@A"},
+        )
+        assert r.status_code == 200
+        assert r.json()["data"]["turns"]  # 有 Agent 回应
+
+        r = client.get(f"/api/meeting/{room_id}/state")
+        recent = r.json()["data"]["recent_messages"]
+        assert any(m["role"] == "audience" and m["speaker"] == "audience:水友" for m in recent)
+
+        # toggle 关观众席
+        r = client.post(f"/api/meeting/{room_id}/audience/toggle", json={"enabled": False})
+        assert r.status_code == 200
+        assert r.json()["data"]["audience_enabled"] is False

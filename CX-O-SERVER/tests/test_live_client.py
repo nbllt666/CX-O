@@ -19,9 +19,13 @@ from server.services import live_client as lc
 class FakeManager:
     def __init__(self):
         self.sent = []
+        self.channel_broadcasts = []
 
     async def send_message(self, client_id, message):
         self.sent.append((client_id, message))
+
+    async def broadcast_to_channel(self, channel, message):
+        self.channel_broadcasts.append((channel, message))
 
 
 class FakeFirewall:
@@ -161,7 +165,10 @@ class TestDanmaku:
         data = {"content": "hello", "user": {"uid": "u1", "username": "n1"}}
         await handler._handle_danmaku(None, {"data": data})
         assert handler.context_manager.danmakus == [("s1", data)]
-        _, msg = handler._manager.sent[0]
+        # 弹幕回显改为 live 频道全房间广播
+        assert len(handler._manager.channel_broadcasts) == 1
+        channel, msg = handler._manager.channel_broadcasts[0]
+        assert channel == "live"
         assert msg["type"] == "danmaku"
         assert msg["data"]["formatted"] is True
 
@@ -170,6 +177,7 @@ class TestDanmaku:
         handler.firewall = FakeFirewall(allowed=False)
         await handler._handle_danmaku(None, {"data": {"content": "x"}})
         assert handler._manager.sent == []
+        assert handler._manager.channel_broadcasts == []
         assert handler.context_manager.danmakus == []
 
 

@@ -1,22 +1,59 @@
 /**
  * 会议状态订阅钩子（useMeetingWebSocket）。
  *
- * 服务端 meeting 模块未提供状态 WS 广播通道（coordinator 的 register_broadcast
- * 未接到端点/WS），故以轮询 GET /api/meeting/{room_id}/state 兜底：
- *  - 传入 roomId（可空）后按 intervalMs 周期拉取状态快照；
- *  - 每次拿到快照把当前发言者写入 localStorage（setMeetingHint），供各桌宠窗
- *    经 `storage` 事件做说话高亮（跨窗同源共享）。
- *  - start / end / join / leave / speak 为 REST 动作，调用成功后触发一次立即刷新。
+ * 订阅机制：「WS 事件优先 + 轮询兜底」。
+ *  - WS 优先：经管理窗常驻 /ws 连接（useConfigReload → meetingEvents 事件总线）接收后端
+ *    广播 `{type:"meeting_state", room_id, data}`，收到即解析归一化并刷新快照 +
+ *    写 setMeetingHint（桌宠说话高亮）。
+ *  - 轮询兜底：WS 不可用/未收到事件时，按 intervalMs 周期 GET /api/meeting/{room_id}/state
+ *    兜底拉取，保证状态不丢失（与既有逻辑一致）。
+ *  - start / end / join / leave / speak / toggleAudience 为 REST 动作，成功后触发一次立即刷新。
  *
  * 请求/响应字段以 CX-O-SERVER/server/core/meeting/models.py 与
  * server/api/routers/meeting.py 为准，见 src/api/clients/meeting.ts。
  */
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { meetingApi } from '../api/clients/meeting';
-import type { MeetingAgentSpec, MeetingRoomSnapshot, MeetingSpeakResult } from '../api/clients/meeting';
+import type {
+  MeetingAgentSpec,
+  MeetingRoomSnapshot,
+  MeetingSpeakOptions,
+  MeetingRecentMessage,
+  MeetingSpeakResult,
+} from '../api/clients/meeting';
 import { setMeetingHint } from '../lib/meetingHint';
+import { subscribeMeetingState } from '../lib/meetingEvents';
 
 const DEFAULT_INTERVAL_MS = 2000;
+
+/**
+ * 纯函数：把后端 `meeting_state` 广播载荷归一化为 MeetingRoomSnapshot。
+ * 入参可为整个广播（{room_id, data}）或直接房间 dict；非法/缺 room_id 返回 null。
+ */
+export function parseMeetingStateEvent(payload: unknown): MeetingRoomSnapshot | null {
+  if (typeof payload !== 'object' || payload === null) return null;
+  const raw = payload as { data?: unknown };
+  const room = (raw.data && typeof raw.data === 'object' ? raw.data : payload) as Record<string, unknown>;
+  if (!room || typeof room.room_id !== 'string' || !room.room_id) return null;
+
+  const state = room.state;
+  const agents = Array.isArray(room.agents) ? (room.agents as MeetingAgentSpec[]) : [];
+  const recent = Array.isArray(room.recent_messages)
+    ? (room.recent_messages as MeetingRecentMessage[])
+    : [];
+
+  return {
+    room_id: String(room.room_id),
+    user: typeof room.user === 'string' ? room.user : 'user',
+    state: state === 'idle' || state === 'in_meeting' || state === 'paused' ? state : 'idle',
+    max_agents: typeof room.max_agents === 'number' ? room.max_agents : 0,
+    agents,
+    token_holder: typeof room.token_holder === 'string' ? room.token_holder : null,
+    transcript_turns: typeof room.transcript_turns === 'number' ? room.transcript_turns : 0,
+    audience_enabled: !!room.audience_enabled,
+    recent_messages: recent,
+  };
+}
 
 export interface UseMeetingWebSocketOptions {
   /** 会议房间号；为空时不轮询（尚未建会） */
@@ -31,12 +68,13 @@ export interface UseMeetingWebSocketReturn {
   snapshot: MeetingRoomSnapshot | null;
   isPolling: boolean;
   isError: boolean;
-  /** 开启会议 */
+  /** 开启会议（可带 audience_enabled 决定建会即开观众席） */
   start: (opts: {
     user: string;
     agents?: MeetingAgentSpec[];
     room_id?: string;
     max_agents?: number;
+    audience_enabled?: boolean;
   }) => Promise<MeetingRoomSnapshot | null>;
   /** 结束会议 */
   end: () => Promise<boolean>;
@@ -44,8 +82,10 @@ export interface UseMeetingWebSocketReturn {
   join: (spec: MeetingAgentSpec) => Promise<MeetingRoomSnapshot | null>;
   /** 移除 Agent */
   leave: (agentId: string) => Promise<MeetingRoomSnapshot | null>;
-  /** 用户发言（触发仲裁） */
-  speak: (text: string) => Promise<MeetingSpeakResult | null>;
+  /** 用户发言（触发仲裁；可带 role/mention 等选项） */
+  speak: (text: string, opts?: MeetingSpeakOptions) => Promise<MeetingSpeakResult | null>;
+  /** 开/关观众席 */
+  toggleAudience: (enabled: boolean) => Promise<MeetingRoomSnapshot | null>;
   /** 立即刷新一次 */
   refresh: () => Promise<MeetingRoomSnapshot | null>;
 }
@@ -100,12 +140,29 @@ export function useMeetingWebSocket(options: UseMeetingWebSocketOptions): UseMee
     };
   }, [roomId, intervalMs, fetchState]);
 
+  // WS 事件优先订阅：后端经 /ws 广播 meeting_state（管理窗常驻连接 → meetingEvents 总线）。
+  // 仅接受当前活动房间的事件；无活动房间时忽略（与轮询空置口径一致）。
+  useEffect(() => {
+    const unsubscribe = subscribeMeetingState((evt) => {
+      const snap = parseMeetingStateEvent(evt);
+      if (!snap) return;
+      const id = roomIdRef.current;
+      if (!id || id !== snap.room_id) return;
+      setSnapshot(snap);
+      setIsError(false);
+      setMeetingHint({ speaker: snap.token_holder ?? null, roomId: snap.room_id });
+      onChangeRef.current?.(snap);
+    });
+    return unsubscribe;
+  }, []);
+
   const start = useCallback(
     async (opts: {
       user: string;
       agents?: MeetingAgentSpec[];
       room_id?: string;
       max_agents?: number;
+      audience_enabled?: boolean;
     }): Promise<MeetingRoomSnapshot | null> => {
       try {
         const s = await meetingApi.start(opts);
@@ -172,11 +229,11 @@ export function useMeetingWebSocket(options: UseMeetingWebSocketOptions): UseMee
   );
 
   const speak = useCallback(
-    async (text: string): Promise<MeetingSpeakResult | null> => {
+    async (text: string, opts?: MeetingSpeakOptions): Promise<MeetingSpeakResult | null> => {
       const id = roomIdRef.current;
       if (!id) return null;
       try {
-        const result = await meetingApi.speak(id, text);
+        const result = await meetingApi.speak(id, text, opts);
         void fetchState();
         return result;
       } catch {
@@ -187,9 +244,27 @@ export function useMeetingWebSocket(options: UseMeetingWebSocketOptions): UseMee
     [fetchState],
   );
 
+  const toggleAudience = useCallback(
+    async (enabled: boolean): Promise<MeetingRoomSnapshot | null> => {
+      const id = roomIdRef.current;
+      if (!id) return null;
+      try {
+        const s = await meetingApi.toggleAudience(id, enabled);
+        setSnapshot(s);
+        setMeetingHint({ speaker: s.token_holder ?? null, roomId: id });
+        onChangeRef.current?.(s);
+        return s;
+      } catch {
+        setIsError(true);
+        return null;
+      }
+    },
+    [],
+  );
+
   const refresh = useCallback(() => fetchState(), [fetchState]);
 
-  return { snapshot, isPolling, isError, start, end, join, leave, speak, refresh };
+  return { snapshot, isPolling, isError, start, end, join, leave, speak, toggleAudience, refresh };
 }
 
 /** 浏览器兜底：直接拉取房间状态（供非 React 侧或一次性调用）。 */

@@ -1,24 +1,27 @@
-"""模块三 · TurnArbiter —— 发言权仲裁（整个协调器的灵魂）。
+"""模块三 · TurnArbiter —— 主答选择器（互动空间）。
 
-决定"用户这句话谁该接、什么时候接"——它决定了会议是"优雅茶话会"还是"混乱菜市场"。
+决定"这条消息谁做主答者"：点名指谁、开放讨论让谁先接。其余在场 Agent 由
+coordinator 按 ``speech_rate`` 与人设命中自发插话（见 coordinator._should_interject）。
 
-设计基准：《CX-O 多 Agent 语音会议协调器》§6。
+设计基准：《CX-O 多 Agent 会议重定位为互动空间》T2。
 
 - 意图解析 ``parse_intent``：可注入独立小模型解释器 ``interpret``（缺省为启发式）。
-- 四种分发 ``arbitrate``：点名直给 / 主持人（默认） / 相关性竞争 / 轮询。
+- 主答选择 ``arbitrate``：点名→被点名者优先；注入 interpret 给出说话者→采用；
+  否则启发式兜底取 room 中发言欲（motivation）最高者。输出统一 ``mode="primary"``，
+  移除旧四模式（moderator/relevance/round_robin/empathy）机械分发。
 """
 from __future__ import annotations
 
 import asyncio
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any, Callable, List, Optional
 
 from server.core.meeting.models import (
     DEFAULT_MODE,
+    VALID_MODES,
     AgentMember,
     IntentType,
     IntentionResult,
     TurnDecision,
-    VALID_MODES,
 )
 
 # 注入意图解释器：async/sync (utterance: str, agents: List[AgentMember]) -> IntentionResult | dict
@@ -33,6 +36,9 @@ _EMPATHY_PREFIXES = ("今天", "最近", "我")
 _EMPATHY_WORDS = ("累", "烦", "开心", "难过", "高兴", "崩溃", "辛苦", "无聊", "兴奋", "紧张")
 # 自言自语/语气词（无需回应）
 _IGNORE_WORDS = ("哦", "嗯", "嗯嗯", "啊", "哈哈", "哈哈哈", "好的", "好吧", "诶")
+
+# 主答选择的统一模式标识（取代旧四模式）
+PRIMARY_MODE = "primary"
 
 
 def _coerce_intention(result: Any) -> IntentionResult:
@@ -66,11 +72,11 @@ def _parse_type(value: Any) -> IntentType:
 
 
 class TurnArbiter:
-    """发言权仲裁器。
+    """主答选择器。
 
     Args:
-        interpret: 可注入的意图解释器；缺省用启发式 ``_default_interpret``。
-        default_mode: 默认发言模式（moderator/relevance/round_robin）。
+        interpret: 可注入的意图/主答解释器；缺省用启发式 ``_default_interpret``。
+        default_mode: 兼容保留的历史默认模式字段（不再参与分发，仅校验存留）。
     """
 
     def __init__(
@@ -80,8 +86,6 @@ class TurnArbiter:
     ):
         self._interpret: Optional[InterpretFunc] = interpret
         self.default_mode: str = default_mode if default_mode in VALID_MODES else DEFAULT_MODE
-        # 轮询游标：room_id -> 下一个发言 agent 索引
-        self._rr_index: Dict[str, int] = {}
 
     # ---------------------------------------------------------------- 意图解析
     async def parse_intent(
@@ -104,19 +108,19 @@ class TurnArbiter:
     ) -> IntentionResult:
         """启发式意图解析兜底（无小模型/未注入时）。
 
-        覆盖点名（agent 名 + 点名信号）、开放提问、共情、自言自语。
+        覆盖点名（@agent + agent 名 + 点名信号）、开放提问、共情、自言自语。
         """
         text = (user_utterance or "").strip()
         if not text:
             return IntentionResult(IntentType.IGNORE, reason="空白输入")
 
-        # 1) 点名：某 agent 名字后跟点名信号
+        # 1) 点名：@agent 提及 或 agent 名 + 点名信号
         for agent in agents:
             names = {agent.display_name, agent.name, agent.agent_id}
             hit_name = next((n for n in names if n and n in text), None)
             if hit_name:
-                # 名字 + 任一信号 或 名字被单独提及→点名
-                if any(sig in text for sig in _ADDR_SIGNAL):
+                at_mention = ("@" + hit_name) in text
+                if at_mention or any(sig in text for sig in _ADDR_SIGNAL):
                     return IntentionResult(
                         IntentType.ADDRESSED,
                         target=agent.agent_id,
@@ -139,22 +143,22 @@ class TurnArbiter:
         # 5) 无法判别的提问默认开放讨论
         return IntentionResult(IntentType.OPEN_DISCUSSION, reason="默认开放讨论")
 
-    # ---------------------------------------------------------------- 仲裁分发
+    # ---------------------------------------------------------------- 主答选择
     async def arbitrate(self, user_utterance: str, room) -> TurnDecision:
-        """仲裁"用户这句话谁该接"，返回裁决结果。"""
+        """仲裁"这条消息谁做主答"，返回主答选择结果（mode="primary"）。"""
         agents = list(getattr(room, "agents", []) or [])
         if not agents:
-            return TurnDecision("ignore", speaker=None, intent=IntentType.IGNORE, reason="无参会 Agent")
+            return TurnDecision(PRIMARY_MODE, speaker=None, intent=IntentType.IGNORE, reason="无参会 Agent")
 
         intent = await self.parse_intent(user_utterance, agents)
 
-        # 点名直给
+        # 点名 → 被点名者优先
         if intent.type == IntentType.ADDRESSED:
             target = self._resolve_target(intent.target, agents)
             return TurnDecision(
-                "addressed",
+                PRIMARY_MODE,
                 speaker=target,
-                participants=[target] if target else [],
+                participants=[a.agent_id for a in agents],
                 intent=intent.type,
                 reason=intent.reason or "点名直给",
             )
@@ -162,38 +166,31 @@ class TurnArbiter:
         # 自言自语 → 无人回应
         if intent.type == IntentType.IGNORE:
             return TurnDecision(
-                "ignore",
+                PRIMARY_MODE,
                 speaker=None,
                 participants=[a.agent_id for a in agents],
                 intent=intent.type,
                 reason=intent.reason or "自言自语",
             )
 
-        # 开放提问 / 领域提问 → 按默认模式分发
-        if intent.type == IntentType.OPEN_DISCUSSION:
-            return await self._dispatch_mode(room, intent)
-        if intent.type == IntentType.DOMAIN:
-            # 选"最擅长"该领域的 agent（退化为按相关度/发言欲竞争）
-            return await self._relevance_competition(room, intent, mode="domain")
+        # 其余意图：注入 interpret（LLM）可能通过 target 直接给出主答者
+        speaker = self._resolve_target(intent.target, agents)
+        if speaker is None:
+            # 启发式兜底：发言欲（motivation）最高者
+            chosen = max(agents, key=lambda a: a.motivation)
+            speaker = chosen.agent_id if chosen else None
+            reason = "启发式主答：发言欲最高"
+        else:
+            reason = "LLM 指定主答"
 
-        # 共情陈述 → 选最共情的一个
-        if intent.type == IntentType.EMPATHY:
-            return self._most_empathetic(room, intent)
+        return TurnDecision(
+            PRIMARY_MODE,
+            speaker=speaker,
+            participants=[a.agent_id for a in agents],
+            intent=intent.type,
+            reason=reason,
+        )
 
-        # 兜底
-        return await self._dispatch_mode(room, intent)
-
-    async def _dispatch_mode(self, room, intent: IntentionResult) -> TurnDecision:
-        """按默认模式分发开放讨论。"""
-        mode = self.default_mode
-        if mode == "round_robin":
-            return self._round_robin(room, intent)
-        if mode == "relevance":
-            return await self._relevance_competition(room, intent)
-        # moderator（主持人，默认）
-        return self._moderator(room, intent)
-
-    # ---------------------------------------------------------------- 各分发策略
     def _resolve_target(self, target: Optional[str], agents: List[AgentMember]) -> Optional[str]:
         """把目标解析为真实 agent_id（支持名/展示名匹配，找不到返回 None）。"""
         if not target:
@@ -203,54 +200,17 @@ class TurnArbiter:
                 return a.agent_id
         return None
 
-    def _moderator(self, room, intent: IntentionResult) -> TurnDecision:
-        """主持人模式：小模型判定"谁最适合接"，缺省以发言欲最高者承接。"""
-        agents = room.agents
-        chosen = max(agents, key=lambda a: a.motivation) if agents else None
-        return TurnDecision(
-            "moderator",
-            speaker=chosen.agent_id if chosen else None,
-            participants=[a.agent_id for a in agents],
-            intent=intent.type,
-            reason="主持人分发：发言欲最高",
-        )
+    def find_addressed_agent(self, text: str, agents: List[AgentMember]) -> Optional[str]:
+        """识别 text 是否点名/提及某 agent，是则返回其 agent_id，否则 None。
 
-    async def _relevance_competition(self, room, intent: IntentionResult, mode: str = "relevance") -> TurnDecision:
-        """相关性竞争：发言欲(相关度+社交欲)最高者先说，其余排队。"""
-        agents = sorted(room.agents, key=lambda a: a.motivation, reverse=True)
-        chosen = agents[0] if agents else None
-        return TurnDecision(
-            mode,
-            speaker=chosen.agent_id if chosen else None,
-            participants=[a.agent_id for a in agents],
-            intent=intent.type,
-            reason="相关性竞争：发言欲最高",
-        )
-
-    def _round_robin(self, room, intent: IntentionResult) -> TurnDecision:
-        """轮询：A→B→C 机械轮流。"""
-        agents = room.agents
-        if not agents:
-            return TurnDecision("round_robin", speaker=None, intent=intent.type, reason="无参会 Agent")
-        idx = self._rr_index.get(room.room_id, 0)
-        chosen = agents[idx % len(agents)].agent_id
-        self._rr_index[room.room_id] = idx + 1
-        return TurnDecision(
-            "round_robin",
-            speaker=chosen,
-            participants=[a.agent_id for a in agents],
-            intent=intent.type,
-            reason="轮询：机械轮流",
-        )
-
-    def _most_empathetic(self, room, intent: IntentionResult) -> TurnDecision:
-        """共情：选最可能共情的 agent（发言欲最高）。"""
-        agents = room.agents
-        chosen = max(agents, key=lambda a: a.motivation) if agents else None
-        return TurnDecision(
-            "empathy",
-            speaker=chosen.agent_id if chosen else None,
-            participants=[a.agent_id for a in agents],
-            intent=intent.type,
-            reason="共情响应",
-        )
+        供 coordinator._should_interject 判定"点名不抢话"。
+        """
+        for agent in agents:
+            names = {agent.display_name, agent.name, agent.agent_id}
+            for n in names:
+                if n and n in text and (
+                    ("@" + n) in text
+                    or any(sig in text for sig in _ADDR_SIGNAL)
+                ):
+                    return agent.agent_id
+        return None

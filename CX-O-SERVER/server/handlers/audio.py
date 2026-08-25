@@ -77,6 +77,28 @@ def _is_continuation(prev: str, cur: str) -> bool:
 # 每个客户端独立维护流水线状态，避免跨客户端干扰
 _dual_stream_sessions: dict[str, "DualStreamSession"] = {}
 
+# 模块级最近注册说话人记录：client_id -> 最近一次识别到的注册说话人名。
+# 供会议等外部模块查询（Task 7.2）。未识别/未注册的伪名（spk_N）绝不记录。
+_latest_speaker_by_client: dict[str, str] = {}
+
+
+def _registered_speaker_from(asr_result: Optional[dict]) -> str:
+    """从 asr_result dict 提取注册说话人名（未注册/缺字段返回空串）。
+
+    仅 speaker_registered 命中时返回 speaker_name（受控 fallback 到 speaker_id），
+    未注册的伪名（spk_N，registered=False）绝不外发。
+    """
+    if not asr_result:
+        return ""
+    if not asr_result.get("speaker_registered"):
+        return ""
+    return (asr_result.get("speaker_name") or asr_result.get("speaker_id") or "").strip()
+
+
+def latest_registered_speaker_by_client(client_id: str) -> str:
+    """返回指定客户端最近一次识别到的注册说话人名（未命中返回空串）。"""
+    return _latest_speaker_by_client.get(client_id, "")
+
 
 async def set_tts_playing(client_id: str, playing: bool):
     """更新指定客户端的 TTS 播放状态，并同步到该客户端的 ASR 打断模块。
@@ -104,6 +126,8 @@ async def cleanup_dual_stream_session(client_id: str) -> None:
     LLM/TTS 资源并向空连接推流，多轮累积导致 TTS 服务被并发打爆。
     """
     session = _dual_stream_sessions.pop(client_id, None)
+    # 一并清理模块级最近说话人记录，避免陈旧说话人跨连接泄漏到会议等下游
+    _latest_speaker_by_client.pop(client_id, None)
     if session:
         try:
             await session.finish()
@@ -199,6 +223,20 @@ class DualStreamSession:
         # 被 GC 提前回收（asyncio 不持有裸 create_task 的引用）。
         self._background_tasks: set = set()
 
+        # 最近一次注册说话人名（Task 7.1）。由接收 asr_result 的入口更新；
+        # 仅 registered 命中时非空，未注册伪名（spk_N）永不记录。
+        self._last_speaker_name: str = ""
+
+    def _store_speaker(self, asr_result: Optional[dict]) -> None:
+        """接收 asr_result 的入口统一调用：把注册说话人名存入 session 最近状态。
+
+        未注册/缺字段时不改（保留最近一次注册说话人，与"最近一次注册说话人"
+        语义一致）。供 _send_partial / _record_context 取用。
+        """
+        name = _registered_speaker_from(asr_result)
+        if name:
+            self._last_speaker_name = name
+
     def _track_background_task(self, task: asyncio.Task) -> asyncio.Task:
         """追踪后台任务，防止被 GC 回收；任务完成后自动从集合中移除。"""
         self._background_tasks.add(task)
@@ -276,7 +314,8 @@ class DualStreamSession:
 
         # 推送 Partial 文本给前端（实时显示用户正在说什么）
         logger.debug("[DIAG-PARTIAL] before _send_partial")
-        await self._send_partial(text)
+        self._store_speaker(asr_result)
+        await self._send_partial(text, speaker=self._last_speaker_name)
         logger.debug("[DIAG-PARTIAL] after _send_partial")
 
         # 同一 utterance 内仅触发一次 LLM，避免 Partial 增量导致重复 Prefill
@@ -322,6 +361,9 @@ class DualStreamSession:
         final_text = ""
         if asr_result:
             final_text = asr_result.get("text", "").strip()
+
+        # 记录本段落最近注册说话人（供上下文记录/最终输出取用）
+        self._store_speaker(asr_result)
 
         # 记录语音结束时间：供 on_vad_speech_start 的打断保护窗口使用
         self._last_speech_end_time = time.monotonic()
@@ -396,8 +438,9 @@ class DualStreamSession:
         if not text:
             return
 
+        self._store_speaker(asr_result)
         # 推送 Final 转写文本给前端（语音识别的最终确认）
-        await self._send_partial(text, is_final=True)
+        await self._send_partial(text, is_final=True, speaker=self._last_speaker_name)
 
         if self._has_triggered_this_utterance:
             # 已由 Partial 触发：仅修正 Final 文本
@@ -809,14 +852,20 @@ class DualStreamSession:
         finally:
             await set_tts_playing(self.client_id, False)
 
-    async def _send_partial(self, text: str, is_final: bool = False) -> None:
-        """发送 ASR 识别文本给前端（Partial 实时显示 / Final 最终确认）"""
+    async def _send_partial(self, text: str, is_final: bool = False, speaker: str = "") -> None:
+        """发送 ASR 识别文本给前端（Partial 实时显示 / Final 最终确认）。
+
+        speaker 唯一来源是注册说话人名（非空）：此时 data 附带
+        speaker_id（=注册名）与 speaker_name 供前端气泡打标签；
+        未注册/缺字段时（空串）data 不带 speaker 字段，伪名（spk_N）绝不外发。
+        """
+        data: dict = {"text": text, "is_final": is_final}
+        if speaker:
+            data["speaker_id"] = speaker
+            data["speaker_name"] = speaker
         await self.manager.send_message(self.client_id, {
             "type": VoiceActions.PARTIAL,
-            "data": {
-                "text": text,
-                "is_final": is_final
-            }
+            "data": data,
         })
 
     async def _send_prefill_started(self, text: str) -> None:
@@ -878,8 +927,14 @@ class DualStreamSession:
             )
 
             # 记录完整轮次：user + assistant
+            # 存在注册说话人时，user 消息附 metadata={"speaker": 注册名}，
+            # content 正文不动，供下游（会议/上下文）感知说话人身份。
+            user_metadata = None
+            if self._last_speaker_name:
+                user_metadata = {"speaker": self._last_speaker_name}
             context_mgr.add_message(
-                session_id=self.session_id, role="user", content=user_text
+                session_id=self.session_id, role="user", content=user_text,
+                metadata=user_metadata,
             )
             context_mgr.add_message(
                 session_id=self.session_id, role="assistant", content=assistant_text
@@ -1333,13 +1388,22 @@ def register_audio_handlers(
                 })
 
             if asr_result:
+                result_data = {
+                    "text": asr_result.get("text", ""),
+                    "is_final": not vad_result.get("is_speaking", False),
+                }
+                # 声纹：仅注册命中时附上 4 字段（未注册伪名 spk_N 绝不外发）
+                _reg_speaker = _registered_speaker_from(asr_result)
+                if _reg_speaker:
+                    result_data["speaker_id"] = _reg_speaker
+                    result_data["speaker_name"] = _reg_speaker
+                    result_data["speaker_registered"] = True
+                    result_data["speaker_conf"] = asr_result.get("speaker_conf", 0.0)
+                    _latest_speaker_by_client[client_id] = _reg_speaker
                 await manager.send_message(client_id, create_response(
                     request_id=request_id,
                     action=ASRActions.RESULT,
-                    data={
-                        "text": asr_result.get("text", ""),
-                        "is_final": not vad_result.get("is_speaking", False)
-                    }
+                    data=result_data,
                 ))
 
             await manager.send_message(client_id, {
@@ -1506,7 +1570,9 @@ def register_audio_handlers(
             # skip_interrupt=True：vad_processor 内部的 agent_interrupt 判定不触发，
             # 由下方 handler 层 _maybe_agent_interrupt 统一接管（可捕获当前 session，
             # 且用非阻塞 create_task，避免主 LLM 判定阻塞帧处理）
-            result = await stream_processor.process_audio_chunk(audio_data, skip_interrupt=True)
+            result = await stream_processor.process_audio_chunk(
+                audio_data, skip_interrupt=True, always_send=True
+            )
 
             if _diag_enabled:
                 _t1 = _diag_time.monotonic()
@@ -1514,6 +1580,11 @@ def register_audio_handlers(
 
             vad_result = result.get("vad", {})
             asr_result = result.get("asr")
+
+            # 模块级记录最近注册说话人，供会议等外部模块查询（Task 7.2）
+            _reg_speaker = _registered_speaker_from(asr_result)
+            if _reg_speaker:
+                _latest_speaker_by_client[client_id] = _reg_speaker
 
             # VAD 状态变化处理
             if vad_result.get("state_changed"):

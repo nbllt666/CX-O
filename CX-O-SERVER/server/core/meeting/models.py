@@ -90,12 +90,12 @@ class IntentionResult:
 
 
 class TurnDecision:
-    """发言权裁决结果。
+    """主答选择结果。
 
     Attributes:
-        mode: 采用的发言模式（addressed/moderator/relevance/round_robin）。
-        speaker: 被选中的发言者 agent_id；None 表示无人回应（IGNORE）。
-        participants: 参与竞争/轮询的 agent 列表（供前端高亮）。
+        mode: 采用的分发模式，群聊式多态回应统一为 "primary"（主答选择）。
+        speaker: 被选中的主答者 agent_id；None 表示无人回应（IGNORE）。
+        participants: 在场候选 agent 清单（供前端高亮）。
         intent: 触发本裁决的意图类型。
         reason: 裁决理由。
     """

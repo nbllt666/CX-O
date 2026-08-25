@@ -25,6 +25,8 @@ export interface PetMessage {
   role: 'user' | 'assistant';
   content: string;
   timestamp: string;
+  /** 声纹：注册说话人名（可选；仅 voice/ASR 路径带，打字输入不带） */
+  speakerName?: string;
 }
 
 export interface PetChatHandle {
@@ -189,6 +191,11 @@ export const PetChat = forwardRef<PetChatHandle, PetChatProps>(function PetChat(
                   : 'glass-panel text-foreground'
               }`}
             >
+              {msg.role === 'user' && msg.speakerName ? (
+                <span className="mb-0.5 block text-[10px] leading-none text-primary-foreground/70">
+                  {msg.speakerName}
+                </span>
+              ) : null}
               {msg.content}
             </div>
           </div>

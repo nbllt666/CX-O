@@ -512,6 +512,74 @@ async def lifespan(app: FastAPI):
     from server.api.routers import physio as physio_router
     physio_router.set_physio_runtime(getattr(services, "physio_runtime", None))
 
+    # ---- 多 Agent 互动协调器装配（meeting，默认 enabled=false，零侵入）----
+    # 对齐 cxfc/autonomy 装配模式：enabled=false 时整体跳过（_coordinator 保持 None，
+    # 路由 start 返回 400「未启用」、房间型端点 404「未装配」，与现状一致）。
+    # require restart 登记见 config_hot_reload.REQUIRES_RESTART["meeting"]。
+    async def _init_meeting():
+        meeting_cfg = getattr(get_settings().config, "meeting", None)
+        if not meeting_cfg or not getattr(meeting_cfg, "enabled", False):
+            return None
+        try:
+            from server.core.meeting.coordinator import MeetingCoordinator
+            from server.core.websocket.manager import get_websocket_manager
+
+            ws_mgr = get_websocket_manager()
+
+            # 状态广播接通 WebSocketManager：载荷形状 {type:"meeting_state", room_id, data}
+            # 参照 cxfc skill_triggered / cluster_event 的 ws_mgr.broadcast 用法。
+            async def _on_meeting_state(room):
+                try:
+                    if ws_mgr:
+                        await ws_mgr.broadcast(
+                            {"type": "meeting_state", "room_id": room.room_id, "data": room.to_dict()}
+                        )
+                except Exception as _e:  # noqa: BLE001 - 广播失败仅告警不影响主流程
+                    lifespan_logger.warning("广播会议状态失败: %s", _e)
+
+            # responder 缺省为 None，由协调器内部按 model_router/client 降级生成（T2 接真实插话引擎）
+            coord = MeetingCoordinator(
+                max_agents=meeting_cfg.max_agents,
+                default_mode=meeting_cfg.default_mode,
+                token_hold_timeout_sec=meeting_cfg.token_hold_timeout_sec,
+                relay_pause_sec=meeting_cfg.relay_pause_sec,
+                backchannel_enabled=meeting_cfg.backchannel_enabled,
+                backchannel_volume=meeting_cfg.backchannel_volume,
+                transcript_max_turns=meeting_cfg.transcript_max_turns,
+                transcript_summary=meeting_cfg.transcript_summary,
+                agent_interrupt_enabled=meeting_cfg.agent_interrupt_enabled,
+                speech_rate=meeting_cfg.speech_rate,
+                agent_speech_prompt=meeting_cfg.agent_speech_prompt,
+                model_router=services.model_router,
+                context_manager=services.context_manager,
+                danmaku_source=meeting_cfg.danmaku_source.model_dump(),  # 观众弹幕源配置（T3）
+            )
+            coord.register_broadcast(_on_meeting_state)
+
+            # 弹幕回复广播接通 WebSocketManager：广播到 live 频道（观众彼此可见 agent 对弹幕的回复）
+            async def _on_danmaku_reply(payload):
+                try:
+                    if ws_mgr:
+                        await ws_mgr.broadcast_to_channel("live", payload)
+                except Exception as _e:  # noqa: BLE001 - 广播失败仅告警
+                    lifespan_logger.warning("弹幕回复广播失败: %s", _e)
+
+            coord.register_danmaku_reply(_on_danmaku_reply)
+            # 注入到路由模块全局变量（对齐 cxfc_router.set_cxfc_manager 模式）
+            from server.api.routers import meeting as meeting_router
+            meeting_router.set_meeting_coordinator(coord)
+            lifespan_logger.info(
+                "多 Agent 互动协调器已装配（max_agents=%s）", meeting_cfg.max_agents
+            )
+            return coord
+        except Exception as _e:
+            # 异常隔离，绝不影响主服务启动
+            lifespan_logger.error("互动协调器装配失败，已隔离（不影响主服务启动）: %s", _e, exc_info=True)
+            return None
+
+    if getattr(get_settings().config, "meeting", None) and getattr(get_settings().config.meeting, "enabled", False):
+        services.meeting_coordinator = await init_service("互动协调器", _init_meeting, logger_=lifespan_logger)
+
     from server.services.asr_service import get_asr_service
     from server.services.tts_service import get_tts_service
     from server.gateway.health import health_checker

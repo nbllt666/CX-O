@@ -17,6 +17,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { useTranslation } from 'react-i18next';
 import {
   ChevronDown,
+  FlaskConical,
   Languages,
   LayoutGrid,
   MessageSquareText,
@@ -67,6 +68,19 @@ const LIVE_SOURCE_GROUP_PATHS: ReadonlySet<string> = new Set([
   'danmaku-source',
   'subtitle-source',
   'audio-source',
+]);
+
+/**
+ * 实验功能分组收编的路由 path 集合（分组逻辑全部位于本组件，不触碰 routes.tsx 契约）。
+ * 收纳：Agent生活（autonomy）/ 梦境日志（dream）/ 微调（tuner）/ 哨兵集群（cluster）/ Neko插件（neko）/ 会议室（meeting）。
+ */
+const EXPERIMENT_GROUP_PATHS: ReadonlySet<string> = new Set([
+  'autonomy',
+  'dream',
+  'tuner',
+  'cluster',
+  'neko',
+  'meeting',
 ]);
 
 /** 顶栏后端连接状态：30s 轮询 /health（轻量探活，与连接检测门同端点） */
@@ -130,6 +144,7 @@ export default function ManagementLayout() {
   const [collapsed, setCollapsed] = useState(false);
   const [isWidgetsExpanded, setIsWidgetsExpanded] = useState(false);
   const [isLiveSourcesExpanded, setIsLiveSourcesExpanded] = useState(false);
+  const [isExperimentsExpanded, setIsExperimentsExpanded] = useState(false);
 
   // ── 对话 Agent 子菜单（复用 chatStore 既有接口）──
   const { agents, currentAgentId, isChatExpanded, setIsChatExpanded, setCurrentAgentId, fetchAgents } =
@@ -137,10 +152,14 @@ export default function ManagementLayout() {
 
   // 分组配置：从冻结登记表派生，不改契约
   const flatItems = MANAGEMENT_ROUTES.filter(
-    (e) => !WIDGET_GROUP_PATHS.has(e.path) && !LIVE_SOURCE_GROUP_PATHS.has(e.path),
+    (e) =>
+      !WIDGET_GROUP_PATHS.has(e.path) &&
+      !LIVE_SOURCE_GROUP_PATHS.has(e.path) &&
+      !EXPERIMENT_GROUP_PATHS.has(e.path),
   );
   const widgetItems = MANAGEMENT_ROUTES.filter((e) => WIDGET_GROUP_PATHS.has(e.path));
   const liveSourceItems = MANAGEMENT_ROUTES.filter((e) => LIVE_SOURCE_GROUP_PATHS.has(e.path));
+  const experimentItems = MANAGEMENT_ROUTES.filter((e) => EXPERIMENT_GROUP_PATHS.has(e.path));
 
   // 挂载即加载 Agent 列表（对齐 CX-O 的 handleAgentClick 数据源）
   useEffect(() => {
@@ -165,6 +184,13 @@ export default function ManagementLayout() {
       setIsLiveSourcesExpanded(true);
     }
   }, [location.pathname, liveSourceItems]);
+
+  // 路由落在实验功能子项时自动展开该分组
+  useEffect(() => {
+    if (experimentItems.some((e) => `/${e.path}` === location.pathname)) {
+      setIsExperimentsExpanded(true);
+    }
+  }, [location.pathname, experimentItems]);
 
   const handleAgentClick = (agentId: string) => {
     setCurrentAgentId(agentId);
@@ -432,6 +458,62 @@ export default function ManagementLayout() {
     </Fragment>
   );
 
+  /** 实验功能分组（展开态）：分组按钮 + 可折叠子项 */
+  const renderExperimentsGroup = () => {
+    const isExperimentChildActive = experimentItems.some(
+      (e) => `/${e.path}` === location.pathname,
+    );
+    return (
+      <div key="experiment-group">
+        <button
+          type="button"
+          onClick={() => setIsExperimentsExpanded(!isExperimentsExpanded)}
+          className={cn(
+            'flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-sm transition-all duration-fast',
+            isExperimentChildActive
+              ? 'bg-primary/15 font-medium text-primary shadow-[inset_0_1px_0_var(--glass-border)]'
+              : 'text-muted-foreground hover:bg-[rgba(255,255,255,0.06)] hover:text-foreground',
+          )}
+        >
+          <FlaskConical className="h-4 w-4 shrink-0" />
+          <span className="whitespace-nowrap">{t('management.sidebar.experimental')}</span>
+          <ChevronDown
+            className={cn(
+              'ml-auto h-4 w-4 transition-transform duration-fast',
+              isExperimentsExpanded && 'rotate-180',
+            )}
+          />
+        </button>
+
+        <AnimatePresence initial={false}>
+          {isExperimentsExpanded && (
+            <motion.ul
+              key="experiment-submenu"
+              className="ml-4 mt-1 space-y-1 overflow-hidden border-l border-[var(--glass-border)] pl-3"
+              initial={{ opacity: 0, height: 0 }}
+              animate={{ opacity: 1, height: 'auto' }}
+              exit={{ opacity: 0, height: 0 }}
+              transition={{ duration: 0.25, ease: [0.4, 0, 0.2, 1] }}
+            >
+              {experimentItems.map((e) => (
+                <li key={e.path}>{renderFlatLink(e)}</li>
+              ))}
+            </motion.ul>
+          )}
+        </AnimatePresence>
+      </div>
+    );
+  };
+
+  /** 实验功能分组（折叠态）：不占位，直接平铺渲染子项图标 */
+  const renderExperimentsCollapsed = () => (
+    <Fragment key="experiment-group-collapsed">
+      {experimentItems.map((e) => (
+        <Fragment key={e.path}>{renderFlatLink(e)}</Fragment>
+      ))}
+    </Fragment>
+  );
+
   return (
     <div className="app-surface relative flex h-screen overflow-hidden">
       {/* 二次元粒子装饰层：常驻布局顶层，pointer-events-none，低于内容高于背景 */}
@@ -466,6 +548,7 @@ export default function ManagementLayout() {
             entry.path === 'chat' ? renderChatItem() : <Fragment key={entry.path || '__index__'}>{renderFlatLink(entry)}</Fragment>,
           )}
           {collapsed ? renderLiveSourcesCollapsed() : renderLiveSourcesGroup()}
+          {collapsed ? renderExperimentsCollapsed() : renderExperimentsGroup()}
           {collapsed ? renderWidgetsCollapsed() : renderWidgetGroup()}
         </nav>
 

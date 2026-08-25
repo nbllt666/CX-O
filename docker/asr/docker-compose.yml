@@ -1,0 +1,31 @@
+# ASR 容器（分享版）独立编排
+# 自包含镜像 cxo/asr-sensevoice:streaming-v1（内置全部模型，免联网下载）。
+#
+# 用法：
+#   1. 加载镜像： docker load -i cxo-asr-sensevoice-streaming-v1.tar
+#   2. 启动：     docker compose -f docker/asr/docker-compose.yml up -d
+#   3. 验证：     curl http://127.0.0.1:8005/health
+services:
+  asr-sensevoice:
+    image: cxo/asr-sensevoice:streaming-v1
+    container_name: asr-sensevoice-share
+    shm_size: '2gb'
+    ports:
+      - "${ASR_PORT:-8005}:8005"
+    environment:
+      - PYTHONIOENCODING=utf-8
+      # 说话人聚类相似度阈值（cam++ 余弦；>= 阈值归簇到注册名或会话临时簇 spk_N）
+      - SPK_SIM_THRESHOLD=${SPK_SIM_THRESHOLD:-0.65}
+      # CPU 推理为默认（免 GPU 依赖）。有 GPU 且显存空闲时改填 "0" 或 "1"。
+      - CUDA_VISIBLE_DEVICES=${CUDA_VISIBLE_DEVICES:-}
+    volumes:
+      # 声纹画像（可选挂载）：宿主机维护 {version, profiles:[{name, embeddings}]}，
+      # 修改后调用 POST /api/v1/voiceprint/profiles/sync 生效。不挂载则用镜像内置空池。
+      - ${VOICEPRINT_DIR:-./data/voiceprint}:/app/data/voiceprint:ro
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8005/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 120s
+    restart: unless-stopped

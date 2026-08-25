@@ -47,6 +47,10 @@ export interface LiveMessage {
     is_speaking?: boolean;
     speech_probability?: number;
     speech_duration_ms?: number;
+    /** 声纹：注册说话人标识（=注册名，仅注册命中带） */
+    speaker_id?: string;
+    /** 声纹：注册说话人名（未注册/伪名 spk_N 不带） */
+    speaker_name?: string;
     [key: string]: unknown;
   };
   [key: string]: unknown;
@@ -63,7 +67,7 @@ export interface UseLiveWebSocketOptions {
     speech_duration_ms: number;
     speech_probability?: number;
   }) => void;
-  onASRResult?: (data: { text: string; is_final: boolean }) => void;
+  onASRResult?: (data: { text: string; is_final: boolean; speakerName?: string }) => void;
   onTTSSync?: (data: TTSSyncData) => void;
   onTTSTick?: (data: TTSTickData) => void;
   onTTSEnd?: (data: TTSEndData) => void;
@@ -183,6 +187,7 @@ export function useLiveWebSocket(options: UseLiveWebSocketOptions = {}): UseLive
             onASRResultRef.current({
               text: String(data.data.text || ''),
               is_final: Boolean(!data.data.is_speaking),
+              speakerName: (data.data.speaker_name as string) || '',
             });
           }
           break;

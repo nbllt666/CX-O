@@ -43,8 +43,19 @@ COPY sensevoice/ /app/sensevoice/
 # 复制 utils 目录（model.py 依赖 utils.ctc_alignment）
 COPY sensevoice/utils/ /app/utils/
 
+# 复制 ASR 容器引擎包（流式分句 + 并行识别/声纹 + 在线聚类）
+COPY asr_container/ /app/asr_container/
+
 # 复制 API 服务到 /app 根目录
 COPY api_server.py /app/api_server.py
+
+# 内置模型缓存（2026-08-25 分享打包：模型随镜像分发，免首次联网下载）：
+# paraformer-zh-streaming(online) / fsmn-vad / ct-punc / SenseVoiceSmall / cam++(zh-cn)
+COPY modelscope_cache/ /root/.cache/modelscope/
+
+# 声纹 profiles 目录（默认空池；对接 CX-O 时由宿主机 bind-mount 覆盖）
+RUN mkdir -p /app/data/voiceprint \
+    && printf '{\n  "version": 1,\n  "profiles": []\n}\n' > /app/data/voiceprint/speaker_profiles.json
 
 # 让 /app 加入 sys.path，使 `from sensevoice.model import` 在容器内可解析
 ENV PYTHONPATH=/app

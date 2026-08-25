@@ -51,6 +51,9 @@ def get_env_config() -> Dict[str, Any]:
         "CXO_ASR_DEVICE": ["asr", "device"],
         "CXO_ASR_REMOTE_URL": ["asr", "remote_url"],
         "CXO_ASR_WS_URL": ["asr", "ws_url"],
+        "CXO_ASR_VOICEPRINT_ENABLED": ["asr", "voiceprint_enabled"],
+        "CXO_ASR_SPK_SIM_THRESHOLD": ["asr", "spk_sim_threshold"],
+        "CXO_ASR_SPK_MODEL": ["asr", "spk_model"],
         "CXO_TTS_MODE": ["tts", "mode"],
         "CXO_TTS_DEVICE": ["tts", "device"],
         "CXO_TTS_REMOTE_URL": ["tts", "remote_url"],
@@ -396,12 +399,18 @@ class ASRConfig(BaseModel):
     mode: str = "remote"
     model_dir: str = "SenseVoiceSmall"
     device: str = "cuda"
-    remote_url: str = "http://127.0.0.1:8001"
+    # 2026-08-25 与容器统一：ASR 容器单次识别与声纹 REST 均监听 8005
+    # （此前默认 8001 与 compose 端口不一致，纯默认配置下不可达；CX-O-SERVER/config.json 已显式覆盖为 8005）
+    remote_url: str = "http://127.0.0.1:8005"
     # WebSocket streaming URL（方案B：SenseVoice 加 WS 接口）
     # 当 mode="remote" 时，streaming 接口优先使用 ws_url 而非 remote_url
     # 默认指向 sensevoice 容器映射的 8005 端口
     ws_url: str = "ws://127.0.0.1:8005/ws/asr/stream"
     language: str = "auto"
+    # 声纹识别配置（Task 5/6）：声纹服务总开关、相似度阈值与声纹模型
+    voiceprint_enabled: bool = True
+    spk_sim_threshold: float = 0.65
+    spk_model: str = "iic/speech_campplus_sv_zh-cn_16k-common"
 
 
 class TTSConfig(BaseModel):
@@ -828,28 +837,52 @@ class VisionEnhancedConfig(BaseModel):
     require_vllm: bool = True  # 是否要求 vLLM 后端（false 可用于降级/调试）
 
 
-class MeetingConfig(BaseModel):
-    """多 Agent 语音会议协调器配置节（meeting，默认 enabled=false，零侵入）。
+class DanmakuSourceConfig(BaseModel):
+    """互动空间观众弹幕源采集配置（type=none 时零侵入，不启动采集器）。
 
-    对应《CX-O 多 Agent 语音会议协调器》§12 配置系统扩展。缺失字段由
-    Pydantic default 补齐；越界数值字段在 _auto_fill_meeting_config 中回退默认值
-    （max_agents 1-10、token_hold_timeout_sec 1-600、relay_pause_sec 0-5、
-    backchannel_volume 0-1、transcript_max_turns 1-200）。
+    对应《会议重定位为互动空间》spec 的观众弹幕通道。type 枚举 none|bilibili|rdf：
+    - none：不启用弹幕源
+    - bilibili：连接 bilibili 直播弹幕（host/port/room_id）
+    - rdf：通用 WebSocket 文本行弹幕（websocket_url）
+    type 不在枚举时由 _auto_fill_meeting_config 回退 none。
+    """
+
+    model_config = ConfigDict(protected_namespaces=())
+
+    type: str = "none"  # 弹幕源类型（none|bilibili|rdf），默认 none，零侵入
+    host: str = ""  # 弹幕源主机（bilibili 用）
+    port: int = 0  # 弹幕源端口（bilibili 用）
+    room_id: str = ""  # 直播间号（bilibili 用）
+    websocket_url: str = ""  # 通用 WebSocket 地址（rdf 用）
+
+
+class MeetingConfig(BaseModel):
+    """多 Agent 互动空间协调器配置节（meeting，默认 enabled=false，零侵入）。
+
+    对应《CX-O 多 Agent 语音会议协调器》§12 配置系统扩展（并承接《会议重定位为
+    互动空间》T4.1 字段扩展）。缺失字段由 Pydantic default 补齐；越界数值字段在
+    _auto_fill_meeting_config 中回退默认值（max_agents 1-10、token_hold_timeout_sec
+    1-600、relay_pause_sec 0-5、backchannel_volume 0-1、transcript_max_turns 1-200、
+    speech_rate 0-1）。
     """
 
     model_config = ConfigDict(protected_namespaces=())
 
     enabled: bool = False  # 总开关，默认关闭，零侵入
     max_agents: int = 5  # 单房间 agent 上限
-    arbiter_model: str = "independent"  # 意图解析用独立小模型
-    default_mode: str = "moderator"  # 默认发言模式（moderator/relevance/round_robin）
+    arbiter_model: str = "independent"  # 主答模型名（LLM 驱动主答选择）
+    default_mode: str = "moderator"  # 插话模型名/策略名（空用内置）
     token_hold_timeout_sec: float = 30.0  # 令牌持有超时，防霸麦
     relay_pause_sec: float = 0.4  # agent 间接力停顿
-    backchannel_enabled: bool = True  # 附和低音量开关
+    backchannel_enabled: bool = False  # 附和低音量开关（与协调器构造默认对齐）
     backchannel_volume: float = 0.2  # 附和音量（主发言的 20%）
     transcript_max_turns: int = 20  # 会议记录注入的最近轮数
     transcript_summary: bool = True  # 更早记录是否摘要压缩
     agent_interrupt_enabled: bool = False  # 是否允许 agent 打断 agent（进阶）
+    audience_enabled: bool = False  # 观众席总开关，默认关零侵入
+    danmaku_source: DanmakuSourceConfig = Field(default_factory=DanmakuSourceConfig)  # 观众弹幕源采集配置
+    speech_rate: float = 0.3  # Agent 自发插话率 0-1
+    agent_speech_prompt: str = ""  # 插话判断 prompt 模板，空用内置
 
 
 class MCPServerConfig(BaseModel):
@@ -1193,6 +1226,16 @@ def _auto_fill_radix_config(user_config: Dict[str, Any]) -> Dict[str, Any]:
         if not isinstance(v, int) or v < 1 or v > 200:
             logger.warning(f"CONFIG_FIELD_OUT_OF_RANGE: meeting.transcript_max_turns={v} 越界（1-200），回退默认值 20")
             mt["transcript_max_turns"] = 20
+    if "speech_rate" in mt:
+        v = mt["speech_rate"]
+        if not isinstance(v, (int, float)) or v < 0 or v > 1:
+            logger.warning(f"CONFIG_FIELD_OUT_OF_RANGE: meeting.speech_rate={v} 越界（0-1），回退默认值 0.3")
+            mt["speech_rate"] = 0.3
+    if isinstance(mt.get("danmaku_source"), dict) and "type" in mt["danmaku_source"]:
+        ds_type = mt["danmaku_source"]["type"]
+        if ds_type not in ("none", "bilibili", "rdf"):
+            logger.warning(f"CONFIG_FIELD_OUT_OF_RANGE: meeting.danmaku_source.type={ds_type} 不在 none|bilibili|rdf，回退默认值 none")
+            mt["danmaku_source"]["type"] = "none"
 
     logger.info("CONFIG_AUTO_FILL_APPLIED: RADIX-Lite 配置 auto_fill + 越界检查完成")
 

@@ -8,7 +8,7 @@
  *
  * 降级口径（对齐 admin.ts）：
  * - 查询类（fetchTopology/fetchSync）失败返回 null，供 UI 降级展示。
- * - fetchState 为「启用网关」：cluster 未启用（state 拉取 503/失败）或后端离线时
+ * - fetchState 为「启用网关」：cluster 未启用 （state 拉取 503/失败）或后端离线时
  *   同样抛归一化错误（normalizeError），由 UI 区分「离线全页错误态」与「未启用徽章」。
  * - 触发类（postTakeover）抛归一化错误（normalizeError），供 UI 捕获提示。
  */
@@ -103,7 +103,7 @@ export const clusterApi = {
     }
   },
 
-  /** 触发故障转移/接管（from_node → to_node）；失败抛归一化错误 */
+  /** 触发故障转移/接管（from_node → to_node） ；失败抛归一化错误 */
   async postTakeover(
     from_node: string,
     to_node?: string,

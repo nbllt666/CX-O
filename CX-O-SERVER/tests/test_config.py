@@ -344,3 +344,43 @@ class TestVisionEnhancedConfig:
         assert c.vision_enhanced.buffer_retention_sec == 30
         assert c.vision_enhanced.clip_max_sec == 10
         assert c.vision_enhanced.diff_threshold == 0.08
+
+
+# --------------------------------------------------------------------------- #
+# MeetingConfig —— 互动空间配置节默认值 / 越界回退
+# --------------------------------------------------------------------------- #
+class TestMeetingConfig:
+    def test_defaults(self):
+        m = config_mod.UnifiedConfig().meeting
+        assert m.enabled is False
+        assert m.audience_enabled is False
+        assert m.danmaku_source.type == "none"
+        assert m.speech_rate == 0.3
+        assert m.agent_speech_prompt == ""
+        assert m.backchannel_enabled is False  # 与协调器构造默认对齐
+        assert m.max_agents == 5
+        assert m.arbiter_model == "independent"
+        assert m.default_mode == "moderator"
+
+    def test_speech_rate_out_of_range(self, caplog):
+        out = _auto_fill_radix_config({"meeting": {"speech_rate": 5}})
+        assert out["meeting"]["speech_rate"] == 0.3
+
+    def test_danmaku_source_type_invalid(self, caplog):
+        out = _auto_fill_radix_config({"meeting": {"danmaku_source": {"type": "bogus"}}})
+        assert out["meeting"]["danmaku_source"]["type"] == "none"
+
+    def test_danmaku_source_type_valid_preserved(self):
+        out = _auto_fill_radix_config({"meeting": {"danmaku_source": {"type": "bilibili", "room_id": "123"}}})
+        assert out["meeting"]["danmaku_source"]["type"] == "bilibili"
+
+    def test_out_of_range_clamped_on_load(self, tmp_path, monkeypatch):
+        cfg_path = tmp_path / "config.json"
+        cfg_path.write_text(json.dumps({
+            "meeting": {"speech_rate": 9, "danmaku_source": {"type": "bogus"}}
+        }), encoding="utf-8")
+        monkeypatch.setenv("CXO_CONFIG", str(cfg_path))
+        Settings.reset()
+        c = get_config()
+        assert c.meeting.speech_rate == 0.3
+        assert c.meeting.danmaku_source.type == "none"

@@ -16,11 +16,21 @@ from typing import Optional, List
 
 import numpy as np
 import torch
-from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect, UploadFile, File, Form
+from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect, UploadFile, File, Form, Request
 from pydantic import BaseModel
 
 # 导入 SenseVoice 模型
 from funasr import AutoModel
+
+# 流式引擎（fsmn-vad 分句 + paraformer 增量 + cam++ 声纹 + 在线聚类）
+from asr_container.streaming_engine import (
+    StreamSession,
+    load_profiles,
+    status_dict,
+    extract_embedding,
+    asr_loaded,
+    spk_loaded,
+)
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -114,6 +124,53 @@ def _pcm_bytes_to_float(pcm_bytes: bytes) -> np.ndarray:
     """PCM int16 LE bytes → float32 numpy array。"""
     arr = np.frombuffer(pcm_bytes, dtype=np.int16)
     return arr.astype(np.float32) / 32768.0
+
+
+def _decode_audio_bytes(audio_bytes: bytes) -> Optional[np.ndarray]:
+    """wav 字节 → float32 16kHz 单声道 numpy 数组；非法音频返回 None。
+
+    与 /asr/recognize 的 wave 解析套路一致，并重采样至 16k。
+    """
+    try:
+        with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as f:
+            f.write(audio_bytes)
+            temp_path = f.name
+
+        with wave.open(temp_path, 'rb') as wf:
+            sample_rate = wf.getframerate()
+            channels = wf.getnchannels()
+            sample_width = wf.getsampwidth()
+            frames = wf.readframes(wf.getnframes())
+
+        if sample_width == 2:
+            dtype = np.int16
+        elif sample_width == 4:
+            dtype = np.int32
+        else:
+            dtype = np.uint8
+
+        audio_array = np.frombuffer(frames, dtype=dtype)
+
+        if dtype == np.uint8:
+            audio_float = (audio_array - 128) / 128.0
+        elif dtype == np.int16:
+            audio_float = audio_array / 32768.0
+        else:
+            audio_float = audio_array / 2147483648.0
+
+        if channels > 1:
+            audio_float = audio_float.reshape(-1, channels).mean(axis=1)
+
+        if sample_rate != 16000:
+            target_length = int(len(audio_float) * 16000 / sample_rate)
+            indices = np.linspace(0, len(audio_float) - 1, target_length)
+            audio_float = np.interp(indices, np.arange(len(audio_float)), audio_float)
+
+        Path(temp_path).unlink(missing_ok=True)
+        return audio_float
+    except Exception as e:  # noqa: BLE001
+        logger.warning(f"音频解码失败: {e}")
+        return None
 
 
 # ------------------------------------------------------------------ #
@@ -244,38 +301,24 @@ async def api_v1_asr(
 # ------------------------------------------------------------------ #
 @app.websocket("/ws/asr/stream")
 async def ws_asr_stream(websocket: WebSocket):
-    """流式 ASR WebSocket 端点。
+    """流式 ASR WebSocket 端点（基于流式引擎：fsmn-vad 分句 + paraformer 增量 + cam++ 声纹）。
 
     客户端发送：
       - 二进制帧：PCM 16kHz mono int16 LE 音频块
       - 文本帧 {"action": "final"}：语音结束信号
 
-    服务端发送：
-      - {"text": "...", "is_final": false, ...}  部分结果
-      - {"text": "...", "is_final": true,  ...}  最终结果
+    服务端发送（字段固定，含 speaker 判定）：
+      - {"text", "is_final": false, "language", "emotion", "speaker_id",
+         "speaker_registered", "speaker_conf"}  部分结果
+      - 同上但 is_final=true  最终结果（含说话人判定）
     """
     await websocket.accept()
     logger.info("[WS-ASR] Client connected")
 
-    pcm_buffer = bytearray()
-    # 双流式模式由 ASR Partial 驱动 LLM Prefill，partial 越早出，端到端延迟越低。
-    # VAD 门控下语音段常被切到 1~2s，原 48000(1.5s)/32000(1s) 阈值导致短句
-    # 全程无 partial、pipeline 饥饿（2026-08-05 实测复现，详见
-    # .trae/documents/20260805_模块0_修复短语音无Partial致流水线饥饿.md）。
-    # 2026-08-17 全链路延迟优化：为把 T5(ASR→LLM→TTS 首包) 压进 <800ms，
-    # 将首次 partial 阈值从 16000(0.5s) 下调到 4800(0.15s)。partial 是投机信号，
-    # 早出由 LLM 抢先 Prefill，后续 partial 逐轮修正，识别质量不受最终影响。
-    # 0.12s 阈值经实测回退：首 partial 过短（1 字）不触发，反而延迟 ≥2 字触发。
-    PARTIAL_THRESHOLD = 4800  # 首次 partial：~0.15s at 16kHz int16
-    PARTIAL_STEP = 3200        # 后续 partial 步进：每新增 ~0.1s 触发一次
-    MAX_BUFFER = 960000        # 缓冲上限 ~30s，防 VAD 漏检时无界增长
-    TRIM_TO = 128000           # 超限后保留尾部 ~4s
-    # 单飞推理标志：任一时刻至多 1 个 partial 推理在飞。
-    # 严禁每帧都提交全缓冲推理——帧速 16.7/s 下默认线程池会排入数十个
-    # 推理任务，GIL 挤占导致 uvicorn loop 无法应答 WS ping，客户端
-    # keepalive 超时断连、推理结果全部丢失（2026-08-05 实测复现）。
-    inference_running = False
-    last_partial_len = 0
+    # 引擎不可用降级：仍返回空 final，不崩溃。日志只告警一次避免刷屏。
+    session = StreamSession()
+    degraded = not asr_loaded()
+    degraded_warned = not degraded
 
     try:
         while True:
@@ -285,41 +328,17 @@ async def ws_asr_stream(websocket: WebSocket):
                 break
 
             if "bytes" in message and message["bytes"] is not None:
-                pcm_buffer.extend(message["bytes"])
-
-                # 缓冲安全上限：裁剪保留尾部，防止无界增长
-                if len(pcm_buffer) > MAX_BUFFER:
-                    del pcm_buffer[:-TRIM_TO]
-                    last_partial_len = min(last_partial_len, len(pcm_buffer))
-
-                # 步进触发 + 单飞：在飞期间音频继续入缓冲，
-                # 下一触发点自然携带最新数据，不丢信息
-                if (not inference_running
-                        and len(pcm_buffer) >= PARTIAL_THRESHOLD
-                        and len(pcm_buffer) - last_partial_len >= PARTIAL_STEP):
-                    inference_running = True
-                    last_partial_len = len(pcm_buffer)
-                    audio_snapshot = _pcm_bytes_to_float(bytes(pcm_buffer))
-
-                    async def _do_partial():
-                        nonlocal inference_running
-                        try:
-                            result = await asyncio.get_event_loop().run_in_executor(
-                                None, _run_inference, audio_snapshot, "auto", True
-                            )
-                            if result["text"]:
-                                await websocket.send_text(json.dumps({
-                                    "text": result["text"],
-                                    "is_final": False,
-                                    "language": result.get("language", ""),
-                                    "emotion": result.get("emotion", ""),
-                                }))
-                        except Exception as e:
-                            logger.error(f"[WS-ASR] Partial inference error: {e}")
-                        finally:
-                            inference_running = False
-
-                    asyncio.create_task(_do_partial())
+                if degraded:
+                    if not degraded_warned:
+                        logger.warning("[WS-ASR] ASR 引擎不可用，丢弃音频并降级返回空结果")
+                        degraded_warned = True
+                    continue
+                try:
+                    results = await session.feed_pcm(message["bytes"])
+                    for m in results:
+                        await websocket.send_text(json.dumps(m))
+                except Exception as e:
+                    logger.error(f"[WS-ASR] Feed inference error: {e}")
 
             elif "text" in message and message["text"] is not None:
                 try:
@@ -328,33 +347,24 @@ async def ws_asr_stream(websocket: WebSocket):
                     continue
 
                 if data.get("action") == "final":
-                    if len(pcm_buffer) > 0:
-                        audio_float = _pcm_bytes_to_float(bytes(pcm_buffer))
-                        try:
-                            result = await asyncio.get_event_loop().run_in_executor(
-                                None, _run_inference, audio_float, "auto", True
-                            )
+                    try:
+                        if degraded:
                             await websocket.send_text(json.dumps({
-                                "text": result["text"],
-                                "is_final": True,
-                                "language": result.get("language", ""),
-                                "emotion": result.get("emotion", ""),
+                                "text": "", "is_final": True, "language": "",
+                                "emotion": "", "speaker_id": "",
+                                "speaker_registered": False, "speaker_conf": 0.0,
                             }))
-                        except Exception as e:
-                            logger.error(f"[WS-ASR] Final inference error: {e}")
-                            await websocket.send_text(json.dumps({
-                                "text": "", "is_final": True, "language": "", "emotion": "",
-                            }))
-                    else:
+                        else:
+                            results = await session.finish()
+                            for m in results:
+                                await websocket.send_text(json.dumps(m))
+                    except Exception as e:
+                        logger.error(f"[WS-ASR] Final inference error: {e}")
                         await websocket.send_text(json.dumps({
-                            "text": "", "is_final": True, "language": "", "emotion": "",
+                            "text": "", "is_final": True, "language": "",
+                            "emotion": "", "speaker_id": "",
+                            "speaker_registered": False, "speaker_conf": 0.0,
                         }))
-                    # 清空 buffer 准备下一轮
-                    pcm_buffer.clear()
-                    # 必须重置 partial 步进锚点：否则下一轮 utterance 需
-                    # buffer >= last_partial_len + PARTIAL_STEP 才出首个 partial，
-                    # 相当于把首轮阈值越抬越高（次生 bug，随阈值下调一并修复）
-                    last_partial_len = 0
 
     except WebSocketDisconnect:
         logger.info("[WS-ASR] Client disconnected")
@@ -362,6 +372,71 @@ async def ws_asr_stream(websocket: WebSocket):
         logger.error(f"[WS-ASR] Error: {e}")
     finally:
         logger.info("[WS-ASR] Connection closed")
+
+
+# ------------------------------------------------------------------ #
+# REST 端点：声纹（voiceprint）status / extract / profiles/sync
+# ------------------------------------------------------------------ #
+@app.get("/api/v1/voiceprint/status")
+async def voiceprint_status():
+    """声纹引擎状态与注册画像概览。"""
+    return status_dict()
+
+
+@app.post("/api/v1/voiceprint/extract")
+async def voiceprint_extract(
+    request: Request,
+    file: Optional[UploadFile] = File(default=None),
+):
+    """提取说话人 192 维 embedding。
+
+    兼容两种入参：
+      ① multipart/form-data：字段名 file（Optional[UploadFile]）
+      ② JSON body：{"audio": "<base64 音频>"}
+
+    返回 {"embedding": [192 float], "dim": 192}；音频非法 → 400；模型未加载 → 503。
+    """
+    audio_bytes: Optional[bytes] = None
+
+    if file is not None:
+        audio_bytes = await file.read()
+    else:
+        body = {}
+        try:
+            body = await request.json()
+        except Exception:  # noqa: BLE001
+            body = {}
+        encoded = body.get("audio")
+        if isinstance(encoded, str) and encoded:
+            try:
+                audio_bytes = base64.b64decode(encoded)
+            except Exception:  # noqa: BLE001
+                audio_bytes = None
+
+    if not audio_bytes:
+        raise HTTPException(status_code=400, detail="no audio provided (json {audio: base64} or multipart file)")
+
+    audio_float = await asyncio.get_event_loop().run_in_executor(
+        None, _decode_audio_bytes, audio_bytes
+    )
+    if audio_float is None or audio_float.size == 0:
+        raise HTTPException(status_code=400, detail="invalid or empty audio")
+
+    if not spk_loaded():
+        raise HTTPException(status_code=503, detail="speaker model not loaded")
+
+    emb = await asyncio.get_event_loop().run_in_executor(None, extract_embedding, audio_float)
+    if emb is None:
+        raise HTTPException(status_code=503, detail="embedding extraction failed")
+
+    return {"embedding": [float(x) for x in emb.tolist()], "dim": int(emb.shape[0])}
+
+
+@app.post("/api/v1/voiceprint/profiles/sync")
+async def voiceprint_profiles_sync():
+    """重载声纹画像 profiles（服务端权威写入后调用刷新容器侧注册池）。"""
+    count = await asyncio.get_event_loop().run_in_executor(None, load_profiles)
+    return {"ok": True, "count": count}
 
 
 @app.get("/health")

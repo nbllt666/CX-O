@@ -37,6 +37,10 @@ export interface WebSocketMessage {
   status?: string;
   data?: {
     content?: string;
+    /** 声纹：注册说话人标识（=注册名，Task 7.1 仅注册命中带） */
+    speaker_id?: string;
+    /** 声纹：注册说话人名（未注册/伪名 spk_N 不带） */
+    speaker_name?: string;
     [key: string]: unknown;
   };
   is_final?: boolean;
@@ -59,8 +63,8 @@ export interface WebSocketOptions {
   onError?: (error: string) => void;
   onConnect?: () => void;
   onDisconnect?: () => void;
-  /** 双流式：ASR Partial 实时识别文本（用户正在说什么） */
-  onPartial?: (text: string, sessionId?: string) => void;
+  /** 双流式：ASR Partial 实时识别文本（用户正在说什么）；speakerName 为注册说话人名（未命中为空串） */
+  onPartial?: (text: string, sessionId?: string, speakerName?: string) => void;
   /** 双流式：TTS 流式音频块（边收边播，同时由内部队列自动播放） */
   onTTSChunk?: (audioBase64: string, isFinal: boolean, textSegment?: string, sessionId?: string) => void;
   /** 双流式：LLM Prefill 已启动（可显示"正在思考"） */
@@ -220,7 +224,8 @@ export function useWebSocket(options: WebSocketOptions): UseWebSocketReturn {
           // ASR Partial 实时识别文本：用户正在说什么（interim subtitle）
           const text = (data.data?.text as string) || '';
           const sessionId = data.data?.session_id as string | undefined;
-          onPartialRef.current?.(text, sessionId);
+          const speakerName = (data.data?.speaker_name as string) || '';
+          onPartialRef.current?.(text, sessionId, speakerName);
           break;
         }
         case VoiceActions.PREFILL_STARTED: {

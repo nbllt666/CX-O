@@ -86,11 +86,27 @@ class MeetingTranscript:
             parts.append(self.older_summary)
 
         for e in recent_entries:
-            parts.append(f"{e.speaker}({e.role}): {e.text}")
+            parts.append(self._render_line(e))
 
         if not parts:
             return "（会议尚未开始）"
         return "\n".join(parts)
+
+    def _render_line(self, entry: TranscriptEntry) -> str:
+        """把单条转录按角色渲染为上下文文本。
+
+        - 观众（audience）：speaker 形如 "audience:<用户名>" → 「观众 用户名: 内容」
+        - 用户（user）：「用户: 内容」
+        - Agent/其他：「<speaker>: 内容」
+        """
+        if entry.role == "audience":
+            name = entry.speaker
+            if name.startswith("audience:"):
+                name = name[len("audience:"):]
+            return f"观众 {name}: {entry.text}"
+        if entry.role == "user":
+            return f"用户: {entry.text}"
+        return f"{entry.speaker}: {entry.text}"
 
     def summarize_older(
         self,

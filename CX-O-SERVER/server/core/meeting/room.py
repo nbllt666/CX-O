@@ -43,6 +43,7 @@ class MeetingRoom:
         max_agents: int = 5,
         token: Optional[SpeakingToken] = None,
         transcript: Optional[MeetingTranscript] = None,
+        audience_enabled: bool = False,
     ):
         self.room_id: str = room_id or uuid.uuid4().hex[:12]
         self.user: str = user
@@ -50,6 +51,8 @@ class MeetingRoom:
         self.agents: List[AgentMemberModel] = list(agents or [])
         self.token: SpeakingToken = token or SpeakingToken()
         self.transcript: MeetingTranscript = transcript or MeetingTranscript()
+        # 观众席开关（供互动空间开/关观众弹幕通道，T3 消费）
+        self.audience_enabled: bool = bool(audience_enabled)
         self.state: RoomState = RoomState.IDLE
         self._state_callbacks: List[StateCallback] = []
 
@@ -76,6 +79,12 @@ class MeetingRoom:
             "agents": [a.to_dict() for a in self.agents],
             "token_holder": self.token.who_holds(),
             "transcript_turns": len(self.transcript),
+            "audience_enabled": self.audience_enabled,
+            # 最近消息流摘要（供前端渲染互动空间消息流）
+            "recent_messages": [
+                {"role": e.role, "speaker": e.speaker, "text": e.text, "ts": e.ts}
+                for e in self.transcript.recent(20)
+            ],
         }
 
     # ---------------------------------------------------------------- 生命周期

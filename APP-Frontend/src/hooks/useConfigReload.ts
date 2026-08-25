@@ -7,6 +7,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { getWsBaseUrl } from '../api/base';
 import { emitConfigChanged } from '../lib/configEvents';
+import { emitMeetingState, emitDanmakuReply } from '../lib/meetingEvents';
 
 interface UseConfigReloadReturn {
   isConnected: boolean;
@@ -42,6 +43,11 @@ export function useConfigReload(): UseConfigReloadReturn {
         try {
           const data = JSON.parse(event.data as string) as {
             event?: string;
+            type?: string;
+            room_id?: string;
+            agent_id?: string;
+            text?: string;
+            username?: string;
             data?: { section?: string; requires_restart?: boolean };
           };
           if (data.event === 'config_changed' && data.data?.section) {
@@ -50,8 +56,20 @@ export function useConfigReload(): UseConfigReloadReturn {
               requiresRestart: !!data.data.requires_restart,
             });
           }
+          // meeting_state / danmaku_reply：后端经 /ws 全连接广播，复用本连接转发到事件总线
+          if (data.type === 'meeting_state' && data.room_id) {
+            emitMeetingState({ room_id: data.room_id, data: data.data });
+          }
+          if (data.type === 'danmaku_reply' && data.room_id) {
+            emitDanmakuReply({
+              room_id: data.room_id,
+              agent_id: String(data.agent_id ?? ''),
+              text: String(data.text ?? ''),
+              username: String(data.username ?? ''),
+            });
+          }
         } catch {
-          // 非 JSON 或非配置事件，忽略
+          // 非 JSON 或非配置/会议事件，忽略
         }
       };
 

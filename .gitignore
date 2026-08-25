@@ -304,3 +304,11 @@ docker-compose.weaviate-gpu-custom.yml
 docker-compose.weaviate-gpu-full.yml
 docker-compose.weaviate-gpu-multilingual.yml
 DiffSinger
+
+# ----------------------------------------
+# ASR 容器分享产物（docker save 的整镜像 tar，~6GB，不入库）
+# ----------------------------------------
+docker/asr/release/
+
+# ASR 容器构建暂存：运行时容器导出的 ModelScope 模型缓存（~3GB，不入库）
+CX-O-SERVER/modelscope_cache/

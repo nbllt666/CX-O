@@ -325,9 +325,11 @@ export default function PetPage() {
   }, []);
 
   const handleAsrResult = useCallback(
-    (data: { text: string; is_final: boolean }) => {
+    (data: { text: string; is_final: boolean; speakerName?: string }) => {
       const text = data.text.trim();
       if (!text) return;
+      // 声纹：仅注册命中的说话人名才标注（未命中为空串，不显示标签）
+      const speakerName = data.speakerName?.trim() || undefined;
       // interim 就地更新同一气泡；一段话一个气泡
       if (!asrMsgIdRef.current) {
         const id = `asr-${Date.now()}`;
@@ -337,6 +339,7 @@ export default function PetPage() {
           role: 'user',
           content: text,
           timestamp: nowIso(),
+          speakerName,
         });
       } else {
         chatRef.current?.updateMessageContent(asrMsgIdRef.current, text);

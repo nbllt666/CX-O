@@ -82,12 +82,18 @@ class LiveClientHandler:
             if asr_result:
                 text = asr_result.get("text", "")
                 if text:
+                    # 声纹说话人（仅注册命中带名；未注册 spk_N 伪名不外发）
+                    _spk_name = asr_result.get("speaker_name") or (asr_result.get("speaker_id") if asr_result.get("speaker_registered") else "")
+                    _payload = {
+                        "text": text,
+                        "is_final": not vad_result.get("is_speaking", False),
+                    }
+                    if _spk_name:
+                        _payload["speaker_id"] = _spk_name
+                        _payload["speaker_name"] = _spk_name
                     await self.manager.send_message(self.client_id, {
                         "type": "asr_result",
-                        "data": {
-                            "text": text,
-                            "is_final": not vad_result.get("is_speaking", False)
-                        }
+                        "data": _payload
                     })
 
                     # per-client 并发化：使用当前 client 打断模块（TTS 播放状态隔离）
@@ -149,10 +155,28 @@ class LiveClientHandler:
         marker_data = self.marker_adapter.process_danmaku(data)
         frontend_data = self.frontend_marker.format_for_frontend(marker_data)
 
-        await self.manager.send_message(self.client_id, {
-            "type": "danmaku",
-            "data": frontend_data
-        })
+        # 弹幕回显改为全房间广播：观众消息投递到 live 频道，所有订阅者（观众）彼此可见弹幕
+        await self.manager.broadcast_to_channel(
+            "live", {"type": "danmaku", "data": frontend_data}
+        )
+
+        # 弹幕转发互动房间：装配了互动协调器且房间开启观众席时，弹幕进入回应引擎
+        await self._forward_danmaku_to_meeting(content, user_id, username)
+
+    async def _forward_danmaku_to_meeting(self, content: str, user_id: str, username: str) -> None:
+        """把弹幕投递给互动协调器（process_audience_message）。
+
+        通过模块级 get_meeting_coordinator 读取已装配协调器（延迟导入避免循环依赖）；
+        房间未开启观众席 / 无活跃房间时由协调器静默返回 None，此处 try/except 兜底。
+        """
+        try:
+            from server.api.routers.meeting import get_meeting_coordinator
+
+            coord = get_meeting_coordinator()
+            if coord is not None:
+                await coord.process_audience_message(content, userid=user_id, username=username)
+        except Exception as e:  # 互动房间未装配/异常时静默跳过，不影响弹幕主路径
+            logger.debug("弹幕转发互动房间跳过: %s", e)
 
     def _safe_feedback_danmaku(self, content: str, user_id: str) -> None:
         """将过滤放行后的弹幕喂给隐式反馈追踪器（fire-and-forget，静默降级）。

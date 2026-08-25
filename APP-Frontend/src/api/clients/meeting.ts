@@ -25,6 +25,14 @@ export interface MeetingAgentSpec {
   voice?: string | null;
 }
 
+/** 消息流单条（room.to_dict().recent_messages，最近 20 条） */
+export interface MeetingRecentMessage {
+  role: 'user' | 'agent' | 'audience';
+  speaker: string;
+  text: string;
+  ts?: string | number;
+}
+
 /** 房间状态快照（room.to_dict()） */
 export interface MeetingRoomSnapshot {
   room_id: string;
@@ -34,6 +42,19 @@ export interface MeetingRoomSnapshot {
   agents: MeetingAgentSpec[];
   token_holder: string | null;
   transcript_turns: number;
+  /** 观众席是否开启（弹幕通道是否在采集） */
+  audience_enabled: boolean;
+  /** 最近消息流（user/agent/audience 三态，供互动空间渲染） */
+  recent_messages: MeetingRecentMessage[];
+}
+
+/** speak 请求可选字段（SpeakRequest：role / userid / username / mention） */
+export interface MeetingSpeakOptions {
+  role?: 'user' | 'audience';
+  userid?: string;
+  username?: string;
+  /** 点名目标 agent_id（@agent 快捷点名时填写） */
+  mention?: string;
 }
 
 /** 发言权裁决（decision.to_dict()） */
@@ -75,12 +96,13 @@ function dataOf<T>(res: ApiResponse<T>): T {
 }
 
 export const meetingApi = {
-  /** 开启会议：data=房间状态快照（含 room_id / agents / state） */
+  /** 开启会议：data=房间状态快照（含 room_id / agents / state / audience_enabled） */
   async start(opts: {
     user: string;
     agents?: MeetingAgentSpec[];
     room_id?: string;
     max_agents?: number;
+    audience_enabled?: boolean;
   }): Promise<MeetingRoomSnapshot> {
     const res = await request<ApiResponse<MeetingRoomSnapshot>>({
       url: '/api/meeting/start',
@@ -90,6 +112,7 @@ export const meetingApi = {
         agents: opts.agents ?? [],
         room_id: opts.room_id,
         max_agents: opts.max_agents,
+        audience_enabled: opts.audience_enabled,
       },
     });
     return dataOf(res);
@@ -123,7 +146,7 @@ export const meetingApi = {
     return dataOf(res);
   },
 
-  /** 将 Agent 移出会议：data=房间状态快照 */
+  /** 移除 Agent：data=房间状态快照 */
   async leave(roomId: string, agentId: string): Promise<MeetingRoomSnapshot> {
     const res = await request<ApiResponse<MeetingRoomSnapshot>>({
       url: `/api/meeting/${encodeURIComponent(roomId)}/leave`,
@@ -133,12 +156,28 @@ export const meetingApi = {
     return dataOf(res);
   },
 
+  /** 开/关观众席（同时启停弹幕连接器）：data=房间状态快照 */
+  async toggleAudience(roomId: string, enabled: boolean): Promise<MeetingRoomSnapshot> {
+    const res = await request<ApiResponse<MeetingRoomSnapshot>>({
+      url: `/api/meeting/${encodeURIComponent(roomId)}/audience/toggle`,
+      method: 'post',
+      data: { enabled },
+    });
+    return dataOf(res);
+  },
+
   /** 用户发言，触发发言权仲裁：data={ decision, turns, transcript_turns } */
-  async speak(roomId: string, text: string): Promise<MeetingSpeakResult> {
+  async speak(roomId: string, text: string, opts?: MeetingSpeakOptions): Promise<MeetingSpeakResult> {
     const res = await request<ApiResponse<MeetingSpeakResult>>({
       url: `/api/meeting/${encodeURIComponent(roomId)}/speak`,
       method: 'post',
-      data: { text },
+      data: {
+        text,
+        role: opts?.role ?? 'user',
+        userid: opts?.userid,
+        username: opts?.username,
+        mention: opts?.mention,
+      },
     });
     return dataOf(res);
   },

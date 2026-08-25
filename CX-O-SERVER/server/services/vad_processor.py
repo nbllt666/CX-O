@@ -322,7 +322,8 @@ class AudioStreamProcessor:
         # 主驱动回调：Partial Result 立即触发 LLM Speculative Prefill，不等 VAD on_end
         self._on_partial_result_callback = on_partial_result
 
-    async def process_audio_chunk(self, audio_data: bytes, skip_interrupt: bool = False) -> dict:
+    async def process_audio_chunk(self, audio_data: bytes, skip_interrupt: bool = False,
+                                  always_send: bool = False) -> dict:
         """处理单帧音频
 
         skip_interrupt: 双流式(voice.dual_stream)路径传 True。
@@ -330,6 +331,12 @@ class AudioStreamProcessor:
         agent_interrupt 的"LLM 判断插话"在此场景完全冗余——每个 partial 额外触发
         一次完整 LLM chat，与主 pipeline 争夺 vLLM 仅有的并发槽，实测把 LLM/TTS
         饿死（chunk first PCM 47s）。半双工/live 路径保持默认 False 不变。
+
+        always_send: 全双工(voice.dual_stream)路径传 True——**不做服务端 VAD 门控**，
+        所有音频帧从第一帧起直通容器流式 ASR（容器内含 fsmn-vad 流式截断与噪声
+        抑制，静默不产文本），消除服务端 VAD speech 判定(~300ms)带来的 T2 延迟，
+        全双工"边说边识别"符合 <800ms 设计目标（2026-08-25 用户指令）。服务端 VAD
+        仍保留用于 speech_end 翻转产出 is_last(final 兜底)，不再阻塞音频上行。
         """
         _debug = logger.isEnabledFor(logging.DEBUG)
         if _debug:
@@ -362,13 +369,13 @@ class AudioStreamProcessor:
             # 本轮识别结果全丢（2026-08-05 18:19 实测复现）。
             is_last = vad_result["state_changed"] and not vad_result["is_speaking"]
 
-            # VAD 门控：仅说话中（及翻转当帧）的音频送 ASR 服务端。
-            # 严禁转发纯静默帧——静默在服务端缓冲累积（final 清空后重新积满
-            # 48KB 阈值），触发对纯静默的 partial 推理，SenseVoice 在静默上
-            # 幻觉出乱码（实测产出韩文 '그.'/'아.'），且 speech_end 已重置
-            # 触发标志，幻觉 partial 会二次触发完整 LLM+TTS pipeline，
-            # 多轮累积致端到端延迟 4.7s→9.5s→14.3s 递增（2026-08-05 实测）。
-            should_send = vad_result["is_speaking"] or is_last
+            # VAD 门控：仅说话中（及翻转当帧）的音频送 ASR 服务端（半双工/live 默认路径）。
+            # ⚠️ 全双工路径（always_send=True，双流式 voice.dual_stream）：**不做门控**，
+            # 所有帧直通容器流式 ASR——容器内含 fsmn-vad 流式截断 + 噪声抑制（静默不产文本），
+            # 消除服务端 VAD speech 判定等待（~300ms），保证"边说边识别"（2026-08-25 用户指令）。
+            # 旧注释的"静默幻觉"根因是 SenseVoice 全缓冲重推理引擎；paraformer 流式引擎
+            # 已实测纯静默/噪声输出空文本，无需再依赖服务端门控防幻觉。
+            should_send = always_send or vad_result["is_speaking"] or is_last
             if _debug:
                 _diag_t2 = time.time()
             if should_send:
@@ -401,7 +408,12 @@ class AudioStreamProcessor:
                     "clean_text": streaming_result.clean_text,
                     "language": streaming_result.language,
                     "is_final": streaming_result.is_final,
-                    "emotion": streaming_result.emotion
+                    "emotion": streaming_result.emotion,
+                    # 声纹识别字段（Task 4）：自 ASR 流式结果透传到回调 dict
+                    "speaker_id": streaming_result.speaker_id,
+                    "speaker_name": streaming_result.speaker_name,
+                    "speaker_registered": streaming_result.speaker_registered,
+                    "speaker_conf": streaming_result.speaker_conf,
                 }
                 result["asr"] = asr_result
 
