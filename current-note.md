@@ -4,6 +4,35 @@
 
 ## 做到哪了
 
+- **修复桌宠开启状态与管理页显示不同步**（已闭合，2026-08-25；issue `模块0-20260825-06`）
+  - 工程过程：用户反馈「默认的桌宠在前端启动时就显示了，但管理页没有」→ 根因=桌宠窗实际开启状态由 Electron 主进程窗口权威持有，而管理页开关来自 `petPanelStore.openAgentIds`（仅手动开关才更新），启动自动打开的默认桌宠窗从未写入 store → 修复：主进程新增 `window:list-pet` IPC 返回实际已开桌宠 agentId，preload 暴露 `listPetWindows`（electron.d.ts 声明可选），AgentsPage 挂载时以实际窗口对齐 store。
+  - 交接状态：**已闭合**（typecheck 通过 + AgentsPage/createStorage 11 tests passed + build 成功，main.js 含 window:list-pet）。变更文档 `.trae/documents/20260825_模块前端_修复桌宠开启状态同步.md`。
+  - 最终结果：管理页初始化时从主进程读取实际桌宠窗口并同步「开启」状态，启动默认桌宠窗现在会在管理页显示为已开启，两侧一致。
+  - 未闭合项：待用户重启桌宠应用后在管理页确认。前端已 build，未重打安装包。
+  - 接续入口：重启应用 → 管理页观察默认 agent 桌宠显示「已开启」。
+
+- **新增「改变默认 Agent」功能**（已闭合，2026-08-25；issue `模块0-20260825-05`）
+  - 工程过程：用户要求「增加改变默认Agent的功能」→ 确认系统已有 is_default 标记（默认徽章/默认不可删/统计展示）但缺设置入口 → 后端新增 `POST /api/agents/{agent_id}/default`（目标置 is_default=True，同事务清其他为 False，保证全局唯一，404 兜底）+ 前端 `agentsApi.setDefaultAgent` + AgentsPage 非默认卡片加「设为默认」按钮（CheckCircle2）+ i18n 双语。
+  - 交接状态：**已闭合**（后端 test_agents_router + test_anythingllm_router **70 passed**（含新增 TestSetDefaultAgent 2 项）+ pyflakes 零告警；前端 typecheck/lint/AgentsPage 5 tests 通过 + build 成功；运行态验证 `POST /api/agents/memory-agent/default` 后 GET /default 返回 memory-agent 且全局唯一，已恢复默认=default）。变更文档 `.trae/documents/20260825_模块0_增加改变默认Agent功能.md`。
+  - 最终结果：管理页每个非默认 agent 卡片新增「设为默认」操作（绿色对勾按钮），点击后该 agent 成为默认（徽章切换、其余清默认、不可删保护跟随转移）。
+  - 未闭合项：无。前端已 build，未重打安装包。
+  - 接续入口：管理页 agent 卡片点击对勾按钮设置默认；如需分发重打安装包。
+
+- **修复自主系统前端开关 + Weaviate 阻塞延迟 + 新增 per-agent 形象**（已闭合，2026-08-25；issues `模块0-20260825-03/02/04`）
+  - 工程过程：用户反馈「大量功能仍然不正常（agent 分开设置 VRM、自主系统等）」→ 逐项实测定位：①自主系统默认 enabled=False 未装配，前端 enable 返回 400「未装配」；②graph 语义搜索因 Weaviate 未运行在请求路径同步阻塞 12.5s，连累 graph/config、autonomy/config 等端点；③后端无 per-agent avatar 契约，形象全局设置，无法按 agent 区分。
+  - 修复：①`autonomy.py` control() 改 async，enable 时经 `_try_ensure_manager` 运行时装配 `setup_autonomy` 并回填单例 + `_persist_enabled` 持久化开关（跨重启保持）；②`semantic_search.py` 加 60s 重试冷却闸门，失败后不再每次阻塞 Weaviate 连接，配合实例缓存使 graph/config 12.5s → 3~4ms；③前端新增 `agentAvatarBindings.ts`（localStorage）实现 per-agent 形象绑定，PetAvatar 按 agentId 覆盖形象，PetPage 传 windowAgentId，AgentsPage 加形象选择器（类型 + 可选模型），i18n 双语。
+  - 交接状态：**已闭合**（后端 87 passed【graph_semantic_search/autonomy_router/graph_router/graph_hybrid/discovery】+ pyflakes 零告警；前端 typecheck/lint 通过 + AgentsPage/AvatarSourcePage 6 passed + build 成功；运行态：autonomy status=running/config enabled=True、graph/config 首次 8s 后连续 3~4ms、health 5ms）。变更文档 3 份（`20260825_模块0_修复Weaviate阻塞延迟.md`、`20260825_模块0_修复自主系统前端开关无效.md`、`20260825_模块前端_新增per-agent形象绑定.md`）。
+  - 最终结果：自主系统现在前端点「启用」可运行时装配并持久化；graph 语义相关端点不再因 Weaviate 缺失阻塞；每个 agent 可在管理页独立选择 VRM/Live2D/无形象并在桌宠多开窗生效。
+  - 未闭合项（需用户 onboard）：per-agent 形象自定义模型需 Electron 系统文件选择；桌宠多开实际观察不同形象待真机确认。前端已 build，未重打安装包。
+  - 接续入口：管理页 → 每个 agent 卡片的「形象设置」选择；重打安装包分发 per-agent 形象。
+
+- **修复局域网后端发现扫描挂死主后端（前端全窗延迟失效根因）**（已闭合，2026-08-25；issue `模块0-20260825-01`）
+  - 工程过程：用户报「前端严重延迟，大量功能失效，所有窗口都这样」→ 探测后端 8000 存活但全部业务 API 超时 → py-spy 堆栈实锤 MainThread 卡在 `ssl.create_default_context()`（`_probe` 建 httpx.AsyncClient）→ 根因=前端 `useBackendFailover→refreshCandidates` 每窗挂载无条件触发 `/api/discovery/backends`，后端对 /24 子网 254 主机逐主机新建 AsyncClient（本机证书库加载 ~1s/次），串行阻塞事件循环数分钟 → 修复：后端 `discovery.py` 改单共享客户端 `verify=False`（跳过证书库加载）+ per-request timeout；前端 `backendFailover.ts` `refreshCandidates` 移除自动局域网发现（保留 cluster peers + 持久化候选），删除 `fetchDiscoveryBackends`，局域网发现仅保留设置页「一键发现」手动入口。
+  - 交接状态：**已闭合**（后端 `test_discovery_router` 4 passed + pyflakes 零告警；前端 `backendFailover.test` 13 passed + typecheck 通过 + eslint 零告警；运行态终验：重启后端后 `/health` 15ms、`/api/agents` 6ms、`/api/config/limits` 4ms、discovery 扫描 6.7s 完成不阻塞、CPU 空闲无忙循环）。变更文档 `.trae/documents/20260825_模块0_修复discovery扫描挂死后端.md`。
+  - 最终结果：后端恢复毫秒级响应，不再因 discovery 扫描挂死；前端新代码不再随窗口挂载触发全子网扫描。后端已用新代码重启（pid 16176）并验证；前端 `npm run build` 已重建（dist 主包不含 `discovery/backends` 自动调用，设置页手动「一键发现」保留）。
+  - 未闭合项：无（如需向最终用户分发需重打安装包 `npm run package:win`，属部署动作非缺陷）。
+  - 接续入口：直接使用即可；重打安装包后可彻底分发修复。
+
 - **前端主后端断连自动切哨兵对等**（已闭合，2026-08-24；承接 spec `admin-plane-sentinel-cluster` 尾部从属需求）
   - 工程过程：用户提问"前端能自动转接接管的后端吗"→ 核查前端连接模型（单后端 + 同址重试，无集群感知）→ 明确答复"不能，需补客户端故障转移"→ 用户拍板：主后端断连时自动切换，可视化部分也要 → 实现 `src/lib/backendFailover.ts`（候选集持久化 / /health 探测 / 集群角色读取 / `runBackendFailover` 切换 + 冷却防震荡 / 派发 `backend:switched`）+ `src/hooks/useBackendFailover.ts`（挂载收集 peers + 周期探测 + 连续失败阈值 + 切换后重载）+ `App.tsx` 根部挂载（覆盖管理界面/桌宠/弹幕/OBS 源）。
   - 交接状态：**已闭合**（typecheck 通过；backendFailover.test 14 + base/App 回归 33 passed；`npm run build` 成功；变更文档 `.trae/documents/20260824_模块前端_主后端断连自动切哨兵.md`）。

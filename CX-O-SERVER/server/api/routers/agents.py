@@ -559,6 +559,33 @@ async def delete_agent(agent_id: str):
         raise HTTPException(status_code=500, detail="内部服务器错误")
 
 
+@router.post("/agents/{agent_id}/default")
+async def set_default_agent(agent_id: str):
+    """将指定 Agent 设为默认 Agent（全局唯一：同事务清除其他 Agent 的 is_default）。
+
+    目标 Agent 不存在返回 404；不删除任何数据，仅转移 is_default 标记。
+    保留 id="default" Agent 作为共享资源锚点（记忆/图/会话兜底），其 is_default
+    标记可被转移，但该 Agent 实体仍存在。
+    """
+    try:
+        agents = _load_agents()
+        target = next((a for a in agents if a["id"] == agent_id), None)
+        if not target:
+            raise HTTPException(status_code=404, detail=f"Agent '{agent_id}' 不存在")
+
+        for agent in agents:
+            agent["is_default"] = agent["id"] == agent_id
+            agent["updated_at"] = datetime.now().isoformat()
+        _save_agents(agents)
+
+        return {"status": "success", "agent": target, "message": f"已设为默认 Agent：{target.get('name', agent_id)}"}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"设置默认Agent失败: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="内部服务器错误")
+
+
 @router.post("/agents/{agent_id}/clone")
 async def clone_agent(agent_id: str):
     """克隆 Agent"""

@@ -14,7 +14,7 @@
     "vision_enabled": true,
     "is_default": true,
     "created_at": "2026-08-03T20:47:28.848453",
-    "updated_at": "2026-08-03T20:47:28.848453"
+    "updated_at": "2026-08-25T13:50:14.970606"
   },
   {
     "id": "memory-agent",
@@ -31,7 +31,7 @@
     "vision_enabled": false,
     "is_default": false,
     "created_at": "2026-08-03T20:47:28.848453",
-    "updated_at": "2026-08-03T20:47:28.848453"
+    "updated_at": "2026-08-25T13:50:14.970615"
   },
   {
     "id": "agent-81c20eda",
@@ -47,7 +47,7 @@
     "decay_model": "exponential",
     "is_default": false,
     "created_at": "2026-08-06T14:04:33.165260",
-    "updated_at": "2026-08-06T14:04:33.165260"
+    "updated_at": "2026-08-25T13:50:14.970617"
   },
   {
     "id": "agent-c7cbb302",
@@ -63,7 +63,7 @@
     "decay_model": "exponential",
     "is_default": false,
     "created_at": "2026-08-06T15:49:46.021632",
-    "updated_at": "2026-08-06T15:49:46.021632"
+    "updated_at": "2026-08-25T13:50:14.970619"
   },
   {
     "id": "agent-750df0f0",
@@ -79,7 +79,7 @@
     "decay_model": "exponential",
     "is_default": false,
     "created_at": "2026-08-06T15:50:21.828164",
-    "updated_at": "2026-08-06T15:50:21.828164"
+    "updated_at": "2026-08-25T13:50:14.970621"
   },
   {
     "id": "agent-5cb88f45",
@@ -95,7 +95,7 @@
     "decay_model": "exponential",
     "is_default": false,
     "created_at": "2026-08-06T15:55:10.501471",
-    "updated_at": "2026-08-06T15:55:10.501471"
+    "updated_at": "2026-08-25T13:50:14.970623"
   },
   {
     "id": "agent-50aabf2f",
@@ -111,7 +111,7 @@
     "decay_model": "exponential",
     "is_default": false,
     "created_at": "2026-08-06T17:04:16.718671",
-    "updated_at": "2026-08-06T17:04:16.718671"
+    "updated_at": "2026-08-25T13:50:14.970625"
   },
   {
     "id": "agent-019cf177",
@@ -127,7 +127,7 @@
     "decay_model": "exponential",
     "is_default": false,
     "created_at": "2026-08-06T17:05:27.718008",
-    "updated_at": "2026-08-06T17:05:27.748031"
+    "updated_at": "2026-08-25T13:50:14.970627"
   },
   {
     "id": "agent-0c450a20",
@@ -143,7 +143,7 @@
     "decay_model": "exponential",
     "is_default": false,
     "created_at": "2026-08-06T17:06:01.871716",
-    "updated_at": "2026-08-06T17:06:01.871716"
+    "updated_at": "2026-08-25T13:50:14.970628"
   },
   {
     "id": "agent-cc4c5b5e",
@@ -159,7 +159,7 @@
     "decay_model": "exponential",
     "is_default": false,
     "created_at": "2026-08-06T17:06:24.008239",
-    "updated_at": "2026-08-06T17:06:24.008239"
+    "updated_at": "2026-08-25T13:50:14.970630"
   },
   {
     "id": "agent-a77b6e7c",
@@ -175,7 +175,7 @@
     "decay_model": "exponential",
     "is_default": false,
     "created_at": "2026-08-06T17:07:25.412909",
-    "updated_at": "2026-08-06T17:07:25.470493"
+    "updated_at": "2026-08-25T13:50:14.970633"
   },
   {
     "id": "agent-2990ad1e",
@@ -191,7 +191,7 @@
     "decay_model": "exponential",
     "is_default": false,
     "created_at": "2026-08-06T17:16:56.515495",
-    "updated_at": "2026-08-06T17:16:56.515495"
+    "updated_at": "2026-08-25T13:50:14.970634"
   },
   {
     "id": "agent-70555452",
@@ -207,7 +207,7 @@
     "decay_model": "exponential",
     "is_default": false,
     "created_at": "2026-08-06T17:21:07.230824",
-    "updated_at": "2026-08-06T17:21:07.230824"
+    "updated_at": "2026-08-25T13:50:14.970636"
   },
   {
     "id": "agent-8cb73966",
@@ -223,7 +223,7 @@
     "decay_model": "exponential",
     "is_default": false,
     "created_at": "2026-08-06T17:22:08.721206",
-    "updated_at": "2026-08-06T17:22:08.740489"
+    "updated_at": "2026-08-25T13:50:14.970638"
   },
   {
     "id": "agent-179e86cf",
@@ -239,7 +239,7 @@
     "decay_model": "exponential",
     "is_default": false,
     "created_at": "2026-08-06T19:43:19.220539",
-    "updated_at": "2026-08-06T19:43:19.220539"
+    "updated_at": "2026-08-25T13:50:14.970640"
   },
   {
     "id": "agent-9fbc79dd",
@@ -255,6 +255,6 @@
     "decay_model": "exponential",
     "is_default": false,
     "created_at": "2026-08-06T19:44:22.166596",
-    "updated_at": "2026-08-06T19:44:22.248021"
+    "updated_at": "2026-08-25T13:50:14.970642"
   }
 ]

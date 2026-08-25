@@ -11,11 +11,15 @@
 """
 from typing import Any, Dict
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, ValidationError
 
 from server.autonomy.config import AutonomyConfig, save_config
 from server.autonomy.manager import AutonomyDisabledError
+
+import logging
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
@@ -88,6 +92,60 @@ def _try_bootstrap_manager():
     return mgr
 
 
+async def _try_ensure_manager(request: Request):
+    """获取可用 AutonomyManager；未装配时对 enable 尝试运行时装配。
+
+    优先复用已装配单例（`_try_bootstrap_manager`）；仍为 None 且 app 已装配
+    services 时，将配置 enabled 持久化后调用 setup_autonomy 完成运行时装配，
+    并回填模块级 `_manager` / `_audit_store`。任何失败返回 None（调用方降级 400）。
+    """
+    global _manager, _audit_store
+    if _manager is not None:
+        return _manager
+    mgr = _try_bootstrap_manager()
+    if mgr is not None:
+        return mgr
+    services = getattr(getattr(request.app, "state", None), "services", None)
+    if services is None:
+        return None
+    try:
+        from server.autonomy.config import load_config
+        from server.autonomy.main import (
+            get_audit_store as _get_assembled_audit,
+            setup_autonomy,
+        )
+
+        cfg = load_config()
+        cfg.enabled = True
+        save_config(cfg)
+        mgr = await setup_autonomy(services)
+        if mgr is not None:
+            _manager = mgr
+            _audit_store = _get_assembled_audit()
+        return mgr
+    except Exception as e:
+        logger.error("自主系统运行时装配失败: %s", e)
+        return None
+
+
+def _persist_enabled(action: str, manager: Any) -> None:
+    """enable/disable 开关状态持久化到配置存储（其余动作不持久化）。
+
+    使用 manager.config 的 store_path 落盘，保证跨重启保持；配置缺失或写入
+    失败仅告警，不影响控制指令执行。
+    """
+    if action not in ("enable", "disable"):
+        return
+    cfg = getattr(manager, "config", None)
+    if cfg is None:
+        return
+    try:
+        cfg.enabled = action == "enable"
+        save_config(cfg)
+    except Exception as e:
+        logger.warning("自主系统开关状态持久化失败: %s", e)
+
+
 @router.get("/autonomy/status")
 def get_status():
     """返回自主系统状态快照（对齐 autonomy_state.schema.json）。
@@ -105,11 +163,12 @@ def get_status():
 
 
 @router.post("/autonomy/control")
-def control(body: ControlRequest):
+async def control(body: ControlRequest, request: Request):
     """下发控制指令：enable / disable / pause / resume / emergency_stop。
 
     非法 action 返回 400；manager 为 None 时对 enable 尝试从装配入口获取已装配
-    单例，仍不可用则返回 400。
+    单例，仍不可用则尝试运行时装配（services 可用时），均不可用则返回 400。
+    enable/disable 会持久化开关状态，保证跨重启保持。
     """
     action = body.action
     if action not in CONTROL_ACTIONS:
@@ -121,12 +180,13 @@ def control(body: ControlRequest):
     manager = _manager
     if manager is None:
         if action == "enable":
-            manager = _try_bootstrap_manager()
+            manager = await _try_ensure_manager(request)
         if manager is None:
             raise HTTPException(status_code=400, detail="自主系统未装配，无法执行控制指令")
 
     method = getattr(manager, action)
     method()
+    _persist_enabled(action, manager)
     return {"status": "ok", "state": _manager_state(manager)}
 
 

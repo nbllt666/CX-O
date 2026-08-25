@@ -9,7 +9,6 @@ import {
   probeBackend,
   readClusterRole,
   fetchClusterPeers,
-  fetchDiscoveryBackends,
   readCandidates,
   writeCandidates,
   refreshCandidates,
@@ -99,32 +98,28 @@ describe('读取集群信息', () => {
     );
     expect(await fetchClusterPeers('http://a:8100')).toEqual(['http://b:8100', 'http://c:8100']);
   });
-  it('fetchDiscoveryBackends 返回发现后端', async () => {
-    stubFetch((url) =>
-      url.endsWith('/api/discovery/backends')
-        ? healthyJson({ backends: [{ url: 'http://192.168.1.10:8100' }] })
-        : healthyJson({}),
-    );
-    expect(await fetchDiscoveryBackends('http://a:8100')).toEqual(['http://192.168.1.10:8100']);
-  });
 });
 
 describe('refreshCandidates', () => {
-  it('合并 当前 + cluster peers + 局域网发现 并持久化', async () => {
-    stubFetch((url) => {
+  it('合并 当前 + cluster peers 并持久化（不触发局域网发现扫描）', async () => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
       if (url.endsWith('/api/cluster/state')) {
-        return healthyJson({ state: { enabled: true, peers: ['http://b:8100'] } });
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({ state: { enabled: true, peers: ['http://b:8100'] } }),
+        };
       }
-      if (url.endsWith('/api/discovery/backends')) {
-        return healthyJson({ backends: [{ url: 'http://192.168.1.20:8100' }] });
-      }
-      return healthyJson({});
+      return { ok: true, status: 200, json: async () => ({}) };
     });
+    vi.stubGlobal('fetch', fetchMock);
     const list = await refreshCandidates('http://a:8100');
     expect(list).toContain('http://a:8100');
     expect(list).toContain('http://b:8100');
-    expect(list).toContain('http://192.168.1.20:8100');
     expect(readCandidates()).toContain('http://b:8100');
+    // 不得触发全子网扫描端点（后端会因此阻塞挂死）
+    expect(fetchMock.mock.calls.some((c) => String(c[0]).includes('/api/discovery/backends'))).toBe(false);
   });
 });
 

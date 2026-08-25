@@ -15,7 +15,9 @@ import { useCallback, useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import {
   Bot,
+  CheckCircle2,
   Copy,
+  FolderOpen,
   Laptop,
   Mic,
   Pencil,
@@ -32,6 +34,13 @@ import type { RefAudioAsset } from '@/api/clients/audio';
 import type { Agent } from '@/api/types';
 import { cn } from '@/lib/utils';
 import { isElectron } from '@/lib/isElectron';
+import { pickModelFile } from '@/lib/vrmModelSource';
+import {
+  clearAgentAvatarBinding,
+  getAgentAvatarBinding,
+  setAgentAvatarBinding,
+  type AgentAvatarBinding,
+} from '@/lib/agentAvatarBindings';
 import { usePetPanelStore } from '@/store/petPanelStore';
 
 type MemoryScene = 'chat' | 'task' | 'first_interaction';
@@ -397,6 +406,112 @@ function AgentRefAudioControl(props: {
   );
 }
 
+/** per-agent 形象绑定控件：选择该 Agent 桌宠的形象类型与可选模型。 */
+function AgentAvatarControl({ agent }: { agent: Agent }) {
+  const { t } = useTranslation();
+  // bindingVersion 驱动 UI 在跨窗/同窗写入后刷新
+  const [version, setVersion] = useState(0);
+  // 初始读一次；storage 事件其他窗触发本组件重渲染（同一管理窗内本组件常驻）
+  const binding = getAgentAvatarBinding(agent.id) as AgentAvatarBinding | null;
+
+  const refresh = () => setVersion((v) => v + 1);
+
+  const handleTypeChange = (value: string) => {
+    if (value === '') {
+      clearAgentAvatarBinding(agent.id);
+    } else {
+      // 切换/首次设置：保留已有 modelPath（如已选自定义模型），仅更新 type
+      const next: AgentAvatarBinding = { type: value as AgentAvatarBinding['type'] };
+      if (binding?.modelPath) next.modelPath = binding.modelPath;
+      if (value === 'none') delete next.modelPath;
+      setAgentAvatarBinding(agent.id, next);
+    }
+    refresh();
+  };
+
+  const handlePickModel = async () => {
+    const path = await pickModelFile();
+    if (!path) return;
+    const type = binding?.type === 'live2d' || binding?.type === 'none' ? 'vrm' : (binding?.type ?? 'vrm');
+    setAgentAvatarBinding(agent.id, { type, modelPath: path });
+    refresh();
+  };
+
+  const handleClearModel = () => {
+    if (!binding) return;
+    const next: AgentAvatarBinding = { type: binding.type };
+    setAgentAvatarBinding(agent.id, next);
+    refresh();
+  };
+
+  void version;
+
+  const labelFor = (b: AgentAvatarBinding | null) => {
+    if (!b) return t('management.agents.avatarFollowGlobal');
+    switch (b.type) {
+      case 'vrm':
+        return t('management.agents.avatarVrm');
+      case 'live2d':
+        return t('management.agents.avatarLive2d');
+      case 'none':
+        return t('management.agents.avatarNone');
+      default:
+        return t('management.agents.avatarFollowGlobal');
+    }
+  };
+
+  return (
+    <div className="border-t border-[var(--glass-border)] pt-2">
+      <div className="mb-1.5 flex items-center gap-1.5">
+        <Laptop className="h-3.5 w-3.5 text-primary" />
+        <span className="text-xs font-medium text-muted-foreground">{t('management.agents.avatarTitle')}</span>
+        {binding && (
+          <span className="truncate text-xs text-primary">
+            {labelFor(binding)}
+            {binding.modelPath ? ` · ${binding.modelPath.split(/[\\/]/).pop()}` : ''}
+          </span>
+        )}
+      </div>
+      <div className="flex flex-wrap items-center gap-1.5">
+        <select
+          value={binding?.type ?? ''}
+          onChange={(e) => handleTypeChange(e.target.value)}
+          aria-label={t('management.agents.avatarTitle')}
+          className="min-w-0 flex-1 rounded-lg border border-[var(--glass-border)] bg-[rgba(255,255,255,0.06)] px-2 py-1.5 text-xs focus:border-[rgba(255,183,225,0.4)] focus:outline-none"
+        >
+          <option value="">{t('management.agents.avatarFollowGlobal')}</option>
+          <option value="vrm">{t('management.agents.avatarVrm')}</option>
+          <option value="live2d">{t('management.agents.avatarLive2d')}</option>
+          <option value="none">{t('management.agents.avatarNone')}</option>
+        </select>
+        {binding && binding.type !== 'none' && (
+          <>
+            <button
+              type="button"
+              onClick={() => void handlePickModel()}
+              title={t('management.agents.avatarPickModel')}
+              className="inline-flex items-center gap-1 rounded-lg border border-[var(--glass-border)] px-2.5 py-1.5 text-xs text-muted-foreground transition-colors hover:bg-[rgba(255,255,255,0.06)]"
+            >
+              <FolderOpen className="h-3.5 w-3.5" />
+              {binding.modelPath ? t('management.agents.avatarChangeModel') : t('management.agents.avatarPickModel')}
+            </button>
+            {binding.modelPath && (
+              <button
+                type="button"
+                onClick={handleClearModel}
+                title={t('management.agents.avatarClearModel')}
+                className="rounded-lg border border-[var(--glass-border)] px-2.5 py-1.5 text-xs text-muted-foreground transition-colors hover:bg-[rgba(255,255,255,0.06)]"
+              >
+                {t('management.agents.avatarClearModel')}
+              </button>
+            )}
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
 export default function AgentsPage() {
   const { t } = useTranslation();
   const [agents, setAgents] = useState<Agent[]>([]);
@@ -424,6 +539,27 @@ export default function AgentsPage() {
       petSetOpen(agent.id, true);
     }
   };
+
+  // 桌宠开启状态与主进程实际窗口对齐（权威来源 = Electron 窗口）：
+  // 启动时自动打开的默认桌宠窗不会写入面板记忆，这里在管理页挂载时把实际已开
+  // 窗口同步进 store，保证「开启状态」与「管理页显示」一致。
+  useEffect(() => {
+    if (!isElectron()) return;
+    const listPet = window.electronAPI?.listPetWindows;
+    if (!listPet) return;
+    void listPet()
+      .then((ids) => {
+        const cur = usePetPanelStore.getState().openAgentIds;
+        const idSet = new Set(ids);
+        for (const id of cur) {
+          if (!idSet.has(id)) usePetPanelStore.getState().setOpen(id, false);
+        }
+        for (const id of ids) usePetPanelStore.getState().setOpen(id, true);
+      })
+      .catch(() => {
+        // 查询失败保持 store 现状
+      });
+  }, []);
 
   const load = useCallback(async () => {
     setIsLoading(true);
@@ -474,6 +610,17 @@ export default function AgentsPage() {
       await load();
     } catch (error) {
       console.error('Agent delete failed:', error);
+      setActionError(true);
+    }
+  };
+
+  const handleSetDefault = async (agent: Agent) => {
+    setActionError(false);
+    try {
+      await agentsApi.setDefaultAgent(agent.id);
+      await load();
+    } catch (error) {
+      console.error('Set default agent failed:', error);
       setActionError(true);
     }
   };
@@ -658,6 +805,17 @@ export default function AgentsPage() {
                   {!agent.is_default && (
                     <button
                       type="button"
+                      onClick={() => void handleSetDefault(agent)}
+                      aria-label={t('management.agents.setDefault')}
+                      title={t('management.agents.setDefault')}
+                      className="rounded-lg p-1.5 text-muted-foreground transition-colors hover:bg-emerald-500/10 hover:text-emerald-400"
+                    >
+                      <CheckCircle2 className="h-3.5 w-3.5" />
+                    </button>
+                  )}
+                  {!agent.is_default && (
+                    <button
+                      type="button"
                       onClick={() => void handleDelete(agent)}
                       aria-label={t('management.agents.delete')}
                       title={t('management.agents.delete')}
@@ -692,6 +850,8 @@ export default function AgentsPage() {
                 assetsError={refAssetsError}
                 onChanged={() => void load()}
               />
+
+              <AgentAvatarControl agent={agent} />
 
               {agent.updated_at && (
                 <p className="border-t border-[var(--glass-border)] pt-2 text-[10px] text-muted-foreground/70">

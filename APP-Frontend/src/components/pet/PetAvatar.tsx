@@ -16,6 +16,10 @@ import { PawPrint } from 'lucide-react';
 import { useSettingsStore } from '../../store/settingsStore';
 import { useObsStore, resolveAvatarScale } from '../../store/obsStore';
 import { isElectron } from '../../lib/isElectron';
+import {
+  AGENT_AVATAR_BINDINGS_KEY,
+  getAgentAvatarBinding,
+} from '../../lib/agentAvatarBindings';
 import type { IAvatarDriver, SceneMode } from '../../avatar/types';
 import { createAvatarDriver } from '../../avatar/createDriver';
 import { createSyntheticLive2DManifest, createSyntheticVRMManifest } from '../../avatar/manifest';
@@ -24,6 +28,8 @@ import { VRMViewer } from './VRMViewer';
 import { Live2DViewer } from './Live2DViewer';
 
 interface PetAvatarProps {
+  /** 桌宠多开：本窗绑定的 agentId，用于 per-agent 形象覆盖（缺省 null 走全局） */
+  agentId?: string | null;
   /** 口型：实时音量与元音权重 ref（useAudioAnalyzer 提供） */
   volumeRef?: MutableRefObject<number>;
   vowelWeightsRef?: MutableRefObject<VowelWeights>;
@@ -38,15 +44,45 @@ export interface PetAvatarHandle {
 }
 
 export const PetAvatar = forwardRef<PetAvatarHandle, PetAvatarProps>(function PetAvatar(
-  { volumeRef, vowelWeightsRef, onDriverReady, sceneMode = 'pet' },
+  { agentId, volumeRef, vowelWeightsRef, onDriverReady, sceneMode = 'pet' },
   ref,
 ) {
   const { t } = useTranslation();
-  const avatarType = useSettingsStore((s) => s.avatarType);
+  const globalAvatarType = useSettingsStore((s) => s.avatarType);
   const live2d = useSettingsStore((s) => s.live2d);
   const vrm = useSettingsStore((s) => s.vrm);
   const captureWidth = useObsStore((s) => s.captureWidth);
   const captureHeight = useObsStore((s) => s.captureHeight);
+
+  // per-agent 形象覆盖：该 agent 有绑定则以绑定为准（type + 可选 modelPath），
+  // 否则回落全局设置。绑定由管理页写入（localStorage），跨窗经 refresh 事件同步：
+  //  - storage 事件：其他窗口 setItem/removeItem 时触发（常规跨窗时序）
+  //  - focus / pageshow：桌宠窗重新聚焦或恢复时强制重读，覆盖跨窗事件未触达的时序
+  // 不修改全局 store，避免多开窗口间互相污染。
+  const [bindingVersion, setBindingVersion] = useState(0);
+  useEffect(() => {
+    const refresh = (e: Event) => {
+      // storage 事件仅关心绑定键；focus/pageshow 无 key（无条件刷新）
+      if (!(e instanceof StorageEvent) || e.key === AGENT_AVATAR_BINDINGS_KEY) {
+        setBindingVersion((v) => v + 1);
+      }
+    };
+    window.addEventListener('storage', refresh);
+    window.addEventListener('focus', refresh);
+    window.addEventListener('pageshow', refresh);
+    return () => {
+      window.removeEventListener('storage', refresh);
+      window.removeEventListener('focus', refresh);
+      window.removeEventListener('pageshow', refresh);
+    };
+  }, []);
+  // `bindingVersion` 驱动每次刷新后重读绑定（storage 事件不触发本窗，focus/pageshow 兜底）
+  const binding = agentId ? getAgentAvatarBinding(agentId) : null;
+  void bindingVersion;
+  const avatarType = binding?.type ?? globalAvatarType;
+  const vrmModelPath = binding?.modelPath ?? vrm.modelPath;
+  const live2dModelPath = binding?.modelPath ?? live2d.modelPath;
+
   // 采集尺寸自适应因子（Electron 窗口已缩放时为 1；浏览器降级为按比例缩放）
   const obsScale = resolveAvatarScale(captureWidth, captureHeight, isElectron());
 
@@ -58,17 +94,17 @@ export const PetAvatar = forwardRef<PetAvatarHandle, PetAvatarProps>(function Pe
   // 实时缩放经 VRMViewer 的 scale prop 走 updateStageTransform 应用，无需重建。
   const manifest = useMemo(() => {
     if (avatarType === 'vrm') {
-      return createSyntheticVRMManifest(vrm.modelPath, 1, vrm.position3d);
+      return createSyntheticVRMManifest(vrmModelPath, 1, vrm.position3d);
     }
     if (avatarType === 'live2d') {
-      return createSyntheticLive2DManifest(live2d.modelPath, live2d.scale * obsScale, live2d.xOffset, live2d.yOffset);
+      return createSyntheticLive2DManifest(live2dModelPath, live2d.scale * obsScale, live2d.xOffset, live2d.yOffset);
     }
     return null;
   }, [
     avatarType,
-    vrm.modelPath,
+    vrmModelPath,
     vrm.position3d,
-    live2d.modelPath,
+    live2dModelPath,
     live2d.scale,
     live2d.xOffset,
     live2d.yOffset,
@@ -115,7 +151,7 @@ export const PetAvatar = forwardRef<PetAvatarHandle, PetAvatarProps>(function Pe
       {avatarType === 'vrm' ? (
         <VRMViewer
           ref={ref}
-          modelPath={vrm.modelPath}
+          modelPath={vrmModelPath}
           avatar={manifest}
           driver={activeDriver}
           scale={vrm.scale * obsScale}
@@ -129,7 +165,7 @@ export const PetAvatar = forwardRef<PetAvatarHandle, PetAvatarProps>(function Pe
         />
       ) : (
         <Live2DViewer
-          modelPath={live2d.modelPath}
+          modelPath={live2dModelPath}
           avatar={manifest}
           driver={activeDriver}
           idleMotionEnabled={live2d.idleMotion}

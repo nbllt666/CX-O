@@ -3,6 +3,7 @@
 """
 
 import logging
+import time
 from typing import Optional, List, Callable
 from urllib.parse import urlparse
 import numpy as np
@@ -12,6 +13,10 @@ from server.core.graph.vectorizer import get_vectorizer
 from server.core.graph.models import GraphNode, SemanticSearchResult
 
 logger = logging.getLogger(__name__)
+
+# Weaviate 连接重试冷却（秒）：Weaviate 不可用时，连接尝试会同步阻塞 ~12.5s，
+# 若每次语义搜索都重试会把事件循环拖死。冷却期内直接走本地回退，不阻塞。
+_RETRY_INTERVAL_SEC = 60.0
 
 
 class SemanticSearch:
@@ -23,10 +28,15 @@ class SemanticSearch:
         self._client = None
         self._vectorizer = get_vectorizer()
         self._initialized = False
+        # 最近一次连接尝试时间（失败后冷却期内不重试）
+        self._last_init_attempt = 0.0
 
     def initialize(self) -> None:
-        if self._initialized:
+        now = time.monotonic()
+        # 冷却闸门：已初始化，或距上次尝试不足冷却期 → 直接返回，避免重复阻塞。
+        if self._initialized or (now - self._last_init_attempt) < _RETRY_INTERVAL_SEC:
             return
+        self._last_init_attempt = now
 
         try:
             import weaviate

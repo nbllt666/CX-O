@@ -106,6 +106,29 @@ class TestInitializeFailure:
         assert searcher._client is None
         assert searcher._initialized is False
 
+    def test_failed_attempt_within_cooldown_does_not_retry(self, searcher, monkeypatch):
+        """Weaviate 连接失败后，冷却期内再次 initialize/search 不得重新发起阻塞连接。"""
+        import builtins
+
+        real_import = builtins.__import__
+        attempts = {"n": 0}
+
+        def fake_import(name, *a, **k):
+            if name == "weaviate":
+                attempts["n"] += 1
+                raise ImportError
+            return real_import(name, *a, **k)
+
+        monkeypatch.setattr(builtins, "__import__", fake_import)
+        searcher.initialize()
+        assert attempts["n"] == 1
+        # 冷却期内再次初始化：不得重试 weaviate 导入（避免 12.5s 阻塞）
+        searcher.initialize()
+        assert attempts["n"] == 1
+        # 冷却期内 search 也不得重新触发连接尝试
+        searcher.search("hello", limit=5)
+        assert attempts["n"] == 1
+
 
 class TestFallbackSearch:
     def test_scores_by_overlap(self, searcher, fallback_db, monkeypatch):

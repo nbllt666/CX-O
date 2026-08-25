@@ -336,6 +336,33 @@ class TestCloneAgent:
 
 
 # --------------------------------------------------------------------------- #
+# POST /agents/{agent_id}/default
+# --------------------------------------------------------------------------- #
+class TestSetDefaultAgent:
+    def test_sets_default_and_clears_others(self, client):
+        _seed(client, [
+            {"id": "default", "name": "默认助手", "is_default": True, "updated_at": "2026-01-01T00:00:00"},
+            {"id": "a", "name": "Agent A", "is_default": False, "updated_at": "2026-01-01T00:00:00"},
+        ])
+        r = client.post("/agents/a/default")
+        assert r.status_code == 200
+        body = r.json()
+        assert body["status"] == "success"
+        assert body["agent"]["is_default"] is True
+        # 全局唯一：只有目标为默认
+        stored = _load_file()
+        assert {a["id"]: a["is_default"] for a in stored} == {"default": False, "a": True}
+        # /agents/default 端点应返回新的默认
+        rd = client.get("/agents/default")
+        assert rd.json()["agent"]["id"] == "a"
+
+    def test_not_found_404(self, client):
+        _seed(client, _default_agents())
+        r = client.post("/agents/nope/default")
+        assert r.status_code == 404
+
+
+# --------------------------------------------------------------------------- #
 # GET /agents/{agent_id}/stats
 # --------------------------------------------------------------------------- #
 class TestGetAgentStats:

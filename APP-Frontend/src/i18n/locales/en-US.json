@@ -362,7 +362,16 @@
       "refAudioSetSuccess": "Set as voice",
       "refAudioClearSuccess": "Voice cleared",
       "refAudioAssetMissing": "Ref audio asset not found or deleted",
-      "refAudioSaveFailed": "Failed to save voice settings. Please retry."
+      "refAudioSaveFailed": "Failed to save voice settings. Please retry.",
+      "avatarTitle": "Avatar",
+      "avatarFollowGlobal": "Follow global avatar",
+      "avatarVrm": "VRM avatar",
+      "avatarLive2d": "Live2D avatar",
+      "avatarNone": "Hide avatar",
+      "avatarPickModel": "Pick model",
+      "avatarChangeModel": "Change model",
+      "avatarClearModel": "Reset model",
+      "setDefault": "Set as default agent"
     },
     "meeting": {
       "subtitle": "Multi-agent voice meeting: create, arbitrate, and manage participants",
@@ -1017,56 +1026,6 @@
       "musicEmpty": "No songs yet",
       "musicStage": "Stage",
       "musicDelete": "Delete"
-    }
-  },
-  "pet": {
-    "title": "Pet Window",
-    "subtitle": "Live2D / VRM avatar mounts here",
-    "avatar": {
-      "disabled": "No avatar enabled. Pick a Live2D / VRM avatar in Settings."
-    },
-    "chat": {
-      "placeholder": "Send a message...",
-      "send": "Send",
-      "offline": "Disconnected, reconnecting...",
-      "unreachable": "Cannot reach the backend right now. Please try again later.",
-      "error": "Sorry, something went wrong: {{message}}"
-    },
-    "menu": {
-      "openManagement": "Open management",
-      "toggleDanmaku": "Show / hide danmaku",
-      "alwaysOnTop": "Always on top",
-      "microphone": "Microphone",
-      "screenShare": "Screen share",
-      "camera": "Camera",
-      "greenScreen": "Green screen",
-      "closePet": "Close pet",
-      "avatarScale": "Avatar scale: {{scale}}",
-      "computerControl": "Authorize control"
-    },
-    "computerControl": {
-      "authorized": "Authorized",
-      "unauthorized": "Not authorized",
-      "notAvailable": "Service not running",
-      "authorizeConfirm": "After authorization, this app can control your computer (screen control, keyboard control, run commands). This authorization is permanent and can be revoked anytime from the pet menu. Authorize?",
-      "revokeConfirm": "After revocation, this app can no longer control your computer. Revoke authorization?"
-    },
-    "obs": {
-      "captureSize": "Capture size: {{size}}"
-    },
-    "capture": {
-      "sendFrame": "Send current view",
-      "framePromptScreen": "[Screen] Take a look at my screen",
-      "framePromptCamera": "[Camera] Take a look at my camera view",
-      "micError": "Failed to enable microphone: please check device permission",
-      "screenError": "Failed to start screen share: permission denied or unsupported",
-      "cameraError": "Failed to enable camera: please check device permission",
-      "micOn": "Microphone on",
-      "screenOn": "Screen sharing",
-      "cameraOn": "Camera capturing"
-    },
-    "danmakuVoice": {
-      "bubblePrefix": "Danmaku | "
     },
     "distillation": {
       "subtitle": "Distill text, character cards, chat logs and more into memories and character-card agents",
@@ -1141,6 +1100,56 @@
         "finalize": "Finalize",
         "reject": "Reject"
       }
+    }
+  },
+  "pet": {
+    "title": "Pet Window",
+    "subtitle": "Live2D / VRM avatar mounts here",
+    "avatar": {
+      "disabled": "No avatar enabled. Pick a Live2D / VRM avatar in Settings."
+    },
+    "chat": {
+      "placeholder": "Send a message...",
+      "send": "Send",
+      "offline": "Disconnected, reconnecting...",
+      "unreachable": "Cannot reach the backend right now. Please try again later.",
+      "error": "Sorry, something went wrong: {{message}}"
+    },
+    "menu": {
+      "openManagement": "Open management",
+      "toggleDanmaku": "Show / hide danmaku",
+      "alwaysOnTop": "Always on top",
+      "microphone": "Microphone",
+      "screenShare": "Screen share",
+      "camera": "Camera",
+      "greenScreen": "Green screen",
+      "closePet": "Close pet",
+      "avatarScale": "Avatar scale: {{scale}}",
+      "computerControl": "Authorize control"
+    },
+    "computerControl": {
+      "authorized": "Authorized",
+      "unauthorized": "Not authorized",
+      "notAvailable": "Service not running",
+      "authorizeConfirm": "After authorization, this app can control your computer (screen control, keyboard control, run commands). This authorization is permanent and can be revoked anytime from the pet menu. Authorize?",
+      "revokeConfirm": "After revocation, this app can no longer control your computer. Revoke authorization?"
+    },
+    "obs": {
+      "captureSize": "Capture size: {{size}}"
+    },
+    "capture": {
+      "sendFrame": "Send current view",
+      "framePromptScreen": "[Screen] Take a look at my screen",
+      "framePromptCamera": "[Camera] Take a look at my camera view",
+      "micError": "Failed to enable microphone: please check device permission",
+      "screenError": "Failed to start screen share: permission denied or unsupported",
+      "cameraError": "Failed to enable camera: please check device permission",
+      "micOn": "Microphone on",
+      "screenOn": "Screen sharing",
+      "cameraOn": "Camera capturing"
+    },
+    "danmakuVoice": {
+      "bubblePrefix": "Danmaku | "
     }
   },
   "danmaku": {

@@ -159,6 +159,37 @@ class TestControl:
         assert body["state"]["status"] == "running"
         assert autonomy_router.get_autonomy_manager() is fake
 
+    def test_control_enable_runtime_assembles_with_services(self, client, tmp_path, monkeypatch):
+        # 无装配入口但 app 有 services → enable 走运行时装配（setup_autonomy 成功）并回填
+        import server.autonomy.main as autonomy_main
+
+        fake_services = object()
+        client.app.state.services = fake_services
+
+        fake = SpyManager()
+        fake.config = AutonomyConfig(enabled=True, store_path=str(tmp_path))
+
+        async def _fake_setup(services):
+            assert services is fake_services
+            autonomy_main._autonomy_manager = fake
+            return fake
+
+        monkeypatch.setattr(autonomy_main, "_autonomy_manager", None)
+        monkeypatch.setattr(autonomy_main, "setup_autonomy", _fake_setup)
+        # 拦截配置读写，避免真实落盘默认存储目录
+        monkeypatch.setattr(autonomy_router, "save_config", lambda cfg: str(tmp_path / "cfg.json"))
+        monkeypatch.setattr(
+            "server.autonomy.config.load_config",
+            lambda store_path="": AutonomyConfig(enabled=False, store_path=str(tmp_path)),
+        )
+
+        r = client.post("/api/autonomy/control", json={"action": "enable"})
+        assert r.status_code == 200
+        body = r.json()
+        assert body["status"] == "ok"
+        assert body["state"]["status"] == "running"
+        assert autonomy_router.get_autonomy_manager() is fake
+
 
 # ================================================================ ⑤ GET /autonomy/audit
 class TestAudit:

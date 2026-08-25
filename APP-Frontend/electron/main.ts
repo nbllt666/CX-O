@@ -405,6 +405,16 @@ function registerIpcHandlers(): void {
     if (win && !win.isDestroyed()) win.close();
   });
 
+  // 桌宠多开：返回当前实际已开启的桌宠窗 agentId 列表（权威来源 = 主进程窗口），
+  // 供管理页初始化时对齐 UI 的「开启」状态（覆盖启动默认窗等未写入面板记忆的来源）。
+  ipcMain.handle('window:list-pet', () => {
+    const ids: string[] = [];
+    for (const [agentId, win] of petWindows) {
+      if (win && !win.isDestroyed()) ids.push(agentId);
+    }
+    return ids;
+  });
+
   // 在系统默认浏览器打开外部 URL（OBS 源预览等；仅放行 http/https/file）
   ipcMain.handle('shell:open-external', (_event, url: string) => {
     if (typeof url !== 'string') return;

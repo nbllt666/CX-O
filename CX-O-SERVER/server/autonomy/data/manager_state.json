@@ -1,0 +1,16 @@
+{
+  "enabled": true,
+  "running": true,
+  "status": "running",
+  "motivations": {
+    "curiosity": 0.24064565209722225,
+    "social_need": 0.2325165216777778,
+    "creative_drive": 0.1837417391611111,
+    "fatigue": 0.0
+  },
+  "last_action": "wait",
+  "last_cycle_at": "2026-08-25T06:19:59.516367+00:00",
+  "daily_budget_used_tokens": 0,
+  "budget_reset_date": "2026-08-25",
+  "diary_last_at": null
+}

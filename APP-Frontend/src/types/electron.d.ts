@@ -13,6 +13,9 @@ declare global {
       // 桌宠多开：按 agentId 打开/关闭对应桌宠窗
       openPet: (agentId: string) => Promise<void>;
       closePet: (agentId: string) => Promise<void>;
+      // 桌宠多开：查询当前实际已开启的桌宠窗 agentId 列表（主进程权威来源；可选，
+      //      管理页挂载时用于对齐开启状态，非 Electron/旧版桥缺失时跳过）
+      listPetWindows?: () => Promise<string[]>;
       setDanmakuVisible: (visible: boolean) => Promise<void>;
       onDanmakuVisibility: (callback: (visible: boolean) => void) => () => void;
       moveWindow: (dx: number, dy: number) => Promise<void>;

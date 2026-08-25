@@ -765,7 +765,7 @@ export default function PetPage() {
         }}
         onContextMenu={handleContextMenu}
       >
-        <PetAvatar volumeRef={lipVolumeRef} vowelWeightsRef={lipVowelRef} onDriverReady={setDriver} />
+        <PetAvatar agentId={windowAgentId} volumeRef={lipVolumeRef} vowelWeightsRef={lipVowelRef} onDriverReady={setDriver} />
 
         {/* 采集状态指示（真实采集中才亮标） */}
         {captureIndicators.length > 0 && (

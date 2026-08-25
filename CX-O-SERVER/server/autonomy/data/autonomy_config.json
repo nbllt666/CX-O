@@ -1,0 +1,48 @@
+{
+  "enabled": true,
+  "auto_start": false,
+  "agent_id": "default",
+  "loop_interval_minutes": 15,
+  "rss_sources": [],
+  "search": {
+    "mcp_server_name": "free-search-mcp",
+    "fallback_rss": true
+  },
+  "schedule": {
+    "wake_time": "08:00",
+    "sleep_time": "02:00",
+    "golden_start": "19:00",
+    "golden_end": "23:00",
+    "diary_time": "02:00",
+    "quiet_windows": []
+  },
+  "budget": {
+    "daily_token_limit": 2000000,
+    "daily_llm_calls_limit": 0,
+    "cost_alert_threshold": 0.8,
+    "overspend_mode": "sleep"
+  },
+  "platforms": [],
+  "permissions": {
+    "allowed_actions": [
+      "sleep",
+      "wait",
+      "read_news",
+      "search",
+      "write_memory",
+      "write_post",
+      "start_live",
+      "stop_live",
+      "write_diary"
+    ],
+    "blocked_actions": []
+  },
+  "safety": {
+    "content_gate_enabled": true,
+    "persona_check_enabled": true,
+    "post_rate_per_hour": 5,
+    "user_online_sleep": true,
+    "leave_mode_authorize": true
+  },
+  "store_path": ""
+}

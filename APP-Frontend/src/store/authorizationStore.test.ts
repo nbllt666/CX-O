@@ -33,6 +33,7 @@ function mockElectronApi(overrides: Partial<{
     toggleDanmakuWindow: vi.fn().mockResolvedValue(undefined),
     openPet: vi.fn().mockResolvedValue(undefined),
     closePet: vi.fn().mockResolvedValue(undefined),
+    listPetWindows: vi.fn().mockResolvedValue([]),
     setDanmakuVisible: vi.fn().mockResolvedValue(undefined),
     onDanmakuVisibility: vi.fn().mockReturnValue(() => undefined),
     moveWindow: vi.fn().mockResolvedValue(undefined),

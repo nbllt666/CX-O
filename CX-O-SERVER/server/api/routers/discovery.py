@@ -6,7 +6,7 @@
 """
 import asyncio
 import socket
-from typing import Dict, List
+from typing import Dict, List, Optional
 
 import httpx
 from fastapi import APIRouter, Query
@@ -21,6 +21,30 @@ router = APIRouter()
 _MAX_CONCURRENCY = 64
 # /24 子网主机范围
 _HOST_START, _HOST_END = 1, 254
+
+# 共享探测客户端（懒加载单例）。
+# 逐主机新建 httpx.AsyncClient 会在事件循环上反复执行 ssl.create_default_context()
+# （本机证书库加载约 1s/次），扫描 /24 子网 254 主机即串行阻塞事件循环数分钟，
+# 导致后端所有 HTTP 请求（含 /health）挂死。
+# verify=False 走 _create_unverified_context() 跳过证书库加载；探测目标为局域网
+# 明文 HTTP /health，无需证书校验。timeout 以查询参数为准逐请求覆盖。
+_shared_client: Optional[httpx.AsyncClient] = None
+_shared_client_lock: Optional[asyncio.Lock] = None
+
+
+async def _get_shared_client() -> httpx.AsyncClient:
+    """获取共享探测客户端（并发安全懒创建）。"""
+    global _shared_client, _shared_client_lock
+    if _shared_client is None:
+        if _shared_client_lock is None:
+            _shared_client_lock = asyncio.Lock()
+        async with _shared_client_lock:
+            if _shared_client is None:
+                _shared_client = httpx.AsyncClient(
+                    verify=False,
+                    timeout=httpx.Timeout(5.0),
+                )
+    return _shared_client
 
 
 def _get_local_ips() -> List[str]:
@@ -64,11 +88,11 @@ def _to_subnets(ips: List[str]) -> List[str]:
 
 
 async def _probe(url: str, timeout: float) -> bool:
-    """探测单个后端健康端点，返回是否可达。"""
+    """探测单个后端健康端点，返回是否可达。复用共享客户端避免重复初始化。"""
     try:
-        async with httpx.AsyncClient(timeout=timeout) as client:
-            resp = await client.get(f"{url}/health")
-            return resp.status_code == 200
+        client = await _get_shared_client()
+        resp = await client.get(f"{url}/health", timeout=timeout)
+        return resp.status_code == 200
     except Exception:
         return False
 

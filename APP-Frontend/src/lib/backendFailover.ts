@@ -90,17 +90,6 @@ export async function fetchClusterPeers(url: string, timeoutMs = STATE_TIMEOUT_M
   return Array.isArray(peers) ? peers.map(normalize).filter(Boolean) : [];
 }
 
-/** 局域网发现到的其他 CX-O 后端 */
-export async function fetchDiscoveryBackends(url: string, timeoutMs = STATE_TIMEOUT_MS): Promise<string[]> {
-  const data = await fetchJson<{ backends?: Array<{ url?: string }> }>(
-    `${normalize(url)}/api/discovery/backends`,
-    timeoutMs,
-  );
-  const backends = data?.backends;
-  if (!Array.isArray(backends)) return [];
-  return backends.map((b) => normalize(b?.url || '')).filter(Boolean);
-}
-
 // ---- 候选集持久化 ----
 
 export function readCandidates(): string[] {
@@ -144,18 +133,18 @@ function writeLastSwitch(url: string): void {
 }
 
 /**
- * 从当前后端收集候选节点（自己 + cluster peers + 局域网发现），并更新持久化候选集。
+ * 从当前后端收集候选节点（自己 + cluster peers + 已持久化候选），并更新持久化候选集。
  * 应在连接可用时（启动 / 每次切换后）调用。
+ *
+ * 注意：这里**不**触发局域网发现（/api/discovery/backends）。该端点会扫描整个 /24 子网，
+ * 后端逐主机新建 httpx.AsyncClient 会在事件循环上执行 ssl 上下文初始化，单次扫描即可
+ * 阻塞主后端数分钟导致全站 API 挂死。局域网发现仅保留设置页「一键发现」手动入口。
  */
 export async function refreshCandidates(current = normalize(getApiBaseUrl())): Promise<string[]> {
   const pool = new Set<string>([current]);
   readCandidates().forEach((u) => pool.add(u));
-  const [peers, discovered] = await Promise.allSettled([
-    fetchClusterPeers(current),
-    fetchDiscoveryBackends(current),
-  ]);
+  const [peers] = await Promise.allSettled([fetchClusterPeers(current)]);
   if (peers.status === 'fulfilled') peers.value.forEach((u) => pool.add(u));
-  if (discovered.status === 'fulfilled') discovered.value.forEach((u) => pool.add(u));
   const list = [...pool];
   writeCandidates(list);
   return list;

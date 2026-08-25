@@ -54,6 +54,16 @@ export const agentsApi = {
     return response.agent;
   },
 
+  /** 将指定 Agent 设为默认 Agent（全局唯一），返回更新后的默认 Agent */
+  async setDefaultAgent(agentId: string): Promise<Agent> {
+    const response = await request<{ status: string; agent: Agent; message: string }>({
+      url: `/api/agents/${agentId}/default`,
+      method: 'post',
+    });
+    clearApiCache('/api/agents');
+    return response.agent;
+  },
+
   async getAvailableModels(): Promise<{ models: string[] }> {
     // 真实端点是 /api/service/models，返回 { providers[{id,name}], ollama_models[{name}] }；
     // 映射为前端约定的 { models: string[] }（取各 provider 模型名 + ollama 模型名，去重）。

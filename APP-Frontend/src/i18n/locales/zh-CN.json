@@ -362,7 +362,16 @@
       "refAudioSetSuccess": "已设为音色",
       "refAudioClearSuccess": "已清除音色",
       "refAudioAssetMissing": "参考音频资产不存在或已删除",
-      "refAudioSaveFailed": "声音设置保存失败，请重试"
+      "refAudioSaveFailed": "声音设置保存失败，请重试",
+      "avatarTitle": "形象设置",
+      "avatarFollowGlobal": "跟随全局形象",
+      "avatarVrm": "VRM 形象",
+      "avatarLive2d": "Live2D 形象",
+      "avatarNone": "不显示形象",
+      "avatarPickModel": "选择模型",
+      "avatarChangeModel": "更换模型",
+      "avatarClearModel": "恢复默认模型",
+      "setDefault": "设为默认 Agent"
     },
     "meeting": {
       "subtitle": "多 Agent 语音会议：建会、发言仲裁、参与者管理",
@@ -1017,56 +1026,6 @@
       "musicEmpty": "暂无歌曲",
       "musicStage": "阶段",
       "musicDelete": "删除"
-    }
-  },
-  "pet": {
-    "title": "桌宠窗",
-    "subtitle": "Live2D / VRM 形象将挂载于此",
-    "avatar": {
-      "disabled": "未启用头像，请到管理界面设置页选择 Live2D / VRM 形象"
-    },
-    "chat": {
-      "placeholder": "发送消息...",
-      "send": "发送",
-      "offline": "未连接，等待重连...",
-      "unreachable": "当前无法连接到后端，请稍后再试",
-      "error": "抱歉，出错了：{{message}}"
-    },
-    "menu": {
-      "openManagement": "打开管理界面",
-      "toggleDanmaku": "显示 / 隐藏弹幕窗",
-      "alwaysOnTop": "窗口置顶",
-      "microphone": "麦克风",
-      "screenShare": "屏幕共享",
-      "camera": "摄像头",
-      "greenScreen": "抠像绿幕",
-      "closePet": "关闭桌宠",
-      "avatarScale": "头像缩放：{{scale}}",
-      "computerControl": "授权控制"
-    },
-    "computerControl": {
-      "authorized": "已授权",
-      "unauthorized": "未授权",
-      "notAvailable": "服务未运行",
-      "authorizeConfirm": "授权后，本应用可控制您的电脑（屏幕控制、键盘控制、运行命令）。此授权永久生效，可随时在桌宠菜单中撤销。是否授权？",
-      "revokeConfirm": "撤销后，本应用将无法再控制您的电脑。是否撤销授权？"
-    },
-    "obs": {
-      "captureSize": "采集尺寸：{{size}}"
-    },
-    "capture": {
-      "sendFrame": "发送当前画面给 TA 看",
-      "framePromptScreen": "[屏幕画面] 看看我现在的屏幕",
-      "framePromptCamera": "[摄像头画面] 看看我现在的画面",
-      "micError": "麦克风开启失败：请检查设备权限",
-      "screenError": "屏幕共享开启失败：权限被拒绝或环境不支持",
-      "cameraError": "摄像头开启失败：请检查设备权限",
-      "micOn": "麦克风开启中",
-      "screenOn": "屏幕共享中",
-      "cameraOn": "摄像头采集中"
-    },
-    "danmakuVoice": {
-      "bubblePrefix": "弹幕播报｜"
     },
     "distillation": {
       "subtitle": "将文本、角色卡、聊天记录等多模态数据蒸馏为记忆与角色卡 Agent",
@@ -1141,6 +1100,56 @@
         "finalize": "终结",
         "reject": "拒绝"
       }
+    }
+  },
+  "pet": {
+    "title": "桌宠窗",
+    "subtitle": "Live2D / VRM 形象将挂载于此",
+    "avatar": {
+      "disabled": "未启用头像，请到管理界面设置页选择 Live2D / VRM 形象"
+    },
+    "chat": {
+      "placeholder": "发送消息...",
+      "send": "发送",
+      "offline": "未连接，等待重连...",
+      "unreachable": "当前无法连接到后端，请稍后再试",
+      "error": "抱歉，出错了：{{message}}"
+    },
+    "menu": {
+      "openManagement": "打开管理界面",
+      "toggleDanmaku": "显示 / 隐藏弹幕窗",
+      "alwaysOnTop": "窗口置顶",
+      "microphone": "麦克风",
+      "screenShare": "屏幕共享",
+      "camera": "摄像头",
+      "greenScreen": "抠像绿幕",
+      "closePet": "关闭桌宠",
+      "avatarScale": "头像缩放：{{scale}}",
+      "computerControl": "授权控制"
+    },
+    "computerControl": {
+      "authorized": "已授权",
+      "unauthorized": "未授权",
+      "notAvailable": "服务未运行",
+      "authorizeConfirm": "授权后，本应用可控制您的电脑（屏幕控制、键盘控制、运行命令）。此授权永久生效，可随时在桌宠菜单中撤销。是否授权？",
+      "revokeConfirm": "撤销后，本应用将无法再控制您的电脑。是否撤销授权？"
+    },
+    "obs": {
+      "captureSize": "采集尺寸：{{size}}"
+    },
+    "capture": {
+      "sendFrame": "发送当前画面给 TA 看",
+      "framePromptScreen": "[屏幕画面] 看看我现在的屏幕",
+      "framePromptCamera": "[摄像头画面] 看看我现在的画面",
+      "micError": "麦克风开启失败：请检查设备权限",
+      "screenError": "屏幕共享开启失败：权限被拒绝或环境不支持",
+      "cameraError": "摄像头开启失败：请检查设备权限",
+      "micOn": "麦克风开启中",
+      "screenOn": "屏幕共享中",
+      "cameraOn": "摄像头采集中"
+    },
+    "danmakuVoice": {
+      "bubblePrefix": "弹幕播报｜"
     }
   },
   "danmaku": {

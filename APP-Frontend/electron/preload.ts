@@ -22,6 +22,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // 桌宠多开：按 agentId 打开/关闭对应桌宠窗
   openPet: (agentId: string) => ipcRenderer.invoke('window:open-pet', agentId),
   closePet: (agentId: string) => ipcRenderer.invoke('window:close-pet', agentId),
+  // 桌宠多开：查询当前实际已开启的桌宠窗 agentId 列表（主进程权威来源）
+  listPetWindows: () => ipcRenderer.invoke('window:list-pet'),
   setDanmakuVisible: (visible: boolean) =>
     ipcRenderer.invoke('window:set-danmaku-visible', visible),
   /** 在系统默认浏览器打开外部 URL（OBS 源预览等） */
