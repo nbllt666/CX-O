@@ -120,12 +120,13 @@ export const agentsApi = {
     return response.agents || [];
   },
 
-  createAcpAgent(data: {
+  /** 注册 ACP 代理：响应为 { status, agent, message }，解包 agent 返回 */
+  async createAcpAgent(data: {
     name: string;
     description?: string;
     capabilities?: string[];
   }): Promise<AcpAgentRow> {
-    return request<AcpAgentRow>({
+    const response = await request<{ status?: string; agent?: AcpAgentRow; message?: string }>({
       url: '/api/acp/agents',
       method: 'post',
       data: {
@@ -136,10 +137,15 @@ export const agentsApi = {
         port: 0,
       },
     });
+    if (!response.agent) {
+      throw new Error(response.message || '注册代理失败');
+    }
+    return response.agent;
   },
 
-  updateAcpAgent(agentId: string, data: Record<string, unknown>): Promise<AcpAgentRow> {
-    return request<AcpAgentRow>({ url: `/api/acp/agents/${agentId}`, method: 'patch', data });
+  /** 更新 ACP 代理（名称 / 描述 / 能力 / 启停状态），无返回体要求 */
+  async updateAcpAgent(agentId: string, data: Record<string, unknown>): Promise<void> {
+    await request({ url: `/api/acp/agents/${agentId}`, method: 'patch', data });
   },
 
   async deleteAcpAgent(agentId: string): Promise<void> {

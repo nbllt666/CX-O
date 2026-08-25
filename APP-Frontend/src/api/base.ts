@@ -60,15 +60,6 @@ export function getVoiceWorkstationUrl(): string {
   );
 }
 
-/** 控制服务地址：默认与主后端同源（分离部署时可经 localStorage / env 独立覆盖） */
-export function getControlServiceUrl(): string {
-  return (
-    localStorage.getItem(STORAGE_KEYS.controlUrl) ||
-    import.meta.env.VITE_CONTROL_SERVICE_URL ||
-    getApiBaseUrl()
-  );
-}
-
 /**
  * 将 HTTP(S) base URL 转换为对应的 WS(S) base URL。
  * 通过 URL.protocol 切换，避免 base URL 含 "http" 子串时被错误替换。
@@ -218,8 +209,6 @@ let httpClient: AxiosInstance | null = null;
 let httpClientBaseUrl: string | null = null;
 let voiceWsClient: AxiosInstance | null = null;
 let voiceWsClientBaseUrl: string | null = null;
-let controlClient: AxiosInstance | null = null;
-let controlClientBaseUrl: string | null = null;
 
 /** 主后端 axios 实例（30s 超时） */
 export function getHttpClient(): AxiosInstance {
@@ -256,8 +245,19 @@ export function getVoiceWsClient(): AxiosInstance {
 export function normalizeError(error: unknown): Error {
   if (error instanceof AxiosError) {
     if (error.response) {
+      // 错误信息回退链：依次尝试后端常见错误字段，全部缺失时退回 statusText
+      const data = error.response.data as {
+        message?: string;
+        error?: string;
+        error_message?: string;
+        detail?: string;
+      } | undefined;
       const message =
-        (error.response.data as { message?: string })?.message || error.response.statusText;
+        data?.message ||
+        data?.error ||
+        data?.error_message ||
+        data?.detail ||
+        error.response.statusText;
       return new Error(`请求失败: ${message}`);
     }
     if (error.request) {
@@ -364,31 +364,6 @@ export async function request<T>(config: AxiosRequestConfig, useCache = false): 
 export async function voiceWorkstationRequest<T>(config: AxiosRequestConfig): Promise<T> {
   try {
     const response = await getVoiceWsClient().request<T>(config);
-    return response.data;
-  } catch (error) {
-    throw normalizeError(error);
-  }
-}
-
-/** 控制服务 axios 实例（30s 超时，默认与主后端同源） */
-export function getControlClient(): AxiosInstance {
-  const baseUrl = getControlServiceUrl();
-  if (!controlClient || controlClientBaseUrl !== baseUrl) {
-    controlClient = axios.create({
-      baseURL: baseUrl,
-      timeout: 30000,
-      headers: { 'Content-Type': 'application/json' },
-    });
-    setupInterceptors(controlClient);
-    controlClientBaseUrl = baseUrl;
-  }
-  return controlClient;
-}
-
-/** 控制服务请求（服务启停 / 主后端进程管理） */
-export async function controlRequest<T>(config: AxiosRequestConfig): Promise<T> {
-  try {
-    const response = await getControlClient().request<T>(config);
     return response.data;
   } catch (error) {
     throw normalizeError(error);

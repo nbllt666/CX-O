@@ -47,6 +47,7 @@ class FakeCXFCManager:
 
     async def disconnect_plugin(self, plugin_id, remove_persistent=True):
         self.calls["disconnect"] = plugin_id
+        self.calls["disconnect_remove_persistent"] = remove_persistent
 
     async def refresh_plugin(self, plugin_id):
         return FakePlugin(plugin_id) if plugin_id == "p1" else None
@@ -174,6 +175,17 @@ class TestPlugins:
         r = c.delete("/cxfc/plugins/p1")
         assert r.status_code == 200
         assert mm.calls["disconnect"] == "p1"
+        # DELETE 端点应移除持久注册记录
+        assert mm.calls["disconnect_remove_persistent"] is True
+
+    def test_disconnect_keep_registration(self, client):
+        c, mm = client
+        r = c.post("/cxfc/plugins/p1/disconnect")
+        assert r.status_code == 200
+        assert r.json() == {"status": "ok"}
+        # POST disconnect 端点应保留持久注册记录（可重新连接）
+        assert mm.calls["disconnect"] == "p1"
+        assert mm.calls["disconnect_remove_persistent"] is False
 
     def test_list(self, client):
         c, mm = client

@@ -134,6 +134,29 @@ class TestChat:
         _, kwargs = async_client.post.call_args
         assert kwargs["json"]["tools"] == [{"type": "function", "function": {"name": "calc"}}]
 
+    @pytest.mark.asyncio
+    async def test_chat_top_p_injected_when_set(self, monkeypatch, client):
+        async_client, _ = self._mock_post(monkeypatch)
+        client.top_p = 0.9
+        await client.chat([{"role": "user", "content": "hi"}])
+        _, kwargs = async_client.post.call_args
+        assert kwargs["json"]["options"]["top_p"] == 0.9
+
+    @pytest.mark.asyncio
+    async def test_chat_top_p_omitted_when_none(self, monkeypatch, client):
+        async_client, _ = self._mock_post(monkeypatch)
+        await client.chat([{"role": "user", "content": "hi"}])
+        _, kwargs = async_client.post.call_args
+        assert "top_p" not in kwargs["json"]["options"]
+
+    @pytest.mark.asyncio
+    async def test_chat_top_p_kwargs_override(self, monkeypatch, client):
+        async_client, _ = self._mock_post(monkeypatch)
+        client.top_p = 0.9
+        await client.chat([{"role": "user", "content": "hi"}], top_p=0.5)
+        _, kwargs = async_client.post.call_args
+        assert kwargs["json"]["options"]["top_p"] == 0.5
+
 
 # ---------------------------------------------------------------- stream_chat
 class TestStreamChat:
@@ -169,6 +192,38 @@ class TestStreamChat:
             ("content", "你好"),
             ("content", "世界"),
         ]
+
+    @pytest.mark.asyncio
+    async def test_stream_top_p_injected_when_set(self, monkeypatch, client):
+        """stream_chat 路径：配置 top_p 时注入 options，未配置时省略。"""
+        lines = [json.dumps({"message": {"content": "ok"}, "done": True})]
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+
+        async def _aiter_lines():
+            for line in lines:
+                yield line
+
+        mock_response.aiter_lines = _aiter_lines
+
+        async_client = AsyncMock()
+        stream_ctx = MagicMock()
+        stream_ctx.__aenter__.return_value = mock_response
+        stream_ctx.__aexit__ = AsyncMock(return_value=False)
+        async_client.stream = MagicMock(return_value=stream_ctx)
+        monkeypatch.setattr(
+            "server.core.llm.client.get_shared_http_client", lambda: async_client
+        )
+
+        client.top_p = 0.9
+        _ = [c async for c in client.stream_chat([{"role": "user", "content": "hi"}])]
+        _, kwargs = async_client.stream.call_args
+        assert kwargs["json"]["options"]["top_p"] == 0.9
+
+        client.top_p = None
+        _ = [c async for c in client.stream_chat([{"role": "user", "content": "hi"}])]
+        _, kwargs = async_client.stream.call_args
+        assert "top_p" not in kwargs["json"]["options"]
 
     @pytest.mark.asyncio
     async def test_stream_skips_bad_json(self, monkeypatch, client):
@@ -317,6 +372,57 @@ class TestVLLMClient:
         resp = await c.chat([{"role": "user", "content": "hi"}])
         assert resp.finish_reason == "error"
         assert "响应格式错误" in resp.error
+
+    @pytest.mark.asyncio
+    async def test_chat_top_p_injected_when_set(self, monkeypatch):
+        c = VLLMClient(top_p=0.9)
+        shared, _ = self._mock_shared_client(monkeypatch)
+        await c.chat([{"role": "user", "content": "hi"}])
+        _, kwargs = shared.post.call_args
+        assert kwargs["json"]["top_p"] == 0.9
+
+    @pytest.mark.asyncio
+    async def test_chat_top_p_omitted_when_none(self, monkeypatch):
+        c = VLLMClient()
+        shared, _ = self._mock_shared_client(monkeypatch)
+        await c.chat([{"role": "user", "content": "hi"}])
+        _, kwargs = shared.post.call_args
+        assert "top_p" not in kwargs["json"]
+
+    @pytest.mark.asyncio
+    async def test_stream_top_p_injected_when_set(self, monkeypatch):
+        """VLLM stream_chat 路径：配置 top_p 时注入请求体，未配置时省略。"""
+        lines = [
+            "data: " + json.dumps({"choices": [{"delta": {"content": "ok"}}]}),
+            "data: [DONE]",
+        ]
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+
+        async def _aiter_lines():
+            for line in lines:
+                yield line
+
+        mock_response.aiter_lines = _aiter_lines
+
+        shared = AsyncMock()
+        stream_ctx = MagicMock()
+        stream_ctx.__aenter__.return_value = mock_response
+        stream_ctx.__aexit__ = AsyncMock(return_value=False)
+        shared.stream = MagicMock(return_value=stream_ctx)
+        monkeypatch.setattr(
+            "server.core.llm.client.get_shared_http_client", lambda: shared
+        )
+
+        c = VLLMClient(top_p=0.9)
+        _ = [chunk async for chunk in c.stream_chat([{"role": "user", "content": "hi"}])]
+        _, kwargs = shared.stream.call_args
+        assert kwargs["json"]["top_p"] == 0.9
+
+        c2 = VLLMClient()
+        _ = [chunk async for chunk in c2.stream_chat([{"role": "user", "content": "hi"}])]
+        _, kwargs = shared.stream.call_args
+        assert "top_p" not in kwargs["json"]
 
 
 # ---------------------------------------------------------------- TRTLLMClient

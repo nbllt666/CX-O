@@ -85,7 +85,8 @@ async def get_unified_config():
     services_config = _get_services_config()
 
     vector_config = {
-        "backend": settings.config.memory.vector_backend,
+        # 前端约定：weaviate 后端需区分嵌入式/独立部署，映射为复合标识
+        "backend": "weaviate_embedded" if settings.config.memory.weaviate.embedded else settings.config.memory.vector_backend,
         "vector_size": settings.config.memory.weaviate.vector_size,
         "weaviate_host": settings.config.memory.weaviate.host,
         "weaviate_port": settings.config.memory.weaviate.port,
@@ -106,6 +107,29 @@ async def get_unified_config():
                 "provider": settings.config.llm.provider,
                 "model": settings.config.llm.model,
                 "host": settings.config.llm.host,
+                # 各模型槽位（main/summary/memory）的完整配置，供前端设置页回显
+                "models": {
+                    key: {
+                        "provider": getattr(mc, "provider"),
+                        "model": getattr(mc, "model"),
+                        "host": getattr(mc, "host"),
+                        "api_key": getattr(mc, "api_key", None) or "",
+                    }
+                    for key, mc in (
+                        ("main", settings.config.models.main),
+                        ("summary", settings.config.models.summary),
+                        ("memory", settings.config.models.memory),
+                    )
+                },
+                # 类型映射默认值（如 {"summary": "main", "memory": "main"}）
+                "defaults": dict(settings.config.models.defaults),
+                # 采样参数（取自主模型配置）
+                "params": {
+                    "temperature": settings.config.models.main.temperature,
+                    "maxTokens": settings.config.models.main.max_tokens,
+                    "topP": getattr(settings.config.models.main, "top_p", None),
+                    "timeout": settings.config.models.main.timeout,
+                },
             },
             "system": {
                 "debug": settings.config.system.debug,
@@ -209,7 +233,19 @@ async def update_unified_config(request: Request, _: bool = Depends(verify_admin
 
         elif section == "vector":
             if "backend" in section_data:
-                settings.config.memory.vector_backend = section_data["backend"]
+                # 前端复合标识映射：weaviate_embedded 拆解为 weaviate 后端 + embedded 开关
+                backend = section_data["backend"]
+                if backend == "weaviate_embedded":
+                    settings.config.memory.vector_backend = "weaviate"
+                    settings.config.memory.weaviate.embedded = True
+                else:
+                    settings.config.memory.vector_backend = backend
+                    if backend == "weaviate":
+                        settings.config.memory.weaviate.embedded = False
+            if "weaviate_host" in section_data:
+                settings.config.memory.weaviate.host = section_data["weaviate_host"]
+            if "weaviate_port" in section_data:
+                settings.config.memory.weaviate.port = int(section_data["weaviate_port"])
             if "vector_size" in section_data:
                 settings.config.memory.weaviate.vector_size = section_data["vector_size"]
             if "embedding_provider" in section_data:
@@ -244,6 +280,32 @@ async def update_unified_config(request: Request, _: bool = Depends(verify_admin
                         model_cfg.model = entry["model"]
                     if "host" in entry:
                         model_cfg.host = entry["host"]
+                    if "api_key" in entry:
+                        # 空字符串归一化为 None，避免配置文件残留空密钥
+                        model_cfg.api_key = entry["api_key"] or None
+
+            # model_defaults：summary/memory 的类型映射默认值（如 {"summary": "main"}）
+            model_defaults = section_data.get("model_defaults")
+            if isinstance(model_defaults, dict):
+                defaults = dict(settings.config.models.defaults)
+                for key in ("summary", "memory"):
+                    if key in model_defaults:
+                        defaults[key] = model_defaults[key]
+                settings.config.models.defaults = defaults
+
+            # llm_params：采样参数同时落到 llm 节与 models.main，供前端与客户端共用
+            llm_params = section_data.get("llm_params")
+            if isinstance(llm_params, dict):
+                if "temperature" in llm_params:
+                    settings.config.llm.temperature = llm_params["temperature"]
+                    settings.config.models.main.temperature = llm_params["temperature"]
+                if "maxTokens" in llm_params:
+                    settings.config.llm.max_tokens = llm_params["maxTokens"]
+                    settings.config.models.main.max_tokens = llm_params["maxTokens"]
+                if "topP" in llm_params:
+                    settings.config.models.main.top_p = llm_params["topP"]
+                if "timeout" in llm_params:
+                    settings.config.models.main.timeout = llm_params["timeout"]
 
             if "provider" in section_data:
                 settings.config.llm.provider = section_data["provider"]
@@ -267,6 +329,24 @@ async def update_unified_config(request: Request, _: bool = Depends(verify_admin
             logger.info("系统配置已更新")
             result = await _apply_and_broadcast(request, section, section_data)
             return {"status": "success", "message": "System config saved", **result}
+
+        elif section == "graph":
+            if "graph_enabled" in section_data:
+                settings.config.graph.enabled = bool(section_data["graph_enabled"])
+
+            settings.save_config()
+            logger.info("图数据库配置已更新")
+            result = await _apply_and_broadcast(request, section, section_data)
+            return {"status": "success", "message": "Graph config saved", **result}
+
+        elif section == "vision_enhanced":
+            if "enabled" in section_data:
+                settings.config.vision_enhanced.enabled = bool(section_data["enabled"])
+
+            settings.save_config()
+            logger.info("视觉增强配置已更新")
+            result = await _apply_and_broadcast(request, section, section_data)
+            return {"status": "success", "message": "Vision enhanced config saved", **result}
 
         else:
             raise HTTPException(status_code=400, detail=f"Unknown section: {section}")

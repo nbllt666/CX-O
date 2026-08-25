@@ -3,7 +3,7 @@
  *
  * 端点：POST /api/vision/clip（已有后端，ContractTask 冻结）。
  * - multipart/form-data 字段：clip(文件) + event_type + ts + source + 可选 narrative_memory_enabled。
- * - 响应形如 {accepted:boolean, clip_id?, pending?}。
+ * - 响应为 APIResponse 包裹：{success, data: {accepted, clip_id?, pending?}, message, ...}。
  *
  * 封装习惯对齐 chat.ts / base.ts：
  * - base URL 复用 getApiBaseUrl()（IPC > localStorage > env > 默认 http://127.0.0.1:8100）；
@@ -33,7 +33,8 @@ export type UploadVisionClipResult = { accepted: boolean };
 /**
  * 上传一个视觉片段到后端 /api/vision/clip。
  * - HTTP/网络错误 normalizeError 归一化后抛错（网络断连 / 5xx 等）；
- * - 响应解析仅取 accepted 布尔位（clip_id/pending 供上层自知即可，无需强约束）。
+ * - 响应为 APIResponse 包裹，仅解包 data.accepted 布尔位
+ *   （clip_id/pending 供上层自知即可，无需强约束）。
  */
 export async function uploadVisionClip(
   request: UploadVisionClipRequest,
@@ -63,8 +64,8 @@ export async function uploadVisionClip(
     if (!res.ok) {
       throw new Error(`请求失败: ${res.status} ${res.statusText}`);
     }
-    const data = (await res.json()) as { accepted?: boolean; clip_id?: string; pending?: boolean };
-    return { accepted: Boolean(data.accepted) };
+    const body = (await res.json()) as { success?: boolean; data?: { accepted?: boolean } };
+    return { accepted: Boolean(body?.data?.accepted) };
   } catch (error) {
     throw normalizeError(error);
   }

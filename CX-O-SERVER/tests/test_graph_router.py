@@ -369,11 +369,18 @@ class TestExport:
 
 
 class TestConfig:
-    def test_config(self, client):
+    def test_config(self, client, monkeypatch):
+        # graph_enabled 读取全局 settings，注入假值避免依赖真实 config.json
+        monkeypatch.setattr(
+            graph_mod, "get_settings",
+            lambda: SimpleNamespace(config=SimpleNamespace(
+                graph=SimpleNamespace(enabled=True))),
+        )
         r = client.get("/config")
         assert r.status_code == 200
         body = r.json()
         assert body["status"] == "success"
+        assert body["config"]["graph_enabled"] is True
         assert body["config"]["database_path"] == "/tmp/graph.db"
         assert body["config"]["weaviate"]["api_key"] == "***"
         assert body["config"]["embedding"]["model"] == "m"

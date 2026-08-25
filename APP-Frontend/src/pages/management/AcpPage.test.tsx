@@ -114,7 +114,7 @@ describe('AcpPage ACP 页', () => {
       total_messages: 0,
     });
     mocked.getAcpAgents.mockResolvedValue(SAMPLE_AGENTS);
-    mocked.updateAcpAgent.mockResolvedValue(SAMPLE_AGENTS[0]);
+    mocked.updateAcpAgent.mockResolvedValue(undefined);
 
     render(<AcpPage />);
     expect(await screen.findByText('远端小助手')).toBeInTheDocument();

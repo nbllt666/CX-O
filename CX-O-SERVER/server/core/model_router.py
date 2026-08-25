@@ -183,6 +183,7 @@ class ModelRouter:
                 temperature=config.temperature,
                 max_tokens=config.max_tokens,
                 api_key=getattr(config, "api_key", None),
+                top_p=getattr(config, "top_p", None),
             )
         elif provider == "vllm":
             return VLLMClient(
@@ -190,6 +191,7 @@ class ModelRouter:
                 model=config.model,
                 temperature=config.temperature,
                 max_tokens=config.max_tokens,
+                top_p=getattr(config, "top_p", None),
             )
         elif provider == "trtllm":
             return TRTLLMClient(

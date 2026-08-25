@@ -26,6 +26,7 @@ from server.core.graph.visualization import GraphExporter
 from server.core.graph.semantic_query import SemanticQueryManager
 from server.core.graph.monitoring import GraphMonitor
 from server.dependencies import _get_or_create_graph_database
+from server.config import get_settings
 
 router = APIRouter(tags=["graph"])
 
@@ -644,6 +645,8 @@ async def get_graph_config_endpoint(agent_id: str = Query("default")):
     return {
         "status": "success",
         "config": {
+            # 全局图功能开关（settings.config.graph.enabled），供前端设置页回显
+            "graph_enabled": get_settings().config.graph.enabled,
             "database_path": config.database_path,
             "auto_create_schema": config.auto_create_schema,
             "pool_size": config.pool_size,

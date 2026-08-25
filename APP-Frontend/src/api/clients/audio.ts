@@ -27,14 +27,28 @@ export const audioApi = {
     return request<Record<string, unknown>>({ url: '/api/audio/config' });
   },
 
-  /** TTS：二进制音频返回，需 arraybuffer 响应类型 */
+  /**
+   * TTS：POST /api/tts/synthesize（JSON {text}），
+   * 响应 { status, audio_data(base64), format, message }，base64 解码后构造音频 Blob。
+   */
   async textToSpeech(text: string): Promise<Blob> {
-    const response = await getHttpClient().post<ArrayBuffer>(
-      '/api/tts',
-      { text },
-      { responseType: 'arraybuffer' },
-    );
-    return new Blob([response.data], { type: 'audio/mp3' });
+    const response = await getHttpClient().post<{
+      status: string;
+      audio_data?: string;
+      format?: string;
+      message?: string;
+    }>('/api/tts/synthesize', { text });
+    const { status, audio_data: audioData, format, message } = response.data;
+    if (status !== 'success' || !audioData) {
+      throw new Error(message || '语音合成失败');
+    }
+    // atob 解码 base64 → 二进制字节
+    const binary = atob(audioData);
+    const bytes = new Uint8Array(binary.length);
+    for (let i = 0; i < binary.length; i++) {
+      bytes[i] = binary.charCodeAt(i);
+    }
+    return new Blob([bytes], { type: format === 'wav' ? 'audio/wav' : 'audio/mp3' });
   },
 
   /** ASR：multipart 上传音频 Blob，后端返回 { status, text?, message? } */

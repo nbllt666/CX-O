@@ -139,6 +139,18 @@ async def disconnect_plugin(plugin_id: str):
         raise HTTPException(status_code=500, detail="内部服务器错误")
 
 
+@router.post("/cxfc/plugins/{plugin_id}/disconnect")
+async def disconnect_plugin_keep_registration(plugin_id: str):
+    """断开插件连接但保留注册记录（可重新连接）。"""
+    cxfc_manager = get_cxfc_manager()
+    try:
+        await cxfc_manager.disconnect_plugin(plugin_id, remove_persistent=False)
+        return {"status": "ok"}
+    except Exception as e:
+        logger.error(f"断开插件失败: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="内部服务器错误")
+
+
 @router.get("/cxfc/plugins")
 async def list_plugins():
     """列出已注册的 CXFC 插件。"""

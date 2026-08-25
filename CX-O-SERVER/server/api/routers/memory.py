@@ -78,6 +78,27 @@ async def list_agent_memory_tables():
         # 添加默认Agent
         agents.insert(0, {"agent_id": "default", "table_name": "memories", "created_at": None})
 
+        # 合并 agents.json 中全部已注册 agent，保证记忆页 Agent 下拉列出所有 agent
+        # （不仅限于已单独建过记忆表的 agent，default 已置顶，其余去重追加）。
+        # 复用 agents router 的 _load_agents（带缓存），失败静默保持现有列表。
+        try:
+            from server.api.routers.agents import _load_agents
+
+            registered = _load_agents()
+            known = {x["agent_id"] for x in agents}
+            for reg in registered:
+                aid = reg.get("id")
+                if aid and aid != "default" and aid not in known:
+                    agents.append(
+                        {"agent_id": aid, "table_name": "memories", "created_at": None}
+                    )
+                    known.add(aid)
+        except Exception as e:
+            logger.warning(f"合并已注册 agent 到记忆表列表失败（保持现有列表）: {e}")
+
+        # 确保 default 仍居首位
+        agents.sort(key=lambda a: a["agent_id"] != "default")
+
         return {"status": "success", "agents": agents, "total": len(agents)}
     except Exception as e:
         logger.error(f"获取Agent记忆表列表失败: {e}", exc_info=True)

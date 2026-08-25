@@ -169,15 +169,6 @@ export interface GraphEntity {
   created_at?: string;
 }
 
-export interface GraphRelation {
-  id: string;
-  type: string;
-  source_id: string;
-  target_id: string;
-  properties?: Record<string, unknown>;
-  created_at?: string;
-}
-
 export interface VectorData {
   memory_id: number;
   content: string;

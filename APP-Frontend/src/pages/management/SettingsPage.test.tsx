@@ -139,7 +139,7 @@ describe('SettingsPage 五区块', () => {
     const { configApi } = await import('@/api/clients/config');
     render(<SettingsPage />);
     expect(screen.getByText('向量后端')).toBeInTheDocument();
-    expect(screen.getByText('集合名称')).toBeInTheDocument();
+    expect(screen.getByText('嵌入模型')).toBeInTheDocument();
     // 向量区块为第二个保存按钮（LLM/向量/图）
     const saveBtn = (await screen.findAllByRole('button', { name: '保存配置' }))[1];
     await waitFor(() => expect(saveBtn).toBeEnabled());

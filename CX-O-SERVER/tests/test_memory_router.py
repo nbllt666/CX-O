@@ -159,14 +159,42 @@ def client(monkeypatch):
 
 
 class TestListAgents:
-    def test_success(self, client):
+    def test_success(self, client, monkeypatch):
+        import server.api.routers.agents as agents_mod
+
+        # 隔离真实 agents.json：固定返回 [default, alpha]
+        monkeypatch.setattr(
+            agents_mod, "_load_agents", lambda: [{"id": "default"}, {"id": "alpha"}]
+        )
         c, mm, sr = client
         r = c.get("/memories/agents")
         assert r.status_code == 200
         body = r.json()
         assert body["status"] == "success"
         assert body["agents"][0]["agent_id"] == "default"
-        assert body["total"] == 2
+        assert {a["agent_id"] for a in body["agents"]} == {"default", "alpha"}
+        assert body["total"] == len(body["agents"])
+
+    def test_merges_registered_agents(self, client, monkeypatch):
+        """agents.json 中已注册但未建独立记忆表的 agent 也应出现在列表。"""
+        import server.api.routers.agents as agents_mod
+
+        monkeypatch.setattr(
+            agents_mod,
+            "_load_agents",
+            lambda: [
+                {"id": "default"},
+                {"id": "alpha"},
+                {"id": "beta"},
+                {"id": "gamma"},
+            ],
+        )
+        c, mm, sr = client
+        r = c.get("/memories/agents")
+        body = r.json()
+        ids = [a["agent_id"] for a in body["agents"]]
+        assert ids[0] == "default"
+        assert {"alpha", "beta", "gamma"} <= set(ids)
 
 
 class TestListMemories:

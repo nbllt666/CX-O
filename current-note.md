@@ -4,6 +4,27 @@
 
 ## 做到哪了
 
+- **修复前后端契约失配（设置界面等 17 处）**（已闭合，2026-08-25；issue `模块0-20260825-01`[20260825_模块0_修复前后端契约失配.md]）
+  - 工程过程：用户要求「修复所有前后端不匹配问题」→ 三个并行探查代理全量比对前端 23 客户端 ~150 调用 vs 后端 32 router，确认 17 处失配 → 后端 7 项补齐（PUT /api/config 新增 graph/vision_enhanced 分支、llm 分支承接 api_key/model_defaults/llm_params、vector 分支承接 weaviate_host/port 与 embedded 映射、GET llm 节返回 models/defaults/params、cxfc 新增 POST .../disconnect、graph/config 补 graph_enabled、ModelConfig.top_p 全链路透传含 stream_chat）+ 前端 7 项对齐（normalizeError 回退链、vision 解包 .data、TTS 改 /api/tts/synthesize+base64 解码、ACP 解包修正、graph/service 死代码清理、SettingsPage 三区块 snake_case 读写+默认值对齐+temperature 上限消费 limits）→ GN-004 审查警示放行（文档滞后+stream top_p 缺失两项已修正）。
+  - 交接状态：**已闭合**（后端 pytest 177 passed 含新增 13 用例；前端 typecheck/lint 通过、src/api+management vitest 26 文件 203 用例全绿[全量仅 electron/ble 3 例存量失败经 git stash 对照确认与本次无关]）。变更文档 `.trae/documents/20260825_模块0_修复前后端契约失配.md`。
+  - 最终结果：设置页 LLM/向量/图数据库/视觉采集四区块保存与回显全部真实生效；插件断开按钮、TTS 试听、视觉上传成功判定、错误信息展示、ACP 返回值全部对齐；删除 13 个调用不存在端点的死方法。
+  - 未闭合项：①浏览器端手动验证（保存回显/TTS 出声/断开按钮）待用户实操确认；②观察项：PUT llm 写 models.* 不同步 legacy config.llm 节（前端读 models 不受影响）；③后端响应包裹双轨（仅 meeting/vision 用 APIResponse）留待 s0601 统一。后端需重启加载新代码；前端未重打安装包。
+  - 接续入口：重启后端 → 设置页各区块保存后重进验证回显；如需分发重打安装包。
+
+- **修复记忆界面只显示默认 agent**（已闭合，2026-08-25；issue `模块0-20260825-08`）
+  - 工程过程：用户反馈「记忆界面只有默认agent」→ 根因=后端 `memory.py::list_agent_memory_tables` 仅从 `agent_memory_tables` 表查询（通常只有 default 有记录），未包含 agents.json 全部已注册 agent → 修复：查询后合并 `agents._load_agents()` 全部 agent（default 置顶，其余去重追加，默认表 memories）。补测试 + 运行态验证。
+  - 交接状态：**已闭合**（`test_memory_router.py` **44 passed** + pyflakes 零告警；运行态 `GET /api/memories/agents` 返回 **16** 个 agent 7ms）。变更文档 `.trae/documents/20260825_模块0_修复记忆界面只显示默认agent.md`。
+  - 最终结果：记忆管理页 Agent 下拉现在列出所有已注册 agent（default 置顶），可切换查看各 agent 记忆。
+  - 未闭合项：无。后端已用新代码重启。
+  - 接续入口：刷新记忆页即可看到全部 agent 下拉。
+
+- **修复蒸馏界面字符显示不正常（翻译 key 错位）**（已闭合，2026-08-25；issue `模块0-20260825-07`）
+  - 工程过程：用户反馈「蒸馏界面字符不正常」实测蒸馏页显示 i18n key 原文 → 根因=蒸馏翻译被错放 `pet.distillation`，而页面用 `management.distillation.*` → 用脚本把 zh-CN/en-US 蒸馏段移入 `management.distillation`。浏览器实测文案恢复。
+  - 交接状态：**已闭合**（浏览器实测蒸馏页字幕/模式/源类型/按钮全部正常；typecheck 通过 + build 成功）。变更文档 `.trae/documents/20260825_模块前端_修复蒸馏界面翻译key错位.md`。
+  - 最终结果：蒸馏页文案恢复为正确中文。
+  - 未闭合项：无。前端已 build，未重打安装包。
+  - 接续入口：刷新蒸馏页即可。
+
 - **修复桌宠开启状态与管理页显示不同步**（已闭合，2026-08-25；issue `模块0-20260825-06`）
   - 工程过程：用户反馈「默认的桌宠在前端启动时就显示了，但管理页没有」→ 根因=桌宠窗实际开启状态由 Electron 主进程窗口权威持有，而管理页开关来自 `petPanelStore.openAgentIds`（仅手动开关才更新），启动自动打开的默认桌宠窗从未写入 store → 修复：主进程新增 `window:list-pet` IPC 返回实际已开桌宠 agentId，preload 暴露 `listPetWindows`（electron.d.ts 声明可选），AgentsPage 挂载时以实际窗口对齐 store。
   - 交接状态：**已闭合**（typecheck 通过 + AgentsPage/createStorage 11 tests passed + build 成功，main.js 含 window:list-pet）。变更文档 `.trae/documents/20260825_模块前端_修复桌宠开启状态同步.md`。

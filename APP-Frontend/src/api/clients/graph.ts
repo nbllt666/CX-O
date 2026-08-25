@@ -1,10 +1,9 @@
 /**
  * graph 域客户端：图数据库节点 / 边 / 语义搜索 / 算法。
- * 端点面对齐 CX-O-Frontend clients/graph.ts（/api/graph/*，支持 agent_id 隔离；
- * 保留旧版 entity/relation API 兼容）。
+ * 端点面对齐 CX-O-Frontend clients/graph.ts（/api/graph/*，支持 agent_id 隔离）。
  */
 import { request } from '../base';
-import type { GraphEntity, GraphRelation } from '../types';
+import type { GraphEntity } from '../types';
 
 export interface GraphNode {
   id: string;
@@ -215,71 +214,6 @@ export const graphApi = {
     scores: Record<string, number>;
   }> {
     return request({ url: '/api/graph/algorithm/pagerank', params });
-  },
-
-  // ── 旧版 Entity/Relation API（兼容 GraphDataPage） ──
-
-  getGraphEntityTypes(library = 'thing'): Promise<{ types: string[]; entity_types?: string[] }> {
-    return request({ url: `/api/graph/${encodeURIComponent(library)}/entity-types` });
-  },
-
-  getGraphRelationTypes(library = 'thing'): Promise<{ types: string[]; relation_types?: string[] }> {
-    return request({ url: `/api/graph/${encodeURIComponent(library)}/relation-types` });
-  },
-
-  async deleteGraphEntity(library: string, entityId: string): Promise<void> {
-    await request({
-      url: `/api/graph/${encodeURIComponent(library)}/entities/${encodeURIComponent(entityId)}`,
-      method: 'delete',
-    });
-  },
-
-  async deleteGraphRelation(
-    library: string,
-    params: { source_id: string; target_id: string; relation_type: string },
-  ): Promise<void> {
-    await request({
-      url: `/api/graph/${encodeURIComponent(library)}/relations`,
-      method: 'delete',
-      data: params,
-    });
-  },
-
-  listGraphEntities(entityType?: string, limit?: number): Promise<{ entities: GraphEntity[] }> {
-    const params = new URLSearchParams();
-    if (entityType) params.append('entity_type', entityType);
-    if (limit) params.append('limit', String(limit));
-    const qs = params.toString();
-    return request({ url: `/api/graph/entities${qs ? `?${qs}` : ''}` });
-  },
-
-  listGraphRelations(relationType?: string, limit?: number): Promise<{ relations: GraphRelation[] }> {
-    const params = new URLSearchParams();
-    if (relationType) params.append('relation_type', relationType);
-    if (limit) params.append('limit', String(limit));
-    const qs = params.toString();
-    return request({ url: `/api/graph/relations${qs ? `?${qs}` : ''}` });
-  },
-
-  createGraphEntity(entityType: string, entityData: Record<string, unknown>): Promise<GraphEntity> {
-    return request({
-      url: '/api/graph/entities',
-      method: 'post',
-      data: { entity_type: entityType, ...entityData },
-    });
-  },
-
-  createGraphRelation(
-    relationType: string,
-    sourceId: string,
-    targetId: string,
-    relationData?: Record<string, unknown>,
-  ): Promise<GraphRelation> {
-    return request({
-      url: '/api/graph/relations',
-      method: 'post',
-      data: { relation_type: relationType, source_id: sourceId, target_id: targetId, ...relationData },
-    });
   },
 
   findGraphPath(sourceId: string, targetId: string, maxDepth?: number): Promise<{ path: GraphEntity[] }> {

@@ -246,6 +246,7 @@ class ModelConfig(BaseModel):
     temperature: float = 0.7
     max_tokens: int = 0
     timeout: int = 60
+    top_p: Optional[float] = None  # 核采样参数，None 表示不启用
     api_key: Optional[str] = None
 
     def get_model_config(self, model_type: str) -> "ModelConfig":

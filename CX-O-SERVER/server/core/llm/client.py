@@ -96,6 +96,7 @@ class OllamaClient(LLMClient):
         max_tokens: int = 4096,
         dimension: int = 768,
         api_key: str = None,
+        top_p: Optional[float] = None,
     ):
         """初始化 Ollama 客户端，保存服务地址与模型参数。"""
         self.host = host.rstrip("/")
@@ -104,6 +105,8 @@ class OllamaClient(LLMClient):
         self.max_tokens = max_tokens
         self.dimension = dimension
         self.api_key = api_key
+        # 核采样参数：None 表示不启用，请求体中不注入
+        self.top_p = top_p
 
     def _validate_messages(self, messages: List[Dict]) -> None:
         """验证消息格式"""
@@ -145,6 +148,11 @@ class OllamaClient(LLMClient):
                     "num_predict": kwargs.get("max_tokens", self.max_tokens),
                 },
             }
+
+            # 核采样参数：仅当配置或调用方显式提供时注入
+            top_p = kwargs.get("top_p", self.top_p)
+            if top_p is not None:
+                request_body["options"]["top_p"] = top_p
 
             # 添加工具支持 (如果提供了 tools)
             tools = kwargs.get("tools")
@@ -246,6 +254,11 @@ class OllamaClient(LLMClient):
                 },
             }
 
+            # 核采样参数：仅当配置或调用方显式提供时注入
+            top_p = kwargs.get("top_p", self.top_p)
+            if top_p is not None:
+                request_body["options"]["top_p"] = top_p
+
             if "tools" in kwargs and kwargs["tools"]:
                 request_body["tools"] = kwargs["tools"]
 
@@ -336,6 +349,7 @@ class VLLMClient(LLMClient):
         max_tokens: int = 4096,
         dimension: int = 768,
         lora_request: Optional[Dict] = None,
+        top_p: Optional[float] = None,
     ):
         """初始化 VLLM 客户端，并对 max_tokens 做防御性上限钳制。
 
@@ -347,6 +361,8 @@ class VLLMClient(LLMClient):
         self.host = host.rstrip("/")
         self.model = model
         self.temperature = temperature
+        # 核采样参数：None 表示不启用，请求体中不注入
+        self.top_p = top_p
         self.lora_request = lora_request or None
         # 防御性 clamp：max_tokens 不能超过 vLLM 模型的 max_model_len（默认 32768）。
         # 配置中若误设 131072 等超大值，vLLM 会返回 400 Bad Request，
@@ -404,6 +420,10 @@ class VLLMClient(LLMClient):
                 "temperature": kwargs.get("temperature", self.temperature),
                 "max_tokens": effective_max_tokens,
             }
+            # 核采样参数：仅当配置或调用方显式提供时注入
+            top_p = kwargs.get("top_p", self.top_p)
+            if top_p is not None:
+                payload["top_p"] = top_p
             if self.lora_request:
                 payload["lora_request"] = self.lora_request
             response = await client.post(
@@ -502,6 +522,11 @@ class VLLMClient(LLMClient):
                 "temperature": kwargs.get("temperature", self.temperature),
                 "max_tokens": effective_max_tokens,
             }
+
+            # 核采样参数：仅当配置或调用方显式提供时注入
+            top_p = kwargs.get("top_p", self.top_p)
+            if top_p is not None:
+                request_body["top_p"] = top_p
 
             if "tools" in kwargs and kwargs["tools"]:
                 request_body["tools"] = kwargs["tools"]

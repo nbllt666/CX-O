@@ -968,10 +968,25 @@ interface LlmParamsConfig {
   timeout: number;
 }
 
+/** 后端 GET /api/config llm 节的 model 形状（api_key 为 snake_case） */
+interface LlmModelResponse {
+  provider?: string;
+  model?: string;
+  host?: string;
+  api_key?: string;
+}
+
+/** 后端 GET /api/config llm 节返回形状 */
+interface LlmConfigResponse {
+  models?: { main?: LlmModelResponse; summary?: LlmModelResponse; memory?: LlmModelResponse };
+  defaults?: { summary?: string; memory?: string };
+  params?: Partial<LlmParamsConfig>;
+}
+
 const DEFAULT_MODEL_ENTRY: ModelEntry = {
   provider: 'ollama',
   host: 'http://localhost:11434',
-  model: 'llama3.2:3b',
+  model: 'qwen3:latest',
   apiKey: '',
   enabled: false,
 };
@@ -982,11 +997,12 @@ const DEFAULT_LLM_MODELS: LlmModelsConfig = {
   memory: { ...DEFAULT_MODEL_ENTRY },
 };
 
+// 对齐后端 ModelConfig 默认（maxTokens 0 表示不限）
 const DEFAULT_LLM_PARAMS: LlmParamsConfig = {
   temperature: 0.7,
-  maxTokens: 2048,
+  maxTokens: 0,
   topP: 0.9,
-  timeout: 30,
+  timeout: 60,
 };
 
 const PROVIDER_OPTIONS = [
@@ -1048,26 +1064,68 @@ function ModelFields(props: {
   );
 }
 
+/** 后端 model 节（api_key snake_case）映射为表单 ModelEntry，缺省字段保持原值 */
+function toModelEntry(prev: ModelEntry, raw: LlmModelResponse | undefined): ModelEntry {
+  if (!raw) return prev;
+  return {
+    ...prev,
+    provider: raw.provider ?? prev.provider,
+    model: raw.model ?? prev.model,
+    host: raw.host ?? prev.host,
+    apiKey: raw.api_key ?? prev.apiKey,
+  };
+}
+
+/** 表单 ModelEntry → 后端 PUT 载荷（仅契约字段，api_key snake_case） */
+function toModelPayload(entry: ModelEntry): LlmModelResponse {
+  return {
+    provider: entry.provider,
+    host: entry.host,
+    model: entry.model,
+    api_key: entry.apiKey,
+  };
+}
+
 function LlmSection() {
   const { t } = useTranslation();
   const { isRunning } = useBackendRunning();
   const [models, setModels] = useState<LlmModelsConfig>(DEFAULT_LLM_MODELS);
   const [params, setParams] = useState<LlmParamsConfig>(DEFAULT_LLM_PARAMS);
+  // temperature 上限消费后端 limits（未加载时回退 2）
+  const temperatureMax = useSettingsStore((s) => s.limits?.temperature_max) ?? 2;
+  const fetchLimits = useSettingsStore((s) => s.fetchLimits);
 
   const loadConfig = useCallback(async () => {
     try {
       const data = await configApi.getConfig();
-      const llm = (data as { config?: { llm?: Partial<ModelEntry> } }).config?.llm;
+      const llm = (data as { config?: { llm?: LlmConfigResponse } }).config?.llm;
       if (llm) {
+        const { models: respModels, defaults, params: respParams } = llm;
         setModels((prev) => ({
-          ...prev,
-          main: {
-            ...prev.main,
-            provider: llm.provider ?? prev.main.provider,
-            model: llm.model ?? prev.main.model,
-            host: llm.host ?? prev.main.host,
+          main: toModelEntry(prev.main, respModels?.main),
+          summary: {
+            ...toModelEntry(prev.summary, respModels?.summary),
+            enabled:
+              defaults?.summary === undefined
+                ? prev.summary.enabled
+                : defaults.summary === 'summary',
+          },
+          memory: {
+            ...toModelEntry(prev.memory, respModels?.memory),
+            enabled:
+              defaults?.memory === undefined
+                ? prev.memory.enabled
+                : defaults.memory === 'memory',
           },
         }));
+        if (respParams) {
+          setParams((prev) => ({
+            temperature: respParams.temperature ?? prev.temperature,
+            maxTokens: respParams.maxTokens ?? prev.maxTokens,
+            topP: respParams.topP ?? prev.topP,
+            timeout: respParams.timeout ?? prev.timeout,
+          }));
+        }
       }
     } catch {
       /* 后端不可达时保持当前表单 */
@@ -1087,9 +1145,18 @@ function LlmSection() {
     return unsubscribe;
   }, [isRunning, loadConfig]);
 
+  // limits 未加载时补拉一次（App 启动链路可能因后端离线而漏拉，失败静默回退默认上限）
+  useEffect(() => {
+    if (!useSettingsStore.getState().limits) void fetchLimits();
+  }, [fetchLimits]);
+
   const handleSave = async () => {
     await configApi.updateConfig('llm', {
-      models,
+      models: {
+        main: toModelPayload(models.main),
+        summary: toModelPayload(models.summary),
+        memory: toModelPayload(models.memory),
+      },
       model_defaults: {
         summary: models.summary.enabled ? 'summary' : 'main',
         memory: models.memory.enabled ? 'memory' : 'main',
@@ -1131,7 +1198,7 @@ function LlmSection() {
           label={t('settings.llm.temperature')}
           value={params.temperature}
           min={0}
-          max={2}
+          max={temperatureMax}
           step={0.05}
           format={(v) => v.toFixed(2)}
           onChange={(v) => setParams((p) => ({ ...p, temperature: v }))}
@@ -1589,25 +1656,32 @@ function EvolutionSection() {
 interface VectorConfigState {
   backend: string;
   vectorSize: number;
-  collectionName: string;
   weaviateHost: string;
   weaviatePort: number;
-  qdrantHost: string;
-  qdrantPort: number;
   embeddingProvider: string;
   embeddingModel: string;
   embeddingApiBase: string;
   embeddingApiKey: string;
 }
 
+/** 后端 GET /api/config vector 节返回形状（snake_case） */
+interface VectorConfigResponse {
+  backend?: string;
+  vector_size?: number;
+  weaviate_host?: string;
+  weaviate_port?: number;
+  embedding_provider?: string;
+  embedding_model?: string;
+  embedding_api_base?: string;
+  embedding_api_key?: string;
+}
+
+// 对齐后端 WeaviateConfig 默认
 const DEFAULT_VECTOR_CONFIG: VectorConfigState = {
   backend: 'weaviate',
-  vectorSize: 768,
-  collectionName: 'memory_vectors',
+  vectorSize: 1024,
   weaviateHost: 'localhost',
-  weaviatePort: 8090,
-  qdrantHost: 'localhost',
-  qdrantPort: 6333,
+  weaviatePort: 8080,
   embeddingProvider: 'ollama',
   embeddingModel: 'nomic-embed-text',
   embeddingApiBase: '',
@@ -1633,21 +1707,18 @@ function VectorSection() {
   const loadConfig = useCallback(async () => {
     try {
       const data = await configApi.getConfig();
-      const vec = (data as { config?: { vector?: Partial<VectorConfigState> } }).config?.vector;
+      const vec = (data as { config?: { vector?: VectorConfigResponse } }).config?.vector;
       if (vec) {
         setConfig((prev) => ({
           ...prev,
           backend: vec.backend ?? prev.backend,
-          vectorSize: vec.vectorSize ?? prev.vectorSize,
-          collectionName: vec.collectionName ?? prev.collectionName,
-          weaviateHost: vec.weaviateHost ?? prev.weaviateHost,
-          weaviatePort: vec.weaviatePort ?? prev.weaviatePort,
-          qdrantHost: vec.qdrantHost ?? prev.qdrantHost,
-          qdrantPort: vec.qdrantPort ?? prev.qdrantPort,
-          embeddingProvider: vec.embeddingProvider ?? prev.embeddingProvider,
-          embeddingModel: vec.embeddingModel ?? prev.embeddingModel,
-          embeddingApiBase: vec.embeddingApiBase ?? prev.embeddingApiBase,
-          embeddingApiKey: vec.embeddingApiKey ?? prev.embeddingApiKey,
+          vectorSize: vec.vector_size ?? prev.vectorSize,
+          weaviateHost: vec.weaviate_host ?? prev.weaviateHost,
+          weaviatePort: vec.weaviate_port ?? prev.weaviatePort,
+          embeddingProvider: vec.embedding_provider ?? prev.embeddingProvider,
+          embeddingModel: vec.embedding_model ?? prev.embeddingModel,
+          embeddingApiBase: vec.embedding_api_base ?? prev.embeddingApiBase,
+          embeddingApiKey: vec.embedding_api_key ?? prev.embeddingApiKey,
         }));
       }
     } catch {
@@ -1674,11 +1745,8 @@ function VectorSection() {
     await configApi.updateConfig('vector', {
       backend: config.backend,
       vector_size: config.vectorSize,
-      collection_name: config.collectionName,
       weaviate_host: config.weaviateHost,
       weaviate_port: config.weaviatePort,
-      qdrant_host: config.qdrantHost,
-      qdrant_port: config.qdrantPort,
       embedding_provider: config.embeddingProvider,
       embedding_model: config.embeddingModel,
       embedding_api_base: config.embeddingApiBase,
@@ -1709,11 +1777,6 @@ function VectorSection() {
         ]}
         onChange={(v) => set({ vectorSize: Number(v) })}
       />
-      <TextField
-        label={t('settings.vector.collectionName')}
-        value={config.collectionName}
-        onChange={(v) => set({ collectionName: v })}
-      />
       {config.backend === 'weaviate' && (
         <>
           <TextField
@@ -1725,16 +1788,6 @@ function VectorSection() {
             label={t('settings.vector.weaviatePort')}
             value={config.weaviatePort}
             onChange={(v) => set({ weaviatePort: v })}
-          />
-          <TextField
-            label={t('settings.vector.qdrantHost')}
-            value={config.qdrantHost}
-            onChange={(v) => set({ qdrantHost: v })}
-          />
-          <NumberField
-            label={t('settings.vector.qdrantPort')}
-            value={config.qdrantPort}
-            onChange={(v) => set({ qdrantPort: v })}
           />
         </>
       )}
@@ -1779,26 +1832,13 @@ function VectorSection() {
 
 // ── 区块 8：图数据库（GraphCard 对齐） ──
 
-interface GraphLibraryConfig {
-  enabled: boolean;
-  label_prefix: string;
-}
-
 interface GraphConfigState {
   graph_enabled: boolean;
-  graph_backend: string;
-  graph_libraries: Record<string, GraphLibraryConfig>;
 }
 
+// 对齐后端默认
 const DEFAULT_GRAPH_CONFIG: GraphConfigState = {
-  graph_enabled: false,
-  graph_backend: 'sqlite',
-  graph_libraries: {
-    user: { enabled: true, label_prefix: 'User' },
-    thing: { enabled: true, label_prefix: 'Thing' },
-    concept: { enabled: true, label_prefix: 'Concept' },
-    event: { enabled: true, label_prefix: 'Event' },
-  },
+  graph_enabled: true,
 };
 
 interface GraphHealthState {
@@ -1838,8 +1878,6 @@ function GraphSection() {
         if (cfg && !cancelled) {
           setConfig((prev) => ({
             graph_enabled: cfg.graph_enabled ?? prev.graph_enabled,
-            graph_backend: cfg.graph_backend ?? prev.graph_backend,
-            graph_libraries: cfg.graph_libraries ?? prev.graph_libraries,
           }));
         }
       } catch {
@@ -1855,7 +1893,7 @@ function GraphSection() {
   const set = (patch: Partial<GraphConfigState>) => setConfig((prev) => ({ ...prev, ...patch }));
 
   const handleSave = async () => {
-    await configApi.updateConfig('graph', config as unknown as Record<string, unknown>);
+    await configApi.updateConfig('graph', { graph_enabled: config.graph_enabled });
     void loadStats();
   };
 
@@ -1875,50 +1913,6 @@ function GraphSection() {
           onChange={(v) => set({ graph_enabled: v })}
         />
       </Row>
-      <TextField
-        label={t('settings.graph.backend')}
-        value={config.graph_backend}
-        onChange={(v) => set({ graph_backend: v })}
-      />
-
-      <div className="space-y-2 rounded-lg border border-[var(--glass-border)] bg-[rgba(255,255,255,0.02)] p-3">
-        <h3 className="text-sm font-medium text-muted-foreground">{t('settings.graph.libraries')}</h3>
-        {Object.entries(config.graph_libraries).map(([name, lib]) => (
-          <div
-            key={name}
-            className="space-y-2 rounded-lg border border-[var(--glass-border)] bg-[rgba(255,255,255,0.02)] p-2"
-          >
-            <Row label={name}>
-              <Toggle
-                label={name}
-                checked={lib.enabled}
-                onChange={(v) =>
-                  setConfig((prev) => ({
-                    ...prev,
-                    graph_libraries: {
-                      ...prev.graph_libraries,
-                      [name]: { ...lib, enabled: v },
-                    },
-                  }))
-                }
-              />
-            </Row>
-            <TextField
-              label={t('settings.graph.labelPrefix')}
-              value={lib.label_prefix}
-              onChange={(v) =>
-                setConfig((prev) => ({
-                  ...prev,
-                  graph_libraries: {
-                    ...prev.graph_libraries,
-                    [name]: { ...lib, label_prefix: v },
-                  },
-                }))
-              }
-            />
-          </div>
-        ))}
-      </div>
 
       <div className="space-y-2 rounded-lg border border-[var(--glass-border)] bg-[rgba(255,255,255,0.02)] p-3">
         <div className="flex items-center justify-between">

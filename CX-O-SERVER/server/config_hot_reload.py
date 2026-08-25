@@ -24,6 +24,8 @@ REQUIRES_RESTART: Dict[str, bool] = {
     # 哨兵集群：拓扑类（cluster_secret/peers/bind/witness）需重启；心跳/快照参数可热更新。
     # 保守起见整段标记需重启（SentinelCluster 持有传输连接与会话，不热重建）。
     "cluster": True,
+    "graph": True,           # 图配置在进程启动时装配为单例
+    "vision_enhanced": True,  # 视觉管线在装配期读取 enabled
 }
 
 
