@@ -72,6 +72,16 @@ interface NekoState {
 
 const MAX_LOGS = 800;
 
+// 各刷新动作的单调请求序号：并发触发时，旧请求的过期响应不覆盖最新请求写入的状态。
+let statusSeq = 0;
+let bridgeSeq = 0;
+let pluginSeq = 0;
+let installedSeq = 0;
+let marketSeq = 0;
+let catalogSeq = 0;
+// pollTask 按 task 追踪请求序号，防止旧轮询的迟到响应覆盖新状态
+const taskSeqMap = new Map<string, number>();
+
 export const useNekoStore = create<NekoState>()((set, get) => ({
   running: false,
   port: null,
@@ -97,6 +107,7 @@ export const useNekoStore = create<NekoState>()((set, get) => ({
   marketUnreachable: false,
 
   refreshStatus: async () => {
+    const seq = ++statusSeq;
     set({ checking: true });
     try {
       let status: { running: boolean; port: number | null; config: NekoRuntimeConfig };
@@ -110,6 +121,8 @@ export const useNekoStore = create<NekoState>()((set, get) => ({
           config: get().config,
         };
       }
+      // 过期响应不覆盖新状态
+      if (seq !== statusSeq) return;
       setNekoPort(status.port);
       set({
         running: status.running,
@@ -127,7 +140,7 @@ export const useNekoStore = create<NekoState>()((set, get) => ({
         set({ bridge: null });
       }
     } finally {
-      set({ checking: false });
+      if (seq === statusSeq) set({ checking: false });
     }
   },
 
@@ -136,10 +149,12 @@ export const useNekoStore = create<NekoState>()((set, get) => ({
       set({ bridge: null });
       return;
     }
+    const seq = ++bridgeSeq;
     try {
-      set({ bridge: await window.neko.getBridgeStatus() });
+      const bridge = await window.neko.getBridgeStatus();
+      if (seq === bridgeSeq) set({ bridge });
     } catch {
-      set({ bridge: null });
+      if (seq === bridgeSeq) set({ bridge: null });
     }
   },
 
@@ -176,36 +191,43 @@ export const useNekoStore = create<NekoState>()((set, get) => ({
   },
 
   refreshPlugins: async () => {
+    const seq = ++pluginSeq;
     set({ loadingPlugins: true });
     try {
       const data = await nekoApi.listPlugins();
+      if (seq !== pluginSeq) return;
       set({ plugins: normalizePluginList(data) });
     } catch (e) {
-      set({ error: e instanceof Error ? e.message : '插件列表加载失败' });
+      if (seq === pluginSeq) {
+        set({ error: e instanceof Error ? e.message : '插件列表加载失败' });
+      }
     } finally {
-      set({ loadingPlugins: false });
+      if (seq === pluginSeq) set({ loadingPlugins: false });
     }
   },
 
   refreshInstalled: async () => {
+    const seq = ++installedSeq;
     try {
       const data = await nekoApi.marketInstalled();
-      set({ installed: data?.installed ?? [] });
+      if (seq === installedSeq) set({ installed: data?.installed ?? [] });
     } catch {
       // 市场桥不可达不阻塞插件列表
     }
   },
 
   refreshMarket: async () => {
+    const seq = ++marketSeq;
     try {
       const status = await nekoApi.marketStatus();
-      set({ marketStatus: status, marketUnreachable: false });
+      if (seq === marketSeq) set({ marketStatus: status, marketUnreachable: false });
     } catch {
-      set({ marketUnreachable: true });
+      if (seq === marketSeq) set({ marketUnreachable: true });
     }
   },
 
   refreshCatalog: async () => {
+    const seq = ++catalogSeq;
     set({ loadingCatalog: true });
     try {
       const data = (await nekoApi.marketCatalog()) as unknown;
@@ -218,11 +240,14 @@ export const useNekoStore = create<NekoState>()((set, get) => ({
         const raw = obj.plugins ?? obj.items ?? obj.data;
         if (Array.isArray(raw)) list = raw as NekoCatalogPlugin[];
       }
+      if (seq !== catalogSeq) return;
       set({ catalog: list, marketUnreachable: false });
     } catch (e) {
-      set({ error: e instanceof Error ? e.message : '商店目录加载失败', marketUnreachable: true });
+      if (seq === catalogSeq) {
+        set({ error: e instanceof Error ? e.message : '商店目录加载失败', marketUnreachable: true });
+      }
     } finally {
-      set({ loadingCatalog: false });
+      if (seq === catalogSeq) set({ loadingCatalog: false });
     }
   },
 
@@ -245,14 +270,19 @@ export const useNekoStore = create<NekoState>()((set, get) => ({
   },
 
   pollTask: async (taskId) => {
+    // 单调请求序号：仅最新一次轮询响应生效，旧轮询的迟到响应不覆盖新状态
+    const seq = (taskSeqMap.get(taskId) ?? 0) + 1;
+    taskSeqMap.set(taskId, seq);
     try {
       const task = await nekoApi.marketTask(taskId);
+      if (taskSeqMap.get(taskId) !== seq) return;
       set((s) => ({ installTasks: { ...s.installTasks, [taskId]: task } }));
       if (task.status === 'completed') {
         await get().refreshInstalled();
         await get().refreshPlugins();
       }
     } catch (e) {
+      if (taskSeqMap.get(taskId) !== seq) return;
       set({ error: e instanceof Error ? e.message : '任务查询失败' });
     }
   },

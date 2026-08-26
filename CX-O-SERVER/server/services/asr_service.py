@@ -494,7 +494,26 @@ class ASRService:
                 await st.ws.send(json.dumps({"action": "final"}))
         except Exception as e:
             logger.error(f"[ASR-WS] Send error: {e}")
-            st.ws = None
+            # 发送失败：清理该 client 的流式会话（复用 release_streaming_session
+            # 的清理逻辑），取消并等待收包 recv_task、置空 ws、关闭旧连接，
+            # 避免孤儿连接与存活 recv task 累积，下次 _ensure_ws 可重建干净连接。
+            try:
+                task = st.recv_task
+                if task is not None and not task.done():
+                    task.cancel()
+                    try:
+                        await task
+                    except asyncio.CancelledError:
+                        pass
+                old_ws = st.ws
+                st.ws = None
+                if old_ws is not None:
+                    try:
+                        await old_ws.close()
+                    except Exception as err:
+                        logger.debug("[ASR-WS] close error on send failure: %s", err)
+            except Exception as cleanup_e:
+                logger.warning(f"[ASR-WS] Cleanup after send error failed: {cleanup_e}")
             return False
         return True
 

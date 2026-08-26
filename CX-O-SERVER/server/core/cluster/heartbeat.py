@@ -132,6 +132,9 @@ class PeerHeartbeat:
 
     async def _mark_suspect_and_confirm(self, endpoint):
         node = self._peer_node_id(endpoint)
+        if node in self._dead:
+            # 已确认死亡：短路，不再重复确认/触发接管回调，仅持续监控健康/嫌疑状态。
+            return
         self.mark_suspect(node)
         if await self.confirm_dead(node):
             self._dead.add(node)
@@ -153,6 +156,9 @@ class PeerHeartbeat:
 
     async def confirm_dead(self, node_id: str) -> bool:
         """多数派确认：本节点观测 + 其他 peer gossip 确认，>= 多数派才返回 True。"""
+        if node_id in self._dead:
+            # 幂等短路：同节点死亡只触发一次接管，不再重复 confirm / 触发 on_dead 回调。
+            return False
         peers = [p for p in self._peers() if p != node_id]
         others_agree = 0
         for endpoint in peers:

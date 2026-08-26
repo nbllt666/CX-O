@@ -537,8 +537,9 @@ class DualStreamSession:
         LLM 吐出第一个 token 即开始平滑缓冲，平滑缓冲输出第一个词组即开始 TTS 合成，
         TTS 合成出第一个音频块即推送给前端。全链路首包音频延迟 < 300ms。
         """
-        # 注入当前语音会话 client_id 到 contextvars（工具执行读取）
-        set_active_client_id(self.client_id)
+        # 注入当前语音会话 client_id 到 contextvars（工具执行读取）。
+        # token 保存 set 的返回值，供 finally 中复位，避免引用未定义变量抛 NameError。
+        token = set_active_client_id(self.client_id)
         try:
             # 延迟导入避免循环依赖
             from server.chat_helpers import (

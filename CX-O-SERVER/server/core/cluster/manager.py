@@ -129,6 +129,17 @@ class SentinelCluster:
         )
         failover.set_event_source(self.emit_event)
 
+        # B3: 注入真实 state_source，使"候选状态过旧拒绝接管"红线在生产态真正生效。
+        # 候选状态版本取本节点 replicator 已应用事件的总同步深度；集群最小要求版本为
+        # 全部 sync_units 至少对齐一次所需的单元数。冷启动/未复制节点会因版本过低被拒。
+        def _state_source(dead_node_id):
+            last = replicator.last_applied()
+            candidate_version = sum(int(v or 0) for v in last.values())
+            min_version = len(active_units) if active_units else 1
+            return candidate_version, min_version
+
+        failover.set_state_source(_state_source)
+
         self.transport = transport
         self.discovery = discovery
         self.consensus = consensus

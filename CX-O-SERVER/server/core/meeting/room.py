@@ -121,8 +121,13 @@ class MeetingRoom:
         if agent is None:
             return False
         self.agents = [a for a in self.agents if a.agent_id != agent_id]
-        if self.token.who_holds() == agent_id:
-            await self.token.release(agent_id)
+        token = self.token
+        # 先从举手队列剔除离场成员（排队成员不可能是持有者），避免令牌后续
+        # 被授予已离场 agent；保留"持有者离开即释放令牌"的逻辑。
+        if agent_id in token.pending_queue:
+            token.pending_queue.remove(agent_id)
+        if token.who_holds() == agent_id:
+            await token.release(agent_id)
         logger.info("会议 %s 离开 agent %s（剩余 %s）", self.room_id, agent_id, len(self.agents))
         return True
 

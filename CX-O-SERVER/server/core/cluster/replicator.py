@@ -52,6 +52,10 @@ class StateReplicator:
         self._last_snapshot_at: dict[str, str] = {}
         self._seq = itertools.count(1)  # 单调递增 seq（主线程同步接 seq）
         self._outbox: list[dict] = []   # 待推事件（有序）
+        # 每 peer 已确认到的 max seq（连续确认水位）：只有低于该水位的前序事件才可从 outbox 移除。
+        self._max_acked_seq: dict[str, int] = {}
+        # 每个 unit 实际已应用过的 seq 集合：精确幂等判据，避免高水位 last_applied 误杀缺口补投的前序事件。
+        self._applied_seqs: dict[str, set[int]] = {}
         self._snapshot_providers: dict[str, callable] = {}
         self._task: asyncio.Task | None = None
         self._running = False
@@ -83,6 +87,8 @@ class StateReplicator:
         }
         # 本地应用：主线程同步推进 last_applied（写变更即本地已生效）
         self._last_applied[unit] = seq
+        # 本地已应用 seq 亦登记，保证对端同 seq 重放被幂等跳过。
+        self._applied_seqs.setdefault(unit, set()).add(seq)
         self._outbox.append(event)
         return seq
 
@@ -143,17 +149,26 @@ class StateReplicator:
         if not self._outbox:
             return
         peers = self._peers()
+        # 顺序发送：按对端已应用水位推进。某事件任一 peer 未确认即停止，保证 outbox 无 seq 缺口
+        #（当前序失败时，后序不得先被对端应用并删除，否则补投前序会被对端高水位误判为已应用而丢弃）。
+        confirmed_seq = 0
         for ev in list(self._outbox):
             ok = False
             try:
                 ok = await self._send_event(peers, ev)
             except Exception:  # noqa: BLE001
                 ok = False
-            if ok:
-                try:
-                    self._outbox.remove(ev)
-                except ValueError:
-                    pass
+            if not ok:
+                break  # 前序未确认：保留后续，下次外层循环从首事件重试
+            confirmed_seq = int(ev.get("seq", 0))
+            try:
+                self._outbox.remove(ev)
+            except ValueError:
+                pass
+        # 记录每 peer 已确认到的 max seq（连续确认水位，供水位推进参考）
+        if confirmed_seq:
+            for ep in peers:
+                self._max_acked_seq[ep] = max(self._max_acked_seq.get(ep, 0), confirmed_seq)
 
     async def _try_snapshot(self):
         """对每个已注册快照 provider 采集快照并真实落盘到 `data/cluster/snapshots`。
@@ -200,10 +215,15 @@ class StateReplicator:
         seq = event.get("seq")
         if unit is None or seq is None:
             return False
-        last = self._last_applied.get(unit, 0)
-        if seq <= last:
-            return False  # 已应用，幂等跳过
-        self._last_applied[unit] = int(seq)
+        # 精确幂等：以"实际已应用过"判定，而非"seq <= last"高水位判定。
+        # 这样即使先序事件曾发送失败、后序已将 last_applied 前移，补投的先序事件（缺口）
+        # 也不会被误判为已应用而丢弃。
+        applied_set = self._applied_seqs.setdefault(unit, set())
+        seq = int(seq)
+        if seq in applied_set:
+            return False  # 已实际应用过，幂等跳过
+        applied_set.add(seq)
+        self._last_applied[unit] = max(self._last_applied.get(unit, 0), seq)
         if unit == "ref_audio":
             self._apply_ref_audio(event.get("op"), event.get("payload") or {})
         return True

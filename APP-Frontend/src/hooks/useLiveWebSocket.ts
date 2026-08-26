@@ -256,6 +256,8 @@ export function useLiveWebSocket(options: UseLiveWebSocketOptions = {}): UseLive
   // 所以 onClose 回调不会触发，需在此显式清理业务状态。
   const disconnect = useCallback(() => {
     transportDisconnect();
+    // onClose 回调不触发 → connectionCount 不会自减，这里显式清零，后续重连从 0 起算
+    setConnectionCount(0);
   }, [transportDisconnect]);
 
   const reconnect = useCallback(() => {

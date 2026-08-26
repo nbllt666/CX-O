@@ -116,7 +116,15 @@ export function useWSTransport(options: UseWSTransportOptions): UseWSTransportRe
   }, []);
 
   const connect = useCallback(() => {
-    if (wsRef.current !== null && wsRef.current.readyState === WebSocket.OPEN) return;
+    // 防重入：socket 处于 OPEN 或 CONNECTING 时直接返回，
+    // 仅当旧 socket 已彻底关闭（CLOSED/CLOSING）或引用为空才新建，避免瞬时窗口内多连接打架。
+    const current = wsRef.current;
+    if (
+      current !== null &&
+      (current.readyState === WebSocket.OPEN || current.readyState === WebSocket.CONNECTING)
+    ) {
+      return;
+    }
 
     const url = urlBuilderRef.current();
     try {
@@ -133,6 +141,11 @@ export function useWSTransport(options: UseWSTransportOptions): UseWSTransportRe
 
       ws.onclose = () => {
         if (isUnmountedRef.current) return;
+        // 仅当 wsRef 仍指向本次关闭的 socket 时才置空，避免误清已新建的后继 socket 引用；
+        // 旧引用清空后不再参与 connect 守卫判断，晚到的旧 onclose 也不会再额外排重连。
+        if (wsRef.current === ws) {
+          wsRef.current = null;
+        }
         setIsConnected(false);
         onCloseRef.current?.();
 

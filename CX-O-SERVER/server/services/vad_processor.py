@@ -481,6 +481,25 @@ class AudioStreamProcessor:
         self._audio_buffer.clear()
         self._buffer_duration_ms = 0
 
+    def _track_background_task(self, task: asyncio.Task) -> asyncio.Task:
+        """追踪后台打断任务，防止被 GC 回收；任务完成后自动从集合移除。"""
+        self._background_tasks.add(task)
+        task.add_done_callback(self._background_tasks.discard)
+        return task
+
+    async def close(self) -> None:
+        """关闭处理器：取消并等待全部后台打断任务（LLM 插话判定等）。
+
+        断连后调用，避免残留后台 LLM 打断任务继续占用资源/竞态写入回调。
+        """
+        tasks = list(self._background_tasks)
+        self._background_tasks.clear()
+        for t in tasks:
+            if not t.done():
+                t.cancel()
+        if tasks:
+            await asyncio.gather(*tasks, return_exceptions=True)
+
 
 def get_vad_processor(client_id: Optional[str] = None) -> VADProcessor:
     """获取 VAD 处理器。
@@ -530,11 +549,39 @@ def ensure_stream_processor_configured(client_id: str) -> AudioStreamProcessor:
 def release_audio_stream_processor(client_id: str) -> None:
     """释放指定客户端的 VAD/AudioStream 独立实例。
 
-    会话结束 / WS 断开时调用。仅移除该客户端的实例，不影响其它客户端
-    与默认单例。客户端再次建立连接时会按需重新懒创建。
+    会话结束 / WS 断开时调用。先关闭处理器（取消并等待后台打断任务），再从
+    注册表移除，避免断连后残留后台 LLM 打断任务；客户端再次连接时按需懒重建。
+    因本函数为同步接口，close 以后台任务调度，关闭完成后即从注册表 pop。
     """
-    _client_audio_stream_processors.pop(client_id, None)
-    _client_vad_processors.pop(client_id, None)
+    processor = _client_audio_stream_processors.get(client_id)
+    if processor is None:
+        _client_vad_processors.pop(client_id, None)
+        return
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        loop = None
+    if loop is not None:
+        loop.create_task(_close_processor_and_discard(processor, client_id))
+    else:
+        # 无运行中 loop（同步环境）：直接取消后台任务后移除，不等待
+        for t in list(processor._background_tasks):
+            if not t.done():
+                t.cancel()
+        processor._background_tasks.clear()
+        _client_audio_stream_processors.pop(client_id, None)
+        _client_vad_processors.pop(client_id, None)
+
+
+async def _close_processor_and_discard(processor: "AudioStreamProcessor", client_id: str) -> None:
+    """关闭指定客户端处理器并移除其注册表条目（由 release 以后台任务调度）。"""
+    try:
+        await processor.close()
+    except Exception as e:
+        logger.warning("关闭 AudioStreamProcessor(%s) 异常: %s", client_id, e)
+    finally:
+        _client_audio_stream_processors.pop(client_id, None)
+        _client_vad_processors.pop(client_id, None)
 
 
 # per-client 实例注册表（client_id -> 独立实例）

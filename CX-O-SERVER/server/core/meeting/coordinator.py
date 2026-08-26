@@ -356,8 +356,12 @@ class MeetingCoordinator:
         if chosen:
             granted = await room.token.acquire(chosen)
             if granted:
-                await self._drive_turn(room, chosen, text, responder, turns)
-                await room.token.release(chosen)
+                # try/finally 保证 _drive_turn 任意异常下令牌必然释放；
+                # finally 只释放、不吞异常，原异常照常向上抛
+                try:
+                    await self._drive_turn(room, chosen, text, responder, turns)
+                finally:
+                    await room.token.release(chosen)
             # 4) 插话：在场其他 Agent 按插话判定依次接话（连续 agent-agent 对话）
             await self._run_interjections(room, text, chosen, turns, responder)
 
@@ -366,7 +370,10 @@ class MeetingCoordinator:
             username = meta.get("username") or meta.get("userid") or "guest"
             await self._emit_danmaku_replies(room_id, turns, username)
 
-        # 5) 写回上下文（复用 ContextManager，可选）+ 广播
+        # 5) 转录有界化：条目超阈值即压缩更早历史，避免 transcript.entries 无界膨胀
+        self._maybe_summarize_older(room)
+
+        # 6) 写回上下文（复用 ContextManager，可选）+ 广播
         await self._ingest_context(room)
 
         await self._broadcast(room)
@@ -405,11 +412,14 @@ class MeetingCoordinator:
                 break
             granted = await room.token.acquire(hit)
             if granted:
-                await asyncio.sleep(self.relay_pause_sec)
-                reply = await self._drive_turn(room, hit, trigger_text, responder, turns)
-                await room.token.release(hit)
-                if reply:
-                    spoke.add(hit)
+                # try/finally 保证本回合任意异常下令牌必然释放；finally 只释放不吞异常
+                try:
+                    await asyncio.sleep(self.relay_pause_sec)
+                    reply = await self._drive_turn(room, hit, trigger_text, responder, turns)
+                    if reply:
+                        spoke.add(hit)
+                finally:
+                    await room.token.release(hit)
 
     def _should_interject(self, room: MeetingRoom, agent_id: str, last_text: str) -> bool:
         """插话判定：是否允许某 agent 就该消息发言。
@@ -593,6 +603,18 @@ class MeetingCoordinator:
         if agent is not None:
             return f"（{agent.display_name} 发言）"
         return None
+
+    def _maybe_summarize_older(self, room: MeetingRoom) -> None:
+        """转录条目超阈值时，把更早历史压缩进 older_summary，保证 entries 有界。
+
+        阈值取 max_turns 的 2 倍：压缩后仅保留最近窗口（render_context 用），
+        更早条目收敛为一段摘要，避免 transcript.entries 随会议进程无界增长。
+        达阈值才触发，避免每轮都做 O(n) 前缀重算与频繁压缩。
+        """
+        if not room.transcript.summary_enabled:
+            return
+        if len(room.transcript) >= self._transcript_max_turns * 2:
+            room.transcript.summarize_older(max_turns=self._transcript_max_turns)
 
     async def _ingest_context(self, room: MeetingRoom) -> None:
         """将最近会议记录写回 ContextManager（若有装配）。"""

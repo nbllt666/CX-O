@@ -167,7 +167,16 @@ class SpeakingToken:
                 await asyncio.sleep(timeout)
             except asyncio.CancelledError:
                 return
-            await self.release(agent_id=agent_id)
+            # 超时触发释放时，先解除对本任务的引用，避免释放过程内部 _set_holder 重新
+            # 排定下一持有者定时器时 _cancel_timeout 取消到当前正在执行释放的自身，
+            # 制造 "task exception was never retrieved"。
+            if self._release_task is asyncio.current_task():
+                self._release_task = None
+            try:
+                await self.release(agent_id=agent_id)
+            except asyncio.CancelledError:
+                # 释放过程被外部取消（如协程取消），安全终止，不向上抛
+                return
             logger.info(
                 "SpeakingToken 持有超时（%.1fs），自动释放 %s", timeout, agent_id
             )

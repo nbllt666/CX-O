@@ -36,6 +36,7 @@ import json
 import logging
 import os
 import re
+import threading
 import uuid
 import wave
 from datetime import datetime, timezone
@@ -50,6 +51,10 @@ from server.qwen3_tts_provider import (
 )
 
 logger = logging.getLogger(__name__)
+
+# 进程级可重入锁：保护索引/绑定/当前指针/音频文件读改写的整写串行化
+# （仅普通线程锁，兼容同步/异步混用调用；禁用 asyncio 锁以避免跨线程并发失效）。
+_LOCK = threading.RLock()
 
 
 class AssetBoundError(Exception):
@@ -252,6 +257,14 @@ def _index_path() -> Path:
     return _resolve_assets_dir() / _INDEX_FILENAME
 
 
+def _atomic_write_bytes(path: Path, data: bytes) -> None:
+    """临时文件 + 原子替换写入音频字节，避免读方（如 build_snapshot）读到并发覆盖的半写音频。"""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_name("." + path.name + ".tmp")
+    tmp.write_bytes(data)
+    os.replace(tmp, path)
+
+
 def _audio_path_for(asset_id: str, fmt: str) -> Path:
     """由资产 ID + 格式确定性推导音频文件路径。"""
     return _resolve_assets_dir() / f"{asset_id}.{fmt}"
@@ -259,32 +272,35 @@ def _audio_path_for(asset_id: str, fmt: str) -> Path:
 
 def _load_index() -> List[Dict[str, Any]]:
     """加载资产索引（文件不存在时返回空列表）。"""
-    path = _index_path()
-    if not path.exists():
-        return []
-    try:
-        with open(path, "r", encoding="utf-8") as f:
-            data = json.load(f)
-    except (json.JSONDecodeError, OSError) as e:
-        logger.error(f"读取参考音频资产索引失败: {path} - {e}")
-        return []
-    return data if isinstance(data, builtins.list) else []
+    with _LOCK:
+        path = _index_path()
+        if not path.exists():
+            return []
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+        except (json.JSONDecodeError, OSError) as e:
+            logger.error(f"读取参考音频资产索引失败: {path} - {e}")
+            return []
+        return data if isinstance(data, builtins.list) else []
 
 
 def _save_index(records: List[Dict[str, Any]]) -> None:
     """原子写入资产索引。"""
-    _resolve_assets_dir().mkdir(parents=True, exist_ok=True)
-    tmp = _index_path().with_suffix(".json.tmp")
-    with open(tmp, "w", encoding="utf-8") as f:
-        json.dump(records, f, ensure_ascii=False, indent=2)
-    os.replace(tmp, _index_path())
+    with _LOCK:
+        _resolve_assets_dir().mkdir(parents=True, exist_ok=True)
+        tmp = _index_path().with_suffix(".json.tmp")
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(records, f, ensure_ascii=False, indent=2)
+        os.replace(tmp, _index_path())
 
 
 def _append_record(asset: RefAudioAsset) -> None:
-    """追加一条资产记录到索引。"""
-    records = _load_index()
-    records.append(asset.to_dict())
-    _save_index(records)
+    """追加一条资产记录到索引（读改写整写在锁内串行化）。"""
+    with _LOCK:
+        records = _load_index()
+        records.append(asset.to_dict())
+        _save_index(records)
 
 
 def _current_path() -> Path:
@@ -294,26 +310,28 @@ def _current_path() -> Path:
 
 def _load_current_id() -> Optional[str]:
     """读取当前默认参考音频资产 ID；未设置或文件损坏返回 None。"""
-    path = _current_path()
-    if not path.exists():
-        return None
-    try:
-        with open(path, "r", encoding="utf-8") as f:
-            data = json.load(f)
-    except (json.JSONDecodeError, OSError) as e:
-        logger.error(f"读取当前参考音频指针失败: {path} - {e}")
-        return None
-    asset_id = data.get("asset_id") if isinstance(data, dict) else None
-    return asset_id if isinstance(asset_id, str) else None
+    with _LOCK:
+        path = _current_path()
+        if not path.exists():
+            return None
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+        except (json.JSONDecodeError, OSError) as e:
+            logger.error(f"读取当前参考音频指针失败: {path} - {e}")
+            return None
+        asset_id = data.get("asset_id") if isinstance(data, dict) else None
+        return asset_id if isinstance(asset_id, str) else None
 
 
 def _save_current_id(asset_id: Optional[str]) -> None:
     """原子写入当前默认参考音频资产 ID（None 表示清除）。"""
-    _resolve_assets_dir().mkdir(parents=True, exist_ok=True)
-    tmp = _current_path().with_suffix(".json.tmp")
-    with open(tmp, "w", encoding="utf-8") as f:
-        json.dump({"asset_id": asset_id}, f, ensure_ascii=False, indent=2)
-    os.replace(tmp, _current_path())
+    with _LOCK:
+        _resolve_assets_dir().mkdir(parents=True, exist_ok=True)
+        tmp = _current_path().with_suffix(".json.tmp")
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump({"asset_id": asset_id}, f, ensure_ascii=False, indent=2)
+        os.replace(tmp, _current_path())
 
 
 def _clear_current_if_matches(asset_id: str) -> None:
@@ -332,25 +350,27 @@ def _bindings_path() -> Path:
 
 def _load_bindings() -> Dict[str, dict]:
     """加载 per-agent 绑定表；文件缺失/损坏返回空表。"""
-    path = _bindings_path()
-    if not path.exists():
-        return {}
-    try:
-        with open(path, "r", encoding="utf-8") as f:
-            data = json.load(f)
-    except (json.JSONDecodeError, OSError) as e:
-        logger.error(f"读取 per-agent 绑定失败: {path} - {e}")
-        return {}
-    return data if isinstance(data, builtins.dict) else {}
+    with _LOCK:
+        path = _bindings_path()
+        if not path.exists():
+            return {}
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+        except (json.JSONDecodeError, OSError) as e:
+            logger.error(f"读取 per-agent 绑定失败: {path} - {e}")
+            return {}
+        return data if isinstance(data, builtins.dict) else {}
 
 
 def _save_bindings(bindings: Dict[str, dict]) -> None:
     """原子写入 per-agent 绑定表。"""
-    _resolve_assets_dir().mkdir(parents=True, exist_ok=True)
-    tmp = _bindings_path().with_suffix(".json.tmp")
-    with open(tmp, "w", encoding="utf-8") as f:
-        json.dump(bindings, f, ensure_ascii=False, indent=2)
-    os.replace(tmp, _bindings_path())
+    with _LOCK:
+        _resolve_assets_dir().mkdir(parents=True, exist_ok=True)
+        tmp = _bindings_path().with_suffix(".json.tmp")
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(bindings, f, ensure_ascii=False, indent=2)
+        os.replace(tmp, _bindings_path())
 
 
 def _apply_binding(
@@ -364,12 +384,13 @@ def _apply_binding(
     asset_id 为 None 时清除绑定（binding_clear）；否则设置绑定。
     emit=True 时触发集群事件（默认）。集群回放时传 emit=False 避免形成回环。
     """
-    bindings = _load_bindings()
-    if asset_id is None:
-        bindings.pop(agent_id, None)
-    else:
-        bindings[agent_id] = {"asset_id": asset_id, "tts_voice": tts_voice}
-    _save_bindings(bindings)
+    with _LOCK:
+        bindings = _load_bindings()
+        if asset_id is None:
+            bindings.pop(agent_id, None)
+        else:
+            bindings[agent_id] = {"asset_id": asset_id, "tts_voice": tts_voice}
+        _save_bindings(bindings)
     if emit:
         op = "binding_set" if asset_id else "binding_clear"
         _emit(
@@ -427,12 +448,13 @@ def asset_used_by_any_agent(asset_id: str) -> bool:
 
 def _new_id() -> str:
     """生成唯一资产 ID（ref_ 前缀 + 随机 hex），碰撞时重试。"""
-    records = _load_index()
-    existing = {r.get("id") for r in records}
-    while True:
-        candidate = f"ref_{uuid.uuid4().hex[:16]}"
-        if candidate not in existing:
-            return candidate
+    with _LOCK:
+        records = _load_index()
+        existing = {r.get("id") for r in records}
+        while True:
+            candidate = f"ref_{uuid.uuid4().hex[:16]}"
+            if candidate not in existing:
+                return candidate
 
 
 def _now_iso() -> str:
@@ -822,8 +844,9 @@ async def register_from_prompt(
         note="",
         created_at=_now_iso(),
     )
-    _audio_path_for(asset.id, asset.format).write_bytes(audio)
-    _append_record(asset)
+    with _LOCK:
+        _atomic_write_bytes(_audio_path_for(asset.id, asset.format), audio)
+        _append_record(asset)
     _emit("ref_audio", "asset_register", {"asset_id": asset.id, "asset": asset.to_dict()})
     logger.info(f"注册 prompt 参考音频资产: {asset.id}")
     return asset
@@ -876,8 +899,9 @@ def register_from_file(
         note=note or "",
         created_at=_now_iso(),
     )
-    _audio_path_for(asset.id, asset.format).write_bytes(data)
-    _append_record(asset)
+    with _LOCK:
+        _atomic_write_bytes(_audio_path_for(asset.id, asset.format), data)
+        _append_record(asset)
     _emit("ref_audio", "asset_register", {"asset_id": asset.id, "asset": asset.to_dict()})
     logger.info(f"注册外部参考音频资产: {asset.id}")
     return asset
@@ -911,12 +935,13 @@ def list() -> List[RefAudioAsset]:
 
 def update_note(asset_id: str, note: str) -> RefAudioAsset:
     """更新资产注释。"""
-    records = _load_index()
-    for rec in records:
-        if rec.get("id") == asset_id:
-            rec["note"] = note
-            _save_index(records)
-            return RefAudioAsset.from_dict(rec)
+    with _LOCK:
+        records = _load_index()
+        for rec in records:
+            if rec.get("id") == asset_id:
+                rec["note"] = note
+                _save_index(records)
+                return RefAudioAsset.from_dict(rec)
     raise RefAudioNotFoundError(f"参考音频资产不存在: {asset_id}")
 
 
@@ -929,15 +954,21 @@ def delete(asset_id: str) -> None:
         raise AssetBoundError(
             f"资产 {asset_id} 被 Agent 绑定，请先解绑再删除"
         )
-    records = _load_index()
-    for rec in records:
-        if rec.get("id") == asset_id:
-            rec["status"] = "deleted"
-            _save_index(records)
-            _clear_current_if_matches(asset_id)
-            _emit("ref_audio", "asset_delete", {"asset_id": asset_id})
-            logger.info(f"软删除参考音频资产: {asset_id}")
-            return
+    with _LOCK:
+        records = _load_index()
+        for rec in records:
+            if rec.get("id") == asset_id:
+                rec["status"] = "deleted"
+                _save_index(records)
+                _clear_current_if_matches(asset_id)
+                emit_delete = True
+                break
+        else:
+            emit_delete = False
+    if emit_delete:
+        _emit("ref_audio", "asset_delete", {"asset_id": asset_id})
+        logger.info(f"软删除参考音频资产: {asset_id}")
+        return
     raise RefAudioNotFoundError(f"参考音频资产不存在: {asset_id}")
 
 
@@ -1033,39 +1064,42 @@ def build_snapshot() -> dict:
     """打包 ref_audio_assets 为可序列化快照 blob（供快照落盘/对等对齐）。
 
     返回 dict：{version, checksum, assets(list), bindings(dict), audio{id: base64}}。
+    全程持锁：在锁内固化索引/绑定引用后再读音频文件，避免读到并发覆盖的半写音频。
     """
     import copy
 
-    assets = copy.deepcopy([r for r in _load_index() if r.get("status") != "deleted"])
-    bindings = _load_bindings()
-    audio: dict = {}
-    for rec in _load_index():
-        aid = rec.get("id")
-        fmt = rec.get("format") or "wav"
-        path = _audio_path_for(aid, fmt)
-        if path.exists():
-            audio[aid] = base64.b64encode(path.read_bytes()).decode("ascii")
-    canon = json.dumps({"assets": assets, "bindings": bindings}, ensure_ascii=False, sort_keys=True)
-    return {
-        "version": _SNAPSHOT_VERSION,
-        "checksum": _md5(canon.encode("utf-8")),
-        "assets": assets,
-        "bindings": bindings,
-        "audio": audio,
-    }
+    with _LOCK:
+        assets = copy.deepcopy([r for r in _load_index() if r.get("status") != "deleted"])
+        bindings = _load_bindings()
+        audio: dict = {}
+        for rec in _load_index():
+            aid = rec.get("id")
+            fmt = rec.get("format") or "wav"
+            path = _audio_path_for(aid, fmt)
+            if path.exists():
+                audio[aid] = base64.b64encode(path.read_bytes()).decode("ascii")
+        canon = json.dumps({"assets": assets, "bindings": bindings}, ensure_ascii=False, sort_keys=True)
+        return {
+            "version": _SNAPSHOT_VERSION,
+            "checksum": _md5(canon.encode("utf-8")),
+            "assets": assets,
+            "bindings": bindings,
+            "audio": audio,
+        }
 
 
 def restore_snapshot(blob: dict) -> None:
     """从快照 blob 解包写入本机 ref_audio_assets（资产音频 + 索引 + 绑定）。"""
-    assets = blob.get("assets", [])
-    bindings = blob.get("bindings", {})
-    audio = blob.get("audio", {}) or {}
-    _save_index(builtins.list(assets))
-    _save_bindings(dict(bindings))
-    for aid, b64 in audio.items():
-        fmt = next((a.get("format", "wav") for a in assets if a.get("id") == aid), "wav")
-        try:
-            data = base64.b64decode(b64)
-        except Exception:  # noqa: BLE001
-            continue
-        _audio_path_for(aid, fmt).write_bytes(data)
+    with _LOCK:
+        assets = blob.get("assets", [])
+        bindings = blob.get("bindings", {})
+        audio = blob.get("audio", {}) or {}
+        _save_index(builtins.list(assets))
+        _save_bindings(dict(bindings))
+        for aid, b64 in audio.items():
+            fmt = next((a.get("format", "wav") for a in assets if a.get("id") == aid), "wav")
+            try:
+                data = base64.b64decode(b64)
+            except Exception:  # noqa: BLE001
+                continue
+            _atomic_write_bytes(_audio_path_for(aid, fmt), data)
