@@ -1,9 +1,11 @@
-"""通用工具函数——共享 HTTP 客户端、深度合并等跨模块复用能力。"""
+"""通用工具函数——共享 HTTP 客户端、深度合并、有界 IO 执行器等跨模块复用能力。"""
 import asyncio
 import json
 import logging
+import os
 import socket
 import uuid
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
@@ -185,6 +187,68 @@ async def close_shared_http_client():
         _shared_http_client = None
 
 
+# ============================================================================
+# 统一并发原语（语音链路多会话并发治理模块，供 ASR / TTS / 声纹等复用）
+# - make_semaphore      : 统一 in-flight 信号量；count<=0 时不限（零侵入默认）
+# - make_bounded_queue  : 有界 asyncio.Queue；maxsize<=0 时不限（兼容既有无界默认）
+#
+# 调用点统一走 acquire/release 或 async with，无论“有信号量”还是“占位不限”，
+# 语义都一致：locked()==True 表示当前不可再进入（供“丢弃”模式用）。
+# ============================================================================
+
+
+class _AlwaysAvailable:
+    """占位信号量：acquire/release 为空操作、locked() 恒 False，等效“不限并发”。
+
+    使调用点无需为“未配置信号量”分支各自兜底；任何 count 取值（含 0/None）
+    下 acquire / release / locked / async with 语义都成立。
+    """
+
+    def locked(self) -> bool:
+        return False
+
+    async def acquire(self) -> None:
+        return None
+
+    def release(self) -> None:
+        return None
+
+    async def __aenter__(self) -> "_AlwaysAvailable":
+        return self
+
+    async def __aexit__(self, exc_type, exc, tb) -> bool:
+        return False
+
+
+def make_semaphore(count: Optional[int]):
+    """创建统一 in-flight 信号量；``count`` 为 None/<=0 时返回不限并发的占位信号量。
+
+    Args:
+        count: 并发上限；None/<=0 表示不限制（保持默认行为零侵入）。
+
+    Returns:
+        ``asyncio.Semaphore`` 或 ``_AlwaysAvailable``（不限并发）。
+    """
+    if count is None or count <= 0:
+        return _AlwaysAvailable()
+    return asyncio.Semaphore(count)
+
+
+def make_bounded_queue(maxsize: Optional[int]) -> asyncio.Queue:
+    """创建 asyncio 队列；``maxsize`` 为 None/<=0 时返回无界队列（兼容既有默认）。
+
+    Args:
+        maxsize: 队列有界上限；None/<=0 表示无界（保持默认行为零侵入）。
+
+    Returns:
+        ``asyncio.Queue``；消费者慢于生产者时，有界队列的 ``put`` 会自然背压，
+        避免无界堆积。
+    """
+    if maxsize is None or maxsize <= 0:
+        return asyncio.Queue()
+    return asyncio.Queue(maxsize=int(maxsize))
+
+
 async def retry_with_backoff(
     func,
     max_retries: int = 3,
@@ -220,3 +284,71 @@ async def retry_with_backoff(
             raise
     if last_exception:
         raise last_exception
+
+
+# ============================================================================
+# 有界 IO 执行器
+# ----------------------------------------------------------------------------
+# 供 async 热路径把同步 sqlite/文件 IO/CPU 段移出事件循环。这是一个进程级共享、
+# 有界（并发上限可配置）的线程池。默认行为零侵入：io_pool_size<=0 时按
+# min(32, (os.cpu_count() or 4) + 4) 自动取值，不改变既有并发上限。
+# ============================================================================
+
+_io_executor: Optional[ThreadPoolExecutor] = None
+
+
+def get_io_executor() -> ThreadPoolExecutor:
+    """获取模块级惰性构造的有界 IO 线程池执行器（单例）。
+
+    池大小取 ``config.executor.io_pool_size``；当该值 <=0（含默认 0）时
+    自动回退到 ``min(32, (os.cpu_count() or 4) + 4)``，保持默认行为零侵入。
+
+    Returns:
+        共享的 ``concurrent.futures.ThreadPoolExecutor`` 实例。
+    """
+    global _io_executor
+    if _io_executor is None:
+        from server.config import get_config
+
+        size = get_config().executor.io_pool_size
+        if not size or size <= 0:
+            size = min(32, (os.cpu_count() or 4) + 4)
+        _io_executor = ThreadPoolExecutor(max_workers=size, thread_name_prefix="cxo-io")
+    return _io_executor
+
+
+def shutdown_io_executor() -> None:
+    """关闭有界 IO 线程池（同步，等待在途任务完成），幂等。
+
+    供服务关闭流程调用。用 try…finally 保证在执行器本就不可用时也不抛异常。
+    """
+    global _io_executor
+    ex = _io_executor
+    _io_executor = None
+    if ex is None:
+        return
+    try:
+        ex.shutdown(wait=True)
+    except Exception as e:  # 关闭失败不影响进程退出
+        logging.getLogger(__name__).warning(f"关闭 IO 执行器失败: {e}")
+    finally:
+        pass
+
+
+async def run_io(func, *args, **kwargs):
+    """在共享有界 IO 线程池中异步执行同步函数，返回其结果。
+
+    把阻塞调用（同步 sqlite / 文件 IO / CPU 段）移出事件循环，避免卡住
+    asyncio 事件循环。支持位置与关键字参数；内部以闭包转发，线程安全。
+
+    Args:
+        func: 需在 IO 线程池执行的同步可调用对象（可为绑定方法）。
+        *args / **kwargs: 传给 func 的参数。
+
+    Returns:
+        func 的返回值。
+    """
+    loop = asyncio.get_running_loop()
+    return await loop.run_in_executor(
+        get_io_executor(), lambda: func(*args, **kwargs)
+    )

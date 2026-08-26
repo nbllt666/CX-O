@@ -62,8 +62,29 @@ DECODER_LOOK_BACK = 1
 
 # 引擎行为阈值
 SPK_SIM_DEFAULT = "0.65"
+
+
+def _spk_inflight_max() -> int:
+    """声纹 in-flight 后台任务上限：优先 config，其次 CXO_SPK_INFLIGHT_MAX，默认 2。
+
+    与现状（SPK_INFLIGHT_MAX=2）一致；允许通过配置放大。配置读取失败（如独立
+    asr 容器无 server 包）时回退默认，保证零侵入。
+    """
+    try:
+        from server.config import get_config as _gc
+        v = int(getattr(_gc().executor, "spk_inflight_max", 2) or 2)
+        if v > 0:
+            return v
+    except Exception:  # noqa: BLE001 - 容器内无 server.config 时走 env/默认
+        pass
+    try:
+        return max(1, int(os.getenv("CXO_SPK_INFLIGHT_MAX", "2")))
+    except ValueError:
+        return 2
+
+
 # 会话级声纹后台任务 in-flight 上限：超过上限丢弃该句（保持 pending，由后续更新），绝不阻塞
-SPK_INFLIGHT_MAX = 2
+SPK_INFLIGHT_MAX = _spk_inflight_max()
 
 # 缓冲上限（样本数），病理兜底：超出整体清空重置
 MAX_BUFFER = 960000
@@ -95,9 +116,28 @@ _SPK: Optional[AutoModel] = None
 _load_lock = threading.Lock()
 _loaded = False
 
+def _engine_workers() -> int:
+    """流式引擎共享线程池大小（ASR 推理 + 声纹共用）：优先 config，其次
+    CXO_SPK_ENGINE_WORKERS，默认 4。与现状（max_workers=4）一致；允许配置放大。
+
+    配置读取失败（如独立 asr 容器无 server 包）时回退 env/默认，保证零侵入。
+    """
+    try:
+        from server.config import get_config as _gc
+        w = int(getattr(_gc().executor, "spk_engine_workers", 4) or 4)
+        if w > 0:
+            return w
+    except Exception:  # noqa: BLE001 - 容器内无 server.config 时走 env/默认
+        pass
+    try:
+        return max(1, int(os.getenv("CXO_SPK_ENGINE_WORKERS", "4")))
+    except ValueError:
+        return 4
+
+
 # 2026-08-25 优化：2→4 workers，避免投机 partial / 增量 / VAD / 声纹任务在单批
 # 并发（多连接）下排队拉高 ASR partial 时延（对齐文档 T2≈280~340ms 达标基线）
-_EXECUTOR = ThreadPoolExecutor(max_workers=4, thread_name_prefix="asr-engine")
+_EXECUTOR = ThreadPoolExecutor(max_workers=_engine_workers(), thread_name_prefix="asr-engine")
 
 # 在线说话人聚类器（阈值从环境变量读，缺省 0.65）
 clusterer = SpeakerClusterer(

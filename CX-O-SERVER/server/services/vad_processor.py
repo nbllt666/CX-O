@@ -10,6 +10,8 @@ from typing import Optional, Callable, Any
 from dataclasses import dataclass
 from enum import Enum
 
+from server.core.utils import run_io
+
 logger = logging.getLogger(__name__)
 
 
@@ -341,7 +343,12 @@ class AudioStreamProcessor:
         _debug = logger.isEnabledFor(logging.DEBUG)
         if _debug:
             _diag_t0 = time.time()
-        vad_result = self.vad.process_audio(audio_data)
+        # SILERO 模式跑 torch 推理（CPU/GPU 阻塞），移入有界 IO 线程池，避免卡事件循环；
+        # WEBRTC/ENERGY 模式为快速 CPU 判定，保持既有内联路径（零侵入、向后兼容）。
+        if self.vad.mode == VADMode.SILERO:
+            vad_result = await run_io(self.vad.process_audio, audio_data)
+        else:
+            vad_result = self.vad.process_audio(audio_data)
         if _debug:
             _diag_t1 = time.time()
 
@@ -440,20 +447,28 @@ class AudioStreamProcessor:
                 # 不再写入 process_audio_chunk 返回值（调用方无需在 ASR 主路径上依赖此字段）。
                 if self._agent_interrupt and streaming_result.text and not skip_interrupt:
                     async def _deferred_interrupt_check():
+                        sem = _get_interrupt_sem()
                         try:
-                            interrupt_result = await self._agent_interrupt.on_asr_partial_result(
-                                streaming_result.text,
-                                streaming_result.is_final
-                            )
-                            # 【标签解耦】半双工路径无 ensure_reply 会话兜底，
-                            # should_reply（Feature B）沿用 interrupt_user 保持旧行为不回归；
-                            # 真打断路径（should_interrupt）行为不变。
-                            if interrupt_result.get("should_interrupt") or interrupt_result.get("should_reply"):
-                                await self._agent_interrupt.interrupt_user(
-                                    interrupt_result.get("reply_content", "")
+                            sem.acquire_nowait()
+                        except Exception:  # 超限丢弃，防任务无限堆积
+                            return
+                        try:
+                            try:
+                                interrupt_result = await self._agent_interrupt.on_asr_partial_result(
+                                    streaming_result.text,
+                                    streaming_result.is_final
                                 )
-                        except Exception as e:
-                            logger.error(f"Deferred agent interrupt check error: {e}")
+                                # 【标签解耦】半双工路径无 ensure_reply 会话兜底，
+                                # should_reply（Feature B）沿用 interrupt_user 保持旧行为不回归；
+                                # 真打断路径（should_interrupt）行为不变。
+                                if interrupt_result.get("should_interrupt") or interrupt_result.get("should_reply"):
+                                    await self._agent_interrupt.interrupt_user(
+                                        interrupt_result.get("reply_content", "")
+                                    )
+                            except Exception as e:
+                                logger.error(f"Deferred agent interrupt check error: {e}")
+                        finally:
+                            sem.release()
 
                     self._track_background_task(
                         asyncio.create_task(_deferred_interrupt_check())
@@ -587,3 +602,24 @@ async def _close_processor_and_discard(processor: "AudioStreamProcessor", client
 # per-client 实例注册表（client_id -> 独立实例）
 _client_vad_processors: dict = {}
 _client_audio_stream_processors: dict = {}
+
+
+# --------------------------------------------------------------------------- #
+# 打断判定后台任务并发信号量（无界 fire-and-forget 限流）
+# 按事件循环缓存，避免跨测试/跨 loop 复用导致 Future 绑定错环。
+# --------------------------------------------------------------------------- #
+_interrupt_sem: Optional[asyncio.Semaphore] = None
+_interrupt_sem_loop: Optional[asyncio.AbstractEventLoop] = None
+
+
+def _get_interrupt_sem() -> asyncio.Semaphore:
+    """获取模块级打断判定并发信号量（可配置大小，超限丢弃，防任务无限堆积）。"""
+    global _interrupt_sem, _interrupt_sem_loop
+    loop = asyncio.get_running_loop()
+    if _interrupt_sem is None or _interrupt_sem_loop is not loop:
+        from server.config import get_config
+
+        size = max(1, get_config().executor.interrupt_concurrency)
+        _interrupt_sem = asyncio.Semaphore(size)
+        _interrupt_sem_loop = loop
+    return _interrupt_sem

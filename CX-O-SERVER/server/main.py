@@ -102,6 +102,25 @@ async def lifespan(app: FastAPI):
 
     lifespan_logger = get_contextual_logger(__name__)
 
+    # ---- 跨进程单 leader 判定（多 worker 后台服务去重，默认 workers=1 零侵入）----
+    # 核心 HTTP 承载服务（model_router/memory/context/ASR/TTS/API）每个 worker 都要有，
+    # 此处仅用于对「定时/后台/告警/预热」等全局副作用服务做单 leader 去重。
+    # 基于 data/ 下文件锁，workers=1 时唯一进程必然拿到 leader；workers>1 时恰一个。
+    from server.core.singleton import SingleLeaderGuard
+
+    _workers = int(getattr(settings.system, "workers", 1) or 1)
+    _multi_worker = _workers > 1
+    _leader_path = getattr(settings.system, "leader_lock_path", "") or None
+    leader_guard = SingleLeaderGuard(lock_path=_leader_path)
+    _is_leader = leader_guard.acquire()
+    if _multi_worker:
+        lifespan_logger.info(
+            "多 worker 模式已启用 (workers=%s)：后台全局副作用服务由单 leader worker 承担 (is_leader=%s)",
+            _workers, _is_leader,
+        )
+    else:
+        lifespan_logger.debug("后台服务 leader 判定: is_leader=%s (workers=1 恒为 leader)", _is_leader)
+
     from server.core.acp.manager import ACPManager
     from server.core.context.manager import ContextManager
     from server.core.llm.client import LLMFactory
@@ -336,22 +355,26 @@ async def lifespan(app: FastAPI):
         from server.core.websocket.handlers import push_alarm_to_agent
         from server.core.websocket.manager import get_websocket_manager
 
-        alarm_manager = get_alarm_manager()
-        main_loop = asyncio.get_running_loop()
+        if _is_leader:
+            alarm_manager = get_alarm_manager()
+            main_loop = asyncio.get_running_loop()
 
-        def on_alarm_trigger(agent_id: str, message: str):
-            try:
-                future = asyncio.run_coroutine_threadsafe(
-                    push_alarm_to_agent(agent_id, message), main_loop
-                )
-                future.result(timeout=5)
-            except Exception as e:
-                logging.getLogger(__name__).error(f"推送提醒失败: {e}")
+            def on_alarm_trigger(agent_id: str, message: str):
+                try:
+                    future = asyncio.run_coroutine_threadsafe(
+                        push_alarm_to_agent(agent_id, message), main_loop
+                    )
+                    future.result(timeout=5)
+                except Exception as e:
+                    logging.getLogger(__name__).error(f"推送提醒失败: {e}")
 
-        alarm_manager.set_trigger_callback(on_alarm_trigger)
-        # BUG-B06 修复: 在事件循环中通过 async 版本调用,避免同步 sqlite 阻塞
-        await alarm_manager.arestore_pending_alarms()
-        lifespan_logger.info("提醒管理器已启动")
+            alarm_manager.set_trigger_callback(on_alarm_trigger)
+            # BUG-B06 修复: 在事件循环中通过 async 版本调用,避免同步 sqlite 阻塞
+            await alarm_manager.arestore_pending_alarms()
+            lifespan_logger.info("提醒管理器已启动")
+        else:
+            # 非 leader worker 跳过 AlarmManager 后台 Timer，杜绝多 worker 重复触发告警
+            lifespan_logger.info("非 leader worker：跳过 AlarmManager 后台 Timer，由 leader worker 承担")
 
         async def on_offline(agent_id: str):
             try:
@@ -407,6 +430,10 @@ async def lifespan(app: FastAPI):
 
     if services.memory_manager:
         async def _init_decay_batch():
+            if not _is_leader:
+                # 非 leader worker 跳过 24h 全量衰减，杜绝多 worker 重复计算/写库
+                lifespan_logger.info("非 leader worker：跳过 DecayBatchProcessor(24h)，由 leader worker 承担")
+                return None
             processor = DecayBatchProcessor(services.memory_manager, interval_hours=24)
             await processor.start()
             return processor
@@ -414,6 +441,10 @@ async def lifespan(app: FastAPI):
         services.decay_batch_processor = await init_service("批量衰减处理器", _init_decay_batch, logger_=lifespan_logger)
 
     async def _init_task_services():
+        if not _is_leader:
+            # 非 leader worker 跳过 60s 轮询调度，杜绝到期任务被多 worker 重复触发
+            lifespan_logger.info("非 leader worker：跳过 TaskScheduler(60s)，由 leader worker 承担")
+            return None
         from server.core.tasks import get_task_manager, TaskScheduler
 
         task_manager = get_task_manager()
@@ -584,7 +615,16 @@ async def lifespan(app: FastAPI):
             return None
 
     if getattr(get_settings().config, "meeting", None) and getattr(get_settings().config.meeting, "enabled", False):
-        services.meeting_coordinator = await init_service("互动协调器", _init_meeting, logger_=lifespan_logger)
+        if _multi_worker:
+            # 多 worker 下未提供跨进程 sticky：会议协调器仅在 leader worker 装配，
+            # 非 leader 的会议 API/弹幕投递可能路由到空协调器。仅告警，不报错不重复触发。
+            lifespan_logger.warning(
+                "多 worker (workers=%s) 下 meeting 未提供跨进程 sticky：互动协调器仅在 leader worker 装配，"
+                "建议仍用单 worker 承载会议/长连接语音，或依赖前置反向代理按房间 sticky。",
+                _workers,
+            )
+        if _is_leader:
+            services.meeting_coordinator = await init_service("互动协调器", _init_meeting, logger_=lifespan_logger)
 
     from server.services.asr_service import get_asr_service
     from server.services.tts_service import get_tts_service
@@ -794,11 +834,16 @@ async def lifespan(app: FastAPI):
 
         await asyncio.gather(_warm_llm(), _warm_embedding())
 
-    try:
-        asyncio.create_task(_warmup_inference_backends())
-        lifespan_logger.info("LLM/Embedding 推理预热任务已启动（后台执行）")
-    except Exception as _bk_warmup_e:
-        lifespan_logger.warning(f"LLM/Embedding 预热任务启动失败（不阻塞启动）: {_bk_warmup_e}")
+    if _is_leader:
+        try:
+            asyncio.create_task(_warmup_inference_backends())
+            lifespan_logger.info("LLM/Embedding 推理预热任务已启动（后台执行）")
+        except Exception as _bk_warmup_e:
+            lifespan_logger.warning(f"LLM/Embedding 预热任务启动失败（不阻塞启动）: {_bk_warmup_e}")
+    else:
+        # 非 leader worker 跳过 LLM/Embedding 预热与 vision_clip_queue/text_smoother 后台循环，
+        # 避免多 worker 各自预热/各跑一遍全局后台 while 循环浪费资源
+        lifespan_logger.info("非 leader worker：跳过 LLM/Embedding 推理预热，由 leader worker 承担")
 
     lifespan_logger.info(f"CX-O-SERVER started successfully (ASR: {app.state.asr_status}, TTS: {app.state.tts_status})")
 
@@ -898,7 +943,16 @@ async def lifespan(app: FastAPI):
             return None
 
     if getattr(get_settings().config, "cluster", None) and getattr(get_settings().config.cluster, "enabled", False):
-        await init_service("哨兵集群", _init_cluster, logger_=lifespan_logger)
+        if _multi_worker:
+            # 多 worker 下未做跨进程归并：哨兵集群仅在 leader worker 装配为集群节点，
+            # 避免单机多 worker 被当作多个集群节点心跳/复制/failover 相互接管。仅告警。
+            lifespan_logger.warning(
+                "多 worker (workers=%s) 下哨兵集群未做跨进程归并：仅 leader worker 装配集群节点，"
+                "建议仍用单 worker 承载集群，或依赖前置反向代理。",
+                _workers,
+            )
+        if _is_leader:
+            await init_service("哨兵集群", _init_cluster, logger_=lifespan_logger)
     if getattr(get_settings().config, "admin", None) and getattr(get_settings().config.admin, "enabled", False):
         await init_service("CX-A管理面", _init_admin, logger_=lifespan_logger)
 
@@ -987,9 +1041,23 @@ async def lifespan(app: FastAPI):
         from server.core.utils import close_shared_http_client
         await close_shared_http_client()
 
-    await shutdown_service("共享HTTP客户端", _close_http_client, logger_=lifespan_logger)
+    # 关闭共享 HTTP 客户端 + T2 遗留的有界 IO 执行器 + 释放单 leader 锁。
+    # try…finally 保证 leader 锁在关闭段必定释放（幂等；进程退出时 OS 亦会释放锁）。
+    try:
+        await shutdown_service("共享HTTP客户端", _close_http_client, logger_=lifespan_logger)
 
-    lifespan_logger.info("CX-O服务已关闭")
+        # T2 遗留：关闭进程级有界 IO 线程池（幂等，异常仅记录不阻断关闭）
+        try:
+            from server.core.utils import shutdown_io_executor
+
+            shutdown_io_executor()
+            lifespan_logger.info("有界 IO 执行器已关闭")
+        except Exception as _io_ex:
+            lifespan_logger.warning(f"关闭 IO 执行器失败（不阻断关闭）: {_io_ex}")
+
+        lifespan_logger.info("CX-O服务已关闭")
+    finally:
+        leader_guard.release()
 
 
 def create_app() -> FastAPI:
@@ -1039,6 +1107,11 @@ def main():
         port=port,
         log_level=log_level,
         reload=False,
+        # workers 透传（默认 1，与现状完全一致）；仅作为显式 opt-in 扩容入口。
+        # workers>1 时 uvicorn 以多进程加载 server.main:app，每个 worker 各跑一遍
+        # lifespan；后台定时/告警/预热等全局副作用服务的去重由 lifespan 内的
+        # 单 leader guard 承担（见 lifespan）。
+        workers=getattr(settings.system, "workers", 1) or 1,
     )
 
 

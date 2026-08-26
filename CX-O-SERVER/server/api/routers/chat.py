@@ -12,8 +12,9 @@ from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
-from server.chat_helpers import get_agent_config, get_llm_client_for_agent, get_tools_for_agent, retrieve_memory_context, ensure_agent_session
+from server.chat_helpers import get_agent_config, get_llm_client_for_agent, get_tools_for_agent, retrieve_memory_context, ensure_agent_session_async
 from server.core.logging_config import get_contextual_logger
+from server.core.utils import run_io
 
 logger = get_contextual_logger(__name__)
 
@@ -122,9 +123,12 @@ async def chat(request: Request):
         llm = get_llm_client_for_agent(agent_config)
 
         session_id = f"agent-{chat_req.agent_id}"
-        ensure_agent_session(context_mgr, chat_req.agent_id, agent_config["name"])
+        await ensure_agent_session_async(context_mgr, chat_req.agent_id, agent_config["name"])
 
-        context_mgr.add_message(session_id=session_id, role="user", content=chat_req.message)
+        await run_io(
+            context_mgr.add_message,
+            session_id=session_id, role="user", content=chat_req.message,
+        )
 
         memory_context = await retrieve_memory_context(
             agent_config, memory_mgr, chat_req.message, session_id
@@ -153,7 +157,10 @@ async def chat(request: Request):
             response = await llm.chat(messages=messages, stream=False)
             final_response = response.content
 
-        context_mgr.add_message(session_id=session_id, role="assistant", content=final_response)
+        await run_io(
+            context_mgr.add_message,
+            session_id=session_id, role="assistant", content=final_response,
+        )
 
         return {
             "status": "success",
@@ -191,10 +198,13 @@ async def chat_stream(request: ChatRequest):
 
         # 3. 获取/创建 Agent 专属会话（每个 Agent 只有一个会话）
         session_id = f"agent-{request.agent_id}"
-        ensure_agent_session(context_mgr, request.agent_id, agent_config["name"])
+        await ensure_agent_session_async(context_mgr, request.agent_id, agent_config["name"])
 
         # 4. 添加用户消息到上下文
-        context_mgr.add_message(session_id=session_id, role="user", content=request.message)
+        await run_io(
+            context_mgr.add_message,
+            session_id=session_id, role="user", content=request.message,
+        )
 
         # 5. 检索记忆（如果启用）
         memory_context = await retrieve_memory_context(
@@ -330,8 +340,9 @@ async def chat_stream(request: ChatRequest):
 
                 # 流结束，保存完整响应到上下文
                 if full_response:
-                    context_mgr.add_message(
-                        session_id=session_id, role="assistant", content=full_response
+                    await run_io(
+                        context_mgr.add_message,
+                        session_id=session_id, role="assistant", content=full_response,
                     )
 
                 # 发送完成事件
@@ -364,7 +375,7 @@ async def get_chat_history(session_id: str, limit: int = 50):
 
     try:
         context_mgr = get_context_manager()
-        session = context_mgr.get_session(session_id)
+        session = await run_io(context_mgr.get_session, session_id)
 
         if not session:
             # 如果会话不存在，检查是否为 Agent 会话
@@ -374,13 +385,17 @@ async def get_chat_history(session_id: str, limit: int = 50):
 
                 if agent_config:
                     # 使用传入的 session_id 创建会话，而不是生成新的 UUID
-                    context_mgr.create_session(
+                    await run_io(
+                        context_mgr.create_session,
                         session_id=session_id,
                         workspace_id="agent-chats",
                         title=f"{agent_config.get('name', 'Agent')} 的对话",
                     )
-                    context_mgr.update_session(session_id, metadata={"agent_id": agent_id})
-                    session = context_mgr.get_session(session_id)
+                    await run_io(
+                        context_mgr.update_session,
+                        session_id, metadata={"agent_id": agent_id},
+                    )
+                    session = await run_io(context_mgr.get_session, session_id)
 
             if not session:
                 return {
@@ -390,7 +405,7 @@ async def get_chat_history(session_id: str, limit: int = 50):
                     "messages": [],
                 }
 
-        messages = context_mgr.get_recent_messages(session_id, limit=limit)
+        messages = await run_io(context_mgr.get_recent_messages, session_id, limit=limit)
 
         return {
             "status": "success",
@@ -441,8 +456,9 @@ async def memory_agent_chat_stream(request: MemoryAgentChatRequest):
 
         # 4. 获取/创建固定会话（记忆管理Agent只有一个会话）
         session_id = "memory-agent-default"
-        context_mgr.ensure_session(
-            session_id, workspace_id="memory-agent", title="记忆管理对话"
+        await run_io(
+            context_mgr.ensure_session,
+            session_id, workspace_id="memory-agent", title="记忆管理对话",
         )
 
         # 5. 加载历史上下文（从数据库）
@@ -450,7 +466,9 @@ async def memory_agent_chat_stream(request: MemoryAgentChatRequest):
         history_context = agent_context_mgr.load_context(agent_id, limit=20)
 
         # 6. 添加用户消息到上下文（持久化）
-        context_mgr.add_message(session_id=session_id, role="user", content=request.message)
+        await run_io(
+            context_mgr.add_message, session_id=session_id, role="user", content=request.message,
+        )
         agent_context_mgr.append_message(agent_id, "user", request.message)
 
         # 7. 构建消息列表（包含历史上下文）
@@ -583,8 +601,9 @@ async def memory_agent_chat_stream(request: MemoryAgentChatRequest):
 
                 # 流结束，保存完整响应到上下文
                 if full_response:
-                    context_mgr.add_message(
-                        session_id=session_id, role="assistant", content=full_response
+                    await run_io(
+                        context_mgr.add_message,
+                        session_id=session_id, role="assistant", content=full_response,
                     )
 
                 # 发送完成事件
@@ -664,7 +683,7 @@ async def summary_agent_stream_chat(request: SummaryAgentChatRequest):
         summary_agent_id = "summary-agent"
         if request.target_session_id:
             try:
-                target_session = context_mgr.get_session(request.target_session_id)
+                target_session = await run_io(context_mgr.get_session, request.target_session_id)
                 if target_session:
                     summary_agent_id = target_session.get("metadata", {}).get(
                         "agent_id", "summary-agent"
@@ -688,13 +707,16 @@ async def summary_agent_stream_chat(request: SummaryAgentChatRequest):
 
         # 4. 获取/创建固定会话（摘要助手只有一个会话，保持上下文持久化）
         session_id = "summary-agent-default"
-        context_mgr.ensure_session(
-            session_id, workspace_id="summary-agent", title="摘要助手对话"
+        await run_io(
+            context_mgr.ensure_session,
+            session_id, workspace_id="summary-agent", title="摘要助手对话",
         )
 
         # 5. 加载历史上下文（在 add_message 之前加载，避免当前用户消息重复）
         history_limit = agent_config.get("history_limit", 50)
-        history_context = context_mgr.get_recent_messages(session_id=session_id, limit=history_limit)
+        history_context = await run_io(
+            context_mgr.get_recent_messages, session_id=session_id, limit=history_limit,
+        )
 
         # 6. 构建消息列表（包含历史上下文）
         messages = []
@@ -726,9 +748,9 @@ async def summary_agent_stream_chat(request: SummaryAgentChatRequest):
             f"摘要助手配置了 {len(tools)} 个工具: {[t['function']['name'] for t in tools]}"
         )
 
-        # 持久化用户消息（同步，CX-O context_mgr 无 add_message_async）
-        context_mgr.add_message(
-            session_id=session_id, role="user", content=request.message
+        # 持久化用户消息（移入有界 IO 线程池，避免事件循环阻断）
+        await run_io(
+            context_mgr.add_message, session_id=session_id, role="user", content=request.message,
         )
 
         async def generate_stream():
@@ -836,8 +858,9 @@ async def summary_agent_stream_chat(request: SummaryAgentChatRequest):
 
                 # 流结束，保存完整响应到上下文
                 if full_response:
-                    context_mgr.add_message(
-                        session_id=session_id, role="assistant", content=full_response
+                    await run_io(
+                        context_mgr.add_message,
+                        session_id=session_id, role="assistant", content=full_response,
                     )
 
                 # 发送完成事件

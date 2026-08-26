@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Dict, List, Optional
 
 from server.core.logging_config import get_contextual_logger
+from server.core.utils import run_io
 
 from .models import Session, SessionMessage, SessionStats, SessionType
 
@@ -503,6 +504,40 @@ class SessionStore:
             created_at=datetime.fromisoformat(row[7]),
             is_deleted=bool(row[8]),
         )
+
+    # ------------------------------------------------------------------ #
+    # 异步变体：把同步 sqlite 移入有界 IO 线程池，供 async 热路径调用。
+    # 每个方法均委托给同名同步实现，返回值与异常语义保持一致。
+    # ------------------------------------------------------------------ #
+    async def create_session_async(self, *args, **kwargs) -> Session:
+        return await run_io(self.create_session, *args, **kwargs)
+
+    async def get_session_async(self, *args, **kwargs) -> Optional[Session]:
+        return await run_io(self.get_session, *args, **kwargs)
+
+    async def get_sessions_async(self, *args, **kwargs) -> List[Session]:
+        return await run_io(self.get_sessions, *args, **kwargs)
+
+    async def update_session_async(self, *args, **kwargs) -> bool:
+        return await run_io(self.update_session, *args, **kwargs)
+
+    async def delete_session_async(self, *args, **kwargs) -> bool:
+        return await run_io(self.delete_session, *args, **kwargs)
+
+    async def add_message_async(self, *args, **kwargs) -> SessionMessage:
+        return await run_io(self.add_message, *args, **kwargs)
+
+    async def get_messages_async(self, *args, **kwargs) -> List[SessionMessage]:
+        return await run_io(self.get_messages, *args, **kwargs)
+
+    async def delete_message_async(self, *args, **kwargs) -> bool:
+        return await run_io(self.delete_message, *args, **kwargs)
+
+    async def get_statistics_async(self, *args, **kwargs) -> SessionStats:
+        return await run_io(self.get_statistics, *args, **kwargs)
+
+    async def cleanup_expired_sessions_async(self, *args, **kwargs) -> int:
+        return await run_io(self.cleanup_expired_sessions, *args, **kwargs)
 
 
 # 全局会话存储实例

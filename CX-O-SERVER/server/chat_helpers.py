@@ -6,6 +6,8 @@
 import logging
 from typing import Optional
 
+from server.core.utils import run_io
+
 logger = logging.getLogger(__name__)
 
 
@@ -14,6 +16,17 @@ def get_agent_config(agent_id: str) -> dict:
     from server.api.routers.agents import _load_agents
 
     agents = _load_agents()
+    return next((a for a in agents if a["id"] == agent_id), None)
+
+
+async def get_agent_config_async(agent_id: str) -> Optional[dict]:
+    """按 agent_id 查找 Agent 配置的异步版本（文件读取移入有界 IO 池）。
+
+    与 ``get_agent_config`` 行为一致，仅供 async 热路径使用。
+    """
+    from server.api.routers.agents import _load_agents
+
+    agents = await run_io(_load_agents)
     return next((a for a in agents if a["id"] == agent_id), None)
 
 
@@ -56,6 +69,20 @@ def ensure_agent_session(context_mgr, agent_id: str, agent_name: str) -> str:
     ensure_session 样板。返回会话 ID。
     """
     return context_mgr.ensure_session(
+        f"agent-{agent_id}",
+        workspace_id="agent-chats",
+        title=f"{agent_name} 的对话",
+        metadata={"agent_id": agent_id},
+    )
+
+
+async def ensure_agent_session_async(context_mgr, agent_id: str, agent_name: str) -> str:
+    """异步取 get-or-create 会话（ensure_session 的同步 sqlite 移入有界 IO 池）。
+
+    与 ``ensure_agent_session`` 返回语义一致（返回会话 ID），供异步路由热路径调用。
+    """
+    return await run_io(
+        context_mgr.ensure_session,
         f"agent-{agent_id}",
         workspace_id="agent-chats",
         title=f"{agent_name} 的对话",

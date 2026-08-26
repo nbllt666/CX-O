@@ -6,9 +6,12 @@
 
 运行：python -m pytest tests/test_tts_service.py -v
 """
+import asyncio
+
 import pytest
 
 from server.services.tts_service import TTSService
+from server.core.utils import make_semaphore
 
 
 def _svc(**kw):
@@ -78,3 +81,55 @@ class TestMisc:
 
     def test_mode_property(self):
         assert _svc(mode="remote").mode == "remote"
+
+
+# ================================================================ 统一并发信号量背压
+class TestConcurrencyGate:
+    """TTS synthesize 统一 in-flight 信号量：wait 排队 / drop 拒绝（spec T3）。"""
+
+    @pytest.mark.asyncio
+    async def test_wait_mode_serializes_inflight(self):
+        s = _svc()
+        s._tts_drop = False
+        s._tts_limit = 1
+        s._tts_sem = make_semaphore(1)
+        active = 0
+        max_active = 0
+
+        async def fake(text, **kw):
+            nonlocal active, max_active
+            active += 1
+            max_active = max(max_active, active)
+            await asyncio.sleep(0.01)
+            active -= 1
+            return b"x"
+
+        s._synthesize_qwen3 = fake
+        results = await asyncio.gather(*[s.synthesize("hi") for _ in range(5)])
+        assert all(r == b"x" for r in results)
+        assert max_active <= 1  # 排队语义：任意时刻 in-flight 不超过上限
+
+    @pytest.mark.asyncio
+    async def test_drop_mode_rejects_when_saturated(self):
+        s = _svc()
+        s._tts_drop = True
+        s._tts_limit = 1
+        s._tts_sem = make_semaphore(1)
+        started = asyncio.Event()
+        release = asyncio.Event()
+        calls = {"n": 0}
+
+        async def fake(text, **kw):
+            calls["n"] += 1
+            started.set()
+            await release.wait()
+            return b"audio"
+
+        s._synthesize_qwen3 = fake
+        t1 = asyncio.create_task(s.synthesize("first"))  # 占用信号量
+        await started.wait()
+        r2 = await s.synthesize("second")  # 已饱和 -> drop 返回空
+        assert r2 == b""
+        assert calls["n"] == 1  # 仅第一个进入 provider
+        release.set()
+        assert (await t1) == b"audio"

@@ -20,6 +20,7 @@ from pathlib import Path
 from typing import Dict, List, Optional
 
 from server.core.logging_config import get_contextual_logger
+from server.core.utils import run_io
 
 logger = get_contextual_logger(__name__)
 
@@ -661,3 +662,34 @@ class ContextManager:
         except Exception as e:
             logger.error(f"清理过期Mono上下文失败: {e}")
             return 0
+
+    # ------------------------------------------------------------------ #
+    # 异步变体：把同步 sqlite 移入有界 IO 线程池，供 async 热路径调用。
+    # 每个方法均委托给同名同步实现，返回值与异常语义保持一致。
+    # ------------------------------------------------------------------ #
+    async def create_session_async(self, *args, **kwargs) -> str:
+        return await run_io(self.create_session, *args, **kwargs)
+
+    async def ensure_session_async(self, *args, **kwargs) -> str:
+        return await run_io(self.ensure_session, *args, **kwargs)
+
+    async def get_session_async(self, *args, **kwargs) -> Optional[Dict]:
+        return await run_io(self.get_session, *args, **kwargs)
+
+    async def get_sessions_async(self, *args, **kwargs) -> List[Dict]:
+        return await run_io(self.get_sessions, *args, **kwargs)
+
+    async def update_session_async(self, *args, **kwargs) -> bool:
+        return await run_io(self.update_session, *args, **kwargs)
+
+    async def add_message_async(self, *args, **kwargs) -> str:
+        return await run_io(self.add_message, *args, **kwargs)
+
+    async def get_messages_async(self, *args, **kwargs) -> List[Dict]:
+        return await run_io(self.get_messages, *args, **kwargs)
+
+    async def get_recent_messages_async(self, *args, **kwargs) -> List[Dict]:
+        return await run_io(self.get_recent_messages, *args, **kwargs)
+
+    async def get_statistics_async(self, *args, **kwargs) -> Dict:
+        return await run_io(self.get_statistics, *args, **kwargs)

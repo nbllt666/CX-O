@@ -25,6 +25,42 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+# --------------------------------------------------------------------------- #
+# 弹幕反馈 fire-and-forget 信号量（无界 create_task 限流）
+# 超限时非阻塞丢弃，防止实录弹幕流下任务无限堆积；按事件循环缓存避免跨 loop 错环。
+# --------------------------------------------------------------------------- #
+_danmaku_sem: Optional[asyncio.Semaphore] = None
+_danmaku_sem_loop: Optional[asyncio.AbstractEventLoop] = None
+
+
+def _get_danmaku_sem() -> asyncio.Semaphore:
+    """获取模块级弹幕反馈并发信号量（可配置大小）。"""
+    global _danmaku_sem, _danmaku_sem_loop
+    loop = asyncio.get_running_loop()
+    if _danmaku_sem is None or _danmaku_sem_loop is not loop:
+        from server.config import get_config
+
+        size = max(1, get_config().executor.danmaku_concurrency)
+        _danmaku_sem = asyncio.Semaphore(size)
+        _danmaku_sem_loop = loop
+    return _danmaku_sem
+
+
+def _acquire_danmaku_slot() -> bool:
+    """非阻塞申请一个弹幕反馈并发槽；已满返回 False（本次丢弃，防任务无限堆积）。"""
+    sem = _get_danmaku_sem()
+    try:
+        sem.acquire_nowait()
+        return True
+    except Exception:
+        return False
+
+
+def _release_danmaku_slot() -> None:
+    """归还弹幕反馈并发槽（须在事件循环线程内调用）。"""
+    _get_danmaku_sem().release()
+
+
 class LiveClientHandler:
     """直播客户端处理器——处理直播弹幕、礼物、进入等实时消息与音频流。"""
 
@@ -187,18 +223,25 @@ class LiveClientHandler:
     def _safe_feedback_danmaku(self, content: str, user_id: str) -> None:
         """将过滤放行后的弹幕喂给隐式反馈追踪器（fire-and-forget，静默降级）。
 
-        后台任务独立调度，不阻塞 danmaku 主路径；追踪器内部异常被吞掉。
+        后台任务独立调度，不阻塞 danmaku 主路径；同步非阻塞申请并发槽，
+        已满则丢弃本次反馈，防任务无限堆积；追踪器内部异常被吞掉。
         """
+        if not _acquire_danmaku_slot():
+            logger.debug("live_feedback 弹幕反馈并发已满，丢弃本次反馈")
+            return
         try:
-            asyncio.create_task(
+            task = asyncio.create_task(
                 self.feedback_tracker.on_danmaku(
                     text=content,
                     user_id=user_id,
                     session_id=self._session_id or "",
                 )
             )
-        except Exception as e:  # 调度失败静默降级
+        except Exception as e:  # 调度失败静默降级并归还并发槽
+            _release_danmaku_slot()
             logger.warning(f"live_feedback 弹幕反馈调度降级: {e}")
+            return
+        task.add_done_callback(lambda _t: _release_danmaku_slot())
 
     def record_ai_response(self, text: str, prompt: str = "", ts: Optional[float] = None) -> None:
         """记录一轮 AI 回复，供后续弹幕窗口判定隐性反馈（增量接入点）。"""

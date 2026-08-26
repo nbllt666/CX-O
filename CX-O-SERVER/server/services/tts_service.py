@@ -15,7 +15,7 @@ from pathlib import Path
 from typing import Any, AsyncGenerator, Callable, Optional
 
 
-from server.core.utils import get_shared_http_client
+from server.core.utils import get_shared_http_client, make_semaphore
 from server.services.emotion_instruction_service import (
     generate_instruction,
     strip_instruction,
@@ -23,6 +23,25 @@ from server.services.emotion_instruction_service import (
 from server.services.effect_parser import EffectParser
 
 logger = logging.getLogger(__name__)
+
+
+def _tts_concurrency() -> tuple[int, bool]:
+    """读取 TTS 统一 in-flight 并发上限与背压模式（默认 8 / wait 排队）。
+
+    - 上限取一个不破坏现状的较大数（默认 8），生产可通过 config 调整。
+    - 模式：``"wait"`` 超限排队等待；``"drop"`` 超限拒绝（返回空/提前结束）。
+    配置读取失败时回退默认，保证零侵入（不破坏既有测试与生产默认）。
+    """
+    try:
+        from server.config import get_settings as _gs
+        exec_cfg = _gs().config.executor
+        limit = int(getattr(exec_cfg, "tts_concurrency", 8) or 8)
+        if limit <= 0:
+            limit = 8
+        mode = str(getattr(exec_cfg, "tts_backpressure_mode", "wait") or "wait").lower()
+        return limit, (mode == "drop")
+    except Exception:  # noqa: BLE001 - 配置缺失/加载失败回退默认
+        return 8, False
 
 
 # <tts_instruction> 结构化 JSON 内是否显式含 speed/volume 键的检测
@@ -118,6 +137,9 @@ class TTSService:
         self._qwen3_enabled = bool(qwen3_enabled)
         self._qwen3_provider = qwen3_provider
         self._emotion_instruction_enabled = bool(emotion_instruction_enabled)
+        # 语音多会话并发治理：统一 in-flight 信号量 + 背压模式（默认 8 / wait）
+        self._tts_limit, self._tts_drop = _tts_concurrency()
+        self._tts_sem = make_semaphore(self._tts_limit)
 
     @property
     def mode(self) -> str:
@@ -361,17 +383,25 @@ class TTSService:
         cross_fade_duration: float | None = None,
         **kwargs
     ) -> bytes:
-        """非流式合成：Qwen3 TTS 唯一合成路径。"""
-        combined = dict(kwargs)
-        if ref_audio_path:
-            combined["ref_audio_path"] = ref_audio_path
-        if ref_text:
-            combined["ref_text"] = ref_text
-        if ref_audio:
-            combined["ref_audio"] = ref_audio
-        if speed is not None:
-            combined["speed"] = speed
-        return await self._synthesize_qwen3(text, **combined)
+        """非流式合成：Qwen3 TTS 唯一合成路径。受统一 in-flight 信号量约束。"""
+        # drop 模式：超限直接拒绝（返回空 bytes），不进入排队
+        if self._tts_drop and self._tts_sem.locked():
+            logger.warning("TTS in-flight 已达 %s，drop 模式丢弃本次合成", self._tts_limit)
+            return b""
+        await self._tts_sem.acquire()
+        try:
+            combined = dict(kwargs)
+            if ref_audio_path:
+                combined["ref_audio_path"] = ref_audio_path
+            if ref_text:
+                combined["ref_text"] = ref_text
+            if ref_audio:
+                combined["ref_audio"] = ref_audio
+            if speed is not None:
+                combined["speed"] = speed
+            return await self._synthesize_qwen3(text, **combined)
+        finally:
+            self._tts_sem.release()
 
     async def synthesize_stream(
         self,
@@ -381,14 +411,22 @@ class TTSService:
         on_chunk: Callable[[str, bytes], None] | None = None,
         **kwargs
     ) -> AsyncGenerator[dict[str, Any], None]:
-        """流式合成：Qwen3 TTS 唯一合成路径。"""
-        combined = dict(kwargs)
-        if ref_audio_path:
-            combined["ref_audio_path"] = ref_audio_path
-        if ref_text:
-            combined["ref_text"] = ref_text
-        async for chunk in self._synthesize_stream_qwen3(text, **combined):
-            yield chunk
+        """流式合成：Qwen3 TTS 唯一合成路径。受统一 in-flight 信号量约束。"""
+        # drop 模式：超限直接结束（不产生任何 chunk），不进入排队
+        if self._tts_drop and self._tts_sem.locked():
+            logger.warning("TTS in-flight 已达 %s，drop 模式丢弃本次流式合成", self._tts_limit)
+            return
+        await self._tts_sem.acquire()
+        try:
+            combined = dict(kwargs)
+            if ref_audio_path:
+                combined["ref_audio_path"] = ref_audio_path
+            if ref_text:
+                combined["ref_text"] = ref_text
+            async for chunk in self._synthesize_stream_qwen3(text, **combined):
+                yield chunk
+        finally:
+            self._tts_sem.release()
 
     async def split_text_streaming(
         self,

@@ -108,6 +108,17 @@ def get_env_config() -> Dict[str, Any]:
         "CXO_MEETING_TRANSCRIPT_MAX_TURNS": ["meeting", "transcript_max_turns"],
         "CXO_MEETING_TRANSCRIPT_SUMMARY": ["meeting", "transcript_summary"],
         "CXO_MEETING_AGENT_INTERRUPT_ENABLED": ["meeting", "agent_interrupt_enabled"],
+        # executor 有界 IO / 并发限流节
+        "CXO_EXECUTOR_IO_POOL_SIZE": ["executor", "io_pool_size"],
+        "CXO_EXECUTOR_DANMAKU_CONCURRENCY": ["executor", "danmaku_concurrency"],
+        "CXO_EXECUTOR_INTERRUPT_CONCURRENCY": ["executor", "interrupt_concurrency"],
+        # executor 语音并发治理节（Module 0 语音多会话并发）
+        "CXO_EXECUTOR_ASR_INFER_WORKERS": ["executor", "asr_infer_workers"],
+        "CXO_EXECUTOR_SPK_ENGINE_WORKERS": ["executor", "spk_engine_workers"],
+        "CXO_EXECUTOR_SPK_INFLIGHT_MAX": ["executor", "spk_inflight_max"],
+        "CXO_EXECUTOR_TTS_CONCURRENCY": ["executor", "tts_concurrency"],
+        "CXO_EXECUTOR_TTS_BACKPRESSURE_MODE": ["executor", "tts_backpressure_mode"],
+        "CXO_EXECUTOR_ASR_RECV_QUEUE_MAXSIZE": ["executor", "asr_recv_queue_maxsize"],
     }
 
     for env_key, path_parts in _env_mappings.items():
@@ -149,6 +160,17 @@ def get_env_config() -> Dict[str, Any]:
                 value = float(value)
             elif field in ("max_agents", "transcript_max_turns"):
                 value = int(value)
+        # executor 语音并发节类型转换（整数/模式，避免 env 覆盖成字符串）
+        if env_key.startswith(f"{ENV_PREFIX}EXECUTOR_") and path_parts:
+            field = path_parts[-1]
+            if field in ("asr_infer_workers", "spk_engine_workers", "spk_inflight_max",
+                         "tts_concurrency", "asr_recv_queue_maxsize"):
+                try:
+                    value = int(value)
+                except (TypeError, ValueError):
+                    value = value
+            elif field == "tts_backpressure_mode":
+                value = str(value)
         current[path_parts[-1]] = value
 
     return env_config
@@ -162,6 +184,44 @@ class SystemConfig(BaseModel):
     debug: bool = False
     log_level: str = "INFO"
     workers: int = 1
+    # 跨进程单 leader 锁文件路径（多 worker 后台服务去重用）。空串（默认）表示
+    # 自动落到 <项目根>/data/leader.lock；显式设置可覆盖。默认 workers=1 时零侵入。
+    leader_lock_path: str = ""
+
+
+class ExecutorConfig(BaseModel):
+    """进程级有界 IO / 并发限流配置节（Module 0 消除事件循环阻断）。
+
+    - ``io_pool_size``：async 热路径同步 sqlite/文件 IO/CPU 段的共享 IO 线程池大小。
+      ``<=0``（默认）表示自动取值 ``min(32, (os.cpu_count() or 4) + 4)``，
+      保持默认行为零侵入，不改变既有并发上限。
+    - ``danmaku_concurrency``：直播弹幕 fire-and-forget 反馈任务的信号量上限，
+      超限丢弃，防止任务无限堆积。
+    - ``interrupt_concurrency``：ASR Partial 打断判定后台任务的信号量上限，超限丢弃。
+
+    语音链路多会话并发治理（默认与现状一致，零侵入，不破坏既有测试）：
+    - ``asr_infer_workers``：ASR embedded 推理线程池大小（现状 ``max_workers=2``），
+      允许配置放大。
+    - ``spk_engine_workers``：流式引擎共享线程池大小（ASR 推理 + 声纹共用，
+      现状 ``max_workers=4``），允许配置放大。
+    - ``spk_inflight_max``：声纹 in-flight 后台任务上限（现状 ``SPK_INFLIGHT_MAX=2``）。
+    - ``tts_concurrency``：TTS ``synthesize``/``synthesize_stream`` 统一 in-flight
+      信号量上限（默认取一个不破坏现状的较大数 8）。
+    - ``tts_backpressure_mode``：``"wait"`` 超限排队等待 / ``"drop"`` 超限丢弃。
+    - ``asr_recv_queue_maxsize``：ASR WS 接收队列有界上限；``0``（默认）表示无界，
+      与现状一致；``>0`` 时消费者慢于生产者由 ``put`` 自然背压，避免无界堆积。
+    """
+
+    io_pool_size: int = 0
+    danmaku_concurrency: int = 8
+    interrupt_concurrency: int = 8
+    # ---- 语音链路并发治理（默认与现状一致，零侵入）----
+    asr_infer_workers: int = 2
+    spk_engine_workers: int = 4
+    spk_inflight_max: int = 2
+    tts_concurrency: int = 8
+    tts_backpressure_mode: str = "wait"
+    asr_recv_queue_maxsize: int = 0
 
 
 class CorsConfig(BaseModel):
@@ -910,6 +970,7 @@ class UnifiedConfig(BaseModel):
 
     system: SystemConfig = Field(default_factory=SystemConfig)
     gateway: GatewayConfig = Field(default_factory=GatewayConfig)
+    executor: ExecutorConfig = Field(default_factory=ExecutorConfig)
     services: ServicesConfig = Field(default_factory=ServicesConfig)
     logging: LoggingConfig = Field(default_factory=LoggingConfig)
     llm: LLMConfig = Field(default_factory=LLMConfig)

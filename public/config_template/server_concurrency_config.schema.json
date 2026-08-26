@@ -1,0 +1,102 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://cx-o.local/config_template/server_concurrency_config.json",
+  "title": "Server Concurrency Config",
+  "description": "CX-O-SERVER 后端并发配置契约：进程级有界 IO 池与语音多会话并发治理参数（消除事件循环阻断 / 语音多会话并发治理 / 横向多进程扩容）。加载时缺失字段自动补齐为默认值（rules-3 §三 配置契约 auto_fill，与 server/config.py ExecutorConfig/SystemConfig 一致）。所有默认值与现状行为保持一致（零侵入）。",
+  "type": "object",
+  "required": ["system", "executor"],
+  "additionalProperties": false,
+  "properties": {
+    "system": {
+      "type": "object",
+      "description": "系统服务配置节（并发相关子集）。",
+      "required": ["workers", "leader_lock_path"],
+      "additionalProperties": false,
+      "properties": {
+        "workers": {
+          "type": "integer",
+          "minimum": 1,
+          "default": 1,
+          "description": "uvicorn 工作进程数。默认 1 = 单 worker 单进程（现状）。>1 时启用横向多进程扩容：每个 worker 承载 HTTP 计算，调度/衰减/告警/预热等后台副作用服务仅由单 leader worker 承担。启用前请确认长连接（WebSocket 广播 / 会议 / 语音流）的 sticky 或归并策略（当前未提供跨进程 sticky）。"
+        },
+        "leader_lock_path": {
+          "type": "string",
+          "default": "",
+          "description": "跨进程单 leader 锁文件路径。空串（默认）表示自动落到 <项目根>/data/leader.lock；显式设置可覆盖。仅用于多 worker 下后台服务去重。"
+        }
+      }
+    },
+    "executor": {
+      "type": "object",
+      "description": "进程级有界 IO / 并发限流配置节。",
+      "required": [
+        "io_pool_size",
+        "danmaku_concurrency",
+        "interrupt_concurrency",
+        "asr_infer_workers",
+        "spk_engine_workers",
+        "spk_inflight_max",
+        "tts_concurrency",
+        "tts_backpressure_mode",
+        "asr_recv_queue_maxsize"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "io_pool_size": {
+          "type": "integer",
+          "minimum": 0,
+          "default": 0,
+          "description": "async 热路径同步 sqlite/文件 IO/CPU 段的共享 IO 线程池大小。<=0（默认）表示自动取值 min(32, (os.cpu_count() or 4) + 4)。"
+        },
+        "danmaku_concurrency": {
+          "type": "integer",
+          "minimum": 1,
+          "default": 8,
+          "description": "直播弹幕 fire-and-forget 反馈任务的信号量上限。超限丢弃，防止任务无限堆积。"
+        },
+        "interrupt_concurrency": {
+          "type": "integer",
+          "minimum": 1,
+          "default": 8,
+          "description": "ASR Partial 打断判定后台任务的信号量上限。超限丢弃。"
+        },
+        "asr_infer_workers": {
+          "type": "integer",
+          "minimum": 1,
+          "default": 2,
+          "description": "ASR embedded 推理线程池大小（现状 max_workers=2），允许配置放大。"
+        },
+        "spk_engine_workers": {
+          "type": "integer",
+          "minimum": 1,
+          "default": 4,
+          "description": "流式引擎共享线程池大小（ASR 推理 + 声纹共用，现状 max_workers=4），允许配置放大。"
+        },
+        "spk_inflight_max": {
+          "type": "integer",
+          "minimum": 1,
+          "default": 2,
+          "description": "声纹 in-flight 后台任务上限（现状 SPK_INFLIGHT_MAX=2）。"
+        },
+        "tts_concurrency": {
+          "type": "integer",
+          "minimum": 1,
+          "default": 8,
+          "description": "TTS synthesize/synthesize_stream 统一 in-flight 信号量上限（默认取较大数 8，不破坏现状）。"
+        },
+        "tts_backpressure_mode": {
+          "type": "string",
+          "enum": ["wait", "drop"],
+          "default": "wait",
+          "description": "TTS 背压语义：wait = 超限排队等待；drop = 超限丢弃。"
+        },
+        "asr_recv_queue_maxsize": {
+          "type": "integer",
+          "minimum": 0,
+          "default": 0,
+          "description": "ASR WS 接收队列有界上限。0 = 无界，与现状一致；>0 时消费者慢于生产者由 put 自然背压，避免无界堆积。"
+        }
+      }
+    }
+  }
+}

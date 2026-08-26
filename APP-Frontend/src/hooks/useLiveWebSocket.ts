@@ -258,7 +258,7 @@ export function useLiveWebSocket(options: UseLiveWebSocketOptions = {}): UseLive
     transportDisconnect();
     // onClose 回调不触发 → connectionCount 不会自减，这里显式清零，后续重连从 0 起算
     setConnectionCount(0);
-  }, [transportDisconnect]);
+  }, [transportDisconnect, setConnectionCount]);
 
   const reconnect = useCallback(() => {
     transportReconnect();

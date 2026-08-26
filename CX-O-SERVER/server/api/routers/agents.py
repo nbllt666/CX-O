@@ -9,6 +9,7 @@ from pydantic import BaseModel, Field
 
 from server.core.cache import agent_config_cache
 from server.core.logging_config import get_contextual_logger
+from server.core.utils import run_io
 
 router = APIRouter()
 logger = get_contextual_logger(__name__)
@@ -549,7 +550,7 @@ async def delete_agent(agent_id: str):
         _save_agents(agents)
 
         # 清理该助手的全部 per-agent 资源（图数据库 + Weaviate collection + 记忆表）
-        _cleanup_agent_resources(agent_id)
+        await run_io(_cleanup_agent_resources, agent_id)
 
         return {"status": "success", "message": f"Agent '{agent_id}' 已删除"}
     except HTTPException:

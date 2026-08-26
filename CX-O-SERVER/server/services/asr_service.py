@@ -19,7 +19,11 @@ from pathlib import Path
 from typing import Any, Optional
 
 
-from server.core.utils import get_shared_http_client, retry_with_backoff
+from server.core.utils import (
+    get_shared_http_client,
+    make_bounded_queue,
+    retry_with_backoff,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -56,6 +60,29 @@ _model_kwargs = None
 _executor: Optional[ThreadPoolExecutor] = None
 
 
+def _asr_infer_workers() -> int:
+    """读取 ASR embedded 推理线程池大小（默认 2，与现状一致；允许配置放大）。
+
+    配置读取失败时回退默认 2，保证零侵入（不破坏既有测试与生产默认）。
+    """
+    try:
+        from server.config import get_settings as _gs
+        w = int(_gs().config.executor.asr_infer_workers or 2)
+        return w if w > 0 else 2
+    except Exception:  # noqa: BLE001 - 配置缺失/加载失败回退默认
+        return 2
+
+
+def _asr_recv_queue_maxsize() -> int:
+    """读取 ASR WS 接收队列有界上限（默认 0=无界，与现状一致；>0 启用背压）。"""
+    try:
+        from server.config import get_settings as _gs
+        v = int(_gs().config.executor.asr_recv_queue_maxsize or 0)
+        return v if v > 0 else 0
+    except Exception:  # noqa: BLE001 - 配置缺失/加载失败回退无界
+        return 0
+
+
 class _StreamState:
     """Per-client 流式会话状态。
 
@@ -69,7 +96,8 @@ class _StreamState:
     def __init__(self):
         self.ws: Any = None  # websockets.WebSocketClientProtocol
         self.lock: asyncio.Lock = asyncio.Lock()
-        self.recv_queue: asyncio.Queue = asyncio.Queue()
+        # 有界队列（配置 asr_recv_queue_maxsize>0 时启用背压；默认 0=无界，与现状一致）
+        self.recv_queue: asyncio.Queue = make_bounded_queue(_asr_recv_queue_maxsize())
         self.recv_task: Optional[asyncio.Task] = None
         self.final_received: bool = False
         self.recent_speaker: tuple = ()
@@ -178,7 +206,7 @@ class ASRService:
         # 方案B：WebSocket 流式接口
         self._ws: Any = None  # websockets.WebSocketClientProtocol（默认会话向后兼容）
         self._ws_lock: asyncio.Lock = asyncio.Lock()
-        self._ws_recv_queue: asyncio.Queue = asyncio.Queue()
+        self._ws_recv_queue: asyncio.Queue = make_bounded_queue(_asr_recv_queue_maxsize())
         self._ws_recv_task: Optional[asyncio.Task] = None
         self._ws_final_received: bool = False  # 是否已收到 final 结果（避免 final 后继续读 queue）
         # 默认会话最近说话人状态（spk 补充消息 / final 回填）
@@ -211,7 +239,7 @@ class ASRService:
             return
 
         logger.info(f"Loading SenseVoice model: {self._model_dir} on device: {self._device}")
-        _executor = ThreadPoolExecutor(max_workers=2)
+        _executor = ThreadPoolExecutor(max_workers=_asr_infer_workers())
 
         try:
             from sensevoice.model import SenseVoiceSmall

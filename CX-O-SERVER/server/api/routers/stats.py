@@ -6,18 +6,16 @@ from pydantic import BaseModel
 
 from server.api.routers.admin import verify_admin_api_key
 from server.core.logging_config import get_contextual_logger
+from server.core.utils import run_io
 
 router = APIRouter()
 logger = get_contextual_logger(__name__)
 
 
-@router.get("/stats")
-async def get_system_stats():
-    from server.dependencies import get_memory_manager
-
+def _collect_system_stats(memory_mgr) -> dict:
+    """同步收集系统统计（sqlite 直连），在 async 热路径中经 run_io 移入 IO 线程池。"""
     conn = None
     try:
-        memory_mgr = get_memory_manager()
         conn = memory_mgr._get_connection()
         cursor = conn.cursor()
 
@@ -43,23 +41,30 @@ async def get_system_stats():
             archived_memories = 0
 
         return {
-            "status": "success",
-            "data": {
-                "total_memories": total_memories,
-                "total_sessions": total_sessions,
-                "total_agents": total_agents,
-                "archived_memories": archived_memories,
-            },
+            "total_memories": total_memories,
+            "total_sessions": total_sessions,
+            "total_agents": total_agents,
+            "archived_memories": archived_memories,
         }
-    except Exception as e:
-        logger.error(f"获取系统统计数据失败: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail=str(e))
     finally:
         if conn is not None:
             try:
                 conn.close()
             except Exception:
                 pass
+
+
+@router.get("/stats")
+async def get_system_stats():
+    from server.dependencies import get_memory_manager
+
+    try:
+        memory_mgr = get_memory_manager()
+        data = await run_io(_collect_system_stats, memory_mgr)
+        return {"status": "success", "data": data}
+    except Exception as e:
+        logger.error(f"获取系统统计数据失败: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 class InterruptEnableRequest(BaseModel):

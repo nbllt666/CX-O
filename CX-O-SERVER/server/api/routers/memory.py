@@ -8,9 +8,60 @@ from server.config import Settings
 from server.core.exceptions import MemoryOperationError
 from server.core.logging_config import get_contextual_logger
 from server.core.memory.secondary_router import SecondaryInstruction
+from server.core.utils import run_io
 
 router = APIRouter()
 logger = get_contextual_logger(__name__)
+
+
+def _collect_agent_tables(memory_mgr) -> list:
+    """同步收集全部 Agent 记忆表列表（sqlite 直连 + agents.json 合并），
+    供 async 热路径经 run_io 移入 IO 线程池执行。"""
+    conn = None
+    try:
+        conn = memory_mgr._get_connection()
+        cursor = conn.cursor()
+
+        cursor.execute(
+            """
+            SELECT agent_id, table_name, created_at
+            FROM agent_memory_tables
+            ORDER BY created_at DESC
+        """
+        )
+        rows = cursor.fetchall()
+
+        agents = []
+        for row in rows:
+            agents.append({"agent_id": row[0], "table_name": row[1], "created_at": row[2]})
+
+        # 添加默认Agent
+        agents.insert(0, {"agent_id": "default", "table_name": "memories", "created_at": None})
+
+        # 合并 agents.json 中全部已注册 agent（复用 agents router 的 _load_agents）
+        try:
+            from server.api.routers.agents import _load_agents
+
+            registered = _load_agents()
+            known = {x["agent_id"] for x in agents}
+            for reg in registered:
+                aid = reg.get("id")
+                if aid and aid != "default" and aid not in known:
+                    agents.append(
+                        {"agent_id": aid, "table_name": "memories", "created_at": None}
+                    )
+                    known.add(aid)
+        except Exception as e:
+            logger.warning(f"合并已注册 agent 到记忆表列表失败（保持现有列表）: {e}")
+
+        agents.sort(key=lambda a: a["agent_id"] != "default")
+        return agents
+    finally:
+        if conn is not None:
+            try:
+                conn.close()
+            except Exception:
+                pass
 
 
 class MemoryCreateRequest(BaseModel):
@@ -56,59 +107,13 @@ async def list_agent_memory_tables():
     """获取所有Agent的记忆表列表"""
     from server.dependencies import get_memory_manager
 
-    conn = None
     try:
         memory_mgr = get_memory_manager()
-        conn = memory_mgr._get_connection()
-        cursor = conn.cursor()
-
-        cursor.execute(
-            """
-            SELECT agent_id, table_name, created_at
-            FROM agent_memory_tables
-            ORDER BY created_at DESC
-        """
-        )
-        rows = cursor.fetchall()
-
-        agents = []
-        for row in rows:
-            agents.append({"agent_id": row[0], "table_name": row[1], "created_at": row[2]})
-
-        # 添加默认Agent
-        agents.insert(0, {"agent_id": "default", "table_name": "memories", "created_at": None})
-
-        # 合并 agents.json 中全部已注册 agent，保证记忆页 Agent 下拉列出所有 agent
-        # （不仅限于已单独建过记忆表的 agent，default 已置顶，其余去重追加）。
-        # 复用 agents router 的 _load_agents（带缓存），失败静默保持现有列表。
-        try:
-            from server.api.routers.agents import _load_agents
-
-            registered = _load_agents()
-            known = {x["agent_id"] for x in agents}
-            for reg in registered:
-                aid = reg.get("id")
-                if aid and aid != "default" and aid not in known:
-                    agents.append(
-                        {"agent_id": aid, "table_name": "memories", "created_at": None}
-                    )
-                    known.add(aid)
-        except Exception as e:
-            logger.warning(f"合并已注册 agent 到记忆表列表失败（保持现有列表）: {e}")
-
-        # 确保 default 仍居首位
-        agents.sort(key=lambda a: a["agent_id"] != "default")
-
+        agents = await run_io(_collect_agent_tables, memory_mgr)
         return {"status": "success", "agents": agents, "total": len(agents)}
     except Exception as e:
         logger.error(f"获取Agent记忆表列表失败: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail="获取Agent记忆表列表失败")
-    finally:
-        if conn is not None:
-            try:
-                conn.close()
-            except Exception:
-                pass
 
 
 @router.get("/memories")
