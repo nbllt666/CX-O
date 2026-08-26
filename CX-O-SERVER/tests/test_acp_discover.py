@@ -144,7 +144,9 @@ class TestBroadcast:
         assert msg["type"] == "ACP_BEACON"
         assert msg["agent_id"] == "sys"
         assert msg["agent_name"] == "系统"
-        assert addr == ("255.255.255.255", d.broadcast_port)
+        assert addr == ("255.255.255.255", d.discovery_port)
+        # #21: 广播目标统一为 discovery_port（对端实际绑定监听的端口）；旧实现
+        # 发往 broadcast_port 默认 9998，对端监听 9999，UDP 发现失效。
 
     @pytest.mark.asyncio
     async def test_broadcast_no_socket_noop(self, tmp_path):

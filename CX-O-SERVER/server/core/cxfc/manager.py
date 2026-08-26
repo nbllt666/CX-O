@@ -366,6 +366,18 @@ class CXFCManager:
         tools = tools or []
         skills = skills or []
         handlers = handlers or {}
+        # #28（补充批注）: 注册期校验 tools↔handlers 一一对应——tool 声明的 handler 键
+        # 必须在 handlers 中存在（#27: CXFCEmbeddedTool.handler 是 handlers dict 的键引用，
+        # 而非仅装饰字段）。缺失的工具在 call_tool 嵌入式分支必然失败，此处显式告警。
+        missing_handlers = [
+            t.get("name", "?")
+            for t in tools
+            if isinstance(t, dict) and t.get("handler") and t.get("handler") not in handlers
+        ]
+        if missing_handlers:
+            logger.error(
+                f"嵌入式插件 {plugin_id} 的工具缺少对应 handler，登记后不可调用: {missing_handlers}"
+            )
         plugin = CXFCPluginInfo(
             plugin_id=f"embedded_{plugin_id}",
             host="",
@@ -724,6 +736,12 @@ class CXFCManager:
             plugins_snapshot = list(self._plugins.items())
         for plugin_id, plugin in plugins_snapshot:
             if plugin.status != PluginStatus.CONNECTED:
+                continue
+            # #26（补充批注）: 心跳超时仅适用于 direct 传输（有 host:port 与真实网络保活）。
+            # embedded（进程内插件）与 relay（前端通道，连通性由 dispatcher 存在性判定，
+            # call_tool 已返回 RELAY_UNREACHABLE）没有网络心跳，按 last_seen 超时处理
+            # 会把它们误标 DISCONNECTED、清掉已注册工具。
+            if plugin.transport != PluginTransport.DIRECT:
                 continue
             if plugin.last_seen and (now - plugin.last_seen).total_seconds() > self._heartbeat_timeout:
                 logger.warning(f"插件 {plugin_id} 心跳超时")

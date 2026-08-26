@@ -216,12 +216,22 @@ export function useDanmakuVoice({
           /* 已结束 */
         }
       }
-      if (ctxRef.current && ctxRef.current.state !== 'closed') {
-        void ctxRef.current.close();
+      const ctx = ctxRef.current;
+      if (ctx && ctx.state !== 'closed') {
+        // 对齐 hooks/audio/pipeline.ts 的 H9/F3：close 完成后才将 ctxRef 置 null，
+        // 避免 close 未完成前重挂载时 ensureGraph 判空重建出第二个 AudioContext。
+        void ctx.close().finally(() => {
+          if (ctxRef.current === ctx) {
+            ctxRef.current = null;
+            analyserRef.current = null;
+            gainNodeRef.current = null;
+          }
+        });
+      } else {
+        ctxRef.current = null;
+        analyserRef.current = null;
+        gainNodeRef.current = null;
       }
-      ctxRef.current = null;
-      analyserRef.current = null;
-      gainNodeRef.current = null;
     };
   }, [stopLipLoop]);
 

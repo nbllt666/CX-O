@@ -56,25 +56,33 @@ class MemoryManager(
         _hybrid_search: 混合搜索实例
     """
 
-    _instance = None
+    _instances: Dict[str, "MemoryManager"] = {}
     _lock = threading.Lock()
     _init_lock = threading.Lock()  # H7: 类级初始化互斥锁（防并发首次 __init__ 双初始化）
 
     def __new__(cls, db_path: str = "data/memories.db") -> "MemoryManager":
-        """创建单例实例
+        """按 db_path 获取记忆管理器实例。
 
         Args:
             db_path: 数据库文件路径
 
         Returns:
-            MemoryManager实例
+            MemoryManager实例。相同 ``db_path`` 复用同一实例；不同 ``db_path``
+            得到相互独立实例——修复原固定全局单例 + ``__init__`` 短路导致
+            不同 db_path 复用同一实例、后传路径被首次初始化慢忽略的问题。
+            默认 ``MemoryManager(db_path="data/memories.db")`` 用法保持不变。
         """
-        if cls._instance is None:
+        key = str(db_path)
+        instance = cls._instances.get(key)
+        if instance is None:
             with cls._lock:
-                if cls._instance is None:
-                    cls._instance = super().__new__(cls)
-                    cls._instance._initialized = False
-        return cls._instance
+                instance = cls._instances.get(key)
+                if instance is None:
+                    instance = super().__new__(cls)
+                    instance._initialized = False
+                    cls._instances[key] = instance
+        cls._instance = instance  # 兼容既有引用：指向最近获取的实例
+        return instance
 
     def __init__(self, db_path: str = "data/memories.db") -> None:
         """初始化记忆管理器

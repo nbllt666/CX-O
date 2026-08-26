@@ -32,6 +32,9 @@ const STORE_NAMES = [
   'cxo-pet-audio',
   'cxo-pet-capture',
   'cxo-pet-panel',
+  // F2（第五轮）: obsStore 使用 OBS_STORE_NAME='cxo-pet-obs'，此前不在预载清单，
+  // localStorage 被清时 OBS 采集尺寸/绿幕状态回退默认（400×500、透明）
+  'cxo-pet-obs',
 ];
 
 // 需要与 Electron 主进程 app-config 双向同步的配置键

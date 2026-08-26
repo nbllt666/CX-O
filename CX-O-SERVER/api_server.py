@@ -130,7 +130,11 @@ def _decode_audio_bytes(audio_bytes: bytes) -> Optional[np.ndarray]:
     """wav 字节 → float32 16kHz 单声道 numpy 数组；非法音频返回 None。
 
     与 /asr/recognize 的 wave 解析套路一致，并重采样至 16k。
+
+    第五轮 M8：临时 .wav 清理改为 try/finally——旧实现仅成功路径 unlink，
+    wave.open/重采样抛异常时泄漏临时文件。
     """
+    temp_path: Optional[str] = None
     try:
         with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as f:
             f.write(audio_bytes)
@@ -166,11 +170,16 @@ def _decode_audio_bytes(audio_bytes: bytes) -> Optional[np.ndarray]:
             indices = np.linspace(0, len(audio_float) - 1, target_length)
             audio_float = np.interp(indices, np.arange(len(audio_float)), audio_float)
 
-        Path(temp_path).unlink(missing_ok=True)
         return audio_float
     except Exception as e:  # noqa: BLE001
         logger.warning(f"音频解码失败: {e}")
         return None
+    finally:
+        if temp_path is not None:
+            try:
+                Path(temp_path).unlink(missing_ok=True)
+            except Exception:  # noqa: BLE001
+                pass
 
 
 # ------------------------------------------------------------------ #
@@ -184,43 +193,13 @@ async def recognize_audio(request: ASRRequest):
     try:
         audio_bytes = base64.b64decode(request.audio)
 
-        with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as f:
-            f.write(audio_bytes)
-            temp_path = f.name
-
-        with wave.open(temp_path, 'rb') as wf:
-            sample_rate = wf.getframerate()
-            channels = wf.getnchannels()
-            sample_width = wf.getsampwidth()
-            frames = wf.readframes(wf.getnframes())
-
-        if sample_width == 2:
-            dtype = np.int16
-        elif sample_width == 4:
-            dtype = np.int32
-        else:
-            dtype = np.uint8
-
-        audio_array = np.frombuffer(frames, dtype=dtype)
-
-        if dtype == np.uint8:
-            audio_float = (audio_array - 128) / 128.0
-        elif dtype == np.int16:
-            audio_float = audio_array / 32768.0
-        else:
-            audio_float = audio_array / 2147483648.0
-
-        if channels > 1:
-            audio_float = audio_float.reshape(-1, channels).mean(axis=1)
-
-        if sample_rate != 16000:
-            target_length = int(len(audio_float) * 16000 / sample_rate)
-            indices = np.linspace(0, len(audio_float) - 1, target_length)
-            audio_float = np.interp(indices, np.arange(len(audio_float)), audio_float)
+        # M8（第五轮）: 复用 _decode_audio_bytes（内部 finally 保证临时文件清理），
+        # 消除三处重复解码块，异常路径不再泄漏临时 .wav。
+        audio_float = _decode_audio_bytes(audio_bytes)
+        if audio_float is None:
+            raise HTTPException(status_code=400, detail="音频解码失败")
 
         result = _run_inference(audio_float, request.language, request.use_itn)
-
-        Path(temp_path).unlink(missing_ok=True)
 
         return ASRResponse(
             status="success",
@@ -228,6 +207,8 @@ async def recognize_audio(request: ASRRequest):
             language=request.language
         )
 
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"ASR error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
@@ -251,46 +232,17 @@ async def api_v1_asr(
         audio_bytes = await file.read()
         use_itn_bool = use_itn.lower() in ("true", "1", "yes")
 
-        with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as f:
-            f.write(audio_bytes)
-            temp_path = f.name
-
-        with wave.open(temp_path, 'rb') as wf:
-            sample_rate = wf.getframerate()
-            channels = wf.getnchannels()
-            sample_width = wf.getsampwidth()
-            frames = wf.readframes(wf.getnframes())
-
-        if sample_width == 2:
-            dtype = np.int16
-        elif sample_width == 4:
-            dtype = np.int32
-        else:
-            dtype = np.uint8
-
-        audio_array = np.frombuffer(frames, dtype=dtype)
-
-        if dtype == np.uint8:
-            audio_float = (audio_array - 128) / 128.0
-        elif dtype == np.int16:
-            audio_float = audio_array / 32768.0
-        else:
-            audio_float = audio_array / 2147483648.0
-
-        if channels > 1:
-            audio_float = audio_float.reshape(-1, channels).mean(axis=1)
-
-        if sample_rate != 16000:
-            target_length = int(len(audio_float) * 16000 / sample_rate)
-            indices = np.linspace(0, len(audio_float) - 1, target_length)
-            audio_float = np.interp(indices, np.arange(len(audio_float)), audio_float)
+        # M8（第五轮）: 复用 _decode_audio_bytes，异常路径不再泄漏临时文件。
+        audio_float = _decode_audio_bytes(audio_bytes)
+        if audio_float is None:
+            raise HTTPException(status_code=400, detail="音频解码失败")
 
         result = _run_inference(audio_float, language, use_itn_bool)
 
-        Path(temp_path).unlink(missing_ok=True)
-
         return {"results": [result]}
 
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"ASR /api/v1/asr error: {e}")
         raise HTTPException(status_code=500, detail=str(e))

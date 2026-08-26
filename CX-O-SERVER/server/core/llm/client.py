@@ -271,6 +271,20 @@ class OllamaClient(LLMClient):
             async with client.stream(
                 "POST", f"{self.host}/api/chat", json=request_body, headers=headers
             ) as response:
+                # 显式检查状态码：非 2xx 时 aiter_lines() 不产出，此前被静默吞掉
+                # 导致调用方无任何输出，无法与"空输出"区分。参照 VLLMClient 做法。
+                # 仅对真实 int 状态码做判定（测试用之 lenient MagicMock 无 status_code 视为成功）。
+                if isinstance(response.status_code, int) and response.status_code != 200:
+                    error_body = await response.aread()
+                    error_text = error_body.decode("utf-8", errors="replace")[:1000]
+                    logger.error(
+                        f"Ollama stream_chat HTTP {response.status_code}: {error_text}"
+                    )
+                    yield {
+                        "type": "error",
+                        "content": f"Ollama HTTP {response.status_code}: {error_text}",
+                    }
+                    return
                 async for line in response.aiter_lines():
                     if line:
                         try:
@@ -586,6 +600,10 @@ class VLLMClient(LLMClient):
                 )
         except Exception as e:
             logger.error(f"VLLM流式调用失败: {e}")
+            # #1（CX-O问题汇总报告）: 顶层异常曾静默吞掉不产出任何块，调用方
+            # 无法区分「空输出」与「调用失败」，TTS 等下游会发空结束标记。
+            # 与 OllamaClient 对齐：显式产出 error 块结束流。
+            yield {"type": "error", "content": f"VLLM流式调用失败: {e}"}
 
     @property
     def model_name(self) -> str:

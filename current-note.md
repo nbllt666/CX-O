@@ -4,6 +4,27 @@
 
 ## 做到哪了
 
+- **修复 CX-O 问题汇总报告补充批注 ACP/CXFC 增量（#20-#28）**（2026-08-26；issue `模块0-20260826-07`，变更文档 `.trae/documents/20260826_模块0_修复ACP与CXFC增量问题.md`）
+  - 工程过程：用户手动更新 `C:\CX-A\.trae\documents\CX-O问题汇总报告.md` 新增「补充批注（ACP 与 CXFC 增量）#20-#28」并指定复核修复 → 逐项源码核实全部属实 → 修复 8 项：**#21** discover 广播端口统一为 discovery_port（旧 9998→9999 错位致 UDP 发现失效）+ 测试修正；**#22/#23** ACP manager 心跳/离线清扫循环接线（connection.heartbeat_interval/timeout，_track_background_task 统一登记，stop 取消）；**#24** get_group_messages 双参语义冗余拆分；**#25** get_status 接 settings.config.acp + ACPGroupConfig 新增 max_groups；**#26** cxfc 心跳超时仅适用 DIRECT transport（embedded/relay 豁免防误标 DISCONNECTED）；**#27/#28** CXFCEmbeddedTool.handler 键语义统一 + 注册期 tools↔handlers 校验告警；**#20** 核实为 CX-A 侧清单认知项（CX-O 无引用 acp/_common.py），记录不改。
+  - 交接状态：**已闭合**（py_compile 全过 + acp/cxfc/config 定向 **209 passed**；**全量合并回归 4167 passed / 0 failed（139.77s）**——含拆查根治：TunerClient 不再急切构造 httpx.AsyncClient（本机默认构造实测 21s，6 条 tuner 用例曾各 ~27s），改注入/惰性共享客户端后全量 299.85s→139.77s，与你手动 <2min 一致；详见变更文档「四、附录」）。
+  - 最终结果：补充批注 9 项尽数处置（8 修复 + 1 记录）；未触碰 public/ 与 .trae/rules。
+  - 未闭合项：后端需重启加载新代码（其余已闭合）。
+  - 接续入口：全量回归通过后重启后端。
+
+- **修复 CX-O 问题汇总报告 19 项**（2026-08-26；issue `模块0-20260826-06`，变更文档 `.trae/documents/20260826_模块0_修复CX-O问题汇总报告.md`）
+  - 工程过程：用户指定修复 CX-A 移植审查报告（`.trae/documents/CX-O问题汇总报告.md`）所列问题 → 逐项源码核实 → 修复 17 项 + 记录不改 2 项：LLM 流式异常 #1（VLLM 补 error 块）、图谱 #3 add_vector 统一返回 / #4 回退索引起用名称 / #5 nodes 补 name 列幂等迁移、记忆 #8 按 db_path 多实例、蒸馏 #9 真实落库 / #10 target_agent_id 归因消费 / #11 磁盘恢复、语音 #12 VAD 能量归一化（阈值等比换算）/#13 ASR 正则非贪婪 / #14 get_voices 接资产索引、Agent #15 种子兜底 / #17 delete 锚点禁删、文档 #6/#16/#18/#19 拓扑/边界/矩阵对齐（docs/CX-A管理接口文档.md）。不改 #2（ValueError 对外契约）、#7（decay 命名与 docstring 自洽）。
+  - 交接状态：**已闭合**（内联簇 143 passed；图/记忆簇 355 passed；蒸馏簇 101 passed；文档对齐完成；**合并全量回归 4167 passed / 0 failed（299.69s）**；此前超长耗时系并行负载所致，人工直跑 <2 分钟属正常）。
+  - 最终结果：CX-O 问题汇总报告 19 项皆处置（17 修复 + 2 记录不改）；三个子任务并行落地（graph/memory / distillation / 文档），未触碰 public/ 与 .trae/rules。
+  - 未闭合项：①蒸馏 MemoryManager 落库默认 db_path 相对 CWD 为既有约定（Agent 提示项，可后续单独对齐项目根绝对路径）；②后端需重启加载新代码。
+  - 接续入口：全量回归通过后重启后端；如需跟进蒸馏落库路径约定可后续单独对齐。
+
+- **第五轮全量扫描 + 高危与中项修复**（2026-08-26；issue `模块0-20260826-05`，变更文档 `.trae/documents/20260826_模块0_第五轮扫描高危与中项修复.md`）
+  - 工程过程：用户要求再次全量扫描 → 4 路并行代理分区取证（后端核心/语音服务/API网关与辅助/前端Electron）→ 定位 3 高 + 14 中 + 约 18 低/疑似 → AskUserQuestion 裁决「先修高+已验证中项」→ 修复落地：H1 `Settings.save_config()` 缺失（7 处调用点必 500 不落盘，测试 mock 掩盖）、H2 `/api/service/*` 4 端点补鉴权、H3 向量配置写键映射；M1 插件双初始化、M2 强理由打断令牌 REVOKED 矛盾、M3 向量化队列重启/task_done、M4 alarm 连接淘汰 busy 计数、M5 图数据库 shutdown 统一关闭、M6 TTS 细粒度流式并入信号量、M7 打断判定 LLM 超时、M8 api_server 临时 wav finally 清理、M9 服务配置双源+缺省对齐、M10 流式引擎模型并发锁+recent_match 锁内读取；F1-F4 前端四处 + 测试契约修正。
+  - 交接状态：**已闭合**（后端定向 561 passed / 0 failed【首轮 431 含既有断言修复后重跑 130 全绿】；H1/H2 运行时实证；前端 tsc 零错误 + vitest 75 passed；全量后端回归已启动待回填）。
+  - 最终结果：高严重度 3 项全修复（配置保存、service 鉴权、向量配置写入）；中严重度 14 项修复 12 项 + M10 安全子项，2 项延期为观察项（流式引擎缓冲裁剪需容器内真机验证）；低/疑似约 18 项入 backlog 未动。
+  - 未闭合项：①全量回归结果待回填；②观察项 4 项见变更文档 §五（缓冲裁剪/乱序设计/service 控制端点密钥交互/低项 backlog）；③后端需重启加载新代码；前端未重打安装包。
+  - 接续入口：全量回归通过后即可重启后端；如需跟进低/疑似 backlog，从变更文档 §五-4 清单继续。
+
 - **会议重定位为「多 Agent 互动空间」**（已闭合，2026-08-25；spec `refactor-meeting-to-interaction-room`、变更文档 `20260825_模块0_会议重定位互动空间.md`）
   - 工程过程：用户指出「会议功能只是为了让多个 agent 一起和用户以及观众交互，现在的设计不合适」→ AskUserQuestion 三决策（场景=本地桌宠+直播观众都要；回应=群聊式多态；模块=重构演进）→ 侦查发现原 MeetingCoordinator 从未装配到主服务+广播悬空+弹幕仅回显本人 → T0 基线(35 passed) → T1 main.py 装配+广播接线 → T2 TurnArbiter 改主答选择/process_message/插话循环/audience 转录 → T3 danmaku_connector+live_client 全房间广播+协调器消费弹幕 → T4 MeetingConfig 重构+REST 扩展 → T5 前端事件订阅+轮询兜底 → T6 互动空间视图+i18n → T7 端到端。
   - 交接状态：**已闭合**（服务端定向回归 265 passed；前端 typecheck/lint、vitest 目标 132 通过/全量 589 通过[3 electron/ble 存量失败与本次无关]；HTTP 端到端冒烟全链路成功：start→speak(user)→speak(audience 水友小明)→recent_messages 四态→toggle off→end(summary 393)）。spec 三件套与 checklist 全勾选。

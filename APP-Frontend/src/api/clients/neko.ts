@@ -18,6 +18,9 @@
 let currentPort: number | null = null;
 let cachedMarketToken: string | null = null;
 
+/** 浏览器直连 fetch 超时（ms），与主进程 neko:http 15s 超时对齐 */
+const NEKO_FETCH_TIMEOUT_MS = 15000;
+
 export function setNekoPort(port: number | null): void {
   currentPort = port;
   // 端口变化时 token 可能失效，重置
@@ -82,7 +85,8 @@ async function ipcRequest<T>(
   return JSON.parse(res.body) as T;
 }
 
-/** 浏览器 / 直连回退 */
+/** 浏览器 / 直连回退（F4：加 15s 超时——旧实现裸 fetch 无超时，插件服务器挂起
+ *  时 Promise 永久悬挂，nekoStore 的 loading 态无法复位；与主进程 neko:http 超时对齐） */
 async function directRequest<T>(
   method: string,
   pathValue: string,
@@ -97,7 +101,10 @@ async function directRequest<T>(
     init.headers = { ...init.headers, 'Content-Type': 'application/json' };
     init.body = typeof body === 'string' ? body : JSON.stringify(body);
   }
-  const res = await fetch(buildUrl(pathValue, query), init);
+  const res = await fetch(buildUrl(pathValue, query), {
+    ...init,
+    signal: AbortSignal.timeout(NEKO_FETCH_TIMEOUT_MS),
+  });
   if (!res.ok) {
     let detail = '';
     try {

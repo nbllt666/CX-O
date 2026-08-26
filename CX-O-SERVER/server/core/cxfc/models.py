@@ -145,7 +145,13 @@ class CXFCRelayResultRequest(BaseModel):
 
 
 class CXFCEmbeddedTool(BaseModel):
-    """嵌入式工具登记结构——名称、描述、参数 schema 与可调用 handler 名称。"""
+    """嵌入式工具登记结构——名称、描述、参数 schema 与可调用 handler 键。
+
+    `handler` 为 handlers dict 的键引用（register_embedded_plugin 注入的进程内
+    Callable 映射），而非描述字符串——#27（补充批注）旧注释只当作描述字段，
+    实际分发走 `_embedded_handlers` dict，二者键语义未统一；现注册期校验
+    handler 键必须存在于 handlers。
+    """
     name: str
     description: str = ""
     parameters: Dict[str, Any] = {}

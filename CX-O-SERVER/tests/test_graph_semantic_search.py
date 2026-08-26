@@ -158,6 +158,21 @@ class TestFallbackSearch:
         monkeypatch.setattr(dbmod, "get_database", lambda config: fallback_db)
         assert searcher._fallback_search("zzz", None, 10, None) == []
 
+    def test_fallback_recalls_node_by_name_when_text_empty(self, searcher, monkeypatch):
+        """text_content 为空但 properties.name 存在时，回退检索应能召回（Y-4 修复）。"""
+        db = FakeDB([
+            _row("n_empty", None, ntype="concept", agent="default"),
+            _row("n_named", None, ntype="concept", agent="default"),
+        ])
+        # 为 n_named 补 name 属性（text_content 为空串兜底无内容）
+        for r in db.rows:
+            if r["id"] == "n_named":
+                r["properties"] = {"name": "semantic model"}
+        monkeypatch.setattr(dbmod, "get_database", lambda config: db)
+        results = searcher._fallback_search("semantic", None, 10, None)
+        assert [r.node.id for r in results] == ["n_named"]
+        assert results[0].node.text_content in (None, "")
+
     def test_search_falls_back_when_no_client(self, searcher, fallback_db, monkeypatch):
         monkeypatch.setattr(dbmod, "get_database", lambda config: fallback_db)
         searcher._initialized = True  # 跳过 weaviate 连接的 slow initialize

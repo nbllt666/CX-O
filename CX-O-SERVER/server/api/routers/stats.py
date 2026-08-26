@@ -78,10 +78,18 @@ async def get_interrupt_stats(_: bool = Depends(verify_admin_api_key)):
     """获取 AI 插话打断判定统计（admin API key 保护）。
 
     返回 agent_interrupt_user 模块的 get_stats() 结果（总判定数 / 三态 decision 计数 /
-    触发打断次数 / 触发回复次数）。
+    触发打断次数 / 触发回复次数）。模块未初始化时返回可控 503，而非裸 500。
     """
-    from server.services.agent_interrupt_user import get_agent_interrupt_module
-    return {"status": "success", "data": get_agent_interrupt_module().get_stats()}
+    try:
+        from server.services.agent_interrupt_user import get_agent_interrupt_module
+    except Exception as e:
+        logger.error(f"AI 插话打断模块不可用: {e}")
+        raise HTTPException(status_code=503, detail=f"AI 插话打断模块不可用: {e}")
+    try:
+        return {"status": "success", "data": get_agent_interrupt_module().get_stats()}
+    except Exception as e:
+        logger.error(f"获取 AI 插话打断统计失败: {e}", exc_info=True)
+        raise HTTPException(status_code=503, detail=str(e))
 
 
 @router.post("/stats/interrupt/enable")
@@ -94,7 +102,11 @@ async def update_interrupt_enable(
     仅更新请求体中显式传入的字段（enabled / speech_end_fallback），未传入字段保持现状；
     返回热更新后的新状态。set_config 为内存热更新，不落盘。
     """
-    from server.services.agent_interrupt_user import get_agent_interrupt_module
+    try:
+        from server.services.agent_interrupt_user import get_agent_interrupt_module
+    except Exception as e:
+        logger.error(f"AI 插话打断模块不可用: {e}")
+        raise HTTPException(status_code=503, detail=f"AI 插话打断模块不可用: {e}")
 
     config = {"agent_interrupt": {}}
     if request.enabled is not None:
@@ -102,8 +114,12 @@ async def update_interrupt_enable(
     if request.speech_end_fallback is not None:
         config["agent_interrupt"]["speech_end_fallback"] = request.speech_end_fallback
 
-    module = get_agent_interrupt_module()
-    module.set_config(config)
+    try:
+        module = get_agent_interrupt_module()
+        module.set_config(config)
+    except Exception as e:
+        logger.error(f"更新 AI 插话打断配置失败: {e}", exc_info=True)
+        raise HTTPException(status_code=503, detail=str(e))
     return {
         "status": "success",
         "data": {"enabled": module.enabled, "speech_end_fallback": module.speech_end_fallback},

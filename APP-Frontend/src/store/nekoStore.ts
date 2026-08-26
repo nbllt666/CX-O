@@ -198,7 +198,7 @@ export const useNekoStore = create<NekoState>()((set, get) => ({
     try {
       const data = await nekoApi.listPlugins();
       if (seq !== pluginSeq) return;
-      set({ plugins: normalizePluginList(data) });
+      set({ plugins: normalizePluginList(data), error: null });
     } catch (e) {
       if (seq === pluginSeq) {
         set({ error: e instanceof Error ? e.message : '插件列表加载失败' });
@@ -212,7 +212,7 @@ export const useNekoStore = create<NekoState>()((set, get) => ({
     const seq = ++installedSeq;
     try {
       const data = await nekoApi.marketInstalled();
-      if (seq === installedSeq) set({ installed: data?.installed ?? [] });
+      if (seq === installedSeq) set({ installed: data?.installed ?? [], error: null });
     } catch {
       // 市场桥不可达不阻塞插件列表
     }
@@ -222,7 +222,7 @@ export const useNekoStore = create<NekoState>()((set, get) => ({
     const seq = ++marketSeq;
     try {
       const status = await nekoApi.marketStatus();
-      if (seq === marketSeq) set({ marketStatus: status, marketUnreachable: false });
+      if (seq === marketSeq) set({ marketStatus: status, marketUnreachable: false, error: null });
     } catch {
       if (seq === marketSeq) set({ marketUnreachable: true });
     }
@@ -243,7 +243,7 @@ export const useNekoStore = create<NekoState>()((set, get) => ({
         if (Array.isArray(raw)) list = raw as NekoCatalogPlugin[];
       }
       if (seq !== catalogSeq) return;
-      set({ catalog: list, marketUnreachable: false });
+      set({ catalog: list, marketUnreachable: false, error: null });
     } catch (e) {
       if (seq === catalogSeq) {
         set({ error: e instanceof Error ? e.message : '商店目录加载失败', marketUnreachable: true });
@@ -263,6 +263,7 @@ export const useNekoStore = create<NekoState>()((set, get) => ({
       const res = await nekoApi.marketInstall(req);
       set((s) => ({
         installTasks: { ...s.installTasks, [res.task_id]: { task_id: res.task_id, status: res.status, stage: 'pending', progress: 0, message: res.message } },
+        error: null,
       }));
       return res.task_id;
     } catch (e) {
@@ -278,7 +279,7 @@ export const useNekoStore = create<NekoState>()((set, get) => ({
     try {
       const task = await nekoApi.marketTask(taskId);
       if (taskSeqMap.get(taskId) !== seq) return;
-      set((s) => ({ installTasks: { ...s.installTasks, [taskId]: task } }));
+      set((s) => ({ installTasks: { ...s.installTasks, [taskId]: task }, error: null }));
       if (task.status === 'completed') {
         await get().refreshInstalled();
         await get().refreshPlugins();

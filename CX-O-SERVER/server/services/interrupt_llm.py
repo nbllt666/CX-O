@@ -30,6 +30,9 @@ class InterruptModuleBase:
     """
 
     _independent_timeout: float = 3.0
+    # M7（第五轮）: 主 LLM 打断判定调用的超时上限。无超时的话，LLM 挂起会
+    # 永久占用 `_interrupt_sem` 槽位/后台任务，最终打断判定静默失效、任务累积。
+    _main_llm_timeout: float = 15.0
 
     def __init__(self):
         self._session_id: Optional[str] = None
@@ -79,7 +82,13 @@ class InterruptModuleBase:
             # 用浅拷贝隔离，判定结束后不污染真实上下文。
             messages = list(self._get_context())
             messages.append({"role": "user", "content": user_content})
-            response = await llm.chat(messages=messages, stream=False)
+            response = await asyncio.wait_for(
+                llm.chat(messages=messages, stream=False),
+                timeout=self._main_llm_timeout,
+            )
+        except asyncio.TimeoutError:
+            logger.warning("主 LLM 打断判定超时（%ss），按不可判定降级", self._main_llm_timeout)
+            return None
         except Exception as e:
             logger.warning(f"主 LLM 不可用/调用失败: {e}")
             return None

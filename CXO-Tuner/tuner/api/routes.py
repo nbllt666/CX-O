@@ -155,6 +155,13 @@ def trigger_train(req: TrainTriggerRequest, request: Request) -> TrainStatus:
         anchor_ratio=anchor_ratio,
     )
     store = _job_store(request)
+    # H2/backlog（issue 08）: 互斥预检须在 store.create 之前——旧实现先 create
+    # 再检查，已有训练进行时会遗留一个永不执行的空 idle 任务在 job store。
+    if is_training_in_progress():
+        raise HTTPException(
+            status_code=409,
+            detail={"error": "training_in_progress", "reason": "已有训练任务进行中，请等待完成后再触发"},
+        )
     store.create(job)
     # 先快照初始 idle 状态，再启动后台线程，保证返回 status 恒为 idle
     initial_status = _to_status(job)
@@ -164,12 +171,6 @@ def trigger_train(req: TrainTriggerRequest, request: Request) -> TrainStatus:
     )
 
     # 后台线程训练：不阻塞请求
-    # H2: 训练互斥预检——已有训练进行时快速 409（run 内 try_begin_training 兜底最终一致性）
-    if is_training_in_progress():
-        raise HTTPException(
-            status_code=409,
-            detail={"error": "training_in_progress", "reason": "已有训练任务进行中，请等待完成后再触发"},
-        )
     trainer = _trainer(request)
     thread = threading.Thread(target=trainer.run, args=(job.job_id,), daemon=True, name=f"train-{job.job_id}")
     thread.start()

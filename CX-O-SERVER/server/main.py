@@ -377,6 +377,8 @@ async def lifespan(app: FastAPI):
             lifespan_logger.info("非 leader worker：跳过 AlarmManager 后台 Timer，由 leader worker 承担")
 
         async def on_offline(agent_id: str):
+            from server.core.utils import run_io
+
             try:
                 session_id = f"agent-{agent_id}"
                 cm = services.context_manager
@@ -384,7 +386,8 @@ async def lifespan(app: FastAPI):
                 if not cm:
                     return
 
-                all_messages = cm.get_messages(session_id, limit=1000)
+                # 同步 sqlite 读取移入 IO 线程池，避免阻塞事件循环
+                all_messages = await run_io(cm.get_messages, session_id, limit=1000)
 
                 if not all_messages or len(all_messages) <= 10:
                     return
@@ -412,8 +415,12 @@ async def lifespan(app: FastAPI):
                         tags=["offline_save", "context", agent_id],
                     )
 
-                for msg in messages_to_archive:
-                    cm.delete_message(msg.get("id"))
+                # 逐条 sqlite 删除同样移入 IO 线程池（单次批量执行，避免 for 循环阻塞）
+                def _batch_delete(msgs):
+                    for msg in msgs:
+                        cm.delete_message(msg.get("id"))
+
+                await run_io(_batch_delete, messages_to_archive)
 
                 lifespan_logger.info(
                     f"离线保存上下文成功: agent={agent_id}, 归档 {len(messages_to_archive)} 条消息"
@@ -992,8 +999,15 @@ async def lifespan(app: FastAPI):
     if hasattr(services, 'cxfc_discovery') and services.cxfc_discovery:
         await shutdown_service("CXFC发现服务", services.cxfc_discovery.stop_discovery, logger_=lifespan_logger)
 
-    if services.graph_database:
-        await shutdown_service("图数据库", services.graph_database.close, logger_=lifespan_logger)
+    # M5（第五轮）: 旧实现 `if services.graph_database:` 恒为 None（懒创建实例
+    # 从不注册到 services），关闭分支是死代码。改为统一关闭依赖层注册表
+    # 中全部 per-agent 图数据库。
+    async def _shutdown_graph():
+        from server.dependencies import close_all_graph_databases
+
+        close_all_graph_databases()
+
+    await shutdown_service("图数据库", _shutdown_graph, logger_=lifespan_logger)
 
     async def _shutdown_alarm():
         from server.core.alarm import get_alarm_manager

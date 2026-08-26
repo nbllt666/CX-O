@@ -196,6 +196,21 @@ class TestScheduledCrud:
     def test_update_not_found(self, manager):
         assert manager.update_scheduled_task("nope", name="x") is None
 
+    def test_update_atomic_on_validation_error(self, manager):
+        # G5：混合字段（合法 name + 非法 schedule）应整体不应用，不留半更新
+        t = manager.create_scheduled_task(
+            "a", {"type": "tool", "tool_name": "x"}, {"type": "interval", "interval_seconds": 10}
+        )
+        with pytest.raises(ValueError):
+            manager.update_scheduled_task(
+                t["id"],
+                name="renamed",
+                schedule={"type": "bad_type"},
+            )
+        got = manager.get_scheduled_task(t["id"])
+        assert got["name"] == "a"  # name 未被部分应用
+        assert got["schedule"]["type"] == "interval"
+
     def test_pause_resume(self, manager):
         t = manager.create_scheduled_task("a", {"type": "tool", "tool_name": "x"}, {"type": "interval", "interval_seconds": 10})
         assert manager.pause_scheduled_task(t["id"])["enabled"] is False

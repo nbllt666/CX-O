@@ -224,6 +224,24 @@ def remove_graph_database(agent_id: str) -> None:
         pass
 
 
+def close_all_graph_databases() -> None:
+    """关闭并清空全部懒创建的图数据库/图存储实例（服务 shutdown 时调用）。
+
+    第五轮 M5：per-agent 图库经 `_get_or_create_graph_database` 懒创建，
+    main.py 原关闭分支 `if services.graph_database:` 恒为 None（死代码），
+    懒创建实例从不 close → 句柄/连接在重启间泄漏。改为统一收口。
+    """
+    with _graph_registry_lock:
+        _graph_stores.clear()
+        _graph_databases.clear()
+    try:
+        from server.core.graph.database import close_all_databases
+
+        close_all_databases()
+    except Exception:
+        pass
+
+
 def get_cxfc_manager(state: ServiceState = Depends(get_service_state)) -> Optional[Any]:
     """获取 CXFC 管理器实例，可能为 None。"""
     return _resolve_state(state).cxfc_manager

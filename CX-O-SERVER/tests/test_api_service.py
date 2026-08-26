@@ -37,8 +37,19 @@ class TestApplyConfigUpdates:
     def test_weaviate_backend(self):
         out = _apply_config_updates({}, {"vector": {"backend": "weaviate", "weaviate_host": "h", "weaviate_port": 9000}})
         assert out["memory"]["vector_backend"] == "weaviate"
-        assert out["memory"]["weaviate"]["weaviate_host"] == "h"
-        assert out["memory"]["weaviate"]["weaviate_port"] == 9000
+        # 第五轮 H3：写键映射为 UnifiedConfig.WeaviateConfig 真实字段 host/port
+        assert out["memory"]["weaviate"]["host"] == "h"
+        assert out["memory"]["weaviate"]["port"] == 9000
+        assert out["memory"]["weaviate"]["embedded"] is False
+
+    def test_weaviate_embedded_backend(self):
+        out = _apply_config_updates(
+            {}, {"vector": {"backend": "weaviate_embedded", "weaviate_host": "h", "weaviate_port": 9000}}
+        )
+        assert out["memory"]["vector_backend"] == "weaviate_embedded"
+        assert out["memory"]["weaviate"]["host"] == "h"
+        assert out["memory"]["weaviate"]["port"] == 9000
+        assert out["memory"]["weaviate"]["embedded"] is True
 
     def test_qdrant_backend(self):
         out = _apply_config_updates({}, {"vector": {"backend": "qdrant", "qdrant_host": "q", "qdrant_port": 6333}})

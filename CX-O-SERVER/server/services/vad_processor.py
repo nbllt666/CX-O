@@ -45,7 +45,10 @@ class VADProcessor:
         self.mode = VADMode.WEBRTC
         self.sample_rate = 16000
         self.frame_duration_ms = 30
-        self.energy_threshold = 500
+        # #12（CX-O问题汇总报告）: 阈值语义改为「归一化到 [-1,1] 满刻度后的均方能量」。
+        # 旧值 500 是原始 int16 刻度的历史缺省（config/vad.yaml 仍为 500），
+        # 载入时等比换算（/32768²），运行时行为不变，只是判据不再与位深耦合。
+        self.energy_threshold = 500 / 32768.0 ** 2
         self.silence_threshold_ms = 500
         self.speech_threshold_ms = 300
         # 双流式模式下 VAD 仅作兜底，不阻塞 ASR Partial 驱动的主流程。
@@ -74,7 +77,8 @@ class VADProcessor:
         self.mode = VADMode(mode_str)
         self.sample_rate = config.get("sample_rate", 16000)
         self.frame_duration_ms = config.get("frame_duration_ms", 30)
-        self.energy_threshold = config.get("energy_threshold", 500)
+        # #12: legacy 配置为原始 int16 刻度，等比换算到归一化刻度（行为不变）
+        self.energy_threshold = config.get("energy_threshold", 500) / 32768.0 ** 2
         self.silence_threshold_ms = config.get("silence_threshold_ms", 500)
         self.speech_threshold_ms = config.get("speech_threshold_ms", 300)
         # 双流式模式下 VAD 仅作兜底：min_silence_duration_ms 默认 150ms，
@@ -201,7 +205,10 @@ class VADProcessor:
 
         samples = struct.unpack(f'<{len(audio_data)//2}h', audio_data)
 
-        energy = sum(s * s for s in samples) / len(samples)
+        # #12（CX-O问题汇总报告）: 归一化至 [-1,1] 满刻度再求均方能量——
+        # 旧实现直接对原始 int16 平方和，判据粒度与位深/采样缩放耦合，
+        # 底噪易误判。归一化后与容器 fsmn-vad 的 float 语义一致，即 -63dBFS。
+        energy = sum((s / 32768.0) ** 2 for s in samples) / len(samples)
         return energy
 
     def _detect_energy(self, audio_data: bytes) -> bool:

@@ -80,6 +80,10 @@ class InterruptCoordinator:
                 logger.warning("强理由打断：agent %s 静音失败", agent.agent_id)
         # 强制收回当前持牌者
         await room.token.revoke()
+        # M2（第五轮）修复：SpeakingToken.acquire 在 REVOKED 态恒返回 False（仅排队），
+        # 不重置则强理由打断的「令牌转给打断者」永远不可达。revoke 后先 reset 回 IDLE
+        # 再为目标 agent 授予令牌，交互语义与注释一致。
+        await room.token.reset()
         granted = await room.token.acquire(from_agent_id)
         if not granted:
             logger.warning(

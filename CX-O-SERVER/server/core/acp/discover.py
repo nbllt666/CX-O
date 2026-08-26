@@ -115,8 +115,11 @@ class ACPLanDiscovery:
                 "port": self.discovery_port,
             }
 
+            # #21（CX-O问题汇总报告补充批注）: 旧实现 sendto(broadcast_port) 而监听
+            # bind(discovery_port)，默认 9998/9999 错位致对端无人监听 9998、UDP 发现失效。
+            # 广播目标改为对端实际监听端口 discovery_port（BEACON 携带的 port 字段不变）。
             self._broadcast_socket.sendto(
-                json.dumps(message).encode(), (self.broadcast_address, self.broadcast_port)
+                json.dumps(message).encode(), (self.broadcast_address, self.discovery_port)
             )
         except Exception as e:
             logger.warning(f"广播失败: {e}")

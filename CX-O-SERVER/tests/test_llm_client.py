@@ -246,6 +246,25 @@ class TestStreamChat:
         chunks = [c async for c in client.stream_chat([{"role": "user", "content": "hi"}])]
         assert [c["content"] for c in chunks] == ["ok"]
 
+    @pytest.mark.asyncio
+    async def test_stream_non_2xx_yields_error(self, monkeypatch, client):
+        """非 2xx 状态码应产出 error 块而非静默无输出（与 VLLMClient 对齐）。"""
+        mock_response = MagicMock()
+        mock_response.status_code = 500
+        mock_response.aread = AsyncMock(return_value=b"internal boom")
+        async_client = AsyncMock()
+        stream_ctx = MagicMock()
+        stream_ctx.__aenter__.return_value = mock_response
+        stream_ctx.__aexit__ = AsyncMock(return_value=False)
+        async_client.stream = MagicMock(return_value=stream_ctx)
+        monkeypatch.setattr(
+            "server.core.llm.client.get_shared_http_client", lambda: async_client
+        )
+        chunks = [c async for c in client.stream_chat([{"role": "user", "content": "hi"}])]
+        assert len(chunks) == 1
+        assert chunks[0]["type"] == "error"
+        assert "Ollama HTTP 500" in chunks[0]["content"]
+
 
 # ---------------------------------------------------------------- 属性与可用性
 class TestMisc:

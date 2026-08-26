@@ -415,10 +415,10 @@ function registerIpcHandlers(): void {
     return ids;
   });
 
-  // 在系统默认浏览器打开外部 URL（OBS 源预览等；仅放行 http/https/file）
+  // 在系统默认浏览器打开外部 URL（OBS 源预览等；仅放行 http/https，不放行 file:）
   ipcMain.handle('shell:open-external', (_event, url: string) => {
     if (typeof url !== 'string') return;
-    if (/^(https?:|file:)/i.test(url)) {
+    if (/^https?:\/\//i.test(url)) {
       shell.openExternal(url);
     }
   });

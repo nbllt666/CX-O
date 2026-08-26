@@ -249,6 +249,9 @@ export function useWebSocket(options: WebSocketOptions): UseWebSocketReturn {
             resetIsGenerating();
             onMessageRef.current?.({ type: 'done' });
           } else if (data.data?.content) {
+            // 续期客户端生成超时：长 TTS/长文本生成期间会持续收到非 final 内容块，
+            // 每个内容块到达都重新起算 60s，防止生成 >60s 时在 done 前误复位 isGenerating。
+            startGeneratingTimer();
             onMessageRef.current?.({ type: 'content', content: data.data.content });
           }
           break;
@@ -288,12 +291,14 @@ export function useWebSocket(options: WebSocketOptions): UseWebSocketReturn {
         case 'done':
         case 'chat_done':
           setIsGenerating(false);
+          clearGeneratingTimer();
           // 会话结束：清空累计文本段，避免跨会话污染
           textProgressRef.current = '';
           onMessageRef.current?.({ type: 'done' });
           break;
         case 'chat_response':
           setIsGenerating(false);
+          clearGeneratingTimer();
           if (data.content) {
             onMessageRef.current?.({ type: 'content', content: data.content });
           }
@@ -334,7 +339,7 @@ export function useWebSocket(options: WebSocketOptions): UseWebSocketReturn {
     } catch (e: unknown) {
       console.error('Failed to parse WebSocket message:', e);
     }
-  }, [startGeneratingTimer]);
+  }, [startGeneratingTimer, clearGeneratingTimer]);
 
   // Transport：URL 构造 + 实例化 + 生命周期；业务逻辑经回调注入。
   // enabled: !!agentId 保留空 agentId 不连接的守卫。

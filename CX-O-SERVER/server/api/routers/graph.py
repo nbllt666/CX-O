@@ -238,7 +238,8 @@ async def create_edge(request: EdgeCreateRequest, agent_id: str = Query("default
         text_content=request.text_content,
     )
     try:
-        return graph.edges.create(edge_data, agent_id=request.agent_id)
+        # 与其他端点一致取 Query agent_id 做 per-agent 隔离（create_node 亦用 Query）
+        return graph.edges.create(edge_data, agent_id=agent_id)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
 

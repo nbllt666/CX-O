@@ -68,6 +68,7 @@ class Database:
             cursor.executescript("""
                 CREATE TABLE IF NOT EXISTS nodes (
                     id TEXT PRIMARY KEY,
+                    name TEXT NOT NULL DEFAULT '',
                     type TEXT NOT NULL,
                     properties TEXT NOT NULL DEFAULT '{}',
                     text_content TEXT,
@@ -112,6 +113,22 @@ class Database:
         # 注意：原 CXHMS 代码用 try/except SELECT agent_id 检测，但 get_cursor 的 except 会
         # 重新抛出异常，导致迁移逻辑永远不执行。改用 PRAGMA table_info 反射式检测列是否存在。
         self._migrate_add_agent_id_column()
+        self._migrate_add_name_column()
+
+    def _migrate_add_name_column(self) -> None:
+        """检测并补充 nodes 表的 name 列（旧版 schema 兼容，幂等）。
+
+        与 agent_id 迁移同一风格：先用 PRAGMA table_info 反射检测列是否存在，
+        不存在才 ALTER TABLE ADD COLUMN。new table 的 CREATE TABLE 已含 name 列，
+        因此该迁移对新建库零操作，仅对旧库补列。
+        """
+        with self.get_cursor() as cursor:
+            cursor.execute("PRAGMA table_info(nodes)")
+            columns = [row["name"] for row in cursor.fetchall()]
+        if "name" not in columns:
+            with self.get_cursor() as cursor:
+                cursor.execute("ALTER TABLE nodes ADD COLUMN name TEXT NOT NULL DEFAULT ''")
+            logger.info("图数据库迁移：nodes 表添加 name 字段")
 
     def _migrate_add_agent_id_column(self) -> None:
         """检测并补充 nodes/edges 的 agent_id 列 + 索引（CXHMS 旧版 schema 兼容）。"""
@@ -216,3 +233,16 @@ def remove_database(agent_id: str) -> Optional[Database]:
         except Exception as e:
             logger.warning(f"关闭图数据库失败 (agent_id={agent_id}): {e}")
     return db
+
+
+def close_all_databases() -> None:
+    """关闭并清空全部已注册的图数据库实例（服务 shutdown 时调用）。
+
+    第五轮 M5：per-agent 图库由依赖层懒创建，若关闭段只关 services 上的
+    显式引用（恒为 None，死代码），懒创建的实例从不 close，重启间句柄泄漏。
+    统一按注册表逐一关闭。
+    """
+    with _db_lock:
+        agents = list(_db_instances.keys())
+    for agent_id in agents:
+        remove_database(agent_id)

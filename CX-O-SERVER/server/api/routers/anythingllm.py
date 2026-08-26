@@ -56,21 +56,21 @@ async def verify_api_key(authorization: Optional[str] = Header(None)) -> None:
         authorization: Authorization header 值，格式 "Bearer <token>"
 
     Raises:
-        HTTPException(403): token 不匹配或缺失（当 API key 已配置时）
+        HTTPException(401): token 不匹配或缺失（当 API key 已配置时）
     """
     if not ANYTHINGLLM_API_KEY:
         return
 
     if not authorization:
-        raise HTTPException(status_code=403, detail={"error": "Invalid API Key"})
+        raise HTTPException(status_code=401, detail={"error": "Invalid API Key"})
 
     # 解析 Bearer token
     if not authorization.startswith("Bearer "):
-        raise HTTPException(status_code=403, detail={"error": "Invalid API Key"})
+        raise HTTPException(status_code=401, detail={"error": "Invalid API Key"})
 
     token = authorization[7:]  # 去掉 "Bearer " 前缀
     if not hmac.compare_digest(token, ANYTHINGLLM_API_KEY):
-        raise HTTPException(status_code=403, detail={"error": "Invalid API Key"})
+        raise HTTPException(status_code=401, detail={"error": "Invalid API Key"})
 
 
 # ========== 请求/响应模型 ==========

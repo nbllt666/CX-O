@@ -520,16 +520,30 @@ class TTSService:
         LLM token 流 → split_text_streaming 细粒度切片 → 逐块调用 Qwen3 流式合成 → yield 音频块
 
         每个 yield 的 dict 包含：text_segment, audio_data, chunk_index, is_final。
+
+        第五轮 M6：并入统一 in-flight 信号量——旧实现绕过 ``_tts_sem``，
+        双流式主路径（DualStreamSession._run_pipeline/_play_reply）可无限制
+        建立 Qwen3 流式合成，绕过为此链路设计的背压护栏。
         """
-        combined = dict(kwargs)
-        if ref_audio_path:
-            combined["ref_audio_path"] = ref_audio_path
-        if ref_text:
-            combined["ref_text"] = ref_text
-        async for chunk in self._synthesize_stream_fine_qwen3(
-            token_stream, char_threshold=char_threshold, **combined
-        ):
-            yield chunk
+        # drop 模式：超限直接结束（不产生任何 chunk），与 synthesize_stream 一致
+        if self._tts_drop and self._tts_sem.locked():
+            logger.warning(
+                "TTS in-flight 已达 %s，drop 模式丢弃细粒度流式合成", self._tts_limit
+            )
+            return
+        await self._tts_sem.acquire()
+        try:
+            combined = dict(kwargs)
+            if ref_audio_path:
+                combined["ref_audio_path"] = ref_audio_path
+            if ref_text:
+                combined["ref_text"] = ref_text
+            async for chunk in self._synthesize_stream_fine_qwen3(
+                token_stream, char_threshold=char_threshold, **combined
+            ):
+                yield chunk
+        finally:
+            self._tts_sem.release()
 
     async def synthesize_with_emotions(
         self,
@@ -550,7 +564,26 @@ class TTSService:
             yield chunk
 
     async def get_voices(self) -> list[dict[str, Any]]:
-        return [{"id": "default", "name": "Default Voice"}]
+        """列出可用音色：参考音频资产优先，保留 default 兜底。
+
+        #14（CX-O问题汇总报告）: 旧实现硬编码单一 default，未接资产库。
+        现枚举 ref_audio_store 已注册资产（id=资产 id，name 取 note/文件名），
+        资产库不可用时降级为默认音色。
+        """
+        voices: list[dict[str, Any]] = [{"id": "default", "name": "Default Voice"}]
+        try:
+            from server import ref_audio_store
+
+            for asset in ref_audio_store.list():
+                if asset.is_deleted:
+                    continue
+                voices.append({
+                    "id": asset.id,
+                    "name": asset.note or asset.file_name or asset.prompt or asset.id,
+                })
+        except Exception as e:
+            logger.warning(f"读取参考音频资产失败，仅返回默认音色: {e}")
+        return voices
 
     def _load_effect_audio(self, effect_name: str) -> bytes | None:
         return self._effect_parser._load_effect(effect_name)

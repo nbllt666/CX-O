@@ -102,6 +102,11 @@ class VectorizationQueue:
             logger.warning("Workers already started")
             return
         
+        # M3（第五轮）修复: stop() 置位后从不 clear，stop 后再次 start() 的
+        # 新 worker 进入 _worker_loop 即因 _stop_event.is_set() 立即退出，
+        # 队列永久不可用。start 时一并清除停止事件。
+        self._stop_event.clear()
+        
         logger.info(f"Starting {self.max_workers} worker threads")
         for i in range(self.max_workers):
             worker = threading.Thread(target=self._worker_loop, name=f"VectorizationWorker-{i}", daemon=True)
@@ -200,13 +205,14 @@ class VectorizationQueue:
                 except Empty:
                     continue
                 
-                # 更新任务状态
-                self._update_task_status(task.memory_id, TaskStatus.PROCESSING)
-                
+                # 更新任务状态（M3: 移入 try/finally——旧实现位于 try 之外，
+                # 该处抛异常会跳过 task_done，PriorityQueue.join 计数失衡永久阻塞）
                 # H8: task_done 须在 finally 中保证执行——处理/重试分支任一步
                 # 抛异常（含回调、stats、状态更新自身抛错）若跳过 task_done，
                 # PriorityQueue.join() 未完成计数失衡，stop/shutdown 永久阻塞。
                 try:
+                    self._update_task_status(task.memory_id, TaskStatus.PROCESSING)
+
                     # 调用完成回调执行实际的向量化操作
                     if self._on_complete_callback:
                         self._on_complete_callback(task.memory_id, task.content)

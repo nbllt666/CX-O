@@ -124,10 +124,13 @@ class TestPrivateHelpers:
         assert _load_file()[0]["id"] == "default"
         assert agents_mod.agent_config_cache.get("all_agents") is not None
 
-    def test_load_agents_corrupt_returns_empty(self, client):
+    def test_load_agents_corrupt_falls_back_to_seed(self, client):
         with open(agents_mod.AGENTS_CONFIG_PATH, "w", encoding="utf-8") as f:
             f.write("{ invalid json")
-        assert agents_mod._load_agents() == []
+        # #15: 解析失败不再返回空列表，注入种子兜底
+        agents = agents_mod._load_agents()
+        assert len(agents) == 2
+        assert any(a["id"] == "default" and a.get("is_default") for a in agents)
 
     def test_save_agents_roundtrip_and_cache_delete(self, client):
         _seed(client, [])

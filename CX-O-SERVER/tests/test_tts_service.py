@@ -70,7 +70,33 @@ class TestSplitTextStreaming:
 # ================================================================ 其他
 class TestMisc:
     @pytest.mark.asyncio
-    async def test_get_voices(self):
+    async def test_get_voices(self, monkeypatch):
+        # #14: get_voices 已接入 ref_audio_store 资产索引（default 兜底 + 资产列表）。
+        # 用 monkeypatch 固定资产列表，避免依赖环境数据目录。
+        from server import ref_audio_store
+
+        class _FakeAsset:
+            id = "a1"
+            note = "音色A"
+            file_name = None
+            prompt = None
+            is_deleted = False
+
+        monkeypatch.setattr(ref_audio_store, "list", lambda: [_FakeAsset()])
+        voices = await _svc().get_voices()
+        assert voices == [
+            {"id": "default", "name": "Default Voice"},
+            {"id": "a1", "name": "音色A"},
+        ]
+
+    @pytest.mark.asyncio
+    async def test_get_voices_falls_back_on_asset_error(self, monkeypatch):
+        from server import ref_audio_store
+
+        def _boom():
+            raise RuntimeError("index unreadable")
+
+        monkeypatch.setattr(ref_audio_store, "list", _boom)
         assert await _svc().get_voices() == [{"id": "default", "name": "Default Voice"}]
 
     @pytest.mark.asyncio

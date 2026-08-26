@@ -144,6 +144,14 @@ clusterer = SpeakerClusterer(
     threshold=float(os.getenv("SPK_SIM_THRESHOLD", SPK_SIM_DEFAULT))
 )
 
+# M10（第五轮）: 三个 AutoModel 为模块级共享单例，但 _EXECUTOR 线程池由
+# 多会话/多句并发提交推理任务。funasr AutoModel 内部持有 generate 相关可变状态，
+# 并发调用可能产生结果错乱。按模型分别串行化推理（推理是 GPU/CPU 密集串行操作，
+# 锁不引入吞吐损失，只消除并发交错）。
+_ASR_LOCK = threading.Lock()
+_VAD_LOCK = threading.Lock()
+_SPK_LOCK = threading.Lock()
+
 
 class _EngineUnavailable(Exception):
     """引擎降级占位异常（模型均不可用时内部标记用，不需要向外部抛出）。"""
@@ -209,7 +217,8 @@ def extract_embedding(audio_float: np.ndarray) -> Optional[np.ndarray]:
     if _SPK is None:
         return None
     try:
-        res = _SPK.generate(input=audio_float)
+        with _SPK_LOCK:  # M10: 共享单例串行推理
+            res = _SPK.generate(input=audio_float)
         if not (res and isinstance(res[0], dict)):
             return None
         e = np.asarray(res[0].get("spk_embedding"), dtype=np.float32)
@@ -274,12 +283,13 @@ def _run_asr_final(audio_slice: np.ndarray) -> str:
     if _ASR is None:
         return ""
     try:
-        res = _ASR.generate(
-            input=audio_slice, cache={}, is_final=True,
-            chunk_size=CHUNK_SIZE,
-            encoder_chunk_look_back=ENCODER_LOOK_BACK,
-            decoder_chunk_look_back=DECODER_LOOK_BACK,
-        )
+        with _ASR_LOCK:  # M10: 共享单例串行推理
+            res = _ASR.generate(
+                input=audio_slice, cache={}, is_final=True,
+                chunk_size=CHUNK_SIZE,
+                encoder_chunk_look_back=ENCODER_LOOK_BACK,
+                decoder_chunk_look_back=DECODER_LOOK_BACK,
+            )
         return str(res[0].get("text", "") or "") if res and isinstance(res[0], dict) else ""
     except Exception as e:  # noqa: BLE001
         logger.error(f"[ENGINE] ASR final 失败: {e}")
@@ -291,12 +301,13 @@ def _run_asr_partial(audio_slice: np.ndarray, asr_cache: dict) -> str:
     if _ASR is None:
         return ""
     try:
-        res = _ASR.generate(
-            input=audio_slice, cache=asr_cache, is_final=False,
-            chunk_size=CHUNK_SIZE,
-            encoder_chunk_look_back=ENCODER_LOOK_BACK,
-            decoder_chunk_look_back=DECODER_LOOK_BACK,
-        )
+        with _ASR_LOCK:  # M10: 共享单例串行推理
+            res = _ASR.generate(
+                input=audio_slice, cache=asr_cache, is_final=False,
+                chunk_size=CHUNK_SIZE,
+                encoder_chunk_look_back=ENCODER_LOOK_BACK,
+                decoder_chunk_look_back=DECODER_LOOK_BACK,
+            )
         return str(res[0].get("text", "") or "") if res and isinstance(res[0], dict) else ""
     except Exception as e:  # noqa: BLE001
         logger.error(f"[ENGINE] ASR partial 失败: {e}")
@@ -308,7 +319,8 @@ def _run_vad(audio: np.ndarray, is_final: bool, vad_cache: dict) -> List[List[in
     if _VAD is None:
         return []
     try:
-        res = _VAD.generate(input=audio, is_final=is_final, cache=vad_cache)
+        with _VAD_LOCK:  # M10: 共享单例串行推理
+            res = _VAD.generate(input=audio, is_final=is_final, cache=vad_cache)
         if res and isinstance(res[0], dict):
             return res[0].get("value", []) or []
         return []
@@ -508,10 +520,14 @@ class StreamSession:
         try:
             async with self._classify_lock:
                 spk_id, registered, conf = self.session.classify(emb)
+                # M10（第五轮）: recent_match 须与 classify 在同一锁内读取——
+                # 旧实现锁外读，并发 classify（另一 in-flight spk 任务/句）可能在
+                # 两步之间改写 _last_match，导致本条 spk 消息的 em_embedding 与
+                # spk_id 不属于同一 utterance。
+                match = self.session.recent_match()
             self._speaker = (spk_id, bool(registered), float(conf))
         except Exception:
             return
-        match = self.session.recent_match()
         # 显式判空后再访问（条件表达式易误读为 None 时仍取 match[1] 的语义）
         em_embedding = []
         if match:

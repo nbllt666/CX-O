@@ -128,7 +128,7 @@ CX-A 默认关闭（`admin.enabled = false`），关闭时控制平面端点一�
 
 ## 5. 基础管理端点
 
-以下端点与 CX-O 常规后端共用 `/api` 前缀，鉴权用 `X-API-Key`。
+以下端点与 CX-O 常规后端共用 `/api` 前缀，鉴权用 `X-API-Key`。管理面两端点族同挂 `/api/admin` 前缀：本节的基础管理端点（`dashboard/stats/health/config/logs/backup`）用 `X-API-Key`；§6 的 CX-A 控制平面（`manifest/status/control/batch/audit`）改用 `Bearer`，二者鉴权相互独立。它们与 CX-O 常规业务路由（如 `/api/agents` 的 Agent 增删改查、`/api/acp`、`/api/graph` 等）在**同一 `/api` 命名空间下并存**；业务端点不套用管理鉴权，基础管理端点也不覆盖业务端点，调用方按前缀 + 鉴权头区分。
 
 ### 5.1 GET `/api/admin/dashboard`
 管理后台仪表盘统计（内存、上下文、ACP）。
@@ -167,6 +167,8 @@ CX-A 默认关闭（`admin.enabled = false`），关闭时控制平面端点一�
 ```
 - `llm.provider` 只允许 `ollama` / `vllm`，否则 400。
 - 成功后持久化到配置文件。返回 `{"status":"success","message":"配置已更新"}`。
+
+> **边界说明**：`PUT /api/admin/config` 属于**基础管理端点**，鉴权仅用 `X-API-Key`，不经过控制平面的 `Bearer` 鉴权，也**不是** `target=config` 的控制面动作。写配置与控制面热重载是两条独立路径：前者直接落盘（本节、`X-API-Key`）；后者由控制平面以 `Bearer` 令牌下发 `target=config` / `action=reload|reload_config|reset` 触发运行时重载（§6.3）。两类端点前缀同为 `/api/admin`，但鉴权方式与归属互不相同，不应混用。
 
 ### 5.6 GET `/api/admin/logs?level=INFO&lines=50`
 读取服务端后端日志尾部。
@@ -228,6 +230,7 @@ CX-A 默认关闭（`admin.enabled = false`），关闭时控制平面端点一�
 }
 ```
 - `agent_id` / `params` 可省。
+- `request_id` **必填**：在 `request_id_ttl_sec` 内重复提交同一 `request_id` 会被拒绝（返回 `ADMIN_REPLAYED`，防重放；见 §3.3 三道防护第 1 点）。
 - 返回：`{"status":"success","result":{...}}`
 - 未知 `action`/`target` 返回 400 + `ADMIN_UNKNOWN_ACTION`。
 
@@ -346,3 +349,4 @@ curl -H "X-API-Key: $ADMIN_API_KEY" \
 - TS 客户端：[admin.ts](../APP-Frontend/src/api/clients/admin.ts)（封装 manifest/status/control/batch/audit）
 - 接口存根：[cx_admin.pyi](../public/interface_stub/cx_admin.pyi)（`AdminAuth` / `AdminManifest` / `AdminControlPlane` / `AdminBatchExecutor` / `InstanceRegistry` / `ClusterAdminBridge`）
 - 数据契约：[admin_control.schema.json](../public/schema/admin_control.schema.json)、[admin_batch.schema.json](../public/schema/admin_batch.schema.json)、[admin_audit.schema.json](../public/schema/admin_audit.schema.json)
+- 实现落点：`CX-O-SERVER/server/api/routers/admin.py`（基础端点 `X-API-Key` 校验 + 控制平面 `Bearer` 路由/`_admin_guard` 守卫）；`CX-O-SERVER/server/core/admin/`（`AdminAuth` / `AdminControlPlane` / `AdminManifest` / `InstanceRegistry` / `ClusterAdminBridge` 实现）。

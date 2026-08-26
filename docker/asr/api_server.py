@@ -62,6 +62,10 @@ async def load_model():
                 model="iic/SenseVoiceSmall",
                 trust_remote_code=True
             )
+            if _kwargs is None:
+                # backlog（issue 08）: build_model 解包出的 kwargs 可能为 None，
+                # 后续 `**_kwargs` 会 TypeError → 500。置空以走默认参数。
+                _kwargs = {}
             logger.info("Loaded SenseVoice from ModelScope")
         except Exception as e2:
             logger.error(f"Failed to load from ModelScope: {e2}")

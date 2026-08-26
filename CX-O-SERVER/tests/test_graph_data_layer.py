@@ -186,6 +186,39 @@ class TestDatabase:
         assert "idx_nodes_agent_id" in indexes
         d.close()
 
+    def test_migrate_adds_name_to_old_schema(self, tmp_path):
+        """模拟旧版无 name 列的 nodes 表，initialize 后应幂等补列。"""
+        path = str(tmp_path / "old.db")
+        conn = sqlite3.connect(path)
+        conn.executescript("""
+            CREATE TABLE nodes (
+                id TEXT PRIMARY KEY,
+                type TEXT NOT NULL,
+                properties TEXT NOT NULL DEFAULT '{}',
+                text_content TEXT, vector_id TEXT,
+                created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+            );
+        """)
+        conn.commit()
+        conn.close()
+
+        d = Database(GraphConfig(database_path=path, timeout=5))
+        d.initialize()
+        cols = {r["name"] for r in d.execute("PRAGMA table_info(nodes)")}
+        assert "name" in cols
+        d.close()
+
+    def test_initialize_has_name_column_default(self, db):
+        """新库 nodes 表应含 name 列且默认空串，缺省插入不报错。"""
+        cols = {r["name"] for r in db.execute("PRAGMA table_info(nodes)")}
+        assert "name" in cols
+        db.execute_modify(
+            "INSERT INTO nodes (id, type, properties, created_at, updated_at, agent_id) "
+            "VALUES ('n_name','t','{}','2026-01-01T00:00:00','2026-01-01T00:00:00','default')",
+        )
+        row = db.execute_one("SELECT name FROM nodes WHERE id = 'n_name'")
+        assert row["name"] == ""
+
     def test_close_resets_connection(self, db):
         db.close()
         assert db._local.connection is None

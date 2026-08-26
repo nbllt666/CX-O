@@ -2,7 +2,7 @@
 
 用 FastAPI TestClient + monkeypatch 隔离外部依赖（agents 存储、LLM、document
 manager）。覆盖：
-- 认证：开放模式放行 / 设置 key 后 Bearer 校验（缺失/前缀/不匹配→403）
+- 认证：开放模式放行 / 设置 key 后 Bearer 校验（缺失/前缀/不匹配→401）
 - OpenAI 模型列表、chat completions（非流式）
 - Workspace 管理：list/create/get/update/delete（含重复、默认保护、404）
 - 模型解析：agent:<id> 与默认 agent
@@ -143,11 +143,11 @@ class TestAuth:
         c, _, _ = client
         monkeypatch.setattr(anythingllm_mod, "ANYTHINGLLM_API_KEY", "secret123")
         # 无 header
-        assert c.get("/v1/auth").status_code == 403
+        assert c.get("/v1/auth").status_code == 401
         # 前缀错误
-        assert c.get("/v1/auth", headers={"Authorization": "Token secret123"}).status_code == 403
+        assert c.get("/v1/auth", headers={"Authorization": "Token secret123"}).status_code == 401
         # token 不匹配
-        assert c.get("/v1/auth", headers={"Authorization": "Bearer wrong"}).status_code == 403
+        assert c.get("/v1/auth", headers={"Authorization": "Bearer wrong"}).status_code == 401
         # 匹配
         r = c.get("/v1/auth", headers={"Authorization": "Bearer secret123"})
         assert r.status_code == 200

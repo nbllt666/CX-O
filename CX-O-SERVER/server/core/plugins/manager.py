@@ -256,8 +256,10 @@ class PluginManager:
                             logger.error(f"插件初始化失败（保持禁用） {pid}: {e}")
 
                     self._create_plugin_task(plugin_id, _complete_enable(init))
-                else:
-                    plugin.instance.initialize(context)
+                # 同步初始化路径：M1（第五轮）修复——旧实现此处再次调用
+                # plugin.instance.initialize(context)，导致同步插件 initialize
+                # 被重复执行两次（重复注册/分配资源）。同步调用结果已由上述
+                # init 取得，省略第二次调用。
 
             if sync_initialized:
                 self._finalize_enable(plugin_id)

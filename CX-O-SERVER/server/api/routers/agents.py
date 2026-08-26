@@ -129,6 +129,55 @@ def _ensure_data_dir():
     os.makedirs(os.path.dirname(AGENTS_CONFIG_PATH), exist_ok=True)
 
 
+def _seed_agents() -> List[dict]:
+    """生成并持久化默认 Agent 种子（缺文件 / 置空 / 解析失败时兜底）。
+
+    #15（CX-O问题汇总报告）: 旧实现仅在文件缺失时注入种子，文件存在但内容
+    为空/非列表时静默返回空列表 → 系统无任何默认 Agent 可用。
+    """
+    now = datetime.now().isoformat()
+
+    default_agent = {
+        "id": "default",
+        "name": "默认助手",
+        "description": "通用AI助手，支持数学计算、记忆管理、提醒设置等多种工具（128k上下文）",
+        "system_prompt": DEFAULT_AGENT_SYSTEM_PROMPT,
+        "model": "main",
+        "temperature": 0.7,
+        "max_tokens": 131072,
+        "use_memory": True,
+        "use_tools": True,
+        "memory_scene": "chat",
+        "decay_model": "exponential",
+        "vision_enabled": False,
+        "is_default": True,
+        "created_at": now,
+        "updated_at": now,
+    }
+
+    memory_agent = {
+        "id": "memory-agent",
+        "name": "记忆管理助手",
+        "description": "专业的记忆管理助手，可以通过自然语言管理记忆库（128k上下文）",
+        "system_prompt": MEMORY_AGENT_SYSTEM_PROMPT,
+        "model": "memory",
+        "temperature": 0.3,
+        "max_tokens": 131072,
+        "use_memory": False,
+        "use_tools": True,
+        "memory_scene": "task",
+        "decay_model": "exponential",
+        "vision_enabled": False,
+        "is_default": False,
+        "created_at": now,
+        "updated_at": now,
+    }
+
+    _save_agents([default_agent, memory_agent])
+    agent_config_cache.set("all_agents", [default_agent, memory_agent])
+    return [default_agent, memory_agent]
+
+
 def _load_agents() -> List[dict]:
     """加载所有 Agent 配置（带缓存）"""
     cached = agent_config_cache.get("all_agents")
@@ -137,55 +186,19 @@ def _load_agents() -> List[dict]:
     
     _ensure_data_dir()
     if not os.path.exists(AGENTS_CONFIG_PATH):
-        now = datetime.now().isoformat()
-
-        default_agent = {
-            "id": "default",
-            "name": "默认助手",
-            "description": "通用AI助手，支持数学计算、记忆管理、提醒设置等多种工具（128k上下文）",
-            "system_prompt": DEFAULT_AGENT_SYSTEM_PROMPT,
-            "model": "main",
-            "temperature": 0.7,
-            "max_tokens": 131072,
-            "use_memory": True,
-            "use_tools": True,
-            "memory_scene": "chat",
-            "decay_model": "exponential",
-            "vision_enabled": False,
-            "is_default": True,
-            "created_at": now,
-            "updated_at": now,
-        }
-
-        memory_agent = {
-            "id": "memory-agent",
-            "name": "记忆管理助手",
-            "description": "专业的记忆管理助手，可以通过自然语言管理记忆库（128k上下文）",
-            "system_prompt": MEMORY_AGENT_SYSTEM_PROMPT,
-            "model": "memory",
-            "temperature": 0.3,
-            "max_tokens": 131072,
-            "use_memory": False,
-            "use_tools": True,
-            "memory_scene": "task",
-            "decay_model": "exponential",
-            "vision_enabled": False,
-            "is_default": False,
-            "created_at": now,
-            "updated_at": now,
-        }
-
-        _save_agents([default_agent, memory_agent])
-        agent_config_cache.set("all_agents", [default_agent, memory_agent])
-        return [default_agent, memory_agent]
+        return _seed_agents()
 
     try:
         with open(AGENTS_CONFIG_PATH, "r", encoding="utf-8") as f:
-            agents = json.load(f)
-            agent_config_cache.set("all_agents", agents)
-            return agents
+            parsed = json.load(f)
+        # #15: 文件存在但内容为空/非列表 → 种子兜底（曾静默返回空，系统无默认 Agent）
+        if isinstance(parsed, list) and parsed:
+            agent_config_cache.set("all_agents", parsed)
+            return parsed
+        logger.warning("Agent 配置为空或格式异常，注入种子兜底")
+        return _seed_agents()
     except Exception:
-        return []
+        return _seed_agents()
 
 
 def _save_agents(agents: List[dict]):
@@ -543,8 +556,11 @@ async def delete_agent(agent_id: str):
         if not agent:
             raise HTTPException(status_code=404, detail=f"Agent '{agent_id}' 不存在")
 
-        if agent.get("is_default", False):
-            raise HTTPException(status_code=400, detail="不能删除默认 Agent")
+        if agent.get("is_default", False) or agent_id == "default":
+            # #17（CX-O问题汇总报告）: is_default 标记可自由转移，仅凭标记
+            # 保护会被绕过——先转移标记再删旧默认。id="default" 是共享资源
+            # 锚点（记忆/图/会话兜底），无条件禁删。
+            raise HTTPException(status_code=400, detail="不能删除默认 Agent 或系统锚点 Agent")
 
         agents = [a for a in agents if a["id"] != agent_id]
         _save_agents(agents)

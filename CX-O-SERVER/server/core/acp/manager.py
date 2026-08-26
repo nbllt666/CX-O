@@ -185,6 +185,9 @@ class ACPManager:
         self._broadcast_task = None
         self._heartbeat_task = None
         self._discovery = None
+        # #22/23（补充批注）: 心跳/离线清扫周期与超时（start 时按配置覆盖）
+        self._heartbeat_interval: float = 10.0
+        self._heartbeat_timeout: float = 30.0
 
         # v3.1.0: 本地 HTTP 端口（供 BEACON 暴露给其他节点，由 start() 从 settings 注入）
         self._local_http_port: int = 8001
@@ -248,10 +251,31 @@ class ACPManager:
             await self._discovery.start()
             logger.info("ACP Discovery服务已启动")
 
+        # #22/23（补充批注）: 心跳/离线清扫此前从未启动——manager 只起 discovery，
+        # 已发现 agent 不会自动 offline；后台任务引用也只有 discovery 真正创建。
+        # 统一经 _track_background_task 登记心跳循环（连接配置 heartbeat_interval/timeout）。
+        try:
+            conn_cfg = settings.config.acp.connection
+            self._heartbeat_interval = float(getattr(conn_cfg, "heartbeat_interval", 10) or 10)
+            self._heartbeat_timeout = float(getattr(conn_cfg, "timeout", 30) or 30)
+        except Exception:
+            self._heartbeat_interval, self._heartbeat_timeout = 10.0, 30.0
+        self._heartbeat_task = self._track_background_task(
+            asyncio.create_task(self._check_agents_heartbeat_loop())
+        )
+
         logger.info("ACP管理器已启动")
 
     async def stop(self) -> None:
         """停止 ACP 管理器"""
+        if self._heartbeat_task:
+            self._heartbeat_task.cancel()
+            try:
+                await self._heartbeat_task
+            except asyncio.CancelledError:
+                pass
+            self._heartbeat_task = None
+
         if self._discovery:
             await self._discovery.stop()
             logger.info("ACP Discovery服务已停止")
@@ -262,6 +286,66 @@ class ACPManager:
         await self._close_all_agent_resources()
 
         logger.info("ACP管理器已停止")
+
+    # ------------------------------------------------------------------ #
+    # #22/23（补充批注）: 心跳/离线清扫——周期性探测过期在线的远程 agent，
+    # 失败置 offline（此前 agent 被发现后永不自动下线）
+    # ------------------------------------------------------------------ #
+    async def _check_agents_heartbeat_loop(self) -> None:
+        """周期性心跳/离线清扫循环（经 _track_background_task 登记）。"""
+        while True:
+            try:
+                await asyncio.sleep(self._heartbeat_interval)
+                await self._check_agents_heartbeat()
+            except asyncio.CancelledError:
+                break
+            except Exception as e:
+                logger.warning(f"ACP 心跳清扫异常: {e}")
+
+    def _is_local_agent(self, agent: ACPAgentInfo) -> bool:
+        """本地 agent 判定：自身 id 或本机地址（host 为空/回环）。"""
+        return (
+            agent.id == self._local_agent_id
+            or agent.host in ("", "127.0.0.1", "localhost")
+        )
+
+    async def _check_agents_heartbeat(self) -> None:
+        async with self._lock:
+            snapshot = [a for a in self.agents.values() if a.status == "online"]
+
+        for agent in snapshot:
+            if self._is_local_agent(agent):
+                continue
+            try:
+                last = datetime.fromisoformat(agent.last_seen) if agent.last_seen else None
+            except ValueError:
+                last = None
+            # 无 last_seen 或超时未更新 → 视为待探测
+            stale = last is None or (datetime.now() - last).total_seconds() > self._heartbeat_timeout
+            if not stale:
+                continue
+            if await self._probe_agent(agent):
+                async with self._lock:
+                    agent.last_seen = datetime.now().isoformat()
+            else:
+                async with self._lock:
+                    agent.status = "offline"
+                logger.info(
+                    f"ACP agent {agent.id}@{agent.host}:{agent.port} 心跳探测失败，置为 offline"
+                )
+
+    async def _probe_agent(self, agent: ACPAgentInfo) -> bool:
+        """探测远程 agent 存活：GET /health 200 视为存活（复用共享 HTTP 客户端）。"""
+        try:
+            from server.core.utils import get_shared_http_client
+
+            client = get_shared_http_client()
+            resp = await client.get(
+                f"http://{agent.host}:{agent.port}/health", timeout=5.0
+            )
+            return resp.status_code == 200
+        except Exception:
+            return False
 
     def _register_local_cxhms_agents(self):
         """将本地 CXHMS/CX-O agent 注册到 ACP 网络，实现同实例 agent 互通。

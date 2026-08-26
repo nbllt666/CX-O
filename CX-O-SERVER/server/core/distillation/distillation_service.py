@@ -551,6 +551,7 @@ class DistillationService:
         config: Optional[Dict[str, Any]] = None,
         multimodal_pipeline: Optional[Any] = None,
         decision_core: Optional[Any] = None,
+        memory_manager: Optional[Any] = None,
     ) -> None:
         """初始化 DistillationService。
 
@@ -558,6 +559,7 @@ class DistillationService:
             config: 配置字典（None 时从 server.config / radix_config.json 加载）
             multimodal_pipeline: MultimodalPipeline 实例（None 时自动实例化）
             decision_core: DecisionCore 实例（None 时自动实例化）
+            memory_manager: MemoryManager 实例（None 时惰性初始化，用于蒸馏产物落库）
         """
         # 配置加载
         self._config: Dict[str, Any] = (
@@ -630,6 +632,9 @@ class DistillationService:
 
         # 内存态 session 索引（持久化层的缓存，提升查询性能）
         self._sessions_cache: Dict[str, Dict[str, Any]] = {}
+
+        # 记忆存储（生产环境惰性初始化，测试可注入 fake 隔离副作用）
+        self._memory_manager = memory_manager
 
     # ------------------------------------------------------------------ #
     # 公开 API（严格匹配 .pyi 签名）
@@ -997,6 +1002,20 @@ class DistillationService:
         self._sessions_cache[session_id] = session
 
         stored = location != "rejected"
+        # OBS-7/#9：真实持久化蒸馏产物到记忆存储，返回真实 memory_id（可查）。
+        # #10：target_agent_id 在 memories 落库时注入 agent_id 归因；permanent 写入 metadata。
+        if stored:
+            real_memory_id = self._persist_distillation_product(
+                session=session,
+                location=location,
+                metadata=metadata,
+                allocated_memory_id=memory_id,
+            )
+            if real_memory_id is not None:
+                memory_id = real_memory_id
+        else:
+            memory_id = None
+
         return FinalizeDistillationResponse(
             stored=stored,
             location=location,
@@ -1142,9 +1161,28 @@ class DistillationService:
             KeyError: group_id 不存在（404）
         """
         sessions_in_group = []
+        seen: set = set()
         for sid, session in self._sessions_cache.items():
             if session.get("session_group_id") == group_id:
                 sessions_in_group.append(session)
+                seen.add(sid)
+
+        # 磁盘恢复路径（#11）：缓存可能为空（进程重启），扫描会话目录，
+        # 将属于该组的磁盘 session 合入结果。只读，幂等，不写盘。
+        if os.path.isdir(self._session_dir):
+            try:
+                for fname in os.listdir(self._session_dir):
+                    if not fname.endswith(".json") or fname.endswith(".tmp"):
+                        continue
+                    sid = fname[: -len(".json")]
+                    if sid in seen:
+                        continue
+                    session = self._load_session(sid)  # 未命中缓存时从磁盘加载并缓存
+                    if session is not None and session.get("session_group_id") == group_id:
+                        sessions_in_group.append(session)
+                        seen.add(sid)
+            except OSError as e:  # noqa: BLE001
+                logger.warning("get_group_status 扫描会话目录失败（%s）", e)
 
         if not sessions_in_group:
             raise KeyError(f"session_group_id 不存在（404）: {group_id}")
@@ -2008,6 +2046,101 @@ class DistillationService:
             raise e
         except (requests.RequestException, json.JSONDecodeError, ValueError, TypeError, KeyError) as e:
             raise ConnectionError(f"LLM 质量评估调用/解析失败: {e}") from e
+
+    def _get_memory_manager(self) -> Optional[Any]:
+        """惰性获取记忆存储实例。
+
+        生产环境初始化 MemoryManager 单例；测试通过构造函数注入 fake 隔离副作用。
+        best-effort：初始化失败返回 None，蒸馏持久化随之降级。
+        """
+        if self._memory_manager is not None:
+            return self._memory_manager
+        try:
+            from server.core.memory import MemoryManager
+
+            mm = MemoryManager()
+            self._memory_manager = mm
+            return mm
+        except Exception as e:  # noqa: BLE001
+            logger.warning(
+                "MemoryManager 初始化失败（%s），蒸馏记忆持久化降级为不落库", e
+            )
+            self._memory_manager = None
+            return None
+
+    def _persist_distillation_product(
+        self,
+        session: Dict[str, Any],
+        location: str,
+        metadata: Dict[str, Any],
+        allocated_memory_id: Optional[int],
+    ) -> Optional[int]:
+        """将蒸馏产物持久化到真实记忆存储，返回真实 memory_id。
+
+        best-effort：记忆存储不可用/内容为空时降级返回 allocated_memory_id，
+        不阻断 finalize 主流程，保持 API 兼容。
+
+        #10 target_agent_id 消费：
+            - memories    → 注入 MemoryManager.write_memory 的 agent_id（按 agent 隔离归因）
+            - permanent   → 写入 metadata["target_agent_id"]（permanent 表无 agent 列）
+
+        Args:
+            session: 蒸馏会话字典（含 extracted_content / target_agent_id）
+            location: memories / permanent_memories / rejected
+            metadata: 记忆元数据
+            allocated_memory_id: 决策阶段分配的 memory_id（可能为假时间戳 id）
+
+        Returns:
+            int 真实落库 memory_id；存储不可用时返回 allocated_memory_id 或 None
+        """
+        if location == "rejected":
+            return None
+        content = (
+            (session.get("extracted_content") or "")
+            or (session.get("preread_summary") or "")
+        ).strip()
+        if not content:
+            return allocated_memory_id
+
+        mm = self._get_memory_manager()
+        if mm is None:
+            return allocated_memory_id
+
+        target_agent_id = session.get("target_agent_id")
+        tags = list(metadata.get("tags") or [])
+        try:
+            if location == "permanent_memories":
+                meta = dict(metadata)
+                if target_agent_id:
+                    meta["target_agent_id"] = target_agent_id
+                real_id = mm.write_permanent_memory(
+                    content=content,
+                    tags=tags,
+                    metadata=meta,
+                    source="distillation",
+                    is_from_main=True,
+                )
+            else:  # memories
+                # metadata.importance 为 0-1 浮点，映射到 write_memory 的 1-5 等级
+                importance = int(round((metadata.get("importance") or 0.75) * 5))
+                importance = max(1, min(5, importance))
+                real_id = mm.write_memory(
+                    content=content,
+                    memory_type="long_term",
+                    importance=importance,
+                    tags=tags,
+                    metadata=metadata,
+                    source="distillation",
+                    agent_id=target_agent_id or "default",
+                )
+            if isinstance(real_id, int) and real_id > 0:
+                return real_id
+            return allocated_memory_id
+        except Exception as e:  # noqa: BLE001
+            logger.warning(
+                "蒸馏结果写入记忆存储失败（%s），降级保留决策 memory_id", e
+            )
+            return allocated_memory_id
 
     def _alloc_memory_id(self) -> int:
         """分配 memory_id（简化：基于时间戳的递增序列）。"""

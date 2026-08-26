@@ -262,6 +262,10 @@ export class BleHeartRateCollector {
     }
     this.clearReconnectTimer();
     this.clearScanTimer();
+    // 复位打断标记：clearScanTimer() 在无待收尾扫描时也会置 scanInterrupted=true，
+    // 但本次 startScan 是全新会话，复位后正常完成的扫描不应被误判为中断（否则
+    // disconnect() 之后首次 startScan 即使扫描成功也会误报「扫描被 connect/disconnect 中断」）。
+    this.scanInterrupted = false;
 
     this.devices.clear();
     this.setState('scanning', '正在扫描 BLE 设备…');

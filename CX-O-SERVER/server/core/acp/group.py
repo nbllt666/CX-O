@@ -201,7 +201,9 @@ class ACPGroupManager:
         Returns:
             List[Dict]: 消息字典列表
         """
-        return await self.acp_manager.get_messages(group_id, group_id=group_id, limit=limit)
+        # #24（补充批注）: 旧实现把 group_id 同时当作 target_id 与 group_id 双参传入，
+        # 语义冗余。群消息按 group 键存取，target 位置显式留空以表达「非单发」。
+        return await self.acp_manager.get_messages("", group_id=group_id, limit=limit)
 
     async def get_member_groups(self, agent_id: str) -> List[Dict]:
         """查询指定 agent 所在的所有群组。
@@ -237,5 +239,17 @@ class ACPGroupManager:
         await self.acp_manager.send_message(message)
 
     def get_status(self) -> Dict:
-        """返回分组管理功能的状态信息。"""
-        return {"enabled": True, "max_groups_per_agent": 10}
+        """返回分组管理功能的状态信息。
+
+        #25（补充批注）: 旧实现硬编码 enabled=True / max_groups=10。
+        改为接 settings.config.acp 实际配置（ACPGroupConfig.max_groups 默认 10）。
+        """
+        try:
+            from server.config import get_settings
+
+            acp_cfg = get_settings().config.acp
+            enabled = bool(acp_cfg.enabled)
+            max_groups = int(getattr(acp_cfg.group, "max_groups", 10))
+        except Exception:
+            enabled, max_groups = True, 10
+        return {"enabled": enabled, "max_groups_per_agent": max_groups}

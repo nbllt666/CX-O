@@ -7,10 +7,12 @@
 import json
 import math
 import random as random_module
+import re
 import time
 from datetime import datetime
 from functools import lru_cache
 from typing import Any, Dict, List
+from zoneinfo import ZoneInfo
 
 
 class BuiltinTools:
@@ -41,6 +43,25 @@ class BuiltinTools:
             计算结果
         """
         try:
+            # 护栏 (a)：表达式长度上限 300，防止 LLM 注入超长表达式
+            if expression is None or len(expression) > 300:
+                return {
+                    "success": False,
+                    "error": "表达式过长（>300 字符）",
+                    "result": None,
+                }
+
+            # 护栏 (b)：预扫描 ** 链（连续幂运算，可构造如 9**9**9 的大整数指数
+            # 拖垮进程）与数值字面量指数 >10000 的情况，未进入 eval 前即拦截
+            if re.search(r"\*\*\s*-?\d+(?:\s*\*\*)", expression):
+                return {"success": False, "error": "禁止链式幂运算", "result": None}
+            for _m in re.finditer(r"\*\*\s*(\d+)", expression):
+                try:
+                    if int(_m.group(1)) > 10000:
+                        return {"success": False, "error": "指数过大（>10000）", "result": None}
+                except ValueError:
+                    pass
+
             # 定义允许的安全函数和常量
             safe_dict = {
                 "abs": abs,
@@ -88,6 +109,16 @@ class BuiltinTools:
             # 执行计算
             result = eval(code, {"__builtins__": {}}, safe_dict)
 
+            # 护栏 (c)：int 结果位数 >20000 时截断为提示，不打印全量（防大整数巨串拖垮下游）
+            if isinstance(result, int):
+                digits = len(str(result))
+                if digits > 20000:
+                    return {
+                        "success": True,
+                        "result": f"[结果过大，已截断，共 {digits} 位数字]",
+                        "expression": expression,
+                    }
+
             return {"success": True, "result": result, "expression": expression}
 
         except Exception as e:
@@ -108,7 +139,15 @@ class BuiltinTools:
             当前时间信息
         """
         try:
-            now = datetime.now()
+            # timezone 参数生效：非 local/空时用 ZoneInfo 转换为指定时区；
+            # 时区名无效时忽略并回退本地时间（保持原行为，不抛异常）
+            if timezone and timezone.lower() != "local":
+                try:
+                    now = datetime.now(ZoneInfo(timezone))
+                except Exception:
+                    now = datetime.now()
+            else:
+                now = datetime.now()
 
             # 转换格式
             format_mapping = {

@@ -425,10 +425,13 @@ class ACPConnectionConfig(BaseModel):
 
 
 class ACPGroupConfig(BaseModel):
-    """ACP 群组配置节：群组端口与最大成员数。"""
+    """ACP 群组配置节：群组端口、最大成员数与每 agent 群组上限。"""
 
     port: int = 10001
     max_members: int = 50
+    # #25（补充批注）: 每 agent 可持有的群组上限，此前 get_status 硬编码 10；
+    # 配置契约缺省值自动补全（auto_fill），不破坏既有 config.json。
+    max_groups: int = 10
 
 
 class ACPConfig(BaseModel):
@@ -1062,6 +1065,16 @@ class Settings:
 
     def reload_config(self):
         self._config = self._load_config()
+
+    def save_config(self) -> None:
+        """将当前配置实例写入磁盘并更新缓存（委托模块级 save_config）。
+
+        历史缺陷：路由层曾以 ``settings.save_config()`` 调用，但 Settings 从未
+        提供该实例方法，走 __getattr__ 抛 AttributeError → 配置保存恒 500 且不落盘。
+        """
+        if self._config is None:
+            raise RuntimeError("配置尚未加载，无法保存")
+        save_config(self._config)
 
     def __getattr__(self, name: str) -> Any:
         if name.startswith("_"):

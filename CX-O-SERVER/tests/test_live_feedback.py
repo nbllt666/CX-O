@@ -185,3 +185,22 @@ class TestWindowOutside:
 
         assert captured == []
         assert t._window == []  # 窗口外弹幕未计入
+
+
+class TestFingerprintBound:
+    def test_reported_fingerprints_is_bounded_deque(self):
+        # _reported_fingerprints 应为有界 deque（仅保留最近指纹），防止长期运行无界增长
+        from collections import deque
+
+        t = LiveFeedbackTracker(
+            emotion_analyzer=EmotionAnalyzer(),
+            push_func=lambda payload: None,
+            get_config=_make_cfg(True),
+        )
+        assert isinstance(t._reported_fingerprints, deque)
+        # 默认 maxlen=2000；追加超过上限时旧指纹被淘汰、长度保持有界
+        for i in range(2100):
+            t._reported_fingerprints.append(f"fp-{i}")
+        assert len(t._reported_fingerprints) == t._reported_fingerprints.maxlen == 2000
+        assert "fp-0" not in t._reported_fingerprints
+        assert "fp-2099" in t._reported_fingerprints

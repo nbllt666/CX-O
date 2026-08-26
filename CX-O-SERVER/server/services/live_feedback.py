@@ -96,8 +96,9 @@ class LiveFeedbackTracker:
         self._response_history: deque = deque(maxlen=20)
         # 当前窗口内的弹幕情感累计
         self._window: List[dict] = []
-        # 已上报指纹（prompt+response md5），避免同回复重复上报
-        self._reported_fingerprints: set = set()
+        # 已上报指纹（prompt+response md5），避免同回复重复上报。
+        # 有界 deque（纯成员判定 + append 追加即可）仅保留最近指纹，防止长期运行无界增长。
+        self._reported_fingerprints: deque = deque(maxlen=2000)
 
     # ------------------------------------------------------------------ #
     # 记录 / 反馈入口
@@ -176,7 +177,7 @@ class LiveFeedbackTracker:
 
             payload = self._build_payload(decision, session_id=session_id)
             await self._safe_push(payload)
-            self._reported_fingerprints.add(fingerprint)
+            self._reported_fingerprints.append(fingerprint)
             return payload
         except Exception as e:  # 静默降级：任何异常不向上抛
             logger.warning(f"live_feedback 弹幕反馈处理降级: {e}")

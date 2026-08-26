@@ -22,6 +22,35 @@ class FakePipeline:
         return {"source_type": source_type, "source_ref": source_ref}
 
 
+class FakeMemoryManager:
+    """记忆存储 fake：记录写入调用并返回真实递增 id，避免测试污染真实 DB。"""
+
+    def __init__(self):
+        self.counter = 0
+        self.memories = []
+        self.permanents = []
+
+    def write_memory(self, content=None, memory_type="long_term", importance=3,
+                     tags=None, metadata=None, permanent=False, emotion_score=0.0,
+                     source="user", workspace_id="default", agent_id="default"):
+        self.counter += 1
+        self.memories.append({
+            "id": self.counter, "content": content, "memory_type": memory_type,
+            "importance": importance, "tags": tags, "metadata": metadata,
+            "source": source, "agent_id": agent_id,
+        })
+        return self.counter
+
+    def write_permanent_memory(self, content=None, tags=None, metadata=None,
+                               emotion_score=0.0, source="user", is_from_main=True):
+        self.counter += 1
+        self.permanents.append({
+            "id": self.counter, "content": content, "tags": tags,
+            "metadata": metadata, "source": source,
+        })
+        return self.counter
+
+
 class SimpleBox:
     """RubricSnapshot / DecisionInput 的假实现。"""
 
@@ -46,6 +75,7 @@ def service(tmp_path):
         config=cfg,
         multimodal_pipeline=FakePipeline(),
         decision_core=None,
+        memory_manager=FakeMemoryManager(),
     )
     # 注入假数据模型类（rubric/decision input），覆盖类构造路径
     svc._rubric_cls = SimpleBox
@@ -326,6 +356,127 @@ class TestSplitChunks:
         chunks = service._split_text_into_chunks(text, 10)  # target=30 chars
         assert len(chunks) > 1
         assert "".join(chunks) == text
+
+
+# --------------------------------------------------------------------------- #
+# 蒸馏产物持久化（OBS-7/#9 落库 + #10 target_agent_id 消费）
+# --------------------------------------------------------------------------- #
+class TestPersistDistillationProduct:
+    def _make_session(self, session_id="sid-persist", target_agent_id=None, location="memories"):
+        return {
+            "session_id": session_id,
+            "source_type": "text",
+            "source_ref": "src",
+            "template_id": "default",
+            "max_turns": 4,
+            "ask_user_on_ambiguity": False,
+            "state": "S_EXTRACT",
+            "turns": [],
+            "preread_summary": "pre 摘要",
+            "ambiguity_questions": [],
+            "extracted_content": "蒸馏出的核心记忆内容",
+            "quality_score": 0.9,
+            "created_at": _iso_now(),
+            "updated_at": _iso_now(),
+            "finalized_at": None,
+            "is_finalized": False,
+            "error_message": None,
+            "target_agent_id": target_agent_id,
+        }
+
+    @pytest.mark.asyncio
+    async def test_finalize_writes_memory_and_returns_real_id(self, service):
+        session = self._make_session(target_agent_id="agent-42")
+        service._save_session(session)
+
+        result = await service.finalize_distillation(
+            session_id="sid-persist", override_decision="permanent"
+        )
+
+        # override=permanent → 落库 permanent_memories，memory_id 为真实 id
+        assert result.stored is True
+        assert result.location == "permanent_memories"
+        assert isinstance(result.memory_id, int) and result.memory_id > 0
+        mm = service._memory_manager
+        assert len(mm.permanents) == 1
+        assert mm.permanents[0]["id"] == result.memory_id
+        # #10：target_agent_id 已写入 permanent 元数据归因
+        assert mm.permanents[0]["metadata"].get("target_agent_id") == "agent-42"
+
+    @pytest.mark.asyncio
+    async def test_finalize_memories_consumes_target_agent_id(self, service):
+        session = self._make_session(target_agent_id="agent-7")
+        service._save_session(session)
+
+        result = await service.finalize_distillation(
+            session_id="sid-persist", override_decision=None
+        )
+        assert result.stored is True
+        assert isinstance(result.memory_id, int) and result.memory_id > 0
+        mm = service._memory_manager
+        # 真实 DecisionCore 可能落 memories 或 permanent；两种情况都须命中归因
+        assert len(mm.memories) + len(mm.permanents) == 1
+        agent_consumed = False
+        if mm.memories:
+            agent_consumed = mm.memories[0]["agent_id"] == "agent-7"
+        if mm.permanents:
+            agent_consumed = (
+                mm.permanents[0]["metadata"].get("target_agent_id") == "agent-7"
+            )
+        # #10：target_agent_id 在落库时被消费归因
+        assert agent_consumed is True
+
+    @pytest.mark.asyncio
+    async def test_finalize_reject_not_stored(self, service):
+        session = self._make_session()
+        service._save_session(session)
+
+        result = await service.finalize_distillation(
+            session_id="sid-persist", override_decision="reject"
+        )
+
+        assert result.stored is False
+        assert result.location == "rejected"
+        assert result.memory_id is None
+        assert len(service._memory_manager.memories) == 0
+        assert len(service._memory_manager.permanents) == 0
+
+
+# --------------------------------------------------------------------------- #
+# 批量切分组状态磁盘恢复（OBS-7/#11）
+# --------------------------------------------------------------------------- #
+class TestGroupStatusDiskRecovery:
+    @pytest.mark.asyncio
+    async def test_get_group_status_recovers_from_disk_after_cache_loss(self, service):
+        # 组内 2 个 session 已落盘，缓存人为清空模拟进程重启
+        for sid, gid, idx in (("a1", "grp1", 0), ("a2", "grp1", 1), ("b1", "grp9", 0)):
+            session = {
+                "session_id": sid, "state": "S_FINALIZE",
+                "is_finalized": True, "chunk_index": idx,
+                "session_group_id": gid, "quality_score": 0.9,
+                "extracted_content": "记忆",
+            }
+            service._save_session(session)
+        service._sessions_cache.clear()  # 模拟重启后缓存为空
+
+        res = await service.get_group_status("grp1")
+
+        assert res["session_group_id"] == "grp1"
+        assert res["total_count"] == 2
+        assert res["completed_count"] == 2
+        assert {s["session_id"] for s in res["sessions"]} == {"a1", "a2"}
+
+    @pytest.mark.asyncio
+    async def test_get_group_status_unknown_group_404(self, service):
+        session = {
+            "session_id": "x1", "state": "S_FINALIZE", "is_finalized": True,
+            "chunk_index": 0, "session_group_id": "grpA",
+        }
+        service._save_session(session)
+        service._sessions_cache.clear()
+
+        with pytest.raises(KeyError, match="404"):
+            await service.get_group_status("grp-nope")
 
 
 # --------------------------------------------------------------------------- #

@@ -83,6 +83,11 @@ class AlarmManager:
         self._on_trigger_callback = None
         self._shutdown = False
         self._connection_cache: Dict[int, sqlite3.Connection] = {}
+        # M4（第五轮）修复: 记录各线程当前借出连接数（_get_connection 借出时 +1、
+        # _release_connection 归还时 -1）。淘汰缓存时仅可关闭「空闲」连接，防止
+        # 关闭正被另一线程执行 sqlite 语句的连接而触发
+        # sqlite3.ProgrammingError: Cannot operate on a closed database。
+        self._busy_count: Dict[int, int] = {}
         self._ensure_db()
 
     def _ensure_db(self):
@@ -127,6 +132,7 @@ class AlarmManager:
             if cached is not None:
                 try:
                     cached.execute("SELECT 1")
+                    self._busy_count[thread_id] = self._busy_count.get(thread_id, 0) + 1
                     return cached
                 except Exception:
                     # 连接已损坏,清理并重新创建
@@ -135,15 +141,21 @@ class AlarmManager:
                     except Exception:
                         pass
                     self._connection_cache.pop(thread_id, None)
+                    self._busy_count.pop(thread_id, None)
 
-            # G2: 容量保护——缓存超上限时关闭最旧一条（插入顺序 = 最旧）
+            # G2: 容量保护——缓存超上限时淘汰一条「空闲」连接（插入顺序 = 最旧）。
+            # M4：仅在 busy 计数为 0 时才 close，避免关掉正被使用的连接。
             if len(self._connection_cache) >= self._MAX_CACHED_CONNECTIONS:
-                oldest_tid, oldest_conn = next(iter(self._connection_cache.items()))
-                try:
-                    oldest_conn.close()
-                except Exception:
-                    pass
-                self._connection_cache.pop(oldest_tid, None)
+                for tid, oldest_conn in list(self._connection_cache.items()):
+                    if self._busy_count.get(tid, 0) > 0:
+                        continue
+                    try:
+                        oldest_conn.close()
+                    except Exception:
+                        pass
+                    self._connection_cache.pop(tid, None)
+                    self._busy_count.pop(tid, None)
+                    break
 
             conn = sqlite3.connect(self.db_path, timeout=30.0)
             conn.row_factory = sqlite3.Row
@@ -152,7 +164,15 @@ class AlarmManager:
             conn.execute("PRAGMA cache_size=-64000")
             conn.execute("PRAGMA busy_timeout=30000")
             self._connection_cache[thread_id] = conn
+            self._busy_count[thread_id] = self._busy_count.get(thread_id, 0) + 1
             return conn
+
+    def _release_connection(self) -> None:
+        """归还当前线程借出的连接（须与 _get_connection 成对，建议 try/finally）。"""
+        thread_id = threading.get_ident()
+        with self._conn_lock:
+            if self._busy_count.get(thread_id, 0) > 0:
+                self._busy_count[thread_id] -= 1
 
     def _close_all_connections(self):
         """关闭并清理所有缓存连接(用于 shutdown / 单元测试)"""
@@ -191,22 +211,25 @@ class AlarmManager:
 
         # BUG-B05 修复: 复用缓存连接,不再主动 close
         conn = self._get_connection()
-        cursor = conn.cursor()
-        cursor.execute(
-            """
-            INSERT INTO alarms (id, agent_id, message, trigger_time, created_at, status)
-            VALUES (?, ?, ?, ?, ?, ?)
-        """,
-            (
-                alarm.id,
-                alarm.agent_id,
-                alarm.message,
-                alarm.trigger_time.isoformat(),
-                alarm.created_at.isoformat(),
-                alarm.status,
-            ),
-        )
-        conn.commit()
+        try:
+            cursor = conn.cursor()
+            cursor.execute(
+                """
+                INSERT INTO alarms (id, agent_id, message, trigger_time, created_at, status)
+                VALUES (?, ?, ?, ?, ?, ?)
+            """,
+                (
+                    alarm.id,
+                    alarm.agent_id,
+                    alarm.message,
+                    alarm.trigger_time.isoformat(),
+                    alarm.created_at.isoformat(),
+                    alarm.status,
+                ),
+            )
+            conn.commit()
+        finally:
+            self._release_connection()
 
         self._schedule_alarm(alarm)
         _safe_log(
@@ -221,9 +244,12 @@ class AlarmManager:
     def get_alarm(self, alarm_id: str) -> Optional[Dict]:
         """按 ID 查询提醒详情，不存在返回 None。"""
         conn = self._get_connection()
-        cursor = conn.cursor()
-        cursor.execute("SELECT * FROM alarms WHERE id = ?", (alarm_id,))
-        row = cursor.fetchone()
+        try:
+            cursor = conn.cursor()
+            cursor.execute("SELECT * FROM alarms WHERE id = ?", (alarm_id,))
+            row = cursor.fetchone()
+        finally:
+            self._release_connection()
 
         if row:
             return dict(row)
@@ -235,19 +261,22 @@ class AlarmManager:
     def get_alarms_by_agent(self, agent_id: str, include_triggered: bool = False) -> List[Dict]:
         """查询某 agent 的提醒列表，默认仅返回待触发项并按触发时间排序。"""
         conn = self._get_connection()
-        cursor = conn.cursor()
+        try:
+            cursor = conn.cursor()
 
-        if include_triggered:
-            cursor.execute(
-                "SELECT * FROM alarms WHERE agent_id = ? ORDER BY trigger_time DESC", (agent_id,)
-            )
-        else:
-            cursor.execute(
-                "SELECT * FROM alarms WHERE agent_id = ? AND status = 'pending' ORDER BY trigger_time",
-                (agent_id,),
-            )
+            if include_triggered:
+                cursor.execute(
+                    "SELECT * FROM alarms WHERE agent_id = ? ORDER BY trigger_time DESC", (agent_id,)
+                )
+            else:
+                cursor.execute(
+                    "SELECT * FROM alarms WHERE agent_id = ? AND status = 'pending' ORDER BY trigger_time",
+                    (agent_id,),
+                )
 
-        rows = cursor.fetchall()
+            rows = cursor.fetchall()
+        finally:
+            self._release_connection()
         return [dict(row) for row in rows]
 
     async def aget_alarms_by_agent(self, agent_id: str, include_triggered: bool = False) -> List[Dict]:
@@ -262,13 +291,16 @@ class AlarmManager:
 
         # BUG-B05 修复: 复用缓存连接
         conn = self._get_connection()
-        cursor = conn.cursor()
-        cursor.execute(
-            "UPDATE alarms SET status = 'cancelled' WHERE id = ? AND status = 'pending'",
-            (alarm_id,),
-        )
-        affected = cursor.rowcount
-        conn.commit()
+        try:
+            cursor = conn.cursor()
+            cursor.execute(
+                "UPDATE alarms SET status = 'cancelled' WHERE id = ? AND status = 'pending'",
+                (alarm_id,),
+            )
+            affected = cursor.rowcount
+            conn.commit()
+        finally:
+            self._release_connection()
 
         if affected > 0:
             _safe_log(logging.INFO, f"取消提醒: {alarm_id}")
@@ -283,13 +315,16 @@ class AlarmManager:
         now = datetime.now()
         # BUG-B05 修复: 复用缓存连接
         conn = self._get_connection()
-        cursor = conn.cursor()
-        cursor.execute(
-            "UPDATE alarms SET status = 'triggered', triggered_at = ? WHERE id = ?",
-            (now.isoformat(), alarm_id),
-        )
-        affected = cursor.rowcount
-        conn.commit()
+        try:
+            cursor = conn.cursor()
+            cursor.execute(
+                "UPDATE alarms SET status = 'triggered', triggered_at = ? WHERE id = ?",
+                (now.isoformat(), alarm_id),
+            )
+            affected = cursor.rowcount
+            conn.commit()
+        finally:
+            self._release_connection()
 
         with self._lock:
             if alarm_id in self._timers:
@@ -303,9 +338,12 @@ class AlarmManager:
     def get_pending_alarms(self) -> List[Dict]:
         """查询全部待触发提醒，按触发时间升序返回。"""
         conn = self._get_connection()
-        cursor = conn.cursor()
-        cursor.execute("SELECT * FROM alarms WHERE status = 'pending' ORDER BY trigger_time")
-        rows = cursor.fetchall()
+        try:
+            cursor = conn.cursor()
+            cursor.execute("SELECT * FROM alarms WHERE status = 'pending' ORDER BY trigger_time")
+            rows = cursor.fetchall()
+        finally:
+            self._release_connection()
         return [dict(row) for row in rows]
 
     async def aget_pending_alarms(self) -> List[Dict]:

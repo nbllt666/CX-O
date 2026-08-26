@@ -14,9 +14,10 @@ import time
 from typing import Any, Optional
 
 import psutil
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
+from server.api.routers.admin import verify_admin_api_key
 from server.core.logging_config import get_contextual_logger
 from server.core.utils import get_shared_http_client
 
@@ -143,10 +144,18 @@ def _apply_config_updates(current_config: dict, incoming: dict) -> dict:
                 if key in vector_cfg:
                     current_config["memory"]["milvus_lite"][key] = vector_cfg[key]
         elif backend in ["weaviate", "weaviate_embedded"]:
+            # 第五轮 H3：UnifiedConfig.WeaviateConfig 字段为 host/port/embedded，
+            # 旧实现写 weaviate_host/weaviate_port（前端读回键），Pydantic 载入时
+            # 被静默丢弃 → 保存永不生效。此处做键映射并落 embedded。
             current_config["memory"].setdefault("weaviate", {})
-            for key in ["weaviate_host", "weaviate_port", "vector_size"]:
-                if key in vector_cfg:
-                    current_config["memory"]["weaviate"][key] = vector_cfg[key]
+            weaviate_cfg = current_config["memory"]["weaviate"]
+            if "weaviate_host" in vector_cfg:
+                weaviate_cfg["host"] = vector_cfg["weaviate_host"]
+            if "weaviate_port" in vector_cfg:
+                weaviate_cfg["port"] = vector_cfg["weaviate_port"]
+            if "vector_size" in vector_cfg:
+                weaviate_cfg["vector_size"] = vector_cfg["vector_size"]
+            weaviate_cfg["embedded"] = backend == "weaviate_embedded"
         elif backend == "qdrant":
             current_config["memory"].setdefault("qdrant", {})
             for key in ["qdrant_host", "qdrant_port", "vector_size"]:
@@ -704,8 +713,11 @@ async def get_gateway_config():
 
 
 @router.put("/service/config")
-async def update_service_config_put(config: dict):
+async def update_service_config_put(config: dict, _: bool = Depends(verify_admin_api_key)):
     """更新服务配置（PUT方法，需要重启生效）
+
+    第五轮 H2：该端点可任意改写 config.json，此前无鉴权；前端未接线，
+    挂 verify_admin_api_key 保护（供外部管理 agent 携带密钥调用）。
 
     BUG-B04 修复: 统一写入项目根目录的 config.json，与 ``server.config``
     加载路径一致；写入后立即 reload Settings，确保运行期内存配置随之更新。
@@ -732,7 +744,7 @@ async def update_service_config_put(config: dict):
 
 
 @router.post("/service/config")
-async def update_service_config(config: dict):
+async def update_service_config(config: dict, _: bool = Depends(verify_admin_api_key)):
     """更新服务配置（需要重启生效）
 
     BUG-B04 修复: 统一读写 config.json，避免与 server.config 加载路径不一致。
@@ -758,8 +770,8 @@ async def update_service_config(config: dict):
 
 
 @router.get("/service/environment")
-async def get_environment_info():
-    """获取环境信息"""
+async def get_environment_info(_: bool = Depends(verify_admin_api_key)):
+    """获取环境信息（含 Python/Conda 路径，第五轮 H2 补鉴权）"""
     conda_python = get_conda_python_path()
     conda_activate = get_conda_activate_script()
 
@@ -776,8 +788,8 @@ async def get_environment_info():
 
 
 @router.get("/service/startup-command")
-async def get_startup_command(use_conda: bool = True):
-    """获取启动命令（供前端直接执行）"""
+async def get_startup_command(use_conda: bool = True, _: bool = Depends(verify_admin_api_key)):
+    """获取启动命令（供前端直接执行；第五轮 H2 补鉴权）"""
     conda_python = get_conda_python_path()
     project_root = get_project_root()
 

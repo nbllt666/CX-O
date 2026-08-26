@@ -69,18 +69,21 @@ export function useAudioPipeline(
     analyserRef.current = analyser;
   }, []);
 
-  const close = useCallback(() => {
+  const close = useCallback((): Promise<void> => {
     const ctx = audioContextRef.current;
     analyserRef.current = null;
     if (ctx) {
       // H9: 等 close 完成后再置 null——旧实现立即置 null，若 close 完成前再次
       // init() 会创建第二个 AudioContext，旧的异步关闭（双 context 瞬时并存）。
-      void ctx.close().finally(() => {
+      // F3（第五轮）: 返回 Promise，供调用方 await 后再重建（useAudioAnalyzer
+      // 快切 audioElement 时曾出现 connect(null analyser) 崩溃）。
+      return ctx.close().finally(() => {
         if (audioContextRef.current === ctx) {
           audioContextRef.current = null;
         }
       });
     }
+    return Promise.resolve();
   }, []);
 
   const createStreamSource = useCallback(
@@ -122,7 +125,10 @@ export function useAudioPipeline(
   );
 
   useEffect(() => {
-    return () => close();
+    return () => {
+      // close 现返回 Promise（F3 供调用方 await）；Effect 清理函数必须同步返回
+      void close();
+    };
   }, [close]);
 
   return {

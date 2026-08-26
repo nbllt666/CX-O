@@ -25,17 +25,39 @@ def mgr(tmp_path, monkeypatch):
 
     monkeypatch.setattr(MemoryManager, "_init_advanced_components", _noop_init)
 
-    # 重置单例
+    # 重置单例/实例注册表
     MemoryManager._instance = None
+    MemoryManager._instances.clear()
     db_path = str(tmp_path / "memories.db")
     m = MemoryManager(db_path=db_path)
     yield m
     m.shutdown()
     MemoryManager._instance = None
+    MemoryManager._instances.clear()
 
 
 def _write(mgr, content, **kwargs):
     return mgr.write_memory(content=content, **kwargs)
+
+
+class TestSingletonIsolation:
+    def test_same_db_path_reuses_instance(self, tmp_path):
+        p = str(tmp_path / "same.db")
+        a = MemoryManager(db_path=p)
+        b = MemoryManager(db_path=p)
+        assert a is b
+        a.shutdown()
+
+    def test_different_db_path_distinct_instances(self, tmp_path):
+        """不同 db_path 不得复用同一实例（Y-8 修复）。"""
+        a = MemoryManager(db_path=str(tmp_path / "a.db"))
+        b = MemoryManager(db_path=str(tmp_path / "b.db"))
+        try:
+            assert a is not b
+            assert a.db_path != b.db_path
+        finally:
+            a.shutdown()
+            b.shutdown()
 
 
 class TestTableName:

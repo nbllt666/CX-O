@@ -28,7 +28,7 @@ from server.core.utils import (
 logger = logging.getLogger(__name__)
 
 TARGET_FS = 16000
-regex = r"<\|.*\|>"
+regex = r"<\|.*?\|>"
 
 
 def _safe_float(value: Any, default: float = 0.0) -> float:
@@ -552,6 +552,15 @@ class ASRService:
                         await old_ws.close()
                     except Exception as err:
                         logger.debug("[ASR-WS] close error on send failure: %s", err)
+                # 同步排空 recv_queue 并复位 final_received（复用 reset() 的排空逻辑）：
+                # 否则重连复用同一队列会读到旧连接残留结果，且 final_received 保持 True
+                # 会跳过 final 状态判定，导致下一轮语音结果被误判
+                while not st.recv_queue.empty():
+                    try:
+                        st.recv_queue.get_nowait()
+                    except asyncio.QueueEmpty:
+                        break
+                st.final_received = False
             except Exception as cleanup_e:
                 logger.warning(f"[ASR-WS] Cleanup after send error failed: {cleanup_e}")
             return False

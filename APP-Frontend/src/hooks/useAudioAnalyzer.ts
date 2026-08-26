@@ -144,16 +144,27 @@ export function useAudioAnalyzer({
       sourceRef.current.disconnect();
       sourceRef.current = null;
     }
-    closePipeline();
 
-    initPipeline();
-    const source = createElementSource(audioElement)!;
-    sourceRef.current = source;
-    sourceAudioElRef.current = audioElement;
-    source.connect(analyserRef.current!);
-    analyserRef.current!.connect(audioContextRef.current!.destination);
+    // F3（第五轮）: close 为异步完成（analyserRef 同步置空、audioContextRef 异步
+    // 置空），旧实现 close 后立刻 init：audioContextRef 仍非空 → init 幂等早退 →
+    // analyser 恒为 null → createElementSource 后 connect(null) 抛 TypeError。
+    // 串行 await close 完成后再重建；cancelled 标志防止 effect 重跑/销毁后
+    // 异步续体仍创建新 AudioContext 造成泄漏。
+    let cancelled = false;
+    const setupPipeline = async () => {
+      await closePipeline();
+      if (cancelled) return;
+      initPipeline();
+      const source = createElementSource(audioElement)!;
+      sourceRef.current = source;
+      sourceAudioElRef.current = audioElement;
+      source.connect(analyserRef.current!);
+      analyserRef.current!.connect(audioContextRef.current!.destination);
+    };
+    void setupPipeline();
 
     return () => {
+      cancelled = true;
       if (sourceRef.current) {
         sourceRef.current.disconnect();
         sourceRef.current = null;

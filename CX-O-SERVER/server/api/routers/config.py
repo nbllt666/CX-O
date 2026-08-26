@@ -33,6 +33,10 @@ def _get_services_config() -> Dict[str, Any]:
     ``services.sensevoice_streaming`` 节可直接映射；danmaku/firewall/firewall_v3/vad
     等节在 UnifiedConfig 尚无专有 Pydantic 模型，缺省返回空容器并交由调用方回退
     内置默认配置（后续由 s0201 补全省级契约后落地）。
+
+    第五轮 M9：叠加 ``_save_services_config`` 落盘的 legacy 文件中的非权威节
+    （danmaku/firewall/vad 等），使 POST /config/services 保存的内容可回读
+    （读写自洽）；sensevoice_streaming 始终以 UnifiedConfig 为权威。
     """
     services_data: Dict[str, Any] = {"services": {}}
     try:
@@ -47,6 +51,17 @@ def _get_services_config() -> Dict[str, Any]:
     except Exception:
         # UnifiedConfig 不可用或无对应节时，回退为空，由调用方回退默认配置
         pass
+    try:
+        saved_file = _PROJECT_ROOT / "config" / "settings.json"
+        if saved_file.exists():
+            saved_services = json.loads(saved_file.read_text(encoding="utf-8")).get(
+                "services", {}
+            )
+            for key in ("danmaku", "firewall", "firewall_v3", "vad", "asr", "tts", "audio"):
+                if key in saved_services:
+                    services_data["services"][key] = saved_services[key]
+    except Exception:
+        pass
     return services_data
 
 
@@ -59,11 +74,12 @@ def _save_services_config(config_data: Dict[str, Any]) -> None:
 
 
 def _get_default_sensevoice_config() -> Dict[str, Any]:
-    """获取 SenseVoice Streaming 默认配置"""
+    """获取 SenseVoice Streaming 默认配置（与 UnifiedConfig.SenseVoiceStreamingConfig
+    缺省值对齐，第五轮 M9：old 512/4 与运行时 800/8000 不一致导致流式行为漂移）。"""
     return {
         "chunk_size": 1024,
-        "hop_size": 512,
-        "look_back": 4
+        "hop_size": 800,
+        "look_back": 8000
     }
 
 

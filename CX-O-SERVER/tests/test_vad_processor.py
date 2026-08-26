@@ -50,8 +50,11 @@ class TestConfig:
 
 class TestEnergyDetection:
     def test_calculate_energy(self, vad):
-        assert vad._calculate_energy(HIGH_SAMPLES) > 500
-        assert vad._calculate_energy(LOW_SAMPLES) < 500
+        # #12: 能量归一化到 [-1,1] 满刻度均方（阈值 500/32768² 同步换算），
+        # 判定语义不变，仍保持 high > threshold > low
+        assert vad._calculate_energy(HIGH_SAMPLES) > vad.energy_threshold
+        assert vad._calculate_energy(LOW_SAMPLES) < vad.energy_threshold
+        assert vad._calculate_energy(HIGH_SAMPLES) < 1.0
 
     def test_calculate_energy_short_frame(self, vad):
         assert vad._calculate_energy(b"\x00") == 0

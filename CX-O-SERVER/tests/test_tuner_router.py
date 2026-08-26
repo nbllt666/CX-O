@@ -52,9 +52,19 @@ class _FakeConfig:
 
 
 def _make_client(handler) -> tuner.TunerClient:
-    """构造一个挂载 mock transport 的 TunerClient（不发起真实网络）。"""
-    client = tuner.TunerClient(base_url="http://mock-tuner:8300", timeout=10)
+    """构造一个挂载 mock transport 的 TunerClient（不发起真实网络）。
+
+    拆查（issue 07 附录）：不调用 TunerClient() 构造函数——其在旧实现中急切构造
+    默认 httpx.AsyncClient，该构造本机耗时 ~21s（证书库/代理发现），使每条用例
+    变慢 ~27s，合计占全量回归一半。这里用 __new__ 跳过构造函数、只注入
+    MockTransport 客户端（构造 0ms）。
+    """
+    client = tuner.TunerClient.__new__(tuner.TunerClient)
+    client.base_url = "http://mock-tuner:8300"
+    client.timeout = 10
+    client._max_retries = 2
     client._client = httpx.AsyncClient(transport=httpx.MockTransport(handler), timeout=10)
+    client._owns_client = True
     return client
 
 

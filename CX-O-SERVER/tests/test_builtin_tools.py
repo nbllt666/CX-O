@@ -49,6 +49,29 @@ class TestCalculator:
         r = BuiltinTools.calculator("3 * 3")
         assert r["expression"] == "3 * 3"
 
+    def test_single_power_still_works(self):
+        # 护栏不应误伤普通单次幂运算
+        r = BuiltinTools.calculator("2 ** 3")
+        assert r["success"] is True
+        assert r["result"] == 8
+
+    def test_chained_power_rejected(self):
+        # 9**9**9 链式幂运算必须被预扫描拦截，而非进入 eval 拖垮进程
+        r = BuiltinTools.calculator("9 ** 9 ** 9")
+        assert r["success"] is False
+        assert "链式幂" in r["error"]
+
+    def test_large_literal_exponent_rejected(self):
+        r = BuiltinTools.calculator("2 ** 20000")
+        assert r["success"] is False
+        assert "指数过大" in r["error"]
+
+    def test_oversized_expression_rejected(self):
+        r = BuiltinTools.calculator("1 + " * 200 + "1")
+        assert len("1 + " * 200 + "1") > 300
+        assert r["success"] is False
+        assert "过长" in r["error"]
+
 
 class TestDatetime:
     def test_default_format(self):
@@ -75,6 +98,28 @@ class TestDatetime:
         r = BuiltinTools.datetime_tool()
         assert "iso" in r
         assert isinstance(r["timestamp"], float)
+
+    def test_timezone_utc(self):
+        # timezone 参数应生效：UTC 时区的 iso 应带 +00:00 偏移（仅当 zoneinfo 可用时断言；
+        # Windows 无 tzdata 时 valid 时区会静默回退本地，属规格允许的降级行为）
+        from datetime import datetime
+        from zoneinfo import ZoneInfo
+
+        r = BuiltinTools.datetime_tool(timezone="UTC")
+        assert r["success"] is True
+        assert r["timezone"] == "UTC"
+        try:
+            aware = datetime.now(ZoneInfo("UTC"))
+            zinfo_ok = aware.utcoffset() is not None
+        except Exception:
+            zinfo_ok = False
+        if zinfo_ok:
+            assert r["iso"].endswith("+00:00")
+
+    def test_invalid_timezone_falls_back(self):
+        # 无效时区名应静默回退本地时间（不抛异常，保持原行为）
+        r = BuiltinTools.datetime_tool(timezone="Not/AZone")
+        assert r["success"] is True
 
 
 class TestRandom:

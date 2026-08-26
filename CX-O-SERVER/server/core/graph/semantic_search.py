@@ -100,6 +100,16 @@ class SemanticSearch:
         vector: Optional[np.ndarray] = None,
         agent_id: str = "default",
     ) -> str:
+        """将节点向量写入语义索引。
+
+        Returns:
+            恒为节点的 ``node_id``（唯一实体标识），与插入成功与否、是否使用
+            Weaviate/本地模式无关。调用方不得依据返回值判断插入成败。
+
+        Failure semantics:
+            成功插入时内部生成 Weaviate 对象 UUID（仅用于对象定位，不对外暴露）；
+            插入失败或无可用客户端时仅记录日志并返回 ``node_id``，不抛出异常。
+        """
         if vector is None:
             vector = self._vectorizer.encode(text_content)
 
@@ -115,12 +125,10 @@ class SemanticSearch:
                     },
                     vector=vector.tolist(),
                 )
-                return str(uuid)
+                logger.debug(f"节点 {node_id} 向量已插入 (weaviate uuid={uuid})")
             except Exception as e:
-                logger.error(f"添加向量失败: {e}")
-                return node_id
-        else:
-            return node_id
+                logger.error(f"添加向量失败 (node_id={node_id}): {e}")
+        return node_id
 
     def search(
         self,
@@ -198,7 +206,7 @@ class SemanticSearch:
         from server.core.graph.database import get_database
         db = get_database(self.config)
 
-        sql = "SELECT * FROM nodes WHERE text_content IS NOT NULL"
+        sql = "SELECT * FROM nodes WHERE text_content IS NOT NULL OR json_extract(properties, '$.name') IS NOT NULL"
         params = []
         if node_type:
             sql += " AND type = ?"
@@ -218,7 +226,15 @@ class SemanticSearch:
             if node_filter and not node_filter(node.id):
                 continue
 
-            text_words = set(node.text_content.lower().split())
+            # 回退索引收敛节点名称：text_content 未维护（空/缺失）时以属性 name 兜底，
+            # 避免该节点因 text_content 为空而永不召回。
+            text = node.text_content or ""
+            if not text.strip():
+                name = node.properties.get("name")
+                if name:
+                    text = str(name)
+
+            text_words = set(text.lower().split())
             score = len(query_words & text_words) / max(len(query_words), 1)
 
             if score > 0:

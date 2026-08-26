@@ -47,6 +47,10 @@ def main():
     data_size = struct.unpack("<I", raw[40:44])[0]
     pcm = raw[44:44 + data_size]
     n_samples = len(pcm) // 2
+    if n_samples == 0:
+        # backlog（issue 08）: 空/极短 PCM 时除零（sum/0）。直接跳过分析。
+        print("empty pcm, skip analysis")
+        return
     samples = struct.unpack("<%dh" % n_samples, pcm)
     rms = math.sqrt(sum(x * x for x in samples) / n_samples)
     peak = max(abs(x) for x in samples)

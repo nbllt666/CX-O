@@ -77,11 +77,23 @@ class TunerClient:
         base_url: str = "http://127.0.0.1:8300",
         timeout: int = 10,
         max_retries: int = 2,
+        client: Optional[httpx.AsyncClient] = None,
     ):
         self.base_url = base_url.rstrip("/")
         self.timeout = timeout
         self._max_retries = max_retries
-        self._client = httpx.AsyncClient(timeout=timeout)
+        # 拆查结论（issue 07 附录）：默认 httpx.AsyncClient 构造在本机因
+        # 证书库加载/代理发现可耗时 ~21s。不再急切构造——优先注入（测试/Mock），
+        # 否则惰性复用项目共享客户端（已连接池化，见 core/utils.get_shared_http_client）。
+        self._client = client
+        self._owns_client = client is None
+
+    def _get_client(self) -> httpx.AsyncClient:
+        if self._client is None:
+            from server.core.utils import get_shared_http_client
+
+            self._client = get_shared_http_client()
+        return self._client
 
     async def _request(
         self,
@@ -93,9 +105,10 @@ class TunerClient:
     ) -> Optional[Any]:
         url = f"{self.base_url}{path}"
         last_err: Optional[Exception] = None
+        client = self._get_client()
         for attempt in range(self._max_retries):
             try:
-                resp = await self._client.request(method, url, params=params, json=json)
+                resp = await client.request(method, url, params=params, json=json)
                 if resp.is_error:
                     logger.warning(
                         f"CXO-Tuner {method} {path} 返回 {resp.status_code}：{resp.text[:200]}"
@@ -142,6 +155,9 @@ class TunerClient:
         return await self._request("DELETE", f"/api/v1/adapters/{adapter_id}")
 
     async def close(self) -> None:
+        # 不关闭共享客户端（非本实例拥有）；仅关闭自主创建的实例
+        if not self._owns_client or self._client is None:
+            return
         try:
             await self._client.aclose()
         except Exception as e:

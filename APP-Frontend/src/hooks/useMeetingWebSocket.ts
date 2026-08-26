@@ -99,6 +99,8 @@ export function useMeetingWebSocket(options: UseMeetingWebSocketOptions): UseMee
   onChangeRef.current = onChange;
   const roomIdRef = useRef(roomId);
   roomIdRef.current = roomId;
+  const intervalMsRef = useRef(intervalMs);
+  intervalMsRef.current = intervalMs;
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   // 轮询「在途」闸：end()/停轮询后置 false，阻止已发起的异步 getState 把旧快照写回
   const pollActiveRef = useRef(false);
@@ -179,7 +181,9 @@ export function useMeetingWebSocket(options: UseMeetingWebSocketOptions): UseMee
           clearInterval(timerRef.current);
           timerRef.current = null;
         }
-        timerRef.current = setInterval(() => void fetchState(), intervalMs);
+        // intervalMsRef 取最新值：start 的 useCallback 依赖为空，closure 内 intervalMs
+        // 是首渲染值，父级中途改 intervalMs 时须用 ref 读数保持重建周期与展示一致。
+        timerRef.current = setInterval(() => void fetchState(), intervalMsRef.current);
         setIsPolling(true);
         setSnapshot(s);
         setIsError(false);

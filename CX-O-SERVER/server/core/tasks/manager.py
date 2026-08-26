@@ -294,8 +294,12 @@ class TaskManager:
         with self._lock:
             for t in self._scheduled_tasks:
                 if t["id"] == task_id:
+                    # G5 模式（与 update_task 对齐）：先全量校验并计算新值，
+                    # 全部通过后再统一应用——旧逻辑边校验边写，中途抛错会在
+                    # 内存 _scheduled_tasks 留下部分修改（且不落盘，造成内存与磁盘不一致）
                     schedule_changed = False
                     enabled_false_to_true = False
+                    prepared: Dict[str, Any] = {}
                     for k, v in fields.items():
                         if k not in allowed:
                             continue
@@ -310,6 +314,9 @@ class TaskManager:
                         if k == "enabled":
                             if not t.get("enabled") and v:
                                 enabled_false_to_true = True
+                        prepared[k] = v
+                    # 全部校验通过，统一应用
+                    for k, v in prepared.items():
                         t[k] = v
                     if schedule_changed or enabled_false_to_true:
                         t["next_run"] = self._compute_next_run(t["schedule"])
