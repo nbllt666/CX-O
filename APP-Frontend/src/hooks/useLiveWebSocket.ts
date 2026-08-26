@@ -184,9 +184,13 @@ export function useLiveWebSocket(options: UseLiveWebSocketOptions = {}): UseLive
           break;
         case 'asr_result':
           if (data.data && onASRResultRef.current) {
+            // 终结判定用服务端显式字段（is_final/end），不再用 VAD 说话态（is_speaking）反推；
+            // 两者均缺省时按「未终结」（中途结果）处理。
+            const explicitFinal =
+              typeof data.data.is_final === 'boolean' ? data.data.is_final : data.data.end === true;
             onASRResultRef.current({
               text: String(data.data.text || ''),
-              is_final: Boolean(!data.data.is_speaking),
+              is_final: explicitFinal,
               speakerName: (data.data.speaker_name as string) || '',
             });
           }

@@ -95,6 +95,8 @@ export function useWSTransport(options: UseWSTransportOptions): UseWSTransportRe
     const r = reconnectRef.current;
     if (r.strategy === 'none') return null;
     if (r.strategy === 'fixed') return r.delay;
+    // 防御空数组：r.delays[-1] 会返回 undefined（undefined!==null → ~0ms 重连风暴），回退安全默认
+    if (r.delays.length === 0) return 1000;
     const idx = Math.min(reconnectAttemptsRef.current, r.delays.length - 1);
     return r.delays[idx];
   }, []);
@@ -159,7 +161,7 @@ export function useWSTransport(options: UseWSTransportOptions): UseWSTransportRe
   const reconnect = useCallback(() => {
     disconnect();
     reconnectAttemptsRef.current = 0;
-    isUnmountedRef.current = false;
+    // 不复位 isUnmountedRef：卸载后不得再重连（复位会破坏卸载防护，卸载后仍触发连接）
     reconnectTimeoutRef.current = window.setTimeout(connect, 50);
   }, [disconnect, connect]);
 

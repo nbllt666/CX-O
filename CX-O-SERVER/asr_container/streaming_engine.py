@@ -263,30 +263,6 @@ def _run_asr_partial(audio_slice: np.ndarray, asr_cache: dict) -> str:
         return ""
 
 
-def _run_asr_speculative(audio_slice: np.ndarray) -> str:
-    """短句投机 partial：对当前缓冲做一次性整句解码（cache={}，is_final=True）。
-
-    2026-08-25 修复：paraformer-zh-streaming 对流式增量在 ~0.5-0.9s 短句上
-    is_final=False 路径不产出文本（实测 0.5s 语音仅 final 有文字），导致
-    双流式管道 on_partial_result 无输入、服务端饿死（旧 SenseVoice 引擎
-    0.5s 即产 partial）。此函数在句长达标后对缓冲做一次性解码，作为投机
-    partial 早发信号（后续 partial/final 继续修正），恢复短句全链路触发。
-    """
-    if _ASR is None:
-        return ""
-    try:
-        res = _ASR.generate(
-            input=audio_slice, cache={}, is_final=True,
-            chunk_size=CHUNK_SIZE,
-            encoder_chunk_look_back=ENCODER_LOOK_BACK,
-            decoder_chunk_look_back=DECODER_LOOK_BACK,
-        )
-        return str(res[0].get("text", "") or "") if res and isinstance(res[0], dict) else ""
-    except Exception as e:  # noqa: BLE001
-        logger.error(f"[ENGINE] ASR 投机 partial 失败: {e}")
-        return ""
-
-
 def _run_vad(audio: np.ndarray, is_final: bool, vad_cache: dict) -> List[List[int]]:
     """fsmn-vad 流式分句。返回 segment 列表 [[beg, end], ...]（16k 采样索引）。"""
     if _VAD is None:
@@ -511,7 +487,7 @@ class StreamSession:
         """增量 partial：对 [_cur_start:] 增量解码，文本非空才产出 partial 消息。
 
         短句兜底：增量路径无文本且本句尚未发过投机 partial 时，对当前缓冲做
-        一次性整句解码（_run_asr_speculative）作为投机 partial 早发，防止
+        一次性整句解码（_run_asr_final）作为投机 partial 早发，防止
         双流式服务端无 partial 输入而饿死（修复 2026-08-25）。
         """
         loop = asyncio.get_running_loop()
@@ -520,7 +496,7 @@ class StreamSession:
         )
         if not text and not self._spec_sent:
             spec = await loop.run_in_executor(
-                _EXECUTOR, _run_asr_speculative, self._audio[self._cur_start:]
+                _EXECUTOR, _run_asr_final, self._audio[self._cur_start:]
             )
             if spec:
                 text = spec

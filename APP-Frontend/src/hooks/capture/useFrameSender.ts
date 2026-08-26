@@ -110,6 +110,8 @@ export function useFrameSender({
   adaptiveIntervalProviderRef.current = adaptiveIntervalProvider;
   const lastSentAtRef = useRef<number | null>(null);
   const lastSentDataUrlRef = useRef<string | null>(null);
+  // 自适应抽帧串行闸：上一拍 async（动态间隔计算 + 发送）未完成时跳过本拍，避免重叠抓帧/并发写 lastSent*
+  const adaptiveInFlightRef = useRef(false);
 
   /** 抓帧并上行；applyDedupe=false 时跳过静止去重（手动点发） */
   const grabAndSend = useCallback((applyDedupe: boolean): boolean => {
@@ -145,25 +147,41 @@ export function useFrameSender({
       return () => clearInterval(timer);
     }
 
-    // adaptive：每拍抽一帧，先算动态间隔再走与 interval 相同的间隔 + 去重裁决
+    // adaptive：每拍用同一帧 dataUrl 做间隔决策并发送，避免「决策帧」与「发送帧」不一致；
+    // 用 adaptiveInFlightRef 串行化：上一拍 async（动态间隔计算 + 发送）未完结时跳过本拍。
     const timer = setInterval(() => {
+      if (adaptiveInFlightRef.current) return;
       const source = pickActiveFrameSource(sourcesRef.current);
       if (!source) return; // 未激活/未就绪不硬采
       const dataUrl = source.captureFrame();
       if (!dataUrl) return;
+      // 静止去重：与上次成功发送帧一致则跳过（沿用 grabAndSend 的去重语义）
+      if (isDuplicateFrame(dataUrl, lastSentDataUrlRef.current)) return;
       const now = Date.now();
+      adaptiveInFlightRef.current = true;
       // computeChangeMagnitude 是 async，环境不支持时可降级 0 或抛错；
-      // 生产者在 try/catch 内被防御，任何异常退化为 interval；fire-and-forget 不阻塞节拍
+      // 生产者在 try/catch 内被防御，任何异常退化为 interval
       void (async () => {
-        const provider = adaptiveIntervalProviderRef.current ?? defaultAdaptiveIntervalProvider;
-        let adaptiveIntervalSec: number;
         try {
-          adaptiveIntervalSec = await provider(dataUrl, lastSentDataUrlRef.current, intervalSecRef.current);
-        } catch {
-          adaptiveIntervalSec = intervalSecRef.current; // 生产者抛错/环境不支持 → 退化 interval
+          const provider = adaptiveIntervalProviderRef.current ?? defaultAdaptiveIntervalProvider;
+          let adaptiveIntervalSec: number;
+          try {
+            adaptiveIntervalSec = await provider(dataUrl, lastSentDataUrlRef.current, intervalSecRef.current);
+          } catch {
+            adaptiveIntervalSec = intervalSecRef.current; // 生产者抛错/环境不支持 → 退化 interval
+          }
+          if (!shouldSendByInterval(now, lastSentAtRef.current, adaptiveIntervalSec)) return;
+          // 互斥闸：对话流式进行中跳过（与 interval/manual 分支同语义）
+          if (canSendRef.current && !canSendRef.current()) return;
+          // 发送决策所用的同一帧 dataUrl，不再二次抓帧
+          sendFrameRef.current(dataUrl, source.kind);
+          const sentAt = Date.now();
+          lastSentAtRef.current = sentAt;
+          lastSentDataUrlRef.current = dataUrl;
+          setLastSentAt(sentAt);
+        } finally {
+          adaptiveInFlightRef.current = false;
         }
-        if (!shouldSendByInterval(now, lastSentAtRef.current, adaptiveIntervalSec)) return;
-        grabAndSend(true);
       })();
     }, TICK_MS);
     return () => clearInterval(timer);

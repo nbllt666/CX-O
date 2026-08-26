@@ -73,7 +73,6 @@ def _patch_vad(monkeypatch, session):
 def _patch_asr(monkeypatch, text="你好"):
     monkeypatch.setattr(engine, "_run_asr_final", lambda audio: text)
     monkeypatch.setattr(engine, "_run_asr_partial", lambda audio, cache: "")
-    monkeypatch.setattr(engine, "_run_asr_speculative", lambda audio: "")
 
 
 def _unit_emb():
@@ -137,7 +136,6 @@ async def _run_fast_path_ready_speaker(monkeypatch):
     _patch_vad(monkeypatch, session)
     monkeypatch.setattr(engine, "_run_asr_final", _slow_asr_first)
     monkeypatch.setattr(engine, "_run_asr_partial", lambda audio, cache: "")
-    monkeypatch.setattr(engine, "_run_asr_speculative", lambda audio: "")
     monkeypatch.setattr(engine, "_run_spk_embedding", lambda audio: _unit_emb())
 
     msgs = await session._vad_sweep()
@@ -196,7 +194,6 @@ async def _run_finish_pending_and_ready(monkeypatch):
     # ready 快速路径：SPK 线程先行完成，emb_fut.done() 为真
     monkeypatch.setattr(engine, "_run_asr_final", _slow_asr_first)
     monkeypatch.setattr(engine, "_run_asr_partial", lambda audio, cache: "")
-    monkeypatch.setattr(engine, "_run_asr_speculative", lambda audio: "")
     monkeypatch.setattr(engine, "_run_spk_embedding", lambda audio: _unit_emb())
     msgs = await session.finish()
     assert len(msgs) == 1
@@ -208,7 +205,6 @@ async def _run_finish_pending_and_ready(monkeypatch):
     _patch_vad(monkeypatch, session2)
     monkeypatch.setattr(engine, "_run_asr_final", lambda audio: "你好")
     monkeypatch.setattr(engine, "_run_asr_partial", lambda audio, cache: "")
-    monkeypatch.setattr(engine, "_run_asr_speculative", lambda audio: "")
     gate = threading.Event()
 
     def _slow_spk(audio):

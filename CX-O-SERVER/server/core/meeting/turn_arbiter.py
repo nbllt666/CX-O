@@ -129,7 +129,7 @@ class TurnArbiter:
 
         # 2) 自言自语/语气词
         for w in _IGNORE_WORDS:
-            if text.strip().lower() == w or text == w:
+            if text.strip().lower() == w:
                 return IntentionResult(IntentType.IGNORE, reason=f"语气词「{w}」")
 
         # 3) 开放提问

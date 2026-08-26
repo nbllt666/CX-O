@@ -209,7 +209,10 @@ class TTSServiceConfig(BaseModel):
 class SenseVoiceStreamingConfig(BaseModel):
     """SenseVoice 流式识别配置节：分块大小、跳跃长度与回看长度。"""
 
-    chunk_size: int = 1600
+    # 与 server.api.routers.config._get_default_sensevoice_config 的缺省分块大小对齐
+    # （1024），使单一真相源（UnifiedConfig）缺省值与 /config/sensevoice-streaming
+    # 回退缺省保持一致，避免 1600/1024 冲突。
+    chunk_size: int = 1024
     hop_size: int = 800
     look_back: int = 8000
 

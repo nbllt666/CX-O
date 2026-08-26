@@ -100,12 +100,15 @@ export function useMeetingWebSocket(options: UseMeetingWebSocketOptions): UseMee
   const roomIdRef = useRef(roomId);
   roomIdRef.current = roomId;
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  // 轮询「在途」闸：end()/停轮询后置 false，阻止已发起的异步 getState 把旧快照写回
+  const pollActiveRef = useRef(false);
 
   const fetchState = useCallback(async (): Promise<MeetingRoomSnapshot | null> => {
     const id = roomIdRef.current;
     if (!id) return null;
     try {
       const s = await meetingApi.getState(id);
+      if (!pollActiveRef.current) return null; // 已停止轮询/房间已结束：丢弃在途结果
       setSnapshot(s);
       setIsError(false);
       // 跨窗广播当前发言者 → 桌宠说话高亮
@@ -121,6 +124,7 @@ export function useMeetingWebSocket(options: UseMeetingWebSocketOptions): UseMee
   // 启动/停止轮询：roomId 有值时定时拉取，无值时清除
   useEffect(() => {
     if (!roomId) {
+      pollActiveRef.current = false;
       setSnapshot(null);
       setIsPolling(false);
       if (timerRef.current) {
@@ -129,10 +133,12 @@ export function useMeetingWebSocket(options: UseMeetingWebSocketOptions): UseMee
       }
       return;
     }
+    pollActiveRef.current = true;
     void fetchState();
     setIsPolling(true);
     timerRef.current = setInterval(() => void fetchState(), intervalMs);
     return () => {
+      pollActiveRef.current = false;
       if (timerRef.current) {
         clearInterval(timerRef.current);
         timerRef.current = null;
@@ -166,6 +172,7 @@ export function useMeetingWebSocket(options: UseMeetingWebSocketOptions): UseMee
     }): Promise<MeetingRoomSnapshot | null> => {
       try {
         const s = await meetingApi.start(opts);
+        pollActiveRef.current = true; // 新会议生效前恢复在途闸（end() 可能已将之关闭）
         setSnapshot(s);
         setIsError(false);
         setMeetingHint({ speaker: s.token_holder ?? null, roomId: s.room_id });
@@ -184,7 +191,16 @@ export function useMeetingWebSocket(options: UseMeetingWebSocketOptions): UseMee
     if (!id) return false;
     try {
       await meetingApi.end(id);
+      // 房间已销毁：停止在途轮询、清除旧快照，避免继续展示已结束会议的状态
+      pollActiveRef.current = false;
+      if (timerRef.current) {
+        clearInterval(timerRef.current);
+        timerRef.current = null;
+      }
       setMeetingHint({ speaker: null, roomId: null });
+      setSnapshot(null);
+      setIsPolling(false);
+      setIsError(false);
       return true;
     } catch {
       setIsError(true);

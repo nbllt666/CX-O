@@ -151,9 +151,8 @@ class TestASRInterruptModule:
 class TestAgentInterruptUser:
     def test_set_config(self):
         a = AgentInterruptUser()
-        a.set_config({"agent_interrupt": {"enabled": False, "interrupt_threshold_ms": 800}})
+        a.set_config({"agent_interrupt": {"enabled": False}})
         assert a.enabled is False
-        assert a.interrupt_threshold_ms == 800
 
     def test_on_user_speech_start_end(self):
         a = AgentInterruptUser()

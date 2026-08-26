@@ -190,7 +190,12 @@ async def asr_speech_to_text(request: Request, asr_svc: ASRService = Depends(get
 
 
 def _load_tts_config() -> dict:
-    config_file = _PROJECT_ROOT / "config" / "settings.json"
+    """从 UnifiedConfig 读取 TTS 配置（收敛自 legacy config/settings.json）。
+
+    返回 schema 保持与 legacy 兼容：engine 固定 qwen3（Qwen3 统一编排）、
+    transition 为固定合成参数；具体值来自 UnifiedConfig.tts。
+    """
+    from server.config import get_settings
 
     default_config = {
         "engine": "qwen3",
@@ -207,24 +212,21 @@ def _load_tts_config() -> dict:
         }
     }
 
-    if not config_file.exists():
-        return default_config
-
     try:
-        with open(config_file, "r", encoding="utf-8") as f:
-            config_data = json.load(f)
-
-        tts_config = config_data.get("tts", {})
-
+        tts = get_settings().config.tts
         return {
-            "engine": tts_config.get("engine", "qwen3"),
-            "ref_audio_path": tts_config.get("ref_audio_path", ""),
-            "ref_text": tts_config.get("ref_text", ""),
-            "speed": tts_config.get("speed", 1.0),
-            "cross_fade_duration": tts_config.get("cross_fade_duration", 0.15),
-            "emotion_enabled": tts_config.get("emotion_enabled", True),
-            "effects_enabled": tts_config.get("effects_enabled", True),
-            "transition": tts_config.get("transition", default_config["transition"])
+            "engine": "qwen3",
+            "ref_audio_path": getattr(tts, "ref_audio_path", "") or "",
+            "ref_text": getattr(tts, "ref_text", "") or "",
+            "speed": getattr(tts, "speed", 1.0),
+            "cross_fade_duration": getattr(tts, "cross_fade_duration", 0.15),
+            "emotion_enabled": getattr(tts, "emotion_enabled", True),
+            "effects_enabled": getattr(tts, "effects_enabled", True),
+            "transition": {
+                "enabled": getattr(tts, "transition_enabled", True),
+                "duration": 0.5,
+                "intensity": 0.7
+            }
         }
     except Exception as e:
         logger.warning(f"加载 TTS 配置失败，使用默认配置: {e}")

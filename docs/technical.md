@@ -158,7 +158,7 @@ CX-O 将虚拟形象、实时语音对话、记忆管理、直播推流、声音
 | 配置 | `config.get/set/reset` | config |
 | 指标 | `metrics.get/requests/history` | metrics |
 | 系统 | `system.health/status/info` | system |
-| 语音 | `voice.dual_stream` / `voice.partial` / `voice.tts_chunk` / `voice.prefill_started` | audio |
+| 语音 | `voice.dual_stream` / `voice.partial` / `voice.tts_chunk` / `voice.prefill_started` / `voice.speaker` / `voice.voiceprint_result` | audio |
 | 弹幕 | `danmaku.list/add/clear` | danmaku |
 | 事件 | `events.subscribe/unsubscribe` | events |
 
@@ -281,6 +281,35 @@ CX-O 将虚拟形象、实时语音对话、记忆管理、直播推流、声音
 | RTF（CosyVoice3 克隆） | 0.13-0.15 | 独立测量，<1 达标 |
 
 > 全链路硬性验收：P95<800ms 且连续 6 轮（每轮 10 次）全部 <800ms（spec `optimize-ws-full-link-sub-800ms`）。由此前的 P50~1300ms / P95~1785ms 优化为 P50 469-699ms / P95 637-762ms（改善 46-64%）。
+
+### 4.11 声纹说话人识别（cam++ 聚类 + LLM 语音建档）
+
+> 容器侧 `asr_container/`（流式 ASR 引擎已升级为 **FSMN-VAD 分句 + paraformer-zh-streaming 增量识别 + cam++ 声纹**，见 `streaming_engine.py` / `speaker_cluster.py`）；服务端消费于 `server/`。以下与本格相关文件、链路均为当前实现。
+
+**目标**：① 实时语音里认出每个说话人（未注册者标临时 ID `spk_N`，注册者直接标名字）；② 用户说"记住我的声音"即可经 LLM 工具调用建档；③ 声纹慢于 ASR 时**文本 final 先发**、说话人标签以临时态"识别中"过渡，不由声纹卡住全双工。
+
+#### 4.11.1 实时识别链路（容器）
+
+- **聚类**：`SpeakerClusterer`（服务端权威注册池镜像，`_centroids`+`_profile_names`）为每个连接派发 `SpeakerSession` 临时簇。`classify(embedding)` 把「注册质心 + 临时簇质心」合并作余弦相似度取最大者：命中注册池 → `registered=True` 返回注册名；命中临时簇 → `registered=False` 返回 `spk_{n}`；低于阈值则新建临时簇。临时簇跨 utterance 保留、会话内不复用、会话间隔离。
+- **每句并行**：`StreamSession._process_sentences` / `finish()` 对每个句子**并行提交** `_run_asr_final` 与 `_run_spk_embedding`，但**只 `await` ASR 文本**：
+  - 声纹已就绪（`spk_fut.done()`）→ final 直接带 `speaker_status="ready"` 与实际 speaker（快速路径，零额外延迟）；
+  - 声纹未就绪 → final 先发、`speaker_status="pending"`（前端显示"(识别中)"），并由 `_track_spk_pump` 后台完成。
+- **识别中兜底**：`_track_spk_pump` 受会话级 **in-flight 上限 `SPK_INFLIGHT_MAX=2`** 约束，超限直接丢弃该句（保持 "(识别中)"，由后续再识别更新），**绝不排队阻塞** 后续 final/partial。语音完成由 `_spk_pump` 产出独立**补充消息** `{"type":"spk","speaker_status":"ready","speaker_id":...,"speaker_registered":...,"speaker_conf":...,"em_embedding":[192 floats]}`，质量心经 `session.recent_match()` 取最近命中簇；`drain_spk_messages()` 由容器 WS 发送侧（`api_server.py` `/ws/asr/stream`）每轮补发。
+- **连续性机制**：`_final_msg` 显式携带 `speaker_status`，**不再"空则回退最近已知 speaker"跨句错标**（避免张冠李戴）；最近已知 `self._speaker` 仅在本句 `ready` 且非空时才更新。
+
+#### 4.11.2 服务端消费与外发（`server/`）
+
+- **协议解析**（`services/asr_service.py`）：`StreamingASRResult` 新增 `speaker_status`；`receive_result` 识别 `type=="spk"` 补充消息 → 回填 per-client `_StreamState.recent_speaker` 与 `recent_spk_embedding`（`em_embedding`），返回空文本 `StreamingASRResult`。普通消息透传 `speaker_status`（缺省 `ready`）。暴露 `get_recent_spk_embedding(client_id)` 供注册工具取最近说话人特征。
+- **透传与防误触发**（`services/vad_processor.py`）：asr_result dict 透传 `speaker_status`；**空文本且非 final**（spk 补充消息）不触发 LLM Partial Prefill。
+- **外发标签**（`handlers/audio.py`）：`speaker_status="pending"` → 气泡 `speaker_label="识别中"`；`="ready"` 且 registered → 注册名（沿用 `_registered_speaker_from`）。收到 spk 补充消息后推送 `voice.speaker` 更新事件，把 "(识别中)" 更新为实际说话人。
+- **语音上下文**（`services/voice_context.py`，新增）：contextvars `_active_client_id`，双流式 `DualStreamSession._run_pipeline` 与 live `handle_audio` 起始处 `set_active_client_id(...)`（try/finally 复位，避免残留串扰）；多客户端连接 = 多 task = 天然隔离。
+
+#### 4.11.3 LLM 工具注册声纹（`register_voiceprint`）
+
+- **工具**（`core/tools/voiceprint_tool.py` + 注册进 `main.py` lifespan + 注入 `chat_helpers.get_tools_for_agent` 的 `main_tool_names`）。
+- **数据来源**：**不重新提取音频**，直接取该会话 `get_recent_spk_embedding(client_id)`（实时聚类已算好的临时簇质心），特征与实时链路完全一致。
+- **执行**：无可用 embedding（文本聊天/会话刚开始）返回中文错误不注册；否则 `asyncio.create_task(_register_and_notify(...))` **后台异步注册**（引用挂会话存活 set 防 GC），工具立即返回 `{"status":"registering"}`，不阻塞 LLM 回复/TTS。注册复用 `voiceprint_service.register_embedding(name, embedding)`（校验 → 追加/更新同名档案 → 原子落盘 → `profiles/sync` 回容器，容器 `load_profiles` 全量替换注册池），完成后推送 `voice.voiceprint_result` 事件；注册后同一会话内该用户再说话直接以注册名匹配。
+- **档案管理 REST**（`/api/voiceprint/*`）：`voiceprint_service` 权威落盘至 `data/voiceprint/speaker_profiles.json`，容器只读消费（bind mount）。
 
 ---
 

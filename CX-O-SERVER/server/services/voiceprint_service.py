@@ -195,6 +195,8 @@ class VoiceprintService:
             raise ValueError("声纹特征 embedding 无效")
         embeddings = [float(x) for x in embedding]
         profiles = self._load_profiles()
+
+        updated = False
         target = next((p for p in profiles if p.get("name") == name), None)
         if target is None:
             target = {
@@ -203,10 +205,15 @@ class VoiceprintService:
                 "created_at": time.strftime("%Y-%m-%dT%H:%M:%S"),
             }
             profiles.append(target)
+        else:
+            updated = True
         target["embeddings"].append(embeddings)
         self._save_profiles(profiles)
         await self._sync_remote()          # 失败仅告警（_sync_remote 已内部捕获）
-        return _profile_summary(target)
+
+        summary = _profile_summary(target)
+        summary["updated"] = updated
+        return summary
 
     def list_profiles(self) -> List[dict]:
         """返回全部声纹档案摘要。"""

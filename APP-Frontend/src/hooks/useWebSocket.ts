@@ -112,7 +112,10 @@ export function useWebSocket(options: WebSocketOptions): UseWebSocketReturn {
 
   const getStoredTimeout = useCallback(() => {
     const stored = localStorage.getItem(STORAGE_KEYS.offlineTimeout);
-    return stored ? parseInt(stored, 10) : 60;
+    if (!stored) return 60;
+    // parseInt 坏串返回 NaN → 回退默认 60，避免 JSON.stringify(NaN) 下发 timeout:null
+    const parsed = parseInt(stored, 10);
+    return Number.isFinite(parsed) ? parsed : 60;
   }, []);
 
   const [timeout, setTimeoutState] = useState(propTimeout || getStoredTimeout());
@@ -160,6 +163,34 @@ export function useWebSocket(options: WebSocketOptions): UseWebSocketReturn {
   useEffect(() => {
     timeoutRef.current = timeout;
   }, [timeout]);
+
+  // ── 生成态客户端超时兜底：服务端异常静默（未发任何终结/流数据）时自动复位，
+  //    避免 isGenerating 永久卡死（PetPage 依赖它）。任何流数据/终结事件到达即续期或清除。
+  const GENERATION_TIMEOUT_MS = 60000;
+  const generatingTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // 镜像 isGenerating，供消息路由（handleMessage）快速判断是否处于生成态
+  const isGeneratingRef = useRef(false);
+
+  const clearGeneratingTimer = useCallback(() => {
+    if (generatingTimerRef.current) {
+      clearTimeout(generatingTimerRef.current);
+      generatingTimerRef.current = null;
+    }
+  }, []);
+
+  const resetIsGenerating = useCallback(() => {
+    isGeneratingRef.current = false;
+    clearGeneratingTimer();
+    setIsGenerating(false);
+  }, [clearGeneratingTimer]);
+
+  const startGeneratingTimer = useCallback(() => {
+    clearGeneratingTimer();
+    generatingTimerRef.current = setTimeout(() => {
+      isGeneratingRef.current = false;
+      setIsGenerating(false);
+    }, GENERATION_TIMEOUT_MS);
+  }, [clearGeneratingTimer]);
 
   const clearPingInterval = useCallback(() => {
     if (pingIntervalRef.current) {
@@ -213,7 +244,7 @@ export function useWebSocket(options: WebSocketOptions): UseWebSocketReturn {
             break;
           }
           if (data.is_final) {
-            setIsGenerating(false);
+            resetIsGenerating();
             onMessageRef.current?.({ type: 'done' });
           } else if (data.data?.content) {
             onMessageRef.current?.({ type: 'content', content: data.data.content });
@@ -237,13 +268,13 @@ export function useWebSocket(options: WebSocketOptions): UseWebSocketReturn {
         }
         case 'response':
           if (data.status === 'error') {
-            setIsGenerating(false);
+            resetIsGenerating();
             const errorMsg = typeof data.error === 'object' ? data.error?.message : data.error;
             onErrorRef.current?.(errorMsg || 'Unknown error');
           }
           break;
         case 'error': {
-          setIsGenerating(false);
+          resetIsGenerating();
           const errMsg = typeof data.error === 'object' ? data.error?.message : data.error;
           onErrorRef.current?.(errMsg || 'Unknown error');
           break;
@@ -271,7 +302,7 @@ export function useWebSocket(options: WebSocketOptions): UseWebSocketReturn {
           onMessageRef.current?.(data);
           break;
         case 'cancelled':
-          setIsGenerating(false);
+          resetIsGenerating();
           onMessageRef.current?.(data);
           break;
         case 'thinking':
@@ -301,7 +332,7 @@ export function useWebSocket(options: WebSocketOptions): UseWebSocketReturn {
     } catch (e: unknown) {
       console.error('Failed to parse WebSocket message:', e);
     }
-  }, []);
+  }, [startGeneratingTimer]);
 
   // Transport：URL 构造 + 实例化 + 生命周期；业务逻辑经回调注入。
   // enabled: !!agentId 保留空 agentId 不连接的守卫。
@@ -329,7 +360,7 @@ export function useWebSocket(options: WebSocketOptions): UseWebSocketReturn {
     },
     onClose: () => {
       // 服务端主动关闭时清理（手动 disconnect 走 wrapper 的 cleanup）
-      setIsGenerating(false);
+      resetIsGenerating();
       clearPingInterval();
       // 断开时清空累计文本段，重连后不残留上一会话内容
       textProgressRef.current = '';
@@ -346,10 +377,10 @@ export function useWebSocket(options: WebSocketOptions): UseWebSocketReturn {
   // 所以 onClose 回调不会触发，需在此显式清理业务状态。
   const disconnect = useCallback(() => {
     transportDisconnect();
-    setIsGenerating(false);
+    resetIsGenerating();
     clearPingInterval();
     onDisconnectRef.current?.();
-  }, [transportDisconnect, clearPingInterval]);
+  }, [transportDisconnect, clearPingInterval, resetIsGenerating]);
 
   const reconnect = useCallback(() => {
     transportReconnect();
@@ -368,7 +399,9 @@ export function useWebSocket(options: WebSocketOptions): UseWebSocketReturn {
         return false;
       }
 
+      isGeneratingRef.current = true;
       setIsGenerating(true);
+      startGeneratingTimer();
       // 后端协议：平铺格式，handler 直接读 message 顶层字段。
       // session_id 固定为 agent-{agentId}，与 ChatPage 历史读取键（getChatHistory）
       // 保持一致，确保 WS 消息写入与前端历史读取落在同一会话。
@@ -382,7 +415,7 @@ export function useWebSocket(options: WebSocketOptions): UseWebSocketReturn {
       );
       return true;
     },
-    [wsRef],
+    [wsRef, startGeneratingTimer],
   );
 
   const cancelGeneration = useCallback(() => {

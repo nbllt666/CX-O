@@ -13,7 +13,6 @@ import type { TTSSyncData } from '@/hooks/useLiveWebSocket';
  */
 const liveWs = vi.hoisted(() => ({
   isConnected: true,
-  connectionCount: 2,
   sendAudio: vi.fn(),
   onTTSSync: undefined as ((data: TTSSyncData) => void) | undefined,
   onTTSEnd: undefined as (() => void) | undefined,
@@ -28,7 +27,6 @@ vi.mock('@/hooks/useLiveWebSocket', () => ({
     liveWs.onTTSEnd = options.onTTSEnd;
     return {
       isConnected: liveWs.isConnected,
-      connectionCount: liveWs.connectionCount,
       sendAudio: liveWs.sendAudio,
       sendMessage: vi.fn(),
       disconnect: vi.fn(),
@@ -55,7 +53,6 @@ describe('AudioPanelPage 音频面板页', () => {
     vi.clearAllMocks();
     mockedAudioApi.getAudioConfig.mockResolvedValue({});
     liveWs.isConnected = true;
-    liveWs.connectionCount = 2;
     liveWs.onTTSSync = undefined;
     liveWs.onTTSEnd = undefined;
     useAudioStore.setState({ micGain: 1, ttsVolume: 1, micEnabled: false });
@@ -68,7 +65,6 @@ describe('AudioPanelPage 音频面板页', () => {
     expect(screen.getByText(/麦克风输入 · TTS 播放/)).toBeInTheDocument();
     // Live WS 状态行
     expect(screen.getByText(/已连接/)).toBeInTheDocument();
-    expect(screen.getByText('2 个客户端在线')).toBeInTheDocument();
     expect(screen.getByText(/同步：已同步/)).toBeInTheDocument();
     // 三区块
     expect(screen.getByText('麦克风输入')).toBeInTheDocument();
@@ -82,11 +78,9 @@ describe('AudioPanelPage 音频面板页', () => {
 
   it('WS 未连接时展示断开与等待同步', () => {
     liveWs.isConnected = false;
-    liveWs.connectionCount = 0;
     render(<AudioPanelPage />);
 
     expect(screen.getByText(/未连接/)).toBeInTheDocument();
-    expect(screen.getByText('0 个客户端在线')).toBeInTheDocument();
     expect(screen.getByText(/同步：等待连接/)).toBeInTheDocument();
   });
 

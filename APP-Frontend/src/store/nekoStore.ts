@@ -103,10 +103,10 @@ export const useNekoStore = create<NekoState>()((set, get) => ({
       if (window.neko) {
         status = await window.neko.getStatus();
       } else {
-        // 浏览器模式：无桥，仅用默认配置兜底
+        // 浏览器模式：无桥，无法感知真实运行状态 → 展示未运行，避免对不存在服务发无效 HTTP
         status = {
-          running: true,
-          port: get().config.port || 48916,
+          running: false,
+          port: null,
           config: get().config,
         };
       }

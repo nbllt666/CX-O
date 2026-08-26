@@ -26,6 +26,31 @@ logger = logging.getLogger(__name__)
 TARGET_FS = 16000
 regex = r"<\|.*\|>"
 
+
+def _safe_float(value: Any, default: float = 0.0) -> float:
+    """数值/字符串安全解析为 float；None、空串或非法值（如 "abc"）返回 default。
+
+    避免 `float(None)` / `float("")` 对非法 speaker_conf 抛异常导致整条结果被吞。
+    """
+    if value is None or value == "":
+        return default
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def _safe_bool(value: Any) -> bool:
+    """布尔安全解析：bool 原样；'true'/'1'/'yes'（不区分大小写）→ True；其余（含 None/''）→ False。
+
+    避免 `bool("false")==True` 语义错误的 speaker_registered。
+    """
+    if isinstance(value, bool):
+        return value
+    if value is None:
+        return False
+    return str(value).strip().lower() in ("true", "1", "yes")
+
 _model_instance = None
 _model_kwargs = None
 _executor: Optional[ThreadPoolExecutor] = None
@@ -295,10 +320,11 @@ class ASRService:
         async def _make_request():
             client = get_shared_http_client()
             response = await client.post(
-                f"{self._remote_url}/asr",
+                f"{self._remote_url}/asr/recognize",
                 json={
                     "audio": audio_base64,
-                    "language": language
+                    "language": language,
+                    "use_itn": use_itn,
                 }
             )
             response.raise_for_status()
@@ -521,9 +547,9 @@ class ASRService:
             # spk 补充消息：无文本，仅带回 speaker 声纹元信息（含 embedding），
             # 回填会话最近说话人状态后直接返回，不再走普通结果解析。
             if data.get("type") == "spk":
-                speaker_id = data.get("speaker_id", "")
-                speaker_registered = bool(data.get("speaker_registered", False))
-                speaker_conf = float(data.get("speaker_conf", 0.0))
+                speaker_id = data.get("speaker_id", "") or ""
+                speaker_registered = _safe_bool(data.get("speaker_registered"))
+                speaker_conf = _safe_float(data.get("speaker_conf"))
                 speaker_name = data.get("speaker_name") or (speaker_id if speaker_registered else "")
                 # 回填会话状态
                 st.recent_speaker = (speaker_id, speaker_registered, speaker_conf)
@@ -542,9 +568,9 @@ class ASRService:
                 st.final_received = True
             speaker_status = data.get("speaker_status", "ready")
             # 声纹字段解析（兼容旧容器缺字段）：缺失时取默认值/空串
-            speaker_id = data.get("speaker_id", "")
-            speaker_registered = bool(data.get("speaker_registered", False))
-            speaker_conf = float(data.get("speaker_conf", 0.0))
+            speaker_id = data.get("speaker_id", "") or ""
+            speaker_registered = _safe_bool(data.get("speaker_registered"))
+            speaker_conf = _safe_float(data.get("speaker_conf"))
             speaker_name = data.get("speaker_name") or (speaker_id if speaker_registered else "")
             # final 回填最近说话人：仅当本句含非空 speaker_id 且状态为 ready 时更新
             if is_final and speaker_id and speaker_status == "ready":

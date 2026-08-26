@@ -49,7 +49,8 @@ class InterruptCoordinator:
         """
         # 先打断所有 agent（置 interrupted 标记）
         for agent in room.agents:
-            await self._interrupt_agent(agent)
+            if not await self._interrupt_agent(agent):
+                logger.warning("用户打断：agent %s 强制静音失败", agent.agent_id)
         # 强制收回令牌（触发各 session 停 TTS）
         revoked = await room.token.revoke()
         return revoked
@@ -75,10 +76,17 @@ class InterruptCoordinator:
 
         # 强理由：先打断正在发言者，令牌转给打断者
         for agent in room.agents:
-            await self._interrupt_agent(agent)
+            if not await self._interrupt_agent(agent):
+                logger.warning("强理由打断：agent %s 静音失败", agent.agent_id)
         # 强制收回当前持牌者
         await room.token.revoke()
         granted = await room.token.acquire(from_agent_id)
+        if not granted:
+            logger.warning(
+                "强理由打断令牌获取失败：%s 未能取得令牌，打断 %s 被拒",
+                from_agent_id, to_agent_id,
+            )
+            return False
         logger.info("强理由打断已放行：%s 打断 %s（granted=%s）", from_agent_id, to_agent_id, granted)
         return True
 
@@ -90,17 +98,24 @@ class InterruptCoordinator:
             return False
         return r in self.strong_reasons or any(k in r for k in self.strong_reasons)
 
-    async def _interrupt_agent(self, agent: AgentMember) -> None:
+    async def _interrupt_agent(self, agent: AgentMember) -> bool:
         """让单个 agent 停止 TTS（复用其 session 的打断逻辑）。
 
-        会话不携带打断能力时仅置 interrupted 标记（降级）。
+        会话不携带打断能力时仅置 interrupted 标记（降级，视为成功）。
+
+        Returns:
+            True 表示打断已下发/移除能力；False 表示打断失败。
+            失败不再静默吞异常，向上反馈供调用方判知（保证用户强制静音优先级）。
         """
         agent.interrupted = True
         session = getattr(agent, "session", None)
         interrupt = getattr(session, "_interrupt_pipeline", None)
-        if interrupt is not None:
-            try:
-                if inspect.iscoroutinefunction(interrupt):
-                    await interrupt()
-            except Exception as e:  # 打断失败不阻断主流程
-                logger.warning("打断 agent %s 失败: %s", agent.agent_id, e)
+        if interrupt is None:
+            return True
+        try:
+            if inspect.iscoroutinefunction(interrupt):
+                await interrupt()
+            return True
+        except Exception as e:  # noqa: BLE001 打断失败需向上反馈，不静默吞异常
+            logger.warning("打断 agent %s 失败: %s", agent.agent_id, e)
+            return False

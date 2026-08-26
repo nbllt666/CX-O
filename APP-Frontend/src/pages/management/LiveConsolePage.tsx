@@ -69,7 +69,7 @@ export default function LiveConsolePage() {
     return () => window.clearInterval(id);
   }, [refreshRate]);
 
-  const { isConnected, connectionCount, disconnect, reconnect } = useLiveWebSocket({
+  const { isConnected, disconnect, reconnect } = useLiveWebSocket({
     onDanmaku: (data) => {
       // 弹幕开关关闭时仍计数速率，但不入渲染队列（与弹幕窗语义一致）
       rateTimestampsRef.current.push(Date.now());
@@ -188,8 +188,10 @@ export default function LiveConsolePage() {
           )}
           {statCard(
             t('management.liveConsole.clientsOnline'),
-            String(connectionCount),
-            'text-primary',
+            isConnected
+              ? t('management.liveConsole.wsConnected')
+              : t('management.liveConsole.wsDisconnected'),
+            isConnected ? 'text-emerald-400' : 'text-red-400',
           )}
           {statCard(
             t('management.liveConsole.backendHealth'),

@@ -94,7 +94,7 @@ export default function AudioPanelPage() {
     setSyncStatus('ready');
   }, []);
 
-  const { isConnected, connectionCount, sendAudio } = useLiveWebSocket({
+  const { isConnected, sendAudio } = useLiveWebSocket({
     onTTSSync: handleTTSSync,
     onTTSEnd: handleTTSEnd,
   });
@@ -345,10 +345,6 @@ export default function AudioPanelPage() {
           WebSocket: {isConnected
             ? t('management.audioPanel.wsConnected')
             : t('management.audioPanel.wsDisconnected')}
-        </span>
-        <span className="text-muted-foreground/50">|</span>
-        <span className="text-sm text-muted-foreground">
-          {t('management.audioPanel.clientsOnline', { count: connectionCount })}
         </span>
         <span className="ml-auto rounded-full bg-primary/10 px-2.5 py-1 text-xs text-primary">
           {t('management.audioPanel.sync', { status: syncStatusText })}

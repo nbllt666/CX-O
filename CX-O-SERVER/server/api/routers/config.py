@@ -2,7 +2,6 @@
 from fastapi import APIRouter, Depends, HTTPException, Request
 from typing import Any, Dict, Optional
 import json
-import yaml
 from pathlib import Path
 
 from pydantic import BaseModel
@@ -28,15 +27,27 @@ class SenseVoiceStreamingConfigRequest(BaseModel):
 
 
 def _get_services_config() -> Dict[str, Any]:
-    """从 config/settings.json 加载服务配置"""
-    config_file = _PROJECT_ROOT / "config" / "settings.json"
-    if config_file.exists():
-        try:
-            with open(config_file, "r", encoding="utf-8") as f:
-                return json.load(f)
-        except Exception as e:
-            logger.warning(f"读取服务配置失败: {e}")
-    return {}
+    """从 UnifiedConfig 读取运行期服务配置（收敛自 legacy config/settings.json）。
+
+    维持对外 ``{"services": {...}}`` 响应结构兼容。当前 UnifiedConfig 仅
+    ``services.sensevoice_streaming`` 节可直接映射；danmaku/firewall/firewall_v3/vad
+    等节在 UnifiedConfig 尚无专有 Pydantic 模型，缺省返回空容器并交由调用方回退
+    内置默认配置（后续由 s0201 补全省级契约后落地）。
+    """
+    services_data: Dict[str, Any] = {"services": {}}
+    try:
+        cfg = get_settings().config
+        sv = cfg.services.sensevoice_streaming
+        if sv is not None:
+            services_data["services"]["sensevoice_streaming"] = {
+                "chunk_size": sv.chunk_size,
+                "hop_size": sv.hop_size,
+                "look_back": sv.look_back,
+            }
+    except Exception:
+        # UnifiedConfig 不可用或无对应节时，回退为空，由调用方回退默认配置
+        pass
+    return services_data
 
 
 def _save_services_config(config_data: Dict[str, Any]) -> None:
@@ -402,14 +413,12 @@ async def update_sensevoice_streaming_config(request: SenseVoiceStreamingConfigR
 
 
 def _load_yaml_config(filename: str) -> Dict[str, Any]:
-    """加载 YAML 配置文件"""
-    config_file = _PROJECT_ROOT / "config" / filename
-    if config_file.exists():
-        try:
-            with open(config_file, "r", encoding="utf-8") as f:
-                return yaml.safe_load(f) or {}
-        except Exception as e:
-            logger.warning(f"加载配置文件 {filename} 失败: {e}")
+    """从 UnifiedConfig 读取对应节（收敛自 legacy config/*.yaml）。
+
+    UnifiedConfig 当前无 danmaku/firewall/firewall_v3/vad 专属 Pydantic 节，
+    故统一返回空，由调用方回退到内置默认配置；不再直接读取 config/*.yaml。
+    后续 s0201 补全省级契约后，可在此按 filename 映射回 UnifiedConfig 字段。
+    """
     return {}
 
 

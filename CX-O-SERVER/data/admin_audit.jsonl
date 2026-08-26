@@ -12,3 +12,5 @@
 {"id": "1d17df96c48c4aa4a6f6", "timestamp": "2026-08-25T13:28:16.664213+00:00", "actor": "CX-A", "level": "info", "action": "control.trigger_failover", "target": "{'from': 'A', 'to': 'B'}", "summary": "集群写操作完成"}
 {"id": "c698c2cb05274927bb61", "timestamp": "2026-08-25T13:28:19.206195+00:00", "actor": "CX-A", "level": "info", "action": "control.trigger_failover", "target": "{'from': 'A', 'to': 'B'}", "summary": "集群写操作完成"}
 {"id": "2c76b681222c4b699074", "timestamp": "2026-08-25T14:33:41.171839+00:00", "actor": "CX-A", "level": "info", "action": "control.trigger_failover", "target": "{'from': 'A', 'to': 'B'}", "summary": "集群写操作完成"}
+{"id": "ab73860a23774f448b0f", "timestamp": "2026-08-26T05:39:10.835205+00:00", "actor": "CX-A", "level": "info", "action": "control.trigger_failover", "target": "{'from': 'A', 'to': 'B'}", "summary": "集群写操作完成"}
+{"id": "5a5ba94060014dcc8ed0", "timestamp": "2026-08-26T05:54:08.113307+00:00", "actor": "CX-A", "level": "info", "action": "control.trigger_failover", "target": "{'from': 'A', 'to': 'B'}", "summary": "集群写操作完成"}

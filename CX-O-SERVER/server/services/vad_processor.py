@@ -136,7 +136,7 @@ class VADProcessor:
             is_speech, speech_probability = self._detect_silero(audio_data)
         else:
             is_speech = self._detect_energy(audio_data)
-            speech_probability = 0.5
+            speech_probability = 1.0 if is_speech else 0.0
 
         state_changed = False
 

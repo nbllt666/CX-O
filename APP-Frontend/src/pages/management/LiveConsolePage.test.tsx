@@ -71,7 +71,6 @@ describe('LiveConsolePage 直播控制台页', () => {
     expect(screen.getByText('控制操作')).toBeInTheDocument();
     // Live WS 连接态与直播客户端均显示「已连接」
     expect(screen.getAllByText('已连接').length).toBeGreaterThan(0);
-    expect(screen.getByText('3')).toBeInTheDocument();
     expect(screen.getByText('正常')).toBeInTheDocument();
   });
 

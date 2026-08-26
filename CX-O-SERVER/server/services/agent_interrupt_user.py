@@ -44,7 +44,6 @@ class AgentInterruptUser(InterruptModuleBase):
         super().__init__()
         self.enabled = True
         self.mode = "main_llm"  # main_llm / independent_llm
-        self.interrupt_threshold_ms = 500
         self.min_speech_duration_ms = 1000
         self._user_state = UserSpeechState()
         self._interrupt_user_callback: Optional[Callable] = None
@@ -79,7 +78,6 @@ class AgentInterruptUser(InterruptModuleBase):
         agent_interrupt = config.get("agent_interrupt", {})
         self.enabled = agent_interrupt.get("enabled", True)
         self.mode = agent_interrupt.get("mode", "main_llm")
-        self.interrupt_threshold_ms = agent_interrupt.get("interrupt_threshold_ms", 500)
         self.min_speech_duration_ms = agent_interrupt.get("min_speech_duration_ms", 1000)
         self._interrupt_cooldown_ms = agent_interrupt.get("interrupt_cooldown_ms", 3000)
         self.speech_end_fallback = agent_interrupt.get("speech_end_fallback", False)
@@ -429,7 +427,6 @@ def _inherit_agent_config(src: AgentInterruptUser, dst: AgentInterruptUser) -> N
     """从默认单例复制配置到新创建的 per-client 实例，保持全局配置一致。"""
     dst.enabled = src.enabled
     dst.mode = src.mode
-    dst.interrupt_threshold_ms = src.interrupt_threshold_ms
     dst.min_speech_duration_ms = src.min_speech_duration_ms
     dst._interrupt_cooldown_ms = src._interrupt_cooldown_ms
     dst.speech_end_fallback = src.speech_end_fallback

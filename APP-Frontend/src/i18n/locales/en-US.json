@@ -835,7 +835,7 @@
       "liveWs": "Live WS",
       "wsConnected": "Connected",
       "wsDisconnected": "Disconnected",
-      "clientsOnline": "Clients Online",
+      "clientsOnline": "Live Link",
       "backendHealth": "Backend Health",
       "loadFailed": "Load failed",
       "backendOk": "OK",

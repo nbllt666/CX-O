@@ -123,6 +123,11 @@ class MeetingTranscript:
             return self.older_summary
         fn = summarizer or self._summarizer
         self.older_summary = fn(older_entries)
+        # 已摘要进 older_summary 的旧条目从 entries 截掉，仅保留窗口内最近 turns 条，
+        # 避免 older()/summarize_older() 反复对同一前缀重摘要、entries 无界增长。
+        turns = int(max_turns if max_turns is not None else self.max_turns)
+        if turns > 0:
+            self.entries = self.entries[-turns:]
         return self.older_summary
 
     def roll_up(self, summarizer: Optional[Summarizer] = None) -> str:

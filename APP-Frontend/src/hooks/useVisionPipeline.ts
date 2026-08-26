@@ -417,7 +417,9 @@ export function useVisionPipeline(options: UseVisionPipelineOptions = {}): UseVi
   const pendingClipCount = useCallback(() => engineRef.current?.pendingClipCount() ?? 0, []);
 
   return {
-    active: managedEnabled && (screenActive || cameraActive),
+    // manual 模式下 sample 恒拒绝采样（与 useFrameSender 语义一致），故 active 须剔除 manual
+    // 才会与真实采样一致：仅 interval/adaptive 且至少一源激活时才视为运行中
+    active: managedEnabled && frameMode !== 'manual' && (screenActive || cameraActive),
     enabled: managedEnabled,
     pendingClipCount,
     flush,
