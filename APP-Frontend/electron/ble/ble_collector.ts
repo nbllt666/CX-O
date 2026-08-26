@@ -243,7 +243,7 @@ export class BleHeartRateCollector {
   }
 
   /** 扫描带 Heart Rate Service 的设备；扫描结束做能力探测（无 0x180D → unsupported）。 */
-  async startScan(): Promise<BleResult> {
+  async startScan(preserveAutoReconnect = false): Promise<BleResult> {
     if (!this.nobleAvailable || !this.noble) {
       return { ok: false, status: this.state, error: 'BLE 不可用（noble 原生模块未加载）' };
     }
@@ -255,7 +255,11 @@ export class BleHeartRateCollector {
     }
 
     // 用户发起扫描 = 接管控制权，取消自动重连与上一次扫描
-    this.autoReconnect = false;
+    // H11: 重连流程内部的补扫（preserveAutoReconnect=true）不得关闭自动重连，
+    // 否则设备从扫描结果短暂丢失时重连链被永久切断（autoReconnect 残留 false）。
+    if (!preserveAutoReconnect) {
+      this.autoReconnect = false;
+    }
     this.clearReconnectTimer();
     this.clearScanTimer();
 
@@ -496,7 +500,8 @@ export class BleHeartRateCollector {
 
     // 设备缓存可能已被新扫描覆盖，缺失时先补一次扫描
     if (!this.devices.has(this.lastDeviceId)) {
-      await this.startScan();
+      // H11: 重连触发的补扫必须保留 autoReconnect（startScan 默认会关闭它）
+      await this.startScan(true);
       if (!this.autoReconnect) return;
     }
     if (!this.devices.has(this.lastDeviceId)) {

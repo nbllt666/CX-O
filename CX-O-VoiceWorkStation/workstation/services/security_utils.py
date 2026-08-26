@@ -6,8 +6,12 @@ from __future__ import annotations
 
 from pathlib import Path
 
+# G6: 锚点基于文件绝对路径（rules-0 §三 禁相对路径）——旧实现 Path("data/training")
+# 相对进程 CWD 解析，启动目录不同会指向错误位置（误拒合法音频或放大允许范围）。
+_WS_ROOT = Path(__file__).resolve().parents[2]
+
 # 训练数据目录允许的根目录
-_TRAINING_DATA_ROOT = Path("data/training").resolve()
+_TRAINING_DATA_ROOT = (_WS_ROOT / "data" / "training").resolve()
 
 
 def validate_training_data_dir(path: str) -> Path:

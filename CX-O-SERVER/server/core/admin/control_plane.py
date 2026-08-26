@@ -60,6 +60,21 @@ def _invoke_method(svc, *names, agent_id: str = "default", params: Dict[str, Any
     return {"available": True, "result": result}
 
 
+async def resolve_invoke_result(result: Any) -> Any:
+    """H1: 管理面返回体可能内嵌裸协程（_invoke_method 对 async 服务方法
+    返回 {"pending": True, "result": <coroutine>}）。路由层此前对顶层判
+    iscoroutine 恒 False，裸协程从未被 await → 'coroutine was never awaited'
+    且无法 JSON 序列化（500）。统一在此 await 后替换，保证返回体可序列化。
+    """
+    if inspect.isawaitable(result):
+        return await result
+    if isinstance(result, dict) and inspect.iscoroutine(result.get("result")):
+        resolved = await result["result"]
+        result = dict(result)
+        result["result"] = resolved
+    return result
+
+
 class AdminControlPlane:
     """统一控制入口。构造(services, auth, cluster_bridge)；auth 由路由层持有使用。"""
 

@@ -74,7 +74,10 @@ class InterruptModuleBase:
             from server.dependencies import get_llm_client
 
             llm = get_llm_client()
-            messages = self._get_context()
+            # H4: get_context 返回会话真实存储列表，直接 append 会把打断判定的
+            # ASR 原文永久写进对话历史（绕过 max_history 截断且每次重复注入）。
+            # 用浅拷贝隔离，判定结束后不污染真实上下文。
+            messages = list(self._get_context())
             messages.append({"role": "user", "content": user_content})
             response = await llm.chat(messages=messages, stream=False)
         except Exception as e:

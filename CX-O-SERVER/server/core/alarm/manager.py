@@ -72,6 +72,9 @@ class Alarm:
 class AlarmManager:
     """定时提醒管理器——创建/取消/触发提醒，支持同步与异步接口。"""
 
+    # G2: 线程级连接缓存上限（asyncio.to_thread 线程池线程不固定，防连接数膨胀）
+    _MAX_CACHED_CONNECTIONS = 32
+
     def __init__(self, db_path: str = _DEFAULT_DB_PATH):
         self.db_path = db_path
         self._timers: Dict[str, threading.Timer] = {}
@@ -113,6 +116,9 @@ class AlarmManager:
         BUG-B05 修复: 增加 ``_conn_lock`` 保护缓存字典的并发访问;命中失败或
         缓存命中时连接的 ``SELECT 1`` 健康检查也会在锁内完成,避免在多线程
         场景下重复创建连接导致缓存膨胀。
+        G2 增强: ``asyncio.to_thread`` 使用不固定线程池线程——按 thread-id 缓存
+        会让每次换线程都新建一条连接且只到 shutdown 才关闭，长期运行连接数膨胀。
+        增加容量上限，超限时关闭最旧一条（dict 保序取队首）保持缓存有界。
         """
         thread_id = threading.get_ident()
 
@@ -129,6 +135,15 @@ class AlarmManager:
                     except Exception:
                         pass
                     self._connection_cache.pop(thread_id, None)
+
+            # G2: 容量保护——缓存超上限时关闭最旧一条（插入顺序 = 最旧）
+            if len(self._connection_cache) >= self._MAX_CACHED_CONNECTIONS:
+                oldest_tid, oldest_conn = next(iter(self._connection_cache.items()))
+                try:
+                    oldest_conn.close()
+                except Exception:
+                    pass
+                self._connection_cache.pop(oldest_tid, None)
 
             conn = sqlite3.connect(self.db_path, timeout=30.0)
             conn.row_factory = sqlite3.Row

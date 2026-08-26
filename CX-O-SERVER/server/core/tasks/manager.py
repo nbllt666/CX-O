@@ -144,6 +144,8 @@ class TaskManager:
         with self._lock:
             for t in self._tasks:
                 if t["id"] == task_id:
+                    # G5: 先全量校验再应用字段——旧逻辑边校验边写，中途抛错会
+                    # 在内存 _tasks 留下部分修改（且不回滚）
                     for k, v in fields.items():
                         if k not in allowed:
                             continue
@@ -151,7 +153,9 @@ class TaskManager:
                             raise ValueError(f"无效的状态: {v}")
                         if k == "priority" and v not in _VALID_PRIORITIES:
                             raise ValueError(f"无效的优先级: {v}")
-                        t[k] = v
+                    for k, v in fields.items():
+                        if k in allowed:
+                            t[k] = v
                     t["updated_at"] = datetime.now().isoformat()
                     self._save_tasks()
                     return dict(t)
@@ -198,6 +202,15 @@ class TaskManager:
             raise ValueError(f"无效的 schedule 类型: {stype}")
         if stype == "once" and not schedule.get("run_at"):
             raise ValueError("once 类型必须提供 run_at")
+        if stype == "once":
+            # G4: run_at 必须是合法 ISO 时间——非法值旧实现会静默跳过执行
+            # （get_due_tasks fromisoformat 失败 continue），任务永久不触发
+            try:
+                datetime.fromisoformat(schedule["run_at"])
+            except (TypeError, ValueError):
+                raise ValueError(
+                    f"once 类型 run_at 必须是 ISO 时间格式: {schedule['run_at']!r}"
+                )
         if stype == "interval" and not schedule.get("interval_seconds"):
             raise ValueError("interval 类型必须提供 interval_seconds")
         if stype in ("daily", "weekly") and not schedule.get("run_at"):
@@ -207,7 +220,13 @@ class TaskManager:
         stype = schedule.get("type")
         now = datetime.now()
         if stype == "once":
-            return schedule.get("run_at")
+            run_at = schedule.get("run_at")
+            try:
+                datetime.fromisoformat(run_at) if run_at else None
+            except (TypeError, ValueError):
+                # G4: 防御已入库/历史脏数据——非法 ISO 视为不可调度，避免静默卡死
+                return None
+            return run_at
         if stype == "interval":
             secs = schedule.get("interval_seconds")
             if not secs:

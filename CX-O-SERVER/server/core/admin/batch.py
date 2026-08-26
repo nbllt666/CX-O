@@ -6,6 +6,8 @@ import inspect
 import time
 from typing import Any, Dict, List
 
+from server.core.admin.control_plane import resolve_invoke_result
+
 
 class AdminBatchExecutor:
     """批量编排。mode=sequential 按序执行，parallel 并行执行。
@@ -59,8 +61,9 @@ class AdminBatchExecutor:
                     agent_id=agent_id,
                     params=params,
                 )
-                if inspect.isawaitable(result):
-                    result = await result
+                # H1: dispatch 顶层恒为 dict，旧逻辑 isawaitable 判恒 False；
+                # result 可能内嵌裸协程（async 服务方法），统一 await 后替换。
+                result = await resolve_invoke_result(result)
                 ok = bool(result.get("ok", True)) if isinstance(result, dict) else True
         except Exception as e:
             result = {"error": str(e)}

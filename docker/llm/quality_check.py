@@ -1,18 +1,24 @@
 """流式 TTS 音频质量检查：拼接流式块后统计 RMS/时长/峰值。"""
 import io
 import json
+import os
 import urllib.request
 import base64
 import struct
 import math
 import sys
 
-REF = r"C:\CX-O\CX-O-SERVER\data\ref_audio_assets\_upload_ref.wav"
+# H10: 参考音频路径允许环境变量覆盖；不再裸 open 不漏句柄
+REF = os.environ.get(
+    "CXO_REF_AUDIO",
+    r"C:\CX-O\CX-O-SERVER\data\ref_audio_assets\_upload_ref.wav",
+)
 
 
 def main():
     text = "今天天气不错适合出门走走。"
-    ref_b64 = base64.b64encode(open(REF, "rb").read()).decode()
+    with open(REF, "rb") as fh:
+        ref_b64 = base64.b64encode(fh.read()).decode()
     body = {
         "input": text,
         "ref_audio": "data:audio/wav;base64," + ref_b64,

@@ -58,8 +58,13 @@ class FakeWs:
 
 
 @pytest.fixture
-def ctx():
-    return PluginContext(plugin_id="p1", plugin_name="测试插件", config={"a": 1})
+def ctx(tmp_path):
+    return PluginContext(
+        plugin_id="p1",
+        plugin_name="测试插件",
+        config={"a": 1},
+        storage_root=tmp_path,  # H3: 私有存储根注入 tmp，避免污染仓库 data/
+    )
 
 
 # --------------------------------------------------------------------------- #
@@ -84,8 +89,12 @@ class TestBasic:
         assert ctx.config["b"] == 2
 
     def test_storage_stub(self, ctx):
+        # H3: get/set_storage 已从桩实现升级为持久化存取（tmp 隔离）
         assert ctx.get_storage("k", None) is None
-        ctx.set_storage("k", "v")  # 不抛异常
+        ctx.set_storage("k", "v")
+        assert ctx.get_storage("k", None) == "v"
+        ctx.set_storage("obj", {"x": [1, 2]})
+        assert ctx.get_storage("obj") == {"x": [1, 2]}
 
 
 # --------------------------------------------------------------------------- #

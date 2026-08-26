@@ -14,6 +14,7 @@
 from __future__ import annotations
 
 import logging
+import re
 import threading
 from typing import List, Optional
 
@@ -24,7 +25,7 @@ from tuner.core.collector import Collector
 from tuner.core.adapter_store.store import AdapterStore, AdapterNotFoundError
 from tuner.core.collector.cleaner import InvalidFeedbackError
 from tuner.core.collector.dataset import DatasetStore
-from tuner.core.trainer.qlora_trainer import QLoRATrainer
+from tuner.core.trainer.qlora_trainer import QLoRATrainer, is_training_in_progress
 from tuner.core.trainer.store import TrainerJobStore
 from tuner.core.trainer.train_job import TrainJob
 from tuner.models import (
@@ -136,6 +137,13 @@ def trigger_train(req: TrainTriggerRequest, request: Request) -> TrainStatus:
         )
 
     job_id = str(req.job_id or "").strip() or ""
+    # H2: 传入的 job_id 会直接拼入文件/目录路径（jobs/<id>.json、lora_dir/<id>/），
+    # 必须消毒防目录穿越/任意文件写入；缺省为空时 TrainJob 自动生成 uuid，不经此校验。
+    if job_id and not re.fullmatch(r"[A-Za-z0-9_-]{1,64}", job_id):
+        raise HTTPException(
+            status_code=422,
+            detail={"error": "invalid_request", "reason": "job_id 仅允许字母/数字/下划线/短横线，长度 1-64"},
+        )
     base_model = req.base_model or cfg.base_model
     dataset_size = _store(request).count()
     job = TrainJob(
@@ -156,6 +164,12 @@ def trigger_train(req: TrainTriggerRequest, request: Request) -> TrainStatus:
     )
 
     # 后台线程训练：不阻塞请求
+    # H2: 训练互斥预检——已有训练进行时快速 409（run 内 try_begin_training 兜底最终一致性）
+    if is_training_in_progress():
+        raise HTTPException(
+            status_code=409,
+            detail={"error": "training_in_progress", "reason": "已有训练任务进行中，请等待完成后再触发"},
+        )
     trainer = _trainer(request)
     thread = threading.Thread(target=trainer.run, args=(job.job_id,), daemon=True, name=f"train-{job.job_id}")
     thread.start()

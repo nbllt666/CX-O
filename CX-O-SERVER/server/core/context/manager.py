@@ -217,12 +217,21 @@ class ContextManager:
             会话ID（已存在时原样返回，不存在时创建后返回）
         """
         if self.get_session(session_id) is None:
-            self.create_session(
-                workspace_id=workspace_id,
-                title=title,
-                session_id=session_id,
-                metadata=metadata,
-            )
+            try:
+                self.create_session(
+                    workspace_id=workspace_id,
+                    title=title,
+                    session_id=session_id,
+                    metadata=metadata,
+                )
+            except Exception as e:
+                # D2: get-then-create 的 TOCTOU——并发对同一 session_id 调用时
+                # 双双判 None 后同时 INSERT 同主键，后到者抛 IntegrityError。
+                # 冲突属"另一路已创建"，回查确认后正常返回；非冲突异常原样抛出。
+                import sqlite3
+
+                if not isinstance(e, sqlite3.IntegrityError) or self.get_session(session_id) is None:
+                    raise
         return session_id
 
     def get_session(self, session_id: str) -> Optional[Dict]:

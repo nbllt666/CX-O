@@ -19,11 +19,15 @@ LLM 置信度极低或不可用时回退 system_prompt 规则（rules-0 §三 fa
 
 import json
 import os
+import threading
 from typing import Any, Dict, List, Optional
 
 from pydantic import BaseModel
 
 from server.core.utils import iso_now as _iso_now, new_uuid as _new_uuid
+
+# H5: 审计日志 read-modify-write 的进程内串行化锁（防同 session 并发决策互覆）
+_AUDIT_LOG_LOCK = threading.Lock()
 
 
 # --------------------------------------------------------------------------- #
@@ -726,6 +730,19 @@ class DecisionCore:
 
             # 读取已有日志（追加模式）
             log_path = os.path.join(self._log_dir, f"{session_id}.json")
+            self._append_audit_entry(log_path, log_entry)
+        except Exception:
+            # best-effort：写入失败不阻断主流程（distillation_log.schema.json exceptions.IOError_500）
+            pass
+
+    def _append_audit_entry(self, log_path: str, log_entry: Dict[str, Any]) -> None:
+        """H5: 加锁的审计日志追加写。
+
+        旧实现为「读整文件→append→写回」的无锁 read-modify-write，同一 session
+        并发决策会互覆丢条，极端时写出截断 JSON（下次读取被静默清空）。以进程内
+        锁串行化"读→改→写"，保证每次写入基于最新完整内容。
+        """
+        with _AUDIT_LOG_LOCK:
             logs: List[Dict[str, Any]] = []
             if os.path.isfile(log_path):
                 try:
@@ -735,16 +752,10 @@ class DecisionCore:
                         logs = []
                 except (json.JSONDecodeError, OSError):
                     logs = []
-
             logs.append(log_entry)
-
-            # auto_init：目录不存在时创建
-            os.makedirs(self._log_dir, exist_ok=True)
+            os.makedirs(os.path.dirname(log_path), exist_ok=True)
             with open(log_path, "w", encoding="utf-8") as fh:
                 json.dump(logs, fh, ensure_ascii=False, indent=2)
-        except Exception:
-            # best-effort：写入失败不阻断主流程（distillation_log.schema.json exceptions.IOError_500）
-            pass
 
     # ------------------------------------------------------------------ #
     # 私有辅助方法（非契约方法）

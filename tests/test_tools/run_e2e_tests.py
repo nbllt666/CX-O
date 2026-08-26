@@ -159,9 +159,9 @@ def test_acp_unidirectional():
                  f"messages_sent={stats.get('messages_sent')}")
 
     node.stop()
-    # main_agent_id 来自 config.json: acp.agent_id = "cxhms-agent-001"（代码默认值是 cxo-agent-001，但运行时被 config.json 覆盖）
-    # 修复：20260719_模块0_CXFC路由注入修复.md 第十四章（断言期望值过期）
-    passed = bool(r_send.get("success")) and main_agent_id == "cxhms-agent-001"
+    # H11: 断言不再硬编码具体 agent_id（曾写死 "cxhms-agent-001"，配置缺省为
+    # cxo-agent-001，环境变化即误报 FAIL）——改为验证运行时注册 id 非空 + 发送成功。
+    passed = bool(r_send.get("success")) and bool(main_agent_id)
     print(f"=== ACP E2E {'PASSED' if passed else 'FAILED'} ===")
     return passed
 

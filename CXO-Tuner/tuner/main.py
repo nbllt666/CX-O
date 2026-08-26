@@ -22,7 +22,7 @@ from tuner.core.collector.dataset import DatasetStore
 from tuner.core.judge.dpo_builder import DpoBuilder
 from tuner.core.judge.judge_engine import JudgeEngine
 from tuner.core.scheduler import IdleScheduler, OnlineDpo
-from tuner.core.trainer.qlora_trainer import QLoRATrainer
+from tuner.core.trainer.qlora_trainer import QLoRATrainer, is_training_in_progress
 from tuner.core.trainer.store import TrainerJobStore
 from tuner.core.trainer.train_job import TrainJob
 

@@ -1099,6 +1099,10 @@ def register_audio_handlers(
         request_id = message.get("request_id", "")
         data = message.get("data", {})
 
+        # E2: 临时参考音频文件必须无条件清理——旧实现仅成功路径 unlink，
+        # synthesize 抛异常时残留 .wav。统一在函数级 finally 清理。
+        _tmp_ref_audio: Optional[str] = None
+
         try:
             text = data.get("text", "")
             ref_audio_base64 = data.get("ref_audio")
@@ -1127,17 +1131,12 @@ def register_audio_handlers(
                 audio_data = base64.b64decode(ref_audio_base64)
                 with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as f:
                     f.write(audio_data)
-                    kwargs["ref_audio_path"] = f.name
+                    _tmp_ref_audio = f.name
+                    kwargs["ref_audio_path"] = _tmp_ref_audio
                 if ref_text:
                     kwargs["ref_text"] = ref_text
 
             audio_bytes = await tts_service.synthesize(text, **kwargs)
-
-            if "ref_audio_path" in kwargs:
-                try:
-                    os.unlink(kwargs["ref_audio_path"])
-                except Exception:
-                    pass
 
             audio_base64 = base64.b64encode(audio_bytes).decode("utf-8")
 
@@ -1157,6 +1156,12 @@ def register_audio_handlers(
                 code="TTS_ERROR",
                 message=str(e)
             ))
+        finally:
+            if _tmp_ref_audio is not None:
+                try:
+                    os.unlink(_tmp_ref_audio)
+                except Exception:
+                    pass
 
     async def handle_tts_synthesize_stream(websocket, message, client_id):
         request_id = message.get("request_id", "")

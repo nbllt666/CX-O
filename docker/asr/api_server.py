@@ -84,36 +84,38 @@ async def recognize_audio(request: ASRRequest):
             f.write(audio_bytes)
             temp_path = f.name
         
-        # 使用 torchaudio 加载
-        waveform, sample_rate = torchaudio.load(temp_path)
-        
-        # 重采样到 16kHz（如果需要）
-        if sample_rate != 16000:
-            resampler = torchaudio.transforms.Resample(sample_rate, 16000)
-            waveform = resampler(waveform)
-        
-        # 转换为模型输入格式
-        audio_input = waveform.squeeze(0).numpy()
-        
-        # 执行识别
-        result = _model.inference(
-            audio_input,
-            language=request.language if request.language != "auto" else None,
-            use_itn=request.use_itn,
-            **_kwargs
-        )
-        
-        # 解析结果
-        text = result.get("text", "") if isinstance(result, dict) else str(result)
-        
-        # 清理临时文件
-        Path(temp_path).unlink(missing_ok=True)
-        
-        return ASRResponse(
-            status="success",
-            text=text,
-            language=request.language
-        )
+        try:
+            # 使用 torchaudio 加载
+            waveform, sample_rate = torchaudio.load(temp_path)
+            
+            # 重采样到 16kHz（如果需要）
+            if sample_rate != 16000:
+                resampler = torchaudio.transforms.Resample(sample_rate, 16000)
+                waveform = resampler(waveform)
+            
+            # 转换为模型输入格式
+            audio_input = waveform.squeeze(0).numpy()
+            
+            # 执行识别
+            result = _model.inference(
+                audio_input,
+                language=request.language if request.language != "auto" else None,
+                use_itn=request.use_itn,
+                **_kwargs
+            )
+            
+            # 解析结果
+            text = result.get("text", "") if isinstance(result, dict) else str(result)
+            
+            return ASRResponse(
+                status="success",
+                text=text,
+                language=request.language
+            )
+        finally:
+            # E6: 无论推理成功/失败都清理临时文件（旧实现仅成功路径 unlink，
+            # torchaudio.load/推理异常时残留 .wav）。
+            Path(temp_path).unlink(missing_ok=True)
         
     except Exception as e:
         logger.error(f"ASR error: {e}")

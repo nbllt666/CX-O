@@ -116,7 +116,14 @@ export function registerNekoIpc(): void {
     }
 
     try {
-      const response = await net.fetch(url, { method, headers, body });
+      // F6: 插件服务器挂起时 Promise 永久悬挂会使管理页状态卡 loading；
+      // 加 15s 超时兜底（Electron net.fetch 支持 AbortSignal.timeout）。
+      const response = await net.fetch(url, {
+        method,
+        headers,
+        body,
+        signal: AbortSignal.timeout(15000),
+      });
       const text = await response.text();
       return { ok: true, status: response.status, body: text };
     } catch (error) {

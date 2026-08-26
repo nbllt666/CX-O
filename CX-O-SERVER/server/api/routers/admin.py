@@ -9,6 +9,7 @@ from fastapi import APIRouter, Header, HTTPException, Request
 from pydantic import BaseModel
 
 from server.core.logging_config import get_contextual_logger
+from server.core.admin.control_plane import resolve_invoke_result
 
 router = APIRouter()
 logger = get_contextual_logger(__name__)
@@ -371,7 +372,20 @@ def _admin_guard(request: Request, required: str, request_id: str = None):
     except HTTPException:
         raise
     except Exception as e:
-        # 权限不足/防重放 → 403（无 Authorization 或 429 限流已在异常内区分，统一 403 兜底）
+        # G3: 认证/限流/重放/禁用错误按语义映射状态码，不再统一 403
+        from server.core.admin.auth import (
+            AdminAuthError,
+            AdminForbiddenError,
+            AdminRateLimitedError,
+            AdminReplayError,
+        )
+
+        if isinstance(e, AdminAuthError):
+            raise HTTPException(status_code=401, detail=str(e))
+        if isinstance(e, AdminRateLimitedError):
+            raise HTTPException(status_code=429, detail=str(e))
+        if isinstance(e, (AdminForbiddenError, AdminReplayError)):
+            raise HTTPException(status_code=403, detail=str(e))
         raise HTTPException(status_code=403, detail=str(e))
     return level
 
@@ -440,9 +454,9 @@ async def admin_control(request: Request, req: _ControlRequest):
         import time
         t0 = time.monotonic()
         result = _control_plane.dispatch(req.action, req.target, req.request_id, req.agent_id or "default", req.params or {})
-        from inspect import iscoroutine
-        if iscoroutine(result):
-            result = await result
+        # H1: dispatch 顶层恒为 dict，旧 iscoroutine 判断恒 False；result 可能
+        # 内嵌裸协程（async 服务方法），统一 await 后替换保证可序列化。
+        result = await resolve_invoke_result(result)
         audit_now("CX-A", "info", "control", f"{req.target}/{req.action}", "管理面控制动作完成",
                   request_id=req.request_id, detail={"elapsed_ms": round((time.monotonic() - t0) * 1000, 1)})
         return {"status": "success", "result": result}
@@ -470,9 +484,8 @@ async def admin_batch(request: Request, req: _BatchRequest):
         t0 = time.monotonic()
         try:
             result = _control_plane.dispatch(st.action, st.target, req.request_id, st.agent_id or "default", st.params or {})
-            from inspect import iscoroutine
-            if iscoroutine(result):
-                result = await result
+            # H1: 同 admin_control，统一 await 内嵌裸协程
+            result = await resolve_invoke_result(result)
             return {"step": i, "ok": True, "result": result, "duration_ms": round((time.monotonic() - t0) * 1000, 1)}
         except Exception as e:
             return {"step": i, "ok": False, "result": {"error": str(e)}, "duration_ms": round((time.monotonic() - t0) * 1000, 1)}

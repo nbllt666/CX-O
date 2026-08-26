@@ -3,6 +3,7 @@ CX-O-VoiceWorkStation 配置模块
 """
 from __future__ import annotations
 
+import os
 from pathlib import Path
 from typing import Optional
 from dataclasses import dataclass, field
@@ -48,7 +49,12 @@ class MusicConfig:
     diffsinger_dir: str = str(_BASE_DIR.parent / "DiffSinger")
     # DiffSinger 依赖 torch/numpy<2/librosa/lightning 等，仅在 cx-o conda 环境中安装；
     # 系统 Python 3.14 缺少这些依赖，必须指向 cx-o 环境解释器。
-    diffsinger_python: str = r"C:\Users\NBLLT666\.conda\envs\cx-o\python.exe"
+    # H12: 默认值仍指向已知环境，但允许通过 CXO_DIFFSINGER_PYTHON 环境变量覆盖，
+    # 避免换机/换环境即崩。
+    diffsinger_python: str = os.environ.get(
+        "CXO_DIFFSINGER_PYTHON",
+        r"C:\Users\NBLLT666\.conda\envs\cx-o\python.exe",
+    )
     # 默认声库：OpenCpop DS1000 声学模型（已部署于 checkpoints/0211_opencpop_ds1000_keyshift/）
     voice_bank: str = "0211_opencpop_ds1000_keyshift"
     default_svc_model: str = ""

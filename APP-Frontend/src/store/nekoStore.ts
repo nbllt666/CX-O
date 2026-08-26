@@ -137,7 +137,9 @@ export const useNekoStore = create<NekoState>()((set, get) => ({
           get().refreshMarket(),
         ]);
       } else {
-        set({ bridge: null });
+        // F2: 运行时被外部终止（崩溃/手动杀进程）后刷新，须与 stopRuntime 一致清理
+        // 旧插件/商店列表，避免 running=false 下 UI 仍展示过期数据。
+        set({ bridge: null, plugins: [], installed: [], marketStatus: null, catalog: [] });
       }
     } finally {
       if (seq === statusSeq) set({ checking: false });

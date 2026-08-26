@@ -118,7 +118,7 @@ export function ConnectionSetup({ onConnected }: ConnectionSetupProps) {
               type="text"
               value={wsUrl}
               onChange={(e) => setWsUrlState(e.target.value)}
-              placeholder="ws://127.0.0.1:8100"
+              placeholder="ws://127.0.0.1:8000"
               className="w-full rounded-lg border border-[var(--glass-border)] bg-[rgba(255,255,255,0.06)] px-4 py-2 backdrop-blur-sm transition-colors focus:border-[rgba(255,183,225,0.4)] focus:outline-none"
             />
             <p className="mt-1 text-xs text-muted-foreground">{t('connection.wsUrlHint')}</p>

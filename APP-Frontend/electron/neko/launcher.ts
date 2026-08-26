@@ -162,6 +162,11 @@ export async function startNeko(): Promise<{ port: number }> {
   });
   child.on('error', (err) => {
     emit(`[neko] 插件服务器启动失败: ${err.message}`);
+    // H10: spawn 失败（如 python 不存在 ENOENT）不会触发 exit 事件，
+    // 默认残留 child/activePort 会让后续 startNeko 误判"正在运行"、
+    // stopNeko 误走 SIGKILL。此处必须手动清理状态。
+    child = null;
+    activePort = null;
   });
 
   // 请求超时：等待端口真正可连

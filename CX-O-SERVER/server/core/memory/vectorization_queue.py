@@ -203,6 +203,9 @@ class VectorizationQueue:
                 # 更新任务状态
                 self._update_task_status(task.memory_id, TaskStatus.PROCESSING)
                 
+                # H8: task_done 须在 finally 中保证执行——处理/重试分支任一步
+                # 抛异常（含回调、stats、状态更新自身抛错）若跳过 task_done，
+                # PriorityQueue.join() 未完成计数失衡，stop/shutdown 永久阻塞。
                 try:
                     # 调用完成回调执行实际的向量化操作
                     if self._on_complete_callback:
@@ -242,8 +245,8 @@ class VectorizationQueue:
                         with self._stats_lock:
                             self._stats["failed_tasks"] += 1
                             self._stats["processing_tasks"] -= 1
-                
-                self._queue.task_done()
+                finally:
+                    self._queue.task_done()
                 
             except Exception as e:
                 logger.error(f"Worker error: {e}", exc_info=True)

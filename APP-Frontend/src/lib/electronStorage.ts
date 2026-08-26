@@ -27,6 +27,11 @@ const STORE_NAMES = [
   'cxo-pet-chat',
   'cxo-pet-danmaku',
   'cxo-pet-computer-control-auth',
+  // F4: audio/capture/pet-panel 三个持久化 store 曾缺失，导致 localStorage 被清时
+  // 主进程文件不预载、状态退化回默认值
+  'cxo-pet-audio',
+  'cxo-pet-capture',
+  'cxo-pet-panel',
 ];
 
 // 需要与 Electron 主进程 app-config 双向同步的配置键

@@ -172,7 +172,8 @@ class TestCleanupOldSessions:
         assert count == 1
         assert ("s_old", False) in store.deleted_ids
         assert ("s_new", False) not in store.deleted_ids
-        assert store.get_sessions_calls == [(False, 10000)]
+        # H2: 分页遍历（单批 page=1000，offset 被 FakeStore *kwargs 吸收）
+        assert store.get_sessions_calls == [(False, 1000)]
 
     def test_none_deleted_when_all_recent(self, store):
         now = datetime.now()

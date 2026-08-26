@@ -69,6 +69,10 @@ async def handle_live_connection(websocket: WebSocket, client_id: str):
     except Exception as e:
         logger.error(f"Live WebSocket error: {e}")
     finally:
+        # H3: 与 websocket_handler 断连路径一致，显式触发清理（移除连接、
+        # 释放双流式会话与 per-client 音频/ASR/打断模块实例）；disconnect
+        # 对已不存在的 client_id 幂等返回，正常断开与异常路径均安全。
+        await ws_manager.disconnect(client_id)
         logger.info(f"Live client cleanup: {client_id}")
 
 

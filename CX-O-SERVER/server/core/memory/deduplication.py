@@ -4,6 +4,7 @@
 """
 
 import hashlib
+import inspect
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any, Dict, List, Optional, Set
@@ -75,6 +76,20 @@ class DeduplicationEngine:
         sorted_ids = sorted(memory_ids)
         id_str = ",".join(map(str, sorted_ids))
         return hashlib.md5(id_str.encode()).hexdigest()[:16]
+
+    async def _load_all_memories(self) -> List[Dict]:
+        """兼容同步/异步 memory_manager 的全量记忆加载。
+
+        D4: 旧代码直接调用 search_memories(...) 且不 await——若管理器为
+        AsyncMemoryManager 会拿到裸协程（迭代 TypeError 被吞、静默返回空）。
+        统一 await-safe 包装，同步管理器原样直通。
+        """
+        res = self.memory_manager.search_memories(
+            memory_type=None, limit=10000, include_deleted=False
+        )
+        if inspect.isawaitable(res):
+            res = await res
+        return res or []
 
     async def check_similarity(self, memory_id_1: int, memory_id_2: int) -> float:
         """检查两个记忆的相似度
@@ -149,9 +164,7 @@ class DeduplicationEngine:
 
         try:
             # 获取所有记忆
-            all_memories = self.memory_manager.search_memories(
-                memory_type=None, limit=10000, include_deleted=False
-            )
+            all_memories = await self._load_all_memories()
 
             for other_memory in all_memories:
                 other_id = other_memory["id"]
@@ -187,9 +200,7 @@ class DeduplicationEngine:
 
         if memory_ids is None:
             # 获取所有记忆
-            all_memories = self.memory_manager.search_memories(
-                memory_type=None, limit=10000, include_deleted=False
-            )
+            all_memories = await self._load_all_memories()
             memory_ids = [m["id"] for m in all_memories]
 
         # 构建相似性图

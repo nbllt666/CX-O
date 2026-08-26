@@ -6,7 +6,7 @@
  * - 响应为 APIResponse 包裹：{success, data: {accepted, clip_id?, pending?}, message, ...}。
  *
  * 封装习惯对齐 chat.ts / base.ts：
- * - base URL 复用 getApiBaseUrl()（IPC > localStorage > env > 默认 http://127.0.0.1:8100）；
+ * - base URL 复用 getApiBaseUrl()（IPC > localStorage > env > 默认 http://127.0.0.1:8000）；
  * - Bearer token 从 localStorage(STORAGE_KEYS.token) 注入，与 axios 拦截器同一取值口径；
  * - 网络/HTTP 错误经 normalizeError 归一化后抛给调用方（由管线统一兜底为「未接受」）。
  *

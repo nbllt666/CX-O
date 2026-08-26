@@ -240,12 +240,39 @@ class PluginManager:
             context = self._create_context(plugin)
 
             # 调用初始化
+            sync_initialized = True
             if plugin.instance and hasattr(plugin.instance, "initialize"):
-                if inspect.iscoroutinefunction(plugin.instance.initialize):
-                    self._create_plugin_task(plugin_id, plugin.instance.initialize(context))
+                init = plugin.instance.initialize(context)
+                if inspect.isawaitable(init):
+                    sync_initialized = False
+                    # H4: 异步初始化完成后才置 enabled + 注册钩子；初始化失败保持
+                    # 禁用——旧实现 fire-and-forget 后立即 enabled=True，半初始化
+                    # 插件以"已启用"暴露
+                    async def _complete_enable(coro, pid=plugin_id):
+                        try:
+                            await coro
+                            self._finalize_enable(pid)
+                        except Exception as e:
+                            logger.error(f"插件初始化失败（保持禁用） {pid}: {e}")
+
+                    self._create_plugin_task(plugin_id, _complete_enable(init))
                 else:
                     plugin.instance.initialize(context)
 
+            if sync_initialized:
+                self._finalize_enable(plugin_id)
+            return True
+
+        except Exception as e:
+            logger.error(f"启用插件失败 {plugin_id}: {e}")
+            return False
+
+    def _finalize_enable(self, plugin_id: str) -> None:
+        """置位启用并注册钩子（同步收口，供同步/异步初始化两路调用）"""
+        plugin = self.plugins.get(plugin_id)
+        if plugin is None or plugin.enabled:
+            return
+        try:
             # 注册钩子
             if plugin.instance and hasattr(plugin.instance, "get_hooks"):
                 hooks = plugin.instance.get_hooks()
@@ -254,11 +281,8 @@ class PluginManager:
 
             plugin.enabled = True
             logger.info(f"插件已启用: {plugin.metadata.name}")
-            return True
-
         except Exception as e:
-            logger.error(f"启用插件失败 {plugin_id}: {e}")
-            return False
+            logger.error(f"插件启用收尾失败 {plugin_id}: {e}")
 
     async def disable_plugin(self, plugin_id: str) -> bool:
         """禁用插件"""

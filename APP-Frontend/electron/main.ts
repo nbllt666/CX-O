@@ -742,20 +742,33 @@ app.whenReady().then(() => {
   });
 });
 
-app.on('will-quit', () => {
-  globalShortcut.unregisterAll();
-  // 停止 CXFC 注册并注销插件（Task 3）
-  void stopCxfcRegistration();
-  // 停止电脑控制插件 HTTPS 服务，回收端口与连接
-  void stopComputerControlPlugin();
-  // 停止 Neko 插件运行时 sidecar 与工具→CXFC 桥，回收子进程/接口
-  void stopNekoRuntime();
-  // 停止生理信号上送后台任务并断开 BLE（Task 5）
-  void stopPhysioBackground();
-});
+// F5: before-quit 阻止默认退出，异步完成清理（CXFC 注销/端口释放/子进程回收）后
+// 再 app.exit——原 will-quit 对多个异步回收全部 void 不等待，进程可能提前退出，
+// 导致注销未发出（后端残留死插件元数据）、HTTP/HTTPS server 端口残留占用。
+let quitCleanupDone = false;
 
-app.on('before-quit', () => {
+app.on('before-quit', (event) => {
   isQuitting = true;
+  if (quitCleanupDone) return;
+  quitCleanupDone = true;
+  event.preventDefault();
+  globalShortcut.unregisterAll();
+  void (async () => {
+    try {
+      await Promise.allSettled([
+        // 停止 CXFC 注册并注销插件（Task 3）
+        stopCxfcRegistration(),
+        // 停止电脑控制插件 HTTPS 服务，回收端口与连接
+        stopComputerControlPlugin(),
+        // 停止 Neko 插件运行时 sidecar 与工具→CXFC 桥，回收子进程/接口
+        stopNekoRuntime(),
+        // 停止生理信号上送后台任务并断开 BLE（Task 5）
+        stopPhysioBackground(),
+      ]);
+    } finally {
+      app.exit(0);
+    }
+  })();
 });
 
 app.on('window-all-closed', () => {

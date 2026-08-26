@@ -59,6 +59,9 @@ class SentinelCluster:
         self._state_version = 0
         self._event_callbacks: list[callable] = []
         self._started = False
+        # E5: 后台接管任务集合——create_task 后跟踪引用并在 shutdown 取消，
+        # 避免接管协程在集群停止后仍在 transport/consensus 上做 I/O。
+        self._bg_tasks: set = set()
 
     # ---- 事件（供上层 Aware 订阅） ----
     def set_event_callback(self, cb):
@@ -152,10 +155,13 @@ class SentinelCluster:
             if not self._started:
                 return
             try:
-                asyncio.get_running_loop().create_task(
+                task = asyncio.get_running_loop().create_task(
                     failover.maybe_takeover(dead_node_id),
                     name="cluster-takeover",
                 )
+                # E5: 登记后台任务，shutdown 时统一取消，防泄漏
+                self._bg_tasks.add(task)
+                task.add_done_callback(self._bg_tasks.discard)
             except RuntimeError:
                 pass
 
@@ -190,6 +196,16 @@ class SentinelCluster:
                 await self.heartbeat.stop()
             except Exception:  # noqa: BLE001
                 log.exception("heartbeat stop failed")
+        # E5: 取消残留的后台接管任务，防止集群停止后任务继续在
+        # transport/consensus/ref_audio 上执行 I/O。
+        for task in list(self._bg_tasks):
+            task.cancel()
+        if self._bg_tasks:
+            try:
+                await asyncio.gather(*list(self._bg_tasks), return_exceptions=True)
+            except Exception:  # noqa: BLE001
+                pass
+        self._bg_tasks.clear()
         # 停用后断开 ref_audio emit hook（短路，单机零影响）
         try:
             from server import ref_audio_store

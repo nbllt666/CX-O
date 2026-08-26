@@ -173,6 +173,14 @@ export function useMeetingWebSocket(options: UseMeetingWebSocketOptions): UseMee
       try {
         const s = await meetingApi.start(opts);
         pollActiveRef.current = true; // 新会议生效前恢复在途闸（end() 可能已将之关闭）
+        // F1: end() 已 clearInterval 且轮询 effect 依赖 [roomId, intervalMs, fetchState]
+        // 未变时不会重跑——同 roomId 再次 start 必须重建定时器，否则轮询兜底失效。
+        if (timerRef.current) {
+          clearInterval(timerRef.current);
+          timerRef.current = null;
+        }
+        timerRef.current = setInterval(() => void fetchState(), intervalMs);
+        setIsPolling(true);
         setSnapshot(s);
         setIsError(false);
         setMeetingHint({ speaker: s.token_holder ?? null, roomId: s.room_id });

@@ -73,17 +73,25 @@ class SessionCleanupTask:
             logger.info(f"会话清理完成: 过期 {expired_count} 个, 长期未访问 {old_count} 个")
 
     async def _cleanup_old_sessions(self) -> int:
-        """清理长期未访问的会话"""
+        """清理长期未访问的会话（分页遍历，避免单次 1 万条上限漏删更旧会话）"""
         cutoff_date = datetime.now() - self.max_session_age
 
-        # 获取所有会话
-        all_sessions = self.session_store.get_sessions(active_only=False, limit=10000)
-
         count = 0
-        for session in all_sessions:
-            if session.last_accessed_at < cutoff_date:
-                if self.session_store.delete_session(session.id, soft_delete=False):
-                    count += 1
+        page = 1000
+        offset = 0
+        while True:
+            batch = self.session_store.get_sessions(
+                active_only=False, limit=page, offset=offset
+            )
+            if not batch:
+                break
+            for session in batch:
+                if session.last_accessed_at < cutoff_date:
+                    if self.session_store.delete_session(session.id, soft_delete=False):
+                        count += 1
+            if len(batch) < page:
+                break
+            offset += page
 
         if count > 0:
             logger.info(f"已清理 {count} 个长期未访问的会话")

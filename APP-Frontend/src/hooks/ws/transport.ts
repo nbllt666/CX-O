@@ -175,7 +175,11 @@ export function useWSTransport(options: UseWSTransportOptions): UseWSTransportRe
     disconnect();
     reconnectAttemptsRef.current = 0;
     // 不复位 isUnmountedRef：卸载后不得再重连（复位会破坏卸载防护，卸载后仍触发连接）
-    reconnectTimeoutRef.current = window.setTimeout(connect, 50);
+    reconnectTimeoutRef.current = window.setTimeout(() => {
+      // H8: 卸载后不再建连（防御卸载与重连调度交错的极端时序）
+      if (isUnmountedRef.current) return;
+      void connect();
+    }, 50);
   }, [disconnect, connect]);
 
   const send = useCallback((data: string | ArrayBuffer): boolean => {

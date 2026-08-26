@@ -65,8 +65,9 @@ class VoxCPMClient:
         self._zipenhancer_model_path = self._config.zipenhancer_model_path
         self._working_dir = str(_CXO_ROOT / self._config.working_dir)
         self._model = None
-        # 允许作为输入参考音频的根目录，默认仅允许 data/input，防止任意本地文件读取。
-        self._allowed_audio_root = Path("data/input").resolve()
+        # 允许作为输入参考音频的根目录，默认仅允许 <repo>/data/input，防止任意本地文件读取。
+        # G6: 锚定 _CXO_ROOT 绝对路径（与 working_dir 同锚），消除 CWD 依赖。
+        self._allowed_audio_root = (_CXO_ROOT / "data" / "input").resolve()
 
     def _validate_audio_path(self, audio_path: str) -> Path:
         """校验 audio_path 解析后必须位于允许的根目录之内，防止任意文件传入子进程。"""

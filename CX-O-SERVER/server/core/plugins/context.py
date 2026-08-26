@@ -1,5 +1,7 @@
 """插件上下文——为插件执行提供上下文与事件分发辅助。"""
+import json
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any, Callable, Dict, Optional, Set
 
 import asyncio
@@ -27,6 +29,8 @@ class PluginContext:
     _llm_client: Optional[Any] = field(default=None, repr=False)
     _tool_registry: Optional[Any] = field(default=None, repr=False)
     _ws_manager: Optional[Any] = field(default=None, repr=False)
+    # H3: 插件私有存储根（测试可注入 tmp；缺省落到 <server>/data/plugin_storage）
+    storage_root: Optional[Path] = field(default=None, repr=False)
     # 后台异步任务引用集合，防止被GC回收
     _background_tasks: Set[asyncio.Task] = field(default_factory=set, repr=False)
 
@@ -167,14 +171,34 @@ class PluginContext:
         """设置配置项（仅内存，不持久化）"""
         self.config[key] = value
 
-    # 存储API（插件私有存储）
+    # 存储API（插件私有存储）——H3: 旧桩实现 get_storage 恒返回默认、set_storage
+    # 空操作，依赖私有存储的插件数据静默丢失。改为按 plugin 落盘 JSON
+    # （<server>/data/plugin_storage/<plugin_id>/<key>.json）。
+    def _storage_file(self, key: str) -> Path:
+        if self.storage_root is not None:
+            data_root = Path(self.storage_root)
+        else:
+            data_root = Path(__file__).resolve().parents[3] / "data" / "plugin_storage"
+        safe_key = (
+            str(key).replace("/", "_").replace("\\", "_").replace("..", "_")
+        )
+        return data_root / str(self.plugin_id) / f"{safe_key}.json"
+
     def get_storage(self, key: str, default=None) -> Any:
-        """获取存储数据"""
-        # 实际实现应该使用数据库或文件存储
-        # 这里简化处理，仅返回默认值
+        """获取插件私有存储数据（缺失/读取失败返回 default）"""
+        try:
+            p = self._storage_file(key)
+            if p.exists():
+                return json.loads(p.read_text(encoding="utf-8"))
+        except Exception as e:
+            self.log_error(f"读取插件存储失败 {key}: {e}")
         return default
 
     def set_storage(self, key: str, value: Any):
-        """存储数据"""
-        # 实际实现应该使用数据库或文件存储
-        pass
+        """存储插件私有数据（落盘 JSON；失败记日志不抛）"""
+        try:
+            p = self._storage_file(key)
+            p.parent.mkdir(parents=True, exist_ok=True)
+            p.write_text(json.dumps(value, ensure_ascii=False), encoding="utf-8")
+        except Exception as e:
+            self.log_error(f"写入插件存储失败 {key}: {e}")

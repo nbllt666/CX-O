@@ -584,12 +584,12 @@ function BackendSection() {
   const [selectedBackendUrl, setSelectedBackendUrl] = useState<string>('');
   const [discoverError, setDiscoverError] = useState<string | null>(null);
 
-  /** 取当前生效端口的端口号（无显式端口时回退默认 8100） */
+  /** 取当前生效端口的端口号（无显式端口时回退默认 8000） */
   const currentPort = ((): number => {
     try {
-      return Number(new URL(getApiBaseUrl()).port) || 8100;
+      return Number(new URL(getApiBaseUrl()).port) || 8000;
     } catch {
-      return 8100;
+      return 8000;
     }
   })();
 
@@ -704,7 +704,7 @@ function BackendSection() {
             aria-label={t('settings.backend.wsLabel')}
             value={wsInput}
             onChange={(e) => setWsInput(e.target.value)}
-            placeholder="ws://127.0.0.1:8100"
+            placeholder="ws://127.0.0.1:8000"
             className="mt-2 w-full rounded-lg border border-[var(--glass-border)] bg-[rgba(255,255,255,0.06)] px-3 py-1.5 text-sm focus:border-[rgba(255,183,225,0.4)] focus:outline-none"
           />
           <p className="mt-1 text-xs text-muted-foreground">{t('settings.backend.wsHint')}</p>

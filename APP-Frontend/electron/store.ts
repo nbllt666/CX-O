@@ -28,5 +28,17 @@ export function loadStore(name: string): string | null {
 
 export function saveStore(name: string, data: string): void {
   const filePath = path.join(getStoreDir(), `${name}.json`);
+  if (data === '') {
+    // F4: removeItem 语义——渲染层 removeItem 调用 storeSave(name, '')，
+    // 空内容表示删除文件；否则残留旧数据会在下次预载时回灌，覆盖删除意图。
+    try {
+      fs.unlinkSync(filePath);
+    } catch (error: unknown) {
+      if ((error as { code?: string }).code !== 'ENOENT') {
+        throw error;
+      }
+    }
+    return;
+  }
   fs.writeFileSync(filePath, data, 'utf-8');
 }

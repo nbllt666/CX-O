@@ -5,7 +5,7 @@
  *   1. Electron IPC config:get-backend-url（initBackendUrl() 启动时解析一次并缓存）
  *   2. localStorage `cxo-backend-url`
  *   3. import.meta.env.VITE_API_URL
- *   4. 默认 http://127.0.0.1:8100
+ *   4. 默认 http://127.0.0.1:8000
  *
  * WS 地址解析优先级：
  *   1. IPC 持久化（initBackendUrl 时从 app-config 同步到 localStorage 的 cxo-ws-url）
@@ -18,7 +18,8 @@
 import axios, { AxiosError } from 'axios';
 import type { AxiosInstance, AxiosRequestConfig, InternalAxiosRequestConfig } from 'axios';
 
-export const DEFAULT_BACKEND_URL = 'http://127.0.0.1:8100';
+// F3: 与主进程 ensureDefaultConfig 默认一致（8000），避免浏览器/桌面端默认端口分叉。
+export const DEFAULT_BACKEND_URL = 'http://127.0.0.1:8000';
 export const DEFAULT_VOICE_WS_URL = 'http://127.0.0.1:8200';
 
 export const STORAGE_KEYS = {

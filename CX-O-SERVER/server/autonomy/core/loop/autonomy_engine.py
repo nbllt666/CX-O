@@ -633,7 +633,7 @@ class AutonomyEngine:
 
     # ================================================================ 日记触发
     async def _maybe_diary(self, now: Optional[datetime] = None) -> Optional[Dict[str, Any]]:
-        """日记时刻触发：is_diary_time 且今日未写日记时生成日记并记录审计。
+        """日记时刻触发：当日到期且今日未写日记时生成日记并记录审计。
 
         日记生成失败不冒泡（返回错误结构并记录审计）。
         """
@@ -642,12 +642,17 @@ class AutonomyEngine:
         if not isinstance(now, datetime):
             return None
         try:
-            if not bool(self.circadian.is_diary_time(now)):
-                return None
+            # H6: 旧 is_diary_time 为分钟级等值判断，主循环粗轮询（默认 15 分钟
+            # 唤醒一次）几乎必然错过目标分钟 → 默认配置下日记可能永远不触发。
+            # 改为追赶式判定：某次唤醒只要已过今日 diary_time 且今日未写即到期。
+            due = self._is_diary_due(now)
         except Exception as e:
             logger.warning("日记时刻判定失败: %s", e)
             return None
-        if self.max_diary_per_day and self._diary_written_today(now):
+        if not due:
+            return None
+        # 已写日记则本轮不触发（追赶式判定下无条件拦截，保证每日至多一次）
+        if self._diary_written_today(now):
             return None
         daily_log = self._daily_log(now)
         if self.diary is None:
@@ -679,6 +684,18 @@ class AutonomyEngine:
         except Exception as e:
             logger.warning("日记审计写入失败: %s", e)
         return result
+
+    def _is_diary_due(self, now: datetime) -> bool:
+        """日记到期判定：now 落在今日 diary_time 起的容差窗口内。
+
+        修复主循环粗轮询（默认 15 分钟唤醒一次）对分钟级等值匹配（旧
+        is_diary_time：hour==H and minute==M）几乎必然错过、导致日记永远
+        不触发的问题：容差窗口取 max(30, 2 × 轮询间隔) 分钟，保证至少一次
+        唤醒落入窗口。窗口有界——超出窗口即视为错过当日时刻，不会无限顺延。
+        """
+        tolerance_min = max(30.0, 2.0 * self.loop_interval_minutes)
+        today_diary = datetime.combine(now.date(), self.circadian.diary_time, tzinfo=now.tzinfo)
+        return today_diary <= now < today_diary + timedelta(minutes=tolerance_min)
 
     def _diary_written_today(self, now: datetime) -> bool:
         """今日是否已写日记（依据 manager.diary_last_at 的日期判定）。"""

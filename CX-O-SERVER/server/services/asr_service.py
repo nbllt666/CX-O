@@ -340,9 +340,21 @@ class ASRService:
                         "emotion": result["results"][0].get("emotion", ""),
                         "event": result["results"][0].get("event", ""),
                     }
+            # E1: 5xx 属临时故障，raise 使 retry_with_backoff 重试（旧实现裸返回
+            # 错误 dict，5xx 永不重试）；4xx 为客户端错误，返回错误结果不重试。
+            if response.status_code >= 500:
+                response.raise_for_status()
             return {"text": "", "error": f"ASR remote error: HTTP {response.status_code}"}
         
-        return await retry_with_backoff(_make_request, max_retries=3, base_delay=1.0, max_delay=30.0, service_name="ASR")
+        try:
+            return await retry_with_backoff(
+                _make_request, max_retries=3, base_delay=1.0, max_delay=30.0, service_name="ASR"
+            )
+        except Exception as exc:
+            # E1: 5xx 触发重试；重试耗尽后仍失败时降级为错误 dict（不向调用方
+            # 抛裸异常），维持调用方统一的「空文本 + error」契约（test 同款断言）。
+            logger.warning("ASR remote 请求重试后仍失败: %s", exc)
+            return {"text": "", "error": f"ASR remote error after retries: {exc}"}
 
     async def _recognize_remote_base64(self, audio_base64: str, language: str = "auto", use_itn: bool = True) -> dict[str, Any]:
         async def _make_request():

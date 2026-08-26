@@ -70,11 +70,17 @@ export function useAudioPipeline(
   }, []);
 
   const close = useCallback(() => {
-    if (audioContextRef.current) {
-      audioContextRef.current.close().catch(() => {});
-      audioContextRef.current = null;
-    }
+    const ctx = audioContextRef.current;
     analyserRef.current = null;
+    if (ctx) {
+      // H9: 等 close 完成后再置 null——旧实现立即置 null，若 close 完成前再次
+      // init() 会创建第二个 AudioContext，旧的异步关闭（双 context 瞬时并存）。
+      void ctx.close().finally(() => {
+        if (audioContextRef.current === ctx) {
+          audioContextRef.current = null;
+        }
+      });
+    }
   }, []);
 
   const createStreamSource = useCallback(

@@ -86,6 +86,38 @@ def apply_resource_caps(config: TunerConfig) -> None:
         logger.warning("显存上限应用失败（torch/CUDA 缺失，忽略）: %s", exc)
 
 
+# H2: 全局训练互斥（模块级、进程内唯一）。手动 /train/trigger 与闲时调度可
+# 各自启动后台线程，若无互斥会并发加载模型（CUDA OOM）并写同一 lora_dir。
+import threading as _threading
+
+_TRAIN_MUTEX = _threading.Lock()
+_active_training_job: "Optional[str]" = None
+
+
+def try_begin_training(job_id: str) -> bool:
+    """尝试登记为唯一进行中训练。已有训练在进行时返回 False。"""
+    global _active_training_job
+    with _TRAIN_MUTEX:
+        if _active_training_job is not None:
+            return False
+        _active_training_job = job_id
+        return True
+
+
+def is_training_in_progress() -> bool:
+    """只读查询当前是否已有训练在进行（供触发方 spawn 前快速拒绝）。"""
+    with _TRAIN_MUTEX:
+        return _active_training_job is not None
+
+
+def end_training(job_id: str) -> None:
+    """释放训练互斥（仅释放与当前 job 匹配的登记）。"""
+    global _active_training_job
+    with _TRAIN_MUTEX:
+        if _active_training_job == job_id:
+            _active_training_job = None
+
+
 class QLoRATrainer:
     """QLoRA 训练引擎。store 负责 job 状态存取，run(job_id) 在后台线程执行。"""
 
@@ -135,27 +167,37 @@ class QLoRATrainer:
     # -- 入口 -------------------------------------------------------------------
     def run(self, job_id: str) -> None:
         """后台线程入口：推进状态机并执行训练。任何异常归一为可读 failed。"""
-        job = self.store.get(job_id)
-        if job is None:
-            logger.error("训练线程启动但 job 不存在: job_id=%s", job_id)
+        # H2: 训练互斥入口；出口统一放在 finally 的 end_training，保证正常/异常都释放
+        if not try_begin_training(job_id):
+            logger.warning("训练互斥拒绝：已有训练进行中 job_id=%s", job_id)
+            job = self.store.get(job_id)
+            if job is not None:
+                self._fail(job, "已有训练任务进行中，本次训练被互斥拒绝")
             return
-        logger.info("训练任务开始: job_id=%s base_model=%r epochs=%d sample_ratio=%.2f anchor_ratio=%.2f",
-                    job.job_id, job.base_model, job.epochs, job.sample_ratio, job.anchor_ratio)
-        job.start()
-        self.store.update(job)
         try:
-            self._train(job)
-            job.complete(loss=job.loss_curve)
+            job = self.store.get(job_id)
+            if job is None:
+                logger.error("训练线程启动但 job 不存在: job_id=%s", job_id)
+                return
+            logger.info("训练任务开始: job_id=%s base_model=%r epochs=%d sample_ratio=%.2f anchor_ratio=%.2f",
+                        job.job_id, job.base_model, job.epochs, job.sample_ratio, job.anchor_ratio)
+            job.start()
             self.store.update(job)
-            logger.info("训练任务完成: job_id=%s steps_loss=%d final_progress=1.0",
-                        job.job_id, len(job.loss_curve))
-        except TrainRuntimeError as exc:
-            logger.error("训练依赖/配置错误，任务失败: job_id=%s error=%s", job.job_id, exc)
-            self._fail(job, str(exc))
-        except Exception:  # noqa: BLE001 —— 归一为可读失败，并保留完整堆栈
-            logger.exception("训练过程异常，任务失败: job_id=%s", job.job_id)
-            detail = traceback.format_exc(limit=15)
-            self._fail(job, f"训练过程中发生异常，详见日志。\n{detail}")
+            try:
+                self._train(job)
+                job.complete(loss=job.loss_curve)
+                self.store.update(job)
+                logger.info("训练任务完成: job_id=%s steps_loss=%d final_progress=1.0",
+                            job.job_id, len(job.loss_curve))
+            except TrainRuntimeError as exc:
+                logger.error("训练依赖/配置错误，任务失败: job_id=%s error=%s", job.job_id, exc)
+                self._fail(job, str(exc))
+            except Exception:  # noqa: BLE001 —— 归一为可读失败，并保留完整堆栈
+                logger.exception("训练过程异常，任务失败: job_id=%s", job.job_id)
+                detail = traceback.format_exc(limit=15)
+                self._fail(job, f"训练过程中发生异常，详见日志。\n{detail}")
+        finally:
+            end_training(job_id)
 
     def _fail(self, job: Any, message: str) -> None:
         job.fail(message)

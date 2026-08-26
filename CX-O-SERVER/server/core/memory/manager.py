@@ -58,6 +58,7 @@ class MemoryManager(
 
     _instance = None
     _lock = threading.Lock()
+    _init_lock = threading.Lock()  # H7: 类级初始化互斥锁（防并发首次 __init__ 双初始化）
 
     def __new__(cls, db_path: str = "data/memories.db") -> "MemoryManager":
         """创建单例实例
@@ -84,6 +85,16 @@ class MemoryManager(
         if self._initialized:
             return
 
+        # H7: __new__ 的单例锁只保证实例只创建一次，两个线程并发首次
+        # __init__ 仍会同时进入完整初始化（双 _init_db / 双清理线程 /
+        # 重复加载高级组件与向量存储）。以类级锁串行化初始化并二次检查，
+        # 保证初始化恰好执行一次。
+        with MemoryManager._init_lock:
+            if self._initialized:
+                return
+            self._initialize(db_path)
+
+    def _initialize(self, db_path: str) -> None:
         self.db_path = Path(db_path)
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
 

@@ -189,6 +189,8 @@ export function useWebSocket(options: WebSocketOptions): UseWebSocketReturn {
     generatingTimerRef.current = setTimeout(() => {
       isGeneratingRef.current = false;
       setIsGenerating(false);
+      // F7: 超时静默结束后清空累计文本，避免残留到下一会话
+      textProgressRef.current = '';
     }, GENERATION_TIMEOUT_MS);
   }, [clearGeneratingTimer]);
 

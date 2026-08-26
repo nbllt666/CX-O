@@ -73,7 +73,7 @@ def _backup_to_response(backup) -> BackupResponse:
 
 
 @router.get("/backups", response_model=List[BackupResponse])
-async def list_backups():
+async def list_backups(_: bool = Depends(verify_admin_api_key)):
     """获取所有备份列表"""
     try:
         manager = get_backup_manager()
@@ -100,6 +100,11 @@ async def create_backup(request: CreateBackupRequest, _: bool = Depends(verify_a
             backup_type=backup_type, description=request.description
         )
 
+        # G1: 备份核心为占位实现（core/backup.py 返回 not_implemented），
+        # 旧代码把 stub 结果包装成 200 "成功"——向调用方显式声明未实现（501）。
+        if backup.get("status") == "not_implemented":
+            raise HTTPException(status_code=501, detail="备份功能当前未实现")
+
         return _backup_to_response(backup)
     except Exception as e:
         logger.error(f"创建备份失败: {e}")
@@ -107,7 +112,7 @@ async def create_backup(request: CreateBackupRequest, _: bool = Depends(verify_a
 
 
 @router.get("/backups/stats", response_model=BackupStatsResponse)
-async def get_backup_stats():
+async def get_backup_stats(_: bool = Depends(verify_admin_api_key)):
     """获取备份统计"""
     try:
         manager = get_backup_manager()
@@ -131,7 +136,7 @@ async def get_backup_stats():
 
 
 @router.get("/backups/{backup_id}", response_model=BackupResponse)
-async def get_backup(backup_id: str):
+async def get_backup(backup_id: str, _: bool = Depends(verify_admin_api_key)):
     """获取备份详情"""
     try:
         manager = get_backup_manager()
@@ -159,6 +164,10 @@ async def restore_backup(backup_id: str, _: bool = Depends(verify_admin_api_key)
             raise HTTPException(status_code=404, detail=f"备份不存在: {backup_id}")
 
         result = manager.restore_backup(backup_id)
+
+        # G1: 同 create_backup——占位实现显式 501，不做伪成功
+        if result.get("status") == "not_implemented":
+            raise HTTPException(status_code=501, detail="备份恢复功能当前未实现")
 
         return RestoreResponse(
             success=result.get("status") == "success",
@@ -215,10 +224,13 @@ async def import_backup(file: UploadFile = File(...), _: bool = Depends(verify_a
             # 导入备份
             backup = manager.import_backup(tmp_path)
 
-            if backup:
-                return {"status": "success", "backup": _backup_to_response(backup)}
-            else:
+            if not backup:
                 raise HTTPException(status_code=400, detail="导入备份失败，文件可能损坏")
+            # G1: 占位实现显式 501，不做伪成功（真实 stub 返回 not_implemented）
+            if backup.get("status") == "not_implemented":
+                raise HTTPException(status_code=501, detail="备份导入功能当前未实现")
+
+            return {"status": "success", "backup": _backup_to_response(backup)}
         finally:
             # 清理临时文件
             if os.path.exists(tmp_path):
@@ -231,7 +243,7 @@ async def import_backup(file: UploadFile = File(...), _: bool = Depends(verify_a
 
 
 @router.get("/backups/{backup_id}/export")
-async def export_backup(backup_id: str):
+async def export_backup(backup_id: str, _: bool = Depends(verify_admin_api_key)):
     """导出备份文件"""
     from fastapi.responses import FileResponse
 

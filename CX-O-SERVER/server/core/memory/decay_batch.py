@@ -2,7 +2,7 @@
 import asyncio
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Dict, List
+from typing import Dict, List, Optional
 
 from server.core.logging_config import get_contextual_logger
 
@@ -72,15 +72,22 @@ class DecayBatchProcessor:
         sync: bool = False,
         dry_run: bool = False,
         offset: int = 0,
+        memories: Optional[List[Dict]] = None,
     ) -> BatchDecayResult:
-        """处理一批记忆的衰减更新，返回处理结果。"""
+        """处理一批记忆的衰减更新，返回处理结果。
+
+        memories 为非 None 时为「快照注入路径」：由 process_all 传入稳定
+        快照切片，避免逐批 search 依赖 ORDER BY importance 排序键（更新
+        importance 会改变排序位置 → offset 分页漂移，漏/重记忆）。
+        """
         from server.core.memory.decay import DecayCalculator
 
         if batch_size > 0:
             self._batch_size = batch_size
 
         decay_calculator = DecayCalculator()
-        memories = self.memory_manager.search_memories(limit=self._batch_size, offset=offset)
+        if memories is None:
+            memories = self.memory_manager.search_memories(limit=self._batch_size, offset=offset)
 
         if not memories:
             return BatchDecayResult(total=0, updated=0, failed=0, details=[])
@@ -160,11 +167,26 @@ class DecayBatchProcessor:
         total_failed = 0
         all_details = []
         batch_count = 0
-        offset = 0
 
-        while True:
+        # D3: 先取全量记忆快照（稳定遍历），再按切片处理——逐批 search(offset)
+        # 会因更新 importance 改变 ORDER BY importance DESC 的排序位置而漏/重记忆。
+        snapshot = self._snapshot_all_memories()
+        if not snapshot:
+            return {
+                "total_batches": 0,
+                "total_updated": 0,
+                "total_failed": 0,
+                "details": [],
+            }
+
+        offset = 0
+        while offset < len(snapshot):
             batch_result = await self.process_batch(
-                batch_size=batch_size, sync=False, dry_run=dry_run, offset=offset
+                batch_size=batch_size,
+                sync=False,
+                dry_run=dry_run,
+                offset=offset,
+                memories=snapshot[offset: offset + batch_size],
             )
 
             batch_count += 1
@@ -178,9 +200,6 @@ class DecayBatchProcessor:
                 f"更新={batch_result.updated}, 失败={batch_result.failed}"
             )
 
-            if batch_result.total < batch_size:
-                break
-
         if sync and not dry_run:
             sync_result = self.memory_manager.sync_decay_values()
             logger.info(f"同步衰减值: 更新={sync_result['updated']}, 失败={sync_result['failed']}")
@@ -191,6 +210,21 @@ class DecayBatchProcessor:
             "total_failed": total_failed,
             "details": all_details,
         }
+
+    def _snapshot_all_memories(self) -> List[Dict]:
+        """全量记忆快照（稳定遍历，不受 importance 排序位置变化影响）。"""
+        memories: List[Dict] = []
+        page = 1000
+        offset = 0
+        while True:
+            batch = self.memory_manager.search_memories(limit=page, offset=offset)
+            if not batch:
+                break
+            memories.extend(batch)
+            if len(batch) < page:
+                break
+            offset += page
+        return memories
 
     def get_batch_status(self) -> Dict:
         """返回当前批次大小、记忆管理器与衰减计算器的可用状态。"""

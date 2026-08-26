@@ -206,6 +206,10 @@ class SemanticSearch:
         if agent_id and agent_id != "default":
             sql += " AND agent_id = ?"
             params.append(agent_id)
+        # H1: 回退搜索加候选上限——旧实现无 LIMIT 全表拉取后内存评分，
+        # 随图规模线性放大内存与耗时。取 "结果需求×10" 且不低于 1000 的候选窗口。
+        sql += " LIMIT ?"
+        params.append(max(limit * 10, 1000))
 
         rows = db.execute(sql, tuple(params))
 

@@ -23,6 +23,10 @@ class Database:
         self._lock = threading.Lock()
         self._init_lock = threading.Lock()
         self._local = threading.local()
+        # D1: 全局连接登记（check_same_thread=False 使每个线程持有独立连接，
+        # 仅关闭当前线程的 thread-local 会让其它线程的连接永不关闭）。
+        self._conn_lock = threading.Lock()
+        self._all_connections: "set" = set()
 
     def _get_connection(self) -> sqlite3.Connection:
         if not hasattr(self._local, 'connection') or self._local.connection is None:
@@ -33,6 +37,8 @@ class Database:
             )
             conn.row_factory = sqlite3.Row
             self._local.connection = conn
+            with self._conn_lock:
+                self._all_connections.add(conn)
         return self._local.connection
 
     @contextmanager
@@ -130,14 +136,21 @@ class Database:
             return False
 
     def close(self) -> None:
-        """关闭当前线程的数据库连接。"""
-        if hasattr(self._local, 'connection') and self._local.connection:
+        """关闭全部线程缓存过的数据库连接（对齐 core/context/manager.py 模式）。
+
+        旧实现仅关闭当前线程的 thread-local 连接，其他线程各自持有的
+        check_same_thread=False 连接永不关闭 → 跨线程资源泄漏。
+        """
+        with self._conn_lock:
+            conns = list(self._all_connections)
+            self._all_connections.clear()
+        for conn in conns:
             try:
-                self._local.connection.close()
+                conn.close()
             except Exception as e:
                 logger.warning(f"关闭数据库连接失败: {e}")
-            finally:
-                self._local.connection = None
+        if hasattr(self._local, 'connection'):
+            self._local.connection = None
 
     def execute(self, query: str, params: tuple = ()) -> List[Dict[str, Any]]:
         with self.get_cursor() as cursor:

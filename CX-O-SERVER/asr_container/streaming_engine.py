@@ -476,6 +476,14 @@ class StreamSession:
     def _track_spk_pump(self, spk_fut, audio_slice: np.ndarray) -> None:
         """登记声纹后台任务（in-flight 上限控制）；超限丢弃该句，保持 pending。"""
         if self._spk_pending_count >= SPK_INFLIGHT_MAX:
+            # E3: 被丢弃的 future 仍占用 _EXECUTOR 线程并可能产生未取回的异常
+            # （"Future exception was never retrieved"）。尽力取消，并挂 done
+            # 回调消费结果/异常，避免告警日志噪音。
+            if not spk_fut.done():
+                spk_fut.cancel()
+                spk_fut.add_done_callback(
+                    lambda f: None if f.cancelled() else f.exception()
+                )
             return
         self._spk_pending_count += 1
         loop = asyncio.get_running_loop()
