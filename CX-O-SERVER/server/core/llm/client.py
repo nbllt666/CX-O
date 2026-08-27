@@ -936,11 +936,24 @@ class LLMFactory:
         """
         # 缓存键并入 host 与 lora_request：此前仅 provider:model，同一模型指向不同
         # host（或同 host 不同 LoRA 适配）时会错误命中第一个实例的缓存。
+        # lora_request 为 dict（见 VLLMClient.__init__ 声明），直接 str() 拼接存在两个
+        # 缺陷：①同内容不同插入序的 dict 生成不同键 → 缓存碎片化永不命中；②若为
+        # 非 dict 自定义对象（如 vLLM SDK LoRARequest），str() 含内存地址 → 永不命中。
+        # 故以 sort_keys 的 JSON 序列化生成稳定键段，不可 JSON 化对象以 repr 兜底；
+        # None/空容器保持 falsy → ""，与 VLLMClient「空配置恒不附加 lora」语义一致。
+        lora = kwargs.get("lora_request")
+        if lora:
+            try:
+                lora_key = json.dumps(lora, sort_keys=True, ensure_ascii=False, default=repr)
+            except (TypeError, ValueError):
+                lora_key = repr(lora)
+        else:
+            lora_key = ""
         key = "{}:{}:{}:{}".format(
             provider,
             kwargs.get("model", "default"),
             kwargs.get("host", "") or "",
-            kwargs.get("lora_request") or "",
+            lora_key,
         )
 
         if key in cls._clients:

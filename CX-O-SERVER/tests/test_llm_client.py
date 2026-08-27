@@ -584,3 +584,44 @@ class TestLLMFactoryCacheKey:
         )
         assert plain is not adapted
         assert adapted is again
+
+    def test_lora_dict_key_order_insensitive_hits_same_cache(self):
+        """同内容不同插入序的 lora_request dict 必须命中同一缓存实例。
+
+        历史缺陷：缓存键直接 str(dict) 拼接，键序不稳定导致语义相同的配置
+        碎片化为多个键，缓存永不命中（外部类型审查项 20260827）。
+        """
+        from server.core.llm.client import LLMFactory
+
+        a = LLMFactory.create_client(
+            "vllm", model="m", host="http://a",
+            lora_request={"model": "adapter-x", "weight": 1.0},
+        )
+        b = LLMFactory.create_client(
+            "vllm", model="m", host="http://a",
+            lora_request={"weight": 1.0, "model": "adapter-x"},  # 键序不同
+        )
+        assert a is b
+
+    def test_lora_empty_dict_same_key_as_absent(self):
+        """空 dict 与未传 lora_request 语义等价（VLLMClient falsy → None），应同键。"""
+        from server.core.llm.client import LLMFactory
+
+        plain = LLMFactory.create_client("vllm", model="m", host="http://a")
+        empty = LLMFactory.create_client(
+            "vllm", model="m", host="http://a", lora_request={}
+        )
+        assert plain is empty
+
+    def test_lora_non_json_object_does_not_raise(self):
+        """不可 JSON 化对象经 default=repr 兜底，构造不抛异常且同对象同键。"""
+        from server.core.llm.client import LLMFactory
+
+        class _SdkLora:  # 模拟 vLLM SDK LoRARequest 之类非 dict 对象
+            def __init__(self, name):
+                self.name = name
+
+        sdk = _SdkLora("adapter-x")
+        a = LLMFactory.create_client("vllm", model="m", host="http://a", lora_request=sdk)
+        b = LLMFactory.create_client("vllm", model="m", host="http://a", lora_request=sdk)
+        assert a is b
