@@ -14,9 +14,16 @@
       "threshold": 0.6
     },
     "sensevoice_streaming": {
-      "chunk_size": 2048,
-      "hop_size": 512,
-      "look_back": 4
+      "chunk_size": 1024,
+      "hop_size": 800,
+      "look_back": 8000
+    },
+    "adaptive_polling": {
+      "enabled": false,
+      "offset_ms": 1,
+      "window_size": 1,
+      "min_interval_ms": 1,
+      "max_interval_ms": 1
     }
   },
   "tts": {

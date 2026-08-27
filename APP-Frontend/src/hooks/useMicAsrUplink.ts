@@ -69,6 +69,22 @@ export function useMicAsrUplink({
   const scriptProcessorRef = useRef<ScriptProcessorNode | null>(null);
   const sourceRef = useRef<MediaStreamAudioSourceNode | null>(null);
   const rafRef = useRef(0);
+  // 竞态防护（B1）：stopCapture 发起的 closePipeline() 的 Promise；快速开关麦克风时
+  // startCapture 必须先等待其完成再重建音频图，避免建在正在关闭的 AudioContext 上。
+  const closingPromiseRef = useRef<Promise<void> | null>(null);
+
+  // getUserMedia 授权弹窗期间可能被用户关闭开关或卸载组件。此时若授权弹窗 resolve，
+  // 需要能读到「最新」的 enabled/卸载状态，避免无条件重建采集上行或抛 mic-start-failed。
+  const mountedRef = useRef(true);
+  const enabledRef = useRef(enabled);
+
+  // 卸载兜底：组件真正卸载后置 false，阻断 async getUserMedia 的迟到续体
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+    };
+  }, []);
 
   const gainRef = useRef(gain);
   gainRef.current = gain;
@@ -135,7 +151,9 @@ export function useMicAsrUplink({
       sourceRef.current.disconnect();
       sourceRef.current = null;
     }
-    closePipeline();
+    // 竞态防护（B1）：close() 返回 Promise 且完成后才置空 audioContextRef，
+    // 记录该 Promise 供后续 startCapture await，避免重建在正在关闭的 ctx 上
+    closingPromiseRef.current = closePipeline();
     if (mediaStreamRef.current) {
       mediaStreamRef.current.getTracks().forEach((track) => track.stop());
       mediaStreamRef.current = null;
@@ -148,6 +166,12 @@ export function useMicAsrUplink({
       onErrorRef.current?.('media-unavailable');
       return;
     }
+    // 竞态防护（B1）：快速开关麦克风——先等上一次 close 完成，再继续重建
+    const prevClose = closingPromiseRef.current;
+    if (prevClose) {
+      await prevClose;
+      closingPromiseRef.current = null;
+    }
     try {
       const stream = await navigator.mediaDevices.getUserMedia({
         audio: {
@@ -158,7 +182,20 @@ export function useMicAsrUplink({
           autoGainControl: true,
         },
       });
+      // 授权弹窗期间开关可能已关闭或组件已卸载：此时不得再重建采集上行，直接停掉轨道
+      if (!mountedRef.current || !enabledRef.current) {
+        stream.getTracks().forEach((track) => track.stop());
+        return;
+      }
       mediaStreamRef.current = stream;
+
+      // 竞态防护（B1）守卫：ctx 已处于 closed 态（上一轮 close 迟到/异步 finally 未跑完）
+      // 时清空 refs，让 initPipeline 走完整重建路径而非幂等早退
+      const staleCtx = audioContextRef.current;
+      if (staleCtx && staleCtx.state === 'closed') {
+        audioContextRef.current = null;
+        analyserRef.current = null;
+      }
 
       initPipeline();
       const source = createStreamSource(stream);
@@ -206,6 +243,7 @@ export function useMicAsrUplink({
 
   // 开关联动：enabled 翻转驱动采集启停；卸载兜底清理
   useEffect(() => {
+    enabledRef.current = enabled;
     if (enabled) {
       void startCapture();
     } else {

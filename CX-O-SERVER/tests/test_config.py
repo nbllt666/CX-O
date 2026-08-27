@@ -3,6 +3,8 @@ server/config.py 单元测试
 环境变量映射、RADIX 配置 auto_fill 越界回退、模型路由、Settings 单例与保存
 """
 import json
+import threading
+import asyncio
 
 from pathlib import Path
 
@@ -17,6 +19,7 @@ from server.config import (
     save_config,
     reload_config,
     _auto_fill_radix_config,
+    atomic_write_json,
     Settings,
 )
 
@@ -25,8 +28,10 @@ from server.config import (
 def _clean_settings(monkeypatch):
     """每个测试前重置 Settings 单例，避免跨测试污染。"""
     Settings.reset()
+    config_mod._last_known_config = None
     yield
     Settings.reset()
+    config_mod._last_known_config = None
 
 
 # --------------------------------------------------------------------------- #
@@ -384,3 +389,103 @@ class TestMeetingConfig:
         c = get_config()
         assert c.meeting.speech_rate == 0.3
         assert c.meeting.danmaku_source.type == "none"
+
+
+# --------------------------------------------------------------------------- #
+# 第六轮扫描批 A2：config.json 内容损坏回退 + 原子写（并发 save 后 JSON 仍合法）
+# --------------------------------------------------------------------------- #
+class TestAtomicWrite:
+    def test_atomic_write_json_basic(self, tmp_path):
+        f = tmp_path / "data.json"
+        atomic_write_json(str(f), {"a": 1, "list": [1, 2]})
+        assert json.loads(f.read_text(encoding="utf-8")) == {"a": 1, "list": [1, 2]}
+
+    def test_atomic_write_creates_parent(self, tmp_path):
+        f = tmp_path / "nested" / "dir" / "data.json"
+        atomic_write_json(str(f), {"x": 1})
+        assert json.loads(f.read_text(encoding="utf-8")) == {"x": 1}
+
+    def test_atomic_write_no_tmp_leftovers(self, tmp_path):
+        f = tmp_path / "data.json"
+        atomic_write_json(str(f), {"a": 1})
+        # 原子写不残留临时文件
+        leftovers = [p for p in tmp_path.iterdir() if p.name.endswith(".tmp")]
+        assert leftovers == []
+
+    def test_concurrent_save_yields_valid_json(self, tmp_path, monkeypatch):
+        cfg_path = tmp_path / "config.json"
+        monkeypatch.setenv("CXO_CONFIG", str(cfg_path))
+        Settings.reset()
+        c = get_config()
+        errors: list = []
+
+        def _save() -> None:
+            try:
+                save_config(c)
+            except Exception as e:  # pragma: no cover - 失败才会走到
+                errors.append(e)
+
+        threads = [threading.Thread(target=_save) for _ in range(20)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+
+        assert errors == []
+        # 并发多次 save 后文件仍为合法 JSON（不半写损坏）
+        loaded = json.loads(cfg_path.read_text(encoding="utf-8"))
+        assert isinstance(loaded, dict)
+        assert "system" in loaded
+
+
+class TestConfigCorruptFallback:
+    def test_corrupt_config_does_not_raise(self, tmp_path, monkeypatch):
+        cfg_path = tmp_path / "config.json"
+        cfg_path.write_text("{ this is not valid json !!!", encoding="utf-8")
+        monkeypatch.setenv("CXO_CONFIG", str(cfg_path))
+        Settings.reset()
+        # 内容损坏时 get_settings() 不得抛异常，回退内置默认配置
+        c = get_config()
+        assert c.system.host == "0.0.0.0"
+        # 损坏副本已备份
+        backups = list(tmp_path.glob("config.json.corrupt-*"))
+        assert len(backups) >= 1
+
+    def test_corrupt_config_falls_back_to_last_snapshot(self, tmp_path, monkeypatch):
+        cfg_path = tmp_path / "config.json"
+        cfg_path.write_text(json.dumps({"system": {"port": 7777}}), encoding="utf-8")
+        monkeypatch.setenv("CXO_CONFIG", str(cfg_path))
+        Settings.reset()
+        assert get_config().system.port == 7777
+        # 覆盖为损坏内容后重载 → 回退上一次成功快照（port=7777），不抛异常
+        cfg_path.write_text("{ bad !!", encoding="utf-8")
+        Settings.reset()
+        c2 = get_config()
+        assert c2.system.port == 7777
+        backups = list(tmp_path.glob("config.json.corrupt-*"))
+        assert len(backups) >= 1
+
+
+class TestConfigHotReload:
+    """config_hot_reload：live 节即时生效（同步运行时 UnifiedConfig）。"""
+
+    def test_live_apply_section_syncs_runtime(self, tmp_path, monkeypatch):
+        from server.config_hot_reload import apply_section
+
+        cfg_path = tmp_path / "config.json"
+        cfg_path.write_text("{}", encoding="utf-8")
+        monkeypatch.setenv("CXO_CONFIG", str(cfg_path))
+        Settings.reset()
+        result = asyncio.run(apply_section(
+            "live", {"danmaku": {"enabled": True}, "firewall": {"blocking": {"blacklist_enabled": False}}}, None
+        ))
+        assert result["applied"] is True
+        assert result["requires_restart"] is False
+        # live 节同步到运行时 UnifiedConfig，组件可即时读取
+        cfg = get_settings().config
+        assert getattr(cfg, "danmaku", None) == {"enabled": True}
+        assert getattr(cfg, "firewall", None) == {"blocking": {"blacklist_enabled": False}}
+
+    def test_live_requires_restart_false(self):
+        from server.config_hot_reload import REQUIRES_RESTART
+        assert REQUIRES_RESTART.get("live", True) is False

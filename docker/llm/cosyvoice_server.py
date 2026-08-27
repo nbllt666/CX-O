@@ -636,30 +636,54 @@ def create_app():
             ref_text = "You are a helpful assistant.<|endofprompt|>" + ref_text
 
         # 参考音频来源：ref_audio（data URL/路径）优先，其次 voice（资产名）
-        prompt_wav = None
-        zero_shot_spk_id = ""
-        if ref_audio:
-            raw = _decode_data_url(ref_audio)
-            h = hashlib.sha1(raw).hexdigest()[:16]
-            zero_shot_spk_id = f"spk_{h}"
-            prompt_wav = _load_wav_bytes(raw, 16000)
-        elif voice:
-            spk_path = os.path.join(args.assets_dir, f"{voice}.wav")
-            if not os.path.exists(spk_path):
-                return JSONResponse(
-                    status_code=422,
-                    content={"error": {"message": f"voice asset not found: {voice}"}},
-                )
-            with open(spk_path, "rb") as f:
-                raw = f.read()
-            h = hashlib.sha1(raw).hexdigest()[:16]
-            zero_shot_spk_id = f"spk_{h}"
-            prompt_wav = _load_wav_bytes(raw, 16000)
+        # 注意：以下整段同步推理（ref 解析 + speaker 注册 + 推理 gen + 全量合成）原本
+        # 都在 async 事件循环内执行，阻塞 /health 与并发请求。现统一挪入 asyncio.to_thread
+        # 后台线程执行，并用 _SYNTH_LOCK 串行化对共享模型的访问（防卸载后模型竞争）。
+        def _prepare_clone():
+            pw = None
+            zid = ""
+            if ref_audio:
+                raw = _decode_data_url(ref_audio)
+                h = hashlib.sha1(raw).hexdigest()[:16]
+                zid = f"spk_{h}"
+                pw = _load_wav_bytes(raw, 16000)
+            elif voice:
+                spk_path = os.path.join(args.assets_dir, f"{voice}.wav")
+                if not os.path.exists(spk_path):
+                    raise _SpeechHttpError(422, f"voice asset not found: {voice}")
+                with open(spk_path, "rb") as f:
+                    raw = f.read()
+                h = hashlib.sha1(raw).hexdigest()[:16]
+                zid = f"spk_{h}"
+                pw = _load_wav_bytes(raw, 16000)
+            if pw is None:
+                raise _SpeechHttpError(422, "CosyVoice3 requires ref_audio/voice for cloning")
+            return pw, zid
 
-        if prompt_wav is None:
-            return JSONResponse(
-                status_code=422,
-                content={"error": {"message": "CosyVoice3 requires ref_audio/voice for cloning"}},
+        # cross_lingual 模式用「仅含 <|endofprompt|> 标记」的 prompt_text，避免参考转写被念出
+        _spk_prompt = (
+            "You are a helpful assistant.<|endofprompt|>"
+            if args.zero_shot_mode == "cross_lingual"
+            else ref_text
+        )
+
+        def _create_gen(pw, zid):
+            # speaker 嵌入缓存：同内容 ref 首次注册，后续命中 frontend.spk2info
+            if zid not in cosyvoice.frontend.spk2info:
+                cosyvoice.add_zero_shot_spk(_spk_prompt, pw, zid)
+            if instruction:
+                return cosyvoice.inference_instruct2(
+                    text, str(instruction), pw, zero_shot_spk_id=zid,
+                    stream=stream, speed=speed,
+                )
+            if args.zero_shot_mode == "cross_lingual":
+                return cosyvoice.inference_zero_shot(
+                    text, _spk_prompt, pw, zero_shot_spk_id=zid,
+                    stream=stream, speed=speed,
+                )
+            return cosyvoice.inference_zero_shot(
+                text, ref_text, pw, zero_shot_spk_id=zid,
+                stream=stream, speed=speed,
             )
 
         t0 = time.monotonic()
@@ -673,32 +697,33 @@ def create_app():
             # cross_lingual 模式改用「仅含 <|endofprompt|> 标记」的 prompt_text：
             #   1) 满足 vLLM 引擎对 <|endofprompt|>（token 151646）的强制断言；
             #   2) prompt_text 不含参考转写文本 → 模型只念目标文本，不再回声。
-            _spk_prompt = (
-                "You are a helpful assistant.<|endofprompt|>"
-                if args.zero_shot_mode == "cross_lingual"
-                else ref_text
-            )
-            # speaker 嵌入缓存：同内容 ref 首次注册，后续命中 frontend.spk2info
-            if zero_shot_spk_id not in cosyvoice.frontend.spk2info:
-                cosyvoice.add_zero_shot_spk(_spk_prompt, prompt_wav, zero_shot_spk_id)
-            _t_spk_done = time.monotonic()
-            if instruction:
-                gen = cosyvoice.inference_instruct2(
-                    text, str(instruction), prompt_wav, zero_shot_spk_id=zero_shot_spk_id,
-                    stream=stream, speed=speed,
-                )
-            elif args.zero_shot_mode == "cross_lingual":
-                # 零样本 + 仅标记 prompt_text（等价于去掉参考转写的条件文本）
-                gen = cosyvoice.inference_zero_shot(
-                    text, _spk_prompt, prompt_wav, zero_shot_spk_id=zero_shot_spk_id,
-                    stream=stream, speed=speed,
-                )
+            if stream:
+                # 流式：在后台线程完成 ref 解析 + speaker 注册 + 推理 gen 构造；
+                # 逐块合成仍由弱网异步生成器承担（每块 await asyncio.sleep(0) 让出循环）。
+                def _stream_prep():
+                    with _SYNTH_LOCK:
+                        pw, zid = _prepare_clone()
+                        gen = _create_gen(pw, zid)
+                    return gen, zid
+
+                gen, zero_shot_spk_id = await asyncio.to_thread(_stream_prep)
             else:
-                gen = cosyvoice.inference_zero_shot(
-                    text, ref_text, prompt_wav, zero_shot_spk_id=zero_shot_spk_id,
-                    stream=stream, speed=speed,
-                )
-            _t_gen_done = time.monotonic()
+                # 非流式：整段（ref 解析 + speaker 注册 + gen 构造 + 全量合成）在线程内完成
+                def _full_synth():
+                    with _SYNTH_LOCK:
+                        pw, zid = _prepare_clone()
+                        gen = _create_gen(pw, zid)
+                        sr, wav = _synth_chunks(gen)
+                        if wav.size == 0:
+                            raise _SpeechHttpError(500, "synthesis returned empty")
+                        return _encode_wav(int(sr), wav, volume=volume), zid
+
+                audio_bytes, zero_shot_spk_id = await asyncio.to_thread(_full_synth)
+            _t_spk_done = time.monotonic()
+            _t_gen_done = _t_spk_done
+        except _SpeechHttpError as exc:
+            _active_request.clear()
+            return JSONResponse(status_code=exc.status_code, content={"error": {"message": exc.message}})
         except Exception as exc:
             _active_request.clear()
             return JSONResponse(status_code=500, content={"error": {"message": str(exc)}})
@@ -726,17 +751,7 @@ def create_app():
                 media_type="audio/wav",
             )
 
-        try:
-            sr, wav = _synth_chunks(gen)
-        except Exception as exc:
-            _active_request.clear()
-            return JSONResponse(status_code=500, content={"error": {"message": str(exc)}})
-
-        if wav.size == 0:
-            _active_request.clear()
-            return JSONResponse(status_code=500, content={"error": {"message": "synthesis returned empty"}})
-
-        audio_bytes = _encode_wav(int(sr), wav, volume=volume)
+        # 非流式：audio_bytes 已在后台线程（_full_synth）内完成全量合成并编码
         print(f"[CosyVoice] synthesized {len(text)} chars -> {len(audio_bytes)} bytes ({time.monotonic()-t0:.2f}s) cache_hit={zero_shot_spk_id in cosyvoice.frontend.spk2info}")
         _active_request.clear()
         return Response(content=audio_bytes, media_type="audio/wav")
@@ -792,6 +807,21 @@ def _run_warmup(cv, args) -> None:
 # GPU 保活信号：_active_request 为 True 时保活线程暂停（避免与真实请求竞争算力）
 # 详见 .trae/documents/20260817_模块0_GPU保活增强消除降频.md
 _active_request = threading.Event()  # 未设置 = 空闲（无请求），保活线程可执行 GEMM
+
+
+class _SpeechHttpError(Exception):
+    """speech 端点内部用于映射固定 HTTP 状态码的信号异常（worker 线程内抛出）。"""
+
+    def __init__(self, status_code: int, message: str) -> None:
+        super().__init__(message)
+        self.status_code = status_code
+        self.message = message
+
+
+# speech 端点同步推理互斥：add_zero_shot_spk / inference_* / _synth_chunks 共享单模型，
+# 且 #3 会把部分权重临时卸载；并发线程访问同一个 model 会产生竞争/重复卸载。用这把全
+# 局锁串行化对这些共享模型的访问（在 asyncio.to_thread 后台线程内为同进程唯一持有者）。
+_SYNTH_LOCK = _threading.Lock()
 
 
 def _patch_hift_decode_cudagraph(cosyvoice) -> bool:

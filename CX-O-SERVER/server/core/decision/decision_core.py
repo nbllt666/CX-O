@@ -227,6 +227,9 @@ class DecisionCore:
         self._log_dir: str = log_dir if log_dir else _LOG_DIR
         self._llm_available: bool = llm_available
         self._memory_seq: int = 1
+        # F4 修复：并发决策（路由线程池 / 蒸馏 / 视觉沉淀多路并发）下
+        # memory_id 自增需要互斥，否则重复分配 decision_id/memory_id。
+        self._memory_seq_lock = threading.Lock()
 
         # auto_init：日志目录不存在时自动创建（rules-0 §三 auto_init: data补全）
         try:
@@ -777,10 +780,11 @@ class DecisionCore:
         )
 
     def _alloc_memory_id(self) -> int:
-        """分配 memory_id（自增序列）。"""
-        mid = self._memory_seq
-        self._memory_seq += 1
-        return mid
+        """分配 memory_id（自增序列，F4 加锁保证并发唯一）。"""
+        with self._memory_seq_lock:
+            mid = self._memory_seq
+            self._memory_seq += 1
+            return mid
 
     def _default_metadata(
         self,

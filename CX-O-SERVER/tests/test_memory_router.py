@@ -15,6 +15,7 @@ from fastapi.testclient import TestClient
 from server.dependencies import get_memory_manager, get_secondary_router, ServiceState, set_service_state
 from server.api.routers import memory as memory_router_mod
 from server.core.memory import emotion as emotion_mod
+from server.core.memory.router import MemoryRouter, RoutingConfig
 
 
 class FakeConn:
@@ -487,3 +488,38 @@ class TestSemanticVector:
         assert data["backend"] == "chroma"
         assert data["vector_count"] == 42
         assert data["sqlite_count"] == 1
+
+
+class _RecentFakeMM:
+    """search_memories 返回含 tags（session_id 命中与否）的记忆，用于 _get_recent_memories 测试。"""
+
+    def __init__(self):
+        self.searches = []
+
+    def search_memories(self, **kw):
+        self.searches.append(kw)
+        if kw.get("offset", 0) == 0:
+            return [
+                {"id": 1, "tags": [kw["tags"][0]], "content": "本会话记忆"},
+                {"id": 2, "tags": ["other_session"], "content": "其他会话记忆"},
+            ]
+        return []
+
+
+class TestGetRecentMemories:
+    def _router(self, mm):
+        return MemoryRouter(mm, None, None, RoutingConfig(max_memories=10, min_score_threshold=0.1))
+
+    def test_filters_by_session_tag(self):
+        mm = _RecentFakeMM()
+        router = self._router(mm)
+        res = router._get_recent_memories("sess_1")
+        # 只有带 sess_1 tag 的记忆被返回
+        assert len(res) == 1
+        assert res[0]["tags"] == ["sess_1"]
+
+    def test_empty_session_returns_empty(self):
+        mm = _RecentFakeMM()
+        router = self._router(mm)
+        assert router._get_recent_memories("") == []
+        assert router._get_recent_memories(None) == []

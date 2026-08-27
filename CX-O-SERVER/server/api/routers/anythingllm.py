@@ -31,8 +31,9 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 from server.api.routers.agents import _load_agents, _save_agents
-from server.chat_helpers import ensure_agent_session, get_llm_client_for_agent
+from server.chat_helpers import ensure_agent_session_async, get_llm_client_for_agent
 from server.core.logging_config import get_contextual_logger
+from server.core.utils import run_io
 from server.dependencies import get_document_memory_manager
 
 router = APIRouter()
@@ -234,15 +235,25 @@ def _build_messages_for_chat(
     )
 
 
-def _get_or_create_session(context_mgr, slug: str, agent_config: Dict[str, Any]) -> str:
-    """获取或创建 workspace 对应的会话。"""
-    return ensure_agent_session(context_mgr, slug, agent_config.get("name", slug))
+async def _get_or_create_session(context_mgr, slug: str, agent_config: Dict[str, Any]) -> str:
+    """获取或创建 workspace 对应的会话（同步 sqlite 移入有界 IO 线程池）。"""
+    return await ensure_agent_session_async(context_mgr, slug, agent_config.get("name", slug))
 
 
-def _save_chat_message(context_mgr, session_id: str, role: str, content: str) -> None:
-    """保存聊天消息到 context_manager（同步，非阻塞主流程）。"""
+async def _call_ctx_async(context_mgr, method: str, *args, **kwargs):
+    """优先调用 ContextManager 的 *_async 变体，否则以 run_io 卸载同名同步方法。"""
+    async_fn = getattr(context_mgr, f"{method}_async", None)
+    if async_fn is not None:
+        return await async_fn(*args, **kwargs)
+    return await run_io(getattr(context_mgr, method), *args, **kwargs)
+
+
+async def _save_chat_message(context_mgr, session_id: str, role: str, content: str) -> None:
+    """保存聊天消息到 context_manager（sqlite 写入移入 IO 线程池，失败不阻塞主流程）。"""
     try:
-        context_mgr.add_message(
+        await _call_ctx_async(
+            context_mgr,
+            "add_message",
             session_id=session_id,
             role=role,
             content=content,
@@ -268,10 +279,12 @@ def _process_attachments(attachments: Optional[List[Dict[str, Any]]]) -> tuple[s
         return f"[附件解析失败: {e}]", []
 
 
-def _prepare_chat_context(slug: str, request: WorkspaceChatRequest, agent: Dict[str, Any]):
+async def _prepare_chat_context(slug: str, request: WorkspaceChatRequest, agent: Dict[str, Any]):
     """准备聊天上下文（chat 和 stream-chat 的公共逻辑）。
 
     处理：会话管理、reset、mode 区分、attachments、消息构建。
+    内部触达 ContextManager 同步 sqlite 的调用均卸载到 IO 线程池
+    （优先使用 *_async 变体）。
 
     Args:
         slug: workspace slug（= agent_id）
@@ -290,15 +303,17 @@ def _prepare_chat_context(slug: str, request: WorkspaceChatRequest, agent: Dict[
 
     if context_mgr and request.mode != "query":
         # chat/automatic 模式：使用历史
-        session_id = _get_or_create_session(context_mgr, slug, agent)
+        session_id = await _get_or_create_session(context_mgr, slug, agent)
 
         # reset: 清空会话历史
         if request.reset:
-            context_mgr.clear_session_messages(session_id)
+            await _call_ctx_async(context_mgr, "clear_session_messages", session_id)
             logger.info(f"会话 {session_id} 历史已清空（reset=true）")
         else:
             # 加载历史
-            history = context_mgr.get_recent_messages(session_id, limit=50)
+            history = await _call_ctx_async(
+                context_mgr, "get_recent_messages", session_id, limit=50
+            )
 
     # 处理附件
     doc_text, image_urls = _process_attachments(request.attachments)
@@ -319,12 +334,12 @@ def _prepare_chat_context(slug: str, request: WorkspaceChatRequest, agent: Dict[
     return context_mgr, session_id, messages, kwargs
 
 
-def _persist_chat(context_mgr, session_id: Optional[str], user_message: str, assistant_response: str) -> None:
-    """持久化聊天消息到 context_manager（chat 和 stream-chat 的公共逻辑）。"""
+async def _persist_chat(context_mgr, session_id: Optional[str], user_message: str, assistant_response: str) -> None:
+    """持久化聊天消息到 context_manager（sqlite 写入移入 IO 线程池）。"""
     if not session_id or not context_mgr:
         return
-    _save_chat_message(context_mgr, session_id, "user", user_message)
-    _save_chat_message(context_mgr, session_id, "assistant", assistant_response)
+    await _save_chat_message(context_mgr, session_id, "user", user_message)
+    await _save_chat_message(context_mgr, session_id, "assistant", assistant_response)
 
 
 def _doc_row_to_response(row: Dict[str, Any], include_text: bool = False) -> Dict[str, Any]:
@@ -611,14 +626,14 @@ async def workspace_chat(slug: str, request: WorkspaceChatRequest, authorization
         raise HTTPException(status_code=500, detail="LLM 客户端不可用")
 
     # 准备聊天上下文（公共逻辑：会话管理、reset、mode、attachments、消息构建）
-    context_mgr, session_id, messages, kwargs = _prepare_chat_context(slug, request, agent)
+    context_mgr, session_id, messages, kwargs = await _prepare_chat_context(slug, request, agent)
 
     try:
         response = await llm.chat(messages, stream=False, **kwargs)
         text_response = response.content or ""
 
         # 持久化
-        _persist_chat(context_mgr, session_id, request.message, text_response)
+        await _persist_chat(context_mgr, session_id, request.message, text_response)
 
         return {
             "id": str(uuid.uuid4()),
@@ -689,7 +704,7 @@ async def workspace_stream_chat(slug: str, request: WorkspaceChatRequest, author
 
             # 持久化（公共逻辑）
             full_response = "".join(collected_text)
-            _persist_chat(context_mgr, session_id, request.message, full_response)
+            await _persist_chat(context_mgr, session_id, request.message, full_response)
         except Exception as e:
             logger.error(f"流式聊天失败: {e}", exc_info=True)
             yield _sse_chunk("", close=True, error=str(e))

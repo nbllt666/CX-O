@@ -108,7 +108,12 @@ class AutonomyEngine:
         loop_interval_minutes: int = 15,
         max_diary_per_day: bool = True,
     ) -> None:
-        """初始化引擎：保存全部组件引用，解析存储目录并执行重启续接。"""
+        """初始化引擎：保存全部组件引用，解析存储目录并执行重启续接。
+
+        loop_interval_minutes 会经 max(..., 1.0) 归一化：配置 0 或负值会被提升为
+        1 分钟（即 interval_seconds >= 60），避免主循环以近乎 0 的间隔空转形成
+        高频忙循环副作用。
+        """
         self.manager = manager
         self.motivation = motivation
         self.circadian = circadian
@@ -127,7 +132,7 @@ class AutonomyEngine:
         self.handlers = handlers or {}
         self.persona = persona or {}
         self.ws_manager = ws_manager
-        self.loop_interval_minutes = max(float(loop_interval_minutes), 0.0)
+        self.loop_interval_minutes = max(float(loop_interval_minutes), 1.0)  # 0 被提升为 1 分钟，避免空转忙循环
         self.max_diary_per_day = bool(max_diary_per_day)
         self.hotspot_topics: List[str] = list(_DEFAULT_HOTSPOT_TOPICS)
         self.hotspot_limit: int = _DEFAULT_HOTSPOT_LIMIT
@@ -708,9 +713,18 @@ class AutonomyEngine:
             return False
 
     def _daily_log(self, now: datetime) -> List[Dict[str, Any]]:
-        """从审计存储取当日条目（供日记生成器使用），健壮处理各形态 list 结果。"""
+        """从审计存储取当日条目（供日记生成器使用），健壮处理各形态 list 结果。
+
+        E8 修复：改为带日期下界查询（since=当日 ISO 日期前缀），由审计层直接
+        过滤，不再 limit=None 全量加载后内存筛选；对不支持 since 的替身实现
+        （TypeError）回退全量查询并保留原内存过滤，行为不变。
+        """
+        day = now.date().isoformat()
         try:
-            page = self.audit.list(limit=None)
+            try:
+                page = self.audit.list(limit=None, since=day)
+            except TypeError:
+                page = self.audit.list(limit=None)
         except Exception:
             return []
         if isinstance(page, dict):
@@ -719,7 +733,6 @@ class AutonomyEngine:
             items = getattr(page, "items", None) or []
         if not isinstance(items, list):
             return []
-        day = now.date().isoformat()
         result: List[Dict[str, Any]] = []
         for entry in items:
             if not isinstance(entry, dict):

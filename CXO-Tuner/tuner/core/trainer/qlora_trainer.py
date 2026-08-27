@@ -38,6 +38,7 @@ from typing import Any, Dict, List, Optional
 
 from tuner.core.collector.dataset import DatasetStore
 from tuner.core.trainer.anchors import load_anchor_samples, sample_anchor_subset
+from tuner.core.trainer.train_job import InvalidTransitionError
 from tuner.config import TunerConfig
 
 logger = logging.getLogger("cxo_tuner.trainer")
@@ -65,7 +66,11 @@ def apply_resource_caps(config: TunerConfig) -> None:
     """
     devices = (getattr(config, "trainer", None) or getattr(config, "CUDA_VISIBLE_DEVICES", ""))
     raw_dev = ""
-    if devices is not None:
+    if isinstance(devices, str):
+        # 死路径修复（批E-3）：trainer 为字符串（如 "0"）时直接取该串，
+        # 而不是对 str 做 getattr("0","CUDA_VISIBLE_DEVICES","") 恒得 ""，env 永不设置。
+        raw_dev = devices
+    elif devices is not None:
         raw_dev = getattr(devices, "CUDA_VISIBLE_DEVICES", "") or ""
     if raw_dev:
         os.environ["CUDA_VISIBLE_DEVICES"] = str(raw_dev)
@@ -165,13 +170,20 @@ class QLoRATrainer:
             raise TrainRuntimeError(_MISSING_DEPS_MSG) from exc
 
     # -- 入口 -------------------------------------------------------------------
-    def run(self, job_id: str) -> None:
-        """后台线程入口：推进状态机并执行训练。任何异常归一为可读 failed。"""
+    def run(self, job_id: str, owned: bool = False) -> None:
+        """后台线程入口：推进状态机并执行训练。任何异常归一为可读 failed。
+
+        owned: 互斥已由调用方（/train/trigger 路由在 API 线程内通过 try_begin_training）
+        登记时传 True，run 不再重复抢锁，仅负责 finally 释放；否则 run 自行抢锁。
+        """
         # H2: 训练互斥入口；出口统一放在 finally 的 end_training，保证正常/异常都释放
-        if not try_begin_training(job_id):
+        if not owned and not try_begin_training(job_id):
             logger.warning("训练互斥拒绝：已有训练进行中 job_id=%s", job_id)
             job = self.store.get(job_id)
-            if job is not None:
+            # 败者分支（批E-2）：仅当目标是 idle 空任务时才标 failed；绝不改动活跃
+            # running job——否则会把正在训练的任务 running→failed，随后真训练线程
+            # complete() 触发二次 _fail 逃逸出后台线程。
+            if job is not None and job.status == "idle":
                 self._fail(job, "已有训练任务进行中，本次训练被互斥拒绝")
             return
         try:
@@ -181,7 +193,15 @@ class QLoRATrainer:
                 return
             logger.info("训练任务开始: job_id=%s base_model=%r epochs=%d sample_ratio=%.2f anchor_ratio=%.2f",
                         job.job_id, job.base_model, job.epochs, job.sample_ratio, job.anchor_ratio)
-            job.start()
+            try:
+                job.start()
+            except InvalidTransitionError:
+                # 进程重启遗留的 running/终态 job 再触发同 id（批E-4）：无法 idle->running，
+                # 显式标 failed 并让线程正常退出，而不是抛异常崩线程、job 停留 running。
+                logger.error("训练启动失败：job 状态非 idle，标记失败 job_id=%s status=%s",
+                             job.job_id, job.status)
+                self._fail(job, "任务当前状态不可启动训练（非 idle，可能为历史遗留 running）")
+                return
             self.store.update(job)
             try:
                 self._train(job)
@@ -200,6 +220,10 @@ class QLoRATrainer:
             end_training(job_id)
 
     def _fail(self, job: Any, message: str) -> None:
+        # 终态已闭合：跳过，避免经 job.fail 抛 InvalidTransitionError 逃逸出后台线程
+        if getattr(job, "status", "") in ("completed", "failed"):
+            logger.warning("任务已处于终态，跳过失败标记: job_id=%s status=%s", job.job_id, getattr(job, "status", ""))
+            return
         job.fail(message)
         self.store.update(job)
         logger.warning("训练任务已标记失败: job_id=%s status=%s", job.job_id, job.status)

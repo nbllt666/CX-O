@@ -34,6 +34,12 @@ export interface PluginRuntimeInfo {
 export interface CxfcClientOptions {
   /** 后端基址，如 http://127.0.0.1:8000 */
   backendUrl: string;
+  /**
+   * 运行时后端地址解析器（可选）：每轮注册/心跳前调用以跟随最新配置
+   * （设置页修改后端地址后无需重启）。返回空值时回落构造期 backendUrl 快照。
+   * 已知限制：config.json 改动在下一轮循环才生效（心跳 10s / 退避最长 30s）。
+   */
+  backendUrlResolver?: () => string | null;
   /** 读取插件运行信息的函数（每次注册/心跳前调用，可异步）。 */
   readPluginInfo: () => PluginRuntimeInfo | Promise<PluginRuntimeInfo>;
   /** 心跳周期（毫秒），默认 10000 */
@@ -55,6 +61,8 @@ interface RegisterResponse {
 const DEFAULT_HEARTBEAT_MS = 10_000;
 const DEFAULT_RETRY_BASE_MS = 1_000;
 const DEFAULT_MAX_RETRY_MS = 30_000;
+/** 单请求超时（毫秒）：防止后端挂起卡死 before-quit 退出链（Promise.allSettled）。 */
+const REQUEST_TIMEOUT_MS = 5_000;
 
 /** 生成随机的 request_id（对齐防重放契约，128 字符以内）。 */
 export function makeRequestId(): string {
@@ -63,6 +71,7 @@ export function makeRequestId(): string {
 
 export class CxfcClient {
   private readonly backendUrl: string;
+  private readonly backendUrlResolver: (() => string | null) | null;
   private readonly readPluginInfo: () => PluginRuntimeInfo | Promise<PluginRuntimeInfo>;
   private readonly heartbeatIntervalMs: number;
   private readonly retryBaseDelayMs: number;
@@ -78,12 +87,20 @@ export class CxfcClient {
 
   constructor(options: CxfcClientOptions) {
     this.backendUrl = options.backendUrl.replace(/\/+$/, '');
+    this.backendUrlResolver = options.backendUrlResolver ?? null;
     this.readPluginInfo = options.readPluginInfo;
     this.heartbeatIntervalMs = options.heartbeatIntervalMs ?? DEFAULT_HEARTBEAT_MS;
     this.retryBaseDelayMs = options.retryBaseDelayMs ?? DEFAULT_RETRY_BASE_MS;
     this.maxRetryDelayMs = options.maxRetryDelayMs ?? DEFAULT_MAX_RETRY_MS;
     this.fetchImpl = options.fetchImpl ?? globalThis.fetch.bind(globalThis);
     this.logger = options.logger ?? (() => undefined);
+  }
+
+  /** 当前生效后端基址：优先每轮解析的最新值，空值回落构造期快照 */
+  private baseUrl(): string {
+    const resolved = this.backendUrlResolver?.() ?? '';
+    if (resolved) return resolved.replace(/\/+$/, '');
+    return this.backendUrl;
   }
 
   /**
@@ -176,10 +193,11 @@ export class CxfcClient {
       // B-1：注册载荷携带自签名证书 PEM，供后端 TOFU 首次信任（证书固定）与 https 访问
       tls_cert_pem: info.tls_cert_pem,
     };
-    const resp = await this.fetchImpl(`${this.backendUrl}/cxfc/register`, {
+    const resp = await this.fetchImpl(`${this.baseUrl()}/cxfc/register`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body),
+      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
     });
     if (!resp.ok) {
       this.logger(`[cxfc] 注册失败 HTTP ${resp.status}`);
@@ -194,10 +212,11 @@ export class CxfcClient {
 
   private async heartbeatOnce(): Promise<boolean> {
     const info = await this.readPluginInfo();
-    const resp = await this.fetchImpl(`${this.backendUrl}/cxfc/heartbeat`, {
+    const resp = await this.fetchImpl(`${this.baseUrl()}/cxfc/heartbeat`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ plugin_id: this.pluginId, port: info.port }),
+      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
     });
     if (!resp.ok) {
       this.logger(`[cxfc] 心跳失败 HTTP ${resp.status}`);
@@ -211,7 +230,10 @@ export class CxfcClient {
   }
 
   private async unregister(pluginId: string): Promise<void> {
-    await this.fetchImpl(`${this.backendUrl}/cxfc/plugins/${pluginId}`, { method: 'DELETE' });
+    await this.fetchImpl(`${this.baseUrl()}/cxfc/plugins/${pluginId}`, {
+      method: 'DELETE',
+      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+    });
   }
 }
 

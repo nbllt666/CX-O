@@ -81,30 +81,38 @@ class ASRInterruptModule(InterruptModuleBase):
         logger.info(f"Checking interrupt for ASR text: {asr_text}, is_final: {is_final}")
 
         if self.mode == "main_llm":
-            return await self._check_with_main_llm(asr_text)
+            return await self._check_with_main_llm(asr_text, is_final)
         else:
-            return await self._check_with_independent_llm(asr_text)
+            return await self._check_with_independent_llm(asr_text, is_final)
 
-    async def _apply_decision(self, decision: str, asr_text: str, llm_response: str = "") -> Tuple[str, bool]:
+    async def _apply_decision(self, decision: str, asr_text: str, llm_response: str = "",
+                              is_final: bool = False) -> Tuple[str, bool]:
         """按判定结果执行副作用并返回 (decision, triggered)。
 
         收敛自 _check_with_main_llm 与 _check_with_independent_llm 相同的
         「INTERRUPT→记录+触发打断 / IGNORE→记录 / CONTINUE→忽略」映射。
+
+        上下文去重：live 路径同一 utterance 会以多帧 partial 演进调用本模块；
+        打断判定（_trigger_interrupt）保持对 partial 的即时响应以维持实时性，
+        但「写回真实上下文」（add_message）仅在 is_final 时执行一次，避免
+        同一句子的多个 partial 被重复写入真实 context 造成膨胀/污染。
         """
         user_message = {"role": "user", "content": asr_text}
         if decision == "INTERRUPT":
-            self._context_manager.add_message(self._session_id, user_message)
+            if is_final:
+                self._context_manager.add_message(self._session_id, user_message)
             logger.info(f"LLM decided to INTERRUPT: {asr_text}")
             await self._trigger_interrupt(asr_text, llm_response)
             return "INTERRUPT", True
         elif decision == "IGNORE":
-            self._context_manager.add_message(self._session_id, user_message)
+            if is_final:
+                self._context_manager.add_message(self._session_id, user_message)
             logger.info(f"LLM decided to IGNORE: {asr_text}")
             return "IGNORE", False
         logger.debug(f"LLM decided to CONTINUE: {asr_text}")
         return "CONTINUE", False
 
-    async def _check_with_main_llm(self, asr_text: str) -> Tuple[str, bool]:
+    async def _check_with_main_llm(self, asr_text: str, is_final: bool = False) -> Tuple[str, bool]:
         try:
             response_text = await self._call_main_llm(asr_text)
             if response_text is None:
@@ -112,7 +120,7 @@ class ASRInterruptModule(InterruptModuleBase):
                 return "IGNORE", False
 
             decision = self._parse_interrupt_decision(response_text)
-            return await self._apply_decision(decision, asr_text, response_text)
+            return await self._apply_decision(decision, asr_text, response_text, is_final)
 
         except Exception as e:
             logger.error(f"Failed to check interrupt with main LLM: {e}")
@@ -129,11 +137,11 @@ class ASRInterruptModule(InterruptModuleBase):
             logger.warning(f"Unknown interrupt decision in response: {response_text[:100]}")
             return "IGNORE"
 
-    async def _check_with_independent_llm(self, asr_text: str) -> Tuple[str, bool]:
+    async def _check_with_independent_llm(self, asr_text: str, is_final: bool = False) -> Tuple[str, bool]:
         try:
             result = await self._call_independent_llm(asr_text)
             decision = result.get("decision", "IGNORE")
-            return await self._apply_decision(decision, asr_text)
+            return await self._apply_decision(decision, asr_text, is_final=is_final)
 
         except Exception as e:
             logger.error(f"Failed to check interrupt with independent LLM: {e}")

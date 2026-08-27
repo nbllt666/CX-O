@@ -196,33 +196,43 @@ export function useAudioAnalyzer({
       return;
     }
 
-    const analyser = analyserRef.current;
-    if (!analyser) return;
+    // setupPipeline 为异步：组件挂载即满足 audioElement && isPlaying && enabled 时，
+    // analyser 可能尚未就绪（analyserRef 是 ref，就绪后不会触发本 effect 重跑）。
+    // 以 RAF 轮询探测 analyser 就绪后再启动分析循环，避免「永不启动」。
+    const tryStart = (): void => {
+      const analyser = analyserRef.current;
+      if (!analyser) {
+        animationFrameRef.current = requestAnimationFrame(tryStart);
+        return;
+      }
 
-    const dataArray = new Uint8Array(analyser.frequencyBinCount);
+      const dataArray = new Uint8Array(analyser.frequencyBinCount);
 
-    const analyze = () => {
-      analyser.getByteFrequencyData(dataArray);
+      const analyze = () => {
+        analyser.getByteFrequencyData(dataArray);
 
-      const sum = dataArray.reduce((acc, val) => acc + val, 0);
-      const average = sum / dataArray.length;
-      const normalizedVolume = Math.min(average / normalizationFactor, 1);
+        const sum = dataArray.reduce((acc, val) => acc + val, 0);
+        const average = sum / dataArray.length;
+        const normalizedVolume = Math.min(average / normalizationFactor, 1);
 
-      const voiceStart = 2;
-      const voiceEnd = Math.min(34, dataArray.length - 1);
-      let voiceSum = 0;
-      for (let i = voiceStart; i <= voiceEnd; i++) voiceSum += dataArray[i];
-      const voiceAverage = voiceSum / (voiceEnd - voiceStart + 1);
-      const normalizedVoiceBand = Math.min(voiceAverage / normalizationFactor, 1);
+        const voiceStart = 2;
+        const voiceEnd = Math.min(34, dataArray.length - 1);
+        let voiceSum = 0;
+        for (let i = voiceStart; i <= voiceEnd; i++) voiceSum += dataArray[i];
+        const voiceAverage = voiceSum / (voiceEnd - voiceStart + 1);
+        const normalizedVoiceBand = Math.min(voiceAverage / normalizationFactor, 1);
 
-      const vowels = computeVowelWeights(dataArray, 0.05, normalizedVolume);
+        const vowels = computeVowelWeights(dataArray, 0.05, normalizedVolume);
 
-      throttledSetState(normalizedVolume, normalizedVoiceBand, vowels);
+        throttledSetState(normalizedVolume, normalizedVoiceBand, vowels);
 
-      animationFrameRef.current = requestAnimationFrame(analyze);
+        animationFrameRef.current = requestAnimationFrame(analyze);
+      };
+
+      analyze();
     };
 
-    analyze();
+    tryStart();
 
     return () => {
       if (animationFrameRef.current) {

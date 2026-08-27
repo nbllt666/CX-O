@@ -120,12 +120,15 @@ class CacheManager:
         return cls._instance
 
     def __init__(self):
-        if self._initialized:
-            return
-        
-        self._caches: Dict[str, LRUCache] = {}
-        self._global_lock = threading.Lock()
-        self._initialized = True
+        # 初始化判定移入类级锁内：避免多线程同时通过 _initialized 检查的窗口
+        # 导致 _caches/_global_lock 被重复构造（后建实例覆盖先建的命名缓存引用）
+        with self._lock:
+            if self._initialized:
+                return
+
+            self._caches: Dict[str, LRUCache] = {}
+            self._global_lock = threading.Lock()
+            self._initialized = True
 
     def get_cache(self, name: str, max_size: int = 1000, ttl: Optional[float] = None) -> LRUCache:
         """按名称获取（或创建）一个 LRU 缓存实例。"""

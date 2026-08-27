@@ -135,13 +135,25 @@ export async function initBackendUrl(): Promise<string> {
 
 interface RetryConfig extends InternalAxiosRequestConfig {
   retryCount?: number;
+  /** 非幂等方法显式声明可自动重试（默认 POST 等写方法不重试，避免重复投递） */
+  retryable?: boolean;
 }
 
 const MAX_RETRIES = 3;
 const RETRY_DELAY_MS = 1000;
 
-/** 仅网络错误 / 5xx / 408 / 429 触发重试，其余 4xx 不重试 */
-function shouldRetry(error: AxiosError): boolean {
+/** 自动重试方法白名单：仅幂等方法；网络错误重试不会造成重复投递副作用 */
+const RETRYABLE_METHODS = new Set(['get', 'head']);
+
+/**
+ * 重试判定：仅白名单方法（GET/HEAD，或声明 retryable===true 的请求）在
+ * 网络错误 / 5xx / 408 / 429 时触发重试，其余 4xx 不重试。
+ */
+export function shouldRetry(error: AxiosError): boolean {
+  const config = error.config as RetryConfig | undefined;
+  const method = (config?.method ?? '').toLowerCase();
+  const methodAllowed = RETRYABLE_METHODS.has(method) || config?.retryable === true;
+  if (!methodAllowed) return false; // POST 等写方法：重复投递有副作用，默认不重试
   if (!error.response) return true;
   const status = error.response.status;
   return (status >= 500 && status < 600) || status === 408 || status === 429;

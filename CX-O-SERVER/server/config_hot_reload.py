@@ -60,6 +60,52 @@ async def apply_section(
         logger.info(f"CXO-Tuner evolution 配置节热更新（仅记录）: {list(section_data.keys())}")
         return {"applied": True, "requires_restart": False}
 
+    if section == "live":
+        # live 节（danmaku/firewall/firewall_v3/vad/sensevoice_streaming）即时生效：
+        # UnifiedConfig 未为这些节声明专有 Pydantic 字段，仍需 object.__setattr__
+        # 直写运行时 UnifiedConfig 对象，但改为原子应用流程：
+        # 1) 先深拷贝组装完整新值集合并逐一做 dict 浅结构校验（与保存路径一致的
+        #    宽松契约：子节必须为 dict；sensevoice_streaming 仅允许数值型
+        #    chunk_size/hop_size/look_back 键，与 config.py 保存分支的键过滤一致）；
+        # 2) 全部校验通过后一次性赋值给对应属性（任一失败则不产生部分写入）；
+        # 3) 任何异常返回 applied=False 并标记 requires_restart，不再谎报成功。
+        import copy as _copy
+
+        _LIVE_KEYS = ("danmaku", "firewall", "firewall_v3", "vad", "sensevoice_streaming")
+        _SV_ALLOWED = ("chunk_size", "hop_size", "look_back")
+        try:
+            from server.config import get_settings
+            cfg = get_settings().config
+
+            new_values: Dict[str, Any] = {}
+            for key in _LIVE_KEYS:
+                value = section_data.get(key)
+                if value is None:
+                    continue
+                if not isinstance(value, dict):
+                    raise ValueError(
+                        f"live.{key} 必须为对象(dict)，实际为 {type(value).__name__}"
+                    )
+                if key == "sensevoice_streaming":
+                    invalid = [
+                        k for k, v in value.items()
+                        if k not in _SV_ALLOWED or isinstance(v, bool)
+                        or not isinstance(v, (int, float))
+                    ]
+                    if invalid:
+                        raise ValueError(
+                            f"live.sensevoice_streaming 含非法字段或非数值取值: {invalid}"
+                        )
+                new_values[key] = _copy.deepcopy(value)
+
+            for key, value in new_values.items():
+                object.__setattr__(cfg, key, value)
+            logger.info(f"live 配置已同步到运行时: {list(new_values.keys())}")
+            return {"applied": True, "requires_restart": False}
+        except Exception as e:
+            logger.error(f"live 配置写运行时失败: {e}")
+            return {"applied": False, "requires_restart": True, "error": str(e)}
+
     return {"applied": not requires_restart, "requires_restart": requires_restart}
 
 

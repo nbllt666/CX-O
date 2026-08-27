@@ -1,22 +1,150 @@
 {
+  "@version": "2.0.0 (2026-08-27 批次H/H3 补全；1.0.0 种子空壳)",
   "$schema": "http://json-schema.org/draft-07/schema#",
   "$id": "https://cx-o/public/schema/memory.schema.json",
   "title": "Memory",
-  "description": "记忆数据契约（种子阶段，待 s0201 补全）",
+  "description": "CX-O 记忆数据契约。源真理为 CX-O-SERVER/server/core/memory/async_manager.py 的 memories 表建表语句（_init_db）与 write_memory 写入签名，以及 permanent_memories 表。字段类型以 SQLite 列定义为准：tags/metadata 落盘为 JSON 字符串，permanent/is_deleted 为 0/1 布尔列。前端 Memory 接口（APP-Frontend/src/api/types.ts）中 type 即本契约 memory_type 的展示层别名。",
   "_sourceOfTruth": {
-    "primary": "c:/CX-O/CX-O-SERVER/server/core/memory/",
-    "secondary": ["c:/CX-O/APP-Frontend/src/api/types.ts"],
-    "note": "后端记忆模型在 server/core/memory/；前端 Memory 接口在 APP-Frontend/src/api/types.ts；数据存储于 data/memories.db（SQLite）"
+    "primary": "c:/CX-O/CX-O-SERVER/server/core/memory/async_manager.py（memories 建表 L40-L91 + write_memory L126-L176）",
+    "secondary": ["c:/CX-O/CX-O-SERVER/server/core/memory/manager.py", "c:/CX-O/APP-Frontend/src/api/types.ts"],
+    "note": "数据存储于 data/memories.db（SQLite，WAL 模式）；per-agent 记忆表为 memories_{safe_agent_id}，结构同本契约"
   },
-  "_seedStage": true,
-  "_completionSkill": "s0201",
   "type": "object",
-  "properties": {},
-  "required": [],
-  "_todo": [
-    "s0201: 从 server/core/memory/ 提取记忆模型 Schema",
-    "s0201: 与前端 Memory 接口对齐",
-    "s0201: 补全三维评分（重要性+时间+相关性）字段",
-    "s0201: 补全双阶段指数衰减模型字段"
+  "additionalProperties": true,
+  "required": [
+    "id",
+    "content",
+    "memory_type",
+    "importance",
+    "permanent",
+    "emotion_score",
+    "workspace_id",
+    "agent_id",
+    "created_at",
+    "updated_at",
+    "accessed_at",
+    "access_count",
+    "decay_score",
+    "is_deleted"
+  ],
+  "properties": {
+    "id": {
+      "type": "integer",
+      "description": "记忆唯一 ID，memories 表自增主键（INTEGER PRIMARY KEY AUTOINCREMENT）。"
+    },
+    "content": {
+      "type": "string",
+      "minLength": 1,
+      "description": "记忆内容正文。TEXT NOT NULL。"
+    },
+    "memory_type": {
+      "type": "string",
+      "enum": ["short_term", "long_term", "permanent"],
+      "default": "short_term",
+      "description": "记忆类型。write_memory 默认 short_term；影响衰减策略与归档路径。永久记忆另存 permanent_memories 表（含 source 来源与 verified 验证标记）。"
+    },
+    "importance": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 5,
+      "default": 3,
+      "description": "重要性等级，1-5 整数，默认 3（INTEGER NOT NULL DEFAULT 3）。用于检索排序与蒸馏阈值判定。"
+    },
+    "tags": {
+      "type": ["array", "null"],
+      "items": {"type": "string"},
+      "default": [],
+      "description": "标签列表。落盘时由 json_dumps 序列化为 JSON 数组字符串存入 tags TEXT 列，读取时反序列化；可空。"
+    },
+    "metadata": {
+      "type": ["object", "null"],
+      "default": {},
+      "description": "元数据字典（自由键值）。落盘为 JSON 对象字符串存入 metadata TEXT 列，读取时反序列化；可空。"
+    },
+    "permanent": {
+      "type": "boolean",
+      "default": false,
+      "description": "是否标记为永久记忆（重要性与时间综合达标后跳过常规衰减/归档）。落盘为 0/1 整数列。"
+    },
+    "emotion_score": {
+      "type": "number",
+      "minimum": -1,
+      "maximum": 1,
+      "default": 0.0,
+      "description": "情感分数（REAL NOT NULL DEFAULT 0.0），来自 emotion 分析模块对内容的情绪极性打分。"
+    },
+    "workspace_id": {
+      "type": "string",
+      "default": "default",
+      "description": "工作区 ID，多租户隔离维度（TEXT NOT NULL DEFAULT 'default'），建有索引 idx_memories_workspace。"
+    },
+    "agent_id": {
+      "type": "string",
+      "default": "default",
+      "description": "归属 Agent ID（TEXT NOT NULL DEFAULT 'default'），建有索引 idx_memories_agent；'default' 为共享锚点 agent。"
+    },
+    "vector_id": {
+      "type": ["string", "null"],
+      "description": "向量库（weaviate 等）中的对应向量 ID；未启用向量检索或尚未向量化时为 null。"
+    },
+    "created_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "创建时间，datetime.now().isoformat() 生成的 ISO8601 字符串。NOT NULL。"
+    },
+    "updated_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "最近更新时间（ISO8601）。写入时与 created_at 同值，更新操作后刷新。NOT NULL。"
+    },
+    "accessed_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "最近被访问/召回时间（ISO8601）。NOT NULL，初始等于 created_at；供基于时间的三维评分与衰减计算使用。"
+    },
+    "access_count": {
+      "type": "integer",
+      "minimum": 0,
+      "default": 0,
+      "description": "累计访问次数（INTEGER NOT NULL DEFAULT 0），相关性评分因子之一。"
+    },
+    "decay_score": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 1,
+      "default": 0.0,
+      "description": "当前衰减分数（REAL NOT NULL DEFAULT 0.0）。双阶段指数衰减模型（decay.py / decay_batch.py）按批次重算回写。"
+    },
+    "is_deleted": {
+      "type": "boolean",
+      "default": false,
+      "description": "软删除标记（INTEGER NOT NULL DEFAULT 0）；删除走软删（7 天后物理清理），查询默认过滤 is_deleted=1。"
+    }
+  },
+  "definitions": {
+    "permanent_memory_record": {
+      "type": "object",
+      "description": "permanent_memories 表行结构（记忆固化后的长期存储，字段独立于 memories 表）：vector_id VARCHAR(100) 可空、content 必填、importance_score/emotion_score REAL 默认、tags JSON 文本、source VARCHAR(50) 默认 'user'（视觉叙事记忆写 'vision'）、verified BOOLEAN 默认 TRUE。",
+      "properties": {
+        "id": {"type": "integer", "description": "自增主键"},
+        "vector_id": {"type": ["string", "null"], "description": "向量库 ID，VARCHAR(100) 可空"},
+        "content": {"type": "string", "minLength": 1, "description": "记忆正文，NOT NULL"},
+        "importance_score": {"type": "number", "default": 1.0, "description": "固化时刻的重要性评分，FLOAT DEFAULT 1.0"},
+        "emotion_score": {"type": "number", "default": 0.0, "description": "情感分数，FLOAT DEFAULT 0.0"},
+        "tags": {"type": ["array", "null"], "items": {"type": "string"}, "description": "标签列表，落盘为 JSON 文本"},
+        "created_at": {"type": "string", "format": "date-time", "description": "创建时间，DEFAULT CURRENT_TIMESTAMP"},
+        "updated_at": {"type": ["string", "null"], "format": "date-time", "description": "更新时间 TIMESTAMP 可空"},
+        "metadata": {"type": ["object", "null"], "description": "元数据字典，落盘为 JSON 文本"},
+        "source": {"type": "string", "default": "user", "enum": ["user", "vision"], "description": "来源标记，VARCHAR(50) DEFAULT 'user'；视觉叙事记忆写 'vision'"},
+        "verified": {"type": "boolean", "default": true, "description": "是否已验证，BOOLEAN DEFAULT TRUE"}
+      },
+      "required": ["content"]
+    }
+  },
+  "_fieldMatrixNotes": [
+    "memories 表全部 NOT NULL 且含默认值的列（memory_type/importance/permanent/emotion_score/workspace_id/agent_id/access_count/decay_score/is_deleted）在 required 中仍列出——接口返回的记忆对象恒携带这些字段（write_memory 显式写入初值）。",
+    "tags/metadata/vector_id 为可空列，不在 required 中。",
+    "衰减模型：双阶段指数衰减（decay_model=exponential/ebbinghaus 见 agents.json per-agent 配置），decay_score 由 decay_batch 后台批量重算。",
+    "三维评分 = 重要性（importance）+ 时间（accessed_at/access_count）+ 相关性（向量检索得分）。"
   ]
 }

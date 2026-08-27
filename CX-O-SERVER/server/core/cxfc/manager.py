@@ -76,8 +76,10 @@ class CXFCManager:
         self._tls_dir: Optional[Path] = None
         # relay 传输：可注入的前端通道投递回调（按 plugin_id 注入，返回 bool 表示通道可用）。
         self._dispatch_relay: Dict[str, RelayDispatcher] = {}
-        # 待回报请求：request_id -> asyncio.Future，relay/result 回报时 resolve。
-        self._relay_waiter: Dict[str, "asyncio.Future"] = {}
+        # 待回报请求：plugin_id -> {request_id -> asyncio.Future}，relay/result 回报时
+        # resolve。E4 修复：改为二级结构，disconnect_plugin 可按插件整体取消并清理，
+        # 替代历史上"request_id 含 plugin_id 子串"的失效匹配（uuid 从不含插件 ID，永不命中）。
+        self._relay_waiter: Dict[str, Dict[str, "asyncio.Future"]] = {}
         # embedded 传输：插件 ID -> {tool_name: Callable} 进程内 handler 映射。
         self._embedded_handlers: Dict[str, Dict[str, Callable]] = {}
         self._relay_timeout: float = 30.0
@@ -514,8 +516,11 @@ class CXFCManager:
         return targets
 
     def complete_relay_result(self, plugin_id: str, request_id: str, payload: Dict):
-        """由 relay 结果回报入口调用，resolve 等待中的调用 Future。"""
-        future = self._relay_waiter.pop(request_id, None)
+        """由 relay 结果回报入口调用，resolve 等待中的调用 Future。
+
+        二级结构下按 plugin_id 定位对应插件的等待桶，再从中弹出 request_id。
+        """
+        future = self._relay_waiter.get(plugin_id, {}).pop(request_id, None)
         if future and not future.done():
             future.set_result(payload)
             return True
@@ -545,8 +550,12 @@ class CXFCManager:
         # 清理 relay / embedded 专属状态（通道回调、进程内 handler）
         self._dispatch_relay.pop(plugin_id, None)
         self._embedded_handlers.pop(plugin_id, None)
-        for rid in [k for k in self._relay_waiter if plugin_id in k]:
-            self._relay_waiter.pop(rid, None)
+        # E4 修复：二级结构下整体取出该插件的等待桶，逐个 cancel 未完成的 Future，
+        # 避免断开后调用方仍在等待永不回报的悬空 Future（原子串匹配逻辑已删除）。
+        pending_waiters = self._relay_waiter.pop(plugin_id, {})
+        for future in pending_waiters.values():
+            if future is not None and not future.done():
+                future.cancel()
 
         # B-1 修复：释放该插件专用 TLS client 与 CA 文件，避免连接/文件泄漏
         await self._release_tls_client(plugin_id)
@@ -634,14 +643,17 @@ class CXFCManager:
         }
         loop = asyncio.get_event_loop()
         future = loop.create_future()
-        self._relay_waiter[request_id] = future
+        # E4 修复：等待表为二级结构，request_id 挂在对应插件的桶下，
+        # 断开清理与回报定位均按 plugin_id 索引。
+        waiter_bucket = self._relay_waiter.setdefault(plugin.plugin_id, {})
+        waiter_bucket[request_id] = future
 
         try:
             delivered = dispatcher(message)
             if asyncio.iscoroutine(delivered):
                 delivered = await delivered
             if not delivered:
-                self._relay_waiter.pop(request_id, None)
+                waiter_bucket.pop(request_id, None)
                 return {"success": False, "error": f"{ERROR_RELAY_UNREACHABLE}: {plugin.plugin_id}"}
             await asyncio.wait_for(future, timeout=self._relay_timeout)
             payload = future.result()
@@ -652,10 +664,10 @@ class CXFCManager:
                 "tool_name": tool_name,
             }
         except asyncio.TimeoutError:
-            self._relay_waiter.pop(request_id, None)
+            waiter_bucket.pop(request_id, None)
             return {"success": False, "error": f"{ERROR_RELAY_TIMEOUT}: {plugin.plugin_id}"}
         except Exception as e:
-            self._relay_waiter.pop(request_id, None)
+            waiter_bucket.pop(request_id, None)
             return {"success": False, "error": str(e)}
 
     async def update_heartbeat(self, plugin_id: str, port: int) -> bool:
@@ -678,7 +690,16 @@ class CXFCManager:
         await self._storage.update_status(plugin_id, PluginStatus.CONNECTED, datetime.now())
 
         if was_disconnected:
-            await self._register_plugin_tools_and_skills(plugin)
+            # E5 修复：重注册前重新持锁复查插件是否仍注册——heartbeat 的锁外阶段可能与
+            # disconnect_plugin 并发交错，直接重注册会把刚被移除的已断开插件复活。
+            async with self._plugins_lock:
+                still_registered = self._plugins.get(plugin_id) is not None
+            if still_registered:
+                await self._register_plugin_tools_and_skills(plugin)
+            else:
+                logger.info(
+                    f"插件 {plugin_id} 心跳恢复期间已被移除，跳过工具重注册"
+                )
 
         return True
 
@@ -798,3 +819,13 @@ class CXFCManager:
             await self._http_client.aclose()
 
         await self._storage.close()
+
+        # E5 修复：收集并取消全部后台任务（start() 经 _track_background_task 追踪的
+        # 重连探测等），避免 shutdown 后任务继续使用已关闭的 client/storage；
+        # 先快照再 cancel（done 回调会从集合摘除），gather 吸收 CancelledError。
+        stale_tasks = [t for t in list(self._background_tasks) if t is not self._heartbeat_task]
+        for task in stale_tasks:
+            task.cancel()
+        if stale_tasks:
+            await asyncio.gather(*stale_tasks, return_exceptions=True)
+        self._background_tasks.clear()

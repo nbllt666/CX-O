@@ -33,6 +33,11 @@ interface ChatState {
   setIsChatExpanded: (expanded: boolean) => void;
 }
 
+// 各刷新动作的单调请求序号（模式同 nekoStore）：多窗口并发触发时，
+// 旧请求的迟到响应不回填陈旧列表、不覆盖派生写入（如 currentAgentId 归零）。
+let fetchAgentsSeq = 0;
+let fetchSessionsSeq = 0;
+
 export const useChatStore = create<ChatState>()(
   persist(
     (set, get) => ({
@@ -46,9 +51,11 @@ export const useChatStore = create<ChatState>()(
       setCurrentAgentId: (id) => set({ currentAgentId: id }),
 
       fetchAgents: async () => {
+        const seq = ++fetchAgentsSeq;
         set({ isLoadingAgents: true, agentsError: null });
         try {
           const agentsList = await agentsApi.getAgents();
+          if (seq !== fetchAgentsSeq) return; // 过期响应丢弃，不回填陈旧列表
           const filteredAgents = agentsList.filter((agent) => agent.id !== 'memory-agent');
           set({ agents: filteredAgents });
 
@@ -65,9 +72,10 @@ export const useChatStore = create<ChatState>()(
           }
         } catch (error: unknown) {
           console.error('Failed to fetch agents:', error);
+          if (seq !== fetchAgentsSeq) return; // 过期失败也不污染最新状态
           set({ agentsError: '加载失败' });
         } finally {
-          set({ isLoadingAgents: false });
+          if (seq === fetchAgentsSeq) set({ isLoadingAgents: false });
         }
       },
 
@@ -81,15 +89,18 @@ export const useChatStore = create<ChatState>()(
       setCurrentSessionId: (id) => set({ currentSessionId: id }),
 
       fetchSessions: async () => {
+        const seq = ++fetchSessionsSeq;
         set({ isLoadingSessions: true, sessionsError: null });
         try {
           const sessions = await chatApi.getSessions();
+          if (seq !== fetchSessionsSeq) return; // 过期响应丢弃，不回填陈旧列表
           set({ sessions });
         } catch (error: unknown) {
           console.error('Failed to fetch sessions:', error);
+          if (seq !== fetchSessionsSeq) return;
           set({ sessionsError: '加载失败' });
         } finally {
-          set({ isLoadingSessions: false });
+          if (seq === fetchSessionsSeq) set({ isLoadingSessions: false });
         }
       },
 

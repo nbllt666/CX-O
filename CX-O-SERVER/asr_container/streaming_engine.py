@@ -445,7 +445,17 @@ class StreamSession:
         return msgs
 
     async def _vad_sweep(self) -> List[dict]:
-        """VAD 分句并产出句子 final 消息。多句并行提交 ASR(final) 与 SPK。"""
+        """VAD 分句并产出句子 final 消息。多句并行提交 ASR(final) 与 SPK。
+
+        ⚠️ 性能说明（第六轮批C2，判定「待真机验证后实施增量」）：
+        本方法每次把整段累积 self._audio 连同 self._vad_cache 重喂 _run_vad，随缓冲增长近似
+        O(n²)。理论上可维护 self._last_vad_end 游标只喂 self._audio[self._last_vad_end:]。
+        但 funasr 容器 VADStreaming.generate(cache=...) 的「缓存累积样本计数」与「返回 beg/end
+        是绝对坐标还是相对切片坐标」语义真机未验证，本环境亦无 funasr 可直接读源确认。若增量喂
+        入后索引语义不符，句子切分会静默错乱，破坏整条 ASR 链路。故暂保持全量重喂现状，待容器
+        真机验证缓存语义后再实施增量；实施时须同步处理句 final / _reset_buffer / MAX_BUFFER 裁剪
+        处的游标复位。
+        """
         loop = asyncio.get_running_loop()
         segments = await loop.run_in_executor(
             _EXECUTOR, _run_vad, self._audio, False, self._vad_cache

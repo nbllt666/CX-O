@@ -31,6 +31,27 @@ logger = logging.getLogger(__name__)
 QUEUE_ITEM_KEYS = ("clip_path", "event_meta", "source", "ts", "accepted_at")
 
 
+class ClipQueueDropStats:
+    """E8 修复: 模块级丢弃计数器——满载丢弃（full）与异常丢弃（error）分别累加。
+
+    进程内单例使用；vision 路由 status 类响应经 ``VisionClipQueue.dropped_count``
+    透出 total。计数器仅增不减，用于运维观测队列丢弃规模。
+    """
+
+    def __init__(self) -> None:
+        self.full: int = 0
+        self.error: int = 0
+
+    @property
+    def total(self) -> int:
+        """累计丢弃条目总数（满载 + 异常）。"""
+        return self.full + self.error
+
+
+#: 模块级丢弃统计（进程内共享，所有 VisionClipQueue 实例共用）
+clip_queue_drop_stats = ClipQueueDropStats()
+
+
 class VisionClipQueue:
     """独立异步视频片段处理队列（内存版）。
 
@@ -42,6 +63,13 @@ class VisionClipQueue:
         self._queue: asyncio.Queue = asyncio.Queue(maxsize=maxsize)
         self._consumer: Optional[Callable] = None
         self._task: Optional[asyncio.Task] = None
+        # E8 修复: 引用模块级丢弃计数器，供状态响应透出 dropped 计数
+        self.drop_stats = clip_queue_drop_stats
+
+    @property
+    def dropped_count(self) -> int:
+        """本进程内累计丢弃的片段数（满载丢弃 + 异常丢弃）。"""
+        return self.drop_stats.total
 
     # ------------------------------------------------------------------ #
     # 对外接口
@@ -78,6 +106,8 @@ class VisionClipQueue:
                         "VisionClipQueue: 无运行中事件循环，无法惰性启动 worker，丢弃片段 %s",
                         item.get("clip_path"),
                     )
+                    # E8 修复: 该分支同样发生了丢弃，计入异常丢弃
+                    self.drop_stats.error += 1
                     return False
                 loop = asyncio.get_running_loop()
                 self._task = loop.create_task(
@@ -87,9 +117,13 @@ class VisionClipQueue:
             return True
         except asyncio.QueueFull:
             logger.warning("VisionClipQueue: 队列已满（%s），丢弃片段", item.get("clip_path"))
+            # E8 修复: 满载丢弃计数累加
+            self.drop_stats.full += 1
             return False
         except Exception as exc:  # noqa: BLE001 —— 面向外部调用者一律安全失败
             logger.warning("VisionClipQueue: 入队失败，丢弃片段: %s", exc)
+            # E8 修复: 异常丢弃计数累加
+            self.drop_stats.error += 1
             return False
 
     def pending_count(self) -> int:

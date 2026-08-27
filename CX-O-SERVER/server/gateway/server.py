@@ -49,7 +49,7 @@ async def handle_live_connection(websocket: WebSocket, client_id: str):
         while True:
             msg = await websocket.receive()
 
-            if msg.get("type") == "text":
+            if msg.get("type") == "websocket.receive" and "text" in msg:
                 data = msg.get("text", "")
                 try:
                     message = json.loads(data)
@@ -57,11 +57,11 @@ async def handle_live_connection(websocket: WebSocket, client_id: str):
                 except json.JSONDecodeError:
                     logger.error(f"Invalid JSON from live client {client_id}")
 
-            elif msg.get("type") == "bytes":
+            elif msg.get("type") == "websocket.receive" and "bytes" in msg:
                 audio_data = msg.get("bytes", b"")
                 await live_handler.handle_audio(websocket, audio_data, client_id)
 
-            elif msg.get("type") == "disconnect":
+            elif msg.get("type") == "websocket.disconnect":
                 break
 
     except WebSocketDisconnect:
@@ -228,8 +228,27 @@ def register_gateway_routes(app: FastAPI):
     async def proxy_control(request: Request, path: str):
         import httpx
         import ipaddress
+        import os
+        import secrets
         import socket
         from urllib.parse import urlparse
+
+        # 控制代理启用时要求管理密钥鉴权：未配置密钥 → 503 保持默认关闭语义；
+        # 密钥缺失/不匹配 → 403。避免任意代理端点成为免鉴权后门。
+        admin_key = os.environ.get("ADMIN_API_KEY", "")
+        if not admin_key:
+            return Response(
+                content=json.dumps({"error": "Admin API key not configured", "running": False}),
+                status_code=503,
+                media_type="application/json",
+            )
+        provided_key = request.headers.get("x-api-key")
+        if not provided_key or not secrets.compare_digest(provided_key, admin_key):
+            return Response(
+                content=json.dumps({"error": "Invalid or missing API key"}),
+                status_code=403,
+                media_type="application/json",
+            )
 
         if not control_service_url or not control_service_url.startswith('http'):
             return Response(

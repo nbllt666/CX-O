@@ -9,9 +9,11 @@ logger = get_contextual_logger(__name__)
 class TaskScheduler:
     """定时任务调度器 - 周期性扫描并执行到期的定时任务"""
 
-    def __init__(self, task_manager, interval_seconds: int = 60):
+    def __init__(self, task_manager, interval_seconds: int = 60, max_retries: int = 3):
         self.task_manager = task_manager
         self.interval_seconds = interval_seconds
+        self.max_retries = max_retries
+        self._retry_counts = {}
         self._task = None
         self._stop_event = asyncio.Event()
 
@@ -61,6 +63,7 @@ class TaskScheduler:
         task_id = task["id"]
         action = task.get("action", {})
         atype = action.get("type")
+        schedule = task.get("schedule") or {}
         try:
             if atype == "tool":
                 from server.core.tools import tool_registry
@@ -74,6 +77,13 @@ class TaskScheduler:
             else:
                 logger.warning(f"未知任务类型: id={task_id}, type={atype}")
             self.task_manager.mark_executed(task_id, success=True)
+            self._retry_counts.pop(task_id, None)
         except Exception as e:
             logger.error(f"定时任务执行失败: id={task_id}, error={e}")
+            # 一次性任务失败不置终态：保留 next_run 允许重试（最多 max_retries 次），
+            # 只有成功或重试耗尽时才置 once 终态。
+            if schedule.get("type") == "once" and self._retry_counts.get(task_id, 0) < self.max_retries:
+                self._retry_counts[task_id] = self._retry_counts.get(task_id, 0) + 1
+                return
             self.task_manager.mark_executed(task_id, success=False)
+            self._retry_counts.pop(task_id, None)

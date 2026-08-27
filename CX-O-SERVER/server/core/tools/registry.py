@@ -302,7 +302,10 @@ class ToolRegistry:
                 if inspect.iscoroutinefunction(tool.function):
                     result = await tool.function(**(arguments or {}))
                 else:
-                    result = tool.function(**(arguments or {}))
+                    # F3 修复：同步 handler（如 decide_storage，内含 DecisionCore
+                    # LLM 决策 requests.post）直接执行会阻塞事件循环，
+                    # 统一卸载到 IO 线程执行。
+                    result = await asyncio.to_thread(tool.function, **(arguments or {}))
 
                 return {"success": True, "result": result, "tool_name": name}
             else:

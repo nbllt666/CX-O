@@ -4,6 +4,49 @@
 
 ## 做到哪了
 
+- **决策接口完全修复（D1 后续：非路由调用方收口）**（已关闭，2026-08-27；issue `模块0-20260827-02`，变更文档 `.trae/documents/20260827_模块0_决策接口完全修复.md`）
+  - 工程过程：用户要求「决策接口完全修复」→ 排查发现批次D1只卸载了 HTTP 路由层，DecisionCore 同步实现仍有 4 个裸调点 → 最小化收口：F1 视觉 worker 沉淀链 to_thread（async consumer 直调 sync sediment 内含 D1 LLM 决策）；F2 蒸馏 finalize/advance 三处 async 直调点 to_thread（_estimate_quality_score 含 LLM 评分 + _invoke_decision_core 含 D1/D6 决策）；F3 工具注册表 call_tool_async 对 sync handler 统一 to_thread（decide_storage 决策工具此前阻塞聊天热路径）；F4 DecisionCore._memory_seq 加 threading.Lock 防并发重复分配 id。
+  - 交接状态：**已关闭**（py_compile 四文件通过；决策链定向 203 passed；相邻回归聊天热路径+工具簇+记忆 256 passed，合计 459/0）。
+  - 最终结果：决策接口全消费面（路由/蒸馏/视觉沉淀/工具注册表）不再有任何事件循环冻结窗口；`vllm.timeout_seconds=300` 默认值偏大已登记留待 s0601 契约变更流程收紧。
+  - 未闭合项：timeout 收紧建议待契约流程。
+  - 接续入口：后端重启加载新代码。
+
+- **第三轮全量扫描 + 全量修复（含集群最小闭环实装）**（2026-08-27；issue `模块0-20260827-01`，变更文档 `.trae/documents/20260827_模块0_第三轮扫描缺陷修复.md`）
+  - 工程过程：用户发起第三轮检查 → 四路并行只读扫描（后端核心/后端外围/前端Electron/配置契约一致性）定位 48 项（高9/中16/低12+契约配置11），高危逐条读码复核非误报 → 人类裁决「全部修复」+两项专项授权：①集群从"能发不能收"半成品实装最小可用闭环；②授权修改 public/ 三份契约文件 → 八批修复落地：**批A** live语音链路（打断判定 acquire_nowait 不存在方法致全量静默失效、弹幕信号量同型、gateway /ws/live ASGI 类型裸字符串比较错误）；**批D** 阻塞与资源（decision 路由同步 requests.post 卡事件循环300s、anythingllm 同步 SQLite、备份打包线程池化、向量化任务表终态裁剪≤200+计数修正、任务 JSON 原子写、ASR base64 错误契约统一、cache 双检锁）；**批B/C** 前端 hooks 竞态与 Electron 稳定（麦克风快切 await close 守卫、屏幕共享代际防护防流泄漏、会议 interval 收归唯一 effect 根治轮询翻倍、插件注册/心跳 fetch 加 5s 超时解退出悬挂、UAC 提权 requestSingleInstanceLock、PowerShell 引号安全化、BLE 监听器去重）；**批E/G** 杂项收敛（config_hot_reload 原子化+失败不谎报、context 连接登记摘除、control_plane signature 判定替代 TypeError 试错两遍、cxfc relay waiter 二级结构断开取消 future、ws manager 双锁统一 RLock、admin/logs 反向块读、alarm 配额50+恢复节流、axios 重试 GET/HEAD 白名单、chatStore seq 防护、视觉管线热更新+pending上限、CORS 动态白名单、token 停止双写磁盘、ble/cxfc backendUrl 每轮跟随）；**批F** 集群闭环（POST /cluster/{op} 无前缀接收路由接 handle_peer_op 五 op + HMAC 鉴权 401/403/404 收口、gossip 改请求-响应真实意见三态计票弃权报告、consensus vote_source 注入、replicator outbox 上限1000/applied_seqs 压实/snapshot 异常日志、flush_pending 重写成功才删+永久失败限量丢弃+周期 flush 任务、手动 failover 任务登记）；**批H** 配置契约（settings.json 三份归一 SHA256 一致真相源=CX-O-SERVER/config/settings.json、requirements.lock.txt 130包快照、memory.schema.json 补齐17字段@2.0.0+CHANGELOG 1.7.0、agent_config_v2 required=[id,name] 对齐现实、.env.example 补16变量样例含 GRAPH_* 拼写真值纠正、start-all.bat python.exe 按 PID 精确停止、prompt_builder 注释口径修正、管理文档 config.json 说明+README 一键入口）。
+  - 交接状态：**已关闭**（批次A/D 定向 46+164 passed；B/E/G 183 passed+tsc 零错误+vitest 606；F 集群 46+相邻31 passed 含新增 test_cluster_receive_loop.py 16用例；H config 定向 97 passed；**后端全量回归 4227 passed / 0 failed**[首轮 4224/3 failed 为 E8 dropped 计数器替身兼容问题，vision.py getattr 兜底定点修复后复跑受影响文件 16 passed]；独立审查=警示放行无 SOFT_BLOCK：12 高危点实码抽验相符、public/ 仅授权内改动、schema 与建表列逐字段吻合；人类终审批准关闭）。
+  - 最终结果：48 项发现全处置（高9全修+中16全修+低12全修+契约配置11项）；STUB_INDEX.md 6 行 CXHMS 幽灵路径已按终审授权注销（改写为历史快照+现行真源双段式）；集群达到最小可用状态（默认 enabled=false 零摩擦不变）；前端 tsc/vitest 全绿。
+  - 未闭合项：①start-all.bat:118 `taskkill /F /IM node.exe` 同构误杀未修登记为已知项；②streaming_engine 等历史观察项延续前轮口径。
+  - 接续入口：后端重启加载新代码；node.exe 精确停止按变更文档 H6 同法在下一小批处理。
+
+- **第六轮全量缺陷扫描 + 全量修复**（2026-08-26；issue `模块0-20260826-10`，变更文档 `.trae/documents/20260826_模块0_第六轮全量缺陷修复.md`）
+  - 工程过程：用户再次发起全量扫描 → 4 路并行取证 × 2 批 + 高危复核，确认约 36 项（3 高 / 15 中 / 18 低疑似），人类裁决「全量修」→ 先写变更文档 → 5 批并行修复：**批 A** 鉴权补挂 + config.json 原子写（H1 /service start/stop/restart 无鉴权 + stop 裸 uvicorn 匹配可杀自身；H2 tools/call/mcp 无鉴权；H3 config 多写者非原子写坏致启动崩）+ sensevoice-streaming 鉴权 + live 段即时生效与读回；**批 B** 后端核心（db_mixin 双删 KeyError、router 近期记忆恒空、graph 迁移映射错位、scheduler 重试、transport outbox 保护、emotion LRU、firewall None、autonomy 任务跟踪/异常回退、loop 最小间隔）；**批 C** 语音（asr 断开排空复位、HTTP ASR run_in_executor+锁、asr_interrupt final 去重、tts temp finally、WS 帧 dict、voiceprint token）；**批 D** 前端（TTS player 竞态、mic 护栏、analyser 轮询、electron IPC、store 白名单、nekoStore/PetChat 收缩）；**批 E** Tuner/docker/VWS（训练互斥 TOCTOU、job 腐化、CUDA 死路径、cosyvoice executor、VWS 路径/TOCTOU、cv3plugin packages）。
+  - 交接状态：**已闭合**（后端全量回归 **4210 passed / 0 failed**[159.86s，用例数 4176→4210]；前端 `npx tsc --noEmit` 零错误 + vitest **602/602 通过**；CXO-Tuner **55 passed**；VWS/docker py_compile + cv3plugin toml 解析通过；H1/H2/H3 运行语义经单测确证）。
+  - 最终结果：第六轮扫描 36 项发现全部处置（3 高全修 + 15 中全修 + 低疑似处 L9 判定外全修）；归档核对 auto-process 为前端记忆页在用保持公开；未触碰 public/ 与 .trae/rules。
+  - 未闭合项（观察项，见变更文档 §五）：①streaming_engine `_vad_sweep` 增量（O(n²)）判定需容器真机验证后实施——与 historic M10「句间缓冲不裁剪 + 增量重叠」同列；②gateway /control 代理启用后需真机实测；③/tools 执行端点鉴权后前端如需无密钥调用需补 x-api-key 交互；④VWS diffsinger_python 空默认换机无真机回归；⑤api_server HTTP 推理锁与流式引擎锁在容器真实并发下待实测。
+  - 接续入口：后端重启加载新代码；streaming_engine 容器层优化需在 docker/asr 内分阶段真机验证后实施。
+
+- **差异审查登记新增问题修复（#29-33 + A）**（2026-08-26；issue `模块0-20260826-09`，变更文档 `.trae/documents/20260826_模块0_差异审查新增问题修复.md`）
+  - 工程过程：用户提示 CX-A「差异审查登记与处理计划」文档登记 CX-O 新问题 6 条 → 逐项核实修复：#29 TRT-LLM stream_chat 补 error 块、#30 ACP wire 统一（投递 to_dict + 接收兼容 type）、#31 /cxfc/call 挂管理密钥（+无密钥 403 用例）、#32 管理文档错误码 403→401、#33 移除 GET /config 残留 chroma 字面量、A nodes name 三处写入 SQL（#5 深化）。收尾实测修复 test_router fake 契约（tags）与 mcp.py 补 proxy=None。
+  - 交接状态：**已闭合**（定向 233 passed；**全量合并回归 4210 passed / 0 failed（151.05s）**）。
+  - 最终结果：差异审查登记 6 条 CX-O 问题全处置；#12/#22/#23 获 CX-A 侧确认（本轮已改）。
+  - 慢测拆查：默认 AsyncClient 构造慢窗口 21.4s（SSL 证书装载）为机器环境因子，非代码回归；代码对齐 proxy=None 后套件 ~2:30 稳定。
+  - 未闭合项：后端需重启加载新代码。
+  - 接续入口：重启后端。
+
+- **浅色模式主背景改亮色（去除近纯白）**（已闭合，2026-08-26；issue `模块0-20260826-09`，变更文档 `.trae/documents/20260826_模块前端_浅色模式主背景改亮色.md`）
+  - 工程过程：用户指出「明亮模式背景不应纯白，应变为亮色」→ 定位 `tokens.css` 浅色语义层 `--bg-primary: var(--gray-50)`（`#fafafc`，视觉等同纯白）→ 改为二次元三主色同系的「樱花粉淡彩」`#fdf1f9`，并同步 `--bg-primary-channel`（`250 250 252`→`253 241 249`）供 Tailwind 透明度修饰；卡片/玻璃面板白底保持不变，仅页面主背景改色。
+  - 交接状态：**已闭合**（`npm run typecheck` 通过；卡片级 `--bg-secondary`/`--bg-tertiary` 未动）。
+  - 最终结果：浅色模式下管理界面整页呈现淡粉亮色背景，不再近纯白。
+  - 未闭合项：无（纯 CSS 变量改动，无逻辑影响）。
+  - 接续入口：浅色模式刷新即可见效；前端未重打安装包，如需分发另行打包。
+
+- **第五轮低/疑似 backlog 清零（17 项）**（2026-08-26；issue `模块0-20260826-08`，变更文档 `.trae/documents/20260826_模块0_低疑似backlog清零.md`）
+  - 工程过程：用户选定「清完低/疑似 backlog」→ 三路并行收尾：**路 A 后端 10 项**（Ollama 非 200 error 块、calculator eval 三护栏、datetime_tool timezone、update_scheduled_task 先校验后应用、live_feedback 指纹有界、asr 发送失败清队列、anythingllm 401、stats 503 包裹、create_edge 用 Query agent_id、WS 离线移 run_io）；**路 B 前端 5 项**（ble scanInterrupted 复位、meetingWebSocket intervalMsRef、shell:open-external 仅 https、useDanmakuVoice close finally、useWebSocket 60s 续期）；**内联 3 项**（CXO-Tuner 预检前移、quality_check 除零、docker/asr _kwargs 判空）。
+  - 交接状态：**已闭合**（路 A 223 passed；路 B tsc 0 + 45 passed；内联 py_compile 过；**合并全量回归 4176 passed / 0 failed（140.81s）**）。
+  - 最终结果：第五轮起记录的全部低/疑似 backlog 清空；回归提速后 4176 用例 140.8s 稳定（证书加载不敏感）。
+  - 未闭合项：仅剩观察项——streaming_engine 缓冲裁剪（延期真机验证）、/service 控制端点密钥交互决策、蒸馏落库 db_path CWD 约定、前端未重打安装包（部署动作）。
+  - 接续入口：后端重启加载新代码；观察项按需另行立项。
+
 - **修复 CX-O 问题汇总报告补充批注 ACP/CXFC 增量（#20-#28）**（2026-08-26；issue `模块0-20260826-07`，变更文档 `.trae/documents/20260826_模块0_修复ACP与CXFC增量问题.md`）
   - 工程过程：用户手动更新 `C:\CX-A\.trae\documents\CX-O问题汇总报告.md` 新增「补充批注（ACP 与 CXFC 增量）#20-#28」并指定复核修复 → 逐项源码核实全部属实 → 修复 8 项：**#21** discover 广播端口统一为 discovery_port（旧 9998→9999 错位致 UDP 发现失效）+ 测试修正；**#22/#23** ACP manager 心跳/离线清扫循环接线（connection.heartbeat_interval/timeout，_track_background_task 统一登记，stop 取消）；**#24** get_group_messages 双参语义冗余拆分；**#25** get_status 接 settings.config.acp + ACPGroupConfig 新增 max_groups；**#26** cxfc 心跳超时仅适用 DIRECT transport（embedded/relay 豁免防误标 DISCONNECTED）；**#27/#28** CXFCEmbeddedTool.handler 键语义统一 + 注册期 tools↔handlers 校验告警；**#20** 核实为 CX-A 侧清单认知项（CX-O 无引用 acp/_common.py），记录不改。
   - 交接状态：**已闭合**（py_compile 全过 + acp/cxfc/config 定向 **209 passed**；**全量合并回归 4167 passed / 0 failed（139.77s）**——含拆查根治：TunerClient 不再急切构造 httpx.AsyncClient（本机默认构造实测 21s，6 条 tuner 用例曾各 ~27s），改注入/惰性共享客户端后全量 299.85s→139.77s，与你手动 <2min 一致；详见变更文档「四、附录」）。

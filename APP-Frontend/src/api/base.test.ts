@@ -5,6 +5,8 @@
  * 每个用例通过 vi.resetModules() + 动态 import 获得全新模块实例隔离状态。
  */
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import { AxiosError } from 'axios';
+import type { InternalAxiosRequestConfig } from 'axios';
 
 const BASE_PATH = './base';
 
@@ -176,5 +178,50 @@ describe('initBackendUrl 启动解析', () => {
     mockElectronApi({ getBackendUrl: vi.fn().mockRejectedValue(new Error('ipc down')) });
     const { initBackendUrl, DEFAULT_BACKEND_URL } = await loadBase();
     await expect(initBackendUrl()).resolves.toBe(DEFAULT_BACKEND_URL);
+  });
+});
+
+/** 构造带 method（及可选响应状态码）的 AxiosError，供 shouldRetry 白名单断言 */
+function makeRetryError(method: string, status?: number): AxiosError {
+  const config = { method } as unknown as InternalAxiosRequestConfig;
+  const error = new AxiosError('测试错误');
+  (error as { config?: InternalAxiosRequestConfig }).config = config;
+  if (status !== undefined) {
+    (error as { response?: unknown }).response = { status, data: {} };
+  }
+  return error;
+}
+
+describe('shouldRetry 重试方法白名单', () => {
+  it('GET/HEAD 网络错误与 408/429/5xx 触发重试，其余 4xx 不重试', async () => {
+    const { shouldRetry } = await loadBase();
+    expect(shouldRetry(makeRetryError('get'))).toBe(true); // 网络错误
+    expect(shouldRetry(makeRetryError('GET'))).toBe(true); // 大写方法名归一化
+    expect(shouldRetry(makeRetryError('head'))).toBe(true);
+    expect(shouldRetry(makeRetryError('get', 503))).toBe(true);
+    expect(shouldRetry(makeRetryError('head', 429))).toBe(true);
+    expect(shouldRetry(makeRetryError('get', 408))).toBe(true);
+    expect(shouldRetry(makeRetryError('get', 404))).toBe(false);
+  });
+
+  it('POST 等非幂等方法不自动重试（网络错误也不重试，避免重复投递）', async () => {
+    const { shouldRetry } = await loadBase();
+    expect(shouldRetry(makeRetryError('post'))).toBe(false);
+    expect(shouldRetry(makeRetryError('POST'))).toBe(false);
+    expect(shouldRetry(makeRetryError('post', 500))).toBe(false);
+    expect(shouldRetry(makeRetryError('delete'))).toBe(false);
+    expect(shouldRetry(makeRetryError('put'))).toBe(false);
+  });
+
+  it('retryable===true 显式声明后非幂等方法可重试', async () => {
+    const { shouldRetry } = await loadBase();
+    const error = makeRetryError('post');
+    ((error.config ?? {}) as { retryable?: boolean }).retryable = true;
+    expect(shouldRetry(error)).toBe(true);
+  });
+
+  it('无 config 时不可判定方法 → 不重试', async () => {
+    const { shouldRetry } = await loadBase();
+    expect(shouldRetry(new AxiosError('无配置'))).toBe(false);
   });
 });

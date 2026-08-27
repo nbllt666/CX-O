@@ -103,8 +103,11 @@ ACP_REPLY_HINT_PROMPT = """<acp_context>
 </behavior>
 </acp_context>"""
 
-# 项目根目录（c:\CX-O）：本文件位于 CX-O-SERVER/server/ 下，向上三级即项目根。
-# 隐藏提示词 hidden_prompt.yaml 位于项目根 config/ 下（CXHMS→CX-O 迁移后与配置分离）。
+# 项目根目录（c:\CX-O）：本文件位于 CX-O-SERVER/server/prompt_builder.py，
+# 三级 parent（server → CX-O-SERVER → c:\CX-O）解析结果即项目根（与本注释口径一致）。
+# 隐藏提示词 hidden_prompt.yaml 的候选位置按优先序（见 _get_hidden_prompts）：
+#   1) <项目根>/config/hidden_prompt.yaml = c:/CX-O/config/hidden_prompt.yaml（当前唯一实际存在并被加载的位置）
+#   2) settings._config_path 所在目录 = CX-O-SERVER/config/hidden_prompt.yaml（旧布局回退候选，当前不存在该文件）
 _PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 
 

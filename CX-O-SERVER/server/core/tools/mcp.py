@@ -315,9 +315,13 @@ class MCPManager:
             return
 
         try:
+            # trust_env=False + proxy=None 规避 Windows 系统代理对 localhost MCP 服务的
+            # 502 干扰；仅 trust_env=False 时构造仍耗时 ~7s（对齐
+            # core/utils.get_shared_http_client 实测结论，proxy=None 降至 ~10ms）
             if server_name not in self._http_clients:
-                # trust_env=False 规避 Windows 系统代理对 localhost MCP 服务的 502 干扰
-                self._http_clients[server_name] = httpx.AsyncClient(timeout=30.0, trust_env=False)
+                self._http_clients[server_name] = httpx.AsyncClient(
+                    timeout=30.0, trust_env=False, proxy=None
+                )
 
             client = self._http_clients[server_name]
 
@@ -402,9 +406,13 @@ class MCPManager:
             return {"success": False, "error": f"服务器未连接: {server_name}"}
 
         try:
+            # trust_env=False + proxy=None 规避 Windows 系统代理对 localhost MCP 服务的
+            # 502 干扰；仅 trust_env=False 时构造仍耗时 ~7s（对齐
+            # core/utils.get_shared_http_client 实测结论，proxy=None 降至 ~10ms）
             if server_name not in self._http_clients:
-                # trust_env=False 规避 Windows 系统代理对 localhost MCP 服务的 502 干扰
-                self._http_clients[server_name] = httpx.AsyncClient(timeout=30.0, trust_env=False)
+                self._http_clients[server_name] = httpx.AsyncClient(
+                    timeout=30.0, trust_env=False, proxy=None
+                )
 
             # 使用 endpoint_url 而非 command
             url = f"{server.endpoint_url}/call"

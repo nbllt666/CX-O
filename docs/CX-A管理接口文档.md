@@ -34,6 +34,8 @@ CX-A 默认关闭（`admin.enabled = false`），关闭时控制平面端点一�
 
 ### 2.1 配置文件（`CX-O-SERVER/config.json`）
 
+> 注意：`CX-O-SERVER/config.json` 不随仓库分发，需首次运行时由模板手工创建（从 `public/config_template/` 模板复制后填入下方 admin 配置节）。
+
 ```json
 {
   "admin": {
@@ -117,7 +119,7 @@ CX-A 默认关闭（`admin.enabled = false`），关闭时控制平面端点一�
 | 错误码 | HTTP | 含义 |
 |--------|------|------|
 | `ADMIN_DISABLED` | 503 | 管理面未启用（`admin.enabled=false`）或未配置 token |
-| `ADMIN_AUTH_FAILED` | 403 | 令牌无效 / 未携带 |
+| `ADMIN_AUTH_FAILED` | 401 | 令牌无效 / 未携带 |
 | `ADMIN_FORBIDDEN` | 403 | 级别不足 |
 | `ADMIN_REPLAYED` | 403 | `request_id` 重复 |
 | `ADMIN_RATE_LIMITED` | 429 | 触限流 |

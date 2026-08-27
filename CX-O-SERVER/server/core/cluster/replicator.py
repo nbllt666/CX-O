@@ -9,12 +9,19 @@ from __future__ import annotations
 import asyncio
 import itertools
 import json
+import logging
 import time
 import uuid
 from pathlib import Path
 
 from ._common import _SNAPSHOT_DIR
 from .units import UNIT_REGISTRY
+
+log = logging.getLogger(__name__)
+
+# ---- 边界常量 ----
+OUTBOX_MAX = 1000        # outbox 硬上限：超限丢最旧并累计丢弃计数告警（防队头阻塞无限增长）
+APPLIED_SEQS_MAX = 5000  # _applied_seqs 容量上限：周期压实保留最新一半（幂等去重窗口）
 
 
 def _iso(t=None) -> str:
@@ -57,6 +64,8 @@ class StateReplicator:
         # 每个 unit 实际已应用过的 seq 集合：精确幂等判据，避免高水位 last_applied 误杀缺口补投的前序事件。
         self._applied_seqs: dict[str, set[int]] = {}
         self._snapshot_providers: dict[str, callable] = {}
+        # outbox 溢出丢弃累计计数（可观测）
+        self._dropped_events = 0
         self._task: asyncio.Task | None = None
         self._running = False
 
@@ -89,6 +98,14 @@ class StateReplicator:
         self._last_applied[unit] = seq
         # 本地已应用 seq 亦登记，保证对端同 seq 重放被幂等跳过。
         self._applied_seqs.setdefault(unit, set()).add(seq)
+        # outbox 硬上限：队头阻塞时丢最旧并告警，防无界增长
+        if len(self._outbox) >= OUTBOX_MAX:
+            evicted = self._outbox.pop(0)
+            self._dropped_events += 1
+            log.warning(
+                "[replicator] outbox 达上限 %d，丢弃最旧事件 unit=%s seq=%s 累计丢弃=%d",
+                OUTBOX_MAX, evicted.get("unit"), evicted.get("seq"), self._dropped_events,
+            )
         self._outbox.append(event)
         return seq
 
@@ -108,6 +125,7 @@ class StateReplicator:
         try:
             while self._running:
                 await self._drain()
+                self._compact_applied_seqs()
                 now = time.monotonic()
                 if now - last_snapshot >= self._snapshot_interval_sec:
                     await self._try_snapshot()
@@ -115,6 +133,23 @@ class StateReplicator:
                 await asyncio.sleep(1.0)
         except asyncio.CancelledError:
             pass
+
+    def _compact_applied_seqs(self):
+        """_applied_seqs 周期容量压实。
+
+        对端 ack 水位（_max_acked_seq）只覆盖本端发出事件的确认，无法作为入站幂等窗口的
+        裁剪依据；故采用最简正确的容量压实：超过 APPLIED_SEQS_MAX 时保留最新一半 seq，
+        兼顾内存有界与"近期重复事件仍可幂等跳过"。极旧重复投递（超出窗口）会被重新应用，
+        由各单元应用层自身的幂等语义兜底。
+        """
+        for unit, seqs in list(self._applied_seqs.items()):
+            if len(seqs) > APPLIED_SEQS_MAX:
+                keep = set(sorted(seqs)[-APPLIED_SEQS_MAX // 2:])
+                self._applied_seqs[unit] = keep
+                log.info(
+                    "[replicator] applied_seqs 压实 unit=%s %d → %d",
+                    unit, len(seqs), len(keep),
+                )
 
     def _peers(self):
         if not self._config:
@@ -181,8 +216,8 @@ class StateReplicator:
                 if blob is not None:
                     self._write_snapshot(unit, blob)
                     self._last_snapshot_at[unit] = _iso()
-            except Exception:  # noqa: BLE001 - 快照失败不影响事件流
-                pass
+            except Exception as e:  # noqa: BLE001 - 快照失败不影响事件流，但必须留痕告警
+                log.warning("[replicator] 快照采集/落盘失败 unit=%s error=%s", unit, e)
 
     def _write_snapshot(self, unit: str, blob: dict) -> None:
         """原子写入单单元快照文件。"""
@@ -273,6 +308,7 @@ class StateReplicator:
                 "last_snapshot_at": self._last_snapshot_at.get(unit),
             }
         status["_pending_outbox"] = len(self._outbox)
+        status["_dropped_unsent"] = self._dropped_events
         return status
 
     async def flush(self):

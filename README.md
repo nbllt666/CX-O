@@ -66,12 +66,20 @@ python download_voxcpm_support.py
 
 **第三步：启动服务**
 
+一键入口（推荐）：双击运行项目根目录的 `start-all.bat`，会自动依次拉起 CX-O-SERVER（8000）、VoiceWorkStation（8200）、APP-Frontend（3100）并打开浏览器；按任意键可统一关闭全部服务。
+
+也可以手动逐个启动：
+
 ```powershell
 # 1. 启动后端（端口 8000）
 cd CX-O-SERVER
 .\start.bat
 
-# 2. 启动前端（端口 3100）
+# 2. 启动语音工作站（端口 8200）
+cd CX-O-VoiceWorkStation
+.\start.bat
+
+# 3. 启动前端（端口 3100）
 cd APP-Frontend
 .\start.bat browser
 ```

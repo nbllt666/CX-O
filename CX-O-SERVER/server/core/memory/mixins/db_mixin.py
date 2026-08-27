@@ -438,6 +438,7 @@ class _MemoryDBMixin:
                     conn = conn_info
                     last_used = current_time
 
+                rebuild = False
                 try:
                     conn.execute("SELECT 1")
 
@@ -446,9 +447,13 @@ class _MemoryDBMixin:
                         conn_info["use_count"] = conn_info.get("use_count", 0) + 1
 
                         if current_time - last_used > 300 and conn_info.get("use_count", 0) > 100:
+                            # 空闲超时 + 高频复用 → 主动重建。
+                            # 已 del 并关闭旧连接，置 rebuild 标记以跳过下方清理段，
+                            # 避免二次 del 触发 KeyError，并确保走到下方 sqlite3.connect 重建返回新连接。
                             conn.close()
                             del self._connection_pool[thread_id]
                             conn = None
+                            rebuild = True
                         else:
                             return conn
                     else:
@@ -458,14 +463,15 @@ class _MemoryDBMixin:
                         "复用连接失败，将重建: thread_id=%s", thread_id, exc_info=True
                     )
 
-                try:
-                    if isinstance(conn_info, dict):
-                        conn_info["connection"].close()
-                    else:
-                        conn.close()
-                except Exception as e:
-                    logger.warning(f"关闭旧连接失败: {e}")
-                del self._connection_pool[thread_id]
+                if not rebuild:
+                    try:
+                        if isinstance(conn_info, dict):
+                            conn_info["connection"].close()
+                        else:
+                            conn.close()
+                    except Exception as e:
+                        logger.warning(f"关闭旧连接失败: {e}")
+                    del self._connection_pool[thread_id]
 
         try:
             conn = sqlite3.connect(str(self.db_path), timeout=20.0, check_same_thread=False)

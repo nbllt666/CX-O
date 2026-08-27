@@ -95,12 +95,13 @@ export function useMeetingWebSocket(options: UseMeetingWebSocketOptions): UseMee
   const [snapshot, setSnapshot] = useState<MeetingRoomSnapshot | null>(null);
   const [isPolling, setIsPolling] = useState(false);
   const [isError, setIsError] = useState(false);
+  // 竞态防护（B3）：轮询代际——start/end 通过 bump epoch 强制唯一轮询 effect 重建定时器，
+  // 解决「同 roomId 再次 start / roomId 切换时旧句柄未清导致 interval 泄漏并发轮询」
+  const [pollEpoch, setPollEpoch] = useState(0);
   const onChangeRef = useRef(onChange);
   onChangeRef.current = onChange;
   const roomIdRef = useRef(roomId);
   roomIdRef.current = roomId;
-  const intervalMsRef = useRef(intervalMs);
-  intervalMsRef.current = intervalMs;
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   // 轮询「在途」闸：end()/停轮询后置 false，阻止已发起的异步 getState 把旧快照写回
   const pollActiveRef = useRef(false);
@@ -123,30 +124,48 @@ export function useMeetingWebSocket(options: UseMeetingWebSocketOptions): UseMee
     }
   }, []);
 
-  // 启动/停止轮询：roomId 有值时定时拉取，无值时清除
+  // 竞态防护（B3）：interval 创建权唯一归属本 effect（依赖 [roomId, pollEpoch]）。
+  // 每次重跑开头先清旧句柄，杜绝多份定时器并发轮询；start()/end() 只置 pollActiveRef
+  // 并 bump epoch 驱动本 effect 重建，不再自行操作定时器。
   useEffect(() => {
+    if (timerRef.current) {
+      clearInterval(timerRef.current);
+      timerRef.current = null;
+    }
     if (!roomId) {
-      pollActiveRef.current = false;
-      setSnapshot(null);
-      setIsPolling(false);
-      if (timerRef.current) {
-        clearInterval(timerRef.current);
-        timerRef.current = null;
+      // 未开会/已离开会议室：清残留快照与轮询态。
+      // start 过渡帧（roomId 尚未随父级 setState 生效）时 pollActiveRef=true，不清快照避免闪空
+      if (!pollActiveRef.current) {
+        setSnapshot(null);
       }
+      setIsPolling(false);
       return;
     }
+    if (!pollActiveRef.current) {
+      // 房间号仍在但轮询闸已关（end 成功后父组件尚未复位 roomId 的过渡期）：不创建定时器
+      setIsPolling(false);
+      return;
+    }
+    // 维持旧行为语义：roomId 有值即在会中（兼容不经 start() 直接获得 roomId 的路径）
     pollActiveRef.current = true;
     void fetchState();
     setIsPolling(true);
     timerRef.current = setInterval(() => void fetchState(), intervalMs);
     return () => {
-      pollActiveRef.current = false;
       if (timerRef.current) {
         clearInterval(timerRef.current);
         timerRef.current = null;
       }
     };
-  }, [roomId, intervalMs, fetchState]);
+  }, [roomId, pollEpoch, intervalMs, fetchState]);
+
+  // 卸载兜底：阻断在途 fetch 的迟到续体（fetchState 以 pollActiveRef 为在途闸）
+  useEffect(
+    () => () => {
+      pollActiveRef.current = false;
+    },
+    [],
+  );
 
   // WS 事件优先订阅：后端经 /ws 广播 meeting_state（管理窗常驻连接 → meetingEvents 总线）。
   // 仅接受当前活动房间的事件；无活动房间时忽略（与轮询空置口径一致）。
@@ -174,21 +193,15 @@ export function useMeetingWebSocket(options: UseMeetingWebSocketOptions): UseMee
     }): Promise<MeetingRoomSnapshot | null> => {
       try {
         const s = await meetingApi.start(opts);
-        pollActiveRef.current = true; // 新会议生效前恢复在途闸（end() 可能已将之关闭）
-        // F1: end() 已 clearInterval 且轮询 effect 依赖 [roomId, intervalMs, fetchState]
-        // 未变时不会重跑——同 roomId 再次 start 必须重建定时器，否则轮询兜底失效。
-        if (timerRef.current) {
-          clearInterval(timerRef.current);
-          timerRef.current = null;
-        }
-        // intervalMsRef 取最新值：start 的 useCallback 依赖为空，closure 内 intervalMs
-        // 是首渲染值，父级中途改 intervalMs 时须用 ref 读数保持重建周期与展示一致。
-        timerRef.current = setInterval(() => void fetchState(), intervalMsRef.current);
-        setIsPolling(true);
+        // 竞态防护（B3）：置轮询闸后 bump epoch 驱动唯一轮询 effect 重建定时器。
+        // 同 roomId 再次 start 时即便 roomId/依赖未变，epoch 变化也能强制重建
+        // （替代旧 F1 手法——此处不再手动 setInterval）。
+        pollActiveRef.current = true;
         setSnapshot(s);
         setIsError(false);
         setMeetingHint({ speaker: s.token_holder ?? null, roomId: s.room_id });
         onChangeRef.current?.(s);
+        setPollEpoch((e) => e + 1);
         return s;
       } catch {
         setIsError(true);
@@ -203,16 +216,14 @@ export function useMeetingWebSocket(options: UseMeetingWebSocketOptions): UseMee
     if (!id) return false;
     try {
       await meetingApi.end(id);
-      // 房间已销毁：停止在途轮询、清除旧快照，避免继续展示已结束会议的状态
+      // 竞态防护（B3）：房间已销毁——关轮询闸、清旧快照后 bump epoch，
+      // 由唯一轮询 effect 收走定时器并丢弃在途结果
       pollActiveRef.current = false;
-      if (timerRef.current) {
-        clearInterval(timerRef.current);
-        timerRef.current = null;
-      }
       setMeetingHint({ speaker: null, roomId: null });
       setSnapshot(null);
       setIsPolling(false);
       setIsError(false);
+      setPollEpoch((e) => e + 1);
       return true;
     } catch {
       setIsError(true);

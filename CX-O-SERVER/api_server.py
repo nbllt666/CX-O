@@ -7,7 +7,9 @@ import base64
 import io
 import json
 import logging
+import os
 import re
+import secrets
 import struct
 import tempfile
 import wave
@@ -40,6 +42,19 @@ app = FastAPI(title="ASR SenseVoice Service")
 # 全局模型实例
 _model = None
 _kwargs = {}
+
+# HTTP 推理串行锁（懒创建，避免模块导入期绑定事件循环）。
+# SenseVoice 与流式引擎（streaming_engine 已用 _ASR_LOCK/_VAD_LOCK 串行化其推理）
+# 共享同一 GPU 状态；HTTP 端点在 run_in_executor 线程内调用 _run_inference，
+# 若不串行化会与流式推理并发竞争 GPU，导致结果错乱。
+_http_infer_lock = None
+
+
+def _get_http_infer_lock() -> "asyncio.Lock":
+    global _http_infer_lock
+    if _http_infer_lock is None:
+        _http_infer_lock = asyncio.Lock()
+    return _http_infer_lock
 
 # 富文本后处理正则（去掉 <|...|> 标记）
 RICH_REGEX = r"<\|.*\|>"
@@ -199,7 +214,11 @@ async def recognize_audio(request: ASRRequest):
         if audio_float is None:
             raise HTTPException(status_code=400, detail="音频解码失败")
 
-        result = _run_inference(audio_float, request.language, request.use_itn)
+        async with _get_http_infer_lock():
+            # 阻塞 FunASR 推理放入线程池，避免卡死事件循环（WS 流式 / health 全卡）
+            result = await asyncio.get_event_loop().run_in_executor(
+                None, _run_inference, audio_float, request.language, request.use_itn
+            )
 
         return ASRResponse(
             status="success",
@@ -237,7 +256,11 @@ async def api_v1_asr(
         if audio_float is None:
             raise HTTPException(status_code=400, detail="音频解码失败")
 
-        result = _run_inference(audio_float, language, use_itn_bool)
+        async with _get_http_infer_lock():
+            # 阻塞 FunASR 推理放入线程池，避免卡死事件循环（与 /asr/recognize 一致）
+            result = await asyncio.get_event_loop().run_in_executor(
+                None, _run_inference, audio_float, language, use_itn_bool
+            )
 
         return {"results": [result]}
 
@@ -301,6 +324,13 @@ async def ws_asr_stream(websocket: WebSocket):
                 try:
                     data = json.loads(message["text"])
                 except json.JSONDecodeError:
+                    continue
+
+                # 非 dict 顶层帧（list/str/number 的合法 JSON）直接忽略，不断连，
+                # 避免下方 data.get("action") 抛 AttributeError 被外层 except 吞掉并断开。
+                if not isinstance(data, dict):
+                    logger.warning("[WS-ASR] Non-object text frame ignored: %r",
+                                   str(message["text"])[:80])
                     continue
 
                 if data.get("action") == "final":
@@ -391,8 +421,17 @@ async def voiceprint_extract(
 
 
 @app.post("/api/v1/voiceprint/profiles/sync")
-async def voiceprint_profiles_sync():
-    """重载声纹画像 profiles（服务端权威写入后调用刷新容器侧注册池）。"""
+async def voiceprint_profiles_sync(request: Request):
+    """重载声纹画像 profiles（服务端权威写入后调用刷新容器侧注册池）。
+
+    零摩擦鉴权：读取环境变量 ASR_API_TOKEN（默认空）。仅当令牌非空时要求请求头
+    x-api-token 与之匹配（secrets.compare_digest 防时序），未配置则保持现状不校验。
+    """
+    env_token = os.environ.get("ASR_API_TOKEN") or ""
+    if env_token:
+        provided = request.headers.get("x-api-token") or ""
+        if not secrets.compare_digest(env_token, provided):
+            raise HTTPException(status_code=403, detail="invalid or missing x-api-token")
     count = await asyncio.get_event_loop().run_in_executor(None, load_profiles)
     return {"ok": True, "count": count}
 

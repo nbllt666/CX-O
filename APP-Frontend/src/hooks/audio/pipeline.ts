@@ -24,8 +24,11 @@ export interface UseAudioPipelineReturn {
   analyserRef: React.MutableRefObject<AnalyserNode | null>;
   /** 创建 AudioContext + Analyser。幂等：若已初始化则为 no-op。 */
   init: () => void;
-  /** 关闭 AudioContext 并清空 refs。幂等：若已关闭则为 no-op。 */
-  close: () => void;
+  /**
+   * 关闭 AudioContext 并清空 refs。幂等：若已关闭则为 no-op。
+   * F3: 返回 Promise，供调用方 await 后再重建（避免在正在关闭的 ctx 上 init）。
+   */
+  close: () => Promise<void>;
   /** 创建 MediaStreamAudioSourceNode（未 init 时返回 null） */
   createStreamSource: (stream: MediaStream) => MediaStreamAudioSourceNode | null;
   /** 创建 MediaElementAudioSourceNode（未 init 时返回 null） */

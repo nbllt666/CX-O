@@ -37,13 +37,14 @@ const STORE_NAMES = [
   'cxo-pet-obs',
 ];
 
-// 需要与 Electron 主进程 app-config 双向同步的配置键
+// 需要与 Electron 主进程 app-config 双向同步的配置键。
+// 注（G5a）：token 类凭据键已移除——登录令牌只在渲染层 localStorage 会话内流转，
+// 不再双写进 userData/app-config.json 明文文件；其余键同步逻辑不变。
 const CONFIG_SYNC_KEYS: string[] = [
   STORAGE_KEYS.backendUrl,
   STORAGE_KEYS.wsUrl,
   STORAGE_KEYS.controlUrl,
   STORAGE_KEYS.voiceWsUrl,
-  STORAGE_KEYS.token,
   STORAGE_KEYS.offlineTimeout,
 ];
 

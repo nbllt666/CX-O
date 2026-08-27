@@ -30,6 +30,7 @@ from server.core.decision.decision_core import (
     RubricSnapshot,
 )
 from server.core.logging_config import get_contextual_logger
+from server.core.utils import run_io
 
 router = APIRouter()
 logger = get_contextual_logger(__name__)
@@ -167,9 +168,11 @@ async def decide_location(request: D1LocationRequest, http_request: Request):
     """
     core = _get_decision_core()
     try:
-        rubric = _resolve_rubric(core, request.agent_id, request.rubric)
+        # 同步实现（内含 requests LLM 调用 / 文件读写）统一卸载到 IO 线程池，避免阻塞事件循环
+        rubric = await run_io(_resolve_rubric, core, request.agent_id, request.rubric)
         decision_input = DecisionInput(**request.decision_input.model_dump())
-        decision = core.decide_location(
+        decision = await run_io(
+            core.decide_location,
             session_id=request.session_id,
             decision_input=decision_input,
             rubric=rubric,
@@ -182,7 +185,8 @@ async def decide_location(request: D1LocationRequest, http_request: Request):
             services = http_request.app.state.services
             mm = getattr(services, "memory_manager", None)
             if mm is not None and hasattr(mm, "write_with_decision"):
-                write_result = mm.write_with_decision(
+                write_result = await run_io(
+                    mm.write_with_decision,
                     content=request.content,
                     decision=decision,
                     metadata=request.metadata,
@@ -202,7 +206,8 @@ async def decide_metadata(request: D2MetadataRequest):
     core = _get_decision_core()
     try:
         decision_input = DecisionInput(**request.decision_input.model_dump())
-        metadata = core.decide_metadata(
+        metadata = await run_io(
+            core.decide_metadata,
             session_id=request.session_id,
             decision_input=decision_input,
         )
@@ -218,8 +223,9 @@ async def decide_ask_user(request: D3AskUserRequest):
     """D3: 追问决策。根据 LLM 置信度决定是否追问人类。"""
     core = _get_decision_core()
     try:
-        rubric = _resolve_rubric(core, request.agent_id, request.rubric)
-        should_ask = core.decide_ask_user(
+        rubric = await run_io(_resolve_rubric, core, request.agent_id, request.rubric)
+        should_ask = await run_io(
+            core.decide_ask_user,
             session_id=request.session_id,
             llm_confidence=request.llm_confidence,
             rubric=rubric,
@@ -240,8 +246,9 @@ async def decide_redistill(request: D4RedistillRequest):
     """D4: 再次蒸馏决策。根据当前轮次决定是否再次蒸馏。"""
     core = _get_decision_core()
     try:
-        rubric = _resolve_rubric(core, request.agent_id, request.rubric)
-        should_redistill = core.decide_redistill(
+        rubric = await run_io(_resolve_rubric, core, request.agent_id, request.rubric)
+        should_redistill = await run_io(
+            core.decide_redistill,
             session_id=request.session_id,
             current_turn=request.current_turn,
             rubric=rubric,
@@ -262,9 +269,10 @@ async def decide_cross_validate(request: D5CrossValidateRequest):
     """D5: 跨源验证决策。根据 rubric.cross_validate_sources 决定是否跨源验证。"""
     core = _get_decision_core()
     try:
-        rubric = _resolve_rubric(core, request.agent_id, request.rubric)
+        rubric = await run_io(_resolve_rubric, core, request.agent_id, request.rubric)
         decision_input = DecisionInput(**request.decision_input.model_dump())
-        should_validate = core.decide_cross_validate(
+        should_validate = await run_io(
+            core.decide_cross_validate,
             session_id=request.session_id,
             decision_input=decision_input,
             rubric=rubric,
@@ -287,8 +295,9 @@ async def decide_reject(request: D6RejectRequest, http_request: Request):
     """
     core = _get_decision_core()
     try:
-        rubric = _resolve_rubric(core, request.agent_id, request.rubric)
-        decision = core.decide_reject(
+        rubric = await run_io(_resolve_rubric, core, request.agent_id, request.rubric)
+        decision = await run_io(
+            core.decide_reject,
             session_id=request.session_id,
             quality_score=request.quality_score,
             rubric=rubric,
@@ -301,7 +310,8 @@ async def decide_reject(request: D6RejectRequest, http_request: Request):
             services = http_request.app.state.services
             mm = getattr(services, "memory_manager", None)
             if mm is not None and hasattr(mm, "write_with_decision"):
-                write_result = mm.write_with_decision(
+                write_result = await run_io(
+                    mm.write_with_decision,
                     content=request.content,
                     decision=decision,
                     metadata=request.metadata,
@@ -328,7 +338,7 @@ async def get_rejected_content(session_id: str, http_request: Request, limit: in
     if mm is None or not hasattr(mm, "get_rejected_content"):
         raise HTTPException(status_code=503, detail="memory_manager 不可用或未集成 decision mixin")
     try:
-        records = mm.get_rejected_content(session_id=session_id, limit=limit)
+        records = await run_io(mm.get_rejected_content, session_id=session_id, limit=limit)
         return {"session_id": session_id, "count": len(records), "records": records}
     except KeyError as exc:
         raise HTTPException(status_code=404, detail=str(exc))
@@ -344,8 +354,9 @@ async def cleanup_expired_rejected_content(request: CleanupRequest, http_request
     if mm is None or not hasattr(mm, "cleanup_expired_rejected_content"):
         raise HTTPException(status_code=503, detail="memory_manager 不可用或未集成 decision mixin")
     try:
-        purged_count = mm.cleanup_expired_rejected_content(
-            retention_days=request.retention_days
+        purged_count = await run_io(
+            mm.cleanup_expired_rejected_content,
+            retention_days=request.retention_days,
         )
         return {"purged_count": purged_count, "retention_days": request.retention_days}
     except RuntimeError as exc:

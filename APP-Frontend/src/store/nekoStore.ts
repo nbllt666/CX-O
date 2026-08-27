@@ -280,6 +280,10 @@ export const useNekoStore = create<NekoState>()((set, get) => ({
       const task = await nekoApi.marketTask(taskId);
       if (taskSeqMap.get(taskId) !== seq) return;
       set((s) => ({ installTasks: { ...s.installTasks, [taskId]: task }, error: null }));
+      // 终态清理：任务完成后不再有价值，删除序号条目，防止 taskSeqMap 无界增长
+      if (task.status === 'completed' || task.status === 'failed') {
+        taskSeqMap.delete(taskId);
+      }
       if (task.status === 'completed') {
         await get().refreshInstalled();
         await get().refreshPlugins();

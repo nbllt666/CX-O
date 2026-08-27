@@ -59,8 +59,11 @@ class TaskManager:
 
     def _save_tasks(self) -> None:
         try:
-            with open(_TASK_LIST_FILE, "w", encoding="utf-8") as f:
+            # 原子写：先写临时文件再 os.replace，避免并发读到半写 JSON（同 ref_audio_store 模式）
+            tmp_file = _TASK_LIST_FILE + ".tmp"
+            with open(tmp_file, "w", encoding="utf-8") as f:
                 json.dump(self._tasks, f, ensure_ascii=False, indent=2)
+            os.replace(tmp_file, _TASK_LIST_FILE)
         except Exception as e:
             logger.error(f"保存任务清单失败: {e}")
             raise
@@ -76,8 +79,11 @@ class TaskManager:
 
     def _save_scheduled_tasks(self) -> None:
         try:
-            with open(_SCHEDULED_TASKS_FILE, "w", encoding="utf-8") as f:
+            # 原子写：先写临时文件再 os.replace，避免并发读到半写 JSON（同 ref_audio_store 模式）
+            tmp_file = _SCHEDULED_TASKS_FILE + ".tmp"
+            with open(tmp_file, "w", encoding="utf-8") as f:
                 json.dump(self._scheduled_tasks, f, ensure_ascii=False, indent=2)
+            os.replace(tmp_file, _SCHEDULED_TASKS_FILE)
         except Exception as e:
             logger.error(f"保存定时任务失败: {e}")
             raise

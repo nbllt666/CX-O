@@ -854,6 +854,9 @@ class TRTLLMClient(LLMClient):
                                 continue
         except Exception as e:
             logger.error(f"TRT-LLM流式调用失败: {e}")
+            # #29（差异审查登记）: 顶层异常静默吞掉，调用方无法区分「空输出」与
+            # 「失败」；与 Ollama/VLLM 对齐，显式产出 error 块结束流。
+            yield {"type": "error", "content": f"TRT-LLM流式调用失败: {e}"}
 
     @property
     def model_name(self) -> str:

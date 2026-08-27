@@ -5,7 +5,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import Optional
 
-from fastapi import APIRouter, Header, HTTPException, Request
+from fastapi import APIRouter, Depends, Header, HTTPException, Request
+from fastapi.concurrency import run_in_threadpool
 from pydantic import BaseModel
 
 from server.core.logging_config import get_contextual_logger
@@ -238,6 +239,39 @@ async def update_config(config: AdminConfigUpdate, x_api_key: Optional[str] = He
         raise HTTPException(status_code=500, detail="更新配置失败")
 
 
+def _read_log_tail(path: str, max_lines: int) -> list:
+    """E7 修复：反向块读日志文件尾部，仅解析末尾 max_lines 行。
+
+    seek 到文件尾按 64KB 块向前读，凑够所需换行数即停；替代原先 readlines()
+    的整文件载入行为。块边界切断的行通过保留残段与下一块拼接解决；
+    未读到文件头时丢弃第一段（必不完整）。
+    """
+    chunk_size = 65536
+    data = b""
+    pos = None
+    with open(path, "rb") as f:
+        f.seek(0, os.SEEK_END)
+        pos = f.tell()
+        # 多读一行余量：split 后需保证完整行数量 >= max_lines
+        while pos > 0 and data.count(b"\n") <= max_lines:
+            step = min(chunk_size, pos)
+            pos -= step
+            f.seek(pos)
+            data = f.read(step) + data
+
+    segments = data.split(b"\n")
+    if pos != 0 and len(segments) > 0:
+        segments = segments[1:]  # 首段为跨块的半截行，丢弃
+    lines = [
+        seg.decode("utf-8", errors="replace").rstrip("\r")
+        for seg in segments
+    ]
+    # split 在结尾换行处产生的空串对应旧实现 rstrip 后消失的行为，剔除
+    if lines and lines[-1] == "":
+        lines.pop()
+    return lines[-max_lines:]
+
+
 @router.get("/admin/logs")
 async def get_logs(level: str = "INFO", lines: int = 50, x_api_key: Optional[str] = Header(None)):
     # B10 修复: verify_admin_api_key 在认证失败时已 raise 403，
@@ -256,7 +290,6 @@ async def get_logs(level: str = "INFO", lines: int = 50, x_api_key: Optional[str
 
     try:
         from server.api.routers.service import _backend_log_path
-        import os
 
         log_file = _backend_log_path
         if not log_file:
@@ -264,10 +297,10 @@ async def get_logs(level: str = "INFO", lines: int = 50, x_api_key: Optional[str
 
             log_file = os.path.join(get_project_root(), "logs", "cxo.log")
         if os.path.exists(log_file):
-            with open(log_file, "r", encoding="utf-8") as f:
-                all_lines = [ln.rstrip("\n") for ln in f.readlines()]
+            # E7 修复: 改为反向块读，只取末尾 lines 行，不再整文件进内存
+            tail_lines = _read_log_tail(log_file, lines)
             # 保持 logs 为数组类型（原接口契约），避免前端对返回类型变化解析失败
-            return {"status": "success", "logs": all_lines[-lines:], "total": len(all_lines[-lines:]), "level": level, "lines": lines}
+            return {"status": "success", "logs": tail_lines, "total": len(tail_lines), "level": level, "lines": lines}
         return {"status": "success", "logs": ["No log file available"], "total": 0, "level": level, "lines": lines}
     except Exception as e:
         logger.error(f"Failed to read logs: {e}", exc_info=True)
@@ -299,18 +332,22 @@ async def create_backup(x_api_key: Optional[str] = Header(None)):
         backup_name = f"backup_{timestamp}"
         backup_path = f"{backup_dir}/{backup_name}.zip"
 
-        # BUG-B-M8 修复: 排除 data/backups 目录,避免备份嵌套导致体积指数增长。
-        # 原实现使用 shutil.make_archive 打包整个 data 目录,其中包含 data/backups,
-        # 导致每次备份都包含历史备份,体积指数增长。
-        with zipfile.ZipFile(backup_path, "w", zipfile.ZIP_DEFLATED) as zipf:
-            for root, dirs, files in os.walk(data_dir):
-                # 排除 backups 子目录,避免递归打包历史备份
-                if "backups" in dirs:
-                    dirs.remove("backups")
-                for file in files:
-                    file_path = os.path.join(root, file)
-                    arcname = os.path.relpath(file_path, data_dir)
-                    zipf.write(file_path, arcname)
+        def _pack_zip() -> None:
+            """同步打包数据目录（移入线程池执行，避免 os.walk+zipfile 压缩阻塞事件循环）。"""
+            # BUG-B-M8 修复: 排除 data/backups 目录,避免备份嵌套导致体积指数增长。
+            # 原实现使用 shutil.make_archive 打包整个 data 目录,其中包含 data/backups,
+            # 导致每次备份都包含历史备份,体积指数增长。
+            with zipfile.ZipFile(backup_path, "w", zipfile.ZIP_DEFLATED) as zipf:
+                for root, dirs, files in os.walk(data_dir):
+                    # 排除 backups 子目录,避免递归打包历史备份
+                    if "backups" in dirs:
+                        dirs.remove("backups")
+                    for file in files:
+                        file_path = os.path.join(root, file)
+                        arcname = os.path.relpath(file_path, data_dir)
+                        zipf.write(file_path, arcname)
+
+        await run_in_threadpool(_pack_zip)
 
         logger.info(f"创建备份: {backup_path}")
 
@@ -513,6 +550,6 @@ async def admin_audit(request: Request, limit: int = 50, offset: int = 0):
 
 
 @router.post("/admin/register")
-async def admin_register():
+async def admin_register(_: bool = Depends(verify_admin_api_key)):
     """内部：CX-O 向 CX-A 注册（本机作为被注册方，仅记录；主动注册由 registry 承接）。"""
     return {"status": "success", "message": "registered", "registered": True}

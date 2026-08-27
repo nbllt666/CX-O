@@ -10,3 +10,8 @@ requires-python = ">=3.10"
 
 [project.entry-points."vllm.general_plugins"]
 cv3_vllm_plugin = "cv3_vllm_plugin:register"
+
+# Batch-E-9: explicitly declare the single package under setuptools flat layout
+# to avoid implicit auto-discovery ambiguity during build.
+[tool.setuptools.packages.find]
+include = ["cv3_vllm_plugin*"]

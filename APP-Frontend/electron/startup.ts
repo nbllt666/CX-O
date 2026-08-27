@@ -114,11 +114,15 @@ export function setRunAsAdmin(enabled: boolean): boolean {
 function relaunchElevated(): void {
   try {
     const exe = process.execPath;
-    const args = process.argv
+    // PowerShell 单引号字符串中 '' 表示字面单引号：逐项转义后以逗号分隔数组传给
+    // -ArgumentList，避免参数含单引号/空格时破坏命令解析（原实现把整串包进一对
+    // 单引号，任一参数含引号即破坏命令并可能注入额外 PS 语句）。
+    const psQuote = (s: string): string => `'${String(s ?? '').replace(/'/g, "''")}'`;
+    const argList = process.argv
       .slice(1)
-      .map((a) => `"${a}"`)
-      .join(' ');
-    const command = `Start-Process -FilePath '${exe}' -ArgumentList '${args}' -Verb RunAs`;
+      .map(psQuote)
+      .join(', ');
+    const command = `Start-Process -FilePath ${psQuote(exe)} -ArgumentList ${argList} -Verb RunAs`;
     const child = spawn('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', command], {
       stdio: 'ignore',
       detached: true,

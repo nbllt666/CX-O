@@ -121,6 +121,10 @@ def register_api_routes(app: FastAPI):
     app.include_router(tuner.router, prefix="/api")
     # 哨兵集群 REST（/api/cluster/*）
     app.include_router(cluster.router, prefix="/api")
+    # 集群节点间接收路由（/cluster/{op}）：sender 端点形状由 _common.build_endpoint 决定，
+    # 为 {scheme}://{base}/cluster/{op} 根级路径，必须不加 /api 前缀挂载才能命中。
+    # cluster.enabled=false 时仅返回 503 CLUSTER_DISABLED，零摩擦不生效任何新代码路径。
+    app.include_router(cluster.peer_router)
     # 主动视觉视频片段上传（/api/vision/clip）—— 独立异步队列底座
     app.include_router(vision.router, prefix="/api")
     # 多 Agent 语音会议协调器 REST（/api/meeting/*）—— enabled=false 时零侵入

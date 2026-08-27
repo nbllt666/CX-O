@@ -151,6 +151,24 @@ class TestNeo4jImporterNodes:
         for old_id in maps:
             assert importer._node_id_mapping[old_id] is not None
 
+    def test_migrate_nodes_mapping_order_with_missing_id(self, importer):
+        # 批内某节点无 id 时，映射仍按 index 与输入一一对应，不被无 id 节点错位
+        data = [
+            {"id": 100, "labels": ["Concept"], "properties": {"a": "1"}},
+            {"id": None, "labels": ["Concept"], "properties": {"no": 1}},
+            {"id": 200, "labels": ["Concept"], "properties": {"b": "2"}},
+        ]
+        importer._node_id_mapping.update({100: None, 200: None})
+        importer.migrate_nodes(data)
+        items = importer.node_manager.list().items
+        new100 = importer._node_id_mapping[100]
+        new200 = importer._node_id_mapping[200]
+        assert new100 is not None and new200 is not None
+        props100 = next(nd.properties for nd in items if nd.id == new100)
+        props200 = next(nd.properties for nd in items if nd.id == new200)
+        assert props100.get("a") == "1"
+        assert props200.get("b") == "2"
+
     def test_migrate_nodes_adds_vector(self, importer):
         importer.migrate_nodes([{"id": 1, "labels": ["Concept"], "properties": {"name": "hello"}}])
         assert len(importer.semantic.added) == 1

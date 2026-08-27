@@ -68,12 +68,15 @@ class WebSocketManager:
         self._offline_callback: Optional[Callable] = None
         self._agent_timeouts: Dict[str, int] = {}  # agent_id -> timeout seconds
         self._llm_count: int = 0
-        # BUG-B07 修复: 使用 asyncio.Lock 保护共享可变 dict 的并发读写
-        # 避免在 FastAPI 多请求并发访问时出现数据竞争
-        self._lock = asyncio.Lock()
-        # BUG-B-M4 修复: 同步方法 subscribe_to_channel / unsubscribe_from_channel
-        # 修改共享 dict/set,使用 threading.Lock 保护,避免多线程并发调用时数据竞争
-        self._sync_lock = threading.Lock()
+        # E6 修复: 单一保护机制收口——同一组共享结构（connections/channels）此前被
+        # asyncio.Lock 与 threading.Lock 两把锁分别守护（异步路径用前者、同步订阅路径
+        # 用后者），跨锁竞态下仍可能互踩。统一为一把 threading.RLock：
+        # - 同步方法 subscribe/unsubscribe 无法 await asyncio.Lock，必须用线程锁；
+        # - 异步路径的各临界区均为无 await 的快速 dict 拷贝/增删（快照后再在锁外 send），
+        #   阻塞式线程锁开销可忽略；
+        # - 选用 RLock 允许重入（disconnect 持锁调用 _remove_from_channel 等内部复用
+        #   场景天然安全），对外方法签名与语义保持不变。
+        self._lock = threading.RLock()
 
     def _track_background_task(self, task: asyncio.Task) -> asyncio.Task:
         """追踪后台任务，防止被GC回收；任务完成后自动从集合中移除"""
@@ -98,7 +101,8 @@ class WebSocketManager:
             client_id = str(uuid.uuid4())
 
         connection = WebSocketConnection(websocket, client_id, metadata)
-        async with self._lock:
+        # E6 修复: 统一 RLock；临界区内仅做 dict 写入，不含 await。
+        with self._lock:
             self.connections[client_id] = connection
 
         # per-client 并发化：懒创建该客户端的独立 VAD/AudioStream 处理器实例，
@@ -124,7 +128,7 @@ class WebSocketManager:
         BUG-B07 修复: 在锁内完成 ``self.connections`` / ``self.channels``
         的修改,避免与 ``broadcast``/``subscribe_to_channel`` 的并发竞争。
         """
-        async with self._lock:
+        with self._lock:
             connection = self.connections.pop(client_id, None)
             if connection is None:
                 return
@@ -167,7 +171,7 @@ class WebSocketManager:
         BUG-B07 修复: 在锁内读取连接并复制出引用,然后在锁外执行 await send,
         避免长时间持锁阻塞其他协程。
         """
-        async with self._lock:
+        with self._lock:
             connection = self.connections.get(client_id)
         if connection is not None:
             # isEnabledFor 门控：send_to_client 每帧调用（voice.dual_stream 热路径），
@@ -194,7 +198,7 @@ class WebSocketManager:
         BUG-B07 修复: 快照在锁内完成,确保一致视图。
         """
         # 1) 迭代前在锁内对字典进行快照,避免快照过程中字典被改
-        async with self._lock:
+        with self._lock:
             connections_snapshot = list(self.connections.items())
         disconnected: list[str] = []
 
@@ -240,7 +244,7 @@ class WebSocketManager:
         BUG-B07 修复: 快照在锁内完成,确保一致视图。
         """
         # 1) 迭代前在锁内对频道成员和连接字典分别做快照
-        async with self._lock:
+        with self._lock:
             members_snapshot = list(self.channels.get(channel, set()))
             connections_snapshot = dict(self.connections)
         disconnected: list[str] = []
@@ -264,7 +268,7 @@ class WebSocketManager:
         BUG-B-M4 修复: 使用 threading.Lock 保护对共享 self.channels /
         self.connections 的读写,避免多线程并发调用时数据竞争。
         """
-        with self._sync_lock:
+        with self._lock:
             if client_id not in self.connections:
                 return
 
@@ -282,7 +286,7 @@ class WebSocketManager:
         BUG-B-M4 修复: 使用 threading.Lock 保护对共享 self.channels /
         self.connections 的读写,避免多线程并发调用时数据竞争。
         """
-        with self._sync_lock:
+        with self._lock:
             if client_id in self.connections:
                 self.connections[client_id].unsubscribe(channel)
 
@@ -293,9 +297,9 @@ class WebSocketManager:
     def _remove_from_channel(self, channel: str, client_id: str):
         """从频道中移除客户端
 
-        BUG-B07 修复: 由调用方在事件循环线程内调用;``disconnect`` 内部
-        通过 ``async with self._lock`` 持有锁后调用本方法,确保与
-        ``broadcast_to_channel`` 的快照读不会并发。
+        BUG-B07 修复 / E6 收口: 由调用方持统一 threading.RLock 后调用
+        （``disconnect``/``unsubscribe_from_channel`` 均在锁内调用本方法），
+        确保与 ``broadcast_to_channel`` 的快照读不会并发。
         """
         if channel in self.channels:
             self.channels[channel].discard(client_id)
@@ -409,7 +413,7 @@ class WebSocketManager:
 
         now = datetime.now()
 
-        async with self._lock:
+        with self._lock:
             connections_snapshot = list(self.connections.items())
             agent_timeouts_snapshot = dict(self._agent_timeouts)
             offline_callback = self._offline_callback

@@ -1,8 +1,10 @@
 """CXFC 端点——插件注册、心跳与事件分发接口。"""
 from typing import Any, Dict
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
+
+from server.api.routers.admin import verify_admin_api_key
 
 from server.core.cxfc.models import (
     CXFCRegisterRequest,
@@ -180,11 +182,17 @@ async def refresh_plugin(plugin_id: str):
 
 
 @router.post("/cxfc/plugins/{plugin_id}/call")
-async def call_plugin_tool(plugin_id: str, request: CXFCCallToolRequest):
+async def call_plugin_tool(
+    plugin_id: str,
+    request: CXFCCallToolRequest,
+    _: bool = Depends(verify_admin_api_key),
+):
     """调用指定插件的工具
 
     通过主系统转发到插件侧的 POST /call 端点，实现工具调用。
     用于测试工具验证端到端调用链路。
+    #31（差异审查登记）: 该端点此前无任何鉴权，任意调用方可触发携合法 token
+    的插件工具转发（越权工具调用入口）。挂 verify_admin_api_key 管理密钥。
     """
     cxfc_manager = get_cxfc_manager()
     try:

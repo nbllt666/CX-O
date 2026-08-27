@@ -25,7 +25,7 @@ from tuner.core.collector import Collector
 from tuner.core.adapter_store.store import AdapterStore, AdapterNotFoundError
 from tuner.core.collector.cleaner import InvalidFeedbackError
 from tuner.core.collector.dataset import DatasetStore
-from tuner.core.trainer.qlora_trainer import QLoRATrainer, is_training_in_progress
+from tuner.core.trainer.qlora_trainer import QLoRATrainer, end_training, try_begin_training
 from tuner.core.trainer.store import TrainerJobStore
 from tuner.core.trainer.train_job import TrainJob
 from tuner.models import (
@@ -155,28 +155,39 @@ def trigger_train(req: TrainTriggerRequest, request: Request) -> TrainStatus:
         anchor_ratio=anchor_ratio,
     )
     store = _job_store(request)
-    # H2/backlog（issue 08）: 互斥预检须在 store.create 之前——旧实现先 create
-    # 再检查，已有训练进行时会遗留一个永不执行的空 idle 任务在 job store。
-    if is_training_in_progress():
+    trainer = _trainer(request)
+    # H2/backlog（issue 08 + 批E-1）: 互斥获取提前到 API 线程内并与预检同临界区完成。
+    # 旧实现是 is_training_in_progress() 与后台线程内的 try_begin_training() 分属不同
+    # 同步域，并发请求都会读到 False、都通过 409 闸门（TOCTOU）。现在直接以
+    # try_begin_training 在 _TRAIN_MUTEX 下原子执行「检查 + 登记」，成功后才 create +
+    # spawn；失败立即 409，绝不留空 idle job、也绝不进入后台线程抢锁失败路径。
+    if not try_begin_training(job.job_id):
         raise HTTPException(
             status_code=409,
             detail={"error": "training_in_progress", "reason": "已有训练任务进行中，请等待完成后再触发"},
         )
-    store.create(job)
-    # 先快照初始 idle 状态，再启动后台线程，保证返回 status 恒为 idle
-    initial_status = _to_status(job)
-    logger.info(
-        "训练触发: job_id=%s base_model=%r epochs=%d sample_ratio=%.2f anchor_ratio=%.2f dataset_size=%d",
-        job.job_id, base_model, epochs, sample_ratio, anchor_ratio, dataset_size,
-    )
+    try:
+        store.create(job)
+        # 先快照初始 idle 状态，再启动后台线程，保证返回 status 恒为 idle
+        initial_status = _to_status(job)
+        logger.info(
+            "训练触发: job_id=%s base_model=%r epochs=%d sample_ratio=%.2f anchor_ratio=%.2f dataset_size=%d",
+            job.job_id, base_model, epochs, sample_ratio, anchor_ratio, dataset_size,
+        )
 
-    # 后台线程训练：不阻塞请求
-    trainer = _trainer(request)
-    thread = threading.Thread(target=trainer.run, args=(job.job_id,), daemon=True, name=f"train-{job.job_id}")
-    thread.start()
-    logger.info("训练后台线程已启动: job_id=%s thread_name=%s", job.job_id, thread.name)
+        # 后台线程训练：不阻塞请求；owned=True 表示互斥已由本请求登记，run 只负责 finally 释放
+        thread = threading.Thread(
+            target=trainer.run, args=(job.job_id,),
+            kwargs={"owned": True}, daemon=True, name=f"train-{job.job_id}",
+        )
+        thread.start()
+        logger.info("训练后台线程已启动: job_id=%s thread_name=%s", job.job_id, thread.name)
 
-    return initial_status
+        return initial_status
+    except Exception:
+        # 已登记互斥但 create / spawn 失败：释放互斥，避免训练通道被永久锁死
+        end_training(job.job_id)
+        raise
 
 
 @router.get("/train/status", response_model=TrainStatus)

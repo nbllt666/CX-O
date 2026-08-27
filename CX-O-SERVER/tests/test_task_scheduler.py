@@ -73,6 +73,33 @@ class TestExecuteTool:
         assert ("tool2", False) in fmg.marks
 
 
+class TestOnceRetry:
+    """一次性任务失败重试：失败不置终态（保留 next_run），超过 max_retries 才终态化。"""
+
+    async def _flaky(self, sched, fmg, monkeypatch, task_id, max_retries):
+        async def fake_call(tool_name, parameters):
+            raise RuntimeError("boom")
+
+        monkeypatch.setattr("server.core.tools.tool_registry.call_tool_async", fake_call)
+        sched.max_retries = max_retries
+        task = {"id": task_id, "action": {"type": "tool", "tool_name": "x", "parameters": {}},
+                "schedule": {"type": "once"}}
+        return task
+
+    @pytest.mark.asyncio
+    async def test_failure_does_not_mark_executed_until_retries(self, sched, fmg, monkeypatch):
+        task = await self._flaky(sched, fmg, monkeypatch, "once1", max_retries=3)
+        await sched._execute_task(task)  # 第 1 次失败
+        assert not fmg.marks  # 不置终态，允许重试
+
+    @pytest.mark.asyncio
+    async def test_failure_marks_terminal_after_max_retries(self, sched, fmg, monkeypatch):
+        task = await self._flaky(sched, fmg, monkeypatch, "once2", max_retries=2)
+        for _ in range(3):  # 失败第 3 次时耗尽重试
+            await sched._execute_task(task)
+        assert ("once2", False) in fmg.marks
+
+
 class TestProcessDue:
     @pytest.mark.asyncio
     async def test_processes_all_due(self, sched, fmg):

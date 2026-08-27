@@ -44,9 +44,13 @@ class VectorizationTask:
 
 class VectorizationQueue:
     """向量化任务队列"""
-    
+
     _instance = None
     _lock = threading.Lock()
+
+    # 终态（COMPLETED/FAILED）条目保留上限：防止 _task_status 字典只进不出导致内存无界增长
+    _MAX_TERMINAL_RECORDS = 200
+    _TERMINAL_STATUSES = (TaskStatus.COMPLETED, TaskStatus.FAILED)
     
     def __new__(cls, *args, **kwargs):
         if cls._instance is None:
@@ -211,6 +215,11 @@ class VectorizationQueue:
                 # 抛异常（含回调、stats、状态更新自身抛错）若跳过 task_done，
                 # PriorityQueue.join() 未完成计数失衡，stop/shutdown 永久阻塞。
                 try:
+                    # 进入 PROCESSING 先补计数——本处理分支各终止/重试路径都会对应 -1，
+                    # 旧实现只减不加必致 processing_tasks 变负
+                    with self._stats_lock:
+                        self._stats["processing_tasks"] += 1
+
                     self._update_task_status(task.memory_id, TaskStatus.PROCESSING)
 
                     # 调用完成回调执行实际的向量化操作
@@ -260,7 +269,17 @@ class VectorizationQueue:
         logger.debug(f"Worker {threading.current_thread().name} stopped")
     
     def _update_task_status(self, memory_id: str, status: TaskStatus):
-        """更新任务状态"""
+        """更新任务状态；转入终态后按插入序从头部裁剪旧终态条目（保留最近 ~200 条）。"""
         with self._status_lock:
             if memory_id in self._task_status:
                 self._task_status[memory_id].status = status
+
+            # 终态裁剪：dict 保持插入序（旧条目在前），弹出多余的 COMPLETED/FAILED 条目；
+            # PENDING/PROCESSING 条目不参与计数，不会误删未完成任务
+            if status in self._TERMINAL_STATUSES:
+                terminal_ids = [
+                    mid for mid, t in self._task_status.items()
+                    if t.status in self._TERMINAL_STATUSES
+                ]
+                for mid in terminal_ids[: max(0, len(terminal_ids) - self._MAX_TERMINAL_RECORDS)]:
+                    del self._task_status[mid]

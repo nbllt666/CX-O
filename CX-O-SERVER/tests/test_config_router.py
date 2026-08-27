@@ -302,6 +302,21 @@ class TestYamlConfigs:
         r = c.get("/vad/config")
         assert r.json()["config"]["vad"]["mode"] == "webrtc"
 
+    def test_live_saved_value_read_back(self, client, tmp_path):
+        # PUT /config live 保存 danmaku/firewall/vad 后，GET 应读回已保存值
+        # （「已保存值叠加默认值」），而非恒返回默认。
+        c, settings = client
+        r = c.put("/config", json={"section": "live", "data": {
+            "danmaku": {"websocket": {"max_connections": 42}},
+        }})
+        assert r.status_code == 200
+        r = c.get("/danmaku/config")
+        assert r.status_code == 200
+        got = r.json()["config"]
+        # 已保存值叠加默认值：嵌套键被保存值覆盖，其余保留默认
+        assert got["websocket"]["max_connections"] == 42
+        assert got["sources"]["bilibili"]["enabled"] is True
+
 
 class TestLive:
     def test_client_status_disconnected(self, client):

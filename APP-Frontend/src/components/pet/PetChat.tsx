@@ -56,6 +56,8 @@ interface PetChatProps {
 
 /** 紧凑展示窗口：仅保留最近 N 条 */
 const MAX_DISPLAY_MESSAGES = 5;
+/** 底层保留上限：展示条数 + 流式余量，防止消息数组无界增长并被流式收尾切断 */
+const MAX_KEPT_MESSAGES = MAX_DISPLAY_MESSAGES + 3;
 
 export const PetChat = forwardRef<PetChatHandle, PetChatProps>(function PetChat(
   { driver, onSend, isLoading, isConnected, inputAccessory, onTextProgress },
@@ -75,7 +77,14 @@ export const PetChat = forwardRef<PetChatHandle, PetChatProps>(function PetChat(
   onTextProgressRef.current = onTextProgress;
 
   const addMessage = useCallback((msg: PetMessage) => {
-    setMessages((prev) => [...prev, msg]);
+    setMessages((prev) => {
+      const next = [...prev, msg];
+      // 有界裁剪：仅从头部丢弃已收尾的旧消息，保留最近 N + 流式余量条，
+      // 既阻止底层数组无界增长，又不影响正在流式的末尾 assistant 消息（updateLast 改的是末条）
+      return next.length > MAX_KEPT_MESSAGES
+        ? next.slice(next.length - MAX_KEPT_MESSAGES)
+        : next;
+    });
   }, []);
 
   const updateLastAssistantMessage = useCallback((delta: string) => {

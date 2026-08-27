@@ -583,6 +583,10 @@ class TTSStreamPlayer {
   private activeSources: AudioBufferSourceNode[] = [];
   private nextStartTime = 0;
   private isPlaying = false;
+  // 单调代际号：interrupt()/dispose() 自增。用于让在途 await decode(base64) 的结果
+  // 与 addQueue 判定失效——打断/释放后已 shift 的块不再 scheduleBuffer，且新旧
+  // processQueue 不会各自消费 pending 造成双播。
+  private generation = 0;
   private readonly onPlayingChange: (playing: boolean) => void;
   // TTS 输出采样率兜底值：默认 24000Hz；若后端裸 PCM 采样率不同需调整
   private readonly fallbackSampleRate = 24000;
@@ -698,10 +702,15 @@ class TTSStreamPlayer {
   }
 
   private async processQueue(): Promise<void> {
+    // 记录本队列的代际号：decode 是异步耗时操作，期间 interrupt()/dispose() 会自增
+    // generation。decode 完成后校验代际，一旦不匹配说明已被打断/释放，丢弃结果不再
+    // scheduleBuffer（避免卸载后重建 AudioContext 泄漏，也避免与新队列双双消费 pending）。
+    const gen = this.generation;
     while (this.pending.length > 0) {
       const item = this.pending.shift();
       if (!item) break;
       const buffer = await this.decode(item.base64);
+      if (gen !== this.generation) return;
       if (buffer) {
         this.scheduleBuffer(buffer);
       }
@@ -721,6 +730,8 @@ class TTSStreamPlayer {
 
   /** 全双工打断：立即停止所有播放、清空待处理队列 */
   interrupt(): void {
+    // 使在途 decode 结果与新生成的队列全部失效
+    this.generation += 1;
     for (const s of this.activeSources) {
       try {
         s.stop();

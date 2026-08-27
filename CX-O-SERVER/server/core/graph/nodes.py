@@ -21,6 +21,17 @@ class NodeManager:
         self.db = db
         self.config = config
 
+    @staticmethod
+    def _resolve_node_name(node: "GraphNode") -> str:
+        """解析节点名称：优先 properties['name']（实体名语义），无则空串。
+
+        #A（差异审查登记深化 #5）：nodes.name 列已存在且建表/迁移已补，但
+        create/update/batch_create 三条写 SQL 均不写该列 → 死列。此处统一落值，
+        保持列与 properties 内实体名一致。
+        """
+        name = node.properties.get("name") if node.properties else None
+        return name if isinstance(name, str) else ""
+
     def create(self, node_data: NodeCreate, agent_id: str = "default") -> GraphNode:
         node_agent_id = node_data.agent_id or agent_id
         node = GraphNode.create(
@@ -31,14 +42,15 @@ class NodeManager:
         )
 
         query = """
-            INSERT INTO nodes (id, type, properties, text_content, vector_id, created_at, updated_at, agent_id)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            INSERT INTO nodes (id, type, name, properties, text_content, vector_id, created_at, updated_at, agent_id)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
         """
         self.db.execute_modify(
             query,
             (
                 node.id,
                 node.type,
+                self._resolve_node_name(node),
                 json.dumps(node.properties),
                 node.text_content,
                 node.vector_id,
@@ -75,13 +87,14 @@ class NodeManager:
 
         query = """
             UPDATE nodes
-            SET type = ?, properties = ?, text_content = ?, updated_at = ?
+            SET type = ?, name = ?, properties = ?, text_content = ?, updated_at = ?
             WHERE id = ? AND agent_id = ?
         """
         self.db.execute_modify(
             query,
             (
                 node.type,
+                self._resolve_node_name(node),
                 json.dumps(node.properties),
                 node.text_content,
                 node.updated_at.isoformat(),
@@ -145,12 +158,13 @@ class NodeManager:
             operations.append(
                 (
                     """
-                    INSERT INTO nodes (id, type, properties, text_content, vector_id, created_at, updated_at, agent_id)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                    INSERT INTO nodes (id, type, name, properties, text_content, vector_id, created_at, updated_at, agent_id)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         node.id,
                         node.type,
+                        self._resolve_node_name(node),
                         json.dumps(node.properties),
                         node.text_content,
                         node.vector_id,

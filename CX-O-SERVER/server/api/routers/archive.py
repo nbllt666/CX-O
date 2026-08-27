@@ -5,10 +5,11 @@
 
 from typing import List, Optional
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
 from server.core.logging_config import get_contextual_logger
+from server.api.routers.admin import verify_admin_api_key
 
 router = APIRouter()
 logger = get_contextual_logger(__name__)
@@ -216,7 +217,7 @@ async def get_duplicate_groups():
 
 
 @router.post("/archive/of-archives")
-async def archive_of_archives(request: ArchiveOfArchivesRequest):
+async def archive_of_archives(request: ArchiveOfArchivesRequest, _: bool = Depends(verify_admin_api_key)):
     """归档的归档 - 对已有归档进行二次压缩"""
     from server.dependencies import get_memory_manager
 
@@ -289,7 +290,7 @@ async def get_archive_levels():
 
 
 @router.post("/archive/threshold")
-async def set_dedup_threshold(request: SetDedupThresholdRequest):
+async def set_dedup_threshold(request: SetDedupThresholdRequest, _: bool = Depends(verify_admin_api_key)):
     """设置去重相似度阈值"""
     from server.dependencies import get_memory_manager
 
@@ -306,6 +307,10 @@ async def set_dedup_threshold(request: SetDedupThresholdRequest):
         settings = get_settings()
 
         settings.config.memory.dedup_threshold = request.threshold
+
+        # 持久化到磁盘：memory.dedup_threshold 为既有配置规则字段，
+        # 复用 settings.save_config() 写回 config.json，避免仅改内存不落盘。
+        settings.save_config()
 
         return {
             "status": "success",
@@ -338,7 +343,9 @@ async def get_dedup_threshold():
 
 @router.post("/archive/auto-process")
 async def auto_archive_process(
-    min_age_days: int = 30, target_level: int = 1, auto_merge: bool = True
+    min_age_days: int = 30,
+    target_level: int = 1,
+    auto_merge: bool = True,
 ):
     """自动归档处理 - 归档旧记忆并合并重复项"""
     from datetime import datetime, timedelta, timezone

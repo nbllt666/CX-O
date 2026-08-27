@@ -14,7 +14,11 @@ from ._common import (
     _DATA_DIR,
     _PENDING_DIR,
     _SNAPSHOT_DIR,
+    CLUSTER_SERVICE_ERROR,
+    ClusterAuthError,
     ClusterDisabledError as _ClusterDisabled,
+    compute_hmac,
+    hmac_matches,
 )
 from .consensus import ConsensusGuard
 from .discovery import PeerDiscovery
@@ -26,6 +30,9 @@ from .transport import ClusterTransport
 from .units import UNIT_REGISTRY
 
 log = logging.getLogger(__name__)
+
+# 接收端合法 op 集合（与 transport 发送侧五 op 一一对应）
+PEER_OPS = ("handshake", "heartbeat", "gossip", "sync_event", "leave")
 
 
 def _iso(t=None) -> str:
@@ -62,6 +69,12 @@ class SentinelCluster:
         # E5: 后台接管任务集合——create_task 后跟踪引用并在 shutdown 取消，
         # 避免接管协程在集群停止后仍在 transport/consensus 上做 I/O。
         self._bg_tasks: set = set()
+        # F1 接收端：对端节点登记表 {node_id: {node_name, role, endpoint, last_seen, left}}
+        self._peers_registry: dict[str, dict] = {}
+        # F5 周期 flush 间隔（秒）
+        self._flush_interval_sec = (
+            float(getattr(config, "pending_flush_interval_sec", 30) or 30) if config else 30.0
+        )
 
     # ---- 事件（供上层 Aware 订阅） ----
     def set_event_callback(self, cb):
@@ -93,6 +106,41 @@ class SentinelCluster:
         if cfg is None or not getattr(cfg, "enabled", False):
             raise _ClusterDisabled("SentinelCluster not enabled")
 
+        self._wire(cfg)
+
+        await self.heartbeat.start()
+        await self.replicator.start()
+        # F5: 挂周期 flush 后台任务（发送失败队列防无界增长），纳入 _bg_tasks 统一取消管理
+        self._spawn_bg(self._flush_loop(), "cluster-pending-flush")
+        self._started = True
+        self._epoch = self.failover.epoch
+        self.role = self.failover.role
+        log.info("SentinelCluster started node=%s role=%s", self._node_id(), self.role)
+
+    def _spawn_bg(self, coro, name: str):
+        """创建后台任务并登记进 _bg_tasks，shutdown 时统一取消；无事件循环时静默跳过。"""
+        try:
+            task = asyncio.get_running_loop().create_task(coro, name=name)
+            self._bg_tasks.add(task)
+            task.add_done_callback(self._bg_tasks.discard)
+        except RuntimeError:
+            pass
+
+    async def _flush_loop(self):
+        """F5: 周期重试待发队列，避免发送失败条目在磁盘上无限堆积。"""
+        interval = max(5.0, float(self._flush_interval_sec))
+        while self._started:
+            await asyncio.sleep(interval)
+            transport = self.transport
+            if transport is None or not self._started:
+                return
+            try:
+                await transport.flush_pending()
+            except Exception:  # noqa: BLE001 - flush 失败不中断循环
+                log.exception("pending queue flush failed")
+
+    def _wire(self, cfg):
+        """同步装配全部集群组件（start 的构造部分；单测可独立调用以组装运行时）。"""
         secret = getattr(cfg, "cluster_secret", "") or ""
         node_id = self._build_identity(cfg)
         transport = ClusterTransport(
@@ -143,6 +191,16 @@ class SentinelCluster:
 
         failover.set_state_source(_state_source)
 
+        # F3: 注入 vote_source——读取本地心跳观测（各 peer 健康状态快照），
+        # 替换 ConsensusGuard 默认的"全体赞成"。计票口径与 PeerHeartbeat.confirm_dead 一致：
+        # 本节点自身观测一票 + 观测 healthy 的对端各一票。
+        def _local_vote_source() -> int:
+            status = heartbeat.node_status()
+            healthy = sum(1 for v in status.values() if v.get("state") == "healthy")
+            return 1 + healthy
+
+        consensus.set_vote_source(_local_vote_source)
+
         self.transport = transport
         self.discovery = discovery
         self.consensus = consensus
@@ -154,25 +212,9 @@ class SentinelCluster:
         def _schedule_takeover(dead_node_id):
             if not self._started:
                 return
-            try:
-                task = asyncio.get_running_loop().create_task(
-                    failover.maybe_takeover(dead_node_id),
-                    name="cluster-takeover",
-                )
-                # E5: 登记后台任务，shutdown 时统一取消，防泄漏
-                self._bg_tasks.add(task)
-                task.add_done_callback(self._bg_tasks.discard)
-            except RuntimeError:
-                pass
+            self._spawn_bg(failover.maybe_takeover(dead_node_id), "cluster-takeover")
 
         heartbeat.set_on_dead(_schedule_takeover)
-
-        await heartbeat.start()
-        await replicator.start()
-        self._started = True
-        self._epoch = failover.epoch
-        self.role = failover.role
-        log.info("SentinelCluster started node=%s role=%s", self._node_id(), self.role)
 
     def _build_identity(self, cfg) -> str:
         ident = NodeIdentity()
@@ -255,6 +297,170 @@ class SentinelCluster:
             status["units"] = self.replicator.sync_status()
         return status
 
+    # ---- F1: 对等接收端（peer_router /cluster/{op} 分派落点） ----
+
+    def register_peer(self, node_id: str, info: dict = None) -> dict:
+        """登记对端节点（handshake/heartbeat 入站时刷新），并维护 endpoint↔node_id 别名。"""
+        node_id = str(node_id or "")
+        if not node_id:
+            return {}
+        info = info or {}
+        entry = self._peers_registry.setdefault(node_id, {"registered_at": _iso()})
+        for k in ("node_name", "role", "endpoint"):
+            v = info.get(k)
+            if v:
+                entry[k] = str(v)
+        entry["left"] = False
+        entry["last_seen"] = _iso()
+        # 别名映射：endpoint → node_id，供 gossip/heartbeat 入站跨标识解析
+        ep = entry.get("endpoint", "")
+        if ep:
+            self._peers_registry.setdefault(f"__alias__{ep}", {"node_id": node_id})
+        return entry
+
+    def _resolve_node_keys(self, name: str) -> list[str]:
+        """把入站标识解析为候选本地观测 key：本身 + registry 内 endpoint↔node_id 互查。"""
+        name = str(name or "")
+        keys = [name] if name else []
+        entry = self._peers_registry.get(name)
+        if entry:
+            for v in (entry.get("endpoint"), entry.get("node_id")):
+                if v and v not in keys:
+                    keys.append(str(v))
+        alias = self._peers_registry.get(f"__alias__{name}")
+        if alias and alias.get("node_id") and alias["node_id"] not in keys:
+            keys.append(str(alias["node_id"]))
+        return keys
+
+    async def handle_peer_op(self, op: str, body: dict) -> tuple[int, dict]:
+        """对端 op 统一入口：鉴权 + 分派。返回 (http_status, 响应体)。
+
+        响应统一 {ok: true/false, ...}；鉴权与发送侧同一套共享密钥 HMAC 约定
+        （transport.compute_hmac(secret, node_id, request_id, str(seq), op)）。
+        """
+        op = str(op or "")
+        body = body if isinstance(body, dict) else {}
+        if op not in PEER_OPS:
+            return 404, {
+                "ok": False,
+                "error_code": CLUSTER_SERVICE_ERROR,
+                "message": f"unknown op: {op}",
+            }
+        secret = getattr(self._config, "cluster_secret", "") or ""
+        node_id = str(body.get("node_id") or "")
+        request_id = str(body.get("request_id") or "")
+        provided = str(body.get("secret_hmac") or "")
+        try:
+            seq = int(body.get("seq") or 0)
+        except (TypeError, ValueError):
+            seq = 0
+        payload = body.get("payload") if isinstance(body.get("payload"), dict) else {}
+
+        if not provided:
+            return 401, {
+                "ok": False,
+                "error_code": "CLUSTER_AUTH_FAILED",
+                "message": "missing secret_hmac",
+            }
+        expected_parts = (node_id, request_id, str(seq), op)
+        if not node_id or not hmac_matches(secret, provided, *expected_parts):
+            return 403, {
+                "ok": False,
+                "error_code": "CLUSTER_AUTH_FAILED",
+                "message": "cluster_secret mismatch",
+            }
+
+        handler = {
+            "handshake": self._op_handshake,
+            "heartbeat": self._op_heartbeat,
+            "gossip": self._op_gossip,
+            "sync_event": self._op_sync_event,
+            "leave": self._op_leave,
+        }[op]
+        try:
+            data = await handler(payload=payload, node_id=node_id, seq=seq)
+        except ClusterAuthError:
+            # op 内层密钥证明失败（如 handshake proof）与外层鉴权同口径：403
+            return 403, {
+                "ok": False,
+                "error_code": "CLUSTER_AUTH_FAILED",
+                "message": "peer secret proof mismatch",
+            }
+        except Exception as e:  # noqa: BLE001 - 分派异常收敛为服务错误响应
+            log.exception("handle_peer_op failed op=%s from=%s", op, node_id)
+            return 500, {"ok": False, "error_code": CLUSTER_SERVICE_ERROR, "message": str(e)}
+        return 200, {"ok": True, **(data or {})}
+
+    async def _op_handshake(self, payload: dict, node_id: str, seq: int = 0) -> dict:
+        """handshake：验证对端密钥证明 → 登记对端 → 回应己方身份（含自身密钥证明）。"""
+        secret = getattr(self._config, "cluster_secret", "") or ""
+        proof = str(payload.get("secret_hmac") or "")
+        if not hmac_matches(secret, proof, node_id, "handshake", node_id):
+            raise ClusterAuthError()
+        entry = self.register_peer(node_id, payload)
+        log.info("[peer] handshake registered node=%s endpoint=%s", node_id, entry.get("endpoint"))
+        ident = self.identity
+        my_id = self._node_id()
+        return {
+            "node_id": my_id,
+            "epoch": self._epoch,
+            "role": self.role,
+            "payload": {
+                "node_name": getattr(ident, "node_name", "") if ident else "",
+                "role": self.role,
+                "endpoint": getattr(ident, "endpoint", "") if ident else "",
+                "secret_hmac": compute_hmac(secret, my_id, "handshake", my_id),
+            },
+        }
+
+    async def _op_heartbeat(self, payload: dict, node_id: str, seq: int = 0) -> dict:
+        """heartbeat：更新对端存活状态（复用 miss 追踪数据结构）。"""
+        st = {}
+        if self.heartbeat is not None:
+            st = self.heartbeat.record_inbound_heartbeat(node_id, payload)
+        self.register_peer(node_id, {"role": payload.get("role")})
+        return {"observed_state": st.get("state", "healthy"), "node_id": self._node_id()}
+
+    async def _op_gossip(self, payload: dict, node_id: str, seq: int = 0) -> dict:
+        """gossip：根据本地 miss 记录如实回答关于 about 的死亡意见。
+
+        死亡判据：本地已确认死亡，或连续 miss 达阈值；跨标识经 registry 别名互查。
+        """
+        about = str(payload.get("about") or "")
+        dead = False
+        if about:
+            keys = self._resolve_node_keys(about)
+            if self.heartbeat is not None:
+                dead = any(self.heartbeat.observation_dead(k) for k in keys)
+        return {"dead": dead, "about": about}
+
+    async def _op_sync_event(self, payload: dict, node_id: str, seq: int = 0) -> dict:
+        """sync_event：交 replicator 幂等应用对端事件（seq 去重），成功回 ack 序号。"""
+        unit = payload.get("unit")
+        event_seq = payload.get("seq", seq)
+        if not unit or event_seq is None:
+            return {"acked_seq": 0, "applied": False, "reason": "invalid_event"}
+        applied = False
+        if self.replicator is not None:
+            applied = await self.replicator.apply_event({
+                "unit": str(unit),
+                "seq": int(event_seq),
+                "op": payload.get("op"),
+                "payload": payload.get("data") or {},
+            })
+        return {"acked_seq": int(event_seq), "applied": bool(applied)}
+
+    async def _op_leave(self, payload: dict, node_id: str, seq: int = 0) -> dict:
+        """leave：标记节点主动离开并触发清理（清嫌疑跟踪 + 广播 node_left）。"""
+        who = str(payload.get("node_id") or node_id)
+        if self.heartbeat is not None:
+            self.heartbeat.handle_leave(who)
+        entry = self.register_peer(who) or {}
+        entry["left"] = True
+        self.emit_event("node_left", node_id=who, graceful=True)
+        log.info("[peer] leave received node=%s", who)
+        return {"left": who}
+
     # ---- 管理桥写操作（ClusterAdminBridge / cluster router 委托） ----
 
     async def maybe_takeover(self, dead_node_id: str) -> dict:
@@ -274,13 +480,8 @@ class SentinelCluster:
         if not from_node:
             return {"status": "error", "error": "missing from_node"}
         self.emit_event("failover_started", from_node=from_node)
-        # 演练路径：构造后台任务执行接管，避免阻塞请求
-        try:
-            asyncio.get_running_loop().create_task(
-                self.maybe_takeover(from_node), name="cluster-manual-failover"
-            )
-        except RuntimeError:
-            pass
+        # 演练路径：后台任务执行接管，避免阻塞请求（F6: 复用 _spawn_bg 登记进 _bg_tasks）
+        self._spawn_bg(self.maybe_takeover(from_node), "cluster-manual-failover")
         return {"status": "ok", "result": "failover_triggered"}
 
     def set_role(self, params: dict) -> dict:

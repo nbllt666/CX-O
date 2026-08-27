@@ -40,6 +40,7 @@ MultimodalPipeline 接入点:
 @version 1.1.0  # CX-O 迁移版
 """
 
+import asyncio
 import json
 import logging
 import os
@@ -879,7 +880,8 @@ class DistillationService:
         elif current_state == "S_STORAGE_DECISION":
             # D1_LOCATION / D6_REJECT 决策
             # 根据 preread_summary 推断 quality_score
-            quality_score = self._estimate_quality_score(session)
+            # F2 修复：估算含 LLM HTTP 评分，卸载到 IO 线程避免阻塞事件循环
+            quality_score = await asyncio.to_thread(self._estimate_quality_score, session)
             session["quality_score"] = quality_score
             reject_threshold = self._rubric.get("quality_reject_threshold", 0.3)
             if quality_score < reject_threshold:
@@ -969,12 +971,15 @@ class DistillationService:
             raise ValueError("会话已终结（409）")
 
         # 调用 DecisionCore 决策（best-effort，失败时降级到内置规则）
+        # F2 修复：估算（内含 LLM HTTP 评分）与决策（内含 D1/D6 LLM 调用）均为同步
+        # 实现，async 方法内直调会阻塞事件循环，统一卸载到 IO 线程执行。
         quality_score = session.get("quality_score")
         if quality_score is None:
-            quality_score = self._estimate_quality_score(session)
+            quality_score = await asyncio.to_thread(self._estimate_quality_score, session)
             session["quality_score"] = quality_score
 
-        location, memory_id, metadata, reason = self._invoke_decision_core(
+        location, memory_id, metadata, reason = await asyncio.to_thread(
+            self._invoke_decision_core,
             session=session,
             quality_score=quality_score,
             override_decision=override_decision,

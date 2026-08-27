@@ -1083,7 +1083,9 @@ def register_audio_handlers(
                     # per-client 并发化：使用当前客户端的独立打断模块实例
                     interrupt_module = get_asr_interrupt_module(client_id)
                     if interrupt_module.enabled:
-                        await interrupt_module.on_asr_result(asr_text)
+                        # RECOGNIZE 为一次完整话语（final），显式传 is_final=True，
+                        # 保持写回真实上下文；与 live 流式 partial 的 is_final 门控去重兼容。
+                        await interrupt_module.on_asr_result(asr_text, is_final=True)
                 except Exception as e:
                     logger.error(f"ASR interrupt check error: {e}")
         except Exception as e:
@@ -1274,6 +1276,15 @@ def register_audio_handlers(
                 await set_tts_playing(client_id, False)
             except Exception as reset_error:
                 logger.error(f"重置 TTS 播放状态失败：{reset_error}")
+
+            # 兼容路径：temp_file 创建后、进入内层 try/finally 前（如 set_tts_playing）
+            # 抛错会跳到这里；此处兜底清理，避免临时参考音频文件泄漏。
+            if temp_file:
+                try:
+                    os.unlink(temp_file)
+                except Exception as cleanup_error:
+                    logger.warning(f"清理临时文件失败：{cleanup_error}")
+
             await manager.send_message(client_id, create_error(
                 request_id=request_id,
                 action=TTSActions.SYNTHESIZE_STREAM,

@@ -294,6 +294,31 @@ class TestStreaming:
         assert s._ws_recv_queue.empty()
         assert s._ws_final_received is False
 
+    @pytest.mark.asyncio
+    async def test_recv_loop_exception_cleans_state(self):
+        # 第六轮 C1-1：接收循环被服务端断开/超时异常退出时，finally 必须
+        # 排空 recv_queue 并复位 final_received（与 send_audio_chunk 发送失败清理一致），
+        # 否则重连复用同一队列会读到旧残留结果、final 判定被跳过。
+        s = ASRService(mode="remote")
+        st = s._stream_accessor("c1")
+        st.recv_queue.put_nowait("stale-1")
+        st.recv_queue.put_nowait("stale-2")
+        st.final_received = True
+
+        class _BrokenWS:
+            def __aiter__(self):
+                async def _gen():
+                    yield "msg1"
+                    raise ConnectionError("server closed")
+                return _gen()
+
+        st.ws = _BrokenWS()
+
+        await s._ws_recv_loop(st)
+        assert st.ws is None
+        assert st.recv_queue.empty()       # 队列已排空（含异常前收到的 msg1）
+        assert st.final_received is False  # final 标记已复位
+
 
 # ================================================================ _run_inference
 class TestRunInference:

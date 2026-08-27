@@ -41,6 +41,9 @@ def _mem(mid, score=0.5, permanent=False, content="x", session_id=None):
         "permanent": permanent,
         "session_id": session_id,
         "type": "long_term",
+        # 差异修复：_get_recent_memories 按 tags 过滤会话（真实记忆把会话 id 记于
+        # tags），旧 fake 只给 session_id 无 tags → test_filters_by_session_id 恒空。
+        "tags": [session_id] if session_id else [],
     }
 
 

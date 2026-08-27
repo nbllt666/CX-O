@@ -138,6 +138,17 @@ class TestCache:
         second = _analyze(analyzer, "开心")
         assert first is second or first == second
 
+    def test_cache_bounded_lru(self, analyzer):
+        # 超过上限按最久未访问淘汰，避免无界增长
+        analyzer._cache_max_size = 2
+        _analyze(analyzer, "开心")
+        _analyze(analyzer, "难过")
+        _analyze(analyzer, "非常开心")
+        assert len(analyzer._cache) == 2
+        assert "开心" not in analyzer._cache  # 最早写入的被淘汰
+        assert "难过" in analyzer._cache
+        assert "非常开心" in analyzer._cache
+
 
 class TestModuleFunctions:
     def test_get_emotion_for_decay_module_func(self):

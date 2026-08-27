@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import httpx
 import json
 import logging
 import os
@@ -370,7 +371,17 @@ class ASRService:
             response.raise_for_status()
             return response.json()
 
-        return await retry_with_backoff(_make_request, max_retries=3, base_delay=1.0, max_delay=30.0, service_name="ASR")
+        try:
+            return await retry_with_backoff(_make_request, max_retries=3, base_delay=1.0, max_delay=30.0, service_name="ASR")
+        except httpx.HTTPStatusError as exc:
+            # 与 _recognize_remote 契约对齐：HTTP 错误降级为「空文本 + error」dict，
+            # 不向调用方抛裸异常
+            logger.warning("ASR base64 remote HTTP 错误: %s", exc)
+            return {"text": "", "error": f"ASR remote error: HTTP {exc.response.status_code}"}
+        except httpx.HTTPError as exc:
+            # 连接失败/超时等网络错误重试耗尽后同样降级，维持统一契约
+            logger.warning("ASR base64 remote 请求重试后仍失败: %s", exc)
+            return {"text": "", "error": f"ASR remote error after retries: {exc}"}
 
     def _process_audio(self, file_io: BytesIO) -> tuple:
         try:
@@ -505,6 +516,15 @@ class ASRService:
             logger.error(f"[ASR-WS] Recv loop error: {e}")
         finally:
             st.ws = None
+            # 与 send_audio_chunk 发送失败清理路径保持一致：排空 recv_queue 并复位
+            # final_received。否则重连复用同一队列会读到旧连接残留结果，且
+            # final_received 保持 True 会跳过 final 状态判定，导致下一轮结果误判。
+            while not st.recv_queue.empty():
+                try:
+                    st.recv_queue.get_nowait()
+                except asyncio.QueueEmpty:  # pragma: no cover - 并发清空竞态兜底
+                    break
+            st.final_received = False
             logger.info(f"[ASR-WS] Recv loop ended (total {_n} msgs), ws cleared")
 
     async def send_audio_chunk(self, audio_data: bytes, is_last: bool = False,

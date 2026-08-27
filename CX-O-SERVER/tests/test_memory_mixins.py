@@ -321,3 +321,30 @@ class TestVectorIntegrationMixin:
     def test_enable_vector_search_unsupported_backend(self, mgr):
         mgr.enable_vector_search(vector_backend="nope")
         assert mgr._vector_store is None
+
+
+# ================================================================ 连接池重用 / 超时重建
+class TestConnectionPool:
+    def test_get_connection_returns_usable(self, mgr):
+        conn = mgr._get_connection()
+        assert conn.cursor().execute("SELECT 1") is not None
+
+    def test_get_connection_rebuild_after_idle_and_high_use(self, mgr):
+        """use_count>100 且空闲>300s 后 _get_connection 仍能返回可用连接（不二次 del KeyError）。"""
+        import threading
+        import time
+
+        thread_id = threading.get_ident()
+        first = mgr._get_connection()
+        pool_entry = mgr._connection_pool.get(thread_id)
+        assert isinstance(pool_entry, dict)
+
+        # 模拟长时间空闲 + 高频复用 → 触发重建分支（原实现会二次 del 抛 KeyError）
+        mgr._connection_pool[thread_id]["last_used"] = time.time() - 400
+        mgr._connection_pool[thread_id]["use_count"] = 101
+
+        rebuilt = mgr._get_connection()
+        assert rebuilt.cursor().execute("SELECT 1") is not None  # 新连接可用
+        # 重建后 use_count 重置，连接来自重建（新对象）
+        assert mgr._connection_pool[thread_id]["use_count"] == 0
+        assert rebuilt is not first

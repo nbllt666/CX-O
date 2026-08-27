@@ -8,10 +8,13 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import time
 import uuid
 
 from ._common import ClusterError
+
+log = logging.getLogger(__name__)
 
 
 def _iso(t=None) -> str:
@@ -48,6 +51,7 @@ class PeerHeartbeat:
         self._dead: set[str] = set()
         self._peer_state: dict[str, dict] = {}
         self._on_dead: callable = None
+        self.last_confirm_report: dict = {}  # 最近一次 confirm_dead 的计票报告（含弃权名单）
         self._task: asyncio.Task | None = None
         self._running = False
 
@@ -155,22 +159,42 @@ class PeerHeartbeat:
         return node_id in self._dead
 
     async def confirm_dead(self, node_id: str) -> bool:
-        """多数派确认：本节点观测 + 其他 peer gossip 确认，>= 多数派才返回 True。"""
+        """多数派确认：本节点观测 + 其他 peer 真实意见（gossip 应答）构成多数派判定。
+
+        - 每个 peer 返回的是对端对自己本地 miss 记录的真实判断 {"dead": bool}；
+        - 网络失败 / 无应答的 peer 视为弃权（不投赞成票），计入 last_confirm_report["abstained"]；
+        - 弃权不改变多数派分母（total = peers 数 + 本节点），与既有语义一致。
+        """
         if node_id in self._dead:
             # 幂等短路：同节点死亡只触发一次接管，不再重复 confirm / 触发 on_dead 回调。
             return False
         peers = [p for p in self._peers() if p != node_id]
         others_agree = 0
+        abstained: list[str] = []
         for endpoint in peers:
             try:
-                if await self._ask_gossip(endpoint, node_id):
-                    others_agree += 1
-            except Exception:  # noqa: BLE001
-                continue
+                opinion = await self._ask_gossip(endpoint, node_id)
+            except Exception:  # noqa: BLE001 - 问询异常视为弃权
+                opinion = None
+            if opinion is None:
+                abstained.append(endpoint)
+            elif opinion:
+                others_agree += 1
         total = len(self._peers()) + 1          # 含本节点
         majority = total // 2 + 1
         agreements = 1 + others_agree           # 本节点自身观测也算一票
         result = agreements >= majority
+        self.last_confirm_report = {
+            "node_id": node_id,
+            "agreements": agreements,
+            "majority": majority,
+            "agree_peers": others_agree,
+            "abstained": list(abstained),   # 网络失败弃权的 peer，报告中说明
+        }
+        log.info(
+            "gossip 死亡确认 node=%s agree=%d/%d（含自身1票）多数=%d 弃权=%s → %s",
+            node_id, agreements, total, majority, abstained or "无", result,
+        )
         if result:
             self._dead.add(node_id)
             self._peer_state[node_id] = {
@@ -185,21 +209,55 @@ class PeerHeartbeat:
                     pass
         return result
 
-    async def _ask_gossip(self, peer_endpoint: str, about: str) -> bool:
+    async def _ask_gossip(self, peer_endpoint: str, about: str) -> bool | None:
+        """向对端询问关于 about 的真实死亡意见。
+
+        返回 True/False 为对端实际应答；None 表示网络失败/无应答（弃权）。
+        """
         if self._gossip_fn:
             return bool(self._gossip_fn(peer_endpoint, about))
         if not self._transport:
             return True
         payload = {"ask": "dead", "about": about}
-        try:
-            return bool(
-                await self._transport.send(
-                    peer_endpoint, "gossip", self._node_id, uuid.uuid4().hex,
-                    seq=0, epoch=self._epoch, payload=payload,
-                )
-            )
-        except ClusterError:
+        reply = await self._transport.send_with_reply(
+            peer_endpoint, "gossip", self._node_id, uuid.uuid4().hex,
+            seq=0, epoch=self._epoch, payload=payload,
+        )
+        if not isinstance(reply, dict):
+            return None  # 网络失败 / 服务错误：弃权
+        return bool(reply.get("dead"))
+
+    # ---- 接收端：处理对端入站 op ----
+    def record_inbound_heartbeat(self, node_id: str, payload: dict) -> dict:
+        """接收 heartbeat op：登记来自 node_id 的入站心跳，重置本地 miss 计数。"""
+        node_id = str(node_id or "")
+        self._miss.pop(node_id, None)
+        st = {
+            "state": "healthy",
+            "last_heartbeat": _iso(),
+            "role": payload.get("role"),
+            "epoch": payload.get("epoch"),
+            "last_sync_seq": payload.get("last_sync_seq"),
+            "state_version": payload.get("state_version"),
+        }
+        self._peer_state[node_id] = st
+        return st
+
+    def handle_leave(self, node_id: str) -> None:
+        """接收 leave op：标记节点主动离开并清理其嫌疑/死亡跟踪状态。"""
+        node_id = str(node_id or "")
+        self._miss.pop(node_id, None)
+        self._suspect.discard(node_id)
+        self._peer_state[node_id] = {"state": "left", "last_heartbeat": None}
+
+    def observation_dead(self, name: str) -> bool:
+        """本地真实观测判定：已确认死亡，或连续 miss 达阈值即视为本地判死。"""
+        name = str(name or "")
+        if not name:
             return False
+        if name in self._dead:
+            return True
+        return self._miss.get(name, 0) >= self._miss_threshold
 
     def node_status(self) -> dict:
         """{标识: {state, last_heartbeat}}，供 topology 使用。"""

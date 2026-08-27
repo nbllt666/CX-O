@@ -7,7 +7,8 @@ from pathlib import Path
 from pydantic import BaseModel
 
 from server.core.logging_config import get_contextual_logger
-from server.config import get_settings
+from server.config import get_settings, atomic_write_json
+from server.core.utils import deep_merge
 from server.api.routers.admin import verify_admin_api_key
 from server.core.websocket import get_websocket_manager
 
@@ -66,11 +67,9 @@ def _get_services_config() -> Dict[str, Any]:
 
 
 def _save_services_config(config_data: Dict[str, Any]) -> None:
-    """保存服务配置到 config/settings.json"""
+    """保存服务配置到 config/settings.json（原子写，避免半写损坏）"""
     config_file = _PROJECT_ROOT / "config" / "settings.json"
-    config_file.parent.mkdir(parents=True, exist_ok=True)
-    with open(config_file, "w", encoding="utf-8") as f:
-        json.dump(config_data, f, indent=2, ensure_ascii=False)
+    atomic_write_json(str(config_file), config_data)
 
 
 def _get_default_sensevoice_config() -> Dict[str, Any]:
@@ -117,8 +116,8 @@ async def get_unified_config():
         "vector_size": settings.config.memory.weaviate.vector_size,
         "weaviate_host": settings.config.memory.weaviate.host,
         "weaviate_port": settings.config.memory.weaviate.port,
-        "db_path": "data/chroma_db",
-        "collection_name": "memory_vectors",
+        # #33（差异审查登记）: 已移除陈旧 chroma 字面量（data/chroma_db /
+        # memory_vectors）——真实后端为 weaviate，旧值会误导前端/管理端。
         "embedding_provider": settings.config.memory.embedding_provider,
         "embedding_model": settings.config.memory.embedding_model,
         "embedding_api_base": settings.config.memory.embedding_api_base,
@@ -216,9 +215,7 @@ async def update_unified_config(request: Request, _: bool = Depends(verify_admin
                     tts_config[key] = section_data[key]
 
             try:
-                config_file.parent.mkdir(parents=True, exist_ok=True)
-                with open(config_file, "w", encoding="utf-8") as f:
-                    json.dump(config_data, f, indent=2, ensure_ascii=False)
+                atomic_write_json(str(config_file), config_data)
             except Exception as e:
                 logger.warning(f"保存音频配置到文件失败: {e}")
 
@@ -405,8 +402,11 @@ async def get_sensevoice_streaming_config():
 
 
 @router.post("/config/sensevoice-streaming")
-async def update_sensevoice_streaming_config(request: SenseVoiceStreamingConfigRequest):
-    """更新 SenseVoice Streaming 配置"""
+async def update_sensevoice_streaming_config(
+    request: SenseVoiceStreamingConfigRequest,
+    _: bool = Depends(verify_admin_api_key),
+):
+    """更新 SenseVoice Streaming 配置（需管理员鉴权）"""
     try:
         data = request.model_dump(exclude_none=True)
         services = _get_services_config()
@@ -429,12 +429,22 @@ async def update_sensevoice_streaming_config(request: SenseVoiceStreamingConfigR
 
 
 def _load_yaml_config(filename: str) -> Dict[str, Any]:
-    """从 UnifiedConfig 读取对应节（收敛自 legacy config/*.yaml）。
+    """从已保存的 config/settings.json 读取对应 live 节（收敛自 legacy config/*.yaml）。
 
-    UnifiedConfig 当前无 danmaku/firewall/firewall_v3/vad 专属 Pydantic 节，
-    故统一返回空，由调用方回退到内置默认配置；不再直接读取 config/*.yaml。
-    后续 s0201 补全省级契约后，可在此按 filename 映射回 UnifiedConfig 字段。
+    返回该节已保存的原始 dict；从未保存过则返回 {}，由调用方深合并到内置默认之上
+    （「已保存值叠加默认值」，而非恒返回默认）。文件名映射到 services 键：
+    ``danmaku.yaml -> services.danmaku``、``firewall.yaml -> services.firewall`` 等。
     """
+    key = filename.rsplit(".", 1)[0]  # "danmaku.yaml" -> "danmaku"
+    try:
+        saved_file = _PROJECT_ROOT / "config" / "settings.json"
+        if saved_file.exists():
+            services = json.loads(saved_file.read_text(encoding="utf-8")).get("services", {})
+            value = services.get(key)
+            if isinstance(value, dict):
+                return value
+    except Exception:
+        pass
     return {}
 
 
@@ -533,37 +543,37 @@ def _get_default_vad_config() -> Dict[str, Any]:
 
 @router.get("/danmaku/config")
 async def get_danmaku_config():
-    """获取弹幕配置"""
-    config = _load_yaml_config("danmaku.yaml")
-    if not config:
-        config = _get_default_danmaku_config()
+    """获取弹幕配置（已保存值叠加默认值）"""
+    config = deep_merge(
+        _get_default_danmaku_config(), _load_yaml_config("danmaku.yaml")
+    )
     return {"status": "success", "config": config}
 
 
 @router.get("/firewall/config")
 async def get_firewall_config():
-    """获取防火墙配置"""
-    config = _load_yaml_config("firewall.yaml")
-    if not config:
-        config = _get_default_firewall_config()
+    """获取防火墙配置（已保存值叠加默认值）"""
+    config = deep_merge(
+        _get_default_firewall_config(), _load_yaml_config("firewall.yaml")
+    )
     return {"status": "success", "config": config}
 
 
 @router.get("/firewall/v3/config")
 async def get_firewall_v3_config():
-    """获取 v3 防火墙配置"""
-    config = _load_yaml_config("firewall_v3.yaml")
-    if not config:
-        config = _get_default_firewall_v3_config()
+    """获取 v3 防火墙配置（已保存值叠加默认值）"""
+    config = deep_merge(
+        _get_default_firewall_v3_config(), _load_yaml_config("firewall_v3.yaml")
+    )
     return {"status": "success", "config": config}
 
 
 @router.get("/vad/config")
 async def get_vad_config():
-    """获取 VAD 配置"""
-    config = _load_yaml_config("vad.yaml")
-    if not config:
-        config = _get_default_vad_config()
+    """获取 VAD 配置（已保存值叠加默认值）"""
+    config = deep_merge(
+        _get_default_vad_config(), _load_yaml_config("vad.yaml")
+    )
     return {"status": "success", "config": config}
 
 
@@ -621,9 +631,7 @@ async def update_audio_config(request: Request, _: bool = Depends(verify_admin_a
                      'emotion_enabled', 'effects_enabled', 'engine']:
             if key in data:
                 tts_config[key] = data[key]
-        config_file.parent.mkdir(parents=True, exist_ok=True)
-        with open(config_file, "w", encoding="utf-8") as f:
-            json.dump(config_data, f, indent=2, ensure_ascii=False)
+        atomic_write_json(str(config_file), config_data)
         logger.info("音频配置已更新")
         return {"status": "success", "message": "音频配置已保存"}
     except Exception as e:

@@ -69,7 +69,7 @@ class DpoBuilder:
             responses = sample.get("responses") or [] if isinstance(sample, dict) else []
             session_id = sample.get("session_id") if isinstance(sample, dict) else None
 
-            if not prompt.strip() or not isinstance(responses, list) or len(responses) < 2:
+            if not isinstance(prompt, str) or not prompt.strip() or not isinstance(responses, list) or len(responses) < 2:
                 result.skipped += 1
                 result.audit.append(
                     {"prompt": prompt, "skip_reason": "样本缺失或候选回复不足 2 条"}

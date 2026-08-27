@@ -77,9 +77,9 @@ class FirewallService:
             self.config.duplicate_threshold = config["duplicate_threshold"]
         if "duplicate_window_seconds" in config:
             self.config.duplicate_window_seconds = config["duplicate_window_seconds"]
-        if "min_message_length" in config:
+        if "min_message_length" in config and isinstance(config["min_message_length"], int) and config["min_message_length"] is not None:
             self.config.min_message_length = config["min_message_length"]
-        if "max_message_length" in config:
+        if "max_message_length" in config and isinstance(config["max_message_length"], int) and config["max_message_length"] is not None:
             self.config.max_message_length = config["max_message_length"]
         if "blocked_patterns" in config:
             self.config.blocked_patterns = config["blocked_patterns"]
@@ -116,13 +116,13 @@ class FirewallService:
         original_content = content
 
         if self.config.length_filter_enabled:
-            if len(content) < self.config.min_message_length:
+            if self.config.min_message_length is not None and len(content) < self.config.min_message_length:
                 return FilterResult(
                     allowed=False,
                     reason=f"Message too short (min: {self.config.min_message_length})",
                     original_content=original_content
                 )
-            if len(content) > self.config.max_message_length:
+            if self.config.max_message_length is not None and len(content) > self.config.max_message_length:
                 return FilterResult(
                     allowed=False,
                     reason=f"Message too long (max: {self.config.max_message_length})",

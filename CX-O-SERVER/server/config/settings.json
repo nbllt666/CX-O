@@ -1,15 +1,39 @@
 {
-  "tts": {
-    "speed": 2.0
-  },
   "services": {
     "danmaku": {
-      "x": 1
+      "enabled": true
+    },
+    "firewall": {
+      "enabled": true,
+      "rules": [
+        "allow 192.168.1.0/24"
+      ]
+    },
+    "vad": {
+      "enabled": true,
+      "threshold": 0.6
     },
     "sensevoice_streaming": {
-      "chunk_size": 2048,
-      "hop_size": 256,
-      "look_back": 4
+      "chunk_size": 1024,
+      "hop_size": 800,
+      "look_back": 8000
+    },
+    "adaptive_polling": {
+      "enabled": false,
+      "offset_ms": 1,
+      "window_size": 1,
+      "min_interval_ms": 1,
+      "max_interval_ms": 1
     }
+  },
+  "tts": {
+    "engine": "qwen3",
+    "model": "qwen3-tts",
+    "speed": 1.0,
+    "cross_fade_duration": 0.15,
+    "emotion_enabled": true,
+    "effects_enabled": true,
+    "ref_audio_path": "",
+    "ref_text": ""
   }
 }

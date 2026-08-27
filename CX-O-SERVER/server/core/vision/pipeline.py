@@ -25,6 +25,7 @@
 """
 from __future__ import annotations
 
+import asyncio
 import logging
 from typing import Any, Dict, Optional
 
@@ -57,7 +58,9 @@ def _wrap_consumer(understanding: Any, memory: Any):
         if summary is None:
             return
         try:
-            memory.sediment_from_consumer(item, summary)
+            # 沉淀链内部含同步 LLM 决策（DecisionCore D1 requests.post）与记忆落库，
+            # 直接 await 会阻塞事件循环（F1 修复）：整体卸载到 IO 线程执行。
+            await asyncio.to_thread(memory.sediment_from_consumer, item, summary)
         except Exception as exc:  # noqa: BLE001 —— 沉淀失败不崩 worker
             logger.warning("VisionPipeline: 沉淀叙事记忆失败（不阻断 worker）: %s", exc)
 

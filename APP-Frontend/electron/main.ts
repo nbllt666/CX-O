@@ -114,7 +114,12 @@ function startPhysioBackground(): void {
   if (physioBackgroundStarted) return;
   physioBackgroundStarted = true;
   const backendUrl = getConfig('backendUrl') || 'http://127.0.0.1:8000';
-  physioUploader = new PhysioUploader({ backendUrl });
+  physioUploader = new PhysioUploader({
+    backendUrl,
+    // 每轮上送前重新读取配置（G5b）：跟随设置页修改后的最新后端地址，
+    // 解决构造期快照漂移；config.ts 的 getter 本身每次读盘即运行时刷新
+    backendUrlResolver: () => getConfig('backendUrl'),
+  });
   physioUploader.startIdleReport(() => {
     const systemIdleSec = powerMonitor.getSystemIdleTime();
     return { system_idle_sec: systemIdleSec, user_active: systemIdleSec < 60 };
@@ -513,7 +518,11 @@ function registerIpcHandlers(): void {
   // 安全边界：仅返回用户经系统对话框选中的 .vrm 路径；渲染层无法任意枚举文件系统。
   ipcMain.handle('model:pick-file', async (event) => {
     const win = BrowserWindow.fromWebContents(event.sender);
-    const result = await dialog.showOpenDialog(win!, {
+    // 窗口可能已销毁（竞态）：win 可为 null，非空断言会同步抛错。校验后优雅降级取消。
+    if (!win || win.isDestroyed()) {
+      return { canceled: true, path: undefined };
+    }
+    const result = await dialog.showOpenDialog(win, {
       title: '选择 VRM 模型',
       filters: [{ name: 'VRM Model', extensions: ['vrm'] }],
       properties: ['openFile'],
@@ -568,12 +577,65 @@ function registerIpcHandlers(): void {
 }
 
 // ---------------------------------------------------------------------------
-// 跨域放行：前后端分离部署时，渲染进程需直连远端后端
+// 跨域放行（G4 条件化白名单）：前后端分离部署时渲染进程需直连远端后端。
+// 仅当请求 Origin 命中以下集合时回显该 Origin 并下发 CORS 头：
+//   - 当前配置的后端地址 origin（每次响应动态读取，设置页换自定义地址后即刻生效）
+//   - 本机默认服务：127.0.0.1/localhost 的 8000（后端）与 8200（语音工作站）
+//   - 开发态 vite dev server（默认 http://localhost:3100 或实际 VITE_DEV_SERVER_URL）
+// Origin 缺失或为 'null' 视为打包态 file:// 渲染进程（Electron 一方壳可信），注入 ACAO:* 放行；
+// 其余来源不下发任何 CORS 头。
 // ---------------------------------------------------------------------------
 function configureCors(): void {
+  const LOCAL_ORIGINS = new Set<string>([
+    'http://127.0.0.1:8000',
+    'http://localhost:8000',
+    'http://127.0.0.1:8200',
+    'http://localhost:8200',
+    'http://localhost:3100',
+  ]);
+  if (devServerUrl) {
+    try {
+      LOCAL_ORIGINS.add(new URL(devServerUrl).origin);
+    } catch {
+      // 非法 dev server 地址忽略，仍保留默认白名单
+    }
+  }
+
   session.defaultSession.webRequest.onHeadersReceived((details, callback) => {
+    // Origin 从请求头提取（键大小写不敏感）
+    let requestOrigin: string | undefined;
+    for (const [key, value] of Object.entries(details.requestHeaders ?? {})) {
+      if (key.toLowerCase() === 'origin') {
+        requestOrigin = String(value);
+        break;
+      }
+    }
+    // 动态解析当前配置的后端地址 origin（保证设置页换地址后连接设置仍可用）
+    let backendOrigin: string | null = null;
+    try {
+      backendOrigin = new URL(getConfig('backendUrl') || 'http://127.0.0.1:8000').origin;
+    } catch {
+      // 配置了非法地址时忽略该项
+    }
+
+    let allowOrigin: string | null = null;
+    if (!requestOrigin || requestOrigin === 'null') {
+      // 打包态渲染进程为 file:// 页面：无 Origin 或 'null'，一方壳可信 → 保持放行
+      allowOrigin = '*';
+    } else if (
+      LOCAL_ORIGINS.has(requestOrigin) ||
+      (backendOrigin !== null && requestOrigin === backendOrigin)
+    ) {
+      allowOrigin = requestOrigin; // 白名单命中 → 回显该 Origin（窄于 *）
+    }
+
+    if (allowOrigin === null) {
+      callback({ responseHeaders: details.responseHeaders }); // 其余来源不下发 CORS 头
+      return;
+    }
+
     const responseHeaders = details.responseHeaders ?? {};
-    responseHeaders['Access-Control-Allow-Origin'] = ['*'];
+    responseHeaders['Access-Control-Allow-Origin'] = [allowOrigin];
     responseHeaders['Access-Control-Allow-Methods'] = ['GET, POST, PUT, DELETE, OPTIONS'];
     responseHeaders['Access-Control-Allow-Headers'] = ['Content-Type, Authorization'];
     callback({ responseHeaders });
@@ -654,6 +716,8 @@ function startCxfcRegistration(plugin: ComputerControlPlugin): void {
   const backendUrl = getConfig('backendUrl') || 'http://127.0.0.1:8000';
   cxfcClient = createCxfcClient({
     backendUrl,
+    // 每轮注册/心跳前重新读取配置（G5b）：跟随设置页修改后的最新后端地址
+    backendUrlResolver: () => getConfig('backendUrl'),
     readPluginInfo: () => buildCxfcRuntimeInfo(plugin),
     logger: (line) => console.log(line),
   });
@@ -672,6 +736,30 @@ async function stopCxfcRegistration(): Promise<void> {
 // ---------------------------------------------------------------------------
 // 应用生命周期
 // ---------------------------------------------------------------------------
+
+// 单实例锁（模块顶层、whenReady 前最早生效）：startup.ts 的提权是经 PowerShell
+// Start-Process 另启一个新实例且当前非提权实例继续运行，不加锁会造成双实例并存
+// （争抢托盘/端口/配置）。拿锁失败 = 已有实例在跑，直接退出本实例。
+// 提权场景下新提权实例会因锁被旧实例持有而退出——旧实例受控退出后才轮到新实例
+// 正常创建窗口；若用户拒绝 UAC 则无新实例，当前实例照常运行（"设置未生效"语义不变）。
+const gotSingleInstanceLock = app.requestSingleInstanceLock();
+if (!gotSingleInstanceLock) {
+  app.quit();
+} else {
+  // 第二个实例尝试启动时聚焦既有主窗口；已销毁则忽略
+  app.on('second-instance', () => {
+    for (const win of petWindows.values()) {
+      if (win.isDestroyed()) continue;
+      if (win.isMinimized()) win.restore();
+      win.focus();
+    }
+    if (managementWindow && !managementWindow.isDestroyed()) {
+      if (managementWindow.isMinimized()) managementWindow.restore();
+      managementWindow.focus();
+    }
+  });
+}
+
 app.whenReady().then(() => {
   Menu.setApplicationMenu(null);
   ensureDefaultConfig();

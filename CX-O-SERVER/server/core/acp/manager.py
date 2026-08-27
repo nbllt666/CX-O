@@ -6,7 +6,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 from server.core.logging_config import get_contextual_logger
 
@@ -102,6 +102,16 @@ class ACPMessageInfo(BaseModel):
     is_read: bool = False
     is_sent: bool = False
     metadata: Dict = Field(default_factory=dict)
+
+    # #30（差异审查登记）: ACP wire 契约统一以 `type` 为准（to_dict 的映射），
+    # 接收侧兼容 `type`/`msg_type` 两种键，避免外部 Agent 按 `type` 上报时
+    # 字段错位落默认值。
+    @model_validator(mode="before")
+    @classmethod
+    def _wire_type_alias(cls, values):
+        if isinstance(values, dict) and "type" in values and "msg_type" not in values:
+            values["msg_type"] = values.pop("type")
+        return values
 
     def to_dict(self) -> Dict:
         """转换为字典表示，保持字段名映射：msg_type -> type。"""
@@ -769,17 +779,10 @@ class ACPManager:
         from server.core.utils import get_shared_http_client
 
         url = f"http://{target.host}:{target.port}/acp/message"
-        payload = {
-            "id": message.id,
-            "msg_type": message.msg_type,
-            "from_agent_id": message.from_agent_id,
-            "from_agent_name": message.from_agent_name,
-            "to_agent_id": message.to_agent_id,
-            "to_group_id": message.to_group_id,
-            "content": message.content,
-            "timestamp": message.timestamp,
-            "metadata": message.metadata,
-        }
+        # #30（差异审查登记）: 投递负载改为复用 to_dict()（wire 键 `type`），
+        # 不再手工拼 msg_type——旧实现与线上格式（to_dict→type）双标准，
+        # 外部 Agent 按 `type` 上报会字段错位。
+        payload = message.to_dict()
 
         client = get_shared_http_client()
         resp = await client.post(url, json=payload, timeout=5.0)

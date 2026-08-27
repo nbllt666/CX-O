@@ -134,6 +134,62 @@ class TestASRInterruptModule:
         assert decision == "IGNORE"
 
     @pytest.mark.asyncio
+    async def test_partial_interrupt_skips_context_write(self, monkeypatch):
+        # 第六轮 C1-5：同一 utterance 的多帧 partial 命中 INTERRUPT——打断判定即时
+        # 触发（保留实时性），但「写回真实上下文」仅在 final 时执行一次，
+        # 避免同一句子的多个 partial 被重复写入真实 context 造成膨胀/污染。
+        m = ASRInterruptModule()
+        m.set_tts_playing(True)
+        written = []
+        cm = types.SimpleNamespace(
+            get_context=lambda sid: [],
+            add_message=lambda sid, msg: written.append(msg),
+        )
+        m.set_session_id("s1")
+        m.set_context_manager(cm)
+        llm = types.SimpleNamespace(chat=async_chat_with("##[INTERRUPT]## 打断"))
+        monkeypatch.setattr("server.dependencies.get_llm_client", lambda: llm)
+
+        for partial_text in ("请", "请问", "请问你"):
+            d, t = await m.on_asr_result(partial_text, is_final=False)
+            assert (d, t) == ("INTERRUPT", True)
+
+        # 打断实时性保持：partial 阶段即置位
+        assert m.is_interrupted is True
+        # 但 partial 阶段未写回真实上下文
+        assert written == []
+
+        # final：仅写回一次
+        df, tf = await m.on_asr_result("请问你是谁", is_final=True)
+        assert (df, tf) == ("INTERRUPT", True)
+        assert len(written) == 1
+        assert written[0] == {"role": "user", "content": "请问你是谁"}
+
+    @pytest.mark.asyncio
+    async def test_ignore_partial_skips_context_write(self, monkeypatch):
+        # IGNORE 判定同样只在 final 写回真实上下文一次
+        m = ASRInterruptModule()
+        m.set_tts_playing(True)
+        written = []
+        cm = types.SimpleNamespace(
+            get_context=lambda sid: [],
+            add_message=lambda sid, msg: written.append(msg),
+        )
+        m.set_session_id("s1")
+        m.set_context_manager(cm)
+        llm = types.SimpleNamespace(chat=async_chat_with("##[IGNORE]## 自语"))
+        monkeypatch.setattr("server.dependencies.get_llm_client", lambda: llm)
+
+        d, t = await m.on_asr_result("算了算了", is_final=False)
+        assert (d, t) == ("IGNORE", False)
+        assert written == []
+
+        d, t = await m.on_asr_result("算了算了", is_final=True)
+        assert (d, t) == ("IGNORE", False)
+        assert len(written) == 1
+        assert written[0] == {"role": "user", "content": "算了算了"}
+
+    @pytest.mark.asyncio
     async def test_independent_llm_timeout(self, monkeypatch):
         m = ASRInterruptModule()
         m.mode = "independent_llm"

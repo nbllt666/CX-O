@@ -2,30 +2,105 @@
   "$schema": "http://json-schema.org/draft-07/schema#",
   "$id": "https://cx-o.local/schema/agent_config_v2.schema.json",
   "title": "AgentConfigV2",
-  "description": "RADIX-Lite AgentConfig 扩展版数据契约（CX-O 迁移版）。在原 AgentConfig（agent.schema.json）基础上新增 3 字段：tools_config（工具启用配置）、decision_rubric（决策 rubric）、distillation_enabled（蒸馏开关）。memory-agent 升级为管理 agent 时使用此契约。对应 agent_tools_v2.pyi 接口存根。",
+  "description": "CX-O Agent 配置数据契约。主结构与运行时真相对齐：源真理为 data/agents.json 实际落盘结构 + CX-O-SERVER/server/api/routers/agents.py 的 AgentConfig 模型（L66-L86）与 _seed_agents/_load_agents/_save_agents 读写链路——标识字段名为 id（非早期草稿的 agent_id），基础字段均有默认值，故 required 仅 id/name。RADIX-Lite 扩展段（tools_config/decision_rubric/distillation_enabled/legacy_parser_enabled）为可选：仅当管理 Agent 启用蒸馏时由 decision_core 从 agents.json 读 rubric 使用，普通 Agent 不携带。对应 agent_tools_v2.pyi 接口存根。",
   "type": "object",
   "required": [
-    "agent_id",
-    "name",
-    "tools_config",
-    "decision_rubric",
-    "distillation_enabled"
+    "id",
+    "name"
   ],
   "additionalProperties": true,
   "properties": {
-    "agent_id": {
+    "id": {
       "type": "string",
       "minLength": 1,
-      "description": "Agent 唯一 ID。复用原 agent.schema.json 的 agent_id 字段。"
+      "description": "Agent 唯一 ID。种子值为 'default' / 'memory-agent'；新建由 _generate_agent_id() 生成 'agent-{uuid8}' 形式。'default' 为共享资源锚点（记忆/图/会话兜底），不可删除。"
     },
     "name": {
       "type": "string",
       "minLength": 1,
-      "description": "Agent 显示名。"
+      "description": "Agent 显示名，全局唯一（create_agent 时按名称查重，重复返回 400）。"
+    },
+    "description": {
+      "type": "string",
+      "default": "",
+      "description": "Agent 描述文案，前端列表展示用。"
+    },
+    "system_prompt": {
+      "type": "string",
+      "default": "你是一个有帮助的AI助手。",
+      "description": "系统提示词。默认助手的单源常量定义于 routers/agents.py DEFAULT_AGENT_SYSTEM_PROMPT。"
+    },
+    "model": {
+      "type": "string",
+      "default": "main",
+      "description": "模型槽位名或具体模型名。槽位值 main/summary/memory 经 models.defaults 映射解析；空字符串在写入侧归一化为 'main'。"
+    },
+    "temperature": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 2,
+      "default": 0.7,
+      "description": "采样温度。"
+    },
+    "max_tokens": {
+      "type": "integer",
+      "minimum": 0,
+      "default": 0,
+      "description": "最大生成 token 数；0 表示不限制（运行时回退模型默认上限）。种子 Agent 为 131072。"
+    },
+    "use_memory": {
+      "type": "boolean",
+      "default": true,
+      "description": "是否启用记忆注入与召回。memory-agent 置 false（其自身是记忆管理者）。"
+    },
+    "use_tools": {
+      "type": "boolean",
+      "default": true,
+      "description": "是否启用工具调用。"
+    },
+    "memory_scene": {
+      "type": "string",
+      "enum": ["chat", "task", "first_interaction"],
+      "default": "chat",
+      "description": "记忆场景标签，影响检索策略与评分权重。"
+    },
+    "decay_model": {
+      "type": "string",
+      "enum": ["exponential", "ebbinghaus"],
+      "default": "exponential",
+      "description": "衰减模型选择：双阶段指数衰减 or 艾宾浩斯遗忘曲线。"
+    },
+    "vision_enabled": {
+      "type": "boolean",
+      "default": false,
+      "description": "是否启用视觉增强叙事记忆（vision_enhanced 联动开关的 per-agent 维度）。"
+    },
+    "is_default": {
+      "type": "boolean",
+      "default": false,
+      "description": "是否为默认 Agent。可自由转移（POST /agents/{agent_id}/default 全局唯一化）；删除时被强制转移而不是拒绝。"
+    },
+    "created_at": {
+      "type": ["string", "null"],
+      "format": "date-time",
+      "description": "创建时间 ISO8601（datetime.now().isoformat()）；旧记录可能缺失。"
+    },
+    "updated_at": {
+      "type": ["string", "null"],
+      "format": "date-time",
+      "description": "最近更新时间 ISO8601。"
+    },
+    "ref_audio_asset_id": {
+      "type": ["string", "null"],
+      "description": "per-agent 参考音频绑定（读透传展示字段）。真源在 server/ref_audio_store.py 运行时存储，从不持久化到 agents.json（GET /agents/{agent_id} 由 _merge_ref_audio_binding 合并展示）。"
+    },
+    "tts_voice": {
+      "type": ["string", "null"],
+      "description": "per-agent TTS 音色绑定（读透传展示字段），同上不落盘 agents.json。"
     },
     "tools_config": {
       "type": "object",
-      "description": "工具启用配置。key=工具名，value=启用状态。新增 8 工具默认全部启用。",
+      "description": "RADIX-Lite 工具启用配置（可选，蒸馏管理 Agent 场景）。key=工具名，value=启用状态。",
       "default": {},
       "properties": {
         "add_agent": {"type": "boolean", "default": true},
@@ -41,13 +116,7 @@
     },
     "decision_rubric": {
       "type": "object",
-      "description": "决策 rubric。DecisionCore 6 决策点的阈值配置。rubric 不可被 LLM 自行修改，仅人类编辑 data/agents.json。",
-      "required": [
-        "importance_threshold_permanent",
-        "quality_reject_threshold",
-        "max_redistill_turns",
-        "ask_user_confidence_threshold"
-      ],
+      "description": "RADIX-Lite 决策 rubric（可选）。DecisionCore 6 决策点阈值配置，rubric 不可被 LLM 自行修改，仅人类编辑 data/agents.json。",
       "properties": {
         "importance_threshold_permanent": {
           "type": "number",
@@ -68,7 +137,7 @@
           "minimum": 0,
           "maximum": 6,
           "default": 2,
-          "description": "最大再次蒸馏轮次。D4_REDISTILL 决策时使用。超过此值不再触发再次蒸馏。"
+          "description": "最大再次蒸馏轮次。D4_REDISTILL 决策时使用，超过此值不再触发再次蒸馏。"
         },
         "ask_user_confidence_threshold": {
           "type": "number",
@@ -103,14 +172,19 @@
     "distillation_enabled": {
       "type": "boolean",
       "default": false,
-      "description": "是否启用蒸馏功能。true=管理 agent 可调用蒸馏工具，false=仅基础工具。memory-agent 升级时设为 true。"
+      "description": "RADIX-Lite 蒸馏功能开关（可选）。true=该管理 Agent 可调用蒸馏工具；false=仅基础工具。当前默认种子两个 Agent 均未设置此键。"
     },
     "legacy_parser_enabled": {
       "type": "boolean",
       "default": true,
-      "description": "parser.py 回退开关。true=走原有解析逻辑，false=调用 MultimodalPipeline.preprocess。仅当 distillation_enabled=true 时有意义。"
+      "description": "parser.py 回退开关（可选）。true=走原有解析逻辑，false=调用 MultimodalPipeline.preprocess。仅当 distillation_enabled=true 时有意义。"
     }
   },
+  "_dataAlignmentNotes": [
+    "对齐证据：c:/CX-O/data/agents.json 种子记录使用 id 键且不含 tools_config/decision_rubric/distillation_enabled。",
+    "对齐证据：routers/agents.py AgentConfig 模型中除 id/name 外全部字段有默认值（L66-L86）；created_at/updated_at 创建时必填写入但类型仍以 Optional 声明，schema 中允许 null 以兼容历史手工编辑文件。",
+    "此前 required 含 tools_config/decision_rubric/distillation_enabled 且要求 agent_id 键，导致任何真实 agents.json 按 draft-07 校验必然失败（幽灵契约），本版修正。"
+  ],
   "definitions": {
     "error_codes": {
       "type": "object",
@@ -118,11 +192,11 @@
       "properties": {
         "AGENT_NOT_FOUND": {
           "const": 404,
-          "description": "Agent 不存在：add_agent/update_agent/delete_agent 时 agent_id 无效。"
+          "description": "Agent 不存在：add_agent/update_agent/delete_agent 时 id 无效。"
         },
         "AGENT_ALREADY_EXISTS": {
           "const": 409,
-          "description": "Agent 已存在：add_agent 时 agent_id 已被占用。"
+          "description": "Agent 已存在：add_agent 时名称重复（实现按 name 查重返回 400；历史错误码保留登记）。"
         },
         "INVALID_RUBRIC": {
           "const": 422,
@@ -209,3 +283,4 @@
       "additionalProperties": false
     }
   }
+}

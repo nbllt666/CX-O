@@ -2,6 +2,38 @@
 
 > 遵循 AC 范式 v6 rules-3 §六 契约版本化规则。所有契约变更必须记录版本号、变更内容、变更原因、影响范围。
 
+## [1.7.0] - 2026-08-27
+
+### 变更内容
+
+- **数据契约变更（MINOR）**：`schema/memory.schema.json` 从空壳占位补全为完整 draft-07 契约（对齐 `async_manager.py` memories 表建表 L40-L91 与 `write_memory` L126-L176 签名）
+  - 新增 17 个字段定义：id/content/memory_type(enum)/importance(1-5)/tags/metadata/permanent/emotion_score/workspace_id/agent_id/vector_id/created_at/updated_at/accessed_at/access_count/decay_score/is_deleted
+  - required 按 memories 表 NOT NULL 列集划定；tags/metadata/vector_id 为可空列不入 required
+  - `definitions.permanent_memory_record` 登记永久记忆表行结构（source=user|vision、verified）
+  - 头部加 `@version` 注释（2.0.0），description 声明源真理与前后端字段映射（前端 type ↔ memory_type）
+- **数据契约变更（MINOR）**：`schema/agent_config_v2.schema.json` 修正幽灵契约使与现实一致（对齐 `data/agents.json` 种子结构 + `routers/agents.py` AgentConfig 模型 L66-L86）
+  - 必填反转收缩：`[agent_id, name, tools_config, decision_rubric, distillation_enabled]` → `[id, name]`
+  - 键修正：`agent_id` → `id`（真实落盘键名）；RADIX 扩展段（tools_config/decision_rubric/distillation_enabled/legacy_parser_enabled）降级为可选
+  - 新增现实字段：description/system_prompt/model/temperature/max_tokens/use_memory/use_tools/memory_scene/decay_model/vision_enabled/is_default/created_at/updated_at + 读透传字段 ref_audio_asset_id/tts_voice
+  - `_dataAlignmentNotes` 登记对齐证据与旧版校验必败原因
+
+### 变更原因
+
+- 第3轮缺陷修复批次H（配置契约与一致性）：两份 schema 此前均为空壳/幽灵状态——memory.schema.json properties 为空对象；agent_config_v2.schema.json 的 required 与真实 agents.json 数据结构不符（任何真实数据按 draft-07 校验必然失败）。
+- 已获人类显式授权修改 public/ 下这两份 schema（批次H 授权范围 H3/H4）。
+
+### 影响范围
+
+- **MINOR 兼容**：两份契约此前均无有效历史实例（空壳无法约束任何数据）、无下游校验依赖（tests 目录 grep 无引用），本次为首次实质生效发布，等效于纯新增，不阻断既有下游。
+- 若严格按字段级差异口径（键重命名 agent_id→id、必填性反转）可视为 MAJOR；因零存量数据、零下游依赖，采用 MINOR 记账并在本节显式登记差异清单。
+- 下游提醒：蒸馏管理 Agent 场景（decision_core 读 rubric）后续实现时按可选段读取；前端 Memory 展示层 type 字段即 memory_type 别名。
+
+### 闭合判据
+
+- [x] 两份契约实体更新并通过 json语法校验（python -m json.tool）
+- [x] CHANGELOG 记录 v1.7.0 条目（本文件）
+- [ ] STUB_INDEX.md 幽灵路径更正（agent_tools_v2.pyi 行源真理指向已不存在的 CXHMS 快照路径）待主线程终审后落盘
+
 ## [1.6.0] - 2026-08-24
 
 ### 变更内容

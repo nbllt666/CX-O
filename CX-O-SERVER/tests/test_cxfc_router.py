@@ -204,16 +204,33 @@ class TestPlugins:
         r = c.post("/cxfc/plugins/nope/refresh")
         assert r.status_code == 404
 
-    def test_call_tool(self, client):
+    #31（差异审查登记）: /call 已挂管理密钥鉴权——无密钥 403，正确携带 200/500
+    def test_call_tool(self, client, monkeypatch):
+        monkeypatch.setattr("server.api.routers.admin.ADMIN_API_KEY", "test-key")
         c, mm = client
-        r = c.post("/cxfc/plugins/p1/call", json={"tool": "t", "arguments": {"a": 1}})
+        r = c.post(
+            "/cxfc/plugins/p1/call",
+            json={"tool": "t", "arguments": {"a": 1}},
+            headers={"X-API-Key": "test-key"},
+        )
         assert r.status_code == 200
         assert r.json()["result"]["tool"] == "t"
 
-    def test_call_tool_error_500(self, client):
+    def test_call_tool_requires_admin_key(self, client, monkeypatch):
+        monkeypatch.setattr("server.api.routers.admin.ADMIN_API_KEY", "test-key")
+        c, mm = client
+        r = c.post("/cxfc/plugins/p1/call", json={"tool": "t"})
+        assert r.status_code == 403
+
+    def test_call_tool_error_500(self, client, monkeypatch):
+        monkeypatch.setattr("server.api.routers.admin.ADMIN_API_KEY", "test-key")
         c, mm = client
         async def _f(*a, **k):
             raise RuntimeError("boom")
         mm.call_tool = _f
-        r = c.post("/cxfc/plugins/p1/call", json={"tool": "t"})
+        r = c.post(
+            "/cxfc/plugins/p1/call",
+            json={"tool": "t"},
+            headers={"X-API-Key": "test-key"},
+        )
         assert r.status_code == 500

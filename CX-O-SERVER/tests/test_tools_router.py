@@ -17,6 +17,7 @@ from fastapi.testclient import TestClient
 from server.dependencies import ServiceState, set_service_state
 from server.core.exceptions import ToolError
 from server.api.routers import tools as tools_router_mod
+from server.api.routers.admin import verify_admin_api_key
 from server.core.tools import registry as registry_mod
 
 
@@ -164,6 +165,8 @@ def client(monkeypatch):
 
     app = FastAPI()
     app.include_router(tools_router_mod.router)
+    # 写/执行端点已挂 verify_admin_api_key，测试中放行鉴权依赖
+    app.dependency_overrides[verify_admin_api_key] = lambda: True
     return TestClient(app), fake_registry, mcp
 
 

@@ -2,11 +2,12 @@
 from datetime import datetime
 from typing import Dict, List, Optional
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
 from server.core.exceptions import MCPError, ToolError
 from server.core.logging_config import get_contextual_logger
+from server.api.routers.admin import verify_admin_api_key
 
 logger = get_contextual_logger(__name__)
 
@@ -112,7 +113,7 @@ async def list_tools(
 
 
 @router.post("/tools")
-async def register_tool(request: ToolRegisterRequest):
+async def register_tool(request: ToolRegisterRequest, _: bool = Depends(verify_admin_api_key)):
     from server.core.tools.registry import tool_registry
 
     try:
@@ -150,20 +151,24 @@ async def get_tool_stats():
         stats = tool_registry.get_tool_stats()
 
         # 计算 MCP 和原生工具数量
+        # 原生（内置）工具：category 非 mcp 且 name 命中内置白名单才计入 native；
+        # 其余自定义/第三方工具计入 custom（原实现两分支都加 native_tools，逻辑失真）。
         mcp_tools = 0
         native_tools = 0
+        custom_tools = 0
         for tool in tool_registry.list_tools(enabled_only=False):
             if tool.category == "mcp":
                 mcp_tools += 1
             elif tool.name in BUILTIN_TOOL_NAMES:
                 native_tools += 1
             else:
-                native_tools += 1
+                custom_tools += 1
 
         # 添加前端需要的字段名
         stats["active_tools"] = stats.get("enabled_tools", 0)
         stats["mcp_tools"] = mcp_tools
         stats["native_tools"] = native_tools
+        stats["custom_tools"] = custom_tools
 
         return {"status": "success", "statistics": stats}
     except ToolError as e:
@@ -182,6 +187,7 @@ async def get_tool_stats():
                 "disabled_tools": 0,
                 "mcp_tools": 0,
                 "native_tools": 0,
+                "custom_tools": 0,
                 "total_calls": 0,
                 "by_category": {},
                 "top_tools": [],
@@ -190,7 +196,7 @@ async def get_tool_stats():
 
 
 @router.post("/tools/call")
-async def call_tool(request: ToolCallRequest):
+async def call_tool(request: ToolCallRequest, _: bool = Depends(verify_admin_api_key)):
     """调用工具"""
     from server.core.tools.registry import tool_registry
 
@@ -215,7 +221,7 @@ class ToolTestRequest(BaseModel):
 
 
 @router.post("/tools/{name}/test")
-async def test_tool(name: str, request: ToolTestRequest):
+async def test_tool(name: str, request: ToolTestRequest, _: bool = Depends(verify_admin_api_key)):
     """测试工具"""
     from server.core.tools.registry import tool_registry
 
@@ -260,7 +266,7 @@ async def get_openai_functions(enabled_only: bool = True):
 
 
 @router.post("/tools/export")
-async def export_tools():
+async def export_tools(_: bool = Depends(verify_admin_api_key)):
     from server.core.tools.registry import tool_registry
 
     try:
@@ -274,7 +280,7 @@ async def export_tools():
 
 
 @router.post("/tools/import")
-async def import_tools(tools: List[Dict]):
+async def import_tools(tools: List[Dict], _: bool = Depends(verify_admin_api_key)):
     from server.core.tools.registry import tool_registry
 
     try:
@@ -304,7 +310,7 @@ async def get_mcp_servers():
 
 
 @router.post("/tools/mcp/servers")
-async def add_mcp_server(request: MCPServerAddRequest):
+async def add_mcp_server(request: MCPServerAddRequest, _: bool = Depends(verify_admin_api_key)):
     """添加一个 MCP 服务器。"""
     from server.dependencies import get_mcp_manager
 
@@ -326,7 +332,7 @@ async def add_mcp_server(request: MCPServerAddRequest):
 
 
 @router.delete("/tools/mcp/servers/{name}")
-async def remove_mcp_server(name: str):
+async def remove_mcp_server(name: str, _: bool = Depends(verify_admin_api_key)):
     from server.dependencies import get_mcp_manager
 
     try:
@@ -345,7 +351,7 @@ async def remove_mcp_server(name: str):
 
 
 @router.post("/tools/mcp/servers/start")
-async def start_mcp_server(request: MCPServerStartRequest):
+async def start_mcp_server(request: MCPServerStartRequest, _: bool = Depends(verify_admin_api_key)):
     from server.dependencies import get_mcp_manager
 
     try:
@@ -364,7 +370,7 @@ async def start_mcp_server(request: MCPServerStartRequest):
 
 
 @router.post("/tools/mcp/servers/stop")
-async def stop_mcp_server(request: MCPServerStopRequest):
+async def stop_mcp_server(request: MCPServerStopRequest, _: bool = Depends(verify_admin_api_key)):
     from server.dependencies import get_mcp_manager
 
     try:
@@ -416,7 +422,7 @@ async def get_mcp_server_tools(name: str):
 
 
 @router.post("/tools/mcp/call")
-async def call_mcp_tool(request: MCPToolCallRequest):
+async def call_mcp_tool(request: MCPToolCallRequest, _: bool = Depends(verify_admin_api_key)):
     from server.dependencies import get_mcp_manager
 
     try:
@@ -435,7 +441,7 @@ async def call_mcp_tool(request: MCPToolCallRequest):
 
 
 @router.post("/tools/mcp/sync")
-async def sync_mcp_tools():
+async def sync_mcp_tools(_: bool = Depends(verify_admin_api_key)):
     from server.dependencies import get_mcp_manager
 
     try:
@@ -524,7 +530,7 @@ async def get_tool(name: str):
 
 
 @router.delete("/tools/{name}")
-async def delete_tool(name: str):
+async def delete_tool(name: str, _: bool = Depends(verify_admin_api_key)):
     """删除指定工具。"""
     from server.core.tools.registry import tool_registry
 

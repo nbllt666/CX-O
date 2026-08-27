@@ -6,7 +6,12 @@ CX-O-SERVER 统一配置模块
 from __future__ import annotations
 
 import json
+import logging
 import os
+import shutil
+import tempfile
+import threading
+import time
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Set
 
@@ -14,8 +19,18 @@ from pydantic import BaseModel, ConfigDict, Field, PrivateAttr, model_validator
 
 from server.core.utils import deep_merge
 
+logger = logging.getLogger(__name__)
 
 ENV_PREFIX = "CXO_"
+
+# 配置保存/重载的串行化锁（RLock 可重入，供 save_config / reload_config /原子写共享）。
+# 防止并发首实例化、并发 save 与 reload 对 _config 的读写竞态，保证写盘 file 与
+# 内存缓存永远一致。
+_CONFIG_SAVE_LOCK = threading.RLock()
+
+# 最近一次成功解析的文件配置快照（内存层），供 config.json 内容损坏时回退，
+# 避免损坏文件导致启动流程崩溃。
+_last_known_config: Optional[Dict[str, Any]] = None
 
 # 项目根（CX-O-SERVER），基于文件位置解析，避免依赖运行时工作目录。
 _PROJECT_ROOT = Path(__file__).resolve().parent.parent
@@ -1006,19 +1021,67 @@ class UnifiedConfig(BaseModel):
     meeting: MeetingConfig = Field(default_factory=MeetingConfig)
 
 
+def atomic_write_json(path: str, data: Dict[str, Any]) -> None:
+    """原子写入 JSON 文件：写临时文件 → os.replace，避免写盘中途崩溃导致半写损坏。
+
+    供本模块及业务路由（server.api.routers.* / service 层）复用。写入全程持有
+    ``_CONFIG_SAVE_LOCK``，与 save_config / reload_config 串行化。临时文件 fsync 后
+    再原子替换目标，保证任一时刻 config.json 要么是旧完整文件、要么是新完整文件，
+    绝不出现损坏的中间态。
+
+    Args:
+        path: 目标文件路径（绝对路径）。
+        data: 待序列化的 dict。
+    """
+    with _CONFIG_SAVE_LOCK:
+        p = Path(path)
+        p.parent.mkdir(parents=True, exist_ok=True)
+        tmp_path: Optional[str] = None
+        try:
+            fd, tmp_path = tempfile.mkstemp(
+                dir=str(p.parent), prefix=f".{p.name}.", suffix=".tmp"
+            )
+            with os.fdopen(fd, "w", encoding="utf-8") as f:
+                json.dump(data, f, indent=4, ensure_ascii=False)
+                f.flush()
+                os.fsync(f.fileno())
+            os.replace(tmp_path, p)
+        finally:
+            if tmp_path and os.path.exists(tmp_path):
+                try:
+                    os.unlink(tmp_path)
+                except OSError:
+                    pass
+
+
+def _backup_corrupt_config(config_path: Path) -> None:
+    """将损坏的配置文件备份为 ``config.json.corrupt-<ts>``，便于事后排查。"""
+    try:
+        ts = time.strftime("%Y%m%d_%H%M%S")
+        backup = config_path.with_name(f"{config_path.name}.corrupt-{ts}")
+        shutil.copyfile(config_path, backup)
+        logger.warning(f"CONFIG_CORRUPT_BACKUP: 已备份损坏配置到 {backup}")
+    except Exception as e:  # 备份失败不影响回退主流程
+        logger.warning(f"备份损坏配置文件失败: {e}")
+
+
 class Settings:
     _instance: Optional["Settings"] = None
     _config: Optional[UnifiedConfig] = None
     _config_path: Optional[str] = None
+    # 单例首次实例化锁：防并发首次加载配置产生多个独立实例/重复读盘。
+    _instance_lock = threading.RLock()
 
     def __new__(cls):
-        if cls._instance is None:
-            cls._instance = super().__new__(cls)
+        with cls._instance_lock:
+            if cls._instance is None:
+                cls._instance = super().__new__(cls)
         return cls._instance
 
     def __init__(self):
-        if self._config is None:
-            self._config = self._load_config()
+        with self._instance_lock:
+            if self._config is None:
+                self._config = self._load_config()
 
     @classmethod
     def reset(cls):
@@ -1038,13 +1101,31 @@ class Settings:
         return Path(__file__).parent.parent / "config.json"
 
     def _load_config(self) -> UnifiedConfig:
+        global _last_known_config
         config_path = self._get_config_path()
         self._config_path = str(config_path)
 
         file_config: Dict[str, Any] = {}
         if config_path.exists():
-            with open(config_path, "r", encoding="utf-8") as f:
-                file_config = json.load(f)
+            try:
+                with open(config_path, "r", encoding="utf-8") as f:
+                    file_config = json.load(f)
+            except Exception as e:
+                # 配置内容损坏/非法：备份损坏副本 → 回退最近一次成功内存快照或内置默认，
+                # 绝不把解析异常抛回启动流程（允许服务带着默认/上次配置继续运行）。
+                _backup_corrupt_config(config_path)
+                if _last_known_config is not None:
+                    file_config = _last_known_config
+                    logger.error(
+                        f"CONFIG_CORRUPT: 配置文件 {config_path} 解析失败（{e}），"
+                        f"已备份损坏副本，回退最近一次成功快照。"
+                    )
+                else:
+                    file_config = {}
+                    logger.error(
+                        f"CONFIG_CORRUPT: 配置文件 {config_path} 解析失败（{e}），"
+                        f"已备份损坏副本，且无历史快照，回退内置默认配置。"
+                    )
 
         env_config = get_env_config()
         merged_config = deep_merge(file_config, env_config)
@@ -1061,10 +1142,14 @@ class Settings:
             explicit = [k for k in ("main", "summary", "memory") if k in models_section]
             config.models._set_explicit(explicit)
 
+        # 更新内存快照（成功解析后），供下一次损坏时回退
+        _last_known_config = file_config
+
         return config
 
     def reload_config(self):
-        self._config = self._load_config()
+        with _CONFIG_SAVE_LOCK:
+            self._config = self._load_config()
 
     def save_config(self) -> None:
         """将当前配置实例写入磁盘并更新缓存（委托模块级 save_config）。
@@ -1074,7 +1159,8 @@ class Settings:
         """
         if self._config is None:
             raise RuntimeError("配置尚未加载，无法保存")
-        save_config(self._config)
+        with _CONFIG_SAVE_LOCK:
+            save_config(self._config)
 
     def __getattr__(self, name: str) -> Any:
         if name.startswith("_"):
@@ -1101,19 +1187,19 @@ def get_config() -> UnifiedConfig:
 
 
 def save_config(config: UnifiedConfig) -> None:
-    """将配置对象写入 config.json 并更新内存缓存。"""
+    """将配置对象写入 config.json 并更新内存缓存（原子写 + 锁串行化）。"""
     settings = get_settings()
     config_path = Path(settings._config_path or settings._get_config_path())
 
-    with open(config_path, "w", encoding="utf-8") as f:
-        json.dump(config.model_dump(), f, indent=4, ensure_ascii=False)
-
-    settings._config = config
+    with _CONFIG_SAVE_LOCK:
+        atomic_write_json(str(config_path), config.model_dump())
+        settings._config = config
 
 
 def reload_config() -> UnifiedConfig:
     settings = get_settings()
-    settings.reload_config()
+    with _CONFIG_SAVE_LOCK:
+        settings.reload_config()
     return settings.config
 
 

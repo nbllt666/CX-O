@@ -46,14 +46,13 @@ def _get_danmaku_sem() -> asyncio.Semaphore:
     return _danmaku_sem
 
 
-def _acquire_danmaku_slot() -> bool:
+async def _acquire_danmaku_slot() -> bool:
     """非阻塞申请一个弹幕反馈并发槽；已满返回 False（本次丢弃，防任务无限堆积）。"""
     sem = _get_danmaku_sem()
-    try:
-        sem.acquire_nowait()
-        return True
-    except Exception:
+    if sem.locked():  # 已满直接丢弃，不排队
         return False
+    await sem.acquire()
+    return True
 
 
 def _release_danmaku_slot() -> None:
@@ -189,7 +188,7 @@ class LiveClientHandler:
             logger.debug("Danmaku filtered: %s", filter_result.reason)
             return
         # 弹幕反馈：过滤放行后喂给隐式反馈追踪器（fire-and-forget，不阻断主路径）
-        self._safe_feedback_danmaku(content, user_id)
+        await self._safe_feedback_danmaku(content, user_id)
 
         if self._session_id:
             self.context_manager.add_danmaku_message(self._session_id, data)
@@ -220,13 +219,13 @@ class LiveClientHandler:
         except Exception as e:  # 互动房间未装配/异常时静默跳过，不影响弹幕主路径
             logger.debug("弹幕转发互动房间跳过: %s", e)
 
-    def _safe_feedback_danmaku(self, content: str, user_id: str) -> None:
+    async def _safe_feedback_danmaku(self, content: str, user_id: str) -> None:
         """将过滤放行后的弹幕喂给隐式反馈追踪器（fire-and-forget，静默降级）。
 
-        后台任务独立调度，不阻塞 danmaku 主路径；同步非阻塞申请并发槽，
+        后台任务独立调度，不阻塞 danmaku 主路径；非阻塞申请并发槽，
         已满则丢弃本次反馈，防任务无限堆积；追踪器内部异常被吞掉。
         """
-        if not _acquire_danmaku_slot():
+        if not await _acquire_danmaku_slot():
             logger.debug("live_feedback 弹幕反馈并发已满，丢弃本次反馈")
             return
         try:

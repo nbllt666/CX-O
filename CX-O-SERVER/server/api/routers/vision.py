@@ -260,7 +260,15 @@ async def upload_vision_clip(
         raise HTTPException(status_code=503, detail="片段队列繁忙，本次片段被丢弃，请稍后重试")
 
     logger.info("VisionClip: 已入队 clip_id=%s path=%s source=%s", clip_id, clip_path, source)
+    # E8 修复: status 类响应透出模块级 dropped 计数（snake_case 追加字段，
+    # 不改变既有契约字段的形状）
     return APIResponse.ok(
-        data={"accepted": True, "clip_id": clip_id, "pending": vision_clip_queue.pending_count()},
+        data={
+            "accepted": True,
+            "clip_id": clip_id,
+            "pending": vision_clip_queue.pending_count(),
+            # 注入的队列替身可能未实现计数器，缺失时按 0 透出
+            "dropped": getattr(vision_clip_queue, "dropped_count", 0),
+        },
         message="已接受，排队处理中",
     )

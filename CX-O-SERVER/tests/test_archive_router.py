@@ -16,6 +16,7 @@ from fastapi.testclient import TestClient
 
 from server.dependencies import ServiceState, set_service_state
 from server.api.routers import archive as archive_router_mod
+from server.api.routers.admin import verify_admin_api_key
 
 
 class SimpleBox:
@@ -106,6 +107,9 @@ class FakeMemoryConfig:
 class FakeSettings:
     config = SimpleBox(memory=FakeMemoryConfig())
 
+    def save_config(self):
+        return None
+
 
 @pytest.fixture
 def client(monkeypatch):
@@ -119,6 +123,9 @@ def client(monkeypatch):
 
     app = FastAPI()
     app.include_router(archive_router_mod.router)
+    # of-archives/threshold/auto-process 等管理写端点已挂 verify_admin_api_key，
+    # 测试中放行鉴权依赖以聚焦业务行为。
+    app.dependency_overrides[verify_admin_api_key] = lambda: True
     return TestClient(app), mm, archiver, dedup
 
 
@@ -131,7 +138,21 @@ def no_archiver_client(monkeypatch):
     monkeypatch.setattr("server.config.get_settings", lambda: FakeSettings())
     app = FastAPI()
     app.include_router(archive_router_mod.router)
+    app.dependency_overrides[verify_admin_api_key] = lambda: True
     return TestClient(app), mm, None, None
+
+
+@pytest.fixture
+def no_auth_client(monkeypatch):
+    """不含鉴权覆盖的客户端：验证管理写端点无密钥访问被拒。"""
+    mm = FakeMemoryManager(archiver=None, deduplication_engine=None)
+    state = ServiceState()
+    state.memory_manager = mm
+    set_service_state(state)
+    monkeypatch.setattr("server.config.get_settings", lambda: FakeSettings())
+    app = FastAPI()
+    app.include_router(archive_router_mod.router)
+    return TestClient(app, raise_server_exceptions=False)  # type: ignore[name-defined]
 
 
 class TestListArchived:
@@ -288,3 +309,28 @@ class TestAutoArchive:
         c, mm, _, _ = no_archiver_client
         r = c.post("/archive/auto-process")
         assert r.status_code == 503
+
+
+class TestManagementAuth:
+    """管理写端点（of-archives / threshold）无密钥访问应被 403 拒绝；auto-process 为前端记忆页在用保持公开。"""
+
+    @pytest.mark.parametrize(
+        "method,path,payload",
+        [
+            ("post", "/archive/of-archives", {"target_level": 4}),
+            ("post", "/archive/threshold", {"threshold": 0.9}),
+        ],
+    )
+    def test_write_endpoint_rejects_unauth(self, no_auth_client, monkeypatch, method, path, payload):
+        from server.api.routers import admin as admin_router_mod
+
+        monkeypatch.setattr(admin_router_mod, "ADMIN_API_KEY", "")
+        c = no_auth_client
+        r = getattr(c, method)(path, json=payload)
+        assert r.status_code == 403
+
+    def test_auto_process_public(self, client):
+        """auto-process 由前端记忆页调用，无密钥也应可用。"""
+        c, _, _, _ = client
+        r = c.post("/archive/auto-process")
+        assert r.status_code in (200, 503)

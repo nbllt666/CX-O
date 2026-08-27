@@ -66,14 +66,16 @@
 
 > 从 CXHMS v1.2.0 迁移 6 个 .pyi，对应 RADIX-Lite 模块 7-10。CX-O 扩展：multimodal_pipeline.pyi 增加 `_vllm_native_worker` 方法支持 vLLM 原生视频/音频解码。
 
-| 存根文件 | 源真理（CXHMS 源码） | 对应 schema | 状态 |
+| 存根文件 | 源真理 | 对应 schema | 状态 |
 |---------|---------------------|------------|------|
-| `template_engine.pyi` | `c:/CX-O/CXHMS/modules/模块7_模板引擎/template_engine.py` | `public/schema/distillation_session.schema.json`（template_id 关联） | ✅ 迁移完成（7 方法，原样复制） |
-| `multimodal_pipeline.pyi` | `c:/CX-O/CXHMS/modules/模块8_多模态管线/multimodal_pipeline.py` | `public/schema/multimodal_artifact.schema.json` | ✅ 迁移完成（CX-O 扩展：5 模态 + `_vllm_native_worker`） |
-| `distillation_service.pyi` | `c:/CX-O/CXHMS/modules/模块9_蒸馏服务/distillation_service.py` | `public/schema/distillation_session.schema.json` + `distillation_log.schema.json` | ✅ 迁移完成（OBS-3 修正：7→9 状态机；端口 8011→8000） |
-| `decision_core.pyi` | `c:/CX-O/CXHMS/modules/模块10_管理Agent扩展/decision_core.py` | `public/schema/distillation_log.schema.json` + `storage_decision.schema.json` | ✅ 迁移完成（9 方法：6 决策点 + 3 内部方法，原样复制） |
-| `agent_tools_v2.pyi` | `c:/CX-O/CXHMS/modules/模块10_管理Agent扩展/agent_tools.py` | `public/schema/agent_config_v2.schema.json` | ✅ 迁移完成（8 工具方法，原样复制） |
-| `memory_manager_v2.pyi` | `c:/CX-O/CXHMS/backend/core/memory/manager.py`（V2 扩展部分） | `public/schema/storage_decision.schema.json` + `rejected_content.schema.json` | ✅ 迁移完成（3 方法：write_with_decision + get_rejected_content + cleanup_expired_rejected_content） |
+| `template_engine.pyi` | 迁移自 CXHMS v1.2.0 历史快照（原源码路径 `c:/CX-O/CXHMS/modules/模块7_模板引擎/template_engine.py` 已随迁移从仓库移除——幽灵路径注销）；现行运行时真源：`CX-O-SERVER/server/core/template_engine/template_engine.py` | `public/schema/distillation_session.schema.json`（template_id 关联） | ✅ 迁移完成（7 方法，原样复制） |
+| `multimodal_pipeline.pyi` | 迁移自 CXHMS v1.2.0 历史快照（原源码路径 `c:/CX-O/CXHMS/modules/模块8_多模态管线/multimodal_pipeline.py` 已随迁移从仓库移除——幽灵路径注销）；现行运行时真源：`CX-O-SERVER/server/core/multimodal/multimodal_pipeline.py` + `workers/` 子目录（含 `_vllm_native_worker` 扩展实现） | `public/schema/multimodal_artifact.schema.json` | ✅ 迁移完成（CX-O 扩展：5 模态 + `_vllm_native_worker`） |
+| `distillation_service.pyi` | 迁移自 CXHMS v1.2.0 历史快照（原源码路径 `c:/CX-O/CXHMS/modules/模块9_蒸馏服务/distillation_service.py` 已随迁移从仓库移除——幽灵路径注销）；现行运行时真源：`CX-O-SERVER/server/core/distillation/distillation_service.py` | `public/schema/distillation_session.schema.json` + `distillation_log.schema.json` | ✅ 迁移完成（OBS-3 修正：7→9 状态机；端口 8011→8000） |
+| `decision_core.pyi` | 迁移自 CXHMS v1.2.0 历史快照（原源码路径 `c:/CX-O/CXHMS/modules/模块10_管理Agent扩展/decision_core.py` 已随迁移从仓库移除——幽灵路径注销）；现行运行时真源：`CX-O-SERVER/server/core/decision/decision_core.py` | `public/schema/distillation_log.schema.json` + `storage_decision.schema.json` | ✅ 迁移完成（9 方法：6 决策点 + 3 内部方法，原样复制） |
+| `agent_tools_v2.pyi` | 迁移自 CXHMS v1.2.0 历史快照（原源码路径 `c:/CX-O/CXHMS/modules/模块10_管理Agent扩展/agent_tools.py` 已随迁移从仓库移除——幽灵路径注销）；现行运行时真源：`CX-O-SERVER/server/core/decision/agent_tools.py` + `data/agents.json` 与 `CX-O-SERVER/server/api/routers/agents.py`（AgentConfig 模型与读写链路） | `public/schema/agent_config_v2.schema.json` | ✅ 迁移完成（8 工具方法，原样复制；配对数据契约已于 CHANGELOG v1.7.0 对齐现实数据结构） |
+| `memory_manager_v2.pyi` | 迁移自 CXHMS v1.2.0 历史快照（原源码路径 `c:/CX-O/CXHMS/backend/core/memory/manager.py` 已随迁移从仓库移除——幽灵路径注销）；现行运行时真源：V2 决策扩展位于 `CX-O-SERVER/server/core/memory/mixins/decision_mixin.py`（挂载于 memory manager） | `public/schema/storage_decision.schema.json` + `rejected_content.schema.json` | ✅ 迁移完成（3 方法：write_with_decision + get_rejected_content + cleanup_expired_rejected_content） |
+
+> 2026-08-27 幽灵路径注销说明：原表中 6 处 `c:/CX-O/CXHMS/...` 源真理路径指向的目录已不在本仓库存在，经人类显式授权后统一改写为「历史快照来源 + 现行运行时真源」双段式描述。
 
 ### CX-O 扩展点
 

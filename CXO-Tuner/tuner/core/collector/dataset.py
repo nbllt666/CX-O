@@ -86,6 +86,17 @@ class DatasetStore:
                 pass  # 列已存在
         self._conn.commit()
 
+    def close(self) -> None:
+        """释放 sqlite 连接。json 后端无线程安全连接需要，调用方按需在生命周期结束处调用。"""
+        with self._lock:
+            conn = getattr(self, "_conn", None)
+            if conn is not None:
+                try:
+                    conn.close()
+                except sqlite3.Error:
+                    pass
+                self._conn = None
+
     # -- 写 -----------------------------------------------------------------
     def add_record(
         self,
@@ -118,25 +129,38 @@ class DatasetStore:
         )
         with self._lock:
             if self._storage == "sqlite":
-                self._conn.execute(
-                    "INSERT INTO records (id, fingerprint, prompt, chosen, rejected, source, anchor, quality_score, session_id, created_at, judge_model, metadata) "
-                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                    (
-                        rec.id,
-                        rec.fingerprint,
-                        rec.prompt,
-                        rec.chosen,
-                        rec.rejected,
-                        rec.source,
-                        1 if rec.anchor else 0,
-                        rec.quality_score,
-                        rec.session_id,
-                        rec.created_at,
-                        rec.judge_model,
-                        json.dumps(rec.metadata, ensure_ascii=False) if rec.metadata is not None else None,
-                    ),
-                )
-                self._conn.commit()
+                try:
+                    self._conn.execute(
+                        "INSERT INTO records (id, fingerprint, prompt, chosen, rejected, source, anchor, quality_score, session_id, created_at, judge_model, metadata) "
+                        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                        (
+                            rec.id,
+                            rec.fingerprint,
+                            rec.prompt,
+                            rec.chosen,
+                            rec.rejected,
+                            rec.source,
+                            1 if rec.anchor else 0,
+                            rec.quality_score,
+                            rec.session_id,
+                            rec.created_at,
+                            rec.judge_model,
+                            json.dumps(rec.metadata, ensure_ascii=False) if rec.metadata is not None else None,
+                        ),
+                    )
+                    self._conn.commit()
+                except sqlite3.IntegrityError:
+                    # fingerprint UNIQUE 冲突：find_by_fingerprint 预检与 INSERT 非原子，
+                    # 并发下会抛 IntegrityError。归一为「已存在」，返回库里既有记录而非冒泡 500。
+                    self._conn.rollback()
+                    row = self._conn.execute(
+                        "SELECT id, fingerprint, prompt, chosen, rejected, source, anchor, quality_score, session_id, created_at, judge_model, metadata "
+                        "FROM records WHERE fingerprint = ?",
+                        (rec.fingerprint,),
+                    ).fetchone()
+                    if row:
+                        return self._row_to_record(row)
+                    return rec  # 冲突但查无记录（并发下被删除的极端情况），返回本构造记录避免断裂
             else:
                 rows = self._load_json()
                 rows.append(self._to_dict_internal(rec))

@@ -58,6 +58,8 @@ export interface NoblePeripheral {
     cb: (err: Error | null, services: NobleService[]) => void,
   ): unknown;
   on(event: 'disconnect', listener: () => void): unknown;
+  /** EventEmitter 同名方法（真实 noble peripheral 继承自 EventEmitter；mock 可缺省）。 */
+  removeAllListeners?(event?: string): unknown;
 }
 
 export interface NobleService {
@@ -74,6 +76,8 @@ export interface NobleCharacteristic {
   unsubscribe(cb?: (err?: Error | null) => void): unknown;
   notify(notify: boolean, cb?: (err?: Error | null) => void): unknown;
   on(event: 'data', listener: (data: Buffer | Uint8Array) => void): unknown;
+  /** EventEmitter 同名方法（真实 noble characteristic 继承自 EventEmitter；mock 可缺省）。 */
+  removeAllListeners?(event?: string): unknown;
 }
 
 // ---------------------------------------------------------------------------
@@ -368,12 +372,15 @@ export class BleHeartRateCollector {
         return { ok: false, status: this.state, error: '设备缺少心率特征 0x2A37' };
       }
 
-      // 先挂 data 监听再订阅，避免丢包
+      // 先挂 data 监听再订阅，避免丢包；断线重连复用同一 characteristic 时
+      // 必须先清理旧监听器，否则 handler 线性累积导致 HR 重复上送。
+      hrChar.removeAllListeners?.('data');
       hrChar.on('data', (data: Buffer | Uint8Array) => this.handleHrData(data));
       await this.subscribeCharacteristic(hrChar);
 
       this.characteristic = hrChar;
-      // 断线事件：驱动自动重连调度
+      // 断线事件：驱动自动重连调度。同样先清旧监听器，避免重连链上一次断线触发多次调度。
+      peripheral.removeAllListeners?.('disconnect');
       peripheral.on('disconnect', () => this.handlePeripheralDisconnect(deviceId));
 
       this.autoReconnect = true;

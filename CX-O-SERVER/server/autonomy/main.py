@@ -8,6 +8,7 @@ import 本模块不依赖任何"实现模块"（post / live 等 P2/P3 能力）�
 
 from __future__ import annotations
 
+import inspect
 import json
 import logging
 from datetime import datetime, timedelta, timezone
@@ -640,6 +641,27 @@ def _build_mcp_search_provider(registry: Any, mcp_manager: Any = None) -> Option
     return _provider
 
 
+async def _safe_stop_after_assembly_error(dream_engine: Any, engine: Any) -> None:
+    """装配异常时尽力停止已启动的引擎（防泄漏），并避免二次异常遮蔽原始异常。
+
+    - 对 awaitable/sync 的 stop 均兼容（AutonomyEngine.stop 为 async，DreamEngine.stop 为 sync）；
+    - 每个对象独立 try/except 包裹，单个 stop 失败不影响其余；
+    - 对未启动对象幂等（stop 内部对 None task 安全），None 与无可调用 stop 者跳过。
+    """
+    for obj in (dream_engine, engine):
+        if obj is None:
+            continue
+        stop = getattr(obj, "stop", None)
+        if not callable(stop):
+            continue
+        try:
+            result = stop()
+            if inspect.isawaitable(result):
+                await result
+        except Exception:
+            logger.exception("装配异常后的引擎停止也失败（已隔离，不再遮蔽原始异常）")
+
+
 async def setup_autonomy(services: Any, store_path: str = "") -> Optional[AutonomyManager]:
     """装配 CX-O-Autonomy 自主系统（embedded CXFC 插件 + P1 主循环引擎）。
 
@@ -1073,5 +1095,11 @@ async def setup_autonomy(services: Any, store_path: str = "") -> Optional[Autono
         )
         return manager
     except Exception as e:
+        # 装配中途异常：先尽力停止已启动的后台引擎（防泄漏），再记日志返回 None。
+        # 清理本身用 try/except 包裹，避免二次异常遮蔽原始异常。
+        try:
+            await _safe_stop_after_assembly_error(dream_engine, engine)
+        except Exception:
+            logger.exception("装配异常后的引擎清理失败")
         logger.exception("CX-O-Autonomy 装配失败，已隔离（不影响主服务启动）: %s", e)
         return None

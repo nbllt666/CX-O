@@ -26,6 +26,12 @@ export interface SystemStateSample {
 
 export interface PhysioUploaderOptions {
   backendUrl: string;
+  /**
+   * 运行时后端地址解析器（可选）：每轮上送前调用以跟随最新配置
+   * （设置页修改后端地址后无需重启）。返回空值时回落构造期 backendUrl 快照。
+   * 已知限制：config.json 改动在下一轮 tick 才生效（HR ≤1s / 静默 ≥30s 周期）。
+   */
+  backendUrlResolver?: () => string | null;
   /** HR 节流窗口（毫秒），默认 1000（≤1Hz） */
   hrThrottleMs?: number;
   /** 系统静默上送周期（毫秒），默认 30000（≥30s） */
@@ -34,8 +40,12 @@ export interface PhysioUploaderOptions {
   logger?: (line: string) => void;
 }
 
+/** 单请求超时（毫秒）：防止后端挂起拖住后台任务/退出链。 */
+const REQUEST_TIMEOUT_MS = 5_000;
+
 export class PhysioUploader {
   private readonly backendUrl: string;
+  private readonly backendUrlResolver: (() => string | null) | null;
   private readonly hrThrottleMs: number;
   private readonly idleIntervalMs: number;
   private readonly fetchImpl: typeof fetch;
@@ -47,10 +57,18 @@ export class PhysioUploader {
 
   constructor(options: PhysioUploaderOptions) {
     this.backendUrl = options.backendUrl.replace(/\/+$/, '');
+    this.backendUrlResolver = options.backendUrlResolver ?? null;
     this.hrThrottleMs = options.hrThrottleMs ?? 1000;
     this.idleIntervalMs = options.idleIntervalMs ?? 30000;
     this.fetchImpl = options.fetchImpl ?? globalThis.fetch.bind(globalThis);
     this.logger = options.logger ?? (() => undefined);
+  }
+
+  /** 当前生效后端基址：优先每轮解析的最新值，空值回落构造期快照 */
+  private baseUrl(): string {
+    const resolved = this.backendUrlResolver?.() ?? '';
+    if (resolved) return resolved.replace(/\/+$/, '');
+    return this.backendUrl;
   }
 
   /**
@@ -69,6 +87,7 @@ export class PhysioUploader {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(sample),
+        signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
       });
       if (!resp.ok) {
         this.logger(`[physio] HR 上送失败 HTTP ${resp.status}，丢弃当前样本`);
@@ -85,10 +104,11 @@ export class PhysioUploader {
   async reportState(sample: SystemStateSample): Promise<boolean> {
     if (this.stopped) return false;
     try {
-      const resp = await this.fetchImpl(`${this.backendUrl}/api/physio/state`, {
+      const resp = await this.fetchImpl(`${this.baseUrl()}/api/physio/state`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(sample),
+        signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
       });
       if (!resp.ok) {
         this.logger(`[physio] 系统状态上送失败 HTTP ${resp.status}`);

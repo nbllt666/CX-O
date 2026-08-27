@@ -238,6 +238,8 @@ export async function startNekoToolBridge(nekoPluginPort: number | null): Promis
   if (!cxfcClient) {
     cxfcClient = createCxfcClient({
       backendUrl,
+      // 每轮注册/心跳前重新读取配置（G5b）：跟随设置页修改后的最新后端地址
+      backendUrlResolver: () => getConfig('backendUrl'),
       readPluginInfo: () => buildBridgeInfo(),
       logger: (line) => console.log(`[neko-bridge] ${line}`),
     });

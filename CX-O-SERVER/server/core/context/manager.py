@@ -69,11 +69,19 @@ class ContextManager:
     def close_connection(self):
         """关闭当前线程的数据库连接"""
         if hasattr(self._local, "connection") and self._local.connection:
+            conn = self._local.connection
             try:
-                self._local.connection.close()
+                conn.close()
             except Exception as e:
                 logger.warning(f"关闭数据库连接失败: {e}")
             self._local.connection = None
+            # BUG-B-M5 修复: 持锁同步从登记表移除当前线程连接,
+            # 找不到(如重复关闭/已被 shutdown 清空)则忽略,消除 _all_connections 只增不减。
+            with self._connection_lock:
+                try:
+                    self._all_connections.remove(conn)
+                except ValueError:
+                    pass
 
     def shutdown(self):
         """关闭所有连接

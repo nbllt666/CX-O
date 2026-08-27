@@ -37,24 +37,39 @@ def _find_method(svc, *names):
     return None
 
 
+def _accepts_agent_id(method) -> bool:
+    """用 inspect.signature 判定目标方法是否接受 agent_id 参数。
+
+    显式 ``agent_id`` 形参（任意位置类型）或 ``**kwargs``（VAR_KEYWORD 兜底）
+    均视为接受；签名不可获取时不注入，保守直接调用。
+    """
+    try:
+        sig = inspect.signature(method)
+    except (TypeError, ValueError):
+        return False
+    for p in sig.parameters.values():
+        if p.kind == inspect.Parameter.VAR_KEYWORD or p.name == "agent_id":
+            return True
+    return False
+
+
 def _invoke_method(svc, *names, agent_id: str = "default", params: Dict[str, Any] = None):
     """探测并调用服务方法，返回 (found, result) 字典。
 
     找不到方法返回 {"unsupported": True}；svc 为空返回 {"available": False}。
+    调用形态由 inspect.signature 静态判定（不接受 agent_id 时干脆不注入），
+    不再用 TypeError 试错两遍——那种重试会把同一管理动作执行两次。
     """
     method = _find_method(svc, *names)
     if method is None:
         return {"available": False if svc is None else True, "unsupported": True}
     kwargs = dict(params or {})
-    if agent_id and agent_id != "default":
+    if agent_id and agent_id != "default" and _accepts_agent_id(method):
         kwargs.setdefault("agent_id", agent_id)
     try:
         result = method(**kwargs) if kwargs else method()
-    except TypeError:
-        try:
-            result = method(agent_id) if agent_id else method()
-        except Exception as e:
-            return {"available": True, "result": None, "error": str(e)}
+    except Exception as e:
+        return {"available": True, "result": None, "error": str(e)}
     if inspect.iscoroutine(result):
         return {"available": True, "pending": True, "result": result}
     return {"available": True, "result": result}

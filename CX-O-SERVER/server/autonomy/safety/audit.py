@@ -52,10 +52,15 @@ class AuditStore:
             f.write(json.dumps(entry, ensure_ascii=False) + "\n")
         return str(path)
 
-    def list(self, limit: int = 50, offset: int = 0) -> Dict[str, Any]:
+    def list(
+        self, limit: int = 50, offset: int = 0, since: Optional[str] = None
+    ) -> Dict[str, Any]:
         """返回审计条目分页列表 {"items": [...], "total": int}。
 
         按写入顺序返回；limit 为 None 时返回全部；损坏行自动跳过。
+        E8 修复：新增 ``since`` 前缀过滤参数（如日期 "2026-08-27"），提供时仅返回
+        timestamp 以该前缀开头的条目，供日记生成等场景按日下界查询，
+        避免全量载入后内存筛选。
         """
         items: List[Dict[str, Any]] = []
         path = Path(self.path)
@@ -66,9 +71,12 @@ class AuditStore:
                     if not line:
                         continue
                     try:
-                        items.append(json.loads(line))
+                        entry = json.loads(line)
                     except json.JSONDecodeError:
                         continue  # 跳过损坏行
+                    if since is not None and not str(entry.get("timestamp", "") or "").startswith(since):
+                        continue
+                    items.append(entry)
         total = len(items)
         if limit is None:
             sliced = items[offset:]

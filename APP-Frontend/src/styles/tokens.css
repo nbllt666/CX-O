@@ -62,8 +62,9 @@
   /* ======================== 2. 语义层 semantic（浅色） ======================== */
 
   /* 2.1 背景 / 文字 */
-  --bg-primary: var(--gray-50);
-  --bg-primary-channel: 250 250 252; /* gray-50 通道值（供 Tailwind <alpha-value>，须与上方同步） */
+  /* 浅色主背景使用「樱花粉淡彩」而非纯白：与二次元三主色（粉/紫/青）同系，扁平亮色不刺眼 */
+  --bg-primary: #fdf1f9;
+  --bg-primary-channel: 253 241 249; /* #fdf1f9 通道值（供 Tailwind <alpha-value>，须与上方同步） */
   --bg-secondary: var(--white);
   --bg-tertiary: var(--gray-100);
   --text-primary: var(--gray-900);

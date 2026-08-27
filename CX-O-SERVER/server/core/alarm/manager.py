@@ -4,6 +4,7 @@ import logging
 import os
 import sqlite3
 import threading
+import time
 import uuid
 from dataclasses import dataclass
 from datetime import datetime, timedelta
@@ -14,6 +15,10 @@ logger = logging.getLogger(__name__)
 
 MAX_DELAY = 86400 * 30  # 最大延迟 30 天（秒）
 MAX_MESSAGE_LENGTH = 1000  # 提醒消息最大长度
+# E8 修复: 单 agent 待触发提醒配额——超限拒绝创建，防止异常调用方无限堆积
+MAX_PENDING_PER_AGENT = 50
+# E8 修复: 重启恢复时相邻到期提醒触发的最小间隔（秒），抑制重启回调洪峰
+RESTORE_TRIGGER_MIN_INTERVAL = 0.2
 
 # 项目根（CX-O-SERVER）：本文件位于 server/core/alarm/ 下，向上 4 级即项目根。
 # 与 agents.py/admin.py 的 _PROJECT_ROOT 模式对齐（rules-0 §三：禁止相对路径）。
@@ -196,6 +201,24 @@ class AlarmManager:
             raise ValueError(f"seconds 必须在 (0, {MAX_DELAY}] 范围内")
         if not isinstance(message, str) or len(message) > MAX_MESSAGE_LENGTH:
             raise ValueError(f"message 长度不能超过 {MAX_MESSAGE_LENGTH} 字符")
+
+        # E8 修复: 单 agent pending 配额校验——超出 MAX_PENDING_PER_AGENT 拒绝创建
+        conn = self._get_connection()
+        try:
+            cursor = conn.cursor()
+            cursor.execute(
+                "SELECT COUNT(*) FROM alarms WHERE agent_id = ? AND status = 'pending'",
+                (agent_id,),
+            )
+            pending_count = cursor.fetchone()[0]
+        finally:
+            self._release_connection()
+        if pending_count >= MAX_PENDING_PER_AGENT:
+            raise ValueError(
+                f"agent {agent_id} 的待触发提醒已达上限 {MAX_PENDING_PER_AGENT}，"
+                f"请先取消或等待现有提醒触发后再创建"
+            )
+
         alarm_id = str(uuid.uuid4())
         now = datetime.now()
         trigger_time = now + timedelta(seconds=seconds)
@@ -381,10 +404,15 @@ class AlarmManager:
                     _safe_log(logging.ERROR, f"提醒回调失败: {e}")
 
     def restore_pending_alarms(self):
-        """从数据库恢复待触发提醒：已到期的立即触发，未到期的重新调度。"""
+        """从数据库恢复待触发提醒：已到期的立即触发，未到期的重新调度。
+
+        E8 修复: 到期提醒逐条节流（相邻触发间隔 >= RESTORE_TRIGGER_MIN_INTERVAL），
+        避免大量过期提醒在重启瞬间集中触发形成回调洪峰。
+        """
         pending = self.get_pending_alarms()
         now = datetime.now()
 
+        last_triggered_at: Optional[float] = None
         for alarm_data in pending:
             trigger_time = datetime.fromisoformat(alarm_data["trigger_time"])
             alarm = Alarm(
@@ -397,6 +425,11 @@ class AlarmManager:
             )
 
             if trigger_time <= now:
+                if last_triggered_at is not None:
+                    elapsed = time.monotonic() - last_triggered_at
+                    if elapsed < RESTORE_TRIGGER_MIN_INTERVAL:
+                        time.sleep(RESTORE_TRIGGER_MIN_INTERVAL - elapsed)
+                last_triggered_at = time.monotonic()
                 self._trigger_alarm(alarm)
             else:
                 self._schedule_alarm(alarm)

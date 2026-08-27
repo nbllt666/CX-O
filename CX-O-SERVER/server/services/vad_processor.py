@@ -455,10 +455,9 @@ class AudioStreamProcessor:
                 if self._agent_interrupt and streaming_result.text and not skip_interrupt:
                     async def _deferred_interrupt_check():
                         sem = _get_interrupt_sem()
-                        try:
-                            sem.acquire_nowait()
-                        except Exception:  # 超限丢弃，防任务无限堆积
+                        if sem.locked():  # 超限丢弃，防任务无限堆积
                             return
+                        await sem.acquire()
                         try:
                             try:
                                 interrupt_result = await self._agent_interrupt.on_asr_partial_result(

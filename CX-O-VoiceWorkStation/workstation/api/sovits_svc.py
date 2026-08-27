@@ -13,6 +13,7 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import threading
 from pathlib import Path
 from typing import Optional
 
@@ -54,6 +55,9 @@ _train_status: dict = {
     "total_epochs": 0,
     "message": "",
 }
+
+# 批E-10：保护 _train_status 判空 + 置忙状态的原子性（防并发双请求都通过闸门）
+_train_lock = threading.Lock()
 
 _trainer_instance: Optional["SoVITSSVCTrainer"] = None
 _trainer_kwargs_hash: Optional[str] = None
@@ -122,7 +126,14 @@ async def preprocess(request: SVCPreprocessRequest):
 async def start_training(request: SVCTrainRequest):
     """启动 So-VITS-SVC 训练"""
 
-    if _train_status["status"] == "running":
+    # 批E-10：判空与置 busy 在同一临界区内原子完成，防止并发第二个请求在判空与
+    # start_training 之间的空档再次进入（双请求都读到 idle 都放行）。
+    with _train_lock:
+        already_running = _train_status["status"] in ("running", "busy_starting")
+        if not already_running:
+            _train_status["status"] = "busy_starting"
+
+    if already_running:
         raise HTTPException(status_code=409, detail="训练任务正在进行中")
 
     try:
@@ -142,6 +153,8 @@ async def start_training(request: SVCTrainRequest):
         return {"status": "success", "task_id": task_id, "message": "训练已启动"}
 
     except Exception as e:
+        # 启动失败/异常：复位忙状态，允许后续重试
+        _train_status["status"] = "idle"
         logger.error(f"Failed to start So-VITS-SVC training: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 

@@ -48,6 +48,9 @@ export interface SampledFrame {
 /** 管线节拍：1s 一拍，兼顾最小采样间隔（frameIntervalSec≥1）与间隔改动即时生效 */
 export const PIPELINE_TICK_MS = 1000;
 
+/** 待上传片段上限：超出丢最旧，防止长离线/上传持续失败场景下内存无限增长 */
+const MAX_PENDING_CLIPS = 50;
+
 /** 默认可打包事件类型：突变类场景跳转才值得生成视频片段 */
 function defaultIsPackable(type: string): boolean {
   return type === 'scene_change';
@@ -113,6 +116,25 @@ export function createVisionPipeline(deps: VisionPipelineDeps): VisionPipelineCo
   const lastVector = new Map<FrameSourceKind, number[]>();
   const pending: BuiltClip<VisionFrame>[] = [];
 
+  // 待上传片段丢弃计数与一次性告警节流标记（超出上限丢最旧）
+  let droppedPendingCount = 0;
+  let droppedWarned = false;
+
+  /** 待传片段统一入队口：超过 MAX_PENDING_CLIPS 时丢最旧并一次性 console.warn */
+  const pushPending = (clip: BuiltClip<VisionFrame>): void => {
+    pending.push(clip);
+    while (pending.length > MAX_PENDING_CLIPS) {
+      pending.shift();
+      droppedPendingCount++;
+    }
+    if (droppedPendingCount > 0 && !droppedWarned) {
+      droppedWarned = true;
+      console.warn(
+        `[vision] 待上传片段超过上限 ${MAX_PENDING_CLIPS}，已累计丢弃最旧片段 ${droppedPendingCount} 个`,
+      );
+    }
+  };
+
   const encodeToBlob = async (clip: BuiltClip<VisionFrame>): Promise<Blob | null> => {
     try {
       return await deps.encode(clip);
@@ -124,7 +146,7 @@ export function createVisionPipeline(deps: VisionPipelineDeps): VisionPipelineCo
   const uploadOrKeep = async (clip: BuiltClip<VisionFrame>): Promise<void> => {
     const blob = await encodeToBlob(clip);
     if (!blob) {
-      pending.push(clip); // 编码降级 → 记录待传
+      pushPending(clip); // 编码降级 → 记录待传
       return;
     }
     try {
@@ -136,7 +158,7 @@ export function createVisionPipeline(deps: VisionPipelineDeps): VisionPipelineCo
       });
       deps.onUploaded?.(result);
     } catch {
-      pending.push(clip); // 上传失败 → 保留待传，不使整轮中断
+      pushPending(clip); // 上传失败 → 保留待传，不使整轮中断
     }
   };
 
@@ -147,7 +169,7 @@ export function createVisionPipeline(deps: VisionPipelineDeps): VisionPipelineCo
       source: kind,
     });
     if (!deps.encodeAndUpload) {
-      pending.push(clip); // 未启用编码 → 记录待传
+      pushPending(clip); // 未启用编码 → 记录待传
       return;
     }
     await uploadOrKeep(clip);
@@ -346,8 +368,27 @@ export function useVisionPipeline(options: UseVisionPipelineOptions = {}): UseVi
   const extCapRef = useRef(options.cap);
   extCapRef.current = options.cap;
 
+  // 整个 options 快照每次渲染同步最新值（G3a）：engine 的 encode/upload/isPackable/
+  // onEvent/onUploaded 回调在执行时从本 ref 取当前配置，使 encodeSize 等运行时可调
+  // 参数即时生效，不再固化为首次渲染快照。
+  const optionsRef = useRef(options);
+  optionsRef.current = options;
+
   const engineRef = useRef<VisionPipelineController | null>(null);
-  if (!engineRef.current) {
+  // 无法热更新的引擎构造参数快照键：detector/clipConfig/buffer 均只在构造期固化，
+  // 检测到浅快照变化时销毁重建 engine；新引擎延续当前 enabled 总闸状态。
+  const structuralKeyRef = useRef<string>('');
+  const structuralKey = JSON.stringify({
+    detectorOptions: options.detectorOptions ?? null,
+    clipConfig: options.clipConfig ?? null,
+    bufferRetentionMs: options.bufferRetentionMs ?? null,
+    bufferMaxFrames: options.bufferMaxFrames ?? null,
+  });
+  if (!engineRef.current || structuralKeyRef.current !== structuralKey) {
+    if (engineRef.current && structuralKeyRef.current !== structuralKey) {
+      engineRef.current.dispose(); // 已知限制：重建不保留旧引擎的待传片段与采样时间轴
+    }
+    structuralKeyRef.current = structuralKey;
     // 双源独立缓冲 + 共享检测器 / 打包器
     const buffers = {
       screen: new RingFrameBuffer<VisionFrame>('screen', {
@@ -369,11 +410,19 @@ export function useVisionPipeline(options: UseVisionPipelineOptions = {}): UseVi
       detector,
       builder,
       bufferFor: (kind) => buffers[kind],
-      encode: options.encode ?? ((clip) => builder.encodeFrames(clip.frames, options.encodeSize ?? { width: 640, height: 360 })),
-      upload: options.upload ?? uploadVisionClip,
-      isPackable: options.isPackable,
-      onEvent: options.onEvent,
-      onUploaded: options.onUploaded,
+      // 编码闭包引用 ref：encodeSize / 注入 encode 每次执行取最新值（不再固化首次快照）
+      encode: async (clip) => {
+        const opt = optionsRef.current;
+        if (opt.encode) return opt.encode(clip);
+        return builder.encodeFrames(clip.frames, opt.encodeSize ?? { width: 640, height: 360 });
+      },
+      upload: (req) => {
+        const opt = optionsRef.current;
+        return opt.upload ? opt.upload(req) : uploadVisionClip(req);
+      },
+      isPackable: (type) => (optionsRef.current.isPackable ?? defaultIsPackable)(type),
+      onEvent: (event) => optionsRef.current.onEvent?.(event),
+      onUploaded: (result) => optionsRef.current.onUploaded?.(result),
       sample: async (kind) => {
         // manual 模式不自动采样（与 useFrameSender 语义一致；管线为自动录制，interval 才采样）
         if (frameModeRef.current === 'manual') return null;
@@ -389,6 +438,9 @@ export function useVisionPipeline(options: UseVisionPipelineOptions = {}): UseVi
         return { dataUrl, vector, ts: Date.now() };
       },
     });
+    // 新引擎立即同步当前总闸与间隔，保证重建期间 enabled 状态延续
+    engineRef.current.setEnabled(managedEnabled);
+    engineRef.current.setIntervalSec(frameIntervalSec);
   }
 
   // 总闸 / 间隔变化同步到 engine

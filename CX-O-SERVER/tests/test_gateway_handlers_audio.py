@@ -387,6 +387,44 @@ class TestASRTTSSynthesize:
         assert len(streams) == 1
         assert streams[0][1]["data"]["emotion"] == "happy"
 
+    @pytest.mark.asyncio
+    async def test_tts_synthesize_stream_set_playing_failure_unlinks_temp(self,
+                                                                          handlers,
+                                                                          monkeypatch):
+        """异常路径临时文件清理：ref_audio 已写临时文件，但 set_tts_playing(True) 抛错
+        跳外层 except，临时文件必须被 unlink，不得泄漏。"""
+        import os
+        import tempfile
+
+        from server.protocol.actions import TTSActions
+
+        # 拦截 NamedTemporaryFile，保留真实创建行为以拿到真实路径
+        real_ntf = tempfile.NamedTemporaryFile
+        created = []
+
+        def _recording_ntf(*args, **kwargs):
+            f = real_ntf(*args, **kwargs)
+            created.append(f.name)
+            return f
+
+        monkeypatch.setattr(tempfile, "NamedTemporaryFile", _recording_ntf)
+
+        # set_tts_playing：playing=True 时抛错（模拟创建临时文件后、进入内层 try 前失败）
+        async def _raising_set_tts_playing(client_id, playing):
+            if playing:
+                raise RuntimeError("boom")
+
+        monkeypatch.setattr(audio_mod, "set_tts_playing", _raising_set_tts_playing)
+
+        h, mgr = handlers
+        ref_audio_b64 = base64.b64encode(b"\x00\x01RMIDATA\x00\x01").decode("utf-8")
+        await h[TTSActions.SYNTHESIZE_STREAM](
+            None, {"data": {"text": "你好", "ref_audio": ref_audio_b64}}, "c1")
+
+        assert len(created) == 1
+        temp_path = created[0]
+        assert not os.path.exists(temp_path), "异常路径下临时文件应被 unlink"
+
 
 # --------------------------------------------------------------------------- #
 # 双流式 handler

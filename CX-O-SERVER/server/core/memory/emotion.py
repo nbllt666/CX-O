@@ -3,6 +3,7 @@
 默认使用摘要模型（LLM）进行情感分析，LLM 不可用或解析失败时回退到本地规则词典。
 """
 import json
+from collections import OrderedDict
 from dataclasses import dataclass
 from typing import List
 
@@ -153,7 +154,9 @@ class EmotionAnalyzer:
         """初始化情感分析器（可选启用 LLM 模式）。"""
         self.use_llm = use_llm
         self.llm_client = llm_client
-        self._cache = {}
+        # 有界 LRU 缓存：超出上限按最久未访问淘汰，避免长期运行无界增长
+        self._cache = OrderedDict()
+        self._cache_max_size = 1024
 
     def set_llm_client(self, llm_client):
         """注入摘要模型客户端并启用 LLM 情感分析模式。"""
@@ -172,6 +175,7 @@ class EmotionAnalyzer:
 
         cache_key = f"{text[:100]}:{context[:50]}" if context else text[:100]
         if cache_key in self._cache:
+            self._cache.move_to_end(cache_key)
             return self._cache[cache_key]
 
         if self.use_llm and self.llm_client:
@@ -180,6 +184,9 @@ class EmotionAnalyzer:
             result = self._analyze_with_rules(text)
 
         self._cache[cache_key] = result
+        self._cache.move_to_end(cache_key)
+        if len(self._cache) > self._cache_max_size:
+            self._cache.popitem(last=False)
         return result
 
     async def _analyze_with_llm(self, text: str, context: str = "") -> EmotionResult:

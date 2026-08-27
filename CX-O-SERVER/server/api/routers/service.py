@@ -33,6 +33,8 @@ _backend_process_lock = threading.Lock()
 _backend_log_handle: Optional[Any] = None
 # 后端进程日志文件绝对路径,供 /service/logs 端点读取
 _backend_log_path: Optional[str] = None
+# 后端进程实际监听端口（start_service 时写入，供 /service/status 回读真实端口）
+_backend_port: Optional[int] = None
 
 
 # ---------------------------------------------------------------------------
@@ -194,6 +196,14 @@ def _open_backend_log_file(root_dir: str) -> tuple:
     ``_backend_log_path`` 的并发写。
     """
     global _backend_log_handle, _backend_log_path
+    # 重开句柄前关闭旧的日志句柄，避免日志文件 fd 泄漏
+    with _backend_process_lock:
+        if _backend_log_handle is not None:
+            try:
+                _backend_log_handle.close()
+            except OSError:
+                pass
+            _backend_log_handle = None
     log_dir = os.path.join(root_dir, "logs")
     try:
         os.makedirs(log_dir, exist_ok=True)
@@ -302,6 +312,7 @@ def get_backend_process() -> Optional[psutil.Process]:
 @router.get("/service/status", response_model=ServiceStatus)
 async def get_service_status():
     """获取后端服务状态"""
+    global _backend_port
     process = get_backend_process()
 
     if process is None:
@@ -349,10 +360,14 @@ async def get_service_status():
             logger.warning(f"检查Conda环境失败: {e}")
 
         return ServiceStatus(
-            running=True, pid=process.pid, port=8000, uptime=uptime, using_conda=using_conda
+            running=True,
+            pid=process.pid,
+            port=_backend_port if _backend_port is not None else 8000,
+            uptime=uptime,
+            using_conda=using_conda,
         )
 
-    return ServiceStatus(running=False, port=8000)
+    return ServiceStatus(running=False, port=_backend_port if _backend_port is not None else 8000)
 
 
 def validate_service_config(config: ServiceConfig) -> None:
@@ -382,7 +397,7 @@ def validate_service_config(config: ServiceConfig) -> None:
 
 
 @router.post("/service/start")
-async def start_service(config: ServiceConfig):
+async def start_service(config: ServiceConfig, _: bool = Depends(verify_admin_api_key)):
     """启动后端服务
 
     BUG-B07 修复: 通过 ``_backend_process_lock`` 保护 ``_backend_process`` 赋值,
@@ -504,6 +519,8 @@ async def start_service(config: ServiceConfig):
         # BUG-B07 修复: 在锁内完成对全局 _backend_process 的赋值,保证可见性
         with _backend_process_lock:
             _backend_process = new_process
+            # 记录实际监听端口，供 /service/status 回读（不再硬编码 8000）
+            _backend_port = config.port
 
         # B10 修复: 写入 pidfile，供后续 status/stop 端点快速定位进程
         _write_pidfile(new_process.pid)
@@ -526,7 +543,7 @@ async def start_service(config: ServiceConfig):
 
 
 @router.post("/service/stop")
-async def stop_service():
+async def stop_service(_: bool = Depends(verify_admin_api_key)):
     """停止后端服务
 
     BUG-B07 修复: 通过 ``_backend_process_lock`` 保护 ``_backend_process`` 写,
@@ -548,19 +565,37 @@ async def stop_service():
                 process = None
 
     if process is None:
-        # 回退到 psutil.process_iter
+        # 回退到 psutil.process_iter —— 仅终止精确匹配的 CX-O 后端进程。
+        # 严禁裸 "uvicorn" 匹配（会误杀承载本请求的其它 uvicorn 进程）。
         stopped = False
+        found_pid = None
         for proc in psutil.process_iter(["pid", "name", "cmdline"]):
             try:
                 # B10 修复: cmdline 可能为 None，用 `or []` 确保是列表
                 cmdline = proc.info.get("cmdline") or []
-                if cmdline and "uvicorn" in " ".join(cmdline):
-                    proc.terminate()
+                cmdline_str = " ".join(cmdline)
+                if cmdline_str and "uvicorn" in cmdline_str and "server.main:app" in cmdline_str:
+                    # 命中精确目标：优先以 pidfile 记录的 backend pid 精确 terminate
+                    pidfile_pid = _read_pidfile()
+                    found_pid = pidfile_pid if (pidfile_pid is not None and pidfile_pid == proc.pid) else proc.pid
                     stopped = True
+                    break
             except (psutil.NoSuchProcess, psutil.AccessDenied):
                 continue
 
-        if stopped:
+        if stopped and found_pid is not None:
+            try:
+                target = psutil.Process(found_pid)
+                if sys.platform == "win32":
+                    target.terminate()
+                else:
+                    target.send_signal(signal.SIGTERM)
+                try:
+                    target.wait(timeout=5)
+                except psutil.TimeoutExpired:
+                    target.kill()
+            except (psutil.NoSuchProcess, psutil.AccessDenied):
+                pass
             # B10 修复: 清理可能存在的 stale pidfile
             _remove_pidfile()
             return {"status": "success", "message": "Service stopped"}
@@ -597,7 +632,7 @@ async def stop_service():
 
 
 @router.post("/service/restart")
-async def restart_service(config: ServiceConfig):
+async def restart_service(config: ServiceConfig, _: bool = Depends(verify_admin_api_key)):
     """重启后端服务"""
     try:
         # 先停止

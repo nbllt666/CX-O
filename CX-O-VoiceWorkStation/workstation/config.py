@@ -47,14 +47,11 @@ class MusicConfig:
     # MockSingingEngine 保留为开发/CI 选项，显式配置 singing_engine="mock" 即可切回。
     singing_engine: str = "diffsinger"
     diffsinger_dir: str = str(_BASE_DIR.parent / "DiffSinger")
-    # DiffSinger 依赖 torch/numpy<2/librosa/lightning 等，仅在 cx-o conda 环境中安装；
-    # 系统 Python 3.14 缺少这些依赖，必须指向 cx-o 环境解释器。
-    # H12: 默认值仍指向已知环境，但允许通过 CXO_DIFFSINGER_PYTHON 环境变量覆盖，
-    # 避免换机/换环境即崩。
-    diffsinger_python: str = os.environ.get(
-        "CXO_DIFFSINGER_PYTHON",
-        r"C:\Users\NBLLT666\.conda\envs\cx-o\python.exe",
-    )
+    # DiffSinger 依赖 torch/numpy<2/librosa/lightning 等，需在 cx-o conda 环境中安装；
+    # 系统 Python 缺少这些依赖。批E-8：默认不再硬编码作者本机路径（换机即失效），
+    # 改为空串 + CXO_DIFFSINGER_PYTHON 环境变量覆盖。空串时由消费方
+    #（services/singing_engine、tools/setup_singing_engine）给出可读的「未配置」错误。
+    diffsinger_python: str = os.environ.get("CXO_DIFFSINGER_PYTHON", "")
     # 默认声库：OpenCpop DS1000 声学模型（已部署于 checkpoints/0211_opencpop_ds1000_keyshift/）
     voice_bank: str = "0211_opencpop_ds1000_keyshift"
     default_svc_model: str = ""

@@ -202,11 +202,11 @@ class Neo4jImporter:
 
             created_nodes = self.node_manager.batch_create(node_creates)
 
-            for old_id, new_node in zip(
-                [nd.get("id") for nd in batch if nd.get("id")],
-                created_nodes
-            ):
-                if old_id in self._node_id_mapping:
+            # 按 index 与 batch/node_creates 一一配对，禁止 zip 两个可能不等长的列表，
+            # 保证批内某节点无 id 时映射仍按序正确。
+            for idx, new_node in enumerate(created_nodes):
+                old_id = batch[idx].get("id") if idx < len(batch) else None
+                if old_id:
                     self._node_id_mapping[old_id] = new_node.id
 
             for node in created_nodes:

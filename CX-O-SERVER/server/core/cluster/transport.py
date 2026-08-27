@@ -7,6 +7,8 @@
 from __future__ import annotations
 
 import json
+import logging
+import os
 import time
 import uuid
 from pathlib import Path
@@ -22,6 +24,12 @@ from ._common import (
     compute_hmac,
     parse_error_code,
 )
+
+log = logging.getLogger(__name__)
+
+# ---- flush_pending 边界常量 ----
+FLUSH_PERMANENT_DROP_LIMIT = 50      # 单轮永久失败丢弃上限（防风暴：超过则保留余量下轮再试）
+FLUSH_MAX_CONSECUTIVE_FAILURES = 10  # 连续发送失败熔断（网络持续不通时中止本轮，避免打爆）
 
 
 class ClusterTransport:
@@ -44,6 +52,8 @@ class ClusterTransport:
         self._timeout_sec = max(5.0, self._evict_sec)
         # request_id 防重放：memory set + monotonic 时间窗
         self._seen: dict[str, float] = {}
+        # flush 永久失败累计丢弃计数（可观测）
+        self._dropped_count = 0
 
     # ---- 依赖注入（便于单测，不发真实网络） ----
     def set_client(self, client):
@@ -76,6 +86,32 @@ class ClusterTransport:
         with open(self._pending_dir / "outbox.jsonl", "a", encoding="utf-8") as fh:
             fh.write(json.dumps(rec, ensure_ascii=False) + "\n")
 
+    async def _post(self, url: str, body: dict):
+        """低层 POST：解析共享 client 并发起请求（flush/send 共用）。"""
+        import server.core.utils as _utils
+
+        client = self._client or _utils.get_shared_http_client()
+        return await client.post(url, json=body, timeout=self._timeout_sec)
+
+    def _build_body(
+        self,
+        op: str,
+        node_id: str,
+        request_id: str,
+        seq: int = 0,
+        epoch: int = 0,
+        payload: dict = None,
+    ) -> dict:
+        return {
+            "op": op,
+            "node_id": node_id,
+            "request_id": request_id,
+            "seq": int(seq),
+            "epoch": int(epoch),
+            "payload": payload or {},
+            "secret_hmac": compute_hmac(self._secret, node_id, request_id, str(int(seq)), op),
+        }
+
     async def send(
         self,
         peer_endpoint: str,
@@ -86,27 +122,15 @@ class ClusterTransport:
         epoch: int = 0,
         payload: dict = None,
     ) -> bool:
-        import server.core.utils as _utils
-
         request_id = request_id or uuid.uuid4().hex
         if self.is_replayed(request_id):
             raise ClusterReplayError(f"replayed request_id={request_id}")
 
         url = build_endpoint(self._scheme, peer_endpoint, op)
-        secret_hmac = compute_hmac(self._secret, node_id, request_id, str(seq), op)
-        body = {
-            "op": op,
-            "node_id": node_id,
-            "request_id": request_id,
-            "seq": int(seq),
-            "epoch": int(epoch),
-            "payload": payload or {},
-            "secret_hmac": secret_hmac,
-        }
+        body = self._build_body(op, node_id, request_id, seq=seq, epoch=epoch, payload=payload)
         self._mark(request_id)
-        client = self._client or _utils.get_shared_http_client()
         try:
-            resp = await client.post(url, json=body, timeout=self._timeout_sec)
+            resp = await self._post(url, body)
             if resp.status_code < 200 or resp.status_code >= 300:
                 data = self._decode(resp)
                 if parse_error_code(data) == CLUSTER_AUTH_FAILED:
@@ -120,41 +144,164 @@ class ClusterTransport:
             self._enqueue(peer_endpoint, body)
             return False
 
+    async def send_with_reply(
+        self,
+        peer_endpoint: str,
+        op: str,
+        node_id: str,
+        request_id: str,
+        seq: int = 0,
+        epoch: int = 0,
+        payload: dict = None,
+    ) -> dict | None:
+        """发送并取回对端应答体（gossip 等请求-响应语义）。
+
+        - 2xx：返回解析后的 JSON dict；
+        - 认证失败：抛 ClusterAuthError（与其他发送路径同约定）；
+        - 其他服务失败 / 网络失败：返回 None（不排队——一次性问询重放无意义）。
+        """
+        request_id = request_id or uuid.uuid4().hex
+        if self.is_replayed(request_id):
+            raise ClusterReplayError(f"replayed request_id={request_id}")
+        url = build_endpoint(self._scheme, peer_endpoint, op)
+        body = self._build_body(op, node_id, request_id, seq=seq, epoch=epoch, payload=payload)
+        self._mark(request_id)
+        try:
+            resp = await self._post(url, body)
+        except ClusterError:
+            raise
+        except Exception:  # noqa: BLE001 - 网络/超时等统一视为无应答
+            return None
+        if resp.status_code < 200 or resp.status_code >= 300:
+            data = self._decode(resp)
+            if parse_error_code(data) == CLUSTER_AUTH_FAILED:
+                raise ClusterAuthError(f"auth failed to {peer_endpoint}")
+            return None
+        try:
+            return resp.json() or {}
+        except Exception:  # noqa: BLE001
+            return {}
+
     async def flush_pending(self) -> None:
-        """尽力重试待发队列。成功即从队列移除；失败则重新入列（新 request_id 避免重放误判）。"""
+        """逐条重试待发队列。
+
+        - 发送成功 → 该条移除；
+        - 4xx/认证类永久失败 → 计入丢弃计数并移除（单轮有 FLUSH_PERMANENT_DROP_LIMIT 上限防风暴）；
+        - 网络类失败 → 条目保留；
+        - 连续失败达 FLUSH_MAX_CONSECUTIVE_FAILURES → 中止本轮，余量保留；
+        - 循环结束后把剩余条目原子改写回文件（tmp + os.replace）。
+          改写前先按字节偏移量回收"flush 期间并发追加"的新条目，避免读改写窗口丢数据；
+          改写本身原子：循环中途崩溃时原文件完好未动，磁盘上条目仍可恢复。
+        """
         f = self._pending_dir / "outbox.jsonl"
         if not f.exists():
             return
-        rows = []
-        with open(f, "r", encoding="utf-8") as fh:
-            for line in fh:
-                line = line.strip()
-                if line:
-                    try:
-                        rows.append(json.loads(line))
-                    except json.JSONDecodeError:
-                        continue
+
+        # 二进制读取并记录偏移量，供后续回收窗口期内新追加的字节
+        with open(f, "rb") as fh:
+            raw = fh.read()
+            offset = len(raw)
+
+        rows: list[dict] = []
+        for line in raw.decode("utf-8", errors="replace").splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                rows.append(json.loads(line))
+            except json.JSONDecodeError:
+                continue
+
+        kept: list[dict] = []
+        permanent_dropped = 0
+        consecutive_failures = 0
+        for rec in rows:
+            peer_endpoint = rec.get("peer_endpoint", "")
+            op = rec.get("op", "")
+            node_id = rec.get("node_id", self._node_id or "")
+            if not peer_endpoint:
+                continue  # 无效条目（缺目标端点）直接移除
+
+            rid = uuid.uuid4().hex  # 重试用新 request_id 避免对端防重放误判
+            body = {
+                "op": op,
+                "node_id": node_id,
+                "request_id": rid,
+                "seq": int(rec.get("seq", 0)),
+                "epoch": int(rec.get("epoch", 0)),
+                "payload": rec.get("payload") or {},
+                "secret_hmac": compute_hmac(self._secret, node_id, rid, str(int(rec.get("seq", 0))), op),
+            }
+            outcome = "transient"
+            try:
+                resp = await self._post(build_endpoint(self._scheme, peer_endpoint, op), body)
+                if 200 <= resp.status_code < 300:
+                    outcome = "ok"
+                else:
+                    code = parse_error_code(self._decode(resp))
+                    # 4xx 与认证失败视为永久失败；5xx 视为瞬时失败
+                    if (400 <= resp.status_code < 500) or code == CLUSTER_AUTH_FAILED:
+                        outcome = "permanent"
+            except Exception:  # noqa: BLE001 - 网络/超时等统一为瞬时失败
+                outcome = "transient"
+
+            if outcome == "ok":
+                consecutive_failures = 0
+                continue
+
+            if outcome == "permanent" and permanent_dropped < FLUSH_PERMANENT_DROP_LIMIT:
+                permanent_dropped += 1
+                self._dropped_count += 1
+                consecutive_failures += 1
+                log.warning(
+                    "[flush] 永久失败条目已丢弃 endpoint=%s op=%s dropped_total=%d",
+                    peer_endpoint, op, self._dropped_count,
+                )
+                continue
+
+            # 瞬时失败 / 超过单轮丢弃上限：保留待下轮
+            kept.append({**rec})
+            consecutive_failures += 1
+            if consecutive_failures >= FLUSH_MAX_CONSECUTIVE_FAILURES:
+                remaining_idx = rows.index(rec) + 1
+                kept.extend(rows[remaining_idx:])
+                log.warning(
+                    "[flush] 连续失败 %d 次，中止本轮，剩余 %d 条保留",
+                    consecutive_failures, len(kept),
+                )
+                break
+
+        # 回收 flush 执行期间并发追加进文件的条目（读改写窗口保护）
+        appended_raw = b""
         try:
-            f.unlink(missing_ok=True)
+            size_now = f.stat().st_size
+            if size_now > offset:
+                with open(f, "rb") as fh:
+                    fh.seek(offset)
+                    appended_raw = fh.read()
         except OSError:
             pass
 
-        for rec in rows:
-            peer_endpoint = rec.pop("peer_endpoint", "")
-            if not peer_endpoint:
-                continue
+        final_bytes = b"".join(
+            (json.dumps(r, ensure_ascii=False) + "\n").encode("utf-8") for r in kept
+        ) + appended_raw
+
+        tmp = f.with_suffix(".jsonl.tmp")
+        try:
+            with open(tmp, "wb") as fh:
+                fh.write(final_bytes)
+            os.replace(tmp, f)
+        except OSError:
+            # 改写失败：保留原文件不动（条目仍在磁盘可恢复）
             try:
-                await self.send(
-                    peer_endpoint,
-                    rec.get("op", ""),
-                    rec.get("node_id", self._node_id or ""),
-                    uuid.uuid4().hex,  # 重试用新 request_id
-                    seq=rec.get("seq", 0),
-                    epoch=rec.get("epoch", 0),
-                    payload=rec.get("payload"),
-                )
-            except ClusterError:
-                continue
+                tmp.unlink(missing_ok=True)
+            except OSError:
+                pass
+
+    @property
+    def dropped_count(self) -> int:
+        """flush 周期中永久失败累计丢弃数（可观测）。"""
+        return self._dropped_count
 
     def pending_count(self) -> int:
         f = self._pending_dir / "outbox.jsonl"

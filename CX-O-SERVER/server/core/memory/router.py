@@ -217,7 +217,7 @@ class MemoryRouter:
                 if not results:
                     break
                 for mem in results:
-                    if mem.get("session_id") == session_id:
+                    if session_id in mem.get("tags", []):
                         memories.append(mem)
                 page += 1
             return memories[:100]

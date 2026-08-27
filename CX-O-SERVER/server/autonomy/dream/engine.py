@@ -142,6 +142,10 @@ class DreamEngine:
         # 后台任务生命周期
         self._stop_event = asyncio.Event()
         self._task: Optional[asyncio.Task] = None
+        # 后台任务引用集合：防止 _safe_run_session/_safe_wake_routines/_safe_purge/
+        # _safe_sleep_session 等 fire-and-forget 任务在完成前被 GC 回收而静默中断
+        # （asyncio 不持有裸 create_task 的引用，回收会静默丢弃任务）。
+        self._bg_tasks: set[asyncio.Task] = set()
         self._status: str = _STATUS_IDLE
         self._last_session_at: Optional[str] = None
         # 最近一次会话触发时刻（窗口边沿 / SleepSensor 确认均记录，供冷却判定）
@@ -277,13 +281,24 @@ class DreamEngine:
         self._task = asyncio.create_task(self._run_loop())
         return self._task
 
+    def _track_background_task(self, task: asyncio.Task) -> asyncio.Task:
+        """追踪后台任务，防止被 GC 提前回收；任务完成后自动从集合移除。"""
+        self._bg_tasks.add(task)
+        task.add_done_callback(self._bg_tasks.discard)
+        return task
+
     def stop(self) -> None:
-        """停止后台循环：置停止事件并取消后台任务。"""
+        """停止后台循环：置停止事件并取消后台任务与未完成的子任务。"""
         self._stop_event.set()
         task = self._task
         self._task = None
         if task is not None and not task.done():
             task.cancel()
+        # 取消仍在运行的后台子任务（run_session/wake/purge），防止循环退出后遗留
+        for bg in list(self._bg_tasks):
+            if not bg.done():
+                bg.cancel()
+        self._bg_tasks.clear()
 
     async def _run_loop(self) -> None:
         """后台昼夜循环：检测相位切换并触发对应动作（异常隔离）。
@@ -314,7 +329,7 @@ class DreamEngine:
                 if sleeping and prev_sleeping is not True:
                     self._status = _STATUS_DREAMING
                     self._last_trigger_at = now
-                    asyncio.create_task(self._safe_run_session())
+                    self._track_background_task(asyncio.create_task(self._safe_run_session()))
 
                 # SleepSensor 生理/行为确认（窗口内 ASLEEP / 窗口外 S4 短路，冷却防高频）
                 if self._sleep_sensor is not None:
@@ -323,12 +338,12 @@ class DreamEngine:
                 # 唤醒窗口进入 → 清除 + 可选主动提起（surface_on_wake）
                 if not sleeping and prev_sleeping is True:
                     self._status = _STATUS_PURGE_SCHEDULED
-                    asyncio.create_task(self._safe_wake_routines())
+                    self._track_background_task(asyncio.create_task(self._safe_wake_routines()))
 
                 # 每 6 小时兜底清除
                 if (now - last_fallback).total_seconds() >= self._fallback_purge_seconds:
                     last_fallback = now
-                    asyncio.create_task(self._safe_purge())
+                    self._track_background_task(asyncio.create_task(self._safe_purge()))
 
                 prev_sleeping = sleeping
             except asyncio.CancelledError:
@@ -386,7 +401,7 @@ class DreamEngine:
         # 带冷却的入睡流程：确认闸门 + 首步自动摘要 + 梦境会话（异常隔离，不阻塞循环）
         self._last_trigger_at = now
         self._status = _STATUS_DREAMING
-        asyncio.create_task(self._safe_sleep_session(snapshot))
+        self._track_background_task(asyncio.create_task(self._safe_sleep_session(snapshot)))
         logger.info(
             "SleepSensor 确认入睡候选，进入入睡流程（确认闸门+自动摘要+会话, sleeping=%s, s4_shortcut=%s）",
             sleeping,

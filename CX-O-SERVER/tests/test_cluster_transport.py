@@ -105,3 +105,36 @@ async def test_auth_failure_raises_not_enqueued(tmp_path):
     assert exc.value.error_code == CLUSTER_AUTH_FAILED
     assert t.pending_count() == 0  # 认证失败不入队
     await transport.aclose()
+
+
+@pytest.mark.asyncio
+async def test_flush_pending_preserves_outbox_on_send_crash(tmp_path):
+    """flush 循环中途遇到未受控异常条目时，不得丢失任何磁盘条目。
+
+    新 flush 实现对单条失败做受控分类（异常→瞬时失败→保留），逐条继续；
+    结束后原子改写回文件：失败条目仍在、成功条目移除，部分进度持久化。
+    """
+    import json as _json
+
+    cfg = make_config()
+    t = ClusterTransport(config=cfg, secret="sk", node_id="me", pending_dir=tmp_path)
+    outbox = tmp_path / "outbox.jsonl"
+    outbox.write_text(_json.dumps({"peer_endpoint": "p1:8443", "op": "x", "payload": {"n": 1}}) + "\n",
+                      encoding="utf-8")
+    with open(outbox, "a", encoding="utf-8") as fh:
+        fh.write(_json.dumps({"peer_endpoint": "p1:8443", "op": "x", "payload": {"n": 2}}) + "\n")
+
+    calls = {"n": 0}
+
+    async def _fake_post(url, body):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise RuntimeError("mid-crash")  # 未受控异常：按瞬时失败保留该条
+        return httpx.Response(200, json={"ok": True})
+
+    t._post = _fake_post
+    await t.flush_pending()
+    # 崩溃条目保留，成功条目移除，文件仍可解析恢复
+    assert outbox.exists()
+    assert t.pending_count() == 1
+    assert calls["n"] == 2

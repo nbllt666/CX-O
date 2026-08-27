@@ -210,6 +210,25 @@ def test_set_config_ignores_unknown_keys(svc):
     # 不应抛错
 
 
+def test_set_config_null_max_length_keeps_old(svc):
+    old = svc.config.max_message_length
+    svc.set_config({"max_message_length": None})
+    assert svc.config.max_message_length == old
+
+
+def test_set_config_non_int_max_length_keeps_old(svc):
+    old = svc.config.max_message_length
+    svc.set_config({"max_message_length": "abc"})
+    assert svc.config.max_message_length == old
+
+
+def test_filter_message_null_max_length_allows(svc):
+    svc.config.max_message_length = None
+    svc.config.min_message_length = 1
+    res = svc.filter_message("非常长的消息内容" * 100)
+    assert res.allowed is True
+
+
 # ---------------------------------------------------------------- 统计/单例
 def test_get_stats(svc):
     svc.filter_message("hello")
