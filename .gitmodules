@@ -1,3 +1,6 @@
 [submodule "third_party/cosyvoice-official"]
 	path = third_party/cosyvoice-official
 	url = https://github.com/FunAudioLLM/CosyVoice.git
+[submodule "docker/asr/sensevoice"]
+	path = docker/asr/sensevoice
+	url = https://github.com/FunAudioLLM/SenseVoice.git
