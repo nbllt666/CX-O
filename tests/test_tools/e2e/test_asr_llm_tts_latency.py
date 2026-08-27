@@ -48,6 +48,8 @@ from typing import Optional
 import httpx
 import requests
 
+from _e2e_agent import E2E_AGENT_ID, reset_agent_state, restore_agent_state
+
 # --------------------------------------------------------------------------- #
 # 服务地址默认配置（与 docker-compose.yml 对齐）
 # --------------------------------------------------------------------------- #
@@ -753,7 +755,7 @@ def main():
     )
     parser.add_argument("--mode", choices=["http", "ws", "both"], default="both", help="测量模式")
     parser.add_argument("--rounds", type=int, default=10, help="测量轮次（默认 10）")
-    parser.add_argument("--agent-id", default="default", help="WS 模式 agent_id（默认 default）")
+    parser.add_argument("--agent-id", default=E2E_AGENT_ID, help=f"WS 模式 agent_id（默认 {E2E_AGENT_ID}）")
     parser.add_argument("--output", default=DEFAULT_OUTPUT_DIR, help="报告输出目录")
     parser.add_argument("--probe", action="store_true", help="仅探测服务可达性，不测量")
     args = parser.parse_args()
@@ -763,7 +765,11 @@ def main():
         asyncio.run(probe_all_services())
         return
 
-    reports = asyncio.run(run_measurement(args.mode, args.rounds, args.agent_id))
+    reset_agent_state()
+    try:
+        reports = asyncio.run(run_measurement(args.mode, args.rounds, args.agent_id))
+    finally:
+        restore_agent_state()
     save_reports(reports, args.output)
 
     # 退出码：全部达标 0，否则 1

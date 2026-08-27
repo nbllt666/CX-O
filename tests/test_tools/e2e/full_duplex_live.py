@@ -1,6 +1,7 @@
 import asyncio, base64, json, time, wave
 import numpy as np
-WS_URL="ws://127.0.0.1:8000/api/ws/default"
+from _e2e_agent import E2E_AGENT_ID, reset_agent_state, restore_agent_state
+WS_URL=f"ws://127.0.0.1:8000/api/ws/{E2E_AGENT_ID}"
 AUDIO=r"C:\CX-O\CX-O-SERVER\data\ref_audio_assets\ref_034ed0259d8043db.wav"
 def load_16k():
     with wave.open(AUDIO,"rb") as wf:
@@ -11,12 +12,18 @@ def load_16k():
         n=int(len(d)*16000/sr); d=np.interp(np.linspace(0,len(d)-1,n),np.arange(len(d)),d).astype(np.float32)
     return d
 async def main():
+    reset_agent_state()
+    try:
+        await _run()
+    finally:
+        await asyncio.to_thread(restore_agent_state)
+async def _run():
     import websockets
     pcm=(np.clip(load_16k(),-1,1)*32767).astype(np.int16)
     t0=None; st={"partial":0,"prefill":0,"tts_audio_bytes":0,"tts_chunks":0,"final":0,"speaker":None,"err":0}
     tts_first=None
     async with websockets.connect(WS_URL,max_size=None) as ws:
-        await ws.send(json.dumps({"action":"voice.dual_stream","request_id":"fd-live","data":{"init":True,"agent_id":"default"}}))
+        await ws.send(json.dumps({"action":"voice.dual_stream","request_id":"fd-live","data":{"init":True,"agent_id":E2E_AGENT_ID}}))
         await asyncio.sleep(0.25)
         async def rcv():
             while True:

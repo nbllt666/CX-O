@@ -130,8 +130,13 @@ export default function ChatPage() {
       try {
         const { messages: history } = await chatApi.getChatHistory(currentAgentId);
         if (token.cancelled) return;
+        // 防御性排序：后端返回按 created_at 升序，这里按时间戳再排一次，
+        // 避免乱序返回直接渲染成"问答错位"（时间戳同值时保持原有相对顺序）
+        const sorted = [...history].sort((a, b) =>
+          (a.created_at || '').localeCompare(b.created_at || ''),
+        );
         setMessages(
-          history.map((m) => ({
+          sorted.map((m) => ({
             id: m.id || `h-${Math.random().toString(36).slice(2)}`,
             role: m.role === 'assistant' ? 'assistant' : 'user',
             content: m.content,

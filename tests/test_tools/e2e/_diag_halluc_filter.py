@@ -1,8 +1,9 @@
 # -*- coding: utf-8 -*-
 """验证首 partial 幻觉过滤：发送干净音频，检查 partial 是否含 'Yeah。' 且不触发 pipeline。"""
 import asyncio, base64, json, time, wave, numpy as np, websockets
+from _e2e_agent import E2E_AGENT_ID, reset_agent_state, restore_agent_state
 
-WS_URL = "ws://127.0.0.1:8000/api/ws/default"
+WS_URL = f"ws://127.0.0.1:8000/api/ws/{E2E_AGENT_ID}"
 REF_ASSET = "ref_034ed0259d8043db"
 
 with wave.open(r"C:\CX-O\tests\test_tools\e2e\reports\voice_e2e_user.wav", "rb") as wf:
@@ -22,9 +23,17 @@ req = "diag-filter"
 
 
 async def main():
+    reset_agent_state()
+    try:
+        await _run()
+    finally:
+        await asyncio.to_thread(restore_agent_state)
+
+
+async def _run():
     async with websockets.connect(WS_URL, max_size=2**24, open_timeout=10) as ws:
         await ws.send(json.dumps({"action": "voice.dual_stream", "request_id": req,
-                                  "data": {"init": True, "agent_id": "default", "ref_asset_id": REF_ASSET}}))
+                                  "data": {"init": True, "agent_id": E2E_AGENT_ID, "ref_asset_id": REF_ASSET}}))
         await asyncio.sleep(0.3)
         t0 = time.monotonic()
         for f in frames:

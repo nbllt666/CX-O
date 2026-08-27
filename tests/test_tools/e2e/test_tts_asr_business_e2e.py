@@ -27,6 +27,8 @@ import time
 import numpy as np
 import requests
 
+from _e2e_agent import E2E_AGENT_ID, reset_agent_state, restore_agent_state
+
 # --------------------------------------------------------------------------- #
 # 服务地址（与 docker-compose.yml / vite.config.ts 对齐）
 # --------------------------------------------------------------------------- #
@@ -159,7 +161,7 @@ async def ws_dual_stream_round(pcm16: bytes, expected_text: str, voice: str) -> 
         "error": None,
     }
     session_id = f"biz-e2e-{int(time.time())}"
-    agent_id = "default"
+    agent_id = E2E_AGENT_ID
     request_id = f"{session_id}-r0"
 
     t0 = time.monotonic()
@@ -365,7 +367,11 @@ def main() -> None:
     parser.add_argument("--voice", default="长乐", help="TTS 音色")
     args = parser.parse_args()
 
-    ok = asyncio.run(run(args.text, args.voice))
+    reset_agent_state()
+    try:
+        ok = asyncio.run(run(args.text, args.voice))
+    finally:
+        restore_agent_state()
     sys.exit(0 if ok else 1)
 
 

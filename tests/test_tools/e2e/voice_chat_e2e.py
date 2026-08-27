@@ -23,7 +23,8 @@ except Exception:
     pass
 
 BASE = "http://127.0.0.1:8000"
-WS_URL = "ws://127.0.0.1:8000/api/ws/default"
+from _e2e_agent import E2E_AGENT_ID, reset_agent_state, restore_agent_state
+WS_URL = f"ws://127.0.0.1:8000/api/ws/{E2E_AGENT_ID}"
 REF_ASSET = "ref_034ed0259d8043db"
 USER_TEXT = "你好，今天天气怎么样"
 OUT_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "reports")
@@ -85,7 +86,7 @@ async def step_dual_stream(pcm_16k: bytes):
     async with websockets.connect(WS_URL, max_size=2**24, open_timeout=10) as ws:
         await ws.send(json.dumps({
             "action": "voice.dual_stream", "request_id": req_id,
-            "data": {"init": True, "agent_id": "default", "ref_asset_id": REF_ASSET},
+            "data": {"init": True, "agent_id": E2E_AGENT_ID, "ref_asset_id": REF_ASSET},
         }))
         await asyncio.sleep(0.3)
 
@@ -226,4 +227,8 @@ async def main():
 
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    reset_agent_state()
+    try:
+        asyncio.run(main())
+    finally:
+        restore_agent_state()

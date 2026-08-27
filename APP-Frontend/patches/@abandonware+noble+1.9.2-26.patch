@@ -1,0 +1,13 @@
+diff --git a/node_modules/@abandonware/noble/lib/win/binding.gyp b/node_modules/@abandonware/noble/lib/win/binding.gyp
+index c967253..16052b7 100644
+--- a/node_modules/@abandonware/noble/lib/win/binding.gyp
++++ b/node_modules/@abandonware/noble/lib/win/binding.gyp
+@@ -16,7 +16,7 @@
+       'msvs_target_platform_version':'10.0.18362.0',
+       'msvs_target_platform_minversion':'10.0.18362.0',
+       'conditions': [
+-        ['OS=="win"', { 'defines': [ '_HAS_EXCEPTIONS=1', 'NAPI_CPP_EXCEPTIONS=1' ] }]
++        ['OS=="win"', { 'defines': [ '_HAS_EXCEPTIONS=1', 'NAPI_CPP_EXCEPTIONS=1', '_SILENCE_EXPERIMENTAL_COROUTINE_DEPRECATION_WARNINGS' ] }]
+       ],
+     }
+   ]

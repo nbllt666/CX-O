@@ -9,7 +9,9 @@ import io as _io
 import numpy as np
 import websockets
 
-WS_URL = "ws://127.0.0.1:8000/api/ws/default"
+from _e2e_agent import E2E_AGENT_ID, reset_agent_state, restore_agent_state
+
+WS_URL = f"ws://127.0.0.1:8000/api/ws/{E2E_AGENT_ID}"
 # 使用真实 16kHz 语音音频（cosyvoice 预热参考音频，有实际语音内容）
 REF_PATH = r"C:\CX-O\docker\llm\cosyvoice_tmp\warmup_ref.wav"
 
@@ -37,6 +39,14 @@ def load_16k_pcm() -> bytes:
 
 
 async def main():
+    reset_agent_state()
+    try:
+        await _run()
+    finally:
+        await asyncio.to_thread(restore_agent_state)
+
+
+async def _run():
     pcm = load_16k_pcm()
     sr = 16000
     frame_ms = 30
@@ -57,7 +67,7 @@ async def main():
             "request_id": "diag-ws-final",
             "data": {
                 "init": True,
-                "agent_id": "default",
+                "agent_id": E2E_AGENT_ID,
                 "engine": "cosyvoice3",
                 "voice": "ref_8df9787c96124a5f",
             },

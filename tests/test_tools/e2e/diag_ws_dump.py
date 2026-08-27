@@ -11,7 +11,9 @@ import time
 import numpy as np
 import websockets
 
-WS_URL = "ws://127.0.0.1:8000/api/ws/default"
+from _e2e_agent import E2E_AGENT_ID, reset_agent_state, restore_agent_state
+
+WS_URL = f"ws://127.0.0.1:8000/api/ws/{E2E_AGENT_ID}"
 SAMPLE_RATE = 16000
 
 
@@ -46,6 +48,14 @@ def make_audio(duration_s: float = 1.0) -> str:
 
 
 async def main():
+    reset_agent_state()
+    try:
+        await _run()
+    finally:
+        await asyncio.to_thread(restore_agent_state)
+
+
+async def _run():
     audio_b64 = make_audio()
     import io
     import wave as _wave
@@ -70,7 +80,7 @@ async def main():
             "request_id": "diag-ws-dump",
             "data": {
                 "init": True,
-                "agent_id": "default",
+                "agent_id": E2E_AGENT_ID,
                 "engine": "cosyvoice3",
                 "voice": "ref_8df9787c96124a5f",
             },

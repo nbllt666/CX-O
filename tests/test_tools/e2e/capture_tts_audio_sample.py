@@ -29,9 +29,11 @@ sys.path.insert(0, str(_PROJECT_ROOT / "tests" / "test_tools" / "e2e"))
 import numpy as np
 import websockets
 
+from _e2e_agent import E2E_AGENT_ID as AGENT_ID  # 测试专用 agent（环境变量 CXO_E2E_AGENT_ID 可覆盖）
+from _e2e_agent import reset_agent_state, restore_agent_state
+
 # 服务地址
 CXO_SERVER_WS = os.environ.get("CXO_SERVER_WS", "ws://127.0.0.1:8000/api/ws/{agent_id}")
-AGENT_ID = os.environ.get("AGENT_ID", "default")  # 与 test_asr_llm_tts_latency.py 对齐
 
 # 音频参数（与 test_asr_llm_tts_latency.py 对齐：真实中文语音裁剪前 1.0s）
 AUDIO_SAMPLE_RATE = 16000
@@ -227,4 +229,8 @@ async def capture_audio_sample() -> None:
 
 
 if __name__ == "__main__":
-    asyncio.run(capture_audio_sample())
+    reset_agent_state()
+    try:
+        asyncio.run(capture_audio_sample())
+    finally:
+        restore_agent_state()
