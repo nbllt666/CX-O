@@ -499,6 +499,8 @@ def set_alarm(seconds: int, message: str, agent_id: str = "default") -> Dict[str
     """
     if not (1 <= seconds):
         return {"error": "秒数必须大于等于1"}
+    if seconds > 86400:
+        return {"error": "秒数不能超过86400（24小时内）"}
 
     try:
         from server.core.alarm import get_alarm_manager

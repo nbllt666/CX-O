@@ -25,6 +25,8 @@ RADIX-Lite 管理 Agent 扩展工具：8 个新增工具。
 import asyncio
 import json
 import os
+import tempfile
+import threading
 from typing import Any, Dict, Optional
 
 from pydantic import BaseModel
@@ -196,6 +198,10 @@ class AgentToolsV2:
         _distillation_service: DistillationService 实例（蒸馏工具使用）
     """
 
+    # M-E 修复: 类级锁包住 add/update/delete 的 load-modify-save 全程，
+    # 防止并发写路径交叉读改写导致丢 agent。
+    _agents_lock = threading.Lock()
+
     def __init__(
         self,
         caller_agent_id: Optional[str] = None,
@@ -251,38 +257,40 @@ class AgentToolsV2:
         if not request.name:
             raise ValueError("name 不能为空（422）")
 
-        agents_data = self._load_agents()
-        agents_list = agents_data.get("agents", [])
+        # M-E 修复: load-modify-save 全程持锁，防并发交叉写丢 agent
+        with self._agents_lock:
+            agents_data = self._load_agents()
+            agents_list = agents_data.get("agents", [])
 
-        for record in agents_list:
-            if record.get("agent_id") == request.agent_id:
-                raise FileExistsError(
-                    f"agent_id 已存在（409）: {request.agent_id}"
-                )
+            for record in agents_list:
+                if record.get("agent_id") == request.agent_id:
+                    raise FileExistsError(
+                        f"agent_id 已存在（409）: {request.agent_id}"
+                    )
 
-        config = request.config or {}
-        tools_config = config.get("tools_config", dict(_DEFAULT_TOOLS_CONFIG))
-        decision_rubric = config.get("decision_rubric")
-        if decision_rubric is None:
-            raise ValueError("decision_rubric 缺失（422）")
-        # 校验 4 必需阈值
-        for field in _REQUIRED_RUBRIC_FIELDS:
-            if field not in decision_rubric:
-                raise ValueError(
-                    f"decision_rubric 缺少必需字段（422）: {field}"
-                )
+            config = request.config or {}
+            tools_config = config.get("tools_config", dict(_DEFAULT_TOOLS_CONFIG))
+            decision_rubric = config.get("decision_rubric")
+            if decision_rubric is None:
+                raise ValueError("decision_rubric 缺失（422）")
+            # 校验 4 必需阈值
+            for field in _REQUIRED_RUBRIC_FIELDS:
+                if field not in decision_rubric:
+                    raise ValueError(
+                        f"decision_rubric 缺少必需字段（422）: {field}"
+                    )
 
-        record = AgentRecord(
-            agent_id=request.agent_id,
-            name=request.name,
-            tools_config=tools_config,
-            decision_rubric=decision_rubric,
-            distillation_enabled=config.get("distillation_enabled", False),
-            legacy_parser_enabled=config.get("legacy_parser_enabled", True),
-        )
-        agents_list.append(record.model_dump())
-        agents_data["agents"] = agents_list
-        self._save_agents(agents_data)
+            record = AgentRecord(
+                agent_id=request.agent_id,
+                name=request.name,
+                tools_config=tools_config,
+                decision_rubric=decision_rubric,
+                distillation_enabled=config.get("distillation_enabled", False),
+                legacy_parser_enabled=config.get("legacy_parser_enabled", True),
+            )
+            agents_list.append(record.model_dump())
+            agents_data["agents"] = agents_list
+            self._save_agents(agents_data)
         return record
 
     def update_agent(self, agent_id: str, request: UpdateAgentRequest) -> AgentRecord:
@@ -303,41 +311,43 @@ class AgentToolsV2:
         """
         self._check_tool_enabled("update_agent")
 
-        agents_data = self._load_agents()
-        agents_list = agents_data.get("agents", [])
+        # M-E 修复: load-modify-save 全程持锁，防并发交叉写丢 agent
+        with self._agents_lock:
+            agents_data = self._load_agents()
+            agents_list = agents_data.get("agents", [])
 
-        target_idx: Optional[int] = None
-        for idx, record in enumerate(agents_list):
-            if record.get("agent_id") == agent_id:
-                target_idx = idx
-                break
-        if target_idx is None:
-            raise KeyError(f"agent_id 不存在（404）: {agent_id}")
+            target_idx: Optional[int] = None
+            for idx, record in enumerate(agents_list):
+                if record.get("agent_id") == agent_id:
+                    target_idx = idx
+                    break
+            if target_idx is None:
+                raise KeyError(f"agent_id 不存在（404）: {agent_id}")
 
-        record_dict = agents_list[target_idx]
-        if request.name is not None:
-            record_dict["name"] = request.name
-        if request.config is not None:
-            cfg = request.config
-            if "tools_config" in cfg:
-                record_dict["tools_config"] = cfg["tools_config"]
-            if "decision_rubric" in cfg:
-                rubric = cfg["decision_rubric"]
-                for field in _REQUIRED_RUBRIC_FIELDS:
-                    if field not in rubric:
-                        raise ValueError(
-                            f"decision_rubric 缺少必需字段（422）: {field}"
-                        )
-                record_dict["decision_rubric"] = rubric
-            if "distillation_enabled" in cfg:
-                record_dict["distillation_enabled"] = cfg["distillation_enabled"]
-            if "legacy_parser_enabled" in cfg:
-                record_dict["legacy_parser_enabled"] = cfg["legacy_parser_enabled"]
+            record_dict = agents_list[target_idx]
+            if request.name is not None:
+                record_dict["name"] = request.name
+            if request.config is not None:
+                cfg = request.config
+                if "tools_config" in cfg:
+                    record_dict["tools_config"] = cfg["tools_config"]
+                if "decision_rubric" in cfg:
+                    rubric = cfg["decision_rubric"]
+                    for field in _REQUIRED_RUBRIC_FIELDS:
+                        if field not in rubric:
+                            raise ValueError(
+                                f"decision_rubric 缺少必需字段（422）: {field}"
+                            )
+                    record_dict["decision_rubric"] = rubric
+                if "distillation_enabled" in cfg:
+                    record_dict["distillation_enabled"] = cfg["distillation_enabled"]
+                if "legacy_parser_enabled" in cfg:
+                    record_dict["legacy_parser_enabled"] = cfg["legacy_parser_enabled"]
 
-        record = AgentRecord(**record_dict)
-        agents_list[target_idx] = record.model_dump()
-        agents_data["agents"] = agents_list
-        self._save_agents(agents_data)
+            record = AgentRecord(**record_dict)
+            agents_list[target_idx] = record.model_dump()
+            agents_data["agents"] = agents_list
+            self._save_agents(agents_data)
         return record
 
     def delete_agent(self, agent_id: str) -> bool:
@@ -358,20 +368,22 @@ class AgentToolsV2:
         """
         self._check_tool_enabled("delete_agent")
 
-        agents_data = self._load_agents()
-        agents_list = agents_data.get("agents", [])
+        # M-E 修复: load-modify-save 全程持锁，防并发交叉写丢 agent
+        with self._agents_lock:
+            agents_data = self._load_agents()
+            agents_list = agents_data.get("agents", [])
 
-        target_idx: Optional[int] = None
-        for idx, record in enumerate(agents_list):
-            if record.get("agent_id") == agent_id:
-                target_idx = idx
-                break
-        if target_idx is None:
-            raise KeyError(f"agent_id 不存在（404）: {agent_id}")
+            target_idx: Optional[int] = None
+            for idx, record in enumerate(agents_list):
+                if record.get("agent_id") == agent_id:
+                    target_idx = idx
+                    break
+            if target_idx is None:
+                raise KeyError(f"agent_id 不存在（404）: {agent_id}")
 
-        del agents_list[target_idx]
-        agents_data["agents"] = agents_list
-        self._save_agents(agents_data)
+            del agents_list[target_idx]
+            agents_data["agents"] = agents_list
+            self._save_agents(agents_data)
 
         # 级联清理：删除该 agent 关联的审计日志（best-effort）
         self._cascade_cleanup_agent(agent_id)
@@ -692,8 +704,14 @@ class AgentToolsV2:
 
         文件不存在时返回默认结构（含 default + memory-agent 两个预置 agent）。
 
+        M-E 修复: 文件存在但 JSON 损坏时改为 raise——旧实现静默返回
+        {"agents": []}，下游写路径会把空结构覆写回文件，丢掉全部 agent。
+
         Returns:
             agents 数据字典 {"agents": [...]}
+
+        Raises:
+            IOError: 文件读取失败或 JSON 解析失败（500，中断写路径防覆写）
         """
         try:
             if not os.path.isfile(self._agents_file):
@@ -704,29 +722,49 @@ class AgentToolsV2:
                     ]
                 }
             with open(self._agents_file, "r", encoding="utf-8") as fh:
-                data = json.load(fh)
-            if not isinstance(data, dict):
-                return {"agents": []}
-            if "agents" not in data:
-                data["agents"] = []
-            return data
-        except json.JSONDecodeError:
-            return {"agents": []}
+                raw = fh.read()
         except OSError as exc:
             raise IOError(f"agents.json 读取失败（500）: {exc}") from exc
+        try:
+            data = json.loads(raw)
+        except json.JSONDecodeError as exc:
+            # M-E: 损坏文件不得以空结构覆写，中断写路径（IOError 是 OSError 子类，
+            # 兼容既有 except (IOError, OSError) 调用方的读取路径）
+            raise IOError(f"agents.json 解析失败（500）: {exc}") from exc
+        if not isinstance(data, dict):
+            raise IOError("agents.json 结构损坏（500）: 顶层不是对象")
+        if "agents" not in data:
+            data["agents"] = []
+        return data
 
     def _save_agents(self, agents_data: Dict[str, Any]) -> None:
-        """保存 agents.json。
+        """保存 agents.json（M-E: 临时文件 + os.replace 原子替换）。
+
+        先写同目录临时文件再原子替换，避免进程崩溃/断电留下半截 JSON
+        导致下次启动解析失败（配合 _load_agents 的 fail-fast）。
 
         Raises:
             IOError: 写入失败（500）
         """
+        tmp_path: Optional[str] = None
         try:
             os.makedirs(os.path.dirname(self._agents_file), exist_ok=True)
-            with open(self._agents_file, "w", encoding="utf-8") as fh:
+            fd, tmp_path = tempfile.mkstemp(
+                prefix=".agents-", suffix=".json.tmp",
+                dir=os.path.dirname(self._agents_file) or ".",
+            )
+            with os.fdopen(fd, "w", encoding="utf-8") as fh:
                 json.dump(agents_data, fh, ensure_ascii=False, indent=2)
+            os.replace(tmp_path, self._agents_file)
+            tmp_path = None  # 已被 replace 消费
         except OSError as exc:
             raise IOError(f"agents.json 写入失败（500）: {exc}") from exc
+        finally:
+            if tmp_path is not None and os.path.exists(tmp_path):
+                try:
+                    os.unlink(tmp_path)
+                except OSError:
+                    pass
 
     def _cascade_cleanup_agent(self, agent_id: str) -> None:
         """级联清理 agent 关联数据（审计日志 best-effort）。"""

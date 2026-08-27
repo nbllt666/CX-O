@@ -77,3 +77,25 @@ async def test_handshake_rejects_peer_wrong_secret_proof():
     assert isinstance(exc.value, ClusterError)
     assert exc.value.error_code == CLUSTER_AUTH_FAILED
     await transport.aclose()
+
+
+@pytest.mark.asyncio
+async def test_handshake_rejects_missing_secret_proof():
+    """L11 收紧：对端自报 node_id 却缺失 secret_hmac 证明 → 拒绝（此前静默放行）。"""
+    cfg = make_config()
+
+    def handler(request):
+        import json as _j
+
+        body = _j.loads(request.content)
+        assert body["node_id"]
+        return httpx.Response(200, json={"node_id": "peer-ghost", "payload": {"node_name": "x"}})
+
+    transport = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    d = PeerDiscovery(config=cfg, node_id="me", secret=cfg.cluster_secret, client=transport)
+    with pytest.raises(Exception) as exc:
+        await d.handshake("p1:8443")
+    from server.core.cluster._common import CLUSTER_AUTH_FAILED, ClusterError
+    assert isinstance(exc.value, ClusterError)
+    assert exc.value.error_code == CLUSTER_AUTH_FAILED
+    await transport.aclose()

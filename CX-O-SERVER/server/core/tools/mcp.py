@@ -87,6 +87,28 @@ class MCPManager:
         self._tool_registry = tool_registry
         logger.info("MCP管理器已连接到工具注册表")
 
+    def _unregister_server_tools(self, server_name: str) -> int:
+        """注销指定 MCP 服务器注册进 ToolRegistry 的工具（幽灵工具清理）。
+
+        MCP 工具以 category="mcp"、tags=[server_name] 注册；服务器移除/停止后，
+        这些工具已不可调用，若不清理会成为"幽灵工具"——仍出现在工具列表中、
+        被模型选中后在调用期才失败。逐个调用 registry.delete_tool 注销。
+
+        Returns:
+            实际注销的工具数量
+        """
+        registry = self._tool_registry
+        if registry is None:
+            return 0
+        removed = 0
+        for tool in list(registry.list_tools(enabled_only=False, include_builtin=True)):
+            if tool.category == "mcp" and server_name in (tool.tags or []):
+                if registry.delete_tool(tool.name):
+                    removed += 1
+        if removed:
+            logger.info(f"已注销 MCP 服务器 {server_name} 的 {removed} 个注册工具")
+        return removed
+
     async def add_server(
         self, name: str, command: str, args: List[str], env: Dict = None, endpoint_url: str = None
     ) -> Dict:
@@ -130,7 +152,9 @@ class MCPManager:
             if server.process:
                 try:
                     server.process.terminate()
-                    server.process.wait(timeout=5)
+                    # 同步 wait 会阻塞事件循环最多 5 秒（与 stop_server/close 对齐），
+                    # 卸载到 IO 线程执行
+                    await asyncio.to_thread(server.process.wait, timeout=5)
                 except Exception as e:
                     logger.warning(f"停止MCP服务器进程失败: {e}")
 
@@ -141,6 +165,9 @@ class MCPManager:
             # 清理后台排空线程引用
             self._stdout_threads.pop(name, None)
             self._stderr_threads.pop(name, None)
+
+            # 清理该 server 注册进 ToolRegistry 的幽灵工具
+            self._unregister_server_tools(name)
 
             del self.servers[name]
             logger.info(f"MCP服务器已移除: {name}")
@@ -265,6 +292,8 @@ class MCPManager:
                 # BUG-B-M5 修复: process.wait() 是同步阻塞调用,在 async 函数中
                 # 会阻塞事件循环最多 5 秒。改用 asyncio.to_thread 在独立线程执行。
                 await asyncio.to_thread(server.process.wait, timeout=5)
+                # 停止后该 server 的工具已不可调用，同步注销注册表中的幽灵工具
+                self._unregister_server_tools(name)
                 server.status = "disconnected"
                 server.last_check = datetime.now().isoformat()
                 logger.info(f"MCP服务器已停止: {name}")
@@ -338,11 +367,34 @@ class MCPManager:
 
                 if self._tool_registry:
                     for tool in server.tools:
+                        name = tool.get("name")
+                        parameters = tool.get("parameters", {})
+                        # 零校验修复：name 必须为非空 str、parameters 必须为 dict
+                        # （对 parameters.type 做 object 宽松校验）；不合格跳过并告警，
+                        # 避免畸形工具描述污染注册表后在调用期才暴露。
+                        if not isinstance(name, str) or not name.strip():
+                            logger.warning(
+                                f"跳过非法 MCP 工具（name 非空字符串校验失败）: "
+                                f"server={server_name}, name={name!r}"
+                            )
+                            continue
+                        if not isinstance(parameters, dict):
+                            logger.warning(
+                                f"跳过非法 MCP 工具（parameters 非 dict）: "
+                                f"server={server_name}, name={name}"
+                            )
+                            continue
+                        if "type" in parameters and parameters.get("type") != "object":
+                            logger.warning(
+                                f"跳过非法 MCP 工具（parameters.type 应为 object）: "
+                                f"server={server_name}, name={name}, type={parameters.get('type')!r}"
+                            )
+                            continue
                         try:
                             self._tool_registry.register(
-                                name=tool.get("name"),
+                                name=name,
                                 description=tool.get("description", ""),
-                                parameters=tool.get("parameters", {}),
+                                parameters=parameters,
                                 enabled=True,
                                 version="1.0.0",
                                 category="mcp",
@@ -470,7 +522,9 @@ class MCPManager:
             if server.process:
                 try:
                     server.process.terminate()
-                    server.process.wait(timeout=5)
+                    # 同步 process.wait(timeout=5) 会阻塞事件循环最多 5 秒
+                    # （与 stop_server 的 BUG-B-M5 修复对齐），卸载到 IO 线程执行
+                    await asyncio.to_thread(server.process.wait, timeout=5)
                 except Exception:
                     pass
 

@@ -15,6 +15,11 @@ from server.api.routers.admin import verify_admin_api_key
 logger = get_contextual_logger(__name__)
 router = APIRouter()
 
+# L 级修复: 导入备份流式分块写出，总量上限 200MB（超限 422 并清理临时文件）。
+# 常量置于模块级便于测试注入小上限。
+_MAX_IMPORT_BYTES = 200 * 1024 * 1024
+_IMPORT_CHUNK_SIZE = 1024 * 1024
+
 
 class CreateBackupRequest(BaseModel):
     """创建备份请求"""
@@ -207,20 +212,38 @@ async def delete_backup(backup_id: str, _: bool = Depends(verify_admin_api_key))
 
 @router.post("/backups/import")
 async def import_backup(file: UploadFile = File(...), _: bool = Depends(verify_admin_api_key)):
-    """导入备份文件"""
+    """导入备份文件。
+
+    L 级修复: 流式分块写临时文件（不再整文件 read() 进内存），总量上限 200MB，
+    超限返回 422 并清理临时文件。
+    """
     try:
         manager = get_backup_manager()
 
-        # 保存上传的文件
+        # 保存上传的文件（流式分块，限制总量）
         import os
         import tempfile
 
+        total_written = 0
+        exceeded = False
         with tempfile.NamedTemporaryFile(delete=False, suffix=".zip") as tmp:
-            content = await file.read()
-            tmp.write(content)
             tmp_path = tmp.name
+            while True:
+                chunk = await file.read(_IMPORT_CHUNK_SIZE)
+                if not chunk:
+                    break
+                total_written += len(chunk)
+                if total_written > _MAX_IMPORT_BYTES:
+                    exceeded = True
+                    break
+                tmp.write(chunk)
 
         try:
+            if exceeded:
+                raise HTTPException(
+                    status_code=422,
+                    detail=f"备份文件超过大小上限（200MB）: 实际 >{_MAX_IMPORT_BYTES} 字节",
+                )
             # 导入备份
             backup = manager.import_backup(tmp_path)
 

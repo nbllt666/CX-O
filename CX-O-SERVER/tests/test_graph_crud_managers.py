@@ -64,11 +64,20 @@ class TestNodeManager:
         assert edge_mgr.count(agent_id="default") == 0  # 级联删除边
         assert node_mgr.get(a.id, "default") is None
 
-    def test_delete_non_cascade_keeps_edges(self, db, node_mgr, edge_mgr):
+    def test_delete_non_cascade_with_edges_rejected(self, db, node_mgr, edge_mgr):
+        """第四轮 §6.3 第12条新契约：cascade=False 且有边 → ValueError 拒绝（不产生悬挂边）。"""
         a, b = _seed_two_nodes(node_mgr)
         edge_mgr.create(EdgeCreate(source_id=a.id, target_id=b.id, relation_type="knows"), "default")
-        node_mgr.delete(a.id, cascade=False, agent_id="default")
+        with pytest.raises(ValueError, match="cascade=True"):
+            node_mgr.delete(a.id, cascade=False, agent_id="default")
+        assert node_mgr.get(a.id, "default") is not None
         assert edge_mgr.count(agent_id="default") == 1
+
+    def test_delete_non_cascade_without_edges_ok(self, db, node_mgr, edge_mgr):
+        """cascade=False 且无关联边 → 直接删除成功。"""
+        a, _ = _seed_two_nodes(node_mgr)
+        assert node_mgr.delete(a.id, cascade=False, agent_id="default") is True
+        assert node_mgr.get(a.id, "default") is None
 
     def test_list_with_type_and_pagination(self, node_mgr):
         for i in range(5):

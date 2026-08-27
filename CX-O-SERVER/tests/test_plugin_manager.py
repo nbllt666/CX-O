@@ -6,6 +6,7 @@
 运行：python -m pytest tests/test_plugin_manager.py -v
 """
 import json
+import sys
 from datetime import datetime
 
 import pytest
@@ -100,6 +101,34 @@ class TestLoad:
         first = mgr.load_plugin("p1")
         second = mgr.load_plugin("p1")
         assert first is second
+
+
+# ------------------------------------------------- 加载失败残留清理（M 修复）
+class TestLoadModuleFailureCleanup:
+    def test_failed_exec_module_leaves_no_sys_modules_residue(self, tmp_path, monkeypatch):
+        """exec_module 失败：半成品模块不得残留在 sys.modules，重试加载不受污染。"""
+        plugin_id = "boomer"
+        monkeypatch.delitem(sys.modules, f"plugins.{plugin_id}", raising=False)
+
+        pdir = tmp_path / plugin_id
+        _write_manifest(pdir, {"id": plugin_id, "name": "炸插件"})
+        init_file = pdir / "__init__.py"
+        init_file.write_text("raise RuntimeError('boom during exec')", encoding="utf-8")
+
+        mgr = PluginManager(str(tmp_path))
+        # 失败路径保持原语义：记日志并返回 None
+        assert mgr.load_plugin(plugin_id) is None
+        # 修复点：sys.modules 不再留半成品条目
+        assert f"plugins.{plugin_id}" not in sys.modules
+
+        # 修复插件文件后重试：应成功加载出实例（不被残留的不完整 module 干扰）
+        init_file.write_text(
+            "class Plugin:\n    def __init__(self):\n        self.ok = True\n",
+            encoding="utf-8",
+        )
+        plugin = mgr.load_plugin(plugin_id)
+        assert plugin is not None
+        assert getattr(plugin.instance, "ok", False) is True
 
 
 # ---------------------------------------------------------------- 钩子

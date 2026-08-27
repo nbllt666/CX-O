@@ -47,17 +47,32 @@ def is_idle_time(
     return _to_minutes(idle_start) <= cur < _to_minutes(idle_end)
 
 
+def _created_at_local_date(created_at: str):
+    """把 job.created_at（isoformat 字符串）解析为本地时区的 date。
+
+    M 级修复：TrainJob.created_at 以 UTC isoformat 存储，此前直接取其 .date()
+    与本地 now.date() 比较——UTC 与本地日期在跨日时段（如东八区 00:00–07:59）
+    错位一天，导致「当日已训练」去重永久失效、闲时窗口重复触发训练。
+    修复口径：带时区的时间戳 astimezone() 归一到本地时区后取 date；
+    naive 时间戳视为本地时间直接取 date。
+    """
+    created = datetime.fromisoformat(created_at)
+    if created.tzinfo is not None:
+        created = created.astimezone()
+    return created.date()
+
+
 def has_completed_today(trainer_store: Any, now: datetime) -> bool:
-    """当日（按 now 的自然日）是否已有 completed 训练任务，用于避免重复触发。"""
+    """当日（按 now 的本地自然日）是否已有 completed 训练任务，用于避免重复触发。"""
     day = now.date().isoformat()
     for job in trainer_store.all():
         if job.status != "completed":
             continue
         try:
-            created = datetime.fromisoformat(job.created_at)
+            local_date = _created_at_local_date(job.created_at)
         except (ValueError, TypeError):
             continue
-        if created.date().isoformat() == day:
+        if local_date.isoformat() == day:
             return True
     return False
 

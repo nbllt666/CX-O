@@ -129,6 +129,7 @@ class ACPLanDiscovery:
             return
 
         found_agents = []
+        local_agent_id = self.acp_manager._local_agent_id
 
         for _ in range(5):
             try:
@@ -149,9 +150,27 @@ class ACPLanDiscovery:
                         last_seen=message.get("timestamp", datetime.now().isoformat()),
                     )
 
-                    if agent.id and agent.id != self.acp_manager._local_agent_id:
-                        await self.acp_manager.register_agent(agent, persist=False)
-                        found_agents.append(agent)
+                    if agent.id and agent.id != local_agent_id:
+                        # M-C 修复: 对比已注册四元组（host/port/version/id），
+                        # 无实质变化不重复 register_agent、不触发全量 YAML 落盘。
+                        # 注意：仅在锁内做快照比对，注册放锁外——asyncio.Lock
+                        # 不可重入，锁内再走 register_agent 会自死锁。
+                        async with self.acp_manager._lock:
+                            existing = self.acp_manager.agents.get(agent.id)
+                            if existing is None:
+                                need_register = True
+                            else:
+                                quad_existing = (
+                                    existing.host,
+                                    existing.port,
+                                    existing.version,
+                                    existing.id,
+                                )
+                                quad_new = (agent.host, agent.port, agent.version, agent.id)
+                                need_register = quad_existing != quad_new
+                        if need_register:
+                            await self.acp_manager.register_agent(agent, persist=False)
+                            found_agents.append(agent)
             except BlockingIOError:
                 continue
             except Exception:
@@ -163,55 +182,66 @@ class ACPLanDiscovery:
             logger.info(f"发现 {len(found_agents)} 个Agents")
 
     async def discover_once(self, timeout: float = 5.0) -> List[Dict]:
-        """执行一次主动发现：在指定超时窗口内监听局域网信标，返回发现的 Agent 字典列表。"""
-        agents = []
+        """执行一次主动发现：在指定超时窗口内监听局域网信标，返回发现的 Agent 字典列表。
+
+        M-C 修复: 发现端口被后台发现服务占用时不再回退随机端口盲听（收不到
+        定向广播 → 恒空扫描假象），改为抛 RuntimeError 让调用方得 503 类明确错误。
+        """
+        agents: List[Dict] = []
 
         async def receive_with_timeout():
             """在超时窗口内循环接收 ACP_BEACON 信标并注册发现的 Agent。"""
             found = []
             sock = self._socket_factory(socket.AF_INET, socket.SOCK_DGRAM)
-            sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
             try:
+                sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
                 sock.bind(("", self.discovery_port))
-            except OSError:
-                # 固定端口已被占用（如发现服务已在运行）时，回退到随机端口，
-                # 避免整个发现过程因 bind 失败而 500。
-                sock.bind(("", 0))
-            sock.settimeout(timeout)
+                sock.settimeout(timeout)
 
-            end_time = asyncio.get_running_loop().time() + timeout
+                end_time = asyncio.get_running_loop().time() + timeout
 
-            while asyncio.get_running_loop().time() < end_time:
+                while asyncio.get_running_loop().time() < end_time:
+                    try:
+                        data, addr = sock.recvfrom(4096)
+                        message = json.loads(data.decode())
+
+                        if message.get("type") == "ACP_BEACON":
+                            agent = ACPAgentInfo(
+                                id=message.get("agent_id", ""),
+                                name=message.get("agent_name", ""),
+                                host=addr[0],
+                                port=message.get("port", 0),
+                                status="online",
+                                version=message.get("version", "1.0.0"),
+                                capabilities=message.get("capabilities", []),
+                                last_seen=message.get("timestamp", datetime.now().isoformat()),
+                            )
+
+                            if agent.id and agent.id != self.acp_manager._local_agent_id:
+                                await self.acp_manager.register_agent(agent, persist=False)
+                                found.append(agent.to_dict())
+                    except socket.timeout:
+                        break
+                    except Exception:
+                        break
+
+                if found:
+                    # 单次落盘：避免每个 agent 触发一次全量 YAML 重写
+                    await self.acp_manager._save_data()
+
+                return found
+            except OSError as exc:
+                # M-C 修复: 固定发现端口已被占用（后台发现服务运行中）→ 明确报错，
+                # 不再回退随机端口造成恒空扫描的假象。
+                raise RuntimeError(
+                    f"discovery port {self.discovery_port} occupied by background service"
+                ) from exc
+            finally:
+                # 泄漏兜底：任何路径（含 raise）都确保关闭本次临时 socket
                 try:
-                    data, addr = sock.recvfrom(4096)
-                    message = json.loads(data.decode())
-
-                    if message.get("type") == "ACP_BEACON":
-                        agent = ACPAgentInfo(
-                            id=message.get("agent_id", ""),
-                            name=message.get("agent_name", ""),
-                            host=addr[0],
-                            port=message.get("port", 0),
-                            status="online",
-                            version=message.get("version", "1.0.0"),
-                            capabilities=message.get("capabilities", []),
-                            last_seen=message.get("timestamp", datetime.now().isoformat()),
-                        )
-
-                        if agent.id and agent.id != self.acp_manager._local_agent_id:
-                            await self.acp_manager.register_agent(agent, persist=False)
-                            found.append(agent.to_dict())
-                except socket.timeout:
-                    break
+                    sock.close()
                 except Exception:
-                    break
-
-            if found:
-                # 单次落盘：避免每个 agent 触发一次全量 YAML 重写
-                await self.acp_manager._save_data()
-
-            sock.close()
-            return found
+                    pass
 
         agents = await receive_with_timeout()
         return agents

@@ -155,9 +155,9 @@ class VisionClipQueue:
                 else:
                     await consumer(item)
             except asyncio.CancelledError:
-                # consumer 被取消：仍需兜底清理，随后向上传播
-                self._cleanup(item)
-                self._queue.task_done()
+                # consumer 被取消：清理与 task_done 计数由 finally 统一收口后向上传播。
+                # 此前取消分支先 cleanup+task_done、finally 再来一遍，同一条目被
+                # 双次 task_done → 队列未完成计数溢出（task_done called too many times）。
                 raise
             except Exception as exc:  # noqa: BLE001 —— consumer 失败不令 worker 崩溃
                 logger.warning("VisionClipQueue: consumer 处理片段失败，已清理: %s", exc)

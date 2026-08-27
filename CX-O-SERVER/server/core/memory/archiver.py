@@ -162,9 +162,9 @@ class AdvancedArchiver:
             logger.error(f"初始化归档数据库失败: {e}")
             if conn:
                 conn.rollback()
-        finally:
-            if conn:
-                conn.close()
+        # M-D3: 连接所有权归 MemoryManager 连接池，此处不得 close——
+        # finally 关闭的是池内缓存连接，后续复用需付重建代价且易触发
+        # "Cannot operate on a closed database"
 
     async def archive_memory(
         self, memory_id: int, target_level: int = 1, compress: bool = True
@@ -251,9 +251,7 @@ class AdvancedArchiver:
                 if conn:
                     conn.rollback()
                 raise
-            finally:
-                if conn:
-                    conn.close()
+            # M-D3: 连接所有权归 MemoryManager 连接池，此处不得 close（原 finally conn.close() 已移除）
 
         except Exception as e:
             logger.error(f"归档记忆失败: {e}")
@@ -355,50 +353,48 @@ class AdvancedArchiver:
             )
 
             # 标记其他记忆为已合并
+            # M-D3: 连接所有权归 MemoryManager 连接池，此处不得 close（原 finally conn.close() 已移除）
             conn = self.memory_manager._get_connection()
-            try:
-                cursor = conn.cursor()
+            cursor = conn.cursor()
 
-                for memory in memories[1:]:
-                    new_metadata = {**(memory.get("metadata") or {}), "merged_into": primary_id}
-                    cursor.execute(
-                        """
-                        UPDATE memories 
-                        SET is_deleted = TRUE, 
-                            metadata = ?
-                        WHERE id = ?
-                    """,
-                        (json.dumps(new_metadata), memory["id"]),
-                    )
-
-                    cursor.execute(
-                        """
-                        INSERT INTO merge_records 
-                        (merged_memory_id, merged_from, merged_content, merge_metadata)
-                        VALUES (?, ?, ?, ?)
-                    """,
-                        (
-                            primary_id,
-                            json.dumps(memory_ids),
-                            merged_content,
-                            json.dumps(merge_metadata),
-                        ),
-                    )
-
-                conn.commit()
-
-                logger.info(f"记忆已合并: {memory_ids} -> {primary_id}")
-
-                return MergeResult(
-                    success=True,
-                    merged_memory_id=primary_id,
-                    merged_from=memory_ids,
-                    merged_content=merged_content,
-                    merge_metadata=merge_metadata,
-                    message=f"成功合并 {len(memory_ids)} 个记忆",
+            for memory in memories[1:]:
+                new_metadata = {**(memory.get("metadata") or {}), "merged_into": primary_id}
+                cursor.execute(
+                    """
+                    UPDATE memories 
+                    SET is_deleted = TRUE, 
+                        metadata = ?
+                    WHERE id = ?
+                """,
+                    (json.dumps(new_metadata), memory["id"]),
                 )
-            finally:
-                conn.close()
+
+                cursor.execute(
+                    """
+                    INSERT INTO merge_records 
+                    (merged_memory_id, merged_from, merged_content, merge_metadata)
+                    VALUES (?, ?, ?, ?)
+                """,
+                    (
+                        primary_id,
+                        json.dumps(memory_ids),
+                        merged_content,
+                        json.dumps(merge_metadata),
+                    ),
+                )
+
+            conn.commit()
+
+            logger.info(f"记忆已合并: {memory_ids} -> {primary_id}")
+
+            return MergeResult(
+                success=True,
+                merged_memory_id=primary_id,
+                merged_from=memory_ids,
+                merged_content=merged_content,
+                merge_metadata=merge_metadata,
+                message=f"成功合并 {len(memory_ids)} 个记忆",
+            )
 
         except Exception as e:
             logger.error(f"合并记忆失败: {e}")
@@ -533,9 +529,7 @@ class AdvancedArchiver:
         except Exception as e:
             logger.error(f"归档的归档失败: {e}")
             return []
-        finally:
-            if conn:
-                conn.close()
+        # M-D3: 连接所有权归 MemoryManager 连接池，此处不得 close（原 finally conn.close() 已移除）
 
     def get_archive_stats(self) -> Dict[str, Any]:
         """获取归档统计"""
@@ -575,9 +569,7 @@ class AdvancedArchiver:
         except Exception as e:
             logger.error(f"获取归档统计失败: {e}")
             return {}
-        finally:
-            if conn:
-                conn.close()
+        # M-D3: 连接所有权归 MemoryManager 连接池，此处不得 close（原 finally conn.close() 已移除）
 
     def record_similarity(
         self,
@@ -607,6 +599,4 @@ class AdvancedArchiver:
 
         except Exception as e:
             logger.warning(f"记录相似性失败: {e}")
-        finally:
-            if conn:
-                conn.close()
+        # M-D3: 连接所有权归 MemoryManager 连接池，此处不得 close（原 finally conn.close() 已移除）

@@ -73,25 +73,17 @@ class SessionCleanupTask:
             logger.info(f"会话清理完成: 过期 {expired_count} 个, 长期未访问 {old_count} 个")
 
     async def _cleanup_old_sessions(self) -> int:
-        """清理长期未访问的会话（分页遍历，避免单次 1 万条上限漏删更旧会话）"""
+        """清理长期未访问的会话。
+
+        H2 条目4: 改为 store 层固定谓词游标删除（delete_sessions_last_accessed_before），
+        取代旧的"SELECT 分页 + offset 前推"——后者在批内发生删除后前推 offset
+        会造成分页漂移、跳过未扫描会话。游标方案：已删行不影响剩余集合对
+        ``last_accessed_at < cutoff`` 谓词的匹配性，天然无漂移；关联 messages
+        由 store 层显式级联硬删防孤儿。
+        """
         cutoff_date = datetime.now() - self.max_session_age
 
-        count = 0
-        page = 1000
-        offset = 0
-        while True:
-            batch = self.session_store.get_sessions(
-                active_only=False, limit=page, offset=offset
-            )
-            if not batch:
-                break
-            for session in batch:
-                if session.last_accessed_at < cutoff_date:
-                    if self.session_store.delete_session(session.id, soft_delete=False):
-                        count += 1
-            if len(batch) < page:
-                break
-            offset += page
+        count = self.session_store.delete_sessions_last_accessed_before(cutoff_date)
 
         if count > 0:
             logger.info(f"已清理 {count} 个长期未访问的会话")

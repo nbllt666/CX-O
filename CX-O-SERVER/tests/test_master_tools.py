@@ -263,6 +263,19 @@ class TestAlarms:
         r = mt.set_alarm(0, "msg")
         assert "秒数必须大于等于1" in r["error"]
 
+    def test_set_alarm_rejects_above_24h(self, clean_deps):
+        """上限校验（L 修复）：seconds > 86400 直接拒绝，不触达告警管理器。"""
+        r = mt.set_alarm(86401, "太长")
+        assert "error" in r
+        assert "86400" in r["error"]
+
+    def test_set_alarm_accepts_24h_boundary(self, clean_deps, monkeypatch):
+        mgr = FakeAlarmManager()
+        monkeypatch.setattr("server.core.alarm.get_alarm_manager", lambda: mgr)
+        r = mt.set_alarm(86400, "恰好24小时")
+        assert r["status"] == "scheduled"
+        assert mgr.created == [("default", 86400, "恰好24小时")]
+
     def test_set_alarm_success(self, clean_deps, monkeypatch):
         mgr = FakeAlarmManager()
         monkeypatch.setattr("server.core.alarm.get_alarm_manager", lambda: mgr)

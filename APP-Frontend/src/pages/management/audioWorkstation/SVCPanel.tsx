@@ -9,7 +9,7 @@
  *
  * 消费 voiceworkstationApi 的 So-VITS-SVC / VoxCPM 域。
  */
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Loader2, MicVocal, Database, Layers } from 'lucide-react';
 import { voiceworkstationApi, getVoiceWorkstationAudioUrl } from '@/api/clients/voiceworkstation';
@@ -190,6 +190,21 @@ export default function SVCPanel() {
     }
   };
 
+  /** 批量任务轮询链状态（C1 修复）：可中止、防并行链、失败有限重试 */
+  const batchPollRef = useRef<{
+    stopped: boolean;
+    timer: ReturnType<typeof setTimeout> | null;
+  }>({ stopped: false, timer: null });
+
+  // 卸载时终止在途轮询链，避免卸载后 setState（C1 修复）
+  useEffect(
+    () => () => {
+      batchPollRef.current.stopped = true;
+      if (batchPollRef.current.timer) clearTimeout(batchPollRef.current.timer);
+    },
+    [],
+  );
+
   const handleBatchSubmit = async () => {
     const texts = batchTexts
       .split('\n')
@@ -205,20 +220,33 @@ export default function SVCPanel() {
         speaker_name: batchSpeaker.trim(),
         texts,
       });
-      // 轮询批量任务进度
+      // 轮询批量任务进度（C1 修复）：连续提交先终止旧链，杜绝并行轮询；
+      // 查询连续失败超阈值则终止，防后端下线后的无限续轮。
       const taskId = res.task_id;
-      const poll = async () => {
+      batchPollRef.current.stopped = true;
+      if (batchPollRef.current.timer) clearTimeout(batchPollRef.current.timer);
+      const chain: { stopped: boolean; timer: ReturnType<typeof setTimeout> | null } = {
+        stopped: false,
+        timer: null,
+      };
+      batchPollRef.current = chain;
+      const MAX_POLL_FAILURES = 15; // ≈30s 持续失败则放弃本轮进度跟踪
+      const poll = async (failCount = 0): Promise<void> => {
+        if (chain.stopped) return;
         try {
           const task = await voiceworkstationApi.getVoxCPMBatchDatasetTask(taskId);
+          if (chain.stopped) return;
           setBatchTask(task);
           if (task.status === 'pending' || task.status === 'running') {
-            setTimeout(poll, 2000);
+            chain.timer = setTimeout(() => void poll(), 2000);
           }
         } catch {
-          // 查询失败静默，下一轮继续
+          if (!chain.stopped && failCount + 1 < MAX_POLL_FAILURES) {
+            chain.timer = setTimeout(() => void poll(failCount + 1), 2000);
+          }
         }
       };
-      poll();
+      void poll();
     } catch (error) {
       console.error('[SVCPanel] batch submit failed:', error);
       setFailed(true);

@@ -253,6 +253,13 @@ class MemoryRouter:
                         "source": r.source,
                         "metadata": r.metadata or {},
                     }
+                    # M-D5: 透传混合检索携带的原始评分字段。缺字段时下游
+                    # calculate_time_score 会用 datetime.now() 兜底 created_at，
+                    # 导致时间通道退化为恒定值——有真实值必须带上。
+                    for _k in ("importance", "importance_score", "created_at", "reactivation_count"):
+                        _v = getattr(r, _k, None)
+                        if _v is not None:
+                            memory[_k] = _v
                     memories.append(memory)
 
                 return memories

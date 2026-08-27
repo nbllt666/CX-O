@@ -482,6 +482,10 @@ class _MemoryDBMixin:
         conn.row_factory = sqlite3.Row
         conn.execute("PRAGMA journal_mode=WAL")
         conn.execute("PRAGMA synchronous=NORMAL")
+        # M-D10: 开启外键约束——否则建表语句里声明的 FOREIGN KEY/ON DELETE
+        # CASCADE 全部失效（SQLite 默认关闭），归档表对 memories 的引用完整性
+        # 无法落地。memory 库内均为全新写入校验，不引入行为回归。
+        conn.execute("PRAGMA foreign_keys=ON")
         conn.execute("PRAGMA cache_size=-64000")
         conn.execute("PRAGMA temp_store=MEMORY")
         conn.execute("PRAGMA mmap_size=268435456")

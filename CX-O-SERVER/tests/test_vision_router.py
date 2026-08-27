@@ -271,6 +271,39 @@ async def test_is_ready_toggles():
     assert q.is_ready() is False
 
 
+@pytest.mark.asyncio
+async def test_queue_cancel_single_task_done_and_cleanup(tmp_path):
+    """consumer 被取消：由 finally 统一收口——单次 task_done（不溢出）且文件仍被清理。
+
+    回归背景：此前取消分支先 cleanup+task_done，finally 再来一遍，同一条目双次
+    task_done 触发 ``ValueError: task_done() called too many times`` 并顶替
+    CancelledError 向上传播。
+    """
+    q = VisionClipQueue()
+    f = tmp_path / "cc.mp4"
+    f.write_bytes(b"data")
+
+    started = asyncio.Event()
+    release = asyncio.Event()
+
+    async def consumer(item):
+        started.set()
+        await release.wait()  # 挂在 consumer 内，等待外部取消
+
+    q.set_consumer(consumer)
+    assert q.enqueue({"clip_path": str(f), "event_meta": {}, "source": "camera", "ts": 9.0, "accepted_at": ""})
+    await asyncio.wait_for(started.wait(), timeout=2.0)
+
+    task = q._task
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await asyncio.wait_for(task, timeout=2.0)
+
+    assert not f.exists(), "取消路径最终仍应由 finally 清理临时文件"
+    # 单次 task_done：join 立即返回即代表未完成计数已归零（未溢出）
+    await asyncio.wait_for(q._queue.join(), timeout=1.0)
+
+
 # --------------------------------------------------------------------------- #
 # helpers
 # --------------------------------------------------------------------------- #

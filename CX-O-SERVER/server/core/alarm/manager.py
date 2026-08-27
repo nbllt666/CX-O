@@ -202,23 +202,6 @@ class AlarmManager:
         if not isinstance(message, str) or len(message) > MAX_MESSAGE_LENGTH:
             raise ValueError(f"message 长度不能超过 {MAX_MESSAGE_LENGTH} 字符")
 
-        # E8 修复: 单 agent pending 配额校验——超出 MAX_PENDING_PER_AGENT 拒绝创建
-        conn = self._get_connection()
-        try:
-            cursor = conn.cursor()
-            cursor.execute(
-                "SELECT COUNT(*) FROM alarms WHERE agent_id = ? AND status = 'pending'",
-                (agent_id,),
-            )
-            pending_count = cursor.fetchone()[0]
-        finally:
-            self._release_connection()
-        if pending_count >= MAX_PENDING_PER_AGENT:
-            raise ValueError(
-                f"agent {agent_id} 的待触发提醒已达上限 {MAX_PENDING_PER_AGENT}，"
-                f"请先取消或等待现有提醒触发后再创建"
-            )
-
         alarm_id = str(uuid.uuid4())
         now = datetime.now()
         trigger_time = now + timedelta(seconds=seconds)
@@ -232,10 +215,25 @@ class AlarmManager:
             status="pending",
         )
 
+        # L10 修复: pending 配额 SELECT 与 INSERT 合并为单事务（BEGIN IMMEDIATE），
+        # 消除两段并发窗口：此前配额检查与插入非原子，多线程可同时通过检查超限插入。
         # BUG-B05 修复: 复用缓存连接,不再主动 close
         conn = self._get_connection()
         try:
             cursor = conn.cursor()
+            cursor.execute("BEGIN IMMEDIATE")
+            cursor.execute(
+                "SELECT COUNT(*) FROM alarms WHERE agent_id = ? AND status = 'pending'",
+                (agent_id,),
+            )
+            pending_count = cursor.fetchone()[0]
+            if pending_count >= MAX_PENDING_PER_AGENT:
+                # 回滚释放写锁后抛出，保持既有 ValueError 契约
+                conn.rollback()
+                raise ValueError(
+                    f"agent {agent_id} 的待触发提醒已达上限 {MAX_PENDING_PER_AGENT}，"
+                    f"请先取消或等待现有提醒触发后再创建"
+                )
             cursor.execute(
                 """
                 INSERT INTO alarms (id, agent_id, message, trigger_time, created_at, status)

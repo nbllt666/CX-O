@@ -224,6 +224,142 @@ class TestDatabase:
         assert db._local.connection is None
 
 
+# ================================================================ edges FK 契约与存量库迁移
+class TestEdgesForeignKeyContract:
+    """第四轮 §6.3 第12条：graph 库 foreign_keys=ON + edges RESTRICT 外键契约。"""
+
+    def test_pragma_foreign_keys_enabled(self, db):
+        row = db.execute_one("PRAGMA foreign_keys")
+        assert row["foreign_keys"] == 1
+
+    def test_edges_table_declares_restrict_fks(self, db):
+        ddl = db.execute_one(
+            "SELECT sql FROM sqlite_master WHERE type='table' AND name='edges'"
+        )["sql"].upper()
+        assert "FOREIGN KEY (SOURCE_ID)" in ddl
+        assert "FOREIGN KEY (TARGET_ID)" in ddl
+        assert "REFERENCES NODES(ID)" in ddl.replace("NODES (", "NODES(")
+        # 无 ON DELETE 子句即默认 RESTRICT——删除仍被引用的节点将被拦截
+        assert "ON DELETE CASCADE" not in ddl
+
+    def test_fk_enforced_rejects_dangling_edge_insert(self, db):
+        with pytest.raises(sqlite3.IntegrityError):
+            db.execute_modify(
+                "INSERT INTO edges (id, source_id, target_id, relation_type, properties, created_at) "
+                "VALUES ('dangling_1', 'ghost_src', 'ghost_tgt', 'r', '{}', '2026-01-01T00:00:00')"
+            )
+
+    def test_foreign_key_check_empty(self, db):
+        assert db.execute("PRAGMA foreign_key_check") == []
+
+
+class TestMigrateEdgesToForeignKeyRestrict:
+    """盘上存量库兼容：旧 DDL（无 FK / 旧 ON DELETE CASCADE）自动迁移为 RESTRICT 形态。
+
+    内存模拟旧建表语句 → Database.initialize() 走真实迁移链路 → 断言结构升级 +
+    数据完整性；重复 initialize 验证迁移幂等。
+    """
+
+    NODES_OLD_DDL = """
+        CREATE TABLE nodes (
+            id TEXT PRIMARY KEY,
+            name TEXT NOT NULL DEFAULT '',
+            type TEXT NOT NULL,
+            properties TEXT NOT NULL DEFAULT '{{}}',
+            text_content TEXT,
+            vector_id TEXT,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            agent_id VARCHAR(100) DEFAULT 'default'
+        );
+    """
+
+    @staticmethod
+    def _build_old_db(path: str, fk_lines: str) -> None:
+        """手工创建旧版 schema 并注入数据：1 条有效边 + 1 条悬挂边。"""
+        conn = sqlite3.connect(path)
+        conn.executescript(f"""
+            {TestMigrateEdgesToForeignKeyRestrict.NODES_OLD_DDL}
+
+            CREATE TABLE edges (
+                id TEXT PRIMARY KEY,
+                source_id TEXT NOT NULL,
+                target_id TEXT NOT NULL,
+                relation_type TEXT NOT NULL,
+                properties TEXT NOT NULL DEFAULT '{{}}',
+                text_content TEXT,
+                vector_id TEXT,
+                created_at TEXT NOT NULL,
+                agent_id VARCHAR(100) DEFAULT 'default'{fk_lines}
+            );
+        """)
+        for nid in ("n1", "n2"):
+            conn.execute(
+                "INSERT INTO nodes (id, type, properties, created_at, updated_at, agent_id) "
+                "VALUES (?, 't', '{}', '2026-01-01T00:00:00', '2026-01-01T00:00:00', 'default')",
+                (nid,),
+            )
+        conn.execute(
+            "INSERT INTO edges (id, source_id, target_id, relation_type, created_at, agent_id) "
+            "VALUES ('e_ok', 'n1', 'n2', 'knows', '2026-01-01T00:00:00', 'default')"
+        )
+        # 旧行为遗留的悬挂边（target 不存在）——裸连接默认 FK 关闭可插入
+        conn.execute(
+            "INSERT INTO edges (id, source_id, target_id, relation_type, created_at, agent_id) "
+            "VALUES ('e_dangling', 'n1', 'ghost', 'likes', '2026-01-01T00:00:00', 'default')"
+        )
+        conn.commit()
+        conn.close()
+
+    @staticmethod
+    def _assert_migrated(d: Database) -> None:
+        """迁移完成态断言：DDL 升级 + 有效边保留 + 悬挂边清理 + 索引齐全 + 完整性通过。"""
+        ddl = d.execute_one("SELECT sql FROM sqlite_master WHERE type='table' AND name='edges'")
+        assert ddl is not None
+        upper = ddl["sql"].upper()
+        assert "FOREIGN KEY" in upper and "ON DELETE CASCADE" not in upper
+
+        edge_ids = {r["id"] for r in d.execute("SELECT id FROM edges")}
+        assert edge_ids == {"e_ok"}  # 有效边保留、悬挂边被剔除
+
+        assert d.execute("PRAGMA foreign_key_check") == []
+
+        indexes = {
+            r["name"]
+            for r in d.execute("SELECT name FROM sqlite_master WHERE type='index' AND tbl_name='edges'")
+        }
+        assert {"idx_edges_source", "idx_edges_target", "idx_edges_relation_type", "idx_edges_agent_id"} <= indexes
+
+    @pytest.mark.parametrize(
+        "fk_lines, label",
+        [
+            ("", "无FK旧表"),
+            (
+                ",\n                    FOREIGN KEY (source_id) REFERENCES nodes(id) ON DELETE CASCADE,"
+                "\n                    FOREIGN KEY (target_id) REFERENCES nodes(id) ON DELETE CASCADE",
+                "含级联旧契约",
+            ),
+        ],
+    )
+    def test_migrate_and_idempotent(self, tmp_path, fk_lines, label):
+        path = str(tmp_path / f"old_{label}.db")
+        self._build_old_db(path, fk_lines)
+
+        d = Database(GraphConfig(database_path=path, timeout=5))
+        d.initialize()
+        self._assert_migrated(d)
+
+        # 幂等证明：二次 initialize（重启重复检测）后结构与数据完全等价
+        before = d.execute_one("SELECT sql FROM sqlite_master WHERE type='table' AND name='edges'")["sql"]
+        rows_before = [tuple(dict(r).values()) for r in d.execute("SELECT * FROM edges ORDER BY id")]
+        d.initialize()
+        after = d.execute_one("SELECT sql FROM sqlite_master WHERE type='table' AND name='edges'")["sql"]
+        rows_after = [tuple(dict(r).values()) for r in d.execute("SELECT * FROM edges ORDER BY id")]
+        assert before == after and rows_before == rows_after
+        self._assert_migrated(d)
+        d.close()
+
+
 # ================================================================ repository
 def _seed_graph(db):
     db.execute_modify(

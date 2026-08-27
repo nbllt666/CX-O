@@ -11,6 +11,7 @@ from pydantic import BaseModel
 
 from server.core.logging_config import get_contextual_logger
 from server.core.admin.control_plane import resolve_invoke_result
+from server.core.admin.cluster_bridge import resolve_cluster_result
 
 router = APIRouter()
 logger = get_contextual_logger(__name__)
@@ -403,9 +404,11 @@ def _admin_guard(request: Request, required: str, request_id: str = None):
     try:
         level = _admin_auth.authenticate(token)
         _admin_auth.check_required_level(level, required)
+        # M-E 修复: check_rate_limit 提前到 check_replay 之前——防重放会登记
+        # request_id，若限流在后被拒，该 request_id 已被白耗无法复用。
+        _admin_auth.check_rate_limit()
         if request_id:
             _admin_auth.check_replay(request_id)
-        _admin_auth.check_rate_limit()
     except HTTPException:
         raise
     except Exception as e:
@@ -434,7 +437,8 @@ async def admin_manifest(request: Request):
         _admin_unavailable()
     cluster_state = None
     if _cluster_bridge is not None:
-        raw = _cluster_bridge.read_state()
+        # M-E: read_state 可能返回内嵌协程包装，先解包取真实数据再判断
+        raw = await resolve_cluster_result(_cluster_bridge.read_state())
         if isinstance(raw, dict) and raw.get("status") not in ("cluster_disabled", "error"):
             cluster_state = raw
         else:
@@ -445,10 +449,15 @@ async def admin_manifest(request: Request):
 @router.get("/admin/status")
 async def admin_status(request: Request):
     _admin_guard(request, "readonly")
+    cluster_snapshot = (
+        await resolve_cluster_result(_cluster_bridge.read_state())
+        if _cluster_bridge is not None
+        else {"enabled": False}
+    )
     snapshot = {
         "models": (_manifest.detect_models() if _manifest else {}),
         "capabilities": (_manifest.detect_capabilities() if _manifest else {}),
-        "cluster": _cluster_bridge.read_state() if _cluster_bridge is not None else {"enabled": False},
+        "cluster": cluster_snapshot,
     }
     return {"status": "success", "snapshot": snapshot}
 
@@ -493,7 +502,9 @@ async def admin_control(request: Request, req: _ControlRequest):
         result = _control_plane.dispatch(req.action, req.target, req.request_id, req.agent_id or "default", req.params or {})
         # H1: dispatch 顶层恒为 dict，旧 iscoroutine 判断恒 False；result 可能
         # 内嵌裸协程（async 服务方法），统一 await 后替换保证可序列化。
-        result = await resolve_invoke_result(result)
+        # M-E: cluster 分支结果可能内嵌 PendingClusterResult 协程包装，先解包
+        # 再走既有 resolve_invoke_result（两条路 admin_control/batch 均如此）。
+        result = await resolve_invoke_result(await resolve_cluster_result(result))
         audit_now("CX-A", "info", "control", f"{req.target}/{req.action}", "管理面控制动作完成",
                   request_id=req.request_id, detail={"elapsed_ms": round((time.monotonic() - t0) * 1000, 1)})
         return {"status": "success", "result": result}
@@ -521,8 +532,9 @@ async def admin_batch(request: Request, req: _BatchRequest):
         t0 = time.monotonic()
         try:
             result = _control_plane.dispatch(st.action, st.target, req.request_id, st.agent_id or "default", st.params or {})
-            # H1: 同 admin_control，统一 await 内嵌裸协程
-            result = await resolve_invoke_result(result)
+            # H1: 同 admin_control，统一 await 内嵌裸协程；
+            # M-E: 先解包 cluster 分支的 PendingClusterResult 包装。
+            result = await resolve_invoke_result(await resolve_cluster_result(result))
             return {"step": i, "ok": True, "result": result, "duration_ms": round((time.monotonic() - t0) * 1000, 1)}
         except Exception as e:
             return {"step": i, "ok": False, "result": {"error": str(e)}, "duration_ms": round((time.monotonic() - t0) * 1000, 1)}

@@ -22,7 +22,7 @@ import pytest
 
 from server import ref_audio_store
 from server.services import tts_service as tts_svc_mod
-from server.services.tts_service import TTSService
+from server.services.tts_service import TTSService, TTSServiceUnavailableError
 from server.qwen3_tts_provider import AudioChunk, SynthesisResponse
 
 
@@ -94,6 +94,49 @@ def mock_instruction(monkeypatch):
         return _Inst()
     monkeypatch.setattr(tts_svc_mod, "generate_instruction", _fake_gen)
     return None
+
+
+# ================================================================== H10：未启用守卫
+class TestQwen3DisabledGuard:
+    """H10：qwen3 未启用 / provider 缺失时三入口抛明确异常 + 构造期校验。"""
+
+    def _disabled_svc(self, **kw):
+        return TTSService(qwen3_enabled=False, qwen3_provider=None, **kw)
+
+    def test_constructor_rejects_enabled_without_provider(self):
+        # 构造期：标志启用但 provider 为 None → 立即 ValueError
+        with pytest.raises(ValueError, match="provider"):
+            TTSService(qwen3_enabled=True, qwen3_provider=None)
+
+    @pytest.mark.asyncio
+    async def test_synthesize_raises_unavailable(self):
+        svc = self._disabled_svc()
+        with pytest.raises(TTSServiceUnavailableError):
+            await svc.synthesize("你好")
+
+    @pytest.mark.asyncio
+    async def test_synthesize_stream_raises_unavailable(self):
+        svc = self._disabled_svc()
+        with pytest.raises(TTSServiceUnavailableError):
+            async for _ in svc.synthesize_stream("你好"):
+                pass
+
+    @pytest.mark.asyncio
+    async def test_synthesize_stream_fine_raises_unavailable(self):
+        async def _tokens():
+            yield "你好"
+
+        svc = self._disabled_svc()
+        with pytest.raises(TTSServiceUnavailableError):
+            async for _ in svc.synthesize_stream_fine(_tokens()):
+                pass
+
+    @pytest.mark.asyncio
+    async def test_enabled_with_provider_still_works(self, mock_instruction):
+        # 启用且 provider 齐全时守卫不误伤
+        svc = _svc()
+        audio = await svc.synthesize("你好")
+        assert audio == b"RIFF....WAV"
 
 
 # ================================================================== 非流式

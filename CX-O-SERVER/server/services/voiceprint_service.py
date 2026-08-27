@@ -8,6 +8,7 @@
 """
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import os
@@ -59,6 +60,9 @@ class VoiceprintService:
     def __init__(self):
         self._avail_cache_at: Optional[float] = None
         self._avail_cache_value: bool = False
+        # M 修复：档案文件 RMW（读-改-写）互斥锁——register/register_embedding/delete
+        # 并发时此前可互相覆盖丢更新（如并发注册两个说话人只落盘一个）。
+        self._io_lock = asyncio.Lock()
 
     @property
     def base_url(self) -> str:
@@ -159,21 +163,23 @@ class VoiceprintService:
             raise VoiceprintUnavailableError("voiceprint service unavailable")
 
         embedding = await self.extract(audio_bytes)
-        profiles = self._load_profiles()
+        # M 修复：RMW 全程持 _io_lock；磁盘 IO 挪 asyncio.to_thread，不阻塞事件循环
+        async with self._io_lock:
+            profiles = await asyncio.to_thread(self._load_profiles)
 
-        updated = False
-        target = next((p for p in profiles if p.get("name") == name), None)
-        if target is None:
-            target = {
-                "name": name,
-                "embeddings": [],
-                "created_at": time.strftime("%Y-%m-%dT%H:%M:%S"),
-            }
-            profiles.append(target)
-        else:
-            updated = True
-        target["embeddings"].append(embedding)
-        self._save_profiles(profiles)
+            updated = False
+            target = next((p for p in profiles if p.get("name") == name), None)
+            if target is None:
+                target = {
+                    "name": name,
+                    "embeddings": [],
+                    "created_at": time.strftime("%Y-%m-%dT%H:%M:%S"),
+                }
+                profiles.append(target)
+            else:
+                updated = True
+            target["embeddings"].append(embedding)
+            await asyncio.to_thread(self._save_profiles, profiles)
         # 同步失败仅告警，不影响本地已落盘档案
         await self._sync_remote()
 
@@ -194,21 +200,23 @@ class VoiceprintService:
         if not isinstance(embedding, (list, tuple)) or not embedding:
             raise ValueError("声纹特征 embedding 无效")
         embeddings = [float(x) for x in embedding]
-        profiles = self._load_profiles()
+        # M 修复：RMW 全程持 _io_lock；磁盘 IO 挪 asyncio.to_thread
+        async with self._io_lock:
+            profiles = await asyncio.to_thread(self._load_profiles)
 
-        updated = False
-        target = next((p for p in profiles if p.get("name") == name), None)
-        if target is None:
-            target = {
-                "name": name,
-                "embeddings": [],
-                "created_at": time.strftime("%Y-%m-%dT%H:%M:%S"),
-            }
-            profiles.append(target)
-        else:
-            updated = True
-        target["embeddings"].append(embeddings)
-        self._save_profiles(profiles)
+            updated = False
+            target = next((p for p in profiles if p.get("name") == name), None)
+            if target is None:
+                target = {
+                    "name": name,
+                    "embeddings": [],
+                    "created_at": time.strftime("%Y-%m-%dT%H:%M:%S"),
+                }
+                profiles.append(target)
+            else:
+                updated = True
+            target["embeddings"].append(embeddings)
+            await asyncio.to_thread(self._save_profiles, profiles)
         await self._sync_remote()          # 失败仅告警（_sync_remote 已内部捕获）
 
         summary = _profile_summary(target)
@@ -221,11 +229,13 @@ class VoiceprintService:
 
     async def delete(self, name: str) -> bool:
         """删除指定声纹档案；存在则删除并同步，返回 True；不存在返回 False。"""
-        profiles = self._load_profiles()
-        remaining = [p for p in profiles if p.get("name") != name]
-        if len(remaining) == len(profiles):
-            return False
-        self._save_profiles(remaining)
+        # M 修复：RMW 全程持 _io_lock；磁盘 IO 挪 asyncio.to_thread
+        async with self._io_lock:
+            profiles = await asyncio.to_thread(self._load_profiles)
+            remaining = [p for p in profiles if p.get("name") != name]
+            if len(remaining) == len(profiles):
+                return False
+            await asyncio.to_thread(self._save_profiles, remaining)
         await self._sync_remote()
         return True
 
@@ -233,9 +243,11 @@ class VoiceprintService:
         """容器可用性 + 本地档案数 + 相似度阈值。"""
         from server.config import get_settings
         available = await self.is_available()
+        # M 修复：档案计数读取挪 asyncio.to_thread，磁盘 IO 不阻塞事件循环
+        profiles = await asyncio.to_thread(self._load_profiles)
         return {
             "available": available,
-            "profiles": len(self._load_profiles()),
+            "profiles": len(profiles),
             "threshold": get_settings().asr.spk_sim_threshold,
         }
 

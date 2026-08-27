@@ -500,3 +500,87 @@ class TestTRTLLMClient:
         await c.chat([{"role": "user", "content": "hi"}])
         _, kwargs = async_client.post.call_args
         assert kwargs["headers"]["Authorization"] == "Bearer secret"
+
+
+class TestTRTLLMStreamNon200:
+    """TRTLLM stream_chat 非 200 显式错误分支（与 VLLMClient 对齐，M 修复）。"""
+
+    @pytest.mark.asyncio
+    async def test_stream_non_200_yields_error_block(self, monkeypatch):
+        from types import SimpleNamespace
+
+        class _Resp:
+            status_code = 502
+            text = ""
+
+            async def aread(self):
+                return b'{"error":"upstream gone"}'
+
+            async def aiter_lines(self):  # pragma: no cover —— 走到这里即为缺陷
+                raise AssertionError("非 200 响应不应进入 SSE 流解析")
+                yield  # noqa: unreachable（使本函数成为生成器）
+
+        class _Ctx:
+            def __init__(self, r):
+                self.r = r
+
+            async def __aenter__(self):
+                return self.r
+
+            async def __aexit__(self, *exc):
+                return False
+
+        fake_client = SimpleNamespace(stream=lambda *a, **k: _Ctx(_Resp()))
+        monkeypatch.setattr(
+            "server.core.llm.client.get_shared_http_client", lambda: fake_client
+        )
+        c = TRTLLMClient(model="trt-m")
+        chunks = [ch async for ch in c.stream_chat([{"role": "user", "content": "hi"}])]
+        # 失败不再被当作"空回复"静默结束：必须产出显式 error 终态块
+        assert len(chunks) == 1
+        assert chunks[0]["type"] == "error"
+        assert "HTTP 502" in chunks[0]["content"]
+        assert "upstream gone" in chunks[0]["content"]
+
+
+class TestLLMFactoryCacheKey:
+    """工厂缓存键并入 host / lora_request（M 修复：不同 host 不再错误命中同一实例）。"""
+
+    def setup_method(self):
+        from server.core.llm.client import LLMFactory
+
+        LLMFactory.clear_cache()
+
+    def teardown_method(self):
+        from server.core.llm.client import LLMFactory
+
+        LLMFactory.clear_cache()
+
+    def test_same_args_hit_same_instance(self):
+        from server.core.llm.client import LLMFactory
+
+        a = LLMFactory.create_client("vllm", model="m", host="http://a")
+        b = LLMFactory.create_client("vllm", model="m", host="http://a")
+        assert a is b
+
+    def test_different_host_creates_distinct_instances(self):
+        from server.core.llm.client import LLMFactory
+
+        a = LLMFactory.create_client("vllm", model="m", host="http://a")
+        b = LLMFactory.create_client("vllm", model="m", host="http://b")
+        assert a is not b
+        assert a.host == "http://a"
+        assert b.host == "http://b"
+
+    def test_different_lora_request_creates_distinct_instances(self):
+        from server.core.llm.client import LLMFactory
+
+        plain = LLMFactory.create_client("vllm", model="m", host="http://a")
+        adapted = LLMFactory.create_client(
+            "vllm", model="m", host="http://a", lora_request={"model": "adapter-x"}
+        )
+        again = LLMFactory.create_client(
+            "vllm", model="m", host="http://a", lora_request={"model": "adapter-x"}
+        )
+        assert plain is not adapted
+        assert adapted is again

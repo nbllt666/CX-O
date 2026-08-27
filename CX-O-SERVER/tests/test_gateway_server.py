@@ -190,12 +190,16 @@ class TestWebsocketHandler:
         assert msg["error"]["code"] == "INVALID_JSON"
 
     @pytest.mark.asyncio
-    async def test_unknown_action_sends_json_error(self, _patch_ws_manager):
-        # 无 type 且 action 未注册 → 命中 else 分支，直接 send_json
+    async def test_unknown_action_sends_unified_error(self, _patch_ws_manager):
+        # 无 type 且 action 未注册 → 命中 else 分支，经 ws_manager 发送统一错误结构（B2 修复）
         ws = FakeWebSocket([{"type": "text", "text": json.dumps(
             {"action": "no.such.action"})}])
         await gateway_server.websocket_handler(ws, "c1")
-        assert ws.sent and "未知操作" in ws.sent[0]["data"]["message"]
+        assert _patch_ws_manager.sent, "应通过 ws_manager.send_message 下发统一错误"
+        msg = _patch_ws_manager.sent[0][1]
+        assert msg["type"] == MessageType.ERROR.value
+        assert msg["error"]["code"] == "UNKNOWN_ACTION"
+        assert "未知操作" in msg["error"]["message"]
 
     @pytest.mark.asyncio
     async def test_disconnect_cleans_up(self, _patch_ws_manager):

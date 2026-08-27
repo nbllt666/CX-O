@@ -52,11 +52,19 @@ class DecayBatchProcessor:
             logger.info("批量衰减处理器已停止")
 
     async def _run_periodically(self):
-        """定期运行衰减处理"""
+        """定期运行衰减处理。
+
+        M-D2: 周期后台任务改调 process_all()（稳定快照全覆盖）。原实现走
+        process_batch() 默认路径 = search(top100 按 importance DESC)，每次
+        周期只衰减最头部 100 条，尾部低分记忆永久饥饿。
+        """
         while not self._stop_event.is_set():
             try:
-                await self.process_batch()
-                logger.info("批量衰减处理完成")
+                result = await self.process_all()
+                logger.info(
+                    f"全量衰减处理完成: 批次={result['total_batches']}, "
+                    f"更新={result['total_updated']}, 失败={result['total_failed']}"
+                )
             except Exception as e:
                 logger.error(f"批量衰减处理失败: {e}")
 
@@ -122,13 +130,20 @@ class DecayBatchProcessor:
 
                     new_importance = score_to_importance(decayed_value)
 
+                    # H9: update_memory 对 metadata 是整列替换——必须先读旧
+                    # metadata 合并衰减字段后再传全量，否则 {"importance_score",
+                    # "decay_updated_at"} 两键覆写会清空 dream 的
+                    # consolidation_state 等既有元数据（持续性数据丢失）。
+                    # 快照条目来自 search_memories/_row_to_memory，metadata 已是
+                    # 完整解析后的 dict。
+                    merged_metadata = dict(memory.get("metadata") or {})
+                    merged_metadata["importance_score"] = decayed_value
+                    merged_metadata["decay_updated_at"] = datetime.now().isoformat()
+
                     success = await self.memory_manager.update_memory_async(
                         memory_id=memory_id,
                         new_importance=new_importance,
-                        new_metadata={
-                            "importance_score": decayed_value,
-                            "decay_updated_at": datetime.now().isoformat(),
-                        },
+                        new_metadata=merged_metadata,
                     )
 
                     if success:

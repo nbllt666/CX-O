@@ -402,20 +402,43 @@ class AgentInterruptUser(InterruptModuleBase):
         return self._user_state.current_text
 
 
+def _inject_agent_interrupt_context(module: "AgentInterruptUser", client_id: Optional[str]) -> None:
+    """H1 注入层（组装点）：把全局 ContextManager 单例与当前会话 id 绑定到打断模块。
+
+    与 asr_interrupt 同构：基类 ``_context_manager/_session_id`` 此前全仓无注入点，
+    主 LLM 判定经 ``_get_context()`` 读取会话历史时恒为空列表 → 判定丢失上下文。
+    本模块自身不写回上下文（写回由主管线负责），注入失败仅降级不阻断创建。
+    """
+    try:
+        if getattr(module, "_context_manager", None) is None:
+            from server.services.context_manager import get_context_manager
+
+            module.set_context_manager(get_context_manager())
+        if getattr(module, "_session_id", None) is None and client_id:
+            module.set_session_id(client_id)
+    except Exception as e:  # noqa: BLE001 - 组装层兜底，不让注入失败拖垮模块创建
+        logger.warning("Agent 打断模块上下文注入失败（判定上下文降级为空）: %s", e)
+
+
 def get_agent_interrupt_module(client_id: Optional[str] = None) -> AgentInterruptUser:
     """返回 AgentInterruptUser 模块单例。
 
     未指定 client_id：返回全局默认单例（向后兼容）。
     指定 client_id：返回该客户端的独立实例，使各会话的说话时序、冷却、
     _user_state 等状态互不串扰（per-client 并发隔离）。
+    创建/复用实例时按 H1 修复注入 ContextManager 与 per-client session_id。
     """
     if client_id is None:
-        return AgentInterruptUser.get_instance()
+        instance = AgentInterruptUser.get_instance()
+        _inject_agent_interrupt_context(instance, None)
+        return instance
     if client_id not in _agent_interrupt_instances:
         instance = AgentInterruptUser()
         _inherit_agent_config(AgentInterruptUser.get_instance(), instance)
         _agent_interrupt_instances[client_id] = instance
-    return _agent_interrupt_instances[client_id]
+    instance = _agent_interrupt_instances[client_id]
+    _inject_agent_interrupt_context(instance, client_id)
+    return instance
 
 
 def release_agent_interrupt_module(client_id: str) -> None:

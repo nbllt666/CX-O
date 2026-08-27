@@ -64,6 +64,8 @@ class SentinelCluster:
         self.role = getattr(config, "role", "standby") if config else "standby"
         self._epoch = 0
         self._state_version = 0
+        # M4: 最近一次接管继承来源（由 failover 成功回调回写，state() 对外可见）
+        self._inherited_from = None
         self._event_callbacks: list[callable] = []
         self._started = False
         # E5: 后台接管任务集合——create_task 后跟踪引用并在 shutdown 取消，
@@ -191,13 +193,13 @@ class SentinelCluster:
 
         failover.set_state_source(_state_source)
 
-        # F3: 注入 vote_source——读取本地心跳观测（各 peer 健康状态快照），
+        # F3: 注入真实 vote_source——读取本地心跳观测（各 peer 健康状态快照），
         # 替换 ConsensusGuard 默认的"全体赞成"。计票口径与 PeerHeartbeat.confirm_dead 一致：
         # 本节点自身观测一票 + 观测 healthy 的对端各一票。
+        # H7 修复：healthy 计数按唯一 peer 标识去重（同 peer 的 endpoint 键与
+        # node_id 键只计一票），修复双键导致的多数派放大。
         def _local_vote_source() -> int:
-            status = heartbeat.node_status()
-            healthy = sum(1 for v in status.values() if v.get("state") == "healthy")
-            return 1 + healthy
+            return 1 + heartbeat.vote_observation()
 
         consensus.set_vote_source(_local_vote_source)
 
@@ -215,6 +217,22 @@ class SentinelCluster:
             self._spawn_bg(failover.maybe_takeover(dead_node_id), "cluster-takeover")
 
         heartbeat.set_on_dead(_schedule_takeover)
+
+        # M4: 接管成功回调——把 failover 的 role/epoch/inherited_from 实时回写
+        # 到 SentinelCluster 可见状态（此前只在 start 时快照，state()/事件纪元会失真）。
+        def _on_takeover_success(role: str, epoch: int, inherited_from):
+            self.role = role
+            self._epoch = epoch
+            self._inherited_from = inherited_from
+
+        failover.set_on_takeover(_on_takeover_success)
+
+        # M5: replicator epoch 接线——出站 sync_event 携带真实纪元；
+        # 接收端以"当前 active 节点即 leader"作为豁免判据。
+        replicator.set_epoch_provider(lambda: failover.epoch)
+        replicator.set_leader_provider(
+            lambda: (self._node_id() if getattr(failover, "role", "") == "active" else "")
+        )
 
     def _build_identity(self, cfg) -> str:
         ident = NodeIdentity()
@@ -259,7 +277,6 @@ class SentinelCluster:
 
     # ---- 查询 ----
     def topology(self) -> list[dict]:
-        node_status = self.heartbeat.node_status() if self.heartbeat else {}
         rows = [{
             "node_id": self._node_id(),
             "endpoint": getattr(self.identity, "endpoint", "") if self.identity else "",
@@ -268,7 +285,12 @@ class SentinelCluster:
             "last_heartbeat": _iso(),
         }]
         for peer_ep in (getattr(self._config, "peers", []) if self._config else []):
-            st = node_status.get(peer_ep, {"state": "unknown", "last_heartbeat": None})
+            # H7 适配：观测键统一为 node_id 后，endpoint 需经映射解析其观测状态
+            st = None
+            if self.heartbeat is not None:
+                st = self.heartbeat.status_for(peer_ep)
+            if st is None:
+                st = {"state": "unknown", "last_heartbeat": None}
             rows.append({
                 "node_id": peer_ep,
                 "endpoint": peer_ep,
@@ -283,6 +305,7 @@ class SentinelCluster:
             "node_id": self._node_id(),
             "role": self.role,
             "epoch": self._epoch,
+            "inherited_from": self._inherited_from,
             "enabled": True,
             "peers": list(getattr(self._config, "peers", []) or []) if self._config else [],
             "identity": {
@@ -354,6 +377,11 @@ class SentinelCluster:
             seq = int(body.get("seq") or 0)
         except (TypeError, ValueError):
             seq = 0
+        # M5: 同步链路携带纪元（sync_event 接收端用它做过期纪元闸门）
+        try:
+            event_epoch = int(body.get("epoch") or 0)
+        except (TypeError, ValueError):
+            event_epoch = 0
         payload = body.get("payload") if isinstance(body.get("payload"), dict) else {}
 
         if not provided:
@@ -378,7 +406,7 @@ class SentinelCluster:
             "leave": self._op_leave,
         }[op]
         try:
-            data = await handler(payload=payload, node_id=node_id, seq=seq)
+            data = await handler(payload=payload, node_id=node_id, seq=seq, epoch=event_epoch)
         except ClusterAuthError:
             # op 内层密钥证明失败（如 handshake proof）与外层鉴权同口径：403
             return 403, {
@@ -391,13 +419,17 @@ class SentinelCluster:
             return 500, {"ok": False, "error_code": CLUSTER_SERVICE_ERROR, "message": str(e)}
         return 200, {"ok": True, **(data or {})}
 
-    async def _op_handshake(self, payload: dict, node_id: str, seq: int = 0) -> dict:
+    async def _op_handshake(self, payload: dict, node_id: str, seq: int = 0, epoch: int = 0) -> dict:
         """handshake：验证对端密钥证明 → 登记对端 → 回应己方身份（含自身密钥证明）。"""
         secret = getattr(self._config, "cluster_secret", "") or ""
         proof = str(payload.get("secret_hmac") or "")
         if not hmac_matches(secret, proof, node_id, "handshake", node_id):
             raise ClusterAuthError()
         entry = self.register_peer(node_id, payload)
+        # H7：回填 endpoint→node_id 映射，心跳观测键自此统一为 node_id
+        ep = (entry or {}).get("endpoint", "")
+        if ep and self.heartbeat is not None:
+            self.heartbeat.bind_endpoint_node(ep, node_id)
         log.info("[peer] handshake registered node=%s endpoint=%s", node_id, entry.get("endpoint"))
         ident = self.identity
         my_id = self._node_id()
@@ -413,15 +445,19 @@ class SentinelCluster:
             },
         }
 
-    async def _op_heartbeat(self, payload: dict, node_id: str, seq: int = 0) -> dict:
+    async def _op_heartbeat(self, payload: dict, node_id: str, seq: int = 0, epoch: int = 0) -> dict:
         """heartbeat：更新对端存活状态（复用 miss 追踪数据结构）。"""
         st = {}
         if self.heartbeat is not None:
             st = self.heartbeat.record_inbound_heartbeat(node_id, payload)
-        self.register_peer(node_id, {"role": payload.get("role")})
+        entry = self.register_peer(node_id, {"role": payload.get("role")})
+        # H7：registry 已知该 node 的 endpoint 时回填映射（通常由先前 handshake 登记）
+        ep = (entry or {}).get("endpoint", "")
+        if ep and self.heartbeat is not None:
+            self.heartbeat.bind_endpoint_node(ep, node_id)
         return {"observed_state": st.get("state", "healthy"), "node_id": self._node_id()}
 
-    async def _op_gossip(self, payload: dict, node_id: str, seq: int = 0) -> dict:
+    async def _op_gossip(self, payload: dict, node_id: str, seq: int = 0, epoch: int = 0) -> dict:
         """gossip：根据本地 miss 记录如实回答关于 about 的死亡意见。
 
         死亡判据：本地已确认死亡，或连续 miss 达阈值；跨标识经 registry 别名互查。
@@ -434,8 +470,8 @@ class SentinelCluster:
                 dead = any(self.heartbeat.observation_dead(k) for k in keys)
         return {"dead": dead, "about": about}
 
-    async def _op_sync_event(self, payload: dict, node_id: str, seq: int = 0) -> dict:
-        """sync_event：交 replicator 幂等应用对端事件（seq 去重），成功回 ack 序号。"""
+    async def _op_sync_event(self, payload: dict, node_id: str, seq: int = 0, epoch: int = 0) -> dict:
+        """sync_event：交 replicator 幂等应用对端事件（seq 去重 + epoch 闸门），成功回 ack 序号。"""
         unit = payload.get("unit")
         event_seq = payload.get("seq", seq)
         if not unit or event_seq is None:
@@ -447,10 +483,12 @@ class SentinelCluster:
                 "seq": int(event_seq),
                 "op": payload.get("op"),
                 "payload": payload.get("data") or {},
+                "node_id": node_id,
+                "epoch": int(epoch or 0),
             })
         return {"acked_seq": int(event_seq), "applied": bool(applied)}
 
-    async def _op_leave(self, payload: dict, node_id: str, seq: int = 0) -> dict:
+    async def _op_leave(self, payload: dict, node_id: str, seq: int = 0, epoch: int = 0) -> dict:
         """leave：标记节点主动离开并触发清理（清嫌疑跟踪 + 广播 node_left）。"""
         who = str(payload.get("node_id") or node_id)
         if self.heartbeat is not None:

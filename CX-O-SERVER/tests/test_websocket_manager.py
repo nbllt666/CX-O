@@ -22,6 +22,8 @@ class FakeWebSocket:
         self.accepted = False
         self.sent = []
         self.to_receive = []
+        self.closed = False
+        self.close_codes = []
 
     async def accept(self):
         self.accepted = True
@@ -31,6 +33,12 @@ class FakeWebSocket:
 
     async def receive_json(self):
         return self.to_receive.pop(0)
+
+    async def close(self, code: int = 1000):
+        if self.closed:
+            raise RuntimeError("already closed")  # 模拟底层二次 close 抛错场景
+        self.closed = True
+        self.close_codes.append(code)
 
 
 # ================================================================ WebSocketConnection
@@ -95,6 +103,33 @@ class TestConnectDisconnect:
         await mgr.disconnect("a")
         assert "a" not in mgr.connections
         assert "room" not in mgr.channels
+
+    @pytest.mark.asyncio
+    async def test_disconnect_closes_underlying_websocket(self, mgr):
+        """H4 回归：disconnect 必须显式 close 底层 WebSocket（防僵尸 TCP）。"""
+        ws = FakeWebSocket()
+        await mgr.connect(ws, client_id="a")
+        await mgr.disconnect("a")
+        assert ws.closed is True
+        assert ws.close_codes == [1000]
+
+    @pytest.mark.asyncio
+    async def test_disconnect_close_failure_swallowed(self, mgr):
+        """底层二次/异常 close 被吞掉，disconnect 本身不抛错。"""
+        ws = FakeWebSocket()
+        await mgr.connect(ws, client_id="a")
+        ws.closed = True  # 预置为已关闭 → close() 会抛 RuntimeError
+        await mgr.disconnect("a")  # 不应抛错
+        assert "a" not in mgr.connections
+
+    @pytest.mark.asyncio
+    async def test_cleanup_inactive_also_closes_socket(self, mgr):
+        """超时清理路径同样会关闭底层连接。"""
+        ws = FakeWebSocket()
+        conn = await mgr.connect(ws, client_id="a", send_connected=False)
+        conn.last_activity = datetime.now() - timedelta(hours=2)
+        await mgr._cleanup_inactive_connections()
+        assert ws.closed is True
 
     @pytest.mark.asyncio
     async def test_disconnect_unknown_is_noop(self, mgr):
@@ -201,6 +236,8 @@ class TestRouting:
 
     @pytest.mark.asyncio
     async def test_action_fallback(self, mgr):
+        ws = FakeWebSocket()
+        await mgr.connect(ws, client_id="a", send_connected=False)
         calls = []
 
         async def action_handler(websocket, message, client_id):
@@ -210,6 +247,19 @@ class TestRouting:
         await mgr.handle_message("a", {"action": "chat.message", "data": "x"})
         assert calls[0][1]["action"] == "chat.message"
         assert calls[0][2] == "a"
+        assert calls[0][0] is ws  # 快照自注册连接，不再是裸 None
+
+    @pytest.mark.asyncio
+    async def test_action_without_connection_skips_handler(self, mgr):
+        """M 回归：无连接的 action 消息不把 None 传入 handler，直接告警返回。"""
+        called = []
+
+        async def action_handler(websocket, message, client_id):
+            called.append((websocket, message, client_id))
+
+        mgr.register_action_handler("chat.message", action_handler)
+        await mgr.handle_action_message("ghost", {"action": "chat.message"})
+        assert called == []  # handler 未被调用，websocket=None 未入参
 
     @pytest.mark.asyncio
     async def test_unknown_message_type(self, mgr):

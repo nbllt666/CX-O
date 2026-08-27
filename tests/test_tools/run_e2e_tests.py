@@ -9,7 +9,15 @@
   python tests/test_tools/run_e2e_tests.py
 
 前置条件：
-  - 主系统后端运行在 http://localhost:8001
+  - 主系统后端运行在 http://localhost:8000
+
+第四轮体检收尾重构（20260827）：
+  本聚合器不再以子进程方式盲调 e2e/ 下的 pytest 形态测试文件——那批文件
+  （test_distillation_e2e.py 等）历史上从未入库（曾被根 *_test.py 忽略规则
+  吞掉后从未 add），盲调只会产生必走 FAIL 的假失败入口。
+  取而代之，main() 结尾打印 tests/test_tools/e2e/ 下现存独立脚本的手动运行
+  指引（每个脚本一行用途 + 命令示例），由开发者按需人工触发。
+  ※ 完整 pytest 形态 E2E 套件（含上述文件的补建/入库治理）待另行立项，暂缓。
 """
 import sys
 import time
@@ -23,19 +31,31 @@ from tests.test_tools.cxfc.preset_tools import get_preset_definitions
 from tests.test_tools.common.api_client import MainSystemClient
 from tests.test_tools.acp.acp_node import ACPNode
 
-# D5 新增的 5 个 E2E 测试通过子进程隔离运行（每个测试有独立的 main()）
-import subprocess as _sp
-E2E_TEST_FILES = [
-    ("asr_llm_tts_latency", "tests/test_tools/e2e/test_asr_llm_tts_latency.py"),
-    ("distillation", "tests/test_tools/e2e/test_distillation_e2e.py"),
-    ("decision", "tests/test_tools/e2e/test_decision_e2e.py"),
-    ("multimodal_vllm_native", "tests/test_tools/e2e/test_multimodal_vllm_native_e2e.py"),
-    ("acp_per_agent_isolation", "tests/test_tools/e2e/test_acp_per_agent_isolation_e2e.py"),
+# 第四轮体检收尾（20260827）：tests/test_tools/e2e/ 下现存独立诊断/E2E 脚本清单
+# （各脚本均可单独人工触发，退出码约定见各脚本自身文档）
+MANUAL_E2E_SCRIPTS = [
+    # (脚本名, 一行用途)
+    ("voice_chat_e2e.py", "语音问答全链路 E2E（输入→ASR→LLM→TTS 回放冒烟）"),
+    ("full_duplex_live.py", "全双工实时通话链路（WS 上行音频 ↔ 下行播报联调）"),
+    ("duplex_latency.py", "双工链路分段延迟测量（VAD 打断 / 首包延迟）"),
+    ("gen_test_audio.py", "生成本地测试音频样本（供 ASR/TTS 用例输入）"),
+    ("analyze_silence.py", "分析音频静音段分布（辅助 VAD 阈值调参）"),
+    ("capture_tts_audio_sample.py", "抓取 TTS 输出音频样本落盘（音质抽查）"),
+    ("generate_edgetts_reference.py", "用 Edge-TTS 生成参考音频基准"),
+    ("diag_asr_candidates.py", "诊断 ASR 多候选（candidates）返回行为"),
+    ("diag_asr_direct.py", "直连 ASR 服务健康诊断"),
+    ("diag_asr_latency.py", "ASR 分环节延迟诊断"),
+    ("diag_tts_chunks.py", "TTS 流式分块（chunking）行为诊断"),
+    ("diag_ws_dump.py", "WebSocket 报文全量转储排查"),
+    ("diag_ws_final.py", "WebSocket 会话终态收尾时序诊断"),
+    ("diag_ws_replicate.py", "WebSocket 会话复现（replicate）诊断"),
+    ("_diag_halluc_filter.py", "幻觉过滤（hallucination filter）专项诊断"),
 ]
 
 
 MAIN_HOST = "localhost"
-MAIN_PORT = 8001
+# 第四轮体检修复：后端默认端口已统一为 8000（对齐 base.ts / start.bat / ConnectionSetup）
+MAIN_PORT = 8000
 MAIN_URL = f"http://{MAIN_HOST}:{MAIN_PORT}"
 
 
@@ -242,54 +262,25 @@ def test_acp_bidirectional():
     return passed
 
 
-def _run_isolated_e2e(name: str, rel_path: str) -> bool:
-    """以子进程隔离方式运行单个 E2E 测试文件。
+def _print_manual_scripts():
+    """打印 tests/test_tools/e2e/ 下现存脚本的手动运行指引。
 
-    每个测试有独立的 main() 和 sys.path 操作，子进程隔离避免 import 污染。
-    退出码约定：
-        0  = PASS
-        77 = SKIP（服务不可达等，pytest 惯例）
-        其他 = FAIL
-    返回 True 表示 PASS/SKIP（不阻断总体），False 表示 FAIL。
-    SKIP 会在汇总中显式标注，不与 PASS 混淆。
+    这些脚本多为独立人工触发的链路验证/诊断工具（依赖 CX-O-SERVER 在线或真实
+    音频设备），不由本聚合器自动调度，因此不存在"文件缺失即 FAIL"的假失败路径。
     """
     project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-    abs_path = os.path.join(project_root, rel_path.replace("/", os.sep))
-    if not os.path.isfile(abs_path):
-        _print("error", f"E2E 测试文件不存在: {abs_path}")
-        return False
-    print(f"\n---------- [isolated] {name} ----------")
-    print(f"[run] python {abs_path}")
-    try:
-        proc = _sp.run(
-            [sys.executable, abs_path],
-            cwd=project_root,
-            capture_output=True,
-            text=True,
-            timeout=300,
-            env={**os.environ, "PYTHONIOENCODING": "utf-8"},
-        )
-    except _sp.TimeoutExpired:
-        _print("error", f"{name} 超时（>300s）")
-        return False
-    # 透传 stdout（含测试自身打印的 PASS/SKIP/FAIL）
-    if proc.stdout:
-        for line in proc.stdout.splitlines():
-            print(f"  {line}")
-    if proc.stderr:
-        # 仅打印 stderr 的非 deprecation 警告
-        for line in proc.stderr.splitlines():
-            if line.strip() and "warning" not in line.lower():
-                print(f"  [stderr] {line}")
-    if proc.returncode == 0:
-        _print("result", f"{name}: PASS (exit=0)")
-        return True
-    elif proc.returncode == 77:
-        _print("result", f"{name}: SKIP (exit=77, 服务不可达)")
-        return True  # SKIP 不阻断总体，但在汇总中显式标注
-    else:
-        _print("result", f"{name}: FAIL (exit={proc.returncode})")
-        return False
+    e2e_dir = os.path.join(project_root, "tests", "test_tools", "e2e")
+    print("\n========== e2e/ 现存脚本 · 手动运行指引 ==========")
+    print("# 需要服务在场时先启动 CX-O-SERVER（默认 http://localhost:8000）")
+    stale = False
+    for name, desc in MANUAL_E2E_SCRIPTS:
+        exists = os.path.isfile(os.path.join(e2e_dir, name))
+        stale = stale or not exists
+        mark = "*" if exists else "?"
+        print(f"  [{mark}] {desc}")
+        print(f"        python tests/test_tools/e2e/{name}")
+    if stale:
+        print("  [?] 标记表示清单过期：脚本已不在盘上，请校订 MANUAL_E2E_SCRIPTS")
 
 
 def main():
@@ -300,17 +291,13 @@ def main():
     print("###############################################")
 
     results = {}
-    # 原 3 组主系统集成测试（需 CX-O-SERVER 运行）
+    # 3 组主系统集成测试（需 CX-O-SERVER 运行）
     results["cxfc"] = test_cxfc_e2e()
     results["acp_uni"] = test_acp_unidirectional()
     results["acp_bidir"] = test_acp_bidirectional()
 
-    # D5 新增的 5 个 E2E 测试（子进程隔离运行）
-    # 退出码：0=PASS / 77=SKIP（服务不可达）/ 其他=FAIL
-    # distillation/decision/acp_per_agent_isolation 在 CX-O-SERVER 未运行时 SKIP
-    # multimodal_vllm_native 与 asr_llm_tts_latency 独立于 CX-O-SERVER，真正执行断言
-    for name, rel_path in E2E_TEST_FILES:
-        results[name] = _run_isolated_e2e(name, rel_path)
+    # e2e/ 目录下的其余脚本改为手动运行指引输出（不自动调度、不计入 PASS/FAIL 汇总）
+    _print_manual_scripts()
 
     print("\n========== 汇总 ==========")
     pass_count = sum(1 for ok in results.values() if ok)

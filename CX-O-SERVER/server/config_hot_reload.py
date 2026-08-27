@@ -52,7 +52,10 @@ async def apply_section(
         try:
             await model_router.reload_clients()
         except Exception as e:
+            # M9 修复：热更新失败不得 fallthrough 谎报 applied=True，
+            # 返回失败结果并标记需重启，由前端提示用户。
             logger.error(f"LLM 配置热更新失败: {e}")
+            return {"applied": False, "requires_restart": True, "error": str(e)}
 
     if section == "evolution":
         # CXO-Tuner evolution 节：不强制重建 Tuner 客户端（客户端按需惰性重建），

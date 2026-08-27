@@ -176,8 +176,11 @@ class LiveFeedbackTracker:
                 return None
 
             payload = self._build_payload(decision, session_id=session_id)
-            await self._safe_push(payload)
+            # M：先登记指纹再 await 推送。查重与登记原本隔着 ``await _safe_push``，
+            # 并发弹幕同窗口触发时可在双方均未登记的间隙双报。push 失败宁可丢
+            # 反馈也不重报（_safe_push 内部已静默降级）。
             self._reported_fingerprints.append(fingerprint)
+            await self._safe_push(payload)
             return payload
         except Exception as e:  # 静默降级：任何异常不向上抛
             logger.warning(f"live_feedback 弹幕反馈处理降级: {e}")

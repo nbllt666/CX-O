@@ -4,3 +4,6 @@
 [submodule "docker/asr/sensevoice"]
 	path = docker/asr/sensevoice
 	url = https://github.com/FunAudioLLM/SenseVoice.git
+[submodule "DiffSinger"]
+	path = DiffSinger
+	url = https://github.com/openvpi/DiffSinger.git

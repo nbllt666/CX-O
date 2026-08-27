@@ -140,14 +140,28 @@ class TestCache:
 
     def test_cache_bounded_lru(self, analyzer):
         # 超过上限按最久未访问淘汰，避免无界增长
+        # （M-D7: 键为全文 SHA-256 指纹，不再是原文本身）
         analyzer._cache_max_size = 2
-        _analyze(analyzer, "开心")
-        _analyze(analyzer, "难过")
-        _analyze(analyzer, "非常开心")
+        r_sad = _analyze(analyzer, "难过")
+        r_happy = _analyze(analyzer, "开心")
+        r_very = _analyze(analyzer, "非常开心")
         assert len(analyzer._cache) == 2
-        assert "开心" not in analyzer._cache  # 最早写入的被淘汰
-        assert "难过" in analyzer._cache
-        assert "非常开心" in analyzer._cache
+        # 最早写入的"难过"被淘汰，最近两条保留
+        assert r_sad not in analyzer._cache.values()
+        assert r_happy in analyzer._cache.values()
+        assert r_very in analyzer._cache.values()
+
+    def test_full_text_fingerprint_no_truncation_collision(self, analyzer):
+        """M-D7: 缓存键使用全文 SHA-256 指纹——前缀相同的两条不同长文本
+        不得互串缓存（原 text[:100] 截断键会导致前缀撞车）。"""
+        common = "开心" * 60  # 120 字符，>100 截断窗口
+        text_a = common + "尾甲"
+        text_b = common + "尾乙"
+        r_a = _analyze(analyzer, text_a)
+        r_b = _analyze(analyzer, text_b)
+        # 两者的键必然不同（全文指纹）
+        assert len(analyzer._cache) == 2
+        assert r_a == r_b or (r_a.polarity == r_b.polarity)  # 同为正面结果即可，重点在键区分
 
 
 class TestModuleFunctions:

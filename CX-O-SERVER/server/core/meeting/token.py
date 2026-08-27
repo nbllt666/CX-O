@@ -93,25 +93,37 @@ class SpeakingToken:
     async def release(self, agent_id: Optional[str] = None) -> Optional[str]:
         """释放令牌（可选指定请求者，非持有者释放被忽略）。
 
+        M 修复：只有实际执行了 ``_clear_holder()`` 的路径才进入交棒循环；
+        非当前持有者调用仅告警返回——此前会跳过清 holder 却仍执行队首交棒，
+        与原持有者形成"双持牌"。
+
         Returns:
-            接下来被授权的中holder；无则 None。
+            接下来被授权的持有者；无则 None。
         """
         next_holder: Optional[str] = None
         async with self._lock:
-            if self._holder is not None and (
-                agent_id is None or self._holder == agent_id
-            ):
+            if agent_id is not None and self._holder != agent_id:
+                logger.warning(
+                    "SpeakingToken.release 非当前持有者调用被忽略: caller=%s holder=%s",
+                    agent_id,
+                    self._holder,
+                )
+                return None
+            cleared = False
+            if self._holder is not None:
                 self._clear_holder()
-            # 从举手队列取队首授权（公平轮候）
-            while self._holder is None and self.pending_queue:
-                candidate = self.pending_queue.popleft()
-                if self._state == TokenState.REVOKED:
-                    # 已收回则不再放行，清空队列
-                    self.pending_queue.clear()
+                cleared = True
+            # 仅在确有清牌动作时才从举手队列取队首授权（公平轮候）
+            if cleared:
+                while self._holder is None and self.pending_queue:
+                    candidate = self.pending_queue.popleft()
+                    if self._state == TokenState.REVOKED:
+                        # 已收回则不再放行，清空队列
+                        self.pending_queue.clear()
+                        break
+                    self._set_holder(candidate)
+                    next_holder = candidate
                     break
-                self._set_holder(candidate)
-                next_holder = candidate
-                break
         return next_holder
 
     async def revoke(self) -> Optional[str]:

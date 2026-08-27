@@ -139,6 +139,15 @@ class WebSocketManager:
 
         logger.info(f"WebSocket 连接已断开: {client_id}, 当前连接数: {len(self.connections)}")
 
+        # H4 修复：显式关闭底层 WebSocket（锁外执行，幂等无害）。
+        # 超时清理/踢出的连接此前从不调用 close()，客户端侧 TCP 保持半开，
+        # 形成假在线僵尸连接（收不到推送也无感知）。已关闭的连接再 close
+        # 会抛异常，统一吞掉即可。
+        try:
+            await connection.websocket.close(code=1000)
+        except Exception as e:
+            logger.debug(f"关闭底层 WebSocket 失败（可能已关闭）: {client_id}: {e}")
+
         # 清理该客户端的双流式语音会话（根治孤儿 pipeline 泄漏：
         # 不清理则 LLM+TTS 流水线持续运行占用资源并向空连接推流，
         # 多轮累积致 TTS 服务并发排队、端到端延迟暴涨）
@@ -363,13 +372,22 @@ class WebSocketManager:
             )
 
     async def handle_action_message(self, client_id: str, message: Dict[str, Any]):
-        """处理收到的消息（基于 action 路由）"""
+        """处理收到的消息（基于 action 路由）
+
+        M 修复：连接读取纳入 ``self._lock`` 快照；无连接时告警直接返回——
+        连接不存在无处回发错误帧，且此前会把 ``None`` 作为 websocket 传入 handler。
+        """
         action = message.get("action", "")
         if action in self._action_handlers:
             handler = self._action_handlers[action]
-            connection = self.connections.get(client_id)
-            websocket = connection.websocket if connection else None
-            await handler(websocket, message, client_id)
+            with self._lock:
+                connection = self.connections.get(client_id)
+            if connection is None:
+                logger.warning(
+                    f"[DIAG-ACTION] connection is None for client_id={client_id}, action={action}"
+                )
+                return
+            await handler(connection.websocket, message, client_id)
         else:
             logger.warning(f"未知 action: {action}")
             await self.send_to_client(

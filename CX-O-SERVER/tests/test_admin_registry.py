@@ -78,3 +78,70 @@ def test_proactive_register_skips_without_endpoint():
         mp.setattr(httpx, "post", post)
         r._active_register()
         post.assert_not_called()
+
+
+# ================================================================ M-E: 真实对外 endpoint
+class TestSelfEndpoint:
+    def test_self_endpoint_composes_lan_ip_and_port(self, monkeypatch):
+        """M-E 定向: 上报 endpoint 为 LAN IP + 本服务端口，不再自指管理端 URL。"""
+        import socket as socket_mod
+
+        r = InstanceRegistry()
+
+        class FakeSock:
+            def connect(self, addr):
+                pass
+
+            def getsockname(self):
+                return ("192.168.7.23", 54321)
+
+            def close(self):
+                pass
+
+        monkeypatch.setattr(
+            "server.core.admin.registry.socket.socket",
+            lambda *a, **k: FakeSock(),
+        )
+        monkeypatch.setattr(
+            InstanceRegistry, "_resolve_self_port", staticmethod(lambda: 8123)
+        )
+        assert r._self_endpoint() == "http://192.168.7.23:8123"
+        assert socket_mod  # 引用防 lint
+
+    def test_active_register_payload_endpoint_not_self_referential(self, monkeypatch):
+        """M-E 定向: /api/admin/register 上报的 endpoint 字段为实例真实地址。"""
+        import httpx
+
+        r = InstanceRegistry(
+            admin_cfg=MagicMock(cx_a_endpoint="http://cx-a-host:9000")
+        )
+        captured = {}
+
+        def fake_post(url, json=None, timeout=None):
+            captured["url"] = url
+            captured["payload"] = json
+            return MagicMock(status_code=200)
+
+        monkeypatch.setattr(httpx, "post", fake_post)
+        monkeypatch.setattr(r, "_self_endpoint", lambda: "http://10.1.2.3:8000")
+
+        r._active_register()
+
+        assert captured["url"].startswith("http://cx-a-host:9000")
+        payload = captured["payload"]
+        assert payload["endpoint"] == "http://10.1.2.3:8000"  # 不再等于管理端 URL
+        assert payload["instance_id"] == r.instance_id
+
+    def test_resolve_self_port_falls_back_env_then_default(self, monkeypatch):
+        from server.core.admin.registry import InstanceRegistry as IR
+
+        def boom():
+            raise RuntimeError("settings unavailable")
+
+        monkeypatch.setattr("server.config.get_settings", boom)
+        monkeypatch.delenv("CXO_PORT", raising=False)
+        monkeypatch.delenv("PORT", raising=False)
+        assert IR._resolve_self_port() == 8000  # 默认兜底
+
+        monkeypatch.setenv("CXO_PORT", "9111")
+        assert IR._resolve_self_port() == 9111

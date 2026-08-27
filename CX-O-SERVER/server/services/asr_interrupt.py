@@ -98,14 +98,22 @@ class ASRInterruptModule(InterruptModuleBase):
         同一句子的多个 partial 被重复写入真实 context 造成膨胀/污染。
         """
         user_message = {"role": "user", "content": asr_text}
+        # H1 防护层：组装层未注入 _context_manager/_session_id 时，None.add_message
+        # 会抛 AttributeError 且被上层 except 吞掉 → 打断功能静默失效。
+        # 未注入时降级为「仅执行打断动作、跳过上下文写回」并 warning 留痕。
+        can_write_context = bool(
+            getattr(self, "_context_manager", None) and getattr(self, "_session_id", None)
+        )
+        if is_final and not can_write_context:
+            logger.warning("打断模块未注入 context_manager/session_id，本次 final 判定跳过上下文写回")
         if decision == "INTERRUPT":
-            if is_final:
+            if is_final and can_write_context:
                 self._context_manager.add_message(self._session_id, user_message)
             logger.info(f"LLM decided to INTERRUPT: {asr_text}")
             await self._trigger_interrupt(asr_text, llm_response)
             return "INTERRUPT", True
         elif decision == "IGNORE":
-            if is_final:
+            if is_final and can_write_context:
                 self._context_manager.add_message(self._session_id, user_message)
             logger.info(f"LLM decided to IGNORE: {asr_text}")
             return "IGNORE", False
@@ -163,20 +171,44 @@ class ASRInterruptModule(InterruptModuleBase):
         return self._is_interrupted
 
 
+def _inject_interrupt_context(module: "ASRInterruptModule", client_id: Optional[str]) -> None:
+    """H1 注入层（组装点）：把全局 ContextManager 单例与当前会话 id 绑定到打断模块。
+
+    基类 ``_context_manager/_session_id`` 此前全仓无任何注入点，final 写回时
+    ``None.add_message`` 必崩并被上层 except 吞掉 → 打断功能静默失效。
+    在实例工厂统一注入；live 路径的真实 session_id（init 消息可自定义）由
+    live_client._handle_init 持有后二次校正。注入失败降级为不写回，不阻断创建。
+    """
+    try:
+        if getattr(module, "_context_manager", None) is None:
+            from server.services.context_manager import get_context_manager
+
+            module.set_context_manager(get_context_manager())
+        if getattr(module, "_session_id", None) is None and client_id:
+            module.set_session_id(client_id)
+    except Exception as e:  # noqa: BLE001 - 组装层兜底，不让注入失败拖垮模块创建
+        logger.warning("ASR 打断模块上下文注入失败（降级为不写回上下文）: %s", e)
+
+
 def get_asr_interrupt_module(client_id: Optional[str] = None) -> ASRInterruptModule:
     """获取 ASR 打断模块。
 
     未指定 client_id：返回全局默认单例（向后兼容）。
     指定 client_id：返回该客户端的独立实例，使各会话的 _tts_playing /
     _is_interrupted 等状态互不串扰（A 播 TTS 不影响 B 的打断判定）。
+    创建/复用实例时按 H1 修复注入 ContextManager 与 per-client session_id。
     """
     if client_id is None:
-        return ASRInterruptModule.get_instance()
+        instance = ASRInterruptModule.get_instance()
+        _inject_interrupt_context(instance, None)
+        return instance
     if client_id not in _asr_interrupt_instances:
         instance = ASRInterruptModule()
         _inherit_asr_config(ASRInterruptModule.get_instance(), instance)
         _asr_interrupt_instances[client_id] = instance
-    return _asr_interrupt_instances[client_id]
+    instance = _asr_interrupt_instances[client_id]
+    _inject_interrupt_context(instance, client_id)
+    return instance
 
 
 def release_asr_interrupt_module(client_id: str) -> None:

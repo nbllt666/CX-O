@@ -1,6 +1,7 @@
 """任务管理器——任务的创建、持久化、状态推进与调度接入。"""
 import json
 import os
+import re
 import threading
 import uuid
 from datetime import datetime, timedelta
@@ -219,8 +220,26 @@ class TaskManager:
                 )
         if stype == "interval" and not schedule.get("interval_seconds"):
             raise ValueError("interval 类型必须提供 interval_seconds")
-        if stype in ("daily", "weekly") and not schedule.get("run_at"):
-            raise ValueError("daily/weekly 类型必须提供 run_at")
+        if stype in ("daily", "weekly"):
+            run_at = schedule.get("run_at")
+            if not run_at:
+                raise ValueError("daily/weekly 类型必须提供 run_at")
+            # M-D9: "%H:%M" 格式前置校验——否则入库后才在 _compute_next_run
+            # 的 strptime 抛 ValueError，next_run 停留 None，任务静默不触发。
+            # 注意：裸 strptime 的 %H/%M 宽容非零填充（"8:5" 也通过），
+            # 故先以严格正则约束 HH:MM 形态再 strptime 验证语义合法。
+            if not isinstance(run_at, str) or not re.fullmatch(
+                r"([01]\d|2[0-3]):([0-5]\d)", run_at
+            ):
+                raise ValueError(
+                    f"daily/weekly 类型 run_at 必须是严格 HH:MM 时间格式: {run_at!r}"
+                )
+            try:
+                datetime.strptime(run_at, "%H:%M")
+            except ValueError:
+                raise ValueError(
+                    f"daily/weekly 类型 run_at 必须是合法时间 (HH:MM): {run_at!r}"
+                )
 
     def _compute_next_run(self, schedule: Dict[str, Any]) -> Optional[str]:
         stype = schedule.get("type")

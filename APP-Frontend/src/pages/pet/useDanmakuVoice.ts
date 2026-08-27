@@ -93,17 +93,20 @@ export function useDanmakuVoice({
     const dataArray = new Uint8Array(FFT_SIZE / 2);
     const tick = () => {
       const analyser = analyserRef.current;
-      if (analyser && speakingRef.current) {
-        analyser.getByteFrequencyData(dataArray);
-        let sum = 0;
-        for (let i = 0; i < dataArray.length; i++) sum += dataArray[i];
-        const v = Math.min(sum / dataArray.length / NORMALIZATION_FACTOR, 1);
-        volumeRef.current = v;
-        vowelWeightsRef.current = computeVowelWeights(dataArray, VOWEL_VOLUME_THRESHOLD, v);
-      } else {
+      if (!analyser || !speakingRef.current) {
+        // L10：队列空档/播报结束即归零并自停 RAF（不再排下一帧），避免无播报时
+        // 空转烧 CPU；rafRef 归零保证 playNext 再次播报时 startLipLoop 可重新拉起
         volumeRef.current = 0;
         vowelWeightsRef.current = { ...ZERO_VOWELS };
+        rafRef.current = 0;
+        return;
       }
+      analyser.getByteFrequencyData(dataArray);
+      let sum = 0;
+      for (let i = 0; i < dataArray.length; i++) sum += dataArray[i];
+      const v = Math.min(sum / dataArray.length / NORMALIZATION_FACTOR, 1);
+      volumeRef.current = v;
+      vowelWeightsRef.current = computeVowelWeights(dataArray, VOWEL_VOLUME_THRESHOLD, v);
       rafRef.current = requestAnimationFrame(tick);
     };
     rafRef.current = requestAnimationFrame(tick);

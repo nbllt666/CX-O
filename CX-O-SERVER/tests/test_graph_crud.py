@@ -102,12 +102,20 @@ class TestNodeDelete:
         # 关联边 A-B 被级联删除
         assert edges.get(seeded["e1"].id) is None
 
-    def test_delete_no_cascade_keeps_edges(self, nodes, edges, seeded):
+    def test_delete_no_cascade_with_edges_rejected(self, nodes, edges, seeded):
+        """第四轮 §6.3 第12条新契约：cascade=False 且存在关联边 → 明确拒绝，不产生悬挂边。"""
         a = seeded["a"]
-        assert nodes.delete(a.id, cascade=False)
-        assert nodes.get(a.id) is None
-        # 非级联时关联边 A-B 保留（SQLite 默认未启用 foreign_keys）
+        with pytest.raises(ValueError, match="cascade=True"):
+            nodes.delete(a.id, cascade=False)
+        # 节点未被删除、关联边完整保留
+        assert nodes.get(a.id) is not None
         assert len(edges.get_outgoing(a.id)) == 1
+
+    def test_delete_no_cascade_without_edges_ok(self, nodes):
+        """cascade=False 且无关联边 → 允许直接删除。"""
+        d = nodes.create(_mk_node("concept", {"tag": "isolated"}, "delta"))
+        assert nodes.delete(d.id, cascade=False)
+        assert nodes.get(d.id) is None
 
     def test_delete_missing(self, nodes):
         assert nodes.delete("nope") is False

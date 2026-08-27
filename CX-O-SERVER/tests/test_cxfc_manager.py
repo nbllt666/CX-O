@@ -282,6 +282,78 @@ class TestDiscovery:
         assert payload["type"] == "CXFC_BEACON"
         assert payload["port"] == 8000
 
+    # ---------------------------------------------------------- L13 泄漏兜底
+    class _LeakProbeSocket:
+        """记录 close 调用的真实 socket 替身（含 bind 失败路径）。"""
+
+        def __init__(self, *, bind_error=False, datagrams=()):
+            self._bind_error = bind_error
+            self._queue = list(datagrams)
+            self.closed = False
+            self.bound = None
+
+        def setsockopt(self, *a):
+            pass
+
+        def settimeout(self, *a):
+            pass
+
+        def bind(self, addr):
+            self.bound = addr
+            if self._bind_error:
+                raise OSError("addr in use")
+
+        def recvfrom(self, bufsize):
+            if self._queue:
+                return self._queue.pop(0), ("127.0.0.1", 9996)
+            import socket as _s
+
+            raise _s.timeout()
+
+        def close(self):
+            self.closed = True
+
+    @pytest.mark.asyncio
+    async def test_public_scan_network_closes_socket_on_success(
+        self, monkeypatch
+    ):
+        """L13 定向: 公共 scan_network 成功路径关闭临时 socket。"""
+        import socket as socket_mod
+
+        from server.core.cxfc import discovery as discovery_mod
+
+        d = CXFCDiscovery(discovery_port=59996)
+        probe = self._LeakProbeSocket(
+            datagrams=[json.dumps({"type": "CXFC_BEACON", "port": 9100}).encode()]
+        )
+        monkeypatch.setattr(socket_mod, "socket", lambda *a, **k: probe)
+        # discovery 模块内 `import socket` 绑定同一模块对象 → patch 生效
+        monkeypatch.setattr(discovery_mod.socket, "AF_INET", socket_mod.AF_INET)
+        monkeypatch.setattr(discovery_mod.socket, "SOCK_DGRAM", socket_mod.SOCK_DGRAM)
+
+        found = await d.scan_network()
+
+        assert found and found[0]["port"] == 9100
+        assert probe.closed is True
+
+    @pytest.mark.asyncio
+    async def test_public_scan_network_closes_socket_on_bind_failure(self, monkeypatch):
+        """L13 定向: bind 抛 OSError 的异常路径同样 try/finally 兜底关闭。"""
+        import socket as socket_mod
+
+        from server.core.cxfc import discovery as discovery_mod
+
+        d = CXFCDiscovery(discovery_port=59997)
+        probe = self._LeakProbeSocket(bind_error=True)
+        monkeypatch.setattr(socket_mod, "socket", lambda *a, **k: probe)
+        monkeypatch.setattr(discovery_mod.socket, "AF_INET", socket_mod.AF_INET)
+        monkeypatch.setattr(discovery_mod.socket, "SOCK_DGRAM", socket_mod.SOCK_DGRAM)
+
+        with pytest.raises(OSError):
+            await d.scan_network()
+
+        assert probe.closed is True
+
 
 class FakeDiscoverySocket:
     """模拟 discovery socket：缓存待收数据，抛 BlockingIOError 表示无更多数据。"""

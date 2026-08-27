@@ -167,6 +167,92 @@ class TestAgentCRUD:
         assert await mgr.get_agent("a1") is None
         assert await mgr.remove_agent("a1") is False
 
+    @pytest.mark.asyncio
+    async def test_remove_agent_cleans_group_members(self, tmp_path, monkeypatch):
+        """M-E 定向: 删除 agent 同步清除群组成员引用并落盘（此前残留孤儿成员）。"""
+        mgr = _make(tmp_path)
+        monkeypatch.setattr(mgr, "cleanup_agent_resources", _noop)
+        await mgr.register_agent(_agent("a1"))
+        g = _group()
+        await mgr.create_group(g)
+        await mgr.add_group_member("g1", {"agent_id": "a1", "name": "a1"})
+        await mgr.add_group_member("g1", {"agent_id": "a2", "name": "a2"})
+
+        # 追加一个不受删除影响的第二群组
+        g2 = _group(group_id="g2")
+        await mgr.create_group(g2)
+        await mgr.add_group_member("g2", {"agent_id": "a2"})
+
+        saved_after = {"n": 0}
+        orig_save = mgr._save_data
+
+        async def spy_save():
+            saved_after["n"] += 1
+            return await orig_save()
+
+        monkeypatch.setattr(mgr, "_save_data", spy_save)
+        assert await mgr.remove_agent("a1") is True
+
+        group = await mgr.get_group("g1")
+        member_ids = [m.get("agent_id") for m in group.members]
+        assert "a1" not in member_ids
+        assert "a2" in member_ids
+        group2 = await mgr.get_group("g2")
+        assert [m.get("agent_id") for m in group2.members] == ["a2"]
+        # 清理动作伴随一次落盘（remove_agent 内 _save_data）
+        assert saved_after["n"] >= 1
+
+
+# ================================================================ 消息历史上限
+class TestMessageCap:
+    @pytest.mark.asyncio
+    async def test_send_message_capped_per_key(self, tmp_path, monkeypatch):
+        """M-E 定向: 单 key 消息历史超上限从头部截断（防无界增长）。"""
+        mgr = _make(tmp_path)
+        monkeypatch.setattr(ACPManager, "MAX_MESSAGES_PER_KEY", 5)
+
+        for i in range(8):
+            await mgr.send_message(_msg(msg_id=f"m{i}", to_agent_id="a1"))
+
+        bucket = mgr.messages["a1"]
+        assert len(bucket) == 5
+        # 最旧的 m0/m1/m2 被丢弃，保留最近 5 条
+        assert [m.id for m in bucket] == ["m3", "m4", "m5", "m6", "m7"]
+
+    @pytest.mark.asyncio
+    async def test_group_message_capped_per_key(self, tmp_path, monkeypatch):
+        mgr = _make(tmp_path)
+        monkeypatch.setattr(ACPManager, "MAX_MESSAGES_PER_KEY", 4)
+
+        for i in range(6):
+            await mgr.send_message(
+                _msg(msg_id=f"g{i}", to_agent_id=None, to_group_id="g1")
+            )
+
+        bucket = mgr.messages["g1"]
+        assert len(bucket) == 4
+        assert [m.id for m in bucket] == ["g2", "g3", "g4", "g5"]
+
+    @pytest.mark.asyncio
+    async def test_receive_external_message_capped(self, tmp_path, monkeypatch):
+        mgr = _make(tmp_path)
+        monkeypatch.setattr(ACPManager, "MAX_MESSAGES_PER_KEY", 3)
+        monkeypatch.setattr(mgr, "_inject_into_chat_context", _anoop)
+
+        async def _no_reply(*args, **kwargs):
+            return None
+
+        # _trigger_auto_reply 由 create_task 发起——替换为 no-op 防外部依赖
+        monkeypatch.setattr(mgr, "_trigger_auto_reply", _no_reply)
+
+        for i in range(5):
+            incoming = ACPMessageInfo(id=f"in{i}", from_agent_id="peer", msg_type="chat")
+            await mgr.receive_external_message(incoming)
+
+        bucket = mgr.messages["peer"]
+        assert len(bucket) == 3
+        assert [m.id for m in bucket] == ["in2", "in3", "in4"]
+
 
 # ================================================================ Connection CRUD
 class TestConnectionCRUD:

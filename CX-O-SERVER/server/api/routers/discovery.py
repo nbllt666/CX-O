@@ -6,6 +6,7 @@
 """
 import asyncio
 import socket
+import threading
 from typing import Dict, List, Optional
 
 import httpx
@@ -30,14 +31,18 @@ _HOST_START, _HOST_END = 1, 254
 # 明文 HTTP /health，无需证书校验。timeout 以查询参数为准逐请求覆盖。
 _shared_client: Optional[httpx.AsyncClient] = None
 _shared_client_lock: Optional[asyncio.Lock] = None
+# B5 修复：threading 守卫锁消除双检竞态——原实现两协程同时看到 lock 为 None 时
+# 会各自创建锁对象并各自进入临界区，互斥失效。
+_creation_guard = threading.Lock()
 
 
 async def _get_shared_client() -> httpx.AsyncClient:
     """获取共享探测客户端（并发安全懒创建）。"""
     global _shared_client, _shared_client_lock
     if _shared_client is None:
-        if _shared_client_lock is None:
-            _shared_client_lock = asyncio.Lock()
+        with _creation_guard:
+            if _shared_client_lock is None:
+                _shared_client_lock = asyncio.Lock()
         async with _shared_client_lock:
             if _shared_client is None:
                 _shared_client = httpx.AsyncClient(

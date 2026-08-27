@@ -51,12 +51,14 @@ export const chatApi = {
   /**
    * SSE 流式聊天：fetch + ReadableStream 逐行解析 `data:` 帧。
    * 带图片消息走此端点（WS chat_stream 不支持 images）。
+   * 支持传入 AbortSignal 以外部中断流式请求（C3 修复）。
    */
   async sendMessageStream(
     message: string,
     onChunk: (chunk: StreamChunk) => void,
     agentId = 'default',
     images?: string[],
+    signal?: AbortSignal,
   ): Promise<void> {
     const baseUrl = getApiBaseUrl();
     const token = localStorage.getItem(STORAGE_KEYS.token);
@@ -70,6 +72,8 @@ export const chatApi = {
       method: 'POST',
       headers,
       body: JSON.stringify({ message, agent_id: agentId, images }),
+      // C3 修复：透传 AbortSignal，reader.read() 在中止时会抛 AbortError
+      signal,
     });
 
     if (!response.ok || !response.body) {
@@ -115,17 +119,18 @@ export const chatApi = {
     }
   },
 
-  /** memory-agent 流式聊天（axios responseType:text 一次性接收后逐行解析） */
+  /** memory-agent 流式聊天（axios responseType:text 一次性接收后逐行解析）；支持 AbortSignal（C3 修复） */
   async sendMemoryAgentMessageStream(
     message: string,
     onChunk: (chunk: StreamChunk) => void,
     sessionId?: string,
+    signal?: AbortSignal,
   ): Promise<void> {
     try {
       const response = await getHttpClient().post(
         '/api/memory-agent/chat/stream',
         { message, session_id: sessionId },
-        { responseType: 'text', transformResponse: [(data: string) => data] },
+        { responseType: 'text', transformResponse: [(data: string) => data], signal },
       );
       const lines = String(response.data).split('\n');
       for (const line of lines) {

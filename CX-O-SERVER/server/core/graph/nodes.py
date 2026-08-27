@@ -107,14 +107,42 @@ class NodeManager:
         return node
 
     def delete(self, node_id: str, cascade: bool = True, agent_id: str = "default") -> bool:
-        if cascade:
-            self.db.execute_modify("DELETE FROM edges WHERE (source_id = ? OR target_id = ?) AND agent_id = ?", (node_id, node_id, agent_id))
-            rowcount = self.db.execute_modify("DELETE FROM nodes WHERE id = ? AND agent_id = ?", (node_id, agent_id))
-        else:
-            rowcount = self.db.execute_modify("DELETE FROM nodes WHERE id = ? AND agent_id = ?", (node_id, agent_id))
-
         logger.info(f"删除节点: {node_id} (cascade={cascade})")
-        return rowcount > 0
+        if not self.exists(node_id, agent_id):
+            return False
+        # 第四轮全面体检 §6.3 第12条：edges 表已统一开启外键（默认 RESTRICT，无
+        # ON DELETE CASCADE）。删除语义收口为两种安全路径——
+        #   cascade=True  ：维持 M-D4 单事务"先显式删边再删节点"，FK 条件满足；
+        #   cascade=False ：存在关联边时抛出明确业务错误拒绝删除（旧行为"静默保留
+        #                   悬挂边"取消）；无关联边才直接删。
+        if cascade:
+            # M-D4: 边删除与节点删除必须在同一事务——原实现两条独立
+            # execute_modify 各自提交，中间失败会留下"边已删而节点仍在"
+            # 的半删状态；db.transaction 单事务保证原子性（参照 batch_delete）。
+            self.db.transaction(
+                [
+                    (
+                        "DELETE FROM edges WHERE (source_id = ? OR target_id = ?) AND agent_id = ?",
+                        (node_id, node_id, agent_id),
+                    ),
+                    ("DELETE FROM nodes WHERE id = ? AND agent_id = ?", (node_id, agent_id)),
+                ]
+            )
+        else:
+            # 物理完整性是库级约束（FK 不区分 agent_id），探测不限定 agent_id，
+            # 避免跨 agent 边引用同 id 节点时被 FK RESTRICT 拦截产生裸 IntegrityError。
+            edge_ref = self.db.execute_one(
+                "SELECT COUNT(*) AS cnt FROM edges WHERE source_id = ? OR target_id = ?",
+                (node_id, node_id),
+            )
+            ref_cnt = edge_ref["cnt"] if edge_ref else 0
+            if ref_cnt > 0:
+                raise ValueError(
+                    f"节点 {node_id} 存在 {ref_cnt} 条关联边，cascade=False 下拒绝删除以避免产生悬挂边；"
+                    f"请使用 cascade=True 级联删除，或先删除关联边"
+                )
+            self.db.execute_modify("DELETE FROM nodes WHERE id = ? AND agent_id = ?", (node_id, agent_id))
+        return True
 
     def list(
         self,

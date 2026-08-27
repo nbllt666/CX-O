@@ -68,6 +68,10 @@ from server.prompt_builder import REALTIME_VOICE_PROMPT_PADDING
 
 logger = logging.getLogger(__name__)
 
+# lifespan 后台任务强引用集：防止 asyncio.create_task 的任务被 GC 中途回收
+# （Python 文档要求持引用），任务完成时自动移除。
+_lifespan_background_tasks: set = set()
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -843,7 +847,10 @@ async def lifespan(app: FastAPI):
 
     if _is_leader:
         try:
-            asyncio.create_task(_warmup_inference_backends())
+            _warmup_task = asyncio.create_task(_warmup_inference_backends())
+            # A1 修复：持强引用防 GC 中途回收；任务完成后自动从集合移除
+            _lifespan_background_tasks.add(_warmup_task)
+            _warmup_task.add_done_callback(_lifespan_background_tasks.discard)
             lifespan_logger.info("LLM/Embedding 推理预热任务已启动（后台执行）")
         except Exception as _bk_warmup_e:
             lifespan_logger.warning(f"LLM/Embedding 预热任务启动失败（不阻塞启动）: {_bk_warmup_e}")

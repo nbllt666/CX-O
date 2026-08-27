@@ -20,8 +20,8 @@ const mocks = vi.hoisted(() => ({
         _cmd: string,
         _args: string[],
         _opts: { detached: boolean; stdio: string },
-      ) => { unref: () => void }
-    >(() => ({ unref: () => {} })),
+      ) => { unref: () => void; on: (_event: string, _cb: (err: Error) => void) => void }
+    >(() => ({ unref: () => {}, on: () => {} })),
   },
 }));
 

@@ -95,14 +95,17 @@ export default function ChatPage() {
   const [input, setInput] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [historyError, setHistoryError] = useState(false);
-  const [alarms, setAlarms] = useState<{ message: string; triggeredAt: string }[]>([]);
+  const [alarms, setAlarms] = useState<
+    { message: string; triggeredAt: string; expireAt: number }[]
+  >([]);
+  // 当前 SSE 回退流的中止控制器（C3 修复：供停止按钮中断不可取消的 fetch 流）
+  const sseAbortRef = useRef<AbortController | null>(null);
   const [showSummaryModal, setShowSummaryModal] = useState(false);
   const [autoStartSummary, setAutoStartSummary] = useState(false);
 
   const tempAssistantIdRef = useRef('');
   const historyTokenRef = useRef<{ cancelled: boolean }>({ cancelled: false });
   const listRef = useRef<HTMLDivElement>(null);
-  const alarmTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Agent 列表
   useEffect(() => {
@@ -232,16 +235,24 @@ export default function ChatPage() {
     [applyEvent, t],
   );
 
-  /** 后端提醒（alarm）事件：追加到右上角 toast，5s 后自动收起 */
+  /** 后端提醒（alarm）事件：追加到右上角 toast（C2 修复：到期时间戳由前台打点，逐条独立存活） */
   const handleAlarm = useCallback((message: string, triggeredAt: string) => {
-    setAlarms((prev) => [...prev, { message, triggeredAt }]);
-    if (alarmTimeoutRef.current) {
-      clearTimeout(alarmTimeoutRef.current);
-    }
-    alarmTimeoutRef.current = setTimeout(() => {
-      setAlarms((prev) => prev.slice(1));
-      alarmTimeoutRef.current = null;
-    }, 5000);
+    setAlarms((prev) => [...prev, { message, triggeredAt, expireAt: Date.now() + 5000 }]);
+  }, []);
+
+  // C2 修复：单一清扫循环按 expireAt 批量移除到期提醒。
+  // 替代原"共享单 timeout 只删第一条"实现——该实现在多条提醒先后到达时，
+  // 计时被反复重置且每次触发仅移除一条，导致后续提醒永驻右上角。
+  useEffect(() => {
+    const timer = setInterval(() => {
+      setAlarms((prev) => {
+        if (prev.length === 0) return prev;
+        const now = Date.now();
+        const next = prev.filter((a) => a.expireAt > now);
+        return next.length === prev.length ? prev : next;
+      });
+    }, 1000);
+    return () => clearInterval(timer);
   }, []);
 
   const dismissAlarm = useCallback((index: number) => {
@@ -277,6 +288,10 @@ export default function ChatPage() {
     }
     if (sentViaWs) return;
 
+    // SSE 回退同样可被停止（C3 修复）：创建 AbortController 并登记到 ref
+    const abortController = new AbortController();
+    sseAbortRef.current = abortController;
+
     try {
       await chatApi.sendMessageStream(
         text,
@@ -295,6 +310,8 @@ export default function ChatPage() {
           setMessages((prev) => applyStreamEvent(prev, assistantId, event));
         },
         currentAgentId,
+        undefined,
+        abortController.signal,
       );
       // SSE 自然结束（[DONE] 不产生 chunk）：确保 loading 复位
       setIsLoading(false);
@@ -303,6 +320,13 @@ export default function ChatPage() {
       );
     } catch (error) {
       setIsLoading(false);
+      // 用户主动停止（C3 修复）：按"已取消"收尾，不弹错误
+      if (error instanceof DOMException && error.name === 'AbortError') {
+        setMessages((prev) =>
+          finalizeStreamMessage(prev, assistantId, t('management.chat.cancelled')),
+        );
+        return;
+      }
       setMessages((prev) =>
         applyStreamEvent(prev, assistantId, {
           type: 'error',
@@ -311,8 +335,16 @@ export default function ChatPage() {
           }),
         }),
       );
+    } finally {
+      sseAbortRef.current = null;
     }
   }, [input, isLoading, currentAgentId, isConnected, wsSendMessage, t]);
+
+  /** 停止生成（C3 修复）：WS cancel 与 SSE 回退的 AbortController 一并触发 */
+  const handleStopGeneration = useCallback(() => {
+    cancelGeneration();
+    sseAbortRef.current?.abort();
+  }, [cancelGeneration]);
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === 'Enter' && !e.shiftKey) {
@@ -452,7 +484,7 @@ export default function ChatPage() {
           {isLoading ? (
             <button
               type="button"
-              onClick={cancelGeneration}
+              onClick={handleStopGeneration}
               title={t('management.chat.stop')}
               className="flex h-11 w-11 shrink-0 items-center justify-center rounded-lg bg-red-500/85 text-white transition-opacity hover:opacity-90"
             >

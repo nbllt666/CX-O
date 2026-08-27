@@ -83,3 +83,29 @@ async def test_file_not_written_on_invalid_args(service):
     with pytest.raises(ValueError):
         await service.register_embedding("阿明", [])
     assert not vp_mod._PROFILES_FILE.exists()
+
+
+@pytest.mark.asyncio
+async def test_concurrent_register_no_lost_update(service):
+    """M 回归：并发注册经 _io_lock 串行 RMW，两个档案都落盘不丢更新。"""
+    import asyncio
+
+    results = await asyncio.gather(
+        service.register_embedding("阿明", [0.1, 0.1]),
+        service.register_embedding("老张", [0.2, 0.2]),
+    )
+    names = {r["name"] for r in results}
+    assert names == {"阿明", "老张"}
+    data = json.loads(vp_mod._PROFILES_FILE.read_text(encoding="utf-8"))
+    persisted = sorted(p["name"] for p in data["profiles"])
+    assert persisted == ["老张", "阿明"]  # 修复前并发覆写可能只留下一个
+
+
+@pytest.mark.asyncio
+async def test_delete_under_lock_roundtrip(service):
+    """delete 走同一把锁：注册→删除→状态计数归零。"""
+    await service.register_embedding("临时", [0.3, 0.3])
+    assert await service.delete("临时") is True
+    assert await service.delete("不存在") is False
+    status = await service.get_status()
+    assert status["profiles"] == 0

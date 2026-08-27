@@ -13,7 +13,10 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from server.api.routers import meeting as meeting_router
-from server.core.meeting.coordinator import MeetingCoordinator
+from server.core.meeting.coordinator import (
+    MeetingCoordinator,
+    MeetingRoomConflictError,
+)
 from server.core.meeting.models import AgentMember
 
 
@@ -74,6 +77,65 @@ class TestCoordinatorCore:
         coord = _make_coordinator()
         with pytest.raises(KeyError):
             await coord.process_user_speech("nope", "hi")
+
+    @pytest.mark.asyncio
+    async def test_start_same_room_conflict_raises(self):
+        """H5 回归：同名房间未结束时再次开会抛业务冲突，不再静默覆盖。"""
+        coord = _make_coordinator()
+        await coord.start_meeting(user="用户", agents=[AgentMember("A")], room_id="conflict-1")
+        first = coord.rooms["conflict-1"]
+        with pytest.raises(MeetingRoomConflictError):
+            await coord.start_meeting(user="用户", agents=[], room_id="conflict-1")
+        # 旧房间对象未被顶替
+        assert coord.rooms["conflict-1"] is first
+
+    @pytest.mark.asyncio
+    async def test_end_meeting_pops_room_then_reusable_id(self):
+        """H5 回归：结束后房间移除，同名房号可重新开会。"""
+        coord = _make_coordinator()
+        await coord.start_meeting(user="用户", agents=[], room_id="reuse-1")
+        await coord.end_meeting("reuse-1")
+        room = await coord.start_meeting(user="用户", agents=[], room_id="reuse-1")
+        assert room.room_id == "reuse-1"
+        await coord.end_meeting("reuse-1")
+
+    @pytest.mark.asyncio
+    async def test_end_meeting_stops_danmaku_connector(self):
+        """H5 回归：end_meeting 在移除房间前先停弹幕连接器（启停联动）。"""
+
+        class _FakeConn:
+            def __init__(self):
+                self.stopped = False
+
+            async def stop(self):
+                self.stopped = True
+
+        coord = _make_coordinator()
+        await coord.start_meeting(user="用户", agents=[], room_id="dk-1")
+        fake = _FakeConn()
+        coord._connector["dk-1"] = fake
+        await coord.end_meeting("dk-1")
+        assert fake.stopped is True
+        assert "dk-1" not in coord._connector   # 连接器登记已清理
+        assert "dk-1" not in coord.rooms        # 房间随后被移除
+
+    @pytest.mark.asyncio
+    async def test_drive_turn_resets_interrupted_flag(self):
+        """L 回归：本轮发言开始时复位上一轮被打断的 interrupted 标记。"""
+
+        async def responder(room, agent_id, user_text):
+            return f"{agent_id}回应:{user_text}"
+
+        coord = _make_coordinator(responder=responder)
+        await coord.start_meeting(
+            user="用户",
+            agents=[AgentMember("A", relevance=0.9, desire_to_speak=0.9), AgentMember("B")],
+            room_id="itl-1",
+        )
+        coord.get_room("itl-1").get_agent("A").interrupted = True
+        result = await coord.process_user_speech("itl-1", "大家觉得呢")
+        assert result["decision"]["speaker"] == "A"
+        assert coord.get_room("itl-1").get_agent("A").interrupted is False
 
 
 # ================================================================ REST 全链路
@@ -178,6 +240,41 @@ class TestMeetingREST:
         monkeypatch.setattr(meeting_router, "get_settings", lambda: FakeSettings())
         meeting_router.set_meeting_coordinator(_make_coordinator())
         r = client.post("/api/meeting/start", json={"agents": []})  # 缺 user
+        assert r.status_code == 422
+
+    def test_start_duplicate_room_returns_409(self, client, monkeypatch):
+        """H5 回归：同名房间未结束时重复开会 → 409；结束后可复用房号。"""
+        monkeypatch.setattr(meeting_router, "get_settings", lambda: FakeSettings())
+        meeting_router.set_meeting_coordinator(_make_coordinator(responder=_fake_responder))
+        r1 = client.post("/api/meeting/start", json={"user": "用户", "room_id": "dup-1"})
+        assert r1.status_code == 200
+        r2 = client.post("/api/meeting/start", json={"user": "用户", "room_id": "dup-1"})
+        assert r2.status_code == 409          # 修复前为 200（静默覆盖）
+        # 结束后房号可复用
+        r3 = client.post("/api/meeting/dup-1/end")
+        assert r3.status_code == 200
+        r4 = client.post("/api/meeting/start", json={"user": "用户", "room_id": "dup-1"})
+        assert r4.status_code == 200
+
+    def test_start_param_bounds_422(self, client, monkeypatch):
+        """M 回归：max_agents>=1 与 relevance/desire_to_speak∈[0,1] 校验。"""
+        monkeypatch.setattr(meeting_router, "get_settings", lambda: FakeSettings())
+        meeting_router.set_meeting_coordinator(_make_coordinator())
+        r = client.post("/api/meeting/start", json={"user": "u", "max_agents": 0})
+        assert r.status_code == 422
+        r = client.post(
+            "/api/meeting/start",
+            json={"user": "u", "agents": [{"agent_id": "A", "relevance": 1.5}]},
+        )
+        assert r.status_code == 422
+
+    def test_speak_invalid_role_422(self, client, monkeypatch):
+        """M 回归：role 仅接受 user/audience，非法值 422 而非落入用户分支。"""
+        monkeypatch.setattr(meeting_router, "get_settings", lambda: FakeSettings())
+        meeting_router.set_meeting_coordinator(_make_coordinator(responder=_fake_responder))
+        start = client.post("/api/meeting/start", json={"user": "用户"})
+        room_id = start.json()["data"]["room_id"]
+        r = client.post(f"/api/meeting/{room_id}/speak", json={"text": "hi", "role": "host"})
         assert r.status_code == 422
 
     def test_audience_toggle_and_speak(self, client, monkeypatch):

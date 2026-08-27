@@ -325,11 +325,23 @@ class DreamEngine:
                     except Exception as e:
                         logger.warning("SleepSensor 刷新异常（已隔离，跳过本轮刷新）: %s", e)
 
-                # 睡眠窗口进入 → 异步发起梦境会话（不阻塞循环）
+                # 睡眠窗口进入 → 异步发起梦境会话（不阻塞循环）。
+                # M-E 修复：仅空闲态且冷却已过才进入——状态非 idle（例如
+                # SleepSensor 已开跑的会话/唤醒清扫未回位）时跳过，防止双开。
                 if sleeping and prev_sleeping is not True:
-                    self._status = _STATUS_DREAMING
-                    self._last_trigger_at = now
-                    self._track_background_task(asyncio.create_task(self._safe_run_session()))
+                    if self._status != _STATUS_IDLE:
+                        logger.info(
+                            "睡眠窗口边沿触发跳过（当前状态=%s，防与进行中会话双开）",
+                            self._status,
+                        )
+                    elif not self._cooldown_passed(now):
+                        logger.info("睡眠窗口边沿触发冷却未到，跳过本轮梦境会话")
+                    else:
+                        self._status = _STATUS_DREAMING
+                        self._last_trigger_at = now
+                        self._track_background_task(
+                            asyncio.create_task(self._safe_run_session())
+                        )
 
                 # SleepSensor 生理/行为确认（窗口内 ASLEEP / 窗口外 S4 短路，冷却防高频）
                 if self._sleep_sensor is not None:
@@ -390,7 +402,8 @@ class DreamEngine:
         if self._auto_summarizer is None:
             self._last_trigger_at = now
             self._status = _STATUS_DREAMING
-            asyncio.create_task(self._safe_run_session())
+            # M-E 修复：纳入 _track_background_task，防止 fire-and-forget 任务被 GC 提前回收
+            self._track_background_task(asyncio.create_task(self._safe_run_session()))
             logger.info(
                 "SleepSensor 确认入睡，触发梦境会话（sleeping=%s, s4_shortcut=%s）",
                 sleeping,

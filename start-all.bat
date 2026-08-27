@@ -108,14 +108,16 @@ echo.
 echo 按任意键关闭所有服务...
 pause > nul
 
-REM 精确停止本脚本启动的服务进程（按 PID 记录逐个杀树，替代误杀全机进程的 taskkill /IM python.exe）
+REM 精确停止本脚本启动的服务进程（按 PID 记录逐个杀树）。
+REM D1 修复：移除全局 taskkill /IM node.exe——前端进程已由上方记录的
+REM 3100 监听 PID 连同整个进程树一并终止；原先的全局清杀会误伤
+REM 用户机器上与本系统无关的其它 Node 进程。
 if exist "%PID_FILE%" (
     for /f "usebackq delims=" %%p in ("%PID_FILE%") do (
         taskkill /PID %%p /T /F > nul 2>&1
     )
     del /f /q "%PID_FILE%" > nul 2>&1
 )
-taskkill /F /IM node.exe > nul 2>&1
 
 echo [服务已关闭]
 pause

@@ -10,7 +10,7 @@
  * 数据全部来自 agentsApi（getAcpStats / getAcpAgents / createAcpAgent /
  * updateAcpAgent / deleteAcpAgent / getAcpMessages / sendAcpMessage）。
  */
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import {
   Activity,
@@ -35,6 +35,9 @@ interface AcpForm {
 }
 
 const EMPTY_FORM: AcpForm = { name: '', description: '', capabilities: '' };
+
+/** loadMessages 单调请求序号（模块级，M5）：快速切换 agent 时旧响应不得覆盖最新选择的消息流 */
+let loadMessagesSeq = 0;
 
 /** 从 ACP 消息 content 中提取可读文本 */
 function extractMessageText(content: AcpMessage['content']): string {
@@ -194,6 +197,28 @@ export default function AcpPage() {
   const [msgInput, setMsgInput] = useState('');
   const [isSending, setIsSending] = useState(false);
   const [sendError, setSendError] = useState(false);
+  // M5：toggle/delete 行操作进行中的 agent id 集，进行中禁用对应按钮防连点重复请求
+  const [pendingIds, setPendingIds] = useState<ReadonlySet<string>>(new Set());
+
+  // M5：卸载标记——loadMessages 的迟到响应在卸载后不得写入 state
+  const mountedRef = useRef(true);
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+    };
+  }, []);
+
+  /** 标记/清除某个 agent 的行操作进行中状态 */
+  const setAgentPending = useCallback((id: string, pending: boolean) => {
+    setPendingIds((prev) => {
+      if (pending === prev.has(id)) return prev;
+      const next = new Set(prev);
+      if (pending) next.add(id);
+      else next.delete(id);
+      return next;
+    });
+  }, []);
 
   const load = useCallback(async () => {
     setIsLoading(true);
@@ -218,11 +243,15 @@ export default function AcpPage() {
   }, [load]);
 
   const loadMessages = useCallback(async (agentId: string) => {
+    // M5：发起即占用新代际；await 返回时比对序号与挂载标记，过期/卸载响应丢弃
+    const seq = ++loadMessagesSeq;
     try {
       const resp = await agentsApi.getAcpMessages(agentId, 50);
+      if (seq !== loadMessagesSeq || !mountedRef.current) return;
       setMessages(resp.messages || []);
     } catch (error) {
       console.error('ACP messages load failed:', error);
+      if (seq !== loadMessagesSeq || !mountedRef.current) return;
       setMessages([]);
     }
   }, []);
@@ -233,6 +262,9 @@ export default function AcpPage() {
   };
 
   const handleToggle = async (agent: AcpAgentRow) => {
+    // M5：进行中守卫 + pendingIds 标记，完成/失败后移除
+    if (pendingIds.has(agent.id)) return;
+    setAgentPending(agent.id, true);
     setActionError(false);
     try {
       await agentsApi.updateAcpAgent(agent.id, {
@@ -242,11 +274,15 @@ export default function AcpPage() {
     } catch (error) {
       console.error('ACP toggle failed:', error);
       setActionError(true);
+    } finally {
+      setAgentPending(agent.id, false);
     }
   };
 
   const handleDelete = async (agent: AcpAgentRow) => {
     if (!window.confirm(t('management.acp.deleteConfirm', { name: agent.name }))) return;
+    if (pendingIds.has(agent.id)) return;
+    setAgentPending(agent.id, true);
     setActionError(false);
     try {
       await agentsApi.deleteAcpAgent(agent.id);
@@ -258,6 +294,8 @@ export default function AcpPage() {
     } catch (error) {
       console.error('ACP delete failed:', error);
       setActionError(true);
+    } finally {
+      setAgentPending(agent.id, false);
     }
   };
 
@@ -418,7 +456,8 @@ export default function AcpPage() {
                         }}
                         aria-label={t('management.acp.toggleStatus')}
                         title={t('management.acp.toggleStatus')}
-                        className="rounded-lg p-1.5 text-muted-foreground transition-colors hover:bg-[rgba(255,255,255,0.08)] hover:text-foreground"
+                        disabled={pendingIds.has(agent.id)}
+                        className="rounded-lg p-1.5 text-muted-foreground transition-colors hover:bg-[rgba(255,255,255,0.08)] hover:text-foreground disabled:cursor-not-allowed disabled:opacity-40"
                       >
                         <Power className="h-3.5 w-3.5" />
                       </button>
@@ -442,7 +481,8 @@ export default function AcpPage() {
                         }}
                         aria-label={t('management.acp.delete')}
                         title={t('management.acp.delete')}
-                        className="rounded-lg p-1.5 text-muted-foreground transition-colors hover:bg-red-500/10 hover:text-red-400"
+                        disabled={pendingIds.has(agent.id)}
+                        className="rounded-lg p-1.5 text-muted-foreground transition-colors hover:bg-red-500/10 hover:text-red-400 disabled:cursor-not-allowed disabled:opacity-40"
                       >
                         <Trash2 className="h-3.5 w-3.5" />
                       </button>

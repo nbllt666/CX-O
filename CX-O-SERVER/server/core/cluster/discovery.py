@@ -96,6 +96,11 @@ class PeerDiscovery:
             peer_id = str(data.get("node_id") or "")
             # 校验对端使用同一共享密钥（对端须回传自身 secret_hmac 证明）
             peer_hmac = (data.get("payload") or {}).get("secret_hmac")
+            if peer_id and not peer_hmac:
+                # L11 收紧：已自报身份却缺失密钥证明 → 拒绝（此前静默放行，方向相反）
+                raise ClusterAuthError(
+                    f"peer {peer_id} missing secret proof in handshake reply"
+                )
             if peer_id and peer_hmac:
                 expected = compute_hmac(self._secret, peer_id, "handshake", peer_id)
                 if not hmac.compare_digest(str(peer_hmac), expected):

@@ -4,6 +4,20 @@
 
 ## 做到哪了
 
+- **第四轮全项目体检 + 全量修复 + GN-004 审查 + 人类裁决 + 收尾清零**（已完成，2026-08-27；issue `模块0-20260827-01`〔体检修复主档〕，变更文档 `.trae/documents/20260827_模块0_第四轮全面体检修复.md`；s0402 终版证据 `test_reports/frontend_gate_20260827_213500/`〔PASSED 已闭合〕；graph 专项 `.trae/documents/20260827_模块0_图数据库外键统一开启.md`）
+  - 工程过程：用户 /goal 全量重扫（特许超并发）→ 8路扫描约80项候选（16H/35M/L余）→ 主线程抽验6项H属实 → rules-6 先写文档 → 波1六组后端并行（A224/B309/C149/D~652/E142/F410 全绿）→ 波2三组（G tsc/eslint/vitest628/H electron110/I Tuner68+Server239）→ T组 gitignore/E2E端口 → pytest 全量首轮 4398P/5F→适配修复后等效 **4403 passed/0 failed** → s0402 四件套（Test2 当时缺入口=不可判定）→ GN-004 警示放行（2 回填完成）→ AskUserQuestion 四项裁决 → J组 Electron 安全补做（36/36 handler 守卫+CORS三态+124 vitest）/ K组技术债全量清理（归档9文件/脱跟踪6产物/submodule 登记/17行变更26P零损伤）→ 用户"完成剩余"→ L组 Playwright 基建（@playwright/test 1.62.1+chromium，双冒烟 2 passed）/ M组 graph FK 统一（RESTRICT 外键+幂等迁移+cascade=False 拒绝语义，204P）/ N组杂项包（DiffSinger 补映射、根 data 单真源收敛、7条运行时目录 ignore、replicator 死字段清除、run_e2e_tests 死清单重构）→ 主线合并快检 234P + vitest 终版 **79f/642t 全过** + playwright 2P → s0402 三重闸终版 **PASSED 闭合**。
+  - 交接状态：**已完成（待关闭：人类终审通过后标已关闭）**。四项裁决全部执行完毕（Electron安全✅/技术债清理✅/graphFK✅/Playwright基建✅重跑闸门闭合）。两次文件写入竞态事件（M组 database.py、N组 run_e2e_tests.py、主线 summary.json 一次假空）均已实码复验幸存并记录。
+  - 最终结果：累计约75项问题闭环、13个执行组、净增约270测试用例；三重闸 Test1/Test2/Test3 三关 PASS 四件套齐备。
+  - 未闭合项（显式，全部登记于主文档 §6.3）：①vectorization_queue 重构（过大另立项）；②RECOVERED 事件主题需 s0601 契约流程；③replicator 自动快照对齐；④decay 时区写入习惯（条件性）；⑤被跟踪存量数据文件（acp yaml/ref_audio_assets/voiceprint profiles）清洗与索引幽灵 cluster/node_identity.json 清理；⑥GeneralUser 音色包 zip.xz 为 HTML 假压缩包待重下；⑦pytest 形态 E2E 五文件是否入库独立立项。
+  - 接续入口：后端重启加载新代码；所有改动在工作区未 commit——按组分块 commit 或整体 review 后提交由人类定。
+
+- **第四轮体检 E组：会话存储双schema收敛（H2）**（已完成，2026-08-27；变更文档 `.trae/documents/20260827_模块0_第四轮全面体检修复.md` §五-E组）
+  - 工程过程：调查判定方案 A（SessionStore 生产零写入方、tuner 只读导出、与 ContextManager 无数据互通）→ store.py 迁移独立库 data/tuner_sessions.db（复用 `_resolve_data_path` 归一化 + TUNER_SESSION_DB env 覆盖）+ 列名访问/软删回减/游标清理/FK ON → manager.py 连接代际计数修 shutdown 后跨线程陈旧连接 + 列名访问 + 软删回减（delete_message/clear_expired_mono）→ cleanup.py 游标化 → routers/tuner.py 显式接线。
+  - 交接状态：**已闭合**（定向套件 test_session_store/test_conversation/test_context_router/test_session_cleanup/test_tuner_router/test_context_manager_server 合计 142 passed / 0 failed，新增 14 例覆盖路径解析、跨 schema 列名交叉、多批游标不跳项零孤儿、软删回减、FK 级联、shutdown 代际重建）。
+  - 最终结果：所有权格局落定——`data/sessions.db` 唯一 owner=ContextManager；`data/tuner_sessions.db` 唯一 owner=SessionStore；串位根因（双 CREATE 抢同库 + SELECT* row[N]）消除。
+  - 未闭环项：无本组阻断项；行为变化提示：FK ON 后向不存在 session 插消息将 IntegrityError（原静默孤儿），现网调用链均 ensure/create 先行不受影响。
+  - 接续入口：主线程波1 冲突核查 → 全量回归 → GN-004 交付前审查。
+
 - **决策接口完全修复（D1 后续：非路由调用方收口）**（已关闭，2026-08-27；issue `模块0-20260827-02`，变更文档 `.trae/documents/20260827_模块0_决策接口完全修复.md`）
   - 工程过程：用户要求「决策接口完全修复」→ 排查发现批次D1只卸载了 HTTP 路由层，DecisionCore 同步实现仍有 4 个裸调点 → 最小化收口：F1 视觉 worker 沉淀链 to_thread（async consumer 直调 sync sediment 内含 D1 LLM 决策）；F2 蒸馏 finalize/advance 三处 async 直调点 to_thread（_estimate_quality_score 含 LLM 评分 + _invoke_decision_core 含 D1/D6 决策）；F3 工具注册表 call_tool_async 对 sync handler 统一 to_thread（decide_storage 决策工具此前阻塞聊天热路径）；F4 DecisionCore._memory_seq 加 threading.Lock 防并发重复分配 id。
   - 交接状态：**已关闭**（py_compile 四文件通过；决策链定向 203 passed；相邻回归聊天热路径+工具簇+记忆 256 passed，合计 459/0）。
@@ -5070,3 +5084,48 @@ spec T2 / tasks T2 / checklist C2.2-C2.3 原写"挂载 GlassCanvas/AnimeDecorati
 1. 主线程拉起 GN-004 交付前审查（上下文：spec 三件套 + 变更文档 + 本段 + 联调脚本）
 2. handle_gn004 循环：阻断→fix→rerun / 警示放行(含SOFT_BLOCK)→AskUserQuestion / 通过→proceed
 3. GN-004 通过后向人类汇报交付结论（不再重复 NotifyUser）。
+
+---
+
+# Spec: audit-project-health-20260827 全项目体检与修复（七字段交接段，2026-08-27）
+
+> 阶段：s0602 技术债扫描 + TRAE-debugger 证据链 + 双向静态审查交叉验证 → 分批修复 → 回归全绿；待 GN-004 交付前审查 → [V] 人类裁决。
+
+## (1) 工程过程
+1. 三路并行探查（架构子代理/测试配置子代理/s0602），产出 20+ 候选问题带文件行号证据。
+2. 主线程逐条代码复核：**否决误报 B3**（acp/plugins/voiceprint 四处实际均已有任务引用追踪）。
+3. rules-6 先写文档：`.trae/documents/20260827_模块0_全项目体检问题修复.md`。
+4. 批次执行 A1-A5/B1/B2/B4/B5/C1-C3/D1/D2/E1/E2/E3 共 18 项修复；B3 拒改。
+5. 回归：前端 vitest **606/606 PASS** + typecheck **0 错误**（s0402 三重闸证据落盘 `test_reports/frontend_gate_20260827_audit/`）；后端 pytest 终态 **4240 passed / 0 failed（2:48）**。
+
+## (2) 交接状态
+| 项 | 状态 |
+|----|------|
+| 修复批次 A-E | **已闭合** |
+| 后端全量回归 | **已闭合**（4240/0，日志 `C:\CX-O\audit_backend_pytest.log`）|
+| 前端三重闸 Test1/Test3/typecheck | **已闭合**；Test2 E2E = 当前不可判定（无独立入口+需全栈在线，沿既有先例留痕+重跑入口） |
+| GN-004 交付前审查 | ⏳ 待主线程拉起（本段回填时点） |
+| [V] 人类终局裁决 | ⏳ 未开始 |
+| 待裁决观察项（死代码删除/discovery 鉴权/CORS 收紧/backlog 设计债） | 未闭合（显式移交 [V]） |
+
+## (3) 最终结果
+- **新增确认并修复的横切缺陷族**（此前多轮文档未覆盖或结论已漂移）：
+  - E 族环境缺陷最关键：venv 缺 pytest-asyncio（≥14 用例长期假阴性）、缺 pypdf（1 FAIL）、HF 联网探测挂死全量套件、requirements.txt 零测试依赖声明、CI 指向已删除目录。
+  - stop_service 自杀开关、config.json 非原子写、坏 env 炸启动、兜底异常外泄内部文本、SSRF fail-open、SSE 不可停等详见变更文档根因表。
+- 修改面：后端 10 文件 + 前端 4 文件 + 入口脚本 2 + CI 1 + requirements/conftest 2 + 新增 CX-O-SERVER/start.bat + 测试断言更新 2 处。全程未触碰 public/ 与 .trae/rules/。
+- 三值状态汇总：可自动化部分全部**已闭合**；E2E 与待裁决观察项 = 显式未闭合/不可判定，无静默偷换。
+
+### 为什么
+- 以运行时证据为准裁定而非沿用历史文档：本轮推翻 1 个子代理整批误报、坐实"collect 成功≠用例真执行"、暴露双级环境漂移（venv vs 清单）。
+- 同文件多编辑引发互相覆盖事故 1 起（ChatPage.tsx），此后该文件串行编辑恢复——工具链教训沉淀于 debug-project-health-audit.md。
+
+### 接续入口
+1. 主线程拉起 GN-004（上下文含本段、变更文档、两份测试锚点日志/四件套、debug 文件）。
+2. handle_gn004 循环处置其结论。
+3. 之后进入 [V]：AskUserQuestion 提交"批准收尾 / 要求修正（指定项）/ 暂停搁置"，并顺带征询待裁决观察项治理意向。
+
+### 审查记录（只追加 · 2026-08-27）
+- **GN-004 交付前审查：警示放行（CAUTION-PASS，无 SOFT_BLOCK）**——三处特别裁定全部成立（测试数字一致/ChatPage 无残留混杂/B3 误报否决有效）；锚点闭合清单核对通过。
+- O1 debug 文件终态滞后：已按其建议当场回填 CLOSED+终值 ✅；O2 路径口径偏差（少一级目录/行号 ±3）：不影响实体结论，仅记录；O3 E2 修复属间接佐证（tsc 0 错误工具级信号）：如实披露保留。
+- 未触发阻断/软阻断，handle_gn004 无 fix-rerun 循环发生。→ proceed 进 [V] 闸门2。
+- **[V] 闸门2 人类裁决：批准收尾 ✅（2026-08-27）**——audit-project-health-20260827 整体闭合归档；待裁决观察项（死代码删除/discovery 鉴权/CORS 收紧/backlog）经用户选择未勾选任何即席治理项，保留在本文档与变更文档显式清单中，后续按需立卡排期；E2E 当前不可判定维持留痕。

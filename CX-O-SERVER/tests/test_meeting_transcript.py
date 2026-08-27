@@ -51,6 +51,48 @@ class TestMeetingTranscript:
         assert "早期要点" in ctx
         assert transcript.older_summary == "早期要点"
 
+    def test_summarize_older_merges_instead_of_overwrite(self):
+        """H3 回归：二次 summarize_older 拼接保留既有摘要，不整体覆盖丢历史。"""
+        transcript = MeetingTranscript(max_turns=2)
+        # 第一轮：仅 2 条，无窗口外内容 → 不产生摘要
+        transcript.append("user", "user", "第一条")
+        transcript.append("a1", "agent", "回复一")
+        assert transcript.summarize_older(max_turns=2) == ""
+        # 追加至窗口外后首次压缩：产生"要点A"
+        transcript.append("user", "user", "第二条")
+        transcript.append("a1", "agent", "回复二")
+        s1 = transcript.summarize_older(max_turns=2, summarizer=lambda e: "要点A")
+        assert s1 == "要点A"
+        # 再次压缩：新要点拼接在旧要点之后，既有历史不被整体覆盖
+        transcript.append("user", "user", "第三条")
+        transcript.append("a1", "agent", "回复三")
+        s2 = transcript.summarize_older(max_turns=2, summarizer=lambda e: "要点B")
+        assert "要点A" in s2, "既有 older_summary 被整体覆盖，早期历史丢失"
+        assert "要点B" in s2
+        assert s2.index("要点A") < s2.index("要点B")  # 新要点拼接在旧要点之后
+
+    def test_summarize_older_length_capped_from_head(self):
+        """H3 回归：older_summary 超长时从头部截断，总长受限。"""
+        long_old = "旧" * 3000
+        transcript = MeetingTranscript(max_turns=2, summarizer=lambda e: "新" * 2000)
+        for i in range(3):          # 需要存在窗口外条目才会执行拼接压缩
+            transcript.append(f"a{i}", "agent", f"msg{i}")
+        transcript.older_summary = long_old  # 预置超长旧摘要
+        merged = transcript.summarize_older(max_turns=2)
+        assert len(merged) <= 4000
+        assert merged.endswith("新" * 1000)   # 最新拼接的尾部被保留
+
+    def test_roll_up_includes_older_summary(self):
+        """H3 回归：roll_up 以伪 entry 并入 older_summary，整场记忆不缺早期历史。"""
+        transcript = MeetingTranscript(max_turns=2)
+        transcript.older_summary = "已压缩的早期历史"
+        transcript.append("user", "user", "最新发言")
+        rolled = transcript.roll_up()
+        assert "已压缩的早期历史" in rolled
+        assert "最新发言" in rolled
+        # 空会议且无摘要仍为占位
+        assert MeetingTranscript().roll_up() == "（空会议）"
+
     def test_roll_up_full_meeting(self):
         """roll_up 沉淀整场会议为记忆文本。"""
         transcript = MeetingTranscript()

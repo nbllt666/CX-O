@@ -272,6 +272,18 @@ export class BleHeartRateCollector {
     this.scanInterrupted = false;
 
     this.devices.clear();
+    // L级修复：peripherals Map 跨扫描只增不清（devices 每次整体重建，peripherals 从未清理）。
+    // 连接类状态已被上方守卫拦截；仅自动重连挂起时的 lastDeviceId 可能仍持有特性订阅/
+    // 断线监听引用，须保留以维持重连链，其余旧条目全部清理控制增长。
+    if (this.autoReconnect && this.lastDeviceId && this.peripherals.has(this.lastDeviceId)) {
+      for (const id of [...this.peripherals.keys()]) {
+        if (id !== this.lastDeviceId) {
+          this.peripherals.delete(id);
+        }
+      }
+    } else {
+      this.peripherals.clear();
+    }
     this.setState('scanning', '正在扫描 BLE 设备…');
     const listener = (peripheral: NoblePeripheral) => this.handleDiscovered(peripheral);
     this.discoverListener = listener;

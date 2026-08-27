@@ -50,6 +50,9 @@ class PeerHeartbeat:
         self._suspect: set[str] = set()
         self._dead: set[str] = set()
         self._peer_state: dict[str, dict] = {}
+        # H7 修复：endpoint→node_id 映射（入站 handshake/heartbeat 时由 manager 回填），
+        # 出站观测按此换算观测键，与入站键统一为 node_id，保证互清可达。
+        self._endpoint_to_node: dict[str, str] = {}
         self._on_dead: callable = None
         self.last_confirm_report: dict = {}  # 最近一次 confirm_dead 的计票报告（含弃权名单）
         self._task: asyncio.Task | None = None
@@ -91,27 +94,102 @@ class PeerHeartbeat:
         except asyncio.CancelledError:
             pass
 
+    # ---- endpoint↔node_id 观测键统一（H7） ----
+    def bind_endpoint_node(self, endpoint: str, node_id: str) -> None:
+        """登记 endpoint→node_id 映射（manager 在入站 handshake/heartbeat 时回填）。"""
+        endpoint = str(endpoint or "")
+        node_id = str(node_id or "")
+        if endpoint and node_id and endpoint != node_id:
+            self._endpoint_to_node[endpoint] = node_id
+
+    def _identity_for_endpoint(self, endpoint) -> str:
+        """出站观测键换算：该 endpoint 已知对应 node_id 则用之，否则退回 endpoint 键。"""
+        ep = str(endpoint or "")
+        return self._endpoint_to_node.get(ep, ep)
+
+    def _unique_peer_identity(self, key) -> str:
+        """任意观测键归一到唯一 peer 标识（node_id 优先），供投票去重。"""
+        k = str(key or "")
+        return self._endpoint_to_node.get(k, k)
+
+    def vote_observation(self) -> int:
+        """本节点本地观测健康票数（供 consensus.vote_source）：按唯一 peer 标识去重。
+
+        同一 peer 可能同时存在 endpoint 键与 node_id 键；经 _endpoint_to_node
+        归一后只计一次，修复同 peer 双计导致的多数派放大（H7）。
+        """
+        counted: set[str] = set()
+        healthy = 0
+        for key, v in self._peer_state.items():
+            ident = self._unique_peer_identity(key)
+            if ident in counted:
+                continue
+            counted.add(ident)
+            if isinstance(v, dict) and v.get("state") == "healthy":
+                healthy += 1
+        return healthy
+
+    def status_for(self, endpoint: str):
+        """按 endpoint 解析观测状态：优先 endpoint 键，其次其映射的 node_id 键。"""
+        ep = str(endpoint or "")
+        st = self._peer_state.get(ep)
+        if st is not None:
+            return st
+        node = self._endpoint_to_node.get(ep)
+        if node:
+            return self._peer_state.get(node)
+        return None
+
+    # ---- 复活通道（M3） ----
+    def _mark_recovered(self, ident: str) -> None:
+        """死亡/嫌疑节点复活：清理跟踪状态并留 RECOVERED 审计日志。
+
+        当前事件契约（cluster_event.schema.json 枚举）无 recover 类主题且 public/
+        禁止修改，故采用 logger.warning 级审计日志 + 状态自然恢复方案。
+        """
+        recovered_states: list[str] = []
+        if ident in self._dead:
+            self._dead.discard(ident)
+            recovered_states.append("dead")
+        if ident in self._suspect:
+            self._suspect.discard(ident)
+            recovered_states.append("suspect")
+        self._miss.pop(ident, None)
+        st = dict(self._peer_state.get(ident, {}))
+        st["state"] = "healthy"
+        self._peer_state[ident] = st
+        if recovered_states:
+            log.warning(
+                "[RECOVERED] 节点 %s 从 %s 状态恢复健康", ident, "/".join(recovered_states)
+            )
+
     async def _beat_once(self):
         for endpoint in self._peers():
+            # H7：换算到该 endpoint 已知唯一标识后再记账，保证与入站心跳键一致可互清
+            ident = self._identity_for_endpoint(endpoint)
             ok = False
             try:
                 ok = await self._ping(endpoint)
             except ClusterError:
                 ok = False
             if ok:
-                self._miss.pop(endpoint, None)
-                self._peer_state[endpoint] = {
-                    "state": "healthy",
-                    "last_heartbeat": _iso(),
-                }
+                was_bad = ident in self._suspect or ident in self._dead
+                self._miss.pop(ident, None)
+                st = dict(self._peer_state.get(ident, {}))
+                st.update({"state": "healthy", "last_heartbeat": _iso()})
+                self._peer_state[ident] = st
+                if was_bad:
+                    self._mark_recovered(ident)
             else:
-                self._miss[endpoint] = self._miss.get(endpoint, 0) + 1
-                st = self._peer_state.get(endpoint, {})
-                if self._miss[endpoint] >= self._miss_threshold:
-                    await self._mark_suspect_and_confirm(endpoint)
+                self._miss[ident] = self._miss.get(ident, 0) + 1
+                prev = self._peer_state.get(ident, {})
+                if self._miss[ident] >= self._miss_threshold:
+                    await self._mark_suspect_and_confirm(ident)
                 else:
-                    st = {"state": "suspect", "last_heartbeat": st.get("last_heartbeat")}
-                self._peer_state[endpoint] = st
+                    self._peer_state[ident] = {
+                        "state": "suspect",
+                        "last_heartbeat": prev.get("last_heartbeat"),
+                    }
 
     async def _ping(self, endpoint) -> bool:
         if not self._transport:
@@ -168,7 +246,11 @@ class PeerHeartbeat:
         if node_id in self._dead:
             # 幂等短路：同节点死亡只触发一次接管，不再重复 confirm / 触发 on_dead 回调。
             return False
-        peers = [p for p in self._peers() if p != node_id]
+        # 排除被确认对象自身（无论以 endpoint 键还是 node_id 形式登记）——不向其问询死亡意见
+        peers = [
+            p for p in self._peers()
+            if p != node_id and self._endpoint_to_node.get(p, p) != node_id
+        ]
         others_agree = 0
         abstained: list[str] = []
         for endpoint in peers:
@@ -241,6 +323,9 @@ class PeerHeartbeat:
             "state_version": payload.get("state_version"),
         }
         self._peer_state[node_id] = st
+        if node_id and (node_id in self._dead or node_id in self._suspect):
+            # M3：入站心跳即复活证据——死亡/嫌疑节点重新现身，走复活通道
+            self._mark_recovered(node_id)
         return st
 
     def handle_leave(self, node_id: str) -> None:

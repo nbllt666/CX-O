@@ -194,11 +194,15 @@ def _build_conversations(limit: int) -> List[Dict[str, Any]]:
 
     每个会话取最后一条 user 消息为 prompt，全部 assistant 消息为 responses。
     无会话或无 user 消息时返回空列表。
+
+    H2 修复（第四轮体检 E组）：显式传入规范化的 Tuner 独立会话库路径
+    （TUNER_SESSION_DB env 覆盖 > 项目根 data/tuner_sessions.db），
+    不再与 ContextManager 的 data/sessions.db（10列结构）共用同库。
     """
     try:
-        from server.core.session import get_session_store
+        from server.core.session import get_session_store, get_tuner_session_db_path
 
-        store = get_session_store()
+        store = get_session_store(get_tuner_session_db_path())
         sessions = store.get_sessions(active_only=True, limit=limit)
     except Exception as e:
         logger.warning(f"读取会话历史失败（返回空列表）: {e}")

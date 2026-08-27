@@ -2,7 +2,6 @@
 import base64
 import json
 import os
-import tempfile
 from pathlib import Path
 from typing import Optional
 
@@ -14,6 +13,7 @@ from server.core.logging_config import get_contextual_logger
 from server.dependencies import get_asr_service, get_tts_service
 from server.services.asr_service import ASRService
 from server.services.tts_service import TTSService
+from server.services.tts_service import TTSServiceUnavailableError
 
 router = APIRouter()
 logger = get_contextual_logger(__name__)
@@ -53,36 +53,42 @@ async def get_audio_config():
 
 @router.post("/tts/synthesize", summary="TTS合成")
 async def tts_synthesize(request: TTSSynthesizeRequest, tts_svc: TTSService = Depends(get_tts_service)):
+    # H10/M：参数缺失统一 400；下游 TTS 失败 502；未预期 500
+    if not request.text:
+        raise HTTPException(status_code=400, detail="缺少文本内容")
+
+    kwargs = {
+        "speed": request.speed if request.speed != 1.0 else tts_svc._speed,
+        "cross_fade_duration": request.cross_fade_duration if request.cross_fade_duration != 0.15 else tts_svc._cross_fade_duration,
+    }
+    if request.ref_asset_id:
+        kwargs["ref_asset_id"] = request.ref_asset_id
+    if request.refs:
+        kwargs["refs"] = request.refs
+    if request.ref_audio:
+        kwargs["ref_audio"] = request.ref_audio
+    if request.ref_text:
+        kwargs["ref_text"] = request.ref_text
+    if request.agent_id:
+        kwargs["agent_id"] = request.agent_id
+
     try:
-        if not request.text:
-            return {"status": "error", "message": "缺少文本内容"}
-
-        kwargs = {
-            "speed": request.speed if request.speed != 1.0 else tts_svc._speed,
-            "cross_fade_duration": request.cross_fade_duration if request.cross_fade_duration != 0.15 else tts_svc._cross_fade_duration,
-        }
-        if request.ref_asset_id:
-            kwargs["ref_asset_id"] = request.ref_asset_id
-        if request.refs:
-            kwargs["refs"] = request.refs
-        if request.ref_audio:
-            kwargs["ref_audio"] = request.ref_audio
-        if request.ref_text:
-            kwargs["ref_text"] = request.ref_text
-        if request.agent_id:
-            kwargs["agent_id"] = request.agent_id
-
         audio_bytes = await tts_svc.synthesize(request.text, **kwargs)
-
-        return {
-            "status": "success",
-            "audio_data": base64.b64encode(audio_bytes).decode("utf-8"),
-            "format": "wav"
-        }
-
+    except TTSServiceUnavailableError as e:
+        # H10：Provider 未装配 / Qwen3 未启用 → 502（下游能力不可用）
+        logger.error(f"TTS 服务不可用: {e}", exc_info=True)
+        raise HTTPException(status_code=502, detail="TTS 服务不可用")
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"TTS合成失败: {e}", exc_info=True)
-        return {"status": "error", "message": "TTS合成失败"}
+        raise HTTPException(status_code=502, detail="TTS合成失败")
+
+    return {
+        "status": "success",
+        "audio_data": base64.b64encode(audio_bytes).decode("utf-8"),
+        "format": "wav"
+    }
 
 
 @router.post("/tts/synthesize-stream", summary="TTS流式合成")
@@ -90,57 +96,65 @@ async def tts_synthesize_stream(request: Request, tts_svc: TTSService = Depends(
     """以 SSE 流式方式合成 TTS 音频。"""
     try:
         data = await request.json()
-        text = data.get("text", "")
+    except Exception:
+        raise HTTPException(status_code=400, detail="请求体不是合法 JSON")
 
-        if not text:
-            async def error_stream():
-                yield f"data: {json.dumps({'type': 'error', 'message': '缺少文本内容'}, ensure_ascii=False)}\n\n"
-            return StreamingResponse(error_stream(), media_type="text/event-stream")
-
-        kwargs = {
-            "speed": data.get("speed", tts_svc._speed),
-            "cross_fade_duration": data.get("cross_fade_duration", tts_svc._cross_fade_duration),
-        }
-        # Qwen3 统一编排：参考音频资产 ID（ref_ 前缀）与多参考音频列表
-        if data.get("ref_asset_id"):
-            kwargs["ref_asset_id"] = data["ref_asset_id"]
-        if data.get("refs"):
-            kwargs["refs"] = data["refs"]
-        if data.get("ref_audio"):
-            kwargs["ref_audio"] = data["ref_audio"]
-        if data.get("ref_text"):
-            kwargs["ref_text"] = data["ref_text"]
-        if data.get("agent_id"):
-            kwargs["agent_id"] = data["agent_id"]
-
-        async def stream_generator():
-            try:
-                async for chunk in tts_svc.synthesize_stream(text, **kwargs):
-                    audio_base64 = None
-                    if chunk.get("audio_data"):
-                        audio_base64 = base64.b64encode(chunk["audio_data"]).decode("utf-8")
-                    chunk_data = json.dumps({
-                        "type": "chunk",
-                        "text_segment": chunk.get("text_segment", ""),
-                        "audio_data": audio_base64,
-                        "chunk_index": chunk.get("chunk_index", 0),
-                        "is_final": chunk.get("is_final", False)
-                    }, ensure_ascii=False)
-                    yield f"data: {chunk_data}\n\n"
-            except Exception as e:
-                logger.error(f"TTS流式合成错误: {e}", exc_info=True)
-                error_data = json.dumps({"type": "error", "message": f"TTS流式合成失败: {str(e)}"}, ensure_ascii=False)
-                yield f"data: {error_data}\n\n"
-
-        return StreamingResponse(stream_generator(), media_type="text/event-stream")
-    except Exception as e:
-        logger.error(f"TTS流式合成初始化失败: {e}", exc_info=True)
-
+    text = data.get("text", "")
+    if not text:
+        # SSE 错误流仍保持 200（前端按 SSE 协议读 event，避免连错误流都解析失败）
         async def error_stream():
-            err_data = json.dumps({"type": "error", "message": "TTS流式合成初始化失败"}, ensure_ascii=False)
-            yield f"data: {err_data}\n\n"
-
+            yield f"data: {json.dumps({'type': 'error', 'message': '缺少文本内容'}, ensure_ascii=False)}\n\n"
         return StreamingResponse(error_stream(), media_type="text/event-stream")
+
+    # H10：入口守卫——Provider 未装配时立即以 SSE error 返回（不进入合成流程）
+    try:
+        tts_svc._ensure_qwen3_ready()
+    except TTSServiceUnavailableError as e:
+        async def unavailable_stream():
+            yield f"data: {json.dumps({'type': 'error', 'message': 'TTS 服务不可用'}, ensure_ascii=False)}\n\n"
+        logger.error(f"TTS 服务不可用: {e}", exc_info=True)
+        return StreamingResponse(unavailable_stream(), media_type="text/event-stream")
+
+    kwargs = {
+        "speed": data.get("speed", tts_svc._speed),
+        "cross_fade_duration": data.get("cross_fade_duration", tts_svc._cross_fade_duration),
+    }
+    # Qwen3 统一编排：参考音频资产 ID（ref_ 前缀）与多参考音频列表
+    if data.get("ref_asset_id"):
+        kwargs["ref_asset_id"] = data["ref_asset_id"]
+    if data.get("refs"):
+        kwargs["refs"] = data["refs"]
+    if data.get("ref_audio"):
+        kwargs["ref_audio"] = data["ref_audio"]
+    if data.get("ref_text"):
+        kwargs["ref_text"] = data["ref_text"]
+    if data.get("agent_id"):
+        kwargs["agent_id"] = data["agent_id"]
+
+    async def stream_generator():
+        try:
+            async for chunk in tts_svc.synthesize_stream(text, **kwargs):
+                audio_base64 = None
+                if chunk.get("audio_data"):
+                    audio_base64 = base64.b64encode(chunk["audio_data"]).decode("utf-8")
+                chunk_data = json.dumps({
+                    "type": "chunk",
+                    "text_segment": chunk.get("text_segment", ""),
+                    "audio_data": audio_base64,
+                    "chunk_index": chunk.get("chunk_index", 0),
+                    "is_final": chunk.get("is_final", False)
+                }, ensure_ascii=False)
+                yield f"data: {chunk_data}\n\n"
+        except TTSServiceUnavailableError as e:
+            logger.error(f"TTS 服务不可用: {e}", exc_info=True)
+            error_data = json.dumps({"type": "error", "message": "TTS 服务不可用"}, ensure_ascii=False)
+            yield f"data: {error_data}\n\n"
+        except Exception as e:
+            logger.error(f"TTS流式合成错误: {e}", exc_info=True)
+            error_data = json.dumps({"type": "error", "message": f"TTS流式合成失败: {str(e)}"}, ensure_ascii=False)
+            yield f"data: {error_data}\n\n"
+
+    return StreamingResponse(stream_generator(), media_type="text/event-stream")
 
 
 @router.post("/asr/speech-to-text", summary="ASR语音识别")
@@ -156,31 +170,36 @@ async def asr_speech_to_text(request: Request, asr_svc: ASRService = Depends(get
             audio_file = form.get("file")
             language = form.get("language", "auto")
             if not audio_file:
-                return {"status": "error", "message": "未提供音频文件"}
+                raise HTTPException(status_code=400, detail="未提供音频文件")
             audio_data = await audio_file.read()
         else:
-            data = await request.json()
+            try:
+                data = await request.json()
+            except Exception:
+                raise HTTPException(status_code=400, detail="请求体不是合法 JSON")
             audio_base64 = data.get("audio", "")
             language = data.get("language", "auto")
             if not audio_base64:
-                return {"status": "error", "message": "未提供音频数据"}
-            audio_bytes = base64.b64decode(audio_base64)
-            with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as f:
-                f.write(audio_bytes)
-                temp_path = f.name
-            with open(temp_path, "rb") as f:
-                audio_data = f.read()
+                raise HTTPException(status_code=400, detail="未提供音频数据")
+            # L 优化：base64 分支直接 BytesIO，消除落盘回读的 IO 开销
+            audio_data = base64.b64decode(audio_base64)
 
-        result = await asr_svc.recognize(audio_data, language)
+        try:
+            result = await asr_svc.recognize(audio_data, language)
+        except Exception as e:
+            logger.error(f"ASR语音识别失败: {e}", exc_info=True)
+            raise HTTPException(status_code=502, detail="语音识别失败")
 
         return {
             "status": "success",
             "text": result.get("text", ""),
             "language": result.get("language", "")
         }
+    except HTTPException:
+        raise
     except Exception as e:
-        logger.error(f"ASR语音识别失败: {e}", exc_info=True)
-        return {"status": "error", "message": "语音识别失败"}
+        logger.error(f"ASR语音识别未预期错误: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="内部服务器错误")
     finally:
         if temp_path and os.path.exists(temp_path):
             try:

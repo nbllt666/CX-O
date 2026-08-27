@@ -85,17 +85,45 @@ class TestLoadSave:
         assert "default" in ids
         assert "memory-agent" in ids
 
-    def test_load_corrupt_json_returns_empty(self, tmp_path):
+    def test_load_corrupt_json_raises(self, tmp_path):
+        """M-E 旧行为契约更新（20260827 第四轮）: 损坏 JSON 不再静默返回空结构
+        （写路径会以空结构覆写丢掉全部 agent），改为抛 IOError 中断。"""
         p = tmp_path / "agents.json"
         p.write_text("{bad json", encoding="utf-8")
         t = _make_tools(tmp_path)
-        assert t._load_agents() == {"agents": []}
+        with pytest.raises(IOError, match="解析失败"):
+            t._load_agents()
 
-    def test_load_non_dict(self, tmp_path):
+    def test_load_non_dict_raises(self, tmp_path):
+        """M-E 定向: 顶层非对象（结构损坏）同样 fail-fast 抛 IOError。"""
         p = tmp_path / "agents.json"
         p.write_text("[1,2]", encoding="utf-8")
         t = _make_tools(tmp_path)
-        assert t._load_agents() == {"agents": []}
+        with pytest.raises(IOError, match="结构损坏"):
+            t._load_agents()
+
+    def test_corrupt_file_not_overwritten_by_write_path(self, tmp_path):
+        """M-E 定向: agents.json 损坏时 add_agent 直接失败，不覆写原文件。"""
+        p = tmp_path / "agents.json"
+        broken = "{bad json"
+        p.write_text(broken, encoding="utf-8")
+        t = _make_tools(tmp_path)
+        req = AddAgentRequest(
+            agent_id="boom", name="B", config={"decision_rubric": _default_rubric()}
+        )
+        with pytest.raises(IOError):
+            t.add_agent(req)
+        assert p.read_text(encoding="utf-8") == broken  # 原文件字节未动
+
+    def test_save_atomic_no_tmp_leftovers(self, tmp_path):
+        """M-E 定向: _save_agents 经临时文件 + os.replace，成功后无 .tmp 残留。"""
+        t = _make_tools(tmp_path)
+        data = t._load_agents()
+        t._save_agents(data)
+        leftovers = list(tmp_path.glob(".agents-*.json.tmp"))
+        assert leftovers == []
+        # 落盘内容可再次合法解析（原子替换完整写入）
+        assert t._load_agents()["agents"]
 
     def test_save_and_reload(self, tmp_path):
         t = _make_tools(tmp_path)

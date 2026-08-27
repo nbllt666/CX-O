@@ -849,7 +849,9 @@ type TabKey = 'plugins' | 'store' | 'install' | 'logs' | 'settings';
 
 export default function NekoPluginsPage() {
   const { t } = useTranslation();
-  const { refreshStatus } = useNekoStore();
+  // L7：仅取 action（引用稳定），按选择器订阅——避免整店订阅使任意 store 字段
+  // （logs/plugins/installTasks 等）变化都重渲染整个页面树
+  const refreshStatus = useNekoStore((s) => s.refreshStatus);
   const [tab, setTab] = useState<TabKey>('plugins');
 
   // 挂载时刷新运行时状态，并订阅日志

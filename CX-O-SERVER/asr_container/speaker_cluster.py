@@ -183,8 +183,13 @@ class SpeakerClusterer:
         return list(self._profile_names)
 
     def profile_count(self) -> int:
-        """返回当前有效注册说话人数量。"""
-        return len(self._profiles)
+        """返回当前有效注册说话人数量。
+
+        L 修复：口径与 ``profile_names()`` 对齐——只统计成功产出质心的档案，
+        排除 embeddings 无效（维度不符/为空）未能入池的条目；否则两类计数
+        在含无效档案时不一致。
+        """
+        return len(self._profile_names)
 
 
 def _demo() -> None:

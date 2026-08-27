@@ -83,7 +83,9 @@ export class PhysioUploader {
     }
     this.lastHrSentAt = now;
     try {
-      const resp = await this.fetchImpl(`${this.backendUrl}/api/physio/hr`, {
+      // M-G 修复：HR 上送同样走每轮解析的 baseUrl()（对齐 reportState），
+      // 避免沿用构造期 backendUrl 快照——设置页换址后仍发旧地址。
+      const resp = await this.fetchImpl(`${this.baseUrl()}/api/physio/hr`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(sample),

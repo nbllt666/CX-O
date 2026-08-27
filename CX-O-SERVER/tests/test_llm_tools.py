@@ -174,3 +174,72 @@ class TestChatWithTools:
         assert result["warning"] == "达到最大迭代次数"
         # 默认 max_iterations=5
         assert len(registry.calls) == 5
+
+
+# ------------------------------------------------- 字符串形式 arguments（OpenAI 兼容）
+class TestStringToolArguments:
+    """OpenAI 协议下 function.arguments 可能为 JSON 字符串；解析后必须展开为 dict，
+    消灭 ``str(**kwargs)`` TypeError 退化（L 级修复）。"""
+
+    def test_parse_tool_calls_parses_string_arguments(self, tools):
+        msg = {
+            "tool_calls": [
+                {
+                    "id": "1",
+                    "type": "function",
+                    "function": {"name": "calc", "arguments": '{"a": 1}'},
+                }
+            ]
+        }
+        parsed = tools.parse_tool_calls(msg)
+        assert parsed[0]["function"]["arguments"] == {"a": 1}
+
+    @pytest.mark.asyncio
+    async def test_execute_tools_accepts_string_arguments(self):
+        registry = FakeToolRegistry({"calc": {"success": True, "result": 9}})
+        tools = LLMTools(llm_client=FakeLLMClient())
+        results = await tools.execute_tools(
+            [{"id": "tc9", "function": {"name": "calc", "arguments": '{"a": 9}'}}],
+            registry,
+        )
+        assert registry.calls == [("calc", {"a": 9})]
+        assert '"result": 9' in results[0]["content"]
+
+    @pytest.mark.asyncio
+    async def test_execute_tools_malformed_string_arguments_becomes_empty_dict(self):
+        registry = FakeToolRegistry({"calc": {"success": True, "result": 0}})
+        tools = LLMTools(llm_client=FakeLLMClient())
+        await tools.execute_tools(
+            [{"id": "tcbad", "function": {"name": "calc", "arguments": "{broken json"}}],
+            registry,
+        )
+        assert registry.calls == [("calc", {})]
+
+    @pytest.mark.asyncio
+    async def test_chat_with_tools_end_to_end_with_string_arguments(self):
+        """多轮链路：模型返回字符串 arguments → 展开执行工具 → 回填结果续聊。"""
+        client = FakeLLMClient(
+            [
+                LLMResponse(
+                    content="",
+                    finish_reason="stop",
+                    tool_calls=[
+                        {
+                            "id": "tc1",
+                            "type": "function",
+                            "function": {"name": "calc", "arguments": '{"a": 7}'},
+                        }
+                    ],
+                ),
+                LLMResponse(content="结果是7", finish_reason="stop"),
+            ]
+        )
+        registry = FakeToolRegistry({"calc": {"success": True, "result": 7}})
+        tools = LLMTools(llm_client=client)
+        result = await tools.chat_with_tools(
+            [{"role": "user", "content": "算一下"}],
+            [{"name": "calc", "description": "计算"}],
+            registry,
+        )
+        assert result["content"] == "结果是7"
+        assert registry.calls == [("calc", {"a": 7})]

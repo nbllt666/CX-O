@@ -92,7 +92,12 @@ interface ApiResponse<T> {
 }
 
 function dataOf<T>(res: ApiResponse<T>): T {
-  return res?.data as T;
+  // M4：失败响应显式抛出携带真实原因的异常，让上游 catch 拿到 error/message
+  // 而非 undefined 静默传播（res.data as T 会把 null/undefined 当成功值返回）。
+  if (!res?.success || res.data == null) {
+    throw new Error(res?.error || res?.message || '会议请求失败');
+  }
+  return res.data;
 }
 
 export const meetingApi = {

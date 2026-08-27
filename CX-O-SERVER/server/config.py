@@ -143,12 +143,17 @@ def get_env_config() -> Dict[str, Any]:
         if not path_parts:
             continue
 
-        if env_key.endswith("_PORT"):
-            value = int(value)
+        if env_key.endswith("_PORT") or env_key.endswith("_WORKERS"):
+            try:
+                value = int(value)
+            except (TypeError, ValueError):
+                # A4 修复：坏环境变量不应阻断整个服务启动，记日志后跳过该键用默认值
+                logger.warning(
+                    f"环境变量 {env_key}={value!r} 不是合法整数，忽略该键并使用默认值"
+                )
+                continue
         elif env_key.endswith("_DEBUG"):
             value = value.lower() in ("true", "1", "yes")
-        elif env_key.endswith("_WORKERS"):
-            value = int(value)
         # vision_enhanced 节类型转换：CXO_VISION_ 前缀键按目标字段名做 bool/int/float 转换
         # （不落入上方的 _PORT/_DEBUG/_WORKERS 通用后缀逻辑，布尔默认 closed）
         if env_key.startswith(f"{ENV_PREFIX}VISION_") and path_parts:
@@ -156,12 +161,24 @@ def get_env_config() -> Dict[str, Any]:
             if field == "enabled" or field.endswith("_enabled") or field == "require_vllm":
                 value = value.lower() in ("true", "1", "yes")
             elif field == "diff_threshold":
-                value = float(value)
+                try:
+                    value = float(value)
+                except (TypeError, ValueError):
+                    logger.warning(
+                        f"环境变量 {env_key}={value!r} 不是合法数字，忽略该键并使用默认值"
+                    )
+                    continue
             elif field in (
                 "buffer_retention_sec", "event_cooldown_sec", "max_clips_per_hour",
                 "pre_roll_sec", "post_roll_sec", "clip_max_sec",
             ):
-                value = int(value)
+                try:
+                    value = int(value)
+                except (TypeError, ValueError):
+                    logger.warning(
+                        f"环境变量 {env_key}={value!r} 不是合法整数，忽略该键并使用默认值"
+                    )
+                    continue
 
         current = env_config
         for part in path_parts[:-1]:
@@ -172,9 +189,21 @@ def get_env_config() -> Dict[str, Any]:
             if field in ("enabled", "backchannel_enabled", "transcript_summary", "agent_interrupt_enabled"):
                 value = value.lower() in ("true", "1", "yes")
             elif field in ("token_hold_timeout_sec", "relay_pause_sec", "backchannel_volume"):
-                value = float(value)
+                try:
+                    value = float(value)
+                except (TypeError, ValueError):
+                    logger.warning(
+                        f"环境变量 {env_key}={value!r} 不是合法数字，忽略该键并使用默认值"
+                    )
+                    continue
             elif field in ("max_agents", "transcript_max_turns"):
-                value = int(value)
+                try:
+                    value = int(value)
+                except (TypeError, ValueError):
+                    logger.warning(
+                        f"环境变量 {env_key}={value!r} 不是合法整数，忽略该键并使用默认值"
+                    )
+                    continue
         # executor 语音并发节类型转换（整数/模式，避免 env 覆盖成字符串）
         if env_key.startswith(f"{ENV_PREFIX}EXECUTOR_") and path_parts:
             field = path_parts[-1]

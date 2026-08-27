@@ -97,8 +97,7 @@ class _DecisionMixin:
             if conn:
                 conn.rollback()
             raise RuntimeError(f"rejected_content 表初始化失败（500）: {e}") from e
-        finally:
-            conn.close()
+        # M-D3: 连接所有权归 MemoryManager 连接池，此处不得 close（原 finally conn.close() 已移除）
 
     def write_with_decision(
         self,
@@ -260,8 +259,7 @@ class _DecisionMixin:
             if conn:
                 conn.rollback()
             raise RuntimeError(f"rejected_content 写入失败（500）: {e}") from e
-        finally:
-            conn.close()
+        # M-D3: 连接所有权归 MemoryManager 连接池，此处不得 close（原 finally conn.close() 已移除）
 
     def get_rejected_content(
         self,
@@ -307,8 +305,7 @@ class _DecisionMixin:
         except Exception as e:
             logger.error(f"查询 rejected_content 失败: {e}", exc_info=True)
             raise RuntimeError(f"rejected_content 查询失败（500）: {e}") from e
-        finally:
-            conn.close()
+        # M-D3: 连接所有权归 MemoryManager 连接池，此处不得 close（原 finally conn.close() 已移除）
 
     def cleanup_expired_rejected_content(
         self,
@@ -360,8 +357,7 @@ class _DecisionMixin:
             if conn:
                 conn.rollback()
             raise RuntimeError(f"rejected_content 清理失败（500）: {e}") from e
-        finally:
-            conn.close()
+        # M-D3: 连接所有权归 MemoryManager 连接池，此处不得 close（原 finally conn.close() 已移除）
 
     def _row_to_rejected_content(self, row: Any) -> Dict[str, Any]:
         """将数据库行转换为 rejected_content dict（对应 schema 字段）。"""

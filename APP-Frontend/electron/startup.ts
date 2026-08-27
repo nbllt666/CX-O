@@ -127,6 +127,11 @@ function relaunchElevated(): void {
       stdio: 'ignore',
       detached: true,
     });
+    // L级修复：补 error 监听——子进程无法创建（如 PowerShell 缺失/ENOENT）时
+    // emit 'error' 且无监听器会直接抛 uncaught exception 打断主流程。
+    child.on('error', (err) => {
+      console.error('[startup] 提权 PowerShell 进程启动失败:', err.message);
+    });
     child.unref();
   } catch (err) {
     console.error('[startup] 请求管理员权限失败:', err);

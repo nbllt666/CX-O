@@ -569,3 +569,38 @@ class TestHealthCloseLegacy:
     def test_detect_legacy_engine_mode_raises(self):
         with pytest.raises(LegacyEngineRemovedError):
             detect_legacy_engine_mode("f5-tts")
+
+
+# ============================================================================
+# 中途断流不降级（M 修复：已产出 chunk 后首选断流，绝不再发新流的 start 块）
+# ============================================================================
+class TestMidStreamNoFallback:
+    @pytest.mark.asyncio
+    async def test_abort_after_chunks_does_not_restart_from_fallback(self):
+        async def gen():
+            yield _pcm16(240)
+            yield _pcm16(240)
+            raise httpx.ReadError("mid-stream reset")
+
+        client = _make_client(stream_resp=FakeStreamResp(gen()))
+        p = Qwen3TTSProvider(config=_cfg(), http_client=client)
+        got: list[AudioChunk] = []
+        with pytest.raises(RuntimeUnavailableError):
+            async for c in p.synthesize_stream(_req()):
+                got.append(c)
+        # 修复语义：中断前仅产出 start(idx0)；不降级重发 → 无第二个 start、index 不归零
+        assert [c.index for c in got] == [0]
+        assert sum(1 for c in got if c.is_start) == 1
+        assert all(not c.is_final for c in got)
+
+    @pytest.mark.asyncio
+    async def test_failure_before_first_chunk_still_falls_back(self):
+        # 尚未产出任何 chunk（连接即被拒）→ 保留降级语义，从 fallback 完整产出唯一流
+        chunks = [_pcm16(240), _pcm16(240)]
+        client = FallbackClient(fail_url_fragment="8091", stream_chunks=chunks)
+        p = Qwen3TTSProvider(config=_cfg(), http_client=client)  # 无 refs → voicedesign(8091)
+        got = [c async for c in p.synthesize_stream(_req())]
+        assert len(got) == 2
+        assert sum(1 for c in got if c.is_start) == 1
+        assert got[-1].is_final is True
+        assert "8093" in client.last_url

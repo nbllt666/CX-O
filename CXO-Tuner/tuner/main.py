@@ -24,7 +24,7 @@ from tuner.core.judge.judge_engine import JudgeEngine
 from tuner.core.scheduler import IdleScheduler, OnlineDpo
 from tuner.core.trainer.qlora_trainer import QLoRATrainer, is_training_in_progress
 from tuner.core.trainer.store import TrainerJobStore
-from tuner.core.trainer.train_job import TrainJob
+from tuner.core.trainer.train_job import InvalidTransitionError, TrainJob
 
 logger = logging.getLogger("cxo_tuner")
 
@@ -48,6 +48,22 @@ def create_app(config: Optional[TunerConfig] = None) -> FastAPI:
         collector = Collector(cleaner, dataset_store)
         trainer_store = TrainerJobStore(os.path.join(resolved.dataset_dir, "train_jobs"))
         trainer = QLoRATrainer(resolved, trainer_store, dataset_store=dataset_store)
+
+        # H15b：服务重启恢复——上一进程崩溃/重启时遗留的 status=="running" 任务实际已无人
+        # 执行，若不清理将永久停留在 running（僵尸任务），且 is_training_in_progress 语义
+        # 与之矛盾、UI 无法重试。启动时统一标记 failed 并强制落盘。
+        _stale_running = [
+            stale for stale in trainer_store.all() if stale.status == "running"
+        ]
+        for stale in _stale_running:
+            try:
+                stale.fail("service restarted mid-training")
+            except InvalidTransitionError:  # pragma: no cover —— all() 刚过滤过，防御兜底
+                continue
+            trainer_store.update(stale, force=True)
+        if _stale_running:
+            logger.warning("服务重启恢复：已将 %d 个遗留 running 训练任务标记为 failed", len(_stale_running))
+
         dpo_builder = DpoBuilder(dataset_store, JudgeEngine(resolved))
         app.state.config = resolved
         app.state.dataset_store = dataset_store

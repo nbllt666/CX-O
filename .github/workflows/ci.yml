@@ -10,15 +10,16 @@ jobs:
   test-backend:
     runs-on: windows-latest
     timeout-minutes: 30
-    
+
     steps:
       - uses: actions/checkout@v4
-      
+
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: '3.10'
-          
+          # D2 修复：项目要求 Python 3.11+（README），且本地环境为 py311
+          python-version: '3.11'
+
       - name: Cache pip packages
         uses: actions/cache@v4
         with:
@@ -26,100 +27,91 @@ jobs:
           key: ${{ runner.os }}-pip-${{ hashFiles('**/requirements*.txt') }}
           restore-keys: |
             ${{ runner.os }}-pip-
-            
+
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install -r CXHMS/requirements.txt
-          pip install -r cx-o-gateway/requirements.txt
-          pip install pytest pytest-asyncio coverage
-          
-      - name: Run CXHMS tests
-        working-directory: ./CXHMS
-        run: pytest backend/tests -v --cov=backend --cov-report=xml
-        
-      - name: Upload coverage
-        uses: codecov/codecov-action@v4
-        with:
-          file: ./CXHMS/coverage.xml
-          flags: unittests
-          
+          # D2 修复：依赖与测试真实位于根 requirements.txt 与 CX-O-SERVER/
+          pip install -r requirements.txt
+          pip install pytest pytest-asyncio httpx
+
+      - name: Run backend tests
+        working-directory: ./CX-O-SERVER
+        run: python -B -m pytest -q -p no:cacheprovider
+
   test-frontend:
     runs-on: ubuntu-latest
     timeout-minutes: 30
-    
+
     steps:
       - uses: actions/checkout@v4
-      
+
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
           node-version: '18'
           cache: 'npm'
-          cache-dependency-path: cx-o-frontend/pnpm-lock.yaml
-          
-      - name: Install pnpm
-        uses: pnpm/action-setup@v4
-        with:
-          version: 8
-          
+          # D2 修复：前端目录为 APP-Frontend，包管理器为 npm（package-lock.json）
+          cache-dependency-path: APP-Frontend/package-lock.json
+
       - name: Install dependencies
-        working-directory: ./cx-o-frontend
-        run: pnpm install --frozen-lockfile
-        
+        working-directory: ./APP-Frontend
+        run: npm ci
+
       - name: Run typecheck
-        working-directory: ./cx-o-frontend
-        run: pnpm run typecheck
-        
+        working-directory: ./APP-Frontend
+        run: npm run typecheck
+
       - name: Run linter
-        working-directory: ./cx-o-frontend
-        run: pnpm run lint
-        
+        working-directory: ./APP-Frontend
+        run: npm run lint
+
       - name: Run tests
-        working-directory: ./cx-o-frontend
-        run: pnpm run test --coverage
-        
+        working-directory: ./APP-Frontend
+        run: npm test -- --reporter=dot
+
   lint:
     runs-on: ubuntu-latest
     timeout-minutes: 15
-    
+
     steps:
       - uses: actions/checkout@v4
-      
+
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: '3.10'
-          
+          python-version: '3.11'
+
       - name: Install linting tools
         run: |
           pip install ruff black isort
-          
+
       - name: Run ruff
         run: |
-          ruff check CXHMS/backend cx-o-gateway
-          
+          # D2 修复：后端源码真实路径为 CX-O-SERVER/server
+          ruff check CX-O-SERVER/server
+
       - name: Run black
         run: |
-          black --check CXHMS/backend cx-o-gateway
-          
+          black --check CX-O-SERVER/server
+
       - name: Run isort
         run: |
-          isort --check-only CXHMS/backend cx-o-gateway
+          isort --check-only CX-O-SERVER/server
 
   build:
     needs: [test-backend, test-frontend, lint]
     runs-on: ubuntu-latest
     timeout-minutes: 20
-    
+
     steps:
       - uses: actions/checkout@v4
-      
+
       - name: Build Docker images
         run: |
           echo "Building Docker images..."
           # Add your Docker build commands here
-          
+
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:

@@ -66,3 +66,13 @@ click>=8.1.0
 tqdm>=4.66.1
 psutil>=5.9.6
 rich>=13.7.1
+
+# ----------------------------------------
+# Testing (audit 2026-08-27: pytest-asyncio was missing from this manifest,
+# causing 14 asyncio-marked tests to fail silently on fresh environments)
+# ----------------------------------------
+pytest>=8.0
+pytest-asyncio>=0.23
+
+# PDF 文档解析（server/core/document/parser.py 可选依赖；缺失时对应测试应跳过）
+pypdf>=4.0

@@ -10,12 +10,29 @@ logger = get_contextual_logger(__name__)
 
 @dataclass
 class SearchResult:
-    """混合检索的单条结果，携带记忆 ID、内容、融合分数、来源（vector/keyword/hybrid）与元数据。"""
+    """混合检索的单条结果，携带记忆 ID、内容、融合分数、来源（vector/keyword/hybrid）与元数据。
+
+    M-D5: importance/importance_score/created_at/reactivation_count 为从
+    sqlite 行 / 向量结果透传的路由评分字段（None 表示该通道未提供），
+    供 MemoryRouter 的重要性/时间通道使用，避免时间分数退化为"以当前
+    时间兜底"的恒定值。
+    """
     memory_id: int
     content: str
     score: float
     source: str
     metadata: Dict = None
+    importance: int = None
+    importance_score: float = None
+    created_at: str = None
+    reactivation_count: int = None
+
+
+def _is_blank_vector(vec) -> bool:
+    """判断嵌入向量是否为空或全零（H14: 零向量不得参与检索/入库链路）。"""
+    if not vec:
+        return True
+    return all(v == 0 for v in vec)
 
 
 @dataclass
@@ -75,6 +92,15 @@ class HybridSearch:
         try:
             embedding = await self.embedding_model.get_embedding(options.query)
 
+            # H14: 嵌入失败（空列表）或全零向量不得进入相似度检索链路——
+            # 空向量直接异常，零向量会产生无意义的满分/NaN 相似度，污染排序。
+            if _is_blank_vector(embedding):
+                logger.warning(
+                    "查询嵌入为空/零向量，跳过向量通道仅用关键词通道: query=%r",
+                    options.query[:50],
+                )
+                return []
+
             # agent_id 透传到 vector_store（步骤2 完成 weaviate per-agent collection 后生效）
             try:
                 vector_results = await self.vector_store.search_similar(
@@ -98,6 +124,10 @@ class HybridSearch:
                     score=r["score"],
                     source="vector",
                     metadata=r.get("metadata"),
+                    importance=r.get("importance"),
+                    importance_score=r.get("importance_score"),
+                    created_at=r.get("created_at"),
+                    reactivation_count=r.get("reactivation_count"),
                 )
                 for r in vector_results
             ]
@@ -122,6 +152,10 @@ class HybridSearch:
                     score=self._calculate_keyword_score(r["content"], options.query),
                     source="keyword",
                     metadata=r,
+                    importance=r.get("importance"),
+                    importance_score=r.get("importance_score"),
+                    created_at=r.get("created_at"),
+                    reactivation_count=r.get("reactivation_count"),
                 )
                 for r in keyword_results
             ]
@@ -143,6 +177,18 @@ class HybridSearch:
 
         return 0.1
 
+    @staticmethod
+    def _fill_missing_fields(dst: SearchResult, src: SearchResult) -> None:
+        """M-D5: 合并重叠结果时保留评分字段——dst 已有值不覆盖，缺失时从 src 补齐。"""
+        if dst.importance is None:
+            dst.importance = src.importance
+        if dst.importance_score is None:
+            dst.importance_score = src.importance_score
+        if dst.created_at is None:
+            dst.created_at = src.created_at
+        if dst.reactivation_count is None:
+            dst.reactivation_count = src.reactivation_count
+
     def _merge_results(
         self,
         vector_results: List[SearchResult],
@@ -161,6 +207,10 @@ class HybridSearch:
                 score=0.0,
                 source="vector",
                 metadata=r.metadata,
+                importance=r.importance,
+                importance_score=r.importance_score,
+                created_at=r.created_at,
+                reactivation_count=r.reactivation_count,
             )
 
         for r in keyword_results:
@@ -169,6 +219,7 @@ class HybridSearch:
                 merged_dict[r.memory_id].source = "hybrid"
                 if r.metadata:
                     merged_dict[r.memory_id].metadata = r.metadata
+                self._fill_missing_fields(merged_dict[r.memory_id], r)
             else:
                 raw_scores[r.memory_id] = {"vector": 0.0, "keyword": r.score}
                 merged_dict[r.memory_id] = SearchResult(
@@ -177,6 +228,10 @@ class HybridSearch:
                     score=0.0,
                     source="keyword",
                     metadata=r.metadata,
+                    importance=r.importance,
+                    importance_score=r.importance_score,
+                    created_at=r.created_at,
+                    reactivation_count=r.reactivation_count,
                 )
 
         for memory_id, scores in raw_scores.items():

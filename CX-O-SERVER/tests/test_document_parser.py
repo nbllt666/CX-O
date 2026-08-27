@@ -104,6 +104,9 @@ class TestParseDocument:
             dp.parse_document("a.xyz", "application/octet-stream", b"x")
 
     def test_pdf_parses(self):
+        # E1 家族修复（audit 2026-08-27）：pypdf 为可选解析依赖，
+        # 环境未安装时应 SKIP 而非 FAIL（缺依赖路径已由 test_pdf_pypdf_missing 单独覆盖）
+        pytest.importorskip("pypdf")
         # 用一个最小合法 PDF，pypdf 能解析页数
         pdf = b"%PDF-1.4\n1 0 obj<</Type/Catalog/Pages 2 0 R>>endobj\n2 0 obj<</Type/Pages/Kids[3 0 R]/Count 1>>endobj\n3 0 obj<</Type/Page/Parent 2 0 R/MediaBox[0 0 200 200]>>endobj\nxref\n0 4\n0000000000 65535 f \ntrailer<</Size 4/Root 1 0 R>>\nstartxref\n0\n%%EOF"
         out = dp.parse_document("a.pdf", "application/pdf", pdf)

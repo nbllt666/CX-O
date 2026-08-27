@@ -270,6 +270,14 @@ class ASRService:
 
     async def shutdown(self):
         global _model_instance, _model_kwargs, _executor
+        # M：先遍历释放全部 per-client 流式会话（关闭 WS 连接并取消后台接收任务），
+        # 再关 executor——旧实现直接关 executor，_stream_sessions 里的 WS 连接与
+        # recv task 成为孤儿，句柄在重启间泄漏。
+        for cid in list(self._stream_sessions.keys()):
+            try:
+                await self.release_streaming_session(cid)
+            except Exception as e:  # noqa: BLE001 - 单会话释放失败不阻断整体关闭
+                logger.warning(f"[ASR-WS] shutdown 释放会话 {cid} 失败: {e}")
         if _executor:
             _executor.shutdown(wait=False)
             _executor = None
@@ -292,20 +300,31 @@ class ASRService:
 
     async def recognize_file(self, file_path: str | Path, language: str = "auto", use_itn: bool = True) -> dict[str, Any]:
         path = Path(file_path)
-        if not path.exists():
-            raise FileNotFoundError(f"Audio file not found: {file_path}")
 
-        with open(path, "rb") as f:
-            audio_data = f.read()
+        def _read_audio() -> bytes:
+            # 同步文件 IO（exists stat + open/read）整体挪线程池，避免大音频文件
+            # 在事件循环上阻塞（与 _recognize_embedded 的 executor 策略对齐）
+            if not path.exists():
+                raise FileNotFoundError(f"Audio file not found: {file_path}")
+            with open(path, "rb") as f:
+                return f.read()
+
+        audio_data = await asyncio.get_running_loop().run_in_executor(None, _read_audio)
 
         return await self.recognize(audio_data, language, use_itn)
 
     async def _recognize_embedded(self, audio_data: bytes, language: str = "auto", use_itn: bool = True) -> dict[str, Any]:
-        audio_tensor, success = self._process_audio(BytesIO(audio_data))
+        loop = asyncio.get_running_loop()
+        # M：_process_audio 含临时文件写盘 + wav 解码 + 重采样（CPU/IO 密集），
+        # 挪入推理线程池执行，消除事件循环阻塞（旧实现在循环上同步跑完整预处理）。
+        audio_tensor, success = await loop.run_in_executor(
+            None if _executor is None else _executor,
+            self._process_audio,
+            BytesIO(audio_data),
+        )
         if not success:
             return {"text": "", "error": "Failed to process audio"}
 
-        loop = asyncio.get_running_loop()
         result = await loop.run_in_executor(
             _executor,
             self._run_inference,

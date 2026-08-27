@@ -75,6 +75,7 @@ class FakeInterruptModule:
         self.reset_count = 0
         self.configs = []
         self.tts_playing_set = []
+        self.session_ids = []
 
     async def on_asr_result(self, text, is_final=False):
         return "INTERRUPT", True
@@ -88,13 +89,21 @@ class FakeInterruptModule:
     def set_config(self, cfg):
         self.configs.append(cfg)
 
+    def set_session_id(self, session_id):
+        # H1：_handle_init 校正真实会话 id 的注入点
+        self.session_ids.append(session_id)
+
 
 class FakeAgentInterrupt:
     def __init__(self):
         self.configs = []
+        self.session_ids = []
 
     def set_config(self, cfg):
         self.configs.append(cfg)
+
+    def set_session_id(self, session_id):
+        self.session_ids.append(session_id)
 
 
 @pytest.fixture

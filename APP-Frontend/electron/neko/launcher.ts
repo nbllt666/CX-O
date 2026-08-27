@@ -64,6 +64,8 @@ export function setNekoConfig(partial: Partial<NekoRuntimeConfig>): NekoRuntimeC
 let child: ChildProcess | null = null;
 /** 当前实际端口（跨 reload 保持） */
 let activePort: number | null = null;
+/** M-G 修复：startNeko 进行中的互斥句柄——并发重入共享同一 Promise，杜绝双 python 孤儿进程 */
+let nekoStarting: Promise<{ port: number }> | null = null;
 let logSink: ((line: string) => void) | null = null;
 
 export function setNekoLogSink(sink: ((line: string) => void) | null): void {
@@ -110,24 +112,32 @@ function isPortAvailable(host: string, port: number): Promise<boolean> {
 /**
  * 启动插件服务器。返回起跑时确定的端口。
  * 若已在运行，直接返回当前端口（幂等）。
- * 运行前先验证 python 可执行与源码目录存在，失败抛错由调用方兜底展示。
+ * 并发重入经模块级 starting Promise 互斥：首个调用创建 Promise 持有全流程
+ * （源码目录校验 → 选端口 → spawn → 等就绪），后续调用 await 同一 Promise，
+ * 不再各自 spawn 出双 python 孤儿进程。
  */
 export async function startNeko(): Promise<{ port: number }> {
   if (isNekoRunning() && activePort) {
     return { port: activePort };
   }
+  if (nekoStarting) {
+    return nekoStarting;
+  }
+  const attempt = doStartNeko().finally(() => {
+    // 仅当互斥句柄仍指向本轮 attempt 时清空（异步回调时刻常量已完成初始化），
+    // 防止极端时序下误清新一轮 attempt
+    if (nekoStarting === attempt) nekoStarting = null;
+  });
+  nekoStarting = attempt;
+  // 附着兜底消费，避免无外部 catch 时 unhandledRejection；真实错误仍由调用方拿到
+  attempt.catch(() => undefined);
+  return attempt;
+}
 
+async function doStartNeko(): Promise<{ port: number }> {
   const cfg = getNekoConfig();
   if (!existsSync(cfg.sourceDir)) {
     throw new Error(`neko 源码目录不存在：${cfg.sourceDir}`);
-  }
-  // 并发调用防护：若刚启动中（进程已起但尚未标记 activePort），等待就绪
-  if (child && child.exitCode === null) {
-    // 进程已存在但 activePort 未定：轮询等待
-    for (let i = 0; i < 40 && !activePort; i++) {
-      await new Promise((r) => setTimeout(r, 250));
-    }
-    if (activePort) return { port: activePort };
   }
 
   const host = '127.0.0.1';
@@ -145,28 +155,31 @@ export async function startNeko(): Promise<{ port: number }> {
   };
 
   const pythonExe = cfg.python.trim() || 'python';
-  child = spawn(pythonExe, ['-m', 'plugin.user_plugin_server'], {
+  const proc = spawn(pythonExe, ['-m', 'plugin.user_plugin_server'], {
     cwd: cfg.sourceDir,
     env,
     windowsHide: false,
     stdio: ['ignore', 'pipe', 'pipe'],
   });
+  child = proc;
 
-  child.stdout?.on('data', emit);
-  child.stderr?.on('data', emit);
+  proc.stdout?.on('data', emit);
+  proc.stderr?.on('data', emit);
 
-  child.on('exit', (code, signal) => {
+  proc.on('exit', (code, signal) => {
     emit(`[neko] 插件服务器退出 code=${code} signal=${signal}`);
-    child = null;
-    activePort = null;
+    // M-G 修复（代际防护）：仅当仍是当前代际时才清状态——退出回调迟到期间若已
+    // startNeko 新一代子进程，不得误置新实例的 child/activePort。
+    if (child === proc) child = null;
+    if (activePort === port) activePort = null;
   });
-  child.on('error', (err) => {
+  proc.on('error', (err) => {
     emit(`[neko] 插件服务器启动失败: ${err.message}`);
     // H10: spawn 失败（如 python 不存在 ENOENT）不会触发 exit 事件，
     // 默认残留 child/activePort 会让后续 startNeko 误判"正在运行"、
-    // stopNeko 误走 SIGKILL。此处必须手动清理状态。
-    child = null;
-    activePort = null;
+    // stopNeko 误走 SIGKILL。此处必须手动清理状态（同样带代际比对）。
+    if (child === proc) child = null;
+    if (activePort === port) activePort = null;
   });
 
   // 请求超时：等待端口真正可连

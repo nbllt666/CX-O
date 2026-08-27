@@ -408,6 +408,63 @@ class TestPhases:
             engine.stop()
             await asyncio.sleep(_SETTLE)
 
+    async def test_sleep_window_edge_skips_when_status_not_idle(self, monkeypatch):
+        """M-E 定向: 边沿触发遇非 idle 状态（如 SleepSensor 已开跑）不再双开。"""
+        FakeScheduler.sequence = [True]
+        monkeypatch.setattr(engine_module, "CircadianScheduler", FakeScheduler)
+        collector = FakeCollector(_snapshot())
+        engine = make_engine(collector=collector)
+        try:
+            # 模拟 SleepSensor 路径已把引擎置为 dreaming
+            engine._status = "dreaming"
+            engine.start()
+            await asyncio.sleep(0.15)
+            # 非 idle → 边沿分支不触发第二路会话；状态不被边沿改写
+            assert collector.calls == 0
+            assert engine._status == "dreaming"
+        finally:
+            engine.stop()
+            await asyncio.sleep(_SETTLE)
+
+    async def test_sleep_window_edge_skips_when_cooldown_pending(self, monkeypatch):
+        """M-E 定向: 冷却未到（30 分钟内已有触发）时边沿跳过，防与 Sensor 双开。"""
+        FakeScheduler.sequence = [True]
+        monkeypatch.setattr(engine_module, "CircadianScheduler", FakeScheduler)
+        collector = FakeCollector(_snapshot())
+        engine = make_engine(collector=collector)
+        try:
+            engine._last_trigger_at = datetime.now()  # 刚触发过 → 冷却未过
+            engine.start()
+            await asyncio.sleep(0.15)
+            assert collector.calls == 0
+            assert engine._status == "idle"  # 未进入 dreaming
+        finally:
+            engine.stop()
+            await asyncio.sleep(_SETTLE)
+
+
+# ================================================================ M-E: Sensor 触发任务追踪
+class TestSensorTaskTracking:
+    class _AsleepSensor:
+        def snapshot(self):
+            return {"state": "ASLEEP", "signals": []}
+
+    @pytest.mark.asyncio
+    async def test_maybe_trigger_by_sensor_tracks_background_task(self):
+        """M-E 定向: 裸 asyncio.create_task 改经 _track_background_task 登记。"""
+        collector = FakeCollector(_snapshot(), delay=0.5)  # 拖慢会话便于断言在跑
+        engine = make_engine(collector=collector, interval=5)
+        engine._sleep_sensor = self._AsleepSensor()
+
+        now = datetime.now()
+        engine._maybe_trigger_by_sensor(now, sleeping=True)
+
+        assert engine._status == "dreaming"
+        # 任务已被登记（旧实现裸 create_task 无引用，GC 可静默回收）
+        assert len(engine._bg_tasks) == 1
+        engine.stop()
+        await asyncio.sleep(_SETTLE)
+
 
 # ================================================================ get_status
 class TestGetStatus:

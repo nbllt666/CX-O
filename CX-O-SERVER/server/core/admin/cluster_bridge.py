@@ -87,6 +87,51 @@ def _audit_read(limit: int = 50, offset: int = 0) -> list:
     return items[offset:offset + max(limit, 1)]
 
 
+class PendingClusterResult:
+    """async cluster_manager 方法返回的裸协程包装（可等待但不是 coroutine）。
+
+    M-E 修复背景：cluster_manager 的方法绝大多数是同步实现；一旦出现 async
+    实现，旧桥接逻辑会把裸协程直接丢弃（_read 返回假 pending、_write 同样
+    假提交），管理面永远拿不到真实数据。control_plane._cluster 对桥方法结果
+    做 inspect.iscoroutine 判定并把命中项折叠成 {"pending": True}（同样丢
+    弃），因此不能把裸协程透传给上层——本包装让协程以"可等待对象"形态穿过
+    iscoroutine 检查，交由能 await 的路由层经 resolve_cluster_result() 统一
+    解包取回真实结果（admin_control / admin_batch / manifest / status 四条
+    路径均已接线）。
+    """
+
+    __slots__ = ("_coro",)
+
+    def __init__(self, coro: Any):
+        self._coro = coro
+
+    def __await__(self):
+        return self._coro.__await__()
+
+
+async def resolve_cluster_result(value: Any) -> Any:
+    """解包结果中内嵌的 PendingClusterResult（M-E，供路由层消费）。
+
+    - Pending 一律 await 还原为真实数据；await 失败转为
+      {"status": "error", "error": ...}（不阻断响应组装）；
+    - dict 各层嵌套均递归处理（dispatch 外壳会再包一层）；
+    - 其余值原样返回。
+    """
+    if isinstance(value, PendingClusterResult):
+        try:
+            return await value
+        except Exception as e:
+            logger.warning(f"CLUSTER_PENDING_RESOLVE_FAILED: {e}")
+            return {"status": "error", "error": str(e)}
+    if isinstance(value, dict):
+        resolved = dict(value)
+        for key, item in value.items():
+            if isinstance(item, (PendingClusterResult, dict)):
+                resolved[key] = await resolve_cluster_result(item)
+        return resolved
+    return value
+
+
 class ClusterAdminBridge:
     """管理面 ↔ 哨兵集群适配器。构造(cluster_manager, auth)。"""
 
@@ -107,7 +152,7 @@ class ClusterAdminBridge:
         """读取集群同步状态。"""
         return self._read("sync_status")
 
-    def _read(self, method: str) -> Dict[str, Any]:
+    def _read(self, method: str) -> Any:
         if self.cluster_manager is None:
             return {"status": "cluster_disabled"}
         fn = getattr(self.cluster_manager, method, None)
@@ -119,7 +164,9 @@ class ClusterAdminBridge:
             logger.warning(f"CLUSTER_READ_FAILED[{method}]: {e}")
             return {"status": "error", "error": str(e)}
         if inspect.iscoroutine(result):
-            return {"status": "pending", "detail": "async cluster read"}
+            # M-E: 协程不再丢弃——包装为可等待对象交路由层 resolve_cluster_result
+            # 解包取真实数据（旧实现返回假 pending 且协程从未被 await）。
+            return PendingClusterResult(result)
         return result if isinstance(result, dict) else {"status": "ok", "data": result}
 
     # ---- 写（翻译 + 审计）----
@@ -135,7 +182,7 @@ class ClusterAdminBridge:
     def remove_peer(self, params: Dict[str, Any]) -> Dict[str, Any]:
         return self._write("remove_peer", params, "control.remove_peer")
 
-    def _write(self, method: str, params: Dict[str, Any], action: str) -> Dict[str, Any]:
+    def _write(self, method: str, params: Dict[str, Any], action: str) -> Any:
         if self.cluster_manager is None:
             return {"status": "cluster_disabled"}
         fn = getattr(self.cluster_manager, method, None)
@@ -151,7 +198,9 @@ class ClusterAdminBridge:
             )
             return {"status": "error", "error": str(e)}
         if inspect.iscoroutine(result):
-            audit_now("CX-A", "info", action, str(params), "集群写操作已提交(pending)")
-            return {"status": "pending", "detail": "async cluster write"}
+            # M-E: 协程不再丢弃——审计仅如实声明"已提交待执行"，真实结果由
+            # 路由层 resolve_cluster_result await 后返回给调用方。
+            audit_now("CX-A", "info", action, str(params), "集群写操作已提交(异步执行中)")
+            return PendingClusterResult(result)
         audit_now("CX-A", "info", action, str(params), "集群写操作完成")
         return {"status": "ok", "result": result}

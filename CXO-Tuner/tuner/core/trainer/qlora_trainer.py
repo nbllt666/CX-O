@@ -202,11 +202,11 @@ class QLoRATrainer:
                              job.job_id, job.status)
                 self._fail(job, "任务当前状态不可启动训练（非 idle，可能为历史遗留 running）")
                 return
-            self.store.update(job)
+            self.store.update(job, force=True)  # idle->running 状态转换点强制落盘
             try:
                 self._train(job)
                 job.complete(loss=job.loss_curve)
-                self.store.update(job)
+                self.store.update(job, force=True)  # running->completed 状态转换点强制落盘
                 logger.info("训练任务完成: job_id=%s steps_loss=%d final_progress=1.0",
                             job.job_id, len(job.loss_curve))
             except TrainRuntimeError as exc:
@@ -225,7 +225,7 @@ class QLoRATrainer:
             logger.warning("任务已处于终态，跳过失败标记: job_id=%s status=%s", job.job_id, getattr(job, "status", ""))
             return
         job.fail(message)
-        self.store.update(job)
+        self.store.update(job, force=True)  # ->failed 状态转换点强制落盘
         logger.warning("训练任务已标记失败: job_id=%s status=%s", job.job_id, job.status)
 
     # -- 训练主流程 ----------------------------------------------------------------
@@ -273,10 +273,15 @@ class QLoRATrainer:
         TrainingArguments = deps["TrainingArguments"]
         TrainerCallback = deps["TrainerCallback"]
 
-        logger.info("开始加载基座模型: base_model=%r job_id=%s (4bit 量化, max_seq_length=2048)",
-                    self.config.base_model, job.job_id)
+        # H15/M-G：优先使用 job.base_model（API 触发时由用户/调用方指定），
+        # 仅在 job 未显式提供时回退到 config.base_model。此前实现忽略 job.base_model
+        # 导致不同基座的训练任务都被强制拉到 config 配置的默认基座上。
+        base_model_name = job.base_model or self.config.base_model
+        logger.info("开始加载基座模型: base_model=%r job_id=%s (4bit 量化, max_seq_length=2048, source=%s)",
+                    base_model_name, job.job_id,
+                    "job" if job.base_model else "config")
         model, tokenizer = FastLanguageModel.from_pretrained(
-            model_name=self.config.base_model,
+            model_name=base_model_name,
             max_seq_length=2048,
             load_in_4bit=True,
         )

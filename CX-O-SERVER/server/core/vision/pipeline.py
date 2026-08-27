@@ -27,6 +27,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import weakref
 from typing import Any, Dict, Optional
 
 from server.config import get_settings
@@ -34,8 +35,12 @@ from server.core.vision.clip_queue import VisionClipQueue, vision_clip_queue
 
 logger = logging.getLogger(__name__)
 
-#: 已注册生产 consumer 的队列 id 集合（防 app 重载 / 多次调用重复注册；测试可重置）
-_REGISTERED_QUEUES: set = set()
+#: 已注册生产 consumer 的队列弱引用集合（防 app 重载 / 多次调用重复注册；测试可重置）。
+#: M 修复：此前按 ``id(queue)`` 记录——CPython 对象被 GC 后 id 可被新对象复用，
+#: 新建队列可能因撞上已销毁队列的旧 id 被误判"已注册"而跳过 consumer 接线。
+#: 改持 weakref.WeakSet（以队列实例本身为键）：强引用消失自动剔除，且不阻止 GC；
+#: 成员判定按实例身份（VisionClipQueue 未自定义 __eq__/__hash__），语义与原意图一致。
+_REGISTERED_QUEUES: "weakref.WeakSet[VisionClipQueue]" = weakref.WeakSet()
 
 
 def _wrap_consumer(understanding: Any, memory: Any):
@@ -93,8 +98,7 @@ def register_vision_pipeline(
             logger.info("VisionPipeline: vision_enhanced 未启用，跳过生产接线")
             return False
 
-        qid = id(target)
-        if qid in _REGISTERED_QUEUES:
+        if target in _REGISTERED_QUEUES:
             logger.info("VisionPipeline: 队列已注册 consumer（幂等），跳过")
             return True
 
@@ -108,7 +112,7 @@ def register_vision_pipeline(
             memory = NarrativeVisionMemory()
 
         target.set_consumer(_wrap_consumer(understanding, memory))
-        _REGISTERED_QUEUES.add(qid)
+        _REGISTERED_QUEUES.add(target)
         logger.info("VisionPipeline: 主动视觉生产链已接线（consumer 已注册）")
         return True
     except Exception as exc:  # noqa: BLE001 —— 装配失败仅告警，不阻断启动

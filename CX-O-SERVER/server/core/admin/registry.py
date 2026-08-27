@@ -1,5 +1,6 @@
 """CX-A 多实例注册/发现/心跳表（对齐 cx_admin.pyi InstanceRegistry 契约）。"""
 import logging
+import os
 import socket
 import threading
 from datetime import datetime, timezone
@@ -122,7 +123,11 @@ class InstanceRegistry:
             self._stop.wait(interval)
 
     def _active_register(self) -> None:
-        """主动向 cx_a_endpoint 上报 /api/admin/register。未配置端点时无操作。"""
+        """主动向 cx_a_endpoint 上报 /api/admin/register。未配置端点时无操作。
+
+        M-E 修复: payload.endpoint 此前上报管理端回调 URL（自指 cx_a_endpoint），
+        改为探测本机 LAN IP + 本服务端口组装真实对外地址。
+        """
         endpoint = ""
         if self.admin_cfg is not None:
             endpoint = getattr(self.admin_cfg, "cx_a_endpoint", "") or ""
@@ -131,7 +136,7 @@ class InstanceRegistry:
         url = str(endpoint).rstrip("/") + "/api/admin/register"
         payload = {
             "instance_id": self.instance_id,
-            "endpoint": url,
+            "endpoint": self._self_endpoint(),
             "role": "active",
             "timestamp": _now().isoformat(),
         }
@@ -141,6 +146,49 @@ class InstanceRegistry:
             httpx.post(url, json=payload, timeout=5)
         except Exception as e:  # pragma: no cover
             logger.warning(f"PROACTIVE_REGISTER_NETWORK: {url} -> {e}")
+
+    def _self_endpoint(self) -> str:
+        """组装本实例真实对外地址：http://<LAN IP>:<本服务端口>（M-E）。
+
+        - IP 探测复用 ACP/CXFC discovery 同源的「UDP connect 默认路由」技巧
+          （不真正发包；实现取 server/api/routers/discovery.py::_get_local_ips
+          首分支与 acp/discover.get_local_ip 的同步等价形式——后者为 async，
+          注册线程内不可 await，故就地同步实现，算法一致）；
+        - 端口从当前实例配置读 settings.config.system.port，缺失退 gateway.port，
+          再退环境变量 CXO_PORT / PORT，最终兜底默认 8000。
+        """
+        ip = "127.0.0.1"
+        try:
+            s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            try:
+                s.connect(("8.8.8.8", 80))
+                ip = s.getsockname()[0] or ip
+            finally:
+                s.close()
+        except Exception as e:
+            logger.debug(f"LAN IP 探测失败，回退 127.0.0.1: {e}")
+
+        port = self._resolve_self_port()
+        return f"http://{ip}:{port}"
+
+    @staticmethod
+    def _resolve_self_port() -> int:
+        """解析本服务监听端口：settings.system.port → gateway.port → env → 8000。"""
+        try:
+            from server.config import get_settings
+
+            settings = get_settings()
+            for section in ("system", "gateway"):
+                port = getattr(getattr(settings.config, section, None), "port", None)
+                if port:
+                    return int(port)
+        except Exception as e:
+            logger.debug(f"读取实例端口配置失败: {e}")
+        for env_key in ("CXO_PORT", "PORT"):
+            raw = os.environ.get(env_key, "")
+            if raw.strip().isdigit():
+                return int(raw)
+        return 8000  # 默认兜底端口（配置/env 均未提供时）
 
 
 def _age(ts, now) -> float:

@@ -299,3 +299,58 @@ class TestCrossSourceLifecycle:
         assert resolve(p.id).source == "prompt"
         assert resolve(f.id).source == "file"
         assert len(list()) == 2
+
+
+# ================================================================ H8: checksum 去重 TOCTOU
+class TestConcurrentDedupeNoTocTou:
+    def test_concurrent_register_same_content_yields_single_asset(self, tmp_path):
+        """H8：并发注册同内容文件，定稿去重在锁内判定 → 只落盘一个资产。"""
+        import threading
+
+        src = _write_wav(tmp_path, "source.wav")
+        results = []
+        errors = []
+        barrier = threading.Barrier(4)
+
+        def worker():
+            try:
+                barrier.wait()  # 最大化同锁区竞争
+                results.append(register_from_file(src))
+            except Exception as e:  # noqa: BLE001
+                errors.append(e)
+
+        threads = [threading.Thread(target=worker) for _ in range(4)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+
+        assert not errors
+        ids = {a.id for a in results}
+        assert len(ids) == 1          # 全部复用同一资产
+        assert len(list()) == 1       # 索引仅一条记录
+
+    def test_rmw_cluster_replay_no_lost_update(self, tmp_path):
+        """H8：集群回放 _apply_asset_register RMW 在锁内串行——并发回放不同资产无丢更新。"""
+        import threading
+
+        payloads = [
+            {"id": f"ref_{i:016x}", "source": "file", "status": "registered",
+             "created_at": "2026-08-27T00:00:00+00:00", "checksum": f"ck-{i}"}
+            for i in range(8)
+        ]
+        barrier = threading.Barrier(len(payloads))
+
+        def worker(p):
+            barrier.wait()
+            ref_audio_store._apply_asset_register(p)
+
+        threads = [threading.Thread(target=worker, args=(p,)) for p in payloads]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+
+        got_ids = {r.get("id") for r in ref_audio_store._load_index()}
+        assert {p["id"] for p in payloads} <= got_ids  # 8 条回放全部落盘（无丢更新）
+        assert len(list()) == 8

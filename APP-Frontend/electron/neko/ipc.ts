@@ -8,7 +8,7 @@
  *   - 日志推送：neko:stdout（副作用：start 时挂载 logSink，广播给所有窗口）
  * ============================================================================
  */
-import { BrowserWindow, ipcMain, net } from 'electron';
+import { BrowserWindow, net } from 'electron';
 import type { IpcMainInvokeEvent } from 'electron';
 import {
   getNekoConfig,
@@ -21,6 +21,7 @@ import {
   type NekoRuntimeConfig,
 } from './launcher';
 import { getNekoToolBridgeStatus } from './toolBridge';
+import { registerIpcHandler } from '../security';
 
 interface ProxyRequest {
   method?: string;
@@ -57,15 +58,15 @@ export function registerNekoIpc(): void {
     }
   });
 
-  ipcMain.handle('neko:get-status', () => getNekoStatus());
+  registerIpcHandler('neko:get-status', () => getNekoStatus());
 
-  ipcMain.handle('neko:get-config', () => getNekoConfig());
+  registerIpcHandler('neko:get-config', () => getNekoConfig());
 
-  ipcMain.handle('neko:set-config', (_event, partial: Partial<NekoRuntimeConfig>) => {
+  registerIpcHandler('neko:set-config', (_event, partial: Partial<NekoRuntimeConfig>) => {
     return setNekoConfig(partial ?? {});
   });
 
-  ipcMain.handle('neko:start', async () => {
+  registerIpcHandler('neko:start', async () => {
     try {
       return { ok: true, ...(await startNekoRuntime()) };
     } catch (error) {
@@ -73,7 +74,7 @@ export function registerNekoIpc(): void {
     }
   });
 
-  ipcMain.handle('neko:stop', async () => {
+  registerIpcHandler('neko:stop', async () => {
     try {
       await stopNekoRuntime();
       return { ok: true };
@@ -82,7 +83,7 @@ export function registerNekoIpc(): void {
     }
   });
 
-  ipcMain.handle('neko:restart', async () => {
+  registerIpcHandler('neko:restart', async () => {
     try {
       return { ok: true, ...(await restartNeko()) };
     } catch (error) {
@@ -91,10 +92,10 @@ export function registerNekoIpc(): void {
   });
 
   // CXFC 工具桥状态（仅供管理页展示）
-  ipcMain.handle('neko:get-bridge-status', () => getNekoToolBridgeStatus());
+  registerIpcHandler('neko:get-bridge-status', () => getNekoToolBridgeStatus());
 
   // HTTP 代理：渲染层把对插件服务器的请求转发过来，主进程 net.fetch 直连
-  ipcMain.handle('neko:http', async (_event: IpcMainInvokeEvent, req: ProxyRequest) => {
+  registerIpcHandler('neko:http', async (_event: IpcMainInvokeEvent, req: ProxyRequest) => {
     const status = getNekoStatus();
     if (!status.running || status.port === null) {
       return { ok: false, error: '插件服务器未运行' };

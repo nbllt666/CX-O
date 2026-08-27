@@ -226,6 +226,9 @@ export type ToolCallResult = {
   message: string;
 };
 
+/** 桥转发单请求超时（毫秒）：插件挂起时调用方最多等这么久，不再永久悬挂。 */
+export const NEKO_FORWARD_TIMEOUT_MS = 15_000;
+
 /**
  * 执行一次 CXFC 工具调用。@param pluginPort 插件服务器端口；@param fetchImpl 可注入便于测试。
  */
@@ -260,6 +263,8 @@ export async function executeNekoToolCall(
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ name: toolName, arguments: args, call_id: ctx.request_id ?? '' }),
+      // M-G 修复：插件挂起时 fetch 永不返回导致调用方永久悬挂——加 abort 超时
+      signal: AbortSignal.timeout(NEKO_FORWARD_TIMEOUT_MS),
     });
     let data: { output?: unknown; is_error?: boolean; error?: string | null } = {};
     try {
@@ -272,6 +277,14 @@ export async function executeNekoToolCall(
     }
     return { ok: true, result: data.output };
   } catch (err) {
+    // 错误映射保持与邻近 PLUGIN_OFFLINE 语义一致；超时单列便于定位
+    if (err instanceof Error && err.name === 'TimeoutError') {
+      return {
+        ok: false,
+        code: 'PLUGIN_OFFLINE',
+        message: `转发到插件服务器超时（${NEKO_FORWARD_TIMEOUT_MS / 1000}s），已中止`,
+      };
+    }
     return {
       ok: false,
       code: 'PLUGIN_OFFLINE',

@@ -73,6 +73,30 @@ class TestSpeakingToken:
         await token.release("B")  # 忽略
         assert token.who_holds() == "A"
 
+    async def test_release_non_holder_no_handoff_double_holding_fix(self):
+        """M 回归：非持有者 release 仅告警返回，绝不触发队首交棒（防双持牌）。"""
+        token = SpeakingToken()
+        await token.acquire("A")
+        await token.acquire("B")
+        await token.acquire("C")  # 队列 [B, C]
+        next_holder = await token.release("X")  # X 与持有者无关
+        assert next_holder is None
+        assert token.who_holds() == "A"          # 令牌仍归 A，未交给任何人
+        assert list(token.pending_queue) == ["B", "C"]  # 队列未被消费
+        assert token.is_held is True
+
+    async def test_release_mismatch_when_idle_does_not_grant_queue(self):
+        """M 回归：令牌空闲但队列非空时，非相关者 release 不得授权队首。"""
+        token = SpeakingToken()
+        await token.acquire("A")
+        await token.revoke()            # holder 清空、状态 REVOKED、队列清空
+        await token.acquire("Z")        # REVOKED 态申请仅入队
+        assert list(token.pending_queue) == ["Z"]
+        next_holder = await token.release("W")  # 非持有路径
+        assert next_holder is None
+        # 未做 reset 前 REVOKED 不放行；且本次 release 不应替队列做任何事
+        assert token.who_holds() is None
+
     async def test_hold_timeout_auto_release(self):
         """持有超时自动释放，防霸麦。"""
         token = SpeakingToken(token_hold_timeout_sec=0.05)

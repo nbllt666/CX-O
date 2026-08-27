@@ -67,25 +67,27 @@ class ConsensusGuard:
                 f"state {candidate_state_version} < min {min_version}; refuse dirty takeover"
             )
 
-        # 防双主：仅当 epoch 为当前最高且 +1 通过才允许
+        # 防双主：仅当 epoch 高于当前才继续（两阶段判定第一阶段——只校验，不提交）
         if epoch <= self._current_epoch:
-            self._current_epoch = max(self._current_epoch, epoch)
             raise ClusterSplitBrainRiskError(
                 f"epoch {epoch} not higher than current {self._current_epoch}"
             )
-        self._current_epoch = epoch
 
+        # 两阶段判定第二阶段：quorum + witness 全部校验通过后才提交 _current_epoch。
+        # 此前实现在此处提前写 _current_epoch，导致 NoQuorum 失败后同参数重试被
+        # 误判为脑裂而永久卡死（H6）。
         total = len(self._peers()) + 1  # 含本节点
         majority = total // 2 + 1
         if total >= 3:
             confirms = self._vote_source() if self._vote_source else (total - 1)
             if confirms < majority:
                 raise ClusterNoQuorumError(f"quorum {confirms} < majority {majority}")
-            return True
-
-        # 2 节点集群：无 witness 无多数派
-        if not self._witness_endpoint():
+        elif not self._witness_endpoint():
+            # 2 节点集群：无 witness 无多数派
             raise ClusterNoQuorumError("2-node cluster without witness has no quorum")
+
+        # 全部校验通过：此刻才提交纪元
+        self._current_epoch = epoch
         return True
 
     def choose_leader_by_witness(self, candidates: list[dict]) -> str:

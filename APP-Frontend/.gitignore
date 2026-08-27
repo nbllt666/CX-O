@@ -31,3 +31,7 @@ Thumbs.db
 
 # TypeScript 增量信息
 *.tsbuildinfo
+
+# Playwright E2E
+playwright-report/
+test-results/

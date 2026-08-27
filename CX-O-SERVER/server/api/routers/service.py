@@ -18,6 +18,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
 from server.api.routers.admin import verify_admin_api_key
+from server.config import atomic_write_json
 from server.core.logging_config import get_contextual_logger
 from server.core.utils import get_shared_http_client
 
@@ -115,10 +116,9 @@ def _load_service_config_file() -> dict:
 
 
 def _save_service_config_file(payload: dict) -> None:
-    """将配置 dict 写回 config.json。"""
+    """将配置 dict 原子写回 config.json（临时文件+fsync+os.replace，防半写损坏）。"""
     config_path = _get_service_config_path()
-    with open(config_path, "w", encoding="utf-8") as f:
-        json.dump(payload, f, indent=4, ensure_ascii=False)
+    atomic_write_json(config_path, payload)
 
 
 def _apply_config_updates(current_config: dict, incoming: dict) -> dict:
@@ -330,6 +330,10 @@ async def get_service_status():
         # 回退到 psutil.process_iter（pidfile 不存在或进程已死时）
         for proc in psutil.process_iter(["pid", "name", "cmdline"]):
             try:
+                # 自我排除（A2 修复）：承载本请求的主服务本身就是
+                # uvicorn server.main:app 形态，不得被回退匹配误报为"已运行的后端"
+                if proc.pid == os.getpid():
+                    continue
                 # B10 修复: cmdline 可能为 None，用 `or []` 确保是列表
                 cmdline = proc.info.get("cmdline") or []
                 if (
@@ -571,6 +575,9 @@ async def stop_service(_: bool = Depends(verify_admin_api_key)):
         found_pid = None
         for proc in psutil.process_iter(["pid", "name", "cmdline"]):
             try:
+                # 自我排除（A2 修复）：严禁 terminate 承载本请求的主服务自身
+                if proc.pid == os.getpid():
+                    continue
                 # B10 修复: cmdline 可能为 None，用 `or []` 确保是列表
                 cmdline = proc.info.get("cmdline") or []
                 cmdline_str = " ".join(cmdline)
@@ -734,11 +741,26 @@ async def get_service_config():
 
 @router.get("/config/gateway")
 async def get_gateway_config():
-    """获取单体架构网关配置（简化版，供前端兼容）"""
+    """获取单体架构网关配置（简化版，供前端兼容）。
+
+    B4 修复：ws/http 地址从 UnifiedConfig system.host/port 动态生成，
+    不再硬编码 127.0.0.1:8000；监听地址为通配地址时对客户端以回环兜底。
+    """
+    from server.config import get_settings
+
+    try:
+        system_cfg = get_settings().config.system
+        host = str(system_cfg.host or "").strip() or "127.0.0.1"
+        port = int(system_cfg.port)
+    except Exception:
+        host, port = "127.0.0.1", 8000
+
+    display_host = "127.0.0.1" if host in ("0.0.0.0", "::", "") else host
+
     monolith_config = {
         "status": "集成",
-        "url": "ws://127.0.0.1:8000/ws",
-        "http_url": "http://127.0.0.1:8000",
+        "url": f"ws://{display_host}:{port}/ws",
+        "http_url": f"http://{display_host}:{port}",
         "timeout": 30,
         "asr": {"status": "集成", "note": "已集成到主服务"},
         "tts": {"status": "集成", "note": "已集成到主服务"},

@@ -2,6 +2,7 @@
 server/services/vad_processor.py 回归测试
 VAD 能量检测 + 说话状态机 + 回调触发（仅测 ENERGY 模式，无外部依赖）
 """
+import asyncio
 import struct
 
 import pytest
@@ -187,3 +188,114 @@ class TestSpeakerPassthrough:
         assert asr["speaker_name"] == ""
         assert asr["speaker_registered"] is False
         assert asr["speaker_conf"] == 0.0
+
+
+class _BlockingInterrupt:
+    """agent_interrupt 替身：on_asr_partial_result 挂在事件上以模拟排队，可放行。"""
+
+    def __init__(self):
+        self.calls = []
+        self.gate_open = False
+
+    async def on_asr_partial_result(self, text, is_final=False):
+        import asyncio
+
+        while not self.gate_open:
+            await asyncio.sleep(0.01)
+        self.calls.append(text)
+        return {"should_interrupt": False, "should_reply": False}
+
+    async def interrupt_user(self, reply_content=""):
+        return True
+
+
+class _AlwaysFreeSemaphore(asyncio.Semaphore):
+    """locked() 恒 False 的信号量替身：让提交端通过超限检查后仍能卡在 acquire。"""
+
+    def locked(self):
+        return False
+
+
+class TestDeferredInterruptEpoch:
+    """M：打断判定并发槽排队期间 utterance 收尾 → 过期判定被代际校验丢弃。"""
+
+    def _make_processor(self):
+        proc = AudioStreamProcessor(client_id="epoch-test")
+        proc.set_config({"vad": {"mode": "energy", "energy_threshold": 500, "sample_rate": 16000}})
+        return proc
+
+    @pytest.mark.asyncio
+    async def test_stale_interrupt_dropped_after_epoch_advance(self, monkeypatch):
+        # 场景还原：partial 高频帧的判定任务通过 locked() 检查后卡在 await acquire；
+        # 本句收尾推进代际；任务最终拿到槽位时校验失败 → 丢弃，不执行 interrupt_user。
+        import asyncio
+        import time as _time
+
+        from server.services import vad_processor as vp_mod
+
+        # 占住可控信号量：提交端 locked() 永远放行，但唯一槽被主协程持有 → 任务挂起在 acquire
+        sem = _AlwaysFreeSemaphore(1)
+        await sem.acquire()
+        monkeypatch.setattr(vp_mod, "_interrupt_sem", sem)
+        monkeypatch.setattr(vp_mod, "_interrupt_sem_loop", asyncio.get_running_loop())
+
+        proc = self._make_processor()
+        interrupt = _BlockingInterrupt()
+        interrupt.gate_open = True  # 校验一旦通过应立即执行（本测试期待其不通过）
+        proc.set_agent_interrupt(interrupt)
+        proc.set_asr_client(_FakeSpeakerStream(StreamingASRResult(text="帮我查一下")))
+
+        # 第1帧：提交打断判定任务（捕获 epoch=0，任务随即挂起在 acquire 上）
+        await proc.process_audio_chunk(HIGH_SAMPLES)
+        assert interrupt.calls == []  # 未执行
+
+        # 本句收尾：推进代际（此刻卡在 acquire 的判定已成过期）
+        proc._utterance_epoch += 1
+
+        # 归还槽位，让任务完成 acquire → 触发代际校验 → 丢弃
+        sem.release()
+        await asyncio.sleep(0.05)
+        assert interrupt.calls == []          # 过期判定被丢弃
+        assert sem._value >= 1                # 槽位已正常归还
+
+    @pytest.mark.asyncio
+    async def test_fresh_interrupt_not_dropped(self):
+        """代际一致（同句）时判定正常执行，不误伤。"""
+        import asyncio
+
+        proc = self._make_processor()
+        interrupt = _BlockingInterrupt()
+        proc.set_agent_interrupt(interrupt)
+        proc.set_asr_client(_FakeSpeakerStream(StreamingASRResult(text="在吗")))
+
+        await proc.process_audio_chunk(HIGH_SAMPLES)
+        interrupt.gate_open = True
+        await asyncio.sleep(0.1)
+
+        assert interrupt.calls == ["在吗"]
+
+    @pytest.mark.asyncio
+    async def test_release_task_tracked_by_module_set(self):
+        """L：release_audio_stream_processor 的后台关闭任务保存进模块级强引用集。"""
+        from server.services import vad_processor as vp_mod
+
+        proc = self._make_processor()
+        vp_mod.get_audio_stream_processor("rel-test")
+        vp_mod._client_audio_stream_processors["rel-test"] = proc
+
+        vp_mod.release_audio_stream_processor("rel-test")
+
+        try:
+            await asyncio_sleep(0.02)
+            # 处理器已从注册表移除（关闭任务已在强引用保护下调度并执行）
+            await asyncio_sleep(0.05)
+            assert "rel-test" not in vp_mod._client_audio_stream_processors
+        finally:
+            for t in list(vp_mod._release_tasks):
+                t.cancel()
+
+
+def asyncio_sleep(duration):
+    import asyncio
+
+    return asyncio.sleep(duration)

@@ -381,3 +381,125 @@ class TestListStatsClose:
         assert client.closed is True
         assert mgr._http_clients == {}
         assert mgr.servers == {}
+
+
+# ---------------------------------------------------------------- 幽灵工具清理 / close 非阻塞
+class _FakeTool:
+    def __init__(self, name, category, tags):
+        self.name = name
+        self.category = category
+        self.tags = tags
+
+
+class RegistryWithDelete(FakeRegistry):
+    """带 list_tools/delete_tool 的注册表替身（记录注销调用）。"""
+
+    def __init__(self):
+        super().__init__()
+        self._tools = {}
+        self.deleted = []
+
+    def register(self, **kwargs):
+        super().register(**kwargs)
+        self._tools[kwargs["name"]] = _FakeTool(
+            kwargs["name"], kwargs.get("category", "general"), list(kwargs.get("tags") or [])
+        )
+
+    def list_tools(self, enabled_only=True, include_builtin=False):
+        return list(self._tools.values())
+
+    def delete_tool(self, name):
+        if name in self._tools:
+            del self._tools[name]
+            self.deleted.append(name)
+            return True
+        return False
+
+
+class TestGhostToolCleanup:
+    @pytest.mark.asyncio
+    async def test_remove_server_unregisters_ghost_tools(self, mgr):
+        await mgr.add_server("s1", "cmd", [])
+        reg = RegistryWithDelete()
+        mgr.set_tool_registry(reg)
+        reg.register(name="t_keep", description="", parameters={}, category="general", tags=[])
+        reg.register(name="t_s1", description="", parameters={}, category="mcp", tags=["s1"])
+        reg.register(name="t_s2", description="", parameters={}, category="mcp", tags=["s2"])
+        assert await mgr.remove_server("s1") is True
+        # 仅注销本 server 的幽灵工具，其余不动
+        assert reg.deleted == ["t_s1"]
+        remaining = {t.name for t in reg.list_tools()}
+        assert remaining == {"t_keep", "t_s2"}
+
+    @pytest.mark.asyncio
+    async def test_stop_server_unregisters_ghost_tools(self, mgr):
+        await mgr.add_server("s1", "cmd", [])
+        mgr.servers["s1"].process = FakeProcess()
+        reg = RegistryWithDelete()
+        mgr.set_tool_registry(reg)
+        reg.register(name="t_keep", description="", parameters={}, category="mcp", tags=["other"])
+        reg.register(name="t_s1", description="", parameters={}, category="mcp", tags=["s1"])
+        assert await mgr.stop_server("s1") is True
+        assert reg.deleted == ["t_s1"]
+
+    @pytest.mark.asyncio
+    async def test_close_terminates_and_waits_process(self, mgr):
+        await mgr.add_server("s1", "cmd", [])
+        proc = FakeProcess()
+        mgr.servers["s1"].process = proc
+        await mgr.close()
+        assert proc.terminated is True
+        assert proc.wait_called is True
+
+
+# ---------------------------------------------------------------- 工具同步零校验修复
+class TestSyncToolsValidation:
+    async def _sync(self, mgr, server_name, tools_payload):
+        mgr.servers[server_name].status = "connected"  # 不参与 _sync_tools，但保持语义清晰
+        mgr._http_clients[server_name] = FakeClient(
+            get_response=FakeResponse(200, {"tools": tools_payload})
+        )
+        await mgr._sync_tools(server_name)
+
+    @pytest.mark.asyncio
+    async def test_skips_invalid_name(self, mgr):
+        await mgr.add_server("s1", "cmd", [])
+        reg = FakeRegistry()
+        mgr._tool_registry = reg
+        await self._sync(mgr, "s1", [
+            {"name": "", "description": "d", "parameters": {}},
+            {"description": "无 name 字段"},
+            {"name": 123, "description": "name 非字符串"},
+        ])
+        assert reg.registrations == []
+
+    @pytest.mark.asyncio
+    async def test_skips_non_dict_parameters(self, mgr):
+        await mgr.add_server("s1", "cmd", [])
+        reg = FakeRegistry()
+        mgr._tool_registry = reg
+        await self._sync(mgr, "s1", [
+            {"name": "ok1", "description": "d", "parameters": "not-a-dict"},
+        ])
+        assert reg.registrations == []
+
+    @pytest.mark.asyncio
+    async def test_skips_non_object_parameter_type(self, mgr):
+        await mgr.add_server("s1", "cmd", [])
+        reg = FakeRegistry()
+        mgr._tool_registry = reg
+        await self._sync(mgr, "s1", [
+            {"name": "bad", "description": "d", "parameters": {"type": "string"}},
+        ])
+        assert reg.registrations == []
+
+    @pytest.mark.asyncio
+    async def test_accepts_object_type_and_missing_type(self, mgr):
+        await mgr.add_server("s1", "cmd", [])
+        reg = FakeRegistry()
+        mgr._tool_registry = reg
+        await self._sync(mgr, "s1", [
+            {"name": "typed", "description": "d", "parameters": {"type": "object", "properties": {}}},
+            {"name": "legacy", "description": "d", "parameters": {"p": 1}},
+        ])
+        assert [r["name"] for r in reg.registrations] == ["typed", "legacy"]

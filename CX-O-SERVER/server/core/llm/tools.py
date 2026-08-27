@@ -1,10 +1,27 @@
 """LLM 工具辅助——模型调用场景下的工具定义与消息处理辅助。"""
-from typing import Dict, List
+from typing import Any, Dict, List
 import json
 
 from server.core.logging_config import get_contextual_logger
 
 logger = get_contextual_logger(__name__)
+
+
+def _normalize_tool_arguments(arguments: Any) -> Dict:
+    """归一化工具调用参数为 dict。
+
+    OpenAI 兼容协议下 ``function.arguments`` 可能是 JSON 字符串而非 dict；
+    直接 ``tool.function(**arguments)`` 会退化为 ``str(**kwargs)`` 抛 TypeError。
+    复用 registry.parse_tool_args（JSON 解析 + ast.literal_eval 兜底）解析后展开。
+    """
+    if isinstance(arguments, dict):
+        return arguments
+    if isinstance(arguments, str):
+        # 延迟导入避免 server.core.tools 包 __init__ 的重依赖链条进入本模块导入期
+        from server.core.tools.registry import parse_tool_args
+
+        return parse_tool_args({"arguments": arguments})
+    return {}
 
 
 class LLMTools:
@@ -30,19 +47,26 @@ class LLMTools:
         return formatted
 
     def parse_tool_calls(self, response_message: Dict) -> List[Dict]:
-        """从 LLM 响应消息中解析工具调用，标准化为统一的调用结构。"""
+        """从 LLM 响应消息中解析工具调用，标准化为统一的调用结构。
+
+        ``function.arguments`` 为字符串形式的 JSON 时在此解析展开为 dict，
+        保证下游 execute_tools 拿到的始终是可直接展开的参数字典。
+        """
         tool_calls = response_message.get("tool_calls", [])
         parsed = []
 
         for tool_call in tool_calls:
             if isinstance(tool_call, dict):
+                function = tool_call.get("function") or {}
                 parsed.append(
                     {
                         "id": tool_call.get("id", ""),
                         "type": tool_call.get("type", "function"),
                         "function": {
-                            "name": tool_call.get("function", {}).get("name", ""),
-                            "arguments": tool_call.get("function", {}).get("arguments", {}),
+                            "name": function.get("name", ""),
+                            "arguments": _normalize_tool_arguments(
+                                function.get("arguments", {})
+                            ),
                         },
                     }
                 )
@@ -59,7 +83,11 @@ class LLMTools:
 
         for tool_call in tool_calls:
             tool_name = tool_call.get("function", {}).get("name", "")
-            arguments = tool_call.get("function", {}).get("arguments", {})
+            # 防御性归一化：即使调用方绕过 parse_tool_calls 直接传入原始响应，
+            # 字符串形式 arguments 也不会以 str(**kwargs) TypeError 退化
+            arguments = _normalize_tool_arguments(
+                tool_call.get("function", {}).get("arguments", {})
+            )
             tool_call_id = tool_call.get("id", "")
 
             # 优先 call_tool_async（支持 async handler）；缺失时回退同步 call_tool（兼容内联/测试注入的 registry）

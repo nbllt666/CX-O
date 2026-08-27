@@ -122,7 +122,9 @@ export function useLiveWebSocket(options: UseLiveWebSocketOptions = {}): UseLive
   const onExternalEventRef = useRef(onExternalEvent);
 
   useEffect(() => {
-    sessionIdRef.current = sessionId;
+    // M3：sessionIdRef 的同步移入下方专用 effect（先比较后赋值）。
+    // 旧实现本 effect 每次渲染先把 sessionIdRef 同步为新值，导致守卫 effect
+    // 的比较恒为 false 成死分支，sessionId 变更永远不触发重连。
     onDanmakuRef.current = onDanmaku;
     onStreamContentRef.current = onStreamContent;
     onGiftRef.current = onGift;
@@ -284,9 +286,11 @@ export function useLiveWebSocket(options: UseLiveWebSocketOptions = {}): UseLive
     [wsRef],
   );
 
-  // sessionId 变更触发断开重连（urlBuilder ref 已由 transport 的 ref sync 更新）
+  // M3：sessionIdRef 同步与守卫合并进同一 effect——先取 prev 值比较再赋新值，
+  // 相等不动作、不等则断开重连（urlBuilder ref 已由 transport 的 ref sync 更新）
   useEffect(() => {
-    if (sessionIdRef.current !== sessionId) {
+    const prevSessionId = sessionIdRef.current;
+    if (prevSessionId !== sessionId) {
       sessionIdRef.current = sessionId;
       transportReconnect();
     }

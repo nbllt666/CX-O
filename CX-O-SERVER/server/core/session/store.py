@@ -1,5 +1,15 @@
-"""会话存储——会话与消息的 SQLite 持久化读写。"""
+"""会话存储——会话与消息的 SQLite 持久化读写。
+
+H2 修复（第四轮体检 E组）：本存储为 CXO-Tuner evolution 集成出口专属，
+默认库迁移至独立文件 ``data/tuner_sessions.db``，不再与 ContextManager 的
+聊天会话库 ``data/sessions.db``（10列结构）共用同一 SQLite 文件。
+此前两套建表语句（13列 vs 10列）先后写同一文件导致"先建者赢"，
+另一方 SELECT * 位置索引串位。迁移后所有权格局：
+  - ``data/sessions.db``      -> 唯一 owner: server.core.context.manager.ContextManager
+  - ``data/tuner_sessions.db``-> 唯一 owner: server.core.session.store.SessionStore
+"""
 import json
+import os
 import sqlite3
 import uuid
 from contextlib import contextmanager
@@ -7,6 +17,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Dict, List, Optional
 
+from server.config import _resolve_data_path
 from server.core.logging_config import get_contextual_logger
 from server.core.utils import run_io
 
@@ -14,15 +25,33 @@ from .models import Session, SessionMessage, SessionStats, SessionType
 
 logger = get_contextual_logger(__name__)
 
+# Tuner 会话独立库默认相对路径（经 _resolve_data_path 归一化为项目根绝对路径）
+DEFAULT_TUNER_SESSIONS_DB = "data/tuner_sessions.db"
+# 环境覆盖先例对齐 server/core/graph/config.py（裸名 env + 路径归一化）
+TUNER_SESSION_DB_ENV = "TUNER_SESSION_DB"
+
+
+def get_tuner_session_db_path() -> str:
+    """解析 Tuner 会话库路径。
+
+    优先级：TUNER_SESSION_DB 环境变量 > 项目根归一化的 data/tuner_sessions.db。
+    绝对路径原样返回，相对路径按项目根解析（复用 server/config.py 归一化机制）。
+    """
+    env_path = os.getenv(TUNER_SESSION_DB_ENV)
+    if env_path:
+        return _resolve_data_path(env_path)
+    return _resolve_data_path(DEFAULT_TUNER_SESSIONS_DB)
+
 
 class SessionStore:
     """持久化会话存储
 
-    使用 SQLite 存储会话数据，支持会话过期管理和自动清理
+    使用 SQLite 存储会话数据，支持会话过期管理和自动清理。
+    默认使用独立的 data/tuner_sessions.db（H2 双 schema 收敛修复）。
     """
 
-    def __init__(self, db_path: str = "data/sessions.db"):
-        self.db_path = db_path
+    def __init__(self, db_path: Optional[str] = None):
+        self.db_path = get_tuner_session_db_path() if db_path is None else db_path
         self._init_db()
 
     @contextmanager
@@ -30,6 +59,9 @@ class SessionStore:
         """获取数据库连接的上下文管理器"""
         conn = sqlite3.connect(self.db_path, timeout=20.0)
         conn.row_factory = sqlite3.Row
+        # H2 条目5: 开启外键约束，硬删 sessions 父行时级联删除 messages 子行
+        # （本模块自建的 messages 表定义带 ON DELETE CASCADE）
+        conn.execute("PRAGMA foreign_keys=ON")
         try:
             yield conn
         finally:
@@ -366,12 +398,25 @@ class SessionStore:
             return [self._row_to_message(row) for row in rows]
 
     def delete_message(self, message_id: str, soft_delete: bool = True) -> bool:
-        """删除消息"""
+        """删除消息。
+
+        H2 条目3: 软删消息时同事务回减所属会话 message_count（下限 0），
+        消除计数只增不减的漂移。
+        """
         with self._get_connection() as conn:
             cursor = conn.cursor()
 
             if soft_delete:
                 cursor.execute("UPDATE messages SET is_deleted = TRUE WHERE id = ?", (message_id,))
+                if cursor.rowcount > 0:
+                    cursor.execute(
+                        """
+                        UPDATE sessions
+                        SET message_count = MAX(message_count - 1, 0), updated_at = ?
+                        WHERE id = (SELECT session_id FROM messages WHERE id = ?)
+                    """,
+                        (datetime.now().isoformat(), message_id),
+                    )
             else:
                 cursor.execute("DELETE FROM messages WHERE id = ?", (message_id,))
 
@@ -408,6 +453,48 @@ class SessionStore:
             logger.info(f"已清理 {count} 个过期会话")
         return count
 
+    def delete_sessions_last_accessed_before(self, cutoff: datetime, page_size: int = 500) -> int:
+        """硬删最后访问时间早于 cutoff 的会话及其关联消息（游标分页）。
+
+        H2 条目4: 取代旧的"SELECT 分页 + offset 前推"方案——删除后前推
+        offset 会造成分页漂移、跳过未扫描会话。本实现固定谓词
+        ``last_accessed_at < cutoff`` 反复取批，已删行不影响剩余集合的匹配性，
+        天然无漂移；批次行数 < page_size 或空即终止。
+
+        Args:
+            cutoff: 截止时间（严格小于该时间的会话被删除）。
+            page_size: 单批大小（默认 500，远低于 SQLite 变量参数上限）。
+
+        Returns:
+            删除的会话数量。
+        """
+        total = 0
+        cutoff_iso = cutoff.isoformat()
+
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            while True:
+                cursor.execute(
+                    "SELECT id FROM sessions WHERE last_accessed_at < ? LIMIT ?",
+                    (cutoff_iso, page_size),
+                )
+                rows = cursor.fetchall()
+                if not rows:
+                    break
+                ids = [r["id"] for r in rows]
+                placeholders = ",".join("?" * len(ids))
+                # 显式级联硬删关联消息：防老库 FK 未开/表定义无 CASCADE 时残留孤儿
+                cursor.execute(
+                    f"DELETE FROM messages WHERE session_id IN ({placeholders})", ids
+                )
+                cursor.execute(f"DELETE FROM sessions WHERE id IN ({placeholders})", ids)
+                total += len(ids)
+                if len(rows) < page_size:
+                    break
+            conn.commit()
+
+        return total
+
     def get_statistics(self, workspace_id: Optional[str] = None) -> SessionStats:
         """获取统计信息"""
         with self._get_connection() as conn:
@@ -421,37 +508,37 @@ class SessionStore:
                 params.append(workspace_id)
 
             # 总会话数
-            cursor.execute(f"SELECT COUNT(*) FROM sessions {base_where}", params)
-            total_sessions = cursor.fetchone()[0]
+            cursor.execute(f"SELECT COUNT(*) AS cnt FROM sessions {base_where}", params)
+            total_sessions = cursor.fetchone()["cnt"]
 
             # 激活会话数
             cursor.execute(
-                f"SELECT COUNT(*) FROM sessions {base_where} AND is_active = TRUE", params
+                f"SELECT COUNT(*) AS cnt FROM sessions {base_where} AND is_active = TRUE", params
             )
-            active_sessions = cursor.fetchone()[0]
+            active_sessions = cursor.fetchone()["cnt"]
 
             # 过期会话数
             now = datetime.now().isoformat()
             cursor.execute(
-                f"""SELECT COUNT(*) FROM sessions {base_where} 
+                f"""SELECT COUNT(*) AS cnt FROM sessions {base_where}
                     AND expires_at IS NOT NULL AND expires_at < ?""",
                 params + [now],
             )
-            expired_sessions = cursor.fetchone()[0]
+            expired_sessions = cursor.fetchone()["cnt"]
 
             # 总消息数
             if workspace_id:
                 cursor.execute(
                     """
-                    SELECT COUNT(*) FROM messages m
+                    SELECT COUNT(*) AS cnt FROM messages m
                     JOIN sessions s ON m.session_id = s.id
                     WHERE s.workspace_id = ?
                 """,
                     (workspace_id,),
                 )
             else:
-                cursor.execute("SELECT COUNT(*) FROM messages")
-            total_messages = cursor.fetchone()[0]
+                cursor.execute("SELECT COUNT(*) AS cnt FROM messages")
+            total_messages = cursor.fetchone()["cnt"]
 
             avg_messages = total_messages / total_sessions if total_sessions > 0 else 0
 
@@ -474,35 +561,39 @@ class SessionStore:
             conn.commit()
 
     def _row_to_session(self, row) -> Session:
-        """将数据库行转换为 Session 对象"""
+        """将数据库行转换为 Session 对象。
+
+        H2 条目1: 使用列名访问（row_factory=sqlite3.Row），消除 SELECT *
+        位置索引在多 schema 共存/演进时串位的根因。
+        """
         return Session(
-            id=row[0],
-            workspace_id=row[1],
-            title=row[2],
-            user_id=row[3],
-            session_type=SessionType(row[4]) if row[4] else SessionType.CHAT,
-            created_at=datetime.fromisoformat(row[5]),
-            updated_at=datetime.fromisoformat(row[6]),
-            last_accessed_at=datetime.fromisoformat(row[7]),
-            message_count=row[8],
-            summary=row[9],
-            metadata=json.loads(row[10] or "{}"),
-            is_active=bool(row[11]),
-            expires_at=datetime.fromisoformat(row[12]) if row[12] else None,
+            id=row["id"],
+            workspace_id=row["workspace_id"],
+            title=row["title"],
+            user_id=row["user_id"],
+            session_type=SessionType(row["session_type"]) if row["session_type"] else SessionType.CHAT,
+            created_at=datetime.fromisoformat(row["created_at"]),
+            updated_at=datetime.fromisoformat(row["updated_at"]),
+            last_accessed_at=datetime.fromisoformat(row["last_accessed_at"]),
+            message_count=row["message_count"],
+            summary=row["summary"],
+            metadata=json.loads(row["metadata"] or "{}"),
+            is_active=bool(row["is_active"]),
+            expires_at=datetime.fromisoformat(row["expires_at"]) if row["expires_at"] else None,
         )
 
     def _row_to_message(self, row) -> SessionMessage:
-        """将数据库行转换为 SessionMessage 对象"""
+        """将数据库行转换为 SessionMessage 对象（列名访问，见 _row_to_session 注）。"""
         return SessionMessage(
-            id=row[0],
-            session_id=row[1],
-            role=row[2],
-            content=row[3],
-            content_type=row[4],
-            metadata=json.loads(row[5] or "{}"),
-            tokens=row[6],
-            created_at=datetime.fromisoformat(row[7]),
-            is_deleted=bool(row[8]),
+            id=row["id"],
+            session_id=row["session_id"],
+            role=row["role"],
+            content=row["content"],
+            content_type=row["content_type"],
+            metadata=json.loads(row["metadata"] or "{}"),
+            tokens=row["tokens"],
+            created_at=datetime.fromisoformat(row["created_at"]),
+            is_deleted=bool(row["is_deleted"]),
         )
 
     # ------------------------------------------------------------------ #
@@ -544,8 +635,13 @@ class SessionStore:
 _session_store: Optional[SessionStore] = None
 
 
-def get_session_store(db_path: str = "data/sessions.db") -> SessionStore:
-    """获取全局会话存储实例"""
+def get_session_store(db_path: Optional[str] = None) -> SessionStore:
+    """获取全局会话存储实例。
+
+    H2 修复：db_path 缺省时解析为独立的 Tuner 会话库（TUNER_SESSION_DB
+    环境变量优先，否则项目根 data/tuner_sessions.db），与 ContextManager
+    的 data/sessions.db 彻底分离。单例语义不变。
+    """
     global _session_store
     if _session_store is None:
         _session_store = SessionStore(db_path)

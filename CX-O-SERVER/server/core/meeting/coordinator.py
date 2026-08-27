@@ -32,6 +32,10 @@ BroadcastCB = Callable[[MeetingRoom], Awaitable[None]]
 DanmakuReplyCB = Callable[[Dict[str, Any]], Awaitable[None]]
 
 
+class MeetingRoomConflictError(RuntimeError):
+    """同名会议房间仍在进行中（start_meeting 冲突，上游 REST 映射为 HTTP 409）。"""
+
+
 class MeetingCoordinator:
     """多 Agent 语音会议协调器。
 
@@ -218,6 +222,12 @@ class MeetingCoordinator:
         if len(members) > cap:
             raise ValueError(f"参会 agent 数 {len(members)} 超过单房间上限 {cap}")
         rid = room_id or _gen_room_id()
+        # H5 修复：同名房间仍进行中时抛业务冲突（此前静默覆盖旧房，前端轮询断裂）。
+        # 已结束的房间会被 end_meeting 从 rooms 移除；残留 IDLE 态（极小竞态窗口）
+        # 允许重建。room_id 缺省随机生成不受影响。
+        existing = self.rooms.get(rid)
+        if existing is not None and existing.state != RoomState.IDLE:
+            raise MeetingRoomConflictError(f"会议房间已存在且未结束: {rid}")
         room = self._new_room(rid, user, members, cap, audience_enabled=audience_enabled)
         self.rooms[rid] = room
         await room.start()
@@ -247,6 +257,9 @@ class MeetingCoordinator:
         """结束会议，返回沉淀的记忆摘要。"""
         room = self._require_room(room_id)
         summary = await room.end()
+        # H5 修复：rooms.pop 前先停止该房间的弹幕连接器（对齐 toggle_audience
+        # 的启停联动）——否则后台弹幕回调死循环回调已删除的房间，持续告警。
+        await self._stop_danmaku(room_id)
         self.rooms.pop(room_id, None)
         return summary
 
@@ -529,6 +542,9 @@ class MeetingCoordinator:
         agent = room.get_agent(agent_id)
         if agent is None:
             return None
+        # L 修复：本轮发言开始即复位上一轮被置位的 interrupted 标记，
+        # 否则该成员一旦被打断将永远带着 interrupted=True（状态永不复位）。
+        agent.interrupted = False
         reply = await self._generate_reply(room, agent_id, user_text, responder)
         if not reply:
             logger.info("agent %s 无回复，跳过本轮", agent_id)

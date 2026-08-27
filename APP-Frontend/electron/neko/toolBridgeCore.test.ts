@@ -8,6 +8,7 @@ import {
   buildToolSchema,
   handleRegistrarRoute,
   executeNekoToolCall,
+  NEKO_FORWARD_TIMEOUT_MS,
 } from './toolBridgeCore';
 
 describe('parsePluginIdFromSource', () => {
@@ -108,5 +109,45 @@ describe('executeNekoToolCall', () => {
     store.register({ name: 't', source: 'plugin:p1' });
     expect((await executeNekoToolCall(store, { tool: 'missing', arguments: {} }, { pluginPort: 48916 })).ok).toBe(false);
     expect((await executeNekoToolCall(store, { tool: 't', arguments: {} }, { pluginPort: 0 })).ok).toBe(false);
+  });
+
+  it('M-G：转发请求携带 abort signal（超时上限 NEKO_FORWARD_TIMEOUT_MS）', async () => {
+    const store = new ToolRegistrarStore();
+    store.register({ name: 't', source: 'plugin:p1' });
+    let capturedSignal: AbortSignal | null | undefined;
+    const fetchImpl = vi.fn(async (_url: string | URL | Request, init?: RequestInit) => {
+      capturedSignal = init?.signal ?? null;
+      return new Response(JSON.stringify({ output: null, is_error: false }), { status: 200 });
+    });
+    await executeNekoToolCall(store, { tool: 't', arguments: {} }, { pluginPort: 48916, fetchImpl });
+    expect(capturedSignal).toBeInstanceOf(AbortSignal);
+    expect(NEKO_FORWARD_TIMEOUT_MS).toBe(15000);
+  });
+
+  it('M-G：超时中止映射为 PLUGIN_OFFLINE（语义与邻近网络错误一致，message 标明超时）', async () => {
+    const store = new ToolRegistrarStore();
+    store.register({ name: 't', source: 'plugin:p1' });
+    const timeoutLikeError = Object.assign(new Error('The operation was aborted due to timeout'), {
+      name: 'TimeoutError',
+    });
+    const fetchImpl = vi.fn(async () => {
+      throw timeoutLikeError;
+    }) as unknown as typeof fetch;
+    const out = await executeNekoToolCall(store, { tool: 't', arguments: {} }, { pluginPort: 48916, fetchImpl });
+    expect(out.ok).toBe(false);
+    if (!out.ok) {
+      expect(out.code).toBe('PLUGIN_OFFLINE');
+      expect(out.message).toContain('超时');
+    }
+  });
+
+  it('M-G：网络拒绝（非超时）仍映射为 PLUGIN_OFFLINE', async () => {
+    const store = new ToolRegistrarStore();
+    store.register({ name: 't', source: 'plugin:p1' });
+    const fetchImpl = vi.fn(async () => {
+      throw new Error('ECONNREFUSED');
+    }) as unknown as typeof fetch;
+    const out = await executeNekoToolCall(store, { tool: 't', arguments: {} }, { pluginPort: 48916, fetchImpl });
+    expect(out).toMatchObject({ ok: false, code: 'PLUGIN_OFFLINE', message: expect.stringContaining('ECONNREFUSED') });
   });
 });

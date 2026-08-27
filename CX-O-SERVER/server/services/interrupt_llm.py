@@ -14,6 +14,10 @@ import json
 import logging
 from typing import Any, Optional
 
+import httpx
+
+from server.core.utils import get_shared_http_client
+
 logger = logging.getLogger(__name__)
 
 
@@ -121,6 +125,10 @@ async def call_ollama_decision(
 ) -> dict:
     """调用 Ollama 独立小模型返回三态打断判定。
 
+    L：复用 server.core.utils 共享 httpx.AsyncClient（旧实现每次调用新建
+    aiohttp.ClientSession，高频 partial 判定下握手/连接开销与 fd 压力显著），
+    timeout 每次调用显式传入，不依赖共享客户端默认超时。
+
     语义（与两个打断模块原有兜底逐分支对齐）：
       - JSON 可解析 → 取 decision（缺失默认 IGNORE）
       - JSON 失败但文本含 INTERRUPT/IGNORE → 文本关键词兜底
@@ -128,35 +136,33 @@ async def call_ollama_decision(
       - 超时 → CONTINUE
       - 其他异常 → IGNORE
     """
-    import aiohttp
-
     try:
-        async with aiohttp.ClientSession() as session:
-            async with session.post(
-                f"{endpoint}/api/generate",
-                json={
-                    "model": model,
-                    "prompt": prompt,
-                    "stream": False,
-                    "format": "json",
-                },
-                timeout=aiohttp.ClientTimeout(total=timeout),
-            ) as response:
-                result = await response.json()
-                text = result.get("response", "")
-                try:
-                    parsed = json.loads(text)
-                    return {
-                        "decision": parsed.get("decision", "IGNORE"),
-                        "reason": parsed.get("reason", ""),
-                    }
-                except json.JSONDecodeError:
-                    if "INTERRUPT" in text:
-                        return {"decision": "INTERRUPT", "reason": "文本解析"}
-                    if "IGNORE" in text:
-                        return {"decision": "IGNORE", "reason": "文本解析"}
-                    return {"decision": "CONTINUE", "reason": "JSON解析失败"}
-    except asyncio.TimeoutError:
+        client = get_shared_http_client()
+        response = await client.post(
+            f"{endpoint}/api/generate",
+            json={
+                "model": model,
+                "prompt": prompt,
+                "stream": False,
+                "format": "json",
+            },
+            timeout=timeout,
+        )
+        result = response.json()
+        text = result.get("response", "")
+        try:
+            parsed = json.loads(text)
+            return {
+                "decision": parsed.get("decision", "IGNORE"),
+                "reason": parsed.get("reason", ""),
+            }
+        except json.JSONDecodeError:
+            if "INTERRUPT" in text:
+                return {"decision": "INTERRUPT", "reason": "文本解析"}
+            if "IGNORE" in text:
+                return {"decision": "IGNORE", "reason": "文本解析"}
+            return {"decision": "CONTINUE", "reason": "JSON解析失败"}
+    except (asyncio.TimeoutError, httpx.TimeoutException):
         logger.warning("独立判定 LLM 超时")
         return {"decision": "CONTINUE", "reason": "超时"}
     except Exception as e:

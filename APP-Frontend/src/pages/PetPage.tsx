@@ -262,6 +262,12 @@ export default function PetPage() {
     onError: () => {
       setIsLoading(false);
     },
+    // M2：服务端干净关闭（code=1000）只触发 transport onClose，不走 error 分支——
+    // 不接线则 isLoading 永久卡死；asrMsgIdRef 不清会导致后续 ASR 文本写入不存在的气泡
+    onDisconnect: () => {
+      setIsLoading(false);
+      asrMsgIdRef.current = null;
+    },
   });
 
   // TTS 音量（audioStore.ttsVolume）实时生效；播放器懒创建前暂存、创建时应用
@@ -418,11 +424,15 @@ export default function PetPage() {
   });
 
   // ── 画面帧发送链路：对话图像链路（/api/chat/stream images，WS 不支持带图） ──
+  // L9：isLoadingRef 只在 render commit 后更新，双击可在 isLoading=true 落地前的
+  // commit 窗口内双双通过守卫 → 本地同步 inFlight ref 在发送链路首尾 set/clear 互斥
+  const sendFrameInFlightRef = useRef(false);
   const sendFrame = useCallback(
     (dataUrl: string, kind: CaptureSourceKind) => {
-      if (isLoadingRef.current) return;
+      if (sendFrameInFlightRef.current || isLoadingRef.current) return;
       // 主动视觉总开关：关闭则不向 LLM 发送画面帧
       if (!visionEnabled) return;
+      sendFrameInFlightRef.current = true;
       const prompt = t(
         kind === 'screen' ? 'pet.capture.framePromptScreen' : 'pet.capture.framePromptCamera',
       );
@@ -463,6 +473,9 @@ export default function PetPage() {
           setIsLoading(false);
           accumulatedRef.current = '';
           chatRef.current?.finalizeLastAssistantMessage(t('pet.chat.unreachable'));
+        })
+        .finally(() => {
+          sendFrameInFlightRef.current = false;
         });
     },
     [t, windowAgentId, handleAssistantStreamEvent, visionEnabled],

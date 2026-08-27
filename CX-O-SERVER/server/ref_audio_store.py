@@ -844,9 +844,17 @@ async def register_from_prompt(
         note="",
         created_at=_now_iso(),
     )
+    # H8 修复：定稿去重查询移入与 _append_record 同一锁区，消除 TOCTOU——
+    # 并发注册同内容音频时只落盘一份（锁内后到者复用先到者）。
+    winner: Optional[RefAudioAsset] = None
     with _LOCK:
-        _atomic_write_bytes(_audio_path_for(asset.id, asset.format), audio)
-        _append_record(asset)
+        winner = _find_by_checksum(checksum)
+        if winner is None:
+            _atomic_write_bytes(_audio_path_for(asset.id, asset.format), audio)
+            _append_record(asset)
+    if winner is not None:
+        logger.info(f"prompt 资产 checksum 去重命中，复用: {winner.id}")
+        return winner
     _emit("ref_audio", "asset_register", {"asset_id": asset.id, "asset": asset.to_dict()})
     logger.info(f"注册 prompt 参考音频资产: {asset.id}")
     return asset
@@ -899,9 +907,16 @@ def register_from_file(
         note=note or "",
         created_at=_now_iso(),
     )
+    # H8 修复：定稿去重查询移入与 _append_record 同一锁区，消除 TOCTOU（同 prompt 注册路径）。
+    winner: Optional[RefAudioAsset] = None
     with _LOCK:
-        _atomic_write_bytes(_audio_path_for(asset.id, asset.format), data)
-        _append_record(asset)
+        winner = _find_by_checksum(checksum)
+        if winner is None:
+            _atomic_write_bytes(_audio_path_for(asset.id, asset.format), data)
+            _append_record(asset)
+    if winner is not None:
+        logger.info(f"外部文件 checksum 去重命中，复用: {winner.id}")
+        return winner
     _emit("ref_audio", "asset_register", {"asset_id": asset.id, "asset": asset.to_dict()})
     logger.info(f"注册外部参考音频资产: {asset.id}")
     return asset
@@ -1033,25 +1048,31 @@ def get_audio_path(asset_id: str) -> Path:
 # ============================================================================
 
 def _apply_asset_register(asset_data: dict) -> bool:
-    """按事件落盘资产元数据（asset_register）。已存在则跳过（幂等）。"""
+    """按事件落盘资产元数据（asset_register）。已存在则跳过（幂等）。
+
+    H8 修复：load→判重→append→save 的 RMW 三步整体纳入 _LOCK（RLock 可重入，
+    内嵌 _load_index/_save_index 自带锁可直接嵌套），消除并发回放丢更新。
+    """
     if not isinstance(asset_data, dict) or not asset_data.get("id"):
         return False
-    records = _load_index()
-    if any(r.get("id") == asset_data["id"] for r in records):
-        return False
-    records.append(asset_data)
-    _save_index(records)
+    with _LOCK:
+        records = _load_index()
+        if any(r.get("id") == asset_data["id"] for r in records):
+            return False
+        records.append(asset_data)
+        _save_index(records)
     return True
 
 
 def _apply_asset_delete(asset_id: str) -> bool:
     """按事件落盘资产软删除（asset_delete）。不存在则跳过（幂等）。"""
-    records = _load_index()
-    for rec in records:
-        if rec.get("id") == asset_id and rec.get("status") != "deleted":
-            rec["status"] = "deleted"
-            _save_index(records)
-            return True
+    with _LOCK:
+        records = _load_index()
+        for rec in records:
+            if rec.get("id") == asset_id and rec.get("status") != "deleted":
+                rec["status"] = "deleted"
+                _save_index(records)
+                return True
     return False
 
 
@@ -1064,28 +1085,40 @@ def build_snapshot() -> dict:
     """打包 ref_audio_assets 为可序列化快照 blob（供快照落盘/对等对齐）。
 
     返回 dict：{version, checksum, assets(list), bindings(dict), audio{id: base64}}。
-    全程持锁：在锁内固化索引/绑定引用后再读音频文件，避免读到并发覆盖的半写音频。
+
+    H8b 修复：两阶段采集——阶段一在 _LOCK 内仅固化资产元数据清单、绑定表与待读
+    路径列表；阶段二在锁外读取音频文件并 base64 编码。此前实现持全局锁完成全部
+    音频读取，大资产目录下会长时间阻塞所有注册/绑定路径。音频并发覆盖安全性由
+    _atomic_write_bytes 的 tmp+os.replace 原子替换保证（读到完整旧值或完整新值）。
     """
     import copy
 
     with _LOCK:
-        assets = copy.deepcopy([r for r in _load_index() if r.get("status") != "deleted"])
+        records = _load_index()
+        assets = copy.deepcopy([r for r in records if r.get("status") != "deleted"])
         bindings = _load_bindings()
-        audio: dict = {}
-        for rec in _load_index():
+        pending_paths = []
+        for rec in records:
             aid = rec.get("id")
             fmt = rec.get("format") or "wav"
-            path = _audio_path_for(aid, fmt)
+            pending_paths.append((aid, _audio_path_for(aid, fmt)))
+
+    # 锁外编码音频（仅读文件，无索引/绑定写竞争）
+    audio: dict = {}
+    for aid, path in pending_paths:
+        try:
             if path.exists():
                 audio[aid] = base64.b64encode(path.read_bytes()).decode("ascii")
-        canon = json.dumps({"assets": assets, "bindings": bindings}, ensure_ascii=False, sort_keys=True)
-        return {
-            "version": _SNAPSHOT_VERSION,
-            "checksum": _md5(canon.encode("utf-8")),
-            "assets": assets,
-            "bindings": bindings,
-            "audio": audio,
-        }
+        except OSError as e:  # noqa: PERF203 - 单文件读取失败不阻断快照
+            logger.warning(f"快照读取音频文件失败 asset={aid}: {e}")
+    canon = json.dumps({"assets": assets, "bindings": bindings}, ensure_ascii=False, sort_keys=True)
+    return {
+        "version": _SNAPSHOT_VERSION,
+        "checksum": _md5(canon.encode("utf-8")),
+        "assets": assets,
+        "bindings": bindings,
+        "audio": audio,
+    }
 
 
 def restore_snapshot(blob: dict) -> None:

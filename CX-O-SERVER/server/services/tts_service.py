@@ -25,6 +25,14 @@ from server.services.effect_parser import EffectParser
 logger = logging.getLogger(__name__)
 
 
+class TTSServiceUnavailableError(RuntimeError):
+    """Qwen3 TTS 未启用或 Provider 缺失时合成入口抛出的明确异常（H10）。
+
+    router 层据此映射 HTTP 502；避免旧实现的 AttributeError 被通用 except
+    吞成 200 error JSON，导致前端拿到无差错的假成功。
+    """
+
+
 def _tts_concurrency() -> tuple[int, bool]:
     """读取 TTS 统一 in-flight 并发上限与背压模式（默认 8 / wait 排队）。
 
@@ -134,7 +142,13 @@ class TTSService:
         self._gateway_url = gateway_url.rstrip("/") if gateway_url else None
         self._ref_audio_data: bytes | None = None
         # Qwen3 统一编排状态
+        # H10：标志启用但 provider 为 None 属组装错误，立即失败拒绝构造不可用实例
         self._qwen3_enabled = bool(qwen3_enabled)
+        if self._qwen3_enabled and qwen3_provider is None:
+            raise ValueError(
+                "TTSService 构造失败：qwen3_enabled=True 但 qwen3_provider 为 None"
+                "（Provider 组装缺失或配置不一致）"
+            )
         self._qwen3_provider = qwen3_provider
         self._emotion_instruction_enabled = bool(emotion_instruction_enabled)
         # 语音多会话并发治理：统一 in-flight 信号量 + 背压模式（默认 8 / wait）
@@ -153,6 +167,14 @@ class TTSService:
         self._initialized = False
 
     # ================================================================ Qwen3 统一编排
+    def _ensure_qwen3_ready(self) -> None:
+        """H10：三条合成入口统一守卫——Qwen3 未启用/Provider 缺失时抛明确异常。"""
+        if not self._qwen3_enabled or self._qwen3_provider is None:
+            raise TTSServiceUnavailableError(
+                "Qwen3 TTS 未启用或 Provider 缺失，无法合成"
+                f"（qwen3_enabled={self._qwen3_enabled}, provider={type(self._qwen3_provider).__name__}）"
+            )
+
     def _qwen3_defaults(self) -> dict:
         """读取 Qwen3 默认合成参数（voice/language/output_format/speed），失败回退内置默认。"""
         try:
@@ -384,6 +406,7 @@ class TTSService:
         **kwargs
     ) -> bytes:
         """非流式合成：Qwen3 TTS 唯一合成路径。受统一 in-flight 信号量约束。"""
+        self._ensure_qwen3_ready()
         # drop 模式：超限直接拒绝（返回空 bytes），不进入排队
         if self._tts_drop and self._tts_sem.locked():
             logger.warning("TTS in-flight 已达 %s，drop 模式丢弃本次合成", self._tts_limit)
@@ -412,6 +435,7 @@ class TTSService:
         **kwargs
     ) -> AsyncGenerator[dict[str, Any], None]:
         """流式合成：Qwen3 TTS 唯一合成路径。受统一 in-flight 信号量约束。"""
+        self._ensure_qwen3_ready()
         # drop 模式：超限直接结束（不产生任何 chunk），不进入排队
         if self._tts_drop and self._tts_sem.locked():
             logger.warning("TTS in-flight 已达 %s，drop 模式丢弃本次流式合成", self._tts_limit)
@@ -526,6 +550,7 @@ class TTSService:
         建立 Qwen3 流式合成，绕过为此链路设计的背压护栏。
         """
         # drop 模式：超限直接结束（不产生任何 chunk），与 synthesize_stream 一致
+        self._ensure_qwen3_ready()
         if self._tts_drop and self._tts_sem.locked():
             logger.warning(
                 "TTS in-flight 已达 %s，drop 模式丢弃细粒度流式合成", self._tts_limit

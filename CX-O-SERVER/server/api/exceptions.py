@@ -1,4 +1,5 @@
 """统一异常体系——服务异常定义与全局异常处理器注册。"""
+import logging
 from typing import Any, Dict
 
 from fastapi import HTTPException, Request
@@ -6,6 +7,8 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 
 from .response import ErrorResponse
+
+logger = logging.getLogger(__name__)
 
 
 class ServiceError(Exception):
@@ -70,13 +73,17 @@ async def validation_exception_handler(
 
 
 async def generic_exception_handler(request: Request, exc: Exception) -> JSONResponse:
-    """兜底异常处理器——将未捕获异常统一转换为 500 JSON 响应。"""
+    """兜底异常处理器——将未捕获异常统一转换为 500 JSON 响应。
+
+    完整堆栈仅在服务端日志记录（A5 修复）；响应体不携带内部异常文本，
+    与 gateway BUG-B-M7 保持同一出口口径，避免向客户端泄漏内部信息。
+    """
+    logger.error(f"未捕获异常 path={request.url.path}: {exc}", exc_info=True)
 
     return JSONResponse(
         status_code=500,
         content=ErrorResponse(
             error_message="Internal server error",
             error_code="INTERNAL_ERROR",
-            details={"exception": str(exc)} if str(exc) else None,
         ).model_dump(by_alias=True),
     )

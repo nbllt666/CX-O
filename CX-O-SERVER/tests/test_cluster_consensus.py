@@ -59,6 +59,38 @@ def test_epoch_not_highest_split_brain_risk():
     with pytest.raises(ClusterSplitBrainRiskError) as exc:
         c.can_takeover("p3", candidate_state_version=5, min_version=1, epoch=2)
     assert exc.value.error_code == CLUSTER_SPLIT_BRAIN_RISK
+    # H6：失败路径不得推进内部纪元
+    assert c.current_epoch == 2
+
+
+def test_no_quorum_failure_does_not_commit_epoch_and_retry_recovers():
+    """H6 回归：quorum 判定失败后 _current_epoch 不得被提前提交。
+
+    此前实现先写 _current_epoch 再判 quorum，NoQuorum 异常后同参数重试
+    被误判为 epoch 不升 → SplitBrainRisk 永久卡死。两阶段判定后应可恢复。
+    """
+    votes = {"n": 0}
+
+    def flaky_vote_source():
+        votes["n"] += 1
+        return 1 if votes["n"] == 1 else 2  # 首次不足多数，第二次达标
+
+    c = ConsensusGuard(config=make_config(["p1", "p2"]), vote_source=flaky_vote_source)
+    with pytest.raises(ClusterNoQuorumError):
+        c.can_takeover("p3", candidate_state_version=20, min_version=1, epoch=5)
+    assert c.current_epoch != 5  # 失败未提交纪元
+
+    # 同参数重试（对端票数恢复）应成功，而非误判脑裂
+    assert c.can_takeover("p3", candidate_state_version=20, min_version=1, epoch=5) is True
+    assert c.current_epoch == 5
+
+
+def test_two_node_witness_failure_does_not_commit_epoch():
+    """H6：2 节点无 witness 的 NoQuorum 失败同样不得提交纪元。"""
+    c = ConsensusGuard(config=make_config(["p1"], witness_endpoint=""))
+    with pytest.raises(ClusterNoQuorumError):
+        c.can_takeover("p2", candidate_state_version=5, min_version=1, epoch=7)
+    assert c.current_epoch == 0
 
 
 def test_witness_arbitration():

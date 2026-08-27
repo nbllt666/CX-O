@@ -2,6 +2,7 @@
 
 默认使用摘要模型（LLM）进行情感分析，LLM 不可用或解析失败时回退到本地规则词典。
 """
+import hashlib
 import json
 from collections import OrderedDict
 from dataclasses import dataclass
@@ -173,7 +174,10 @@ class EmotionAnalyzer:
                 polarity=0.0, intensity=0.0, emotion_type="neutral", confidence=0.5, keywords=[]
             )
 
-        cache_key = f"{text[:100]}:{context[:50]}" if context else text[:100]
+        # M-D7: 缓存键改用全文 SHA-256 指纹——原 text[:100] 截断会让前 100
+        # 字符相同的不同文本互串缓存，返回错误情感结果。
+        text_fp = hashlib.sha256(text.encode("utf-8", errors="replace")).hexdigest()
+        cache_key = f"{text_fp}:{context[:50]}" if context else text_fp
         if cache_key in self._cache:
             self._cache.move_to_end(cache_key)
             return self._cache[cache_key]

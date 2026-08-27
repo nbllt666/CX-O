@@ -110,6 +110,46 @@ class TestGraphMonitorHealth:
         assert result["vector_store"]["status"] == "degraded"
 
 
+class TestGraphMonitorVectorWiring:
+    """M-D8: 健康检查只检查构造注入的 semantic 实例引用，不再每次 new
+    SemanticSearch(GraphConfig())；未注入时如实上报 degraded。"""
+
+    def test_not_wired_reports_degraded_with_reason(self, db):
+        result = GraphMonitor(db).health_check()
+        assert result["vector_store"]["status"] == "degraded"
+        assert "not wired" in result["vector_store"]["reason"]
+
+    def test_injected_initialized_semantic_reports_ok(self, db):
+        class _FakeSemantic:
+            _initialized = True
+
+        monitor = GraphMonitor(db, semantic_search=_FakeSemantic())
+        result = monitor.health_check()
+        assert result["vector_store"] == {"status": "ok", "backend": "weaviate"}
+
+    def test_injected_uninitialized_semantic_reports_degraded(self, db):
+        class _FakeSemantic:
+            _initialized = False
+
+        monitor = GraphMonitor(db, semantic_search=_FakeSemantic())
+        v = monitor._check_vector_store()
+        assert v["status"] == "degraded"
+        assert "fallback" in v["reason"]
+
+    def test_no_semantic_search_import_side_effect(self, db, monkeypatch):
+        """_check_vector_store 被传入 sentinel 时不得新建真实 SemanticSearch
+        （通过拦截 GraphConfig 构造验证无隐式构建路径）。"""
+        import server.core.graph.config as gconfig
+
+        def _boom(*a, **k):  # pragma: no cover - 若被调用即失败
+            raise AssertionError("health_check 不应构造新的 GraphConfig/SemanticSearch")
+
+        monkeypatch.setattr(gconfig, "GraphConfig", _boom)
+        monitor = GraphMonitor(db)
+        v = monitor._check_vector_store()
+        assert v["status"] == "degraded"
+
+
 class TestGraphMonitorMetrics:
     def test_get_metrics_empty(self, db):
         result = GraphMonitor(db).get_metrics()

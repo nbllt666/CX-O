@@ -130,7 +130,9 @@ class TestBoundAssetDeleteProtection:
 # ================================================================ fallback 顺序
 class TestBuildRefIdsFallback:
     def _svc(self):
-        return TTSService(qwen3_enabled=True, qwen3_provider=None)
+        # H10 构造守卫适配：qwen3_enabled=True 必须携带 provider；
+        # 本类仅测 _build_ref_ids 纯回退逻辑，合成不可达，用占位 stub 即可
+        return TTSService(qwen3_enabled=True, qwen3_provider=object())
 
     def test_explicit_refs_win_over_agent_binding(self, tmp_path):
         asset = _file_asset(tmp_path)

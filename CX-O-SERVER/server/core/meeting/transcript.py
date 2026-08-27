@@ -17,6 +17,9 @@ from server.core.meeting.models import TranscriptEntry
 # 摘要器类型：接收待摘要条目列表，返回压缩后的摘要文本
 Summarizer = Callable[[List[TranscriptEntry]], str]
 
+# older_summary 拼接后的总长上限（字符）；超长从头部截断，保留最新尾部
+_MAX_SUMMARY_CHARS = 4000
+
 
 def _default_summarizer(entries: List[TranscriptEntry]) -> str:
     """默认摘要器：逐条拼接说话者+内容（无 LLM 时兜底）。"""
@@ -122,7 +125,15 @@ class MeetingTranscript:
         if not older_entries:
             return self.older_summary
         fn = summarizer or self._summarizer
-        self.older_summary = fn(older_entries)
+        summary_text = fn(older_entries)
+        # H3 修复：拼接保留既有 older_summary，不再整体覆盖——
+        # 二次压缩时早期的历史要点得以延续，不会随新一轮摘要被永久丢失。
+        prev = self.older_summary
+        merged = (prev + "\n" + summary_text).strip()
+        # 总长限制：超长从头部截断（保留最新拼接的尾部），防 older_summary 无界增长。
+        if len(merged) > _MAX_SUMMARY_CHARS:
+            merged = merged[-_MAX_SUMMARY_CHARS:]
+        self.older_summary = merged
         # 已摘要进 older_summary 的旧条目从 entries 截掉，仅保留窗口内最近 turns 条，
         # 避免 older()/summarize_older() 反复对同一前缀重摘要、entries 无界增长。
         turns = int(max_turns if max_turns is not None else self.max_turns)
@@ -133,13 +144,26 @@ class MeetingTranscript:
     def roll_up(self, summarizer: Optional[Summarizer] = None) -> str:
         """把全部会议记录沉淀为一段记忆文本（会议结束调用）。
 
+        H3 修复：``older_summary`` 中沉淀的早期历史也并入本次沉淀——
+        以一条伪 entry 插入列表头部交给摘要器，避免整场记忆缺失早前内容。
+
         Returns:
             整场会议的要点摘要，供写回记忆。
         """
         fn = summarizer or self._summarizer
-        if not self.entries:
+        entries = list(self.entries)
+        if self.older_summary:
+            entries.insert(
+                0,
+                TranscriptEntry(
+                    speaker="会议早期摘要",
+                    role="summary",
+                    text=self.older_summary,
+                ),
+            )
+        if not entries:
             return "（空会议）"
-        return fn(self.entries)
+        return fn(entries)
 
     def __len__(self) -> int:
         """记录条目总数。"""

@@ -36,6 +36,11 @@ class TextVectorizer:
             except ImportError:
                 logger.warning("sentence-transformers 未安装，使用简化的向量化")
                 self._model = None
+            except Exception as e:
+                # E3 修复：模型名无效 / 缓存缺失 / 离线元数据不可达等一律回退简化向量化，
+                # 不让图数据库向量化路径因单个模型加载问题整体失效。
+                logger.warning(f"文本向量化模型加载失败，回退简化的向量化: {e}")
+                self._model = None
 
     def encode(self, text: str) -> np.ndarray:
         self._load_model()

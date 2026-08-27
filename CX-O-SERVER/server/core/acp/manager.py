@@ -162,6 +162,8 @@ class ACPManager:
     DEFAULT_AGENT_ID = "default"
     DEFAULT_WEAVIATE_COLLECTION = "CXOMemory"  # CX-O 既有共享 collection（向后兼容）
     PER_AGENT_WEAVIATE_PREFIX = "CXHMSMemory_"  # per-agent collection 前缀（spec 要求）
+    # 每个 key（群组 id / agent id）的内存消息历史上限（防长期运行无界增长）
+    MAX_MESSAGES_PER_KEY = 500
     # 图数据库路径基于 _PROJECT_ROOT 解析（rules-0 §三：禁止 CWD 相对路径）。
     # 与 agents_file 等路径锚点保持一致，避免依赖运行时工作目录。
     DEFAULT_GRAPH_DB = os.path.join(_PROJECT_ROOT, "data", "graph.db")  # CX-O 既有共享 graph（向后兼容）
@@ -544,11 +546,22 @@ class ACPManager:
 
         v3.1.0: 删除 agent 时自动清理对应的 per-agent 资源（Weaviate collection + SQLite graph）。
         向后兼容：default agent 的共享资源不会被清理。
+        M-E 修复: 同步清除群组成员引用中该 agent 的孤儿项并落盘（此前
+        self.groups 遍历被注释遗漏，成员列表残留已删除 agent）。
         """
         existed = False
         async with self._lock:
             if agent_id in self.agents:
                 del self.agents[agent_id]
+                # 清除群组成员引用中的孤儿项（M-E）
+                for group in self.groups.values():
+                    remaining = [
+                        m for m in group.members
+                        if not isinstance(m, dict) or m.get("agent_id") != agent_id
+                    ]
+                    if len(remaining) != len(group.members):
+                        group.members = remaining
+                        group.updated_at = datetime.now().isoformat()
                 await self._save_data()
                 existed = True
 
@@ -691,6 +704,22 @@ class ACPManager:
                 return True
             return False
 
+    def _append_message(self, key: str, message: ACPMessageInfo) -> None:
+        """向指定 key（群组 id / agent id）的消息槽追加并截断到上限。
+
+        M-E 修复: 消息历史此前无界增长；三个追加入口（send_message 群组/单聊、
+        receive_external_message）统一走本助手，超过 MAX_MESSAGES_PER_KEY 时
+        从头部丢弃最旧消息（消息仅存内存，不涉及落盘）。
+        """
+        bucket = self.messages.get(key)
+        if bucket is None:
+            bucket = []
+            self.messages[key] = bucket
+        bucket.append(message)
+        overflow = len(bucket) - self.MAX_MESSAGES_PER_KEY
+        if overflow > 0:
+            del bucket[:overflow]
+
     async def send_message(self, message: ACPMessageInfo) -> ACPMessageInfo:
         """发送消息
 
@@ -701,14 +730,9 @@ class ACPManager:
         """
         async with self._lock:
             if message.to_group_id:
-                if message.to_group_id not in self.messages:
-                    self.messages[message.to_group_id] = []
-                self.messages[message.to_group_id].append(message)
+                self._append_message(message.to_group_id, message)
             elif message.to_agent_id:
-                agent_id = message.to_agent_id
-                if agent_id not in self.messages:
-                    self.messages[agent_id] = []
-                self.messages[agent_id].append(message)
+                self._append_message(message.to_agent_id, message)
 
             # 消息仅存内存（agents/connections/groups 才持久化），此处不触发 YAML 重写，
             # 避免每条消息都产生 3 次冗余文件 I/O（ACP 自动回复热路径）。
@@ -801,7 +825,7 @@ class ACPManager:
         让主系统前端以系统消息形式显示，LLM 在下次对话时也能看到。
         """
         async with self._lock:
-            self.messages.setdefault(message.from_agent_id, []).append(message)
+            self._append_message(message.from_agent_id, message)
 
         # 消息仅存内存，不触发 YAML 重写（见 send_message 注释）。
 

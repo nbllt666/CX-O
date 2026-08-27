@@ -120,30 +120,40 @@ class CXFCDiscovery:
             logger.info(f"CXFC 发现 {len(found)} 个插件")
 
     async def scan_network(self) -> List[Dict[str, Any]]:
+        """主动扫描一轮局域网插件信标。
+
+        L 级修复: bind/遍历的异常路径此前会泄漏 socket——改为 try/finally
+        兜底关闭，任何退出路径都释放句柄。
+        """
         found = []
         sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-        sock.bind(("", self.discovery_port))
-        sock.settimeout(2.0)
+        try:
+            sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            sock.bind(("", self.discovery_port))
+            sock.settimeout(2.0)
 
-        for _ in range(5):
+            for _ in range(5):
+                try:
+                    data, addr = sock.recvfrom(4096)
+                    beacon = json.loads(data.decode())
+                    if beacon.get("type") == "CXFC_BEACON":
+                        found.append({
+                            "host": addr[0],
+                            "port": beacon.get("port", 0),
+                            "name": beacon.get("name", ""),
+                            "capabilities": beacon.get("capabilities", []),
+                            "version": beacon.get("version", ""),
+                        })
+                except socket.timeout:
+                    break
+                except Exception:
+                    continue
+        finally:
+            # 泄漏兜底：bind 失败/遍历异常均确保关闭 socket
             try:
-                data, addr = sock.recvfrom(4096)
-                beacon = json.loads(data.decode())
-                if beacon.get("type") == "CXFC_BEACON":
-                    found.append({
-                        "host": addr[0],
-                        "port": beacon.get("port", 0),
-                        "name": beacon.get("name", ""),
-                        "capabilities": beacon.get("capabilities", []),
-                        "version": beacon.get("version", ""),
-                    })
-            except socket.timeout:
-                break
+                sock.close()
             except Exception:
-                continue
-
-        sock.close()
+                pass
         return found
 
     def get_discovered(self) -> List[Dict[str, Any]]:

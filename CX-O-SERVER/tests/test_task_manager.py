@@ -161,6 +161,49 @@ class TestCreateScheduled:
         assert t["next_run"] is None
 
 
+class TestDailyWeeklyScheduleValidation:
+    """M-D9: daily/weekly 的 run_at 必须在应用前做 HH:MM 前置校验，
+    非法格式创建/更新即拒绝，而不是入库后 next_run=None 静默不触发。"""
+
+    ACTION = {"type": "tool", "tool_name": "x"}
+
+    def test_valid_daily_time_accepted(self, manager):
+        t = manager.create_scheduled_task("d", self.ACTION, {"type": "daily", "run_at": "08:30"})
+        assert t["next_run"] is not None
+        assert "T08:30" in t["next_run"]
+
+    def test_valid_weekly_time_accepted(self, manager):
+        t = manager.create_scheduled_task("w", self.ACTION, {"type": "weekly", "run_at": "23:59"})
+        assert t["next_run"] is not None
+
+    @pytest.mark.parametrize("bad", ["8:5", "25:00", "08:60", "0800", "08:30:00", "abc", ""])
+    def test_invalid_daily_time_rejected_at_create(self, manager, bad):
+        with pytest.raises(ValueError):
+            manager.create_scheduled_task("d", self.ACTION, {"type": "daily", "run_at": bad})
+
+    @pytest.mark.parametrize("bad", ["8:5", "25:00", "08:60", "abc", ""])
+    def test_invalid_weekly_time_rejected_at_create(self, manager, bad):
+        with pytest.raises(ValueError):
+            manager.create_scheduled_task("w", self.ACTION, {"type": "weekly", "run_at": bad})
+
+    def test_invalid_daily_missing_run_at_rejected(self, manager):
+        with pytest.raises(ValueError):
+            manager.create_scheduled_task("d", self.ACTION, {"type": "daily"})
+
+    def test_update_schedule_bad_format_rejected_without_apply(self, manager):
+        """update 路径同样前置校验：校验失败时旧 schedule 不得被部分修改。"""
+        t = manager.create_scheduled_task("d", self.ACTION, {"type": "daily", "run_at": "08:30"})
+        with pytest.raises(ValueError):
+            manager.update_scheduled_task(t["id"], schedule={"type": "daily", "run_at": "nonsense"})
+        stored = manager.get_scheduled_task(t["id"])
+        assert stored["schedule"]["run_at"] == "08:30"  # 未被污染
+
+    def test_update_schedule_valid_format_applied(self, manager):
+        t = manager.create_scheduled_task("d", self.ACTION, {"type": "daily", "run_at": "08:30"})
+        updated = manager.update_scheduled_task(t["id"], schedule={"type": "daily", "run_at": "09:15"})
+        assert "T09:15" in updated["next_run"]
+
+
 class TestScheduledCrud:
     def test_list_enabled_only(self, manager):
         a = manager.create_scheduled_task("a", {"type": "tool", "tool_name": "x"}, {"type": "interval", "interval_seconds": 10})

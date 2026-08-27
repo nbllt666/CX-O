@@ -72,6 +72,10 @@ export function useMicAsrUplink({
   // 竞态防护（B1）：stopCapture 发起的 closePipeline() 的 Promise；快速开关麦克风时
   // startCapture 必须先等待其完成再重建音频图，避免建在正在关闭的 AudioContext 上。
   const closingPromiseRef = useRef<Promise<void> | null>(null);
+  // 竞态防护（H13）：startCapture 代际号——每次 start/stop 递增。getUserMedia 授权
+  // 等待窗口内的二次启动/停止会使本代次结果过期（React.StrictMode 双挂载必现场景），
+  // await 返回后凭代际判断结果是否仍然有效，对齐 useVideoCapture 的 requestSeqRef 范式。
+  const startSeqRef = useRef(0);
 
   // getUserMedia 授权弹窗期间可能被用户关闭开关或卸载组件。此时若授权弹窗 resolve，
   // 需要能读到「最新」的 enabled/卸载状态，避免无条件重建采集上行或抛 mic-start-failed。
@@ -141,6 +145,8 @@ export function useMicAsrUplink({
   }, [analyserRef]);
 
   const stopCapture = useCallback(() => {
+    // 竞态防护（H13）：同步作废全部在途 getUserMedia 结果
+    startSeqRef.current += 1;
     stopLipLoop();
     if (scriptProcessorRef.current) {
       scriptProcessorRef.current.onaudioprocess = null;
@@ -166,6 +172,9 @@ export function useMicAsrUplink({
       onErrorRef.current?.('media-unavailable');
       return;
     }
+    // 竞态防护（H13）：发起即占用新代际；await 返回后凭本代次判断结果是否仍然有效
+    startSeqRef.current += 1;
+    const seq = startSeqRef.current;
     // 竞态防护（B1）：快速开关麦克风——先等上一次 close 完成，再继续重建
     const prevClose = closingPromiseRef.current;
     if (prevClose) {
@@ -182,10 +191,26 @@ export function useMicAsrUplink({
           autoGainControl: true,
         },
       });
-      // 授权弹窗期间开关可能已关闭或组件已卸载：此时不得再重建采集上行，直接停掉轨道
-      if (!mountedRef.current || !enabledRef.current) {
+      // 竞态防护（H13）：授权等待窗口内开关已关闭/组件已卸载/已发生二次启动 →
+      // 本结果过期，立即释放轨道并退出，杜绝 MediaStream 泄漏与 PCM 双份上行
+      if (!mountedRef.current || !enabledRef.current || seq !== startSeqRef.current) {
         stream.getTracks().forEach((track) => track.stop());
         return;
+      }
+
+      // 竞态防护（H13）：重建音频图前先拆干净上一轮残留节点与旧轨道，
+      // 避免快速二次启动时新旧两份 pipeline 并存导致 PCM 双份上行
+      if (scriptProcessorRef.current) {
+        scriptProcessorRef.current.onaudioprocess = null;
+        scriptProcessorRef.current.disconnect();
+        scriptProcessorRef.current = null;
+      }
+      if (sourceRef.current) {
+        sourceRef.current.disconnect();
+        sourceRef.current = null;
+      }
+      if (mediaStreamRef.current && mediaStreamRef.current !== stream) {
+        mediaStreamRef.current.getTracks().forEach((track) => track.stop());
       }
       mediaStreamRef.current = stream;
 
@@ -227,6 +252,8 @@ export function useMicAsrUplink({
       setIsActive(true);
     } catch (e) {
       console.error('[useMicAsrUplink] Failed to start microphone:', e);
+      // 竞态防护（H13）：仅当代际仍有效才清理并上报，过期失败不得影响新一轮采集
+      if (!mountedRef.current || seq !== startSeqRef.current) return;
       stopCapture();
       onErrorRef.current?.('mic-start-failed');
     }

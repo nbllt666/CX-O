@@ -16,13 +16,14 @@
 
 响应对齐 server/api/response.py：统一 APIResponse 封装；错误走 exceptions/HTTPException。
 """
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Literal, Optional
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
 from server.api.response import APIResponse
 from server.config import get_settings
+from server.core.meeting.coordinator import MeetingRoomConflictError
 
 router = APIRouter()
 
@@ -71,8 +72,9 @@ class AgentSpec(BaseModel):
     agent_id: str = Field(..., min_length=1)
     name: str = ""
     persona: str = ""
-    relevance: float = 0.5
-    desire_to_speak: float = 0.5
+    # M 修复：relevance / desire_to_speak 取值域收敛到 [0, 1]（语义即相关度/发言欲）
+    relevance: float = Field(0.5, ge=0, le=1)
+    desire_to_speak: float = Field(0.5, ge=0, le=1)
     voice: Optional[str] = None
 
 
@@ -82,7 +84,8 @@ class StartRequest(BaseModel):
     user: str = Field(..., min_length=1)
     agents: List[AgentSpec] = Field(default_factory=list)
     room_id: Optional[str] = None
-    max_agents: Optional[int] = None
+    # M 修复：max_agents 下界保护（>=1），防止 0/负数导致上限判断形同虚设
+    max_agents: Optional[int] = Field(None, ge=1)
     audience_enabled: bool = False
 
 
@@ -101,7 +104,8 @@ class SpeakRequest(BaseModel):
     """用户/观众发言请求体。"""
 
     text: str = Field(..., min_length=1)
-    role: str = "user"  # 消息角色：user=用户/主播，audience=观众弹幕
+    # M 修复：role 收敛为字面量枚举——此前非法值会静默落入"用户发言"分支
+    role: Literal["user", "audience"] = "user"
     userid: str = ""
     username: str = ""
     mention: str = ""
@@ -134,6 +138,9 @@ async def start_meeting(body: StartRequest):
             max_agents=body.max_agents,
             audience_enabled=body.audience_enabled,
         )
+    except MeetingRoomConflictError as e:
+        # H5 修复：同名房间仍进行中 → 业务冲突 409（缺省随机 room_id 不受影响）
+        raise HTTPException(status_code=409, detail=str(e))
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     return APIResponse.ok(data=room.to_dict(), message="会议已开启")

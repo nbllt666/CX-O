@@ -176,7 +176,13 @@ class PluginManager:
                 if spec and spec.loader:
                     module = importlib.util.module_from_spec(spec)
                     sys.modules[f"plugins.{plugin_id}"] = module
-                    spec.loader.exec_module(module)
+                    try:
+                        spec.loader.exec_module(module)
+                    except Exception:
+                        # 半成品模块不得残留 sys.modules：否则后续 load 重试会拿到
+                        # 执行失败的不完整 module 对象，伪装成"已加载成功"
+                        sys.modules.pop(f"plugins.{plugin_id}", None)
+                        raise
 
                     # 实例化插件类
                     if hasattr(module, "Plugin"):

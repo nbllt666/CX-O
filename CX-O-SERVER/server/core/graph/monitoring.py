@@ -76,8 +76,16 @@ def get_metrics() -> QueryMetrics:
 class GraphMonitor:
     """图数据库监控器"""
 
-    def __init__(self, db: Database):
+    def __init__(self, db: Database, semantic_search=None):
+        """初始化监控器。
+
+        M-D8: semantic_search 为构造注入的既有 SemanticSearch 实例引用——
+        原实现每次 health_check 都 new 一个 SemanticSearch(GraphConfig())，
+        与服务实际持有的组件脱钩且重复构建开销大；未注入时向量存储检查
+        如实上报 degraded（vector store 未接入监控）。
+        """
         self.db = db
+        self.semantic_search = semantic_search
 
     def health_check(self) -> Dict[str, Any]:
         """执行图数据库与向量存储的健康检查。"""
@@ -163,14 +171,16 @@ class GraphMonitor:
             }
 
     def _check_vector_store(self) -> Dict[str, Any]:
+        # M-D8: 只检查当前实例持有的 semantic_search 引用（构造注入），
+        # 不再每次新建 SemanticSearch(GraphConfig())。
+        semantic = self.semantic_search
+        if semantic is None:
+            return {
+                "status": "degraded",
+                "reason": "vector store not wired into monitor",
+            }
         try:
-            from server.core.graph.semantic_search import SemanticSearch
-            from server.core.graph.config import GraphConfig
-
-            config = GraphConfig()
-            semantic = SemanticSearch(config)
-
-            if semantic._initialized:
+            if getattr(semantic, "_initialized", False):
                 return {
                     "status": "ok",
                     "backend": "weaviate",

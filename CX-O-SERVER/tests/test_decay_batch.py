@@ -83,6 +83,36 @@ class TestProcessBatch:
             assert "decay_updated_at" in meta
 
     @pytest.mark.asyncio
+    async def test_h9_metadata_merged_not_replaced(self):
+        """H9: 衰减更新必须保留旧 metadata 原字段（如 dream consolidation_state），
+        只在其上合并 importance_score/decay_updated_at——不允许两键覆写清空。"""
+        mem = _mem(7)
+        mem["metadata"] = {
+            "type": "dream",
+            "consolidation_state": "confirmed",
+            "dream_session_id": "sess-1",
+        }
+        mgr = FakeMemoryManager([mem])
+        p = DecayBatchProcessor(memory_manager=mgr)
+        r = await p.process_batch()
+        assert r.updated == 1
+        mid, imp, meta = mgr.updates[0]
+        # 原字段保留
+        assert meta["consolidation_state"] == "confirmed"
+        assert meta["type"] == "dream"
+        assert meta["dream_session_id"] == "sess-1"
+        # 衰减字段已合并
+        assert "decay_updated_at" in meta
+        assert meta["importance_score"] < 0.8
+
+    @pytest.mark.asyncio
+    async def test_update_without_legacy_metadata_key(self, processor):
+        """快照条目缺 metadata 键时以空 dict 兜底，不抛异常。"""
+        r = await processor.process_batch()
+        for _, _, meta in processor.memory_manager.updates:
+            assert isinstance(meta, dict)
+
+    @pytest.mark.asyncio
     async def test_update_failure_counts_failed(self, processor):
         async def _fail(*a, **k):
             return False
@@ -127,6 +157,31 @@ class TestLifecycle:
         assert processor._task is not None
         await processor.stop()
         assert processor._task is None
+
+    @pytest.mark.asyncio
+    async def test_periodic_uses_process_all_full_coverage(self, processor):
+        """M-D2: 周期后台任务必须走 process_all 全量快照，而非默认
+        process_batch(top100)——后者使尾部低分记忆饥饿。"""
+        calls = {"n": 0}
+
+        async def _fake_process_all(*a, **k):
+            calls["n"] += 1
+            return {"total_batches": 1, "total_updated": 3, "total_failed": 0, "details": []}
+
+        processor.process_all = _fake_process_all
+        real_stop_wait = processor._stop_event.wait
+
+        def _stop_event_wait(timeout=None):
+            # 第一轮周期结束后立即置位停止信号收口
+            if calls["n"] >= 1:
+                processor._stop_event.set()
+            return real_stop_wait()
+
+        processor._stop_event.wait = _stop_event_wait
+        task = asyncio.create_task(processor._run_periodically())
+        await asyncio.wait_for(task, timeout=2.0)
+        # 周期处理调用的是 process_all 且已执行
+        assert calls["n"] == 1
 
     @pytest.mark.asyncio
     async def test_start_idempotent(self, processor):

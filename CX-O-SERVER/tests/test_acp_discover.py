@@ -181,6 +181,62 @@ class TestScan:
         d._discovery_socket = FakeSocket(recv_data=[])
         await d._scan_network()  # BlockingIOError/timeout 被捕获，不抛异常
 
+    @pytest.mark.asyncio
+    async def test_scan_dedup_skips_unchanged_beacon(self, tmp_path, monkeypatch):
+        """M-C 定向: 四元组（host/port/version/id）无变化不重复注册、不重复落盘。"""
+        # 两个完全相同的 beacon
+        mgr, d, fake = _make_discovery(tmp_path, recv_data=[_beacon(), _beacon()])
+        d._discovery_socket = fake
+
+        reg_calls = {"n": 0}
+        orig_register = mgr.register_agent
+
+        async def spy_register(agent, persist=True):
+            reg_calls["n"] += 1
+            return await orig_register(agent, persist=persist)
+
+        save_calls = {"n": 0}
+        orig_save = mgr._save_data
+
+        async def spy_save():
+            save_calls["n"] += 1
+            return await orig_save()
+
+        monkeypatch.setattr(mgr, "register_agent", spy_register)
+        monkeypatch.setattr(mgr, "_save_data", spy_save)
+
+        await d._scan_network()
+
+        assert reg_calls["n"] == 1          # 第二个相同 beacon 被去重
+        assert len(mgr.agents) == 1
+        assert save_calls["n"] == 1         # 单次合并落盘，无变化不追加落盘
+
+    @pytest.mark.asyncio
+    async def test_scan_reregisters_when_quad_changes(self, tmp_path, monkeypatch):
+        """M-C 定向: host/port/version/id 任一变化 → 重新注册。"""
+        changed = json.loads(_beacon()[0].decode())
+        changed["port"] = 7000
+        changed_payload = (json.dumps(changed).encode(), ("10.0.0.5", 9998))
+        mgr, d, fake = _make_discovery(
+            tmp_path, recv_data=[_beacon(), changed_payload]
+        )
+        d._discovery_socket = fake
+
+        reg_calls = {"n": 0}
+        orig_register = mgr.register_agent
+
+        async def spy_register(agent, persist=True):
+            reg_calls["n"] += 1
+            return await orig_register(agent, persist=persist)
+
+        monkeypatch.setattr(mgr, "register_agent", spy_register)
+
+        await d._scan_network()
+
+        assert reg_calls["n"] == 2          # 端口变化触发重注册
+        peer = await mgr.get_agent("peer")
+        assert peer.port == 7000
+
 
 # ================================================================ 单次发现
 class TestDiscoverOnce:
@@ -203,7 +259,9 @@ class TestDiscoverOnce:
 
     @pytest.mark.asyncio
     async def test_discover_once_bind_fallback(self, tmp_path):
-        # 首次 bind 抛 OSError，随后回退随机端口成功
+        # M-C 旧行为契约更新（20260827 第四轮）: bind 占用不再回退随机端口盲听
+        # （对端定向广播收不到 → 恒空扫描假象），改为抛 RuntimeError 让调用方得
+        # 明确错误；finally 兜底确保本次临时 socket 被关闭。
         mgr, d, fake = _make_discovery(tmp_path, recv_data=[])
         real_bind = fake.bind
 
@@ -214,8 +272,9 @@ class TestDiscoverOnce:
 
         fake.bind = bind
         d._socket_factory = lambda *a, **k: fake
-        agents = await d.discover_once(timeout=0.1)
-        assert agents == []
+        with pytest.raises(RuntimeError, match="discovery port .* occupied by background service"):
+            await d.discover_once(timeout=0.1)
+        assert fake.closed is True
 
     @pytest.mark.asyncio
     async def test_discover_once_timeout(self, tmp_path):

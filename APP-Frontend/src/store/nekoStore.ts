@@ -141,6 +141,12 @@ export const useNekoStore = create<NekoState>()((set, get) => ({
         // 旧插件/商店列表，避免 running=false 下 UI 仍展示过期数据。
         set({ bridge: null, plugins: [], installed: [], marketStatus: null, catalog: [] });
       }
+    } catch (e) {
+      // L8：桥接/IPC 异常不得让 rejection 外抛（挂载 effect 中 void 调用会产生
+      // unhandledrejection），落 error 字段供 UI 展示；checking 由 finally 复位。
+      if (seq === statusSeq) {
+        set({ error: e instanceof Error ? e.message : '运行时状态刷新失败' });
+      }
     } finally {
       if (seq === statusSeq) set({ checking: false });
     }
@@ -254,8 +260,13 @@ export const useNekoStore = create<NekoState>()((set, get) => ({
   },
 
   pluginAction: async (pluginId, action) => {
-    await nekoApi.pluginAction(pluginId, action);
-    await get().refreshPlugins();
+    // L8：启停/重载失败落 error 字段而非 rejection 外抛，调用方无需各自兜底
+    try {
+      await nekoApi.pluginAction(pluginId, action);
+      await get().refreshPlugins();
+    } catch (e) {
+      set({ error: e instanceof Error ? e.message : '插件操作失败' });
+    }
   },
 
   installPlugin: async (req) => {

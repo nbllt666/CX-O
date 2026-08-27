@@ -60,6 +60,11 @@ def _release_danmaku_slot() -> None:
     _get_danmaku_sem().release()
 
 
+# fire-and-forget 反馈任务强引用集（仿 vad_processor._track_background_task）：
+# 裸 create_task 的任务在完成前若失去所有引用，可能被 GC 提前回收而静默中断。
+_feedback_tasks: set = set()
+
+
 class LiveClientHandler:
     """直播客户端处理器——处理直播弹幕、礼物、进入等实时消息与音频流。"""
 
@@ -170,6 +175,13 @@ class LiveClientHandler:
         self.client_config.update(data)
         self._session_id = data.get("session_id", self.client_id)
 
+        # H1 注入校正：live 路径的真实会话 id（init 消息可自定义，缺省为 client_id）
+        # 注入打断模块，保证 final 判定写回上下文落在正确 session。
+        _asr_interrupt = get_asr_interrupt_module(self.client_id)
+        _asr_interrupt.set_session_id(self._session_id)
+        _agent_interrupt = get_agent_interrupt_module(self.client_id)
+        _agent_interrupt.set_session_id(self._session_id)
+
         logger.info(f"Live client initialized: {self.client_id}, config: {data}")
 
         await self.manager.send_message(self.client_id, {
@@ -224,6 +236,8 @@ class LiveClientHandler:
 
         后台任务独立调度，不阻塞 danmaku 主路径；非阻塞申请并发槽，
         已满则丢弃本次反馈，防任务无限堆积；追踪器内部异常被吞掉。
+        任务引用保存进模块级集合（仿 vad_processor._track_background_task），
+        防止裸 create_task 无强引用被 GC 提前回收。
         """
         if not await _acquire_danmaku_slot():
             logger.debug("live_feedback 弹幕反馈并发已满，丢弃本次反馈")
@@ -240,7 +254,13 @@ class LiveClientHandler:
             _release_danmaku_slot()
             logger.warning(f"live_feedback 弹幕反馈调度降级: {e}")
             return
-        task.add_done_callback(lambda _t: _release_danmaku_slot())
+
+        def _on_feedback_done(done_task: "asyncio.Task") -> None:
+            _feedback_tasks.discard(done_task)
+            _release_danmaku_slot()
+
+        _feedback_tasks.add(task)
+        task.add_done_callback(_on_feedback_done)
 
     def record_ai_response(self, text: str, prompt: str = "", ts: Optional[float] = None) -> None:
         """记录一轮 AI 回复，供后续弹幕窗口判定隐性反馈（增量接入点）。"""

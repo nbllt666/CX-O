@@ -184,3 +184,96 @@ class TestMonoContext:
 
     def test_get_mono_context_on_missing_session(self, mgr):
         assert mgr.get_mono_context("nonexistent") == []
+
+
+# --------------------------------------------------------------------------- #
+# H2（第四轮体检 E组）追加验证
+# --------------------------------------------------------------------------- #
+class TestSoftDeleteDecrement:
+    """H2 条目3: 软删消息同事务回减 message_count（下限 0）。"""
+
+    def test_delete_message_decrements_session_count(self, mgr):
+        sid = _new_session(mgr)
+        m1 = mgr.add_message(sid, "user", "a")
+        mgr.add_message(sid, "user", "b")
+        assert mgr.get_session(sid)["message_count"] == 2
+
+        assert mgr.delete_message(m1) is True
+        # 会话持久化计数同步回减（而非仅查询侧过滤）
+        assert mgr.get_session(sid)["message_count"] == 1
+
+    def test_delete_missing_message_no_decrement(self, mgr):
+        sid = _new_session(mgr)
+        mgr.add_message(sid, "user", "a")
+        before = mgr.get_session(sid)["message_count"]
+        assert mgr.delete_message("no-such-id") is False
+        assert mgr.get_session(sid)["message_count"] == before
+
+    def test_clear_expired_mono_decrements_count(self, mgr):
+        """clear_expired_mono 亦为 is_deleted=TRUE 软删入口，需回减计数。"""
+        sid = _new_session(mgr)
+        mgr.add_message(sid, "user", "普通消息")
+        # rounds=-1 → expires_at 在过去 → 立即可清理
+        assert mgr.add_mono_context(sid, "过期mono", rounds=-1) is True
+        count_after_add = mgr.get_session(sid)["message_count"]
+        assert count_after_add == 2
+
+        deleted = mgr.clear_expired_mono()
+        assert deleted >= 1
+        got = mgr.get_session(sid)
+        # 普通消息仍在；mono 软删已回减，剩余计数=普通消息数
+        assert got["message_count"] == 1
+        assert mgr.get_messages(sid)[0]["content"] == "普通消息"
+
+
+class TestShutdownGeneration:
+    """H2 条目2: shutdown 后其他线程陈旧连接按代际弃置重建，不再误用已关闭连接。"""
+
+    def test_worker_thread_reconnects_after_shutdown(self, tmp_path):
+        import threading
+
+        m = ContextManager(db_path=str(tmp_path / "gen.db"))
+        started = threading.Event()
+        shutdown_done = threading.Event()
+        worker_done = threading.Event()
+        errors, results = [], []
+
+        def worker():
+            try:
+                conn = m._get_connection()  # 该线程 thread-local：第 0 代连接
+                assert conn is not None
+                started.set()
+                shutdown_done.wait(timeout=5)
+                # shutdown 后再次取连接并执行完整读写——旧实现此处抛
+                # "Cannot operate on a closed database"
+                sid = m.create_session(title="重建后写入")
+                got = m.get_session(sid)
+                results.append(got is not None and got["title"] == "重建后写入")
+            except Exception as e:  # pragma: no cover - 仅失败路径触发
+                errors.append(e)
+            finally:
+                worker_done.set()
+
+        t = threading.Thread(target=worker)
+        t.start()
+        try:
+            assert started.wait(timeout=5), "worker 未在超时内建立首连"
+            m.shutdown()  # 关闭所有线程连接并自增代际
+            shutdown_done.set()
+            assert worker_done.wait(timeout=5), "worker 未在超时内完成"
+            assert errors == []
+            assert results == [True]
+        finally:
+            shutdown_done.set()
+            t.join(timeout=5)
+            m.shutdown()
+
+    def test_repeated_shutdown_is_safe(self, tmp_path):
+        m = ContextManager(db_path=str(tmp_path / "gen2.db"))
+        _ = m.create_session(title="x")
+        m.shutdown()
+        m.shutdown()  # 二次关闭不抛异常
+        # shutdown 后主线程自身仍可重新获取连接
+        sid = m.create_session(title="reborn")
+        assert m.get_session(sid)["title"] == "reborn"
+        m.shutdown()

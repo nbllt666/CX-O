@@ -198,6 +198,66 @@ class TestFingerprintBound:
             get_config=_make_cfg(True),
         )
         assert isinstance(t._reported_fingerprints, deque)
+
+
+class TestFingerprintRegisterBeforePush:
+    """M：指纹先登记后推送——并发双报防护，push 失败宁可丢反馈也不重报。"""
+
+    @pytest.mark.asyncio
+    async def test_push_failure_still_registers_fingerprint(self):
+        # push 抛异常被 _safe_push 吞掉后，指纹已登记 → 同 prompt/response 不再重报
+        import asyncio
+
+        async def failing_push(payload):
+            raise ConnectionError("tuner down")
+
+        t = LiveFeedbackTracker(
+            emotion_analyzer=EmotionAnalyzer(),
+            push_func=failing_push,
+            get_config=_make_cfg(True),
+        )
+        t.record_ai_response(AI_RESPONSE, ts=600.0, prompt=PROMPT)
+
+        # 未达爆发阈值（默认 3）的弹幕直接 None，不登记指纹
+        assert await t.on_danmaku("开心", ts=600.5) is None
+        assert await t.on_danmaku("开心", ts=601.0) is None
+
+        # 第 3 条达到阈值 → 构造 payload 返回，push 静默降级（failing_push 被吞）
+        third = await t.on_danmaku("开心", ts=601.5)
+        assert isinstance(third, dict) and third["source"] == "live_danmaku"
+
+        for ts in [602.0, 602.5]:
+            # 指纹已登记（先于 push）→ 查重命中，不再重报
+            assert await t.on_danmaku("开心", ts=ts) is None
+
+        fingerprint = t._fingerprint()
+        assert fingerprint in t._reported_fingerprints  # 已登记
+
+    @pytest.mark.asyncio
+    async def test_concurrent_burst_reports_once(self):
+        # 并发弹幕同窗口爆发：登记先行使第二次进入时查重命中 → 仅报一次
+        import asyncio
+
+        pushed = []
+
+        async def slow_push(payload):
+            await asyncio.sleep(0.01)  # 制造 await 窗口
+            pushed.append(payload)
+
+        t = LiveFeedbackTracker(
+            emotion_analyzer=EmotionAnalyzer(),
+            push_func=slow_push,
+            get_config=_make_cfg(True),
+        )
+        t.record_ai_response(AI_RESPONSE, ts=700.0, prompt=PROMPT)
+
+        results = await asyncio.gather(
+            *[t.on_danmaku("开心", ts=700.5 + i * 0.001) for i in range(3)]
+        )
+        payloads = [r for r in results if r is not None]
+        assert len(payloads) == 1  # 只报一次
+        assert len(pushed) == 1
+        assert t._reported_fingerprints.count(t._fingerprint()) == 1
         # 默认 maxlen=2000；追加超过上限时旧指纹被淘汰、长度保持有界
         for i in range(2100):
             t._reported_fingerprints.append(f"fp-{i}")

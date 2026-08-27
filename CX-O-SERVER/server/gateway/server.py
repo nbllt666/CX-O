@@ -3,6 +3,7 @@ WebSocket 服务端
 """
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import time
@@ -135,7 +136,14 @@ async def websocket_handler(websocket: WebSocket, client_id: str):
                 await ws_manager.handle_message(client_id, message)
             else:
                 logger.warning(f"未知的 WebSocket action: {action}")
-                await websocket.send_json({"type": "error", "data": {"message": f"未知操作: {action}"}})
+                # B2 修复：统一经 ws_manager 发送标准错误结构
+                # （原先直发 send_json，跳过 last_activity 更新且形态与其它出口不一致）
+                await ws_manager.send_message(client_id, create_error(
+                    request_id=request_id,
+                    action=action,
+                    code="UNKNOWN_ACTION",
+                    message=f"未知操作: {action}"
+                ))
 
     except WebSocketDisconnect:
         await ws_manager.disconnect(client_id)
@@ -280,7 +288,8 @@ def register_gateway_routes(app: FastAPI):
         allowed_hosts = {"localhost", "127.0.0.1", "::1"}
         if target_host and target_host not in allowed_hosts:
             try:
-                infos = socket.getaddrinfo(target_host, None)
+                # B1 修复：getaddrinfo 为阻塞 DNS 调用，移入线程避免卡住事件循环
+                infos = await asyncio.to_thread(socket.getaddrinfo, target_host, None)
                 for info in infos:
                     ip = ipaddress.ip_address(info[4][0])
                     if ip.is_link_local or ip.is_private or ip.is_reserved:
@@ -289,8 +298,15 @@ def register_gateway_routes(app: FastAPI):
                             status_code=403,
                             media_type="application/json",
                         )
-            except Exception:
-                pass
+            except Exception as e:
+                # B1 修复：解析失败比成功更可疑——fail-closed 拒绝代理，
+                # 原实现 except: pass 对不可解析主机直接放行（SSRF 缺口）
+                logger.warning(f"DNS 解析失败，拒绝代理目标 {target_host}: {e}")
+                return Response(
+                    content=json.dumps({"error": "Target host could not be resolved"}),
+                    status_code=403,
+                    media_type="application/json",
+                )
 
         # SSRF 防护：过滤敏感请求头，防止凭据泄露到代理目标
         sensitive_headers = {"authorization", "cookie", "set-cookie", "x-api-key"}

@@ -116,12 +116,16 @@ export function useWSTransport(options: UseWSTransportOptions): UseWSTransportRe
   }, []);
 
   const connect = useCallback(() => {
-    // 防重入：socket 处于 OPEN 或 CONNECTING 时直接返回，
-    // 仅当旧 socket 已彻底关闭（CLOSED/CLOSING）或引用为空才新建，避免瞬时窗口内多连接打架。
+    // 防重入：socket 处于 OPEN / CONNECTING / CLOSING 时直接返回。
+    // L6 补 CLOSING 拦截：半关闭期间新建会让新旧两个 socket 短暂并存，
+    // 迟到的旧 onclose 会污染新连接状态并重复调度重连；CLOSING 完成后由
+    // 自身 onclose 统一走「置空 + 重连调度」路径，闭环收敛无需外部补建。
     const current = wsRef.current;
     if (
       current !== null &&
-      (current.readyState === WebSocket.OPEN || current.readyState === WebSocket.CONNECTING)
+      (current.readyState === WebSocket.OPEN ||
+        current.readyState === WebSocket.CONNECTING ||
+        current.readyState === WebSocket.CLOSING)
     ) {
       return;
     }
@@ -141,11 +145,12 @@ export function useWSTransport(options: UseWSTransportOptions): UseWSTransportRe
 
       ws.onclose = () => {
         if (isUnmountedRef.current) return;
-        // 仅当 wsRef 仍指向本次关闭的 socket 时才置空，避免误清已新建的后继 socket 引用；
-        // 旧引用清空后不再参与 connect 守卫判断，晚到的旧 onclose 也不会再额外排重连。
-        if (wsRef.current === ws) {
-          wsRef.current = null;
-        }
+        // L6：仅当 wsRef 仍指向本次关闭的 socket 时才走清理路径。
+        // 迟到的旧 socket close 事件（如 connect 守卫修复前 CLOSING 窗口新建的后继连接）
+        // 不得 setIsConnected(false)、不得触发业务 onClose、不得重复调度重连——
+        // 否则会把已建立的新连接误报为断开，并叠加一层重连定时器。
+        if (wsRef.current !== ws) return;
+        wsRef.current = null;
         setIsConnected(false);
         onCloseRef.current?.();
 

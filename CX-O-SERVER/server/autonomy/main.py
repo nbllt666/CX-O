@@ -11,7 +11,7 @@ from __future__ import annotations
 import inspect
 import json
 import logging
-from datetime import datetime, timedelta, timezone
+from datetime import datetime
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
 
@@ -233,8 +233,33 @@ def _autonomy_get_status() -> Dict[str, Any]:
 
 
 def _today_local_date() -> str:
-    """返回本地（UTC+8）今日日期 YYYY-MM-DD。"""
-    return datetime.now(timezone(timedelta(hours=8))).date().isoformat()
+    """返回本地（系统时区）今日日期 YYYY-MM-DD。
+
+    H12: 与引擎审计时间戳基准统一——审计条目已改为
+    datetime.now().astimezone() 本地带偏移时间戳，此处日期来源同步改为
+    astimezone()，避免硬编码 UTC+8 与机器时区漂移时错位。
+    """
+    return datetime.now().astimezone().date().isoformat()
+
+
+def _entry_in_local_day(entry: Dict[str, Any], day_prefix: str) -> bool:
+    """判断审计条目时间戳是否属于本地指定日（H12 跨时区归一）。
+
+    - 带 tz 的 ISO 时间戳（含历史 UTC 条目）：先转本地时区再比较日期，
+      保证本地 00:00–07:59 生成的条目按本地日归档不再丢失；
+    - 无 tz 的朴素时间戳：按其自身日期判定（与旧日期前缀语义等价）；
+    - 无法解析的条目回退日期前缀匹配。
+    """
+    ts = str(entry.get("timestamp", "") or "")
+    if not ts:
+        return False
+    try:
+        dt = datetime.fromisoformat(ts)
+    except ValueError:
+        return ts.startswith(day_prefix)
+    if dt.tzinfo is None:
+        return dt.date().isoformat() == day_prefix
+    return dt.astimezone().date().isoformat() == day_prefix
 
 
 def _today_daily_log() -> List[Dict[str, Any]]:
@@ -251,10 +276,7 @@ def _today_daily_log() -> List[Dict[str, Any]]:
     if not isinstance(items, list):
         return []
     day = _today_local_date()
-    return [
-        entry for entry in items
-        if isinstance(entry, dict) and str(entry.get("timestamp", "") or "").startswith(day)
-    ]
+    return [entry for entry in items if isinstance(entry, dict) and _entry_in_local_day(entry, day)]
 
 
 async def _autonomy_read_news(limit: int = 5) -> List[Dict[str, Any]]:

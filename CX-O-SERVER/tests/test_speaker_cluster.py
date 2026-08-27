@@ -156,6 +156,20 @@ def test_clear_profiles(orthogonal):
     assert s.classify(vA)[0] == "spk_0"
 
 
+def test_profile_count_excludes_invalid_profiles(orthogonal):
+    """L 回归：profile_count 与 profile_names 口径一致——centroid 无效的档案不计数。"""
+    vA = orthogonal[0]
+    clusterer = SpeakerClusterer(threshold=0.65)
+    ret = clusterer.upsert_profiles([
+        {"name": "A", "embeddings": vA.tolist()},      # 有效
+        {"name": "BAD_DIM", "embeddings": [0.1, 0.2]},  # 维度不符 → 无效
+        {"name": "BAD_EMPTY", "embeddings": []},        # 空 → 无效
+    ])
+    assert ret == 3                       # upsert 返回原始推送条数（口径不变）
+    assert clusterer.profile_names() == ["A"]
+    assert clusterer.profile_count() == 1  # L 修复前会返回 3（与 names 不一致）
+
+
 def test_recent_match_none_and_reset(orthogonal):
     """未 classify 时 recent_match 返回 None；reset 后同样清空。"""
     vB = orthogonal[1]

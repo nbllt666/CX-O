@@ -226,3 +226,74 @@ async def _run_finish_pending_and_ready(monkeypatch):
 
 def test_finish_pending_and_ready(monkeypatch):
     asyncio.run(_run_finish_pending_and_ready(monkeypatch))
+
+
+# ================================================================ #
+# L 级修复回归：_GrowableAudioBuffer 摊还 O(1) 追加替代逐帧 np.append
+# ================================================================ #
+
+async def _run_feed_pcm_accumulates_correctly(monkeypatch):
+    """多次 feed_pcm 后累积内容与逐段拼接完全一致，且为 O(1) 追加路径。"""
+    monkeypatch.setattr(engine, "_VAD", None)   # 关闭 VAD 分支
+    monkeypatch.setattr(engine, "_ASR", None)   # 关闭 partial 分支
+    session = engine.StreamSession()
+
+    chunks = []
+    for i in range(30):
+        raw = ((np.arange(97, dtype=np.int16) + i * 13) % 30000 - 15000).astype(np.int16)
+        chunks.append(raw)
+        msgs = await session.feed_pcm(raw.tobytes())
+        assert msgs == []
+    expected = np.concatenate(chunks).astype(np.float32) / 32768.0
+
+    buf_view = session._audio                   # 增长缓冲视图
+    assert isinstance(buf_view, np.ndarray)
+    assert len(buf_view) == expected.size
+    np.testing.assert_allclose(np.asarray(buf_view), expected)
+
+
+def test_feed_pcm_accumulates_correctly(monkeypatch):
+    asyncio.run(_run_feed_pcm_accumulates_correctly(monkeypatch))
+
+
+async def _run_feed_pcm_snapshot_stable_across_appends(monkeypatch):
+    """在途旧视图（声纹后台 audio_slice 场景）不因后续追加而改变内容。"""
+    monkeypatch.setattr(engine, "_VAD", None)
+    monkeypatch.setattr(engine, "_ASR", None)
+    session = engine.StreamSession()
+    first = (np.ones(5000, dtype=np.int16)).tobytes()
+    await session.feed_pcm(first)
+    snapshot = np.array(session._audio, copy=True)  # 记录当前累积内容
+
+    for _ in range(7):                              # 触发扩容 + 多次原地追加
+        await session.feed_pcm((np.full(4000, 77, dtype=np.int16)).tobytes())
+
+    assert len(session._audio) > snapshot.size      # 缓冲持续增长
+    # 追加只写尾部：既有前缀内容不变（等价于旧的按次拷贝语义）
+    np.testing.assert_array_equal(
+        np.asarray(session._audio)[: snapshot.size], snapshot
+    )
+
+
+def test_feed_pcm_snapshot_stable_across_appends(monkeypatch):
+    asyncio.run(_run_feed_pcm_snapshot_stable_across_appends(monkeypatch))
+
+
+async def _run_feed_pcm_pathological_reset(monkeypatch):
+    """缓冲总量越过 MAX_BUFFER 时整体清空重置（行为与旧实现一致）。"""
+    monkeypatch.setattr(engine, "_VAD", None)
+    monkeypatch.setattr(engine, "_ASR", None)
+    session = engine.StreamSession()
+    big = np.zeros(600000, dtype=np.int16).tobytes()
+
+    await session.feed_pcm(big)
+    assert len(session._audio) == 600000
+    assert session._cur_start == 0
+
+    await session.feed_pcm(big)                     # 120万 > MAX_BUFFER=96万
+    assert len(session._audio) == 600000            # 先清空再接收本帧
+    assert session._spec_sent is False              # 各句内状态已复位
+
+
+def test_feed_pcm_pathological_reset(monkeypatch):
+    asyncio.run(_run_feed_pcm_pathological_reset(monkeypatch))

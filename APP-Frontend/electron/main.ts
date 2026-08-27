@@ -15,7 +15,7 @@
  *   供 OBS 等采集端按窗口名区分多个桌宠。
  * ============================================================================
  */
-import { app, BrowserWindow, desktopCapturer, dialog, ipcMain, session, Menu, Tray, nativeImage, globalShortcut, shell, powerMonitor } from 'electron';
+import { app, BrowserWindow, desktopCapturer, dialog, session, Menu, Tray, nativeImage, globalShortcut, shell, powerMonitor } from 'electron';
 import type { NativeImage } from 'electron';
 import * as path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -42,6 +42,7 @@ import {
 } from './startup';
 import { registerNekoIpc } from './neko/ipc';
 import { getNekoConfig, startNekoRuntime, stopNekoRuntime } from './neko/launcher';
+import { registerIpcHandler } from './security';
 
 // ESM 主进程下自行构造 __dirname（产物为 ESM 格式，Node 不注入该全局）
 const __filename = fileURLToPath(import.meta.url);
@@ -274,9 +275,12 @@ function openManagementWindow(): BrowserWindow {
     managementWindow.webContents.openDevTools({ mode: 'detach' });
   }
 
-  // 关闭仅销毁窗口，不退出应用
-  managementWindow.on('closed', () => {
-    managementWindow = null;
+  // 关闭仅销毁窗口，不退出应用。
+  // M-G 修复：闭包捕获局部 win 引用，closed 时比对模块级变量仍是本窗才置 null，
+  // 防止旧窗迟到的销毁事件误清掉已被重建的新窗口引用。
+  const win = managementWindow;
+  win.on('closed', () => {
+    if (managementWindow === win) managementWindow = null;
   });
 
   return managementWindow;
@@ -304,9 +308,12 @@ function createDanmakuWindow(): BrowserWindow {
 
   loadRoute(danmakuWindow, '/danmaku');
 
-  // 关闭仅销毁窗口，不退出应用
-  danmakuWindow.on('closed', () => {
-    danmakuWindow = null;
+  // 关闭仅销毁窗口，不退出应用。
+  // M-G 修复：闭包捕获局部 win 引用，closed 时比对模块级变量仍是本窗才置 null，
+  // 防止旧窗迟到的销毁事件误清掉已被重建的新窗口引用（与管理窗同型竞态）。
+  const win = danmakuWindow;
+  win.on('closed', () => {
+    if (danmakuWindow === win) danmakuWindow = null;
   });
   return danmakuWindow;
 }
@@ -384,23 +391,23 @@ function createTray(): void {
 // ---------------------------------------------------------------------------
 function registerIpcHandlers(): void {
   // 持久化存储（userData/store/<name>.json）
-  ipcMain.handle('store:load', (_event, name: string) => loadStore(name));
-  ipcMain.handle('store:save', (_event, name: string, data: string) => {
+  registerIpcHandler('store:load', (_event, name: string) => loadStore(name));
+  registerIpcHandler('store:save', (_event, name: string, data: string) => {
     saveStore(name, data);
   });
 
   // 窗口控制
-  ipcMain.handle('window:open-management', () => {
+  registerIpcHandler('window:open-management', () => {
     openManagementWindow();
   });
 
   // 桌宠多开：按 agentId 创建/聚焦对应桌宠窗（幂等）
-  ipcMain.handle('window:open-pet', (_event, agentId: string) => {
+  registerIpcHandler('window:open-pet', (_event, agentId: string) => {
     createPetWindow(String(agentId || 'default'));
   });
 
   // 桌宠多开：按 agentId 关闭对应桌宠窗（最后窗关闭触发应用退出）
-  ipcMain.handle('window:close-pet', (_event, agentId: string) => {
+  registerIpcHandler('window:close-pet', (_event, agentId: string) => {
     if (agentId) {
       closePetWindow(String(agentId));
       return;
@@ -412,7 +419,7 @@ function registerIpcHandlers(): void {
 
   // 桌宠多开：返回当前实际已开启的桌宠窗 agentId 列表（权威来源 = 主进程窗口），
   // 供管理页初始化时对齐 UI 的「开启」状态（覆盖启动默认窗等未写入面板记忆的来源）。
-  ipcMain.handle('window:list-pet', () => {
+  registerIpcHandler('window:list-pet', () => {
     const ids: string[] = [];
     for (const [agentId, win] of petWindows) {
       if (win && !win.isDestroyed()) ids.push(agentId);
@@ -421,24 +428,24 @@ function registerIpcHandlers(): void {
   });
 
   // 在系统默认浏览器打开外部 URL（OBS 源预览等；仅放行 http/https，不放行 file:）
-  ipcMain.handle('shell:open-external', (_event, url: string) => {
+  registerIpcHandler('shell:open-external', (_event, url: string) => {
     if (typeof url !== 'string') return;
     if (/^https?:\/\//i.test(url)) {
       shell.openExternal(url);
     }
   });
 
-  ipcMain.handle('window:toggle-danmaku', () => {
+  registerIpcHandler('window:toggle-danmaku', () => {
     toggleDanmakuWindow();
   });
 
   // 幂等显隐（启动恢复、托盘同步等场景语义确定）
-  ipcMain.handle('window:set-danmaku-visible', (_event, visible: boolean) => {
+  registerIpcHandler('window:set-danmaku-visible', (_event, visible: boolean) => {
     setDanmakuVisible(visible);
   });
 
   // 桌宠窗拖拽：增量坐标移动（渲染层记录按下点，逐帧回传 delta）
-  ipcMain.handle('window:move', (event, dx: number, dy: number) => {
+  registerIpcHandler('window:move', (event, dx: number, dy: number) => {
     const win = BrowserWindow.fromWebContents(event.sender);
     if (win && !win.isDestroyed()) {
       const [currentX, currentY] = win.getPosition();
@@ -447,14 +454,14 @@ function registerIpcHandlers(): void {
   });
 
   // 鼠标穿透：保留 forward 以便窗口重新收到 mousemove，避免离开窗口后永久卡在穿透态
-  ipcMain.handle('window:set-ignore-mouse-events', (event, ignore: boolean) => {
+  registerIpcHandler('window:set-ignore-mouse-events', (event, ignore: boolean) => {
     const win = BrowserWindow.fromWebContents(event.sender);
     if (win && !win.isDestroyed()) {
       win.setIgnoreMouseEvents(ignore, { forward: true });
     }
   });
 
-  ipcMain.handle('window:set-always-on-top', (event, flag: boolean) => {
+  registerIpcHandler('window:set-always-on-top', (event, flag: boolean) => {
     const win = BrowserWindow.fromWebContents(event.sender);
     if (win && !win.isDestroyed()) {
       win.setAlwaysOnTop(flag);
@@ -464,7 +471,7 @@ function registerIpcHandlers(): void {
   // 桌宠窗采集尺寸预设（SubTask 9.3）：渲染层下发目标尺寸，主进程 setSize。
   // 尺寸合法化（下限 300x400 对齐窗口 minWidth/minHeight）在渲染层 obsStore 完成，
   // 此处仅取整兜底；窗口最小尺寸约束由 Electron 自身强制。
-  ipcMain.handle('window:set-size', (event, width: number, height: number) => {
+  registerIpcHandler('window:set-size', (event, width: number, height: number) => {
     const win = BrowserWindow.fromWebContents(event.sender);
     if (win && !win.isDestroyed() && Number.isFinite(width) && Number.isFinite(height)) {
       win.setSize(Math.round(width), Math.round(height));
@@ -472,35 +479,35 @@ function registerIpcHandlers(): void {
   });
 
   // 后端地址配置（userData/config.json）
-  ipcMain.handle('config:get-backend-url', () => getConfig('backendUrl'));
-  ipcMain.handle('config:set-backend-url', (_event, url: string) => {
+  registerIpcHandler('config:get-backend-url', () => getConfig('backendUrl'));
+  registerIpcHandler('config:set-backend-url', (_event, url: string) => {
     setConfig('backendUrl', url);
   });
 
   // 前端启动配置（Task 5）：自启动 / 管理员权限启动，仅作用于前端 Electron。
   // 浏览器模式渲染层无 electronAPI，不会调用这些 IPC。
-  ipcMain.handle('startup:get-settings', () => getStartupSettings());
-  ipcMain.handle('startup:set-auto-start', (_event, enabled: boolean) => {
+  registerIpcHandler('startup:get-settings', () => getStartupSettings());
+  registerIpcHandler('startup:set-auto-start', (_event, enabled: boolean) => {
     setAutoStart(!!enabled);
     return getStartupSettings();
   });
-  ipcMain.handle('startup:set-run-as-admin', (_event, enabled: boolean) => {
+  registerIpcHandler('startup:set-run-as-admin', (_event, enabled: boolean) => {
     setRunAsAdmin(!!enabled);
     return getStartupSettings();
   });
 
   // 电脑控制插件：授权状态读写 + 运行信息。
   // 渲染层不得直接执行本机控制，只能经主进程校验授权后调用插件（插件服务内部仍校验授权）。
-  ipcMain.handle('computerControl:get-auth', () => getComputerControlAuthorization());
-  ipcMain.handle('computerControl:set-auth', (_event, value: boolean) =>
+  registerIpcHandler('computerControl:get-auth', () => getComputerControlAuthorization());
+  registerIpcHandler('computerControl:set-auth', (_event, value: boolean) =>
     setComputerControlAuthorization(!!value),
   );
-  ipcMain.handle('computerControl:get-info', () => getPluginInfo());
+  registerIpcHandler('computerControl:get-info', () => getPluginInfo());
 
   // P2-T2 relay 推送路径：渲染层收到后端 cxfc_relay_call 后经主进程执行本机工具。
   // 沿用"渲染层不得直接执行本机控制"安全边界：执行前校验本地授权（与 /call HTTP 端点一致），
   // 未授权不执行任何本机动作。
-  ipcMain.handle(
+  registerIpcHandler(
     'computerControl:call-tool',
     (_event, tool: string, args: Record<string, unknown>) => {
       if (!getComputerControlAuthorization()) {
@@ -516,7 +523,7 @@ function registerIpcHandlers(): void {
 
   // VRM 模型：桌面模式模型选择（默认模型打包在包内，用户可选本地 .vrm 覆盖）。
   // 安全边界：仅返回用户经系统对话框选中的 .vrm 路径；渲染层无法任意枚举文件系统。
-  ipcMain.handle('model:pick-file', async (event) => {
+  registerIpcHandler('model:pick-file', async (event) => {
     const win = BrowserWindow.fromWebContents(event.sender);
     // 窗口可能已销毁（竞态）：win 可为 null，非空断言会同步抛错。校验后优雅降级取消。
     if (!win || win.isDestroyed()) {
@@ -535,7 +542,7 @@ function registerIpcHandlers(): void {
 
   // VRM 模型：读取本地 .vrm 文件为字节流（仅放行 .vrm 后缀，读取失败返回 null）。
   // 渲染层持 blob URL 交给 GLTFLoader，避免 file:// 跨域问题，dev(http) 与生产(file) 行为一致。
-  ipcMain.handle('model:read-file', async (_event, filePath: string) => {
+  registerIpcHandler('model:read-file', async (_event, filePath: string) => {
     try {
       if (typeof filePath !== 'string' || !/\.vrm$/i.test(filePath)) return null;
       return await readFile(filePath);
@@ -546,7 +553,7 @@ function registerIpcHandlers(): void {
 
   // 手环心率 BLE 采集（Task 5 / spec：前端 Electron BLE 采集）。
   // 实时 HR / 状态 / 错误经主进程 webContents.send('ble:notify') 推送（见 ensureBleCollector）。
-  ipcMain.handle('ble:scan', async () => {
+  registerIpcHandler('ble:scan', async () => {
     try {
       const result = await ensureBleCollector().startScan();
       return { ok: result.ok, status: result.status, devices: result.devices ?? [], error: result.error };
@@ -555,7 +562,7 @@ function registerIpcHandlers(): void {
     }
   });
 
-  ipcMain.handle('ble:connect', async (_event, deviceId: string) => {
+  registerIpcHandler('ble:connect', async (_event, deviceId: string) => {
     try {
       const result = await ensureBleCollector().connect(String(deviceId ?? ''));
       return { ok: result.ok, status: result.status, error: result.error };
@@ -564,7 +571,7 @@ function registerIpcHandlers(): void {
     }
   });
 
-  ipcMain.handle('ble:disconnect', async () => {
+  registerIpcHandler('ble:disconnect', async () => {
     try {
       const result = await ensureBleCollector().disconnect();
       return { ok: result.ok, status: result.status, error: result.error };
@@ -573,60 +580,44 @@ function registerIpcHandlers(): void {
     }
   });
 
-  ipcMain.handle('ble:status', () => ensureBleCollector().getStatus());
+  registerIpcHandler('ble:status', () => ensureBleCollector().getStatus());
 }
 
 // ---------------------------------------------------------------------------
-// 跨域放行（G4 条件化白名单）：前后端分离部署时渲染进程需直连远端后端。
-// 仅当请求 Origin 命中以下集合时回显该 Origin 并下发 CORS 头：
-//   - 当前配置的后端地址 origin（每次响应动态读取，设置页换自定义地址后即刻生效）
-//   - 本机默认服务：127.0.0.1/localhost 的 8000（后端）与 8200（语音工作站）
-//   - 开发态 vite dev server（默认 http://localhost:3100 或实际 VITE_DEV_SERVER_URL）
-// Origin 缺失或为 'null' 视为打包态 file:// 渲染进程（Electron 一方壳可信），注入 ACAO:* 放行；
-// 其余来源不下发任何 CORS 头。
+// 跨域放行（安全加固·收窄版）：仅对本机可信来源下发 CORS 头。
+// 三态策略：
+//   - Origin 缺失或 'null' → ACAO:'*' 保持放行
+//     （打包态 file:// 渲染进程 fetch 表现为 null，一方壳可信，不能破坏自家页面）
+//   - Origin 明确命中 http://localhost:* / http://127.0.0.1:*（任意端口）
+//     → 回显该 Origin 放行（dev 场景，含 Vite dev server 3100）
+//   - 其它明确 Origin → 不下发 Access-Control-Allow-Origin 头（log debug 记录）
+// Allow-Headers / Methods 维持既有固定值不变。
 // ---------------------------------------------------------------------------
 function configureCors(): void {
-  const LOCAL_ORIGINS = new Set<string>([
-    'http://127.0.0.1:8000',
-    'http://localhost:8000',
-    'http://127.0.0.1:8200',
-    'http://localhost:8200',
-    'http://localhost:3100',
-  ]);
-  if (devServerUrl) {
-    try {
-      LOCAL_ORIGINS.add(new URL(devServerUrl).origin);
-    } catch {
-      // 非法 dev server 地址忽略，仍保留默认白名单
-    }
-  }
+  // dev 本机 Origin 白名单：任意端口的 localhost / 127.0.0.1，锚定结尾防伪装域
+  const LOCAL_ORIGIN_RE = /^http:\/\/(?:localhost|127\.0\.0\.1):\d+$/i;
 
   session.defaultSession.webRequest.onHeadersReceived((details, callback) => {
-    // Origin 从请求头提取（键大小写不敏感）
+    // Origin 从请求头提取（键大小写不敏感）。
+    // 注意：headersReceived 的官方类型不包含 requestHeaders（仅 beforeSendHeaders 声明），
+    // 历史运行时部分 channel 仍携带；此处按可选读取，缺失时自然落入下方无-Origin 兜底分支。
     let requestOrigin: string | undefined;
-    for (const [key, value] of Object.entries(details.requestHeaders ?? {})) {
+    const rawReqHeaders = (details as { requestHeaders?: Record<string, string> }).requestHeaders ?? {};
+    for (const [key, value] of Object.entries(rawReqHeaders)) {
       if (key.toLowerCase() === 'origin') {
         requestOrigin = String(value);
         break;
       }
-    }
-    // 动态解析当前配置的后端地址 origin（保证设置页换地址后连接设置仍可用）
-    let backendOrigin: string | null = null;
-    try {
-      backendOrigin = new URL(getConfig('backendUrl') || 'http://127.0.0.1:8000').origin;
-    } catch {
-      // 配置了非法地址时忽略该项
     }
 
     let allowOrigin: string | null = null;
     if (!requestOrigin || requestOrigin === 'null') {
       // 打包态渲染进程为 file:// 页面：无 Origin 或 'null'，一方壳可信 → 保持放行
       allowOrigin = '*';
-    } else if (
-      LOCAL_ORIGINS.has(requestOrigin) ||
-      (backendOrigin !== null && requestOrigin === backendOrigin)
-    ) {
-      allowOrigin = requestOrigin; // 白名单命中 → 回显该 Origin（窄于 *）
+    } else if (LOCAL_ORIGIN_RE.test(requestOrigin)) {
+      allowOrigin = requestOrigin; // dev 本机来源 → 回显该 Origin（窄于 *）
+    } else {
+      console.debug(`[cors] 未放行非本机 Origin，不下发 CORS 头: ${requestOrigin}`);
     }
 
     if (allowOrigin === null) {

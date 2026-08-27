@@ -62,12 +62,16 @@ class DreamConsolidator:
         write_dream_memory 落库；consolidation_state / confirmed_at / importance_score
         由 consolidate_dream 提级完成。
 
+        M-E 修复：提级（consolidate_dream）未生效时不再把缓冲置 approved——
+        保持 pending 状态允许重试；返回值区分结果：固化完整成功返回新记忆 id，
+        候选缺失/已决策/提级未生效返回 None 供上层感知。
+
         Args:
             buffer_id: 缓冲候选 id
             agent_id: Agent ID
 
         Returns:
-            新写入的梦境记忆 id；候选不存在或已决策返回 None。
+            新写入的梦境记忆 id；候选不存在、已决策或提级未生效返回 None。
         """
         candidate = self.buffer.get(buffer_id)
         if candidate is None:
@@ -104,11 +108,15 @@ class DreamConsolidator:
             memory_id, confirmed_importance=self.config.confirmed_importance
         )
         if not confirmed:
+            # M-E: 提级未生效（可能状态不符）→ 保持 pending 可重试，仅记录失败，
+            # 不置 approved，也不向调用方谎报固化完成。
             logger.warning(
-                "固化提级未生效（可能状态不符）: memory_id=%s, buffer_id=%s",
+                "固化提级未生效，缓冲保持待决策（pending）供重试: "
+                "memory_id=%s, buffer_id=%s",
                 memory_id,
                 buffer_id,
             )
+            return None
         self.buffer.mark_decision(buffer_id, "approved", reason="user_confirmed")
         logger.info(
             "梦境候选已固化: buffer_id=%s -> memory_id=%s, agent=%s",

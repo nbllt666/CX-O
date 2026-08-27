@@ -335,6 +335,52 @@ def _run_spk_embedding(audio_slice: np.ndarray) -> Optional[np.ndarray]:
 
 
 # --------------------------------------------------------------------------- #
+# 音频缓冲：摊还 O(1) 追加（L 级修复：替代逐帧 np.append 的 O(n²) 全量拷贝）
+# --------------------------------------------------------------------------- #
+class _GrowableAudioBuffer:
+    """可增长 float32 音频缓冲。
+
+    此前 ``feed_pcm`` 每帧执行 ``np.append(self._audio, chunk)``——每次都整段
+    拷贝重建数组，随缓冲增长呈 O(n²)。改为「倍增容量的后备数组 + 已写长度」：
+    - ``append`` 摊还 O(1)，仅在容量不足时搬运一次；
+    - ``view()`` 返回 ``[0:_size]`` 的 ndarray 视图，对 VAD/ASR 喂入与
+      ``len()/切片/索引`` 等既有消费点语义与连续 ndarray 完全一致；
+    - 已写入区间永不回写覆盖（只在尾部追加；扩容时旧块整块拷贝后仍由旧视图持有），
+      在途切片（如声纹后台任务的 audio_slice）数据不变性等同旧的按次拷贝行为。
+    """
+
+    __slots__ = ("_data", "_size")
+
+    def __init__(self) -> None:
+        self._data = np.empty(0, dtype=np.float32)
+        self._size = 0
+
+    def reset(self) -> None:
+        """清空缓冲（丢弃后备数组，下次追加重新起步）。"""
+        self._data = np.empty(0, dtype=np.float32)
+        self._size = 0
+
+    def append(self, chunk: np.ndarray) -> None:
+        """追加一段样本（一维 float32/可转换数组），摊还 O(1)。"""
+        n = int(chunk.size)
+        need = self._size + n
+        if need > self._data.shape[0]:
+            cap = max(need, self._data.shape[0] * 2, 4096)
+            new_data = np.empty(cap, dtype=np.float32)
+            new_data[: self._size] = self._data[: self._size]
+            self._data = new_data
+        self._data[self._size : need] = chunk
+        self._size = need
+
+    def view(self) -> np.ndarray:
+        """返回已写入区间的 ndarray 视图（[0:_size]，消费方按只读对待）。"""
+        return self._data[: self._size]
+
+    def __len__(self) -> int:
+        return self._size
+
+
+# --------------------------------------------------------------------------- #
 # StreamSession：每条 WS 连接一个，持有独立累积状态与说话人临时簇
 # --------------------------------------------------------------------------- #
 class StreamSession:
@@ -348,7 +394,7 @@ class StreamSession:
 
     def __init__(self) -> None:
         _load_models()
-        self._audio = np.empty(0, dtype=np.float32)   # 累积音频（当前 utterance）
+        self._buf = _GrowableAudioBuffer()            # 增长式累积音频缓冲（O(1) 追加）
         self._cur_start = 0                           # 当前句起点样本索引
         self._asr_cache: dict = {}                    # 当前句增量 ASR cache
         self._vad_cache: dict = {}                    # VAD 流式 cache
@@ -360,6 +406,19 @@ class StreamSession:
         self._spk_pending_count = 0        # 会话内 in-flight 声纹任务数
         self._pending_spk_msgs: List[dict] = []  # 待下发的 spk 补充消息
         self._classify_lock = asyncio.Lock()     # classify 并发互斥
+
+    @property
+    def _audio(self) -> np.ndarray:
+        """已累积音频视图（兼容既有消费点：len/切片/整段喂 VAD）。"""
+        return self._buf.view()
+
+    @_audio.setter
+    def _audio(self, value: np.ndarray) -> None:
+        """整体替换缓冲内容（兼容旧调用点/测试直塞整段音频的场景）。"""
+        self._buf.reset()
+        arr = np.asarray(value, dtype=np.float32).reshape(-1)
+        if arr.size:
+            self._buf.append(arr)
 
     # ------------------------------------------------------------------ #
     # 消息构造
@@ -397,7 +456,7 @@ class StreamSession:
             logger.warning(
                 f"[SESSION] 缓冲超限（>{MAX_BUFFER} 样本），整体清空重置（病理兜底）"
             )
-        self._audio = np.empty(0, dtype=np.float32)
+        self._buf.reset()
         self._cur_start = 0
         self._asr_cache = {}
         self._vad_cache = {}
@@ -418,7 +477,7 @@ class StreamSession:
         # 病理兜底：缓冲超限整体清空重置
         if len(self._audio) + n > MAX_BUFFER:
             self._reset_buffer(pathological=True)
-        self._audio = np.append(self._audio, chunk)
+        self._buf.append(chunk)
         self._last_vad_t += n
         # 全量转发下（服务端不再做 VAD 门控）纯数字静音帧仍喂 VAD，但不计入 ASR
         # partial 步进锚点，避免静默空转解码烧 CPU（语音帧 RMS 通常 >> 1e-4）。

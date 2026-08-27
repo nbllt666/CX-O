@@ -836,6 +836,19 @@ class TRTLLMClient(LLMClient):
             async with client.stream(
                 "POST", f"{self.host}/v1/chat/completions", json=request_body, headers=headers
             ) as response:
+                # 显式检查状态码（与 VLLMClient.stream_chat 对齐）：此前缺少该检查，
+                # 非 200 响应体没有 SSE data 行，aiter_lines() 零产出，失败被当作
+                # "空回复"继续走播报链路，用户只听到静音结束标记而无错误提示。
+                if response.status_code != 200:
+                    error_body = await response.aread()
+                    error_text = error_body.decode("utf-8", errors="replace")[:1000]
+                    logger.error(
+                        f"TRT-LLM stream_chat HTTP {response.status_code}: {error_text} | "
+                        f"request_body={json.dumps(request_body, ensure_ascii=False)[:500]}"
+                    )
+                    yield {"type": "error", "content": f"TRT-LLM HTTP {response.status_code}: {error_text}"}
+                    return
+
                 async for line in response.aiter_lines():
                     if line and line.startswith("data: "):
                         data = line[6:]
@@ -921,7 +934,14 @@ class LLMFactory:
         Raises:
             ValueError: 不支持的提供商
         """
-        key = f"{provider}:{kwargs.get('model', 'default')}"
+        # 缓存键并入 host 与 lora_request：此前仅 provider:model，同一模型指向不同
+        # host（或同 host 不同 LoRA 适配）时会错误命中第一个实例的缓存。
+        key = "{}:{}:{}:{}".format(
+            provider,
+            kwargs.get("model", "default"),
+            kwargs.get("host", "") or "",
+            kwargs.get("lora_request") or "",
+        )
 
         if key in cls._clients:
             return cls._clients[key]

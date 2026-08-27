@@ -46,11 +46,29 @@ class ContextManager:
         # BUG-B-M3 修复: 记录所有线程创建的连接,shutdown() 时统一关闭,
         # 避免仅关闭当前线程连接导致其他线程连接泄漏。
         self._all_connections: List = []
+        # H2 条目2: 连接代际计数。shutdown()/close() 时自增，其他线程
+        # threading.local 中残留的旧代际连接在下次 _get_connection() 被识别并
+        # 弃置重建，避免"已关闭连接被 not None 检查误判为可用"→
+        # "Cannot operate on a closed database"。
+        self._generation = 0
         self._init_db()
 
     def _get_connection(self):
         """获取线程本地数据库连接"""
-        if not hasattr(self._local, "connection") or self._local.connection is None:
+        conn = getattr(self._local, "connection", None)
+        # 旧代际残留连接（shutdown 后）：弃置并从登记表移除，重建新代际连接
+        if conn is not None and getattr(self._local, "generation", -1) != self._generation:
+            with self._connection_lock:
+                try:
+                    self._all_connections.remove(conn)
+                except ValueError:
+                    pass
+            try:
+                conn.close()
+            except Exception:
+                pass
+            conn = None
+        if conn is None:
             import sqlite3
 
             conn = sqlite3.connect(self.db_path, timeout=30.0)
@@ -61,7 +79,12 @@ class ContextManager:
             conn.execute("PRAGMA temp_store=MEMORY")
             conn.execute("PRAGMA mmap_size=268435456")
             conn.execute("PRAGMA busy_timeout=30000")
+            # H2 条目5: 开启外键约束（本模块 messages 表 FK 未带 CASCADE，
+            # 但所有 DELETE sessions 父行路径均已先显式删除子行 messages，
+            # 见 delete_session / clear_all_sessions）
+            conn.execute("PRAGMA foreign_keys=ON")
             self._local.connection = conn
+            self._local.generation = self._generation
             with self._connection_lock:
                 self._all_connections.append(conn)
         return self._local.connection
@@ -88,8 +111,13 @@ class ContextManager:
 
         BUG-B-M3 修复: 关闭所有线程创建的连接,而不仅仅是当前线程的连接,
         避免多线程场景下其他线程连接泄漏。
+
+        H2 条目2 修复: 自增代际计数,其他线程 threading.local 中残留的旧
+        连接在下一次 _get_connection() 时按代际不匹配被弃置重建,而非因
+        "not None" 被误用导致 Cannot operate on a closed database。
         """
         with self._connection_lock:
+            self._generation += 1
             connections_to_close = list(self._all_connections)
             self._all_connections.clear()
         for conn in connections_to_close:
@@ -329,8 +357,8 @@ class ContextManager:
         cursor = conn.cursor()
 
         # 获取会话数量
-        cursor.execute("SELECT COUNT(*) FROM sessions")
-        count = cursor.fetchone()[0]
+        cursor.execute("SELECT COUNT(*) AS cnt FROM sessions")
+        count = cursor.fetchone()["cnt"]
 
         # 删除所有消息
         cursor.execute("DELETE FROM messages")
@@ -422,11 +450,21 @@ class ContextManager:
         return [self._row_to_message(row) for row in reversed(rows)]
 
     def delete_message(self, message_id: str) -> bool:
+        """软删消息（H2 条目3: 同事务回减所属会话 message_count，下限 0）。"""
         conn = self._get_connection()
         cursor = conn.cursor()
 
         cursor.execute("UPDATE messages SET is_deleted = TRUE WHERE id = ?", (message_id,))
         success = cursor.rowcount > 0
+        if success:
+            cursor.execute(
+                """
+                UPDATE sessions
+                SET message_count = MAX(message_count - 1, 0)
+                WHERE id = (SELECT session_id FROM messages WHERE id = ?)
+            """,
+                (message_id,),
+            )
         conn.commit()
 
         return success
@@ -480,10 +518,10 @@ class ContextManager:
         cursor = conn.cursor()
 
         cursor.execute(
-            "SELECT COUNT(*) FROM messages WHERE session_id = ? AND is_deleted = FALSE",
+            "SELECT COUNT(*) AS cnt FROM messages WHERE session_id = ? AND is_deleted = FALSE",
             (session_id,),
         )
-        count = cursor.fetchone()[0]
+        count = cursor.fetchone()["cnt"]
 
         return count
 
@@ -499,30 +537,32 @@ class ContextManager:
         return success
 
     def _row_to_session(self, row) -> Dict:
+        """数据库行转 Dict（H2 条目1: 列名访问，消除 SELECT * 位置索引串位）。"""
         return {
-            "id": row[0],
-            "workspace_id": row[1],
-            "title": row[2],
-            "user_id": row[3],
-            "created_at": row[4],
-            "updated_at": row[5],
-            "message_count": row[6],
-            "summary": row[7],
-            "metadata": json.loads(row[8] or "{}"),
-            "is_active": bool(row[9]),
+            "id": row["id"],
+            "workspace_id": row["workspace_id"],
+            "title": row["title"],
+            "user_id": row["user_id"],
+            "created_at": row["created_at"],
+            "updated_at": row["updated_at"],
+            "message_count": row["message_count"],
+            "summary": row["summary"],
+            "metadata": json.loads(row["metadata"] or "{}"),
+            "is_active": bool(row["is_active"]),
         }
 
     def _row_to_message(self, row) -> Dict:
+        """数据库行转 Dict（H2 条目1: 列名访问，见 _row_to_session 注）。"""
         return {
-            "id": row[0],
-            "session_id": row[1],
-            "role": row[2],
-            "content": row[3],
-            "content_type": row[4],
-            "metadata": json.loads(row[5] or "{}"),
-            "tokens": row[6],
-            "created_at": row[7],
-            "is_deleted": bool(row[8]),
+            "id": row["id"],
+            "session_id": row["session_id"],
+            "role": row["role"],
+            "content": row["content"],
+            "content_type": row["content_type"],
+            "metadata": json.loads(row["metadata"] or "{}"),
+            "tokens": row["tokens"],
+            "created_at": row["created_at"],
+            "is_deleted": bool(row["is_deleted"]),
         }
 
     def get_statistics(self, workspace_id: str = "default") -> Dict:
@@ -530,20 +570,23 @@ class ContextManager:
         conn = self._get_connection()
         cursor = conn.cursor()
 
-        cursor.execute("SELECT COUNT(*) FROM sessions WHERE workspace_id = ?", (workspace_id,))
-        total_sessions = cursor.fetchone()[0]
+        cursor.execute(
+            "SELECT COUNT(*) AS cnt FROM sessions WHERE workspace_id = ?", (workspace_id,)
+        )
+        total_sessions = cursor.fetchone()["cnt"]
 
         cursor.execute(
-            "SELECT COUNT(*) FROM sessions WHERE workspace_id = ? AND is_active = TRUE",
+            "SELECT COUNT(*) AS cnt FROM sessions WHERE workspace_id = ? AND is_active = TRUE",
             (workspace_id,),
         )
-        active_sessions = cursor.fetchone()[0]
+        active_sessions = cursor.fetchone()["cnt"]
 
         cursor.execute(
-            "SELECT COUNT(*) FROM messages m JOIN sessions s ON m.session_id = s.id WHERE s.workspace_id = ?",
+            "SELECT COUNT(*) AS cnt FROM messages m JOIN sessions s ON m.session_id = s.id "
+            "WHERE s.workspace_id = ?",
             (workspace_id,),
         )
-        total_messages = cursor.fetchone()[0]
+        total_messages = cursor.fetchone()["cnt"]
 
         avg_messages = total_messages / total_sessions if total_sessions > 0 else 0
 
@@ -640,12 +683,44 @@ class ContextManager:
             return []
 
     def clear_expired_mono(self, session_id: str = None) -> int:
-        """清理过期的Mono上下文"""
+        """清理过期的Mono上下文
+
+        H2 条目3: 本方法是 is_deleted=TRUE 软删入口之一，同一事务内按
+        各会话被软删的 mono 消息数回减 message_count（下限 0）。
+        """
         try:
             conn = self._get_connection()
             cursor = conn.cursor()
 
             now = datetime.now()
+
+            # 先统计本批将被软删的消息在各会话的分布（软删前查询，条件不再变化）
+            if session_id:
+                cursor.execute(
+                    """
+                    SELECT session_id, COUNT(*) AS cnt FROM messages
+                    WHERE session_id = ? AND content_type = 'mono_context'
+                    AND is_deleted = FALSE
+                    AND json_extract(metadata, '$.expires_at') < ?
+                    GROUP BY session_id
+                """,
+                    (session_id, now.isoformat()),
+                )
+            else:
+                cursor.execute(
+                    """
+                    SELECT session_id, COUNT(*) AS cnt FROM messages
+                    WHERE content_type = 'mono_context'
+                    AND is_deleted = FALSE
+                    AND json_extract(metadata, '$.expires_at') < ?
+                    GROUP BY session_id
+                """,
+                    (now.isoformat(),),
+                )
+            per_session = [(r["session_id"], r["cnt"]) for r in cursor.fetchall()]
+
+            if not per_session:
+                return 0
 
             if session_id:
                 cursor.execute(
@@ -669,6 +744,13 @@ class ContextManager:
                 )
 
             deleted_count = cursor.rowcount
+
+            # 同事务回减各会话计数
+            for sid, cnt in per_session:
+                cursor.execute(
+                    "UPDATE sessions SET message_count = MAX(message_count - ?, 0) WHERE id = ?",
+                    (cnt, sid),
+                )
 
             conn.commit()
 

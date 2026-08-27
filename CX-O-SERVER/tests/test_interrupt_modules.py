@@ -15,8 +15,8 @@ import types
 import pytest
 
 from server.handlers.audio import DualStreamSession
-from server.services.asr_interrupt import ASRInterruptModule
-from server.services.agent_interrupt_user import AgentInterruptUser
+from server.services.asr_interrupt import ASRInterruptModule, get_asr_interrupt_module
+from server.services.agent_interrupt_user import AgentInterruptUser, get_agent_interrupt_module
 
 
 # ================================================================ ASRInterruptModule
@@ -1115,95 +1115,78 @@ def async_chat_with(content):
 
 # ================================================================ call_ollama_decision
 # 共享助手：POST Ollama /api/generate + JSON 解析 + 文本兜底 + 超时/异常降级
-def _install_fake_aiohttp(monkeypatch, response_text=None, exc=None):
-    """用假 aiohttp 替换 call_ollama_decision 内部 `import aiohttp` 拿到的模块。"""
-    import sys
+def _install_fake_shared_client(monkeypatch, response_text=None, exc=None):
+    """用假共享 httpx 客户端替换 interrupt_llm.get_shared_http_client（L：共享客户端复用）。"""
+    from server.services import interrupt_llm as il
 
     class FakeResponse:
         def __init__(self, text):
             self._text = text
 
-        async def __aenter__(self):
-            return self
-
-        async def __aexit__(self, *args):
-            return False
-
-        async def json(self):
+        def json(self):
             return {"response": self._text}
 
-    class FakeSession:
+    class FakeClient:
         def __init__(self):
             self.posts = []
 
-        async def __aenter__(self):
-            return self
-
-        async def __aexit__(self, *args):
-            return False
-
-        def post(self, url, **kw):
-            """同步返回 async 上下文管理器，模拟真实 aiohttp 的 session.post。"""
+        async def post(self, url, **kw):
             self.posts.append((url, kw))
             if exc is not None:
                 raise exc
             return FakeResponse(response_text)
 
-    class FakeClientTimeout:
-        def __init__(self, total):
-            self.total = total
-
-    fake_session = FakeSession()
-    fake_module = types.SimpleNamespace(
-        ClientSession=lambda: fake_session,
-        ClientTimeout=FakeClientTimeout,
-    )
-    monkeypatch.setitem(sys.modules, "aiohttp", fake_module)
-    return fake_session
+    fake_client = FakeClient()
+    monkeypatch.setattr(il, "get_shared_http_client", lambda: fake_client)
+    return fake_client
 
 
 class TestCallOllamaDecision:
     @pytest.mark.asyncio
     async def test_parses_json_decision(self, monkeypatch):
-        session = _install_fake_aiohttp(monkeypatch, '{"decision": "INTERRUPT", "reason": "r"}')
+        client = _install_fake_shared_client(monkeypatch, '{"decision": "INTERRUPT", "reason": "r"}')
         result = await interrupt_llm_import().call_ollama_decision("http://x", "m", "p")
         assert result == {"decision": "INTERRUPT", "reason": "r"}
-        assert session.posts[0][1]["json"]["format"] == "json"
+        assert client.posts[0][1]["json"]["format"] == "json"
+        # L：timeout 每次调用显式传入
+        assert client.posts[0][1].get("timeout") is not None
 
     @pytest.mark.asyncio
     async def test_json_missing_decision_defaults_ignore(self, monkeypatch):
-        _install_fake_aiohttp(monkeypatch, '{"foo": "bar"}')
+        _install_fake_shared_client(monkeypatch, '{"foo": "bar"}')
         result = await interrupt_llm_import().call_ollama_decision("http://x", "m", "p")
         assert result["decision"] == "IGNORE"
 
     @pytest.mark.asyncio
     async def test_json_fail_text_interrupt(self, monkeypatch):
-        _install_fake_aiohttp(monkeypatch, "not json INTERRUPT here")
+        _install_fake_shared_client(monkeypatch, "not json INTERRUPT here")
         result = await interrupt_llm_import().call_ollama_decision("http://x", "m", "p")
         assert result == {"decision": "INTERRUPT", "reason": "文本解析"}
 
     @pytest.mark.asyncio
     async def test_json_fail_text_ignore(self, monkeypatch):
-        _install_fake_aiohttp(monkeypatch, "IGNORE whatever")
+        _install_fake_shared_client(monkeypatch, "IGNORE whatever")
         result = await interrupt_llm_import().call_ollama_decision("http://x", "m", "p")
         assert result["decision"] == "IGNORE"
 
     @pytest.mark.asyncio
     async def test_json_fail_no_keyword_continue(self, monkeypatch):
-        _install_fake_aiohttp(monkeypatch, "完全没有标记的文本")
+        _install_fake_shared_client(monkeypatch, "完全没有标记的文本")
         result = await interrupt_llm_import().call_ollama_decision("http://x", "m", "p")
         assert result["decision"] == "CONTINUE"
 
     @pytest.mark.asyncio
     async def test_timeout_returns_continue(self, monkeypatch):
-        _install_fake_aiohttp(monkeypatch, exc=TimeoutError())
+        import httpx as _httpx
+
+        _install_fake_shared_client(monkeypatch, exc=_httpx.TimeoutException("t/o"))
         result = await interrupt_llm_import().call_ollama_decision("http://x", "m", "p")
         assert result["decision"] == "CONTINUE"
         assert result["reason"] == "超时"
 
     @pytest.mark.asyncio
     async def test_other_exception_returns_ignore(self, monkeypatch):
-        _install_fake_aiohttp(monkeypatch, exc=RuntimeError("boom"))
+        _install_fake_shared_client(monkeypatch, exc=RuntimeError("boom"))
         result = await interrupt_llm_import().call_ollama_decision("http://x", "m", "p")
         assert result["decision"] == "IGNORE"
         assert result["reason"] == "boom"
@@ -1213,3 +1196,121 @@ def interrupt_llm_import():
     from server.services import interrupt_llm
 
     return interrupt_llm
+
+
+# ================================================================ H1：上下文注入与防护
+class TestInterruptContextInjection:
+    """H1：_context_manager/_session_id 组装层注入 + _apply_decision 未注入防护。"""
+
+    @pytest.mark.asyncio
+    async def test_apply_decision_skips_write_when_not_injected(self, monkeypatch, caplog):
+        # (a) 防护层：未注入时 final 判定不抛 AttributeError、打断动作照常执行、仅 warning 留痕
+        m = ASRInterruptModule()
+        assert m._context_manager is None and m._session_id is None
+        m.set_tts_playing(True)
+        fired = []
+
+        async def cb(text, resp):
+            fired.append(text)
+
+        m.set_interrupt_callback(cb)
+        llm = types.SimpleNamespace(chat=async_chat_with("##[INTERRUPT]## 打断"))
+        monkeypatch.setattr("server.dependencies.get_llm_client", lambda: llm)
+
+        with caplog.at_level("WARNING", logger="server.services.asr_interrupt"):
+            decision, triggered = await m.on_asr_result("请回答", is_final=True)
+        # 打断功能不再静默失效（判定/触发不受写回缺失影响）
+        assert decision == "INTERRUPT"
+        assert triggered is True
+        assert fired == ["请回答"]
+        # 跳过写回并 warning 留痕（不再被 except 吞掉的 AttributeError）
+        assert any("跳过上下文写回" in rec.message for rec in caplog.records)
+
+    @pytest.mark.asyncio
+    async def test_apply_decision_writes_when_injected(self, monkeypatch):
+        # 注入齐全时行为不变：final 判定正常写回
+        m = ASRInterruptModule()
+        m.set_tts_playing(True)
+        written = []
+        cm = types.SimpleNamespace(
+            get_context=lambda sid: [],
+            add_message=lambda sid, msg: written.append(msg),
+        )
+        m.set_session_id("s1")
+        m.set_context_manager(cm)
+        llm = types.SimpleNamespace(chat=async_chat_with("##[INTERRUPT]## 打断"))
+        monkeypatch.setattr("server.dependencies.get_llm_client", lambda: llm)
+
+        d, t = await m.on_asr_result("请问你是谁", is_final=True)
+        assert (d, t) == ("INTERRUPT", True)
+        assert written == [{"role": "user", "content": "请问你是谁"}]
+
+    @pytest.mark.asyncio
+    async def test_factory_injects_context_manager_and_client_session(self):
+        # (b) 注入层：per-client 工厂创建的实例持有真实 ContextManager 与 session_id
+        from server.services.agent_interrupt_user import (
+            release_agent_interrupt_module,
+        )
+        from server.services.asr_interrupt import release_asr_interrupt_module
+
+        try:
+            mod = get_asr_interrupt_module("h1-client-a")
+            from server.services.context_manager import get_context_manager as _gcm
+
+            assert mod._context_manager is _gcm()
+            assert mod._session_id == "h1-client-a"
+
+            amod = get_agent_interrupt_module("h1-client-a")
+            assert amod._context_manager is _gcm()
+            assert amod._session_id == "h1-client-a"
+        finally:
+            release_asr_interrupt_module("h1-client-a")
+            release_agent_interrupt_module("h1-client-a")
+
+    @pytest.mark.asyncio
+    async def test_live_init_corrects_real_session_id(self, monkeypatch):
+        # live_client._handle_init 持有真实 session_id 时覆盖 client_id 兜底值
+        from server.services.live_client import LiveClientHandler
+
+        sent = []
+        mgr = types.SimpleNamespace(
+            send_message=lambda cid, payload: _async_append(sent, payload)
+        )
+        handler = LiveClientHandler.__new__(LiveClientHandler)
+        handler.manager = mgr
+        handler.client_id = "h1-live"
+        handler.client_config = {}
+        handler.marker_adapter = types.SimpleNamespace(process_danmaku=lambda d: d)
+        handler.frontend_marker = types.SimpleNamespace(format_for_frontend=lambda x: x)
+
+        class _CM:
+            def add_danmaku_message(self, sid, data):
+                pass
+
+        handler.context_manager = _CM()
+        handler.firewall = types.SimpleNamespace(
+            filter_message=lambda c, u, n: types.SimpleNamespace(allowed=False, reason="x")
+        )
+        tracker_calls = []
+        handler.feedback_tracker = types.SimpleNamespace(
+            on_danmaku=lambda **kw: _async_append(tracker_calls, kw)
+        )
+        handler._session_id = None
+
+        await handler._handle_init(None, {"data": {"session_id": "real-session"}})
+
+        from server.services.agent_interrupt_user import (
+            release_agent_interrupt_module,
+        )
+        from server.services.asr_interrupt import release_asr_interrupt_module
+
+        try:
+            assert get_asr_interrupt_module("h1-live")._session_id == "real-session"
+            assert get_agent_interrupt_module("h1-live")._session_id == "real-session"
+        finally:
+            release_asr_interrupt_module("h1-live")
+            release_agent_interrupt_module("h1-live")
+
+
+async def _async_append(store, item):
+    store.append(item)

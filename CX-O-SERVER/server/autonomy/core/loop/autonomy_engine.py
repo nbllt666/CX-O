@@ -233,6 +233,7 @@ class AutonomyEngine:
             online_sleep = self._apply_user_online_policy()
             await self._motivate()
             budget_blocked = await self._apply_budget_gate()
+            manager_blocked = not self._manager_action_allowed()
             if budget_blocked:
                 # 预算超支：跳过规划与行动，仅审计 skipped（记账不执行）
                 action_result = {
@@ -240,6 +241,19 @@ class AutonomyEngine:
                     "target": "",
                     "payload": {},
                     "reason": "budget_exceeded",
+                    "expected_outcome": "",
+                    "result": "skipped",
+                }
+            elif manager_blocked:
+                # H11: 管理面门控——pause()/disable()/emergency_stop() 把
+                # manager.running/enabled 置 False 后，引擎此前从不读取这些字段，
+                # 暂停完全无效且状态谎报。此处跳过规划与行动并审计 skipped
+                # （降级为轮级跳过以维持轮询语义，resume/enable 后自动恢复）。
+                action_result = {
+                    "action": "wait",
+                    "target": "",
+                    "payload": {},
+                    "reason": "paused_or_disabled",
                     "expected_outcome": "",
                     "result": "skipped",
                 }
@@ -266,7 +280,9 @@ class AutonomyEngine:
                 self.manager.last_action = str(action_result.get("action", "") or "")
             elif plan is not None:
                 self.manager.last_action = str(plan.get("action", "") or "")
-            self.manager.last_cycle_at = self._now_iso()
+            # H12: last_cycle_at 统一用本地带偏移时间戳（日记过滤按本地日期前缀
+            # 匹配；_elapsed_minutes 对 tz-aware 时间戳跨时区求差无混算）。
+            self.manager.last_cycle_at = self._local_now_iso()
             self._sync_manager_motivations()
             self._save_manager_state()
 
@@ -300,6 +316,19 @@ class AutonomyEngine:
         except Exception as e:
             logger.warning("用户在线状态同步 killswitch 失败: %s", e)
         return bool(is_online)
+
+    # ------------------------------------------------------------ 0) 管理面门控
+    def _manager_action_allowed(self) -> bool:
+        """H11: 管理面门控——manager.enabled 且 manager.running 才允许规划与行动。
+
+        AutonomyManager.pause()/disable()/emergency_stop() 会把 running（和/或
+        enabled）置 False，resume()/enable() 复位 True；engine.start() 前装配层
+        已调用 manager.enable()。字段缺失时按启用处理（兼容测试替身，避免误伤）。
+        """
+        return (
+            bool(getattr(self.manager, "enabled", True))
+            and bool(getattr(self.manager, "running", True))
+        )
 
     # ------------------------------------------------------------ 0) 预算熔断闸门
     async def _apply_budget_gate(self) -> bool:
@@ -582,7 +611,7 @@ class AutonomyEngine:
         """
         plan = plan if isinstance(plan, dict) else {}
         entry: Dict[str, Any] = {
-            "timestamp": self._now_iso(),
+            "timestamp": self._local_now_iso(),
             "motivations": self._motivation_dict(),
             "action": str(action_result.get("action", "") or plan.get("action", "") or "wait"),
             "target": str(action_result.get("target", "") or plan.get("target", "") or ""),
@@ -619,7 +648,7 @@ class AutonomyEngine:
         try:
             self.audit.append(
                 {
-                    "timestamp": self._now_iso(),
+                    "timestamp": self._local_now_iso(),
                     "motivations": self._motivation_dict(),
                     "action": str((plan or {}).get("action", "") or "wait"),
                     "target": str((plan or {}).get("target", "") or ""),
@@ -669,12 +698,15 @@ class AutonomyEngine:
         except Exception as e:
             logger.warning("日记生成失败: %s", e)
             result = {"diary": "", "memory_id": None, "error": str(e)}
-        self.manager.diary_last_at = now.isoformat()
-        self._save_manager_state()
+        # L11/H12: 仅日记真正落库（memory_id 存在）才更新 diary_last_at——
+        # 失败保留"今日未写"状态允许下一唤醒重试；审计仍记录 failed 条目。
+        if (result or {}).get("memory_id"):
+            self.manager.diary_last_at = now.isoformat()
+            self._save_manager_state()
         try:
             self.audit.append(
                 {
-                    "timestamp": self._now_iso(),
+                    "timestamp": self._local_now_iso(),
                     "motivations": self._motivation_dict(),
                     "action": "write_diary",
                     "target": "",
@@ -816,9 +848,15 @@ class AutonomyEngine:
             return await value
         return value
 
-    def _now_iso(self) -> str:
-        """当前 UTC ISO 时间戳（对齐 models._now_iso 格式）。"""
-        return datetime.now(timezone.utc).isoformat()
+    def _local_now_iso(self) -> str:
+        """本地时区 ISO 时间戳（H12 审计条目/last_cycle_at 统一基准）。
+
+        此前审计条目写 UTC 时间戳，而日记过滤器按本地日期前缀
+        （startswith(now.date())）匹配，本地 00:00–07:59 生成的条目永远进不了
+        当日日志。统一改为本地带偏移时间戳后两侧基准一致；tz-aware ISO 串可被
+        _elapsed_minutes / _diary_written_today 直接解析，跨时区求差不引入混算。
+        """
+        return datetime.now().astimezone().isoformat()
 
     def _local_now(self) -> Any:
         """本地当前时间：优先感知器 now()，缺省 UTC+8。"""

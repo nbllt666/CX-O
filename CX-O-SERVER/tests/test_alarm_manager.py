@@ -289,3 +289,49 @@ class TestSingleton:
         m3 = get_alarm_manager()
         assert m3 is not m1
         m3.shutdown()
+
+
+# --------------------------------------------------------------------------- #
+# L10: pending 配额 SELECT+INSERT 单事务（BEGIN IMMEDIATE）
+# --------------------------------------------------------------------------- #
+class TestQuotaAtomicTransaction:
+    def test_quota_exceeded_still_raises_value_error(self, mgr, monkeypatch):
+        """配额超限契约保持：ValueError 消息不变，且连接回滚后可继续使用。"""
+        import server.core.alarm.manager as alarm_mod
+
+        monkeypatch.setattr(alarm_mod, "MAX_PENDING_PER_AGENT", 2)
+        mgr.create_alarm("ag-q", 600, "m1")
+        mgr.create_alarm("ag-q", 600, "m2")
+        with pytest.raises(ValueError) as exc:
+            mgr.create_alarm("ag-q", 600, "m3")
+        assert "已达上限" in str(exc.value)
+        # 回滚未污染缓存连接：其他 agent 建单正常
+        aid = mgr.create_alarm("other", 600, "ok")
+        assert mgr.get_alarm(aid)["agent_id"] == "other"
+
+    def test_concurrent_creation_respects_quota_cap(self, mgr, tmp_path, monkeypatch):
+        """L10：并发创建同一 agent 提醒，配额原子生效——pending 数不超上限。"""
+        import server.core.alarm.manager as alarm_mod
+
+        cap = 5
+        monkeypatch.setattr(alarm_mod, "MAX_PENDING_PER_AGENT", cap)
+        successes = []
+        failures = []
+        barrier = threading.Barrier(12)
+
+        def worker(i):
+            barrier.wait()
+            try:
+                successes.append(mgr.create_alarm("racer", 600, f"m{i}"))
+            except ValueError:
+                failures.append(i)
+
+        threads = [threading.Thread(target=worker, args=(i,)) for i in range(12)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+
+        pending = mgr.get_alarms_by_agent("racer")
+        assert len(pending) <= cap            # 硬上限不被并发击穿
+        assert len(successes) == len(pending)  # 成功数与库内一致（无超限写入）

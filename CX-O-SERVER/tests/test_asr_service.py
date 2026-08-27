@@ -320,6 +320,78 @@ class TestStreaming:
         assert st.final_received is False  # final 标记已复位
 
 
+# ================================================================ M：shutdown 流式会话释放 / executor 阻塞
+class TestShutdownReleasesStreamSessions:
+    """M：shutdown 先遍历释放全部 per-client 流式会话，再关 executor。"""
+
+    @pytest.mark.asyncio
+    async def test_shutdown_releases_all_sessions(self, monkeypatch):
+        released = []
+        s = ASRService(mode="remote")
+
+        async def fake_release(cid):
+            s._stream_sessions.pop(cid, None)  # 模拟真实 release 的注册表移除
+            released.append(cid)
+
+        monkeypatch.setattr(s, "release_streaming_session", fake_release)
+        s._stream_sessions["c1"] = types.SimpleNamespace()
+        s._stream_sessions["c2"] = types.SimpleNamespace()
+        s._initialized = True
+        asr_service._model_instance = object()  # 触发 reset 路径
+
+        await s.shutdown()
+
+        assert sorted(released) == ["c1", "c2"]
+        assert s._stream_sessions == {}
+        assert asr_service._model_instance is None
+        assert s._initialized is False
+
+    @pytest.mark.asyncio
+    async def test_shutdown_single_session_failure_not_blocking(self, monkeypatch):
+        # 单个会话释放失败不阻断整体关闭（其余仍被释放，executor 照常关闭）
+        released = []
+
+        s = ASRService(mode="remote")
+
+        async def fake_release(cid):
+            if cid == "bad":
+                raise RuntimeError("close failed")
+            s._stream_sessions.pop(cid, None)
+            released.append(cid)
+
+        monkeypatch.setattr(s, "release_streaming_session", fake_release)
+        s._stream_sessions["bad"] = types.SimpleNamespace()
+        s._stream_sessions["good"] = types.SimpleNamespace()
+
+        await s.shutdown()
+
+        assert released == ["good"]
+
+    @pytest.mark.asyncio
+    async def test_recognize_file_runs_io_off_event_loop(self, tmp_path, monkeypatch):
+        # L：recognize_file 的同步 open/read 挪入线程池（run_in_executor），
+        # 识别结果路径与 FileNotFoundError 契约不变。
+        f = tmp_path / "a.wav"
+        f.write_bytes(b"RIFF-fake-audio")
+
+        s = ASRService(mode="remote")
+        called = {}
+
+        async def fake_recognize(audio_data, language="auto", use_itn=True):
+            called["data"] = audio_data
+            return {"text": "ok", "language": language}
+
+        monkeypatch.setattr(s, "recognize", fake_recognize)
+
+        result = await s.recognize_file(f, language="zh")
+        assert result == {"text": "ok", "language": "zh"}
+        assert called["data"] == b"RIFF-fake-audio"
+
+        # FileNotFoundError 契约保持（executor 内抛出后正常向上传播）
+        with pytest.raises(FileNotFoundError):
+            await s.recognize_file(tmp_path / "missing.wav")
+
+
 # ================================================================ _run_inference
 class TestRunInference:
     def test_cleans_tags_and_extracts(self, monkeypatch):

@@ -936,16 +936,31 @@ class Qwen3TTSProvider:
         首选运行时（带 refs→cosyvoice，无 refs→voicedesign）不可用/超时/断流/非法响应
         （RuntimeUnavailableError）时降级 qwen3_base 重试一次；请求校验与 refs 解析
         仅执行一次。请求非法（InvalidRequestError 等）不降级。
+
+        中途断流契约（M 修复）：仅当首选运行时尚未产出任何 chunk 时才允许降级重发；
+        一旦已向消费者产出音频，再从 fallback 从头重发会产生第二个 start 块且 index
+        归零，破坏「恰一个 start / index 单调递增」的消费者契约——此时不再降级，
+        原样向上传播异常终止本流（与「底层断流抛 RuntimeUnavailableError」语义一致）。
         """
         self._validate_request(req)
         resolved = await self._resolve_refs(req)
         primary = self._select_runtime(req, resolved)
         fallback = self._fallback_runtime(primary)
+        produced_any_chunk = False
         try:
             async for chunk in self._synthesize_stream_once(req, resolved, primary):
+                produced_any_chunk = True
                 yield chunk
         except RuntimeUnavailableError as exc:
-            if fallback is None:
+            if fallback is None or produced_any_chunk:
+                # 无可降级运行时；或已产出 chunk —— 绝不 yield 新流的 start 块
+                if produced_any_chunk:
+                    _log(
+                        "synthesize_stream",
+                        f"首选运行时 {primary} 在已产出音频后中途断流，不降级（避免破坏 start/index 契约）: {exc}",
+                        0,
+                        "ERROR",
+                    )
                 raise
             _log("synthesize_stream", f"首选运行时 {primary} 不可用，降级 {fallback}（原因: {exc}）", 0, "ERROR")
             async for chunk in self._synthesize_stream_once(req, resolved, fallback):

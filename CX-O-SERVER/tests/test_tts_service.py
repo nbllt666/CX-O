@@ -115,7 +115,9 @@ class TestConcurrencyGate:
 
     @pytest.mark.asyncio
     async def test_wait_mode_serializes_inflight(self):
-        s = _svc()
+        # H10 守卫生效：并发门测试需构造已就绪实例（仅用于过入口守卫，
+        # 真实合成路径已被 fake 替换）
+        s = _svc(qwen3_enabled=True, qwen3_provider=object())
         s._tts_drop = False
         s._tts_limit = 1
         s._tts_sem = make_semaphore(1)
@@ -137,7 +139,7 @@ class TestConcurrencyGate:
 
     @pytest.mark.asyncio
     async def test_drop_mode_rejects_when_saturated(self):
-        s = _svc()
+        s = _svc(qwen3_enabled=True, qwen3_provider=object())  # 过 H10 入口守卫
         s._tts_drop = True
         s._tts_limit = 1
         s._tts_sem = make_semaphore(1)

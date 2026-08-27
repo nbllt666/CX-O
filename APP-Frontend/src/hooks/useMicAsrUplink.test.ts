@@ -105,3 +105,77 @@ describe('useMicAsrUplink startCapture 护栏', () => {
     expect(pipeline.init).toHaveBeenCalled();
   });
 });
+
+/** 多实例 getUserMedia mock：每次调用返回可独立 resolve 的 promise，逐个暴露轨道 stop spy（H13） */
+function mockMultiGetUserMedia() {
+  const pendings: Array<{ stop: ReturnType<typeof vi.fn>; resolve: () => void }> = [];
+  Object.defineProperty(navigator, 'mediaDevices', {
+    configurable: true,
+    value: {
+      getUserMedia: vi.fn(
+        () =>
+          new Promise<MediaStream>((resolve) => {
+            const stop = vi.fn();
+            pendings.push({
+              stop,
+              resolve: () => resolve({ getTracks: () => [{ stop }] } as unknown as MediaStream),
+            });
+          }),
+      ),
+    },
+  });
+  return pendings;
+}
+
+describe('useMicAsrUplink startCapture 并发竞态（H13）', () => {
+  it('授权等待窗口内二次启动：首个迟到 MediaStream 停轨丢弃，最终仅一份上行管线激活', async () => {
+    // 准备一轮完整的管线节点 mock（供第二次 start 成功建图）；清零累计计数
+    pipeline.init.mockClear();
+    (pipeline.createStreamSource as ReturnType<typeof vi.fn>).mockClear();
+    (pipeline.createScriptProcessor as ReturnType<typeof vi.fn>).mockClear();
+    (pipeline.createStreamDestination as ReturnType<typeof vi.fn>).mockClear();
+    pipeline.analyserRef.current = {
+      frequencyBinCount: 16,
+      getByteFrequencyData: (a: Uint8Array) => a.fill(0),
+      connect: () => {},
+    };
+    pipeline.createStreamSource.mockReturnValueOnce({
+      connect: vi.fn(),
+      disconnect: vi.fn(),
+    } as unknown as MediaStreamAudioSourceNode);
+    pipeline.createScriptProcessor.mockReturnValueOnce({
+      connect: vi.fn(),
+      disconnect: vi.fn(),
+      onaudioprocess: null,
+    } as never);
+    pipeline.createStreamDestination.mockReturnValueOnce({} as never);
+
+    const pendings = mockMultiGetUserMedia();
+
+    const { result, rerender } = renderHook(
+      ({ e }: { e: boolean }) => useMicAsrUplink(opts(e)),
+      { initialProps: { e: true } },
+    );
+
+    // 第一次启动发起（授权挂起）
+    await act(async () => {});
+    expect(pendings.length).toBe(1);
+
+    // 授权等待窗口内：关闭开关（作废第一轮）→ 立即再次开启（第二轮启动）
+    rerender({ e: false });
+    rerender({ e: true });
+    await act(async () => {});
+    expect(navigator.mediaDevices.getUserMedia).toHaveBeenCalledTimes(2);
+
+    // 第一轮授权迟到 resolve：必须立即停轨丢弃，不得泄漏 MediaStream
+    pendings[0].resolve();
+    await act(async () => {});
+    expect(pendings[0].stop).toHaveBeenCalledTimes(1);
+
+    // 第二轮授权到达：正常建图激活，且全程只建一份管线（PCM 不双份上行）
+    pendings[1].resolve();
+    await waitFor(() => expect(result.current.isActive).toBe(true));
+    expect(pipeline.init).toHaveBeenCalledTimes(1);
+    expect(pipeline.createStreamSource).toHaveBeenCalledTimes(1);
+  });
+});

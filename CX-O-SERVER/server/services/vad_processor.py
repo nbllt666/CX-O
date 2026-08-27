@@ -297,6 +297,11 @@ class AudioStreamProcessor:
         # 后台任务引用集合：防止 _deferred_interrupt_check 等长任务被 GC 提前回收
         # （asyncio 不持有裸 create_task 的引用，任务完成前被回收会静默中断）。
         self._background_tasks: set = set()
+        # M：utterance 代际计数器——每轮语音收尾（is_last）时递增。
+        # 打断判定提交时捕获当前代际，acquire 信号量后比对；不一致说明本句已
+        # 结束/新一轮已开启，过期判定直接丢弃，防止高频 partial 绕过并发槽积压
+        # 后对旧 utterance 执行 interrupt_user。
+        self._utterance_epoch: int = 0
 
     @classmethod
     def get_instance(cls):
@@ -453,12 +458,21 @@ class AudioStreamProcessor:
                 # 打断结果由 _deferred_interrupt_check 直接调用 interrupt_user 落地，
                 # 不再写入 process_audio_chunk 返回值（调用方无需在 ASR 主路径上依赖此字段）。
                 if self._agent_interrupt and streaming_result.text and not skip_interrupt:
-                    async def _deferred_interrupt_check():
+                    # M：提交时捕获 utterance 代际（闭包必须显式传参——直接引用
+                    # self._utterance_epoch 会在任务执行时读到最新值，失去比对意义）
+                    _epoch_at_dispatch = self._utterance_epoch
+
+                    async def _deferred_interrupt_check(epoch: int):
                         sem = _get_interrupt_sem()
                         if sem.locked():  # 超限丢弃，防任务无限堆积
                             return
                         await sem.acquire()
                         try:
+                            # M 代际校验：排队等待期间本句已收尾（is_last 推进代际）
+                            # → 本次判定已过期，丢弃，不执行 interrupt_user
+                            if epoch != self._utterance_epoch:
+                                logger.debug("过期打断判定丢弃（epoch %s != %s）", epoch, self._utterance_epoch)
+                                return
                             try:
                                 interrupt_result = await self._agent_interrupt.on_asr_partial_result(
                                     streaming_result.text,
@@ -477,13 +491,15 @@ class AudioStreamProcessor:
                             sem.release()
 
                     self._track_background_task(
-                        asyncio.create_task(_deferred_interrupt_check())
+                        asyncio.create_task(_deferred_interrupt_check(_epoch_at_dispatch))
                     )
 
                 if self._on_result_callback:
                     await self._on_result_callback(result)
 
             if is_last:
+                # M：本轮 utterance 收尾 → 推进代际，使仍在排队的旧句打断判定过期丢弃
+                self._utterance_epoch += 1
                 # VAD on_end 兜底：仅修正 Final 文本，不重启已由 Partial 启动的 LLM 流程。
                 # 双流式模式下主流程已由 ASR Partial Result 驱动，此处只做收尾与状态复位，
                 # 避免阻塞或重复触发 LLM Prefill
@@ -573,6 +589,7 @@ def release_audio_stream_processor(client_id: str) -> None:
     会话结束 / WS 断开时调用。先关闭处理器（取消并等待后台打断任务），再从
     注册表移除，避免断连后残留后台 LLM 打断任务；客户端再次连接时按需懒重建。
     因本函数为同步接口，close 以后台任务调度，关闭完成后即从注册表 pop。
+    调度任务保存进模块级强引用集（_release_tasks），防止裸 create_task 被 GC 回收。
     """
     processor = _client_audio_stream_processors.get(client_id)
     if processor is None:
@@ -583,7 +600,10 @@ def release_audio_stream_processor(client_id: str) -> None:
     except RuntimeError:
         loop = None
     if loop is not None:
-        loop.create_task(_close_processor_and_discard(processor, client_id))
+        task = loop.create_task(_close_processor_and_discard(processor, client_id))
+        # L：保存强引用，完成后自动移除（仿 AudioStreamProcessor._track_background_task）
+        _release_tasks.add(task)
+        task.add_done_callback(_release_tasks.discard)
     else:
         # 无运行中 loop（同步环境）：直接取消后台任务后移除，不等待
         for t in list(processor._background_tasks):
@@ -608,6 +628,9 @@ async def _close_processor_and_discard(processor: "AudioStreamProcessor", client
 # per-client 实例注册表（client_id -> 独立实例）
 _client_vad_processors: dict = {}
 _client_audio_stream_processors: dict = {}
+
+# release_audio_stream_processor 后台关闭任务的强引用集（防 GC 提前回收，L）
+_release_tasks: set = set()
 
 
 # --------------------------------------------------------------------------- #

@@ -3,6 +3,9 @@
 用轻量替身 SessionStore 隔离真实数据库；通过极小间隔/年龄阈值走通
 清理循环与单次执行路径，验证过期与长期未访问会话的删除逻辑及
 start/stop/run_once 生命周期。
+
+H2（第四轮体检 E组）：长期未访问清理改为 store 层固定谓词游标删除
+delete_sessions_last_accessed_before，替身同步收敛该方法签名。
 """
 import asyncio
 from datetime import datetime, timedelta
@@ -20,18 +23,18 @@ class FakeSessionStore:
         self.sessions = sessions or []
         self.deleted_ids = []
         self.expired_count = 0
-        self.get_sessions_calls = []
+        self.old_cleanup_calls = []
 
     def cleanup_expired_sessions(self):
         return self.expired_count
 
-    def get_sessions(self, active_only=True, limit=50, **kwargs):
-        self.get_sessions_calls.append((active_only, limit))
-        return self.sessions
-
-    def delete_session(self, session_id, soft_delete=True):
-        self.deleted_ids.append((session_id, soft_delete))
-        return True
+    def delete_sessions_last_accessed_before(self, cutoff, page_size=500):
+        """H2 条目4 替身实现：模拟固定谓词游标删除（last_accessed_at < cutoff）。"""
+        self.old_cleanup_calls.append(cutoff)
+        removed = [s for s in self.sessions if s.last_accessed_at < cutoff]
+        self.sessions = [s for s in self.sessions if s.last_accessed_at >= cutoff]
+        self.deleted_ids.extend((s.id, False) for s in removed)
+        return len(removed)
 
 
 class FakeSession:
@@ -172,8 +175,10 @@ class TestCleanupOldSessions:
         assert count == 1
         assert ("s_old", False) in store.deleted_ids
         assert ("s_new", False) not in store.deleted_ids
-        # H2: 分页遍历（单批 page=1000，offset 被 FakeStore *kwargs 吸收）
-        assert store.get_sessions_calls == [(False, 1000)]
+        # H2 条目4: 委托 store 游标删除，cutoff = now - max_session_age（约 30 天前）
+        assert len(store.old_cleanup_calls) == 1
+        cutoff = store.old_cleanup_calls[0]
+        assert timedelta(days=29) <= (now - cutoff) <= timedelta(days=30, seconds=1)
 
     def test_none_deleted_when_all_recent(self, store):
         now = datetime.now()
@@ -183,9 +188,9 @@ class TestCleanupOldSessions:
         assert store.deleted_ids == []
 
     def test_delete_failure_does_not_count(self, store):
+        # 替身语义下删除恒成功；此处验证返回计数与删除数一致（0 条时为 0）
         now = datetime.now()
-        store.sessions = [FakeSession("old", now - timedelta(days=40))]
-        store.delete_session = lambda sid, soft_delete=True: False
+        store.sessions = []
         t = _task(store, age_days=30)
         assert asyncio.run(t._cleanup_old_sessions()) == 0
 

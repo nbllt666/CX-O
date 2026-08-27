@@ -72,15 +72,26 @@ class OllamaEmbedding(EmbeddingModel):
             return []
 
     async def get_embeddings(self, texts: List[str]) -> List[List[float]]:
-        """批量计算文本嵌入，失败的条目用零向量占位。"""
+        """批量计算文本嵌入。
+
+        H14: 失败条目不再以零向量占位（零向量入库会污染相似度排序），
+        而是直接过滤掉不返回；由此导致的召回量减少会记录 warning 日志。
+        返回列表长度可能小于 len(texts)，调用方不得按位置对齐。
+        """
         embeddings = []
+        failed_texts = []
         for text in texts:
             emb = await self.get_embedding(text)
             if emb:
                 embeddings.append(emb)
             else:
-                logger.warning(f"文本嵌入失败: {text[:50]}...")
-                embeddings.append([0.0] * self.dimension)
+                failed_texts.append(text)
+        if failed_texts:
+            # 占位不入库 → 召回量减少，必须留痕提示
+            logger.warning(
+                f"{len(failed_texts)}/{len(texts)} 条文本嵌入失败，已过滤不入库"
+                f"（召回量将减少），示例: {failed_texts[0][:50]!r}..."
+            )
         return embeddings
 
     @property
@@ -181,8 +192,11 @@ class VLLMEmbedding(EmbeddingModel):
             return []
 
     async def get_embeddings(self, texts: List[str]) -> List[List[float]]:
-        """批量请求全部文本嵌入，按返回的 index 排序，失败时用零向量占位。"""
-        # batch request: send all texts in one request, map by index
+        """批量请求全部文本嵌入，按返回的 index 排序。
+
+        H14: 整体请求失败或返回条目嵌入缺失时，不再用零向量占位——
+        直接过滤并 warning 提示召回量减少，避免零向量污染向量库与排序。
+        """
         try:
             # 复用 shared HTTP 连接池，避免每次调用都构造 httpx.AsyncClient
             client = get_shared_http_client()
@@ -195,15 +209,30 @@ class VLLMEmbedding(EmbeddingModel):
             if response.status_code == 200:
                 result = response.json()
                 data = result.get("data", [])
-                # data is a list of {"index": i, "embedding": [...]}; sort by index
-                data_sorted = sorted(data, key=lambda x: x.get("index", 0))
-                return [d.get("embedding", []) for d in data_sorted]
+                # data is a list of {"index": i, "embedding": [...]}
+                filtered = [
+                    d.get("embedding") for d in sorted(data, key=lambda x: x.get("index", 0))
+                    if d.get("embedding")
+                ]
+                missing = len(texts) - len(filtered)
+                if missing > 0:
+                    logger.warning(
+                        f"vLLM 批量嵌入 {missing}/{len(texts)} 条缺失/为空，已过滤不入库"
+                        f"（召回量将减少）"
+                    )
+                return filtered
             else:
                 logger.error(f"vLLM 批量嵌入失败: {response.status_code}")
-                return [[0.0] * self._dimension for _ in texts]
+                logger.warning(
+                    f"vLLM 批量嵌入整体失败，{len(texts)} 条全部过滤不入库（召回量将减少）"
+                )
+                return []
         except Exception as e:
             logger.error(f"获取 vLLM 批量嵌入失败: {e}")
-            return [[0.0] * self._dimension for _ in texts]
+            logger.warning(
+                f"vLLM 批量嵌入异常，{len(texts)} 条全部过滤不入库（召回量将减少）"
+            )
+            return []
 
     @property
     def dimension(self) -> int:
@@ -224,8 +253,13 @@ class EmbeddingFactory:
 
     @classmethod
     def create(cls, provider: str = "ollama", **kwargs) -> EmbeddingModel:
-        """按 provider 创建嵌入模型实例，命中缓存直接返回。"""
-        key = f"{provider}:{kwargs.get('model', 'default')}"
+        """按 provider 创建嵌入模型实例，命中缓存直接返回。
+
+        H14: 缓存键并入 host/api_base——同一模型名但不同服务地址的实例
+        不得互串缓存；api_key 不参与缓存键也不进日志（避免凭据泄露）。
+        """
+        endpoint = kwargs.get("host") or kwargs.get("api_base") or ""
+        key = f"{provider}:{kwargs.get('model', 'default')}@{endpoint}"
 
         with cls._lock:
             if key in cls._models:

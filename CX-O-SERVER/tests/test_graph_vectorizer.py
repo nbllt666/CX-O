@@ -23,8 +23,17 @@ def _config(vector_dim=8):
 
 
 @pytest.fixture
-def vec():  # 无模型环境：强制 _load_model 不加载
+def vec(monkeypatch):
+    """真·无模型环境：彻底短路 _load_model。
+
+    E3 修复：原实现仅置 ``v._model = None``，作者机器恰好未安装
+    sentence_transformers 时才有"不加载"效果；一旦环境装了该包，
+    ``encode()`` 会真实进入 _load_model 并向 HuggingFace 联网探测
+    fake-model，离线环境导致整条套件无限期阻塞（py-spy 实测）。
+    此处以 no-op 替换加载器，保证单测零网络、零依赖差异。
+    """
     v = TextVectorizer(config=_config())
+    monkeypatch.setattr(v, "_load_model", lambda: None)
     v._model = None
     return v
 
