@@ -238,6 +238,9 @@ test_*.py
 !CX-O-SERVER/tests/*_test.py
 # 放行根 tests 目录下的 E2E 工具套件（第四轮体检修复：原先被 test_*.py 规则系统性吞掉）
 !tests/test_tools/**
+# 否定放行会连带重新包含编译缓存，须在其后重新忽略（后置规则优先）
+tests/test_tools/**/__pycache__/
+tests/test_tools/**/*.py[cod]
 *_output.txt
 *_output.raw
 container_log.txt
