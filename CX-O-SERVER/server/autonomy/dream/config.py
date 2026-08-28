@@ -9,12 +9,17 @@
 from __future__ import annotations
 
 import json
+import logging
+import threading
 from pathlib import Path
 from typing import Optional
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from server.autonomy._atomic_io import atomic_write_json, quarantine_corrupt_file
 from server.autonomy.config import ScheduleConfig
+
+logger = logging.getLogger(__name__)
 
 
 class SleepConfirmationConfig(BaseModel):
@@ -90,7 +95,9 @@ def resolve_store_dir(store_path: str = "") -> str:
 def load_config(store_path: str = "") -> DreamConfig:
     """从 store_path/dream_config.json 读取配置。
 
-    缺失字段自动补齐默认值；文件不存在时返回全默认实例。
+    缺失字段自动补齐默认值；文件不存在时返回全默认实例；文件损坏
+    （OSError / JSON 解析失败）时告警、坏档改名 .corrupt 留痕并回退全默认
+    实例（R2：对齐 autonomy config load 健壮性）。
     store_path 为空表示使用默认解析目录（server/autonomy/data/）。
     """
     store = resolve_store_dir(store_path)
@@ -101,15 +108,28 @@ def load_config(store_path: str = "") -> DreamConfig:
         with open(cfg_path, "r", encoding="utf-8") as f:
             raw = json.load(f)
     except (OSError, json.JSONDecodeError) as e:
-        raise ValueError(f"读取梦境配置失败 {cfg_path}: {e}") from e
+        corrupt_path = quarantine_corrupt_file(cfg_path)
+        logger.warning(
+            "梦境配置损坏，回退默认配置 %s: %s（坏档改名: %s）",
+            cfg_path,
+            e,
+            corrupt_path or "失败",
+        )
+        return DreamConfig()
     return DreamConfig.model_validate(raw)
 
 
+# 配置读改写/保存的串行化锁（RLock 可重入：路由层 RMW 全程持锁时，
+# save_config 内部再次 acquire 不会死锁）。routers/dream.py、routers/physio.py
+# 的 update_config 经 to_thread 执行时全程持此锁，消除并发写交错。
+CONFIG_WRITE_LOCK = threading.RLock()
+
+
 def save_config(config: DreamConfig, store_path: str = "") -> str:
-    """将配置写入 store_path/dream_config.json，返回写入路径。"""
+    """将配置原子写入 store_path/dream_config.json，返回写入路径。"""
     store = resolve_store_dir(store_path)
     cfg_path = Path(store) / "dream_config.json"
     cfg_path.parent.mkdir(parents=True, exist_ok=True)
-    with open(cfg_path, "w", encoding="utf-8") as f:
-        json.dump(config.model_dump(), f, ensure_ascii=False, indent=2)
+    with CONFIG_WRITE_LOCK:
+        atomic_write_json(cfg_path, config.model_dump())
     return str(cfg_path)

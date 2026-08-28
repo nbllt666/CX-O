@@ -261,11 +261,24 @@ export default function PetPage() {
     chatRef.current?.advanceTimeline?.(cumulativeRaw);
   }, []);
 
+  // D6：当前说话人记录（voice.speaker 事件驱动；跨 utterance 保留，供语音气泡打标签）
+  const currentSpeakerRef = useRef<{ speakerId?: string; speakerName?: string }>({});
+  const handleSpeaker = useCallback(
+    (speaker: { speakerId: string; speakerName: string }) => {
+      currentSpeakerRef.current = {
+        speakerId: speaker.speakerId || undefined,
+        speakerName: speaker.speakerName || undefined,
+      };
+    },
+    [],
+  );
+
   const { isConnected, isTTSPlaying, sendMessage, getTTSAnalyser, setTTSVolume } = useWebSocket({
     agentId: windowAgentId,
     timeout: 60,
     onMessage: handleWsMessage,
     onTextProgress: handleTextProgress,
+    onSpeaker: handleSpeaker,
     onError: () => {
       setIsLoading(false);
     },
@@ -341,8 +354,11 @@ export default function PetPage() {
     (data: { text: string; is_final: boolean; speakerName?: string }) => {
       const text = data.text.trim();
       if (!text) return;
-      // 声纹：仅注册命中的说话人名才标注（未命中为空串，不显示标签）
-      const speakerName = data.speakerName?.trim() || undefined;
+      // D6 声纹标注：注册名（ASR 结果携带）优先，回落到 voice.speaker 记录的当前说话人；
+      // 未注册时用伪名 speakerId，由 PetChat 渲染为「说话人N」小标签（缺失不占位）
+      const speakerName =
+        data.speakerName?.trim() || currentSpeakerRef.current.speakerName || undefined;
+      const speakerId = currentSpeakerRef.current.speakerId;
       // interim 就地更新同一气泡；一段话一个气泡
       if (!asrMsgIdRef.current) {
         const id = `asr-${Date.now()}`;
@@ -353,6 +369,7 @@ export default function PetPage() {
           content: text,
           timestamp: nowIso(),
           speakerName,
+          speakerId,
         });
       } else {
         chatRef.current?.updateMessageContent(asrMsgIdRef.current, text);

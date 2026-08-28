@@ -82,7 +82,13 @@ async function ipcRequest<T>(
     }
     throw new Error(`Neko 请求失败 (${res.status})：${detail}`);
   }
-  return JSON.parse(res.body) as T;
+  try {
+    return JSON.parse(res.body) as T;
+  } catch {
+    // 成功响应体非合法 JSON：带状态码与原文片段抛错（与上方错误分支风格同构）
+    const snippet = res.body.length > 120 ? `${res.body.slice(0, 120)}…` : res.body;
+    throw new Error(`Neko 响应解析失败 (${res.status ?? 'unknown'})：${snippet}`);
+  }
 }
 
 /** 浏览器 / 直连回退（F4：加 15s 超时——旧实现裸 fetch 无超时，插件服务器挂起

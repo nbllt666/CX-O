@@ -5,6 +5,7 @@ import logging
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Optional
 
+from server.core.utils import run_io
 from server.chat_helpers import get_agent_config, get_llm_client_for_agent, get_tools_for_agent, retrieve_memory_context, ensure_agent_session
 from server.prompt_builder import build_messages
 from server.protocol.message import create_response, create_error, create_stream
@@ -127,7 +128,11 @@ async def _build_chat_context(
     await _maybe_wake_from_sleep(user_message, manager)
     from server.dependencies import get_context_manager, get_memory_manager
 
-    agent_config = get_agent_config(agent_id)
+    # P4: Agent 配置读取含同步文件 IO（agents.json，TTL 过期后首个调用触发读盘），
+    # 卸载到共享有界 IO 池执行，避免卡事件循环。保留 get_agent_config 模块级
+    # 名称绑定（tests/test_gateway_handlers_chat.py 以 monkeypatch 该名注入用例），
+    # 故不直接改调 get_agent_config_async——两者 IO 路径等价（run_io(_load_agents)）。
+    agent_config = await run_io(get_agent_config, agent_id)
     if not agent_config:
         await manager.send_message(client_id, create_error(
             request_id=request_id,

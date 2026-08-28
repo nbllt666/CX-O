@@ -18,8 +18,13 @@
 from __future__ import annotations
 
 import json
+import logging
 from pathlib import Path
 from typing import Optional
+
+from server.autonomy._atomic_io import atomic_write_json
+
+logger = logging.getLogger(__name__)
 
 # 默认存储路径：本文件位于 server/autonomy/safety/，parent.parent = server/autonomy
 DEFAULT_STORE_PATH = str(Path(__file__).resolve().parent.parent / "data" / "killswitch.json")
@@ -36,22 +41,43 @@ class KillSwitch:
         self.sleeping: bool = False
 
     def emergency_stop(self) -> None:
-        """紧急停止：enabled 置 False，任何行动不得继续。"""
+        """紧急停止：enabled 置 False，任何行动不得继续。
+
+        状态变更后尽力持久化（R4：急停跨重启保持）。
+        """
         self.enabled = False
+        self._persist()
 
     def resume(self) -> None:
-        """恢复：解除急停/暂停/睡眠，全部回到可行动状态。"""
+        """恢复：解除急停/暂停/睡眠，全部回到可行动状态（变更后尽力持久化）。"""
         self.enabled = True
         self.paused = False
         self.sleeping = False
+        self._persist()
 
     def pause(self) -> None:
-        """临时暂停自主行动（不解除急停状态）。"""
+        """临时暂停自主行动（不解除急停状态，变更后尽力持久化）。"""
         self.paused = True
+        self._persist()
 
     def set_sleeping(self, sleeping: bool) -> None:
-        """设置/解除睡眠档标记。"""
-        self.sleeping = bool(sleeping)
+        """设置/解除睡眠档标记。
+
+        状态实际变化时持久化（R4：sleeping 档跨重启保持）；未变化不重复
+        落盘（update_from_user_online 每轮调用，避免轮级高频写）。
+        """
+        new_value = bool(sleeping)
+        if new_value == self.sleeping:
+            return
+        self.sleeping = new_value
+        self._persist()
+
+    def _persist(self) -> None:
+        """状态变更后尽力持久化到 killswitch.json；失败仅告警不影响内存状态。"""
+        try:
+            self.save()
+        except Exception as e:
+            logger.warning("KillSwitch 状态持久化失败: %s", e)
 
     def update_from_user_online(self, is_online: bool, user_online_sleep: bool) -> None:
         """按用户在线状态同步休眠档（P2-T4 用户在线休眠策略）。
@@ -97,10 +123,9 @@ class KillSwitch:
         return self
 
     def save(self) -> str:
-        """将当前状态持久化为 JSON，返回写入路径。"""
+        """将当前状态原子持久化为 JSON，返回写入路径。"""
         path = Path(self.store_path)
         path.parent.mkdir(parents=True, exist_ok=True)
         data = {"enabled": self.enabled, "paused": self.paused, "sleeping": self.sleeping}
-        with open(path, "w", encoding="utf-8") as f:
-            json.dump(data, f, ensure_ascii=False, indent=2)
+        atomic_write_json(path, data)
         return str(path)

@@ -6,6 +6,7 @@ import { MANAGEMENT_ROUTES } from '@/pages/management/routes';
 import PetPage from '@/pages/PetPage';
 import DanmakuPage from '@/pages/DanmakuPage';
 import ConnectionSetup from '@/components/ConnectionSetup';
+import GlobalToasts from '@/components/GlobalToast';
 import { useThemeStore } from '@/store/themeStore';
 import { useSettingsStore } from '@/store/settingsStore';
 import { getApiBaseUrl } from '@/api/base';
@@ -134,6 +135,8 @@ export default function App() {
           <Route path="/pet" element={<PetPage />} />
           <Route path="/danmaku" element={<DanmakuPage />} />
         </Routes>
+        {/* D9 全局轻量 toast（cluster_event / autonomy_cost_alert）；OBS /source/* 叠加页不挂载 */}
+        <GlobalToasts />
       </HashRouter>
     );
   }
@@ -163,6 +166,8 @@ export default function App() {
           )}
         </Route>
       </Routes>
+      {/* D9 全局轻量 toast（cluster_event / autonomy_cost_alert） */}
+      <GlobalToasts />
     </HashRouter>
   );
 }

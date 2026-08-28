@@ -387,6 +387,59 @@ function createTray(): void {
 }
 
 // ---------------------------------------------------------------------------
+// VRM 模型读取白名单（R8-07）
+// model:read-file 原仅校验 .vrm 后缀，受信渲染层可直读全盘任意 .vrm。收紧为：
+//   1) 最近一次经系统对话框（model:pick-file）选中的路径（精确命中）
+//   2) 历史会话中用户经对话框选过的目录（目录前缀命中）
+// 目录集合持久化于 userData/store/cxo-pet-model-whitelist.json：pick 选中的
+// 路径经渲染层 settingsStore 持久化，重启后 VRMViewer 直接以持久化路径恢复
+// 加载（多 Agent 各自绑定不同模型），仅凭本会话 pick 记录会误杀该合法场景，
+// 故白名单必须跨会话保留用户曾授权的目录。
+// 比较统一 resolve 后小写（目标平台 Windows，路径大小写不敏感）。
+// ---------------------------------------------------------------------------
+let lastPickedModelPath: string | null = null;
+const pickedModelDirs = new Set<string>();
+
+/** 白名单比较用规范化：resolve 归一 + 小写（Windows 大小写不敏感语义） */
+function normalizeModelPath(p: string): string {
+  return path.resolve(p).toLowerCase();
+}
+
+/** 启动时从 userData/store 恢复历史 pick 目录白名单 */
+function loadPickedModelDirs(): void {
+  try {
+    const raw = loadStore('cxo-pet-model-whitelist');
+    if (!raw) return;
+    const parsed = JSON.parse(raw) as { dirs?: unknown };
+    if (!Array.isArray(parsed.dirs)) return;
+    for (const dir of parsed.dirs) {
+      if (typeof dir === 'string' && dir) pickedModelDirs.add(normalizeModelPath(dir));
+    }
+  } catch {
+    // 白名单持久化损坏时忽略：回退空集合，仅影响跨会话恢复加载，pick 后自动重建
+  }
+}
+
+/** 将历史 pick 目录白名单持久化到 userData/store */
+function savePickedModelDirs(): void {
+  try {
+    saveStore('cxo-pet-model-whitelist', JSON.stringify({ dirs: [...pickedModelDirs] }));
+  } catch {
+    // 持久化失败不阻断 pick 主流程：本会话白名单仍在内存生效
+  }
+}
+
+/** 白名单判定：最近 pick 路径精确命中，或位于历史 pick 目录内（目录前缀，含目录自身） */
+function isWhitelistedModelPath(filePath: string): boolean {
+  const normalized = normalizeModelPath(filePath);
+  if (lastPickedModelPath && normalized === normalizeModelPath(lastPickedModelPath)) return true;
+  for (const dir of pickedModelDirs) {
+    if (normalized === dir || normalized.startsWith(dir + path.sep)) return true;
+  }
+  return false;
+}
+
+// ---------------------------------------------------------------------------
 // IPC 处理器
 // ---------------------------------------------------------------------------
 function registerIpcHandlers(): void {
@@ -537,14 +590,21 @@ function registerIpcHandlers(): void {
     if (result.canceled || result.filePaths.length === 0) {
       return { canceled: true, path: undefined };
     }
-    return { canceled: false, path: result.filePaths[0] };
+    const picked = result.filePaths[0];
+    // R8-07：登记本次 pick 结果进读取白名单（精确路径 + 所在目录，目录集合持久化）
+    lastPickedModelPath = picked;
+    pickedModelDirs.add(normalizeModelPath(picked));
+    savePickedModelDirs();
+    return { canceled: false, path: picked };
   });
 
   // VRM 模型：读取本地 .vrm 文件为字节流（仅放行 .vrm 后缀，读取失败返回 null）。
   // 渲染层持 blob URL 交给 GLTFLoader，避免 file:// 跨域问题，dev(http) 与生产(file) 行为一致。
+  // R8-07：叠加路径白名单——仅放行用户经系统对话框授权过的模型（见上方白名单区段）。
   registerIpcHandler('model:read-file', async (_event, filePath: string) => {
     try {
       if (typeof filePath !== 'string' || !/\.vrm$/i.test(filePath)) return null;
+      if (!isWhitelistedModelPath(filePath)) return null;
       return await readFile(filePath);
     } catch {
       return null;
@@ -754,6 +814,7 @@ if (!gotSingleInstanceLock) {
 app.whenReady().then(() => {
   Menu.setApplicationMenu(null);
   ensureDefaultConfig();
+  loadPickedModelDirs();
   // 前端启动配置（Task 5）：若持久化 run_as_admin=true 且当前未提权，请求 UAC 提权 relaunch。
   // 返回 true = 已触发提权请求：当前实例必须受控退出让出单实例锁，否则新提权实例
   // 拿锁失败直接退出。延迟约 800ms（给 PowerShell UAC 弹窗弹出时间）后经既有

@@ -573,6 +573,9 @@ async def admin_batch(request: Request, req: _BatchRequest):
 @router.get("/admin/audit")
 async def admin_audit(request: Request, limit: int = 50, offset: int = 0):
     _admin_guard(request, "readonly")
+    # R9: 分页参数钳制（对齐 tuner.py:252 惯例）
+    limit = max(1, min(int(limit), 200))
+    offset = max(0, int(offset))
     from server.core.admin.cluster_bridge import _audit_read
     # C3: 审计文件读为阻塞 IO（已改反向块读），再包线程池避免卡事件循环
     items = await run_in_threadpool(_audit_read, limit, offset)

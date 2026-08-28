@@ -93,6 +93,10 @@ class StateReplicator:
         fn = self._snapshot_providers.get(unit)
         return fn(unit) if fn else None
 
+    def snapshot_units(self) -> list:
+        """已注册快照 provider 的单元列表（E14：供接管门槛度量"真实同步单元集"）。"""
+        return list(self._snapshot_providers)
+
     # ---- 本地写变更 ----
     def emit(self, unit: str, op: str, payload: dict) -> int:
         if unit not in self._units:
@@ -144,12 +148,19 @@ class StateReplicator:
         last_snapshot = time.monotonic()
         try:
             while self._running:
-                await self._drain()
-                self._compact_applied_seqs()
-                now = time.monotonic()
-                if now - last_snapshot >= self._snapshot_interval_sec:
-                    await self._try_snapshot()
-                    last_snapshot = now
+                # E15 自愈：循环体内未预期异常留痕后继续循环（防止 task 死亡且
+                # _running 仍 True → start() 幂等守卫拒绝重启 → 复制静默永久停摆）。
+                # CancelledError 属 BaseException，不会被下方 except Exception 吞掉，
+                # 正常穿透到外层分支退出。
+                try:
+                    await self._drain()
+                    self._compact_applied_seqs()
+                    now = time.monotonic()
+                    if now - last_snapshot >= self._snapshot_interval_sec:
+                        await self._try_snapshot()
+                        last_snapshot = now
+                except Exception:  # noqa: BLE001 - 单轮失败留痕，下一轮自愈
+                    log.exception("[replicator] 复制循环出现未预期异常，%.1fs 后继续（自愈）", 1.0)
                 await asyncio.sleep(1.0)
         except asyncio.CancelledError:
             pass
@@ -190,26 +201,48 @@ class StateReplicator:
             "data": ev["payload"],
             "timestamp": ev["timestamp"],
         }
+        # E12 队头阻塞修复：遍历全部 peer 尽力发送，任一成功即确认（不变量"seq 推进
+        # 必须有 peer 成功"保持不变）。单 peer 宕机不再放弃后续健康 peer 的复制，
+        # 也不再造成 outbox 队头阻塞涨满丢事件；失败 peer 的缺口由精确幂等（B4）
+        # 与快照对齐兜底。
+        if not peers:
+            return True  # 无 peer（单机模式）：无事可同步，视为成功避免 outbox 积压
+        any_ok = False
         for ep in peers:
-            ok = await self._transport.send(
-                ep,
-                "sync_event",
-                self._node_id,
-                uuid.uuid4().hex,
-                seq=ev["seq"],
-                epoch=cur_epoch,
-                payload=payload,
-            )
-            if not ok:
-                return False
-        return True
+            try:
+                ok = await self._transport.send(
+                    ep,
+                    "sync_event",
+                    self._node_id,
+                    uuid.uuid4().hex,
+                    seq=ev["seq"],
+                    epoch=cur_epoch,
+                    payload=payload,
+                )
+            except Exception as e:  # noqa: BLE001 - 单 peer 异常留痕，不阻断其余 peer
+                log.warning(
+                    "[replicator] 事件发送异常 peer=%s unit=%s seq=%s error=%s",
+                    ep, ev["unit"], ev["seq"], e,
+                )
+                continue
+            if ok:
+                any_ok = True
+            else:
+                log.warning(
+                    "[replicator] 事件发送失败 peer=%s unit=%s seq=%s（该 peer 出现缺口，"
+                    "待重投/快照对齐；单 peer 失败不阻塞健康 peer）",
+                    ep, ev["unit"], ev["seq"],
+                )
+        return any_ok
 
     async def _drain(self):
         if not self._outbox:
             return
         peers = self._peers()
-        # 顺序发送：按对端已应用水位推进。某事件任一 peer 未确认即停止，保证 outbox 无 seq 缺口
-        #（当前序失败时，后序不得先被对端应用并删除，否则补投前序会被对端高水位误判为已应用而丢弃）。
+        # 顺序发送：按 seq 顺序逐事件推进；_send_event 任一 peer 成功即确认并移出
+        # outbox（单 peer 失败不阻塞健康 peer，E12）。仅当全部 peer 失败时停止本轮，
+        # 保留队头事件待下次循环重试（避免无谓重试风暴）；失败 peer 的缺口由精确
+        # 幂等（B4，补投前序不会被高水位误杀）与快照对齐兜底。
         for ev in list(self._outbox):
             ok = False
             try:
@@ -305,15 +338,26 @@ class StateReplicator:
         # B4 假应用修复：先应用、成功后才登记 seq。旧实现先 add(seq) 再应用、
         # 且应用函数吞异常，落盘失败的事件也被标记"已应用"→ 发送端不再重投 → 丢数据。
         # 现应用失败不登记，返回 False 让接收端回 acked_seq=0、发送端保留 outbox 重投。
-        if unit == "ref_audio":
-            ok = self._apply_ref_audio(event.get("op"), event.get("payload") or {})
-            if not ok:
-                log.warning(
-                    "[replicator] ref_audio 事件应用失败，不登记 seq（等待重投） "
-                    "unit=%s seq=%s op=%s",
-                    unit, seq, event.get("op"),
-                )
-                return False
+        # E13 假应用修复（扩展到全部单元）：仅 ref_audio 实现了落盘应用端。其余单元
+        # （memory/session/persona/config/graph/autonomy/vector）当前无接收端实现，
+        # 旧实现直接登记 seq + ack → 发送端删 outbox 但本地零变更（假确认丢数据，
+        # 与 units.py 声明的 incremental 契约不符）。现拒绝 ack（return False 且不登记
+        # seq），发送端保留事件重试；待实现对应应用端后放开。
+        if unit != "ref_audio":
+            log.warning(
+                "[replicator] 单元 %s 暂无应用端实现，拒绝 ack（不登记 seq，发送端重投） "
+                "seq=%s op=%s",
+                unit, seq, event.get("op"),
+            )
+            return False
+        ok = self._apply_ref_audio(event.get("op"), event.get("payload") or {})
+        if not ok:
+            log.warning(
+                "[replicator] ref_audio 事件应用失败，不登记 seq（等待重投） "
+                "unit=%s seq=%s op=%s",
+                unit, seq, event.get("op"),
+            )
+            return False
         applied_set.add(seq)
         self._last_applied[unit] = max(self._last_applied.get(unit, 0), seq)
         return True

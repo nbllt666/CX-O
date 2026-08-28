@@ -134,6 +134,14 @@ services:
             - driver: nvidia
               count: 1
               capabilities: [gpu]
+    # X2 修复：补齐 healthcheck（asr/llm 均有）；端点为 /api/v1/health（APIRouter prefix="/api/v1"），
+    # 容器内端口 8300 与 ports 映射及 uvicorn 启动配置对齐；轻量连通性检查。
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8300/api/v1/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
     restart: unless-stopped
     networks:
       - cxo-inference

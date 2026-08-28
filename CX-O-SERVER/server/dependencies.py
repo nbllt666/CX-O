@@ -5,6 +5,10 @@ from typing import Optional, Any, Dict
 from fastapi import HTTPException, Request
 from fastapi import Depends
 
+from server.core.logging_config import get_contextual_logger
+
+logger = get_contextual_logger(__name__)
+
 
 class ServiceState:
     """服务依赖容器——持有各服务单例引用，作为 FastAPI 应用全局状态注册表。"""
@@ -207,21 +211,34 @@ def remove_graph_database(agent_id: str) -> None:
 
     迁移自 CXHMS：用于 agent 删除或重置时清理对应图数据库资源。
     底层 Database 由 server.core.graph.database 的 remove_database 同步移除。
+
+    E11: close 失败时 warning 留痕，且实例保留在注册表中不移除——
+    引用不丢失、后续可重试；close 成功才从注册表摘除（最小改动方案）。
     """
     with _graph_registry_lock:
-        _graph_stores.pop(agent_id, None)
-        gdb = _graph_databases.pop(agent_id, None)
+        gdb = _graph_databases.get(agent_id)
+    close_failed = False
     if gdb is not None:
         try:
             gdb.close()
         except Exception:
-            pass
+            close_failed = True
+            logger.warning(
+                "关闭 agent %s 的图数据库实例失败，保留注册表引用以便重试",
+                agent_id,
+                exc_info=True,
+            )
+    if not close_failed:
+        # close 成功（或本就无实例）才摘除注册表，防止 close 失败后引用丢失无法重试
+        with _graph_registry_lock:
+            _graph_stores.pop(agent_id, None)
+            _graph_databases.pop(agent_id, None)
     try:
         from server.core.graph.database import remove_database
 
         remove_database(agent_id)
     except Exception:
-        pass
+        logger.warning("移除 agent %s 的底层 Database 失败", agent_id, exc_info=True)
 
 
 def close_all_graph_databases() -> None:
@@ -230,16 +247,28 @@ def close_all_graph_databases() -> None:
     第五轮 M5：per-agent 图库经 `_get_or_create_graph_database` 懒创建，
     main.py 原关闭分支 `if services.graph_database:` 恒为 None（死代码），
     懒创建实例从不 close → 句柄/连接在重启间泄漏。改为统一收口。
+
+    E11: 锁内先取注册表快照 → 清空注册表 → 锁外对快照逐个 close；
+    close 失败仅 warning 留痕（引用仍在快照中可诊断），不改变幂等语义。
     """
     with _graph_registry_lock:
+        stores_snapshot = dict(_graph_stores)
+        databases_snapshot = dict(_graph_databases)
         _graph_stores.clear()
         _graph_databases.clear()
+    for agent_id, gdb in databases_snapshot.items():
+        try:
+            gdb.close()
+        except Exception:
+            logger.warning(
+                "关闭 agent %s 的图数据库实例失败", agent_id, exc_info=True
+            )
     try:
         from server.core.graph.database import close_all_databases
 
         close_all_databases()
     except Exception:
-        pass
+        logger.warning("close_all_databases 执行失败", exc_info=True)
 
 
 def get_cxfc_manager(state: ServiceState = Depends(get_service_state)) -> Optional[Any]:

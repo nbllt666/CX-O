@@ -7,6 +7,9 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import re
+import time
+import uuid
 from typing import Optional, TYPE_CHECKING
 
 from server.services.marker_adapter import MarkerAdapter
@@ -65,6 +68,34 @@ def _release_danmaku_slot() -> None:
 _feedback_tasks: set = set()
 
 
+# --------------------------------------------------------------------------- #
+# W5: live 会话 AI 回复链路（stream/response）与字幕播报同步（tts_sync/tick/end）
+# --------------------------------------------------------------------------- #
+# live 文本回复使用默认 agent（live 连接无 agent_id 概念，对齐 chat 处理器回退口径）
+_LIVE_REPLY_AGENT_ID = "default"
+# live 回复 token 上限：直播互动场景控制单轮生成时长（防御性，低于常规聊天默认值）
+_LIVE_REPLY_MAX_TOKENS_CAP = 512
+# 字幕播报近似参数：live 路径无真实 TTS 播放与音频下行通道（前端 useLiveWebSocket
+# 忽略二进制帧），无真实时长源，按中文 TTS 常速（约 5 字/秒）估算；tick 为进度心跳间隔。
+_LIVE_TTS_MS_PER_CHAR = 200
+_LIVE_TTS_MIN_DURATION_MS = 800
+_LIVE_TTS_TICK_INTERVAL = 0.2
+
+# fire-and-forget 回复任务强引用集（仿 _feedback_tasks，防 GC 提前回收）
+_reply_tasks: set = set()
+
+# 回复分句正则：按句末标点（含换行）零宽切分，标点保留在前句
+_REPLY_SENTENCE_SPLIT_RE = re.compile(r"(?<=[。！？!?；;\n])")
+
+
+def _split_reply_sentences(text: str) -> list:
+    """把回复文本按句切分（保留标点），用于逐句字幕播报同步。"""
+    parts = [p.strip() for p in _REPLY_SENTENCE_SPLIT_RE.split(text or "") if p.strip()]
+    if not parts and text and text.strip():
+        parts = [text.strip()]
+    return parts
+
+
 class LiveClientHandler:
     """直播客户端处理器——处理直播弹幕、礼物、进入等实时消息与音频流。"""
 
@@ -78,28 +109,45 @@ class LiveClientHandler:
         self.frontend_marker = get_frontend_marker()
         self.feedback_tracker: LiveFeedbackTracker = get_live_feedback_tracker()
         self._session_id: Optional[str] = None
+        # W5: 在途回复生成任务引用（in-flight 守卫 + 强引用跟踪）
+        self._reply_task: Optional["asyncio.Task"] = None
 
     async def handle_message(self, websocket, message: dict, client_id: str):
         msg_type = message.get("type")
 
-        if msg_type == "init":
-            await self._handle_init(websocket, message)
-        elif msg_type == "danmaku":
-            await self._handle_danmaku(websocket, message)
-        elif msg_type == "gift":
-            await self._handle_gift(websocket, message)
-        elif msg_type == "enter":
-            await self._handle_enter(websocket, message)
-        elif msg_type == "config":
-            await self._handle_config(websocket, message)
-        elif msg_type == "text":
-            await self._handle_text(websocket, message)
-        elif msg_type == "interrupt":
-            await self._handle_interrupt(websocket, message)
-        elif msg_type == "stop_tts":
-            await self._handle_stop_tts(websocket, message)
-        else:
-            logger.warning(f"Unknown live message type: {msg_type}")
+        try:
+            if msg_type == "init":
+                await self._handle_init(websocket, message)
+            elif msg_type == "danmaku":
+                await self._handle_danmaku(websocket, message)
+            elif msg_type == "gift":
+                await self._handle_gift(websocket, message)
+            elif msg_type == "enter":
+                await self._handle_enter(websocket, message)
+            elif msg_type == "config":
+                await self._handle_config(websocket, message)
+            elif msg_type == "text":
+                await self._handle_text(websocket, message)
+            elif msg_type == "interrupt":
+                await self._handle_interrupt(websocket, message)
+            elif msg_type == "stop_tts":
+                await self._handle_stop_tts(websocket, message)
+            else:
+                logger.warning(f"Unknown live message type: {msg_type}")
+        except Exception as e:
+            # E1 修复：8 种消息分派异常不再向上穿透断连 /ws/live——留痕后向
+            # 该连接回发 error 帧（与 manager type 路由 error 回发格式一致），
+            # 连接保持存活，由调用方收帧循环继续。
+            logger.warning(
+                f"Live message handling failed type={msg_type} client={client_id}: {e}"
+            )
+            try:
+                await self.manager.send_message(
+                    self.client_id,
+                    {"type": "error", "error": f"处理消息失败: {str(e)}"},
+                )
+            except Exception as send_err:
+                logger.debug(f"live error 帧回发失败 client={self.client_id}: {send_err}")
 
     async def handle_audio(self, websocket, audio_data: bytes, client_id: str):
         # 注入当前语音会话 client_id 到 contextvars（工具执行读取）
@@ -190,10 +238,19 @@ class LiveClientHandler:
         })
 
     async def _handle_danmaku(self, websocket, message: dict):
+        # E1 修复：data:null / user 非字典时安全降级为空值，防 AttributeError
+        # 断连 /ws/live（此前 data 为 None 时 data.get 直接崩溃）。
         data = message.get("data", {})
+        if not isinstance(data, dict):
+            logger.warning(f"弹幕 data 非字典，已降级为空对象: {type(data).__name__}")
+            data = {}
+        user = data.get("user", {})
+        if not isinstance(user, dict):
+            logger.warning(f"弹幕 user 非字典，已降级为空对象: {type(user).__name__}")
+            user = {}
         content = data.get("content", "")
-        user_id = data.get("user", {}).get("uid", "")
-        username = data.get("user", {}).get("username", "")
+        user_id = user.get("uid", "")
+        username = user.get("username", "")
 
         filter_result = self.firewall.filter_message(content, user_id, username)
         if not filter_result.allowed:
@@ -284,6 +341,11 @@ class LiveClientHandler:
             "data": {"status": "ok"}
         })
 
+        # W5: 礼物事件回显广播给 live 频道全部连接（对齐 danmaku :212 广播口径）。
+        # 平台适配层（danmaku_connector）无 gift 事件源，此处以 C→S 入站事件为源
+        # 回显广播；单用户场景下发送方自身的前端 onGift 亦被触发，界面可工作。
+        await self._safe_channel_send({"type": "gift", "data": data})
+
     async def _handle_enter(self, websocket, message: dict):
         data = message.get("data", {})
         # 每进入事件触发；实录弹幕流下高频，降级 DEBUG 并惰性格式化避免热路径 eager f-string
@@ -293,6 +355,10 @@ class LiveClientHandler:
             "type": "enter_ack",
             "data": {"status": "ok"}
         })
+
+        # W5: 进入事件回显广播给 live 频道全部连接（对齐 danmaku :212 广播口径；
+        # 平台适配层无 enter 事件源，以 C→S 入站事件为源回显广播）
+        await self._safe_channel_send({"type": "enter", "data": data})
 
     async def _handle_config(self, websocket, message: dict):
         data = message.get("data", {})
@@ -329,6 +395,10 @@ class LiveClientHandler:
             "data": {"status": "ok"}
         })
 
+        # W5: 补出直播回复链路（C→S text → LLM → stream/response 下发）。
+        # fire-and-forget 不阻塞连接消息循环；text_ack 已先行返回，生成失败仅日志。
+        self._schedule_reply(text)
+
     async def _handle_interrupt(self, websocket, message: dict):
         data = message.get("data", {})
         source = data.get("source", "user")
@@ -352,3 +422,125 @@ class LiveClientHandler:
             "type": "stop_tts_ack",
             "data": {"status": "ok"}
         })
+
+    # ------------------------------------------------------------------ #
+    # W5: live 回复链路（stream/response）与字幕播报同步（tts_sync/tick/end）
+    # ------------------------------------------------------------------ #
+    async def _safe_channel_send(self, message: dict) -> bool:
+        """向 live 频道广播消息；失败仅日志不阻断直播主流程，返回是否成功。"""
+        try:
+            await self.manager.broadcast_to_channel("live", message)
+            return True
+        except Exception as e:
+            logger.warning(f"live 频道广播失败（type={message.get('type')}）: {e}")
+            return False
+
+    def _schedule_reply(self, text: str) -> None:
+        """调度一轮 AI 回复生成（fire-and-forget，含强引用跟踪与在途守卫）。
+
+        在途守卫：上一轮回复未完成时丢弃本轮生成（对齐弹幕反馈的丢弃式限流），
+        避免直播弹幕流下 LLM 生成任务无限堆积。
+        """
+        if not (text and text.strip()):
+            return
+        if self._reply_task is not None and not self._reply_task.done():
+            logger.debug("live 回复生成进行中，丢弃本轮 text 生成请求")
+            return
+        self._reply_task = asyncio.create_task(self._reply_pipeline(text))
+        _reply_tasks.add(self._reply_task)
+        self._reply_task.add_done_callback(_reply_tasks.discard)
+
+    async def _reply_pipeline(self, text: str) -> None:
+        """W5: live 会话 AI 回复链路——LLM 流式生成 → stream 逐块/response 终稿
+        下发 → 上下文回写 → 隐式反馈记录 → 字幕播报同步。
+
+        装配对齐 server/handlers/chat.py 主聊天链路同型（agent 配置 →
+        build_messages → stream_chat），经 record_ai_response 打通既有
+        「增量接入点」（此前无调用方）；整个管线异常均吞掉，不阻断直播主流程。
+        """
+        full = ""
+        try:
+            from server.chat_helpers import get_agent_config_async, get_llm_client_for_agent
+            from server.prompt_builder import build_messages
+
+            agent_config = await get_agent_config_async(_LIVE_REPLY_AGENT_ID)
+            if not agent_config:
+                logger.warning("live 回复生成跳过：默认 agent 不可用（%s）", _LIVE_REPLY_AGENT_ID)
+                return
+            llm = get_llm_client_for_agent(agent_config)
+            session_id = self._session_id or self.client_id
+            messages = build_messages(agent_config, self.context_manager, session_id, text)
+            try:
+                max_tokens = int(agent_config.get("max_tokens", _LIVE_REPLY_MAX_TOKENS_CAP))
+            except (TypeError, ValueError):
+                max_tokens = _LIVE_REPLY_MAX_TOKENS_CAP
+            max_tokens = max(1, min(max_tokens, _LIVE_REPLY_MAX_TOKENS_CAP))
+
+            async for chunk in llm.stream_chat(
+                messages=messages,
+                temperature=agent_config.get("temperature", 0.7),
+                max_tokens=max_tokens,
+            ):
+                content = ""
+                if isinstance(chunk, dict):
+                    if chunk.get("type") == "content":
+                        content = chunk.get("content", "")
+                elif isinstance(chunk, str):
+                    content = chunk
+                if not content:
+                    continue
+                full += content
+                await self._safe_channel_send({"type": "stream", "data": {"content": content}})
+
+            if full.strip():
+                await self._safe_channel_send({"type": "response", "data": {"content": full}})
+                if self._session_id:
+                    self.context_manager.add_message(self._session_id, {
+                        "role": "assistant", "content": full
+                    })
+                try:
+                    self.record_ai_response(full, prompt=text)
+                except Exception as e:
+                    logger.warning(f"live_feedback 回复记录降级: {e}")
+                await self._announce_reply_subtitles(full)
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:
+            logger.warning(f"live 回复生成失败（text_ack 已回，不影响直播主流程）: {e}")
+
+    async def _announce_reply_subtitles(self, text: str) -> None:
+        """W5: 回复字幕播报同步——按句串行广播 tts_sync / tts_tick / tts_end。
+
+        live 路径无真实 TTS 播放与音频下行通道，本方法仅广播字幕同步信号
+        （设计参照 git fa2be0f 版被删除的 LiveTTSSyncBroadcaster，字段契约
+        playback_id/server_ts/text/duration/position 与前端 useLiveWebSocket
+        一致）；时长按常速近似估算（_LIVE_TTS_MS_PER_CHAR）。广播通道失效
+        （房间空/已断连）时停止播报推进。
+        """
+        for sentence in _split_reply_sentences(text):
+            duration_ms = max(
+                _LIVE_TTS_MIN_DURATION_MS, len(sentence) * _LIVE_TTS_MS_PER_CHAR
+            )
+            playback_id = uuid.uuid4().hex[:12]
+            if not await self._safe_channel_send({"type": "tts_sync", "data": {
+                "playback_id": playback_id,
+                "server_ts": int(time.time() * 1000),
+                "text": sentence,
+                "duration": duration_ms,
+            }}):
+                return
+            start = time.monotonic()
+            while True:
+                await asyncio.sleep(_LIVE_TTS_TICK_INTERVAL)
+                elapsed_ms = int((time.monotonic() - start) * 1000)
+                if elapsed_ms >= duration_ms:
+                    break
+                await self._safe_channel_send({"type": "tts_tick", "data": {
+                    "playback_id": playback_id,
+                    "server_ts": int(time.time() * 1000),
+                    "position": min(elapsed_ms, duration_ms),
+                }})
+            await self._safe_channel_send({"type": "tts_end", "data": {
+                "playback_id": playback_id,
+                "server_ts": int(time.time() * 1000),
+            }})

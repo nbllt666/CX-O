@@ -9,6 +9,11 @@
     "save": "Save",
     "retry": "Retry"
   },
+  "errorBoundary": {
+    "title": "Something went wrong",
+    "message": "An unexpected rendering error occurred. Please reload the page; if it keeps happening, contact the developer.",
+    "reload": "Reload page"
+  },
   "management": {
     "title": "Management",
     "subtitle": "Admin console",
@@ -962,7 +967,7 @@
       "musicTitleLabel": "Song title",
       "musicTitlePlaceholder": "Enter song title",
       "musicScoreLabel": "Score JSON",
-      "musicScorePlaceholder": "Paste score JSON (optional)",
+      "musicScorePlaceholder": "Paste score JSON",
       "musicSynthesize": "Synthesize",
       "musicSynthesizing": "Synthesizing...",
       "musicSynthFailed": "Synthesis failed, please retry (check that the score JSON is valid)",
@@ -971,7 +976,14 @@
       "musicLoadFailed": "Failed to load song list",
       "musicEmpty": "No songs yet",
       "musicStage": "Stage",
-      "musicDelete": "Delete"
+      "musicDelete": "Delete",
+      "musicScoreRequired": "Please fill in the score first",
+      "status": {
+        "pending": "Pending",
+        "running": "Running",
+        "completed": "Completed",
+        "failed": "Failed"
+      }
     },
     "distillation": {
       "subtitle": "Distill text, character cards, chat logs and more into memories and character-card agents",
@@ -1126,7 +1138,8 @@
       "send": "Send",
       "offline": "Disconnected, reconnecting...",
       "unreachable": "Cannot reach the backend right now. Please try again later.",
-      "error": "Sorry, something went wrong: {{message}}"
+      "error": "Sorry, something went wrong: {{message}}",
+      "speakerFallback": "Speaker {{index}}"
     },
     "menu": {
       "openManagement": "Open management",
@@ -1446,5 +1459,15 @@
   "configReload": {
     "appliedTitle": "「{{section}}」config applied",
     "restartTitle": "「{{section}}」config saved, restart required"
+  },
+  "events": {
+    "clusterTitle": "Cluster event",
+    "clusterFailoverStarted": "Takeover started: {{node}}",
+    "clusterFailoverCompleted": "Failover completed",
+    "clusterNodeLeft": "Node left: {{node}}",
+    "clusterRoleChanged": "Role changed to {{role}}",
+    "clusterGeneric": "Cluster event: {{topic}}",
+    "costAlertTitle": "Cost alert",
+    "costAlertMessage": "Today's tokens: {{used}}/{{limit}} ({{ratio}})"
   }
 }

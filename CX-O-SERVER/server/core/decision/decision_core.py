@@ -20,14 +20,22 @@ LLM 置信度极低或不可用时回退 system_prompt 规则（rules-0 §三 fa
 import json
 import os
 import threading
+from concurrent.futures import ThreadPoolExecutor
 from typing import Any, Dict, List, Optional
 
 from pydantic import BaseModel
 
-from server.core.utils import iso_now as _iso_now, new_uuid as _new_uuid
+from server.core import agent_store
+from server.core.utils import (
+    append_audit_entry as _append_audit_entry_shared,
+    iso_now as _iso_now,
+    new_uuid as _new_uuid,
+)
 
-# H5: 审计日志 read-modify-write 的进程内串行化锁（防同 session 并发决策互覆）
-_AUDIT_LOG_LOCK = threading.Lock()
+# P2: 决策 LLM 调用专用有界执行器（decide_location 内 requests.post 超时默认 300s）。
+# 与共享 cxo-io 池隔离：长 LLM 调用最多占满本池 2 个线程，不再挤占共享池中的
+# 短 IO 任务（sqlite / 文件读写等）。
+DECISION_EXECUTOR = ThreadPoolExecutor(max_workers=2, thread_name_prefix="decision-llm")
 
 
 # --------------------------------------------------------------------------- #
@@ -40,7 +48,8 @@ _THIS_DIR = os.path.dirname(os.path.abspath(__file__))
 _PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(_THIS_DIR)))
 _PUBLIC_ROOT = os.path.dirname(_PROJECT_ROOT)
 _DATA_DIR = os.path.join(_PROJECT_ROOT, "data")
-_AGENTS_FILE = os.path.join(_DATA_DIR, "agents.json")
+# E1 收敛：agents.json 路径改引用 agent_store 统一锚点（绝对路径，与 CWD 无关）
+_AGENTS_FILE = agent_store.AGENTS_PATH
 _LOG_DIR = os.path.join(_DATA_DIR, "distillation_logs")
 _CONFIG_FILE = os.path.join(
     _PUBLIC_ROOT, "public", "config_template", "radix_config.json"
@@ -739,26 +748,17 @@ class DecisionCore:
             pass
 
     def _append_audit_entry(self, log_path: str, log_entry: Dict[str, Any]) -> None:
-        """H5: 加锁的审计日志追加写。
+        """审计日志有界追加写（薄委托 server/core/utils.py: append_audit_entry）。
 
-        旧实现为「读整文件→append→写回」的无锁 read-modify-write，同一 session
-        并发决策会互覆丢条，极端时写出截断 JSON（下次读取被静默清空）。以进程内
-        锁串行化"读→改→写"，保证每次写入基于最新完整内容。
+        演进历史：旧实现为「读整文件→append→写回」的无锁 read-modify-write，
+        同一 session 并发决策会互覆丢条，极端时写出截断 JSON（下次读取被静默
+        清空）；H5 曾以模块级 _AUDIT_LOG_LOCK 串行化修复互覆，但仍遗留两个问题
+        ——全量 indent=2 写回的 O(N²) 写放大、跨 session 全局锁串行。现改为委托
+        共享帮助函数：per-path（即 per-session）锁串行化、仅保留最后 200 条
+        （消除无界增长与写放大）、tmp+os.replace 原子写。方法签名保持不变，
+        兼容既有调用与测试。
         """
-        with _AUDIT_LOG_LOCK:
-            logs: List[Dict[str, Any]] = []
-            if os.path.isfile(log_path):
-                try:
-                    with open(log_path, "r", encoding="utf-8") as fh:
-                        logs = json.load(fh)
-                    if not isinstance(logs, list):
-                        logs = []
-                except (json.JSONDecodeError, OSError):
-                    logs = []
-            logs.append(log_entry)
-            os.makedirs(os.path.dirname(log_path), exist_ok=True)
-            with open(log_path, "w", encoding="utf-8") as fh:
-                json.dump(logs, fh, ensure_ascii=False, indent=2)
+        _append_audit_entry_shared(log_path, log_entry)
 
     # ------------------------------------------------------------------ #
     # 私有辅助方法（非契约方法）

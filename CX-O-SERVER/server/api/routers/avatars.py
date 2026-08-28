@@ -3,7 +3,11 @@ Avatar 模型管理路由 - 提供 VRM/Live2D 模型上传、下载、管理 API
 """
 
 import asyncio
+import json
+import os
 import re
+import tempfile
+import threading
 import uuid
 from datetime import datetime
 from pathlib import Path
@@ -27,6 +31,9 @@ LIVE2D_DIR = AVATARS_DIR / "live2d"
 ALLOWED_VRM_EXTENSIONS = {".vrm"}
 ALLOWED_LIVE2D_EXTENSIONS = {".model.json", ".model3.json", ".zip"}
 MAX_FILE_SIZE = 50 * 1024 * 1024  # 50MB
+
+# E6: 元数据写路径互斥锁（RLock：update_avatar 锁内读改写时可重入 _save）
+_METADATA_LOCK = threading.RLock()
 
 
 def _ensure_avatars_dirs():
@@ -124,17 +131,29 @@ def _load_avatar_metadata(avatar_id: str, avatar_type: str) -> Optional[AvatarMe
 
 
 def _save_avatar_metadata(metadata: AvatarMetadata):
-    """保存 avatar 元数据到 JSON 文件"""
+    """保存 avatar 元数据到 JSON 文件（E6: 同目录临时文件 + os.replace 原子替换，锁内串行）"""
     avatar_dir = _get_avatar_dir(metadata.type)
     meta_path = avatar_dir / f"{metadata.id}.json"
-    
-    try:
-        import json
-        with open(meta_path, "w", encoding="utf-8") as f:
-            json.dump(metadata.model_dump(), f, ensure_ascii=False, indent=2)
-    except Exception as e:
-        logger.error(f"保存 avatar 元数据失败: {e}")
-        raise
+
+    with _METADATA_LOCK:
+        tmp_path: Optional[str] = None
+        try:
+            fd, tmp_path = tempfile.mkstemp(
+                prefix=f".{metadata.id}-", suffix=".json.tmp", dir=str(avatar_dir),
+            )
+            with os.fdopen(fd, "w", encoding="utf-8") as f:
+                json.dump(metadata.model_dump(), f, ensure_ascii=False, indent=2)
+            os.replace(tmp_path, meta_path)
+            tmp_path = None  # 已被 replace 消费
+        except Exception as e:
+            logger.error(f"保存 avatar 元数据失败: {e}")
+            raise
+        finally:
+            if tmp_path is not None and os.path.exists(tmp_path):
+                try:
+                    os.unlink(tmp_path)
+                except OSError:
+                    pass
 
 
 def _delete_avatar_files(avatar_id: str, avatar_type: str):
@@ -326,19 +345,21 @@ async def get_avatar_file(avatar_id: str, avatar_type: str):
 async def update_avatar(avatar_id: str, avatar_type: str, request: AvatarUpdateRequest):
     """更新模型元数据"""
     try:
-        metadata = _load_avatar_metadata(avatar_id, avatar_type)
-        if not metadata:
-            raise HTTPException(status_code=404, detail="模型不存在")
-        
-        if request.name is not None:
-            metadata.name = request.name
-        if request.metadata is not None:
-            metadata.metadata = request.metadata
-        
-        metadata.updated_at = datetime.now().isoformat()
-        
-        _save_avatar_metadata(metadata)
-        
+        # E6: 读-改-写全程锁内串行，防止并发 PUT 丢失更新
+        with _METADATA_LOCK:
+            metadata = _load_avatar_metadata(avatar_id, avatar_type)
+            if not metadata:
+                raise HTTPException(status_code=404, detail="模型不存在")
+
+            if request.name is not None:
+                metadata.name = request.name
+            if request.metadata is not None:
+                metadata.metadata = request.metadata
+
+            metadata.updated_at = datetime.now().isoformat()
+
+            _save_avatar_metadata(metadata)
+
         return {"status": "success", "avatar": metadata}
     except HTTPException:
         raise

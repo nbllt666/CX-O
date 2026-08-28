@@ -27,6 +27,18 @@ export interface PetMessage {
   timestamp: string;
   /** 声纹：注册说话人名（可选；仅 voice/ASR 路径带，打字输入不带） */
   speakerName?: string;
+  /** 声纹：说话人标识（可选；未注册时为伪名 spk_N，渲染为「说话人N」小标签） */
+  speakerId?: string;
+}
+
+/** 声纹小标签兜底文案：伪名 spk_N →「说话人N」（fallbackLabel 供 i18n），其余标识原样展示 */
+function formatSpeakerLabel(
+  speakerId: string | undefined,
+  fallbackLabel: (index: string) => string,
+): string {
+  if (!speakerId) return '';
+  const m = /^spk[_-]?(\d+)$/i.exec(speakerId);
+  return m ? fallbackLabel(m[1]) : speakerId;
 }
 
 export interface PetChatHandle {
@@ -191,24 +203,32 @@ export const PetChat = forwardRef<PetChatHandle, PetChatProps>(function PetChat(
     <div className="flex h-full flex-col" style={{ backgroundColor: 'transparent' }}>
       {/* 消息气泡区 */}
       <div className="flex-1 space-y-1.5 overflow-y-auto px-2 py-1">
-        {displayMessages.map((msg) => (
-          <div key={msg.id} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
-            <div
-              className={`max-w-[85%] whitespace-pre-wrap break-words rounded-xl px-2.5 py-1.5 text-xs leading-relaxed backdrop-blur-md ${
-                msg.role === 'user'
-                  ? 'bg-primary/80 text-primary-foreground'
-                  : 'glass-panel text-foreground'
-              }`}
-            >
-              {msg.role === 'user' && msg.speakerName ? (
-                <span className="mb-0.5 block text-[10px] leading-none text-primary-foreground/70">
-                  {msg.speakerName}
-                </span>
-              ) : null}
-              {msg.content}
+        {displayMessages.map((msg) => {
+          // D6：说话人小标签——注册名优先，未注册伪名 spk_N 兜底为「说话人N」；缺失不占位
+          const speakerLabel =
+            msg.speakerName ||
+            formatSpeakerLabel(msg.speakerId, (index) =>
+              t('pet.chat.speakerFallback', { index }),
+            );
+          return (
+            <div key={msg.id} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
+              <div
+                className={`max-w-[85%] whitespace-pre-wrap break-words rounded-xl px-2.5 py-1.5 text-xs leading-relaxed backdrop-blur-md ${
+                  msg.role === 'user'
+                    ? 'bg-primary/80 text-primary-foreground'
+                    : 'glass-panel text-foreground'
+                }`}
+              >
+                {msg.role === 'user' && speakerLabel ? (
+                  <span className="mb-0.5 block text-[10px] leading-none text-primary-foreground/70">
+                    {speakerLabel}
+                  </span>
+                ) : null}
+                {msg.content}
+              </div>
             </div>
-          </div>
-        ))}
+          );
+        })}
         <div ref={messagesEndRef} />
       </div>
 

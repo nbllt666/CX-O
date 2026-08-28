@@ -5,7 +5,7 @@
  * - 连接打开后发送 init（session_id）
  * - 指数退避自动重连（100/200/500/1000/2000ms）
  * - 消息路由：danmaku / stream / response / gift / enter / vad_status /
- *   asr_result / tts_sync / tts_tick / tts_end / external_event
+ *   asr_result / tts_sync / tts_tick / tts_end / interrupt / external_event
  * - sendAudio 二进制上行（ArrayBuffer）
  */
 import { useCallback, useEffect, useRef, useState } from 'react';
@@ -36,6 +36,13 @@ export interface TTSTickData {
 export interface TTSEndData {
   playback_id: string;
   server_ts: number;
+}
+
+/** ASR 打断判定命中（后端 live_client 推送 {"type":"interrupt"}） */
+export interface LiveInterruptData {
+  source: string;
+  text?: string;
+  decision?: unknown;
 }
 
 export interface LiveMessage {
@@ -71,6 +78,7 @@ export interface UseLiveWebSocketOptions {
   onTTSSync?: (data: TTSSyncData) => void;
   onTTSTick?: (data: TTSTickData) => void;
   onTTSEnd?: (data: TTSEndData) => void;
+  onInterrupt?: (data: LiveInterruptData) => void;
   onError?: (error: string) => void;
   onConnect?: () => void;
   onDisconnect?: () => void;
@@ -98,6 +106,7 @@ export function useLiveWebSocket(options: UseLiveWebSocketOptions = {}): UseLive
     onTTSSync,
     onTTSTick,
     onTTSEnd,
+    onInterrupt,
     onError,
     onConnect,
     onDisconnect,
@@ -116,6 +125,7 @@ export function useLiveWebSocket(options: UseLiveWebSocketOptions = {}): UseLive
   const onTTSSyncRef = useRef(onTTSSync);
   const onTTSTickRef = useRef(onTTSTick);
   const onTTSEndRef = useRef(onTTSEnd);
+  const onInterruptRef = useRef(onInterrupt);
   const onErrorRef = useRef(onError);
   const onConnectRef = useRef(onConnect);
   const onDisconnectRef = useRef(onDisconnect);
@@ -134,6 +144,7 @@ export function useLiveWebSocket(options: UseLiveWebSocketOptions = {}): UseLive
     onTTSSyncRef.current = onTTSSync;
     onTTSTickRef.current = onTTSTick;
     onTTSEndRef.current = onTTSEnd;
+    onInterruptRef.current = onInterrupt;
     onErrorRef.current = onError;
     onConnectRef.current = onConnect;
     onDisconnectRef.current = onDisconnect;
@@ -210,6 +221,13 @@ export function useLiveWebSocket(options: UseLiveWebSocketOptions = {}): UseLive
         case 'tts_end':
           if (data.data && onTTSEndRef.current) {
             onTTSEndRef.current(data.data as unknown as TTSEndData);
+          }
+          break;
+        case 'interrupt':
+          // ASR 打断判定命中：与 tts_end 同口径透传给使用方，由使用方
+          // 终止当前播报并清空播放队列（hook 本身不持有 TTS 播放状态）。
+          if (data.data && onInterruptRef.current) {
+            onInterruptRef.current(data.data as unknown as LiveInterruptData);
           }
           break;
         case 'external_event':

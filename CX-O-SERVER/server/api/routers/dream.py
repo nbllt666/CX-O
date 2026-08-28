@@ -14,13 +14,19 @@
 引擎端点以 disabled 口径响应（不抛 500）。配置读写走独立 config 模块
 （load_config/save_config），不依赖引擎实例，始终可用。
 """
+import asyncio
 import logging
 from typing import Any, Dict, Optional
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, ValidationError
 
-from server.autonomy.dream.config import DreamConfig, load_config, save_config
+from server.autonomy.dream.config import (
+    CONFIG_WRITE_LOCK,
+    DreamConfig,
+    load_config,
+    save_config,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -90,6 +96,9 @@ def list_candidates(
 
     未启用时返回空列表 {"items": [], "total": 0}。
     """
+    # R9: 分页参数钳制（对齐 tuner.py:252 惯例）
+    limit = max(1, min(int(limit), 200))
+    offset = max(0, int(offset))
     engine = _engine
     if not _engine_ready():
         return {"items": [], "total": 0}
@@ -211,15 +220,22 @@ async def update_config(partial: Dict[str, Any]):
 
     以当前配置为基础做深度合并后经 DreamConfig.model_validate 校验；非法字段
     （extra="forbid"）、非法枚举/非法时间格式返回 422。运行期 enabled 变更尽力
-    应用到已装配引擎（start/stop）。
+    应用到已装配引擎（start/stop）。读改写全程持 CONFIG_WRITE_LOCK 并经
+    to_thread 执行（R3 补漏：事件循环内不做阻塞文件 IO，多入口写串行化）。
     """
-    current = load_config().model_dump()
-    merged = _deep_merge(current, partial)
+
+    def _rmw() -> DreamConfig:
+        with CONFIG_WRITE_LOCK:
+            current = load_config().model_dump()
+            merged = _deep_merge(current, partial)
+            updated = DreamConfig.model_validate(merged)
+            save_config(updated)
+        return updated
+
     try:
-        updated = DreamConfig.model_validate(merged)
+        updated = await asyncio.to_thread(_rmw)
     except (ValidationError, ValueError) as e:
         raise HTTPException(status_code=422, detail=f"配置字段非法: {e}") from e
 
-    save_config(updated)
     _sync_engine_runtime(_engine, updated)
     return updated.model_dump()

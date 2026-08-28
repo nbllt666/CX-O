@@ -1,5 +1,6 @@
 """WebSocket 连接与消息管理器——管理客户端连接生命周期、消息路由与广播。"""
 import asyncio
+import json
 import logging
 import threading
 from datetime import datetime
@@ -33,10 +34,35 @@ class WebSocketConnection:
             raise
 
     async def receive(self) -> Dict[str, Any]:
-        """接收消息"""
-        data = await self.websocket.receive_json()
-        self.last_activity = datetime.now()
-        return data
+        """接收消息
+
+        E3 修复：不再使用 receive_json()——畸形 JSON 会抛 JSONDecodeError、
+        二进制帧会抛 KeyError 直接穿透 /ws/{agent_id}、/ws、/ws/chat 三个端点。
+        改为原生 receive() 按帧类型取 text/bytes 后手动 json.loads：
+        解析失败（含非 dict 的合法 JSON）记 debug 日志并跳过，循环取下一帧；
+        WebSocketDisconnect 不捕获，连接关闭时正常向上传播。
+        """
+        while True:
+            raw = await self.websocket.receive()
+            if "text" in raw:
+                payload = raw["text"]
+            elif "bytes" in raw:
+                payload = raw["bytes"]
+            else:
+                # 其余未知控制帧兜底跳过（断连由 starlette 以 WebSocketDisconnect 抛出）
+                continue
+            try:
+                data = json.loads(payload)
+            except (ValueError, TypeError):
+                preview = payload if isinstance(payload, str) else repr(payload[:64])
+                logger.debug(f"收到非 JSON 帧，已跳过 {self.client_id}: {str(preview)[:100]}")
+                continue
+            if not isinstance(data, dict):
+                # 保持返回契约 Dict[str, Any]：合法 JSON 标量/数组同样跳过
+                logger.debug(f"收到非对象 JSON 帧，已跳过 {self.client_id}: {type(data).__name__}")
+                continue
+            self.last_activity = datetime.now()
+            return data
 
     def subscribe(self, channel: str):
         """订阅频道"""
@@ -403,7 +429,19 @@ class WebSocketManager:
                     f"[DIAG-ACTION] connection is None for client_id={client_id}, action={action}"
                 )
                 return
-            await handler(connection.websocket, message, client_id)
+            try:
+                await handler(connection.websocket, message, client_id)
+            except Exception as e:
+                # E2a 修复：与 type 路由的 try/except 对称——handler 异常不再
+                # 穿透断连端点；留痕后尝试向该 client 回发 error 帧，不向上抛。
+                logger.exception(f"action 处理失败 {action} (client={client_id}): {e}")
+                try:
+                    await self.send_to_client(
+                        client_id,
+                        {"type": "error", "data": {"message": "action 处理失败"}},
+                    )
+                except Exception as send_err:
+                    logger.debug(f"action 错误帧回发失败 client={client_id}: {send_err}")
         else:
             logger.warning(f"未知 action: {action}")
             await self.send_to_client(

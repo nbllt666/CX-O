@@ -111,6 +111,34 @@ class TestSimpleHandlers:
         await handler._handle_config("c1", {"other": 1})
         assert fake_mgr.sent == []
 
+    @pytest.mark.asyncio
+    async def test_config_agent_id_auto_subscribes(self, handler, fake_mgr):
+        # W1: config 携带 agent_id → 落 metadata 并自动订阅 agent:{id} alarm 频道
+        conn = SimpleNamespace(metadata={})
+        fake_mgr.connections["c1"] = conn
+        await handler._handle_config("c1", {"agent_id": "ag1", "timeout": 60})
+        assert fake_mgr.subscriptions == [("c1", "agent:ag1")]
+        assert conn.metadata["agent_id"] == "ag1"
+
+    @pytest.mark.asyncio
+    async def test_config_agent_rebind_unsubscribes_old(self, handler, fake_mgr):
+        # W1: 换绑 agent → 先退订旧频道再订阅新频道，避免跨 agent 串音
+        conn = SimpleNamespace(
+            metadata={"agent_id": "ag1"}, is_subscribed=lambda ch: ch == "agent:ag1"
+        )
+        fake_mgr.connections["c1"] = conn
+        await handler._handle_config("c1", {"agent_id": "ag2"})
+        assert fake_mgr.unsubscriptions == [("c1", "agent:ag1")]
+        assert fake_mgr.subscriptions == [("c1", "agent:ag2")]
+        assert conn.metadata["agent_id"] == "ag2"
+
+    @pytest.mark.asyncio
+    async def test_config_without_agent_id_no_subscribe(self, handler, fake_mgr):
+        # W1: 字段缺失时行为不变（向后兼容），不触发任何订阅
+        fake_mgr.connections["c1"] = SimpleNamespace(metadata={})
+        await handler._handle_config("c1", {"timeout": 60})
+        assert fake_mgr.subscriptions == []
+
 
 _NO_AGENT = object()  # 哨兵：显式表示 agent 不存在
 
@@ -243,6 +271,34 @@ class TestHandleChatStream:
         assert _last_sent(fake_mgr)["type"] == "chat_done"
 
     @pytest.mark.asyncio
+    async def test_stream_thinking_frame_forwarded(self, handler, fake_mgr, monkeypatch):
+        # W4: stream_chat 产出 dict 分帧时，thinking 帧以 SSE 同款字段（type/content）
+        # 转发；content 帧仍以 chat_chunk 外发；thinking 不入对话上下文。
+        saved = []
+        context_mgr = SimpleNamespace(
+            get_session=lambda sid: {"id": sid} if sid == "s1" else None,
+            create_session=lambda **kw: kw.get("session_id") or "s1",
+            update_session=lambda *a, **kw: True,
+            add_message=lambda session_id, role, content: saved.append((role, content)),
+        )
+
+        async def stream_chat(messages, temperature=0.7, max_tokens=4096):
+            yield {"type": "thinking", "content": "正在思考"}
+            yield {"type": "content", "content": "你"}
+            yield {"type": "content", "content": "好"}
+
+        llm = SimpleNamespace(chat=None, stream_chat=stream_chat)
+        _patch_chat_deps(monkeypatch, llm=llm, context_mgr=context_mgr)
+        await handler._handle_chat_stream("c1", {"message": "hi", "session_id": "s1"})
+        thinking = [m for _, m in fake_mgr.sent if m["type"] == "thinking"]
+        assert thinking == [{"type": "thinking", "content": "正在思考"}]
+        chunks = [m["content"] for _, m in fake_mgr.sent if m["type"] == "chat_chunk"]
+        assert chunks == ["你", "好"]
+        assert _last_sent(fake_mgr)["type"] == "chat_done"
+        # thinking 不累积为回复（与 SSE 契约一致：仅 content 入对话上下文）
+        assert ("assistant", "你好") in saved
+
+    @pytest.mark.asyncio
     async def test_stream_cancel_interrupts(self, handler, fake_mgr, monkeypatch):
         async def stream_chat(messages, temperature=0.7, max_tokens=4096):
             handler._cancel_flags["c1"] = True  # 首个 chunk 前即收到取消请求
@@ -252,6 +308,73 @@ class TestHandleChatStream:
         _patch_chat_deps(monkeypatch, llm=llm)
         await handler._handle_chat_stream("c1", {"message": "hi", "session_id": "s1"})
         assert _last_sent(fake_mgr)["type"] == "cancelled"
+
+    @pytest.mark.asyncio
+    async def test_stream_cancel_saves_partial_response(self, handler, fake_mgr, monkeypatch):
+        # E4: 取消时已生成的半截回复以 [已打断] 标记补写入库，避免「用户问了没回答」断层
+        saved = []
+        context_mgr = SimpleNamespace(
+            get_session=lambda sid: {"id": sid} if sid == "s1" else None,
+            create_session=lambda **kw: kw.get("session_id") or "s1",
+            update_session=lambda *a, **kw: True,
+            add_message=lambda session_id, role, content: saved.append((role, content)),
+        )
+
+        async def stream_chat(messages, temperature=0.7, max_tokens=4096):
+            yield "半句话"
+            handler._cancel_flags["c1"] = True  # 第二个 chunk 前收到取消请求
+            yield "后续内容"
+
+        llm = SimpleNamespace(chat=None, stream_chat=stream_chat)
+        _patch_chat_deps(monkeypatch, llm=llm, context_mgr=context_mgr)
+        await handler._handle_chat_stream("c1", {"message": "hi", "session_id": "s1"})
+        assert _last_sent(fake_mgr)["type"] == "cancelled"
+        assert ("assistant", "半句话\n\n[已打断]") in saved
+
+    @pytest.mark.asyncio
+    async def test_stream_error_saves_partial_response(self, handler, fake_mgr, monkeypatch):
+        # E4: 流中途异常时已生成的半截回复以 [已中断] 标记补写入库
+        saved = []
+        context_mgr = SimpleNamespace(
+            get_session=lambda sid: {"id": sid} if sid == "s1" else None,
+            create_session=lambda **kw: kw.get("session_id") or "s1",
+            update_session=lambda *a, **kw: True,
+            add_message=lambda session_id, role, content: saved.append((role, content)),
+        )
+
+        async def stream_chat(messages, temperature=0.7, max_tokens=4096):
+            yield "部分"
+            yield "内容"
+            raise RuntimeError("llm exploded")
+
+        llm = SimpleNamespace(chat=None, stream_chat=stream_chat)
+        _patch_chat_deps(monkeypatch, llm=llm, context_mgr=context_mgr)
+        await handler._handle_chat_stream("c1", {"message": "hi", "session_id": "s1"})
+        msg = _last_sent(fake_mgr)
+        assert msg["type"] == "error"
+        assert "llm exploded" in msg["error"]
+        assert ("assistant", "部分内容\n\n[已中断]") in saved
+
+    @pytest.mark.asyncio
+    async def test_stream_cancel_empty_response_not_saved(self, handler, fake_mgr, monkeypatch):
+        # E4: 取消时一个字都未生成（full_response 为空串）则不补写 assistant 消息
+        saved = []
+        context_mgr = SimpleNamespace(
+            get_session=lambda sid: {"id": sid} if sid == "s1" else None,
+            create_session=lambda **kw: kw.get("session_id") or "s1",
+            update_session=lambda *a, **kw: True,
+            add_message=lambda session_id, role, content: saved.append((role, content)),
+        )
+
+        async def stream_chat(messages, temperature=0.7, max_tokens=4096):
+            handler._cancel_flags["c1"] = True  # 首个 chunk 前即取消，零内容
+            yield "半句话"
+
+        llm = SimpleNamespace(chat=None, stream_chat=stream_chat)
+        _patch_chat_deps(monkeypatch, llm=llm, context_mgr=context_mgr)
+        await handler._handle_chat_stream("c1", {"message": "hi", "session_id": "s1"})
+        assert _last_sent(fake_mgr)["type"] == "cancelled"
+        assert all(role != "assistant" for role, _ in saved)
 
 
 class TestPushAlarm:

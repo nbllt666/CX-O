@@ -48,9 +48,13 @@ async def websocket_agent_endpoint(websocket: WebSocket, agent_id: str, timeout:
 
     except WebSocketDisconnect:
         logger.info(f"WebSocket Agent 客户端断开连接: {client_id}, agent={agent_id}")
-        await ws_manager.disconnect(client_id)
     except Exception as e:
         logger.error(f"WebSocket Agent 错误 {client_id}: {e}")
+    finally:
+        # L1: 清理统一挂 finally——asyncio.CancelledError 继承 BaseException，
+        # 不被 except Exception 捕获，取消路径（uvicorn shutdown/任务取消）
+        # 也必须释放连接与会话资源；disconnect 对不存在的 client_id 幂等
+        # （与 gateway/server.py live handler 的 finally 先例一致）。
         await ws_manager.disconnect(client_id)
 
 
@@ -87,9 +91,10 @@ async def websocket_endpoint(
 
     except WebSocketDisconnect:
         logger.info(f"WebSocket 客户端断开连接: {client_id}")
-        await ws_manager.disconnect(client_id)
     except Exception as e:
         logger.error(f"WebSocket 错误 {client_id}: {e}")
+    finally:
+        # L1: 清理统一挂 finally，覆盖 CancelledError 取消路径；disconnect 幂等。
         await ws_manager.disconnect(client_id)
 
 
@@ -133,9 +138,10 @@ async def websocket_chat_endpoint(
 
     except WebSocketDisconnect:
         logger.info(f"WebSocket 聊天客户端断开连接: {client_id}")
-        await ws_manager.disconnect(client_id)
     except Exception as e:
         logger.error(f"WebSocket 聊天错误 {client_id}: {e}")
+    finally:
+        # L1: 清理统一挂 finally，覆盖 CancelledError 取消路径；disconnect 幂等。
         await ws_manager.disconnect(client_id)
 
 
@@ -182,8 +188,10 @@ async def websocket_live_endpoint(
     except WebSocketDisconnect:
         logger.info(f"直播客户端断开连接: {client_id}")
         # per-client 实例随 client 生命周期在 manager.disconnect 中释放，无需补丁重置
-        await ws_manager.disconnect(client_id)
     except Exception as e:
         logger.error(f"直播 WebSocket 错误 {client_id}: {e}")
         # per-client 实例随 client 生命周期在 manager.disconnect 中释放，无需补丁重置
+    finally:
+        # L1: 清理统一挂 finally——CancelledError 取消路径同样释放 per-client
+        # 双流会话/VAD/ASR流式会话/打断模块；disconnect 幂等。
         await ws_manager.disconnect(client_id)

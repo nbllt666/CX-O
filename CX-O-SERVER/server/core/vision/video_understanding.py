@@ -445,14 +445,17 @@ def draw_keyframe(video_path: str, timestamp_sec: float) -> Optional[str]:
         import cv2  # type: ignore  # noqa: PLC0415（可选依赖，运行时探测）
 
         cap = cv2.VideoCapture(video_path)
-        if cap.isOpened():
-            fps = cap.get(cv2.CAP_PROP_FPS) or 30.0
-            idx = max(0, int(timestamp_sec * fps))
-            cap.set(cv2.CAP_PROP_POS_FRAMES, idx)
-            ok, arr = cap.read()
+        try:
+            if cap.isOpened():
+                fps = cap.get(cv2.CAP_PROP_FPS) or 30.0
+                idx = max(0, int(timestamp_sec * fps))
+                cap.set(cv2.CAP_PROP_POS_FRAMES, idx)
+                ok, arr = cap.read()
+                if ok and arr is not None:
+                    frame = arr
+        finally:
+            # L4: set/read 抛异常时也必须释放解码器，防句柄泄漏
             cap.release()
-            if ok and arr is not None:
-                frame = arr
     except Exception as exc:  # noqa: BLE001
         logger.debug("draw_keyframe: cv2 不可用或失败（%s）", exc)
 
@@ -478,20 +481,23 @@ def draw_keyframe(video_path: str, timestamp_sec: float) -> Optional[str]:
             import av  # type: ignore  # noqa: PLC0415
 
             container = av.open(video_path)
-            stream = next(
-                (s for s in container.streams if s.type == "video"), None
-            )
-            if stream is not None:
-                stream.thread_type = "AUTO"
-                fps = float(stream.average_rate or 30.0)
-                idx = max(0, int(timestamp_sec * fps))
-                container.seek(max(0, int(timestamp_sec * 1000000)))
-                for frame_av in container.decode(video=0):
-                    if frame_av.pts is not None and int(frame_av.pts * fps / stream.time_base) >= idx:
-                        arr = frame_av.to_ndarray(format="bgr24")
-                        frame = arr
-                        break
-            container.close()
+            try:
+                stream = next(
+                    (s for s in container.streams if s.type == "video"), None
+                )
+                if stream is not None:
+                    stream.thread_type = "AUTO"
+                    fps = float(stream.average_rate or 30.0)
+                    idx = max(0, int(timestamp_sec * fps))
+                    container.seek(max(0, int(timestamp_sec * 1000000)))
+                    for frame_av in container.decode(video=0):
+                        if frame_av.pts is not None and int(frame_av.pts * fps / stream.time_base) >= idx:
+                            arr = frame_av.to_ndarray(format="bgr24")
+                            frame = arr
+                            break
+            finally:
+                # L4: decode 抛异常时也必须关闭容器，防句柄泄漏
+                container.close()
         except Exception as exc:  # noqa: BLE001
             logger.debug("draw_keyframe: av 不可用或失败（%s）", exc)
 
@@ -502,11 +508,17 @@ def draw_keyframe(video_path: str, timestamp_sec: float) -> Optional[str]:
         return None
 
     # 落盘临时图（可见用于 OCR）
-    tmp_path = tempfile.mktemp(suffix=".png")
+    # L4: mktemp 已弃用且存在 TOCTOU 竞态，改 mkstemp（先关闭返回的 fd 再用路径）
+    fd, tmp_path = tempfile.mkstemp(suffix=".png")
+    os.close(fd)
     try:
         _save_frame(tmp_path, frame)
     except Exception as exc:  # noqa: BLE001
         logger.warning("draw_keyframe: 保存临时关键帧失败（%s）", exc)
+        try:
+            os.unlink(tmp_path)  # mkstemp 已创建空文件，失败时清理避免残留
+        except OSError:
+            pass
         return None
     return tmp_path
 

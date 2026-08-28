@@ -1,5 +1,4 @@
 """Agent 配置端点——Agent 的增删改查与配置管理接口。"""
-import json
 import os
 from datetime import datetime
 from typing import List, Optional
@@ -7,60 +6,29 @@ from typing import List, Optional
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
+from server.core import agent_store
 from server.core.cache import agent_config_cache
 from server.core.logging_config import get_contextual_logger
+from server.core.prompts_constants import (
+    DEFAULT_AGENT_SYSTEM_PROMPT,
+    MEMORY_AGENT_SYSTEM_PROMPT,
+)
 from server.core.utils import run_io
 
 router = APIRouter()
 logger = get_contextual_logger(__name__)
 
-# Agent 配置文件路径
-AGENTS_CONFIG_PATH = "data/agents.json"
+# Agent 配置文件路径（E1 收敛：由 CWD 相对路径改为引用 agent_store 的项目
+# 绝对路径，与 CWD 无关；保留模块属性形态，测试可 monkeypatch 覆盖指向 tmp_path）
+AGENTS_CONFIG_PATH = agent_store.AGENTS_PATH
 
 # --------------------------------------------------------------------------- #
-# system_prompt 单源常量
-# 默认助手 / 记忆管理助手 的 system_prompt 在此单源定义，seed 与 secondary_router
-# 共同引用，避免多处重复导致漂移（rules-0 提示词去重收敛）。
+# system_prompt 单源常量（E2 下沉 core 侧：server/core/prompts_constants.py）
+# 默认助手 / 记忆管理助手 的 system_prompt 单源在 core 侧定义；此处从该模块
+# 导入并在原命名空间保留同名引用，保证既有
+# `from server.api.routers.agents import MEMORY_AGENT_SYSTEM_PROMPT` 引用与测试
+# 不破，且 secondary_router 无需再反向依赖 api 层。
 # --------------------------------------------------------------------------- #
-DEFAULT_AGENT_SYSTEM_PROMPT = """你是默认助手，一位热情、可靠、随和的AI伙伴。请始终用中文、以自然亲切的口吻回答用户的问题，语气贴近日常交流，避免生硬。
-
-你可以使用以下工具帮助用户：
-
-### 基础工具
-1. calculator - 数学计算工具，支持基本运算、三角函数、对数等
-2. datetime - 获取当前日期和时间
-3. random - 生成随机数
-4. json_format - 格式化JSON字符串
-
-### 记忆与上下文工具
-5. write_long_term_memory - 写入长期记忆，保存用户的重要信息、偏好、事件等
-6. search_all_memories - 搜索所有记忆，检索与当前话题相关的历史信息
-7. call_assistant - 调用记忆管理模型，获取专业处理结果
-8. set_alarm - 设置定时提醒，在指定时间后提醒用户
-9. mono - 保持信息在上下文中，跨多轮对话记住重要信息
-
-使用原则：
-- 需要计算/时间/日期/随机数/JSON格式化时，首选对应工具，不要自己心算或编造
-- 用户提到的重要偏好、事实、事件，主动调用 write_long_term_memory 保存
-- 用户问及之前聊过的事情时，先 search_all_memories 检索
-- 用户要求定闹钟/提醒时，调用 set_alarm
-- 回答清晰直接，先给结论再给补充；不确定时坦诚说明，不编造"""
-
-MEMORY_AGENT_SYSTEM_PROMPT = """你是记忆管理助手，专门负责帮助用户管理和维护记忆库。你可以通过自然语言理解用户的需求，并调用相应的工具来执行记忆管理操作。
-
-你可以使用以下9个记忆管理工具：
-
-1. update_memory_node - 更新记忆节点内容
-2. search_memories - 搜索记忆（关键词搜索）
-3. delete_memory - 删除记忆（软删除，7天后自动清理）
-4. get_memory_stats - 获取记忆库统计信息
-5. search_by_tag - 按标签搜索记忆
-6. bulk_delete - 批量删除记忆
-7. restore_memory - 恢复软删除的记忆
-8. get_chat_history - 获取指定会话的聊天历史
-9. get_available_commands - 获取所有可用命令列表
-
-工具选用建议：用户想找某条记忆时先用 search_memories 或 search_by_tag；想删除/清理时用 delete_memory 或 bulk_delete；想恢复误删时用 restore_memory；想了解记忆库概况时用 get_memory_stats 或 get_available_commands。执行操作前先确认用户意图；删除类操作需先与用户确认再执行。用中文回答用户的问题。"""
 
 
 class AgentConfig(BaseModel):
@@ -179,33 +147,28 @@ def _seed_agents() -> List[dict]:
 
 
 def _load_agents() -> List[dict]:
-    """加载所有 Agent 配置（带缓存）"""
+    """加载所有 Agent 配置（带缓存；读写委托 agent_store 统一入口）"""
     cached = agent_config_cache.get("all_agents")
     if cached is not None:
         return cached
-    
+
     _ensure_data_dir()
     if not os.path.exists(AGENTS_CONFIG_PATH):
         return _seed_agents()
 
-    try:
-        with open(AGENTS_CONFIG_PATH, "r", encoding="utf-8") as f:
-            parsed = json.load(f)
-        # #15: 文件存在但内容为空/非列表 → 种子兜底（曾静默返回空，系统无默认 Agent）
-        if isinstance(parsed, list) and parsed:
-            agent_config_cache.set("all_agents", parsed)
-            return parsed
-        logger.warning("Agent 配置为空或格式异常，注入种子兜底")
-        return _seed_agents()
-    except Exception:
-        return _seed_agents()
+    # E1 收敛：委托 agent_store 兼容读（宽松模式：损坏/结构异常 → []），
+    # 空/损坏结果由下方种子兜底（#15：文件存在但内容为空/非列表不再静默返回空）
+    agents = agent_store.load_agents(AGENTS_CONFIG_PATH)
+    if agents:
+        agent_config_cache.set("all_agents", agents)
+        return agents
+    logger.warning("Agent 配置为空或格式异常，注入种子兜底")
+    return _seed_agents()
 
 
 def _save_agents(agents: List[dict]):
-    """保存所有 Agent 配置"""
-    _ensure_data_dir()
-    with open(AGENTS_CONFIG_PATH, "w", encoding="utf-8") as f:
-        json.dump(agents, f, ensure_ascii=False, indent=2)
+    """保存所有 Agent 配置（委托 agent_store：锁内 tmp+os.replace 原子写）"""
+    agent_store.save_agents(agents, path=AGENTS_CONFIG_PATH)
     agent_config_cache.delete("all_agents")
 
 

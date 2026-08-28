@@ -3,13 +3,18 @@
  *
  * 消费 voiceworkstationApi 音乐域：
  * musicListSongs / musicSynthesize / musicGetTask / musicDeleteSong / musicValidateScore。
- * 简化版：展示歌曲列表（含状态/进度/可播放），新建合成（乐谱 JSON 可选，为空时仅提交标题占位）。
+ * 简化版：展示歌曲列表（含状态/进度/可播放），新建合成（乐谱 JSON 必填，标题并入
+ * score JSON 提交——后端 SynthesizeRequest 无独立 title 字段；空乐谱本地阻断不发请求；
+ * 提交受理成功后才清空输入；存在进行中任务时 3s 轮询刷新列表）。
  */
 import { useCallback, useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Loader2, Music4, RefreshCw, Trash2 } from 'lucide-react';
 import { voiceworkstationApi, getVoiceWorkstationAudioUrl } from '@/api/clients/voiceworkstation';
 import type { SongSummary } from '@/api/clients/voiceworkstation';
+
+/** 进行中任务列表轮询间隔（与 CompositionPanel 任务轮询一致） */
+const POLL_INTERVAL_MS = 3000;
 
 export default function MusicPanel() {
   const { t } = useTranslation();
@@ -19,6 +24,7 @@ export default function MusicPanel() {
   const [loading, setLoading] = useState(false);
   const [loadError, setLoadError] = useState(false);
   const [failed, setFailed] = useState(false);
+  const [scoreRequired, setScoreRequired] = useState(false);
 
   const load = useCallback(() => {
     setLoadError(false);
@@ -35,29 +41,56 @@ export default function MusicPanel() {
     load();
   }, [load]);
 
+  // R8-03：存在进行中任务（pending/running）时挂 3s 轮询复用 load() 刷新列表，
+  // 全部终态（completed/failed）后随依赖变化自动清理；与手动刷新共用同一 load，无竞态。
+  const hasActiveTask = songs.some((s) => s.status === 'pending' || s.status === 'running');
+  useEffect(() => {
+    if (!hasActiveTask) return;
+    const timer = setInterval(load, POLL_INTERVAL_MS);
+    return () => clearInterval(timer);
+  }, [hasActiveTask, load]);
+
   const handleSynthesize = async () => {
     if (!title.trim()) return;
+    const trimmed = scoreJson.trim();
+    // 空乐谱本地阻断：后端空 melody 必 failed（singing_engine 校验），不发请求
+    if (!trimmed) {
+      setScoreRequired(true);
+      return;
+    }
     setLoading(true);
     setFailed(false);
-    let score: Record<string, unknown> | undefined;
-    const trimmed = scoreJson.trim();
-    if (trimmed) {
-      try {
-        score = JSON.parse(trimmed) as Record<string, unknown>;
-        const v = await voiceworkstationApi.musicValidateScore(score);
-        if (!v.valid) {
-          setFailed(true);
-          setLoading(false);
-          return;
-        }
-      } catch {
+    setScoreRequired(false);
+    let parsedScore: Record<string, unknown>;
+    try {
+      parsedScore = JSON.parse(trimmed) as Record<string, unknown>;
+    } catch {
+      setFailed(true);
+      setLoading(false);
+      return;
+    }
+    // 解析后无 melody 同样本地阻断
+    if (!Array.isArray(parsedScore.melody) || parsedScore.melody.length === 0) {
+      setScoreRequired(true);
+      setLoading(false);
+      return;
+    }
+    try {
+      const v = await voiceworkstationApi.musicValidateScore(parsedScore);
+      if (!v.valid) {
         setFailed(true);
         setLoading(false);
         return;
       }
+    } catch {
+      setFailed(true);
+      setLoading(false);
+      return;
     }
     try {
-      await voiceworkstationApi.musicSynthesize({ score: score ?? {} });
+      // 标题并入 score JSON（后端 SynthesizeRequest 仅含 score 等字段，无独立 title）
+      await voiceworkstationApi.musicSynthesize({ score: { ...parsedScore, title: title.trim() } });
+      // 仅受理成功后清空输入；失败保留供重试
       setTitle('');
       setScoreJson('');
       await load();
@@ -124,6 +157,9 @@ export default function MusicPanel() {
       </div>
 
       {failed && <p className="text-xs text-red-400">{t('management.audioWorkstation.musicSynthFailed')}</p>}
+      {scoreRequired && (
+        <p className="text-xs text-red-400">{t('management.audioWorkstation.musicScoreRequired')}</p>
+      )}
 
       {/* 歌曲列表 */}
       <div className="space-y-2">
@@ -155,7 +191,8 @@ export default function MusicPanel() {
                 <div className="min-w-0 flex-1">
                   <p className="truncate text-sm">{song.title}</p>
                   <p className="text-xs text-muted-foreground">
-                    {song.status} · {t('management.audioWorkstation.musicStage')}: {song.stage} · {song.progress}%
+                    {t(`management.audioWorkstation.status.${song.status}`, { defaultValue: song.status })} ·{' '}
+                    {t('management.audioWorkstation.musicStage')}: {song.stage} · {song.progress}%
                   </p>
                 </div>
                 {song.audio_url && (

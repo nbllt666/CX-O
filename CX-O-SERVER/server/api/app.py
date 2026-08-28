@@ -5,6 +5,7 @@ from fastapi.exceptions import RequestValidationError
 
 from server.api.exceptions import (
     ServiceError,
+    core_exception_handler,
     service_exception_handler,
     generic_exception_handler,
     http_exception_handler,
@@ -132,6 +133,13 @@ def register_api_routes(app: FastAPI):
     # 声纹识别 REST（/api/voiceprint/*）
     app.include_router(voiceprint.router, prefix="/api")
 
+    # E3 双异常体系收敛：CoreException 全局 handler——core 侧异常（ACPError/
+    # MemoryOperationError/VectorStoreError/MCPError 等）未被路由捕获时不再落
+    # generic handler 变 500 INTERNAL_ERROR，保留错误码与详情。Starlette 按
+    # 异常类型 MRO 精确匹配 handler，与 ServiceError/Exception 注册顺序无关。
+    from server.core.exceptions import CoreException
+
+    app.add_exception_handler(CoreException, core_exception_handler)
     app.add_exception_handler(ServiceError, service_exception_handler)
     app.add_exception_handler(HTTPException, http_exception_handler)
     app.add_exception_handler(RequestValidationError, validation_exception_handler)

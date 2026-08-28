@@ -4,6 +4,7 @@ from datetime import datetime
 from typing import Any, Dict, Optional
 
 from server.core.logging_config import get_contextual_logger
+from server.core.utils import run_io
 
 from .manager import get_websocket_manager
 
@@ -66,7 +67,10 @@ class ChatWebSocketHandler:
                 )
                 return
 
-            agent_config = get_agent_config(agent_id)
+            # P4: 配置读取含同步文件 IO（agents.json，TTL 过期后首个调用触发读盘），
+            # 卸载到共享有界 IO 池执行（与 handlers/chat.py:135 同款方案），避免卡事件循环。
+            # 保留 get_agent_config 模块级名称绑定（tests 以 monkeypatch 该名注入用例）。
+            agent_config = await run_io(get_agent_config, agent_id)
             if not agent_config:
                 await self.ws_manager.send_to_client(
                     client_id, {"type": "error", "error": f"Agent '{agent_id}' 不存在"}
@@ -136,6 +140,9 @@ class ChatWebSocketHandler:
         from server.chat_helpers import get_agent_config, get_llm_client_for_agent, retrieve_memory_context
         from server.prompt_builder import build_messages
 
+        # E4: 提前初始化，保证 except 分支可安全引用（早期异常时为空串，不触发补写）
+        full_response = ""
+
         try:
             agent_id = message.get("agent_id", "default")
             session_id = message.get("session_id")
@@ -147,8 +154,8 @@ class ChatWebSocketHandler:
                 )
                 return
 
-            # 获取配置
-            agent_config = get_agent_config(agent_id)
+            # 获取配置（P4: run_io 卸载同步文件 IO，与 _handle_chat 同款方案）
+            agent_config = await run_io(get_agent_config, agent_id)
             if not agent_config:
                 await self.ws_manager.send_to_client(
                     client_id, {"type": "error", "error": f"Agent '{agent_id}' 不存在"}
@@ -199,8 +206,7 @@ class ChatWebSocketHandler:
                 memory_context=memory_context,
             )
 
-            # 流式响应
-            full_response = ""
+            # 流式响应（full_response 已在 try 前初始化，供取消/异常路径补写半截回复）
             self._cancel_flags[client_id] = False
 
             async for chunk in llm.stream_chat(
@@ -209,12 +215,44 @@ class ChatWebSocketHandler:
                 max_tokens=agent_config.get("max_tokens", 4096),
             ):
                 if self._cancel_flags.get(client_id, False):
+                    # E4: 取消时已生成的半截回复补写入库，避免「用户问了没回答」断层。
+                    # 先发 cancelled 帧再补写：若发送失败落入 except 分支，由 except 补写，不重复。
                     await self.ws_manager.send_to_client(
                         client_id, {"type": "cancelled", "timestamp": datetime.now().isoformat()}
                     )
+                    if full_response:
+                        context_mgr.add_message(
+                            session_id=session_id,
+                            role="assistant",
+                            content=full_response + "\n\n[已打断]",
+                        )
                     return
 
-                if chunk:
+                if not chunk:
+                    continue
+
+                # W4: 对齐 HTTP SSE 契约（api/routers/chat.py generate_stream）——
+                # stream_chat 可能产出 dict 分帧（thinking/content/tool_calls）。
+                # thinking 帧以相同字段（type/content）转发给 WS 客户端；内容帧仍以
+                # chat_chunk 外发，既有帧契约不变。旧格式（str）行为保持原样。
+                if isinstance(chunk, dict):
+                    chunk_type = chunk.get("type")
+                    if chunk_type == "thinking":
+                        await self.ws_manager.send_to_client(
+                            client_id,
+                            {"type": "thinking", "content": chunk.get("content", "")},
+                        )
+                    elif chunk_type == "tool_calls":
+                        # WS 聊天流未启用工具链（stream_chat 未传 tools），防御性跳过
+                        logger.debug(f"WS 聊天流忽略 tool_calls 帧: {chunk.get('tool_calls', [])}")
+                    else:
+                        content = chunk.get("content", "")
+                        if content:
+                            full_response += content
+                            await self.ws_manager.send_to_client(
+                                client_id, {"type": "chat_chunk", "content": content}
+                            )
+                elif isinstance(chunk, str):
                     full_response += chunk
                     await self.ws_manager.send_to_client(
                         client_id, {"type": "chat_chunk", "content": chunk}
@@ -225,6 +263,8 @@ class ChatWebSocketHandler:
                 context_mgr.add_message(
                     session_id=session_id, role="assistant", content=full_response
                 )
+                # E4: 已完整入库即置空，防止后续 chat_done 发送失败时 except 分支重复补写
+                full_response = ""
 
             # 发送完成消息
             await self.ws_manager.send_to_client(
@@ -238,6 +278,15 @@ class ChatWebSocketHandler:
 
         except Exception as e:
             logger.error(f"处理流式聊天消息失败: {e}")
+            # E4: 流中途异常时补写已生成的半截回复，避免「用户问了没回答」断层。
+            # full_response 非空意味着 context_mgr/session_id 必已就绪；先补写再发
+            # error 帧（连接已断时发送会抛异常，补写仍需完成）。
+            if full_response:
+                context_mgr.add_message(
+                    session_id=session_id,
+                    role="assistant",
+                    content=full_response + "\n\n[已中断]",
+                )
             await self.ws_manager.send_to_client(client_id, {"type": "error", "error": str(e)})
         finally:
             self._cancel_flags.pop(client_id, None)
@@ -283,6 +332,22 @@ class ChatWebSocketHandler:
             await self.ws_manager.send_to_client(
                 client_id, {"type": "config_updated", "timeout": timeout}
             )
+
+        # W1: agent_id 落入连接 metadata 并自动订阅 agent:{id} alarm 频道。
+        # 前端从不显式发 subscribe，alarm 推送（push_alarm_to_agent → broadcast_to_channel）
+        # 依赖此自动订阅触达前端提醒 UI。字段缺失时行为不变（向后兼容）。
+        agent_id = message.get("agent_id")
+        if agent_id:
+            connection = self.ws_manager.connections.get(client_id)
+            if connection is not None:
+                old_agent_id = connection.metadata.get("agent_id")
+                new_channel = f"agent:{agent_id}"
+                old_channel = f"agent:{old_agent_id}" if old_agent_id else None
+                # 换绑到不同 agent：先退订旧 alarm 频道，避免跨 agent 串音
+                if old_channel and old_channel != new_channel and connection.is_subscribed(old_channel):
+                    self.ws_manager.unsubscribe_from_channel(client_id, old_channel)
+                connection.metadata["agent_id"] = agent_id
+                self.ws_manager.subscribe_to_channel(client_id, new_channel)
 
 
 async def push_alarm_to_agent(agent_id: str, alarm_message: str):

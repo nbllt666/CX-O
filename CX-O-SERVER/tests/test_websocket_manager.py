@@ -6,6 +6,7 @@ type 路由与 action 回退、未知消息/未知 action、离线清理与回�
 
 运行：python -m pytest tests/test_websocket_manager.py -v
 """
+import json
 from datetime import datetime, timedelta
 
 import pytest
@@ -22,6 +23,7 @@ class FakeWebSocket:
         self.accepted = False
         self.sent = []
         self.to_receive = []
+        self.raw_frames = []  # 原生 ASGI 帧队列（优先于 to_receive，供 E3 用例注入畸形帧）
         self.closed = False
         self.close_codes = []
 
@@ -33,6 +35,14 @@ class FakeWebSocket:
 
     async def receive_json(self):
         return self.to_receive.pop(0)
+
+    async def receive(self):
+        """E3 适配：模拟 ASGI 原生帧。raw_frames 优先（原始帧队列），
+        否则把 to_receive 中的对象包装成 {"text": json.dumps(...)} 帧。"""
+        if self.raw_frames:
+            return self.raw_frames.pop(0)
+        item = self.to_receive.pop(0)
+        return {"text": json.dumps(item)}
 
     async def close(self, code: int = 1000):
         if self.closed:
@@ -71,6 +81,44 @@ class TestConnection:
         ws.to_receive = [{"type": "hello"}]
         c = WebSocketConnection(ws, "c1")
         assert await c.receive() == {"type": "hello"}
+
+    @pytest.mark.asyncio
+    async def test_receive_skips_malformed_frames(self):
+        """E3 回归：畸形 JSON 文本帧/二进制帧不抛异常，跳过后取到有效帧。"""
+        ws = FakeWebSocket()
+        ws.raw_frames = [
+            {"text": "{not-valid-json"},
+            {"bytes": b"\xff\xfe\x00broken"},
+            {"text": json.dumps({"type": "ok"})},
+        ]
+        c = WebSocketConnection(ws, "c1")
+        assert await c.receive() == {"type": "ok"}
+
+    @pytest.mark.asyncio
+    async def test_receive_skips_non_dict_json(self):
+        """E3 回归：合法 JSON 但非对象（数组/标量）同样跳过，维持 dict 返回契约。"""
+        ws = FakeWebSocket()
+        ws.raw_frames = [
+            {"text": "[1, 2, 3]"},
+            {"text": json.dumps({"type": "hello"})},
+        ]
+        c = WebSocketConnection(ws, "c1")
+        assert await c.receive() == {"type": "hello"}
+
+    @pytest.mark.asyncio
+    async def test_receive_propagates_disconnect(self):
+        """E3 回归：连接关闭时 WebSocketDisconnect 正常向上传播，不被吞掉。"""
+        from fastapi import WebSocketDisconnect
+
+        ws = FakeWebSocket()
+
+        async def raise_disconnect():
+            raise WebSocketDisconnect(code=1000)
+
+        ws.receive = raise_disconnect
+        c = WebSocketConnection(ws, "c1")
+        with pytest.raises(WebSocketDisconnect):
+            await c.receive()
 
 
 # ================================================================ WebSocketManager
@@ -274,6 +322,22 @@ class TestRouting:
         await mgr.connect(ws, client_id="a", send_connected=False)
         await mgr.handle_action_message("a", {"action": "nope"})
         assert ws.sent[-1]["type"] == "error"
+
+    @pytest.mark.asyncio
+    async def test_action_handler_error_sends_error_and_keeps_connection(self, mgr):
+        """E2a 回归：action handler 抛异常不断连，客户端收到 error 帧。"""
+        ws = FakeWebSocket()
+        await mgr.connect(ws, client_id="a", send_connected=False)
+
+        async def bad_handler(websocket, message, client_id):
+            raise RuntimeError("action boom")
+
+        mgr.register_action_handler("chat.message", bad_handler)
+        await mgr.handle_message("a", {"action": "chat.message"})  # 不应抛
+        assert "a" in mgr.connections  # 连接未被断开
+        last = ws.sent[-1]
+        assert last["type"] == "error"
+        assert last["data"]["message"] == "action 处理失败"
 
     @pytest.mark.asyncio
     async def test_handle_action_get_handler(self, mgr):

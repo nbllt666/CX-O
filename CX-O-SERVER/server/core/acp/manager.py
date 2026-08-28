@@ -8,6 +8,7 @@ from typing import Any, Dict, List, Optional
 
 from pydantic import BaseModel, Field, model_validator
 
+from server.core import agent_store
 from server.core.logging_config import get_contextual_logger
 
 logger = get_contextual_logger(__name__)
@@ -387,13 +388,15 @@ class ACPManager:
             )
 
         # 2. 从 data/agents.json 加载用户创建的角色卡 agent（适配 CX-O 既有数据格式）
-        agents_file = os.path.join(_PROJECT_ROOT, "data", "agents.json")
+        # E1 收敛：读路径委托 agent_store 统一入口（绝对路径锚点 + 兼容读），
+        # 替代本文件自拼 _PROJECT_ROOT 路径。缺失 → 空列表（等价原 return）；
+        # 损坏 → store 宽松模式记 warning 返回空列表，与原 except 分支留痕等价。
+        agents_file = agent_store.AGENTS_PATH
         if not os.path.exists(agents_file):
             return
 
         try:
-            with open(agents_file, "r", encoding="utf-8") as f:
-                cxhms_agents = json.load(f)
+            cxhms_agents = agent_store.load_agents()
 
             count = 0
             for agent_data in cxhms_agents:

@@ -228,23 +228,33 @@ async def test_sync_event_applies_then_dedupes(tmp_path, monkeypatch):
     inject(cl, monkeypatch)
     tc = make_app(cl)
 
-    payload1 = {"unit": "memory", "op": "upsert", "seq": 11, "data": {"k": "v"}}
-    r1 = tc.post("/cluster/sync_event", json=peer_body("sync_event", node_id="peer-c", seq=11, payload=payload1))
-    assert r1.status_code == 200
-    d1 = r1.json()
-    assert d1 == {"ok": True, "acked_seq": 11, "applied": True}
-    assert cl.replicator.last_applied()["memory"] == 11
+    # E13 后仅 ref_audio 有应用端：改用 ref_audio 绑定事件（落盘走临时资产目录），
+    # 保持原意图：应用→ack / 同 seq 重放幂等 ack / 新 seq 正常推进。
+    from server import ref_audio_store
 
-    # 幂等：同 seq 重放 ack 但不再应用
-    r2 = tc.post("/cluster/sync_event", json=peer_body("sync_event", node_id="peer-c", seq=11, payload=payload1))
-    d2 = r2.json()
-    assert d2["ok"] is True and d2["acked_seq"] == 11 and d2["applied"] is False
+    ref_audio_store._set_assets_dir(tmp_path)
+    try:
+        payload1 = {"unit": "ref_audio", "op": "binding_set", "seq": 11,
+                    "data": {"agent_id": "agent-x", "asset_id": "a-1", "tts_voice": "v1"}}
+        r1 = tc.post("/cluster/sync_event", json=peer_body("sync_event", node_id="peer-c", seq=11, payload=payload1))
+        assert r1.status_code == 200
+        d1 = r1.json()
+        assert d1 == {"ok": True, "acked_seq": 11, "applied": True}
+        assert cl.replicator.last_applied()["ref_audio"] == 11
 
-    # 新 seq 正常推进
-    payload3 = {"unit": "memory", "op": "upsert", "seq": 12, "data": {"k": "v2"}}
-    r3 = tc.post("/cluster/sync_event", json=peer_body("sync_event", node_id="peer-c", seq=12, payload=payload3))
-    assert r3.json()["applied"] is True
-    assert cl.replicator.last_applied()["memory"] == 12
+        # 幂等：同 seq 重放 ack 但不再应用
+        r2 = tc.post("/cluster/sync_event", json=peer_body("sync_event", node_id="peer-c", seq=11, payload=payload1))
+        d2 = r2.json()
+        assert d2["ok"] is True and d2["acked_seq"] == 11 and d2["applied"] is False
+
+        # 新 seq 正常推进
+        payload3 = {"unit": "ref_audio", "op": "binding_set", "seq": 12,
+                    "data": {"agent_id": "agent-x", "asset_id": "a-2", "tts_voice": "v2"}}
+        r3 = tc.post("/cluster/sync_event", json=peer_body("sync_event", node_id="peer-c", seq=12, payload=payload3))
+        assert r3.json()["applied"] is True
+        assert cl.replicator.last_applied()["ref_audio"] == 12
+    finally:
+        ref_audio_store._set_assets_dir(None)
 
 
 def test_leave_marks_left_clears_suspect_and_emits_event(tmp_path, monkeypatch):
@@ -395,16 +405,17 @@ async def test_applied_seqs_capacity_compaction(tmp_path, monkeypatch):
     from server.core.cluster import replicator as rep_mod
 
     monkeypatch.setattr(rep_mod, "APPLIED_SEQS_MAX", 4)
-    rep = StateReplicator(config=make_config(), node_id="me", units={"memory": "incremental"})
+    rep = StateReplicator(config=make_config(), node_id="me", units={"ref_audio": "incremental"})
+    monkeypatch.setattr(rep, "_apply_ref_audio", lambda op, payload: True)  # 隔离应用层（E13）
     for s in range(1, 7):                       # 应用 6 个 distinct seq（> 上限 4 触发压实）
-        await rep.apply_event({"unit": "memory", "seq": s, "op": "x", "payload": {}})
+        await rep.apply_event({"unit": "ref_audio", "seq": s, "op": "x", "payload": {}})
     rep._compact_applied_seqs()                 # 周期压实入口（生产由 _loop 调度）
-    seqs = rep._applied_seqs["memory"]
+    seqs = rep._applied_seqs["ref_audio"]
     assert len(seqs) <= 4                       # 容量有界
     assert seqs == {5, 6}                       # 保留最新一半
     # 最新 seq 重放仍幂等跳过；被压实的极旧 seq 会重新应用（容量窗口取舍，各单元应用层幂等兜底）
-    assert await rep.apply_event({"unit": "memory", "seq": 6, "op": "x", "payload": {}}) is False
-    assert await rep.apply_event({"unit": "memory", "seq": 1, "op": "x", "payload": {}}) is True
+    assert await rep.apply_event({"unit": "ref_audio", "seq": 6, "op": "x", "payload": {}}) is False
+    assert await rep.apply_event({"unit": "ref_audio", "seq": 1, "op": "x", "payload": {}}) is True
 
 
 @pytest.mark.asyncio

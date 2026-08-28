@@ -4,6 +4,7 @@ import json
 import logging
 import os
 import socket
+import threading
 import uuid
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
@@ -352,3 +353,75 @@ async def run_io(func, *args, **kwargs):
     return await loop.run_in_executor(
         get_io_executor(), lambda: func(*args, **kwargs)
     )
+
+
+# ============================================================================
+# 审计日志追加写（decision_core._append_audit_entry / distillation_service
+# ._write_audit_log 共享入口，P1 修复）
+# ----------------------------------------------------------------------------
+# 旧实现为「读整个 JSON 数组 → append → indent=2 全量写回」：文件随条目数
+# O(N²) 写放大且无界增长。此处提供统一修复：
+# - per-path 锁注册表：同一文件（即同一 session）的读改写串行化，不同
+#   session 互不阻塞（替代原模块级全局锁的跨 session 串行）；
+# - 软上限 max_entries（默认 200）：仅保留最后 N 条，消除无界增长；
+# - tmp + os.replace 原子替换：避免半写损坏。
+# JSONL 方案被否决：public/schema/distillation_log.schema.json 锁定
+# {session_id}.json 路径（public/ 只读，变更须走契约流程）。
+# ============================================================================
+
+_AUDIT_LOCKS: Dict[str, threading.Lock] = {}
+_AUDIT_LOCKS_GUARDIAN = threading.Lock()
+
+
+def _get_audit_lock(path: str) -> threading.Lock:
+    """取 per-path 审计锁（不存在则创建）。
+
+    guardian 锁只保护注册表字典本身的读写，锁内操作极短；
+    返回的 per-path 锁用于串行化该文件的读-改-写。
+    """
+    with _AUDIT_LOCKS_GUARDIAN:
+        lock = _AUDIT_LOCKS.get(path)
+        if lock is None:
+            lock = threading.Lock()
+            _AUDIT_LOCKS[path] = lock
+        return lock
+
+
+def append_audit_entry(path: str, entry: Dict[str, Any], max_entries: int = 200) -> None:
+    """向 JSON 数组格式的审计日志文件追加一条记录（加锁读改写 + 原子替换）。
+
+    行为约定：
+    - 文件为 JSON 数组，条目结构由 distillation_log.schema.json 契约约束；
+    - 同一 path 的读-改-写由 per-path 锁串行化，保证基于最新完整内容追加；
+    - 解析失败（JSONDecodeError / OSError / 非 list）→ 从空数组重建
+      （与旧实现的容错口径一致）；
+    - 追加后仅保留最后 ``max_entries`` 条（默认 200），消除 O(N²) 写放大
+      与无界增长；``max_entries`` <=0 时不截断；
+    - 写回先写 ``{path}.tmp`` 再 ``os.replace``，原子替换防半写。
+
+    Args:
+        path: 审计日志文件路径（JSON 数组）。
+        entry: 待追加的日志条目（dict）。
+        max_entries: 保留条数上限；超过时丢弃最旧条目。<=0 表示不截断。
+    """
+    with _get_audit_lock(path):
+        logs: List[Dict[str, Any]] = []
+        try:
+            with open(path, "r", encoding="utf-8") as fh:
+                loaded = json.load(fh)
+            if isinstance(loaded, list):
+                logs = loaded
+        except (json.JSONDecodeError, OSError, ValueError):
+            logs = []
+
+        logs.append(entry)
+        if max_entries and max_entries > 0 and len(logs) > max_entries:
+            logs = logs[-max_entries:]
+
+        directory = os.path.dirname(path)
+        if directory:
+            os.makedirs(directory, exist_ok=True)
+        tmp_path = path + ".tmp"
+        with open(tmp_path, "w", encoding="utf-8") as fh:
+            json.dump(logs, fh, ensure_ascii=False, indent=2)
+        os.replace(tmp_path, path)

@@ -95,8 +95,9 @@ class MemorySearchRequest(BaseModel):
     memory_type: Optional[str] = None
     tags: Optional[List[str]] = None
     time_range: Optional[str] = None
-    limit: int = 10
-    offset: int = 0
+    # R9: 分页参数边界约束，防恶意大 limit 拖库（对齐 tuner.py:252 钳制语义 max(1, min(x, 200))）
+    limit: int = Field(default=10, ge=1, le=200)
+    offset: int = Field(default=0, ge=0)
     include_deleted: bool = False
     workspace_id: str = "default"
     agent_id: str = "default"
@@ -126,6 +127,9 @@ async def list_memories(
     agent_id: str = "default",
 ):
     """列出记忆"""
+    # R9: 分页参数钳制（对齐 tuner.py:252 惯例），下游 get_permanent_memories/search_memories 直传
+    limit = max(1, min(int(limit), 200))
+    offset = max(0, int(offset))
     from server.dependencies import get_memory_manager
 
     actual_type = type or memory_type

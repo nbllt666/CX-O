@@ -23,13 +23,12 @@ RADIX-Lite 管理 Agent 扩展工具：8 个新增工具。
 """
 
 import asyncio
-import json
 import os
-import tempfile
-import threading
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
 from pydantic import BaseModel
+
+from server.core import agent_store
 
 
 # --------------------------------------------------------------------------- #
@@ -40,7 +39,8 @@ from pydantic import BaseModel
 _THIS_DIR = os.path.dirname(os.path.abspath(__file__))
 _PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(_THIS_DIR)))
 _DATA_DIR = os.path.join(_PROJECT_ROOT, "data")
-_AGENTS_FILE = os.path.join(_DATA_DIR, "agents.json")
+# E1 收敛：默认路径改引用 agent_store 统一锚点（绝对路径，与 CWD 无关）
+_AGENTS_FILE = agent_store.AGENTS_PATH
 
 
 # --------------------------------------------------------------------------- #
@@ -198,9 +198,9 @@ class AgentToolsV2:
         _distillation_service: DistillationService 实例（蒸馏工具使用）
     """
 
-    # M-E 修复: 类级锁包住 add/update/delete 的 load-modify-save 全程，
-    # 防止并发写路径交叉读改写导致丢 agent。
-    _agents_lock = threading.Lock()
+    # E1 收敛：原类级 _agents_lock（threading.Lock）删除，add/update/delete 的
+    # load-modify-save 全程互斥改由 agent_store 全局 RLock 承接（可重入、跨入口
+    # 统一防护，不再仅限本类内互斥）。
 
     def __init__(
         self,
@@ -257,13 +257,14 @@ class AgentToolsV2:
         if not request.name:
             raise ValueError("name 不能为空（422）")
 
-        # M-E 修复: load-modify-save 全程持锁，防并发交叉写丢 agent
-        with self._agents_lock:
-            agents_data = self._load_agents()
-            agents_list = agents_data.get("agents", [])
+        # M-E 修复沿用: load-modify-save 全程持锁防并发交叉写丢 agent——
+        # 锁与原子写由 agent_store.update_agents（全局 RLock + os.replace）承接，
+        # mutator 抛异常时文件保持原样不落盘（含查重 FileExistsError 路径）
+        record_holder: List[AgentRecord] = []
 
-            for record in agents_list:
-                if record.get("agent_id") == request.agent_id:
+        def _mutate(agents_list):
+            for existing in agents_list:
+                if existing.get("agent_id") == request.agent_id:
                     raise FileExistsError(
                         f"agent_id 已存在（409）: {request.agent_id}"
                     )
@@ -280,7 +281,7 @@ class AgentToolsV2:
                         f"decision_rubric 缺少必需字段（422）: {field}"
                     )
 
-            record = AgentRecord(
+            rec = AgentRecord(
                 agent_id=request.agent_id,
                 name=request.name,
                 tools_config=tools_config,
@@ -288,10 +289,11 @@ class AgentToolsV2:
                 distillation_enabled=config.get("distillation_enabled", False),
                 legacy_parser_enabled=config.get("legacy_parser_enabled", True),
             )
-            agents_list.append(record.model_dump())
-            agents_data["agents"] = agents_list
-            self._save_agents(agents_data)
-        return record
+            agents_list.append(rec.model_dump())
+            record_holder.append(rec)
+
+        agent_store.update_agents(_mutate, path=self._agents_file)
+        return record_holder[0]
 
     def update_agent(self, agent_id: str, request: UpdateAgentRequest) -> AgentRecord:
         """工具 2: 更新 agent 配置。
@@ -311,14 +313,14 @@ class AgentToolsV2:
         """
         self._check_tool_enabled("update_agent")
 
-        # M-E 修复: load-modify-save 全程持锁，防并发交叉写丢 agent
-        with self._agents_lock:
-            agents_data = self._load_agents()
-            agents_list = agents_data.get("agents", [])
+        # M-E 修复沿用: load-modify-save 全程持锁——由 agent_store.update_agents
+        # （全局 RLock + os.replace 原子写）承接，mutator 抛 KeyError 时不落盘
+        record_holder: List[AgentRecord] = []
 
-            target_idx: Optional[int] = None
-            for idx, record in enumerate(agents_list):
-                if record.get("agent_id") == agent_id:
+        def _mutate(agents_list):
+            target_idx = None
+            for idx, existing in enumerate(agents_list):
+                if existing.get("agent_id") == agent_id:
                     target_idx = idx
                     break
             if target_idx is None:
@@ -344,11 +346,12 @@ class AgentToolsV2:
                 if "legacy_parser_enabled" in cfg:
                     record_dict["legacy_parser_enabled"] = cfg["legacy_parser_enabled"]
 
-            record = AgentRecord(**record_dict)
-            agents_list[target_idx] = record.model_dump()
-            agents_data["agents"] = agents_list
-            self._save_agents(agents_data)
-        return record
+            rec = AgentRecord(**record_dict)
+            agents_list[target_idx] = rec.model_dump()
+            record_holder.append(rec)
+
+        agent_store.update_agents(_mutate, path=self._agents_file)
+        return record_holder[0]
 
     def delete_agent(self, agent_id: str) -> bool:
         """工具 3: 删除 agent（含级联清理）。
@@ -368,22 +371,19 @@ class AgentToolsV2:
         """
         self._check_tool_enabled("delete_agent")
 
-        # M-E 修复: load-modify-save 全程持锁，防并发交叉写丢 agent
-        with self._agents_lock:
-            agents_data = self._load_agents()
-            agents_list = agents_data.get("agents", [])
-
-            target_idx: Optional[int] = None
-            for idx, record in enumerate(agents_list):
-                if record.get("agent_id") == agent_id:
+        # M-E 修复沿用: load-modify-save 全程持锁——由 agent_store.update_agents
+        # （全局 RLock + os.replace 原子写）承接，mutator 抛 KeyError 时不落盘
+        def _mutate(agents_list):
+            target_idx = None
+            for idx, existing in enumerate(agents_list):
+                if existing.get("agent_id") == agent_id:
                     target_idx = idx
                     break
             if target_idx is None:
                 raise KeyError(f"agent_id 不存在（404）: {agent_id}")
-
             del agents_list[target_idx]
-            agents_data["agents"] = agents_list
-            self._save_agents(agents_data)
+
+        agent_store.update_agents(_mutate, path=self._agents_file)
 
         # 级联清理：删除该 agent 关联的审计日志（best-effort）
         self._cascade_cleanup_agent(agent_id)
@@ -700,71 +700,43 @@ class AgentToolsV2:
                 )
 
     def _load_agents(self) -> Dict[str, Any]:
-        """加载 agents.json。
+        """加载 agents.json（E1 收敛：委托 agent_store，fail-fast 读语义）。
 
-        文件不存在时返回默认结构（含 default + memory-agent 两个预置 agent）。
-
-        M-E 修复: 文件存在但 JSON 损坏时改为 raise——旧实现静默返回
-        {"agents": []}，下游写路径会把空结构覆写回文件，丢掉全部 agent。
+        文件不存在时返回默认结构（含 default + memory-agent 两个预置 agent）；
+        文件存在但 JSON 损坏 / 结构损坏时抛 IOError 中断写路径——旧实现静默返回
+        {"agents": []} 会让下游写路径以空结构覆写丢掉全部 agent（M-E 语义，
+        由 agent_store strict 模式承接，措辞与既有调用方断言一致）。
 
         Returns:
-            agents 数据字典 {"agents": [...]}
+            agents 数据字典 {"agents": [...]}（磁盘扁平 list 在此包装为 dict 视图）
 
         Raises:
-            IOError: 文件读取失败或 JSON 解析失败（500，中断写路径防覆写）
+            IOError: 文件读取失败或 JSON 解析/结构损坏（500，中断写路径防覆写）
         """
-        try:
-            if not os.path.isfile(self._agents_file):
-                return {
-                    "agents": [
-                        _make_default_agent().model_dump(),
-                        _make_memory_agent().model_dump(),
-                    ]
-                }
-            with open(self._agents_file, "r", encoding="utf-8") as fh:
-                raw = fh.read()
-        except OSError as exc:
-            raise IOError(f"agents.json 读取失败（500）: {exc}") from exc
-        try:
-            data = json.loads(raw)
-        except json.JSONDecodeError as exc:
-            # M-E: 损坏文件不得以空结构覆写，中断写路径（IOError 是 OSError 子类，
-            # 兼容既有 except (IOError, OSError) 调用方的读取路径）
-            raise IOError(f"agents.json 解析失败（500）: {exc}") from exc
-        if not isinstance(data, dict):
-            raise IOError("agents.json 结构损坏（500）: 顶层不是对象")
-        if "agents" not in data:
-            data["agents"] = []
-        return data
+        if not os.path.isfile(self._agents_file):
+            return {
+                "agents": [
+                    _make_default_agent().model_dump(),
+                    _make_memory_agent().model_dump(),
+                ]
+            }
+        agents_list = agent_store.load_agents(self._agents_file, strict=True)
+        return {"agents": agents_list}
 
     def _save_agents(self, agents_data: Dict[str, Any]) -> None:
-        """保存 agents.json（M-E: 临时文件 + os.replace 原子替换）。
+        """保存 agents.json（E1 收敛：委托 agent_store，锁内临时文件 + os.replace 原子替换）。
 
-        先写同目录临时文件再原子替换，避免进程崩溃/断电留下半截 JSON
-        导致下次启动解析失败（配合 _load_agents 的 fail-fast）。
+        Args:
+            agents_data: {"agents": [...]} 数据字典（视图形状，落盘由 store
+                归一为扁平 list，与 data/agents.json 既有格式一致）
 
         Raises:
             IOError: 写入失败（500）
         """
-        tmp_path: Optional[str] = None
         try:
-            os.makedirs(os.path.dirname(self._agents_file), exist_ok=True)
-            fd, tmp_path = tempfile.mkstemp(
-                prefix=".agents-", suffix=".json.tmp",
-                dir=os.path.dirname(self._agents_file) or ".",
-            )
-            with os.fdopen(fd, "w", encoding="utf-8") as fh:
-                json.dump(agents_data, fh, ensure_ascii=False, indent=2)
-            os.replace(tmp_path, self._agents_file)
-            tmp_path = None  # 已被 replace 消费
+            agent_store.save_agents(agents_data, path=self._agents_file)
         except OSError as exc:
             raise IOError(f"agents.json 写入失败（500）: {exc}") from exc
-        finally:
-            if tmp_path is not None and os.path.exists(tmp_path):
-                try:
-                    os.unlink(tmp_path)
-                except OSError:
-                    pass
 
     def _cascade_cleanup_agent(self, agent_id: str) -> None:
         """级联清理 agent 关联数据（审计日志 best-effort）。"""

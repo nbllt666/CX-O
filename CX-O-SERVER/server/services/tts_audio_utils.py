@@ -151,10 +151,16 @@ class CrossRequestSilenceFilter:
         }
 
 
+# P6: 句末标点模式预编译为模块级常量——split_text_by_sentences 处于 TTS 分句
+# 热路径，每次调用重复 re.compile 纯浪费；re 模块内部虽有缓存，但显式预编译
+# 免去每次调用的缓存查找与函数调用开销
+_SENTENCE_ENDINGS = re.compile(r'([。！？.!?]+)')
+
+
 def split_text_by_sentences(text: str, max_length: int = 200) -> list[str]:
     """按句末标点将文本切分为句子，并按 max_length 合并相邻短句。"""
 
-    sentence_endings = re.compile(r'([。！？.!?]+)')
+    sentence_endings = _SENTENCE_ENDINGS
     parts = sentence_endings.split(text)
 
     sentences = []

@@ -6,6 +6,8 @@ from fastapi import HTTPException, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 
+from server.core.exceptions import CoreException
+
 from .response import ErrorResponse
 
 logger = logging.getLogger(__name__)
@@ -35,6 +37,40 @@ async def service_exception_handler(request: Request, exc: ServiceError) -> JSON
         status_code=exc.status_code,
         content=ErrorResponse(
             error_message=exc.message, error_code=exc.error_code, details=exc.details
+        ).model_dump(by_alias=True),
+    )
+
+
+# CoreException 错误码 → HTTP status 覆盖表（E3 双异常体系收敛）。
+# CoreException 结构（server/core/exceptions.py）携带业务错误码 code（str）与
+# details，无 HTTP status 字段；当前全部错误码（CORE_ERROR/ACP_ERROR/
+# MEMORY_ERROR/VECTOR_STORE_ERROR/TOOL_ERROR/MCP_ERROR）均为服务端操作失败
+# 语义，默认映射 500。后续若出现可精确定位的错误码（404/409/422 语义），
+# 在此表登记覆盖即可。
+_CORE_CODE_STATUS_OVERRIDES: Dict[str, int] = {}
+
+
+async def core_exception_handler(request: Request, exc: CoreException) -> JSONResponse:
+    """将 CoreException 转换为统一的 JSON 错误响应（E3 双异常体系收敛）。
+
+    此前 CoreException 子类（ACPError/MemoryOperationError/VectorStoreError/
+    MCPError 等）未被路由捕获时落入 generic handler 变 500 INTERNAL_ERROR，
+    丢失错误码与详情。本 handler 保持与 service_exception_handler 完全相同的
+    响应体形状（ErrorResponse，by_alias），前端契约一致。
+
+    HTTP status 取值优先级：异常自带 status_code/status 属性 →
+    _CORE_CODE_STATUS_OVERRIDES 按错误码覆盖 → 默认 500。
+    """
+    status_code = getattr(exc, "status_code", None) or getattr(exc, "status", None)
+    if not isinstance(status_code, int):
+        status_code = _CORE_CODE_STATUS_OVERRIDES.get(exc.code, 500)
+
+    logger.error(f"CoreException path={request.url.path}: {exc}", exc_info=True)
+
+    return JSONResponse(
+        status_code=status_code,
+        content=ErrorResponse(
+            error_message=exc.message, error_code=exc.code, details=exc.details
         ).model_dump(by_alias=True),
     )
 

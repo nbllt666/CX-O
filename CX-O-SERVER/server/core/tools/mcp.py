@@ -155,6 +155,15 @@ class MCPManager:
                     # 同步 wait 会阻塞事件循环最多 5 秒（与 stop_server/close 对齐），
                     # 卸载到 IO 线程执行
                     await asyncio.to_thread(server.process.wait, timeout=5)
+                except subprocess.TimeoutExpired:
+                    # L5: terminate 超时升级 kill + wait(3)，防止子进程残留
+                    # （参照 service.py stop 的 terminate 超时 kill 升级模式）
+                    logger.warning(f"MCP服务器进程 terminate 超时，升级 kill: {name}")
+                    try:
+                        server.process.kill()
+                        await asyncio.to_thread(server.process.wait, timeout=3)
+                    except Exception as kill_exc:
+                        logger.warning(f"MCP服务器进程 kill 升级失败: {name}, {kill_exc}")
                 except Exception as e:
                     logger.warning(f"停止MCP服务器进程失败: {e}")
 
@@ -236,7 +245,8 @@ class MCPManager:
 
             # 检查进程是否还在运行
             if process.poll() is not None:
-                stdout, stderr = process.communicate()
+                # L5: communicate 加超时，防止流读取异常时无限阻塞事件循环
+                stdout, stderr = process.communicate(timeout=5)
                 error_msg = stderr.decode("utf-8") if stderr else "进程启动失败"
                 server.status = "error"
                 server.error = error_msg
@@ -291,7 +301,15 @@ class MCPManager:
                 server.process.terminate()
                 # BUG-B-M5 修复: process.wait() 是同步阻塞调用,在 async 函数中
                 # 会阻塞事件循环最多 5 秒。改用 asyncio.to_thread 在独立线程执行。
-                await asyncio.to_thread(server.process.wait, timeout=5)
+                try:
+                    await asyncio.to_thread(server.process.wait, timeout=5)
+                except subprocess.TimeoutExpired:
+                    # L5: 超时升级 kill + wait(3) 确保子进程终止，再按原语义抛错
+                    # （参照 service.py stop 的 terminate 超时 kill 升级模式）
+                    logger.warning(f"MCP服务器进程 terminate 超时，升级 kill: {name}")
+                    server.process.kill()
+                    await asyncio.to_thread(server.process.wait, timeout=3)
+                    raise
                 # 停止后该 server 的工具已不可调用，同步注销注册表中的幽灵工具
                 self._unregister_server_tools(name)
                 server.status = "disconnected"
@@ -525,6 +543,13 @@ class MCPManager:
                     # 同步 process.wait(timeout=5) 会阻塞事件循环最多 5 秒
                     # （与 stop_server 的 BUG-B-M5 修复对齐），卸载到 IO 线程执行
                     await asyncio.to_thread(server.process.wait, timeout=5)
+                except subprocess.TimeoutExpired:
+                    # L5: 超时升级 kill + wait(3)，防止管理器关闭时子进程残留
+                    try:
+                        server.process.kill()
+                        await asyncio.to_thread(server.process.wait, timeout=3)
+                    except Exception:
+                        pass
                 except Exception:
                     pass
 

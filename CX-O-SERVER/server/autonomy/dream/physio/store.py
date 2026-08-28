@@ -14,6 +14,8 @@ import logging
 from pathlib import Path
 from typing import Any, Dict
 
+from server.autonomy._atomic_io import atomic_write_json
+
 logger = logging.getLogger(__name__)
 
 # 数据目录：本文件位于 server/autonomy/dream/physio/ 下，向上三级即 server/autonomy/，
@@ -79,11 +81,10 @@ class PhysioSignalStore:
             self._state = {}
 
     def save(self) -> None:
-        """将内存状态写入文件。"""
+        """将内存状态原子写入文件。"""
         p = Path(self.path)
         p.parent.mkdir(parents=True, exist_ok=True)
-        with open(p, "w", encoding="utf-8") as f:
-            json.dump(self._state, f, ensure_ascii=False, indent=2)
+        atomic_write_json(p, self._state)
 
     # -------------------------------------------------------------- 操作
     def clear(self) -> None:

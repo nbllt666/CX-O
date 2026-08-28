@@ -9,6 +9,11 @@
     "save": "保存",
     "retry": "重试"
   },
+  "errorBoundary": {
+    "title": "页面出现异常",
+    "message": "渲染时发生未捕获错误，请刷新页面重试；若反复出现请联系开发者。",
+    "reload": "刷新页面"
+  },
   "management": {
     "title": "管理界面",
     "subtitle": "桌宠应用的管理后台",
@@ -961,7 +966,7 @@
       "musicTitleLabel": "歌曲标题",
       "musicTitlePlaceholder": "输入歌曲标题",
       "musicScoreLabel": "乐谱 JSON",
-      "musicScorePlaceholder": "粘贴乐谱 JSON（可选）",
+      "musicScorePlaceholder": "粘贴乐谱 JSON",
       "musicSynthesize": "开始合成",
       "musicSynthesizing": "合成中...",
       "musicSynthFailed": "合成失败，请重试（请检查乐谱 JSON 是否合法）",
@@ -970,7 +975,14 @@
       "musicLoadFailed": "加载歌曲列表失败",
       "musicEmpty": "暂无歌曲",
       "musicStage": "阶段",
-      "musicDelete": "删除"
+      "musicDelete": "删除",
+      "musicScoreRequired": "请先填写乐谱",
+      "status": {
+        "pending": "排队中",
+        "running": "合成中",
+        "completed": "已完成",
+        "failed": "失败"
+      }
     },
     "distillation": {
       "subtitle": "将文本、角色卡、聊天记录等多模态数据蒸馏为记忆与角色卡 Agent",
@@ -1125,7 +1137,8 @@
       "send": "发送",
       "offline": "未连接，等待重连...",
       "unreachable": "当前无法连接到后端，请稍后再试",
-      "error": "抱歉，出错了：{{message}}"
+      "error": "抱歉，出错了：{{message}}",
+      "speakerFallback": "说话人{{index}}"
     },
     "menu": {
       "openManagement": "打开管理界面",
@@ -1445,5 +1458,15 @@
   "configReload": {
     "appliedTitle": "「{{section}}」配置已生效",
     "restartTitle": "「{{section}}」配置已保存，需重启后生效"
+  },
+  "events": {
+    "clusterTitle": "集群事件",
+    "clusterFailoverStarted": "开始接管 {{node}}",
+    "clusterFailoverCompleted": "故障转移完成",
+    "clusterNodeLeft": "节点离开 {{node}}",
+    "clusterRoleChanged": "角色切换为 {{role}}",
+    "clusterGeneric": "集群事件：{{topic}}",
+    "costAlertTitle": "成本告警",
+    "costAlertMessage": "今日 Token 已用 {{used}}/{{limit}}（{{ratio}}）"
   }
 }

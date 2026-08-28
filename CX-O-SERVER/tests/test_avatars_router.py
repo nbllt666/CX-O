@@ -7,6 +7,8 @@
 
 运行：python -m pytest tests/test_avatars_router.py -v
 """
+import json
+
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
@@ -171,3 +173,35 @@ class TestDeleteAvatar:
         c, vrm, _ = client
         r = c.delete("/avatars/nonexistent", params={"avatar_type": "vrm"})
         assert r.status_code == 404
+
+
+class TestSaveAvatarMetadataAtomic:
+    """E6: 元数据原子写——落盘为合法 JSON；写入中途失败不破坏原文件。"""
+
+    def test_save_writes_valid_json(self, client):
+        c, vrm, _ = client
+        up = _upload(c, avatar_type="vrm", filename="m.vrm").json()["avatar"]
+        meta_path = vrm / f"{up['id']}.json"
+        # 保存后文件为合法 JSON 且字段一致
+        data = json.loads(meta_path.read_text(encoding="utf-8"))
+        assert data["id"] == up["id"]
+        assert data["name"] == up["name"]
+        assert data["type"] == "vrm"
+
+    def test_save_failure_keeps_original_file(self, client, monkeypatch):
+        c, vrm, _ = client
+        up = _upload(c, avatar_type="vrm", filename="m.vrm").json()["avatar"]
+        meta_path = vrm / f"{up['id']}.json"
+        old_content = meta_path.read_text(encoding="utf-8")
+
+        def _boom(*args, **kwargs):
+            raise RuntimeError("模拟 json.dump 中途失败")
+
+        # 模拟序列化中途异常：原文件必须保持旧内容，且无残留 .tmp
+        monkeypatch.setattr(json, "dump", _boom)
+        metadata = avatars_mod.AvatarMetadata(**up)
+        with pytest.raises(RuntimeError):
+            avatars_mod._save_avatar_metadata(metadata)
+
+        assert meta_path.read_text(encoding="utf-8") == old_content
+        assert list(vrm.glob("*.tmp")) == []

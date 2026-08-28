@@ -8,9 +8,11 @@ from typing import Dict, List, Optional
 from server.core.logging_config import get_contextual_logger
 from server.core.utils import extract_json, format_messages_for_summary
 
-# 记忆管理助手 system_prompt 单源常量的延迟加载（避免顶部循环导入 API 路由模块）
+# 记忆管理助手 system_prompt 单源常量（E2 收敛：单源下沉 core 侧
+# server/core/prompts_constants.py，本模块直接从 core 导入，
+# 消除原先函数内延迟导入 api 层常量规避循环导入的 core→api 反向依赖）
 def _get_memory_agent_prompt() -> str:
-    from server.api.routers.agents import MEMORY_AGENT_SYSTEM_PROMPT
+    from server.core.prompts_constants import MEMORY_AGENT_SYSTEM_PROMPT
 
     return MEMORY_AGENT_SYSTEM_PROMPT
 
@@ -956,7 +958,7 @@ class SecondaryModelRouter:
             )
 
         try:
-            # 构建系统提示词（单源引用 agents.py 的 MEMORY_AGENT_SYSTEM_PROMPT常量）
+            # 构建系统提示词（单源引用 core 侧 prompts_constants 的 MEMORY_AGENT_SYSTEM_PROMPT 常量）
             system_prompt = _get_memory_agent_prompt()
 
             response = await memory_client.chat(

@@ -396,6 +396,8 @@ class DualStreamSession:
         logger.debug("[DIAG-PARTIAL] after _send_prefill_started, creating pipeline task")
 
         # 异步启动 LLM → TextSmoother → TTS 流水线，不阻塞音频帧接收
+        # 覆盖槽位前回收旧流水线，防 prefill 窗口内新 utterance 使旧 pipeline 成为孤儿（双路 TTS）
+        await self._cancel_stale_pipeline()
         self._pipeline_task = asyncio.create_task(self._run_pipeline(full_user_text))
 
     async def on_vad_speech_end(self, asr_result: Optional[dict]) -> None:
@@ -475,6 +477,7 @@ class DualStreamSession:
 
         logger.debug("[DIAG-PARTIAL] on_vad_speech_end fallback trigger, text='%s'", full_user_text)
         await self._send_prefill_started(full_user_text)
+        await self._cancel_stale_pipeline()
         self._pipeline_task = asyncio.create_task(self._run_pipeline(full_user_text))
         self._schedule_finalize_turn(self._pipeline_task)
 
@@ -531,6 +534,7 @@ class DualStreamSession:
         await self._send_prefill_started(full_user_text)
 
         # 异步启动 LLM → TextSmoother → TTS 流水线，不阻塞音频帧接收
+        await self._cancel_stale_pipeline()
         self._pipeline_task = asyncio.create_task(self._run_pipeline(full_user_text))
         # 兜底路径 speech_end 已过，无人调度 _finalize_turn，此处自行调度记录上下文
         self._schedule_finalize_turn(self._pipeline_task)
@@ -539,7 +543,7 @@ class DualStreamSession:
         """回复兜底（Feature B should_reply=True 专用）：确保主管线产出回复。
 
         与 interrupt_and_reply 解耦：**不** cancel 主管线、**不**置
-        _agent_interrupt_triggered、**不**发送 voice.interrupted——回复由主
+        _agent_interrupt_triggered、**不**外发打断事件（voice.interrupted 已删除）——回复由主
         LLM 管线（LLM→TextSmoother→TTS）产出，保持 low-latency partial 驱动路径。
         - 主管线已启动（_has_triggered_this_utterance=True）：no-op，防重复管线
         - 未启动且候选文本达阈值：启动主管线（合并 pending/final 文本）
@@ -553,6 +557,7 @@ class DualStreamSession:
         self._current_user_text = candidate
         self._final_user_text = candidate
         await self._send_prefill_started(candidate)
+        await self._cancel_stale_pipeline()
         self._pipeline_task = asyncio.create_task(self._run_pipeline(candidate))
         self._schedule_finalize_turn(self._pipeline_task)
 
@@ -769,6 +774,33 @@ class DualStreamSession:
         if text:
             yield text
 
+    async def _cancel_stale_pipeline(self) -> None:
+        """取消并回收旧流水线任务（覆盖 _pipeline_task 槽位前调用）
+
+        场景：LLM prefill 窗口（TTS 未标记播放、guard window 外）内新 utterance
+        触发新 pipeline 时，旧 pipeline 若仍在途且未被 cancel 将成为孤儿任务，
+        与新 pipeline 并发推流导致双路 TTS。覆盖赋值前调用本方法：
+        - 旧任务在途 → cancel 并至多等待 0.5s 回收，不抛未捕获异常；
+        - 旧任务已结束 → 直接跳过 cancel；
+        - 完成后槽位置 None。
+        """
+        task = self._pipeline_task
+        if task and not task.done():
+            task.cancel()
+            try:
+                # asyncio.wait 不向调用方传播任务自身的 CancelledError/异常，
+                # 仅等待其终结（至多 0.5s，超时则任务留在取消流程中自行收尾）
+                await asyncio.wait([task], timeout=0.5)
+            except (asyncio.CancelledError, Exception):
+                pass
+            if task.done():
+                # 主动取回结果，避免 "Task exception was never retrieved" 告警
+                try:
+                    task.result()
+                except (asyncio.CancelledError, Exception):
+                    pass
+        self._pipeline_task = None
+
     async def _interrupt_pipeline(self) -> None:
         """打断当前流水线（毫秒级全双工打断）
 
@@ -781,11 +813,7 @@ class DualStreamSession:
                 await self._pipeline_task
             except asyncio.CancelledError:
                 pass
-        # 通知前端 TTS 已被打断
-        await self.manager.send_message(self.client_id, {
-            "type": "voice.interrupted",
-            "data": {"reason": "user_speech"}
-        })
+        # （voice.interrupted 事件已删除：前端零消费；打断提示由 agent_interrupt_user 承接）
 
     async def _finalize_turn(self, pipeline_task: asyncio.Task) -> None:
         """等待流水线完成后记录上下文（使用 VAD 修正后的 Final 文本）
@@ -845,42 +873,62 @@ class DualStreamSession:
         由 LLM 打断判定（agent_interrupt_user）命中后调用，是"AI 打断人"的动作执行点。
         【标签解耦】打断与回复独立（用户裁决全量重构）：
         - 有 reply_content（AI 插话回应）：真打断——cancel 主管线 + 置打断标记 +
-          发 voice.interrupted + _play_reply 直接播报（后续用户开口可再次打断）。
+          _play_reply 直接播报（后续用户开口可再次打断）。
         - 无 reply_content（仅让位，回复由主 pipeline 生成，对应独立 LLM 模式）：
-          **不** cancel 主管线、**不**置 _agent_interrupt_triggered，仅发打断事件
-          （保持 should_interrupt 场景归因信号）。避免"空打断"反复摧毁在途回复
+          **不** cancel 主管线、**不**置 _agent_interrupt_triggered。
+          避免"空打断"反复摧毁在途回复
           ——paused_long 等长句场景实测根因：LLM 在用户组织语言中反复判 INTERRUPT，
           空打断逐个 cancel 主管线，导致用户实际听不到任何回复。
+        （voice.interrupted 事件已删除：前端零消费，打断确认由上方 agent_interrupt_user 承接）
         """
+        # W3: 打断确认事件（前端 useWebSocket.ts 监听 agent_interrupt_user，透传 onMessage）。
+        # 双流实时语音链路的打断确认点（route_agent_interrupt_result → 本方法）；
+        # 发送失败不影响打断主流程。
+        try:
+            await self.manager.send_message(self.client_id, {
+                "type": "agent_interrupt_user",
+                "data": {
+                    "agent_id": self.agent_id,
+                    "session_id": self.session_id,
+                    "has_reply": bool(reply_content),
+                    "timestamp": time.time(),
+                },
+            })
+        except Exception as e:
+            logger.warning(f"发送 agent_interrupt_user 事件失败（不影响打断主流程）: {e}")
+
         if reply_content:
             # 标记当前 utterance 已由 LLM 插话打断（供 speech_end_fallback 互斥使用：
             # on_vad_speech_end 据此跳过 VAD 兜底触发，避免双路 TTS 并发）
             self._agent_interrupt_triggered = True
 
-            # 停止当前正在播放的 TTS（若有）
-            if self._pipeline_task and not self._pipeline_task.done():
-                self._pipeline_task.cancel()
-                try:
-                    await self._pipeline_task
-                except (asyncio.CancelledError, Exception):
-                    pass
-
-            # 通知前端 TTS 已打断
-            await self.manager.send_message(self.client_id, {
-                "type": "voice.interrupted",
-                "data": {"reason": "agent_interrupt"}
-            })
+            # 停止当前正在播放的 TTS（若有），并回收旧 pipeline 槽位
+            # （复用 _cancel_stale_pipeline：cancel + 至多 0.5s 回收 + 槽位置 None，
+            # 防旧任务孤儿化后与新 _play_reply 并发推流）
+            await self._cancel_stale_pipeline()
 
             logger.debug("[DIAG-INTERRUPT] AI 插话播报: %s", reply_content[:40])
             # 插话回应作为新的 pipeline，后续用户开口可再次打断
             self._pipeline_task = asyncio.create_task(self._play_reply(reply_content))
-        else:
-            # 仅让位：不 cancel 主管线、不置打断标记；仅发打断事件供 should_interrupt 场景归因。
-            # 回复由主 LLM 管线产出（partial/final/ensure_reply 已驱动），不被空打断摧毁。
-            await self.manager.send_message(self.client_id, {
-                "type": "voice.interrupted",
-                "data": {"reason": "agent_interrupt"}
-            })
+
+            # W3: 打断后的 agent 回复下发事件（前端 useWebSocket.ts 监听 agent_reply，
+            # 透传 onMessage）。选择"下发时"（而非 TTS 播完）发送：重打打断场景下
+            # 在途回复会被 cancel，播完时点可能永不到达；发送失败不影响打断主流程。
+            try:
+                await self.manager.send_message(self.client_id, {
+                    "type": "agent_reply",
+                    "data": {
+                        "agent_id": self.agent_id,
+                        "session_id": self.session_id,
+                        "content": reply_content,
+                        "timestamp": time.time(),
+                    },
+                })
+            except Exception as e:
+                logger.warning(f"发送 agent_reply 事件失败（不影响打断主流程）: {e}")
+        # 仅让位（无 reply_content）：不 cancel 主管线、不置打断标记；不外发任何事件。
+        # 回复由主 LLM 管线产出（partial/final/ensure_reply 已驱动），不被空打断摧毁。
+        # （原 voice.interrupted 发送已删除：前端零消费，打断确认由 agent_interrupt_user 承接）
 
     async def _play_reply(self, reply_content: str) -> None:
         """直接合成并播报一段固定文本（AI 插话回应），不经过 LLM。
@@ -927,7 +975,8 @@ class DualStreamSession:
         此时 speaker 仍为空串，与 speaker_id/speaker_name 并存互不冲突）；
         默认空串时 data 不带 speaker_label，不改变既有外发行为。
         """
-        data: dict = {"text": text, "is_final": is_final}
+        # W2: data 补 session_id（前端 useWebSocket.ts voice.partial 分支已读 data.session_id）
+        data: dict = {"text": text, "is_final": is_final, "session_id": self.session_id}
         if speaker_label:
             data["speaker_label"] = speaker_label
         if speaker:
@@ -948,7 +997,9 @@ class DualStreamSession:
             "type": VoiceActions.PREFILL_STARTED,
             "data": {
                 "partial_text": text,
-                "timestamp": time.time()
+                "timestamp": time.time(),
+                # W2: 补 session_id（前端 useWebSocket.ts voice.prefill_started 分支已读 data.session_id）
+                "session_id": self.session_id,
             }
         })
 
@@ -1022,6 +1073,11 @@ class DualStreamSession:
                 await self._pipeline_task
             except asyncio.CancelledError:
                 pass
+            except Exception as e:
+                # E2b 兜底：_run_pipeline 内部已自吞普通异常（仅重抛
+                # CancelledError），正常不会走到这里；此分支防御 cancel 竞态
+                # 窗口（取消送达前任务恰好抛错），确保 finish() 幂等安全。
+                logger.warning(f"等待流水线任务结束时捕获非取消异常: {e}")
         # 取消所有追踪中的后台任务（打断判定/finalize 等），
         # 防止断连后在途任务仍启动新的 LLM+TTS pipeline 向已死连接推流。
         for task in list(self._background_tasks):
@@ -1578,7 +1634,6 @@ def register_audio_handlers(
         - voice.partial: ASR Partial 识别文本（实时显示）
         - voice.prefill_started: LLM Prefill 已启动信号
         - voice.tts_chunk: TTS 音频块（流式推送）
-        - voice.interrupted: TTS 被用户打断通知
         - vad_status / vad_frame: VAD 状态（与半双工模式一致）
         """
         request_id = message.get("request_id", "")

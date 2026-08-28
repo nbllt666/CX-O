@@ -73,7 +73,7 @@ export const memoriesApi = {
     await request({
       url: `/api/memories/${memoryId}`,
       method: 'delete',
-      params: { soft: softDelete },
+      params: { soft_delete: softDelete },
     });
   },
 
@@ -176,8 +176,24 @@ export const memoriesApi = {
     });
   },
 
-  memoryChat(message: string, sessionId: string): Promise<{ response: string }> {
-    return request<{ response: string }>({
+  /** 对齐后端 MemoryChatResponse：{ status, message, session_id, pending_command?, data? } */
+  memoryChat(
+    message: string,
+    sessionId: string,
+  ): Promise<{
+    status: string;
+    message: string;
+    session_id: string;
+    pending_command?: Record<string, unknown> | null;
+    data?: Record<string, unknown> | null;
+  }> {
+    return request<{
+      status: string;
+      message: string;
+      session_id: string;
+      pending_command?: Record<string, unknown> | null;
+      data?: Record<string, unknown> | null;
+    }>({
       url: '/api/memory-chat',
       method: 'post',
       data: { message, session_id: sessionId },
@@ -197,14 +213,19 @@ export const memoriesApi = {
     return response.statistics;
   },
 
-  mergeMemories(
+  /** 后端返回 { status, result }，解包返回 result（合并结果对象） */
+  async mergeMemories(
     memoryIds: number[],
-  ): Promise<{ success: boolean; merged_memory_id?: number }> {
-    return request<{ success: boolean; merged_memory_id?: number }>({
+  ): Promise<{ success: boolean; merged_memory_id?: number; [k: string]: unknown }> {
+    const resp = await request<{
+      status: string;
+      result: { success: boolean; merged_memory_id?: number; [k: string]: unknown };
+    }>({
       url: '/api/archive/merge',
       method: 'post',
       data: { memory_ids: memoryIds },
     });
+    return resp.result;
   },
 
   detectDuplicates(): Promise<{ duplicate_groups: DuplicateGroup[] }> {

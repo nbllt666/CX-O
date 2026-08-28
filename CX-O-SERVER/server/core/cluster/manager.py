@@ -176,6 +176,9 @@ class SentinelCluster:
 
         replicator.register_backup_provider("ref_audio", _ref_audio_snapshot)
         ref_audio_store.set_emit_hook(replicator.emit)
+        # E14: emit hook 注册单元登记（与上一行 set_emit_hook 对应）。未来为其他单元
+        # 注册 emit hook 时必须同步维护此集合，作为"真实同步单元集"的来源之一。
+        emit_hook_units = {"ref_audio"}
         failover = FailoverManager(
             config=cfg, consensus=consensus, node_id=node_id,
             transport=transport, current_epoch=self._epoch,
@@ -183,12 +186,22 @@ class SentinelCluster:
         failover.set_event_source(self.emit_event)
 
         # B3: 注入真实 state_source，使"候选状态过旧拒绝接管"红线在生产态真正生效。
-        # 候选状态版本取本节点 replicator 已应用事件的总同步深度；集群最小要求版本为
-        # 全部 sync_units 至少对齐一次所需的单元数。冷启动/未复制节点会因版本过低被拒。
+        # E14 门槛修正：UNIT_REGISTRY 全量单元中仅部分（当前只有 ref_audio）实际接入
+        # emit hook / 快照 provider，其余单元永不 emit、last_applied 恒为 0；旧实现以
+        # len(active_units) 为分母导致门槛失真（实际只度量 ref_audio 事件数却要求
+        # 达到全部单元数）。现以"已注册 emit hook 或快照 provider 的单元集合"为真实
+        # 同步单元集，候选版本与最小门槛都只在该集合上计算：候选节点必须在真实
+        # 同步的单元上达到事件数门槛。冷启动/未复制节点仍会因版本过低被拒。
         def _state_source(dead_node_id):
             last = replicator.last_applied()
-            candidate_version = sum(int(v or 0) for v in last.values())
-            min_version = len(active_units) if active_units else 1
+            synced = set(replicator.snapshot_units()) | emit_hook_units
+            if not synced:
+                # 兜底（正常装配下不可达：_wire 恒注册 ref_audio provider + emit hook）：
+                # 退化为"实际有同步进度的单元"集；仍为空时取 emit hook 基线单元，
+                # 保证 min_version ≥ 1（脏接管红线不被 (x, 0) 旁路）。
+                synced = {u for u, v in last.items() if int(v or 0) > 0} or emit_hook_units
+            candidate_version = sum(int(last.get(u) or 0) for u in synced)
+            min_version = len(synced)
             return candidate_version, min_version
 
         failover.set_state_source(_state_source)

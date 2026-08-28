@@ -985,6 +985,18 @@ async def lifespan(app: FastAPI):
 
     lifespan_logger.info("正在关闭CX-O服务...")
 
+    # L7: 显式取消 lifespan 后台任务（如 LLM/Embedding 预热），防止 shutdown
+    # 之后任务继续运行或异常逸出无人消费。仿照 cluster/manager.shutdown 的
+    # 快照 → 逐个 cancel → gather(return_exceptions=True) → clear 模式。
+    if _lifespan_background_tasks:
+        for _bg_task in list(_lifespan_background_tasks):
+            _bg_task.cancel()
+        try:
+            await asyncio.gather(*list(_lifespan_background_tasks), return_exceptions=True)
+        except Exception as _bg_gather_e:  # pragma: no cover —— return_exceptions 下不应抛出
+            lifespan_logger.warning(f"lifespan 后台任务取消等待异常（不影响关闭）: {_bg_gather_e}")
+        _lifespan_background_tasks.clear()
+
     # 哨兵集群优雅关闭（逆序：flush 未同步变更 → 广播主动下线 → 停客户端）
     cluster_manager = getattr(services, "cluster_manager", None)
     if cluster_manager is not None:

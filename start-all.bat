@@ -3,8 +3,9 @@ chcp 65001 > nul
 setlocal EnableDelayedExpansion
 
 REM 服务 PID 记录文件（精确停止专用，避免 taskkill /IM python.exe 误杀全机 Python 进程）
+REM R8-04：启动时不再清空 PID 文件——残留记录属于上次运行的服务，保留其 PID
+REM 可被 stop-all.bat / 末尾停止逻辑一并接管；本次启动成功后新 PID 自然追加。
 set "PID_FILE=%TEMP%\cxo_pids.txt"
-if exist "%PID_FILE%" del /f /q "%PID_FILE%" > nul 2>&1
 
 echo ========================================
 echo CX-O 一键启动脚本
@@ -36,7 +37,7 @@ cd ..
 echo [等待 CX-O-SERVER 启动...]
 for /L %%i in (1,1,30) do (
     ping -n 2 127.0.0.1 > nul 2>&1
-    netstat -an | findstr ":8000" | findstr "LISTENING" > nul 2>&1
+    netstat -an | findstr /c:":8000 " | findstr "LISTENING" > nul 2>&1
     if not errorlevel 1 (
         echo [CX-O-SERVER 已启动]
         call :record_pid 8000
@@ -44,6 +45,8 @@ for /L %%i in (1,1,30) do (
     )
 )
 echo [警告] CX-O-SERVER 启动超时，继续启动其他服务...
+REM R8-04：超时路径补记 PID——服务可能延迟启动成功，若此刻端口已监听则纳入停止管理
+call :record_pid 8000
 
 REM ==========================================
 REM 启动 CX-O-VoiceWorkStation
@@ -58,7 +61,7 @@ cd ..
 echo [等待 CX-O-VoiceWorkStation 启动...]
 for /L %%i in (1,1,30) do (
     ping -n 2 127.0.0.1 > nul 2>&1
-    netstat -an | findstr ":8200" | findstr "LISTENING" > nul 2>&1
+    netstat -an | findstr /c:":8200 " | findstr "LISTENING" > nul 2>&1
     if not errorlevel 1 (
         echo [CX-O-VoiceWorkStation 已启动]
         call :record_pid 8200
@@ -66,6 +69,8 @@ for /L %%i in (1,1,30) do (
     )
 )
 echo [警告] CX-O-VoiceWorkStation 启动超时，继续启动其他服务...
+REM R8-04：超时路径补记 PID——服务可能延迟启动成功，若此刻端口已监听则纳入停止管理
+call :record_pid 8200
 
 REM ==========================================
 REM 启动 APP-Frontend（浏览器模式，替代原 CX-O-Frontend）
@@ -80,13 +85,16 @@ cd ..
 echo [等待 APP-Frontend 启动...]
 for /L %%i in (1,1,30) do (
     ping -n 2 127.0.0.1 > nul 2>&1
-    netstat -an | findstr ":3100" | findstr "LISTENING" > nul 2>&1
+    netstat -an | findstr /c:":3100 " | findstr "LISTENING" > nul 2>&1
     if not errorlevel 1 (
         echo [APP-Frontend 已启动]
         call :record_pid 3100
         goto :check_complete
     )
 )
+echo [警告] APP-Frontend 启动超时，继续完成启动流程...
+REM R8-04：超时路径补记 PID——服务可能延迟启动成功，若此刻端口已监听则纳入停止管理
+call :record_pid 3100
 
 :check_complete
 echo.

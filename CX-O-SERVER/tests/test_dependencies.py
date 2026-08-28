@@ -202,3 +202,32 @@ class TestGraphRegistry:
         assert len(results) == 8
         # 全部线程返回同一实例（双重检查锁保证单例）
         assert all(r is results[0] for r in results)
+
+
+class TestCloseAllGraphDatabasesResilience:
+    """E11: 逐实例 close 抛异常时仍清空注册表、不抛出且有 warning 留痕。"""
+
+    def test_close_exception_still_clears_registry_and_logs(self, monkeypatch, caplog):
+        import logging
+
+        import server.core.graph as graph_mod
+
+        class BoomGraphDB(FakeGraphDB):
+            def close(self):
+                raise RuntimeError("close 失败")
+
+        monkeypatch.setattr(graph_mod, "GraphDatabase", BoomGraphDB)
+        deps._get_or_create_graph_database("boom")
+        assert "boom" in deps._graph_databases
+
+        # 不应抛出（幂等语义保持：调用后注册表必须已清空）
+        with caplog.at_level(logging.WARNING):
+            deps.close_all_graph_databases()
+
+        assert "boom" not in deps._graph_databases
+        assert "boom" not in deps._graph_stores
+        # close 失败有 warning 留痕
+        assert any(
+            r.levelno == logging.WARNING and "boom" in r.getMessage()
+            for r in caplog.records
+        )

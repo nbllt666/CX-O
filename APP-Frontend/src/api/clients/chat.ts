@@ -29,8 +29,12 @@ export const chatApi = {
     return { messages: response.messages || [] };
   },
 
-  createSession(title: string, agentId = 'default'): Promise<Session> {
-    return request<Session>({
+  /** 对齐后端 context.py create_session：{ status, session_id, message } */
+  createSession(
+    title: string,
+    agentId = 'default',
+  ): Promise<{ status: string; session_id: string; message: string }> {
+    return request<{ status: string; session_id: string; message: string }>({
       url: '/api/context/sessions',
       method: 'post',
       data: { title, agent_id: agentId },

@@ -19,6 +19,8 @@ import json
 from pathlib import Path
 from typing import Dict, Union
 
+from server.autonomy._atomic_io import atomic_write_json
+
 # 默认初始动机（对齐 manager.py 的 Motivations 初始值）
 _DEFAULT_CURIOSITY = 0.2
 _DEFAULT_SOCIAL_NEED = 0.2
@@ -132,12 +134,11 @@ class MotivationState:
     def save(self, store_path: Union[str, Path] = "") -> str:
         """将当前状态写入 motivation_state.json，返回写入文件路径。
 
-        写入内容为 to_dict()（四维状态字段），目录不存在时自动创建。
+        写入内容为 to_dict()（四维状态字段），目录不存在时自动创建（原子写）。
         """
         path = self.get_store_path(store_path)
         path.parent.mkdir(parents=True, exist_ok=True)
-        with open(path, "w", encoding="utf-8") as f:
-            json.dump(self.to_dict(), f, ensure_ascii=False, indent=2)
+        atomic_write_json(path, self.to_dict())
         return str(path)
 
     @classmethod

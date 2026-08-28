@@ -31,7 +31,8 @@ export const toolsApi = {
     return request<{ result: Record<string, unknown> }>({
       url: `/api/tools/${toolId}/test`,
       method: 'post',
-      data: params,
+      // 后端 ToolTestRequest 契约要求 { arguments: {...} }，裸传 params 会被忽略（恒空参执行）
+      data: { arguments: params },
     });
   },
 

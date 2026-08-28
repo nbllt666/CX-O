@@ -208,7 +208,7 @@ class AgentInterruptUser(InterruptModuleBase):
             # 需回复的完整请求、且本 utterance 尚未触发打断时，触发一次"回复"。
             # 【标签解耦】should_interrupt=False（用户已说完，非真打断），
             # should_reply=True——下游走 ensure_reply 回复兜底，不 cancel 主管线、
-            # 不发 voice.interrupted、不置会话级 _agent_interrupt_triggered。
+            # 不外发打断事件（voice.interrupted 已删除）、不置会话级 _agent_interrupt_triggered。
             if (
                 self.reply_on_final_question
                 and not self._interrupted_this_utterance

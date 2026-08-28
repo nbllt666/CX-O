@@ -117,7 +117,13 @@ export const adminApi = {
   /** 实例状态快照（{models,capabilities,cluster}）；后端离线返回 null */
   async fetchStatus(): Promise<AdminStatus | null> {
     try {
-      return await request<AdminStatus>({ url: '/api/admin/status' });
+      // F1: 后端 GET /admin/status 返回 {"status":"success","snapshot":{...}}（admin.py admin_status），
+      // request() 原样返回 response.data 不解包，故此处解包 snapshot 层；
+      // 对无包裹的历史/代理响应做 ?? resp 兜底，保持对外返回类型 AdminStatus。
+      const resp = await request<{ status?: string; snapshot?: AdminStatus } & AdminStatus>({
+        url: '/api/admin/status',
+      });
+      return resp.snapshot ?? resp;
     } catch {
       return null;
     }
@@ -126,10 +132,11 @@ export const adminApi = {
   /** 下发单条控制指令（action+target）；失败抛归一化错误 */
   async postControl(payload: AdminControlPayload): Promise<AdminControlResult> {
     try {
+      // F1: 后端 _ControlRequest.request_id 必填（防重放），前端可选 → 未传时自动生成兜底
       return await request<AdminControlResult>({
         url: '/api/admin/control',
         method: 'post',
-        data: payload,
+        data: { ...payload, request_id: payload.request_id ?? crypto.randomUUID() },
       });
     } catch (err) {
       throw normalizeError(err);
@@ -139,10 +146,11 @@ export const adminApi = {
   /** 批量控制指令；失败抛归一化错误 */
   async postBatch(payload: AdminBatchPayload): Promise<AdminBatchResult> {
     try {
+      // F1: 后端 _BatchRequest.request_id 必填（防重放），前端可选 → 未传时自动生成兜底
       return await request<AdminBatchResult>({
         url: '/api/admin/batch',
         method: 'post',
-        data: payload,
+        data: { ...payload, request_id: payload.request_id ?? crypto.randomUUID() },
       });
     } catch (err) {
       throw normalizeError(err);

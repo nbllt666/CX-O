@@ -92,3 +92,56 @@ describe('useLiveWebSocket sessionId 变更重连（M3）', () => {
     expect(MockWebSocket.instances.length).toBe(count);
   });
 });
+
+describe('useLiveWebSocket interrupt 消息路由（D5）', () => {
+  it('收到 type=interrupt 时触发 onInterrupt 并透传 data', async () => {
+    vi.stubGlobal('WebSocket', MockWebSocket);
+
+    const onInterrupt = vi.fn();
+    renderHook(() => useLiveWebSocket({ onInterrupt }));
+    await flushDelay();
+
+    // 建连 + 打开
+    const ws = lastInstance();
+    await act(async () => {
+      ws.onopen?.(new Event('open'));
+    });
+
+    // 模拟后端 ASR 打断判定命中推送（live_client.py: {"type":"interrupt","data":{...}}）
+    await act(async () => {
+      ws.onmessage?.(
+        new MessageEvent('message', {
+          data: JSON.stringify({
+            type: 'interrupt',
+            data: { source: 'asr', text: '停一下', decision: 'barge_in' },
+          }),
+        }),
+      );
+    });
+
+    expect(onInterrupt).toHaveBeenCalledTimes(1);
+    expect(onInterrupt).toHaveBeenCalledWith({
+      source: 'asr',
+      text: '停一下',
+      decision: 'barge_in',
+    });
+  });
+
+  it('interrupt 消息缺 data 时不触发回调（与 tts_end 同口径防误触）', async () => {
+    vi.stubGlobal('WebSocket', MockWebSocket);
+
+    const onInterrupt = vi.fn();
+    renderHook(() => useLiveWebSocket({ onInterrupt }));
+    await flushDelay();
+
+    const ws = lastInstance();
+    await act(async () => {
+      ws.onopen?.(new Event('open'));
+    });
+    await act(async () => {
+      ws.onmessage?.(new MessageEvent('message', { data: JSON.stringify({ type: 'interrupt' }) }));
+    });
+
+    expect(onInterrupt).not.toHaveBeenCalled();
+  });
+});

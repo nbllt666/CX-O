@@ -22,6 +22,8 @@ import json
 from pathlib import Path
 from typing import Any, Dict, Optional, Union
 
+from server.autonomy._atomic_io import atomic_write_json
+
 # 默认存储路径：本文件位于 server/autonomy/safety/budget/，parents[2] = server/autonomy
 DEFAULT_STORE_PATH = str(Path(__file__).resolve().parents[2] / "data" / "token_ledger.json")
 
@@ -185,7 +187,7 @@ class TokenLedger:
         return self
 
     def save(self) -> str:
-        """将当前状态持久化为 JSON，返回写入路径。"""
+        """将当前状态原子持久化为 JSON，返回写入路径。"""
         path = Path(self.store_path)
         path.parent.mkdir(parents=True, exist_ok=True)
         data = {
@@ -194,6 +196,5 @@ class TokenLedger:
             "llm_calls": self._llm_calls,
             "alerted": self._alerted,
         }
-        with open(path, "w", encoding="utf-8") as f:
-            json.dump(data, f, ensure_ascii=False, indent=2)
+        atomic_write_json(path, data)
         return str(path)

@@ -146,9 +146,12 @@ async def websocket_handler(websocket: WebSocket, client_id: str):
                 ))
 
     except WebSocketDisconnect:
-        await ws_manager.disconnect(client_id)
+        logger.info(f"WebSocket client disconnected: {client_id}")
     except Exception as e:
         logger.error(f"WebSocket error: {e}")
+    finally:
+        # L1: 清理统一挂 finally，覆盖 asyncio.CancelledError 取消路径
+        # （uvicorn shutdown/任务取消）；disconnect 幂等，与 live handler 先例一致。
         await ws_manager.disconnect(client_id)
 
 

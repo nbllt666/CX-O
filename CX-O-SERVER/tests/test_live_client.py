@@ -7,9 +7,12 @@ get_agent_interrupt_module）注入假依赖，覆盖：
 - handle_message 消息路由（init/danmaku/gift/enter/config/text/interrupt/stop_tts/未知）
 - 各 _handle_* 方法：配置更新、弹幕过滤、上下文写入、ack 响应
 - handle_audio：VAD 状态变化、ASR 结果推送、打断判定、vad_frame
+- W5：gift/enter live 频道广播、stream/response 回复链路、tts_sync/tick/end 字幕播报
 
 运行：python -m pytest tests/test_live_client.py -v
 """
+import asyncio
+
 import pytest
 
 from server.services import live_client as lc
@@ -148,6 +151,25 @@ class TestRouting:
         await handler.handle_message(None, {"type": "nope"}, "c1")
         assert handler._manager.sent == []
 
+    @pytest.mark.asyncio
+    async def test_handle_message_danmaku_data_null_no_raise(self, handler):
+        """E1 回归：handle_message 收到 {"type":"danmaku","data":null} 不抛异常。"""
+        handler.firewall = FakeFirewall(allowed=False)  # 空内容到此拦截，主路径收束
+        await handler.handle_message(None, {"type": "danmaku", "data": None}, "c1")  # 不应抛
+        assert handler._manager.channel_broadcasts == []
+
+    @pytest.mark.asyncio
+    async def test_handler_exception_sends_error_frame_keeps_loop(self, handler, monkeypatch):
+        """E1 回归：分派 handler 抛异常时回发 error 帧且不向上抛（不断连）。"""
+
+        async def boom(ws, msg):
+            raise RuntimeError("danmaku explode")
+
+        monkeypatch.setattr(handler, "_handle_danmaku", boom)
+        await handler.handle_message(None, {"type": "danmaku", "data": {"content": "x"}}, "c1")
+        _, msg = handler._manager.sent[-1]
+        assert msg["type"] == "error"
+
 
 # ================================================================ _handle_init
 class TestInit:
@@ -188,6 +210,20 @@ class TestDanmaku:
         assert handler._manager.sent == []
         assert handler._manager.channel_broadcasts == []
         assert handler.context_manager.danmakus == []
+
+    @pytest.mark.asyncio
+    async def test_danmaku_data_null_safe(self, handler):
+        """E1 回归：data 为 null 时降级为空对象，不抛 AttributeError。"""
+        handler.firewall = FakeFirewall(allowed=False)  # 空内容到此拦截，主路径收束
+        await handler._handle_danmaku(None, {"data": None})  # 不应抛
+        assert handler._manager.channel_broadcasts == []
+
+    @pytest.mark.asyncio
+    async def test_danmaku_user_non_dict_safe(self, handler):
+        """E1 回归：user 为非字典时降级为空值，不抛 AttributeError。"""
+        handler.firewall = FakeFirewall(allowed=False)
+        await handler._handle_danmaku(
+            None, {"data": {"content": "hi", "user": "stranger"}})  # 不应抛
 
 
 # ================================================================ _handle_gift / enter
@@ -235,8 +271,10 @@ class TestConfig:
 # ================================================================ _handle_text / interrupt / stop_tts
 class TestText:
     @pytest.mark.asyncio
-    async def test_text_adds_context_and_acks(self, handler):
+    async def test_text_adds_context_and_acks(self, handler, monkeypatch):
         handler._session_id = "s1"
+        # W5: 屏蔽新增的回复生成调度（本用例仅验证既有上下文写入 + ack 行为）
+        monkeypatch.setattr(handler, "_schedule_reply", lambda text: None)
         await handler._handle_text(None, {"data": {"text": "hi"}})
         assert handler.context_manager.messages[0][1] == {"role": "user", "content": "hi"}
         assert handler._manager.sent[0][1]["type"] == "text_ack"
@@ -336,3 +374,251 @@ class TestAudio:
             "P", (), {"process_audio_chunk": boom})())
         await handler.handle_audio(None, b"\x00", "c1")
         assert handler._manager.sent == []  # 异常被捕获，无消息
+
+
+# ================================================================ W5: gift/enter 频道广播
+class TestGiftBroadcast:
+    @pytest.mark.asyncio
+    async def test_gift_broadcasts_to_live_channel(self, handler):
+        data = {"gift": "flower", "count": 1, "user": {"uid": "u1", "username": "n1"}}
+        await handler._handle_gift(None, {"data": data})
+        # ack 照旧先行
+        assert handler._manager.sent[0][1]["type"] == "gift_ack"
+        # W5: 入站礼物事件原样广播给 live 频道
+        assert ("live", {"type": "gift", "data": data}) in handler._manager.channel_broadcasts
+
+    @pytest.mark.asyncio
+    async def test_gift_broadcast_failure_swallowed(self, handler):
+        async def boom(channel, message):
+            raise RuntimeError("ws closed")
+
+        handler._manager.broadcast_to_channel = boom
+        await handler._handle_gift(None, {"data": {"gift": "flower"}})  # 广播失败不抛
+        assert handler._manager.sent[0][1]["type"] == "gift_ack"
+
+
+class TestEnterBroadcast:
+    @pytest.mark.asyncio
+    async def test_enter_broadcasts_to_live_channel(self, handler):
+        data = {"user": {"uid": "u2", "username": "观众甲"}}
+        await handler._handle_enter(None, {"data": data})
+        assert handler._manager.sent[0][1]["type"] == "enter_ack"
+        assert ("live", {"type": "enter", "data": data}) in handler._manager.channel_broadcasts
+
+
+# ================================================================ W5: stream/response 回复链路
+class FakeLiveLLM:
+    """可编程流式 LLM 假件：按预设 chunk 序列产出/抛错。"""
+
+    def __init__(self, chunks=None, error=None):
+        self._chunks = chunks or []
+        self._error = error
+        self.calls = []
+
+    async def stream_chat(self, messages=None, **kwargs):
+        self.calls.append({"messages": messages, **kwargs})
+        if self._error is not None:
+            raise self._error
+        for c in self._chunks:
+            yield c
+
+
+@pytest.fixture
+def reply_env(monkeypatch, handler):
+    """装配 live 回复链路假依赖：默认 agent 配置 + 可编程 LLM + build_messages。
+
+    字幕播报参数同步归零（时长 0ms），回复链路测试不因播报 sleep 变慢。
+    """
+    agent_cfg = {
+        "id": "default", "name": "小助手", "system_prompt": "你是主播助手",
+        "model": "main", "temperature": 0.5, "max_tokens": 4096,
+    }
+
+    async def fake_cfg(agent_id):
+        return agent_cfg if agent_id == "default" else None
+
+    llm = FakeLiveLLM()
+    monkeypatch.setattr("server.chat_helpers.get_agent_config_async", fake_cfg)
+    monkeypatch.setattr("server.chat_helpers.get_llm_client_for_agent", lambda cfg: llm)
+    monkeypatch.setattr(
+        "server.prompt_builder.build_messages",
+        lambda cfg, cm, sid, text, **kw: [{"role": "user", "content": text}],
+    )
+    monkeypatch.setattr(lc, "_LIVE_TTS_MIN_DURATION_MS", 0)
+    monkeypatch.setattr(lc, "_LIVE_TTS_MS_PER_CHAR", 0)
+    monkeypatch.setattr(lc, "_LIVE_TTS_TICK_INTERVAL", 0.001)
+
+    feedback = []
+    monkeypatch.setattr(
+        handler, "record_ai_response",
+        lambda text, prompt="", ts=None: feedback.append((text, prompt)),
+    )
+    return handler, llm, feedback
+
+
+class TestLiveReplyPipeline:
+    @pytest.mark.asyncio
+    async def test_stream_chunks_then_response(self, reply_env):
+        handler, llm, feedback = reply_env
+        llm._chunks = [
+            {"type": "thinking", "content": "..."},
+            {"type": "content", "content": "你"},
+            {"type": "content", "content": "好呀"},
+            "！",
+        ]
+        await handler._reply_pipeline("大家好")
+        msgs = [m for _, m in handler._manager.channel_broadcasts]
+        types = [m["type"] for m in msgs]
+        # thinking 不外发；content chunk 逐个 stream
+        assert "thinking" not in types
+        streams = [m["data"]["content"] for m in msgs if m["type"] == "stream"]
+        assert streams == ["你", "好呀", "！"]
+        resp = [m for m in msgs if m["type"] == "response"]
+        assert len(resp) == 1
+        assert resp[0]["data"]["content"] == "你好呀！"
+
+    @pytest.mark.asyncio
+    async def test_reply_context_feedback_and_subtitle(self, reply_env):
+        handler, llm, feedback = reply_env
+        handler._session_id = "s1"
+        llm._chunks = [{"type": "content", "content": "收到！"}]
+        await handler._reply_pipeline("hi")
+        # 上下文回写 assistant
+        assert ("s1", {"role": "assistant", "content": "收到！"}) in handler.context_manager.messages
+        # 隐式反馈记录（既有增量接入点被打通）
+        assert feedback == [("收到！", "hi")]
+        # 字幕播报同步随回复触发
+        types = [m["type"] for _, m in handler._manager.channel_broadcasts]
+        assert types[0] == "stream" and "tts_sync" in types and "tts_end" in types
+
+    @pytest.mark.asyncio
+    async def test_llm_error_swallowed(self, reply_env):
+        handler, llm, feedback = reply_env
+        llm._error = RuntimeError("llm down")
+        await handler._reply_pipeline("hi")  # 不抛异常
+        assert handler._manager.channel_broadcasts == []
+        assert feedback == []
+
+    @pytest.mark.asyncio
+    async def test_no_default_agent_skips(self, handler, monkeypatch):
+        async def none_cfg(agent_id):
+            return None
+
+        monkeypatch.setattr("server.chat_helpers.get_agent_config_async", none_cfg)
+        await handler._reply_pipeline("hi")
+        assert handler._manager.channel_broadcasts == []
+
+    @pytest.mark.asyncio
+    async def test_empty_reply_no_response_frame(self, reply_env):
+        handler, llm, feedback = reply_env
+        llm._chunks = [{"type": "thinking", "content": "x"}]
+        await handler._reply_pipeline("hi")
+        types = [m["type"] for _, m in handler._manager.channel_broadcasts]
+        assert "response" not in types
+        assert feedback == []
+
+
+class TestScheduleReply:
+    @pytest.mark.asyncio
+    async def test_schedule_creates_tracked_task(self, handler, monkeypatch):
+        called = []
+
+        async def fake_pipeline(text):
+            called.append(text)
+
+        monkeypatch.setattr(handler, "_reply_pipeline", fake_pipeline)
+        handler._schedule_reply("hi")
+        assert handler._reply_task is not None
+        await handler._reply_task
+        assert called == ["hi"]
+        # 完成回调已从模块强引用集清理
+        assert handler._reply_task not in lc._reply_tasks
+
+    @pytest.mark.asyncio
+    async def test_inflight_guard_drops_new_request(self, handler, monkeypatch):
+        async def slow_pipeline(text):
+            await asyncio.sleep(10)
+
+        monkeypatch.setattr(handler, "_reply_pipeline", slow_pipeline)
+        handler._schedule_reply("first")
+        first = handler._reply_task
+        handler._schedule_reply("second")  # 在途 → 丢弃本轮
+        assert handler._reply_task is first
+        first.cancel()
+        try:
+            await first
+        except asyncio.CancelledError:
+            pass
+
+    @pytest.mark.asyncio
+    async def test_blank_text_no_task(self, handler):
+        handler._schedule_reply("   ")
+        assert handler._reply_task is None
+
+    @pytest.mark.asyncio
+    async def test_handle_text_schedules_reply(self, handler, monkeypatch):
+        scheduled = []
+        monkeypatch.setattr(handler, "_schedule_reply", lambda text: scheduled.append(text))
+        await handler._handle_text(None, {"data": {"text": "hi"}})
+        assert scheduled == ["hi"]
+        assert handler._manager.sent[0][1]["type"] == "text_ack"
+
+
+# ================================================================ W5: 字幕播报同步
+class TestSubtitleSync:
+    @pytest.mark.asyncio
+    async def test_sentence_sync_tick_end_sequence(self, handler, monkeypatch):
+        monkeypatch.setattr(lc, "_LIVE_TTS_MIN_DURATION_MS", 60)
+        monkeypatch.setattr(lc, "_LIVE_TTS_MS_PER_CHAR", 20)
+        monkeypatch.setattr(lc, "_LIVE_TTS_TICK_INTERVAL", 0.002)
+        await handler._announce_reply_subtitles("你好。世界！")
+        msgs = [m for _, m in handler._manager.channel_broadcasts]
+        types = [m["type"] for m in msgs]
+        # 两句各自 sync→tick*→end
+        assert types.count("tts_sync") == 2
+        assert types.count("tts_end") == 2
+        assert types.count("tts_tick") >= 2
+        syncs = [m for m in msgs if m["type"] == "tts_sync"]
+        assert [m["data"]["text"] for m in syncs] == ["你好。", "世界！"]
+        for s in syncs:
+            pid = s["data"]["playback_id"]
+            # 字段契约与前端 TTSSyncData/TTSTickData/TTSEndData 一致
+            assert set(s["data"].keys()) == {"playback_id", "server_ts", "text", "duration"}
+            ends = [m for m in msgs if m["type"] == "tts_end" and m["data"]["playback_id"] == pid]
+            assert len(ends) == 1
+            assert set(ends[0]["data"].keys()) == {"playback_id", "server_ts"}
+            ticks = [m for m in msgs if m["type"] == "tts_tick" and m["data"]["playback_id"] == pid]
+            assert len(ticks) >= 1
+            assert set(ticks[0]["data"].keys()) == {"playback_id", "server_ts", "position"}
+            positions = [t["data"]["position"] for t in ticks]
+            assert positions == sorted(positions)  # position 单调不减
+        # playback_id 逐句独立
+        assert syncs[0]["data"]["playback_id"] != syncs[1]["data"]["playback_id"]
+
+    @pytest.mark.asyncio
+    async def test_channel_failure_stops_advance(self, handler, monkeypatch):
+        # 第 1 次广播成功（tts_sync），其后失败 → 停止推进且不抛异常
+        calls = {"n": 0}
+
+        async def flaky(channel, message):
+            calls["n"] += 1
+            if calls["n"] >= 2:
+                raise RuntimeError("closed")
+            handler._manager.channel_broadcasts.append((channel, message))
+
+        handler._manager.broadcast_to_channel = flaky
+        monkeypatch.setattr(lc, "_LIVE_TTS_MIN_DURATION_MS", 0)
+        monkeypatch.setattr(lc, "_LIVE_TTS_MS_PER_CHAR", 0)
+        monkeypatch.setattr(lc, "_LIVE_TTS_TICK_INTERVAL", 0.001)
+        await handler._announce_reply_subtitles("第一句。第二句！")
+        syncs = [m for _, m in handler._manager.channel_broadcasts if m["type"] == "tts_sync"]
+        assert len(syncs) == 1  # 第二句未推进
+
+    @pytest.mark.asyncio
+    async def test_unterminated_text_single_sentence(self, handler, monkeypatch):
+        monkeypatch.setattr(lc, "_LIVE_TTS_MIN_DURATION_MS", 0)
+        monkeypatch.setattr(lc, "_LIVE_TTS_MS_PER_CHAR", 0)
+        monkeypatch.setattr(lc, "_LIVE_TTS_TICK_INTERVAL", 0.001)
+        await handler._announce_reply_subtitles("无标点结尾")
+        syncs = [m for _, m in handler._manager.channel_broadcasts if m["type"] == "tts_sync"]
+        assert [m["data"]["text"] for m in syncs] == ["无标点结尾"]

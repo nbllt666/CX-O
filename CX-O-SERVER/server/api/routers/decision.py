@@ -19,12 +19,15 @@
 
 @version 1.0.0
 """
+import asyncio
+import functools
 from typing import Any, Dict, Optional
 
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
 
 from server.core.decision.decision_core import (
+    DECISION_EXECUTOR,
     DecisionCore,
     DecisionInput,
     RubricSnapshot,
@@ -171,11 +174,16 @@ async def decide_location(request: D1LocationRequest, http_request: Request):
         # 同步实现（内含 requests LLM 调用 / 文件读写）统一卸载到 IO 线程池，避免阻塞事件循环
         rubric = await run_io(_resolve_rubric, core, request.agent_id, request.rubric)
         decision_input = DecisionInput(**request.decision_input.model_dump())
-        decision = await run_io(
-            core.decide_location,
-            session_id=request.session_id,
-            decision_input=decision_input,
-            rubric=rubric,
+        # P2: decide_location 内含同步 LLM 调用（timeout 默认 300s），改走决策专用
+        # 执行器，避免长调用挤占共享 cxo-io 池中的短 IO 任务
+        decision = await asyncio.get_running_loop().run_in_executor(
+            DECISION_EXECUTOR,
+            functools.partial(
+                core.decide_location,
+                session_id=request.session_id,
+                decision_input=decision_input,
+                rubric=rubric,
+            ),
         )
 
         result: Dict[str, Any] = decision.model_dump()
@@ -333,6 +341,8 @@ async def decide_reject(request: D6RejectRequest, http_request: Request):
 @router.get("/decision/rejected/{session_id}")
 async def get_rejected_content(session_id: str, http_request: Request, limit: int = 50):
     """查询指定会话的被拒绝内容。"""
+    # R9: 分页参数钳制（对齐 tuner.py:252 惯例）
+    limit = max(1, min(int(limit), 200))
     services = http_request.app.state.services
     mm = getattr(services, "memory_manager", None)
     if mm is None or not hasattr(mm, "get_rejected_content"):

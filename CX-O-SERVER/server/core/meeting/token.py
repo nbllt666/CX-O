@@ -189,6 +189,11 @@ class SpeakingToken:
             except asyncio.CancelledError:
                 # 释放过程被外部取消（如协程取消），安全终止，不向上抛
                 return
+            except Exception as e:
+                # L6: 普通异常不得逸出——上方已将 _release_task 置 None，无人
+                # 消费任务异常，逸出会变成 "task exception was never retrieved"
+                logger.warning("SpeakingToken 超时自动释放异常（%s）: %s", agent_id, e)
+                return
             logger.info(
                 "SpeakingToken 持有超时（%.1fs），自动释放 %s", timeout, agent_id
             )

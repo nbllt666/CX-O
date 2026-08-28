@@ -18,9 +18,12 @@ if errorlevel 1 (
 for /f "tokens=2" %%i in ('python --version 2^>^&1') do set PYTHON_VERSION=%%i
 echo 当前 Python 版本: %PYTHON_VERSION%
 
-:: 提取主版本号
-set MAJOR_VERSION=%PYTHON_VERSION:~0,1%
-set MINOR_VERSION=%PYTHON_VERSION:~2,2%
+:: 提取主次版本号（X3 修复：for /f 按 "." 拆分，替代子串截取——
+:: 原 %PYTHON_VERSION:~2,2% 对 "3.9.1" 截得 "9." 导致 LSS 数值比较异常）
+for /f "tokens=1,2 delims=." %%a in ("%PYTHON_VERSION%") do (
+    set MAJOR_VERSION=%%a
+    set MINOR_VERSION=%%b
+)
 
 :: 检查是否为 3.11+
 if %MAJOR_VERSION% LSS 3 (

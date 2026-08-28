@@ -9,6 +9,9 @@
 依赖注入对齐 cxfc.py 模式：模块级 `_manager` / `_audit_store` 全局 + `set_*` 注入函数，
 由 server/main.py 装配成功后注入。
 """
+import asyncio
+import logging
+import threading
 from typing import Any, Dict
 
 from fastapi import APIRouter, Depends, HTTPException, Request
@@ -18,14 +21,24 @@ from server.api.routers.admin import verify_admin_api_key
 from server.autonomy.config import AutonomyConfig, save_config
 from server.autonomy.manager import AutonomyDisabledError
 
-import logging
-
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
 # 控制指令枚举（对齐 public/interface_stub/cxo_autonomy.pyi control() 契约）
 CONTROL_ACTIONS = ("enable", "disable", "pause", "resume", "emergency_stop")
+
+# 配置写锁（R3）：串行化 PUT /autonomy/config 读改写与 control enable/disable
+# 持久化两条写路径，消除双入口并发写交错损坏文件。async 上下文经
+# asyncio.to_thread 在工作线程内持锁执行，事件循环内不做阻塞文件 IO。
+_CONFIG_WRITE_LOCK = threading.Lock()
+
+
+def _save_config_locked(cfg: AutonomyConfig) -> None:
+    """持 _CONFIG_WRITE_LOCK 写配置（供工作线程内执行）。"""
+    with _CONFIG_WRITE_LOCK:
+        save_config(cfg)
+
 
 _manager = None
 _audit_store = None
@@ -116,9 +129,14 @@ async def _try_ensure_manager(request: Request):
             setup_autonomy,
         )
 
-        cfg = load_config()
-        cfg.enabled = True
-        save_config(cfg)
+        def _enable_and_save_locked() -> None:
+            """持锁读改写：读取当前配置置 enabled=True 后落盘（线程内执行）。"""
+            with _CONFIG_WRITE_LOCK:
+                cfg = load_config()
+                cfg.enabled = True
+                save_config(cfg)
+
+        await asyncio.to_thread(_enable_and_save_locked)
         mgr = await setup_autonomy(services)
         if mgr is not None:
             _manager = mgr
@@ -129,11 +147,12 @@ async def _try_ensure_manager(request: Request):
         return None
 
 
-def _persist_enabled(action: str, manager: Any) -> None:
+async def _persist_enabled(action: str, manager: Any) -> None:
     """enable/disable 开关状态持久化到配置存储（其余动作不持久化）。
 
-    使用 manager.config 的 store_path 落盘，保证跨重启保持；配置缺失或写入
-    失败仅告警，不影响控制指令执行。
+    使用 manager.config 的 store_path 落盘，保证跨重启保持；写盘经
+    asyncio.to_thread 在工作线程中执行且持 _CONFIG_WRITE_LOCK，事件循环内
+    不做阻塞文件 IO（R3）。配置缺失或写入失败仅告警，不影响控制指令执行。
     """
     if action not in ("enable", "disable"):
         return
@@ -142,7 +161,7 @@ def _persist_enabled(action: str, manager: Any) -> None:
         return
     try:
         cfg.enabled = action == "enable"
-        save_config(cfg)
+        await asyncio.to_thread(_save_config_locked, cfg)
     except Exception as e:
         logger.warning("自主系统开关状态持久化失败: %s", e)
 
@@ -192,7 +211,7 @@ async def control(
 
     method = getattr(manager, action)
     method()
-    _persist_enabled(action, manager)
+    await _persist_enabled(action, manager)
     return {"status": "ok", "state": _manager_state(manager)}
 
 
@@ -202,6 +221,9 @@ def list_audit(limit: int = 50, offset: int = 0):
 
     AuditStore 未装配时返回空列表与 total=0。
     """
+    # R9: 分页参数钳制（对齐 tuner.py:252 惯例）
+    limit = max(1, min(int(limit), 200))
+    offset = max(0, int(offset))
     store = _audit_store
     if store is None:
         return {"items": [], "total": 0}
@@ -239,18 +261,22 @@ def update_config(partial: Dict[str, Any], _: bool = Depends(verify_admin_api_ke
     C5: 写路径端点补管理员鉴权。
     以当前配置为基础做深度合并后经 AutonomyConfig.model_validate 校验；非法字段
     （extra="forbid"）、非法枚举/非法时间格式返回 422。未装配返回 404。
+    读改写（读 manager.config → _deep_merge → save_config）整体持
+    _CONFIG_WRITE_LOCK（sync 线程池上下文直接 with）：与 control 持久化路径
+    串行化，消除双入口并发写交错损坏文件与丢更新（R3）。
     """
     manager = _manager
     if manager is None or manager.config is None:
         raise HTTPException(status_code=404, detail="自主系统未装配")
 
-    current = manager.config.model_dump()
-    merged = _deep_merge(current, partial)
-    try:
-        updated = AutonomyConfig.model_validate(merged)
-    except (ValidationError, ValueError) as e:
-        raise HTTPException(status_code=422, detail=f"配置字段非法: {e}") from e
+    with _CONFIG_WRITE_LOCK:
+        current = manager.config.model_dump()
+        merged = _deep_merge(current, partial)
+        try:
+            updated = AutonomyConfig.model_validate(merged)
+        except (ValidationError, ValueError) as e:
+            raise HTTPException(status_code=422, detail=f"配置字段非法: {e}") from e
 
-    save_config(updated)
-    manager.config = updated
+        save_config(updated)
+        manager.config = updated
     return updated.model_dump()

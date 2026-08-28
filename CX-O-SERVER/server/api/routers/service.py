@@ -28,8 +28,11 @@ logger = get_contextual_logger(__name__)
 # 全局变量存储后端进程
 _backend_process: Optional[subprocess.Popen] = None
 # BUG-B07 修复: 保护对 _backend_process / _backend_log_handle / _backend_log_path
-# 的并发读写,避免多请求同时启动/停止后端时出现数据竞争
-_backend_process_lock = threading.Lock()
+# 的并发读写,避免多请求同时启动/停止后端时出现数据竞争。
+# E7 修复: 改用 RLock——start_service 的临界区（已运行检查+Popen+进程登记）内需
+# 复用内部同样取锁的 get_backend_process/_open_backend_log_file/_close_backend_log_handle
+# 等辅助函数,同线程可重入避免自死锁;跨线程互斥语义与 Lock 完全一致。
+_backend_process_lock = threading.RLock()
 # 后端进程日志文件句柄,防止 GC 关闭文件描述符
 _backend_log_handle: Optional[Any] = None
 # 后端进程日志文件绝对路径,供 /service/logs 端点读取
@@ -224,6 +227,23 @@ def _open_backend_log_file(root_dir: str) -> tuple:
     return log_path, handle
 
 
+def _close_backend_log_handle() -> None:
+    """幂等释放全局 _backend_log_handle（L3 日志句柄泄漏修复）。
+
+    句柄由 _open_backend_log_file 打开、设计上持有至后端进程结束；在 stop
+    成功路径 / psutil 回退成功路径 / start 异常路径显式释放，避免 Windows 下
+    句柄锁住 logs/cxo.log 无法轮转。重复调用安全（判 None 后才 close+置 None）。
+    """
+    global _backend_log_handle
+    with _backend_process_lock:
+        if _backend_log_handle is not None:
+            try:
+                _backend_log_handle.close()
+            except OSError:
+                pass
+            _backend_log_handle = None
+
+
 class ServiceStatus(BaseModel):
     """服务状态"""
 
@@ -406,128 +426,141 @@ async def start_service(config: ServiceConfig, _: bool = Depends(verify_admin_ap
 
     BUG-B07 修复: 通过 ``_backend_process_lock`` 保护 ``_backend_process`` 赋值,
     避免多请求同时启动/停止后端时出现数据竞争。
+
+    E7 修复: "已运行检查 + subprocess.Popen + _backend_process/_backend_port 登记"
+    整体纳入同一 ``_backend_process_lock`` 临界区（锁已改 RLock,锁内可复用内部
+    同样取锁的辅助函数）,消除原先"锁外 Popen、锁内赋值"窗口导致的并发双实例。
     """
-    global _backend_process
+    # E16 修复: 补 _backend_port 的 global 声明——原先 global 只有 _backend_process,
+    # 此处对 _backend_port 的赋值只作用于局部变量,模块级 _backend_port 永不更新,
+    # /service/status 端口回读恒兜底 8000
+    global _backend_process, _backend_port
 
     # 验证配置
     validate_service_config(config)
 
-    # 检查是否已在运行
+    # 快速路径预检（锁外,仅提前拒绝;权威检查在下方临界区内）
     existing_process = get_backend_process()
     if existing_process is not None:
         raise HTTPException(status_code=400, detail="Service is already running")
 
-    # 在创建子进程前再确认一次,避免 TOCTOU 竞争
-    with _backend_process_lock:
-        if _backend_process is not None and get_backend_process() is not None:
-            raise HTTPException(status_code=400, detail="Service is already running")
+    # 锁外准备只读环境信息（不触碰共享状态,避免无谓占用临界区）
+    root_dir = get_project_root()
+    conda_python = get_conda_python_path()
+    conda_activate = get_conda_activate_script()
+    use_conda = config.use_conda and conda_python is not None
+
+    # E9 修复: 预置 None,保证 except 分支在任何失败路径下都能安全区分
+    # "Popen 未执行"（None）与"Popen 已成功但登记未完成"
+    new_process = None
 
     try:
-        # 获取项目根目录
-        root_dir = get_project_root()
-
-        # 检查是否使用 Conda 环境
-        conda_python = get_conda_python_path()
-        conda_activate = get_conda_activate_script()
-        use_conda = config.use_conda and conda_python is not None
-
-        # 为子进程打开一个日志文件,避免 stdout/stderr=PIPE 死锁 (BUG-B03)
-        _log_path, _log_handle = _open_backend_log_file(root_dir)
-        if _log_handle is not None:
-            _stdout_target = _log_handle
-            _stderr_target = _log_handle
-        else:
-            _stdout_target = subprocess.DEVNULL
-            _stderr_target = subprocess.DEVNULL
-
-        if use_conda and sys.platform == "win32" and conda_activate:
-            # Windows: 使用 activate.bat 激活环境
-            # 使用列表形式的命令避免命令注入
-            cmd = [
-                "cmd",
-                "/c",
-                f'"{conda_activate}" base && python -m uvicorn server.main:app '
-                f"--host {config.host} --port {config.port} --log-level {config.log_level}",
-            ]
-            if config.reload:
-                cmd[-1] += " --reload"
-
-            logger.info("Starting with Conda activate script")
-
-            # 使用 shell=False 执行命令
-            new_process = subprocess.Popen(
-                cmd,
-                cwd=root_dir,
-                stdout=_stdout_target,
-                stderr=_stderr_target,
-                shell=False,
-                creationflags=subprocess.CREATE_NEW_PROCESS_GROUP,
-            )
-
-        elif use_conda and conda_python:
-            # 直接使用 Conda Python
-            cmd = [
-                conda_python,
-                "-m",
-                "uvicorn",
-                "server.main:app",
-                "--host",
-                config.host,
-                "--port",
-                str(config.port),
-                "--log-level",
-                config.log_level,
-            ]
-
-            if config.reload:
-                cmd.append("--reload")
-
-            logger.info(f"Starting with Conda Python: {' '.join(cmd)}")
-
-            new_process = subprocess.Popen(
-                cmd,
-                cwd=root_dir,
-                stdout=_stdout_target,
-                stderr=_stderr_target,
-                creationflags=subprocess.CREATE_NEW_PROCESS_GROUP if sys.platform == "win32" else 0,
-            )
-
-        else:
-            # 使用系统 Python
-            cmd = [
-                sys.executable,
-                "-m",
-                "uvicorn",
-                "server.main:app",
-                "--host",
-                config.host,
-                "--port",
-                str(config.port),
-                "--log-level",
-                config.log_level,
-            ]
-
-            if config.reload:
-                cmd.append("--reload")
-
-            logger.info(f"Starting with system Python: {' '.join(cmd)}")
-
-            new_process = subprocess.Popen(
-                cmd,
-                cwd=root_dir,
-                stdout=_stdout_target,
-                stderr=_stderr_target,
-                creationflags=subprocess.CREATE_NEW_PROCESS_GROUP if sys.platform == "win32" else 0,
-            )
-
-        # BUG-B07 修复: 在锁内完成对全局 _backend_process 的赋值,保证可见性
+        # E7 修复: 已运行检查 + 日志句柄创建 + Popen + 进程登记 同一临界区,
+        # 确保任何路径下 _backend_process 赋值与 Popen 原子（临界区内均为
+        # 毫秒级操作,无读日志回显之类的长时间阻塞 IO）
         with _backend_process_lock:
+            # 在创建子进程前再确认一次,避免 TOCTOU 竞争
+            if _backend_process is not None and get_backend_process() is not None:
+                raise HTTPException(status_code=400, detail="Service is already running")
+
+            # 为子进程打开一个日志文件,避免 stdout/stderr=PIPE 死锁 (BUG-B03)
+            _log_path, _log_handle = _open_backend_log_file(root_dir)
+            if _log_handle is not None:
+                _stdout_target = _log_handle
+                _stderr_target = _log_handle
+            else:
+                _stdout_target = subprocess.DEVNULL
+                _stderr_target = subprocess.DEVNULL
+
+            if use_conda and sys.platform == "win32" and conda_activate:
+                # Windows: 使用 activate.bat 激活环境
+                # 使用列表形式的命令避免命令注入
+                cmd = [
+                    "cmd",
+                    "/c",
+                    f'"{conda_activate}" base && python -m uvicorn server.main:app '
+                    f"--host {config.host} --port {config.port} --log-level {config.log_level}",
+                ]
+                if config.reload:
+                    cmd[-1] += " --reload"
+
+                logger.info("Starting with Conda activate script")
+
+                # 使用 shell=False 执行命令
+                new_process = subprocess.Popen(
+                    cmd,
+                    cwd=root_dir,
+                    stdout=_stdout_target,
+                    stderr=_stderr_target,
+                    shell=False,
+                    creationflags=subprocess.CREATE_NEW_PROCESS_GROUP,
+                )
+
+            elif use_conda and conda_python:
+                # 直接使用 Conda Python
+                cmd = [
+                    conda_python,
+                    "-m",
+                    "uvicorn",
+                    "server.main:app",
+                    "--host",
+                    config.host,
+                    "--port",
+                    str(config.port),
+                    "--log-level",
+                    config.log_level,
+                ]
+
+                if config.reload:
+                    cmd.append("--reload")
+
+                logger.info(f"Starting with Conda Python: {' '.join(cmd)}")
+
+                new_process = subprocess.Popen(
+                    cmd,
+                    cwd=root_dir,
+                    stdout=_stdout_target,
+                    stderr=_stderr_target,
+                    creationflags=subprocess.CREATE_NEW_PROCESS_GROUP if sys.platform == "win32" else 0,
+                )
+
+            else:
+                # 使用系统 Python
+                cmd = [
+                    sys.executable,
+                    "-m",
+                    "uvicorn",
+                    "server.main:app",
+                    "--host",
+                    config.host,
+                    "--port",
+                    str(config.port),
+                    "--log-level",
+                    config.log_level,
+                ]
+
+                if config.reload:
+                    cmd.append("--reload")
+
+                logger.info(f"Starting with system Python: {' '.join(cmd)}")
+
+                new_process = subprocess.Popen(
+                    cmd,
+                    cwd=root_dir,
+                    stdout=_stdout_target,
+                    stderr=_stderr_target,
+                    creationflags=subprocess.CREATE_NEW_PROCESS_GROUP if sys.platform == "win32" else 0,
+                )
+
+            # E7 修复: 锁内完成对全局 _backend_process/_backend_port 的登记,
+            # 保证 Popen→进程登记 原子（BUG-B07 可见性语义保留）
             _backend_process = new_process
             # 记录实际监听端口，供 /service/status 回读（不再硬编码 8000）
             _backend_port = config.port
 
-        # B10 修复: 写入 pidfile，供后续 status/stop 端点快速定位进程
-        _write_pidfile(new_process.pid)
+            # B10 修复: 写入 pidfile（与进程登记强相关,一并纳入临界区）,
+            # 供后续 status/stop 端点快速定位进程
+            _write_pidfile(new_process.pid)
 
         logger.info(
             f"Backend service started: PID={new_process.pid}, Port={config.port}, Conda={use_conda}"
@@ -541,7 +574,34 @@ async def start_service(config: ServiceConfig, _: bool = Depends(verify_admin_ap
             "using_conda": use_conda,
         }
 
+    except HTTPException:
+        # E7 修复: 临界区内"已在运行"等 4xx 语义直通,不落入下方 500 兜底
+        raise
     except Exception as e:
+        # L3: 启动失败时释放刚打开的日志句柄，避免泄漏锁住 logs/cxo.log
+        _close_backend_log_handle()
+        # E9 修复: Popen 成功但登记未完成（_backend_process 不是本进程）时,
+        # 已 spawn 的子进程会遗留为孤儿——回收之,避免占用端口与资源。
+        # 回收动作放锁外: terminate+wait(3) 可能阻塞数秒,不应占用临界区;
+        # 本次 start 流程已失败返回,不存在并发登记竞争。
+        if new_process is not None and _backend_process is not new_process:
+            logger.warning(
+                f"Reaping orphan backend process after failed start: PID={new_process.pid}"
+            )
+            try:
+                new_process.terminate()
+                try:
+                    new_process.wait(timeout=3)
+                except subprocess.TimeoutExpired:
+                    new_process.kill()
+                    new_process.wait(timeout=3)
+            except Exception as reap_err:
+                # 回收失败仅留痕,不吞原始启动异常
+                logger.error(f"Failed to reap orphan process: {reap_err}")
+            # pidfile 由登记成功后的 _write_pidfile 写入;仅在其内容确为本进程
+            # PID 时清理,避免误删上一个存活实例的 pidfile
+            if _read_pidfile() == new_process.pid:
+                _remove_pidfile()
         logger.error(f"Failed to start service: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail="启动服务失败")
 
@@ -573,6 +633,12 @@ async def stop_service(_: bool = Depends(verify_admin_api_key)):
         # 严禁裸 "uvicorn" 匹配（会误杀承载本请求的其它 uvicorn 进程）。
         stopped = False
         found_pid = None
+        # E8 修复: 防误杀——cmdline 匹配后还须校验候选进程 cwd 位于本项目根内。
+        # 项目根口径与 admin.py/_PROJECT_ROOT、get_project_root() 一致:
+        # service.py 上溯 4 级目录（server/api/routers/service.py -> 项目根）。
+        # 防止误杀本机其它项目中同名模块（server.main:app）的 uvicorn 进程。
+        project_root = get_project_root()
+        root_norm = os.path.normcase(os.path.abspath(project_root))
         for proc in psutil.process_iter(["pid", "name", "cmdline"]):
             try:
                 # 自我排除（A2 修复）：严禁 terminate 承载本请求的主服务自身
@@ -582,6 +648,16 @@ async def stop_service(_: bool = Depends(verify_admin_api_key)):
                 cmdline = proc.info.get("cmdline") or []
                 cmdline_str = " ".join(cmdline)
                 if cmdline_str and "uvicorn" in cmdline_str and "server.main:app" in cmdline_str:
+                    # E8 修复: cwd 校验——获取失败（权限/进程消失,psutil.Error 基类
+                    # 覆盖 AccessDenied/NoSuchProcess 等）时保守跳过不杀;
+                    # cwd 不在本项目根内（含根本身）的一律跳过。
+                    try:
+                        proc_cwd = proc.cwd()
+                    except psutil.Error:
+                        continue
+                    cwd_norm = os.path.normcase(os.path.abspath(proc_cwd))
+                    if cwd_norm != root_norm and not cwd_norm.startswith(root_norm + os.sep):
+                        continue
                     # 命中精确目标：优先以 pidfile 记录的 backend pid 精确 terminate
                     pidfile_pid = _read_pidfile()
                     found_pid = pidfile_pid if (pidfile_pid is not None and pidfile_pid == proc.pid) else proc.pid
@@ -605,6 +681,8 @@ async def stop_service(_: bool = Depends(verify_admin_api_key)):
                 pass
             # B10 修复: 清理可能存在的 stale pidfile
             _remove_pidfile()
+            # L3: 进程已停止，释放重定向日志句柄，避免锁住 logs/cxo.log
+            _close_backend_log_handle()
             return {"status": "success", "message": "Service stopped"}
 
         raise HTTPException(status_code=400, detail="Service is not running")
@@ -628,6 +706,9 @@ async def stop_service(_: bool = Depends(verify_admin_api_key)):
 
         # B10 修复: 停止后删除 pidfile
         _remove_pidfile()
+
+        # L3: 后端进程已停止，释放重定向日志句柄，避免锁住 logs/cxo.log
+        _close_backend_log_handle()
 
         logger.info("Backend service stopped")
 
@@ -661,6 +742,10 @@ async def restart_service(config: ServiceConfig, _: bool = Depends(verify_admin_
 async def get_service_logs(lines: int = 100):
     """获取服务日志"""
     try:
+        # E10 修复: lines 参数钳制——lines=0 时 all_lines[-0:] 等价 [0:] 会退化为
+        # "返回全量日志"（语义反转）,负数会跳过首 |lines| 行,超大值有内存风险。
+        # 钳制到 [1, 10000],lines=0 归位默认值 100（默认值保持不变）。
+        lines = max(1, min(int(lines or 100), 10000))
         # B10 修复: 原读相对路径 "logs/cxo.log"，与 _open_backend_log_file 写入的
         # {root}/logs/cxo.log 在 CWD≠项目根时会错位。改为优先使用 _backend_log_path，
         # 回退到项目根目录下的绝对路径。

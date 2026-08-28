@@ -37,6 +37,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
+from server.autonomy._atomic_io import atomic_write_json
 from server.autonomy.config import resolve_store_dir
 from server.autonomy.perception.env.context_sensor import ContextSensor
 from server.core.logging_config import get_contextual_logger
@@ -285,6 +286,9 @@ class AutonomyEngine:
             self.manager.last_cycle_at = self._local_now_iso()
             self._sync_manager_motivations()
             self._save_manager_state()
+            # R4: 每轮末尾统一持久化 Token 台账（记账/跨日重置均发生在轮内，
+            # 每轮仅落盘一次），避免重启后当日预算清零绕过熔断。
+            await self._persist_token_ledger()
 
     def _apply_user_online_policy(self) -> bool:
         """轮首用户在线策略：将传感器判定同步到 killswitch 休眠档。
@@ -835,10 +839,24 @@ class AutonomyEngine:
             }
             path = Path(self._store_dir) / "manager_state.json"
             path.parent.mkdir(parents=True, exist_ok=True)
-            with open(path, "w", encoding="utf-8") as f:
-                json.dump(data, f, ensure_ascii=False, indent=2)
+            atomic_write_json(path, data)
         except Exception as e:
             logger.warning("保存 manager 状态失败: %s", e)
+
+    async def _persist_token_ledger(self) -> None:
+        """R4: 每轮末尾持久化 Token 台账（尽力而为，不冒泡）。
+
+        记账（_audit → add_tokens）与跨日重置（_sync_budget_date）均发生在
+        轮内，轮末统一落盘一次，避免一轮多次重复写；经 asyncio.to_thread 在
+        工作线程执行原子写，事件循环内不做阻塞文件 IO。重启后从
+        token_ledger.json 恢复当日消耗，堵住"重启清零预算绕过熔断"缺口。
+        """
+        if self.token_ledger is None:
+            return
+        try:
+            await asyncio.to_thread(self.token_ledger.save)
+        except Exception as e:
+            logger.warning("Token 台账持久化失败: %s", e)
 
     # ================================================================ 工具方法
     @staticmethod

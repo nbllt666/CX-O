@@ -95,7 +95,9 @@ class DecayBatchProcessor:
 
         decay_calculator = DecayCalculator()
         if memories is None:
-            memories = self.memory_manager.search_memories(limit=self._batch_size, offset=offset)
+            memories = await asyncio.to_thread(
+                self.memory_manager.search_memories, limit=self._batch_size, offset=offset
+            )
 
         if not memories:
             return BatchDecayResult(total=0, updated=0, failed=0, details=[])
@@ -167,7 +169,7 @@ class DecayBatchProcessor:
                 failed_count += 1
 
         if sync and not dry_run:
-            sync_result = self.memory_manager.sync_decay_values()
+            sync_result = await asyncio.to_thread(self.memory_manager.sync_decay_values)
             logger.info(f"同步衰减值: 更新={sync_result['updated']}, 失败={sync_result['failed']}")
 
         return BatchDecayResult(
@@ -185,7 +187,8 @@ class DecayBatchProcessor:
 
         # D3: 先取全量记忆快照（稳定遍历），再按切片处理——逐批 search(offset)
         # 会因更新 importance 改变 ORDER BY importance DESC 的排序位置而漏/重记忆。
-        snapshot = self._snapshot_all_memories()
+        # R6: 快照为同步阻塞 IO，经 to_thread 卸载避免卡事件循环（对齐 L145 update_memory_async 模式）。
+        snapshot = await asyncio.to_thread(self._snapshot_all_memories)
         if not snapshot:
             return {
                 "total_batches": 0,
@@ -216,7 +219,7 @@ class DecayBatchProcessor:
             )
 
         if sync and not dry_run:
-            sync_result = self.memory_manager.sync_decay_values()
+            sync_result = await asyncio.to_thread(self.memory_manager.sync_decay_values)
             logger.info(f"同步衰减值: 更新={sync_result['updated']}, 失败={sync_result['failed']}")
 
         return {

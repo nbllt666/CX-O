@@ -121,7 +121,8 @@ def get_llm_client_for_agent(agent_config: dict):
     """按 Agent 配置获取 LLM 客户端。
 
     - model 为 main/summary/memory 类型 → 从 model_router 获取对应客户端
-    - model 为具体模型名 → 基于 main 客户端 host 创建 OllamaClient
+    - model 为具体模型名 → 基于 main 客户端 host 经 LLMFactory.create_client
+      创建/复用缓存实例（缓存键含 provider/model/host/temperature/max_tokens）
     - 处理失败 → 回退到全局 llm_client
     """
     from server.dependencies import get_llm_client, get_model_router
@@ -138,9 +139,13 @@ def get_llm_client_for_agent(agent_config: dict):
         else:
             main_client = model_router.get_client("main")
             if main_client:
-                from server.core.llm.client import OllamaClient
+                # P5: 改经 LLMFactory 缓存复用——旧实现每请求直接新建
+                # OllamaClient 造成实例churn；工厂缓存键并入 host/model/
+                # temperature/max_tokens，不同 host 或采样参数不会互串缓存
+                from server.core.llm.client import LLMFactory
 
-                return OllamaClient(
+                return LLMFactory.create_client(
+                    "ollama",
                     host=main_client.host,
                     model=model,
                     temperature=agent_config.get("temperature", 0.7),

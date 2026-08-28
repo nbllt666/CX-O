@@ -4,7 +4,8 @@
  * 行为口径对齐 CX-O-Frontend useWebSocket：
  * - 连接打开后发送 config（agent_id + timeout），30s ping 心跳
  * - 消息路由：stream / voice.partial / voice.tts_chunk / voice.prefill_started /
- *   response / error / content / tool_call / done / cancelled / vad_status 等
+ *   voice.speaker / response / error / content / done / cancelled / vad_status /
+ *   cluster_event / autonomy_cost_alert（toast）/ skill_triggered 等（eventsStore）
  * - TTS 流式播放：首包优先、back-to-back 衔接、全双工打断
  * - fixed 2s 自动重连（覆盖 HMR 与网络抖动）
  * - 带图消息返回 false，由 caller 回退 HTTP /api/chat/stream
@@ -13,8 +14,18 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 
 import { getWsBaseUrl, STORAGE_KEYS } from '../api/base';
 import { VoiceActions } from '../constants/actions';
+import { useToastStore } from '../store/toastStore';
+import { useEventsStore } from '../store/eventsStore';
 import { useWSTransport } from './ws/transport';
 import { createDefaultRelayDeps, handleCxfcRelayCall, type CxfcRelayCallMessage } from './ws/cxfcRelay';
+
+/** D9：cluster_event 中需要弹 toast 的主题（切换/故障类）；心跳/拓扑加入类不弹防刷屏 */
+const CLUSTER_TOAST_TOPICS = new Set([
+  'cluster.failover_started',
+  'cluster.failover_completed',
+  'cluster.node_left',
+  'cluster.role_changed',
+]);
 
 export interface WebSocketMessage {
   type: string;
@@ -73,6 +84,13 @@ export interface WebSocketOptions {
   onTTSPlayingChange?: (playing: boolean) => void;
   /** 音画同步：累计的原始含标签文本段拼接结果（供外部增量定位/字幕对齐） */
   onTextProgress?: (cumulativeRaw: string) => void;
+  /** D6：voice.speaker 事件——当前说话人识别结果（spk 补充消息，speaker_name 仅注册命中非空） */
+  onSpeaker?: (speaker: {
+    speakerId: string;
+    speakerName: string;
+    speakerRegistered: boolean;
+    speakerConf: number;
+  }) => void;
 }
 
 export interface DualStreamPayload {
@@ -136,6 +154,7 @@ export function useWebSocket(options: WebSocketOptions): UseWebSocketReturn {
   const onPrefillStartedRef = useRef(options.onPrefillStarted);
   const onTTSPlayingChangeRef = useRef(options.onTTSPlayingChange);
   const onTextProgressRef = useRef(options.onTextProgress);
+  const onSpeakerRef = useRef(options.onSpeaker);
   // 跨 tts_chunk 累计的原始含标签文本段拼接结果；会话间需重置防污染
   const textProgressRef = useRef('');
 
@@ -151,6 +170,7 @@ export function useWebSocket(options: WebSocketOptions): UseWebSocketReturn {
     onPrefillStartedRef.current = options.onPrefillStarted;
     onTTSPlayingChangeRef.current = options.onTTSPlayingChange;
     onTextProgressRef.current = options.onTextProgress;
+    onSpeakerRef.current = options.onSpeaker;
   });
 
   // TTS 流式播放器：收到第一个 tts_chunk 立即播放，不等整句合成完成。
@@ -304,24 +324,57 @@ export function useWebSocket(options: WebSocketOptions): UseWebSocketReturn {
           }
           onMessageRef.current?.({ type: 'done' });
           break;
-        case 'tool_call':
-        case 'tool_result':
-          onMessageRef.current?.(data);
-          break;
         case 'cancelled':
           resetIsGenerating();
           onMessageRef.current?.(data);
           break;
         case 'thinking':
-        case 'tool_start':
         case 'vad_status':
         case 'vad_frame':
-        case 'asr_stream_result':
-        case 'asr_stream_status':
         case 'agent_interrupt_user':
         case 'agent_reply':
           onMessageRef.current?.(data);
           break;
+        case 'voice.speaker': {
+          // D6：声纹 spk 补充消息（text 空的识别帧）——解析当前说话人并经回调交使用方记录；
+          // speaker_name 仅注册命中非空，未注册时 speakerId 为伪名（spk_N）
+          const speakerData = (data.data || {}) as Record<string, unknown>;
+          onSpeakerRef.current?.({
+            speakerId: String(speakerData.speaker_id || ''),
+            speakerName: String(speakerData.speaker_name || ''),
+            speakerRegistered: Boolean(speakerData.speaker_registered),
+            speakerConf: Number(speakerData.speaker_conf || 0),
+          });
+          onMessageRef.current?.(data);
+          break;
+        }
+        case 'cluster_event': {
+          // D9：集群广播事件——仅切换/故障类主题弹轻量 toast（心跳/拓扑类不弹防刷屏）
+          const clusterEvent = (data.data || {}) as Record<string, unknown>;
+          const topic = String(clusterEvent.topic || '');
+          if (CLUSTER_TOAST_TOPICS.has(topic)) {
+            useToastStore.getState().push({ kind: 'cluster', topic, data: clusterEvent });
+          }
+          onMessageRef.current?.(data);
+          break;
+        }
+        case 'autonomy_cost_alert': {
+          // D9：自主系统成本告警——直接弹轻量 toast（data: usage_ratio/daily_used/limit/date）
+          useToastStore.getState().push({
+            kind: 'cost',
+            data: (data.data || {}) as Record<string, unknown>,
+          });
+          onMessageRef.current?.(data);
+          break;
+        }
+        case 'skill_triggered':
+        case 'plugin_status_changed':
+        case 'system.wake': {
+          // D9：广播事件入有界事件存档（不做 UI，供后续功能查询）
+          useEventsStore.getState().push(data.type, data.data);
+          onMessageRef.current?.(data);
+          break;
+        }
         case 'external_event':
           if (onExternalEventRef.current && data.data) {
             onExternalEventRef.current(data.data as Record<string, unknown>);

@@ -186,15 +186,6 @@ export default function ChatPage() {
         case 'thinking':
           applyEvent({ type: data.type === 'chat_chunk' ? 'content' : data.type, content: data.content });
           break;
-        case 'tool_call':
-          applyEvent({ type: 'tool_call', tool_call: data.tool_call as StreamEvent['tool_call'] });
-          break;
-        case 'tool_start':
-          applyEvent({ type: 'tool_start', tool_name: data.tool_name });
-          break;
-        case 'tool_result':
-          applyEvent({ type: 'tool_result', tool_name: data.tool_name, result: data.result });
-          break;
         case 'done':
         case 'chat_done':
           finalize('management.chat.doneEmpty');

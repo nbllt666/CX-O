@@ -49,7 +49,12 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from pydantic import BaseModel
 
-from server.core.utils import iso_now as _iso_now, new_uuid as _new_uuid
+from server.core import agent_store
+from server.core.utils import (
+    append_audit_entry,
+    iso_now as _iso_now,
+    new_uuid as _new_uuid,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -547,6 +552,11 @@ class DistillationService:
           finalize_distillation 阶段调用
     """
 
+    # P3: 会话缓存软上限——写入前若超限按插入序淘汰最旧（dict 保序）；
+    # 终态（is_finalized=True，对应 S_FINALIZE/S_REJECT，即 completed/rejected）
+    # 会话在持久化成功后 pop 出缓存，防止长驻进程缓存无界增长
+    _SESSIONS_CACHE_MAX = 500
+
     def __init__(
         self,
         config: Optional[Dict[str, Any]] = None,
@@ -632,10 +642,38 @@ class DistillationService:
         self._vllm_base_url: str = _load_vllm_base_url()
 
         # 内存态 session 索引（持久化层的缓存，提升查询性能）
+        # P3: 所有写入统一经 _cache_put（软上限淘汰最旧），终态会话经
+        # _cache_drop 在持久化后移出缓存，防止无界增长
         self._sessions_cache: Dict[str, Dict[str, Any]] = {}
 
         # 记忆存储（生产环境惰性初始化，测试可注入 fake 隔离副作用）
         self._memory_manager = memory_manager
+
+    def _cache_put(self, session_id: str, session: Dict[str, Any]) -> None:
+        """P3: 写入会话缓存，带软上限（超限按插入序淘汰最旧）。
+
+        dict 保插入序：达到 _SESSIONS_CACHE_MAX 且为新键写入时，先以
+        ``next(iter(...))`` 淘汰最旧条目再写入，缓存规模稳定在软上限附近。
+
+        Args:
+            session_id: 会话 ID
+            session: 会话字典（与持久化层结构一致）
+        """
+        if (
+            len(self._sessions_cache) >= self._SESSIONS_CACHE_MAX
+            and session_id not in self._sessions_cache
+        ):
+            oldest_sid = next(iter(self._sessions_cache))
+            self._sessions_cache.pop(oldest_sid, None)
+        self._sessions_cache[session_id] = session
+
+    def _cache_drop(self, session_id: str) -> None:
+        """P3: 将已达终态的会话移出缓存（持久化层仍保留完整会话，可按需重载）。
+
+        Args:
+            session_id: 会话 ID
+        """
+        self._sessions_cache.pop(session_id, None)
 
     # ------------------------------------------------------------------ #
     # 公开 API（严格匹配 .pyi 签名）
@@ -727,9 +765,9 @@ class DistillationService:
             "error_message": None,
         }
 
-        # 持久化 + 缓存
+        # 持久化 + 缓存（P3: 经 _cache_put 有界写入）
         self._save_session(session)
-        self._sessions_cache[session_id] = session
+        self._cache_put(session_id, session)
 
         return StartDistillationResponse(
             session_id=session_id,
@@ -927,9 +965,13 @@ class DistillationService:
             }
         )
 
-        # 持久化 + 缓存更新
+        # 持久化 + 缓存更新（P3: 终态（is_finalized，S_REJECT 拒绝路径）持久化
+        # 成功后 pop 出缓存；非终态经 _cache_put 有界写入）
         self._save_session(session)
-        self._sessions_cache[session_id] = session
+        if session.get("is_finalized"):
+            self._cache_drop(session_id)
+        else:
+            self._cache_put(session_id, session)
 
         return AdvanceDistillationResponse(
             session_id=session_id,
@@ -1002,9 +1044,10 @@ class DistillationService:
             }
         )
 
-        # 持久化
+        # 持久化（P3: finalize 必达终态 S_FINALIZE/S_REJECT（is_finalized=True），
+        # 持久化成功后 pop 出缓存，磁盘仍可按需重载）
         self._save_session(session)
-        self._sessions_cache[session_id] = session
+        self._cache_drop(session_id)
 
         stored = location != "rejected"
         # OBS-7/#9：真实持久化蒸馏产物到记忆存储，返回真实 memory_id（可查）。
@@ -1135,7 +1178,7 @@ class DistillationService:
                 session["distillation_goal"] = distillation_goal
                 session["target_agent_id"] = target_agent_id
                 self._save_session(session)
-                self._sessions_cache[start_resp.session_id] = session
+                self._cache_put(start_resp.session_id, session)
 
             sessions.append(
                 {
@@ -1282,7 +1325,8 @@ class DistillationService:
             dict: 写入的标准 Agent 配置
 
         Raises:
-            OSError / json.JSONDecodeError: agents.json 读写失败（由调用方捕获）
+            OSError: agents.json 写入失败（由调用方捕获）；读取失败/损坏由
+                agent_store 宽松模式（strict=False）按空列表重建，不抛解析异常
         """
         import uuid
 
@@ -1299,17 +1343,6 @@ class DistillationService:
             f"你是角色「{name}」。以下是该角色的设定与记忆蒸馏内容，请据此扮演：\n"
             f"{extracted}"
         )
-
-        agents_path = os.path.join(_PROJECT_ROOT, "data", "agents.json")
-        agents: List[Dict[str, Any]] = []
-        if os.path.exists(agents_path):
-            try:
-                with open(agents_path, "r", encoding="utf-8") as fh:
-                    loaded = json.load(fh)
-                if isinstance(loaded, list):
-                    agents = loaded
-            except (json.JSONDecodeError, OSError) as exc:
-                logger.warning("agents.json 读取失败（%s），将重建", exc)
 
         now = _iso_now()
         agent: Dict[str, Any] = {
@@ -1329,10 +1362,18 @@ class DistillationService:
             "created_at": now,
             "updated_at": now,
         }
-        agents.append(agent)
-        _ensure_dir(os.path.dirname(agents_path))
-        with open(agents_path, "w", encoding="utf-8") as fh:
-            json.dump(agents, fh, ensure_ascii=False, indent=2)
+
+        # E1 收敛：读写委托 agent_store.update_agents（全局 RLock 锁内读改写 +
+        # os.replace 原子写，消除本函数原 open("w") 非原子写与交叉读改写窗口）。
+        # 路径仍从本模块 _PROJECT_ROOT 派生（与 agent_store.AGENTS_PATH 同源解析，
+        # 保留测试经 monkeypatch _PROJECT_ROOT 注入 tmp_path 的既有口径）；
+        # 宽松读语义（strict=False）与原实现一致：损坏/缺失 → 空列表重建。
+        agents_path = os.path.join(_PROJECT_ROOT, "data", "agents.json")
+
+        def _append_agent(agents_list: List[Dict[str, Any]]) -> None:
+            agents_list.append(agent)
+
+        agent_store.update_agents(_append_agent, path=agents_path, strict=False)
         return agent
 
     # ------------------------------------------------------------------ #
@@ -2024,7 +2065,9 @@ class DistillationService:
                 )
             data = resp.json()
             content = (
-                data.get("choices", [{}])[0]
+                # R7: `or [{}]` 双保险——data["choices"] 为 None 或空列表时不抛 IndexError
+                # （对齐 server/core/decision/decision_core.py:693）
+                (data.get("choices") or [{}])[0]
                 .get("message", {})
                 .get("content", "")
                 .strip()
@@ -2049,7 +2092,7 @@ class DistillationService:
             return float(score)
         except (ConnectionError,) as e:
             raise e
-        except (requests.RequestException, json.JSONDecodeError, ValueError, TypeError, KeyError) as e:
+        except (requests.RequestException, json.JSONDecodeError, ValueError, TypeError, KeyError, IndexError) as e:
             raise ConnectionError(f"LLM 质量评估调用/解析失败: {e}") from e
 
     def _get_memory_manager(self) -> Optional[Any]:
@@ -2181,16 +2224,6 @@ class DistillationService:
         """
         try:
             log_path = os.path.join(self._log_dir, f"{session_id}.json")
-            # 读取已有日志（追加模式）
-            existing: List[Dict[str, Any]] = []
-            if os.path.exists(log_path):
-                try:
-                    with open(log_path, "r", encoding="utf-8") as fh:
-                        existing = json.load(fh)
-                        if not isinstance(existing, list):
-                            existing = []
-                except (json.JSONDecodeError, OSError):
-                    existing = []
 
             # 构造日志条目（符合 distillation_log.schema.json）
             log_entry = {
@@ -2216,13 +2249,12 @@ class DistillationService:
                 },
                 "timestamp": _iso_now(),
             }
-            existing.append(log_entry)
 
-            # 原子写入（先写临时文件再重命名，避免半写损坏）
-            tmp_path = log_path + ".tmp"
-            with open(tmp_path, "w", encoding="utf-8") as fh:
-                json.dump(existing, fh, ensure_ascii=False, indent=2)
-            os.replace(tmp_path, log_path)
+            # P1: 改经共享追加写（server/core/utils.py: append_audit_entry）——
+            # per-path 锁串行化同 session 并发读改写、仅保留最后 200 条
+            # （消除「全量读→append→全量写回」的 O(N²) 写放大与无界增长）、
+            # tmp+os.replace 原子替换防半写
+            append_audit_entry(log_path, log_entry)
         except (OSError, json.JSONDecodeError, ValueError, TypeError):
             # best-effort：写入失败不阻断主流程
             pass
@@ -2264,7 +2296,8 @@ class DistillationService:
         try:
             with open(session_path, "r", encoding="utf-8") as fh:
                 session = json.load(fh)
-            self._sessions_cache[session_id] = session
+            # P3: 经 _cache_put 有界写入（超限淘汰最旧）
+            self._cache_put(session_id, session)
             return session
         except (json.JSONDecodeError, OSError):
             return None
