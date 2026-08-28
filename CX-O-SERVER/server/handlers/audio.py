@@ -242,6 +242,15 @@ class DualStreamSession:
         # 被 GC 提前回收（asyncio 不持有裸 create_task 的引用）。
         self._background_tasks: set = set()
 
+        # B3: "AI 打断人"判定在途标记——同一会话同一时刻最多 1 个打断判定任务，
+        # 在途期间新帧触发的判定直接丢弃（非阻塞、不排队）。
+        self._interrupt_judging: bool = False
+
+        # B7: 在途 finalize 任务及其对应的 pipeline 任务——
+        # 同一轮上下文只调度一次 _finalize_turn，防重复记录上下文。
+        self._finalizing: Optional[asyncio.Task] = None
+        self._finalizing_pipeline: Optional[asyncio.Task] = None
+
         # 最近一次注册说话人名（Task 7.1）。由接收 asr_result 的入口更新；
         # 仅 registered 命中时非空，未注册伪名（spk_N）永不记录。
         self._last_speaker_name: str = ""
@@ -268,6 +277,23 @@ class DualStreamSession:
         self._background_tasks.add(task)
         task.add_done_callback(self._background_tasks.discard)
         return task
+
+    def _schedule_finalize_turn(self, pipeline_task: asyncio.Task) -> None:
+        """调度 _finalize_turn 后台任务（B7 防重复调度护栏）。
+
+        同一轮对话内 VAD speech_end / final 可能触发多次，若每次都新建
+        _finalize_turn，会并发等待同一 pipeline 并重复写同一轮上下文。护栏规则：
+        - 已有在途 finalize 且其对应**同一** pipeline → 跳过（单轮上下文只写一次）；
+        - 已有在途 finalize 但对应**旧** pipeline（本轮已换新 pipeline）→ 不跳过，
+          否则新轮次上下文将无人记录（旧 finalize 醒来后因 pipeline 不匹配会跳过记录）。
+        """
+        fin = self._finalizing
+        if fin is not None and not fin.done() and self._finalizing_pipeline is pipeline_task:
+            return
+        self._finalizing_pipeline = pipeline_task
+        self._finalizing = self._track_background_task(
+            asyncio.create_task(self._finalize_turn(pipeline_task))
+        )
 
     async def on_vad_speech_start(self) -> None:
         """VAD 检测到用户开始说话 —— 全双工打断触发点
@@ -401,11 +427,10 @@ class DualStreamSession:
 
             # 调度后台任务：等待流水线完成后记录上下文
             # 不阻塞音频帧接收，流水线可能仍在生成 TTS
+            # B7: 经 _schedule_finalize_turn 调度，防同一轮重复调度重复记录
             pipeline_task = self._pipeline_task
             if pipeline_task is not None:
-                self._track_background_task(
-                    asyncio.create_task(self._finalize_turn(pipeline_task))
-                )
+                self._schedule_finalize_turn(pipeline_task)
             return
 
         # ---- 未触发：VAD speech_end 兜底触发 ----
@@ -421,12 +446,23 @@ class DualStreamSession:
 
         # final 若已在 speech_end 前到达，会被 on_final_result 以 is_speaking=True
         # 累积进 pending；此处合并 pending + final 触发（文本过短则留待合并）。
+        # B12 方向性修复：子串包含改双向判定取较长者——旧实现单向
+        # `final not in pending` 会在 pending ⊂ final 时拼接出重复文本
+        # （如 "你好" + "你好今天" → "你好 你好今天"）。
         candidate = final_text or self._pending_user_text
         if len(candidate) < self._trigger_char_threshold:
             return
 
-        if self._pending_user_text and final_text and final_text not in self._pending_user_text:
-            full_user_text = f"{self._pending_user_text} {final_text}"
+        if self._pending_user_text and final_text:
+            if final_text in self._pending_user_text:
+                # final 是 pending 的子串/复现 → 取更完整的 pending
+                full_user_text = self._pending_user_text
+            elif self._pending_user_text in final_text:
+                # pending 是 final 的子串/前缀 → 取更完整的 final
+                full_user_text = final_text
+            else:
+                # 互不包含 → 拼接
+                full_user_text = f"{self._pending_user_text} {final_text}"
         elif final_text:
             full_user_text = final_text
         else:
@@ -440,9 +476,7 @@ class DualStreamSession:
         logger.debug("[DIAG-PARTIAL] on_vad_speech_end fallback trigger, text='%s'", full_user_text)
         await self._send_prefill_started(full_user_text)
         self._pipeline_task = asyncio.create_task(self._run_pipeline(full_user_text))
-        self._track_background_task(
-            asyncio.create_task(self._finalize_turn(self._pipeline_task))
-        )
+        self._schedule_finalize_turn(self._pipeline_task)
 
         # 注意：不在此处重置 _has_triggered_this_utterance。
         # final 结果在 speech_end 之后才到达，on_final_result 需要凭此 flag
@@ -499,9 +533,7 @@ class DualStreamSession:
         # 异步启动 LLM → TextSmoother → TTS 流水线，不阻塞音频帧接收
         self._pipeline_task = asyncio.create_task(self._run_pipeline(full_user_text))
         # 兜底路径 speech_end 已过，无人调度 _finalize_turn，此处自行调度记录上下文
-        self._track_background_task(
-            asyncio.create_task(self._finalize_turn(self._pipeline_task))
-        )
+        self._schedule_finalize_turn(self._pipeline_task)
 
     async def ensure_reply(self) -> None:
         """回复兜底（Feature B should_reply=True 专用）：确保主管线产出回复。
@@ -522,9 +554,7 @@ class DualStreamSession:
         self._final_user_text = candidate
         await self._send_prefill_started(candidate)
         self._pipeline_task = asyncio.create_task(self._run_pipeline(candidate))
-        self._track_background_task(
-            asyncio.create_task(self._finalize_turn(self._pipeline_task))
-        )
+        self._schedule_finalize_turn(self._pipeline_task)
 
     async def _run_pipeline(self, user_text: str) -> None:
         """运行 LLM → TextSmoother → TTS 全链路流水线
@@ -764,6 +794,10 @@ class DualStreamSession:
         使用 _final_user_text（VAD on_end 修正后的 Final 文本）记录上下文。
         若流水线被新 utterance 打断（_pipeline_task is not self._pipeline_task），
         则跳过记录（用户文本已由 CancelledError 处理器累积到 pending）。
+
+        B7 原子置位：仅当此 task 仍是当前流水线时，先把 _pipeline_task 置 None
+        （在 await _record_context 之前），使并发/重复的 finalize 在 record 的
+        await 窗口内立即判定"非当前流水线"，保证单轮上下文只写一次。
         """
         try:
             await pipeline_task
@@ -772,20 +806,20 @@ class DualStreamSession:
         except Exception:
             pass
 
-        # 仅当此 task 仍是当前流水线时才记录上下文
-        # （若已被新 utterance 的 pipeline 替换，则跳过，避免覆盖新轮次状态）
-        if self._pipeline_task is pipeline_task and self._pipeline_completed:
-            # 使用 VAD 修正后的 Final 文本记录上下文（比 Partial 更准确）
-            user_text = self._final_user_text or self._current_user_text
-            await self._record_context(user_text, self._current_assistant_text)
-
-        # 重置状态（仅当此 task 仍是当前流水线时）
+        # 仅当此 task 仍是当前流水线时才处理（若已被新 utterance 的 pipeline
+        # 替换，则跳过，避免覆盖新轮次状态）
         if self._pipeline_task is pipeline_task:
+            # 原子置位：先摘除当前流水线引用，再执行上下文记录
+            self._pipeline_task = None
+            if self._pipeline_completed:
+                # 使用 VAD 修正后的 Final 文本记录上下文（比 Partial 更准确）
+                user_text = self._final_user_text or self._current_user_text
+                await self._record_context(user_text, self._current_assistant_text)
+            # 重置本轮状态
             self._current_user_text = ""
             self._current_assistant_text = ""
             self._final_user_text = ""
             self._pipeline_completed = False
-            self._pipeline_task = None
 
     def _build_tts_kwargs(self) -> dict:
         """构建 Qwen3 统一编排合成参数：
@@ -1503,7 +1537,14 @@ def register_audio_handlers(
 
         内部判定（agent_interrupt_user.on_asr_partial_result）可能调用 LLM（~8s），
         因此必须由调用方以 create_task 异步发起，绝不阻塞音频帧处理。
+
+        B3 在途防护：判定为 fire-and-forget（每帧 ASR 文本都可触发一次），若无
+        并发护栏，判定堆积时会并发占用多个 LLM 判定槽。此处加会话级在途标记：
+        已有判定在途时新触发直接丢弃（非阻塞、不排队），保证每时刻最多 1 个判定。
         """
+        if session._interrupt_judging:
+            return
+        session._interrupt_judging = True
         try:
             from server.services.agent_interrupt_user import get_agent_interrupt_module
             agent_interrupt = get_agent_interrupt_module(session.client_id)
@@ -1522,6 +1563,8 @@ def register_audio_handlers(
             pass
         except Exception as e:
             logger.error(f"AI 插话判定错误: {e}")
+        finally:
+            session._interrupt_judging = False
 
     async def handle_voice_dual_stream(websocket, message, client_id):
         """双流式语音 handler：编排 ASR → LLM → TTS 全链路流水线

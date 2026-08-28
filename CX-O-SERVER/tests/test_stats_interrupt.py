@@ -11,13 +11,13 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from server.api.routers import stats as stats_router_mod
-from server.api.routers import admin as admin_router_mod
 from server.services.agent_interrupt_user import get_agent_interrupt_module
 
 
 @pytest.fixture
 def client(monkeypatch):
-    monkeypatch.setattr(admin_router_mod, "ADMIN_API_KEY", "secret_key")
+    # C7: ADMIN_API_KEY 改为惰性读取 env，测试经 setenv 注入
+    monkeypatch.setenv("ADMIN_API_KEY", "secret_key")
     app = FastAPI()
     app.include_router(stats_router_mod.router, prefix="/api")
     return TestClient(app, raise_server_exceptions=False)
@@ -25,7 +25,8 @@ def client(monkeypatch):
 
 @pytest.fixture
 def no_key_client(monkeypatch):
-    monkeypatch.setattr(admin_router_mod, "ADMIN_API_KEY", "")
+    # C7: 惰性读取 env——未配置场景经 delenv 模拟
+    monkeypatch.delenv("ADMIN_API_KEY", raising=False)
     app = FastAPI()
     app.include_router(stats_router_mod.router, prefix="/api")
     return TestClient(app, raise_server_exceptions=False)

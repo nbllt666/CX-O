@@ -63,9 +63,12 @@ def create_app() -> FastAPI:
         lifespan=lifespan,
     )
 
+    # CORS 白名单从配置读取（默认前端管理界面来源 + file:// 源，可用
+    # CXO_VWS_CORS_ORIGINS 覆盖）；不再放开 "*"——服务含训练/文件接口，
+    # 任意源可读会造成跨站读取风险。
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=["*"],
+        allow_origins=settings.server.cors_origins,
         allow_credentials=False,
         allow_methods=["*"],
         allow_headers=["*"],
@@ -105,7 +108,7 @@ app = create_app()
 
 def main():
     settings = get_settings()
-    host = getattr(settings.server, 'host', '0.0.0.0')
+    host = getattr(settings.server, 'host', '127.0.0.1')
     port = getattr(settings.server, 'port', 8200)
     log_level = getattr(settings.server, 'log_level', 'info').lower()
 

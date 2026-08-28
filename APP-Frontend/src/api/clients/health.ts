@@ -12,32 +12,14 @@ export interface VectorStatus {
   collection_info: Record<string, unknown>;
 }
 
-export interface RefsStatus {
-  emotions_count: number;
-  transitions_count: number;
-  total_count: number;
-  is_complete: boolean;
-  expected_total: number;
-}
-
 export const healthApi = {
   /** GET /health —— 连接检测门使用的轻量探活端点 */
   getHealth(): Promise<HealthStatus> {
     return request<HealthStatus>({ url: '/health' });
   },
 
-  getGraphHealth(): Promise<{ connected: boolean; message?: string }> {
-    return request<{ connected: boolean; message?: string }>({ url: '/api/graph/health' });
-  },
-
   getGraphStats(): Promise<GraphStats> {
     return request<GraphStats>({ url: '/api/graph/stats' });
-  },
-
-  async testGraphConnection(): Promise<{ status: string; message: string }> {
-    const data = await request<Record<string, unknown>>({ url: '/api/graph/health' });
-    const overall = String(data.overall ?? 'unknown');
-    return { status: overall === 'healthy' ? 'connected' : 'error', message: overall };
   },
 
   /** 后端返回 { status, vector_status }，解包后返回 */
@@ -54,10 +36,6 @@ export const healthApi = {
 
   getVoiceWorkstationStatus(): Promise<{ status: string }> {
     return voiceWorkstationRequest<{ status: string }>({ url: '/health' });
-  },
-
-  getRefsStatus(): Promise<RefsStatus> {
-    return voiceWorkstationRequest<RefsStatus>({ url: '/refs-status' });
   },
 
   getLiveClientStatus(): Promise<{ status: string }> {

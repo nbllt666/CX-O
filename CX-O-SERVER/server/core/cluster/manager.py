@@ -471,7 +471,15 @@ class SentinelCluster:
         return {"dead": dead, "about": about}
 
     async def _op_sync_event(self, payload: dict, node_id: str, seq: int = 0, epoch: int = 0) -> dict:
-        """sync_event：交 replicator 幂等应用对端事件（seq 去重 + epoch 闸门），成功回 ack 序号。"""
+        """sync_event：交 replicator 幂等应用对端事件（seq 去重 + epoch 闸门），成功回 ack 序号。
+
+        B4 ack 语义修正：applied=False 分两种成因——
+        - seq 已在幂等集合（此前已应用成功，本次为响应丢失后的重投/缺口补投）：
+          仍回完整 acked_seq=event_seq，发送端可移除 outbox 条目（否则重投永远
+          无法确认，队列楔死）；
+        - seq 未应用（落盘失败/过期纪元拒绝/replicator 缺失）：回 acked_seq=0，
+          发送端保留 outbox 条目重投，杜绝"假确认丢数据"。
+        """
         unit = payload.get("unit")
         event_seq = payload.get("seq", seq)
         if not unit or event_seq is None:
@@ -486,7 +494,14 @@ class SentinelCluster:
                 "node_id": node_id,
                 "epoch": int(epoch or 0),
             })
-        return {"acked_seq": int(event_seq), "applied": bool(applied)}
+        if applied:
+            return {"acked_seq": int(event_seq), "applied": True}
+        # applied=False：幂等重放仍回 ack；未应用（失败/拒绝）不回 ack
+        already_applied = self.replicator.is_seq_applied(str(unit), int(event_seq))
+        return {
+            "acked_seq": int(event_seq) if already_applied else 0,
+            "applied": False,
+        }
 
     async def _op_leave(self, payload: dict, node_id: str, seq: int = 0, epoch: int = 0) -> dict:
         """leave：标记节点主动离开并触发清理（清嫌疑跟踪 + 广播 node_left）。"""

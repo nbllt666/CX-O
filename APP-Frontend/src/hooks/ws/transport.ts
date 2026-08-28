@@ -130,8 +130,10 @@ export function useWSTransport(options: UseWSTransportOptions): UseWSTransportRe
       return;
     }
 
-    const url = urlBuilderRef.current();
     try {
+      // D11: urlBuilder 构造在 try 内——urlBuilder 抛异常（如配置缺失）时走
+      // 与 new WebSocket 同步失败一致的 catch 路径，而非异常冒泡中断调用方
+      const url = urlBuilderRef.current();
       const ws = new WebSocket(url);
       wsRef.current = ws;
       ws.binaryType = binaryTypeRef.current;
@@ -173,6 +175,14 @@ export function useWSTransport(options: UseWSTransportOptions): UseWSTransportRe
     } catch (e) {
       console.error('[WSTransport] Failed to create WebSocket:', e);
       onErrorRef.current?.('Failed to create WebSocket connection');
+      // D11: 同步失败路径与 onclose 对齐——状态复位 false，并按既有退避策略
+      // 调度重连；否则 urlBuilder 抛异常 / 构造失败会让连接静默死掉不再恢复。
+      setIsConnected(false);
+      const delay = getReconnectDelay();
+      if (delay !== null) {
+        reconnectAttemptsRef.current++;
+        reconnectTimeoutRef.current = window.setTimeout(connect, delay);
+      }
     }
   }, [getReconnectDelay]);
 

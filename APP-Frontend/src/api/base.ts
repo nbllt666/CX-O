@@ -28,6 +28,8 @@ export const STORAGE_KEYS = {
   voiceWsUrl: 'cxo-voicews-url',
   controlUrl: 'cxo-control-url',
   token: 'cxo-token',
+  /** 管理面 x-api-key（与后端 ADMIN_API_KEY 对齐；C5/C10 鉴权端点调用需携带） */
+  adminKey: 'cxo-admin-key',
   offlineTimeout: 'cxo-offline-timeout',
 } as const;
 
@@ -182,6 +184,12 @@ function setupInterceptors(instance: AxiosInstance): void {
     const token = localStorage.getItem(STORAGE_KEYS.token);
     if (token) {
       config.headers.Authorization = `Bearer ${token}`;
+    }
+    // C5/C10: 后端鉴权端点（live disconnect / discovery / config 写路径等）要求
+    // x-api-key 头；localStorage 配置了管理密钥时统一注入，与 Bearer token 同口径。
+    const adminKey = localStorage.getItem(STORAGE_KEYS.adminKey);
+    if (adminKey) {
+      config.headers['x-api-key'] = adminKey;
     }
     return config;
   });

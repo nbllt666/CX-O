@@ -93,6 +93,8 @@ class TunerClient:
             from server.core.utils import get_shared_http_client
 
             self._client = get_shared_http_client()
+            # C11: 惰性注入的是全局共享客户端——所有权归共享池，本实例不得关闭
+            self._owns_client = False
         return self._client
 
     async def _request(
@@ -155,6 +157,15 @@ class TunerClient:
         return await self._request("DELETE", f"/api/v1/adapters/{adapter_id}")
 
     async def close(self) -> None:
+        # C11 双保险：若当前持有的是全局共享客户端，强制标记为非自有，防止误关全局单例
+        if self._client is not None:
+            try:
+                from server.core.utils import get_shared_http_client
+
+                if self._client is get_shared_http_client():
+                    self._owns_client = False
+            except Exception:
+                pass
         # 不关闭共享客户端（非本实例拥有）；仅关闭自主创建的实例
         if not self._owns_client or self._client is None:
             return

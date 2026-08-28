@@ -1,4 +1,5 @@
 """记忆路由——多源记忆检索结果的评分合并与选优决策。"""
+import asyncio
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Dict, List
@@ -131,7 +132,9 @@ class MemoryRouter:
         all_memories = []
 
         try:
-            recent_memories = self._get_recent_memories(session_id)
+            # A1: _get_recent_memories 内部为同步 SQLite LIKE 查询（热路径逐消息调用），
+            # 下放至线程池执行，避免阻塞事件循环；方法本身保持同步签名（有单测直调）
+            recent_memories = await asyncio.to_thread(self._get_recent_memories, session_id)
             if recent_memories:
                 all_memories.extend(recent_memories)
                 applied_rules.append("最近交互记忆优先")
@@ -264,7 +267,10 @@ class MemoryRouter:
 
                 return memories
 
-            return self.memory_manager.search_memories(
+            # A1: hybrid 不可用时的回退分支同样走同步 SQLite（LIKE 全表扫描），
+            # 经 to_thread 下放，避免阻塞事件循环
+            return await asyncio.to_thread(
+                self.memory_manager.search_memories,
                 query=query,
                 memory_type=options.get("memory_type"),
                 tags=options.get("tags"),

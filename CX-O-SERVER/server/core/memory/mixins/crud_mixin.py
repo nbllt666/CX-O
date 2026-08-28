@@ -292,6 +292,10 @@ class _MemoryCRUDMixin:
             if new_importance is not None:
                 updates.append("importance = ?")
                 params.append(new_importance)
+                # A5: importance 与 importance_score（0-1 归一列）双列同步更新，
+                # 仅写整数列会导致衰减计算/评分读到过期的 importance_score
+                updates.append("importance_score = ?")
+                params.append(new_importance / 5.0)
 
             if new_metadata is not None:
                 updates.append("metadata = ?")

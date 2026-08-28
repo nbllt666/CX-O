@@ -92,7 +92,7 @@ class _StreamState:
     """
 
     __slots__ = ("ws", "lock", "recv_queue", "recv_task", "final_received",
-                 "recent_speaker", "recent_spk_embedding")
+                 "recent_speaker", "recent_spk_embedding", "closed")
 
     def __init__(self):
         self.ws: Any = None  # websockets.WebSocketClientProtocol
@@ -103,6 +103,10 @@ class _StreamState:
         self.final_received: bool = False
         self.recent_speaker: tuple = ()
         self.recent_spk_embedding: Optional[list] = None
+        # B6: 会话已释放标记——release_streaming_session 置位后，任何仍持有本
+        # state 引用的在途调用（send_audio_chunk/_ensure_ws）不得再重建 WS/recv
+        # task，杜绝"已出册 state 上重建孤儿连接"竞态。
+        self.closed: bool = False
 
 
 class _StreamAccessor:
@@ -185,6 +189,11 @@ class _StreamAccessor:
             self._svc._recent_spk_embedding = value
         else:
             self._state.recent_spk_embedding = value
+
+    @property
+    def closed(self) -> bool:
+        """会话是否已被释放（B6）。默认会话不经 release 释放，恒为 False。"""
+        return self._state.closed if self._state is not None else False
 
 
 class ASRService:
@@ -278,6 +287,27 @@ class ASRService:
                 await self.release_streaming_session(cid)
             except Exception as e:  # noqa: BLE001 - 单会话释放失败不阻断整体关闭
                 logger.warning(f"[ASR-WS] shutdown 释放会话 {cid} 失败: {e}")
+        # B9: 默认会话（client_id=None）补充清理——执行与 release_streaming_session
+        # 相同的 cancel+close 序列（判空），否则 shutdown 后默认会话的 WS 连接与
+        # recv task 成为孤儿。
+        try:
+            default_task = self._ws_recv_task
+            if default_task is not None and not default_task.done():
+                default_task.cancel()
+                try:
+                    await default_task
+                except (asyncio.CancelledError, Exception):  # noqa: BLE001
+                    pass
+            self._ws_recv_task = None
+            default_ws = self._ws
+            self._ws = None
+            if default_ws is not None:
+                try:
+                    await default_ws.close()
+                except Exception as e:  # noqa: BLE001
+                    logger.debug("[ASR-WS] close error for default session: %s", e)
+        except Exception as e:  # noqa: BLE001 - 默认会话清理失败不阻断整体关闭
+            logger.warning(f"[ASR-WS] shutdown 清理默认会话失败: {e}")
         if _executor:
             _executor.shutdown(wait=False)
             _executor = None
@@ -494,8 +524,13 @@ class ASRService:
         """懒加载 WebSocket 连接，启动后台接收任务。
 
         client_id: 指定客户端会话；None 表示默认会话（向后兼容）。
+        B6: 会话已被 release（closed=True）时拒绝重建——在途调用仍持有旧 state
+        引用，若在此重建 WS/recv task，连接将无人释放（孤儿连接）。
         """
         st = self._stream_accessor(client_id)
+        if st.closed:
+            logger.info("[ASR-WS] 会话已释放 (client=%s)，拒绝重建 WS", client_id)
+            return False
         if st.ws is not None:
             return True
         async with st.lock:
@@ -563,6 +598,11 @@ class ASRService:
             logger.warning("ASRService not initialized, skip send_audio_chunk")
             return False
         st = self._stream_accessor(client_id)
+        # B6: accessor 取得后校验会话是否已被 release——release 与音频帧处理并发时，
+        # 在途调用不得再于已出册 state 上发送/重建连接
+        if st.closed:
+            logger.info("[ASR-WS] 会话已释放 (client=%s)，丢弃本次音频帧", client_id)
+            return False
         if not await self._ensure_ws(client_id):
             return False
         try:
@@ -720,10 +760,14 @@ class ASRService:
         """释放指定客户端的流式会话：关闭其 ASR WS 连接并取消后台接收任务。
 
         仅在客户端断开/会话结束时调用，不影响其它客户端会话。
+        B6: 先置 state.closed=True 再做清理——release 与音频帧处理并发时，
+        仍持有本 state 引用的在途 send_audio_chunk/_ensure_ws 会看到 closed
+        而不再重建 WS/recv task，杜绝孤儿连接竞态。
         """
         state = self._stream_sessions.pop(client_id, None)
         if state is None:
             return
+        state.closed = True
         task = state.recv_task
         if task is not None and not task.done():
             task.cancel()

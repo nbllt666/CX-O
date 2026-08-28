@@ -322,9 +322,8 @@ class TestManagementAuth:
         ],
     )
     def test_write_endpoint_rejects_unauth(self, no_auth_client, monkeypatch, method, path, payload):
-        from server.api.routers import admin as admin_router_mod
-
-        monkeypatch.setattr(admin_router_mod, "ADMIN_API_KEY", "")
+        # C7: ADMIN_API_KEY 改为惰性读取 env，未配置场景经 delenv 模拟
+        monkeypatch.delenv("ADMIN_API_KEY", raising=False)
         c = no_auth_client
         r = getattr(c, method)(path, json=payload)
         assert r.status_code == 403

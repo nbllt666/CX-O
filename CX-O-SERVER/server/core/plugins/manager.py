@@ -4,6 +4,7 @@ import importlib
 import importlib.util
 import inspect
 import json
+import os
 import sys
 from datetime import datetime
 from pathlib import Path
@@ -16,6 +17,16 @@ from .models import HookType, Plugin, PluginEvent, PluginHook, PluginMetadata, P
 
 logger = get_contextual_logger(__name__)
 
+# --------------------------------------------------------------------------- #
+# 路径锚点（rules-0 §三：os.path.dirname(os.path.abspath(__file__))，禁止相对路径）
+# A11 修复：原 plugins_dir 默认值 "plugins" 为 cwd 相对路径，服务从其他目录启动时
+# 插件目录解析漂移。修复为项目根锚定绝对路径（对齐 tasks/manager.py D13 同法）。
+# 本文件位于 server/core/plugins/，项目根为其上 3 级。
+# --------------------------------------------------------------------------- #
+_THIS_DIR = os.path.dirname(os.path.abspath(__file__))
+_PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(_THIS_DIR)))
+_DEFAULT_PLUGINS_DIR = os.path.join(_PROJECT_ROOT, "plugins")
+
 
 class PluginManager:
     """插件管理器
@@ -23,8 +34,9 @@ class PluginManager:
     负责插件的发现、加载、启用/禁用和钩子管理
     """
 
-    def __init__(self, plugins_dir: str = "plugins"):
-        self.plugins_dir = Path(plugins_dir)
+    def __init__(self, plugins_dir: str = None):
+        # A11: 默认值由相对路径 "plugins" 改为项目根锚定绝对路径；显式传参不受影响
+        self.plugins_dir = Path(plugins_dir) if plugins_dir else Path(_DEFAULT_PLUGINS_DIR)
         self.plugins: Dict[str, Plugin] = {}
         self.hooks: Dict[HookType, List[PluginHook]] = {}
         self._context: Optional[PluginContext] = None

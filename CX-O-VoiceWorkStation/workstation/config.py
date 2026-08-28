@@ -13,10 +13,22 @@ _BASE_DIR = Path(__file__).parent.parent
 
 @dataclass
 class ServerConfig:
-    host: str = "0.0.0.0"
+    # 默认仅绑定本机回环：服务含训练/文件操作接口，默认不暴露到局域网；
+    # 局域网部署可显式改配置（如 CXO_VWS_HOST 环境变量或配置文件）。
+    host: str = "127.0.0.1"
     port: int = 8200
     log_level: str = "INFO"
     debug: bool = True
+    # CORS 白名单：前端管理界面来源 + file:// 源（null）。
+    # 可经环境变量 CXO_VWS_CORS_ORIGINS（逗号分隔）覆盖；默认不再放开 "*"。
+    cors_origins: list = field(default_factory=lambda: [
+        origin.strip()
+        for origin in os.environ.get(
+            "CXO_VWS_CORS_ORIGINS",
+            "http://localhost:3100,http://127.0.0.1:3100,null",
+        ).split(",")
+        if origin.strip()
+    ])
 
 
 @dataclass

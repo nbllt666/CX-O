@@ -71,37 +71,47 @@ class NodeManager:
         return None
 
     def update(self, node_id: str, update_data: NodeUpdate, agent_id: str = "default") -> Optional[GraphNode]:
-        node = self.get(node_id, agent_id)
-        if not node:
-            return None
-
-        if update_data.type is not None:
-            node.type = update_data.type
-        if update_data.properties is not None:
-            node.properties.update(update_data.properties)
-        if update_data.text_content is not None:
-            node.text_content = update_data.text_content
-
+        # A4: 并发读改写保护——同 edges.update，properties 整列 JSON 覆写在两步
+        # 分离事务下会互相覆盖丢失更新。BEGIN IMMEDIATE → SELECT → Python 合并
+        # → UPDATE → COMMIT 全程同一连接同一事务。
         from datetime import datetime
-        node.updated_at = datetime.now()
 
-        query = """
-            UPDATE nodes
-            SET type = ?, name = ?, properties = ?, text_content = ?, updated_at = ?
-            WHERE id = ? AND agent_id = ?
-        """
-        self.db.execute_modify(
-            query,
-            (
-                node.type,
-                self._resolve_node_name(node),
-                json.dumps(node.properties),
-                node.text_content,
-                node.updated_at.isoformat(),
-                node_id,
-                agent_id,
-            ),
-        )
+        with self.db.get_cursor() as cursor:
+            cursor.execute("BEGIN IMMEDIATE")
+            cursor.execute(
+                "SELECT * FROM nodes WHERE id = ? AND agent_id = ?", (node_id, agent_id)
+            )
+            row = cursor.fetchone()
+            if not row:
+                return None
+
+            node = GraphNode.from_dict(dict(row))
+
+            if update_data.type is not None:
+                node.type = update_data.type
+            if update_data.properties is not None:
+                node.properties.update(update_data.properties)
+            if update_data.text_content is not None:
+                node.text_content = update_data.text_content
+
+            node.updated_at = datetime.now()
+
+            cursor.execute(
+                """
+                UPDATE nodes
+                SET type = ?, name = ?, properties = ?, text_content = ?, updated_at = ?
+                WHERE id = ? AND agent_id = ?
+                """,
+                (
+                    node.type,
+                    self._resolve_node_name(node),
+                    json.dumps(node.properties),
+                    node.text_content,
+                    node.updated_at.isoformat(),
+                    node_id,
+                    agent_id,
+                ),
+            )
 
         logger.info(f"更新节点: {node_id}")
         return node

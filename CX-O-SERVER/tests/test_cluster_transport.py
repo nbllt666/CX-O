@@ -75,7 +75,9 @@ async def test_send_failure_enqueues_pending_and_flush_retries(tmp_path):
         calls["n"] += 1
         return httpx.Response(
             (200 if calls["n"] >= 2 else 500),
-            json={"error_code": "CLUSTER_SERVICE_ERROR"} if calls["n"] < 2 else {"ok": True},
+            # 成功响应需符合 sync_event 确认契约：acked_seq==seq 且 applied=True，
+            # 否则 transport 按“未获对端应用确认”保留重投
+            json={"error_code": "CLUSTER_SERVICE_ERROR"} if calls["n"] < 2 else {"ok": True, "acked_seq": 7, "applied": True},
         )
     cfg = make_config()
     transport = httpx.AsyncClient(transport=httpx.MockTransport(handler))

@@ -317,12 +317,15 @@ class TestChatHistory:
         assert body["session"] is None
         assert body["messages"] == []
 
-    def test_agent_session_auto_created(self, harness):
-        harness.agent_config = _simple_config(name="助手甲")
+    def test_agent_session_not_auto_created(self, harness):
+        # C9: 读路径不再自动创建会话——session 不存在时返回空历史且不产生写路径
+        # （旧断言"GET 自动创建 agent 会话"对应的行为即本次修复的缺陷）
         r = harness.client.get("/chat/history/agent-default")
         assert r.status_code == 200
-        assert "agent-default" in harness.ctx.sessions
-        assert harness.ctx.sessions["agent-default"]["metadata"].get("agent_id") == "default"
+        body = r.json()
+        assert body["session"] is None
+        assert body["messages"] == []
+        assert "agent-default" not in harness.ctx.sessions
 
     def test_agent_not_configured_returns_empty(self, harness):
         harness.agent_config = None

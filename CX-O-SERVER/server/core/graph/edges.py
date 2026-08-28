@@ -67,32 +67,43 @@ class EdgeManager:
         return None
 
     def update(self, edge_id: str, update_data: EdgeUpdate, agent_id: str = "default") -> Optional[GraphEdge]:
-        edge = self.get(edge_id, agent_id)
-        if not edge:
-            return None
+        # A4: 并发读改写保护——properties 整列 JSON 覆写，原先"独立事务读-get +
+        # Python 合并 + 独立事务写回"两步分离，并发 update 会互相覆盖丢失更新。
+        # BEGIN IMMEDIATE 在读之前即获取写锁，SELECT → Python 合并 → UPDATE →
+        # COMMIT 全程同一连接同一事务（get_cursor 末尾 commit / 异常 rollback），
+        # 与 database.py _migrate_edges_foreign_keys 的事务模式对齐。
+        with self.db.get_cursor() as cursor:
+            cursor.execute("BEGIN IMMEDIATE")
+            cursor.execute(
+                "SELECT * FROM edges WHERE id = ? AND agent_id = ?", (edge_id, agent_id)
+            )
+            row = cursor.fetchone()
+            if not row:
+                return None
 
-        if update_data.relation_type is not None:
-            edge.relation_type = update_data.relation_type
-        if update_data.properties is not None:
-            edge.properties.update(update_data.properties)
-        if update_data.text_content is not None:
-            edge.text_content = update_data.text_content
+            edge = GraphEdge.from_dict(dict(row))
 
-        query = """
-            UPDATE edges
-            SET relation_type = ?, properties = ?, text_content = ?
-            WHERE id = ? AND agent_id = ?
-        """
-        self.db.execute_modify(
-            query,
-            (
-                edge.relation_type,
-                json.dumps(edge.properties),
-                edge.text_content,
-                edge_id,
-                agent_id,
-            ),
-        )
+            if update_data.relation_type is not None:
+                edge.relation_type = update_data.relation_type
+            if update_data.properties is not None:
+                edge.properties.update(update_data.properties)
+            if update_data.text_content is not None:
+                edge.text_content = update_data.text_content
+
+            cursor.execute(
+                """
+                UPDATE edges
+                SET relation_type = ?, properties = ?, text_content = ?
+                WHERE id = ? AND agent_id = ?
+                """,
+                (
+                    edge.relation_type,
+                    json.dumps(edge.properties),
+                    edge.text_content,
+                    edge_id,
+                    agent_id,
+                ),
+            )
 
         logger.info(f"更新边: {edge_id}")
         return edge

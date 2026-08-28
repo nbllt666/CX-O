@@ -4,6 +4,14 @@
 
 ## 做到哪了
 
+- **第五轮深扫缺陷修复（技术债 s0602 + code-review + debugger 三合一）**（已关闭，2026-08-28；issue `模块0-20260828-01`，变更文档 `.trae/documents/20260828_模块0_第五轮深扫缺陷修复.md`；GN-004 警示放行 + 人类终审批准关闭）
+  - 工程过程：用户 /goal 三 Skill 合一扫描（许可不限量 subagent）→ 4 路并行只读扫描定位约 54 项（高 9/中 22/低 23，含已知项去重）→ 主线程抽验高危属实 → rules-6 先写文档 → 4 subagent 并行修复：批A 后端核心 11 项（MemoryRouter 热路径 to_thread、Ollama tool_calls 顺序、池连接误关、图 update 事务、broadcast 超时并发等）/ 批B 语音 12 项（TTS ref 解析缓存+to_thread、CancelledError 裸 raise、打断判定并发护栏、replicator 真应用确认、parallel 入口守卫补齐等）/ 批C API 安全 11 项（api_key 脱敏哨兵、autonomy/live/discovery 鉴权、审计 to_thread、上传流式校验、legacy llm 委托、TunerClient 所有权等）/ 批D 前端外围 12 项（训练进度 ×100、提权 relaunch 退出、采集尺寸 effect、VWS host 收敛等）→ 主线程 M1 CORS 收敛 + M2 哨兵协议核对（前端零改动闭环）→ 后端等效全量 **4414 passed / 0 failed**（180.74s，1 个集群 mock 测试随 ack 契约更新）→ 前端 tsc/eslint 0 错误 + vitest 641/642（ble 存量失败与本轮无关）→ Tuner 68 passed → GN-004 交付前审查**警示放行**（9 项实码抽验全属实，2 项锚点警示已修正闭合，旧 CorsConfig 同步对齐 107 passed 复验）。
+  - 交接状态：**已关闭**（人类终审批准，2026-08-28）。47 项修复 + 5 项登记不修（R1-R5，理由显式）全部处置；3 项遗留显式登记（pyi:119 契约 s0601、前端 admin-key 录入 UI、R1-R5）。
+  - 最终结果：安全面闭环（GET /config 不再泄露明文 key、CORS 白名单+无凭据、3 端点补鉴权、前端 x-api-key 统一注入）；语音链路性能根因消除（TTS ref 缓存）；打断语义修复（CancelledError 传播+丢字修复）；集群复制去假应用；管理密钥**使用前提**：后端 .env ADMIN_API_KEY 需写入前端 localStorage `cxo-admin-key`（暂无录入 UI）。
+  - 未闭合项：见变更文档 §六登记遗留 3 项 + 观察项（streaming_engine 缓冲裁剪等历史项延续前轮口径）。
+  - 接续入口：后端重启加载新代码；所有改动在工作区未 commit（按组分块或整体提交由人类定）；pyi:119 契约修正需走 s0601。
+  - 交付后裁决：C1 部分回退——用户要求 GET /config 明文显示 api key，已恢复明文回显并移除 PUT 哨兵分支（`20260828_模块0_GETconfig回显apikey.md`，33 passed）；CORS 收敛与 C5/C10 鉴权维持不变。
+
 - **第四轮全项目体检 + 全量修复 + GN-004 审查 + 人类裁决 + 收尾清零**（已完成，2026-08-27；issue `模块0-20260827-01`〔体检修复主档〕，变更文档 `.trae/documents/20260827_模块0_第四轮全面体检修复.md`；s0402 终版证据 `test_reports/frontend_gate_20260827_213500/`〔PASSED 已闭合〕；graph 专项 `.trae/documents/20260827_模块0_图数据库外键统一开启.md`）
   - 工程过程：用户 /goal 全量重扫（特许超并发）→ 8路扫描约80项候选（16H/35M/L余）→ 主线程抽验6项H属实 → rules-6 先写文档 → 波1六组后端并行（A224/B309/C149/D~652/E142/F410 全绿）→ 波2三组（G tsc/eslint/vitest628/H electron110/I Tuner68+Server239）→ T组 gitignore/E2E端口 → pytest 全量首轮 4398P/5F→适配修复后等效 **4403 passed/0 failed** → s0402 四件套（Test2 当时缺入口=不可判定）→ GN-004 警示放行（2 回填完成）→ AskUserQuestion 四项裁决 → J组 Electron 安全补做（36/36 handler 守卫+CORS三态+124 vitest）/ K组技术债全量清理（归档9文件/脱跟踪6产物/submodule 登记/17行变更26P零损伤）→ 用户"完成剩余"→ L组 Playwright 基建（@playwright/test 1.62.1+chromium，双冒烟 2 passed）/ M组 graph FK 统一（RESTRICT 外键+幂等迁移+cascade=False 拒绝语义，204P）/ N组杂项包（DiffSinger 补映射、根 data 单真源收敛、7条运行时目录 ignore、replicator 死字段清除、run_e2e_tests 死清单重构）→ 主线合并快检 234P + vitest 终版 **79f/642t 全过** + playwright 2P → s0402 三重闸终版 **PASSED 闭合**。
   - 交接状态：**已完成（待关闭：人类终审通过后标已关闭）**。四项裁决全部执行完毕（Electron安全✅/技术债清理✅/graphFK✅/Playwright基建✅重跑闸门闭合）。两次文件写入竞态事件（M组 database.py、N组 run_e2e_tests.py、主线 summary.json 一次假空）均已实码复验幸存并记录。

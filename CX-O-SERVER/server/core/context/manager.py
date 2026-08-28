@@ -531,7 +531,9 @@ class ContextManager:
 
         cursor.execute("DELETE FROM messages WHERE session_id = ?", (session_id,))
         cursor.execute("UPDATE sessions SET message_count = 0 WHERE id = ?", (session_id,))
-        success = cursor.rowcount >= 0
+        # A8: rowcount >= 0 恒真；改用第二条 UPDATE（sessions）的 rowcount 判断
+        # 会话是否存在——不存在时应返回 False
+        success = cursor.rowcount > 0
         conn.commit()
 
         return success

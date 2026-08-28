@@ -122,7 +122,6 @@ export default function PetPage() {
   const captureWidth = useObsStore((s) => s.captureWidth);
   const captureHeight = useObsStore((s) => s.captureHeight);
   const cycleCaptureSize = useObsStore((s) => s.cycleCaptureSize);
-  const setCaptureSize = useObsStore((s) => s.setCaptureSize);
 
   // ── Task 4 电脑控制授权状态（授权为永久授权，撤销后不自动恢复） ──
   const computerControlAuthorized = useAuthorizationStore((s) => s.authorized);
@@ -153,14 +152,22 @@ export default function PetPage() {
 
   // 缩放与窗口联动：桌宠模型始终填满窗口，放大时同步放大窗口 → 模型更大且不被裁切。
   // 仅 VRM 生效（Live2D 走固定布局），且仅在 Electron 有窗口控制权时下发 IPC。
+  // 注意：此处不再回写 obsStore.setCaptureSize——覆写会把预设档位变成非预设值，
+  // 导致 getNextCaptureSize 无法命中预设而回落默认档（写冲突，D3）。
   useEffect(() => {
     if (!isElectron()) return;
     if (avatarType !== 'vrm') return;
     const w = Math.round(CAPTURE_BASE_WIDTH * avatarScale);
     const h = Math.round(CAPTURE_BASE_HEIGHT * avatarScale);
     void window.electronAPI?.setWindowSize(w, h);
-    setCaptureSize(w, h);
-  }, [avatarType, avatarScale, setCaptureSize]);
+  }, [avatarType, avatarScale]);
+
+  // 采集尺寸驱动窗口：右键 cycleCaptureSize / 预设档切换改 store 后经此下发 IPC，
+  // 保证 Electron 下窗口尺寸跟随采集尺寸（此前仅 avatarScale effect 下发，切换档位不生效）。
+  useEffect(() => {
+    if (!isElectron()) return;
+    void window.electronAPI?.setWindowSize(captureWidth, captureHeight);
+  }, [captureWidth, captureHeight]);
 
   const avatarContainerRef = useRef<HTMLDivElement>(null);
   const chatAreaRef = useRef<HTMLDivElement>(null);

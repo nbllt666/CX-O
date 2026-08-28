@@ -1095,10 +1095,16 @@ def create_app() -> FastAPI:
     cors_config = getattr(settings, 'cors', None)
     cors_enabled = getattr(cors_config, 'enabled', True) if cors_config else True
     if cors_enabled:
+        cors_origins = getattr(cors_config, 'origins', None) or []
+        cors_credentials = getattr(cors_config, 'allow_credentials', False) if cors_config else False
+        # 安全约束：origins 含通配符时禁止凭据（Starlette 会反射任意 Origin 并附带
+        # Allow-Credentials，等价于允许任何网页带凭据跨域读写本服务）
+        if "*" in cors_origins:
+            cors_credentials = False
         app.add_middleware(
             CORSMiddleware,
-            allow_origins=getattr(cors_config, 'origins', ['*']) if cors_config else ['*'],
-            allow_credentials=getattr(cors_config, 'allow_credentials', True) if cors_config else True,
+            allow_origins=cors_origins or ["*"],
+            allow_credentials=cors_credentials,
             allow_methods=["*"],
             allow_headers=["*"],
         )

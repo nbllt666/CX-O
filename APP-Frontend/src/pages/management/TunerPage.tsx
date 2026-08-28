@@ -59,6 +59,7 @@ export default function TunerPage() {
   // ── 适配器列表与操作 ──
   const [adapters, setAdapters] = useState<TunerAdapter[]>([]);
   const [adaptersLoaded, setAdaptersLoaded] = useState(false);
+  const [adaptersOffline, setAdaptersOffline] = useState(false);
   const [applyingId, setApplyingId] = useState<string | null>(null);
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [adapterMsg, setAdapterMsg] = useState<{
@@ -67,9 +68,10 @@ export default function TunerPage() {
     text: string;
   } | null>(null);
 
-  /** 加载适配器列表 */
+  /** 加载适配器列表；null 表示 Tuner 离线（degraded/网络失败），驱动列表区展示离线提示 */
   const loadAdapters = useCallback(async () => {
     const list = await tunerApi.listAdapters();
+    setAdaptersOffline(list === null);
     setAdapters(list ?? []);
     setAdaptersLoaded(true);
   }, []);
@@ -314,14 +316,14 @@ export default function TunerPage() {
                 <div className="flex items-center justify-between text-xs">
                   <span className="text-muted-foreground">{t('management.tuner.progress')}</span>
                   <span className="tabular-nums text-muted-foreground">
-                    {Math.round(trainStatus.progress ?? 0)}%
+                    {Math.round((trainStatus.progress ?? 0) * 100)}%
                   </span>
                 </div>
                 <div className="mt-1 h-2 w-full overflow-hidden rounded-full bg-[rgba(255,255,255,0.08)]">
                   <div
                     className="h-full rounded-full bg-emerald-400 transition-all"
                     style={{
-                      width: `${Math.max(0, Math.min(100, trainStatus.progress ?? 0))}%`,
+                      width: `${Math.max(0, Math.min(100, (trainStatus.progress ?? 0) * 100))}%`,
                     }}
                   />
                 </div>
@@ -356,7 +358,12 @@ export default function TunerPage() {
           </Button>
         </CardHeader>
         <CardBody>
-          {adaptersLoaded && adapters.length === 0 ? (
+          {adaptersLoaded && adaptersOffline ? (
+            <div className="flex items-center gap-3 py-4">
+              <AlertCircle className="h-5 w-5 shrink-0 text-muted-foreground" />
+              <p className="text-sm text-muted-foreground">{t('management.tuner.offline')}</p>
+            </div>
+          ) : adaptersLoaded && adapters.length === 0 ? (
             <p className="py-4 text-center text-sm text-muted-foreground">
               {t('management.tuner.noAdapters')}
             </p>

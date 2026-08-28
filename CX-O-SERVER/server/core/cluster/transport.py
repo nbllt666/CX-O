@@ -137,12 +137,38 @@ class ClusterTransport:
                     raise ClusterAuthError(f"auth failed to {peer_endpoint}")
                 self._enqueue(peer_endpoint, body)
                 return False
+            # B4 应用级确认：sync_event 不能只看 HTTP 状态码——对端 2xx 但
+            # applied=False 且未回 ack（acked_seq=0，应用失败/纪元拒绝）时视为
+            # 本次投递未确认。返回 False 让 replicator._drain 保留 outbox 条目
+            # 重投；不写磁盘待发队列（事件仍在 replicator outbox，避免双队列重复重投）。
+            if op == "sync_event" and not self._sync_event_acked(self._decode(resp), seq):
+                log.warning(
+                    "[transport] sync_event 未获对端应用确认 endpoint=%s seq=%s resp=%s，保留重投",
+                    peer_endpoint, seq, self._decode(resp),
+                )
+                return False
             return True
         except ClusterError:
             raise
         except Exception:  # noqa: BLE001 - 网络/超时等统一入待发队列
             self._enqueue(peer_endpoint, body)
             return False
+
+    @staticmethod
+    def _sync_event_acked(data: dict, seq: int) -> bool:
+        """判定 sync_event 响应是否构成有效应用确认（B4）。
+
+        判据：acked_seq == 本次发送的 seq（新应用与幂等重放均回完整 ack）→ 确认；
+        acked_seq==0 / 缺字段 / 非法 → 未确认。旧版对端恒回 acked_seq=event_seq，
+        天然兼容本判据。
+        """
+        if not isinstance(data, dict):
+            return False
+        try:
+            acked = int(data.get("acked_seq") or 0)
+        except (TypeError, ValueError):
+            return False
+        return acked == int(seq)
 
     async def send_with_reply(
         self,
@@ -236,7 +262,17 @@ class ClusterTransport:
             try:
                 resp = await self._post(build_endpoint(self._scheme, peer_endpoint, op), body)
                 if 200 <= resp.status_code < 300:
-                    outcome = "ok"
+                    # B4 应用级确认：sync_event 2xx 但未获 ack（acked_seq=0）时
+                    # 视为瞬时未确认——条目保留重投，不得当 ok 移除（假确认丢数据），
+                    # 也不得当 permanent 丢弃。
+                    if op == "sync_event" and not self._sync_event_acked(self._decode(resp), int(rec.get("seq", 0))):
+                        outcome = "transient"
+                        log.warning(
+                            "[flush] sync_event 未获对端应用确认 endpoint=%s seq=%s，保留重投",
+                            peer_endpoint, rec.get("seq", 0),
+                        )
+                    else:
+                        outcome = "ok"
                 else:
                     code = parse_error_code(self._decode(resp))
                     # 4xx 与认证失败视为永久失败；5xx 视为瞬时失败

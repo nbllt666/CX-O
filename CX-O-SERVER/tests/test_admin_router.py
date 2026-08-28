@@ -65,7 +65,8 @@ def client(monkeypatch):
     set_service_state(state)
     fake_registry = SimpleBox(get_tool_stats=lambda: {"total_tools": 3})
     monkeypatch.setattr(registry_mod, "tool_registry", fake_registry)
-    monkeypatch.setattr(admin_router_mod, "ADMIN_API_KEY", "secret_key")
+    # C7: ADMIN_API_KEY 改为惰性读取 env，测试经 setenv 注入
+    monkeypatch.setenv("ADMIN_API_KEY", "secret_key")
     monkeypatch.setattr("server.config.get_settings", lambda: FakeSettings())
 
     app = FastAPI()
@@ -75,7 +76,8 @@ def client(monkeypatch):
 
 @pytest.fixture
 def no_key_client(monkeypatch):
-    monkeypatch.setattr(admin_router_mod, "ADMIN_API_KEY", "")
+    # C7: 惰性读取 env——未配置场景经 delenv 模拟
+    monkeypatch.delenv("ADMIN_API_KEY", raising=False)
     app = FastAPI()
     app.include_router(admin_router_mod.router)
     return TestClient(app, raise_server_exceptions=False)

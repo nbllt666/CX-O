@@ -156,6 +156,13 @@ def trigger_train(req: TrainTriggerRequest, request: Request) -> TrainStatus:
     )
     store = _job_store(request)
     trainer = _trainer(request)
+    # D5: 显式传入的 job_id 已存在时拒绝复用，防止新任务覆盖历史任务记录。
+    # 缺省 job_id（TrainJob 自动生成 uuid）不经此检查，行为不变。
+    if job_id and store.get(job_id) is not None:
+        raise HTTPException(
+            status_code=409,
+            detail={"error": "job_id_exists", "reason": "job_id 已存在，请更换 job_id 后重试"},
+        )
     # H2/backlog（issue 08 + 批E-1）: 互斥获取提前到 API 线程内并与预检同临界区完成。
     # 旧实现是 is_training_in_progress() 与后台线程内的 try_begin_training() 分属不同
     # 同步域，并发请求都会读到 False、都通过 409 闸门（TOCTOU）。现在直接以

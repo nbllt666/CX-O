@@ -26,6 +26,7 @@
 """
 from __future__ import annotations
 
+import asyncio
 import re
 import tempfile
 import uuid
@@ -75,6 +76,26 @@ def reset_vision_guard() -> None:
     _COOLDOWN_STAMP.clear()
 
 
+def _prune_cooldown(now: float) -> None:
+    """C8: 清理冷却表中已过期键（now - stamp 超过当前冷却窗口即删除）。
+
+    在写入新键处顺带调用，防止长驻进程下 _COOLDOWN_STAMP 无限增长；
+    冷却未启用（cooldown_sec<=0）时历史戳记全部视为过期清空。
+    """
+    try:
+        cooldown_sec = int(
+            getattr(get_settings().config.vision_enhanced, "event_cooldown_sec", 0) or 0
+        )
+    except Exception:
+        cooldown_sec = 0
+    if cooldown_sec <= 0:
+        _COOLDOWN_STAMP.clear()
+        return
+    expired = [k for k, ts in _COOLDOWN_STAMP.items() if (now - ts) > cooldown_sec]
+    for k in expired:
+        _COOLDOWN_STAMP.pop(k, None)
+
+
 def _guard_check(
     source: str, event_type: str, max_per_hour: int, cooldown_sec: int
 ) -> Tuple[bool, str]:
@@ -105,6 +126,8 @@ def _guard_check(
 
     _RATE_WINDOW.append(now)
     _COOLDOWN_STAMP[key] = now
+    # C8: 写入新键时顺带清理过期键
+    _prune_cooldown(now)
     return True, ""
 
 
@@ -201,7 +224,22 @@ async def upload_vision_clip(
     if not event_type or not str(event_type).strip():
         raise HTTPException(status_code=422, detail="event_type 不能为空")
 
+    # ---- C4: 分块读上传（1MB 块），边读边校验总量，避免超大请求整读进内存放大 ----
+    size = 0
+    chunks = []
+    while chunk := await clip.read(1024 * 1024):
+        size += len(chunk)
+        if size > _MAX_CLIP_BYTES:
+            raise HTTPException(
+                status_code=413, detail=f"片段过大，超过 {_MAX_CLIP_BYTES // (1024 * 1024)}MB"
+            )
+        chunks.append(chunk)
+    content = b"".join(chunks)
+    if not content:
+        raise HTTPException(status_code=422, detail="上传片段为空")
+
     # ---- 后端二次护栏（Task 12.2）：小时限流 + 同类事件冷却（入队/落盘前拒绝）----
+    # C8: 状态记账移到 size/空校验之后——被 413/422 拒绝的请求不占用限流窗口
     max_per_hour = int(getattr(ve, "max_clips_per_hour", 0) or 0)
     cooldown_sec = int(getattr(ve, "event_cooldown_sec", 0) or 0)
     guard_ok, guard_reason = _guard_check(source, event_type.strip(), max_per_hour, cooldown_sec)
@@ -210,12 +248,6 @@ async def upload_vision_clip(
                     source, event_type, guard_reason)
         raise HTTPException(status_code=429, detail=guard_reason)
 
-    content = await clip.read()
-    if not content:
-        raise HTTPException(status_code=422, detail="上传片段为空")
-    if len(content) > _MAX_CLIP_BYTES:
-        raise HTTPException(status_code=413, detail=f"片段过大，超过 {_MAX_CLIP_BYTES // (1024 * 1024)}MB")
-
     # ---- 落临时区（唯一命名，携带事件信息）----
     ts_ms = int(round(parsed_ts * 1000))
     clip_id = uuid.uuid4().hex
@@ -223,7 +255,8 @@ async def upload_vision_clip(
     clip_path = _vision_tmp_dir() / f"{clip_id}_{filename}"
 
     try:
-        clip_path.write_bytes(content)
+        # C4: 阻塞写盘经线程包裹，避免卡事件循环
+        await asyncio.to_thread(clip_path.write_bytes, content)
     except Exception as exc:  # noqa: BLE001
         logger.error("VisionClip: 落临时区失败: %s", exc, exc_info=True)
         _map_clip_exception(exc)

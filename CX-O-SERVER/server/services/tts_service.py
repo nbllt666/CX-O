@@ -584,9 +584,24 @@ class TTSService:
         on_chunk: Callable[[str, bytes], None] | None = None,
         **kwargs
     ) -> AsyncGenerator[dict[str, Any], None]:
-        """带情感标注的流式合成：情感由 tts_instruction 承载，委托 Qwen3 流式合成。"""
-        async for chunk in self._synthesize_stream_qwen3(text, **kwargs):
-            yield chunk
+        """带情感标注的流式合成：情感由 tts_instruction 承载，委托 Qwen3 流式合成。
+
+        B5 守卫对齐 synthesize_stream_fine：入口统一 ``_ensure_qwen3_ready()``
+        （未启用/Provider 缺失时抛 TTSServiceUnavailableError），并受统一
+        in-flight 信号量约束——旧实现绕过 ``_tts_sem``，可无限制建立流式合成，
+        绕过为此链路设计的背压护栏。
+        """
+        self._ensure_qwen3_ready()
+        # drop 模式：超限直接结束（不产生任何 chunk），与 synthesize_stream_fine 一致
+        if self._tts_drop and self._tts_sem.locked():
+            logger.warning("TTS in-flight 已达 %s，drop 模式丢弃流式合成", self._tts_limit)
+            return
+        await self._tts_sem.acquire()
+        try:
+            async for chunk in self._synthesize_stream_qwen3(text, **kwargs):
+                yield chunk
+        finally:
+            self._tts_sem.release()
 
     async def get_voices(self) -> list[dict[str, Any]]:
         """列出可用音色：参考音频资产优先，保留 default 兜底。

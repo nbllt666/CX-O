@@ -307,5 +307,18 @@ class DatasetStore:
         return []
 
     def _save_json(self, rows: List[Dict[str, Any]]) -> None:
-        with open(self._json_path, "w", encoding="utf-8") as fh:
-            json.dump(rows, fh, ensure_ascii=False, indent=2)
+        # H15a 同款原子写（参照 trainer/store.py）：先写临时文件再 os.replace 原子替换，
+        # 任何进程崩溃点都不会留下半截 JSON（读侧 _load_json 遇损坏会静默回落空列表）。
+        tmp_path = f"{self._json_path}.tmp"
+        try:
+            with open(tmp_path, "w", encoding="utf-8") as fh:
+                json.dump(rows, fh, ensure_ascii=False, indent=2)
+            os.replace(tmp_path, self._json_path)
+        except OSError:
+            # 写失败时清理残留临时文件后原样抛出（保持写失败可感知语义）
+            try:
+                if os.path.exists(tmp_path):
+                    os.remove(tmp_path)
+            except OSError:
+                pass
+            raise

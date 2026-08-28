@@ -4,11 +4,37 @@
 消除两个入口对 Agent 配置解析与 LLM 客户端选择的重复逻辑与行为漂移。
 """
 import logging
-from typing import Optional
+import threading
+from typing import Dict, Optional
 
 from server.core.utils import run_io
 
 logger = logging.getLogger(__name__)
+
+# A1: MemoryRouter 惰性共享缓存（按 memory_manager 身份分键）。
+# 原实现每条消息新建 MemoryRouter，其 __init__ 重建 Settings()（加载全量配置）、
+# DecayCalculator 与 HybridSearch，纯浪费且拖慢聊天热路径。状态共享安全性：
+# route() 路径对 self.config / self.decay_calculator / self.hybrid_search 仅读不写
+# （config 仅 set_config 可变，本共享入口从不调用；DecayCalculator 为纯计算器；
+# HybridSearch 每次调用无请求态字段），可安全跨协程复用。
+_router_cache: Dict[int, object] = {}
+_router_cache_lock = threading.Lock()
+
+
+def get_shared_memory_router(memory_mgr):
+    """获取与 memory_mgr 绑定的共享 MemoryRouter 单例（不存在则惰性创建）。"""
+    from server.core.memory.router import MemoryRouter
+
+    key = id(memory_mgr)
+    router = _router_cache.get(key)
+    if router is not None:
+        return router
+    with _router_cache_lock:
+        router = _router_cache.get(key)
+        if router is None:
+            router = MemoryRouter(memory_manager=memory_mgr)
+            _router_cache[key] = router
+    return router
 
 
 def get_agent_config(agent_id: str) -> dict:
@@ -46,9 +72,10 @@ async def retrieve_memory_context(
         return None
 
     from server.config import get_settings
-    from server.core.memory.router import MemoryRouter
 
-    router = MemoryRouter(memory_manager=memory_mgr)
+    # A1: 改用共享单例，避免每条消息重建 MemoryRouter（Settings/DecayCalculator/
+    # HybridSearch 初始化开销）
+    router = get_shared_memory_router(memory_mgr)
     routing_result = await router.route(
         query=user_message,
         session_id=session_id,

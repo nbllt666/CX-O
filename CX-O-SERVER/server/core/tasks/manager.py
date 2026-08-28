@@ -1,4 +1,5 @@
 """任务管理器——任务的创建、持久化、状态推进与调度接入。"""
+import copy
 import json
 import os
 import re
@@ -143,7 +144,8 @@ class TaskManager:
         with self._lock:
             for t in self._tasks:
                 if t["id"] == task_id:
-                    return dict(t)
+                    # A9: deepcopy 防止调用方改动嵌套容器（tags 等）穿透到内部状态
+                    return copy.deepcopy(t)
         return None
 
     def update_task(self, task_id: str, **fields) -> Optional[dict]:
@@ -311,7 +313,8 @@ class TaskManager:
         with self._lock:
             for t in self._scheduled_tasks:
                 if t["id"] == task_id:
-                    return dict(t)
+                    # A9: deepcopy 同 get_task，防嵌套容器穿透
+                    return copy.deepcopy(t)
         return None
 
     def update_scheduled_task(self, task_id: str, **fields) -> Optional[dict]:

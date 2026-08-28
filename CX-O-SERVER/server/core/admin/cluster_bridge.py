@@ -5,6 +5,7 @@
 """
 import inspect
 import logging
+import os
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
@@ -63,26 +64,47 @@ def audit_now(
 
 
 def _audit_read(limit: int = 50, offset: int = 0) -> list:
-    """分页读取管理面审计日志（JSONL，倒序）。"""
+    """分页读取管理面审计日志（JSONL，倒序）。
+
+    C3 修复：反向块读——seek 到文件尾按 64KB 块向前回退，仅收集末尾
+    max(offset + limit, 200) 条（对齐 admin/logs 的 _read_log_tail 模式），
+    替代原先全量读入内存再倒序切片的行为。
+    """
     import json
 
     path = _ADMIN_AUDIT_PATH
-    items: list = []
     if not path.exists():
-        return items
+        return []
+    # 需要收集的末尾条数：覆盖 offset+limit 分页窗口（含最小余量 200）
+    need = max(offset + max(limit, 1), 200)
+    chunk_size = 65536
+    data = b""
+    pos = None
     try:
-        with open(path, "r", encoding="utf-8") as f:
-            for line in f:
-                line = line.strip()
-                if not line:
-                    continue
-                try:
-                    items.append(json.loads(line))
-                except Exception:
-                    continue
+        with open(path, "rb") as f:
+            f.seek(0, os.SEEK_END)
+            pos = f.tell()
+            while pos > 0 and data.count(b"\n") <= need:
+                step = min(chunk_size, pos)
+                pos -= step
+                f.seek(pos)
+                data = f.read(step) + data
     except Exception as e:
         logger.warning(f"AUDIT_READ_FAILED: {e}")
         return []
+
+    segments = data.split(b"\n")
+    if pos != 0 and len(segments) > 0:
+        segments = segments[1:]  # 首段为跨块的半截行，丢弃（未读到文件头时必不完整）
+    items: list = []
+    for seg in segments:
+        line = seg.decode("utf-8", errors="replace").strip()
+        if not line:
+            continue
+        try:
+            items.append(json.loads(line))
+        except Exception:
+            continue
     items.reverse()
     return items[offset:offset + max(limit, 1)]
 

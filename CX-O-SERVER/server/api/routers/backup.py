@@ -111,6 +111,9 @@ async def create_backup(request: CreateBackupRequest, _: bool = Depends(verify_a
             raise HTTPException(status_code=501, detail="备份功能当前未实现")
 
         return _backup_to_response(backup)
+    except HTTPException:
+        # C2: 业务 HTTPException（如 501 未实现）原样透传，不再被 500 吞掉
+        raise
     except Exception as e:
         logger.error(f"创建备份失败: {e}")
         raise HTTPException(status_code=500, detail=str(e))

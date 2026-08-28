@@ -5,6 +5,7 @@
 以避免逐请求建连。
 """
 import json
+import threading
 import time
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
@@ -159,9 +160,14 @@ class OllamaClient(LLMClient):
             if tools:
                 request_body["tools"] = tools
 
+            # A7: 与 stream_chat 对齐补鉴权头（api_key 存在时加 Authorization）
+            headers = {"Content-Type": "application/json"}
+            if self.api_key:
+                headers["Authorization"] = f"Bearer {self.api_key}"
+
             client = get_shared_http_client()
             response = await client.post(
-                f"{self.host}/api/chat", json=request_body, timeout=120.0
+                f"{self.host}/api/chat", json=request_body, headers=headers, timeout=120.0
             )
 
             if response.status_code == 200:
@@ -302,12 +308,14 @@ class OllamaClient(LLMClient):
                             elif thinking:
                                 yield {"type": "thinking", "content": thinking}
 
-                            if data.get("done", False):
-                                break
-
+                            # A2: tool_calls 提取必须先于 done 判断——Ollama 在收尾
+                            # 分片（done=true）携带 tool_calls，先 break 会永久丢失
                             tool_calls = message.get("tool_calls")
                             if tool_calls:
                                 yield {"type": "tool_calls", "tool_calls": tool_calls}
+
+                            if data.get("done", False):
+                                break
                         except json.JSONDecodeError:
                             continue
         except Exception as e:
@@ -332,11 +340,17 @@ class OllamaClient(LLMClient):
     async def get_embedding(self, text: str) -> Optional[List[float]]:
         """使用Ollama获取文本的向量嵌入"""
         try:
+            # A7: 与 stream_chat 对齐补鉴权头（api_key 存在时加 Authorization）
+            headers = {"Content-Type": "application/json"}
+            if self.api_key:
+                headers["Authorization"] = f"Bearer {self.api_key}"
+
             # 使用预热好的 shared HTTP client，避免每次调用都重新构造 httpx.AsyncClient
             client = get_shared_http_client()
             response = await client.post(
                 f"{self.host}/api/embeddings",
                 json={"model": self.model, "prompt": text},
+                headers=headers,
                 timeout=30.0,
             )
 
@@ -919,6 +933,9 @@ class LLMFactory:
     """LLM 客户端工厂：按 provider 创建并缓存客户端实例。"""
 
     _clients: Dict[str, LLMClient] = {}
+    # A10: 类级锁保护 _clients 读写（参照 EmbeddingFactory._lock 模式），
+    # 防止并发 create_client 重复创建实例
+    _lock = threading.Lock()
 
     @classmethod
     def create_client(cls, provider: str = "ollama", **kwargs) -> LLMClient:
@@ -949,29 +966,39 @@ class LLMFactory:
                 lora_key = repr(lora)
         else:
             lora_key = ""
-        key = "{}:{}:{}:{}".format(
+        # A10: 缓存键并入 temperature/max_tokens/api_key——同一模型但不同采样
+        # 参数或不同凭据的实例不得互串缓存；api_key 参与键但不写日志（避免凭据泄露）
+        temperature = kwargs.get("temperature", 0.7)
+        max_tokens = kwargs.get("max_tokens", 4096)
+        api_key = kwargs.get("api_key") or ""
+        key = "{}:{}:{}:{}:{}:{}:{}".format(
             provider,
             kwargs.get("model", "default"),
             kwargs.get("host", "") or "",
             lora_key,
+            temperature,
+            max_tokens,
+            api_key,
         )
 
-        if key in cls._clients:
-            return cls._clients[key]
+        with cls._lock:
+            if key in cls._clients:
+                return cls._clients[key]
 
-        if provider == "ollama":
-            client = OllamaClient(**kwargs)
-        elif provider == "vllm":
-            client = VLLMClient(**kwargs)
-        elif provider == "trtllm":
-            client = TRTLLMClient(**kwargs)
-        else:
-            raise ValueError(f"不支持的LLM提供商: {provider}")
+            if provider == "ollama":
+                client = OllamaClient(**kwargs)
+            elif provider == "vllm":
+                client = VLLMClient(**kwargs)
+            elif provider == "trtllm":
+                client = TRTLLMClient(**kwargs)
+            else:
+                raise ValueError(f"不支持的LLM提供商: {provider}")
 
-        cls._clients[key] = client
-        return client
+            cls._clients[key] = client
+            return client
 
     @classmethod
     def clear_cache(cls):
         """清空已缓存的客户端实例。"""
-        cls._clients.clear()
+        with cls._lock:
+            cls._clients.clear()

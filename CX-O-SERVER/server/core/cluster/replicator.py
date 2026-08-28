@@ -302,16 +302,28 @@ class StateReplicator:
         seq = int(seq)
         if seq in applied_set:
             return False  # 已实际应用过，幂等跳过
+        # B4 假应用修复：先应用、成功后才登记 seq。旧实现先 add(seq) 再应用、
+        # 且应用函数吞异常，落盘失败的事件也被标记"已应用"→ 发送端不再重投 → 丢数据。
+        # 现应用失败不登记，返回 False 让接收端回 acked_seq=0、发送端保留 outbox 重投。
+        if unit == "ref_audio":
+            ok = self._apply_ref_audio(event.get("op"), event.get("payload") or {})
+            if not ok:
+                log.warning(
+                    "[replicator] ref_audio 事件应用失败，不登记 seq（等待重投） "
+                    "unit=%s seq=%s op=%s",
+                    unit, seq, event.get("op"),
+                )
+                return False
         applied_set.add(seq)
         self._last_applied[unit] = max(self._last_applied.get(unit, 0), seq)
-        if unit == "ref_audio":
-            self._apply_ref_audio(event.get("op"), event.get("payload") or {})
         return True
 
-    def _apply_ref_audio(self, op: str, payload: dict) -> None:
+    def _apply_ref_audio(self, op: str, payload: dict) -> bool:
         """接收端落盘 ref_audio 事件（资产元数据 / 绑定；音频文件走快照对齐）。
 
         使用 ref_audio_store 内部幂等写入，不触发 emit hook（避免回环）。
+        B4: 返回应用成败——失败（异常/未知 op）返回 False，由调用方留痕并
+        不登记 seq，让发送端重投；不再静默吞异常造成"假应用丢数据"。
         """
         try:
             from server import ref_audio_store
@@ -335,11 +347,30 @@ class StateReplicator:
                     None,
                     emit=False,
                 )
-        except Exception:  # noqa: BLE001 - 接收端落盘失败不阻断 last_applied 推进
-            pass
+            else:
+                # 未知 op：按失败处理（不登记 seq），发送端重投；持续失败由
+                # 告警留痕暴露，必要时走快照对齐
+                log.warning("[replicator] 未知的 ref_audio op=%s，按应用失败处理", op)
+                return False
+            return True
+        except Exception as e:  # noqa: BLE001 - 应用失败必须可见，交由发送端重投
+            log.warning("[replicator] ref_audio 事件落盘失败 op=%s error=%s", op, e)
+            return False
 
     def last_applied(self) -> dict:
         return dict(self._last_applied)
+
+    def is_seq_applied(self, unit: str, seq: int) -> bool:
+        """查询该 unit 的 seq 是否已在本地实际应用过（B4）。
+
+        供接收端（manager._op_sync_event）区分 applied=False 的两种成因：
+        - seq 已在幂等集合 → 幂等重放（此前已应用成功）→ 仍回完整 ack；
+        - seq 不在集合 → 本次应用失败/被纪元闸门拒绝 → 不回 ack，让发送端重投。
+        """
+        try:
+            return int(seq) in self._applied_seqs.get(str(unit), set())
+        except (TypeError, ValueError):
+            return False
 
     def sync_status(self) -> dict:
         outbox_units = [e["unit"] for e in self._outbox]

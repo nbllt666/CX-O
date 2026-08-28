@@ -139,6 +139,7 @@ async def get_unified_config():
                         "provider": getattr(mc, "provider"),
                         "model": getattr(mc, "model"),
                         "host": getattr(mc, "host"),
+                        # 用户裁决（20260828_模块0_GETconfig回显apikey.md）：明文回显
                         "api_key": getattr(mc, "api_key", None) or "",
                     }
                     for key, mc in (
@@ -178,6 +179,69 @@ async def _apply_and_broadcast(request: Request, section: str, section_data: Dic
     result = await apply_section(section, section_data, model_router)
     await broadcast_config_changed(get_websocket_manager(), section, result["requires_restart"])
     return result
+
+
+async def _apply_llm_section(request: Request, section_data: Dict[str, Any]) -> Dict[str, Any]:
+    """LLM 配置节核心落盘逻辑（C6：PUT /config llm 分支与 legacy POST /config/llm 共用）。
+
+    前端提交的 models 结构（main/summary/memory）映射到 config.models，
+    使 ModelRouter.reload_clients() 能按新配置重建客户端（热更新真实生效）。
+    """
+    from server.config import get_settings
+    settings = get_settings()
+
+    models_data = section_data.get("models")
+    if isinstance(models_data, dict):
+        for key in ("main", "summary", "memory"):
+            entry = models_data.get(key)
+            if not isinstance(entry, dict):
+                continue
+            model_cfg = getattr(settings.config.models, key, None)
+            if model_cfg is None:
+                continue
+            if "provider" in entry:
+                model_cfg.provider = entry["provider"]
+            if "model" in entry:
+                model_cfg.model = entry["model"]
+            if "host" in entry:
+                model_cfg.host = entry["host"]
+            if "api_key" in entry:
+                # 空字符串归一化为 None，避免配置文件残留空密钥
+                model_cfg.api_key = entry["api_key"] or None
+
+    # model_defaults：summary/memory 的类型映射默认值（如 {"summary": "main"}）
+    model_defaults = section_data.get("model_defaults")
+    if isinstance(model_defaults, dict):
+        defaults = dict(settings.config.models.defaults)
+        for key in ("summary", "memory"):
+            if key in model_defaults:
+                defaults[key] = model_defaults[key]
+        settings.config.models.defaults = defaults
+
+    # llm_params：采样参数同时落到 llm 节与 models.main，供前端与客户端共用
+    llm_params = section_data.get("llm_params")
+    if isinstance(llm_params, dict):
+        if "temperature" in llm_params:
+            settings.config.llm.temperature = llm_params["temperature"]
+            settings.config.models.main.temperature = llm_params["temperature"]
+        if "maxTokens" in llm_params:
+            settings.config.llm.max_tokens = llm_params["maxTokens"]
+            settings.config.models.main.max_tokens = llm_params["maxTokens"]
+        if "topP" in llm_params:
+            settings.config.models.main.top_p = llm_params["topP"]
+        if "timeout" in llm_params:
+            settings.config.models.main.timeout = llm_params["timeout"]
+
+    if "provider" in section_data:
+        settings.config.llm.provider = section_data["provider"]
+    if "model" in section_data:
+        settings.config.llm.model = section_data["model"]
+    if "host" in section_data:
+        settings.config.llm.host = section_data["host"]
+
+    settings.save_config()
+    logger.info("LLM配置已更新")
+    return await _apply_and_broadcast(request, "llm", section_data)
 
 
 @router.put("/config")
@@ -287,60 +351,8 @@ async def update_unified_config(request: Request, _: bool = Depends(verify_admin
             return {"status": "success", "message": "Vector config saved", **result}
 
         elif section == "llm":
-            # 前端提交的 models 结构（main/summary/memory）映射到 config.models，
-            # 使 ModelRouter.reload_clients() 能按新配置重建客户端（热更新真实生效）。
-            models_data = section_data.get("models")
-            if isinstance(models_data, dict):
-                for key in ("main", "summary", "memory"):
-                    entry = models_data.get(key)
-                    if not isinstance(entry, dict):
-                        continue
-                    model_cfg = getattr(settings.config.models, key, None)
-                    if model_cfg is None:
-                        continue
-                    if "provider" in entry:
-                        model_cfg.provider = entry["provider"]
-                    if "model" in entry:
-                        model_cfg.model = entry["model"]
-                    if "host" in entry:
-                        model_cfg.host = entry["host"]
-                    if "api_key" in entry:
-                        # 空字符串归一化为 None，避免配置文件残留空密钥
-                        model_cfg.api_key = entry["api_key"] or None
-
-            # model_defaults：summary/memory 的类型映射默认值（如 {"summary": "main"}）
-            model_defaults = section_data.get("model_defaults")
-            if isinstance(model_defaults, dict):
-                defaults = dict(settings.config.models.defaults)
-                for key in ("summary", "memory"):
-                    if key in model_defaults:
-                        defaults[key] = model_defaults[key]
-                settings.config.models.defaults = defaults
-
-            # llm_params：采样参数同时落到 llm 节与 models.main，供前端与客户端共用
-            llm_params = section_data.get("llm_params")
-            if isinstance(llm_params, dict):
-                if "temperature" in llm_params:
-                    settings.config.llm.temperature = llm_params["temperature"]
-                    settings.config.models.main.temperature = llm_params["temperature"]
-                if "maxTokens" in llm_params:
-                    settings.config.llm.max_tokens = llm_params["maxTokens"]
-                    settings.config.models.main.max_tokens = llm_params["maxTokens"]
-                if "topP" in llm_params:
-                    settings.config.models.main.top_p = llm_params["topP"]
-                if "timeout" in llm_params:
-                    settings.config.models.main.timeout = llm_params["timeout"]
-
-            if "provider" in section_data:
-                settings.config.llm.provider = section_data["provider"]
-            if "model" in section_data:
-                settings.config.llm.model = section_data["model"]
-            if "host" in section_data:
-                settings.config.llm.host = section_data["host"]
-
-            settings.save_config()
-            logger.info("LLM配置已更新")
-            result = await _apply_and_broadcast(request, section, section_data)
+            # C6: 核心落盘逻辑抽至 _apply_llm_section，与 legacy POST /config/llm 同轨
+            result = await _apply_llm_section(request, section_data)
             return {"status": "success", "message": "LLM config saved", **result}
 
         elif section == "system":
@@ -596,8 +608,8 @@ async def get_live_client_status():
 
 
 @router.post("/live/client/{client_id}/disconnect")
-async def disconnect_live_client(client_id: str):
-    """断开直播客户端 WebSocket 连接"""
+async def disconnect_live_client(client_id: str, _: bool = Depends(verify_admin_api_key)):
+    """断开直播客户端 WebSocket 连接（C5: 控制类端点需管理员鉴权）"""
     ws_manager = get_websocket_manager()
     await ws_manager.disconnect(client_id)
     return {"status": "success", "message": f"客户端 {client_id} 已断开"}

@@ -33,6 +33,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import inspect
 import io
 import logging
 import time
@@ -386,6 +387,13 @@ class Qwen3TTSProvider:
         self._owns_client = False
         self._ref_resolver = ref_resolver
         self._closed = False
+        # B1: 参考音频解析缓存（键=资产 ID，值=重采样到 24kHz 后的 ResolvedRef）。
+        # 资产不可变，无需失效；细粒度流式每段重复解析同一批资产（同步读盘 + 纯
+        # Python 重采样），命中缓存直接复用，消除事件循环阻塞。
+        self._resolved_ref_cache: Dict[str, ResolvedRef] = {}
+        # B1: 参考音频 base64 编码缓存（键=资产 ID）。编码发生在请求构建期，
+        # 逐段重复合成会对同一资产重复编码大字节串，缓存后每个资产仅编码一次。
+        self._ref_b64_cache: Dict[str, str] = {}
         pref = self._cfg.get("runtime", "voicedesign")
         # 配置层 runtime 兼容历史值 "vllm"（Provider 内部映射为运行时名 voicedesign）
         pref = RUNTIME_ALIASES.get(pref, pref)
@@ -524,7 +532,8 @@ class Qwen3TTSProvider:
         if req.speed is not None and abs(req.speed - 1.0) > 1e-6:
             body["speed"] = req.speed
         if resolved:
-            body["ref_audio"] = [base64.b64encode(r.data).decode("ascii") for r in resolved]
+            # B1: base64 编码走实例级缓存（键=资产 ID），避免逐段重复合成时重复编码
+            body["ref_audio"] = [self._ref_b64(r) for r in resolved]
             body["ref_text"] = [r.ref_text for r in resolved]
         return body
 
@@ -553,8 +562,9 @@ class Qwen3TTSProvider:
         if req.volume is not None:
             body["volume"] = req.volume
         if resolved:
+            # B1: base64 编码走实例级缓存（键=资产 ID），data URL 前缀按运行时拼接
             body["ref_audio"] = [
-                "data:audio/wav;base64," + base64.b64encode(r.data).decode("ascii")
+                "data:audio/wav;base64," + self._ref_b64(r)
                 for r in resolved
             ]
             body["ref_text"] = [r.ref_text for r in resolved]
@@ -602,13 +612,21 @@ class Qwen3TTSProvider:
 
     # ------------------------------------------------------------ 参考音频
     async def _resolve_one(self, asset_id: str) -> ResolvedRef:
-        """解析单个参考音频资产 ID 为 ResolvedRef（Task 3 接入）。"""
+        """解析单个参考音频资产 ID 为 ResolvedRef（Task 3 接入）。
+
+        B1: 同步 resolver（read_bytes 等阻塞 IO）经 asyncio.to_thread 下放线程池
+        执行，避免阻塞事件循环；异步 resolver 直接 await。
+        """
         if self._ref_resolver is None:
             raise RefAudioNotFoundError(
                 f"参考音频解析器未接入（属 Task 3 Range），无法解析资产 {asset_id}"
             )
-        result = self._ref_resolver(asset_id)
-        if asyncio.iscoroutine(result):
+        if inspect.iscoroutinefunction(self._ref_resolver):
+            result = await self._ref_resolver(asset_id)
+        else:
+            result = await asyncio.to_thread(self._ref_resolver, asset_id)
+        if inspect.iscoroutine(result):
+            # 兼容"同步函数返回协程"的解析器：在当前事件循环内完成 await
             result = await result
         if result is None:
             raise RefAudioNotFoundError(f"参考音频资产不存在或已删除: {asset_id}")
@@ -624,15 +642,47 @@ class Qwen3TTSProvider:
         )
 
     async def _resolve_refs(self, req: SynthesisRequest) -> List[ResolvedRef]:
-        """解析全部 refs 并在推理前重采样到 24kHz。"""
+        """解析全部 refs 并在推理前重采样到 24kHz（资产级缓存 + 线程池下放）。
+
+        B1: 细粒度流式路径每段重复解析同一批资产——resolver 读盘 + 纯 Python
+        重采样均为阻塞操作，此前在事件循环内逐次执行。资产不可变，故按 asset_id
+        缓存重采样结果：命中直接返回；未命中时重采样经 asyncio.to_thread 下放
+        线程池，完成后写入缓存。
+        """
         if not req.refs:
             return []
         resolved: List[ResolvedRef] = []
         for asset_id in req.refs:
+            cached = self._resolved_ref_cache.get(asset_id)
+            if cached is not None:
+                resolved.append(cached)
+                continue
             bundle = await self._resolve_one(asset_id)
-            resampled = self._resample_to_synth(bundle)
+            resampled = await asyncio.to_thread(self._resample_to_synth, bundle)
+            self._resolved_ref_cache[asset_id] = resampled
             resolved.append(resampled)
         return resolved
+
+    def clear_ref_cache(self) -> None:
+        """清空参考音频解析/编码缓存。
+
+        资产不可变（键空间=资产 ID 有限集合），常规运行无需失效；
+        供测试或显式刷新场景使用。
+        """
+        self._resolved_ref_cache.clear()
+        self._ref_b64_cache.clear()
+
+    def _ref_b64(self, r: ResolvedRef) -> str:
+        """参考音频原始字节的 base64 编码（实例级缓存，键=资产 ID）。
+
+        B1: 请求构建期的重复 base64 编码随缓存消除——同一资产仅在首次
+        编码一次，后续请求直接复用缓存串。
+        """
+        cached = self._ref_b64_cache.get(r.asset_id)
+        if cached is None:
+            cached = base64.b64encode(r.data).decode("ascii")
+            self._ref_b64_cache[r.asset_id] = cached
+        return cached
 
     def _resample_to_synth(self, bundle: ResolvedRef) -> ResolvedRef:
         """将参考音频重采样到合成输出采样率 24000（输入范围 [8000,48000]）。"""
@@ -817,20 +867,25 @@ class Qwen3TTSProvider:
         """非流式合成。
 
         首选运行时（带 refs→cosyvoice，无 refs→voicedesign）不可用/超时/非法响应
-        （RuntimeUnavailableError）时降级 qwen3_base 重试一次；请求校验与 refs 解析
-        仅执行一次。请求非法（InvalidRequestError 等）不降级。
+        （RuntimeUnavailableError）或不支持该能力（RuntimeUnsupportedError，B8）
+        时降级 qwen3_base 重试一次；请求校验与 refs 解析仅执行一次。
+        请求非法（InvalidRequestError 等）不降级。
         """
         t0 = time.monotonic()
         self._validate_request(req)
         resolved = await self._resolve_refs(req)
-        primary = self._select_runtime(req, resolved)
-        fallback = self._fallback_runtime(primary)
+        # B8: _select_runtime 抛 RuntimeUnsupportedError（带 refs 且未配置 cosyvoice）
+        # 时 primary 未赋值，先以配置运行时兜底供降级日志引用；降级目标默认 qwen3_base
+        primary = self._runtime
+        fallback: Optional[str] = "qwen3_base"
         try:
+            primary = self._select_runtime(req, resolved)
+            fallback = self._fallback_runtime(primary)
             return await self._synthesize_once(req, resolved, primary, t0)
-        except RuntimeUnavailableError as exc:
+        except (RuntimeUnavailableError, RuntimeUnsupportedError) as exc:
             if fallback is None:
                 raise
-            _log("synthesize", f"首选运行时 {primary} 不可用，降级 {fallback}（原因: {exc}）", t0, "ERROR")
+            _log("synthesize", f"首选运行时 {primary} 不可用/不支持，降级 {fallback}（原因: {exc}）", t0, "ERROR")
             return await self._synthesize_once(req, resolved, fallback, t0)
 
     async def _synthesize_stream_once(
@@ -841,7 +896,8 @@ class Qwen3TTSProvider:
     ) -> AsyncIterator[AudioChunk]:
         """单次流式合成（供 synthesize_stream 的首选/降级循环调用，最多执行 2 次）。
 
-        chunk 顺序稳定（index 递增），恰一个 start/一个 final；取消抛 StreamAbortedError。
+        chunk 顺序稳定（index 递增），恰一个 start/一个 final；取消时清理局部资源
+        后 CancelledError 原样传播（B2）。
         底层断流/超时/非法响应抛 RuntimeUnavailableError。
         """
         body = self._build_runtime_request(req, runtime, resolved)
@@ -895,9 +951,12 @@ class Qwen3TTSProvider:
                     )
                     index += 1
         except asyncio.CancelledError:
+            # B2: 清理局部资源后必须裸 raise 原样上抛——CancelledError 承载
+            # task.cancel() 传播语义，转抛 StreamAbortedError 会吞掉取消信号，
+            # 使上层取消/打断流程误判任务仍在运行。
             pending = None
             _log("synthesize_stream", "被取消/打断，资源已清理", 0, "ERROR")
-            raise StreamAbortedError("流式合成被取消/打断，资源已清理")
+            raise
         except httpx.HTTPStatusError as exc:
             _log("synthesize_stream", f"HTTP 错误 ({runtime}) {exc}", 0, "ERROR")
             raise self._map_http_error(exc, runtime)
@@ -934,8 +993,9 @@ class Qwen3TTSProvider:
         """流式合成。
 
         首选运行时（带 refs→cosyvoice，无 refs→voicedesign）不可用/超时/断流/非法响应
-        （RuntimeUnavailableError）时降级 qwen3_base 重试一次；请求校验与 refs 解析
-        仅执行一次。请求非法（InvalidRequestError 等）不降级。
+        （RuntimeUnavailableError）或不支持该能力（RuntimeUnsupportedError，B8）
+        时降级 qwen3_base 重试一次；请求校验与 refs 解析仅执行一次。
+        请求非法（InvalidRequestError 等）不降级。
 
         中途断流契约（M 修复）：仅当首选运行时尚未产出任何 chunk 时才允许降级重发；
         一旦已向消费者产出音频，再从 fallback 从头重发会产生第二个 start 块且 index
@@ -944,14 +1004,18 @@ class Qwen3TTSProvider:
         """
         self._validate_request(req)
         resolved = await self._resolve_refs(req)
-        primary = self._select_runtime(req, resolved)
-        fallback = self._fallback_runtime(primary)
+        # B8: _select_runtime 抛 RuntimeUnsupportedError 时 primary 未赋值，
+        # 先以配置运行时兜底供降级日志引用；降级目标默认 qwen3_base
+        primary = self._runtime
+        fallback: Optional[str] = "qwen3_base"
         produced_any_chunk = False
         try:
+            primary = self._select_runtime(req, resolved)
+            fallback = self._fallback_runtime(primary)
             async for chunk in self._synthesize_stream_once(req, resolved, primary):
                 produced_any_chunk = True
                 yield chunk
-        except RuntimeUnavailableError as exc:
+        except (RuntimeUnavailableError, RuntimeUnsupportedError) as exc:
             if fallback is None or produced_any_chunk:
                 # 无可降级运行时；或已产出 chunk —— 绝不 yield 新流的 start 块
                 if produced_any_chunk:

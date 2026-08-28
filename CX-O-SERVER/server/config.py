@@ -269,12 +269,24 @@ class ExecutorConfig(BaseModel):
 
 
 class CorsConfig(BaseModel):
-    """CORS 跨域配置节：允许的源、方法与请求头及凭据开关。"""
+    """CORS 跨域配置节（gateway.cors，当前无中间件消费点，保留作配置兼容）。
 
-    allow_origins: List[str] = Field(default_factory=lambda: ["*"])
+    默认值与顶层 CORSConfig 安全口径对齐（本机白名单 + 关闭凭据），
+    防止未来接入消费点时复刻"通配符 + 凭据反射"的不安全默认。
+    """
+
+    allow_origins: List[str] = Field(
+        default_factory=lambda: [
+            "http://localhost:3100",
+            "http://127.0.0.1:3100",
+            "http://localhost:5173",
+            "http://127.0.0.1:5173",
+            "null",
+        ]
+    )
     allow_methods: List[str] = Field(default_factory=lambda: ["*"])
     allow_headers: List[str] = Field(default_factory=lambda: ["*"])
-    allow_credentials: bool = True
+    allow_credentials: bool = False
 
 
 class GatewayConfig(BaseModel):
@@ -488,9 +500,25 @@ class ACPConfig(BaseModel):
 
 
 class CORSConfig(BaseModel):
+    """顶层 CORS 配置节（settings.cors，main.py 中间件消费）。
+
+    安全默认值：本机来源白名单（3100=Vite dev、5173=Vite 默认、
+    "null"=Electron file:// 渲染进程的 Origin 头），且默认关闭凭据。
+    本应用无 Cookie 依赖（管理面走 x-api-key 头），credentials=False 无功能损失；
+    局域网部署如需放行其它来源，请通过 config.json 的 cors.origins 显式配置。
+    """
+
     enabled: bool = True
-    origins: List[str] = Field(default_factory=lambda: ["*"])
-    allow_credentials: bool = True
+    origins: List[str] = Field(
+        default_factory=lambda: [
+            "http://localhost:3100",
+            "http://127.0.0.1:3100",
+            "http://localhost:5173",
+            "http://127.0.0.1:5173",
+            "null",
+        ]
+    )
+    allow_credentials: bool = False
 
 
 class VectorConfig(BaseModel):

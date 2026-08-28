@@ -11,9 +11,10 @@
 """
 from typing import Any, Dict
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, ValidationError
 
+from server.api.routers.admin import verify_admin_api_key
 from server.autonomy.config import AutonomyConfig, save_config
 from server.autonomy.manager import AutonomyDisabledError
 
@@ -163,9 +164,14 @@ def get_status():
 
 
 @router.post("/autonomy/control")
-async def control(body: ControlRequest, request: Request):
+async def control(
+    body: ControlRequest,
+    request: Request,
+    _: bool = Depends(verify_admin_api_key),
+):
     """下发控制指令：enable / disable / pause / resume / emergency_stop。
 
+    C5: 控制类端点补管理员鉴权（GET 状态端点保持开放）。
     非法 action 返回 400；manager 为 None 时对 enable 尝试从装配入口获取已装配
     单例，仍不可用则尝试运行时装配（services 可用时），均不可用则返回 400。
     enable/disable 会持久化开关状态，保证跨重启保持。
@@ -227,9 +233,10 @@ def _deep_merge(base: Dict[str, Any], patch: Dict[str, Any]) -> Dict[str, Any]:
 
 
 @router.put("/autonomy/config")
-def update_config(partial: Dict[str, Any]):
+def update_config(partial: Dict[str, Any], _: bool = Depends(verify_admin_api_key)):
     """局部更新自主系统配置并保存（自动补齐缺失字段）。
 
+    C5: 写路径端点补管理员鉴权。
     以当前配置为基础做深度合并后经 AutonomyConfig.model_validate 校验；非法字段
     （extra="forbid"）、非法枚举/非法时间格式返回 422。未装配返回 404。
     """

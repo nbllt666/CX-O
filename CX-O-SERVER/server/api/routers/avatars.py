@@ -2,6 +2,7 @@
 Avatar 模型管理路由 - 提供 VRM/Live2D 模型上传、下载、管理 API
 """
 
+import asyncio
 import re
 import uuid
 from datetime import datetime
@@ -220,11 +221,18 @@ async def upload_avatar(
                 detail=f"不支持的文件格式。VRM 支持: {ALLOWED_VRM_EXTENSIONS}, Live2D 支持: {ALLOWED_LIVE2D_EXTENSIONS}"
             )
         
-        # 读取文件内容
-        content = await file.read()
-        
-        if len(content) > MAX_FILE_SIZE:
-            raise HTTPException(status_code=400, detail=f"文件大小不能超过 {MAX_FILE_SIZE / 1024 / 1024}MB")
+        # C4: 分块读上传（1MB 块），边读边校验总量，避免超大请求整读进内存放大
+        size = 0
+        chunks = []
+        while chunk := await file.read(1024 * 1024):
+            size += len(chunk)
+            if size > MAX_FILE_SIZE:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"文件大小不能超过 {MAX_FILE_SIZE / 1024 / 1024}MB",
+                )
+            chunks.append(chunk)
+        content = b"".join(chunks)
         
         # 生成唯一 ID
         avatar_id = str(uuid.uuid4())
@@ -238,12 +246,10 @@ async def upload_avatar(
         else:
             ext = Path(file.filename).suffix.lower()
         
-        # 保存文件
+        # 保存文件（C4: 线程包裹阻塞写盘，避免卡事件循环）
         avatar_dir = _get_avatar_dir(avatar_type)
         file_path = avatar_dir / f"{avatar_id}{ext}"
-        
-        with open(file_path, "wb") as f:
-            f.write(content)
+        await asyncio.to_thread(file_path.write_bytes, content)
         
         # 创建元数据
         display_name = name or file.filename.replace(ext, "")

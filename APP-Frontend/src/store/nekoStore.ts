@@ -291,9 +291,16 @@ export const useNekoStore = create<NekoState>()((set, get) => ({
       const task = await nekoApi.marketTask(taskId);
       if (taskSeqMap.get(taskId) !== seq) return;
       set((s) => ({ installTasks: { ...s.installTasks, [taskId]: task }, error: null }));
-      // 终态清理：任务完成后不再有价值，删除序号条目，防止 taskSeqMap 无界增长
-      if (task.status === 'completed' || task.status === 'failed') {
+      // 终态清理：completed/failed/cancelled 后任务不再有价值——删除序号条目防
+      // taskSeqMap 无界增长，并从 installTasks 移除该条目防列表残留（终态以
+      // refreshInstalled / refreshPlugins 刷新后的插件列表呈现）。
+      if (['completed', 'failed', 'cancelled'].includes(task.status)) {
         taskSeqMap.delete(taskId);
+        // 函数式 set 读最新状态解构移除，避免基于陈旧闭包值覆盖并发更新
+        set((s) => {
+          const { [taskId]: _removed, ...rest } = s.installTasks;
+          return { installTasks: rest };
+        });
       }
       if (task.status === 'completed') {
         await get().refreshInstalled();

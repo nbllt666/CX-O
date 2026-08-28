@@ -197,6 +197,18 @@ class WebSocketManager:
         """发送消息给指定客户端（send_to_client 的别名）"""
         await self.send_to_client(client_id, message)
 
+    # A6: 单连接发送超时（秒）——慢客户端不再阻塞整个广播
+    SEND_TIMEOUT = 5.0
+
+    @staticmethod
+    async def _send_with_timeout(client_id: str, connection, message, timeout: float = 5.0):
+        """带超时的单连接发送：成功返回 None，失败/超时返回 client_id（供调用方清理）。"""
+        try:
+            await asyncio.wait_for(connection.send(message), timeout=timeout)
+            return None
+        except Exception:
+            return client_id
+
     async def broadcast(self, message: Dict[str, Any], exclude: Optional[str] = None):
         """广播消息给所有客户端
 
@@ -205,19 +217,21 @@ class WebSocketManager:
         断连清理通过延迟异步任务执行。
 
         BUG-B07 修复: 快照在锁内完成,确保一致视图。
+        A6 修复: 逐个 await 改为 gather 并发发送 + 单连接超时，一个慢客户端
+        不再阻塞整个广播。
         """
         # 1) 迭代前在锁内对字典进行快照,避免快照过程中字典被改
         with self._lock:
             connections_snapshot = list(self.connections.items())
-        disconnected: list[str] = []
 
-        for client_id, connection in connections_snapshot:
-            if client_id == exclude:
-                continue
-            try:
-                await connection.send(message)
-            except Exception:
-                disconnected.append(client_id)
+        results = await asyncio.gather(
+            *[
+                self._send_with_timeout(client_id, connection, message, self.SEND_TIMEOUT)
+                for client_id, connection in connections_snapshot
+                if client_id != exclude
+            ]
+        )
+        disconnected = [client_id for client_id in results if client_id]
 
         # 2) 清理断开的连接：延迟到下一次事件循环，避免在当前调用栈中修改字典
         if disconnected:
@@ -256,16 +270,18 @@ class WebSocketManager:
         with self._lock:
             members_snapshot = list(self.channels.get(channel, set()))
             connections_snapshot = dict(self.connections)
-        disconnected: list[str] = []
 
-        for client_id in members_snapshot:
-            connection = connections_snapshot.get(client_id)
-            if connection is None:
-                continue
-            try:
-                await connection.send(message)
-            except Exception:
-                disconnected.append(client_id)
+        # A6 修复: gather 并发发送 + 单连接超时（与 broadcast 同口径）
+        results = await asyncio.gather(
+            *[
+                self._send_with_timeout(
+                    client_id, connections_snapshot[client_id], message, self.SEND_TIMEOUT
+                )
+                for client_id in members_snapshot
+                if connections_snapshot.get(client_id) is not None
+            ]
+        )
+        disconnected = [client_id for client_id in results if client_id]
 
         # 2) 清理断开的连接：延迟到下一次事件循环
         if disconnected:

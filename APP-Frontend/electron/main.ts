@@ -755,9 +755,17 @@ app.whenReady().then(() => {
   Menu.setApplicationMenu(null);
   ensureDefaultConfig();
   // 前端启动配置（Task 5）：若持久化 run_as_admin=true 且当前未提权，请求 UAC 提权 relaunch。
-  // 用户拒绝 UAC 时当前实例保持可用（不阻断后续窗口创建）。
+  // 返回 true = 已触发提权请求：当前实例必须受控退出让出单实例锁，否则新提权实例
+  // 拿锁失败直接退出。延迟约 800ms（给 PowerShell UAC 弹窗弹出时间）后经既有
+  // before-quit 清理路径退出；期间不再创建窗口/启动后台服务。
   try {
-    applyStartupOnLaunch();
+    if (applyStartupOnLaunch()) {
+      setTimeout(() => {
+        isQuitting = true;
+        app.quit(); // 触发 before-quit：异步完成清理后 app.exit(0)
+      }, 800);
+      return;
+    }
   } catch (err) {
     console.error('[startup] 启动时应用提权配置失败:', err);
   }
@@ -834,16 +842,23 @@ app.on('before-quit', (event) => {
   globalShortcut.unregisterAll();
   void (async () => {
     try {
-      await Promise.allSettled([
-        // 停止 CXFC 注册并注销插件（Task 3）
-        stopCxfcRegistration(),
-        // 停止电脑控制插件 HTTPS 服务，回收端口与连接
-        stopComputerControlPlugin(),
-        // 停止 Neko 插件运行时 sidecar 与工具→CXFC 桥，回收子进程/接口
-        stopNekoRuntime(),
-        // 停止生理信号上送后台任务并断开 BLE（Task 5）
-        stopPhysioBackground(),
+      // 总超时兜底：任一清理步骤挂起（网络注销超时/子进程回收卡死等）时 8s 后
+      // 强制继续退出，防止进程无法关闭
+      const timeout = new Promise<'timeout'>((resolve) => setTimeout(() => resolve('timeout'), 8000));
+      const result = await Promise.race([
+        Promise.allSettled([
+          // 停止 CXFC 注册并注销插件（Task 3）
+          stopCxfcRegistration(),
+          // 停止电脑控制插件 HTTPS 服务，回收端口与连接
+          stopComputerControlPlugin(),
+          // 停止 Neko 插件运行时 sidecar 与工具→CXFC 桥，回收子进程/接口
+          stopNekoRuntime(),
+          // 停止生理信号上送后台任务并断开 BLE（Task 5）
+          stopPhysioBackground(),
+        ]),
+        timeout,
       ]);
+      if (result === 'timeout') console.error('[quit] cleanup timeout, forcing exit');
     } finally {
       app.exit(0);
     }

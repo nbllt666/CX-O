@@ -1,4 +1,5 @@
 """管理端点——API 密钥、运行时配置与数据管理接口。"""
+import asyncio
 import os
 import secrets
 from datetime import datetime
@@ -16,7 +17,13 @@ from server.core.admin.cluster_bridge import resolve_cluster_result
 router = APIRouter()
 logger = get_contextual_logger(__name__)
 
-ADMIN_API_KEY = os.environ.get("ADMIN_API_KEY", "")
+def _admin_api_key() -> str:
+    """C7: 惰性读取管理密钥——避免导入期冻结 env，运行期变更（如测试/热更新）可生效。
+
+    gateway/server.py 的 /control 代理仍保持每请求 os.environ 读取行为，不受影响。
+    """
+    return os.environ.get("ADMIN_API_KEY", "")
+
 
 # 项目根目录（c:\CX-O\CX-O-SERVER）：本文件位于 server/api/routers/ 下，向上 4 级即项目根。
 # 与 audio.py/config.py/avatars.py/agents.py 的 _PROJECT_ROOT 模式对齐（rules-0 §三：禁止相对路径）。
@@ -68,9 +75,10 @@ class AdminConfigUpdate(BaseModel):
 
 def verify_admin_api_key(x_api_key: Optional[str] = Header(None)) -> bool:
     """校验管理端 API 密钥，未配置或校验失败时抛出 403。"""
-    if not ADMIN_API_KEY:
+    admin_key = _admin_api_key()
+    if not admin_key:
         raise HTTPException(status_code=403, detail="Admin API key not configured")
-    if not x_api_key or not secrets.compare_digest(x_api_key, ADMIN_API_KEY):
+    if not x_api_key or not secrets.compare_digest(x_api_key, admin_key):
         raise HTTPException(status_code=403, detail="Invalid API key")
     return True
 
@@ -505,8 +513,12 @@ async def admin_control(request: Request, req: _ControlRequest):
         # M-E: cluster 分支结果可能内嵌 PendingClusterResult 协程包装，先解包
         # 再走既有 resolve_invoke_result（两条路 admin_control/batch 均如此）。
         result = await resolve_invoke_result(await resolve_cluster_result(result))
-        audit_now("CX-A", "info", "control", f"{req.target}/{req.action}", "管理面控制动作完成",
-                  request_id=req.request_id, detail={"elapsed_ms": round((time.monotonic() - t0) * 1000, 1)})
+        # C3: 审计写为阻塞 IO，经线程包裹避免卡事件循环（审计必须可靠，接受微秒级延迟）
+        await asyncio.to_thread(
+            audit_now, "CX-A", "info", "control", f"{req.target}/{req.action}", "管理面控制动作完成",
+            request_id=req.request_id,
+            detail={"elapsed_ms": round((time.monotonic() - t0) * 1000, 1)},
+        )
         return {"status": "success", "result": result}
     except HTTPException:
         raise
@@ -540,7 +552,8 @@ async def admin_batch(request: Request, req: _BatchRequest):
             return {"step": i, "ok": False, "result": {"error": str(e)}, "duration_ms": round((time.monotonic() - t0) * 1000, 1)}
 
     if req.mode == "parallel":
-        import asyncio
+        # asyncio 已在模块顶层导入（C3 审计 to_thread 依赖），此处不再局部导入，
+        # 否则会使 asyncio 成为函数局部变量导致 sequential 分支 UnboundLocalError
         out = await asyncio.gather(*[_run_step(i, st) for i, st in enumerate(steps)])
     else:  # sequential
         out = []
@@ -549,8 +562,11 @@ async def admin_batch(request: Request, req: _BatchRequest):
             out.append(r)
             if req.stop_on_error and not r["ok"]:
                 break
-    audit_now("CX-A", "info", "batch", f"mode={req.mode}", "批量编排执行",
-              request_id=req.request_id, detail={"steps": len(steps), "completed": len(out)})
+    # C3: 审计写为阻塞 IO，经线程包裹避免卡事件循环（审计必须可靠，接受微秒级延迟）
+    await asyncio.to_thread(
+        audit_now, "CX-A", "info", "batch", f"mode={req.mode}", "批量编排执行",
+        request_id=req.request_id, detail={"steps": len(steps), "completed": len(out)},
+    )
     return {"status": "success", "mode": req.mode, "steps": out}
 
 
@@ -558,7 +574,9 @@ async def admin_batch(request: Request, req: _BatchRequest):
 async def admin_audit(request: Request, limit: int = 50, offset: int = 0):
     _admin_guard(request, "readonly")
     from server.core.admin.cluster_bridge import _audit_read
-    return {"status": "success", "items": _audit_read(limit, offset)}
+    # C3: 审计文件读为阻塞 IO（已改反向块读），再包线程池避免卡事件循环
+    items = await run_in_threadpool(_audit_read, limit, offset)
+    return {"status": "success", "items": items}
 
 
 @router.post("/admin/register")

@@ -30,7 +30,13 @@ class AdapterStore:
     def _safe_path(self, adapter_id: str) -> str:
         path = os.path.abspath(os.path.join(self.lora_dir, adapter_id))
         root = os.path.abspath(self.lora_dir)
-        if os.path.commonpath([root, path]) != root or not os.path.isdir(path):
+        try:
+            inside = os.path.commonpath([root, path]) == root
+        except ValueError:
+            # Windows 跨盘符（如 root=C:\x 与 path=D:\y）时 commonpath 抛 ValueError，
+            # 一律视为越界路径，按适配器不存在处理（D6）。
+            inside = False
+        if not inside or not os.path.isdir(path):
             raise AdapterNotFoundError(f"adapter '{adapter_id}' 不存在")
         return path
 

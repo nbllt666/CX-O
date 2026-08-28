@@ -7,11 +7,15 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from server.api.routers import discovery
+from server.api.routers.admin import verify_admin_api_key
 
 
 def _make_client() -> TestClient:
+    """挂载 discovery 路由；C10 后端点已挂管理员鉴权，测试经依赖覆盖放行
+    （本文件聚焦扫描逻辑，鉴权行为由 test_admin_router 覆盖）。"""
     app = FastAPI()
     app.include_router(discovery.router, prefix="/api")
+    app.dependency_overrides[verify_admin_api_key] = lambda: True
     return TestClient(app)
 
 
@@ -52,6 +56,9 @@ def test_port_validation(monkeypatch):
     # 越界端口应返回 422
     resp = client.get("/api/discovery/backends", params={"port": 70000})
     assert resp.status_code == 422
+    # C10: 非白名单端口（合法范围但不在 {8000, 8100, 8200}）应返回 400
+    resp = client.get("/api/discovery/backends", params={"port": 9000})
+    assert resp.status_code == 400
 
 
 def test_all_hosts_scanned(monkeypatch):

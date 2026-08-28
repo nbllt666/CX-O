@@ -10,8 +10,9 @@ import threading
 from typing import Dict, List, Optional
 
 import httpx
-from fastapi import APIRouter, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 
+from server.api.routers.admin import verify_admin_api_key
 from server.core.logging_config import get_contextual_logger
 
 logger = get_contextual_logger(__name__)
@@ -22,6 +23,8 @@ router = APIRouter()
 _MAX_CONCURRENCY = 64
 # /24 子网主机范围
 _HOST_START, _HOST_END = 1, 254
+# C10: 端口白名单——仅允许本项目实际使用的后端端口，防止被当作任意端口扫描器滥用
+_ALLOWED_DISCOVERY_PORTS = {8000, 8100, 8200}
 
 # 共享探测客户端（懒加载单例）。
 # 逐主机新建 httpx.AsyncClient 会在事件循环上反复执行 ssl.create_default_context()
@@ -106,12 +109,19 @@ async def _probe(url: str, timeout: float) -> bool:
 async def discover_backends(
     port: int = Query(8100, ge=1, le=65535, description="待探测的后端端口"),
     timeout: float = Query(0.8, ge=0.1, le=5.0, description="单地址探测超时（秒）"),
+    _: bool = Depends(verify_admin_api_key),
 ) -> Dict[str, List[Dict[str, object]]]:
     """扫描局域网子网，返回可达的 CX-O 后端地址列表。
 
-    探测路径为 ``http://<host>:<port>/health``，仅收集返回 200 的目标。
-    并发受 ``_MAX_CONCURRENCY`` 限制，避免瞬时占用过多连接。
+    C10: 端点补管理员鉴权；port 限制白名单 {8000, 8100, 8200}（非白名单返回 400），
+    防止无鉴权任意端口扫描。探测路径为 ``http://<host>:<port>/health``，仅收集
+    返回 200 的目标。并发受 ``_MAX_CONCURRENCY`` 限制，避免瞬时占用过多连接。
     """
+    if port not in _ALLOWED_DISCOVERY_PORTS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"port 仅允许 {sorted(_ALLOWED_DISCOVERY_PORTS)}",
+        )
     local_ips = _get_local_ips()
     subnets = _to_subnets(local_ips)
     if not subnets:

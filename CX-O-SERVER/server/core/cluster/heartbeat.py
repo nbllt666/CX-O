@@ -87,9 +87,17 @@ class PeerHeartbeat:
         self._task = asyncio.create_task(self._loop(), name="cluster-heartbeat")
 
     async def _loop(self):
+        # B11: 单轮心跳异常不再终止循环——除 CancelledError 保持 cancel 传播外，
+        # 其余异常留痕后继续下一轮（否则一次瞬时网络/服务异常会杀掉心跳后台任务，
+        # 节点从此不再发心跳、被对端误判死亡）。
         try:
             while self._running:
-                await self._beat_once()
+                try:
+                    await self._beat_once()
+                except asyncio.CancelledError:
+                    raise
+                except Exception:  # noqa: BLE001 - 单轮失败留痕后继续循环
+                    log.exception("心跳循环异常")
                 await asyncio.sleep(self._interval)
         except asyncio.CancelledError:
             pass
@@ -182,14 +190,17 @@ class PeerHeartbeat:
                     self._mark_recovered(ident)
             else:
                 self._miss[ident] = self._miss.get(ident, 0) + 1
-                prev = self._peer_state.get(ident, {})
                 if self._miss[ident] >= self._miss_threshold:
                     await self._mark_suspect_and_confirm(ident)
                 else:
-                    self._peer_state[ident] = {
-                        "state": "suspect",
-                        "last_heartbeat": prev.get("last_heartbeat"),
-                    }
+                    # B11: 就地 update 保留既有元数据（role/epoch/last_sync_seq 等，
+                    # 由 record_inbound_heartbeat 写入）——旧实现整 dict 覆盖会清空
+                    # 这些字段，破坏 gossip/vote 依赖的观测上下文。prev 不存在才新建。
+                    prev = self._peer_state.get(ident)
+                    if prev is None:
+                        self._peer_state[ident] = {"state": "suspect", "last_heartbeat": None}
+                    else:
+                        prev.update({"state": "suspect"})
 
     async def _ping(self, endpoint) -> bool:
         if not self._transport:

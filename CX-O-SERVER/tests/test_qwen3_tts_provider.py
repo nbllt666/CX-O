@@ -5,12 +5,13 @@ Task 2 [P] 闭合判据：Provider 单测与 Mock 合成覆盖成功、超时、
 
 覆盖：
 - 非流式 synthesize：成功、超时、连接失败、HTTP 状态映射、空/非法响应
-- 流式 synthesize_stream：chunk 边界（恰一 start/一 final）、断流、取消(StreamAbortedError)
+- 流式 synthesize_stream：chunk 边界（恰一 start/一 final）、断流、取消（B2: CancelledError 原样传播）
 - 请求校验：非法 text/format/speed、情感指令超长、refs 前缀校验
 - 参考音频：ref_resolver 未接入(RefAudioNotFoundError)、采样率越界、
   双来源 refs 重采样到 24kHz 并进入请求体
 - 运行时：voicedesign 首选（VoiceDesign 日常/情感），speed 由 vLLM 直接支持（探针实证，不再兜底）、
-  refs 携带时路由 cosyvoice（CosyVoice2 克隆运行时）；未配置 cosyvoice 时 RuntimeUnsupportedError；
+  refs 携带时路由 cosyvoice（CosyVoice2 克隆运行时）；未配置 cosyvoice 时降级
+  qwen3_base（B8: RuntimeUnsupportedError 加入降级捕获）；
   首选运行时不可用/超时/非法响应时降级 qwen3_base（Qwen3-TTS Base）
 - health_check 轻量探活、close 资源清理、旧引擎检测(LegacyEngineRemovedError)
 
@@ -335,7 +336,9 @@ class TestSynthesizeStream:
                 pass
 
     @pytest.mark.asyncio
-    async def test_cancel_raises_stream_aborted(self):
+    async def test_cancel_propagates_cancelled_error(self):
+        # B2 行为修正：取消必须原样传播（task.cancel 语义）——
+        # 旧实现把 CancelledError 转抛 StreamAbortedError，吞掉取消信号（旧行为即缺陷）
         async def infinite_stream():
             # 持续产出 chunk，直到被取消
             while True:
@@ -352,7 +355,7 @@ class TestSynthesizeStream:
         task = asyncio.ensure_future(consume())
         await asyncio.sleep(0.02)
         task.cancel()
-        with pytest.raises(StreamAbortedError):
+        with pytest.raises(asyncio.CancelledError):
             await task
 
 
@@ -449,14 +452,19 @@ class TestRuntimeSelection:
         assert "8094" in client.last_url
 
     @pytest.mark.asyncio
-    async def test_refs_no_cosyvoice_raises_unsupported(self):
-        # VoiceDesign 任务携带 refs 且无 cosyvoice 兜底 → 错误信息清晰
+    async def test_refs_no_cosyvoice_falls_back_to_qwen3_base(self):
+        # B8 行为修正：带 refs 且未配置 cosyvoice 时，RuntimeUnsupportedError
+        # 加入降级捕获 → 降级 qwen3_base 完成合成（旧行为直接抛错即缺陷：
+        # 配置缺口不应让语音合成整体失败）
+        client = _make_client(post_response=FakeResponse(content=_pcm16(240)))
         p = Qwen3TTSProvider(
             config=_cfg(cosyvoice_base_url=""),
-            http_client=_make_client(), ref_resolver=lambda aid: ResolvedRef(asset_id=aid, data=_pcm16(240), sample_rate=24000))
-        with pytest.raises(RuntimeUnsupportedError) as exc:
-            await p.synthesize(_req(refs=["ref_a"]))
-        assert "CosyVoice3" in str(exc.value)
+            http_client=client, ref_resolver=lambda aid: ResolvedRef(asset_id=aid, data=_pcm16(240), sample_rate=24000))
+        resp = await p.synthesize(_req(refs=["ref_a"]))
+        assert resp.runtime == "qwen3_base"
+        assert "8093" in client.last_url
+        # 降级请求体使用 qwen3_base 模型（resolved refs 可被 fallback 请求构造消费）
+        assert client.last_json["model"] == "Qwen/Qwen3-TTS-12Hz-1.7B-Base"
 
     @pytest.mark.asyncio
     async def test_no_refs_stays_voicedesign(self):

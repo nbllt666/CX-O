@@ -71,9 +71,16 @@ def _reset_router_globals():
 
 @pytest.fixture
 def client():
-    """构造仅挂载 autonomy 路由的 FastAPI 测试客户端（/api 前缀）。"""
+    """构造仅挂载 autonomy 路由的 FastAPI 测试客户端（/api 前缀）。
+
+    C5: control/config 写端点已挂管理员鉴权，测试经依赖覆盖放行
+    （本文件聚焦控制/配置逻辑，鉴权行为由 test_admin_router 覆盖）。
+    """
+    from server.api.routers.admin import verify_admin_api_key
+
     app = FastAPI()
     app.include_router(autonomy_router.router, prefix="/api")
+    app.dependency_overrides[verify_admin_api_key] = lambda: True
     return TestClient(app)
 
 

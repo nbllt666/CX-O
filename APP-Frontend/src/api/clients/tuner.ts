@@ -125,7 +125,7 @@ export const tunerApi = {
       const resp = await request<TunerEnvelope<TunerAdapter>>({
         url: '/api/v1/tuner/adapters',
       });
-      if (resp?.status === 'degraded') return [];
+      if (resp?.status === 'degraded') return null;
       return resp?.adapters ?? [];
     } catch {
       return null;

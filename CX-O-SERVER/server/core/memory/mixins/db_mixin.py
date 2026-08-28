@@ -165,8 +165,9 @@ class _MemoryDBMixin:
         except Exception as e:
             logger.error(f"创建Agent记忆表失败: {e}")
             raise
-        finally:
-            conn.close()
+        # M-D3 口径对齐：连接所有权归 _connection_pool，此处不得 close——
+        # finally 关闭的是池内缓存连接，下次探活必失败触发重建
+        # （原 finally: conn.close() 已移除）
 
     def _start_cleanup_task(self):
         def cleanup_task():

@@ -5,6 +5,7 @@ Agent 可以在用户说话过程中判断是否可以插话
 import json
 import logging
 import time
+from collections import deque
 from typing import Optional, Callable, Any
 from dataclasses import dataclass, field
 
@@ -33,7 +34,9 @@ class UserSpeechState:
     current_text: str = ""
     start_time: float = 0
     last_update_time: float = 0
-    text_segments: list = field(default_factory=list)
+    # B3 有界化：segments 列表仅写不读（诊断用途），超长 utterance 的逐帧 append
+    # 会无界累积。改为 deque(maxlen=50)——超过 50 条自动丢弃最旧。
+    text_segments: deque = field(default_factory=lambda: deque(maxlen=50))
 
 
 class AgentInterruptUser(InterruptModuleBase):

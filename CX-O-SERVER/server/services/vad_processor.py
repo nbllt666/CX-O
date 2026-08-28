@@ -59,8 +59,7 @@ class VADProcessor:
         self._vad: Any = None
         self._on_speech_start_callback: Optional[Callable] = None
         self._on_speech_end_callback: Optional[Callable] = None
-        self._audio_buffer: bytearray = bytearray()
-        self._buffer_duration_ms = 0
+        # B10: 原 _audio_buffer/_buffer_duration_ms 仅初始化从未读写（死缓冲），已删除
         self._initialized = False
         self._frame_size = self._compute_frame_size()
 
@@ -288,8 +287,8 @@ class AudioStreamProcessor:
         self.vad = VADProcessor()
         self._streaming_client: Any = None
         self._agent_interrupt: Any = None
-        self._audio_buffer: bytearray = bytearray()
-        self._buffer_duration_ms = 0
+        # B10: 原 _audio_buffer/_buffer_duration_ms 为死写缓冲（仅 extend/clear，
+        # 全文件无任何读取点），已删除维护；兜底路径判定逻辑保留。
         self._on_result_callback: Optional[Callable] = None
         # 双流式模式主驱动回调：ASR Partial Result 产出即触发 LLM Speculative Prefill，
         # 省去等待 VAD on_end 的 500ms 静默判定，实现毫秒级首字响应
@@ -369,15 +368,10 @@ class AudioStreamProcessor:
             "asr": None,
         }
 
-        # 音频缓冲仅在「无流式 ASR 客户端」的兜底路径被读取（is_speaking 期间累积、
-        # 静默超 1s 清空）。双流式语音路径恒有 _streaming_client，缓冲累加是纯死写（每帧
-        # extend + len/32 + += 均被丢弃），故下移到兜底分支，避免占用热路径。
+        # 无流式 ASR 客户端的兜底路径：仅返回 VAD 结果，不上行 ASR。
+        # B10: 原死写音频缓冲维护（extend/时长累计/超时清空）已删除——
+        # 全文件无读取点，纯热路径开销。
         if not self._streaming_client:
-            self._audio_buffer.extend(audio_data)
-            self._buffer_duration_ms += len(audio_data) / 32
-            if not vad_result["is_speaking"] and self._buffer_duration_ms > 1000:
-                self._audio_buffer.clear()
-                self._buffer_duration_ms = 0
             return result
 
         try:
@@ -504,8 +498,6 @@ class AudioStreamProcessor:
                 # 双流式模式下主流程已由 ASR Partial Result 驱动，此处只做收尾与状态复位，
                 # 避免阻塞或重复触发 LLM Prefill
                 await self._streaming_client.reset(client_id=self.client_id)
-                self._audio_buffer.clear()
-                self._buffer_duration_ms = 0
 
         except Exception as e:
             logger.error(f"Streaming ASR error: {e}")
@@ -513,10 +505,8 @@ class AudioStreamProcessor:
         return result
 
     def reset(self):
-        """重置 VAD 状态并清空音频缓冲。"""
+        """重置 VAD 状态（B10: 原死写音频缓冲清理已随缓冲删除）。"""
         self.vad.reset()
-        self._audio_buffer.clear()
-        self._buffer_duration_ms = 0
 
     def _track_background_task(self, task: asyncio.Task) -> asyncio.Task:
         """追踪后台打断任务，防止被 GC 回收；任务完成后自动从集合移除。"""

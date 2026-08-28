@@ -378,32 +378,14 @@ async def get_chat_history(session_id: str, limit: int = 50):
         session = await run_io(context_mgr.get_session, session_id)
 
         if not session:
-            # 如果会话不存在，检查是否为 Agent 会话
-            if session_id.startswith("agent-"):
-                agent_id = session_id.replace("agent-", "")
-                agent_config = get_agent_config(agent_id)
-
-                if agent_config:
-                    # 使用传入的 session_id 创建会话，而不是生成新的 UUID
-                    await run_io(
-                        context_mgr.create_session,
-                        session_id=session_id,
-                        workspace_id="agent-chats",
-                        title=f"{agent_config.get('name', 'Agent')} 的对话",
-                    )
-                    await run_io(
-                        context_mgr.update_session,
-                        session_id, metadata={"agent_id": agent_id},
-                    )
-                    session = await run_io(context_mgr.get_session, session_id)
-
-            if not session:
-                return {
-                    "status": "success",
-                    "session_id": session_id,
-                    "session": None,
-                    "messages": [],
-                }
+            # C9: 读路径不再自动创建会话（写路径归 POST 消息流程，其已有 ensure_session），
+            # session 不存在时直接返回空历史，保持响应形状不变
+            return {
+                "status": "success",
+                "session_id": session_id,
+                "session": None,
+                "messages": [],
+            }
 
         messages = await run_io(context_mgr.get_recent_messages, session_id, limit=limit)
 
