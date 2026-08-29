@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING
 from server.protocol.message import create_response, create_error
 from server.protocol.actions import SystemActions
 from server.gateway.health import health_checker
+from server.core.utils import run_io
 
 if TYPE_CHECKING:
     from server.core.websocket.manager import WebSocketManager
@@ -48,7 +49,9 @@ def register_system_handlers(manager: "WebSocketManager"):
             try:
                 from server.dependencies import get_memory_manager
                 memory_mgr = get_memory_manager()
-                status["services"]["memory"] = {"available": True, "stats": memory_mgr.get_statistics()}
+                # get_statistics 为同步主库读，移入线程池避免阻塞事件循环
+                # （对齐下方 acp 的 await 形态）
+                status["services"]["memory"] = {"available": True, "stats": await run_io(memory_mgr.get_statistics)}
             except Exception as e:
                 logger.warning("获取memory管理器状态失败: %s", e, exc_info=True)
                 status["services"]["memory"] = {"available": False}

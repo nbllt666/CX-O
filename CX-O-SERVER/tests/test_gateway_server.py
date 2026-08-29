@@ -207,3 +207,66 @@ class TestWebsocketHandler:
         ws = FakeWebSocket([])
         await gateway_server.websocket_handler(ws, "c1")
         assert "c1" in _patch_ws_manager.disconnected
+
+
+# ================================================================ handle_live_connection（live bytes 分支隔离）
+class _FakeLiveHandler:
+    """可编程 live 处理器替身：handle_audio 对 b"boom" 抛错，其余记录。"""
+
+    instances = []  # 类级实例表，供断言读取调用痕迹
+
+    def __init__(self, ws_manager, client_id, client_config):
+        self.audio_calls = []
+        _FakeLiveHandler.instances.append(self)
+
+    async def handle_message(self, websocket, message, client_id):
+        self.audio_calls.append(("text", message))
+
+    async def handle_audio(self, websocket, audio_data, client_id):
+        if bytes(audio_data) == b"boom":
+            raise RuntimeError("audio boom")
+        self.audio_calls.append(("audio", bytes(audio_data)))
+
+
+class TestHandleLiveConnection:
+    @pytest.mark.asyncio
+    async def test_bytes_branch_isolates_per_message_errors(self, _patch_ws_manager, monkeypatch):
+        """bytes 分支单条音频异常被隔离：回发 error 帧且连接继续收发不断开。"""
+        import server.services.live_client as live_client_mod
+        monkeypatch.setattr(live_client_mod, "LiveClientHandler", _FakeLiveHandler)
+
+        ws = FakeWebSocket([
+            {"type": "websocket.receive", "bytes": b"boom"},  # 触发 handle_audio 抛错
+            {"type": "websocket.receive", "bytes": b"ok"},    # 异常后仍能继续处理
+            {"type": "websocket.disconnect"},
+        ])
+        await gateway_server.handle_live_connection(ws, "c-live")
+
+        handler = _FakeLiveHandler.instances[-1]
+        # 1) 异常未 break 循环：后续音频仍被处理
+        assert ("audio", b"ok") in handler.audio_calls
+        # 2) 向该连接回发了 error 帧（不携带内部异常详情）
+        err_frames = [m for _, m in _patch_ws_manager.sent
+                      if isinstance(m, dict) and m.get("type") == "error"]
+        assert err_frames and err_frames[0]["error"] == "audio processing failed"
+        # 3) 连接正常走 finally 清理
+        assert "c-live" in _patch_ws_manager.disconnected
+
+    @pytest.mark.asyncio
+    async def test_bytes_branch_normal_flow_no_error_frame(self, _patch_ws_manager, monkeypatch):
+        """正常音频不触发 error 帧，处理照常。"""
+        import server.services.live_client as live_client_mod
+        monkeypatch.setattr(live_client_mod, "LiveClientHandler", _FakeLiveHandler)
+
+        ws = FakeWebSocket([
+            {"type": "websocket.receive", "bytes": b"ok"},
+            {"type": "websocket.disconnect"},
+        ])
+        await gateway_server.handle_live_connection(ws, "c-live2")
+
+        handler = _FakeLiveHandler.instances[-1]
+        assert ("audio", b"ok") in handler.audio_calls
+        err_frames = [m for _, m in _patch_ws_manager.sent
+                      if isinstance(m, dict) and m.get("type") == "error"]
+        assert not err_frames
+        assert "c-live2" in _patch_ws_manager.disconnected

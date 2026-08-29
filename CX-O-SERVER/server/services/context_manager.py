@@ -1,5 +1,9 @@
-"""
-上下文管理器 - 管理对话上下文
+"""对话历史管理器（ChatHistoryManager）——管理内存态对话上下文。
+
+L-10 消歧：本模块历史上与 server/core/context/manager.py 的 ContextManager
+（SQLite 持久层，sessions.db 唯一 owner）同名不同义。本类只维护内存
+LRU 消息历史（单例经 get_context_manager() 获取），被 live_client /
+asr_interrupt / agent_interrupt_user 消费；持久化会话请使用 core 版。
 """
 from collections import OrderedDict
 from typing import List, Dict
@@ -11,8 +15,8 @@ from server.config import Settings
 MAX_SESSIONS = 256
 
 
-class ContextManager:
-    """对话上下文管理器——按会话维护消息历史并限制最大长度。"""
+class ChatHistoryManager:
+    """对话历史管理器——按会话维护内存消息历史并限制最大长度（L-10 改名，原 ContextManager）。"""
 
     def __init__(self, max_history: int = None):
         if max_history is None:
@@ -63,9 +67,9 @@ class ContextManager:
             del self.contexts[session_id]
 
 
-_context_manager = ContextManager()
+_context_manager = ChatHistoryManager()
 
 
-def get_context_manager() -> ContextManager:
-    """返回全局唯一的 ContextManager 单例。"""
+def get_context_manager() -> ChatHistoryManager:
+    """返回全局唯一的 ChatHistoryManager 单例（函数名保留，历史调用方零改动）。"""
     return _context_manager

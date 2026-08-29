@@ -498,9 +498,10 @@ function registerIpcHandlers(): void {
   });
 
   // 桌宠窗拖拽：增量坐标移动（渲染层记录按下点，逐帧回传 delta）
+  // 坐标合法性校验对齐 window:set-size：非有限值直接忽略，防止 setPosition 写入 NaN。
   registerIpcHandler('window:move', (event, dx: number, dy: number) => {
     const win = BrowserWindow.fromWebContents(event.sender);
-    if (win && !win.isDestroyed()) {
+    if (win && !win.isDestroyed() && Number.isFinite(dx) && Number.isFinite(dy)) {
       const [currentX, currentY] = win.getPosition();
       win.setPosition(currentX + dx, currentY + dy);
     }
@@ -651,7 +652,7 @@ function registerIpcHandlers(): void {
 //   - Origin 明确命中 http://localhost:* / http://127.0.0.1:*（任意端口）
 //     → 回显该 Origin 放行（dev 场景，含 Vite dev server 3100）
 //   - 其它明确 Origin → 不下发 Access-Control-Allow-Origin 头（log debug 记录）
-// Allow-Headers / Methods 维持既有固定值不变。
+// Allow-Headers 透传优先：后端已带该头时不覆盖，缺失时补写兜底值（含 x-api-key）；Methods 维持固定值。
 // ---------------------------------------------------------------------------
 function configureCors(): void {
   // dev 本机 Origin 白名单：任意端口的 localhost / 127.0.0.1，锚定结尾防伪装域
@@ -688,7 +689,14 @@ function configureCors(): void {
     const responseHeaders = details.responseHeaders ?? {};
     responseHeaders['Access-Control-Allow-Origin'] = [allowOrigin];
     responseHeaders['Access-Control-Allow-Methods'] = ['GET, POST, PUT, DELETE, OPTIONS'];
-    responseHeaders['Access-Control-Allow-Headers'] = ['Content-Type, Authorization'];
+    // Allow-Headers 透传优先：后端 FastAPI CORSMiddleware 已下发更宽名单时不覆盖
+    // （键大小写不敏感检测），仅在后端缺失该头时补写兜底值（含 x-api-key）。
+    const hasAllowHeaders = Object.keys(responseHeaders).some(
+      (key) => key.toLowerCase() === 'access-control-allow-headers',
+    );
+    if (!hasAllowHeaders) {
+      responseHeaders['Access-Control-Allow-Headers'] = ['Content-Type, Authorization, x-api-key'];
+    }
     callback({ responseHeaders });
   });
 }

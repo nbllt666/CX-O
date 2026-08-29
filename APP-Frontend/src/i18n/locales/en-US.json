@@ -308,6 +308,7 @@
       "detectDuplicates": "Detect duplicates",
       "archiveResult": "Done: {{archived}} archived, {{merged}} merged",
       "archiveFailed": "Archiving failed",
+      "mergeFailed": "Memory merge failed",
       "dupTitle": "Duplicate groups ({{count}})",
       "reDetect": "Re-detect",
       "detecting": "Detecting...",
@@ -840,7 +841,7 @@
       "liveWs": "Live WS",
       "wsConnected": "Connected",
       "wsDisconnected": "Disconnected",
-      "clientsOnline": "Live Link",
+      "connectionDuration": "Connection Time",
       "backendHealth": "Backend Health",
       "loadFailed": "Load failed",
       "backendOk": "OK",
@@ -1267,6 +1268,18 @@
       "discoverFailed": "Discovery failed. Make sure the current backend is reachable and retry.",
       "discoverResult": "Found {{count}} backends. Select one to connect.",
       "connect": "Connect"
+    },
+    "adminKey": {
+      "sectionTitle": "Admin Key",
+      "sectionDesc": "Enter the admin key (x-api-key) for backend admin endpoints",
+      "statusLabel": "Status",
+      "configured": "Configured",
+      "notConfigured": "Not configured",
+      "inputLabel": "Admin key",
+      "inputPlaceholder": "Enter admin key (saved value is not shown)",
+      "save": "Save",
+      "clear": "Clear",
+      "hint": "The key is stored only in local browser storage (aligned with the backend ADMIN_API_KEY); requests automatically carry the x-api-key header once saved"
     },
     "audio": {
       "sectionTitle": "Audio",

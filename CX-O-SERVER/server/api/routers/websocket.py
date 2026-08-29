@@ -55,7 +55,9 @@ async def websocket_agent_endpoint(websocket: WebSocket, agent_id: str, timeout:
         # 不被 except Exception 捕获，取消路径（uvicorn shutdown/任务取消）
         # 也必须释放连接与会话资源；disconnect 对不存在的 client_id 幂等
         # （与 gateway/server.py live handler 的 finally 先例一致）。
-        await ws_manager.disconnect(client_id)
+        # R9-01: 携带本连接代际，disconnect 代际校验防同 id 重连后
+        # 旧端点 finally 拆毁新会话。
+        await ws_manager.disconnect(client_id, generation=connection.generation)
 
 
 @router.websocket("/ws")
@@ -95,7 +97,8 @@ async def websocket_endpoint(
         logger.error(f"WebSocket 错误 {client_id}: {e}")
     finally:
         # L1: 清理统一挂 finally，覆盖 CancelledError 取消路径；disconnect 幂等。
-        await ws_manager.disconnect(client_id)
+        # R9-01: 携带本连接代际，防同 id 重连后旧端点 finally 拆毁新会话。
+        await ws_manager.disconnect(client_id, generation=connection.generation)
 
 
 @router.websocket("/ws/chat")
@@ -142,7 +145,8 @@ async def websocket_chat_endpoint(
         logger.error(f"WebSocket 聊天错误 {client_id}: {e}")
     finally:
         # L1: 清理统一挂 finally，覆盖 CancelledError 取消路径；disconnect 幂等。
-        await ws_manager.disconnect(client_id)
+        # R9-01: 携带本连接代际，防同 id 重连后旧端点 finally 拆毁新会话。
+        await ws_manager.disconnect(client_id, generation=connection.generation)
 
 
 @router.websocket("/ws/live")
@@ -194,4 +198,5 @@ async def websocket_live_endpoint(
     finally:
         # L1: 清理统一挂 finally——CancelledError 取消路径同样释放 per-client
         # 双流会话/VAD/ASR流式会话/打断模块；disconnect 幂等。
-        await ws_manager.disconnect(client_id)
+        # R9-01: 携带本连接代际，防同 id 重连后旧端点 finally 拆毁新会话。
+        await ws_manager.disconnect(client_id, generation=connection.generation)

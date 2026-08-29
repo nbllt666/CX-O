@@ -310,3 +310,59 @@ class TestMeetingREST:
         r = client.post(f"/api/meeting/{room_id}/audience/toggle", json={"enabled": False})
         assert r.status_code == 200
         assert r.json()["data"]["audience_enabled"] is False
+
+
+# ================================================================ 上下文回写异步化（_ingest_context）
+class _FakeCtxAsync:
+    """带 add_message_async 变体的假 ContextManager（对齐真实实现的 async 变体）。"""
+
+    def __init__(self):
+        self.calls = []
+
+    async def add_message_async(self, room_id, role, content):
+        self.calls.append(("async", room_id, role, content))
+
+
+class _FakeCtxSync:
+    """仅同步 add_message 的假 ContextManager（降级路径）。"""
+
+    def __init__(self):
+        self.calls = []
+
+    def add_message(self, room_id, role, content):
+        self.calls.append(("sync", room_id, role, content))
+
+
+class TestIngestContextAsync:
+    @pytest.mark.asyncio
+    async def test_ingest_prefers_async_variant(self):
+        """_ingest_context 优先调用 add_message_async，内容含会议记录标记。"""
+        cm = _FakeCtxAsync()
+        coord = _make_coordinator(context_manager=cm)
+        room = await coord.start_meeting(user="用户", agents=[AgentMember("A")], room_id="ctx-a1")
+        room.transcript.append("user", "user", "聊聊天气")
+        await coord._ingest_context(room)
+        assert cm.calls, "应调用 add_message_async"
+        kind, room_id, role, content = cm.calls[0]
+        assert kind == "async"
+        assert room_id == "ctx-a1"
+        assert role == "system"
+        assert "[会议记录]" in content and "聊聊天气" in content
+
+    @pytest.mark.asyncio
+    async def test_ingest_falls_back_to_threaded_sync_add(self):
+        """无 async 变体时同步 add_message 经线程池调用，参数一致。"""
+        cm = _FakeCtxSync()
+        coord = _make_coordinator(context_manager=cm)
+        await coord.start_meeting(user="用户", agents=[AgentMember("A")], room_id="ctx-s1")
+        await coord._ingest_context(coord.get_room("ctx-s1"))
+        assert cm.calls and cm.calls[0][0] == "sync"
+        assert cm.calls[0][1] == "ctx-s1"
+        assert cm.calls[0][2] == "system"
+
+    @pytest.mark.asyncio
+    async def test_ingest_without_cm_is_noop(self):
+        """未装配 context_manager 时静默返回不抛错。"""
+        coord = _make_coordinator()
+        await coord.start_meeting(user="用户", agents=[], room_id="ctx-n1")
+        await coord._ingest_context(coord.get_room("ctx-n1"))  # 不抛异常即通过

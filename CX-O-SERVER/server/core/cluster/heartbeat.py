@@ -57,6 +57,16 @@ class PeerHeartbeat:
         self.last_confirm_report: dict = {}  # 最近一次 confirm_dead 的计票报告（含弃权名单）
         self._task: asyncio.Task | None = None
         self._running = False
+        # 死亡确认后台化：同一 node_id 在途确认去重 + 后台任务强引用登记（防 GC 提前回收）
+        self._confirm_inflight: set[str] = set()
+        self._confirm_tasks: set[asyncio.Task] = set()
+
+    def _track_background_task(self, task: asyncio.Task) -> asyncio.Task:
+        """后台任务强引用登记（仿本仓 manager._track_background_task 模式）：
+        保存引用防止 fire-and-forget 任务被 GC 提前回收，完成后自动移除。"""
+        self._confirm_tasks.add(task)
+        task.add_done_callback(self._confirm_tasks.discard)
+        return task
 
     # ---- 依赖注入 ----
     def set_on_dead(self, cb):
@@ -191,7 +201,11 @@ class PeerHeartbeat:
             else:
                 self._miss[ident] = self._miss.get(ident, 0) + 1
                 if self._miss[ident] >= self._miss_threshold:
-                    await self._mark_suspect_and_confirm(ident)
+                    # 确认流程后台化：gossip 多数派问询（含总超时）最长可阻塞 15s+，
+                    # 内联 await 会卡住心跳主循环，延后其他 peer 的 ping。
+                    # 改为 create_task 后台执行，_beat_once 只发起不等待；
+                    # 同一 node_id 确认在途时不再重复发起（防重复确认风暴）。
+                    self._start_confirm_task(ident)
                 else:
                     # B11: 就地 update 保留既有元数据（role/epoch/last_sync_seq 等，
                     # 由 record_inbound_heartbeat 写入）——旧实现整 dict 覆盖会清空
@@ -223,14 +237,36 @@ class PeerHeartbeat:
         except ClusterError:
             return False
 
-    async def _mark_suspect_and_confirm(self, endpoint):
+    def _start_confirm_task(self, endpoint) -> None:
+        """发起死亡确认后台任务（_beat_once 只发起不等待）。
+
+        - 去重：同一 node_id 已有确认任务在途时不重复发起；
+        - 已确认死亡节点短路（与 _mark_suspect_and_confirm 幂等语义一致）；
+        - 任务经 _track_background_task 强引用登记，防止被 GC 提前回收。
+        """
         node = self._peer_node_id(endpoint)
         if node in self._dead:
-            # 已确认死亡：短路，不再重复确认/触发接管回调，仅持续监控健康/嫌疑状态。
             return
-        self.mark_suspect(node)
-        if await self.confirm_dead(node):
-            self._dead.add(node)
+        if node in self._confirm_inflight:
+            return
+        task = asyncio.create_task(
+            self._mark_suspect_and_confirm(node), name=f"cluster-confirm-{node}"
+        )
+        self._confirm_inflight.add(node)
+        self._track_background_task(task)
+
+    async def _mark_suspect_and_confirm(self, endpoint):
+        node = self._peer_node_id(endpoint)
+        try:
+            if node in self._dead:
+                # 已确认死亡：短路，不再重复确认/触发接管回调，仅持续监控健康/嫌疑状态。
+                return
+            self.mark_suspect(node)
+            if await self.confirm_dead(node):
+                self._dead.add(node)
+        finally:
+            # 无论确认成败（含任务被取消）都释放在途标记，允许后续轮次重新发起
+            self._confirm_inflight.discard(node)
 
     def _peer_node_id(self, endpoint) -> str:
         # 握手前 peer node_id 未知，以 endpoint 作为监视标识
@@ -262,17 +298,32 @@ class PeerHeartbeat:
             p for p in self._peers()
             if p != node_id and self._endpoint_to_node.get(p, p) != node_id
         ]
+        # gossip 问询并发化：旧实现逐个串行 await，单 peer 超时最高 15s，
+        # N 个不可达 peer 会把确认流程拖到 N×15s。改 gather 并发 + 单轮总超时
+        # （总超时 = min(单请求超时×2, 15s)，超时的 peer 全部按弃权计票）。
         others_agree = 0
         abstained: list[str] = []
-        for endpoint in peers:
+        if peers:
+            single_timeout = float(getattr(self._transport, "_timeout_sec", 7.5) or 7.5)
+            total_timeout = max(1.0, min(single_timeout * 2, 15.0))
             try:
-                opinion = await self._ask_gossip(endpoint, node_id)
-            except Exception:  # noqa: BLE001 - 问询异常视为弃权
-                opinion = None
-            if opinion is None:
-                abstained.append(endpoint)
-            elif opinion:
-                others_agree += 1
+                results = await asyncio.wait_for(
+                    asyncio.gather(
+                        *(self._ask_gossip(p, node_id) for p in peers),
+                        return_exceptions=True,
+                    ),
+                    timeout=total_timeout,
+                )
+            except asyncio.TimeoutError:
+                # 单轮总超时：所有未应答 peer 视为弃权（与单点异常弃权口径一致）
+                results = [None] * len(peers)
+            for endpoint, r in zip(peers, results):
+                # 异常/None 均视为弃权；真实应答 True/False 计入赞成/反对
+                opinion = None if isinstance(r, BaseException) else r
+                if opinion is None:
+                    abstained.append(endpoint)
+                elif opinion:
+                    others_agree += 1
         total = len(self._peers()) + 1          # 含本节点
         majority = total // 2 + 1
         agreements = 1 + others_agree           # 本节点自身观测也算一票
@@ -379,3 +430,9 @@ class PeerHeartbeat:
             except (asyncio.CancelledError, Exception):  # noqa: BLE001
                 pass
         self._task = None
+        # 停止在途死亡确认后台任务：stop 后不应再触发 on_dead 接管回调
+        for t in list(self._confirm_tasks):
+            t.cancel()
+        if self._confirm_tasks:
+            await asyncio.gather(*list(self._confirm_tasks), return_exceptions=True)
+        self._confirm_inflight.clear()

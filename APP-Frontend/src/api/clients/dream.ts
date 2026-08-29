@@ -101,7 +101,7 @@ export const dreamApi = {
   async purgeSession(sessionId: string): Promise<DreamPurgeSessionResult> {
     try {
       return await request<DreamPurgeSessionResult>({
-        url: `/api/dream/session/${sessionId}`,
+        url: `/api/dream/session/${encodeURIComponent(sessionId)}`,
         method: 'delete',
       });
     } catch (err) {

@@ -67,7 +67,15 @@ class ACPGroupManager:
         return await self.acp_manager.delete_group(group_id)
 
     async def join_group(self, group_id: str, agent_id: str, agent_name: str) -> bool:
-        """将 Agent 加入指定群组，校验群组活跃状态与成员上限，成功时广播成员加入事件。"""
+        """将 Agent 加入指定群组，校验群组活跃状态与成员上限，成功时广播成员加入事件。
+
+        上限 TOCTOU 修复: 旧实现 get_group 校验（max_members）在锁外完成，
+        add_group_member 只追加不复检，N 个并发 join 可同时通过校验突破上限。
+        现改为：锁外仅做参数准备与快速路径预检（行为对齐旧实现），真正的
+        "活跃/上限/重复校验 + 追加"收敛到 manager.try_add_group_member 的
+        锁内原子段执行。
+        """
+        # ---- 锁外快速路径预检（读快照，行为对齐旧实现）----
         group = await self.acp_manager.get_group(group_id)
         if not group:
             return False
@@ -84,9 +92,12 @@ class ACPGroupManager:
                 logger.info(f"Agent已在群组中: {agent_id}")
                 return True
 
+        # ---- 锁外仅做参数准备，锁内完成校验+追加 ----
         member = ACPGroupMember(agent_id=agent_id, agent_name=agent_name, role="member")
 
-        success = await self.acp_manager.add_group_member(group_id, member.to_dict())
+        success = await self.acp_manager.try_add_group_member(
+            group_id, member.to_dict(), group.max_members
+        )
         if success:
             await self._broadcast_group_event(
                 group_id, "member_joined", {"agent_id": agent_id, "agent_name": agent_name}

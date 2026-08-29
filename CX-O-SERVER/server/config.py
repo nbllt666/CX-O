@@ -208,11 +208,17 @@ def get_env_config() -> Dict[str, Any]:
         if env_key.startswith(f"{ENV_PREFIX}EXECUTOR_") and path_parts:
             field = path_parts[-1]
             if field in ("asr_infer_workers", "spk_engine_workers", "spk_inflight_max",
-                         "tts_concurrency", "asr_recv_queue_maxsize"):
+                         "tts_concurrency", "asr_recv_queue_maxsize",
+                         "danmaku_concurrency", "interrupt_concurrency"):
                 try:
                     value = int(value)
                 except (TypeError, ValueError):
-                    value = value
+                    # A4 修复：坏环境变量不应让 Pydantic 启动崩溃，
+                    # 记日志后跳过该键并使用默认值（对齐 VISION/MEETING 分支模式）
+                    logger.warning(
+                        f"环境变量 {env_key}={value!r} 不是合法整数，忽略该键并使用默认值"
+                    )
+                    continue
             elif field == "tts_backpressure_mode":
                 value = str(value)
         current[path_parts[-1]] = value
@@ -494,6 +500,10 @@ class ACPConfig(BaseModel):
     enabled: bool = True
     agent_id: str = "cxo-agent-001"
     agent_name: str = "CX-O Agent"
+    # 开放协议入口（/acp/receive、/acp/send/group）的独立协议 token，
+    # 与 admin key 分离：缺省空 = 不校验（兼容既有外部 Agent 投递行为）；
+    # 配置后调用方须携带同值 X-ACP-Key 头，否则 403（渐进启用，第11轮）。
+    auth_token: str = ""
     discovery: ACPDiscoveryConfig = Field(default_factory=ACPDiscoveryConfig)
     connection: ACPConnectionConfig = Field(default_factory=ACPConnectionConfig)
     group: ACPGroupConfig = Field(default_factory=ACPGroupConfig)

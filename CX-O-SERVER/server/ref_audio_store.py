@@ -415,8 +415,14 @@ def set_for_agent(
     Returns:
         绑定后的 {asset_id, tts_voice} 字典。
     """
-    resolve(asset_id)  # 不存在/已删除抛 RefAudioNotFoundError
-    binding = _apply_binding(agent_id, asset_id, tts_voice=tts_voice, emit=True)
+    # 并发修复：resolve 校验（存在且未删除）移入 ``_LOCK`` 临界区内——
+    # 旧实现在锁外校验、经 _apply_binding 再取锁写入，与 delete（同锁
+    # 软删除）并发时存在 TOCTOU 窗口："校验通过 → delete 软删除 →
+    # 绑定照常写入"，产生"已删资产仍被 Agent 绑定"的悬挂绑定。
+    # _LOCK 为 RLock 可重入，锁内调用 resolve（内部再取锁）安全。
+    with _LOCK:
+        resolve(asset_id)  # 不存在/已删除抛 RefAudioNotFoundError
+        binding = _apply_binding(agent_id, asset_id, tts_voice=tts_voice, emit=True)
     logger.info(f"Agent {agent_id} 绑定参考音频资产: {asset_id}")
     return binding or {"asset_id": asset_id, "tts_voice": tts_voice}
 
@@ -964,12 +970,17 @@ def delete(asset_id: str) -> None:
     """删除资产（软删除，status=deleted）。若为当前默认资产，同时清除当前指针。
 
     被任一 Agent 绑定的资产拒绝删除（抛 AssetBoundError，提示先解绑）。
+
+    并发修复：绑定保护检查移入 ``_LOCK`` 临界区内——旧实现在锁外检查、锁内
+    删除，与 ``_apply_binding``（同锁写绑定表）并发时存在 TOCTOU 窗口：
+    "检查通过 → set_for_agent 绑定 → 删除照常执行"，产生"资产已删但仍被
+    Agent 绑定"的悬挂绑定。_LOCK 为 RLock 可重入，检查函数内部再取锁安全。
     """
-    if asset_used_by_any_agent(asset_id):
-        raise AssetBoundError(
-            f"资产 {asset_id} 被 Agent 绑定，请先解绑再删除"
-        )
     with _LOCK:
+        if asset_used_by_any_agent(asset_id):
+            raise AssetBoundError(
+                f"资产 {asset_id} 被 Agent 绑定，请先解绑再删除"
+            )
         records = _load_index()
         for rec in records:
             if rec.get("id") == asset_id:

@@ -25,9 +25,11 @@ import asyncio
 from typing import Any, Dict, List, Optional
 
 import httpx
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
 
+from server.api.routers._pagination import clamp_pagination
+from server.api.routers.admin import verify_admin_api_key
 from server.core.logging_config import get_contextual_logger
 from server.config import get_config
 
@@ -249,13 +251,19 @@ async def export_conversations(limit: int = 10):
 
     无会话时返回空列表（不 503，会话导出对 CX-O 核心无影响）。
     """
-    conversations = _build_conversations(limit=max(1, min(limit, 100)))
+    # T-07: 分页钳制统一走 _pagination.clamp_pagination（本端点口径 max_limit=100，无 offset）
+    limit, _ = clamp_pagination(limit, 0, max_limit=100)
+    conversations = _build_conversations(limit=limit)
     return {"status": "success", "conversations": conversations}
 
 
 @router.post("/v1/tuner/feedback")
-async def forward_feedback(request: Request, payload: FeedbackIn):
-    """转发 CX-O 内 feedback 到 CXO-Tuner。
+async def forward_feedback(
+    request: Request,
+    payload: FeedbackIn,
+    _: bool = Depends(verify_admin_api_key),
+):
+    """转发 CX-O 内 feedback 到 CXO-Tuner（写路径，补挂管理员鉴权）。
 
     evolution 未启用（enabled=False）或 Tuner 不可达时返回 503（不抛破坏主线程）。
     """
@@ -290,8 +298,12 @@ async def get_dataset_stats(request: Request):
 
 
 @router.post("/v1/tuner/train/trigger")
-async def trigger_train(request: Request, payload: TrainTriggerRequest):
-    """触发 LoRA 训练。Tuner 不可达时返回 503。"""
+async def trigger_train(
+    request: Request,
+    payload: TrainTriggerRequest,
+    _: bool = Depends(verify_admin_api_key),
+):
+    """触发 LoRA 训练（写路径，补挂管理员鉴权）。Tuner 不可达时返回 503。"""
     client = _get_tuner_client(request)
     result = await client.trigger_train(payload.model_dump(exclude_none=True))
     if result is None:
@@ -322,8 +334,12 @@ async def list_adapters(request: Request):
 
 
 @router.delete("/v1/tuner/adapters/{adapter_id}")
-async def delete_adapter(request: Request, adapter_id: str):
-    """删除指定适配器。Tuner 不可达时返回删失败（降级）。"""
+async def delete_adapter(
+    request: Request,
+    adapter_id: str,
+    _: bool = Depends(verify_admin_api_key),
+):
+    """删除指定适配器（写路径，补挂管理员鉴权）。Tuner 不可达时返回删失败（降级）。"""
     client = _get_tuner_client(request)
     try:
         result = await client.delete_adapter(adapter_id)

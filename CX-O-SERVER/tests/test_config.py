@@ -489,3 +489,51 @@ class TestConfigHotReload:
     def test_live_requires_restart_false(self):
         from server.config_hot_reload import REQUIRES_RESTART
         assert REQUIRES_RESTART.get("live", True) is False
+
+
+# --------------------------------------------------------------------------- #
+# ExecutorConfig —— 环境变量坏值回退（A4 修复：不再让 Pydantic 启动崩溃）
+# --------------------------------------------------------------------------- #
+class TestExecutorEnvConfig:
+    def test_bad_int_env_skipped_in_env_config(self, monkeypatch):
+        """EXECUTOR 节坏整型环境变量：get_env_config 阶段即跳过该键，不产出字符串值。
+
+        注：循环前置的 setdefault 会预留空 executor 节（VISION/MEETING 分支同模式），
+        断言核心是该键不带字符串坏值落入配置。
+        """
+        monkeypatch.setenv("CXO_EXECUTOR_TTS_CONCURRENCY", "abc")
+        out = get_env_config()
+        assert out.get("executor", {}) == {}
+        assert "tts_concurrency" not in out.get("executor", {})
+
+    def test_bad_int_env_falls_back_to_default(self, tmp_path, monkeypatch):
+        """坏整型环境变量下完整配置加载不崩溃，字段回退默认值 8。"""
+        cfg_path = tmp_path / "config.json"
+        cfg_path.write_text("{}", encoding="utf-8")
+        monkeypatch.setenv("CXO_CONFIG", str(cfg_path))
+        monkeypatch.setenv("CXO_EXECUTOR_TTS_CONCURRENCY", "abc")
+        Settings.reset()
+        c = get_config()
+        assert c.executor.tts_concurrency == 8
+
+    def test_danmaku_interrupt_concurrency_env_override(self, tmp_path, monkeypatch):
+        """danmaku_concurrency / interrupt_concurrency 两个转换清单字段可正常经 env 覆盖。"""
+        cfg_path = tmp_path / "config.json"
+        cfg_path.write_text("{}", encoding="utf-8")
+        monkeypatch.setenv("CXO_CONFIG", str(cfg_path))
+        monkeypatch.setenv("CXO_EXECUTOR_DANMAKU_CONCURRENCY", "3")
+        monkeypatch.setenv("CXO_EXECUTOR_INTERRUPT_CONCURRENCY", "5")
+        Settings.reset()
+        c = get_config()
+        assert c.executor.danmaku_concurrency == 3
+        assert c.executor.interrupt_concurrency == 5
+
+    def test_bad_danmaku_env_falls_back_to_default(self, tmp_path, monkeypatch):
+        """新增清单字段同样具备坏值回退能力。"""
+        cfg_path = tmp_path / "config.json"
+        cfg_path.write_text("{}", encoding="utf-8")
+        monkeypatch.setenv("CXO_CONFIG", str(cfg_path))
+        monkeypatch.setenv("CXO_EXECUTOR_DANMAKU_CONCURRENCY", "not-a-number")
+        Settings.reset()
+        c = get_config()
+        assert c.executor.danmaku_concurrency == 8

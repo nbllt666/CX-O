@@ -20,6 +20,7 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from server.api.routers import dream as dream_router
+from server.api.routers.admin import verify_admin_api_key
 from server.autonomy.dream.config import DreamConfig
 
 
@@ -123,9 +124,15 @@ def _reset_router_globals():
 
 @pytest.fixture
 def client():
-    """构造仅挂载 dream 路由的 FastAPI 测试客户端（/api 前缀）。"""
+    """构造仅挂载 dream 路由的 FastAPI 测试客户端（/api 前缀）。
+
+    写路径（trigger/confirm/reject/purge_session/purge/config PUT）已补挂
+    verify_admin_api_key：既有用例经 dependency_overrides 放行，403 场景由
+    TestDreamWriteAuthRequired 单独覆盖（读路径 status/list/config GET 保持开放）。
+    """
     app = FastAPI()
     app.include_router(dream_router.router, prefix="/api")
+    app.dependency_overrides[verify_admin_api_key] = lambda: True
     return TestClient(app)
 
 
@@ -354,9 +361,50 @@ class TestConfig:
 
     def test_put_config_enabled_true_starts_engine(self, client, monkeypatch, tmp_path, engine):
         _patch_config_io(monkeypatch, tmp_path)
-        engine.config.enabled = False
         dream_router.set_dream_engine(engine)
         r = client.put("/api/dream/config", json={"enabled": True})
         assert r.status_code == 200
         assert r.json()["enabled"] is True
         assert "start" in engine.calls
+
+
+# ================================================================ 写路径鉴权（鉴权漏挂簇修复补充用例）
+# verify_admin_api_key 校验失败统一抛 403（项目既有口径，对齐 test_stats_interrupt.py）；
+# 本组用例不挂 dependency_overrides，真实走到密钥校验依赖。
+class TestDreamWriteAuthRequired:
+    @staticmethod
+    def _raw_client() -> TestClient:
+        app = FastAPI()
+        app.include_router(dream_router.router, prefix="/api")
+        return TestClient(app, raise_server_exceptions=False)
+
+    def test_trigger_requires_auth(self):
+        r = self._raw_client().post("/api/dream/trigger")
+        assert r.status_code == 403
+
+    def test_confirm_requires_auth(self):
+        r = self._raw_client().post("/api/dream/1/confirm")
+        assert r.status_code == 403
+
+    def test_reject_requires_auth(self):
+        r = self._raw_client().post("/api/dream/1/reject", json={"reason": "x"})
+        assert r.status_code == 403
+
+    def test_purge_session_requires_auth(self):
+        r = self._raw_client().delete("/api/dream/session/sess_001")
+        assert r.status_code == 403
+
+    def test_purge_requires_auth(self):
+        r = self._raw_client().post("/api/dream/purge")
+        assert r.status_code == 403
+
+    def test_put_config_requires_auth(self):
+        r = self._raw_client().put("/api/dream/config", json={"enabled": True})
+        assert r.status_code == 403
+
+    def test_read_paths_stay_open(self):
+        # 读路径回归：status / list / config GET 不挂鉴权，无密钥仍 200
+        c = self._raw_client()
+        assert c.get("/api/dream/status").status_code == 200
+        assert c.get("/api/dream/list").status_code == 200
+        assert c.get("/api/dream/config").status_code == 200

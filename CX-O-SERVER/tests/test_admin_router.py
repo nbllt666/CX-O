@@ -39,6 +39,9 @@ class FakeSettings:
             vector=FakeSection(enabled=True),
             acp=FakeSection(enabled=True, agent_name="alice"),
             system=FakeSection(debug=False),
+            # run_io → get_io_executor 会读 config.executor.io_pool_size
+            #（模块级单例惰性构造，全量/定向执行时序不同，替身必须完整）
+            executor=FakeSection(io_pool_size=2),
         )
         self.saved = False
 

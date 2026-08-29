@@ -198,7 +198,14 @@ class SessionStore:
             row = cursor.fetchone()
 
             if row:
-                self._update_last_accessed(session_id)
+                # 写放大修复: 命中即更新 last_accessed_at。原实现调 _update_last_accessed
+                # 另开一个完整连接周期 UPDATE+commit，每读一次多一次连接开销；
+                # 现内联到当前连接同事务提交，读路径收敛为单连接周期。
+                cursor.execute(
+                    "UPDATE sessions SET last_accessed_at = ? WHERE id = ?",
+                    (datetime.now().isoformat(), session_id),
+                )
+                conn.commit()
                 return self._row_to_session(row)
             return None
 
@@ -549,16 +556,6 @@ class SessionStore:
                 total_messages=total_messages,
                 avg_messages_per_session=round(avg_messages, 2),
             )
-
-    def _update_last_accessed(self, session_id: str):
-        """更新最后访问时间"""
-        with self._get_connection() as conn:
-            cursor = conn.cursor()
-            cursor.execute(
-                "UPDATE sessions SET last_accessed_at = ? WHERE id = ?",
-                (datetime.now().isoformat(), session_id),
-            )
-            conn.commit()
 
     def _row_to_session(self, row) -> Session:
         """将数据库行转换为 Session 对象。

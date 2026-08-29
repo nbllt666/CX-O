@@ -36,6 +36,7 @@ import base64
 import inspect
 import io
 import logging
+import struct
 import time
 import wave
 from dataclasses import dataclass, field
@@ -115,8 +116,12 @@ def _trim_tail_silence(pcm: bytes, sample_rate: int) -> bytes:
     用途：消除 TTS 合成音频（CosyVoice3 等）尾部 ~100ms 静音，改善整段播放
     结尾停顿感。仅对流式 final 块末尾裁剪，不改变 chunk 顺序与契约。
 
-    实现：从尾部回溯，跳过幅度低于 ``峰值 * _SILENCE_RATIO_THRESHOLD`` 的采样，
-    但至少保留 ``_TRIM_MIN_RETAIN_S`` 时长（保护真实弱语音尾音）。
+    实现：struct.unpack 一次性解出全部 16bit 小端样本（向量化，替代旧实现的
+    逐样本 int.from_bytes 双遍扫描），峰值计算 max(map(abs, ...)) 走 C 级迭代；
+    尾部静音回溯基于解出的样本数组，行为与旧实现逐字节等价：
+    - 奇数字节输入：尾字节截断（仅读取前 n*2 字节）；
+    - 全静音块（峰值==0）：原样返回；
+    - 至少保留 ``_TRIM_MIN_RETAIN_S`` 时长（保护真实弱语音尾音）。
 
     Args:
         pcm: 裸 PCM int16 字节（小端）。
@@ -131,13 +136,12 @@ def _trim_tail_silence(pcm: bytes, sample_rate: int) -> bytes:
     if n == 0:
         return pcm
 
-    # 相对峰值（避免低音量音频误删真实语音）
-    peak = 0
-    for i in range(n):
-        v = int.from_bytes(pcm[i * step : i * step + step], "little", signed=True)
-        a = -v if v < 0 else v
-        if a > peak:
-            peak = a
+    # 一次性解出全部样本（"<{n}h"：n 个 16bit 小端有符号短整型）。
+    # 奇数字节输入仅消费前 n*step 字节，与旧实现逐样本读取范围一致。
+    samples = struct.unpack(f"<{n}h", pcm[: n * step])
+
+    # 相对峰值（避免低音量音频误删真实语音）：max+map(abs) 为 C 级迭代
+    peak = max(map(abs, samples))
     if peak == 0:
         return pcm  # 全静音块，原样返回（不裁剪，交由上层语义处理）
 
@@ -147,9 +151,7 @@ def _trim_tail_silence(pcm: bytes, sample_rate: int) -> bytes:
     keep = n
     stop = max(n - min_retain, 0)
     for i in range(n - 1, stop - 1, -1):
-        v = int.from_bytes(pcm[i * step : i * step + step], "little", signed=True)
-        a = -v if v < 0 else v
-        if a > thr:
+        if abs(samples[i]) > thr:
             keep = i + 1
             break
     else:

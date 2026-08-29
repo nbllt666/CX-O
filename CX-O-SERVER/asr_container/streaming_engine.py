@@ -113,7 +113,10 @@ PROFILES_PATH = "/app/data/voiceprint/speaker_profiles.json"
 _ASR: Optional[AutoModel] = None
 _VAD: Optional[AutoModel] = None
 _SPK: Optional[AutoModel] = None
-_load_lock = threading.Lock()
+# 三模型懒加载互斥锁：防止并发调用 _load_models 重复加载（首次 WS 连接触发的
+# 加载耗时数十秒，多连接同时首连会并发进入）。加载本身保持同步，由调用方放入
+# to_thread / run_in_executor 执行，不阻塞事件循环。
+_MODELS_LOAD_LOCK = threading.Lock()
 _loaded = False
 
 def _engine_workers() -> int:
@@ -158,11 +161,16 @@ class _EngineUnavailable(Exception):
 
 
 def _load_models() -> None:
-    """懒加载三个模型实例（线程安全，幂等）。加载失败置 None 降级，不抛出。"""
+    """懒加载三个模型实例（线程安全，幂等）。加载失败置 None 降级，不抛出。
+
+    持模块级 ``_MODELS_LOAD_LOCK`` 双重检查：首个进入者执行同步加载（调用方应
+    将本函数置于 to_thread / run_in_executor，避免阻塞事件循环），其余线程在锁上
+    等待或经 ``_loaded`` 快速返回。
+    """
     global _ASR, _VAD, _SPK, _loaded
     if _loaded:
         return
-    with _load_lock:
+    with _MODELS_LOAD_LOCK:
         if _loaded:
             return
 
@@ -193,9 +201,27 @@ def _load_models() -> None:
                 logger.error(f"[ENGINE] SPK 模型加载失败，已降级禁用: {e}")
 
 
+def preload_streaming_models() -> None:
+    """启动期预载入口：供 api_server startup 经 asyncio.to_thread 调用。
+
+    背景：三个 FunASR AutoModel 串行同步加载数十秒，若由首次 WS 连接触发懒加载
+    会阻塞容器事件循环。预载把该开销移到服务启动期（startup 在 to_thread 中执行，
+    不阻塞事件循环）。内部经 _load_models 持 _MODELS_LOAD_LOCK 幂等执行——启动后
+    首次 WS 连接的懒加载调用变为零开销快速返回；加载失败仍按降级语义置 None，
+    不抛出。
+    """
+    _load_models()
+
+
 # --------------------------------------------------------------------------- #
 # 对外状态查询与工具函数
 # --------------------------------------------------------------------------- #
+# 懒加载触发说明（状态查询路径，行为影响最小方案）：asr_loaded/spk_loaded/
+# status_dict/extract_embedding/StreamSession.__init__ 中的同步 _load_models()
+# 调用保持不变——api_server startup 已预载（经 to_thread），此后这些调用均为
+# _loaded=True 的零开销快速返回（无锁直返）；预载完成前 FastAPI 尚未开始接收
+# 连接，故不存在事件循环阻塞窗口。仅 finish()（可能在预载完成前被首连触发）改为
+# 经 to_thread 触发加载。
 def asr_loaded() -> bool:
     """ASR 模型是否可用（流式识别的硬依赖）。"""
     _load_models()
@@ -642,8 +668,13 @@ class StreamSession:
         """客户端发 final 时：对当前句剩余尾段做整句 final 识别 + 说话人判定，随后重置。
 
         ``full_audio_slice`` 若传入则用它作为识别切片（否则用自 [_cur_start:] 的尾段）。
+
+        懒加载触发改造（行为影响最小方案）：保留"未加载则触发加载"语义，但经
+        ``asyncio.to_thread`` 执行——同步 ``_load_models()`` 在首次连接时会阻塞
+        事件循环数十秒；移入线程后 finish 仍等待模型就绪（外部行为不变），仅不再
+        卡住循环。启动期已由 api_server startup 预载，正常路径此调用为零开销。
         """
-        _load_models()
+        await asyncio.to_thread(_load_models)
         tail = (
             full_audio_slice
             if full_audio_slice is not None

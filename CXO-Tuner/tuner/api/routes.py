@@ -4,11 +4,11 @@
   - GET    /api/v1/health
   - POST   /api/v1/feedback
   - GET    /api/v1/dataset/stats
-  - POST   /api/v1/train/trigger   （骨架占位）
-  - GET    /api/v1/train/status    （骨架占位）
+  - POST   /api/v1/train/trigger   （参数校验后创建 TrainJob 并后台线程启动 QLoRA 训练）
+  - GET    /api/v1/train/status    （查询训练任务进度与状态）
   - GET    /api/v1/adapters
   - DELETE /api/v1/adapters/{id}
-  - POST   /api/v1/adapters/{id}/apply（骨架占位）
+  - POST   /api/v1/adapters/{id}/apply（委托 AdapterStore.apply 应用适配器，未找到返回 404）
   - POST   /api/v1/judge/build（历史对话→DPO 自动构建）
 """
 from __future__ import annotations

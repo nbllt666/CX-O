@@ -414,6 +414,12 @@ export function startRuntimeLoop(
   runtime: VRMRuntimeState,
   onFrame?: (dt: number) => void,
 ): void {
+  // 幂等守卫：重入时先取消旧 RAF 循环再启动，避免双循环并行
+  //（destroy 只取消最后一条 animationFrameId，旧循环会泄漏并持续渲染）
+  if (runtime.animationFrameId !== 0) {
+    cancelAnimationFrame(runtime.animationFrameId);
+    runtime.animationFrameId = 0;
+  }
   const clock = new THREE.Timer();
   let frameCount = 0;
 

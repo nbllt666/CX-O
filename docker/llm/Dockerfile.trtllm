@@ -21,8 +21,11 @@ HEALTHCHECK --interval=30s --timeout=10s --start-period=120s --retries=5 \
     CMD curl -f http://localhost:8080/health || exit 1
 
 # Use trtllm-serve for OpenAI-compatible API
-CMD ["sh", "-c", "trtllm-serve ${ENGINE_PATH} \
-    --host ${HOST} \
-    --port ${PORT} \
-    --max-batch-size ${MAX_BATCH_SIZE} \
-    --max-num-tokens ${MAX_NUM_TOKENS}"]
+# 2026-08-29 对齐 tritonserver:24.12 旧版 CLI：
+#   - 旧版需 serve 子命令，模型路径用 --model_dir，监听地址用 --host_ip
+#     （新版为位置参数 + --host，勿混用）；
+#   - 旧版无 --max-batch-size / --max-num-tokens 连字符参数，已删除；如需限流请按
+#     镜像内 trtllm-serve --help 的实际参数名自行补充。
+CMD ["sh", "-c", "trtllm-serve serve --model_dir ${ENGINE_PATH} \
+    --host_ip ${HOST} \
+    --port ${PORT}"]

@@ -98,6 +98,11 @@ class FakeContextMgr:
     def add_message(self, **kw):
         self.messages.append(kw)
 
+    async def add_message_async(self, **kw):
+        # 伴生C3 适配：chat.py 已改走 add_message_async（core 管理器的
+        # run_io 包裹变体），fake 保持同签名同步落内存
+        self.add_message(**kw)
+
     def get_message_count(self, sid):
         return len(self.messages)
 

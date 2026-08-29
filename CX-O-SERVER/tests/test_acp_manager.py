@@ -2,12 +2,12 @@
 
 用 tmp data_dir 隔离 YAML 持久化，monkeypatch 外部交付/存储实例隔离副作用，覆盖：
 模型 to_dict 映射、初始化、Agent/连接/群组 CRUD、消息路由（群组/外部 HTTP/本地）、
-统计、端口更新、per-agent 资源清理（Weaviate collection + SQLite graph）、
-Weaviate store 与 graph database 懒创建。
+统计、端口更新、per-agent 资源清理（per-agent SQLite graph 文件）。
 
 运行：python -m pytest tests/test_acp_manager.py -v
 """
 from datetime import datetime
+from pathlib import Path
 
 import pytest
 
@@ -479,80 +479,23 @@ class TestAgentPort:
 class TestResources:
     @pytest.mark.asyncio
     async def test_cleanup_default_skips(self, tmp_path):
+        # default 走共享资源跳过分支：不清理共享 collection/文件，直接返回 True
         mgr = _make(tmp_path)
-        mgr._agent_weaviate_stores["default"] = object()
-        mgr._agent_graph_dbs["default"] = object()
         assert await mgr.cleanup_agent_resources("default") is True
-        assert "default" not in mgr._agent_weaviate_stores
-        assert "default" not in mgr._agent_graph_dbs
-
-    def test_get_weaviate_store_cache(self, tmp_path, monkeypatch):
-        mgr = _make(tmp_path)
-        fake = object()
-        monkeypatch.setattr(mgr, "_create_weaviate_store", lambda schema: fake)
-        s1 = mgr.get_agent_weaviate_store("a1")
-        s2 = mgr.get_agent_weaviate_store("a1")
-        assert s1 is fake
-        assert s2 is fake
-        assert "a1" in mgr._agent_weaviate_stores
-
-    def test_get_weaviate_store_fallback_none(self, tmp_path, monkeypatch):
-        mgr = _make(tmp_path)
-        monkeypatch.setattr(mgr, "_create_weaviate_store", lambda schema: None)
-        assert mgr.get_agent_weaviate_store("a1") is None
-
-    def test_get_weaviate_store_exception_none(self, tmp_path, monkeypatch):
-        mgr = _make(tmp_path)
-        def boom(schema):
-            raise RuntimeError("no weaviate")
-        monkeypatch.setattr(mgr, "_create_weaviate_store", boom)
-        assert mgr.get_agent_weaviate_store("a1") is None
-
-    def test_get_graph_database_cache(self, tmp_path, monkeypatch):
-        mgr = _make(tmp_path)
-        class FakeDB:
-            def initialize(self):
-                pass
-        fake_db = FakeDB()
-        monkeypatch.setattr(mgr, "_agent_graph_dbs", {})
-        # 注入 fake 数据库类
-        import server.core.graph.database as gdb
-        import server.core.graph.config as gcfg
-        monkeypatch.setattr(gcfg, "GraphConfig", lambda **kw: kw)
-        monkeypatch.setattr(gdb, "Database", lambda config: fake_db)
-        db1 = mgr.get_agent_graph_database("a1")
-        db2 = mgr.get_agent_graph_database("a1")
-        assert db1 is fake_db
-        assert db2 is fake_db
-        assert "a1" in mgr._agent_graph_dbs
-
-    def test_get_graph_database_import_fail_none(self, tmp_path, monkeypatch):
-        mgr = _make(tmp_path)
-        import server.core.graph.config as gcfg
-        import server.core.graph.database as gdb
-        monkeypatch.setattr(gcfg, "GraphConfig", lambda **kw: kw)
-        def boom(config):
-            raise RuntimeError("db fail")
-        monkeypatch.setattr(gdb, "Database", boom)
-        assert mgr.get_agent_graph_database("a1") is None
 
     @pytest.mark.asyncio
-    async def test_close_all_agent_resources(self, tmp_path):
+    async def test_cleanup_removes_graph_files(self, tmp_path):
+        # 非 default agent：清理 per-agent graph 文件及 -wal/-shm 侧车（前缀重定向到 tmp 隔离）
         mgr = _make(tmp_path)
-        closed = []
-        class FakeStore:
-            _client = object()
-            def close(self):
-                closed.append("store")
-        class FakeDB:
-            def close(self):
-                closed.append("db")
-        mgr._agent_weaviate_stores["a1"] = FakeStore()
-        mgr._agent_graph_dbs["a1"] = FakeDB()
-        await mgr._close_all_agent_resources()
-        assert closed == ["store", "db"]
-        assert mgr._agent_weaviate_stores == {}
-        assert mgr._agent_graph_dbs == {}
+        mgr.PER_AGENT_GRAPH_PREFIX = str(tmp_path / "graph_")
+        graph_path = Path(f"{mgr.PER_AGENT_GRAPH_PREFIX}a1.db")
+        graph_path.write_bytes(b"x")
+        Path(f"{graph_path}-wal").write_bytes(b"w")
+        Path(f"{graph_path}-shm").write_bytes(b"s")
+        assert await mgr.cleanup_agent_resources("a1") is True
+        assert not graph_path.exists()
+        assert not Path(f"{graph_path}-wal").exists()
+        assert not Path(f"{graph_path}-shm").exists()
 
 
 # ================================================================ 持久化

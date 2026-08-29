@@ -163,3 +163,76 @@ async def test_event_broadcast_on_join(tmp_path):
     msgs = await gm.get_group_messages(g.id)
     # join 触发 control 事件消息（to_dict 映射 msg_type -> type）
     assert any(m["type"] == "control" for m in msgs)
+
+
+# ================================================================ 并发 join 上限（第十轮 TOCTOU 修复）
+class TestConcurrentJoinMaxMembers:
+    @pytest.mark.asyncio
+    async def test_concurrent_join_respects_max_members(self, tmp_path):
+        """N 个并发 join 对 max_members=2：最终成员数 ≤ 2（锁内复检兜底）。"""
+        import asyncio
+
+        mgr, gm = await _make(tmp_path)
+        g = await gm.create_group("群A", max_members=2)  # 群主 + 1 个空位
+
+        results = await asyncio.gather(
+            *[gm.join_group(g.id, f"a{i}", f"成员{i}") for i in range(8)]
+        )
+
+        group = await mgr.get_group(g.id)
+        # 核心断言：无论锁外预检还是锁内复检拦截，成员数绝不超过上限
+        assert len(group.members) <= 2
+        # 返回 True 的 join 数与实际新增成员数一致
+        assert sum(1 for r in results if r) == len(group.members) - 1
+        # 所有成功加入者确实在成员列表中
+        joined = {f"a{i}" for i, r in enumerate(results) if r}
+        in_group = {m["agent_id"] for m in group.members}
+        assert joined <= in_group
+
+    @pytest.mark.asyncio
+    async def test_try_add_group_member_lock_recheck(self, tmp_path):
+        """绕过 join_group 锁外预检、直接并发调用 try_add_group_member：
+        锁内"活跃/上限/重复"复检保证幂等与上限不可突破。"""
+        import asyncio
+
+        mgr, gm = await _make(tmp_path)
+        g = await gm.create_group("群B", max_members=3)  # 群主 + 2 个空位
+
+        # 场景1：同一成员并发 join 5 次（幂等）——仅追加一次
+        member = {"agent_id": "x1", "agent_name": "X1", "role": "member"}
+        results = await asyncio.gather(
+            *[mgr.try_add_group_member(g.id, dict(member), 3) for _ in range(5)]
+        )
+        assert all(results)  # 幂等语义：全部 True
+        group = await mgr.get_group(g.id)
+        assert len(group.members) == 2  # 群主 + 仅一个 x1
+
+        # 场景2：6 个不同成员并发争抢最后 1 个空位——最多再进 1 人
+        others = [
+            {"agent_id": f"y{i}", "agent_name": f"Y{i}", "role": "member"}
+            for i in range(6)
+        ]
+        results2 = await asyncio.gather(
+            *[mgr.try_add_group_member(g.id, m, 3) for m in others]
+        )
+        group = await mgr.get_group(g.id)
+        assert len(group.members) <= 3
+        assert sum(1 for r in results2 if r) == len(group.members) - 2
+        # 被拒绝者确实不在组内
+        admitted = {m["agent_id"] for i, m in enumerate(others) if results2[i]}
+        in_group = {m["agent_id"] for m in group.members}
+        assert admitted <= in_group
+
+    @pytest.mark.asyncio
+    async def test_try_add_group_member_rejects_inactive_or_missing(self, tmp_path):
+        """锁内复检同样拦截组不存在 / 组不活跃（与 join_group 对外行为一致）。"""
+        mgr, gm = await _make(tmp_path)
+        member = {"agent_id": "z1", "agent_name": "Z1", "role": "member"}
+
+        # 组不存在
+        assert await mgr.try_add_group_member("ghost", dict(member), 50) is False
+
+        # 组不活跃
+        g = await gm.create_group("群C", max_members=5)
+        await mgr.update_group(g.id, is_active=False)
+        assert await mgr.try_add_group_member(g.id, dict(member), 5) is False

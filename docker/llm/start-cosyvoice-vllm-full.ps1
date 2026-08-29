@@ -28,6 +28,7 @@ $runArgs = @(
     "-e", "CUDA_VISIBLE_DEVICES=1",
     "-p", "${PORT}:${PORT}",
     "--shm-size=4g",
+    "--restart", "unless-stopped",
     $IMAGE,
     "python", "/workspace/server.py",
     "--host", "0.0.0.0",

@@ -16,6 +16,7 @@ from fastapi.testclient import TestClient
 
 from server.dependencies import ServiceState, set_service_state
 from server.api.routers import context as context_router_mod
+from server.core.utils import run_io
 
 
 class SimpleBox:
@@ -74,6 +75,35 @@ class FakeContextManager:
 
     def get_statistics(self, workspace_id="default"):
         return {"session_count": len(self.sessions)}
+
+    # ------------------------------------------------------------------
+    # 异步变体：对齐真 ContextManager 的 *_async 委托语义（run_io 移入
+    # IO 线程池后调同步实现），供路由层 async 热路径调用。
+    # ------------------------------------------------------------------
+
+    async def create_session_async(self, *args, **kwargs):
+        return await run_io(self.create_session, *args, **kwargs)
+
+    async def get_session_async(self, *args, **kwargs):
+        return await run_io(self.get_session, *args, **kwargs)
+
+    async def get_sessions_async(self, *args, **kwargs):
+        return await run_io(self.get_sessions, *args, **kwargs)
+
+    async def update_session_async(self, *args, **kwargs):
+        return await run_io(self.update_session, *args, **kwargs)
+
+    async def add_message_async(self, *args, **kwargs):
+        return await run_io(self.add_message, *args, **kwargs)
+
+    async def get_messages_async(self, *args, **kwargs):
+        return await run_io(self.get_messages, *args, **kwargs)
+
+    async def get_recent_messages_async(self, *args, **kwargs):
+        return await run_io(self.get_recent_messages, *args, **kwargs)
+
+    async def get_statistics_async(self, *args, **kwargs):
+        return await run_io(self.get_statistics, *args, **kwargs)
 
 
 class FakeSummarizer:
@@ -221,3 +251,35 @@ class TestStats:
         r = c.get("/context/stats")
         assert r.status_code == 200
         assert r.json()["statistics"]["session_count"] == 1
+
+
+class TestAsyncParity:
+    """异步化后响应结构回归：路由切到 *_async / run_io 后端点返回体必须保持原结构。"""
+
+    def test_sessions_list_structure_unchanged(self, client):
+        """GET /context/sessions 走 get_sessions_async 后结构与同步时代一致。"""
+        c, _, _ = client
+        r = c.get("/context/sessions")
+        assert r.status_code == 200
+        body = r.json()
+        assert set(body.keys()) == {"status", "sessions", "total"}
+        assert body["status"] == "success"
+        assert body["total"] == len(body["sessions"]) == 1
+        # 会话元素字段契约不变
+        assert set(body["sessions"][0].keys()) == {
+            "session_id", "workspace_id", "title", "active"
+        }
+
+    def test_add_message_structure_unchanged(self, client):
+        """POST /context/messages 走 add_message_async 后返回体结构不变。"""
+        c, _, _ = client
+        r = c.post(
+            "/context/messages",
+            json={"session_id": "s1", "role": "user", "content": "hi"},
+        )
+        assert r.status_code == 200
+        body = r.json()
+        assert set(body.keys()) == {"status", "message_id", "message"}
+        assert body["status"] == "success"
+        assert body["message_id"] == "m_new"
+        assert body["message"] == "消息添加成功"

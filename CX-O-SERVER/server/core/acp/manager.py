@@ -4,7 +4,7 @@ import json
 import os
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Dict, List, Optional
 
 from pydantic import BaseModel, Field, model_validator
 
@@ -155,8 +155,6 @@ class ACPManager:
         _local_agent_id: 本地 Agent ID
         _local_agent_name: 本地 Agent 名称
         _local_http_port: 本地 HTTP 端口（供 BEACON 暴露给其他节点）
-        _agent_weaviate_stores: per-agent Weaviate store 缓存
-        _agent_graph_dbs: per-agent SQLite graph database 缓存
     """
 
     # v3.1.0 per-agent 隔离常量
@@ -205,9 +203,7 @@ class ACPManager:
         # v3.1.0: 本地 HTTP 端口（供 BEACON 暴露给其他节点，由 start() 从 settings 注入）
         self._local_http_port: int = 8001
 
-        # v3.1.0: per-agent 资源隔离缓存（懒创建/懒加载）
-        self._agent_weaviate_stores: Dict[str, Any] = {}
-        self._agent_graph_dbs: Dict[str, Any] = {}
+        # per-agent 资源文件清理互斥锁（cleanup_agent_resources 使用）
         self._resource_lock = asyncio.Lock()
 
         self._load_data()
@@ -294,9 +290,6 @@ class ACPManager:
             logger.info("ACP Discovery服务已停止")
 
         await self._save_data()
-
-        # v3.1.0: 关闭所有 per-agent 存储实例
-        await self._close_all_agent_resources()
 
         logger.info("ACP管理器已停止")
 
@@ -695,6 +688,41 @@ class ACPManager:
                 await self._save_data()
                 return True
             return False
+
+    async def try_add_group_member(self, group_id: str, member: dict, max_members: int) -> bool:
+        """锁内原子化"校验 + 追加"成员（join_group 上限 TOCTOU 修复）。
+
+        join_group 旧路径在锁外 get_group 校验 max_members 后再调
+        add_group_member（仅追加不复检），并发 join 可绕过成员上限。
+        本方法在 ``self._lock`` 内一次完成：取组 → 校验活跃状态/成员上限/
+        重复 → 追加 → 持久化，校验与追加之间无锁间隙。
+
+        返回语义（对齐 join_group 旧行为）：
+        - 组不存在 / 组不活跃 / 已达上限 → False；
+        - 成员已在组内（幂等加入）→ True，不重复追加；
+        - 新增成功 → True。
+        """
+        async with self._lock:
+            if group_id not in self.groups:
+                return False
+
+            group = self.groups[group_id]
+
+            if not group.is_active:
+                return False
+
+            if len(group.members) >= max_members:
+                return False
+
+            for existing in group.members:
+                if existing.get("agent_id") == member.get("agent_id"):
+                    # 幂等：已在组内视为成功，不重复追加
+                    return True
+
+            group.members.append(member)
+            group.updated_at = datetime.now().isoformat()
+            await self._save_data()
+            return True
 
     async def remove_group_member(self, group_id: str, agent_id: str) -> bool:
         """从群组移除指定 agent 成员并持久化，群组不存在时返回 False。"""
@@ -1155,9 +1183,6 @@ class ACPManager:
                 "local_agent_id": self._local_agent_id,
                 "local_agent_name": self._local_agent_name,
                 "local_http_port": self._local_http_port,
-                # v3.1.0: per-agent 资源隔离统计
-                "per_agent_weaviate_stores": len(self._agent_weaviate_stores),
-                "per_agent_graph_dbs": len(self._agent_graph_dbs),
             }
 
     # ==================== v3.1.0 per-agent 资源隔离 ====================
@@ -1192,15 +1217,17 @@ class ACPManager:
         return True
 
     async def cleanup_agent_resources(self, agent_id: str) -> bool:
-        """v3.1.0: 清理 agent 资源（Weaviate collection + SQLite graph 文件）
+        """v3.1.0: 清理 agent 资源（per-agent SQLite graph 文件）
 
         删除 agent 时自动调用，清理对应的 per-agent 资源：
-        - per-agent Weaviate collection（CXHMSMemory_{agent_id}）
-        - per-agent SQLite graph 文件（data/graph_{agent_id}.db）
-        - 关闭并移除缓存的存储实例
+        - per-agent SQLite graph 文件（data/graph_{agent_id}.db）及 -wal/-shm 侧车文件
+
+        说明：原 per-agent Weaviate collection / graph database 缓存实例清理段
+        （_agent_weaviate_stores / _agent_graph_dbs）随懒创建缓存一并移除——
+        生产代码从不填充该缓存，属空转清理。
 
         向后兼容：agent_id="default" 不清理共享资源（CXOMemory / data/graph.db），
-        仅移除缓存引用（若有），返回 True。
+        直接返回 True。
 
         Args:
             agent_id: Agent ID
@@ -1212,47 +1239,12 @@ class ACPManager:
             logger.info(
                 "跳过 default agent 资源清理（共享资源 CXOMemory/graph.db，向后兼容）"
             )
-            async with self._resource_lock:
-                # default 仅移除缓存引用，不删除共享 collection/文件
-                self._agent_weaviate_stores.pop(agent_id, None)
-                self._agent_graph_dbs.pop(agent_id, None)
             return True
 
         cleaned: List[str] = []
 
         async with self._resource_lock:
-            # 1. 清理 per-agent Weaviate collection
-            store = self._agent_weaviate_stores.pop(agent_id, None)
-            if store is not None:
-                collection_name = f"{self.PER_AGENT_WEAVIATE_PREFIX}{agent_id}"
-                try:
-                    if getattr(store, "_client", None):
-                        try:
-                            if store._client.collections.exists(collection_name):
-                                store._client.collections.delete(collection_name)
-                                logger.info(f"已删除 Weaviate collection: {collection_name}")
-                                cleaned.append(f"weaviate_collection:{collection_name}")
-                        except Exception as e:
-                            logger.warning(
-                                f"删除 Weaviate collection {collection_name} 失败: {e}"
-                            )
-                    try:
-                        store.close()
-                    except Exception as e:
-                        logger.debug(f"关闭 Weaviate store 连接: {e}")
-                except Exception as e:
-                    logger.warning(f"清理 Weaviate store 失败: {e}")
-
-            # 2. 清理 per-agent SQLite graph
-            db = self._agent_graph_dbs.pop(agent_id, None)
-            if db is not None:
-                try:
-                    db.close()
-                    cleaned.append("graph_db_connection")
-                except Exception as e:
-                    logger.warning(f"关闭 graph database 失败: {e}")
-
-            # 3. 删除 per-agent SQLite 文件
+            # 删除 per-agent SQLite 文件
             graph_path = Path(f"{self.PER_AGENT_GRAPH_PREFIX}{agent_id}.db")
             if graph_path.exists():
                 try:
@@ -1262,7 +1254,7 @@ class ACPManager:
                 except Exception as e:
                     logger.warning(f"删除 SQLite 文件 {graph_path} 失败: {e}")
 
-            # 4. 清理可能的 -wal/-shm 侧车文件
+            # 清理可能的 -wal/-shm 侧车文件
             for suffix in ("-wal", "-shm"):
                 sidecar = Path(f"{self.PER_AGENT_GRAPH_PREFIX}{agent_id}.db{suffix}")
                 if sidecar.exists():
@@ -1273,165 +1265,3 @@ class ACPManager:
 
         logger.info(f"Agent {agent_id} 资源清理完成: {cleaned}")
         return True
-
-    def get_agent_weaviate_store(self, agent_id: str):
-        """v3.1.0: 获取 agent 专属 Weaviate store（懒创建）
-
-        - agent_id="default": 返回共享 CXOMemory store（向后兼容）
-        - 其他: 返回 per-agent CXHMSMemory_{agent_id} store（懒创建）
-
-        首次访问时创建并缓存，后续直接返回缓存实例。
-        若 Weaviate 不可用，返回 None（不抛异常）。
-
-        Args:
-            agent_id: Agent ID
-
-        Returns:
-            WeaviateVectorStore or None: per-agent store 实例，Weaviate 不可用时返回 None
-        """
-        if agent_id in self._agent_weaviate_stores:
-            return self._agent_weaviate_stores[agent_id]
-
-        if agent_id == self.DEFAULT_AGENT_ID:
-            schema_class = self.DEFAULT_WEAVIATE_COLLECTION
-        else:
-            schema_class = f"{self.PER_AGENT_WEAVIATE_PREFIX}{agent_id}"
-
-        try:
-            store = self._create_weaviate_store(schema_class)
-            if store is None:
-                return None
-            self._agent_weaviate_stores[agent_id] = store
-            logger.info(
-                f"v3.1.0 懒创建 Weaviate store: agent={agent_id}, collection={schema_class}"
-            )
-            return store
-        except Exception as e:
-            logger.error(f"创建 Weaviate store 失败: agent={agent_id}, error={e}")
-            return None
-
-    def _create_weaviate_store(self, schema_class: str):
-        """创建 WeaviateVectorStore 实例，从 CX-O config 读取配置
-
-        适配 CX-O: 从 settings.config.memory.weaviate 读取 host/port/grpc_port/
-        embedded/vector_size/api_key；config 读取失败时用 WeaviateVectorStore 默认值。
-
-        Args:
-            schema_class: Weaviate collection 名
-
-        Returns:
-            WeaviateVectorStore or None
-        """
-        try:
-            from server.core.memory.weaviate_store import WeaviateVectorStore
-        except Exception as e:
-            logger.error(f"导入 WeaviateVectorStore 失败: {e}")
-            return None
-
-        # 默认值（与 WeaviateConfig 默认一致）
-        host = "localhost"
-        port = 8080
-        grpc_port = 50051
-        embedded = False
-        vector_size = 768
-        api_key = None
-
-        try:
-            from server.config import get_settings
-
-            settings = get_settings()
-            w = settings.config.memory.weaviate
-            host = getattr(w, "host", host)
-            port = getattr(w, "port", port)
-            grpc_port = getattr(w, "grpc_port", grpc_port)
-            embedded = getattr(w, "embedded", embedded)
-            vector_size = getattr(w, "vector_size", vector_size)
-            api_key = getattr(w, "api_key", api_key)
-        except Exception as e:
-            logger.warning(f"读取 Weaviate config 失败,用默认值: {e}")
-
-        try:
-            return WeaviateVectorStore(
-                host=host,
-                port=port,
-                grpc_port=grpc_port,
-                embedded=embedded,
-                vector_size=vector_size,
-                schema_class=schema_class,
-                api_key=api_key,
-            )
-        except Exception as e:
-            logger.error(f"实例化 WeaviateVectorStore 失败 (schema={schema_class}): {e}")
-            return None
-
-    def get_agent_graph_database(self, agent_id: str):
-        """v3.1.0: 获取 agent 专属 graph database（懒加载）
-
-        - agent_id="default": 返回共享 data/graph.db（向后兼容）
-        - 其他: 返回 per-agent data/graph_{agent_id}.db（懒加载）
-
-        首次访问时创建并初始化表结构，后续直接返回缓存实例。
-        直接实例化 Database（不通过 get_database 单例），避免与主系统共享实例冲突。
-
-        Args:
-            agent_id: Agent ID
-
-        Returns:
-            Database or None: per-agent graph database 实例，创建失败时返回 None
-        """
-        if agent_id in self._agent_graph_dbs:
-            return self._agent_graph_dbs[agent_id]
-
-        if agent_id == self.DEFAULT_AGENT_ID:
-            db_path = self.DEFAULT_GRAPH_DB
-        else:
-            db_path = f"{self.PER_AGENT_GRAPH_PREFIX}{agent_id}.db"
-
-        try:
-            from server.core.graph.config import GraphConfig
-            from server.core.graph.database import Database
-        except Exception as e:
-            logger.error(f"导入 graph Database 失败: {e}")
-            return None
-
-        try:
-            # 确保父目录存在
-            Path(db_path).parent.mkdir(parents=True, exist_ok=True)
-
-            config = GraphConfig(database_path=db_path)
-            db = Database(config)
-            db.initialize()  # 创建表结构
-            self._agent_graph_dbs[agent_id] = db
-            logger.info(
-                f"v3.1.0 懒加载 graph database: agent={agent_id}, path={db_path}"
-            )
-            return db
-        except Exception as e:
-            logger.error(f"创建 graph database 失败: agent={agent_id}, path={db_path}, error={e}")
-            return None
-
-    async def _close_all_agent_resources(self) -> None:
-        """v3.1.0: 关闭所有 per-agent 存储实例（stop 时调用）
-
-        注意：此方法仅关闭缓存实例的连接，不删除 collection/文件。
-        资源删除由 cleanup_agent_resources 显式调用。
-        """
-        async with self._resource_lock:
-            # 关闭所有 Weaviate store
-            for agent_id, store in list(self._agent_weaviate_stores.items()):
-                try:
-                    if getattr(store, "_client", None):
-                        store.close()
-                except Exception as e:
-                    logger.debug(f"关闭 Weaviate store (agent={agent_id}): {e}")
-            self._agent_weaviate_stores.clear()
-
-            # 关闭所有 graph database
-            for agent_id, db in list(self._agent_graph_dbs.items()):
-                try:
-                    db.close()
-                except Exception as e:
-                    logger.debug(f"关闭 graph database (agent={agent_id}): {e}")
-            self._agent_graph_dbs.clear()
-
-        logger.info("v3.1.0: 所有 per-agent 存储实例已关闭")

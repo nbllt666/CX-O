@@ -12,6 +12,7 @@ import time
 import uuid
 from typing import Optional, TYPE_CHECKING
 
+from server.core.utils import run_io
 from server.services.marker_adapter import MarkerAdapter
 from server.services.context_manager import get_context_manager
 from server.services.firewall import get_firewall_service
@@ -69,6 +70,29 @@ _feedback_tasks: set = set()
 
 
 # --------------------------------------------------------------------------- #
+# R9-03: live 打断判定后台任务并发信号量（无界 fire-and-forget 限流）
+# 同构接入 vad_processor._get_interrupt_sem 护栏模式：按事件循环缓存，
+# 超限非阻塞丢弃，防任务无限堆积；配置与 vad_processor 同源
+# （executor.interrupt_concurrency）。
+# --------------------------------------------------------------------------- #
+_interrupt_sem: Optional[asyncio.Semaphore] = None
+_interrupt_sem_loop: Optional[asyncio.AbstractEventLoop] = None
+
+
+def _get_interrupt_sem() -> asyncio.Semaphore:
+    """获取模块级打断判定并发信号量（可配置大小，超限丢弃，防任务无限堆积）。"""
+    global _interrupt_sem, _interrupt_sem_loop
+    loop = asyncio.get_running_loop()
+    if _interrupt_sem is None or _interrupt_sem_loop is not loop:
+        from server.config import get_config
+
+        size = max(1, get_config().executor.interrupt_concurrency)
+        _interrupt_sem = asyncio.Semaphore(size)
+        _interrupt_sem_loop = loop
+    return _interrupt_sem
+
+
+# --------------------------------------------------------------------------- #
 # W5: live 会话 AI 回复链路（stream/response）与字幕播报同步（tts_sync/tick/end）
 # --------------------------------------------------------------------------- #
 # live 文本回复使用默认 agent（live 连接无 agent_id 概念，对齐 chat 处理器回退口径）
@@ -83,6 +107,9 @@ _LIVE_TTS_TICK_INTERVAL = 0.2
 
 # fire-and-forget 回复任务强引用集（仿 _feedback_tasks，防 GC 提前回收）
 _reply_tasks: set = set()
+
+# fire-and-forget 字幕播报任务强引用集（仿 _reply_tasks，防 GC 提前回收）
+_announce_tasks: set = set()
 
 # 回复分句正则：按句末标点（含换行）零宽切分，标点保留在前句
 _REPLY_SENTENCE_SPLIT_RE = re.compile(r"(?<=[。！？!?；;\n])")
@@ -111,6 +138,18 @@ class LiveClientHandler:
         self._session_id: Optional[str] = None
         # W5: 在途回复生成任务引用（in-flight 守卫 + 强引用跟踪）
         self._reply_task: Optional["asyncio.Task"] = None
+        # R9-03: utterance 代际（新一段语音 speech_start 时推进）——
+        # 打断判定后台任务提交时捕获代际，执行时比对，过期判定丢弃，
+        # 防旧判定结果作用新 utterance（对齐 vad_processor 代际护栏语义）
+        self._utterance_epoch: int = 0
+        # R9-03: 打断判定后台任务强引用集（防 GC 提前回收）
+        self._interrupt_tasks: set = set()
+        # R9-05: 字幕播报 per-client 锁——多轮回复的播报任务串行排队，
+        # 防双任务同时推同一字幕队列
+        self._announce_lock: asyncio.Lock = asyncio.Lock()
+        # R9-05: 在途播报任务引用（供测试/观测；fire-and-forget 主引用在
+        # 模块级 _announce_tasks 强引用集）
+        self._announce_task: Optional["asyncio.Task"] = None
 
     async def handle_message(self, websocket, message: dict, client_id: str):
         msg_type = message.get("type")
@@ -162,6 +201,10 @@ class LiveClientHandler:
 
             if vad_result.get("state_changed"):
                 status = "speech_start" if vad_result["is_speaking"] else "speech_end"
+                if status == "speech_start":
+                    # R9-03: 新 utterance 开始 → 推进代际，使上一句仍在排队/
+                    # 执行中的打断判定过期丢弃（防旧判定结果作用新 utterance）
+                    self._utterance_epoch += 1
                 await self.manager.send_message(self.client_id, {
                     "type": "vad_status",
                     "data": {
@@ -190,18 +233,16 @@ class LiveClientHandler:
                     # per-client 并发化：使用当前 client 打断模块（TTS 播放状态隔离）
                     interrupt_module = get_asr_interrupt_module(self.client_id)
                     if interrupt_module.enabled and interrupt_module._tts_playing:
-                        decision, should_interrupt = await interrupt_module.on_asr_result(
-                            text, is_final=not vad_result.get("is_speaking", False)
+                        # R9-03: 打断判定移出收帧热路径——on_asr_result 内部走
+                        # LLM 判定（可达秒级），await 会阻塞 handle_audio 收帧
+                        # 循环。改由后台任务执行（同构 vad_processor 护栏：
+                        # 信号量限流 + utterance 代际校验），判定命中后走既有
+                        # live 打断动作（回发 interrupt 帧）。
+                        self._dispatch_interrupt_check(
+                            interrupt_module,
+                            text,
+                            not vad_result.get("is_speaking", False),
                         )
-                        if should_interrupt:
-                            await self.manager.send_message(self.client_id, {
-                                "type": "interrupt",
-                                "data": {
-                                    "source": "asr",
-                                    "text": text,
-                                    "decision": decision
-                                }
-                            })
 
             await self.manager.send_message(self.client_id, {
                 "type": "vad_frame",
@@ -217,6 +258,70 @@ class LiveClientHandler:
         finally:
             # 复位 contextvars，避免异常路径下 client_id 残留串扰
             reset_active_client_id(token)
+
+    def _dispatch_interrupt_check(self, interrupt_module, text: str, is_final: bool) -> None:
+        """调度打断判定后台任务（R9-03，同构 vad_processor 护栏）。
+
+        - 提交时捕获 utterance 代际（闭包显式传参——直接引用
+          self._utterance_epoch 会在任务执行时读到最新值，失去比对意义）；
+        - 模块级信号量限流（超限非阻塞丢弃，防任务无限堆积）；
+        - 任务引用登记强引用集，防 GC 提前回收。
+        """
+        epoch_at_dispatch = self._utterance_epoch
+        task = asyncio.create_task(
+            self._deferred_interrupt_check(interrupt_module, text, is_final, epoch_at_dispatch)
+        )
+        self._interrupt_tasks.add(task)
+        task.add_done_callback(self._interrupt_tasks.discard)
+
+    async def _deferred_interrupt_check(
+        self, interrupt_module, text: str, is_final: bool, epoch: int
+    ) -> None:
+        """后台打断判定：信号量限流 + 代际校验后执行 LLM 判定。
+
+        判定命中打断时走既有 live 打断动作（向该客户端回发 interrupt 帧，
+        与原同步路径行为一致）；整个判定异常吞掉并留痕，不影响收帧主循环。
+        """
+        sem = _get_interrupt_sem()
+        if sem.locked():  # 超限丢弃，防任务无限堆积
+            return
+        await sem.acquire()
+        try:
+            # 代际校验：排队/等待期间已开启新 utterance → 本次判定过期，
+            # 丢弃，不回发打断（防旧判定结果作用新 utterance）
+            if epoch != self._utterance_epoch:
+                logger.debug(
+                    "过期打断判定丢弃（epoch %s != %s）", epoch, self._utterance_epoch
+                )
+                return
+            decision, should_interrupt = await interrupt_module.on_asr_result(
+                text, is_final=is_final
+            )
+            # 二次代际校验：LLM 判定可达秒级，判定期间新 utterance 可能已
+            # 开始（speech_start 推进代际）——过期判定丢弃，防旧判定结果
+            # 作用新 utterance
+            if epoch != self._utterance_epoch:
+                logger.debug(
+                    "判定期间 utterance 已更替，过期打断判定丢弃（epoch %s != %s）",
+                    epoch, self._utterance_epoch,
+                )
+                return
+            if should_interrupt:
+                # 既有 live 打断动作：回发 interrupt 帧（对齐原同步路径）
+                await self.manager.send_message(self.client_id, {
+                    "type": "interrupt",
+                    "data": {
+                        "source": "asr",
+                        "text": text,
+                        "decision": decision
+                    }
+                })
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:
+            logger.warning(f"live 打断判定后台任务失败 client={self.client_id}: {e}")
+        finally:
+            sem.release()
 
     async def _handle_init(self, websocket, message: dict):
         data = message.get("data", {})
@@ -260,7 +365,10 @@ class LiveClientHandler:
         await self._safe_feedback_danmaku(content, user_id)
 
         if self._session_id:
-            self.context_manager.add_danmaku_message(self._session_id, data)
+            # 伴生C3：上下文写入移出事件循环直调路径（run_io 包裹；
+            # 当前 services.context_manager 为内存实现，此包裹统一异步
+            # 调用口径，绑定切换至 sqlite 实现时无需再改调用方）
+            await run_io(self.context_manager.add_danmaku_message, self._session_id, data)
 
         marker_data = self.marker_adapter.process_danmaku(data)
         frontend_data = self.frontend_marker.format_for_frontend(marker_data)
@@ -331,7 +439,8 @@ class LiveClientHandler:
         logger.debug("Gift received: %s", data)
 
         if self._session_id:
-            self.context_manager.add_message(self._session_id, {
+            # 伴生C3：上下文写入 run_io 包裹（口径同上）
+            await run_io(self.context_manager.add_message, self._session_id, {
                 "role": "gift",
                 "content": json.dumps(data, ensure_ascii=False)
             })
@@ -385,7 +494,8 @@ class LiveClientHandler:
         text = data.get("text", "")
 
         if self._session_id:
-            self.context_manager.add_message(self._session_id, {
+            # 伴生C3：上下文写入 run_io 包裹（口径同上）
+            await run_io(self.context_manager.add_message, self._session_id, {
                 "role": "user",
                 "content": text
             })
@@ -495,14 +605,17 @@ class LiveClientHandler:
             if full.strip():
                 await self._safe_channel_send({"type": "response", "data": {"content": full}})
                 if self._session_id:
-                    self.context_manager.add_message(self._session_id, {
+                    # 伴生C3：回复回写 run_io 包裹（口径同上）
+                    await run_io(self.context_manager.add_message, self._session_id, {
                         "role": "assistant", "content": full
                     })
                 try:
                     self.record_ai_response(full, prompt=text)
                 except Exception as e:
                     logger.warning(f"live_feedback 回复记录降级: {e}")
-                await self._announce_reply_subtitles(full)
+                # R9-05: 字幕播报改后台独立任务——不再 await 阻塞回复管线，
+                # _reply_task 在途守卫因此仅覆盖生成阶段，长播报不再丢弃新回复
+                self._schedule_announce(full)
         except asyncio.CancelledError:
             raise
         except Exception as e:
@@ -544,3 +657,50 @@ class LiveClientHandler:
                 "playback_id": playback_id,
                 "server_ts": int(time.time() * 1000),
             }})
+
+    # ------------------------------------------------------------------ #
+    # R9-02/R9-05: 字幕播报后台化与 live TTS 播放状态置位
+    # ------------------------------------------------------------------ #
+    def _schedule_announce(self, text: str) -> None:
+        """调度字幕播报后台任务（R9-05，fire-and-forget，含强引用跟踪）。
+
+        播报脱离 _reply_pipeline 串行 await 后，回复生成任务不再被长播报
+        占住，_reply_task 在途守卫仅覆盖生成阶段，长播报期间新回复照常受理。
+        """
+        task = asyncio.create_task(self._announce_pipeline(text))
+        self._announce_task = task
+        _announce_tasks.add(task)
+        task.add_done_callback(_announce_tasks.discard)
+
+    async def _announce_pipeline(self, text: str) -> None:
+        """播报任务主体：per-client 播报锁串行化 + live TTS 播放状态置位/复位。
+
+        - 播报锁（R9-05 并发安全）：新一轮回复的播报任务与旧播报任务并发
+          时在锁上串行排队（旧任务保留不打断），确保不会双任务同时推同一
+          字幕队列；
+        - TTS 状态置位（R9-02）：live 路径的"TTS 播放"即字幕播报——播报
+          开始时 set_tts_playing(client_id, True)，结束/异常/取消时 finally
+          置 False，使 handle_audio 的打断判定门控真正生效（此前 live 侧
+          从未置位，`_tts_playing` 恒为 False，打断判定成死路径）。
+          置位/复位均在锁内，避免排队任务的 finally 提前清掉后任任务的
+          播放状态。
+        """
+        async with self._announce_lock:
+            await self._set_tts_playing(True)
+            try:
+                await self._announce_reply_subtitles(text)
+            finally:
+                await self._set_tts_playing(False)
+
+    async def _set_tts_playing(self, playing: bool) -> None:
+        """live 侧 TTS 播放状态置位（per-client，复用 audio.set_tts_playing）。
+
+        audio.set_tts_playing 内部按 client_id 定位该客户端独立的打断模块
+        并同步 _tts_playing_clients 集合；失败静默降级（状态仅影响打断
+        判定门控，不应拖垮播报主流程）。
+        """
+        try:
+            from server.handlers.audio import set_tts_playing
+            await set_tts_playing(self.client_id, playing)
+        except Exception as e:
+            logger.debug(f"live TTS 播放状态置位失败 client={self.client_id}: {e}")

@@ -78,6 +78,8 @@ export default function AudioPanelPage() {
   const processorRef = useRef<ScriptProcessorNode | null>(null);
   const rafRef = useRef(0);
   const lastFlushRef = useRef(0);
+  // 麦克风启动进行中守卫：防止双击重入覆盖 mediaStreamRef（旧流泄漏 + 双音频图）
+  const startingRef = useRef(false);
 
   const micGainRef = useRef(micGain);
   micGainRef.current = micGain;
@@ -222,72 +224,79 @@ export default function AudioPanelPage() {
   }, [closePipeline, stopLevelLoop]);
 
   const startMic = useCallback(async () => {
-    setMicError(null);
-    if (!navigator.mediaDevices?.getUserMedia) {
-      setMicError('media-unavailable');
-      return;
-    }
+    // 进行中守卫：双击重入会覆盖 mediaStreamRef，导致旧 MediaStream 泄漏 + 双音频图
+    if (startingRef.current) return;
+    startingRef.current = true;
     try {
-      const resolvedAec = await resolveAecMode();
-      const stream = await navigator.mediaDevices.getUserMedia({
-        audio: {
-          sampleRate: 16000,
-          channelCount: 1,
-          deviceId: selectedDeviceRef.current ? { exact: selectedDeviceRef.current } : undefined,
-          echoCancellation: resolvedAec === 'browser',
-          noiseSuppression: resolvedAec === 'browser',
-          autoGainControl: resolvedAec === 'browser',
-        },
-      });
-      mediaStreamRef.current = stream;
-
-      initPipeline();
-      const source = createStreamSource(stream);
-      const processor = createScriptProcessor(SCRIPT_BUFFER_SIZE, 1, 1);
-      const uplinkDestination = createStreamDestination();
-      const analyser = analyserRef.current;
-      const ctx = source?.context;
-      if (!source || !processor || !uplinkDestination || !analyser || !ctx) {
-        throw new Error('audio pipeline init failed');
+      setMicError(null);
+      if (!navigator.mediaDevices?.getUserMedia) {
+        setMicError('media-unavailable');
+        return;
       }
+      try {
+        const resolvedAec = await resolveAecMode();
+        const stream = await navigator.mediaDevices.getUserMedia({
+          audio: {
+            sampleRate: 16000,
+            channelCount: 1,
+            deviceId: selectedDeviceRef.current ? { exact: selectedDeviceRef.current } : undefined,
+            echoCancellation: resolvedAec === 'browser',
+            noiseSuppression: resolvedAec === 'browser',
+            autoGainControl: resolvedAec === 'browser',
+          },
+        });
+        mediaStreamRef.current = stream;
 
-      // 麦克风增益节点（audioStore.micGain 实时生效）
-      const gainNode = ctx.createGain();
-      gainNode.gain.value = micGainRef.current;
-      micGainNodeRef.current = gainNode;
+        initPipeline();
+        const source = createStreamSource(stream);
+        const processor = createScriptProcessor(SCRIPT_BUFFER_SIZE, 1, 1);
+        const uplinkDestination = createStreamDestination();
+        const analyser = analyserRef.current;
+        const ctx = source?.context;
+        if (!source || !processor || !uplinkDestination || !analyser || !ctx) {
+          throw new Error('audio pipeline init failed');
+        }
 
-      // 本地监听节点（默认静音，防止回授）
-      const monitorGain = ctx.createGain();
-      monitorGain.gain.value = 0;
-      monitorGainNodeRef.current = monitorGain;
+        // 麦克风增益节点（audioStore.micGain 实时生效）
+        const gainNode = ctx.createGain();
+        gainNode.gain.value = micGainRef.current;
+        micGainNodeRef.current = gainNode;
 
-      processor.onaudioprocess = (event) => {
-        const input = event.inputBuffer.getChannelData(0);
-        const pcm = encodePcm16(input, micGainRef.current);
-        sendAudioRef.current(pcm.buffer as ArrayBuffer);
-      };
+        // 本地监听节点（默认静音，防止回授）
+        const monitorGain = ctx.createGain();
+        monitorGain.gain.value = 0;
+        monitorGainNodeRef.current = monitorGain;
 
-      source.connect(gainNode);
-      gainNode.connect(analyser);
-      analyser.connect(processor);
-      processor.connect(uplinkDestination);
-      // 本地监听旁路：analyser → monitorGain → 扬声器
-      analyser.connect(monitorGain);
-      monitorGain.connect(ctx.destination);
+        processor.onaudioprocess = (event) => {
+          const input = event.inputBuffer.getChannelData(0);
+          const pcm = encodePcm16(input, micGainRef.current);
+          sendAudioRef.current(pcm.buffer as ArrayBuffer);
+        };
 
-      if (ctx.state === 'suspended' && typeof AudioContext !== 'undefined' && ctx instanceof AudioContext) {
-        void ctx.resume();
+        source.connect(gainNode);
+        gainNode.connect(analyser);
+        analyser.connect(processor);
+        processor.connect(uplinkDestination);
+        // 本地监听旁路：analyser → monitorGain → 扬声器
+        analyser.connect(monitorGain);
+        monitorGain.connect(ctx.destination);
+
+        if (ctx.state === 'suspended' && typeof AudioContext !== 'undefined' && ctx instanceof AudioContext) {
+          void ctx.resume();
+        }
+
+        sourceRef.current = source;
+        processorRef.current = processor;
+        setAecStatus(resolvedAec === 'manual' ? 'manual' : 'active');
+        startLevelLoop();
+        setMicOn(true);
+      } catch (error) {
+        console.error('[AudioPanelPage] mic start failed:', error);
+        await stopMic();
+        setMicError('mic-start-failed');
       }
-
-      sourceRef.current = source;
-      processorRef.current = processor;
-      setAecStatus(resolvedAec === 'manual' ? 'manual' : 'active');
-      startLevelLoop();
-      setMicOn(true);
-    } catch (error) {
-      console.error('[AudioPanelPage] mic start failed:', error);
-      stopMic();
-      setMicError('mic-start-failed');
+    } finally {
+      startingRef.current = false;
     }
   }, [
     resolveAecMode,
@@ -300,9 +309,11 @@ export default function AudioPanelPage() {
     stopMic,
   ]);
 
-  // 卸载兜底清理
+  // 卸载兜底清理（stopMic 为 async，清理函数必须同步返回，不能直接返回 Promise）
   useEffect(() => {
-    return () => stopMic();
+    return () => {
+      void stopMic();
+    };
   }, [stopMic]);
 
   // 增益/监听音量实时生效
@@ -387,7 +398,10 @@ export default function AudioPanelPage() {
         <div className="flex items-center gap-3">
           <button
             type="button"
-            onClick={() => (micOn ? stopMic() : void startMic())}
+            onClick={() => {
+              if (micOn) void stopMic();
+              else void startMic();
+            }}
             className={cn(
               'flex items-center gap-2 rounded-lg px-4 py-2 text-sm font-medium transition-opacity hover:opacity-90',
               micOn ? 'bg-red-500/85 text-white' : 'bg-emerald-500/85 text-white',

@@ -14,7 +14,7 @@
     "peer_timeout_sec": { "type": "number", "minimum": 1, "default": 15, "description": "心跳超时（秒）。" },
     "miss_threshold": { "type": "integer", "minimum": 1, "default": 3, "description": "连续丢失几次判疑似故障。" },
     "snapshot_interval_sec": { "type": "integer", "minimum": 1, "default": 300, "description": "快照对齐间隔（秒）。" },
-    "sync_units": { "type": "array", "items": { "type": "string", "enum": ["memory", "persona", "config", "session"] }, "default": ["memory", "persona", "config", "session"], "description": "启用同步的备份单元。" },
+    "sync_units": { "type": "array", "items": { "type": "string", "enum": ["memory", "persona", "config", "session", "ref_audio"] }, "default": ["memory", "persona", "config", "session", "ref_audio"], "description": "启用同步的备份单元。" },
     "transport": { "type": "string", "enum": ["https", "http"], "default": "https", "description": "节点间传输协议。" },
     "bind": { "type": "string", "default": "0.0.0.0", "description": "集群监听地址（跨机需可路由）。" },
     "witness": {

@@ -53,6 +53,23 @@
           "type": "string",
           "default": "http://127.0.0.1:8000",
           "description": "CX-O-SERVER 主后端 URL。DistillationService 调用主后端 API（如 MemoryManager.write_with_decision）时使用。"
+        },
+        "quality_llm_enabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "是否启用 LLM 质量评估（OBS-6 方案 C）。启用后 _estimate_quality_score 优先调用 LLM 评估；失败或禁用时回退启发式（基础分 0.4）。"
+        },
+        "quality_llm_model": {
+          "type": "string",
+          "default": "",
+          "description": "LLM 质量评估模型名。空字符串表示从 llm 段继承默认模型。"
+        },
+        "quality_llm_timeout_seconds": {
+          "type": "integer",
+          "minimum": 5,
+          "maximum": 120,
+          "default": 30,
+          "description": "LLM 质量评估调用超时（秒）。5-120，默认 30。"
         }
       }
     },
@@ -96,6 +113,21 @@
           "type": "boolean",
           "default": true,
           "description": "vision 不可用时是否降级为仅 OCR。true=降级（vision_degraded=true），false=报错。"
+        },
+        "vision_base_url": {
+          "type": "string",
+          "default": "http://127.0.0.1:8080",
+          "description": "vision 模型服务 URL。可与 vLLM 主模型同实例。默认 http://127.0.0.1:8080。"
+        },
+        "vision_model": {
+          "type": "string",
+          "default": "",
+          "description": "vision 模型名。空字符串表示不启用 vision（仅 OCR）。如 'Qwen/Qwen2-VL-7B-Instruct'。"
+        },
+        "vision_timeout_seconds": {
+          "type": "integer",
+          "default": 300,
+          "description": "vision 推理超时（秒）。默认 300。"
         },
         "vllm_native_enabled": {
           "type": "boolean",

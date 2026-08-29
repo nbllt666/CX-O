@@ -16,6 +16,7 @@ from fastapi.testclient import TestClient
 
 from server.dependencies import ServiceState, set_service_state
 from server.api.routers import vector as vector_mod
+from server.api.routers.admin import verify_admin_api_key
 
 
 # --------------------------------------------------------------------------- #
@@ -111,6 +112,9 @@ def client(monkeypatch):
 
     app = FastAPI()
     app.include_router(vector_mod.router)
+    # 写路径（delete/sync/rebuild）已补挂 verify_admin_api_key：
+    # 既有用例经 dependency_overrides 放行，403 场景由 TestVectorAuthRequired 单独覆盖
+    app.dependency_overrides[verify_admin_api_key] = lambda: True
     return TestClient(app), mm, store
 
 
@@ -125,6 +129,8 @@ def disabled_client(monkeypatch):
 
     app = FastAPI()
     app.include_router(vector_mod.router)
+    # 同上：鉴权 override 放行，保证 disabled 场景仍能走到 503 分支
+    app.dependency_overrides[verify_admin_api_key] = lambda: True
     return TestClient(app), mm, store
 
 
@@ -282,3 +288,37 @@ class TestSearchVectors:
         c, _, _ = disabled_client
         r = c.post("/vector/search", params={"query": "hello"})
         assert r.status_code == 503
+
+
+# --------------------------------------------------------------------------- #
+# 写路径鉴权（鉴权漏挂簇修复补充用例）
+# verify_admin_api_key 校验失败统一抛 403（项目既有口径，对齐 test_stats_interrupt.py）；
+# 本组用例不挂 dependency_overrides，真实走到密钥校验依赖。
+# --------------------------------------------------------------------------- #
+class TestVectorAuthRequired:
+    @staticmethod
+    def _raw_client(monkeypatch) -> TestClient:
+        mm = FakeMemoryManager(vector_store=FakeVectorStore(), embedding_model=FakeEmbeddingModel())
+        state = ServiceState()
+        state.memory_manager = mm
+        set_service_state(state)
+        monkeypatch.setattr("server.config.get_settings", lambda: FakeSettings())
+
+        app = FastAPI()
+        app.include_router(vector_mod.router)
+        return TestClient(app, raise_server_exceptions=False)
+
+    def test_rebuild_requires_auth(self, monkeypatch):
+        c = self._raw_client(monkeypatch)
+        r = c.post("/vector/rebuild")
+        assert r.status_code == 403
+
+    def test_delete_requires_auth(self, monkeypatch):
+        c = self._raw_client(monkeypatch)
+        r = c.delete("/vector/vectors/1")
+        assert r.status_code == 403
+
+    def test_sync_requires_auth(self, monkeypatch):
+        c = self._raw_client(monkeypatch)
+        r = c.post("/vector/sync")
+        assert r.status_code == 403

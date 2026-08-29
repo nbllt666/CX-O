@@ -18,9 +18,11 @@ import asyncio
 import logging
 from typing import Any, Dict, Optional
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, ValidationError
 
+from server.api.routers._pagination import clamp_pagination
+from server.api.routers.admin import verify_admin_api_key
 from server.autonomy.dream.config import (
     CONFIG_WRITE_LOCK,
     DreamConfig,
@@ -74,8 +76,8 @@ def get_status():
 
 
 @router.post("/dream/trigger")
-async def trigger(agent_id: str = "default"):
-    """手动触发一轮梦境会话（采集 → 生成 → D7 过滤 → 缓冲）。
+async def trigger(agent_id: str = "default", _: bool = Depends(verify_admin_api_key)):
+    """手动触发一轮梦境会话（采集 → 生成 → D7 过滤 → 缓冲；写路径，补挂管理员鉴权，对齐 autonomy.py）。
 
     未启用时返回 {"status": "disabled"}（HTTP 200），不抛错。
     """
@@ -96,9 +98,8 @@ def list_candidates(
 
     未启用时返回空列表 {"items": [], "total": 0}。
     """
-    # R9: 分页参数钳制（对齐 tuner.py:252 惯例）
-    limit = max(1, min(int(limit), 200))
-    offset = max(0, int(offset))
+    # T-07: 分页钳制统一走 _pagination.clamp_pagination
+    limit, offset = clamp_pagination(limit, offset)
     engine = _engine
     if not _engine_ready():
         return {"items": [], "total": 0}
@@ -110,8 +111,12 @@ def list_candidates(
 
 
 @router.post("/dream/{buffer_id}/confirm")
-def confirm(buffer_id: int, agent_id: str = "default"):
-    """确认一条梦境候选 → 固化为主库梦境记忆（红线 R5 前置）。
+def confirm(
+    buffer_id: int,
+    agent_id: str = "default",
+    _: bool = Depends(verify_admin_api_key),
+):
+    """确认一条梦境候选 → 固化为主库梦境记忆（红线 R5 前置；写路径，补挂管理员鉴权）。
 
     候选不存在或已决策（rejected/approved）返回 404。
     """
@@ -129,8 +134,9 @@ def reject(
     buffer_id: int,
     body: Optional[RejectRequest] = None,
     agent_id: str = "default",
+    _: bool = Depends(verify_admin_api_key),
 ):
-    """否定一条梦境候选 → 缓冲置 rejected（保留 30 天审计），不写主库。
+    """否定一条梦境候选 → 缓冲置 rejected（保留 30 天审计），不写主库（写路径，补挂管理员鉴权）。
 
     候选不存在或已否定返回 404。reason 可选（请求体 {"reason": str}）。
     """
@@ -145,8 +151,12 @@ def reject(
 
 
 @router.delete("/dream/session/{session_id}")
-def purge_session(session_id: str, agent_id: str = "default"):
-    """按会话回滚：软删该会话全部 type='dream' 记忆（红线 R5）。
+def purge_session(
+    session_id: str,
+    agent_id: str = "default",
+    _: bool = Depends(verify_admin_api_key),
+):
+    """按会话回滚：软删该会话全部 type='dream' 记忆（红线 R5；写路径，补挂管理员鉴权）。
 
     返回 {"purged": n}。
     """
@@ -160,8 +170,8 @@ def purge_session(session_id: str, agent_id: str = "default"):
 
 
 @router.post("/dream/purge")
-async def purge(agent_id: str = "default"):
-    """手动触发清除任务（超 TTL 未确认 / 低重要性 / 缓冲过期）。
+async def purge(agent_id: str = "default", _: bool = Depends(verify_admin_api_key)):
+    """手动触发清除任务（超 TTL 未确认 / 低重要性 / 缓冲过期；写路径，补挂管理员鉴权）。
 
     返回 {"purged_memories": n, "purged_buffer": n}。
     """
@@ -215,8 +225,8 @@ def _sync_engine_runtime(engine, updated: DreamConfig) -> None:
 
 
 @router.put("/dream/config")
-async def update_config(partial: Dict[str, Any]):
-    """局部更新梦境配置并保存（自动补齐缺失字段）。
+async def update_config(partial: Dict[str, Any], _: bool = Depends(verify_admin_api_key)):
+    """局部更新梦境配置并保存（自动补齐缺失字段；写路径，补挂管理员鉴权）。
 
     以当前配置为基础做深度合并后经 DreamConfig.model_validate 校验；非法字段
     （extra="forbid"）、非法枚举/非法时间格式返回 422。运行期 enabled 变更尽力

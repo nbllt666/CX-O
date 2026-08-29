@@ -233,6 +233,18 @@ class ASRService:
             self._stream_sessions[client_id] = _StreamState()
         return _StreamAccessor(self, self._stream_sessions[client_id])
 
+    def _peek_stream_state(self, client_id: Optional[str]) -> Optional["_StreamState"]:
+        """只读访问器：按 client_id 查询流式会话状态，**不落册**。
+
+        与 _stream_accessor 的区别：未知 client_id 返回 None（不插入含锁+队列的
+        _StreamState 注册表项），供纯读语义的调用方避免为不存在的会话创建
+        永久空注册项（泄漏）。client_id 为 None 时返回 None——默认会话状态
+        保存在服务实例属性上，无独立 _StreamState，由调用方按默认属性读取。
+        """
+        if client_id is None:
+            return None
+        return self._stream_sessions.get(client_id)
+
     @property
     def mode(self) -> str:
         return self._mode
@@ -838,7 +850,12 @@ def get_recent_spk_embedding(client_id: Optional[str] = None) -> Optional[list]:
     """返回指定客户端最近收到的 spk 补充消息中的说话人 embedding（192 float 列表）。
 
     client_id 为 None 时读取默认会话的最近 embedding；未收到过 spk 补充消息时返回 None。
+    纯读语义：走只读访问器 _peek_stream_state（dict.get 不落册）——未知 client_id
+    不再为"查询一次 embedding"创建含锁+队列的空会话注册项。
     """
     svc = get_asr_service()
-    st = svc._stream_accessor(client_id)
-    return st.recent_spk_embedding
+    st = svc._peek_stream_state(client_id)
+    if st is not None:
+        return st.recent_spk_embedding
+    # 未知 client_id（无会话）→ None 快照；默认会话（None）→ 实例属性
+    return svc._recent_spk_embedding if client_id is None else None

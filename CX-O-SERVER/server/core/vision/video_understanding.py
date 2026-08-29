@@ -488,10 +488,17 @@ def draw_keyframe(video_path: str, timestamp_sec: float) -> Optional[str]:
                 if stream is not None:
                     stream.thread_type = "AUTO"
                     fps = float(stream.average_rate or 30.0)
+                    # 帧序口径：目标帧序 = 时间戳秒 × fps（与上方 cv2/imageio
+                    # 分支 idx = int(timestamp_sec * fps) 保持一致）。
+                    # PyAV 中 pts 以 stream.time_base 为单位，换算秒需
+                    # pts × time_base；旧实现 pts × fps / time_base 量纲颠倒
+                    # （time_base 通常为 1/90000 量级，旧式会放大 8100 倍），
+                    # 导致几乎任何 pts 都满足条件、恒取 seek 后首帧。
                     idx = max(0, int(timestamp_sec * fps))
                     container.seek(max(0, int(timestamp_sec * 1000000)))
                     for frame_av in container.decode(video=0):
-                        if frame_av.pts is not None and int(frame_av.pts * fps / stream.time_base) >= idx:
+                        # 帧序 = pts(时间基) × time_base(秒/时间基) × fps(帧/秒)
+                        if frame_av.pts is not None and int(frame_av.pts * stream.time_base * fps) >= idx:
                             arr = frame_av.to_ndarray(format="bgr24")
                             frame = arr
                             break

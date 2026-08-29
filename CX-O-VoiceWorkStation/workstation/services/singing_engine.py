@@ -243,8 +243,15 @@ class DiffSingerEngine(SingingEngine):
 
         base_dir = Path(self._diffsinger_dir)
         bank_path = next(
-            c for c in _voice_bank_candidates(base_dir, effective_bank) if c.exists()
+            (c for c in _voice_bank_candidates(base_dir, effective_bank) if c.exists()),
+            None,
         )
+        if bank_path is None:
+            # 防御 TOCTOU：check_deployment 通过后候选目录被移除时，不再裸抛 StopIteration
+            raise SingingEngineError(
+                f"未找到可用的声库目录: bank={effective_bank}, base_dir={base_dir}\n"
+                "请先运行安装/检查脚本: python -m workstation.tools.setup_singing_engine"
+            )
         out = Path(output_path)
         out.parent.mkdir(parents=True, exist_ok=True)
 

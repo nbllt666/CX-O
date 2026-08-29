@@ -14,7 +14,10 @@
   - cxo_tuner_dpo_dataset.schema.json   -> DatasetStats 统计口径
   - cxo_tuner_config.schema.json        -> 服务自身配置（不含接口签名）
 
-@version 1.0.0
+@version 1.1.0
+@changelog v1.1.0 补 POST /judge/build 端点声明与 JudgeBuildSample/JudgeBuildRequest/
+    JudgeBuildResponse 类型（对照 tuner/api/routes.py:242 与 tuner/models.py 实现，
+    已获人类显式授权的契约修正）
 @see public/schema/cxo_tuner_feedback.schema.json
 @see public/schema/cxo_tuner_dpo_dataset.schema.json
 @see public/schema/cxo_tuner_config.schema.json
@@ -33,6 +36,9 @@ __all__ = [
     "TrainStatus",
     "AdapterInfo",
     "ApplyAdapterResponse",
+    "JudgeBuildSample",
+    "JudgeBuildRequest",
+    "JudgeBuildResponse",
     "CXOTunerAPI",
 ]
 
@@ -107,6 +113,27 @@ class ApplyAdapterResponse(BaseModel):
     adapter_id: str
     applied: bool
     detail: Optional[str] = None
+
+
+class JudgeBuildSample(BaseModel):
+    """单条会话历史样本：同一 prompt 的多个候选回复（对齐 tuner/models.py）。"""
+    prompt: str
+    responses: List[str] = []
+    session_id: Optional[str] = None
+
+
+class JudgeBuildRequest(BaseModel):
+    """触发 judge 批量构建 DPO 的请求（POST /judge/build）。"""
+    samples: List[JudgeBuildSample]
+    character_card_hint: Optional[str] = None
+
+
+class JudgeBuildResponse(BaseModel):
+    """judge 批量构建的结果摘要。audit 为 judge 明细列表（供日志/审计）。"""
+    built: int
+    skipped: int
+    total_samples: int
+    audit: List[Dict[str, Any]]
 
 
 # ---------------------------------------------------------------------------
@@ -237,5 +264,25 @@ class CXOTunerAPI:
             ConnectionError_503: vLLM 端点不可达 / 换装失败
             ValueError_422: id 不存在或与配置 base_model 不匹配
             RuntimeError_500: 应用过程内部异常
+        """
+        ...
+
+    def build_judge(self, req: JudgeBuildRequest) -> JudgeBuildResponse:
+        """历史对话→DPO 自动构建（POST /judge/build，对齐 routes.py:242）。
+
+        输入会话历史样本（同一 prompt 的多个候选回复）+ 可选角色人设提示，触发
+        LLM-as-a-Judge 批量比较并产出 source=judge 的 DPO 记录写入数据集。
+
+        Args:
+            req: JudgeBuildRequest（samples + 可选 character_card_hint）
+
+        Returns:
+            JudgeBuildResponse: 构建条数 built / 跳过条数 skipped /
+                total_samples 与 judge 明细摘要 audit（供审计）
+
+        Raises:
+            ConnectionError_503: 裁判模型端点不可用
+            ValueError_422: samples 校验失败（空 responses 等）
+            RuntimeError_500: 构建或写入数据集失败
         """
         ...

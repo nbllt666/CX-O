@@ -1,7 +1,6 @@
 """音频端点——ASR/TTS 音频处理与流式合成接口。"""
 import base64
 import json
-import os
 from pathlib import Path
 from typing import Optional
 
@@ -21,13 +20,20 @@ logger = get_contextual_logger(__name__)
 # 项目根（CX-O-SERVER），基于文件位置解析，避免依赖运行时工作目录
 _PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent.parent
 
+# 上传防呆：单次请求音频（解码后）大小上限 20MB（音频级入口兜底，参照 ref_audio_assets 上限模式）
+_MAX_UPLOAD_BYTES = 20 * 1024 * 1024
+
 
 class TTSSynthesizeRequest(BaseModel):
-    """TTS 合成请求参数"""
+    """TTS 合成请求参数
+
+    speed / cross_fade_duration 缺省 None 时使用服务端默认；显式传值（含 1.0/0.15）
+    一律保留，与流式端点（data.get 默认）口径一致。
+    """
 
     text: str
-    speed: float = 1.0
-    cross_fade_duration: float = 0.15
+    speed: Optional[float] = None
+    cross_fade_duration: Optional[float] = None
     ref_audio: Optional[str] = None
     ref_text: Optional[str] = None
     # Qwen3 统一编排：参考音频资产 ID（ref_ 前缀）与无参考音频合成
@@ -58,8 +64,12 @@ async def tts_synthesize(request: TTSSynthesizeRequest, tts_svc: TTSService = De
         raise HTTPException(status_code=400, detail="缺少文本内容")
 
     kwargs = {
-        "speed": request.speed if request.speed != 1.0 else tts_svc._speed,
-        "cross_fade_duration": request.cross_fade_duration if request.cross_fade_duration != 0.15 else tts_svc._cross_fade_duration,
+        "speed": request.speed if request.speed is not None else tts_svc._speed,
+        "cross_fade_duration": (
+            request.cross_fade_duration
+            if request.cross_fade_duration is not None
+            else tts_svc._cross_fade_duration
+        ),
     }
     if request.ref_asset_id:
         kwargs["ref_asset_id"] = request.ref_asset_id
@@ -151,7 +161,8 @@ async def tts_synthesize_stream(request: Request, tts_svc: TTSService = Depends(
             yield f"data: {error_data}\n\n"
         except Exception as e:
             logger.error(f"TTS流式合成错误: {e}", exc_info=True)
-            error_data = json.dumps({"type": "error", "message": f"TTS流式合成失败: {str(e)}"}, ensure_ascii=False)
+            # 错误文案收敛：SSE 错误事件不透传内部实现细节（详情见上方日志）
+            error_data = json.dumps({"type": "error", "message": "TTS流式合成失败"}, ensure_ascii=False)
             yield f"data: {error_data}\n\n"
 
     return StreamingResponse(stream_generator(), media_type="text/event-stream")
@@ -160,18 +171,23 @@ async def tts_synthesize_stream(request: Request, tts_svc: TTSService = Depends(
 @router.post("/asr/speech-to-text", summary="ASR语音识别")
 async def asr_speech_to_text(request: Request, asr_svc: ASRService = Depends(get_asr_service)):
     """语音识别，将上传或 base64 编码的音频转为文本。"""
-    temp_path = None
     try:
         content_type = request.headers.get("content-type", "")
         language = "auto"
 
         if "multipart/form-data" in content_type:
+            # 上传防呆：Content-Length 预检（超限直接 413，不进入读取），读取后复查实际长度
+            content_length = request.headers.get("content-length", "")
+            if content_length.isdigit() and int(content_length) > _MAX_UPLOAD_BYTES:
+                raise HTTPException(status_code=413, detail="音频文件过大")
             form = await request.form()
             audio_file = form.get("file")
             language = form.get("language", "auto")
             if not audio_file:
                 raise HTTPException(status_code=400, detail="未提供音频文件")
             audio_data = await audio_file.read()
+            if len(audio_data) > _MAX_UPLOAD_BYTES:
+                raise HTTPException(status_code=413, detail="音频文件过大")
         else:
             try:
                 data = await request.json()
@@ -181,8 +197,13 @@ async def asr_speech_to_text(request: Request, asr_svc: ASRService = Depends(get
             language = data.get("language", "auto")
             if not audio_base64:
                 raise HTTPException(status_code=400, detail="未提供音频数据")
+            # 上传防呆：base64 编码长度预检（4/3 膨胀 + padding 余量），超限 413
+            if len(audio_base64) > _MAX_UPLOAD_BYTES * 4 // 3 + 4:
+                raise HTTPException(status_code=413, detail="音频文件过大")
             # L 优化：base64 分支直接 BytesIO，消除落盘回读的 IO 开销
             audio_data = base64.b64decode(audio_base64)
+            if len(audio_data) > _MAX_UPLOAD_BYTES:
+                raise HTTPException(status_code=413, detail="音频文件过大")
 
         try:
             result = await asr_svc.recognize(audio_data, language)
@@ -200,12 +221,6 @@ async def asr_speech_to_text(request: Request, asr_svc: ASRService = Depends(get
     except Exception as e:
         logger.error(f"ASR语音识别未预期错误: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail="内部服务器错误")
-    finally:
-        if temp_path and os.path.exists(temp_path):
-            try:
-                os.unlink(temp_path)
-            except Exception:
-                pass
 
 
 def _load_tts_config() -> dict:

@@ -60,6 +60,15 @@ def test_register_audio_invalid_base64_400(client, monkeypatch):
     assert r.status_code == 400
 
 
+def test_register_audio_oversize_413(client, monkeypatch):
+    # 上传防呆：base64 编码长度预检超限 → 413（与 ASR 入口同口径）
+    monkeypatch.setattr(vp_router_mod, "_MAX_UPLOAD_BYTES", 8)
+    big = base64.b64encode(b"x" * 64).decode()
+    r = client.post("/voiceprint/profiles", json={"name": "阿明", "audio": big})
+    assert r.status_code == 413
+    assert r.json()["detail"] == "音频文件过大"
+
+
 def test_register_name_invalid_400(client, monkeypatch):
     async def _register(name, audio_bytes):
         raise ValueError("声纹档案名不能为空且长度不能超过 32")

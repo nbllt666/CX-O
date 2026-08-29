@@ -173,3 +173,60 @@ class TestASR:
         audio = base64.b64encode(b"RIFF").decode()
         r = c.post("/asr/speech-to-text", json={"audio": audio})
         assert r.status_code == 502
+
+    def test_multipart_oversize_returns_413(self, client, monkeypatch):
+        # 上传防呆：multipart 分支超限 → 413（Content-Length 预检 / 读后复查）
+        c, tts, asr = client
+        monkeypatch.setattr(audio_router_mod, "_MAX_UPLOAD_BYTES", 8)
+        r = c.post("/asr/speech-to-text", files={"file": ("a.wav", b"RIFF!!!!!!", "audio/wav")})
+        assert r.status_code == 413
+        assert r.json()["detail"] == "音频文件过大"
+
+    def test_base64_oversize_returns_413(self, client, monkeypatch):
+        # 上传防呆：base64 分支编码长度预检超限 → 413
+        c, tts, asr = client
+        monkeypatch.setattr(audio_router_mod, "_MAX_UPLOAD_BYTES", 8)
+        big = base64.b64encode(b"x" * 64).decode()
+        r = c.post("/asr/speech-to-text", json={"audio": big})
+        assert r.status_code == 413
+        assert r.json()["detail"] == "音频文件过大"
+
+
+class TestTTSSpeedSemantics:
+    """speed/cross_fade Optional 语义：显式值（含 1.0）一律保留，缺省用服务端默认。"""
+
+    def test_explicit_speed_1_0_preserved(self, client):
+        c, tts, asr = client
+        tts._speed = 0.8
+        tts._cross_fade_duration = 0.3
+        captured = {}
+
+        async def _capture(text, **kwargs):
+            captured.update(kwargs)
+            return b"x"
+
+        tts.synthesize = _capture
+        r = c.post(
+            "/tts/synthesize",
+            json={"text": "你好", "speed": 1.0, "cross_fade_duration": 0.15},
+        )
+        assert r.status_code == 200
+        # 显式 1.0/0.15 不再被哨兵替换为服务端默认（与流式端点口径一致）
+        assert captured["speed"] == 1.0
+        assert captured["cross_fade_duration"] == 0.15
+
+    def test_missing_fields_use_server_default(self, client):
+        c, tts, asr = client
+        tts._speed = 0.8
+        tts._cross_fade_duration = 0.3
+        captured = {}
+
+        async def _capture(text, **kwargs):
+            captured.update(kwargs)
+            return b"x"
+
+        tts.synthesize = _capture
+        r = c.post("/tts/synthesize", json={"text": "你好"})
+        assert r.status_code == 200
+        assert captured["speed"] == 0.8
+        assert captured["cross_fade_duration"] == 0.3

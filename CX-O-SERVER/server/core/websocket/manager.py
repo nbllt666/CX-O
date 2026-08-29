@@ -3,6 +3,7 @@ import asyncio
 import json
 import logging
 import threading
+import time
 from datetime import datetime
 from typing import Any, Callable, Dict, Optional, Set
 
@@ -23,6 +24,12 @@ class WebSocketConnection:
         self.connected_at = datetime.now()
         self.last_activity = datetime.now()
         self.subscriptions: Set[str] = set()  # 订阅的频道
+        # R9-01 重连串扰防护：连接代际（由 manager.connect 在锁内递增赋值）。
+        # 同 client_id 重连时代际单调推进，旧端点 finally 携带旧代际调用
+        # disconnect 时将被代际校验拦下，不得拆毁新会话。
+        self.generation: int = 0
+        # 二进制帧 error 帧限频状态（monotonic 时间戳，每连接独立）
+        self._last_unsupported_frame_error_ts: float = 0.0
 
     async def send(self, data: Dict[str, Any]):
         """发送消息"""
@@ -46,23 +53,49 @@ class WebSocketConnection:
             raw = await self.websocket.receive()
             if "text" in raw:
                 payload = raw["text"]
+                is_binary = False
             elif "bytes" in raw:
                 payload = raw["bytes"]
+                is_binary = True
             else:
                 # 其余未知控制帧兜底跳过（断连由 starlette 以 WebSocketDisconnect 抛出）
                 continue
+            # R9-01 配套：任何到达的数据帧均视为活跃并刷新 last_activity——
+            # 此前二进制/畸形帧跳过路径不刷新，活跃客户端会被超时清理误杀
+            self.last_activity = datetime.now()
             try:
                 data = json.loads(payload)
             except (ValueError, TypeError):
                 preview = payload if isinstance(payload, str) else repr(payload[:64])
                 logger.debug(f"收到非 JSON 帧，已跳过 {self.client_id}: {str(preview)[:100]}")
+                if is_binary:
+                    # 二进制帧不支持：限频回发 error 帧（每连接每 5 秒最多 1 条，
+                    # 防畸形帧洪泛放大流量）
+                    await self._send_unsupported_frame_error()
                 continue
             if not isinstance(data, dict):
                 # 保持返回契约 Dict[str, Any]：合法 JSON 标量/数组同样跳过
                 logger.debug(f"收到非对象 JSON 帧，已跳过 {self.client_id}: {type(data).__name__}")
                 continue
-            self.last_activity = datetime.now()
             return data
+
+    # 二进制帧 error 帧限频间隔（秒）：每连接每 5 秒最多回发 1 条
+    UNSUPPORTED_FRAME_ERROR_INTERVAL = 5.0
+
+    async def _send_unsupported_frame_error(self):
+        """二进制帧 error 帧限频回发：防畸形帧洪泛在收帧路径上放大发送流量。"""
+        now = time.monotonic()
+        if now - self._last_unsupported_frame_error_ts < self.UNSUPPORTED_FRAME_ERROR_INTERVAL:
+            return
+        self._last_unsupported_frame_error_ts = now
+        try:
+            await self.send({
+                "type": "error",
+                "code": "UNSUPPORTED_FRAME",
+                "message": "不支持二进制帧",
+            })
+        except Exception as e:
+            logger.debug(f"UNSUPPORTED_FRAME error 帧回发失败 {self.client_id}: {e}")
 
     def subscribe(self, channel: str):
         """订阅频道"""
@@ -94,6 +127,12 @@ class WebSocketManager:
         self._offline_callback: Optional[Callable] = None
         self._agent_timeouts: Dict[str, int] = {}  # agent_id -> timeout seconds
         self._llm_count: int = 0
+        # R9-01 重连串扰防护：client_id -> 当前登记连接代际。
+        # 代际取自全局单调序列 _generation_seq（而非 per-client +1），
+        # 真实断开时回收条目也不会产生 ABA 复用，历史残留 disconnect
+        # 无法再命中新连接；字典规模始终与活跃连接同阶，不无界增长。
+        self._generations: Dict[str, int] = {}
+        self._generation_seq: int = 0
         # E6 修复: 单一保护机制收口——同一组共享结构（connections/channels）此前被
         # asyncio.Lock 与 threading.Lock 两把锁分别守护（异步路径用前者、同步订阅路径
         # 用后者），跨锁竞态下仍可能互踩。统一为一把 threading.RLock：
@@ -129,7 +168,23 @@ class WebSocketManager:
         connection = WebSocketConnection(websocket, client_id, metadata)
         # E6 修复: 统一 RLock；临界区内仅做 dict 写入，不含 await。
         with self._lock:
+            # R9-01 重连串扰防护：分配全局单调代际并登记，同 id 旧连接被
+            # 新连接覆盖（代际已推进，旧端点 disconnect 将被代际校验拦下）。
+            old_connection = self.connections.get(client_id)
+            self._generation_seq += 1
+            connection.generation = self._generation_seq
+            self._generations[client_id] = connection.generation
             self.connections[client_id] = connection
+
+        if old_connection is not None:
+            # 检测到同 client_id 旧连接：先 close 旧 socket（抑制异常），
+            # 防旧连接继续收发串扰；旧端点收帧循环随即断开，其 finally 携带
+            # 旧代际调用 disconnect 时会被代际校验拦下，不拆毁本新会话。
+            logger.info(f"检测到同 client_id 旧连接，已关闭旧 socket 防串扰: {client_id}")
+            try:
+                await old_connection.websocket.close(code=1000)
+            except Exception as e:
+                logger.debug(f"关闭旧连接失败（可能已关闭）: {client_id}: {e}")
 
         # per-client 并发化：懒创建该客户端的独立 VAD/AudioStream 处理器实例，
         # 后续 /ws/live、dual_stream 会话按 client_id 取自己的实例，互不串扰。
@@ -148,18 +203,40 @@ class WebSocketManager:
 
         return connection
 
-    async def disconnect(self, client_id: str):
+    async def disconnect(self, client_id: str, generation: Optional[int] = None):
         """断开连接
 
         BUG-B07 修复: 在锁内完成 ``self.connections`` / ``self.channels``
         的修改,避免与 ``broadcast``/``subscribe_to_channel`` 的并发竞争。
+
+        R9-01 代际校验: 调用方（/ws 端点 finally）传入其连接的 generation，
+        仅当与当前登记代际一致才执行清理——同 id 重连后，旧端点 finally
+        携带旧代际到达时直接跳过，不得拆毁新会话/新会话的频道成员。
+        generation 为 None（内部清理路径/外部踢出等未携带代际的调用）时，
+        以当前登记连接自身的代际为准——等价于"清理当前登记连接"，保持
+        既有语义不变。
         """
         with self._lock:
-            connection = self.connections.pop(client_id, None)
+            connection = self.connections.get(client_id)
             if connection is None:
                 return
 
-            # 从所有频道中移除
+            current_generation = self._generations.get(client_id, 0)
+            effective_generation = connection.generation if generation is None else generation
+            if effective_generation != current_generation:
+                logger.info(
+                    f"跳过过期 disconnect（代际不匹配，不拆毁新会话）: {client_id}, "
+                    f"gen={effective_generation} != current={current_generation}"
+                )
+                return
+
+            # 代际校验通过 → 正式移除连接并回收代际登记（代际取自全局
+            # 单调序列，回收后新连接拿到更大代际，历史残留 disconnect
+            # 无法再命中，无 ABA 复用风险）
+            del self.connections[client_id]
+            self._generations.pop(client_id, None)
+
+            # 从所有频道中移除（代际校验通过后才执行，防误删新连接成员）
             for channel in list(connection.subscriptions):
                 self._remove_from_channel(channel, client_id)
 
@@ -250,6 +327,9 @@ class WebSocketManager:
         with self._lock:
             connections_snapshot = list(self.connections.items())
 
+        # R9-01: 记录发送目标连接的代际，清理时回传 disconnect 做代际校验
+        generation_by_client = {cid: conn.generation for cid, conn in connections_snapshot}
+
         results = await asyncio.gather(
             *[
                 self._send_with_timeout(client_id, connection, message, self.SEND_TIMEOUT)
@@ -260,14 +340,20 @@ class WebSocketManager:
         disconnected = [client_id for client_id in results if client_id]
 
         # 2) 清理断开的连接：延迟到下一次事件循环，避免在当前调用栈中修改字典
+        #    （携带发送失败时的连接代际，防清理期间同 id 重连后误拆新连接）
         if disconnected:
-            self._track_background_task(asyncio.create_task(self._cleanup_disconnected(disconnected)))
+            pairs = [(cid, generation_by_client.get(cid)) for cid in disconnected]
+            self._track_background_task(asyncio.create_task(self._cleanup_disconnected(pairs)))
 
-    async def _cleanup_disconnected(self, client_ids: list[str]):
-        """延迟清理已断开的连接（异步任务中执行）"""
-        for client_id in client_ids:
+    async def _cleanup_disconnected(self, disconnected: list):
+        """延迟清理已断开的连接（异步任务中执行）
+
+        disconnected 为 (client_id, generation) 二元组列表：generation 为
+        发送失败时目标连接的代际，供 disconnect 做代际校验（R9-01）。
+        """
+        for client_id, generation in disconnected:
             try:
-                await self.disconnect(client_id)
+                await self.disconnect(client_id, generation=generation)
             except Exception as e:
                 logger.debug(f"清理断开连接 {client_id} 失败: {e}")
 
@@ -297,6 +383,9 @@ class WebSocketManager:
             members_snapshot = list(self.channels.get(channel, set()))
             connections_snapshot = dict(self.connections)
 
+        # R9-01: 记录发送目标连接的代际，清理时回传 disconnect 做代际校验
+        generation_by_client = {cid: conn.generation for cid, conn in connections_snapshot.items()}
+
         # A6 修复: gather 并发发送 + 单连接超时（与 broadcast 同口径）
         results = await asyncio.gather(
             *[
@@ -310,8 +399,10 @@ class WebSocketManager:
         disconnected = [client_id for client_id in results if client_id]
 
         # 2) 清理断开的连接：延迟到下一次事件循环
+        #    （携带发送失败时的连接代际，防清理期间同 id 重连后误拆新连接）
         if disconnected:
-            self._track_background_task(asyncio.create_task(self._cleanup_disconnected(disconnected)))
+            pairs = [(cid, generation_by_client.get(cid)) for cid in disconnected]
+            self._track_background_task(asyncio.create_task(self._cleanup_disconnected(pairs)))
 
     def subscribe_to_channel(self, client_id: str, channel: str):
         """订阅频道
@@ -497,11 +588,13 @@ class WebSocketManager:
             timeout = timedelta(seconds=timeout_seconds)
 
             if now - connection.last_activity > timeout:
-                inactive.append((client_id, agent_id))
+                # R9-01: 快照时捕获连接代际，disconnect 校验防超时清理与
+                # 同 id 重连竞态下误拆新连接
+                inactive.append((client_id, agent_id, connection.generation))
 
-        for client_id, agent_id in inactive:
+        for client_id, agent_id, generation in inactive:
             logger.info(f"连接超时离线: {client_id}, agent={agent_id}")
-            await self.disconnect(client_id)
+            await self.disconnect(client_id, generation=generation)
 
             if offline_callback:
                 try:

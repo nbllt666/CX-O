@@ -4,6 +4,7 @@
 支持使用内置 Conda 环境或系统 Python
 """
 
+import asyncio
 import json
 import os
 import signal
@@ -11,6 +12,7 @@ import subprocess
 import sys
 import threading
 import time
+from collections import deque
 from typing import Any, Optional
 
 import psutil
@@ -94,6 +96,89 @@ def _remove_pidfile() -> None:
             os.remove(pidfile)
     except OSError as e:
         logger.warning(f"删除 pidfile 失败: {e}")
+
+
+# ---------------------------------------------------------------------------
+# 阻塞 IO 卸载辅助（同步函数，仅供 async 端点经 asyncio.to_thread 调度）：
+# 日志全量读/进程表遍历/process.wait 均为重阻塞操作，不得直接运行在
+# 事件循环线程上（无日志或进程表庞大时最长可冻结循环数秒）。
+# ---------------------------------------------------------------------------
+
+
+def _read_log_tail(path: str, lines: int) -> str:
+    """尾读日志文件末尾 lines 行（deque 定长滑动窗口，避免全量载入内存）。
+
+    行为与旧实现 ``"".join(f.readlines()[-lines:])`` 等价（返回最后 N 行），
+    但内存占用从 O(文件大小) 降为 O(lines)。
+    """
+    with open(path, "r", encoding="utf-8") as f:
+        tail = deque(f, maxlen=lines)
+    return "".join(tail)
+
+
+def _find_backend_by_process_iter_sync() -> Optional[psutil.Process]:
+    """status 回退路径：遍历进程表查找 CX-O 后端进程（uvicorn server.main:app）。
+
+    自我排除（A2 修复）逻辑原样保留：承载本请求的主服务自身不得被误报。
+    pidfile 主路径不变，仅本回退遍历经 asyncio.to_thread 异步化。
+    """
+    for proc in psutil.process_iter(["pid", "name", "cmdline"]):
+        try:
+            # 自我排除（A2 修复）：承载本请求的主服务本身就是
+            # uvicorn server.main:app 形态，不得被回退匹配误报为"已运行的后端"
+            if proc.pid == os.getpid():
+                continue
+            # cmdline 可能为 None，用 `or []` 确保是列表
+            cmdline = proc.info.get("cmdline") or []
+            if (
+                cmdline
+                and "uvicorn" in " ".join(cmdline)
+                and "server.main:app" in " ".join(cmdline)
+            ):
+                # 找到已运行的进程，直接使用其PID
+                return proc
+        except (psutil.NoSuchProcess, psutil.AccessDenied):
+            continue
+    return None
+
+
+def _find_stop_target_by_process_iter_sync(project_root: str) -> tuple:
+    """stop 回退路径：遍历进程表定位精确匹配的 CX-O 后端进程 PID。
+
+    返回 ``(stopped, found_pid)``。自我排除（A2）、cwd 校验（E8 防误杀）、
+    pidfile 精确匹配逻辑全部原样保留，仅将阻塞遍历整体移入辅助函数供
+    asyncio.to_thread 调度。
+    """
+    stopped = False
+    found_pid = None
+    root_norm = os.path.normcase(os.path.abspath(project_root))
+    for proc in psutil.process_iter(["pid", "name", "cmdline"]):
+        try:
+            # 自我排除（A2 修复）：严禁 terminate 承载本请求的主服务自身
+            if proc.pid == os.getpid():
+                continue
+            # cmdline 可能为 None，用 `or []` 确保是列表
+            cmdline = proc.info.get("cmdline") or []
+            cmdline_str = " ".join(cmdline)
+            if cmdline_str and "uvicorn" in cmdline_str and "server.main:app" in cmdline_str:
+                # E8 修复: cwd 校验——获取失败（权限/进程消失,psutil.Error 基类
+                # 覆盖 AccessDenied/NoSuchProcess 等）时保守跳过不杀;
+                # cwd 不在本项目根内（含根本身）的一律跳过。
+                try:
+                    proc_cwd = proc.cwd()
+                except psutil.Error:
+                    continue
+                cwd_norm = os.path.normcase(os.path.abspath(proc_cwd))
+                if cwd_norm != root_norm and not cwd_norm.startswith(root_norm + os.sep):
+                    continue
+                # 命中精确目标：优先以 pidfile 记录的 backend pid 精确 terminate
+                pidfile_pid = _read_pidfile()
+                found_pid = pidfile_pid if (pidfile_pid is not None and pidfile_pid == proc.pid) else proc.pid
+                stopped = True
+                break
+        except (psutil.NoSuchProcess, psutil.AccessDenied):
+            continue
+    return stopped, found_pid
 
 
 def _get_service_config_path() -> str:
@@ -347,25 +432,9 @@ async def get_service_status():
                 process = None
 
     if process is None:
-        # 回退到 psutil.process_iter（pidfile 不存在或进程已死时）
-        for proc in psutil.process_iter(["pid", "name", "cmdline"]):
-            try:
-                # 自我排除（A2 修复）：承载本请求的主服务本身就是
-                # uvicorn server.main:app 形态，不得被回退匹配误报为"已运行的后端"
-                if proc.pid == os.getpid():
-                    continue
-                # B10 修复: cmdline 可能为 None，用 `or []` 确保是列表
-                cmdline = proc.info.get("cmdline") or []
-                if (
-                    cmdline
-                    and "uvicorn" in " ".join(cmdline)
-                    and "server.main:app" in " ".join(cmdline)
-                ):
-                    # 找到已运行的进程，直接使用其PID
-                    process = proc
-                    break
-            except (psutil.NoSuchProcess, psutil.AccessDenied):
-                continue
+        # 回退到 psutil.process_iter（pidfile 不存在或进程已死时）。
+        # 阻塞遍历经 asyncio.to_thread 卸载，避免进程表庞大时冻结事件循环。
+        process = await asyncio.to_thread(_find_backend_by_process_iter_sync)
 
     if process and process.is_running():
         try:
@@ -591,10 +660,11 @@ async def start_service(config: ServiceConfig, _: bool = Depends(verify_admin_ap
             try:
                 new_process.terminate()
                 try:
-                    new_process.wait(timeout=3)
+                    # 阻塞 wait 经 asyncio.to_thread 卸载，避免冻结事件循环
+                    await asyncio.to_thread(new_process.wait, timeout=3)
                 except subprocess.TimeoutExpired:
                     new_process.kill()
-                    new_process.wait(timeout=3)
+                    await asyncio.to_thread(new_process.wait, timeout=3)
             except Exception as reap_err:
                 # 回收失败仅留痕,不吞原始启动异常
                 logger.error(f"Failed to reap orphan process: {reap_err}")
@@ -631,40 +701,15 @@ async def stop_service(_: bool = Depends(verify_admin_api_key)):
     if process is None:
         # 回退到 psutil.process_iter —— 仅终止精确匹配的 CX-O 后端进程。
         # 严禁裸 "uvicorn" 匹配（会误杀承载本请求的其它 uvicorn 进程）。
-        stopped = False
-        found_pid = None
         # E8 修复: 防误杀——cmdline 匹配后还须校验候选进程 cwd 位于本项目根内。
         # 项目根口径与 admin.py/_PROJECT_ROOT、get_project_root() 一致:
         # service.py 上溯 4 级目录（server/api/routers/service.py -> 项目根）。
         # 防止误杀本机其它项目中同名模块（server.main:app）的 uvicorn 进程。
+        # 阻塞遍历整体经 asyncio.to_thread 卸载（自我排除/cwd 校验逻辑原样保留）。
         project_root = get_project_root()
-        root_norm = os.path.normcase(os.path.abspath(project_root))
-        for proc in psutil.process_iter(["pid", "name", "cmdline"]):
-            try:
-                # 自我排除（A2 修复）：严禁 terminate 承载本请求的主服务自身
-                if proc.pid == os.getpid():
-                    continue
-                # B10 修复: cmdline 可能为 None，用 `or []` 确保是列表
-                cmdline = proc.info.get("cmdline") or []
-                cmdline_str = " ".join(cmdline)
-                if cmdline_str and "uvicorn" in cmdline_str and "server.main:app" in cmdline_str:
-                    # E8 修复: cwd 校验——获取失败（权限/进程消失,psutil.Error 基类
-                    # 覆盖 AccessDenied/NoSuchProcess 等）时保守跳过不杀;
-                    # cwd 不在本项目根内（含根本身）的一律跳过。
-                    try:
-                        proc_cwd = proc.cwd()
-                    except psutil.Error:
-                        continue
-                    cwd_norm = os.path.normcase(os.path.abspath(proc_cwd))
-                    if cwd_norm != root_norm and not cwd_norm.startswith(root_norm + os.sep):
-                        continue
-                    # 命中精确目标：优先以 pidfile 记录的 backend pid 精确 terminate
-                    pidfile_pid = _read_pidfile()
-                    found_pid = pidfile_pid if (pidfile_pid is not None and pidfile_pid == proc.pid) else proc.pid
-                    stopped = True
-                    break
-            except (psutil.NoSuchProcess, psutil.AccessDenied):
-                continue
+        stopped, found_pid = await asyncio.to_thread(
+            _find_stop_target_by_process_iter_sync, project_root
+        )
 
         if stopped and found_pid is not None:
             try:
@@ -674,7 +719,8 @@ async def stop_service(_: bool = Depends(verify_admin_api_key)):
                 else:
                     target.send_signal(signal.SIGTERM)
                 try:
-                    target.wait(timeout=5)
+                    # 阻塞 wait 经 asyncio.to_thread 卸载，避免冻结事件循环
+                    await asyncio.to_thread(target.wait, timeout=5)
                 except psutil.TimeoutExpired:
                     target.kill()
             except (psutil.NoSuchProcess, psutil.AccessDenied):
@@ -696,7 +742,8 @@ async def stop_service(_: bool = Depends(verify_admin_api_key)):
 
         # 等待进程结束
         try:
-            process.wait(timeout=5)
+            # 阻塞 wait 经 asyncio.to_thread 卸载，避免冻结事件循环
+            await asyncio.to_thread(process.wait, timeout=5)
         except psutil.TimeoutExpired:
             # 强制终止
             process.kill()
@@ -729,9 +776,7 @@ async def restart_service(config: ServiceConfig, _: bool = Depends(verify_admin_
         # 服务可能未运行，忽略错误
         pass
 
-    # 等待一下确保端口释放
-    import asyncio
-
+    # 等待一下确保端口释放（asyncio 已在模块顶部导入）
     await asyncio.sleep(1)
 
     # 再启动
@@ -753,9 +798,11 @@ async def get_service_logs(lines: int = 100):
         if not log_file:
             log_file = os.path.join(get_project_root(), "logs", "cxo.log")
         if os.path.exists(log_file):
-            with open(log_file, "r", encoding="utf-8") as f:
-                all_lines = f.readlines()
-                return {"status": "success", "logs": "".join(all_lines[-lines:])}
+            # 阻塞文件读整体经 asyncio.to_thread 卸载；_read_log_tail 用 deque
+            # 尾读仅保留最后 N 行，行为等价于旧的 readlines()[-lines:] 但
+            # 不再将全量日志载入内存。
+            logs = await asyncio.to_thread(_read_log_tail, log_file, lines)
+            return {"status": "success", "logs": logs}
 
         return {"status": "success", "logs": "No log file available"}
 

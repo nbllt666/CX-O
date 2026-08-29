@@ -64,6 +64,43 @@ class TestGetSession:
     def test_unknown_returns_none(self, store):
         assert store.get_session("nonexistent") is None
 
+    def test_hit_updates_last_accessed_single_connection_cycle(self, store, session, monkeypatch):
+        """写放大修复验证：命中读后 last_accessed_at 被更新，且全程仅一个连接周期。"""
+        before = session.last_accessed_at
+        calls = {"n": 0}
+        orig = store._get_connection
+
+        def counting():
+            # 每次获取连接计数一次——原实现命中读会开两个连接周期
+            calls["n"] += 1
+            return orig()
+
+        monkeypatch.setattr(store, "_get_connection", counting)
+        got = store.get_session(session.id)
+        assert got.id == session.id
+        assert calls["n"] == 1
+
+        # last_accessed_at 已更新（>= 创建时刻；从库直读而非读缓存对象）
+        with sqlite3.connect(store.db_path) as conn:
+            row = conn.execute(
+                "SELECT last_accessed_at FROM sessions WHERE id = ?", (session.id,)
+            ).fetchone()
+        updated = datetime.fromisoformat(row[0])
+        assert updated >= before
+
+    def test_miss_does_not_write(self, store, monkeypatch):
+        """未命中不触发 last_accessed 写路径（保持无副作用）。"""
+        calls = {"n": 0}
+        orig = store._get_connection
+
+        def counting():
+            calls["n"] += 1
+            return orig()
+
+        monkeypatch.setattr(store, "_get_connection", counting)
+        assert store.get_session("nonexistent") is None
+        assert calls["n"] == 1
+
 
 class TestGetSessions:
     def test_filter_by_workspace(self, store):

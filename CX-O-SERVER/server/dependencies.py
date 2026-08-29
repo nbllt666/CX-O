@@ -40,6 +40,8 @@ class ServiceState:
         self.instance_registry: Optional[Any] = None
         self.cluster_manager: Optional[Any] = None
         self.cluster_bridge: Optional[Any] = None
+        # 会话清理后台任务是否由本 worker 启动（非 leader 为 None，shutdown 据此跳过）
+        self.session_cleanup_started: Optional[bool] = None
 
 
 _service_state: Optional[ServiceState] = None

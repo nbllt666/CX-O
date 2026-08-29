@@ -301,3 +301,85 @@ class TestLocalIP:
 
         d._socket_factory = boom
         assert await d.get_local_ip() == "127.0.0.1"
+
+
+class BlockingFakeSocket(FakeSocket):
+    """模拟阻塞收包 socket：recvfrom 记录执行线程并短暂阻塞后再超时。
+
+    旧实现（recvfrom 直接跑在事件循环线程）下，阻塞期间 heartbeat 无法
+    调度；新实现（to_thread 卸载）下 heartbeat 正常推进——以此区分修复前后。
+    """
+
+    def __init__(self, **kw):
+        super().__init__(**kw)
+        self.recv_thread = None
+
+    def recvfrom(self, bufsize):
+        import threading
+        import time
+
+        self.recv_thread = threading.get_ident()
+        time.sleep(0.1)  # 模拟阻塞收包（无信标）
+        raise socket.timeout("no data")
+
+
+# ================================================================ 事件循环不冻结（第十轮）
+class TestDiscoverOnceEventLoopNotFrozen:
+    @pytest.mark.asyncio
+    async def test_discover_once_does_not_block_event_loop(self, tmp_path):
+        """无信标时 discover_once 不冻结事件循环：收包在 to_thread 工作线程
+        执行，等待期间的并发任务（heartbeat）仍能推进。"""
+        import threading
+
+        mgr, d, _ = _make_discovery(tmp_path)
+        fake = BlockingFakeSocket()
+        d._socket_factory = lambda *a, **k: fake
+
+        ticks = {"n": 0}
+        stop = asyncio.Event()
+
+        async def heartbeat():
+            while not stop.is_set():
+                ticks["n"] += 1
+                await asyncio.sleep(0.01)
+
+        hb = asyncio.create_task(heartbeat())
+        try:
+            agents = await d.discover_once(timeout=0.5)
+        finally:
+            stop.set()
+            await hb
+
+        assert agents == []
+        # 收包发生在非事件循环线程（to_thread 工作线程）
+        assert fake.recv_thread is not None
+        assert fake.recv_thread != threading.get_ident()
+        # 事件循环未被冻结：0.1s 阻塞收包期间 heartbeat 获得多轮调度
+        # （旧实现下该值只会是 1——阻塞期间事件循环无法调度任何任务）
+        assert ticks["n"] >= 3
+        # finally 兜底关闭仍然生效
+        assert fake.closed is True
+
+    @pytest.mark.asyncio
+    async def test_discover_once_still_parses_beacon_from_worker_thread(self, tmp_path):
+        """to_thread 化后收包解析语义不变：beacon 仍被正确发现并注册。"""
+        import threading
+
+        mgr, d, fake = _make_discovery(tmp_path, recv_data=[_beacon()])
+
+        real_recvfrom = fake.recvfrom
+        recv_threads = []
+
+        def spy_recvfrom(bufsize):
+            recv_threads.append(threading.get_ident())
+            return real_recvfrom(bufsize)
+
+        fake.recvfrom = spy_recvfrom
+        d._socket_factory = lambda *a, **k: fake
+
+        agents = await d.discover_once(timeout=0.2)
+
+        assert len(agents) == 1
+        assert agents[0]["id"] == "peer"
+        assert recv_threads and recv_threads[0] != threading.get_ident()
+        assert await mgr.get_agent("peer") is not None

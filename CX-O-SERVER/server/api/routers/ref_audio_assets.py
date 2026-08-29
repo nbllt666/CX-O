@@ -8,12 +8,14 @@ public/interface_stub/ref_audio_store.pyi 与 ref_audio_asset.schema.json）。
 """
 from __future__ import annotations
 
+import uuid
 from typing import Optional
 
-from fastapi import APIRouter, File, Form, HTTPException, UploadFile
+from fastapi import APIRouter, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 
+from server.config import get_settings
 from server.core.logging_config import get_contextual_logger
 from server.qwen3_tts_provider import (
     InvalidRefAudioError,
@@ -25,8 +27,29 @@ import server.ref_audio_store as store
 logger = get_contextual_logger(__name__)
 router = APIRouter()
 
-# 外部文件上传大小上限（与配置 max_ref_audio_size_mb 对齐，默认 50MB）
-_MAX_UPLOAD_BYTES = 60 * 1024 * 1024
+
+def _resolve_max_upload_bytes() -> int:
+    """启动时从配置读取参考音频单文件大小上限（MB → bytes）。
+
+    与 store 内部校验（get_settings().tts.max_ref_audio_size_mb）同源同口径，
+    消除路由硬编码 60MB 与 store 50MB 的双闸门不一致（50-60MB 文件不再进入必失败的泄漏路径）。
+    """
+    try:
+        return int(get_settings().tts.max_ref_audio_size_mb) * 1024 * 1024
+    except Exception:  # noqa: BLE001 — 配置不可用时回退内置默认 50MB
+        return 50 * 1024 * 1024
+
+
+_MAX_UPLOAD_BYTES = _resolve_max_upload_bytes()
+
+# 试听 media_type 映射（未列出的扩展名保持现口径 audio/mpeg）
+_AUDIO_MEDIA_TYPES = {
+    ".wav": "audio/wav",
+    ".mp3": "audio/mpeg",
+    ".flac": "audio/flac",
+    ".ogg": "audio/ogg",
+    ".m4a": "audio/mp4",
+}
 
 
 class SetCurrentAssetRequest(BaseModel):
@@ -107,12 +130,17 @@ async def clear_current_asset():
 
 @router.post("/ref-audio-assets/from-file", summary="注册外部音频文件资产")
 async def register_from_file(
+    request: Request,
     file: UploadFile = File(...),
     ref_text: Optional[str] = Form(None),
     note: Optional[str] = Form(None),
 ):
     """上传外部音频文件并注册为 source=file 资产。"""
     try:
+        # 上传防呆：Content-Length 预检（超限直接 413，不整读入内存），读取后复查实际长度
+        content_length = request.headers.get("content-length", "")
+        if content_length.isdigit() and int(content_length) > _MAX_UPLOAD_BYTES:
+            raise HTTPException(status_code=413, detail="音频文件过大")
         content = await file.read()
         if not content:
             raise HTTPException(status_code=400, detail="音频文件为空")
@@ -122,14 +150,17 @@ async def register_from_file(
         asset_dir = store._resolve_assets_dir()
         asset_dir.mkdir(parents=True, exist_ok=True)
         safe_name = _sanitize_upload_name(file.filename or "ref_audio")
-        tmp_path = asset_dir / f"_upload_{safe_name}"
+        # 临时名加 uuid：并发上传同名文件不再互相覆盖（safe_name 仅用于最终注册元数据）
+        tmp_path = asset_dir / f"_upload_{uuid.uuid4().hex}_{safe_name}"
         tmp_path.write_bytes(content)
-        asset = store.register_from_file(str(tmp_path), ref_text=ref_text or "", note=note or "")
-        # 注册成功后清理上传临时文件（store 已复制到资产文件）
         try:
-            tmp_path.unlink(missing_ok=True)
-        except OSError:
-            pass
+            asset = store.register_from_file(str(tmp_path), ref_text=ref_text or "", note=note or "")
+        finally:
+            # 注册成功与异常（InvalidRefAudioError 等）路径都清理上传临时文件，杜绝残留
+            try:
+                tmp_path.unlink(missing_ok=True)
+            except OSError:
+                pass
         return {"asset": _to_public(asset)}
     except InvalidRefAudioError as e:
         raise HTTPException(status_code=400, detail=str(e))
@@ -137,7 +168,8 @@ async def register_from_file(
         raise
     except Exception as e:  # noqa: BLE001
         logger.error(f"注册外部文件资产失败: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail=str(e))
+        # 错误文案收敛：不透传内部路径/实现细节（详情见上方日志）
+        raise HTTPException(status_code=500, detail="音频处理失败，请检查文件格式")
 
 
 @router.post("/ref-audio-assets/from-prompt", summary="提示词生成参考音频资产")
@@ -154,7 +186,8 @@ async def register_from_prompt(payload: RegisterFromPromptRequest):
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:  # noqa: BLE001
         logger.error(f"提示词生成参考音频失败: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail=str(e))
+        # 错误文案收敛：不透传内部实现细节（详情见上方日志）
+        raise HTTPException(status_code=500, detail="参考音频生成失败，请稍后重试")
 
 
 @router.get("/ref-audio-assets/{asset_id}", summary="参考音频资产详情")
@@ -177,7 +210,7 @@ async def get_asset_audio(asset_id: str):
     """返回资产音频文件供前端试听。"""
     try:
         path = store.get_audio_path(asset_id)
-        media_type = "audio/wav" if path.suffix.lower() == ".wav" else "audio/mpeg"
+        media_type = _AUDIO_MEDIA_TYPES.get(path.suffix.lower(), "audio/mpeg")
         return FileResponse(path=path, media_type=media_type)
     except (RefAudioNotFoundError, InvalidRefAudioError) as e:
         raise HTTPException(status_code=404, detail=str(e))

@@ -1,5 +1,7 @@
 """PeerHeartbeat 测试：miss→suspect、多数派确认（自 mock 多数）、on_dead 回调、
-观测键统一（H7）、投票去重（H7）、死亡节点复活通道（M3）。"""
+观测键统一（H7）、投票去重（H7）、死亡节点复活通道（M3）、
+gossip 问询并发化与死亡确认后台化（不阻塞 _beat_once）。"""
+import asyncio
 from types import SimpleNamespace
 
 import pytest
@@ -42,7 +44,11 @@ async def test_miss_increments_and_suspect_after_threshold():
     hb.set_gossip_fn(lambda ep, about: True)  # 全票确认
 
     await hb._beat_once()  # 第 1 次 miss：p2=1
-    await hb._beat_once()  # 第 2 次 miss：p2>=threshold → suspect + 确认
+    await hb._beat_once()  # 第 2 次 miss：p2>=threshold → suspect + 确认（后台任务）
+
+    # 确认流程已后台化：等待在途确认任务完成后断言终态
+    if hb._confirm_tasks:
+        await asyncio.gather(*list(hb._confirm_tasks))
 
     assert hb.is_suspect("p2")
     assert hb.is_dead("p2")
@@ -195,3 +201,134 @@ async def test_status_for_resolves_via_mapping():
     st = hb.status_for("ep-9")
     assert st["state"] == "suspect"
     assert hb.status_for("unknown-ep") is None
+
+
+# ---------------- gossip 问询并发化 + 死亡确认后台化 ----------------
+
+@pytest.mark.asyncio
+async def test_confirm_dead_asks_gossip_concurrently():
+    """confirm_dead 并发问询全部 peer：mock _ask_gossip 统计最大并发数 == peer 数。
+
+    旧实现串行 await（单 peer 超时最高 15s），修复后 gather 并发——
+    所有问询应处于同时在途状态。
+    """
+    cfg = make_config(peers=["p1", "p2", "p3"])
+    hb = PeerHeartbeat(config=cfg, node_id="me")
+
+    inflight = {"n": 0, "max": 0}
+
+    async def fake_ask(peer, about):
+        inflight["n"] += 1
+        inflight["max"] = max(inflight["max"], inflight["n"])
+        await asyncio.sleep(0.02)  # 让出控制权，暴露并发窗口
+        inflight["n"] -= 1
+        return True
+
+    hb._ask_gossip = fake_ask
+    assert await hb.confirm_dead("deadZ") is True
+    assert inflight["max"] == 3  # 3 个 peer 并发问询，而非串行 1
+
+
+@pytest.mark.asyncio
+async def test_confirm_dead_total_timeout_treats_all_as_abstained():
+    """单轮 gossip 总超时：未应答的 peer 全部按弃权计票（不抛超时异常）。"""
+    cfg = make_config(peers=["slow1", "slow2"])
+    hb = PeerHeartbeat(config=cfg, node_id="me")
+
+    async def hanging_ask(peer, about):
+        await asyncio.sleep(30)  # 远超总超时，应被 wait_for 取消
+
+    hb._ask_gossip = hanging_ask
+    # 压缩总超时：transport 无 _timeout_sec 时默认 7.5 → 总超时 15s，太慢；
+    # 注入小 _timeout_sec 验证超时路径（total = max(1, min(0.1*2, 15)) = 1s 下限，
+    # 仍偏慢 → 直接改为 monkey transport 为带 _timeout_sec=0.1 的假对象）
+    hb._transport = SimpleNamespace(_timeout_sec=0.1)
+
+    import time as _t
+    start = _t.monotonic()
+    assert await hb.confirm_dead("deadT") is False  # 仅自身 1 票 < 多数派 2
+    elapsed = _t.monotonic() - start
+    assert elapsed < 5  # 总超时生效（未挂满 30s）
+    assert set(hb.last_confirm_report["abstained"]) == {"slow1", "slow2"}
+
+
+@pytest.mark.asyncio
+async def test_confirm_runs_in_background_not_blocking_beat():
+    """确认任务后台化：_beat_once 只发起不等待——确认未完成时主循环已返回。"""
+    # 双 peer：p1 掉线成为确认目标（被排除出问询名单），p2 投赞成票
+    cfg = make_config(peers=["p1", "p2"], miss_threshold=1)
+    t = _DeadTransport("p1")
+    hb = PeerHeartbeat(config=cfg, transport=t, node_id="me")
+    release = asyncio.Event()
+
+    async def slow_ask(peer, about):
+        await release.wait()  # 阻塞确认直到测试放行
+        return True
+
+    hb._ask_gossip = slow_ask
+    await hb._beat_once()  # p1 miss 达阈值 → 发起后台确认后立即返回
+
+    assert "p1" in hb._confirm_inflight  # 在途登记（去重依据）
+    assert not hb.is_dead("p1")          # 主循环未阻塞等待确认结果
+
+    release.set()
+    await asyncio.gather(*list(hb._confirm_tasks))  # 等待后台确认完成
+    assert hb.is_dead("p1")              # 自身观测 + p2 赞成 = 多数派(2/3)
+
+
+@pytest.mark.asyncio
+async def test_confirm_task_dedup_per_node():
+    """同一 node_id 确认在途时不再重复发起（第二轮 miss 达标不叠加问询）。"""
+    # 双 peer：p1 掉线成为确认目标，p2 为问询对象
+    cfg = make_config(peers=["p1", "p2"], miss_threshold=1)
+    t = _DeadTransport("p1")
+    hb = PeerHeartbeat(config=cfg, transport=t, node_id="me")
+    calls = {"n": 0}
+    gate = asyncio.Event()
+
+    async def slow_ask(peer, about):
+        calls["n"] += 1
+        await gate.wait()
+        return False
+
+    hb._ask_gossip = slow_ask
+    entered = asyncio.Event()
+
+    async def slow_ask_enter(peer, about):
+        entered.set()  # 记录"确认任务已真正进入问询"
+        return await slow_ask(peer, about)
+
+    hb._ask_gossip = slow_ask_enter
+    await hb._beat_once()  # p1 miss（阈值 1）→ 发起确认
+    # 确定性等待：确认任务穿透 create_task→wait_for→gather 层级进入 slow_ask
+    await asyncio.wait_for(entered.wait(), timeout=2)
+    await hb._beat_once()  # p1 再次 miss 达标 → 在途去重，不得再发起
+    assert calls["n"] == 1
+
+    gate.set()
+    await asyncio.gather(*list(hb._confirm_tasks))
+    assert "p1" not in hb._confirm_inflight  # 完成后在途标记释放
+
+
+@pytest.mark.asyncio
+async def test_stop_cancels_inflight_confirm_tasks():
+    """stop 取消在途确认后台任务，且不触发 on_dead 接管回调。"""
+    cfg = make_config(peers=["p1"], miss_threshold=1)
+    t = _DeadTransport("p1")
+    hb = PeerHeartbeat(config=cfg, transport=t, node_id="me")
+    fired = []
+    hb.set_on_dead(lambda node: fired.append(node))
+    release = asyncio.Event()
+
+    async def slow_ask(peer, about):
+        await release.wait()
+        return True
+
+    hb._ask_gossip = slow_ask
+    await hb._beat_once()
+    assert hb._confirm_tasks  # 确认任务在途
+
+    await hb.stop()
+    assert not hb._confirm_tasks       # 在途任务已取消并清理
+    assert fired == []                 # 未触发 on_dead 接管
+    release.set()                      # 放行（协程已被取消，此信号无效果）

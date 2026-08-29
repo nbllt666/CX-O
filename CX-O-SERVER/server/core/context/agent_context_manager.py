@@ -10,6 +10,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
+from server.config import atomic_write_json
 from server.core.logging_config import get_contextual_logger
 
 logger = get_contextual_logger(__name__)
@@ -119,8 +120,8 @@ class AgentContextManager:
                 "created_at": context_data.created_at,
                 "updated_at": context_data.updated_at,
             }
-            with open(file_path, "w", encoding="utf-8") as f:
-                json.dump(data, f, ensure_ascii=False, indent=2)
+            # 原子写（mkstemp+fsync+os.replace）：写盘中途崩溃不再产生半写截断文件
+            atomic_write_json(str(file_path), data)
         except Exception as e:
             logger.error(f"保存Agent上下文到文件失败: {e}")
             raise

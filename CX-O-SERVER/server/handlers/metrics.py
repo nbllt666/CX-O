@@ -6,6 +6,7 @@ from typing import TYPE_CHECKING
 
 from server.protocol.message import create_response, create_error
 from server.protocol.actions import MetricsActions
+from server.core.utils import run_io
 
 if TYPE_CHECKING:
     from server.core.websocket.manager import WebSocketManager
@@ -26,7 +27,9 @@ def register_metrics_handlers(manager: "WebSocketManager"):
 
             try:
                 memory_mgr = get_memory_manager()
-                metrics["memory"] = memory_mgr.get_statistics()
+                # get_statistics 为同步主库读，移入线程池避免阻塞事件循环
+                # （对齐下方 acp 的 await 形态）
+                metrics["memory"] = await run_io(memory_mgr.get_statistics)
             except Exception as e:
                 logger.warning("获取memory metrics失败: %s", e, exc_info=True)
                 metrics["memory"] = {"error": "unavailable"}

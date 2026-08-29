@@ -1,4 +1,7 @@
-FROM vllm/vllm-openai:latest
+# 2026-08-29 钉版本：latest 浮动标签会让 CUDA 基座/引擎/CLI 行为随上游漂移
+# （GGUF 加载路径、启动参数在版本间有破坏性变更）。升级方式：改为更新的已知可用
+# tag（如 v0.10.x），构建后先以 docker compose --profile llm up llm 验证 /health 再切换。
+FROM vllm/vllm-openai:v0.9.2
 
 # 清空基础镜像的 ENTRYPOINT ["vllm serve"]
 # 否则 CMD 会被拼接成 "vllm serve sh -c python -m ..." 导致参数解析错误
@@ -38,22 +41,28 @@ HEALTHCHECK --interval=30s --timeout=10s --start-period=120s --retries=5 \
 # vLLM natively supports GGUF loading
 # Dynamic LoRA 参数仅在 ENABLE_LORA=true 时追加；否则 LORA_ARGS 为空，
 # 命令与未启用 LoRA 时完全一致（向后兼容，关闭状态不会多出 --enable-lora/--lora-* 参数）。
+# ENABLE_PREFIX_CACHING 同口径显式比较：仅 "true" 时追加 --enable-prefix-caching
+# （原 ${VAR:+...} 写法在设为 "false" 等非空值时会误开启，2026-08-29 修复）。
 # LORA_MODULES 支持多 adapter：name=path 用逗号分隔（如
 #   base=./models/base_lora,streaming=./models/streaming_lora,intimate=./models/intimate_lora）
 # 先经 tr 将逗号转空格分词，--lora-modules 才能正确展开为多个 name=path 参数。
-CMD ["sh", "-c", "if [ \"$ENABLE_LORA\" = \"true\" ]; then \
+CMD ["sh", "-c", "if [ \"$ENABLE_PREFIX_CACHING\" = \"true\" ]; then \
+    PREFIX_ARGS=\"--enable-prefix-caching\"; \
+    else \
+    PREFIX_ARGS=\"\"; \
+    fi; \
+    if [ \"$ENABLE_LORA\" = \"true\" ]; then \
     LORA_SPLIT=$(printf '%s' \"$LORA_MODULES\" | tr ',' ' '); \
     LORA_ARGS=\"--enable-lora${LORA_SPLIT:+ --lora-modules $LORA_SPLIT}${MAX_LORAS:+ --max-loras $MAX_LORAS}\"; \
     else \
     LORA_ARGS=\"\"; \
     fi; \
-    python -m vllm.entrypoints.openai.api_server \
-    --model ${MODEL_PATH} \
+    vllm serve ${MODEL_PATH} \
     --host ${HOST} \
     --port ${PORT} \
     --max-model-len ${MAX_MODEL_LEN} \
     --gpu-memory-utilization ${GPU_MEMORY_UTILIZATION} \
     --dtype ${DTYPE} \
     --max-num-seqs ${MAX_NUM_SEQS} \
-    ${ENABLE_PREFIX_CACHING:+--enable-prefix-caching} \
+    $PREFIX_ARGS \
     $LORA_ARGS"]

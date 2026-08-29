@@ -4,6 +4,7 @@ from typing import Any, Dict, List, Optional
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
+from server.api.routers._pagination import clamp_pagination
 from server.config import Settings
 from server.core.exceptions import MemoryOperationError
 from server.core.logging_config import get_contextual_logger
@@ -57,11 +58,20 @@ def _collect_agent_tables(memory_mgr) -> list:
         agents.sort(key=lambda a: a["agent_id"] != "default")
         return agents
     finally:
-        if conn is not None:
-            try:
-                conn.close()
-            except Exception:
-                pass
+        # M-D3: 连接所有权归 MemoryManager 连接池，此处不得 close
+        # （对照 archiver.py:165-167 注释）；连接归还由池管理，无需清理。
+        pass
+
+
+def _count_active_memories(memory_mgr) -> int:
+    """同步统计未删除记忆总数（sqlite 直连），供 async 端点经 run_io 移入
+    IO 线程池执行。M-D3: 连接所有权归 MemoryManager 连接池，获取后不得
+    close（对照 archiver.py:165-167 注释），归还由池管理。"""
+    conn = memory_mgr._get_connection()
+    cursor = conn.cursor()
+    cursor.execute("SELECT COUNT(*) FROM memories WHERE is_deleted = 0")
+    row = cursor.fetchone()
+    return row[0] if row else 0
 
 
 class MemoryCreateRequest(BaseModel):
@@ -95,7 +105,7 @@ class MemorySearchRequest(BaseModel):
     memory_type: Optional[str] = None
     tags: Optional[List[str]] = None
     time_range: Optional[str] = None
-    # R9: 分页参数边界约束，防恶意大 limit 拖库（对齐 tuner.py:252 钳制语义 max(1, min(x, 200))）
+    # R9: 分页参数边界约束，防恶意大 limit 拖库（tuner.py:252 口径为 max(1, min(x, 100))，本端点上限 200）
     limit: int = Field(default=10, ge=1, le=200)
     offset: int = Field(default=0, ge=0)
     include_deleted: bool = False
@@ -127,9 +137,8 @@ async def list_memories(
     agent_id: str = "default",
 ):
     """列出记忆"""
-    # R9: 分页参数钳制（对齐 tuner.py:252 惯例），下游 get_permanent_memories/search_memories 直传
-    limit = max(1, min(int(limit), 200))
-    offset = max(0, int(offset))
+    # T-07: 分页钳制统一走 _pagination.clamp_pagination，下游 get_permanent_memories/search_memories 直传
+    limit, offset = clamp_pagination(limit, offset)
     from server.dependencies import get_memory_manager
 
     actual_type = type or memory_type
@@ -139,7 +148,8 @@ async def list_memories(
 
         # 处理永久记忆类型
         if actual_type == "permanent":
-            memories = memory_mgr.get_permanent_memories(limit=limit, offset=offset)
+            # 经 run_io 把同步 sqlite 查询移入 IO 线程池，避免阻塞事件循环
+            memories = await run_io(memory_mgr.get_permanent_memories, limit=limit, offset=offset)
             # 统一字段名：importance_score -> importance
             normalized_memories = []
             for m in memories:
@@ -165,8 +175,9 @@ async def list_memories(
                 "total": len(normalized_memories),
             }
 
-        # 普通记忆查询
-        memories = memory_mgr.search_memories(
+        # 普通记忆查询（经 run_io 移入 IO 线程池，避免阻塞事件循环）
+        memories = await run_io(
+            memory_mgr.search_memories,
             memory_type=actual_type,
             limit=limit,
             offset=offset,
@@ -224,7 +235,8 @@ async def get_memory_stats(workspace_id: str = "default"):
 
     try:
         memory_mgr = get_memory_manager()
-        stats = memory_mgr.get_statistics(workspace_id)
+        # 经 run_io 把同步 sqlite 聚合查询移入 IO 线程池
+        stats = await run_io(memory_mgr.get_statistics, workspace_id)
 
         return {"status": "success", "statistics": stats}
     except Exception as e:
@@ -247,7 +259,9 @@ async def get_diary_entries(
 
     try:
         memory_mgr = get_memory_manager()
-        memories = memory_mgr.search_memories(
+        # 经 run_io 把日记检索的同步 sqlite 查询移入 IO 线程池
+        memories = await run_io(
+            memory_mgr.search_memories,
             memory_type="diary", limit=limit, workspace_id=workspace_id, agent_id=agent_id
         )
 
@@ -279,7 +293,9 @@ async def search_by_tag(
 
     try:
         memory_mgr = get_memory_manager()
-        memories = memory_mgr.search_memories(
+        # 经 run_io 把标签检索的同步 sqlite 查询移入 IO 线程池
+        memories = await run_io(
+            memory_mgr.search_memories,
             tags=[tag], limit=limit, workspace_id=workspace_id, agent_id=agent_id
         )
 
@@ -296,7 +312,8 @@ async def get_decay_statistics(workspace_id: str = "default"):
 
     try:
         memory_mgr = get_memory_manager()
-        stats = memory_mgr.get_decay_statistics(workspace_id)
+        # 经 run_io 把衰减统计的同步 sqlite 查询移入 IO 线程池
+        stats = await run_io(memory_mgr.get_decay_statistics, workspace_id)
 
         return {"status": "success", "statistics": stats}
     except Exception as e:
@@ -314,7 +331,9 @@ async def list_permanent_memories(limit: int = 20, offset: int = 0, tags: List[s
 
     try:
         memory_mgr = get_memory_manager()
-        memories = memory_mgr.get_permanent_memories(
+        # 经 run_io 把永久记忆列表的同步 sqlite 查询移入 IO 线程池
+        memories = await run_io(
+            memory_mgr.get_permanent_memories,
             limit=limit, offset=offset, tags=tags if tags else None
         )
 
@@ -330,7 +349,8 @@ async def get_memory(memory_id: int, agent_id: str = "default"):
 
     try:
         memory_mgr = get_memory_manager()
-        memory = memory_mgr.get_memory(memory_id, agent_id=agent_id)
+        # 经 run_io 把单条记忆查询的同步 sqlite 移入 IO 线程池
+        memory = await run_io(memory_mgr.get_memory, memory_id, agent_id=agent_id)
 
         if not memory:
             raise HTTPException(status_code=404, detail="记忆不存在")
@@ -402,7 +422,9 @@ async def search_memories(request: MemorySearchRequest):
     try:
         memory_mgr = get_memory_manager()
         actual_type = request.type or request.memory_type
-        memories = memory_mgr.search_memories(
+        # 经 run_io 把搜索的同步 sqlite 查询移入 IO 线程池
+        memories = await run_io(
+            memory_mgr.search_memories,
             query=request.query,
             memory_type=actual_type,
             tags=request.tags,
@@ -436,7 +458,9 @@ async def rag_search(query: str, workspace_id: str = "default", limit: int = Non
                 query=query, limit=limit, workspace_id=workspace_id, agent_id=agent_id
             )
         else:
-            results = memory_mgr.search_memories(
+            # 向量未启用：经 run_io 把同步 sqlite 回退检索移入 IO 线程池
+            results = await run_io(
+                memory_mgr.search_memories,
                 query=query, limit=limit, workspace_id=workspace_id, agent_id=agent_id
             )
 
@@ -460,7 +484,9 @@ async def create_permanent_memory(
 
     try:
         memory_mgr = get_memory_manager()
-        memory_id = memory_mgr.write_permanent_memory(
+        # 经 run_io 把永久记忆写入的同步 sqlite 操作移入 IO 线程池
+        memory_id = await run_io(
+            memory_mgr.write_permanent_memory,
             content=content,
             tags=tags or [],
             metadata=metadata or {},
@@ -481,7 +507,8 @@ async def get_permanent_memory(memory_id: int):
 
     try:
         memory_mgr = get_memory_manager()
-        memory = memory_mgr.get_permanent_memory(memory_id)
+        # 经 run_io 把永久记忆读取的同步 sqlite 查询移入 IO 线程池
+        memory = await run_io(memory_mgr.get_permanent_memory, memory_id)
 
         if not memory:
             raise HTTPException(status_code=404, detail="永久记忆不存在")
@@ -503,7 +530,9 @@ async def update_permanent_memory(
 
     try:
         memory_mgr = get_memory_manager()
-        success = memory_mgr.update_permanent_memory(
+        # 经 run_io 把永久记忆更新的同步 sqlite 操作移入 IO 线程池
+        success = await run_io(
+            memory_mgr.update_permanent_memory,
             memory_id=memory_id, content=content, tags=tags, metadata=metadata
         )
 
@@ -524,7 +553,10 @@ async def delete_permanent_memory(memory_id: int):
 
     try:
         memory_mgr = get_memory_manager()
-        success = memory_mgr.delete_permanent_memory(memory_id, is_from_main=True)
+        # 经 run_io 把永久记忆删除的同步 sqlite 操作移入 IO 线程池
+        success = await run_io(
+            memory_mgr.delete_permanent_memory, memory_id, is_from_main=True
+        )
 
         if not success:
             raise HTTPException(status_code=404, detail="永久记忆不存在")
@@ -554,7 +586,9 @@ async def search_memories_3d(
         if len(weights) != 3:
             raise HTTPException(status_code=400, detail="权重必须包含3个值")
 
-        memories = memory_mgr.search_memories_3d(
+        # 经 run_io 把三维检索的同步 sqlite 查询移入 IO 线程池
+        memories = await run_io(
+            memory_mgr.search_memories_3d,
             query=query,
             memory_type=memory_type,
             tags=tags if tags else None,
@@ -585,7 +619,10 @@ async def recall_memory(memory_id: int, emotion_intensity: float = 0.0, agent_id
 
     try:
         memory_mgr = get_memory_manager()
-        memory = memory_mgr.recall_memory(memory_id, emotion_intensity, agent_id=agent_id)
+        # 经 run_io 把记忆召回的同步操作移入 IO 线程池
+        memory = await run_io(
+            memory_mgr.recall_memory, memory_id, emotion_intensity, agent_id=agent_id
+        )
 
         if not memory:
             raise HTTPException(status_code=404, detail="记忆不存在")
@@ -603,7 +640,9 @@ async def batch_write_memories(memories: List[Dict], raise_on_error: bool = Fals
 
     try:
         memory_mgr = get_memory_manager()
-        result = memory_mgr.batch_write_memories(memories, raise_on_error)
+        # 经 run_io 把批量写入的同步 sqlite 操作移入 IO 线程池
+        #（raise_on_error 默认值保持显式传参）
+        result = await run_io(memory_mgr.batch_write_memories, memories, raise_on_error)
 
         return {"status": "success", "result": result}
     except Exception as e:
@@ -639,7 +678,10 @@ async def batch_update_memories(request: BatchUpdateRequest):
                 update_item["importance"] = request.data["importance"]
             updates.append(update_item)
 
-        result = memory_mgr.batch_update_memories(updates, agent_id=request.agent_id)
+        # 经 run_io 把批量更新的同步 sqlite 操作移入 IO 线程池
+        result = await run_io(
+            memory_mgr.batch_update_memories, updates, agent_id=request.agent_id
+        )
 
         return {"status": "success", "result": result}
     except Exception as e:
@@ -672,7 +714,9 @@ async def batch_delete_memories(
 
     try:
         memory_mgr = get_memory_manager()
-        result = memory_mgr.batch_delete_memories(
+        # 经 run_io 把批量删除的同步 sqlite 操作移入 IO 线程池
+        result = await run_io(
+            memory_mgr.batch_delete_memories,
             request.ids, soft_delete, raise_on_error, request.agent_id
         )
 
@@ -693,7 +737,9 @@ async def batch_update_memory_tags(request: BatchTagsRequest):
 
     try:
         memory_mgr = get_memory_manager()
-        result = memory_mgr.batch_update_tags(
+        # 经 run_io 把批量标签更新的同步 sqlite 操作移入 IO 线程池
+        result = await run_io(
+            memory_mgr.batch_update_tags,
             memory_ids=request.ids,
             tags=request.tags,
             operation=request.operation,
@@ -713,7 +759,10 @@ async def batch_archive_memories(request: BatchIdsRequest):
 
     try:
         memory_mgr = get_memory_manager()
-        result = memory_mgr.batch_archive_memories(request.ids, request.agent_id)
+        # 经 run_io 把批量归档的同步 sqlite 操作移入 IO 线程池
+        result = await run_io(
+            memory_mgr.batch_archive_memories, request.ids, request.agent_id
+        )
 
         return {"status": "success", "result": result}
     except Exception as e:
@@ -733,7 +782,10 @@ async def batch_restore_memories(request: BatchIdsRequest):
 
         for memory_id in request.ids:
             try:
-                success = memory_mgr.restore_memory(memory_id, request.agent_id)
+                # 逐条经 run_io 移入 IO 线程池，异常语义与同步直调一致
+                success = await run_io(
+                    memory_mgr.restore_memory, memory_id, request.agent_id
+                )
                 if success:
                     restored_count += 1
                 else:
@@ -766,7 +818,9 @@ async def batch_tag_by_query(request: BatchTagByQueryRequest):
 
     try:
         memory_mgr = get_memory_manager()
-        memories = memory_mgr.search_memories(
+        # 经 run_io 把按查询检索的同步 sqlite 查询移入 IO 线程池
+        memories = await run_io(
+            memory_mgr.search_memories,
             query=request.query, limit=100, agent_id=request.agent_id
         )
         ids = [m["id"] for m in memories]
@@ -777,7 +831,9 @@ async def batch_tag_by_query(request: BatchTagByQueryRequest):
                 "result": {"updated_count": 0, "message": "没有找到匹配的记忆"},
             }
 
-        result = memory_mgr.batch_update_tags(
+        # 第二步写入同样经 run_io 移入 IO 线程池（第一步 search 已包裹）
+        result = await run_io(
+            memory_mgr.batch_update_tags,
             memory_ids=ids,
             tags=request.tags,
             operation=request.operation,
@@ -804,7 +860,9 @@ async def batch_delete_by_query(request: BatchDeleteByQueryRequest):
 
     try:
         memory_mgr = get_memory_manager()
-        memories = memory_mgr.search_memories(
+        # 经 run_io 把按查询检索的同步 sqlite 查询移入 IO 线程池
+        memories = await run_io(
+            memory_mgr.search_memories,
             query=request.query, limit=100, agent_id=request.agent_id
         )
         ids = [m["id"] for m in memories]
@@ -815,7 +873,10 @@ async def batch_delete_by_query(request: BatchDeleteByQueryRequest):
                 "result": {"deleted_count": 0, "message": "没有找到匹配的记忆"},
             }
 
-        result = memory_mgr.batch_delete_memories(ids, agent_id=request.agent_id)
+        # 第二步删除同样经 run_io 移入 IO 线程池（第一步 search 已包裹）
+        result = await run_io(
+            memory_mgr.batch_delete_memories, ids, agent_id=request.agent_id
+        )
 
         return {"status": "success", "result": result}
     except Exception as e:
@@ -838,7 +899,9 @@ async def batch_archive_by_query(request: BatchArchiveByQueryRequest):
 
     try:
         memory_mgr = get_memory_manager()
-        memories = memory_mgr.search_memories(
+        # 经 run_io 把按查询检索的同步 sqlite 查询移入 IO 线程池
+        memories = await run_io(
+            memory_mgr.search_memories,
             query=request.query, limit=100, agent_id=request.agent_id
         )
         ids = [m["id"] for m in memories]
@@ -849,7 +912,8 @@ async def batch_archive_by_query(request: BatchArchiveByQueryRequest):
                 "result": {"archived_count": 0, "message": "没有找到匹配的记忆"},
             }
 
-        result = memory_mgr.batch_archive_memories(ids, request.agent_id)
+        # 第二步归档同样经 run_io 移入 IO 线程池（第一步 search 已包裹）
+        result = await run_io(memory_mgr.batch_archive_memories, ids, request.agent_id)
 
         return {"status": "success", "result": result}
     except Exception as e:
@@ -866,7 +930,9 @@ async def get_memories_by_type(
 
     try:
         memory_mgr = get_memory_manager()
-        memories = memory_mgr.search_memories(
+        # 经 run_io 把按类型检索的同步 sqlite 查询移入 IO 线程池
+        memories = await run_io(
+            memory_mgr.search_memories,
             memory_type=memory_type, limit=limit, workspace_id=workspace_id, agent_id=agent_id
         )
 
@@ -882,7 +948,8 @@ async def sync_decay_values(workspace_id: str = "default"):
 
     try:
         memory_mgr = get_memory_manager()
-        result = memory_mgr.sync_decay_values(workspace_id)
+        # 经 run_io 把衰减值同步的批量 sqlite 写移入 IO 线程池
+        result = await run_io(memory_mgr.sync_decay_values, workspace_id)
 
         return {"status": "success", "result": result}
     except Exception as e:
@@ -1033,12 +1100,9 @@ async def get_vector_status():
             "last_sync": None,
         }
 
-        conn = memory_mgr._get_connection()
-        cursor = conn.cursor()
-        cursor.execute("SELECT COUNT(*) FROM memories WHERE is_deleted = 0")
-        row = cursor.fetchone()
-        result["sqlite_count"] = row[0] if row else 0
-        conn.close()
+        # 经 run_io 把同步 sqlite 计数移入 IO 线程池（连接所有权归池，
+        # 不再手动 close——M-D3，对照 archiver.py:165-167 注释）
+        result["sqlite_count"] = await run_io(_count_active_memories, memory_mgr)
 
         if enabled:
             vector_store = memory_mgr._vector_store

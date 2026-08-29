@@ -1040,7 +1040,8 @@ class DualStreamSession:
             context_mgr = get_context_manager()
 
             # 确保 session 存在
-            context_mgr.ensure_session(
+            # 伴生C3 修复：ensure_session / add_message 同步 sqlite 直调 → 异步变体
+            await context_mgr.ensure_session_async(
                 self.session_id,
                 workspace_id="agent-chats",
                 title="双流式对话",
@@ -1053,11 +1054,11 @@ class DualStreamSession:
             user_metadata = None
             if self._last_speaker_name:
                 user_metadata = {"speaker": self._last_speaker_name}
-            context_mgr.add_message(
+            await context_mgr.add_message_async(
                 session_id=self.session_id, role="user", content=user_text,
                 metadata=user_metadata,
             )
-            context_mgr.add_message(
+            await context_mgr.add_message_async(
                 session_id=self.session_id, role="assistant", content=assistant_text
             )
         except Exception as e:

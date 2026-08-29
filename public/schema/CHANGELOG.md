@@ -2,6 +2,39 @@
 
 > 遵循 AC 范式 v6 rules-3 §六 契约版本化规则。所有契约变更必须记录版本号、变更内容、变更原因、影响范围。
 
+## [1.8.0] - 2026-08-29
+
+### 变更内容
+
+- **接口契约变更（MAJOR）**：`interface_stub/speech_orchestrator.pyi` v2.0.0 整份重写——原 `SpeechOrchestrator` 全库无实现（幽灵契约），删除并以 `server/services/tts_service.py` 的 `TTSService` 实际公开面重建契约（synthesize/synthesize_stream/synthesize_stream_fine/synthesize_with_emotions/synthesize_stream_with_emotions/split_text_streaming/get_voices/health_check/initialize/shutdown + `TTSServiceUnavailableError`；打断职能在语音管线会话层，非编排面）。配套：`tests/test_contracts_qwen3_tts.py::test_orchestrator_stub` 断言随改，全绿。
+- **接口契约变更（MINOR）**：`interface_stub/ref_audio_store.pyi` v1.1.0 补齐 per-agent 绑定/快照/集群 emit hook 整层 13 个签名（set_for_agent/get_for_agent/clear_for_agent/list_bindings/asset_used_by_any_agent/set_emit_hook/build_snapshot/restore_snapshot/build_bindings/set_prompt_generator/get_audio_path + `AssetBoundError`/`GeneratedAudio`），`register_from_prompt` 补 async 标注。纯新增，不阻断既有下游。
+- **接口契约变更（MAJOR）**：`interface_stub/multimodal_pipeline.pyi` v2.0.0 删除 3 个幽灵方法 `_ocr_worker/_vision_worker/_merge_ocr_vision`（实现中已内联下沉至 `workers.ImageWorker`），补 `__init__` 公开签名。无调用方可依赖（方法不存在于实现），等效无破坏。
+- **接口契约变更（MINOR）**：`interface_stub/emotion_instruction_service.pyi` v1.1.0——`EmotionInstruction` 补 `raw/speed/volume` 字段，`generate_instruction` 补 async，新增 `strip_instruction/set_instruction_generator/get_supported_legacy_markers/validate_explicit_instruction` 超集函数。纯新增，不阻断。
+- **接口契约变更（PATCH）**：`interface_stub/cx_cluster.pyi` v1.0.1——`confirm_dead` 补 async、`emit` 返回 `int`、`StateReplicator.sync_status` 返回 `Dict[str, Any]`。签名撒谎修正（实现自始如此），无存量调用方按旧存根调用。
+- **接口契约变更（PATCH）**：`interface_stub/cx_admin.pyi` v1.0.1——`AdminBatchExecutor.execute` 补 async 与 `stop_on_error=True` 默认值、`AdminControlPlane.dispatch` 默认参数对齐。同上，不阻断。
+- **接口契约变更（PATCH）**：`interface_stub/memory_manager_v2.pyi` v1.0.1——`get_rejected_content` 签名对齐实现（`session_id` 必填、`limit` 默认 50、空 session_id 抛 `KeyError`）。按字面属必填性反转（MAJOR），因实现自始必填、零存量调用方依赖旧可选形态，参照 v1.7.0 先例降级 PATCH 记账；配套 `pre_generated_mock/mock_memory_manager_v2.py` v1.2.0 签名同步。
+- **配置契约变更（MINOR）**：`config_template/cluster_config.schema.json` 的 `sync_units` 补齐 `ref_audio` 备份单元（enum 与 default 同步为 `["memory", "persona", "config", "session", "ref_audio"]`，对齐 `server/config.py` ClusterConfig 默认值与 `server/core/cluster/units.py` UNIT_REGISTRY）。
+- **配置契约变更（PATCH）**：`config_template/computer_control_config.schema.json` 三默认值对齐 Electron 插件实现：`host` `"0.0.0.0"`→`"127.0.0.1"`、`port` `18443`→`8443`（对齐 `APP-Frontend/electron/plugins/computerControl/index.ts`）、`backend_url` `https`→`http`（对齐 `electron/main.ts`）；properties 层与顶层 default 两处同步，字段名与 required 集合未变。
+- **配置契约变更（MINOR）**：`config_template/radix_config.json` 契约面补齐实现既有字段——`distillation_service` 补 `quality_llm_enabled/quality_llm_model/quality_llm_timeout_seconds`（对齐 DistillationConfig）、`multimodal_pipeline` 补 `vision_base_url/vision_model/vision_timeout_seconds`（对齐 MultimodalPipelineConfig）；新增字段均带默认值，auto_fill 行为不变。
+- **接口契约变更（注释级）**：`interface_stub/distillation_service.pyi` 头部补真实路由核对注释（`/api/v1/distillation/*` + 批量切分 5 端点），注明种子阶段契约；签名未动。
+
+### 变更原因
+
+- 第十一轮质量修复 G4 批次（契约对齐实现，实现为源真理）：11 份契约与实现存在漂移（幽灵类/幽灵方法、缺层、签名撒谎、默认值漂移、契约面窄于实现），经 3 路独立交叉验证确认后，获人类显式授权修订。
+- G4-A（schema/config 3 文件）与 G4-B（pyi 6 份修订 + mock 同步 + 测试同步）并行执行，定向测试 97 passed + 125 passed 全绿。
+
+### 影响范围
+
+- speech_orchestrator.pyi 与 multimodal_pipeline.pyi 为 MAJOR（幽灵契约修正），但被删声明在全库零实现零调用方，等效无破坏；memory_manager_v2.pyi 必填性反转已按 v1.7.0 先例降级记账。
+- computer_control 三默认值修正影响 auto_fill 产物：新装环境 host 收敛为 127.0.0.1、端口 8443、后端 http——与插件实际监听行为一致；已落盘旧配置不受影响。
+- 下游登记（未改动，待后续批次）：①`schema/cluster_backup_unit.schema.json` 的 `unit` 枚举缺 `ref_audio`（8 单元缺 1，数据契约侧同类缺口）；②`memory_manager_v2.pyi` 的 `write_with_decision` 存根与 `decision_mixin.py` 实现存在返回类型/参数漂移；③agents.pyi/chat.pyi 尚有真实端点未覆盖（default/ref-audio 绑定端点、summary-agent 流式端点），属 s0201 补全范围。
+
+### 闭合判据
+
+- [x] 11 份契约实体修订并通过 JSON/ast 语法校验
+- [x] 定向测试全绿（test_contracts_computer_control + test_config + test_cluster_ref_audio：97 passed；test_contracts_qwen3_tts + test_narrative_memory + test_memory_mixins + test_ref_audio_assets_router：125 passed）
+- [x] CHANGELOG v1.8.0 记录本条目（本文件）
+
 ## [1.7.0] - 2026-08-27
 
 ### 变更内容

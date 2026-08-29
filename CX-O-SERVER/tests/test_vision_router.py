@@ -1,16 +1,26 @@
 """server.api.routers.vision 路由 + server.core.vision.clip_queue 队列测试。
 
-覆盖：
+覆盖（HEAD 基线 12 例）：
 - 路由护栏：enabled=False 已忽略且不排队不落盘；source/ts/event_type 非法 4xx；文件过大 413。
 - 路由收取合法片段：返回 accepted 并提交队列（含 pending）；真实队列端到端临时文件最终清理。
 - 队列 worker：consumer 抛出异常时文件仍被清洁、worker 不崩溃并继续处理后续条目。
 - 队列惰性启动安全失败（无运行中事件循环时 enqueue 返回 False）。
+
+R9 合并并入（第九轮 6 例）——频率护栏记账回滚：
+``_guard_check`` 在 enqueue **之前**写小时滑窗（_RATE_WINDOW）与冷却戳
+（_COOLDOWN_STAMP）。队列满 503 / 入队异常路径下，片段被丢弃却已耗配额并
+刷新冷却——修复后 enqueue 失败路径回滚本条记账：
+- 队列满（enqueue→False）→ 503 + 滑窗/冷却戳回滚（新键删除）
+- 队列满且冷却戳有旧值 → 旧值恢复
+- 入队异常 → 500 + 记账回滚
+- 成功入队 → 记账保留（不误回滚）
 
 运行：python -m pytest tests/test_vision_router.py -q
 """
 import asyncio
 import time
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 from fastapi import FastAPI
@@ -18,6 +28,8 @@ from fastapi.testclient import TestClient
 
 from server.core.vision.clip_queue import VisionClipQueue
 from server.api.routers import vision as vision_router_mod
+# R9 合并：第九轮回滚用例以 vision_mod 别名引用同一模块
+from server.api.routers import vision as vision_mod
 
 
 # --------------------------------------------------------------------------- #
@@ -60,6 +72,17 @@ class FakeQueue:
 
     def is_ready(self):
         return self.consumer is not None
+
+
+# --------------------------------------------------------------------------- #
+# R9 合并并入：护栏内存态复位（模块级 deque/dict 进程内共享，autouse 全局生效）
+# --------------------------------------------------------------------------- #
+@pytest.fixture(autouse=True)
+def _clean_guard():
+    """每个用例复位护栏内存态（模块级 deque/dict 进程内共享）。"""
+    vision_mod.reset_vision_guard()
+    yield
+    vision_mod.reset_vision_guard()
 
 
 # --------------------------------------------------------------------------- #
@@ -302,6 +325,112 @@ async def test_queue_cancel_single_task_done_and_cleanup(tmp_path):
     assert not f.exists(), "取消路径最终仍应由 finally 清理临时文件"
     # 单次 task_done：join 立即返回即代表未完成计数已归零（未溢出）
     await asyncio.wait_for(q._queue.join(), timeout=1.0)
+
+
+# --------------------------------------------------------------------------- #
+# R9 合并并入：频率护栏记账回滚（第九轮）
+# --------------------------------------------------------------------------- #
+def _fake_settings(max_per_hour=10, cooldown_sec=30):
+    """构造 vision_enhanced 配置（enabled + 限流/冷却参数）。"""
+    return SimpleNamespace(
+        config=SimpleNamespace(
+            vision_enhanced=SimpleNamespace(
+                enabled=True,
+                max_clips_per_hour=max_per_hour,
+                event_cooldown_sec=cooldown_sec,
+                clip_max_sec=None,
+            )
+        )
+    )
+
+
+@pytest.fixture
+def client(monkeypatch):
+    monkeypatch.setattr(vision_mod, "get_settings", lambda: _fake_settings())
+    app = FastAPI()
+    app.include_router(vision_mod.router)
+    return TestClient(app)
+
+
+def _post_clip(c, event_type="person", source="camera"):
+    return c.post(
+        "/vision/clip",
+        files={"clip": ("clip.mp4", b"\x00\x01\x02", "video/mp4")},
+        data={"event_type": event_type, "ts": "100.5", "source": source},
+    )
+
+
+class TestQueueFullRollback:
+    def test_queue_full_rolls_back_rate_window_and_cooldown(self, client, monkeypatch):
+        """队列满 503：本条滑窗时间戳被移除、新建冷却戳被删除。"""
+        monkeypatch.setattr(vision_mod.vision_clip_queue, "enqueue", lambda item: False)
+        r = _post_clip(client)
+        assert r.status_code == 503
+        assert len(vision_mod._RATE_WINDOW) == 0      # 记账已回滚
+        assert dict(vision_mod._COOLDOWN_STAMP) == {}  # 新键已回滚删除
+
+    def test_queue_full_restores_previous_cooldown_stamp(self, client, monkeypatch):
+        """队列满 503：冷却戳原有旧值被恢复（而非停留在本次覆盖写的新值）。"""
+        old_ts = time.monotonic() - 1000.0
+        key = ("camera", "person")
+        vision_mod._COOLDOWN_STAMP[key] = old_ts
+        monkeypatch.setattr(vision_mod.vision_clip_queue, "enqueue", lambda item: False)
+        r = _post_clip(client)
+        assert r.status_code == 503
+        assert len(vision_mod._RATE_WINDOW) == 0
+        assert vision_mod._COOLDOWN_STAMP[key] == old_ts  # 旧值恢复
+
+    def test_queue_full_does_not_consume_hourly_quota(self, client, monkeypatch):
+        """队列满 503 后配额未被消耗：紧接着的下一请求可正常入队。"""
+        state = {"full_once": True}
+
+        def fake_enqueue(item):
+            if state["full_once"]:
+                state["full_once"] = False
+                return False  # 第一次队列满
+            return True       # 之后恢复
+
+        monkeypatch.setattr(vision_mod.vision_clip_queue, "enqueue", fake_enqueue)
+        r1 = _post_clip(client)
+        assert r1.status_code == 503
+        assert len(vision_mod._RATE_WINDOW) == 0
+
+        r2 = _post_clip(client)
+        assert r2.status_code == 200
+        assert len(vision_mod._RATE_WINDOW) == 1  # 仅成功那条占配额
+
+    def test_enqueue_exception_rolls_back_guard(self, client, monkeypatch):
+        """入队抛异常（500 路径）：同样回滚本条记账。"""
+        def boom(item):
+            raise RuntimeError("queue broken")
+
+        monkeypatch.setattr(vision_mod.vision_clip_queue, "enqueue", boom)
+        r = _post_clip(client)
+        assert r.status_code == 500
+        assert len(vision_mod._RATE_WINDOW) == 0
+        assert dict(vision_mod._COOLDOWN_STAMP) == {}
+
+
+class TestSuccessfulEnqueueKeepsRecord:
+    def test_success_keeps_guard_record(self, client, monkeypatch):
+        """成功入队：记账保留（滑窗 1 条 + 冷却戳存在），不误回滚。"""
+        monkeypatch.setattr(vision_mod.vision_clip_queue, "enqueue", lambda item: True)
+        r = _post_clip(client)
+        assert r.status_code == 200
+        assert len(vision_mod._RATE_WINDOW) == 1
+        assert ("camera", "person") in vision_mod._COOLDOWN_STAMP
+
+
+class TestGuardRollbackUnit:
+    def test_rollback_ignores_foreign_new_stamp(self, client):
+        """回滚不覆盖并发请求其后写入的新冷却戳：仅当当前值仍是本条 now 时恢复。"""
+        key = ("camera", "person")
+        my_now = 1000.0
+        vision_mod._COOLDOWN_STAMP[key] = my_now  # 模拟本条写入
+        foreign_now = 2000.0                      # 并发请求其后覆盖写
+        vision_mod._COOLDOWN_STAMP[key] = foreign_now
+        vision_mod._rollback_guard_record(key, my_now, None)
+        assert vision_mod._COOLDOWN_STAMP[key] == foreign_now  # 未被回滚破坏
 
 
 # --------------------------------------------------------------------------- #

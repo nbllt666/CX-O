@@ -24,6 +24,7 @@
  *  - 合成参数（svc_model/transpose/gain）：首版用默认，合成面板二期补全
  */
 import { useState, useEffect, useRef, useMemo, useCallback } from 'react';
+import { useTranslation } from 'react-i18next';
 import { voiceworkstationApi, getVoiceWorkstationAudioUrl } from '@/api/clients/voiceworkstation';
 import type { SongTask, SongSummary } from '@/api/clients/voiceworkstation';
 import { Button, Card, CardBody, Input, Badge } from '@/components/ui-v2';
@@ -71,6 +72,7 @@ export function CompositionPanel({
   pollTask,
   pollIntervalMs = POLL_INTERVAL_MS,
 }: CompositionPanelProps) {
+  const { t } = useTranslation();
   const resolvedBackend = useMemo(() => backend ?? createRestBackend(), [backend]);
   const resolvedPollTask = useMemo(
     () => pollTask ?? ((id: string) => voiceworkstationApi.musicGetTask(id)),
@@ -761,7 +763,10 @@ export function CompositionPanel({
                     <div className="flex-1 min-w-0">
                       <div className="text-sm truncate">{song.title}</div>
                       <div className="flex items-center gap-1.5">
-                        <Badge variant={taskBadgeVariant(song.status)}>{song.status}</Badge>
+                        <Badge variant={taskBadgeVariant(song.status)}>
+                          {/* 状态经 i18n 映射（与 MusicPanel 共用 management.audioWorkstation.status.*）；未知值回退原文 */}
+                          {t(`management.audioWorkstation.status.${song.status}`, { defaultValue: song.status })}
+                        </Badge>
                         {song.audio_url && (
                           <a
                             className="text-xs text-[var(--color-accent)] underline"

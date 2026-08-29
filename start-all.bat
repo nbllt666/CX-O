@@ -120,9 +120,12 @@ REM 精确停止本脚本启动的服务进程（按 PID 记录逐个杀树）�
 REM D1 修复：移除全局 taskkill /IM node.exe——前端进程已由上方记录的
 REM 3100 监听 PID 连同整个进程树一并终止；原先的全局清杀会误伤
 REM 用户机器上与本系统无关的其它 Node 进程。
+REM 第11轮：复用 stop-all.bat 的 PID 复用防护——进程名不在白名单
+REM （python.exe/node.exe/electron.exe）的 PID 一律跳过，防止系统
+REM 将 PID 复用给无关进程后被本脚本误杀整棵进程树。
 if exist "%PID_FILE%" (
     for /f "usebackq delims=" %%p in ("%PID_FILE%") do (
-        taskkill /PID %%p /T /F > nul 2>&1
+        call :stop_owned_pid %%p
     )
     del /f /q "%PID_FILE%" > nul 2>&1
 )
@@ -135,4 +138,29 @@ goto :eof
 :record_pid
 REM 子例程：将监听指定端口的进程 PID 追加到 PID_FILE（netstat -ano 第5列为 PID）
 for /f "tokens=5" %%p in ('netstat -ano ^| findstr ":%~1 " ^| findstr "LISTENING"') do >> "%PID_FILE%" echo %%p
+goto :eof
+
+:stop_owned_pid
+REM Subroutine copied from stop-all.bat (PID reuse guard): kill tree ONLY if
+REM image name is whitelisted (python.exe/node.exe/electron.exe). A recycled
+REM PID belonging to an unrelated process is skipped, never killed. English
+REM REM comments per stop-all.bat NOTE (cmd mangles long UTF-8 REM lines).
+set "TARGET_PID=%~1"
+set "PROC_NAME="
+for /f "tokens=1" %%n in ('tasklist /FI "PID eq %TARGET_PID%" /NH 2^>nul') do (
+    if not defined PROC_NAME set "PROC_NAME=%%n"
+)
+if /i "%PROC_NAME%"=="python.exe" goto :kill_tree
+if /i "%PROC_NAME%"=="node.exe" goto :kill_tree
+if /i "%PROC_NAME%"=="electron.exe" goto :kill_tree
+echo [跳过] PID %TARGET_PID% 进程已退出或进程名 [%PROC_NAME%] 不属于本项目（PID 复用防护），未终止
+goto :eof
+
+:kill_tree
+taskkill /PID %TARGET_PID% /T /F > nul 2>&1
+if not errorlevel 1 (
+    echo [已停止] PID %TARGET_PID% [%PROC_NAME%]
+) else (
+    echo [停止失败] PID %TARGET_PID% [%PROC_NAME%]
+)
 goto :eof

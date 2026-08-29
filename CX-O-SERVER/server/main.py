@@ -467,6 +467,23 @@ async def lifespan(app: FastAPI):
 
     services.task_scheduler = await init_service("任务调度服务", _init_task_services, logger_=lifespan_logger)
 
+    # 会话清理接线：start_session_cleanup 此前全仓无调用点，tuner_sessions.db 的
+    # 过期会话永不清理。属定时后台全局副作用，纳入 leader guard——非 leader worker
+    # 跳过，杜绝多 worker 重复清理；shutdown 段按 session_cleanup_started 对称停止。
+    async def _init_session_cleanup():
+        if not _is_leader:
+            lifespan_logger.info("非 leader worker：跳过 SessionCleanupTask，由 leader worker 承担")
+            return None
+        from server.core.session.cleanup import start_session_cleanup
+        from server.core.session.store import get_session_store
+
+        await start_session_cleanup(get_session_store())
+        return True
+
+    services.session_cleanup_started = await init_service(
+        "会话清理任务", _init_session_cleanup, logger_=lifespan_logger
+    )
+
     async def _init_cxfc():
         from server.core.cxfc.manager import CXFCManager
         from server.core.cxfc.discovery import CXFCDiscovery
@@ -1039,6 +1056,15 @@ async def lifespan(app: FastAPI):
         await get_websocket_manager().stop_cleanup_task()
 
     await shutdown_service("WebSocket管理器cleanup任务", _shutdown_ws_cleanup, logger_=lifespan_logger)
+
+    # 会话清理后台任务对称停止（仅本 worker 启动过才停）
+    if getattr(services, "session_cleanup_started", None):
+        async def _shutdown_session_cleanup():
+            from server.core.session.cleanup import stop_session_cleanup
+
+            await stop_session_cleanup()
+
+        await shutdown_service("会话清理任务", _shutdown_session_cleanup, logger_=lifespan_logger)
 
     if services.decay_batch_processor:
         await shutdown_service("批量衰减处理器", services.decay_batch_processor.stop, logger_=lifespan_logger)

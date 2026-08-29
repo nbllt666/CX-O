@@ -2,7 +2,7 @@
   "$schema": "http://json-schema.org/draft-07/schema#",
   "$id": "https://cx-o/public/schema/message.schema.json",
   "title": "Message",
-  "description": "WebSocket 消息协议数据契约。源真理：c:/CX-O/CX-O-SERVER/server/protocol/message.py 的 6 个 Pydantic BaseModel + 5 个工厂函数。s0601/A6 实现 create_request 后锁定字段契约。",
+  "description": "WebSocket 消息协议数据契约。源真理：c:/CX-O/CX-O-SERVER/server/protocol/message.py 的 6 个 Pydantic BaseModel + 5 个工厂函数。s0601/A6 实现 create_request 后锁定字段契约。顶层组合用 anyOf（分支可重叠：BaseMessage 仅约束公共字段，与各子类型分支天然重叠，仅要求 type 与载荷一致；oneOf 的『恰好匹配一个』语义会使所有合法消息双匹配失败）。",
   "_sourceOfTruth": {
     "primary": "c:/CX-O/CX-O-SERVER/server/protocol/message.py",
     "secondary": ["c:/CX-O/CX-O-SERVER/server/protocol/actions.py"],
@@ -10,9 +10,10 @@
   },
   "_seedStage": false,
   "_completionSkill": "s0601",
-  "_version": "1.0.0",
+  "_version": "1.1.0",
+  "_changelog": "v1.1.0 oneOf→anyOf（oneOf 误用修复）：BaseMessage 与 RequestMessage/ResponseMessage/StreamMessage/ErrorMessage 分支重叠，最小合法实例（无子类型专有属性）同时命中多分支致 oneOf 校验恒失败；改 anyOf 宽容语义并在 description 注明（已获人类显式授权的契约修正）",
   "type": "object",
-  "oneOf": [
+  "anyOf": [
     {"$ref": "#/$defs/BaseMessage"},
     {"$ref": "#/$defs/RequestMessage"},
     {"$ref": "#/$defs/ResponseMessage"},

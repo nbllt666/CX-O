@@ -4,7 +4,9 @@
  * settingsStore.vrm.modelPath 的三种取值形态：
  * - '/models/CX-OPEN.vrm'：打包内默认资源（经 resolveAssetUrl 归一化，dev http 与生产 file 均可用）
  * - 本地绝对路径（Electron 用户选择的 .vrm，如 C:\...\xxx.vrm / \\server\...）
- * - 'blob:...'：浏览器模式用户上传的临时 URL（不持久化，刷新即失效）
+ * - 'blob:...'：浏览器模式用户上传的临时 URL。该值会随 settingsStore 持久化写入，
+ *   但 blob URL 仅在创建它的会话内有效——刷新/重启后原 URL 已失效；
+ *   settingsStore.merge 还原时对 blob: 前缀 modelPath 回退默认路径（见 settingsStore）。
  *
  * 本地路径在 Electron 下经主进程 IPC（model:read-file）读取为字节流并生成 blob URL；
  * 其余形态直接返回可加载 URL。resolveVrmModelUrl 返回的 blob URL 需在模型卸载时 revoke。

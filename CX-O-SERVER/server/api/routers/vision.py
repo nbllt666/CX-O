@@ -97,7 +97,8 @@ def _prune_cooldown(now: float) -> None:
 
 
 def _guard_check(
-    source: str, event_type: str, max_per_hour: int, cooldown_sec: int
+    source: str, event_type: str, max_per_hour: int, cooldown_sec: int,
+    now: Optional[float] = None,
 ) -> Tuple[bool, str]:
     """对一次待接受 clip 做频率护栏判定（副作用：通过即入窗口/写冷却）。
 
@@ -106,11 +107,13 @@ def _guard_check(
         event_type: 触发事件类型。
         max_per_hour: 小时上限；<=0 表示不启用小时限流。
         cooldown_sec: 同类事件冷却秒数；<=0 表示不启用冷却。
+        now: 可选单调时钟时间戳（调用方捕获后传入，供失败路径精确回滚本条
+            记账）；缺省取当前 monotonic()。
 
     Returns:
         (True, "") 通过；否则 (False, "rate_limited" | "cooldown")。
     """
-    now = _time.monotonic()
+    now = now if now is not None else _time.monotonic()
 
     # 1) 同类事件冷却：按 (source, event_type) 在 cooldown_sec 内禁止重复触发
     key = (source, str(event_type).strip())
@@ -129,6 +132,35 @@ def _guard_check(
     # C8: 写入新键时顺带清理过期键
     _prune_cooldown(now)
     return True, ""
+
+
+def _rollback_guard_record(key: Tuple[str, str], now: float, prev_cooldown: Optional[float]) -> None:
+    """回滚一次已记账的护栏记录（入队失败/队列满路径专用）。
+
+    背景：``_guard_check`` 在入队**之前**写滑窗时间戳与冷却戳，若随后
+    ``vision_clip_queue.enqueue`` 失败（队列满 503 / 异常），本条请求并未被
+    消费却已耗掉一条小时配额并刷新同类事件冷却——回滚本条记账恢复原状。
+
+    - 滑窗：从右侧移除一个等于 ``now`` 的时间戳（即本条 append 的值；
+      monotonic 精度下与并发请求撞值的概率可忽略）；
+    - 冷却戳：仅当当前值仍是本条写入的 ``now`` 时恢复旧值（prev 为 None
+      则删除该键），避免覆盖并发请求其后写入的新戳。
+    """
+    try:
+        for i in range(len(_RATE_WINDOW) - 1, -1, -1):
+            if _RATE_WINDOW[i] == now:
+                del _RATE_WINDOW[i]
+                break
+    except Exception:  # noqa: BLE001 - 回滚失败不影响主流程
+        pass
+    try:
+        if _COOLDOWN_STAMP.get(key) == now:
+            if prev_cooldown is None:
+                _COOLDOWN_STAMP.pop(key, None)
+            else:
+                _COOLDOWN_STAMP[key] = prev_cooldown
+    except Exception:  # noqa: BLE001 - 回滚失败不影响主流程
+        pass
 
 
 def _vision_tmp_dir() -> Path:
@@ -242,7 +274,14 @@ async def upload_vision_clip(
     # C8: 状态记账移到 size/空校验之后——被 413/422 拒绝的请求不占用限流窗口
     max_per_hour = int(getattr(ve, "max_clips_per_hour", 0) or 0)
     cooldown_sec = int(getattr(ve, "event_cooldown_sec", 0) or 0)
-    guard_ok, guard_reason = _guard_check(source, event_type.strip(), max_per_hour, cooldown_sec)
+    # 记账回滚准备：捕获本条 monotonic 时间戳与冷却戳旧值——入队失败（队列满
+    # 503/异常）时回滚本条记账，避免"未消费却已耗配额/刷新冷却"
+    guard_key = (source, str(event_type).strip())
+    prev_cooldown = _COOLDOWN_STAMP.get(guard_key)
+    guard_now = _time.monotonic()
+    guard_ok, guard_reason = _guard_check(
+        source, event_type.strip(), max_per_hour, cooldown_sec, now=guard_now
+    )
     if not guard_ok:
         logger.info("VisionClip: 频率护栏拒绝 clip source=%s event_type=%s reason=%s",
                     source, event_type, guard_reason)
@@ -278,7 +317,8 @@ async def upload_vision_clip(
         ok = vision_clip_queue.enqueue(item)
     except Exception as exc:  # noqa: BLE001
         logger.error("VisionClip: 入队失败: %s", exc, exc_info=True)
-        # 入队失败：兜底清理已落盘临时文件，避免遗留
+        # 入队失败：回滚本条护栏记账（未消费不耗配额），再兜底清理已落盘临时文件
+        _rollback_guard_record(guard_key, guard_now, prev_cooldown)
         try:
             clip_path.unlink(missing_ok=True)
         except OSError:
@@ -286,6 +326,8 @@ async def upload_vision_clip(
         _map_clip_exception(exc)
 
     if not ok:
+        # 队列满（503）：片段被丢弃且未被消费，回滚本条护栏记账
+        _rollback_guard_record(guard_key, guard_now, prev_cooldown)
         try:
             clip_path.unlink(missing_ok=True)
         except OSError:

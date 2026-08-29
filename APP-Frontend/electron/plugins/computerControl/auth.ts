@@ -77,6 +77,13 @@ export class Authenticator {
       this.seen.set(requestId, now);
       return { ok: true };
     }
+    // 满窗高频退化策略：prune 后仍满额（记账被窗口内高频请求占满且无过期可删），
+    // 强制驱逐 Map 迭代顺序中最旧的条目再插入，保证记账容量有界、不无界增长。
+    // 不会误伤本请求的重放判定：已在窗内的 request_id 在上方分支提前返回。
+    if (this.seen.size >= this.maxEntries) {
+      const oldest = this.seen.keys().next().value;
+      if (oldest !== undefined) this.seen.delete(oldest);
+    }
     this.seen.set(requestId, now);
     return { ok: true };
   }

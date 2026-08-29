@@ -131,6 +131,8 @@ export default function ArchivePage() {
       void loadStats();
     } catch (error) {
       console.error('Merge failed:', error);
+      // 合并失败同样要给出可见错误反馈（对齐 handleAutoArchive 的 processResult 写法）
+      setProcessResult({ ok: false, text: t('management.archive.mergeFailed') });
     } finally {
       setIsProcessing(false);
     }

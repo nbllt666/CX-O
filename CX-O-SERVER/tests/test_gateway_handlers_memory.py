@@ -119,7 +119,8 @@ class TestMemoryHandlers:
         _patch(monkeypatch, mm)
         await handlers[MemoryActions.SEARCH](None, {"data": {"query": "q"}}, "c1")
         assert mgr.sent[-1][1]["data"]["memories"] == [{"id": 1}]
-        assert mm.calls[0][0] == "search"
+        # 非语义分支已切换为异步变体 search_memories_async（不再同步直调）
+        assert mm.calls[0][0] == "search_async"
 
     @pytest.mark.asyncio
     async def test_search_vector(self, handlers, mgr, mm, monkeypatch):
@@ -143,6 +144,38 @@ class TestMemoryHandlers:
         code, message = _err(mgr)
         assert code == "MEMORY_ERROR"
         assert "Vector search failed" in message
+
+    @pytest.mark.asyncio
+    async def test_search_regular_async_variant(self, handlers, mgr, mm, monkeypatch):
+        """非语义分支必须走 search_memories_async 异步变体，且参数逐项透传不变。"""
+        _patch(monkeypatch, mm)
+        await handlers[MemoryActions.SEARCH](
+            None,
+            {
+                "data": {
+                    "query": "q",
+                    "type": "long_term",
+                    "tags": ["t1"],
+                    "time_range": "7d",
+                    "limit": 7,
+                    "offset": 2,
+                    "workspace_id": "ws1",
+                    "agent_id": "a1",
+                }
+            },
+            "c1",
+        )
+        assert mgr.sent[-1][1]["data"]["memories"] == [{"id": 1}]
+        assert mm.calls[0][0] == "search_async"
+        kw = mm.calls[0][1]
+        assert kw["query"] == "q"
+        assert kw["memory_type"] == "long_term"
+        assert kw["tags"] == ["t1"]
+        assert kw["time_range"] == "7d"
+        assert kw["limit"] == 7
+        assert kw["offset"] == 2
+        assert kw["workspace_id"] == "ws1"
+        assert kw["agent_id"] == "a1"
 
     @pytest.mark.asyncio
     async def test_manager_error(self, handlers, mgr, monkeypatch):

@@ -18,6 +18,7 @@ import binascii
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
+from server.core.logging_config import get_contextual_logger
 from server.services import voiceprint_service
 from server.services.voiceprint_service import (
     VoiceprintUnavailableError,
@@ -25,6 +26,10 @@ from server.services.voiceprint_service import (
 )
 
 router = APIRouter(prefix="/voiceprint", tags=["voiceprint"])
+logger = get_contextual_logger(__name__)
+
+# 上传防呆：单次请求音频（解码后）大小上限 20MB（与 audio.py ASR 入口同口径）
+_MAX_UPLOAD_BYTES = 20 * 1024 * 1024
 
 
 class RegisterProfileRequest(BaseModel):
@@ -35,13 +40,18 @@ class RegisterProfileRequest(BaseModel):
 
 
 def _decode_audio(payload: RegisterProfileRequest) -> bytes:
-    """从 base64 解码音频字节；解码失败或内容为空抛 400。"""
+    """从 base64 解码音频字节；超限抛 413，解码失败或内容为空抛 400。"""
     if not payload.audio:
         raise HTTPException(status_code=400, detail="audio 不能为空")
+    # 上传防呆：base64 编码长度预检（4/3 膨胀 + padding 余量），超限 413
+    if len(payload.audio) > _MAX_UPLOAD_BYTES * 4 // 3 + 4:
+        raise HTTPException(status_code=413, detail="音频文件过大")
     try:
         audio_bytes = base64.b64decode(payload.audio)
     except (binascii.Error, ValueError) as e:
-        raise HTTPException(status_code=400, detail=f"audio 解码失败: {e}")
+        # 错误文案收敛：不透传解码器内部报错（详情留日志）
+        logger.warning(f"audio base64 解码失败: {e}")
+        raise HTTPException(status_code=400, detail="音频解码失败，请检查文件格式")
     if not audio_bytes:
         raise HTTPException(status_code=400, detail="audio 解码内容为空")
     return audio_bytes
@@ -64,7 +74,9 @@ async def register_profile(payload: RegisterProfileRequest):
     except VoiceprintUnavailableError:
         raise HTTPException(status_code=503, detail="voiceprint service unavailable")
     except VoiceprintServiceError as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        # 错误文案收敛：不透传内部实现细节（详情留日志）
+        logger.error(f"声纹档案注册失败: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="声纹服务处理失败")
     return {"profile": summary}
 
 

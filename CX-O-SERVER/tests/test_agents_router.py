@@ -40,7 +40,7 @@ class FakeContextManager:
     def __init__(self, sessions=None):
         self.sessions = sessions or []
 
-    def list_sessions(self):
+    def get_sessions(self):
         return self.sessions
 
 
@@ -206,10 +206,12 @@ class TestCreateAgent:
 
     def test_save_error_500(self, client, monkeypatch):
         _seed(client, [])
-        def boom(agents):
+        def boom(agents, path=None):
             raise RuntimeError("disk full")
 
-        monkeypatch.setattr(agents_mod, "_save_agents", boom)
+        # 写路径已收敛到 agent_store.update_agents（锁内 save），
+        # 改 patch 底层 save_agents 验证异常经 update_agents 传播为 500
+        monkeypatch.setattr(agents_mod.agent_store, "save_agents", boom)
         r = client.post("/agents", json={"name": "x"})
         assert r.status_code == 500
         assert r.json()["detail"] == "内部服务器错误"
@@ -371,10 +373,11 @@ class TestSetDefaultAgent:
 class TestGetAgentStats:
     def test_success(self, client, monkeypatch):
         _seed(client, _default_agents())
+        # 修复后语义：sessions 无顶层 agent_id 列，agent 归属在嵌套 metadata dict 中
         sessions = [
-            {"agent_id": "default", "message_count": 5},
-            {"agent_id": "default", "message_count": 3},
-            {"agent_id": "memory-agent", "message_count": 2},
+            {"metadata": {"agent_id": "default"}, "message_count": 5},
+            {"metadata": {"agent_id": "default"}, "message_count": 3},
+            {"metadata": {"agent_id": "memory-agent"}, "message_count": 2},
         ]
         monkeypatch.setattr(
             "server.dependencies.get_context_manager",
@@ -383,8 +386,27 @@ class TestGetAgentStats:
         r = client.get("/agents/default/stats")
         assert r.status_code == 200
         body = r.json()
+        assert body["status"] == "success"
         assert body["session_count"] == 2
         assert body["total_messages"] == 8
+
+    def test_sessions_without_metadata_skipped(self, client, monkeypatch):
+        """metadata 缺失或为 None 的 session 不参与计数且不报错。"""
+        _seed(client, _default_agents())
+        sessions = [
+            {"message_count": 1},                    # 无 metadata 键
+            {"metadata": None, "message_count": 2},  # metadata 为 None
+            {"metadata": {"agent_id": "default"}, "message_count": 4},
+        ]
+        monkeypatch.setattr(
+            "server.dependencies.get_context_manager",
+            lambda: FakeContextManager(sessions),
+        )
+        r = client.get("/agents/default/stats")
+        assert r.status_code == 200
+        body = r.json()
+        assert body["session_count"] == 1
+        assert body["total_messages"] == 4
 
     def test_not_found_404(self, client):
         _seed(client, _default_agents())
@@ -401,7 +423,70 @@ class TestGetAgentStats:
         assert r.status_code == 200
         body = r.json()
         assert body["session_count"] == 0
+        assert body["total_messages"] == 0
         assert "error" in body
+        # 修复后语义：异常分支不再谎报 status="success"
+        assert body["status"] == "error"
+        assert body["success"] is False
+
+
+# --------------------------------------------------------------------------- #
+# 五端点锁化回归（create/update/delete/set_default/clone 统一走 update_agents）
+# --------------------------------------------------------------------------- #
+class TestLockingRegression:
+    def test_write_endpoints_route_through_update_agents(self, client, monkeypatch):
+        """五个写端点均经由 agent_store.update_agents 锁入口执行读-改-写。"""
+        _seed(client, _default_agents())
+        calls = []
+        real_update_agents = agents_mod.agent_store.update_agents
+
+        def spy(mutator, path=None, **kwargs):
+            calls.append(path)
+            return real_update_agents(mutator, path=path, **kwargs)
+
+        monkeypatch.setattr(agents_mod.agent_store, "update_agents", spy)
+        client.post("/agents", json={"name": "锁化"})          # create
+        client.put("/agents/default", json={"name": "改名"})   # update
+        client.delete("/agents/memory-agent")                  # delete
+        client.post("/agents/default/default")                 # set_default
+        client.post("/agents/default/clone")                   # clone
+        assert len(calls) == 5
+
+    def test_mutator_error_keeps_file_intact(self, client):
+        """mutator 异常（404/400）时中止保存，agents.json 保持原样不损坏。"""
+        _seed(client, _default_agents())
+        snapshot = _load_file()
+
+        assert client.put("/agents/nope", json={"name": "x"}).status_code == 404
+        assert client.delete("/agents/nope").status_code == 404
+        assert client.post("/agents/nope/default").status_code == 404
+        assert client.post("/agents/nope/clone").status_code == 404
+        assert client.delete("/agents/default").status_code == 400
+
+        assert _load_file() == snapshot
+
+    def test_concurrent_creates_all_persisted(self, client):
+        """并发创建同名以外的新 Agent：锁化后无丢失覆盖，全部落盘。"""
+        import threading
+
+        _seed(client, [])
+        errors = []
+
+        def _create(idx):
+            try:
+                r = client.post("/agents", json={"name": f"并发助手{idx}"})
+                assert r.status_code == 200, r.json()
+            except Exception as e:  # pragma: no cover - 失败才会走到
+                errors.append(e)
+
+        threads = [threading.Thread(target=_create, args=(i,)) for i in range(8)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+
+        assert errors == []
+        assert len(_load_file()) == 8
 
 
 # --------------------------------------------------------------------------- #
@@ -583,3 +668,43 @@ class TestResourceCleanup:
                             lambda aid: calls.append(("mem", aid)))
         agents_mod._cleanup_agent_resources("a1")
         assert calls == [("graph", "a1"), ("weav", "a1"), ("mem", "a1")]
+
+
+# --------------------------------------------------------------------------- #
+# stats 端点 run_io 卸载回归（第九轮 G2：get_sessions 异步化）
+# --------------------------------------------------------------------------- #
+class TestGetAgentStatsRunIO:
+    def test_get_sessions_offloads_from_event_loop(self, client, monkeypatch):
+        """修复回归：get_sessions 经 run_io 在事件循环外线程执行，不阻塞事件循环。
+
+        直接以事件循环驱动端点协程，对比「事件循环线程 id」与「get_sessions
+        实际执行线程 id」：修复前同步直调两者相同；修复后 run_io 线程池不同。
+        """
+        import asyncio
+        import threading
+
+        _seed(client, _default_agents())
+        loop_thread_ids = []
+        call_thread_ids = []
+
+        class SpyContextManager:
+            def get_sessions(self):
+                call_thread_ids.append(threading.get_ident())
+                return [{"metadata": {"agent_id": "default"}, "message_count": 2}]
+
+        monkeypatch.setattr(
+            "server.dependencies.get_context_manager",
+            lambda: SpyContextManager(),
+        )
+
+        async def probe():
+            loop_thread_ids.append(threading.get_ident())
+            return await agents_mod.get_agent_stats("default")
+
+        body = asyncio.run(probe())
+        assert body["status"] == "success"
+        assert body["agent_id"] == "default"
+        assert body["session_count"] == 1
+        assert body["total_messages"] == 2
+        # 关键断言：get_sessions 执行线程 != 事件循环线程
+        assert call_thread_ids[0] != loop_thread_ids[0]

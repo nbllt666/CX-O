@@ -37,12 +37,13 @@ RUN pip install --no-cache-dir \
     protobuf \
     pyarrow \
     pyworld==0.3.4 \
+    python-multipart \
     tensorboard \
     wetext \
     wget
 
 # 预下载 wetext 模型（避免首次推理时远程下载）
-RUN python -c "import wetext; print('wetext ready')" 2>/dev/null
+RUN python -c "import wetext; print('wetext ready')"
 
 # 复制 cosyvoice-official 源码（含内部 third_party/Matcha-TTS 子模块）
 COPY third_party/cosyvoice-official/ ./cosyvoice-official/

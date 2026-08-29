@@ -35,6 +35,9 @@ import { Badge } from '@/components/ui-v2/badge';
 import { cn } from '@/lib/utils';
 import { isElectron } from '@/lib/isElectron';
 
+/** 会议操作忙碌动作枚举（busy 守卫的粒度） */
+type MeetingBusyAction = 'start' | 'speak' | 'join' | 'leave' | 'end' | 'toggle-audience';
+
 export default function MeetingRoomView() {
   const { t } = useTranslation();
   const [agents, setAgents] = useState<Agent[]>([]);
@@ -49,6 +52,9 @@ export default function MeetingRoomView() {
   const [startWithAudience, setStartWithAudience] = useState(false);
   // 输入框当前点名的 agent_id（@agent 快捷点名；发言时作为 speak.mention）
   const [mentionTarget, setMentionTarget] = useState<string | null>(null);
+  // 会议操作忙碌标记（对齐 DreamPage busyAction 模式）：
+  // 任一异步会议操作进行中时统一禁用操作按钮，防止并发触发；异步操作 try/finally 复位
+  const [busyAction, setBusyAction] = useState<MeetingBusyAction | null>(null);
 
   const loadAgents = useCallback(async () => {
     try {
@@ -75,6 +81,7 @@ export default function MeetingRoomView() {
   const participants = snapshot?.agents ?? [];
 
   const handleStart = async () => {
+    if (busyAction) return;
     setActionError(null);
     if (selected.length === 0) {
       setActionError(t('management.meeting.noParticipants'));
@@ -84,43 +91,59 @@ export default function MeetingRoomView() {
       const a = agents.find((x) => x.id === id);
       return { agent_id: id, name: a?.name ?? id };
     });
-    const room = await meeting.start({
-      user: userName.trim() || 'user',
-      agents: specs,
-      audience_enabled: startWithAudience,
-    });
-    if (!room) {
-      setActionError(t('management.meeting.startFailed'));
-      return;
+    setBusyAction('start');
+    try {
+      const room = await meeting.start({
+        user: userName.trim() || 'user',
+        agents: specs,
+        audience_enabled: startWithAudience,
+      });
+      if (!room) {
+        setActionError(t('management.meeting.startFailed'));
+        return;
+      }
+      setActiveRoomId(room.room_id);
+    } finally {
+      setBusyAction(null);
     }
-    setActiveRoomId(room.room_id);
   };
 
   const handleEnd = async () => {
-    const ok = await meeting.end();
-    if (ok) {
-      setActiveRoomId(null);
-      setSpeakResult(null);
-      setActionError(null);
-    } else {
-      setActionError(t('management.meeting.endFailed'));
+    if (busyAction) return;
+    setBusyAction('end');
+    try {
+      const ok = await meeting.end();
+      if (ok) {
+        setActiveRoomId(null);
+        setSpeakResult(null);
+        setActionError(null);
+      } else {
+        setActionError(t('management.meeting.endFailed'));
+      }
+    } finally {
+      setBusyAction(null);
     }
   };
 
   const handleSpeak = async () => {
-    if (!speakText.trim()) return;
+    if (!speakText.trim() || busyAction) return;
     setActionError(null);
-    const res = await meeting.speak(speakText.trim(), {
-      role: 'user',
-      username: userName.trim() || 'user',
-      mention: mentionTarget ?? undefined,
-    });
-    if (res) {
-      setSpeakResult(res.turns.map((tm) => `[${tm.speaker}] ${tm.text}`).join('\n'));
-      setSpeakText('');
-      setMentionTarget(null);
-    } else {
-      setSpeakResult(t('management.meeting.speakFailed'));
+    setBusyAction('speak');
+    try {
+      const res = await meeting.speak(speakText.trim(), {
+        role: 'user',
+        username: userName.trim() || 'user',
+        mention: mentionTarget ?? undefined,
+      });
+      if (res) {
+        setSpeakResult(res.turns.map((tm) => `[${tm.speaker}] ${tm.text}`).join('\n'));
+        setSpeakText('');
+        setMentionTarget(null);
+      } else {
+        setSpeakResult(t('management.meeting.speakFailed'));
+      }
+    } finally {
+      setBusyAction(null);
     }
   };
 
@@ -152,10 +175,40 @@ export default function MeetingRoomView() {
   };
 
   const handleToggleAudience = async () => {
+    if (busyAction) return;
     setActionError(null);
-    const next = !audienceEnabled;
-    const s = await meeting.toggleAudience(next);
-    if (!s) setActionError(t('management.meeting.actionFailed'));
+    setBusyAction('toggle-audience');
+    try {
+      const next = !audienceEnabled;
+      const s = await meeting.toggleAudience(next);
+      if (!s) setActionError(t('management.meeting.actionFailed'));
+    } finally {
+      setBusyAction(null);
+    }
+  };
+
+  // 移出参与者（原内联 then 链提取为具名 handler，纳入 busy 守卫）
+  const handleLeave = async (agentId: string) => {
+    if (busyAction) return;
+    setBusyAction('leave');
+    try {
+      const r = await meeting.leave(agentId);
+      setActionError(r ? null : t('management.meeting.actionFailed'));
+    } finally {
+      setBusyAction(null);
+    }
+  };
+
+  // 并入 agent（原内联 then 链提取为具名 handler，纳入 busy 守卫）
+  const handleJoin = async (agent: Agent) => {
+    if (busyAction) return;
+    setBusyAction('join');
+    try {
+      const r = await meeting.join({ agent_id: agent.id, name: agent.name });
+      setActionError(r ? null : t('management.meeting.actionFailed'));
+    } finally {
+      setBusyAction(null);
+    }
   };
 
   return (
@@ -247,7 +300,7 @@ export default function MeetingRoomView() {
                 size="sm"
                 onClick={() => void handleStart()}
                 icon={<Play className="h-4 w-4" />}
-                disabled={selected.length === 0}
+                disabled={selected.length === 0 || !!busyAction}
               >
                 {t('management.meeting.start')}
               </Button>
@@ -300,9 +353,10 @@ export default function MeetingRoomView() {
                   type="button"
                   data-testid="audience-toggle-live"
                   aria-pressed={audienceEnabled}
+                  disabled={!!busyAction}
                   onClick={() => void handleToggleAudience()}
                   className={cn(
-                    'flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs transition-colors',
+                    'flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs transition-colors disabled:opacity-50',
                     audienceEnabled
                       ? 'border-[var(--color-primary)] bg-primary/15 text-primary'
                       : 'border-[var(--glass-border)] text-muted-foreground',
@@ -355,7 +409,8 @@ export default function MeetingRoomView() {
                       <Button
                         variant="ghost"
                         size="sm"
-                        onClick={() => void meeting.leave(p.agent_id).then((r) => setActionError(r ? null : t('management.meeting.actionFailed')))}
+                        disabled={!!busyAction}
+                        onClick={() => void handleLeave(p.agent_id)}
                         icon={<UserMinus className="h-3.5 w-3.5" />}
                       >
                         {t('management.meeting.leave')}
@@ -372,7 +427,8 @@ export default function MeetingRoomView() {
                     key={a.id}
                     variant="secondary"
                     size="sm"
-                    onClick={() => void meeting.join({ agent_id: a.id, name: a.name }).then((r) => setActionError(r ? null : t('management.meeting.actionFailed')))}
+                    disabled={!!busyAction}
+                    onClick={() => void handleJoin(a)}
                     icon={<UserPlus className="h-3.5 w-3.5" />}
                   >
                     {a.name}
@@ -452,11 +508,16 @@ export default function MeetingRoomView() {
                   size="sm"
                   onClick={() => void handleSpeak()}
                   icon={<MessageSquarePlus className="h-4 w-4" />}
-                  disabled={!speakText.trim()}
+                  disabled={!speakText.trim() || !!busyAction}
                 >
                   {t('management.meeting.speak')}
                 </Button>
-                <Button size="sm" onClick={() => void handleEnd()} icon={<Square className="h-4 w-4" />}>
+                <Button
+                  size="sm"
+                  onClick={() => void handleEnd()}
+                  icon={<Square className="h-4 w-4" />}
+                  disabled={!!busyAction}
+                >
                   {t('management.meeting.end')}
                 </Button>
               </div>

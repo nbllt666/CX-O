@@ -140,7 +140,9 @@ def register_memory_handlers(manager: "WebSocketManager"):
                     ))
                     return
             else:
-                result = memory_mgr.search_memories(
+                # 非语义分支走异步变体（crud_mixin.search_memories_async，
+                # 内部 to_thread），避免同步 sqlite 查询阻塞事件循环
+                result = await memory_mgr.search_memories_async(
                     query=data.get("query"),
                     memory_type=data.get("type"),
                     tags=data.get("tags"),

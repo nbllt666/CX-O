@@ -13,6 +13,8 @@ from pydantic import BaseModel
 from server.core.logging_config import get_contextual_logger
 from server.core.admin.control_plane import resolve_invoke_result
 from server.core.admin.cluster_bridge import resolve_cluster_result
+from server.core.utils import run_io
+from server.api.routers._pagination import clamp_pagination
 
 router = APIRouter()
 logger = get_contextual_logger(__name__)
@@ -96,13 +98,15 @@ async def get_dashboard(x_api_key: Optional[str] = Header(None)):
 
     try:
         memory_mgr = get_memory_manager()
-        stats["memory"] = memory_mgr.get_statistics()
+        # 经 run_io 把 memory 统计的同步 sqlite 聚合查询移入 IO 线程池
+        stats["memory"] = await run_io(memory_mgr.get_statistics)
     except Exception as e:
         logger.warning(f"获取内存管理统计失败: {e}")
 
     try:
         context_mgr = get_context_manager()
-        stats["context"] = context_mgr.get_statistics()
+        # 经 run_io 把 context 统计的同步 sqlite 聚合查询移入 IO 线程池
+        stats["context"] = await run_io(context_mgr.get_statistics)
     except Exception as e:
         logger.warning(f"获取上下文管理统计失败: {e}")
 
@@ -128,13 +132,15 @@ async def get_stats(x_api_key: Optional[str] = Header(None)):
 
     try:
         memory_mgr = get_memory_manager()
-        stats["memory"] = memory_mgr.get_statistics()
+        # 经 run_io 把 memory 统计的同步 sqlite 聚合查询移入 IO 线程池
+        stats["memory"] = await run_io(memory_mgr.get_statistics)
     except Exception as e:
         logger.warning(f"获取内存管理统计失败: {e}")
 
     try:
         context_mgr = get_context_manager()
-        stats["context"] = context_mgr.get_statistics()
+        # 经 run_io 把 context 统计的同步 sqlite 聚合查询移入 IO 线程池
+        stats["context"] = await run_io(context_mgr.get_statistics)
     except Exception as e:
         logger.warning(f"获取上下文管理统计失败: {e}")
 
@@ -539,29 +545,38 @@ async def admin_batch(request: Request, req: _BatchRequest):
             raise HTTPException(status_code=400, detail=f"step[{i}] 必须是对象")
         steps.append(_StepItem(**st))
 
-    async def _run_step(i: int, st: _StepItem):
-        import time
-        t0 = time.monotonic()
-        try:
-            result = _control_plane.dispatch(st.action, st.target, req.request_id, st.agent_id or "default", st.params or {})
-            # H1: 同 admin_control，统一 await 内嵌裸协程；
-            # M-E: 先解包 cluster 分支的 PendingClusterResult 包装。
-            result = await resolve_invoke_result(await resolve_cluster_result(result))
-            return {"step": i, "ok": True, "result": result, "duration_ms": round((time.monotonic() - t0) * 1000, 1)}
-        except Exception as e:
-            return {"step": i, "ok": False, "result": {"error": str(e)}, "duration_ms": round((time.monotonic() - t0) * 1000, 1)}
+    class _ClusterResolvingDispatch:
+        """AdminBatchExecutor 适配层（M-E）：原路由实现先经 resolve_cluster_result
+        解包 cluster 分支的 PendingClusterResult 包装，再走 resolve_invoke_result；
+        executor 内部仅做后者，故在此包装 dispatch 补齐解包链，保持响应契约不变。
+        """
 
-    if req.mode == "parallel":
-        # asyncio 已在模块顶层导入（C3 审计 to_thread 依赖），此处不再局部导入，
-        # 否则会使 asyncio 成为函数局部变量导致 sequential 分支 UnboundLocalError
-        out = await asyncio.gather(*[_run_step(i, st) for i, st in enumerate(steps)])
-    else:  # sequential
-        out = []
-        for i, st in enumerate(steps):
-            r = await _run_step(i, st)
-            out.append(r)
-            if req.stop_on_error and not r["ok"]:
-                break
+        def __init__(self, control_plane):
+            self._control_plane = control_plane
+
+        def dispatch(self, *args, **kwargs):
+            return resolve_cluster_result(self._control_plane.dispatch(*args, **kwargs))
+
+    # 委托 AdminBatchExecutor（server/core/admin/batch.py）执行编排；
+    # agent_id 显式 None 归一化为 "default"、非 parallel 一律 sequential，
+    # 均与原内联实现语义一致。
+    from server.core.admin.batch import AdminBatchExecutor
+
+    executor = AdminBatchExecutor(_ClusterResolvingDispatch(_control_plane))
+    steps_payload = [
+        {
+            "target": st.target,
+            "action": st.action,
+            "agent_id": st.agent_id or "default",
+            "params": st.params or {},
+        }
+        for st in steps
+    ]
+    batch_mode = "parallel" if req.mode == "parallel" else "sequential"
+    batch_result = await executor.execute(
+        req.request_id, batch_mode, steps_payload, stop_on_error=req.stop_on_error
+    )
+    out = batch_result["steps"]
     # C3: 审计写为阻塞 IO，经线程包裹避免卡事件循环（审计必须可靠，接受微秒级延迟）
     await asyncio.to_thread(
         audit_now, "CX-A", "info", "batch", f"mode={req.mode}", "批量编排执行",
@@ -573,9 +588,8 @@ async def admin_batch(request: Request, req: _BatchRequest):
 @router.get("/admin/audit")
 async def admin_audit(request: Request, limit: int = 50, offset: int = 0):
     _admin_guard(request, "readonly")
-    # R9: 分页参数钳制（对齐 tuner.py:252 惯例）
-    limit = max(1, min(int(limit), 200))
-    offset = max(0, int(offset))
+    # T-07: 分页钳制统一走 _pagination.clamp_pagination
+    limit, offset = clamp_pagination(limit, offset)
     from server.core.admin.cluster_bridge import _audit_read
     # C3: 审计文件读为阻塞 IO（已改反向块读），再包线程池避免卡事件循环
     items = await run_in_threadpool(_audit_read, limit, offset)

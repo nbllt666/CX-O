@@ -261,10 +261,13 @@ class TestInterfaceStub:
         assert "EmotionInstructionInvalidError" in text
 
     def test_orchestrator_stub(self):
+        # G4-B 契约对齐：编排面契约重写为 TTSService（源真理 server/services/tts_service.py）
         text = _stub_text("orchestrator")
         for sig in (
-            "def synthesize_text(", "def synthesize_stream_text(",
-            "def interrupt(", "def close(",
+            "async def synthesize(", "async def synthesize_stream(",
+            "async def synthesize_stream_fine(", "async def get_voices(",
+            "async def health_check(", "async def shutdown(",
         ):
             assert sig in text, f"speech_orchestrator.pyi 缺少签名 {sig}"
-        assert "class SpeechOrchestrator" in text
+        assert "class TTSService" in text
+        assert "TTSServiceUnavailableError" in text

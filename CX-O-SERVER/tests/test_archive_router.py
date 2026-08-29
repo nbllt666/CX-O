@@ -105,7 +105,12 @@ class FakeMemoryConfig:
 
 
 class FakeSettings:
-    config = SimpleBox(memory=FakeMemoryConfig())
+    config = SimpleBox(
+        memory=FakeMemoryConfig(),
+        # run_io → get_io_executor 会读 config.executor.io_pool_size
+        #（模块级单例惰性构造，替身需完整防执行时序差异）
+        executor=SimpleBox(io_pool_size=2),
+    )
 
     def save_config(self):
         return None
@@ -333,3 +338,44 @@ class TestManagementAuth:
         c, _, _, _ = client
         r = c.post("/archive/auto-process")
         assert r.status_code in (200, 503)
+
+
+class TestRunIoParity:
+    """get_duplicate_groups / get_archive_stats 经 run_io 执行后响应结构不变，
+    且确实经 run_io 路径（而非同步直调）。"""
+
+    def _record_run_io(self, monkeypatch):
+        recorded = []
+        orig = archive_router_mod.run_io
+
+        async def _recorder(func, *args, **kwargs):
+            recorded.append(getattr(func, "__name__", repr(func)))
+            return await orig(func, *args, **kwargs)
+
+        monkeypatch.setattr(archive_router_mod, "run_io", _recorder)
+        return recorded
+
+    def test_duplicate_groups_via_run_io(self, client, monkeypatch):
+        c, mm, _, dedup = client
+        recorded = self._record_run_io(monkeypatch)
+        r = c.get("/archive/duplicates")
+        assert r.status_code == 200
+        body = r.json()
+        assert set(body.keys()) == {"status", "duplicate_groups", "total_groups"}
+        assert body["status"] == "success"
+        assert body["total_groups"] == 1
+        assert body["duplicate_groups"][0]["merged"] is True
+        assert "get_duplicate_groups" in recorded
+
+    def test_archive_stats_via_run_io(self, client, monkeypatch):
+        c, mm, archiver, _ = client
+        recorded = self._record_run_io(monkeypatch)
+        r = c.get("/archive/stats")
+        assert r.status_code == 200
+        body = r.json()
+        assert set(body.keys()) == {"status", "statistics"}
+        assert body["status"] == "success"
+        assert body["statistics"]["archived"] == 5
+        # by_level 的 int 键经 JSON 序列化为字符串键
+        assert body["statistics"]["by_level"] == {"1": 5}
+        assert "get_archive_stats" in recorded

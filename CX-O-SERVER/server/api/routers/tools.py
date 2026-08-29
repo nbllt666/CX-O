@@ -178,8 +178,11 @@ async def get_tool_stats():
         import traceback
 
         logger.error(f"详细堆栈: {traceback.format_exc()}")
+        # 鉴权漏挂簇修复：异常时不再谎报 success，改为 error 状态并透出错误信息；
+        # 计数字段保持全零结构，兼容前端消费方对 statistics 字段的既有解析。
         return {
-            "status": "success",
+            "status": "error",
+            "error": f"获取工具统计失败: {e}",
             "statistics": {
                 "total_tools": 0,
                 "enabled_tools": 0,
@@ -475,7 +478,8 @@ async def get_plugins():
 
 
 @router.patch("/tools/{name}")
-async def patch_tool(name: str, request: ToolPatchRequest):
+async def patch_tool(name: str, request: ToolPatchRequest, _: bool = Depends(verify_admin_api_key)):
+    """修改工具（写路径，补挂管理员鉴权，对齐同文件 register/call/delete 写法）"""
     from server.core.tools.registry import tool_registry
 
     try:

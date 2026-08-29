@@ -122,8 +122,13 @@ class ChatHarness:
 
         # chat.py 在模块顶层 `from server.chat_helpers import ...` 绑定引用，
         # 因此必须 patch 模块级名字，而非源模块。
-        monkeypatch.setattr("server.api.routers.chat.get_agent_config",
-                            lambda aid: self.agent_config)
+        # 路由已切换为 get_agent_config_async（异步变体），patch 点同步迁移；
+        # fake 以协程返回以匹配 await 调用语义。
+        async def _fake_agent_config(aid):
+            return self.agent_config
+
+        monkeypatch.setattr("server.api.routers.chat.get_agent_config_async",
+                            _fake_agent_config)
         monkeypatch.setattr("server.api.routers.chat.get_llm_client_for_agent",
                             lambda cfg: self.llm)
         # 函数体内 `from server.dependencies import ...` 在调用时解析，直接 patch 源模块

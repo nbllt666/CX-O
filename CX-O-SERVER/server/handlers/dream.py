@@ -7,6 +7,7 @@ C→S 消息走 {action, request_id, data} 约定，经 ws_manager 的 action �
 单例，dream.enabled 时由 setup_autonomy 装配）执行固化/否定，并回发
 {action, request_id, ok, data}（对齐 spec "WebSocket 协议"）。
 """
+import asyncio
 import logging
 from typing import TYPE_CHECKING, Dict, Any
 
@@ -57,7 +58,9 @@ def register_dream_handlers(manager: "WebSocketManager"):
             return
         try:
             data = _payload(message)
-            memory_id = consolidator.consolidate(
+            # consolidate 涉及主库写，同步直调会阻塞事件循环 → 移入线程执行
+            memory_id = await asyncio.to_thread(
+                consolidator.consolidate,
                 data.get("buffer_id"), data.get("agent_id", "default")
             )
             await manager.send_message(client_id, create_response(
@@ -87,7 +90,9 @@ def register_dream_handlers(manager: "WebSocketManager"):
             return
         try:
             data = _payload(message)
-            ok = consolidator.reject(
+            # reject 同样涉及主库写，移入线程避免阻塞事件循环
+            ok = await asyncio.to_thread(
+                consolidator.reject,
                 data.get("buffer_id"),
                 data.get("agent_id", "default"),
                 data.get("reason", ""),

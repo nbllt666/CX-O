@@ -14,6 +14,7 @@ from fastapi.testclient import TestClient
 
 from server.dependencies import ServiceState, set_service_state
 from server.api.routers import acp as acp_router_mod
+from server.api.routers.admin import verify_admin_api_key
 from server.core.acp import discover as acp_discover_mod
 from server.core.acp import group as acp_group_mod
 
@@ -126,6 +127,9 @@ def client(monkeypatch):
     monkeypatch.setattr(acp_group_mod, "ACPGroupManager", FakeGroupManager)
     app = FastAPI()
     app.include_router(acp_router_mod.router)
+    # 写路径（send / cleanup resources）已补挂 verify_admin_api_key：
+    # 既有用例经 dependency_overrides 放行，403 场景由 TestAcpWriteAuthRequired 单独覆盖
+    app.dependency_overrides[verify_admin_api_key] = lambda: True
     return TestClient(app, raise_server_exceptions=False), mm
 
 
@@ -284,3 +288,106 @@ class TestV310:
         mm.update_agent_port = _f
         r = c.put("/acp/agents/nope/port", json={"port": 9002})
         assert r.status_code == 404
+
+
+# --------------------------------------------------------------------------- #
+# 写路径鉴权（鉴权漏挂簇修复补充用例）
+# verify_admin_api_key 校验失败统一抛 403（项目既有口径，对齐 test_stats_interrupt.py）；
+# 本组用例不挂 dependency_overrides，真实走到密钥校验依赖。
+# /acp/receive 为开放协议入口（鉴权属 SEC 簇登记项），保持无鉴权不在本组覆盖范围。
+# --------------------------------------------------------------------------- #
+class TestAcpWriteAuthRequired:
+    @staticmethod
+    def _raw_client(monkeypatch) -> TestClient:
+        mm = FakeACPManager()
+        state = ServiceState()
+        state.acp_manager = mm
+        set_service_state(state)
+        monkeypatch.setattr(acp_discover_mod, "ACPLanDiscovery", FakeDiscovery)
+        monkeypatch.setattr(acp_group_mod, "ACPGroupManager", FakeGroupManager)
+        app = FastAPI()
+        app.include_router(acp_router_mod.router)
+        return TestClient(app, raise_server_exceptions=False), mm
+
+    def test_send_requires_auth(self, monkeypatch):
+        c, _ = self._raw_client(monkeypatch)
+        r = c.post("/acp/send", json={"to_agent_id": "a1", "content": {"t": 1}})
+        assert r.status_code == 403
+
+    def test_cleanup_resources_requires_auth(self, monkeypatch):
+        c, _ = self._raw_client(monkeypatch)
+        r = c.delete("/acp/agents/a1/resources")
+        assert r.status_code == 403
+
+    def test_receive_stays_open(self, monkeypatch):
+        # 开放协议入口回归：/acp/receive 不受鉴权补挂影响（无密钥仍可投递）
+        c, _ = self._raw_client(monkeypatch)
+        r = c.post("/acp/receive", json={
+            "id": "x", "msg_type": "chat", "from_agent_id": "a", "from_agent_name": "A",
+            "content": {"t": 1}, "timestamp": "2026-08-09T00:00:00", "is_sent": True,
+        })
+        assert r.status_code == 200
+        assert r.json()["data"]["id"] == "rx"
+
+
+# --------------------------------------------------------------------------- #
+# ACP 开放协议 token（第11轮第22项）：acp.auth_token 缺省空=不校验（兼容旧行为）；
+# 配置后要求同值 X-ACP-Key 头，否则 403。独立于 admin key。
+# --------------------------------------------------------------------------- #
+class _Box:
+    def __init__(self, **kw):
+        self.__dict__.update(kw)
+
+
+_RECEIVE_PAYLOAD = {
+    "id": "x", "msg_type": "chat", "from_agent_id": "a", "from_agent_name": "A",
+    "content": {"t": 1}, "timestamp": "2026-08-09T00:00:00", "is_sent": True,
+}
+
+
+class TestAcpProtocolToken:
+    @staticmethod
+    def _client_with_token(monkeypatch, token: str):
+        monkeypatch.setattr(
+            "server.config.get_settings",
+            lambda: _Box(config=_Box(acp=_Box(auth_token=token))),
+        )
+        return TestAcpWriteAuthRequired._raw_client(monkeypatch)
+
+    def test_empty_token_stays_open(self, monkeypatch):
+        c, _ = self._client_with_token(monkeypatch, "")
+        r = c.post("/acp/receive", json=_RECEIVE_PAYLOAD)
+        assert r.status_code == 200
+
+    def test_configured_token_missing_header_403(self, monkeypatch):
+        c, _ = self._client_with_token(monkeypatch, "s3cret")
+        r = c.post("/acp/receive", json=_RECEIVE_PAYLOAD)
+        assert r.status_code == 403
+
+    def test_configured_token_wrong_403(self, monkeypatch):
+        c, _ = self._client_with_token(monkeypatch, "s3cret")
+        r = c.post("/acp/receive", json=_RECEIVE_PAYLOAD, headers={"X-ACP-Key": "bad"})
+        assert r.status_code == 403
+
+    def test_configured_token_ok(self, monkeypatch):
+        c, _ = self._client_with_token(monkeypatch, "s3cret")
+        r = c.post(
+            "/acp/receive", json=_RECEIVE_PAYLOAD, headers={"X-ACP-Key": "s3cret"}
+        )
+        assert r.status_code == 200
+        assert r.json()["data"]["id"] == "rx"
+
+    def test_send_group_token_missing_403(self, monkeypatch):
+        c, _ = self._client_with_token(monkeypatch, "s3cret")
+        r = c.post("/acp/send/group", params={"group_id": "g1"}, json={"t": 1})
+        assert r.status_code == 403
+
+    def test_send_group_token_ok(self, monkeypatch):
+        c, _ = self._client_with_token(monkeypatch, "s3cret")
+        r = c.post(
+            "/acp/send/group",
+            params={"group_id": "g1"},
+            json={"t": 1},
+            headers={"X-ACP-Key": "s3cret"},
+        )
+        assert r.status_code == 200

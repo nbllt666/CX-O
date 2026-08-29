@@ -20,17 +20,20 @@ from server.qwen3_tts_provider import (
 )
 from server import ref_audio_store
 from server.ref_audio_store import (
+    AssetBoundError,
     GeneratedAudio,
     clear_current,
     delete,
     exists,
     get,
     get_current,
+    get_for_agent,
     list,
     register_from_file,
     register_from_prompt,
     resolve,
     set_current,
+    set_for_agent,
     set_prompt_generator,
     update_note,
 )
@@ -354,3 +357,75 @@ class TestConcurrentDedupeNoTocTou:
         got_ids = {r.get("id") for r in ref_audio_store._load_index()}
         assert {p["id"] for p in payloads} <= got_ids  # 8 条回放全部落盘（无丢更新）
         assert len(list()) == 8
+
+
+# ================================================================ delete 绑定保护 TOCTOU（锁内检查）
+class TestDeleteBindingProtectionInLock:
+    def test_delete_vs_set_for_agent_no_dangling_binding(self, tmp_path):
+        """delete 与 set_for_agent 并发不产生"已删还被绑"悬挂绑定。
+
+        修复：绑定保护检查 asset_used_by_any_agent 移入 _LOCK 临界区内，与
+        _apply_binding（同锁写绑定表）互斥。并发交错只允许两种合法终态：
+        - 绑定先落盘 → delete 抛 AssetBoundError（资产保留且被绑定）；
+        - 删除先落盘 → set_for_agent 经 resolve 抛 RefAudioNotFoundError（无绑定落盘）。
+        不变式：绑定表存在指向某资产的绑定时，该资产不得为 deleted。
+        """
+        import threading
+
+        src = _write_wav(tmp_path, "voice.wav")
+        errors = []
+
+        for round_idx in range(20):
+            # 每轮注册新内容资产（duration 微调避免 checksum 去重复用）
+            asset = register_from_file(_write_wav(tmp_path, f"v{round_idx}.wav",
+                                                  duration=3.0 + round_idx * 0.01))
+            agent_id = f"agent-race-{round_idx}"
+            barrier = threading.Barrier(2)
+
+            def do_delete(aid=asset.id):
+                try:
+                    barrier.wait()
+                    delete(aid)  # 被绑定则抛 AssetBoundError（合法终态）
+                except AssetBoundError:
+                    pass
+                except Exception as e:  # noqa: BLE001
+                    errors.append(e)
+
+            def do_bind(aid=asset.id, agid=agent_id):
+                try:
+                    barrier.wait()
+                    set_for_agent(agid, aid)  # 资产已删则抛 RefAudioNotFoundError（合法终态）
+                except RefAudioNotFoundError:
+                    pass
+                except Exception as e:  # noqa: BLE001
+                    errors.append(e)
+
+            t1 = threading.Thread(target=do_delete)
+            t2 = threading.Thread(target=do_bind)
+            t1.start()
+            t2.start()
+            t1.join()
+            t2.join()
+
+            # 不变式：资产被绑定 ⟹ 资产未删除；资产已删除 ⟹ 无指向它的绑定
+            bound = get_for_agent(agent_id)
+            asset_now = get(asset.id)
+            if bound is not None and bound.get("asset_id") == asset.id:
+                assert asset_now is not None and not asset_now.is_deleted, (
+                    f"第 {round_idx} 轮出现悬挂绑定：资产已删但仍被 {agent_id} 绑定"
+                )
+            if asset_now is not None and asset_now.is_deleted:
+                assert bound is None or bound.get("asset_id") != asset.id, (
+                    f"第 {round_idx} 轮出现悬挂绑定：资产已删但仍被 {agent_id} 绑定"
+                )
+
+        assert not errors  # 无预期外异常
+
+    def test_delete_bound_asset_still_rejected_in_lock(self, tmp_path):
+        """锁内检查语义不变：被绑定的资产删除仍抛 AssetBoundError。"""
+        src = _write_wav(tmp_path, "bound.wav")
+        asset = register_from_file(src)
+        set_for_agent("agent-keep", asset.id)
+        with pytest.raises(AssetBoundError):
+            delete(asset.id)
+        assert not get(asset.id).is_deleted  # 资产未被删除

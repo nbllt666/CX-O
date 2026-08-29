@@ -12,7 +12,7 @@ Mock 策略:
 - 异常路径通过 raise 模拟（ValueError=422 / RuntimeError=500）
 - 真实实现就位后，切换导入路径即可替换
 
-@version 1.1.0
+@version 1.2.0  # G4-B 签名同步：get_rejected_content 对齐实现（session_id 必填、limit 默认 50、空 session_id 抛 KeyError）
 @see public/interface_stub/memory_manager_v2.pyi
 @see public/schema/storage_decision.schema.json
 @see public/schema/agent_config_v2.schema.json
@@ -137,22 +137,24 @@ class MockMemoryManagerV2:
 
     def get_rejected_content(
         self,
-        session_id: Optional[str] = None,
-        limit: int = 100,
+        session_id: str,
+        limit: int = 50,
     ) -> List[Dict[str, Any]]:
-        """获取被拒绝的内容列表。
+        """查询指定会话的被拒绝内容（签名对齐实现：session_id 必填、limit 默认 50）。
 
-        Mock behavior: 返回 rejected_content 表记录，按 session_id 过滤（如提供）。
+        Mock behavior: 返回 rejected_content 表记录，按 session_id 过滤；
+        空 session_id 抛 KeyError（对齐实现 404）；limit<=0 回退为 50（对齐实现）。
         """
-        if limit < 0:
-            raise ValueError(f"limit 不能为负（422）: {limit}")
+        if not session_id:
+            raise KeyError("session_id 不能为空（404）")
+        if limit <= 0:
+            limit = 50
 
         results: List[Dict[str, Any]] = []
         for record in self._rejected_content.values():
-            if session_id is not None:
-                rec_session = record.get("decision", {}).get("session_id")
-                if rec_session != session_id:
-                    continue
+            rec_session = record.get("decision", {}).get("session_id")
+            if rec_session != session_id:
+                continue
             results.append({
                 "content": record["content"],
                 "quality_score": record.get("decision", {}).get("quality_score"),

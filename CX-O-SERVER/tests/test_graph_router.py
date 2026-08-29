@@ -3,9 +3,11 @@
 monkeypatch graph 模块的 _get_or_create_graph_database + GraphMonitor/SemanticQueryManager/
 GraphExporter，返回假 graph 对象（用真实 GraphNode/GraphEdge dataclass 构造返回值）。
 覆盖 node/edge/traversal/semantic/health/metrics/stats/algorithm/query-hops/path-constrained/export/config。
+含鉴权漏挂簇修复补充用例：export 端点密钥门槛 + file_path 落盘路径收敛。
 
 运行：python -m pytest tests/test_graph_router.py -v
 """
+from pathlib import Path
 from types import SimpleNamespace
 from typing import Optional
 
@@ -14,6 +16,7 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from server.api.routers import graph as graph_mod
+from server.api.routers.admin import verify_admin_api_key
 from server.core.graph.models import GraphNode, GraphEdge
 
 
@@ -172,6 +175,9 @@ def client(monkeypatch):
     monkeypatch.setattr(graph_mod, "GraphExporter", FakeExporter)
     app = FastAPI()
     app.include_router(graph_mod.router)
+    # /export/graphml、/export/dot 已补挂 verify_admin_api_key：
+    # 既有用例经 dependency_overrides 放行，403/收敛场景由 TestExportAuth 单独覆盖
+    app.dependency_overrides[verify_admin_api_key] = lambda: True
     return TestClient(app, raise_server_exceptions=False)
 
 
@@ -384,3 +390,73 @@ class TestConfig:
         assert body["config"]["database_path"] == "/tmp/graph.db"
         assert body["config"]["weaviate"]["api_key"] == "***"
         assert body["config"]["embedding"]["model"] == "m"
+
+
+# --------------------------------------------------------------------------- #
+# export 端点鉴权与落盘路径收敛（鉴权漏挂簇修复补充用例）
+# verify_admin_api_key 校验失败统一抛 403（项目既有口径，对齐 test_stats_interrupt.py）；
+# 收敛规则：file_path 仅取文件名，落盘强制收敛到 <项目根>/data/graph_exports/。
+# --------------------------------------------------------------------------- #
+class TestExportAuth:
+    @staticmethod
+    def _raw_client(monkeypatch, exporter_cls=FakeExporter) -> TestClient:
+        """不挂鉴权 override 的客户端：真实走到密钥校验依赖。"""
+        monkeypatch.setattr(
+            graph_mod, "_get_or_create_graph_database", lambda agent_id="default": FakeGraph()
+        )
+        monkeypatch.setattr(graph_mod, "GraphMonitor", FakeMonitor)
+        monkeypatch.setattr(graph_mod, "SemanticQueryManager", FakeSQM)
+        monkeypatch.setattr(graph_mod, "GraphExporter", exporter_cls)
+        app = FastAPI()
+        app.include_router(graph_mod.router)
+        return TestClient(app, raise_server_exceptions=False)
+
+    def test_graphml_without_key_403(self, monkeypatch):
+        r = self._raw_client(monkeypatch).get("/export/graphml")
+        assert r.status_code == 403
+
+    def test_dot_without_key_403(self, monkeypatch):
+        r = self._raw_client(monkeypatch).get("/export/dot")
+        assert r.status_code == 403
+
+    def test_graphml_with_key_traversal_converged(self, monkeypatch):
+        # 带正确密钥 + file_path 含 ../ 穿越：落盘路径必须被收敛到导出目录内
+        monkeypatch.setenv("ADMIN_API_KEY", "secret_key")
+        recorded = {}
+
+        class RecordingExporter(FakeExporter):
+            def export_graphml(self, file_path):
+                recorded["graphml"] = file_path
+
+        c = self._raw_client(monkeypatch, RecordingExporter)
+        r = c.get(
+            "/export/graphml",
+            params={"file_path": "../../evil.graphml"},
+            headers={"X-API-Key": "secret_key"},
+        )
+        assert r.status_code == 200
+        # 透传给 exporter 的路径已收敛：仅保留文件名且位于导出目录内
+        target = Path(recorded["graphml"])
+        assert target.name == "evil.graphml"
+        assert target.is_relative_to(graph_mod._EXPORT_DIR.resolve())
+        # 响应中返回实际落盘路径
+        assert Path(r.json()["file_path"]) == target
+
+    def test_dot_with_key_traversal_converged(self, monkeypatch):
+        monkeypatch.setenv("ADMIN_API_KEY", "secret_key")
+        recorded = {}
+
+        class RecordingExporter(FakeExporter):
+            def export_dot(self, file_path):
+                recorded["dot"] = file_path
+
+        c = self._raw_client(monkeypatch, RecordingExporter)
+        r = c.get(
+            "/export/dot",
+            params={"file_path": "..\\..\\evil.dot"},
+            headers={"X-API-Key": "secret_key"},
+        )
+        assert r.status_code == 200
+        target = Path(recorded["dot"])
+        assert target.name == "evil.dot"
+        assert target.is_relative_to(graph_mod._EXPORT_DIR.resolve())

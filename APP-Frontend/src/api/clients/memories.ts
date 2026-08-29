@@ -85,11 +85,19 @@ export const memoriesApi = {
     });
   },
 
-  searchMemories(query: string): Promise<{ memories: Memory[] }> {
+  /** 搜索记忆；type/agent_id 可选透传（后端 MemorySearchRequest 支持），空值不传 */
+  searchMemories(
+    query: string,
+    options?: { type?: string; agent_id?: string },
+  ): Promise<{ memories: Memory[] }> {
     return request<{ memories: Memory[] }>({
       url: '/api/memories/search',
       method: 'post',
-      data: { query },
+      data: {
+        query,
+        ...(options?.type ? { type: options.type } : {}),
+        ...(options?.agent_id ? { agent_id: options.agent_id } : {}),
+      },
     });
   },
 

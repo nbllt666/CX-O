@@ -6,6 +6,7 @@
 """
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import os
@@ -223,10 +224,10 @@ class ClusterTransport:
         if not f.exists():
             return
 
-        # 二进制读取并记录偏移量，供后续回收窗口期内新追加的字节
-        with open(f, "rb") as fh:
-            raw = fh.read()
-            offset = len(raw)
+        # 二进制读取并记录偏移量，供后续回收窗口期内新追加的字节。
+        # 阻塞整读经 asyncio.to_thread 包裹：outbox 较大时不再卡事件循环。
+        raw = await asyncio.to_thread(f.read_bytes)
+        offset = len(raw)
 
         rows: list[dict] = []
         for line in raw.decode("utf-8", errors="replace").splitlines():
@@ -241,7 +242,7 @@ class ClusterTransport:
         kept: list[dict] = []
         permanent_dropped = 0
         consecutive_failures = 0
-        for rec in rows:
+        for idx, rec in enumerate(rows):
             peer_endpoint = rec.get("peer_endpoint", "")
             op = rec.get("op", "")
             node_id = rec.get("node_id", self._node_id or "")
@@ -299,7 +300,9 @@ class ClusterTransport:
             kept.append({**rec})
             consecutive_failures += 1
             if consecutive_failures >= FLUSH_MAX_CONSECUTIVE_FAILURES:
-                remaining_idx = rows.index(rec) + 1
+                # 用枚举下标定位剩余条目：旧 rows.index(rec) 按值相等查找，
+                # 重复条目（内容相同的 JSONL 行）会错位到首个匹配位置，多保/少保数据
+                remaining_idx = idx + 1
                 kept.extend(rows[remaining_idx:])
                 log.warning(
                     "[flush] 连续失败 %d 次，中止本轮，剩余 %d 条保留",
@@ -307,26 +310,36 @@ class ClusterTransport:
                 )
                 break
 
-        # 回收 flush 执行期间并发追加进文件的条目（读改写窗口保护）
-        appended_raw = b""
-        try:
-            size_now = f.stat().st_size
-            if size_now > offset:
-                with open(f, "rb") as fh:
-                    fh.seek(offset)
-                    appended_raw = fh.read()
-        except OSError:
-            pass
+        # 回收 flush 执行期间并发追加进文件的条目（读改写窗口保护）。
+        # 阻塞读（stat + seek + read）经线程包裹，不卡事件循环。
+        def _read_appended() -> bytes:
+            try:
+                size_now = f.stat().st_size
+                if size_now > offset:
+                    with open(f, "rb") as fh:
+                        fh.seek(offset)
+                        return fh.read()
+            except OSError:
+                pass
+            return b""
+
+        appended_raw = await asyncio.to_thread(_read_appended)
 
         final_bytes = b"".join(
             (json.dumps(r, ensure_ascii=False) + "\n").encode("utf-8") for r in kept
         ) + appended_raw
 
         tmp = f.with_suffix(".jsonl.tmp")
-        try:
+
+        # 原子改写（拼字节 + tmp 写 + os.replace）经线程包裹：保持既有崩溃安全
+        # 语义不变（中途失败原文件完好），只是不再阻塞事件循环。
+        def _atomic_rewrite() -> None:
             with open(tmp, "wb") as fh:
                 fh.write(final_bytes)
             os.replace(tmp, f)
+
+        try:
+            await asyncio.to_thread(_atomic_rewrite)
         except OSError:
             # 改写失败：保留原文件不动（条目仍在磁盘可恢复）
             try:

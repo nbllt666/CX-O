@@ -668,7 +668,8 @@ async def workspace_stream_chat(slug: str, request: WorkspaceChatRequest, author
         raise HTTPException(status_code=500, detail="LLM 客户端不可用")
 
     # 准备聊天上下文（公共逻辑：会话管理、reset、mode、attachments、消息构建）
-    context_mgr, session_id, messages, kwargs = _prepare_chat_context(slug, request, agent)
+    # 修复：_prepare_chat_context 是 async def，必须 await 消费协程，否则解包协程对象必 TypeError
+    context_mgr, session_id, messages, kwargs = await _prepare_chat_context(slug, request, agent)
 
     chat_id = str(uuid.uuid4())
 
@@ -731,7 +732,8 @@ async def workspace_chats(slug: str, authorization: Optional[str] = Header(None)
         from server.dependencies import get_context_manager
         context_mgr = get_context_manager()
         session_id = f"agent-{slug}"
-        messages = context_mgr.get_recent_messages(session_id, limit=50)
+        # 经 run_io 把同步 sqlite 历史查询移入 IO 线程池，避免阻塞事件循环
+        messages = await run_io(context_mgr.get_recent_messages, session_id, limit=50)
         for msg in messages:
             if msg.get("role") in ["user", "assistant"]:
                 history.append({

@@ -2,11 +2,12 @@
 # 包含 LLM (vLLM/TRT-LLM) 和 ASR (FunASR+SenseVoice) 服务
 #
 # 使用方式:
-#   启动所有服务:   docker compose up
-#   仅启动 LLM:     docker compose up llm
+#   裸启动（仅 asr-sensevoice，llm/tuner 受 profile 门控不随裸 up 启动）: docker compose up
+#   启动 LLM:       docker compose --profile llm up llm
 #   仅启动 ASR:     docker compose up asr-sensevoice
-#   指定 LLM 后端:  LLM_BACKEND=vllm docker compose up llm
-#                    LLM_BACKEND=trtllm docker compose up llm
+#   启动 Tuner:     docker compose --profile tuner up cxo-tuner
+#   指定 LLM 后端:  LLM_BACKEND=vllm docker compose --profile llm up llm
+#                    LLM_BACKEND=trtllm docker compose --profile llm up llm
 
 services:
   # ============================================================
@@ -33,6 +34,9 @@ services:
       - ./CX-O-SERVER/asr_container:/app/asr_container:ro
       # 声纹注册 profiles（服务端权威写入，容器只读消费；/api/v1/voiceprint/profiles/sync 重载）
       - ./CX-O-SERVER/data/voiceprint:/app/data/voiceprint:ro
+      # 注意（2026-08-29）：asr-models 命名卷非空时，Docker 会跳过"镜像内容→空卷"
+      # 的初始化复制，镜像内 /root/.cache/modelscope 不会落入卷；更换/新增镜像内模型
+      # 后需 docker volume rm asr-models 重建空卷，以触发重新复制。
       - asr-models:/root/.cache/modelscope
     deploy:
       resources:
@@ -53,8 +57,17 @@ services:
   # ============================================================
   llm:
     build:
-      context: ./docker/llm
-      dockerfile: Dockerfile.${LLM_BACKEND:-vllm}
+      # 2026-08-29 修复：context 改仓库根 + dockerfile 加 docker/llm/ 前缀——
+      # Dockerfile.cosyvoice-vllm 的 COPY third_party/... 为仓库根路径，原 ./docker/llm
+      # context 下必然解析失败。四份 Dockerfile 在仓库根 context 下的 COPY 核查：
+      #   vllm / trtllm：无 COPY，任何 context 均可构建；
+      #   cosyvoice-vllm：COPY third_party/cosyvoice-official、docker/llm/cv3plugin、
+      #     docker/llm/cosyvoice_server.py，均以仓库根为基准，根 context 下可解析；
+      #   cosyvoice-vllm.full（LLM_BACKEND=cosyvoice-vllm.full）：COPY 路径同上可解析，
+      #     但还需 --build-context models=./models/Fun-CosyVoice3-0.5B-2512 命名构建
+      #     上下文（compose 无法传递该参数）→ 该变体需按文件头部命令手动构建。
+      context: .
+      dockerfile: docker/llm/Dockerfile.${LLM_BACKEND:-vllm}
       args:
         - BUILDKIT_INLINE_CACHE=1
     shm_size: '4gb'

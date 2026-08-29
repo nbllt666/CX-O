@@ -4,7 +4,8 @@ from typing import Dict
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
-from server.core.utils import format_messages_for_summary
+# 修复：批量替换事故导致 run_io 重复导入 84 次，收敛为单次导入（实际使用：run_io + format_messages_for_summary）
+from server.core.utils import format_messages_for_summary, run_io
 
 router = APIRouter()
 
@@ -29,7 +30,8 @@ async def list_sessions(workspace_id: str = "default", limit: int = 20, active_o
 
     try:
         context_mgr = get_context_manager()
-        sessions = context_mgr.get_sessions(
+        # 异步变体：get_sessions 的 sqlite 查询移入 IO 线程池，避免阻塞事件循环
+        sessions = await context_mgr.get_sessions_async(
             workspace_id=workspace_id, limit=limit, active_only=active_only
         )
         return {"status": "success", "sessions": sessions, "total": len(sessions)}
@@ -43,7 +45,8 @@ async def create_session(request: SessionCreateRequest):
 
     try:
         context_mgr = get_context_manager()
-        session_id = context_mgr.create_session(
+        # 异步变体：create_session 的 sqlite 写入移入 IO 线程池
+        session_id = await context_mgr.create_session_async(
             workspace_id=request.workspace_id, title=request.title, metadata=request.metadata
         )
         return {"status": "success", "session_id": session_id, "message": "会话创建成功"}
@@ -57,7 +60,8 @@ async def get_session(session_id: str):
 
     try:
         context_mgr = get_context_manager()
-        session = context_mgr.get_session(session_id)
+        # 异步变体：get_session 的 sqlite 查询移入 IO 线程池
+        session = await context_mgr.get_session_async(session_id)
 
         if not session:
             raise HTTPException(status_code=404, detail="会话不存在")
@@ -79,7 +83,8 @@ async def clear_session_messages(session_id: str):
 
     try:
         context_mgr = get_context_manager()
-        success = context_mgr.clear_session_messages(session_id)
+        # 无 async 变体：经 run_io 把同步 sqlite 移入 IO 线程池
+        success = await run_io(context_mgr.clear_session_messages, session_id)
         if not success:
             raise HTTPException(status_code=404, detail="会话不存在")
         return {"status": "success", "message": "会话消息已清空"}
@@ -100,7 +105,8 @@ async def clear_all_sessions():
 
     try:
         context_mgr = get_context_manager()
-        count = context_mgr.clear_all_sessions()
+        # 无 async 变体：经 run_io 把同步 sqlite 移入 IO 线程池
+        count = await run_io(context_mgr.clear_all_sessions)
 
         return {"status": "success", "message": f"已删除 {count} 个会话", "deleted_count": count}
     except Exception as e:
@@ -113,7 +119,8 @@ async def delete_session(session_id: str):
 
     try:
         context_mgr = get_context_manager()
-        success = context_mgr.delete_session(session_id)
+        # 无 async 变体：经 run_io 把同步 sqlite 移入 IO 线程池
+        success = await run_io(context_mgr.delete_session, session_id)
 
         if not success:
             raise HTTPException(status_code=404, detail="会话不存在")
@@ -132,7 +139,8 @@ async def get_messages(session_id: str, limit: int = 50, offset: int = 0):
 
     try:
         context_mgr = get_context_manager()
-        messages = context_mgr.get_messages(session_id=session_id, limit=limit, offset=offset)
+        # 异步变体：get_messages 的 sqlite 查询移入 IO 线程池
+        messages = await context_mgr.get_messages_async(session_id=session_id, limit=limit, offset=offset)
         return {
             "status": "success",
             "session_id": session_id,
@@ -156,7 +164,8 @@ async def add_message(request: MessageCreateRequest):
 
     try:
         context_mgr = get_context_manager()
-        message_id = context_mgr.add_message(
+        # 异步变体：add_message 的 sqlite 写入移入 IO 线程池
+        message_id = await context_mgr.add_message_async(
             session_id=request.session_id,
             role=request.role,
             content=request.content,
@@ -179,7 +188,8 @@ async def generate_summary(session_id: str, max_points: int = 5, save_as_memory:
         memory_manager = get_memory_manager()
 
         # 获取对话消息（取最近 100 条，避免 get_messages 返回最旧消息导致摘要陈旧）
-        messages = context_mgr.get_recent_messages(session_id, limit=100)
+        # 异步变体：get_recent_messages 的 sqlite 查询移入 IO 线程池
+        messages = await context_mgr.get_recent_messages_async(session_id, limit=100)
         if not messages:
             raise HTTPException(status_code=404, detail="会话不存在或为空")
 
@@ -308,7 +318,8 @@ async def generate_summary(session_id: str, max_points: int = 5, save_as_memory:
                 logging.getLogger(__name__).error(f"保存摘要记忆失败: {e}")
 
         # 更新会话摘要
-        context_mgr.update_session(session_id, summary=summary_text[:500])
+        # 异步变体：update_session 的 sqlite 写入移入 IO 线程池
+        await context_mgr.update_session_async(session_id, summary=summary_text[:500])
 
         return {
             "status": "success",
@@ -335,7 +346,8 @@ async def get_context_stats(workspace_id: str = "default"):
 
     try:
         context_mgr = get_context_manager()
-        stats = context_mgr.get_statistics(workspace_id)
+        # 异步变体：get_statistics 的 sqlite 聚合查询移入 IO 线程池
+        stats = await context_mgr.get_statistics_async(workspace_id)
 
         return {"status": "success", "statistics": stats}
     except Exception as e:

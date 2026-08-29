@@ -42,6 +42,28 @@ _streamer: Optional[Any] = None
 # Dream 梦境引擎单例（由 setup_autonomy 在 dream.enabled 时装配，供 dream 工具 handler 使用）
 _dream_engine: Optional[Any] = None
 
+# Physio 生理信号存储单例（由 setup_autonomy 在 dream.enabled 且 physio 装配成功时
+# 保存引用，供关闭路径 flush_physio_store() 强制落盘节流窗口内的脏数据——L-P1 接线）
+_physio_store_ref: Optional[Any] = None
+
+
+def flush_physio_store() -> None:
+    """关闭路径兜底：强制落盘 PhysioSignalStore 节流窗口内的脏数据。
+
+    update() 落盘按 30s 节流（interval 内仅置脏），服务关闭时若不 flush，
+    窗口内最新衍生指标（base_hr/设备指纹）会丢失。本函数供 autonomy 关闭路径
+    与上层 lifespan shutdown 调用：store 未装配直接返回；异常 suppress + 告警，
+    不影响其余清理。
+    """
+    store = _physio_store_ref
+    if store is None:
+        return
+    try:
+        store.flush()
+        logger.info("PhysioSignalStore 关闭前 flush 完成")
+    except Exception as e:  # noqa: BLE001 —— 关闭路径 flush 失败不中断清理
+        logger.warning("PhysioSignalStore 关闭前 flush 失败（忽略）: %s", e)
+
 
 def get_autonomy_manager() -> Optional[AutonomyManager]:
     """返回模块级单例 AutonomyManager（未装配返回 None）。"""
@@ -682,6 +704,10 @@ async def _safe_stop_after_assembly_error(dream_engine: Any, engine: Any) -> Non
                 await result
         except Exception:
             logger.exception("装配异常后的引擎停止也失败（已隔离，不再遮蔽原始异常）")
+    # L-P1 接线：装配异常关闭路径同时 flush physio store 节流窗口内的脏数据
+    #（store 未装配时为空操作；flush_physio_store 内部已 suppress 异常 + 告警，
+    # 不影响引擎清理，也不遮蔽原始装配异常）
+    flush_physio_store()
 
 
 async def setup_autonomy(services: Any, store_path: str = "") -> Optional[AutonomyManager]:
@@ -695,7 +721,7 @@ async def setup_autonomy(services: Any, store_path: str = "") -> Optional[Autono
     """
     global _autonomy_manager, _autonomy_engine, _rss_fetcher, _memory_actions
     global _diary_generator, _search_monitor, _audit_store, _poster, _streamer
-    global _consolidator, _dream_engine
+    global _consolidator, _dream_engine, _physio_store_ref
     _autonomy_manager = None
     _autonomy_engine = None
     _rss_fetcher = None
@@ -920,6 +946,8 @@ async def setup_autonomy(services: Any, store_path: str = "") -> Optional[Autono
                     )
 
                     physio_store = PhysioSignalStore()
+                    # 保存模块级引用供关闭路径 flush_physio_store() 落盘（L-P1 接线）
+                    _physio_store_ref = physio_store
                     physio_estimator = HeartRateSleepEstimator(
                         config=dream_config.physio, store=physio_store
                     )

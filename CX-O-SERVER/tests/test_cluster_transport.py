@@ -140,3 +140,72 @@ async def test_flush_pending_preserves_outbox_on_send_crash(tmp_path):
     assert outbox.exists()
     assert t.pending_count() == 1
     assert calls["n"] == 2
+
+
+@pytest.mark.asyncio
+async def test_flush_interrupt_keeps_correct_rows_with_duplicates(tmp_path):
+    """flush 熔断中断后按枚举下标保留剩余条目：重复条目不错位。
+
+    全部条目内容相同时，旧实现 rows.index(rec) 按值相等查找首个匹配——
+    第 10 条（熔断点）会把 remaining_idx 错定位到 1，导致已保留的 10 条副本
+    与 rows[1:]（11 条）重复叠加（12 条输入错写回 21 条）。枚举下标修复后：
+    熔断点及其前 9 条逐条保留 + 其后余量 2 条 = 12 条（无重复叠加，零丢失）。
+    """
+    cfg = make_config()
+    t = ClusterTransport(config=cfg, secret="sk", node_id="me", pending_dir=tmp_path)
+    outbox = tmp_path / "outbox.jsonl"
+    rec = {"peer_endpoint": "p1:8443", "op": "x", "payload": {"n": 1}}
+    outbox.write_text(
+        "".join(json.dumps(rec, ensure_ascii=False) + "\n" for _ in range(12)),
+        encoding="utf-8",
+    )
+
+    async def _always_fail(url, body):
+        raise RuntimeError("network down")  # 全部瞬时失败，累计连续失败触发熔断
+
+    t._post = _always_fail
+    await t.flush_pending()
+
+    # FLUSH_MAX_CONSECUTIVE_FAILURES=10：熔断发生在第 10 条
+    # → 前 10 条逐条保留 + remaining（下标 10 起的 2 条）= 12 条（零丢失）
+    # 旧实现按值索引错位 → 10 + 11 = 21 条（重复叠加）
+    assert t.pending_count() == 12
+    lines = [json.loads(x) for x in outbox.read_text(encoding="utf-8").splitlines() if x.strip()]
+    assert len(lines) == 12
+    assert all(line == rec for line in lines)
+
+
+@pytest.mark.asyncio
+async def test_flush_mixed_success_with_duplicates_keeps_position(tmp_path):
+    """重复条目场景下"成功才删"语义精确定位：第 1 条成功、第 2 条（重复内容）失败。
+
+    旧 rows.index(rec) 在第 2 条失败时仍匹配到第 1 条的位置——本用例锁定
+    枚举下标修复后成功/失败按真实位置生效。
+    """
+    cfg = make_config()
+    t = ClusterTransport(config=cfg, secret="sk", node_id="me", pending_dir=tmp_path)
+    outbox = tmp_path / "outbox.jsonl"
+    same = {"peer_endpoint": "p1:8443", "op": "x", "payload": {"n": 1}}
+    third = {"peer_endpoint": "p1:8443", "op": "x", "payload": {"n": 2}}
+    outbox.write_text(
+        json.dumps(same, ensure_ascii=False) + "\n"
+        + json.dumps(same, ensure_ascii=False) + "\n"
+        + json.dumps(third, ensure_ascii=False) + "\n",
+        encoding="utf-8",
+    )
+
+    calls = {"n": 0}
+
+    async def _fail_second(url, body):
+        calls["n"] += 1
+        if calls["n"] == 2:
+            raise RuntimeError("transient")  # 第 2 条失败（未达熔断阈值 10，保留）
+        return httpx.Response(200, json={"ok": True})
+
+    t._post = _fail_second
+    await t.flush_pending()
+
+    # 第 1 条成功移除；第 2 条失败保留；第 3 条成功移除
+    assert t.pending_count() == 1
+    lines = [json.loads(x) for x in outbox.read_text(encoding="utf-8").splitlines() if x.strip()]
+    assert lines == [same]

@@ -121,7 +121,14 @@ async function directRequest<T>(
     }
     throw new Error(`Neko 请求失败 (${res.status})：${detail}`);
   }
-  return (await res.json()) as T;
+  // 成功响应体非合法 JSON：带状态码与原文片段抛错（对齐 ipcRequest 成功分支的防护与错误信息风格）
+  const bodyText = await res.text();
+  try {
+    return JSON.parse(bodyText) as T;
+  } catch {
+    const snippet = bodyText.length > 120 ? `${bodyText.slice(0, 120)}…` : bodyText;
+    throw new Error(`Neko 响应解析失败 (${res.status})：${snippet}`);
+  }
 }
 
 /** 统一请求：优先 IPC 代理，浏览器降级直接 fetch */

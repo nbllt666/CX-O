@@ -639,9 +639,16 @@ class MeetingCoordinator:
             return
         try:
             context = room.transcript.render_context(self._transcript_max_turns)
+            # 优先探测 ContextManager 的 async 变体（真实实现内部走 run_io 线程池），
+            # 避免在事件循环内同步直写主库造成阻塞
+            add_async = getattr(cm, "add_message_async", None) or getattr(cm, "append_message_async", None)
+            if add_async is not None:
+                await add_async(room.room_id, "system", f"[会议记录]\n{context}")
+                return
             add = getattr(cm, "add_message", None) or getattr(cm, "append_message", None)
             if add is not None:
-                add(room.room_id, "system", f"[会议记录]\n{context}")
+                # 无 async 变体时，同步 add 也移入线程执行，保持事件循环不被写库阻塞
+                await asyncio.to_thread(add, room.room_id, "system", f"[会议记录]\n{context}")
         except Exception as e:  # 上下文回写失败不阻断主流程
             logger.warning("会议上下文回写失败: %s", e)
 

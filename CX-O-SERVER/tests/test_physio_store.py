@@ -118,3 +118,102 @@ class TestPathResolution:
     def test_explicit_path_passthrough(self, tmp_path):
         store = PhysioSignalStore(path=str(tmp_path / "custom" / "state.json"))
         assert store.path == str(tmp_path / "custom" / "state.json")
+
+
+# ================================================================ 落盘节流（写放大修复）
+class TestThrottledPersistence:
+    """update() 落盘按 _MIN_FLUSH_INTERVAL_SEC（30s）节流；flush() 强制落盘。
+
+    用假单调时钟精确控制节流窗口；文件内容直读断言，内存 get() 断言始终最新。
+    """
+
+    @pytest.fixture
+    def clock(self, monkeypatch):
+        """可控单调时钟：clock["t"] 即 time.monotonic() 返回值。"""
+        import server.autonomy.dream.physio.store as store_mod
+
+        now = {"t": 1000.0}
+        monkeypatch.setattr(store_mod.time, "monotonic", lambda: now["t"])
+        return now
+
+    def test_first_update_saves_immediately(self, tmp_path, clock):
+        path = tmp_path / "physio_state.json"
+        store = PhysioSignalStore(path=str(path))
+        store.update({"base_hr": 60.0})
+        # 首次 update 距节流基准（0.0）远超 30s → 立即落盘
+        assert json.loads(path.read_text(encoding="utf-8"))["base_hr"] == 60.0
+        assert store._dirty is False
+
+    def test_multiple_updates_within_interval_save_once(self, tmp_path, clock):
+        path = tmp_path / "physio_state.json"
+        store = PhysioSignalStore(path=str(path))
+        store.update({"base_hr": 60.0})  # 首次落盘
+        # 10s 后再次 update：interval 内仅置脏不落盘
+        clock["t"] = 1010.0
+        store.update({"base_hr": 62.0})
+        assert store._dirty is True
+        # 落盘文件仍是旧值，内存已是最新（读取路径始终反映内存状态）
+        assert json.loads(path.read_text(encoding="utf-8"))["base_hr"] == 60.0
+        assert store.get("base_hr") == 62.0
+        # 20s 处第三次 update：仍在 interval 内，不落盘
+        clock["t"] = 1020.0
+        store.update({"base_hr": 63.0})
+        assert json.loads(path.read_text(encoding="utf-8"))["base_hr"] == 60.0
+        # 31s 处第四次 update：超过最小间隔 → 落盘最新值并清脏
+        clock["t"] = 1031.0
+        store.update({"base_hr": 64.0})
+        assert json.loads(path.read_text(encoding="utf-8"))["base_hr"] == 64.0
+        assert store._dirty is False
+
+    def test_flush_forces_save_of_latest_state(self, tmp_path, clock):
+        path = tmp_path / "physio_state.json"
+        store = PhysioSignalStore(path=str(path))
+        store.update({"base_hr": 60.0})  # 首次落盘
+        clock["t"] = 1005.0
+        store.update({"base_hr": 71.5, "hr_sleep_confidence": 0.9})  # interval 内仅置脏
+        assert store._dirty is True
+        # flush 强制落盘：文件立即反映内存最新值
+        store.flush()
+        data = json.loads(path.read_text(encoding="utf-8"))
+        assert data["base_hr"] == 71.5
+        assert data["hr_sleep_confidence"] == 0.9
+        assert store._dirty is False
+
+    def test_no_change_update_skips_dirty_and_save(self, tmp_path, clock):
+        path = tmp_path / "physio_state.json"
+        store = PhysioSignalStore(path=str(path))
+        store.update({"base_hr": 60.0})  # 首次落盘
+        clock["t"] = 1005.0
+        # 全 None 值 → 无实际变化 → 不置脏不落盘
+        store.update({"base_hr": None, "hr_sleep_confidence": None})
+        assert store._dirty is False
+        assert json.loads(path.read_text(encoding="utf-8"))["base_hr"] == 60.0
+
+    def test_clear_saves_immediately_and_resets_dirty(self, tmp_path, clock):
+        path = tmp_path / "physio_state.json"
+        store = PhysioSignalStore(path=str(path))
+        store.update({"base_hr": 60.0})
+        clock["t"] = 1005.0
+        store.update({"base_hr": 62.0})  # interval 内置脏
+        assert store._dirty is True
+        store.clear()  # 清空属低频显式操作，立即落盘
+        assert store._dirty is False
+        assert json.loads(path.read_text(encoding="utf-8")) == {}
+
+    def test_flush_clears_dirty_and_persists_content(self, tmp_path, clock):
+        """关闭路径 flush 接线（L-P1）语义：flush 后脏标记清除且最新内容落盘，幂等。"""
+        path = tmp_path / "physio_state.json"
+        store = PhysioSignalStore(path=str(path))
+        store.update({"base_hr": 60.0})  # 首次落盘
+        clock["t"] = 1005.0
+        store.update({"base_hr": 75.0, "device_fingerprint": "fp-flush"})  # interval 内仅置脏
+        assert store._dirty is True
+        store.flush()
+        # 脏标记清除 + 节流窗口内最新内容落盘
+        assert store._dirty is False
+        data = json.loads(path.read_text(encoding="utf-8"))
+        assert data["base_hr"] == 75.0
+        assert data["device_fingerprint"] == "fp-flush"
+        # 幂等：再次 flush 不抛错且内容不变
+        store.flush()
+        assert json.loads(path.read_text(encoding="utf-8"))["base_hr"] == 75.0

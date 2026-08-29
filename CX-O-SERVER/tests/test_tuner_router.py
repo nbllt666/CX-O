@@ -15,6 +15,7 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from server.api.routers import tuner
+from server.api.routers.admin import verify_admin_api_key
 from server.config import _auto_fill_radix_config, CXOTunerConfig, UnifiedConfig
 
 
@@ -71,6 +72,9 @@ def _make_client(handler) -> tuner.TunerClient:
 def _build_app(handler, evolution=None) -> TestClient:
     app = FastAPI()
     app.include_router(tuner.router, prefix="/api")
+    # 写路径（feedback/train-trigger/adapters-delete）已补挂 verify_admin_api_key：
+    # 既有用例经 dependency_overrides 放行，403 场景由 TestWriteAuthRequired 单独覆盖
+    app.dependency_overrides[verify_admin_api_key] = lambda: True
     app.state.tuner_client = _make_client(handler)
     return TestClient(app), _FakeConfig(evolution)
 
@@ -220,3 +224,31 @@ class TestEvolutionConfigAutoFill:
     def test_missing_evolution_section_created(self):
         res = _auto_fill_radix_config({})
         assert "evolution" in res
+
+
+# --------------------------------------------------------------------------- #
+# 写路径鉴权（鉴权漏挂簇修复补充用例）
+# verify_admin_api_key 校验失败统一抛 403（项目既有口径，对齐 test_stats_interrupt.py）；
+# 本组用例不挂 dependency_overrides，真实走到密钥校验依赖。
+# --------------------------------------------------------------------------- #
+class TestWriteAuthRequired:
+    @staticmethod
+    def _raw_client() -> TestClient:
+        app = FastAPI()
+        app.include_router(tuner.router, prefix="/api")
+        return TestClient(app, raise_server_exceptions=False)
+
+    def test_feedback_requires_auth(self):
+        c = self._raw_client()
+        resp = c.post("/api/v1/tuner/feedback", json=_feedback_payload())
+        assert resp.status_code == 403
+
+    def test_train_trigger_requires_auth(self):
+        c = self._raw_client()
+        resp = c.post("/api/v1/tuner/train/trigger", json={"epochs": 1})
+        assert resp.status_code == 403
+
+    def test_delete_adapter_requires_auth(self):
+        c = self._raw_client()
+        resp = c.delete("/api/v1/tuner/adapters/adapter-1")
+        assert resp.status_code == 403

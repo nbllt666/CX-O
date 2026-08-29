@@ -12,7 +12,7 @@ from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
-from server.chat_helpers import get_agent_config, get_llm_client_for_agent, get_tools_for_agent, retrieve_memory_context, ensure_agent_session_async
+from server.chat_helpers import get_agent_config_async, get_llm_client_for_agent, get_tools_for_agent, retrieve_memory_context, ensure_agent_session_async
 from server.core.logging_config import get_contextual_logger
 from server.core.utils import run_io
 
@@ -114,7 +114,8 @@ async def chat(request: Request):
         chat_req = ChatRequest(**data)
 
     try:
-        agent_config = get_agent_config(chat_req.agent_id)
+        # 异步变体：Agent 配置的文件读取移入 IO 线程池，避免阻塞事件循环
+        agent_config = await get_agent_config_async(chat_req.agent_id)
         if not agent_config:
             raise HTTPException(status_code=404, detail=f"Agent '{chat_req.agent_id}' 不存在")
 
@@ -186,8 +187,8 @@ async def chat_stream(request: ChatRequest):
     from server.dependencies import get_context_manager, get_memory_manager
 
     try:
-        # 1. 获取 Agent 配置
-        agent_config = get_agent_config(request.agent_id)
+        # 1. 获取 Agent 配置（异步变体：文件读取移入 IO 线程池）
+        agent_config = await get_agent_config_async(request.agent_id)
         if not agent_config:
             raise HTTPException(status_code=404, detail=f"Agent '{request.agent_id}' 不存在")
 
@@ -421,8 +422,8 @@ async def memory_agent_chat_stream(request: MemoryAgentChatRequest):
     from server.core.context.agent_context_manager import get_agent_context_manager
 
     try:
-        # 1. 获取记忆管理Agent配置
-        agent_config = get_agent_config("memory-agent")
+        # 1. 获取记忆管理Agent配置（异步变体：文件读取移入 IO 线程池）
+        agent_config = await get_agent_config_async("memory-agent")
         if not agent_config:
             raise HTTPException(status_code=404, detail="记忆管理Agent未配置")
 

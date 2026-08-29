@@ -3,6 +3,7 @@
 实现归档的归档、智能合并、压缩等功能
 """
 
+import asyncio
 import json
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -169,17 +170,23 @@ class AdvancedArchiver:
     async def archive_memory(
         self, memory_id: int, target_level: int = 1, compress: bool = True
     ) -> Optional[ArchiveRecord]:
-        """归档单个记忆"""
+        """归档单个记忆。
+
+        两阶段结构（消除"LLM await 与 sqlite 写段交错"的隐式事务跨 await 问题）：
+        - 阶段1（async）：读取原记忆 + LLM 压缩，全部 await 在进入事务段前完成；
+        - 阶段2（同步事务段）：经 asyncio.to_thread 卸载到工作线程执行，
+          段内无任何 await，thread_id 共享连接不再被其他协程的 commit/rollback 污染。
+        """
         try:
-            # 获取原记忆
-            memory = self.memory_manager.get_memory(memory_id)
+            # 阶段1a：获取原记忆（同步 sqlite 读同样卸载到 IO 线程，不阻塞事件循环）
+            memory = await asyncio.to_thread(self.memory_manager.get_memory, memory_id)
             if not memory:
                 logger.warning(f"记忆不存在: {memory_id}")
                 return None
 
             original_content = memory.get("content", "")
 
-            # 压缩内容
+            # 阶段1b：压缩内容（LLM await 全部完成后才进入事务段）
             if compress and self.llm_client:
                 compressed_content = await self._compress_content(original_content, target_level)
             else:
@@ -190,72 +197,95 @@ class AdvancedArchiver:
                 len(compressed_content) / len(original_content) if original_content else 1.0
             )
 
-            # 保存归档记录
-            conn = None
-            try:
-                conn = self.memory_manager._get_connection()
-                if not conn:
-                    logger.error("无法获取数据库连接")
-                    return None
+            compression_metadata = {
+                "original_length": len(original_content),
+                "compressed_length": len(compressed_content),
+                "compression_ratio": compression_ratio,
+                "target_level": target_level,
+            }
 
-                cursor = conn.cursor()
-
-                compression_metadata = {
-                    "original_length": len(original_content),
-                    "compressed_length": len(compressed_content),
-                    "compression_ratio": compression_ratio,
-                    "target_level": target_level,
-                }
-
-                cursor.execute(
-                    """
-                    INSERT INTO archive_records 
-                    (original_memory_id, archive_level, compressed_content, original_content, compression_metadata)
-                    VALUES (?, ?, ?, ?, ?)
-                """,
-                    (
-                        memory_id,
-                        target_level,
-                        compressed_content,
-                        original_content,
-                        json.dumps(compression_metadata),
-                    ),
-                )
-
-                archive_id = cursor.lastrowid
-
-                # 更新记忆状态为已归档（设置 archived_at 与 updated_at）
-                now = datetime.now().isoformat()
-                cursor.execute(
-                    """
-                    UPDATE memories 
-                    SET archived_at = ?, updated_at = ?
-                    WHERE id = ?
-                """,
-                    (now, now, memory_id),
-                )
-
-                conn.commit()
-
-                logger.info(f"记忆已归档: {memory_id} -> 级别 {target_level}")
-
-                return ArchiveRecord(
-                    archive_id=archive_id,
-                    original_memory_id=memory_id,
-                    archive_level=target_level,
-                    compressed_content=compressed_content,
-                    original_content=original_content,
-                    compression_metadata=compression_metadata,
-                )
-            except Exception:
-                if conn:
-                    conn.rollback()
-                raise
-            # M-D3: 连接所有权归 MemoryManager 连接池，此处不得 close（原 finally conn.close() 已移除）
+            # 阶段2：同步事务段（INSERT 归档记录 + UPDATE 记忆归档标记 + commit）
+            # 整体卸载到工作线程，行为与返回值（ArchiveRecord）与原实现一致；
+            # 段内异常回滚后向 async 侧抛出，由外层统一捕获返回 None。
+            return await asyncio.to_thread(
+                self._archive_memory_sync,
+                memory_id,
+                target_level,
+                compressed_content,
+                original_content,
+                compression_metadata,
+            )
 
         except Exception as e:
             logger.error(f"归档记忆失败: {e}")
             return None
+
+    def _archive_memory_sync(
+        self,
+        memory_id: int,
+        target_level: int,
+        compressed_content: str,
+        original_content: str,
+        compression_metadata: Dict[str, Any],
+    ) -> ArchiveRecord:
+        """archive_memory 阶段2 的同步事务段（仅供 asyncio.to_thread 调度）。
+
+        事务段内严禁出现 await：INSERT + UPDATE 在同一事务内提交，
+        任一步失败整体 rollback 后向调用方抛出（外层 async 捕获返回 None）。
+        连接所有权归 MemoryManager 连接池，此处不得 close（M-D3）。
+        """
+        conn = self.memory_manager._get_connection()
+        if not conn:
+            logger.error("无法获取数据库连接")
+            raise RuntimeError("无法获取数据库连接")
+
+        cursor = conn.cursor()
+
+        try:
+            cursor.execute(
+                """
+                INSERT INTO archive_records
+                (original_memory_id, archive_level, compressed_content, original_content, compression_metadata)
+                VALUES (?, ?, ?, ?, ?)
+                """,
+                (
+                    memory_id,
+                    target_level,
+                    compressed_content,
+                    original_content,
+                    json.dumps(compression_metadata),
+                ),
+            )
+
+            archive_id = cursor.lastrowid
+
+            # 更新记忆状态为已归档（设置 archived_at 与 updated_at）
+            now = datetime.now().isoformat()
+            cursor.execute(
+                """
+                UPDATE memories
+                SET archived_at = ?, updated_at = ?
+                WHERE id = ?
+                """,
+                (now, now, memory_id),
+            )
+
+            conn.commit()
+
+            logger.info(f"记忆已归档: {memory_id} -> 级别 {target_level}")
+
+            return ArchiveRecord(
+                archive_id=archive_id,
+                original_memory_id=memory_id,
+                archive_level=target_level,
+                compressed_content=compressed_content,
+                original_content=original_content,
+                compression_metadata=compression_metadata,
+            )
+        except Exception:
+            if conn:
+                conn.rollback()
+            raise
 
     async def _compress_content(self, content: str, level: int) -> str:
         """使用 LLM 压缩内容"""
@@ -340,50 +370,42 @@ class AdvancedArchiver:
                 "memory_count": len(memories),
             }
 
-            # 更新主记忆
-            await self.memory_manager.update_memory_async(
-                memory_id=primary_id,
-                new_content=merged_content,
-                new_tags=list(all_tags),
-                new_metadata={
-                    **primary_memory.get("metadata", {}),
-                    "merged_from": memory_ids,
-                    "is_merged": True,
-                },
+            # 原子化修复: 原实现分两阶段写——先经 update_memory_async 在独立连接提交主记忆，
+            # 再裸 cursor 更新其余记忆 + INSERT merge_records 后才 commit。两阶段跨连接无事务，
+            # 中途中断即产生"主记忆已改、其余记忆未标删"的半合并状态。
+            # 现将全部写收敛到同一连接的同一显式事务（BEGIN IMMEDIATE）内，任一步失败整体回滚。
+            # M-D3: 连接所有权归 MemoryManager 连接池，此处不得 close（原 finally conn.close() 已移除）
+            # 线程卸载: BEGIN IMMEDIATE 事务段整体经 asyncio.to_thread 在工作线程执行——
+            # 段内无任何 await，事件循环不再被同步 sqlite 阻塞，共享连接也不会在
+            # 事务中途被其他协程的 commit/rollback 污染。
+            await asyncio.to_thread(
+                self._merge_memories_txn_sync,
+                memories,
+                primary_memory,
+                primary_id,
+                memory_ids,
+                merged_content,
+                merge_metadata,
+                all_tags,
             )
 
-            # 标记其他记忆为已合并
-            # M-D3: 连接所有权归 MemoryManager 连接池，此处不得 close（原 finally conn.close() 已移除）
-            conn = self.memory_manager._get_connection()
-            cursor = conn.cursor()
-
-            for memory in memories[1:]:
-                new_metadata = {**(memory.get("metadata") or {}), "merged_into": primary_id}
-                cursor.execute(
-                    """
-                    UPDATE memories 
-                    SET is_deleted = TRUE, 
-                        metadata = ?
-                    WHERE id = ?
-                """,
-                    (json.dumps(new_metadata), memory["id"]),
+            # 向量同步（对齐 update_memory 成功路径语义：失败仅告警，不影响主操作）
+            try:
+                self.memory_manager._update_vector_for_memory(
+                    primary_id,
+                    merged_content,
+                    {
+                        "tags": list(all_tags),
+                        "agent_id": "default",
+                        **(primary_memory.get("metadata") or {}),
+                        "merged_from": memory_ids,
+                        "is_merged": True,
+                    },
                 )
-
-                cursor.execute(
-                    """
-                    INSERT INTO merge_records 
-                    (merged_memory_id, merged_from, merged_content, merge_metadata)
-                    VALUES (?, ?, ?, ?)
-                """,
-                    (
-                        primary_id,
-                        json.dumps(memory_ids),
-                        merged_content,
-                        json.dumps(merge_metadata),
-                    ),
+            except Exception as vec_e:
+                logger.warning(
+                    f"合并后向量更新失败，不影响主操作: memory_id={primary_id}, error={vec_e}"
                 )
-
-            conn.commit()
 
             logger.info(f"记忆已合并: {memory_ids} -> {primary_id}")
 
@@ -399,6 +421,99 @@ class AdvancedArchiver:
         except Exception as e:
             logger.error(f"合并记忆失败: {e}")
             return MergeResult(success=False, message=str(e))
+
+    def _merge_memories_txn_sync(
+        self,
+        memories: List[Dict],
+        primary_memory: Dict,
+        primary_id: int,
+        memory_ids: List[int],
+        merged_content: str,
+        merge_metadata: Dict[str, Any],
+        all_tags: set,
+    ) -> None:
+        """merge_duplicate_memories 的同步事务段（仅供 asyncio.to_thread 调度）。
+
+        段内严禁出现 await：BEGIN IMMEDIATE 先取写锁，标记次记忆软删 +
+        写合并审计 + 更新主记忆全部在同一事务内提交，任一步失败整体回滚；
+        rowcount==0 视为主记忆不存在/已删除，抛错触发整体回滚（原样保留）。
+        连接所有权归 MemoryManager 连接池，此处不得 close（M-D3）。
+        """
+        conn = self.memory_manager._get_connection()
+        cursor = conn.cursor()
+
+        try:
+            # 显式开启 IMMEDIATE 事务：先取写锁，全部写要么整体生效要么整体回滚
+            cursor.execute("BEGIN IMMEDIATE")
+
+            # 阶段1：标记其余记忆为已合并（软删除 + merged_into 元数据）并写合并审计记录
+            for memory in memories[1:]:
+                new_metadata = {**(memory.get("metadata") or {}), "merged_into": primary_id}
+                cursor.execute(
+                    """
+                    UPDATE memories
+                    SET is_deleted = TRUE,
+                        metadata = ?
+                    WHERE id = ?
+                    """,
+                    (json.dumps(new_metadata, ensure_ascii=False), memory["id"]),
+                )
+
+                cursor.execute(
+                    """
+                    INSERT INTO merge_records
+                    (merged_memory_id, merged_from, merged_content, merge_metadata)
+                    VALUES (?, ?, ?, ?)
+                    """,
+                    (
+                        primary_id,
+                        json.dumps(memory_ids),
+                        merged_content,
+                        json.dumps(merge_metadata),
+                    ),
+                )
+
+            # 阶段2：更新主记忆——SQL 语义复制自 crud_mixin.update_memory
+            # （content/tags/metadata/updated_at 四列，WHERE id AND is_deleted=FALSE，
+            #   tags/metadata 以 ensure_ascii=False 序列化）。原先经 update_memory_async
+            #   在独立连接提前提交，是半合并的根因，现并入本事务保证原子性。
+            cursor.execute(
+                """
+                UPDATE memories
+                SET content = ?,
+                    tags = ?,
+                    metadata = ?,
+                    updated_at = ?
+                WHERE id = ? AND is_deleted = FALSE
+                """,
+                (
+                    merged_content,
+                    json.dumps(list(all_tags), ensure_ascii=False),
+                    json.dumps(
+                        {
+                            **(primary_memory.get("metadata") or {}),
+                            "merged_from": memory_ids,
+                            "is_merged": True,
+                        },
+                        ensure_ascii=False,
+                    ),
+                    datetime.now().isoformat(),
+                    primary_id,
+                ),
+            )
+            if cursor.rowcount == 0:
+                # 主记忆不存在或已被删除：整体回滚，避免只标删了其余记忆的半合并
+                raise RuntimeError(f"主记忆更新失败（不存在或已删除）: id={primary_id}")
+
+            conn.commit()
+        except Exception:
+            # 任一步失败整体回滚：主记忆与其余记忆均保持合并前状态，
+            # 并清掉连接上的悬挂事务（连接将复用回池，不得残留未提交写）
+            try:
+                conn.rollback()
+            except Exception:
+                logger.warning("合并事务回滚失败", exc_info=True)
+            raise
 
     async def _smart_merge_content(self, memories: List[Dict]) -> str:
         """智能合并记忆内容"""
@@ -447,33 +562,31 @@ class AdvancedArchiver:
             return memories[0].get("content", "") if memories else ""
 
     async def archive_of_archives(self, archive_level: int = 4):
-        """归档的归档 - 对已有归档进行二次压缩"""
-        conn = None
+        """归档的归档 - 对已有归档进行二次压缩。
+
+        两阶段结构（对齐 merge_duplicate_memories 第九轮事务化）：
+        - 阶段1（async）：读取候选归档 + 循环外先对全部待归档条目完成 LLM
+          压缩收集结果，全部 await 在进入事务段前结束；
+        - 阶段2（同步事务段）：经 asyncio.to_thread 卸载，BEGIN IMMEDIATE 下
+          全部 INSERT 后统一 commit、异常整体 rollback——消除旧实现
+          "LLM await 与 cursor.execute(INSERT) 交错"导致的隐式事务跨 await
+          持 thread_id 共享连接、被其他协程 commit/rollback 污染的问题。
+        """
         try:
-            conn = self.memory_manager._get_connection()
-            cursor = conn.cursor()
-
-            cursor.execute(
-                """
-                SELECT * FROM archive_records 
-                WHERE archive_level = ?
-                ORDER BY archived_at DESC
-            """,
-                (archive_level - 1,),
+            # 阶段1a：读取候选归档（同步 sqlite 读卸载到 IO 线程）
+            archives = await asyncio.to_thread(
+                self._fetch_archives_by_level, archive_level - 1
             )
-
-            archives = cursor.fetchall()
 
             if not archives:
                 logger.info(f"没有需要二次归档的级别 {archive_level - 1} 记录")
                 return []
 
-            results = []
-
+            # 阶段1b：循环外先对全部待归档条目完成 LLM 压缩收集结果（无 sqlite 写）
+            rows = []
             for archive in archives:
                 archive_id = archive[0]
                 original_id = archive[1]
-                archive[2]
                 current_content = archive[3]
                 original_content = archive[4]
 
@@ -494,18 +607,78 @@ class AdvancedArchiver:
                     ),
                 }
 
-                cursor.execute(
-                    """
-                    INSERT INTO archive_records 
-                    (original_memory_id, archive_level, compressed_content, original_content, compression_metadata)
-                    VALUES (?, ?, ?, ?, ?)
-                """,
+                rows.append(
                     (
                         original_id,
                         archive_level,
                         further_compressed,
                         original_content,
                         json.dumps(compression_metadata),
+                        compression_metadata["total_compression_ratio"],
+                    )
+                )
+
+            # 阶段2：同步事务段（BEGIN IMMEDIATE + 全部 INSERT + commit，段内无 await）
+            results = await asyncio.to_thread(self._insert_second_level_archives_sync, rows)
+
+            logger.info(f"完成归档的归档: {len(results)} 条记录升级到级别 {archive_level}")
+
+            return results
+
+        except Exception as e:
+            logger.error(f"归档的归档失败: {e}")
+            return []
+        # M-D3: 连接所有权归 MemoryManager 连接池，此处不得 close（原 finally conn.close() 已移除）
+
+    def _fetch_archives_by_level(self, level: int) -> list:
+        """读取指定级别的归档记录（同步 sqlite 读，仅供 asyncio.to_thread 调度）。"""
+        conn = self.memory_manager._get_connection()
+        cursor = conn.cursor()
+
+        cursor.execute(
+            """
+            SELECT * FROM archive_records
+            WHERE archive_level = ?
+            ORDER BY archived_at DESC
+            """,
+            (level,),
+        )
+
+        return cursor.fetchall()
+
+    def _insert_second_level_archives_sync(self, rows: List[tuple]) -> List[Dict[str, Any]]:
+        """archive_of_archives 阶段2 的同步事务段（仅供 asyncio.to_thread 调度）。
+
+        段内严禁出现 await：BEGIN IMMEDIATE 先取写锁，全部 INSERT 要么整体
+        生效要么整体回滚；连接所有权归 MemoryManager 连接池，此处不得 close。
+        """
+        conn = self.memory_manager._get_connection()
+        cursor = conn.cursor()
+        results: List[Dict[str, Any]] = []
+
+        try:
+            cursor.execute("BEGIN IMMEDIATE")
+
+            for (
+                original_id,
+                archive_level,
+                further_compressed,
+                original_content,
+                metadata_json,
+                total_ratio,
+            ) in rows:
+                cursor.execute(
+                    """
+                    INSERT INTO archive_records
+                    (original_memory_id, archive_level, compressed_content, original_content, compression_metadata)
+                    VALUES (?, ?, ?, ?, ?)
+                    """,
+                    (
+                        original_id,
+                        archive_level,
+                        further_compressed,
+                        original_content,
+                        metadata_json,
                     ),
                 )
 
@@ -516,20 +689,20 @@ class AdvancedArchiver:
                         "archive_id": new_archive_id,
                         "original_memory_id": original_id,
                         "archive_level": archive_level,
-                        "compression_ratio": compression_metadata["total_compression_ratio"],
+                        "compression_ratio": total_ratio,
                     }
                 )
 
             conn.commit()
+        except Exception:
+            # 任一步失败整体回滚：不残留半提交的二次归档行
+            try:
+                conn.rollback()
+            except Exception:
+                logger.warning("二次归档事务回滚失败", exc_info=True)
+            raise
 
-            logger.info(f"完成归档的归档: {len(results)} 条记录升级到级别 {archive_level}")
-
-            return results
-
-        except Exception as e:
-            logger.error(f"归档的归档失败: {e}")
-            return []
-        # M-D3: 连接所有权归 MemoryManager 连接池，此处不得 close（原 finally conn.close() 已移除）
+        return results
 
     def get_archive_stats(self) -> Dict[str, Any]:
         """获取归档统计"""

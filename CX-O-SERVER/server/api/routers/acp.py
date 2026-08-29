@@ -3,15 +3,32 @@ import uuid
 from datetime import datetime
 from typing import Dict, List, Optional
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, Header, HTTPException
 from pydantic import BaseModel
 
+from server.api.routers.admin import verify_admin_api_key
 from server.core.exceptions import ACPError
 from server.core.acp.manager import ACPMessageInfo
 from server.core.logging_config import get_contextual_logger
 
 router = APIRouter()
 logger = get_contextual_logger(__name__)
+
+
+def _verify_acp_protocol_token(x_acp_key: Optional[str]) -> None:
+    """ACP 开放协议入口的独立 token 校验（区别于 admin key）。
+
+    缺省空 = 不校验（兼容既有外部 Agent 投递行为）；配置 acp.auth_token
+    后调用方须携带同值 X-ACP-Key 头，否则 403（口径对齐项目鉴权）。
+    """
+    from server.config import get_settings
+
+    expected = (get_settings().config.acp.auth_token or "").strip()
+    if not expected:
+        return
+    if (x_acp_key or "").strip() != expected:
+        logger.warning("ACP 协议 token 校验失败：X-ACP-Key 缺失或不匹配")
+        raise HTTPException(status_code=403, detail="ACP token 无效")
 
 
 class ACPDiscoverRequest(BaseModel):
@@ -339,8 +356,8 @@ async def leave_group(group_id: str):
 
 
 @router.post("/acp/send")
-async def send_message(request: ACPSendMessageRequest):
-    """向指定代理或群组发送 ACP 消息。"""
+async def send_message(request: ACPSendMessageRequest, _: bool = Depends(verify_admin_api_key)):
+    """向指定代理或群组发送 ACP 消息（写路径，补挂管理员鉴权）。"""
     from server.dependencies import get_acp_manager
     from server.core.acp.manager import ACPMessageInfo
 
@@ -368,14 +385,20 @@ async def send_message(request: ACPSendMessageRequest):
 
 
 @router.post("/acp/receive")
-async def receive_external_message(message: ACPMessageInfo):
+async def receive_external_message(
+    message: ACPMessageInfo, x_acp_key: Optional[str] = Header(default=None)
+):
     """接收外部 ACP Agent 通过 HTTP 投递的消息（移植自 CXHMS v3.1.0）
 
     此端点供外部 ACP Agent 的 send_to_main_system 调用，
     将消息存入本地历史并触发自动回复。
     修复：20260719_模块0_CXFC路由注入修复.md 第十二章（端点原本缺失导致 404）
+    开放协议入口：可选独立协议 token（acp.auth_token，缺省空=不校验；
+    配置后要求 X-ACP-Key 头，第11轮第22项）。
     """
     from server.dependencies import get_acp_manager
+
+    _verify_acp_protocol_token(x_acp_key)
 
     try:
         acp_mgr = get_acp_manager()
@@ -387,9 +410,16 @@ async def receive_external_message(message: ACPMessageInfo):
 
 
 @router.post("/acp/send/group")
-async def send_group_message(group_id: str, content: Dict):
+async def send_group_message(
+    group_id: str,
+    content: Dict,
+    x_acp_key: Optional[str] = Header(default=None),
+):
+    """群组广播（开放协议写路径，与 /acp/receive 同一可选 token 口径）。"""
     from server.dependencies import get_acp_manager
     from server.core.acp.group import ACPGroupManager
+
+    _verify_acp_protocol_token(x_acp_key)
 
     try:
         acp_mgr = get_acp_manager()
@@ -446,8 +476,8 @@ async def get_acp_stats():
 
 
 @router.delete("/acp/agents/{agent_id}/resources")
-async def cleanup_agent_resources(agent_id: str):
-    """清理 agent 资源（v3.1.0 per-agent 资源隔离）
+async def cleanup_agent_resources(agent_id: str, _: bool = Depends(verify_admin_api_key)):
+    """清理 agent 资源（v3.1.0 per-agent 资源隔离，破坏性写路径，补挂管理员鉴权）
 
     删除 agent 的 per-agent 资源：
     - per-agent Weaviate collection（CXHMSMemory_{agent_id}）

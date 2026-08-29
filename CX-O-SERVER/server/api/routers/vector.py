@@ -5,9 +5,10 @@
 
 from typing import Optional
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 
+from server.api.routers.admin import verify_admin_api_key
 from server.core.logging_config import get_contextual_logger
 
 router = APIRouter()
@@ -213,7 +214,8 @@ async def get_vector(memory_id: int):
 
 
 @router.delete("/vector/vectors/{memory_id}")
-async def delete_vector(memory_id: int):
+async def delete_vector(memory_id: int, _: bool = Depends(verify_admin_api_key)):
+    """删除向量（写路径，补挂管理员鉴权）。"""
     from server.dependencies import get_memory_manager
 
     try:
@@ -236,7 +238,8 @@ async def delete_vector(memory_id: int):
 
 
 @router.post("/vector/sync")
-async def sync_vectors():
+async def sync_vectors(_: bool = Depends(verify_admin_api_key)):
+    """向量与 SQLite 同步（写路径，补挂管理员鉴权）。"""
     from server.dependencies import get_memory_manager
 
     try:
@@ -265,8 +268,8 @@ async def sync_vectors():
 
 
 @router.post("/vector/rebuild")
-async def rebuild_vectors():
-    """清空并重建向量数据库。"""
+async def rebuild_vectors(_: bool = Depends(verify_admin_api_key)):
+    """清空并重建向量数据库（破坏性写路径，补挂管理员鉴权）。"""
     from server.dependencies import get_memory_manager
 
     try:

@@ -12,6 +12,10 @@
 状态机：S_INIT → S_PREREAD → S_QUESTION → S_REFLECT → S_CROSSVALIDATE
        → S_EXTRACT → S_STORAGE_DECISION → S_FINALIZE / S_REJECT
 
+后端对应（已核对 server/api/routers/distillation.py，真实路径 /api/v1/distillation/*，
+另含批量切分 5 端点 start-batch/group/{group_id}/finalize-agent/parse-character-card/start-from-character-card）；
+种子阶段契约——本存根为代表性签名，s0201 后续补全。
+
 @version 1.0.0
 @see public/schema/distillation_session.schema.json
 @see public/config_template/radix_config.json

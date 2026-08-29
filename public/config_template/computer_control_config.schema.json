@@ -18,14 +18,14 @@
     "host": {
       "type": "string",
       "description": "插件 HTTPS 服务监听地址。按冻结决策不限制本地回环，可被后端触达的地址。",
-      "default": "0.0.0.0"
+      "default": "127.0.0.1"
     },
     "port": {
       "type": "integer",
       "description": "插件 HTTPS 服务监听端口。端口冲突时自动重试分配并重注册。",
       "minimum": 1,
       "maximum": 65535,
-      "default": 18443
+      "default": 8443
     },
     "tls_cert_path": {
       "type": "string",
@@ -108,7 +108,7 @@
     "backend_url": {
       "type": "string",
       "description": "CX-O-SERVER 后端地址，Electron 据此完成 CXFC 注册、心跳与断开注销。",
-      "default": "https://127.0.0.1:8000"
+      "default": "http://127.0.0.1:8000"
     }
   },
   "required": [
@@ -143,6 +143,6 @@
     },
     "auto_start": false,
     "run_as_admin": false,
-    "backend_url": "https://127.0.0.1:8000"
+    "backend_url": "http://127.0.0.1:8000"
   }
 }

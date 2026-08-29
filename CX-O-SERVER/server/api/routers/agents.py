@@ -172,6 +172,17 @@ def _save_agents(agents: List[dict]):
     agent_config_cache.delete("all_agents")
 
 
+def _update_agents_locked(mutator) -> List[dict]:
+    """锁内读-改-写（委托 agent_store.update_agents），写后失效读缓存。
+
+    mutator 抛出的任何异常（含 HTTPException）会中止保存（文件保持原样不落盘）
+    并向调用方传播；写路径成功后删除 all_agents 缓存，与 _save_agents 语义一致。
+    """
+    agents = agent_store.update_agents(mutator, path=AGENTS_CONFIG_PATH)
+    agent_config_cache.delete("all_agents")
+    return agents
+
+
 def _generate_agent_id() -> str:
     """生成 Agent ID"""
     import uuid
@@ -243,12 +254,6 @@ async def create_agent(request: AgentCreateRequest):
         dict: 包含 status 和新创建的 agent 配置
     """
     try:
-        agents = _load_agents()
-
-        # 检查名称是否重复
-        if any(a["name"] == request.name for a in agents):
-            raise HTTPException(status_code=400, detail=f"Agent 名称 '{request.name}' 已存在")
-
         now = datetime.now().isoformat()
 
         # 处理空模型字符串 - 空字符串表示使用默认模型
@@ -271,8 +276,14 @@ async def create_agent(request: AgentCreateRequest):
             "updated_at": now,
         }
 
-        agents.append(new_agent)
-        _save_agents(agents)
+        # 锁内读-改-写：名称重复校验与落盘同锁，消除并发创建的丢失覆盖竞态
+        def _mutator(agents):
+            # 检查名称是否重复
+            if any(a["name"] == request.name for a in agents):
+                raise HTTPException(status_code=400, detail=f"Agent 名称 '{request.name}' 已存在")
+            agents.append(new_agent)
+
+        _update_agents_locked(_mutator)
 
         return {"status": "success", "agent": new_agent, "message": "Agent 创建成功"}
     except HTTPException:
@@ -340,30 +351,35 @@ async def get_agent(agent_id: str):
 async def update_agent(agent_id: str, request: AgentUpdateRequest):
     """更新 Agent"""
     try:
-        agents = _load_agents()
-        agent_index = next((i for i, a in enumerate(agents) if a["id"] == agent_id), None)
+        updated: dict = {}
 
-        if agent_index is None:
-            raise HTTPException(status_code=404, detail=f"Agent '{agent_id}' 不存在")
+        # 锁内读-改-写：404 校验与字段更新同锁，消除并发更新的丢失覆盖竞态
+        def _mutator(agents):
+            agent_index = next((i for i, a in enumerate(agents) if a["id"] == agent_id), None)
 
-        agent = agents[agent_index]
+            if agent_index is None:
+                raise HTTPException(status_code=404, detail=f"Agent '{agent_id}' 不存在")
 
-        # 更新字段
-        update_data = request.model_dump(exclude_unset=True)
-        for key, value in update_data.items():
-            # per-agent 参考音频绑定不落盘 agents.json（走专用绑定端点）
-            if key in ("ref_audio_asset_id", "tts_voice"):
-                continue
-            if value is not None:
-                # 处理空模型字符串 - 空字符串表示使用默认模型
-                if key == "model" and value and isinstance(value, str) and not value.strip():
-                    value = "main"
-                agent[key] = value
+            agent = agents[agent_index]
 
-        agent["updated_at"] = datetime.now().isoformat()
-        _save_agents(agents)
+            # 更新字段
+            update_data = request.model_dump(exclude_unset=True)
+            for key, value in update_data.items():
+                # per-agent 参考音频绑定不落盘 agents.json（走专用绑定端点）
+                if key in ("ref_audio_asset_id", "tts_voice"):
+                    continue
+                if value is not None:
+                    # 处理空模型字符串 - 空字符串表示使用默认模型
+                    if key == "model" and value and isinstance(value, str) and not value.strip():
+                        value = "main"
+                    agent[key] = value
 
-        return {"status": "success", "agent": agent, "message": "Agent 更新成功"}
+            agent["updated_at"] = datetime.now().isoformat()
+            updated["agent"] = agent
+
+        _update_agents_locked(_mutator)
+
+        return {"status": "success", "agent": updated["agent"], "message": "Agent 更新成功"}
     except HTTPException:
         raise
     except Exception as e:
@@ -513,20 +529,22 @@ def _cleanup_agent_resources(agent_id: str) -> None:
 async def delete_agent(agent_id: str):
     """删除 Agent"""
     try:
-        agents = _load_agents()
-        agent = next((a for a in agents if a["id"] == agent_id), None)
+        # 锁内读-改-写：404/400 校验与删除同锁，消除并发删除的重复清理竞态
+        def _mutator(agents):
+            agent = next((a for a in agents if a["id"] == agent_id), None)
 
-        if not agent:
-            raise HTTPException(status_code=404, detail=f"Agent '{agent_id}' 不存在")
+            if not agent:
+                raise HTTPException(status_code=404, detail=f"Agent '{agent_id}' 不存在")
 
-        if agent.get("is_default", False) or agent_id == "default":
-            # #17（CX-O问题汇总报告）: is_default 标记可自由转移，仅凭标记
-            # 保护会被绕过——先转移标记再删旧默认。id="default" 是共享资源
-            # 锚点（记忆/图/会话兜底），无条件禁删。
-            raise HTTPException(status_code=400, detail="不能删除默认 Agent 或系统锚点 Agent")
+            if agent.get("is_default", False) or agent_id == "default":
+                # #17（CX-O问题汇总报告）: is_default 标记可自由转移，仅凭标记
+                # 保护会被绕过——先转移标记再删旧默认。id="default" 是共享资源
+                # 锚点（记忆/图/会话兜底），无条件禁删。
+                raise HTTPException(status_code=400, detail="不能删除默认 Agent 或系统锚点 Agent")
 
-        agents = [a for a in agents if a["id"] != agent_id]
-        _save_agents(agents)
+            agents[:] = [a for a in agents if a["id"] != agent_id]
+
+        _update_agents_locked(_mutator)
 
         # 清理该助手的全部 per-agent 资源（图数据库 + Weaviate collection + 记忆表）
         await run_io(_cleanup_agent_resources, agent_id)
@@ -548,17 +566,23 @@ async def set_default_agent(agent_id: str):
     标记可被转移，但该 Agent 实体仍存在。
     """
     try:
-        agents = _load_agents()
-        target = next((a for a in agents if a["id"] == agent_id), None)
-        if not target:
-            raise HTTPException(status_code=404, detail=f"Agent '{agent_id}' 不存在")
+        target: dict = {}
 
-        for agent in agents:
-            agent["is_default"] = agent["id"] == agent_id
-            agent["updated_at"] = datetime.now().isoformat()
-        _save_agents(agents)
+        # 锁内读-改-写：404 校验与全局唯一 is_default 转移同锁，消除并发转移竞态
+        def _mutator(agents):
+            found = next((a for a in agents if a["id"] == agent_id), None)
+            if not found:
+                raise HTTPException(status_code=404, detail=f"Agent '{agent_id}' 不存在")
 
-        return {"status": "success", "agent": target, "message": f"已设为默认 Agent：{target.get('name', agent_id)}"}
+            for agent in agents:
+                agent["is_default"] = agent["id"] == agent_id
+                agent["updated_at"] = datetime.now().isoformat()
+            target["agent"] = found
+
+        _update_agents_locked(_mutator)
+
+        found = target["agent"]
+        return {"status": "success", "agent": found, "message": f"已设为默认 Agent：{found.get('name', agent_id)}"}
     except HTTPException:
         raise
     except Exception as e:
@@ -570,26 +594,31 @@ async def set_default_agent(agent_id: str):
 async def clone_agent(agent_id: str):
     """克隆 Agent"""
     try:
-        agents = _load_agents()
-        source_agent = next((a for a in agents if a["id"] == agent_id), None)
+        cloned: dict = {}
 
-        if not source_agent:
-            raise HTTPException(status_code=404, detail=f"Agent '{agent_id}' 不存在")
+        # 锁内读-改-写：404 校验与克隆落盘同锁，消除并发克隆的丢失覆盖竞态
+        def _mutator(agents):
+            source_agent = next((a for a in agents if a["id"] == agent_id), None)
 
-        now = datetime.now().isoformat()
-        new_agent = {
-            **source_agent,
-            "id": _generate_agent_id(),
-            "name": f"{source_agent['name']} (副本)",
-            "is_default": False,
-            "created_at": now,
-            "updated_at": now,
-        }
+            if not source_agent:
+                raise HTTPException(status_code=404, detail=f"Agent '{agent_id}' 不存在")
 
-        agents.append(new_agent)
-        _save_agents(agents)
+            now = datetime.now().isoformat()
+            new_agent = {
+                **source_agent,
+                "id": _generate_agent_id(),
+                "name": f"{source_agent['name']} (副本)",
+                "is_default": False,
+                "created_at": now,
+                "updated_at": now,
+            }
 
-        return {"status": "success", "agent": new_agent, "message": "Agent 克隆成功"}
+            agents.append(new_agent)
+            cloned["agent"] = new_agent
+
+        _update_agents_locked(_mutator)
+
+        return {"status": "success", "agent": cloned["agent"], "message": "Agent 克隆成功"}
     except HTTPException:
         raise
     except Exception as e:
@@ -611,8 +640,14 @@ async def get_agent_stats(agent_id: str):
 
         context_mgr = get_context_manager()
         # 获取使用该 Agent 的会话数量
-        sessions = context_mgr.list_sessions()
-        agent_sessions = [s for s in sessions if s.get("agent_id") == agent_id]
+        # 修复：ContextManager 无 list_sessions 方法（正确入口为 get_sessions）；
+        # sessions 表无顶层 agent_id 列，agent 归属记录在每项嵌套 metadata dict 中
+        # 修复：async 端点内同步直调 sqlite 查询会阻塞事件循环，经 run_io 卸载到 IO 线程池
+        sessions = await run_io(context_mgr.get_sessions)
+        agent_sessions = [
+            s for s in sessions
+            if (s.get("metadata") or {}).get("agent_id") == agent_id
+        ]
 
         return {
             "status": "success",
@@ -624,8 +659,11 @@ async def get_agent_stats(agent_id: str):
         raise
     except Exception as e:
         logger.error(f"获取Agent统计失败: {e}", exc_info=True)
+        # 修复：异常分支不再谎报 status="success"，显式降级为 error 语义；
+        # 计数字段保持返回 0 以兼容既有消费方
         return {
-            "status": "success",
+            "status": "error",
+            "success": False,
             "agent_id": agent_id,
             "session_count": 0,
             "total_messages": 0,

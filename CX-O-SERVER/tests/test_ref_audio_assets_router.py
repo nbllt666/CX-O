@@ -21,6 +21,7 @@ from fastapi.testclient import TestClient
 
 from server import ref_audio_store
 from server.api.routers import ref_audio_assets as router_mod
+from server.qwen3_tts_provider import InvalidRefAudioError
 from server.ref_audio_store import GeneratedAudio, set_prompt_generator
 
 
@@ -162,6 +163,55 @@ class TestFromFile:
         )
         assert r.status_code == 400
 
+    def test_oversize_returns_413(self, client, monkeypatch):
+        # 上传防呆：Content-Length 预检超限 → 413（不整读入内存）
+        monkeypatch.setattr(router_mod, "_MAX_UPLOAD_BYTES", 8)
+        r = client.post(
+            "/ref-audio-assets/from-file",
+            files={"file": ("ref.wav", _wav_bytes(), "audio/wav")},
+        )
+        assert r.status_code == 413
+        assert r.json()["detail"] == "音频文件过大"
+
+    def test_invalid_audio_cleans_tmp(self, client):
+        # InvalidRefAudioError 路径也必须清理 _upload_ 临时文件（实证残留回归）
+        r = client.post(
+            "/ref-audio-assets/from-file",
+            files={"file": ("x.txt", b"hello world", "text/plain")},
+        )
+        assert r.status_code == 400
+        residue = [
+            p.name
+            for p in ref_audio_store._resolve_assets_dir().iterdir()
+            if p.name.startswith("_upload_")
+        ]
+        assert residue == []
+
+    def test_tmp_name_unique_same_filename(self, client, monkeypatch):
+        # 临时名含 uuid：同名文件上传不再互相覆盖（两次注册拿到不同临时路径）
+        seen = []
+
+        def _capture_and_fail(path, ref_text="", note=""):
+            seen.append(path)
+            raise InvalidRefAudioError("模拟校验失败")
+
+        monkeypatch.setattr(ref_audio_store, "register_from_file", _capture_and_fail)
+        for _ in range(2):
+            r = client.post(
+                "/ref-audio-assets/from-file",
+                files={"file": ("ref.wav", _wav_bytes(), "audio/wav")},
+            )
+            assert r.status_code == 400
+        assert len(seen) == 2
+        assert seen[0] != seen[1]
+        # 异常路径同样清理完毕
+        residue = [
+            p.name
+            for p in ref_audio_store._resolve_assets_dir().iterdir()
+            if p.name.startswith("_upload_")
+        ]
+        assert residue == []
+
 
 class TestFromPrompt:
     def test_register_success(self, client):
@@ -215,6 +265,25 @@ class TestGetAssetAudio:
     def test_not_found(self, client):
         r = client.get("/ref-audio-assets/ref_nonexistent123/audio")
         assert r.status_code in (404, 400)
+
+    @pytest.mark.parametrize(
+        "suffix,expected",
+        [
+            (".wav", "audio/wav"),
+            (".mp3", "audio/mpeg"),
+            (".flac", "audio/flac"),
+            (".ogg", "audio/ogg"),
+            (".m4a", "audio/mp4"),
+            (".xyz", "audio/mpeg"),  # 未列出的扩展名保持现口径
+        ],
+    )
+    def test_media_type_mapping(self, client, monkeypatch, tmp_path, suffix, expected):
+        p = tmp_path / f"asset{suffix}"
+        p.write_bytes(b"fake")
+        monkeypatch.setattr(ref_audio_store, "get_audio_path", lambda asset_id: p)
+        r = client.get("/ref-audio-assets/ref_any/audio")
+        assert r.status_code == 200
+        assert r.headers["content-type"].startswith(expected)
 
 
 class TestUpdateNote:

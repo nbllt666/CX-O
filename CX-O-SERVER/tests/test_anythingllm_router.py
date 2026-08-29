@@ -395,3 +395,50 @@ class TestDocumentEndpoints:
         assert r.json()["added"] == ["a1"]
         assert r.json()["removed"] == ["d1"]
         assert dmm.embeddings_calls[0][0] == "alice"
+
+
+# --------------------------------------------------------------------------- #
+# Workspace stream-chat（流式端点 + _prepare_chat_context await 回归）
+# --------------------------------------------------------------------------- #
+class FakeStreamLLM:
+    """带 stream_chat 的假 LLM：产出两个 content chunk 后正常结束。"""
+
+    async def stream_chat(self, messages, **kwargs):
+        yield {"type": "content", "content": "你"}
+        yield {"type": "content", "content": "好"}
+
+
+class TestWorkspaceStreamChat:
+    def test_stream_chat_success_sse(self, client, monkeypatch):
+        """修复回归：_prepare_chat_context 被 await 消费，端点返回 200 SSE 流而非 500 TypeError。
+
+        修复前 _prepare_chat_context 返回协程对象，四元组解包必 TypeError → 100% 500。
+        """
+        import json
+
+        c, _, _ = client
+
+        async def fake_prepare(slug, request, agent):
+            # context_mgr=None 时 _persist_chat 直接跳过，隔离存储依赖
+            return None, "sess-1", [{"role": "user", "content": request.message}], {}
+
+        monkeypatch.setattr(anythingllm_mod, "_prepare_chat_context", fake_prepare)
+        monkeypatch.setattr(
+            anythingllm_mod, "get_llm_client_for_agent", lambda agent: FakeStreamLLM()
+        )
+
+        r = c.post("/v1/workspace/default/stream-chat", json={"message": "hi", "mode": "chat"})
+        assert r.status_code == 200
+        assert "text/event-stream" in r.headers["content-type"]
+
+        # 解析 AnythingLLM 标准 SSE：两个正文 chunk + 一个 close chunk
+        events = [ln for ln in r.text.split("\n\n") if ln.startswith("data: ")]
+        payloads = [json.loads(e[len("data: "):]) for e in events]
+        chunks = [
+            p["textResponse"] for p in payloads
+            if p["type"] == "textResponseChunk" and not p["close"]
+        ]
+        assert chunks == ["你", "好"]
+        closes = [p for p in payloads if p["close"]]
+        assert len(closes) == 1
+        assert closes[0]["error"] is None

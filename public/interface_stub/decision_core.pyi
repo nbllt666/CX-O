@@ -1,21 +1,29 @@
 """DecisionCore 接口契约存根。
 
-定义 RADIX-Lite DecisionCore 的 6 决策点方法签名 + rubric 加载签名。
+定义 RADIX-Lite DecisionCore 的决策点方法签名 + rubric 加载签名。
 实现必须严格匹配此存根定义的签名，否则契约测试不通过。
 
-6 决策点：
+决策点（DECISION_POINTS 枚举登记 7 项）：
   - D1_LOCATION: 存入位置决策（memories / permanent_memories / rejected）
   - D2_METADATA: 元数据决策（时间 / 重要性 / 来源 / 标签）
   - D3_ASK_USER: 追问决策（quality_score 边界触发）
   - D4_REDISTILL: 再次蒸馏决策（max_redistill_turns 限制）
   - D5_CROSS_VALIDATE: 跨源验证决策（多源对比）
   - D6_REJECT: 拒绝存储决策（quality_score < quality_reject_threshold）
+  - D7_DREAM_FILTER: 梦境内容过滤闸门（确定性引擎内实现——正则/lucidity
+    阈值拦截，不走 LLM；仅在 DECISION_POINTS 枚举登记供审计与校验）
 
 rubric 驱动决策，读取 data/agents.json 的 decision_rubric 字段。
 决策审计日志写入 data/distillation_logs/{session_id}.json。
 LLM 置信度极低时回退 system_prompt 规则。
 
-@version 1.0.0
+@version 1.0.1
+@changelog 1.0.0 -> 1.0.1 (PATCH):
+    1. _llm_decide(prompt, decision_input) -> tuple 声明与实现对齐——实现仅
+       存在 _llm_call(prompt) -> str（原始输出文本，解析由 _parse_llm_output
+       等下游方法承担），原 _llm_decide 签名在实现中不存在。
+    2. decision_point 枚举注释补登记 D7_DREAM_FILTER（实现 DECISION_POINTS
+       实际包含，契约此前遗漏）。
 @see public/schema/storage_decision.schema.json
 @see public/schema/distillation_log.schema.json
 @see public/config_template/radix_config.json
@@ -55,7 +63,7 @@ class StorageDecision(BaseModel):
     """存储决策。字段与 storage_decision.schema.json 一致。"""
     decision_id: str
     session_id: str
-    decision_point: str  # enum: D1_LOCATION / D2_METADATA / D3_ASK_USER / D4_REDISTILL / D5_CROSS_VALIDATE / D6_REJECT
+    decision_point: str  # enum: D1_LOCATION / D2_METADATA / D3_ASK_USER / D4_REDISTILL / D5_CROSS_VALIDATE / D6_REJECT / D7_DREAM_FILTER
     location: str  # enum: memories / permanent_memories / rejected
     memory_id: Optional[int]
     metadata: Dict[str, Any]
@@ -237,19 +245,18 @@ class DecisionCore:
         """
         ...
 
-    def _llm_decide(
-        self,
-        prompt: str,
-        decision_input: DecisionInput,
-    ) -> tuple:
-        """内部方法：LLM 决策。
+    def _llm_call(self, prompt: str) -> str:
+        """内部方法：调用 LLM 并返回原始输出文本。
+
+        通过 vLLM HTTP 接口（OpenAI 兼容）调用 LLM。
+        LLM 不可用时 raise ConnectionError，触发 system_prompt 规则回退。
+        输出解析由 _parse_llm_output / _parse_metadata_output 等下游方法承担。
 
         Args:
             prompt: 决策提示词
-            decision_input: 决策输入
 
         Returns:
-            (decision_str, confidence_float) 元组
+            LLM 原始输出文本
 
         Raises:
             ConnectionError: LLM 端点不可用，触发 system_prompt 规则回退（503）

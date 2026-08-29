@@ -17,6 +17,7 @@ from typing import Any, Dict
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, ValidationError
 
+from server.api.routers._pagination import clamp_pagination
 from server.api.routers.admin import verify_admin_api_key
 from server.autonomy.config import AutonomyConfig, save_config
 from server.autonomy.manager import AutonomyDisabledError
@@ -221,9 +222,8 @@ def list_audit(limit: int = 50, offset: int = 0):
 
     AuditStore 未装配时返回空列表与 total=0。
     """
-    # R9: 分页参数钳制（对齐 tuner.py:252 惯例）
-    limit = max(1, min(int(limit), 200))
-    offset = max(0, int(offset))
+    # T-07: 分页钳制统一走 _pagination.clamp_pagination
+    limit, offset = clamp_pagination(limit, offset)
     store = _audit_store
     if store is None:
         return {"items": [], "total": 0}

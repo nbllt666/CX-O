@@ -15,6 +15,8 @@
 
 @version 1.1.0  # CX-O 扩展版
 """
+# 修复：async 端点内同步重型 preprocess（OCR/视频解码）经 asyncio.to_thread 卸载到线程池
+import asyncio
 from typing import Any, Dict, Optional
 
 from fastapi import APIRouter, HTTPException
@@ -123,7 +125,10 @@ async def preprocess(request: PreprocessRequest):
     """
     pipeline = _get_pipeline()
     try:
-        artifact = pipeline.preprocess(
+        # 修复：preprocess 内含 OCR/视频解码等重型同步操作，async 端点直调会阻塞事件循环全站，
+        # 卸载到线程池执行（对齐 distillation_service.py:1851 的第九轮既有修法）
+        artifact = await asyncio.to_thread(
+            pipeline.preprocess,
             source_type=request.source_type,
             source_ref=request.source_ref,
         )

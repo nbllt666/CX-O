@@ -386,7 +386,11 @@ export default function MemoriesPage() {
     try {
       const query = searchQuery.trim();
       const result = query
-        ? await memoriesApi.searchMemories(query)
+        ? await memoriesApi.searchMemories(query, {
+            // 搜索模式同样遵循列表过滤条件：类型/Agent 空值不传（后端 MemorySearchRequest 支持）
+            type: filterType === 'all' ? undefined : filterType,
+            agent_id: currentAgentId || undefined,
+          })
         : await memoriesApi.getMemories({
             type: filterType === 'all' ? undefined : filterType,
             limit: 1000,

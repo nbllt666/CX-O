@@ -9,6 +9,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
 from server.core.logging_config import get_contextual_logger
+from server.core.utils import run_io
 from server.api.routers.admin import verify_admin_api_key
 
 router = APIRouter()
@@ -63,7 +64,9 @@ async def list_archived_memories(
 
     try:
         memory_mgr = get_memory_manager()
-        memories = memory_mgr.search_memories(
+        # 经 run_io 把归档列表检索的同步 sqlite 查询移入 IO 线程池，避免阻塞事件循环
+        memories = await run_io(
+            memory_mgr.search_memories,
             memory_type=memory_type,
             limit=limit,
             offset=offset,
@@ -201,7 +204,8 @@ async def get_duplicate_groups():
         ):
             raise HTTPException(status_code=503, detail="去重功能未启用")
 
-        groups = memory_mgr.deduplication_engine.get_duplicate_groups()
+        # 经 run_io 把去重组查询的同步操作移入 IO 线程池
+        groups = await run_io(memory_mgr.deduplication_engine.get_duplicate_groups)
 
         return {
             "status": "success",
@@ -254,7 +258,8 @@ async def get_archive_stats():
         if not hasattr(memory_mgr, "archiver") or memory_mgr.archiver is None:
             raise HTTPException(status_code=503, detail="归档功能未启用")
 
-        stats = memory_mgr.archiver.get_archive_stats()
+        # 经 run_io 把归档统计查询的同步操作移入 IO 线程池
+        stats = await run_io(memory_mgr.archiver.get_archive_stats)
 
         return {"status": "success", "statistics": stats}
 
@@ -390,7 +395,9 @@ async def auto_archive_process(
         # ISO 格式将误判。改为 datetime 解析比较，统一时区处理。
         cutoff = datetime.now(timezone.utc) - timedelta(days=min_age_days)
 
-        old_memories = memory_mgr.search_memories(
+        # 经 run_io 把旧记忆扫描的同步 sqlite 查询移入 IO 线程池，避免阻塞事件循环
+        old_memories = await run_io(
+            memory_mgr.search_memories,
             memory_type=None, limit=1000, include_deleted=False
         )
 

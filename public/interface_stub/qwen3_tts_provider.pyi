@@ -4,6 +4,11 @@
 完成 Skill: s0201
 当前状态: 契约冻结——仅声明签名，无实现逻辑。
 
+@version 1.0.1
+@changelog 1.0.0 -> 1.0.1 (PATCH): synthesize_stream 取消语义 docstring 与实现对齐——
+    实现取消以 asyncio.CancelledError 原样上抛（B2 修复），不再转抛 StreamAbortedError
+    （该异常当前实现零抛出点，类声明保留供下游兼容引用）。
+
 职责：统一 Provider 请求转换、健康检查、超时、取消、错误映射与关闭。
 vLLM 私有参数封装在 Provider 内，不泄漏到前端协议；无参考音频的日常/情感合成
 走 vLLM VoiceDesign（voicedesign 运行时），带参考音频的语音克隆/情感路由
@@ -56,6 +61,12 @@ class RuntimeUnsupportedError(Qwen3TTSError):
     http_status: int = 200
 
 class StreamAbortedError(Qwen3TTSError):
+    """流式中止错误。
+
+    @version-note 1.0.1: 当前实现（B2 修复后）零抛出点——取消以
+    asyncio.CancelledError 原样传播，不再转抛本异常；类保留供下游
+    except 分支兼容引用，不应依赖其被抛出。
+    """
     error_code: str = "STREAM_ABORTED"
     http_status: int = 499
 
@@ -116,7 +127,9 @@ def synthesize(req: SynthesisRequest) -> SynthesisResponse:
 
 
 def synthesize_stream(req: SynthesisRequest) -> AsyncIterator[AudioChunk]:
-    """流式合成。chunk 顺序稳定，恰一个 start/一个 final；取消抛 StreamAbortedError 并清理资源。"""
+    """流式合成。chunk 顺序稳定，恰一个 start/一个 final；
+    取消/打断以 asyncio.CancelledError 原样上抛（清理局部资源后裸 raise，
+    不转抛 StreamAbortedError，避免吞掉 task.cancel() 取消信号）。"""
     ...
 
 

@@ -4,7 +4,7 @@
 在原 MemoryManager 基础上新增 write_with_decision 方法，支持 DecisionCore 驱动的智能存储。
 实现必须严格匹配此存根定义的签名，否则契约测试不通过。
 
-@version 1.0.0
+@version 1.0.1  # G4-B 契约对齐（PATCH）：get_rejected_content 签名对齐实现（session_id 必填、limit 默认 50）
 @see public/schema/storage_decision.schema.json
 @see public/schema/agent_config_v2.schema.json
 """
@@ -61,21 +61,22 @@ class MemoryManagerV2:
 
     def get_rejected_content(
         self,
-        session_id: Optional[str] = None,
-        limit: int = 100,
+        session_id: str,
+        limit: int = 50,
     ) -> List[Dict[str, Any]]:
-        """获取被拒绝的内容列表。
+        """查询指定会话的被拒绝内容。
 
         用于 GN-004 抽样审查和人类 override_decision。
 
         Args:
-            session_id: 会话 ID 过滤（None=全部）
-            limit: 返回上限
+            session_id: 会话 ID（必填）
+            limit: 返回条数上限（默认 50；<=0 时实现回退为 50）
 
         Returns:
-            被拒绝内容列表（含 content / quality_score / reason / created_at）
+            被拒绝内容记录列表（按 created_at 降序，不含已清理记录）
 
         Raises:
+            KeyError: session_id 为空（404）
             RuntimeError: 数据库查询失败（500）
         """
         ...

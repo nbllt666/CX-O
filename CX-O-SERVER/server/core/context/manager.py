@@ -30,6 +30,10 @@ class ContextManager:
 
     负责管理对话会话和消息历史，支持Mono上下文和LRU缓存
 
+    L-10 消歧：与 server/services/context_manager.py 的 ChatHistoryManager
+    （内存态消息历史单例）同名历史问题已在该侧改名；本类是 sessions.db
+    持久层唯一 owner，main.py 将本实例挂为 services.context_manager 容器属性。
+
     Attributes:
         db_path: 数据库文件路径
     """

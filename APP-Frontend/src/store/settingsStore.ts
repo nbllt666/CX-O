@@ -224,6 +224,9 @@ const defaultLayoutSettings: LayoutSettings = {
   vrmWidth: 300,
 };
 
+/** persist 存储键（测试引用；改动会破坏既有持久化兼容，对齐 captureStore.CAPTURE_STORE_NAME 模式） */
+export const SETTINGS_STORE_NAME = 'cxo-pet-settings';
+
 export const useSettingsStore = create<SettingsState>()(
   persist(
     (set) => ({
@@ -337,7 +340,7 @@ export const useSettingsStore = create<SettingsState>()(
       },
     }),
     {
-      name: 'cxo-pet-settings',
+      name: SETTINGS_STORE_NAME,
       storage: createStorage(),
       partialize: (state) => ({
         avatarType: state.avatarType,
@@ -349,6 +352,12 @@ export const useSettingsStore = create<SettingsState>()(
       merge: (persisted, current) => {
         const p = (persisted as Partial<SettingsState>) || {};
         const pv = p.vrm;
+        // blob: URL 只在创建它的会话内有效，持久化还原出来必然是死链 → 回退 store 内
+        // vrm 初始 state 的默认模型路径，避免桌宠窗拿到失效 URL 加载失败。
+        const sanitizedModelPath =
+          typeof pv?.modelPath === 'string' && pv.modelPath.startsWith('blob:')
+            ? current.vrm.modelPath
+            : pv?.modelPath;
         const persistedTweak = pv?.tweak;
         const hasLegacyVRMTweak =
           persistedTweak?.camera?.offsetY === 1.2 &&
@@ -364,6 +373,7 @@ export const useSettingsStore = create<SettingsState>()(
           vrm: {
             ...current.vrm,
             ...(pv || {}),
+            modelPath: sanitizedModelPath ?? current.vrm.modelPath,
             tweak: hasLegacyVRMTweak ? current.vrm.tweak : pv?.tweak ?? current.vrm.tweak,
             maxWidth: Math.max(pv?.maxWidth ?? 0, current.vrm.maxWidth),
             animation: {

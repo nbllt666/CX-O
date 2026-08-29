@@ -189,3 +189,37 @@ def test_agent_context_data_defaults():
     assert d.messages == []
     assert d.memory_state is None
     assert d.created_at is None
+
+
+# ---------------------------------------------------------------- 原子写
+def test_save_atomic_no_tmp_residue(mgr):
+    """原子写：保存后目录内无 .tmp 残留，且内容完整可解析。"""
+    mgr.save_context("a1", [{"role": "user", "content": "原子写"}])
+    file_path = mgr._get_file_path("a1")
+    assert file_path.exists()
+    leftovers = [p.name for p in file_path.parent.iterdir() if p.name != file_path.name]
+    assert leftovers == []
+    data = json.loads(file_path.read_text(encoding="utf-8"))
+    assert data["agent_id"] == "a1"
+    assert data["messages"][0]["content"] == "原子写"
+
+
+def test_save_atomic_crash_keeps_old_file(mgr, monkeypatch):
+    """原子写中途失败（os.replace 抛错）：旧文件保持完整，目录无 .tmp 残留。"""
+    import server.config as config_mod
+
+    mgr.save_context("a1", [{"role": "user", "content": "v1"}])
+    file_path = mgr._get_file_path("a1")
+
+    def _boom(*args, **kwargs):
+        raise OSError("simulated crash mid-write")
+
+    monkeypatch.setattr(config_mod.os, "replace", _boom)
+    with pytest.raises(OSError):
+        mgr.save_context("a1", [{"role": "user", "content": "v2"}])
+
+    # 旧内容完整保留（未出现半写截断），finally 分支已清理临时文件
+    data = json.loads(file_path.read_text(encoding="utf-8"))
+    assert data["messages"][0]["content"] == "v1"
+    leftovers = [p.name for p in file_path.parent.iterdir() if p.suffix == ".tmp"]
+    assert leftovers == []

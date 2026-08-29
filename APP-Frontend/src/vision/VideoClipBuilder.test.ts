@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import { RingFrameBuffer } from './RingFrameBuffer';
 import { VideoClipBuilder } from './VideoClipBuilder';
@@ -114,5 +114,78 @@ describe('VideoClipBuilder encodeFrames 降级', () => {
     );
     // jsdom 下 canvas.getContext('2d') 返回 null → 不调用真实 canvas，恒返回 null
     expect(blob).toBeNull();
+  });
+});
+
+describe('VideoClipBuilder encodeFrames 异常清理', () => {
+  it('drawImage 抛错时仍终止 recorder 并释放 captureStream 轨道，且向上抛出原错误', async () => {
+    // ── Fake 环境：最小 canvas / MediaRecorder 替身（真实清理路径验证）──
+    const trackStop = vi.fn();
+    const fakeStream = { getTracks: () => [{ stop: trackStop }] };
+    const drawImage = vi.fn(() => {
+      throw new Error('draw fail');
+    });
+    const fakeCanvas = {
+      width: 0,
+      height: 0,
+      getContext: () => ({ drawImage }),
+      captureStream: () => fakeStream,
+    };
+
+    // 最小 FakeMediaRecorder：记录 stop 次数；stop() 触发 onstop（与真实行为一致）
+    let stopCalls = 0;
+    const instances: unknown[] = [];
+    class FakeMediaRecorder {
+      static isTypeSupported(): boolean {
+        return true;
+      }
+      state: 'recording' | 'inactive' = 'inactive';
+      ondataavailable: ((e: unknown) => void) | null = null;
+      onstop: (() => void) | null = null;
+      onerror: ((e: unknown) => void) | null = null;
+      constructor() {
+        instances.push(this);
+      }
+      start(): void {
+        this.state = 'recording';
+      }
+      stop(): void {
+        stopCalls += 1;
+        this.state = 'inactive';
+        this.onstop?.();
+      }
+    }
+
+    const originalCreateElement: (tag: string, options?: ElementCreationOptions) => HTMLElement =
+      document.createElement.bind(document);
+    const createElementSpy = vi.spyOn(document, 'createElement').mockImplementation(
+      (tag: string, options?: ElementCreationOptions) =>
+        tag === 'canvas'
+          ? (fakeCanvas as unknown as HTMLCanvasElement)
+          : originalCreateElement(tag, options),
+    );
+    const originalMediaRecorder = (globalThis as { MediaRecorder?: unknown }).MediaRecorder;
+    (globalThis as { MediaRecorder?: unknown }).MediaRecorder = FakeMediaRecorder;
+
+    try {
+      const builder = new VideoClipBuilder<number>();
+      await expect(
+        builder.encodeFrames(
+          [
+            { frame: 1, ts: 0 },
+            { frame: 2, ts: 16 },
+          ],
+          { width: 320, height: 180 },
+        ),
+      ).rejects.toThrow('draw fail');
+    } finally {
+      createElementSpy.mockRestore();
+      (globalThis as { MediaRecorder?: unknown }).MediaRecorder = originalMediaRecorder;
+    }
+
+    // 异常路径仍完成清理：captureStream 轨道已 stop、recorder 已终止（onstop 清理路径被保住）
+    expect(trackStop).toHaveBeenCalledTimes(1);
+    expect(stopCalls).toBe(1);
+    expect(instances.length).toBe(1);
   });
 });

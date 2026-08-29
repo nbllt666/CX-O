@@ -77,16 +77,23 @@ async function startRegistrar(): Promise<void> {
   if (registrarServer) return;
   const server = createHttpServer((req, res) => {
     void (async () => {
-      let url: URL;
+      // 整体 try/catch：readJson 在客户端中断连接时会 reject，若不捕获会成为
+      // unhandledRejection 导致主进程崩溃（对齐 handleBridgeReq 的整体兜底写法）
       try {
-        url = new URL(req.url ?? '/', `http://127.0.0.1:${NEKO_MAIN_SERVER_REGISTER_PORT}`);
-      } catch {
-        return writeJson(res, 400, { ok: false, error: '非法路径' });
+        let url: URL;
+        try {
+          url = new URL(req.url ?? '/', `http://127.0.0.1:${NEKO_MAIN_SERVER_REGISTER_PORT}`);
+        } catch {
+          return writeJson(res, 400, { ok: false, error: '非法路径' });
+        }
+        const body = req.method === 'POST' ? await readJson(req) : null;
+        const result = handleRegistrarRoute(store, req.method ?? 'GET', url.pathname, body);
+        res.writeHead(result.status, result.headers);
+        res.end(result.body);
+      } catch (err) {
+        console.error(`[neko-registrar] 注册接收器请求处理异常: ${messageOf(err)}`);
+        writeJson(res, 400, { ok: false, error: `注册接收器请求处理失败: ${messageOf(err)}` });
       }
-      const body = req.method === 'POST' ? await readJson(req) : null;
-      const result = handleRegistrarRoute(store, req.method ?? 'GET', url.pathname, body);
-      res.writeHead(result.status, result.headers);
-      res.end(result.body);
     })();
   });
   await new Promise<void>((resolve, reject) => {

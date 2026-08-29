@@ -13,10 +13,13 @@
 """
 
 import json
-from fastapi import APIRouter, HTTPException, Query
+from pathlib import Path
+
+from fastapi import APIRouter, Depends, HTTPException, Query
 from typing import Optional, List, Dict, Any
 from pydantic import BaseModel, Field
 
+from server.api.routers.admin import verify_admin_api_key
 from server.core.graph import GraphDatabase
 from server.core.graph.models import (
     GraphNode, GraphEdge,
@@ -25,10 +28,39 @@ from server.core.graph.models import (
 from server.core.graph.visualization import GraphExporter
 from server.core.graph.semantic_query import SemanticQueryManager
 from server.core.graph.monitoring import GraphMonitor
+from server.core.utils import run_io
 from server.dependencies import _get_or_create_graph_database
 from server.config import get_settings
 
 router = APIRouter(tags=["graph"])
+
+# 导出落盘收敛目录（对齐 admin.py _PROJECT_ROOT 模式）：本文件位于
+# server/api/routers/ 下，向上 4 级即项目根，导出文件只允许写入
+# <项目根>/data/graph_exports/，杜绝用户可控 file_path 任意路径写盘。
+_EXPORT_DIR = Path(__file__).resolve().parent.parent.parent.parent / "data" / "graph_exports"
+
+
+def _resolve_export_target(file_path: str) -> Path:
+    """将用户传入的 file_path 收敛到 _EXPORT_DIR 内的安全落盘路径。
+
+    仅取文件名（丢弃全部目录成分，../../ 穿越无效），再 resolve 后断言
+    仍位于 _EXPORT_DIR 内（防符号链接等旁路），不满足则 400。
+    """
+    safe_name = Path(file_path).name
+    target = _EXPORT_DIR / safe_name
+    _EXPORT_DIR.mkdir(parents=True, exist_ok=True)
+    resolved = target.resolve()
+    if not resolved.is_relative_to(_EXPORT_DIR.resolve()):
+        raise HTTPException(status_code=400, detail="非法导出路径：仅允许写入导出目录")
+    return resolved
+
+
+def _collect_graph_status_snapshot(graph: GraphDatabase, agent_id: str):
+    """同步收集 /status 端点所需快照（健康检查 + 监控统计），供 run_io 整体包裹。"""
+    health = graph.health_check()
+    monitor = GraphMonitor(graph.db)
+    stats = monitor.get_graph_stats(agent_id=agent_id)
+    return health, stats
 
 
 def _resolve_graph_database(agent_id: str) -> GraphDatabase:
@@ -143,7 +175,8 @@ async def create_node(request: NodeCreateRequest, agent_id: str = Query("default
         properties=request.properties,
         text_content=request.text_content,
     )
-    return graph.nodes.create(node_data, agent_id=agent_id)
+    # R10-03: 同步 sqlite 写移出事件循环（Database 为 thread-local 连接，跨线程安全）
+    return await run_io(graph.nodes.create, node_data, agent_id=agent_id)
 
 
 @router.get("/nodes/search")
@@ -155,7 +188,9 @@ async def search_nodes(
 ):
     """搜索节点"""
     graph = _resolve_graph_database(agent_id)
-    result = graph.nodes.search(node_type=node_type, limit=limit, offset=offset, agent_id=agent_id)
+    result = await run_io(
+        graph.nodes.search, node_type=node_type, limit=limit, offset=offset, agent_id=agent_id
+    )
     return result
 
 
@@ -167,7 +202,7 @@ async def batch_create_nodes(requests: List[NodeCreateRequest], agent_id: str = 
         NodeCreate(type=r.type, properties=r.properties, text_content=r.text_content, agent_id=r.agent_id)
         for r in requests
     ]
-    nodes = graph.nodes.batch_create(nodes_data)
+    nodes = await run_io(graph.nodes.batch_create, nodes_data)
     return {"created": len(nodes), "nodes": nodes}
 
 
@@ -175,7 +210,7 @@ async def batch_create_nodes(requests: List[NodeCreateRequest], agent_id: str = 
 async def get_node(node_id: str, agent_id: str = Query("default")):
     """获取节点"""
     graph = _resolve_graph_database(agent_id)
-    node = graph.nodes.get(node_id, agent_id=agent_id)
+    node = await run_io(graph.nodes.get, node_id, agent_id=agent_id)
     if not node:
         raise HTTPException(status_code=404, detail="节点不存在")
     return node
@@ -190,7 +225,7 @@ async def update_node(node_id: str, request: NodeUpdateRequest, agent_id: str = 
         properties=request.properties,
         text_content=request.text_content,
     )
-    node = graph.nodes.update(node_id, update_data, agent_id=agent_id)
+    node = await run_io(graph.nodes.update, node_id, update_data, agent_id=agent_id)
     if not node:
         raise HTTPException(status_code=404, detail="节点不存在")
     return node
@@ -200,7 +235,7 @@ async def update_node(node_id: str, request: NodeUpdateRequest, agent_id: str = 
 async def delete_node(node_id: str, cascade: bool = True, agent_id: str = Query("default")):
     """删除节点"""
     graph = _resolve_graph_database(agent_id)
-    graph.nodes.delete(node_id, cascade=cascade, agent_id=agent_id)
+    await run_io(graph.nodes.delete, node_id, cascade=cascade, agent_id=agent_id)
     return {"status": "ok", "message": f"节点 {node_id} 已删除"}
 
 
@@ -213,7 +248,13 @@ async def get_neighbors(
 ):
     """获取邻居节点"""
     graph = _resolve_graph_database(agent_id)
-    neighbors = graph.traversal.get_neighbors(node_id, max_depth=max_depth, direction=direction, agent_id=agent_id)
+    neighbors = await run_io(
+        graph.traversal.get_neighbors,
+        node_id,
+        max_depth=max_depth,
+        direction=direction,
+        agent_id=agent_id,
+    )
     return {
         "node_id": node_id,
         "neighbors": [
@@ -239,7 +280,7 @@ async def create_edge(request: EdgeCreateRequest, agent_id: str = Query("default
     )
     try:
         # 与其他端点一致取 Query agent_id 做 per-agent 隔离（create_node 亦用 Query）
-        return graph.edges.create(edge_data, agent_id=agent_id)
+        return await run_io(graph.edges.create, edge_data, agent_id=agent_id)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
 
@@ -255,7 +296,8 @@ async def search_edges(
 ):
     """搜索边"""
     graph = _resolve_graph_database(agent_id)
-    result = graph.edges.search(
+    result = await run_io(
+        graph.edges.search,
         relation_type=relation_type,
         source_id=source_id,
         target_id=target_id,
@@ -270,7 +312,7 @@ async def search_edges(
 async def get_edge(edge_id: str, agent_id: str = Query("default")):
     """获取边"""
     graph = _resolve_graph_database(agent_id)
-    edge = graph.edges.get(edge_id, agent_id=agent_id)
+    edge = await run_io(graph.edges.get, edge_id, agent_id=agent_id)
     if not edge:
         raise HTTPException(status_code=404, detail="边不存在")
     return edge
@@ -285,7 +327,7 @@ async def update_edge(edge_id: str, request: EdgeUpdateRequest, agent_id: str = 
         properties=request.properties,
         text_content=request.text_content,
     )
-    edge = graph.edges.update(edge_id, update_data, agent_id=agent_id)
+    edge = await run_io(graph.edges.update, edge_id, update_data, agent_id=agent_id)
     if not edge:
         raise HTTPException(status_code=404, detail="边不存在")
     return edge
@@ -295,7 +337,7 @@ async def update_edge(edge_id: str, request: EdgeUpdateRequest, agent_id: str = 
 async def delete_edge(edge_id: str, agent_id: str = Query("default")):
     """删除边"""
     graph = _resolve_graph_database(agent_id)
-    graph.edges.delete(edge_id, agent_id=agent_id)
+    await run_io(graph.edges.delete, edge_id, agent_id=agent_id)
     return {"status": "ok", "message": f"边 {edge_id} 已删除"}
 
 
@@ -305,7 +347,8 @@ async def delete_edge(edge_id: str, agent_id: str = Query("default")):
 async def traverse_bfs(request: TraversalBFSRequest):
     """广度优先遍历"""
     graph = _resolve_graph_database(request.agent_id)
-    nodes = graph.traversal.bfs_traverse(
+    nodes = await run_io(
+        graph.traversal.bfs_traverse,
         start_id=request.start_id,
         max_depth=request.max_depth,
         node_type_filter=request.node_type_filter,
@@ -318,7 +361,8 @@ async def traverse_bfs(request: TraversalBFSRequest):
 async def traverse_dfs(request: TraversalDFSRequest):
     """深度优先遍历"""
     graph = _resolve_graph_database(request.agent_id)
-    nodes = graph.traversal.dfs_traverse(
+    nodes = await run_io(
+        graph.traversal.dfs_traverse,
         start_id=request.start_id,
         max_depth=request.max_depth,
         node_type_filter=request.node_type_filter,
@@ -336,7 +380,7 @@ async def shortest_path(
 ):
     """最短路径"""
     graph = _resolve_graph_database(agent_id)
-    path = graph.traversal.shortest_path(start_id, end_id, max_length, agent_id=agent_id)
+    path = await run_io(graph.traversal.shortest_path, start_id, end_id, max_length, agent_id=agent_id)
     if not path:
         raise HTTPException(status_code=404, detail="路径不存在")
     return {
@@ -354,7 +398,9 @@ async def shortest_path(
 async def semantic_search(request: SemanticSearchRequest):
     """语义搜索"""
     graph = _resolve_graph_database(request.agent_id)
-    results = graph.semantic.search(
+    # R10-03: 语义搜索含嵌入推理（重 IO/CPU），必须移出事件循环
+    results = await run_io(
+        graph.semantic.search,
         query=request.query,
         node_type=request.node_type,
         limit=request.limit,
@@ -378,7 +424,8 @@ async def semantic_search(request: SemanticSearchRequest):
 async def hybrid_search(request: HybridSearchRequest):
     """混合搜索"""
     graph = _resolve_graph_database(request.agent_id)
-    results = graph.hybrid.filtered_semantic_search(
+    results = await run_io(
+        graph.hybrid.filtered_semantic_search,
         query=request.query,
         node_type=request.node_type,
         properties_filter=request.properties_filter,
@@ -408,7 +455,9 @@ async def semantic_neighbors(
 ):
     """语义邻居"""
     graph = _resolve_graph_database(agent_id)
-    results = graph.hybrid.semantic_neighbors(node_id=node_id, limit=limit, depth=depth, agent_id=agent_id)
+    results = await run_io(
+        graph.hybrid.semantic_neighbors, node_id=node_id, limit=limit, depth=depth, agent_id=agent_id
+    )
     return {
         "node_id": node_id,
         "results": [
@@ -427,7 +476,7 @@ async def semantic_neighbors(
 async def health_check(agent_id: str = Query("default")):
     """健康检查"""
     graph = _resolve_graph_database(agent_id)
-    status = graph.health_check()
+    status = await run_io(graph.health_check)
     return status
 
 
@@ -439,9 +488,8 @@ async def get_graph_status(agent_id: str = Query("default")):
     {connected, graph_enabled, message, libraries: {user/thing/concept/event: {entity_count, relation_count}}, database_path}
     """
     graph = _resolve_graph_database(agent_id)
-    health = graph.health_check()
-    monitor = GraphMonitor(graph.db)
-    stats = monitor.get_graph_stats(agent_id=agent_id)
+    # R10-03: 健康检查 + 监控统计两步同步调用，提取为模块级辅助整体包裹
+    health, stats = await run_io(_collect_graph_status_snapshot, graph, agent_id)
 
     edge_count = stats.get("edge_count", 0)
     node_types = stats.get("node_types", {}) or {}
@@ -472,7 +520,7 @@ async def get_metrics(agent_id: str = Query("default")):
     """获取性能指标"""
     graph = _resolve_graph_database(agent_id)
     monitor = GraphMonitor(graph.db)
-    return monitor.get_metrics()
+    return await run_io(monitor.get_metrics)
 
 
 @router.get("/stats")
@@ -480,7 +528,7 @@ async def get_graph_stats(agent_id: str = Query("default")):
     """获取图统计信息"""
     graph = _resolve_graph_database(agent_id)
     monitor = GraphMonitor(graph.db)
-    return monitor.get_graph_stats(agent_id=agent_id)
+    return await run_io(monitor.get_graph_stats, agent_id=agent_id)
 
 
 # ============ Algorithm Endpoints ============
@@ -493,7 +541,9 @@ async def get_pagerank(
 ):
     """PageRank 算法"""
     graph = _resolve_graph_database(agent_id)
-    scores = graph.traversal.pagerank(damping=damping, max_iterations=max_iterations, agent_id=agent_id)
+    scores = await run_io(
+        graph.traversal.pagerank, damping=damping, max_iterations=max_iterations, agent_id=agent_id
+    )
     return {"damping": damping, "scores": scores}
 
 
@@ -504,7 +554,7 @@ async def get_important_nodes(
 ):
     """获取最重要的节点"""
     graph = _resolve_graph_database(agent_id)
-    nodes = graph.traversal.get_important_nodes(limit=limit, agent_id=agent_id)
+    nodes = await run_io(graph.traversal.get_important_nodes, limit=limit, agent_id=agent_id)
     return {
         "limit": limit,
         "nodes": [
@@ -524,7 +574,7 @@ async def get_communities(
 ):
     """社区发现"""
     graph = _resolve_graph_database(agent_id)
-    communities = graph.traversal.community_detection(method=method, agent_id=agent_id)
+    communities = await run_io(graph.traversal.community_detection, method=method, agent_id=agent_id)
     return {
         "method": method,
         "communities": communities,
@@ -538,7 +588,7 @@ async def get_community_stats(
 ):
     """获取社区统计信息"""
     graph = _resolve_graph_database(agent_id)
-    stats = graph.traversal.get_community_stats(agent_id=agent_id)
+    stats = await run_io(graph.traversal.get_community_stats, agent_id=agent_id)
     return {
         "method": method,
         "stats": stats,
@@ -552,7 +602,9 @@ async def semantic_query_hops(request: SemanticQueryHopsRequest):
     """多跳语义查询（CX-O 独有）"""
     graph = _resolve_graph_database(request.agent_id)
     semantic_query_mgr = SemanticQueryManager(graph.db)
-    results = semantic_query_mgr.semantic_query_with_hops(
+    # R10-03: 多跳查询含嵌入推理，移出事件循环
+    results = await run_io(
+        semantic_query_mgr.semantic_query_with_hops,
         start_node_id=request.start_node_id,
         query=request.query,
         hops=request.hops,
@@ -579,7 +631,9 @@ async def path_constrained_search(request: PathConstrainedSearchRequest):
     """路径约束的语义搜索（CX-O 独有）"""
     graph = _resolve_graph_database(request.agent_id)
     semantic_query_mgr = SemanticQueryManager(graph.db)
-    results = semantic_query_mgr.path_constrained_semantic_search(
+    # R10-03: 语义查询含嵌入推理，移出事件循环
+    results = await run_io(
+        semantic_query_mgr.path_constrained_semantic_search,
         start_node_id=request.start_node_id,
         end_node_id=request.end_node_id,
         query=request.query,
@@ -608,7 +662,8 @@ async def export_json(agent_id: str = Query("default")):
     """导出为 JSON 格式"""
     graph = _resolve_graph_database(agent_id)
     exporter = GraphExporter(graph.db)
-    json_str = exporter.export_json()
+    # R10-03: 全量读表为阻塞 IO，移出事件循环
+    json_str = await run_io(exporter.export_json)
     return {"format": "json", "data": json.loads(json_str)}
 
 
@@ -616,24 +671,30 @@ async def export_json(agent_id: str = Query("default")):
 async def export_graphml(
     file_path: str = Query(default="graph_export.graphml"),
     agent_id: str = Query("default"),
+    _: bool = Depends(verify_admin_api_key),
 ):
-    """导出为 GraphML 格式"""
+    """导出为 GraphML 格式（管理员鉴权 + 落盘路径收敛到 data/graph_exports/）"""
     graph = _resolve_graph_database(agent_id)
     exporter = GraphExporter(graph.db)
-    exporter.export_graphml(file_path)
-    return {"format": "graphml", "file_path": file_path, "status": "exported"}
+    # 安全修复：file_path 用户可控曾可直接写任意路径——仅取文件名收敛到导出目录
+    target = _resolve_export_target(file_path)
+    await run_io(exporter.export_graphml, str(target))
+    return {"format": "graphml", "file_path": str(target), "status": "exported"}
 
 
 @router.get("/export/dot")
 async def export_dot(
     file_path: str = Query(default="graph_export.dot"),
     agent_id: str = Query("default"),
+    _: bool = Depends(verify_admin_api_key),
 ):
-    """导出为 DOT 格式"""
+    """导出为 DOT 格式（管理员鉴权 + 落盘路径收敛到 data/graph_exports/）"""
     graph = _resolve_graph_database(agent_id)
     exporter = GraphExporter(graph.db)
-    exporter.export_dot(file_path)
-    return {"format": "dot", "file_path": file_path, "status": "exported"}
+    # 安全修复：file_path 用户可控曾可直接写任意路径——仅取文件名收敛到导出目录
+    target = _resolve_export_target(file_path)
+    await run_io(exporter.export_dot, str(target))
+    return {"format": "dot", "file_path": str(target), "status": "exported"}
 
 
 # ============ Config Endpoint (CX-O 独有) ============

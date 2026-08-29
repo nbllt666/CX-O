@@ -6,16 +6,20 @@ Task 7 闭合判据：Qwen3 TTS 为唯一合成路径，旧 F5/Orpheus 引擎已
 全部走 Qwen3，覆盖：
 
 - 非流式 synthesize：剥离指令、生成指令、refs 归一化、委托 Provider、返回音频
-- 无参考音频合成（refs 为空列表）
+- 无参考音频合成（refs 为空列表；isolated_store 隔离资产环境态）
 - 流式 synthesize_stream：chunk 顺序与 is_final 保持
 - 细粒度流式 synthesize_stream_fine：token 流分块 → 逐段合成 → 末尾 final
 - 情感方法 synthesize_with_emotions / synthesize_stream_with_emotions 委托 Qwen3
 - _build_ref_ids 五来源归一化（refs / ref_asset_id / ref_audio 资产ID / base64 / path）
 - _build_qwen3_request defaults 读取与 kwargs 覆盖
+- VoiceDesign prompt 生成器接线、LLM speed/volume 结构化标签注入
+- _trim_tail_silence（qwen3_tts_provider）向量化实现边界行为（R9 合并并入）：
+  空输入 / 奇数字节 / 全静音 / 相对阈值 / min_retain 等边界
 
 运行：python -m pytest tests/test_tts_service_qwen3.py -q
 """
 import io
+import struct
 import wave
 
 import pytest
@@ -23,7 +27,11 @@ import pytest
 from server import ref_audio_store
 from server.services import tts_service as tts_svc_mod
 from server.services.tts_service import TTSService, TTSServiceUnavailableError
-from server.qwen3_tts_provider import AudioChunk, SynthesisResponse
+from server.qwen3_tts_provider import (
+    AudioChunk,
+    SynthesisResponse,
+    _trim_tail_silence,
+)
 
 
 def _wav_bytes(sample_rate: int = 24000, channels: int = 1, duration: float = 3.0) -> bytes:
@@ -420,3 +428,109 @@ class TestStructuredVoiceLabel:
         assert req.speed == 0.5
         # 标签未指定 volume → 不引入 volume，保持默认 1.0
         assert req.volume == 1.0
+
+
+# ================================================================== _trim_tail_silence 向量化边界（R9 合并并入）
+def _pack(samples):
+    """样本列表 → 16bit 小端 PCM 字节。"""
+    return struct.pack(f"<{len(samples)}h", *samples)
+
+
+class TestTrimTailSilenceBoundaries:
+    """_trim_tail_silence 向量化实现（struct.unpack 单次解样本）边界行为锁定。
+
+    HEAD 基线中无 _trim_tail_silence 用例（其早期行为测试位于实现侧引入轮），
+    本组用例为第九轮向量化重构后新增，无 HEAD 重叠。
+    """
+
+    def test_empty_input_returns_as_is(self):
+        assert _trim_tail_silence(b"", 24000) == b""
+
+    def test_single_byte_input_returns_as_is(self):
+        # n = 0（不足一个完整样本）→ 原样返回
+        assert _trim_tail_silence(b"\x00", 24000) == b"\x00"
+
+    def test_all_silence_returns_unchanged(self):
+        pcm = _pack([0, 0, 0, 0, 0])
+        assert _trim_tail_silence(pcm, 24000) == pcm
+
+    def test_all_silence_with_odd_trailing_byte_returns_unchanged(self):
+        # 全静音 + 奇数尾字节：峰值 0 → 原样返回（尾字节也不丢）
+        pcm = b"\x00" * 7
+        assert _trim_tail_silence(pcm, 24000) == pcm
+
+    def test_no_trailing_silence_unchanged(self):
+        # 末样本即响亮 → 不裁剪
+        samples = [0, 100, -200, 300, 5, -400]
+        pcm = _pack(samples)
+        assert _trim_tail_silence(pcm, 24000) == pcm
+
+    def test_trailing_silence_trimmed_to_last_loud_sample(self):
+        # 尾部静音被裁到最后一个响亮样本（keep = i+1）
+        samples = [500, 0, 0, 0, 0]
+        pcm = _pack(samples)
+        out = _trim_tail_silence(pcm, 24000)
+        assert out == _pack([500])  # 只保留样本 0
+
+    def test_negative_samples_count_as_amplitude(self):
+        # 负样本按绝对值计幅：尾部 -3000 是"响亮"样本，其后静音被裁
+        samples = [-3000, 0, 0, 0]
+        pcm = _pack(samples)
+        out = _trim_tail_silence(pcm, 24000)
+        assert out == _pack([-3000])
+
+    def test_quiet_tail_below_relative_threshold_trimmed(self):
+        # 相对阈值：峰值 10000，尾部幅度 10 < 10000*0.00316≈31.6 → 视为静音裁掉
+        samples = [10000] + [10] * 8
+        pcm = _pack(samples)
+        out = _trim_tail_silence(pcm, 24000)
+        assert out == _pack([10000])
+
+    def test_odd_byte_input_tail_byte_dropped_on_trim(self):
+        # 奇数字节：仅消费前 n*2 字节；裁剪边界按完整样本计算，尾字节随裁剪丢弃
+        pcm = _pack([0, 0, 0, 700]) + b"\xab"  # 4 个完整样本 + 1 尾字节
+        out = _trim_tail_silence(pcm, 24000)
+        assert out == _pack([0, 0, 0, 700])  # 末样本响亮：keep=n，尾字节被截断
+
+    def test_min_retain_boundary_caps_trim_window(self):
+        # 采样率 1000 → min_retain = int(1000*0.050) = 50 样本；
+        # 响亮样本在回溯窗口（最后 50 样本）之外 → 最多只裁 50 样本
+        samples = [800] + [0] * 199  # 响亮在索引 0，尾部 199 样本全静音
+        pcm = _pack(samples)
+        out = _trim_tail_silence(pcm, 1000)
+        assert out == _pack([800] + [0] * 149)  # keep=stop=150：保留前 150 样本
+
+    def test_loud_within_retain_window_trims_to_it(self):
+        # 响亮样本在最后 50 样本窗口内（索引 180，n=200，stop=150）→ 裁到其后
+        samples = [0] * 180 + [900] + [0] * 19
+        pcm = _pack(samples)
+        out = _trim_tail_silence(pcm, 1000)
+        assert out == _pack([0] * 180 + [900])  # keep = 181
+
+    def test_large_block_roundtrip_matches_expected(self):
+        # 真实规模（24000Hz，0.5s）：语音段 + 0.1s 尾部静音
+        sr = 24000
+        speech = [((i * 7919) % 20000) - 10000 for i in range(sr // 2)]  # 高幅值伪随机
+        tail_silence = [0] * (sr // 10)
+        pcm = _pack(speech + tail_silence)
+        out = _trim_tail_silence(pcm, sr)
+        # 尾部静音 2400 样本，但回溯窗口上限 min_retain=1200（50ms）→ 裁掉 1200
+        assert out == _pack(speech + [0] * (sr // 20))
+
+    def test_full_silence_large_block_returns_unchanged(self):
+        # 大块全静音：peak == 0 早退，不做回溯扫描
+        pcm = b"\x00" * (24000 * 2)  # 1s 静音
+        assert _trim_tail_silence(pcm, 24000) == pcm
+
+
+@pytest.mark.parametrize("samples,expected_keep_count", [
+    ([100, 0, 0], 1),
+    ([0, 100, 0], 2),
+    ([-100, 0, 5, 0, 0], 3),
+    ([32767, -32768, 0], 2),  # int16 两端极值按绝对值计幅
+])
+def test_trim_positions_parametrized(samples, expected_keep_count):
+    """参数化：裁剪边界 == 最后一个超阈值样本下标 + 1。"""
+    pcm = _pack(samples)
+    out = _trim_tail_silence(pcm, 24000)
+    assert out == _pack(samples[:expected_keep_count])

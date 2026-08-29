@@ -49,9 +49,11 @@ COPY asr_container/ /app/asr_container/
 # 复制 API 服务到 /app 根目录
 COPY api_server.py /app/api_server.py
 
-# 内置模型缓存（2026-08-25 分享打包：模型随镜像分发，免首次联网下载）：
-# paraformer-zh-streaming(online) / fsmn-vad / ct-punc / SenseVoiceSmall / cam++(zh-cn)
-COPY modelscope_cache/ /root/.cache/modelscope/
+# 模型缓存（2026-08-29 修复）：原 COPY modelscope_cache/ 层已删除——
+# CX-O-SERVER/modelscope_cache/ 不存在导致源码构建必失败，且 compose 已把
+# asr-models 命名卷挂载到 /root/.cache/modelscope（卷非空时镜像层内容会被遮蔽）。
+# 运行时模型由 compose 的 asr-models 命名卷挂载 /root/.cache/modelscope 提供；
+# 如需烘焙进镜像请恢复此层并预置 CX-O-SERVER/modelscope_cache/。
 
 # 声纹 profiles 目录（默认空池；对接 CX-O 时由宿主机 bind-mount 覆盖）
 RUN mkdir -p /app/data/voiceprint \
@@ -62,6 +64,11 @@ ENV PYTHONPATH=/app
 
 # 端口
 EXPOSE 8005
+
+# 本体 HEALTHCHECK（补齐，与 docker/asr/docker-compose.yml 及根 docker-compose.yml
+# 口径一致：容器内端口 8005 / interval 30s / timeout 10s / retries 5 / start_period 120s）
+HEALTHCHECK --interval=30s --timeout=10s --start-period=120s --retries=5 \
+    CMD curl -f http://localhost:8005/health || exit 1
 
 # 启动服务
 CMD ["python", "/app/api_server.py"]

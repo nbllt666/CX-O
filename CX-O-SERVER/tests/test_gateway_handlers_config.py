@@ -125,3 +125,75 @@ class TestConfigSet:
         await handlers[ConfigActions.SET](None, {"data": {"section": "gateway", "data": {"zzz": 1}}}, "c1")
         assert mgr.sent[-1][1]["data"] == {"saved": True}
         assert not hasattr(conf.gateway, "zzz")
+
+
+# ================================================================ 脱敏与回验（WS 配置安全修复回归）
+from pydantic import BaseModel as _PydBaseModel
+
+
+class TestConfigGetSanitize:
+    """config.get 回包脱敏：key 名含 api_key/apikey/api-key/secret/token/
+    password/credential（大小写不敏感）的值必须打码为 "***"。"""
+
+    @pytest.mark.asyncio
+    async def test_get_full_masks_api_key(self, handlers, mgr, monkeypatch):
+        conf = make_config()
+        conf.gateway.api_key = "sk-secret123"
+        _patch_conf(monkeypatch, conf=conf)
+        await handlers[ConfigActions.GET](None, {"request_id": "r1"}, "c1")
+        data = mgr.sent[-1][1]["data"]["config"]
+        assert data["gateway"]["api_key"] == "***"
+        assert data["gateway"]["host"] == "0.0.0.0"  # 非敏感字段不受影响
+
+    @pytest.mark.asyncio
+    async def test_get_section_masks_case_insensitive(self, handlers, mgr, monkeypatch):
+        conf = make_config()
+        conf.services.asr.SecretToken = "t-abc"  # 大小写不敏感命中 token 标记
+        _patch_conf(monkeypatch, conf=conf)
+        await handlers[ConfigActions.GET](None, {"data": {"section": "services.asr"}}, "c1")
+        assert mgr.sent[-1][1]["data"]["config"] == {"url": "http://asr", "SecretToken": "***"}
+
+    @pytest.mark.asyncio
+    async def test_get_masks_inside_list_of_dicts(self, handlers, mgr, monkeypatch):
+        # list 内嵌 dict 的敏感 key 同样递归脱敏
+        conf = make_config()
+        conf.gateway.providers = [{"name": "openai", "api_key": "k1"}]
+        _patch_conf(monkeypatch, conf=conf)
+        await handlers[ConfigActions.GET](None, {"data": {"section": "gateway"}}, "c1")
+        providers = mgr.sent[-1][1]["data"]["config"]["providers"]
+        assert providers[0]["api_key"] == "***"
+        assert providers[0]["name"] == "openai"
+
+
+class _RealGateSection(_PydBaseModel):
+    """真实 pydantic 段模型：专测 config.set 的 Pydantic 回验路径。"""
+    host: str = "0.0.0.0"
+    port: int = 8000
+
+
+class TestConfigSetValidation:
+    @pytest.mark.asyncio
+    async def test_set_invalid_value_rejected_not_saved(self, handlers, mgr, monkeypatch):
+        conf = make_config()
+        conf.gateway = _RealGateSection()
+        saved = _patch_conf(monkeypatch, conf=conf)
+        await handlers[ConfigActions.SET](
+            None, {"data": {"section": "gateway", "data": {"port": "not-an-int"}}}, "c1"
+        )
+        msg = mgr.sent[-1][1]
+        assert msg["type"] == "error"
+        assert msg["error"]["code"] == "VALIDATION_ERROR"
+        assert saved == []                 # 校验失败不落盘
+        assert conf.gateway.port == 8000   # 原值未被污染
+
+    @pytest.mark.asyncio
+    async def test_set_valid_value_passes_validation(self, handlers, mgr, monkeypatch):
+        conf = make_config()
+        conf.gateway = _RealGateSection()
+        saved = _patch_conf(monkeypatch, conf=conf)
+        await handlers[ConfigActions.SET](
+            None, {"data": {"section": "gateway", "data": {"port": 9001}}}, "c1"
+        )
+        assert mgr.sent[-1][1]["data"] == {"saved": True}
+        assert conf.gateway.port == 9001
+        assert len(saved) == 1

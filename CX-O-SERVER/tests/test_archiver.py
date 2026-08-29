@@ -140,6 +140,48 @@ class TestMergeMemories:
         r = await archiver.merge_duplicate_memories([m1, 99999])
         assert r.success is False
 
+    @pytest.mark.asyncio
+    async def test_merge_atomic_rollback_on_failure(self, archiver, mgr):
+        """合并中途注入异常（merge_records INSERT 失败）→ 整体回滚。
+
+        原子性保证：主记忆内容/标签/metadata 与被合并记忆的软删标记均保持
+        合并前状态，merge_records 无残留行（修复前的两阶段写会产生半合并）。
+        """
+        m1 = mgr.write_memory("主记忆内容", tags=["a"])
+        m2 = mgr.write_memory("次记忆内容", tags=["b"])
+
+        conn = mgr._get_connection()
+        # DB 级故障注入：merge_records 的 INSERT 一律 RAISE(ABORT)，迫使合并事务中途失败
+        conn.execute(
+            "CREATE TRIGGER test_inject_merge_fail "
+            "BEFORE INSERT ON merge_records "
+            "BEGIN SELECT RAISE(ABORT, 'injected merge failure'); END"
+        )
+        conn.commit()
+
+        r = await archiver.merge_duplicate_memories([m1, m2])
+        assert r.success is False
+
+        # 清理注入触发器，恢复连接可用性
+        conn.execute("DROP TRIGGER test_inject_merge_fail")
+        conn.commit()
+
+        # 主记忆未被修改：内容/标签原样，metadata 无合并标记
+        primary = mgr.get_memory(m1)
+        assert primary["content"] == "主记忆内容"
+        assert primary["tags"] == ["a"]
+        assert "is_merged" not in primary["metadata"]
+        assert "merged_from" not in primary["metadata"]
+
+        # 被合并记忆未被软删除：metadata 无 merged_into
+        secondary = mgr.get_memory(m2, include_deleted=True)
+        assert secondary["is_deleted"] is False
+        assert "merged_into" not in secondary["metadata"]
+
+        # merge_records 无残留行
+        row = conn.execute("SELECT COUNT(*) FROM merge_records").fetchone()
+        assert row[0] == 0
+
 
 class TestArchiveOfArchives:
     @pytest.mark.asyncio
@@ -191,3 +233,130 @@ class TestSimilarity:
         conn.close()
         assert row[0] == 3
         assert row[1] == 5
+
+
+class TestTwoPhaseTransaction:
+    """第十轮修复: 两阶段事务化 + sqlite 同步段 to_thread 卸载的行为验证。
+
+    - archive_memory / archive_of_archives 的 LLM 压缩收集（await）必须全部
+      在进入同步事务段之前完成，事务段内无任何 await；
+    - 同步 sqlite 段经 asyncio.to_thread 卸载到工作线程，事件循环不再被阻塞。
+    """
+
+    @pytest.mark.asyncio
+    async def test_archive_memory_runs_in_worker_thread(self, archiver, mgr):
+        """archive_memory 的 sqlite 写段经 to_thread 卸载：执行线程 ≠ 事件循环线程。"""
+        import threading
+
+        loop_thread = threading.get_ident()
+        seen_threads = []
+
+        original_sync = archiver._archive_memory_sync
+
+        def spy_sync(*args, **kwargs):
+            # 本函数在 asyncio.to_thread 的工作线程中执行
+            seen_threads.append(threading.get_ident())
+            return original_sync(*args, **kwargs)
+
+        archiver._archive_memory_sync = spy_sync
+
+        mid = mgr.write_memory("线程卸载验证记忆")
+        rec = await archiver.archive_memory(mid, target_level=1)
+
+        assert rec is not None
+        assert seen_threads, "事务段未被调用"
+        assert seen_threads[0] != loop_thread
+
+    @pytest.mark.asyncio
+    async def test_archive_memory_get_memory_in_worker_thread(self, archiver, mgr):
+        """archive_memory 阶段1 的 get_memory 读同样在非事件循环线程执行。"""
+        import threading
+
+        loop_thread = threading.get_ident()
+        seen_threads = []
+
+        mgr_get_memory = mgr.get_memory
+
+        def spy_get_memory(memory_id, *args, **kwargs):
+            seen_threads.append(threading.get_ident())
+            return mgr_get_memory(memory_id, *args, **kwargs)
+
+        mgr.get_memory = spy_get_memory
+
+        mid = mgr.write_memory("读路径线程卸载验证")
+        rec = await archiver.archive_memory(mid)
+
+        assert rec is not None
+        assert seen_threads and seen_threads[0] != loop_thread
+
+    @pytest.mark.asyncio
+    async def test_archive_of_archives_compresses_before_txn(self, archiver, mgr, monkeypatch):
+        """两阶段顺序：全部 _compress_content 收集完成后才进入同步事务段。"""
+        import asyncio
+
+        mid = mgr.write_memory("两阶段顺序验证内容")
+        await archiver.archive_memory(mid, target_level=3)
+
+        class CountingLLM:
+            def __init__(self):
+                self.calls = 0
+
+            async def chat(self, messages, stream=False):
+                self.calls += 1
+                # 主动让出事件循环：若收集与事务段交错，此处会让问题显形
+                await asyncio.sleep(0)
+                return _Resp(f"二次压缩{self.calls}")
+
+        llm = CountingLLM()
+        archiver.llm_client = llm
+
+        txn_calls = {"n": 0}
+        original_txn = archiver._insert_second_level_archives_sync
+
+        def spy_txn(rows):
+            # 进入事务段时，压缩收集（阶段1）必须已全部完成
+            txn_calls["n"] += 1
+            assert llm.calls == 1
+            return original_txn(rows)
+
+        monkeypatch.setattr(archiver, "_insert_second_level_archives_sync", spy_txn)
+
+        results = await archiver.archive_of_archives(4)
+
+        assert len(results) == 1
+        assert results[0]["archive_level"] == 4
+        assert llm.calls == 1
+        assert txn_calls["n"] == 1
+
+    @pytest.mark.asyncio
+    async def test_archive_of_archives_rollback_on_insert_failure(self, archiver, mgr):
+        """事务段 INSERT 失败注入 → 整体回滚，无半提交的二级归档行，且连接可复用。"""
+        mid = mgr.write_memory("二次归档回滚验证")
+        await archiver.archive_memory(mid, target_level=3)
+
+        conn = mgr._get_connection()
+        # DB 级故障注入：archive_records 的 INSERT 一律 RAISE(ABORT)
+        conn.execute(
+            "CREATE TRIGGER test_inject_aoa_fail "
+            "BEFORE INSERT ON archive_records "
+            "BEGIN SELECT RAISE(ABORT, 'injected aoa failure'); END"
+        )
+        conn.commit()
+
+        # 失败返回 []（与旧实现对外行为一致）
+        assert await archiver.archive_of_archives(4) == []
+
+        # 事务段已整体回滚：级别 4 无残留行
+        row = conn.execute(
+            "SELECT COUNT(*) FROM archive_records WHERE archive_level = 4"
+        ).fetchone()
+        assert row[0] == 0
+
+        # 清理注入触发器，验证回滚后连接可用、两阶段路径可正常重试
+        conn.execute("DROP TRIGGER test_inject_aoa_fail")
+        conn.commit()
+
+        results = await archiver.archive_of_archives(4)
+        assert len(results) == 1
+        assert results[0]["original_memory_id"] == mid
+        assert results[0]["archive_level"] == 4

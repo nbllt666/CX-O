@@ -9,6 +9,41 @@ from server.core.logging_config import get_contextual_logger
 logger = get_contextual_logger(__name__)
 
 
+def _recv_cxfc_beacons_sync(sock) -> List[Dict[str, Any]]:
+    """scan_network 的同步收包辅助（仅供 asyncio.to_thread 调度）。
+
+    最多 5 轮阻塞 recvfrom 收集 CXFC_BEACON 插件信标，异常语义对齐旧实现：
+    - ``socket.timeout`` → 停止收包（break）；
+    - 其他收包/解析异常 → 跳过本轮继续（旧实现 ``except Exception: continue``）。
+    阻塞式 recvfrom（settimeout 2.0）不得直接运行在事件循环线程上。
+    """
+    found: List[Dict[str, Any]] = []
+
+    for _ in range(5):
+        try:
+            data, addr = sock.recvfrom(4096)
+        except socket.timeout:
+            break
+        except Exception:
+            continue
+
+        try:
+            beacon = json.loads(data.decode())
+        except Exception:
+            continue
+
+        if beacon.get("type") == "CXFC_BEACON":
+            found.append({
+                "host": addr[0],
+                "port": beacon.get("port", 0),
+                "name": beacon.get("name", ""),
+                "capabilities": beacon.get("capabilities", []),
+                "version": beacon.get("version", ""),
+            })
+
+    return found
+
+
 class CXFCDiscovery:
     """CXFC 插件发现器，通过 UDP 广播宣告自身存在并监听局域网内的插件信标，维护已发现插件列表。"""
 
@@ -124,37 +159,25 @@ class CXFCDiscovery:
 
         L 级修复: bind/遍历的异常路径此前会泄漏 socket——改为 try/finally
         兜底关闭，任何退出路径都释放句柄。
+        线程卸载修复: 阻塞收包段（settimeout 2.0 + recvfrom 循环）整体经
+        asyncio.to_thread 卸载到工作线程（_recv_cxfc_beacons_sync），
+        无信标时事件循环不再被阻塞最长 10s；本 async 函数只做 socket
+        准备、to_thread 调度与结果组装。
         """
-        found = []
         sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         try:
             sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
             sock.bind(("", self.discovery_port))
             sock.settimeout(2.0)
 
-            for _ in range(5):
-                try:
-                    data, addr = sock.recvfrom(4096)
-                    beacon = json.loads(data.decode())
-                    if beacon.get("type") == "CXFC_BEACON":
-                        found.append({
-                            "host": addr[0],
-                            "port": beacon.get("port", 0),
-                            "name": beacon.get("name", ""),
-                            "capabilities": beacon.get("capabilities", []),
-                            "version": beacon.get("version", ""),
-                        })
-                except socket.timeout:
-                    break
-                except Exception:
-                    continue
+            # 阻塞收包段整体卸载到工作线程
+            return await asyncio.to_thread(_recv_cxfc_beacons_sync, sock)
         finally:
-            # 泄漏兜底：bind 失败/遍历异常均确保关闭 socket
+            # 泄漏兜底：bind 失败/收包异常均确保关闭 socket
             try:
                 sock.close()
             except Exception:
                 pass
-        return found
 
     def get_discovered(self) -> List[Dict[str, Any]]:
         """返回当前已发现的插件列表。"""

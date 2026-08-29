@@ -13,7 +13,7 @@
 统一产出 MultimodalArtifact。视频/音频模态通过 _vllm_native_worker 处理，
 检测 LLM provider，若为 vllm 则通过 vLLM API 直接投递原生视频/音频，否则降级路径。
 
-@version 1.0.0
+@version 2.0.0  # G4-B 契约对齐（MAJOR）：删除幽灵方法 _ocr_worker/_vision_worker/_merge_ocr_vision（实现中已内联下沉到 workers.ImageWorker），补 __init__ 签名
 @see public/schema/multimodal_artifact.schema.json
 @see public/config_template/radix_config.json
 """
@@ -59,6 +59,16 @@ class MultimodalPipeline:
     worker 池（独立进程组），3 模态预处理。
     接管 parser.py 下沉的解析能力。
     """
+
+    def __init__(self, config: Optional[Dict[str, Any]] = None) -> None:
+        """初始化 MultimodalPipeline（worker 池 + 各模态 worker 装配，配置 auto_fill）。
+
+        Args:
+            config: 可选配置 dict。支持扁平形态与 radix_config 嵌套形态；
+                None 时按优先级自动加载：server/config.py MultimodalPipelineConfig
+                → config/radix_config.json 实例 → 配置模板 default → 代码内兜底。
+        """
+        ...
 
     def preprocess(
         self,
@@ -140,35 +150,6 @@ class MultimodalPipeline:
         """
         ...
 
-    def _ocr_worker(self, image_path: str) -> List[OCRBlock]:
-        """内部方法：PaddleOCR worker。
-
-        Args:
-            image_path: 图片路径
-
-        Returns:
-            OCR 文本块列表
-
-        Raises:
-            RuntimeError: PaddleOCR 引擎异常（500）
-        """
-        ...
-
-    def _vision_worker(self, image_path: str) -> str:
-        """内部方法：vLLM vision worker。
-
-        Args:
-            image_path: 图片路径
-
-        Returns:
-            视觉描述文本
-
-        Raises:
-            ConnectionError: vLLM vision 端点不可用（503）
-            RuntimeError: vision 推理失败（500）
-        """
-        ...
-
     def _vllm_native_worker(
         self,
         source_ref: str,
@@ -198,21 +179,5 @@ class MultimodalPipeline:
             FileNotFoundError: source_ref 指向的文件不存在（404）
             ConnectionError: vLLM 端点不可用（503，触发降级路径，非阻断）
             RuntimeError: vLLM 原生解码失败 / 视频音频文件损坏（422/500）
-        """
-        ...
-
-    def _merge_ocr_vision(
-        self,
-        ocr_blocks: List[OCRBlock],
-        vision_description: str,
-    ) -> MultimodalArtifact:
-        """内部方法：合并 OCR + vision 通道结果。
-
-        Args:
-            ocr_blocks: OCR 文本块
-            vision_description: vision 描述
-
-        Returns:
-            合并后的 MultimodalArtifact
         """
         ...

@@ -544,5 +544,49 @@ class TestSpeakerSpk:
         assert s._stream_accessor("B").recent_spk_embedding is None
 
 
+# ================================================================ 只读访问器：_peek_stream_state 不落册
+class TestPeekStreamStateNoRegistration:
+    """get_recent_spk_embedding 纯读语义：未知 client_id 不得为查询落册 _StreamState。
+
+    修复：_stream_accessor 读路径对未知 client_id 会插入含锁+队列的 _StreamState
+    注册项（泄漏）；新增 _peek_stream_state（dict.get 不落册）供只读调用方使用，
+    写路径（receive_result 等）落册行为保持不变。
+    """
+
+    def test_unknown_client_not_registered(self, monkeypatch):
+        s = ASRService(mode="remote")
+        monkeypatch.setattr(asr_service, "get_asr_service", lambda: s)
+        # 未知 client_id：返回 None 快照，且注册表不新增条目
+        assert get_recent_spk_embedding("ghost-client") is None
+        assert "ghost-client" not in s._stream_sessions
+
+    def test_default_session_reads_instance_attr(self, monkeypatch):
+        """client_id=None：读默认会话实例属性，行为与旧实现一致。"""
+        s = ASRService(mode="remote")
+        monkeypatch.setattr(asr_service, "get_asr_service", lambda: s)
+        assert get_recent_spk_embedding(None) is None
+        s._recent_spk_embedding = [0.5, 0.6]
+        assert get_recent_spk_embedding(None) == [0.5, 0.6]
+
+    def test_existing_session_read_via_peek(self, monkeypatch):
+        """已存在会话：走只读访问器取状态值。"""
+        s = ASRService(mode="remote")
+        monkeypatch.setattr(asr_service, "get_asr_service", lambda: s)
+        st = s._stream_accessor("c-exist")  # 写路径显式落册
+        st.recent_spk_embedding = [0.7]
+        assert get_recent_spk_embedding("c-exist") == [0.7]
+        assert set(s._stream_sessions) == {"c-exist"}  # 查询不额外落册
+
+    def test_peek_returns_none_for_missing_but_accessor_registers(self):
+        """_peek_stream_state 与 _stream_accessor 落册行为对照。"""
+        s = ASRService(mode="remote")
+        assert s._peek_stream_state("nope") is None          # 只读：不落册
+        assert "nope" not in s._stream_sessions
+        assert s._peek_stream_state(None) is None            # 默认会话无独立 state
+        s._stream_accessor("yes")                            # 写路径：落册
+        assert "yes" in s._stream_sessions
+        assert s._peek_stream_state("yes") is s._stream_sessions["yes"]
+
+
 async def _raise_send(data):
     raise RuntimeError("send fail")

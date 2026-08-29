@@ -121,15 +121,37 @@ ${contextText}
     }
   }, [isOpen, messages.length, t]);
 
+  // 自动摘要 100ms 延迟触发定时器：关闭弹窗/组件卸载时清除，避免延迟回调命中已卸载组件
+  const autoStartTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
   // 自动开始摘要
   useEffect(() => {
     if (isOpen && autoStart && !autoStartedRef.current && messages.length > 0) {
       autoStartedRef.current = true;
-      setTimeout(() => {
+      autoStartTimerRef.current = setTimeout(() => {
         void handleAutoSummary();
       }, 100);
     }
   }, [isOpen, autoStart, messages.length, handleAutoSummary]);
+
+  // 关闭弹窗时取消尚未触发的自动摘要
+  useEffect(() => {
+    if (isOpen) return;
+    if (autoStartTimerRef.current !== null) {
+      clearTimeout(autoStartTimerRef.current);
+      autoStartTimerRef.current = null;
+    }
+  }, [isOpen]);
+
+  // 组件卸载时取消尚未触发的自动摘要
+  useEffect(() => {
+    return () => {
+      if (autoStartTimerRef.current !== null) {
+        clearTimeout(autoStartTimerRef.current);
+        autoStartTimerRef.current = null;
+      }
+    };
+  }, []);
 
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });

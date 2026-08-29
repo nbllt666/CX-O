@@ -81,24 +81,33 @@ class TrainJob:
         logger.info("训练状态迁移: job_id=%s -> running", self.job_id)
 
     def complete(self, loss: Optional[List[float]] = None) -> None:
-        """running -> completed；可选追加最终 loss 曲线。"""
+        """running -> completed；可选追加最终 loss 曲线。
+
+        先校验迁移合法性、后赋值字段：非法迁移直接抛 InvalidTransitionError，
+        不污染 loss_curve/progress（修复：原实现先写字段后校验，对终态对象
+        调 complete 会先把 loss_curve/progress 覆盖掉再抛异常）。
+        """
         with self._lock:
-            if loss:
-                self.loss_curve = list(loss)
-            self.progress = 1.0
             if "completed" not in _TRANSITIONS.get(self.status, set()):
                 raise InvalidTransitionError(
                     f"非法状态迁移: {self.status} -> completed"
                 )
+            if loss:
+                self.loss_curve = list(loss)
+            self.progress = 1.0
             self.status = "completed"
         logger.info("训练状态迁移: job_id=%s -> completed (loss_points=%d)", self.job_id, len(self.loss_curve))
 
     def fail(self, message: str) -> None:
-        """idle/running -> failed。"""
+        """idle/running -> failed。
+
+        先校验迁移合法性、后赋值字段：非法迁移直接抛 InvalidTransitionError，
+        不污染 error（修复时序与 complete 一致）。
+        """
         with self._lock:
-            self.error = message
             if "failed" not in _TRANSITIONS.get(self.status, set()):
                 raise InvalidTransitionError(f"非法状态迁移: {self.status} -> failed")
+            self.error = message
             self.status = "failed"
         logger.error("训练状态迁移: job_id=%s -> failed. error=%s", self.job_id, message)
 

@@ -1,5 +1,7 @@
 """CX-O 管理面（CX-A）接口契约（core/admin/* + api/routers/admin.py）。
 
+契约版本: 1.0.1（PATCH，G4-B 签名对齐：AdminBatchExecutor.execute 补 async 与 stop_on_error 默认值、AdminControlPlane.dispatch 参数默认值对齐实现）
+
 所有异常契约：调用方必须处理约定的异常。
 错误码枚举（统一字符串）：ADMIN_DISABLED / ADMIN_AUTH_FAILED / ADMIN_FORBIDDEN /
 ADMIN_REPLAYED / ADMIN_RATE_LIMITED / ADMIN_UNKNOWN_ACTION / ADMIN_SERVICE_ERROR。
@@ -55,13 +57,13 @@ class AdminManifest:
 # ---- AdminControlPlane ----
 class AdminControlPlane:
     """统一控制入口。对 target=cluster 转发 ClusterAdminBridge。"""
-    def dispatch(self, action: str, target: str, request_id: str, agent_id: str, params: Dict[str, Any]) -> Dict[str, Any]: ...
+    def dispatch(self, action: str, target: str, request_id: str, agent_id: str = "default", params: Optional[Dict[str, Any]] = None) -> Dict[str, Any]: ...
     def _execute(self, target: str, action: str, **kw) -> Dict[str, Any]: ...
 
 # ---- AdminBatchExecutor ----
 class AdminBatchExecutor:
     """批量编排。mode=sequential/parallel。返回每步 {step, ok, result, duration_ms}。"""
-    def execute(self, request_id: str, mode: str, steps: List[Dict[str, Any]], stop_on_error: bool) -> Dict[str, Any]: ...
+    async def execute(self, request_id: str, mode: str, steps: List[Dict[str, Any]], stop_on_error: bool = True) -> Dict[str, Any]: ...
 
 # ---- InstanceRegistry ----
 class InstanceRegistry:

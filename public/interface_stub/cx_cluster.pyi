@@ -1,5 +1,7 @@
 """CX-O 哨兵集群接口契约（core/cluster/* + api/routers/cluster.py）。
 
+契约版本: 1.0.1（PATCH，G4-B 签名对齐：confirm_dead 补 async、emit 返回 int、StateReplicator.sync_status 返回结构对齐实现）
+
 所有异常契约：调用方必须处理约定的异常。
 错误码枚举（统一字符串）：CLUSTER_DISABLED / CLUSTER_AUTH_FAILED / CLUSTER_REPLAYED /
 CLUSTER_NO_QUORUM / CLUSTER_DIRTY_TAKEOVER / CLUSTER_SPLIT_BRAIN_RISK / CLUSTER_SERVICE_ERROR。
@@ -58,17 +60,17 @@ class PeerHeartbeat:
     async def start(self) -> None: ...
     async def stop(self) -> None: ...  # 广播主动下线
     def mark_suspect(self, node_id: str) -> None: ...
-    def confirm_dead(self, node_id: str) -> bool: ...  # 多数派确认后才返回 True
+    async def confirm_dead(self, node_id: str) -> bool: ...  # 多数派确认后才返回 True（幂等短路返回 False）
 
 # ---- BackupUnit Sentinel 状态复制 ----
 class StateReplicator:
     """增量事件流 + 定期快照双轨制；不阻塞主链路；待发队列。"""
-    def emit(self, unit: str, op: str, payload: Dict[str, Any]) -> None: ...  # 本地写变更
+    def emit(self, unit: str, op: str, payload: Dict[str, Any]) -> int: ...  # 本地写变更，返回事件 seq
     async def start(self) -> None: ...
     async def stop(self) -> None: ...
     async def flush(self) -> None: ...  # 尽力推给 peer（关闭时）
     async def apply_event(self, event: Dict[str, Any]) -> bool: ...  # 幂等重放
-    def sync_status(self) -> Dict[str, str]: ...
+    def sync_status(self) -> Dict[str, Any]: ...  # {unit: {strategy, last_applied_seq, later_events, last_snapshot_at}} + _pending_outbox/_dropped_unsent/dropped_events
 
 class BackupUnit:
     unit: str

@@ -523,3 +523,117 @@ class TestGetRecentMemories:
         router = self._router(mm)
         assert router._get_recent_memories("") == []
         assert router._get_recent_memories(None) == []
+
+
+class TestAsyncParity:
+    """异步化后响应结构回归：路由内同步 sqlite 直调改为 run_io 包裹后，
+    端点返回体结构必须与包裹前保持一致。"""
+
+    def test_list_memories_structure_unchanged(self, client):
+        """GET /memories 走 run_io(search_memories) 后返回体结构不变。"""
+        c, mm, sr = client
+        r = c.get("/memories")
+        assert r.status_code == 200
+        body = r.json()
+        assert set(body.keys()) == {"status", "memories", "total"}
+        assert body["status"] == "success"
+        assert body["total"] == len(body["memories"]) == 1
+        assert body["memories"][0]["id"] == 1
+        # run_io 仅改执行线程，透传参数不变
+        assert mm.calls["search"][0]["limit"] == 20
+
+    def test_stats_structure_unchanged(self, client):
+        """GET /memories/stats 走 run_io(get_statistics) 后返回体结构不变。"""
+        c, mm, sr = client
+        r = c.get("/memories/stats")
+        assert r.status_code == 200
+        body = r.json()
+        assert set(body.keys()) == {"status", "statistics"}
+        assert body["status"] == "success"
+        assert body["statistics"] == {"total": 3}
+
+
+def _record_run_io(monkeypatch):
+    """包一层 run_io 记录器：记录经 run_io 执行的同步函数名，透传原实现。"""
+    recorded = []
+    orig = memory_router_mod.run_io
+
+    async def _recorder(func, *args, **kwargs):
+        recorded.append(getattr(func, "__name__", repr(func)))
+        return await orig(func, *args, **kwargs)
+
+    monkeypatch.setattr(memory_router_mod, "run_io", _recorder)
+    return recorded
+
+
+class TestRunIoCoverage:
+    """第十轮补全：permanent 写入 / batch 写入 / sync_decay 端点经 run_io 执行，
+    响应结构与参数透传保持不变。"""
+
+    def test_permanent_write_via_run_io(self, client, monkeypatch):
+        c, mm, sr = client
+        recorded = _record_run_io(monkeypatch)
+        seen = {}
+        orig = mm.write_permanent_memory
+
+        def _rec(**kw):
+            seen.update(kw)
+            return orig(**kw)
+
+        _rec.__name__ = "write_permanent_memory"  # 保持记录器可识别原方法名
+        mm.write_permanent_memory = _rec
+        r = c.post("/memories/permanent", params={"content": "c"})
+        assert r.status_code == 200
+        body = r.json()
+        assert set(body.keys()) == {"status", "memory_id", "message"}
+        assert body["memory_id"] == 6
+        # 参数透传不变：is_from_main 固定 True，空 tags/metadata 归一
+        assert seen["content"] == "c"
+        assert seen["is_from_main"] is True
+        assert seen["tags"] == []
+        assert seen["metadata"] == {}
+        assert "write_permanent_memory" in recorded
+
+    def test_batch_write_via_run_io(self, client, monkeypatch):
+        c, mm, sr = client
+        recorded = _record_run_io(monkeypatch)
+        seen = {}
+        orig = mm.batch_write_memories
+
+        def _rec(memories, raise_on_error):
+            seen["memories"] = memories
+            seen["raise_on_error"] = raise_on_error
+            return orig(memories, raise_on_error)
+
+        _rec.__name__ = "batch_write_memories"  # 保持记录器可识别原方法名
+        mm.batch_write_memories = _rec
+        r = c.post("/memories/batch/write", json=[{"content": "a"}])
+        assert r.status_code == 200
+        body = r.json()
+        assert set(body.keys()) == {"status", "result"}
+        assert body["result"] == {"success": 1}
+        # raise_on_error 默认值经位置参数显式传递保持
+        assert seen["raise_on_error"] is False
+        assert seen["memories"] == [{"content": "a"}]
+        assert "batch_write_memories" in recorded
+
+    def test_sync_decay_via_run_io(self, client, monkeypatch):
+        c, mm, sr = client
+        recorded = _record_run_io(monkeypatch)
+        seen = []
+        orig = mm.sync_decay_values
+
+        def _rec(workspace_id):
+            seen.append(workspace_id)
+            return orig(workspace_id)
+
+        _rec.__name__ = "sync_decay_values"  # 保持记录器可识别原方法名
+        mm.sync_decay_values = _rec
+        r = c.post("/memories/sync-decay")
+        assert r.status_code == 200
+        body = r.json()
+        assert set(body.keys()) == {"status", "result"}
+        assert body["result"] == {"synced": 1}
+        # workspace_id 默认值显式透传
+        assert seen == ["default"]
+        assert "sync_decay_values" in recorded

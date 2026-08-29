@@ -2,14 +2,16 @@
   "$schema": "http://json-schema.org/draft-07/schema#",
   "$id": "https://cx-o/public/schema/agent.schema.json",
   "title": "Agent",
-  "description": "Agent 配置数据契约（种子阶段，待 s0201 补全完整字段定义）",
+  "description": "Agent 配置数据契约（种子阶段，待 s0201 补全完整字段定义）。顶层接受扁平 list（[agent, ...]）或 {agents: [...]} 双形态（agent_store 兼容两种装载方式）",
   "_sourceOfTruth": {
-    "primary": "c:/CX-O/data/agents.json",
+    "primary": "c:/CX-O/CX-O-SERVER/data/agents.json",
     "secondary": [],
-    "note": "Agent 数据以 data/agents.json 为源真理，14 字段：id/name/description/system_prompt/model/temperature/max_tokens/use_memory/use_tools/memory_scene/decay_model/vision_enabled/is_default/created_at/updated_at"
+    "note": "Agent 数据以 CX-O-SERVER/data/agents.json 为源真理，14 字段：id/name/description/system_prompt/model/temperature/max_tokens/use_memory/use_tools/memory_scene/decay_model/vision_enabled/is_default/created_at/updated_at"
   },
   "_seedStage": true,
   "_completionSkill": "s0201",
+  "_version": "1.1.0",
+  "_changelog": "v1.1.0 _sourceOfTruth.primary 路径修正为 c:/CX-O/CX-O-SERVER/data/agents.json（旧路径 c:/CX-O/data/agents.json 与实际存储不符）；description 补注顶层扁平 list / {agents:[...]} 双形态兼容（已获人类显式授权的契约修正）",
   "type": "object",
   "properties": {},
   "required": [],

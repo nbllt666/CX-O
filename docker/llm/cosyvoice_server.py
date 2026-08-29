@@ -195,15 +195,17 @@ async def _stream_wav_pcm(gen, native_sr: int, volume: float = 1.0):
 async def _stream_wav_pcm_keepalive(gen, native_sr: int, volume: float = 1.0):
     """流式响应包装：_stream_wav_pcm + GPU 保活信号复位。
 
-    speech handler 在请求开始置位 _active_request（暂停保活 GEMM 与请求竞争），
-    流式响应在后台逐块生成，此处 finally 保证流式结束（含客户端断开/异常）后
-    复位信号，恢复保活。详见 .trae/documents/20260817_模块0_GPU保活增强消除降频.md
+    speech handler 在请求开始对 _active_count 计数 +1（暂停保活 GEMM 与请求
+    竞争），流式响应在后台逐块生成，此处 finally 保证流式结束（含客户端断开/
+    异常）后计数 -1；计数归零（count==0）即恢复保活——并发流式下每请求只减
+    自己的份额，不会提前恢复。详见 .trae/documents/20260817_模块0_GPU保活增强消除降频.md
     """
     try:
         async for chunk in _stream_wav_pcm(gen, native_sr, volume=volume):
             yield chunk
     finally:
-        _active_request.clear()
+        # 流式结束（含断开/异常）：请求计数 -1，归零后恢复保活
+        _active_count -= 1
 
 
 def _load_wav_bytes(raw: bytes, target_sr: int = 16000):
@@ -487,10 +489,13 @@ def _patch_llm_cudagraph(cv) -> bool:
                 max_len = tts_text_len * 20
 
                 # ---- 缓存容量保护：最小 token 数放不下则回退 ----
+                # eager fallback 与 graph replay 共享同一 LLM/StaticCache，须与 graph 路径
+                # 同锁（extra['lock']）串行，防止与其他请求跨线程并发 forward。
                 _prefill_len = lm_input.shape[1]
                 if _prefill_len + min_len > extra['max_cache_len']:
                     print("[WARN] LLM CUDA graph: prefill too long, fallback original")
-                    return _original_llm_job(text, prompt_text, llm_prompt_speech_token, llm_embedding, uuid)
+                    with extra['lock']:
+                        return _original_llm_job(text, prompt_text, llm_prompt_speech_token, llm_embedding, uuid)
 
                 _cache = extra['cache']
                 _inp_buf = extra['inp_buf']
@@ -561,9 +566,11 @@ def _patch_llm_cudagraph(cv) -> bool:
             except Exception as exc:
                 appended = len(self.tts_speech_token_dict.get(uuid, [])) - appended_before
                 if appended == 0:
-                    # 未产出 token，可安全回退原始实现
+                    # 未产出 token，可安全回退原始实现（eager 同样持 extra['lock']，
+                    # 防止与其他请求的 graph replay / eager forward 跨线程并发）
                     print(f"[WARN] LLM CUDA graph decode failed (fallback original): {exc}")
-                    return _original_llm_job(text, prompt_text, llm_prompt_speech_token, llm_embedding, uuid)
+                    with extra['lock']:
+                        return _original_llm_job(text, prompt_text, llm_prompt_speech_token, llm_embedding, uuid)
                 # 已产出部分 token：回退会重复，直接标记结束避免 tts() 挂起
                 print(f"[WARN] LLM CUDA graph decode aborted after {appended} tokens: {exc}")
                 self.llm_end_dict[uuid] = True
@@ -688,9 +695,11 @@ def create_app():
 
         t0 = time.monotonic()
         _t_parse_done = t0
-        # 请求进行中：暂停 GPU 保活（保活 GEMM 与真实请求竞争算力，详见
-        # .trae/documents/20260817_模块0_GPU保活增强消除降频.md）
-        _active_request.set()
+        # 请求进行中：请求计数 +1 暂停 GPU 保活（保活 GEMM 与真实请求竞争算力，
+        # 详见 .trae/documents/20260817_模块0_GPU保活增强消除降频.md）。
+        # 并发流式语义：多请求重叠时计数累加，先结束的请求只减自己的份额，
+        # 全部结束（count==0）后才恢复保活 GEMM。
+        _active_count += 1
         try:
             # CosyVoice3 的 LLM 会把 prompt_text + text 拼接后整体生成语音（llm.py concat）。
             # 参考转写文本若进入 prompt_text 会被念出来（回声/前缀问题）。
@@ -722,10 +731,10 @@ def create_app():
             _t_spk_done = time.monotonic()
             _t_gen_done = _t_spk_done
         except _SpeechHttpError as exc:
-            _active_request.clear()
+            _active_count -= 1  # 异常路径：撤销本请求的保活暂停计数
             return JSONResponse(status_code=exc.status_code, content={"error": {"message": exc.message}})
         except Exception as exc:
-            _active_request.clear()
+            _active_count -= 1  # 异常路径：撤销本请求的保活暂停计数
             return JSONResponse(status_code=500, content={"error": {"message": str(exc)}})
 
         # [DIAG-TIMING] 阶段计时：parse → spk → gen 创建
@@ -740,10 +749,14 @@ def create_app():
             # 注意：CosyVoice tts() 流式循环内会自增 token_hop_len（*stream_scale_factor），
             # 且跨请求持久化——此处每请求重置，避免后续请求首 hop 被放大到 100。
             if args.stream_hop_len and hasattr(cosyvoice.model, "token_hop_len"):
-                cosyvoice.model.token_hop_len = int(args.stream_hop_len)
-                cosyvoice.model.token_max_hop_len = max(
-                    cosyvoice.model.token_max_hop_len, 4 * int(args.stream_hop_len)
-                )
+                # 并发流式语义：token_hop_len/token_max_hop_len 是跨请求共享模型态，
+                # 复位须与 hift CUDA graph 静态缓冲一样纳入 _MODEL_STATE_LOCK，
+                # 防止与另一请求正在进行的流式 hop 推进竞写。
+                with _MODEL_STATE_LOCK:
+                    cosyvoice.model.token_hop_len = int(args.stream_hop_len)
+                    cosyvoice.model.token_max_hop_len = max(
+                        cosyvoice.model.token_max_hop_len, 4 * int(args.stream_hop_len)
+                    )
             print(f"[CosyVoice] streaming start {len(text)} chars cache_hit={zero_shot_spk_id in cosyvoice.frontend.spk2info} "
                   f"token_hop_len={getattr(cosyvoice.model, 'token_hop_len', 'n/a')} speed={speed} volume={volume}")
             return StreamingResponse(
@@ -753,7 +766,7 @@ def create_app():
 
         # 非流式：audio_bytes 已在后台线程（_full_synth）内完成全量合成并编码
         print(f"[CosyVoice] synthesized {len(text)} chars -> {len(audio_bytes)} bytes ({time.monotonic()-t0:.2f}s) cache_hit={zero_shot_spk_id in cosyvoice.frontend.spk2info}")
-        _active_request.clear()
+        _active_count -= 1  # 非流式完成：撤销本请求的保活暂停计数（归零恢复保活）
         return Response(content=audio_bytes, media_type="audio/wav")
 
     return app
@@ -804,9 +817,14 @@ def _run_warmup(cv, args) -> None:
         print(f"[WARN] Warmup failed (server will still start): {exc}")
 
 
-# GPU 保活信号：_active_request 为 True 时保活线程暂停（避免与真实请求竞争算力）
+# GPU 保活信号：_active_count 为进行中请求数（引用计数）。并发流式请求会重叠，
+# 原 Event 的 set/clear 二值语义在多请求交叉时会被先结束的请求提前 clear（此时
+# 另一请求仍在推理），保活 GEMM 与真实请求竞争算力。改为引用计数：
+# _active_count > 0 暂停保活；count == 0 恢复保活 GEMM。
+# 所有 += / -= 写点均在 asyncio 事件循环线程（speech handler / 流式包装器
+# finally），天然串行无竞写；保活线程仅做读取（GIL 下 int 读取原子）。
 # 详见 .trae/documents/20260817_模块0_GPU保活增强消除降频.md
-_active_request = threading.Event()  # 未设置 = 空闲（无请求），保活线程可执行 GEMM
+_active_count = 0  # >0 = 有请求进行中（暂停保活），==0 = 空闲（保活可执行 GEMM）
 
 
 class _SpeechHttpError(Exception):
@@ -818,10 +836,25 @@ class _SpeechHttpError(Exception):
         self.message = message
 
 
-# speech 端点同步推理互斥：add_zero_shot_spk / inference_* / _synth_chunks 共享单模型，
-# 且 #3 会把部分权重临时卸载；并发线程访问同一个 model 会产生竞争/重复卸载。用这把全
-# 局锁串行化对这些共享模型的访问（在 asyncio.to_thread 后台线程内为同进程唯一持有者）。
-_SYNTH_LOCK = _threading.Lock()
+# speech 端点推理互斥采用「细粒度锁」策略，本锁并非覆盖全部推理段：
+# - _SYNTH_LOCK 仅覆盖 speech 端点的 prep 段（ref 解析 + add_zero_shot_spk speaker
+#   注册 + gen 构造）与非流式全量合成段（_full_synth 含 _synth_chunks）；#3 会把部分
+#   权重临时卸载，prep/全量段持本锁可防卸载后模型竞争。
+# - 流式路径的逐块推理（llm_job / flow / hift 逐 hop）刻意不持 _SYNTH_LOCK（整段包锁
+#   会显著伤 TTFT 与并发度），改用细粒度锁保护共享模型态：
+#   * llm CUDA graph：extra['lock']（_patch_llm_cudagraph 内，replay 与 eager fallback 同锁）；
+#   * hift CUDA graph：_MODEL_STATE_LOCK（replay / eager 计算 / capture 全部持锁）；
+#   * token_hop_len 等 hop 共享模型态：_MODEL_STATE_LOCK（speech 端点流式复位处）。
+# 注：threading 已在模块头导入；此前此处误用 _patch_llm_cudagraph 函数内的
+# `import threading as _threading` 别名（模块级执行时 NameError），已改回 threading。
+_SYNTH_LOCK = threading.Lock()
+
+# 模型态互斥锁：保护 hift CUDA graph patch 的静态缓冲（xc_static/sstft_static/
+# mag_out/phase_out 等 closure 单例）与 cosyvoice.model.token_hop_len 等跨请求
+# 共享模型态。并发流式请求若同时执行 copy_→replay→读静态输出，会把对方输入写进
+# 同一静态缓冲产生错乱音频；token_hop_len 复位与流式 hop 推进同理。锁粒度仅覆盖
+# 模型态写段，不覆盖网络/文本处理。
+_MODEL_STATE_LOCK = threading.Lock()
 
 
 def _patch_hift_decode_cudagraph(cosyvoice) -> bool:
@@ -852,6 +885,9 @@ def _patch_hift_decode_cudagraph(cosyvoice) -> bool:
         orig_decode = h.decode  # 原始 decode（未绑定实例的类方法函数）
 
         # 可变状态（闭包持有，跨调用保持）
+        # graph_failed / graph_retry_left：capture 失败退避标记——失败后不再逐 hop 重试
+        # （每次重试含 3 次 warmup+capture，持续失败会持续劣化性能），每模型进程生命
+        # 周期至多重试一次，重试机会耗尽后只走 eager 路径（见 wrapped_decode）。
         state = {
             "graph": None,
             "xc_static": None,
@@ -860,6 +896,8 @@ def _patch_hift_decode_cudagraph(cosyvoice) -> bool:
             "phase_out": None,
             "captured_key": None,
             "device": None,
+            "graph_failed": False,
+            "graph_retry_left": 1,
         }
 
         def _transform_source(s: _t.Tensor):
@@ -904,7 +942,7 @@ def _patch_hift_decode_cudagraph(cosyvoice) -> bool:
             )
 
         def _capture(xc: _t.Tensor, s_stft: _t.Tensor):
-            """按 (xc, s_stft) 形状捕获中间段 CUDA graph。失败静默（保持 eager）。"""
+            """按 (xc, s_stft) 形状捕获中间段 CUDA graph。失败记 graph_failed 标记（保持 eager，退避见 wrapped_decode）。"""
             try:
                 dev = xc.device
                 state["device"] = dev
@@ -925,8 +963,10 @@ def _patch_hift_decode_cudagraph(cosyvoice) -> bool:
                 print(f"[Patch] hift decode middle CUDA graph captured for "
                       f"{tuple(xc.shape)}/{tuple(s_stft.shape)}")
             except Exception as exc:  # noqa: BLE001 - 捕获失败不影响正确性
-                print(f"[WARN] hift decode CUDA graph capture failed (keep eager): {exc}")
                 state["graph"] = None
+                state["graph_failed"] = True  # 失败标记：停止逐 hop 重试（退避见 wrapped_decode）
+                print(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] [WARN] hift decode CUDA graph capture "
+                      f"failed (mark graph_failed, eager-only until retry): {exc}")
 
         def wrapped_decode(x: _t.Tensor, s: _t.Tensor, finalize: bool = True) -> _t.Tensor:
             """替代 hift.decode。stft/conv_pre/istft eager；中间 conv 段走 CUDA graph（shape 匹配时）。"""
@@ -947,27 +987,42 @@ def _patch_hift_decode_cudagraph(cosyvoice) -> bool:
                         and key == state["captured_key"]
                         and xc.device == state["device"]
                         and s_stft.device == state["device"]):
-                    # shape 命中：copy 输入进静态缓冲 → replay → 取静态输出
-                    xc_c = xc.contiguous()
-                    s_stft_c = s_stft.contiguous()
-                    with _t.no_grad():
-                        state["xc_static"].copy_(xc_c)
-                        state["sstft_static"].copy_(s_stft_c)
-                        state["graph"].replay()
-                    magnitude = state["mag_out"]
-                    phase = state["phase_out"]
-                    out = _istft(magnitude, phase)
-                    out = out[:, :-int(U * h.istft_params["hop_len"])]
-                    return _t.clamp(out, -h.audio_limit, h.audio_limit)
+                    # shape 命中：copy 输入进静态缓冲 → replay → 读静态输出。
+                    # 并发流式语义：xc_static/sstft_static/mag_out/phase_out 是闭包
+                    # 单例（跨请求共享），copy_→replay→消费输出（istft/clamp 生成
+                    # 独立张量）必须整段持 _MODEL_STATE_LOCK 原子完成，否则并发请求
+                    # 交叉写同一静态缓冲会产生错乱音频；返回值不再引用静态缓冲。
+                    with _MODEL_STATE_LOCK:
+                        xc_c = xc.contiguous()
+                        s_stft_c = s_stft.contiguous()
+                        with _t.no_grad():
+                            state["xc_static"].copy_(xc_c)
+                            state["sstft_static"].copy_(s_stft_c)
+                            state["graph"].replay()
+                        out = _istft(state["mag_out"], state["phase_out"])
+                        out = out[:, :-int(U * h.istft_params["hop_len"])]
+                        return _t.clamp(out, -h.audio_limit, h.audio_limit)
 
-                # eager 或捕获新 graph（首 hop / shape 变化时在此捕获）
-                if not finalize and state["graph"] is None:
-                    _capture(xc, s_stft)
-                magnitude, phase = _middle(xc, s_stft)
-                out = _istft(magnitude, phase)
-                if not finalize:
-                    out = out[:, :-int(U * h.istft_params["hop_len"])]
-                return _t.clamp(out, -h.audio_limit, h.audio_limit)
+                # eager 或捕获新 graph（首 hop / shape 变化时在此捕获）。
+                # 并发语义：capture 的 warmup+捕获需独占 CUDA stream（其他线程并发提交
+                # 会破坏捕获），与 replay 路径同锁（_MODEL_STATE_LOCK）串行化；capture
+                # 失败记 graph_failed 后不再逐 hop 重试，每模型进程生命周期至多重试一次，
+                # 重试机会耗尽后只走 eager 路径。
+                if (not finalize and state["graph"] is None
+                        and (not state["graph_failed"] or state["graph_retry_left"] > 0)):
+                    with _MODEL_STATE_LOCK:
+                        if state["graph_failed"] and state["graph_retry_left"] > 0:
+                            state["graph_retry_left"] -= 1  # 消耗最后一次重试机会
+                        _capture(xc, s_stft)
+
+                # eager 计算段（shape 不匹配 / capture 失败 / finalize 尾块）：与 replay
+                # 共享 hift 模块与窗口，同样纳入 _MODEL_STATE_LOCK 防跨线程并发 forward。
+                with _MODEL_STATE_LOCK:
+                    magnitude, phase = _middle(xc, s_stft)
+                    out = _istft(magnitude, phase)
+                    if not finalize:
+                        out = out[:, :-int(U * h.istft_params["hop_len"])]
+                    return _t.clamp(out, -h.audio_limit, h.audio_limit)
             except Exception:  # noqa: BLE001 - 任何异常回退原始 decode
                 return orig_decode(x, s, finalize=finalize)
 
@@ -987,8 +1042,8 @@ def _start_gpu_keepalive() -> None:
     串联），GPU 在请求间隙降频到 ~210MHz（nvidia-smi 实测 idle 36°C/22W），下一请求
     首块须等待升频 → 0.35s/0.70s 冷热交替，P95 超标。原 1024x1024 GEMM @ 20ms
     占空比 <1%（~0.2ms 计算 + 20ms 空闲），不足以阻止降频。升级到 4096x4096 GEMM
-    （~5.3ms 计算）+ 时隙 10ms，占 GPU ~50%，通过 _active_request Event 在真实请求
-    进行中暂停保活，消除竞争。
+    （~5.3ms 计算）+ 时隙 10ms，占 GPU ~50%，通过 _active_count 引用计数在真实
+    请求进行中暂停保活（并发流式下 count==0 才恢复），消除竞争。
 
     管理员权限下 `nvidia-smi -lgc` 不可用（Windows 平台 exit=4），此为软件替代方案。
     """
@@ -1003,8 +1058,8 @@ def _start_gpu_keepalive() -> None:
         _stop = threading.Event()
         def _pulse():
             while not _stop.is_set():
-                # 请求进行中 → 跳过本次保活（等待 ~10ms 后重试）
-                if _active_request.is_set():
+                # 请求进行中（_active_count > 0）→ 跳过本次保活（等待 ~10ms 后重试）
+                if _active_count != 0:
                     _stop.wait(0.01)
                     continue
                 with _torch.inference_mode():

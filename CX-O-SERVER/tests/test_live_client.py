@@ -18,6 +18,15 @@ import pytest
 from server.services import live_client as lc
 
 
+async def _drain_until(predicate, tries=200):
+    """让出事件循环直至条件满足（后台任务执行），超时返回最终判定。"""
+    for _ in range(tries):
+        if predicate():
+            return True
+        await asyncio.sleep(0.001)
+    return predicate()
+
+
 # ================================================================ 假依赖
 class FakeManager:
     def __init__(self):
@@ -79,8 +88,10 @@ class FakeInterruptModule:
         self.configs = []
         self.tts_playing_set = []
         self.session_ids = []
+        self.asr_calls = []  # R9-03：记录打断判定调用（text, is_final）
 
     async def on_asr_result(self, text, is_final=False):
+        self.asr_calls.append((text, is_final))
         return "INTERRUPT", True
 
     def set_tts_playing(self, playing):
@@ -123,6 +134,15 @@ def handler(monkeypatch):
     monkeypatch.setattr(lc, "get_frontend_marker", lambda: fm)
     monkeypatch.setattr(lc, "get_asr_interrupt_module", lambda client_id=None: im)
     monkeypatch.setattr(lc, "get_agent_interrupt_module", lambda client_id=None: ai)
+
+    # R9-02：默认屏蔽真实 audio.set_tts_playing（避免测试触碰全局 per-client
+    # 打断模块注册表与跨事件循环的模块级锁），各用例可再覆盖为带记录假件
+    import server.handlers.audio as audio_mod
+
+    async def _noop_set_tts(client_id, playing):
+        return None
+
+    monkeypatch.setattr(audio_mod, "set_tts_playing", _noop_set_tts)
 
     h = lc.LiveClientHandler(manager, "c1", {})
     # 重绑定 fixture 内可访问的依赖
@@ -343,9 +363,15 @@ class TestAudio:
                             lambda client_id: FakeStreamProcessor(vad=vad, asr=asr))
         monkeypatch.setattr(lc, "get_asr_interrupt_module", lambda client_id=None: im)
         await handler.handle_audio(None, b"\x00", "c1")
+        # R9-03：打断判定在后台任务执行——让出事件循环直至 interrupt 帧回发
+        await _drain_until(
+            lambda: any(m[1]["type"] == "interrupt" for m in handler._manager.sent)
+        )
         types = [m[1]["type"] for m in handler._manager.sent]
         assert "asr_result" in types
         assert "interrupt" in types
+        # 打断判定确已被调用（后台任务执行了 on_asr_result）
+        assert im.asr_calls == [("你好", True)]
         # interrupt 消息数据
         inter = [m[1] for m in handler._manager.sent if m[1]["type"] == "interrupt"][0]
         assert inter["data"]["text"] == "你好"
@@ -447,6 +473,14 @@ def reply_env(monkeypatch, handler):
     monkeypatch.setattr(lc, "_LIVE_TTS_MIN_DURATION_MS", 0)
     monkeypatch.setattr(lc, "_LIVE_TTS_MS_PER_CHAR", 0)
     monkeypatch.setattr(lc, "_LIVE_TTS_TICK_INTERVAL", 0.001)
+    # R9-02：屏蔽播报置位的真实 audio.set_tts_playing（避免测试触碰全局
+    # per-client 打断模块注册表），由各用例按需替换为带记录的假件
+    import server.handlers.audio as audio_mod
+
+    async def _noop_set_tts(client_id, playing):
+        return None
+
+    monkeypatch.setattr(audio_mod, "set_tts_playing", _noop_set_tts)
 
     feedback = []
     monkeypatch.setattr(
@@ -476,6 +510,9 @@ class TestLiveReplyPipeline:
         resp = [m for m in msgs if m["type"] == "response"]
         assert len(resp) == 1
         assert resp[0]["data"]["content"] == "你好呀！"
+        # R9-05：播报已转后台任务——收尾等待完成，避免用例结束时任务仍挂起
+        if handler._announce_task is not None:
+            await handler._announce_task
 
     @pytest.mark.asyncio
     async def test_reply_context_feedback_and_subtitle(self, reply_env):
@@ -487,7 +524,9 @@ class TestLiveReplyPipeline:
         assert ("s1", {"role": "assistant", "content": "收到！"}) in handler.context_manager.messages
         # 隐式反馈记录（既有增量接入点被打通）
         assert feedback == [("收到！", "hi")]
-        # 字幕播报同步随回复触发
+        # R9-05：字幕播报为后台任务——等待在途播报任务完成后验证同步帧
+        assert handler._announce_task is not None
+        await handler._announce_task
         types = [m["type"] for _, m in handler._manager.channel_broadcasts]
         assert types[0] == "stream" and "tts_sync" in types and "tts_end" in types
 
@@ -622,3 +661,262 @@ class TestSubtitleSync:
         await handler._announce_reply_subtitles("无标点结尾")
         syncs = [m for _, m in handler._manager.channel_broadcasts if m["type"] == "tts_sync"]
         assert [m["data"]["text"] for m in syncs] == ["无标点结尾"]
+
+
+# ================================================================ R9-02: live TTS 置位
+class TestLiveTtsPlaying:
+    @pytest.mark.asyncio
+    async def test_announce_sets_tts_playing_true_then_false(self, handler, monkeypatch):
+        """R9-02：播报开始置位 TTS 播放状态，结束 finally 复位（live 路径的
+        "TTS 播放"即字幕播报，此前从未置位 → 打断判定死路径）。"""
+        im = FakeInterruptModule(enabled=True)
+        monkeypatch.setattr(lc, "get_asr_interrupt_module", lambda client_id=None: im)
+        tts_calls = []
+
+        async def fake_set_tts(client_id, playing):
+            tts_calls.append((client_id, playing))
+            im._tts_playing = playing
+
+        import server.handlers.audio as audio_mod
+        monkeypatch.setattr(audio_mod, "set_tts_playing", fake_set_tts)
+
+        release = asyncio.Event()
+
+        async def slow_announce(text):
+            await release.wait()
+
+        monkeypatch.setattr(handler, "_announce_reply_subtitles", slow_announce)
+
+        task = asyncio.create_task(handler._announce_pipeline("你好"))
+        await asyncio.sleep(0.01)
+        # 播报进行中：已置位
+        assert im._tts_playing is True
+        assert tts_calls[0] == ("c1", True)
+        release.set()
+        await task
+        # 播报结束：finally 复位
+        assert im._tts_playing is False
+        assert tts_calls[-1] == ("c1", False)
+
+    @pytest.mark.asyncio
+    async def test_announce_reset_on_exception(self, handler, monkeypatch):
+        """R9-02：播报异常时 TTS 播放状态同样在 finally 复位。"""
+        im = FakeInterruptModule(enabled=True)
+        monkeypatch.setattr(lc, "get_asr_interrupt_module", lambda client_id=None: im)
+
+        async def fake_set_tts(client_id, playing):
+            im._tts_playing = playing
+
+        import server.handlers.audio as audio_mod
+        monkeypatch.setattr(audio_mod, "set_tts_playing", fake_set_tts)
+
+        async def boom(text):
+            raise RuntimeError("broadcast down")
+
+        monkeypatch.setattr(handler, "_announce_reply_subtitles", boom)
+
+        with pytest.raises(RuntimeError):
+            await handler._announce_pipeline("你好")
+        assert im._tts_playing is False
+
+    @pytest.mark.asyncio
+    async def test_interrupt_decision_triggered_while_tts_playing(self, handler, monkeypatch):
+        """R9-02+R9-03 端到端：live TTS 置位后，handle_audio 的打断判定门控
+        放行，后台判定任务执行 on_asr_result 并回发 interrupt 帧。"""
+        vad = {"is_speaking": False, "speech_probability": 0.0,
+               "speech_duration_ms": 0, "state_changed": False}
+        asr = {"text": "停一下"}
+        im = FakeInterruptModule(enabled=True, tts_playing=True)  # 置位后状态
+        monkeypatch.setattr(lc, "ensure_stream_processor_configured",
+                            lambda client_id: FakeStreamProcessor(vad=vad, asr=asr))
+        monkeypatch.setattr(lc, "get_asr_interrupt_module", lambda client_id=None: im)
+
+        await handler.handle_audio(None, b"\x00", "c1")
+        await _drain_until(
+            lambda: any(m[1]["type"] == "interrupt" for m in handler._manager.sent)
+        )
+        # 打断判定被触发（fake interrupt module 收到调用）
+        assert im.asr_calls == [("停一下", True)]
+        inters = [m[1] for m in handler._manager.sent if m[1]["type"] == "interrupt"]
+        assert len(inters) == 1
+        assert inters[0]["data"]["source"] == "asr"
+        assert inters[0]["data"]["text"] == "停一下"
+
+    @pytest.mark.asyncio
+    async def test_interrupt_check_not_playing_gate_still_blocks(self, handler, monkeypatch):
+        """门控保持：未置位（未播报）时不调度打断判定。"""
+        vad = {"is_speaking": False, "speech_probability": 0.0,
+               "speech_duration_ms": 0, "state_changed": False}
+        asr = {"text": "hi"}
+        im = FakeInterruptModule(enabled=True, tts_playing=False)
+        monkeypatch.setattr(lc, "ensure_stream_processor_configured",
+                            lambda client_id: FakeStreamProcessor(vad=vad, asr=asr))
+        monkeypatch.setattr(lc, "get_asr_interrupt_module", lambda client_id=None: im)
+        await handler.handle_audio(None, b"\x00", "c1")
+        await _drain_until(lambda: bool(im.asr_calls))
+        assert im.asr_calls == []
+
+
+# ================================================================ R9-03: 打断判定后台化
+class TestDeferredInterruptCheck:
+    @pytest.mark.asyncio
+    async def test_decision_runs_in_background_without_blocking(self, handler, monkeypatch):
+        """R9-03：on_asr_result 阻塞（模拟 LLM 秒级判定）时 handle_audio
+        立即返回，收帧热路径（vad_frame）先行推进，不被判定阻塞。"""
+        vad = {"is_speaking": False, "speech_probability": 0.0,
+               "speech_duration_ms": 0, "state_changed": False}
+        asr = {"text": "你好"}
+        im = FakeInterruptModule(enabled=True, tts_playing=True)
+        gate = asyncio.Event()
+
+        async def slow_on_asr_result(text, is_final=False):
+            im.asr_calls.append((text, is_final))
+            await gate.wait()  # 模拟 LLM 判定耗时
+            return "INTERRUPT", True
+
+        monkeypatch.setattr(im, "on_asr_result", slow_on_asr_result)
+        monkeypatch.setattr(lc, "ensure_stream_processor_configured",
+                            lambda client_id: FakeStreamProcessor(vad=vad, asr=asr))
+        monkeypatch.setattr(lc, "get_asr_interrupt_module", lambda client_id=None: im)
+
+        await handler.handle_audio(None, b"\x00", "c1")
+
+        # handle_audio 返回时判定任务仍在阻塞（未阻塞热路径）
+        types = [m[1]["type"] for m in handler._manager.sent]
+        assert "vad_frame" in types          # 热路径已推进完
+        assert "interrupt" not in types      # 判定未完成，无打断帧
+        # 释放判定 → interrupt 帧随后回发
+        gate.set()
+        await _drain_until(
+            lambda: any(m[1]["type"] == "interrupt" for m in handler._manager.sent)
+        )
+        assert any(m[1]["type"] == "interrupt" for m in handler._manager.sent)
+
+    @pytest.mark.asyncio
+    async def test_stale_epoch_decision_discarded(self, handler, monkeypatch):
+        """R9-03 代际护栏：判定排队期间新 utterance 开始（speech_start 推进
+        代际）→ 旧判定过期丢弃，不回发打断帧。"""
+        im = FakeInterruptModule(enabled=True, tts_playing=True)
+        gate = asyncio.Event()
+
+        async def gated_on_asr_result(text, is_final=False):
+            im.asr_calls.append((text, is_final))
+            await gate.wait()
+            return "INTERRUPT", True
+
+        monkeypatch.setattr(im, "on_asr_result", gated_on_asr_result)
+
+        # 第 1 帧：TTS 播放中收到用户语音（触发判定，判定阻塞在 gate）
+        vad1 = {"is_speaking": True, "speech_probability": 0.9,
+                "speech_duration_ms": 100, "state_changed": False}
+        monkeypatch.setattr(lc, "ensure_stream_processor_configured",
+                            lambda client_id: FakeStreamProcessor(vad=vad1, asr={"text": "第一句"}))
+        monkeypatch.setattr(lc, "get_asr_interrupt_module", lambda client_id=None: im)
+        await handler.handle_audio(None, b"\x00", "c1")
+        # 等待后台判定任务真正启动并阻塞在 gate 上
+        await _drain_until(lambda: bool(im.asr_calls))
+        assert im.asr_calls == [("第一句", False)]
+
+        # 第 2 帧：新 utterance 开始（speech_start）→ 代际推进
+        vad2 = {"is_speaking": True, "speech_probability": 0.9,
+                "speech_duration_ms": 200, "state_changed": True}
+        monkeypatch.setattr(lc, "ensure_stream_processor_configured",
+                            lambda client_id: FakeStreamProcessor(vad=vad2))
+        await handler.handle_audio(None, b"\x00", "c1")
+        assert handler._utterance_epoch == 1
+
+        # 释放第 1 句判定 → 代际过期 → 丢弃，无 interrupt 帧
+        gate.set()
+        await _drain_until(lambda: len(im.asr_calls) == 1 and not handler._interrupt_tasks)
+        assert not any(m[1]["type"] == "interrupt" for m in handler._manager.sent)
+
+    @pytest.mark.asyncio
+    async def test_decision_error_swallowed(self, handler, monkeypatch):
+        """后台判定异常被吞掉并留痕，不影响后续收帧（无异常上抛）。"""
+        vad = {"is_speaking": False, "speech_probability": 0.0,
+               "speech_duration_ms": 0, "state_changed": False}
+        asr = {"text": "hi"}
+        im = FakeInterruptModule(enabled=True, tts_playing=True)
+
+        async def boom(text, is_final=False):
+            raise RuntimeError("llm down")
+
+        monkeypatch.setattr(im, "on_asr_result", boom)
+        monkeypatch.setattr(lc, "ensure_stream_processor_configured",
+                            lambda client_id: FakeStreamProcessor(vad=vad, asr=asr))
+        monkeypatch.setattr(lc, "get_asr_interrupt_module", lambda client_id=None: im)
+        await handler.handle_audio(None, b"\x00", "c1")
+        await _drain_until(lambda: len(handler._interrupt_tasks) == 0)
+        # 异常被吞：无 interrupt 帧，热路径消息不受影响
+        assert not any(m[1]["type"] == "interrupt" for m in handler._manager.sent)
+        assert any(m[1]["type"] == "vad_frame" for m in handler._manager.sent)
+
+
+# ================================================================ R9-05: 播报后台化
+class TestAnnounceBackground:
+    @pytest.mark.asyncio
+    async def test_reply_pipeline_returns_before_announce_finishes(self, handler, monkeypatch):
+        """R9-05：_reply_pipeline 不再 await 播报——生成完成即返回，播报在
+        后台独立任务在途；_reply_task 在途守卫因此仅覆盖生成阶段。"""
+        handler._session_id = "s1"
+
+        async def fake_cfg(agent_id):
+            return {"name": "A", "model": "main", "max_tokens": 64}
+
+        monkeypatch.setattr("server.chat_helpers.get_agent_config_async", fake_cfg)
+        llm = FakeLiveLLM(chunks=[{"type": "content", "content": "收到！"}])
+        monkeypatch.setattr("server.chat_helpers.get_llm_client_for_agent", lambda cfg: llm)
+        monkeypatch.setattr(
+            "server.prompt_builder.build_messages",
+            lambda cfg, cm, sid, text, **kw: [{"role": "user", "content": text}],
+        )
+
+        gate = asyncio.Event()
+
+        async def gated_announce(text):
+            await gate.wait()  # 长播报挂起
+
+        monkeypatch.setattr(handler, "_announce_reply_subtitles", gated_announce)
+
+        await handler._reply_pipeline("hi")  # 应立即返回（不等播报）
+        assert handler._announce_task is not None
+        assert not handler._announce_task.done()
+        # 生成任务已完成（在途守卫不覆盖播报阶段，新回复不再被丢弃）
+        assert handler._reply_task is None or handler._reply_task.done()
+        gate.set()
+        await handler._announce_task
+
+    @pytest.mark.asyncio
+    async def test_schedule_announce_registers_tracked_task(self, handler):
+        """_schedule_announce 登记强引用任务集（防 GC），完成后自动清理。"""
+        handler._schedule_announce("hi")
+        task = handler._announce_task
+        assert task is not None
+        assert task in lc._announce_tasks
+        await task
+        assert task not in lc._announce_tasks
+
+    @pytest.mark.asyncio
+    async def test_announce_tasks_serialized_by_lock(self, handler, monkeypatch):
+        """R9-05 并发安全：并发两轮播报经 per-client 播报锁串行排队，
+        不会双任务同时推同一字幕队列。"""
+        import server.handlers.audio as audio_mod
+
+        async def _noop_set_tts(client_id, playing):
+            return None
+
+        monkeypatch.setattr(audio_mod, "set_tts_playing", _noop_set_tts)
+        order = []
+
+        async def fake_announce(text):
+            order.append(f"start:{text}")
+            await asyncio.sleep(0.01)
+            order.append(f"end:{text}")
+
+        monkeypatch.setattr(handler, "_announce_reply_subtitles", fake_announce)
+
+        t1 = asyncio.create_task(handler._announce_pipeline("一"))
+        t2 = asyncio.create_task(handler._announce_pipeline("二"))
+        await asyncio.gather(t1, t2)
+        # 严格串行：第一轮完整结束后第二轮才开始
+        assert order == ["start:一", "end:一", "start:二", "end:二"]

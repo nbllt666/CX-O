@@ -26,6 +26,7 @@ from typing import Any, Dict, Optional
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
 
+from server.api.routers._pagination import clamp_pagination
 from server.core.decision.decision_core import (
     DECISION_EXECUTOR,
     DecisionCore,
@@ -341,8 +342,8 @@ async def decide_reject(request: D6RejectRequest, http_request: Request):
 @router.get("/decision/rejected/{session_id}")
 async def get_rejected_content(session_id: str, http_request: Request, limit: int = 50):
     """查询指定会话的被拒绝内容。"""
-    # R9: 分页参数钳制（对齐 tuner.py:252 惯例）
-    limit = max(1, min(int(limit), 200))
+    # T-07: 分页钳制统一走 _pagination.clamp_pagination（本端点仅 limit，无 offset）
+    limit, _ = clamp_pagination(limit)
     services = http_request.app.state.services
     mm = getattr(services, "memory_manager", None)
     if mm is None or not hasattr(mm, "get_rejected_content"):

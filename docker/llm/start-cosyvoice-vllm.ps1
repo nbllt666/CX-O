@@ -12,12 +12,16 @@
 #     --flow-cfg-rate 0  : 关闭 CFG（batch=1）。⚠️ flow_steps=1 + CFG on 会产生削波/波形断裂 artifact，必须为 0
 #     --stream-hop-len 5 : 首 hop 5 token（配合 token_min_hop_len 覆盖）
 #   - 回退参数: --flow-steps 3（去掉 --flow-cfg-rate）即恢复 baseline（首块 ~0.57s 但音质最稳）
+param(
+    # 模型根目录（宿主机侧，容器固定挂载到 /workspace/models；默认值保持原硬编码路径兼容）
+    [string]$ModelsPath = "C:\CX-O\models"
+)
 $ErrorActionPreference = "Stop"
 
 $IMAGE = "cosyvoice-vllm:latest"
 $CONTAINER = "cosyvoice-vllm"
 $PORT = "8094"
-$MODEL_DIR = "C:\CX-O\models\Fun-CosyVoice3-0.5B-2512"
+$MODEL_DIR = Join-Path $ModelsPath "Fun-CosyVoice3-0.5B-2512"
 $MODEL_CONTAINER = "/workspace/models/Fun-CosyVoice3-0.5B-2512"
 
 # 已存在则先停旧容器
@@ -33,9 +37,10 @@ $runArgs = @(
     "--name", $CONTAINER,
     "--gpus", "all",
     "-e", "CUDA_VISIBLE_DEVICES=1",
-    "-v", "C:\CX-O\models:/workspace/models",
+    "-v", "${ModelsPath}:/workspace/models",
     "-p", "${PORT}:${PORT}",
     "--shm-size=4g",
+    "--restart", "unless-stopped",
     $IMAGE,
     "python", "/workspace/server.py",
     "--model_dir", $MODEL_CONTAINER,

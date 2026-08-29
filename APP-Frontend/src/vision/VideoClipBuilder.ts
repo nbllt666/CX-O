@@ -137,19 +137,48 @@ export class VideoClipBuilder<T> {
     recorder.ondataavailable = (e) => {
       if (e.data && e.data.size > 0) chunks.push(e.data);
     };
-    const stopped = new Promise<void>((resolve) => {
-      recorder.onstop = () => resolve();
+    // stopped：onstop resolve；onerror reject（对齐 onstop 的收尾路径，避免录制
+    // 异常时 await 永久挂起）。两者都触发时以先 settle 者为准，防止未处理 rejection。
+    let settled = false;
+    const stopped = new Promise<void>((resolve, reject) => {
+      recorder.onstop = () => {
+        if (!settled) {
+          settled = true;
+          resolve();
+        }
+      };
+      recorder.onerror = (event) => {
+        if (!settled) {
+          settled = true;
+          const err = (event as unknown as { error?: unknown }).error;
+          reject(err instanceof Error ? err : new Error('MediaRecorder 录制异常'));
+        }
+      };
     });
     recorder.start();
 
     // 逐帧绘制到低分辨率画布，帧间隔由 ts 密度估算（clamp 到 [16,500]ms）
     const intervalMs = Math.min(500, Math.max(16, Math.round(1000 / fps)));
-    for (const f of frames) {
-      // 浏览器下 T 为可绘制源（CanvasImageSource）；此绘制仅真实 canvas 环境执行
-      ctx.drawImage(f.frame as unknown as CanvasImageSource, 0, 0, options.width, options.height);
-      await new Promise((r) => setTimeout(r, intervalMs));
+    try {
+      for (const f of frames) {
+        // 浏览器下 T 为可绘制源（CanvasImageSource）；此绘制仅真实 canvas 环境执行
+        ctx.drawImage(f.frame as unknown as CanvasImageSource, 0, 0, options.width, options.height);
+        await new Promise((r) => setTimeout(r, intervalMs));
+      }
+    } catch (err) {
+      // 绘制/等待异常（如帧源已释放）：仍终止 recorder 保住 onstop 清理路径，再向上抛出
+      try {
+        if (recorder.state !== 'inactive') recorder.stop();
+        await stopped;
+      } catch {
+        // recorder 可能已因 error 自行停止（stopped 经 onerror reject），忽略二次异常
+      }
+      throw err;
+    } finally {
+      // 无论成功或异常都要停掉 captureStream 的轨道，避免 MediaStream 轨道泄漏
+      stream.getTracks().forEach((t) => t.stop());
     }
-    recorder.stop();
+    if (recorder.state !== 'inactive') recorder.stop();
     await stopped;
 
     if (chunks.length === 0) return null;

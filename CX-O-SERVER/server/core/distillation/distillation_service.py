@@ -1834,6 +1834,7 @@ class DistillationService:
         Raises:
             RuntimeError: MultimodalPipeline 预处理失败
             ConnectionError: MultimodalPipeline 不可用
+            TimeoutError: MultimodalPipeline 预处理超时（task_timeout，默认 120s）
         """
         artifact_summary = ""
         try:
@@ -1844,7 +1845,11 @@ class DistillationService:
                 )
                 ref = source_ref if source_ref else ""
                 try:
-                    artifact = self._multimodal_pipeline.preprocess(
+                    # F2 修复：preprocess 为同步实现（内部 future.result 阻塞等待，
+                    # 默认 task_timeout=120s），async 方法内直调会阻塞事件循环，
+                    # 卸载到 IO 线程执行（对齐本文件 922/1023 行 to_thread 先例）。
+                    artifact = await asyncio.to_thread(
+                        self._multimodal_pipeline.preprocess,
                         source_type=mp_source_type,
                         source_ref=ref,
                     )
@@ -1859,7 +1864,9 @@ class DistillationService:
                         f"vision_degraded={vision_degraded}] "
                         f"{text_content[:500]}"
                     )
-                except (ValueError, FileNotFoundError, RuntimeError, ConnectionError) as e:
+                # F2 修复：元组补 TimeoutError——preprocess 超时抛 TimeoutError，
+                # 此前未被捕获会穿透到外层转 500，best-effort 降级失效
+                except (ValueError, FileNotFoundError, RuntimeError, ConnectionError, TimeoutError) as e:
                     # best-effort：预处理失败时降级到占位摘要
                     logger.warning(
                         "MultimodalPipeline preprocess 降级 (source_type=%s): %s",

@@ -252,7 +252,7 @@ export function useLiveWebSocket(options: UseLiveWebSocketOptions = {}): UseLive
     disconnect: transportDisconnect,
     reconnect: transportReconnect,
   } = useWSTransport({
-    urlBuilder: () => `${getWsBaseUrl()}/ws/live${sessionId ? `?session_id=${sessionId}` : ''}`,
+    urlBuilder: () => `${getWsBaseUrl()}/ws/live${sessionId ? `?session_id=${encodeURIComponent(sessionId)}` : ''}`,
     binaryType: 'arraybuffer',
     reconnect: { strategy: 'exponential', delays: [100, 200, 500, 1000, 2000] },
     onOpen: (ws) => {

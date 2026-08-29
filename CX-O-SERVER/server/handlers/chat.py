@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Optional
 
 from server.core.utils import run_io
-from server.chat_helpers import get_agent_config, get_llm_client_for_agent, get_tools_for_agent, retrieve_memory_context, ensure_agent_session
+from server.chat_helpers import get_agent_config, get_llm_client_for_agent, get_tools_for_agent, retrieve_memory_context, ensure_agent_session_async
 from server.prompt_builder import build_messages
 from server.protocol.message import create_response, create_error, create_stream
 from server.protocol.actions import ChatActions
@@ -146,10 +146,11 @@ async def _build_chat_context(
     context_mgr = get_context_manager()
     llm = get_llm_client_for_agent(agent_config)
 
-    session_id = f"agent-{agent_id}"
-    ensure_agent_session(context_mgr, agent_id, agent_config["name"])
+    # 伴生C3 修复：ensure_session / add_message 均为同步 sqlite 直调，
+    # 改走异步变体（run_io 有界 IO 池），不再阻塞事件循环
+    session_id = await ensure_agent_session_async(context_mgr, agent_id, agent_config["name"])
 
-    context_mgr.add_message(session_id=session_id, role="user", content=user_message)
+    await context_mgr.add_message_async(session_id=session_id, role="user", content=user_message)
 
     memory_context = await retrieve_memory_context(
         agent_config, memory_mgr, user_message, session_id
@@ -265,7 +266,7 @@ def register_chat_handlers(manager: "WebSocketManager"):
 
             _record_live_feedback(final_response, text, ctx.session_id)
 
-            ctx.context_mgr.add_message(session_id=ctx.session_id, role="assistant", content=final_response)
+            await ctx.context_mgr.add_message_async(session_id=ctx.session_id, role="assistant", content=final_response)
 
             await _manager.send_message(client_id, create_response(
                 request_id=request_id,
@@ -313,7 +314,7 @@ def register_chat_handlers(manager: "WebSocketManager"):
 
             if full_response:
                 _record_live_feedback(full_response, text, ctx.session_id)
-                ctx.context_mgr.add_message(session_id=ctx.session_id, role="assistant", content=full_response)
+                await ctx.context_mgr.add_message_async(session_id=ctx.session_id, role="assistant", content=full_response)
 
             await _manager.send_message(client_id, create_stream(
                 request_id=request_id,
@@ -358,7 +359,7 @@ def register_chat_handlers(manager: "WebSocketManager"):
 
             _record_live_feedback(final_response, text, ctx.session_id)
 
-            ctx.context_mgr.add_message(session_id=ctx.session_id, role="assistant", content=final_response)
+            await ctx.context_mgr.add_message_async(session_id=ctx.session_id, role="assistant", content=final_response)
 
             await _manager.send_message(client_id, create_response(
                 request_id=request_id,

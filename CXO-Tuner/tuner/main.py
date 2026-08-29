@@ -127,6 +127,13 @@ def create_app(config: Optional[TunerConfig] = None) -> FastAPI:
                 scheduler_stop.set()
             if scheduler_thread is not None:
                 scheduler_thread.join(timeout=5.0)
+            # 生命周期结束释放 DatasetStore 持有的 sqlite 连接（dataset_store 为本
+            # lifespan 闭包内创建的实例，作用域覆盖 finally；json 后端无连接时 close
+            # 内部幂等跳过）。异常隔离，不影响其余清理。
+            try:
+                dataset_store.close()
+            except Exception as exc:  # noqa: BLE001 —— 关闭失败仅告警
+                logger.warning("DatasetStore 关闭失败: %s", exc)
 
     app = FastAPI(title="CXO-Tuner", version="1.0.0", lifespan=lifespan)
     app.state.config = resolved

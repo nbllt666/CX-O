@@ -18,6 +18,7 @@ import {
   Bot,
   Camera,
   Database,
+  KeyRound,
   Link2,
   Mic,
   MonitorPlay,
@@ -262,7 +263,21 @@ function SaveControl(props: {
   backendOffLabel: string;
 }) {
   const [status, setStatus] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
+  // 2s 复位定时器：新点击前先清除旧 timer，组件卸载时也清除，避免对已卸载组件 setState
+  const resetTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => {
+    return () => {
+      if (resetTimerRef.current !== null) {
+        clearTimeout(resetTimerRef.current);
+        resetTimerRef.current = null;
+      }
+    };
+  }, []);
   const handleClick = async () => {
+    if (resetTimerRef.current !== null) {
+      clearTimeout(resetTimerRef.current);
+      resetTimerRef.current = null;
+    }
     setStatus('saving');
     try {
       await props.onSave();
@@ -270,7 +285,10 @@ function SaveControl(props: {
     } catch {
       setStatus('error');
     }
-    setTimeout(() => setStatus('idle'), 2000);
+    resetTimerRef.current = setTimeout(() => {
+      resetTimerRef.current = null;
+      setStatus('idle');
+    }, 2000);
   };
   return (
     <div className="flex items-center gap-2 pt-1">
@@ -350,6 +368,8 @@ function AvatarSection() {
   const handleVrmFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
+    // 替换前释放旧值：旧值为浏览器上传的临时 blob URL 时先 revoke，避免反复选择造成泄漏
+    if (vrm.modelPath.startsWith('blob:')) URL.revokeObjectURL(vrm.modelPath);
     setVRMSettings({ modelPath: URL.createObjectURL(file) });
     e.target.value = '';
   };
@@ -775,6 +795,84 @@ function BackendSection() {
           ? t('settings.backend.electronHint')
           : t('settings.backend.browserHint')}
       </p>
+    </Section>
+  );
+}
+
+// ── 区块 3.5：管理密钥 ──
+// 管理面 x-api-key 录入（仅设置项，不做管理面板）：保存写 localStorage
+// （key 常量取自 base.ts STORAGE_KEYS.adminKey），base.ts 请求拦截器检测到已配置时
+// 自动为鉴权端点注入 x-api-key 头。输入框 type=password 且不回显已存值，仅展示配置状态徽标。
+
+function AdminKeySection() {
+  const { t } = useTranslation();
+  const [configured, setConfigured] = useState(
+    () => !!localStorage.getItem(STORAGE_KEYS.adminKey),
+  );
+  const [input, setInput] = useState('');
+
+  const handleSave = () => {
+    const key = input.trim();
+    if (!key) return;
+    localStorage.setItem(STORAGE_KEYS.adminKey, key);
+    setInput('');
+    setConfigured(true);
+  };
+
+  const handleClear = () => {
+    localStorage.removeItem(STORAGE_KEYS.adminKey);
+    setInput('');
+    setConfigured(false);
+  };
+
+  return (
+    <Section
+      icon={KeyRound}
+      title={t('settings.adminKey.sectionTitle')}
+      desc={t('settings.adminKey.sectionDesc')}
+    >
+      <Row label={t('settings.adminKey.statusLabel')}>
+        <span
+          className={cn(
+            'rounded-full px-2 py-0.5 text-[10px] font-medium',
+            configured
+              ? 'bg-emerald-500/15 text-emerald-400'
+              : 'bg-[rgba(255,255,255,0.1)] text-muted-foreground',
+          )}
+        >
+          {configured ? t('settings.adminKey.configured') : t('settings.adminKey.notConfigured')}
+        </span>
+      </Row>
+      <div className="rounded-lg border border-[var(--glass-border)] bg-[rgba(255,255,255,0.04)] px-3 py-2">
+        <input
+          type="password"
+          aria-label={t('settings.adminKey.inputLabel')}
+          value={input}
+          onChange={(e) => setInput(e.target.value)}
+          placeholder={t('settings.adminKey.inputPlaceholder')}
+          autoComplete="off"
+          className="w-full rounded-lg border border-[var(--glass-border)] bg-[rgba(255,255,255,0.06)] px-3 py-1.5 text-sm focus:border-[rgba(255,183,225,0.4)] focus:outline-none"
+        />
+        <div className="mt-2 flex items-center gap-2">
+          <button
+            type="button"
+            disabled={!input.trim()}
+            onClick={handleSave}
+            className="rounded-lg bg-primary px-3 py-1.5 text-xs font-medium text-primary-foreground transition-opacity hover:opacity-85 disabled:opacity-50"
+          >
+            {t('settings.adminKey.save')}
+          </button>
+          <button
+            type="button"
+            disabled={!configured}
+            onClick={handleClear}
+            className="rounded-lg border border-[var(--glass-border)] bg-[rgba(255,255,255,0.04)] px-3 py-1.5 text-xs text-muted-foreground transition-opacity hover:opacity-85 disabled:opacity-50"
+          >
+            {t('settings.adminKey.clear')}
+          </button>
+        </div>
+      </div>
+      <p className="text-xs text-muted-foreground">{t('settings.adminKey.hint')}</p>
     </Section>
   );
 }
@@ -2402,6 +2500,7 @@ export default function SettingsPage() {
       <AvatarSection />
       <LiveSection />
       <BackendSection />
+      <AdminKeySection />
       <AudioSection />
       <CaptureSection />
       <LlmSection />

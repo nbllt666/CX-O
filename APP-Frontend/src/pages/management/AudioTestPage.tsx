@@ -8,7 +8,7 @@
  * 数据全部来自 audioApi 客户端（speechToText / textToSpeech），非占位页。
  * 浏览器/桌面模式均可运行；识别/合成失败展示错误态可重试。
  */
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { AudioLines, Loader2, Mic, Play, Upload, Volume2 } from 'lucide-react';
 import { audioApi } from '@/api/clients/audio';
@@ -33,6 +33,13 @@ export default function AudioTestPage() {
   const [ttsAudio, setTtsAudio] = useState<string | null>(null);
   const [ttsLoading, setTtsLoading] = useState(false);
   const [ttsError, setTtsError] = useState(false);
+
+  // 卸载时释放 TTS 试听 blob URL，避免内存泄漏（切换音频时 handleTTS 已 revoke 旧值，双重 revoke 无害）
+  useEffect(() => {
+    return () => {
+      if (ttsAudio) URL.revokeObjectURL(ttsAudio);
+    };
+  }, [ttsAudio]);
 
   const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];

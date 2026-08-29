@@ -60,7 +60,21 @@ async def handle_live_connection(websocket: WebSocket, client_id: str):
 
             elif msg.get("type") == "websocket.receive" and "bytes" in msg:
                 audio_data = msg.get("bytes", b"")
-                await live_handler.handle_audio(websocket, audio_data, client_id)
+                # 逐消息异常隔离：单条音频处理失败只记录并回发 error 帧，
+                # 不 break 循环不断连（对齐 text 分支的 JSONDecodeError 隔离粒度，
+                # 及 live_client.handle_message 的 E1 error 帧形态）
+                try:
+                    await live_handler.handle_audio(websocket, audio_data, client_id)
+                except Exception:
+                    logger.exception(f"Live audio handling failed for {client_id}")
+                    try:
+                        # 回发 live 协议既有 error 帧形态；不携带内部异常详情
+                        await ws_manager.send_message(client_id, {
+                            "type": "error",
+                            "error": "audio processing failed",
+                        })
+                    except Exception as send_err:
+                        logger.warning(f"回发 live error 帧失败: {client_id}: {send_err}")
 
             elif msg.get("type") == "websocket.disconnect":
                 break

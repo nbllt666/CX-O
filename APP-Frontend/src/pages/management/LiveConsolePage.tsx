@@ -83,6 +83,33 @@ export default function LiveConsolePage() {
     danmakuOnRef.current = danmakuOn;
   }, [danmakuOn]);
 
+  // ── Live WS 连接时长：就绪态以外的补充信息（每秒刷新，未连接显示 "--"）──
+  const [connectedSince, setConnectedSince] = useState<number | null>(null);
+  const [elapsedLabel, setElapsedLabel] = useState('--');
+  useEffect(() => {
+    if (isConnected) {
+      // 建连时刻只在断开→连接的沿上记录，重渲染不重置
+      setConnectedSince((prev) => prev ?? Date.now());
+    } else {
+      setConnectedSince(null);
+      setElapsedLabel('--');
+    }
+  }, [isConnected]);
+  useEffect(() => {
+    if (connectedSince === null) return;
+    const pad = (n: number) => String(n).padStart(2, '0');
+    const tick = () => {
+      const sec = Math.max(0, Math.floor((Date.now() - connectedSince) / 1000));
+      const h = Math.floor(sec / 3600);
+      const m = Math.floor((sec % 3600) / 60);
+      const s = sec % 60;
+      setElapsedLabel(h > 0 ? `${h}:${pad(m)}:${pad(s)}` : `${pad(m)}:${pad(s)}`);
+    };
+    tick();
+    const id = window.setInterval(tick, 1000);
+    return () => window.clearInterval(id);
+  }, [connectedSince]);
+
   // ── 后端健康 / 直播客户端状态 ──
   const [health, setHealth] = useState<{ status?: string; database?: string } | null>(null);
   const [healthFailed, setHealthFailed] = useState(false);
@@ -186,12 +213,12 @@ export default function LiveConsolePage() {
               : t('management.liveConsole.wsDisconnected'),
             isConnected ? 'text-emerald-400' : 'text-red-400',
           )}
+          {/* 连接时长卡片：后端 /api/live/client/status 无在线数字段（仅 connected/client_id），
+              原先与 Live WS 卡片逐字重复，改为展示本页 Live WS 的连接时长 */}
           {statCard(
-            t('management.liveConsole.clientsOnline'),
-            isConnected
-              ? t('management.liveConsole.wsConnected')
-              : t('management.liveConsole.wsDisconnected'),
-            isConnected ? 'text-emerald-400' : 'text-red-400',
+            t('management.liveConsole.connectionDuration'),
+            elapsedLabel,
+            isConnected ? 'text-emerald-400' : 'text-muted-foreground',
           )}
           {statCard(
             t('management.liveConsole.backendHealth'),

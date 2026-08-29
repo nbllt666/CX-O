@@ -174,3 +174,42 @@ class TestHealth:
         assert body["status"] == "unhealthy"
         assert body["pipeline_initialized"] is False
         assert "init fail" in body["error"]
+
+
+# --------------------------------------------------------------------------- #
+# preprocess to_thread 卸载回归（第九轮 G2：重型同步 preprocess 异步化）
+# --------------------------------------------------------------------------- #
+class TestPreprocessToThread:
+    def test_preprocess_offloads_from_event_loop(self, client, monkeypatch):
+        """修复回归：preprocess 经 asyncio.to_thread 在事件循环外线程执行。
+
+        直接以事件循环驱动端点协程，对比「事件循环线程 id」与「preprocess
+        实际执行线程 id」：修复前 async 端点直调同步 preprocess（内含 OCR/
+        视频解码）两者相同 → 阻塞全站；修复后 to_thread 线程池不同。
+        """
+        import asyncio
+        import threading
+
+        c, pipeline = client
+        loop_thread_ids = []
+        call_thread_ids = []
+        original_preprocess = pipeline.preprocess
+
+        def spy_preprocess(source_type, source_ref):
+            call_thread_ids.append(threading.get_ident())
+            return original_preprocess(source_type, source_ref)
+
+        # 实例属性替换优先于类方法，端点内 pipeline.preprocess(...) 走 spy
+        monkeypatch.setattr(pipeline, "preprocess", spy_preprocess)
+
+        async def probe():
+            loop_thread_ids.append(threading.get_ident())
+            request = mm_router_mod.PreprocessRequest(source_type="text", source_ref="hello")
+            return await mm_router_mod.preprocess(request)
+
+        resp = asyncio.run(probe())
+        assert resp.artifact_id == "a1"
+        # spy 生效且参数正确透传
+        assert pipeline.preprocess_calls == [("text", "hello")]
+        # 关键断言：preprocess 执行线程 != 事件循环线程
+        assert call_thread_ids[0] != loop_thread_ids[0]

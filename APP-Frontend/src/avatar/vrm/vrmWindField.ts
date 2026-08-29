@@ -199,8 +199,17 @@ export class VRMWindField {
     const manager = this.vrm?.springBoneManager;
     if (!manager) return;
 
+    // three-vrm 3.x 新版弹簧骨集合为 `_joints`（Set），旧版为数组 `joints`；兼容两者
+    // （与 bindVRM 的双形态提取一致），否则 3.x 下 manager.joints 为 undefined 会 TypeError。
+    const rawJoints = manager.joints ?? (manager as unknown as { _joints?: unknown })._joints;
+    const joints: VRMSpringBoneJoint[] = Array.isArray(rawJoints)
+      ? rawJoints
+      : rawJoints instanceof Set
+        ? Array.from(rawJoints)
+        : [];
+
     for (const group of this.customGroups) {
-      for (const joint of manager.joints) {
+      for (const joint of joints) {
         const boneName = joint.bone.name;
         const matchesGroup = group.boneNames.some(
           (name) =>

@@ -377,3 +377,61 @@ class TestMCP:
         r = c.post("/tools/mcp/sync")
         assert r.status_code == 200
         assert r.json()["count"] == 1
+
+
+# --------------------------------------------------------------------------- #
+# 鉴权漏挂簇修复补充用例
+# 说明：PATCH /tools/{name} 补挂 verify_admin_api_key 后新增鉴权用例；
+# 既有用例经 client fixture 的 dependency_overrides 放行，不受影响。
+# 项目统一口径：verify_admin_api_key 失败抛 403（对齐 test_stats_interrupt.py 既有断言）。
+# --------------------------------------------------------------------------- #
+@pytest.fixture
+def raw_client(monkeypatch):
+    """不挂鉴权 override 的客户端：用于真实校验 PATCH 端点的密钥门槛。"""
+    fake_registry = FakeRegistry()
+    monkeypatch.setattr(registry_mod, "tool_registry", fake_registry)
+    import server.core.tools as core_tools_mod
+    monkeypatch.setattr(core_tools_mod, "tool_registry", fake_registry)
+
+    app = FastAPI()
+    app.include_router(tools_router_mod.router)
+    return TestClient(app), fake_registry
+
+
+class TestPatchToolAuth:
+    def test_patch_without_key_403(self, raw_client):
+        # 无密钥（env 未配置）请求 → 403
+        c, _ = raw_client
+        r = c.patch("/tools/calc", json={"enabled": False})
+        assert r.status_code == 403
+
+    def test_patch_with_key_200(self, raw_client, monkeypatch):
+        # 携带正确 X-API-Key → 200 且 patch 生效（对齐 setenv ADMIN_API_KEY 惰性注入模式）
+        monkeypatch.setenv("ADMIN_API_KEY", "secret_key")
+        c, reg = raw_client
+        r = c.patch(
+            "/tools/calc",
+            json={"enabled": False},
+            headers={"X-API-Key": "secret_key"},
+        )
+        assert r.status_code == 200
+        assert reg.tools["calc"].enabled is False
+
+
+class TestToolStatsError:
+    def test_stats_error_branch_returns_error_status(self, client, monkeypatch):
+        # /tools/stats 异常分支：不再谎报 success，返回 status=error + error 信息，计数保持 0
+        c, reg, _ = client
+
+        def _boom():
+            raise RuntimeError("boom")
+
+        monkeypatch.setattr(reg, "get_tool_stats", _boom)
+        r = c.get("/tools/stats")
+        assert r.status_code == 200
+        body = r.json()
+        assert body["status"] == "error"
+        assert "boom" in body["error"]
+        # 计数结构保持全零，兼容前端消费方
+        assert body["statistics"]["total_tools"] == 0
+        assert body["statistics"]["by_category"] == {}

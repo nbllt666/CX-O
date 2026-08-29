@@ -32,6 +32,7 @@ from asr_container.streaming_engine import (
     extract_embedding,
     asr_loaded,
     spk_loaded,
+    preload_streaming_models,
 )
 
 logging.basicConfig(level=logging.INFO)
@@ -101,6 +102,15 @@ async def load_model():
         except Exception as e2:
             logger.error(f"Failed to load from ModelScope Hub: {e2}")
             raise
+
+    # 流式引擎三模型预载（修复：首次 WS 连接触发懒加载会同步阻塞容器事件循环
+    # 数十秒）。经 asyncio.to_thread 在工作线程执行，引擎内部持 _MODELS_LOAD_LOCK
+    # 幂等；失败仅告警降级（首次连接仍可走原懒加载路径），不阻断启动。
+    try:
+        await asyncio.to_thread(preload_streaming_models)
+        logger.info("Streaming engine models preloaded (paraformer/fsmn-vad/cam++)")
+    except Exception as e:
+        logger.error(f"Streaming engine preload failed (lazy fallback on first WS): {e}")
 
 
 def _clean_text(raw: str) -> str:
