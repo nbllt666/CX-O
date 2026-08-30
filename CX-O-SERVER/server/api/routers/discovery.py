@@ -122,7 +122,8 @@ async def discover_backends(
             status_code=400,
             detail=f"port 仅允许 {sorted(_ALLOWED_DISCOVERY_PORTS)}",
         )
-    local_ips = _get_local_ips()
+    # G1/A3: 本机 IP 枚举为同步 socket 调用，经 to_thread 卸载避免阻塞事件循环
+    local_ips = await asyncio.to_thread(_get_local_ips)
     subnets = _to_subnets(local_ips)
     if not subnets:
         logger.warning("无法确定本机局域网子网，返回空发现结果")

@@ -79,7 +79,6 @@ def main() -> None:
         print(f"未知工具：{tool}")
         print("可用工具：cxfc | acp | mcp")
         sys.exit(1)
-        return
 
     run_mode, run_target = find_streamlit_python()
 
@@ -93,7 +92,6 @@ def main() -> None:
         print(f"已尝试的 Python: {sys.executable}")
         print("已尝试 PATH 中的 streamlit 命令和常见 Anaconda 路径")
         sys.exit(1)
-        return
 
     print(f"启动 {tool.upper()} 测试工具 (端口 {port})")
     print(f"  应用: {app_path}")

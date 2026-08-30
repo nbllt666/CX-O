@@ -267,7 +267,8 @@ class StateReplicator:
             try:
                 blob = await asyncio.to_thread(self._backup_provider, unit)
                 if blob is not None:
-                    self._write_snapshot(unit, blob)
+                    # G1/A5: 原子落盘为同步文件 IO，与 build_snapshot 同样经线程池执行
+                    await asyncio.to_thread(self._write_snapshot, unit, blob)
                     self._last_snapshot_at[unit] = _iso()
             except Exception as e:  # noqa: BLE001 - 快照失败不影响事件流，但必须留痕告警
                 log.warning("[replicator] 快照采集/落盘失败 unit=%s error=%s", unit, e)

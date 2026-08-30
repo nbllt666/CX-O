@@ -381,9 +381,95 @@ class TestPushAlarm:
     @pytest.mark.asyncio
     async def test_push_alarm_broadcasts(self, monkeypatch):
         import server.core.websocket.manager as mgr_mod
+
         fake = FakeWSManager()
         monkeypatch.setattr(mgr_mod, "get_websocket_manager", lambda: fake)
         await push_alarm_to_agent("ag1", "提醒内容")
         assert fake.broadcasted[0][0] == "agent:ag1"
         assert fake.broadcasted[0][1]["type"] == "alarm"
         assert fake.broadcasted[0][1]["message"] == "提醒内容"
+
+
+class TestEnsureAgentSession:
+    """G1/D6: _ensure_agent_session 异步化后行为等价，同步 sqlite 调用经 run_io 卸载。"""
+
+    @pytest.mark.asyncio
+    async def test_returns_existing_session_without_create(self):
+        calls = []
+
+        def get_session(sid):
+            calls.append(("get", sid))
+            return {"id": sid}
+
+        def create_session(**kw):  # pragma: no cover - 不应被调用
+            raise AssertionError("会话已存在时不应 create_session")
+
+        def update_session(sid, **kw):  # pragma: no cover - 不应被调用
+            raise AssertionError("会话已存在时不应 update_session")
+
+        context_mgr = SimpleNamespace(
+            get_session=get_session, create_session=create_session, update_session=update_session
+        )
+        session_id = await ChatWebSocketHandler._ensure_agent_session(
+            context_mgr, "ag1", {"name": "A"}
+        )
+        assert session_id == "agent-ag1"
+        assert calls == [("get", "agent-ag1")]
+
+    @pytest.mark.asyncio
+    async def test_creates_missing_session_with_metadata(self):
+        created_kw = {}
+        updated = []
+
+        def get_session(sid):
+            return None
+
+        def create_session(**kw):
+            created_kw.update(kw)
+            return "agent-ag1"
+
+        def update_session(sid, **kw):
+            updated.append((sid, kw))
+            return True
+
+        context_mgr = SimpleNamespace(
+            get_session=get_session, create_session=create_session, update_session=update_session
+        )
+        session_id = await ChatWebSocketHandler._ensure_agent_session(
+            context_mgr, "ag1", {"name": "测试Agent"}
+        )
+        assert session_id == "agent-ag1"
+        assert created_kw["session_id"] == "agent-ag1"
+        assert created_kw["workspace_id"] == "agent-chats"
+        assert created_kw["title"] == "与 测试Agent 的对话"
+        assert updated == [("agent-ag1", {"metadata": {"agent_id": "ag1"}})]
+
+    @pytest.mark.asyncio
+    async def test_session_calls_routed_through_run_io(self, monkeypatch):
+        """三个同步调用均经 run_io 卸载（D6 核心诉求：不直调同步 sqlite）。"""
+        routed = []
+        real_run_io = handlers_mod.run_io
+
+        async def spy_run_io(func, *args, **kwargs):
+            routed.append(getattr(func, "__name__", str(func)))
+            return await real_run_io(func, *args, **kwargs)
+
+        monkeypatch.setattr(handlers_mod, "run_io", spy_run_io)
+
+        def get_session(sid):
+            return None
+
+        def create_session(**kw):
+            return "agent-ag1"
+
+        def update_session(sid, **kw):
+            return True
+
+        context_mgr = SimpleNamespace(
+            get_session=get_session, create_session=create_session, update_session=update_session
+        )
+        session_id = await ChatWebSocketHandler._ensure_agent_session(
+            context_mgr, "ag1", {"name": "A"}
+        )
+        assert session_id == "agent-ag1"
+        assert routed == ["get_session", "create_session", "update_session"]

@@ -4,6 +4,7 @@ So-VITS-SVC 训练服务
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import os
 import re
@@ -123,13 +124,24 @@ class SoVITSSVCTrainer:
         speaker_name = _sanitize_speaker_name(speaker_name)
         # 校验 training_data_dir 必须位于允许的根目录之下，防止目录穿越
         training_data_dir = validate_training_data_dir(training_data_dir)
-        raw_dir = training_data_dir / "raw" / speaker_name
-        raw_dir.mkdir(parents=True, exist_ok=True)
 
         results = {}
 
+        # C2：按上游 argparse 实码重写三步预处理参数（旧实现的 -s 44100 / -d / -s 全部错位）。
+        #   resample.py:               --sr2 <int> --in_dir <含 speaker 子目录的 raw 根> [--out_dir2]
+        #   preprocess_flist_config.py: --train_list/--val_list/--source_dir（默认 ./filelists/*.txt、./dataset/44k）
+        #   preprocess_hubert_f0.py:   -d/--device --in_dir --f0_predictor --num_processes
+        # 三步 CWD 均为上游仓库根（_run_subprocess 固定 cwd），默认相对路径与上游标准
+        # 工作流一致（resample --out_dir2 默认 ./dataset/44k == flist --source_dir 默认 ==
+        # hubert --in_dir 默认），故仅显式传必要参数。hubert 步骤读 configs/config.json
+        # （flist 步骤产出，顺序已保证），--f0_predictor 显式取 pm 与推理默认对齐且免下载
+        # rmvpe 模型。
+        raw_root = training_data_dir / "raw"
+        raw_dir = raw_root / speaker_name
+        raw_dir.mkdir(parents=True, exist_ok=True)
+
         returncode, stdout, stderr = await self._run_subprocess(
-            [self._python_path, "resample.py", "-s", "44100", "-d", str(raw_dir)]
+            [self._python_path, "resample.py", "--sr2", "44100", "--in_dir", str(raw_root)]
         )
         results["resample"] = {
             "returncode": returncode,
@@ -142,7 +154,7 @@ class SoVITSSVCTrainer:
             return results
 
         returncode, stdout, stderr = await self._run_subprocess(
-            [self._python_path, "preprocess_flist_config.py", "-s", speaker_name]
+            [self._python_path, "preprocess_flist_config.py"]
         )
         results["preprocess_flist_config"] = {
             "returncode": returncode,
@@ -155,7 +167,7 @@ class SoVITSSVCTrainer:
             return results
 
         returncode, stdout, stderr = await self._run_subprocess(
-            [self._python_path, "preprocess_hubert_f0.py", "-s", speaker_name]
+            [self._python_path, "preprocess_hubert_f0.py", "--f0_predictor", "pm"]
         )
         results["preprocess_hubert_f0"] = {
             "returncode": returncode,
@@ -170,6 +182,35 @@ class SoVITSSVCTrainer:
         self._preprocessed.add(speaker_name)
         logger.info(f"Preprocessing completed successfully for speaker: {speaker_name}")
         return results
+
+    @staticmethod
+    def _write_runtime_config(
+        source_config_path: Path,
+        target_path: Path,
+        *,
+        epochs: int,
+        batch_size: int,
+        learning_rate: float,
+    ) -> None:
+        """读取上游 config.json，改写 train 段超参后写入 target_path（C4）。
+
+        字段名以上游 configs_template/config_template.json 与 utils.get_hparams 实码为准：
+        train.epochs / train.batch_size / train.learning_rate。
+        """
+        if not source_config_path.exists():
+            raise RuntimeError(
+                f"上游 config.json 不存在: {source_config_path}（请先完成 preprocess 再训练）"
+            )
+        with open(source_config_path, "r", encoding="utf-8") as f:
+            config = json.load(f)
+        train_section = config.get("train") if isinstance(config, dict) else None
+        if not isinstance(train_section, dict):
+            raise RuntimeError(f"上游 config.json 缺少 train 段: {source_config_path}")
+        train_section["epochs"] = int(epochs)
+        train_section["batch_size"] = int(batch_size)
+        train_section["learning_rate"] = float(learning_rate)
+        with open(target_path, "w", encoding="utf-8") as f:
+            json.dump(config, f, ensure_ascii=False, indent=2)
 
     async def start_training(
         self,
@@ -197,18 +238,32 @@ class SoVITSSVCTrainer:
         output_path = self._output_dir / output_name
         output_path.mkdir(parents=True, exist_ok=True)
 
-        config_path = self._so_vits_svc_dir / "configs" / "config.json"
+        source_config_path = self._so_vits_svc_dir / "configs" / "config.json"
         model_name = output_name
+
+        # C4：上游 train.py 仅通过 -c 接收超参（utils.get_hparams），此前 API 请求中的
+        # epochs/batch_size/learning_rate 只用于进度分母而未真正传入训练进程。
+        # 按请求参数改写上游 config.json 的 train 段并落盘独立副本到本训练 output_path 下
+        # （多训练互不覆盖；上游 get_hparams 还会再把它复制到 logs/<model>/config.json）。
+        runtime_config_path = output_path / "config.json"
+        self._write_runtime_config(
+            source_config_path,
+            runtime_config_path,
+            epochs=epochs,
+            batch_size=batch_size,
+            learning_rate=learning_rate,
+        )
 
         logger.info(f"Starting So-VITS-SVC training: {self._task_id}")
         logger.info(f"  Training data: {self._training_data_dir}")
         logger.info(f"  Output: {output_path}")
         logger.info(f"  Epochs: {epochs}, Batch size: {batch_size}, LR: {learning_rate}")
+        logger.info(f"  Runtime config: {runtime_config_path}")
 
         args = [
             self._python_path,
             "train.py",
-            "-c", str(config_path),
+            "-c", str(runtime_config_path),
             "-m", model_name,
         ]
 
@@ -317,10 +372,16 @@ class SoVITSSVCTrainer:
                     )
         if self._monitor_task and not self._monitor_task.done():
             self._monitor_task.cancel()
-            try:
-                await self._monitor_task
-            except (asyncio.CancelledError, Exception):
-                pass
+            # join 已取消的监控任务：asyncio.wait 不透传被等待任务自身的
+            # CancelledError，任务取消后此处正常返回，后续清理（L329-331）必达；
+            # 若 stop_training 自身被外部取消，CancelledError 经 wait 自然向上传播。
+            done, _ = await asyncio.wait([self._monitor_task])
+            for task in done:
+                if task.cancelled():
+                    continue
+                exc = task.exception()
+                if exc:
+                    logger.debug(f"训练监控任务异常退出: {exc}")
         self._process = None
         self._monitor_task = None
         logger.info("So-VITS-SVC training stopped")

@@ -223,8 +223,9 @@ class MCPManager:
                     if any(char in arg for char in dangerous_chars):
                         raise MCPError(f"参数包含危险字符: {arg}")
 
-            # 启动进程
-            process = subprocess.Popen(
+            # 启动进程（G1/A2: Popen 为同步系统调用，经 to_thread 卸载避免阻塞事件循环）
+            process = await asyncio.to_thread(
+                subprocess.Popen,
                 [server.command] + (server.args or []),
                 env=env,
                 stdout=subprocess.PIPE,
@@ -246,7 +247,8 @@ class MCPManager:
             # 检查进程是否还在运行
             if process.poll() is not None:
                 # L5: communicate 加超时，防止流读取异常时无限阻塞事件循环
-                stdout, stderr = process.communicate(timeout=5)
+                # （G1/A2: communicate 为同步阻塞读，经 to_thread 卸载）
+                stdout, stderr = await asyncio.to_thread(process.communicate, timeout=5)
                 error_msg = stderr.decode("utf-8") if stderr else "进程启动失败"
                 server.status = "error"
                 server.error = error_msg

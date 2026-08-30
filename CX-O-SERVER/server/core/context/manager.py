@@ -606,7 +606,12 @@ class ContextManager:
     def add_mono_context(
         self, session_id: str, content: str, rounds: int = 1, metadata: Dict = None
     ) -> bool:
-        """添加Mono上下文（保持信息在上下文中）"""
+        """添加Mono上下文（保持信息在上下文中）。
+
+        注（G1/A7）：参数 rounds 名义为轮数，实现按小时换算
+        （expires_at = now + timedelta(hours=rounds)，即 1轮≈1小时），
+        过期按墙钟时间判定，而非按对话轮数推进。
+        """
         try:
             conn = self._get_connection()
             cursor = conn.cursor()

@@ -2,7 +2,7 @@
 
 对应契约:
 - 接口契约: public/interface_stub/template_engine.pyi
-- 数据契约: public/schema/template_registry.schema.json
+- 数据契约: 无独立 schema 文件，字段定义以本文件 TemplateRecord 为准（待 s0201 重建）
 - 配置契约: public/config_template/radix_config.json (template_engine 段)
 
 实现策略:
@@ -16,7 +16,7 @@
 
 @version 1.0.0
 @see public/interface_stub/template_engine.pyi
-@see public/schema/template_registry.schema.json
+@see 数据契约: 本文件 TemplateRecord 字段定义（原 schema 文件不存在，待 s0201 重建）
 """
 
 import os
@@ -50,7 +50,7 @@ _DEFAULT_TEMPLATES_DIR = os.path.join(_PROJECT_ROOT, "data", "templates")
 
 
 # --------------------------------------------------------------------------- #
-# 枚举常量（与 template_registry.schema.json 一致）
+# 枚举常量（权威定义源，待 s0201 重建契约时以此为准）
 # --------------------------------------------------------------------------- #
 _CATEGORIES = {"preset", "custom"}
 _WORKFLOW_MODES = {"single_turn", "multi_turn"}
@@ -77,7 +77,7 @@ class TemplateFrontmatter(BaseModel):
 
 
 class TemplateRecord(BaseModel):
-    """模板记录。字段与 template_registry.schema.json 一致。"""
+    """模板记录。字段定义权威源（待 s0201 重建数据契约时以此为准）。"""
 
     template_id: str
     name: str

@@ -20,7 +20,7 @@ import type { WebSocketMessage } from '@/hooks/useWebSocket';
 import { chatApi } from '@/api/clients/chat';
 import { DreamActions } from '@/constants/actions';
 import { Button } from '@/components/ui-v2/button';
-import { cn } from '@/lib/utils';
+import { cn, nextMessageId } from '@/lib/utils';
 import {
   applyStreamEvent,
   createAssistantMessage,
@@ -207,7 +207,7 @@ export default function ChatPage() {
           setMessages((prev) => [
             ...prev,
             {
-              ...createAssistantMessage(`d-${Date.now()}`),
+              ...createAssistantMessage(nextMessageId('d-')),
               content: `${DREAM_SURFACE_PREFIX}${dreamContent}`,
             },
           ]);
@@ -261,17 +261,22 @@ export default function ChatPage() {
     onMessage: handleWsMessage,
     onError: handleWsError,
     onAlarm: handleAlarm,
+    // 对齐 PetPage M2 修复：服务端干净关闭（code=1000）只触发 onClose 不走 error 分支，
+    // 不接线则 isLoading 永久卡死、停止按钮无法复位
+    onDisconnect: () => {
+      setIsLoading(false);
+    },
   });
 
   const handleSend = useCallback(async () => {
     const text = input.trim();
     if (!text || isLoading || !currentAgentId) return;
 
-    const assistantId = `a-${Date.now()}`;
+    const assistantId = nextMessageId('a-');
     tempAssistantIdRef.current = assistantId;
     setMessages((prev) => [
       ...prev,
-      createUserMessage(`u-${Date.now()}`, text),
+      createUserMessage(nextMessageId('u-'), text),
       createAssistantMessage(assistantId),
     ]);
     setInput('');

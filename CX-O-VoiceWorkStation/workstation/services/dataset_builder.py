@@ -25,6 +25,7 @@ import json
 import logging
 import os
 import re
+import threading
 import uuid
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -54,6 +55,27 @@ AUDIO_EXTENSIONS = (".wav", ".mp3", ".flac", ".ogg")
 # 支持的批量数据集生成引擎（SVC 训练数据来源）
 ENGINE_VOXCPM = "voxcpm"
 _SUPPORTED_ENGINES = (ENGINE_VOXCPM,)
+
+# ---------------------------------------------------------------------------
+# per-dataset_dir 互斥：同一目录并发批量任务会互覆盖 manifest（编号取
+# len(entries)+1，两个任务同时基于同一份 entries 计数会产出同名文件 / 丢条目）。
+# 键为解析后绝对路径（归一相对/绝对写法差异）；guard 仅保护 dict 的创建读取。
+# 用 asyncio.Lock 而非 threading.Lock：批量任务全部运行在宿主事件循环线程上
+# （submit_batch → asyncio.create_task，单进程单 loop 部署与 song_pipeline 一致），
+# threading.Lock 跨 await 全程持锁会阻塞 loop 线程导致死锁。
+# ---------------------------------------------------------------------------
+_DIR_LOCKS_GUARD = threading.Lock()
+_DIR_LOCKS: "dict[str, asyncio.Lock]" = {}
+
+
+def _get_dir_lock(resolved_dir: str) -> asyncio.Lock:
+    """按解析后的 dataset_dir 取互斥锁，不存在时在 guard 内创建"""
+    with _DIR_LOCKS_GUARD:
+        lock = _DIR_LOCKS.get(resolved_dir)
+        if lock is None:
+            lock = asyncio.Lock()
+            _DIR_LOCKS[resolved_dir] = lock
+        return lock
 
 
 def _now_iso() -> str:
@@ -312,100 +334,22 @@ class DatasetBuilderService:
         inference_timesteps: Optional[int],
     ) -> None:
         dataset_dir = Path(record.dataset_dir)
+        # 同一 dataset_dir 并发批量任务 per-dir 互斥：manifest 读取、条目编号与
+        # _write_manifest 落盘全程持锁，防并发任务互覆盖（详见 _DIR_LOCKS 注释）
+        dir_lock = _get_dir_lock(os.path.abspath(str(dataset_dir)))
         try:
             record.status = "running"
-            manifest = self._load_manifest(dataset_dir)
-            entries: list[dict] = manifest.setdefault("entries", [])
-            by_fingerprint = {e.get("fingerprint"): e for e in entries}
-
-            # 获取 voxcpm client（默认工厂惰性构造）
-            client = self._client_factory()
-
-            # voxcpm 推理参数覆盖
-            kwargs: dict[str, Any] = {}
-            if cfg_value is not None:
-                kwargs["cfg_value"] = cfg_value
-            if inference_timesteps is not None:
-                kwargs["inference_timesteps"] = inference_timesteps
-
-            for index, item in enumerate(texts):
-                text = str(item["text"])
-                item_control = item.get("control")
-                effective_control = control if item_control is None else str(item_control)
-                record.current_text = text
-
-                # voxcpm 去重指纹参数（沿用旧字段集保持与既有 manifest 兼容）
-                fp_params = {
-                    "text": text,
-                    "mode": record.mode,
-                    "control": effective_control,
-                    "reference_audio_path": reference_audio_path,
-                    "prompt_audio_path": prompt_audio_path,
-                    "prompt_text": prompt_text,
-                    "cfg_value": cfg_value,
-                    "inference_timesteps": inference_timesteps,
-                }
-                fingerprint = _entry_fingerprint(fp_params)
-
-                existing = by_fingerprint.get(fingerprint)
-                if existing is not None and (dataset_dir / existing["file"]).is_file():
-                    # 重复提交：指纹命中且文件仍在，跳过不重复生成
-                    record.skipped += 1
-                    logger.info("批量数据集跳过重复条目: task_id=%s index=%d file=%s",
-                                record.task_id, index, existing["file"])
-                    continue
-
-                filename = f"{len(entries) + 1:04d}_{fingerprint[:8]}.wav"
-                output_path = dataset_dir / filename
-                try:
-                    await self._generate_one(
-                        record.engine, client, record.mode, text, effective_control,
-                        reference_audio_path, prompt_audio_path, prompt_text,
-                        output_path, kwargs,
-                    )
-                    if not output_path.is_file():
-                        raise RuntimeError(f"生成完成但输出文件不存在: {output_path}")
-                except Exception as exc:
-                    # 单条失败不中断整批：计入 failed 并继续后续条目
-                    record.failed += 1
-                    record.failures.append({"index": index, "text": text, "error": str(exc)})
-                    logger.warning(
-                        "批量数据集单条生成失败: task_id=%s index=%d error=%s",
-                        record.task_id, index, exc,
-                    )
-                    continue
-
-                entry = {
-                    "fingerprint": fingerprint,
-                    "file": filename,
-                    "md5": _md5_file(output_path),
-                    "text": text,
-                    "engine": record.engine,
-                    "mode": record.mode,
-                    "control": effective_control,
-                    "created_at": _now_iso(),
-                }
-                if existing is not None:
-                    # manifest 有记录但文件丢失：原位替换，重新生成
-                    entries[entries.index(existing)] = entry
-                else:
-                    entries.append(entry)
-                by_fingerprint[fingerprint] = entry
-                self._write_manifest(dataset_dir, manifest)
-                record.done += 1
-
-            record.current_text = None
-            record.finished_at = _now_iso()
-            if record.failed == 0:
-                record.status = "completed"
-            else:
-                record.status = "failed"
-                first = record.failures[0]
-                record.error = f"{record.failed}/{record.total} 条生成失败，首条: {first['error']}"
-            logger.info(
-                "批量数据集任务结束: task_id=%s status=%s done=%d skipped=%d failed=%d",
-                record.task_id, record.status, record.done, record.skipped, record.failed,
-            )
+            async with dir_lock:
+                await self._run_locked(
+                    record, texts,
+                    control=control,
+                    reference_audio_path=reference_audio_path,
+                    prompt_audio_path=prompt_audio_path,
+                    prompt_text=prompt_text,
+                    cfg_value=cfg_value,
+                    inference_timesteps=inference_timesteps,
+                    dataset_dir=dataset_dir,
+                )
         except asyncio.CancelledError:
             raise
         except Exception as exc:
@@ -414,6 +358,113 @@ class DatasetBuilderService:
             record.current_text = None
             record.finished_at = _now_iso()
             logger.error("批量数据集任务失败: task_id=%s error=%s", record.task_id, exc)
+
+    async def _run_locked(
+        self,
+        record: BatchDatasetTask,
+        texts: list[dict],
+        *,
+        control: str,
+        reference_audio_path: Optional[str],
+        prompt_audio_path: Optional[str],
+        prompt_text: Optional[str],
+        cfg_value: Optional[float],
+        inference_timesteps: Optional[int],
+        dataset_dir: Path,
+    ) -> None:
+        """批量生成主体（调用方持有 dataset_dir 互斥锁，同目录任务全程串行）"""
+        manifest = self._load_manifest(dataset_dir)
+        entries: list[dict] = manifest.setdefault("entries", [])
+        by_fingerprint = {e.get("fingerprint"): e for e in entries}
+
+        # 获取 voxcpm client（默认工厂惰性构造）
+        client = self._client_factory()
+
+        # voxcpm 推理参数覆盖
+        kwargs: dict[str, Any] = {}
+        if cfg_value is not None:
+            kwargs["cfg_value"] = cfg_value
+        if inference_timesteps is not None:
+            kwargs["inference_timesteps"] = inference_timesteps
+
+        for index, item in enumerate(texts):
+            text = str(item["text"])
+            item_control = item.get("control")
+            effective_control = control if item_control is None else str(item_control)
+            record.current_text = text
+
+            # voxcpm 去重指纹参数（沿用旧字段集保持与既有 manifest 兼容）
+            fp_params = {
+                "text": text,
+                "mode": record.mode,
+                "control": effective_control,
+                "reference_audio_path": reference_audio_path,
+                "prompt_audio_path": prompt_audio_path,
+                "prompt_text": prompt_text,
+                "cfg_value": cfg_value,
+                "inference_timesteps": inference_timesteps,
+            }
+            fingerprint = _entry_fingerprint(fp_params)
+
+            existing = by_fingerprint.get(fingerprint)
+            if existing is not None and (dataset_dir / existing["file"]).is_file():
+                # 重复提交：指纹命中且文件仍在，跳过不重复生成
+                record.skipped += 1
+                logger.info("批量数据集跳过重复条目: task_id=%s index=%d file=%s",
+                            record.task_id, index, existing["file"])
+                continue
+
+            filename = f"{len(entries) + 1:04d}_{fingerprint[:8]}.wav"
+            output_path = dataset_dir / filename
+            try:
+                await self._generate_one(
+                    record.engine, client, record.mode, text, effective_control,
+                    reference_audio_path, prompt_audio_path, prompt_text,
+                    output_path, kwargs,
+                )
+                if not output_path.is_file():
+                    raise RuntimeError(f"生成完成但输出文件不存在: {output_path}")
+            except Exception as exc:
+                # 单条失败不中断整批：计入 failed 并继续后续条目
+                record.failed += 1
+                record.failures.append({"index": index, "text": text, "error": str(exc)})
+                logger.warning(
+                    "批量数据集单条生成失败: task_id=%s index=%d error=%s",
+                    record.task_id, index, exc,
+                )
+                continue
+
+            entry = {
+                "fingerprint": fingerprint,
+                "file": filename,
+                "md5": _md5_file(output_path),
+                "text": text,
+                "engine": record.engine,
+                "mode": record.mode,
+                "control": effective_control,
+                "created_at": _now_iso(),
+            }
+            if existing is not None:
+                # manifest 有记录但文件丢失：原位替换，重新生成
+                entries[entries.index(existing)] = entry
+            else:
+                entries.append(entry)
+            by_fingerprint[fingerprint] = entry
+            self._write_manifest(dataset_dir, manifest)
+            record.done += 1
+
+        record.current_text = None
+        record.finished_at = _now_iso()
+        if record.failed == 0:
+            record.status = "completed"
+        else:
+            record.status = "failed"
+            first = record.failures[0]
+            record.error = f"{record.failed}/{record.total} 条生成失败，首条: {first['error']}"
+        logger.info(
+            "批量数据集任务结束: task_id=%s status=%s done=%d skipped=%d failed=%d",
+            record.task_id, record.status, record.done, record.skipped, record.failed,
+        )
 
     async def _generate_one(
         self,

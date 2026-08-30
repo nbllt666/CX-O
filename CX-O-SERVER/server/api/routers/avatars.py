@@ -18,6 +18,7 @@ from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
 from server.core.logging_config import get_contextual_logger
+from server.core.utils import run_io
 
 logger = get_contextual_logger(__name__)
 router = APIRouter()
@@ -187,33 +188,43 @@ def _get_model_file_path(avatar_id: str, avatar_type: str) -> Optional[Path]:
     return None
 
 
+def _collect_avatars(type: Optional[str] = None) -> List[AvatarMetadata]:
+    """同步扫描 avatar 目录并组装元数据列表（供 async 端点经 run_io 卸载执行）。
+
+    G1/A7: glob 遍历 + 逐文件元数据读取为同步文件 IO，整体提取到本同步辅助函数，
+    由 list_avatars 经 run_io 卸载到 IO 线程池，扫描/过滤/排序行为与原内联块一致。
+    """
+    _ensure_avatars_dirs()
+
+    avatars: List[AvatarMetadata] = []
+
+    # 扫描 VRM 目录
+    if type is None or type == "vrm":
+        for meta_file in VRM_DIR.glob("*.json"):
+            avatar_id = meta_file.stem
+            metadata = _load_avatar_metadata(avatar_id, "vrm")
+            if metadata:
+                avatars.append(metadata)
+
+    # 扫描 Live2D 目录
+    if type is None or type == "live2d":
+        for meta_file in LIVE2D_DIR.glob("*.json"):
+            avatar_id = meta_file.stem
+            metadata = _load_avatar_metadata(avatar_id, "live2d")
+            if metadata:
+                avatars.append(metadata)
+
+    # 按创建时间排序（最新的在前）
+    avatars.sort(key=lambda x: x.created_at, reverse=True)
+    return avatars
+
+
 @router.get("/avatars", response_model=AvatarListResponse)
 async def list_avatars(type: Optional[str] = None):
     """获取所有已上传的模型列表"""
     try:
-        _ensure_avatars_dirs()
-        
-        avatars = []
-        
-        # 扫描 VRM 目录
-        if type is None or type == "vrm":
-            for meta_file in VRM_DIR.glob("*.json"):
-                avatar_id = meta_file.stem
-                metadata = _load_avatar_metadata(avatar_id, "vrm")
-                if metadata:
-                    avatars.append(metadata)
-        
-        # 扫描 Live2D 目录
-        if type is None or type == "live2d":
-            for meta_file in LIVE2D_DIR.glob("*.json"):
-                avatar_id = meta_file.stem
-                metadata = _load_avatar_metadata(avatar_id, "live2d")
-                if metadata:
-                    avatars.append(metadata)
-        
-        # 按创建时间排序（最新的在前）
-        avatars.sort(key=lambda x: x.created_at, reverse=True)
-        
+        avatars = await run_io(_collect_avatars, type)
+
         return AvatarListResponse(avatars=avatars, total=len(avatars))
     except Exception as e:
         logger.error(f"获取模型列表失败: {e}", exc_info=True)

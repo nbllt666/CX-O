@@ -355,7 +355,11 @@ async def delete_adapter(
 
 
 @router.post("/v1/tuner/adapters/{adapter_id}/apply")
-async def apply_adapter(request: Request, adapter_id: str):
+async def apply_adapter(
+    request: Request,
+    adapter_id: str,
+    _: bool = Depends(verify_admin_api_key),
+):
     """Phase1 手动应用适配器：通过 config_hot_reload 切换 llm.host/port 或标记 lora。
 
     骨架阶段不强制真实切换，返回 applied 状态 + 记录当前 evolution 配置，并保留

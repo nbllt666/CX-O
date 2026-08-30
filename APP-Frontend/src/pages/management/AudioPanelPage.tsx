@@ -80,6 +80,10 @@ export default function AudioPanelPage() {
   const lastFlushRef = useRef(0);
   // 麦克风启动进行中守卫：防止双击重入覆盖 mediaStreamRef（旧流泄漏 + 双音频图）
   const startingRef = useRef(false);
+  // 麦克风启动代际号（对齐 useMicAsrUplink 的 startSeqRef 范式）：start/stop 各自递增。
+  // getUserMedia 授权弹窗等待窗口内的卸载兜底 stopMic / 二次启动会使本代次结果过期，
+  // await 返回后凭代际判断是否仍然有效，防止迟到续体复活音频图 + setMicOn(true)
+  const startSeqRef = useRef(0);
 
   const micGainRef = useRef(micGain);
   micGainRef.current = micGain;
@@ -201,7 +205,9 @@ export default function AudioPanelPage() {
     rafRef.current = requestAnimationFrame(tick);
   }, [analyserRef]);
 
-  const stopMic = useCallback(() => {
+  const stopMic = useCallback(async () => {
+    // 代际守卫：任何 stop（用户关闭/卸载兜底）同步作废全部在途 startMic 迟到续体
+    startSeqRef.current += 1;
     stopLevelLoop();
     if (processorRef.current) {
       processorRef.current.onaudioprocess = null;
@@ -214,7 +220,8 @@ export default function AudioPanelPage() {
     }
     micGainNodeRef.current = null;
     monitorGainNodeRef.current = null;
-    closePipeline();
+    // close() 返回 Promise：await 关闭完成后再继续，避免后续重建建立在正在关闭的 ctx 上
+    await closePipeline();
     if (mediaStreamRef.current) {
       mediaStreamRef.current.getTracks().forEach((track) => track.stop());
       mediaStreamRef.current = null;
@@ -227,6 +234,9 @@ export default function AudioPanelPage() {
     // 进行中守卫：双击重入会覆盖 mediaStreamRef，导致旧 MediaStream 泄漏 + 双音频图
     if (startingRef.current) return;
     startingRef.current = true;
+    // 代际守卫：发起即占用新代际；每个 await 返回后凭本代次判断结果是否仍然有效
+    startSeqRef.current += 1;
+    const seq = startSeqRef.current;
     try {
       setMicError(null);
       if (!navigator.mediaDevices?.getUserMedia) {
@@ -235,6 +245,8 @@ export default function AudioPanelPage() {
       }
       try {
         const resolvedAec = await resolveAecMode();
+        // 代际校验：resolveAecMode 等待窗口内被 stop/卸载/二次启动作废 → 本轮直接退出
+        if (seq !== startSeqRef.current) return;
         const stream = await navigator.mediaDevices.getUserMedia({
           audio: {
             sampleRate: 16000,
@@ -245,6 +257,12 @@ export default function AudioPanelPage() {
             autoGainControl: resolvedAec === 'browser',
           },
         });
+        // 代际校验：授权弹窗等待期间卸载兜底 stopMic 已作废本代次 →
+        // 立即释放新拿到的流并退出，杜绝迟到续体复活音频图 + setMicOn(true)
+        if (seq !== startSeqRef.current) {
+          stream.getTracks().forEach((track) => track.stop());
+          return;
+        }
         mediaStreamRef.current = stream;
 
         initPipeline();
@@ -292,6 +310,9 @@ export default function AudioPanelPage() {
         setMicOn(true);
       } catch (error) {
         console.error('[AudioPanelPage] mic start failed:', error);
+        // 代际守卫：仅当代际仍有效才清理现场并上报；过期失败（被 stop/新一轮作废）
+        // 不得清理新现场，也不得 setMicError 覆盖新状态
+        if (seq !== startSeqRef.current) return;
         await stopMic();
         setMicError('mic-start-failed');
       }

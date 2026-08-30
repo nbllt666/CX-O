@@ -15,6 +15,7 @@ from pydantic import BaseModel
 from server.chat_helpers import get_agent_config_async, get_llm_client_for_agent, get_tools_for_agent, retrieve_memory_context, ensure_agent_session_async
 from server.core.logging_config import get_contextual_logger
 from server.core.utils import run_io
+from server.api.routers._pagination import clamp_pagination
 
 logger = get_contextual_logger(__name__)
 
@@ -375,6 +376,9 @@ async def get_chat_history(session_id: str, limit: int = 50):
     from server.dependencies import get_context_manager
 
     try:
+        # T-07: 分页钳制统一走 _pagination.clamp_pagination（本端点仅 limit，无 offset），
+        # 防恶意超大 limit 拖库与非正数 limit 异常
+        limit, _ = clamp_pagination(limit)
         context_mgr = get_context_manager()
         session = await run_io(context_mgr.get_session, session_id)
 
@@ -444,9 +448,9 @@ async def memory_agent_chat_stream(request: MemoryAgentChatRequest):
             session_id, workspace_id="memory-agent", title="记忆管理对话",
         )
 
-        # 5. 加载历史上下文（从数据库）
+        # 5. 加载历史上下文（从数据库，G1/A6: 经 run_io 卸载同步 IO）
         agent_id = "memory-agent"
-        history_context = agent_context_mgr.load_context(agent_id, limit=20)
+        history_context = await run_io(agent_context_mgr.load_context, agent_id, limit=20)
 
         # 6. 添加用户消息到上下文（持久化）
         await run_io(

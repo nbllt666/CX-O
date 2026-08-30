@@ -34,20 +34,24 @@ class ChatWebSocketHandler:
         self.ws_manager.register_handler("config", self._handle_config)
 
     @staticmethod
-    def _ensure_agent_session(context_mgr, agent_id: str, agent_config: dict) -> str:
+    async def _ensure_agent_session(context_mgr, agent_id: str, agent_config: dict) -> str:
         """确保 agent-{agent_id} 会话存在并返回其 ID。
 
         与 GET /api/chat/history/agent-{id} 的历史读取键保持一致（workspace=agent-chats），
         使 WS 聊天写入与前端历史读取落在同一会话，修复「前端不加载历史记录」。
+
+        G1/D6: get_session/create_session/update_session 为同步 sqlite 直调，
+        统一经 run_io 卸载到共享有界 IO 池（与 add_message 同款方案）。
         """
         session_id = f"agent-{agent_id}"
-        if not context_mgr.get_session(session_id):
-            context_mgr.create_session(
+        if not await run_io(context_mgr.get_session, session_id):
+            await run_io(
+                context_mgr.create_session,
                 session_id=session_id,
                 workspace_id="agent-chats",
                 title=f"与 {agent_config.get('name', 'Agent')} 的对话",
             )
-            context_mgr.update_session(session_id, metadata={"agent_id": agent_id})
+            await run_io(context_mgr.update_session, session_id, metadata={"agent_id": agent_id})
         return session_id
 
     async def _handle_chat(self, client_id: str, message: Dict[str, Any]):
@@ -82,10 +86,11 @@ class ChatWebSocketHandler:
             llm = get_llm_client_for_agent(agent_config)
 
             if session_id:
-                if not context_mgr.get_session(session_id):
+                # G1/D6: get_session 为同步 sqlite 直调，经 run_io 卸载
+                if not await run_io(context_mgr.get_session, session_id):
                     # 会话不存在：agent-{id} 模式自动创建（对齐历史读取键），否则报错
                     if session_id == f"agent-{agent_id}":
-                        session_id = self._ensure_agent_session(
+                        session_id = await self._ensure_agent_session(
                             context_mgr, agent_id, agent_config
                         )
                     else:
@@ -95,9 +100,15 @@ class ChatWebSocketHandler:
                         return
             else:
                 # 无 session_id 时默认使用 agent-{id} 会话，与前端历史读取键一致
-                session_id = self._ensure_agent_session(context_mgr, agent_id, agent_config)
+                session_id = await self._ensure_agent_session(context_mgr, agent_id, agent_config)
 
-            context_mgr.add_message(session_id=session_id, role="user", content=user_message)
+            # 伴生C3：上下文写入 run_io 包裹，避免同步 sqlite 阻塞事件循环
+            await run_io(
+                context_mgr.add_message,
+                session_id=session_id,
+                role="user",
+                content=user_message,
+            )
 
             memory_context = await retrieve_memory_context(
                 agent_config, memory_mgr, user_message, session_id
@@ -113,8 +124,12 @@ class ChatWebSocketHandler:
 
             response = await llm.chat(messages=messages, stream=False)
 
-            context_mgr.add_message(
-                session_id=session_id, role="assistant", content=response.content
+            # 伴生C3：上下文写入 run_io 包裹（口径同上）
+            await run_io(
+                context_mgr.add_message,
+                session_id=session_id,
+                role="assistant",
+                content=response.content,
             )
 
             await self.ws_manager.send_to_client(
@@ -169,10 +184,11 @@ class ChatWebSocketHandler:
 
             # 获取/创建会话
             if session_id:
-                if not context_mgr.get_session(session_id):
+                # G1/D6: get_session 为同步 sqlite 直调，经 run_io 卸载
+                if not await run_io(context_mgr.get_session, session_id):
                     # 会话不存在：agent-{id} 模式自动创建（对齐历史读取键），否则报错
                     if session_id == f"agent-{agent_id}":
-                        session_id = self._ensure_agent_session(
+                        session_id = await self._ensure_agent_session(
                             context_mgr, agent_id, agent_config
                         )
                     else:
@@ -182,15 +198,20 @@ class ChatWebSocketHandler:
                         return
             else:
                 # 无 session_id 时默认使用 agent-{id} 会话，与前端历史读取键一致
-                session_id = self._ensure_agent_session(context_mgr, agent_id, agent_config)
+                session_id = await self._ensure_agent_session(context_mgr, agent_id, agent_config)
 
             # 发送会话ID
             await self.ws_manager.send_to_client(
                 client_id, {"type": "session_info", "session_id": session_id}
             )
 
-            # 添加用户消息
-            context_mgr.add_message(session_id=session_id, role="user", content=user_message)
+            # 添加用户消息（伴生C3：同步 sqlite 写入 run_io 包裹，避免阻塞事件循环）
+            await run_io(
+                context_mgr.add_message,
+                session_id=session_id,
+                role="user",
+                content=user_message,
+            )
 
             # 检索记忆
             memory_context = await retrieve_memory_context(
@@ -221,7 +242,9 @@ class ChatWebSocketHandler:
                         client_id, {"type": "cancelled", "timestamp": datetime.now().isoformat()}
                     )
                     if full_response:
-                        context_mgr.add_message(
+                        # 伴生C3：同步 sqlite 写入 run_io 包裹（口径同上）
+                        await run_io(
+                            context_mgr.add_message,
                             session_id=session_id,
                             role="assistant",
                             content=full_response + "\n\n[已打断]",
@@ -258,10 +281,13 @@ class ChatWebSocketHandler:
                         client_id, {"type": "chat_chunk", "content": chunk}
                     )
 
-            # 保存完整响应
+            # 保存完整响应（伴生C3：同步 sqlite 写入 run_io 包裹，避免阻塞事件循环）
             if full_response:
-                context_mgr.add_message(
-                    session_id=session_id, role="assistant", content=full_response
+                await run_io(
+                    context_mgr.add_message,
+                    session_id=session_id,
+                    role="assistant",
+                    content=full_response,
                 )
                 # E4: 已完整入库即置空，防止后续 chat_done 发送失败时 except 分支重复补写
                 full_response = ""
@@ -282,7 +308,9 @@ class ChatWebSocketHandler:
             # full_response 非空意味着 context_mgr/session_id 必已就绪；先补写再发
             # error 帧（连接已断时发送会抛异常，补写仍需完成）。
             if full_response:
-                context_mgr.add_message(
+                # 伴生C3：同步 sqlite 写入 run_io 包裹（口径同上）
+                await run_io(
+                    context_mgr.add_message,
                     session_id=session_id,
                     role="assistant",
                     content=full_response + "\n\n[已中断]",

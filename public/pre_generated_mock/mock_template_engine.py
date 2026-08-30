@@ -1,7 +1,7 @@
 """TemplateEngine 预生成 Mock 实现（CX-O 迁移版）。
 
 对应接口契约: public/interface_stub/template_engine.pyi
-对应数据契约: public/schema/template_registry.schema.json
+对应数据契约: 无独立 schema 文件，字段定义以实现 c:/CX-O/CX-O-SERVER/server/core/template_engine/template_engine.py 为准（待 s0201 重建）
 对应配置契约: public/config_template/radix_config.json
 
 Mock 策略:
@@ -12,7 +12,7 @@ Mock 策略:
 
 @version 1.1.0
 @see public/interface_stub/template_engine.pyi
-@see public/schema/template_registry.schema.json
+@see 实现: c:/CX-O/CX-O-SERVER/server/core/template_engine/template_engine.py
 
 CX-O 迁移版，基于 CXHMS v1.2.0 Mock 适配。
 """
@@ -51,7 +51,7 @@ class TemplateFrontmatter(BaseModel):
 
 
 class TemplateRecord(BaseModel):
-    """模板记录。字段与 template_registry.schema.json 一致。"""
+    """模板记录。字段定义以实现为准（c:/CX-O/CX-O-SERVER/server/core/template_engine/template_engine.py）。"""
     template_id: str
     name: str
     category: str  # enum: preset / custom
@@ -86,7 +86,7 @@ class UpdateTemplateRequest(BaseModel):
 
 
 # --------------------------------------------------------------------------- #
-# 枚举常量（与 template_registry.schema.json 一致）
+# 枚举常量（与实现 template_engine.py 保持一致）
 # --------------------------------------------------------------------------- #
 
 _CATEGORIES = {"preset", "custom"}
@@ -152,7 +152,7 @@ class MockTemplateEngine:
     """TemplateEngine 的 Mock 实现。
 
     内存态维护模板注册表，YAML frontmatter + 简化 Jinja2 渲染。
-    返回值通过 template_registry.schema.json 校验。
+    返回值以实现（c:/CX-O/CX-O-SERVER/server/core/template_engine/template_engine.py）的 TemplateRecord 定义为准。
     """
 
     def __init__(self) -> None:

@@ -45,9 +45,26 @@ class TestDaysElapsed:
         assert calc.calculate_days_elapsed(created) < 0
 
     def test_naive_aware_timezone_fix(self, calc):
-        # created 带 +00:00（aware），current 为 naive → 统一视为 UTC
-        created = "2025-12-31T12:00:00+00:00"
-        days = calc.calculate_days_elapsed(created)
+        # G1/A1: created 为 aware，current 为 naive → naive 端按系统本地时区
+        # 换算为 UTC 后求差（旧 replace(tzinfo=utc) 把本地时间错标为 UTC）。
+        # 时区无关断言：以 naive current 的 UTC 等效点作为 created，天数差应为 0。
+        local_tz = datetime.now().astimezone().tzinfo
+        naive_current = datetime(2026, 1, 1, 12, 0, 0)
+        calc.set_current_time(naive_current)
+        created = naive_current.replace(tzinfo=local_tz).astimezone(timezone.utc)
+        days = calc.calculate_days_elapsed(created.isoformat())
+        assert days == pytest.approx(0.0)
+
+    def test_no_utc_mislabel_offset(self, calc):
+        # G1/A1 回归：weaviate_store 写入 aware UTC created_at；UTC+8 环境下
+        # 旧实现把 naive 本地 current 错标为 UTC 会虚增 8h（约 0.333 天）。
+        # 时区无关断言：created 取 current 的 UTC 等效点前推 1 天 → days 恰为 1.0。
+        local_tz = datetime.now().astimezone().tzinfo
+        naive_current = datetime(2026, 1, 1, 12, 0, 0)
+        calc.set_current_time(naive_current)
+        utc_equivalent = naive_current.replace(tzinfo=local_tz).astimezone(timezone.utc)
+        created = utc_equivalent - timedelta(days=1)
+        days = calc.calculate_days_elapsed(created.isoformat())
         assert days == pytest.approx(1.0)
 
     def test_invalid_date_returns_zero(self, calc):

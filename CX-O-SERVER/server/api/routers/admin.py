@@ -242,7 +242,9 @@ async def update_config(config: AdminConfigUpdate, x_api_key: Optional[str] = He
             if config.system.debug is not None:
                 settings.config.system.debug = config.system.debug
 
-        settings.save_config()
+        # G1/A6: save_config 为同步原子写盘（内部持 _CONFIG_SAVE_LOCK），
+        # 整体经 run_io 卸载到 IO 线程池——锁获取随方法一起进入线程，写锁语义不变
+        await run_io(settings.save_config)
 
         logger.info("管理员更新了系统配置")
 
@@ -313,7 +315,8 @@ async def get_logs(level: str = "INFO", lines: int = 50, x_api_key: Optional[str
             log_file = os.path.join(get_project_root(), "logs", "cxo.log")
         if os.path.exists(log_file):
             # E7 修复: 改为反向块读，只取末尾 lines 行，不再整文件进内存
-            tail_lines = _read_log_tail(log_file, lines)
+            # G1/A4: 块读为同步阻塞 IO，async 路由内经线程包裹避免卡事件循环
+            tail_lines = await asyncio.to_thread(_read_log_tail, log_file, lines)
             # 保持 logs 为数组类型（原接口契约），避免前端对返回类型变化解析失败
             return {"status": "success", "logs": tail_lines, "total": len(tail_lines), "level": level, "lines": lines}
         return {"status": "success", "logs": ["No log file available"], "total": 0, "level": level, "lines": lines}

@@ -108,6 +108,9 @@ export function createVisionPipeline(deps: VisionPipelineDeps): VisionPipelineCo
   const enabledRef = { v: deps.enabled };
   const intervalSecRef = { v: deps.intervalSec };
   const disposedRef = { v: false };
+  // C1 在途互斥闸：上一拍 tick（含 Image 解码/打包上传 await）未完成时跳过本拍，
+  // 防止解码耗时 >1s 时双拍重叠导致同源双帧入缓冲（对齐 useFrameSender adaptiveInFlightRef 范式）
+  const tickInFlightRef = { v: false };
   const isPackable = deps.isPackable ?? defaultIsPackable;
 
   // 每源采样时间轴 / 去重 / 检测前向量
@@ -176,36 +179,42 @@ export function createVisionPipeline(deps: VisionPipelineDeps): VisionPipelineCo
   };
 
   async function tick(): Promise<number> {
-    if (disposedRef.v || !enabledRef.v) return 0;
-    let packaged = 0;
-    const kinds: FrameSourceKind[] = ['screen', 'camera'];
-    for (const kind of kinds) {
-      const frame = await deps.sample(kind);
-      if (!frame) continue;
-      const now = frame.ts;
-      // 节流：距上次采样未满 intervalSec 跳过本帧
-      if (!shouldSendByInterval(now, lastSampleAt.get(kind) ?? null, intervalSecRef.v)) continue;
-      // 静止去重：与上次采得帧完全一致则跳过（屏幕静止时重复采样无信息量）
-      if (isDuplicateFrame(frame.dataUrl, lastFrame.get(kind) ?? null)) continue;
+    // C1：最外层在途闸——上一拍未完成即跳过本拍（返回 0 与空拍口径一致）；try/finally 保证复位
+    if (tickInFlightRef.v || disposedRef.v || !enabledRef.v) return 0;
+    tickInFlightRef.v = true;
+    try {
+      let packaged = 0;
+      const kinds: FrameSourceKind[] = ['screen', 'camera'];
+      for (const kind of kinds) {
+        const frame = await deps.sample(kind);
+        if (!frame) continue;
+        const now = frame.ts;
+        // 节流：距上次采样未满 intervalSec 跳过本帧
+        if (!shouldSendByInterval(now, lastSampleAt.get(kind) ?? null, intervalSecRef.v)) continue;
+        // 静止去重：与上次采得帧完全一致则跳过（屏幕静止时重复采样无信息量）
+        if (isDuplicateFrame(frame.dataUrl, lastFrame.get(kind) ?? null)) continue;
 
-      deps.bufferFor(kind).push(frame.dataUrl, now);
-      lastSampleAt.set(kind, now);
-      lastFrame.set(kind, frame.dataUrl);
+        deps.bufferFor(kind).push(frame.dataUrl, now);
+        lastSampleAt.set(kind, now);
+        lastFrame.set(kind, frame.dataUrl);
 
-      if (!frame.vector) {
-        continue; // 无向量则无法参与检测，但帧仍已入缓冲
+        if (!frame.vector) {
+          continue; // 无向量则无法参与检测，但帧仍已入缓冲
+        }
+        const prev = lastVector.get(kind);
+        lastVector.set(kind, frame.vector);
+        if (!prev) continue; // 首帧仅建基线，不做差分
+        const event = deps.detector.feed(prev, frame.vector, now, kind);
+        if (event && isPackable(event.type)) {
+          deps.onEvent?.(event);
+          await packageEvent(kind, event);
+          packaged++;
+        }
       }
-      const prev = lastVector.get(kind);
-      lastVector.set(kind, frame.vector);
-      if (!prev) continue; // 首帧仅建基线，不做差分
-      const event = deps.detector.feed(prev, frame.vector, now, kind);
-      if (event && isPackable(event.type)) {
-        deps.onEvent?.(event);
-        await packageEvent(kind, event);
-        packaged++;
-      }
+      return packaged;
+    } finally {
+      tickInFlightRef.v = false;
     }
-    return packaged;
   }
 
   async function flush(): Promise<number> {

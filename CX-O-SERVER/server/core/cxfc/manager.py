@@ -215,8 +215,9 @@ class CXFCManager:
             resp = await client.get(f"{scheme}://{host}:{port}/tools", timeout=10.0)
             if resp.status_code == 200:
                 return resp.json().get("tools", [])
-        except Exception:
-            pass
+        except Exception as e:
+            # G1/A8: 静默吞异常改为留痕，便于排查插件工具拉取失败
+            logger.warning(f"拉取插件工具失败 {scheme}://{host}:{port}: {e}")
         return []
 
     async def _fetch_skills(self, host: str, port: int, client: httpx.AsyncClient = None, scheme: str = "http") -> List[Dict]:
@@ -225,8 +226,9 @@ class CXFCManager:
             resp = await client.get(f"{scheme}://{host}:{port}/skills", timeout=10.0)
             if resp.status_code == 200:
                 return resp.json().get("skills", [])
-        except Exception:
-            pass
+        except Exception as e:
+            # G1/A8: 静默吞异常改为留痕，便于排查插件技能拉取失败
+            logger.warning(f"拉取插件技能失败 {scheme}://{host}:{port}: {e}")
         return []
 
     async def _register_plugin_tools_and_skills(self, plugin: CXFCPluginInfo):
@@ -534,8 +536,9 @@ class CXFCManager:
                     tool_name = tool.get("name", "")
                     if hasattr(self._tool_registry, "delete_tool"):
                         self._tool_registry.delete_tool(tool_name)
-                except Exception:
-                    pass
+                except Exception as e:
+                    # G1/A8: 单个工具清理失败仅留痕，不中断其余工具的注销
+                    logger.debug(f"清理插件 {plugin_id} 工具注册失败: {e}")
         self._skill_registry.unregister_skills(plugin_id)
 
     async def disconnect_plugin(self, plugin_id: str, remove_persistent: bool = True):
@@ -788,8 +791,9 @@ class CXFCManager:
                                 },
                             }
                         )
-                    except Exception:
-                        pass
+                    except Exception as e:
+                        # G1/A8: 断连广播失败仅留痕，不影响心跳循环继续
+                        logger.debug(f"广播插件 {plugin_id} 断连状态失败: {e}")
 
     def get_plugins(self) -> List[CXFCPluginInfo]:
         """返回全部已注册插件信息的列表。"""

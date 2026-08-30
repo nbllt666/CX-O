@@ -4,23 +4,12 @@
 在原 MemoryManager 基础上新增 write_with_decision 方法，支持 DecisionCore 驱动的智能存储。
 实现必须严格匹配此存根定义的签名，否则契约测试不通过。
 
-@version 1.0.1  # G4-B 契约对齐（PATCH）：get_rejected_content 签名对齐实现（session_id 必填、limit 默认 50）
+@version 1.1.0  # G2 契约修订（MINOR）：write_with_decision 签名对齐实现（4 参：content/decision/metadata/source，decision: Any，返回 Dict 含 location/memory_id/rejected_id）；移除无引用的 WriteWithDecisionResult 模型
 @see public/schema/storage_decision.schema.json
 @see public/schema/agent_config_v2.schema.json
 """
 
 from typing import Any, Dict, List, Optional
-
-from pydantic import BaseModel
-
-
-class WriteWithDecisionResult(BaseModel):
-    """write_with_decision 返回结果。"""
-    stored: bool
-    location: str  # enum: memories / permanent_memories / rejected
-    memory_id: Optional[int]
-    metadata: Dict[str, Any]
-    reason: str
 
 
 class MemoryManagerV2:
@@ -34,28 +23,34 @@ class MemoryManagerV2:
     def write_with_decision(
         self,
         content: str,
-        decision: Dict[str, Any],
-        metadata: Dict[str, Any],
-    ) -> WriteWithDecisionResult:
-        """根据 DecisionCore 决策写入记忆。
+        decision: Any,
+        metadata: Optional[Dict[str, Any]] = None,
+        source: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """按 decision.location 决定写入主库或 rejected_content 表。
 
-        根据 decision.location 决定写入位置：
-        - memories → 写入 memories 表（临时记忆）
-        - permanent_memories → 写入 permanent_memories 表（永久记忆）
-        - rejected → 写入 rejected_content 表（保留 30 天）
+        - location=memories → write_memory（临时记忆）
+        - location=permanent_memories → write_permanent_memory（永久记忆）
+        - location=rejected → 写入 rejected_content 表（保留 retention_days 天）
 
         Args:
-            content: 记忆内容
-            decision: DecisionCore 决策结果（含 location / quality_score / reason）
-            metadata: 记忆元数据（time / importance / source / tags）
+            content: 记忆/被拒绝内容
+            decision: StorageDecision 对象或 dict（含 location/quality_score/reason/
+                      metadata/decision_point/llm_confidence 等字段）
+            metadata: 附加元数据（写入主库时合并到记忆 metadata；写入 rejected 时
+                      合并到 rejected_content.metadata）
+            source: 来源标记透传（'vision'/'user' 等）。memories 分支默认 'user'；
+                    permanent_memories 分支缺省维持 'radix_decision'。
 
         Returns:
-            WriteWithDecisionResult: stored + location + memory_id + metadata + reason
+            Dict[str, Any]: 含以下键——
+                location: str（memories / permanent_memories / rejected）
+                memory_id: Optional[int]（主库分支的记忆 ID，rejected 分支为 None）
+                rejected_id: Optional[str]（rejected 分支的记录 UUID，主库分支为 None）
 
         Raises:
             ValueError: decision.location 不在枚举中（422）
             RuntimeError: 数据库写入失败（500）
-            IOError: 数据库文件不可访问（500）
         """
         ...
 

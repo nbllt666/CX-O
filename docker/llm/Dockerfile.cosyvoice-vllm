@@ -1,5 +1,10 @@
 # CosyVoice3 + vLLM 进程内引擎容器
 # 基于 vllm-omni 镜像（已有 vLLM 0.26.0 + torch 2.11.0 + CUDA 13.0）
+# ⚠️ 浮动 tag 风险登记（2026-08-30）：`latest` 随上游发布漂移，CUDA 基座/引擎/
+# CLI 行为可能破坏性变更。Dockerfile.vllm 已钉版的基座为 vllm/vllm-openai:v0.9.2，
+# 与本文件基座 vllm/vllm-omni 属不同仓库，无法镜像其已验证 tag；且构建环境无法
+# 联网核实 vllm-omni 各版本 tag 的存在性，故不盲钉。升级方式：构建端核实可用
+# tag 后将 latest 替换为明确版本号，并验证 /health 后再固化。
 FROM vllm/vllm-omni:latest
 
 # 清空入口点（基础镜像默认 "vllm serve"）
@@ -64,13 +69,20 @@ EXPOSE 8094
 HEALTHCHECK --interval=30s --timeout=10s --start-period=120s --retries=5 \
     CMD curl -f http://localhost:8094/health || exit 1
 
-CMD ["sh", "-c", "python /workspace/server.py \
+# 开关参数显式比较（2026-08-30 修复）：原 ${VAR:+--flag} 写法在变量设为
+# "false" 等非空值时会误开启（与 Dockerfile.vllm:43-45 同型问题），改为仅
+# "true" 时追加开关——BF16/VLLM=false 真正关闭，NO_WARMUP=false 真正执行 warmup。
+CMD ["sh", "-c", "BF16_ARGS=''; VLLM_ARGS=''; NO_WARMUP_ARGS=''; \
+    if [ \"$BF16\" = \"true\" ]; then BF16_ARGS='--bf16'; fi; \
+    if [ \"$VLLM\" = \"true\" ]; then VLLM_ARGS='--vllm'; fi; \
+    if [ \"$NO_WARMUP\" = \"true\" ]; then NO_WARMUP_ARGS='--no-warmup'; fi; \
+    python /workspace/server.py \
     --model_dir ${MODEL_DIR} \
     --host ${HOST} \
     --port ${PORT} \
     --device ${DEVICE} \
-    ${BF16:+--bf16} \
+    $BF16_ARGS \
     --stream-hop-len ${STREAM_HOP_LEN} \
     --flow-steps ${FLOW_STEPS} \
-    ${VLLM:+--vllm} \
-    ${NO_WARMUP:+--no-warmup}"]
+    $VLLM_ARGS \
+    $NO_WARMUP_ARGS"]

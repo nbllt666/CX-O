@@ -17,6 +17,7 @@ import {
   resizeRuntime,
   setIdleAnimationConfig,
   setIdleAnimationEnabled,
+  updateStageTransform,
   type Live2DRuntimeState,
 } from '../../avatar/live2d/live2dEngine';
 import type { AnimationSettings } from '../../store/settingsStore';
@@ -25,6 +26,14 @@ interface Live2DViewerProps {
   modelPath: string;
   avatar: AvatarManifest;
   driver: IAvatarDriver | null;
+  /**
+   * 用户舞台变换（实时热更新，不并入 manifest——避免拖缩放/偏移滑杆时整模型重建重载）。
+   * scale 与 obsScale 采集自适应因子合成后传入；xOffset/yOffset 为设置原值（内部 /400 归一化）。
+   * 取值口径与旧 manifest 内嵌方式等价（fitModel：scale 相乘、offset 相加）。
+   */
+  scale?: number;
+  xOffset?: number;
+  yOffset?: number;
   idleMotionEnabled?: boolean;
   animationConfig?: Partial<AnimationSettings>;
   /** 口型：实时音量 ref（0~1，渲染循环直读） */
@@ -37,6 +46,9 @@ export function Live2DViewer({
   modelPath,
   avatar,
   driver,
+  scale = 1,
+  xOffset = 0,
+  yOffset = 0,
   idleMotionEnabled = true,
   animationConfig,
   volumeRef,
@@ -138,6 +150,22 @@ export function Live2DViewer({
       }
     };
   }, [modelPath, avatar, driver, animationConfig, idleMotionEnabled]);
+
+  // 用户舞台变换（scale/xOffset/yOffset）变化时热应用（B3）：经引擎 updateStageTransform
+  // 改写 runtime.currentTransform 并重算取景，不重建模型——对齐 VRMViewer 的
+  // scale/position prop 热更新方案。xOffset/yOffset /400 归一化口径与旧 manifest
+  // 内嵌方式（createSyntheticLive2DManifest）一致；isLoading 依赖确保加载完成、
+  // runtimeRef 就位后补首次应用。
+  useEffect(() => {
+    const runtime = runtimeRef.current;
+    const container = containerRef.current;
+    if (!runtime || !container || isLoading) return;
+    updateStageTransform(runtime, container, {
+      scale,
+      offsetX: xOffset / 400,
+      offsetY: yOffset / 400,
+    });
+  }, [scale, xOffset, yOffset, isLoading]);
 
   if (loadError) {
     return (

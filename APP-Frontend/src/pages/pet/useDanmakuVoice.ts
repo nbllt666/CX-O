@@ -69,6 +69,9 @@ export function useDanmakuVoice({
   const activeSourceRef = useRef<AudioBufferSourceNode | null>(null);
   const speakingRef = useRef(false);
   const rafRef = useRef(0);
+  // 卸载代际号：unmount 自增。playNext 内每个 await 返回后校验代际，过期即丢弃，
+  // 防止卸载后在途 TTS/解码结果继续 ensureGraph/重建播放链（幽灵播放 + AudioContext 泄漏）
+  const generationRef = useRef(0);
 
   const enabledRef = useRef(enabled);
   enabledRef.current = enabled;
@@ -148,11 +151,16 @@ export function useDanmakuVoice({
     }
     speakingRef.current = true;
     setIsPlaying(true);
+    // 记录本次播报的代际号：await 期间组件可能卸载（代际自增），过期结果全部丢弃
+    const generation = generationRef.current;
     try {
       const blob = await audioApi.textToSpeech(item.text);
+      if (generationRef.current !== generation) return;
       const arrayBuffer = await blob.arrayBuffer();
+      if (generationRef.current !== generation) return;
       const ctx = ensureGraph();
       const audioBuffer = await ctx.decodeAudioData(arrayBuffer);
+      if (generationRef.current !== generation) return;
       // 等待合成期间开关被关闭：丢弃本次播报
       if (!enabledRef.current) {
         speakingRef.current = false;
@@ -172,6 +180,8 @@ export function useDanmakuVoice({
       };
       source.start();
     } catch (e) {
+      // 卸载后代际过期：静默终止，不再链式取下一条（队列已随卸载清空）
+      if (generationRef.current !== generation) return;
       // 合成/网络失败：跳过该条继续下一条
       console.warn('[useDanmakuVoice] TTS failed, skip item:', e);
       speakingRef.current = false;
@@ -211,6 +221,10 @@ export function useDanmakuVoice({
   // 卸载：释放音频资源
   useEffect(() => {
     return () => {
+      // 代际自增最前置：使在途 playNext 的所有 await 结果立即过期丢弃
+      generationRef.current += 1;
+      queueRef.current.clear();
+      speakingRef.current = false;
       stopLipLoop();
       if (activeSourceRef.current) {
         try {

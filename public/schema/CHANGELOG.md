@@ -2,6 +2,95 @@
 
 > 遵循 AC 范式 v6 rules-3 §六 契约版本化规则。所有契约变更必须记录版本号、变更内容、变更原因、影响范围。
 
+## [1.11.0] - 2026-08-30
+
+### 变更内容
+
+- **接口契约变更（PATCH）**：`interface_stub/template_engine.pyi` v1.0.1→1.0.2——清理 `TemplateRecord` docstring 内残留的悬空 schema 引用（该 schema 文件不存在，v1.9.0 仅修正了头部 @see），改指实现位置 `server/core/template_engine/template_engine.py`。连带同步：`pre_generated_mock/mock_template_engine.py` 5 处注释引用（:4/:15/:54/:89/:155）与 `pre_generated_mock/README.md` Mock 清单表格行，全部改指实现位置。
+- **配置契约变更（PATCH）**：`config_template/settings_json.schema.json`（新增 `@version` 注记 1.0.0→1.0.1）——`_sourceOfTruth.primary` 由不存在的 `c:/CX-O/config/settings.json` 改指实际加载点 `c:/CX-O/CX-O-SERVER/config/settings.json`（对齐 `server/api/routers/config.py:61/:76` 经 `_PROJECT_ROOT` 解析）；`note` 补第 5 子段 `adaptive_polling`（真源文件 :21-27 实存）并登记加载点。
+- **配置契约变更（PATCH）**：`config_template/default_yaml.schema.json`（新增 `@version` 注记 1.0.0→1.0.1）——`_sourceOfTruth.primary/secondary` 指向的 `c:/CX-O/config/default.yaml` 与 `c:/CX-O/config/validation.py` 均不存在，指针改指实现位置 `c:/CX-O/CX-O-SERVER/server/config.py` 并加注"源已并入 UnifiedConfig（约 :1053），本契约待 s0201 重建"。
+- **接口契约变更（PATCH）**：`interface_stub/memory.pyi` v1.1.0→1.1.1——三处存根签名与实现（`server/api/routers/memory.py`）对齐，修正此前 str 笔误，无运行时影响：`update_memory` 改 `(memory_id: int, request: MemoryUpdateRequest)`（对齐 :366-367；新增 `MemoryUpdateRequest` 模型对齐 :90-97）、`delete_memory` 补 `(soft_delete: bool = True, agent_id: str = "default")`（对齐 :392-393）、`rag_search` 改实现参数序 `(query, workspace_id, limit: Optional[int] = None, agent_id)`（对齐 :445-446）。
+- **配置契约变更（MINOR）**：`config_template/radix_config.json` v1.1.0→1.2.0（新增 `@version` 注记）——`decision_core` 补 `rubric_path`（string，默认 "data/agents.json"）与 `audit_log_path`（string，默认 "data/distillation_logs/"），根级补 `legacy_port`（integer，默认 8011）；均对齐 `server/config.py` `DecisionCoreConfig`（:931-932）与 `RadixConfig`（:915）默认值。`additionalProperties: false` 保持不变，补齐后契约面覆盖实现全部键。
+- **杂项清理（人类已授权）**：删除 `CX-O-SERVER/server/config/settings.json`（零代码引用孤儿副本；删除前 SHA256 核对与真源 `CX-O-SERVER/config/settings.json` 完全一致，哈希 AC6C45B4…97E9）。
+
+### 变更原因
+
+- 第十五轮质量评估 G4 契约批次：契约面与实现/真实文件漂移（悬空引用、指针指向不存在文件、存根签名笔误、契约字段窄于实现）+ 1 份孤儿副本文件，经实现证据逐条核验后执行。public/ 修改与 B4 删除已获人类显式授权（AskUserQuestion 2026-08-30 裁决"四批全修 + 删除孤儿副本"，授权记录于 `.trae/documents/20260830_模块0_第十五轮全面质量评估修复.md` §2.1）。
+
+### 影响范围
+
+- B1/B2/B3 均为注释/指针级修正（PATCH），不改变任何校验语义；settings_json/default_yaml 两份 schema 仍为种子阶段（`_seedStage: true`），完整 Schema 待 s0201。
+- B6 存根签名对齐为笔误修正（PATCH）：实现自始如此（memory_id 为 int、rag_search query 在前），无调用方按旧存根签名调用，无运行时影响。
+- B5 为纯新增可选字段（MINOR）：新字段带默认值，Pydantic auto_fill 兜底不受影响；`additionalProperties: false` 策略未改，补齐后 radix_config.json 契约面与 `server/config.py` RadixConfig/DecisionCoreConfig 键集一致。
+- B4 删除零代码引用副本，真源 `CX-O-SERVER/config/settings.json` 未动。
+
+### 闭合判据
+
+- [x] 7 份契约/Mock/README 文件实体修订 + 1 份孤儿副本删除（删除前哈希一致性核对通过）
+- [x] 3 份 JSON 契约 json.load 解析通过；template_engine 实现侧 2 份 Python 文件 ast 语法校验通过
+- [x] B1 悬空数据契约名 grep 于 public/ 与 server/core/template_engine/ 残留清零（仅本文件 v1.9.0 历史条目保留历史记载）
+- [x] 契约相关定向测试（pytest -k "config or template"）结果记录于任务报告
+
+## [1.10.0] - 2026-08-30
+
+### 变更内容
+
+- **数据契约变更（MINOR）**：`schema/memory.schema.json` v2.0.0→2.1.0——`definitions.permanent_memory_record.source` 枚举追加 `"radix_decision"`（原枚举仅 `["user", "vision"]`，与实现缺省值冲突），description 注明 radix_decision 为 `write_with_decision` permanent 分支的缺省来源标记。对齐 `server/core/memory/mixins/decision_mixin.py:161`（`source=source or "radix_decision"`）与 `interface_stub/memory_manager_v2.pyi:43`。
+- **数据契约变更（PATCH/修复级）**：`schema/distillation_log.schema.json`——修复文件物理截断（原 L183 `"exception_type": {"const": "json` 处于字符串值中间，json.load 必失败）：补全 `definitions.exceptions.json_JSONDecodeError_500` 对象（exception_type const `"json.JSONDecodeError"`，结构镜像同文件 `IOError_500`：trigger_method/behavior/reason，与日志 best-effort 非阻断语义一致），补齐 exceptions 的 `additionalProperties: false` 与全部缺失闭合括号。
+- **数据契约变更（PATCH/修复级）**：`schema/distillation_session.schema.json`——修复文件物理截断（原 L261 键名中间截断，json.load 必失败）：补齐 `definitions.exceptions` 的 `additionalProperties: false` 与文件收尾闭合括号。未改动任何语义字段；`#/definitions/turn` 内部 $ref 解析验证正常。
+- **Mock 对齐**：`pre_generated_mock/mock_memory_manager_v2.py` v1.2.0→1.3.0——对齐 `interface_stub/memory_manager_v2.pyi @1.1.0`：`write_with_decision` 改 4 参签名 `(content, decision, metadata=None, source=None)`、返回 `Dict{location, memory_id, rejected_id}` 三分支形状（rejected 分支 rejected_id 为 UUID 字符串、memory_id 为 None；stored 分支相反，对齐 `decision_mixin.py:102-176`）；移除 pyi 已声明删除且全仓无代码引用的 `WriteWithDecisionResult` 模型；`get_rejected_content` 排序改 created_at 降序（对齐实现 `ORDER BY created_at DESC`）；rejected 分支改以 rejected_id UUID 为表键，修复原实现分配 `_alloc_id` 后弃用导致的序号空耗。
+- **Mock 对齐**：`pre_generated_mock/mock_decision_core.py` v1.1.0→1.1.1——`_DECISION_POINTS` 补 `"D7_DREAM_FILTER"`（对齐 `interface_stub/decision_core.pyi:66` 与实现 `server/core/decision/decision_core.py:120`）。
+- **测试适配**：`tests/test_tools/e2e/test_decision_e2e.py`——`test_write_with_decision_accept` docstring 中的过期契约依据（`WriteWithDecisionResult(...)`）同步为 pyi @1.1.0 的 Dict 形状描述；该测试代码本已按 `write_result.get("memory_id"/"rejected_id")` dict 方式断言，无逻辑改动。
+
+### 变更原因
+
+- 第十三轮质量评估 G2 批次：2 份 schema 文件物理截断属阻塞性缺陷（json.load 必失败，第十二轮全量校验漏检项）；memory.schema source 枚举与实现缺省值冲突（合法写入数据会被 schema 拒绝）；pre_generated_mock 面与 pyi @1.1.0 漂移（第十二轮 CHANGELOG [1.9.0] 已登记"待后续批次处理"，即本批次）。经实现证据逐条核验后，获人类显式授权修订（授权范围：5 份契约/Mock 文件 + 本 CHANGELOG + 测试 docstring 同步）。
+
+### 影响范围
+
+- memory.schema source 枚举扩展为纯新增（MINOR）：既有 `user`/`vision` 取值校验不受影响，此前会被拒绝的 `radix_decision` 缺省写入转为可校验通过。
+- 2 份截断 schema 修复不改变任何既有语义字段，仅使文件恢复可解析；下游按契约加载这 2 份 schema 的校验路径由此恢复可用。
+- mock_memory_manager_v2 返回形状变更影响所有直接消费该 Mock 返回值的调用方：旧 `WriteWithDecisionResult` 对象属性访问（`.stored/.reason`）需改为 dict 访问；全仓检索确认无代码引用该 Mock（仅本文件自包含定义与 E2E 测试 docstring），故无适配负担。
+- mock_decision_core 补 D7_DREAM_FILTER 为纯新增枚举项，`_write_audit_log` 校验放行该决策点，不影响既有 6 决策点行为。
+
+### 闭合判据
+
+- [x] 5 份授权文件实体修订 + 本 CHANGELOG 记录 + 测试 docstring 同步
+- [x] `public/schema/` 全部 45 个 schema 文件 json.load 全量复验 0 失败（含本次修复的 2 份与 memory.schema 枚举扩展）
+- [x] mock_memory_manager_v2 三分支返回形状内存自测通过（memories/permanent_memories/rejected）；py_compile 通过
+- [x] 契约相关测试（decision/memory/distillation 定向）结果记录于任务报告
+
+## [1.9.0] - 2026-08-30
+
+### 变更内容
+
+- **数据契约变更（MINOR）**：`schema/cluster_backup_unit.schema.json`——`unit` 枚举追加 `"ref_audio"`（8 单元补齐最后缺口），description 补充 ref_audio 语义。对齐 `server/ref_audio_store.py:864/926/995` 的 `_emit("ref_audio", ...)` 事件发射（ref_audio 资产注册/删除事件走集群同步）。
+- **数据契约变更（MINOR）**：`schema/storage_decision.schema.json`——`decision_point` 枚举追加 `"D7_DREAM_FILTER"`，description 补充 D7=梦境过滤器确定性拦截语义。对齐 `server/core/decision/decision_core.py:120` DECISION_POINTS 登记（实现 `server/autonomy/dream/filter.py`；`interface_stub/decision_core.pyi:66` 已登记）。另修复该文件原有语法缺陷：`definitions.exceptions` 与根对象缺少 3 个闭合括号（修订前该 schema 无法被 json 解析加载，属阻塞性缺陷；未改动任何语义字段）。
+- **数据契约变更（MINOR）**：`schema/emotion_instruction.schema.json`——properties 追加 `speed`（number，0.5~2.0，默认 1.0，真实语速倍率）与 `volume`（number，0.1~2.0，默认 1.0，音量倍率）。对齐 `server/services/emotion_instruction_service.py:117-128` EmotionInstruction dataclass 字段定义（`interface_stub/emotion_instruction_service.pyi` v1.1.0 已含同名字段）。
+- **接口契约变更（MINOR）**：`interface_stub/memory_manager_v2.pyi` v1.0.1→1.1.0——`write_with_decision` 签名对齐实现：`(content: str, decision: Any, metadata: Optional[Dict[str, Any]] = None, source: Optional[str] = None) -> Dict[str, Any]`，docstring 写明返回 Dict 含 `location/memory_id/rejected_id` 三键；移除因此无引用的 `WriteWithDecisionResult` 模型（预生成 Mock 为自包含定义，不受影响）。对齐 `server/core/memory/mixins/decision_mixin.py:102-176`；调用方证据 `server/core/vision/narrative_memory.py:209-215`（4 参调用 + dict 访问 `result.get("memory_id")`）。
+- **接口契约变更（MINOR）**：`interface_stub/agents.pyi` v1.0.0→1.1.0——补齐实现有而存根缺的 7 处：`GET /agents/default`（agents.py:296-300）、`POST /agents/{agent_id}/default`（agents.py:560-561）、`DELETE /agents/{agent_id}/context`（agents.py:714-715）、`GET/PUT/DELETE /agents/{agent_id}/ref-audio`（agents.py:767-768/780-781/810-811）；`agent_context` 补 `limit: int = 20` 参数（agents.py:675）；新增 `SetAgentRefAudioRequest` 模型（agents.py:213-217：asset_id min_length=1、tts_voice 可选）。
+- **接口契约变更（MINOR）**：`interface_stub/chat.pyi` v1.0.0→1.1.0——`POST /chat` 签名改为 `chat(request: Request)` 直收 fastapi.Request、无 Pydantic 体（对齐 chat.py:74-75，multipart/JSON 分流注明）；`GET /chat/history/{session_id}` 补 `limit: int = 50` 参数（对齐 chat.py:372-373）；补 `POST /summary-agent/chat/stream` 端点与 `SummaryAgentChatRequest` 模型（message/agent_id="summary-agent"/images/target_session_id，对齐 chat.py:620-636）。
+- **接口契约变更（PATCH）**：`interface_stub/template_engine.pyi` v1.0.0→1.0.1——修正 `@see public/schema/template_registry.schema.json` 悬空引用（该 schema 文件不存在），改为指向实现位置 `server/core/template_engine/template_engine.py`。
+- **接口契约变更（MINOR）**：`interface_stub/physio.pyi`——`PhysioSignalStore` 段补 `flush() -> None` 声明（强制落盘、忽略节流间隔）。对齐 `server/autonomy/dream/physio/store.py:102-107`。
+- **杂项清理**：删除 `interface_stub/__pycache__/cx_cluster.cpython-314.pyc` 与 `cx_admin.cpython-314.pyc`（interface_stub 仅承载 .pyi 契约存根，对应源 .py 不存在，为历史误生成产物）。
+
+### 变更原因
+
+- 第十二轮质量评估 G2 批次（契约对齐实现，实现为源真理，不改变任何运行行为）：9 份契约文件与实现存在漂移（枚举缺口、字段缺口、签名漂移、端点缺失、悬空引用、幽灵缓存产物），经实现证据逐条核验后，获人类显式授权修订（授权范围：8 份契约文件 + 本 CHANGELOG + 2 个 .pyc 删除）。
+
+### 影响范围
+
+- 三处 schema 枚举/字段追加均为纯新增（MINOR）：已有枚举值与字段未改动，既有合法数据校验不受影响；新增枚举值使此前被 schema 拒绝的合法实现数据（ref_audio 单元、D7 决策点、speed/volume 字段）转为可校验通过。
+- memory_manager_v2.pyi 签名修正与实现一致，调用方（narrative_memory.py）已按 4 参 dict 风格调用，无适配需求；WriteWithDecisionResult 在 pyi 中零引用后移除，预生成 Mock 自包含定义不受影响。
+- agents.pyi/chat.pyi 端点补齐为纯新增声明（种子存根扩面），不改变任何实现行为；template_engine.pyi 仅注释级修正；physio.pyi 补声明对应实现既有方法。
+- 下游登记（未改动）：`public/pre_generated_mock/mock_memory_manager_v2.py` 的 `write_with_decision` 仍返回 `WriteWithDecisionResult` 对象（与真实实现返回 Dict 存在形状差异），属 Mock 面漂移，本次授权清单未含该文件，待后续批次处理。
+
+### 闭合判据
+
+- [x] 8 份契约实体修订（3 schema + 5 pyi）+ CHANGELOG 记录（本条目）+ 2 个 .pyc 删除
+- [x] JSON 文件通过 json.tool 语法校验；pyi 通过 ast 语法校验
+- [x] 契约相关测试运行（test_orchestrator_stub/test_ref_audio_store 等）结果记录于任务报告
+
 ## [1.8.0] - 2026-08-29
 
 ### 变更内容

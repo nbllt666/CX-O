@@ -1,4 +1,5 @@
 {
+  "@version": "1.2.0 (2026-08-30 decision_core 补 rubric_path/audit_log_path、根级补 legacy_port（对齐 server/config.py RadixConfig/DecisionCoreConfig 默认值），第十五轮 G4 MINOR；1.1.0 对齐实现补 quality_llm_*/vision_* 字段（v1.8.0 批次）；1.0.0 种子创建)",
   "$schema": "http://json-schema.org/draft-07/schema#",
   "$id": "https://cx-o.local/config_template/radix_config.json",
   "title": "RADIX Config",
@@ -225,6 +226,16 @@
           "type": "boolean",
           "default": true,
           "description": "LLM 置信度极低时是否回退 system_prompt 规则。true=回退（互补融合项 3），false=报错。"
+        },
+        "rubric_path": {
+          "type": "string",
+          "default": "data/agents.json",
+          "description": "决策 rubric 路径。对齐 server/config.py DecisionCoreConfig.rubric_path 默认值。"
+        },
+        "audit_log_path": {
+          "type": "string",
+          "default": "data/distillation_logs/",
+          "description": "审计日志路径。对齐 server/config.py DecisionCoreConfig.audit_log_path 默认值。"
         }
       }
     },
@@ -361,6 +372,11 @@
       "type": "boolean",
       "default": true,
       "description": "parser.py 回退开关。true=走原有解析逻辑，false=调用 MultimodalPipeline.preprocess。升级时设为 false 启用下沉路径。"
+    },
+    "legacy_port": {
+      "type": "integer",
+      "default": 8011,
+      "description": "CXHMS 历史 RADIX 端口，CX-O 已将 RADIX 子服务合并到主后端 8000，仅保留兼容字段。对齐 server/config.py RadixConfig.legacy_port 默认值。"
     }
   },
   "definitions": {

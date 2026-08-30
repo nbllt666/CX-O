@@ -2,13 +2,14 @@
 from fastapi import APIRouter, Depends, HTTPException, Request
 from typing import Any, Dict, Optional
 import json
+import threading
 from pathlib import Path
 
 from pydantic import BaseModel
 
 from server.core.logging_config import get_contextual_logger
 from server.config import get_settings, atomic_write_json
-from server.core.utils import deep_merge
+from server.core.utils import deep_merge, run_io
 from server.api.routers.admin import verify_admin_api_key
 from server.core.websocket import get_websocket_manager
 
@@ -17,6 +18,10 @@ logger = get_contextual_logger(__name__)
 
 # 项目根（CX-O-SERVER），基于文件位置解析，避免依赖运行时工作目录
 _PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent.parent
+
+# settings.json 读改写（RMW）串行化锁：保护本文件内各端点对
+# config/settings.json 的 读→改→写 复合操作，避免并发请求交叉覆盖
+_SETTINGS_RW_LOCK = threading.Lock()
 
 
 class SenseVoiceStreamingConfigRequest(BaseModel):
@@ -72,6 +77,90 @@ def _save_services_config(config_data: Dict[str, Any]) -> None:
     atomic_write_json(str(config_file), config_data)
 
 
+def _update_audio_section_locked(config_file: Path, section_data: Dict[str, Any]) -> None:
+    """PUT /config audio 节持锁 RMW：读→改→写 settings.json 的 tts 节。
+
+    由 async 端点经 run_io 卸载到 IO 线程池执行——threading.Lock 随函数体进入
+    工作线程获取/释放，锁语义与原同步块等价，同步文件 IO 不再阻塞事件循环；
+    写失败留痕 warning 后继续（与原同步块一致，不冒泡）。
+    """
+    with _SETTINGS_RW_LOCK:
+        config_data = {}
+        if config_file.exists():
+            try:
+                with open(config_file, "r", encoding="utf-8") as f:
+                    config_data = json.load(f)
+            except Exception as e:
+                logger.warning(f"读取服务配置失败: {e}")
+
+        if "tts" not in config_data:
+            config_data["tts"] = {}
+
+        tts_config = config_data["tts"]
+        for key in ['ref_audio_path', 'ref_text', 'speed', 'cross_fade_duration',
+                   'emotion_enabled', 'effects_enabled']:
+            if key in section_data:
+                tts_config[key] = section_data[key]
+
+        try:
+            atomic_write_json(str(config_file), config_data)
+        except Exception as e:
+            logger.warning(f"保存音频配置到文件失败: {e}")
+
+
+def _update_audio_config_locked(config_file: Path, data: Dict[str, Any]) -> None:
+    """POST /config/audio 持锁 RMW：读→改→写 settings.json 的 tts 节（多 engine 键）。
+
+    由 async 端点经 run_io 卸载到 IO 线程池执行（锁语义不变）；写失败向上
+    冒泡由端点统一兜底（与原同步块一致）。
+    """
+    with _SETTINGS_RW_LOCK:
+        config_data = {}
+        if config_file.exists():
+            try:
+                with open(config_file, "r", encoding="utf-8") as f:
+                    config_data = json.load(f)
+            except Exception as e:
+                logger.warning(f"读取服务配置失败: {e}")
+        if "tts" not in config_data:
+            config_data["tts"] = {}
+        tts_config = config_data["tts"]
+        for key in ['ref_audio_path', 'ref_text', 'speed', 'cross_fade_duration',
+                     'emotion_enabled', 'effects_enabled', 'engine']:
+            if key in data:
+                tts_config[key] = data[key]
+        atomic_write_json(str(config_file), config_data)
+
+
+def _update_services_section_locked(section_data: Dict[str, Any], service_keys: tuple) -> None:
+    """services 节持锁 RMW：读→改→写 settings.json，全程持 _SETTINGS_RW_LOCK。
+
+    由 async 端点经 run_io 卸载到 IO 线程池执行（锁语义不变）。service_keys
+    为允许写入的 services 顶层键集合（PUT /config live 与 POST /config/services
+    的可写键不同，由调用方传入，写入顺序与原同步块一致）。
+    """
+    with _SETTINGS_RW_LOCK:
+        services_data = _get_services_config()
+        if "services" not in services_data:
+            services_data["services"] = {}
+
+        services = services_data["services"]
+
+        for key in service_keys:
+            if key in section_data:
+                services[key] = section_data[key]
+
+        if 'sensevoice_streaming' in section_data:
+            sv_data = section_data['sensevoice_streaming']
+            if 'sensevoice_streaming' not in services:
+                services['sensevoice_streaming'] = _get_default_sensevoice_config()
+            for key in ['chunk_size', 'hop_size', 'look_back']:
+                if key in sv_data:
+                    services['sensevoice_streaming'][key] = sv_data[key]
+
+        _save_services_config(services_data)
+
+
 def _get_default_sensevoice_config() -> Dict[str, Any]:
     """获取 SenseVoice Streaming 默认配置（与 UnifiedConfig.SenseVoiceStreamingConfig
     缺省值对齐，第五轮 M9：old 512/4 与运行时 800/8000 不一致导致流式行为漂移）。"""
@@ -108,7 +197,7 @@ async def get_unified_config():
             "effects_enabled": True,
         }
 
-    services_config = _get_services_config()
+    services_config = await run_io(_get_services_config)
 
     vector_config = {
         # 前端约定：weaviate 后端需区分嵌入式/独立部署，映射为复合标识
@@ -260,61 +349,23 @@ async def update_unified_config(request: Request, _: bool = Depends(verify_admin
 
         if section == "audio":
             config_file = _PROJECT_ROOT / "config" / "settings.json"
-            config_data = {}
 
-            if config_file.exists():
-                try:
-                    with open(config_file, "r", encoding="utf-8") as f:
-                        config_data = json.load(f)
-                except Exception as e:
-                    logger.warning(f"读取服务配置失败: {e}")
-
-            if "tts" not in config_data:
-                config_data["tts"] = {}
-
-            tts_config = config_data["tts"]
-            for key in ['ref_audio_path', 'ref_text', 'speed', 'cross_fade_duration',
-                       'emotion_enabled', 'effects_enabled']:
-                if key in section_data:
-                    tts_config[key] = section_data[key]
-
-            try:
-                atomic_write_json(str(config_file), config_data)
-            except Exception as e:
-                logger.warning(f"保存音频配置到文件失败: {e}")
+            # RMW 串行化：读→改→写全程持锁（经 run_io 卸载到 IO 线程池执行，
+            # threading.Lock 随辅助函数进入工作线程，锁语义不变），避免并发请求交叉覆盖 settings.json
+            await run_io(_update_audio_section_locked, config_file, section_data)
 
             logger.info("音频配置已更新")
             result = await _apply_and_broadcast(request, section, section_data)
             return {"status": "success", "message": "Audio config saved", **result}
 
         elif section == "live":
-            services_data = _get_services_config()
-            if "services" not in services_data:
-                services_data["services"] = {}
-
-            services = services_data["services"]
-
-            if 'danmaku' in section_data:
-                services['danmaku'] = section_data['danmaku']
-
-            if 'firewall' in section_data:
-                services['firewall'] = section_data['firewall']
-
-            if 'firewall_v3' in section_data:
-                services['firewall_v3'] = section_data['firewall_v3']
-
-            if 'vad' in section_data:
-                services['vad'] = section_data['vad']
-
-            if 'sensevoice_streaming' in section_data:
-                sv_data = section_data['sensevoice_streaming']
-                if 'sensevoice_streaming' not in services:
-                    services['sensevoice_streaming'] = _get_default_sensevoice_config()
-                for key in ['chunk_size', 'hop_size', 'look_back']:
-                    if key in sv_data:
-                        services['sensevoice_streaming'][key] = sv_data[key]
-
-            _save_services_config(services_data)
+            # RMW 串行化：services 读→改→写全程持锁（经 run_io 卸载到 IO 线程池
+            # 执行，锁语义不变），避免并发请求交叉覆盖 settings.json
+            await run_io(
+                _update_services_section_locked,
+                section_data,
+                ('danmaku', 'firewall', 'firewall_v3', 'vad'),
+            )
             logger.info("Live 配置已更新")
             result = await _apply_and_broadcast(request, section, section_data)
             return {"status": "success", "message": "Live config saved", **result}
@@ -403,7 +454,7 @@ async def update_config_post(request: Request, _: bool = Depends(verify_admin_ap
 @router.get("/config/sensevoice-streaming")
 async def get_sensevoice_streaming_config():
     """获取 SenseVoice Streaming 配置"""
-    services = _get_services_config()
+    services = await run_io(_get_services_config)
     sensevoice_config = services.get("services", {}).get("sensevoice_streaming", None)
     if sensevoice_config is None:
         sensevoice_config = _get_default_sensevoice_config()
@@ -421,7 +472,7 @@ async def update_sensevoice_streaming_config(
     """更新 SenseVoice Streaming 配置（需管理员鉴权）"""
     try:
         data = request.model_dump(exclude_none=True)
-        services = _get_services_config()
+        services = await run_io(_get_services_config)
         if "services" not in services:
             services["services"] = {}
         if "sensevoice_streaming" not in services["services"]:
@@ -432,7 +483,7 @@ async def update_sensevoice_streaming_config(
             if key in data:
                 sv_config[key] = data[key]
 
-        _save_services_config(services)
+        await run_io(_save_services_config, services)
         logger.info("SenseVoice Streaming 配置已更新")
         return {"status": "success", "message": "SenseVoice Streaming config saved"}
     except Exception as e:
@@ -629,21 +680,9 @@ async def update_audio_config(request: Request, _: bool = Depends(verify_admin_a
     try:
         data = await request.json()
         config_file = _PROJECT_ROOT / "config" / "settings.json"
-        config_data = {}
-        if config_file.exists():
-            try:
-                with open(config_file, "r", encoding="utf-8") as f:
-                    config_data = json.load(f)
-            except Exception as e:
-                logger.warning(f"读取服务配置失败: {e}")
-        if "tts" not in config_data:
-            config_data["tts"] = {}
-        tts_config = config_data["tts"]
-        for key in ['ref_audio_path', 'ref_text', 'speed', 'cross_fade_duration',
-                     'emotion_enabled', 'effects_enabled', 'engine']:
-            if key in data:
-                tts_config[key] = data[key]
-        atomic_write_json(str(config_file), config_data)
+        # RMW 串行化：读→改→写全程持锁（经 run_io 卸载到 IO 线程池执行，锁语义不变），
+        # 避免并发请求交叉覆盖 settings.json
+        await run_io(_update_audio_config_locked, config_file, data)
         logger.info("音频配置已更新")
         return {"status": "success", "message": "音频配置已保存"}
     except Exception as e:
@@ -654,7 +693,7 @@ async def update_audio_config(request: Request, _: bool = Depends(verify_admin_a
 @router.get("/config/services")
 async def get_services_config():
     """获取服务配置 - 对应 Gateway 的 GET /api/config/services"""
-    services = _get_services_config()
+    services = await run_io(_get_services_config)
     return {"status": "success", "config": services.get("services", {})}
 
 
@@ -663,21 +702,13 @@ async def update_services_config(request: Request, _: bool = Depends(verify_admi
     """更新服务配置 - 对应 Gateway 的 POST /api/config/services"""
     try:
         data = await request.json()
-        services_data = _get_services_config()
-        if "services" not in services_data:
-            services_data["services"] = {}
-        services = services_data["services"]
-        for key in ['danmaku', 'firewall', 'firewall_v3', 'vad', 'asr', 'tts', 'audio']:
-            if key in data:
-                services[key] = data[key]
-        if 'sensevoice_streaming' in data:
-            sv_data = data['sensevoice_streaming']
-            if 'sensevoice_streaming' not in services:
-                services['sensevoice_streaming'] = _get_default_sensevoice_config()
-            for key in ['chunk_size', 'hop_size', 'look_back']:
-                if key in sv_data:
-                    services['sensevoice_streaming'][key] = sv_data[key]
-        _save_services_config(services_data)
+        # RMW 串行化：services 读→改→写全程持锁（经 run_io 卸载到 IO 线程池执行，
+        # 锁语义不变），避免并发请求交叉覆盖 settings.json
+        await run_io(
+            _update_services_section_locked,
+            data,
+            ('danmaku', 'firewall', 'firewall_v3', 'vad', 'asr', 'tts', 'audio'),
+        )
         logger.info("服务配置已更新")
         return {"status": "success", "message": "服务配置已保存"}
     except Exception as e:

@@ -119,6 +119,38 @@ describe('handleCxfcRelayCall', () => {
       ),
     ).resolves.toBeUndefined();
   });
+
+  // 多窗去重：后端向每个窗口广播同一条 relay call，同窗口内已见 request_id 不再执行
+  it('同 request_id 二次调用 → 不执行 executor 不回报', async () => {
+    const executor = vi.fn<RelayToolExecutor>(async () => ({ ok: true, output: 1 }));
+    const report = makeReport();
+    const message: CxfcRelayCallMessage = {
+      type: 'cxfc_relay_call',
+      plugin_id: 'relay_pc',
+      request_id: 'dedup-dup-1',
+      tool: 'computer_run_command',
+      arguments: {},
+    };
+    await handleCxfcRelayCall(message, { executor, report });
+    await handleCxfcRelayCall(message, { executor, report });
+    expect(executor).toHaveBeenCalledTimes(1);
+    expect(report).toHaveBeenCalledTimes(1);
+  });
+
+  it('不同 request_id → 各自正常执行', async () => {
+    const executor = vi.fn<RelayToolExecutor>(async () => ({ ok: true, output: 1 }));
+    const report = makeReport();
+    await handleCxfcRelayCall(
+      { type: 'cxfc_relay_call', plugin_id: 'relay_pc', request_id: 'dedup-a-1', tool: 'computer_run_command', arguments: {} },
+      { executor, report },
+    );
+    await handleCxfcRelayCall(
+      { type: 'cxfc_relay_call', plugin_id: 'relay_pc', request_id: 'dedup-a-2', tool: 'computer_run_command', arguments: {} },
+      { executor, report },
+    );
+    expect(executor).toHaveBeenCalledTimes(2);
+    expect(report).toHaveBeenCalledTimes(2);
+  });
 });
 
 describe('createElectronComputerControlExecutor', () => {

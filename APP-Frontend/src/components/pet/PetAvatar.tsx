@@ -90,26 +90,20 @@ export const PetAvatar = forwardRef<PetAvatarHandle, PetAvatarProps>(function Pe
   const [activeDriver, setActiveDriver] = useState<IAvatarDriver | null>(null);
 
   // 清单合成（设置变更 → 新清单 → 下游重建）。
-  // VRM 的实时 scale 不并入 manifest（清单保持稳定，避免每次缩放都整模型重建重载）；
-  // 实时缩放经 VRMViewer 的 scale prop 走 updateStageTransform 应用，无需重建。
+  // 实时 scale/xOffset/yOffset 均不并入 manifest（清单保持稳定，避免拖缩放滑杆时
+  // 每个刻度都触发整模型 destroyRuntime/createLive2DRuntime 全量重载）：
+  // - VRM：经 VRMViewer 的 scale/position props 走 updateStageTransform 热应用；
+  // - Live2D：同口径经 Live2DViewer 的 scale/xOffset/yOffset props 热应用。
   const manifest = useMemo(() => {
     if (avatarType === 'vrm') {
       return createSyntheticVRMManifest(vrmModelPath, 1, vrm.position3d);
     }
     if (avatarType === 'live2d') {
-      return createSyntheticLive2DManifest(live2dModelPath, live2d.scale * obsScale, live2d.xOffset, live2d.yOffset);
+      // scale/xOffset/yOffset 均不并入 manifest：基线 1，实时值经 Live2DViewer props 热应用
+      return createSyntheticLive2DManifest(live2dModelPath, 1);
     }
     return null;
-  }, [
-    avatarType,
-    vrmModelPath,
-    vrm.position3d,
-    live2dModelPath,
-    live2d.scale,
-    live2d.xOffset,
-    live2d.yOffset,
-    obsScale,
-  ]);
+  }, [avatarType, vrmModelPath, vrm.position3d, live2dModelPath]);
 
   // 驱动实例：随清单重建（头像类型切换实时响应）
   useEffect(() => {
@@ -168,6 +162,9 @@ export const PetAvatar = forwardRef<PetAvatarHandle, PetAvatarProps>(function Pe
           modelPath={live2dModelPath}
           avatar={manifest}
           driver={activeDriver}
+          scale={live2d.scale * obsScale}
+          xOffset={live2d.xOffset}
+          yOffset={live2d.yOffset}
           idleMotionEnabled={live2d.idleMotion}
           animationConfig={live2d.animation}
           volumeRef={volumeRef}

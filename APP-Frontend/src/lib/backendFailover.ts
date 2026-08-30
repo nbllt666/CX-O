@@ -156,49 +156,61 @@ export async function refreshCandidates(current = normalize(getApiBaseUrl())): P
  * - 当前不可达 → 探测候选（排除当前），选健康者；优先 role==='active'。
  * - 切换成功 → 更新 base/ws 地址、写候选集、派发 BACKEND_SWITCHED_EVENT，返回新 URL。
  *
+ * 模块级在途互斥：同窗若存在多个 hook 实例（StrictMode/未来多挂载），并发触发
+ * 切换会对同一批候选重复探测、重复写地址并派发多次事件——只允许一轮执行，
+ * 后续并发调用在在途期间直接返回 null（不会触发重载）。
+ *
  * @param current 当前 base URL（缺省取 getApiBaseUrl()）
  */
+let failoverInFlight = false;
+
 export async function runBackendFailover(
   current = normalize(getApiBaseUrl()),
 ): Promise<string | null> {
-  // 当前仍可用：无需切换
-  if (await probeBackend(current)) return null;
+  if (failoverInFlight) return null;
+  failoverInFlight = true;
+  try {
+    // 当前仍可用：无需切换
+    if (await probeBackend(current)) return null;
 
-  // 冷却：刚切换到的 url 在冷却期内不反复切换，避免 A/B 震荡
-  const last = readLastSwitch();
-  if (last && last.url === current && Date.now() - last.at < SWITCH_COOLDOWN_MS) {
-    return null;
-  }
-
-  const candidates = readCandidates().filter((u) => u && u !== current);
-  if (candidates.length === 0) return null;
-
-  const healthy: string[] = [];
-  for (const url of candidates) {
-    if (await probeBackend(url)) {
-      healthy.push(url);
+    // 冷却：刚切换到的 url 在冷却期内不反复切换，避免 A/B 震荡
+    const last = readLastSwitch();
+    if (last && last.url === current && Date.now() - last.at < SWITCH_COOLDOWN_MS) {
+      return null;
     }
+
+    const candidates = readCandidates().filter((u) => u && u !== current);
+    if (candidates.length === 0) return null;
+
+    const healthy: string[] = [];
+    for (const url of candidates) {
+      if (await probeBackend(url)) {
+        healthy.push(url);
+      }
+    }
+    if (healthy.length === 0) return null;
+
+    const roles = await Promise.all(
+      healthy.map(async (url) => ({ url, role: await readClusterRole(url) })),
+    );
+    const active = roles.find((r) => r.role === 'active');
+    const target = (active ?? roles[0]).url;
+
+    if (normalize(target) === current) return null;
+
+    setBackendUrl(normalize(target));
+    // 主后端故障转移时 WS 必须跟随新节点（覆盖可能存在的旧显式 ws 覆盖）
+    setWsUrl(httpToWsUrl(normalize(target)));
+    writeCandidates([normalize(target), ...candidates]);
+    writeLastSwitch(normalize(target));
+
+    window.dispatchEvent(
+      new CustomEvent<SwitchedDetail>(BACKEND_SWITCHED_EVENT, { detail: { url: normalize(target) } }),
+    );
+    return normalize(target);
+  } finally {
+    failoverInFlight = false;
   }
-  if (healthy.length === 0) return null;
-
-  const roles = await Promise.all(
-    healthy.map(async (url) => ({ url, role: await readClusterRole(url) })),
-  );
-  const active = roles.find((r) => r.role === 'active');
-  const target = (active ?? roles[0]).url;
-
-  if (normalize(target) === current) return null;
-
-  setBackendUrl(normalize(target));
-  // 主后端故障转移时 WS 必须跟随新节点（覆盖可能存在的旧显式 ws 覆盖）
-  setWsUrl(httpToWsUrl(normalize(target)));
-  writeCandidates([normalize(target), ...candidates]);
-  writeLastSwitch(normalize(target));
-
-  window.dispatchEvent(
-    new CustomEvent<SwitchedDetail>(BACKEND_SWITCHED_EVENT, { detail: { url: normalize(target) } }),
-  );
-  return normalize(target);
 }
 
 export const backendFailoverInternals = {

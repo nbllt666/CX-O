@@ -12,7 +12,7 @@ Mock 策略:
 - 异常路径通过 raise 模拟（ValueError=422 / RuntimeError=500）
 - 真实实现就位后，切换导入路径即可替换
 
-@version 1.2.0  # G4-B 签名同步：get_rejected_content 对齐实现（session_id 必填、limit 默认 50、空 session_id 抛 KeyError）
+@version 1.3.0  # 第十三轮 G2 契约对齐：write_with_decision 改 4 参签名（+source），返回 Dict{location, memory_id, rejected_id}（对齐 pyi @1.1.0 与 decision_mixin.py 三分支）；移除无引用的 WriteWithDecisionResult 模型；get_rejected_content 改 created_at 降序（对齐实现 ORDER BY created_at DESC）；rejected 分支改以 rejected_id UUID 为键，不再空耗主库序号
 @see public/interface_stub/memory_manager_v2.pyi
 @see public/schema/storage_decision.schema.json
 @see public/schema/agent_config_v2.schema.json
@@ -21,10 +21,9 @@ CX-O 迁移版，基于 CXHMS v1.2.0 Mock 适配。
 """
 
 import os
+import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
-
-from pydantic import BaseModel
 
 
 # --------------------------------------------------------------------------- #
@@ -38,18 +37,9 @@ def _iso_now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
-# --------------------------------------------------------------------------- #
-# Pydantic 模型（与 .pyi 存根保持一致，Mock 自包含）
-# --------------------------------------------------------------------------- #
-
-
-class WriteWithDecisionResult(BaseModel):
-    """write_with_decision 返回结果。"""
-    stored: bool
-    location: str  # enum: memories / permanent_memories / rejected
-    memory_id: Optional[int]
-    metadata: Dict[str, Any]
-    reason: str
+def _new_uuid() -> str:
+    """生成 UUID v4 字符串（rejected 分支的 rejected_id）。"""
+    return str(uuid.uuid4())
 
 
 # --------------------------------------------------------------------------- #
@@ -66,15 +56,15 @@ class MockMemoryManagerV2:
     """MemoryManager V2 的 Mock 实现。
 
     在原 MemoryManager 基础上扩展，新增 write_with_decision 方法。
-    返回值通过 storage_decision.schema.json 校验（location/memory_id 字段）。
+    返回值通过 storage_decision.schema.json 校验（location/memory_id/rejected_id 键）。
     """
 
     def __init__(self) -> None:
         # 三张内存态表
         self._memories: Dict[int, Dict[str, Any]] = {}
         self._permanent_memories: Dict[int, Dict[str, Any]] = {}
-        self._rejected_content: Dict[int, Dict[str, Any]] = {}
-        # 自增 ID（三表共享序列，保证 memory_id 唯一）
+        self._rejected_content: Dict[str, Dict[str, Any]] = {}
+        # 自增 ID（memories / permanent_memories 共用序列；rejected 以 UUID 为键，不消耗序号）
         self._seq: int = 1
 
     # ------------------------------------------------------------------ #
@@ -85,14 +75,21 @@ class MockMemoryManagerV2:
         self,
         content: str,
         decision: Dict[str, Any],
-        metadata: Dict[str, Any],
-    ) -> WriteWithDecisionResult:
+        metadata: Optional[Dict[str, Any]] = None,
+        source: Optional[str] = None,
+    ) -> Dict[str, Any]:
         """根据 DecisionCore 决策写入记忆。
 
-        Mock behavior: 根据 decision['location'] 分发写入对应表。
-        - memories → 写入 _memories
-        - permanent_memories → 写入 _permanent_memories
+        Mock behavior: 根据 decision['location'] 分发写入对应表
+        （对齐 decision_mixin.py L102-176 的三个返回分支）。
+        - memories → 写入 _memories（source 缺省 'user'）
+        - permanent_memories → 写入 _permanent_memories（source 缺省 'radix_decision'）
         - rejected → 写入 _rejected_content（含 created_at 用于过期清理）
+
+        Returns:
+            Dict[str, Any]（对齐 pyi @1.1.0）：
+            - memories/permanent_memories 分支：memory_id 为分配 ID，rejected_id=None
+            - rejected 分支：memory_id=None，rejected_id 为 UUID 字符串
         """
         if not content:
             raise ValueError("content 不能为空（422）")
@@ -102,38 +99,55 @@ class MockMemoryManagerV2:
                 f"decision.location 不在枚举中（422）: {location}"
             )
 
-        memory_id = self._alloc_id()
         now = _iso_now()
-        record = {
-            "memory_id": memory_id,
-            "content": content,
-            "decision": dict(decision),
-            "metadata": dict(metadata),
-            "created_at": now,
-        }
-
-        stored = True
-        reason = decision.get("reason") or f"[Mock] 写入 {location}"
 
         if location == "memories":
-            self._memories[memory_id] = record
-        elif location == "permanent_memories":
-            self._permanent_memories[memory_id] = record
-        else:  # rejected
-            # rejected 不分配 memory_id（与 schema 一致：location=rejected 时 memory_id=null）
-            record["memory_id"] = None
-            # 重新分配的 ID 放回序列池不回收，但 rejected 表用独立 key
-            self._rejected_content[memory_id] = record
-            stored = False  # rejected 视为未存储到 memories/permanent_memories
-            memory_id = None
+            memory_id = self._alloc_id()
+            self._memories[memory_id] = {
+                "memory_id": memory_id,
+                "content": content,
+                "decision": dict(decision),
+                "metadata": dict(metadata or {}),
+                "source": source or "user",
+                "created_at": now,
+            }
+            return {
+                "location": "memories",
+                "memory_id": memory_id,
+                "rejected_id": None,
+            }
 
-        return WriteWithDecisionResult(
-            stored=stored,
-            location=location,
-            memory_id=memory_id,
-            metadata=dict(metadata),
-            reason=reason,
-        )
+        if location == "permanent_memories":
+            memory_id = self._alloc_id()
+            self._permanent_memories[memory_id] = {
+                "memory_id": memory_id,
+                "content": content,
+                "decision": dict(decision),
+                "metadata": dict(metadata or {}),
+                "source": source or "radix_decision",
+                "created_at": now,
+            }
+            return {
+                "location": "permanent_memories",
+                "memory_id": memory_id,
+                "rejected_id": None,
+            }
+
+        # location == "rejected" → 以 rejected_id UUID 为表键
+        # （不消耗主库序号；与 schema 一致：location=rejected 时 memory_id=null）
+        rejected_id = _new_uuid()
+        self._rejected_content[rejected_id] = {
+            "memory_id": None,
+            "content": content,
+            "decision": dict(decision),
+            "metadata": dict(metadata or {}),
+            "created_at": now,
+        }
+        return {
+            "location": "rejected",
+            "memory_id": None,
+            "rejected_id": rejected_id,
+        }
 
     def get_rejected_content(
         self,
@@ -161,8 +175,8 @@ class MockMemoryManagerV2:
                 "reason": record.get("decision", {}).get("reason"),
                 "created_at": record["created_at"],
             })
-        # 按 created_at 升序（rules-0 §三 sorting.order: ascending）
-        results.sort(key=lambda r: r["created_at"])
+        # 按 created_at 降序（对齐 pyi @1.1.0 与实现 decision_mixin.py ORDER BY created_at DESC）
+        results.sort(key=lambda r: r["created_at"], reverse=True)
         return results[:limit]
 
     def cleanup_expired_rejected_content(self, retention_days: int = 30) -> int:
@@ -177,7 +191,7 @@ class MockMemoryManagerV2:
 
         now = datetime.now(timezone.utc)
         threshold = now - timedelta(days=retention_days)
-        expired_ids: List[int] = []
+        expired_ids: List[str] = []
 
         for mid, record in self._rejected_content.items():
             created_str = record.get("created_at")
@@ -214,11 +228,11 @@ class MockMemoryManagerV2:
 
         非契约方法，仅供 Mock 自检/测试使用。
         """
-        mid = self._alloc_id()
+        rid = _new_uuid()
         expired_time = (
             datetime.now(timezone.utc) - timedelta(days=days_ago)
         ).isoformat()
-        self._rejected_content[mid] = {
+        self._rejected_content[rid] = {
             "memory_id": None,
             "content": f"[Mock] 过期 rejected 记录（{days_ago} 天前）",
             "decision": {

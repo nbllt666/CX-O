@@ -7,8 +7,8 @@
 支持：extends / block / if / elif / else / for / include / filter
 模板仓库：data/templates/presets/（预设） + data/templates/custom/（自定义）
 
-@version 1.0.0
-@see public/schema/template_registry.schema.json
+@version 1.0.2  # G4 契约修订（PATCH）：清理类 docstring 内残留的悬空 schema 引用，改指实现位置（延续 v1.9.0 的 @see 修正）
+@see 实现: c:/CX-O/CX-O-SERVER/server/core/template_engine/template_engine.py
 @see public/config_template/radix_config.json
 """
 
@@ -28,7 +28,7 @@ class TemplateFrontmatter(BaseModel):
 
 
 class TemplateRecord(BaseModel):
-    """模板记录。字段与 template_registry.schema.json 一致。"""
+    """模板记录。字段定义以实现为准（c:/CX-O/CX-O-SERVER/server/core/template_engine/template_engine.py）。"""
     template_id: str
     name: str
     category: str  # enum: preset / custom

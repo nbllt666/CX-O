@@ -1,12 +1,13 @@
 {
+  "@version": "1.0.1 (2026-08-30 _sourceOfTruth.primary 改指实际加载点 CX-O-SERVER/config/settings.json + note 补 adaptive_polling 第 5 子段，第十五轮 G4 PATCH；1.0.0 种子)",
   "$schema": "http://json-schema.org/draft-07/schema#",
   "$id": "https://cx-o/public/config_template/settings_json.schema.json",
   "title": "SettingsJson",
   "description": "服务运行时设置契约（种子阶段，待 s0201 补全）",
   "_sourceOfTruth": {
-    "primary": "c:/CX-O/config/settings.json",
+    "primary": "c:/CX-O/CX-O-SERVER/config/settings.json",
     "secondary": [],
-    "note": "settings.json 顶层：services（danmaku/firewall/vad/sensevoice_streaming）+ tts"
+    "note": "settings.json 顶层：services（danmaku/firewall/vad/sensevoice_streaming/adaptive_polling）+ tts。实际加载点：server/api/routers/config.py:61/:76 经 _PROJECT_ROOT 解析 CX-O-SERVER/config/settings.json"
   },
   "_seedStage": true,
   "_completionSkill": "s0201",

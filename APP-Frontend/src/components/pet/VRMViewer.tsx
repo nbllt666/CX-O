@@ -160,8 +160,18 @@ export const VRMViewer = forwardRef<VRMViewerHandle, VRMViewerProps>(function VR
       // 解析模型加载源：打包内资源直接走 URL；本地路径经 IPC 读为 blob URL（卸载时 revoke）
       const source = await resolveVrmModelUrl(modelPath);
       blobRevoke = source.revoke;
+      // B5：若 cleanup 已在 resolve 等待间隙跑完（此时其读到的 blobRevoke 仍为 null），
+      // 这里立即补 revoke，防止本地路径读出的 blob URL 泄漏数十 MB
+      if (cancelled) {
+        source.revoke();
+        return;
+      }
       const gltf = await loader.loadAsync(source.url);
-      if (cancelled) return;
+      // B5：loadAsync 等待间隙 cleanup 跑完 → 主动 revoke（幂等）后退出
+      if (cancelled) {
+        source.revoke();
+        return;
+      }
 
       const vrm = gltf.userData.vrm as VRM | undefined;
       if (!vrm) throw new Error('Not a VRM model');
@@ -298,6 +308,10 @@ export const VRMViewer = forwardRef<VRMViewerHandle, VRMViewerProps>(function VR
     };
 
     loadModel().catch((error: unknown) => {
+      // B5：失败路径先释放 blob URL（幂等：URL.revokeObjectURL 重复调用无害），
+      // 覆盖 loadAsync 抛错 / 非 VRM 模型 / 运行时创建失败等全部 catch 进入点
+      blobRevoke?.();
+      blobRevoke = null;
       if (cancelled) return;
       console.error('VRM: Failed to load model:', error);
       const msg = error instanceof Error ? error.message : '';
@@ -318,9 +332,17 @@ export const VRMViewer = forwardRef<VRMViewerHandle, VRMViewerProps>(function VR
     return () => {
       cancelled = true;
       unsubPerformance?.();
+      // B5：revoke 幂等化——置 null 防与 loadModel 内补 revoke / catch 分支重复；重复调用本身无害
       blobRevoke?.();
+      blobRevoke = null;
       if (runtimeRef.current) {
         destroyRuntime(runtimeRef.current);
+        // C2：守卫清理 window 调试引用——仅当仍指向本实例时置 null，
+        // 防止卸载时误清新实例挂上的 __vrmRuntime（对齐 PetAvatar __cxoDriver 清理模式）
+        const win = window as unknown as { __vrmRuntime?: unknown };
+        if (win.__vrmRuntime === runtimeRef.current) {
+          win.__vrmRuntime = null;
+        }
         runtimeRef.current = null;
       }
     };

@@ -42,13 +42,27 @@ function formatSpeakerLabel(
 }
 
 export interface PetChatHandle {
-  addMessage: (msg: PetMessage) => void;
+  /**
+   * 追加消息；options.pinned=true 时该消息豁免 MAX_KEPT_MESSAGES 裁剪（C5：
+   * ASR interim 气泡在识别期间不可被弹幕气泡挤出，否则 updateMessageContent 按 id
+   * 更新失效、interim 文本展示丢失）。pinned 消息须由调用方在终态时显式 unpinMessage。
+   */
+  addMessage: (msg: PetMessage, options?: { pinned?: boolean }) => void;
+  /**
+   * 流式目标 id：占位气泡（a- 前缀）创建时登记，收尾/失败时清除。
+   * 设置后 updateLast/finalize 按该 id 精确定位更新——弹幕播报（dv-）与
+   * ASR interim（asr-）气泡随时插入不再串台；不参与 MAX_KEPT_MESSAGES 裁剪。
+   * null 时回落旧行为（改末条 assistant），兼容既有单流调用方。
+   */
+  setStreamingTarget: (id: string | null) => void;
   /** 流式追加：把增量内容拼到最后一条助手消息上 */
   updateLastAssistantMessage: (delta: string) => void;
   /** 收尾：解析完整文本中的驱动标签并下发驱动，气泡替换为干净文本 */
   finalizeLastAssistantMessage: (fullContent: string) => void;
   /** 按 id 整体替换消息内容（ASR interim → final 就地更新气泡） */
   updateMessageContent: (id: string, content: string) => void;
+  /** C5：解除 pinned 豁免（ASR final 落定/连接断开时调用，与 addMessage pinned 严格成对） */
+  unpinMessage: (id: string) => void;
   /** 音画同步 Task3：按 TTS 累计原文进度推进标签时间线，触发已命中标签 */
   advanceTimeline: (cumulativeRaw: string) => void;
   /** 音画同步 Task3 兜底：TTS 播放结束/缺失 text_segment 时，触发剩余全部标签并重置 */
@@ -87,20 +101,64 @@ export const PetChat = forwardRef<PetChatHandle, PetChatProps>(function PetChat(
   // 记录父级传入的 TTS 原文进度回调（经 handle.advanceTimeline 推进）
   const onTextProgressRef = useRef(onTextProgress);
   onTextProgressRef.current = onTextProgress;
+  // 流式目标消息 id（B1）：占位气泡创建时由 PetPage 登记为当前流式目标，
+  // updateLast/finalize 按该 id 定位更新，避免 dv-/asr- 气泡插入后串台；
+  // 裁剪时跳过该消息，防止流式中的气泡被挤出 MAX_KEPT_MESSAGES 窗口后增量永久丢失
+  const streamingTargetIdRef = useRef<string | null>(null);
+  // C5：pinned 消息 id 集合——豁免 MAX_KEPT_MESSAGES 裁剪的消息（当前仅 ASR interim 气泡）。
+  // 有界性：由调用方保证 pin（addMessage options.pinned）与 unpin（unpinMessage）严格成对，
+  // 集合不跨组件卸载存活（ref 随组件释放），不跨会话累积
+  const pinnedIdsRef = useRef<Set<string>>(new Set());
 
-  const addMessage = useCallback((msg: PetMessage) => {
+  const setStreamingTarget = useCallback((id: string | null) => {
+    streamingTargetIdRef.current = id;
+  }, []);
+
+  const unpinMessage = useCallback((id: string) => {
+    pinnedIdsRef.current.delete(id);
+  }, []);
+
+  const addMessage = useCallback((msg: PetMessage, options?: { pinned?: boolean }) => {
+    if (options?.pinned) pinnedIdsRef.current.add(msg.id);
     setMessages((prev) => {
       const next = [...prev, msg];
-      // 有界裁剪：仅从头部丢弃已收尾的旧消息，保留最近 N + 流式余量条，
-      // 既阻止底层数组无界增长，又不影响正在流式的末尾 assistant 消息（updateLast 改的是末条）
-      return next.length > MAX_KEPT_MESSAGES
-        ? next.slice(next.length - MAX_KEPT_MESSAGES)
-        : next;
+      if (next.length <= MAX_KEPT_MESSAGES) return next;
+      // 有界裁剪：仅从头部丢弃旧消息，既阻止底层数组无界增长，又保住正在流式的气泡。
+      // 豁免集合 = 流式目标消息（B1）+ pinned 消息（C5）——弹幕播报/ASR interim 气泡随时插入，
+      // 若按窗口大小硬裁会把滑出窗口的流式中 a- 气泡永久丢弃，或使 asr- 气泡
+      // 被 updateMessageContent 更新失效（按 id 无命中静默 no-op，interim 文本展示消失）
+      const targetId = streamingTargetIdRef.current;
+      const exempt = (id: string) =>
+        (targetId != null && id === targetId) || pinnedIdsRef.current.has(id);
+      let overflow = next.length - MAX_KEPT_MESSAGES;
+      const kept: PetMessage[] = [];
+      for (const m of next) {
+        if (overflow > 0 && !exempt(m.id)) {
+          overflow -= 1;
+          continue;
+        }
+        kept.push(m);
+      }
+      return kept;
     });
   }, []);
 
   const updateLastAssistantMessage = useCallback((delta: string) => {
     setMessages((prev) => {
+      // B1：设置了流式目标 → 按占位气泡 id 精确追加（弹幕/ASR 气泡插入不串台）；
+      // 目标已不在消息列表（被清除/异常）时静默跳过，对齐既有防御
+      const targetId = streamingTargetIdRef.current;
+      if (targetId) {
+        const idx = prev.findIndex((m) => m.id === targetId && m.role === 'assistant');
+        if (idx === -1) return prev;
+        const target = prev[idx];
+        return [
+          ...prev.slice(0, idx),
+          { ...target, content: target.content + delta },
+          ...prev.slice(idx + 1),
+        ];
+      }
+      // 未设置目标：回落旧行为（改末条 assistant），兼容既有单流调用方
       const last = prev[prev.length - 1];
       if (last && last.role === 'assistant') {
         return [...prev.slice(0, -1), { ...last, content: last.content + delta }];
@@ -111,8 +169,19 @@ export const PetChat = forwardRef<PetChatHandle, PetChatProps>(function PetChat(
 
   const finalizeLastAssistantMessage = useCallback((fullContent: string) => {
     setMessages((prev) => {
-      const last = prev[prev.length - 1];
-      if (!last || last.role !== 'assistant') return prev;
+      // B1：与 updateLast 同口径按流式目标定位；找不到时静默跳过（对齐既有防御）
+      const targetId = streamingTargetIdRef.current;
+      let index: number;
+      if (targetId) {
+        const idx = prev.findIndex((m) => m.id === targetId && m.role === 'assistant');
+        if (idx === -1) return prev;
+        index = idx;
+      } else {
+        const last = prev[prev.length - 1];
+        if (!last || last.role !== 'assistant') return prev;
+        index = prev.length - 1;
+      }
+      const target = prev[index];
       const { cleanText, tags } = parseAvatarTags(fullContent);
       if (tags.length > 0) {
         // 音画同步 Task3：含标签 → 构建时间线，标签随 TTS 朗读进度逐步触发（advanceTimeline），
@@ -122,7 +191,9 @@ export const PetChat = forwardRef<PetChatHandle, PetChatProps>(function PetChat(
         // 无标签：清空可能残留的旧时间线，避免污染下一条消息
         timelineRef.current = null;
       }
-      return [...prev.slice(0, -1), { ...last, content: cleanText }];
+      const next = [...prev];
+      next[index] = { ...target, content: cleanText };
+      return next;
     });
   }, []);
 
@@ -157,17 +228,21 @@ export const PetChat = forwardRef<PetChatHandle, PetChatProps>(function PetChat(
     ref,
     () => ({
       addMessage,
+      setStreamingTarget,
       updateLastAssistantMessage,
       finalizeLastAssistantMessage,
       updateMessageContent,
+      unpinMessage,
       advanceTimeline,
       flushRemaining,
     }),
     [
       addMessage,
+      setStreamingTarget,
       updateLastAssistantMessage,
       finalizeLastAssistantMessage,
       updateMessageContent,
+      unpinMessage,
       advanceTimeline,
       flushRemaining,
     ],

@@ -258,4 +258,7 @@
           }
         }
       },
-      "
+      "additionalProperties": false
+    }
+  }
+}

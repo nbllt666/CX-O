@@ -180,4 +180,14 @@
           "type": "object",
           "description": "日志文件 JSON 解析异常（查询时）。",
           "properties": {
-            "exception_type": {"const": "json
+            "exception_type": {"const": "json.JSONDecodeError"},
+            "trigger_method": {"const": "read_log"},
+            "behavior": {"const": "best-effort, non-blocking"},
+            "reason": {"type": "string"}
+          }
+        }
+      },
+      "additionalProperties": false
+    }
+  }
+}

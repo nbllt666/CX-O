@@ -310,15 +310,15 @@ export function useWebSocket(options: WebSocketOptions): UseWebSocketReturn {
           break;
         case 'done':
         case 'chat_done':
-          setIsGenerating(false);
-          clearGeneratingTimer();
+          // B6：统一走 resetIsGenerating（isGeneratingRef 复位 + 计时器清理 + setState），
+          // 与 cancelled/error 分支语义一致，避免镜像 ref 与状态不一致
+          resetIsGenerating();
           // 会话结束：清空累计文本段，避免跨会话污染
           textProgressRef.current = '';
           onMessageRef.current?.({ type: 'done' });
           break;
         case 'chat_response':
-          setIsGenerating(false);
-          clearGeneratingTimer();
+          resetIsGenerating();
           if (data.content) {
             onMessageRef.current?.({ type: 'content', content: data.content });
           }
@@ -392,7 +392,7 @@ export function useWebSocket(options: WebSocketOptions): UseWebSocketReturn {
     } catch (e: unknown) {
       console.error('Failed to parse WebSocket message:', e);
     }
-  }, [startGeneratingTimer, clearGeneratingTimer]);
+  }, [startGeneratingTimer, clearGeneratingTimer, resetIsGenerating]);
 
   // Transport：URL 构造 + 实例化 + 生命周期；业务逻辑经回调注入。
   // enabled: !!agentId 保留空 agentId 不连接的守卫。

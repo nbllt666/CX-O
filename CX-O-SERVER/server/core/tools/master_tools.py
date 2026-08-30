@@ -204,7 +204,10 @@ def register_master_tools():
     # 5. mono - 保持上下文
     tool_registry.register(
         name="mono",
-        description="将某些信息保持在接下来的对话上下文中。这对于需要跨多轮记住的信息很有用。",
+        description=(
+            "将某些信息保持在接下来的对话上下文中。这对于需要跨多轮记住的信息很有用。"
+            "保持时长按小时计（每轮近似1小时），过期按墙钟时间判定。"
+        ),
         parameters={
             "type": "object",
             "properties": {
@@ -215,7 +218,7 @@ def register_master_tools():
                 },
                 "rounds": {
                     "type": "integer",
-                    "description": "保持的对话轮数（默认1轮）",
+                    "description": "保持时长（名义为轮数，实现按小时换算：1轮≈1小时；默认1轮≈1小时）",
                     "default": 1,
                     "minimum": 1,
                 },
@@ -564,7 +567,14 @@ def cancel_alarm(alarm_id: str) -> Dict[str, Any]:
 
 
 def mono(content: str, session_id: str = None, rounds: int = 1) -> Dict[str, Any]:
-    """保持上下文"""
+    """保持上下文
+
+    Args:
+        content: 要保持的内容
+        session_id: 会话ID（可选）
+        rounds: 保持时长，名义为轮数，实现按小时换算（1轮≈1小时），
+            过期按墙钟时间判定
+    """
     cm = get_context_manager()
     if not cm:
         return {"error": "上下文管理器不可用"}
@@ -585,7 +595,7 @@ def mono(content: str, session_id: str = None, rounds: int = 1) -> Dict[str, Any
 
             return {
                 "status": "success",
-                "message": "上下文已添加，将在指定轮数内保持",
+                "message": "上下文已添加，将保持指定小时数（每轮近似1小时）",
                 "content": content,
                 "rounds": rounds,
                 "session_id": session_id,

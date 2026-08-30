@@ -281,8 +281,11 @@ export function useLiveWebSocket(options: UseLiveWebSocketOptions = {}): UseLive
   }, [transportDisconnect, setConnectionCount]);
 
   const reconnect = useCallback(() => {
+    // B7：transportReconnect 内部走 disconnect（onclose 被 null 化，业务 onClose 不触发），
+    // connectionCount 只增不减 → 与手动 disconnect 同口径先显式归零，新连接 onOpen 从 0 起算
+    setConnectionCount(0);
     transportReconnect();
-  }, [transportReconnect]);
+  }, [transportReconnect, setConnectionCount]);
 
   const sendMessage = useCallback(
     (message: Record<string, unknown>) => {
@@ -305,14 +308,15 @@ export function useLiveWebSocket(options: UseLiveWebSocketOptions = {}): UseLive
   );
 
   // M3：sessionIdRef 同步与守卫合并进同一 effect——先取 prev 值比较再赋新值，
-  // 相等不动作、不等则断开重连（urlBuilder ref 已由 transport 的 ref sync 更新）
+  // 相等不动作、不等则断开重连（urlBuilder ref 已由 transport 的 ref sync 更新）。
+  // 走上方 reconnect wrapper（B7：先归零 connectionCount 再 transportReconnect）
   useEffect(() => {
     const prevSessionId = sessionIdRef.current;
     if (prevSessionId !== sessionId) {
       sessionIdRef.current = sessionId;
-      transportReconnect();
+      reconnect();
     }
-  }, [sessionId, transportReconnect]);
+  }, [sessionId, reconnect]);
 
   return {
     isConnected,

@@ -136,7 +136,8 @@ class ClusterTransport:
                 data = self._decode(resp)
                 if parse_error_code(data) == CLUSTER_AUTH_FAILED:
                     raise ClusterAuthError(f"auth failed to {peer_endpoint}")
-                self._enqueue(peer_endpoint, body)
+                # G1/A3: _enqueue 含同步 mkdir+open+write，async 上下文内经线程包裹
+                await asyncio.to_thread(self._enqueue, peer_endpoint, body)
                 return False
             # B4 应用级确认：sync_event 不能只看 HTTP 状态码——对端 2xx 但
             # applied=False 且未回 ack（acked_seq=0，应用失败/纪元拒绝）时视为
@@ -152,7 +153,8 @@ class ClusterTransport:
         except ClusterError:
             raise
         except Exception:  # noqa: BLE001 - 网络/超时等统一入待发队列
-            self._enqueue(peer_endpoint, body)
+            # G1/A3: 同上——入队写盘经线程包裹，不阻塞事件循环
+            await asyncio.to_thread(self._enqueue, peer_endpoint, body)
             return False
 
     @staticmethod

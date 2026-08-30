@@ -207,6 +207,19 @@ export class CxfcClient {
     this.pluginId = data.plugin_id ?? `cxfc_${info.host}_${info.port}`;
     this.registered = true;
     this.logger(`[cxfc] 注册成功 plugin_id=${this.pluginId}`);
+    // stop 竞态复查：注册请求在途期间 stop() 可能已执行——彼时 registered=false，
+    // stop 内的注销分支被跳过。此处注册完成后复查 stopped，若已 stop 立即补注销
+    // （尽力而为，失败不阻断），保持 stopped/registered 语义一致；返回后 runOnce
+    // 的 stopped 检查会终止循环，不会再排下轮心跳。
+    if (this.stopped) {
+      this.registered = false;
+      try {
+        await this.unregister(this.pluginId);
+        this.logger(`[cxfc] 已停止，补注销完成 plugin_id=${this.pluginId}`);
+      } catch (err) {
+        this.logger(`[cxfc] 停止后补注销失败（忽略）: ${String(err)}`);
+      }
+    }
     return true;
   }
 

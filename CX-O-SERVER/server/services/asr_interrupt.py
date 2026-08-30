@@ -5,6 +5,7 @@ ASR 打断模块 - 伪全双工实现
 import logging
 from typing import Optional, Callable, Tuple
 
+from server.core.utils import run_io
 from server.services.interrupt_llm import InterruptModuleBase
 
 logger = logging.getLogger(__name__)
@@ -108,13 +109,15 @@ class ASRInterruptModule(InterruptModuleBase):
             logger.warning("打断模块未注入 context_manager/session_id，本次 final 判定跳过上下文写回")
         if decision == "INTERRUPT":
             if is_final and can_write_context:
-                self._context_manager.add_message(self._session_id, user_message)
+                # 同步上下文写回移入 IO 线程池（口径同 live_client 伴生C3），避免阻塞事件循环
+                await run_io(self._context_manager.add_message, self._session_id, user_message)
             logger.info(f"LLM decided to INTERRUPT: {asr_text}")
             await self._trigger_interrupt(asr_text, llm_response)
             return "INTERRUPT", True
         elif decision == "IGNORE":
             if is_final and can_write_context:
-                self._context_manager.add_message(self._session_id, user_message)
+                # 同步上下文写回移入 IO 线程池（口径同 live_client 伴生C3），避免阻塞事件循环
+                await run_io(self._context_manager.add_message, self._session_id, user_message)
             logger.info(f"LLM decided to IGNORE: {asr_text}")
             return "IGNORE", False
         logger.debug(f"LLM decided to CONTINUE: {asr_text}")

@@ -13,7 +13,7 @@
 
 | 文件 | 对应 .pyi 存根 | 对应 schema | 方法数 | 说明 |
 |------|---------------|-------------|--------|------|
-| `mock_template_engine.py` | `template_engine.pyi` | `template_registry.schema.json` | 7 | 模板渲染 + CRUD（YAML frontmatter + Jinja2） |
+| `mock_template_engine.py` | `template_engine.pyi` | —（无独立 schema，字段以实现 template_engine.py 为准，待 s0201 重建） | 7 | 模板渲染 + CRUD（YAML frontmatter + Jinja2） |
 | `mock_multimodal_pipeline.py` | `multimodal_pipeline.pyi` | `multimodal_artifact.schema.json` | 8 | 5 模态预处理（CX-O 扩展：含 `_vllm_native_worker` + `native_decode_used` 字段） |
 | `mock_distillation_service.py` | `distillation_service.pyi` | `distillation_session.schema.json` | 5 | 4 API + 1 内部方法（9 状态机多轮蒸馏） |
 | `mock_decision_core.py` | `decision_core.pyi` | `storage_decision.schema.json` | 9 | 6 决策点 + 3 内部方法（rubric 驱动） |

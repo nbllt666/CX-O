@@ -47,12 +47,12 @@ import { useChatStore } from '../store/chatStore';
 import { useAudioStore } from '../store/audioStore';
 import { useCaptureStore } from '../store/captureStore';
 import { useObsStore } from '../store/obsStore';
-import { CAPTURE_BASE_WIDTH, CAPTURE_BASE_HEIGHT } from '../store/obsStore';
 import {
   useAuthorizationStore,
   isComputerControlEnabled,
 } from '../store/authorizationStore';
 import { isElectron } from '../lib/isElectron';
+import { nextMessageId } from '../lib/utils';
 import { useSettingsStore } from '../store/settingsStore';
 import { useWebSocket } from '../hooks/useWebSocket';
 import type { WebSocketMessage } from '../hooks/useWebSocket';
@@ -150,24 +150,19 @@ export default function PetPage() {
   const setVRMSettings = useSettingsStore((s) => s.setVRMSettings);
   const setLive2DSettings = useSettingsStore((s) => s.setLive2DSettings);
 
-  // 缩放与窗口联动：桌宠模型始终填满窗口，放大时同步放大窗口 → 模型更大且不被裁切。
-  // 仅 VRM 生效（Live2D 走固定布局），且仅在 Electron 有窗口控制权时下发 IPC。
-  // 注意：此处不再回写 obsStore.setCaptureSize——覆写会把预设档位变成非预设值，
+  // 缩放与采集尺寸统一驱动窗口（合并原 avatarScale / captureSize 两 effect，消除
+  // 互相覆盖：两 effect 各自下发不同目标尺寸，后触发者覆盖先触发者）。统一语义：
+  // 目标窗口 = 当前采集档位 × 缩放因子——VRM 叠加用户滑杆缩放；Live2D 走固定布局，
+  // 缩放因子恒 1，仅跟随采集档位。仅在 Electron 有窗口控制权时下发 IPC。
+  // 注意：不回写 obsStore.setCaptureSize——覆写会把预设档位变成非预设值，
   // 导致 getNextCaptureSize 无法命中预设而回落默认档（写冲突，D3）。
   useEffect(() => {
     if (!isElectron()) return;
-    if (avatarType !== 'vrm') return;
-    const w = Math.round(CAPTURE_BASE_WIDTH * avatarScale);
-    const h = Math.round(CAPTURE_BASE_HEIGHT * avatarScale);
+    const scale = avatarType === 'vrm' ? avatarScale : 1;
+    const w = Math.round(captureWidth * scale);
+    const h = Math.round(captureHeight * scale);
     void window.electronAPI?.setWindowSize(w, h);
-  }, [avatarType, avatarScale]);
-
-  // 采集尺寸驱动窗口：右键 cycleCaptureSize / 预设档切换改 store 后经此下发 IPC，
-  // 保证 Electron 下窗口尺寸跟随采集尺寸（此前仅 avatarScale effect 下发，切换档位不生效）。
-  useEffect(() => {
-    if (!isElectron()) return;
-    void window.electronAPI?.setWindowSize(captureWidth, captureHeight);
-  }, [captureWidth, captureHeight]);
+  }, [avatarType, avatarScale, captureWidth, captureHeight]);
 
   const avatarContainerRef = useRef<HTMLDivElement>(null);
   const chatAreaRef = useRef<HTMLDivElement>(null);
@@ -180,6 +175,10 @@ export default function PetPage() {
   // 流式会话互斥闸（语音派发 / 帧发送 / 定时抽帧共用）
   const isLoadingRef = useRef(false);
   isLoadingRef.current = isLoading;
+  // B8：助手回复派发互斥（本地同步 ref）——isLoadingRef 只在 render commit 后更新，
+  // 背靠背 ASR final 可在 commit 窗口内双双通过守卫造成双派发；
+  // dispatchToAssistant 开始置 true，done/error/失败/断开路径清除（对齐 sendFrameInFlightRef 范式）
+  const dispatchInFlightRef = useRef(false);
 
   // 桌宠窗独立加载 /pet，需自行拉取 Agent 列表以确定 currentAgentId
   useEffect(() => {
@@ -229,12 +228,17 @@ export default function PetPage() {
         chatRef.current?.finalizeLastAssistantMessage(finalContent);
         // 音画同步 Task3 兜底：文本流收尾后触发剩余全部标签并重置时间线
         chatRef.current?.flushRemaining?.();
+        // B1/B8：流式收尾清除目标与派发互斥（done/cancelled/error 终结统一走这里）
+        chatRef.current?.setStreamingTarget(null);
+        dispatchInFlightRef.current = false;
       } else if (type === 'error') {
         setIsLoading(false);
         accumulatedRef.current = '';
         chatRef.current?.finalizeLastAssistantMessage(
           t('pet.chat.error', { message: payload.error ?? 'unknown' }),
         );
+        chatRef.current?.setStreamingTarget(null);
+        dispatchInFlightRef.current = false;
       }
     },
     [t],
@@ -281,12 +285,19 @@ export default function PetPage() {
     onSpeaker: handleSpeaker,
     onError: () => {
       setIsLoading(false);
+      // B8：WS 层错误不保证后续 done/error 终结帧到达，同步解除派发互斥防卡死
+      dispatchInFlightRef.current = false;
     },
     // M2：服务端干净关闭（code=1000）只触发 transport onClose，不走 error 分支——
     // 不接线则 isLoading 永久卡死；asrMsgIdRef 不清会导致后续 ASR 文本写入不存在的气泡
     onDisconnect: () => {
       setIsLoading(false);
+      // C5：断连时 asr 气泡若仍在识别中，解除其裁剪豁免（pin/unpin 严格成对，集合有界）
+      const pendingAsrId = asrMsgIdRef.current;
       asrMsgIdRef.current = null;
+      if (pendingAsrId) chatRef.current?.unpinMessage(pendingAsrId);
+      chatRef.current?.setStreamingTarget(null);
+      dispatchInFlightRef.current = false;
     },
   });
 
@@ -305,7 +316,7 @@ export default function PetPage() {
   const handleDanmakuSpeakStart = useCallback(
     (text: string) => {
       chatRef.current?.addMessage({
-        id: `dv-${Date.now()}`,
+        id: nextMessageId('dv-'),
         role: 'assistant',
         content: `${t('pet.danmakuVoice.bubblePrefix')}${text}`,
         timestamp: nowIso(),
@@ -328,9 +339,16 @@ export default function PetPage() {
   // ── 助手回复派发（打字输入与 ASR final 共用；用户气泡由 caller 负责落） ──
   const dispatchToAssistant = useCallback(
     (message: string) => {
+      // B8：commit 窗口内的双派发防御（isLoadingRef 落地前背靠背 final 会双双通过）
+      if (dispatchInFlightRef.current) return;
+      dispatchInFlightRef.current = true;
       accumulatedRef.current = '';
+      const replyId = nextMessageId('a-');
+      // B1：登记流式目标——随后插入的弹幕播报/ASR interim 气泡不影响流式增量定位，
+      // 流式中的占位气泡也不参与 PetChat 的窗口裁剪
+      chatRef.current?.setStreamingTarget(replyId);
       chatRef.current?.addMessage({
-        id: `a-${Date.now()}`,
+        id: replyId,
         role: 'assistant',
         content: '',
         timestamp: nowIso(),
@@ -340,6 +358,8 @@ export default function PetPage() {
       if (!sent) {
         setIsLoading(false);
         chatRef.current?.finalizeLastAssistantMessage(t('pet.chat.unreachable'));
+        chatRef.current?.setStreamingTarget(null);
+        dispatchInFlightRef.current = false;
       }
     },
     [isConnected, sendMessage, t],
@@ -361,23 +381,33 @@ export default function PetPage() {
       const speakerId = currentSpeakerRef.current.speakerId;
       // interim 就地更新同一气泡；一段话一个气泡
       if (!asrMsgIdRef.current) {
-        const id = `asr-${Date.now()}`;
+        const id = nextMessageId('asr-');
         asrMsgIdRef.current = id;
-        chatRef.current?.addMessage({
-          id,
-          role: 'user',
-          content: text,
-          timestamp: nowIso(),
-          speakerName,
-          speakerId,
-        });
+        // C5：识别期间 pinned——防极端场景（单句识别期间插入 ≥MAX_KEPT_MESSAGES 条弹幕
+        // 气泡）把 asr- 气泡裁出窗口，updateMessageContent 按 id 无命中失效、interim 文本丢失；
+        // final 落定/断连时 unpin（与 pinned 严格成对，集合有界）
+        chatRef.current?.addMessage(
+          {
+            id,
+            role: 'user',
+            content: text,
+            timestamp: nowIso(),
+            speakerName,
+            speakerId,
+          },
+          { pinned: true },
+        );
       } else {
         chatRef.current?.updateMessageContent(asrMsgIdRef.current, text);
       }
       if (data.is_final) {
+        // C5：final 文本已写入气泡（更新路径）或创建即 final，解除裁剪豁免
+        const finalizedId = asrMsgIdRef.current;
         asrMsgIdRef.current = null;
-        // 对话进行中不并发派发，识别文本保留气泡待用户稍后处理
-        if (!isLoadingRef.current) {
+        if (finalizedId) chatRef.current?.unpinMessage(finalizedId);
+        // 对话进行中不并发派发，识别文本保留气泡待用户稍后处理；
+        // B8：isLoadingRef 同步于 render commit，背靠背 final 需本地 inFlight ref 兜底防双派发
+        if (!isLoadingRef.current && !dispatchInFlightRef.current) {
           dispatchToAssistant(text);
         }
       }
@@ -406,7 +436,7 @@ export default function PetPage() {
             ? 'pet.capture.screenError'
             : 'pet.capture.cameraError';
       chatRef.current?.addMessage({
-        id: `err-${Date.now()}`,
+        id: nextMessageId('err-'),
         role: 'assistant',
         content: t(key),
         timestamp: nowIso(),
@@ -461,14 +491,17 @@ export default function PetPage() {
         kind === 'screen' ? 'pet.capture.framePromptScreen' : 'pet.capture.framePromptCamera',
       );
       chatRef.current?.addMessage({
-        id: `u-${Date.now()}`,
+        id: nextMessageId('u-'),
         role: 'user',
         content: prompt,
         timestamp: nowIso(),
       });
       accumulatedRef.current = '';
+      const frameReplyId = nextMessageId('a-');
+      // B1：帧发送回复同样登记流式目标（弹幕/ASR 气泡插入不串台、不参与窗口裁剪）
+      chatRef.current?.setStreamingTarget(frameReplyId);
       chatRef.current?.addMessage({
-        id: `a-${Date.now()}`,
+        id: frameReplyId,
         role: 'assistant',
         content: '',
         timestamp: nowIso(),
@@ -497,6 +530,9 @@ export default function PetPage() {
           setIsLoading(false);
           accumulatedRef.current = '';
           chatRef.current?.finalizeLastAssistantMessage(t('pet.chat.unreachable'));
+          // B1/B8：SSE 整体失败不走终结分块，这里同步清除目标与互斥
+          chatRef.current?.setStreamingTarget(null);
+          dispatchInFlightRef.current = false;
         })
         .finally(() => {
           sendFrameInFlightRef.current = false;

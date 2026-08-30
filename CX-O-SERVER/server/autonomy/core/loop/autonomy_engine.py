@@ -231,7 +231,7 @@ class AutonomyEngine:
         plan: Optional[Dict[str, Any]] = None
         action_result: Optional[Dict[str, Any]] = None
         try:
-            online_sleep = self._apply_user_online_policy()
+            online_sleep = await self._apply_user_online_policy()
             await self._motivate()
             budget_blocked = await self._apply_budget_gate()
             manager_blocked = not self._manager_action_allowed()
@@ -285,13 +285,18 @@ class AutonomyEngine:
             # 匹配；_elapsed_minutes 对 tz-aware 时间戳跨时区求差无混算）。
             self.manager.last_cycle_at = self._local_now_iso()
             self._sync_manager_motivations()
-            self._save_manager_state()
+            # G1/A4: manager 状态落盘为同步文件 IO，经 to_thread 卸载（对齐 _persist_token_ledger）
+            await asyncio.to_thread(self._save_manager_state)
             # R4: 每轮末尾统一持久化 Token 台账（记账/跨日重置均发生在轮内，
             # 每轮仅落盘一次），避免重启后当日预算清零绕过熔断。
             await self._persist_token_ledger()
 
-    def _apply_user_online_policy(self) -> bool:
+    async def _apply_user_online_policy(self) -> bool:
         """轮首用户在线策略：将传感器判定同步到 killswitch 休眠档。
+
+        G1/A4: 改为 async——killswitch.update_from_user_online 内部含条件
+        _persist 落盘（同步 IO），经 asyncio.to_thread 卸载，本方法相应改为
+        协程由 _run_round await（唯一调用点）。
 
         仅在 sensor 为真实 ContextSensor（含可调用 is_user_online）且
         config.safety.user_online_sleep 开启时生效；否则不改动 killswitch
@@ -316,7 +321,10 @@ class AutonomyEngine:
             logger.warning("用户在线判定失败: %s", e)
             is_online = False
         try:
-            self.killswitch.update_from_user_online(is_online, user_online_sleep)
+            # G1/A4: killswitch 休眠档更新内部含条件 _persist 落盘（同步 IO），经 to_thread 卸载
+            await asyncio.to_thread(
+                self.killswitch.update_from_user_online, is_online, user_online_sleep
+            )
         except Exception as e:
             logger.warning("用户在线状态同步 killswitch 失败: %s", e)
         return bool(is_online)
@@ -486,7 +494,8 @@ class AutonomyEngine:
         save = getattr(self.motivation, "save", None)
         if callable(save):
             try:
-                save(self._store_dir)
+                # G1/A4: 动机状态落盘为同步文件 IO，经 to_thread 卸载
+                await asyncio.to_thread(save, self._store_dir)
             except Exception as e:
                 logger.warning("动机保存失败: %s", e)
         self._sync_manager_motivations()
@@ -629,7 +638,8 @@ class AutonomyEngine:
             "expected_outcome": str(plan.get("expected_outcome", "") or ""),
         }
         try:
-            self.audit.append(entry)
+            # G1/A4: 审计条目落盘为同步文件 IO，经 to_thread 卸载
+            await asyncio.to_thread(self.audit.append, entry)
         except Exception as e:
             logger.error("审计写入失败: %s", e)
             return
@@ -650,7 +660,9 @@ class AutonomyEngine:
     ) -> None:
         """记录一轮异常的错误审计条目（尽力而为，不冒泡）。"""
         try:
-            self.audit.append(
+            # G1/A4: 错误审计条目落盘为同步文件 IO，经 to_thread 卸载
+            await asyncio.to_thread(
+                self.audit.append,
                 {
                     "timestamp": self._local_now_iso(),
                     "motivations": self._motivation_dict(),
@@ -706,9 +718,12 @@ class AutonomyEngine:
         # 失败保留"今日未写"状态允许下一唤醒重试；审计仍记录 failed 条目。
         if (result or {}).get("memory_id"):
             self.manager.diary_last_at = now.isoformat()
-            self._save_manager_state()
+            # G1/A4: 状态落盘为同步文件 IO，经 to_thread 卸载（与 :288 同型）
+            await asyncio.to_thread(self._save_manager_state)
         try:
-            self.audit.append(
+            # G1/A4: 审计条目落盘为同步文件 IO，经 to_thread 卸载（与 _audit 同型）
+            await asyncio.to_thread(
+                self.audit.append,
                 {
                     "timestamp": self._local_now_iso(),
                     "motivations": self._motivation_dict(),
@@ -903,8 +918,11 @@ class AutonomyEngine:
         if self.manager.last_cycle_at:
             try:
                 last = datetime.fromisoformat(str(self.manager.last_cycle_at))
+                # G1/A1 规则（对齐 decay.py）：遗留 naive 数据按本地时区换算 UTC，
+                # 禁止 replace(tzinfo=utc) 直接错标（当前写入端 _local_now_iso
+                # 已返回 aware 时间戳，此分支仅为防御遗留数据）。
                 if last.tzinfo is None:
-                    last = last.replace(tzinfo=timezone.utc)
+                    last = last.astimezone(timezone.utc)
                 now = datetime.now(timezone.utc)
                 delta = (now - last).total_seconds() / 60.0
                 return max(delta, 0.0)

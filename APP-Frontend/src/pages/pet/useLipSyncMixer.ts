@@ -58,15 +58,19 @@ export function useLipSyncMixer({
       if (channel) {
         volumeRef.current = channel.volumeRef.current;
         vowelWeightsRef.current = { ...channel.vowelWeightsRef.current };
+        raf = requestAnimationFrame(tick);
       } else {
+        // 无活跃音源：归零闭嘴并自停 RAF（不再排下一帧），避免全程空转烧 CPU；
+        // 任一路 active 翻转时下方依赖数组触发 effect 重跑，循环自动重启
         volumeRef.current = 0;
         vowelWeightsRef.current = { ...ZERO_VOWELS };
+        raf = 0;
       }
-      raf = requestAnimationFrame(tick);
     };
     raf = requestAnimationFrame(tick);
     return () => cancelAnimationFrame(raf);
-  }, []);
+    // 依赖三路 active：无源→有源时重启 tick 循环；有源→无源时重跑后由 tick 自停
+  }, [tts.active, danmaku.active, mic.active]);
 
   return { volumeRef, vowelWeightsRef };
 }

@@ -11,17 +11,15 @@
  * 状态记忆（danmakuStore persist）：
  * - 置顶/背景不透明度/暂停滚动：本页挂载时直接应用持久化值；
  * - 显隐：窗口被创建即上报 visible=true，用户点「隐藏」置 false。
- *   重启后由主进程读取持久化 visible 决定是否创建弹幕窗——
- *   【IPC/主进程缺口】现有 window:toggle-danmaku 仅支持切换，主进程
- *   尚无启动时读取 cxo-pet-danmaku 存储并恢复窗口的逻辑，需主线程补充。
+ *   重启后由主进程读取持久化 visible 决定是否创建弹幕窗——恢复逻辑已在
+ *   electron/main.ts 启动流程实现（读取 cxo-pet-danmaku 存储，visible=true 时恢复）。
  *
  * 鼠标穿透：
  * - 会话内状态，刻意不持久化（重启默认关闭，防无恢复入口时窗口永久锁死）；
- * - 开启后窗口不可交互，恢复入口需主进程托盘菜单/全局快捷键支持（缺口同上）。
+ * - 恢复入口为主进程托盘菜单/全局快捷键（electron/main.ts 均已实现）。
  *
- * 全局快捷键（Ctrl+Shift+D 唤起/隐藏弹幕窗）：
- * - globalShortcut 须在主进程注册，属 electron/ 改动，本任务不触碰，
- *   列为 IPC/主进程缺口，由主线程补上。
+ * 全局快捷键（CommandOrControl+Shift+D 唤起/隐藏弹幕窗）：
+ * - 已由主进程 globalShortcut 注册（electron/main.ts），渲染层无需处理。
  */
 import { useCallback, useEffect, useReducer, useRef, useState } from 'react';
 import DanmakuList from '@/components/danmaku/DanmakuList';

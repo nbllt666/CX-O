@@ -411,8 +411,11 @@ async def auto_archive_process(
                 logger.warning(f"无法解析 created_at 时间戳: {created_at_str}，跳过该记忆")
                 continue
             # 统一为 aware datetime（UTC）进行比较
+            # G1/A1 规则（对齐 decay.py）：naive 端按系统本地时区解释后换算 UTC，
+            # 禁止 replace(tzinfo=utc) 直接错标——后者把本地时间当作 UTC，
+            # UTC+8 下记忆会显示早 8 小时而被提前归档。
             if created_at.tzinfo is None:
-                created_at = created_at.replace(tzinfo=timezone.utc)
+                created_at = created_at.astimezone(timezone.utc)
             if created_at < cutoff:
                 if not memory.get("archived_at"):
                     archive_result = await memory_mgr.archiver.archive_memory(

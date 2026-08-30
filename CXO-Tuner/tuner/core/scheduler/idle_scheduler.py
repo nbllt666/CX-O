@@ -102,7 +102,11 @@ class IdleScheduler:
         self.now_fn = now_fn or datetime.now
         self.trainer_store = trainer_store
         self._trained_dates = set()  # 进程内存去重：已触发过训练的自然日
-        self._lock = threading.Lock()
+        # C9：tick() 的「查重→is_idle 判定→trigger→登记」必须落在同一临界区内，
+        # 旧实现检查与登记分离存在 TOCTOU 窗口（并发 tick 会重复触发训练并留下
+        # 冗余 failed 记录）。用 RLock：trigger 为调用方注入的闭包，若其内部
+        # 同线程重入 tick()/锁（如触发路径回调调度器）仍可重入不死锁。
+        self._lock = threading.RLock()
 
     # -- 规模读取 ---------------------------------------------------------------
     def _dataset_size(self) -> int:
@@ -130,17 +134,17 @@ class IdleScheduler:
             return False
         now = self.now_fn()
         day = now.date().isoformat()
+        # C9：查重→判定→trigger→登记收进同一临界区，消除检查/登记分离的 TOCTOU。
+        # trigger 抛异常时不登记当日（与旧语义一致：下次 tick 可重试），异常向上传播。
         with self._lock:
             if day in self._trained_dates:
                 return False
-        if not self.is_idle_active(now):
-            return False
-        if self.trainer_store is not None and has_completed_today(self.trainer_store, now):
-            # 当日已有 completed 任务，视为该自然日已训练过，不再重复触发
-            with self._lock:
+            if not self.is_idle_active(now):
+                return False
+            if self.trainer_store is not None and has_completed_today(self.trainer_store, now):
+                # 当日已有 completed 任务，视为该自然日已训练过，不再重复触发
                 self._trained_dates.add(day)
-            return False
-        self.trigger()
-        with self._lock:
+                return False
+            self.trigger()
             self._trained_dates.add(day)
-        return True
+            return True

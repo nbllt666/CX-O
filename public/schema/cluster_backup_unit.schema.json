@@ -8,8 +8,8 @@
   "properties": {
     "unit": {
       "type": "string",
-      "enum": ["memory", "persona", "config", "graph", "session", "autonomy", "vector"],
-      "description": "备份单元名。"
+      "enum": ["memory", "persona", "config", "graph", "session", "autonomy", "vector", "ref_audio"],
+      "description": "备份单元名。ref_audio=参考音频资产（ref_audio_store 注册/删除事件同步）。"
     },
     "strategy": { "type": "string", "enum": ["incremental", "snapshot", "rebuild"], "description": "同步策略：增量事件流 / 定期快照 / 接收端重建（vector）。" },
     "last_applied_seq": { "type": "integer", "minimum": 0, "description": "已应用 seq（断线补传锚点）。" },

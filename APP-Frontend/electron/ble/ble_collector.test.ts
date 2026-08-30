@@ -19,6 +19,25 @@ import {
 import { PhysioUploader } from './uploader';
 
 // ---------------------------------------------------------------------------
+// noble 加载路径打桩（D8）
+// ---------------------------------------------------------------------------
+
+// tryLoadNoble 经 createRequire(import.meta.url) 动态 require('@abandonware/noble')，
+// 结果取决于本机是否装了 noble →「加载失败 graceful 降级」用例会随环境漂移
+// （本机装了 noble 后构造状态不再是 unavailable）。这里把 node:module 的 createRequire
+// 桩化为返回恒抛错的 require（模拟 noble 缺失环境），其余 node:module 导出保持原样；
+// 其余用例均走 nobleLib 注入路径（不触发 tryLoadNoble），不受本 mock 影响。
+vi.mock('node:module', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('node:module')>();
+  return {
+    ...actual,
+    createRequire: () => () => {
+      throw new Error('[mock] @abandonware/noble unavailable');
+    },
+  };
+});
+
+// ---------------------------------------------------------------------------
 // noble 打桩
 // ---------------------------------------------------------------------------
 
@@ -380,7 +399,9 @@ describe('BleHeartRateCollector', () => {
   });
 
   it('noble 加载失败 graceful 降级：状态 unavailable，API 不崩溃', async () => {
-    // 注入 API 不完整的对象 → 与动态 require 失败同路径，确定性降级
+    // 注入 API 不完整的对象 → 退回 tryLoadNoble 动态 require 路径；
+    // node:module 的 createRequire 已被本文件顶部 mock 桩化为恒抛错，
+    // 与「noble 缺失」环境等价，不依赖本机 noble 构建状态
     const collector = new BleHeartRateCollector({ nobleLib: {} });
     expect(collector.getStatus().status).toBe('unavailable');
     const scan = await collector.startScan();

@@ -74,9 +74,11 @@ class FakeMemoryManager:
         self.get_rejected_calls = []
         self.cleanup_calls = []
 
-    def write_with_decision(self, content, decision, metadata=None):
+    def write_with_decision(self, content, decision, metadata=None, source=None):
         self.write_calls.append((content, decision, metadata))
-        return {"stored": True, "memory_id": 1}
+        # 返回形状对齐实现（decision_mixin.py write_with_decision）：
+        # {"location", "memory_id", "rejected_id"}
+        return {"location": "memories", "memory_id": 1, "rejected_id": None}
 
     def get_rejected_content(self, session_id, limit=50):
         self.get_rejected_calls.append((session_id, limit))

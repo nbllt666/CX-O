@@ -442,10 +442,20 @@ function isWhitelistedModelPath(filePath: string): boolean {
 // ---------------------------------------------------------------------------
 // IPC 处理器
 // ---------------------------------------------------------------------------
+/** store:save 单槽位载荷上限：5MB（JSON 字符串长度） */
+const MAX_STORE_SAVE_LENGTH = 5 * 1024 * 1024;
+
 function registerIpcHandlers(): void {
   // 持久化存储（userData/store/<name>.json）
   registerIpcHandler('store:load', (_event, name: string) => loadStore(name));
   registerIpcHandler('store:save', (_event, name: string, data: string) => {
+    // 载荷上限：单槽位 > 5MB 视为异常写入（zustand persist 状态失控/恶意构造），
+    // 阻断落盘。错误风格对齐 saveStore 非法名分支（throw Error → invoke 方收到 rejection）。
+    if (typeof data === 'string' && data.length > MAX_STORE_SAVE_LENGTH) {
+      throw new Error(
+        `store:save 载荷超限（${data.length} > ${MAX_STORE_SAVE_LENGTH} 字符）: ${name}`,
+      );
+    }
     saveStore(name, data);
   });
 
@@ -687,14 +697,20 @@ function configureCors(): void {
     }
 
     const responseHeaders = details.responseHeaders ?? {};
-    responseHeaders['Access-Control-Allow-Origin'] = [allowOrigin];
-    responseHeaders['Access-Control-Allow-Methods'] = ['GET, POST, PUT, DELETE, OPTIONS'];
+    // 与下方 Allow-Headers 同款大小写不敏感防重检查：后端已下发同名 CORS 头（键
+    // 大小写可能不同，如 access-control-allow-origin）时不重复赋值，避免响应携带
+    // 重复/冲突头导致浏览器 CORS 校验失败。
+    const hasHeader = (name: string) =>
+      Object.keys(responseHeaders).some((key) => key.toLowerCase() === name);
+    if (!hasHeader('access-control-allow-origin')) {
+      responseHeaders['Access-Control-Allow-Origin'] = [allowOrigin];
+    }
+    if (!hasHeader('access-control-allow-methods')) {
+      responseHeaders['Access-Control-Allow-Methods'] = ['GET, POST, PUT, DELETE, OPTIONS'];
+    }
     // Allow-Headers 透传优先：后端 FastAPI CORSMiddleware 已下发更宽名单时不覆盖
     // （键大小写不敏感检测），仅在后端缺失该头时补写兜底值（含 x-api-key）。
-    const hasAllowHeaders = Object.keys(responseHeaders).some(
-      (key) => key.toLowerCase() === 'access-control-allow-headers',
-    );
-    if (!hasAllowHeaders) {
+    if (!hasHeader('access-control-allow-headers')) {
       responseHeaders['Access-Control-Allow-Headers'] = ['Content-Type, Authorization, x-api-key'];
     }
     callback({ responseHeaders });

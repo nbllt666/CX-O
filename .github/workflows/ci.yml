@@ -39,6 +39,36 @@ jobs:
         working-directory: ./CX-O-SERVER
         run: python -B -m pytest -q -p no:cacheprovider
 
+      # 登记（第十二轮 G4 评估）：CX-O-VoiceWorkStation 实际存在 16 个测试文件
+      # （tests/test_*.py，非空占位），但其依赖未固化——pyproject.toml 仅声明
+      # jsonschema/music21，且无 requirements.txt（实际运行还需 fastapi/uvicorn/
+      # voxcpm 等重量级依赖），CI 环境无法可靠安装，故暂不建 test-vws job。
+      # 待 VWS requirements 固化后接入独立 job。
+
+  test-tuner:
+    runs-on: windows-latest
+    timeout-minutes: 20
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        working-directory: ./CXO-Tuner
+        run: |
+          python -m pip install --upgrade pip
+          # 依赖以 requirements.txt 为准（pyproject.toml 的 dependencies 为空占位）
+          pip install -r requirements.txt
+          pip install pytest pytest-asyncio httpx
+
+      - name: Run tuner tests
+        working-directory: ./CXO-Tuner
+        run: python -B -m pytest -q -p no:cacheprovider
+
   test-frontend:
     runs-on: ubuntu-latest
     timeout-minutes: 30
@@ -84,7 +114,10 @@ jobs:
 
       - name: Install linting tools
         run: |
-          pip install ruff black isort
+          # C13（2026-08-30）：锁定 lint 工具版本保证检查结果可复现（仓库无
+          # requirements-dev.txt，直接在此锁定；升级时同步验证 ruff/black 规则兼容性）。
+          # ruff 0.6.9 / black 24.10.0（2024 末广泛使用的稳定版）/ isort 5.13.2。
+          pip install "ruff==0.6.9" "black==24.10.0" "isort==5.13.2"
 
       - name: Run ruff
         run: |
@@ -99,23 +132,3 @@ jobs:
         run: |
           isort --check-only CX-O-SERVER/server
 
-  build:
-    needs: [test-backend, test-frontend, lint]
-    runs-on: ubuntu-latest
-    timeout-minutes: 20
-
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Build Docker images
-        run: |
-          echo "Building Docker images..."
-          # Add your Docker build commands here
-
-      - name: Upload artifacts
-        uses: actions/upload-artifact@v4
-        with:
-          name: build-artifacts
-          path: |
-            **/dist/*
-            **/*.whl

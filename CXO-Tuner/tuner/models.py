@@ -6,7 +6,7 @@ from __future__ import annotations
 
 from typing import Any, Dict, List, Optional
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 class FeedbackIn(BaseModel):
@@ -85,17 +85,25 @@ class ApplyAdapterResponse(BaseModel):
 
 
 class JudgeBuildSample(BaseModel):
-    """单条会话历史样本：同一 prompt 的多个候选回复。"""
+    """单条会话历史样本：同一 prompt 的多个候选回复。
+
+    C12：responses 加上限（每样本最多 5 个候选）——judge 构建 DPO 时候选两两
+    配对调用 LLM，无上限的 responses 会被恶意/异常请求放大成 O(n²) LLM 调用。
+    """
 
     prompt: str
-    responses: List[str] = []
+    responses: List[str] = Field(default_factory=list, max_length=5)
     session_id: Optional[str] = None
 
 
 class JudgeBuildRequest(BaseModel):
-    """触发 judge 批量构建 DPO 的请求。"""
+    """触发 judge 批量构建 DPO 的请求。
 
-    samples: List[JudgeBuildSample]
+    C12：samples 加上限（单次请求最多 100 条样本）——每条样本至少触发一次
+    LLM 评估，无上限的 samples 同样会放大成海量 LLM 调用。
+    """
+
+    samples: List[JudgeBuildSample] = Field(max_length=100)
     character_card_hint: Optional[str] = None
 
 

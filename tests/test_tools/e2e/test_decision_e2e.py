@@ -540,8 +540,8 @@ def test_write_with_decision_accept() -> Tuple[bool, str]:
     通过 D1_LOCATION + content 触发 write_with_decision，验证 memory_id 非空。
     条件：quality_score=0.85 >= 0.4（不拒绝），importance 回退=0.75 >= 0.7 → permanent_memories。
 
-    契约依据：memory_manager_v2.pyi write_with_decision 返回
-    WriteWithDecisionResult(stored/location/memory_id/metadata/reason)。
+    契约依据：memory_manager_v2.pyi @1.1.0 write_with_decision 返回
+    Dict（含 location/memory_id/rejected_id 三键）。
     """
     _print("write", "测试 write_with_decision accept 路径（permanent_memories）")
     sid = _new_session_id()

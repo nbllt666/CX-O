@@ -1,5 +1,5 @@
 {
-  "@version": "2.0.0 (2026-08-27 批次H/H3 补全；1.0.0 种子空壳)",
+  "@version": "2.1.0 (2026-08-30 permanent_memory_record.source 枚举补 radix_decision，第十三轮 G2；2.0.0 批次H/H3 补全；1.0.0 种子空壳)",
   "$schema": "http://json-schema.org/draft-07/schema#",
   "$id": "https://cx-o/public/schema/memory.schema.json",
   "title": "Memory",
@@ -135,7 +135,7 @@
         "created_at": {"type": "string", "format": "date-time", "description": "创建时间，DEFAULT CURRENT_TIMESTAMP"},
         "updated_at": {"type": ["string", "null"], "format": "date-time", "description": "更新时间 TIMESTAMP 可空"},
         "metadata": {"type": ["object", "null"], "description": "元数据字典，落盘为 JSON 文本"},
-        "source": {"type": "string", "default": "user", "enum": ["user", "vision"], "description": "来源标记，VARCHAR(50) DEFAULT 'user'；视觉叙事记忆写 'vision'"},
+        "source": {"type": "string", "default": "user", "enum": ["user", "vision", "radix_decision"], "description": "来源标记，VARCHAR(50) DEFAULT 'user'；视觉叙事记忆写 'vision'；radix_decision 为 write_with_decision permanent 分支的缺省来源标记"},
         "verified": {"type": "boolean", "default": true, "description": "是否已验证，BOOLEAN DEFAULT TRUE"}
       },
       "required": ["content"]

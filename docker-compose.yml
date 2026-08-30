@@ -90,6 +90,9 @@ services:
       - LORA_MODULES=${LLM_LORA_MODULES:-}
       # TRT-LLM 模式
       - ENGINE_PATH=${LLM_ENGINE_PATH:-/workspace/engines}
+      # C8（2026-08-30）：tritonserver:24.12 旧版 trtllm-serve 无连字符限流参数，
+      # 以下两变量对旧版不生效（start-trtllm.sh 已同步删除命令行传参）；保留仅为
+      # 向后兼容，新版 trtllm-serve 恢复限流参数后可直接复用。
       - MAX_BATCH_SIZE=${LLM_MAX_BATCH_SIZE:-256}
       - MAX_NUM_TOKENS=${LLM_MAX_NUM_TOKENS:-8192}
     volumes:
@@ -119,9 +122,13 @@ services:
   # ============================================================
   # 可选 profile：仅 `docker compose --profile tuner up` 时才启动，
   # 不启用时完全不影响主系统（asr-sensevoice / llm）。
-  # 镜像约定：cxo/tuner:latest 由 CXO-Tuner 目录下的 Dockerfile 构建（如尚未提供则直接拉取）。
+  # 镜像约定：cxo/tuner:latest 由 CXO-Tuner/Dockerfile 构建（C5：2026-08-30 补齐
+  # build 源，此前 compose 引用镜像但无构建入口）。
   cxo-tuner:
     image: cxo/tuner:latest
+    build:
+      context: ./CXO-Tuner
+      dockerfile: Dockerfile
     profiles:
       - tuner
     ports:

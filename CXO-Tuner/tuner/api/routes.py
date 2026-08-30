@@ -25,7 +25,12 @@ from tuner.core.collector import Collector
 from tuner.core.adapter_store.store import AdapterStore, AdapterNotFoundError
 from tuner.core.collector.cleaner import InvalidFeedbackError
 from tuner.core.collector.dataset import DatasetStore
-from tuner.core.trainer.qlora_trainer import QLoRATrainer, end_training, try_begin_training
+from tuner.core.trainer.qlora_trainer import (
+    QLoRATrainer,
+    end_training,
+    get_active_training_job,
+    try_begin_training,
+)
 from tuner.core.trainer.store import TrainerJobStore
 from tuner.core.trainer.train_job import TrainJob
 from tuner.models import (
@@ -224,6 +229,18 @@ def list_adapters(request: Request) -> List[AdapterInfo]:
 
 @router.delete("/adapters/{adapter_id}", response_model=dict)
 def delete_adapter(adapter_id: str, request: Request) -> dict:
+    # D5：删除适配器与活跃训练竞态防护。训练进行中时后台线程正写
+    # lora_dir/{job_id}/（qlora_trainer._train 的 out_dir），精确拒绝删除
+    # 与活跃 job_id 同名的适配器，避免 rmtree 与 save_pretrained 竞态。
+    active_job = get_active_training_job()
+    if active_job is not None and adapter_id == active_job:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                f"适配器 '{adapter_id}' 正在训练中，无法删除；"
+                "请等待训练完成或先停止训练后再试"
+            ),
+        )
     try:
         ok = _adapters(request).delete(adapter_id)
     except AdapterNotFoundError as exc:

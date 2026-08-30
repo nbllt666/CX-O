@@ -1,12 +1,13 @@
 {
+  "@version": "1.0.1 (2026-08-30 _sourceOfTruth 指针改指实现 server/config.py UnifiedConfig 并加注源并入说明，第十五轮 G4 PATCH；1.0.0 种子)",
   "$schema": "http://json-schema.org/draft-07/schema#",
   "$id": "https://cx-o/public/config_template/default_yaml.schema.json",
   "title": "DefaultYamlConfig",
   "description": "默认 YAML 配置契约（种子阶段，待 s0201 补全）",
   "_sourceOfTruth": {
-    "primary": "c:/CX-O/config/default.yaml",
-    "secondary": ["c:/CX-O/config/validation.py"],
-    "note": "default.yaml 21 顶层键：server/cors/logging/database/models/model_defaults/agent/memory/context/tools/acp/security/monitoring/llm_params/tts/avatar/asr/voice_workstation/live/limits。validation.py 含 REQUIRED_FIELDS + VALID_VALUES 枚举集"
+    "primary": "c:/CX-O/CX-O-SERVER/server/config.py",
+    "secondary": [],
+    "note": "源已并入 CX-O-SERVER/server/config.py UnifiedConfig（约 :1053），本契约待 s0201 重建。原 c:/CX-O/config/default.yaml 与 c:/CX-O/config/validation.py 均已不存在"
   },
   "_seedStage": true,
   "_completionSkill": "s0201",

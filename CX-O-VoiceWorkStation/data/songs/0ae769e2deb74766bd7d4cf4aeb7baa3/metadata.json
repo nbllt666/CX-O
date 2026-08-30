@@ -1,0 +1,101 @@
+{
+  "version": 1,
+  "song_id": "0ae769e2deb74766bd7d4cf4aeb7baa3",
+  "title": "测试歌",
+  "status": "running",
+  "stage": "accompaniment",
+  "progress": 0.1,
+  "error": null,
+  "created_at": "2026-08-30T15:20:17+08:00",
+  "finished_at": null,
+  "score": {
+    "title": "测试歌",
+    "bpm": 120,
+    "melody": [
+      {
+        "pitch": "C4",
+        "beats": 1.0,
+        "lyric": "你"
+      }
+    ],
+    "chords": [
+      {
+        "chord": "C",
+        "beats": 4
+      }
+    ],
+    "accompaniment_tracks": [
+      {
+        "id": "trk_f451f703",
+        "name": "钢琴",
+        "program": 0,
+        "mode": "auto",
+        "style": "block_chords",
+        "volume": 100,
+        "pan": 64,
+        "events": [
+          {
+            "pitch": "C4",
+            "beats": 4,
+            "offset": 0,
+            "velocity": 64
+          }
+        ]
+      }
+    ],
+    "time_signature": "4/4",
+    "key": "C"
+  },
+  "params": {
+    "svc_model": "",
+    "speaker_id": 0,
+    "transpose": 0,
+    "vocal_gain": 1.0,
+    "accompaniment_gain": 0.8,
+    "voice_bank": ""
+  },
+  "steps": [
+    {
+      "name": "validate",
+      "status": "completed",
+      "error": null,
+      "message": "",
+      "started_at": "2026-08-30T15:20:17+08:00",
+      "finished_at": "2026-08-30T15:20:17+08:00"
+    },
+    {
+      "name": "accompaniment",
+      "status": "running",
+      "error": null,
+      "message": "",
+      "started_at": "2026-08-30T15:20:17+08:00",
+      "finished_at": null
+    },
+    {
+      "name": "vocal",
+      "status": "pending",
+      "error": null,
+      "message": "",
+      "started_at": null,
+      "finished_at": null
+    },
+    {
+      "name": "svc",
+      "status": "pending",
+      "error": null,
+      "message": "",
+      "started_at": null,
+      "finished_at": null
+    },
+    {
+      "name": "mix",
+      "status": "pending",
+      "error": null,
+      "message": "",
+      "started_at": null,
+      "finished_at": null
+    }
+  ],
+  "files": {},
+  "audio_url": null
+}

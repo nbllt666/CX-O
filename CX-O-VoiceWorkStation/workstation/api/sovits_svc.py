@@ -32,11 +32,12 @@ class SVCPreprocessRequest(BaseModel):
 
 
 class SVCTrainRequest(BaseModel):
-    training_data_dir: Optional[str] = None
     epochs: int = Field(10000, ge=1, le=100000)
     batch_size: int = Field(4, ge=1)
     learning_rate: float = Field(1e-4, gt=0)
     output_name: Optional[str] = None
+    # D3：说话人名称透传；None 时 trainer 走默认 "speaker"（sovits_svc_trainer.start_training）
+    speaker_name: Optional[str] = None
 
 
 class SVCInferRequest(BaseModel):
@@ -144,6 +145,7 @@ async def start_training(request: SVCTrainRequest):
             batch_size=request.batch_size,
             learning_rate=request.learning_rate,
             output_name=request.output_name,
+            speaker_name=request.speaker_name,
             progress_callback=lambda **kw: _update_train_status(**kw),
         )
 

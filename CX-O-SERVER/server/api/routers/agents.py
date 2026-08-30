@@ -689,8 +689,9 @@ async def get_agent_context(agent_id: str, limit: int = 20):
             raise HTTPException(status_code=404, detail=f"Agent '{agent_id}' 不存在")
 
         context_mgr = get_agent_context_manager()
-        summary = context_mgr.get_context_summary(agent_id)
-        messages = context_mgr.get_message_history(agent_id, limit=limit)
+        # G1/A6: 上下文摘要/历史读取为同步文件 IO，经 run_io 卸载到 IO 线程池
+        summary = await run_io(context_mgr.get_context_summary, agent_id)
+        messages = await run_io(context_mgr.get_message_history, agent_id, limit=limit)
 
         return {
             "status": "success",
@@ -728,7 +729,8 @@ async def clear_agent_context(agent_id: str):
             raise HTTPException(status_code=404, detail=f"Agent '{agent_id}' 不存在")
 
         context_mgr = get_agent_context_manager()
-        context_mgr.clear_context(agent_id)
+        # G1/A6: clear_context 含上下文文件 unlink（同步 IO），经 run_io 卸载
+        await run_io(context_mgr.clear_context, agent_id)
 
         return {"status": "success", "message": f"Agent '{agent_id}' 的上下文已清空"}
     except HTTPException:

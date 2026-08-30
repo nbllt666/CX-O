@@ -71,7 +71,11 @@ class DecayCalculator:
     }
 
     def __init__(self):
-        """初始化衰减计算器，记录当前时间作为计算基准。"""
+        """初始化衰减计算器，记录当前时间作为计算基准。
+
+        current_time 为本地 naive 时间；与 aware UTC 时间戳比较时由
+        calculate_days_elapsed 按本地时区换算为 UTC 后再求差（G1/A1）。
+        """
         self.current_time = datetime.now()
 
     def set_current_time(self, time: datetime):
@@ -116,11 +120,15 @@ class DecayCalculator:
         try:
             created = datetime.fromisoformat(created_at.replace("Z", "+00:00"))
             current = self.current_time
-            # B7 修复: 统一时区——若一端 naive 一端 aware，将 naive 端视为 UTC
+            # B7 修复: 统一时区——若一端 naive 一端 aware，将 naive 端按系统
+            # 本地时区换算为 UTC 后再求差。G1/A1: 必须用 .astimezone(timezone.utc)
+            # （naive 按本地时区解释后换算），不能用 replace(tzinfo=utc) 直接错标——
+            # 后者把本地时间当作 UTC，对 weaviate_store 写入的 aware UTC created_at
+            # 会产生本地时区偏移（UTC+8 下为 8 小时）。
             if created.tzinfo is None and current.tzinfo is not None:
-                created = created.replace(tzinfo=timezone.utc)
+                created = created.astimezone(timezone.utc)
             elif current.tzinfo is None and created.tzinfo is not None:
-                current = current.replace(tzinfo=timezone.utc)
+                current = current.astimezone(timezone.utc)
             delta = current - created
             return delta.total_seconds() / 86400.0
         except Exception as e:

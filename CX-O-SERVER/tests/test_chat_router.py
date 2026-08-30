@@ -347,6 +347,30 @@ class TestChatHistory:
         assert r.status_code == 500
         assert r.json()["detail"] == "获取聊天历史失败"
 
+    def test_history_limit_clamped_to_max(self, harness):
+        # T-07: 超大 limit 钳制到上限 200，防恶意拖库
+        harness.ctx.create_session(session_id="agent-default", title="t")
+        for i in range(250):
+            harness.ctx.add_message("agent-default", "user", f"m{i}")
+        r = harness.client.get("/chat/history/agent-default", params={"limit": 99999})
+        assert r.status_code == 200
+        body = r.json()
+        assert len(body["messages"]) == 200
+        # 保留最近 200 条语义（尾部截断）
+        assert body["messages"][0]["content"] == "m50"
+        assert body["messages"][-1]["content"] == "m249"
+
+    def test_history_non_positive_limit_clamped_to_one(self, harness):
+        # T-07: 非正数 limit 钳制到 1（未钳制时 [-0:] 会返回全量，属真实缺陷）
+        harness.ctx.create_session(session_id="agent-default", title="t")
+        for i in range(3):
+            harness.ctx.add_message("agent-default", "user", f"m{i}")
+        r = harness.client.get("/chat/history/agent-default", params={"limit": 0})
+        assert r.status_code == 200
+        body = r.json()
+        assert len(body["messages"]) == 1
+        assert body["messages"][0]["content"] == "m2"
+
 
 # --------------------------------------------------------------------------- #
 # POST /chat/stream —— SSE 流式

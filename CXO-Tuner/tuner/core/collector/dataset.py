@@ -97,6 +97,13 @@ class DatasetStore:
                     pass
                 self._conn = None
 
+    def _require_conn(self) -> sqlite3.Connection:
+        """取当前 sqlite 连接；close() 后再访问给出清晰错误而非裸 AttributeError（C14）。"""
+        conn = getattr(self, "_conn", None)
+        if conn is None:
+            raise RuntimeError("DatasetStore is closed")
+        return conn
+
     # -- 写 -----------------------------------------------------------------
     def add_record(
         self,
@@ -129,8 +136,9 @@ class DatasetStore:
         )
         with self._lock:
             if self._storage == "sqlite":
+                conn = self._require_conn()
                 try:
-                    self._conn.execute(
+                    conn.execute(
                         "INSERT INTO records (id, fingerprint, prompt, chosen, rejected, source, anchor, quality_score, session_id, created_at, judge_model, metadata) "
                         "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                         (
@@ -148,12 +156,12 @@ class DatasetStore:
                             json.dumps(rec.metadata, ensure_ascii=False) if rec.metadata is not None else None,
                         ),
                     )
-                    self._conn.commit()
+                    conn.commit()
                 except sqlite3.IntegrityError:
                     # fingerprint UNIQUE 冲突：find_by_fingerprint 预检与 INSERT 非原子，
                     # 并发下会抛 IntegrityError。归一为「已存在」，返回库里既有记录而非冒泡 500。
-                    self._conn.rollback()
-                    row = self._conn.execute(
+                    conn.rollback()
+                    row = conn.execute(
                         "SELECT id, fingerprint, prompt, chosen, rejected, source, anchor, quality_score, session_id, created_at, judge_model, metadata "
                         "FROM records WHERE fingerprint = ?",
                         (rec.fingerprint,),
@@ -170,7 +178,7 @@ class DatasetStore:
     def find_by_fingerprint(self, fingerprint: str) -> Optional[DpoRecord]:
         with self._lock:
             if self._storage == "sqlite":
-                cur = self._conn.execute(
+                cur = self._require_conn().execute(
                     "SELECT id, fingerprint, prompt, chosen, rejected, source, anchor, quality_score, session_id, created_at, judge_model, metadata "
                     "FROM records WHERE fingerprint = ?",
                     (fingerprint,),
@@ -189,15 +197,16 @@ class DatasetStore:
     def get_stats(self) -> DatasetStats:
         with self._lock:
             if self._storage == "sqlite":
-                total = self._conn.execute("SELECT COUNT(*) FROM records").fetchone()[0]
+                conn = self._require_conn()
+                total = conn.execute("SELECT COUNT(*) FROM records").fetchone()[0]
                 breakdown: Dict[str, int] = {
                     src: 0 for src in _SOURCE_ALL
                 }
-                for src, cnt in self._conn.execute(
+                for src, cnt in conn.execute(
                     "SELECT source, COUNT(*) FROM records GROUP BY source"
                 ):
                     breakdown[src] = cnt
-                anchor_count = self._conn.execute(
+                anchor_count = conn.execute(
                     "SELECT COUNT(*) FROM records WHERE anchor = 1"
                 ).fetchone()[0]
             else:
@@ -229,7 +238,7 @@ class DatasetStore:
     def all_records(self) -> List[DpoRecord]:
         with self._lock:
             if self._storage == "sqlite":
-                rows = self._conn.execute(
+                rows = self._require_conn().execute(
                     "SELECT id, fingerprint, prompt, chosen, rejected, source, anchor, quality_score, session_id, created_at, judge_model, metadata "
                     "FROM records"
                 ).fetchall()

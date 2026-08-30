@@ -321,7 +321,7 @@ async def get_decay_statistics(workspace_id: str = "default"):
 
 
 @router.get("/memories/permanent")
-async def list_permanent_memories(limit: int = 20, offset: int = 0, tags: List[str] = []):
+async def list_permanent_memories(limit: int = 20, offset: int = 0, tags: Optional[List[str]] = None):
     """列出永久记忆。
 
     注意：本路由必须声明在 ``/memories/{memory_id}`` 之前，否则单段路径
@@ -331,10 +331,12 @@ async def list_permanent_memories(limit: int = 20, offset: int = 0, tags: List[s
 
     try:
         memory_mgr = get_memory_manager()
+        # G1/A11: 消除可变默认参数；空/缺省 tags 归一为 []（下游对 falsy tags 行为一致）
+        tags = tags or []
         # 经 run_io 把永久记忆列表的同步 sqlite 查询移入 IO 线程池
         memories = await run_io(
             memory_mgr.get_permanent_memories,
-            limit=limit, offset=offset, tags=tags if tags else None
+            limit=limit, offset=offset, tags=tags
         )
 
         return {"status": "success", "memories": memories, "total": len(memories)}

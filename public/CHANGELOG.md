@@ -16,6 +16,20 @@
 
 ---
 
+## [0.2.0] - 2026-08-30
+
+### 契约修复批次（MINOR，含 PATCH 项）
+- **变更内容**：第十五轮 G4 契约批次——①`interface_stub/template_engine.pyi` v1.0.2（PATCH）：清理 docstring 残留悬空 schema 引用改指实现位置（连带 `pre_generated_mock/mock_template_engine.py` 5 处注释与 `pre_generated_mock/README.md` 表格行同步）；②`config_template/settings_json.schema.json` 1.0.1（PATCH）：`_sourceOfTruth.primary` 改指实际加载点 `CX-O-SERVER/config/settings.json`，note 补 `adaptive_polling` 子段；③`config_template/default_yaml.schema.json` 1.0.1（PATCH）：指针改指实现 `server/config.py`（UnifiedConfig），加注源已并入、契约待 s0201 重建；④`config_template/radix_config.json` 1.2.0（MINOR）：`decision_core` 补 `rubric_path`/`audit_log_path`、根级补 `legacy_port`（对齐 `server/config.py` 默认值，纯新增带默认值不阻断）；⑤`interface_stub/memory.pyi` 1.1.1（PATCH）：update_memory/delete_memory/rag_search 三处签名对齐实现（修正 str 笔误）；⑥删除零代码引用孤儿副本 `CX-O-SERVER/server/config/settings.json`（删除前 SHA256 与真源一致）。
+- **变更原因**：第十五轮质量评估 G4 批次修复，实现为源真理；public/ 修改与孤儿副本删除已获人类显式授权（AskUserQuestion 2026-08-30"四批全修+删除孤儿副本"）。
+- **影响范围**：注释/指针级修正与纯新增可选字段，无字段删除/类型变更/必填性反转，不阻断既有下游；memory.pyi 签名修正无运行时影响（实现自始如此）。
+- **变更来源**：人工（人类显式授权，AskUserQuestion 2026-08-30）
+
+### 闭合判据
+- [x] 7 份契约/Mock/README 实体修订 + 1 份孤儿副本删除（哈希核对通过）+ JSON/ast 语法自验通过
+- [x] 详细记录见 `public/schema/CHANGELOG.md` [1.11.0] 同日条目
+
+---
+
 ## [0.1.1] - 2026-08-14
 
 ### 配置契约描述同步（PATCH）

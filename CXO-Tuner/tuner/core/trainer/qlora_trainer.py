@@ -115,12 +115,47 @@ def is_training_in_progress() -> bool:
         return _active_training_job is not None
 
 
+def get_active_training_job() -> "Optional[str]":
+    """只读查询当前进行中训练的 job_id；无训练时返回 None。
+
+    D5：供适配器删除等写操作做精确竞态防护——训练输出目录为
+    lora_dir/{job_id}，adapter_id 与活跃 job_id 相同时禁止删除。
+    """
+    with _TRAIN_MUTEX:
+        return _active_training_job
+
+
 def end_training(job_id: str) -> None:
     """释放训练互斥（仅释放与当前 job 匹配的登记）。"""
     global _active_training_job
     with _TRAIN_MUTEX:
         if _active_training_job == job_id:
             _active_training_job = None
+
+
+def _build_trainer(trainer_cls, *, model, args, train_dataset, tokenizer, callbacks):
+    """构造 trl Trainer，兼容新旧 trl 的 tokenizer 参数名（C6）。
+
+    新版 trl/transformers 将 Trainer 基类的 tokenizer= 更名为 processing_class=
+    （旧名已删除，传 tokenizer= 直接 TypeError）。优先传 processing_class=；
+    当前安装版本的构造器不认该参数（签名绑定期 TypeError）时回退旧版 tokenizer=。
+    """
+    try:
+        return trainer_cls(
+            model=model,
+            args=args,
+            train_dataset=train_dataset,
+            processing_class=tokenizer,
+            callbacks=callbacks,
+        )
+    except TypeError:
+        return trainer_cls(
+            model=model,
+            args=args,
+            train_dataset=train_dataset,
+            tokenizer=tokenizer,
+            callbacks=callbacks,
+        )
 
 
 class QLoRATrainer:
@@ -337,8 +372,10 @@ class QLoRATrainer:
             gradient_checkpointing=True,
         )
         # 注：DPOTrainer 缺省 data_collator 时会自建 DPODataCollatorWithPadding，
-        # 因此不传 collator；不同 trl 版本对 tokenizer 参数名存在差异（tokenizer= 兼容旧版）。
-        dpo_trainer = DPOTrainer(
+        # 因此不传 collator；不同 trl 版本对 tokenizer 参数名存在差异，
+        # 统一经 _build_trainer 兼容（processing_class 优先，TypeError 回退 tokenizer）。
+        dpo_trainer = _build_trainer(
+            DPOTrainer,
             model=model,
             args=dpo_args,
             train_dataset=dpo_dataset,
@@ -376,7 +413,8 @@ class QLoRATrainer:
             )
             # SFT 回放：DPO 主损失 + λ 权重的锚点 SFT 回放，等价于 spec 公式意图；
             # SFT loss 经回调按 λ 缩放后写入 job，反映公式中的加权贡献。
-            sft_trainer = SFTTrainer(
+            sft_trainer = _build_trainer(
+                SFTTrainer,
                 model=model,
                 args=sft_args,
                 train_dataset=sft_dataset,

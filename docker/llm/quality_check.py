@@ -46,7 +46,9 @@ def main():
     # 解析 WAV 头：RIFF chunk 表遍历（从 12 字节起逐 chunk：id(4)+size(4)+body），
     # 定位 data chunk 偏移与大小，兼容 fmt 扩展头/JUNK 等非 44 字节布局；
     # 采样率从 fmt chunk 数据内偏移 +4 读取（替代旧 raw[24:28] 硬编码）。
-    assert raw[:4] == b"RIFF", raw[:16]
+    # 显式 if + raise（修复：assert 做流程控制在 python -O 下被剥离，等于不校验）
+    if raw[:4] != b"RIFF":
+        raise ValueError(f"响应不是 RIFF WAV（前16字节: {raw[:16]!r}）")
     pos = 12  # 跳过 'RIFF'+riff_size+'WAVE' 共 12 字节
     data_off = None
     data_size = 0
@@ -63,7 +65,8 @@ def main():
             data_size = csize
             break
         pos += 8 + csize + (csize & 1)  # chunk 按 2 字节对齐（奇数 size 补 1 填充字节）
-    assert data_off is not None, "WAV 中未找到 data chunk"
+    if data_off is None:
+        raise ValueError("WAV 中未找到 data chunk")
     pcm = raw[data_off:data_off + data_size]  # size 无效/占位时 Python 切片自动截到文件尾
     n_samples = len(pcm) // 2
     if n_samples == 0:
@@ -73,8 +76,14 @@ def main():
     samples = struct.unpack("<%dh" % n_samples, pcm)
     rms = math.sqrt(sum(x * x for x in samples) / n_samples)
     peak = max(abs(x) for x in samples)
-    dur = n_samples / sr
-    print(f"sr={sr} dur_s={dur:.2f} rms={rms:.1f} peak={peak} bytes={len(pcm)}")
+    if sr is None:
+        # 畸形 WAV 缺 fmt chunk：无法得知采样率，跳过时长计算
+        # （修复：原 n_samples / sr 在 sr=None 时直接 TypeError 未处理）
+        print("WARN: fmt chunk missing, sample rate unknown; skip duration calc")
+        print(f"sr=unknown rms={rms:.1f} peak={peak} bytes={len(pcm)}")
+    else:
+        dur = n_samples / sr
+        print(f"sr={sr} dur_s={dur:.2f} rms={rms:.1f} peak={peak} bytes={len(pcm)}")
 
 
 if __name__ == "__main__":

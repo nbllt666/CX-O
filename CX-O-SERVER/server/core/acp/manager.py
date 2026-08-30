@@ -10,6 +10,7 @@ from pydantic import BaseModel, Field, model_validator
 
 from server.core import agent_store
 from server.core.logging_config import get_contextual_logger
+from server.core.utils import run_io
 
 logger = get_contextual_logger(__name__)
 
@@ -996,7 +997,9 @@ class ACPManager:
                 "from_agent_id": message.from_agent_id,
                 "tool_calls": state.tool_calls if state.tool_calls else None,
             }
-            context_mgr.add_message(
+            # 伴生核查C：同步 sqlite 写入 run_io 包裹，避免阻塞事件循环
+            await run_io(
+                context_mgr.add_message,
                 session_id=session_id,
                 role="assistant",
                 content=reply_text,
@@ -1006,13 +1009,15 @@ class ACPManager:
 
             # 外部消息场景：同时保存到本地系统 agent 的 ACP 协议级 session
             if not target_agent_id and self._local_agent_id:
-                acp_session_id = context_mgr.ensure_session(
+                acp_session_id = await context_mgr.ensure_session_async(
                     f"agent-{self._local_agent_id}",
                     workspace_id="agent-chats",
                     title=f"{self._local_agent_name} 的对话",
                     metadata={"agent_id": self._local_agent_id},
                 )
-                context_mgr.add_message(
+                # 伴生核查C：同步 sqlite 写入 run_io 包裹（口径同上）
+                await run_io(
+                    context_mgr.add_message,
                     session_id=acp_session_id,
                     role="assistant",
                     content=reply_text,
@@ -1083,13 +1088,15 @@ class ACPManager:
                 target_info = self.agents.get(target_agent_id)
                 if target_info:
                     target_agent_name = target_info.name or target_agent_id
-                context_mgr.ensure_session(
+                await context_mgr.ensure_session_async(
                     session_id,
                     workspace_id="agent-chats",
                     title=f"{target_agent_name} 的对话",
                     metadata={"agent_id": target_agent_id},
                 )
-                context_mgr.add_message(
+                # 伴生核查C：同步 sqlite 写入 run_io 包裹，避免阻塞事件循环
+                await run_io(
+                    context_mgr.add_message,
                     session_id=session_id,
                     role="user",
                     content=user_content,
@@ -1099,13 +1106,15 @@ class ACPManager:
                 return
 
             # 外部消息场景：注入到 ACP 协议级 session
-            session_id = context_mgr.ensure_session(
+            session_id = await context_mgr.ensure_session_async(
                 f"agent-{self._local_agent_id}",
                 workspace_id="agent-chats",
                 title=f"{self._local_agent_name} 的对话",
                 metadata={"agent_id": self._local_agent_id},
             )
-            context_mgr.add_message(
+            # 伴生核查C：同步 sqlite 写入 run_io 包裹，避免阻塞事件循环
+            await run_io(
+                context_mgr.add_message,
                 session_id=session_id,
                 role="user",
                 content=user_content,
@@ -1114,13 +1123,15 @@ class ACPManager:
             )
 
             # 同时注入到前端默认助手 session（agent-default），确保前端可见
-            default_session_id = context_mgr.ensure_session(
+            default_session_id = await context_mgr.ensure_session_async(
                 f"agent-{self.DEFAULT_AGENT_ID}",
                 workspace_id="agent-chats",
                 title="默认助手的对话",
                 metadata={"agent_id": self.DEFAULT_AGENT_ID},
             )
-            context_mgr.add_message(
+            # 伴生核查C：同步 sqlite 写入 run_io 包裹（口径同上）
+            await run_io(
+                context_mgr.add_message,
                 session_id=default_session_id,
                 role="user",
                 content=user_content,

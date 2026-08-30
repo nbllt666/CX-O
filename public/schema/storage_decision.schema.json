@@ -27,8 +27,8 @@
     },
     "decision_point": {
       "type": "string",
-      "enum": ["D1_LOCATION", "D2_METADATA", "D3_ASK_USER", "D4_REDISTILL", "D5_CROSS_VALIDATE", "D6_REJECT"],
-      "description": "决策点。D1=存入位置，D2=元数据，D3=追问，D4=再次蒸馏，D5=跨源验证，D6=拒绝存储。"
+      "enum": ["D1_LOCATION", "D2_METADATA", "D3_ASK_USER", "D4_REDISTILL", "D5_CROSS_VALIDATE", "D6_REJECT", "D7_DREAM_FILTER"],
+      "description": "决策点。D1=存入位置，D2=元数据，D3=追问，D4=再次蒸馏，D5=跨源验证，D6=拒绝存储，D7=梦境过滤器确定性拦截（DreamFilter）。"
     },
     "location": {
       "type": "string",
@@ -159,3 +159,6 @@
         }
       },
       "additionalProperties": false
+    }
+  }
+}

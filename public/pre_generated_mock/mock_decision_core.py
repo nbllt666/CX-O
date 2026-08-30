@@ -12,7 +12,7 @@ Mock 策略:
 - 审计日志内存态暂存（best-effort，写入失败不阻断）
 - 真实实现就位后，切换导入路径即可替换
 
-@version 1.1.0
+@version 1.1.1  # 第十三轮 G2 契约对齐：_DECISION_POINTS 补 D7_DREAM_FILTER（对齐 decision_core.pyi L66 与实现 decision_core.py L120）
 @see public/interface_stub/decision_core.pyi
 @see public/schema/storage_decision.schema.json
 @see public/schema/distillation_log.schema.json
@@ -97,6 +97,7 @@ class StorageDecision(BaseModel):
 _DECISION_POINTS = {
     "D1_LOCATION", "D2_METADATA", "D3_ASK_USER",
     "D4_REDISTILL", "D5_CROSS_VALIDATE", "D6_REJECT",
+    "D7_DREAM_FILTER",
 }
 
 _LOCATIONS = {"memories", "permanent_memories", "rejected"}

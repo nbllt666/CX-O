@@ -30,6 +30,9 @@ export interface UseBackendFailoverOptions {
 
 export function useBackendFailover(options: UseBackendFailoverOptions = {}): void {
   const consecutiveRef = useRef(0);
+  // 在途互斥：单轮探测+切换可超过 poll 间隔（探测超时叠加候选逐个探测），
+  // 并发 tick 会双计数、双 reload——tick 开头若在途则直接跳过本轮
+  const inFlightRef = useRef(false);
   const optionsRef = useRef(options);
   optionsRef.current = options;
 
@@ -41,18 +44,26 @@ export function useBackendFailover(options: UseBackendFailoverOptions = {}): voi
     void refreshCandidates().catch(() => {});
 
     const tick = async () => {
-      if (cancelled) return;
-      const current = normalize(getApiBaseUrl());
-      const ok = await probeBackend(current);
-      consecutiveRef.current = ok ? 0 : consecutiveRef.current + 1;
+      if (cancelled || inFlightRef.current) return;
+      inFlightRef.current = true;
+      try {
+        const current = normalize(getApiBaseUrl());
+        const ok = await probeBackend(current);
+        consecutiveRef.current = ok ? 0 : consecutiveRef.current + 1;
 
-      if (!ok && consecutiveRef.current >= (optionsRef.current.consecutive ?? FAILOVER_CONSECUTIVE)) {
-        const next = await runBackendFailover(current);
-        if (next && next !== current) {
-          optionsRef.current.onSwitched?.(next);
-          // 切换后重载当前窗，使所有客户端以新 base/ws 地址重连
-          window.location.reload();
+        if (
+          !ok &&
+          consecutiveRef.current >= (optionsRef.current.consecutive ?? FAILOVER_CONSECUTIVE)
+        ) {
+          const next = await runBackendFailover(current);
+          if (next && next !== current) {
+            optionsRef.current.onSwitched?.(next);
+            // 切换后重载当前窗，使所有客户端以新 base/ws 地址重连
+            window.location.reload();
+          }
         }
+      } finally {
+        inFlightRef.current = false;
       }
     };
 

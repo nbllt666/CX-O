@@ -4,7 +4,12 @@
 完成 Skill: s0201
 当前状态: 种子——仅含代表性端点签名
 
-@version 1.1.0
+@version 1.1.1
+@changelog v1.1.1 存根签名与实现对齐修正（修正此前 str 笔误），无运行时影响：
+    update_memory 改 (memory_id: int, request: MemoryUpdateRequest)、
+    delete_memory 补 (soft_delete: bool = True, agent_id: str = "default")、
+    rag_search 改实现参数序 (query, workspace_id, limit: Optional[int], agent_id)
+    （对照 memory.py:367/:393/:446）
 @changelog v1.1.0 按实现对齐 5 处签名漂移（对照 memory.py 实码，已获人类显式授权）：
     get_memory(memory_id: int, agent_id)、list_memories 对齐 :122-129 实参、
     search_memories 改 POST + MemorySearchRequest 请求体、
@@ -22,6 +27,15 @@ class MemoryCreateRequest(BaseModel):
     agent_id: str
     content: str
     # TODO s0201: 补全全部字段（importance/tags/scene 等）
+
+
+class MemoryUpdateRequest(BaseModel):
+    """更新记忆请求体（对齐实码 memory.py:90-97）。"""
+    content: Optional[str] = None
+    importance: Optional[int] = None
+    tags: Optional[List[str]] = None
+    metadata: Optional[Dict] = None
+    agent_id: str = "default"
 
 
 class MemorySearchRequest(BaseModel):
@@ -78,13 +92,13 @@ async def get_memory(memory_id: int, agent_id: str = "default") -> dict:
     ...
 
 
-async def update_memory(memory_id: str, request: dict) -> dict:
-    """PUT /api/memories/{memory_id} — 更新记忆。"""
+async def update_memory(memory_id: int, request: MemoryUpdateRequest) -> dict:
+    """PUT /api/memories/{memory_id} — 更新记忆（对齐实码 memory.py:366-367）。"""
     ...
 
 
-async def delete_memory(memory_id: str) -> dict:
-    """DELETE /api/memories/{memory_id} — 删除记忆。"""
+async def delete_memory(memory_id: int, soft_delete: bool = True, agent_id: str = "default") -> dict:
+    """DELETE /api/memories/{memory_id} — 删除记忆（默认软删除，对齐实码 memory.py:392-393）。"""
     ...
 
 
@@ -100,8 +114,8 @@ async def search_memories(request: MemorySearchRequest) -> dict:
     ...
 
 
-async def rag_search(agent_id: str, query: str) -> dict:
-    """POST /api/memories/rag — RAG 检索增强生成。"""
+async def rag_search(query: str, workspace_id: str = "default", limit: Optional[int] = None, agent_id: str = "default") -> dict:
+    """POST /api/memories/rag — RAG 检索（对齐实码 memory.py:445-446 参数序；limit=None 时运行时取 limits.memory.rag_search_limit）。"""
     ...
 
 

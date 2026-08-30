@@ -24,13 +24,14 @@
 - 配置从 workstation.config.get_settings().music 读取；MusicConfig 未含的
   新增字段（drafts_dir / draft_ttl_days / undo_stack_limit / default_vocal_gain
   / default_accompaniment_gain）按 music-config.schema.json 默认值补齐
-- submit_draft 物化 auto 轨 + 校验 + 桩返回 task_id（真实合成流水线接入由
-  模块2 / 后续批次完成）
+- submit_draft 物化 auto 轨 + 校验 + 经 SongPipelineService 提交真合成流水线
+  （延迟导入 workstation.services.song_pipeline，返回映射保持 task_id/status 契约）
 - 严格匹配 voicews_music.pyi 签名（参数名 / 类型 / 返回值 / 异常约定）
 - 文件路径用 os.path.dirname(os.path.abspath(__file__)) 解析（rules-2）
 """
 from __future__ import annotations
 
+import asyncio
 import copy
 import json
 import logging
@@ -41,7 +42,9 @@ import uuid
 from datetime import datetime, timedelta
 from typing import Any, Optional, TypedDict
 
-from jsonschema import Draft7Validator, RefResolver
+from jsonschema import Draft7Validator
+from referencing import Registry, Resource
+from referencing.jsonschema import DRAFT7
 
 from workstation.music.score import validate_score
 
@@ -135,23 +138,56 @@ def _load_protocol() -> dict:
         return json.load(fp)
 
 
-_PROTOCOL: dict = _load_protocol()
-_RESOLVER: RefResolver = RefResolver.from_schema(_PROTOCOL)
+# 协议文档与 args 校验器均惰性构建（首次使用时加载并缓存）：
+# 1. 契约文件缺失 / 损坏时不在模块导入期崩掉——降级为跳过 args 校验并 log 警告；
+# 2. jsonschema>=4.18 已弃用 RefResolver，args 子 schema 的 "#/definitions/..."
+#    内部引用改经 referencing Registry 承载协议根文档解析（基座校验器
+#    evolve 继承，等价旧 RefResolver.from_schema(_PROTOCOL) 语义）。
+_PROTOCOL: Optional[dict] = None
+_PROTOCOL_LOAD_FAILED: bool = False
+_ARGS_VALIDATORS: Optional[dict[str, Draft7Validator]] = None
+
+# 协议根文档注册 URN（固定锚点，仅作 Registry 内寻址，不参与校验语义）
+_PROTOCOL_URN = "urn:cxo:command-protocol"
 
 
-def _make_args_validator(command: str) -> Draft7Validator:
-    """按 command 构造 args_<command> 校验器（$ref 经 resolver 解析到协议 definitions）"""
-    schema_key = f"args_{command}"
-    schema = _PROTOCOL["definitions"].get(schema_key)
-    if schema is None:
-        # create_draft/get_draft 等若协议未定义独立 args schema，用空 schema 放行
-        schema = {"type": "object"}
-    return Draft7Validator(schema, resolver=_RESOLVER)
+def _get_protocol() -> dict:
+    """惰性加载协议文档并缓存；加载失败降级为空文档（args 校验跳过）并警告"""
+    global _PROTOCOL, _PROTOCOL_LOAD_FAILED
+    if _PROTOCOL is None and not _PROTOCOL_LOAD_FAILED:
+        try:
+            _PROTOCOL = _load_protocol()
+        except Exception as exc:
+            _PROTOCOL_LOAD_FAILED = True
+            logger.warning(
+                "command-protocol.schema.json 加载失败，args 校验降级为跳过: %s", exc
+            )
+    return _PROTOCOL if _PROTOCOL is not None else {}
 
 
-_ARGS_VALIDATORS: dict[str, Draft7Validator] = {
-    cmd: _make_args_validator(cmd) for cmd in _COMMANDS
-}
+def _get_args_validators() -> dict[str, Draft7Validator]:
+    """惰性构建全部命令的 args 校验器（依赖协议加载，单次构建缓存）"""
+    global _ARGS_VALIDATORS
+    if _ARGS_VALIDATORS is None:
+        protocol = _get_protocol()
+        # default_specification=DRAFT7：协议加载失败降级为空文档（无 $schema 可
+        # 检测）时 from_contents 也能构建，保证降级路径本身不崩
+        registry = Registry().with_resource(
+            _PROTOCOL_URN,
+            Resource.from_contents(protocol, default_specification=DRAFT7),
+        )
+        base = Draft7Validator(protocol, registry=registry)
+        validators: dict[str, Draft7Validator] = {}
+        for cmd in _COMMANDS:
+            # create_draft/get_draft 等若协议未定义独立 args schema，用空 schema 放行
+            schema = protocol.get("definitions", {}).get(f"args_{cmd}")
+            if schema is None:
+                schema = {"type": "object"}
+            # evolve 继承以协议根为基座的 resolver：子 schema 的 "#/definitions/..."
+            # 相对协议根解析（等价旧 RefResolver.from_schema 语义）
+            validators[cmd] = base.evolve(schema=schema)
+        _ARGS_VALIDATORS = validators
+    return _ARGS_VALIDATORS
 
 
 # ---------------------------------------------------------------------------
@@ -1020,7 +1056,7 @@ def execute_command(draft_id: str, command: str, args: dict) -> dict:
         )
 
     # 2. args 校验（按 command 分发 args_<command> schema）
-    validator = _ARGS_VALIDATORS[command]
+    validator = _get_args_validators()[command]
     raw_errors = sorted(validator.iter_errors(args), key=lambda e: list(e.absolute_path))
     if raw_errors:
         msgs = [f"{_format_json_path(e)}: {e.message}" for e in raw_errors]
@@ -1069,13 +1105,56 @@ def _cmd_validate_draft(state: DraftState) -> dict:
     return _ok(state, ["$"], {"valid": ok, "errors": errors})
 
 
+# submit_draft → 流水线提交参数白名单：args_submit_draft 契约允许且
+# SongPipelineService.submit 接受的键（draft_id 由命令寻址消费，不透传流水线）
+_SUBMIT_PARAM_KEYS: frozenset[str] = frozenset({
+    "svc_model", "speaker_id", "transpose", "vocal_gain", "accompaniment_gain",
+})
+
+
+def _submit_to_pipeline(score: dict, params: dict) -> str:
+    """
+    同步上下文把物化歌谱提交进歌曲流水线，返回 song_id。
+
+    延迟导入 workstation.services.song_pipeline：music 包不在导入期拉起
+    services 链（singing_engine 依赖重），也规避 music↔services 循环依赖。
+
+    - 已在事件循环内（FastAPI / CXFC 同步链路）：SongPipelineService.submit
+      协程体当前无 await 点（参数校验→任务注册→落盘→create_task 均同步），
+      以 coro.send(None) 同步驱动至 StopIteration 取回 song_id；其内部
+      create_task 调度的后台流水线挂宿主长驻 loop 存活执行。若未来 submit
+      引入 await 点（send 返回非 None），关闭半驱动协程并按 SUBMIT_FAILED 失败。
+    - 无事件循环（脚本 / 单测）：asyncio.run 同步完成提交；后台流水线挂临时
+      loop，随 loop 关闭被取消（任务停留 pending、metadata 已落盘），该场景
+      仅完成受理注册，不携带后台执行。
+    """
+    from workstation.services.song_pipeline import get_song_pipeline  # 延迟导入
+
+    submit_kwargs = {k: params[k] for k in _SUBMIT_PARAM_KEYS if k in params}
+    coro = get_song_pipeline().submit(score=score, **submit_kwargs)
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        return asyncio.run(coro)
+    try:
+        coro.send(None)
+    except StopIteration as stop:
+        return stop.value
+    coro.close()
+    raise _CommandError(
+        "SUBMIT_FAILED",
+        "流水线提交协程含 await 点，同步链路无法驱动（submit 实现已偏离接线假设）",
+    )
+
+
 def submit_draft(draft_id: str, **params: Any) -> dict:
     """
-    物化草稿（auto 空 events 轨经 arranger 生成）→ 校验 → 提交既有合成流水线，
+    物化草稿（auto 空 events 轨经 arranger 生成）→ 校验 → 提交歌曲合成流水线，
     返回 result={task_id, song_id, status}。草稿保留可继续编辑。
 
-    本批次桩实现：物化 + 校验 + 生成 task_id（真实合成流水线接入由模块2 / 后续
-    批次完成）。version 不增（submit 非编辑类命令）。
+    task_id/song_id 即流水线 song_id（uuid4 hex，可经 /api/music/tasks/{id} 查询
+    进度）；status 固定 "pending"（受理即返回，流水线后台执行）。version 不增
+    （submit 非编辑类命令）。
 
     Raises:
         无（失败走 SUBMIT_FAILED / SCORE_VALIDATION_FAILED 错误码）
@@ -1101,9 +1180,19 @@ def submit_draft(draft_id: str, **params: Any) -> dict:
             {"errors": errors},
             draft_id=draft_id,
         )
-    # 桩：生成 task_id，真实流水线接入由模块2 / 后续批次完成
-    task_id = "draft_" + uuid.uuid4().hex[:12]
-    result = {"task_id": task_id, "song_id": task_id, "status": "pending"}
+    try:
+        song_id = _submit_to_pipeline(materialized, params)
+    except _CommandError as exc:
+        return _fail(exc.code, exc.message, exc.details, draft_id=draft_id)
+    except Exception as exc:  # get_settings/落盘等意外异常，按既有错误风格收敛
+        logger.exception("submit_draft 流水线提交失败: draft_id=%s", draft_id)
+        return _fail(
+            "SUBMIT_FAILED",
+            f"流水线提交失败: {exc}",
+            {"draft_id": draft_id},
+            draft_id=draft_id,
+        )
+    result = {"task_id": song_id, "song_id": song_id, "status": "pending"}
     return _ok(state, ["$"], result)
 
 

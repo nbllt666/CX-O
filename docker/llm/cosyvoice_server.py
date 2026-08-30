@@ -699,6 +699,10 @@ def create_app():
         # 详见 .trae/documents/20260817_模块0_GPU保活增强消除降频.md）。
         # 并发流式语义：多请求重叠时计数累加，先结束的请求只减自己的份额，
         # 全部结束（count==0）后才恢复保活 GEMM。
+        # C7：try 范围覆盖到 StreamingResponse/Response 构造完成——hop 复位、
+        # 阶段日志、响应构造等同步段任一异常都必须回收计数，否则保活机制
+        # 永久失效（流式路径由 keepalive finally 减，非流式在 return 前显式减，
+        # 异常路径在 except 减——维持既有分工，仅把裸露段纳入异常保护）。
         _active_count += 1
         try:
             # CosyVoice3 的 LLM 会把 prompt_text + text 拼接后整体生成语音（llm.py concat）。
@@ -730,44 +734,46 @@ def create_app():
                 audio_bytes, zero_shot_spk_id = await asyncio.to_thread(_full_synth)
             _t_spk_done = time.monotonic()
             _t_gen_done = _t_spk_done
+
+            # [DIAG-TIMING] 阶段计时：parse → spk → gen 创建
+            print(f"[DIAG-TIMING] parse={( _t_parse_done - t0)*1000:.0f}ms "
+                  f"spk={(_t_spk_done - _t_parse_done)*1000:.0f}ms "
+                  f"gen_ctor={(_t_gen_done - _t_spk_done)*1000:.0f}ms "
+                  f"cache_hit={zero_shot_spk_id in cosyvoice.frontend.spk2info}")
+
+            if stream:
+                # 真正流式：llm_job 后台线程逐 token 生成，token2wav 够一 hop 即输出，
+                # StreamingResponse 逐块下发，首块延迟显著低于全量合成（WAV 头先发，PCM 逐段）。
+                # 注意：CosyVoice tts() 流式循环内会自增 token_hop_len（*stream_scale_factor），
+                # 且跨请求持久化——此处每请求重置，避免后续请求首 hop 被放大到 100。
+                if args.stream_hop_len and hasattr(cosyvoice.model, "token_hop_len"):
+                    # 并发流式语义：token_hop_len/token_max_hop_len 是跨请求共享模型态，
+                    # 复位须与 hift CUDA graph 静态缓冲一样纳入 _MODEL_STATE_LOCK，
+                    # 防止与另一请求正在进行的流式 hop 推进竞写。
+                    with _MODEL_STATE_LOCK:
+                        cosyvoice.model.token_hop_len = int(args.stream_hop_len)
+                        cosyvoice.model.token_max_hop_len = max(
+                            cosyvoice.model.token_max_hop_len, 4 * int(args.stream_hop_len)
+                        )
+                print(f"[CosyVoice] streaming start {len(text)} chars cache_hit={zero_shot_spk_id in cosyvoice.frontend.spk2info} "
+                      f"token_hop_len={getattr(cosyvoice.model, 'token_hop_len', 'n/a')} speed={speed} volume={volume}")
+                # 流式路径：计数由 _stream_wav_pcm_keepalive 的 finally 在流式结束
+                # （含客户端断开/异常）时回收，此处不再显式减。
+                return StreamingResponse(
+                    _stream_wav_pcm_keepalive(gen, int(cosyvoice.sample_rate), volume=volume),
+                    media_type="audio/wav",
+                )
+
+            # 非流式：audio_bytes 已在后台线程（_full_synth）内完成全量合成并编码
+            print(f"[CosyVoice] synthesized {len(text)} chars -> {len(audio_bytes)} bytes ({time.monotonic()-t0:.2f}s) cache_hit={zero_shot_spk_id in cosyvoice.frontend.spk2info}")
+            _active_count -= 1  # 非流式完成：撤销本请求的保活暂停计数（归零恢复保活）
+            return Response(content=audio_bytes, media_type="audio/wav")
         except _SpeechHttpError as exc:
             _active_count -= 1  # 异常路径：撤销本请求的保活暂停计数
             return JSONResponse(status_code=exc.status_code, content={"error": {"message": exc.message}})
         except Exception as exc:
-            _active_count -= 1  # 异常路径：撤销本请求的保活暂停计数
+            _active_count -= 1  # 异常路径：撤销本请求的保活暂停计数（含 hop 复位/响应构造段）
             return JSONResponse(status_code=500, content={"error": {"message": str(exc)}})
-
-        # [DIAG-TIMING] 阶段计时：parse → spk → gen 创建
-        print(f"[DIAG-TIMING] parse={( _t_parse_done - t0)*1000:.0f}ms "
-              f"spk={(_t_spk_done - _t_parse_done)*1000:.0f}ms "
-              f"gen_ctor={(_t_gen_done - _t_spk_done)*1000:.0f}ms "
-              f"cache_hit={zero_shot_spk_id in cosyvoice.frontend.spk2info}")
-
-        if stream:
-            # 真正流式：llm_job 后台线程逐 token 生成，token2wav 够一 hop 即输出，
-            # StreamingResponse 逐块下发，首块延迟显著低于全量合成（WAV 头先发，PCM 逐段）。
-            # 注意：CosyVoice tts() 流式循环内会自增 token_hop_len（*stream_scale_factor），
-            # 且跨请求持久化——此处每请求重置，避免后续请求首 hop 被放大到 100。
-            if args.stream_hop_len and hasattr(cosyvoice.model, "token_hop_len"):
-                # 并发流式语义：token_hop_len/token_max_hop_len 是跨请求共享模型态，
-                # 复位须与 hift CUDA graph 静态缓冲一样纳入 _MODEL_STATE_LOCK，
-                # 防止与另一请求正在进行的流式 hop 推进竞写。
-                with _MODEL_STATE_LOCK:
-                    cosyvoice.model.token_hop_len = int(args.stream_hop_len)
-                    cosyvoice.model.token_max_hop_len = max(
-                        cosyvoice.model.token_max_hop_len, 4 * int(args.stream_hop_len)
-                    )
-            print(f"[CosyVoice] streaming start {len(text)} chars cache_hit={zero_shot_spk_id in cosyvoice.frontend.spk2info} "
-                  f"token_hop_len={getattr(cosyvoice.model, 'token_hop_len', 'n/a')} speed={speed} volume={volume}")
-            return StreamingResponse(
-                _stream_wav_pcm_keepalive(gen, int(cosyvoice.sample_rate), volume=volume),
-                media_type="audio/wav",
-            )
-
-        # 非流式：audio_bytes 已在后台线程（_full_synth）内完成全量合成并编码
-        print(f"[CosyVoice] synthesized {len(text)} chars -> {len(audio_bytes)} bytes ({time.monotonic()-t0:.2f}s) cache_hit={zero_shot_spk_id in cosyvoice.frontend.spk2info}")
-        _active_count -= 1  # 非流式完成：撤销本请求的保活暂停计数（归零恢复保活）
-        return Response(content=audio_bytes, media_type="audio/wav")
 
     return app
 

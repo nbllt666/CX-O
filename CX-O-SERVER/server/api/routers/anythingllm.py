@@ -795,7 +795,9 @@ async def upload_document(
     mime = file.content_type or "application/octet-stream"
 
     try:
-        result = dmm.upload_file(
+        # 同步持久化（文件 IO）移入 IO 线程池，避免阻塞事件循环
+        result = await run_io(
+            dmm.upload_file,
             file_bytes=file_bytes,
             filename=file.filename or "untitled",
             mime=mime,
@@ -833,7 +835,9 @@ async def upload_raw_text(
     workspaces = [request.addToWorkspaces] if request.addToWorkspaces else None
 
     try:
-        result = dmm.upload_text(
+        # 同步持久化（文件 IO）移入 IO 线程池，避免阻塞事件循环
+        result = await run_io(
+            dmm.upload_text,
             text_content=request.textContent,
             metadata=request.metadata,
             workspaces=workspaces,
@@ -859,7 +863,8 @@ async def list_documents(
     """
     await verify_api_key(authorization)
 
-    docs = dmm.list_documents()
+    # 同步文档列表读取移入 IO 线程池，避免阻塞事件循环
+    docs = await run_io(dmm.list_documents)
     items = [_doc_row_to_response(d, include_text=False) for d in docs]
     return {
         "localFiles": {
@@ -916,7 +921,8 @@ async def get_document(
     """
     await verify_api_key(authorization)
 
-    doc = dmm.get_document(docName)
+    # 同步文档读取（磁盘 IO）移入 IO 线程池，避免阻塞事件循环
+    doc = await run_io(dmm.get_document, docName)
     if not doc:
         raise HTTPException(status_code=404, detail=f"文档 '{docName}' 不存在")
     return _doc_row_to_response(doc, include_text=True)
@@ -938,7 +944,8 @@ async def delete_document(
     """
     await verify_api_key(authorization)
 
-    success = dmm.delete_document(docName)
+    # 同步删除（磁盘 IO）移入 IO 线程池，避免阻塞事件循环
+    success = await run_io(dmm.delete_document, docName)
     if not success:
         raise HTTPException(status_code=404, detail=f"文档 '{docName}' 不存在")
     return {"success": True}
@@ -965,7 +972,9 @@ async def update_workspace_embeddings(
     """
     await verify_api_key(authorization)
 
-    result = dmm.update_workspace_documents(
+    # 同步 workspace 关联更新（磁盘 IO）移入 IO 线程池，避免阻塞事件循环
+    result = await run_io(
+        dmm.update_workspace_documents,
         slug=slug,
         adds=request.adds,
         deletes=request.deletes,

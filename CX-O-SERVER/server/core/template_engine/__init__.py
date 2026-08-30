@@ -14,13 +14,13 @@ CX-O 适配点:
 
 对应契约（严格匹配签名，rules-3 §二 signature_match）:
     - 接口: public/interface_stub/template_engine.pyi
-    - 数据: public/schema/template_registry.schema.json
+    - 数据: 无独立 schema 文件，字段定义以 template_engine.py TemplateRecord 为准（待 s0201 重建）
     - 配置: public/config_template/radix_config.json（template_engine 段）
     - 运行时配置: server/config.py（template_engine 节，由主线程统一扩展，缺失时降级默认值）
 
 @version 1.0.0
 @see public/interface_stub/template_engine.pyi
-@see public/schema/template_registry.schema.json
+@see 数据契约: template_engine.py（本包 TemplateRecord 字段定义，待 s0201 重建）
 """
 
 from .template_engine import (

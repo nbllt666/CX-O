@@ -1,5 +1,6 @@
 /**
- * 预加载脚本（CJS 产物 preload.cjs，sandbox 兼容）
+ * 预加载脚本（ESM 产物 preload.mjs —— main.ts sharedWebPreferences 以 preload.mjs 加载；
+ * ESM 预加载要求 sandbox:false，安全边界由 contextIsolation:true + nodeIntegration:false 保证）
  * 通过 contextBridge 暴露类型安全的 electronAPI；渲染层类型声明见 src/types/electron.d.ts
  */
 import { contextBridge, ipcRenderer } from 'electron';
