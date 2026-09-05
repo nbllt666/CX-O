@@ -10,6 +10,8 @@
 3. save_config → load_config 往返一致
 4. extra 字段被 forbid（抛 pydantic ValidationError）
 5. 非法 HH:MM 抛 ValueError（经 ScheduleConfig 校验）
+6. trigger 触发闸门子节：默认值 / save→load 往返 / 非法值（越界与未知字段）
+   抛 ValidationError / 旧配置（无 trigger 节）load 后自动补全默认（auto_fill）
 
 运行：python -m pytest tests/test_dream_config.py -q
 """
@@ -22,6 +24,7 @@ from pydantic import ValidationError
 from server.autonomy.config import ScheduleConfig
 from server.autonomy.dream.config import (
     DreamConfig,
+    DreamTriggerConfig,
     load_config,
     resolve_store_dir,
     save_config,
@@ -146,3 +149,71 @@ class TestResolveStoreDir:
 
     def test_explicit_store_path_passthrough(self, tmp_path):
         assert resolve_store_dir(str(tmp_path)) == str(tmp_path)
+
+
+# ================================================================ trigger 触发闸门子节
+class TestDreamTriggerConfig:
+    def test_trigger_defaults(self):
+        """trigger 子节全默认（零回归：不做情绪查询、概率恒命中）。"""
+        cfg = DreamConfig()
+        assert cfg.trigger.emotion_enabled is False
+        assert cfg.trigger.emotion_threshold == 0.7
+        assert cfg.trigger.emotion_window_hours == 24
+        assert cfg.trigger.emotion_min_events == 1
+        assert cfg.trigger.probability == 1.0
+
+    def test_default_trigger_instances_are_isolated(self):
+        a = DreamConfig()
+        b = DreamConfig()
+        a.trigger.probability = 0.3
+        assert b.trigger.probability == 1.0
+
+    def test_round_trip_preserves_trigger(self, tmp_path):
+        """save→load 往返保留 trigger 子节全部字段。"""
+        cfg = DreamConfig(
+            trigger=DreamTriggerConfig(
+                emotion_enabled=True,
+                emotion_threshold=0.8,
+                emotion_window_hours=12,
+                emotion_min_events=2,
+                probability=0.5,
+            )
+        )
+        save_config(cfg, store_path=str(tmp_path))
+        loaded = load_config(str(tmp_path))
+        assert loaded.trigger == cfg.trigger
+        assert loaded.trigger.emotion_enabled is True
+        assert loaded.trigger.emotion_threshold == 0.8
+        assert loaded.trigger.emotion_window_hours == 12
+        assert loaded.trigger.emotion_min_events == 2
+        assert loaded.trigger.probability == 0.5
+
+    @pytest.mark.parametrize(
+        "payload",
+        [
+            {"probability": 1.5},
+            {"probability": -0.1},
+            {"emotion_threshold": 1.5},
+            {"emotion_window_hours": 0},
+            {"emotion_min_events": 0},
+        ],
+    )
+    def test_invalid_trigger_values_rejected(self, payload):
+        with pytest.raises(ValidationError):
+            DreamConfig.model_validate({"trigger": payload})
+
+    def test_trigger_unknown_field_rejected(self):
+        """trigger 子节 extra="forbid"：未知字段抛 ValidationError。"""
+        with pytest.raises(ValidationError):
+            DreamConfig.model_validate({"trigger": {"emotion_enabled": True, "unknown": 1}})
+
+    def test_legacy_config_without_trigger_fills_defaults(self, tmp_path):
+        """旧配置文件（无 trigger 节）load 后 trigger 为全默认（auto_fill）。"""
+        _write_json(tmp_path / "dream_config.json", {"enabled": True})
+        cfg = load_config(str(tmp_path))
+        assert cfg.enabled is True
+        assert cfg.trigger.emotion_enabled is False
+        assert cfg.trigger.emotion_threshold == 0.7
+        assert cfg.trigger.emotion_window_hours == 24
+        assert cfg.trigger.emotion_min_events == 1
+        assert cfg.trigger.probability == 1.0

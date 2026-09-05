@@ -1,6 +1,6 @@
 """CXO-Tuner 独立后台微调服务 FastAPI 入口。
 
-启动：uvicorn tuner.main:app --host 0.0.0.0 --port 8300
+启动：uvicorn tuner.main:app --host 0.0.0.0 --port 8310
 lifespan 阶段初始化 DatasetStore / AdapterStore / Collector 并挂到 app.state。
 """
 from __future__ import annotations

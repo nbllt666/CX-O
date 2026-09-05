@@ -1,0 +1,18 @@
+{
+  "version": 1,
+  "created_at": "2026-09-05T21:05:12+08:00",
+  "dataset_dir": "C:\\Users\\NBLLT666\\AppData\\Local\\Temp\\pytest-of-NBLLT666\\pytest-2040\\test_exclude_null_text_entries0\\data\\training\\sovits_svc\\raw\\spk_null",
+  "speaker_name": "spk_null",
+  "language": "ZH",
+  "val_ratio": 0.05,
+  "total": 20,
+  "used": 17,
+  "excluded_no_text": 3,
+  "excluded_missing_file": 0,
+  "train_count": 16,
+  "val_count": 1,
+  "split_note": "按 95%/5% 切分",
+  "train_file": "C:\\CX-O\\CXO-ModelStation\\data\\training\\melotts\\spk_null\\train.txt",
+  "val_file": "C:\\CX-O\\CXO-ModelStation\\data\\training\\melotts\\spk_null\\val.txt",
+  "metadata_file": "C:\\CX-O\\CXO-ModelStation\\data\\training\\melotts\\spk_null\\metadata.list"
+}

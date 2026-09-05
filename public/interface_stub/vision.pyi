@@ -3,6 +3,7 @@
 源真理: 后端视觉增强视频叙事记忆功能（vision_enhanced 配置段）
 完成 Skill: s0201
 当前状态: 种子——仅含 POST /api/vision/clip 代表性端点与核心类型
+@version 1.0.1  # PATCH：追加帧过滤三态契约 FrameFilterDecision/FilterFrameRequest/FilterFrameResponse（spec add-vlm-frame-filter-face-match，纯新增声明，未动既有内容）；1.0.0 种子
 """
 
 from typing import Literal, Optional, Union
@@ -78,3 +79,34 @@ async def create_vision_clip(request: VisionClipRequest) -> VisionClipResponse:
 
 
 # TODO s0201: 补全 vision_enhanced 全部端点（clip 查询/删除/批量等）+ 完整异常说明
+
+
+# ---- 帧过滤三态契约（spec add-vlm-frame-filter-face-match，POST /api/vision/frame）----
+# 三态语义：forward=有价值，转发给主 LLM；summarize=中等价值，仅生成摘要沉淀；
+# discard=无价值，直接筛除。filter_fail_mode=passthrough 降级时 action 恒为 forward。
+class FrameFilterDecision(BaseModel):
+    """帧过滤判定结果：小 VLM 对单帧的三态判定（frame_filter_enabled=true 时产出）。"""
+    action: Literal['forward', 'summarize', 'discard']  # 三态判定：forward 转发主 LLM / summarize 仅摘要沉淀 / discard 筛除
+    summary: str  # 帧内容一句话摘要（三态均产出，discard 时为筛除依据的简述）
+    reason: str  # 判定理由（供审计与调试回溯）
+    importance: Literal['low', 'medium', 'high']  # 帧重要程度三档
+    degraded: bool  # 是否降级产出（VLM 超时/JSON 解析失败时按 filter_fail_mode 兜底；true 时 action 恒为 forward，对应 passthrough 语义）
+
+
+class FilterFrameRequest(BaseModel):
+    """POST /api/vision/frame 请求体：单帧图像 + 会话归属信息。"""
+    image: str  # 帧图像（dataURL 或纯 base64 编码的 JPEG/PNG，20MB 上限）
+    agent_id: str  # 会话归属 Agent ID（用于取 ContextManager 最近 N 条上下文与档案归属）
+    source: Literal['camera', 'screen']  # 帧来源：camera=摄像头画面，screen=屏幕捕捉
+    ts: Optional[Union[int, float]] = None  # 帧时间戳（秒或毫秒，缺省由服务端补齐）
+
+
+class FilterFrameResponse(BaseModel):
+    """POST /api/vision/frame 响应体：三态判定 + 面部标签 + 过滤器生效标记。"""
+    action: Literal['forward', 'summarize', 'discard']  # 三态判定结果（frame_filter_enabled=false 时恒为 forward）
+    summary: Optional[str] = None  # 帧摘要（filter_active=true 时存在）
+    reason: Optional[str] = None  # 判定理由（filter_active=true 时存在）
+    importance: Optional[Literal['low', 'medium', 'high']] = None  # 重要程度（filter_active=true 时存在）
+    degraded: Optional[bool] = None  # 是否降级产出（filter_active=true 时存在）
+    face_labels: Optional[list[str]] = None  # 命中的人脸档案名列表（camera 源且 face_match.enabled 时存在，无人脸/未启用为 None）
+    filter_active: bool  # 帧过滤器是否实际生效（frame_filter_enabled=false 时为 false，响应仅含 action=forward + filter_active）

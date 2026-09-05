@@ -1,0 +1,1 @@
+C:\Users\NBLLT666\AppData\Local\Temp\pytest-of-NBLLT666\pytest-2040\test_split_val_at_least_one_wh0\data\training\sovits_svc\raw\spk_b\0001.wav|spk_b|ZH|text-1

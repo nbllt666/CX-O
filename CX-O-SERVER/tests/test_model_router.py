@@ -149,7 +149,62 @@ class TestModelInfo:
 
     def test_get_all_models_info(self, router):
         all_info = router.get_all_models_info()
-        assert set(all_info.keys()) == {"main", "summary", "memory"}
+        assert set(all_info.keys()) == {"main", "summary", "memory", "dream"}
+
+
+# ---------------------------------------------------------------- dream 槽位
+class TestDreamClientSlot:
+    @pytest.mark.asyncio
+    async def test_initialize_registers_dream_client(self, router, monkeypatch):
+        """initialize 按既有顺序遍历 model_types 并为 dream 创建客户端（mock，无网络）。"""
+        created = []
+
+        class FakeDreamClient:
+            model_name = "dream"
+
+        def fake_create(model_type):
+            created.append(model_type)
+            return FakeDreamClient()
+
+        async def noop_status():
+            return {}
+
+        async def noop_warmup():
+            pass
+
+        monkeypatch.setattr(router, "_create_client", fake_create)
+        monkeypatch.setattr(router, "check_all_status", noop_status)
+        monkeypatch.setattr(router, "warmup_models", noop_warmup)
+
+        await router.initialize()
+
+        # dream 追加在 memory 之后（既有顺序保持）
+        assert created == ["main", "summary", "memory", "dream"]
+        assert "dream" in router._clients
+        assert router.get_client("dream") is not None
+        assert router._initialized is True
+
+    def test_get_client_dream_unregistered_returns_none(self, router):
+        """dream 客户端未注册时返回 None（与 summary 等槽位口径一致）。"""
+        assert router.get_client("dream") is None
+
+    def test_get_config_dream_follows_main(self, monkeypatch):
+        """dream 未显式配置时 get_config("dream") 返回 main 的配置（defaults 跟随）。"""
+        mc = ModelsConfig()
+        monkeypatch.setattr(
+            "server.core.model_router.get_settings", lambda: _make_settings(mc)
+        )
+        r = ModelRouter()
+        cfg = r.get_config("dream")
+        assert isinstance(cfg, ModelConfig)
+        assert cfg is mc.main
+        assert r.get_config("main") is mc.main
+
+    def test_all_models_info_contains_dream_entry(self, router):
+        all_info = router.get_all_models_info()
+        assert "dream" in all_info
+        # dream 未显式配置 → 标记 follows main
+        assert all_info["dream"].get("follows") == "main"
 
 
 # ---------------------------------------------------------------- 生命周期

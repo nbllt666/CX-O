@@ -1,9 +1,9 @@
 # CXO-Tuner 生产镜像（C5：2026-08-30 新建，此前 docker-compose 的 cxo-tuner 服务
 # 引用 cxo/tuner:latest 但无构建源）。
 #
-# 端口与入口以实码为准：
-#   - tuner/main.py 文档：uvicorn tuner.main:app --host 0.0.0.0 --port 8300
-#   - docker-compose.yml：ports 8300:8300，healthcheck /api/v1/health（APIRouter prefix="/api/v1"）
+# 端口与入口以实码为准（2026-09-05 起：宿主侧默认映射 8310，容器内仍 8300，与 CXO-ModelStation 宿主端口 8300 错开）：
+#   - tuner/main.py 文档：uvicorn tuner.main:app --host 0.0.0.0 --port 8310（裸机）
+#   - docker-compose.yml：ports "${CXO_TUNER_PORT:-8310}:8300"，healthcheck /api/v1/health（APIRouter prefix="/api/v1"）
 FROM python:3.11-slim
 
 ENV PYTHONDONTWRITEBYTECODE=1 \

@@ -52,15 +52,22 @@ class SoVITSSVCInferer:
     def __init__(
         self,
         model_path: Optional[str] = None,
-        output_dir: str = "data/models/sovits_svc",
+        output_dir: str = str(_WS_ROOT / "data" / "svc-results"),
         so_vits_svc_dir: str = "",
         python_path: str = "python",
         allowed_audio_root: Optional[str] = None,
+        models_dir: Optional[str] = None,
     ):
         self._model_path = model_path
+        # D2（拆分后口径）：默认输出目录锚定 _WS_ROOT 绝对路径（VWS 自有
+        # data/svc-results），消除 CWD 依赖；生产路径由 config 注入
+        # settings.sovits_svc.infer_output_dir（构造注入为准）。
         self._output_dir = Path(output_dir)
         self._so_vits_svc_dir = Path(so_vits_svc_dir) if so_vits_svc_dir else Path("so-vits-svc-4.1-Stable")
         self._python_path = python_path
+        # 模型白名单根（可选）：指向 ModelStation 模型目录（config.models_dir），
+        # 使跨服务只读模型路径可通过 _validate_model_path 校验。
+        self._models_dir = Path(models_dir).resolve() if models_dir else None
         # 允许作为推理输入的根目录。默认仅允许 input 目录。
         # D2：默认根锚定 _WS_ROOT 绝对路径（与 security_utils G6 同源锚点），
         # 消除 CWD 依赖——旧实现 Path("data/input") 相对进程 CWD 解析，
@@ -88,7 +95,8 @@ class SoVITSSVCInferer:
 
     def _validate_model_path(self, model_path: str) -> Path:
         """校验 model_path 解析后必须位于允许的模型根目录之内
-        （data/models/sovits_svc 或 so-vits-svc/logs），防止任意本地文件传入子进程。"""
+        （推理输出目录 / models_dir（ModelStation 模型目录，只读）或 so-vits-svc/logs），
+        防止任意本地文件传入子进程。"""
         path = Path(model_path)
         try:
             resolved = path.resolve()
@@ -96,8 +104,10 @@ class SoVITSSVCInferer:
             raise ValueError(f"Invalid model path: {model_path}: {e}")
         allowed_roots = [
             self._output_dir.resolve(),
-            (self._so_vits_svc_dir / "logs").resolve(),
         ]
+        if self._models_dir is not None:
+            allowed_roots.append(self._models_dir)
+        allowed_roots.append((self._so_vits_svc_dir / "logs").resolve())
         for root in allowed_roots:
             if resolved.is_relative_to(root):
                 return resolved

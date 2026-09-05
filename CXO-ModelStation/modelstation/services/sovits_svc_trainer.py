@@ -1,5 +1,9 @@
 """
 So-VITS-SVC 训练服务
+
+自 CX-O-VoiceWorkStation/workstation/services/sovits_svc_trainer.py 迁移
+（change-id: split-audio-workstation-cxfc-modelstation），
+import 路径 workstation.* → modelstation.* 全量改写，逻辑不变。
 """
 from __future__ import annotations
 
@@ -14,7 +18,7 @@ import uuid
 from pathlib import Path
 from typing import Callable, Optional
 
-from workstation.services.security_utils import validate_training_data_dir
+from modelstation.services.security_utils import validate_training_data_dir
 
 logger = logging.getLogger(__name__)
 
@@ -127,13 +131,12 @@ class SoVITSSVCTrainer:
 
         results = {}
 
-        # C2：按上游 argparse 实码重写三步预处理参数（旧实现的 -s 44100 / -d / -s 全部错位）。
+        # 按上游 argparse 实码重写三步预处理参数：
         #   resample.py:               --sr2 <int> --in_dir <含 speaker 子目录的 raw 根> [--out_dir2]
         #   preprocess_flist_config.py: --train_list/--val_list/--source_dir（默认 ./filelists/*.txt、./dataset/44k）
         #   preprocess_hubert_f0.py:   -d/--device --in_dir --f0_predictor --num_processes
         # 三步 CWD 均为上游仓库根（_run_subprocess 固定 cwd），默认相对路径与上游标准
-        # 工作流一致（resample --out_dir2 默认 ./dataset/44k == flist --source_dir 默认 ==
-        # hubert --in_dir 默认），故仅显式传必要参数。hubert 步骤读 configs/config.json
+        # 工作流一致，故仅显式传必要参数。hubert 步骤读 configs/config.json
         # （flist 步骤产出，顺序已保证），--f0_predictor 显式取 pm 与推理默认对齐且免下载
         # rmvpe 模型。
         raw_root = training_data_dir / "raw"
@@ -192,7 +195,7 @@ class SoVITSSVCTrainer:
         batch_size: int,
         learning_rate: float,
     ) -> None:
-        """读取上游 config.json，改写 train 段超参后写入 target_path（C4）。
+        """读取上游 config.json，改写 train 段超参后写入 target_path。
 
         字段名以上游 configs_template/config_template.json 与 utils.get_hparams 实码为准：
         train.epochs / train.batch_size / train.learning_rate。
@@ -241,10 +244,9 @@ class SoVITSSVCTrainer:
         source_config_path = self._so_vits_svc_dir / "configs" / "config.json"
         model_name = output_name
 
-        # C4：上游 train.py 仅通过 -c 接收超参（utils.get_hparams），此前 API 请求中的
-        # epochs/batch_size/learning_rate 只用于进度分母而未真正传入训练进程。
-        # 按请求参数改写上游 config.json 的 train 段并落盘独立副本到本训练 output_path 下
-        # （多训练互不覆盖；上游 get_hparams 还会再把它复制到 logs/<model>/config.json）。
+        # 上游 train.py 仅通过 -c 接收超参（utils.get_hparams），请求中的
+        # epochs/batch_size/learning_rate 按请求参数改写上游 config.json 的 train 段
+        # 并落盘独立副本到本训练 output_path 下（多训练互不覆盖）。
         runtime_config_path = output_path / "config.json"
         self._write_runtime_config(
             source_config_path,
@@ -373,8 +375,7 @@ class SoVITSSVCTrainer:
         if self._monitor_task and not self._monitor_task.done():
             self._monitor_task.cancel()
             # join 已取消的监控任务：asyncio.wait 不透传被等待任务自身的
-            # CancelledError，任务取消后此处正常返回，后续清理（L329-331）必达；
-            # 若 stop_training 自身被外部取消，CancelledError 经 wait 自然向上传播。
+            # CancelledError，任务取消后此处正常返回，后续清理必达。
             done, _ = await asyncio.wait([self._monitor_task])
             for task in done:
                 if task.cancelled():

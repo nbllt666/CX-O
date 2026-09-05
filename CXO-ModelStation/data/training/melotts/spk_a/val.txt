@@ -1,0 +1,5 @@
+C:\Users\NBLLT666\AppData\Local\Temp\pytest-of-NBLLT666\pytest-2040\test_split_95_5_and_line_forma0\data\training\sovits_svc\raw\spk_a\0001.wav|spk_a|ZH|第1句测试文本
+C:\Users\NBLLT666\AppData\Local\Temp\pytest-of-NBLLT666\pytest-2040\test_split_95_5_and_line_forma0\data\training\sovits_svc\raw\spk_a\0021.wav|spk_a|ZH|第21句测试文本
+C:\Users\NBLLT666\AppData\Local\Temp\pytest-of-NBLLT666\pytest-2040\test_split_95_5_and_line_forma0\data\training\sovits_svc\raw\spk_a\0041.wav|spk_a|ZH|第41句测试文本
+C:\Users\NBLLT666\AppData\Local\Temp\pytest-of-NBLLT666\pytest-2040\test_split_95_5_and_line_forma0\data\training\sovits_svc\raw\spk_a\0061.wav|spk_a|ZH|第61句测试文本
+C:\Users\NBLLT666\AppData\Local\Temp\pytest-of-NBLLT666\pytest-2040\test_split_95_5_and_line_forma0\data\training\sovits_svc\raw\spk_a\0081.wav|spk_a|ZH|第81句测试文本

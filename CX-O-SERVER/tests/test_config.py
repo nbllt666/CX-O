@@ -221,6 +221,64 @@ class TestModelsConfig:
         assert mc.resolve_target("summary") == "main"
         assert mc.get_model_config("summary") is mc.main
 
+    def test_dream_defaults_alias_to_main(self):
+        # dream 未显式配置时按 defaults 跟随 main（ModelsConfig 直接构造，零回归）
+        mc = config_mod.ModelsConfig()
+        assert mc.resolve_target("dream") == "main"
+        assert mc.get_model_config("dream") is mc.main
+
+    def test_dream_explicit_section_loaded_from_config_file(self, tmp_path, monkeypatch):
+        # 经真实 config.json 加载路径（CXO_CONFIG → Settings）：
+        # models.dream 显式节存在时解除 defaults 跟随，返回 dream 独立配置
+        cfg_path = tmp_path / "config.json"
+        cfg_path.write_text(
+            json.dumps(
+                {
+                    "models": {
+                        "main": {"provider": "ollama", "model": "main-model"},
+                        "dream": {
+                            "provider": "vllm",
+                            "host": "http://127.0.0.1:9999",
+                            "model": "dream-model",
+                        },
+                    }
+                }
+            ),
+            encoding="utf-8",
+        )
+        monkeypatch.setenv("CXO_CONFIG", str(cfg_path))
+        s = get_settings()
+        mc = s.config.models
+        assert mc.resolve_target("dream") == "dream"
+        dream_cfg = mc.get_model_config("dream")
+        assert dream_cfg.provider == "vllm"
+        assert dream_cfg.model == "dream-model"
+        # main 节不受 dream 影响
+        assert mc.get_model_config("main").model == "main-model"
+
+    def test_legacy_config_without_dream_section_compatible(self, tmp_path, monkeypatch):
+        # 旧 config.json（models 节无 dream）加载兼容：dream 跟随 main，summary 行为不变
+        cfg_path = tmp_path / "config.json"
+        cfg_path.write_text(
+            json.dumps(
+                {
+                    "models": {
+                        "main": {"provider": "ollama", "model": "legacy-main"},
+                    }
+                }
+            ),
+            encoding="utf-8",
+        )
+        monkeypatch.setenv("CXO_CONFIG", str(cfg_path))
+        s = get_settings()
+        mc = s.config.models
+        assert mc.resolve_target("dream") == "main"
+        assert mc.get_model_config("dream") is mc.main
+        assert mc.get_model_config("dream").model == "legacy-main"
+        # summary 行为不变（仍跟随 main）
+        assert mc.resolve_target("summary") == "main"
+        assert mc.get_model_config("summary") is mc.main
+
     def test_db_url(self):
         dc = config_mod.DatabaseConfig(path="data/x.db")
         # 相对路径被归一化为项目根绝对路径

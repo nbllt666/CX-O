@@ -864,7 +864,12 @@ def _load_effective_dream_config(store_path: str = ""):
         from server.config import get_settings
 
         section = get_settings().config.dream
-        return DreamConfig.model_validate(section.model_dump())
+        # 过滤到引擎已知字段：UnifiedConfig 节可能领先引擎侧字段（如外部增量
+        # trigger 子节），而 DreamConfig 为 extra="forbid"，透传全量 dump 会
+        # ValidationError 并静默回退默认值。字段漂移由镜像测试告警。
+        engine_fields = DreamConfig.model_fields.keys()
+        known = {k: v for k, v in section.model_dump().items() if k in engine_fields}
+        return DreamConfig.model_validate(known)
     except Exception as e:
         logger.warning("读取 UnifiedConfig.dream 节失败，回退旧配置文件: %s", e)
         return _dream_legacy_load(store_path=store_path)

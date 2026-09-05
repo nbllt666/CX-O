@@ -63,6 +63,8 @@ import type { CaptureSourceKind } from '../hooks/capture/useVideoCapture';
 import { useFrameSender } from '../hooks/capture/useFrameSender';
 import { useVisionPipeline } from '../hooks/useVisionPipeline';
 import { chatApi } from '../api/clients/chat';
+import { filterFrame } from '../api/clients/vision';
+import { runFrameFilterFlow } from './pet/frameFilterFlow';
 import type { IAvatarDriver } from '../avatar/types';
 import { PetAvatar } from '../components/pet/PetAvatar';
 import { PetChat } from '../components/pet/PetChat';
@@ -113,6 +115,8 @@ export default function PetPage() {
   const cameraActive = useCaptureStore((s) => s.cameraActive);
   const setCameraActive = useCaptureStore((s) => s.setCameraActive);
   const visionEnabled = useCaptureStore((s) => s.visionEnabled);
+  // 帧筛选开关：开启后单帧先经 /api/vision/frame 三态判定再分流（默认关=现状直通）
+  const frameFilterEnabled = useCaptureStore((s) => s.frameFilterEnabled);
   const frameMode = useCaptureStore((s) => s.frameMode);
   const frameIntervalSec = useCaptureStore((s) => s.frameIntervalSec);
 
@@ -481,15 +485,11 @@ export default function PetPage() {
   // L9：isLoadingRef 只在 render commit 后更新，双击可在 isLoading=true 落地前的
   // commit 窗口内双双通过守卫 → 本地同步 inFlight ref 在发送链路首尾 set/clear 互斥
   const sendFrameInFlightRef = useRef(false);
-  const sendFrame = useCallback(
-    (dataUrl: string, kind: CaptureSourceKind) => {
-      if (sendFrameInFlightRef.current || isLoadingRef.current) return;
-      // 主动视觉总开关：关闭则不向 LLM 发送画面帧
-      if (!visionEnabled) return;
-      sendFrameInFlightRef.current = true;
-      const prompt = t(
-        kind === 'screen' ? 'pet.capture.framePromptScreen' : 'pet.capture.framePromptCamera',
-      );
+
+  // 公共对话发起（直通与筛选 forward/回退三路复用，行为与现状一致）：
+  // 用户气泡 + 助手占位流式目标 + sendMessageStream；finally 复位帧互斥。
+  const startFrameConversation = useCallback(
+    (prompt: string, dataUrl: string) => {
       chatRef.current?.addMessage({
         id: nextMessageId('u-'),
         role: 'user',
@@ -538,7 +538,48 @@ export default function PetPage() {
           sendFrameInFlightRef.current = false;
         });
     },
-    [t, windowAgentId, handleAssistantStreamEvent, visionEnabled],
+    [t, windowAgentId, handleAssistantStreamEvent],
+  );
+
+  const sendFrame = useCallback(
+    (dataUrl: string, kind: CaptureSourceKind) => {
+      if (sendFrameInFlightRef.current || isLoadingRef.current) return;
+      // 主动视觉总开关：关闭则不向 LLM 发送画面帧
+      if (!visionEnabled) return;
+      sendFrameInFlightRef.current = true;
+      const basePrompt = t(
+        kind === 'screen' ? 'pet.capture.framePromptScreen' : 'pet.capture.framePromptCamera',
+      );
+      // i18n t 窄化为 face_labels 提示构造器（frameFilterFlow 纯函数注入口）
+      const buildLabelsHint = (labels: string) => t('pet.capture.faceLabelsHint', { labels });
+
+      // 筛选关闭：现状直通对话，零新增请求（行为与改动前完全一致）
+      if (!frameFilterEnabled) {
+        startFrameConversation(basePrompt, dataUrl);
+        return;
+      }
+
+      // 筛选开启：先 POST /api/vision/frame 三态判定，再按 forward/summarize/discard 分流；
+      // 筛选请求失败回退直通对话（视觉不断流）。互斥标志贯穿「筛选请求 + 对话」全程。
+      void runFrameFilterFlow(dataUrl, windowAgentId, kind, nowIso(), basePrompt, buildLabelsHint, {
+        requestFilter: filterFrame,
+        startConversation: startFrameConversation,
+        settleSilent: () => {
+          sendFrameInFlightRef.current = false;
+        },
+        fallbackToConversation: (error) => {
+          console.warn('[PetPage] 帧筛选请求失败，回退直通对话:', error);
+          startFrameConversation(basePrompt, dataUrl);
+        },
+      });
+    },
+    [
+      t,
+      windowAgentId,
+      visionEnabled,
+      frameFilterEnabled,
+      startFrameConversation,
+    ],
   );
 
   const { sendNow } = useFrameSender({

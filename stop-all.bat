@@ -6,6 +6,9 @@ REM CX-O one-click stop script.
 REM Reads the service PID file recorded by start-all.bat and kills each
 REM process tree by PID. PID file path matches start-all.bat's PID_FILE
 REM variable (cxo_pids.txt under user TEMP).
+REM Covered services (recorded by port): 8000 SERVER / 8200 VoiceWorkStation
+REM / 8300 ModelStation / 3100 APP-Frontend. Port-based recording means new
+REM services are covered automatically once start-all.bat calls :record_pid.
 REM Usage:
 REM   1. Standalone stop entry -- for orphan services after start timeout
 REM      or daily shutdown; works by double-click or from command line.

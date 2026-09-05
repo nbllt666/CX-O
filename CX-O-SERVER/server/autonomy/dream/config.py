@@ -62,6 +62,20 @@ class PhysioConfig(BaseModel):
         return self
 
 
+class DreamTriggerConfig(BaseModel):
+    """梦境触发闸门子节（对齐 server/config.py DreamTriggerSection 与 dream_config.json trigger）。
+
+    默认值零回归：emotion_enabled=False 不做情绪查询；probability=1.0 恒命中。
+    """
+
+    model_config = ConfigDict(extra="forbid")
+    emotion_enabled: bool = False
+    emotion_threshold: float = Field(default=0.7, ge=0.0, le=1.0)
+    emotion_window_hours: int = Field(default=24, ge=1)
+    emotion_min_events: int = Field(default=1, ge=1)
+    probability: float = Field(default=1.0, ge=0.0, le=1.0)
+
+
 class DreamConfig(BaseModel):
     """CX-O-Dream 梦境引擎配置（对齐 dream_config.schema.json）。
 
@@ -84,6 +98,7 @@ class DreamConfig(BaseModel):
     max_surface_per_day: int = 1
     schedule: ScheduleConfig = Field(default_factory=ScheduleConfig)
     physio: PhysioConfig = Field(default_factory=PhysioConfig)
+    trigger: DreamTriggerConfig = Field(default_factory=DreamTriggerConfig)
     sleep_confirmation: SleepConfirmationConfig = Field(default_factory=SleepConfirmationConfig)
 
 

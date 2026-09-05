@@ -1,0 +1,59 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://cx-o/public/schema/face_profile.schema.json",
+  "title": "FaceProfileStore",
+  "description": "人脸档案存储数据契约（种子阶段，待 s0201 补全）。定义人脸档案持久化文件结构：档案条目数组，每条含姓名、人脸特征向量与创建时间。对应 spec add-vlm-frame-filter-face-match 的 face_match 节（store_path 指向本契约约束的存储文件）。",
+  "_sourceOfTruth": {
+    "primary": "c:/CX-O/CX-O-SERVER/server/ (face_match 后端，待实现)",
+    "secondary": [
+      "c:/CX-O/public/interface_stub/face.pyi",
+      "c:/CX-O/public/config_template/radix_config.json"
+    ],
+    "note": "约束 face_match 人脸档案存储文件（radix_config.face_match.store_path）的字段结构；FaceProfileService 读写该文件时以此契约校验"
+  },
+  "_seedStage": true,
+  "_completionSkill": "s0201",
+  "type": "object",
+  "required": ["version", "profiles"],
+  "additionalProperties": false,
+  "properties": {
+    "version": {
+      "type": "string",
+      "description": "存储文件结构版本号（语义版本 MAJOR.MINOR.PATCH），用于后续档案格式迁移判断。"
+    },
+    "profiles": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["name", "embedding", "created_at"],
+        "additionalProperties": false,
+        "properties": {
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "description": "人脸档案唯一标识名（非空字符串），register 时指定，match 命中后返回，delete_profile 按名删除。"
+          },
+          "embedding": {
+            "type": "array",
+            "items": {
+              "type": "number"
+            },
+            "minItems": 1,
+            "description": "人脸特征向量（浮点数数组，非空），由本地模型或外部端点提取；匹配时按相似度阈值（radix_config.face_match.sim_threshold）与该向量比较。"
+          },
+          "created_at": {
+            "type": "string",
+            "description": "档案创建时间戳（ISO 8601 格式字符串，本地时区），由 FaceProfileService.register 写入。"
+          }
+        },
+        "description": "单条人脸档案：姓名 + 特征向量 + 创建时间，三字段均为必填。"
+      },
+      "description": "人脸档案条目数组。数组内 name 不得重复（由 FaceProfileService.register 幂等覆盖语义保证，同 register 覆盖既有 embedding/created_at）。"
+    }
+  },
+  "_todo": [
+    "s0201: 从后端 face_match 实现提取完整档案结构（如补充 updated_at/agent_id 归属字段）",
+    "s0201: 确认 embedding 维度约束（本地模型维度固定，外部端点维度由端点决定）",
+    "s0201: 补全存储文件读写错误码契约（文件损坏/IO 失败场景）"
+  ]
+}

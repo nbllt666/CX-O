@@ -273,6 +273,12 @@ async def lifespan(app: FastAPI):
 
     await init_service("声纹注册工具", _register_voiceprint_tool, logger_=lifespan_logger)
 
+    def _register_face_tool():
+        from server.core.tools import register_face_tool
+        register_face_tool()
+
+    await init_service("人脸注册工具", _register_face_tool, logger_=lifespan_logger)
+
     def _register_master():
         from server.core.tools import register_master_tools, set_master_dependencies
         set_master_dependencies(

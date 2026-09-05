@@ -214,8 +214,8 @@ describe('SettingsPage 五区块', () => {
     ).toBeInTheDocument();
 
     const turnOnButtons = screen.getAllByRole('button', { name: '开启' });
-    expect(turnOnButtons).toHaveLength(4); // 主动视觉总开关 + 视频模式 + 屏幕共享 + 摄像头
-    fireEvent.click(turnOnButtons[2]); // 屏幕共享
+    expect(turnOnButtons).toHaveLength(5); // 主动视觉总开关 + 视频模式 + 帧筛选 + 屏幕共享 + 摄像头
+    fireEvent.click(turnOnButtons[3]); // 屏幕共享
     expect(useCaptureStore.getState().screenActive).toBe(true);
     expect(useCaptureStore.getState().cameraActive).toBe(false);
 
@@ -237,11 +237,11 @@ describe('SettingsPage 五区块', () => {
 
     render(<SettingsPage />);
     expect(useCaptureStore.getState().videoModeEnabled).toBe(false);
-    // 视觉采集区块现含 4 个采集开关（主动视觉总开关 + 视频模式 + 屏幕共享 + 摄像头）
+    // 视觉采集区块现含 5 个采集开关（主动视觉总开关 + 视频模式 + 帧筛选 + 屏幕共享 + 摄像头）
     const turnOnButtons = screen.getAllByRole('button', { name: '开启' });
-    expect(turnOnButtons).toHaveLength(4);
+    expect(turnOnButtons).toHaveLength(5);
 
-    // 开启视频模式：index 1（0=主动视觉总开关，1=视频模式，2=屏幕共享，3=摄像头）
+    // 开启视频模式：index 1（0=主动视觉总开关，1=视频模式，2=帧筛选，3=屏幕共享，4=摄像头）
     fireEvent.click(turnOnButtons[1]);
     expect(useCaptureStore.getState().videoModeEnabled).toBe(true);
     // 开启时触发后端写入 vision_enhanced.enabled=true
@@ -258,8 +258,43 @@ describe('SettingsPage 五区块', () => {
     });
   });
 
+  it('帧筛选开关：开启写入 store 并 best-effort 同步后端，关闭不回写（Task 5）', async () => {
+    const { configApi } = await import('@/api/clients/config');
+    // 清空其它用例（如 LLM/向量保存）对 updateConfig 的调用，隔离断言
+    (configApi.updateConfig as ReturnType<typeof vi.fn>).mockClear();
+
+    render(<SettingsPage />);
+    expect(useCaptureStore.getState().frameFilterEnabled).toBe(false);
+    const turnOnButtons = screen.getAllByRole('button', { name: '开启' });
+
+    // 开启帧筛选：index 2（0=主动视觉总开关，1=视频模式，2=帧筛选，3=屏幕共享，4=摄像头）
+    fireEvent.click(turnOnButtons[2]);
+    expect(useCaptureStore.getState().frameFilterEnabled).toBe(true);
+    // 开启时触发后端写入 vision_enhanced.frame_filter_enabled=true（单向同步先例）
+    await waitFor(() =>
+      expect(configApi.updateConfig).toHaveBeenCalledWith('vision_enhanced', {
+        frame_filter_enabled: true,
+      }),
+    );
+
+    // 关闭帧筛选：对齐 videoMode 先例，单向同步不回写 false
+    // （其余开关均为关闭态，页面此时仅帧筛选呈现「关闭」按钮）
+    (configApi.updateConfig as ReturnType<typeof vi.fn>).mockClear();
+    fireEvent.click(screen.getByRole('button', { name: '关闭' }));
+    expect(useCaptureStore.getState().frameFilterEnabled).toBe(false);
+    expect(configApi.updateConfig).not.toHaveBeenCalledWith('vision_enhanced', {
+      frame_filter_enabled: false,
+    });
+  });
+
   it('i18n：settings.capture.videoMode / videoModeDesc 键在中英文 locale 均存在且非原始 key 形态', () => {
-    const keys = ['settings.capture.videoMode', 'settings.capture.videoModeDesc'];
+    const keys = [
+      'settings.capture.videoMode',
+      'settings.capture.videoModeDesc',
+      'settings.capture.frameFilter',
+      'settings.capture.frameFilterDesc',
+      'pet.capture.faceLabelsHint',
+    ];
     for (const lng of ['zh-CN', 'en-US']) {
       for (const key of keys) {
         const value = i18n.t(key, { lng });

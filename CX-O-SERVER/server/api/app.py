@@ -26,6 +26,7 @@ from server.api.routers import (
     chat,
     decision,
     dream,
+    face,
     physio,
     config,
     context,
@@ -132,6 +133,8 @@ def register_api_routes(app: FastAPI):
     app.include_router(meeting.router, prefix="/api")
     # 声纹识别 REST（/api/voiceprint/*）
     app.include_router(voiceprint.router, prefix="/api")
+    # 人脸档案 REST（/api/face/*）—— 对称声纹三层架构
+    app.include_router(face.router, prefix="/api")
 
     # E3 双异常体系收敛：CoreException 全局 handler——core 侧异常（ACPError/
     # MemoryOperationError/VectorStoreError/MCPError 等）未被路由捕获时不再落

@@ -1,5 +1,6 @@
 """管理端点——API 密钥、运行时配置与数据管理接口。"""
 import asyncio
+import logging
 import os
 import secrets
 import uuid
@@ -680,9 +681,15 @@ async def admin_get_model_context(request: Request, agent_id: Optional[str] = No
     explicit = getattr(models, "_explicit", None) or set()
     defaults = dict(getattr(models, "defaults", None) or {})
     slots: dict = {}
-    for slot in ("main", "summary", "memory"):
+    # 动态枚举 ModelConfig 槽位（外部增量如 models.dream 自动纳入），defaults
+    # 为 str 映射非槽位配置，跳过
+    from server.config import ModelConfig
+
+    for slot in models.__class__.model_fields:
+        if slot == "defaults":
+            continue
         slot_cfg = getattr(models, slot, None)
-        if slot_cfg is None:
+        if not isinstance(slot_cfg, ModelConfig):
             continue
         slots[slot] = {
             "model": getattr(slot_cfg, "model", None),
@@ -807,3 +814,135 @@ async def admin_update_model_context(request: Request, req: _ModelContextUpdateR
 async def admin_register(_: bool = Depends(verify_admin_api_key)):
     """内部：CX-O 向 CX-A 注册（本机作为被注册方，仅记录；主动注册由 registry 承接）。"""
     return {"status": "success", "message": "registered", "registered": True}
+
+
+# ===========================================================================
+# 管理面遥测增强（spec enhance-admin-telemetry 一/四）：
+#   - GET  /admin/telemetry        四组遥测聚合查看（readonly，?groups= 过滤）
+#   - GET  /admin/config-whitelist 配置白名单边界回显（readonly）
+#   - PUT  /admin/logging/level    日志级别热调（operator）
+# ===========================================================================
+
+# 日志级别合法枚举（spec 四：PUT /admin/logging/level body 校验口径）
+_ALLOWED_LOG_LEVELS = ("DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL")
+
+# 结构性危险节拒绝说明（spec 三「保持拒绝」边界透明化口径）
+_REJECTED_SECTIONS = [
+    {"section": "admin.*", "reason": "管理面 token/绑定地址属结构性安全面，禁止远程修改"},
+    {"section": "cluster.*", "reason": "集群对等/密钥配置影响节点身份，禁止运行期修改"},
+    {"section": "database.*", "reason": "存储路径变更涉及数据迁移，禁止运行期修改"},
+    {"section": "cors.*", "reason": "跨域策略属安全边界，禁止远程修改"},
+    {"section": "mcp_servers", "reason": "MCP 服务器注册表变更需重启生效，不开放热改"},
+    {"section": "gateway.*", "reason": "网关监听/代理配置属结构性配置，禁止远程修改"},
+    {"section": "services.*", "reason": "服务装配配置需重启生效，不开放热改"},
+]
+
+# 白名单边界附注（executor 上界 / autonomy·dream 引擎同步 / logging 热调语义）
+_WHITELIST_NOTES = {
+    "executor": "executor 仅开放 io_pool_size/danmaku_concurrency/interrupt_concurrency 三个标量字段"
+                "（上界：io_pool_size≤64、并发信号量≤256），修改后需重启生效（restart_required: true）",
+    "autonomy_dream": "autonomy.*/dream.* 仅开放标量节字段；引擎启停与编排同步走"
+                      " PUT /autonomy/config、/dream/config 专用端点",
+    "logging": "logging.level 经 PUT /admin/logging/level 热调即时生效（hot_applied）；"
+               "logging 其余字段属需重启域，不在白名单",
+}
+
+
+@router.get("/admin/telemetry")
+async def admin_telemetry(request: Request, groups: str = ""):
+    """四组遥测聚合查看（readonly）：runtime/connections/engines/security。
+
+    groups 为逗号分隔过滤（空=全部，非法组忽略）；单组采集异常在
+    telemetry.collect_all 内部降级 {"available": false}，不拖垮整体快照。
+    """
+    _admin_guard(request, "readonly")
+    from server.core.admin import telemetry as telemetry_mod
+
+    # 逗号分隔 → 列表；空串按全量口径（collect_all 对 None/空返回全部）
+    selected = [g.strip() for g in (groups or "").split(",") if g.strip()]
+    try:
+        data = await telemetry_mod.collect_all(_services, selected or None)
+    except Exception as e:  # 防御性兜底：collect_all 内部已逐组降级，此处不应触达
+        logger.error(f"TELEMETRY: 聚合采集异常: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"遥测聚合失败: {e}")
+    return {"status": "success", "telemetry": data}
+
+
+@router.get("/admin/config-whitelist")
+async def admin_config_whitelist(request: Request):
+    """配置白名单边界回显（readonly）：可改节/字段 + 拒绝清单说明。
+
+    经模块级 getattr 探测 control_plane.ADMIN_CONFIG_UPDATE_WHITELIST
+    （GN-004 OBS-5：常量在模块上而非 _control_plane 实例上，严禁 getattr 实例）；
+    T2 未合入/常量缺失时返回 {"available": false} 占位而非 500。
+    """
+    _admin_guard(request, "readonly")
+    from server.core.admin import control_plane as _cp_mod
+
+    whitelist = getattr(_cp_mod, "ADMIN_CONFIG_UPDATE_WHITELIST", None)
+    if not whitelist:
+        return {"status": "success", "available": False, "note": "白名单常量未就绪"}
+    # Dict[str, Set[str]] → {节: 排序字段列表}（集合/列表形态均兼容）
+    normalized: dict = {}
+    for section, fields in whitelist.items():
+        try:
+            normalized[str(section)] = sorted(str(f) for f in fields)
+        except Exception as e:
+            logger.warning(f"CONFIG_WHITELIST: 节 {section} 字段归一化失败: {e}")
+            normalized[str(section)] = []
+    return {
+        "status": "success",
+        "available": True,
+        "whitelist": normalized,
+        "rejected_sections": _REJECTED_SECTIONS,
+        "notes": _WHITELIST_NOTES,
+    }
+
+
+class _LoggingLevelRequest(BaseModel):
+    """PUT /admin/logging/level 请求体：日志级别 + 可选防重放 request_id。"""
+
+    level: str
+    request_id: Optional[str] = None
+
+
+@router.put("/admin/logging/level")
+async def admin_set_logging_level(request: Request, req: _LoggingLevelRequest):
+    """日志级别热调（operator）：config.update 通道落盘 + root logger 即时生效。"""
+    _admin_guard(request, "operator", request_id=req.request_id)
+    if _control_plane is None:
+        _admin_unavailable()
+    level = (req.level or "").strip().upper()
+    if level not in _ALLOWED_LOG_LEVELS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"非法日志级别: {req.level}（允许枚举: {'/'.join(_ALLOWED_LOG_LEVELS)}）",
+        )
+    request_id = req.request_id or uuid.uuid4().hex
+    previous_level = logging.getLevelName(logging.getLogger().getEffectiveLevel())
+    try:
+        # 生效路径统一走 config.update 通道（T2 白名单登记 logging.level）：
+        # 保证落盘 + 缓存失效 + requires_restart 语义一致；{path: value} 扁平映射
+        await resolve_invoke_result(
+            _control_plane.dispatch(
+                "update", "config", request_id, "default", {"logging.level": level}
+            )
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        # 白名单未登记（T2 未合入）/ 类型非法 / 落盘失败 → 400 + 控制面错误码
+        raise HTTPException(status_code=400, detail=f"配置更新失败: {e}")
+    # 即时生效钩子：root logger 级别切换（config.update 已落盘，重启后语义一致）
+    logging.getLogger().setLevel(level)
+    await asyncio.to_thread(
+        audit_now, "CX-A", "info", "logging_level", level, "日志级别热调整",
+        request_id=request_id,
+        detail={"previous_level": previous_level, "hot_applied": True},
+    )
+    return {
+        "status": "success",
+        "hot_applied": True,
+        "level": level,
+        "previous_level": previous_level,
+    }

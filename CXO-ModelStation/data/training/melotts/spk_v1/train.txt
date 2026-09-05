@@ -1,0 +1,2 @@
+C:\Users\NBLLT666\AppData\Local\Temp\pytest-of-NBLLT666\pytest-2040\test_v1_manifest_migration_sem0\data\training\sovits_svc\raw\spk_v1\0001.wav|spk_v1|ZH|v1 补录文本
+C:\Users\NBLLT666\AppData\Local\Temp\pytest-of-NBLLT666\pytest-2040\test_v1_manifest_migration_sem0\data\training\sovits_svc\raw\spk_v1\0002.wav|spk_v1|ZH|v1 补录文本

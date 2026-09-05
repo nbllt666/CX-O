@@ -33,22 +33,25 @@ class ServerConfig:
 
 @dataclass
 class SoVitSSVCConfig:
+    # 瘦身后仅保留推理与模型列表能力；训练全链路已迁至 CXO-ModelStation（8300）。
     enabled: bool = True
-    output_dir: str = str(_BASE_DIR / "data" / "models" / "sovits_svc")
-    training_data_dir: str = str(_BASE_DIR / "data" / "training" / "sovits_svc")
-    so_vits_svc_dir: str = str(_BASE_DIR.parent / "so-vits-svc-4.1-Stable")
+    # 模型目录：指向 ModelStation 的模型产出（只读消费：列表 + 推理输入）。
+    # 以 _BASE_DIR.parent 锚定项目根解析（与 so_vits_svc_dir 同先例），禁 CWD 相对。
+    models_dir: str = str(_BASE_DIR.parent / "CXO-ModelStation" / "data" / "models" / "sovits_svc")
+    # 推理结果输出目录：VWS 自有受控目录（audio-files svc-results 类别映射此目录）
+    infer_output_dir: str = str(_BASE_DIR / "data" / "svc-results")
+    # 引擎目录：2026-09-05 so-vits-svc-4.1-Stable 迁入 CXO-ModelStation/engines/
+    # （自包含化，单一真源，与 ModelStation config 默认值一致），VWS 只读推理共用。
+    so_vits_svc_dir: str = str(_BASE_DIR.parent / "CXO-ModelStation" / "engines" / "so-vits-svc-4.1-Stable")
     python_path: str = "python"
 
 
 @dataclass
-class VoxCPMConfig:
-    model_path: str = "openbmb/VoxCPM2"
-    device: str = "auto"
-    enable_denoiser: bool = True
-    cfg_value: float = 2.0
-    inference_timesteps: int = 10
-    zipenhancer_model_path: str = "iic/speech_zipenhancer_ans_multiloss_16k_base"
-    working_dir: str = "VoxCPM-main"
+class AudioUploadConfig:
+    # 受控上传（POST /api/audio-uploads）：翻唱音频入口，落盘目录为
+    # SoVITSSVCInferer allowed_audio_root 白名单根（data/input/），上传即可推理。
+    max_size_mb: int = 50
+    input_dir: str = str(_BASE_DIR / "data" / "input")
 
 
 @dataclass
@@ -75,14 +78,14 @@ class CXFCConfig:
     server_url: str = "http://127.0.0.1:8000"
     auto_register: bool = True
     heartbeat_interval: int = 15
-    plugin_name: str = "voiceworkstation-music"
+    plugin_name: str = "作曲翻唱CXFC"
 
 
 @dataclass
 class WorkstationSettings:
     server: ServerConfig = field(default_factory=ServerConfig)
     sovits_svc: SoVitSSVCConfig = field(default_factory=SoVitSSVCConfig)
-    voxcpm: VoxCPMConfig = field(default_factory=VoxCPMConfig)
+    audio_upload: AudioUploadConfig = field(default_factory=AudioUploadConfig)
     music: MusicConfig = field(default_factory=MusicConfig)
     cxfc: CXFCConfig = field(default_factory=CXFCConfig)
 

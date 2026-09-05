@@ -76,6 +76,13 @@ const DREAM_CONFIG: DreamConfig = {
     diary_time: '02:00',
     quiet_windows: [],
   },
+  trigger: {
+    emotion_enabled: false,
+    emotion_threshold: 0.7,
+    emotion_window_hours: 24,
+    emotion_min_events: 1,
+    probability: 1.0,
+  },
 };
 
 const PHYSIO_STATUS_ACTIVE: PhysioStatusActive = {
@@ -283,5 +290,105 @@ describe('DreamPage 生理信号区块', () => {
       await screen.findByText('加载失败，请检查后端连接后重试'),
     ).toBeInTheDocument();
     expect(screen.getByRole('button', { name: '重试' })).toBeInTheDocument();
+  });
+});
+
+/** 按测试 id 取 trigger 数字/开关输入框 */
+function getTriggerInput(testId: string): HTMLInputElement {
+  return screen.getByTestId(testId) as HTMLInputElement;
+}
+
+describe('DreamPage 情绪触发（trigger）配置', () => {
+  beforeAll(async () => {
+    await i18n.changeLanguage('zh-CN');
+  });
+
+  afterEach(() => {
+    cleanup();
+    vi.clearAllMocks();
+    removeBleMock();
+  });
+
+  it('配置加载后渲染 trigger 字段（mock 返回值回显）', async () => {
+    mockDreamActive();
+    mockPhysioDisabled();
+
+    render(<DreamPage />);
+
+    expect(await screen.findByTestId('dream-config-trigger-emotion-enabled')).toBeInTheDocument();
+    expect(getTriggerInput('dream-config-trigger-emotion-enabled').checked).toBe(false);
+    expect(getTriggerInput('dream-config-trigger-emotion-threshold').value).toBe('0.7');
+    expect(getTriggerInput('dream-config-trigger-emotion-window-hours').value).toBe('24');
+    expect(getTriggerInput('dream-config-trigger-emotion-min-events').value).toBe('1');
+    expect(getTriggerInput('dream-config-trigger-probability').value).toBe('1');
+    // 分组标题渲染
+    expect(screen.getByText('情绪触发条件')).toBeInTheDocument();
+  });
+
+  it('修改 trigger 字段后保存 → updateConfig 载荷包含更新后的 trigger 子节', async () => {
+    mockDreamActive();
+    mockPhysioDisabled();
+    mockedDream.updateConfig.mockResolvedValue(DREAM_CONFIG);
+
+    render(<DreamPage />);
+    expect(await screen.findByTestId('dream-config-trigger-emotion-enabled')).toBeInTheDocument();
+
+    fireEvent.click(getTriggerInput('dream-config-trigger-emotion-enabled'));
+    fireEvent.change(getTriggerInput('dream-config-trigger-emotion-threshold'), {
+      target: { value: '0.85' },
+    });
+    fireEvent.change(getTriggerInput('dream-config-trigger-probability'), {
+      target: { value: '0.5' },
+    });
+
+    fireEvent.click(screen.getByRole('button', { name: '保存' }));
+
+    await waitFor(() => {
+      expect(mockedDream.updateConfig).toHaveBeenCalledWith(
+        expect.objectContaining({
+          trigger: expect.objectContaining({
+            emotion_enabled: true,
+            emotion_threshold: 0.85,
+            emotion_window_hours: 24,
+            emotion_min_events: 1,
+            probability: 0.5,
+          }),
+        }),
+      );
+    });
+  });
+
+  it('旧响应无 trigger 子节时字段显示契约默认值且保存不崩溃', async () => {
+    mockedDream.getStatus.mockResolvedValue(DREAM_STATUS_IDLE);
+    mockedDream.getConfig.mockResolvedValue({
+      ...DREAM_CONFIG,
+      trigger: undefined,
+    } as unknown as DreamConfig);
+    mockedDream.getList.mockResolvedValue({ items: [], total: 0 });
+    mockedDream.updateConfig.mockResolvedValue(DREAM_CONFIG);
+    mockPhysioDisabled();
+
+    render(<DreamPage />);
+
+    expect(await screen.findByTestId('dream-config-trigger-emotion-enabled')).toBeInTheDocument();
+    expect(getTriggerInput('dream-config-trigger-emotion-enabled').checked).toBe(false);
+    expect(getTriggerInput('dream-config-trigger-emotion-threshold').value).toBe('0.7');
+    expect(getTriggerInput('dream-config-trigger-emotion-window-hours').value).toBe('24');
+    expect(getTriggerInput('dream-config-trigger-emotion-min-events').value).toBe('1');
+    expect(getTriggerInput('dream-config-trigger-probability').value).toBe('1');
+
+    // 保存不崩溃，载荷携带回退后的默认 trigger 子节
+    fireEvent.click(screen.getByRole('button', { name: '保存' }));
+    await waitFor(() => {
+      expect(mockedDream.updateConfig).toHaveBeenCalledWith(
+        expect.objectContaining({
+          trigger: expect.objectContaining({
+            emotion_enabled: false,
+            emotion_threshold: 0.7,
+            probability: 1,
+          }),
+        }),
+      );
+    });
   });
 });

@@ -4,7 +4,7 @@
 状态机：validate → accompaniment → vocal → svc → mix → done / failed
 
 - 提交（submit）立即返回 song_id，后台 asyncio.create_task 执行流水线
-  （与 sovits_svc_trainer 的 asyncio.create_task 后台监控模式一致）；
+  （项目既有的后台任务模式）；
   阻塞步骤（fluidsynth 子进程 / 引擎合成 / 混音）以 asyncio.to_thread 包裹，
   不阻塞事件循环。
 - 任务状态内存注册表 + 逐步落盘 data/songs/<song_id>/metadata.json，
@@ -12,7 +12,7 @@
 - SVC 变声复用 SoVITSSVCInferer：未指定模型时跳过该步骤（skipped）；
   指定模型但推理失败 → 任务 failed 且错误可读。
   推理输出目录与 /api/audio-files/ 的 svc-results 类别映射目录一致
-  （均为 settings.sovits_svc.output_dir，见 Task 1.2 实施注记），
+  （均为 settings.sovits_svc.infer_output_dir，拆分变更注记），
   成品 final.wav 位于 songs 类别受控目录内，可直接通过音频服务访问。
 - 并发多任务互不干扰：song_id 为 uuid4 hex，SVC 输入文件命名带 song_id，
   避免多任务同 stem 导致推理输出 converted_<stem>.wav 互相覆盖。
@@ -373,9 +373,10 @@ class SongPipelineService:
         """
         SVC 变声步骤：复用 SoVITSSVCInferer，返回歌曲目录内的 vocal_svc.wav。
 
-        - 推理输出目录 = settings.sovits_svc.output_dir（与 /api/audio-files/ 的
-          svc-results 类别映射目录一致，Task 1.2 注记钉住），模型路径校验沿用
-          inferer 既有的 output_dir / sovits logs 白名单，不绕过安全约束；
+        - 推理输出目录 = settings.sovits_svc.infer_output_dir（与 /api/audio-files/ 的
+          svc-results 类别映射目录一致），模型路径校验沿用 inferer 既有的
+          output_dir / models_dir（ModelStation 模型目录，只读）/ sovits logs
+          白名单，不绕过安全约束；
         - allowed_audio_root 传 songs_dir 解析路径，使歌曲目录内的歌声输入
           通过 inferer 的路径校验；
         - 输入文件名带 song_id，避免并发任务同 stem 输出 converted_<stem>.wav
@@ -386,7 +387,8 @@ class SongPipelineService:
         svc_cfg = self._settings.sovits_svc
         inferer = SoVITSSVCInferer(
             model_path=svc_model,
-            output_dir=svc_cfg.output_dir,
+            output_dir=svc_cfg.infer_output_dir,
+            models_dir=svc_cfg.models_dir,
             so_vits_svc_dir=svc_cfg.so_vits_svc_dir,
             python_path=svc_cfg.python_path,
             allowed_audio_root=str(Path(self._settings.music.songs_dir).resolve()),
@@ -484,7 +486,7 @@ class SongPipelineService:
 
 
 # ---------------------------------------------------------------------------
-# 模块级单例（与 api/sovits_svc._get_trainer 的单例模式一致）
+# 模块级单例（项目既有的稳定单例模式）
 # ---------------------------------------------------------------------------
 
 _pipeline_instance: Optional[SongPipelineService] = None

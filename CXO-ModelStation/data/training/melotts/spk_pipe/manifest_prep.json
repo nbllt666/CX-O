@@ -1,0 +1,18 @@
+{
+  "version": 1,
+  "created_at": "2026-09-05T21:05:12+08:00",
+  "dataset_dir": "C:\\Users\\NBLLT666\\AppData\\Local\\Temp\\pytest-of-NBLLT666\\pytest-2040\\test_text_pipe_and_newline_san0\\data\\training\\sovits_svc\\raw\\spk_pipe",
+  "speaker_name": "spk_pipe",
+  "language": "ZH",
+  "val_ratio": 0.05,
+  "total": 6,
+  "used": 6,
+  "excluded_no_text": 0,
+  "excluded_missing_file": 0,
+  "train_count": 5,
+  "val_count": 1,
+  "split_note": "按 95%/5% 切分",
+  "train_file": "C:\\CX-O\\CXO-ModelStation\\data\\training\\melotts\\spk_pipe\\train.txt",
+  "val_file": "C:\\CX-O\\CXO-ModelStation\\data\\training\\melotts\\spk_pipe\\val.txt",
+  "metadata_file": "C:\\CX-O\\CXO-ModelStation\\data\\training\\melotts\\spk_pipe\\metadata.list"
+}

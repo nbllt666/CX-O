@@ -303,8 +303,9 @@ log.txt
 # ----------------------------------------
 CosyVoice-main/
 LLM_Live2D-master/
-so-vits-svc-4.1-Stable/
-VoxCPM-main/
+# 2026-09-05 自包含化：so-vits-svc-4.1-Stable 与 VoxCPM-main 已迁入
+# CXO-ModelStation/engines/，原根目录两条排除规则删除，改为引擎总排除
+CXO-ModelStation/engines/
 vllm-gemma4/
 weaviate-embeddings/
 CXHMS/

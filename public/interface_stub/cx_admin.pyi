@@ -1,6 +1,6 @@
 """CX-O 管理面（CX-A）接口契约（core/admin/* + api/routers/admin.py）。
 
-契约版本: 1.0.2（PATCH，enhance-cxfc-admin-and-integrate-dream：登记 prompt target / preview action 只读能力，AdminControlPlane.dispatch 与 POST /api/admin/prompt/preview、GET/PUT /api/admin/model-context 新端点，见 spec.md）
+契约版本: 1.1.0（MINOR，enhance-admin-telemetry：登记 GET /admin/telemetry 遥测聚合、GET /admin/config-whitelist 白名单边界回显、PUT /admin/logging/level 日志热调三端点；config.update 白名单扩展 limits.context.*/limits.memory.*/logging.level/system.debug/executor 3 字段/autonomy·dream 标量节；AdminAuth 安全计数器；见 spec.md）
 
 所有异常契约：调用方必须处理约定的异常。
 错误码枚举（统一字符串）：ADMIN_DISABLED / ADMIN_AUTH_FAILED / ADMIN_FORBIDDEN /

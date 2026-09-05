@@ -38,6 +38,20 @@
       "hr_stability_threshold": {"type": "number", "minimum": 0, "default": 6.0, "description": "窗口心率标准差上限（稳定判定）"},
       "base_hr_learning": {"type": "boolean", "default": true, "description": "清醒基线自学习开关（窗口高百分位缓慢更新，持久化于 store）"},
       "store_raw_hr": {"type": "boolean", "enum": [false], "default": false, "description": "原始心率是否落盘（隐私红线 R6：强制 false，写 true 抛校验错误，拒绝保存）"}
+    }},
+    "trigger": {"type": "object", "additionalProperties": false, "description": "梦境触发闸门配置（默认零回归：emotion_enabled=false 不做情绪查询；probability=1.0 恒命中）", "properties": {
+      "emotion_enabled": {"type": "boolean", "default": false, "description": "情绪阈值触发闸门开关：启用后仅当最近窗口内事件情绪峰值达标才允许触发梦境会话"},
+      "emotion_threshold": {"type": "number", "minimum": 0, "maximum": 1, "default": 0.7, "description": "情绪峰值阈值：窗口内 MAX(ABS(emotion_score)) ≥ 此值视为达标"},
+      "emotion_window_hours": {"type": "integer", "minimum": 1, "default": 24, "description": "最近事件回看窗口（小时）"},
+      "emotion_min_events": {"type": "integer", "minimum": 1, "default": 1, "description": "窗口内最少事件数：空窗或事件数不足视为不满足情绪条件"},
+      "probability": {"type": "number", "minimum": 0, "maximum": 1, "default": 1.0, "description": "触发概率门：情绪闸门（若启用）通过后 random() < probability 才进入梦境会话，1.0 表示条件满足必触发"}
+    }},
+    "sleep_confirmation": {"type": "object", "additionalProperties": false, "description": "休眠前 LLM 意图确认配置（对齐 DreamSleepConfirmationSection）", "properties": {
+      "enabled": {"type": "boolean", "default": true, "description": "入睡 LLM 确认闸门开关"},
+      "model": {"type": "string", "default": "summary", "description": "确认所用模型槽位名"},
+      "timeout_sec": {"type": "number", "minimum": 0, "default": 10.0, "description": "确认调用超时（秒）"},
+      "prompt_template": {"type": "string", "default": "", "description": "确认提示词模板（空串用内置默认）"},
+      "cooldown_seconds": {"type": "integer", "minimum": 0, "default": 1800, "description": "确认冷却间隔（秒），防高频确认"}
     }}
   }
 }

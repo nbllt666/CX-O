@@ -1,12 +1,12 @@
 /**
- * voiceworkstation 域客户端：音频工作站统一客户端。
- * 端点面对齐 CX-O-Frontend clients/voiceworkstation.ts：
- * - VoxCPM：/api/voxcpm/batch-dataset[/{task_id}]（批量 SVC 训练数据生成）
- * - So-VITS-SVC：/api/sovits-svc/preprocess、/train、/stop、/status、/models、/infer、/datasets CRUD
+ * voiceworkstation 域客户端：作曲/翻唱CXFC 服务客户端（VWS 8200）。
+ * 端点面对齐 split-audio-workstation-cxfc-modelstation 瘦身后的服务边界：
+ * - 受控上传：POST /api/audio-uploads（翻唱音频入口，multipart 字段 file）
+ * - So-VITS-SVC：/api/sovits-svc/models（只读）、/api/sovits-svc/infer（翻唱变声）
  * - 音乐：/api/music/score/validate、/import-musicxml、/synthesize、/tasks/{id}、/songs[/{id}]
  *
- * 说明：F5-TTS / Orpheus 引擎已随 Qwen3 TTS 迁移移除；VoxCPM 单条参考音频生成
- * 亦随 Task 7 移除，仅保留 voxcpm 批量数据集引擎。
+ * 说明：训练域（preprocess/train/stop/status/datasets/voxcpm batch-dataset/workflow）
+ * 已整体迁至 CXO-ModelStation（8300），由模型工作站独立前端承接，本客户端不再提供。
  */
 import { getVoiceWsClient, getVoiceWorkstationUrl, voiceWorkstationRequest } from '../base';
 
@@ -19,44 +19,13 @@ export interface VoiceWsAudioResult {
   audio_url: string;
 }
 
-// ── VoxCPM 批量数据集 ──
+// ── 受控上传 ──
 
-export interface BatchDatasetTextItem {
-  text: string;
-  control?: string;
-}
-
-/** 批量数据集生成的 VoxCPM 模式（单条参考音频生成已随 Task 7 移除） */
-export type VoxCPMBatchMode = 'design' | 'controllable_clone' | 'ultimate_clone';
-
-export interface BatchDatasetRequest {
-  speaker_name: string;
-  texts: BatchDatasetTextItem[];
-  mode?: VoxCPMBatchMode;
-  control?: string;
-  reference_audio_path?: string;
-  prompt_audio_path?: string;
-  prompt_text?: string;
-  cfg_value?: number;
-  inference_timesteps?: number;
-}
-
-export interface BatchDatasetTask {
-  task_id: string;
-  speaker_name: string;
-  dataset_dir: string;
-  mode: string;
-  engine: string;
-  status: string; // pending / running / completed / failed
-  total: number;
-  done: number;
-  skipped: number;
-  failed: number;
-  current_text: string | null;
-  error: string | null;
-  failures: { index: number; text: string; error: string }[];
-  created_at: string;
-  finished_at: string | null;
+/** POST /api/audio-uploads 响应：audio_path 为落盘绝对路径，可直接作为 infer 的 audio_path 入参 */
+export interface AudioUploadResult {
+  status: string;
+  filename: string;
+  audio_path: string;
 }
 
 // ── So-VITS-SVC ──
@@ -69,43 +38,12 @@ export interface SVCModel {
   d_model: string | null;
 }
 
-export interface SVCTrainStatus {
-  task_id: string | null;
-  status: string; // idle / running / stopped / completed / failed
-  progress: number;
-  epoch: number;
-  total_epochs: number;
-  message: string;
-  models: SVCModel[];
-}
-
-export interface SVCPreprocessRequest {
-  training_data_dir: string;
-  speaker_name: string;
-}
-
-export interface SVCTrainRequest {
-  training_data_dir?: string;
-  epochs: number;
-  batch_size: number;
-  learning_rate: number;
-  output_name?: string;
-}
-
 export interface SVCInferRequest {
   audio_path: string;
   model_path?: string;
   speaker_id?: number;
   transpose?: number;
   cluster_model_path?: string;
-}
-
-export interface SVCDataset {
-  name: string;
-  file_count: number;
-  total_size_bytes: number;
-  created_at: string;
-  has_manifest: boolean;
 }
 
 // ── 音乐 ──
@@ -170,35 +108,19 @@ export function getVoiceWorkstationAudioUrl(audioUrl: string): string {
 }
 
 export const voiceworkstationApi = {
-  // ── VoxCPM 批量数据集 ──
+  // ── 受控上传 ──
 
-  submitVoxCPMBatchDataset(data: BatchDatasetRequest): Promise<{ status: string; task_id: string; total: number }> {
-    return voiceWorkstationRequest({ url: '/api/voxcpm/batch-dataset', method: 'POST', data });
-  },
-
-  getVoxCPMBatchDatasetTask(taskId: string): Promise<BatchDatasetTask> {
-    return voiceWorkstationRequest<BatchDatasetTask>({
-      url: `/api/voxcpm/batch-dataset/${encodeURIComponent(taskId)}`,
+  /** 本地音频上传（multipart 字段 file），落盘 infer 白名单根，返回 audio_path 可直接推理 */
+  async uploadAudio(file: File): Promise<AudioUploadResult> {
+    const formData = new FormData();
+    formData.append('file', file);
+    const response = await getVoiceWsClient().post<AudioUploadResult>('/api/audio-uploads', formData, {
+      headers: { 'Content-Type': 'multipart/form-data' },
     });
+    return response.data;
   },
 
-  // ── So-VITS-SVC ──
-
-  sovitsSVCPreprocess(data: SVCPreprocessRequest): Promise<{ status: string; results: Record<string, unknown> }> {
-    return voiceWorkstationRequest({ url: '/api/sovits-svc/preprocess', method: 'POST', data });
-  },
-
-  startSoVITSSVCTrain(data: SVCTrainRequest): Promise<{ status: string; task_id: string; message: string }> {
-    return voiceWorkstationRequest({ url: '/api/sovits-svc/train', method: 'POST', data });
-  },
-
-  stopSoVITSSVCTrain(): Promise<{ status: string; message: string }> {
-    return voiceWorkstationRequest({ url: '/api/sovits-svc/stop', method: 'POST' });
-  },
-
-  getSoVITSSVCStatus(): Promise<SVCTrainStatus> {
-    return voiceWorkstationRequest<SVCTrainStatus>({ url: '/api/sovits-svc/status' });
-  },
+  // ── So-VITS-SVC（只读模型列表 + 翻唱推理）──
 
   listSoVITSSVCModels(): Promise<{ status: string; models: SVCModel[] }> {
     return voiceWorkstationRequest({ url: '/api/sovits-svc/models' });
@@ -206,41 +128,6 @@ export const voiceworkstationApi = {
 
   sovitsSVCInfer(data: SVCInferRequest): Promise<VoiceWsAudioResult> {
     return voiceWorkstationRequest<VoiceWsAudioResult>({ url: '/api/sovits-svc/infer', method: 'POST', data });
-  },
-
-  // ── SVC 数据集管理 ──
-
-  listSVCDatasets(): Promise<{ status: string; datasets: SVCDataset[] }> {
-    return voiceWorkstationRequest({ url: '/api/sovits-svc/datasets' });
-  },
-
-  async importSVCDataset(speakerName: string, files: File[]): Promise<{
-    status: string;
-    name: string;
-    imported: number;
-    files: string[];
-    skipped: string[];
-  }> {
-    const formData = new FormData();
-    formData.append('speaker_name', speakerName);
-    files.forEach((f) => formData.append('files', f));
-    const response = await getVoiceWsClient().post<{
-      status: string;
-      name: string;
-      imported: number;
-      files: string[];
-      skipped: string[];
-    }>('/api/sovits-svc/datasets/import', formData, {
-      headers: { 'Content-Type': 'multipart/form-data' },
-    });
-    return response.data;
-  },
-
-  deleteSVCDataset(speakerName: string): Promise<{ status: string; message: string }> {
-    return voiceWorkstationRequest({
-      url: `/api/sovits-svc/datasets/${encodeURIComponent(speakerName)}`,
-      method: 'DELETE',
-    });
   },
 
   // ── 音乐 ──

@@ -36,6 +36,15 @@ REQUIRES_RESTART: Dict[str, bool] = {
     # 端点自身的引擎 start/stop 与 manager 同步逻辑承担（互不影响）。
     "autonomy": True,
     "dream": True,
+    # 管理面白名单扩展（spec enhance-admin-telemetry 三）：executor 线程池/信号量
+    # 在进程装配期构建（io_pool_size 等），保守登记需重启；limits 节整节保守登记
+    # （其中 context/memory 子字段经管理面 config.update 修改后 build_messages
+    # 每次读 settings 实际热生效，此处为整节语义标注，与 apply_section/前端
+    # 提示口径统一）。
+    "executor": True,
+    "limits": True,
+    # logging 不登记（get 默认 False）：level 走管理面 config.update 的
+    # hot_applied 即时钩子；其余需重启字段（file/max_bytes 等）不在白名单内
 }
 
 

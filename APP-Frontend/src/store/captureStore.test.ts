@@ -1,6 +1,7 @@
 /**
  * captureStore 单测（Task 4 / Task 6 共享契约）。
  * 覆盖：默认态、视频叙事开关 videoModeEnabled 的 setter 与持久化、
+ * 帧筛选开关 frameFilterEnabled 的 setter 与持久化（spec add-vlm-frame-filter-face-match Task 5）、
  * 旧持久化未知 frameMode 的安全回退，以及既有字段默认值回归。
  */
 import { beforeEach, describe, expect, it } from 'vitest';
@@ -13,6 +14,7 @@ function resetStore() {
     cameraActive: false,
     visionEnabled: false,
     videoModeEnabled: false,
+    frameFilterEnabled: false,
     frameMode: 'interval',
     frameIntervalSec: 5,
   });
@@ -60,6 +62,24 @@ describe('videoModeEnabled（视频叙事开关）', () => {
   });
 });
 
+describe('frameFilterEnabled（帧筛选开关，Task 5）', () => {
+  it('默认 frameFilterEnabled === false（关闭=现状直通）', () => {
+    expect(useCaptureStore.getState().frameFilterEnabled).toBe(false);
+  });
+
+  it('setFrameFilterEnabled(true) 后值变更', () => {
+    useCaptureStore.getState().setFrameFilterEnabled(true);
+    expect(useCaptureStore.getState().frameFilterEnabled).toBe(true);
+    useCaptureStore.getState().setFrameFilterEnabled(false);
+    expect(useCaptureStore.getState().frameFilterEnabled).toBe(false);
+  });
+
+  it('持久化 partialize 纳入 frameFilterEnabled', () => {
+    useCaptureStore.getState().setFrameFilterEnabled(true);
+    expect(readPersistedState().frameFilterEnabled).toBe(true);
+  });
+});
+
 describe('persist merge（旧持久化兼容）', () => {
   it('未知 frameMode 安全回退 interval', async () => {
     localStorage.setItem(
@@ -79,6 +99,25 @@ describe('persist merge（旧持久化兼容）', () => {
     );
     await useCaptureStore.persist.rehydrate();
     expect(useCaptureStore.getState().videoModeEnabled).toBe(true);
+  });
+
+  it('merge 纳入 frameFilterEnabled（持久化 true 覆盖默认 false，Task 5）', async () => {
+    useCaptureStore.getState().setFrameFilterEnabled(false);
+    localStorage.setItem(
+      CAPTURE_STORE_NAME,
+      JSON.stringify({ state: { frameFilterEnabled: true }, version: 0 }),
+    );
+    await useCaptureStore.persist.rehydrate();
+    expect(useCaptureStore.getState().frameFilterEnabled).toBe(true);
+  });
+
+  it('merge 对缺失 frameFilterEnabled 的旧持久化回退默认 false', async () => {
+    localStorage.setItem(
+      CAPTURE_STORE_NAME,
+      JSON.stringify({ state: { visionEnabled: true }, version: 0 }),
+    );
+    await useCaptureStore.persist.rehydrate();
+    expect(useCaptureStore.getState().frameFilterEnabled).toBe(false);
   });
 
   it('合法 adaptive 档经 merge 保留', async () => {

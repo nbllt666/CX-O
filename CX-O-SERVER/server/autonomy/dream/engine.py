@@ -10,6 +10,9 @@ DreamEngine 串联 采集 → 联想生成 → D7 确定性闸门过滤 → 缓�
   或窗口外 S4 显式睡眠语短路 ASLEEP → 触发 run_session（冷却 30min 防高频）；
   Task 3：注入 auto_summarizer 时改走"入睡 LLM 确认闸门 → 首步自动摘要 →
   梦境会话"的入睡流程（确认拒绝回退 DROWSY 并跳过本轮）
+  Task 4 触发闸门：边沿 / Sensor 触发点前置情绪峰值闸门（每轮循环评估一次
+  并缓存）与触发概率闸门（触发点即时 roll）；默认 emotion_enabled=False /
+  probability=1.0 零回归
 - 唤醒窗口进入 → create_task(purge_job.run()) + 可选 consolidator.surface()（surface_on_wake）
 - 每 6 小时兜底 purge
 - 任何异常被捕获隔离并记日志，绝不影响主服务与语音链路
@@ -24,6 +27,7 @@ from __future__ import annotations
 import asyncio
 import inspect
 import logging
+import random
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 
@@ -150,6 +154,10 @@ class DreamEngine:
         self._last_session_at: Optional[str] = None
         # 最近一次会话触发时刻（窗口边沿 / SleepSensor 确认均记录，供冷却判定）
         self._last_trigger_at: Optional[datetime] = None
+        # Task 4 触发闸门缓存：情绪闸门每轮循环评估一次（None=尚未评估，
+        # 直调触发点时视为通过）；概率闸门在触发点即时 roll，不缓存
+        self._emotion_gate_cache: Optional[bool] = None
+        self._emotion_gate_detail: str = ""
         self._stats: Dict[str, int] = {
             "sessions": 0,
             "generated": 0,
@@ -306,6 +314,9 @@ class DreamEngine:
         - 睡眠窗口进入 → create_task(run_session)，状态 dreaming，结束后回 idle
         - SleepSensor 生理/行为确认（注入时）：窗口内 ASLEEP 或 S4 短路 → 触发
           run_session（冷却 30min 防高频）；无 sleep_sensor 时保持纯时间窗口
+        - Task 4 触发闸门：每轮评估情绪峰值闸门并缓存；边沿/Sensor 触发点依次
+          检查情绪闸门（读缓存）与触发概率闸门（即时 roll），未通过跳过本轮
+          （不进入入睡流程、不更新 _last_trigger_at）
         - 唤醒窗口进入 → create_task(purge_job.run()) + 可选 consolidator.surface()
         - 每 6 小时兜底 purge
         - config.enabled 关闭后退出
@@ -325,9 +336,16 @@ class DreamEngine:
                     except Exception as e:
                         logger.warning("SleepSensor 刷新异常（已隔离，跳过本轮刷新）: %s", e)
 
+                # Task 4：每轮评估情绪触发闸门并缓存（emotion_enabled=False 时
+                # 零查询直接通过；评估异常已在方法内隔离，不阻断循环）
+                self._emotion_gate_cache = await self._passes_emotion_gate()
+
                 # 睡眠窗口进入 → 异步发起梦境会话（不阻塞循环）。
                 # M-E 修复：仅空闲态且冷却已过才进入——状态非 idle（例如
                 # SleepSensor 已开跑的会话/唤醒清扫未回位）时跳过，防止双开。
+                # Task 4：冷却之后依次检查情绪闸门（读缓存）与触发概率闸门
+                # （即时 roll），未通过跳过本轮（不置 dreaming、不更新
+                # _last_trigger_at）。
                 if sleeping and prev_sleeping is not True:
                     if self._status != _STATUS_IDLE:
                         logger.info(
@@ -336,6 +354,16 @@ class DreamEngine:
                         )
                     elif not self._cooldown_passed(now):
                         logger.info("睡眠窗口边沿触发冷却未到，跳过本轮梦境会话")
+                    elif self._emotion_gate_cache is False:
+                        logger.info(
+                            "情绪闸门未通过，跳过本轮梦境会话（%s）",
+                            self._emotion_gate_detail,
+                        )
+                    elif not self._passes_probability_roll():
+                        logger.info(
+                            "触发概率未命中（probability=%.2f），跳过本轮梦境会话",
+                            self.config.trigger.probability,
+                        )
                     else:
                         self._status = _STATUS_DREAMING
                         self._last_trigger_at = now
@@ -371,6 +399,61 @@ class DreamEngine:
                 break
         logger.info("梦境引擎后台循环退出")
 
+    # ================================================================ 触发闸门（Task 4）
+    async def _passes_emotion_gate(self) -> bool:
+        """情绪触发闸门：每轮循环评估一次并缓存（Task 4）。
+
+        - trigger.emotion_enabled=False → 直接通过，不发起任何 collector 查询
+          （零回归：默认配置下决策路径与旧版一致）
+        - 启用时调 collect_recent_emotion_peak(_DEFAULT_AGENT_ID, window_hours)，
+          判据 peak >= emotion_threshold 且 count >= emotion_min_events
+        - collector 未注入 / 缺少情绪峰值接口 / 查询异常 → 降级为不通过
+          （False + WARNING 日志），绝不阻断主循环
+        - 结果写入 self._emotion_gate_cache / self._emotion_gate_detail
+          （detail 记录 peak/threshold/count，供跳过日志定位原因）
+        """
+        trigger = self.config.trigger
+        if not trigger.emotion_enabled:
+            self._emotion_gate_cache = True
+            self._emotion_gate_detail = "emotion_enabled=False（闸门关闭）"
+            return True
+        collector = self._collector
+        if collector is None or not callable(
+            getattr(collector, "collect_recent_emotion_peak", None)
+        ):
+            self._emotion_gate_cache = False
+            self._emotion_gate_detail = "collector 未注入或缺少情绪峰值接口"
+            logger.warning(
+                "情绪闸门：collector 未注入或缺少 collect_recent_emotion_peak，按不通过处理"
+            )
+            return False
+        try:
+            result = await collector.collect_recent_emotion_peak(
+                _DEFAULT_AGENT_ID, trigger.emotion_window_hours
+            )
+            peak = float(result.get("peak", 0.0) or 0.0)
+            count = int(result.get("count", 0) or 0)
+        except Exception as e:
+            self._emotion_gate_cache = False
+            self._emotion_gate_detail = f"情绪峰值查询异常: {e}"
+            logger.warning("情绪闸门查询异常，降级为不通过: %s", e)
+            return False
+        passed = peak >= trigger.emotion_threshold and count >= trigger.emotion_min_events
+        self._emotion_gate_detail = (
+            f"peak={peak:.2f}, threshold={trigger.emotion_threshold:.2f}, "
+            f"count={count}, min_events={trigger.emotion_min_events}"
+        )
+        self._emotion_gate_cache = passed
+        return passed
+
+    def _passes_probability_roll(self) -> bool:
+        """触发概率闸门：触发点即时判定（Task 4）。
+
+        random() ∈ [0,1) < probability → 命中；probability=1.0 时恒命中
+        （random() < 1.0 恒成立，无需特判）。不缓存，每个触发点独立 roll。
+        """
+        return random.random() < float(self.config.trigger.probability)
+
     # ================================================================ SleepSensor 触发
     def _maybe_trigger_by_sensor(self, now: datetime, sleeping: bool) -> None:
         """SleepSensor 生理/行为确认触发梦境会话（异常隔离，冷却防高频）。
@@ -381,11 +464,27 @@ class DreamEngine:
         - 注入 auto_summarizer 时走"入睡 LLM 确认闸门 + 首步自动摘要"入睡流程：
             确认拒绝 → sleep_sensor 回退非 ASLEEP（DROWSY）并跳过本轮；确认通过 →
             ENTERING_SLEEP，先同步等待自动摘要，完毕后再进入梦境会话（置 dreaming）
+        - Task 4 触发闸门：冷却之后、读取传感器快照之前依次检查情绪峰值闸门
+          （读每轮缓存）与触发概率闸门（即时 roll）；未通过直接 return
+          （不进入入睡流程、不更新 _last_trigger_at）
         - snapshot() 异常被捕获隔离，不影响主循环
         """
         if self._status == _STATUS_DREAMING:
             return
         if not self._cooldown_passed(now):
+            return
+        # Task 4：触发闸门（情绪读缓存：None/True 视为通过，False 拦截；
+        # 概率即时 roll）。未通过不读快照、不触发、不记触发时刻。
+        if self._emotion_gate_cache is False:
+            logger.info(
+                "情绪闸门未通过，跳过本轮梦境会话（%s）", self._emotion_gate_detail
+            )
+            return
+        if not self._passes_probability_roll():
+            logger.info(
+                "触发概率未命中（probability=%.2f），跳过本轮梦境会话",
+                self.config.trigger.probability,
+            )
             return
         try:
             snapshot = self._sleep_sensor.snapshot()

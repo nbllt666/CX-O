@@ -73,6 +73,37 @@ class DreamMaterialCollector:
             agent_id=agent_id,
         )
 
+    # ------------------------------------------------------------- 最近事件情绪峰值
+    async def collect_recent_emotion_peak(self, agent_id: str, window_hours: int = 24) -> Dict:
+        """采集最近事件窗口内的情绪峰值（供 DreamEngine 情绪触发闸门使用）。
+
+        查询最近 window_hours 小时内（不含梦境记忆）的最大情绪绝对值与事件数。
+        workspace_id 硬编码为 "default"，对齐既有 _collect_emotion_baseline 行为；
+        agent_id 参数保留以对齐采集器接口签名（当前查询按 workspace 维度聚合）。
+
+        Args:
+            agent_id: Agent ID（接口对齐保留参数）
+            window_hours: 回看窗口（小时），默认 24
+
+        Returns:
+            {"peak": float, "count": int}；查询失败或返回非法时
+            降级为 {"peak": 0.0, "count": 0}（即"不满足触发条件"）
+        """
+        try:
+            since_iso = (datetime.now() - timedelta(hours=window_hours)).isoformat()
+            result = await asyncio.to_thread(
+                self._memory_manager.get_emotion_peak_since, since_iso, "default"
+            )
+            if isinstance(result, dict) and "peak" in result and "count" in result:
+                return result
+            logger.warning(
+                f"梦境素材采集：情绪峰值返回格式非法，降级为不满足条件: {result!r}"
+            )
+            return {"peak": 0.0, "count": 0}
+        except Exception as e:
+            logger.warning(f"梦境素材采集：最近事件情绪峰值查询失败，降级为不满足条件: {e}")
+            return {"peak": 0.0, "count": 0}
+
     # ------------------------------------------------------------- 边缘记忆
     async def _collect_edge_memories(self, agent_id: str) -> List[Dict]:
         window_days = max(int(self._config.material_window_days), 0)

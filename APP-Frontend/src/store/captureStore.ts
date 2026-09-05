@@ -39,6 +39,8 @@ interface CaptureState {
   visionEnabled: boolean;
   /** 重量级"视频叙事"管线开关：与 visionEnabled 图片轮询彼此独立（持久化，默认关，性能考虑） */
   videoModeEnabled: boolean;
+  /** 帧筛选开关：开启后单帧先经 /api/vision/frame 三态判定再分流（持久化，默认关，对齐 videoModeEnabled 范式） */
+  frameFilterEnabled: boolean;
   /** 画面帧发送节奏：手动点发 / 定时抽帧 / 自适应（持久化） */
   frameMode: CaptureFrameMode;
   /** 定时抽帧间隔秒数 1~60（持久化） */
@@ -47,6 +49,7 @@ interface CaptureState {
   setCameraActive: (v: boolean) => void;
   setVisionEnabled: (v: boolean) => void;
   setVideoModeEnabled: (v: boolean) => void;
+  setFrameFilterEnabled: (v: boolean) => void;
   setFrameMode: (v: CaptureFrameMode) => void;
   setFrameIntervalSec: (v: number) => void;
 }
@@ -58,6 +61,7 @@ export const useCaptureStore = create<CaptureState>()(
       cameraActive: false,
       visionEnabled: false,
       videoModeEnabled: false,
+      frameFilterEnabled: false,
       frameMode: 'interval',
       frameIntervalSec: 5,
 
@@ -65,6 +69,7 @@ export const useCaptureStore = create<CaptureState>()(
       setCameraActive: (v) => set({ cameraActive: v }),
       setVisionEnabled: (v) => set({ visionEnabled: v }),
       setVideoModeEnabled: (v) => set({ videoModeEnabled: v }),
+      setFrameFilterEnabled: (v) => set({ frameFilterEnabled: v }),
       setFrameMode: (v) => set({ frameMode: v }),
       setFrameIntervalSec: (v) => set({ frameIntervalSec: clampFrameIntervalSec(v) }),
     }),
@@ -75,6 +80,7 @@ export const useCaptureStore = create<CaptureState>()(
       partialize: (state) => ({
         visionEnabled: state.visionEnabled,
         videoModeEnabled: state.videoModeEnabled,
+        frameFilterEnabled: state.frameFilterEnabled,
         frameMode: state.frameMode,
         frameIntervalSec: state.frameIntervalSec,
       }),
@@ -84,6 +90,7 @@ export const useCaptureStore = create<CaptureState>()(
           ...current,
           visionEnabled: p.visionEnabled ?? current.visionEnabled,
           videoModeEnabled: p.videoModeEnabled ?? current.videoModeEnabled,
+          frameFilterEnabled: p.frameFilterEnabled ?? current.frameFilterEnabled,
           // 旧持久化可能写入未知 frameMode，安全回退 interval，避免下游收到未定义档位
           frameMode: isCaptureFrameMode(p.frameMode) ? p.frameMode : 'interval',
           frameIntervalSec: clampFrameIntervalSec(p.frameIntervalSec ?? current.frameIntervalSec),

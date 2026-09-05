@@ -42,7 +42,7 @@ _SCORE_BY_RESULT: Dict[str, float] = {
 _DEFAULT_SCORE = 0.5
 
 # Tuner 地址解析：环境 CXO_TUNER_URL → 配置 evolution.host → 缺省
-_DEFAULT_TUNER_URL = "http://localhost:8300"
+_DEFAULT_TUNER_URL = "http://localhost:8310"
 _TUNER_ENV_KEY = "CXO_TUNER_URL"
 _TUNER_FEEDBACK_PATH = "/api/v1/feedback"
 
@@ -62,7 +62,7 @@ def resolve_tuner_url() -> str:
     优先级：
         1. 环境变量 CXO_TUNER_URL
         2. server.config settings.config.evolution.host（CXOTunerConfig.host）
-        3. 缺省 http://localhost:8300
+        3. 缺省 http://localhost:8310
 
     Returns:
         str: 去掉末尾斜杠的 Tuner 基础 URL

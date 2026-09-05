@@ -137,6 +137,12 @@ class AdminManifest:
             # 端点随 admin 面启用即可用，不依赖 services 组件就绪
             "prompt_preview": True,
             "model_context": True,
+            # 管理面遥测增强（spec enhance-admin-telemetry 一/四）：
+            # telemetry 聚合查看、config-whitelist 边界回显（readonly）、
+            # logging-level 热调（operator）——端点随 admin 面启用即可用
+            "telemetry": True,
+            "config_whitelist": True,
+            "logging_level": True,
         }
 
     def detect_models(self) -> Dict[str, str]:

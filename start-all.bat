@@ -65,12 +65,38 @@ for /L %%i in (1,1,30) do (
     if not errorlevel 1 (
         echo [CX-O-VoiceWorkStation 已启动]
         call :record_pid 8200
-        goto :start_frontend
+        goto :start_modelstation
     )
 )
 echo [警告] CX-O-VoiceWorkStation 启动超时，继续启动其他服务...
 REM R8-04：超时路径补记 PID——服务可能延迟启动成功，若此刻端口已监听则纳入停止管理
 call :record_pid 8200
+
+REM ==========================================
+REM 启动 CXO-ModelStation（模型训练工作站）
+REM 单 worker 约束：训练状态进程内缓存（与原 VWS 约定一致），禁止多 worker 部署
+REM 生产模式：frontend/dist 已由后端自动静态托管，无需单独拉起前端
+REM ==========================================
+:start_modelstation
+echo.
+echo [启动 CXO-ModelStation - 端口 8300]
+cd CXO-ModelStation
+start "CXO-ModelStation" cmd /c "start.bat"
+cd ..
+
+echo [等待 CXO-ModelStation 启动...]
+for /L %%i in (1,1,30) do (
+    ping -n 2 127.0.0.1 > nul 2>&1
+    netstat -an | findstr /c:":8300 " | findstr "LISTENING" > nul 2>&1
+    if not errorlevel 1 (
+        echo [CXO-ModelStation 已启动]
+        call :record_pid 8300
+        goto :start_frontend
+    )
+)
+echo [警告] CXO-ModelStation 启动超时，继续启动其他服务...
+REM R8-04：超时路径补记 PID——服务可能延迟启动成功，若此刻端口已监听则纳入停止管理
+call :record_pid 8300
 
 REM ==========================================
 REM 启动 APP-Frontend（浏览器模式，替代原 CX-O-Frontend）
@@ -105,7 +131,8 @@ echo.
 echo 服务地址:
 echo   - 前端:             http://localhost:3100
 echo   - CX-O-SERVER:      http://localhost:8000
-echo   - VoiceWorkStation: http://localhost:8200
+echo   - VoiceWorkStation: http://localhost:8200 （作曲/翻唱CXFC）
+echo   - ModelStation:     http://localhost:8300 （模型训练工作站，后端托管前端页面）
 echo.
 echo 按任意键打开浏览器...
 pause > nul

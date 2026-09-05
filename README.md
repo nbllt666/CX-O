@@ -16,7 +16,9 @@ CX-O 是一套面向二次元爱好者的 AI 人格化陪伴系统。它把虚�
 
 **虚拟主播直播** — 直接对接 OBS，拆分成形象源、弹幕源、字幕源、音频源四个独立浏览器源。开个直播间，让你的 AI 角色当主播，实时念弹幕、回观众消息。
 
-**声音克隆与训练** — 语音工作站提供从参考音频生成到 So-VITS-SVC 训练的完整流程。用你喜欢的声音素材训练专属音色，还能给 AI 角色用上。
+**声音克隆与翻唱** — 语音工作站（作曲/翻唱CXFC）提供翻唱变声：选好音色模型、上传一段你的音频、调一下变调，一键得到翻唱结果，还能让 AI 角色用这个声音说话。
+
+**模型工作站（独立训练站）** — So-VITS-SVC 训练全流程（数据集管理、批量语料生成、训练控制台、模型试听）搬到独立站点，训练重启不再影响作曲和聊天服务。用你喜欢的声音素材训练专属音色。
 
 **AI 作曲与歌声合成** — 写个歌谱就能生成带人声的歌曲。支持旋律编辑、和弦编排、MusicXML 导入，选好声库和变调参数就能合成成品。
 
@@ -66,7 +68,7 @@ python download_voxcpm_support.py
 
 **第三步：启动服务**
 
-一键入口（推荐）：双击运行项目根目录的 `start-all.bat`，会自动依次拉起 CX-O-SERVER（8000）、VoiceWorkStation（8200）、APP-Frontend（3100）并打开浏览器；按任意键可统一关闭全部服务。
+一键入口（推荐）：双击运行项目根目录的 `start-all.bat`，会自动依次拉起 CX-O-SERVER（8000）、VoiceWorkStation（8200）、ModelStation（8300）、APP-Frontend（3100）并打开浏览器；按任意键可统一关闭全部服务。
 
 也可以手动逐个启动：
 
@@ -79,7 +81,11 @@ cd CX-O-SERVER
 cd CX-O-VoiceWorkStation
 .\start.bat
 
-# 3. 启动前端（端口 3100）
+# 3. 启动模型工作站（端口 8300）
+cd CXO-ModelStation
+.\start.bat
+
+# 4. 启动前端（端口 3100）
 cd APP-Frontend
 .\start.bat browser
 ```
@@ -137,8 +143,9 @@ cd APP-Frontend
 CX-O/
 ├── APP-Frontend/           # 前端桌面应用（Electron，浏览器模式默认端口 3100）
 ├── CX-O-SERVER/            # 后端服务（FastAPI + WebSocket）
-├── CX-O-VoiceWorkStation/  # 语音工作站（声音克隆与训练）
-├── CXO-Tuner/              # 进化实验室（可选独立服务，自我进化，默认端口 8300）
+├── CX-O-VoiceWorkStation/  # 语音工作站（作曲/翻唱CXFC：作曲/歌曲合成/翻唱推理，端口 8200）
+├── CXO-ModelStation/       # 模型工作站（So-VITS-SVC 训练全链路，后端 8300，训练时前端由后端托管；engines/ 内含 so-vits-svc-4.1-Stable / VoxCPM-main / MeloTTS 三引擎，2026-09-05 自包含化迁入；独立部署见 CXO-ModelStation/DEPLOY.md）
+├── CXO-Tuner/              # 进化实验室（可选独立服务，自我进化，默认端口 8310——2026-09-05 起与模型工作站 8300 错开，可同启）
 ├── config/                 # 全局配置文件
 ├── docker/                 # Docker 镜像构建文件
 ├── docs/                   # 项目文档

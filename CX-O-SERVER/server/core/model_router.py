@@ -127,7 +127,7 @@ class ModelRouter:
         logger.info("初始化模型路由器...")
 
         # 初始化所有模型客户端
-        model_types = ["main", "summary", "memory"]
+        model_types = ["main", "summary", "memory", "dream"]
 
         for model_type in model_types:
             try:
@@ -209,7 +209,7 @@ class ModelRouter:
         """获取指定类型的模型客户端
 
         Args:
-            model_type: 模型类型 (main, summary, memory)
+            model_type: 模型类型 (main, summary, memory, dream)
 
         Returns:
             LLMClient实例或None
@@ -223,7 +223,7 @@ class ModelRouter:
         """获取指定类型的模型配置
 
         Args:
-            model_type: 模型类型 (main, summary, memory)
+            model_type: 模型类型 (main, summary, memory, dream)
 
         Returns:
             ModelConfig实例或None
@@ -316,7 +316,7 @@ class ModelRouter:
         Returns:
             所有模型状态字典
         """
-        model_types = ["main", "summary", "memory"]
+        model_types = ["main", "summary", "memory", "dream"]
 
         for model_type in model_types:
             await self.check_status(model_type)
@@ -374,6 +374,7 @@ class ModelRouter:
             "main": self.get_model_info("main"),
             "summary": self.get_model_info("summary"),
             "memory": self.get_model_info("memory"),
+            "dream": self.get_model_info("dream"),
         }
 
     async def reload_clients(self):
@@ -382,7 +383,7 @@ class ModelRouter:
         用于 LLM 配置变更后即时生效，无需重启服务。逐节 try-except，
         单节失败保留旧客户端可继续使用（尽力挽救），不中断整体重建。
         """
-        model_types = ["main", "summary", "memory"]
+        model_types = ["main", "summary", "memory", "dream"]
         new_clients: Dict[str, LLMClient] = {}
 
         for model_type in model_types:

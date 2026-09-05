@@ -1,0 +1,5 @@
+C:\Users\NBLLT666\AppData\Local\Temp\pytest-of-NBLLT666\pytest-2040\test_text_pipe_and_newline_san0\data\training\sovits_svc\raw\spk_pipe\0002.wav|spk_pipe|ZH|a b c
+C:\Users\NBLLT666\AppData\Local\Temp\pytest-of-NBLLT666\pytest-2040\test_text_pipe_and_newline_san0\data\training\sovits_svc\raw\spk_pipe\0003.wav|spk_pipe|ZH|a b c
+C:\Users\NBLLT666\AppData\Local\Temp\pytest-of-NBLLT666\pytest-2040\test_text_pipe_and_newline_san0\data\training\sovits_svc\raw\spk_pipe\0004.wav|spk_pipe|ZH|a b c
+C:\Users\NBLLT666\AppData\Local\Temp\pytest-of-NBLLT666\pytest-2040\test_text_pipe_and_newline_san0\data\training\sovits_svc\raw\spk_pipe\0005.wav|spk_pipe|ZH|a b c
+C:\Users\NBLLT666\AppData\Local\Temp\pytest-of-NBLLT666\pytest-2040\test_text_pipe_and_newline_san0\data\training\sovits_svc\raw\spk_pipe\0006.wav|spk_pipe|ZH|a b c

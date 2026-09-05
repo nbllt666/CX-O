@@ -1,0 +1,20 @@
+{
+  "draft_id": "80ce75b1cf69426ab3ac19b45a5e7fbb",
+  "score": {
+    "title": "未命名",
+    "bpm": 120,
+    "time_signature": "4/4",
+    "key": "C",
+    "melody": [
+      {
+        "pitch": "C4",
+        "beats": 4,
+        "lyric": ""
+      }
+    ],
+    "chords": [],
+    "accompaniment_tracks": []
+  },
+  "version": 0,
+  "updated_at": "2026-09-05T17:31:45+08:00"
+}

@@ -193,7 +193,7 @@ class TestEvolutionConfigAutoFill:
     def test_defaults_when_missing(self):
         cfg = CXOTunerConfig()
         assert cfg.enabled is False
-        assert cfg.host == "http://127.0.0.1:8300"
+        assert cfg.host == "http://127.0.0.1:8310"
         assert cfg.timeout == 10
         assert cfg.quality_reject_threshold == 0.3
         assert cfg.auto_push is False

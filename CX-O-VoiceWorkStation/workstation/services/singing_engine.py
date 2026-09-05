@@ -6,8 +6,8 @@
 - SingingEngine：抽象基类，定义 synthesize(score, voice_bank, output_path) -> Path；
 - MockSingingEngine：确定性正弦波歌声合成（标准库 wave/struct/math，无第三方依赖），
   用于开发、测试与 CI——同样输入产出字节级一致的合法 WAV；
-- DiffSingerEngine：以子进程方式调用外部 DiffSinger 部署（与 sovits_svc_trainer 相同的
-  子进程模式）；未部署（目录/解释器/声库缺失）时抛 SingingEngineError，逐项列出缺失项；
+- DiffSingerEngine：以子进程方式调用外部 DiffSinger 部署（项目既有的子进程模式）；
+  未部署（目录/解释器/声库缺失）时抛 SingingEngineError，逐项列出缺失项；
 - create_singing_engine(config)：按配置 music.singing_engine（mock / diffsinger）构造引擎。
 """
 from __future__ import annotations
@@ -202,7 +202,7 @@ def check_diffsinger_deployment(
 
 class DiffSingerEngine(SingingEngine):
     """
-    DiffSinger 歌声合成引擎：子进程调用外部部署（与 sovits_svc_trainer 同模式）。
+    DiffSinger 歌声合成引擎：子进程调用外部部署（项目既有的子进程模式）。
 
     构造时不做部署检查（允许先实例化再择时合成）；synthesize 时逐项检查，
     未部署抛 SingingEngineError 并列出全部缺失项与安装指引。

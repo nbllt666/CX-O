@@ -15,6 +15,8 @@ from .assistant_tools import (
 )
 from .task_tools import register_task_tools
 from .builtin import register_builtin_tools
+from .face_tool import register_face_tool
+from .voiceprint_tool import register_voiceprint_tool
 from .master_tools import (
     acp_connect,
     acp_create_group,
@@ -114,6 +116,7 @@ __all__ = [
     "MCPManager",
     "MCPServer",
     "register_builtin_tools",
+    "register_face_tool",
     "register_voiceprint_tool",
     # Master tools
     "register_master_tools",

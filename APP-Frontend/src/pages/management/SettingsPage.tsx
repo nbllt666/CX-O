@@ -936,12 +936,14 @@ function CaptureSection() {
   const cameraActive = useCaptureStore((s) => s.cameraActive);
   const visionEnabled = useCaptureStore((s) => s.visionEnabled);
   const videoModeEnabled = useCaptureStore((s) => s.videoModeEnabled);
+  const frameFilterEnabled = useCaptureStore((s) => s.frameFilterEnabled);
   const frameMode = useCaptureStore((s) => s.frameMode);
   const frameIntervalSec = useCaptureStore((s) => s.frameIntervalSec);
   const setScreenActive = useCaptureStore((s) => s.setScreenActive);
   const setCameraActive = useCaptureStore((s) => s.setCameraActive);
   const setVisionEnabled = useCaptureStore((s) => s.setVisionEnabled);
   const setVideoModeEnabled = useCaptureStore((s) => s.setVideoModeEnabled);
+  const setFrameFilterEnabled = useCaptureStore((s) => s.setFrameFilterEnabled);
   const setFrameMode = useCaptureStore((s) => s.setFrameMode);
   const setFrameIntervalSec = useCaptureStore((s) => s.setFrameIntervalSec);
 
@@ -966,6 +968,22 @@ function CaptureSection() {
   const handleVideoModeChange = (v: boolean) => {
     setVideoModeEnabled(v);
     void syncVideoModeBackend(v);
+  };
+
+  // 帧筛选开启时，尽力而为地把 vision_enhanced.frame_filter_enabled 同步到后端；
+  // 对齐 videoMode 先例：单向同步（关闭不回写 false）、失败静默，不弹错不阻塞 UI。
+  const syncFrameFilterBackend = async (enabled: boolean) => {
+    if (!enabled) return;
+    try {
+      await configApi.updateConfig('vision_enhanced', { frame_filter_enabled: true });
+    } catch {
+      // 尽力而为：后端不可达/写入失败时忽略，不影响本地开关状态
+    }
+  };
+
+  const handleFrameFilterChange = (v: boolean) => {
+    setFrameFilterEnabled(v);
+    void syncFrameFilterBackend(v);
   };
 
   const renderCaptureRow = (
@@ -1018,6 +1036,11 @@ function CaptureSection() {
       <p className="flex items-center gap-1.5 text-xs text-muted-foreground">
         <MonitorPlay className="h-3.5 w-3.5" />
         {t('settings.capture.videoModeDesc')}
+      </p>
+      {renderCaptureRow(t('settings.capture.frameFilter'), frameFilterEnabled, handleFrameFilterChange)}
+      <p className="flex items-center gap-1.5 text-xs text-muted-foreground">
+        <MonitorPlay className="h-3.5 w-3.5" />
+        {t('settings.capture.frameFilterDesc')}
       </p>
       {renderCaptureRow(t('settings.capture.screen'), screenActive, setScreenActive)}
       {renderCaptureRow(t('settings.capture.camera'), cameraActive, setCameraActive)}

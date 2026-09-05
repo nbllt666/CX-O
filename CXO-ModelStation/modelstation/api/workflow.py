@@ -41,7 +41,7 @@ def _get_sovits_trainer():
     """复用 sovits_svc 模块导出的共享单例，确保跨接口共享同一个
     SoVITSSVCTrainer 实例（含 `_preprocessed` 状态与运行中的训练进程），
     避免跨接口触发训练时误报 "Preprocessing must be completed"。"""
-    from workstation.api.sovits_svc import get_sovits_trainer
+    from modelstation.api.sovits_svc import get_sovits_trainer
 
     return get_sovits_trainer()
 
@@ -84,6 +84,15 @@ async def execute_step(step_id: str, request: Request):
             output = await _execute_inference(body)
         else:
             raise HTTPException(status_code=400, detail=f"Unknown step: {step_id}")
+    except HTTPException:
+        # 语义化错误（如训练互斥 409）原样透传，不吞为 500
+        logger.error(f"Workflow step {step_id} failed with HTTP error")
+        async with _workflow_lock:
+            step = _find_step(step_id)
+            if step is not None:
+                step["status"] = "error"
+                step["output"] = {"error": "step failed (see response detail)"}
+        raise
     except Exception as e:
         logger.error(f"Workflow step {step_id} failed: {e}")
         async with _workflow_lock:
@@ -127,6 +136,14 @@ async def _execute_train_prep(body: dict) -> dict:
 
 
 async def _execute_training(body: dict) -> dict:
+    from modelstation.api.sovits_svc import _training_conflict_detail, _update_train_status
+    from modelstation.services.training_mutex import (
+        TRAINING_SOVITS_SVC,
+        end_training,
+        try_begin_training,
+        update_training_task,
+    )
+
     trainer = _get_sovits_trainer()
 
     epochs = body.get("epochs", 10000)
@@ -135,20 +152,34 @@ async def _execute_training(body: dict) -> dict:
     output_name = body.get("output_name")
     speaker_name = body.get("speaker_name", "speaker")
 
-    task_id = await trainer.start_training(
-        epochs=epochs,
-        batch_size=batch_size,
-        learning_rate=learning_rate,
-        output_name=output_name,
-        speaker_name=speaker_name,
-    )
+    # 跨类型训练互斥：workflow 直调 trainer 的旁路封堵（与 /api/sovits-svc/train
+    # 消费同一共享原语）。task_id 先以 None 占位，start_training 返回后回填。
+    mutex_ok, mutex_current = try_begin_training(TRAINING_SOVITS_SVC, None)
+    if not mutex_ok:
+        raise HTTPException(status_code=409, detail=_training_conflict_detail(mutex_current))
+
+    try:
+        task_id = await trainer.start_training(
+            epochs=epochs,
+            batch_size=batch_size,
+            learning_rate=learning_rate,
+            output_name=output_name,
+            speaker_name=speaker_name,
+            # 与 API 路径一致：终态回调释放互斥（completed/failed）并同步共享状态 dict
+            progress_callback=lambda **kw: _update_train_status(**kw),
+        )
+    except Exception:
+        end_training(TRAINING_SOVITS_SVC)
+        raise
+
+    update_training_task(TRAINING_SOVITS_SVC, task_id)
 
     return {"task_id": task_id}
 
 
 async def _execute_inference(body: dict) -> dict:
-    from workstation.services.sovits_svc_infer import SoVITSSVCInferer
-    from workstation.config import get_settings
+    from modelstation.services.sovits_svc_infer import SoVITSSVCInferer
+    from modelstation.config import get_settings
 
     settings = get_settings()
 
@@ -160,9 +191,15 @@ async def _execute_inference(body: dict) -> dict:
 
     inferer = SoVITSSVCInferer(
         model_path=model_path,
-        output_dir=settings.sovits_svc.output_dir,
+        output_dir=settings.sovits_svc.audition_dir,
         so_vits_svc_dir=settings.sovits_svc.so_vits_svc_dir,
         python_path=settings.sovits_svc.python_path,
+        models_dir=settings.sovits_svc.models_dir,
+        # infer 输入白名单根 = 训练数据目录 ∪ data/input
+        allowed_audio_roots=[
+            settings.sovits_svc.training_data_dir,
+            settings.sovits_svc.input_dir,
+        ],
     )
 
     result_path = await inferer.infer(
@@ -192,6 +229,10 @@ async def reset_workflow():
         except Exception as e:
             # stop_training 失败不应阻塞 reset，仅记录告警
             logger.warning(f"reset_workflow: trainer.stop_training raised: {e}")
+        # 释放跨类型训练互斥（幂等；若终态回调已释放则无害）
+        from modelstation.services.training_mutex import TRAINING_SOVITS_SVC, end_training
+
+        end_training(TRAINING_SOVITS_SVC)
 
         for step in _workflow_state["steps"]:
             step["status"] = "pending"

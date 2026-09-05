@@ -22,6 +22,16 @@
     各进程队列、互不消费。若未来确需多 worker，须为**整条视觉链路**引入进程外共享
     （如 Redis 共享限流状态 + 外部队列），而不仅是护栏状态。
 
+帧筛选端点（POST /api/vision/frame，spec add-vlm-frame-filter-face-match T4.3）：
+    接收单帧画面（dataURL/base64，20MB 上限）+ agent_id/source/ts，流程 =
+    参数校验 → （camera 源且 face_match.enabled 时）人脸匹配得 face_labels →
+    camera 源覆盖写入最近帧单槽缓存（``frame_cache``，仅内存不落盘，face_tool
+    注册"眼前的人"的帧来源挂点）→ 独立小 VLM 三态筛选（forward/summarize/discard，
+    判定与 summarize 摘要沉淀见 ``server/core/vision/frame_filter.py``）→ 返回判定。
+    ``frame_filter_enabled=false`` 时立即返回 forward（零筛选开销，不调用任何模型）。
+    本端点不入队不落盘，与 /clip 的限流/冷却/队列机制完全独立（决策点 #13：不加
+    限流）；帧频率由前端 frameThrottle 控制。
+
 路由注册：见 ``server/api/app.py`` ``include_router(vision.router, prefix="/api")``。
 """
 from __future__ import annotations
@@ -32,17 +42,20 @@ import tempfile
 import uuid
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Literal, Optional, Union
 
 import time as _time
 from collections import deque
 from typing import Deque, Dict, Tuple
 
 from fastapi import APIRouter, File, Form, HTTPException, UploadFile
+from pydantic import BaseModel, Field
 
 from server.config import get_settings
 from server.core.logging_config import get_contextual_logger
+from server.core.vision import frame_cache
 from server.core.vision.clip_queue import vision_clip_queue
+from server.core.vision.frame_filter import get_frame_filter
 from server.api.response import APIResponse
 
 router = APIRouter()
@@ -347,3 +360,133 @@ async def upload_vision_clip(
         },
         message="已接受，排队处理中",
     )
+
+
+# --------------------------------------------------------------------------- #
+# 帧筛选端点（spec add-vlm-frame-filter-face-match T4.3）：POST /vision/frame
+#   判定逻辑委托 FrameFilter（server/core/vision/frame_filter.py），本路由只做
+#   入参校验、人脸匹配编排、最近帧缓存挂点与响应整形。响应形状对齐
+#   public/interface_stub/vision.pyi::FilterFrameResponse。
+# --------------------------------------------------------------------------- #
+#: 单帧图像（解码后）大小上限 20MB（与 face.py / voiceprint 同口径）
+_MAX_FRAME_BYTES = 20 * 1024 * 1024
+#: 筛选未启用时的立即直通响应（零筛选开销，不调用任何模型）
+_FRAME_FILTER_OFF_RESPONSE: Dict[str, Any] = {
+    "action": "forward",
+    "filter_active": False,
+    "degraded": False,
+}
+
+
+class FilterFrameRequest(BaseModel):
+    """POST /vision/frame 请求体（字段对齐 vision.pyi::FilterFrameRequest 契约）。"""
+
+    image: str = Field(min_length=1, description="帧图像，dataURL 或 base64 编码（20MB 上限）")
+    agent_id: str = Field(min_length=1, description="会话归属 Agent ID")
+    source: Literal["camera", "screen"] = Field(..., description="帧来源：camera=摄像头，screen=屏幕")
+    ts: Optional[Union[int, float]] = Field(None, description="帧时间戳（秒），缺省由服务端补齐")
+
+
+def _check_frame_image_size(image: str) -> None:
+    """帧图像大小防呆：dataURL/base64 原串长度预检（4/3 膨胀 + padding 余量），超限抛 413。
+
+    口径与 face.py::_check_image_size 一致（图像解码本身交服务层/筛选层处理）。
+    """
+    if len(image) > _MAX_FRAME_BYTES * 4 // 3 + 4:
+        raise HTTPException(status_code=413, detail="帧图像过大")
+
+
+async def _match_face_labels(image_b64: str) -> list:
+    """camera 源人脸匹配 → face_labels 列表（如 ["小A", "未知人脸×1"]）。
+
+    命中项收集 name，unknown 项计数；FaceServiceUnavailable 及任何失败均跳过
+    （返回空列表），不阻断筛选（spec：face_match 不可用时该步跳过）。
+    """
+    try:
+        from server.services.face_profile_service import get_face_profile_service
+
+        matches = await get_face_profile_service().match(image_b64)
+    except Exception as exc:  # noqa: BLE001  不可用/失败一律跳过，不阻断筛选
+        logger.warning("VisionFrame: 人脸匹配不可用/失败，跳过 face_labels: %s", exc)
+        return []
+    labels: list = []
+    unknown_count = 0
+    for item in matches or []:
+        item = item or {}
+        name = item.get("name")
+        if name:
+            labels.append(str(name))
+        elif item.get("unknown"):
+            unknown_count += 1
+    if unknown_count:
+        labels.append(f"未知人脸×{unknown_count}")
+    return labels
+
+
+@router.post("/vision/frame")
+async def filter_vision_frame(payload: FilterFrameRequest):
+    """接收单帧画面并返回三态筛选判定（forward/summarize/discard）。
+
+    流程：422/413 参数校验 → frame_filter_enabled=false 立即直通 →
+    （camera 且 face_match.enabled）人脸匹配得 face_labels → camera 源写最近帧
+    缓存（face_tool 挂点，无论判定结果都写）→ FrameFilter 三态判定
+    （summarize 时由 FrameFilter 内部沉淀摘要记忆）→ 返回判定。
+
+    Returns:
+        dict: ``{action, summary?, reason?, importance?, degraded, face_labels?,
+        filter_active}``（对齐 vision.pyi::FilterFrameResponse；筛选未启用时仅
+        ``{action: "forward", filter_active: false, degraded: false}``）。
+
+    Raises:
+        HTTPException 422: image/agent_id 为空、source 非法（Pydantic 校验）
+        HTTPException 413: 帧图像超 20MB
+    """
+    image = (payload.image or "").strip()
+    if not image:
+        raise HTTPException(status_code=422, detail="image 不能为空")
+    agent_id = (payload.agent_id or "").strip()
+    if not agent_id:
+        raise HTTPException(status_code=422, detail="agent_id 不能为空")
+    _check_frame_image_size(payload.image)
+
+    settings = get_settings()
+    ve = settings.config.vision_enhanced
+    # 筛选未启用：立即直通返回（零筛选开销，不调用任何模型、不写缓存）
+    if not getattr(ve, "frame_filter_enabled", False):
+        logger.info("VisionFrame: frame_filter_enabled=False，帧直通返回")
+        return dict(_FRAME_FILTER_OFF_RESPONSE)
+
+    # ts 缺省由服务端补齐（沿用 _parse_ts 惯例，不可解析按缺省处理）
+    ts = _parse_ts(payload.ts)
+    if ts is None:
+        ts = _time.time()
+
+    face_labels: Optional[list] = None
+    if payload.source == "camera":
+        fm = getattr(settings.config, "face_match", None)
+        if fm is not None and getattr(fm, "enabled", False):
+            face_labels = await _match_face_labels(payload.image)
+
+    # camera 源覆盖写入最近帧单槽缓存（face_tool 注册"眼前的人"的帧来源挂点；
+    # 仅内存不落盘，无论判定结果都写）
+    if payload.source == "camera":
+        frame_cache.set_recent_frame(payload.image)
+
+    decision = await get_frame_filter().filter_frame(
+        payload.image,
+        agent_id=agent_id,
+        session_id=f"agent-{agent_id}",  # 对齐 chat 流程的 agent 会话命名
+        source=payload.source,
+        ts=ts,
+        face_labels=face_labels,
+    )
+
+    return {
+        "action": decision.action,
+        "summary": decision.summary or None,
+        "reason": decision.reason or None,
+        "importance": decision.importance,
+        "degraded": decision.degraded,
+        "face_labels": face_labels,
+        "filter_active": True,
+    }

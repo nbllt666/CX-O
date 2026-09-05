@@ -112,6 +112,21 @@ def get_env_config() -> Dict[str, Any]:
         "CXO_VISION_TEMPORAL_FUSION_ENABLED": ["vision_enhanced", "temporal_fusion_enabled"],
         "CXO_VISION_OCR_KEYFRAME_ENABLED": ["vision_enhanced", "ocr_keyframe_enabled"],
         "CXO_VISION_REQUIRE_VLLM": ["vision_enhanced", "require_vllm"],
+        # vision_enhanced 帧过滤器（spec add-vlm-frame-filter-face-match）
+        "CXO_VISION_FRAME_FILTER_ENABLED": ["vision_enhanced", "frame_filter_enabled"],
+        "CXO_VISION_FRAME_FILTER_VLM_ENDPOINT": ["vision_enhanced", "filter_vlm_endpoint"],
+        "CXO_VISION_FRAME_FILTER_VLM_MODEL": ["vision_enhanced", "filter_vlm_model"],
+        "CXO_VISION_FRAME_FILTER_CONTEXT_MESSAGES": ["vision_enhanced", "filter_context_messages"],
+        "CXO_VISION_FRAME_FILTER_TIMEOUT_SECONDS": ["vision_enhanced", "filter_timeout_seconds"],
+        "CXO_VISION_FRAME_FILTER_FAIL_MODE": ["vision_enhanced", "filter_fail_mode"],
+        # face_match 节（人脸档案匹配，默认关闭，零侵入）
+        "CXO_FACE_ENABLED": ["face_match", "enabled"],
+        "CXO_FACE_PROVIDER": ["face_match", "provider"],
+        "CXO_FACE_ENDPOINT": ["face_match", "endpoint"],
+        "CXO_FACE_SIM_THRESHOLD": ["face_match", "sim_threshold"],
+        "CXO_FACE_MAX_FACES_PER_FRAME": ["face_match", "max_faces_per_frame"],
+        "CXO_FACE_MODEL_ROOT": ["face_match", "model_root"],
+        "CXO_FACE_STORE_PATH": ["face_match", "store_path"],
         # meeting 节（多 Agent 语音会议协调器，默认关闭，零侵入）
         "CXO_MEETING_ENABLED": ["meeting", "enabled"],
         "CXO_MEETING_MAX_AGENTS": ["meeting", "max_agents"],
@@ -161,7 +176,7 @@ def get_env_config() -> Dict[str, Any]:
             field = path_parts[-1]
             if field == "enabled" or field.endswith("_enabled") or field == "require_vllm":
                 value = value.lower() in ("true", "1", "yes")
-            elif field == "diff_threshold":
+            elif field in ("diff_threshold", "filter_timeout_seconds"):
                 try:
                     value = float(value)
                 except (TypeError, ValueError):
@@ -172,6 +187,7 @@ def get_env_config() -> Dict[str, Any]:
             elif field in (
                 "buffer_retention_sec", "event_cooldown_sec", "max_clips_per_hour",
                 "pre_roll_sec", "post_roll_sec", "clip_max_sec",
+                "filter_context_messages",
             ):
                 try:
                     value = int(value)
@@ -222,6 +238,28 @@ def get_env_config() -> Dict[str, Any]:
                     continue
             elif field == "tts_backpressure_mode":
                 value = str(value)
+        # face_match 节类型转换（CXO_FACE_ 前缀键按目标字段名做 bool/int/float 转换，
+        # 对齐 VISION/MEETING/EXECUTOR 分支模式，避免 env 覆盖成字符串）
+        if env_key.startswith(f"{ENV_PREFIX}FACE_") and path_parts:
+            field = path_parts[-1]
+            if field == "enabled":
+                value = value.lower() in ("true", "1", "yes")
+            elif field == "sim_threshold":
+                try:
+                    value = float(value)
+                except (TypeError, ValueError):
+                    logger.warning(
+                        f"环境变量 {env_key}={value!r} 不是合法数字，忽略该键并使用默认值"
+                    )
+                    continue
+            elif field == "max_faces_per_frame":
+                try:
+                    value = int(value)
+                except (TypeError, ValueError):
+                    logger.warning(
+                        f"环境变量 {env_key}={value!r} 不是合法整数，忽略该键并使用默认值"
+                    )
+                    continue
         current[path_parts[-1]] = value
 
     return env_config
@@ -393,7 +431,11 @@ class ModelsConfig(BaseModel):
     main: ModelConfig = Field(default_factory=ModelConfig)
     summary: ModelConfig = Field(default_factory=lambda: ModelConfig(max_tokens=131072))
     memory: ModelConfig = Field(default_factory=lambda: ModelConfig(max_tokens=131072))
-    defaults: Dict[str, str] = Field(default_factory=lambda: {"summary": "main", "memory": "main"})
+    # CX-O-Dream 独立模型槽位：显式配置 models.dream 时梦境生成使用该节；未显式配置按 defaults 跟随 main
+    dream: ModelConfig = Field(default_factory=ModelConfig)
+    defaults: Dict[str, str] = Field(
+        default_factory=lambda: {"summary": "main", "memory": "main", "dream": "main"}
+    )
 
     _explicit: Set[str] = PrivateAttr(default_factory=set)
 
@@ -407,7 +449,7 @@ class ModelsConfig(BaseModel):
         显式配置的模型返回自身；否则按 ``defaults`` 映射回退（未知类型回退到 main）。
         """
         model_type = model_type.lower()
-        if model_type in ("main", "summary", "memory") and model_type not in self._explicit:
+        if model_type in ("main", "summary", "memory", "dream") and model_type not in self._explicit:
             return self.defaults.get(model_type, "main")
         return model_type
 
@@ -951,7 +993,7 @@ class CXOTunerConfig(BaseModel):
     """
 
     enabled: bool = False  # 是否启用（evolution 集成出口）
-    host: str = "http://127.0.0.1:8300"  # CXO-Tuner 服务基础 URL
+    host: str = "http://127.0.0.1:8310"  # CXO-Tuner 服务基础 URL（8310：8300 已归 CXO-ModelStation）
     timeout: int = 10  # 客户端请求超时（秒），取值范围 1-300
     quality_reject_threshold: float = 0.3  # 反馈质量拒绝阈值，0-1（对照 decision_core）
     auto_push: bool = False  # 是否自动推送反馈/会话历史到 Tuner
@@ -967,7 +1009,8 @@ class VisionEnhancedConfig(BaseModel):
     后端叙事记忆功能仅在 enabled=true 时生效；其余开关按下述默认值。缺失字段由
     Pydantic default 补齐；越界数值字段在 _auto_fill_radix_config 中回退默认值
     （buffer_retention_sec 5-300、clip_max_sec 2-120、diff_threshold 0.01-1、
-    event_cooldown_sec 1-300、max_clips_per_hour 1-1000）。
+    event_cooldown_sec 1-300、max_clips_per_hour 1-1000、filter_context_messages
+    1-20、filter_timeout_seconds 2-30、filter_fail_mode ∈ passthrough|discard）。
     """
 
     model_config = ConfigDict(protected_namespaces=())
@@ -984,6 +1027,35 @@ class VisionEnhancedConfig(BaseModel):
     temporal_fusion_enabled: bool = False  # 是否启用跨时段时间融合
     ocr_keyframe_enabled: bool = True  # 是否对关键帧做 OCR
     require_vllm: bool = True  # 是否要求 vLLM 后端（false 可用于降级/调试）
+    # ---- 帧过滤器（spec add-vlm-frame-filter-face-match，VLM 帧过滤三态 filter/passthrough/discard，默认关闭零侵入）----
+    frame_filter_enabled: bool = False  # 帧过滤器总开关，默认关闭
+    filter_vlm_endpoint: str = ""  # 过滤 VLM 服务端点（OpenAI 兼容 base_url），空=未配置
+    filter_vlm_model: str = ""  # 过滤 VLM 模型名，空=未配置
+    filter_context_messages: int = 6  # 过滤请求携带的上下文消息条数，1-20，越界回退 6
+    filter_timeout_seconds: float = 8.0  # 过滤 VLM 单帧调用超时（秒），2-30，越界回退 8.0
+    filter_fail_mode: str = "passthrough"  # 过滤失败兜底模式（passthrough|discard），非法回退 passthrough
+
+
+class FaceMatchConfig(BaseModel):
+    """人脸档案匹配配置节（face_match，默认关闭，零侵入）。
+
+    对应 public/config_template/radix_config.json 的 face_match 段与
+    public/interface_stub/face.pyi 接口契约（spec add-vlm-frame-filter-face-match）。
+    仅 enabled=true 时启用人脸注册/匹配；provider=local 使用本地模型目录推理，
+    external 调用外部 HTTP 端点。缺失字段由 Pydantic default 补齐；越界字段在
+    _auto_fill_radix_config 中回退默认值（sim_threshold 0.2-0.8、
+    max_faces_per_frame 1-8、provider ∈ local|external）。
+    """
+
+    model_config = ConfigDict(protected_namespaces=())
+
+    enabled: bool = False  # 人脸匹配总开关，默认关闭
+    provider: str = "local"  # 人脸识别提供方（local|external），非法回退 local
+    endpoint: str = ""  # provider=external 时的服务端点，空=未配置
+    sim_threshold: float = 0.45  # 人脸相似度匹配阈值，0.2-0.8，越界回退 0.45
+    max_faces_per_frame: int = 4  # 单帧最多处理人脸数，1-8，越界回退 4
+    model_root: str = ""  # provider=local 时的本地模型根目录，空=使用内置默认路径
+    store_path: str = ""  # 人脸档案存储路径，空=使用内置默认路径
 
 
 class DanmakuSourceConfig(BaseModel):
@@ -1237,6 +1309,20 @@ class DreamPhysioSection(BaseModel):
         return self
 
 
+class DreamTriggerSection(BaseModel):
+    """梦境触发闸门子节（对齐 dream_config.json trigger）。
+
+    默认值零回归：emotion_enabled=False 不做情绪查询；probability=1.0 恒命中。
+    """
+
+    model_config = ConfigDict(extra="forbid")
+    emotion_enabled: bool = False
+    emotion_threshold: float = Field(default=0.7, ge=0.0, le=1.0)
+    emotion_window_hours: int = Field(default=24, ge=1)
+    emotion_min_events: int = Field(default=1, ge=1)
+    probability: float = Field(default=1.0, ge=0.0, le=1.0)
+
+
 class DreamSection(BaseModel):
     """CX-O-Dream 梦境引擎配置节（dream，迁移自 dream_config.json）。
 
@@ -1260,6 +1346,7 @@ class DreamSection(BaseModel):
     max_surface_per_day: int = 1
     schedule: AutonomyScheduleSection = Field(default_factory=AutonomyScheduleSection)
     physio: DreamPhysioSection = Field(default_factory=DreamPhysioSection)
+    trigger: DreamTriggerSection = Field(default_factory=DreamTriggerSection)
     sleep_confirmation: DreamSleepConfirmationSection = Field(
         default_factory=DreamSleepConfirmationSection
     )
@@ -1296,6 +1383,8 @@ class UnifiedConfig(BaseModel):
     evolution: CXOTunerConfig = Field(default_factory=CXOTunerConfig)
     # 视觉增强视频叙事记忆（默认关闭，零侵入）
     vision_enhanced: VisionEnhancedConfig = Field(default_factory=VisionEnhancedConfig)
+    # 人脸档案匹配（默认关闭，零侵入，spec add-vlm-frame-filter-face-match）
+    face_match: FaceMatchConfig = Field(default_factory=FaceMatchConfig)
     # CX-A 管理面 + 哨兵集群（默认 enabled=false，零侵入）
     admin: AdminConfig = Field(default_factory=AdminConfig)
     cluster: ClusterConfig = Field(default_factory=ClusterConfig)
@@ -1421,10 +1510,10 @@ class Settings:
         config = UnifiedConfig(**merged_config)
 
         # 记录显式配置的模型节：仅当 models.<type> 显式存在时才解除 defaults 跟随，
-        # 允许 summary/memory 独立配置不同模型（否则仍跟随 main）。
+        # 允许 summary/memory/dream 独立配置不同模型（否则仍跟随 main）。
         models_section = merged_config.get("models")
         if isinstance(models_section, dict):
-            explicit = [k for k in ("main", "summary", "memory") if k in models_section]
+            explicit = [k for k in ("main", "summary", "memory", "dream") if k in models_section]
             config.models._set_explicit(explicit)
 
         # 更新内存快照（成功解析后），供下一次损坏时回退
@@ -1730,6 +1819,41 @@ def _auto_fill_radix_config(user_config: Dict[str, Any]) -> Dict[str, Any]:
         if not isinstance(v, (int, float)) or v < 0:
             logger.warning(f"CONFIG_FIELD_OUT_OF_RANGE: vision_enhanced.post_roll_sec={v} 非法，回退默认值 6")
             ve["post_roll_sec"] = 6
+
+    # 帧过滤器字段越界检查（spec add-vlm-frame-filter-face-match）
+    if "filter_context_messages" in ve:
+        v = ve["filter_context_messages"]
+        if not isinstance(v, int) or v < 1 or v > 20:
+            logger.warning(f"CONFIG_FIELD_OUT_OF_RANGE: vision_enhanced.filter_context_messages={v} 越界（1-20），回退默认值 6")
+            ve["filter_context_messages"] = 6
+    if "filter_timeout_seconds" in ve:
+        v = ve["filter_timeout_seconds"]
+        if not isinstance(v, (int, float)) or v < 2 or v > 30:
+            logger.warning(f"CONFIG_FIELD_OUT_OF_RANGE: vision_enhanced.filter_timeout_seconds={v} 越界（2-30），回退默认值 8.0")
+            ve["filter_timeout_seconds"] = 8.0
+    if "filter_fail_mode" in ve:
+        v = ve["filter_fail_mode"]
+        if not isinstance(v, str) or v not in ("passthrough", "discard"):
+            logger.warning(f"CONFIG_FIELD_OUT_OF_RANGE: vision_enhanced.filter_fail_mode={v!r} 非法（passthrough|discard），回退默认值 passthrough")
+            ve["filter_fail_mode"] = "passthrough"
+
+    # ---- face_match 节（人脸档案匹配）越界检查 ----
+    fm = user_config.setdefault("face_match", {})
+    if "provider" in fm:
+        v = fm["provider"]
+        if not isinstance(v, str) or v not in ("local", "external"):
+            logger.warning(f"CONFIG_FIELD_OUT_OF_RANGE: face_match.provider={v!r} 非法（local|external），回退默认值 local")
+            fm["provider"] = "local"
+    if "sim_threshold" in fm:
+        v = fm["sim_threshold"]
+        if not isinstance(v, (int, float)) or v < 0.2 or v > 0.8:
+            logger.warning(f"CONFIG_FIELD_OUT_OF_RANGE: face_match.sim_threshold={v} 越界（0.2-0.8），回退默认值 0.45")
+            fm["sim_threshold"] = 0.45
+    if "max_faces_per_frame" in fm:
+        v = fm["max_faces_per_frame"]
+        if not isinstance(v, int) or v < 1 or v > 8:
+            logger.warning(f"CONFIG_FIELD_OUT_OF_RANGE: face_match.max_faces_per_frame={v} 越界（1-8），回退默认值 4")
+            fm["max_faces_per_frame"] = 4
 
     # ---- radix 节（遗留兼容，无越界检查，仅记录 auto_fill）----
     user_config.setdefault("radix", {})

@@ -256,6 +256,11 @@ async def update_config(partial: Dict[str, Any], _: bool = Depends(verify_admin_
     except (ValidationError, ValueError) as e:
         raise HTTPException(status_code=422, detail=f"配置字段非法: {e}") from e
 
-    # 引擎侧 config 映射回 DreamConfig（引擎内部类型契约），再应用 start/stop
-    _sync_engine_runtime(_engine, DreamConfig.model_validate(updated.model_dump()))
+    # 引擎侧 config 映射回 DreamConfig（引擎内部类型契约），再应用 start/stop。
+    # 过滤到引擎已知字段：UnifiedConfig DreamSection 可能领先引擎侧字段（外部
+    # 增量如 trigger 子节），而 DreamConfig extra="forbid"，透传全量 dump 会
+    # ValidationError 致 PUT 整体 500。字段漂移由镜像测试告警。
+    engine_fields = DreamConfig.model_fields.keys()
+    known = {k: v for k, v in updated.model_dump().items() if k in engine_fields}
+    _sync_engine_runtime(_engine, DreamConfig.model_validate(known))
     return updated.model_dump()

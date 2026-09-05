@@ -1,0 +1,18 @@
+# CXO-ModelStation 自身 Python 依赖（自包含部署，见 DEPLOY.md）
+# 依赖范围以 modelstation/ 包现有 import 为准（2026-09-05 汇总）；
+# 引擎（so-vits-svc / VoxCPM / MeloTTS）各自依赖见 engines/ 内对应 README/requirements，
+# 不在本文件范围。
+
+# Web 框架与 ASGI 服务
+fastapi
+uvicorn
+
+# 数据模型与配置（pydantic v2）
+pydantic>=2
+
+# HTTP 客户端（外部服务调用）
+httpx
+
+# 测试
+pytest
+pytest-asyncio

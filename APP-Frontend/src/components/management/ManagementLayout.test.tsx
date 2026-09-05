@@ -78,7 +78,7 @@ describe('ManagementLayout 增强侧边栏', () => {
 
     expect(screen.getByText('向量数据')).toBeInTheDocument();
     expect(screen.getByText('归档')).toBeInTheDocument();
-    expect(screen.getByText('音频工作站')).toBeInTheDocument();
+    expect(screen.getByText('作曲/翻唱CXFC')).toBeInTheDocument();
     expect(screen.getByText('音频测试')).toBeInTheDocument();
   });
 
@@ -101,7 +101,7 @@ describe('ManagementLayout 增强侧边栏', () => {
     expect(screen.queryByRole('button', { name: '小工具' })).not.toBeInTheDocument();
     expect(screen.getByTitle('向量数据')).toBeInTheDocument();
     expect(screen.getByTitle('归档')).toBeInTheDocument();
-    expect(screen.getByTitle('音频工作站')).toBeInTheDocument();
+    expect(screen.getByTitle('作曲/翻唱CXFC')).toBeInTheDocument();
     expect(screen.getByTitle('音频测试')).toBeInTheDocument();
   });
 

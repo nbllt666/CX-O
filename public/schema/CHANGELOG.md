@@ -2,6 +2,39 @@
 
 > 遵循 AC 范式 v6 rules-3 §六 契约版本化规则。所有契约变更必须记录版本号、变更内容、变更原因、影响范围。
 
+## [1.13.0] - 2026-09-05
+
+### 变更内容
+
+- **配置契约变更（MINOR）**：`config_template/radix_config.json` v1.2.0→1.3.0——`vision_enhanced` 段补 6 个帧过滤字段（`frame_filter_enabled` 默认 false、`filter_vlm_endpoint`/`filter_vlm_model` 默认空串、`filter_context_messages` 1-20 默认 6、`filter_timeout_seconds` 2-30 默认 8.0、`filter_fail_mode` ∈ passthrough|discard 默认 passthrough），新增 `face_match` 段 7 字段（`enabled` 默认 false、`provider` ∈ local|external 默认 local、`endpoint`/`model_root`/`store_path` 默认空串、`sim_threshold` 0.2-0.8 默认 0.45、`max_faces_per_frame` 1-8 默认 4）。默认值均对齐 `server/config.py` `VisionEnhancedConfig`/`FaceMatchConfig` 与 `_auto_fill_radix_config` 越界回退。
+- **接口契约变更（PATCH）**：`interface_stub/vision.pyi` 新增 `@version` 注记 1.0.0→1.0.1——追加帧过滤三态契约 `FrameFilterDecision`（action ∈ forward|summarize|discard、summary、reason、importance ∈ low|medium|high、degraded）、`FilterFrameRequest`（image/agent_id/source/ts）、`FilterFrameResponse`（action/summary/reason/importance/degraded/face_labels/filter_active）三模型声明，docstring 说明三态语义（forward 转发主 LLM / summarize 仅摘要沉淀 / discard 筛除；降级时按 filter_fail_mode=passthrough 恒 forward）。纯新增声明，未删除/未改动既有内容。
+- **接口契约新增（MINOR）**：`interface_stub/face.pyi` 新增（@version 1.0.0）——`FaceProfileService`（register/match/list_profiles/delete_profile 异步四方法 + get_status 同步状态查询）+ `FaceServiceUnavailable` 异常 + `get_face_profile_service` 工厂函数，全部签名带中文 docstring（参数/返回/异常说明）。
+- **数据契约新增（MINOR）**：`schema/face_profile.schema.json` 新增（draft-07，`_seedStage: true` 待 s0201 补全）——人脸档案存储文件结构：`version`（string）+ `profiles` 数组（每条 `name`/`embedding`/`created_at` 三必填），约束 radix_config.face_match.store_path 指向的持久化文件。
+
+### 变更原因
+
+- spec `add-vlm-frame-filter-face-match`（VLM 帧过滤 + 人脸档案匹配）Task 1 契约与配置层冻结：后端 `VisionEnhancedConfig` +6 字段、`FaceMatchConfig` 新节、ENV_KEY_MAP +13 键（CXO_VISION_FRAME_FILTER_* 6 键 + CXO_FACE_* 7 键）、`_auto_fill_radix_config` 越界回退已同步落地，public/ 契约面同步对齐实现。5 份 public/ 文件均在 spec 授权清单内，已获人类显式批准。
+
+### 影响范围
+
+- 影响域：主动视觉（帧过滤）与面部匹配两功能；全部为 MINOR/PATCH 级纯新增，向后兼容，不阻断既有下游。
+- `frame_filter_enabled`/`face_match.enabled` 默认 false（零侵入）：既有部署行为不变；新字段带默认值，Pydantic auto_fill 兜底不受影响。
+- `radix_config.json` 根级 `additionalProperties: false` 保持，`face_match` 已入 properties，契约面与实现键集一致；`vision.pyi` 既有声明未动。
+- 下游待实现（后续 Task）：`server/core/vision/frame_filter.py`（FrameFilter 判定器）、`server/core/face/profile_service.py`（FaceProfileService 实现，须严格匹配 face.pyi 签名）、`POST /api/vision/frame` 路由与 face 路由挂载。
+
+### 闭合判据
+
+- [x] 5 份契约文件落盘（radix_config.json + vision.pyi 修改，face.pyi + face_profile.schema.json 新增，CHANGELOG 记录）
+- [x] 2 份 JSON 契约 json.load 解析通过；2 份 .pyi 通过 ast 语法校验
+- [x] config 冒烟验证通过（UnifiedConfig 默认值 + FaceMatchConfig 挂载）；定向单测结果记录于任务报告
+
+## [1.12.0] - 2026-09-04
+
+### 变更内容
+
+- **接口契约变更（MINOR）**：`interface_stub/cx_admin.pyi` v1.0.2→1.1.0——登记管理面遥测增强三端点（GET /admin/telemetry 四组遥测聚合 readonly、GET /admin/config-whitelist 白名单边界回显 readonly、PUT /admin/logging/level 日志级别热调 operator）与 AdminAuth 安全计数器（认证失败/限流触发/重放拦截）；config.update 白名单扩展（limits.context.* 7 字段/limits.memory.*/logging.level/system.debug/executor 显式 3 字段含上界校验/autonomy·dream 标量节）。来源：spec `.trae/specs/enhance-admin-telemetry/`（人类批准，GN-004 计划审查警示放行）。
+- **说明**：`schema/admin_control.schema.json` 本轮无需变更——config.update 的 params.additionalProperties 已开放（@1.1.0 既有），telemetry/config-whitelist 为 GET 端点不经 control 域分发。
+
 ## [1.12.0] - 2026-09-04
 
 ### 变更内容

@@ -7,28 +7,19 @@ import { voiceworkstationApi } from '@/api/clients/voiceworkstation';
 import { audioApi } from '@/api/clients/audio';
 
 /**
- * AudioWorkstationPage 冒烟 + Tab 切换 + API 接线测试（Qwen3 迁移后）：
- * voiceworkstationApi 与 audioApi 整体打桩；默认渲染 SVC 面板，
- * 逐 Tab 切换验证对应面板渲染并消费对应域接口；非占位校验。
- * F5-TTS / Orpheus / VoxCPM 单条参考音频生成已随 Qwen3 TTS 迁移移除。
+ * 作曲/翻唱CXFC 页冒烟 + Tab 切换 + API 接线测试（split-audio-workstation-cxfc-modelstation 后）：
+ * voiceworkstationApi 与 audioApi 整体打桩；默认渲染翻唱（Cover）面板，
+ * 逐 Tab 切换验证对应面板渲染并消费对应域接口；tab=svc 已移除，非法值回落默认 Tab。
+ * 训练/数据集 UI 已整体迁至模型工作站独立前端（CXO-ModelStation/frontend）。
  */
 vi.mock('@/api/clients/voiceworkstation', () => ({
   voiceworkstationApi: {
-    getSoVITSSVCStatus: vi.fn(),
     listSoVITSSVCModels: vi.fn(),
-    sovitsSVCPreprocess: vi.fn(),
-    startSoVITSSVCTrain: vi.fn(),
-    stopSoVITSSVCTrain: vi.fn(),
     sovitsSVCInfer: vi.fn(),
+    uploadAudio: vi.fn(),
     musicListSongs: vi.fn(),
-    musicValidateScore: vi.fn(),
-    musicSynthesize: vi.fn(),
+    musicGetTask: vi.fn(),
     musicDeleteSong: vi.fn(),
-    listSVCDatasets: vi.fn(),
-    importSVCDataset: vi.fn(),
-    deleteSVCDataset: vi.fn(),
-    submitVoxCPMBatchDataset: vi.fn(),
-    getVoxCPMBatchDatasetTask: vi.fn(),
   },
   getVoiceWorkstationAudioUrl: (url: string) => url,
 }));
@@ -55,20 +46,10 @@ function renderPage(initialPath = '/') {
   );
 }
 
-describe('AudioWorkstationPage 音频工作站页', () => {
+describe('AudioWorkstationPage 作曲/翻唱CXFC 页', () => {
   beforeAll(async () => {
     await i18n.changeLanguage('zh-CN');
-    mocked.getSoVITSSVCStatus.mockResolvedValue({
-      task_id: null,
-      status: 'idle',
-      progress: 0,
-      epoch: 0,
-      total_epochs: 0,
-      message: '',
-      models: [],
-    });
-    mocked.listSoVITSSVCModels.mockResolvedValue({ status: 'ok', models: [] });
-    mocked.listSVCDatasets.mockResolvedValue({ status: 'ok', datasets: [] });
+    mocked.listSoVITSSVCModels.mockResolvedValue({ status: 'success', models: [] });
     mocked.musicListSongs.mockResolvedValue({ songs: [] });
     mockedAudio.listRefAudioAssets.mockResolvedValue({ assets: [], current_asset_id: null });
   });
@@ -78,17 +59,28 @@ describe('AudioWorkstationPage 音频工作站页', () => {
     vi.clearAllMocks();
   });
 
-  it('渲染三个 Tab 按钮与默认 SVC 面板，并消费 SVC 域接口', async () => {
+  it('渲染三个 Tab 按钮与默认翻唱面板，并消费 models 接口', async () => {
     renderPage();
 
-    for (const name of ['SVC 训练推理', '作曲合成', '参考音频资产']) {
+    for (const name of ['翻唱', '作曲合成', '参考音频资产']) {
       expect(screen.getByRole('button', { name })).toBeInTheDocument();
     }
-    // 默认 SVC 面板
-    expect(await screen.findByText('批量数据集生成')).toBeInTheDocument();
-    expect(mocked.getSoVITSSVCStatus).toHaveBeenCalled();
-    expect(mocked.listSVCDatasets).toHaveBeenCalled();
+    // 默认 Cover 面板：空模型列表提示 + 上传/推理通道渲染
+    expect(await screen.findByTestId('cover-no-models')).toBeInTheDocument();
+    expect(screen.getByTestId('cover-upload-btn')).toBeInTheDocument();
+    expect(screen.getByTestId('cover-infer-btn')).toBeInTheDocument();
+    expect(mocked.listSoVITSSVCModels).toHaveBeenCalled();
+    // 无训练/数据集 UI 残留
+    expect(screen.queryByText(/批量数据集生成/)).not.toBeInTheDocument();
     expect(screen.queryByText(/页面建设中/)).not.toBeInTheDocument();
+  });
+
+  it('tab=svc 已移除：非法参数回落默认翻唱 Tab', async () => {
+    renderPage('/?tab=svc');
+
+    expect(await screen.findByTestId('cover-no-models')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '翻唱' })).toHaveClass('bg-primary');
+    expect(mocked.listSoVITSSVCModels).toHaveBeenCalled();
   });
 
   it('切到作曲合成 Tab 渲染歌曲列表并消费 musicListSongs', async () => {

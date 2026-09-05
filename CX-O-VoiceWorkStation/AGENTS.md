@@ -8,6 +8,8 @@
 
 本文件为**模块级 AGENTS.md**（rules-4 §三），绑定 spec `redesign-composition-staff-editor` 后端模块 0–5 的开发边界，与全局 `c:\CX-O\AGENTS.md` 及 `.trae/rules/rules-0~7.md` 共同生效；冲突时以全局与 rules 为更细粒度约束。
 
+> 变更注记（2026-09-05，spec `split-audio-workstation-cxfc-modelstation`）：训练相关模块已迁出至 `CXO-ModelStation/`，本服务聚焦作曲/翻唱CXFC，详见文末「五、变更注记」。
+
 ## 二、AC 范式通用约束（rules-4 §4.3）
 
 ```yaml
@@ -68,3 +70,16 @@ binding_rules:
 - 编排/台账：`c:\CX-O\.trae\specs\redesign-composition-staff-editor\tasks.md`
 - 冻结契约：`c:\CX-O\.trae\specs\redesign-composition-staff-editor\contracts\`
 - 融合设计：`c:\CX-O\.trae\specs\redesign-composition-staff-editor\schemes\merged.md`
+
+## 五、变更注记（2026-09-05，spec `split-audio-workstation-cxfc-modelstation`）
+
+> 本段为事实性边界更新，不改动上文各段既有规则；上文与本文冲突处，以本段反映的当前服务边界为准。
+
+### 5.1 模块边界变更
+
+- **训练相关模块已迁出**：`sovits_svc_trainer`、`dataset_builder`、`voxcpm_client`、`api/datasets.py`、`api/workflow.py` 已于 2026-09-05 迁出至 `c:\CX-O\CXO-ModelStation\`（后端包 `modelstation/`，端口 8300）。本服务不再提供训练/数据集/批量语料/workflow API，聚焦**作曲/翻唱CXFC**（作曲/歌曲合成/SVC 翻唱推理/CXFC 插件）。
+- **本服务保留 API**：`/api/music/*` 全量、`/api/sovits-svc/infer`、`/api/sovits-svc/models`（只读）、`/api/audio-files/*`（songs / svc-results）、CXFC `/tools` `/skills` `/call`、`/health`。
+- **新增受控上传端点**：`POST /api/audio-uploads`（multipart 字段 `file`），落盘 `data/input/`（即 infer 白名单根），作为主前端翻唱面板的音频入口；不暴露于 audio-files category。
+- **`models_dir` 指向 ModelStation 只读**：`SoVitSSVCConfig` 已移除 `output_dir`/`training_data_dir`，新增 `models_dir`（默认解析至 `CXO-ModelStation/data/models/sovits_svc`，仅列表+推理输入，禁止写入）与 `infer_output_dir`（默认本服务 `data/svc-results/`）。
+- **`sovits_svc_infer.py` 双副本声明**：本服务（翻唱）与 ModelStation（试听）各持一份独立副本，自此独立演化、互不同步、不设同步义务（spec 冻结条款，GN-004 不将两侧差异视为漂移）。
+- 消费方影响：训练类调用方必须改连 `http://127.0.0.1:8300`（端点路径与原 8200 同形）。

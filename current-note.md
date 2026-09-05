@@ -4,6 +4,23 @@
 
 ## 做到哪了
 
+- **enhance-admin-telemetry（整体）**（**已闭合**——spec 闸门 GN-004 计划审查 + 实现任务 0-3 + T3 全量回归 + GN-004 交付前审查警示放行 + 人类 [V] 终审批准全部通过，2026-09-05；spec 目录 `.trae/specs/enhance-admin-telemetry/`，变更文档 `.trae/documents/20260905_模块0_管理面遥测增强.md`）
+  - 工程过程：现状调查（admin 端点面/UnifiedConfig 30 节/白名单现状）→ EC-7 裁决（REQ-01：查看四组全选 + 修改三组全选含"放开所有"→ 安全白名单+边界透明落地）→ 三件套+GN-004 计划审查（警示放行，OBS-1~8 落盘修正）→ 人类批准 → T1∥T2 并行（e1a414c2/359391b8）→ T3 合流：首轮全量 4881P/**7F**（全归因工作区外部改动交叠）→ 主线程修复 4 处 → **最终全量 4914P/0F**（188.54s，`C:\CX-O\logs\telemetry_backend_pytest_final.log`，基线 4750 净增 164）→ GN-004 交付前审查**警示放行（无 SOFT_BLOCK，9a47b623）** → 人类终审**批准收尾 ✅（2026-09-05）**。
+  - 交接状态：**Task 0-3 全部已闭合**（T0 主线程 s0401 ALLOWED：pyi @1.1.0 + CHANGELOG 1.13.0；T1/T2 subagent 交付；台账 4 行全回填真实 ID）。
+  - 最终结果：①`GET /admin/telemetry`（readonly）：runtime（uptime/事件循环 lag/IO 线程池/gc/psutil 可选降级）+ connections（ws 统计/ASR 会话/VAD/TTS in-flight/voice_latency）+ engines（autonomy/dream/tuner/meeting/cxfc 五引擎统一形状）+ security（计数器+审计摘要），?groups= 过滤、单组异常降级 {"available":false}；②auth.py 安全三计数器（独立锁，AdminDisabled 不计数）；③白名单放开 `ADMIN_CONFIG_UPDATE_WHITELIST` dict：limits.context 7 + limits.memory 16 + logging.level（**热调钩子 root setLevel，hot_applied**）+ system.debug + executor 显式 3 字段（上界 io_pool_size≤64/信号量≤256）+ autonomy 深层 16 + dream 深层 25（**store_raw_hr 红线排除**）；危险节 7 组保持拒绝；④`GET /admin/config-whitelist` 边界回显（模块级 getattr，OBS-5）+ `PUT /admin/logging/level` 热调；⑤manifest 三能力 + model-context 槽位动态枚举（外部 models.dream 自动纳入）。
+  - 为什么：遥测只有 DEBUG 日志不可运营；"放开所有"的安全边界=白名单全量安全面+危险节拒绝+边界透明可查（防远程配置写失控）；映射加固（settings→引擎 dump 过滤 model_fields）修的是上轮集成接缝的防御性缺口，而非替外部实现功能。
+  - 未闭合项（显式登记）：①**外部并行会话交叠**：工作区存在 add-vlm-frame-filter-face-match 会话未提交改动（config.py ModelsConfig.dream 槽位+DreamSection.trigger 子节、face_profile、VoiceWorkStation/AudioWorkstation 删改等）——未回滚；其 trigger 中间态由镜像测试 `_ALLOWED_EXTERNAL_DELTA={"dream":{"trigger"}}` 登记，**该会话闭合后应清空此登记**；dream.trigger 白名单路径引擎侧暂不生效（外部半成品固有）②**部署项**：后端重启加载新代码（遥测/白名单/热调生效）、真机验证 telemetry 端点（uptime_source/psutil 实际可用性）③CHANGELOG 历史重复 [1.12.0] 标题（GN-004 OBS-10，登记 s0602 收编）④历轮遗留与未 commit 状态维持（提交策略由人类定）。
+  - 接续入口：本轮已闭合（2026-09-05 人类终审批准）。后续若继续：重启后端验证遥测端点实跑（部署项）→ 外部会话闭合后清空 _ALLOWED_EXTERNAL_DELTA → s0602 收编 CHANGELOG 重复标题。
+  - 审查记录：GN-004 计划审查**警示放行**（OBS-1~8 已修正落盘）；GN-004 交付前审查**警示放行（无 SOFT_BLOCK，2026-09-05）**——10 项 rubric 全过、测试数字与日志逐字吻合、外部交叠处置合规（不回滚外部/修自己防御性/显式登记 delta）、白名单安全面无缺口；[V] 闸门2 人类裁决**批准收尾 ✅（2026-09-05）**。
+
+- **add-vlm-frame-filter-face-match（整体）**（**已闭合**——spec 闸门 GN-004 警示放行 + 人类批准 spec + 实现 T1-T6 + s0402 三重闸 + GN-004 交付前审查警示放行 + 人类 [V] 终审批准全部通过，2026-09-05；spec 目录 `.trae/specs/add-vlm-frame-filter-face-match/`，变更文档 `.trae/documents/20260905_模块0_帧筛选与面部匹配.md`，s0402 证据 `.trae/documents/test_reports/frontend_gate_20260905_framefilter/`）
+  - 工程过程：用户需求两条（①主动视觉独立小 VLM 帧筛选+摘要+按需分流主 LLM/摘要+主模型上下文注入提升准确度；②面部特征匹配）→ Explore 深查+实码核验 → 三件套产出 → GN-004 spec 闸门（警示放行，F1 必修项补"最近帧单槽内存缓存"等 8 项全处置）→ 人类批准 spec → **T1→批次1（T2‖T3）→批次2（T4‖T5）→T6 主线程收口**（subagent 真实 ID 8aa67892/c4f642ad/0ff47ebd/b32df9ff/65ca7970，台账 6 行全回填）→ 合流核验（en-US 两键被并行 spec enhance-admin-telemetry 吞键已补回）→ 全量回归 → s0402 PASSED → GN-004 交付审查**警示放行（无 SOFT_BLOCK，f53ee6b8）**→ 人类 [V] 终审**批准收尾 ✅（2026-09-05，AskUserQuestion：批准+授权修 face.pyi @1.0.2+声纹缺陷并入修复）**。
+  - 交接状态：**T1-T6 全部已闭合**；终审后修正（face.pyi @1.0.2 方法体 F-A、tools/__init__.py 声纹 import F-E）已落盘并复验（imports OK + 定向 121P）。
+  - 最终结果：①帧筛选层：`FrameFilter`（独立小 VLM 三态 forward/summarize/discard + 主模型上下文注入 + face_labels 喂筛选器与主 LLM + 四类降级 fail-open + endpoint 回退链）+ `POST /api/vision/frame`（off 零开销直通；camera 源写最近帧单槽内存缓存）；②面部特征匹配：`FaceProfileService`（对称声纹三层，local=insightface 懒加载优雅降级/external 容器，原子写+锁，list 脱敏）+ `/api/face` 五端点 + LLM 工具 `register_face_profile`；③前端：frameFilterEnabled 开关（默认关）+ sendFrame 分流（forward 才对话/summarize·discard 静默/失败回退直通）+ SettingsPage 开关；④契约：face.pyi @1.0.2、face_profile.schema.json、vision.pyi @1.0.1、radix_config @1.3.0、CHANGELOG 1.13.0；⑤声纹工具挂载失效顺带修复（tools/__init__.py 补 register_voiceprint_tool import，人类裁决并入）。
+  - 为什么：单帧直通烧 token 且打扰——筛选层 fail-open 保现状语义；对话发起权留前端复用聊天流；人脸对称声纹三层零新存储口径；管理界面不进前端（硬约束）——仅 REST API + LLM 工具。
+  - 未闭合项（显式登记）：①**部署项**：后端重启加载新代码、前端重新构建安装包；②**依赖**：provider=local 需 `pip install insightface onnxruntime`（未装时 get_status available=false，register/match 503 优雅降级，不影响其余功能）；③真机验证=当前不可判定（真脸注册/真实小 VLM 判定待①②后实测；入口：开启帧筛选开关→摄像头对话一轮→/memories 查 frame_summary 摘要）；④登记不修：vision.pyi degraded 注释未覆盖 discard 降级分支（F-F，随下次 public/ 变更一并修）；⑤历轮+本 spec 改动叠加未 commit（提交策略由人类定）。
+  - 接续入口：本轮已闭合（2026-09-05 终审批准）。后续若继续：重启后端+装依赖→真机语音/视觉验证→历轮改动分块 commit 立项。
+  - 审查记录：GN-004 spec 闸门第一轮**警示放行**（F1-F8 全处置）+ 交付前 GN-004 **警示放行（无 SOFT_BLOCK）**——13 处实码抽验相符、定向 121 独立重跑复现、隐私红线独立核实、public/ 足迹恰为授权 5 文件（cx_admin.pyi/dream_config 归属并行 spec 各有授权注记）；[V] 闸门2 人类裁决**批准收尾 ✅（2026-09-05）**。
 - **enhance-cxfc-admin-and-integrate-dream（整体）**（**已闭合**——spec 闸门 GN-004 两轮 + 实现任务 0-7 + T8 合流三重测试 + GN-004 交付前审查警示放行 + 人类 [V] 终审批准全部通过，2026-09-05；spec 目录 `.trae/specs/enhance-cxfc-admin-and-integrate-dream/`，无独立 issue 档，留痕 8 份变更文档见下）
   - 工程过程：4 路并行 Explore 调查 → EC-7 四项裁决（REQ-01：网关=允许插件接入/前端=独立 CXFC 页/dream·autonomy=彻底集成推翻 Frozen Decision 1/2/管理接口=control_plane+REST 双轨）→ 三件套产出+主线程自查修 4 处事实错误 → GN-004 两轮 spec 审查（警示放行→采纳修正→复审放行，REQ-02 闭合）→ 人类批准 spec → **5 路并行实现**（T1 网关/T2 前端页/T3 管理接口/T4 延迟指标/T6 集成，actual id 97cb2bf2/2d07f7ba/d993e382/9e7927dd/db6bd3b2）→ **2 路并行收尾**（T5 卡片 3c0289ca/T7 导航 fbff984f）→ T8 合流：后端全量 **4750P/0F**（218s，`C:\CX-O\logs\round16_backend_pytest.log`，基线 4662 零回归）+ 前端 **677/677**（85 文件，tsc 0，净增 12 为新用例）→ GN-004 交付前审查 **警示放行（无 SOFT_BLOCK，a286a490）** → 人类终审 **批准收尾 ✅（2026-09-05，AskUserQuestion）**。
   - 交接状态：**Task 0-8 全部已闭合**（Task 0 主线程 s0401 闸门：admin_control.schema @1.1.0 target+prompt/action+preview、cx_admin.pyi @1.0.2、CHANGELOG 1.12.0；其余 7 任务 subagent 交付，台账见 spec.md 9 行全回填真实 ID）。
@@ -5242,3 +5259,101 @@ spec T2 / tasks T2 / checklist C2.2-C2.3 原写"挂载 GlassCanvas/AnimeDecorati
 - O1 debug 文件终态滞后：已按其建议当场回填 CLOSED+终值 ✅；O2 路径口径偏差（少一级目录/行号 ±3）：不影响实体结论，仅记录；O3 E2 修复属间接佐证（tsc 0 错误工具级信号）：如实披露保留。
 - 未触发阻断/软阻断，handle_gn004 无 fix-rerun 循环发生。→ proceed 进 [V] 闸门2。
 - **[V] 闸门2 人类裁决：批准收尾 ✅（2026-08-27）**——audit-project-health-20260827 整体闭合归档；待裁决观察项（死代码删除/discovery 鉴权/CORS 收紧/backlog）经用户选择未勾选任何即席治理项，保留在本文档与变更文档显式清单中，后续按需立卡排期；E2E 当前不可判定维持留痕。
+
+---
+
+## split-audio-workstation-cxfc-modelstation（spec 阶段 · 2026-09-05）
+
+### 做到哪了
+- 需求：拆分音频工作站为「作曲/翻唱CXFC」（VWS 8200 瘦身）+「模型工作站」（新建 CXO-ModelStation 8300 后端 + 独立前端 3300）。
+- spec 三件套已产出：.trae/specs/split-audio-workstation-cxfc-modelstation/（spec.md / tasks.md / checklist.md）。
+- GN-004 首轮审查：警示放行（SB-1 ×1、D-1~D-4、O-1~O-4）；SB-1 已经 AskUserQuestion 人类裁决（追踪标识 REQ-20260905-SPLIT-01）。
+
+### 请示闭环追踪（rules-0 §四-6）
+- **REQ-20260905-SPLIT-01**（架构分叉双裁决，AskUserQuestion 2026-09-05）：①后端拆成两个独立服务=选「拆成两个后端服务」✅；②数据归属=选「迁移到新服务目录」✅ → 已确认闭合，裁决已回写 spec 头注。
+- **REQ-20260905-SPLIT-02**（GN-004 SB-1 翻唱音频入口，AskUserQuestion 2026-09-05）：选「新增受控上传接口」✅ → 已确认闭合，spec 新增「翻唱音频受控上传」Requirement（POST /api/audio-uploads，落盘 data/input/ infer 白名单根），tasks 增 SubTask 2.4、4.1/4.2 已更新。
+
+### 为什么
+- 训练是重 GPU 单 worker 长任务，与轻量作曲/翻唱服务解耦后可独立部署/重启；用户显式要求模型工作站独立前端。
+- 数据零丢失优先于源目录清洁：迁移同名冲突时双方保留并列明细。
+
+### 未闭合项
+- GN-004 修正后完整复审（不得仅复审 SB-1，须全量 rerun）——当前进行中。
+- [V] 闸门2：spec 交付审批 NotifyUser 待人类批准；实施阶段（Task 1-6）未开始。
+- 台账 6 行 actual agent id 均待回填（实施启动后填入）。
+
+### 接续入口
+1. GN-004 完整复审通过 → NotifyUser 提交 spec 三件套待批。
+2. 人类批准后按 tasks.md 台账执行：P1 批（Task 1 ∥ Task 2）→ P2 批（Task 3 ∥ Task 4）→ Task 5 → Task 6（主线程）。
+3. 失败回退锚点见 tasks.md 文末。
+
+### 审查记录（只追加 · 2026-09-05）
+- **GN-004 首轮：警示放行**（SB-1×1 → REQ-20260905-SPLIT-02 人类裁决闭环；D-1~D-4、O-1~O-4 全部修复回写）。
+- **GN-004 完整复审：警示放行（SOFT_BLOCK=0）**——上轮 9 项逐项核验已修复；新发现 D-5（audio_path 格式未钉死，改绝对路径语义）、D-6（ModelStation infer 输入白名单未接线，补「训练数据目录 ∪ data/input」）、O-5（台账 Task 2 标签改 2.1–2.6）、O-6/O-7（措辞收口+auto_init 注明）、O-8（.m4a 可读错误测试覆盖纳入 SubTask 2.4）——均属 REQ-20260905-SPLIT-02 裁决方向的机械落实，无需新裁决，已全部回写 spec/tasks/checklist。
+- 状态：spec 三件套定稿，待 [V] 闸门2 人类审批（NotifyUser）。
+
+### 审查记录（只追加 · 2026-09-05 实施交付）
+- **实施交付完成**：Task 1–6 全部闭合（台账 6 行真实 agent id：84ed6753 / 3cebb8d3 / 1c4f9c2f / 3a932247 / a71d0a6e / 主线程）。P1 批（ModelStation 后端 ∥ VWS 瘦身）→ P2 批（ModelStation 前端 ∥ 主前端）→ Task 5 → Task 6 串行完成，branch-only 无跨分支回滚。
+- **验证证据（主线程实测）**：ModelStation 后端 64 passed；VWS 394 passed 1 skipped（既有 fluidsynth 项）；ModelStation 前端 12 passed + build 通过；主前端 682 passed + typecheck/eslint 零错误 + E2E 冒烟 2 passed；三服务 8000/8200/8300 /health 全 healthy；VWS 已删端点 404 / 保留端点 200；ModelStation 静态托管 + SPA fallback 200；迁移 moved=2/conflicts=0/errors=0（环境仅占位文件）+ 幂等重跑通过。
+- **产出**：CXO-ModelStation/（后端+独立前端+迁移工具+64 测试）；VWS 瘦身（训练域移除+受控上传端点+models_dir 跨服务只读）；主前端作曲/翻唱CXFC 页（CoverPanel/客户端瘦身/i18n）；脚本与锚点（start-all/stop-all/start.bat/AGENTS/README）。
+- **GN-004 交付前审查：警示放行（CAUTION-PASS）**——spec Requirement 逐条对照吻合、独立复跑 64+7 测试一致、public/ 零触碰、台账合规、变更文档 rules-6 合规、5 项遗留显式登记；SB-B（note 实施段缺失）与本审查记录即为其修正动作，补齐后闭合；O-1（checklist 回填）同批完成。
+- **未闭合项（移交）**：①Tuner 端口 8300 冲突（README 已注记勿同启，调整属 Tuner 范围待裁决）；②VWS security_utils.py 死代码（留 s0602）；③迁移工具大数据量场景当前不可判定（本环境无真实数据）；④ModelStation infer 相对路径按 CWD 解析（前端已缓解）；⑤浏览器级真人走查移交用户验收。
+
+## (3) 最终结果
+- 拆分交付成立：8200=作曲/翻唱CXFC（创作+agent 插件），8300=模型工作站（训练全链路+独立前端）。变更文档：.trae/documents/20260905_模块7_拆分音频工作站.md（含完整验证表）。spec 三件套与 checklist 全部勾选闭合。
+- 接续入口：后续如需调整 Tuner 端口、清理 security_utils 死代码、根治 infer 相对路径锚定，各立卡走新 spec；本项目变更已收敛，无进行中分支。
+
+### 审查记录（只追加 · 2026-09-05 端口调整）
+- **遗留项①（Tuner 端口冲突）已闭合**：用户指令「调整端口」→ CXO-Tuner 裸机监听 8300→**8310**（ModelStation 8300 spec 冻结不动）。变更文档：.trae/documents/20260905_模块0_调整Tuner端口避免冲突.md（已完成）。
+- 改动面：Tuner ps1/main.py docstring/Dockerfile 注释；compose 宿主映射默认值；.env.example；SERVER config.py 默认 host、tuner router 默认 base_url、evaluator 兜底 URL、test 默认值断言；README 注记。容器内端口 8300 保留（独立网络，无冲突）。
+- 验证：SERVER tuner 测试 31 passed；Tuner 测试 68 passed；Tuner 8310 + ModelStation 8300 双服务实启同启冒烟通过（端口冲突消失）。
+- 过程事故：tuner.py 同文件并行 Edit 覆盖丢失 1 次（L79 回退 8300），rg 残留检索当场抓获、串行补修——同文件编辑串行铁律再次确认。
+
+## [GN-004 审查记录] add-dream-emotion-probability-trigger Spec 三件套（2026-09-05）
+
+- **做到哪了**：spec 三件套（梦境触发条件/概率/独立模型）已完成并通过 GN-004 三轮审查，待人类 NotifyUser 裁决后进入实施
+- **为什么**：第一轮阻断 B1（server/config.py L1427 _set_explicit 显式列表遗漏 dream，显式配置会被 defaults 静默覆盖）+ W1（model_router 4 处硬编码）/W2（public schema 写授权）/W3（Sensor 路径表述矛盾）；第二轮阻断 R1（执行者并行编辑同一文件致后写覆盖先写，tasks/checklist 修正丢失，GN-004 实时重读发现）；第三轮通过
+- **审查结论**：【通过】（GN-004 agent id: 105d2da9-e580-4f54-98de-0ec3df19732d，retry_count=2）
+- **未闭合项**：O5 [WARN] Task 1.2 与 Task 2.1 并行改 server/config.py 有覆盖风险→实施时同文件改动由主线程串行合并；O6 [WARN] model_types "4 处"措辞第 4 处为字典字面量（可执行不改）；实施期全部 Task 待启动
+- **接续入口**：人类批准后按 tasks.md P0（Task 1 串行链 + Task 2 并行）启动实施，subagent 台账见 .trae/specs/add-dream-emotion-probability-trigger/tasks.md
+- **经验沉淀**：对同一文件的多个 Edit 严禁并行调用（本轮实际踩坑：spec.md 与 tasks.md 各丢一批编辑），必须串行逐个执行
+
+---
+
+## extend-modelstation-standalone-melotts-datasets（实施交付 · 2026-09-05）
+
+### 做到哪了
+- spec 三件套（GN-004 T1 警示放行+修正后批准）→ Task 1–5 全部实施完成并验证。
+- 交付：①自包含部署（engines/ 三引擎迁入+克隆 MeloTTS、config 锚定、setup_engines/requirements/DEPLOY、VWS so_vits_svc_dir 同步单一真源）；②数据集三引擎（/api/datasets/batch-generate：voxcpm/cosyvoice3_zero/qwen3_voicedesign，runtime_tts_client 协议对齐 provider 实码——refs=base64 内联、voicedesign 走 instructions；manifest v2 逐条 text+engine，v1 幂等迁移）；③MeloTTS 微调（四列 filelist prep + 官方两步管线 trainer + /api/melotts 五端点 + training_mutex 跨类型互斥含 workflow 旁路封堵）；④前端三页扩展（引擎选择/模型类型/分组）。
+
+### 为什么
+- 三项人类裁决：自包含目录、复用 vLLM 端点、统一数据集双消费；MeloTTS filelist 按引擎实码升级四列（spec 写明以实码为准）。
+
+### 未闭合项
+1. [当前不可判定] MeloTTS GPU 实跑（需 GPU + pip install -e .，见 DEPLOY.md）
+2. [当前不可判定] base_checkpoint=--pretrain_G 语义确认（首次实跑前）
+3. [当前不可判定] vLLM voicedesign(8091)/cosyvoice(8094) 在线联调（当前 8094 代理 502，运行时未起）
+4. [当前不可判定] 三页新交互浏览器级走查（移交用户）
+5. MeloTTS 试听 infer 不在本期 spec（模型库页已标注）
+
+### 接续入口
+- GN-004 交付前审查（本记录写入时点待拉起）→ 通过后本变更收敛。
+- 后续可立卡：MeloTTS infer/试听端点、vLLM 运行时编排进 DEPLOY、Tuner 与 ModelStation 的训练队列协同。
+
+### 请示闭环追踪
+- REQ-20260905-MS-01（AskUserQuestion 三裁决：自包含目录/复用 vLLM 端点/双消费）✅ 已确认闭合，落 spec 头注。
+
+### 审查记录（只追加 · 2026-09-05 交付审查）
+- **GN-004 交付前审查（T3）：通过（PASS）**——独立复跑三套件与声明一致（ModelStation 146 passed / VWS 394 passed 1 skipped / 前端 18 passed）；协议对齐逐项核验（refs base64、instructions、44 字节头、裁剪阈值）；互斥接线旁路闭合核验（sovits 3 出口点 + workflow 4 处 + reset）；public/ 零触碰；[当前不可判定] 5 项诚实登记无静默转闭合。
+- 观察项 O-1（变更文档第三章复选框形态）已按建议补汇总注记；O-2（git 工作区多 spec 未提交）移交人类择机分批提交；O-3（终端 GBK 显示乱码，文件本身 UTF-8 完好）仅留痕。
+- 状态：本变更收敛闭合。变更大批次（rounds 6–15 + 拆分 + 本次扩展）均未提交 git——建议尽快分批提交。
+
+## [实施完成] add-dream-emotion-probability-trigger 梦境触发条件与独立模型（2026-09-05）
+
+- **做到哪了**：Task 1-6 全部闭合。配置契约层（DreamTriggerConfig/DreamSection.trigger/public schema trigger+sleep_confirmation 漂移补齐）、独立模型槽位（ModelsConfig.dream+_set_explicit+model_router 4 处）、情绪峰值查询（query_mixin.get_emotion_peak_since/collector.collect_recent_emotion_peak）、引擎触发闸门（_passes_emotion_gate 每轮缓存+_passes_probability_roll 触发点即时判定，两触发点接入）、前端 DreamPage trigger 分组 5 字段+i18n。
+- **为什么**：用户需求——梦境触发增加"最近事件情绪达到阈值"条件与可调概率，允许独立模型。设计默认零回归（emotion_enabled=False/probability=1.0/model 仍 summary）。
+- **验证结论**：pytest -k dream=338 passed；-k "config or model_router"=474 passed；睡眠链路 51 passed；vitest DreamPage 10 passed；tsc 0 错误。public schema 经人类显式授权（AskUserQuestion 批准）后写入。
+- **产出物清单**：后端 6 文件（config.py×2/dream config/engine/collector/query_mixin/model_router）+ schema 契约 + 前端 4 文件（types/DreamPage/zh-CN/en-US）+ 测试 6 文件（新增约 40 用例）+ 变更文档 .trae/documents/20260905_模块0_梦境触发条件与独立模型.md。
+- **未闭合项**：无阻塞项。运行期部署提醒：后端重启后新配置节生效；真机验证情绪触发需 config 开启 emotion_enabled 并积累带 emotion_score 的记忆事件。subagent 报告的观察项：collect_recent_emotion_peak 的 agent_id 参数当前未参与查询（workspace_id 硬编码 default，对齐既有行为，接口预留）。
+- **接续入口**：spec 任务全部完成；后续若需扩展（如情绪类型维度、按 agent 独立窗口）可基于 trigger 子节增量演进。
+- **经验沉淀**：同文件多 Edit 并行 = 丢编辑（本轮 3 次实际事故：spec 修订批次/DreamPage.tsx/test_dream_collector.py，均靠实时重读暴露）；模型槽位多点硬编码新增成本高；GN-004 审查必须以文件实时内容为唯一证据源。

@@ -428,6 +428,19 @@ export interface DreamConfig {
     diary_time: string;
     quiet_windows: string[];
   };
+  /** 情绪触发子节（后端 GET 对旧配置自动补默认值；PUT 携带该子节做深度合并校验） */
+  trigger: {
+    /** 情绪闸门开关 */
+    emotion_enabled: boolean;
+    /** 情绪阈值 [0,1] */
+    emotion_threshold: number;
+    /** 回看窗口（小时），>= 1 */
+    emotion_window_hours: number;
+    /** 最少事件数，>= 1 */
+    emotion_min_events: number;
+    /** 触发概率 [0,1] */
+    probability: number;
+  };
 }
 
 // ── CX-O-Dream 生理信号（physio）类型（对齐 server/autonomy/dream/physio/ 契约） ──

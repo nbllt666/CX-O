@@ -117,12 +117,18 @@ class TestGetModelContext:
         assert r.status_code == 200
         mc = r.json()["model_context"]
         slots = mc["global"]["models"]
-        assert set(slots) == {"main", "summary", "memory"}
-        assert mc["global"]["defaults"] == {"summary": "main", "memory": "main"}
-        # 默认未显式配置 → summary/memory 跟随 main
+        # 外部改动（CX-O-Dream）为 ModelsConfig 增设 dream 槽位，槽位集合随之扩展
+        assert set(slots) == {"main", "summary", "memory", "dream"}
+        assert mc["global"]["defaults"] == {
+            "summary": "main",
+            "memory": "main",
+            "dream": "main",
+        }
+        # 默认未显式配置 → summary/memory/dream 跟随 main
         assert slots["summary"]["explicit"] is False
         assert slots["summary"]["following"] == "main"
         assert slots["memory"]["following"] == "main"
+        assert slots["dream"]["following"] == "main"
         # 槽位字段完整（model/max_tokens/temperature/host/port）
         for slot in slots.values():
             assert set(slot) == {"model", "max_tokens", "temperature", "host", "port", "explicit", "following"}
@@ -191,9 +197,11 @@ class TestPutModelContextGlobal:
         assert env.fake.config.llm.temperature == 0.3
 
     def test_whitelist_outside_400(self, env):
+        # 本轮 spec（enhance-admin-telemetry）已将 system.debug 纳入白名单，
+        # "白名单外"示例改用 llm.stream（LLMConfig 实有字段、刻意不放开）
         r = env.client.put(
             "/admin/model-context",
-            json={"global": {"system.debug": True}},
+            json={"global": {"llm.stream": True}},
         )
         assert r.status_code == 400
         assert "ADMIN_CONFIG_FIELD_NOT_ALLOWED" in r.json()["detail"]

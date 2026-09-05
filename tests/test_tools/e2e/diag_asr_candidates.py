@@ -4,6 +4,7 @@
 """
 import asyncio
 import json
+import os
 import wave
 
 import numpy as np
@@ -11,11 +12,19 @@ import websockets
 
 ASR_WS = "ws://127.0.0.1:8005/ws/asr/stream"
 
+# VoxCPM 参考音频：2026-09-05 引擎目录迁移至 CXO-ModelStation/engines/ 后，
+# 原硬编码 C:\CX-O\VoxCPM-main\... 失效。改为环境变量 CXO_VOXCPM_REF_AUDIO
+# 可配置，缺省回退迁移后新路径。
+VOXCPM_REF_AUDIO = os.environ.get(
+    "CXO_VOXCPM_REF_AUDIO",
+    r"C:\CX-O\CXO-ModelStation\engines\VoxCPM-main\examples\reference_speaker.wav",
+)
+
 CANDIDATES = [
     r"C:\CX-O\docker\llm\cosyvoice_tmp\warmup_ref.wav",
     r"C:\CX-O\.trae\test_reports\test_zh_changle.wav",
     r"C:\CX-O\third_party\cosyvoice-official\asset\cross_lingual_prompt.wav",
-    r"C:\CX-O\VoxCPM-main\examples\reference_speaker.wav",
+    VOXCPM_REF_AUDIO,
     r"C:\CX-O\docker\asr\sensevoice\runtime\llama.cpp\tests\sample.wav",
 ]
 

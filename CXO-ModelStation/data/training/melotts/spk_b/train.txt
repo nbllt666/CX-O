@@ -1,0 +1,4 @@
+C:\Users\NBLLT666\AppData\Local\Temp\pytest-of-NBLLT666\pytest-2040\test_split_val_at_least_one_wh0\data\training\sovits_svc\raw\spk_b\0002.wav|spk_b|ZH|text-2
+C:\Users\NBLLT666\AppData\Local\Temp\pytest-of-NBLLT666\pytest-2040\test_split_val_at_least_one_wh0\data\training\sovits_svc\raw\spk_b\0003.wav|spk_b|ZH|text-3
+C:\Users\NBLLT666\AppData\Local\Temp\pytest-of-NBLLT666\pytest-2040\test_split_val_at_least_one_wh0\data\training\sovits_svc\raw\spk_b\0004.wav|spk_b|ZH|text-4
+C:\Users\NBLLT666\AppData\Local\Temp\pytest-of-NBLLT666\pytest-2040\test_split_val_at_least_one_wh0\data\training\sovits_svc\raw\spk_b\0005.wav|spk_b|ZH|text-5

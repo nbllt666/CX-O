@@ -446,3 +446,43 @@ class _QueryHelpersMixin:
             logger.error(f"按情感获取记忆失败: {e}", exc_info=True)
             return []
 
+    def get_emotion_peak_since(self, since_iso: str, workspace_id: str = "default") -> Dict:
+        """查询自指定时间以来的情绪峰值与事件数（排除梦境记忆）
+
+        供梦境情绪触发闸门使用：聚合最近事件窗口内 emotion_score 绝对值的最大值，
+        并排除 type='dream' 的梦境记忆，避免梦境内容自我强化情绪峰值。
+
+        Args:
+            since_iso: 起始时间（ISO 格式字符串，含该时刻及之后）
+            workspace_id: 工作区ID
+
+        Returns:
+            {"peak": float, "count": int}；查询失败时降级返回 {"peak": 0.0, "count": 0}
+        """
+        conn = None
+        try:
+            conn = self._get_connection()
+            cursor = conn.cursor()
+
+            cursor.execute(
+                """
+                SELECT COALESCE(MAX(ABS(emotion_score)), 0.0) AS peak, COUNT(*) AS cnt
+                FROM memories
+                WHERE is_deleted = FALSE
+                AND workspace_id = ?
+                AND created_at >= ?
+                AND (type IS NULL OR type != 'dream')
+                """,
+                (workspace_id, since_iso),
+            )
+
+            row = cursor.fetchone()
+            return {
+                "peak": float(row["peak"] or 0.0),
+                "count": int(row["cnt"] or 0),
+            }
+
+        except Exception as e:
+            logger.error(f"查询情绪峰值失败: {e}", exc_info=True)
+            return {"peak": 0.0, "count": 0}
+

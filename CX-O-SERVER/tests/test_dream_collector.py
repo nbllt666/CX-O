@@ -38,12 +38,20 @@ def _iso(days_ago=0):
 
 
 class FakeMemoryManager:
-    """mock memory_manager：仅实现采集用到的两个只读查询方法，并记录调用。"""
+    """mock memory_manager：仅实现采集用到的只读查询方法，并记录调用。
 
-    def __init__(self, pool=None, diary=None):
+    peak_result / peak_error 用于 collect_recent_emotion_peak 用例：
+    - peak_result 非 None 时 get_emotion_peak_since 返回该值
+    - peak_error 非 None 时 get_emotion_peak_since 抛该异常
+    """
+
+    def __init__(self, pool=None, diary=None, peak_result=None, peak_error=None):
         self.pool = pool or []
         self.diary = diary or []
         self.called = []
+        self.peak_result = peak_result
+        self.peak_error = peak_error
+        self.peak_calls = []
 
     async def search_memories_async(
         self,
@@ -63,6 +71,12 @@ class FakeMemoryManager:
     def search_by_tag(self, tag, workspace_id="default", limit=50):
         self.called.append(f"search_by_tag:{tag}")
         return [m for m in self.diary if tag in (m.get("tags") or [])]
+
+    def get_emotion_peak_since(self, since_iso, workspace_id="default"):
+        self.peak_calls.append((since_iso, workspace_id))
+        if self.peak_error is not None:
+            raise self.peak_error
+        return self.peak_result
 
 
 class _SearchResult:
@@ -240,3 +254,46 @@ class TestEmotionBaseline:
 
         snap = asyncio.run(DreamMaterialCollector(ErrorMM()).collect())
         assert snap.emotion_baseline == 0.0
+
+
+# ================================================================ 最近事件情绪峰值
+class TestRecentEmotionPeak:
+    def test_peak_passthrough(self):
+        mm = FakeMemoryManager(peak_result={"peak": 0.85, "count": 3})
+        result = asyncio.run(DreamMaterialCollector(mm).collect_recent_emotion_peak("default"))
+        assert result == {"peak": 0.85, "count": 3}
+
+    def test_window_and_workspace_args(self):
+        mm = FakeMemoryManager(peak_result={"peak": 0.5, "count": 1})
+        before = datetime.now()
+        asyncio.run(
+            DreamMaterialCollector(mm).collect_recent_emotion_peak("default", window_hours=6)
+        )
+        after = datetime.now()
+        # 只调用一次 get_emotion_peak_since，workspace_id 硬编码 "default"
+        assert len(mm.peak_calls) == 1
+        since_iso, workspace_id = mm.peak_calls[0]
+        assert workspace_id == "default"
+        # 宽松断言：since_iso 约为 now - 6h（落在测试执行的时间窗口内）
+        since = datetime.fromisoformat(since_iso)
+        assert before - timedelta(hours=6) <= since <= after - timedelta(hours=6)
+
+    def test_exception_degrades_without_raise(self):
+        mm = FakeMemoryManager(peak_error=RuntimeError("db down"))
+        result = asyncio.run(DreamMaterialCollector(mm).collect_recent_emotion_peak("default"))
+        assert result == {"peak": 0.0, "count": 0}
+
+    def test_none_result_degrades(self):
+        mm = FakeMemoryManager(peak_result=None)
+        result = asyncio.run(DreamMaterialCollector(mm).collect_recent_emotion_peak("default"))
+        assert result == {"peak": 0.0, "count": 0}
+
+    def test_non_dict_result_degrades(self):
+        mm = FakeMemoryManager(peak_result=[0.9, 5])
+        result = asyncio.run(DreamMaterialCollector(mm).collect_recent_emotion_peak("default"))
+        assert result == {"peak": 0.0, "count": 0}
+
+    def test_dict_missing_keys_degrades(self):
+        mm = FakeMemoryManager(peak_result={"peak": 0.9})
+        result = asyncio.run(DreamMaterialCollector(mm).collect_recent_emotion_peak("default"))
+        assert result == {"peak": 0.0, "count": 0}

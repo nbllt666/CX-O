@@ -57,6 +57,20 @@ const EMPTY_STATS: DreamStats = {
   purges: 0,
 };
 
+/** 情绪触发（trigger）子节契约默认值：旧后端响应缺该子节时前端回退，避免输入组件拿到 undefined */
+const TRIGGER_DEFAULTS: DreamConfig['trigger'] = {
+  emotion_enabled: false,
+  emotion_threshold: 0.7,
+  emotion_window_hours: 24,
+  emotion_min_events: 1,
+  probability: 1.0,
+};
+
+/** 配置归一化：补齐旧响应缺失的 trigger 子节（对齐后端 GET 自动补默认值口径） */
+function normalizeDreamConfig(config: DreamConfig): DreamConfig {
+  return { ...config, trigger: { ...TRIGGER_DEFAULTS, ...config.trigger } };
+}
+
 /** 忙碌动作标记：用于禁用对应按钮，避免重复提交 */
 type DreamBusyAction =
   | 'trigger'
@@ -122,12 +136,16 @@ function NumberField({
   value,
   onChange,
   step,
+  min,
+  max,
   testId,
 }: {
   label: string;
   value: number;
   onChange: (v: number) => void;
   step?: number;
+  min?: number;
+  max?: number;
   testId?: string;
 }) {
   return (
@@ -139,6 +157,8 @@ function NumberField({
         value={Number.isFinite(value) ? String(value) : ''}
         onChange={(e) => onChange(e.target.value === '' ? 0 : Number(e.target.value))}
         step={step}
+        min={min}
+        max={max}
         className="rounded-lg border border-[var(--glass-border)] bg-transparent px-2 py-1 text-xs outline-none focus:border-primary/50"
       />
     </label>
@@ -209,7 +229,7 @@ export default function DreamPage() {
     ]);
     setStatus(statusData);
     if (configData && !draftSyncedRef.current) {
-      setDraft(configData);
+      setDraft(normalizeDreamConfig(configData));
       draftSyncedRef.current = true;
     }
     return statusData;
@@ -337,6 +357,12 @@ export default function DreamPage() {
     setSaved(false);
   };
 
+  /** 情绪触发（trigger）子节草稿更新：嵌套合并，整份 draft 随保存 PUT（后端深度合并校验） */
+  const updateTrigger = (patch: Partial<DreamConfig['trigger']>) => {
+    setDraft((prev) => (prev ? { ...prev, trigger: { ...prev.trigger, ...patch } } : prev));
+    setSaved(false);
+  };
+
   const handleSaveConfig = async () => {
     if (!draft || busyAction) return;
     setBusyAction('save-config');
@@ -344,7 +370,7 @@ export default function DreamPage() {
     setSaved(false);
     try {
       const next = await dreamApi.updateConfig(draft);
-      setDraft(next);
+      setDraft(normalizeDreamConfig(next));
       setSaved(true);
       await fetchStatusAndConfig();
       await loadList();
@@ -916,6 +942,53 @@ export default function DreamPage() {
                     label={t('management.dream.field.sleepTime')}
                     value={draft.schedule.sleep_time}
                     onChange={(v) => updateSchedule({ sleep_time: v })}
+                  />
+                </div>
+
+                {/* ── 情绪触发（trigger）分组 ── */}
+                <h4 className="pt-1 text-xs font-medium text-muted-foreground">
+                  {t('management.dream.triggerGroupTitle')}
+                </h4>
+                <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
+                  <CheckboxField
+                    label={t('management.dream.field.emotionEnabled')}
+                    checked={draft.trigger.emotion_enabled}
+                    onChange={(v) => updateTrigger({ emotion_enabled: v })}
+                    testId="dream-config-trigger-emotion-enabled"
+                  />
+                  <NumberField
+                    label={t('management.dream.field.emotionThreshold')}
+                    value={draft.trigger.emotion_threshold}
+                    step={0.05}
+                    min={0}
+                    max={1}
+                    onChange={(v) => updateTrigger({ emotion_threshold: v })}
+                    testId="dream-config-trigger-emotion-threshold"
+                  />
+                  <NumberField
+                    label={t('management.dream.field.emotionWindowHours')}
+                    value={draft.trigger.emotion_window_hours}
+                    step={1}
+                    min={1}
+                    onChange={(v) => updateTrigger({ emotion_window_hours: v })}
+                    testId="dream-config-trigger-emotion-window-hours"
+                  />
+                  <NumberField
+                    label={t('management.dream.field.emotionMinEvents')}
+                    value={draft.trigger.emotion_min_events}
+                    step={1}
+                    min={1}
+                    onChange={(v) => updateTrigger({ emotion_min_events: v })}
+                    testId="dream-config-trigger-emotion-min-events"
+                  />
+                  <NumberField
+                    label={t('management.dream.field.probability')}
+                    value={draft.trigger.probability}
+                    step={0.05}
+                    min={0}
+                    max={1}
+                    onChange={(v) => updateTrigger({ probability: v })}
+                    testId="dream-config-trigger-probability"
                   />
                 </div>
                 {actionError && (

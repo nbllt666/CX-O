@@ -10,6 +10,9 @@
 ⑦ POST /dream/purge  返回 {purged_memories, purged_buffer}
 ⑧ GET  /dream/config  返回配置（UnifiedConfig.dream 节，Task 6.2 迁移，不依赖引擎）
 ⑨ PUT  /dream/config  非法 422 / 合法更新持久化 settings + GET 往返 / enabled 开关通知引擎 start/stop
+⑩ GET/PUT /dream/config trigger 触发闸门子节：PUT 合法 trigger 往返（响应/GET/
+   settings/config.json 均含该值）/ 非法值 422（越界 probability / 未知字段）/
+   旧配置（dream 节无 trigger 数据）GET 自动补默认 trigger
 
 运行：python -m pytest tests/test_dream_router.py -q
 """
@@ -381,6 +384,70 @@ class TestConfig:
         from server.autonomy.dream.config import DreamConfig
 
         assert isinstance(engine.config, DreamConfig)
+
+
+# ================================================================ ⑩ trigger 触发闸门子节
+class TestConfigTrigger:
+    def test_put_config_trigger_roundtrip(self, client, isolated_settings):
+        """PUT 合法 trigger：响应、settings 内存态、config.json 磁盘态、GET 均含该值。"""
+        settings, cfg_path = isolated_settings
+        r = client.put(
+            "/api/dream/config",
+            json={
+                "trigger": {
+                    "emotion_enabled": True,
+                    "emotion_threshold": 0.8,
+                    "probability": 0.5,
+                }
+            },
+        )
+        assert r.status_code == 200
+        body = r.json()
+        assert body["trigger"]["emotion_enabled"] is True
+        assert body["trigger"]["emotion_threshold"] == 0.8
+        assert body["trigger"]["probability"] == 0.5
+        # 未提交的 trigger 字段保留默认（深度合并 + 自动补齐）
+        assert body["trigger"]["emotion_window_hours"] == 24
+        assert body["trigger"]["emotion_min_events"] == 1
+        # 已持久化到 UnifiedConfig（settings 内存态 + config.json 磁盘态）
+        assert settings.config.dream.trigger.emotion_enabled is True
+        persisted = json.loads(cfg_path.read_text(encoding="utf-8"))
+        assert persisted["dream"]["trigger"]["probability"] == 0.5
+        # GET 往返
+        r2 = client.get("/api/dream/config")
+        assert r2.status_code == 200
+        trigger = r2.json()["trigger"]
+        assert trigger["emotion_enabled"] is True
+        assert trigger["emotion_threshold"] == 0.8
+        assert trigger["probability"] == 0.5
+
+    def test_put_config_trigger_invalid_probability_422(self, client, isolated_settings):
+        r = client.put("/api/dream/config", json={"trigger": {"probability": 1.5}})
+        assert r.status_code == 422
+
+    def test_put_config_trigger_unknown_field_422(self, client, isolated_settings):
+        """trigger 子节 extra="forbid"：未知字段 422。"""
+        r = client.put("/api/dream/config", json={"trigger": {"unknown": 1}})
+        assert r.status_code == 422
+
+    def test_get_config_legacy_without_trigger_fills_defaults(self, client, isolated_settings):
+        """旧配置（dream 节无 trigger 数据）GET 自动补默认 trigger。"""
+        settings, cfg_path = isolated_settings
+        cfg_path.write_text(
+            json.dumps({"dream": {"enabled": True}}, ensure_ascii=False),
+            encoding="utf-8",
+        )
+        settings.reload_config()
+        assert settings.config.dream.enabled is True
+        r = client.get("/api/dream/config")
+        assert r.status_code == 200
+        body = r.json()
+        assert body["enabled"] is True
+        assert body["trigger"]["emotion_enabled"] is False
+        assert body["trigger"]["emotion_threshold"] == 0.7
+        assert body["trigger"]["emotion_window_hours"] == 24
+        assert body["trigger"]["emotion_min_events"] == 1
+        assert body["trigger"]["probability"] == 1.0
 
 
 # ================================================================ 写路径鉴权（鉴权漏挂簇修复补充用例）

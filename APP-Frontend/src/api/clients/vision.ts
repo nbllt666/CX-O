@@ -13,7 +13,7 @@
  * 注意：FormData 的 Content-Type 由浏览器自动附带 boundary，这里不手动设置，
  * 否则后端无法解析 multipart。
  */
-import { getApiBaseUrl, normalizeError, STORAGE_KEYS } from '../base';
+import { getApiBaseUrl, normalizeError, request, STORAGE_KEYS } from '../base';
 
 export interface UploadVisionClipRequest {
   /** 已编码的片段文件（video/webm Blob） */
@@ -69,4 +69,43 @@ export async function uploadVisionClip(
   } catch (error) {
     throw normalizeError(error);
   }
+}
+
+// ── 帧筛选（Task 5 / spec add-vlm-frame-filter-face-match，信号契约冻结） ──
+
+/** 帧筛选三态判定：forward=转发主 LLM 对话 / summarize=仅沉淀摘要 / discard=无价值丢弃 */
+export type FrameFilterAction = 'forward' | 'summarize' | 'discard';
+
+/**
+ * POST /api/vision/frame 响应（spec 信号契约，非 APIResponse 包裹，扁平结构）。
+ * summary/reason/importance/degraded/face_labels 按判定结果可选；filter_active
+ * 为 false 表示后端筛选开关关闭（直接 forward，零筛选开销）。
+ */
+export interface FrameFilterResponse {
+  action: FrameFilterAction;
+  summary?: string;
+  reason?: string;
+  importance?: 'low' | 'medium' | 'high';
+  degraded?: boolean;
+  face_labels?: string[];
+  filter_active: boolean;
+}
+
+/**
+ * 单帧筛选判定：把画面帧交给后端小 VLM 筛选层，返回 forward/summarize/discard 三态。
+ * - image 为 dataURL（与 chat images 同口径）；ts 为可解析时间戳字符串，可选；
+ * - 网络错误 / 非 2xx 一律抛出（normalizeError 归一化），由调用方回退直通对话；
+ * - 响应为扁平信号契约（非 APIResponse 包裹），直接透传。
+ */
+export async function filterFrame(
+  image: string,
+  agentId: string,
+  source: 'camera' | 'screen',
+  ts?: string,
+): Promise<FrameFilterResponse> {
+  return request<FrameFilterResponse>({
+    url: '/api/vision/frame',
+    method: 'post',
+    data: { image, agent_id: agentId, source, ts },
+  });
 }

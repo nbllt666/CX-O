@@ -1,0 +1,18 @@
+{
+  "version": 1,
+  "created_at": "2026-09-05T21:05:12+08:00",
+  "dataset_dir": "C:\\Users\\NBLLT666\\AppData\\Local\\Temp\\pytest-of-NBLLT666\\pytest-2040\\test_split_below_min_total_all1\\data\\training\\sovits_svc\\raw\\spk_small_2",
+  "speaker_name": "spk_small_2",
+  "language": "ZH",
+  "val_ratio": 0.05,
+  "total": 2,
+  "used": 2,
+  "excluded_no_text": 0,
+  "excluded_missing_file": 0,
+  "train_count": 2,
+  "val_count": 0,
+  "split_note": "条目总数 2 < 5，全部进入 train（未做比例切分）",
+  "train_file": "C:\\CX-O\\CXO-ModelStation\\data\\training\\melotts\\spk_small_2\\train.txt",
+  "val_file": "C:\\CX-O\\CXO-ModelStation\\data\\training\\melotts\\spk_small_2\\val.txt",
+  "metadata_file": "C:\\CX-O\\CXO-ModelStation\\data\\training\\melotts\\spk_small_2\\metadata.list"
+}

@@ -13,6 +13,8 @@
 6. 生命周期：start 幂等 / enabled=false 不启动 / stop 幂等
 7. 入睡流程（Task 3）：确认闸门通过/拒绝、首步自动摘要执行、摘要失败降级
    仍不阻断并最终进入 run_session 的分支
+8. 触发闸门（Task 4）：默认配置零回归（不查情绪峰值）、情绪满足/不满足/
+   空窗/查询异常降级、概率命中/未命中、Sensor 路径闸门拦截与冷却优先
 
 运行：python -m pytest tests/test_dream_engine.py -q
 """
@@ -23,7 +25,7 @@ import pytest
 
 import server.autonomy.dream.engine as engine_module
 from server.autonomy.dream.collector import DreamMaterialSnapshot
-from server.autonomy.dream.config import DreamConfig
+from server.autonomy.dream.config import DreamConfig, DreamTriggerConfig
 from server.autonomy.dream.engine import DreamEngine
 from server.autonomy.dream.filter import DreamFilter
 from server.autonomy.dream.generator import DreamCandidate
@@ -762,3 +764,217 @@ class TestTriggerAutoSummary:
         )
         result = await engine.trigger_auto_summary("default")
         assert result is None  # 异常被隔离
+
+
+# ================================================================ Task 4 触发闸门（情绪 + 概率）
+class EmotionPeakCollector(FakeCollector):
+    """带 collect_recent_emotion_peak 跟踪的假采集器（Task 4 闸门测试专用）。
+
+    - collect() 行为继承 FakeCollector（会话素材采集）
+    - collect_recent_emotion_peak() 返回配置的 peak/count，可注入异常；
+      peak_calls 记录每次调用 (agent_id, window_hours)
+    """
+
+    def __init__(self, snapshot=None, peak=0.0, count=0, peak_exc=None, **kwargs):
+        super().__init__(snapshot=snapshot, **kwargs)
+        self.peak = peak
+        self.count = count
+        self.peak_exc = peak_exc
+        self.peak_calls = []
+
+    async def collect_recent_emotion_peak(self, agent_id, window_hours=24):
+        self.peak_calls.append((agent_id, window_hours))
+        if self.peak_exc:
+            raise self.peak_exc
+        return {"peak": self.peak, "count": self.count}
+
+
+class _AsleepOnlySensor:
+    """snapshot 恒 ASLEEP 的假 SleepSensor（无流转方法，闸门拦截用不到）。"""
+
+    def snapshot(self):
+        return {"state": "ASLEEP", "signals": []}
+
+
+def _emotion_trigger_config(**overrides):
+    """构造开启情绪闸门的 DreamTriggerConfig（其余字段用默认）。"""
+    return DreamTriggerConfig(emotion_enabled=True, **overrides)
+
+
+def make_gate_engine(*, config=None, collector=None, sensor=None):
+    """构造 Task 4 闸门测试用 DreamEngine（enabled=True，间隔 0.05s）。"""
+    return DreamEngine(
+        collector=collector or EmotionPeakCollector(_snapshot()),
+        generator=FakeGenerator([_candidate()]),
+        dream_filter=FakeFilter(),
+        buffer=FakeBuffer(),
+        consolidator=FakeConsolidator(),
+        purge_job=FakePurgeJob(),
+        config=config or DreamConfig(enabled=True),
+        interval_seconds=0.05,
+        sleep_sensor=sensor,
+    )
+
+
+@pytest.mark.asyncio
+class TestTriggerGates:
+    async def test_default_config_edge_trigger_zero_regression(self, monkeypatch):
+        """默认配置（emotion_enabled=False, probability=1.0）零回归：
+        边沿触发照常进入会话，且不发起任何情绪峰值查询。"""
+        FakeScheduler.sequence = [True]
+        monkeypatch.setattr(engine_module, "CircadianScheduler", FakeScheduler)
+        collector = EmotionPeakCollector(_snapshot())
+        engine = make_gate_engine(collector=collector)
+        try:
+            engine.start()
+            await asyncio.sleep(0.15)
+            assert collector.calls >= 1          # 会话照常触发
+            assert collector.peak_calls == []    # 情绪闸门关闭 → 零查询
+        finally:
+            engine.stop()
+            await asyncio.sleep(_SETTLE)
+
+    async def test_emotion_gate_pass_triggers_session(self, monkeypatch):
+        """emotion_enabled=True 且 peak=0.85/count=3 ≥ threshold=0.7 → 边沿触发。"""
+        FakeScheduler.sequence = [True]
+        monkeypatch.setattr(engine_module, "CircadianScheduler", FakeScheduler)
+        collector = EmotionPeakCollector(_snapshot(), peak=0.85, count=3)
+        config = DreamConfig(enabled=True, trigger=_emotion_trigger_config())
+        engine = make_gate_engine(config=config, collector=collector)
+        try:
+            engine.start()
+            await asyncio.sleep(0.15)
+            assert collector.peak_calls          # 情绪峰值已被查询
+            assert collector.calls >= 1          # 闸门通过 → 会话触发
+        finally:
+            engine.stop()
+            await asyncio.sleep(_SETTLE)
+
+    async def test_emotion_gate_peak_below_threshold_blocks(self, monkeypatch):
+        """peak=0.4 < threshold=0.7 → 不触发、状态仍 idle、_last_trigger_at 不更新。"""
+        FakeScheduler.sequence = [True]
+        monkeypatch.setattr(engine_module, "CircadianScheduler", FakeScheduler)
+        collector = EmotionPeakCollector(_snapshot(), peak=0.4, count=3)
+        config = DreamConfig(enabled=True, trigger=_emotion_trigger_config())
+        engine = make_gate_engine(config=config, collector=collector)
+        try:
+            engine.start()
+            await asyncio.sleep(0.15)
+            assert collector.calls == 0
+            assert engine._status == "idle"
+            assert engine._last_trigger_at is None
+        finally:
+            engine.stop()
+            await asyncio.sleep(_SETTLE)
+
+    async def test_emotion_gate_empty_window_blocks(self, monkeypatch):
+        """count=0（空窗）→ 即使 peak 达标也不触发。"""
+        FakeScheduler.sequence = [True]
+        monkeypatch.setattr(engine_module, "CircadianScheduler", FakeScheduler)
+        collector = EmotionPeakCollector(_snapshot(), peak=0.9, count=0)
+        config = DreamConfig(enabled=True, trigger=_emotion_trigger_config())
+        engine = make_gate_engine(config=config, collector=collector)
+        try:
+            engine.start()
+            await asyncio.sleep(0.15)
+            assert collector.calls == 0
+            assert engine._status == "idle"
+            assert engine._last_trigger_at is None
+        finally:
+            engine.stop()
+            await asyncio.sleep(_SETTLE)
+
+    async def test_emotion_gate_query_exception_degrades(self, monkeypatch):
+        """情绪查询异常 → 闸门降级 False、不触发、主循环不崩（保持运行）。"""
+        FakeScheduler.sequence = [True]
+        monkeypatch.setattr(engine_module, "CircadianScheduler", FakeScheduler)
+        collector = EmotionPeakCollector(
+            _snapshot(), peak_exc=RuntimeError("emotion query down")
+        )
+        config = DreamConfig(enabled=True, trigger=_emotion_trigger_config())
+        engine = make_gate_engine(config=config, collector=collector)
+        try:
+            engine.start()
+            await asyncio.sleep(0.15)
+            assert collector.peak_calls                    # 查询已发起
+            assert collector.calls == 0                    # 未触发会话
+            assert engine._status == "idle"                # 主循环存活
+            assert engine._task is not None and not engine._task.done()
+        finally:
+            engine.stop()
+            await asyncio.sleep(_SETTLE)
+
+    async def test_probability_roll_miss_blocks_edge_trigger(self, monkeypatch):
+        """probability=0.5 且 random()=0.7 → 未命中，边沿不触发（情绪闸门关闭）。"""
+        FakeScheduler.sequence = [True]
+        monkeypatch.setattr(engine_module, "CircadianScheduler", FakeScheduler)
+        monkeypatch.setattr(engine_module.random, "random", lambda: 0.7)
+        collector = EmotionPeakCollector(_snapshot())
+        config = DreamConfig(enabled=True, trigger=DreamTriggerConfig(probability=0.5))
+        engine = make_gate_engine(config=config, collector=collector)
+        try:
+            engine.start()
+            await asyncio.sleep(0.15)
+            assert collector.calls == 0
+            assert engine._status == "idle"
+            assert engine._last_trigger_at is None
+        finally:
+            engine.stop()
+            await asyncio.sleep(_SETTLE)
+
+    async def test_probability_roll_hit_allows_edge_trigger(self, monkeypatch):
+        """probability=0.5 且 random()=0.3 → 命中，边沿触发（概率独立生效）。"""
+        FakeScheduler.sequence = [True]
+        monkeypatch.setattr(engine_module, "CircadianScheduler", FakeScheduler)
+        monkeypatch.setattr(engine_module.random, "random", lambda: 0.3)
+        collector = EmotionPeakCollector(_snapshot())
+        config = DreamConfig(enabled=True, trigger=DreamTriggerConfig(probability=0.5))
+        engine = make_gate_engine(config=config, collector=collector)
+        try:
+            engine.start()
+            await asyncio.sleep(0.15)
+            assert collector.calls >= 1
+        finally:
+            engine.stop()
+            await asyncio.sleep(_SETTLE)
+
+    async def test_sensor_path_blocked_by_emotion_gate(self):
+        """Sensor 路径：情绪闸门不满足（peak=0.4）→ 不触发会话、不更新触发时刻。"""
+        collector = EmotionPeakCollector(_snapshot(), peak=0.4, count=2)
+        config = DreamConfig(enabled=True, trigger=_emotion_trigger_config())
+        engine = make_gate_engine(
+            config=config, collector=collector, sensor=_AsleepOnlySensor()
+        )
+        # 模拟后台循环每轮评估后的缓存
+        gate = await engine._passes_emotion_gate()
+        assert gate is False
+
+        engine._maybe_trigger_by_sensor(datetime.now(), sleeping=True)
+        await asyncio.sleep(0.08)
+
+        assert collector.calls == 0                      # 未触发会话
+        assert engine.get_status()["stats"]["sessions"] == 0
+        assert engine._last_trigger_at is None           # 触发时刻不更新
+
+    async def test_sensor_path_gate_after_cooldown(self):
+        """闸门位于冷却之后：冷却未过时直接 return（不触发会话）。
+
+        实现选择说明：情绪闸门评估在 _run_loop 每轮无条件进行（缓存刷新），
+        故"冷却未过时 collector 零查询"不成立；本用例断言 Sensor 触发点在
+        冷却未过时直接 return——即便闸门缓存为 True 也不触发。
+        """
+        collector = EmotionPeakCollector(_snapshot(), peak=0.9, count=5)
+        config = DreamConfig(enabled=True, trigger=_emotion_trigger_config())
+        engine = make_gate_engine(
+            config=config, collector=collector, sensor=_AsleepOnlySensor()
+        )
+        gate = await engine._passes_emotion_gate()
+        assert gate is True
+        engine._emotion_gate_cache = True
+
+        engine._last_trigger_at = datetime.now()  # 刚触发过 → 冷却未过
+        engine._maybe_trigger_by_sensor(datetime.now(), sleeping=True)
+        await asyncio.sleep(0.08)
+
+        assert collector.calls == 0
+        assert engine._status == "idle"

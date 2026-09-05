@@ -1,6 +1,6 @@
 """CXO-Tuner evolution 集成出口路由。
 
-连接 CX-O 主后端与 CXO-Tuner 自适应微调服务（host 8300）：
+连接 CX-O 主后端与 CXO-Tuner 自适应微调服务（host 8310；8300 已归 CXO-ModelStation）：
   - ``TunerClient``：httpx 异步客户端，封装 Tuner 后端 HTTP 接口；
     不可达/超时/错误时降级，返回 None 且不抛异常破坏主线程（CX-O 核心零影响）。
   - 会话历史导出：GET /api/v1/tuner/conversations（供后端 Judge 使用）。
@@ -76,7 +76,7 @@ class TunerClient:
 
     def __init__(
         self,
-        base_url: str = "http://127.0.0.1:8300",
+        base_url: str = "http://127.0.0.1:8310",
         timeout: int = 10,
         max_retries: int = 2,
         client: Optional[httpx.AsyncClient] = None,
