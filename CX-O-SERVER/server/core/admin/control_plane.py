@@ -11,19 +11,48 @@ from server.core.admin.auth import AdminUnknownActionError
 
 logger = logging.getLogger(__name__)
 
-# 合法 target 域（对齐 admin_control.schema.json target 枚举）
+
+class AdminControlError(Exception):
+    """管理面控制错误（400 语义）：白名单外字段/未知字段/参数非法/Agent 不存在等。
+
+    与 AdminUnknownActionError（未知 target/action 枚举）区分：本类承载域内
+    校验失败，消息统一携带 ADMIN_* 错误码前缀，路由层捕获后映射 HTTP 400。
+    """
+
+# 合法 target 域（对齐 admin_control.schema.json target 枚举；prompt 为提示词装配只读域）
 VALID_TARGETS = frozenset(
-    {"autonomy", "voice", "live", "config", "agent", "tuner", "instance", "cluster"}
+    {"autonomy", "voice", "live", "config", "agent", "tuner", "instance", "cluster", "prompt"}
 )
 # 合法 action 集合（对齐 admin_control.schema.json action 枚举）
 VALID_ACTIONS = frozenset(
     {
         "enable", "disable", "pause", "resume", "emergency_stop", "restart",
         "reload_config", "reload", "reset", "start", "stop", "shutdown",
-        "create", "update", "delete", "topology", "state",
+        "create", "update", "delete", "preview", "topology", "state",
         "trigger_failover", "set_role", "add_peer", "remove_peer", "sync_status",
     }
 )
+
+
+# ---------------------------------------------------------------------------
+# config.update 白名单（spec enhance-cxfc-admin-and-integrate-dream 三）：
+# 仅允许 llm.{provider,model,host,port,max_tokens,temperature} 与
+# models.{main,summary,memory}.{model,max_tokens,temperature,host,port}。
+# 说明：llm.port 保留在白名单内与契约口径一致，但 LLMConfig 无 port 字段，
+# 落点时经字段存在性校验拒绝（ADMIN_CONFIG_FIELD_UNKNOWN），保证白名单语义
+# 与配置模型实际结构一致。
+# ---------------------------------------------------------------------------
+_CONFIG_UPDATE_WHITELIST = frozenset(
+    {f"llm.{f}" for f in ("provider", "model", "host", "port", "max_tokens", "temperature")}
+    | {
+        f"models.{slot}.{f}"
+        for slot in ("main", "summary", "memory")
+        for f in ("model", "max_tokens", "temperature", "host", "port")
+    }
+)
+# 字段轻量类型约束：数值字段（bool 是 int 子类，显式排除布尔冒充）；字符串字段
+_CONFIG_NUMERIC_FIELDS = frozenset({"max_tokens", "port", "temperature"})
+_CONFIG_STRING_FIELDS = frozenset({"provider", "model", "host"})
 
 
 def _find_method(svc, *names):
@@ -146,7 +175,26 @@ class AdminControlPlane:
                 except Exception as e:
                     logger.error(f"ADMIN_CONTROL: 配置重载失败: {e}")
                     return {"result": f"config_reload_error: {e}", "error": str(e)}
+            if action == "update":
+                # spec 三：config.update（operator 级）——白名单路径修改 llm/models 并落盘
+                return self._config_update(params)
             raise AdminUnknownActionError(f"ADMIN_UNKNOWN_ACTION: config/{action}")
+
+        if target == "prompt":
+            # spec 三：提示词装配只读域。preview 内联实现（不走 _invoke_method——
+            # 预览不映射服务方法，而是委托零副作用的 build_preview_messages）。
+            if action == "preview":
+                from server.core.admin.prompt_preview import build_preview_messages
+
+                return build_preview_messages(
+                    agent_id=params.get("agent_id") or agent_id or "default",
+                    user_message=params.get("user_message", ""),
+                    history=params.get("history"),
+                    is_realtime_voice=bool(params.get("is_realtime_voice", False)),
+                    acp_context=params.get("acp_context"),
+                    include_hidden_prompts=bool(params.get("include_hidden_prompts", True)),
+                )
+            raise AdminUnknownActionError(f"ADMIN_UNKNOWN_ACTION: prompt/{action}")
 
         if target == "agent":
             acp = getattr(services, "acp_manager", None) if services is not None else None
@@ -176,6 +224,87 @@ class AdminControlPlane:
             return self._cluster(action, params)
 
         raise AdminUnknownActionError(f"ADMIN_UNKNOWN_ACTION: {target}/{action}")
+
+    def _config_update(self, params: Dict[str, Any]) -> Dict[str, Any]:
+        """config.update：按白名单路径修改 llm/models 配置并落盘 + 缓存失效 + 热更新判定。
+
+        - params 为 {path: value} 扁平映射（如 {"llm.model": "qwen3",
+          "models.main.max_tokens": 4096}）
+        - 白名单外路径抛 AdminControlError（路由层映射 400）
+        - 应用后 get_settings().save_config() 原子落盘（内部持 _CONFIG_SAVE_LOCK），
+          并失效 agent_config_cache 与 prompt_builder._get_hidden_prompts lru_cache
+          （spec 三：缓存失效）
+        - requires_restart 按 config_hot_reload.REQUIRES_RESTART 逐节判定
+          （llm=False 可热更；models 无 apply_section 热应用分支，保守登记需重启）
+        """
+        if not isinstance(params, dict) or not params:
+            raise AdminControlError("ADMIN_CONFIG_UPDATE_EMPTY: params 需为非空 {path: value} 映射")
+
+        from server.config import get_settings
+
+        cfg = get_settings().config
+        touched_sections = set()
+        for path, value in params.items():
+            if path not in _CONFIG_UPDATE_WHITELIST:
+                raise AdminControlError(f"ADMIN_CONFIG_FIELD_NOT_ALLOWED: {path}（白名单外字段）")
+            # 轻量类型校验：数值字段拒绝布尔冒充，字符串字段拒绝非字符串
+            field = path.rsplit(".", 1)[-1]
+            if field in _CONFIG_NUMERIC_FIELDS and (
+                isinstance(value, bool) or not isinstance(value, (int, float))
+            ):
+                raise AdminControlError(
+                    f"ADMIN_CONFIG_VALUE_TYPE: {path} 需为数值（temperature 可为浮点，其余为整数）"
+                )
+            if field in _CONFIG_STRING_FIELDS and not isinstance(value, str):
+                raise AdminControlError(f"ADMIN_CONFIG_VALUE_TYPE: {path} 需为字符串")
+
+            # 定位落点对象：llm.<field> 或 models.<slot>.<field>
+            if path.startswith("llm."):
+                obj = cfg.llm
+            else:
+                slot = path.split(".", 2)[1]
+                obj = getattr(cfg.models, slot, None)
+                if obj is None:
+                    raise AdminControlError(f"ADMIN_CONFIG_FIELD_UNKNOWN: {path}（模型槽位不存在）")
+            # 字段存在性校验：llm.port 等白名单内但配置模型无该字段的路径在此拒绝
+            if not hasattr(obj, field):
+                raise AdminControlError(f"ADMIN_CONFIG_FIELD_UNKNOWN: {path}（字段不存在）")
+            setattr(obj, field, value)
+            touched_sections.add("llm" if path.startswith("llm.") else "models")
+
+        # 原子落盘（save_config 内部持 _CONFIG_SAVE_LOCK，同步写）
+        try:
+            get_settings().save_config()
+        except Exception as e:
+            raise AdminControlError(f"ADMIN_CONFIG_SAVE_FAILED: {e}")
+
+        # 缓存失效 1/2：agent_config_cache（agents.json 的 all_agents 读缓存）
+        try:
+            from server.core.cache import agent_config_cache
+
+            agent_config_cache.delete("all_agents")
+        except Exception as e:
+            logger.warning(f"ADMIN_CONTROL: agent_config_cache 失效失败: {e}")
+        # 缓存失效 2/2：隐藏提示词 lru_cache（运行期视为静态，此处防御性清空）
+        try:
+            from server.prompt_builder import _get_hidden_prompts
+
+            _get_hidden_prompts.cache_clear()
+        except Exception as e:
+            logger.warning(f"ADMIN_CONTROL: _get_hidden_prompts 缓存失效失败: {e}")
+
+        # 热更新判定（llm=False 可热更；models 保守需重启，见 REQUIRES_RESTART 表）
+        requires_restart: Dict[str, bool] = {}
+        try:
+            from server.config_hot_reload import REQUIRES_RESTART
+
+            requires_restart = {
+                s: bool(REQUIRES_RESTART.get(s, False)) for s in sorted(touched_sections)
+            }
+        except Exception as e:
+            logger.warning(f"ADMIN_CONTROL: 热更新判定失败: {e}")
+
+        return {"updated": sorted(params.keys()), "requires_restart": requires_restart}
 
     def _cluster(self, action: str, params: Dict[str, Any]) -> Dict[str, Any]:
         """cluster 域委托 ClusterAdminBridge；未知 cluster action 抛异常。"""

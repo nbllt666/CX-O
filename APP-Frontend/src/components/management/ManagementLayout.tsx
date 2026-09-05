@@ -16,6 +16,7 @@ import { NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useTranslation } from 'react-i18next';
 import {
+  Cable,
   ChevronDown,
   FlaskConical,
   Languages,
@@ -72,16 +73,22 @@ const LIVE_SOURCE_GROUP_PATHS: ReadonlySet<string> = new Set([
 
 /**
  * 实验功能分组收编的路由 path 集合（分组逻辑全部位于本组件，不触碰 routes.tsx 契约）。
- * 收纳：Agent生活（autonomy）/ 梦境日志（dream）/ 微调（tuner）/ 哨兵集群（cluster）/ Neko插件（neko）/ 会议室（meeting）。
+ * 收纳：微调（tuner）/ 哨兵集群（cluster）/ Neko插件（neko）/ 会议室（meeting）。
+ * 注：autonomy/dream 已按 spec enhance-cxfc-admin-and-integrate-dream Task 7 升为一级导航，
+ *     从本集合移除后由 flatItems 过滤逻辑自动归入主列表，无需其他改动。
  */
 const EXPERIMENT_GROUP_PATHS: ReadonlySet<string> = new Set([
-  'autonomy',
-  'dream',
   'tuner',
   'cluster',
   'neko',
   'meeting',
 ]);
+
+/**
+ * 插件与集成分组（enhance-cxfc-admin-and-integrate-dream Task 2，仅新增 /cxfc 相关，不动既有分组）。
+ * 收纳：CXFC 管理台（cxfc）；后续第三方 relay/embedded 集成页可继续归入本组。
+ */
+const INTEGRATION_GROUP_PATHS: ReadonlySet<string> = new Set(['cxfc']);
 
 /** 顶栏后端连接状态：30s 轮询 /health（轻量探活，与连接检测门同端点） */
 function useBackendStatus(): BackendStatus {
@@ -140,11 +147,12 @@ export default function ManagementLayout() {
     };
   }, []);
 
-  // ── 侧边栏本地状态（整体折叠/小工具分组展开/直播源分组展开）──
+  // ── 侧边栏本地状态（整体折叠/小工具分组展开/直播源分组展开/集成分组展开）──
   const [collapsed, setCollapsed] = useState(false);
   const [isWidgetsExpanded, setIsWidgetsExpanded] = useState(false);
   const [isLiveSourcesExpanded, setIsLiveSourcesExpanded] = useState(false);
   const [isExperimentsExpanded, setIsExperimentsExpanded] = useState(false);
+  const [isIntegrationExpanded, setIsIntegrationExpanded] = useState(false);
 
   // ── 对话 Agent 子菜单（复用 chatStore 既有接口）──
   const { agents, currentAgentId, isChatExpanded, setIsChatExpanded, setCurrentAgentId, fetchAgents } =
@@ -155,11 +163,13 @@ export default function ManagementLayout() {
     (e) =>
       !WIDGET_GROUP_PATHS.has(e.path) &&
       !LIVE_SOURCE_GROUP_PATHS.has(e.path) &&
-      !EXPERIMENT_GROUP_PATHS.has(e.path),
+      !EXPERIMENT_GROUP_PATHS.has(e.path) &&
+      !INTEGRATION_GROUP_PATHS.has(e.path),
   );
   const widgetItems = MANAGEMENT_ROUTES.filter((e) => WIDGET_GROUP_PATHS.has(e.path));
   const liveSourceItems = MANAGEMENT_ROUTES.filter((e) => LIVE_SOURCE_GROUP_PATHS.has(e.path));
   const experimentItems = MANAGEMENT_ROUTES.filter((e) => EXPERIMENT_GROUP_PATHS.has(e.path));
+  const integrationItems = MANAGEMENT_ROUTES.filter((e) => INTEGRATION_GROUP_PATHS.has(e.path));
 
   // 挂载即加载 Agent 列表（对齐 CX-O 的 handleAgentClick 数据源）
   useEffect(() => {
@@ -191,6 +201,13 @@ export default function ManagementLayout() {
       setIsExperimentsExpanded(true);
     }
   }, [location.pathname, experimentItems]);
+
+  // 路由落在插件与集成分组子项时自动展开该分组
+  useEffect(() => {
+    if (integrationItems.some((e) => `/${e.path}` === location.pathname)) {
+      setIsIntegrationExpanded(true);
+    }
+  }, [location.pathname, integrationItems]);
 
   const handleAgentClick = (agentId: string) => {
     setCurrentAgentId(agentId);
@@ -514,6 +531,62 @@ export default function ManagementLayout() {
     </Fragment>
   );
 
+  /** 插件与集成分组（展开态）：分组按钮 + 可折叠子项 */
+  const renderIntegrationGroup = () => {
+    const isIntegrationChildActive = integrationItems.some(
+      (e) => `/${e.path}` === location.pathname,
+    );
+    return (
+      <div key="integration-group">
+        <button
+          type="button"
+          onClick={() => setIsIntegrationExpanded(!isIntegrationExpanded)}
+          className={cn(
+            'flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-sm transition-all duration-fast',
+            isIntegrationChildActive
+              ? 'bg-primary/15 font-medium text-primary shadow-[inset_0_1px_0_var(--glass-border)]'
+              : 'text-muted-foreground hover:bg-[rgba(255,255,255,0.06)] hover:text-foreground',
+          )}
+        >
+          <Cable className="h-4 w-4 shrink-0" />
+          <span className="whitespace-nowrap">{t('management.sidebar.integration')}</span>
+          <ChevronDown
+            className={cn(
+              'ml-auto h-4 w-4 transition-transform duration-fast',
+              isIntegrationExpanded && 'rotate-180',
+            )}
+          />
+        </button>
+
+        <AnimatePresence initial={false}>
+          {isIntegrationExpanded && (
+            <motion.ul
+              key="integration-submenu"
+              className="ml-4 mt-1 space-y-1 overflow-hidden border-l border-[var(--glass-border)] pl-3"
+              initial={{ opacity: 0, height: 0 }}
+              animate={{ opacity: 1, height: 'auto' }}
+              exit={{ opacity: 0, height: 0 }}
+              transition={{ duration: 0.25, ease: [0.4, 0, 0.2, 1] }}
+            >
+              {integrationItems.map((e) => (
+                <li key={e.path}>{renderFlatLink(e)}</li>
+              ))}
+            </motion.ul>
+          )}
+        </AnimatePresence>
+      </div>
+    );
+  };
+
+  /** 插件与集成分组（折叠态）：不占位，直接平铺渲染子项图标 */
+  const renderIntegrationCollapsed = () => (
+    <Fragment key="integration-group-collapsed">
+      {integrationItems.map((e) => (
+        <Fragment key={e.path}>{renderFlatLink(e)}</Fragment>
+      ))}
+    </Fragment>
+  );
+
   return (
     <div className="app-surface relative flex h-screen overflow-hidden">
       {/* 二次元粒子装饰层：常驻布局顶层，pointer-events-none，低于内容高于背景 */}
@@ -549,6 +622,7 @@ export default function ManagementLayout() {
           )}
           {collapsed ? renderLiveSourcesCollapsed() : renderLiveSourcesGroup()}
           {collapsed ? renderExperimentsCollapsed() : renderExperimentsGroup()}
+          {collapsed ? renderIntegrationCollapsed() : renderIntegrationGroup()}
           {collapsed ? renderWidgetsCollapsed() : renderWidgetGroup()}
         </nav>
 

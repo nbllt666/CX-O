@@ -124,3 +124,31 @@ async def update_interrupt_enable(
         "status": "success",
         "data": {"enabled": module.enabled, "speech_end_fallback": module.speech_end_fallback},
     }
+
+
+@router.get("/stats/voice-latency")
+async def get_voice_latency_stats():
+    """获取语音链路延迟统计（spec Task 4，仪表盘性能指标卡片数据源）。
+
+    返回 {summary, recent, buffer_size}：
+    - summary: 各段延迟 {asr/ttft/tts_first/e2e: {p50, p95, max, count}}（ms）
+    - recent: 最近 N 轮明细（client_id / settled_at / segments / events）
+    - buffer_size: 缓冲内已结算轮次样本数
+    无样本时各段 p50/p95/max 为 null、count=0（前端显示"暂无样本"而非报错）。
+    采集器查询内部吞异常，本端点不阻断。
+    """
+    try:
+        from server.core.metrics.voice_latency import get_voice_latency_tracker
+
+        tracker = get_voice_latency_tracker()
+        return {
+            "status": "success",
+            "data": {
+                "summary": tracker.summary(),
+                "recent": tracker.recent(20),
+                "buffer_size": tracker.buffer_size(),
+            },
+        }
+    except Exception as e:
+        logger.error(f"获取语音链路延迟统计失败: {e}", exc_info=True)
+        raise HTTPException(status_code=503, detail=str(e))

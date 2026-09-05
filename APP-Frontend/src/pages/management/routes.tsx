@@ -35,6 +35,7 @@ import {
   MonitorPlay,
   Moon,
   Network,
+  Plug,
   Puzzle,
   Server,
   Settings,
@@ -240,6 +241,13 @@ export const MANAGEMENT_ROUTES: readonly ManagementRouteEntry[] = [
     titleKey: 'management.nav.cluster',
     icon: Server,
     Component: lazy(() => import('./ClusterPage')),
+  },
+  // ── CXFC 前端管理页（enhance-cxfc-admin-and-integrate-dream Task 2，仅追加，不改既有条目） ──
+  {
+    path: 'cxfc',
+    titleKey: 'management.nav.cxfc',
+    icon: Plug,
+    Component: lazy(() => import('./CxfcPage')),
   },
 ];
 

@@ -3,8 +3,8 @@
 - GET  /autonomy/status   状态快照（未装配/未启用返回 {"status": "disabled"}，不抛错）
 - POST /autonomy/control  控制指令（enable/disable/pause/resume/emergency_stop）
 - GET  /autonomy/audit    审计日志分页 {items, total}
-- GET  /autonomy/config   当前配置（对齐 autonomy_config.schema.json）
-- PUT  /autonomy/config   局部更新配置并保存（非法字段/枚举/时间格式返回 422）
+- GET  /autonomy/config   当前配置（UnifiedConfig.autonomy 节，未装配也可读）
+- PUT  /autonomy/config   局部更新配置并持久化 settings（非法字段/枚举/时间格式返回 422）
 
 依赖注入对齐 cxfc.py 模式：模块级 `_manager` / `_audit_store` 全局 + `set_*` 注入函数，
 由 server/main.py 装配成功后注入。
@@ -131,11 +131,13 @@ async def _try_ensure_manager(request: Request):
         )
 
         def _enable_and_save_locked() -> None:
-            """持锁读改写：读取当前配置置 enabled=True 后落盘（线程内执行）。"""
+            """持锁读改写：settings 节 enabled 置 True 后落盘（线程内执行，Task 6.2）。"""
+            from server.config import get_settings
+
             with _CONFIG_WRITE_LOCK:
-                cfg = load_config()
-                cfg.enabled = True
-                save_config(cfg)
+                settings = get_settings()
+                settings.config.autonomy.enabled = True
+                settings.save_config()
 
         await asyncio.to_thread(_enable_and_save_locked)
         mgr = await setup_autonomy(services)
@@ -149,20 +151,32 @@ async def _try_ensure_manager(request: Request):
 
 
 async def _persist_enabled(action: str, manager: Any) -> None:
-    """enable/disable 开关状态持久化到配置存储（其余动作不持久化）。
+    """enable/disable 开关状态持久化到 UnifiedConfig（Task 6.2；其余动作不持久化）。
 
-    使用 manager.config 的 store_path 落盘，保证跨重启保持；写盘经
-    asyncio.to_thread 在工作线程中执行且持 _CONFIG_WRITE_LOCK，事件循环内
-    不做阻塞文件 IO（R3）。配置缺失或写入失败仅告警，不影响控制指令执行。
+    沿用旧版守卫语义：manager.config 缺失（纯测试替身/未初始化）时跳过持久化。
+    写入 settings.config.autonomy.enabled 并经 settings.save_config() 落盘
+    （config.json 原子写），保证跨重启保持；manager.config 同步更新保持引擎侧
+    运行时一致。写盘经 asyncio.to_thread 在工作线程中执行且持 _CONFIG_WRITE_LOCK，
+    事件循环内不做阻塞文件 IO（R3）。配置缺失或写入失败仅告警，不影响控制指令执行。
     """
     if action not in ("enable", "disable"):
         return
     cfg = getattr(manager, "config", None)
     if cfg is None:
         return
+
+    def _persist_locked() -> None:
+        """持锁读改写：settings 节 enabled 置位 + 落盘 + manager.config 同步。"""
+        from server.config import get_settings
+
+        with _CONFIG_WRITE_LOCK:
+            settings = get_settings()
+            settings.config.autonomy.enabled = action == "enable"
+            settings.save_config()
+            cfg.enabled = action == "enable"
+
     try:
-        cfg.enabled = action == "enable"
-        await asyncio.to_thread(_save_config_locked, cfg)
+        await asyncio.to_thread(_persist_locked)
     except Exception as e:
         logger.warning("自主系统开关状态持久化失败: %s", e)
 
@@ -232,11 +246,15 @@ def list_audit(limit: int = 50, offset: int = 0):
 
 @router.get("/autonomy/config")
 def get_config():
-    """返回当前自主系统配置（对齐 autonomy_config.schema.json）。未装配返回 404。"""
-    manager = _manager
-    if manager is None or manager.config is None:
-        raise HTTPException(status_code=404, detail="自主系统未装配")
-    return manager.config.model_dump()
+    """返回当前自主系统配置（UnifiedConfig.autonomy 节 dump，Task 6.2 配置迁入 settings）。
+
+    配置唯一真相源为 UnifiedConfig（settings 单例），不再依赖 manager 装配——
+    autonomy 未启用/未装配时也可读可改（前端一级导航需要），响应 JSON 形状与
+    旧版（manager.config.model_dump）字段完全一致，前端 autonomyApi 无感。
+    """
+    from server.config import get_settings
+
+    return get_settings().config.autonomy.model_dump()
 
 
 def _deep_merge(base: Dict[str, Any], patch: Dict[str, Any]) -> Dict[str, Any]:
@@ -256,27 +274,33 @@ def _deep_merge(base: Dict[str, Any], patch: Dict[str, Any]) -> Dict[str, Any]:
 
 @router.put("/autonomy/config")
 def update_config(partial: Dict[str, Any], _: bool = Depends(verify_admin_api_key)):
-    """局部更新自主系统配置并保存（自动补齐缺失字段）。
+    """局部更新自主系统配置并持久化到 UnifiedConfig（Task 6.2，自动补齐缺失字段）。
 
     C5: 写路径端点补管理员鉴权。
-    以当前配置为基础做深度合并后经 AutonomyConfig.model_validate 校验；非法字段
-    （extra="forbid"）、非法枚举/非法时间格式返回 422。未装配返回 404。
-    读改写（读 manager.config → _deep_merge → save_config）整体持
-    _CONFIG_WRITE_LOCK（sync 线程池上下文直接 with）：与 control 持久化路径
-    串行化，消除双入口并发写交错损坏文件与丢更新（R3）。
+    以 settings.config.autonomy 为基础做深度合并后经 AutonomySection 校验；非法字段
+    （extra="forbid"）、非法枚举/非法时间格式返回 422。持久化走 settings.save_config()
+    （config.json 原子落盘）。manager 已装配时同步更新 manager.config（映射回
+    AutonomyConfig 保持引擎侧类型契约），运行时应用语义与旧版一致。
+    读改写整体持 _CONFIG_WRITE_LOCK（sync 线程池上下文直接 with）：与 control
+    持久化路径串行化，消除双入口并发写交错损坏文件与丢更新（R3）。
     """
-    manager = _manager
-    if manager is None or manager.config is None:
-        raise HTTPException(status_code=404, detail="自主系统未装配")
+    from server.config import AutonomySection, get_settings
 
     with _CONFIG_WRITE_LOCK:
-        current = manager.config.model_dump()
+        settings = get_settings()
+        current = settings.config.autonomy.model_dump()
         merged = _deep_merge(current, partial)
         try:
-            updated = AutonomyConfig.model_validate(merged)
+            updated = AutonomySection.model_validate(merged)
         except (ValidationError, ValueError) as e:
             raise HTTPException(status_code=422, detail=f"配置字段非法: {e}") from e
 
-        save_config(updated)
-        manager.config = updated
+        settings.config.autonomy = updated
+        settings.save_config()
+        # manager 已装配时同步运行时配置（engine 侧保持 AutonomyConfig 类型）
+        manager = _manager
+        if manager is not None:
+            from server.autonomy.config import AutonomyConfig
+
+            manager.config = AutonomyConfig.model_validate(updated.model_dump())
     return updated.model_dump()

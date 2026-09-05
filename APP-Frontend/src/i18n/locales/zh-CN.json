@@ -46,7 +46,8 @@
       "dream": "梦境日志",
       "meeting": "会议室",
       "tuner": "微调",
-      "cluster": "哨兵集群"
+      "cluster": "哨兵集群",
+      "cxfc": "CXFC 管理台"
     },
     "neko": {
       "subtitle": "对接 neko 插件运行时与插件商店",
@@ -155,6 +156,7 @@
       "experimental": "实验功能",
       "widgets": "小工具",
       "liveSources": "直播 OBS 源",
+      "integration": "插件与集成",
       "openInBrowser": "在浏览器打开",
       "collapse": "收起侧边栏",
       "expand": "展开侧边栏"
@@ -187,6 +189,21 @@
         "memories": "浏览记忆",
         "archive": "记忆归档",
         "settings": "系统设置"
+      },
+      "performance": {
+        "title": "性能指标",
+        "samples": "样本数",
+        "unit": "ms",
+        "segments": {
+          "asr": "语音识别",
+          "ttft": "LLM 首 Token",
+          "ttsFirst": "TTS 首帧",
+          "e2e": "端到端"
+        },
+        "p50": "P50",
+        "p95": "P95",
+        "empty": "暂无样本",
+        "errorHint": "指标拉取失败，将在下轮自动重试"
       }
     },
     "chat": {
@@ -521,6 +538,53 @@
       "unknownPlugin": "未知插件",
       "fieldHost": "主机",
       "fieldPort": "端口"
+    },
+    "cxfc": {
+      "subtitle": "CXFC 数据网关总览：插件、工具技能、relay 目标与记忆/生理接口测试",
+      "refresh": "刷新",
+      "loadFailed": "加载失败，请检查后端连接后重试",
+      "retry": "重试",
+      "pluginsTitle": "插件总览",
+      "pluginsEmpty": "暂无已注册插件",
+      "transport": {
+        "direct": "直连",
+        "relay": "前端转接",
+        "embedded": "嵌入式"
+      },
+      "heartbeat": "心跳",
+      "heartbeatOk": "正常",
+      "heartbeatStale": "离线",
+      "lastSeen": "最近心跳",
+      "lastSeenNever": "无记录",
+      "toolsSkillsTitle": "工具与技能清单",
+      "toolsSkillsEmpty": "暂无工具或技能",
+      "toolsLabel": "工具",
+      "skillsLabel": "技能",
+      "ungrouped": "未分组技能",
+      "relayTitle": "Relay 目标",
+      "relayEmpty": "暂无 relay 目标（前端转接插件未注册）",
+      "relayActive": "活跃",
+      "relayInactive": "待命",
+      "relayLoadFailed": "relay 目标拉取失败",
+      "testerTitle": "记忆/生理网关测试器",
+      "testerHint": "选择端点并以 JSON 传参调用（测试器经管理密钥 X-API-Key 运维旁路鉴权）",
+      "endpointLabel": "端点",
+      "paramsLabel": "请求参数（JSON）",
+      "invalidJson": "参数不是合法 JSON",
+      "run": "执行调用",
+      "running": "调用中...",
+      "responseLabel": "响应",
+      "errorLabel": "调用失败",
+      "emptyResponse": "暂无响应",
+      "endpoints": {
+        "memorySearch": "记忆检索 memory/search",
+        "memoryWrite": "记忆写入 memory/write",
+        "memoryStats": "记忆统计 memory/stats",
+        "memoryGet": "记忆详情 memory/{id}",
+        "physioReport": "生理上报 physio/report",
+        "physioStatus": "生理状态 physio/status",
+        "physioSleep": "睡眠数据 physio/sleep"
+      }
     },
     "tools": {
       "subtitle": "工具管理：列表、启停、参数 Schema 与测试调用",

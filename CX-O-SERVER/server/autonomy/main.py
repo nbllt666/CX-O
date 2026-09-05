@@ -1,8 +1,11 @@
-"""CX-O-Autonomy 自主系统 embedded CXFC 插件装配入口。
+"""CX-O-Autonomy 自主系统装配入口（Task 6.1 彻底集成：去插件包装）。
 
 setup_autonomy 加载配置并按 enabled 决定是否装配完整 P1 组件（感知/规划/行动/
-反思/安全）与 AutonomyEngine 主循环，注册为 embedded CXFC 插件（plugin_id 前缀
-embedded_）并 start 引擎。所有异常被捕获并记录日志，不影响主服务启动（异常隔离）。
+反思/安全）与 AutonomyEngine 主循环，工具/技能**直接注册**进 ToolRegistry
+（category="builtin"）与 SkillRegistry（不再经 embedded CXFC 插件包装，不再出现
+于 GET /api/cxfc/plugins 插件列表），并 start 引擎。启动装配时经 manager 公开
+方法清理历史 embedded 插件残留条目（cxo-autonomy / embedded_cxo-autonomy 双形态，
+幂等）。所有异常被捕获并记录日志，不影响主服务启动（异常隔离）。
 import 本模块不依赖任何"实现模块"（post / live 等 P2/P3 能力），缺失时不会崩溃。
 """
 
@@ -79,8 +82,8 @@ def get_audit_store() -> Optional[Any]:
 
 
 # ---------------------------------------------------------------------------
-# 工具描述（注册进 embedded CXFC 插件 ToolRegistry，参数为 JSON Schema object）
-# 参数契约对齐 public/interface_stub/cxo_autonomy.pyi 各工具签名。
+# 工具描述（Task 6.1 去插件包装：直接注册进 ToolRegistry，category="builtin"）
+# 参数为 JSON Schema object，契约对齐 public/interface_stub/cxo_autonomy.pyi 各工具签名。
 # ---------------------------------------------------------------------------
 TOOL_SPECS: List[Dict[str, Any]] = [
     {
@@ -183,7 +186,7 @@ TOOL_SPECS: List[Dict[str, Any]] = [
 
 
 # ---------------------------------------------------------------------------
-# Dream 工具描述（dream.enabled 时并入 cxo-autonomy 插件 ToolRegistry，参数为 JSON Schema object）
+# Dream 工具描述（dream.enabled 时并入 builtin 工具直注，参数为 JSON Schema object）
 # ---------------------------------------------------------------------------
 DREAM_TOOL_SPECS: List[Dict[str, Any]] = [
     {
@@ -492,7 +495,7 @@ def _build_dream_ws_sender(ws_manager: Any) -> Optional[Callable]:
 
 
 # ---------------------------------------------------------------------------
-# Dream 工具 handlers（并入 cxo-autonomy 插件；未启用时优雅返回 disabled，不抛错）
+# Dream 工具 handlers（dream.enabled 时并入 builtin 直注；未启用时优雅返回 disabled，不抛错）
 # ---------------------------------------------------------------------------
 def _dream_get_status() -> Dict[str, Any]:
     """真实实现：返回梦境引擎状态快照（未启用返回 disabled，不抛错）。"""
@@ -710,12 +713,171 @@ async def _safe_stop_after_assembly_error(dream_engine: Any, engine: Any) -> Non
     flush_physio_store()
 
 
+# ---------------------------------------------------------------------------
+# Task 6.1/6.2/6.4 彻底集成辅助：残留清理 / builtin 直注 / 配置统一解析
+# ---------------------------------------------------------------------------
+async def _cleanup_legacy_autonomy_plugins(cxfc: Any) -> None:
+    """启动残留清理：移除历史 embedded 插件条目（双形态，幂等，Task 6.4）。
+
+    历史 embedded CXFC 插件（plugin_id="cxo-autonomy"，运行时经 manager 拼接为
+    "embedded_cxo-autonomy"）在 data/cxfc_plugins.db 中的残留记录会让
+    GET /api/cxfc/plugins 出现幽灵插件条目（spec REMOVED Requirement）。此处仅经
+    manager 公开方法（get_plugin + disconnect_plugin(remove_persistent=True)）移除
+    内存与持久化条目，不触碰 manager/storage 内部实现；条目不存在时天然幂等
+    （no-op）。manager 未启用（None）或任何异常时静默跳过，不影响装配。
+    """
+    if cxfc is None:
+        return
+    legacy_ids = (AUTONOMY_PLUGIN_ID, f"embedded_{AUTONOMY_PLUGIN_ID}")
+    for pid in legacy_ids:
+        try:
+            if cxfc.get_plugin(pid) is None:
+                continue
+            await cxfc.disconnect_plugin(pid, remove_persistent=True)
+            logger.info("已清理历史 autonomy 插件残留条目: %s", pid)
+        except Exception as e:  # noqa: BLE001 —— 单个条目清理失败不影响其余清理
+            logger.warning("清理历史 autonomy 插件条目 %s 失败（忽略）: %s", pid, e)
+
+
+def _resolve_tool_registry(services: Any):
+    """解析工具注册表：services.tool_registry 优先，缺失回退全局单例（Task 6.1）。"""
+    registry = getattr(services, "tool_registry", None)
+    if registry is not None:
+        return registry
+    try:
+        from server.core.tools.registry import tool_registry as _global_tool_registry
+
+        return _global_tool_registry
+    except Exception as e:
+        logger.warning("加载全局工具注册表失败: %s", e)
+        return None
+
+
+def _register_builtin_tools(
+    services: Any, tool_specs: List[Dict[str, Any]], handlers: Dict[str, Callable]
+) -> None:
+    """将 autonomy/dream 工具直注 ToolRegistry（category="builtin"，Task 6.1）。
+
+    注册面（name/description/parameters/function）对齐原 register_embedded_plugin →
+    _register_catalog 路径，category 改为 builtin、不再挂插件 tags——LLM 工具分发
+    不再经 CXFC 插件转发。enabled 开关语义不变：autonomy disabled 早已提前返回，
+    dream disabled 时 dream 工具不在 tool_specs 内。单个工具注册失败逐条隔离，
+    不影响其余工具与其余装配（与原 _register_catalog 行为一致）。
+    """
+    registry = _resolve_tool_registry(services)
+    if registry is None:
+        logger.warning("工具注册表不可用，autonomy/dream 工具跳过注册")
+        return
+    for spec in tool_specs:
+        try:
+            registry.register(
+                name=str(spec.get("name", "")),
+                description=str(spec.get("description", "")),
+                parameters=dict(spec.get("parameters", {}) or {}),
+                function=handlers.get(str(spec.get("name", ""))),
+                category="builtin",
+            )
+        except Exception as e:
+            logger.warning("注册工具 %s 失败: %s", spec.get("name"), e)
+
+
+def _register_builtin_skills(services: Any, skill_specs: List[Dict[str, Any]]) -> None:
+    """将 SKILL_SPECS 直注 SkillRegistry（source_plugin_id="builtin"，Task 6.1）。
+
+    SkillRegistry 实例取自 cxfc manager 公开方法 get_skill_registry()；manager 未
+    启用时技能跳过注册（仅告警，不影响工具与引擎）。单个技能注册失败逐条隔离。
+    """
+    cxfc = getattr(services, "cxfc_manager", None)
+    skill_registry = None
+    if cxfc is not None:
+        try:
+            skill_registry = cxfc.get_skill_registry()
+        except Exception as e:
+            logger.warning("获取技能注册表失败: %s", e)
+    if skill_registry is None:
+        logger.warning("技能注册表不可用，autonomy 技能跳过注册")
+        return
+    try:
+        from server.core.cxfc.models import SkillDefinition
+    except Exception as e:
+        logger.warning("加载 SkillDefinition 失败，autonomy 技能跳过注册: %s", e)
+        return
+    for spec in skill_specs:
+        try:
+            skill_registry.register_skill(
+                SkillDefinition(
+                    name=str(spec.get("name", "")),
+                    description=str(spec.get("description", "")),
+                    prompt_template=str(spec.get("prompt_template", "")),
+                    trigger_keywords=list(spec.get("trigger_keywords", []) or []),
+                    trigger_events=list(spec.get("trigger_events", []) or []),
+                    auto_inject=bool(spec.get("auto_inject", False)),
+                    # 去插件包装后技能不再归属插件，登记为 builtin 来源
+                    source_plugin_id="builtin",
+                )
+            )
+        except Exception as e:
+            logger.warning("注册 Skill %s 失败: %s", spec.get("name"), e)
+
+
+def _load_effective_autonomy_config(store_path: str = "") -> "AutonomyConfig":
+    """读取生效的自主系统配置（Task 6.2 配置迁入 UnifiedConfig 后的解析序）。
+
+    - 旧档 autonomy_config.json（注入 store_path 或默认 data 目录下）存在时优先
+      读旧档（迁移前兼容语义不变，测试注入路径行为不变）；
+    - 旧档不存在（迁移后唯一形态）→ 读 UnifiedConfig.autonomy 节（唯一真相源），
+      映射回 AutonomyConfig（store_path 以装配入参为准）；
+    - UnifiedConfig 读取失败时回退旧 load_config（全默认），异常隔离。
+    """
+    from server.autonomy.config import AutonomyConfig, _resolve_store
+
+    legacy_path = Path(_resolve_store(store_path)) / "autonomy_config.json"
+    if legacy_path.exists():
+        return load_config(store_path=store_path)
+    try:
+        from server.config import get_settings
+
+        section = get_settings().config.autonomy
+        cfg = AutonomyConfig.model_validate(section.model_dump())
+        cfg.store_path = store_path
+        return cfg
+    except Exception as e:
+        logger.warning("读取 UnifiedConfig.autonomy 节失败，回退旧配置文件: %s", e)
+        return load_config(store_path=store_path)
+
+
+def _load_effective_dream_config(store_path: str = ""):
+    """读取生效的梦境配置（解析序同 _load_effective_autonomy_config，Task 6.2）。
+
+    - 旧档 dream_config.json 存在时优先读旧档；
+    - 旧档不存在 → 读 UnifiedConfig.dream 节（唯一真相源）映射回 DreamConfig；
+    - UnifiedConfig 读取失败时回退旧 load_config（全默认），异常隔离。
+    """
+    from server.autonomy.dream.config import DreamConfig
+    from server.autonomy.dream.config import load_config as _dream_legacy_load
+    from server.autonomy.dream.config import resolve_store_dir as _dream_store
+
+    legacy_path = Path(_dream_store(store_path)) / "dream_config.json"
+    if legacy_path.exists():
+        return _dream_legacy_load(store_path=store_path)
+    try:
+        from server.config import get_settings
+
+        section = get_settings().config.dream
+        return DreamConfig.model_validate(section.model_dump())
+    except Exception as e:
+        logger.warning("读取 UnifiedConfig.dream 节失败，回退旧配置文件: %s", e)
+        return _dream_legacy_load(store_path=store_path)
+
+
 async def setup_autonomy(services: Any, store_path: str = "") -> Optional[AutonomyManager]:
-    """装配 CX-O-Autonomy 自主系统（embedded CXFC 插件 + P1 主循环引擎）。
+    """装配 CX-O-Autonomy 自主系统（builtin 直注工具 + P1 主循环引擎，Task 6.1）。
 
     加载配置；enabled=False 返回 None；否则基于 services 提供 model_router
     get_client("main")、memory manager、firewall 等真实服务，装配完整 P1 组件与
-    AutonomyEngine，注册 embedded 插件并 start 引擎。任何异常被捕获记录日志并
+    AutonomyEngine，工具/技能直接注册进 ToolRegistry（category="builtin"）与
+    SkillRegistry，并 start 引擎。cxfc manager 不再是硬依赖（去插件包装后仅用于
+    残留清理/技能注册/电脑控制查找，缺失时降级）。任何异常被捕获记录日志并
     返回 None（异常隔离，不影响主服务启动）。P1 组件 import 均在函数内延迟执行，
     避免循环 import。
     """
@@ -734,15 +896,23 @@ async def setup_autonomy(services: Any, store_path: str = "") -> Optional[Autono
     _consolidator = None
     _dream_engine = None
     try:
-        config = load_config(store_path=store_path)
+        config = _load_effective_autonomy_config(store_path=store_path)
         if not config.enabled:
             logger.info("CX-O-Autonomy 未启用（config.enabled=False），跳过装配")
             return None
 
         cxfc = getattr(services, "cxfc_manager", None)
-        if cxfc is None:
-            logger.warning("services.cxfc_manager 不可用，CX-O-Autonomy 装配跳过")
-            return None
+        if cxfc is not None:
+            # Task 6.4：历史 embedded 插件残留清理必须在工具直注**之前**执行
+            # （disconnect_plugin 会按工具名清理 ToolRegistry 旧注册）
+            await _cleanup_legacy_autonomy_plugins(cxfc)
+        else:
+            # 去插件包装后 autonomy 不再依赖 CXFC（工具直注 ToolRegistry），
+            # manager 缺失仅影响技能注册与电脑控制查找，降级继续装配。
+            logger.info(
+                "services.cxfc_manager 不可用，跳过残留清理"
+                "（去插件包装后 autonomy 不再依赖 CXFC，降级继续装配）"
+            )
 
         # ---- 延迟 import P1 组件（避免循环 import） ----
         from server.autonomy.action.content.memory_actions import MemoryActions
@@ -898,17 +1068,15 @@ async def setup_autonomy(services: Any, store_path: str = "") -> Optional[Autono
         circadian = CircadianScheduler(config.schedule.model_dump())
         manager = AutonomyManager(config)
 
-        # ---- CX-O-Dream 梦境引擎（并入 cxo-autonomy 插件；dream.enabled=false 零侵入） ----
-        # 加载独立 DreamConfig（不并入 UnifiedConfig / config_hot_reload，见 spec Frozen
-        # Decision 2）；enabled 时延迟 import dream 模块，构建引擎组件并挂载模块级单例
-        # 供 dream 工具 handler 使用。任何异常被捕获隔离，不影响 autonomy 插件装配。
+        # ---- CX-O-Dream 梦境引擎（并入 builtin 工具直注；dream.enabled=false 零侵入） ----
+        # 加载生效 DreamConfig（Task 6.2：优先 UnifiedConfig.dream 节，旧档存在时
+        # 兼容读旧档）；enabled 时延迟 import dream 模块，构建引擎组件并挂载模块级
+        # 单例供 dream 工具 handler 使用。任何异常被捕获隔离，不影响 autonomy 装配。
         dream_config = None
         dream_engine = None
         physio_runtime = None
         try:
-            from server.autonomy.dream.config import load_config as _dream_load_config
-
-            dream_config = _dream_load_config(store_path=store_path)
+            dream_config = _load_effective_dream_config(store_path=store_path)
         except Exception as e:
             logger.warning("Dream 配置加载失败，梦境引擎跳过（不影响 autonomy 装配）: %s", e)
             dream_config = None
@@ -1075,7 +1243,7 @@ async def setup_autonomy(services: Any, store_path: str = "") -> Optional[Autono
                 )
                 _dream_engine = dream_engine
                 logger.info(
-                    "CX-O-Dream 梦境引擎组件已装配（enabled=True，将并入 cxo-autonomy 插件）"
+                    "CX-O-Dream 梦境引擎组件已装配（enabled=True，将并入 builtin 工具直注）"
                 )
             except Exception as e:
                 logger.exception(
@@ -1106,21 +1274,18 @@ async def setup_autonomy(services: Any, store_path: str = "") -> Optional[Autono
             loop_interval_minutes=config.loop_interval_minutes,
         )
 
-        # ---- Dream 工具/能力/处理器并入 cxo-autonomy 插件（dream.enabled 时追加） ----
-        plugin_tools: List[Dict[str, Any]] = TOOL_SPECS
-        plugin_capabilities: List[str] = AUTONOMY_CAPABILITIES
-        if dream_config is not None and dream_config.enabled:
-            plugin_tools = TOOL_SPECS + DREAM_TOOL_SPECS
-            plugin_capabilities = AUTONOMY_CAPABILITIES + ["dream"]
-
-        await cxfc.register_embedded_plugin(
-            plugin_id=AUTONOMY_PLUGIN_ID,
-            name=AUTONOMY_PLUGIN_NAME,
-            tools=plugin_tools,
-            skills=SKILL_SPECS,
-            capabilities=plugin_capabilities,
-            handlers=get_handlers(),
-        )
+        # ---- Task 6.1 去插件包装：工具/技能直接注册（不再经 embedded CXFC 插件） ----
+        # 工具直注 ToolRegistry（category="builtin"），LLM 工具分发不经 CXFC 转发；
+        # 技能直注 SkillRegistry（source_plugin_id="builtin"）。enabled 开关语义不变：
+        # autonomy disabled 早已提前返回；dream disabled 时 dream 工具不并入。
+        # 注意：本方法开头已完成历史 embedded 插件残留清理（先清理后直注，避免
+        # disconnect 按名误删本批 builtin 注册）。
+        handlers = get_handlers()
+        tool_specs: List[Dict[str, Any]] = list(TOOL_SPECS)
+        if _dream_engine is not None:
+            tool_specs += DREAM_TOOL_SPECS
+        _register_builtin_tools(services, tool_specs, handlers)
+        _register_builtin_skills(services, SKILL_SPECS)
         manager.enable()
         _autonomy_manager = manager
         _autonomy_engine = engine
@@ -1131,7 +1296,7 @@ async def setup_autonomy(services: Any, store_path: str = "") -> Optional[Autono
         if dream_engine is not None:
             dream_engine.start()
             services.dream_engine = dream_engine
-            logger.info("CX-O-Dream 梦境引擎已挂载为 embedded 插件能力并启动后台循环")
+            logger.info("CX-O-Dream 梦境引擎已直注为 builtin 工具能力并启动后台循环")
         # Physio 生理信号运行时容器挂载（供 /api/physio/* 路由注入；未装配时 None 降级）
         services.physio_runtime = physio_runtime
         # 休眠前确认仲裁器 + sleep_sensor 挂载到 services（供聊天唤醒检测等消费）
@@ -1140,8 +1305,8 @@ async def setup_autonomy(services: Any, store_path: str = "") -> Optional[Autono
             services.sleep_sensor = physio_runtime.sleep_sensor
         await engine.start()
         logger.info(
-            "CX-O-Autonomy 已装配为 embedded CXFC 插件（%s）并启动主循环",
-            f"embedded_{AUTONOMY_PLUGIN_ID}",
+            "CX-O-Autonomy 已完成 builtin 直注（工具 %s 个，category=builtin）并启动主循环",
+            len(tool_specs),
         )
         return manager
     except Exception as e:

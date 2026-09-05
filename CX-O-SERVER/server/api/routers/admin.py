@@ -2,13 +2,14 @@
 import asyncio
 import os
 import secrets
+import uuid
 from datetime import datetime
 from pathlib import Path
 from typing import Optional
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Request
 from fastapi.concurrency import run_in_threadpool
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from server.core.logging_config import get_contextual_logger
 from server.core.admin.control_plane import resolve_invoke_result
@@ -597,6 +598,209 @@ async def admin_audit(request: Request, limit: int = 50, offset: int = 0):
     # C3: 审计文件读为阻塞 IO（已改反向块读），再包线程池避免卡事件循环
     items = await run_in_threadpool(_audit_read, limit, offset)
     return {"status": "success", "items": items}
+
+
+# ===========================================================================
+# 管理接口增强（spec enhance-cxfc-admin-and-integrate-dream 三）：
+#   - POST /admin/prompt/preview  提示词装配预览（readonly，零副作用）
+#   - GET  /admin/model-context   模型上下文参数回显（readonly）
+#   - PUT  /admin/model-context   模型上下文参数修改（operator；global 走
+#         control_plane config.update 白名单，agent 级走 agents 持久化）
+# ===========================================================================
+
+
+class _PromptPreviewRequest(BaseModel):
+    """POST /admin/prompt/preview 请求体（readonly 级，零副作用预览）。"""
+
+    agent_id: str
+    user_message: str
+    history: Optional[list] = None
+    is_realtime_voice: bool = False
+    acp_context: Optional[dict] = None
+    include_hidden_prompts: bool = True
+
+
+class _ModelContextUpdateRequest(BaseModel):
+    """PUT /admin/model-context 请求体。
+
+    - global：{path: value} 白名单映射（委托 control_plane config.update）
+    - agent_id + system_prompt/model/max_tokens/temperature：agent 级更新
+      （复用 agents 路由的 _update_agents_locked 持久化，勿重复造轮子）
+    """
+
+    # 字段名 global 为 Python 关键字，经 alias 接收 JSON 的 "global" 键
+    global_config: Optional[dict] = Field(default=None, alias="global")
+    agent_id: Optional[str] = None
+    system_prompt: Optional[str] = None
+    model: Optional[str] = None
+    max_tokens: Optional[int] = None
+    temperature: Optional[float] = None
+    request_id: Optional[str] = None
+
+
+@router.post("/admin/prompt/preview")
+async def admin_prompt_preview(request: Request, req: _PromptPreviewRequest):
+    """提示词装配预览（readonly）：零副作用回显 build_messages 装配结果。"""
+    _admin_guard(request, "readonly")
+    from server.core.admin.control_plane import AdminControlError
+    from server.core.admin.prompt_preview import build_preview_messages
+
+    # 装配含 YAML 读取等文件 IO，保守经线程池避免卡事件循环
+    try:
+        preview = await run_in_threadpool(
+            build_preview_messages,
+            req.agent_id,
+            req.user_message,
+            req.history,
+            req.is_realtime_voice,
+            req.acp_context,
+            req.include_hidden_prompts,
+        )
+    except AdminControlError as e:
+        # 参数非法 / Agent 不存在 / 装配失败 → 400 + ADMIN_* 错误码
+        raise HTTPException(status_code=400, detail=str(e))
+    # C3: 审计写为阻塞 IO，经线程包裹避免卡事件循环（与 admin_control 同模式）
+    await asyncio.to_thread(
+        audit_now, "CX-A", "info", "prompt_preview", req.agent_id, "提示词装配预览",
+        detail={"branch": preview.get("branch"), "messages": len(preview.get("messages", []))},
+    )
+    return {"status": "success", "preview": preview}
+
+
+@router.get("/admin/model-context")
+async def admin_get_model_context(request: Request, agent_id: Optional[str] = None):
+    """模型上下文参数回显（readonly）：全局 models.* + 指定 agent 的生效参数。"""
+    _admin_guard(request, "readonly")
+    from server.config import get_settings
+
+    settings = get_settings()
+    models = settings.config.models
+    # _explicit 为 ModelsConfig 私有属性（配置文件中显式存在的槽位集合）；
+    # 测试替身可能未携带该属性，用 getattr 兜底
+    explicit = getattr(models, "_explicit", None) or set()
+    defaults = dict(getattr(models, "defaults", None) or {})
+    slots: dict = {}
+    for slot in ("main", "summary", "memory"):
+        slot_cfg = getattr(models, slot, None)
+        if slot_cfg is None:
+            continue
+        slots[slot] = {
+            "model": getattr(slot_cfg, "model", None),
+            "max_tokens": getattr(slot_cfg, "max_tokens", None),
+            "temperature": getattr(slot_cfg, "temperature", None),
+            "host": getattr(slot_cfg, "host", None),
+            "port": getattr(slot_cfg, "port", None),
+            "explicit": slot in explicit,
+            "following": defaults.get(slot) if slot not in explicit else None,
+        }
+    result = {"global": {"models": slots, "defaults": defaults}}
+    if agent_id:
+        from server import chat_helpers
+
+        agent = chat_helpers.get_agent_config(agent_id)
+        if agent is None:
+            raise HTTPException(status_code=404, detail=f"Agent '{agent_id}' 不存在")
+        result["agent"] = {
+            "agent_id": agent_id,
+            "system_prompt": agent.get("system_prompt", ""),
+            "model": agent.get("model", "main"),
+            "max_tokens": agent.get("max_tokens"),
+            "temperature": agent.get("temperature"),
+        }
+    return {"status": "success", "model_context": result}
+
+
+@router.put("/admin/model-context")
+async def admin_update_model_context(request: Request, req: _ModelContextUpdateRequest):
+    """模型上下文参数修改（operator）。
+
+    - global：{path: value} 白名单映射，委托 control_plane config.update
+      （白名单校验 + save_config 落盘 + 缓存失效 + 热更新判定）
+    - agent_id：agent 级 system_prompt/model/max_tokens/temperature 更新，
+      复用 agents 路由的 _update_agents_locked（锁内读改写 + 写后失效读缓存）
+    """
+    _admin_guard(request, "operator")
+    updated: dict = {"global": None, "agent": None}
+
+    if req.global_config:
+        if _control_plane is None:
+            _admin_unavailable()
+        try:
+            result = await resolve_invoke_result(
+                _control_plane.dispatch(
+                    "update", "config", req.request_id or uuid.uuid4().hex,
+                    "default", dict(req.global_config),
+                )
+            )
+            updated["global"] = result.get("result")
+        except Exception as e:
+            # 白名单外 / 类型错误 / 落盘失败 → 400 + 控制面 ADMIN_* 错误码
+            raise HTTPException(status_code=400, detail=str(e))
+
+    if req.agent_id:
+        fields = {
+            k: v for k, v in {
+                "system_prompt": req.system_prompt,
+                "model": req.model,
+                "max_tokens": req.max_tokens,
+                "temperature": req.temperature,
+            }.items() if v is not None
+        }
+        if not fields:
+            raise HTTPException(
+                status_code=400,
+                detail="agent 级更新需提供至少一个字段（system_prompt/model/max_tokens/temperature）",
+            )
+        from server.api.routers.agents import _update_agents_locked
+
+        def _mutator(agents):
+            # 与 agents.update_agent 同模式：锁内 404 校验 + 字段更新
+            idx = next((i for i, a in enumerate(agents) if a.get("id") == req.agent_id), None)
+            if idx is None:
+                raise HTTPException(status_code=404, detail=f"Agent '{req.agent_id}' 不存在")
+            agents[idx].update(fields)
+            agents[idx]["updated_at"] = datetime.now().isoformat()
+
+        try:
+            agents_after = await run_in_threadpool(_update_agents_locked, _mutator)
+        except HTTPException:
+            raise
+        except Exception as e:
+            raise HTTPException(status_code=400, detail=f"agent 级更新失败: {e}")
+        agent = next((a for a in agents_after if a.get("id") == req.agent_id), None)
+        if agent is not None:
+            updated["agent"] = {
+                k: agent.get(k)
+                for k in ("id", "system_prompt", "model", "max_tokens", "temperature")
+            }
+        # 防御性双重失效：_update_agents_locked 已删 all_agents 缓存，此处幂等再删一次，
+        # 保证 global 与 agent 更新混批时缓存状态确定（LRUCache.delete 幂等无害）
+        try:
+            from server.core.cache import agent_config_cache
+
+            agent_config_cache.delete("all_agents")
+        except Exception as e:
+            logger.warning(f"MODEL_CONTEXT: agent_config_cache 失效失败: {e}")
+
+    if updated["global"] is None and updated["agent"] is None:
+        raise HTTPException(
+            status_code=400,
+            detail="请求体需提供 global（白名单映射）或 agent_id（agent 级字段）",
+        )
+
+    await asyncio.to_thread(
+        audit_now, "CX-A", "info", "model_context",
+        (req.agent_id or "global"), "模型上下文参数更新",
+        request_id=req.request_id,
+        detail={
+            "global": updated["global"].get("updated") if isinstance(updated["global"], dict) else None,
+            "agent_fields": sorted(
+                k for k in ("system_prompt", "model", "max_tokens", "temperature")
+                if getattr(req, k) is not None
+            ),
+        },
+    )
+    return {"status": "success", "updated": updated}
 
 
 @router.post("/admin/register")

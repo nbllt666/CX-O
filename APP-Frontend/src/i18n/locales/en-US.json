@@ -46,7 +46,8 @@
       "dream": "Dream Log",
       "meeting": "Meeting Room",
       "tuner": "Tuner",
-      "cluster": "Cluster"
+      "cluster": "Cluster",
+      "cxfc": "CXFC Console"
     },
     "neko": {
       "subtitle": "Bridge to the neko plugin runtime and plugin store",
@@ -155,6 +156,7 @@
       "experimental": "Experimental",
       "widgets": "Widgets",
       "liveSources": "Live OBS Sources",
+      "integration": "Plugins & Integration",
       "openInBrowser": "Open in browser",
       "collapse": "Collapse sidebar",
       "expand": "Expand sidebar"
@@ -187,6 +189,21 @@
         "memories": "Browse memories",
         "archive": "Archive memories",
         "settings": "Settings"
+      },
+      "performance": {
+        "title": "Performance",
+        "samples": "Samples",
+        "unit": "ms",
+        "segments": {
+          "asr": "ASR",
+          "ttft": "LLM First Token",
+          "ttsFirst": "TTS First Chunk",
+          "e2e": "End-to-End"
+        },
+        "p50": "P50",
+        "p95": "P95",
+        "empty": "No samples yet",
+        "errorHint": "Failed to load metrics, will retry automatically"
       }
     },
     "chat": {
@@ -521,6 +538,53 @@
       "unknownPlugin": "Unknown plugin",
       "fieldHost": "Host",
       "fieldPort": "Port"
+    },
+    "cxfc": {
+      "subtitle": "CXFC gateway overview: plugins, tools/skills, relay targets and memory/physio testers",
+      "refresh": "Refresh",
+      "loadFailed": "Failed to load. Check the backend connection and retry.",
+      "retry": "Retry",
+      "pluginsTitle": "Plugin Overview",
+      "pluginsEmpty": "No registered plugins yet",
+      "transport": {
+        "direct": "Direct",
+        "relay": "Relay",
+        "embedded": "Embedded"
+      },
+      "heartbeat": "Heartbeat",
+      "heartbeatOk": "OK",
+      "heartbeatStale": "Offline",
+      "lastSeen": "Last seen",
+      "lastSeenNever": "No record",
+      "toolsSkillsTitle": "Tools & Skills",
+      "toolsSkillsEmpty": "No tools or skills yet",
+      "toolsLabel": "Tools",
+      "skillsLabel": "Skills",
+      "ungrouped": "Ungrouped skills",
+      "relayTitle": "Relay Targets",
+      "relayEmpty": "No relay targets (no relay plugin registered)",
+      "relayActive": "Active",
+      "relayInactive": "Standby",
+      "relayLoadFailed": "Failed to load relay targets",
+      "testerTitle": "Memory/Physio Gateway Tester",
+      "testerHint": "Pick an endpoint and call it with JSON params (the tester authenticates via the admin key X-API-Key ops bypass)",
+      "endpointLabel": "Endpoint",
+      "paramsLabel": "Request params (JSON)",
+      "invalidJson": "Params are not valid JSON",
+      "run": "Run",
+      "running": "Calling...",
+      "responseLabel": "Response",
+      "errorLabel": "Call failed",
+      "emptyResponse": "No response yet",
+      "endpoints": {
+        "memorySearch": "Memory search memory/search",
+        "memoryWrite": "Memory write memory/write",
+        "memoryStats": "Memory stats memory/stats",
+        "memoryGet": "Memory detail memory/{id}",
+        "physioReport": "Physio report physio/report",
+        "physioStatus": "Physio status physio/status",
+        "physioSleep": "Sleep data physio/sleep"
+      }
     },
     "tools": {
       "subtitle": "Tool management: list, toggle, parameter schema and test calls",

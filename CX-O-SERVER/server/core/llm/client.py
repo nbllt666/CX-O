@@ -15,6 +15,9 @@ import httpx
 
 from server.core.logging_config import get_contextual_logger
 from server.core.utils import get_shared_http_client
+# 语音链路延迟采集（spec Task 4）：纯标准库模块，顶层导入无循环依赖风险；
+# record_current 内部吞异常，埋点零阻断流式热路径
+from server.core.metrics.voice_latency import get_voice_latency_tracker
 
 logger = get_contextual_logger(__name__)
 
@@ -599,6 +602,12 @@ class VLLMClient(LLMClient):
                                         logger.info(
                                             f"[DIAG-TTFT] first token at {(time.monotonic()-_diag_start)*1000:.1f}ms: '{content[:20]}'"
                                         )
+                                        # 语音延迟埋点（spec Task 4）：llm_first_token（TTFT）。
+                                        # client_id 经 voice_context 的 contextvar 从语音会话
+                                        # _run_pipeline 透传（async generator 与迭代方同 task 上下文，
+                                        # 可直接读取）；非语音路径读到 "default"，记入 default 键，
+                                        # 不影响 per-client 语音轮次统计。
+                                        get_voice_latency_tracker().record_current("llm_first_token")
                                     _diag_token_count += 1
                                     yield content
 

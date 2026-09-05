@@ -6,8 +6,8 @@
 ③ POST /autonomy/control enable/disable/emergency_stop 合法 action 生效（spy manager 断言调用）
 ④ POST /autonomy/control 非法 action 返回 400
 ⑤ GET  /autonomy/audit  返回 {items, total}（AuditStore 未装配返回空）
-⑥ GET  /autonomy/config  返回配置；未装配 404
-⑦ PUT  /autonomy/config  局部更新成功 / 非法字段 422 / 未装配 404
+⑥ GET  /autonomy/config  返回 UnifiedConfig.autonomy 节（Task 6.2 迁移，未装配也可读）
+⑦ PUT  /autonomy/config  局部更新持久化 settings / 非法字段 422 / 同步 manager.config
 
 运行：python -m pytest tests/test_autonomy_router.py -q
 """
@@ -167,35 +167,39 @@ class TestControl:
         assert autonomy_router.get_autonomy_manager() is fake
 
     def test_control_enable_runtime_assembles_with_services(self, client, tmp_path, monkeypatch):
-        # 无装配入口但 app 有 services → enable 走运行时装配（setup_autonomy 成功）并回填
+        # 无装配入口但 app 有 services → enable 走运行时装配（setup_autonomy 成功）并回填。
+        # Task 6.2：开关持久化已改写 UnifiedConfig settings——经 CXO_CONFIG 指向 tmp
+        # 隔离 Settings 单例，防测试写真实 config.json。
         import server.autonomy.main as autonomy_main
+        from server import config as config_module
 
-        fake_services = object()
-        client.app.state.services = fake_services
+        monkeypatch.setenv("CXO_CONFIG", str(tmp_path / "config.json"))
+        config_module.Settings.reset()
+        try:
+            fake_services = object()
+            client.app.state.services = fake_services
 
-        fake = SpyManager()
-        fake.config = AutonomyConfig(enabled=True, store_path=str(tmp_path))
+            fake = SpyManager()
+            fake.config = AutonomyConfig(enabled=True, store_path=str(tmp_path))
 
-        async def _fake_setup(services):
-            assert services is fake_services
-            autonomy_main._autonomy_manager = fake
-            return fake
+            async def _fake_setup(services):
+                assert services is fake_services
+                autonomy_main._autonomy_manager = fake
+                return fake
 
-        monkeypatch.setattr(autonomy_main, "_autonomy_manager", None)
-        monkeypatch.setattr(autonomy_main, "setup_autonomy", _fake_setup)
-        # 拦截配置读写，避免真实落盘默认存储目录
-        monkeypatch.setattr(autonomy_router, "save_config", lambda cfg: str(tmp_path / "cfg.json"))
-        monkeypatch.setattr(
-            "server.autonomy.config.load_config",
-            lambda store_path="": AutonomyConfig(enabled=False, store_path=str(tmp_path)),
-        )
+            monkeypatch.setattr(autonomy_main, "_autonomy_manager", None)
+            monkeypatch.setattr(autonomy_main, "setup_autonomy", _fake_setup)
 
-        r = client.post("/api/autonomy/control", json={"action": "enable"})
-        assert r.status_code == 200
-        body = r.json()
-        assert body["status"] == "ok"
-        assert body["state"]["status"] == "running"
-        assert autonomy_router.get_autonomy_manager() is fake
+            r = client.post("/api/autonomy/control", json={"action": "enable"})
+            assert r.status_code == 200
+            body = r.json()
+            assert body["status"] == "ok"
+            assert body["state"]["status"] == "running"
+            assert autonomy_router.get_autonomy_manager() is fake
+            # 开关状态已持久化到 UnifiedConfig（settings 节 enabled=True）
+            assert config_module.get_settings().config.autonomy.enabled is True
+        finally:
+            config_module.Settings.reset()
 
 
 # ================================================================ ⑤ GET /autonomy/audit
@@ -221,10 +225,23 @@ class TestAudit:
 
 
 # ================================================================ ⑥ GET /autonomy/config
+# Task 6.2：配置唯一真相源为 UnifiedConfig（settings 单例），不再依赖 manager 装配——
+# 未装配也可读（前端一级导航需要）。经 CXO_CONFIG 指向 tmp 隔离 Settings 单例，
+# 防测试读写真实 config.json。
+@pytest.fixture
+def isolated_settings(monkeypatch, tmp_path):
+    from server import config as config_module
+
+    monkeypatch.setenv("CXO_CONFIG", str(tmp_path / "config.json"))
+    config_module.Settings.reset()
+    yield config_module.get_settings()
+    config_module.Settings.reset()
+
+
 class TestGetConfig:
-    def test_config_returns_config(self, client, tmp_path):
-        m = _manager_with_config(tmp_path, enabled=True, agent_id="测试人设")
-        autonomy_router.set_autonomy_manager(m)
+    def test_config_returns_settings_section(self, client, isolated_settings):
+        isolated_settings.config.autonomy.agent_id = "测试人设"
+        isolated_settings.config.autonomy.enabled = True
         r = client.get("/api/autonomy/config")
         assert r.status_code == 200
         body = r.json()
@@ -233,41 +250,49 @@ class TestGetConfig:
         assert body["loop_interval_minutes"] == 15
         assert body["budget"]["daily_token_limit"] == 2000000
 
-    def test_config_404_when_no_manager(self, client):
+    def test_config_available_without_manager(self, client, isolated_settings):
+        # 未装配（manager 为 None）也可读：返回 settings 节默认值（200，不再 404）
         r = client.get("/api/autonomy/config")
-        assert r.status_code == 404
+        assert r.status_code == 200
+        body = r.json()
+        assert body["enabled"] is False
+        assert body["agent_id"] == "default"
 
 
 # ================================================================ ⑦ PUT /autonomy/config
 class TestPutConfig:
-    def test_config_put_partial_update(self, client, tmp_path):
-        m = _manager_with_config(tmp_path, enabled=True)
-        autonomy_router.set_autonomy_manager(m)
+    def test_config_put_partial_update(self, client, isolated_settings):
         r = client.put("/api/autonomy/config", json={"budget": {"overspend_mode": "low_cost"}})
         assert r.status_code == 200
         body = r.json()
         assert body["budget"]["overspend_mode"] == "low_cost"
         # 未提交字段保留默认/原值（深度合并 + 自动补齐）
         assert body["budget"]["daily_token_limit"] == 2000000
-        assert body["enabled"] is True
-        # 已持久化到 store_path
-        assert (tmp_path / "autonomy_config.json").exists()
+        assert body["enabled"] is False
+        # 已持久化到 UnifiedConfig（settings 内存态 + config.json 磁盘态）
+        assert isolated_settings.config.autonomy.budget.overspend_mode == "low_cost"
 
-    def test_config_put_invalid_field_422(self, client, tmp_path):
-        autonomy_router.set_autonomy_manager(_manager_with_config(tmp_path))
+    def test_config_put_syncs_manager_runtime_config(self, client, isolated_settings, tmp_path):
+        # manager 已装配时 PUT 同步 manager.config（映射回 AutonomyConfig，运行时语义）
+        from server.autonomy.config import AutonomyConfig
+
+        m = SpyManager()
+        m.config = AutonomyConfig(store_path=str(tmp_path), enabled=True)
+        autonomy_router.set_autonomy_manager(m)
+        r = client.put("/api/autonomy/config", json={"agent_id": "运行时同步"})
+        assert r.status_code == 200
+        assert r.json()["agent_id"] == "运行时同步"
+        assert isinstance(m.config, AutonomyConfig)
+        assert m.config.agent_id == "运行时同步"
+
+    def test_config_put_invalid_field_422(self, client, isolated_settings):
         r = client.put("/api/autonomy/config", json={"unknown_field": 1})
         assert r.status_code == 422
 
-    def test_config_put_invalid_enum_422(self, client, tmp_path):
-        autonomy_router.set_autonomy_manager(_manager_with_config(tmp_path))
+    def test_config_put_invalid_enum_422(self, client, isolated_settings):
         r = client.put("/api/autonomy/config", json={"budget": {"overspend_mode": "explode"}})
         assert r.status_code == 422
 
-    def test_config_put_invalid_time_422(self, client, tmp_path):
-        autonomy_router.set_autonomy_manager(_manager_with_config(tmp_path))
+    def test_config_put_invalid_time_422(self, client, isolated_settings):
         r = client.put("/api/autonomy/config", json={"schedule": {"wake_time": "25:99"}})
         assert r.status_code == 422
-
-    def test_config_put_404_when_no_manager(self, client):
-        r = client.put("/api/autonomy/config", json={"enabled": True})
-        assert r.status_code == 404

@@ -27,6 +27,8 @@ class CXFCStorage:
         既有数据库文件，创建后检测缺失列并执行 ALTER TABLE ADD COLUMN 迁移，旧库
         中历史插件的 token/指纹保持 NULL，不影响既有插件加载。
         B-1 修复：新增 tls_cert_pem 列，沿用幂等 ADD COLUMN 迁移，保持旧库兼容。
+        CXFC 数据网关：新增 plugin_access_token_hash 列（插件访问令牌的 SHA-256
+        哈希），同样走幂等 ADD COLUMN 迁移；明文不落盘，仅注册响应一次性返回。
         """
         Path(self.db_path).parent.mkdir(parents=True, exist_ok=True)
         self._db = await aiosqlite.connect(self.db_path)
@@ -48,6 +50,7 @@ class CXFCStorage:
                 tls_cert_fingerprint TEXT,
                 tls_cert_pem TEXT,
                 transport TEXT,
+                plugin_access_token_hash TEXT,
                 created_at TEXT,
                 updated_at TEXT
             )
@@ -58,6 +61,7 @@ class CXFCStorage:
         await self._ensure_column("tls_cert_fingerprint", "TEXT")
         await self._ensure_column("tls_cert_pem", "TEXT")
         await self._ensure_column("transport", "TEXT")
+        await self._ensure_column("plugin_access_token_hash", "TEXT")
         await self._db.commit()
 
     async def _ensure_column(self, column: str, col_type: str):
@@ -79,8 +83,8 @@ class CXFCStorage:
         await self._db.execute(
             """
             INSERT OR REPLACE INTO cxfc_plugins
-            (plugin_id, host, port, name, version, capabilities, status, last_seen, tools, skills, token, tls_cert_fingerprint, tls_cert_pem, transport, created_at, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            (plugin_id, host, port, name, version, capabilities, status, last_seen, tools, skills, token, tls_cert_fingerprint, tls_cert_pem, transport, plugin_access_token_hash, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 plugin.plugin_id,
@@ -97,6 +101,7 @@ class CXFCStorage:
                 plugin.tls_cert_fingerprint,
                 plugin.tls_cert_pem,
                 plugin.transport.value,
+                plugin.plugin_access_token_hash,
                 plugin.created_at.isoformat() if plugin.created_at else None,
                 plugin.updated_at.isoformat() if plugin.updated_at else None,
             ),
@@ -126,6 +131,11 @@ class CXFCStorage:
                     PluginTransport(row["transport"])
                     if ("transport" in row.keys() and row["transport"])
                     else PluginTransport.DIRECT
+                ),
+                plugin_access_token_hash=(
+                    row["plugin_access_token_hash"]
+                    if "plugin_access_token_hash" in row.keys()
+                    else None
                 ),
                 created_at=datetime.fromisoformat(row["created_at"]) if row["created_at"] else None,
                 updated_at=datetime.fromisoformat(row["updated_at"]) if row["updated_at"] else None,

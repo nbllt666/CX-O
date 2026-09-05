@@ -23,6 +23,8 @@ CONTROL_ACTIONS = [
     "create",
     "update",
     "delete",
+    # prompt 域只读动作（提示词装配预览，spec enhance-cxfc-admin-and-integrate-dream 三）
+    "preview",
 ]
 
 ENDPOINTS = {"ws": "/ws", "health": "/api/health", "cluster": "/api/cluster"}
@@ -130,6 +132,11 @@ class AdminManifest:
             "live_stream": getattr(svc, "live", None) is not None if svc is not None else False,
             "computer_control": getattr(svc, "cxfc_manager", None) is not None if svc is not None else False,
             "vision": getattr(svc, "multimodal", None) is not None if svc is not None else False,
+            # 管理接口增强（spec enhance-cxfc-admin-and-integrate-dream 三）：
+            # prompt.preview（readonly 预览）与 model-context 读写（operator）
+            # 端点随 admin 面启用即可用，不依赖 services 组件就绪
+            "prompt_preview": True,
+            "model_context": True,
         }
 
     def detect_models(self) -> Dict[str, str]:

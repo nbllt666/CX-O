@@ -14,6 +14,10 @@ logger = get_contextual_logger(__name__)
 # True = 需重启；False = 可热更新，保存后即时生效。
 REQUIRES_RESTART: Dict[str, bool] = {
     "llm": False,      # 可热更新：重建 LLM 客户端
+    # 多模型槽位节（models.main/summary/memory，spec enhance-cxfc-admin-and-integrate-dream 三）：
+    # apply_section 无对应热应用分支（ModelRouter 持多槽位客户端），保守登记需重启；
+    # llm 节维持 False 不变
+    "models": True,
     "vector": True,    # 向量库客户端持有持久连接，需重启
     "audio": False,
     "live": False,
@@ -27,6 +31,11 @@ REQUIRES_RESTART: Dict[str, bool] = {
     "graph": True,           # 图配置在进程启动时装配为单例
     "vision_enhanced": True,  # 视觉管线在装配期读取 enabled
     "meeting": True,  # 互动协调器在装配期构建，需重启生效
+    # 梦境/自主彻底集成（Task 6.2）：两节登记为需重启——引擎在启动装配期构建。
+    # 运行时启停不经 apply_section，由 PUT /api/dream/config、/api/autonomy/config
+    # 端点自身的引擎 start/stop 与 manager 同步逻辑承担（互不影响）。
+    "autonomy": True,
+    "dream": True,
 }
 
 

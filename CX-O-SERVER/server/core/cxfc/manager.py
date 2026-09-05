@@ -3,6 +3,7 @@ import asyncio
 import base64
 import hashlib
 import os
+import secrets
 import uuid
 from datetime import datetime
 from pathlib import Path
@@ -86,6 +87,11 @@ class CXFCManager:
         # P2-T2：生产 relay WS dispatcher（经 self._ws_manager 广播 cxfc_relay_call）。
         # 由 enable_relay_ws_dispatch() 装配；未装配时为 None，保持既有"显式注入 dispatcher"语义。
         self._relay_ws_dispatcher: Optional[RelayDispatcher] = None
+        # CXFC 数据网关（spec: enhance-cxfc-admin-and-integrate-dream Task 1）：
+        # 插件访问令牌的内存代持表（plugin_id -> 明文）。明文仅在注册响应中一次性
+        # 返回，库中只存 SHA-256 哈希；relay/embedded 的明文由后端代持供后续调用方
+        # 使用，不经任何接口外露。direct 插件同样代持（便于重连时读取）。
+        self._plugin_access_tokens: Dict[str, str] = {}
 
     def _track_background_task(self, task: asyncio.Task) -> asyncio.Task:
         """追踪后台任务，防止被GC回收；任务完成后自动从集合中移除"""
@@ -165,6 +171,45 @@ class CXFCManager:
 
     def set_tool_registry(self, tool_registry):
         self._tool_registry = tool_registry
+
+    # ---------------------------------------------------------------------
+    # CXFC 数据网关：插件访问令牌签发 / 代持 / 校验（Task 1）
+    # ---------------------------------------------------------------------
+    @staticmethod
+    def _issue_plugin_access_token() -> "tuple[str, str]":
+        """签发插件访问令牌，返回 (明文, SHA-256 哈希)。
+
+        明文由 secrets.token_hex(32) 生成（64 字符十六进制），仅注册响应一次性
+        返回；库中只存哈希（plugin_access_token_hash 列）。
+        """
+        plaintext = secrets.token_hex(32)
+        return plaintext, hashlib.sha256(plaintext.encode("utf-8")).hexdigest()
+
+    def _grant_plugin_access_token(self, plugin: CXFCPluginInfo) -> str:
+        """为已构建的插件对象签发访问令牌：哈希写入模型（随后随 save_plugin 落盘），
+        明文写入内存代持表并返回（供注册响应一次性下发）。"""
+        plaintext, digest = self._issue_plugin_access_token()
+        plugin.plugin_access_token_hash = digest
+        self._plugin_access_tokens[plugin.plugin_id] = plaintext
+        return plaintext
+
+    def get_plugin_access_token(self, plugin_id: str) -> Optional[str]:
+        """读取内存代持的插件访问令牌明文（仅注册响应一次性披露；不落盘、不外露）。"""
+        return self._plugin_access_tokens.get(plugin_id)
+
+    def verify_plugin_access_token(self, token: str) -> Optional[str]:
+        """校验插件访问令牌：sha256(明文) 后与各插件库中哈希恒时比对。
+
+        命中返回对应 plugin_id（供网关绑定 request.state）；未命中返回 None。
+        """
+        if not token:
+            return None
+        digest = hashlib.sha256(token.encode("utf-8")).hexdigest()
+        for plugin in self.get_plugins():
+            stored = getattr(plugin, "plugin_access_token_hash", None)
+            if stored and secrets.compare_digest(digest, stored):
+                return plugin.plugin_id
+        return None
 
     def set_ws_manager(self, ws_manager):
         self._ws_manager = ws_manager
@@ -347,6 +392,9 @@ class CXFCManager:
 
         self._register_catalog(plugin_id, request.tools, request.skills)
 
+        # CXFC 数据网关：签发插件访问令牌（哈希落库，明文由注册响应一次性返回）
+        self._grant_plugin_access_token(plugin)
+
         await self._storage.save_plugin(plugin)
         # BUG-B07 修复: 在锁内完成 _plugins 写入
         async with self._plugins_lock:
@@ -400,6 +448,9 @@ class CXFCManager:
         self._embedded_handlers[plugin.plugin_id] = handlers
 
         self._register_catalog(plugin.plugin_id, tools, skills, handlers)
+
+        # CXFC 数据网关：签发插件访问令牌（哈希落库，明文由后端内存代持）
+        self._grant_plugin_access_token(plugin)
 
         await self._storage.save_plugin(plugin)
         async with self._plugins_lock:
@@ -495,6 +546,9 @@ class CXFCManager:
         )
         self._register_catalog(plugin.plugin_id, tools, skills)
 
+        # CXFC 数据网关：签发插件访问令牌（哈希落库，明文由后端内存代持）
+        self._grant_plugin_access_token(plugin)
+
         await self._storage.save_plugin(plugin)
         async with self._plugins_lock:
             self._plugins[plugin.plugin_id] = plugin
@@ -553,6 +607,8 @@ class CXFCManager:
         # 清理 relay / embedded 专属状态（通道回调、进程内 handler）
         self._dispatch_relay.pop(plugin_id, None)
         self._embedded_handlers.pop(plugin_id, None)
+        # CXFC 数据网关：清理插件访问令牌的内存代持明文（库中哈希随记录一并处理）
+        self._plugin_access_tokens.pop(plugin_id, None)
         # E4 修复：二级结构下整体取出该插件的等待桶，逐个 cancel 未完成的 Future，
         # 避免断开后调用方仍在等待永不回报的悬空 Future（原子串匹配逻辑已删除）。
         pending_waiters = self._relay_waiter.pop(plugin_id, {})

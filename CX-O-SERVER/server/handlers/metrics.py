@@ -63,6 +63,14 @@ def register_metrics_handlers(manager: "WebSocketManager"):
                 logger.warning("获取plugins metrics失败: %s", e, exc_info=True)
                 metrics["plugins"] = {"error": "unavailable"}
 
+            # 语音链路延迟（spec Task 4，ADDITIVE 追加键，既有键不动）
+            try:
+                from server.core.metrics.voice_latency import get_voice_latency_tracker
+                metrics["voice_latency"] = get_voice_latency_tracker().summary()
+            except Exception as e:
+                logger.warning("获取voice_latency metrics失败: %s", e, exc_info=True)
+                metrics["voice_latency"] = {"error": "unavailable"}
+
             metrics["gateway"] = manager.get_stats()
 
             await manager.send_message(client_id, create_response(

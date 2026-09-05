@@ -1,7 +1,7 @@
 """CXFC 数据模型——插件、技能与事件的数据结构定义。"""
 from typing import List, Optional, Dict, Any
 from datetime import datetime
-from pydantic import BaseModel, field_serializer
+from pydantic import BaseModel, Field, field_serializer
 from enum import Enum
 
 
@@ -46,6 +46,11 @@ class CXFCPluginInfo(BaseModel):
     token: Optional[str] = None
     tls_cert_fingerprint: Optional[str] = None
     tls_cert_pem: Optional[str] = None
+    # CXFC 数据网关（spec: enhance-cxfc-admin-and-integrate-dream Task 1）：
+    # 插件访问令牌仅存 SHA-256 哈希（明文只在注册响应中一次性返回，后端内存代持）。
+    # exclude=True 保证本字段不进入任何 API 序列化输出（GET /cxfc/plugins 等不泄露哈希），
+    # 持久化由 storage.save_plugin/load_plugins 按列显式读写。
+    plugin_access_token_hash: Optional[str] = Field(default=None, exclude=True)
     created_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None
 
@@ -170,3 +175,16 @@ class CXFCEmbeddedRegisterRequest(BaseModel):
     capabilities: List[str] = []
     skills: List[Dict[str, Any]] = []
     transport: PluginTransport = PluginTransport.EMBEDDED
+
+
+class CXFCRegisterAccessResponse(BaseModel):
+    """CXFC 插件注册成功响应（direct/relay/embedded 三类注册共用）。
+
+    plugin_access_token 为后端签发的插件访问令牌**明文**，仅在注册响应中一次性
+    返回——插件须自行保存；后端库中只存 SHA-256 哈希（plugin_access_token_hash），
+    relay/embedded 由后端在内存代持明文（供后续调用方使用，不经任何接口外露）。
+    插件后续调用数据网关时以 Authorization: Bearer <plugin_access_token> 鉴权。
+    """
+    status: str = "ok"
+    plugin_id: str
+    plugin_access_token: Optional[str] = None

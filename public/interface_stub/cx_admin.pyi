@@ -1,6 +1,6 @@
 """CX-O 管理面（CX-A）接口契约（core/admin/* + api/routers/admin.py）。
 
-契约版本: 1.0.1（PATCH，G4-B 签名对齐：AdminBatchExecutor.execute 补 async 与 stop_on_error 默认值、AdminControlPlane.dispatch 参数默认值对齐实现）
+契约版本: 1.0.2（PATCH，enhance-cxfc-admin-and-integrate-dream：登记 prompt target / preview action 只读能力，AdminControlPlane.dispatch 与 POST /api/admin/prompt/preview、GET/PUT /api/admin/model-context 新端点，见 spec.md）
 
 所有异常契约：调用方必须处理约定的异常。
 错误码枚举（统一字符串）：ADMIN_DISABLED / ADMIN_AUTH_FAILED / ADMIN_FORBIDDEN /

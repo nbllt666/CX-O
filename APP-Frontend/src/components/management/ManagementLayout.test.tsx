@@ -12,6 +12,7 @@ import i18n from '@/i18n';
  * - B. 侧边栏整体折叠后，小工具分组不占位、子项平铺为图标
  * - C. 对话 Agent 子菜单：展开显示列表、点击切换并跳转 /chat
  * - D. 粒子装饰层常驻（data-particle-field）
+ * - E/F. 实验功能组收编范围（Task 7：autonomy/dream 升一级导航，组内仅剩四成员）
  */
 vi.mock('@/api/clients/agents', () => ({
   agentsApi: {
@@ -125,5 +126,34 @@ describe('ManagementLayout 增强侧边栏', () => {
     renderLayout('/chat');
     expect(await screen.findByText('Agent One')).toBeInTheDocument();
     expect(screen.getByText('chat-content')).toBeInTheDocument();
+  });
+
+  it('E. 实验功能组仅含微调/哨兵集群/Neko插件/会议室，不含 Agent 生活/梦境日志（Task 7）', () => {
+    renderLayout('/');
+    // 升级后 autonomy/dream 仅作为一级导航出现（主列表各一次，未收编进实验组）
+    expect(screen.getAllByText('Agent 生活').length).toBe(1);
+    expect(screen.getAllByText('梦境日志').length).toBe(1);
+
+    // 展开实验功能组：四个成员可见
+    fireEvent.click(screen.getByRole('button', { name: '实验功能' }));
+    expect(screen.getByText('微调')).toBeInTheDocument();
+    expect(screen.getByText('哨兵集群')).toBeInTheDocument();
+    expect(screen.getByText('Neko 插件')).toBeInTheDocument();
+    expect(screen.getByText('会议室')).toBeInTheDocument();
+
+    // 展开后 autonomy/dream 不重复出现（未落入实验组子菜单）
+    expect(screen.getAllByText('Agent 生活').length).toBe(1);
+    expect(screen.getAllByText('梦境日志').length).toBe(1);
+  });
+
+  it('F. Agent 生活/梦境日志作为一级导航链接出现在主列表（Task 7）', () => {
+    renderLayout('/');
+    expect(screen.getByRole('link', { name: 'Agent 生活' })).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: '梦境日志' })).toBeInTheDocument();
+
+    // 未展开实验功能组时，组内成员默认不可见
+    expect(screen.queryByText('微调')).not.toBeInTheDocument();
+    expect(screen.queryByText('哨兵集群')).not.toBeInTheDocument();
+    expect(screen.queryByText('会议室')).not.toBeInTheDocument();
   });
 });

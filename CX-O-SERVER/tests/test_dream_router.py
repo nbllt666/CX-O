@@ -8,8 +8,8 @@
 ⑤ POST /dream/{id}/reject   否定返回 ok（reason 透传）；候选不存在/未启用 404
 ⑥ DELETE /dream/session/{id} 会话回滚返回 {purged:n}（红线 R5）
 ⑦ POST /dream/purge  返回 {purged_memories, purged_buffer}
-⑧ GET  /dream/config  返回配置（独立配置模块，不依赖引擎）
-⑨ PUT  /dream/config  非法 422 / 合法更新持久化 + GET 往返 / enabled 开关通知引擎 start/stop
+⑧ GET  /dream/config  返回配置（UnifiedConfig.dream 节，Task 6.2 迁移，不依赖引擎）
+⑨ PUT  /dream/config  非法 422 / 合法更新持久化 settings + GET 往返 / enabled 开关通知引擎 start/stop
 
 运行：python -m pytest tests/test_dream_router.py -q
 """
@@ -309,9 +309,21 @@ class TestPurge:
 
 
 # ================================================================ ⑧⑨ GET/PUT /dream/config
+# Task 6.2：配置唯一真相源为 UnifiedConfig（settings 单例）——经 CXO_CONFIG 指向
+# tmp 隔离 Settings 单例，防测试读写真实 config.json。
+@pytest.fixture
+def isolated_settings(monkeypatch, tmp_path):
+    from server import config as config_module
+
+    monkeypatch.setenv("CXO_CONFIG", str(tmp_path / "config.json"))
+    config_module.Settings.reset()
+    yield config_module.get_settings(), tmp_path / "config.json"
+    config_module.Settings.reset()
+
+
 class TestConfig:
-    def test_get_config_returns_defaults(self, client, monkeypatch, tmp_path):
-        _patch_config_io(monkeypatch, tmp_path)
+    def test_get_config_returns_defaults(self, client, isolated_settings):
+        settings, cfg_path = isolated_settings
         r = client.get("/api/dream/config")
         assert r.status_code == 200
         body = r.json()
@@ -320,18 +332,16 @@ class TestConfig:
         assert body["dream_temperature"] == 0.9
         assert body["schedule"]["sleep_time"] == "02:00"
 
-    def test_put_config_invalid_field_422(self, client, monkeypatch, tmp_path):
-        _patch_config_io(monkeypatch, tmp_path)
+    def test_put_config_invalid_field_422(self, client, isolated_settings):
         r = client.put("/api/dream/config", json={"unknown_field": 1})
         assert r.status_code == 422
 
-    def test_put_config_invalid_time_422(self, client, monkeypatch, tmp_path):
-        _patch_config_io(monkeypatch, tmp_path)
+    def test_put_config_invalid_time_422(self, client, isolated_settings):
         r = client.put("/api/dream/config", json={"schedule": {"wake_time": "25:99"}})
         assert r.status_code == 422
 
-    def test_put_config_valid_update_persists_and_roundtrip(self, client, monkeypatch, tmp_path):
-        _patch_config_io(monkeypatch, tmp_path)
+    def test_put_config_valid_update_persists_and_roundtrip(self, client, isolated_settings):
+        settings, cfg_path = isolated_settings
         r = client.put(
             "/api/dream/config",
             json={"dream_temperature": 0.7, "candidates_per_session": 5, "enabled": True},
@@ -344,28 +354,33 @@ class TestConfig:
         # 未提交字段保留默认（深度合并 + 自动补齐）
         assert body["model"] == "summary"
         assert body["schedule"]["wake_time"] == "08:00"
-        # 已持久化
-        assert (tmp_path / "dream_config.json").exists()
+        # 已持久化到 UnifiedConfig（settings 内存态 + config.json 磁盘态）
+        assert settings.config.dream.dream_temperature == 0.7
+        assert cfg_path.exists()
+        persisted = json.loads(cfg_path.read_text(encoding="utf-8"))
+        assert persisted["dream"]["dream_temperature"] == 0.7
         # GET 往返
         r2 = client.get("/api/dream/config")
         assert r2.status_code == 200
         assert r2.json()["dream_temperature"] == 0.7
 
-    def test_put_config_enabled_false_stops_engine(self, client, monkeypatch, tmp_path, engine):
-        _patch_config_io(monkeypatch, tmp_path)
+    def test_put_config_enabled_false_stops_engine(self, client, isolated_settings, engine):
         dream_router.set_dream_engine(engine)
         r = client.put("/api/dream/config", json={"enabled": False})
         assert r.status_code == 200
         assert r.json()["enabled"] is False
         assert "stop" in engine.calls
 
-    def test_put_config_enabled_true_starts_engine(self, client, monkeypatch, tmp_path, engine):
-        _patch_config_io(monkeypatch, tmp_path)
+    def test_put_config_enabled_true_starts_engine(self, client, isolated_settings, engine):
         dream_router.set_dream_engine(engine)
         r = client.put("/api/dream/config", json={"enabled": True})
         assert r.status_code == 200
         assert r.json()["enabled"] is True
         assert "start" in engine.calls
+        # 引擎侧 config 映射回 DreamConfig（类型契约保持）
+        from server.autonomy.dream.config import DreamConfig
+
+        assert isinstance(engine.config, DreamConfig)
 
 
 # ================================================================ 写路径鉴权（鉴权漏挂簇修复补充用例）

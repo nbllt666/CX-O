@@ -14,6 +14,8 @@ from server.protocol.actions import ASRActions, TTSActions, EmotionActions, Effe
 from server.services.emotion_parser import get_supported_emotions, extract_emotions_with_text
 from server.services.effect_parser import EffectParser
 from server.services.voice_context import set_active_client_id
+# 语音链路延迟采集（spec Task 4）：record 内部吞异常，埋点零阻断主链路
+from server.core.metrics.voice_latency import get_voice_latency_tracker
 # 模块级导入实时语音访问器：vad_processor 无对 audio 的反向依赖（无循环导入），
 # 消除双流式/流式 ASR handler 每帧重复执行函数级 import（16.7 帧/s 热路径）。
 # per-client 并发化：ensure_stream_processor_configured 按 client_id 取独立实例。
@@ -209,6 +211,10 @@ class DualStreamSession:
         # ---- 流水线状态 ----
         self._pipeline_task: Optional[asyncio.Task] = None
         self._tts_chunk_index: int = 0
+        # 语音延迟埋点（spec Task 4）：主管线 TTS 首块待打点标志。
+        # 仅 _run_pipeline 置 True，_play_reply（AI 插话回复）显式置 False——
+        # 插话回复不属于用户语音轮次，不计入 tts_first_chunk 延迟。
+        self._tts_first_chunk_pending: bool = False
         # 当前 utterance 是否已触发 LLM（避免同一 utterance 内重复触发）
         self._has_triggered_this_utterance: bool = False
         # 当前 utterance 是否已由 LLM 插话打断（interrupt_and_reply 置位，
@@ -422,6 +428,9 @@ class DualStreamSession:
         # 记录语音结束时间：供 on_vad_speech_start 的打断保护窗口使用
         self._last_speech_end_time = time.monotonic()
 
+        # 语音延迟埋点（spec Task 4）：speech_end 开新轮（record 内部吞异常，零阻断）
+        get_voice_latency_tracker().record(self.client_id, "speech_end")
+
         if self._has_triggered_this_utterance:
             # 当前 utterance 已触发 LLM：用 Final 文本修正上下文记录
             # Final 文本比 Partial 更准确（VAD on_end 后 ASR 有完整上下文）
@@ -504,6 +513,8 @@ class DualStreamSession:
         self._store_speaker(asr_result)
         # 推送 Final 转写文本给前端（语音识别的最终确认）
         await self._send_partial(text, is_final=True, speaker=self._last_speaker_name, speaker_label=self._last_speaker_label)
+        # 语音延迟埋点（spec Task 4）：asr_final（final 文本产生处，零阻断）
+        get_voice_latency_tracker().record(self.client_id, "asr_final")
 
         if self._has_triggered_this_utterance:
             # 已由 Partial 触发：仅修正 Final 文本
@@ -636,6 +647,8 @@ class DualStreamSession:
             # 两种模式的工具能力相同，差异仅在记忆获取方式：
             #   - auto：每轮预注入记忆 + 也可工具调用
             #   - fast：不预检索，靠工具按需召回
+            # 语音延迟埋点（spec Task 4）：发起 LLM 请求前打 llm_start（零阻断）
+            get_voice_latency_tracker().record(self.client_id, "llm_start")
             llm_stream = llm.stream_chat(
                 messages=messages,
                 temperature=agent_config.get("temperature", 0.7),
@@ -666,6 +679,8 @@ class DualStreamSession:
             # 不必等整句，首包音频延迟压缩数百毫秒
             await set_tts_playing(self.client_id, True)
             self._tts_chunk_index = 0
+            # 语音延迟埋点：主管线 TTS 首块打点待命（_send_tts_chunk 消费，零阻断）
+            self._tts_first_chunk_pending = True
             self._current_assistant_text = ""
 
             # 构建 Qwen3 统一编排合成参数（参考音频资产/路径）
@@ -840,6 +855,8 @@ class DualStreamSession:
             # 原子置位：先摘除当前流水线引用，再执行上下文记录
             self._pipeline_task = None
             if self._pipeline_completed:
+                # 语音延迟埋点（spec Task 4）：一轮回复完成，打 turn_done 结算入缓冲
+                get_voice_latency_tracker().record(self.client_id, "turn_done")
                 # 使用 VAD 修正后的 Final 文本记录上下文（比 Partial 更准确）
                 user_text = self._final_user_text or self._current_user_text
                 await self._record_context(user_text, self._current_assistant_text)
@@ -946,6 +963,8 @@ class DualStreamSession:
 
         await set_tts_playing(self.client_id, True)
         self._tts_chunk_index = 0
+        # 语音延迟埋点：AI 插话回复不属用户语音轮次，禁用 tts_first_chunk 打点
+        self._tts_first_chunk_pending = False
         self._current_assistant_text = ""
         try:
             async for chunk in self.tts_service.synthesize_stream_fine(
@@ -1005,6 +1024,10 @@ class DualStreamSession:
 
     async def _send_tts_chunk(self, chunk: dict, is_final: bool) -> None:
         """发送 TTS 音频块给前端（流式推送，不等整句）"""
+        # 语音延迟埋点（spec Task 4）：主管线首个 TTS 块打 tts_first_chunk（零阻断）
+        if self._tts_first_chunk_pending:
+            self._tts_first_chunk_pending = False
+            get_voice_latency_tracker().record(self.client_id, "tts_first_chunk")
         audio_data = chunk.get("audio_data")
         audio_base64 = None
         if audio_data:

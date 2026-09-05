@@ -2,6 +2,13 @@
 
 > 遵循 AC 范式 v6 rules-3 §六 契约版本化规则。所有契约变更必须记录版本号、变更内容、变更原因、影响范围。
 
+## [1.12.0] - 2026-09-04
+
+### 变更内容
+
+- **数据契约变更（MINOR）**：`schema/admin_control.schema.json` @version 1.1.0——target 枚举追加 `prompt`（提示词装配只读域）、action 枚举追加 `preview`（readonly 级只读动作），ADDITIVE 值扩展，既有枚举值全部保留（`update` 原已存在未动）。来源：spec `.trae/specs/enhance-cxfc-admin-and-integrate-dream/`（人类批准，GN-004 两轮审查），实现于 Task 3（control_plane prompt.preview 域）。连带：`interface_stub/cx_admin.pyi` v1.0.1→1.0.2 PATCH 头注登记同批新端点（POST /api/admin/prompt/preview、GET/PUT /api/admin/model-context）。
+- **说明**：CXFC capability 声明（memory/physio）经确认无独立契约文件，在代码层 `server/core/cxfc/models.py` capabilities 列表声明，不新建 public/ 契约。
+
 ## [1.11.0] - 2026-08-30
 
 ### 变更内容

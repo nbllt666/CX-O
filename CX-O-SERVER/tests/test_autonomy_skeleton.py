@@ -1,4 +1,4 @@
-"""CX-O-Autonomy P0-T2 骨架测试：配置默认/补齐/校验、管理器生命周期、embedded 注册装配。
+"""CX-O-Autonomy P0-T2 骨架测试：配置默认/补齐/校验、管理器生命周期、builtin 直注装配。
 
 覆盖：
 1. config 默认值（对齐 autonomy_config.schema.json）+ 缺失字段自动补齐
@@ -6,8 +6,9 @@
 3. 非法枚举（overspend_mode / action）与非法时间格式抛 ValueError
 4. AutonomyManager 启停/暂停/恢复/紧急停止 + get_status 形状（jsonschema 校验对齐 state 契约）
 5. setup_autonomy 在 enabled=False 时返回 None
-6. enabled=True 时经真实 CXFCManager（临时 sqlite storage）register_embedded_plugin 后，
-   /cxfc 插件列表可见 embedded_cxo-autonomy 且 transport=="embedded"
+6. enabled=True 时经真实 CXFCManager（临时 sqlite storage）装配后，工具直注
+   ToolRegistry（category=="builtin"）、技能直注 SkillRegistry，且 /cxfc 插件列表
+   不再出现 autonomy 条目（Task 6.1 去插件包装，双形态覆盖）
 7. autonomy_get_status handler 可调用
 
 运行：python -m pytest tests/test_autonomy_skeleton.py -q
@@ -192,11 +193,10 @@ async def test_setup_autonomy_disabled_returns_none(tmp_path):
     assert get_autonomy_manager() is None
 
 
-# ================================================================ ⑥⑦ enabled=True 注册装配 + handler
+# ================================================================ ⑥⑦ enabled=True 直注装配 + handler
 @pytest.mark.asyncio
 async def test_setup_autonomy_enabled_registers_embedded_and_handler(tmp_path):
     from server.core.cxfc.manager import CXFCManager
-    from server.core.cxfc.models import PluginTransport
     from server.core.tools.registry import ToolRegistry
 
     # 真实 CXFCManager + 临时 sqlite storage
@@ -208,6 +208,7 @@ async def test_setup_autonomy_enabled_registers_embedded_and_handler(tmp_path):
     class FakeServices:
         def __init__(self):
             self.cxfc_manager = cxfc
+            self.tool_registry = tr
             self.autonomy_manager = None
 
     services = FakeServices()
@@ -217,22 +218,25 @@ async def test_setup_autonomy_enabled_registers_embedded_and_handler(tmp_path):
     assert manager is not None
     assert services.autonomy_manager is manager
 
-    # /cxfc 插件列表可见 embedded_cxo-autonomy，transport=="embedded"
-    pid = f"embedded_{AUTONOMY_PLUGIN_ID}"
-    plugins = cxfc.get_plugins()
-    plugin = next((p for p in plugins if p.plugin_id == pid), None)
-    assert plugin is not None, f"插件列表缺少 {pid}，实际: {[p.plugin_id for p in plugins]}"
-    assert plugin.transport == PluginTransport.EMBEDDED
-    assert plugin.transport.value == "embedded"
-    assert plugin.host == ""
-    assert plugin.port == 0
-    assert plugin.name == AUTONOMY_PLUGIN_NAME
-    assert set(plugin.capabilities) == set(AUTONOMY_CAPABILITIES)
-    assert len(plugin.tools) == 9
-    assert plugin.skills == SKILL_SPECS
+    # 去插件包装（Task 6.1）：插件列表不再出现 autonomy 条目（双形态覆盖）
+    ids = {p.plugin_id for p in cxfc.get_plugins()}
+    assert f"embedded_{AUTONOMY_PLUGIN_ID}" not in ids
+    assert AUTONOMY_PLUGIN_ID not in ids
+
+    # ⑥ 工具直注 ToolRegistry：全部 category=="builtin" 且 handler 已接线
+    handlers = get_handlers()
+    for spec in TOOL_SPECS:
+        tool = tr.get_tool(spec["name"])
+        assert tool is not None, f"工具 {spec['name']} 未注册"
+        assert tool.category == "builtin"
+        assert tool.function is handlers[spec["name"]]
+
+    # ⑥ 技能直注 SkillRegistry：来源登记为 builtin（不再归属插件）
+    skills = {s.name: s for s in cxfc.get_skill_registry().get_all_skills()}
+    assert "autonomy_loop" in skills
+    assert skills["autonomy_loop"].source_plugin_id == "builtin"
 
     # ⑦ autonomy_get_status handler 可调用（直接调用 + 经 ToolRegistry 分发）
-    handlers = get_handlers()
     assert "autonomy_get_status" in handlers
     st = handlers["autonomy_get_status"]()
     validate(instance=st, schema=STATE_SCHEMA)

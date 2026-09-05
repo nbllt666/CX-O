@@ -54,6 +54,7 @@ import asyncio
 import logging
 from contextlib import asynccontextmanager
 from datetime import datetime
+from typing import Any
 
 import uvicorn
 from fastapi import FastAPI
@@ -71,6 +72,29 @@ logger = logging.getLogger(__name__)
 # lifespan 后台任务强引用集：防止 asyncio.create_task 的任务被 GC 中途回收
 # （Python 文档要求持引用），任务完成时自动移除。
 _lifespan_background_tasks: set[asyncio.Task] = set()
+
+
+async def _shutdown_dream_autonomy(services: Any, logger_: Any) -> None:
+    """dream/autonomy 生命周期补全关闭清单（Task 6.4，供 lifespan shutdown 复用）。
+
+    顺序：autonomy engine stop → dream engine stop → flush_physio_store()（引擎
+    全停后强制落盘生理存储节流窗口内的脏数据）。每个清理项独立经 shutdown_service
+    try-except 隔离，单项失败不影响其余清理。引擎引用取自 services 装配返回值
+    （未装配/未启用时为 None，跳过）。模块级函数便于单测注入 fake 断言调用。
+    """
+    autonomy_engine = getattr(services, "autonomy_engine", None)
+    if autonomy_engine is not None:
+        await shutdown_service("自主系统引擎", autonomy_engine.stop, logger_=logger_)
+    dream_engine = getattr(services, "dream_engine", None)
+    if dream_engine is not None:
+        await shutdown_service("梦境引擎", dream_engine.stop, logger_=logger_)
+
+    async def _flush_physio():
+        from server.autonomy.main import flush_physio_store
+
+        flush_physio_store()
+
+    await shutdown_service("生理信号存储flush", _flush_physio, logger_=logger_)
 
 
 @asynccontextmanager
@@ -552,8 +576,19 @@ async def lifespan(app: FastAPI):
 
     services.cxfc_manager = await init_service("CXFC管理器", _init_cxfc, logger_=lifespan_logger)
 
-    # CX-O-Autonomy 自主系统（embedded CXFC 插件）——在 cxfc_manager 就绪后装配。
-    # enabled=False 时 setup_autonomy 返回 None，不占用服务槽位；任何异常被内部隔离。
+    # dream/autonomy 配置迁移（Task 6.2）：旧 server/autonomy/data/*.json → UnifiedConfig
+    # （幂等，一次性；导入成功后旧文件改名 .migrated 留档）。失败仅告警，不阻断启动。
+    try:
+        from server.config import migrate_legacy_autonomy_configs
+
+        _cfg_migration = migrate_legacy_autonomy_configs()
+        if any(_cfg_migration.values()):
+            lifespan_logger.info("旧 autonomy/dream 配置已迁入 UnifiedConfig: %s", _cfg_migration)
+    except Exception as _cfg_mig_e:
+        lifespan_logger.warning(f"autonomy/dream 配置迁移失败（不影响启动）: {_cfg_mig_e}")
+
+    # CX-O-Autonomy 自主系统（builtin 直注工具，Task 6.1 去插件包装）——在 cxfc_manager
+    # 就绪后装配。enabled=False 时 setup_autonomy 返回 None，不占用服务槽位；任何异常被内部隔离。
     async def _init_autonomy():
         from server.autonomy.main import setup_autonomy
         return await setup_autonomy(services)
@@ -1034,6 +1069,9 @@ async def lifespan(app: FastAPI):
         await shutdown_service("CXFC管理器", services.cxfc_manager.shutdown, logger_=lifespan_logger)
     if hasattr(services, 'cxfc_discovery') and services.cxfc_discovery:
         await shutdown_service("CXFC发现服务", services.cxfc_discovery.stop_discovery, logger_=lifespan_logger)
+
+    # dream/autonomy 生命周期补全（Task 6.4）：停双引擎 + flush 生理存储
+    await _shutdown_dream_autonomy(services, lifespan_logger)
 
     # M5（第五轮）: 旧实现 `if services.graph_database:` 恒为 None（懒创建实例
     # 从不注册到 services），关闭分支是死代码。改为统一关闭依赖层注册表

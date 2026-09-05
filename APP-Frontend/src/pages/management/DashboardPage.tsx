@@ -7,10 +7,13 @@
  * - 服务统计：已归档记忆、消息总数
  * - 快捷操作：发起对话 / 浏览记忆 / 记忆归档 / 系统设置
  *
- * 数据全部来自已有 api clients（healthApi / memoriesApi / chatApi / agentsApi），
+ * - 性能指标：语音链路延迟（ASR / LLM 首 Token / TTS 首帧 / 端到端）P50/P95 横条，
+ *   15s 轮询 + in-flight 互斥，无样本或拉取失败时区块内静默降级为空态
+ *
+ * 数据全部来自已有 api clients（healthApi / memoriesApi / chatApi / agentsApi / metricsApi），
  * 无 react-query 依赖，本地 useState + useEffect 拉取；失败展示错误态并可重试。
  */
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import {
@@ -21,6 +24,7 @@ import {
   Brain,
   CalendarClock,
   Database,
+  Gauge,
   HeartPulse,
   MemoryStick,
   MessageSquareText,
@@ -33,6 +37,8 @@ import { memoriesApi } from '@/api/clients/memories';
 import type { MemoryStats } from '@/api/clients/memories';
 import { chatApi } from '@/api/clients/chat';
 import { agentsApi } from '@/api/clients/agents';
+import { metricsApi } from '@/api/clients/metrics';
+import type { VoiceLatencyStats } from '@/api/clients/metrics';
 import type { HealthStatus, Session } from '@/api/types';
 import { cn } from '@/lib/utils';
 
@@ -42,6 +48,22 @@ interface DashboardData {
   sessions: Session[];
   agentCount: number;
 }
+
+/** 性能横条归一化上限（ms）：超过按满格截断，数值仍真实显示 */
+const PERF_BAR_MAX_MS = 1500;
+/** 性能指标轮询间隔（ms） */
+const PERF_POLL_MS = 15000;
+
+/** 性能指标区块的段定义（按语音链路管线顺序：识别 → 首Token → 首帧 → 端到端） */
+const PERF_SEGMENTS: Array<{
+  key: 'asr' | 'ttft' | 'tts_first' | 'e2e';
+  labelKey: string;
+}> = [
+  { key: 'asr', labelKey: 'management.dashboard.performance.segments.asr' },
+  { key: 'ttft', labelKey: 'management.dashboard.performance.segments.ttft' },
+  { key: 'tts_first', labelKey: 'management.dashboard.performance.segments.ttsFirst' },
+  { key: 'e2e', labelKey: 'management.dashboard.performance.segments.e2e' },
+];
 
 /** 统计今日活跃会话（updated_at 落在今日 0 点之后） */
 function countTodaySessions(sessions: Session[]): number {
@@ -127,11 +149,83 @@ function isComponentOk(
   return fallbackBool ?? false;
 }
 
+/** 性能横条：宽度按 ms 归一化（上限 PERF_BAR_MAX_MS 截断），数值真实显示；无值为 — */
+function PerfBar(props: { label: string; value: number | null; tone: string }) {
+  const { t } = useTranslation();
+  const ms = props.value;
+  const pct = Math.max(0, Math.min((ms ?? 0) / PERF_BAR_MAX_MS, 1)) * 100;
+  return (
+    <div className="flex items-center gap-2 text-xs">
+      <span className="w-8 shrink-0 text-muted-foreground">{props.label}</span>
+      <div className="h-1.5 flex-1 overflow-hidden rounded-full bg-[rgba(255,255,255,0.08)]">
+        <div
+          className={cn('h-full rounded-full transition-all duration-fast', props.tone)}
+          style={{ width: `${pct}%` }}
+        />
+      </div>
+      <span className="w-20 shrink-0 text-right font-mono tabular-nums text-muted-foreground">
+        {ms == null ? '—' : `${Math.round(ms)} ${t('management.dashboard.performance.unit')}`}
+      </span>
+    </div>
+  );
+}
+
+/** 性能指标单段卡片：段名 + P50/P95 两条横条 */
+function PerfSegment(props: { label: string; p50: number | null; p95: number | null }) {
+  const { t } = useTranslation();
+  return (
+    <div className="space-y-1.5 rounded-lg border border-[var(--glass-border)] bg-[rgba(255,255,255,0.04)] px-3 py-2.5">
+      <p className="text-xs font-medium">{props.label}</p>
+      <PerfBar
+        label={t('management.dashboard.performance.p50')}
+        value={props.p50}
+        tone="bg-primary/70"
+      />
+      <PerfBar
+        label={t('management.dashboard.performance.p95')}
+        value={props.p95}
+        tone="bg-amber-400/70"
+      />
+    </div>
+  );
+}
+
 export default function DashboardPage() {
   const { t } = useTranslation();
   const [data, setData] = useState<DashboardData | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [loadError, setLoadError] = useState(false);
+  const [voiceLatency, setVoiceLatency] = useState<VoiceLatencyStats | null>(null);
+  const [perfError, setPerfError] = useState(false);
+  // 在途互斥：15s 轮询周期内上一请求未返回时跳过本 tick，防止并发叠请求
+  // （照抄 useBackendFailover 的 in-flight 互斥范式）
+  const perfInFlightRef = useRef(false);
+
+  const loadPerf = useCallback(async () => {
+    if (perfInFlightRef.current) return;
+    perfInFlightRef.current = true;
+    try {
+      const stats = await metricsApi.getVoiceLatency();
+      // 陈旧响应（客户端 seq 判定）返回 null，丢弃不做状态更新
+      if (stats) {
+        setVoiceLatency(stats);
+        setPerfError(false);
+      }
+    } catch (error) {
+      // 静默降级：仅在性能区块内显示空态+提示，不影响页面其他区块
+      console.error('Voice latency load failed:', error);
+      setVoiceLatency(null);
+      setPerfError(true);
+    } finally {
+      perfInFlightRef.current = false;
+    }
+  }, []);
+
+  useEffect(() => {
+    void loadPerf();
+    const timer = setInterval(() => void loadPerf(), PERF_POLL_MS);
+    return () => clearInterval(timer);
+  }, [loadPerf]);
 
   const load = useCallback(async () => {
     setIsLoading(true);
@@ -167,6 +261,11 @@ export default function DashboardPage() {
     { to: '/archive', labelKey: 'management.dashboard.quick.archive', icon: Archive },
     { to: '/settings', labelKey: 'management.dashboard.quick.settings', icon: Settings },
   ];
+
+  // 空态判定：无数据或四段样本数全为 0（含请求失败的静默降级空态）
+  const perfSummary = voiceLatency?.summary;
+  const perfEmpty =
+    !perfSummary || PERF_SEGMENTS.every((seg) => (perfSummary[seg.key]?.count ?? 0) === 0);
 
   return (
     <div className="mx-auto max-w-5xl space-y-6">
@@ -287,6 +386,47 @@ export default function DashboardPage() {
             })}
           </div>
         </div>
+      </div>
+
+      {/* 性能指标：语音链路延迟（P50/P95 横条，15s 轮询） */}
+      <div className="glass-panel p-5">
+        <div className="mb-4 flex items-center justify-between">
+          <h2 className="flex items-center gap-2 text-base font-semibold">
+            <Gauge className="h-4 w-4 text-accent" />
+            {t('management.dashboard.performance.title')}
+          </h2>
+          {voiceLatency && (
+            <span className="text-xs text-muted-foreground">
+              {t('management.dashboard.performance.samples')}: {voiceLatency.buffer_size}
+            </span>
+          )}
+        </div>
+        {perfEmpty ? (
+          <div className="space-y-1">
+            <p className="text-sm text-muted-foreground">
+              {t('management.dashboard.performance.empty')}
+            </p>
+            {perfError && (
+              <p className="text-xs text-amber-400/80">
+                {t('management.dashboard.performance.errorHint')}
+              </p>
+            )}
+          </div>
+        ) : (
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+            {PERF_SEGMENTS.map((seg) => {
+              const s = perfSummary?.[seg.key];
+              return (
+                <PerfSegment
+                  key={seg.key}
+                  label={t(seg.labelKey)}
+                  p50={s?.p50 ?? null}
+                  p95={s?.p95 ?? null}
+                />
+              );
+            })}
+          </div>
+        )}
       </div>
 
       {/* 服务统计 */}

@@ -8,6 +8,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 import shutil
 import tempfile
 import threading
@@ -1050,6 +1051,220 @@ class MCPServerConfig(BaseModel):
     enabled: bool = True
 
 
+# ============================================================================
+# CX-O 自主系统 / 梦境配置节（Task 6.2 配置迁入 UnifiedConfig）
+# 字段逐一对照 server/autonomy/data/autonomy_config.json 与 dream_config.json
+# （含默认值），启动时经 migrate_legacy_autonomy_configs 一次性导入并留档。
+# 节模型与引擎侧 AutonomyConfig/DreamConfig 保持字段同构（契约镜像由
+# tests/test_autonomy_builtin_migration.py 断言），此处独立定义避免
+# config.py 在 import 期拉起 server.autonomy 包（其 __init__ 会导入 main.py）。
+# 校验器（HH:MM 时间格式 / 枚举 / 动作白名单）与引擎侧 server/autonomy/config.py
+# 语义一致，保证 PUT 校验口径与旧版完全相同。
+# ============================================================================
+# 时间字段格式（对齐 autonomy 契约 pattern ^([01]?[0-9]|2[0-3]):[0-5][0-9]$）
+_AUTONOMY_HHMM_RE = re.compile(r"^([01]?[0-9]|2[0-3]):[0-5][0-9]$")
+# 静默档窗口格式 HH:MM-HH:MM
+_AUTONOMY_QUIET_WINDOW_RE = re.compile(
+    r"^([01]?[0-9]|2[0-3]):[0-5][0-9]-([01]?[0-9]|2[0-3]):[0-5][0-9]$"
+)
+# 动作枚举（autonomy_action.schema.json，9 项）
+AUTONOMY_ACTION_ENUM = [
+    "sleep",
+    "wait",
+    "read_news",
+    "search",
+    "write_memory",
+    "write_post",
+    "start_live",
+    "stop_live",
+    "write_diary",
+]
+
+
+class AutonomySearchSection(BaseModel):
+    """自主系统搜索子节（对齐 autonomy_config.json search）。"""
+
+    model_config = ConfigDict(extra="forbid")
+    mcp_server_name: str = "free-search-mcp"
+    fallback_rss: bool = True
+
+
+class AutonomyScheduleSection(BaseModel):
+    """自主系统日程子节（对齐 autonomy_config.json schedule，HH:MM 校验）。"""
+
+    model_config = ConfigDict(extra="forbid")
+    wake_time: str = "08:00"
+    sleep_time: str = "02:00"
+    golden_start: str = "19:00"
+    golden_end: str = "23:00"
+    diary_time: str = "02:00"
+    quiet_windows: List[str] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def _check_times(self) -> "AutonomyScheduleSection":
+        """时间字段 HH:MM 与静默档 HH:MM-HH:MM 校验（对齐引擎侧 ScheduleConfig）。"""
+        for field_name in (
+            "wake_time",
+            "sleep_time",
+            "golden_start",
+            "golden_end",
+            "diary_time",
+        ):
+            value = getattr(self, field_name)
+            if not _AUTONOMY_HHMM_RE.match(value):
+                raise ValueError(f"时间字段必须为 HH:MM 格式，收到 {value!r}")
+        for window in self.quiet_windows:
+            if not _AUTONOMY_QUIET_WINDOW_RE.match(window):
+                raise ValueError(f"静默档必须为 HH:MM-HH:MM 格式，收到 {window!r}")
+        return self
+
+
+class AutonomyBudgetSection(BaseModel):
+    """自主系统预算子节（对齐 autonomy_config.json budget）。"""
+
+    model_config = ConfigDict(extra="forbid")
+    daily_token_limit: int = 2000000
+    daily_llm_calls_limit: int = 0
+    cost_alert_threshold: float = 0.8
+    overspend_mode: str = "sleep"
+
+    @model_validator(mode="after")
+    def _check_overspend_mode(self) -> "AutonomyBudgetSection":
+        """overspend_mode 枚举校验（对齐引擎侧 BudgetConfig）。"""
+        if self.overspend_mode not in ("sleep", "low_cost"):
+            raise ValueError(f"overspend_mode 非法值 {self.overspend_mode!r}，可选 sleep/low_cost")
+        return self
+
+
+class AutonomyPermissionsSection(BaseModel):
+    """自主系统权限子节（对齐 autonomy_config.json permissions）。"""
+
+    model_config = ConfigDict(extra="forbid")
+    allowed_actions: List[str] = Field(default_factory=list)
+    blocked_actions: List[str] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def _check_allowed_actions(self) -> "AutonomyPermissionsSection":
+        """allowed_actions 白名单校验（对齐引擎侧 PermissionsConfig）。"""
+        for action in self.allowed_actions:
+            if action not in AUTONOMY_ACTION_ENUM:
+                raise ValueError(f"allowed_actions 含非法 action {action!r}")
+        return self
+
+
+class AutonomySafetySection(BaseModel):
+    """自主系统安全子节（对齐 autonomy_config.json safety）。"""
+
+    model_config = ConfigDict(extra="forbid")
+    content_gate_enabled: bool = True
+    persona_check_enabled: bool = True
+    post_rate_per_hour: int = 5
+    user_online_sleep: bool = True
+    leave_mode_authorize: bool = True
+
+
+class AutonomySection(BaseModel):
+    """CX-O-Autonomy 自主系统配置节（autonomy，迁移自 autonomy_config.json）。
+
+    默认值与 server/autonomy/config.py AutonomyConfig 完全一致（enabled=False
+    零侵入）；迁移时旧档缺失字段由 Pydantic 默认补齐。
+    """
+
+    model_config = ConfigDict(extra="forbid", protected_namespaces=())
+    enabled: bool = False
+    auto_start: bool = False
+    agent_id: str = "default"
+    loop_interval_minutes: int = 15
+    rss_sources: List[str] = Field(default_factory=list)
+    search: AutonomySearchSection = Field(default_factory=AutonomySearchSection)
+    schedule: AutonomyScheduleSection = Field(default_factory=AutonomyScheduleSection)
+    budget: AutonomyBudgetSection = Field(default_factory=AutonomyBudgetSection)
+    platforms: List[str] = Field(default_factory=list)
+    permissions: AutonomyPermissionsSection = Field(
+        default_factory=lambda: AutonomyPermissionsSection(
+            allowed_actions=[
+                "sleep",
+                "wait",
+                "read_news",
+                "search",
+                "write_memory",
+                "write_post",
+                "start_live",
+                "stop_live",
+                "write_diary",
+            ]
+        )
+    )
+    safety: AutonomySafetySection = Field(default_factory=AutonomySafetySection)
+    store_path: str = ""
+
+
+class DreamSleepConfirmationSection(BaseModel):
+    """梦境休眠前 LLM 意图确认子节（对齐 dream_config.json sleep_confirmation）。"""
+
+    model_config = ConfigDict(extra="forbid")
+    enabled: bool = True
+    model: str = "summary"
+    timeout_sec: float = 10.0
+    prompt_template: str = ""
+    cooldown_seconds: int = 1800
+
+
+class DreamPhysioSection(BaseModel):
+    """梦境生理信号接入子节（对齐 dream_config.json physio）。
+
+    store_raw_hr 沿用隐私红线 R6：原始心率禁止落盘，写 True 抛 ValueError。
+    """
+
+    model_config = ConfigDict(extra="forbid")
+    enabled: bool = False
+    backend: str = "noble"  # 信息性登记键（前端 Electron noble 采集，后端无对应实现）
+    device_name_hint: str = ""
+    device_fingerprint: Optional[str] = None
+    scan_timeout_sec: int = 15
+    reconnect_interval_sec: int = 30
+    base_drop_ratio: float = 0.88
+    base_drop_confirm_min: int = 5
+    hr_stability_threshold: float = 6.0
+    base_hr_learning: bool = True
+    store_raw_hr: bool = False
+
+    @model_validator(mode="after")
+    def _check_store_raw_hr(self) -> "DreamPhysioSection":
+        """store_raw_hr 强制 False（隐私红线 R6：原始心率禁止落盘）。"""
+        if self.store_raw_hr:
+            raise ValueError("store_raw_hr 必须为 False：原始心率禁止落盘（隐私红线 R6）")
+        return self
+
+
+class DreamSection(BaseModel):
+    """CX-O-Dream 梦境引擎配置节（dream，迁移自 dream_config.json）。
+
+    默认值与 server/autonomy/dream/config.py DreamConfig 完全一致
+    （enabled=False 零侵入）；schedule 子节复用 AutonomyScheduleSection。
+    """
+
+    model_config = ConfigDict(extra="forbid", protected_namespaces=())
+    enabled: bool = False
+    model: str = "summary"
+    dream_temperature: float = 0.9
+    candidates_per_session: int = 3
+    material_window_days: int = 7
+    max_material_items: int = 20
+    min_lucidity: float = 0.3
+    dream_ttl_hours: int = 72
+    purge_threshold: float = 0.1
+    confirmed_importance: float = 0.4
+    surface_on_wake: bool = True
+    surface_probability: float = 0.5
+    max_surface_per_day: int = 1
+    schedule: AutonomyScheduleSection = Field(default_factory=AutonomyScheduleSection)
+    physio: DreamPhysioSection = Field(default_factory=DreamPhysioSection)
+    sleep_confirmation: DreamSleepConfirmationSection = Field(
+        default_factory=DreamSleepConfirmationSection
+    )
+
+
 class UnifiedConfig(BaseModel):
     model_config = ConfigDict(protected_namespaces=())
 
@@ -1086,6 +1301,9 @@ class UnifiedConfig(BaseModel):
     cluster: ClusterConfig = Field(default_factory=ClusterConfig)
     # 多 Agent 语音会议协调器（默认 enabled=false，零侵入）
     meeting: MeetingConfig = Field(default_factory=MeetingConfig)
+    # CX-O 自主系统 / 梦境引擎（Task 6.2 迁移自 server/autonomy/data/*.json，零侵入）
+    autonomy: AutonomySection = Field(default_factory=AutonomySection)
+    dream: DreamSection = Field(default_factory=DreamSection)
 
 
 def atomic_write_json(path: str, data: Dict[str, Any]) -> None:
@@ -1268,6 +1486,106 @@ def reload_config() -> UnifiedConfig:
     with _CONFIG_SAVE_LOCK:
         settings.reload_config()
     return settings.config
+
+
+# 旧配置文件所在目录：server/autonomy/data/（基于本文件绝对路径解析，禁止相对路径）。
+_LEGACY_AUTONOMY_DATA_DIR = Path(__file__).resolve().parent / "autonomy" / "data"
+
+# 迁移留档后缀：旧文件改名 <原名>.json.migrated 留档（不删除）。
+_MIGRATED_SUFFIX = ".migrated"
+
+
+def migrate_legacy_autonomy_configs(
+    legacy_dir: Optional[str] = None,
+) -> Dict[str, Any]:
+    """将旧 autonomy/dream 配置 JSON 一次性迁入 UnifiedConfig（Task 6.2，幂等）。
+
+    迁移规则（spec「梦境/自主彻底集成」配置迁移 Scenario）：
+    - 旧文件（autonomy_config.json / dream_config.json）存在且 UnifiedConfig
+      对应节仍为全默认值 → 导入值 → save_config() → 旧文件改名 ``<原名>.migrated``
+      留档（不删除）；
+    - 对应节已非默认值（用户已在新路径配置过）→ 旧文件仅改名留档，不导入
+      （UnifiedConfig 为唯一真相源，避免旧值反向覆盖）；
+    - 旧文件解析/校验失败（非法字段 / 隐私红线越界）→ 跳过导入且**不**改名
+      （保留现场供人工排查），告警留痕；
+    - 幂等：迁移完成后旧文件已改名，二次启动不再触发任何动作。
+
+    Args:
+        legacy_dir: 旧配置目录（默认 server/autonomy/data/，测试可注入 tmp 目录）。
+
+    Returns:
+        {"autonomy": bool, "dream": bool}——各节是否发生了「导入」动作
+        （仅改名留档返回 False，供调用方日志区分）。
+    """
+
+    def _is_default(section: BaseModel) -> bool:
+        """判断配置节是否仍为全默认值（与空构造实例逐字段对比）。"""
+        return section.model_dump() == type(section)().model_dump()
+
+    results = {"autonomy": False, "dream": False}
+    settings = get_settings()
+    with _CONFIG_SAVE_LOCK:
+        targets = (
+            (
+                "autonomy",
+                AutonomySection,
+                "autonomy_config.json",
+            ),
+            (
+                "dream",
+                DreamSection,
+                "dream_config.json",
+            ),
+        )
+        dir_path = Path(legacy_dir) if legacy_dir else _LEGACY_AUTONOMY_DATA_DIR
+        imported_any = False
+        for name, section_model, filename in targets:
+            legacy_path = dir_path / filename
+            if not legacy_path.exists():
+                continue
+            section = getattr(settings.config, name)
+            try:
+                raw = json.loads(legacy_path.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError) as e:
+                logger.warning(
+                    "AUTONOMY_CONFIG_MIGRATION: 旧配置 %s 读取失败，跳过迁移（保留现场）: %s",
+                    legacy_path,
+                    e,
+                )
+                continue
+            try:
+                imported = section_model.model_validate(raw)
+            except Exception as e:  # noqa: BLE001 —— 非法旧档跳过迁移，保留现场
+                logger.warning(
+                    "AUTONOMY_CONFIG_MIGRATION: 旧配置 %s 字段非法，跳过迁移（保留现场）: %s",
+                    legacy_path,
+                    e,
+                )
+                continue
+            if _is_default(section):
+                # 节仍为全默认值 → 导入旧值
+                setattr(settings.config, name, imported)
+                results[name] = True
+                imported_any = True
+                logger.info(
+                    "AUTONOMY_CONFIG_MIGRATION: %s 节已从 %s 导入 UnifiedConfig", name, legacy_path
+                )
+            else:
+                logger.info(
+                    "AUTONOMY_CONFIG_MIGRATION: %s 节已存在非默认配置，跳过导入（旧档仅留档）",
+                    name,
+                )
+            # 留档：旧文件改名 <原名>.json.migrated（不删除；失败仅告警，不阻断）
+            migrated_path = Path(str(legacy_path) + _MIGRATED_SUFFIX)
+            try:
+                os.replace(str(legacy_path), str(migrated_path))
+            except OSError as e:
+                logger.warning(
+                    "AUTONOMY_CONFIG_MIGRATION: 旧配置 %s 改名留档失败: %s", legacy_path, e
+                )
+        if imported_any:
+            save_config(settings.config)
+    return results
 
 
 def get_service_url(service_name: str) -> str:

@@ -11,8 +11,9 @@
 
 依赖注入对齐 autonomy.py / cxfc.py 模式：模块级 `_engine` 全局 + `set_dream_engine`
 注入函数，由 server/main.py 装配成功后注入。engine 为 None（未装配/未启用）时所有
-引擎端点以 disabled 口径响应（不抛 500）。配置读写走独立 config 模块
-（load_config/save_config），不依赖引擎实例，始终可用。
+引擎端点以 disabled 口径响应（不抛 500）。配置读写走 UnifiedConfig settings 单例
+（Task 6.2 迁移：GET/PUT /dream/config 直读直写 settings.config.dream 并落盘
+config.json），不依赖引擎实例，始终可用。
 """
 import asyncio
 import logging
@@ -183,11 +184,14 @@ async def purge(agent_id: str = "default", _: bool = Depends(verify_admin_api_ke
 
 @router.get("/dream/config")
 def get_config():
-    """返回当前梦境配置（DreamConfig.model_dump）。
+    """返回当前梦境配置（UnifiedConfig.dream 节 dump，Task 6.2 配置迁入 settings）。
 
-    独立配置模块（load_config），不依赖引擎实例，未启用也可读。
+    配置唯一真相源为 UnifiedConfig（settings 单例），不依赖引擎实例，未启用也可读。
+    响应 JSON 形状与旧版（dream_config.json 直读）字段完全一致，前端 dreamApi 无感。
     """
-    return load_config().model_dump()
+    from server.config import get_settings
+
+    return get_settings().config.dream.model_dump()
 
 
 def _deep_merge(base: Dict[str, Any], patch: Dict[str, Any]) -> Dict[str, Any]:
@@ -226,20 +230,25 @@ def _sync_engine_runtime(engine, updated: DreamConfig) -> None:
 
 @router.put("/dream/config")
 async def update_config(partial: Dict[str, Any], _: bool = Depends(verify_admin_api_key)):
-    """局部更新梦境配置并保存（自动补齐缺失字段；写路径，补挂管理员鉴权）。
+    """局部更新梦境配置并持久化到 UnifiedConfig（Task 6.2；自动补齐缺失字段）。
 
-    以当前配置为基础做深度合并后经 DreamConfig.model_validate 校验；非法字段
-    （extra="forbid"）、非法枚举/非法时间格式返回 422。运行期 enabled 变更尽力
-    应用到已装配引擎（start/stop）。读改写全程持 CONFIG_WRITE_LOCK 并经
-    to_thread 执行（R3 补漏：事件循环内不做阻塞文件 IO，多入口写串行化）。
+    以 settings.config.dream 为基础做深度合并后经 DreamSection 校验；非法字段
+    （extra="forbid"）、非法枚举/非法时间格式返回 422。持久化走 settings.save_config()
+    （config.json 原子落盘）。运行期 enabled 变更尽力应用到已装配引擎（start/stop，
+    引擎侧 config 映射回 DreamConfig 保持类型一致）。读改写全程持 CONFIG_WRITE_LOCK
+    并经 to_thread 执行（R3 补漏：事件循环内不做阻塞文件 IO，多入口写串行化）。
     """
 
-    def _rmw() -> DreamConfig:
+    def _rmw() -> "DreamSection":
+        from server.config import DreamSection, get_settings
+
         with CONFIG_WRITE_LOCK:
-            current = load_config().model_dump()
+            settings = get_settings()
+            current = settings.config.dream.model_dump()
             merged = _deep_merge(current, partial)
-            updated = DreamConfig.model_validate(merged)
-            save_config(updated)
+            updated = DreamSection.model_validate(merged)
+            settings.config.dream = updated
+            settings.save_config()
         return updated
 
     try:
@@ -247,5 +256,6 @@ async def update_config(partial: Dict[str, Any], _: bool = Depends(verify_admin_
     except (ValidationError, ValueError) as e:
         raise HTTPException(status_code=422, detail=f"配置字段非法: {e}") from e
 
-    _sync_engine_runtime(_engine, updated)
+    # 引擎侧 config 映射回 DreamConfig（引擎内部类型契约），再应用 start/stop
+    _sync_engine_runtime(_engine, DreamConfig.model_validate(updated.model_dump()))
     return updated.model_dump()

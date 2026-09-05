@@ -2,19 +2,19 @@
   "$schema": "http://json-schema.org/draft-07/schema#",
   "$id": "https://cx-o/public/schema/admin_control.schema.json",
   "title": "AdminControl",
-  "description": "管理面统一控制动作请求契约（POST /api/admin/control）。request_id 用于幂等/防重放。未知 action 或 target 返回 400+错误码。",
+  "description": "管理面统一控制动作请求契约（POST /api/admin/control）。request_id 用于幂等/防重放。未知 action 或 target 返回 400+错误码。@version 1.1.0（MINOR：target 枚举追加 prompt、action 枚举追加 preview，ADDITIVE 值扩展，见 enhance-cxfc-admin-and-integrate-dream spec）",
   "type": "object",
   "required": ["action", "target", "request_id"],
   "properties": {
     "action": {
       "type": "string",
-      "enum": ["enable", "disable", "pause", "resume", "emergency_stop", "restart", "reload_config", "reload", "reset", "start", "stop", "shutdown", "create", "update", "delete", "topology", "state", "trigger_failover", "set_role", "add_peer", "remove_peer", "sync_status"],
-      "description": "控制动作。合法动作集合随 target 校验。"
+      "enum": ["enable", "disable", "pause", "resume", "emergency_stop", "restart", "reload_config", "reload", "reset", "start", "stop", "shutdown", "create", "update", "delete", "preview", "topology", "state", "trigger_failover", "set_role", "add_peer", "remove_peer", "sync_status"],
+      "description": "控制动作。合法动作集合随 target 校验。preview 为 readonly 级只读动作（如 prompt 装配预览）。"
     },
     "target": {
       "type": "string",
-      "enum": ["autonomy", "voice", "live", "config", "agent", "tuner", "instance", "cluster"],
-      "description": "控制目标域。cluster 转发 ClusterAdminBridge。"
+      "enum": ["autonomy", "voice", "live", "config", "agent", "tuner", "instance", "cluster", "prompt"],
+      "description": "控制目标域。cluster 转发 ClusterAdminBridge；prompt 为提示词装配只读域。"
     },
     "agent_id": { "type": "string", "default": "default", "description": "目标 Agent ID。" },
     "request_id": { "type": "string", "minLength": 1, "description": "幂等/防重放标识（服务端 TTL 去重）。" },
