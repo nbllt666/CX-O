@@ -153,6 +153,8 @@ config.json
 # ----------------------------------------
 tmp/
 temp/
+# 临时 git worktree（agent 工具核对 HEAD 用，勿入库）
+.tmp_head_check/
 *.tmp
 *.temp
 *.bak
