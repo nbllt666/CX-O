@@ -404,18 +404,18 @@ class DreamEngine:
         """情绪触发闸门：每轮循环评估一次并缓存（Task 4）。
 
         - trigger.emotion_enabled=False → 直接通过，不发起任何 collector 查询
-          （零回归：默认配置下决策路径与旧版一致）
+          （零回归：默认配置下决策路径与旧版一致）；缓存由调用点
+          （_run_loop 每轮回写）负责，本分支不写 cache/detail
         - 启用时调 collect_recent_emotion_peak(_DEFAULT_AGENT_ID, window_hours)，
           判据 peak >= emotion_threshold 且 count >= emotion_min_events
         - collector 未注入 / 缺少情绪峰值接口 / 查询异常 → 降级为不通过
           （False + WARNING 日志），绝不阻断主循环
-        - 结果写入 self._emotion_gate_cache / self._emotion_gate_detail
-          （detail 记录 peak/threshold/count，供跳过日志定位原因）
+        - 启用态各分支写入 self._emotion_gate_cache / self._emotion_gate_detail
+          （detail 记录 peak/threshold/count，供跳过日志定位原因；
+          detail 仅在 cache is False 的未通过日志中消费，禁用态不可达）
         """
         trigger = self.config.trigger
         if not trigger.emotion_enabled:
-            self._emotion_gate_cache = True
-            self._emotion_gate_detail = "emotion_enabled=False（闸门关闭）"
             return True
         collector = self._collector
         if collector is None or not callable(
