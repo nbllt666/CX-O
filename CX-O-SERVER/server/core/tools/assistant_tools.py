@@ -5,6 +5,7 @@
 from typing import Any, Dict, List
 
 from server.config import Settings
+from server.core.memory.persona_guard import evaluate_persona_guard
 from .registry import tool_registry
 from .graph_tools import (
     user_graph_update_entity, user_graph_delete_entity, user_graph_update_relation, user_graph_delete_relation, user_graph_get_stats, user_graph_export,
@@ -89,22 +90,22 @@ def register_assistant_tools():
         examples=["搜索关于工作的记忆", "查找用户提到喜欢的颜色"],
     )
 
-    # 3. delete_memory - 删除记忆（软删除）
+    # 3. delete_memory - 遗忘记忆（软删除）
     tool_registry.register(
         name="delete_memory",
-        description="删除指定记忆。执行软删除，记忆会在7天后自动清理，也可通过restore_memory恢复。",
+        description="遗忘指定记忆（软删除）。被遗忘的记忆无限期保留、可随时通过restore_memory恢复，永不物理清除。",
         parameters={
             "type": "object",
             "properties": {
-                "memory_id": {"type": "string", "description": "要删除的记忆ID"},
-                "reason": {"type": "string", "description": "删除原因"},
+                "memory_id": {"type": "string", "description": "要遗忘的记忆ID"},
+                "reason": {"type": "string", "description": "遗忘原因"},
             },
             "required": ["memory_id", "reason"],
         },
         function=delete_memory,
         category="assistant",
-        tags=["memory", "delete", "soft_delete"],
-        examples=["删除过时或错误的信息"],
+        tags=["memory", "forget", "soft_delete"],
+        examples=["遗忘这条过时的记忆"],
     )
 
     # 4. get_memory_stats - 获取记忆统计
@@ -140,27 +141,27 @@ def register_assistant_tools():
         examples=["查找带有'重要'标签的记忆"],
     )
 
-    # 6. bulk_delete - 批量删除（软删除）
+    # 6. bulk_delete - 批量遗忘（软删除）
     tool_registry.register(
         name="bulk_delete",
-        description="批量删除记忆（软删除）。",
+        description="批量遗忘记忆（软删除）。被遗忘的记忆无限期保留、可随时恢复，永不物理清除。受人格保护的记忆将被跳过并列入protected。",
         parameters={
             "type": "object",
             "properties": {
                 "memory_ids": {
                     "type": "array",
                     "items": {"type": "string"},
-                    "description": "要删除的记忆ID列表",
+                    "description": "要遗忘的记忆ID列表",
                     "minItems": 2,
                 },
-                "reason": {"type": "string", "description": "删除原因"},
+                "reason": {"type": "string", "description": "遗忘原因"},
             },
             "required": ["memory_ids", "reason"],
         },
         function=bulk_delete,
         category="assistant",
-        tags=["memory", "delete", "bulk", "batch"],
-        examples=["批量删除多条过时记忆"],
+        tags=["memory", "forget", "bulk", "batch"],
+        examples=["批量遗忘多条过时记忆"],
     )
 
     # 7. restore_memory - 恢复记忆
@@ -670,21 +671,32 @@ def search_memories(query: str, time_range: str = None, limit: int = None) -> Di
 
 
 def delete_memory(memory_id: str, reason: str) -> Dict[str, Any]:
-    """删除记忆（软删除）"""
+    """遗忘记忆（软删除）。受人格保护的记忆会被闸门拒绝。"""
     mm = get_memory_manager()
     if not mm:
         return {"error": "记忆管理器不可用"}
 
     try:
-        success = mm.delete_memory(memory_id=memory_id, soft_delete=True)
-        return {
+        # 人格保护闸门：永久记忆/高情感印记/高频再激活记忆不可被遗忘。
+        # 记忆不存在时跳过闸门，交由原删除逻辑统一按 failed 处理。
+        memory = mm.get_memory(int(memory_id))
+        if memory is not None:
+            guard = evaluate_persona_guard(memory)
+            if not guard.get("allowed"):
+                return {"error": guard.get("reason", "该记忆受人格保护，不可遗忘")}
+
+        success = mm.delete_memory(memory_id=int(memory_id), soft_delete=True)
+        result = {
             "status": "deleted" if success else "failed",
             "memory_id": memory_id,
             "reason": reason,
             "soft_delete": True,
         }
+        if success:
+            result["message"] = "已遗忘，可随时恢复；如需彻底清除请通过 REST API 显式硬删操作"
+        return result
     except Exception as e:
-        return {"error": f"删除记忆失败: {str(e)}"}
+        return {"error": f"遗忘记忆失败: {str(e)}"}
 
 
 def get_memory_stats() -> Dict[str, Any]:
@@ -725,22 +737,37 @@ def search_by_tag(tags: List[str]) -> Dict[str, Any]:
 
 
 def bulk_delete(memory_ids: List[str], reason: str) -> Dict[str, Any]:
-    """批量删除（软删除）"""
+    """批量遗忘（软删除）。受人格保护的记忆被跳过并列入 protected。"""
     mm = get_memory_manager()
     if not mm:
         return {"error": "记忆管理器不可用"}
 
     try:
-        result = mm.batch_delete_memories(memory_ids=[int(mid) for mid in memory_ids], soft_delete=True)
+        # 人格保护闸门分桶：受保护 → protected（含原因）；放行 → 走原批量软删逻辑。
+        # 记忆不存在时跳过闸门，交由原批量逻辑统一计为 failed。
+        allowed_ids = []
+        protected = []
+        for mid in memory_ids:
+            memory = mm.get_memory(int(mid))
+            if memory is not None:
+                guard = evaluate_persona_guard(memory)
+                if not guard.get("allowed"):
+                    protected.append({"memory_id": mid, "reason": guard.get("reason", "")})
+                    continue
+            allowed_ids.append(int(mid))
+
+        result = mm.batch_delete_memories(memory_ids=allowed_ids, soft_delete=True)
         return {
             "status": "completed",
             "deleted_count": result.get("success", 0),
             "failed_count": result.get("failed", 0),
+            "forgotten": result.get("deleted_ids", []),
+            "protected": protected,
             "reason": reason,
             "soft_delete": True,
         }
     except Exception as e:
-        return {"error": f"批量删除失败: {str(e)}"}
+        return {"error": f"批量遗忘失败: {str(e)}"}
 
 
 def restore_memory(memory_id: str) -> Dict[str, Any]:

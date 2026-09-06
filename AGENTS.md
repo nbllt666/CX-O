@@ -66,13 +66,14 @@ CX-O 是**多服务架构**，以下服务目录是独立服务，**非 AC 模�
 |------|---------|--------|------|
 | CX-O Frontend | `APP-Frontend/` | React 18 + TypeScript + Vite + Electron | 3100（浏览器模式）/ Electron 桌面模式 |
 | CX-O Server | `CX-O-SERVER/` | Python 3.10+ + FastAPI + WebSocket | 8000 |
-| CX-O VoiceWorkStation | `CX-O-VoiceWorkStation/` | Python + FastAPI — 作曲/翻唱CXFC（作曲/歌曲合成/SVC 翻唱推理/CXFC 插件；训练域已迁至 CXO-ModelStation） | 8200 |
+| CX-O VoiceWorkStation | `CX-O-VoiceWorkStation/` | Python + FastAPI — 作曲/翻唱CXFC（作曲/歌曲合成/SVC 翻唱推理/音域分析自动升降 key/双人合唱分离流水线/CXFC 插件；训练域已迁至 CXO-ModelStation；分离引擎见 engines/） | 8200 |
 | CX-O ModelStation | `CXO-ModelStation/` | Python + FastAPI（单 worker）+ Vite/React 独立前端 | 8300（后端）/ 3300（前端 dev） |
 
 **第三方独立仓库**（原位不动，不纳入 AC 模块管理）：
 - `LLM_Live2D-master/`
 - `so-vits-svc-4.1-Stable/`、`VoxCPM-main/`——2026-09-05 迁移至 `CXO-ModelStation/engines/`（自包含化，change-id: extend-modelstation-standalone-melotts-datasets；so-vits 为 ModelStation 训练与 VWS 翻唱推理共用单一真源，VoxCPM-main 仅 ModelStation 使用）
 - `CXO-ModelStation/engines/MeloTTS/`——第三方独立仓库（myshell-ai/MeloTTS，2026-09-05 经 `tools/setup_engines.py --clone-melotts` 克隆就位，不纳入 AC 模块管理）
+- `CX-O-VoiceWorkStation/engines/{demucs,AudioSep}/`——第三方独立仓库（facebookresearch/demucs + Audio-AGI/AudioSep，2026-09-06 经 `tools/setup_separation.py --clone` 克隆就位，翻唱分离引擎：人声/伴奏 + 文本查询拆分双人声部；权重下载见 DEPLOY-SEPARATION.md，不纳入 AC 模块管理）
 - 已移除（Qwen3 TTS 迁移 Task 7，2026-08-14）：`orpheus-tts/`、`cosyvoice/`、`CosyVoice-main/`（F5-TTS/Orpheus 旧引擎第三方目录，用户批准全删；TTS 已全面改用 Qwen3）
 
 ### 4.2 目录策略

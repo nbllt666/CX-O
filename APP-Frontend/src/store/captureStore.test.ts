@@ -2,6 +2,7 @@
  * captureStore 单测（Task 4 / Task 6 共享契约）。
  * 覆盖：默认态、视频叙事开关 videoModeEnabled 的 setter 与持久化、
  * 帧筛选开关 frameFilterEnabled 的 setter 与持久化（spec add-vlm-frame-filter-face-match Task 5）、
+ * 自适应占空比 frameDutyCycle 的默认值 / setter 钳制 / 持久化 / merge 回填（spec enhance-frame-adaptive-duty-cycle Task 1）、
  * 旧持久化未知 frameMode 的安全回退，以及既有字段默认值回归。
  */
 import { beforeEach, describe, expect, it } from 'vitest';
@@ -17,6 +18,7 @@ function resetStore() {
     frameFilterEnabled: false,
     frameMode: 'interval',
     frameIntervalSec: 5,
+    frameDutyCycle: 50,
   });
 }
 
@@ -127,5 +129,45 @@ describe('persist merge（旧持久化兼容）', () => {
     );
     await useCaptureStore.persist.rehydrate();
     expect(useCaptureStore.getState().frameMode).toBe('adaptive');
+  });
+});
+
+describe('frameDutyCycle（自适应占空比，spec enhance-frame-adaptive-duty-cycle Task 1）', () => {
+  it('默认 frameDutyCycle === 50（与历史行为一致）', () => {
+    expect(useCaptureStore.getState().frameDutyCycle).toBe(50);
+  });
+
+  it('setFrameDutyCycle 钳制取整：5→10、95→90、50.7→51', () => {
+    useCaptureStore.getState().setFrameDutyCycle(5);
+    expect(useCaptureStore.getState().frameDutyCycle).toBe(10);
+    useCaptureStore.getState().setFrameDutyCycle(95);
+    expect(useCaptureStore.getState().frameDutyCycle).toBe(90);
+    useCaptureStore.getState().setFrameDutyCycle(50.7);
+    expect(useCaptureStore.getState().frameDutyCycle).toBe(51);
+  });
+
+  it('持久化 partialize 纳入 frameDutyCycle', () => {
+    useCaptureStore.getState().setFrameDutyCycle(80);
+    expect(readPersistedState().frameDutyCycle).toBe(80);
+  });
+});
+
+describe('persist merge（frameDutyCycle 旧档兼容）', () => {
+  it('merge 纳入 frameDutyCycle（持久化 80 覆盖默认 50）', async () => {
+    localStorage.setItem(
+      CAPTURE_STORE_NAME,
+      JSON.stringify({ state: { frameDutyCycle: 80 }, version: 0 }),
+    );
+    await useCaptureStore.persist.rehydrate();
+    expect(useCaptureStore.getState().frameDutyCycle).toBe(80);
+  });
+
+  it('merge 对缺失 frameDutyCycle 的旧持久化回填默认 50', async () => {
+    localStorage.setItem(
+      CAPTURE_STORE_NAME,
+      JSON.stringify({ state: { visionEnabled: true }, version: 0 }),
+    );
+    await useCaptureStore.persist.rehydrate();
+    expect(useCaptureStore.getState().frameDutyCycle).toBe(50);
   });
 });

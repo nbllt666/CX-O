@@ -17,6 +17,7 @@
  * - adaptive 静止 → 拉长（provider 返回 10，6s 内仅首帧发出）；
  * - adaptive 不支持 → 退化为 interval（provider 抛错，按 intervalSec=5 定时）；
  * - defaultAdaptiveIntervalProvider：变化度不可算（=0/相同帧）→ 退化 baseIntervalSec。
+ * - dutyCycle 透传：注入 provider 第 4 参收到注入值/缺省 undefined（缺省路径与现状一致）。
  */
 import { act, cleanup, renderHook } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -160,5 +161,46 @@ describe('defaultAdaptiveIntervalProvider（退化路径纯函数）', () => {
     await expect(defaultAdaptiveIntervalProvider('data:image/img,a', null, 5)).resolves.toBe(5);
     // 两帧完全一致（computeChangeMagnitude 快速路径返回 0）同样退化到基准间隔
     await expect(defaultAdaptiveIntervalProvider('data:image/img,a', 'data:image/img,a', 5)).resolves.toBe(5);
+  });
+});
+
+describe('useFrameSender dutyCycle 透传', () => {
+  it('传 dutyCycle 时 provider 第 4 参收到该值', async () => {
+    vi.useFakeTimers();
+    const sendFrame = vi.fn();
+    const provider = vi.fn(async () => 1);
+    renderHook(() =>
+      useFrameSender({
+        sources: [makeChangingSource('screen')],
+        mode: 'adaptive',
+        intervalSec: 5,
+        sendFrame,
+        dutyCycle: 80,
+        adaptiveIntervalProvider: provider,
+      }),
+    );
+
+    await advance(1500); // 首拍（1s）即向 provider 询问动态间隔
+    expect(provider).toHaveBeenCalledTimes(1);
+    expect(provider).toHaveBeenCalledWith('data:image/jpeg;base64,frame0', null, 5, 80);
+  });
+
+  it('不传 dutyCycle 时 provider 第 4 参收到 undefined（缺省路径与现状一致）', async () => {
+    vi.useFakeTimers();
+    const sendFrame = vi.fn();
+    const provider = vi.fn(async () => 1);
+    renderHook(() =>
+      useFrameSender({
+        sources: [makeChangingSource('screen')],
+        mode: 'adaptive',
+        intervalSec: 5,
+        sendFrame,
+        adaptiveIntervalProvider: provider,
+      }),
+    );
+
+    await advance(1500);
+    expect(provider).toHaveBeenCalledTimes(1);
+    expect(provider).toHaveBeenCalledWith('data:image/jpeg;base64,frame0', null, 5, undefined);
   });
 });

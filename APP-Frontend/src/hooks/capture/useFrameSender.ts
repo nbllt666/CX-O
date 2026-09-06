@@ -30,7 +30,8 @@ import type { CaptureSourceKind } from './useVideoCapture';
 /**
  * adaptive 模式动态间隔的生产者。
  *
- * - 入参：当前帧 dataURL、上次成功发送帧 dataURL（可为 null）、基准间隔秒；
+ * - 入参：当前帧 dataURL、上次成功发送帧 dataURL（可为 null）、基准间隔秒、
+ *   自适应占空比 dutyCycle（百分比 10-90，可选——纯函数按百分比口径消费，缺省由其兜底 50）；
  * - 返回：本拍应采用的最小发送间隔（秒），非正数表示每次放行；
  * - 承诺：不抛错。任何异常/无法比对的降级都收敛为「返回 baseIntervalSec」，
  *   即退化为 interval 行为；
@@ -41,6 +42,7 @@ export type AdaptiveIntervalProvider = (
   dataUrl: string,
   prevDataUrl: string | null,
   baseIntervalSec: number,
+  dutyCycle?: number,
 ) => Promise<number>;
 
 /** 默认生产者：随画面变化度动态调整间隔；变化度不可算（=0 或抛错）→ 退化固定间隔 */
@@ -48,6 +50,7 @@ export async function defaultAdaptiveIntervalProvider(
   dataUrl: string,
   prevDataUrl: string | null,
   baseIntervalSec: number,
+  dutyCycle?: number,
 ): Promise<number> {
   let magnitude: number;
   try {
@@ -56,7 +59,7 @@ export async function defaultAdaptiveIntervalProvider(
     return baseIntervalSec; // 环境不支持像素差异计算 → 退化 interval
   }
   if (magnitude === 0) return baseIntervalSec; // 无从比较/降级 0 → 退化 interval
-  return computeAdaptiveIntervalSec({ baseIntervalSec, magnitude });
+  return computeAdaptiveIntervalSec({ baseIntervalSec, magnitude, dutyCycle });
 }
 
 export interface UseFrameSenderOptions {
@@ -66,6 +69,8 @@ export interface UseFrameSenderOptions {
   mode: 'manual' | 'interval' | 'adaptive';
   /** 定时抽帧间隔秒（captureStore.frameIntervalSec，已被 store 钳制 1~60） */
   intervalSec: number;
+  /** 自适应占空比百分比 10-90（captureStore.frameDutyCycle，可选）：透传给 adaptive 间隔生产者；缺省由纯函数兜底 50（与现状一致） */
+  dutyCycle?: number;
   /** 实际上行出口：帧 dataURL + 来源（PetPage 注入对话图像链路） */
   sendFrame: (dataUrl: string, kind: CaptureSourceKind) => void;
   /** 上行互斥闸：返回 false 时本拍跳过（如对话流式进行中）；缺省恒可发 */
@@ -92,6 +97,7 @@ export function useFrameSender({
   sources,
   mode,
   intervalSec,
+  dutyCycle,
   sendFrame,
   canSend,
   adaptiveIntervalProvider,
@@ -106,6 +112,8 @@ export function useFrameSender({
   canSendRef.current = canSend;
   const intervalSecRef = useRef(intervalSec);
   intervalSecRef.current = intervalSec;
+  const dutyCycleRef = useRef<number | undefined>(dutyCycle);
+  dutyCycleRef.current = dutyCycle; // 自适应占空比（可选）：adaptive 节拍向 provider 透传，缺省 undefined 由纯函数兜底 50
   const adaptiveIntervalProviderRef = useRef<AdaptiveIntervalProvider | undefined>(adaptiveIntervalProvider);
   adaptiveIntervalProviderRef.current = adaptiveIntervalProvider;
   const lastSentAtRef = useRef<number | null>(null);
@@ -166,7 +174,12 @@ export function useFrameSender({
           const provider = adaptiveIntervalProviderRef.current ?? defaultAdaptiveIntervalProvider;
           let adaptiveIntervalSec: number;
           try {
-            adaptiveIntervalSec = await provider(dataUrl, lastSentDataUrlRef.current, intervalSecRef.current);
+            adaptiveIntervalSec = await provider(
+              dataUrl,
+              lastSentDataUrlRef.current,
+              intervalSecRef.current,
+              dutyCycleRef.current,
+            );
           } catch {
             adaptiveIntervalSec = intervalSecRef.current; // 生产者抛错/环境不支持 → 退化 interval
           }

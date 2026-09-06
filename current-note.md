@@ -4,6 +4,14 @@
 
 ## 做到哪了
 
+- **enhance-frame-adaptive-duty-cycle（整体）**（**已闭合**——GN-004 spec 闸门警示放行（3cf3cf31，O-1/O-2/O-3 落盘处置）+ 人类批准 spec + T1/T2/T3 串行实现 + GN-004 交付审查警示放行（ef337fab，无 SOFT_BLOCK）全部通过，2026-09-06；spec 目录 `.trae/specs/enhance-frame-adaptive-duty-cycle/`，变更文档 `.trae/documents/20260906_模块0_自适应占空比调节.md`）
+  - 工程过程：用户需求"改进轮询自适应，添加占空比调节" → frameThrottle/useFrameSender/captureStore/PetPage/SettingsPage 实码核验 → 三件套（纯前端、无后端/契约触碰）→ GN-004 spec 闸门（警示放行：O-1 i18n 文案方向勘误、O-2 NaN duty 兜底、O-3 头注措辞，全处置）→ 人类批准 → T1（66686b9e：纯函数锚点参数化+链路透传+13 用例）→ T2（8da1f323：SettingsPage 滑条+i18n+全量回归）→ T3 收口（主线程：合流核验+变更文档+GN-004 交付审查）。
+  - 交接状态：**T1-T3 全部已闭合**；checklist 17 项三值回填全部已闭合。
+  - 最终结果：`computeAdaptiveIntervalSec` 占空比参数化（`t=clamp(1-duty/100,0.1,0.9)`，duty=50 与旧实现代数恒等逐点回归，NaN/Infinity 兜底 50）+ captureStore.frameDutyCycle 持久化（10-90 默认 50）+ useFrameSender provider 第 4 可选参透传 + PetPage 接线 + SettingsPage adaptive 条件滑条 + i18n zh/en 四键；测试：定向 87 例（GN-004 独立重跑复现）/全量 **718 例**（基线 704 净增 14 零回归）/tsc 0 错；后端/public/ 零触碰（11 前端文件）。
+  - 为什么：固定曲线无法表达个体"积极程度"偏好——锚点参数化一条曲线一个旋钮，PWM 占空比语义（越大越活跃）；否决周期性 ON-OFF 窗口（状态机复杂度不成比例，决策点 #7）。
+  - 未闭合项（显式登记）：①前端需重新构建安装包（纯前端改动，无后端重启需求）；②dutyCycleDesc 落键但 UI 未渲染（SliderField 无 desc 参数，对齐 intervalSec 现状，键由 i18n 断言看守——有意取舍非遗漏）；③历轮改动叠加未 commit（提交策略由人类定）。
+  - 接续入口：本轮已闭合。前端重打包后用户即可在设置页视觉采集区（自适应模式）使用占空比滑条。
+  - 审查记录：GN-004 spec 闸门**警示放行**（3 观察项全处置）+ 交付前 GN-004 **警示放行（无 SOFT_BLOCK）**——数学同构性独立核验（duty=50 与旧公式代数恒等）、定向 87 独立重跑复现、数字自洽核算（74+13=87、704+14=718）、边界纪律属实。本轮全程"单文件单批单 Edit+回读"零竞态（对比上一 spec 三次勾选丢失，纪律有效）。
 - **enhance-admin-telemetry（整体）**（**已闭合**——spec 闸门 GN-004 计划审查 + 实现任务 0-3 + T3 全量回归 + GN-004 交付前审查警示放行 + 人类 [V] 终审批准全部通过，2026-09-05；spec 目录 `.trae/specs/enhance-admin-telemetry/`，变更文档 `.trae/documents/20260905_模块0_管理面遥测增强.md`）
   - 工程过程：现状调查（admin 端点面/UnifiedConfig 30 节/白名单现状）→ EC-7 裁决（REQ-01：查看四组全选 + 修改三组全选含"放开所有"→ 安全白名单+边界透明落地）→ 三件套+GN-004 计划审查（警示放行，OBS-1~8 落盘修正）→ 人类批准 → T1∥T2 并行（e1a414c2/359391b8）→ T3 合流：首轮全量 4881P/**7F**（全归因工作区外部改动交叠）→ 主线程修复 4 处 → **最终全量 4914P/0F**（188.54s，`C:\CX-O\logs\telemetry_backend_pytest_final.log`，基线 4750 净增 164）→ GN-004 交付前审查**警示放行（无 SOFT_BLOCK，9a47b623）** → 人类终审**批准收尾 ✅（2026-09-05）**。
   - 交接状态：**Task 0-3 全部已闭合**（T0 主线程 s0401 ALLOWED：pyi @1.1.0 + CHANGELOG 1.13.0；T1/T2 subagent 交付；台账 4 行全回填真实 ID）。
@@ -5357,3 +5365,143 @@ spec T2 / tasks T2 / checklist C2.2-C2.3 原写"挂载 GlassCanvas/AnimeDecorati
 - **未闭合项**：无阻塞项。运行期部署提醒：后端重启后新配置节生效；真机验证情绪触发需 config 开启 emotion_enabled 并积累带 emotion_score 的记忆事件。subagent 报告的观察项：collect_recent_emotion_peak 的 agent_id 参数当前未参与查询（workspace_id 硬编码 default，对齐既有行为，接口预留）。
 - **接续入口**：spec 任务全部完成；后续若需扩展（如情绪类型维度、按 agent 独立窗口）可基于 trigger 子节增量演进。
 - **经验沉淀**：同文件多 Edit 并行 = 丢编辑（本轮 3 次实际事故：spec 修订批次/DreamPage.tsx/test_dream_collector.py，均靠实时重读暴露）；模型槽位多点硬编码新增成本高；GN-004 审查必须以文件实时内容为唯一证据源。
+
+---
+
+## enhance-cover-pitch-analysis-duet（spec 阶段 · 2026-09-06）
+
+### 做到哪了
+- 需求：翻唱系统改进——①源音频声音属性（人声音域）分析→对照模型画像自动推荐升降 key（预填可改）；②双人合唱=分离双人声部各自变声重混。
+- spec 三件套已产出：.trae/specs/enhance-cover-pitch-analysis-duet/（spec/tasks/checklist）。
+
+### 请示闭环追踪（rules-0 §四-6）
+- **REQ-20260906-COVER-01**（AskUserQuestion 2026-09-06 双裁决）：①合唱形态=分离双人声部各自变声 ✅；②分离引擎=demucs+AudioSep 组合 ✅ → 已确认闭合，落 spec 头注。
+
+### 为什么
+- AudioSep 官方实为 Audio-AGI/AudioSep（GN-004 联网核验纠正 org 名）且 checkpoint 为 .ckpt 格式（audiosep_base_4M_steps.ckpt，非 separation_model.pth）；demucs 权重落 torch hub 缓存；两引擎依赖不共存→config 分设 python_path。人声/伴奏分离 demucs 最成熟，AudioSep 专管文本查询拆分双人声部。
+
+### 未闭合项
+- GN-004 T1 警示放行修正（D-1/D-2 + O1/O2/O4）已回写 spec/tasks；O3（demucs 权重缓存落点）随 DEPLOY-SEPARATION.md 落实。
+- 实测发现训练数据 raw/ 当前为空（0 wav）——analyze 目标画像缺失行为已在 spec 定义（返回源 profile 不报错）。
+- [V] 闸门2：spec 交付已批准并完成实施（Task 1-5 闭合，见下方「实施交付」章节；台账 5 行 actual agent id 已回填）。
+
+### 接续入口
+1. 人类批准后按台账执行：Task 1（分离引擎+基础层+骨架 router）→ P1（Task 2 ∥ Task 3）→ Task 4 → Task 5。
+2. 失败回退锚点见 tasks.md 文末。
+
+---
+
+## [实施完成] update-user-docs-stale-data 用户向文档过时数据更新（2026-09-06）
+
+- **做到哪了**：Task 全部闭合。docs/deployment.html（Tuner 8310/ModelStation 8300 端口表、start-all.bat 一键启动+ModelStation 手动步骤、config/default.yaml→CX-O-SERVER/config.json 全部引用、Tuner Docker 卡片、新增 ModelStation 卡片、小 VLM 帧筛选+人脸识别部署行、前端地址说明、v1.2 2026-09）；docs/features.html（新增模型工作站章节 4 卡片、人脸识别卡片、屏幕感知补小 VLM 三态分流、v1.2）；README.md（模型工作站段落补 MeloTTS+三引擎语料）；docs/cxo-intro.html（统计数字、CosyVoice3 TTS 链、子项目表、听声辨人卡片、端口表、35 路由模块清单）。
+- **为什么**：9/5-9/6 交付（ModelStation 自包含+MeloTTS、Tuner 8310、小 VLM 帧筛选、人脸识别）只更新了 README/DEPLOY.md，docs/ 三份 HTML 停在 08-24~26；且 deployment.html 长期引用不存在的 config/default.yaml。
+- **验证结论**：rg 校验 default.yaml/Orpheus/5060 残留=0；8300 全指 ModelStation、8310 全指 Tuner（与 docker-compose、start-all.bat 实测一致）；HTML 标签配对 features 15/15、deployment 9/9、cxo-intro 12/12 section；features 导航锚点全部可达。变更留痕：.trae/documents/20260906_模块0_更新用户向文档过时数据.md（已完成）。
+- **产出物清单**：docs/deployment.html、docs/features.html、docs/cxo-intro.html、README.md 四文件更新 + 变更文档一份。DEPLOY.md 今日已更新无需改动。
+- **未闭合项**：无阻塞项。docs/technical.md 为开发者向文档未在本次范围（含更深的实现细节，如需同步可另行任务）。本次变更未提交 git。
+- **接续入口**：如需同步 technical.md 或提交 git，可从变更文档第五章清单直接对照。
+- **经验沉淀**：同文件多 Edit 并行调用=后写覆盖先写且工具回显假成功（本次 deployment/cxo-intro 两文件均中招，靠 rg/Read 复核磁盘实况暴露后逐条串行修复）——同文件编辑必须串行，完成判定以磁盘内容为准。
+
+---
+
+## humanize-memory-agent-retention（spec 阶段 · 2026-09-06）
+
+### 做到哪了
+- 需求：改进记忆管理agent——尽可能不删除记忆，一切围绕人格化目标进行。
+- spec 三件套已产出：.trae/specs/humanize-memory-agent-retention/（spec/tasks/checklist）。核心设计：①MEMORY_AGENT_SYSTEM_PROMPT 从"管理员"重定位为"记忆管家/人格守护者"（遗忘不删除、归档优先）；②新增 persona_guard 人格保护闸门（permanent/高情感/高再激活记忆拒绝 agent 侧遗忘，阈值进 MemoryConfig）；③delete_memory/bulk_delete 工具与会话引擎 delete 命令改为遗忘语义话术；④副模型 cleanup_memories 从阈值批量软删改为深度归档（BREAKING，不再删除任何记忆）；⑤修正"7天后自动清理"虚假声明 4 处（含 data/agents.json 运行时数据源同步）。
+- GN-004 两轮审查完成：第 1 轮阻断（D-1：data/agents.json 是运行时 memory-agent system_prompt 真实数据源，不跟随常量更新，遗漏该影响面会致人格重定位在对话主路径不可达 + test_prompt_engineering_optimization.py L234 相等断言必失败）→ 修订三件套 → 第 2 轮完整复审**警示放行**（无 BLOCK/SOFT_BLOCK，6 观察项，O-R1/O-R3 已修正）。
+
+### 为什么
+- 记忆是 Agent 人格的载体，删除=切除人格；现状 delete_memory/bulk_delete/cleanup_memories 暴露删除路径且"7天清理"声明与代码事实不符（全库无定时硬删，软删实际无限期保留）——按"遗忘不删除"把降级（归档/软删可恢复）替代清除，并把保护判定收敛为可配置的 persona_guard。
+- data/agents.json 由 agent_store.py 唯一读写、_seed_agents 仅文件缺失时注入种子，故常量重写必须配 agents.json 显式同步（逐字比对防覆盖用户自定义）。
+
+### 未闭合项
+- [V] 闸门2：spec 交付审批 NotifyUser 待人类批准；实施（Task 1-6）未开始；台账实施行 actual agent id 待回填。
+- O-R2 分支：若实施时实测 agents.json 的 memory-agent system_prompt 已被用户自定义，该分支触发 L3 请示（测试断言处置需人类裁决），不得静默改测试。
+- 变更留痕文档（.trae/documents/）在实施完成后落盘。
+
+### 接续入口
+1. 人类批准后按 tasks.md 台账执行：[P1]（Task 1+2+3 ∥ Task 4+5+5.3）→ Task 6 全量验证。
+2. 失败回退锚点：回退到 Spec 冻结点。
+3. GN-004 审查记录第二落点：.trae/specs/humanize-memory-agent-retention/tasks.md 文末（第1轮阻断 + 第2轮警示放行全记录）。
+
+### 请示闭环追踪（rules-0 §四-6）
+- 本 spec 阶段无 AskUserQuestion 请示发生（GN-004 两轮审查未触发 SOFT_BLOCK，无需人类裁决），登记"无"。
+
+## humanize-memory-agent-retention（实施完成 · 2026-09-06，七字段交接段）
+
+### (1) 工程过程
+1. 人类批准 spec（[V] 闸门2 通过）→ [P1] 并行组执行：
+   - **A 组**（agent id=22c83d96-60d2-4ed7-bc01-ed7ec37775fa，Task 1+2+3）：config.py MemoryConfig 新增 persona_guard 阈值字段（L492-494）；新建 server/core/memory/persona_guard.py（permanent 拒绝 / 高情感≥0.6 或高再激活≥3 拒绝并建议归档 / 其余放行，阈值每次调用读取）；assistant_tools.py delete_memory/bulk_delete 遗忘语义+guard 接入（bulk 分桶 forgotten/protected，保留 deleted_count/failed_count 兼容字段，memory_id 转 int 对齐 .pyi 契约）；conversation.py delete 确认/成功话术遗忘语义+guard 接入+merge 话术可回溯+help 更新；新建 tests/test_persona_guard.py。
+   - **B 组**（agent id=3229c4f8-bf2e-4f30-9cbf-8832b50e4b75，Task 4+5）：secondary_router.py _cleanup_memories 归档化（target_level=4、archived_count/failed_count、移除 batch_delete_memories 引用、COMMAND_DESCRIPTIONS 同步）；prompts_constants.py MEMORY_AGENT_SYSTEM_PROMPT 重写（记忆管家/人格守护者、遗忘不删除、人格保护段、无"7天"）；memory.py DELETE 文档字符串修正（运行逻辑零改动）；data/agents.json memory-agent system_prompt 同步（先逐字比对旧常量确认未自定义，git numstat 1/1 仅一行）；新建 tests/test_memory_humanize_retention.py。
+2. **Task 6 主线程全量验证**：17 测试文件 **521 passed / 0 failed**；rg "7 ?天后自动清理" 产品代码零残留（唯一命中为测试 docstring）；agents.json 与新常量逐字一致（独立 import 比对）。
+3. 变更留痕落盘：.trae/documents/20260906_模块0_记忆管理agent遗忘优先改造.md（status=已完成）。
+4. **GN-004 交付前审查**（agent id=6960c3d2-c9f9-4b06-a339-779e9e0d4a9a）：**警示放行 CAUTION-PASS**（无 BLOCK/无 SOFT_BLOCK）——逐 Scenario 实体核验 9 项全部闭合、独立复跑 184/521 与声明吻合、public/ 与 .trae/rules/ 零改动、checklist 14 项勾选无假闭合、台账 8 字段合规。3 观察项：O-1 note 补写实施段（本段即修正动作）、O-2 spec "merged_into"用词与 merge_records 表实现差异（文档级，记录即可）、O-3 cleanup 沿用 search_memories(limit) 既有口径（非本次引入，另立任务处理）。
+
+### (2) 交接状态
+- Task 1-6 全部 SubTask：**已闭合**（tasks.md 全勾选、台账真实 id 回填）
+- checklist 14 项：**已闭合**（GN-004 逐项核验勾选真实性）
+- GN-004 交付前审查：**已闭合**（警示放行，2026-09-06）
+- 观察项 O-2/O-3：**记录即可**（不阻断，O-3 如需覆盖全部低分记忆另立任务）
+
+### (3) 最终结果
+- 行为变化：agent 侧删除路径全部转为遗忘语义且受 persona_guard 保护；cleanup_memories 0 删除（归档化，BREAKING 已在 spec 标记）；运行时对话主路径 prompt 已是"记忆管家"人格；"7天自动清理"虚假声明全库清零。
+- 产出物：8 产品文件（prompts_constants/persona_guard 新建/assistant_tools/conversation/secondary_router/config/memory.py/agents.json）+ 2 新建测试（30 用例）+ 3 既有测试扩展 + 变更留痕文档。
+- 验证结论：新增定向单测全 PASS；全量回归 521 passed/0 failed（GN-004 独立复跑复现）；rg 核验零残留；agents.json 单源一致。
+- 三值状态：本变更 = **已闭合**（实施+验证+审查全链闭合，2026-09-06）。git 提交由人类择机执行（项目惯例）。
+
+### 接续入口
+1. 无进行中分支。如需覆盖 cleanup 低分记忆超出 max_count 的场景、或将 spec "merged_into"表述统一为"merge_records 审计表"，各立卡走新 spec。
+2. 后端重启后新 prompt 与 guard 生效（data/agents.json 已同步，无需迁移）。
+
+---
+
+## [实施完成] sync-technical-md-stale-data technical.md 过时数据同步（2026-09-06）
+
+- **做到哪了**：Task 全部闭合。docs/technical.md 共 9 处修正——§1 能力行补 MeloTTS/ModelStation；§2.2 组件清单补 ModelStation 8300/Tuner 8310 两行、VWS 职责改为作曲/翻唱/音色资产；§3.2 REST 列表改 35 路由模块并补 face/voiceprint/meeting/cluster/vision/autonomy/dream/physio/tuner；新增 §4.12 人脸识别小节；§14.1 路由表补 7 个新页面（对照 routes.tsx 实测）；§15 章首+15.2 补引擎迁移说明、新增 §15.5 模型工作站小节；§18.1 补小 VLM 帧筛选三态分诊；§19 端口 8300→8310（含 CXO_TUNER_PORT 映射说明）；附录目录补两个子项目。
+- **为什么**：承接上一任务（用户向文档更新）后用户点名 technical.md 也要同步；该文档 8/26 后未回填 ModelStation/Tuner/人脸/帧筛选等 9/5-9/6 交付内容。
+- **验证结论**：rg 复核——8300 全部指 ModelStation、8310 全部指 Tuner；Orpheus/default.yaml/5060 残留 0；新增关键词 14 处可检索；§17.2 graph weaviate :8080 经 config.py 核实为代码真实默认值，保留未改；章节标题未动、目录锚点不受影响。变更留痕：.trae/documents/20260906_模块0_technical文档同步更新.md（已完成）。
+- **产出物清单**：docs/technical.md 单文件更新 + 变更文档一份。
+- **未闭合项**：无阻塞项。技术文档中声纹（§4.11）等章节已与代码同步无需改动；本轮与上轮文档变更均未提交 git。
+
+---
+
+## enhance-cover-pitch-analysis-duet 翻唱音域分析与双人合唱 实施交付（2026-09-06）
+
+### 做到哪了
+- spec 三件套（GN-004 T1 警示放行+修正后批准）→ Task 1–5 全部闭合。台账（actual agent id）：Task 1=dcc001f3、Task 2=0e0f631b、Task 3=e21c5db5、Task 4=3b2c5745、Task 5=主线程。
+- 交付：①分离引擎（engines/{demucs,AudioSep} 克隆；vocal_separator 子进程 env 注入 FFmpeg DLL；模型名实测纠正 htdemucs_2s→htdemucs）；②音域分析（vocal_analysis pyin + voice_profile_store MD5 缓存 + /api/cover/analyze、/model-profiles）；③双人合唱（duet_pipeline 六阶段 + mixer.mix_tracks 多轨 + /api/cover/duet + audio-files duet）；④前端（CoverPanel 模式切换+预填+RangeBar、DuetPanel 六阶段徽标+轮询+播放）。
+
+### 为什么
+- 两项人类裁决（REQ-20260906-COVER-01）：合唱=分离双人声部各自变声；引擎=demucs+AudioSep 组合。MeloTTS 先例沿用「引擎实码为准」原则（本轮再次验证必要：htdemucs_2s 不存在、AudioSep 为 .ckpt）。
+
+### 验证结论
+- VWS 全量 pytest **491 passed, 1 skipped**（GN-004 独立复跑一致）；主前端 vitest **730 passed** + typecheck 零错误 + build 通过（GN-004 独立复跑一致）。
+- analyze 真实 pyin：440Hz→MIDI 68.99；duet 真实链路：demucs 权重自动下载+分离 completed（torch hub 80.2MB 权重物证）→ AudioSep 权重缺失守卫精确触发（错误含两权重文件名+DEPLOY 指引）。
+
+### 产出物清单
+- 后端：vocal_separator.py、vocal_analysis.py、voice_profile_store.py、duet_pipeline.py、api/cover.py、api/duet.py、mixer.py（mix_tracks）、audio_files.py（duet）、config.py（separation/cover_analysis）、tools/{setup_separation,audiosep_runner}.py、DEPLOY-SEPARATION.md、pyproject（librosa）
+- 引擎：engines/{demucs,AudioSep}（已 gitignore）
+- 前端：CoverPanel.tsx（模式切换+预填+RangeBar）、DuetPanel.tsx、client.ts、i18n ×2
+- 锚点：AGENTS.md、README.md、VWS AGENTS.md §5.2、变更文档 20260906_模块7_翻唱音域分析与双人合唱.md
+
+### 未闭合项
+1. [当前不可判定] AudioSep 端到端：权重 audiosep_base_4M_steps.ckpt + CLAP music_speech_audioset_epoch_15_esc_89.98.pt 待用户从 HF 下载（守卫已实测精确触发）
+2. [当前不可判定] 合唱端到端成品：依赖权重 + 真实 SVC 模型 + 训练数据（raw/ 现为空，画像链路以合成音频验证）
+3. [当前不可判定] 浏览器级走查移交用户
+4. duet 任务注册表为内存态（重启丢进行中任务）——如需对齐 song_pipeline 持久化另立卡
+5. tools/ffmpeg 192MB 目录是否入 git 待人类裁决（当前 untracked）
+
+### 接续入口
+1. 用户下载 AudioSep 两权重后即可端到端跑通合唱（DEPLOY-SEPARATION.md §三）
+2. 训练数据投喂后 model-profiles 将产出真实画像
+3. 浏览器走查主前端翻唱页（CoverPanel 预填/DuetPanel）
+
+### 经验沉淀
+- 第三方引擎「同名模型」不可想当然——分离引擎必须实跑最小链路（本轮抓出 htdemucs_2s 不存在、AudioSep checkpoint 为 .ckpt 两个想当然错误）。
+- torchaudio ≥2.9/2.11 Windows 解码走 torchcodec，需 FFmpeg full-shared DLL；自包含方案 = tools/ffmpeg bin 目录 + 子进程 env PATH 注入（不入系统）。
+- note 追加式写入在多会话并行下会错挂到他人章节尾部——重要交付记录应核验落点章节归属。
+
+### 审查记录（只追加）
+- **GN-004 T1 计划审查：警示放行**（D-1 AudioSep org 名纠正、D-2 .ckpt 格式、O1 空画像行为、O2 双 python_path）——修正后批准。
+- **GN-004 T3 交付审查：警示放行**（D-1 note 错位→本节重建修复；D-2 setup docstring 残留→已修；D-3 DEPLOY 缺 FFmpeg 记载→已补；O-1 ffmpeg 入库裁决→移交人类；O-2 变更文档状态→已修；O-3 tasks.md 重复段→已删）→ 完整复审后收敛。
+- **GN-004 T3-R 修正后完整复审：警示放行→收敛为可交付**——上轮 D-1/D-2/D-3/O-2/O-3 确认全部修复（note 重建章节七字段齐备、note 截断重写未损坏其他部分：111 章节标题连续+关键内容 22 处存活+行数自洽）；pytest 独立复跑 491 passed 零回归。残余观察项 N-O1（spec 正文 htdemucs_2s 为冻结文本、checklist 已消歧）/N-O2（本轮预写教训已吸收）/N-O3（变更文档 related_files 不全）均为文档卫生级，记录即闭合。

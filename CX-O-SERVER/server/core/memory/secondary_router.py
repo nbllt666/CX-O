@@ -84,7 +84,7 @@ class SecondaryModelRouter:
             "example": {"memory_id": 123, "reason": "内容已过时"},
         },
         SecondaryCommand.CLEANUP_MEMORIES.value: {
-            "description": "清理低价值或过期的记忆",
+            "description": "将低价值或过期的记忆归档到深度归档级别（不删除，保留原文可回溯）",
             "parameters": {
                 "threshold": {
                     "type": "float",
@@ -96,7 +96,7 @@ class SecondaryModelRouter:
                     "type": "int",
                     "required": False,
                     "default": 100,
-                    "description": "最大清理数量",
+                    "description": "最大归档数量",
                 },
             },
             "example": {"threshold": 0.05, "max_count": 50},
@@ -423,24 +423,52 @@ class SecondaryModelRouter:
             )
 
     async def _cleanup_memories(self, params: Dict) -> SecondaryResult:
-        """清理低价值记忆"""
+        """清理低价值记忆：归档到深度归档级别（不删除，保留原文可回溯）"""
         threshold = params.get("threshold", 0.1)
         max_count = params.get("max_count", 100)
 
-        memories = self.memory_manager.search_memories(limit=max_count)
-        low_value_ids = [m["id"] for m in memories if m.get("importance_score", 0.0) < threshold]
+        archiver = getattr(self.memory_manager, "archiver", None)
+        if archiver is None:
+            return SecondaryResult(
+                status="error",
+                command="cleanup_memories",
+                output={
+                    "error": "归档功能未启用，cleanup_memories 已改为归档化实现，需启用 archive_enabled"
+                },
+                execution_time_ms=0.0,
+            )
 
-        result = self.memory_manager.batch_delete_memories(
-            memory_ids=low_value_ids, soft_delete=True
-        )
+        memories = self.memory_manager.search_memories(limit=max_count)
+        low_value = [m for m in memories if m.get("importance_score", 0.0) < threshold]
+
+        # 归档化：遗忘≠删除，低分记忆进入深度归档（target_level=4），原文保留可回溯
+        archived_count = 0
+        failed_count = 0
+        for m in low_value:
+            try:
+                memory_id = int(m["id"])
+            except (KeyError, TypeError, ValueError):
+                # search_memories 返回的 id 可能是 str，无效 id 计入失败而非中断
+                logger.warning(f"cleanup_memories 跳过无效记忆ID: {m.get('id')!r}")
+                failed_count += 1
+                continue
+            try:
+                record = await archiver.archive_memory(memory_id=memory_id, target_level=4)
+            except Exception as e:
+                logger.error(f"cleanup_memories 归档记忆失败 memory_id={memory_id}: {e}")
+                record = None
+            if record is not None:
+                archived_count += 1
+            else:
+                failed_count += 1
 
         return SecondaryResult(
             status="success",
             command="cleanup_memories",
             output={
                 "threshold": threshold,
-                "deleted_count": result["success"],
-                "failed_count": result["failed"],
+                "archived_count": archived_count,
+                "failed_count": failed_count,
             },
             execution_time_ms=0.0,
         )

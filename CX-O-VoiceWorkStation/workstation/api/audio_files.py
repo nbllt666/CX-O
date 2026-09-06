@@ -17,6 +17,7 @@ from fastapi import APIRouter, HTTPException
 from fastapi.responses import FileResponse
 
 from workstation.config import get_settings
+from workstation.services.duet_pipeline import DUET_DIR
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -36,11 +37,14 @@ def _category_dirs() -> dict[str, Path]:
     - svc-results: So-VITS-SVC 推理结果目录（sovits_svc_infer 直接落盘在
                    infer_output_dir 根目录，文件名为 converted_<stem>.wav，无子目录）
     - songs:       歌曲流水线成品目录 data/songs（允许 <song_id>/final.wav 子路径）
+    - duet:        双人合唱流水线产物目录 data/duet（允许 <task_id>/final.wav 子路径；
+                   目录锚点 DUET_DIR 由 duet_pipeline 模块内 _VWS_ROOT 定义，config 禁改）
     """
     settings = get_settings()
     return {
         "svc-results": Path(settings.sovits_svc.infer_output_dir),
         "songs": Path(settings.music.songs_dir),
+        "duet": DUET_DIR,
     }
 
 

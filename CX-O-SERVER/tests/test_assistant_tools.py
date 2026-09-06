@@ -9,6 +9,7 @@
 import pytest
 
 import server.core.tools.assistant_tools as at
+from server.core.tools.registry import tool_registry
 
 
 # ---------------------------------------------------------------- 依赖替身
@@ -17,9 +18,12 @@ class FakeMemoryManager:
         self.update_result = True
         self.search_results = []
         self.delete_result = True
+        self.delete_calls = []
         self.stats = {}
-        self.batch_result = {"success": 1, "failed": 2}
+        self.batch_result = {"success": 1, "failed": 2, "deleted_ids": [11]}
+        self.batch_calls = []
         self.restore_result = True
+        self.memories = {}  # memory_id -> 记忆 dict（供人格保护闸门读取）
 
     def update_memory(self, memory_id, new_content):
         return self.update_result
@@ -27,13 +31,18 @@ class FakeMemoryManager:
     def search_memories(self, query=None, time_range=None, limit=None, tags=None):
         return self.search_results
 
+    def get_memory(self, memory_id, include_deleted=False):
+        return self.memories.get(int(memory_id))
+
     def delete_memory(self, memory_id, soft_delete):
+        self.delete_calls.append(memory_id)
         return self.delete_result
 
     def get_statistics(self):
         return self.stats
 
     def batch_delete_memories(self, memory_ids, soft_delete):
+        self.batch_calls.append(list(memory_ids))
         return self.batch_result
 
     def restore_memory(self, memory_id):
@@ -166,6 +175,78 @@ class TestDeleteMemory:
         assert at.delete_memory("1", "x")["status"] == "failed"
 
 
+# ------------------------------------------------- 遗忘语义改造（人格保护闸门）
+class TestDeleteMemoryForgetSemantics:
+    """delete_memory 遗忘语义：注册描述、闸门拒绝路径与成功提示。"""
+
+    def test_registration_forget_description(self, clean_deps):
+        """注册描述为遗忘语义，无"7天自动清理"表述。"""
+        at.register_assistant_tools()
+        tool = tool_registry.get_tool("delete_memory")
+        assert "遗忘" in tool.description
+        assert "永不物理清除" in tool.description
+        assert "restore_memory" in tool.description
+        assert "7天" not in tool.description
+        assert "7 天" not in tool.description
+
+    def test_registration_tags_and_examples(self, clean_deps):
+        at.register_assistant_tools()
+        tool = tool_registry.get_tool("delete_memory")
+        assert tool.tags == ["memory", "forget", "soft_delete"]
+        assert tool.examples and "遗忘" in tool.examples[0]
+
+    def test_guard_rejection_permanent(self, clean_deps):
+        """永久记忆被真实闸门拒绝，返回保护原因且未执行删除。"""
+        mm = FakeMemoryManager()
+        mm.memories = {1: {"id": 1, "content": "人格核心记忆", "permanent": 1}}
+        _set_mm(mm)
+        r = at.delete_memory("1", "x")
+        assert "error" in r
+        assert "人格核心" in r["error"]
+        assert mm.delete_calls == []
+
+    def test_guard_rejection_reason_passthrough(self, clean_deps, monkeypatch):
+        """闸门拒绝时原因透传到 error 字段。"""
+        mm = FakeMemoryManager()
+        mm.memories = {2: {"id": 2, "content": "普通记忆"}}
+        _set_mm(mm)
+        monkeypatch.setattr(
+            at,
+            "evaluate_persona_guard",
+            lambda m: {"allowed": False, "reason": "自定义保护原因"},
+        )
+        r = at.delete_memory("2", "x")
+        assert r == {"error": "自定义保护原因"}
+        assert mm.delete_calls == []
+
+    def test_success_message_mentions_restore_and_hard_delete(self, clean_deps, monkeypatch):
+        """放行后成功返回含"可随时恢复"与"REST API 显式硬删"提示。"""
+        mm = FakeMemoryManager()
+        mm.memories = {1: {"id": 1, "content": "普通记忆"}}
+        _set_mm(mm)
+        monkeypatch.setattr(
+            at, "evaluate_persona_guard", lambda m: {"allowed": True, "reason": ""}
+        )
+        r = at.delete_memory("1", "过时")
+        assert r["status"] == "deleted"
+        assert "可随时恢复" in r["message"]
+        assert "REST API 显式硬删" in r["message"]
+        assert mm.delete_calls == [1]
+
+    def test_memory_not_found_skips_guard(self, clean_deps, monkeypatch):
+        """记忆不存在时跳过闸门，交由原删除逻辑处理（failed 路径）。"""
+        guard_called = []
+        monkeypatch.setattr(
+            at, "evaluate_persona_guard", lambda m: guard_called.append(m)
+        )
+        mm = FakeMemoryManager()  # memories 为空 → get_memory 返回 None
+        mm.delete_result = False
+        _set_mm(mm)
+        r = at.delete_memory("99", "x")
+        assert guard_called == []
+        assert r["status"] == "failed"
+
+
 # ---------------------------------------------------------------- 统计
 class TestMemoryStats:
     def test_no_manager(self, clean_deps):
@@ -231,7 +312,74 @@ class TestBulkDelete:
 
         _set_mm(Boom())
         r = at.bulk_delete(["1", "2"], "x")
-        assert "批量删除失败" in r["error"]
+        assert "批量遗忘失败" in r["error"]
+
+
+# ------------------------------------------------- 批量遗忘分桶（人格保护闸门）
+class TestBulkDeleteForgetSemantics:
+    """bulk_delete 遗忘语义：注册描述、protected/forgotten 分桶。"""
+
+    def test_registration_forget_description(self, clean_deps):
+        """注册描述为批量遗忘语义，说明受保护记忆将被跳过。"""
+        at.register_assistant_tools()
+        tool = tool_registry.get_tool("bulk_delete")
+        assert "批量遗忘" in tool.description
+        assert "永不物理清除" in tool.description
+        assert "protected" in tool.description
+
+    def test_registration_tags_and_examples(self, clean_deps):
+        at.register_assistant_tools()
+        tool = tool_registry.get_tool("bulk_delete")
+        assert tool.tags == ["memory", "forget", "bulk", "batch"]
+        assert tool.examples and "遗忘" in tool.examples[0]
+
+    def test_buckets_with_monkeypatched_guard(self, clean_deps, monkeypatch):
+        """放行 id 走批量软删并列入 forgotten；受保护 id 跳过并列入 protected。"""
+        mm = FakeMemoryManager()
+        mm.memories = {1: {"id": 1, "content": "受保护"}, 2: {"id": 2, "content": "普通"}}
+        mm.batch_result = {"success": 1, "failed": 0, "deleted_ids": [2]}
+        _set_mm(mm)
+        monkeypatch.setattr(
+            at,
+            "evaluate_persona_guard",
+            lambda m: (
+                {"allowed": False, "reason": f"保护原因-{m['id']}"}
+                if m["id"] == 1
+                else {"allowed": True, "reason": ""}
+            ),
+        )
+        r = at.bulk_delete(["1", "2"], "x")
+        assert r["status"] == "completed"
+        assert r["forgotten"] == [2]
+        assert r["protected"] == [{"memory_id": "1", "reason": "保护原因-1"}]
+        assert r["deleted_count"] == 1
+        assert r["failed_count"] == 0
+        assert mm.batch_calls == [[2]]
+
+    def test_permanent_protection_with_real_guard(self, clean_deps):
+        """真实闸门集成：永久记忆进入 protected，普通记忆进入 forgotten。"""
+        mm = FakeMemoryManager()
+        mm.memories = {1: {"id": 1, "content": "人格核心", "permanent": 1}, 2: {"id": 2}}
+        mm.batch_result = {"success": 1, "failed": 0, "deleted_ids": [2]}
+        _set_mm(mm)
+        r = at.bulk_delete(["1", "2"], "x")
+        assert [p["memory_id"] for p in r["protected"]] == ["1"]
+        assert "人格核心" in r["protected"][0]["reason"]
+        assert r["forgotten"] == [2]
+
+    def test_memory_not_found_skips_guard(self, clean_deps, monkeypatch):
+        """不存在的记忆跳过闸门，交由原批量逻辑统一计为 failed。"""
+        guard_called = []
+        monkeypatch.setattr(
+            at, "evaluate_persona_guard", lambda m: guard_called.append(m)
+        )
+        mm = FakeMemoryManager()
+        _set_mm(mm)
+        r = at.bulk_delete(["1", "2"], "x")
+        assert guard_called == []
+        assert r["deleted_count"] == 1
+        assert r["failed_count"] == 2
+        assert r["protected"] == []
 
 
 # ---------------------------------------------------------------- 恢复

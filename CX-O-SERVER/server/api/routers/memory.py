@@ -393,12 +393,12 @@ async def update_memory(memory_id: int, request: MemoryUpdateRequest):
 
 @router.delete("/memories/{memory_id}")
 async def delete_memory(memory_id: int, soft_delete: bool = True, agent_id: str = "default"):
-    """删除记忆（默认软删除，对齐 CXHMS 行为）
+    """删除记忆（默认软删除=遗忘，对齐 CXHMS 行为）
 
-    统一为 soft_delete=True（软删除），更安全：
-    - 误删可恢复（restore_memory）
-    - 7 天后自动清理
-    - 如需硬删除，显式传 soft_delete=False
+    统一为 soft_delete=True（软删除，即遗忘），更安全：
+    - 记忆无限期保留，可随时通过恢复接口还原（restore_memory）
+    - 永不自动物理清除
+    - 物理清除仅限显式传 soft_delete=False 的硬删参数
     """
     from server.dependencies import get_memory_manager
 

@@ -10,6 +10,7 @@ from typing import Any, Callable, Dict, List, Optional
 
 from server.config import Settings
 from server.core.logging_config import get_contextual_logger
+from server.core.memory.persona_guard import evaluate_persona_guard
 
 logger = get_contextual_logger(__name__)
 
@@ -351,7 +352,7 @@ class MemoryConversationEngine:
             context.pending_command = command
             return {
                 "status": "waiting_confirmation",
-                "message": f"确认合并 {len(command.parameters.get('memory_ids', []))} 个记忆吗？合并后将无法撤销。（是/否）",
+                "message": f"确认合并 {len(command.parameters.get('memory_ids', []))} 个记忆吗？被合并记忆将保留原文并写入合并审计记录，可回溯。（是/否）",
                 "pending_command": {"type": "merge", "description": "合并重复记忆"},
             }
 
@@ -391,31 +392,39 @@ class MemoryConversationEngine:
     async def _handle_delete(
         self, command: MemoryCommand, context: ConversationContext
     ) -> Dict[str, Any]:
-        """处理删除命令"""
+        """处理遗忘命令（软删除）"""
         if command.requires_confirmation:
             context.pending_command = command
             return {
                 "status": "waiting_confirmation",
-                "message": f"确认删除记忆 ID {command.parameters.get('memory_id')} 吗？删除后将无法恢复。（是/否）",
-                "pending_command": {"type": "delete", "description": "删除记忆"},
+                "message": f"确认遗忘记忆 ID {command.parameters.get('memory_id')} 吗？将转为遗忘状态（软删除），可随时恢复；也可以选择归档（archive）作为替代。（是/否）",
+                "pending_command": {"type": "delete", "description": "遗忘记忆"},
             }
 
         memory_id = command.parameters.get("memory_id")
 
         if not memory_id:
-            return {"status": "error", "message": "请指定要删除的记忆ID"}
+            return {"status": "error", "message": "请指定要遗忘的记忆ID"}
 
         try:
+            # 人格保护闸门：永久记忆/高情感印记/高频再激活记忆不可被遗忘。
+            # 记忆不存在时跳过闸门，交由原删除逻辑统一按失败处理。
+            memory = await self.memory_manager.get_memory_async(memory_id)
+            if memory is not None:
+                guard = evaluate_persona_guard(memory)
+                if not guard.get("allowed"):
+                    return {"status": "error", "message": guard.get("reason", "")}
+
             success = await self.memory_manager.delete_memory_async(memory_id, soft_delete=True)
 
             if success:
-                return {"status": "success", "message": f"记忆 ID {memory_id} 已删除"}
+                return {"status": "success", "message": f"记忆 ID {memory_id} 已遗忘（软删除），可随时恢复"}
             else:
-                return {"status": "error", "message": "删除失败，记忆可能不存在"}
+                return {"status": "error", "message": "遗忘失败，记忆可能不存在"}
 
         except Exception as e:
-            logger.error(f"删除记忆失败: {e}")
-            return {"status": "error", "message": f"删除失败: {str(e)}"}
+            logger.error(f"遗忘记忆失败: {e}")
+            return {"status": "error", "message": f"遗忘失败: {str(e)}"}
 
     async def _handle_update(
         self, command: MemoryCommand, context: ConversationContext
@@ -536,8 +545,8 @@ class MemoryConversationEngine:
    - "合并重复记忆"
    - "去重并合并"
 
-4. 删除记忆
-   - "删除记忆 ID 789"
+4. 遗忘记忆
+   - "遗忘记忆 ID 789"
 
 5. 检测重复
    - "检测重复记忆"
@@ -552,7 +561,8 @@ class MemoryConversationEngine:
    - "怎么用"
 
 注意事项：
-- 删除、归档、合并操作需要确认
+- 遗忘、归档、合并操作需要确认
+- 永久记忆与高情感记忆受人格保护，不可遗忘，可考虑归档替代
 - 可以使用自然语言描述你的需求
 - 支持中英文命令
 """

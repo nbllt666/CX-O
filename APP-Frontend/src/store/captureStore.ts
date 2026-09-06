@@ -7,7 +7,7 @@
  *
  * 硬性约束（checklist「视觉采集与开关」）：
  * - screenActive / cameraActive 为会话内状态，刻意不持久化 —— 默认关闭、重启不自动恢复；
- * - frameMode / frameIntervalSec 持久化（发送节奏偏好）。
+ * - frameMode / frameIntervalSec / frameDutyCycle 持久化（发送节奏偏好）。
  */
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
@@ -30,6 +30,15 @@ export function clampFrameIntervalSec(v: number): number {
   return Math.min(MAX_FRAME_INTERVAL_SEC, Math.max(MIN_FRAME_INTERVAL_SEC, Math.round(v)));
 }
 
+export const MIN_FRAME_DUTY_CYCLE = 10;
+export const MAX_FRAME_DUTY_CYCLE = 90;
+
+/** 自适应占空比钳制：取整并钳到 [10,90]；NaN 按默认 50 兜底（对齐 clampFrameIntervalSec 范式） */
+export function clampFrameDutyCycle(v: number): number {
+  if (Number.isNaN(v)) return 50;
+  return Math.min(MAX_FRAME_DUTY_CYCLE, Math.max(MIN_FRAME_DUTY_CYCLE, Math.round(v)));
+}
+
 interface CaptureState {
   /** 屏幕共享采集中（会话内，不持久化） */
   screenActive: boolean;
@@ -45,6 +54,8 @@ interface CaptureState {
   frameMode: CaptureFrameMode;
   /** 定时抽帧间隔秒数 1~60（持久化） */
   frameIntervalSec: number;
+  /** 自适应抽帧占空比百分比 10~90（持久化）：adaptive 曲线锚点 t=1-duty/100，越大越积极跟随变化、越小越省带宽；默认 50 与历史行为一致 */
+  frameDutyCycle: number;
   setScreenActive: (v: boolean) => void;
   setCameraActive: (v: boolean) => void;
   setVisionEnabled: (v: boolean) => void;
@@ -52,6 +63,7 @@ interface CaptureState {
   setFrameFilterEnabled: (v: boolean) => void;
   setFrameMode: (v: CaptureFrameMode) => void;
   setFrameIntervalSec: (v: number) => void;
+  setFrameDutyCycle: (v: number) => void;
 }
 
 export const useCaptureStore = create<CaptureState>()(
@@ -64,6 +76,7 @@ export const useCaptureStore = create<CaptureState>()(
       frameFilterEnabled: false,
       frameMode: 'interval',
       frameIntervalSec: 5,
+      frameDutyCycle: 50,
 
       setScreenActive: (v) => set({ screenActive: v }),
       setCameraActive: (v) => set({ cameraActive: v }),
@@ -72,6 +85,7 @@ export const useCaptureStore = create<CaptureState>()(
       setFrameFilterEnabled: (v) => set({ frameFilterEnabled: v }),
       setFrameMode: (v) => set({ frameMode: v }),
       setFrameIntervalSec: (v) => set({ frameIntervalSec: clampFrameIntervalSec(v) }),
+      setFrameDutyCycle: (v) => set({ frameDutyCycle: clampFrameDutyCycle(v) }),
     }),
     {
       name: CAPTURE_STORE_NAME,
@@ -83,6 +97,7 @@ export const useCaptureStore = create<CaptureState>()(
         frameFilterEnabled: state.frameFilterEnabled,
         frameMode: state.frameMode,
         frameIntervalSec: state.frameIntervalSec,
+        frameDutyCycle: state.frameDutyCycle,
       }),
       merge: (persisted, current) => {
         const p = (persisted as Partial<CaptureState>) || {};
@@ -94,6 +109,8 @@ export const useCaptureStore = create<CaptureState>()(
           // 旧持久化可能写入未知 frameMode，安全回退 interval，避免下游收到未定义档位
           frameMode: isCaptureFrameMode(p.frameMode) ? p.frameMode : 'interval',
           frameIntervalSec: clampFrameIntervalSec(p.frameIntervalSec ?? current.frameIntervalSec),
+          // 旧持久化档无 frameDutyCycle 字段时回填默认 50（行为与现状一致）
+          frameDutyCycle: clampFrameDutyCycle(p.frameDutyCycle ?? current.frameDutyCycle),
         };
       },
     },

@@ -154,7 +154,7 @@ td:first-child { color: var(--text-bright); font-weight: 500; }
 <div class="hero">
   <h1>CX-O 功能特性文档</h1>
   <p>从语音对话到 AI 作曲，从虚拟形象到记忆系统——这里是 CX-O 所有功能的完整说明</p>
-  <div class="badge">v1.1 &nbsp;|&nbsp; 2026-08</div>
+  <div class="badge">v1.2 &nbsp;|&nbsp; 2026-09</div>
 </div>
 
 <nav class="nav">
@@ -165,6 +165,7 @@ td:first-child { color: var(--text-bright); font-weight: 500; }
     <a href="#agents">多角色管理</a>
     <a href="#live">直播推流</a>
     <a href="#voice-ws">语音工作站</a>
+    <a href="#model-ws">模型工作站</a>
     <a href="#music">AI 作曲</a>
     <a href="#pet">桌面宠物</a>
     <a href="#tools">工具与插件</a>
@@ -259,6 +260,18 @@ td:first-child { color: var(--text-bright); font-weight: 500; }
         <li>语音建档：出声一句就能注册，同一会话里立即生效</li>
         <li>识别不卡嘴：声音刚算出来时先标记「识别中」，随即更新成说话人名字，全程不拖慢对话</li>
         <li>多人场景一条条认：会议、直播间里说话的人各自有名字，不会张冠李戴</li>
+      </ul>
+    </div>
+
+    <div class="card">
+      <span class="tag tag-pink">认人升级</span>
+      <h3>记住这个人（人脸识别）</h3>
+      <p>声音认人之外，现在连脸也认得了。摄像头看到新面孔时，说一句「记住这个人」，她就给这个人建档；下次再出现，她知道眼前站的是谁。</p>
+      <ul class="feature-list">
+        <li>一句话注册：对话里说「记住这个人」即可建档，也能在管理接口里注册 / 匹配 / 删除</li>
+        <li>认出的名字自动融进对话和画面筛选——她聊起天来知道你在场</li>
+        <li>隐私友好：特征数据只存在你本机，不存任何原图，名单里也看不到原始特征</li>
+        <li>本地识别需要装 insightface 与 onnxruntime 两个依赖，没装的话只会温柔提示，不影响别的功能</li>
       </ul>
     </div>
   </div>
@@ -606,6 +619,59 @@ td:first-child { color: var(--text-bright); font-weight: 500; }
   </div>
 </section>
 
+<!-- 模型工作站 -->
+<section class="section" id="model-ws">
+  <h2 class="section-title"><span class="icon">🏗️</span> 模型工作站</h2>
+  <p class="section-desc">独立的音色训练站（默认端口 8300）：训练重启不再影响作曲和聊天服务。整个目录自包含，拷到另一台机器也能跑。</p>
+
+  <div class="card-grid">
+    <div class="card">
+      <span class="tag tag-purple">SVC 训练</span>
+      <h3>So-VITS-SVC 训练全流程</h3>
+      <p>数据集管理、预处理、训练控制台、模型试听一应俱全，用你喜欢的声音素材训练专属音色模型，训练时页面由工作站自己托管，随开随用。</p>
+      <ul class="feature-list">
+        <li>数据集管理：导入 wav/mp3/flac/ogg/zip</li>
+        <li>训练参数与实时进度</li>
+        <li>训练产物进模型库，供翻唱和作曲调用</li>
+      </ul>
+    </div>
+
+    <div class="card">
+      <span class="tag tag-pink">微调训练</span>
+      <h3>MeloTTS 微调</h3>
+      <p>除了 So-VITS-SVC，还能给 MeloTTS 做微调训练，四列清单格式的语料直接喂进去就行。两类训练互斥——同时只跑一种，避免抢资源打架。</p>
+      <ul class="feature-list">
+        <li>官方两步流程：数据集整理 → 微调训练</li>
+        <li>语料按四列清单格式组织</li>
+        <li>与 So-VITS-SVC 训练互斥，资源不冲突</li>
+        <li>首次训练前需在引擎目录装依赖并配置底模</li>
+      </ul>
+    </div>
+
+    <div class="card">
+      <span class="tag tag-cyan">语料生成</span>
+      <h3>批量语料生成（三引擎）</h3>
+      <p>一条命令批量生成训练语料，三种引擎任你挑：想要谁的声音，三种办法都能造出来。</p>
+      <ul class="feature-list">
+        <li>voxcpm：本地 VoxCPM 引擎直接生成</li>
+        <li>cosyvoice3_zero：零样本克隆，给一小段参考音频就能批量产出同款音色</li>
+        <li>qwen3_voicedesign：用文字描述想要的音色，让 AI 照着描述发音</li>
+        <li>后两种引擎需要对应的 vLLM 服务在线（可跨机器配置）</li>
+      </ul>
+    </div>
+
+    <div class="card">
+      <span class="tag tag-green">独立部署</span>
+      <h3>自包含，拎包就走</h3>
+      <p>三引擎（So-VITS-SVC / VoxCPM / MeloTTS）全部收在工作站自己的 engines/ 目录里，不依赖外面的项目文件。想把训练站搬到另一台机器？拷目录、看部署指引就行。</p>
+      <ul class="feature-list">
+        <li>引擎完整性一键自检（setup_engines.py）</li>
+        <li>跨机器部署见 CXO-ModelStation/DEPLOY.md</li>
+      </ul>
+    </div>
+  </div>
+</section>
+
 <!-- AI 作曲 -->
 <section class="section" id="music">
   <h2 class="section-title"><span class="icon">🎵</span> AI 作曲与歌声合成</h2>
@@ -760,6 +826,7 @@ td:first-child { color: var(--text-bright); font-weight: 500; }
         <li>两种模式：看图模式省资源，录像模式会记住你经历的过程</li>
         <li>记住过程——你玩了两小时黑神话、debug 卡住又解决，她都记在心里，改天聊起还能回忆</li>
         <li>看图模式会自动调节节奏：画面动得勤就看得勤、静止就放慢，省流量不打扰</li>
+        <li>小 VLM 帧筛选（可选，默认关）：每帧先让小模型过目分诊——有聊头的才送主模型看图聊天，一般的只存一句话摘要进记忆，没价值的直接丢弃；小模型一时失手也会自动回退直传，不打断画面</li>
         <li>设置页一键开关，录像模式单独开关，关闭后立即停发画面</li>
       </ul>
     </div>
@@ -1067,7 +1134,7 @@ td:first-child { color: var(--text-bright); font-weight: 500; }
 </div>
 
 <div class="footer">
-  CX-O 功能特性文档 &nbsp;|&nbsp; 2026-08 &nbsp;|&nbsp; 配套 <a href="./deployment.html" style="color:var(--accent-light)">部署文档</a> 和 <a href="../README.md" style="color:var(--accent-light)">README</a>
+  CX-O 功能特性文档 &nbsp;|&nbsp; 2026-09 &nbsp;|&nbsp; 配套 <a href="./deployment.html" style="color:var(--accent-light)">部署文档</a> 和 <a href="../README.md" style="color:var(--accent-light)">README</a>
 </div>
 
 </body>

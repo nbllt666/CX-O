@@ -38,6 +38,8 @@ import { useAudioStore } from '@/store/audioStore';
 import {
   MAX_FRAME_INTERVAL_SEC,
   MIN_FRAME_INTERVAL_SEC,
+  MAX_FRAME_DUTY_CYCLE,
+  MIN_FRAME_DUTY_CYCLE,
   useCaptureStore,
 } from '@/store/captureStore';
 import type { CaptureFrameMode } from '@/store/captureStore';
@@ -939,6 +941,7 @@ function CaptureSection() {
   const frameFilterEnabled = useCaptureStore((s) => s.frameFilterEnabled);
   const frameMode = useCaptureStore((s) => s.frameMode);
   const frameIntervalSec = useCaptureStore((s) => s.frameIntervalSec);
+  const frameDutyCycle = useCaptureStore((s) => s.frameDutyCycle);
   const setScreenActive = useCaptureStore((s) => s.setScreenActive);
   const setCameraActive = useCaptureStore((s) => s.setCameraActive);
   const setVisionEnabled = useCaptureStore((s) => s.setVisionEnabled);
@@ -946,6 +949,7 @@ function CaptureSection() {
   const setFrameFilterEnabled = useCaptureStore((s) => s.setFrameFilterEnabled);
   const setFrameMode = useCaptureStore((s) => s.setFrameMode);
   const setFrameIntervalSec = useCaptureStore((s) => s.setFrameIntervalSec);
+  const setFrameDutyCycle = useCaptureStore((s) => s.setFrameDutyCycle);
 
   const modeOptions: Array<{ value: CaptureFrameMode; label: string }> = [
     { value: 'interval', label: t('settings.capture.modeInterval') },
@@ -1060,6 +1064,18 @@ function CaptureSection() {
           step={1}
           format={(v) => `${v}s`}
           onChange={setFrameIntervalSec}
+        />
+      ) : null}
+      {/* 自适应占空比：仅 adaptive 档显示，调节自适应曲线的积极程度（复用抽帧间隔滑条同型展示） */}
+      {frameMode === 'adaptive' ? (
+        <SliderField
+          label={t('settings.capture.dutyCycle')}
+          value={frameDutyCycle}
+          min={MIN_FRAME_DUTY_CYCLE}
+          max={MAX_FRAME_DUTY_CYCLE}
+          step={1}
+          format={(v) => `${v}%`}
+          onChange={setFrameDutyCycle}
         />
       ) : null}
     </Section>

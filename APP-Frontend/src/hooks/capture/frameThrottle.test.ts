@@ -131,3 +131,104 @@ describe('computeAdaptiveIntervalSec', () => {
     expect(computeAdaptiveIntervalSec({ baseIntervalSec: 5, magnitude: 1, minSec: 2, maxSec: 10 })).toBe(2);
   });
 });
+
+describe('computeAdaptiveIntervalSec（占空比 dutyCycle）', () => {
+  /** 旧实现参考（固定 0.5 锚点）：内联对照基准，防实现漂移（spec 回归承诺的逐点对照） */
+  function legacyAdaptiveInterval(opts: {
+    baseIntervalSec: number;
+    magnitude: number;
+    minSec?: number;
+    maxSec?: number;
+  }): number {
+    const minSec = opts.minSec ?? 1;
+    const maxSec = opts.maxSec ?? 60;
+    const floor = Math.min(minSec, maxSec);
+    const ceil = Math.max(minSec, maxSec);
+    const m = Math.min(1, Math.max(0, Number.isFinite(opts.magnitude) ? opts.magnitude : 0));
+    const base = Number.isFinite(opts.baseIntervalSec)
+      ? Math.min(ceil, Math.max(floor, opts.baseIntervalSec))
+      : ceil;
+    if (m <= 0.5) {
+      return ceil - (ceil - base) * (m / 0.5);
+    }
+    return base - (base - floor) * ((m - 0.5) / 0.5);
+  }
+
+  it('回归：不传 dutyCycle 与传 50 的输出均与旧公式逐点一致', () => {
+    const cases: Array<{
+      baseIntervalSec: number;
+      magnitude: number;
+      minSec?: number;
+      maxSec?: number;
+    }> = [
+      { baseIntervalSec: 5, magnitude: 0 },
+      { baseIntervalSec: 5, magnitude: 0.25 },
+      { baseIntervalSec: 8, magnitude: 0.5 },
+      { baseIntervalSec: 5, magnitude: 0.75 },
+      { baseIntervalSec: 5, magnitude: 1 },
+      { baseIntervalSec: 10, magnitude: 0.3, minSec: 2, maxSec: 10 },
+      { baseIntervalSec: 10, magnitude: 0.5, minSec: 2, maxSec: 10 },
+      { baseIntervalSec: 10, magnitude: 0.6, minSec: 2, maxSec: 10 },
+      { baseIntervalSec: 3, magnitude: 0.2, minSec: 20, maxSec: 4 }, // min/max 乱序
+      { baseIntervalSec: 5, magnitude: -1 }, // magnitude 越界钳制
+      { baseIntervalSec: 5, magnitude: 2 },
+      { baseIntervalSec: Number.NaN, magnitude: 0.7 }, // 非法 base 保守处理
+    ];
+    for (const c of cases) {
+      expect(computeAdaptiveIntervalSec(c)).toBe(legacyAdaptiveInterval(c));
+      expect(computeAdaptiveIntervalSec({ ...c, dutyCycle: 50 })).toBe(legacyAdaptiveInterval(c));
+    }
+  });
+
+  it('方向：duty 越大越积极——duty=80 输出 < duty=20 输出，且 duty=20 时低变化度间隔 > base', () => {
+    const active = computeAdaptiveIntervalSec({
+      baseIntervalSec: 10,
+      magnitude: 0.3,
+      maxSec: 60,
+      dutyCycle: 80,
+    });
+    const quiet = computeAdaptiveIntervalSec({
+      baseIntervalSec: 10,
+      magnitude: 0.3,
+      maxSec: 60,
+      dutyCycle: 20,
+    });
+    expect(active).toBeLessThan(quiet);
+    expect(quiet).toBeGreaterThan(10);
+  });
+
+  it('单调：固定 duty=70，magnitude 0→1（步进 0.1）输出单调不增', () => {
+    const vals = Array.from({ length: 11 }, (_, i) => i / 10).map((m) =>
+      computeAdaptiveIntervalSec({ baseIntervalSec: 10, magnitude: m, dutyCycle: 70 }),
+    );
+    for (let i = 1; i < vals.length; i++) {
+      expect(vals[i]).toBeLessThanOrEqual(vals[i - 1]);
+    }
+  });
+
+  it('端点：m=0 → maxSec、m=1 → minSec、m=t（duty=70 → t=0.3）→ base', () => {
+    expect(computeAdaptiveIntervalSec({ baseIntervalSec: 10, magnitude: 0, dutyCycle: 70, maxSec: 60 })).toBe(60);
+    expect(computeAdaptiveIntervalSec({ baseIntervalSec: 10, magnitude: 1, dutyCycle: 70, minSec: 2 })).toBe(2);
+    // t=1-70/100 存在浮点表示误差，锚点收敛用 closeTo 断言
+    expect(
+      computeAdaptiveIntervalSec({ baseIntervalSec: 10, magnitude: 0.3, dutyCycle: 70, maxSec: 60 }),
+    ).toBeCloseTo(10, 9);
+  });
+
+  it('钳制：duty=5 与 duty=95 分别等价于 duty=10 与 duty=90', () => {
+    const opts = { baseIntervalSec: 10, magnitude: 0.4, maxSec: 60 } as const;
+    expect(computeAdaptiveIntervalSec({ ...opts, dutyCycle: 5 })).toBe(
+      computeAdaptiveIntervalSec({ ...opts, dutyCycle: 10 }),
+    );
+    expect(computeAdaptiveIntervalSec({ ...opts, dutyCycle: 95 })).toBe(
+      computeAdaptiveIntervalSec({ ...opts, dutyCycle: 90 }),
+    );
+  });
+
+  it('兜底：非有限数 duty（NaN/Infinity）按缺省 50 处理，输出与不传 dutyCycle 一致', () => {
+    const opts = { baseIntervalSec: 10, magnitude: 0.6, maxSec: 60 } as const;
+    const baseline = computeAdaptiveIntervalSec(opts);
+    expect(computeAdaptiveIntervalSec({ ...opts, dutyCycle: Number.NaN })).toBe(baseline);
+    expect(computeAdaptiveIntervalSec({ ...opts, dutyCycle: Number.POSITIVE_INFINITY })).toBe(baseline);
+  });
+});

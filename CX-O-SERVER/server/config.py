@@ -489,6 +489,9 @@ class MemoryConfig(BaseModel):
     archive_enabled: bool = True
     dedup_threshold: float = 0.85
     archive_compression_enabled: bool = True
+    # 人格保护闸门阈值：高情感印记/高频再激活记忆禁止被记忆管理 agent 遗忘
+    persona_guard_emotion_threshold: float = 0.6
+    persona_guard_reactivation_threshold: int = 3
 
 
 class DatabaseConfig(BaseModel):

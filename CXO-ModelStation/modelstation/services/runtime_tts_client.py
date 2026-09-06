@@ -48,7 +48,7 @@ logger = logging.getLogger(__name__)
 # 流式 wav 输出时跳过的 WAV 头长度（与 provider WAV_HEADER_SIZE 一致）
 WAV_HEADER_SIZE = 44
 # voicedesign 运行时的 vLLM 私有 task_type（provider 默认值，不泄漏到数据面协议之外）
-TASK_TYPE_VOICEDESIGN = "VoiceDesign"
+VOICEDesign_TASK_TYPE = "VoiceDesign"
 # 尾部静音裁剪参数（与 provider 常量一致）
 SILENCE_RATIO_THRESHOLD = 0.00316  # 相对峰值阈值，-50 dBFS ≈ 10^(-50/20)
 TRIM_MIN_RETAIN_S = 0.05           # 至少保留 50ms 语音尾音，保护真实弱语音尾音

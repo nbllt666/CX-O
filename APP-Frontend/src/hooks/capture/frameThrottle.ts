@@ -4,6 +4,9 @@
  * 节奏模型（checklist「视觉采集与开关」：发送节奏可控，避免持续占用带宽）：
  * - manual   仅手动点发（sendNow），不做间隔判定；
  * - interval 定时抽帧，距上次成功发送满 intervalSec 秒才放行下一帧；
+ * - adaptive 自适应抽帧：按画面变化度动态调整间隔，曲线锚点由占空比
+ *   dutyCycle（百分比 10-90，缺省 50）调节——越大越积极跟随变化、越小越
+ *   安静省带宽；缺省 50 时与历史固定 0.5 锚点行为逐点一致；
  * - 画面静止去重：与上次成功发送的帧 dataURL 完全一致则跳过
  *   （屏幕静止时重复上传同一张图没有信息量，纯耗带宽）。
  *
@@ -123,11 +126,21 @@ export interface AdaptiveIntervalOpts {
   minSec?: number;
   /** 上限秒（默认 60，≈MAX_FRAME_INTERVAL_SEC） */
   maxSec?: number;
+  /**
+   * 自适应占空比（百分比 10-90，缺省 50）：调节曲线"活跃段"锚点 t=1-duty/100。
+   * 越大 → t 越小 → 微小变化即加速采样（越积极跟随变化）；
+   * 越小 → t 越大 → 仅剧变才加速（越安静、越省带宽）。
+   * 回归承诺：缺省或传 50 时输出与旧固定 0.5 锚点实现逐点一致。
+   */
+  dutyCycle?: number;
 }
 
 /**
  * 由画面变化度计算自适应发送间隔（秒）。纯函数、无副作用。
- * 以 baseIntervalSec 为中心的分段线性映射：magnitude=0 → maxSec、0.5 → base、1 → minSec，
+ * 以 baseIntervalSec 为中心的分段线性映射：magnitude=0 → maxSec、t → base、1 → minSec，
+ * 其中活跃阈值锚点 t = clamp(1 - dutyCycle/100, 0.1, 0.9)：占空比越大 → t 越小 →
+ * 微小变化即加速采样（越积极）；越小 → t 越大 → 仅剧变才加速（越省带宽）。
+ * dutyCycle 缺省 50 时 t=0.5，与旧固定 0.5 锚点实现逐点一致（回归承诺）。
  * 全程在 [minSec,maxSec] 内单调递减（变化越激烈 → 发送越频繁）。
  * magnitude 钳制 [0,1]；min/max 乱序自动交换；非法输入按保守（最松）处理。
  */
@@ -141,10 +154,15 @@ export function computeAdaptiveIntervalSec(opts: AdaptiveIntervalOpts): number {
   const base = Number.isFinite(baseIntervalSec)
     ? Math.min(ceil, Math.max(floor, baseIntervalSec))
     : ceil;
-  if (m <= 0.5) {
-    // [0, 0.5]：maxSec → base 线性下降
-    return ceil - (ceil - base) * (m / 0.5);
+  // 占空比 → 活跃阈值锚点：非有限数（NaN/Infinity/未传）按缺省 50 兜底，钳制 [10,90] → t ∈ [0.1,0.9]
+  const dutyRaw = opts.dutyCycle;
+  const duty =
+    typeof dutyRaw === 'number' && Number.isFinite(dutyRaw) ? Math.min(90, Math.max(10, dutyRaw)) : 50;
+  const t = 1 - duty / 100;
+  if (m <= t) {
+    // [0, t]：maxSec → base 线性下降（duty 钳制后 t>0 恒成立，无除零风险）
+    return ceil - (ceil - base) * (m / t);
   }
-  // (0.5, 1]：base → minSec 线性下降
-  return base - (base - floor) * ((m - 0.5) / 0.5);
+  // (t, 1]：base → minSec 线性下降
+  return base - (base - floor) * ((m - t) / (1 - t));
 }

@@ -191,7 +191,7 @@ pre code { color: var(--accent-green); }
 <div class="hero">
   <h1>CX-O 部署文档</h1>
   <p>从环境搭建到服务启动——所有需要下载的模型、配套服务、硬件要求和配置指南</p>
-  <div class="badge">v1.1 &nbsp;|&nbsp; 2026-08</div>
+  <div class="badge">v1.2 &nbsp;|&nbsp; 2026-09</div>
 </div>
 
 <nav class="nav">
@@ -422,7 +422,7 @@ pre code { color: var(--accent-green); }
       <tr><th>端口</th><td>11434</td></tr>
       <tr><th>安装方式</th><td>从 <code>ollama.com</code> 下载安装包</td></tr>
       <tr><th>启动命令</th><td><code>ollama serve</code>（安装后默认作为服务运行）</td></tr>
-      <tr><th>配置位置</th><td><code>config/default.yaml</code> 第 30-31 行</td></tr>
+      <tr><th>配置位置</th><td><code>CX-O-SERVER/config.json</code>（<code>CXO_</code> 前缀环境变量可覆盖）</td></tr>
     </table>
   </div>
 
@@ -434,11 +434,11 @@ pre code { color: var(--accent-green); }
       <tr><th>默认端口</th><td>HTTP 8090 / gRPC 50061</td></tr>
       <tr><th>独立服务启动</th><td>Docker: <code>docker run -p 8090:8090 semitechnologies/weaviate</code></td></tr>
       <tr><th>嵌入式模式</th><td>配置 <code>vector_backend: weaviate_embedded</code>，无需独立服务，自动嵌入进程</td></tr>
-      <tr><th>配置位置</th><td><code>config/default.yaml</code> 第 100-107 行</td></tr>
+      <tr><th>配置位置</th><td><code>CX-O-SERVER/config.json</code> 的 <code>memory.vector_*</code> 字段</td></tr>
     </table>
     <div class="warning-box">
       <h4>注意</h4>
-      <p>虽然 <code>default.yaml</code> 中列出了 Chroma、Milvus Lite、Qdrant 等后端，但后端代码当前仅支持 <code>weaviate</code> 和 <code>weaviate_embedded</code> 两种。配置其他后端不会生效。</p>
+      <p>虽然配置文件中列出了 Chroma、Milvus Lite、Qdrant 等后端，但后端代码当前仅支持 <code>weaviate</code> 和 <code>weaviate_embedded</code> 两种。配置其他后端不会生效。</p>
     </div>
   </div>
 
@@ -481,8 +481,9 @@ pre code { color: var(--accent-green); }
       <tr><td>8093</td><td>Qwen3-TTS Base</td><td>TTS 降级兜底</td></tr>
       <tr><td>8094</td><td>CosyVoice3 TTS</td><td>主引擎：克隆与情感合成</td></tr>
       <tr><td>8101</td><td>Embedding</td><td>记忆向量嵌入推理</td></tr>
-      <tr><td>8200</td><td>CX-O VoiceWorkStation</td><td>语音工作站</td></tr>
-      <tr><td>8300</td><td>CXO-Tuner</td><td>进化实验室（自我进化，可选）</td></tr>
+      <tr><td>8200</td><td>CX-O VoiceWorkStation</td><td>语音工作站（作曲/翻唱 CXFC）</td></tr>
+      <tr><td>8300</td><td>CXO-ModelStation</td><td>模型工作站（So-VITS-SVC / MeloTTS 训练 + 语料生成，后端托管前端）</td></tr>
+      <tr><td>8310</td><td>CXO-Tuner</td><td>进化实验室（自我进化，可选，与 ModelStation 端口错开、可同启）</td></tr>
       <tr><td>11434</td><td>Ollama</td><td>本地 LLM 推理</td></tr>
       <tr><td>50061</td><td>Weaviate gRPC</td><td>向量数据库 gRPC 通道</td></tr>
       <tr><td>9996/9997</td><td>CXFC</td><td>插件发现 / 广播</td></tr>
@@ -497,7 +498,12 @@ pre code { color: var(--accent-green); }
   <p class="section-desc">服务有依赖关系，必须按正确顺序启动。下面是完整的启动流程。</p>
 
   <div class="card">
-    <h3>完整启动流程</h3>
+    <h3>一键启动（推荐）</h3>
+    <p>双击运行项目根目录的 <code>start-all.bat</code>，会自动按依赖顺序拉起四个服务并等待端口就绪：CX-O-SERVER（8000）→ VoiceWorkStation（8200）→ ModelStation（8300）→ APP-Frontend（3100），最后打开浏览器。配套 <code>stop-all.bat</code> / 按任意键可统一关闭全部服务。</p>
+  </div>
+
+  <div class="card">
+    <h3>手动启动流程</h3>
     <ol class="step-list">
       <li><strong>基础环境准备</strong><br>
         <pre><code># 创建 Python 虚拟环境
@@ -539,12 +545,16 @@ cd docker\llm
 docker compose up -d llm</code></pre>
       </li>
       <li><strong>启动 CX-O 应用服务</strong><br>
-        <pre><code># 语音工作站（如需声音克隆功能）
+        <pre><code># 后端服务（核心，必须启动）
+cd CX-O-SERVER
+.\start.bat
+
+# 语音工作站（如需作曲/翻唱功能）
 cd CX-O-VoiceWorkStation
 .\start.bat
 
-# 后端服务（核心，必须启动）
-cd CX-O-SERVER
+# 模型工作站（如需音色训练，可选）
+cd CXO-ModelStation
 .\start.bat
 
 # 前端服务（必须启动，浏览器模式）
@@ -601,8 +611,8 @@ cd APP-Frontend
   <p class="section-desc">CX-O 的配置分三层：配置文件、环境变量、前端设置。优先级从高到低。</p>
 
   <div class="card">
-    <h3>配置文件：<code>config/default.yaml</code></h3>
-    <p>主配置文件，包含所有核心配置项。修改后重启后端生效。</p>
+    <h3>配置文件：<code>CX-O-SERVER/config.json</code></h3>
+    <p>主配置文件（JSON 格式），包含所有核心配置项，支持 <code>CXO_</code> 前缀环境变量覆盖与缺省字段自动补全。修改后重启后端生效。</p>
     <table>
       <tr>
         <th>配置项</th>
@@ -700,14 +710,15 @@ cp .env.example .env</code></pre>
   </div>
 
   <div class="card">
-    <h3>前端环境变量：<code>APP-Frontend/.env</code></h3>
+    <h3>前端后端地址</h3>
+    <p>前端默认连接 <code>http://127.0.0.1:8000</code>（与主进程默认一致）。首次打开会显示连接引导页，确认后端地址即可；也可以在 <code>APP-Frontend/.env</code> 中用 <code>VITE_API_URL</code> 预先指定后端地址（该文件默认不存在，需要时自行创建）。</p>
     <table>
       <tr>
         <th>变量</th>
         <th>默认值</th>
         <th>说明</th>
       </tr>
-      <tr><td><code>VITE_API_URL</code></td><td>http://127.0.0.1:8000</td><td>后端 API 地址</td></tr>
+      <tr><td><code>VITE_API_URL</code></td><td>http://127.0.0.1:8000</td><td>后端 API 地址（可选覆盖）</td></tr>
     </table>
   </div>
 
@@ -758,7 +769,7 @@ cp .env.example .env</code></pre>
         <th>说明</th>
       </tr>
       <tr><td>启动方式</td><td><code>docker compose --profile tuner up</code>（默认 <code>docker compose up -d</code> 不含此服务）</td></tr>
-      <tr><td>端口</td><td><code>8300</code>（可用 <code>CXO_TUNER_PORT</code> 调整）</td></tr>
+      <tr><td>端口</td><td><code>8310</code>（可用 <code>CXO_TUNER_PORT</code> 调整；2026-09-05 起与模型工作站 8300 错开，两者可同时启动）</td></tr>
       <tr><td>硬件</td><td>支持 GPU 与 CPU——训练默认走 CPU，注入 GPU 编号（<code>CUDA_VISIBLE_DEVICES</code>）即 GPU 加速。推荐有独立空余 GPU 时启用</td></tr>
       <tr><td>挂载</td><td>数据 / 模型 / 角色卡目录卷挂载（对话数据、训练产物 LoRA adapter）</td></tr>
       <tr><td>可选性</td><td>仅当启用 <code>tuner</code> profile 时才启动；关闭即完全隔离，主系统不依赖其任何产物</td></tr>
@@ -786,8 +797,26 @@ cp .env.example .env</code></pre>
   </div>
 
   <div class="card">
+    <span class="tag tag-purple">可选 · 音色训练</span>
+    <h3>CXO-ModelStation — 模型工作站</h3>
+    <p>独立的音色训练站：So-VITS-SVC 训练全流程、MeloTTS 微调训练、批量语料生成都在这里完成，训练重启不再影响作曲和聊天服务。自包含部署单元（引擎全部位于 <code>CXO-ModelStation/engines/</code>），把整个目录拷到另一台同构机器也能跑。</p>
+    <table>
+      <tr>
+        <th>项目</th>
+        <th>说明</th>
+      </tr>
+      <tr><td>启动方式</td><td><code>cd CXO-ModelStation && .\start.bat</code>（已包含在 <code>start-all.bat</code> 一键启动内）</td></tr>
+      <tr><td>端口</td><td>后端 <code>8300</code>（训练时前端页面由后端托管，浏览器打开 8300 即可操作；前端 dev 模式 3300）</td></tr>
+      <tr><td>训练能力</td><td>So-VITS-SVC 训练 / MeloTTS 微调训练，两类训练互斥（同时只跑一种，防资源冲突）</td></tr>
+      <tr><td>语料生成</td><td>统一接口 <code>/api/datasets/batch-generate</code> 支持三种引擎：voxcpm、cosyvoice3_zero（零样本克隆）、qwen3_voicedesign（文字描述音色）；后两者需要对应的 vLLM 运行时在线（默认端口 8094 / 8091，可跨机配置）</td></tr>
+      <tr><td>首次训练须知</td><td>MeloTTS 训练前需在其引擎目录 <code>pip install -e .</code> 安装依赖并配置 base_checkpoint；引擎完整性可用 <code>python tools/setup_engines.py</code> 自检</td></tr>
+      <tr><td>独立部署</td><td>跨机器部署的完整步骤见 <code>CXO-ModelStation/DEPLOY.md</code></td></tr>
+    </table>
+  </div>
+
+  <div class="card">
     <span class="tag tag-pink">可选 · 无需额外部署</span>
-    <h3>梦境 / 手环 / 屏幕感知 / 电脑控制</h3>
+    <h3>梦境 / 手环 / 屏幕感知 / 人脸识别 / 电脑控制</h3>
     <p>这些新能力都随主服务一起使用，不需要额外安装或部署任何东西：</p>
     <table>
       <tr>
@@ -796,7 +825,8 @@ cp .env.example .env</code></pre>
       </tr>
       <tr><td>梦境引擎 + 智能入眠</td><td>夜深时把白天相处记忆联想成梦，醒来在聊天里讲给你听；你确认才算数。入睡前会先结合上下文确认、入睡第一步自动摘要归档、你说话/喊一声即唤醒。默认关闭，随主服务即可</td></tr>
       <tr><td>手环心率</td><td>连接小米 / 华为手环（开启蓝牙心率广播），用心率下降判断入睡，让梦境触发更准；扫不到设备自动退回时间窗口判定</td></tr>
-      <tr><td>屏幕感知</td><td>可选开启后，AI 能"看见"你的屏幕或摄像头画面，聊天时据此刻画你正在做的事；录像模式还会记住你刚经历的过程。看图模式自动调节节奏省资源，录像模式默认关闭</td></tr>
+      <tr><td>屏幕感知</td><td>可选开启后，AI 能"看见"你的屏幕或摄像头画面，聊天时据此刻画你正在做的事；录像模式还会记住你刚经历的过程。看图模式自动调节节奏省资源，录像模式默认关闭。设置页「视觉采集」里还可开启独立小 VLM 帧筛选（默认关）：每帧先由小模型分诊——高价值才送主模型看图聊天、一般价值只存一句话摘要进记忆、无价值直接丢弃，失败或超时自动回退为直传不打断画面</td></tr>
+      <tr><td>人脸识别</td><td>对话里说一句「记住这个人」即可给在场的人建档（注册 / 匹配 / 删除走 <code>/api/face</code>）。特征本地存储、不存原图、名单脱敏；识别结果自动注入对话与帧筛选，AI 知道眼前有谁。本地识别需安装 <code>insightface</code> 与 <code>onnxruntime</code> 依赖，缺失时只提示不影响其他功能</td></tr>
       <tr><td>电脑控制</td><td>让 AI 帮你操作电脑（看屏幕、按键、运行程序），在桌面宠物上授权一次即可</td></tr>
     </table>
   </div>
@@ -877,7 +907,7 @@ CXO_CLUSTER_ROLE=standby</code></pre>
     <ul style="margin-left:20px; color:var(--text-dim);">
       <li>启动 ASR 服务：Docker <code>docker compose up -d asr-sensevoice</code>（端口 8005）</li>
       <li>启动 TTS 服务：根据 <code>tts.engine</code> 配置启动对应服务</li>
-      <li>检查 <code>config/default.yaml</code> 中的 <code>asr.remote_url</code> 和 <code>tts.remote_url</code> 是否指向正确地址</li>
+      <li>检查 <code>CX-O-SERVER/config.json</code> 中的 <code>asr.remote_url</code> 和 <code>tts.remote_url</code> 是否指向正确地址</li>
     </ul>
   </div>
 
@@ -899,12 +929,12 @@ CXO_CLUSTER_ROLE=standby</code></pre>
 
   <div class="card">
     <h3>前端连接不上后端</h3>
-    <p>检查 <code>APP-Frontend/.env</code> 中的 <code>VITE_API_URL</code> 是否指向正确的后端地址。默认 <code>http://127.0.0.1:8000</code>。前端启动时会请求 <code>/health</code> 接口检查连通性，连不上会显示引导页。</p>
+    <p>前端启动时会请求 <code>/health</code> 接口检查连通性，连不上会显示引导页。首次打开在引导页确认后端地址即可；确认无误仍连不上时，检查后端是否启动（默认 <code>http://127.0.0.1:8000</code>），或检查 <code>CX-O-SERVER/config.json</code> 的 <code>system.port</code> 与前端地址是否一致。</p>
   </div>
 
   <div class="card">
     <h3>端口冲突</h3>
-    <p>如果某个服务端口被占用，可以在 <code>.env</code> 或 <code>config/default.yaml</code> 中调整对应端口，并同步更新其他服务的引用地址。主要服务端口见<a href="#ports" style="color:var(--accent-cyan)">端口分配表</a>。</p>
+    <p>如果某个服务端口被占用，可以在 <code>CX-O-SERVER/config.json</code>、<code>.env</code> 或各服务的启动脚本中调整对应端口，并同步更新其他服务的引用地址。主要服务端口见<a href="#ports" style="color:var(--accent-cyan)">端口分配表</a>。</p>
   </div>
 
   <div class="card">
@@ -921,7 +951,7 @@ CXO_CLUSTER_ROLE=standby</code></pre>
 </div>
 
 <div class="footer">
-  CX-O 部署文档 &nbsp;|&nbsp; 2026-08 &nbsp;|&nbsp; 配套 <a href="./features.html" style="color:var(--accent-cyan)">功能特性文档</a> 和 <a href="../README.md" style="color:var(--accent-cyan)">README</a>
+  CX-O 部署文档 &nbsp;|&nbsp; 2026-09 &nbsp;|&nbsp; 配套 <a href="./features.html" style="color:var(--accent-cyan)">功能特性文档</a> 和 <a href="../README.md" style="color:var(--accent-cyan)">README</a>
 </div>
 
 </body>

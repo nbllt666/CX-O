@@ -7,10 +7,15 @@
 - 采样位宽要求 16bit PCM（流水线内 fluidsynth / Mock 引擎产物均为 16bit）
 - 声道以输入为准统一：两路均单声道 → 单声道输出；否则立体声输出（单声道复制为双声道）
 - 长度以较长者为准，短者补静音；逐样本 clip 防削波
+
+多轨扩展（change-id: enhance-cover-pitch-analysis-duet Task 3）：
+- mix_tracks(tracks, output_path)：N 轨加权求和混音，重采样/补静音/clip/声道
+  语义与 mix_wav 完全一致；mix_wav 签名与行为零改动（song_pipeline 回归保证）
 """
 from __future__ import annotations
 
 import array
+import math
 import os
 import wave
 from pathlib import Path
@@ -156,6 +161,109 @@ def mix_wav(
     for i in range(out_len):
         frame = [
             _clip_pcm16(vocal[ch][i] * vocal_gain + acc[ch][i] * accompaniment_gain)
+            for ch in range(out_channels)
+        ]
+        mixed.extend(frame)
+
+    out = Path(output_path)
+    out.parent.mkdir(parents=True, exist_ok=True)
+    with wave.open(str(out), "wb") as wf:
+        wf.setnchannels(out_channels)
+        wf.setsampwidth(2)
+        wf.setframerate(sample_rate)
+        wf.writeframes(mixed.tobytes())
+    return out
+
+
+def mix_tracks(
+    tracks: list[tuple[str | os.PathLike, float]],
+    output_path: str | os.PathLike,
+    sample_rate: int = DEFAULT_SAMPLE_RATE,
+) -> Path:
+    """
+    N 轨加权混音（duet 三轨混音消费，change-id: enhance-cover-pitch-analysis-duet Task 3）。
+
+    策略与 mix_wav 完全一致：全部轨线性插值重采样至 sample_rate、16bit PCM；
+    声道以输入为准（全部单声道 → 单声道输出，任一立体声 → 立体声输出，
+    单声道轨复制为双声道）；长度以最长轨为准，短者补静音；
+    逐样本 `Σ sample_i * gain_i` 加权求和并 clip 防削波。
+
+    Args:
+        tracks: [(wav 路径, 增益), ...] 有序轨列表（求和顺序不影响结果）
+        output_path: 输出 WAV 路径（父目录自动创建）
+        sample_rate: 输出采样率（默认 44100）
+
+    Returns:
+        输出 WAV 的 Path
+
+    Raises:
+        ValueError: tracks 为空 / 轨条目格式非法 / 增益非法 / 输入文件缺失（可读原因）
+        MixerError: 输入非 WAV、位宽非 16bit 或声道数不支持时
+    """
+    if not tracks:
+        raise ValueError("mix_tracks: tracks 不能为空（至少需要一路输入）")
+
+    normalized: list[tuple[str, float]] = []
+    for index, entry in enumerate(tracks):
+        if not isinstance(entry, (tuple, list)) or len(entry) != 2:
+            raise ValueError(
+                f"mix_tracks: 第 {index} 轨格式非法（应为 (路径, 增益) 元组）: {entry!r}"
+            )
+        path, gain = entry
+        if (
+            not isinstance(gain, (int, float))
+            or isinstance(gain, bool)
+            or not math.isfinite(gain)
+            or gain < 0
+        ):
+            raise ValueError(
+                f"mix_tracks: 第 {index} 轨增益非法: {gain!r}（必须为 ≥0 的有限数值）"
+            )
+        if not os.path.isfile(path):
+            raise ValueError(f"mix_tracks: 输入 WAV 文件不存在: {path}")
+        normalized.append((path, float(gain)))
+
+    # 读取全部轨：[(逐声道样本列表, 采样率, 声道数, 增益)]
+    loaded: list[tuple[list[list[float]], int, int, float]] = []
+    for path, gain in normalized:
+        samples, rate, channels = _read_wav_pcm16(path)
+        loaded.append((_to_channel_lists(samples, channels), rate, channels, gain))
+
+    # 声道语义对齐 mix_wav：全部单声道 → 单声道；任一立体声 → 立体声
+    out_channels = 1 if all(channels == 1 for _, _, channels, _ in loaded) else 2
+
+    def _prepare(
+        ch_lists: list[list[float]], rate: int, channels: int
+    ) -> list[list[float]]:
+        per_channel = [
+            _resample_linear(ch, rate, sample_rate) for ch in ch_lists
+        ]
+        if out_channels == 2 and channels == 1:
+            per_channel = [per_channel[0], list(per_channel[0])]
+        return per_channel
+
+    prepared: list[tuple[list[list[float]], float]] = [
+        (_prepare(ch_lists, rate, channels), gain)
+        for ch_lists, rate, channels, gain in loaded
+    ]
+
+    # 长度取最长轨，短者逐声道补静音
+    out_len = max(
+        (len(ch) for per_channel, _ in prepared for ch in per_channel),
+        default=0,
+    )
+    for per_channel, _gain in prepared:
+        for ch_data in per_channel:
+            if len(ch_data) < out_len:
+                ch_data.extend([0.0] * (out_len - len(ch_data)))
+
+    # 逐样本加权和 + clip 防削波
+    mixed = array.array("h")
+    for i in range(out_len):
+        frame = [
+            _clip_pcm16(
+                sum(per_channel[ch][i] * gain for per_channel, gain in prepared)
+            )
             for ch in range(out_channels)
         ]
         mixed.extend(frame)

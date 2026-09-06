@@ -83,6 +83,12 @@ class FakeMemoryManager:
             results = [m for m in results if query in m.get("content", "")]
         return results[:limit]
 
+    async def get_memory_async(self, memory_id, include_deleted=False):
+        for m in self.memories:
+            if m.get("id") == memory_id:
+                return m
+        return None
+
     async def delete_memory_async(self, memory_id, soft_delete=True):
         self.deleted.append(memory_id)
         return True
@@ -336,3 +342,76 @@ class TestMergeHandler:
         assert r["status"] == "waiting_confirmation"
         r2 = await engine.process_message("是", session_id="s")
         assert r2["status"] == "error", r2["message"]
+
+
+class TestForgetSemantics:
+    """遗忘语义改造：删除/合并话术去破坏化、人格保护闸门与帮助文本。"""
+
+    @pytest.mark.asyncio
+    async def test_delete_confirmation_forget_semantics(self, engine, mgr):
+        """确认话术为遗忘语义：可恢复、含归档替代建议、不含"无法恢复"。"""
+        mgr.add(1, "普通记忆")
+        r = await engine.process_message("删除记忆 ID 1", session_id="s")
+        assert r["status"] == "waiting_confirmation"
+        assert "遗忘" in r["message"]
+        assert "可随时恢复" in r["message"]
+        assert "归档" in r["message"]
+        assert "无法恢复" not in r["message"]
+
+    @pytest.mark.asyncio
+    async def test_delete_success_forget_message(self, engine, mgr):
+        """成功话术："已遗忘（软删除），可随时恢复"。"""
+        mgr.add(1, "普通记忆")
+        await engine.process_message("删除记忆 ID 1", session_id="s")
+        r = await engine.process_message("是", session_id="s")
+        assert r["status"] == "success"
+        assert "已遗忘" in r["message"]
+        assert "可随时恢复" in r["message"]
+
+    @pytest.mark.asyncio
+    async def test_delete_guard_rejection_permanent(self, engine, mgr):
+        """永久记忆被人格保护闸门拒绝，返回保护原因且未执行删除。"""
+        mgr.add(1, "人格核心记忆", permanent=True)
+        await engine.process_message("删除记忆 ID 1", session_id="s")
+        r = await engine.process_message("是", session_id="s")
+        assert r["status"] == "error"
+        assert "人格核心" in r["message"]
+        assert mgr.deleted == []
+
+    @pytest.mark.asyncio
+    async def test_delete_guard_rejection_reason_passthrough(self, engine, mgr, monkeypatch):
+        """闸门拒绝原因透传到 message（monkeypatch 闸门验证接线）。"""
+        from server.core.memory import conversation as conv
+
+        mgr.add(1, "普通记忆")
+        monkeypatch.setattr(
+            conv,
+            "evaluate_persona_guard",
+            lambda m: {"allowed": False, "reason": "自定义保护原因"},
+        )
+        await engine.process_message("删除记忆 ID 1", session_id="s")
+        r = await engine.process_message("是", session_id="s")
+        assert r["status"] == "error"
+        assert r["message"] == "自定义保护原因"
+        assert mgr.deleted == []
+
+    @pytest.mark.asyncio
+    async def test_merge_confirmation_traceable(self, engine, mgr):
+        """合并确认话术：无"无法撤销"，含"保留原文/审计/可回溯"。"""
+        mgr.archiver = FakeArchiver()
+        r = await engine.process_message("合并记忆 1 和记忆 2", session_id="s")
+        assert r["status"] == "waiting_confirmation"
+        assert "无法撤销" not in r["message"]
+        assert "保留原文" in r["message"]
+        assert "审计" in r["message"]
+        assert "可回溯" in r["message"]
+
+    @pytest.mark.asyncio
+    async def test_help_contains_forget_and_persona_note(self, engine):
+        """帮助文本：第4条为遗忘记忆，注意事项含人格保护说明。"""
+        r = await engine.process_message("帮助", session_id="s")
+        assert r["status"] == "success"
+        assert "遗忘记忆" in r["message"]
+        assert '"遗忘记忆 ID 789"' in r["message"]
+        assert "人格保护" in r["message"]
+        assert "归档" in r["message"]

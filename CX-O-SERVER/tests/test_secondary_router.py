@@ -21,6 +21,7 @@ class FakeMemoryManager:
     def __init__(self):
         self.memories = {}
         self._next_id = 1
+        self.archiver = None
         self.calls = {"update": [], "delete": [], "write": []}
 
     def add(self, content="内容", importance_score=0.8, importance=3, **meta):
@@ -113,6 +114,20 @@ class FakeModelRouter:
             return self._summary
         if model_type == "memory":
             return self._memory
+        return None
+
+
+class FakeArchiver:
+    """模拟归档器，记录 archive_memory 调用并返回可控结果。"""
+
+    def __init__(self, success=True):
+        self.success = success
+        self.calls = []
+
+    async def archive_memory(self, memory_id, target_level=1, compress=True):
+        self.calls.append({"memory_id": memory_id, "target_level": target_level})
+        if self.success:
+            return {"memory_id": memory_id, "target_level": target_level}
         return None
 
 
@@ -266,15 +281,22 @@ class TestArchiveMemory:
 class TestCleanupMemories:
     @pytest.mark.asyncio
     async def test_filters_low_importance(self, router):
+        """低分记忆被归档到深度归档级别（不删除），高分记忆不动。"""
         router.memory_manager.add("高价值", importance_score=0.9)
         router.memory_manager.add("低价值", importance_score=0.01)
+        archiver = FakeArchiver()
+        router.memory_manager.archiver = archiver
         result = await router.execute_command(
             _instr("cleanup_memories", threshold=0.1)
         )
         assert result.status == "success"
-        # 仅低价值记忆被删除
-        deleted_ids = router.memory_manager.calls["delete"]
-        assert deleted_ids and deleted_ids[0][0] == [2]
+        # 仅低价值记忆被归档（id 已转为 int，target_level=4 深度归档）
+        assert [c["memory_id"] for c in archiver.calls] == [2]
+        assert archiver.calls[0]["target_level"] == 4
+        # 遗忘≠删除：不调用批量删除
+        assert router.memory_manager.calls["delete"] == []
+        assert result.output["archived_count"] == 1
+        assert result.output["failed_count"] == 0
 
 
 # ---------------------------------------------------------------- analyze_importance

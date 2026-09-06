@@ -355,10 +355,10 @@ nav.scrolled{background:rgba(11,11,20,.92);box-shadow:0 4px 30px rgba(0,0,0,.4)}
     </div>
     <div class="stats">
       <div class="stat"><div class="num">5</div><div class="lbl">子项目</div></div>
-      <div class="stat"><div class="num">18</div><div class="lbl">REST 路由</div></div>
+      <div class="stat"><div class="num">35</div><div class="lbl">路由模块</div></div>
       <div class="stat"><div class="num">56</div><div class="lbl">图谱工具</div></div>
       <div class="stat"><div class="num">15</div><div class="lbl">情感标记</div></div>
-      <div class="stat"><div class="num">13</div><div class="lbl">Orpheus 音色</div></div>
+      <div class="stat"><div class="num">64</div><div class="lbl">情感参考音频</div></div>
     </div>
   </div>
 </header>
@@ -477,7 +477,7 @@ nav.scrolled{background:rgba(11,11,20,.92);box-shadow:0 4px 30px rgba(0,0,0,.4)}
         <div style="text-align:center;font-size:.78rem;color:var(--muted);text-transform:uppercase;letter-spacing:.1em;margin-bottom:.6rem">Services · server/services/</div>
         <div class="arch-core">
           <div class="arch-box">ASR<div class="sub">SenseVoice</div></div>
-          <div class="arch-box">TTS<div class="sub">F5 / Orpheus</div></div>
+          <div class="arch-box">TTS<div class="sub">CosyVoice3 主引擎 + 降级链</div></div>
           <div class="arch-box">VAD<div class="sub">Energy/WebRTC/Silero</div></div>
           <div class="arch-box">Interrupt<div class="sub">双向全双工</div></div>
           <div class="arch-box">Firewall<div class="sub">三档审核</div></div>
@@ -489,7 +489,7 @@ nav.scrolled{background:rgba(11,11,20,.92);box-shadow:0 4px 30px rgba(0,0,0,.4)}
       <div class="arch-arrow">▼</div>
       <div class="arch-layer">
         <div class="arch-box" style="border-color:var(--accent-2);background:rgba(253,121,168,.06)">
-          External Services <span class="sub">Ollama · vLLM · Weaviate · CosyVoice · Orpheus TTS · MCP Servers</span>
+          External Services <span class="sub">Ollama · vLLM · Weaviate · CosyVoice3 / VoiceDesign / Qwen3-TTS · ASR 容器 · MCP Servers</span>
         </div>
       </div>
     </div>
@@ -505,8 +505,8 @@ nav.scrolled{background:rgba(11,11,20,.92);box-shadow:0 4px 30px rgba(0,0,0,.4)}
   <div class="wrap">
     <div class="section-head reveal">
       <span class="tag">Subprojects</span>
-      <h2>五大子项目</h2>
-      <p>从核心后端到桌面应用，从语音工作站到流式情感合成，各子项目各司其职、可独立部署。</p>
+      <h2>子项目全景</h2>
+      <p>从核心后端到桌面应用，从语音工作站到音色训练站，各子项目各司其职、可独立部署。</p>
     </div>
     <div class="sub-table reveal">
       <div class="sub-row" style="background:var(--bg-2);font-weight:700;color:var(--accent);font-size:.78rem;text-transform:uppercase;letter-spacing:.08em">
@@ -528,18 +528,24 @@ nav.scrolled{background:rgba(11,11,20,.92);box-shadow:0 4px 30px rgba(0,0,0,.4)}
         <div class="nm">CX-O-VoiceWorkStation<span class="port">:8200</span></div>
         <div class="stk">Python · FastAPI · CLI 子进程</div>
         <div class="opt">可选</div>
-        <div class="desc">语音工作站：VoxCPM / CosyVoice / IndexTTS 2 / F5-TTS / So-VITS-SVC 五步工作流</div>
+        <div class="desc">语音工作站：作曲 / 歌曲合成 / 翻唱推理（CXFC），音色资产管理</div>
       </div>
       <div class="sub-row">
-        <div class="nm">Orpheus TTS<span class="port">:5060</span></div>
-        <div class="stk">Python · FastAPI · vLLM · SNAC</div>
+        <div class="nm">CXO-ModelStation<span class="port">:8300</span></div>
+        <div class="stk">Python · FastAPI · engines/ 自包含三引擎</div>
         <div class="opt">可选</div>
-        <div class="desc">流式情感语音合成，OpenAI 兼容 API，13 种音色，首包延迟 &lt; 300ms，24kHz 输出</div>
+        <div class="desc">模型工作站：So-VITS-SVC / MeloTTS 训练 + 三引擎批量语料生成，训练时前端由后端托管</div>
       </div>
       <div class="sub-row">
-        <div class="nm">CX-O-Gateway<span class="port">:8100</span></div>
+        <div class="nm">CXO-Tuner<span class="port">:8310</span></div>
+        <div class="stk">Python · FastAPI · LoRA 微调</div>
+        <div class="opt">可选</div>
+        <div class="desc">进化实验室：自我进化独立可选服务，离线闲时学习用户偏好（与 ModelStation 端口错开，可同启）</div>
+      </div>
+      <div class="sub-row">
+        <div class="nm">CX-O-Gateway<span class="port">→8000</span></div>
         <div class="stk">Python · FastAPI</div>
-        <div class="opt">可选</div>
+        <div class="opt">已整合</div>
         <div class="desc">轻量级独立网关，反向代理 + 独立 WebSocket 端点（已整合进 SERVER，可独立部署）</div>
       </div>
     </div>
@@ -751,8 +757,8 @@ get_stats · export</div>
       <div class="card g2 reveal d2">
         <div class="ic">🔊</div>
         <h3>TTS 语音合成</h3>
-        <p><strong>三模式</strong>：embedded（F5-TTS）/ remote（HTTP）/ orpheus（vLLM + SNAC）。情感语音切换、音效插入、按句分割流式合成、Triton 推理加速。</p>
-        <span class="pill">F5-TTS · Orpheus · Triton</span>
+        <p><strong>CosyVoice3 主引擎</strong>（:8094）承接参考音频克隆与情感合成；无参考音频时走 VoiceDesign（:8091）音频设计；主引擎不可用自动降级 Qwen3-TTS Base（:8093）。支持情感语音切换、音效插入、按句分割流式合成。</p>
+        <span class="pill">CosyVoice3 · VoiceDesign · 自动降级</span>
       </div>
       <div class="card g3 reveal d3">
         <div class="ic">📡</div>
@@ -762,10 +768,10 @@ get_stats · export</div>
       </div>
       <div class="card g1 reveal d4">
         <div class="ic">🎵</div>
-        <h3>Orpheus TTS 流式情感合成</h3>
-        <p>基于 <strong>vLLM + SNAC 解码</strong>，OpenAI 兼容 API（<code>/v1/audio/speech</code>）。客户端 → FastAPI Bridge (:5060) → vLLM → SNAC 7 层码本解码 → 24kHz WAV。首包延迟 &lt; 300ms，RTF 约 0.08-0.15。</p>
-        <p style="margin-top:.6rem"><strong>13 种音色</strong>：tara/leah/leo/dan/mia/jess/zoe/zac/river/charlotte/james/matthew…<br><strong>情感标签</strong>：<code>&lt;laugh&gt;</code> <code>&lt;sigh&gt;</code> <code>&lt;giggle&gt;</code> <code>&lt;cough&gt;</code> <code>&lt;gasp&gt;</code> 等</p>
-        <span class="pill">vLLM · SNAC · 24kHz</span>
+        <h3>听声辨人（声纹识别）</h3>
+        <p>说话人声纹实时识别：对话里说一句「记住我的声音」，她就给这个声音建档；之后语音对话和圆桌会议里，谁在说话一目了然。</p>
+        <p style="margin-top:.6rem">声纹注册用容器实时聚类质心、<strong>异步执行</strong>不拖慢回复与合成；识别还没算完时先标「识别中」，算完立刻更新成名字。多人会议一条条认，不张冠李戴。</p>
+        <span class="pill">声纹聚类 · 异步注册 · 会议/直播可用</span>
       </div>
     </div>
 
@@ -785,7 +791,7 @@ get_stats · export</div>
             <li><strong>④ So-VITS-SVC 训练</strong>：可配置 epochs/batch_size/lr，异步训练，支持 F5-TTS 微调</li>
             <li><strong>⑤ So-VITS-SVC 推理 + IndexTTS 2</strong>：8 情感 × 5 强度 = 40 组合</li>
           </ul>
-          <p style="margin-top:.6rem"><strong>IndexTTS 按需启停</strong>：<code>IndexTTSManager</code> 单例，空闲超时（默认 300s）自动停止，节省 GPU 资源。</p>
+          <p style="margin-top:.6rem"><strong>IndexTTS 按需启停</strong>：<code>IndexTTSManager</code> 单例，空闲超时（默认 300s）自动停止，节省 GPU 资源。So-VITS-SVC 训练与推理引擎已迁至独立的模型工作站（<code>CXO-ModelStation :8300</code>），工作站聚焦作曲 / 翻唱与音色资产。</p>
         </div>
         <div class="side">
           <h4>多引擎支持</h4>
@@ -981,12 +987,12 @@ get_stats · export</div>
         <h4>AI 语音服务</h4>
         <div class="chips">
           <span class="chip hl">SenseVoice ASR</span>
-          <span class="chip hl">F5-TTS</span>
-          <span class="chip hl">Orpheus TTS</span>
-          <span class="chip">CosyVoice</span>
+          <span class="chip hl">CosyVoice3</span>
+          <span class="chip">VoiceDesign</span>
+          <span class="chip">Qwen3-TTS Base</span>
           <span class="chip">So-VITS-SVC</span>
           <span class="chip">VoxCPM</span>
-          <span class="chip">IndexTTS 2</span>
+          <span class="chip">MeloTTS</span>
         </div>
       </div>
       <div class="tech-card">
@@ -1057,17 +1063,20 @@ get_stats · export</div>
     <div class="section-head reveal">
       <span class="tag">Services & Ports</span>
       <h2>服务端口与 API</h2>
-      <p>18 个 REST 路由模块，WebSocket 双端点（/ws 通用、/ws/live 直播），完整覆盖对话、记忆、图谱、Agent、工具、ACP、CXFC。</p>
+      <p>35 个 REST 路由模块，WebSocket 双端点（/ws 通用、/ws/live 直播），完整覆盖对话、记忆、图谱、Agent、工具、ACP、CXFC、声纹、人脸、会议等。</p>
     </div>
     <table class="port-table reveal">
       <thead><tr><th>服务</th><th>端口</th><th>协议</th><th>说明</th></tr></thead>
       <tbody>
         <tr><td>CX-O-SERVER</td><td class="pnum">8000</td><td>WebSocket / HTTP</td><td>单体应用，集成所有功能</td></tr>
         <tr><td>APP-Frontend</td><td class="pnum">3100</td><td>HTTP</td><td>Web 前端 / Electron 桌面应用</td></tr>
-        <tr><td>CX-O-Gateway</td><td class="pnum">8100</td><td>HTTP</td><td>轻量网关（可选独立部署）</td></tr>
+        <tr><td>CX-O-Gateway</td><td class="pnum">8100</td><td>HTTP</td><td>轻量网关（已整合进 SERVER，可独立部署）</td></tr>
         <tr><td>VoiceWorkStation</td><td class="pnum">8200</td><td>HTTP</td><td>语音工作站（可选）</td></tr>
+        <tr><td>ModelStation</td><td class="pnum">8300</td><td>HTTP</td><td>模型工作站：音色训练 / 语料生成（可选）</td></tr>
+        <tr><td>CXO-Tuner</td><td class="pnum">8310</td><td>HTTP</td><td>进化实验室（可选）</td></tr>
         <tr><td>Weaviate</td><td class="pnum">8090</td><td>HTTP / gRPC</td><td>向量数据库（可选）</td></tr>
-        <tr><td>Orpheus TTS</td><td class="pnum">5060</td><td>HTTP</td><td>流式情感语音合成（可选）</td></tr>
+        <tr><td>CosyVoice3 TTS</td><td class="pnum">8094</td><td>HTTP</td><td>语音合成主引擎（VoiceDesign 8091 / Qwen3-TTS Base 8093）</td></tr>
+        <tr><td>ASR SenseVoice</td><td class="pnum">8005</td><td>HTTP / WS</td><td>语音识别容器（含声纹 REST）</td></tr>
         <tr><td>vLLM</td><td class="pnum">8080</td><td>HTTP</td><td>LLM 推理加速（可选）</td></tr>
       </tbody>
     </table>
@@ -1094,8 +1103,8 @@ ws://localhost:8000/api/ws/live
 { "type": "...", "data": {...} }</div>
       </div>
       <div class="card">
-        <h3 style="font-size:1rem;margin-bottom:.6rem">18 个路由模块</h3>
-        <p style="font-size:.82rem;color:var(--text-2)">chat · config · memory · memory_chat · context · tools · acp · service · agents · graph · archive · audio · avatars · backup · admin · stats · vector · websocket</p>
+        <h3 style="font-size:1rem;margin-bottom:.6rem">35 个路由模块</h3>
+        <p style="font-size:.8rem;color:var(--text-2)">chat · config · memory · memory_chat · context · tools · acp · cxfc · service · agents · graph · archive · audio · avatars · backup · admin · stats · vector · websocket · face · voiceprint · meeting · cluster · vision · autonomy · dream · distillation · decision · discovery · physio · ref_audio_assets · multimodal · anythingllm · tuner · _pagination</p>
       </div>
     </div>
   </div>

@@ -78,6 +78,12 @@ binding_rules:
 ### 5.1 模块边界变更
 
 - **训练相关模块已迁出**：`sovits_svc_trainer`、`dataset_builder`、`voxcpm_client`、`api/datasets.py`、`api/workflow.py` 已于 2026-09-05 迁出至 `c:\CX-O\CXO-ModelStation\`（后端包 `modelstation/`，端口 8300）。本服务不再提供训练/数据集/批量语料/workflow API，聚焦**作曲/翻唱CXFC**（作曲/歌曲合成/SVC 翻唱推理/CXFC 插件）。
+
+### 5.2 变更注记（2026-09-06，spec `enhance-cover-pitch-analysis-duet`）
+
+- **翻唱能力扩展**：新增音域分析自动升降 key（`services/vocal_analysis.py` + `voice_profile_store.py` + `api/cover.py` 的 /analyze、/model-profiles；目标画像跨服务只读 `CXO-ModelStation/data/training/sovits_svc`，MD5 缓存于 data/voice_profiles）与双人合唱分离流水线（`services/vocal_separator.py` + `duet_pipeline.py` + `api/duet.py`，六阶段 separate→split→analyze→svc_a/svc_b→mix；模型可空=保留原声；mixer 新增 mix_tracks 多轨向后兼容）。
+- **分离引擎**：`engines/{demucs,AudioSep}/`（第三方，Audio-AGI/AudioSep + facebookresearch/demucs，2026-09-06 克隆就位），子进程环境隔离（config `separation` 段分设 python_path）；权重未就位时相关端点 503 含 `tools/setup_separation.py` 指引；权重下载见 `DEPLOY-SEPARATION.md`。
+- **audio-files category 新增** `duet` → data/duet。
 - **本服务保留 API**：`/api/music/*` 全量、`/api/sovits-svc/infer`、`/api/sovits-svc/models`（只读）、`/api/audio-files/*`（songs / svc-results）、CXFC `/tools` `/skills` `/call`、`/health`。
 - **新增受控上传端点**：`POST /api/audio-uploads`（multipart 字段 `file`），落盘 `data/input/`（即 infer 白名单根），作为主前端翻唱面板的音频入口；不暴露于 audio-files category。
 - **`models_dir` 指向 ModelStation 只读**：`SoVitSSVCConfig` 已移除 `output_dir`/`training_data_dir`，新增 `models_dir`（默认解析至 `CXO-ModelStation/data/models/sovits_svc`，仅列表+推理输入，禁止写入）与 `infer_output_dir`（默认本服务 `data/svc-results/`）。

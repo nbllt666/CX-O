@@ -46,7 +46,7 @@ CX-O 将虚拟形象、实时语音对话、记忆管理、直播推流、声音
 | 记忆系统 | 三层记忆 + 向量检索 + 知识图谱 + 自动衰减 + 记忆蒸馏 |
 | 多 Agent 协作 | 多人格独立管理，ACP 协议互相通信，可开圆桌语音会议（各 Agent 可绑专属音色） |
 | 直播推流 | OBS 四源拆分（形象/弹幕/字幕/音频），弹幕实时互动 |
-| 声音克隆与训练 | VoxCPM 音色设计与情感参考 + So-VITS-SVC 训练推理 |
+| 声音克隆与训练 | VoxCPM 音色设计与情感参考 + So-VITS-SVC / MeloTTS 训练推理（独立模型工作站 CXO-ModelStation，三引擎语料生成） |
 | AI 作曲与歌声 | 歌谱编辑 + MusicXML 导入 + 声库选择 + 歌声合成 |
 | 桌面宠物 | 透明悬浮窗、鼠标穿透、右键菜单，支持多开（每 Agent 一窗，窗顶带角色标识） |
 | 自我进化 | 可选独立服务，对话反馈驱动自动微调，越用越懂你 |
@@ -86,7 +86,9 @@ CX-O 将虚拟形象、实时语音对话、记忆管理、直播推流、声音
 |------|------|------|------|
 | CX-O-SERVER | Python / FastAPI / uvicorn | 8000 | 统一后端：Gateway(WS) + REST + ASR + TTS 单体 |
 | APP-Frontend | React / TypeScript / Vite / Electron | 3100（浏览器）/ Electron | 统一前端：管理界面、聊天、直播、录音作曲、桌面宠物 |
-| CX-O-VoiceWorkStation | Python / FastAPI | 8200 | 数据集生成、SVC 训练/推理、AI 作曲 |
+| CX-O-VoiceWorkStation | Python / FastAPI | 8200 | 语音工作站：作曲/歌曲合成/翻唱推理（CXFC），音色资产管理 |
+| CXO-ModelStation | Python / FastAPI | 8300 | 模型工作站：So-VITS-SVC / MeloTTS 训练 + 三引擎批量语料生成（engines/ 自包含，后端托管前端；见 §15.5） |
+| CXO-Tuner | Python / FastAPI | 8310 | 自我进化可选服务（QLoRA + DPO，见 §19；与 ModelStation 端口错开、可同启） |
 | asr-sensevoice | Docker / FunASR+SenseVoice | 8005 | 语音识别服务 |
 | cosyvoice-tts | 独立 conda 服务 | 8094 | CosyVoice3 主引擎（克隆与情感合成） |
 | voicedesign-tts | vLLM-Omni | 8091 | 无参考音频的音频设计 |
@@ -139,7 +141,7 @@ CX-O 将虚拟形象、实时语音对话、记忆管理、直播推流、声音
 
 ### 3.2 双网关（REST + WebSocket）
 
-- **REST**（`server/api/app.py` + `routers/`）：`/api/v1/...` 路由，覆盖 agents、chat、memory、graph、tools、config、stats、backup、archive、anythingllm、distillation、multimodal、vector、service、acp、cxfc、admin、audio、avatars、live 等。
+- **REST**（`server/api/app.py` + `routers/`）：`/api/v1/...` 路由，共 35 个路由模块，覆盖 agents、chat、memory、graph、tools、config、stats、backup、archive、anythingllm、distillation、multimodal、vector、service、acp、cxfc、admin、audio、avatars、live、face（人脸注册/匹配/删除）、voiceprint（声纹档案）、meeting（圆桌会议）、cluster（哨兵）、vision（视觉片段）、autonomy（自主生命）、dream（梦境）、physio（生理信号）、tuner（进化实验室）等。
 - **Gateway / WebSocket**（`server/gateway/server.py`）：`/ws` 与 `/ws/live` 两条通道，接收 `action` 驱动的 JSON 消息，按 `ACTION_HANDLERS` 映射到对应 handler（chat / memory / tools / plugin / context / acp / mcp / config / metrics / system / audio / danmaku / events）。
 
 ### 3.3 WebSocket 消息协议（`server/protocol/`）
@@ -310,6 +312,15 @@ CX-O 将虚拟形象、实时语音对话、记忆管理、直播推流、声音
 - **数据来源**：**不重新提取音频**，直接取该会话 `get_recent_spk_embedding(client_id)`（实时聚类已算好的临时簇质心），特征与实时链路完全一致。
 - **执行**：无可用 embedding（文本聊天/会话刚开始）返回中文错误不注册；否则 `asyncio.create_task(_register_and_notify(...))` **后台异步注册**（引用挂会话存活 set 防 GC），工具立即返回 `{"status":"registering"}`，不阻塞 LLM 回复/TTS。注册复用 `voiceprint_service.register_embedding(name, embedding)`（校验 → 追加/更新同名档案 → 原子落盘 → `profiles/sync` 回容器，容器 `load_profiles` 全量替换注册池），完成后推送 `voice.voiceprint_result` 事件；注册后同一会话内该用户再说话直接以注册名匹配。
 - **档案管理 REST**（`/api/voiceprint/*`）：`voiceprint_service` 权威落盘至 `data/voiceprint/speaker_profiles.json`，容器只读消费（bind mount）。
+
+### 4.12 人脸识别（「记住这个人」）
+
+> 与 §4.11 声纹同构的"认人"能力，服务端 `server/api/routers/face.py`（REST `/api/face`：注册 / 匹配 / 删除）+ LLM 工具触发。
+
+- **触发方式**：对话里说「记住这个人」，LLM 调用人脸注册工具，从当前摄像头画面提取特征建档；识别结果自动注入对话上下文与视觉帧筛选（Agent 知道眼前有谁）。
+- **存储架构（对齐声纹）**：特征本地落盘、**不存任何原图**、对外名单脱敏（不暴露特征向量），随声纹走本地数据目录。
+- **降级策略**：本地识别依赖 `insightface` + `onnxruntime`；依赖缺失时仅给出提示，不影响其他功能（不做硬性启动校验）。
+- **联动**：识别出的在场人员信息作为「谁在场」上下文供独立小 VLM 帧筛选参考（见 §18.1）。
 
 ---
 
@@ -637,6 +648,11 @@ T(t) = 1 / (1 + (Δt/T₅₀)^k)      # T₅₀=30, k=2
 | `/settings` | 设置 |
 | `/memory-agent`、`/vector` | 记忆 Agent / 向量数据 |
 | `/dream` | 梦境日志（含生理信号区块，见 §21/§22） |
+| `/autonomy` | Agent 生活（自主生命动机/行为日志，见 §20） |
+| `/meeting` | 多 Agent 圆桌会议 |
+| `/tuner` | 进化实验室（连接 CXO-Tuner，见 §19） |
+| `/cluster` | 哨兵集群状态与备份（见 §23） |
+| `/neko`、`/cxfc`、`/distillation` | Neko 插件 / CXFC 插件管理 / 蒸馏会话 |
 | `/live-console`、`/live-overlay` | 直播控制台 / 直播分屏 |
 | `/avatar-source`、`/danmaku-source`、`/subtitle-source`、`/audio-source` | OBS 四类浏览器源 |
 | `/pet`、`/danmaku` | 桌面宠物 / 弹幕独立窗 |
@@ -677,7 +693,7 @@ T(t) = 1 / (1 + (Δt/T₅₀)^k)      # T₅₀=30, k=2
 
 ## 15. 语音工作站（CX-O-VoiceWorkStation）
 
-> Python / FastAPI，端口 8200，提供声音克隆与训练、AI 作曲能力。
+> Python / FastAPI，端口 8200，提供作曲/歌曲合成/翻唱推理（CXFC）与音色资产管理；音色训练引擎见 §15.5 模型工作站。
 
 ### 15.1 数据集生成
 
@@ -688,6 +704,7 @@ T(t) = 1 / (1 + (Δt/T₅₀)^k)      # T₅₀=30, k=2
 - `sovits_svc_trainer` / `sovits_svc_infer`：So-VITS-SVC 训练与推理。
 - `dataset_builder`：数据集构建。
 - 训练在子进程中运行，服务关闭时自动停止并释放 GPU。
+- **引擎位置**：So-VITS-SVC 训练与推理引擎实体已迁至模型工作站 `CXO-ModelStation/engines/`（见 §15.5），工作站聚焦编排调用与音色资产管理。
 
 ### 15.3 AI 作曲与歌声合成
 
@@ -698,6 +715,15 @@ T(t) = 1 / (1 + (Δt/T₅₀)^k)      # T₅₀=30, k=2
 ### 15.4 CXFC 集成
 
 - 启动时注册为 CXFC 插件并保持心跳，通过 `/tools`、`/skills`、`/call` 暴露能力给主服务。
+
+### 15.5 模型工作站（CXO-ModelStation，端口 8300）
+
+> 独立的音色训练站（Python / FastAPI，训练时前端页面由后端托管），训练重启不再影响作曲与聊天服务。自包含部署单元：三引擎全部位于 `CXO-ModelStation/engines/`，跨机器部署见 `CXO-ModelStation/DEPLOY.md`。
+
+- **训练能力**：So-VITS-SVC 训练全流程与 MeloTTS 微调训练（官方两步流程、四列清单 filelist）；两类训练互斥（模块级互斥锁，409 响应冲突请求），防止资源冲突。
+- **批量语料生成**：统一端点 `/api/datasets/batch-generate` 支持三引擎——`voxcpm`（本地引擎）、`cosyvoice3_zero`（零样本克隆，参考音频 base64 内联）、`qwen3_voicedesign`（文字描述音色）；后两者要求对应 vLLM 运行时在线（默认 8094 / 8091，可跨机配置）。
+- **数据集契约**：manifest v2 含文本对（v1 自动迁移）；MeloTTS 语料按四列清单格式组织。
+- **引擎自检**：`tools/setup_engines.py` 校验三引擎完整性（so-vits-svc-4.1-Stable / VoxCPM-main / MeloTTS），缺失项输出修复指引（含 `--clone-melotts` 克隆）。MeloTTS 首次训练前需在引擎目录 `pip install -e .` 并配置 base_checkpoint。
 
 ---
 
@@ -772,6 +798,7 @@ config.json 文件配置  →  deep_merge  →  环境变量（CXO_ 前缀）  �
 - **采集状态**：`captureStore` 维护 `screenActive` / `cameraActive`（会话内采集开关）与 `frameMode` / `frameIntervalSec`（节奏偏好，持久化）。
 - **总开关**：持久化 `visionEnabled`（默认 false）一键关闭画面上行；关闭时定时抽帧与手动点发均不发送（`useFrameSender` 注入闸门）。
 - **帧节流**：`frameThrottle` 控制发送频率，避免高频上行占用带宽与算力。
+- **独立小 VLM 帧筛选（可选，默认关）**：设置页「视觉采集」开启后，每帧先经独立小视觉模型**三态分诊**——高价值帧送主模型看图聊天；一般价值帧仅沉淀一句话摘要入记忆；无价值帧直接丢弃。分诊输入含近期对话片段与「谁在场」信息（含 §4.12 人脸识别结果）；小模型失败/超时自动回退为直传，不中断视觉流。
 - 依赖具备视觉能力的多模态 LLM 才能理解画面。
 - **视频叙事管线**：事件驱动回溯打包的片段经 `POST /api/vision/clip` 入独立异步队列（`server/core/vision/clip_queue.py`），由 `VideoUnderstanding` 消费、`NarrativeVisionMemory` 沉淀为 `source='vision'` 记忆。
 - **护栏（单进程边界）**：路由侧小时限流（`_RATE_WINDOW`）与同类事件冷却（`_COOLDOWN_STAMP`）为**进程内内存态**，与整条视觉链路（`vision_clip_queue` 内存队列、消费者）及整服务单进程架构一致。服务以单 worker 运行（`server.main:main` / `api_server.py` 均不传 `workers`）；**勿用 `uvicorn --workers N` 多进程启动**，否则限流放大 N 倍、冷却失效、片段分散各进程互不消费。
@@ -794,13 +821,13 @@ config.json 文件配置  →  deep_merge  →  环境变量（CXO_ 前缀）  �
 
 ## 19. 自我进化服务（CXO-Tuner）
 
-> 位于 `CXO-Tuner/`，可选独立服务，提供"自我进化"能力——LLM 从自然对话中自动回收反馈、自动评判、自动微调，让 AI 越用越懂用户偏好。默认端口 **8300**。
+> 位于 `CXO-Tuner/`，可选独立服务，提供"自我进化"能力——LLM 从自然对话中自动回收反馈、自动评判、自动微调，让 AI 越用越懂用户偏好。默认端口 **8310**。
 
 > 说明：本节为工程视角的能力范围说明。该服务**可选**，默认随 docker-compose 主配置不启用（`profiles: ["tuner"]`），不启动时对主系统零侵入。
 
 ### 19.1 独立服务定位
 
-- 独立 FastAPI 应用（`tuner/main.py` 应用工厂 + lifespan 初始化），端口 `8300`，与 CX-O-SERVER 主服务解耦，可按需启停。
+- 独立 FastAPI 应用（`tuner/main.py` 应用工厂 + lifespan 初始化），端口 `8310`（2026-09-05 起与模型工作站 8300 错开，可同启；容器内仍为 8300，由 `CXO_TUNER_PORT` 映射），与 CX-O-SERVER 主服务解耦，可按需启停。
 - 通过 `CXO-Tuner/start-cxo-tuner.ps1` 启动脚本单独拉起。
 - 配置：`tuner/config.py` 对齐 `public/schema/cxo_tuner_config.schema.json`，`load_config()` 从 `CXO_TUNER_CONFIG`（JSON 环境变量）读取并自动补齐缺失字段（auto_fill）。
 - 集成：进化产物作为 LoRA adapter 供主系统 vLLM **动态 LoRA** 加载（`vllm_url` / `vllm_lora_enabled` 契约打通）；前端"进化实验室"连接其 API 做数据集 / 训练任务 / 进度可视化。
@@ -1083,7 +1110,10 @@ CX-O/
 │       │   ├── admin/      # 管理面（auth/manifest/control_plane/batch/registry/cluster_bridge）
 │       │   └── cluster/    # 哨兵集群（identity/discovery/transport/heartbeat/replicator/failover/consensus/manager）
 │       ├── protocol/       # 消息协议（action）
-├── CX-O-VoiceWorkStation/  # 语音工作站（声音克隆/训练/作曲）
+├── CX-O-VoiceWorkStation/  # 语音工作站（作曲/歌曲合成/翻唱推理，音色资产）
+├── CXO-ModelStation/       # 模型工作站（So-VITS-SVC / MeloTTS 训练 + 三引擎语料生成）
+│   └── engines/            # so-vits-svc-4.1-Stable / VoxCPM-main / MeloTTS 三引擎（自包含）
+├── CXO-Tuner/              # 自我进化可选服务（QLoRA + DPO，:8310）
 ├── docker/                 # 推理服务 Dockerfile
 ├── docs/                   # 项目文档
 ├── models/                 # 本地模型

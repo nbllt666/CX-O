@@ -86,6 +86,7 @@ describe('SettingsPage 五区块', () => {
       visionEnabled: false,
       frameMode: 'interval',
       frameIntervalSec: 5,
+      frameDutyCycle: 50,
     });
   });
 
@@ -293,6 +294,8 @@ describe('SettingsPage 五区块', () => {
       'settings.capture.videoModeDesc',
       'settings.capture.frameFilter',
       'settings.capture.frameFilterDesc',
+      'settings.capture.dutyCycle',
+      'settings.capture.dutyCycleDesc',
       'pet.capture.faceLabelsHint',
     ];
     for (const lng of ['zh-CN', 'en-US']) {
@@ -322,6 +325,31 @@ describe('SettingsPage 五区块', () => {
     fireEvent.click(screen.getByRole('button', { name: '手动点发' }));
     expect(useCaptureStore.getState().frameMode).toBe('manual');
     expect(screen.queryByRole('slider', { name: '抽帧间隔（秒）' })).not.toBeInTheDocument();
+  });
+
+  it('自适应占空比滑条：仅 adaptive 档渲染、范围 10-90 步进 1、改动写入 store', () => {
+    render(<SettingsPage />);
+    // 默认 interval 档：占空比滑条不渲染（抽帧间隔滑条不受影响）
+    expect(screen.queryByRole('slider', { name: '自适应占空比' })).not.toBeInTheDocument();
+    expect(screen.getByRole('slider', { name: '抽帧间隔（秒）' })).toBeInTheDocument();
+
+    // 切 adaptive：占空比滑条出现，范围 10-90、步进 1
+    fireEvent.click(screen.getByRole('button', { name: '自适应' }));
+    expect(useCaptureStore.getState().frameMode).toBe('adaptive');
+    const duty = screen.getByRole('slider', { name: '自适应占空比' });
+    expect(duty).toBeInTheDocument();
+    expect(duty).toHaveAttribute('min', '10');
+    expect(duty).toHaveAttribute('max', '90');
+    expect(duty).toHaveAttribute('step', '1');
+
+    // 拖动至 80：改动即写入 store
+    fireEvent.change(duty, { target: { value: '80' } });
+    expect(useCaptureStore.getState().frameDutyCycle).toBe(80);
+
+    // 切回 interval：占空比滑条消失
+    fireEvent.click(screen.getByRole('button', { name: '定时抽帧' }));
+    expect(useCaptureStore.getState().frameMode).toBe('interval');
+    expect(screen.queryByRole('slider', { name: '自适应占空比' })).not.toBeInTheDocument();
   });
 
   it('后端地址保存：探测通过后写入 localStorage 并提示生效', async () => {

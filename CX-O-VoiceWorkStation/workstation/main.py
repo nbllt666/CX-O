@@ -7,6 +7,7 @@ CX-O-VoiceWorkStation 作曲/翻唱CXFC 服务
 - 受控上传：POST /api/audio-uploads（翻唱音频入口，落盘 infer 白名单根）
 - 音频文件服务：/api/audio-files/*（songs + svc-results）
 - CXFC 插件：/tools /skills /call（面向 agent 的作曲演唱工具面）
+- 翻唱增强（enhance-cover-pitch-analysis-duet）：/api/cover/*（音域分析 + 双人合唱）
 
 训练全链路（preprocess/train/stop/status）、数据集、批量语料与 workflow API
 已迁至 CXO-ModelStation（端口 8300）。
@@ -78,6 +79,8 @@ def create_app() -> FastAPI:
     from workstation.api.audio_uploads import router as audio_uploads_router
     from workstation.api.music import router as music_router
     from workstation.api.cxfc_plugin import router as cxfc_plugin_router
+    from workstation.api.cover import router as cover_router
+    from workstation.api.duet import router as duet_router
 
     app.include_router(sovits_svc_router, prefix="/api/sovits-svc", tags=["So-VITS-SVC 推理"])
     app.include_router(audio_files_router, prefix="/api/audio-files", tags=["音频文件服务"])
@@ -85,6 +88,10 @@ def create_app() -> FastAPI:
     app.include_router(music_router, prefix="/api/music", tags=["音乐作曲与演唱"])
     # CXFC 插件端点挂在根路径（/tools、/skills、/call），CX-O-SERVER 按 host:port 直连抓取
     app.include_router(cxfc_plugin_router, tags=["CXFC 插件"])
+    # 翻唱音域分析与双人合唱（enhance-cover-pitch-analysis-duet Task 1 骨架；
+    # 最终 URL：/api/cover/status、/api/cover/analyze（Task 2）、/api/cover/duet*（Task 3））
+    app.include_router(cover_router, prefix="/api/cover", tags=["翻唱音域分析"])
+    app.include_router(duet_router, prefix="/api/cover", tags=["双人合唱"])
 
     @app.get("/health")
     async def health_check():

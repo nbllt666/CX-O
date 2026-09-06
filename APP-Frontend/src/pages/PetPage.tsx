@@ -119,6 +119,8 @@ export default function PetPage() {
   const frameFilterEnabled = useCaptureStore((s) => s.frameFilterEnabled);
   const frameMode = useCaptureStore((s) => s.frameMode);
   const frameIntervalSec = useCaptureStore((s) => s.frameIntervalSec);
+  // 自适应占空比：adaptive 模式曲线积极程度旋钮（10-90，默认 50=历史行为），透传给 useFrameSender
+  const frameDutyCycle = useCaptureStore((s) => s.frameDutyCycle);
 
   // ── Task 9 状态存储绑定（obsStore：抠像绿幕 + 采集尺寸，全持久化） ──
   const greenScreen = useObsStore((s) => s.greenScreen);
@@ -589,6 +591,7 @@ export default function PetPage() {
     ],
     mode: frameMode,
     intervalSec: frameIntervalSec,
+    dutyCycle: frameDutyCycle, // 自适应占空比透传（interval/manual 模式不消费，零影响）
     sendFrame,
     canSend: () => visionEnabled && !isLoadingRef.current,
   });
