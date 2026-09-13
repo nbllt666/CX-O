@@ -40,8 +40,7 @@ import {
   setAutoStart,
   setRunAsAdmin,
 } from './startup';
-import { registerNekoIpc } from './neko/ipc';
-import { getNekoConfig, startNekoRuntime, stopNekoRuntime } from './neko/launcher';
+import { registerNekoIpc, getNekoAdapter } from './neko/ipc';
 import { registerIpcHandler } from './security';
 
 // ESM 主进程下自行构造 __dirname（产物为 ESM 格式，Node 不注入该全局）
@@ -869,16 +868,23 @@ app.whenReady().then(() => {
     console.error('[physio] 生理信号后台上送任务启动失败:', err);
   }
 
-  // Neko 插件运行时 + 工具→CXFC 桥：若配置了自动启动，异步拉起（不阻断主流程）
-  try {
-    if (getNekoConfig().autoStart) {
-      startNekoRuntime()
-        .then(({ port, bridge }) => console.log(`[neko] 插件服务器已自动启动，端口 ${port}，工具桥=${bridge}`))
-        .catch((err) => console.error('[neko] 自动启动失败:', err));
+  // Neko 独立适配器（CXO-NekoAdapter）：异步拉起控制面进程（轻量不阻断主流程）；
+  // 若 neko.autoStart=true 再经 POST /start 拉起插件服务器运行时
+  void (async () => {
+    try {
+      await getNekoAdapter().ensureAdapter();
+      if (getConfig('neko.autoStart') === 'true') {
+        const r = await getNekoAdapter().start();
+        if (r.ok) {
+          console.log(`[neko] 插件服务器已自动启动，端口 ${r.port ?? '未知'}`);
+        } else {
+          console.error(`[neko] 自动启动运行时失败: ${r.error ?? '未知错误'}`);
+        }
+      }
+    } catch (err) {
+      console.error('[neko] 适配器自动拉起失败:', err);
     }
-  } catch (err) {
-    console.error('[neko] 自动启动检查失败:', err);
-  }
+  })();
 
   // 电脑控制插件：随应用启动 HTTPS 插件服务（异步，失败不阻断主流程）
   startComputerControlPlugin()
@@ -936,8 +942,8 @@ app.on('before-quit', (event) => {
           stopCxfcRegistration(),
           // 停止电脑控制插件 HTTPS 服务，回收端口与连接
           stopComputerControlPlugin(),
-          // 停止 Neko 插件运行时 sidecar 与工具→CXFC 桥，回收子进程/接口
-          stopNekoRuntime(),
+          // 停止 Neko 独立适配器（先 POST /stop 停运行时，再 SIGTERM→SIGKILL 杀适配器进程，带超时兜底）
+          getNekoAdapter().stopAdapterProcess(),
           // 停止生理信号上送后台任务并断开 BLE（Task 5）
           stopPhysioBackground(),
         ]),

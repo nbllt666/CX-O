@@ -15,6 +15,7 @@ import type { ReactNode } from 'react';
 import { useTranslation } from 'react-i18next';
 import { SendHorizonal } from 'lucide-react';
 import { parseAvatarTags } from '../../avatar/tagParser';
+import { stripTtsInstruction } from '../../avatar/stripTtsInstruction';
 import { applyAvatarTags } from '../../avatar/applyTags';
 import { createLabelTimeline } from '../../avatar/labelTimeline';
 import type { LabelTimeline } from '../../avatar/labelTimeline';
@@ -192,7 +193,9 @@ export const PetChat = forwardRef<PetChatHandle, PetChatProps>(function PetChat(
         timelineRef.current = null;
       }
       const next = [...prev];
-      next[index] = { ...target, content: cleanText };
+      // 情感TTS指令剥离（展示分支）：cleanText 再剥 <tts_instruction> 块，
+      // 驱动路径（createLabelTimeline(fullContent)）保持原始全文口径不变
+      next[index] = { ...target, content: stripTtsInstruction(cleanText) };
       return next;
     });
   }, []);
@@ -299,7 +302,8 @@ export const PetChat = forwardRef<PetChatHandle, PetChatProps>(function PetChat(
                     {speakerLabel}
                   </span>
                 ) : null}
-                {msg.content}
+                {/* 助手气泡展示统一剥离 <tts_instruction>（流式增量未闭合时只显示开标签前文本） */}
+                {msg.role === 'assistant' ? stripTtsInstruction(msg.content) : msg.content}
               </div>
             </div>
           );

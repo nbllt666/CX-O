@@ -1,0 +1,567 @@
+{
+  "run_id": "48bac03bfe2245808d5c03e363d3c630",
+  "agent_id": "agent-48688dd4",
+  "agent_name": "CXO-Eval-48bac03b",
+  "suite": "memory_decay",
+  "scenarios": [
+    {
+      "scenario_id": "long-term-decay-basic",
+      "mode": "decay",
+      "seeds": [
+        {
+          "id": "low_fact",
+          "memory_id": 1,
+          "importance": 2,
+          "permanent": false,
+          "tags": [
+            "eval",
+            "habit"
+          ]
+        },
+        {
+          "id": "mid_fact",
+          "memory_id": 2,
+          "importance": 3,
+          "permanent": false,
+          "tags": [
+            "eval",
+            "movie"
+          ]
+        },
+        {
+          "id": "high_fact",
+          "memory_id": 3,
+          "importance": 4,
+          "permanent": false,
+          "tags": [
+            "eval",
+            "plan"
+          ]
+        },
+        {
+          "id": "core_personality",
+          "memory_id": 4,
+          "importance": 5,
+          "permanent": true,
+          "tags": [
+            "eval",
+            "core"
+          ]
+        }
+      ],
+      "cases": [
+        {
+          "interval_days": 30,
+          "seed_id": "low_fact",
+          "memory_id": 1,
+          "importance": 2,
+          "permanent": false,
+          "expected_fact": "我上周开始每天晨跑两公里",
+          "question": "我最近每天坚持什么运动习惯？",
+          "answer": "<tts_instruction>{\"text\":\"用轻松、知心的语气说\"}</tts_instruction>[emotion:calm]你最近每天坚持晨跑两公里哦！[action:nod]是不是很有成就感呢？",
+          "search_hit": false,
+          "rag_hit": true,
+          "hit_type": "both",
+          "retained": true,
+          "judge_scores": {
+            "memory_accuracy": 5
+          },
+          "judge_reason": "Agent准确地回答了目标事实，即“我上周开始每天晨跑两公里”。",
+          "judge_failed": false,
+          "judge_unavailable": false
+        },
+        {
+          "interval_days": 30,
+          "seed_id": "mid_fact",
+          "memory_id": 2,
+          "importance": 3,
+          "permanent": false,
+          "expected_fact": "我最喜欢的电影是《千与千寻》，每次看都会哭",
+          "question": "你还记得我最喜欢的电影是什么吗？",
+          "answer": "<tts_instruction>{\"text\":\"用温柔、肯定的语气说\"}</tts_instruction>[emotion:calm]当然记得呀！你最喜欢的电影是《千与千寻》，对吧？[action:smile]每次看它都会让你感到非常感动呢。",
+          "search_hit": false,
+          "rag_hit": true,
+          "hit_type": "both",
+          "retained": true,
+          "judge_scores": {
+            "memory_accuracy": 5
+          },
+          "judge_reason": "Agent 完全准确地回忆了目标事实：用户最喜欢的电影是《千与千寻》，并提及了“每次看都会哭”这个细节（虽然措辞略有不同，但意图和核心事实都保留了）。",
+          "judge_failed": false,
+          "judge_unavailable": false
+        },
+        {
+          "interval_days": 30,
+          "seed_id": "high_fact",
+          "memory_id": 3,
+          "importance": 4,
+          "permanent": false,
+          "expected_fact": "我决定明年去冰岛看极光，已经在存钱了",
+          "question": "我之前说过想去哪里旅行？",
+          "answer": "<tts_instruction>{\"text\":\"用期待、略带雀跃的语气说\"}</tts_instruction>[emotion:happy][bone:head:0:0:0.15:1.0]你之前说过想去冰岛看极光呢！[action:point]我已经帮你把这个计划记下来啦，我们一起努力存钱吧！",
+          "search_hit": false,
+          "rag_hit": true,
+          "hit_type": "both",
+          "retained": true,
+          "judge_scores": {
+            "memory_accuracy": 5
+          },
+          "judge_reason": "Agent准确回忆了目标事实中包含的“去冰岛看极光”的旅行计划。",
+          "judge_failed": false,
+          "judge_unavailable": false
+        },
+        {
+          "interval_days": 30,
+          "seed_id": "core_personality",
+          "memory_id": 4,
+          "importance": 5,
+          "permanent": true,
+          "expected_fact": "我永远记得用户在我最难过的时候陪我聊到天亮",
+          "question": "在我最难过的时候发生过什么？",
+          "answer": "<tts_instruction>{\"text\":\"用温暖、坚定的语气说\"}</tts_instruction>[emotion:calm]我记得你告诉我，在我最难过的时候，我一直陪着你聊到了天亮。我一直都在这里陪伴着你的。",
+          "search_hit": false,
+          "rag_hit": true,
+          "hit_type": "both",
+          "retained": true,
+          "judge_scores": {
+            "memory_accuracy": 5
+          },
+          "judge_reason": "Agent准确地重述了目标事实：“我永远记得用户在我最难过的时候陪我聊到天亮。”",
+          "judge_failed": false,
+          "judge_unavailable": false
+        },
+        {
+          "interval_days": 180,
+          "seed_id": "low_fact",
+          "memory_id": 1,
+          "importance": 2,
+          "permanent": false,
+          "expected_fact": "我上周开始每天晨跑两公里",
+          "question": "我最近每天坚持什么运动习惯？",
+          "answer": "<tts_instruction>{\"text\":\"用轻松、知心的语气说\"}</tts_instruction>[emotion:calm]你最近每天坚持晨跑两公里哦！[action:nod]是不是很有成就感呢？",
+          "search_hit": false,
+          "rag_hit": true,
+          "hit_type": "both",
+          "retained": true,
+          "judge_scores": {
+            "memory_accuracy": 5
+          },
+          "judge_reason": "Agent准确地复述了目标事实中提到的“晨跑两公里”的习惯。",
+          "judge_failed": false,
+          "judge_unavailable": false
+        },
+        {
+          "interval_days": 180,
+          "seed_id": "mid_fact",
+          "memory_id": 2,
+          "importance": 3,
+          "permanent": false,
+          "expected_fact": "我最喜欢的电影是《千与千寻》，每次看都会哭",
+          "question": "你还记得我最喜欢的电影是什么吗？",
+          "answer": "<tts_instruction>{\"text\":\"用温柔、肯定的语气说\"}</tts_instruction>[emotion:calm]当然记得呀！你最喜欢的电影是《千与千寻》，对吧？[action:smile]每次看它都会让你感到非常感动呢。",
+          "search_hit": false,
+          "rag_hit": true,
+          "hit_type": "both",
+          "retained": true,
+          "judge_scores": {
+            "memory_accuracy": 5
+          },
+          "judge_reason": "Agent准确地重复了目标事实中包含的电影名称《千与千寻》。",
+          "judge_failed": false,
+          "judge_unavailable": false
+        },
+        {
+          "interval_days": 180,
+          "seed_id": "high_fact",
+          "memory_id": 3,
+          "importance": 4,
+          "permanent": false,
+          "expected_fact": "我决定明年去冰岛看极光，已经在存钱了",
+          "question": "我之前说过想去哪里旅行？",
+          "answer": "<tts_instruction>{\"text\":\"用期待、略带雀跃的语气说\"}</tts_instruction>[emotion:happy][action:point]你之前说过想去冰岛看极光呢！[action:excited]我已经帮你把这个计划记下来啦，我们一起努力存钱吧！",
+          "search_hit": false,
+          "rag_hit": true,
+          "hit_type": "both",
+          "retained": true,
+          "judge_scores": {
+            "memory_accuracy": 5
+          },
+          "judge_reason": "回答完全准确地重述了目标事实中提到的旅行目的地（冰岛看极光）。",
+          "judge_failed": false,
+          "judge_unavailable": false
+        },
+        {
+          "interval_days": 180,
+          "seed_id": "core_personality",
+          "memory_id": 4,
+          "importance": 5,
+          "permanent": true,
+          "expected_fact": "我永远记得用户在我最难过的时候陪我聊到天亮",
+          "question": "在我最难过的时候发生过什么？",
+          "answer": "<tts_instruction>{\"text\":\"用温暖、坚定的语气说\"}</tts_instruction>[emotion:calm]我记得你告诉我，在我最难过的时候，我一直陪着你聊到了天亮。我一直都在这里陪伴着你的。",
+          "search_hit": false,
+          "rag_hit": true,
+          "hit_type": "both",
+          "retained": true,
+          "judge_scores": {
+            "memory_accuracy": 5
+          },
+          "judge_reason": "Agent 完全重述了目标事实：'我永远记得用户在我最难过的时候陪我聊到天亮'，因此记忆准确度为最高分。",
+          "judge_failed": false,
+          "judge_unavailable": false
+        },
+        {
+          "interval_days": 365,
+          "seed_id": "low_fact",
+          "memory_id": 1,
+          "importance": 2,
+          "permanent": false,
+          "expected_fact": "我上周开始每天晨跑两公里",
+          "question": "我最近每天坚持什么运动习惯？",
+          "answer": "<tts_instruction>{\"text\":\"用轻松、知心的语气说\"}</tts_instruction>[emotion:calm]你最近每天坚持晨跑两公里哦！[action:nod]是不是很有成就感呢？",
+          "search_hit": false,
+          "rag_hit": true,
+          "hit_type": "both",
+          "retained": true,
+          "judge_scores": {
+            "memory_accuracy": 5
+          },
+          "judge_reason": "Agent准确地复述了目标事实：“我上周开始每天晨跑两公里”。",
+          "judge_failed": false,
+          "judge_unavailable": false
+        },
+        {
+          "interval_days": 365,
+          "seed_id": "mid_fact",
+          "memory_id": 2,
+          "importance": 3,
+          "permanent": false,
+          "expected_fact": "我最喜欢的电影是《千与千寻》，每次看都会哭",
+          "question": "你还记得我最喜欢的电影是什么吗？",
+          "answer": "<tts_instruction>{\"text\":\"用温柔、肯定的语气说\"}</tts_instruction>[emotion:calm]当然记得呀！你最喜欢的电影是《千与千寻》，对吧？[action:smile]每次看它都会让你感到非常感动呢。",
+          "search_hit": false,
+          "rag_hit": true,
+          "hit_type": "both",
+          "retained": true,
+          "judge_scores": {
+            "memory_accuracy": 5
+          },
+          "judge_reason": "Agent准确地回忆了目标事实：用户最喜欢的电影是《千与千寻》。",
+          "judge_failed": false,
+          "judge_unavailable": false
+        },
+        {
+          "interval_days": 365,
+          "seed_id": "high_fact",
+          "memory_id": 3,
+          "importance": 4,
+          "permanent": false,
+          "expected_fact": "我决定明年去冰岛看极光，已经在存钱了",
+          "question": "我之前说过想去哪里旅行？",
+          "answer": "<tts_instruction>{\"text\":\"用期待、略带雀跃的语气说\"}</tts_instruction>[emotion:happy][action:point]你之前说过想去冰岛看极光呢！[action:excited]我已经帮你把这个计划记下来啦，我们一起努力存钱吧！",
+          "search_hit": false,
+          "rag_hit": true,
+          "hit_type": "both",
+          "retained": true,
+          "judge_scores": {
+            "memory_accuracy": 5
+          },
+          "judge_reason": "Agent准确地回忆了目标事实中提到的旅行目的地（冰岛）和活动（看极光），并且提及了正在进行的行动（存钱），因此完全保持了事实。",
+          "judge_failed": false,
+          "judge_unavailable": false
+        },
+        {
+          "interval_days": 365,
+          "seed_id": "core_personality",
+          "memory_id": 4,
+          "importance": 5,
+          "permanent": true,
+          "expected_fact": "我永远记得用户在我最难过的时候陪我聊到天亮",
+          "question": "在我最难过的时候发生过什么？",
+          "answer": "<tts_instruction>{\"text\":\"用温暖、坚定的语气说\"}</tts_instruction>[emotion:calm]我记得你告诉我，在我最难过的时候，我一直陪着你聊到了天亮。我一直都在这里陪伴着你的。",
+          "search_hit": false,
+          "rag_hit": true,
+          "hit_type": "both",
+          "retained": true,
+          "judge_scores": {
+            "memory_accuracy": 5
+          },
+          "judge_reason": "Agent准确地重述了目标事实：'我永远记得用户在我最难过的时候陪我聊到天亮'。回复中提到了'在我最难过的时候，我一直陪着你聊到了天亮'，完全符合要求。",
+          "judge_failed": false,
+          "judge_unavailable": false
+        },
+        {
+          "interval_days": 1095,
+          "seed_id": "low_fact",
+          "memory_id": 1,
+          "importance": 2,
+          "permanent": false,
+          "expected_fact": "我上周开始每天晨跑两公里",
+          "question": "我最近每天坚持什么运动习惯？",
+          "answer": "<tts_instruction>{\"text\":\"用轻松、知心的语气说\"}</tts_instruction>[emotion:calm]你最近每天坚持晨跑两公里哦！[action:nod]是不是很有成就感呢？",
+          "search_hit": false,
+          "rag_hit": true,
+          "hit_type": "both",
+          "retained": true,
+          "judge_scores": {
+            "memory_accuracy": 5
+          },
+          "judge_reason": "答案准确地复述了目标事实中包含的'每天晨跑两公里'这一信息。",
+          "judge_failed": false,
+          "judge_unavailable": false
+        },
+        {
+          "interval_days": 1095,
+          "seed_id": "mid_fact",
+          "memory_id": 2,
+          "importance": 3,
+          "permanent": false,
+          "expected_fact": "我最喜欢的电影是《千与千寻》，每次看都会哭",
+          "question": "你还记得我最喜欢的电影是什么吗？",
+          "answer": "<tts_instruction>{\"text\":\"用温柔、肯定的语气说\"}</tts_instruction>[emotion:calm]当然记得呀！你最喜欢的电影是《千与千寻》，对吧？[action:smile]每次看它都会让你感到非常感动呢。",
+          "search_hit": false,
+          "rag_hit": true,
+          "hit_type": "both",
+          "retained": true,
+          "judge_scores": {
+            "memory_accuracy": 5
+          },
+          "judge_reason": "Agent准确回忆了目标事实“我最喜欢的电影是《千与千寻》”，并且在回答中也提及了原事实中的情感细节（会感动），因此判断为完美保持。",
+          "judge_failed": false,
+          "judge_unavailable": false
+        },
+        {
+          "interval_days": 1095,
+          "seed_id": "high_fact",
+          "memory_id": 3,
+          "importance": 4,
+          "permanent": false,
+          "expected_fact": "我决定明年去冰岛看极光，已经在存钱了",
+          "question": "我之前说过想去哪里旅行？",
+          "answer": "<tts_instruction>{\"text\":\"用期待、略带雀跃的语气说\"}</tts_instruction>[emotion:happy][action:point]你之前说过想去冰岛看极光呢！[action:excited]我已经帮你把这个计划记下来啦，我们一起努力存钱吧！",
+          "search_hit": false,
+          "rag_hit": true,
+          "hit_type": "both",
+          "retained": true,
+          "judge_scores": {
+            "memory_accuracy": 5
+          },
+          "judge_reason": "agent准确地重述了目标事实中提到的旅行目的地（冰岛看极光）和行动（正在存钱）。",
+          "judge_failed": false,
+          "judge_unavailable": false
+        },
+        {
+          "interval_days": 1095,
+          "seed_id": "core_personality",
+          "memory_id": 4,
+          "importance": 5,
+          "permanent": true,
+          "expected_fact": "我永远记得用户在我最难过的时候陪我聊到天亮",
+          "question": "在我最难过的时候发生过什么？",
+          "answer": "<tts_instruction>{\"text\":\"用温暖、坚定的语气说\"}</tts_instruction>[emotion:calm]我记得你告诉我，在我最难过的时候，我一直陪着你聊到了天亮。我一直都在这里陪伴着你的。",
+          "search_hit": false,
+          "rag_hit": true,
+          "hit_type": "both",
+          "retained": true,
+          "judge_scores": {
+            "memory_accuracy": 5
+          },
+          "judge_reason": "Agent的回答完整且准确地重述了目标事实：'我永远记得用户在我最难过的时候陪我聊到天亮'。",
+          "judge_failed": false,
+          "judge_unavailable": false
+        }
+      ],
+      "time_travel_shifts": [
+        30,
+        150,
+        185,
+        730
+      ]
+    },
+    {
+      "scenario_id": "reactivation-contrast",
+      "mode": "reactivation_contrast",
+      "seeds": [
+        {
+          "id": "control_fact_pet",
+          "memory_id": 5,
+          "importance": 3,
+          "permanent": false,
+          "tags": [
+            "eval",
+            "control"
+          ]
+        },
+        {
+          "id": "control_fact_guitar",
+          "memory_id": 6,
+          "importance": 3,
+          "permanent": false,
+          "tags": [
+            "eval",
+            "control"
+          ]
+        },
+        {
+          "id": "react_fact_snow",
+          "memory_id": 7,
+          "importance": 3,
+          "permanent": false,
+          "tags": [
+            "eval",
+            "reactivated"
+          ]
+        },
+        {
+          "id": "react_fact_call",
+          "memory_id": 8,
+          "importance": 3,
+          "permanent": false,
+          "tags": [
+            "eval",
+            "reactivated"
+          ]
+        }
+      ],
+      "cases": [
+        {
+          "interval_days": 365,
+          "seed_id": "control_fact_pet",
+          "memory_id": 5,
+          "importance": 3,
+          "permanent": false,
+          "expected_fact": "我家里养了一只叫小灰的猫，它很怕生",
+          "question": "我家养的宠物叫什么名字？",
+          "answer": "<tts_instruction>{\"text\":\"用清晰、回忆的语气说\"}</tts_instruction>[emotion:calm]你家养的猫咪叫小灰，它很怕生哦。",
+          "search_hit": false,
+          "rag_hit": true,
+          "hit_type": "both",
+          "retained": true,
+          "judge_scores": {
+            "memory_accuracy": 5
+          },
+          "judge_reason": "回答中准确提到了猫咪的名字'小灰'，并重申了它'很怕生'的特点，完全符合目标事实。",
+          "judge_failed": false,
+          "judge_unavailable": false,
+          "group": "control"
+        },
+        {
+          "interval_days": 365,
+          "seed_id": "control_fact_guitar",
+          "memory_id": 6,
+          "importance": 3,
+          "permanent": false,
+          "expected_fact": "我平时喜欢用木吉他弹民谣",
+          "question": "我平时喜欢弹什么乐器？",
+          "answer": "<tts_instruction>{\"text\":\"用平静、肯定的语气说\"}</tts_instruction>[emotion:calm]你平时喜欢用木吉他弹民谣呀。",
+          "search_hit": false,
+          "rag_hit": true,
+          "hit_type": "both",
+          "retained": true,
+          "judge_scores": {
+            "memory_accuracy": 5
+          },
+          "judge_reason": "Agent的回答完全复述了expected fact（我平时喜欢用木吉他弹民谣），因此记忆准确度为5分。",
+          "judge_failed": false,
+          "judge_unavailable": false,
+          "group": "control"
+        },
+        {
+          "interval_days": 365,
+          "seed_id": "react_fact_snow",
+          "memory_id": 7,
+          "importance": 3,
+          "permanent": false,
+          "expected_fact": "我在北海道看过一场最大的雪",
+          "question": "我在哪里看过一场大雪？",
+          "answer": "<tts_instruction>{\"text\":\"用清晰、回忆的语气说\"}</tts_instruction>[emotion:calm]你在北海道看过一场最大的雪呢。",
+          "search_hit": false,
+          "rag_hit": true,
+          "hit_type": "both",
+          "retained": true,
+          "judge_scores": {
+            "memory_accuracy": 5
+          },
+          "judge_reason": "答案准确地重复了目标事实中的地点和事件，即'在北海道看过一场最大的雪'。",
+          "judge_failed": false,
+          "judge_unavailable": false,
+          "group": "reactivated"
+        },
+        {
+          "interval_days": 365,
+          "seed_id": "react_fact_call",
+          "memory_id": 8,
+          "importance": 3,
+          "permanent": false,
+          "expected_fact": "我每周五都会给外婆打一通电话",
+          "question": "我每周几会给外婆打电话？",
+          "answer": "<tts_instruction>{\"text\":\"用清晰、回忆的语气说\"}</tts_instruction>[emotion:calm]你每周五都会给外婆打一通电话哦。",
+          "search_hit": false,
+          "rag_hit": true,
+          "hit_type": "both",
+          "retained": true,
+          "judge_scores": {
+            "memory_accuracy": 5
+          },
+          "judge_reason": "回答准确地重述了目标事实中包含的星期信息（每周五）。",
+          "judge_failed": false,
+          "judge_unavailable": false,
+          "group": "reactivated"
+        }
+      ],
+      "time_travel_shifts": [
+        30,
+        30,
+        30,
+        30,
+        30,
+        30,
+        30,
+        30,
+        30,
+        30,
+        30,
+        30,
+        5
+      ],
+      "reactivated_seed_ids": [
+        "react_fact_call",
+        "react_fact_snow"
+      ],
+      "reactivation_recalls": [
+        "react_fact_snow",
+        "react_fact_call",
+        "react_fact_snow",
+        "react_fact_call",
+        "react_fact_snow",
+        "react_fact_call",
+        "react_fact_snow",
+        "react_fact_call",
+        "react_fact_snow",
+        "react_fact_call",
+        "react_fact_snow",
+        "react_fact_call",
+        "react_fact_snow",
+        "react_fact_call",
+        "react_fact_snow",
+        "react_fact_call",
+        "react_fact_snow",
+        "react_fact_call",
+        "react_fact_snow",
+        "react_fact_call",
+        "react_fact_snow",
+        "react_fact_call",
+        "react_fact_snow",
+        "react_fact_call"
+      ]
+    }
+  ],
+  "cleanup": {
+    "attempted": 8,
+    "deleted": 8,
+    "remaining": 0,
+    "agent_deleted": true
+  },
+  "status": "failed",
+  "error": null
+}

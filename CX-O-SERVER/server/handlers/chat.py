@@ -10,6 +10,7 @@ from server.chat_helpers import get_agent_config, get_llm_client_for_agent, get_
 from server.prompt_builder import build_messages
 from server.protocol.message import create_response, create_error, create_stream
 from server.protocol.actions import ChatActions
+from server.services.preset_expand import expand_action_presets
 
 if TYPE_CHECKING:
     from server.core.websocket.manager import WebSocketManager
@@ -264,6 +265,10 @@ def register_chat_handlers(manager: "WebSocketManager"):
                 response = await _process_tool_calls(response.tool_calls, messages, ctx.llm)
                 final_response = response.content
 
+            # 动作预设展开（Task 4.2）：下发/落库前将 [action:预设名] 展开为标签序列，
+            # 保证前端展示与历史存储一致
+            final_response = expand_action_presets(final_response, agent_id)
+
             _record_live_feedback(final_response, text, ctx.session_id)
 
             await ctx.context_mgr.add_message_async(session_id=ctx.session_id, role="assistant", content=final_response)
@@ -313,6 +318,9 @@ def register_chat_handlers(manager: "WebSocketManager"):
                 )
 
             if full_response:
+                # 动作预设展开（Task 4.2）：落库前展开 [action:预设名]，保证历史恢复
+                # 展示与前端标签驱动一致（流式增量已按原样下发，展开作用于最终完整文本）
+                full_response = expand_action_presets(full_response, agent_id)
                 _record_live_feedback(full_response, text, ctx.session_id)
                 await ctx.context_mgr.add_message_async(session_id=ctx.session_id, role="assistant", content=full_response)
 
@@ -356,6 +364,10 @@ def register_chat_handlers(manager: "WebSocketManager"):
             if hasattr(response, "tool_calls") and response.tool_calls:
                 response = await _process_tool_calls(response.tool_calls, messages, ctx.llm)
                 final_response = response.content
+
+            # 动作预设展开（Task 4.2）：下发/落库前将 [action:预设名] 展开为标签序列，
+            # 保证前端展示与历史存储一致
+            final_response = expand_action_presets(final_response, agent_id)
 
             _record_live_feedback(final_response, text, ctx.session_id)
 

@@ -124,12 +124,21 @@ class ChatWebSocketHandler:
 
             response = await llm.chat(messages=messages, stream=False)
 
+            # 动作预设展开（Task 4.2）：下发/落库前将 [action:预设名] 展开为标签序列，
+            # 保证前端展示与历史存储一致（失败静默回退原文本）
+            try:
+                from server.services.preset_expand import expand_action_presets
+                reply_content = expand_action_presets(response.content, agent_id)
+            except Exception as e:
+                logger.warning(f"动作预设展开失败（原样下发）: {e}")
+                reply_content = response.content
+
             # 伴生C3：上下文写入 run_io 包裹（口径同上）
             await run_io(
                 context_mgr.add_message,
                 session_id=session_id,
                 role="assistant",
-                content=response.content,
+                content=reply_content,
             )
 
             await self.ws_manager.send_to_client(
@@ -137,7 +146,7 @@ class ChatWebSocketHandler:
                 {
                     "type": "chat_response",
                     "session_id": session_id,
-                    "content": response.content,
+                    "content": reply_content,
                     "tokens_used": response.usage.get("total_tokens", 0) if response.usage else 0,
                     "timestamp": datetime.now().isoformat(),
                 },
@@ -242,7 +251,13 @@ class ChatWebSocketHandler:
                         client_id, {"type": "cancelled", "timestamp": datetime.now().isoformat()}
                     )
                     if full_response:
-                        # 伴生C3：同步 sqlite 写入 run_io 包裹（口径同上）
+                        # 动作预设展开（Task 4.2）：落库前展开 [action:预设名]
+                        try:
+                            from server.services.preset_expand import expand_action_presets
+                            full_response = expand_action_presets(full_response, agent_id)
+                        except Exception as e:
+                            logger.warning(f"动作预设展开失败（原样落库）: {e}")
+                        # 伴生C3（展开前落库）：同步 sqlite 写入 run_io 包裹（口径同上）
                         await run_io(
                             context_mgr.add_message,
                             session_id=session_id,
@@ -283,6 +298,13 @@ class ChatWebSocketHandler:
 
             # 保存完整响应（伴生C3：同步 sqlite 写入 run_io 包裹，避免阻塞事件循环）
             if full_response:
+                # 动作预设展开（Task 4.2）：落库前展开 [action:预设名]，保证历史恢复
+                # 展示与前端标签驱动一致（流式增量已按原样下发）
+                try:
+                    from server.services.preset_expand import expand_action_presets
+                    full_response = expand_action_presets(full_response, agent_id)
+                except Exception as e:
+                    logger.warning(f"动作预设展开失败（原样落库）: {e}")
                 await run_io(
                     context_mgr.add_message,
                     session_id=session_id,
@@ -308,6 +330,12 @@ class ChatWebSocketHandler:
             # full_response 非空意味着 context_mgr/session_id 必已就绪；先补写再发
             # error 帧（连接已断时发送会抛异常，补写仍需完成）。
             if full_response:
+                # 动作预设展开（Task 4.2）：半截回复补写前展开 [action:预设名]
+                try:
+                    from server.services.preset_expand import expand_action_presets
+                    full_response = expand_action_presets(full_response, agent_id)
+                except Exception as e:
+                    logger.warning(f"动作预设展开失败（原样落库）: {e}")
                 # 伴生C3：同步 sqlite 写入 run_io 包裹（口径同上）
                 await run_io(
                     context_mgr.add_message,

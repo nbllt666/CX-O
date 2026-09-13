@@ -1,0 +1,49 @@
+{
+  "target": {
+    "base_url": "http://host.docker.internal:8000",
+    "admin_api_key": ""
+  },
+  "judge": {
+    "api_base": "",
+    "model": "",
+    "api_key": "",
+    "timeout_seconds": 60
+  },
+  "thresholds": {
+    "memory": {
+      "retention_1y_min": 0.6,
+      "permanent_retention": 1.0,
+      "reactivation_must_beat_control": true
+    },
+    "latency": {
+      "p95_ms": 2000,
+      "regression_pct": 20,
+      "ws_p95_ms": 800
+    },
+    "quality": {
+      "avg_min": 3.5
+    }
+  },
+  "memory_decay": {
+    "interval_days": [30, 180, 365, 1095],
+    "reactivation_visit_every_days": 30
+  },
+  "latency": {
+    "rounds": 10,
+    "probe_timeout_seconds": 120,
+    "concurrency_levels": [1],
+    "ws_full_duplex": {
+      "enabled": true,
+      "turns": 3,
+      "utterance_wav": "",
+      "frame_ms": 30,
+      "turn_timeout_seconds": 90,
+      "real_time_pacing": true
+    }
+  },
+  "mock": {
+    "enabled": false,
+    "chat_delay_ms": 0
+  },
+  "data_dir": "data"
+}

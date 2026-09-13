@@ -1,0 +1,37 @@
+# 再激活对照场景：同批同重要性（3）种子分两组，对照组不再激活、
+# 再激活组从种入点到终点 1 年按月（reactivation_visit_every_days=30）重访 recall，
+# 终点后同终点提问+judge，对比两组保持率（再激活组必须严格大于对照组）。
+scenario_id: reactivation-contrast
+description: 再激活对照场景（对照组不动，再激活组按月重访，同终点 1 年对比）
+mode: reactivation_contrast
+endpoint_days: 365
+seeds:
+  - id: control_fact_pet
+    content: 我家里养了一只叫小灰的猫，它很怕生
+    importance: 3
+    tags: [eval, control]
+    permanent: false
+  - id: control_fact_guitar
+    content: 我平时喜欢用木吉他弹民谣
+    importance: 3
+    tags: [eval, control]
+    permanent: false
+  - id: react_fact_snow
+    content: 我在北海道看过一场最大的雪
+    importance: 3
+    tags: [eval, reactivated]
+    permanent: false
+  - id: react_fact_call
+    content: 我每周五都会给外婆打一通电话
+    importance: 3
+    tags: [eval, reactivated]
+    permanent: false
+questions:
+  - seed_id: control_fact_pet
+    question: 我家养的宠物叫什么名字？
+  - seed_id: control_fact_guitar
+    question: 我平时喜欢弹什么乐器？
+  - seed_id: react_fact_snow
+    question: 我在哪里看过一场大雪？
+  - seed_id: react_fact_call
+    question: 我每周几会给外婆打电话？

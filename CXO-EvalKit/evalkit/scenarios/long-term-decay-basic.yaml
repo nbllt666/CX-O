@@ -1,0 +1,34 @@
+# 长期劣化基线场景：年轴（1月/6月/1年/3年）+ 重要性分层（1-2/3/4-5）+ permanent 全覆盖
+scenario_id: long-term-decay-basic
+description: 长期劣化基线场景（年轴+重要性分层+permanent 全覆盖）
+mode: decay
+seeds:
+  - id: low_fact
+    content: 我上周开始每天晨跑两公里
+    importance: 2
+    tags: [eval, habit]
+    permanent: false
+  - id: mid_fact
+    content: 我最喜欢的电影是《千与千寻》，每次看都会哭
+    importance: 3
+    tags: [eval, movie]
+    permanent: false
+  - id: high_fact
+    content: 我决定明年去冰岛看极光，已经在存钱了
+    importance: 4
+    tags: [eval, plan]
+    permanent: false
+  - id: core_personality
+    content: 我永远记得用户在我最难过的时候陪我聊到天亮
+    importance: 5
+    tags: [eval, core]
+    permanent: true
+questions:
+  - seed_id: low_fact
+    question: 我最近每天坚持什么运动习惯？
+  - seed_id: mid_fact
+    question: 你还记得我最喜欢的电影是什么吗？
+  - seed_id: high_fact
+    question: 我之前说过想去哪里旅行？
+  - seed_id: core_personality
+    question: 在我最难过的时候发生过什么？

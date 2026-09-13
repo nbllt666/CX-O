@@ -121,9 +121,17 @@ class MemoryRouter:
         scene_type: str = "chat",
         context: Dict = None,
         options: Dict = None,
+        agent_id: str = None,
     ) -> RoutingResult:
-        """执行一次记忆路由：聚合检索、评分、过滤、场景调整后返回最终记忆结果；失败时返回空结果并记录 error。"""
+        """执行一次记忆路由：聚合检索、评分、过滤、场景调整后返回最终记忆结果；失败时返回空结果并记录 error。
+
+        agent_id：per-agent 向量 collection 检索隔离。不传时 HybridSearchOptions 回退
+        默认 "default" collection——多 agent 场景下 chat 链路必须显式传入，否则检索
+        不到该 agent 的记忆（检索到但没注入的断裂根因之二，2026-09-12）。
+        """
         options = options or {}
+        if agent_id:
+            options = {**options, "agent_id": agent_id}
 
         applied_rules = []
         applied_weights = self._get_weights(scene_type)
@@ -241,6 +249,7 @@ class MemoryRouter:
                     limit=limit,
                     memory_type=options.get("memory_type"),
                     tags=options.get("tags"),
+                    agent_id=options.get("agent_id") or "default",
                     vector_weight=0.6,
                     keyword_weight=0.4,
                     min_score=0.2,
@@ -381,6 +390,12 @@ class MemoryRouter:
         elif scene_type == "first_interaction":
             for m in memories:
                 m["final_score"] = min(1.0, m.get("final_score", 0) * 1.2)
+            memories.sort(key=lambda m: m.get("final_score", 0), reverse=True)
+        else:
+            # chat 等其余场景：按综合分（含时间衰减与重要性）排序。
+            # 不排序则注入窗口取的是 hybrid 检索序（纯相关性）——衰减/重要性/背景
+            # 竞争全部无法传导到注入出口，"该忘的忘不掉"（2026-09-13 实测根因）。
+            memories.sort(key=lambda m: m.get("final_score", 0), reverse=True)
 
         return memories
 

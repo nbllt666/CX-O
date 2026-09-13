@@ -49,7 +49,9 @@ REALTIME_VOICE_HISTORY_LIMIT = 4
 #   - 常量供 server/main.py 语音前缀预热复用，保证预热与生产请求完全同构，
 #     从而建立可命中的 prefix cache。
 # 实测（tokenize_check.py）：608 字符 system_prompt ≈ 341 tokens，约 1.78 字符/token；
-# 本 padding 约 76 字符 ≈ 42 tokens，追加后 341+42=383 >= 360（'你好'）与 343+42=385。
+# 本 padding 约 317 字符 ≈ 178 tokens，追加后 341+178=519 >= 360（'你好'）与 343+178=521。
+# （注：tts_instruction 口径已从「末尾追加」改为「回复最前面输出」，见下方文本；约束仍为
+# 仅追加不删除，满足 >=360 tokens 下限即可。）
 #
 # 【回应边界（忽略规则）】除 prefix-cache 补足外，此处同时承载"忽略传导"指令：
 # 实时语音主管线（主 LLM 对话）独立于 agent_interrupt 的 IGNORE 判定，只要 ASR
@@ -60,8 +62,9 @@ REALTIME_VOICE_PROMPT_PADDING = (
     "\n\n我们正在通过实时语音自然对话。我会认真倾听你的每一句话，"
     "用亲切友好的方式回应，并尽我所能提供清晰、有帮助的内容。"
     "你可以随时继续表达你的想法，我在这里。"
-    "如回复需带明显情绪/语速/音量变化，可在末尾加<tts_instruction>{\"text\":\"语气描述\","
-    "\"speed\":语速倍率,\"volume\":音量倍率}</tts_instruction>标签让语音更具表现力；"
+    "如回复需带明显情绪/语速/音量变化，需在回复最前面输出（先输出完整标签，再接回复正文）"
+    "<tts_instruction>{\"text\":\"语气描述\",\"speed\":语速倍率,\"volume\":音量倍率}</tts_instruction>"
+    "标签让语音更具表现力；"
     "平淡回复则不加。"
     "\n\n【回应边界】当你说的话只是表达情绪、自言自语或随意感慨（如\"唉，好累啊\"），"
     "而不是在向我提问或请求帮助时，我可以选择不回应或只做简短回应，不强行接话；"
@@ -221,6 +224,75 @@ def _inject_cxfc_skills(messages: List[dict], user_message: str) -> None:
         logger.warning(f"Skills injection failed: {e}")
 
 
+def _build_preset_injection(agent_id: Optional[str]) -> Optional[str]:
+    """构建「per-agent 预设清单 + 可用动作清单」注入段（spec Task 4.3）。
+
+    内容（均条件化：无数据不注入，不留空段落）：
+    1. 情感TTS预设清单：名字 + 描述 + 引用写法（回复最前面用
+       ``<tts_instruction>{"preset":"名字"}</tts_instruction>`` 触发）。
+    2. 动作预设清单：名字 + 描述 + 引用写法（正文中用 ``[action:名字]`` 触发）。
+    3. 动作清单：前端上报的真实可用动作名（avatar_manifest_registry），消除
+       「LLM 猜动作名」痛点；未上报（actions 为空）时不注入。
+
+    性能与安全：
+    - 不做 lru_cache（agent 动态，缓存会引入陈旧风险）；preset_service 读路径带
+      mtime 缓存（约 2 次 stat），manifest 为进程内存缓存，热路径开销可忽略。
+    - agent_id 缺失/非法、服务异常 → 返回 None 静默跳过，绝不阻断提示词组装。
+    """
+    if not agent_id or not isinstance(agent_id, str):
+        return None
+
+    sections: List[str] = []
+
+    # 1+2. 预设清单（读取失败静默跳过，不影响主流程）
+    try:
+        from server.services import preset_service  # 惰性导入避免环依赖
+
+        emotion_presets = preset_service.list_emotion_presets(agent_id)
+        action_presets = preset_service.list_action_presets(agent_id)
+    except Exception as e:  # noqa: BLE001 - 预设读取失败不注入
+        logger.warning(f"读取 Agent 预设清单失败（跳过注入）: agent={agent_id!r} -> {e}")
+        emotion_presets, action_presets = [], []
+
+    if emotion_presets:
+        lines = [
+            '【情感TTS预设（快捷指令）】需要特定语气/语速/音量时，在回复最前面输出 '
+            '<tts_instruction>{"preset":"预设名"}</tts_instruction> 引用预设：'
+        ]
+        for p in emotion_presets:
+            name = str(p.get("name", "")).strip()
+            desc = str(p.get("description", "") or "").strip()
+            lines.append(f'- {name}（引用写法 <tts_instruction>{{"preset":"{name}"}}</tts_instruction>）: {desc}')
+        sections.append("\n".join(lines))
+
+    if action_presets:
+        lines = ["【动作预设（快捷指令）】在回复正文中用 [action:预设名] 触发一组动作标签："]
+        for p in action_presets:
+            name = str(p.get("name", "")).strip()
+            desc = str(p.get("description", "") or "").strip()
+            lines.append(f"- {name}（引用写法 [action:{name}]）: {desc}")
+        sections.append("\n".join(lines))
+
+    # 3. 动作清单（前端上报的真实可用动作名；未上报/为空不注入）
+    try:
+        from server.services.avatar_manifest_registry import get_avatar_manifest_registry
+
+        manifest = get_avatar_manifest_registry().get(agent_id)
+        actions = [str(a).strip() for a in (manifest.get("actions") or []) if str(a).strip()]
+    except Exception as e:  # noqa: BLE001 - 清单读取失败不注入
+        logger.warning(f"读取头像动作清单失败（跳过注入）: agent={agent_id!r} -> {e}")
+        actions = []
+    if actions:
+        sections.append(
+            "当前形象可用动作名（直接在回复正文中使用，不要编造其他动作名）："
+            + " ".join(f"[action:{a}]" for a in actions)
+        )
+
+    if not sections:
+        return None
+    return "\n\n".join(sections)
+
+
 def build_messages(
     agent_config: dict,
     context_mgr,
@@ -232,6 +304,7 @@ def build_messages(
     history: Optional[List[dict]] = None,
     include_hidden_prompts: bool = True,
     acp_context: Optional[dict] = None,
+    agent_id: Optional[str] = None,
 ) -> List[dict]:
     """构建发送给 LLM 的消息列表。
 
@@ -250,11 +323,19 @@ def build_messages(
             无用户轮次。注入 ACP_REPLY_HINT_PROMPT + 历史 + incoming_message 上下文，
             不追加 user 消息、不注入主聊天隐藏提示词（与历史 ACP 行为一致）。
             字典需含 "from_agent_id"（消息发送方 ID）。
+        agent_id: 当前 Agent 标识（可选）。缺省时从 agent_config 的 "id"/"agent_id"
+            键推导（agents.json 条目自带 id）；用于注入 per-agent 预设清单与可用
+            动作清单段（Task 4.3）。无法确定时不注入。
 
     Returns:
         list[dict]: OpenAI 格式的消息列表。
     """
     messages: List[dict] = []
+
+    # 预设/动作清单注入用的 agent 标识：显式参数优先，其次 agent_config 内置 id
+    preset_agent_id = agent_id
+    if not preset_agent_id and isinstance(agent_config, dict):
+        preset_agent_id = agent_config.get("id") or agent_config.get("agent_id")
 
     system_prompt = agent_config.get("system_prompt", "")
     # 核心人设 System Prompt：实时与非实时模式均保留，确保 LLM 不丢失基础人设和能力。
@@ -301,6 +382,14 @@ def build_messages(
             if _msg.get("role") == "system":
                 _msg["content"] = _msg["content"] + REALTIME_VOICE_PROMPT_PADDING
                 break
+
+        # 预设清单 + 可用动作清单注入（Task 4.3）：作为独立 system 消息插在稳定前缀
+        # system(padded) 之后、记忆之前——预设/清单属低频变化段，位于动态记忆之前
+        # 可最大化 vLLM prefix cache 命中；无数据时 _build_preset_injection 返回
+        # None 不注入（不留空段落）。
+        _preset_section = _build_preset_injection(preset_agent_id)
+        if _preset_section:
+            messages.append({"role": "system", "content": _preset_section})
 
         # 记忆注入：追加在稳定前缀 system(padded) 之后、历史之前，作为独立 system 消息。
         # vLLM prefix cache 对 system 前缀 KV 仍 partial 命中；记忆属每次变化段，仅 prefill。
@@ -354,6 +443,13 @@ def build_messages(
             messages.append({"role": "system", "content": f"相关记忆:\n{memory_context}"})
 
         _inject_cxfc_skills(messages, user_message)
+
+    # ── per-agent 预设清单 + 可用动作清单注入（Task 4.3，非实时分支）──
+    # 位于历史之前；无数据时返回 None 不注入（不留空段落）。ACP 自动回复分支
+    # 已提前返回不经过此处（agent-to-agent 文本不驱动形象动作）。
+    _preset_section = _build_preset_injection(preset_agent_id)
+    if _preset_section:
+        messages.append({"role": "system", "content": _preset_section})
 
     history_limit = get_settings().config.limits.context.chat_context_limit
     chat_history = _resolve_history(context_mgr, session_id, history, history_limit)

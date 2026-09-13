@@ -257,11 +257,38 @@ def _neutral_fallback() -> EmotionInstruction:
 # 内嵌指令解析
 # ============================================================================
 
-def _parse_instruction_content(content: str) -> Optional[Tuple[str, float, float, float, float, float]]:
-    """解析 <tts_instruction> 块内容，返回 (text, intensity, confidence, neutral, speed, volume)。
+def _load_emotion_preset_safe(agent_id: Optional[str], name: str) -> Optional[dict]:
+    """按 agent_id+name 查询情感TTS预设；agent_id 缺失/非法/服务异常一律返回 None（安全回退）。
+
+    preset_service 读取带 mtime 缓存（2 次 stat），查询开销可忽略；
+    任何异常仅告警并回退普通解析，绝不让预设查询阻断语音主流程。
+    """
+    if not agent_id:
+        return None
+    try:
+        from server.services import preset_service  # 惰性导入避免环依赖
+
+        return preset_service.get_emotion_preset(agent_id, name)
+    except Exception as e:  # noqa: BLE001 - 预设查询失败回退普通解析
+        logger.warning(f"查询情感预设失败（回退普通解析）: agent={agent_id!r} name={name!r} -> {e}")
+        return None
+
+
+def _parse_instruction_content(
+    content: str, agent_id: Optional[str] = None
+) -> Optional[Tuple[str, float, float, float, float, float, Optional[str]]]:
+    """解析 <tts_instruction> 块内容，返回 (text, intensity, confidence, neutral, speed, volume, preset_name)。
 
     支持纯文本 / Markdown 围栏 JSON / 裸 JSON。非法返回 None（触发中性回退）。
     纯文本形态 speed/volume 保持默认 1.0。
+
+    preset 引用（per-agent 快捷指令，spec enhance-emotion-tts-and-action-presets Task 4.1）：
+    - ``{"preset":"名"}`` 且 agent_id 提供时查该 agent 的情感预设：命中 → 用预设的
+      text/speed/volume 构建指令（preset_name 返回引用名供 raw 审计）；
+    - 优先级：JSON 同时带 text 与 preset 时 **text 优先**——preset 仅在无 text 键时生效，
+      引用展开不覆盖显式指令内容；
+    - 未命中（预设不存在 / agent_id 缺失 / 预设 text 非法）→ 按无 text 的非法结构回退中性，
+      与现有非法 JSON 行为一致（不报错）。
     """
     content = content.strip()
     if not content:
@@ -275,6 +302,25 @@ def _parse_instruction_content(content: str) -> Optional[Tuple[str, float, float
     try:
         data = json.loads(json_candidate)
         if isinstance(data, dict):
+            # ── preset 引用解析（仅当 JSON 无 text 键时生效，text 优先）──
+            preset_name = data.get("preset")
+            if isinstance(preset_name, str) and preset_name.strip() and "text" not in data:
+                preset = _load_emotion_preset_safe(agent_id, preset_name)
+                preset_text = _validate_instruction_text(preset.get("text")) if preset else None
+                if preset_text is not None:
+                    # 命中：text/speed/volume 取自预设（speed/volume 再经 clamp 收敛双保险）
+                    return (
+                        preset_text,
+                        0.5,
+                        0.5,
+                        0.0,
+                        _clamp_speed(preset.get("speed"), default=1.0),
+                        _clamp_volume(preset.get("volume"), default=1.0),
+                        preset_name,
+                    )
+                # 未命中：按无 text 的非法结构回退中性（与现有非法 JSON 行为一致）
+                if json_candidate.strip().startswith(("{", "[")):
+                    return None
             text = _validate_instruction_text(data.get("text"))
             if text is None:
                 return None
@@ -283,7 +329,7 @@ def _parse_instruction_content(content: str) -> Optional[Tuple[str, float, float
             neutral = bool(data.get("neutral", False))
             speed = _clamp_speed(data.get("speed"), default=1.0)
             volume = _clamp_volume(data.get("volume"), default=1.0)
-            return (text, intensity, confidence, 1.0 if neutral else 0.0, speed, volume)
+            return (text, intensity, confidence, 1.0 if neutral else 0.0, speed, volume, None)
     except (json.JSONDecodeError, TypeError, ValueError):
         # JSON 形内容（以 { 或 [ 开头）解析失败 → 视为非法结构，回退中性，
         # 不得把残缺 JSON 当作纯文本指令。
@@ -294,15 +340,21 @@ def _parse_instruction_content(content: str) -> Optional[Tuple[str, float, float
     text = _validate_instruction_text(content)
     if text is None:
         return None
-    return (text, 0.5, 0.5, 0.0, 1.0, 1.0)
+    return (text, 0.5, 0.5, 0.0, 1.0, 1.0, None)
 
 
-def _extract_embedded_instruction(reply_text: str) -> Optional[Tuple[str, float, float, float, float, float]]:
-    """从回复文本中提取首个 <tts_instruction> 块并解析。"""
+def _extract_embedded_instruction(
+    reply_text: str, agent_id: Optional[str] = None
+) -> Optional[Tuple[str, float, float, float, float, float, Optional[str]]]:
+    """从回复文本中提取首个 <tts_instruction> 块并解析。
+
+    返回 7 元组，末位 preset_name 仅在指令经 per-agent 预设展开时非 None
+    （generate_instruction 据此在 raw 记录引用名），普通解析路径恒为 None。
+    """
     match = _TTS_INSTRUCTION_RE.search(reply_text)
     if not match:
         return None
-    return _parse_instruction_content(match.group(1))
+    return _parse_instruction_content(match.group(1), agent_id=agent_id)
 
 
 def strip_instruction(reply_text: str) -> str:
@@ -372,11 +424,15 @@ async def generate_instruction(
     reply_text: str,
     character_context: Optional[str] = None,
     conversation_context: Optional[str] = None,
+    *,
+    agent_id: Optional[str] = None,
 ) -> EmotionInstruction:
     """生成自然语言 tts_instruction（Task 4 主入口）。
 
     流程：
     1. 解析回复文本内嵌 ``<tts_instruction>`` 块（LLM 直接和消息一起生成的路径）。
+       agent_id 提供时，``{"preset":"名"}`` 引用按该 agent 的情感TTS预设展开
+       （per-agent 快捷指令，Task 4.1）；预设命中 → 用预设 text/speed/volume 构建。
     2. 无内嵌指令时，检测旧 ``[emotion:*]`` / Orpheus XML 标签 → 迁移转换。
     3. 仍未命中且注入了 LLM 生成器 → 调用生成（超时/异常回退中性）。
     4. 全部未命中 → 返回中性指令（neutral=true）。
@@ -385,21 +441,26 @@ async def generate_instruction(
         reply_text: LLM 原始回复文本（可能含内嵌指令标记）。
         character_context: 角色/人设上下文（可选，供 LLM 生成器兜底使用）。
         conversation_context: 对话上下文（可选，供 LLM 生成器兜底使用）。
+        agent_id: 当前 Agent 标识（可选，仅关键字参数）。缺省不查预设，行为与
+            历史版本完全一致（向后兼容：现有调用方不受影响）。
 
     Returns:
         EmotionInstruction；生成/解析失败时返回 neutral=true 中性指令（不抛错）。
+        预设展开命中时 source 沿用 "llm"（契约 source 枚举不含 preset，引用由
+        LLM 发起，raw 字段记录 ``{"preset":"名"}`` 供审计回溯）。
     """
     # 1. 内嵌指令（LLM 与消息一起生成的默认路径）
-    parsed = _extract_embedded_instruction(reply_text)
+    parsed = _extract_embedded_instruction(reply_text, agent_id=agent_id)
     if parsed is not None:
-        text, intensity, confidence, neutral_flag, speed, volume = parsed
+        text, intensity, confidence, neutral_flag, speed, volume, preset_name = parsed
         return _build_instruction(
             text,
             intensity=intensity,
             confidence=confidence,
             neutral=(neutral_flag == 1.0),
             source="llm",
-            raw=reply_text[:200],
+            # raw：预设展开记录引用名（审计可回溯），普通路径记录原始回复截断
+            raw=(f'{{"preset":"{preset_name}"}}' if preset_name else reply_text[:200]),
             speed=speed,
             volume=volume,
         )

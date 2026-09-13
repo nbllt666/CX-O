@@ -6,13 +6,12 @@
  * 而非 cleanText。cleanText 仅用于显示。
  *
  * 设计说明：
- * - 遍历 parseAvatarTags(rawText).segments，按各段 raw 长度累积字符偏移；
- *   text 段推进 content.length，tag 段记录「tag 起点在 rawText 中的偏移」后
- *   再推进 raw.length（含标签语法完整长度）。
- * - 由于 tagParser 对每个 tag 生成独立 tag 段（一个 tag 段仅含一个 tag），
- *   触发点即该段的起点，多 label 排列时累加正确。
+ * - 触发点偏移直接取 scanAvatarTagMatches 给出的「标签起点在 rawText 中的
+ *   真实字符位置」：已被容错分级剥离的非法标签不产生命中点，也不会使
+ *   后续标签的偏移发生位移。
+ * - 由于每个匹配独立对应一个标签，多 label 排列时触发点互不干扰。
  */
-import { parseAvatarTags } from './tagParser';
+import { parseAvatarTags, scanAvatarTagMatches } from './tagParser';
 import type { AvatarTag } from './tagParser';
 
 /** 一次标签命中：标签 + 其在原始全文中的起始字符偏移 */
@@ -36,17 +35,13 @@ export interface LabelTimeline {
 }
 
 export function createLabelTimeline(rawText: string): LabelTimeline {
-  const { segments, cleanText } = parseAvatarTags(rawText);
+  const { cleanText } = parseAvatarTags(rawText);
 
-  // 按 raw 片段长度在 rawText 中累计偏移，预生成有序命中列表
+  // 按 rawText 真实匹配起点预生成有序命中列表（dropped/unknown 标签不产生命中点）
   const hits: LabelHit[] = [];
-  let cursor = 0;
-  for (const segment of segments) {
-    if (segment.type === 'tag') {
-      hits.push({ tag: segment.tag, rawCharOffset: cursor });
-      cursor += segment.raw.length;
-    } else {
-      cursor += segment.content.length;
+  for (const m of scanAvatarTagMatches(rawText)) {
+    if (m.tag) {
+      hits.push({ tag: m.tag, rawCharOffset: m.start });
     }
   }
 

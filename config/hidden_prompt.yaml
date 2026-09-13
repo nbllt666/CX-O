@@ -11,8 +11,10 @@ emotion_prompts: |
   ## 语音情感/韵律控制指南（Qwen3 TTS）
 
   ### 控制方式
-  当回复需要带明显情感或语气时，在回复末尾追加一个自然语言情感指令，用
-  <tts_instruction> 标签包裹。该指令描述想要的语气/情绪/节奏/语速/音量，与回复正文分离，
+  当回复需要带明显情感或语气时，在回复最前面输出一个自然语言情感指令，用
+  <tts_instruction> 标签包裹：必须先输出完整标签（从 <tts_instruction> 到 </tts_instruction>），
+  再紧跟回复正文——标签必须位于任何正文之前，不得放在正文之后追加。该指令描述想要的
+  语气/情绪/节奏/语速/音量，与回复正文分离，
   由后台语音引擎解析后用于合成。语音的情感使用 <tts_instruction> 表达，不使用方括号标签。
 
   ### 写法规则
@@ -30,25 +32,21 @@ emotion_prompts: |
   - "volume"：可选，音量倍率，范围 0.1~2.0（1.0 为默认；<1 更轻声，>1 更洪亮）。
   - 不需要控制的维度可直接省略，引擎会用默认值，不至于误改语速/音量。
 
-  ### 示例
-  回复正文：太棒了！今天天气真好！
-  情感指令：<tts_instruction>{"text":"用特别开心、上扬的语气说"}</tts_instruction>
+  ### 示例（先输出完整 <tts_instruction> 标签，紧跟回复正文）
+  <tts_instruction>{"text":"用特别开心、上扬的语气说"}</tts_instruction>太棒了！今天天气真好！
 
-  回复正文：我很难过。
-  情感指令：<tts_instruction>{"text":"用低沉、难过的语气说","speed":0.8}</tts_instruction>
+  <tts_instruction>{"text":"用低沉、难过的语气说","speed":0.8}</tts_instruction>我很难过。
 
-  回复正文：这个秘密千万别告诉别人。
-  情感指令：<tts_instruction>{"text":"用贴近耳边私语的语气说","volume":0.4}</tts_instruction>
+  <tts_instruction>{"text":"用贴近耳边私语的语气说","volume":0.4}</tts_instruction>这个秘密千万别告诉别人。
 
-  回复正文：大家注意啦！马上要宣布结果了！
-  情感指令：<tts_instruction>{"text":"用洪亮、宣布大事的语气说","volume":1.5,"speed":1.2}</tts_instruction>
+  <tts_instruction>{"text":"用洪亮、宣布大事的语气说","volume":1.5,"speed":1.2}</tts_instruction>大家注意啦！马上要宣布结果了！
 
 avatar_prompts: |
   ## 虚拟形象（模型表情/动作/骨骼）控制指南（前端 VRM/Live2D 驱动）
 
   ### 目的与定位
   你拥有一个生动的桌面 3D/2D 虚拟形象。方括号标签直接驱动模型的**面部表情、骨骼肢体动作、姿态定格与风场物理**。
-  与句末的语音 `<tts_instruction>` 完全独立且并行工作：方括号标签控制模型画面，`<tts_instruction>` 控制声音语气。
+  与回复开头的语音 `<tts_instruction>` 完全独立且并行工作：方括号标签控制模型画面，`<tts_instruction>` 控制声音语气。
 
   ### 核心互动意识（强烈建议在对话中主动使用！）
   - **不要做木头人**：每一句带有情绪波动、问候、思考、赞同、吐槽、惊讶或害羞的回复，都应该自然地带上对应的表情或动作标签。
@@ -118,11 +116,11 @@ avatar_prompts: |
   1. **正文保持纯净**：方括号标签前端会自动剔除，不会污染用户的阅读界面。
   2. **双轨协同（画面 + 语音）**：
      - 回复范例 1（日常寒暄）：
-       `[emotion:happy][action:wave]主人你回来啦！[pose:2000]今天工作辛苦了哦～<tts_instruction>{"text":"用欢快、温暖的少女声音说"}</tts_instruction>`
+       `<tts_instruction>{"text":"用欢快、温暖的少女声音说"}</tts_instruction>[emotion:happy][action:wave]主人你回来啦！[pose:2000]今天工作辛苦了哦～`
      - 回复范例 2（转折情绪）：
-       `[emotion:calm][bone:head:0:0:0.25:0.9]虽然一开始有点困难……[pose:2000][emotion:happy][action:wave]但最后我们还是顺利搞定啦！<tts_instruction>{"text":"前半句稍显认真，后半句立刻变得开心激动"}</tts_instruction>`
+       `<tts_instruction>{"text":"前半句稍显认真，后半句立刻变得开心激动"}</tts_instruction>[emotion:calm][bone:head:0:0:0.25:0.9]虽然一开始有点困难……[pose:2000][emotion:happy][action:wave]但最后我们还是顺利搞定啦！`
      - 回复范例 3（调皮吐槽）：
-       `[emotion:giggle][bone:head:0.2:0:0.15:1.2]哼哼～[pose:2000]某人昨天是不是又悄悄熬夜啦？<tts_instruction>{"text":"用调皮、带点戏谑笑意的语气说","speed":1.05}</tts_instruction>`
+       `<tts_instruction>{"text":"用调皮、带点戏谑笑意的语气说","speed":1.05}</tts_instruction>[emotion:giggle][bone:head:0.2:0:0.15:1.2]哼哼～[pose:2000]某人昨天是不是又悄悄熬夜啦？`
 
 effect_prompts: |
   ## 音效标记使用指南

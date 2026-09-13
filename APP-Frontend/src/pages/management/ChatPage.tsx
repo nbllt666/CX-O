@@ -30,6 +30,7 @@ import {
 } from './chatStream';
 import type { ChatMsg, StreamEvent } from './chatStream';
 import { stripAvatarTags } from '@/avatar/tagParser';
+import { stripTtsInstruction } from '@/avatar/stripTtsInstruction';
 import { MarkdownContent } from './MarkdownContent';
 import { ThinkingProcess } from './ThinkingProcess';
 import { SummaryModal } from './SummaryModal';
@@ -72,7 +73,8 @@ function MessageBubble(props: { msg: ChatMsg; loading?: boolean }) {
             {isUser ? (
               <p className="whitespace-pre-wrap break-words">{msg.content}</p>
             ) : (
-              <MarkdownContent content={stripAvatarTags(msg.content)} />
+              // 先剥 <tts_instruction> 块再剥方括号标签：流式显示与历史恢复共用此渲染路径
+              <MarkdownContent content={stripAvatarTags(stripTtsInstruction(msg.content))} />
             )}
           </div>
         )}

@@ -36,35 +36,42 @@ class DecayCalculator:
         0.92: ImportanceLevel(
             score_range=(0.85, 0.99),
             decay_type="exponential",
-            params={"alpha": 0.2, "lambda1": 0.01, "lambda2": 0.001},
+            # 2026-09-13 衰减曲线审计修正：原 λ2=0.001 实际 180d 保持 0.70，
+            # 与声明 retention_180d=0.95 相差 25pct——慢相过快导致高重要性记忆
+            # 半年即失去时间区分度。α 同步下调（0.2→0.03，否则数学上达不成 95%）。
+            params={"alpha": 0.03, "lambda1": 0.01, "lambda2": 0.000145},
             permanent=False,
             retention_180d=0.95,
         ),
         0.77: ImportanceLevel(
             score_range=(0.70, 0.84),
             decay_type="exponential",
-            params={"alpha": 0.35, "lambda1": 0.08, "lambda2": 0.015},
+            # 审计修正：原 λ2=0.015 实际 180d 保持 0.044 vs 声明 0.80（差 18 倍）。
+            params={"alpha": 0.10, "lambda1": 0.08, "lambda2": 0.000654},
             permanent=False,
             retention_180d=0.80,
         ),
         0.60: ImportanceLevel(
             score_range=(0.50, 0.69),
             decay_type="exponential",
-            params={"alpha": 0.6, "lambda1": 0.25, "lambda2": 0.04},
+            # 审计修正：原 λ2=0.04 实际 180d 保持 0.0003 vs 声明 0.50（金鱼曲线主因）。
+            params={"alpha": 0.20, "lambda1": 0.25, "lambda2": 0.00262},
             permanent=False,
             retention_180d=0.50,
         ),
         0.40: ImportanceLevel(
             score_range=(0.30, 0.49),
             decay_type="exponential",
-            params={"alpha": 0.75, "lambda1": 0.45, "lambda2": 0.08},
+            # 审计修正：原 λ2=0.08 实际 180d ≈0 vs 声明 0.25。
+            params={"alpha": 0.30, "lambda1": 0.45, "lambda2": 0.00578},
             permanent=False,
             retention_180d=0.25,
         ),
         0.15: ImportanceLevel(
             score_range=(0.0, 0.29),
             decay_type="exponential",
-            params={"alpha": 0.9, "lambda1": 0.8, "lambda2": 0.15},
+            # 审计修正：原 λ2=0.15 实际 180d ≈0 vs 声明 0.05。
+            params={"alpha": 0.50, "lambda1": 0.80, "lambda2": 0.0128},
             permanent=False,
             retention_180d=0.05,
         ),
@@ -108,17 +115,25 @@ class DecayCalculator:
         else:
             return self.IMPORTANCE_LEVELS[0.15]
 
-    def calculate_days_elapsed(self, created_at: str) -> float:
+    def calculate_days_elapsed(self, created_at) -> float:
         """计算创建时间到当前时间经过的天数（统一时区处理）。
 
         Args:
-            created_at: 创建时间（ISO 格式）
+            created_at: 创建时间（ISO 格式字符串，或 datetime 对象——
+                Weaviate v4 客户端将 DATE 属性反序列化为 datetime，
+                对 datetime 调 str.replace 会抛 TypeError 并被旧代码
+                静默吞成 0.0，导致时间通道整体失效）
 
         Returns:
             float: 经过的天数，计算失败时返回 0.0
         """
         try:
-            created = datetime.fromisoformat(created_at.replace("Z", "+00:00"))
+            if isinstance(created_at, datetime):
+                created = created_at
+            else:
+                created = datetime.fromisoformat(
+                    str(created_at).replace("Z", "+00:00")
+                )
             current = self.current_time
             # B7 修复: 统一时区——若一端 naive 一端 aware，将 naive 端按系统
             # 本地时区换算为 UTC 后再求差。G1/A1: 必须用 .astimezone(timezone.utc)
@@ -263,14 +278,14 @@ class DecayCalculator:
                 lambda2=0.0,
             )
 
-        # 双阶段指数衰减（默认）
+        # 双阶段指数衰减（默认）；缺省参数与 0.60 档分层参数对齐（2026-09-13 审计修正）
         if decay_params:
             return self.calculate_exponential_decay(
                 importance=importance,
                 days_elapsed=days_elapsed,
-                alpha=decay_params.get("alpha", 0.6),
+                alpha=decay_params.get("alpha", 0.2),
                 lambda1=decay_params.get("lambda1", 0.25),
-                lambda2=decay_params.get("lambda2", 0.04),
+                lambda2=decay_params.get("lambda2", 0.00262),
             )
 
         level = self.get_level_from_importance(importance)

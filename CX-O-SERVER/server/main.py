@@ -292,6 +292,14 @@ async def lifespan(app: FastAPI):
 
     master_tools_registered = await init_service("主模型工具", _register_master, logger_=lifespan_logger) is not None
 
+    def _register_preset_tools():
+        # per-agent 预设工具（快捷指令：情感TTS预设/动作预设），主模型可用
+        from server.core.tools import register_preset_tools
+        register_preset_tools()
+        return True
+
+    await init_service("预设工具", _register_preset_tools, logger_=lifespan_logger)
+
     def _register_summary():
         from server.core.memory.emotion import set_emotion_llm_client
         from server.core.tools import register_summary_tools, set_summary_dependencies

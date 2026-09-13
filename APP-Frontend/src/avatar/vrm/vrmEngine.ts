@@ -24,6 +24,7 @@ import type {
 import { VRMAnimation } from './vrmAnimation';
 import { VRMLipSync } from './vrmLipSync';
 import { BlendShapeInterpolator } from './vrmBlendShapeInterpolator';
+import { BonePidController } from './vrmBonePid';
 
 type ResolvedBinding =
   | { mode: 'preset'; params: Record<string, number> }
@@ -73,6 +74,15 @@ export type VRMRuntimeState = {
   boneTransitionSpeeds: Map<string, number>;
   boneCurrentRotations: Map<string, { x: number; y: number; z: number }>;
   boneTargetRotations: Map<string, { x: number; y: number; z: number }>;
+  /**
+   * 骨骼 PID 控制器（骨骼平滑，替代指数 lerp）：boneName → x/y/z 三轴各一个实例。
+   * 惰性创建于 boneControl 路径，生命周期与 boneTargetRotations 同步
+   * （归中/释放时 reset 清积分微分历史，destroy 时清空）。
+   */
+  bonePidControllers: Map<
+    string,
+    { x: BonePidController; y: BonePidController; z: BonePidController }
+  >;
   /** 骨骼自动归中计时器：boneName → 剩余保持秒；<=0 时对应该骨骼目标归零回待机 */
   boneHoldTimers: Map<string, number>;
   /**
@@ -98,6 +108,40 @@ function easeTowards(current: number, target: number, factor: number): number {
     return target;
   }
   return current + (target - current) * factor;
+}
+
+/**
+ * 取（或惰性创建）某骨骼的三轴 PID 控制器组。
+ * 创建时以骨骼当前角度同步初值，避免首帧位置跳变。
+ */
+function getBonePidTrio(
+  runtime: VRMRuntimeState,
+  boneName: string,
+  initial: { x: number; y: number; z: number },
+): { x: BonePidController; y: BonePidController; z: BonePidController } {
+  let trio = runtime.bonePidControllers.get(boneName);
+  if (!trio) {
+    trio = {
+      x: new BonePidController(initial.x),
+      y: new BonePidController(initial.y),
+      z: new BonePidController(initial.z),
+    };
+    runtime.bonePidControllers.set(boneName, trio);
+  }
+  return trio;
+}
+
+/**
+ * 清空某骨骼 PID 控制器的积分/微分历史（保留当前角度，保持运动连续）。
+ * 用于归中计时到期 / releasePose 释放时防止残留积分引发超调。
+ */
+function resetBonePidTrio(runtime: VRMRuntimeState, boneName: string): void {
+  const trio = runtime.bonePidControllers.get(boneName);
+  if (trio) {
+    trio.x.reset();
+    trio.y.reset();
+    trio.z.reset();
+  }
 }
 
 function getOverlayFactor(blendShapeName: string, hasExplicitTarget: boolean): number {
@@ -397,6 +441,7 @@ export function createVRMRuntime(
     boneTransitionSpeeds: new Map(),
     boneCurrentRotations: new Map(),
     boneTargetRotations: new Map(),
+    bonePidControllers: new Map(),
     boneHoldTimers: new Map(),
     bangBones,
     cameraTweak,
@@ -488,10 +533,11 @@ export function startRuntimeLoop(
       for (const [boneName, remain] of runtime.boneHoldTimers) {
         const next = remain - dt;
         if (next <= 0) {
-          // 保持到期 → 该骨骼目标归零，让插值器平滑回到待机；并移除计时器
+          // 保持到期 → 该骨骼目标归零，PID 平滑回归待机；清积分/微分历史防超调，并移除计时器
           runtime.boneHoldTimers.delete(boneName);
           runtime.boneTargetRotations.set(boneName, { x: 0, y: 0, z: 0 });
           runtime.boneTransitionSpeeds.set(boneName, 3.3);
+          resetBonePidTrio(runtime, boneName);
         } else {
           runtime.boneHoldTimers.set(boneName, next);
         }
@@ -501,22 +547,32 @@ export function startRuntimeLoop(
     if (runtime.boneTargetRotations.size > 0) {
       const humanoid = runtime.vrm.humanoid;
       if (humanoid) {
+        // 骨骼 PID 平滑：每骨骼 x/y/z 三轴各一个控制器实例（P 主导、小 I 抗静差、D 抑制超调）。
+        // speed 作为响应度倍率传入（1.0 常规 / 3.3 归中加速），对齐原 boneTransitionSpeeds 语义。
         for (const [boneName, target] of runtime.boneTargetRotations) {
           const bone = humanoid.getNormalizedBoneNode(boneName as never);
           if (!bone) continue;
 
           const speed = runtime.boneTransitionSpeeds.get(boneName) ?? 1.0;
-          const current = runtime.boneCurrentRotations.get(boneName) ?? {
-            x: bone.rotation.x,
-            y: bone.rotation.y,
-            z: bone.rotation.z,
-          };
+          let current = runtime.boneCurrentRotations.get(boneName);
+          if (!current) {
+            current = {
+              x: bone.rotation.x,
+              y: bone.rotation.y,
+              z: bone.rotation.z,
+            };
+            runtime.boneCurrentRotations.set(boneName, current);
+          }
 
-          const factor = Math.min(1, speed * dt * 5);
+          const trio = getBonePidTrio(runtime, boneName, current);
+          trio.x.setTarget(target.x);
+          trio.y.setTarget(target.y);
+          trio.z.setTarget(target.z);
+
           const next = {
-            x: current.x + (target.x - current.x) * factor,
-            y: current.y + (target.y - current.y) * factor,
-            z: current.z + (target.z - current.z) * factor,
+            x: trio.x.update(dt, speed),
+            y: trio.y.update(dt, speed),
+            z: trio.z.update(dt, speed),
           };
 
           runtime.boneCurrentRotations.set(boneName, next);
@@ -628,6 +684,8 @@ export function releasePose(runtime: VRMRuntimeState): void {
   for (const boneName of runtime.boneTargetRotations.keys()) {
     runtime.boneTargetRotations.set(boneName, { x: 0, y: 0, z: 0 });
     runtime.boneTransitionSpeeds.set(boneName, 3.3);
+    // 释放归中：同步清空 PID 积分/微分历史（保留当前角度，PID 平滑归零不跳变）
+    resetBonePidTrio(runtime, boneName);
   }
 }
 
@@ -715,6 +773,7 @@ export function destroyRuntime(runtime: VRMRuntimeState): void {
   runtime.boneTransitionSpeeds.clear();
   runtime.boneCurrentRotations.clear();
   runtime.boneTargetRotations.clear();
+  runtime.bonePidControllers.clear();
   runtime.activeExpressionMix = [];
   runtime.parameterOverrides = [];
 }

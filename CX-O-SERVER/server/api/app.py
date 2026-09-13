@@ -18,6 +18,7 @@ from server.api.routers import (
     admin,
     agents,
     anythingllm,
+    avatar_manifest,
     archive,
     audio,
     autonomy,
@@ -37,6 +38,7 @@ from server.api.routers import (
     memory,
     memory_chat,
     multimodal,
+    presets,
     ref_audio_assets,
     service,
     stats,
@@ -98,7 +100,9 @@ def register_api_routes(app: FastAPI):
     app.include_router(archive.router, prefix="/api")
     app.include_router(audio.router, prefix="/api")
     app.include_router(ref_audio_assets.router, prefix="/api")
+    app.include_router(presets.router, prefix="/api")
     app.include_router(avatars.router, prefix="/api")
+    app.include_router(avatar_manifest.router, prefix="/api")
     app.include_router(admin.router, prefix="/api")
     app.include_router(backup.router, prefix="/api")
     app.include_router(decision.router, prefix="/api")

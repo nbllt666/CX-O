@@ -110,8 +110,11 @@ class _VectorIntegrationMixin:
             return
 
         try:
-            # 在工作线程中执行异步向量化
+            # 在工作线程中执行异步向量化（元数据规范化与同步路径共用同一方法）
             async def _do_vectorization():
+                vector_metadata, real_created_at = self._build_vector_payload_meta(
+                    int(memory_id), agent_id
+                )
                 # 获取向量
                 embedding = await self._embedding_model.get_embedding(content)
                 # 存储到向量数据库（per-agent collection）
@@ -119,7 +122,9 @@ class _VectorIntegrationMixin:
                     memory_id=int(memory_id),
                     content=content,
                     embedding=embedding,
+                    metadata=vector_metadata,
                     agent_id=agent_id,
+                    created_at=real_created_at,
                 )
 
             result = self._run_async_sync(_do_vectorization())
@@ -153,12 +158,41 @@ class _VectorIntegrationMixin:
         try:
             asyncio.get_running_loop()
         except RuntimeError:
-            # 当前线程没有运行中的事件循环（同步/工作线程），直接 asyncio.run
-            return asyncio.run(coro)
-        # 事件循环线程：提交到后台循环，避免死锁
+            # 当前线程没有运行中的事件循环（同步/工作线程）：同样提交到持久后台循环。
+            # 不得用 asyncio.run——每次新建/关闭事件循环会让 shared http client 连接池里
+            # 绑定在该短命 loop 上的 keep-alive 连接全部变死，主 loop 后续 chat 复用
+            # 死连接报 "Event loop is closed" → 空回答（EvalKit 实测空回答根因之一）。
+            pass
+        # 事件循环线程与同步线程统一：提交到持久后台循环，避免死锁
         loop = _get_background_loop()
         future = asyncio.run_coroutine_threadsafe(coro, loop)
         return future.result(timeout=60)
+
+    def _build_vector_payload_meta(self, memory_id: int, agent_id: str, fallback: Dict = None):
+        """从 SQLite 点查真实元数据，构造向量 payload 所需的 metadata 与 created_at。
+
+        向量 payload 的 importance/created_at 是检索侧 calculate_time_score 与
+        _score_memories 的唯一数据来源；调用方原始 metadata 不含这些规范化字段
+        （缺省即 payload 0.6/now），会导致时间通道与重要性分层双双失效——
+        "该忘的忘不掉"的终极根因（2026-09-13 实测）。
+
+        Returns:
+            (metadata dict, created_at 或 None)
+        """
+        memory_row = self.get_memory(int(memory_id), agent_id=agent_id) or {}
+        fb = fallback or {}
+        # SQLite importance_score 列恒 0.6（死字段），真实重要性用 importance 整数换算
+        _imp = memory_row.get("importance")
+        meta = {
+            "type": memory_row.get("type") or fb.get("type", "long_term"),
+            "importance_score": (_imp / 5.0) if _imp is not None else fb.get("importance_score", 0.6),
+            "tags": memory_row.get("tags") or fb.get("tags") or [],
+            "workspace_id": memory_row.get("workspace_id", "default"),
+            "is_archived": bool(memory_row.get("is_archived", False)),
+            "emotion_score": memory_row.get("emotion_score", 0.0),
+            "agent_id": agent_id,
+        }
+        return meta, memory_row.get("created_at")
 
     def _sync_vector_for_memory(self, memory_id: int, content: str, metadata: Dict = None) -> bool:
         """同步记忆到向量数据库（异步非阻塞）
@@ -190,14 +224,19 @@ class _VectorIntegrationMixin:
             # 注意：当前 vectorization_queue.add_task 不支持 agent_id 参数，
             # 因此对 per-agent 的向量化走同步路径以保证 agent_id 透传
             try:
+                payload_meta, payload_created = self._build_vector_payload_meta(
+                    memory_id, agent_id, metadata
+                )
+
                 async def _sync_async():
                     embedding = await self._embedding_model.get_embedding(content)
                     return await self._vector_store.add_memory_vector(
                         memory_id=memory_id,
                         content=content,
                         embedding=embedding,
-                        metadata=metadata,
+                        metadata=payload_meta,
                         agent_id=agent_id,
+                        created_at=payload_created,
                     )
 
                 result = self._run_async_sync(_sync_async())
@@ -209,12 +248,16 @@ class _VectorIntegrationMixin:
                 return False
 
         try:
+            payload_meta, payload_created = self._build_vector_payload_meta(
+                memory_id, agent_id, metadata
+            )
 
             async def _sync():
                 embedding = await self._embedding_model.get_embedding(content)
                 return await self._vector_store.add_memory_vector(
                     memory_id=memory_id, content=content, embedding=embedding,
-                    metadata=metadata, agent_id=agent_id,
+                    metadata=payload_meta, agent_id=agent_id,
+                    created_at=payload_created,
                 )
 
             result = self._run_async_sync(_sync())
@@ -251,10 +294,14 @@ class _VectorIntegrationMixin:
 
             async def _update():
                 await self._vector_store.delete_by_memory_id(memory_id, agent_id=agent_id)
+                payload_meta, payload_created = self._build_vector_payload_meta(
+                    memory_id, agent_id, metadata
+                )
                 embedding = await self._embedding_model.get_embedding(content)
                 return await self._vector_store.add_memory_vector(
                     memory_id=memory_id, content=content, embedding=embedding,
-                    metadata=metadata, agent_id=agent_id,
+                    metadata=payload_meta, agent_id=agent_id,
+                    created_at=payload_created,
                 )
 
             result = self._run_async_sync(_update())

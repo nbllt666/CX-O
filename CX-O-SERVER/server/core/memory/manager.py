@@ -10,6 +10,7 @@
 - _BatchOperationsMixin: 批量操作
 - _QueryHelpersMixin: 查询辅助
 - _DreamMixin: 梦境记忆写入与生命周期（type='dream' 软隔离）
+- _EvalMixin: 评测支撑（时间旅行回拨，仅供评测框架使用）
 
 本文件仅保留单例 (__new__) 和初始化 (__init__) 逻辑，所有方法由 mixin 提供。
 """
@@ -27,6 +28,7 @@ from .mixins.graph_mixin import _GraphIntegrationMixin
 from .mixins.permanent_mixin import _PermanentMemoryMixin
 from .mixins.query_mixin import _QueryHelpersMixin
 from .mixins.decision_mixin import _DecisionMixin
+from .mixins.eval_mixin import _EvalMixin
 from .mixins.vector_mixin import _VectorIntegrationMixin
 
 if TYPE_CHECKING:
@@ -44,6 +46,7 @@ class MemoryManager(
     _QueryHelpersMixin,
     _DecisionMixin,
     _DreamMixin,
+    _EvalMixin,
 ):
     """记忆管理器
 

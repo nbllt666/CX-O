@@ -29,6 +29,11 @@ BUILTIN_TOOL_NAMES = {
     "get_alarms",
     "cancel_alarm",
     "mono",
+    # per-agent 预设工具（快捷指令：情感TTS预设/动作预设）
+    "save_emotion_preset",
+    "save_action_preset",
+    "list_presets",
+    "delete_preset",
     # 摘要模型工具
     "summarize_content",
     "save_summary_memory",

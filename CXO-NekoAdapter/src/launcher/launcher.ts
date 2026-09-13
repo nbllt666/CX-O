@@ -1,9 +1,9 @@
 /**
- * Neko 插件运行时 sidecar 启动器（Electron 主进程）
+ * Neko 插件运行时 sidecar 启动器（独立适配器进程）
  * ============================================================================
  * 职责：把 neko 的插件服务器（python -m plugin.user_plugin_server）作为本机
  * 子进程拉起/停止，并复用它监听 127.0.0.1 的端口。由于前端与后端可能不在同一
- * 台机器，neko 相关一切（进程、插件、商店）都运行在本机前端这一侧。
+ * 台机器，neko 相关一切（进程、插件、商店）都运行在本机这一侧。
  *
  * 依赖：本机已安装 Python 且能导入 neko 源码根目录下的 config/plugin/utils 包。
  * 不修改 neko 源码（C:\N.E.K.O-main 只读）。
@@ -12,10 +12,11 @@
 import { spawn, type ChildProcess } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import * as net from 'node:net';
-import { getConfig, setConfig } from '../config';
-import { startNekoToolRegistrar, startNekoToolBridge, stopNekoToolBridge } from './toolBridge';
+import { getAll, setConfig } from '../shared/config';
+import { startNekoToolRegistrar, startNekoToolBridge, stopNekoToolBridge } from '../bridge/toolBridge';
+import { appendRuntimeLog } from './logBuffer';
 
-/** 运行时配置（持久化于 userData/config.json，均为字符串键值） */
+/** 运行时配置（持久化于适配器 data/config.json，均为字符串键值） */
 export interface NekoRuntimeConfig {
   /** Python 可执行路径；空则用 PATH 中的 python */
   python: string;
@@ -27,34 +28,26 @@ export interface NekoRuntimeConfig {
   autoStart: boolean;
 }
 
-export const NEKO_CONFIG_KEYS = {
-  python: 'neko.python',
-  sourceDir: 'neko.sourceDir',
-  port: 'neko.port',
-  autoStart: 'neko.autoStart',
-} as const;
-
-export const DEFAULT_NEKO_CONFIG: NekoRuntimeConfig = {
-  python: 'python',
-  sourceDir: 'C:\\N.E.K.O-main',
-  port: 48916,
-  autoStart: false,
-};
-
 export function getNekoConfig(): NekoRuntimeConfig {
+  // 配置键与默认值统一由 shared/config 维护（auto_init 补全），此处仅摘取
+  // 运行时相关子集，保持与原宿主实现相同的读取语义
+  const all = getAll();
   return {
-    python: getConfig(NEKO_CONFIG_KEYS.python) || DEFAULT_NEKO_CONFIG.python,
-    sourceDir: getConfig(NEKO_CONFIG_KEYS.sourceDir) || DEFAULT_NEKO_CONFIG.sourceDir,
-    port: Number(getConfig(NEKO_CONFIG_KEYS.port)) || DEFAULT_NEKO_CONFIG.port,
-    autoStart: getConfig(NEKO_CONFIG_KEYS.autoStart) === 'true',
+    python: all.python,
+    sourceDir: all.sourceDir,
+    port: all.port,
+    autoStart: all.autoStart,
   };
 }
 
 export function setNekoConfig(partial: Partial<NekoRuntimeConfig>): NekoRuntimeConfig {
-  if (partial.python !== undefined) setConfig(NEKO_CONFIG_KEYS.python, partial.python.trim());
-  if (partial.sourceDir !== undefined) setConfig(NEKO_CONFIG_KEYS.sourceDir, partial.sourceDir.trim());
-  if (partial.port !== undefined) setConfig(NEKO_CONFIG_KEYS.port, String(Math.max(0, Math.floor(partial.port))));
-  if (partial.autoStart !== undefined) setConfig(NEKO_CONFIG_KEYS.autoStart, String(!!partial.autoStart));
+  // 值归一化（trim / 端口取整下限 0 / 布尔化）由 shared/config.setConfig 统一处理
+  setConfig({
+    ...(partial.python !== undefined ? { python: partial.python } : {}),
+    ...(partial.sourceDir !== undefined ? { sourceDir: partial.sourceDir } : {}),
+    ...(partial.port !== undefined ? { port: partial.port } : {}),
+    ...(partial.autoStart !== undefined ? { autoStart: partial.autoStart } : {}),
+  });
   return getNekoConfig();
 }
 
@@ -68,6 +61,10 @@ let activePort: number | null = null;
 let nekoStarting: Promise<{ port: number }> | null = null;
 let logSink: ((line: string) => void) | null = null;
 
+/**
+ * 注入日志 sink（后续控制面可用其做实时推送）；传 null 解除注入。
+ * 注入与否不影响环形缓冲收集（logBuffer 始终记录，便于 SSE 回放）。
+ */
 export function setNekoLogSink(sink: ((line: string) => void) | null): void {
   logSink = sink;
 }
@@ -83,7 +80,10 @@ export function getNekoStatus(): { running: boolean; port: number | null; config
 }
 
 function emit(chunk: Buffer | string): void {
-  if (logSink) logSink(String(chunk).replace(/\s+$/, ''));
+  const line = String(chunk).replace(/\s+$/, '');
+  if (logSink) logSink(line);
+  // 环形缓冲始终收集，供后续控制面 SSE / 日志查询使用
+  appendRuntimeLog(line);
 }
 
 // 在 host 上找空闲端口（与 neko 自身策略一致：base 起向后探测）
@@ -263,4 +263,14 @@ export async function startNekoRuntime(): Promise<{ port: number; bridge: boolea
 export async function stopNekoRuntime(): Promise<void> {
   await stopNekoToolBridge();
   await stopNeko();
+}
+
+/**
+ * 完整重启 neko 运行时（供后续控制面调用）：停桥 → 停插件服务器 → 再整体拉起。
+ * 与 restartNeko（仅重启插件服务器子进程）不同：本函数同时重建桥与注册接收器，
+ * 适用于配置变更（如后端地址/端口）后需要全量重建运行时的场景。
+ */
+export async function restartNekoFull(): Promise<{ port: number; bridge: boolean }> {
+  await stopNekoRuntime();
+  return startNekoRuntime();
 }

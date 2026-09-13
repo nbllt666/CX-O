@@ -59,9 +59,22 @@ function writeConfig(config: Record<string, string>): void {
   }
 }
 
+/**
+ * 缺省键默认值表（auto_init：读取缺失时回落默认；不主动写盘，写盘仍由 setConfig 显式完成）
+ * 仅收录需要默认值的键，其余键保持「缺失返回 null」的原语义。
+ */
+const DEFAULT_KEYS: Record<string, string> = {
+  /** Neko 独立适配器项目目录；空串表示自动向上逐级探测解析 */
+  'neko.adapterDir': '',
+  /** Neko 独立适配器控制面 HTTP 端口 */
+  'neko.adapterControlPort': '48920',
+  /** 存量 Neko 配置一次性种子同步完成标记 */
+  'neko.seeded': 'false',
+};
+
 export function getConfig(key: string): string | null {
   const config = readConfig();
-  return config[key] ?? null;
+  return config[key] ?? DEFAULT_KEYS[key] ?? null;
 }
 
 export function setConfig(key: string, value: string): void {

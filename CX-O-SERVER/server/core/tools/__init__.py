@@ -36,6 +36,13 @@ from .master_tools import (
     write_long_term_memory,
     write_permanent_memory,
 )
+from .preset_tools import (
+    delete_preset,
+    list_presets,
+    register_preset_tools,
+    save_action_preset,
+    save_emotion_preset,
+)
 from .graph_tools import (
     concept_graph_create_entity,
     concept_graph_create_relation,
@@ -134,6 +141,12 @@ __all__ = [
     "acp_join_group",
     "acp_leave_group",
     "set_master_dependencies",
+    # Preset tools
+    "register_preset_tools",
+    "save_emotion_preset",
+    "save_action_preset",
+    "list_presets",
+    "delete_preset",
     # Summary tools
     "register_summary_tools",
     "summarize_content",

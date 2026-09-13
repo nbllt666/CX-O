@@ -98,7 +98,8 @@ def mock_instruction(monkeypatch):
     monkeypatch.setattr(tts_svc_mod, "strip_instruction", lambda t: t)
     class _Inst:
         text = "用俏皮的语气说"
-    async def _fake_gen(text):
+    # 签名与真实 generate_instruction 对齐（Task 4.1 新增仅关键字 agent_id 透传参数）
+    async def _fake_gen(text, character_context=None, conversation_context=None, agent_id=None):
         return _Inst()
     monkeypatch.setattr(tts_svc_mod, "generate_instruction", _fake_gen)
     return None

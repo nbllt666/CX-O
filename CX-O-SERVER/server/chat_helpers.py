@@ -32,7 +32,16 @@ def get_shared_memory_router(memory_mgr):
     with _router_cache_lock:
         router = _router_cache.get(key)
         if router is None:
-            router = MemoryRouter(memory_manager=memory_mgr)
+            # 必须透传 manager 的向量组件：MemoryRouter 缺省 vector_store/embedding_model
+            # 均为 None → hybrid_search 不启用 → chat 链路回退 SQLite LIKE 检索
+            # （全包含匹配），自然语言提问命中不了记忆 → 注入为空。
+            # rag/search 端点独立走向量检索故能命中，与 chat 链路形成"检索到但没注入"的
+            # 断裂（EvalKit memory_decay 实测发现的根因，2026-09-12）。
+            router = MemoryRouter(
+                memory_manager=memory_mgr,
+                vector_store=getattr(memory_mgr, "_vector_store", None),
+                embedding_model=getattr(memory_mgr, "_embedding_model", None),
+            )
             _router_cache[key] = router
     return router
 
@@ -80,12 +89,30 @@ async def retrieve_memory_context(
         query=user_message,
         session_id=session_id,
         scene_type=agent_config.get("memory_scene", "chat"),
+        agent_id=agent_config.get("id"),
     )
     if not routing_result.memories:
         return None
 
     limit = get_settings().config.limits.memory.inject_memories_count
-    return "\n".join([f"- {m['content']}" for m in routing_result.memories[:limit]])
+    injected = routing_result.memories[:limit]
+    # 注入现场日志（排障用）：条数 + 每条综合分/时间分/内容头，观察"该忘的忘"是否传导
+    logger.info(
+        "[EVAL-INJECT] agent=%s candidates=%s inject=%s limit=%s detail=%s",
+        agent_config.get("id"),
+        len(routing_result.memories),
+        len(injected),
+        limit,
+        [
+            (
+                m.get("final_score"),
+                (m.get("component_scores") or {}).get("time"),
+                str(m.get("content"))[:10],
+            )
+            for m in injected
+        ],
+    )
+    return "\n".join([f"- {m['content']}" for m in injected])
 
 
 def ensure_agent_session(context_mgr, agent_id: str, agent_name: str) -> str:
@@ -178,6 +205,8 @@ def get_tools_for_agent() -> list:
     main_tool_names = {
         "write_long_term_memory", "search_all_memories", "call_assistant",
         "set_alarm", "mono", "write_permanent_memory",
+        # per-agent 预设工具（快捷指令：情感TTS预设/动作预设）
+        "save_emotion_preset", "save_action_preset", "list_presets", "delete_preset",
         "acp_list_agents", "acp_connect", "acp_disconnect",
         "acp_send_message", "acp_create_group", "acp_join_group", "acp_leave_group",
         "register_voiceprint",

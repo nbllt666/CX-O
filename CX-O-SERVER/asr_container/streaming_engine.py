@@ -187,6 +187,24 @@ def _load_models() -> None:
         if _VAD is None:
             try:
                 _VAD = AutoModel(model=VAD_MODEL, device="cpu", disable_update=True)
+                # 句尾静音窗 800ms(funasr 默认) → 400ms：实测说完→出声延迟中分句等待
+                # 占大头（能量说完→首包 995ms，其中分句等待 ~800ms）。400ms 仍足以
+                # 区分自然停顿与换气，配合服务端 VAD 150ms 兜底（双流式仅作修正）。
+                # funasr fsmn-vad 把该值放在内层 model.max_end_silence_time 与
+                # model.vad_opts.max_end_silence_time（无 .config），两处都显式覆盖。
+                _patched = 0
+                for holder in (
+                    getattr(_VAD.model, "vad_opts", None),
+                    _VAD.model,
+                ):
+                    if holder is not None and hasattr(holder, "max_end_silence_time"):
+                        holder.max_end_silence_time = 400
+                        _patched += 1
+                logger.info(
+                    f"[ENGINE] VAD max_end_silence_time=400ms 已覆盖 {(_patched)} 处"
+                    f"（当前值: model={getattr(_VAD.model, 'max_end_silence_time', 'n/a')} "
+                    f"vad_opts={getattr(getattr(_VAD.model, 'vad_opts', None), 'max_end_silence_time', 'n/a')}）"
+                )
                 logger.info(f"[ENGINE] VAD 模型加载成功: {VAD_MODEL}")
             except Exception as e:  # noqa: BLE001
                 _VAD = None

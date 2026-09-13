@@ -1014,9 +1014,28 @@ class Qwen3TTSProvider:
         try:
             primary = self._select_runtime(req, resolved)
             fallback = self._fallback_runtime(primary)
-            async for chunk in self._synthesize_stream_once(req, resolved, primary):
-                produced_any_chunk = True
-                yield chunk
+            # 瞬时连接抖动重试（带退避）：cosyvoice 运行时偶发返回空流/连接拒绝（实测
+            # dual_stream 逐句合成场景反复出现，容器侧零重启且健康、直连风暴 0/360
+            # 失败——为 Docker 端口转发器瞬态抽风，毫秒~秒级窗口）。未产出任何 chunk
+            # 前重试不破坏「恰一个 start / index 单调递增」消费者契约；已产出 chunk 后
+            # 中途断流仍按 M 修复语义不重试不降级，原样上抛。
+            max_primary_attempts = 3
+            for attempt in range(1, max_primary_attempts + 1):
+                try:
+                    async for chunk in self._synthesize_stream_once(req, resolved, primary):
+                        produced_any_chunk = True
+                        yield chunk
+                    return
+                except (RuntimeUnavailableError, RuntimeUnsupportedError) as exc:
+                    if produced_any_chunk or attempt >= max_primary_attempts:
+                        raise
+                    await asyncio.sleep(0.1 * attempt)  # 退避 100/200ms，避开转发器抖动窗
+                    _log(
+                        "synthesize_stream",
+                        f"首选运行时 {primary} 瞬时不可用，重试 {attempt}/{max_primary_attempts - 1}: {exc}",
+                        0,
+                        "ERROR",
+                    )
         except (RuntimeUnavailableError, RuntimeUnsupportedError) as exc:
             if fallback is None or produced_any_chunk:
                 # 无可降级运行时；或已产出 chunk —— 绝不 yield 新流的 start 块

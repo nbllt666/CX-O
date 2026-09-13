@@ -68,6 +68,7 @@ CX-O 是**多服务架构**，以下服务目录是独立服务，**非 AC 模�
 | CX-O Server | `CX-O-SERVER/` | Python 3.10+ + FastAPI + WebSocket | 8000 |
 | CX-O VoiceWorkStation | `CX-O-VoiceWorkStation/` | Python + FastAPI — 作曲/翻唱CXFC（作曲/歌曲合成/SVC 翻唱推理/音域分析自动升降 key/双人合唱分离流水线/CXFC 插件；训练域已迁至 CXO-ModelStation；分离引擎见 engines/） | 8200 |
 | CX-O ModelStation | `CXO-ModelStation/` | Python + FastAPI（单 worker）+ Vite/React 独立前端 | 8300（后端）/ 3300（前端 dev） |
+| CXO-EvalKit | `CXO-EvalKit/` | Python 3.11+ + FastAPI — LLM 评测框架（自包含子项目，对主服务执行 memory/latency/quality 三维度评测 + judge 评分 + 阈值判定，报告落 run 目录；部署见 CXO-EvalKit/DEPLOY.md） | 8320（宿主，容器内 8300） |
 
 **第三方独立仓库**（原位不动，不纳入 AC 模块管理）：
 - `LLM_Live2D-master/`

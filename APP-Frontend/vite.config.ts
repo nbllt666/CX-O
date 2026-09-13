@@ -26,7 +26,11 @@ export default defineConfig({
     // 字符串 find 会同时匹配 'punycode' 与 'punycode/'（rollup 别名语义），
     // 抢在下方自定义别名之前把目录导入指到 CJS 源文件，绕过 optimizeDeps 预打包。
     // 我们自身不导入 Node punycode 内置模块，无需该别名。
-    nodePolyfills({ include: ['url', 'path', 'stream', 'util', 'assert'] }),
+    // vitest 运行时禁用该插件：①浏览器垫片会把 node: 内置模块别名到 node-stdlib-browser，
+    // 其 esm/proxy/url.js 的目录式 'punycode/' 导入在外置 ESM 加载下直接报错，
+    // 导致 electron 单测（node 环境）无法收集；②electron 单测需要原生 node: 模块语义。
+    // 基线验证：全部 src jsdom 测试不依赖该插件（752 用例不经过任何 node: 垫片别名）。
+    ...(process.env.VITEST ? [] : [nodePolyfills({ include: ['url', 'path', 'stream', 'util', 'assert'] })]),
     ...(enableElectron
       ? [
           electron([

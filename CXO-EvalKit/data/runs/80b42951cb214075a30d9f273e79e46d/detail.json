@@ -1,0 +1,64 @@
+{
+  "run_id": "80b42951cb214075a30d9f273e79e46d",
+  "agent_id": "eval-agent-80b42951cb214075a30d9f273e79e46d",
+  "suite": "memory_decay",
+  "scenarios": [
+    {
+      "scenario_id": "long-term-decay-basic",
+      "mode": "decay",
+      "seeds": [
+        {
+          "id": "low_fact",
+          "memory_id": 1,
+          "importance": 2,
+          "permanent": false,
+          "tags": [
+            "eval",
+            "habit"
+          ]
+        },
+        {
+          "id": "mid_fact",
+          "memory_id": 2,
+          "importance": 3,
+          "permanent": false,
+          "tags": [
+            "eval",
+            "movie"
+          ]
+        },
+        {
+          "id": "high_fact",
+          "memory_id": 3,
+          "importance": 4,
+          "permanent": false,
+          "tags": [
+            "eval",
+            "plan"
+          ]
+        },
+        {
+          "id": "core_personality",
+          "memory_id": 4,
+          "importance": 5,
+          "permanent": true,
+          "tags": [
+            "eval",
+            "core"
+          ]
+        }
+      ],
+      "cases": [],
+      "time_travel_shifts": [
+        30
+      ]
+    }
+  ],
+  "cleanup": {
+    "attempted": 4,
+    "deleted": 4,
+    "remaining": 0
+  },
+  "status": "error",
+  "error": "HTTP 404: {\"success\":false,\"error\":\"Agent 'eval-agent-80b42951cb214075a30d9f273e79e46d' 不存在\",\"error_code\":\"HTTP_404\",\"details\":null,\"timestamp\":\"2026-09-12T13:16:59.650543\"}\nTraceback (most recent call last):\n  File \"C:\\CX-O\\CXO-EvalKit\\evalkit\\suites\\memory_decay.py\", line 503, in run_memory_decay\n    _run_scenario(\n    ~~~~~~~~~~~~~^\n        scenario, client, judge, agent_id, config, run_state, detail,\n        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n        retention_acc, retrieval_acc, react_acc,\n        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n    )\n    ^\n  File \"C:\\CX-O\\CXO-EvalKit\\evalkit\\suites\\memory_decay.py\", line 417, in _run_scenario\n    _run_decay_flow(\n    ~~~~~~~~~~~~~~~^\n        client, judge, agent_id, config, run_state, record, seeds, seed_map, questions,\n        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n        retention_acc, retrieval_acc,\n        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n    )\n    ^\n  File \"C:\\CX-O\\CXO-EvalKit\\evalkit\\suites\\memory_decay.py\", line 303, in _run_decay_flow\n    case = _ask_case(\n        client, judge, agent_id, seed, seed_map[seed[\"id\"]], question, target_days, run_state\n    )\n  File \"C:\\CX-O\\CXO-EvalKit\\evalkit\\suites\\memory_decay.py\", line 184, in _ask_case\n    resp = client.chat(question, agent_id)\n  File \"C:\\CX-O\\CXO-EvalKit\\evalkit\\target.py\", line 90, in chat\n    data = self._unwrap(resp)\n  File \"C:\\CX-O\\CXO-EvalKit\\evalkit\\target.py\", line 63, in _unwrap\n    raise TargetHttpError(resp.status_code, str(detail))\nevalkit.target.TargetHttpError: HTTP 404: {\"success\":false,\"error\":\"Agent 'eval-agent-80b42951cb214075a30d9f273e79e46d' 不存在\",\"error_code\":\"HTTP_404\",\"details\":null,\"timestamp\":\"2026-09-12T13:16:59.650543\"}\n"
+}

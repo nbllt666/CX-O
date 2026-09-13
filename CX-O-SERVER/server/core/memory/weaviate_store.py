@@ -17,6 +17,24 @@ if TYPE_CHECKING:
 logger = get_contextual_logger(__name__)
 
 
+def _to_rfc3339(ts: str) -> str:
+    """将时间戳归一化为 Weaviate DATE 属性要求的 RFC3339（带时区）格式。
+
+    SQLite 库内时间为本地 naive isoformat；无时区时按本地时区补齐再转 UTC，
+    避免 naive 时间戳被 Weaviate 拒绝。解析失败时回退当前 UTC 时间。
+    """
+    try:
+        text = str(ts).strip().replace("Z", "+00:00")
+        if " " in text:
+            text = text.replace(" ", "T", 1)
+        dt = datetime.fromisoformat(text)
+        if dt.tzinfo is None:
+            dt = dt.astimezone()
+        return dt.astimezone(timezone.utc).isoformat()
+    except (ValueError, TypeError):
+        return datetime.now(timezone.utc).isoformat()
+
+
 @dataclass
 class WeaviateConfig:
     """Weaviate 配置"""
@@ -170,11 +188,15 @@ class WeaviateVectorStore:
 
     async def add_memory_vector(
         self, memory_id: int, content: str, embedding: List[float], metadata: Dict = None,
-        agent_id: str = "default",
+        agent_id: str = "default", created_at: Optional[str] = None,
     ) -> bool:
         """添加记忆向量到 per-agent collection
 
         迁移自 CXHMS: backend/core/memory/weaviate_store.py:L161-L203
+
+        created_at：记忆的真实创建时间（RFC3339 归一化后入库）。缺省取当前时刻。
+        必须传真实值——时间衰减（calculate_time_score）以向量 payload 的 created_at
+        为准；若恒为写入时刻，时间旅行/长期记忆的时间通道将失效（该忘的忘不掉）。
         """
         if not self._client:
             return False
@@ -198,7 +220,7 @@ class WeaviateVectorStore:
                 "memory_type": metadata.get("type", "long_term") if metadata else "long_term",
                 "importance": metadata.get("importance_score", 0.6) if metadata else 0.6,
                 "tags": metadata.get("tags", []) if metadata else [],
-                "created_at": datetime.now(timezone.utc).isoformat(),
+                "created_at": _to_rfc3339(created_at) if created_at else datetime.now(timezone.utc).isoformat(),
                 "workspace_id": metadata.get("workspace_id", "default") if metadata else "default",
                 "is_archived": metadata.get("is_archived", False) if metadata else False,
                 "emotion_score": metadata.get("emotion_score", 0.0) if metadata else 0.0,
@@ -331,9 +353,62 @@ class WeaviateVectorStore:
             logger.error(f"Weaviate 删除向量失败: {e}")
             return False
 
+    async def shift_created_at(self, shifts: Dict[str, str], agent_id: str = "default") -> int:
+        """按记忆 ID 批量回拨 per-agent collection 内 payload 的 created_at。
+
+        评测时间旅行的向量侧同步：SQLite 的 created_at/updated_at 回拨后，
+        向量 payload 若仍保持写入时刻，hybrid 向量检索（主通道）读到的时间
+        恒为"刚创建"，时间衰减通道失效——该忘的记忆永远忘不掉。
+
+        Args:
+            shifts: {str(memory_id): 回拨后的 created_at（任意可解析时间戳，
+                内部经 _to_rfc3339 归一化）}
+            agent_id: 目标 agent（决定 per-agent collection）
+
+        Returns:
+            实际回拨的对象数（不存在的 memory_id 跳过）
+        """
+        if not self._client or not shifts:
+            return 0
+
+        shifted = 0
+        try:
+            collection_name = self._collection_name_for_agent(agent_id)
+            collection = self._client.collections.get(collection_name)
+
+            from weaviate.classes.query import Filter
+
+            for memory_id_str, new_created_at in shifts.items():
+                try:
+                    result = collection.query.fetch_objects(
+                        filters=Filter.by_property("memory_id").equal(int(memory_id_str)),
+                        limit=1,
+                    )
+                    if not result.objects:
+                        continue
+                    collection.data.update(
+                        uuid=result.objects[0].uuid,
+                        properties={"created_at": _to_rfc3339(new_created_at)},
+                    )
+                    shifted += 1
+                except Exception as e:
+                    logger.warning(
+                        f"Weaviate created_at 回拨失败: memory_id={memory_id_str}, "
+                        f"collection={collection_name}, error={e}"
+                    )
+
+            logger.info(
+                f"Weaviate created_at 回拨完成: agent={agent_id}, "
+                f"requested={len(shifts)}, shifted={shifted}"
+            )
+            return shifted
+        except Exception as e:
+            logger.error(f"Weaviate created_at 批量回拨失败: {e}", exc_info=True)
+            return shifted
+
     async def update_memory_vector(
         self, memory_id: int, content: str, embedding: List[float], metadata: Dict = None,
-        agent_id: str = "default",
+        agent_id: str = "default", created_at: Optional[str] = None,
     ) -> bool:
         """更新记忆向量（在 per-agent collection 中）
 
@@ -352,7 +427,8 @@ class WeaviateVectorStore:
             await self.delete_by_memory_id(memory_id, agent_id=effective_agent_id)
             # 添加新向量
             return await self.add_memory_vector(
-                memory_id, content, embedding, metadata, agent_id=effective_agent_id
+                memory_id, content, embedding, metadata, agent_id=effective_agent_id,
+                created_at=created_at,
             )
 
         except Exception as e:
@@ -550,6 +626,11 @@ class WeaviateVectorStore:
                 try:
                     existing = await self.get_vector_by_id(memory_id, agent_id=mem_agent_id)
 
+                    # importance_score 列写入恒 0.6（死字段），自愈同步时用 importance 整数换算真值
+                    sync_meta = dict(memory)
+                    if memory.get("importance") is not None:
+                        sync_meta["importance_score"] = memory["importance"] / 5.0
+
                     if existing is None:
                         logger.info(f"Weaviate 向量不存在，创建: memory_id={memory_id}, agent_id={mem_agent_id}")
                         if self.embedding_model:
@@ -558,8 +639,9 @@ class WeaviateVectorStore:
                                 memory_id=memory_id,
                                 content=content,
                                 embedding=embedding,
-                                metadata=memory,
+                                metadata=sync_meta,
                                 agent_id=mem_agent_id,
+                                created_at=memory.get("created_at"),
                             )
                             result.synced += 1
                             result.details.append(f"创建: {memory_id} (agent={mem_agent_id})")
@@ -571,8 +653,9 @@ class WeaviateVectorStore:
                                 memory_id=memory_id,
                                 content=content,
                                 embedding=embedding,
-                                metadata=memory,
+                                metadata=sync_meta,
                                 agent_id=mem_agent_id,
+                                created_at=memory.get("created_at"),
                             )
                             result.synced += 1
                             result.details.append(f"更新: {memory_id} (agent={mem_agent_id})")

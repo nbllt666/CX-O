@@ -1,5 +1,5 @@
 /**
- * Neko 插件 LLM 工具 → CXFC 桥（Electron 主进程）
+ * Neko 插件 LLM 工具 → CXFC 桥（独立适配器进程）
  * ============================================================================
  * 组合层：把纯逻辑（toolBridgeCore）接到真实 socket 与 CX-O 后端：
  *   1. 注册接收器（loopback HTTP，主服务器端口 48911）——模拟 neko 主服务器
@@ -12,17 +12,17 @@
  * 就绪（插件已加载、工具已上报）后启动。由 launcher 的 startNekoRuntime 编排。
  * ============================================================================
  */
-import { app } from 'electron';
 import { createServer as createHttpServer, type Server as HttpServer } from 'node:http';
 import { createServer as createHttpsServer, type Server as HttpsServer } from 'node:https';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import * as path from 'node:path';
 import { randomBytes } from 'node:crypto';
-import { Authenticator } from '../plugins/computerControl/auth';
-import { ensureCertificate } from '../plugins/computerControl/tls';
-import { HTTP_STATUS, messageOf, type ErrorCode } from '../plugins/computerControl/errors';
-import { createCxfcClient, type CxfcClient, type PluginRuntimeInfo } from '../cxfc/client';
-import { getConfig } from '../config';
+import { Authenticator } from '../shared/auth';
+import { ensureCertificate } from '../shared/tls';
+import { HTTP_STATUS, messageOf, type ErrorCode } from '../shared/errors';
+import { createCxfcClient, type CxfcClient, type PluginRuntimeInfo } from '../shared/cxfc-client';
+import { getConfig } from '../shared/config';
+import { certsDir } from '../shared/paths';
 import {
   handleRegistrarRoute,
   executeNekoToolCall,
@@ -78,7 +78,7 @@ async function startRegistrar(): Promise<void> {
   const server = createHttpServer((req, res) => {
     void (async () => {
       // 整体 try/catch：readJson 在客户端中断连接时会 reject，若不捕获会成为
-      // unhandledRejection 导致主进程崩溃（对齐 handleBridgeReq 的整体兜底写法）
+      // unhandledRejection 导致进程崩溃（对齐 handleBridgeReq 的整体兜底写法）
       try {
         let url: URL;
         try {
@@ -117,7 +117,7 @@ function buildBridgeInfo(): PluginRuntimeInfo {
   return {
     host: '127.0.0.1',
     port: bridgePort,
-    name: 'APP-Frontend Neko 插件工具桥',
+    name: 'CXO-NekoAdapter Neko 插件工具桥',
     version: '1.0.0',
     capabilities: ['plugin_tools'],
     tools: store.listSchemas(),
@@ -159,7 +159,9 @@ async function handleBridgeCall(req: IncomingMessage, res: ServerResponse): Prom
 async function startBridgeServer(): Promise<number> {
   if (bridgeServer) return bridgePort;
 
-  const certDir = path.join(app.getPath('userData'), 'neko', 'toolBridge');
+  // 证书目录：适配器本地 data/certs/neko-toolBridge（原宿主 userData 目录已由
+  // 本项目 data 目录替代，持久化语义不变：重复启动复用同一证书，指纹稳定）
+  const certDir = path.join(certsDir, 'neko-toolBridge');
   const material = ensureCertificate(certDir);
   tls = { cert: material.cert, key: material.key, fingerprint: material.fingerprint };
   token = randomBytes(32).toString('hex');
@@ -245,7 +247,7 @@ export async function startNekoToolBridge(nekoPluginPort: number | null): Promis
   if (!cxfcClient) {
     cxfcClient = createCxfcClient({
       backendUrl,
-      // 每轮注册/心跳前重新读取配置（G5b）：跟随设置页修改后的最新后端地址
+      // 每轮注册/心跳前重新读取配置（G5b）：跟随配置修改后的最新后端地址
       backendUrlResolver: () => getConfig('backendUrl'),
       readPluginInfo: () => buildBridgeInfo(),
       logger: (line) => console.log(`[neko-bridge] ${line}`),
@@ -290,7 +292,7 @@ export interface NekoToolBridgeStatus {
   cxfcRegistered: boolean;
 }
 
-/** 当前状态（供 IPC / 管理页展示） */
+/** 当前状态（供控制面 / 管理页展示） */
 export function getNekoToolBridgeStatus(): NekoToolBridgeStatus {
   return {
     registrarRunning: !!registrarServer,

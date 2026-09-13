@@ -7,9 +7,12 @@
 运行：python -m pytest tests/test_tts_service.py -v
 """
 import asyncio
+import json
+import re
 
 import pytest
 
+from server.services.emotion_instruction_service import generate_instruction
 from server.services.tts_service import TTSService
 from server.core.utils import make_semaphore
 
@@ -65,6 +68,76 @@ class TestSplitTextStreaming:
         s = _svc()
         chunks = await self._collect(s, ["  "])
         assert chunks == []  # 全空白不产出
+
+
+class TestSplitTextStreamingTagBuffering:
+    """前置 <tts_instruction> 标签缓冲：标签完整进入首个切片（情感指令前置生效）。
+
+    spec: enhance-emotion-tts-and-action-presets（标签前置 + 横切保护 + 旧口径兼容 + 未闭合兜底）
+    """
+
+    async def _collect(self, s, tokens, threshold=3):
+        async def gen():
+            for t in tokens:
+                yield t
+        return [chunk async for chunk in s.split_text_streaming(gen(), char_threshold=threshold)]
+
+    @pytest.mark.asyncio
+    async def test_leading_tag_kept_intact_in_first_chunk(self):
+        # 标签在最前：首个切片包含完整闭合标签，generate_instruction 解析 source=llm 非 neutral
+        s = _svc()
+        tag = '<tts_instruction>{"text":"用开心的语气说"}</tts_instruction>'
+        chunks = await self._collect(s, list(tag + "今天天气真好呀"), threshold=3)
+        joined = "".join(chunks)
+        assert joined == tag + "今天天气真好呀"  # 文本不丢失不重复
+        assert "</tts_instruction>" in chunks[0]  # 首个切片含完整闭合标签
+        ins = await generate_instruction(chunks[0])
+        assert ins.source == "llm"
+        assert ins.neutral is False
+        assert ins.text == "用开心的语气说"
+
+    @pytest.mark.asyncio
+    async def test_tag_split_across_tokens_not_broken(self):
+        # 标签横切：开标签与闭合标记均拆进多个 token，标签不被切开、切片后 JSON 可解析
+        s = _svc()
+        tag = '<tts_instruction>{"text":"用开心的语气说","speed":1.2}</tts_instruction>'
+        tokens = [
+            "<tts_inst", 'ruction>{"te', 'xt":"用开心的语气', '说","spe',
+            'ed":1.2}<', "/tts_inst", "ruction>", "今天", "天气真好",
+        ]
+        chunks = await self._collect(s, tokens, threshold=3)
+        joined = "".join(chunks)
+        assert joined == tag + "今天天气真好"  # 无文本丢失
+        assert tag in chunks[0]  # 完整标签落在首个切片
+        m = re.search(r"<tts_instruction\s*>([\s\S]*?)</tts_instruction>", chunks[0])
+        data = json.loads(m.group(1))
+        assert data["text"] == "用开心的语气说"
+        assert data["speed"] == 1.2
+
+    @pytest.mark.asyncio
+    async def test_trailing_tag_last_chunk_parses(self):
+        # 旧口径兼容：标签在最后，含标签的末段仍能解析（现状行为保持不劣化）
+        s = _svc()
+        tag = '<tts_instruction>{"text":"用平静的语气说"}</tts_instruction>'
+        tokens = ["你好", "，世界", tag]
+        chunks = await self._collect(s, tokens, threshold=3)
+        joined = "".join(chunks)
+        assert joined == "你好，世界" + tag  # 正文与标签均保留
+        last = chunks[-1]
+        assert tag in last  # 标签未被从中间切开
+        ins = await generate_instruction(last)
+        assert ins.source == "llm"
+        assert ins.text == "用平静的语气说"
+
+    @pytest.mark.asyncio
+    async def test_unclosed_tag_flushed_at_stream_end(self):
+        # 未闭合标签流结束：buffer 原样吐出不丢文本（下游解析回退中性，不报错）
+        s = _svc()
+        unclosed = '<tts_instruction>{"text":"用开心的语气说'
+        chunks = await self._collect(s, ["今天天气", "不错", unclosed], threshold=3)
+        joined = "".join(chunks)
+        assert "今天天气不错" in joined.replace(unclosed, "")  # 正文保留
+        assert unclosed in joined  # 未闭合标签原文不丢失
 
 
 # ================================================================ 其他

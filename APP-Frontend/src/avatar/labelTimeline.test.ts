@@ -88,10 +88,20 @@ describe('createLabelTimeline', () => {
     expect(all[1].tag).toEqual({ type: 'action', action: 'wave' });
   });
 
-  it('非法标签按原文保留为文本，不产生触发点', () => {
-    const tl = createLabelTimeline('你好[emotion:rage]朋友');
-    // rage 不受支持 → 回退为纯文本，无 tag 触发点
+  it('已剥离标签不产生触发点，也不影响后续标签的 rawText 偏移', () => {
+    const tl = createLabelTimeline('你[emotion:rage]好[action:wave]');
+    // rage 不受支持 → 被剥离（容错分级），无触发点
+    expect(tl.cleanText).toBe('你好');
+    // [action:wave] 真实起点 = 1 + 14（[emotion:rage] 占位） + 1 = 16，不因剥离而位移
+    const hits = tl.advanceTo(100);
+    expect(hits).toHaveLength(1);
+    expect(hits[0]).toMatchObject({ rawCharOffset: 16 });
+    expect(hits[0].tag).toEqual({ type: 'action', action: 'wave' });
+  });
+
+  it('未知类型标签保留为文本，不产生触发点', () => {
+    const tl = createLabelTimeline('你好[unknown:x]朋友');
     expect(tl.advanceTo(100)).toEqual([]);
-    expect(tl.cleanText).toBe('你好[emotion:rage]朋友');
+    expect(tl.cleanText).toBe('你好[unknown:x]朋友');
   });
 });

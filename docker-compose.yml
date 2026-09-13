@@ -166,6 +166,33 @@ services:
     networks:
       - cxo-inference
 
+  # ============================================================
+  # CXO-EvalKit 评测服务（LLM 评测框架：memory/latency/quality suites）
+  # ============================================================
+  # 可选 profile：裸 up 不启动，`docker compose --profile eval up cxo-evalkit` 启动。
+  # 宿主端口默认 8320（CXO_EVALKIT_PORT 覆盖），容器内 8300；
+  # healthcheck 用 python urllib 探活（镜像不装 curl）；数据卷 ./data/evalkit → /app/data。
+  cxo-evalkit:
+    build:
+      context: ./CXO-EvalKit
+      dockerfile: Dockerfile
+    profiles: [eval]
+    ports:
+      - "${CXO_EVALKIT_PORT:-8320}:8300"
+    environment:
+      - PYTHONIOENCODING=utf-8
+    volumes:
+      - ./data/evalkit:/app/data
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request;urllib.request.urlopen('http://localhost:8300/api/v1/health')"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 20s
+    restart: unless-stopped
+    networks:
+      - cxo-inference
+
 volumes:
   llm-engines:
     driver: local

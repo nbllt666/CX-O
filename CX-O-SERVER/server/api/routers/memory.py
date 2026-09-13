@@ -1,10 +1,11 @@
 """记忆端点——记忆写入、检索与二次指令应用接口。"""
 from typing import Any, Dict, List, Optional
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
 from server.api.routers._pagination import clamp_pagination
+from server.api.routers.admin import verify_admin_api_key
 from server.config import Settings
 from server.core.exceptions import MemoryOperationError
 from server.core.logging_config import get_contextual_logger
@@ -942,6 +943,65 @@ async def get_memories_by_type(
     except Exception as e:
         logger.error(f"按类型获取记忆失败: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail="按类型获取记忆失败")
+
+
+class EvalTimeTravelRequest(BaseModel):
+    """时间旅行评测请求（仅供评测框架对专用 eval agent 使用）"""
+
+    agent_id: str
+    shift_days: int
+    memory_ids: Optional[List[int]] = None
+    tags: Optional[List[str]] = None
+
+
+@router.post("/memories/eval/time-travel")
+async def eval_time_travel(
+    body: EvalTimeTravelRequest,
+    _: bool = Depends(verify_admin_api_key),
+):
+    """时间旅行回拨（评测支撑端点，须 admin key）。
+
+    仅供外部评测框架对专用 eval agent 使用：将该 agent 下未删除记忆的
+    created_at/updated_at 整体回拨 shift_days 天，模拟记忆长期劣化。
+    单次上限 3650 天（10 年），多年劣化由调用方多次累积回拨。
+    """
+    from server.dependencies import get_memory_manager
+
+    if not (1 <= body.shift_days <= 3650):
+        raise HTTPException(
+            status_code=400,
+            detail="shift_days 必须在 1 到 3650 天之间（单次上限 10 年，多年劣化请多次累积回拨）",
+        )
+
+    try:
+        memory_mgr = get_memory_manager()
+        shifted_count = await run_io(
+            memory_mgr.shift_memory_time,
+            body.agent_id,
+            body.shift_days,
+            body.memory_ids,
+            body.tags,
+        )
+
+        if shifted_count == 0:
+            raise HTTPException(status_code=404, detail="该 agent 下没有可操作的记忆")
+
+        # 与 POST /memories/sync-decay 复用同一衰减底层逻辑：
+        # 回拨成功后刷新衰减统计（时间分数为实时计算，按回拨后的 created_at 生效）
+        await run_io(memory_mgr.sync_decay_values)
+
+        return {
+            "status": "success",
+            "shifted_count": shifted_count,
+            "message": f"已将 agent '{body.agent_id}' 的 {shifted_count} 条记忆回拨 {body.shift_days} 天",
+        }
+    except HTTPException:
+        raise
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        logger.error(f"时间旅行回拨失败: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="时间旅行回拨失败")
 
 
 @router.post("/memories/sync-decay")

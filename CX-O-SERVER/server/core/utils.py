@@ -158,34 +158,70 @@ def extract_json(text: Any, default: Any = None) -> Any:
 
 
 _shared_http_client: Optional[httpx.AsyncClient] = None
+# 按事件循环隔离的 client（id(loop) → client）。httpx 连接池中的 keep-alive 连接
+# 绑定创建它的事件循环；多 loop 共用一个 client 时，短命/后台 loop 的连接死后留在
+# 共享池里，主 loop 复用即报 "Event loop is closed"。主服务存在两个稳定 loop：
+# uvicorn 主循环与记忆向量化的持久后台循环，各自持有独立 client 实例。
+_loop_http_clients: Dict[int, httpx.AsyncClient] = {}
+
+
+def _create_shared_http_client() -> httpx.AsyncClient:
+    """构造共享参数的 httpx.AsyncClient（禁用系统代理，显式 TCP_NODELAY）。"""
+    # 显式禁用 Windows 系统代理检测（trust_env=False + proxy=None）
+    # 不依赖 main.py 的 monkey-patch（某些导入顺序下 patch 可能未生效）
+    # 实测：仅 trust_env=False 仍耗时 7.8s（httpx 内部代理检测残留）；
+    # 必须同时 proxy=None 才能降到 ~10ms（与 requests 一致）
+    return httpx.AsyncClient(
+        timeout=httpx.Timeout(connect=10.0, read=120.0, write=120.0, pool=10.0),
+        limits=httpx.Limits(max_keepalive_connections=5, max_connections=10, keepalive_expiry=30.0),
+        trust_env=False,
+        proxy=None,
+        transport=httpx.AsyncHTTPTransport(
+            socket_options=[(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)],
+        ),
+    )
 
 
 def get_shared_http_client() -> httpx.AsyncClient:
-    """获取模块级共享的 httpx.AsyncClient 单例（惰性创建，禁用系统代理）。"""
+    """获取与当前事件循环绑定的 httpx.AsyncClient（主 loop 单例语义不变）。
+
+    - 无运行中循环（同步上下文）：返回主单例（与既有调用方行为兼容）。
+    - 有运行中循环且非主单例的绑定 loop：返回该 loop 专属 client（惰性创建）。
+    """
     global _shared_http_client
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        loop = None
+
+    if loop is not None and _shared_http_client is not None:
+        bound = getattr(_shared_http_client, "_bound_loop", None)
+        if bound is not None and bound is not loop:
+            client = _loop_http_clients.get(id(loop))
+            if client is None:
+                client = _create_shared_http_client()
+                client._bound_loop = loop
+                _loop_http_clients[id(loop)] = client
+            return client
+
     if _shared_http_client is None:
-        # 显式禁用 Windows 系统代理检测（trust_env=False + proxy=None）
-        # 不依赖 main.py 的 monkey-patch（某些导入顺序下 patch 可能未生效）
-        # 实测：仅 trust_env=False 仍耗时 7.8s（httpx 内部代理检测残留）；
-        # 必须同时 proxy=None 才能降到 ~10ms（与 requests 一致）
-        _shared_http_client = httpx.AsyncClient(
-            timeout=httpx.Timeout(connect=10.0, read=120.0, write=120.0, pool=10.0),
-            limits=httpx.Limits(max_keepalive_connections=5, max_connections=10, keepalive_expiry=30.0),
-            trust_env=False,
-            proxy=None,
-            transport=httpx.AsyncHTTPTransport(
-                socket_options=[(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)],
-            ),
-        )
+        _shared_http_client = _create_shared_http_client()
+        _shared_http_client._bound_loop = loop
     return _shared_http_client
 
 
 async def close_shared_http_client():
-    """关闭共享 HTTP 客户端并置空，供服务关闭时调用。"""
+    """关闭共享 HTTP 客户端（含各 loop 隔离实例）并置空，供服务关闭时调用。"""
     global _shared_http_client
     if _shared_http_client:
         await _shared_http_client.aclose()
         _shared_http_client = None
+    while _loop_http_clients:
+        _, client = _loop_http_clients.popitem()
+        try:
+            await client.aclose()
+        except Exception:
+            pass
 
 
 # ============================================================================

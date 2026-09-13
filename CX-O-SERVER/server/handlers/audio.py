@@ -13,7 +13,7 @@ from server.protocol.message import create_response, create_error, create_stream
 from server.protocol.actions import ASRActions, TTSActions, EmotionActions, EffectActions, VoiceActions
 from server.services.emotion_parser import get_supported_emotions, extract_emotions_with_text
 from server.services.effect_parser import EffectParser
-from server.services.voice_context import set_active_client_id
+from server.services.voice_context import reset_active_client_id, set_active_client_id
 # 语音链路延迟采集（spec Task 4）：record 内部吞异常，埋点零阻断主链路
 from server.core.metrics.voice_latency import get_voice_latency_tracker
 # 模块级导入实时语音访问器：vad_processor 无对 audio 的反向依赖（无循环导入），
@@ -915,6 +915,15 @@ class DualStreamSession:
             logger.warning(f"发送 agent_interrupt_user 事件失败（不影响打断主流程）: {e}")
 
         if reply_content:
+            # 动作预设展开（Task 4.2）：插话回复文本在播报与 agent_reply 下发前
+            # 展开 [action:预设名]，保证语音正文与前端展示/历史一致。
+            # 失败静默回退原文本，不影响打断主流程。
+            try:
+                from server.services.preset_expand import expand_action_presets
+                reply_content = expand_action_presets(reply_content, self.agent_id)
+            except Exception as e:
+                logger.warning(f"动作预设展开失败（原样播报）: {e}")
+
             # 标记当前 utterance 已由 LLM 插话打断（供 speech_end_fallback 互斥使用：
             # on_vad_speech_end 据此跳过 VAD 兜底触发，避免双路 TTS 并发）
             self._agent_interrupt_triggered = True
@@ -1061,6 +1070,15 @@ class DualStreamSession:
         try:
             from server.dependencies import get_context_manager
             context_mgr = get_context_manager()
+
+            # 动作预设展开（Task 4.2）：语音链路回复文本落库前展开 [action:预设名]，
+            # 保证历史恢复展示与前端标签驱动一致（TTS 流式增量已按原样下发）。
+            # 失败静默回退原文本，不影响上下文记录。
+            try:
+                from server.services.preset_expand import expand_action_presets
+                assistant_text = expand_action_presets(assistant_text, self.agent_id)
+            except Exception as e:
+                logger.warning(f"动作预设展开失败（原样落库）: {e}")
 
             # 确保 session 存在
             # 伴生C3 修复：ensure_session / add_message 同步 sqlite 直调 → 异步变体

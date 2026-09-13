@@ -843,7 +843,7 @@ class MemoryLimitsConfig(BaseModel):
     hybrid_search_limit: int = 30
     hybrid_search_min_score: float = 0.15
     vector_min_score: float = 0.3
-    inject_memories_count: int = 20
+    inject_memories_count: int = 5
     rag_search_limit: int = 20
     entity_extract_max_content: int = 8000
     max_entities: int = 50

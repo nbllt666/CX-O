@@ -23,6 +23,7 @@ import {
 import type { IAvatarDriver, SceneMode } from '../../avatar/types';
 import { createAvatarDriver } from '../../avatar/createDriver';
 import { createSyntheticLive2DManifest, createSyntheticVRMManifest } from '../../avatar/manifest';
+import { reportManifestActions } from '../../api/clients/avatarManifest';
 import type { VowelWeights } from '../../hooks/useAudioAnalyzer';
 import { VRMViewer } from './VRMViewer';
 import { Live2DViewer } from './Live2DViewer';
@@ -130,6 +131,15 @@ export const PetAvatar = forwardRef<PetAvatarHandle, PetAvatarProps>(function Pe
   useEffect(() => {
     onDriverReady?.(activeDriver);
   }, [activeDriver, onDriverReady]);
+
+  // 动作清单上报（spec enhance-emotion-tts-and-action-presets Task 5.2）：
+  // manifest 就绪（motions/expressions 数据可用）即上报服务端缓存，供提示词
+  // 注入真实动作名。manifest 变化（头像类型/模型切换、per-agent 绑定变更）时
+  // 重新上报覆盖；空 actions 内部跳过，失败在内部 console.warn 静默——均不
+  // 影响头像加载主流程。
+  useEffect(() => {
+    void reportManifestActions(manifest, agentId);
+  }, [manifest, agentId]);
 
   if (!manifest || avatarType === 'none') {
     return (

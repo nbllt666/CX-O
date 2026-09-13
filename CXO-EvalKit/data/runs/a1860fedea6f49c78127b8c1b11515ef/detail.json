@@ -1,0 +1,122 @@
+{
+  "suite": "quality",
+  "run_id": "a1860fedea6f49c78127b8c1b11515ef",
+  "status": "error",
+  "agent_id": "eval-agent-a1860fedea6f49c78127b8c1b11515ef",
+  "scripts": [
+    {
+      "script_id": "evening_debrief",
+      "description": "晚间倾诉：加班疲惫与情绪回应的陪伴对话",
+      "turns": [
+        {
+          "turn_index": 0,
+          "user_message": "今天加班到九点才到家，累得一句话都不想说。",
+          "reply": null,
+          "network_error": "TargetHttpError: HTTP 404: {\"success\":false,\"error\":\"Agent 'eval-agent-a1860fedea6f49c78127b8c1b11515ef' 不存在\",\"error_code\":\"HTTP_404\",\"details\":null,\"timestamp\":\"2026-09-12T13:15:53.937791\"}"
+        },
+        {
+          "turn_index": 1,
+          "user_message": "会上方案被领导当众否了，其实那版是我熬了两个晚上赶出来的。",
+          "reply": null,
+          "network_error": "TargetHttpError: HTTP 404: {\"success\":false,\"error\":\"Agent 'eval-agent-a1860fedea6f49c78127b8c1b11515ef' 不存在\",\"error_code\":\"HTTP_404\",\"details\":null,\"timestamp\":\"2026-09-12T13:16:03.400208\"}"
+        },
+        {
+          "turn_index": 2,
+          "user_message": "回来路上买了份炸鸡，吃着吃着眼泪就下来了，我是不是太没出息了。",
+          "reply": null,
+          "network_error": "TargetHttpError: HTTP 404: {\"success\":false,\"error\":\"Agent 'eval-agent-a1860fedea6f49c78127b8c1b11515ef' 不存在\",\"error_code\":\"HTTP_404\",\"details\":null,\"timestamp\":\"2026-09-12T13:16:12.861194\"}"
+        },
+        {
+          "turn_index": 3,
+          "user_message": "算了不说了，周末想一个人去海边待两天，你觉得这个主意怎么样？",
+          "reply": null,
+          "network_error": "TargetHttpError: HTTP 404: {\"success\":false,\"error\":\"Agent 'eval-agent-a1860fedea6f49c78127b8c1b11515ef' 不存在\",\"error_code\":\"HTTP_404\",\"details\":null,\"timestamp\":\"2026-09-12T13:16:22.299612\"}"
+        }
+      ]
+    },
+    {
+      "script_id": "old_photo_memory",
+      "description": "旧照片回忆：室友往事与人际疏远的陪伴对话",
+      "turns": [
+        {
+          "turn_index": 0,
+          "user_message": "周末翻旧照片，看到大学时和室友在天台吃泡面的合照，突然好想她们。",
+          "reply": null,
+          "network_error": "TargetHttpError: HTTP 404: {\"success\":false,\"error\":\"Agent 'eval-agent-a1860fedea6f49c78127b8c1b11515ef' 不存在\",\"error_code\":\"HTTP_404\",\"details\":null,\"timestamp\":\"2026-09-12T13:16:31.715249\"}"
+        },
+        {
+          "turn_index": 1,
+          "user_message": "那时候我们总在熄灯后聊到半夜，聊未来聊到睡不着。",
+          "reply": null,
+          "network_error": "TargetHttpError: HTTP 404: {\"success\":false,\"error\":\"Agent 'eval-agent-a1860fedea6f49c78127b8c1b11515ef' 不存在\",\"error_code\":\"HTTP_404\",\"details\":null,\"timestamp\":\"2026-09-12T13:16:41.208792\"}"
+        },
+        {
+          "turn_index": 2,
+          "user_message": "上个月给其中一个室友发消息，她到现在都没回，我有点失落。",
+          "reply": null,
+          "network_error": "TargetHttpError: HTTP 404: {\"success\":false,\"error\":\"Agent 'eval-agent-a1860fedea6f49c78127b8c1b11515ef' 不存在\",\"error_code\":\"HTTP_404\",\"details\":null,\"timestamp\":\"2026-09-12T13:16:50.649394\"}"
+        },
+        {
+          "turn_index": 3,
+          "user_message": "你说人与人是不是走着走着就散了？",
+          "reply": null,
+          "network_error": "TargetHttpError: HTTP 404: {\"success\":false,\"error\":\"Agent 'eval-agent-a1860fedea6f49c78127b8c1b11515ef' 不存在\",\"error_code\":\"HTTP_404\",\"details\":null,\"timestamp\":\"2026-09-12T13:17:00.136388\"}"
+        }
+      ]
+    }
+  ],
+  "summary": {
+    "suite": "quality",
+    "status": "error",
+    "started_at": "2026-09-12T05:15:44.375622+00:00",
+    "finished_at": "2026-09-12T05:17:00.137885+00:00",
+    "config": {
+      "agent_id": "eval-agent-a1860fedea6f49c78127b8c1b11515ef",
+      "avg_min": 3.5
+    },
+    "judge_failed_count": 0,
+    "failed_turns": [
+      {
+        "script_id": "evening_debrief",
+        "turn_index": 0,
+        "error": "TargetHttpError: HTTP 404: {\"success\":false,\"error\":\"Agent 'eval-agent-a1860fedea6f49c78127b8c1b11515ef' 不存在\",\"error_code\":\"HTTP_404\",\"details\":null,\"timestamp\":\"2026-09-12T13:15:53.937791\"}"
+      },
+      {
+        "script_id": "evening_debrief",
+        "turn_index": 1,
+        "error": "TargetHttpError: HTTP 404: {\"success\":false,\"error\":\"Agent 'eval-agent-a1860fedea6f49c78127b8c1b11515ef' 不存在\",\"error_code\":\"HTTP_404\",\"details\":null,\"timestamp\":\"2026-09-12T13:16:03.400208\"}"
+      },
+      {
+        "script_id": "evening_debrief",
+        "turn_index": 2,
+        "error": "TargetHttpError: HTTP 404: {\"success\":false,\"error\":\"Agent 'eval-agent-a1860fedea6f49c78127b8c1b11515ef' 不存在\",\"error_code\":\"HTTP_404\",\"details\":null,\"timestamp\":\"2026-09-12T13:16:12.861194\"}"
+      },
+      {
+        "script_id": "evening_debrief",
+        "turn_index": 3,
+        "error": "TargetHttpError: HTTP 404: {\"success\":false,\"error\":\"Agent 'eval-agent-a1860fedea6f49c78127b8c1b11515ef' 不存在\",\"error_code\":\"HTTP_404\",\"details\":null,\"timestamp\":\"2026-09-12T13:16:22.299612\"}"
+      },
+      {
+        "script_id": "old_photo_memory",
+        "turn_index": 0,
+        "error": "TargetHttpError: HTTP 404: {\"success\":false,\"error\":\"Agent 'eval-agent-a1860fedea6f49c78127b8c1b11515ef' 不存在\",\"error_code\":\"HTTP_404\",\"details\":null,\"timestamp\":\"2026-09-12T13:16:31.715249\"}"
+      },
+      {
+        "script_id": "old_photo_memory",
+        "turn_index": 1,
+        "error": "TargetHttpError: HTTP 404: {\"success\":false,\"error\":\"Agent 'eval-agent-a1860fedea6f49c78127b8c1b11515ef' 不存在\",\"error_code\":\"HTTP_404\",\"details\":null,\"timestamp\":\"2026-09-12T13:16:41.208792\"}"
+      },
+      {
+        "script_id": "old_photo_memory",
+        "turn_index": 2,
+        "error": "TargetHttpError: HTTP 404: {\"success\":false,\"error\":\"Agent 'eval-agent-a1860fedea6f49c78127b8c1b11515ef' 不存在\",\"error_code\":\"HTTP_404\",\"details\":null,\"timestamp\":\"2026-09-12T13:16:50.649394\"}"
+      },
+      {
+        "script_id": "old_photo_memory",
+        "turn_index": 3,
+        "error": "TargetHttpError: HTTP 404: {\"success\":false,\"error\":\"Agent 'eval-agent-a1860fedea6f49c78127b8c1b11515ef' 不存在\",\"error_code\":\"HTTP_404\",\"details\":null,\"timestamp\":\"2026-09-12T13:17:00.136388\"}"
+      }
+    ],
+    "error": "全部 8 轮对话失败（TargetError/TargetHttpError），无回复可判分"
+  }
+}

@@ -146,12 +146,27 @@ CX-O/
 ├── CX-O-VoiceWorkStation/  # 语音工作站（作曲/翻唱CXFC：作曲/歌曲合成/翻唱推理/音域分析自动升降 key/双人合唱分离，端口 8200；engines/ 内含 demucs + AudioSep 分离引擎，见 DEPLOY-SEPARATION.md）
 ├── CXO-ModelStation/       # 模型工作站（So-VITS-SVC 训练全链路，后端 8300，训练时前端由后端托管；engines/ 内含 so-vits-svc-4.1-Stable / VoxCPM-main / MeloTTS 三引擎，2026-09-05 自包含化迁入；独立部署见 CXO-ModelStation/DEPLOY.md）
 ├── CXO-Tuner/              # 进化实验室（可选独立服务，自我进化，默认端口 8310——2026-09-05 起与模型工作站 8300 错开，可同启）
+├── CXO-EvalKit/            # LLM 评测框架（可选独立服务，对后端做记忆/延迟/质量自动体检，宿主端口 8320，详见 CXO-EvalKit/DEPLOY.md）
 ├── config/                 # 全局配置文件
 ├── docker/                 # Docker 镜像构建文件
 ├── docs/                   # 项目文档
 ├── models/                 # 本地模型存放目录
 └── public/                 # 公共契约资源
 ```
+
+---
+
+## LLM 评测框架
+
+你的 AI 伙伴记性好不好、回话快不快、聊得贴不贴心，不用靠感觉猜——CXO-EvalKit 是给整个系统做"体检"的独立小服务：它扮演一个真实用户，和你的 AI 对话、存记忆、翻旧账，然后交出一份带 ✅/❌ 判定的体检报告。
+
+**它能测三个维度：**
+
+- **记忆衰减**：种下一批记忆后，把时间快进 1 个月、半年、1 年、3 年，看她还记不记得—— permanent（永久）记忆一分不能丢，普通记忆 1 年后至少保持六成才算合格；还会专门对比"常回家看看（定期重温）"的记忆是不是比没人管的记忆保存得更好
+- **响应速度**：模拟日常聊天、翻记忆搜索、多人同时发消息三种场景，统计响应时间；还能和上一次体检对比，一旦明显变慢立刻标红
+- **对话质量**：回放一整套生活化对话剧本，AI 裁判从"记没记住事、人设稳不稳定、说话连不连贯"三个角度逐句打分，低于 3 分的回复会连同原文一起列出来，方便定位问题
+
+**怎么用：** 三步走——启动体检服务（`docker compose --profile eval up cxo-evalkit`，或本地 `uvicorn evalkit.api:app --port 8300`）→ 发一条命令开始体检（`POST /api/v1/runs`，选 memory_decay / latency / quality 任意一项）→ 体检完成后拉取报告（`GET /api/v1/runs/{id}/report`，一份 Markdown，直接阅读）。也有内置演示模式，不接真实服务就能先跑通看报告长什么样。详细步骤见 [CXO-EvalKit/DEPLOY.md](./CXO-EvalKit/DEPLOY.md)。
 
 ---
 

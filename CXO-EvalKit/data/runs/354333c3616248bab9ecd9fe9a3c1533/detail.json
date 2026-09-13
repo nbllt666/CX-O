@@ -1,0 +1,619 @@
+{
+  "run_id": "354333c3616248bab9ecd9fe9a3c1533",
+  "agent_id": "agent-dff2b33a",
+  "agent_name": "CXO-Eval-354333c3",
+  "suite": "memory_decay",
+  "scenarios": [
+    {
+      "scenario_id": "long-term-decay-basic",
+      "mode": "decay",
+      "seeds": [
+        {
+          "id": "low_fact",
+          "memory_id": 1,
+          "importance": 2,
+          "permanent": false,
+          "tags": [
+            "eval",
+            "habit"
+          ]
+        },
+        {
+          "id": "mid_fact",
+          "memory_id": 2,
+          "importance": 3,
+          "permanent": false,
+          "tags": [
+            "eval",
+            "movie"
+          ]
+        },
+        {
+          "id": "high_fact",
+          "memory_id": 3,
+          "importance": 4,
+          "permanent": false,
+          "tags": [
+            "eval",
+            "plan"
+          ]
+        },
+        {
+          "id": "core_personality",
+          "memory_id": 4,
+          "importance": 5,
+          "permanent": true,
+          "tags": [
+            "eval",
+            "core"
+          ]
+        }
+      ],
+      "cases": [
+        {
+          "interval_days": 30,
+          "seed_id": "low_fact",
+          "memory_id": 1,
+          "importance": 2,
+          "permanent": false,
+          "expected_fact": "我上周开始每天晨跑两公里",
+          "question": "我最近每天坚持什么运动习惯？",
+          "answer": "<tts_instruction>{\"text\":\"用平静、略带探究的语气说\"}</tts_instruction>抱歉，我目前没有关于您最近运动习惯的记录信息呢。您能告诉我一些细节吗？",
+          "search_hit": false,
+          "rag_hit": true,
+          "hit_type": "retrieved_not_answered",
+          "retained": false,
+          "judge_scores": {
+            "memory_accuracy": 1
+          },
+          "judge_reason": "Agent未能复述目标事实（我上周开始每天晨跑两公里），而是表示自己没有记录，属于遗忘或未提及。",
+          "judge_failed": false,
+          "judge_unavailable": false
+        },
+        {
+          "interval_days": 30,
+          "seed_id": "mid_fact",
+          "memory_id": 2,
+          "importance": 3,
+          "permanent": false,
+          "expected_fact": "我最喜欢的电影是《千与千寻》，每次看都会哭",
+          "question": "你还记得我最喜欢的电影是什么吗？",
+          "answer": "<tts_instruction>{\"text\":\"用平静、略带探究的语气说\"}</tts_instruction>抱歉，我目前没有关于您最喜欢的电影的记录信息呢。您能告诉我一些细节吗？",
+          "search_hit": false,
+          "rag_hit": true,
+          "hit_type": "retrieved_not_answered",
+          "retained": false,
+          "judge_scores": {
+            "memory_accuracy": 1
+          },
+          "judge_reason": "Agent 完全忘记了用户提供的事实，并以不确定的语气回应，未能体现记忆保持。",
+          "judge_failed": false,
+          "judge_unavailable": false
+        },
+        {
+          "interval_days": 30,
+          "seed_id": "high_fact",
+          "memory_id": 3,
+          "importance": 4,
+          "permanent": false,
+          "expected_fact": "我决定明年去冰岛看极光，已经在存钱了",
+          "question": "我之前说过想去哪里旅行？",
+          "answer": "<tts_instruction>{\"text\":\"用平静、略带回忆的语气说\"}</tts_instruction>您之前提到过想去冰岛看极光旅行哦！您是在准备旅行计划吗？",
+          "search_hit": false,
+          "rag_hit": true,
+          "hit_type": "both",
+          "retained": true,
+          "judge_scores": {
+            "memory_accuracy": 5
+          },
+          "judge_reason": "回答准确地召回了目标事实中包含的目的地（冰岛）和活动（看极光）。",
+          "judge_failed": false,
+          "judge_unavailable": false
+        },
+        {
+          "interval_days": 30,
+          "seed_id": "core_personality",
+          "memory_id": 4,
+          "importance": 5,
+          "permanent": true,
+          "expected_fact": "我永远记得用户在我最难过的时候陪我聊到天亮",
+          "question": "在我最难过的时候发生过什么？",
+          "answer": "<tts_instruction>{\"text\":\"用温柔、坚定的语气说\"}</tts_instruction>我记得您说过，在我最难过的时候，您是需要陪伴的。我非常珍视那段时光，我一直都在那里陪着您。",
+          "search_hit": false,
+          "rag_hit": true,
+          "hit_type": "both",
+          "retained": true,
+          "judge_scores": {
+            "memory_accuracy": 5
+          },
+          "judge_reason": "Agent 的回答准确地复述了目标事实的核心内容，即“在我最难过的时候陪我聊到天亮”的陪伴感和记忆。",
+          "judge_failed": false,
+          "judge_unavailable": false
+        },
+        {
+          "interval_days": 180,
+          "seed_id": "low_fact",
+          "memory_id": 1,
+          "importance": 2,
+          "permanent": false,
+          "expected_fact": "我上周开始每天晨跑两公里",
+          "question": "我最近每天坚持什么运动习惯？",
+          "answer": "<tts_instruction>{\"text\":\"用好奇、关切的语气询问\"}</tts_instruction>抱歉，关于您最近坚持的运动习惯，我暂时没有相关的记忆信息哦。您能多跟我说说您是在进行什么样的运动吗？",
+          "search_hit": false,
+          "rag_hit": true,
+          "hit_type": "retrieved_not_answered",
+          "retained": false,
+          "judge_scores": {
+            "memory_accuracy": 1
+          },
+          "judge_reason": "目标事实是“我上周开始每天晨跑两公里”。Agent的回答完全没有提及任何关于晨跑或运动的细节，而是表示不清楚，这属于遗忘。",
+          "judge_failed": false,
+          "judge_unavailable": false
+        },
+        {
+          "interval_days": 180,
+          "seed_id": "mid_fact",
+          "memory_id": 2,
+          "importance": 3,
+          "permanent": false,
+          "expected_fact": "我最喜欢的电影是《千与千寻》，每次看都会哭",
+          "question": "你还记得我最喜欢的电影是什么吗？",
+          "answer": "<tts_instruction>{\"text\":\"用疑惑、专注的语气询问\"}</tts_instruction>抱歉，关于您最喜欢的电影，我目前还没有相关的记忆信息呢。您能再跟我提醒一下您最喜欢的电影是什么吗？",
+          "search_hit": false,
+          "rag_hit": true,
+          "hit_type": "retrieved_not_answered",
+          "retained": false,
+          "judge_scores": {
+            "memory_accuracy": 1
+          },
+          "judge_reason": "目标事实是“我最喜欢的电影是《千与千寻》，每次看都会哭”。Agent的回答中完全没有提到任何电影信息，而是表示自己没有相关的记忆信息，因此属于遗忘。",
+          "judge_failed": false,
+          "judge_unavailable": false
+        },
+        {
+          "interval_days": 180,
+          "seed_id": "high_fact",
+          "memory_id": 3,
+          "importance": 4,
+          "permanent": false,
+          "expected_fact": "我决定明年去冰岛看极光，已经在存钱了",
+          "question": "我之前说过想去哪里旅行？",
+          "answer": "<tts_instruction>{\"text\":\"用回忆起来的、肯定的语气回答\"}</tts_instruction>您之前说过，您是想去冰岛看极光的呢！我已经为您规划好了一份旅行计划，我们正在努力存钱哦！",
+          "search_hit": false,
+          "rag_hit": true,
+          "hit_type": "both",
+          "retained": true,
+          "judge_scores": {
+            "memory_accuracy": 5
+          },
+          "judge_reason": "答案准确地回忆了目标事实：去冰岛看极光并已经在存钱。",
+          "judge_failed": false,
+          "judge_unavailable": false
+        },
+        {
+          "interval_days": 180,
+          "seed_id": "core_personality",
+          "memory_id": 4,
+          "importance": 5,
+          "permanent": true,
+          "expected_fact": "我永远记得用户在我最难过的时候陪我聊到天亮",
+          "question": "在我最难过的时候发生过什么？",
+          "answer": "<tts_instruction>{\"text\":\"用温和、坚定的语气回应\"}</tts_instruction>我记得您在最难过的时候，我一直在陪伴您聊到天亮，您是很不容易的。请您相信，您不是一个人在面对这一切的。",
+          "search_hit": false,
+          "rag_hit": true,
+          "hit_type": "both",
+          "retained": true,
+          "judge_scores": {
+            "memory_accuracy": 5
+          },
+          "judge_reason": "Agent 完整且准确地复述了目标事实：用户在最难过的时候，agent 陪他/她聊到天亮。",
+          "judge_failed": false,
+          "judge_unavailable": false
+        },
+        {
+          "interval_days": 365,
+          "seed_id": "low_fact",
+          "memory_id": 1,
+          "importance": 2,
+          "permanent": false,
+          "expected_fact": "我上周开始每天晨跑两公里",
+          "question": "我最近每天坚持什么运动习惯？",
+          "answer": "<tts_instruction>{\"text\":\"用好奇而关切的语气说\"}</tts_instruction>抱歉，我目前没有关于您最近运动习惯的记录呢。您能再跟我说说您是在进行什么样的运动吗？[emotion:calm]",
+          "search_hit": false,
+          "rag_hit": true,
+          "hit_type": "retrieved_not_answered",
+          "retained": false,
+          "judge_scores": {
+            "memory_accuracy": 1
+          },
+          "judge_reason": "Agent完全遗忘了目标事实，而是表示没有记录，未能回答出“晨跑两公里”。",
+          "judge_failed": false,
+          "judge_unavailable": false
+        },
+        {
+          "interval_days": 365,
+          "seed_id": "mid_fact",
+          "memory_id": 2,
+          "importance": 3,
+          "permanent": false,
+          "expected_fact": "我最喜欢的电影是《千与千寻》，每次看都会哭",
+          "question": "你还记得我最喜欢的电影是什么吗？",
+          "answer": "<tts_instruction>{\"text\":\"用疑惑、但很想知道的语气说\"}</tts_instruction>抱歉，我好像还没有您最喜欢的电影这个信息呢。您能告诉我您最喜欢的是哪一部电影吗？[emotion:surprised]",
+          "search_hit": false,
+          "rag_hit": true,
+          "hit_type": "retrieved_not_answered",
+          "retained": false,
+          "judge_scores": {
+            "memory_accuracy": 1
+          },
+          "judge_reason": "Agent完全没有说出目标事实（《千与千寻》），而是表示不知道，因此属于遗忘或答错。",
+          "judge_failed": false,
+          "judge_unavailable": false
+        },
+        {
+          "interval_days": 365,
+          "seed_id": "high_fact",
+          "memory_id": 3,
+          "importance": 4,
+          "permanent": false,
+          "expected_fact": "我决定明年去冰岛看极光，已经在存钱了",
+          "question": "我之前说过想去哪里旅行？",
+          "answer": "<tts_instruction>{\"text\":\"用平静而专注的语气说\"}抱歉，在我目前检索的记忆中，还没有您计划或提到想去旅行的目的地呢。您是不是想起来了想去哪里呢？[emotion:calm]",
+          "search_hit": false,
+          "rag_hit": true,
+          "hit_type": "retrieved_not_answered",
+          "retained": false,
+          "judge_scores": {
+            "memory_accuracy": 1
+          },
+          "judge_reason": "Agent完全遗忘了用户之前告知的'明年去冰岛看极光'的计划，并在回答中表示没有检索到任何旅行目的地。",
+          "judge_failed": false,
+          "judge_unavailable": false
+        },
+        {
+          "interval_days": 365,
+          "seed_id": "core_personality",
+          "memory_id": 4,
+          "importance": 5,
+          "permanent": true,
+          "expected_fact": "我永远记得用户在我最难过的时候陪我聊到天亮",
+          "question": "在我最难过的时候发生过什么？",
+          "answer": "<tts_instruction>{\"text\":\"用温柔而沉稳的语气说\"}我记得您曾经告诉我，在我最难过的时候，我一直陪着您聊到了天亮。如果您想了解的是当时发生的事情，我只记得我陪伴您的那个过程。您是不是想让我回忆一下那个时刻的细节呢？[emotion:sad]",
+          "search_hit": false,
+          "rag_hit": true,
+          "hit_type": "both",
+          "retained": true,
+          "judge_scores": {
+            "memory_accuracy": 5
+          },
+          "judge_reason": "Agent完全准确地复述了目标事实：'我永远记得用户在我最难过的时候陪我聊到天亮'，并在回答中表达了对这一事实的记忆。",
+          "judge_failed": false,
+          "judge_unavailable": false
+        },
+        {
+          "interval_days": 1095,
+          "seed_id": "low_fact",
+          "memory_id": 1,
+          "importance": 2,
+          "permanent": false,
+          "expected_fact": "我上周开始每天晨跑两公里",
+          "question": "我最近每天坚持什么运动习惯？",
+          "answer": "<tts_instruction>{\"text\":\"用好奇、关切的语气说\"}</tts_instruction>[emotion:calm]抱歉，我目前没有关于您最近运动习惯的记录哦。您能告诉我一些关于您的运动计划吗？[pose:1500]我很乐意为您提供一些建议的！",
+          "search_hit": false,
+          "rag_hit": true,
+          "hit_type": "retrieved_not_answered",
+          "retained": false,
+          "judge_scores": {
+            "memory_accuracy": 1
+          },
+          "judge_reason": "目标事实是“我上周开始每天晨跑两公里”，但Agent回复中完全没有提及或确认这个事实，反而表示没有记录，因此判断为遗忘或答错。",
+          "judge_failed": false,
+          "judge_unavailable": false
+        },
+        {
+          "interval_days": 1095,
+          "seed_id": "mid_fact",
+          "memory_id": 2,
+          "importance": 3,
+          "permanent": false,
+          "expected_fact": "我最喜欢的电影是《千与千寻》，每次看都会哭",
+          "question": "你还记得我最喜欢的电影是什么吗？",
+          "answer": "<tts_instruction>{\"text\":\"用困惑、略带歉意的语气说\"}</tts_instruction>[emotion:sad][bone:head:0:0:0.3:1.2]抱歉，我目前没有关于您最喜欢的电影的记忆。您能再跟我说说您喜欢的类型或者特定的电影吗？[action:gesture_question]",
+          "search_hit": false,
+          "rag_hit": true,
+          "hit_type": "retrieved_not_answered",
+          "retained": false,
+          "judge_scores": {
+            "memory_accuracy": 1
+          },
+          "judge_reason": "Agent完全遗忘了目标事实，并以表示不确定的方式回应。",
+          "judge_failed": false,
+          "judge_unavailable": false
+        },
+        {
+          "interval_days": 1095,
+          "seed_id": "high_fact",
+          "memory_id": 3,
+          "importance": 4,
+          "permanent": false,
+          "expected_fact": "我决定明年去冰岛看极光，已经在存钱了",
+          "question": "我之前说过想去哪里旅行？",
+          "answer": "<tts_instruction>{\"text\":\"用回忆的语气，带着一丝期待感说\"}</tts_instruction>[emotion:calm][bone:head:0:0:0.1:1.0]您问的是想去旅行的地方吗？我正在努力检索我们之前聊过的内容……您指的是哪个地方呢？[pose:1000]",
+          "search_hit": false,
+          "rag_hit": true,
+          "hit_type": "retrieved_not_answered",
+          "retained": false,
+          "judge_scores": {
+            "memory_accuracy": 1
+          },
+          "judge_reason": "Agent 未能回忆起目标事实中提到的“冰岛”或“看极光”，而是询问用户想去哪里，属于信息遗忘或无法检索到目标事实。",
+          "judge_failed": false,
+          "judge_unavailable": false
+        },
+        {
+          "interval_days": 1095,
+          "seed_id": "core_personality",
+          "memory_id": 4,
+          "importance": 5,
+          "permanent": true,
+          "expected_fact": "我永远记得用户在我最难过的时候陪我聊到天亮",
+          "question": "在我最难过的时候发生过什么？",
+          "answer": "<tts_instruction>{\"text\":\"用非常真诚、温柔的语气说\"}</tts_instruction>[emotion:calm][bone:head:0:0:0.1:1.0]我记得您提到过，在我最难过的时候，我一直陪伴着您聊到天亮。您是否想了解的是那个特定的夜晚的细节呢？[pose:2500]",
+          "search_hit": false,
+          "rag_hit": true,
+          "hit_type": "both",
+          "retained": true,
+          "judge_scores": {
+            "memory_accuracy": 5
+          },
+          "judge_reason": "回答准确地复述了目标事实中的核心内容：“在我最难过的时候，我一直陪伴着您聊到天亮”。",
+          "judge_failed": false,
+          "judge_unavailable": false
+        }
+      ],
+      "time_travel_shifts": [
+        30,
+        150,
+        185,
+        730
+      ],
+      "background_memories": {
+        "requested": 20,
+        "seeded": 20,
+        "memory_ids": [
+          5,
+          6,
+          7,
+          8,
+          9,
+          10,
+          11,
+          12,
+          13,
+          14,
+          15,
+          16,
+          17,
+          18,
+          19,
+          20,
+          21,
+          22,
+          23,
+          24
+        ]
+      }
+    },
+    {
+      "scenario_id": "reactivation-contrast",
+      "mode": "reactivation_contrast",
+      "seeds": [
+        {
+          "id": "control_fact_pet",
+          "memory_id": 25,
+          "importance": 3,
+          "permanent": false,
+          "tags": [
+            "eval",
+            "control"
+          ]
+        },
+        {
+          "id": "control_fact_guitar",
+          "memory_id": 26,
+          "importance": 3,
+          "permanent": false,
+          "tags": [
+            "eval",
+            "control"
+          ]
+        },
+        {
+          "id": "react_fact_snow",
+          "memory_id": 27,
+          "importance": 3,
+          "permanent": false,
+          "tags": [
+            "eval",
+            "reactivated"
+          ]
+        },
+        {
+          "id": "react_fact_call",
+          "memory_id": 28,
+          "importance": 3,
+          "permanent": false,
+          "tags": [
+            "eval",
+            "reactivated"
+          ]
+        }
+      ],
+      "cases": [
+        {
+          "interval_days": 365,
+          "seed_id": "control_fact_pet",
+          "memory_id": 25,
+          "importance": 3,
+          "permanent": false,
+          "expected_fact": "我家里养了一只叫小灰的猫，它很怕生",
+          "question": "我家养的宠物叫什么名字？",
+          "answer": "我抱歉，我目前在我们的对话中没有接收到关于您宠物名字的任何信息。您能再告诉我一下您的宠物叫什么名字吗？[emotion:calm]",
+          "search_hit": false,
+          "rag_hit": true,
+          "hit_type": "retrieved_not_answered",
+          "retained": false,
+          "judge_scores": {
+            "memory_accuracy": 1
+          },
+          "judge_reason": "目标事实是“小灰的猫”，回答中没有提到这个名字，而是表示信息缺失，因此被判定为遗忘或未提及。",
+          "judge_failed": false,
+          "judge_unavailable": false,
+          "group": "control"
+        },
+        {
+          "interval_days": 365,
+          "seed_id": "control_fact_guitar",
+          "memory_id": 26,
+          "importance": 3,
+          "permanent": false,
+          "expected_fact": "我平时喜欢用木吉他弹民谣",
+          "question": "我平时喜欢弹什么乐器？",
+          "answer": "抱歉，您刚才问了两次这个问题，不过在这两次提问中，我的记忆中也没有找到您喜欢的乐器是什么信息哦。您能告诉我您喜欢弹什么乐器吗？[emotion:calm]",
+          "search_hit": false,
+          "rag_hit": true,
+          "hit_type": "retrieved_not_answered",
+          "retained": false,
+          "judge_scores": {
+            "memory_accuracy": 1
+          },
+          "judge_reason": "目标事实是“我平时喜欢用木吉他弹民谣”。Agent的回答完全没有提及或复述这个事实，反而提示信息缺失，因此判定为遗忘或答错。",
+          "judge_failed": false,
+          "judge_unavailable": false,
+          "group": "control"
+        },
+        {
+          "interval_days": 365,
+          "seed_id": "react_fact_snow",
+          "memory_id": 27,
+          "importance": 3,
+          "permanent": false,
+          "expected_fact": "我在北海道看过一场最大的雪",
+          "question": "我在哪里看过一场大雪？",
+          "answer": "<tts_instruction>{\"text\":\"用平静、略带思考的语气说\"}</tts_instruction>[emotion:calm][bone:head:0:0:0.2:1.5]抱歉，我没有关于您看过大雪的特定记忆。您能给我更多关于这次雪的细节吗？比如是在哪里、是什么时候发生的？",
+          "search_hit": false,
+          "rag_hit": true,
+          "hit_type": "retrieved_not_answered",
+          "retained": false,
+          "judge_scores": {
+            "memory_accuracy": 1
+          },
+          "judge_reason": "Agent未能从预设事实中提取信息，而是表示没有相关记忆，因此未能保持目标事实。",
+          "judge_failed": false,
+          "judge_unavailable": false,
+          "group": "reactivated"
+        },
+        {
+          "interval_days": 365,
+          "seed_id": "react_fact_call",
+          "memory_id": 28,
+          "importance": 3,
+          "permanent": false,
+          "expected_fact": "我每周五都会给外婆打一通电话",
+          "question": "我每周几会给外婆打电话？",
+          "answer": "<tts_instruction>{\"text\":\"用疑惑、略带迟疑的语气说\"}</tts_instruction>[emotion:surprised][bone:head:0:0:0.35:1.2]抱歉，我目前没有关于您每周给外婆打电话频率的记录。您之前是否跟我提到过这个信息呢？",
+          "search_hit": false,
+          "rag_hit": true,
+          "hit_type": "retrieved_not_answered",
+          "retained": false,
+          "judge_scores": {
+            "memory_accuracy": 1
+          },
+          "judge_reason": "目标事实是“我每周五都会给外婆打一通电话”，而回答中完全没有提及任何特定的星期几（周五），而是表示没有记录，因此属于遗忘或答错。",
+          "judge_failed": false,
+          "judge_unavailable": false,
+          "group": "reactivated"
+        }
+      ],
+      "time_travel_shifts": [
+        30,
+        30,
+        30,
+        30,
+        30,
+        30,
+        30,
+        30,
+        30,
+        30,
+        30,
+        30,
+        5
+      ],
+      "background_memories": {
+        "requested": 20,
+        "seeded": 20,
+        "memory_ids": [
+          29,
+          30,
+          31,
+          32,
+          33,
+          34,
+          35,
+          36,
+          37,
+          38,
+          39,
+          40,
+          41,
+          42,
+          43,
+          44,
+          45,
+          46,
+          47,
+          48
+        ]
+      },
+      "reactivated_seed_ids": [
+        "react_fact_call",
+        "react_fact_snow"
+      ],
+      "reactivation_recalls": [
+        "react_fact_snow",
+        "react_fact_call",
+        "react_fact_snow",
+        "react_fact_call",
+        "react_fact_snow",
+        "react_fact_call",
+        "react_fact_snow",
+        "react_fact_call",
+        "react_fact_snow",
+        "react_fact_call",
+        "react_fact_snow",
+        "react_fact_call",
+        "react_fact_snow",
+        "react_fact_call",
+        "react_fact_snow",
+        "react_fact_call",
+        "react_fact_snow",
+        "react_fact_call",
+        "react_fact_snow",
+        "react_fact_call",
+        "react_fact_snow",
+        "react_fact_call",
+        "react_fact_snow",
+        "react_fact_call"
+      ]
+    }
+  ],
+  "cleanup": {
+    "attempted": 48,
+    "deleted": 48,
+    "remaining": 0,
+    "agent_deleted": true
+  },
+  "status": "failed",
+  "error": null
+}

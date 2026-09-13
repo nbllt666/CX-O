@@ -117,6 +117,14 @@ class HybridSearch:
                     memory_type=options.memory_type,
                 )
 
+            def _pick(item: Dict, key: str):
+                """兼容两种返回形态：顶层键（旧约定/测试 mock）与 metadata 子字典
+                （weaviate_store 实际返回）。顶层非 None 优先。"""
+                v = item.get(key)
+                if v is not None:
+                    return v
+                return (item.get("metadata") or {}).get(key)
+
             return [
                 SearchResult(
                     memory_id=r["memory_id"],
@@ -124,10 +132,13 @@ class HybridSearch:
                     score=r["score"],
                     source="vector",
                     metadata=r.get("metadata"),
-                    importance=r.get("importance"),
-                    importance_score=r.get("importance_score"),
-                    created_at=r.get("created_at"),
-                    reactivation_count=r.get("reactivation_count"),
+                    # 元数据在 weaviate_store 返回的 metadata 子字典中——顶层只有
+                    # memory_id/score/content/metadata，按顶层取键恒得 None，
+                    # 检索侧时间/重要性通道整体失效（2026-09-13 实测根因）。
+                    importance=_pick(r, "importance"),
+                    importance_score=_pick(r, "importance_score"),
+                    created_at=_pick(r, "created_at"),
+                    reactivation_count=_pick(r, "reactivation_count"),
                 )
                 for r in vector_results
             ]
@@ -153,7 +164,12 @@ class HybridSearch:
                     source="keyword",
                     metadata=r,
                     importance=r.get("importance"),
-                    importance_score=r.get("importance_score"),
+                    # importance_score 显式给值优先透传（接口语义）；缺失时用
+                    # importance 整数换算（SQLite 该列历史写入恒 0.6，真值在
+                    # importance 列——由向量通道 metadata 修复兜底真值来源）。
+                    importance_score=r.get("importance_score")
+                    if r.get("importance_score") is not None
+                    else (r.get("importance", 3) / 5.0),
                     created_at=r.get("created_at"),
                     reactivation_count=r.get("reactivation_count"),
                 )

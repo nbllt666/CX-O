@@ -1,0 +1,64 @@
+{
+  "run_id": "0d12c3b88c9b4b8189e9b4430bfdb1e7",
+  "agent_id": "agent-a61b3e03",
+  "agent_name": "CXO-Eval-0d12c3b8",
+  "suite": "memory_decay",
+  "scenarios": [
+    {
+      "scenario_id": "long-term-decay-basic",
+      "mode": "decay",
+      "seeds": [
+        {
+          "id": "low_fact",
+          "memory_id": 1,
+          "importance": 2,
+          "permanent": false,
+          "tags": [
+            "eval",
+            "habit"
+          ]
+        },
+        {
+          "id": "mid_fact",
+          "memory_id": 2,
+          "importance": 3,
+          "permanent": false,
+          "tags": [
+            "eval",
+            "movie"
+          ]
+        },
+        {
+          "id": "high_fact",
+          "memory_id": 3,
+          "importance": 4,
+          "permanent": false,
+          "tags": [
+            "eval",
+            "plan"
+          ]
+        },
+        {
+          "id": "core_personality",
+          "memory_id": 4,
+          "importance": 5,
+          "permanent": true,
+          "tags": [
+            "eval",
+            "core"
+          ]
+        }
+      ],
+      "cases": [],
+      "time_travel_shifts": []
+    }
+  ],
+  "cleanup": {
+    "attempted": 4,
+    "deleted": 4,
+    "remaining": 0,
+    "agent_deleted": true
+  },
+  "status": "error",
+  "error": "HTTP 403: {\"success\":false,\"error\":\"Admin API key not configured\",\"error_code\":\"HTTP_403\",\"details\":null,\"timestamp\":\"2026-09-12T20:05:42.108353\"}\nTraceback (most recent call last):\n  File \"C:\\CX-O\\CXO-EvalKit\\evalkit\\suites\\memory_decay.py\", line 509, in run_memory_decay\n    _run_scenario(\n    ~~~~~~~~~~~~~^\n        scenario, client, judge, agent_id, config, run_state, detail,\n        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n        retention_acc, retrieval_acc, react_acc,\n        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n    )\n    ^\n  File \"C:\\CX-O\\CXO-EvalKit\\evalkit\\suites\\memory_decay.py\", line 417, in _run_scenario\n    _run_decay_flow(\n    ~~~~~~~~~~~~~~~^\n        client, judge, agent_id, config, run_state, record, seeds, seed_map, questions,\n        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n        retention_acc, retrieval_acc,\n        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n    )\n    ^\n  File \"C:\\CX-O\\CXO-EvalKit\\evalkit\\suites\\memory_decay.py\", line 296, in _run_decay_flow\n    _time_travel_safe(client, agent_id, shift, record)\n    ~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"C:\\CX-O\\CXO-EvalKit\\evalkit\\suites\\memory_decay.py\", line 162, in _time_travel_safe\n    client.time_travel(agent_id, shift_days)\n    ~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^\n  File \"C:\\CX-O\\CXO-EvalKit\\evalkit\\target.py\", line 248, in time_travel\n    return self._unwrap(\n           ~~~~~~~~~~~~^\n        c.post(\n        ^^^^^^^\n            \"/api/memories/eval/time-travel\", json=body, headers=self._admin_headers()\n            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n        )\n        ^\n    )\n    ^\n  File \"C:\\CX-O\\CXO-EvalKit\\evalkit\\target.py\", line 63, in _unwrap\n    raise TargetHttpError(resp.status_code, str(detail))\nevalkit.target.TargetHttpError: HTTP 403: {\"success\":false,\"error\":\"Admin API key not configured\",\"error_code\":\"HTTP_403\",\"details\":null,\"timestamp\":\"2026-09-12T20:05:42.108353\"}\n"
+}

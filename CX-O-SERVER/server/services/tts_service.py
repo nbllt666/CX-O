@@ -55,6 +55,28 @@ def _tts_concurrency() -> tuple[int, bool]:
 # <tts_instruction> 结构化 JSON 内是否显式含 speed/volume 键的检测
 _SPEED_KEY = "speed"
 _VOLUME_KEY = "volume"
+# preset 引用检测（per-agent 情感预设快捷指令，spec enhance-emotion-tts-and-action-presets）
+_PRESET_KEY = "preset"
+_TEXT_KEY = "text"
+
+# 前置 <tts_instruction> 标签缓冲（情感指令前置口径，spec enhance-emotion-tts-and-action-presets）：
+# 流式分块器检测到未闭合的开标签时暂不切片，等闭合标记到达后恢复既有切片逻辑，
+# 保证首个切片包含完整标签。开标签/闭合标记都可能横跨 token 到达，必须基于整个 buffer 搜索。
+_TTS_OPEN_TAG = "<tts_instruction"
+_TTS_CLOSE_TAG = "</tts_instruction>"
+
+
+def _tts_open_tag_partial_suffix_len(buffer: str) -> int:
+    """返回 buffer 尾部与 ``<tts_instruction`` 开标签前缀重叠的最大长度（0 = 无重叠）。
+
+    用于处理「开标签只到达了一部分」的横切场景（如尾部为 ``<tts_inst``）：
+    此时无法确定是否为标签开头，分块器应继续缓冲而非误切片。
+    """
+    max_n = min(len(buffer), len(_TTS_OPEN_TAG) - 1)
+    for n in range(max_n, 0, -1):
+        if _TTS_OPEN_TAG.startswith(buffer[-n:]):
+            return n
+    return 0
 
 
 def _has_json_key(text: str, key: str) -> bool:
@@ -80,6 +102,17 @@ def _has_json_key(text: str, key: str) -> bool:
 _TTAG_RE = re.compile(r"<tts_instruction\s*>([\s\S]*?)</tts_instruction>")
 # Markdown 围栏 JSON 提取
 _FENCE_RE = re.compile(r"```(?:json)?\s*([\s\S]*?)```")
+# TTS 不可朗读字符（emoji/装饰符号/变体选择符/零宽连接符等）：CosyVoice3 语音 LLM
+# 遇此类段会立即 EOS 产出空流，进而触发运行时降级（RUNTIME_UNAVAILABLE，实测
+# dual_stream 逐句合成场景反复出现）——送合成前剥离，文本其余部分原样保留。
+_UNSPEAKABLE_RE = re.compile(
+    "[\U0001F000-\U0001FAFF\u2190-\u2BFF\u2600-\u27BF\uFE0F\u200D\u20E3\u00AE\u00A9\u2122\u2049\u203C]"
+)
+
+
+def _strip_unspeakable(text: str) -> str:
+    """剥离 TTS 不可朗读字符（emoji 等），返回剩余可读文本。"""
+    return _UNSPEAKABLE_RE.sub("", text)
 
 
 def _label_has_speed_volume(text: str) -> tuple[bool, bool]:
@@ -93,14 +126,59 @@ def _label_has_speed_volume(text: str) -> tuple[bool, bool]:
     return has_speed, has_volume
 
 
-def _inject_label_params(base_kwargs: dict, text: str, instruction) -> dict:
+def _label_requests_preset(text: str) -> bool:
+    """检测内嵌 <tts_instruction> JSON 是否为纯 preset 引用（含 preset 键且不含 text 键）。
+
+    text 与 preset 并存时 text 优先（preset 不生效，见 emotion_instruction_service
+    _parse_instruction_content），此时不算 preset 引用，speed/volume 仍按既有
+    「显式键才注入」规则处理。
+    """
+    for tag_m in _TTAG_RE.finditer(text):
+        stripped = tag_m.group(1).strip()
+        _fence = _FENCE_RE.search(stripped)
+        if _fence:
+            stripped = _fence.group(1).strip()
+        if not stripped.startswith("{"):
+            # 纯文本指令（非 JSON），不可能是 preset 引用
+            continue
+        try:
+            data = json.loads(stripped)
+        except Exception:
+            continue
+        if isinstance(data, dict) and _PRESET_KEY in data and _TEXT_KEY not in data:
+            return True
+    return False
+
+
+def _preset_hit(kwargs: dict, text: str, instruction) -> bool:
+    """本段标签是否命中 per-agent 情感预设展开（Task 4.1）。
+
+    判据：kwargs 携带 agent_id 且标签为纯 preset 引用且解析结果非中性。
+    未命中（预设不存在/agent_id 缺失）时解析回退中性指令，此时不得注入，
+    避免以回退默认值（1.0）覆盖 config 层合成参数。
+    """
+    return bool(
+        kwargs.get("agent_id")
+        and instruction is not None
+        and not getattr(instruction, "neutral", False)
+        and _label_requests_preset(text)
+    )
+
+
+def _inject_label_params(base_kwargs: dict, text: str, instruction, preset_hit: bool = False) -> dict:
     """从内嵌标签将 speed/volume 注入合成参数；仅当标签显式指定对应键才覆盖。
 
     instruction 缺省（None / 关闭 / 无标签）时保持 base_kwargs 不变，
     不覆盖 config 层默认 speed。
+    preset_hit=True（情感预设展开命中）时预设的 speed/volume 视为显式参数指定：
+    预设保存时已收敛到合法区间（speed 0.5~2.0 / volume 0.1~2.0），整体注入。
     """
     out = dict(base_kwargs)
     if instruction is None:
+        return out
+    if preset_hit:
+        out["speed"] = instruction.speed
+        out["volume"] = instruction.volume
         return out
     has_speed, has_volume = _label_has_speed_volume(text)
     if has_speed:
@@ -279,15 +357,17 @@ class TTSService:
         inst = await self._gen_instruction_full(text)
         return inst.text or None if inst else None
 
-    async def _gen_instruction_full(self, text: str):
+    async def _gen_instruction_full(self, text: str, agent_id: Optional[str] = None):
         """生成完整 EmotionInstruction（含 speed/volume 真实参数），关闭时返回 None。
 
+        agent_id 透传给 generate_instruction：``{"preset":"名"}`` 引用按该 agent 的
+        情感TTS预设展开（Task 4.1）；缺省不查预设（向后兼容，现有调用方行为不变）。
         对 speed/volume 做防御性读取（兼容测试中仅实现 .text 的轻量替身）。
         """
         if not self._emotion_instruction_enabled:
             return None
         try:
-            instruction = await generate_instruction(text)
+            instruction = await generate_instruction(text, agent_id=agent_id)
         except Exception:
             return None
         if instruction is None:
@@ -305,12 +385,14 @@ class TTSService:
             speed = 1.0
         if volume <= 0:
             volume = 1.0
-        # 简单封装，统一 .text/.speed/.volume 访问
+        # 简单封装，统一 .text/.speed/.volume/.neutral 访问
+        # （neutral 供 _preset_hit 判定：preset 引用未命中回退中性时不注入参数）
         from types import SimpleNamespace
         return SimpleNamespace(
             text=(instruction.text or None) if getattr(instruction, "text", None) else None,
             speed=speed,
             volume=volume,
+            neutral=bool(getattr(instruction, "neutral", False)),
         )
 
     def _build_qwen3_request(self, text, ref_ids, instruction_text, stream, **kwargs):
@@ -340,22 +422,32 @@ class TTSService:
         )
 
     async def _synthesize_qwen3(self, text: str, **kwargs) -> bytes:
-        """Qwen3 非流式合成：剥离指令 → 生成指令 → 委托 Provider，返回完整音频 bytes。"""
-        clean = strip_instruction(text)
-        instruction = await self._gen_instruction_full(text)
+        """Qwen3 非流式合成：剥离指令 → 生成指令 → 委托 Provider，返回完整音频 bytes。
+
+        kwargs.agent_id 透传指令解析（preset 引用展开，Task 4.1）。
+        """
+        clean = _strip_unspeakable(strip_instruction(text))
+        instruction = await self._gen_instruction_full(text, agent_id=kwargs.get("agent_id"))
         ref_ids = self._build_ref_ids(kwargs)
-        req_kwargs = _inject_label_params(kwargs, text, instruction)
+        req_kwargs = _inject_label_params(
+            kwargs, text, instruction, preset_hit=_preset_hit(kwargs, text, instruction)
+        )
         req = self._build_qwen3_request(clean, ref_ids, instruction.text if instruction else None,
                                         stream=False, **req_kwargs)
         resp = await self._qwen3_provider.synthesize(req)
         return resp.audio
 
     async def _synthesize_stream_qwen3(self, text: str, **kwargs):
-        """Qwen3 流式合成：直接委托 Provider 的 AudioChunk 流，保持 chunk 顺序与 is_final。"""
-        clean = strip_instruction(text)
-        instruction = await self._gen_instruction_full(text)
+        """Qwen3 流式合成：直接委托 Provider 的 AudioChunk 流，保持 chunk 顺序与 is_final。
+
+        kwargs.agent_id 透传指令解析（preset 引用展开，Task 4.1）。
+        """
+        clean = _strip_unspeakable(strip_instruction(text))
+        instruction = await self._gen_instruction_full(text, agent_id=kwargs.get("agent_id"))
         ref_ids = self._build_ref_ids(kwargs)
-        req_kwargs = _inject_label_params(kwargs, text, instruction)
+        req_kwargs = _inject_label_params(
+            kwargs, text, instruction, preset_hit=_preset_hit(kwargs, text, instruction)
+        )
         req = self._build_qwen3_request(clean, ref_ids, instruction.text if instruction else None,
                                         stream=True, **req_kwargs)
         async for chunk in self._qwen3_provider.synthesize_stream(req):
@@ -371,6 +463,8 @@ class TTSService:
 
         每段从内嵌 <tts_instruction> 解析出 speed/volume 后，仅当标签显式指定时才
         覆盖本段真实合成参数（避免用标签缺省值覆盖 config 层默认 speed）。
+        kwargs.agent_id 透传逐段指令解析：``{"preset":"名"}`` 引用按该 agent 的
+        情感预设展开（Task 4.1，前置标签缓冲保证引用标签完整落入首段）。
         """
         ref_ids = self._build_ref_ids(kwargs)
         chunk_index = 0
@@ -379,10 +473,18 @@ class TTSService:
         ):
             if not text_segment.strip():
                 continue
-            clean = strip_instruction(text_segment)
-            instruction = await self._gen_instruction_full(text_segment)
-            # 逐段标签覆盖：仅当标签显式包含 speed/volume 键才注入，不覆盖 config 默认
-            seg_kwargs = _inject_label_params(kwargs, text_segment, instruction)
+            clean = _strip_unspeakable(strip_instruction(text_segment))
+            if not re.search(r"[\u4e00-\u9fffA-Za-z0-9]", clean):
+                # 无任何 CJK/字母数字实义字符（纯标点/emoji/符号段）：跳过——
+                # CosyVoice3 对此类段立即 EOS 产出空流（实测触发运行时降级）
+                continue
+            instruction = await self._gen_instruction_full(text_segment, agent_id=kwargs.get("agent_id"))
+            # 逐段标签覆盖：仅当标签显式包含 speed/volume 键才注入，不覆盖 config 默认；
+            # preset 引用命中时预设 speed/volume 整体注入（未命中回退中性不注入）
+            seg_kwargs = _inject_label_params(
+                kwargs, text_segment, instruction,
+                preset_hit=_preset_hit(kwargs, text_segment, instruction),
+            )
             req = self._build_qwen3_request(clean, ref_ids, instruction.text if instruction else None,
                                             stream=True, **seg_kwargs)
             async for chunk in self._qwen3_provider.synthesize_stream(req):
@@ -468,6 +570,17 @@ class TTSService:
           省去等待句号/逗号的数百毫秒阻塞。
         - 停顿标点（，、；：）：遇到即切片，利用自然语义边界，
           保证切片位置在可朗读的停顿处，避免语音割裂感。
+
+        前置 <tts_instruction> 标签缓冲（情感指令前置口径）：
+        检测到缓冲区存在未闭合的 ``<tts_instruction`` 开标签时暂不输出切片
+        （继续缓冲），直到闭合标记 ``</tts_instruction>`` 到达；闭合后标签块
+        原子进入既有切片逻辑（首个切片包含完整标签，情感指令由此作用于全篇）。
+        开标签/闭合标记都可能横跨 token 到达，一律基于整个 buffer 搜索判定；
+        buffer 尾部为疑似开标签前缀（如 ``<tts_inst``）时同样缓冲等待，避免误切。
+        若整条流结束标签仍未闭合（LLM 异常输出），流末尾把 buffer 原样吐出，
+        不丢文本（下游 generate_instruction 解析失败自然回退中性）。
+        标签在回复末尾的旧口径行为保持：未闭合期间正文一并缓冲，闭合后
+        正常切片，含标签的末段仍可解析，不劣化。
         """
         # 阈值范围保护：限制在 2~5 之间，过小会导致切片过碎增加 TTS 调用开销，
         # 过大则失去细粒度优势、退化为接近整句分割
@@ -491,6 +604,22 @@ class TTSService:
                 if "\u4e00" <= char <= "\u9fff":
                     chinese_char_count += 1
 
+            # ── 前置 <tts_instruction> 标签缓冲判定 ──
+            # 基于整个 buffer 搜索（开标签/闭合标记都可能横跨 token 到达），
+            # 不得按 token 局部判断。
+            open_idx = buffer.find(_TTS_OPEN_TAG)
+            tag_end = -1  # 闭合标记结束位置（-1 = buffer 中无已闭合标签块）
+            if open_idx != -1:
+                close_idx = buffer.find(_TTS_CLOSE_TAG, open_idx)
+                if close_idx == -1:
+                    # 开标签未闭合：整段继续缓冲，暂不输出切片
+                    continue
+                tag_end = close_idx + len(_TTS_CLOSE_TAG)
+            elif _tts_open_tag_partial_suffix_len(buffer) > 0:
+                # buffer 尾部疑似开标签前缀（如 "<tts_inst"）：无法确定是否为标签，
+                # 继续缓冲等待更多 token，避免误切片
+                continue
+
             # 双重触发判定：任一条件满足即立即切片
             should_slice = False
             cut_pos = -1
@@ -512,6 +641,13 @@ class TTSService:
                 # buffer 一般不会远超阈值）
                 if cut_pos == -1:
                     cut_pos = len(buffer)
+
+            # 标签原子性保护：切片点不得落入已闭合的
+            # <tts_instruction>...</tts_instruction> 块内部（JSON 内容中的英文
+            # 逗号/冒号属于停顿标点集，否则会把标签从中间切开导致 JSON 解析失败）。
+            # cut_pos 越界到 tag_end 即首个切片完整包含标签。
+            if should_slice and tag_end > 0 and cut_pos < tag_end:
+                cut_pos = tag_end
 
             if should_slice and cut_pos > 0:
                 chunk = buffer[:cut_pos]

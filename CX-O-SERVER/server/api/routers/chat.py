@@ -16,6 +16,7 @@ from server.chat_helpers import get_agent_config_async, get_llm_client_for_agent
 from server.core.logging_config import get_contextual_logger
 from server.core.utils import run_io
 from server.api.routers._pagination import clamp_pagination
+from server.services.preset_expand import expand_action_presets
 
 logger = get_contextual_logger(__name__)
 
@@ -158,6 +159,10 @@ async def chat(request: Request):
 
             response = await llm.chat(messages=messages, stream=False)
             final_response = response.content
+
+        # 动作预设展开（Task 4.2）：下发/落库前将 [action:预设名] 展开为标签序列，
+        # 保证前端展示与历史存储一致
+        final_response = expand_action_presets(final_response, chat_req.agent_id)
 
         await run_io(
             context_mgr.add_message,
@@ -342,6 +347,9 @@ async def chat_stream(request: ChatRequest):
 
                 # 流结束，保存完整响应到上下文
                 if full_response:
+                    # 动作预设展开（Task 4.2）：落库前展开 [action:预设名]，保证历史恢复
+                    # 展示与前端标签驱动一致（流式增量已按原样下发，展开作用于最终完整文本）
+                    full_response = expand_action_presets(full_response, request.agent_id)
                     await run_io(
                         context_mgr.add_message,
                         session_id=session_id, role="assistant", content=full_response,
