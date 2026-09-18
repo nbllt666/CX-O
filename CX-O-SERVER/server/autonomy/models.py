@@ -33,7 +33,7 @@ ActionType = Literal[
 AuditResult = Literal["success", "failed", "blocked", "skipped"]
 
 # 状态枚举（对齐 autonomy_state.schema.json）
-StateStatus = Literal["running", "paused", "sleeping", "budget_limited", "error"]
+StateStatus = Literal["running", "paused", "sleeping"]
 
 
 def _now_iso() -> str:

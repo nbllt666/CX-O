@@ -35,13 +35,14 @@ class TestAutonomy:
         assert out["ok"] is True and out["target"] == "autonomy"
         auto.enable.assert_called_once()
 
-    def test_emergency_stop(self):
+    def test_emergency_stop_rejected(self):
+        # autonomy/emergency_stop 已删除：显式拒绝（ADMIN_UNKNOWN_ACTION），不再静默假成功
         auto = MagicMock()
-        auto.emergency_stop.return_value = {"stopped": True}
         plane = _plane(_services(autonomy_manager=auto))
-        out = plane.dispatch("emergency_stop", "autonomy", "r")
-        assert out["ok"] is True
-        auto.emergency_stop.assert_called_once()
+        with pytest.raises(AdminUnknownActionError) as exc:
+            plane.dispatch("emergency_stop", "autonomy", "r")
+        assert exc.value.error_code == "ADMIN_UNKNOWN_ACTION"
+        auto.emergency_stop.assert_not_called()
 
 
 class TestVoice:

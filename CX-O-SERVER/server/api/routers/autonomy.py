@@ -1,7 +1,7 @@
 """CX-O-Autonomy 自主系统 REST 端点（前端 Agent 生活控制页依赖，P4 前置）。
 
 - GET  /autonomy/status   状态快照（未装配/未启用返回 {"status": "disabled"}，不抛错）
-- POST /autonomy/control  控制指令（enable/disable/pause/resume/emergency_stop）
+- POST /autonomy/control  控制指令（enable/disable/pause/resume）
 - GET  /autonomy/audit    审计日志分页 {items, total}
 - GET  /autonomy/config   当前配置（UnifiedConfig.autonomy 节，未装配也可读）
 - PUT  /autonomy/config   局部更新配置并持久化 settings（非法字段/枚举/时间格式返回 422）
@@ -27,7 +27,7 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 # 控制指令枚举（对齐 public/interface_stub/cxo_autonomy.pyi control() 契约）
-CONTROL_ACTIONS = ("enable", "disable", "pause", "resume", "emergency_stop")
+CONTROL_ACTIONS = ("enable", "disable", "pause", "resume")
 
 # 配置写锁（R3）：串行化 PUT /autonomy/config 读改写与 control enable/disable
 # 持久化两条写路径，消除双入口并发写交错损坏文件。async 上下文经
@@ -76,7 +76,7 @@ class ControlRequest(BaseModel):
 def _manager_state(manager) -> Dict[str, Any]:
     """返回控制后的轻量状态快照（enabled/running/status）。
 
-    不调用 get_status()——它在未启用/紧急停止后会抛 AutonomyDisabledError，
+    不调用 get_status()——它在未启用后会抛 AutonomyDisabledError，
     而 control 返回的 state 需要在任何动作后都可读。
     """
     return {
@@ -203,7 +203,7 @@ async def control(
     request: Request,
     _: bool = Depends(verify_admin_api_key),
 ):
-    """下发控制指令：enable / disable / pause / resume / emergency_stop。
+    """下发控制指令：enable / disable / pause / resume。
 
     C5: 控制类端点补管理员鉴权（GET 状态端点保持开放）。
     非法 action 返回 400；manager 为 None 时对 enable 尝试从装配入口获取已装配

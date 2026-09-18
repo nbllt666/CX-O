@@ -4,13 +4,15 @@
 ① TokenLedger —— add/remaining/超限/usage_ratio cap 1.0/告警一次/新日重置/持久化往返；
 ② ContentGate —— 防火墙拒绝与放行、persona_check 调用（同步/异步）、未注入时基础检查；
 ③ RateLimiter —— 达上限 allow=False、窗口滑过后恢复、hit 计数、时钟注入；
-④ KillSwitch —— 急停后 is_active False、resume 恢复、pause/sleeping、持久化往返；
+④ KillSwitch —— pause/sleeping、resume 恢复、持久化往返、无急停不变量（无 emergency_stop
+   属性、落盘不含 enabled 键）；
 ⑤ AuditStore —— append/list 分页/缺字段拒绝/非法枚举拒绝/clear。
 
 运行：python -m pytest tests/test_autonomy_safety.py -q
 """
 import asyncio
 import datetime
+import json
 from pathlib import Path
 
 import pytest
@@ -271,18 +273,10 @@ class TestRateLimiter:
 class TestKillSwitch:
     def test_default_active(self, tmp_path):
         ks = KillSwitch(store_path=str(tmp_path / "killswitch.json"))
-        assert ks.enabled is True
         assert ks.is_active() is True
-
-    def test_emergency_stop(self, tmp_path):
-        ks = KillSwitch(store_path=str(tmp_path / "killswitch.json"))
-        ks.emergency_stop()
-        assert ks.enabled is False
-        assert ks.is_active() is False
 
     def test_resume_restores(self, tmp_path):
         ks = KillSwitch(store_path=str(tmp_path / "killswitch.json"))
-        ks.emergency_stop()
         ks.pause()
         ks.set_sleeping(True)
         assert ks.is_active() is False
@@ -290,7 +284,6 @@ class TestKillSwitch:
         assert ks.is_active() is True
         assert ks.paused is False
         assert ks.sleeping is False
-        assert ks.enabled is True
 
     def test_pause_and_sleeping(self, tmp_path):
         ks = KillSwitch(store_path=str(tmp_path / "killswitch.json"))
@@ -306,14 +299,31 @@ class TestKillSwitch:
     def test_persistence_roundtrip(self, tmp_path):
         path = str(tmp_path / "killswitch.json")
         ks = KillSwitch(store_path=path)
-        ks.emergency_stop()
+        ks.pause()
         ks.set_sleeping(True)
         ks.save()
 
         restored = KillSwitch(store_path=path).load()
-        assert restored.enabled is False
+        assert restored.paused is True
         assert restored.sleeping is True
         assert restored.is_active() is False
+
+    def test_no_emergency_stop_attribute(self):
+        """不变量①：KillSwitch / AutonomyManager 上不再存在 emergency_stop 属性。"""
+        from server.autonomy.manager import AutonomyManager
+
+        assert not hasattr(KillSwitch, "emergency_stop")
+        assert not hasattr(AutonomyManager, "emergency_stop")
+
+    def test_save_json_has_no_enabled_key(self, tmp_path):
+        """不变量②：killswitch.json 落盘只含 paused/sleeping，不含 enabled 键。"""
+        path = tmp_path / "killswitch.json"
+        ks = KillSwitch(store_path=str(path))
+        ks.pause()
+        ks.save()
+        data = json.loads(path.read_text(encoding="utf-8"))
+        assert set(data.keys()) == {"paused", "sleeping"}
+        assert "enabled" not in data
 
 
 # ================================================================ ⑤ AuditStore

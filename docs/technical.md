@@ -896,13 +896,15 @@ docker compose --profile tuner up
 ### 20.3 预算、审计与安全
 
 - **预算** `safety/budget/token_ledger.py`（`TokenLedger`）：日 token 上限 / 日 LLM 调用上限 /
-  成本告警阈值 / 超支模式（`overspend_mode`：sleep / low_cost），状态持久化于
-  `server/autonomy/data/token_ledger.json`。
+  成本告警阈值 / 超支模式（`overspend_mode`：sleep / low_cost，保留字段），状态持久化于
+  `server/autonomy/data/token_ledger.json`。**超支仅记账 + 成本告警，不再阻断行动**（原预算熔断
+  硬阻断已按人类裁决删除，2026-09-18）。
 - **审计** `safety/audit.py`（`AuditStore`）：每次行动写审计日志（`audit_logs.jsonl`），
   供前端行为回放与用户追溯。
 - **安全**：`safety/gate/content_gate.py`（`ContentGate`，对接防火墙，内容闸门）；
   `safety/ratelimit/limiter.py`（`RateLimiter`，发帖限速 `post_rate_per_hour`）；
-  `safety/killswitch.py`（`KillSwitch`，紧急停止持久化）。
+  `safety/killswitch.py`（`KillSwitch`，暂停/睡眠状态开关 + JSON 持久化；**无急停语义**——
+  急停已按人类裁决删除，遗留 `killswitch.json` 的 `enabled` 键被忽略）。
 - **离开模式**：`safety.leave_mode_authorize=True` 时用户离开直接授权自主行动，无需逐次确认；
   `user_online_sleep` 控制用户在线时是否休眠。
 
@@ -930,12 +932,14 @@ docker compose --profile tuner up
   捕获隔离，不影响主服务启动。
 - **REST** `server/api/routers/autonomy.py`（挂载 `/api`）：
   `GET /autonomy/status`（未启用返回 `{"status":"disabled"}` 不抛错）、
-  `POST /autonomy/control`（enable/disable/pause/resume/emergency_stop）、
+  `POST /autonomy/control`（enable/disable/pause/resume；`emergency_stop` 已删除，返回 400）、
   `GET /autonomy/audit`（分页）、`GET|PUT /autonomy/config`（深度合并 + model_validate 校验，
-  非法字段/枚举/时间格式返回 422）。
+  非法字段/枚举/时间格式返回 422）。主循环无条件运行（`while True`）：paused / sleeping /
+  manager 门控一律降级为轮级跳过，不存在终止循环的急停路径；遗留 `manager_state.json` 的
+  非法 status 在载入时归一化为 `running`。
 - **前端控制页**：管理窗路由 `/autonomy` → `AutonomyPage`（"Agent 生活"）：状态徽章（
-  running/paused/sleeping/budget_limited/error/disabled）、四维动机进度条、日预算用量、
-  控制区（启用/禁用/暂停/恢复/紧急停止/自动启动）、行为回放（审计列表分页加载）。
+  running/paused/sleeping/disabled）、四维动机进度条、日预算用量、
+  控制区（未启用 → 启用；非 running → 恢复；自动启动开关）、行为回放（审计列表分页加载）。
   前端降级口径：后端离线全页错误态；未启用展示"未启用"徽章；config/audit 独立容错。
 
 > 自主生命的「睡眠窗口」由梦境引擎承接（§21），其入睡 / 唤醒依据来自生理信号接入（§22）。

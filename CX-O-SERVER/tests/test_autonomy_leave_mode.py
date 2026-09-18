@@ -3,9 +3,8 @@
 覆盖：
 ① KillSwitch.update_from_user_online —— 在线→sleeping True、离线→sleeping False；
 ② user_online_sleep=False 时不改变 sleeping（保留手动休眠状态）；
-③ leave_mode() 语义 —— 离线且未急停→True；在线→False；急停后→False；
-④ 引擎在用户在线时跳过规划与行动（mock planner 不被调用）、离线时正常规划；
-⑤ 急停优先于离开模式（急停后即使离线也跳过行动）。
+③ leave_mode() 语义 —— 未暂停且未休眠→True；在线休眠→False；暂停后→False；
+④ 引擎在用户在线时跳过规划与行动（mock planner 不被调用）、离线时正常规划。
 
 运行：python -m pytest tests/test_autonomy_leave_mode.py -q
 """
@@ -184,7 +183,7 @@ class TestUpdateFromUserOnlineDisabled:
 class TestLeaveMode:
     def test_offline_and_active_is_leave_mode(self, tmp_path):
         ks = KillSwitch(store_path=str(tmp_path / "killswitch.json"))
-        # sleeping=False、enabled=True、非 paused → 离开模式
+        # sleeping=False、非 paused → 离开模式
         assert ks.leave_mode() is True
 
     def test_online_sleep_not_leave_mode(self, tmp_path):
@@ -192,12 +191,6 @@ class TestLeaveMode:
         ks.update_from_user_online(True, user_online_sleep=True)
         assert ks.sleeping is True
         assert ks.leave_mode() is False
-
-    def test_emergency_stop_not_leave_mode(self, tmp_path):
-        ks = KillSwitch(store_path=str(tmp_path / "killswitch.json"))
-        ks.emergency_stop()
-        assert ks.sleeping is False
-        assert ks.leave_mode() is False  # 急停优先于离开模式
 
     def test_paused_not_leave_mode(self, tmp_path):
         ks = KillSwitch(store_path=str(tmp_path / "killswitch.json"))
@@ -273,23 +266,3 @@ async def test_engine_policy_disabled_plans_regardless(tmp_path):
     engine.planner.plan.assert_awaited_once()
     items = list_audit(engine)
     assert items[0]["result"] == "success"
-
-
-# ================================================================ ⑤ 急停优先于离开模式
-@pytest.mark.asyncio
-async def test_emergency_stop_priority_over_leave_mode(tmp_path):
-    # 用户离线（本应进入离开模式），但急停优先：跳过一切行动
-    killswitch = KillSwitch(store_path=str(tmp_path / "killswitch.json"))
-    killswitch.emergency_stop()
-    engine, state = build_engine(tmp_path, online=False, killswitch=killswitch)
-
-    await engine._run_round()
-
-    assert killswitch.enabled is False
-    assert killswitch.leave_mode() is False  # 急停后离开模式恒为 False
-    assert killswitch.sleeping is False
-    engine.planner.plan.assert_not_called()
-
-    items = list_audit(engine)
-    assert len(items) == 1
-    assert items[0]["result"] == "skipped"

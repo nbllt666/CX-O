@@ -323,7 +323,12 @@ class AdminControlPlane:
         if target == "autonomy":
             auto = getattr(services, "autonomy_manager", None) if services is not None else None
             # action 即 autonomy_manager 上的方法名（enable/disable/pause/resume/
-            # emergency_stop/start/stop 等）
+            # start/stop 等）。emergency_stop 已从 manager 删除：显式拒绝，避免
+            # 静默落到 unsupported 的「假成功」；全局 VALID_ACTIONS 共享枚举不动。
+            if action == "emergency_stop":
+                raise AdminUnknownActionError(
+                    "ADMIN_UNKNOWN_ACTION: autonomy/emergency_stop（急停已删除）"
+                )
             return _invoke_method(auto, action, agent_id=agent_id, params=params)
 
         if target == "voice":

@@ -5,9 +5,11 @@
    OSError）后原文件内容保持完整且无 .tmp 残留、覆盖已存在文件安全；
 ② load 坏档回退 —— autonomy_config.json / dream_config.json 损坏时返回默认
    配置并生成 .corrupt 留痕文件（原文件移除）；
-③ KillSwitch 状态变更（emergency_stop/pause/resume/set_sleeping/
-   update_from_user_online）后 store 文件内容同步，未变化不重复落盘；
-④ TokenLedger save 后文件内容正确；引擎每轮末尾统一持久化台账（R4 接线）。
+③ KillSwitch 状态变更（pause/resume/set_sleeping/update_from_user_online）后 store
+   文件内容同步（只写 paused/sleeping，不含 enabled），未变化不重复落盘；遗留
+   killswitch.json（含 enabled 键）加载后不导致停摆；
+④ 遗留 manager_state.json（status=budget_limited / error）经引擎载入归一化为 running；
+⑤ TokenLedger save 后文件内容正确；引擎每轮末尾统一持久化台账（R4 接线）。
 
 运行：python -m pytest tests/test_autonomy_persistence.py -q
 """
@@ -93,14 +95,15 @@ class TestLoadCorruptFallback:
 
 # ================================================================ ③ KillSwitch 接线
 class TestKillSwitchPersistenceWiring:
-    def test_emergency_stop_persists(self, tmp_path):
+    def test_pause_persists_without_enabled_key(self, tmp_path):
         path = tmp_path / "killswitch.json"
         ks = KillSwitch(store_path=str(path))
-        ks.emergency_stop()  # 状态变更即落盘（无需显式 save）
+        ks.pause()  # 状态变更即落盘（无需显式 save）
         data = json.loads(path.read_text(encoding="utf-8"))
-        assert data == {"enabled": False, "paused": False, "sleeping": False}
+        assert data == {"paused": True, "sleeping": False}
+        assert "enabled" not in data
         restored = KillSwitch(store_path=str(path)).load()
-        assert restored.enabled is False
+        assert restored.paused is True
         assert restored.is_active() is False
 
     def test_pause_and_resume_persist(self, tmp_path):
@@ -110,7 +113,18 @@ class TestKillSwitchPersistenceWiring:
         assert json.loads(path.read_text(encoding="utf-8"))["paused"] is True
         ks.resume()
         data = json.loads(path.read_text(encoding="utf-8"))
-        assert data == {"enabled": True, "paused": False, "sleeping": False}
+        assert data == {"paused": False, "sleeping": False}
+
+    def test_legacy_killswitch_enabled_false_does_not_block(self, tmp_path):
+        """不变量③：遗留 killswitch.json（enabled=false）加载后仍可行动。"""
+        path = tmp_path / "killswitch.json"
+        path.write_text(
+            json.dumps({"enabled": False, "paused": False, "sleeping": False}),
+            encoding="utf-8",
+        )
+        ks = KillSwitch(store_path=str(path)).load()
+        assert ks.is_active() is True
+        assert ks.leave_mode() is True
 
     def test_set_sleeping_persists_and_skips_unchanged(self, tmp_path, monkeypatch):
         ks = KillSwitch(store_path=str(tmp_path / "killswitch.json"))
@@ -211,3 +225,23 @@ async def test_round_end_ledger_save_failure_not_fatal(tmp_path, monkeypatch):
     assert json.loads(
         (tmp_path / "manager_state.json").read_text(encoding="utf-8")
     )["last_cycle_at"] == engine.manager.last_cycle_at
+
+
+# ================================================================ ④ 遗留 manager_state 归一化
+class TestLegacyManagerStateNormalization:
+    @pytest.mark.parametrize("legacy_status", ["budget_limited", "error"])
+    def test_legacy_status_normalized_to_running(self, tmp_path, legacy_status):
+        """不变量④：遗留 manager_state.json 非法 status 经引擎载入归一化为 running。"""
+        (tmp_path / "manager_state.json").write_text(
+            json.dumps({"status": legacy_status}), encoding="utf-8"
+        )
+        engine = _build_engine(tmp_path)
+        assert engine.manager.status == "running"
+
+    def test_valid_status_preserved(self, tmp_path):
+        """对照组：合法 status（paused）不被归一化覆盖。"""
+        (tmp_path / "manager_state.json").write_text(
+            json.dumps({"status": "paused"}), encoding="utf-8"
+        )
+        engine = _build_engine(tmp_path)
+        assert engine.manager.status == "paused"

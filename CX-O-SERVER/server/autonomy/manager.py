@@ -1,8 +1,7 @@
 """CX-O-Autonomy 自主系统管理器（P0 最小骨架，P1-T8 再扩展主循环）。
 
-持有配置、运行状态（running/paused/sleeping/budget_limited）、动机、最近行动与
-当日预算消耗。主循环由 P1-T8 扩展；本阶段仅实现 启用/停用/暂停/恢复/紧急停止/
-状态快照。
+持有配置、运行状态（running/paused/sleeping）、动机、最近行动与当日预算消耗。
+主循环由 P1-T8 扩展；本阶段仅实现 启用/停用/暂停/恢复/状态快照。
 
 异常契约（对齐 public/interface_stub/cxo_autonomy.pyi，本模块定义 5 类）：
 - AutonomyError（基类）/ AutonomyDisabledError（error_code = AUTONOMY_DISABLED）
@@ -61,9 +60,9 @@ class AutonomyPersistError(AutonomyError):
 class AutonomyManager:
     """CX-O-Autonomy 自主系统管理器。
 
-    - enabled：总开关（enable / disable / emergency_stop 控制）
-    - running：主循环是否在跑（enable / resume 置 True；pause / disable / emergency_stop 置 False）
-    - status：running / paused / sleeping / budget_limited / error 状态枚举
+    - enabled：总开关（enable / disable 控制）
+    - running：主循环是否在跑（enable / resume 置 True；pause / disable 置 False）
+    - status：running / paused / sleeping 状态枚举
     """
 
     def __init__(self, config: Optional[AutonomyConfig] = None):
@@ -102,12 +101,6 @@ class AutonomyManager:
         """恢复主循环。"""
         self.running = True
         self.status = "running"
-
-    def emergency_stop(self) -> None:
-        """紧急停止：立即停用并置 error 状态。"""
-        self.enabled = False
-        self.running = False
-        self.status = "error"
 
     def get_status(self) -> Dict[str, Any]:
         """返回状态快照（对齐 autonomy_state.schema.json）。未启用时抛 AutonomyDisabledError。"""

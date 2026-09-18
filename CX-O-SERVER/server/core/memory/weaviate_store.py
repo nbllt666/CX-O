@@ -3,6 +3,7 @@ Weaviate 向量存储实现
 支持 Embedded Weaviate 和普通 Weaviate 两种模式
 """
 
+import asyncio
 import threading
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -176,6 +177,29 @@ class WeaviateVectorStore:
 
         except Exception as e:
             logger.error(f"创建/检查 Weaviate 集合失败 (agent_id={agent_id}): {e}")
+
+    async def has_agent_collection(self, agent_id: str = "default") -> bool:
+        """探测指定 agent 的 per-agent 集合是否存在（供检索侧短路空集合）。
+
+        不存在的集合上执行 ``near_vector`` 会在 Weaviate 侧走 class-not-found
+        失败路径（实测恒定 ~155ms），且必然查不到任何向量——检索前先探存在性
+        （实测 ~2ms）可省下这段纯空转。集合不存在 ⇒ 该 agent 向量记忆数为 0，
+        跳过向量通道与"查询得到空结果"等价。
+
+        不做进程内缓存：集合由写入路径 ``_ensure_collection_for_agent`` 创建，
+        每轮实时探测（~2ms）避免"集合后来创建但被缓存判死"的陈旧风险。
+        探测异常返回 True（保守：不短路，走原查询路径，最坏等于现状）。
+        """
+        if not self._client:
+            return False
+        collection_name = self._collection_name_for_agent(agent_id)
+        try:
+            return await asyncio.to_thread(
+                self._client.collections.exists, collection_name
+            )
+        except Exception as e:  # noqa: BLE001 - 探测失败不短路
+            logger.warning(f"Weaviate 集合存在性探测失败 {collection_name}: {e}")
+            return True
 
     def is_available(self) -> bool:
         """检查向量存储是否可用"""

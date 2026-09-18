@@ -24,9 +24,16 @@ services:
       - PYTHONIOENCODING=utf-8
       # 在线聚类相似度阈值（cam++ 余弦；>= 阈值归簇，否则新建会话内临时簇 spk_N）
       - SPK_SIM_THRESHOLD=${SPK_SIM_THRESHOLD:-0.65}
-      - CUDA_VISIBLE_DEVICES=  # 2026-08-18 GPU 分配实验结论：GPU0/GPU1 各被 LLM/cosyvoice 占用，无空余 GPU；
-                               # ASR 用 GPU0 会挤爆（实测 GPU0 满 19.8GB → 全链路 P50 超 2.9s 退化）。
-                               # 回退纯 CPU 推理（T2~280ms），为全链路最稳。
+      # 推理设备（2026-09-18）：默认 cpu。曾按人类裁决"试挂 GPU1"加速投机解码，
+      # 实测**无收益**（150ms 音频解码 GPU 125ms vs CPU 173ms 看似略快，但 600ms 音频
+      # GPU 249ms 反而慢于 CPU；SenseVoice 300ms GPU 170ms vs CPU 158ms）。
+      # 决定性证据：**10ms 音频在 GPU 上仍耗时 116ms**——投机解码的 ~120ms 里约 116ms
+      # 是 funasr `AutoModel.generate` 的固定开销（cache 初始化/特征/后处理，与音频长度
+      # 无关），非算力瓶颈，GPU 只会额外引入主机-设备传输开销。故回退纯 CPU。
+      # 历史教训（2026-08-18，仍有效）：ASR 用 GPU0 会挤爆显存（满 19.8GB）→ 全链路
+      # P50 超 2.9s 退化。
+      - ASR_DEVICE=${ASR_DEVICE:-cpu}
+      - CUDA_VISIBLE_DEVICES=
     volumes:
       - ./CX-O-SERVER/sensevoice:/app/sensevoice:ro
       - ./CX-O-SERVER/api_server.py:/app/api_server.py:ro
@@ -41,6 +48,8 @@ services:
     deploy:
       resources:
         reservations:
+          # 2026-09-18：曾挂 GPU1 试加速投机解码，实测无收益（见上方 ASR_DEVICE 注释），
+          # 已回退。保持空列表 = 不申请 GPU 设备。
           devices: []
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8005/health"]

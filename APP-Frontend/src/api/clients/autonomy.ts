@@ -20,8 +20,8 @@ import type {
   AutonomyStatus,
 } from '../types';
 
-/** 控制指令枚举（对齐后端 CONTROL_ACTIONS） */
-export type AutonomyControlAction = 'enable' | 'disable' | 'pause' | 'resume' | 'emergency_stop';
+/** 控制指令枚举（对齐后端 CONTROL_ACTIONS，共 4 项） */
+export type AutonomyControlAction = 'enable' | 'disable' | 'pause' | 'resume';
 
 /** 审计日志分页响应：{"items": [...], "total": int} */
 export interface AutonomyAuditPage {
@@ -42,7 +42,7 @@ export const autonomyApi = {
     }
   },
 
-  /** 下发控制指令（enable/disable/pause/resume/emergency_stop）；失败抛归一化错误 */
+  /** 下发控制指令（enable/disable/pause/resume）；失败抛归一化错误 */
   async control(action: AutonomyControlAction): Promise<AutonomyControlResult> {
     try {
       return await request<AutonomyControlResult>({

@@ -253,9 +253,9 @@ export interface AutonomyStatusDisabled {
   status: 'disabled';
 }
 
-/** 已启用：含动机/状态/上次行动/预算等字段 */
+/** 已启用：含动机/状态/上次行动/预算等字段；status 对齐精简后的 autonomy_state.schema.json（仅 running/paused/sleeping） */
 export interface AutonomyStatusActive {
-  status: 'running' | 'paused' | 'sleeping' | 'budget_limited' | 'error';
+  status: 'running' | 'paused' | 'sleeping';
   motivations?: AutonomyMotivations;
   last_action?: string | null;
   last_cycle_at?: string | null;

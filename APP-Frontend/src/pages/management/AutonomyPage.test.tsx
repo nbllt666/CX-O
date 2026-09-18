@@ -8,7 +8,8 @@ import type { AutonomyAuditEntry, AutonomyConfig, AutonomyStatus } from '@/api/t
 /**
  * AutonomyPage「Agent 生活」冒烟 + 关键交互测试（P4-T1）：
  * autonomyApi 整体打桩，避免真实网络；覆盖状态/动机/预算/审计渲染、
- * 未启用降级态、紧急停止确认、启用/禁用控制、审计字段渲染与后端错误态。
+ * 未启用降级态、启用/恢复控制、自动启动开关、审计字段渲染与后端错误态。
+ * 注：页面已移除禁用/暂停/紧急停止入口（spec remove-autonomy-stop-paths）。
  */
 vi.mock('@/api/clients/autonomy', () => ({
   autonomyApi: {
@@ -33,6 +34,15 @@ const ACTIVE_STATUS: AutonomyStatus = {
 };
 
 const DISABLED_STATUS: AutonomyStatus = { status: 'disabled' };
+
+const PAUSED_STATUS: AutonomyStatus = {
+  status: 'paused',
+  motivations: { curiosity: 0.4, social_need: 0.3, creative_drive: 0.2, fatigue: 0.6 },
+  last_action: 'write_post',
+  last_cycle_at: '2026-08-22T10:00:00Z',
+  daily_budget_used_tokens: 1000,
+  budget_reset_date: '2026-08-22',
+};
 
 const SAMPLE_AUDIT: AutonomyAuditEntry[] = [
   {
@@ -118,6 +128,12 @@ describe('AutonomyPage Agent 生活页', () => {
     expect(screen.getByText('灵感触发')).toBeInTheDocument();
     expect(screen.getByText('静默时段')).toBeInTheDocument();
     expect(screen.queryByText(/页面建设中/)).not.toBeInTheDocument();
+    // running 态不提供任何停用/控制按钮
+    expect(screen.queryByRole('button', { name: '禁用' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: '暂停' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: '恢复' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: '紧急停止' })).not.toBeInTheDocument();
+    expect(screen.getByRole('checkbox')).toBeInTheDocument();
   });
 
   it('后端返回 disabled 时显示未启用态', async () => {
@@ -132,25 +148,25 @@ describe('AutonomyPage Agent 生活页', () => {
     expect(screen.getByRole('button', { name: '启用' })).toBeInTheDocument();
   });
 
-  it('紧急停止按钮需确认后触发 control("emergency_stop")', async () => {
-    mocked.getStatus.mockResolvedValue(ACTIVE_STATUS);
+  it('paused 状态显示「恢复」按钮并触发 control("resume")', async () => {
+    mocked.getStatus.mockResolvedValue(PAUSED_STATUS);
     mocked.getConfig.mockResolvedValue(SAMPLE_CONFIG);
     mocked.getAudit.mockResolvedValue({ items: [], total: 0 });
     mocked.control.mockResolvedValue({
       status: 'ok',
-      state: { enabled: false, running: false, status: 'error' },
+      state: { enabled: true, running: true, status: 'running' },
     });
-    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true);
 
     render(<AutonomyPage />);
-    expect(await screen.findByText('运行中')).toBeInTheDocument();
-
-    fireEvent.click(screen.getByRole('button', { name: '紧急停止' }));
+    expect(await screen.findByText('已暂停')).toBeInTheDocument();
+    // paused 态无禁用/暂停/急停入口
+    expect(screen.queryByRole('button', { name: '禁用' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: '暂停' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: '紧急停止' })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: '恢复' }));
     await waitFor(() => {
-      expect(confirmSpy).toHaveBeenCalled();
-      expect(mocked.control).toHaveBeenCalledWith('emergency_stop');
+      expect(mocked.control).toHaveBeenCalledWith('resume');
     });
-    confirmSpy.mockRestore();
   });
 
   it('启用按钮触发 control("enable")', async () => {
@@ -170,20 +186,18 @@ describe('AutonomyPage Agent 生活页', () => {
     });
   });
 
-  it('禁用按钮触发 control("disable")', async () => {
+  it('自动启动开关触发 updateConfig({auto_start:false})', async () => {
     mocked.getStatus.mockResolvedValue(ACTIVE_STATUS);
     mocked.getConfig.mockResolvedValue(SAMPLE_CONFIG);
     mocked.getAudit.mockResolvedValue({ items: [], total: 0 });
-    mocked.control.mockResolvedValue({
-      status: 'ok',
-      state: { enabled: false, running: false, status: 'paused' },
-    });
+    mocked.updateConfig.mockResolvedValue({ ...SAMPLE_CONFIG, auto_start: false });
 
     render(<AutonomyPage />);
-    expect(await screen.findByRole('button', { name: '禁用' })).toBeInTheDocument();
-    fireEvent.click(screen.getByRole('button', { name: '禁用' }));
+    const checkbox = await screen.findByRole('checkbox');
+    expect(checkbox).toBeChecked();
+    fireEvent.click(checkbox);
     await waitFor(() => {
-      expect(mocked.control).toHaveBeenCalledWith('disable');
+      expect(mocked.updateConfig).toHaveBeenCalledWith({ auto_start: false });
     });
   });
 

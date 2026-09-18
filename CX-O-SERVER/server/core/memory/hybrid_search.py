@@ -90,6 +90,17 @@ class HybridSearch:
 
     async def _vector_search(self, options: HybridSearchOptions) -> List[SearchResult]:
         try:
+            # 空集合短路：per-agent 集合不存在时该 agent 向量记忆数为 0，此时
+            # near_vector 会走 Weaviate class-not-found 失败路径（实测恒定 ~155ms）
+            # 且必然无结果——先探存在性（实测 ~2ms）省下这段空转。后端不支持该
+            # 能力（测试桩/其它 backend）时 getattr 取不到 → 跳过短路，行为不变。
+            guard = getattr(self.vector_store, "has_agent_collection", None)
+            if guard is not None and not await guard(options.agent_id or "default"):
+                logger.debug(
+                    "向量集合不存在，跳过向量通道: agent_id=%s", options.agent_id
+                )
+                return []
+
             embedding = await self.embedding_model.get_embedding(options.query)
 
             # H14: 嵌入失败（空列表）或全零向量不得进入相似度检索链路——

@@ -61,11 +61,25 @@ def _make_session():
     return s
 
 
+def _append_audio(session, n=16000):
+    """追加一段新音频（VAD 增量契约要求每次 sweep 有新增输入）。"""
+    session._audio = np.concatenate(
+        [np.asarray(session._audio, dtype=np.float32),
+         np.ones(n, dtype=np.float32) * 0.1]
+    )
+
+
 def _patch_vad(monkeypatch, session):
-    """VAD 总是回报一个以当前句起点为 begins 的单句，供 _vad_sweep 产出句子。"""
+    """VAD 总是对**本次新增音频**回报一个完整句（起点事件 + 句尾事件），毫秒契约。
+
+    与 _vad_sweep 的增量协议对齐：只处理 ``[self._vad_fed:]`` 的新音频，返回
+    ``[beg_ms, -1]``（人声起点）与 ``[-1, end_ms]``（句尾）两个连续事件。
+    """
 
     def _fake_vad(audio, is_final, vad_cache):
-        return [[session._cur_start, session._cur_start + 1000]]
+        n_ms = max(len(audio) // engine.MS_TO_SAMPLES, 1)
+        start_ms = session._cur_start // engine.MS_TO_SAMPLES
+        return [[start_ms, -1], [-1, start_ms + n_ms]]
 
     monkeypatch.setattr(engine, "_run_vad", _fake_vad)
 
@@ -164,12 +178,14 @@ async def _run_spk_inflight_limit_drops_third(monkeypatch):
 
     # 前两句 → pending，并登记两个后台任务（in-flight=2）
     m1 = await session._vad_sweep()
+    _append_audio(session)
     m2 = await session._vad_sweep()
     assert m1[0]["speaker_status"] == "pending"
     assert m2[0]["speaker_status"] == "pending"
     assert session._spk_pending_count == 2
 
     # 第三句：超限，_track_spk_pump 直接丢弃，不新增任务、不阻塞
+    _append_audio(session)
     m3 = await session._vad_sweep()
     assert m3[0]["speaker_status"] == "pending"
     assert session._spk_pending_count == 2            # 未超过上限
@@ -292,7 +308,9 @@ async def _run_feed_pcm_pathological_reset(monkeypatch):
 
     await session.feed_pcm(big)                     # 120万 > MAX_BUFFER=96万
     assert len(session._audio) == 600000            # 先清空再接收本帧
-    assert session._spec_sent is False              # 各句内状态已复位
+    assert session._spec_text == ""                 # 各句内状态已复位
+    assert session._spec_last_len == 0
+    assert session._pending_trim is False
 
 
 def test_feed_pcm_pathological_reset(monkeypatch):

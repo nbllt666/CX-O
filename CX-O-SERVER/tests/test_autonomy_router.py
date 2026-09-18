@@ -3,7 +3,8 @@
 覆盖：
 ① GET  /autonomy/status  manager 注入且启用返回状态形状（jsonschema 校验对齐 state 契约）
 ② GET  /autonomy/status  manager 为 None / 未启用 返回 {"status": "disabled"}（200 不抛错）
-③ POST /autonomy/control enable/disable/emergency_stop 合法 action 生效（spy manager 断言调用）
+③ POST /autonomy/control enable/disable/pause/resume 合法 action 生效（spy manager 断言调用）；
+   emergency_stop 已从控制枚举移除 → 返回 400，且 CONTROL_ACTIONS 为 4 项
 ④ POST /autonomy/control 非法 action 返回 400
 ⑤ GET  /autonomy/audit  返回 {items, total}（AuditStore 未装配返回空）
 ⑥ GET  /autonomy/config  返回 UnifiedConfig.autonomy 节（Task 6.2 迁移，未装配也可读）
@@ -53,10 +54,6 @@ class SpyManager(AutonomyManager):
     def resume(self):
         self.calls.append("resume")
         super().resume()
-
-    def emergency_stop(self):
-        self.calls.append("emergency_stop")
-        super().emergency_stop()
 
 
 @pytest.fixture(autouse=True)
@@ -127,7 +124,8 @@ class TestControl:
         [
             ("enable", "running"),
             ("disable", "paused"),
-            ("emergency_stop", "error"),
+            ("pause", "paused"),
+            ("resume", "running"),
         ],
     )
     def test_control_valid_action_effect_and_calls(self, client, action, expected_status):
@@ -139,6 +137,18 @@ class TestControl:
         assert body["status"] == "ok"
         assert body["state"]["status"] == expected_status
         assert m.calls == [action]
+
+    def test_control_actions_enum_excludes_emergency_stop(self):
+        """不变量⑤：CONTROL_ACTIONS 恰为 enable/disable/pause/resume 四项。"""
+        assert autonomy_router.CONTROL_ACTIONS == ("enable", "disable", "pause", "resume")
+
+    def test_control_emergency_stop_returns_400(self, client):
+        """不变量⑤：emergency_stop 已从控制枚举移除 → HTTP 400，且不调用 manager。"""
+        m = SpyManager()
+        autonomy_router.set_autonomy_manager(m)
+        r = client.post("/api/autonomy/control", json={"action": "emergency_stop"})
+        assert r.status_code == 400
+        assert m.calls == []
 
     def test_control_invalid_action_400(self, client):
         autonomy_router.set_autonomy_manager(SpyManager())

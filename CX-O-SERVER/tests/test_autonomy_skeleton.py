@@ -4,7 +4,7 @@
 1. config 默认值（对齐 autonomy_config.schema.json）+ 缺失字段自动补齐
 2. config save/load 往返一致
 3. 非法枚举（overspend_mode / action）与非法时间格式抛 ValueError
-4. AutonomyManager 启停/暂停/恢复/紧急停止 + get_status 形状（jsonschema 校验对齐 state 契约）
+4. AutonomyManager 启停/暂停/恢复 + get_status 形状（jsonschema 校验对齐 state 契约）
 5. setup_autonomy 在 enabled=False 时返回 None
 6. enabled=True 时经真实 CXFCManager（临时 sqlite storage）装配后，工具直注
    ToolRegistry（category=="builtin"）、技能直注 SkillRegistry，且 /cxfc 插件列表
@@ -147,7 +147,7 @@ class TestManagerLifecycle:
         with pytest.raises(AutonomyDisabledError):
             m.get_status()
 
-    def test_enable_pause_resume_emergency_stop_and_status_shape(self):
+    def test_enable_pause_resume_and_status_shape(self):
         m = AutonomyManager()
         m.enable()
         assert m.running is True
@@ -169,12 +169,6 @@ class TestManagerLifecycle:
         m.resume()
         assert m.running is True
         assert m.get_status()["status"] == "running"
-
-        # 紧急停止：running 置 False，未启用 → get_status 抛 AutonomyDisabledError
-        m.emergency_stop()
-        assert m.running is False
-        with pytest.raises(AutonomyDisabledError):
-            m.get_status()
 
 
 # ================================================================ ⑤ enabled=False → None

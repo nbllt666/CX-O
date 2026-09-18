@@ -1,13 +1,13 @@
-"""CX-O-Autonomy P6 收尾：预算熔断闸门接线单元测试（全部 mock 外部组件）。
+"""CX-O-Autonomy 预算「仅记账 + 告警」接线测试（全部 mock 外部组件）。
 
-覆盖：
-① 超支时 planner 不被调用、审计 result=skipped / trigger_reason=budget_exceeded /
-   cost_tokens=0、manager.status=budget_limited；
+语义（删除预算熔断硬阻断后）：当日 token 超支不再阻断行动——
+① 超支时仍执行规划与行动：planner 被调用、审计 result != skipped 且不产生
+   trigger_reason=budget_exceeded、manager.status 不出现 budget_limited；
 ② 未超支正常规划（planner 被调用、审计 success、status=running）；
-③ 新日恢复（budget_reset_date 变更 / ledger 跨日重置后 status 回 running）；
+③ 跨日重置仍生效（_sync_budget_date → reset_if_new_day 清零当日计数）；
 ④ is_alert_triggered 时 ws_manager.broadcast 被调且含 autonomy_cost_alert、
    同日内只告警一次；
-⑤ ws_manager 缺失不抛错（告警路径仅记日志）。
+⑤ ws_manager 缺失不抛错（告警路径仅记日志），且超支仍照常规划。
 
 运行：python -m pytest tests/test_autonomy_budget_gate.py -q
 """
@@ -144,25 +144,27 @@ def list_audit(engine):
     return page.get("items", [])
 
 
-# ================================================================ ① 超支熔断
+# ================================================================ ①② 超支不阻断
 @pytest.mark.asyncio
-async def test_over_budget_blocks_planning(tmp_path):
+async def test_over_budget_still_plans_and_acts(tmp_path):
     ledger = TokenLedger(daily_token_limit=100, store_path=str(tmp_path / "ledger.json"))
     ledger.add_tokens(150)  # 超支
     engine = build_engine(tmp_path, token_ledger=ledger)
 
     await engine._run_round()
 
-    # 超支：跳过规划与行动（降级为记账不执行）
-    engine.planner.plan.assert_not_called()
-    assert engine.manager.status == "budget_limited"
-    # 审计：result=skipped / trigger_reason=budget_exceeded / cost_tokens=0
+    # ① 超支后仍执行规划与行动，审计 result 不为 skipped，且无 budget_exceeded
+    engine.planner.plan.assert_awaited_once()
     items = list_audit(engine)
     assert len(items) == 1
-    assert items[0]["result"] == "skipped"
-    assert items[0]["trigger_reason"] == "budget_exceeded"
-    assert items[0]["cost_tokens"] == 0
+    assert items[0]["result"] != "skipped"
+    assert items[0]["result"] == "success"
+    assert items[0]["trigger_reason"] != "budget_exceeded"
     assert engine.manager.last_cycle_at is not None
+
+    # ② manager.status 不出现 budget_limited
+    assert engine.manager.status == "running"
+    assert engine.manager.status != "budget_limited"
 
 
 # ================================================================ ② 未超支正常规划
@@ -179,29 +181,28 @@ async def test_normal_planning_when_under_budget(tmp_path):
     assert engine.manager.last_action == "read_news"
 
 
-# ================================================================ ③ 新日恢复
+# ================================================================ ③ 跨日重置仍生效
 @pytest.mark.asyncio
-async def test_new_day_recovers_status(tmp_path):
+async def test_new_day_reset_still_applies(tmp_path):
     ledger = TokenLedger(daily_token_limit=100, store_path=str(tmp_path / "ledger.json"))
-    ledger.add_tokens(150)
+    yesterday = (datetime.date.today() - datetime.timedelta(days=1)).isoformat()
+    ledger.reset_if_new_day(yesterday)  # 台账日期置为昨天并清零
+    ledger.add_tokens(150)  # 昨天超支
+    assert ledger.is_over_budget() is True
+
     engine = build_engine(tmp_path, token_ledger=ledger)
+    engine.manager.budget_reset_date = yesterday  # 管理面记录昨日
 
-    # 第一轮：超支 → budget_limited
     await engine._run_round()
-    assert engine.manager.status == "budget_limited"
-    assert engine.planner.plan.call_count == 0
 
-    # 模拟新的一天：budget_reset_date 变化 + ledger 跨日重置
-    tomorrow = (datetime.date.today() + datetime.timedelta(days=1)).isoformat()
-    engine.manager.budget_reset_date = tomorrow
-    ledger.reset_if_new_day(tomorrow)
-
-    # 第二轮：is_over_budget 自然 False → status 恢复 running
-    await engine._run_round()
-    assert engine.manager.status == "running"
+    today = datetime.date.today().isoformat()
+    # _sync_budget_date 检出跨日 → reset_if_new_day 清零当日计数并更新重置日
+    assert engine.manager.budget_reset_date == today
+    assert ledger.daily_used() == 0
+    assert ledger.is_over_budget() is False
+    # 重置当轮照常规划执行
     engine.planner.plan.assert_awaited_once()
-    items = list_audit(engine)
-    assert items[1]["result"] == "success"
+    assert list_audit(engine)[0]["result"] == "success"
 
 
 # ================================================================ ④ 成本告警当日一次
@@ -233,14 +234,14 @@ async def test_cost_alert_pushed_once_per_day(tmp_path):
 
 # ================================================================ ⑤ ws_manager 缺失不抛错
 @pytest.mark.asyncio
-async def test_ws_manager_missing_does_not_raise(tmp_path):
-    # 达到告警阈值但 ws_manager=None：告警路径仅记日志，不抛错
+async def test_ws_manager_missing_does_not_raise_even_over_budget(tmp_path):
+    # 超支 + 达到告警阈值但 ws_manager=None：告警路径仅记日志，不抛错且照常规划
     ledger = TokenLedger(
         daily_token_limit=100,
         cost_alert_threshold=0.5,
         store_path=str(tmp_path / "ledger.json"),
     )
-    ledger.add_tokens(60)
+    ledger.add_tokens(150)
     engine = build_engine(tmp_path, token_ledger=ledger, ws_manager=None)
 
     await engine._run_round()  # 不应抛异常
@@ -249,3 +250,4 @@ async def test_ws_manager_missing_does_not_raise(tmp_path):
     engine.planner.plan.assert_awaited_once()
     items = list_audit(engine)
     assert items[0]["result"] == "success"
+    assert items[0]["trigger_reason"] != "budget_exceeded"

@@ -40,7 +40,7 @@ class AutonomyPersistError(AutonomyError):
 #   对应注册为下方同名自主工具（embedded CXFC 插件 tools，Python Callable）。
 # 下方工具中 autonomy_get_status / autonomy_retrieve_memory 为决策辅助工具（供规划器补充上下文），
 #   不属于动作枚举，不产生独立审计 action。
-# control()（REST 控制面）的 action 取值 enable/disable/pause/resume/emergency_stop，
+# control()（REST 控制面）的 action 取值 enable/disable/pause/resume，
 #   与控制指令语义绑定，与自主行动枚举（autonomy_action.schema.json）是两套不同枚举，勿混用。
 
 # ---- embedded CXFC 插件工具（register_embedded_plugin("cxo-autonomy", tools=..., handlers=...)） ----
@@ -83,7 +83,7 @@ def get_status() -> Dict[str, Any]:
     """GET /api/autonomy/status —— 状态/动机/预算/最近行动。"""
 
 def control(action: str) -> Dict[str, Any]:
-    """POST /api/autonomy/control —— body {"action": "enable"|"disable"|"pause"|"resume"|"emergency_stop"}。
+    """POST /api/autonomy/control —— body {"action": "enable"|"disable"|"pause"|"resume"}。
     非法 action 返回 400。"""
 
 def list_audit(limit: int = 50, offset: int = 0) -> Dict[str, Any]:

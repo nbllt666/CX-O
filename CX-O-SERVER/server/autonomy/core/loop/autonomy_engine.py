@@ -4,7 +4,7 @@ AutonomyEngine 串联 感知→动机→规划→行动→审计 五层流水线
 周期运行：
 
 - start() / stop()        启动/停止后台循环任务
-- _run_loop()             后台主循环（while killswitch.enabled）
+- _run_loop()             后台主循环（无条件周期运行，仅 stop()/任务取消终止）
 - _run_round()            单轮五层流水线（轮首含用户在线策略）
 - _execute()              按 action 分发执行（sleep/wait 为内部原语不调 handler）
 - _maybe_diary()          日记时刻触发日记生成（is_diary_time 且今日未写）
@@ -13,18 +13,18 @@ AutonomyEngine 串联 感知→动机→规划→行动→审计 五层流水线
 - 行动前对 write_post 过内容闸门（fail-closed），拒绝则 result=blocked 不执行；
 - 每轮追加审计（对齐 public/schema/autonomy_audit.schema.json），Token 记账，
   效果评估；
-- 预算熔断闸门：每轮动机更新后、规划前检查 TokenLedger 超支（超支 → 置
-  manager.status=budget_limited，跳过规划与行动，审计 result=skipped /
-  trigger_reason=budget_exceeded）；未超支且此前 budget_limited（新的一天
-  budget_reset_date 变化后）自动恢复 running；达到成本告警阈值时经
-  ws_manager.broadcast 推送 autonomy_cost_alert（当日仅一次，缺失仅记日志）；
+- 预算仅记账与告警、不阻断行动：每轮动机更新后同步 TokenLedger（跨日经
+  reset_if_new_day 自动重置），达到成本告警阈值时经 ws_manager.broadcast
+  推送 autonomy_cost_alert（当日仅一次，缺失仅记日志）；超支不再置
+  manager.status 为预算受限态、不再跳过规划与行动；
 - round 内任何异常被捕获（不冒泡），记录错误审计后继续下一轮；
-- 紧急停止（killswitch.emergency_stop）后循环立即退出，不执行新轮次；
-- 用户在线休眠策略（P2-T4）：仅急停（enabled=False）终止循环；休眠/暂停降级
-  为轮级跳过（见 _run_round），从而支持"用户在线→休眠、用户离开→离开模式
-  自动恢复"的轮询语义。
+- 主循环无条件运行：不存在任何会终止循环的急停路径；paused / sleeping /
+  manager 门控（enabled/running=False）一律降级为轮级跳过（见 _run_round），
+  从而支持"用户在线→休眠、用户离开→离开模式自动恢复"的轮询语义。
 
-生命周期：构造时从持久化恢复 motivation 与 manager 状态（重启续接）。
+生命周期：构造时从持久化恢复 motivation 与 manager 状态（重启续接）；载入遗留
+manager_state.json 时把 status 归一化为 running/paused/sleeping（历史预算受限态 /
+错误态不回放，避免升级后契约越界）。
 本模块无相对路径访问，禁止 "../../" / "..\\\\" 形式。
 """
 
@@ -71,6 +71,10 @@ _MANAGER_STATE_FIELDS: Tuple[str, ...] = (
     "budget_reset_date",
     "diary_last_at",
 )
+
+# manager.status 白名单（对齐 public/schema/autonomy_state.schema.json 精简枚举）；
+# 载入遗留 manager_state.json 时，非白名单值（历史预算受限态 / 错误态）归一化为 running
+_VALID_MANAGER_STATUSES: Tuple[str, ...] = ("running", "paused", "sleeping")
 
 
 class AutonomyEngine:
@@ -176,22 +180,20 @@ class AutonomyEngine:
                 pass
 
     async def _run_loop(self) -> None:
-        """后台主循环：未急停期间周期执行单轮，并在每次醒来后检查日记时刻。
+        """后台主循环：无条件周期执行单轮，并在每次醒来后检查日记时刻。
 
-        P2-T4 起循环守卫由 killswitch.is_active() 放宽为 killswitch.enabled：
-        - 仅紧急停止（enabled=False）才终止循环；
-        - 暂停/休眠（paused/sleeping）不再终止循环，降级为轮级跳过（见
-          _run_round），从而支持"用户在线→休眠、用户离开→离开模式自动恢复"
-          的轮询语义。
+        主循环无条件运行（while True）：不存在任何会终止循环的急停路径，
+        终止仅由 stop()（置 running=False 并 task.cancel()）或任务取消承担；
+        paused / sleeping / manager 门控（enabled/running=False）一律降级为
+        轮级跳过（见 _run_round），从而支持"用户在线→休眠、用户离开→离开模式
+        自动恢复"的轮询语义。
         round 内任何异常被捕获（不冒泡），记录错误审计后 continue 下一轮；
-        急停（killswitch.enabled 为 False）后循环立即退出，不执行新轮次。
+        running=False 由 stop() 负责，循环体内不再置位（任务取消抛出的
+        CancelledError 不经 except Exception，此处置位为不可达死代码）。
         """
         interval_seconds: float = self.loop_interval_minutes * 60.0
-        while self.killswitch.enabled:
+        while True:
             await asyncio.sleep(interval_seconds)
-            # 醒来后再次确认未被急停，避免急停后执行多余轮次
-            if not self.killswitch.enabled:
-                break
             try:
                 await self._run_round()
             except Exception as e:
@@ -201,7 +203,6 @@ class AutonomyEngine:
                 await self._maybe_diary()
             except Exception as e:
                 logger.error("日记触发异常（不冒泡）: %s", e)
-        self.running = False
 
     # ================================================================ 单轮流水线
     async def _run_round(self) -> None:
@@ -214,15 +215,17 @@ class AutonomyEngine:
         - 用户离开 → sleeping=False（离开模式，自主全授权，不拦截操作）。
         用户在线触发休眠时，本轮跳过规划与行动，仅更新动机并记录 result=skipped
         （trigger_reason=user_online_sleep）的审计条目（推荐方案：保留审计可回溯，
-        且维持轮询语义，用户离开后下一轮自动恢复）。急停优先于一切：enabled=False
-        时本轮同样跳过行动，且 leave_mode() 恒为 False。
+        且维持轮询语义，用户离开后下一轮自动恢复）。暂停/休眠仅降级为轮级跳过，
+        不终止主循环。
 
-        预算熔断闸门（P6）：动机更新后、规划前检查 TokenLedger——
-        - 超支 → 置 manager.status=budget_limited，跳过规划与行动，审计
-          result=skipped / trigger_reason=budget_exceeded（降级为记账不执行）；
-        - 未超支 → 若此前 budget_limited（新的一天 budget_reset_date 变化后
-          is_over_budget 自然 False）恢复 running；达到成本告警阈值经
-          ws_manager.broadcast 推送 autonomy_cost_alert（当日仅一次）。
+        预算仅记账与告警（P6）：动机更新后、规划前调用 _apply_budget_accounting()
+        同步 TokenLedger（跨日自动重置），并在达到成本告警阈值时推送 autonomy
+        成本告警（当日仅一次）。超支不再阻断行动，manager.status 不再进入
+        预算受限态。
+
+        门控顺序：用户在线策略 → 动机 → 预算记账 → manager 门控
+        （_manager_action_allowed，result=skipped / reason=paused_or_disabled）
+        → killswitch.is_active() → 感知/规划/执行；上述门控均不终止主循环。
 
         round 内任何异常被捕获（不冒泡）：记录错误审计后本轮结束，由 _run_loop
         继续下一轮。最后更新 manager 的 last_action / last_cycle_at 并保存
@@ -233,23 +236,12 @@ class AutonomyEngine:
         try:
             online_sleep = await self._apply_user_online_policy()
             await self._motivate()
-            budget_blocked = await self._apply_budget_gate()
+            await self._apply_budget_accounting()
             manager_blocked = not self._manager_action_allowed()
-            if budget_blocked:
-                # 预算超支：跳过规划与行动，仅审计 skipped（记账不执行）
-                action_result = {
-                    "action": "wait",
-                    "target": "",
-                    "payload": {},
-                    "reason": "budget_exceeded",
-                    "expected_outcome": "",
-                    "result": "skipped",
-                }
-            elif manager_blocked:
-                # H11: 管理面门控——pause()/disable()/emergency_stop() 把
-                # manager.running/enabled 置 False 后，引擎此前从不读取这些字段，
-                # 暂停完全无效且状态谎报。此处跳过规划与行动并审计 skipped
-                # （降级为轮级跳过以维持轮询语义，resume/enable 后自动恢复）。
+            if manager_blocked:
+                # H11: 管理面门控——pause()/disable() 把 manager.running/enabled
+                # 置 False 后，跳过规划与行动并审计 skipped（降级为轮级跳过以
+                # 维持轮询语义，resume/enable 后自动恢复；不终止主循环）。
                 action_result = {
                     "action": "wait",
                     "target": "",
@@ -263,7 +255,7 @@ class AutonomyEngine:
                 plan = await self._plan(sense)
                 action_result = await self._execute(plan)
             else:
-                # 用户在线触发休眠 / 已暂停 / 已急停：跳过规划与行动，仅审计 skipped
+                # 用户在线触发休眠 / 已暂停 / 已休眠：跳过规划与行动，仅审计 skipped
                 action_result = {
                     "action": "wait",
                     "target": "",
@@ -300,7 +292,7 @@ class AutonomyEngine:
 
         仅在 sensor 为真实 ContextSensor（含可调用 is_user_online）且
         config.safety.user_online_sleep 开启时生效；否则不改动 killswitch
-        （不干预手动 sleeping / 暂停 / 急停，测试 MagicMock 替身也不触发）。
+        （不干预手动 sleeping / 暂停，测试 MagicMock 替身也不触发）。
 
         Returns:
             bool: 是否因"用户在线"在本轮触发休眠（True=本轮处于用户在线休眠，
@@ -333,52 +325,39 @@ class AutonomyEngine:
     def _manager_action_allowed(self) -> bool:
         """H11: 管理面门控——manager.enabled 且 manager.running 才允许规划与行动。
 
-        AutonomyManager.pause()/disable()/emergency_stop() 会把 running（和/或
-        enabled）置 False，resume()/enable() 复位 True；engine.start() 前装配层
-        已调用 manager.enable()。字段缺失时按启用处理（兼容测试替身，避免误伤）。
+        AutonomyManager.pause()/disable() 会把 running（和/或 enabled）置 False，
+        resume()/enable() 复位 True；engine.start() 前装配层已调用 manager.enable()。
+        字段缺失时按启用处理（兼容测试替身，避免误伤）。
         """
         return (
             bool(getattr(self.manager, "enabled", True))
             and bool(getattr(self.manager, "running", True))
         )
 
-    # ------------------------------------------------------------ 0) 预算熔断闸门
-    async def _apply_budget_gate(self) -> bool:
-        """轮首预算闸门：动机更新后、规划前执行预算熔断与成本告警。
+    # ------------------------------------------------------------ 0) 预算记账与告警
+    async def _apply_budget_accounting(self) -> None:
+        """轮首预算记账：动机更新后、规划前同步 TokenLedger 并推送成本告警。
 
-        先按自然日同步预算日期（跨日自动重置 TokenLedger 当日计数），再判定：
-        - 超支 → 置 manager.status="budget_limited" 并返回 True（本轮跳过规划
-          与行动，降级为记账不执行，审计由 _run_round 记录 result=skipped /
-          trigger_reason=budget_exceeded）；
-        - 未超支 → 若此前处于 budget_limited（新的一天 budget_reset_date 变化后
-          is_over_budget 自然为 False）恢复 running；达到成本告警阈值时经
-          ws_manager.broadcast 推送 autonomy_cost_alert（当日仅一次，标记由
-          TokenLedger 内部管理；ws_manager 缺失仅记日志）。
-
-        Returns:
-            bool: True=预算超支本轮跳过规划与行动；False=继续正常规划。
+        仅记账与告警、不阻断行动：先按自然日同步预算日期（跨日自动重置
+        TokenLedger 当日计数），超支时仅记日志；达到成本告警阈值时经
+        ws_manager.broadcast 推送 autonomy_cost_alert（当日仅一次，标记由
+        TokenLedger 内部管理；ws_manager 缺失仅记日志）。超支不再置
+        manager.status 为受限态、不再跳过规划与行动（无返回值）。
         """
         if self.token_ledger is None:
-            return False
+            return
         try:
             self._sync_budget_date()
             if self.token_ledger.is_over_budget():
-                self.manager.status = "budget_limited"
-                logger.warning("自主系统当日预算超支，本轮降级为记账不执行")
-                return True
+                logger.warning("自主系统当日预算超支，仅记账与告警（不阻断行动）")
         except Exception as e:
             logger.warning("预算超支判定失败: %s", e)
-            return False
-        # 未超支：此前因预算受限则恢复（新的一天重置后自然恢复）
-        if getattr(self.manager, "status", "") == "budget_limited":
-            self.manager.status = "running"
-            logger.info("自主系统预算已恢复（新的一天），状态恢复 running")
+            return
         try:
             if self.token_ledger.is_alert_triggered():
                 await self._push_cost_alert()
         except Exception as e:
             logger.warning("成本告警推送失败: %s", e)
-        return False
 
     def _sync_budget_date(self) -> None:
         """按自然日同步预算日期：跨日时自动重置 TokenLedger 计数并更新 manager.budget_reset_date。
@@ -807,7 +786,13 @@ class AutonomyEngine:
         self._load_manager_state()
 
     def _load_manager_state(self) -> None:
-        """从 manager_state.json 恢复 manager 字段与 motivations（尽力而为）。"""
+        """从 manager_state.json 恢复 manager 字段与 motivations（尽力而为）。
+
+        遗留数据迁移：`status` 做白名单归一化——载入值不属于
+        {"running", "paused", "sleeping"} 时（历史预算受限态 / 错误态）置为
+        "running"，避免升级后回放已被契约精简的状态枚举；其余字段恢复行为
+        不变（持久化字段集合不变，仍保存 status）。
+        """
         try:
             path = Path(self._store_dir) / "manager_state.json"
             if not path.exists():
@@ -818,7 +803,13 @@ class AutonomyEngine:
                 return
             for field in _MANAGER_STATE_FIELDS:
                 if field in data:
-                    setattr(self.manager, field, data[field])
+                    value = data[field]
+                    if field == "status" and value not in _VALID_MANAGER_STATUSES:
+                        logger.info(
+                            "遗留 manager.status=%r 超出精简枚举，归一化为 running", value
+                        )
+                        value = "running"
+                    setattr(self.manager, field, value)
             if isinstance(data.get("motivations"), dict):
                 try:
                     from server.autonomy.models import Motivations
@@ -864,7 +855,7 @@ class AutonomyEngine:
         记账（_audit → add_tokens）与跨日重置（_sync_budget_date）均发生在
         轮内，轮末统一落盘一次，避免一轮多次重复写；经 asyncio.to_thread 在
         工作线程执行原子写，事件循环内不做阻塞文件 IO。重启后从
-        token_ledger.json 恢复当日消耗，堵住"重启清零预算绕过熔断"缺口。
+        token_ledger.json 恢复当日消耗，避免"重启清零当日预算记账"的口径偏差。
         """
         if self.token_ledger is None:
             return

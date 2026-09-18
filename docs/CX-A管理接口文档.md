@@ -240,7 +240,7 @@ CX-A 默认关闭（`admin.enabled = false`），关闭时控制平面端点一�
 
 | target | 合法 action | 说明 |
 |--------|------------|------|
-| `autonomy` | `enable` `disable` `pause` `resume` `emergency_stop` `start` `stop` | 依 `autonomy_manager` 上同名方法调用 |
+| `autonomy` | `enable` `disable` `pause` `resume` | 依 `autonomy_manager` 上同名方法调用；`emergency_stop` 已删除（调用返回 `ADMIN_UNKNOWN_ACTION`）；`start` / `stop` 未实现（返回 `unsupported`） |
 | `voice` | 同上类通用动作 | 依 `tts` / `audio` 服务上同名方法调用 |
 | `live` | 通用动作 | 依 `live` 服务 |
 | `config` | `reload` `reload_config` `reset` | 触发配置热重载 |

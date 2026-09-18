@@ -1,4 +1,5 @@
 """AutonomyEngine 循环间隔归一化测试（修复第六轮 B2：loop_interval_minutes 允许 0 空转）。"""
+import json
 import types
 
 from server.autonomy.core.loop.autonomy_engine import AutonomyEngine
@@ -131,7 +132,7 @@ def _build_full_engine(tmp_path):
 
 @pytest.mark.asyncio
 class TestManagerGate:
-    """[H11] pause/disable/emergency_stop 门控——引擎读取管理面标志位。"""
+    """[H11] pause/disable 门控——引擎读取管理面标志位（无急停路径）。"""
 
     async def test_pause_blocks_round_and_audits_skipped(self, tmp_path):
         engine = _build_full_engine(tmp_path)
@@ -159,24 +160,45 @@ class TestManagerGate:
 
     async def test_disable_blocks_round(self, tmp_path):
         engine = _build_full_engine(tmp_path)
-        engine.manager.disable()  # enabled=False（与 killswitch.enabled 无关）
+        engine.manager.disable()  # enabled=False（管理面装配总开关）
 
         await engine._run_round()
         engine.planner.plan.assert_not_called()
         items = engine.audit.list(limit=None).get("items", [])
         assert items[0]["trigger_reason"] == "paused_or_disabled"
 
-    async def test_manager_emergency_stop_blocks_round(self, tmp_path):
+
+@pytest.mark.asyncio
+class TestLegacyStopFilesDoNotHalt:
+    """[T5.4] 遗留停摆档（killswitch enabled=false / manager status=error）不再导致停摆。"""
+
+    async def test_legacy_files_still_enter_planning_path(self, tmp_path):
+        """加载遗留 killswitch.json(enabled=false) + manager_state.json(status=error)
+        后运行一轮：本轮仍进入规划与执行路径（非 skipped、不终止）。"""
+        # 升级前遗留档
+        (tmp_path / "killswitch.json").write_text(
+            json.dumps({"enabled": False, "paused": False, "sleeping": False}),
+            encoding="utf-8",
+        )
+        (tmp_path / "manager_state.json").write_text(
+            json.dumps({"status": "error"}), encoding="utf-8"
+        )
+
         engine = _build_full_engine(tmp_path)
-        engine.manager.emergency_stop()  # enabled=False + status=error
+        # 对齐装配层 main.setup_autonomy：KillSwitch(...).load()（忽略遗留 enabled 键）
+        engine.killswitch.load()
+
+        # 遗留档不再把系统置于停摆态
+        assert engine.killswitch.is_active() is True
+        assert engine.manager.status == "running"
 
         await engine._run_round()
-        engine.planner.plan.assert_not_called()
+
+        # 进入规划/执行路径：planner 被调用，审计 result=success（非 skipped）
+        engine.planner.plan.assert_awaited_once()
         items = engine.audit.list(limit=None).get("items", [])
-        assert items[0]["result"] == "skipped"
-        assert items[0]["trigger_reason"] == "paused_or_disabled"
-        # 状态闭环：不再谎报——status 保持 error 而非被跳过轮次改写
-        assert engine.manager.status == "error"
+        assert items[-1]["result"] == "success"
+        assert items[-1]["trigger_reason"] != "budget_exceeded"
 
 
 @pytest.mark.asyncio

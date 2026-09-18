@@ -173,6 +173,19 @@ class TestAutonomyConfigContract:
 
 # ================================================================ autonomy_state 契约
 class TestAutonomyStateContract:
+    def test_status_enum_is_three_values(self, state_schema):
+        """不变量⑥：status 枚举精简为 [running, paused, sleeping]。"""
+        assert state_schema["properties"]["status"]["enum"] == [
+            "running", "paused", "sleeping",
+        ]
+
+    def test_budget_limited_status_rejected(self, state_schema):
+        """不变量⑥：已删除的 budget_limited（及 error）不再是合法状态。"""
+        with pytest.raises(ValidationError):
+            validate(instance={"status": "budget_limited"}, schema=state_schema)
+        with pytest.raises(ValidationError):
+            validate(instance={"status": "error"}, schema=state_schema)
+
     def test_invalid_status_enum_fails(self, state_schema):
         with pytest.raises(ValidationError):
             validate(instance={"status": "gone_wrong"}, schema=state_schema)
@@ -214,6 +227,17 @@ class TestAutonomyStub:
         for sig in ("def get_status(", "def control(", "def list_audit(",
                     "def get_config(", "def update_config("):
             assert sig in text, f"cxo_autonomy.pyi 缺少端点签名 {sig}"
+
+    def test_control_enum_excludes_emergency_stop(self):
+        """不变量⑦：control() 指令枚举恰为 4 项，不含 emergency_stop。"""
+        text = _stub_text()
+        match = re.search(r'def control\(action: str\).*?"""(.*?)"""', text, re.S)
+        assert match is not None, "cxo_autonomy.pyi 缺少 control() docstring"
+        doc = match.group(1)
+        for action in ("enable", "disable", "pause", "resume"):
+            assert action in doc, f"control() 枚举缺少 {action}"
+        assert "emergency_stop" not in doc
+        assert "emergency_stop" not in text  # 存根全文不再宣告急停指令
 
 
 # ================================================================ 三层一致性（rules-3 §五）

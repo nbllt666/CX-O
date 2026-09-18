@@ -817,8 +817,9 @@ async def lifespan(app: FastAPI):
         _emb_url = _bk_settings.config.memory.embedding_api_base.rstrip("/")
         _emb_model = _bk_settings.config.memory.embedding_model
 
-        async def _warm_llm() -> None:
-            for _attempt in range(60):  # vLLM(BNB) 加载约 2-3 分钟，最长等 ~5 分钟
+        async def _warm_llm() -> bool:
+            # 单轮快速探测（vLLM 未就绪时约 1 分钟内失败返回），由外层自愈循环重试
+            for _attempt in range(6):
                 try:
                     _resp = await _warmup_client.post(
                         f"{_llm_url}/v1/chat/completions",
@@ -832,30 +833,29 @@ async def lifespan(app: FastAPI):
                     )
                     if _resp.status_code == 200:
                         lifespan_logger.info(f"LLM 推理预热完成 (第 {_attempt + 1} 次尝试)")
-                        break
+                        return True
                 except Exception:
                     pass
                 await asyncio.sleep(5)
-            else:
-                lifespan_logger.warning("LLM 推理预热超时（不影响运行）")
-                return
+            return False
 
-            # 语音链路前缀预热：用 default agent 的完整 system_prompt（与
-            # voice.dual_stream 实时语音 build_messages 结构一致）发送多轮流式请求，
-            # 预热 vLLM Triton JIT kernel shape 并建立 system_prompt 前缀 KV cache。
-            # 实测：无此预热时语音链路 LLM TTFT ~444ms；预热后 TTFT 降至 ~30ms
-            # （证据 .trae/documents/20260817_模块0_服务端语音前缀预热.md）。
-            # 注意：仅预热缓存，绝不修改/精简生产 system_prompt 内容。
-            # 2026-08-23 起实时语音额外注入记忆（独立 system 消息，位于 system(padded)
-            # 之后）。记忆是每次请求变化段，不参与前缀缓存；此处仍以
-            # system_prompt + padding + user 建立稳定前缀，vLLM 对 system 前缀 KV 保持
-            # partial 命中，仅记忆/历史变化段每次 prefill，缓存优化仍然有效。
+        async def _warm_voice_prefix() -> bool:
+            """语音链路前缀预热：用 default agent 的完整 system_prompt（与
+            voice.dual_stream 实时语音 build_messages 结构一致）发送多轮流式请求，
+            预热 vLLM Triton JIT kernel shape 并建立 system_prompt 前缀 KV cache。
+            实测：无此预热时语音链路 LLM TTFT ~444ms；预热后 TTFT 降至 ~30ms
+            （证据 .trae/documents/20260817_模块0_服务端语音前缀预热.md）。
+            注意：仅预热缓存，绝不修改/精简生产 system_prompt 内容。
+            2026-08-23 起实时语音额外注入记忆（独立 system 消息，位于 system(padded)
+            之后）。记忆是每次请求变化段，不参与前缀缓存；此处仍以
+            system_prompt + padding + user 建立稳定前缀，vLLM 对 system 前缀 KV 保持
+            partial 命中，仅记忆/历史变化段每次 prefill，缓存优化仍然有效。"""
             try:
                 _agent = get_agent_config("default") or {}
                 _system_prompt = (_agent.get("system_prompt") or "").strip()
                 if not _system_prompt:
                     lifespan_logger.warning("语音前缀预热跳过：default agent 无 system_prompt")
-                    return
+                    return True  # 无内容可预热，视为完成（不阻塞自愈循环）
                 # 与生产 build_messages(is_realtime_voice=True) 完全同构：
                 # system 末尾追加无害 padding，使完整 prompt >=360 tokens，
                 # 满足 vLLM prefix cache 写入/命中长度（>=353 tokens）阈值。
@@ -888,13 +888,16 @@ async def lifespan(app: FastAPI):
                         f"语音前缀预热完成：{_warm_success}/10 轮（system_prompt {len(_system_prompt)} "
                         f"+ padding {len(REALTIME_VOICE_PROMPT_PADDING)} 字符，已含 prefix-cache padding）"
                     )
-                else:
-                    lifespan_logger.warning("语音前缀预热全部失败（不影响运行）")
+                    return True
+                lifespan_logger.warning("语音前缀预热全部失败（将由自愈循环重试）")
+                return False
             except Exception as _warm_prefix_e:
-                lifespan_logger.warning(f"语音前缀预热异常（不影响运行）: {_warm_prefix_e}")
+                lifespan_logger.warning(f"语音前缀预热异常（将由自愈循环重试）: {_warm_prefix_e}")
+                return False
 
-        async def _warm_embedding() -> None:
-            for _attempt in range(60):
+        async def _warm_embedding() -> bool:
+            # 单轮快速探测（同 _warm_llm），由外层自愈循环重试
+            for _attempt in range(6):
                 try:
                     _resp = await _warmup_client.post(
                         f"{_emb_url}/v1/embeddings",
@@ -903,13 +906,59 @@ async def lifespan(app: FastAPI):
                     )
                     if _resp.status_code == 200:
                         lifespan_logger.info(f"Embedding 推理预热完成 (第 {_attempt + 1} 次尝试)")
-                        return
+                        return True
                 except Exception:
                     pass
                 await asyncio.sleep(5)
-            lifespan_logger.warning("Embedding 推理预热超时（不影响运行）")
+            return False
 
-        await asyncio.gather(_warm_llm(), _warm_embedding())
+        async def _warm_tts() -> bool:
+            """TTS 首帧合成预热：CosyVoice 引擎首个推理请求含 CUDA graph 捕获与
+            说话人特征首次构建，实测首轮合成 TTFT→首包 2153ms vs 稳态 359ms
+            （全双工 turn 0 冷惩罚主因，服务端埋点证据）。预热一次短句合成消除该惩罚。
+            与 LLM 预热同构：失败由外层自愈循环重试，不影响主流程。
+
+            就绪判定不做属性预检（_initialized 在生产 remote 模式下不置位，
+            真实守卫是 _ensure_qwen3_ready 的 provider 检查）——直接尝试合成，
+            异常即视为未就绪。"""
+            try:
+                from server.services.tts_service import get_tts_service
+
+                _tts = get_tts_service()
+                if _tts is None:
+                    return False
+                _audio = await _tts.synthesize("你好呀，很高兴见到你。")
+                if _audio:
+                    lifespan_logger.info(f"TTS 首帧合成预热完成（{len(_audio)} bytes）")
+                    return True
+                lifespan_logger.warning("TTS 预热返回空音频（将由自愈循环重试）")
+                return False
+            except Exception as _tts_warm_e:
+                lifespan_logger.warning(f"TTS 预热失败（将由自愈循环重试）: {_tts_warm_e}")
+                return False
+
+        # 自愈循环：依赖容器（vLLM/Embedding/TTS）可能晚于主服务就绪——单轮探测失败后
+        # 每 60s 重试，直到 LLM/Embedding/语音前缀/TTS 全部预热成功。原实现为一次性
+        # 5 分钟窗口，主服务先于依赖容器启动时预热整体错过，首条真实语音请求
+        # 承担 CUDA graph 捕获 + 前缀 cache 未建 + TTS 首帧合成的全部冷启动惩罚（实测教训）。
+        _warm_round = 0
+        while True:
+            _warm_round += 1
+            _llm_ok = await _warm_llm()
+            if _llm_ok:
+                _prefix_ok = await _warm_voice_prefix()
+            else:
+                _prefix_ok = False
+            _emb_ok = await _warm_embedding()
+            _tts_ok = await _warm_tts()
+            if _llm_ok and _prefix_ok and _emb_ok and _tts_ok:
+                lifespan_logger.info(f"推理后端预热全部完成（共 {_warm_round} 轮）")
+                break
+            lifespan_logger.warning(
+                f"推理预热第 {_warm_round} 轮未完成（llm={_llm_ok} prefix={_prefix_ok} "
+                f"embedding={_emb_ok} tts={_tts_ok}），60s 后自愈重试"
+            )
+            await asyncio.sleep(60)
 
     if _is_leader:
         try:
