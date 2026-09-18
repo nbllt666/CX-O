@@ -248,3 +248,63 @@
 - **[观察] 改动范围表述** → 已澄清：本单 2 文件；工作树另有既有无关改动（`server/main.py` 预热自愈、`server/autonomy/*`、`CXO-EvalKit/data/runs/*`）。
 - **[观察] 未独立验证项（ws_probe 输出与单测输出未落盘）** → 已补落盘：`.trae/documents/test_reports/ws_probe_20260918_fix_empty_collection.json` / `.log`（4 轮，P50 413.0 / P95 427.3）、`backend_pytest_20260918_fix_empty_collection.txt`（1201 passed）。
 - **[V] 未闭合**：人类对剩余质量取舍项的裁决（见七字段「未闭合项」①②③）；GN-004 通过不豁免人类裁决。
+
+---
+
+# current-note — fix-autonomy-disable-and-loop-exit（2026-09-18 文件末尾追加；追加式、不覆盖任何既有条目）
+
+> 更新时间: 2026-09-18 23:28 | 变更ID: fix-autonomy-disable-and-loop-exit | 阶段: 已完成（实现+验证+GN-004 复审警示放行+[V] 已由 ASK-20260918-04 闭合）
+
+## 七字段交接状态
+
+| 字段 | 内容 |
+|------|------|
+| 做到哪了 | 评审反馈的两条问题已核实并处理：**Issue1（禁用入口缺失）确认存在并修复**——重构把控制区改成了 `!active ? 启用 : (非running ? 恢复 : null)`，启用后 UI 无任何回退入口（后端 `CONTROL_ACTIONS` 仍含 disable、`manager.disable()` 仍在、前端类型仍含 `'disable'`，属前端单侧回归）；已恢复「禁用」按钮（active 恒显示）+ 文案键 + 修正被"改成断言按钮不存在"的用例。**Issue2（stop() 后死循环）实测不成立**——空闲态与轮内两场景 stop() 均 0.1ms 内终止（CancelledError 不被轮内 except Exception 吞），但按评审建议恢复了退出条件 `while self.running:`，使终止不再单点依赖 task.cancel()。**追加轮（ASK-20260918-04 人类裁定）**：再恢复「暂停」入口，控制区三入口（启用/禁用/暂停·恢复）与后端 CONTROL_ACTIONS 完全对齐 |
+| 为什么 | 人类指令「验证问题的存在性并进行修复」+ 评审 Issue1/Issue2 原文。核实结论：Issue1 存在（用户启用后无法关闭自主系统）；Issue2 不复现但脆弱性成立（守卫被删后终止单点依赖取消），故按"恢复退出条件"加固而非回滚 killswitch 语义 |
+| 未闭合项 | 无阻塞项。① **[V] 已闭合**：ASK-20260918-04 人类裁定「额外恢复『暂停』入口」→ 追加轮已实施并重跑三重闸门 PASSED；② 后端改动属代码级，主服务未重启（守卫下次启动生效，行为向后兼容） |
+| 接续入口 | 前端：`cd c:/CX-O/APP-Frontend && npx vitest run && npx playwright test`；后端：`cd c:/CX-O/CX-O-SERVER && python -m pytest tests/ -q -k "autonomy or autonomy_engine or engine_nonblock"`。变更文档：`.trae/documents/20260918_模块0_禁用入口与循环退出.md` |
+| 人类裁决记录 | ASK-20260918-02/03 已闭合；**ASK-20260918-04（本单 [V]）→ 人类裁定：额外恢复「暂停」入口**，已实施并验证（追加轮） |
+| 请示追踪 | 无悬空请示 |
+| 审查状态 | 交付前 GN-004 审查：**警示放行**（无 SOFT_BLOCK，agent `106ec20d-b382-404c-8a8d-b06b94f65fd8`）；5 条发现项已全部处理，见 (4) |
+
+## 三段交接
+
+### (1) 工程过程
+1. 读提交 `4df605a` 相关 diff（AutonomyPage.tsx / autonomy_engine.py / killswitch.py / router / manager / 测试 / i18n）
+2. Issue1 核实：控制区分支 `null` 分支存在 + 后端 disable 仍合法 + 前端类型仍含 disable + 用例被改为断言按钮不存在 → **确认存在**
+3. Issue2 核实：临时用例实测（空闲态 / 轮内 / 对照 disable 不终止）→ **stop() 可终止，主张不成立**；判断依据补充：CancelledError 属 BaseException，轮内 `except Exception` 不吞；`server/autonomy` 全域无吞取消写法
+4. 按 rules-6 先写变更文档（`.trae/documents/20260918_模块0_禁用入口与循环退出.md`），再改码
+5. Issue1 修复：`AutonomyPage.tsx`（禁用按钮恒显示 + 非 running 追加恢复）、zh-CN/en-US `disable` 键、测试修正 + 新增禁用触发用例
+6. Issue2 加固：`autonomy_engine.py` `_run_loop` 恢复 `while self.running:`（含 docstring/模块头注释同步）；`tests/test_autonomy_engine.py` 新增 `TestLoopTermination` 3 例
+7. 测试：后端 `pytest tests/ -q -k "autonomy or autonomy_engine or engine_nonblock"` 347 passed；前端三重闸门（s0402）PASSED（单测 7/7 + Playwright E2E 2/2 + tsc exit 0 + 全量 vitest 770 passed），证据落盘 `.trae/documents/test_reports/frontend_gate_20260918_fix_autonomy_disable_btn/`
+8. 交付前 GN-004 独立审查（警示放行）→ 5 条发现项处理：精确化后端复现命令、模块头与 `while self.running` 对齐、frontmatter 时间改创建时刻、运行态数据文件显式声明、本段改用三值状态标记
+
+### (2) 交接状态
+
+- Issue1 修复：**已闭合**（前端 4 文件；闸门一已锁定交互）
+- Issue2 加固：**已闭合**（后端 1 文件 + 测试 1 文件；含"仅标志位退出"用例）
+- 单测/E2E/Mock 回归：**已闭合**（后端 `pytest tests/ -q -k "autonomy or autonomy_engine or engine_nonblock"` 347 passed；前端三重闸门 PASSED：7/7 + 2/2 + tsc exit 0 + 770 passed）
+- 变更文档：**已闭合**（`.trae/documents/20260918_模块0_禁用入口与循环退出.md`，含最终结果与未闭合项）
+- 交付前 GN-004 审查：**已闭合**（警示放行，见 (4)）
+- 运行态数据文件（`server/autonomy/data/audit_logs.jsonl` / `manager_state.json`）：**非本单改动**（运行中服务写入），提交时按文件隔离
+
+### (3) 最终结果
+- Issue1：running 态从"无任何按钮"恢复为「禁用」+「暂停」；paused/sleeping 态「禁用」+「恢复」；`control('disable'|'pause'|'resume')` 三入口与后端 `CONTROL_ACTIONS` 完全对齐
+- Issue2：`stop()` 终止已实测（0.1ms，双场景）+ 退出条件已恢复（`while self.running:`），并以"仅置 running=False 不发取消"用例锁定守卫本身
+- 未恢复项：急停（`emergency_stop` / `emergencyConfirm`，保持重构意图删除）
+- 追加轮（ASK-20260918-04）：恢复「暂停」入口 + i18n + 用例；三重闸门重跑 PASSED（8/8 + 2/2 + tsc exit 0 + 771 passed），证据 `.trae/documents/test_reports/frontend_gate_20260918_fix_autonomy_pause_entry/`
+- 产出物清单：`AutonomyPage.tsx`、`zh-CN.json`、`en-US.json`、`AutonomyPage.test.tsx`、`autonomy_engine.py`、`tests/test_autonomy_engine.py`、`.trae/documents/20260918_模块0_禁用入口与循环退出.md`、两个前端闸门证据目录
+
+### (4) GN-004 交付前审查记录（追加式）
+
+- 结论：**警示放行**（无 [SOFT_BLOCK]），agent `106ec20d-b382-404c-8a8d-b06b94f65fd8`（2026-09-18 23:2x）。GN-004 独立复跑：`pytest tests/test_autonomy_engine.py -q` → 17 passed；`pytest tests/ -k "autonomy"` → 340 passed / 0 failed。
+- **独立核验通过项**：① Issue1 定性成立（`routers/autonomy.py` CONTROL_ACTIONS 含 disable、`manager.disable()` 在、前端类型含 `'disable'`，属前端单侧回归）；② `AutonomyPage.tsx` active 恒显「禁用」+ 非 running 追加「恢复」，复用 `handleControl` 无新 API；③ 旧"断言按钮不存在"两处已纠正、新增点击触发 disable 用例；④ Issue2 表述诚实（明写"实测不成立"另述"按建议加固"，未包装）；⑤ `autonomy_engine.py:197` 实为 `while self.running`、无 `while True`，`stop()` 先置 running=False 再 cancel，三例终止用例齐备（末例断言 `task.cancelled() is False`）；⑥ 闸门证据与日志一致（test1 7/7、test2 2/2 且显式声明不含 autonomy 语义、vitest 770、tsc exit 0）；⑦ 文档命名/frontmatter/状态机合规，文件创建时刻早于代码改动；⑧ `public/interface_stub`、`public/schema` 未被本单改动。
+- **[警示] 后端通过数不可按原文命令复现** → 已处理：文档与 note 改为精确命令 `-k "autonomy or autonomy_engine or engine_nonblock"`（347 passed / 4827 deselected），并补更窄复核命令（`tests/test_autonomy_engine.py` → 17 passed）。
+- **[观察] 模块头与实现表述相悖** → 已处理：`autonomy_engine.py` 第 21-24 行模块头改为"主循环以 `while self.running` 守卫周期运行……终止由 stop() 承担"，与 :197 一致。
+- **[观察] frontmatter timestamp 与文件时间不符** → 已处理：改为创建时刻 `23:09:00`（文件 CreationTime 23:09:29），`completed_at` 改为 `23:15:00`（LastWriteTime 23:15:23）。
+- **[观察] 工作树含运行态数据文件改动** → 已在文档/note 显式声明为非本单改动（运行中服务写入），提交时按文件隔离。
+- **[观察] 交接状态用"已完成"而非三值** → 已处理：本 note (2) 段改用 `已闭合 / 未闭合 / 当前不可判定` 三值标记。
+- **[观察] 前端类型仍含 `'pause'`** → 非越界：API 契约允许且无 UI 入口，符合"暂停入口保持移除"的既定范围。**（该观察项已被追加轮取代：人类裁定 ASK-20260918-04 恢复「暂停」UI 入口，`'pause'` 现为正式 UI 动作。）**
+- **[V] 未闭合**：人类确认本单两条问题的处理口径（Issue1 已修复 / Issue2 实测不成立但按建议加固）；GN-004 通过不豁免人类裁决。
+
+> **追加（复审后）**：上述 [V] 已由 **ASK-20260918-04** 闭合（人类裁定：额外恢复「暂停」入口），追加轮已实施并重跑三重闸门 PASSED；本条保留为审查历史（rules-5 只追加不修改）。复审（同一 GN-004 agent）结论：**警示放行**，3 条观察项（文档 completed_at、本 (4) 段 [V] 表述、note 头部阶段）已全部处理。

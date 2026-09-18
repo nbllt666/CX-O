@@ -661,6 +661,8 @@
       "budgetExceeded": "已超出每日预算",
       "controlTitle": "控制",
       "enable": "启用",
+      "disable": "禁用",
+      "pause": "暂停",
       "resume": "恢复",
       "autoStart": "随应用自动启动",
       "actionFailed": "操作失败，请重试",

@@ -661,6 +661,8 @@
       "budgetExceeded": "Daily budget exceeded",
       "controlTitle": "Control",
       "enable": "Enable",
+      "disable": "Disable",
+      "pause": "Pause",
       "resume": "Resume",
       "autoStart": "Auto-start with the app",
       "actionFailed": "Action failed. Please retry.",

@@ -4,7 +4,7 @@ AutonomyEngine 串联 感知→动机→规划→行动→审计 五层流水线
 周期运行：
 
 - start() / stop()        启动/停止后台循环任务
-- _run_loop()             后台主循环（无条件周期运行，仅 stop()/任务取消终止）
+- _run_loop()             后台主循环（while self.running：标志位守卫 + 任务取消双路径终止）
 - _run_round()            单轮五层流水线（轮首含用户在线策略）
 - _execute()              按 action 分发执行（sleep/wait 为内部原语不调 handler）
 - _maybe_diary()          日记时刻触发日记生成（is_diary_time 且今日未写）
@@ -18,9 +18,10 @@ AutonomyEngine 串联 感知→动机→规划→行动→审计 五层流水线
   推送 autonomy_cost_alert（当日仅一次，缺失仅记日志）；超支不再置
   manager.status 为预算受限态、不再跳过规划与行动；
 - round 内任何异常被捕获（不冒泡），记录错误审计后继续下一轮；
-- 主循环无条件运行：不存在任何会终止循环的急停路径；paused / sleeping /
-  manager 门控（enabled/running=False）一律降级为轮级跳过（见 _run_round），
-  从而支持"用户在线→休眠、用户离开→离开模式自动恢复"的轮询语义。
+- 主循环以 `while self.running` 守卫周期运行：不存在任何会终止循环的急停路径；
+  paused / sleeping / manager 门控（enabled/running=False）一律降级为轮级跳过
+  （见 _run_round），从而支持"用户在线→休眠、用户离开→离开模式自动恢复"的
+  轮询语义；终止由 stop() 承担（置 running=False 的守卫自退 + task.cancel() 取消）。
 
 生命周期：构造时从持久化恢复 motivation 与 manager 状态（重启续接）；载入遗留
 manager_state.json 时把 status 归一化为 running/paused/sleeping（历史预算受限态 /
@@ -180,19 +181,21 @@ class AutonomyEngine:
                 pass
 
     async def _run_loop(self) -> None:
-        """后台主循环：无条件周期执行单轮，并在每次醒来后检查日记时刻。
+        """后台主循环：未停止期间周期执行单轮，并在每次醒来后检查日记时刻。
 
-        主循环无条件运行（while True）：不存在任何会终止循环的急停路径，
-        终止仅由 stop()（置 running=False 并 task.cancel()）或任务取消承担；
+        主循环无条件运行（while self.running）：不存在任何会终止循环的急停路径，
+        终止有两条冗余路径——① stop() 先置 running=False，循环守卫在轮首自检后
+        自行退出；② stop() 的 task.cancel() 经 await 点（asyncio.sleep）抛出
+        CancelledError 直接解开循环。两条路径互为兜底（守卫不依赖 killswitch，
+        与"移除急停语义"一致），避免终止单点依赖取消。
         paused / sleeping / manager 门控（enabled/running=False）一律降级为
         轮级跳过（见 _run_round），从而支持"用户在线→休眠、用户离开→离开模式
         自动恢复"的轮询语义。
         round 内任何异常被捕获（不冒泡），记录错误审计后 continue 下一轮；
-        running=False 由 stop() 负责，循环体内不再置位（任务取消抛出的
-        CancelledError 不经 except Exception，此处置位为不可达死代码）。
+        running=False 由 stop() 负责（守卫在下一轮首生效）。
         """
         interval_seconds: float = self.loop_interval_minutes * 60.0
-        while True:
+        while self.running:
             await asyncio.sleep(interval_seconds)
             try:
                 await self._run_round()

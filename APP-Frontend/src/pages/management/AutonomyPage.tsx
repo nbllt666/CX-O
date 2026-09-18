@@ -5,7 +5,8 @@
  * - 顶部状态卡片：运行/暂停/休眠/禁用徽章 + 上次行动/上次循环
  * - 四维动机可视化（curiosity/social_need/creative_drive/fatigue 进度条 0-100%）
  * - 日预算用量比例条（daily_budget_used_tokens vs config.budget.daily_token_limit）
- * - 控制区：未启用时「启用」、paused/sleeping 时「恢复」、自动启动设置（已移除禁用/暂停/急停入口）
+ * - 控制区：未启用时「启用」；已启用时「禁用」（恒显示，总开关可回退）+
+ *   running 时「暂停」、paused/sleeping 时「恢复」、自动启动设置（急停入口已移除）
  * - 行为回放：审计列表（timestamp/action/target/result/trigger_reason，加载更多分页）
  *
  * 数据全部来自 autonomyApi。降级口径：
@@ -19,6 +20,7 @@ import {
   AlertTriangle,
   Ban,
   HeartPulse,
+  Pause,
   Play,
   Power,
   RefreshCw,
@@ -370,17 +372,40 @@ export default function AutonomyPage() {
                   <Power className="h-3.5 w-3.5" />
                   {t('management.autonomy.enable')}
                 </button>
-              ) : status.status !== 'running' ? (
-                <button
-                  type="button"
-                  onClick={() => void handleControl('resume')}
-                  disabled={!!busyAction}
-                  className="flex items-center gap-1.5 rounded-lg border border-[var(--glass-border)] px-3 py-1.5 text-xs text-muted-foreground transition-colors hover:bg-[rgba(255,255,255,0.06)] disabled:opacity-50"
-                >
-                  <Play className="h-3.5 w-3.5" />
-                  {t('management.autonomy.resume')}
-                </button>
-              ) : null}
+              ) : (
+                <>
+                  <button
+                    type="button"
+                    onClick={() => void handleControl('disable')}
+                    disabled={!!busyAction}
+                    className="flex items-center gap-1.5 rounded-lg border border-[var(--glass-border)] px-3 py-1.5 text-xs text-muted-foreground transition-colors hover:bg-[rgba(255,255,255,0.06)] disabled:opacity-50"
+                  >
+                    <Power className="h-3.5 w-3.5" />
+                    {t('management.autonomy.disable')}
+                  </button>
+                  {status.status === 'running' ? (
+                    <button
+                      type="button"
+                      onClick={() => void handleControl('pause')}
+                      disabled={!!busyAction}
+                      className="flex items-center gap-1.5 rounded-lg border border-[var(--glass-border)] px-3 py-1.5 text-xs text-muted-foreground transition-colors hover:bg-[rgba(255,255,255,0.06)] disabled:opacity-50"
+                    >
+                      <Pause className="h-3.5 w-3.5" />
+                      {t('management.autonomy.pause')}
+                    </button>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={() => void handleControl('resume')}
+                      disabled={!!busyAction}
+                      className="flex items-center gap-1.5 rounded-lg border border-[var(--glass-border)] px-3 py-1.5 text-xs text-muted-foreground transition-colors hover:bg-[rgba(255,255,255,0.06)] disabled:opacity-50"
+                    >
+                      <Play className="h-3.5 w-3.5" />
+                      {t('management.autonomy.resume')}
+                    </button>
+                  )}
+                </>
+              )}
               <label className="flex cursor-pointer items-center gap-2 text-xs text-muted-foreground">
                 <input
                   type="checkbox"

@@ -1,4 +1,5 @@
 """AutonomyEngine 循环间隔归一化测试（修复第六轮 B2：loop_interval_minutes 允许 0 空转）。"""
+import asyncio
 import json
 import types
 
@@ -166,6 +167,67 @@ class TestManagerGate:
         engine.planner.plan.assert_not_called()
         items = engine.audit.list(limit=None).get("items", [])
         assert items[0]["trigger_reason"] == "paused_or_disabled"
+
+
+@pytest.mark.asyncio
+class TestLoopTermination:
+    """[评审 Issue2] 主循环终止路径——标志位守卫 + 任务取消双路径均须生效。
+
+    背景：`while self.killswitch.enabled` 改为无条件循环后，终止一度单点依赖
+    `stop()` 的 task.cancel()（守卫被删）。本组用例锁定两条冗余终止路径，防止
+    "stop() 后主循环不退出"回归。
+    """
+
+    async def test_stop_terminates_idle_loop(self, tmp_path):
+        """空闲等待期（sleep 中）调用 stop()：主循环任务必须终止、running 置 False。"""
+        engine = _build_full_engine(tmp_path)
+        task = await engine.start()
+        assert task.done() is False
+        await asyncio.sleep(0.05)
+
+        await asyncio.wait_for(engine.stop(), timeout=5.0)
+
+        assert task.done() is True, "stop() 后主循环任务仍在运行（未终止）"
+        assert engine.running is False
+
+    async def test_stop_terminates_mid_round(self, tmp_path):
+        """单轮执行中（轮内长 await）调用 stop()：任务同样必须终止。"""
+        engine = _build_full_engine(tmp_path)
+        engine.loop_interval_minutes = 0.01  # 0.6s 间隔，便于迅速进入轮内
+
+        entered = asyncio.Event()
+
+        async def _hanging_round():
+            entered.set()
+            await asyncio.sleep(300)  # 模拟轮内长时间 await
+
+        engine._run_round = _hanging_round  # type: ignore[method-assign]
+
+        task = await engine.start()
+        await asyncio.wait_for(entered.wait(), timeout=5.0)
+
+        await asyncio.wait_for(engine.stop(), timeout=5.0)
+
+        assert task.done() is True, "轮内 stop() 后主循环任务仍在运行（未终止）"
+        assert engine.running is False
+
+    async def test_running_flag_guard_exits_loop_without_cancel(self, tmp_path):
+        """守卫路径独立生效：仅置 running=False（不发取消）时，循环须在下一轮自行退出。
+
+        该用例直接锁定"退出条件"本身——即便取消路径被未来改动削弱（如轮内新增
+        吞 CancelledError 的写法），标志位守卫仍能终止主循环。
+        """
+        engine = _build_full_engine(tmp_path)
+        engine.loop_interval_minutes = 0.01  # 0.6s 间隔
+
+        task = await engine.start()
+        await asyncio.sleep(0.1)
+
+        engine.running = False  # 模拟 stop() 的置位，但不调用 task.cancel()
+        await asyncio.wait_for(task, timeout=5.0)
+
+        assert task.done() is True, "仅置 running=False 时主循环未自行退出（守卫失效）"
+        assert task.cancelled() is False  # 走守卫正常返回，而非取消
 
 
 @pytest.mark.asyncio

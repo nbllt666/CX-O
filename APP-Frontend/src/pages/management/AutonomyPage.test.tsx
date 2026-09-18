@@ -8,8 +8,9 @@ import type { AutonomyAuditEntry, AutonomyConfig, AutonomyStatus } from '@/api/t
 /**
  * AutonomyPage「Agent 生活」冒烟 + 关键交互测试（P4-T1）：
  * autonomyApi 整体打桩，避免真实网络；覆盖状态/动机/预算/审计渲染、
- * 未启用降级态、启用/恢复控制、自动启动开关、审计字段渲染与后端错误态。
- * 注：页面已移除禁用/暂停/紧急停止入口（spec remove-autonomy-stop-paths）。
+ * 未启用降级态、启用/禁用/暂停/恢复控制、自动启动开关、审计字段渲染与后端错误态。
+ * 注：页面已移除紧急停止入口（spec remove-autonomy-stop-paths）；「禁用」（总开关回退）
+ * 与「暂停/恢复」由评审 Issue1 + 人类裁定后恢复（UI 入口与后端 CONTROL_ACTIONS 对齐）。
  */
 vi.mock('@/api/clients/autonomy', () => ({
   autonomyApi: {
@@ -128,9 +129,9 @@ describe('AutonomyPage Agent 生活页', () => {
     expect(screen.getByText('灵感触发')).toBeInTheDocument();
     expect(screen.getByText('静默时段')).toBeInTheDocument();
     expect(screen.queryByText(/页面建设中/)).not.toBeInTheDocument();
-    // running 态不提供任何停用/控制按钮
-    expect(screen.queryByRole('button', { name: '禁用' })).not.toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: '暂停' })).not.toBeInTheDocument();
+    // running 态提供「禁用」「暂停」两个入口，不提供「恢复」/急停
+    expect(screen.getByRole('button', { name: '禁用' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '暂停' })).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: '恢复' })).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: '紧急停止' })).not.toBeInTheDocument();
     expect(screen.getByRole('checkbox')).toBeInTheDocument();
@@ -159,13 +160,47 @@ describe('AutonomyPage Agent 生活页', () => {
 
     render(<AutonomyPage />);
     expect(await screen.findByText('已暂停')).toBeInTheDocument();
-    // paused 态无禁用/暂停/急停入口
-    expect(screen.queryByRole('button', { name: '禁用' })).not.toBeInTheDocument();
+    // paused 态：「禁用」与「恢复」并存，「暂停」入口不出现（非 running）
+    expect(screen.getByRole('button', { name: '禁用' })).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: '暂停' })).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: '紧急停止' })).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: '恢复' }));
     await waitFor(() => {
       expect(mocked.control).toHaveBeenCalledWith('resume');
+    });
+  });
+
+  it('暂停按钮触发 control("pause")（running 态可用）', async () => {
+    mocked.getStatus.mockResolvedValue(ACTIVE_STATUS);
+    mocked.getConfig.mockResolvedValue(SAMPLE_CONFIG);
+    mocked.getAudit.mockResolvedValue({ items: [], total: 0 });
+    mocked.control.mockResolvedValue({
+      status: 'ok',
+      state: { enabled: true, running: false, status: 'paused' },
+    });
+
+    render(<AutonomyPage />);
+    expect(await screen.findByRole('button', { name: '暂停' })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: '暂停' }));
+    await waitFor(() => {
+      expect(mocked.control).toHaveBeenCalledWith('pause');
+    });
+  });
+
+  it('禁用按钮触发 control("disable")（启用后总开关可回退）', async () => {
+    mocked.getStatus.mockResolvedValue(ACTIVE_STATUS);
+    mocked.getConfig.mockResolvedValue(SAMPLE_CONFIG);
+    mocked.getAudit.mockResolvedValue({ items: [], total: 0 });
+    mocked.control.mockResolvedValue({
+      status: 'ok',
+      state: { enabled: false, running: false, status: 'paused' },
+    });
+
+    render(<AutonomyPage />);
+    expect(await screen.findByRole('button', { name: '禁用' })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: '禁用' }));
+    await waitFor(() => {
+      expect(mocked.control).toHaveBeenCalledWith('disable');
     });
   });
 
