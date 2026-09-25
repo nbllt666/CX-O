@@ -8,6 +8,8 @@ VoxCPM 客户端
 - 参考音频白名单根 = CXO-ModelStation/data/input（_MS_ROOT 锚点）；
 - working_dir 默认 engines/VoxCPM-main（config 注入绝对路径；绝对路径与 _CXO_ROOT
   拼接时 pathlib 语义为取绝对路径本身，_CXO_ROOT 仅作空值回退锚点保留）。
+引擎 CLI 入口修正（2026-09-25，Task 4.5）：由 `-m voxcpm` 改为 `-m voxcpm.cli`
+（引擎源码无 __main__.py，console_script 入口为 voxcpm.cli:main）。
 """
 from __future__ import annotations
 
@@ -31,6 +33,9 @@ _MS_ROOT = Path(__file__).resolve().parents[2]
 # VoxCPM 子进程默认超时（秒），与 SoVITS 保持数量级
 _VOXCPM_SUBPROCESS_TIMEOUT = 300.0
 _VOXCPM_STOP_WAIT_TIMEOUT = 10.0
+
+# VoxCPM CLI 模块入口：引擎无 __main__.py，必须走 cli 子模块（console_script 入口等价物）
+_VOXCPM_MODULE = "voxcpm.cli"
 
 
 async def _communicate_with_timeout(process: asyncio.subprocess.Process, timeout: float) -> tuple[bytes, bytes]:
@@ -96,8 +101,12 @@ class VoxCPMClient:
         return resolved
 
     def _build_base_args(self) -> list[str]:
+        # 入口修正（change-id: package-modelstation-desktop-installer / Task 4.5）：
+        # 上游引擎 engines/VoxCPM-main/src/voxcpm 无 __main__.py，`-m voxcpm` 必然报
+        # "No module named voxcpm.__main__"；引擎实际入口为 console_script `voxcpm = voxcpm.cli:main`，
+        # 故统一改用 `-m voxcpm.cli`（唯一允许的后端行为改动，最小化）。
         args = [
-            sys.executable, "-m", "voxcpm",
+            sys.executable, "-m", _VOXCPM_MODULE,
             "--model-path", self._model_path,
         ]
         return args
@@ -249,7 +258,7 @@ class VoxCPMClient:
             import sys
             # 使用极快的 --help 参数：仅触发模块 import 与 argparse，毫秒级完成
             args = [
-                sys.executable, "-m", "voxcpm", "--help",
+                sys.executable, "-m", _VOXCPM_MODULE, "--help",
             ]
             returncode, _stdout, _stderr = await self._run_subprocess(args, timeout=10.0)
             return returncode == 0

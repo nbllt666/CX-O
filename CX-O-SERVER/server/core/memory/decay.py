@@ -483,46 +483,6 @@ class DecayCalculator:
         """
         return memory.get("importance_score", memory.get("importance", 3) / 5.0)
 
-    def calculate_final_score(
-        self,
-        memory: Dict,
-        query_embedding=None,
-        weights: Tuple[float, float, float] = (0.35, 0.25, 0.4),
-        apply_reactivation: bool = True,
-        apply_network: bool = False,
-    ) -> float:
-        """综合重要性、时间与相关性维度计算最终记忆评分。
-
-        Args:
-            memory: 记忆数据
-            query_embedding: 查询向量嵌入
-            weights: 三维权重 (重要性, 时间, 相关性)
-            apply_reactivation: 是否应用再激活加成
-            apply_network: 是否应用网络效应
-
-        Returns:
-            float: 最终评分（上限 1.0）
-        """
-        importance_w, time_w, relevance_w = weights
-
-        importance_score = self.calculate_importance_score(memory)
-
-        time_score = self.calculate_time_score(
-            memory=memory, apply_reactivation=apply_reactivation, apply_network=apply_network
-        )
-
-        relevance_score = memory.get("score", 0.5)
-
-        base_score = (
-            importance_score * importance_w + time_score * time_w + relevance_score * relevance_w
-        )
-
-        permanent = memory.get("permanent", False)
-        if permanent:
-            return min(base_score + 0.15, 1.0)
-
-        return min(base_score, 1.0)
-
 
 def score_to_importance(score: float) -> int:
     """将 0-1 分数映射为 1-5 的重要性等级。

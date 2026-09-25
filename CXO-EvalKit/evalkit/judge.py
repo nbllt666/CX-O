@@ -46,6 +46,10 @@ class JudgeClient:
         self.api_key = judge.api_key
         self.timeout_seconds = judge.timeout_seconds
         self._transport = transport
+        # 持久共享连接（懒初始化）：httpx 每次构造 Client 会重建 HTTPTransport，
+        # Windows 上实测约 6.6 s（默认 verify=True 的 SSL 初始化路径），
+        # 逐次评分新建会让每次评分凭空多付该开销（详见 target.py _SharedSession 注释）。
+        self._shared: Optional[httpx.Client] = None
 
     def score(self, prompt: str) -> Dict[str, Any]:
         """评分单条 prompt。成功返回 {"scores": {...}, "reason": ...}。"""
@@ -80,11 +84,21 @@ class JudgeClient:
             "stream": False,
         }
         # trust_env=False：同 target.py，绕过 Windows 注册表系统代理（企业环境实测 502 教训）
-        with httpx.Client(timeout=self.timeout_seconds, transport=self._transport,
-                          trust_env=False) as client:
-            resp = client.post(self.endpoint, json=payload, headers=headers)
-            resp.raise_for_status()
-            return resp.json()
+        if self._shared is None:
+            self._shared = httpx.Client(
+                timeout=self.timeout_seconds, transport=self._transport, trust_env=False
+            )
+        resp = self._shared.post(
+            self.endpoint, json=payload, headers=headers, timeout=self.timeout_seconds
+        )
+        resp.raise_for_status()
+        return resp.json()
+
+    def close(self) -> None:
+        """关闭共享连接（幂等）。suite 结束后调用，释放连接池。"""
+        if self._shared is not None:
+            self._shared.close()
+            self._shared = None
 
     @staticmethod
     def _extract_content(data: Dict[str, Any]) -> Optional[str]:

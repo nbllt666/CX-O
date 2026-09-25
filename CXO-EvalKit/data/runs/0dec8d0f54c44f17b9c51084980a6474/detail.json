@@ -1,0 +1,623 @@
+{
+  "suite": "latency",
+  "run_id": "0dec8d0f54c44f17b9c51084980a6474",
+  "status": "failed",
+  "judgment": {
+    "overall_p95_ms": 12336.695,
+    "threshold_p95_ms": 2000.0,
+    "passed": false
+  },
+  "summary": {
+    "suite": "latency",
+    "status": "failed",
+    "started_at": "2026-09-19T04:54:54.412601+00:00",
+    "finished_at": "2026-09-19T04:58:47.769301+00:00",
+    "config": {
+      "rounds": 3,
+      "probe_timeout_seconds": 180.0,
+      "concurrency_levels": [
+        1
+      ],
+      "agent_id": "default"
+    },
+    "thresholds": {
+      "p95_ms": 2000.0,
+      "regression_pct": 20.0
+    },
+    "overall": {
+      "count": 21,
+      "mean": 6781.743,
+      "p50": 5795.684,
+      "p95": 12336.695,
+      "p99": 12447.84,
+      "min": 2132.402,
+      "max": 12475.627,
+      "failed_count": 0,
+      "failure_rate": 0.0
+    },
+    "by_probe": {
+      "greet_short": {
+        "count": 3,
+        "mean": 5998.034,
+        "p50": 3176.49,
+        "p95": 11420.674,
+        "p99": 12153.491,
+        "min": 2480.917,
+        "max": 12336.695
+      },
+      "greet_morning": {
+        "count": 3,
+        "mean": 2941.321,
+        "p50": 2948.334,
+        "p95": 3010.386,
+        "p99": 3015.902,
+        "min": 2858.349,
+        "max": 3017.281
+      },
+      "daily_medium": {
+        "count": 3,
+        "mean": 5261.402,
+        "p50": 5141.155,
+        "p95": 5730.231,
+        "p99": 5782.594,
+        "min": 4847.366,
+        "max": 5795.684
+      },
+      "mood_long": {
+        "count": 3,
+        "mean": 9002.659,
+        "p50": 9049.171,
+        "p95": 9244.283,
+        "p99": 9261.626,
+        "min": 8692.845,
+        "max": 9265.962
+      },
+      "story_long": {
+        "count": 3,
+        "mean": 9923.825,
+        "p50": 9952.598,
+        "p95": 10195.699,
+        "p99": 10217.308,
+        "min": 9596.168,
+        "max": 10222.71
+      },
+      "nostalgia_long": {
+        "count": 3,
+        "mean": 11770.328,
+        "p50": 11482.855,
+        "p95": 12376.349,
+        "p99": 12455.771,
+        "min": 11352.503,
+        "max": 12475.627
+      },
+      "goodnight_short": {
+        "count": 3,
+        "mean": 2574.63,
+        "p50": 2551.106,
+        "p95": 2991.455,
+        "p99": 3030.597,
+        "min": 2132.402,
+        "max": 3040.383
+      }
+    },
+    "retrieval": {
+      "rounds": 5,
+      "limit": 5,
+      "search_memories": {
+        "q_self_preference": {
+          "count": 5,
+          "mean": 8.993,
+          "p50": 3.567,
+          "p95": 23.259,
+          "p99": 26.419,
+          "min": 3.168,
+          "max": 27.208,
+          "failed_count": 0
+        },
+        "q_recent_event": {
+          "count": 5,
+          "mean": 3.794,
+          "p50": 3.793,
+          "p95": 3.91,
+          "p99": 3.913,
+          "min": 3.579,
+          "max": 3.914,
+          "failed_count": 0
+        }
+      },
+      "rag_search": {
+        "q_self_preference": {
+          "count": 5,
+          "mean": 80.177,
+          "p50": 76.536,
+          "p95": 93.296,
+          "p99": 96.21,
+          "min": 72.913,
+          "max": 96.939,
+          "failed_count": 0
+        },
+        "q_recent_event": {
+          "count": 5,
+          "mean": 76.415,
+          "p50": 74.972,
+          "p95": 83.414,
+          "p99": 84.318,
+          "min": 71.706,
+          "max": 84.543,
+          "failed_count": 0
+        }
+      }
+    },
+    "concurrency": {
+      "levels": {
+        "1": {
+          "count": 7,
+          "mean": 4891.685,
+          "p50": 3926.381,
+          "p95": 7952.89,
+          "p99": 8011.807,
+          "min": 2110.186,
+          "max": 8026.536,
+          "failed_count": 0,
+          "failure_rate": 0.0
+        }
+      },
+      "degradation": {
+        "1": {
+          "p95_ratio": 1.0
+        }
+      }
+    },
+    "baseline": {
+      "baseline_run_id": null,
+      "baseline_missing": true,
+      "reason": "未配置 baseline_run_id"
+    },
+    "ws_full_duplex": {
+      "enabled": true,
+      "turns": [
+        {
+          "turn_index": 0,
+          "timings": {
+            "asr_first_partial": 422.0,
+            "prefill_started": 422.3,
+            "tts_first_audio": 1526.1,
+            "asr_final": 1832.3,
+            "vad_speech_end": 8972.0,
+            "tts_done": 9436.9
+          },
+          "timeout": false,
+          "error": null,
+          "asr_text": "你好 你好 你好呀 你好呀 你好呀 你好呀 你好呀 你好呀 你好呀 你好呀 碎 碎 碎 碎 碎 碎新过得怎么 最近过得怎么样 我的 我在 我在 我在 我在 我在 我在研究怎 我在研究怎 我在研究怎 我在研究怎 我在研究怎 我在研究怎么把日 我在研究怎么把日 我在研究怎么把日子 过 过 过 过 过 过得更有意 过得更有意 过得更有意思一点",
+          "speech_end_offset_ms": 8460.0
+        },
+        {
+          "turn_index": 1,
+          "timings": {
+            "asr_first_partial": 391.8,
+            "prefill_started": 392.2,
+            "tts_first_audio": 843.8,
+            "asr_final": 1741.8,
+            "tts_done": 7289.8,
+            "vad_speech_end": 8971.9
+          },
+          "timeout": false,
+          "error": null,
+          "asr_text": "你好 你好 你好呀 你好呀 你好呀 你好呀 你好呀 你好呀 你好呀 你好呀 碎 碎 碎 碎 碎 碎新过得怎么 最近过得怎么样 我的 我在 我在 我在 我在 我在 我在研究怎 我在研究怎 我在研究怎 我在研究怎 我在研究怎 我在研究怎么把日 我在研究怎么把日 我在研究怎么把日子 过 过 过 过 过 过得更有意 过得更有意 过得更有意思一点",
+          "speech_end_offset_ms": 8460.0
+        },
+        {
+          "turn_index": 2,
+          "timings": {
+            "asr_first_partial": 392.1,
+            "prefill_started": 392.5,
+            "tts_first_audio": 852.3,
+            "asr_final": 1742.8,
+            "vad_speech_end": 8971.7,
+            "tts_done": 10358.4
+          },
+          "timeout": false,
+          "error": null,
+          "asr_text": "你好 你好 你好呀 你好呀 你好呀 你好呀 你好呀 你好呀 你好呀 你好呀 碎 碎 碎 碎 碎 碎新过得怎么 最近过得怎么样 我的 我在 我在 我在 我在 我在 我在研究怎 我在研究怎 我在研究怎 我在研究怎 我在研究怎 我在研究怎么把日 我在研究怎么把日 我在研究怎么把日子 过 过 过 过 过 过得更有意 过得更有意 过得更有意思一点",
+          "speech_end_offset_ms": 8460.0
+        }
+      ],
+      "stats": {
+        "stages": {
+          "asr_first_partial": {
+            "count": 3,
+            "mean": 402.0,
+            "p50": 392.1,
+            "p95": 419.0,
+            "min": 391.8,
+            "max": 422.0
+          },
+          "asr_final": {
+            "count": 3,
+            "mean": 1772.3,
+            "p50": 1742.8,
+            "p95": 1823.3,
+            "min": 1741.8,
+            "max": 1832.3
+          },
+          "prefill_started": {
+            "count": 3,
+            "mean": 402.3,
+            "p50": 392.5,
+            "p95": 419.3,
+            "min": 392.2,
+            "max": 422.3
+          },
+          "tts_first_audio": {
+            "count": 3,
+            "mean": 1074.1,
+            "p50": 852.3,
+            "p95": 1458.7,
+            "min": 843.8,
+            "max": 1526.1
+          },
+          "tts_done": {
+            "count": 3,
+            "mean": 9028.4,
+            "p50": 9436.9,
+            "p95": 10266.2,
+            "min": 7289.8,
+            "max": 10358.4
+          },
+          "vad_speech_end": {
+            "count": 3,
+            "mean": 8971.9,
+            "p50": 8971.9,
+            "p95": 8972.0,
+            "min": 8971.7,
+            "max": 8972.0
+          }
+        },
+        "first_partial_to_first_audio": {
+          "count": 3,
+          "mean": 672.1,
+          "p50": 460.2,
+          "p95": 1039.7,
+          "min": 452.0,
+          "max": 1104.1
+        },
+        "speech_end_to_first_audio": {
+          "count": 3,
+          "mean": 0.0,
+          "p50": 0.0,
+          "p95": 0.0,
+          "min": 0.0,
+          "max": 0.0
+        },
+        "asr_final_to_first_audio": {
+          "count": 3,
+          "mean": 0.0,
+          "p50": 0.0,
+          "p95": 0.0,
+          "min": 0.0,
+          "max": 0.0
+        },
+        "stream_to_first_audio": {
+          "count": 3,
+          "mean": 1074.1,
+          "p50": 852.3,
+          "p95": 1458.7,
+          "min": 843.8,
+          "max": 1526.1
+        },
+        "segmentation_wait": {
+          "count": 3,
+          "mean": 0.0,
+          "p50": 0.0,
+          "p95": 0.0,
+          "min": 0.0,
+          "max": 0.0
+        },
+        "timeouts": 0,
+        "errors": 0
+      },
+      "failure_reason": "全双工首包 P95 1039.7 ms 超过阈值 800.0 ms",
+      "judgment": {
+        "ws_p95": 1039.7,
+        "threshold_ws_p95_ms": 800.0,
+        "passed": false
+      },
+      "cleanup": {
+        "agent_deleted": true
+      }
+    },
+    "judgment": {
+      "overall_p95_ms": 12336.695,
+      "threshold_p95_ms": 2000.0,
+      "passed": false
+    }
+  },
+  "probes": [
+    {
+      "id": "greet_short",
+      "message": "在吗？"
+    },
+    {
+      "id": "greet_morning",
+      "message": "早上好呀，今天天气不错，你那边怎么样？"
+    },
+    {
+      "id": "daily_medium",
+      "message": "今天上班有点累，晚上想看点轻松的东西，有什么推荐吗？"
+    },
+    {
+      "id": "mood_long",
+      "message": "最近有点迷茫，工作节奏很快，感觉自己一直在赶进度，很难停下来好好想想自己真正想要什么。\n你也会有这种感觉吗？如果有的话，你一般是怎么调适的？"
+    },
+    {
+      "id": "story_long",
+      "message": "跟你说个事，今天回家路上遇到一只流浪猫，蹲在便利店门口，看起来好几天没吃东西了。\n我买了点火腿肠喂它，它吃完也不走，就那样一直看着我。\n我有点纠结要不要带回家养，又担心自己照顾不好它。"
+    },
+    {
+      "id": "nostalgia_long",
+      "message": "这周末整理旧照片，翻到几年前的旅行合集，突然特别想念那时候的自己，说走就走，也不怕迷路。\n现在做任何决定之前都要反复权衡，好像快乐变复杂了。\n你会怀念以前的自己吗？还是觉得成长本来就是这样？"
+    },
+    {
+      "id": "goodnight_short",
+      "message": "晚安，做个好梦。"
+    }
+  ],
+  "raw": {
+    "e2e": {
+      "rounds": 3,
+      "samples_by_probe": {
+        "greet_short": [
+          12336.694800062105,
+          3176.489500096068,
+          2480.9172998648137
+        ],
+        "greet_morning": [
+          2948.3338999561965,
+          2858.3494999911636,
+          3017.2807001508772
+        ],
+        "daily_medium": [
+          5795.684199780226,
+          5141.1550000775605,
+          4847.3655001726
+        ],
+        "mood_long": [
+          8692.844999954104,
+          9265.96220000647,
+          9049.171000020579
+        ],
+        "story_long": [
+          9596.16779978387,
+          9952.598300063983,
+          10222.71030000411
+        ],
+        "nostalgia_long": [
+          12475.62659997493,
+          11352.503000060096,
+          11482.854600064456
+        ],
+        "goodnight_short": [
+          3040.3827999252826,
+          2551.105899969116,
+          2132.4015001300722
+        ]
+      },
+      "failures": []
+    },
+    "retrieval": {
+      "rounds": 5,
+      "queries": [
+        {
+          "id": "q_self_preference",
+          "query": "我之前说过自己喜欢的电影是什么来着？"
+        },
+        {
+          "id": "q_recent_event",
+          "query": "帮我回忆一下我上周提到的那家餐厅叫什么名字。"
+        }
+      ],
+      "samples": {
+        "search_memories": {
+          "q_self_preference": [
+            27.208399958908558,
+            7.463000016286969,
+            3.5586999729275703,
+            3.1677999068051577,
+            3.5674998071044683
+          ],
+          "q_recent_event": [
+            3.7878998555243015,
+            3.914299886673689,
+            3.8939998485147953,
+            3.579199779778719,
+            3.793400013819337
+          ]
+        },
+        "rag_search": {
+          "q_self_preference": [
+            96.93889995105565,
+            78.72359990142286,
+            75.7712998893112,
+            76.53630012646317,
+            72.91260012425482
+          ],
+          "q_recent_event": [
+            84.54340021125972,
+            74.9715999700129,
+            71.70599978417158,
+            78.89860006980598,
+            71.95599982514977
+          ]
+        }
+      },
+      "failures": []
+    },
+    "concurrency": {
+      "1": {
+        "samples": [
+          2110.185500001535,
+          2374.614799860865,
+          3926.3812000863254,
+          7781.04820009321,
+          8026.536499848589,
+          7157.430699793622,
+          2865.599100012332
+        ],
+        "failures": []
+      }
+    },
+    "ws_full_duplex": {
+      "enabled": true,
+      "turns": [
+        {
+          "turn_index": 0,
+          "timings": {
+            "asr_first_partial": 422.0,
+            "prefill_started": 422.3,
+            "tts_first_audio": 1526.1,
+            "asr_final": 1832.3,
+            "vad_speech_end": 8972.0,
+            "tts_done": 9436.9
+          },
+          "timeout": false,
+          "error": null,
+          "asr_text": "你好 你好 你好呀 你好呀 你好呀 你好呀 你好呀 你好呀 你好呀 你好呀 碎 碎 碎 碎 碎 碎新过得怎么 最近过得怎么样 我的 我在 我在 我在 我在 我在 我在研究怎 我在研究怎 我在研究怎 我在研究怎 我在研究怎 我在研究怎么把日 我在研究怎么把日 我在研究怎么把日子 过 过 过 过 过 过得更有意 过得更有意 过得更有意思一点",
+          "speech_end_offset_ms": 8460.0
+        },
+        {
+          "turn_index": 1,
+          "timings": {
+            "asr_first_partial": 391.8,
+            "prefill_started": 392.2,
+            "tts_first_audio": 843.8,
+            "asr_final": 1741.8,
+            "tts_done": 7289.8,
+            "vad_speech_end": 8971.9
+          },
+          "timeout": false,
+          "error": null,
+          "asr_text": "你好 你好 你好呀 你好呀 你好呀 你好呀 你好呀 你好呀 你好呀 你好呀 碎 碎 碎 碎 碎 碎新过得怎么 最近过得怎么样 我的 我在 我在 我在 我在 我在 我在研究怎 我在研究怎 我在研究怎 我在研究怎 我在研究怎 我在研究怎么把日 我在研究怎么把日 我在研究怎么把日子 过 过 过 过 过 过得更有意 过得更有意 过得更有意思一点",
+          "speech_end_offset_ms": 8460.0
+        },
+        {
+          "turn_index": 2,
+          "timings": {
+            "asr_first_partial": 392.1,
+            "prefill_started": 392.5,
+            "tts_first_audio": 852.3,
+            "asr_final": 1742.8,
+            "vad_speech_end": 8971.7,
+            "tts_done": 10358.4
+          },
+          "timeout": false,
+          "error": null,
+          "asr_text": "你好 你好 你好呀 你好呀 你好呀 你好呀 你好呀 你好呀 你好呀 你好呀 碎 碎 碎 碎 碎 碎新过得怎么 最近过得怎么样 我的 我在 我在 我在 我在 我在 我在研究怎 我在研究怎 我在研究怎 我在研究怎 我在研究怎 我在研究怎么把日 我在研究怎么把日 我在研究怎么把日子 过 过 过 过 过 过得更有意 过得更有意 过得更有意思一点",
+          "speech_end_offset_ms": 8460.0
+        }
+      ],
+      "stats": {
+        "stages": {
+          "asr_first_partial": {
+            "count": 3,
+            "mean": 402.0,
+            "p50": 392.1,
+            "p95": 419.0,
+            "min": 391.8,
+            "max": 422.0
+          },
+          "asr_final": {
+            "count": 3,
+            "mean": 1772.3,
+            "p50": 1742.8,
+            "p95": 1823.3,
+            "min": 1741.8,
+            "max": 1832.3
+          },
+          "prefill_started": {
+            "count": 3,
+            "mean": 402.3,
+            "p50": 392.5,
+            "p95": 419.3,
+            "min": 392.2,
+            "max": 422.3
+          },
+          "tts_first_audio": {
+            "count": 3,
+            "mean": 1074.1,
+            "p50": 852.3,
+            "p95": 1458.7,
+            "min": 843.8,
+            "max": 1526.1
+          },
+          "tts_done": {
+            "count": 3,
+            "mean": 9028.4,
+            "p50": 9436.9,
+            "p95": 10266.2,
+            "min": 7289.8,
+            "max": 10358.4
+          },
+          "vad_speech_end": {
+            "count": 3,
+            "mean": 8971.9,
+            "p50": 8971.9,
+            "p95": 8972.0,
+            "min": 8971.7,
+            "max": 8972.0
+          }
+        },
+        "first_partial_to_first_audio": {
+          "count": 3,
+          "mean": 672.1,
+          "p50": 460.2,
+          "p95": 1039.7,
+          "min": 452.0,
+          "max": 1104.1
+        },
+        "speech_end_to_first_audio": {
+          "count": 3,
+          "mean": 0.0,
+          "p50": 0.0,
+          "p95": 0.0,
+          "min": 0.0,
+          "max": 0.0
+        },
+        "asr_final_to_first_audio": {
+          "count": 3,
+          "mean": 0.0,
+          "p50": 0.0,
+          "p95": 0.0,
+          "min": 0.0,
+          "max": 0.0
+        },
+        "stream_to_first_audio": {
+          "count": 3,
+          "mean": 1074.1,
+          "p50": 852.3,
+          "p95": 1458.7,
+          "min": 843.8,
+          "max": 1526.1
+        },
+        "segmentation_wait": {
+          "count": 3,
+          "mean": 0.0,
+          "p50": 0.0,
+          "p95": 0.0,
+          "min": 0.0,
+          "max": 0.0
+        },
+        "timeouts": 0,
+        "errors": 0
+      },
+      "failure_reason": "全双工首包 P95 1039.7 ms 超过阈值 800.0 ms",
+      "judgment": {
+        "ws_p95": 1039.7,
+        "threshold_ws_p95_ms": 800.0,
+        "passed": false
+      },
+      "cleanup": {
+        "agent_deleted": true
+      }
+    }
+  }
+}

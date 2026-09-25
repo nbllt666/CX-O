@@ -9,7 +9,7 @@ agents:
   metadata: {}
   name: CXHMS Agent
   port: 8001
-  status: online
+  status: offline
   version: 1.0.0
 - capabilities: []
   host: 127.0.0.1

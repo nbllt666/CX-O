@@ -8,6 +8,7 @@ from pydantic import BaseModel, Field
 
 from server.core import agent_store
 from server.core.cache import agent_config_cache
+from server.core.llm.prefix_warmup import warm_agent_prefix_background
 from server.core.logging_config import get_contextual_logger
 from server.core.prompts_constants import (
     DEFAULT_AGENT_SYSTEM_PROMPT,
@@ -285,6 +286,11 @@ async def create_agent(request: AgentCreateRequest):
 
         _update_agents_locked(_mutator)
 
+        # 语音前缀预热（第 1 项）：新建 agent 的 system_prompt 前缀不在 vLLM cache，
+        # 实时语音首轮需全量 prefill（TTFT 多付 ~320ms）。落盘后非阻塞预热，
+        # 不改变本端点的同步语义与响应内容。
+        warm_agent_prefix_background(new_agent)
+
         return {"status": "success", "agent": new_agent, "message": "Agent 创建成功"}
     except HTTPException:
         raise
@@ -352,9 +358,11 @@ async def update_agent(agent_id: str, request: AgentUpdateRequest):
     """更新 Agent"""
     try:
         updated: dict = {}
+        prompt_changed = False
 
         # 锁内读-改-写：404 校验与字段更新同锁，消除并发更新的丢失覆盖竞态
         def _mutator(agents):
+            nonlocal prompt_changed
             agent_index = next((i for i, a in enumerate(agents) if a["id"] == agent_id), None)
 
             if agent_index is None:
@@ -364,6 +372,7 @@ async def update_agent(agent_id: str, request: AgentUpdateRequest):
 
             # 更新字段
             update_data = request.model_dump(exclude_unset=True)
+            prompt_changed = "system_prompt" in update_data
             for key, value in update_data.items():
                 # per-agent 参考音频绑定不落盘 agents.json（走专用绑定端点）
                 if key in ("ref_audio_asset_id", "tts_voice"):
@@ -378,6 +387,11 @@ async def update_agent(agent_id: str, request: AgentUpdateRequest):
             updated["agent"] = agent
 
         _update_agents_locked(_mutator)
+
+        # 语音前缀预热（第 1 项）：仅 system_prompt 变更时该 agent 的前缀 cache 失效，
+        # 需重建（其余字段更新不影响前缀，跳过以免无谓的全量 prefill）。
+        if prompt_changed:
+            warm_agent_prefix_background(updated["agent"])
 
         return {"status": "success", "agent": updated["agent"], "message": "Agent 更新成功"}
     except HTTPException:

@@ -288,5 +288,37 @@
     "is_default": false,
     "created_at": "2026-09-12T20:13:51.709463",
     "updated_at": "2026-09-12T20:13:51.709463"
+  },
+  {
+    "id": "agent-e13009ba",
+    "name": "CXO-ColdProbe-newf865e8",
+    "description": "冷启动实验 agent newf865e8",
+    "system_prompt": "你是冷启动实验助手 f865e8。本次实验的唯一标识是 72ee850491b54b9099953c9b01fa1fb5，请在回答时保持自然、简短。你需要以稳定的方式回应用户，不编造事实，不清楚时直说不知道。请始终使用中文回答，保持友好、简洁的语气，避免长篇大论。",
+    "model": "main",
+    "temperature": 0.7,
+    "max_tokens": 0,
+    "use_memory": true,
+    "use_tools": false,
+    "memory_scene": "chat",
+    "decay_model": "exponential",
+    "is_default": false,
+    "created_at": "2026-09-19T10:18:37.090780",
+    "updated_at": "2026-09-19T10:18:37.090780"
+  },
+  {
+    "id": "agent-07af377a",
+    "name": "CXO-HealthDiag",
+    "description": "全双工停滞 × /health 并发探活（一次性）",
+    "system_prompt": "你是 CX-O 评测助手，请自然、简洁地回答问题。",
+    "model": "main",
+    "temperature": 0.7,
+    "max_tokens": 0,
+    "use_memory": true,
+    "use_tools": false,
+    "memory_scene": "chat",
+    "decay_model": "exponential",
+    "is_default": false,
+    "created_at": "2026-09-25T20:57:54.145074",
+    "updated_at": "2026-09-25T20:57:54.145074"
   }
 ]

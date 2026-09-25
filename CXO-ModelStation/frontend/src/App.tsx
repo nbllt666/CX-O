@@ -1,4 +1,5 @@
 import { BrowserRouter, NavLink, Navigate, Route, Routes } from "react-router-dom";
+import ConnectionPage from "./pages/ConnectionPage";
 import CorpusPage from "./pages/CorpusPage";
 import DatasetsPage from "./pages/DatasetsPage";
 import ModelsPage from "./pages/ModelsPage";
@@ -11,6 +12,7 @@ const NAV_ITEMS = [
   { to: "/train", label: "训练控制台", desc: "预处理 / 训练 / 进度" },
   { to: "/models", label: "模型库", desc: "模型列表与试听推理" },
   { to: "/workflow", label: "工作流总览", desc: "三步训练编排" },
+  { to: "/connection", label: "连接设置", desc: "后端地址与数据根" },
 ];
 
 /** 模型工作站独立前端：侧边导航布局 + 五页面路由 */
@@ -45,6 +47,7 @@ export default function App() {
             <Route path="/train" element={<TrainPage />} />
             <Route path="/models" element={<ModelsPage />} />
             <Route path="/workflow" element={<WorkflowPage />} />
+            <Route path="/connection" element={<ConnectionPage />} />
             <Route path="*" element={<Navigate to="/datasets" replace />} />
           </Routes>
         </main>

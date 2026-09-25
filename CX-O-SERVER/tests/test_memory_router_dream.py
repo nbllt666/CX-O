@@ -207,3 +207,16 @@ class TestRouteDreamIsolation:
         result = await _router(FakeMemoryManager([_mem(1, score=0.6)])).route("hi")
         assert isinstance(result, RoutingResult)
         assert "dream" in result.source_counts
+
+
+class TestScoringDreamGate:
+    """梦境 relevance ×0.7 降权在乘法门控下作用于最终分数（T3 新增）。"""
+
+    def test_dream_final_is_downweighted_by_factor(self):
+        r = _router(FakeMemoryManager())
+        weights = {"importance": 0.45, "time": 0.20, "relevance": 0.35}
+        dream = r._score_memories([_mem(1, score=0.8, type="dream")], "q", weights, {})[0]
+        normal = r._score_memories([_mem(2, score=0.8, type="long_term")], "q", weights, {})[0]
+        # 降权后 relevance 直接作为乘性门控 → final 同比下降 0.7 倍
+        assert dream["component_scores"]["relevance"] == pytest.approx(0.8 * 0.7)
+        assert dream["final_score"] == pytest.approx(normal["final_score"] * 0.7)

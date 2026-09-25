@@ -49,6 +49,13 @@ class HybridSearchOptions:
     use_keyword: bool = True
     workspace_id: str = None
     agent_id: str = "default"
+    # query 嵌入单次复用：route() 计算一次后注入，向量通道优先使用；
+    # 缺失/空向量（None 或全零）时回退内部自算，行为不变。
+    query_embedding: List[float] = None
+    # 失败状态传递（T5b）：调用方已尝试获取 query 嵌入且失败（如 route() 的
+    # _embed_query 返回 None）。为真且注入向量为空白时，向量通道直接跳过、
+    # 不再重复调用嵌入服务——等价于"嵌入失败 → 向量通道无结果"，召回语义不变。
+    query_embedding_attempted: bool = False
 
 
 class HybridSearch:
@@ -101,7 +108,20 @@ class HybridSearch:
                 )
                 return []
 
-            embedding = await self.embedding_model.get_embedding(options.query)
+            # query 嵌入单次复用：注入向量非空且通过空/零校验时直接使用，不再调用嵌入服务；
+            # 缺失或为空白向量时回退内部自算（行为不变）。
+            embedding = options.query_embedding
+            if _is_blank_vector(embedding):
+                # 失败状态传递（T5b）：调用方已尝试且失败时不再重复调用嵌入服务
+                # （嵌入服务离线时每次调用约 2s 超时）——向量通道直接无结果，
+                # 与"嵌入失败 → 向量通道无结果"语义一致，不改变召回行为。
+                if options.query_embedding_attempted:
+                    logger.warning(
+                        "query 嵌入已尝试且失败，跳过向量通道避免重复调用: query=%r",
+                        options.query[:50],
+                    )
+                    return []
+                embedding = await self.embedding_model.get_embedding(options.query)
 
             # H14: 嵌入失败（空列表）或全零向量不得进入相似度检索链路——
             # 空向量直接异常，零向量会产生无意义的满分/NaN 相似度，污染排序。

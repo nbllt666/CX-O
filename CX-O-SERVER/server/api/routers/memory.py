@@ -589,6 +589,28 @@ async def search_memories_3d(
         if len(weights) != 3:
             raise HTTPException(status_code=400, detail="权重必须包含3个值")
 
+        # U1 修复：预取真实相关性映射（memory_id → (1+cos)/2，与向量通道同尺度）。
+        # min_score=0.0 取全量命中，避免"低相似度未命中却拿缺省 0.5"的倒挂；
+        # 嵌入/向量库不可用或任何异常 → relevance_map 保持 None（mixin 回退缺省 0.5，无损降级）
+        relevance_map = None
+        try:
+            embedding_model = getattr(memory_mgr, "_embedding_model", None)
+            vector_store = getattr(memory_mgr, "_vector_store", None)
+            if query and embedding_model is not None and vector_store is not None:
+                query_embedding = await embedding_model.get_embedding(query)
+                if query_embedding and any(query_embedding):
+                    hits = await vector_store.search_similar(
+                        query_embedding=query_embedding, limit=500, min_score=0.0
+                    )
+                    relevance_map = {
+                        h["memory_id"]: h["score"]
+                        for h in hits
+                        if h.get("memory_id") is not None and h.get("score") is not None
+                    } or None
+        except Exception as e:
+            logger.warning(f"3d 真实相关性预取失败，回退缺省相关性: {e}")
+            relevance_map = None
+
         # 经 run_io 把三维检索的同步 sqlite 查询移入 IO 线程池
         memories = await run_io(
             memory_mgr.search_memories_3d,
@@ -598,6 +620,7 @@ async def search_memories_3d(
             limit=limit,
             weights=tuple(weights),
             workspace_id=workspace_id,
+            relevance_map=relevance_map,
         )
 
         return {

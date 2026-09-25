@@ -308,3 +308,438 @@
 - **[V] 未闭合**：人类确认本单两条问题的处理口径（Issue1 已修复 / Issue2 实测不成立但按建议加固）；GN-004 通过不豁免人类裁决。
 
 > **追加（复审后）**：上述 [V] 已由 **ASK-20260918-04** 闭合（人类裁定：额外恢复「暂停」入口），追加轮已实施并重跑三重闸门 PASSED；本条保留为审查历史（rules-5 只追加不修改）。复审（同一 GN-004 agent）结论：**警示放行**，3 条观察项（文档 completed_at、本 (4) 段 [V] 表述、note 头部阶段）已全部处理。
+
+---
+
+# current-note — 首音频三段排查（2026-09-19 追加；本文件被多并行会话共用，写入前已读真实末尾再追加）
+
+> 更新时间: 2026-09-19 14:05 | 变更ID: first-audio-latency-triage | 阶段: 第1/3项已交付，第2项分析完成待裁决
+
+## 七字段交接状态
+
+| 字段 | 内容 |
+|------|------|
+| 做到哪了 | 四项均已闭合或达分析终点：① EvalKit 建连开销修复（已实现+验证）；② 第1项非默认助手前缀预热（已实现+验证+上线）；③ 第3项首 partial 被动埋点（已实施+上线，首个 run 即定位瞬态）；④ 第2项 TTS 首块归属拆分（分析完成，方案对比已出，**待人类选定方案**） |
+| 为什么 | 用户需求「开工！」= 按风险递增推进首音频剩余三段；中途两次改向（先修 EvalKit 建连 → 先查 GPU 占用）均已闭环 |
+| 未闭合项 | ① 第2项方案选型（方案C 削固定开销 / 方案A 量化 / 暂停）待人类裁决；② 首轮瞬态根因（已定位为 vLLM 后端波动，非代码可控）；③ `tests/test_config_router.py` **11 个**既有失败（测试夹具与实现漂移，需另单） |
+| 接续入口 | 第2项若选方案C：`docker/llm/cosyvoice_server.py` 加逐段插桩 → 重建镜像（`docker build -f docker/llm/Dockerfile.cosyvoice-vllm -t cosyvoice-vllm:latest .`）→ 定位 ~120ms 固定开销 |
+| 人类裁决记录 | ASK-20260919-01（第1项走 ①+② 组合）已闭合；ASK-20260919-02（第3项加被动埋点 / 第2项先拆归属出对比）已闭合；**ASK-20260919-03（第2项选型）已发出未闭合** |
+| 请示追踪 | **存在 1 项悬空请示**：ASK-20260919-03（第2项 TTS 改造方案选型） |
+| 审查状态 | **交付前 GN-004 审查：已闭合（警示放行，agent `9275f84e-d648-4367-b910-3004438e81c6`，无 [SOFT_BLOCK]）；3 项 [警示] 已全部修正，2 项 [观察] 已加固** |
+
+## 三段交接
+
+### (1) 工程过程
+1. **EvalKit 建连开销**（承接 09-18 冷启动排查中的意外发现）：根因 = `httpx.HTTPTransport()` 在 Windows 默认 verify 路径构造 ~6.6s，而 `TargetClient._client()`（21 处）/`JudgeClient._request_chat()` 逐请求新建。改为持久共享连接 + `_SharedSession` 请求级 timeout 代理（21 处调用点零改动）。
+2. **第1项·非默认助手前缀预热**：先短 prompt 误判"证伪" → 用生产同规模（2481 tokens）复测**更正为成立**（未预热 665ms vs 预热 36ms）→ 人类裁决 ①+② 组合 → 新增 `prefix_warmup.py`（预热唯一实现）+ `main.py` 委托全量预热 + `agents.py` 创建/更新非阻塞预热。
+3. **第3项·首 partial 被动埋点**：先误判"重启后首个会话冷启动" → 隔离测试（重启后首会话 / 全新 agent / 直连容器共 10+ 会话）**全数未复现** → 更正为"间歇性跨阶段漂移" → 人类裁决加被动埋点 → 在 `DualStreamSession` 加候选/扣留累计 + `[DIAG-FIRST-PARTIAL]` 单行输出。
+4. **第2项·TTS 首块归属拆分**：容器内日志逐 hop 拆解 + `--flow-steps` 1→3 扫描（每步 ~100ms）→ 归并为 flow ~100ms / hift ~40ms / **固定开销 ~120ms**；容器参数已还原并复测确认。
+
+### (2) 交接状态
+- EvalKit 建连开销：**已闭合**（REST min 9801→1848ms，-81%；82 passed）
+- 第1项 前缀预热：**已闭合**（A/B 三测点本单预热≈天然预热；启动 19/19；103 passed）
+- 第3项 首 partial 埋点：**已闭合**（埋点上线并定位瞬态；103 passed）
+- 第2项 TTS 归属拆分：**已闭合（分析）**；**方案选型 = 未闭合**（ASK-20260919-03 待裁决）
+- 首轮瞬态根因：**当前不可判定**（已定位为 vLLM 后端 TTFT 波动 58~908ms，非代码可控；连续 2 检查点无进展则依 rules-5 §2.4 上报）
+- 交付前 GN-004 审查：**未开始**
+- **三值标记说明**：本段状态使用 `已闭合 / 未闭合 / 当前不可判定` 三值
+
+### (3) 最终结果
+- 验证结论：
+  - EvalKit：REST `overall.min` 9801→**1848ms**、p95 18902→9799ms；`pytest tests/ -q` → **82 passed**
+  - 第1项：A/B 三测点（冷 / 天然预热 / 本单预热）C≈B（差 -4/-11ms）→ 预热有效；启动日志 `语音前缀预热完成：19/19 个 agent`；`test_agents_router + test_agent_tools` **87 passed**、`test_lifecycle + test_model_router + test_ref_audio_agent` **50 passed**
+  - 第3项：埋点在首个 run 即定位瞬态（turn0 LLM TTFT **577.9ms** vs turn1/2 **58.1/57.9ms**，而 ASR 侧三段完全一致）→ 瞬态归属 LLM 后端；并否定两假设（tools 渲染位置差 5ms、预热形状覆盖差 26ms）
+  - 第2项：flow(1步) ~100ms / hift ~40ms / 固定开销 ~120ms(47%)；`--flow-steps` 1→3 使 first audio 0.27→0.47s 中位（每步 ~100ms）
+- 产出物清单：
+  - `.trae/documents/20260919_模块0_修复评测客户端建连开销.md`
+  - `.trae/documents/20260919_模块0_非默认助手前缀预热扩展.md`
+  - `.trae/documents/20260919_模块0_语音首partial被动埋点.md`
+  - `.trae/documents/20260919_模块0_TTS首块归属拆分与改造方案对比.md`
+  - 代码：`CXO-EvalKit/evalkit/{target,judge}.py` + `suites/{latency,quality,memory_decay}.py`；`CX-O-SERVER/server/core/llm/prefix_warmup.py`（新）+ `server/main.py` + `server/api/routers/agents.py` + `server/handlers/audio.py`
+  - EvalKit runs：`48f8cba2`（建连修复验证）/ `3fb9f4f4` / `ac76bea6` / `0dec8d0f` / `4617abf3`（瞬态捕获）
+- 临时脚本已全部删除（`_t_ttft_series.py`/`_t_prefix_warm.py`/`_t_asr_first_partial.py`/`_t_ws_voice_probe.py`/`_t_tools_prefix.py`/`_t_prod_prefix_cover.py`/`_t_tts_first.py`）
+- `public/` 与 `.trae/rules/` 零改动
+- 既有问题（非本单）：`tests/test_config_router.py` **11 failed**（`FakeBox` 缺 `executor`，测试夹具与 `get_io_executor()` 实现漂移）
+
+### (4) GN-004 交付前审查记录（追加式）
+
+- 结论：**警示放行**（无 [阻断] / 无 [SOFT_BLOCK]），agent `9275f84e-d648-4367-b910-3004438e81c6`（2026-09-19 14:0x）。
+- **独立核验通过项**（GN-004 自跑）：① EvalKit 全量 `pytest tests/ -q` → **82 passed**（与文档一致）；
+  ② 主服务定向 4 文件 → **143 passed** 全绿；③ REST 指标 `48f8cba2` vs `f2ebdcc8` 逐项一致
+  （min 1848.078↔9801.368、p50 6013.378↔12122.141、p95 9798.914↔18902.089）；
+  ④ `audio.py` diff 为 `+39/-0` **纯增量**，未改任何分支判断/发送时序；⑤ `agents.py` 的响应体、
+  同步语义、`except HTTPException / except Exception` 结构均未变；⑥ `public/` 零改动（97 tracked 文件无当日 mtime）、
+  `.trae/rules/` 经 mtime 证实未改（该目录被 .gitignore:218 忽略，git 无法证实）；
+  ⑦ 项目内零临时脚本残留；⑧ note 三段交接 + 三值标记齐备；
+  ⑨ **两次错误结论的更正是否诚实** → 通过（doc#1 第五章、doc#2「补测」、doc#3「根因分析」均显式记录错误结论与致错原因，未抹去重写）。
+- **[警示] F1 run `3fb9f4f4` 的 ws_p95 张冠李戴** → **已修正**：文档原记 1689.3（实为 run `48f8cba2` 的值），
+  落盘 detail.json 实为 **1054.2**；doc#2「补测」表与 doc#3「问题现象」表两处均已更正。
+- **[警示] F2 存量失败披露不足** → **已修正**：原记「4 例」为 `-k` 子集口径；该文件单独全跑为 **11 failed**
+  （执行者独立复跑核实）。doc#3 已更正并注明两种口径，note 未闭合项同步更正。
+- **[警示] F3 4 篇文档 frontmatter `status` 未随正文更新** → **已修正**：分别回填为
+  `已完成`/`已完成`/`已完成`/`已完成`（第4篇为分析单，另加 `pending_decision` 字段显式登记 ASK-20260919-03）。
+- **[观察] F4 doc#1 `related_files` 不完整** → **已修正**：补入 `suites/{latency,quality,memory_decay}.py`。
+- **[观察] F5 `warm_agent_prefix_background` 无「无运行事件循环」守卫** + **[观察] F6 warm 抛错会造成半提交** → **已加固**：
+  该两项为同一根因，在 `prefix_warmup.py` 内加 `get_running_loop()` 守卫 + 任务创建 try/except
+  （无 loop → 静默跳过，不再可能冒泡为 HTTP 500）。加固后回归 **155 passed**。
+- **[观察] F7 单测触发真实后台预热网络请求** → **已知悉未处理**：属测试隔离改进，非本单闭合范围；
+  预热异常本即静默（零影响），留待后续测试治理批次。
+- **[观察] F8 第2项归并含估算/残差口径** → **已修正**：doc#4 归并表增「口径」列并加口径声明
+  （flow=首 hop 增量外推、hift=稳态等效**上界**、固定开销=**残差推断**），明写三者不可简单相加，
+  精确定位须方案 C 插桩。
+- **[观察] F9 EvalKit 建连修复超出原任务字面范围** → **已处理**：该单有独立留痕文档与用户改向确认，
+  本 note「为什么」字段已记明改向闭环；GN-004 判定不构成方向偏离。
+- **[观察] F10 本迭代无 spec 三件套 / 无 subagent 台账** → **非越界**：本单为主线程迭代
+  （未调度 subagent），rules-0 §四-11 台账不适用；闭合信号定义于各变更文档「预期效果/验证方式」。
+- **[V] 未闭合（须人类裁决，GN-004 通过不豁免）**：**ASK-20260919-03**（第2项 TTS 改造方案选型：
+  方案C 削固定开销 / 方案A 量化 / 暂停）→ **本单不得标记「全部交付完成」**，
+  口径保持「第1、3项及 EvalKit 建连修复已交付；第2项为分析态待人类裁决」。
+- **未独立验证项**（GN-004 明确声明，须人类知悉）：服务端日志 `[DIAG-TTFT]`/`[DIAG-FIRST-PARTIAL]`、
+  容器日志 `first audio at Xs`、第2项 `--flow-steps` 扫描与容器还原、启动 19/19 预热、GPU 现场归因
+  —— GN-004 无运行态访问权限，均基于执行者自述。**不得据此声称已第三方证伪。**
+
+---
+
+## 追加轮：方案 C 步骤 1（TTS 首块固定开销定位）— 2026-09-19 18:30
+
+> 人类裁决 ASK-20260919-03 的回复为「C试试」→ 选**方案 C（先削固定开销）**。
+> 本轮为方案 C 的**步骤 1（插桩定位）**，结论**否定了方案 C 的原始假设**。
+
+### 做到哪了
+
+1. **插桩完成并实测**：新增 `_patch_first_hop_probe()`（`PROBE_FIRST_HOP` 环境变量门控，默认关闭）
+   + `_stream_wav_pcm` 首次 next 打点，经**挂载覆盖**注入容器（不重建镜像），拿到稳态 4 次一致数据。
+2. **定位结论（推翻原假设）**：首 hop 261~273 ms 的真实构成 =
+   flow **110~118 ms** / hift **68~82 ms** / 等 token **恒 74 ms** / 准备（搬运+autocast+切片）**仅 1~3 ms**。
+   → 原以为的"~120 ms 固定工程开销"**不存在**；「削 `.to(device)` 搬运 / autocast」无对象可削。
+3. **附带修复既存缺陷**：`_active_count` 缺 `global` 声明（阻塞挂载；重建镜像必崩）→ 已修，
+   独立成单 `20260919_模块0_修复cosyvoice脚本global缺失.md`。
+4. **附带发现镜像漂移（重大）**：容器实际运行的是镜像内烘焙的**旧版** server.py（1181 行），
+   与仓库 HEAD（1271 行）差约 90 行（含 GPU 保活引用计数、`asyncio.to_thread` 推理重构）→
+   **仓库改动未在生产生效**。
+5. **容器已恢复生产状态**（去挂载、无探针），冒烟通过（`first audio 0.30s`）。
+
+### 未闭合项
+
+- **方案 C 后续选型（新，须人类裁决）**：
+  - **D1** 削「等 token 74 ms」——需改**第三方源码** `cosyvoice/cli/model.py` 的 `tts()`；
+    降 token 门槛可能影响首块连贯性/音质 → 有取舍
+  - **D2** 优化 hift 首 hop（78 ms，实测为前序估算两倍）——无质量取舍，但需再插桩定位 hift 内部
+  - **D3** 量化 flow（114 ms）——需人耳验收音质
+  - **D4** 不再投入
+- **镜像是否重建（新，须人类裁决）**：重建可让仓库 ~90 行改动（含 GPU 保活引用计数 +
+  推理线程化重构）在生产生效，但需一次完整回归验证成本。
+- 前序遗留：首轮瞬态根因（vLLM 后端波动，非代码可控）；`tests/test_config_router.py` 11 个既有失败。
+
+### 接续入口
+
+- 若选 D2：在 `_patch_first_hop_probe` 基础上对 `hift.inference` 内部再插桩
+  （`hift.decode` / `_istft` / CUDA graph 命中情况），沿用挂载覆盖方式迭代。
+- 若选 D1：先读 `third_party/cosyvoice-official/cosyvoice/cli/model.py` 的 `tts()` 与
+  `flow.pre_lookahead_len` 实际值，评估降门槛的音质影响后再动。
+- 若选重建镜像：`docker build -f docker/llm/Dockerfile.cosyvoice-vllm -t cosyvoice-vllm:latest .`
+  （注意：**必须先确认 `_active_count` 修复已含在内**，否则 TTS 全挂）。
+
+### 请示追踪
+
+- **ASK-20260919-03 已闭合**（人类回「C试试」→ 方案 C）。
+- **新增悬空请示 ASK-20260919-04**：方案 C 后续选型（D1/D2/D3/D4）+ 镜像是否重建。
+
+### 审查状态
+
+- **本轮（方案 C 步骤 1）尚未过 GN-004**。待人类选定下一步后，与后续改动**一并**送审
+  （避免对同一文件重复审查）；若人类决定「暂停/收口」，则**立即补做** GN-004 复审，
+  审查对象为：`docker/llm/cosyvoice_server.py`（探针 + global 修复）+
+  `20260919_模块0_TTS首块固定开销定位.md` + `20260919_模块0_修复cosyvoice脚本global缺失.md`。
+
+---
+
+## 追加轮：D2 实施完成 —— 修复 hift CUDA graph 从未命中（2026-09-24 23:2x）
+
+> 人类指令「继续」→ 承接方案 C，选取**无质量取舍**的 D2（优化 hift 首 hop）推进。
+> 已过 GN-004 交付前审查（**警示放行**，agent `bd407524-7857-49c1-a9d4-470c44a4108c`，
+> 无 [阻断]/[SOFT_BLOCK]），其 4 项 [警示] 与 2 项 [观察] 已修正。
+
+### (1) 工程过程
+
+1. **定位**：`_patch_hift_decode_cudagraph`（2026-08-18 上线）的 CUDA graph 是**单 shape 单例**
+   （`state["graph"]` + 单个 `captured_key`），且「捕获仅在 `graph is None` 时进行」构成互斥死角 ——
+   生产各 hop 的 shape 随 `token_hop_len` 递增与首 hop 长 `prompt_feat` 变化，与 warmup 捕获的
+   shape 恒不同 → **既不命中也不重新捕获** → 该 patch 自上线起从未在生产生效（插桩实证全部 `命中=否`）。
+2. **修复**：改为 `state["graphs"]` 多 shape 缓存（`OrderedDict` + LRU，上限 8），每个新 shape 各捕获一次；
+   新增**捕获时一致性自检**；据 GN-004 W-2 追加**命中路径自检**（验证 replay 确实消费 `copy_` 的新输入）；
+   据 O-2 将 entry 取值移入锁内（消除 LRU 淘汰竞态下的 `KeyError` 边缘）。
+3. **验证**：稳态 3 次请求 + 两级自检日志（见下「最终结果」）。
+
+### (2) 交接状态
+
+- D2 代码修复：**已闭合**（实现 + 两级自检 + 性能实测）
+- **第二阶段「消除首请求捕获成本」：已闭合**（人类 ASK-20260919-04 裁决后实施；
+  新增 `_warmup_production_shapes`，首请求 `first audio` 0.72s → **0.23s**，与稳态持平）
+- GN-004 交付前审查：**已闭合**（警示放行；W-1/W-2/W-3/O-2/O-3 **均已修正**；W-4 信号见「请示追踪」）
+- **修复持久化：已闭合**（2026-09-25 镜像已重建并通过冒烟，见下「镜像重建」节）
+- O-1（LRU 淘汰路径无运行证据）：**当前不可判定**（本轮仍未触发淘汰，仅静态审查通过）
+
+### 镜像重建与冒烟（2026-09-25，人类裁决项执行完毕）
+
+**镜像**：`docker build -f docker/llm/Dockerfile.cosyvoice-vllm -t cosyvoice-vllm:latest .` → 成功（exit 0）。
+新镜像 `308544e37192`（29.9GB）；旧镜像已备份为 **`cosyvoice-vllm:pre-20260924-backup`**（`c3d6863235e9`，可回退）。
+
+**冒烟（新镜像 + 无 server.py 挂载，即勾兑镜像内代码）**：
+
+| 检查项 | 结果 |
+|--------|------|
+| 容器挂载 | 仅 `/workspace/ref_assets` + `/workspace/models`（**无 server.py**）→ 确证跑镜像内代码 |
+| 容器健康 | healthy ✓（说明 `_active_count` global 修复生效，否则请求即 500） |
+| 多 shape graph 捕获 | warmup 捕获 5 个（缓存 1/8~5/8）✓ |
+| **生产 shape 预热** | 捕获 `(1,512,9)/(29)/(69)`（6/8~8/8），`Production-shape warmup complete in 3.8s` ✓ |
+| 探针默认关闭 | 无 `[PROBE-*]` 输出 ✓（符合设计） |
+| 主服务健康 | healthy（7 组件全 true）✓ |
+| **TTS 端到端首块** | #0 = **290ms（首个请求）**、#1/#2 = 226ms → **首请求≈稳态，捕获成本已消除** ✓ |
+| 容器内 `first audio` | **0.20~0.21s** ✓（与修复后挂载态一致） |
+| 音频数据 | 185108 / 133128 / 119684 base64 字节，均正常 ✓ |
+
+**未做**：EvalKit 全双工段回归（EvalKit 服务未启动）。
+
+### (3) 最终结果
+
+- **性能（三阶段，容器内 `first audio`）**：
+
+  | 阶段 | 首个真实请求 | 稳态 |
+  |------|-------------|------|
+  | 修复前（单 shape 单例） | 0.72~0.77 s | 0.26~0.27 s |
+  | 多 shape 缓存 + LRU | 0.29 s（含 70ms 诊断自检） | 0.20~0.21 s |
+  | **+ 生产 shape 预热**（生产态） | **0.23 s** | **0.23 s** |
+
+  首 hop 构成（稳态）：flow 108~125ms / 等 token 74~75ms / **hift 11~17ms**（修复前 76~79ms）/ 准备 1~3ms。
+- **音频正确性**：捕获自检 8 个 shape + 命中自检 3 个 shape，**全部 `max|eager-replay| = 0.000e+00`**
+  （逐位一致）；命中自检的输入与捕获输入不同 → 证明命中路径确实消费新输入。
+  （命中自检已改为 `PROBE_FIRST_HOP` 门控，生产默认关闭以省去其 ~70ms 开销。）
+- 产出物：`docker/llm/cosyvoice_server.py`（多 shape+LRU+两级自检+生产 shape 预热+global 修复+探针）；
+  `docker/llm/start-cosyvoice-vllm.ps1`（`$RefAssetsPath` 只读挂载 + `--warmup-ref-assets`）；
+  文档 `20260924_模块0_修复hift图缓存未命中.md`（含两阶段）等三份；临时脚本零残留。
+- 合规：`public/` 与 `.trae/rules/` 零改动（GN-004 独立核实）。
+
+### 实施中发现的必要条件（教训）
+
+`tts()` 流式循环会把 `token_hop_len` 自增至 `token_max_hop_len`，故 streaming warmup 结束后
+其值为 100。**生产 shape 预热前必须复位为 `args.stream_hop_len`**，否则预热产出的 shape
+与生产请求不一致 → 预捕永不命中（首测即因此失效，日志表现为"预热完成但无新捕获"）。
+
+### 未闭合项
+
+- **⚠ 修复未持久化（最关键）**：当前仅靠 `-v docker/llm/cosyvoice_server.py:/workspace/server.py`
+  **挂载覆盖**生效；容器镜像版（1181 行旧版，GN-004 已独立核实 `_active_count`=0 处、
+  `state["graph"]`=4 处、无 `asyncio.to_thread`）**不含此修复**。
+  **须人类裁决**：重建镜像 / 恢复生产（放弃修复）/ 继续挂载观察。
+- **首个请求承担捕获成本**：首请求需捕获 5~8 个 shape，实测首请求 `first audio` 0.72~0.77s
+  （稳态 0.20~0.21s）。属一次性成本；如需消除可在启动 warmup 阶段按生产参考音频预捕 shape（未实施）。
+- 前序遗留：`ASK-20260919-03` 的第2项剩余候选（D1 等 token / D3 量化 flow / D4 停止）；
+  首轮瞬态根因（vLLM 后端波动）；`tests/test_config_router.py` 11 个既有失败。
+
+### 接续入口
+
+- 若重建镜像：`docker build -f docker/llm/Dockerfile.cosyvoice-vllm -t cosyvoice-vllm:latest .`
+  → 需完整回归（TTS 冒烟 + 音频抽听 + EvalKit 全双工段）；**构建前确认 `_active_count` 的
+  global 修复已含在工作区**（否则 TTS 全挂）。
+- 若继续 D1/D3：见 `20260919_模块0_TTS首块固定开销定位.md` 的候选表。
+- **观测复用**：`PROBE_FIRST_HOP=true` 环境变量即可启用全部打点（默认关闭，生产零开销）。
+
+### 请示追踪
+
+- **⚠ ASK-20260919-04 仍未闭合，且范围已扩大**：
+  ① **镜像是否重建（新增，最关键）** ② 第2项后续选型（D1/D3/D4）。
+- **[GN-004 W-4 信号]**：本轮 D2 系人类「继续」指令下自行选定并实施，属「开放选择题被当作已裁决」的边缘。
+  虽有披露与 `git checkout -- docker/llm/cosyvoice_server.py` 回退路径、且方向未偏离已批准的方案 C，
+  但**信号必须送达人类**（本次报告已送达）。
+
+### 审查状态
+
+- **GN-004 交付前审查：已闭合**（警示放行，agent `bd407524-7857-49c1-a9d4-470c44a4108c`）。
+  独立复现：容器日志性能数字逐项一致；镜像漂移经 `docker run --rm` 独立证实；`public/` 零改动经 git 核实；
+  `_active_count` 缺陷经 `git diff` 证实为新增行（非误判）。
+- **未独立验证项**（GN-004 明确声明，须人类知悉）：① 修复前「全部 `命中=否` / hift 76~79ms」的
+  旧格式探针日志已被本次改动覆盖，**不可回溯复现**（基于执行者自述，佐证为 09-19 文档独立记录的 hift 68~82ms）；
+  ② 真实生产中跨会话、跨参考音频的长时稳定性未验证（本次为同一参考音频、连续请求）；
+  ③ LRU 淘汰行为无运行证据（本轮未触发）；④ 主服务 8000 侧全链路 TTFT 未复核（不在本单范围）。
+
+---
+
+# current-note — fix-memory-recall-zero-relevance（2026-09-25 文件末尾追加；追加式、不覆盖任何既有条目）
+
+> 更新时间: 2026-09-25 | 变更ID: fix-memory-recall-zero-relevance | 阶段: **交付完成待 [V] 人类确认**（T0~T7 全部完成；GN-004 交付前审查警示放行 `0a04f905`；全量回归 5210 passed）
+
+## 七字段交接状态
+
+| 字段 | 内容 |
+|------|------|
+| 做到哪了 | T0~T7 全部完成并勾选；checklist 除 IX.4/IX.6（交付前审查记录/[V] 确认）外全部勾选（V.5 已勾：5210≥5187）；GN-004 交付前审查警示放行（`0a04f905`）；**追加修复 U1/U5/U6**（人类「修复剩余」指令）：定向 **181 passed**、真实链路验证通过、全量回归 **5215 passed**（≥ 基线 5187，+5）（留痕 `20260925_模块0_修复剩余观察项.md`）；**待人类 [V] 交付确认** |
+| 为什么 | 用户指令「先修复一个严重问题：记忆召回3维评分可能会召回相关度为零的记忆（建议改为：相关性*（重要性+时间分数））」，指定 Skill：TRAE-code-review / TRAE-debugger；人类裁决 ASK-20260925-01/02 + [V] 三项（清理授权 / recent 保留 / T5b 修复） |
+| 未闭合项 | ① **人类 [V] 交付确认（唯一阻断项）**；② 观察项 U2（阈值通过率，实测 inject 5→5 无下降）/ U3（NF5 覆盖极窄，已裁决保留）/ U4（延迟预算待嵌入服务 8101 在线复测）待放行；③ **U1/U5/U6 已修复（2026-09-25，人类「修复剩余」指令）**：3d 端点真实相关性映射注入（命中用真实分、不可用回退 0.5）、`_fill_missing_relevance` 失败短路（不重复嵌入）、回退分支 agent 隔离（留痕 `20260925_模块0_修复剩余观察项.md`；定向 181 passed、真实链路验证通过、全量回归 **5215 passed**）；④ 环境既有：weaviate 容器 unhealthy（8080 不可达）→ U1 命中路径真实链路验证受限（单测覆盖）；⑤ `.dbg/server_post_t5c_*.log` 为现行服务日志（T5b 遗留已随 16:14 重启清理） |
+| 接续入口 | [V] 确认后交付完成；回滚按留痕文档第四章（还原 router/hybrid_search/advanced_mixin/decay 四文件 + 恢复测试断言）；U4 延迟预算待嵌入服务（8101）在线后复测 |
+| 人类裁决记录 | ASK-20260925-01/02 已闭合；[V]（2026-09-25）三项已执行（T5 清理 / recent 并入保留评估 / T5b 修复） |
+| 请示追踪 | 无悬空请示 |
+| 审查状态 | 计划审查 4 轮（阻断→警示→阻断→警示放行）；检查点 `976ccf4f` 警示放行；代码变更后 `2c50ca36` 警示放行；**交付前 `0a04f905` 警示放行**（D1~D4；D1/D3 已修、D2/D4 已登记） |
+
+## 三段交接
+
+### (1) 工程过程
+1. 勘察定位：`router.py` L308-312（加权和）、`advanced_mixin.py` L71-75（3d 同族）、`decay.py` L486（死代码无调用者）、`router.py` L302（缺省假相关性 0.5）、`config.py` L842（min_score_threshold=0.15）
+2. AskUserQuestion 3 问（ASK-20260925-01）→ 三件套首版产出
+3. GN-004 首轮计划审查：**阻断**（F1：recent 通道产出被 `all_memories` 死变量丢弃）→ 独立核实属实（git 证实 ≥`ec29e91`/2026-08-04）→ AskUserQuestion（ASK-20260925-02：**顺带修复并纳入**）→ 修正 F1~F10
+4. GN-004 复审：**警示放行**（N1 Scenario 算术错误 / N2 recent 未按 agent_id 隔离 等）→ 修正 N1~N7
+5. GN-004 三轮：**阻断**（agent `34c5a851`，SB-B 假闭合证据：**同文件并行编辑竞态致部分修正丢失**——spec.md 的 N1 Scenario/F9 行号/观察项登记表、tasks.md 的 T5 第二落点）→ 独立核实属实 → 三件套**整体重写回补**并处置 NF1~NF8（含 NF5 recent 通道可触发性登记、NF7 台账 [P2]、NF8 Impact 补列）
+6. GN-004 四轮：**警示放行**（agent `e4a09a99`，无 [SOFT_BLOCK]；NF1~NF8 逐条与实体比对确认落地、三轮 SB-B 已消除）→ 观察项 NEW-1~NEW-4 处置（note 头部阶段/台账计数口径/标注归属）
+7. **人类批准 Spec** → 实施 T0~T4：T0 留痕文档+基线（5187 passed）→ T1 debugger 插桩与证据（H1~H4 确认、NF5 覆盖极窄）→ T2a∥T2b 代码改造（死代码删除、docs 同步）→ T3 测试（1 断言更新 + 20 新增，173 passed）→ T4 pre/post 验证与观测（修复生效、触发线未触发、延迟归因嵌入服务离线）
+8. GN-004 关键检查点审查：**警示放行**（agent `976ccf4f`，NF-A~NF-F；NF-A 三段交接刷新、NF-C 纳入 [V]、NF-F 登记）
+9. **[V] 人类裁决（2026-09-25）**：① 确认修复有效、授权清理；② NF5"重新评估该并入"→ 评估结论"建议保留（成本≈0）"；③ 降级重复嵌入"本次一并修复"
+10. **T5 清理**（`4b5421d6`：插桩 0 残留、Debug Server 停、debug 文件归档删除）→ **T5b 修复**（`dd885c03`：失败状态传递，真实链路失败次数 2→1、e2e −2324ms，176 passed）→ **GN-004 代码变更后复审：警示放行**（`2c50ca36`，N-1~N-6）
+11. **T6 TRAE-code-review 完整流程**（主线程 + 2 独立验证 `1ccb62c0`/`2c300014` 交叉验证：2 问题 2/2、1 项 0/2 排除；用户裁决仅登记不修；报告落盘 `code_review_T6_20260925.md`）
+12. **T7 收口**：全量回归 **5210 passed**（≥ 基线 5187）→ 留痕文档 status=已完成 + 第五章全回填 → note/spec 三段交接刷新 → **GN-004 交付前审查：警示放行**（`0a04f905`，D1~D4；D1/D3 已修、D2/D4 已登记）→ **待人类 [V] 交付确认**
+13. **追加修复 U1/U5/U6（人类「修复剩余」指令，2026-09-25）**：留痕先行（`20260925_模块0_修复剩余观察项.md`）→ U5 失败短路 + U6 回退分支 agent 隔离 + U1 3d 端点真实相关性映射（`relevance_map`）→ 新增 5 测试（定向 181；全量 **5215** ≥ 基线 5187）→ 真实链路验证（3d 200 降级 / chat 无回归）→ **GN-004 复审查：警示放行**（`ccf260cb`，O1~O4 已处置）
+
+### (2) 交接状态
+- Spec 三件套：**已闭合**（人类批准 + 全回填）
+- 实施 T0~T8（含 T5b/T8）：**已闭合**（全勾选、台账真实 agent id、证据落盘）
+- checklist：**未闭合**（仅 IX.6 [V] 交付确认未勾；其余全勾）
+- 交付前 GN-004 审查：**已闭合**（警示放行 `0a04f905`）+ 追加修复复审 **已闭合**（警示放行 `ccf260cb`）
+
+### (3) 最终结果
+- 验证结论（交付态）：全量 pytest **5215 passed / 0 failed**（≥ 基线 5187）；定向 181 passed（GN-004 复跑一致）；pre/post 修复生效（零相关 0.65→0 被过滤、弱相关 0.755→0.30、recent 由丢弃→纳入）；注入 30→30/5→5（触发线未触发）；T5b 失败 2→1、e2e −2324ms；**U1/U5/U6 追加修复落地**（3d 真实相关性 / 失败短路 / agent 隔离）；public/ 与 .trae/rules/ 零改动
+- 产出物清单：代码 6 文件（含 memory.py 端点）+ 测试 5 文件（新增 28 条）+ 留痕文档 2 份 + 证据 9 份 + spec 三件套 + note 本章节
+- 关键事实：**recent 通道产出被静默丢弃为既存缺陷**（已在 T2a 修复）；**NF5 覆盖极窄**（[V] 裁决保留）；**U1/U5/U6 经「修复剩余」指令补齐**
+- 未闭合项（待 [V] 逐项放行）：人类 [V] 交付确认；U2 阈值通过率 / U3 NF5 覆盖极窄 / U4 延迟预算待复测 / O1 端点延迟退化 / O4 relevance_map 覆盖取舍
+- [V] 裁决记录（2026-09-25）：① 确认有效授权清理；② NF5 重新评估 → 建议保留；③ 降级重复嵌入 → 本次一并修复（T5b）；④ 「修复剩余」→ U1/U5/U6 已修复；⑤ 交付确认（**未显式作出**，待人类一句话确认）
+
+---
+
+# current-note — package-modelstation-desktop-installer（2026-09-25 文件末尾追加；追加式、不覆盖任何既有条目）
+
+> 更新时间: 2026-09-25 | 变更ID: package-modelstation-desktop-installer | 阶段: **Spec 三件套已写、GN-004 警示放行、待人类批准后进入实施**
+
+## 七字段交接状态
+
+- **任务**：把 `C:\CX-O\CXO-ModelStation` 独立打包 + 加独立前端（人类四项裁决：Electron 桌面安装包 / 全含 engines+data / 前端独立进程与端口 / 包内嵌便携 Python 环境）。
+- **规格**：`.trae/specs/package-modelstation-desktop-installer/{spec,tasks,checklist}.md`（Task 0~5 + 台账 + 冻结的打包态目录契约）。
+- **交接状态**：三件套 **已闭合**（GN-004 警示放行，观察项 O1~O8 已处置或已登记）；实施 **未开始**；人类批准 **[V] 未闭合**。
+- **未闭合项**：人类 [V] 批准；实施期风险（见下「最终结果」未闭合项）。
+- **接续入口**：人类批准 → Task 0（变更文档前置）→ P1 = Task 1（`frontend/*`）∥ Task 2（`tools/*`）→ Task 3 → Task 4 → Task 5。
+- **回退锚点**：前一轮稳定点 = 纯浏览器站点形态的 `frontend/`（无 `electron/`）；实施失败按 tasks.md「回退锚点」章节回退，不得回滚工作树中与本 spec 无关的既有改动。
+
+### (1) 工程过程
+
+1. 需求收束：AskUserQuestion 四项裁决（产物形态 / 打包范围 / 前端形态 / Python 环境）已闭环。
+2. 现状勘查（三路只读）：① APP-Frontend Electron 先例（electron 42 + builder 26 + vite-plugin-electron，NSIS，无 extraResources，主进程 `onHeadersReceived` 注入跨域头）；② ModelStation 引擎调用链（so-vits/MeloTTS 全走 config `python_path`，**VoxCPM 走 `sys.executable`**、CORS 白名单已含 3300、`_mount_frontend` 现状、engines 无权重、py311 实为 Anaconda 3.13.9 venv 且缺引擎依赖）；③ 姊妹项目 CX-A 的「Miniconda 现场装配 + PyInstaller onedir + Inno Setup」先例。
+3. s0401 写前闸门：三件套=工程交接锚点（格式合规放行）、`frontend/`+`tools/`=免检通行区、根 `AGENTS.md`=保护资产（须人类批准）、无跨模块破坏性动作 → `ALLOWED`。
+4. 三件套落盘 → GN-004 独立审查 → 观察项处置（见下）。
+
+### (2) 交接状态
+
+- 三件套：**已闭合**（spec/tasks/checklist 齐备；台账八字段齐、③⑤ 已按 rules-0 §四-11 填「待回填」）。
+- GN-004（agent `676371ab`）：**警示放行**，无阻断、无 `[SOFT_BLOCK]`；11 项事实核对 PASS、1 项存疑（「CX-A 否决 NSIS」无记录佐证）。
+- 实施与验证：**未开始**（Task 0~5 全未启动）。
+
+### (3) 最终结果
+
+- **规格产出**：spec 含 6 条 ADDED + 2 条 MODIFIED Requirements、无 REMOVED、**BREAKING 无**；新增「打包态目录契约（冻结）」（`resources/backend|runtime|engines|data` + 固定端口语义 + `directories.output: release`），作为 P1 两并行分支的唯一接口。
+- **GN-004 观察项处置**：O1 Inno 回退未落子任务 → **已补 Task 3.3**（`.iss` 消费 `win-unpacked` + `iscc` 检测与显式报错）；O2 路径契约仅文字冻结 → **已写进 spec 冻结契约并扩展 O4**（output=release）；O3 vite-plugin-electron 与 vite 5.4/TS 5.6 兼容性 → **已写入 Task 1.1 前置冒烟**；O5 反代透传 multipart/Range 未落细 → **已写入 Task 1.2 与 checklist A**；O7 data 种子口径 → **已要求产物报告列种子清单 + checklist D**；O8 checklist 三值口径 → **已在 checklist 头部声明**；O6 `--profile base` 略超裁决范围 → 保留（默认 full，不阻塞交付），登记为人类可裁剪项。
+- **关键事实（供实施者免于重查）**：`sovits_svc.python_path` / `melotts.python_path` 默认 `"python"`，训练与预处理子进程全部跟随该配置；`voxcpm_client` 用 `sys.executable` 且未覆盖子进程 `env=`（故父进程 `PYTHONPATH` 可传递）；后端无 WebSocket 需求；桌面壳走「本地静态服务 + `/api` 反代」同源路线，故不依赖后端 CORS 改动。
+- **未闭合项**：① 人类 [V] 批准（三件套 + 冻结契约）；② 实施期实测项——full profile 体积与安装包形态判据（NSIS/Inno）、CUDA 轮子档位、构建网络与磁盘可行性；③ 人工清单（真实装机 / GPU 实战训练 / 安装包实装 / 离线权重训练链路，见 checklist G）。
+- **接续入口**：人类批准 → 实施；GN-004 结论为行为约束（警示放行 + 观察项已处置，无 SOFT_BLOCK，无需人类裁决观察项）。
+
+---
+
+# current-note — evalkit-full-duplex-regression（2026-09-25 文件末尾追加；追加式、不覆盖任何既有条目）
+
+> 更新时间: 2026-09-25 20:15 | 变更ID: evalkit-full-duplex-regression | 阶段: 回归完成，交付前 GN-004 审查中
+
+## 七字段交接状态
+
+| 字段 | 内容 |
+|------|------|
+| 做到哪了 | 全双工段回归完成，**并已执行人类要求的补充验证**：环境恢复后 n=3 两轮曾达标（791.3 / 510.6 ms），但加大取样后**判定翻转为不达标且不稳健**——turns=9 一轮（run4 `1df27b8d`）8/9 轮 449.8~668.5 ms、第 7 轮 5152.7 ms → P95 **3359.0 ms ❌**；12 轮连续探测 2/12 离群（5375.8 / 5352.3 ms，均 asr_final 后 +4.0 s）。留痕已修订（第五章）+ 4 份证据落盘 |
+| 为什么 | 用户指令「搞定EvalKit 全双工段回归」，追问后选择「要求补充验证」。首轮 run 复现 5557.8 ms 超标，根因锁定为两个容器停机（LLM 8002 / 嵌入 8101）致每轮检索 +2s；恢复后 n=3 达标，但补充验证揭示**间歇性后置停滞**（~10~17% 轮次 ~4~5.4 s），分层排除 ASR/LLM（440 请求无 TTFT>2.5s）/TTS（first audio 0.2-0.3s）/嵌入（169 请求 <0.5s）/weaviate（ready 4ms）引擎，指向主服务编排-检索客户端路径（`rag_search` 空闲后首调 ~2.2s，两次复现） |
+| 未闭合项 | ① **全双工段 ~10~17% 轮次 ~4~5.4 s 后置停滞（离群），达标稳健性未建立**；成因指向主服务编排/检索客户端路径，需单独立项排查（涉主服务代码改动，须先写变更文档+人类裁决，本次未擅自改）；② REST 段 E2E P95 9.2~14.5s 超 2000ms（LLM 生成速度主导，9/19 各轮同样未达标，历史既有）；③ `weaviate` unhealthy 定性为 healthcheck 误报（功能正常，未处置）；④ 人类 [V] 交付确认 |
+| 接续入口 | EvalKit 本地 8300（本会话后台 job-`dbe35bcf60cd470ebde2c7bd05cc75c2`）；重跑：`POST http://localhost:8300/api/v1/runs {"suite":"latency"}`；加大取样：加 `"config_overrides":{"latency":{"ws_full_duplex":{"turns":9}}}`；报告：`GET /api/v1/runs/{id}/report` |
+| 人类裁决记录 | 人类「要求补充验证」（ASK-20260925-EvalKit-01）已闭合：补充验证已执行并回填（判定翻转）；新一轮 [V] 交付确认待裁决 |
+| 请示追踪 | 无悬空请示（补充验证请示→执行→回填链路闭合） |
+| 审查状态 | GN-004 交付前审查（首轮）：警示放行（agent `e528d4ed`，无 [SOFT_BLOCK]）；**补充验证后复审：警示放行、无 [SOFT_BLOCK]**（agent `c809913c`，A~E 全 PASS，含 runs 表 `config_snapshot.latency.ws_full_duplex.turns=9` 硬证据）；观察项：O-1 status 语义已按建议澄清（frontmatter 加范围声明 + residual/pending_defect）｜O-2/O-4/O-5 仅登记｜O-3 正线索未复现（间歇触发，非反证） |
+
+## 三段交接
+
+### (1) 工程过程
+
+1. 运行态勘察：EvalKit 未运行、ASR(8005)/TTS(8094) 在线、**LLM(8002)/嵌入(8101) 停机 21h**、系统代理 7897（TargetClient 已 `trust_env=False`、WS 探测已 `proxy=None`，无需改）
+2. `docker start vllm-gemma4`（126 s 就绪，GPU0/原配置复现）+ `docker start cxhms-vllm-embedding`（65 s 就绪，CUDA_VISIBLE_DEVICES=1/GPU1）
+3. EvalKit 本地起 8300 → 冒烟 `POST /api/chat` 200 → run1 `aaf6a5f7`（report 口径 ≈300 s / 4m59s，ws_p95 5557.8 ms ❌ 复现）
+4. 分层定位：WS 原始事件时间线（临时脚本，用后即删）+ vLLM Prometheus 指标差分 + TTS 容器日志 + 9/19 检索耗时对比
+5. 恢复嵌入后复测：rag_search 2053→72 ms、单轮 partial→首包 4117→497 ms → run2 `ed3c34e2`（791.3 ✅）、run3 `a026f2c3`（510.6 ✅）
+6. 留痕 `.trae/documents/20260925_模块0_EvalKit全双工段回归.md` + 证据 `.trae/documents/test_reports/evalkit_ws_full_duplex_20260925/`
+7. GN-004 交付前审查（首轮，agent `e528d4ed`）：警示放行、无 [SOFT_BLOCK]，观察项 ①~④ 已处置/登记
+8. **人类裁决「要求补充验证」→ 加大取样**：run4 `1df27b8d`（`config_overrides` turns=9，P95 **3359.0 ms ❌**，8/9 轮 449.8~668.5 ms、第 7 轮 5152.7 ms）+ 12 轮连续探测（**2/12 离群** 5375.8 / 5352.3 ms，均 asr_final 后 +4.0 s）
+9. 离群分层排除：LLM 直方图（440 请求无 TTFT>2.5s、queue≤0.3s）／TTS（0.20~0.29s）／嵌入（169 请求≤0.5s）／weaviate（ready 4ms；unhealthy=healthcheck `curl` 误报）；线索 = `rag_search` 空闲后首调 ~2.2s（2197.8 / 2177.3 两次复现）；留痕修订第五章 + 证据 `ws_12turns_repeat_after_restore.txt`
+
+### (2) 交接状态
+
+- 全双工段回归：已完成，但**判定经补充验证翻转**——稳态 440~700 ms（4 轮 run 中 n=3 两轮曾判达标），
+  但 ~10~17% 轮次存在 ~4~5.4 s 后置停滞（turns=9 的 P95 = 3359.0 ms ❌）→ **达标稳健性未建立**
+- 补充验证（人类要求）：已完成并回填（run4 turns=9 + 12 轮连续探测；离群分层排除四引擎）
+- 环境依赖恢复：已闭合（LLM 8002 / 嵌入 8101 容器运行中，`rag_search` 常态 72~90 ms）
+- 留痕文档：已完成（status=已完成）
+- REST 段阈值：未达标（历史既有观测项，未处置）
+- GN-004 交付前审查：两轮均已闭合（首轮警示放行 `e528d4ed`；补充验证后复审警示放行 `c809913c`，均无 [SOFT_BLOCK]）
+- 人类 [V] 交付确认：未开始
+
+### (3) 最终结果
+
+- 验证结论（**经补充验证修订**）：全双工段**稳态** partial→首包 440~700 ms（远优于 800 ms 阈值），
+  但 **~10~17% 轮次出现 ~4~5.4 s 后置停滞**（asr_final 后 +3.97~4.0 s）——
+  turns=9 一轮 P95 = **3359.0 ms ❌**、12 轮探测 2/12 离群（5375.8 / 5352.3 ms）→ **达标稳健性未建立**；
+  n=3 的 run2/run3（791.3 / 510.6 ms ✅）属小样本未命中离群
+- 离群归因（分层排除）：ASR 段正常（partial 362~423 / final 1742~1802 ms）；LLM 440 请求无 TTFT>2.5s 且 queue≤0.3s；
+  TTS 逐段 first audio 0.20~0.29 s；嵌入 169 请求 ≤0.5 s；weaviate ready 200@4 ms（unhealthy 系 healthcheck `curl` 误报）
+  → 指向**主服务编排/检索客户端路径**（旁证：`rag_search` 空闲后首调 ~2.2 s，两次复现；同族于当日"嵌入离线 +2 s/轮"）
+- 产出物：四轮 run 报告（`CXO-EvalKit/data/runs/{aaf6a5f7,ed3c34e2,a026f2c3,1df27b8d}/report.md` + `detail.json`）、
+  三份 WS 事件证据（前/后时间线 + 12 轮复测）、留痕文档（含第五章补充验证）
+- 环境状态变更（用户须知）：`vllm-gemma4`(8002/GPU0)、`cxhms-vllm-embedding`(8101/GPU1) 已恢复运行；EvalKit 本地 8300 运行中（后台 job）
+
+---
+
+# current-note — fix-dual-stream-post-final-stall（2026-09-25 文件末尾追加；追加式、不覆盖任何既有条目）
+
+> 更新时间: 2026-09-25 21:15 | 变更ID: fix-dual-stream-post-final-stall | 阶段: 分析中（定位已收敛，待人类授权重启/插桩）
+
+## 七字段交接状态
+
+| 字段 | 内容 |
+|------|------|
+| 做到哪了 | **根因已定位并修复**：循环监视（独立线程+栈快照）捕获 4 次 lag 7.8~8.3 s，栈含 `ssl.create_default_context(cafile=certifi.where())`——本机实测该调用 **6074 ms**、`httpx.AsyncClient()` 构造 **7979 ms**；触发源 = `RssFetcher.fetch()` **每次调用新建客户端**（自主/梦境新闻路径）。**修复 2**（`rss_fetcher.py` 复用 `get_shared_http_client()`）验证：fetch#2 从 ~8 s 降到 **2.7 ms**、12 轮无停滞、`/health` 的 7.8~8.3 s 尖峰消失（原每轮 2 次）。**修复 1**（`prefix_warmup.py` 预热限流）此前已验证（引擎长间隔 90~180 s → ≤30 s） |
+| 为什么 | 人类连续选择「立项修复 → A+B 插桩 → B 继续排查循环阻塞」；根因与两项修复均由实测证据支撑（含监视器栈快照 + 隔离计时 + 子进程双次 fetch 对比） |
+| 未闭合项 | ① agent 创建窗口仍有 1 次 ~2 s 循环占用（成因未定位，低频）；② 混合负载下全双工 P95 仍可能 >800 ms（LLM 首 token 抖动，独立观察项）；③ **插桩/调试服务器/调试记录/`.dbg/` 待人类确认后清理**（调试记录 `[OPEN]`）；④ 修复仅 2 个文件（`prefix_warmup.py`、`rss_fetcher.py`），未触 `public/`/rules/入口文件 |
+| 接续入口 | 人类确认修复 → 清理插桩（`audio.py` P0~P6+M，grep 验零残留）→ 停调试服务器（7778）→ 删 `debug-dual-stream-post-final-stall.md` 与 `.dbg/` → 变更文档置已完成 + GN-004 交付前审查 |
+| 人类裁决记录 | ASK-20260925-EvalKit-02（后续处置）= **立项修复**，已闭合；新一轮授权（重启/插桩）**待裁决** |
+| 请示追踪 | 待裁决请示 1 项（重启授权），未悬空 |
+| 审查状态 | GN-004 交付前审查：未开始（status=分析中，未到交付） |
+
+## 三段交接
+
+### (1) 工程过程
+
+1. s0401 写前闸门：`ALLOWED`（`.trae/documents/`=锚点；主服务业务代码=免检通行区；不涉 `public/`/`.trae/rules/`）
+2. 只读代码勘察（Explore agent）：dual_stream 入口 `audio.py:1706`、管线 `_run_pipeline:614`；三入口共用 `retrieve_memory_context`+`build_messages`；`weaviate_store` `connect_to_local(Timeout(init=2))` 且 host=`localhost`；`db_mixin:221-258` 健康检查单次失败即 null+重建；`utils:168-210` 共享 httpx（keepalive_expiry=30 / pool=10）；`prefix_warmup` 与在线路径共享 client
+3. 运行时实验（只读）：**A/B `use_memory=false` 停滞仍在（2/8）→ 排除记忆路径**；`/health` 并发采样 651+652+989 次 → **排除全局事件循环阻塞**（仅每脚本 1 次 ~2052 ms 尖峰，疑为 agent 创建触发的 prefix 预热）
+4. 容器日志对齐：停滞窗口 TTS **空闲 89 s**、LLM **无请求** → 停滞在"LLM 调用之前"
+5. 变更文档落盘（含附录证据 + 步骤 A/B 候选）
+
+### (2) 交接状态
+
+- 变更文档：已完成（status=分析中）
+- 诊断定位：分析中（收敛：管线前段等待 + 随 uptime 退化）
+- 修复实施：未开始（待授权）
+- GN-004 审查：未开始
+
+### (3) 最终结果
+
+- 已确认结论：停滞**非** ASR/LLM/TTS/嵌入/weaviate 引擎侧、**非**记忆路径、**非**全局阻塞；位于 asr_final 之后 ~+4.0 s 的"LLM 调用前"编排等待；停滞率随服务运行时长上升（17%→25%→42%）
+- 产出物：变更文档（模块0-20260925-04，含两轮运行时证据）
+- 待人类授权：主服务重启（步骤 A 判定退化假设）或重启+插桩（步骤 B 确定等待点）

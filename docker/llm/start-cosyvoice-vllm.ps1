@@ -14,7 +14,10 @@
 #   - 回退参数: --flow-steps 3（去掉 --flow-cfg-rate）即恢复 baseline（首块 ~0.57s 但音质最稳）
 param(
     # 模型根目录（宿主机侧，容器固定挂载到 /workspace/models；默认值保持原硬编码路径兼容）
-    [string]$ModelsPath = "C:\CX-O\models"
+    [string]$ModelsPath = "C:\CX-O\models",
+    # 生产参考音频资产目录（只读挂载到 /workspace/ref_assets，供启动期预捕 hift
+    # CUDA graph 的生产 shape —— 消除首个真实请求的 shape 捕获开销，2026-09-24）
+    [string]$RefAssetsPath = "C:\CX-O\CX-O-SERVER\data\ref_audio_assets"
 )
 $ErrorActionPreference = "Stop"
 
@@ -24,6 +27,12 @@ $PORT = "8094"
 $MODEL_DIR = Join-Path $ModelsPath "Fun-CosyVoice3-0.5B-2512"
 $MODEL_CONTAINER = "/workspace/models/Fun-CosyVoice3-0.5B-2512"
 
+# ref 资产目录不存在时降级：跳过 shape 预热挂载（容器内预热会打印 WARN 并回落）
+$mountRef = Test-Path $RefAssetsPath
+if (-not $mountRef) {
+    Write-Host "⚠ 未找到参考音频资产目录，跳过 shape 预热挂载: $RefAssetsPath"
+}
+
 # 已存在则先停旧容器
 $existing = docker ps -a --format "{{.Names}}"
 if ($existing -contains $CONTAINER) {
@@ -32,12 +41,19 @@ if ($existing -contains $CONTAINER) {
 }
 
 Write-Host "启动 $CONTAINER (GPU1 / port $PORT / CosyVoice3 + vLLM in-process)"
+# ref 资产存在时才挂载 + 传 --warmup-ref-assets（否则容器内预热打印 WARN 并回落）
+$volArgs = @("-v", "${ModelsPath}:/workspace/models")
+$warmArgs = @()
+if ($mountRef) {
+    $volArgs += @("-v", "${RefAssetsPath}:/workspace/ref_assets:ro")
+    $warmArgs = @("--warmup-ref-assets", "/workspace/ref_assets")
+}
 $runArgs = @(
     "run", "-d",
     "--name", $CONTAINER,
     "--gpus", "all",
-    "-e", "CUDA_VISIBLE_DEVICES=1",
-    "-v", "${ModelsPath}:/workspace/models",
+    "-e", "CUDA_VISIBLE_DEVICES=1"
+) + $volArgs + @(
     "-p", "${PORT}:${PORT}",
     "--shm-size=4g",
     "--restart", "unless-stopped",
@@ -54,7 +70,7 @@ $runArgs = @(
     "--vllm",
     "--tmp_dir", "/tmp",
     "--assets_dir", "/tmp"
-)
+) + $warmArgs
 docker @runArgs
 
 Write-Host "启动命令已下发。查看日志: docker logs -f $CONTAINER"

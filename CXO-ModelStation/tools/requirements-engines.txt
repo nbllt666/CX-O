@@ -1,0 +1,133 @@
+# CXO-ModelStation 便携运行时 —— 引擎第三方依赖钉版清单
+# ---------------------------------------------------------------------------
+# 消费方：tools/build_runtime.py --profile full（Python 3.10 / Windows amd64 嵌入式运行时）
+# 标注规则：每条右侧标注来源文件（实读自 engines/ 下清单与其真实 import 闭包）；
+#           凡入选项均以「训练 / 预处理 / 推理链路真实 import」为准，剔除纯 Web/UI/
+#           导出工具链（统一归入文末「按需」段落，默认注释不安装）。
+# 版本选择原则：取 so-vits-svc-4.1-Stable 与 MeloTTS 的约束交集；两者冲突处已就地标注。
+# 注意：torch / torchaudio 由 build_runtime.py 单独经 --torch-index 轮子源安装
+#       （本文件中的 torch 行仅作声明，脚本会自动过滤后再交给 PyPI 源）。
+# ---------------------------------------------------------------------------
+
+#### A) 共享数值 / 音频 / 日志基础 / 构建工具 ####
+cython                        # 构建用（非引擎 import）：fairseq 无 cp310 win 轮子，需源码编译（--no-build-isolation 需要它）
+setuptools<81                 # 兼容钉版：librosa==0.9.1 实码 `from pkg_resources import resource_filename`，
+                              #   而 setuptools>=81 已移除 pkg_resources 模块；不钉则 librosa 导入失败。
+numpy==1.23.5                 # engines/so-vits-svc-4.1-Stable/requirements.txt（钉死；MeloTTS librosa/numba 亦要求 numpy<2）
+scipy==1.10.0                 # engines/so-vits-svc-4.1-Stable/requirements.txt
+soundfile==0.12.1             # engines/so-vits-svc-4.1-Stable/requirements.txt；MeloTTS(melo/mel_processing.py) 亦用
+librosa==0.9.1                # engines/so-vits-svc-4.1-Stable/requirements.txt + engines/MeloTTS/requirements.txt（两引擎共同钉死）
+numba==0.57.1                 # librosa==0.9.1 的硬依赖（实码 import numba：melo/mel_processing.py）
+matplotlib==3.7.5             # so-vits utils.py / 频谱绘图（实码 import matplotlib）
+pyyaml==6.0.1                 # so-vits 配置读写（实码 import yaml）
+tqdm==4.66.5                  # engines/so-vits-svc-4.1-Stable/requirements.txt；MeloTTS / VoxCPM 亦用
+loguru==0.7.2                 # engines/MeloTTS/requirements.txt；so-vits preprocess_flist_config.py（实码 import loguru）
+rich==13.7.1                  # engines/so-vits-svc-4.1-Stable/requirements.txt（resample.py 实码 import rich）
+einops==0.7.0                 # so-vits 模块 + engines/VoxCPM-main/pyproject.toml（实码 import einops）
+local-attention               # engines/so-vits-svc-4.1-Stable/requirements.txt（实码 import local_attention；未钉版：该包 Windows 轮子版本随 PyPI 变动）
+
+#### B) PyTorch（由 --torch-index 决定轮子源，默认 cu128） ####
+torch                         # so-vits / MeloTTS / VoxCPM 共同需要；build_runtime.py 经 --index-url 单独安装
+torchaudio                    # 同上（engines/VoxCPM-main/pyproject.toml、MeloTTS 实码 import torchaudio）
+
+#### C) so-vits-svc-4.1-Stable 训练 / 预处理 / 推理 / 索引 链路 ####
+faiss-cpu==1.7.4              # engines/so-vits-svc-4.1-Stable/requirements.txt（utils.py 实码 import faiss）
+                              # 钉 1.7.4 依据：PyPI 上 faiss-cpu≥1.10 的 win_amd64 cp310 轮子已要求 numpy>=1.25，
+                              #   与本清单 numpy==1.23.5（so-vits 钉版）冲突；1.7.4 有 cp310-win 轮子且不设 numpy 下限。
+scikit-learn==1.3.2           # engines/so-vits-svc-4.1-Stable/requirements.txt（utils.py 实码 sklearn.cluster）
+pyworld==0.3.5                # engines/so-vits-svc-4.1-Stable/requirements.txt（未钉版；钉镜像可用最新 0.3.5）
+                              # 实测：0.3.5 有 cp310-cp310-win_amd64 轮子（直接 wheel 安装，无需编译）；
+                              #   若改钉更高版本需先确认镜像/官方是否仍有 cp310-win 轮子。
+praat-parselmouth==0.4.3      # engines/so-vits-svc-4.1-Stable/requirements.txt（实码 import parselmouth）
+torchcrepe==0.0.23            # engines/so-vits-svc-4.1-Stable/requirements.txt（modules/F0Predictor/crepe.py 实码 import torchcrepe）
+pynvml==11.5.0                # engines/so-vits-svc-4.1-Stable/requirements.txt（实码 import pynvml，显存监控）
+transformers==4.37.2          # engines/MeloTTS/requirements.txt 钉 ==4.27.4；engines/VoxCPM-main/pyproject.toml 声明 >=4.36.2
+                              # ⚠ 冲突裁决（实测）：MeloTTS 的 ==4.27.4 缺 LlamaTokenizerFast（4.28+ 才有），
+                              #   会让 `import voxcpm` 直接 ImportError；故取 VoxCPM 下限侧 4.37.2。
+                              #   实测 4.37.2 下 `import voxcpm` 与 MeloTTS 文本链路 import 均通过；
+                              #   风险：MeloTTS 的 BERT 清洗路径未做真实训练验证（见 Task 2 报告未闭合项）。
+tensorboard==2.16.2           # engines/MeloTTS/requirements.txt；so-vits train.py 亦用 torch.utils.tensorboard
+fairseq==0.12.2               # engines/so-vits-svc-4.1-Stable/requirements.txt（vencoder 实码 from fairseq import checkpoint_utils）
+                              # ⚠ 已知阻断（实测）：fairseq 依赖 omegaconf<2.1，而 omegaconf 2.0.x 的 wheel 元数据
+                              #   在 modern pip/packaging 下非法（`PyYAML>=5.1.*`）→ pip 判定 ResolutionImpossible。
+                              #   构建器对此退化处理：fairseq==0.12.2 --no-deps 安装 + 单独补 omegaconf/hydra-core 等
+                              #   （见 build_runtime.install_fairseq_fallback 与 manifest.install.engines.fairseq）。
+omegaconf==2.3.0              # fairseq==0.12.2 --no-deps 后补齐（绕开 omegaconf<2.1 非法元数据；实码 import omegaconf）
+hydra-core==1.3.2             # 同上（fairseq/dataclass/configs.py 实码 from hydra.core.config_store import ConfigStore）
+sacrebleu                     # fairseq 声明依赖（sacrebleu>=1.4.12）
+bitarray                      # fairseq 声明依赖
+portalocker                   # fairseq 声明依赖
+cffi                          # fairseq 声明依赖
+ffmpeg-python                 # engines/so-vits-svc-4.1-Stable/requirements.txt（inference/infer_tool.py 实码 import ffmpeg）
+
+#### D) MeloTTS 链路（melo/ 包；训练/预处理/音素化/文本清洗） ####
+cached_path==1.6.2            # engines/MeloTTS/requirements.txt（melo/text/*.py 实码 from cached_path import cached_path）
+huggingface_hub==0.20.3       # MeloTTS（melo/text 实码 hf_hub_download）+ engines/VoxCPM-main/pyproject.toml
+num2words==0.5.12             # engines/MeloTTS/requirements.txt（实码 import num2words）
+unidic_lite==1.0.8            # engines/MeloTTS/requirements.txt（fugashi 词典）
+mecab-python3==1.0.9          # engines/MeloTTS/requirements.txt
+pykakasi==2.2.1               # engines/MeloTTS/requirements.txt（实码 import pykakasi）
+fugashi==1.3.0                # engines/MeloTTS/requirements.txt
+g2p_en==2.1.0                 # engines/MeloTTS/requirements.txt（实码 from g2p_en import G2p）
+g2pkk                         # engines/MeloTTS/requirements.txt（g2pkk>=0.1.1，韩语 G2P）
+anyascii==0.3.2               # engines/MeloTTS/requirements.txt（实码 import anyascii）
+jamo==0.4.1                   # engines/MeloTTS/requirements.txt（实码 hangul_to_jamo）
+gruut==2.2.3                  # engines/MeloTTS/requirements.txt（gruut[de,es,fr]）
+gruut-ipa                    # melo/text/{fr,es}_phonemizer 实码 import gruut_ipa
+inflect==7.0.0                # engines/MeloTTS/requirements.txt（实码 import inflect）
+unidecode==1.3.7              # engines/MeloTTS/requirements.txt
+pypinyin==0.50.0              # engines/MeloTTS/requirements.txt（实码 lazy_pinyin）
+cn2an==0.5.22                 # engines/MeloTTS/requirements.txt（实码 import cn2an）
+jieba==0.42.1                 # engines/MeloTTS/requirements.txt（实码 import jieba）
+langid==1.1.6                 # engines/MeloTTS/requirements.txt
+pydub==0.25.1                 # engines/MeloTTS/requirements.txt
+txtsplit                      # engines/MeloTTS/requirements.txt
+eng_to_ipa==0.0.2             # engines/MeloTTS/requirements.txt
+six                           # melo/text/*.py 实码 import six
+click                         # melo/preprocess_text.py 实码 import click（CLI 入口）
+
+#### E) VoxCPM-main 运行链路（轻量、可导入所需） ####
+# 说明：包源码位于 engines/VoxCPM-main/src/voxcpm，打包态由 PYTHONPATH 指向该目录，
+#       不做 editable 安装（硬约束）。以下为 `import voxcpm` 闭包的第三方依赖。
+addict                       # engines/VoxCPM-main/pyproject.toml
+safetensors                  # engines/VoxCPM-main/pyproject.toml（model/voxcpm*.py 惰性 load_file）
+wetext                        # engines/VoxCPM-main/pyproject.toml（utils/text_normalize.py 实码 from wetext import Normalizer）
+regex                         # voxcpm/utils/text_normalize.py 实码 import regex
+simplejson                    # engines/VoxCPM-main/pyproject.toml
+sortedcontainers              # engines/VoxCPM-main/pyproject.toml
+argbind                       # engines/VoxCPM-main/pyproject.toml（cli.py 实码 import argbind）
+
+# ---------------------------------------------------------------------------
+#### 按需（当前训练/推理链路不加载；仅 Web/UI、ONNX 导出、VoxCPM 降噪/训练 才需要） ####
+# 默认注释不安装；如需启用，去掉行首 # 并确认其轮子可用。
+#
+# [so-vits Web/导出]
+# Flask==2.1.2                # requirements_win.txt（flask_api.py / webUI.py，训练链路不加载）
+# Flask_Cors==3.0.10          # requirements_win.txt
+# gradio>=3.7.0               # requirements.txt（webUI.py）
+# onnx                        # requirements.txt（onnx_export*.py）
+# onnxsim                     # requirements.txt
+# onnxoptimizer               # requirements.txt
+# onnxruntime                 # onnxexport/ 实码 import onnxruntime
+# tensorboardX                # requirements.txt（仅 webUI/导出路径）
+# scikit-maad                 # requirements.txt（当前实码未 import）
+# langdetect                  # requirements.txt（webUI 语言检测）
+# edge_tts                    # requirements.txt（webUI TTS 试听）
+# playsound==1.3.0            # requirements_win.txt（试听播放）
+# PyAudio==0.2.12             # requirements_win.txt
+# sounddevice==0.4.5          # requirements_win.txt
+# requests==2.28.1            # requirements_win.txt（未在训练链路 import）
+#
+# [MeloTTS UI / 词典]
+# gradio                      # engines/MeloTTS/requirements.txt（melo/app.py）
+# unidic==1.1.0               # engines/MeloTTS/requirements.txt（post-install 需下载词典；改用 unidic_lite）
+# num2words==0.5.12（已入选项）
+#
+# [VoxCPM 降噪 / 训练 / 数据]
+# modelscope>=1.22.0          # engines/VoxCPM-main/pyproject.toml（zipenhancer.py 实码 import modelscope；降噪链路）
+# funasr                      # engines/VoxCPM-main/pyproject.toml
+# datasets>=3,<4              # engines/VoxCPM-main/pyproject.toml（training/data.py）
+# spaces                      # engines/VoxCPM-main/pyproject.toml
+# torchcodec                  # engines/VoxCPM-main/pyproject.toml
+# gradio>=6,<7                # engines/VoxCPM-main/pyproject.toml（app.py）
+# pydantic                    # 后端已装（requirements.txt）

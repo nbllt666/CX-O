@@ -365,6 +365,31 @@ class TestRecover3d:
         assert r.status_code == 200
         assert r.json()["applied_weights"]["importance"] == 0.35
 
+    def test_3d_passes_relevance_map(self, client):
+        """U1：端点预取向量相似度映射（id→score）并传入 search_memories_3d。"""
+        c, mm, sr = client
+        received = {}
+
+        def _fake_3d(**kw):
+            received.update(kw)
+            return []
+
+        mm.search_memories_3d = _fake_3d
+
+        class _Emb:
+            async def get_embedding(self, q):
+                return [1.0, 0.0]
+
+        class _Store:
+            async def search_similar(self, **kw):
+                return [{"memory_id": 7, "score": 0.8}]
+
+        mm._embedding_model = _Emb()
+        mm._vector_store = _Store()
+        r = c.post("/memories/3d", params={"query": "q"})
+        assert r.status_code == 200
+        assert received.get("relevance_map") == {7: 0.8}
+
     def test_recall_404(self, client):
         c, mm, sr = client
         mm.recall_memory = lambda *a, **k: None

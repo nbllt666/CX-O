@@ -22,7 +22,24 @@ class _AdvancedSearchMixin:
         limit: int = 10,
         weights: Tuple[float, float, float] = (0.35, 0.25, 0.4),
         workspace_id: str = "default",
+        relevance_map: Dict[int, float] = None,
     ) -> List[Dict]:
+        """3D 检索：以相关性为乘性门控计算最终分数。
+
+        公式（与 MemoryRouter._score_memories 主链路一致）：
+            final = relevance × (w_importance·importance + w_time·time) / (w_importance + w_time)
+
+        - relevance 为乘性门控：relevance=0 → final=0，importance/time 不可补偿；
+          结果 clamp 到 [0,1]。
+        - weights[2]（relevance_weight）保留为配置兼容字段（applied_weights 仍输出），
+          但不再参与公式；importance/time 作为组内相对权重由 (w_i+w_t) 归一化。
+          w_i+w_t <= 0（非法配置）时防御性取 0。
+        - relevance 来源（U1 修复）：优先取 `relevance_map`（记忆 id → 真实相似度
+          `(1+cos)/2`，由调用方注入，如 `/memories/3d` 端点的向量检索映射）；
+          未命中或未提供时回退 `memory.get("score", 0.5)` 缺省值
+          （向量库/嵌入不可用时保持原行为，无损降级）。
+        - permanent 记忆 +0.15 加性加成保留（在乘法结果之上，随后统一 clamp 到 1.0）。
+        """
         from server.core.memory.decay import DecayCalculator
 
         conn = self._get_connection()
@@ -66,18 +83,32 @@ class _AdvancedSearchMixin:
 
             importance_score = decay_calculator.calculate_importance_score(memory)
             time_score = decay_calculator.calculate_time_score(memory, apply_reactivation=True)
+            # relevance 来源（U1 修复）：优先取注入的真实相似度映射，未命中回退缺省 0.5
             relevance_score = memory.get("score", 0.5)
+            if relevance_map:
+                _mapped = relevance_map.get(memory.get("id"))
+                if _mapped is not None:
+                    relevance_score = _mapped
 
-            final_score = (
-                importance_score * weights[0]
-                + time_score * weights[1]
-                + relevance_score * weights[2]
-            )
+            # 归一化乘法门控：relevance 为乘性门控（relevance=0 → 0 分，
+            # importance/time 不可补偿）；importance/time 作为组内相对权重由 (w_i+w_t) 归一化。
+            # weights[2]（relevance_weight）保留为配置兼容字段，不再参与公式。
+            gate_denominator = weights[0] + weights[1]
+            if gate_denominator > 0:
+                final_score = (
+                    relevance_score
+                    * (importance_score * weights[0] + time_score * weights[1])
+                    / gate_denominator
+                )
+            else:
+                # 防御：importance/time 权重之和 <= 0（非法配置）→ 门控闭合，取 0
+                final_score = 0.0
 
+            # permanent 加性 +0.15 加成保留（在乘法结果之上，随后统一 clamp 到 1.0）
             if memory.get("permanent"):
                 final_score = min(final_score + 0.15, 1.0)
 
-            final_score = min(final_score, 1.0)
+            final_score = min(max(final_score, 0.0), 1.0)
 
             memory["final_score"] = final_score
             memory["component_scores"] = {

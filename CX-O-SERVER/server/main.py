@@ -63,9 +63,6 @@ from fastapi.middleware.cors import CORSMiddleware
 from server.config import get_settings
 from server.dependencies import ServiceState, set_service_state
 from server.core.lifecycle import init_service, shutdown_service
-# 预热后台任务使用（原函数内导入，上移避免首次调用导入开销）
-from server.chat_helpers import get_agent_config
-from server.prompt_builder import REALTIME_VOICE_PROMPT_PADDING
 
 logger = logging.getLogger(__name__)
 
@@ -840,57 +837,23 @@ async def lifespan(app: FastAPI):
             return False
 
         async def _warm_voice_prefix() -> bool:
-            """语音链路前缀预热：用 default agent 的完整 system_prompt（与
-            voice.dual_stream 实时语音 build_messages 结构一致）发送多轮流式请求，
-            预热 vLLM Triton JIT kernel shape 并建立 system_prompt 前缀 KV cache。
-            实测：无此预热时语音链路 LLM TTFT ~444ms；预热后 TTFT 降至 ~30ms
+            """语音链路前缀预热：遍历全部 agent，用各自完整 system_prompt（与
+            voice.dual_stream 实时语音 build_messages 结构一致）发送流式请求，
+            建立 system_prompt 前缀 KV cache。实测：无此预热时语音链路 LLM TTFT
+            ~444ms；预热后 TTFT 降至 ~30ms
             （证据 .trae/documents/20260817_模块0_服务端语音前缀预热.md）。
             注意：仅预热缓存，绝不修改/精简生产 system_prompt 内容。
             2026-08-23 起实时语音额外注入记忆（独立 system 消息，位于 system(padded)
             之后）。记忆是每次请求变化段，不参与前缀缓存；此处仍以
             system_prompt + padding + user 建立稳定前缀，vLLM 对 system 前缀 KV 保持
-            partial 命中，仅记忆/历史变化段每次 prefill，缓存优化仍然有效。"""
+            partial 命中，仅记忆/历史变化段每次 prefill，缓存优化仍然有效。
+            2026-09-19：由"仅 default agent"扩展为"全部 agent"——原实现下 EvalKit
+            一次性 eval agent 与用户新建 agent 的前缀不在 cache，首轮需全量 prefill
+            （~2747 tokens），TTFT 多付 ~320ms（全新前缀 395ms vs 重放 78ms）。"""
+            from server.core.llm.prefix_warmup import warm_agents_prefixes
+
             try:
-                _agent = get_agent_config("default") or {}
-                _system_prompt = (_agent.get("system_prompt") or "").strip()
-                if not _system_prompt:
-                    lifespan_logger.warning("语音前缀预热跳过：default agent 无 system_prompt")
-                    return True  # 无内容可预热，视为完成（不阻塞自愈循环）
-                # 与生产 build_messages(is_realtime_voice=True) 完全同构：
-                # system 末尾追加无害 padding，使完整 prompt >=360 tokens，
-                # 满足 vLLM prefix cache 写入/命中长度（>=353 tokens）阈值。
-                _voice_msgs = [
-                    {"role": "system", "content": _system_prompt + REALTIME_VOICE_PROMPT_PADDING},
-                    {"role": "user", "content": "你好"},
-                ]
-                _warm_success = 0
-                for _i in range(10):
-                    try:
-                        async with _warmup_client.stream(
-                            "POST", f"{_llm_url}/v1/chat/completions",
-                            json={
-                                "model": _llm_model,
-                                "messages": _voice_msgs,
-                                "stream": True,
-                                "max_tokens": 32,
-                            },
-                            timeout=30.0,
-                        ) as _ws_resp:
-                            if _ws_resp.status_code != 200:
-                                continue
-                            async for _chunk in _ws_resp.aiter_bytes():
-                                pass
-                            _warm_success += 1
-                    except Exception:
-                        continue
-                if _warm_success > 0:
-                    lifespan_logger.info(
-                        f"语音前缀预热完成：{_warm_success}/10 轮（system_prompt {len(_system_prompt)} "
-                        f"+ padding {len(REALTIME_VOICE_PROMPT_PADDING)} 字符，已含 prefix-cache padding）"
-                    )
-                    return True
-                lifespan_logger.warning("语音前缀预热全部失败（将由自愈循环重试）")
-                return False
+                return await warm_agents_prefixes()
             except Exception as _warm_prefix_e:
                 lifespan_logger.warning(f"语音前缀预热异常（将由自愈循环重试）: {_warm_prefix_e}")
                 return False

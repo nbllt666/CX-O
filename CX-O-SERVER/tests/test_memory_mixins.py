@@ -11,6 +11,7 @@
 import pytest
 
 from server.core.memory.manager import MemoryManager
+from server.core.memory.mixins.advanced_mixin import _AdvancedSearchMixin
 
 
 @pytest.fixture
@@ -348,3 +349,98 @@ class TestConnectionPool:
         # 重建后 use_count 重置，连接来自重建（新对象）
         assert mgr._connection_pool[thread_id]["use_count"] == 0
         assert rebuilt is not first
+
+
+# ================================================================ advanced_mixin 3D
+class _Fake3DCursor:
+    def __init__(self, rows):
+        self._rows = rows
+
+    def execute(self, *a, **k):
+        return self
+
+    def fetchall(self):
+        return self._rows
+
+
+class _Fake3DConn:
+    def __init__(self, rows):
+        self._rows = rows
+
+    def cursor(self):
+        return _Fake3DCursor(self._rows)
+
+
+class _Fake3DManager(_AdvancedSearchMixin):
+    """最小桩：仅提供 search_memories_3d 依赖的 _get_connection / _row_to_memory。"""
+
+    def __init__(self, memories):
+        self._memories = memories
+
+    def _get_connection(self):
+        return _Fake3DConn(self._memories)
+
+    def _row_to_memory(self, row):
+        return dict(row)
+
+
+class TestAdvancedSearch3D:
+    """3D 检索（/memories/3d）归一化乘法门控 + permanent +0.15 相对位次边界（T3 新增）。
+
+    公式：final = relevance × (w_i·importance + w_t·time) / (w_i+w_t)，
+    permanent 行在其上再加 0.15（随后统一 clamp [0,1]）。
+    """
+
+    def _row(self, **over):
+        base = {
+            "type": "long_term",
+            "content": "c",
+            "permanent": False,
+            "importance_score": 1.0,
+            "created_at": "2026-09-25T00:00:00",
+            "metadata": {},
+            "tags": [],
+            "reactivation_count": 0,
+        }
+        base.update(over)
+        return base
+
+    def test_gate_formula_and_permanent_boundary(self):
+        rows = [
+            # id=11 permanent、importance=1.0 → 0.5×1.0 + 0.15 = 0.65
+            self._row(id=11, score=0.5, importance_score=1.0, permanent=True),
+            # id=10 非 permanent、importance=1.0（time=1.0）→ 0.5×1.0 = 0.50
+            self._row(id=10, score=0.5, importance_score=1.0, permanent=False),
+            # id=12 permanent 但 importance=0.0 → 0.5×(0.25/0.6)+0.15 ≈ 0.358（永久不必然领先）
+            self._row(id=12, score=0.5, importance_score=0.0, permanent=True),
+            # id=13 relevance=0（importance/time 拉满）→ 0，门控闭合
+            self._row(id=13, score=0.0, importance_score=1.0, permanent=False),
+        ]
+        out = _Fake3DManager(rows).search_memories_3d(
+            "x", weights=(0.35, 0.25, 0.4), limit=10
+        )
+        assert [m["id"] for m in out] == [11, 10, 12, 13]
+        finals = {m["id"]: m["final_score"] for m in out}
+        assert finals[11] == pytest.approx(0.65)
+        assert finals[10] == pytest.approx(0.50)
+        assert finals[12] == pytest.approx(0.25 / 0.6 * 0.5 + 0.15)  # ≈0.358 < 0.50
+        assert finals[13] == pytest.approx(0.0)
+
+    def test_relevance_map_override_and_fallback(self):
+        """U1：relevance_map 命中用真实相似度；未命中/未提供回退缺省 0.5。"""
+        rows = [
+            self._row(id=21, score=0.9, importance_score=1.0),  # 映射命中 → 0.2
+            self._row(id=22, score=0.9, importance_score=1.0),  # 未命中 → 0.9
+        ]
+        out = _Fake3DManager(rows).search_memories_3d(
+            "x", weights=(0.35, 0.25, 0.4), limit=10, relevance_map={21: 0.2}
+        )
+        finals = {m["id"]: m["final_score"] for m in out}
+        assert finals[21] == pytest.approx(0.2)  # 0.2 × (1.0×0.35 + 1.0×0.25)/0.6
+        assert finals[22] == pytest.approx(0.9)  # 未命中 → 走 score 缺省路径
+
+        # 未提供映射 → 全部走 score 缺省路径（与修复前行为一致）
+        out2 = _Fake3DManager(rows).search_memories_3d("x", weights=(0.35, 0.25, 0.4), limit=10)
+        assert {m["id"]: m["final_score"] for m in out2}[21] == pytest.approx(0.9)
+        # relevance_weight 仍作为兼容字段输出（不参与公式）
+        assert out[0]["applied_weights"]["relevance"] == pytest.approx(0.4)

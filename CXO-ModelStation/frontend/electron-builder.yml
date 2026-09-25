@@ -1,0 +1,77 @@
+# CXO-ModelStation 桌面安装包配置（electron-builder）
+# change-id: package-modelstation-desktop-installer
+#
+# 目录约定（相对本文件所在目录 frontend/ 解析）：
+#   - app 目录 = frontend/（package.json / dist/ / dist-electron/ 所在）
+#   - output   = ../release → <CXO-ModelStation>/release（见仓库根 .gitignore）
+#
+# 零拷贝：extraResources 直指源目录（../modelstation, ../engines, ../data, ../build/runtime），
+# 打包全程对 modelstation/、engines/、data/、build/runtime 只读，不做 staging 二次拷贝。
+#
+# 运行时布局（冻结契约）：
+#   <安装根>/CXO-ModelStation.exe
+#   <安装根>/resources/{backend/modelstation, runtime/python/python.exe, engines/, data/}
+appId: com.cxo.modelstation
+productName: CXO-ModelStation
+
+directories:
+  output: ../release
+
+# 渲染层依赖已由 vite 内联进 dist/，故只收 3 项；
+# 显式列 files 且排除 node_modules —— 本项目 electron 系全在 devDependencies，
+# 不应把 node_modules 整包打进 app.asar。
+files:
+  - dist/**/*
+  - dist-electron/**/*
+  - package.json
+  - "!**/node_modules/**"
+
+extraResources:
+  - from: ../modelstation
+    to: backend/modelstation
+    filter:
+      - "**/*"
+      - "!**/__pycache__/**"
+      - "!**/*.pyc"
+      - "!**/.pytest_cache/**"
+  - from: ../engines
+    to: engines
+    filter:
+      - "**/*"
+      - "!**/__pycache__/**"
+      - "!**/*.pyc"
+      - "!**/.pytest_cache/**"
+      - "!**/.git/**"
+  - from: ../data
+    to: data
+    filter:
+      - "**/*"
+      - "!**/__pycache__/**"
+      - "!**/*.pyc"
+  - from: ../build/runtime
+    to: runtime
+    filter:
+      - "**/*"
+      - "!**/__pycache__/**"
+      - "!**/*.pyc"
+      - "!**/.pytest_cache/**"
+
+# 无可重建原生依赖（便携运行时已自带），跳过 npm rebuild 加速打包
+npmRebuild: false
+
+win:
+  target:
+    - dir
+    - nsis
+
+nsis:
+  oneClick: false
+  allowToChangeInstallationDirectory: true
+  createDesktopShortcut: true
+  perMachine: false
+  differentialPackage: false
+  artifactName: ${productName} Setup ${version}.${ext}
+
+# .npmrc 的 electron_mirror 在 npm 11 下会触发告警；在构建器配置里显式声明下载镜像
+electronDownload:
+  mirror: https://npmmirror.com/mirrors/electron/

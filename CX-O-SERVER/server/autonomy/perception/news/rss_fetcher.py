@@ -14,8 +14,6 @@ from __future__ import annotations
 import xml.etree.ElementTree as ET
 from typing import Dict, List
 
-import httpx
-
 from server.core.logging_config import get_contextual_logger
 
 logger = get_contextual_logger(__name__)
@@ -57,18 +55,25 @@ class RssFetcher:
         """逐个抓取全部 RSS 源并解析，返回汇总结果列表。
 
         单源失败记录日志并跳过，不阻断其余源；全部失败返回 []。
+
+        2026-09-25 全双工首包停滞修复：原实现每次调用新建 httpx.AsyncClient，
+        实测该机（Anaconda Python + certifi）单次构造耗时 **7979ms**
+        （其中 ssl.create_default_context(cafile=certifi.where()) 占 6074ms），
+        全部发生在事件循环上 → 每次新闻抓取阻塞循环 ~8s，期间实时语音首包被拖住
+        4~5.4s。改为复用 server.core.utils 的共享客户端（构造一次、按事件循环隔离，
+        与 api/routers/discovery.py 同一修复先例）；超时与跟随重定向改为按请求传入。
         """
+        from server.core.utils import get_shared_http_client
+
+        client = get_shared_http_client()
         results: List[Dict] = []
-        async with httpx.AsyncClient(
-            timeout=self.timeout, follow_redirects=True, trust_env=False, proxy=None
-        ) as client:
-            for url in self.urls:
-                try:
-                    response = await client.get(url)
-                    response.raise_for_status()
-                    results.extend(self._parse(url, response.text))
-                except Exception as e:
-                    logger.warning("抓取 RSS 源失败 %s: %s", url, e)
+        for url in self.urls:
+            try:
+                response = await client.get(url, timeout=self.timeout, follow_redirects=True)
+                response.raise_for_status()
+                results.extend(self._parse(url, response.text))
+            except Exception as e:
+                logger.warning("抓取 RSS 源失败 %s: %s", url, e)
         return results
 
     def _parse(self, source: str, xml_text: str) -> List[Dict]:

@@ -341,3 +341,13 @@ data/evalkit/
 # 放行 EvalKit 真实单测套件（上方 test_*.py 全局忽略规则会吞掉 tests/ 下的测试文件）
 !CXO-EvalKit/tests/test_*.py
 !CXO-EvalKit/tests/*_test.py
+
+# ----------------------------------------
+# CXO-ModelStation 桌面出包产物（electron-builder）
+# ----------------------------------------
+# 注：CXO-ModelStation/build/ 已被上方通用规则 `build/`（第 18 行）覆盖，故此处不再重复。
+# 安装包/便携目录（release 与形态试跑目录 release-nsis-trial 等）
+CXO-ModelStation/release/
+CXO-ModelStation/release-*/
+# Electron 主进程/预加载构建产物（vite-plugin-electron 输出，非源码）
+CXO-ModelStation/frontend/dist-electron/

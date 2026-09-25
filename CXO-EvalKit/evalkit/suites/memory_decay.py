@@ -558,8 +558,10 @@ def run_memory_decay(
     eval-agent-{run_id} 不可用——改为按 run 注册一次性真实 agent（服务端生成 id），
     清理时 delete_agent 由服务端连带清理记忆表/Weaviate/图库，隔离性更强。
     """
+    _owns_client = client is None
     if client is None:
         client = build_client(config)
+    _owns_judge = judge is None
     if judge is None:
         judge = build_judge(config)
     agent_meta = client.create_eval_agent(run_id)
@@ -607,6 +609,10 @@ def run_memory_decay(
             cleanup_result["agent_deleted"] = False
             cleanup_result["agent_delete_note"] = f"删除 eval agent 异常(已吞掉): {exc}"
         detail["cleanup"] = cleanup_result
+        if _owns_client:
+            client.close()
+        if _owns_judge:
+            judge.close()
 
     # ---- 指标汇总（summary 不放种子原文）----
     retention_matrix: Dict[Any, Dict[str, Optional[float]]] = {}

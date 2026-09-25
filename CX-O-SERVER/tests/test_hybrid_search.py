@@ -310,3 +310,69 @@ class TestBlankVectorGuard:
         results = await hs.search(opts)
         assert store.calls == []
         assert results == []
+
+
+class TestQueryEmbeddingReuse:
+    """query 嵌入单次复用（T3 新增）：注入向量优先，缺失时回退内部自算。"""
+
+    @pytest.mark.asyncio
+    async def test_injected_embedding_skips_embedding_call(self, hs):
+        store = FakeVectorStore(results=[{"memory_id": 1, "content": "c", "score": 0.9}])
+        emb = FakeEmbedding()
+        hs.vector_store = store
+        hs.embedding_model = emb
+        opts = HybridSearchOptions(
+            query="q", use_vector=True, use_keyword=False, query_embedding=[0.1, 0.2]
+        )
+        results = await hs.search(opts)
+        assert emb.calls == 0  # 注入向量 → 不再调用嵌入服务
+        assert len(results) == 1
+        assert results[0].source == "vector"
+
+    @pytest.mark.asyncio
+    async def test_missing_embedding_falls_back_to_self_compute(self, hs):
+        store = FakeVectorStore(results=[{"memory_id": 1, "content": "c", "score": 0.9}])
+        emb = FakeEmbedding()
+        hs.vector_store = store
+        hs.embedding_model = emb
+        opts = HybridSearchOptions(query="q", use_vector=True, use_keyword=False)  # 未注入
+        await hs.search(opts)
+        assert emb.calls == 1  # 缺失 → 回退自算，行为不变
+
+
+class TestAttemptedEmbeddingFlag:
+    """T5b: 失败状态传递——调用方已尝试且失败时，向量通道不重复调用嵌入服务。"""
+
+    @pytest.mark.asyncio
+    async def test_attempted_failure_skips_vector_channel(self, hs):
+        """flag=True + query_embedding=None → get_embedding 0 次、向量通道无结果。"""
+        store = FakeVectorStore(results=[{"memory_id": 1, "content": "c", "score": 0.9}])
+        emb = FakeEmbedding()
+        hs.vector_store = store
+        hs.embedding_model = emb
+        opts = HybridSearchOptions(
+            query="q",
+            use_vector=True,
+            use_keyword=False,
+            query_embedding=None,
+            query_embedding_attempted=True,
+        )
+        results = await hs.search(opts)
+        assert emb.calls == 0  # 已尝试且失败 → 不再重复调用嵌入服务
+        assert store.calls == []  # 未进入相似度检索
+        assert results == []  # 等价于"嵌入失败 → 向量通道无结果"
+
+    @pytest.mark.asyncio
+    async def test_attempted_failure_with_blank_vector_direct(self, hs):
+        """flag=True + query_embedding=[]（空白向量）→ _vector_search 直接返回 []。"""
+        store = FakeVectorStore(results=[{"memory_id": 1, "content": "c", "score": 0.9}])
+        emb = FakeEmbedding()
+        hs.vector_store = store
+        hs.embedding_model = emb
+        opts = HybridSearchOptions(
+            query="q",
+            query_embedding=[],
+            query_embedding_attempted=True,
+        )
+        assert await hs._vector_search(opts) == []
+        assert emb.calls == 0

@@ -36,6 +36,46 @@ class TargetHttpError(TargetError):
         super().__init__(f"HTTP {status_code}: {detail}")
 
 
+class _SharedSession:
+    """共享 httpx.Client 上的轻量请求代理（借用语义）。
+
+    背景：httpx 每次构造 Client 会重建 HTTPTransport，在 Windows 上实测约 6.6 s
+    （默认 verify=True 的 SSL 初始化路径；显式传 context/verify=False 则 <1 ms，
+    而 TCP 建连仅 1 ms）。评测探针逐请求新建会让每次探测凭空多付该开销，
+    直接污染 elapsed_ms 口径（实测单探针 9801 ms vs 复用连接 3204 ms）。
+
+    本代理把 per-call timeout 绑定到**请求参数**而非 client 属性，因此：
+    - 保持"每次调用可指定不同超时"的原语义；
+    - 并发档位下不会因共享 client 的 timeout 属性互相覆盖；
+    - 调用方 `with self._client(...) as c: c.get/post/delete(...)` 写法零改动。
+    __exit__ 不关闭底层——client 生命周期由 TargetClient.close() 管理。
+    """
+
+    __slots__ = ("_client", "_timeout")
+
+    def __init__(self, client: httpx.Client, timeout: float):
+        self._client = client
+        self._timeout = timeout
+
+    def __enter__(self) -> "_SharedSession":
+        return self
+
+    def __exit__(self, *exc_info) -> bool:
+        return False
+
+    def get(self, url: str, **kwargs):
+        kwargs.setdefault("timeout", self._timeout)
+        return self._client.get(url, **kwargs)
+
+    def post(self, url: str, **kwargs):
+        kwargs.setdefault("timeout", self._timeout)
+        return self._client.post(url, **kwargs)
+
+    def delete(self, url: str, **kwargs):
+        kwargs.setdefault("timeout", self._timeout)
+        return self._client.delete(url, **kwargs)
+
+
 class TargetClient:
     """主服务 REST 客户端。transport 参数供测试注入 httpx.MockTransport。"""
 
@@ -43,18 +83,32 @@ class TargetClient:
         self.base_url = config.target.base_url.rstrip("/")
         self.admin_api_key = config.target.admin_api_key
         self._transport = transport
+        # 持久共享连接（懒初始化）：避免逐请求重建 HTTPTransport 的固定开销
+        self._shared: Optional[httpx.Client] = None
 
     # ------------------------------------------------------------------
     # 内部工具
     # ------------------------------------------------------------------
-    def _client(self, timeout: float = DEFAULT_TIMEOUT) -> httpx.Client:
+    def _client(self, timeout: float = DEFAULT_TIMEOUT) -> "_SharedSession":
         # trust_env=False：httpx 默认会经 urllib 读 Windows 注册表系统代理，
         # 企业代理环境下 localhost:8000 请求被转给代理返回 502（实测教训）。
         # 本客户端只直连被测主服务，必须绕过一切系统代理。
-        return httpx.Client(
-            base_url=self.base_url, timeout=timeout, transport=self._transport,
-            trust_env=False,
-        )
+        #
+        # 懒初始化不加锁：httpx.Client 本身线程安全（连接池内置锁），且首次调用
+        # 必发生在 suite 的串行探测阶段（_run_e2e_phase / _run_retrieval_phase），
+        # 到并发档位（ThreadPoolExecutor）时 _shared 已就绪，故不存在初始化竞态。
+        if self._shared is None:
+            self._shared = httpx.Client(
+                base_url=self.base_url, timeout=DEFAULT_TIMEOUT,
+                transport=self._transport, trust_env=False,
+            )
+        return _SharedSession(self._shared, timeout)
+
+    def close(self) -> None:
+        """关闭共享连接（幂等）。suite 结束后调用，释放连接池。"""
+        if self._shared is not None:
+            self._shared.close()
+            self._shared = None
 
     @staticmethod
     def _unwrap(resp: httpx.Response) -> Dict[str, Any]:

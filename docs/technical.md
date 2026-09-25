@@ -400,11 +400,13 @@ memories(
 ```
 最近交互记忆（session tag 召回，最多 100）
   + 检索结果（hybrid 向量+关键词，或 SQL LIKE）
+→ 按 id 去重合并（同 id 保留检索分数，缺字段以 recent 行补齐）
+→ 无检索分数候选先经批量嵌入计算真实相关性 (1+cos)/2（嵌入不可用时回退缺省 0.5）
 → _score_memories 三维打分 → _apply_filters 过滤
 → _apply_scene_adjustment 场景调整 → 取 config.max_memories 条
 ```
 
-- **三维打分**：`final_score = importance·w₁ + time·w₂ + relevance·w₃`。
+- **三维打分**：`final_score = relevance × (w_importance·importance + w_time·time) / (w_importance + w_time)`。相关性为**乘性门控**（`relevance=0 → 0` 分，importance/time 不可补偿）；`relevance_weight` 保留为配置兼容字段，不参与公式。
 - **场景感知权重**：按 `scene_type` 切换权重（`_get_weights`）——
 
 | 场景 | importance | time | relevance |
@@ -420,7 +422,7 @@ memories(
 - **过滤规则**：永久记忆始终保留；`score >= high_priority_threshold(0.8)` 或 `>= min_score_threshold` 保留；显式提及的记忆保留。
 - **混合检索**（`hybrid_search.py`）：`vector_weight=0.6`、`keyword_weight=0.4`、`min_score=0.2`。
 
-**3D 检索** `search_memories_3d`（`advanced_mixin`）：默认权重 `(0.35, 0.25, 0.4)`，对每条记忆并行计算 importance / time / relevance，永久记忆 +0.15 加成，按 `final_score` 排序。
+**3D 检索** `search_memories_3d`（`advanced_mixin`）：默认权重 `(0.35, 0.25, 0.4)`，套用与主链路相同的**乘法门控公式**；relevance 仍取行缺省 `0.5`（LIKE 查询无相似度来源）；永久记忆 `+0.15` 加成保留，按 `final_score` 排序。
 
 ### 5.4 衰减机制（核心公式）
 

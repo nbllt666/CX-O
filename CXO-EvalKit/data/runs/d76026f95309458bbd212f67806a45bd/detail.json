@@ -1,0 +1,797 @@
+{
+  "suite": "latency",
+  "run_id": "d76026f95309458bbd212f67806a45bd",
+  "status": "failed",
+  "judgment": {
+    "overall_p95_ms": 9708.427,
+    "threshold_p95_ms": 2000.0,
+    "passed": false
+  },
+  "summary": {
+    "suite": "latency",
+    "status": "failed",
+    "started_at": "2026-09-25T13:44:59.151504+00:00",
+    "finished_at": "2026-09-25T13:50:25.353681+00:00",
+    "config": {
+      "rounds": 3,
+      "probe_timeout_seconds": 180.0,
+      "concurrency_levels": [
+        1
+      ],
+      "agent_id": "default"
+    },
+    "thresholds": {
+      "p95_ms": 2000.0,
+      "regression_pct": 20.0
+    },
+    "overall": {
+      "count": 21,
+      "mean": 6409.296,
+      "p50": 6730.509,
+      "p95": 9708.427,
+      "p99": 12465.028,
+      "min": 2501.083,
+      "max": 13154.178,
+      "failed_count": 0,
+      "failure_rate": 0.0
+    },
+    "by_probe": {
+      "greet_short": {
+        "count": 3,
+        "mean": 6816.286,
+        "p50": 3745.641,
+        "p95": 12213.324,
+        "p99": 12966.007,
+        "min": 3549.038,
+        "max": 13154.178
+      },
+      "greet_morning": {
+        "count": 3,
+        "mean": 3747.842,
+        "p50": 3789.45,
+        "p95": 3918.546,
+        "p99": 3930.021,
+        "min": 3521.185,
+        "max": 3932.89
+      },
+      "daily_medium": {
+        "count": 3,
+        "mean": 5933.451,
+        "p50": 6649.978,
+        "p95": 6884.174,
+        "p99": 6904.992,
+        "min": 4240.179,
+        "max": 6910.196
+      },
+      "mood_long": {
+        "count": 3,
+        "mean": 6839.256,
+        "p50": 6756.193,
+        "p95": 7003.577,
+        "p99": 7025.567,
+        "min": 6730.509,
+        "max": 7031.064
+      },
+      "story_long": {
+        "count": 3,
+        "mean": 9659.723,
+        "p50": 9699.542,
+        "p95": 9707.538,
+        "p99": 9708.249,
+        "min": 9571.2,
+        "max": 9708.427
+      },
+      "nostalgia_long": {
+        "count": 3,
+        "mean": 8729.997,
+        "p50": 8738.169,
+        "p95": 8784.305,
+        "p99": 8788.406,
+        "min": 8662.392,
+        "max": 8789.431
+      },
+      "goodnight_short": {
+        "count": 3,
+        "mean": 3138.52,
+        "p50": 2547.949,
+        "p95": 4184.671,
+        "p99": 4330.157,
+        "min": 2501.083,
+        "max": 4366.529
+      }
+    },
+    "retrieval": {
+      "rounds": 5,
+      "limit": 5,
+      "search_memories": {
+        "q_self_preference": {
+          "count": 5,
+          "mean": 5.873,
+          "p50": 3.725,
+          "p95": 10.413,
+          "p99": 10.976,
+          "min": 3.434,
+          "max": 11.117,
+          "failed_count": 0
+        },
+        "q_recent_event": {
+          "count": 5,
+          "mean": 3.67,
+          "p50": 3.514,
+          "p95": 4.39,
+          "p99": 4.506,
+          "min": 3.232,
+          "max": 4.535,
+          "failed_count": 0
+        }
+      },
+      "rag_search": {
+        "q_self_preference": {
+          "count": 5,
+          "mean": 77.0,
+          "p50": 75.56,
+          "p95": 83.362,
+          "p99": 84.615,
+          "min": 73.492,
+          "max": 84.928,
+          "failed_count": 0
+        },
+        "q_recent_event": {
+          "count": 5,
+          "mean": 87.638,
+          "p50": 85.221,
+          "p95": 102.912,
+          "p99": 103.837,
+          "min": 73.763,
+          "max": 104.068,
+          "failed_count": 0
+        }
+      }
+    },
+    "concurrency": {
+      "levels": {
+        "1": {
+          "count": 7,
+          "mean": 4709.383,
+          "p50": 4279.56,
+          "p95": 7152.346,
+          "p99": 7204.866,
+          "min": 2392.155,
+          "max": 7217.996,
+          "failed_count": 0,
+          "failure_rate": 0.0
+        }
+      },
+      "degradation": {
+        "1": {
+          "p95_ratio": 1.0
+        }
+      }
+    },
+    "baseline": {
+      "baseline_run_id": null,
+      "baseline_missing": true,
+      "reason": "未配置 baseline_run_id"
+    },
+    "ws_full_duplex": {
+      "enabled": true,
+      "turns": [
+        {
+          "turn_index": 0,
+          "timings": {
+            "asr_first_partial": 423.2,
+            "prefill_started": 423.7,
+            "tts_first_audio": 1559.0,
+            "asr_final": 1772.5,
+            "tts_done": 8343.3,
+            "vad_speech_end": 8971.7
+          },
+          "timeout": false,
+          "error": null,
+          "asr_text": "你好 你好 你好呀 你好呀 你好呀 你好呀 你好呀 你好呀 你好呀 你好呀 碎 碎 碎 碎 碎 碎新过得怎么 最近过得怎么样 我的 我在 我在 我在 我在 我在 我在研究怎 我在研究怎 我在研究怎 我在研究怎 我在研究怎 我在研究怎么把日 我在研究怎么把日 我在研究怎么把日子 过 过 过 过 过 过得更有意 过得更有意 过得更有意思一点",
+          "speech_end_offset_ms": 8460.0
+        },
+        {
+          "turn_index": 1,
+          "timings": {
+            "asr_first_partial": 362.7,
+            "prefill_started": 363.1,
+            "tts_first_audio": 868.8,
+            "asr_final": 1742.8,
+            "tts_done": 4769.1
+          },
+          "timeout": false,
+          "error": null,
+          "asr_text": "你好 你好 你好呀 你好呀 你好呀 你好呀 你好呀 你好呀 你好呀 你好呀 碎 碎 碎 碎 碎 碎新过得怎么 最近过得怎么样 我的 我在 我在 我在 我在 我在",
+          "speech_end_offset_ms": 8460.0
+        },
+        {
+          "turn_index": 2,
+          "timings": {
+            "asr_first_partial": 392.8,
+            "prefill_started": 393.2,
+            "tts_first_audio": 1097.7,
+            "asr_final": 1772.8,
+            "tts_done": 6891.7,
+            "vad_speech_end": 8971.7
+          },
+          "timeout": false,
+          "error": null,
+          "asr_text": "你好 你好 你好呀 你好呀 你好呀 你好呀 你好呀 你好呀 你好呀 你好呀 碎 碎 碎 碎 碎 碎新过得怎么 最近过得怎么样 我的 我在 我在 我在 我在 我在 我在研究怎 我在研究怎 我在研究怎 我在研究怎 我在研究怎 我在研究怎么把日 我在研究怎么把日 我在研究怎么把日子 过 过 过 过 过 过得更有意 过得更有意 过得更有意思一点",
+          "speech_end_offset_ms": 8460.0
+        },
+        {
+          "turn_index": 3,
+          "timings": {
+            "asr_first_partial": 393.9,
+            "prefill_started": 394.3,
+            "tts_first_audio": 1105.6,
+            "asr_final": 1802.5,
+            "tts_done": 8002.2,
+            "vad_speech_end": 8971.6
+          },
+          "timeout": false,
+          "error": null,
+          "asr_text": "你好 你好 你好呀 你好呀 你好呀 你好呀 你好呀 你好呀 你好呀 你好呀 碎 碎 碎 碎 碎 碎新过得怎么 最近过得怎么样 我的 我在 我在 我在 我在 我在 我在研究怎 我在研究怎 我在研究怎 我在研究怎 我在研究怎 我在研究怎么把日 我在研究怎么把日 我在研究怎么把日子 过 过 过 过 过 过得更有意 过得更有意 过得更有意思一点",
+          "speech_end_offset_ms": 8460.0
+        },
+        {
+          "turn_index": 4,
+          "timings": {
+            "asr_first_partial": 423.0,
+            "prefill_started": 423.4,
+            "tts_first_audio": 1173.4,
+            "asr_final": 1772.4,
+            "vad_speech_end": 8971.9,
+            "tts_done": 9973.2
+          },
+          "timeout": false,
+          "error": null,
+          "asr_text": "你好 你好 你好呀 你好呀 你好呀 你好呀 你好呀 你好呀 你好呀 你好呀 碎 碎 碎 碎 碎 碎新过得怎么 最近过得怎么样 我的 我在 我在 我在 我在 我在 我在研究怎 我在研究怎 我在研究怎 我在研究怎 我在研究怎 我在研究怎么把日 我在研究怎么把日 我在研究怎么把日子 过 过 过 过 过 过得更有意 过得更有意 过得更有意思一点",
+          "speech_end_offset_ms": 8460.0
+        },
+        {
+          "turn_index": 5,
+          "timings": {
+            "asr_first_partial": 453.0,
+            "prefill_started": 453.4,
+            "tts_first_audio": 1154.6,
+            "asr_final": 1772.5,
+            "tts_done": 6895.9,
+            "vad_speech_end": 8971.8
+          },
+          "timeout": false,
+          "error": null,
+          "asr_text": "你好 你好 你好呀 你好呀 你好呀 你好呀 你好呀 你好呀 你好呀 你好呀 碎 碎 碎 碎 碎 碎新过得怎么 最近过得怎么样 我的 我在 我在 我在 我在 我在 我在研究怎 我在研究怎 我在研究怎 我在研究怎 我在研究怎 我在研究怎么把日 我在研究怎么把日 我在研究怎么把日子 过 过 过 过 过 过得更有意 过得更有意 过得更有意思一点",
+          "speech_end_offset_ms": 8460.0
+        },
+        {
+          "turn_index": 6,
+          "timings": {
+            "asr_first_partial": 425.3,
+            "prefill_started": 425.8,
+            "tts_first_audio": 1090.7,
+            "asr_final": 1742.3,
+            "vad_speech_end": 8972.4,
+            "tts_done": 9223.7
+          },
+          "timeout": false,
+          "error": null,
+          "asr_text": "你好 你好 你好呀 你好呀 你好呀 你好呀 你好呀 你好呀 你好呀 你好呀 碎 碎 碎 碎 碎 碎新过得怎么 最近过得怎么样 我的 我在 我在 我在 我在 我在 我在研究怎 我在研究怎 我在研究怎 我在研究怎 我在研究怎 我在研究怎么把日 我在研究怎么把日 我在研究怎么把日子 过 过 过 过 过 过得更有意 过得更有意 过得更有意思一点",
+          "speech_end_offset_ms": 8460.0
+        },
+        {
+          "turn_index": 7,
+          "timings": {
+            "asr_first_partial": 392.6,
+            "prefill_started": 392.9,
+            "tts_first_audio": 1102.7,
+            "asr_final": 1742.0,
+            "tts_done": 5803.1
+          },
+          "timeout": false,
+          "error": null,
+          "asr_text": "你好 你好 你好呀 你好呀 你好呀 你好呀 你好呀 你好呀 你好呀 你好呀 碎 碎 碎 碎 碎 碎新过得怎么 最近过得怎么样 我的 我在 我在 我在 我在 我在 我在研究怎 我在研究怎 我在研究怎 我在研究怎 我在研究怎",
+          "speech_end_offset_ms": 8460.0
+        },
+        {
+          "turn_index": 8,
+          "timings": {
+            "asr_first_partial": 392.8,
+            "prefill_started": 393.1,
+            "tts_first_audio": 1041.0,
+            "asr_final": 1802.0,
+            "tts_done": 5446.0
+          },
+          "timeout": false,
+          "error": null,
+          "asr_text": "你好 你好 你好呀 你好呀 你好呀 你好呀 你好呀 你好呀 你好呀 你好呀 碎 碎 碎 碎 碎 碎新过得怎么 最近过得怎么样 我的 我在 我在 我在 我在 我在 我在研究怎 我在研究怎 我在研究怎 我在研究怎 我在研究怎",
+          "speech_end_offset_ms": 8460.0
+        }
+      ],
+      "stats": {
+        "stages": {
+          "asr_first_partial": {
+            "count": 9,
+            "mean": 406.6,
+            "p50": 393.9,
+            "p95": 441.9,
+            "min": 362.7,
+            "max": 453.0
+          },
+          "asr_final": {
+            "count": 9,
+            "mean": 1769.1,
+            "p50": 1772.5,
+            "p95": 1802.3,
+            "min": 1742.0,
+            "max": 1802.5
+          },
+          "prefill_started": {
+            "count": 9,
+            "mean": 407.0,
+            "p50": 394.3,
+            "p95": 442.4,
+            "min": 363.1,
+            "max": 453.4
+          },
+          "tts_first_audio": {
+            "count": 9,
+            "mean": 1132.6,
+            "p50": 1102.7,
+            "p95": 1404.8,
+            "min": 868.8,
+            "max": 1559.0
+          },
+          "tts_done": {
+            "count": 9,
+            "mean": 7260.9,
+            "p50": 6895.9,
+            "p95": 9673.4,
+            "min": 4769.1,
+            "max": 9973.2
+          },
+          "vad_speech_end": {
+            "count": 6,
+            "mean": 8971.9,
+            "p50": 8971.8,
+            "p95": 8972.3,
+            "min": 8971.6,
+            "max": 8972.4
+          }
+        },
+        "first_partial_to_first_audio": {
+          "count": 9,
+          "mean": 726.0,
+          "p50": 704.9,
+          "p95": 981.6,
+          "min": 506.1,
+          "max": 1135.8
+        },
+        "speech_end_to_first_audio": {
+          "count": 9,
+          "mean": 0.0,
+          "p50": 0.0,
+          "p95": 0.0,
+          "min": 0.0,
+          "max": 0.0
+        },
+        "asr_final_to_first_audio": {
+          "count": 9,
+          "mean": 0.0,
+          "p50": 0.0,
+          "p95": 0.0,
+          "min": 0.0,
+          "max": 0.0
+        },
+        "stream_to_first_audio": {
+          "count": 9,
+          "mean": 1132.6,
+          "p50": 1102.7,
+          "p95": 1404.8,
+          "min": 868.8,
+          "max": 1559.0
+        },
+        "segmentation_wait": {
+          "count": 9,
+          "mean": 0.0,
+          "p50": 0.0,
+          "p95": 0.0,
+          "min": 0.0,
+          "max": 0.0
+        },
+        "timeouts": 0,
+        "errors": 0
+      },
+      "failure_reason": "全双工首包 P95 981.6 ms 超过阈值 800.0 ms",
+      "judgment": {
+        "ws_p95": 981.6,
+        "threshold_ws_p95_ms": 800.0,
+        "passed": false
+      },
+      "cleanup": {
+        "agent_deleted": true
+      }
+    },
+    "judgment": {
+      "overall_p95_ms": 9708.427,
+      "threshold_p95_ms": 2000.0,
+      "passed": false
+    }
+  },
+  "probes": [
+    {
+      "id": "greet_short",
+      "message": "在吗？"
+    },
+    {
+      "id": "greet_morning",
+      "message": "早上好呀，今天天气不错，你那边怎么样？"
+    },
+    {
+      "id": "daily_medium",
+      "message": "今天上班有点累，晚上想看点轻松的东西，有什么推荐吗？"
+    },
+    {
+      "id": "mood_long",
+      "message": "最近有点迷茫，工作节奏很快，感觉自己一直在赶进度，很难停下来好好想想自己真正想要什么。\n你也会有这种感觉吗？如果有的话，你一般是怎么调适的？"
+    },
+    {
+      "id": "story_long",
+      "message": "跟你说个事，今天回家路上遇到一只流浪猫，蹲在便利店门口，看起来好几天没吃东西了。\n我买了点火腿肠喂它，它吃完也不走，就那样一直看着我。\n我有点纠结要不要带回家养，又担心自己照顾不好它。"
+    },
+    {
+      "id": "nostalgia_long",
+      "message": "这周末整理旧照片，翻到几年前的旅行合集，突然特别想念那时候的自己，说走就走，也不怕迷路。\n现在做任何决定之前都要反复权衡，好像快乐变复杂了。\n你会怀念以前的自己吗？还是觉得成长本来就是这样？"
+    },
+    {
+      "id": "goodnight_short",
+      "message": "晚安，做个好梦。"
+    }
+  ],
+  "raw": {
+    "e2e": {
+      "rounds": 3,
+      "samples_by_probe": {
+        "greet_short": [
+          13154.177999997046,
+          3549.037699995097,
+          3745.641000001342
+        ],
+        "greet_morning": [
+          3521.1849000043003,
+          3932.8899000101956,
+          3789.4502999988617
+        ],
+        "daily_medium": [
+          6649.978000001283,
+          6910.195900010876,
+          4240.178600011859
+        ],
+        "mood_long": [
+          6756.193000008352,
+          6730.509000000893,
+          7031.064499999047
+        ],
+        "story_long": [
+          9708.42690000427,
+          9571.20040000882,
+          9699.542000002111
+        ],
+        "nostalgia_long": [
+          8662.391500009107,
+          8738.169100004598,
+          8789.431400000467
+        ],
+        "goodnight_short": [
+          4366.5287000039825,
+          2547.949100000551,
+          2501.082699993276
+        ]
+      },
+      "failures": []
+    },
+    "retrieval": {
+      "rounds": 5,
+      "queries": [
+        {
+          "id": "q_self_preference",
+          "query": "我之前说过自己喜欢的电影是什么来着？"
+        },
+        {
+          "id": "q_recent_event",
+          "query": "帮我回忆一下我上周提到的那家餐厅叫什么名字。"
+        }
+      ],
+      "samples": {
+        "search_memories": {
+          "q_self_preference": [
+            11.11710000259336,
+            7.597499992698431,
+            3.724599999259226,
+            3.4940000041387975,
+            3.4336000098846853
+          ],
+          "q_recent_event": [
+            4.535000000032596,
+            3.81070000003092,
+            3.260400000726804,
+            3.5139999963575974,
+            3.2318999874405563
+          ]
+        },
+        "rag_search": {
+          "q_self_preference": [
+            75.55999999749474,
+            77.097400004277,
+            84.9278000096092,
+            73.92070000059903,
+            73.49249999970198
+          ],
+          "q_recent_event": [
+            85.22120000270661,
+            98.28869999910239,
+            73.76280000607949,
+            76.84870000230148,
+            104.06789999979082
+          ]
+        }
+      },
+      "failures": []
+    },
+    "concurrency": {
+      "1": {
+        "samples": [
+          2392.1550000086427,
+          2923.1415999965975,
+          4279.560399998445,
+          6186.116700002458,
+          7217.995700004394,
+          6999.165000001085,
+          2967.5462000013795
+        ],
+        "failures": []
+      }
+    },
+    "ws_full_duplex": {
+      "enabled": true,
+      "turns": [
+        {
+          "turn_index": 0,
+          "timings": {
+            "asr_first_partial": 423.2,
+            "prefill_started": 423.7,
+            "tts_first_audio": 1559.0,
+            "asr_final": 1772.5,
+            "tts_done": 8343.3,
+            "vad_speech_end": 8971.7
+          },
+          "timeout": false,
+          "error": null,
+          "asr_text": "你好 你好 你好呀 你好呀 你好呀 你好呀 你好呀 你好呀 你好呀 你好呀 碎 碎 碎 碎 碎 碎新过得怎么 最近过得怎么样 我的 我在 我在 我在 我在 我在 我在研究怎 我在研究怎 我在研究怎 我在研究怎 我在研究怎 我在研究怎么把日 我在研究怎么把日 我在研究怎么把日子 过 过 过 过 过 过得更有意 过得更有意 过得更有意思一点",
+          "speech_end_offset_ms": 8460.0
+        },
+        {
+          "turn_index": 1,
+          "timings": {
+            "asr_first_partial": 362.7,
+            "prefill_started": 363.1,
+            "tts_first_audio": 868.8,
+            "asr_final": 1742.8,
+            "tts_done": 4769.1
+          },
+          "timeout": false,
+          "error": null,
+          "asr_text": "你好 你好 你好呀 你好呀 你好呀 你好呀 你好呀 你好呀 你好呀 你好呀 碎 碎 碎 碎 碎 碎新过得怎么 最近过得怎么样 我的 我在 我在 我在 我在 我在",
+          "speech_end_offset_ms": 8460.0
+        },
+        {
+          "turn_index": 2,
+          "timings": {
+            "asr_first_partial": 392.8,
+            "prefill_started": 393.2,
+            "tts_first_audio": 1097.7,
+            "asr_final": 1772.8,
+            "tts_done": 6891.7,
+            "vad_speech_end": 8971.7
+          },
+          "timeout": false,
+          "error": null,
+          "asr_text": "你好 你好 你好呀 你好呀 你好呀 你好呀 你好呀 你好呀 你好呀 你好呀 碎 碎 碎 碎 碎 碎新过得怎么 最近过得怎么样 我的 我在 我在 我在 我在 我在 我在研究怎 我在研究怎 我在研究怎 我在研究怎 我在研究怎 我在研究怎么把日 我在研究怎么把日 我在研究怎么把日子 过 过 过 过 过 过得更有意 过得更有意 过得更有意思一点",
+          "speech_end_offset_ms": 8460.0
+        },
+        {
+          "turn_index": 3,
+          "timings": {
+            "asr_first_partial": 393.9,
+            "prefill_started": 394.3,
+            "tts_first_audio": 1105.6,
+            "asr_final": 1802.5,
+            "tts_done": 8002.2,
+            "vad_speech_end": 8971.6
+          },
+          "timeout": false,
+          "error": null,
+          "asr_text": "你好 你好 你好呀 你好呀 你好呀 你好呀 你好呀 你好呀 你好呀 你好呀 碎 碎 碎 碎 碎 碎新过得怎么 最近过得怎么样 我的 我在 我在 我在 我在 我在 我在研究怎 我在研究怎 我在研究怎 我在研究怎 我在研究怎 我在研究怎么把日 我在研究怎么把日 我在研究怎么把日子 过 过 过 过 过 过得更有意 过得更有意 过得更有意思一点",
+          "speech_end_offset_ms": 8460.0
+        },
+        {
+          "turn_index": 4,
+          "timings": {
+            "asr_first_partial": 423.0,
+            "prefill_started": 423.4,
+            "tts_first_audio": 1173.4,
+            "asr_final": 1772.4,
+            "vad_speech_end": 8971.9,
+            "tts_done": 9973.2
+          },
+          "timeout": false,
+          "error": null,
+          "asr_text": "你好 你好 你好呀 你好呀 你好呀 你好呀 你好呀 你好呀 你好呀 你好呀 碎 碎 碎 碎 碎 碎新过得怎么 最近过得怎么样 我的 我在 我在 我在 我在 我在 我在研究怎 我在研究怎 我在研究怎 我在研究怎 我在研究怎 我在研究怎么把日 我在研究怎么把日 我在研究怎么把日子 过 过 过 过 过 过得更有意 过得更有意 过得更有意思一点",
+          "speech_end_offset_ms": 8460.0
+        },
+        {
+          "turn_index": 5,
+          "timings": {
+            "asr_first_partial": 453.0,
+            "prefill_started": 453.4,
+            "tts_first_audio": 1154.6,
+            "asr_final": 1772.5,
+            "tts_done": 6895.9,
+            "vad_speech_end": 8971.8
+          },
+          "timeout": false,
+          "error": null,
+          "asr_text": "你好 你好 你好呀 你好呀 你好呀 你好呀 你好呀 你好呀 你好呀 你好呀 碎 碎 碎 碎 碎 碎新过得怎么 最近过得怎么样 我的 我在 我在 我在 我在 我在 我在研究怎 我在研究怎 我在研究怎 我在研究怎 我在研究怎 我在研究怎么把日 我在研究怎么把日 我在研究怎么把日子 过 过 过 过 过 过得更有意 过得更有意 过得更有意思一点",
+          "speech_end_offset_ms": 8460.0
+        },
+        {
+          "turn_index": 6,
+          "timings": {
+            "asr_first_partial": 425.3,
+            "prefill_started": 425.8,
+            "tts_first_audio": 1090.7,
+            "asr_final": 1742.3,
+            "vad_speech_end": 8972.4,
+            "tts_done": 9223.7
+          },
+          "timeout": false,
+          "error": null,
+          "asr_text": "你好 你好 你好呀 你好呀 你好呀 你好呀 你好呀 你好呀 你好呀 你好呀 碎 碎 碎 碎 碎 碎新过得怎么 最近过得怎么样 我的 我在 我在 我在 我在 我在 我在研究怎 我在研究怎 我在研究怎 我在研究怎 我在研究怎 我在研究怎么把日 我在研究怎么把日 我在研究怎么把日子 过 过 过 过 过 过得更有意 过得更有意 过得更有意思一点",
+          "speech_end_offset_ms": 8460.0
+        },
+        {
+          "turn_index": 7,
+          "timings": {
+            "asr_first_partial": 392.6,
+            "prefill_started": 392.9,
+            "tts_first_audio": 1102.7,
+            "asr_final": 1742.0,
+            "tts_done": 5803.1
+          },
+          "timeout": false,
+          "error": null,
+          "asr_text": "你好 你好 你好呀 你好呀 你好呀 你好呀 你好呀 你好呀 你好呀 你好呀 碎 碎 碎 碎 碎 碎新过得怎么 最近过得怎么样 我的 我在 我在 我在 我在 我在 我在研究怎 我在研究怎 我在研究怎 我在研究怎 我在研究怎",
+          "speech_end_offset_ms": 8460.0
+        },
+        {
+          "turn_index": 8,
+          "timings": {
+            "asr_first_partial": 392.8,
+            "prefill_started": 393.1,
+            "tts_first_audio": 1041.0,
+            "asr_final": 1802.0,
+            "tts_done": 5446.0
+          },
+          "timeout": false,
+          "error": null,
+          "asr_text": "你好 你好 你好呀 你好呀 你好呀 你好呀 你好呀 你好呀 你好呀 你好呀 碎 碎 碎 碎 碎 碎新过得怎么 最近过得怎么样 我的 我在 我在 我在 我在 我在 我在研究怎 我在研究怎 我在研究怎 我在研究怎 我在研究怎",
+          "speech_end_offset_ms": 8460.0
+        }
+      ],
+      "stats": {
+        "stages": {
+          "asr_first_partial": {
+            "count": 9,
+            "mean": 406.6,
+            "p50": 393.9,
+            "p95": 441.9,
+            "min": 362.7,
+            "max": 453.0
+          },
+          "asr_final": {
+            "count": 9,
+            "mean": 1769.1,
+            "p50": 1772.5,
+            "p95": 1802.3,
+            "min": 1742.0,
+            "max": 1802.5
+          },
+          "prefill_started": {
+            "count": 9,
+            "mean": 407.0,
+            "p50": 394.3,
+            "p95": 442.4,
+            "min": 363.1,
+            "max": 453.4
+          },
+          "tts_first_audio": {
+            "count": 9,
+            "mean": 1132.6,
+            "p50": 1102.7,
+            "p95": 1404.8,
+            "min": 868.8,
+            "max": 1559.0
+          },
+          "tts_done": {
+            "count": 9,
+            "mean": 7260.9,
+            "p50": 6895.9,
+            "p95": 9673.4,
+            "min": 4769.1,
+            "max": 9973.2
+          },
+          "vad_speech_end": {
+            "count": 6,
+            "mean": 8971.9,
+            "p50": 8971.8,
+            "p95": 8972.3,
+            "min": 8971.6,
+            "max": 8972.4
+          }
+        },
+        "first_partial_to_first_audio": {
+          "count": 9,
+          "mean": 726.0,
+          "p50": 704.9,
+          "p95": 981.6,
+          "min": 506.1,
+          "max": 1135.8
+        },
+        "speech_end_to_first_audio": {
+          "count": 9,
+          "mean": 0.0,
+          "p50": 0.0,
+          "p95": 0.0,
+          "min": 0.0,
+          "max": 0.0
+        },
+        "asr_final_to_first_audio": {
+          "count": 9,
+          "mean": 0.0,
+          "p50": 0.0,
+          "p95": 0.0,
+          "min": 0.0,
+          "max": 0.0
+        },
+        "stream_to_first_audio": {
+          "count": 9,
+          "mean": 1132.6,
+          "p50": 1102.7,
+          "p95": 1404.8,
+          "min": 868.8,
+          "max": 1559.0
+        },
+        "segmentation_wait": {
+          "count": 9,
+          "mean": 0.0,
+          "p50": 0.0,
+          "p95": 0.0,
+          "min": 0.0,
+          "max": 0.0
+        },
+        "timeouts": 0,
+        "errors": 0
+      },
+      "failure_reason": "全双工首包 P95 981.6 ms 超过阈值 800.0 ms",
+      "judgment": {
+        "ws_p95": 981.6,
+        "threshold_ws_p95_ms": 800.0,
+        "passed": false
+      },
+      "cleanup": {
+        "agent_deleted": true
+      }
+    }
+  }
+}

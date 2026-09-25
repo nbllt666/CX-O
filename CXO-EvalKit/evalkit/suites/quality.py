@@ -193,10 +193,12 @@ def run_quality_suite(
     suite 内部完成 finish_run 终态化与 save_run_artifacts 明细落盘。
     """
     started_at = _now()
+    _owns_client = client is None
     if client is None:
         from evalkit.target import build_client  # 局部导入避免环
 
         client = build_client(config)
+    _owns_judge = judge is None
     if judge is None:
         from evalkit.judge import build_judge  # 局部导入避免环
 
@@ -214,6 +216,10 @@ def run_quality_suite(
         except TargetError as exc:
             detail.setdefault("cleanup", {})["agent_deleted"] = False
             detail["cleanup"]["note"] = f"删除 eval agent 异常(已吞掉): {exc}"
+        if _owns_client:
+            client.close()
+        if _owns_judge:
+            judge.close()
         _write_terminal(store, run_id, summary, detail, error)  # 原始终态化（勿改为 _finish）
 
     # ---- 回放阶段: 逐脚本逐轮 chat，网络失败记入 failed_turns 并继续 ----

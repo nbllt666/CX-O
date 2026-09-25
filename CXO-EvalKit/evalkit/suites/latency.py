@@ -448,6 +448,7 @@ def run_latency_suite(
     与 save_run_artifacts 明细落盘。
     """
     started_at = _now()
+    _owns_client = client is None
     if client is None:
         from evalkit.target import build_client  # 局部导入避免环
 
@@ -470,6 +471,8 @@ def run_latency_suite(
             {"suite": SUITE_NAME, "run_id": run_id, "status": "error", "error": error},
         )
         store.finish_run(run_id, "error", error=error)
+        if _owns_client:
+            client.close()
         return {"suite": SUITE_NAME, "status": "error", "error": error, "finished_at": _now()}
 
     # ---- 检索与并发采样 ----
@@ -580,4 +583,6 @@ def run_latency_suite(
     }
     store.save_run_artifacts(run_id, detail)
     store.finish_run(run_id, summary["status"], metrics_summary=summary)
+    if _owns_client:
+        client.close()  # 自建 client 释放共享连接；外部注入的由调用方管理
     return summary

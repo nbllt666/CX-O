@@ -56,6 +56,7 @@ import time
 import wave
 
 import numpy as np
+from collections import OrderedDict
 
 from fastapi import Request
 from fastapi.responses import JSONResponse, Response, StreamingResponse
@@ -173,14 +174,27 @@ async def _stream_wav_pcm(gen, native_sr: int, volume: float = 1.0):
     _t0 = time.monotonic()
     _first = True
     yield _make_wav_header(SYNTH_SAMPLE_RATE, 0xFFFFFFFF)
-    for out in gen:
+    _gen = gen.__iter__() if hasattr(gen, "__iter__") else gen
+    while True:
+        _t_next = time.monotonic()
+        try:
+            out = next(_gen)
+        except StopIteration:
+            break
+        _t_now = time.monotonic()
         speech = out["tts_speech"]
         t = speech.detach().cpu().numpy()
         if t.ndim == 2:
             t = t.mean(axis=0)
         t = np.asarray(t, dtype=np.float32).reshape(-1)
         if _first:
+            # next() 耗时 = 轮询等 token 就绪 + 首 hop token2wav；
+            # 减去 [PROBE-HOP] 记录的首 hop 耗时即得"等 token"一段。
             print(f"[CosyVoice] first audio at {time.monotonic()-_t0:.2f}s len={t.size/SYNTH_SAMPLE_RATE:.2f}s")
+            if os.environ.get("PROBE_FIRST_HOP", "").lower() in ("true", "1", "yes"):
+                _next_ms = (_t_now - _t_next) * 1000.0
+                print(f"[PROBE-FIRST-NEXT] next()={_next_ms:.0f}ms 其中首hop={_PROBE_LAST_HOP_MS:.0f}ms "
+                      f"等token+帧(≈含10ms轮询粒度)={_next_ms - _PROBE_LAST_HOP_MS:.0f}ms", flush=True)
             _first = False
         if t.size == 0:
             continue
@@ -200,6 +214,11 @@ async def _stream_wav_pcm_keepalive(gen, native_sr: int, volume: float = 1.0):
     异常）后计数 -1；计数归零（count==0）即恢复保活——并发流式下每请求只减
     自己的份额，不会提前恢复。详见 .trae/documents/20260817_模块0_GPU保活增强消除降频.md
     """
+    # noqa: PLW0603 —— _active_count 为模块级引用计数，函数内读-改-写需显式 global
+    # （2026-09-19 修复：原实现漏此声明 → `_active_count -= 1` 被判为局部变量，
+    #  UnboundLocalError 使流式请求必然 500。该缺陷仅在重建镜像后暴露——
+    #  现行容器运行的仍是镜像内烘焙的旧版 server.py，其无引用计数机制。）
+    global _active_count
     try:
         async for chunk in _stream_wav_pcm(gen, native_sr, volume=volume):
             yield chunk
@@ -611,6 +630,10 @@ def create_app():
 
     @app.post("/v1/audio/speech")
     async def speech(request: Request):
+        # noqa: PLW0603 —— 请求引用计数（暂停 GPU 保活）为模块级变量；本函数内为
+        # 读-改-写，必须显式 global（2026-09-19 修复：原实现漏此声明，
+        # `_active_count += 1` 被判定为局部变量 → UnboundLocalError 使所有 TTS 请求 500）
+        global _active_count
         try:
             data = await request.json()
         except Exception:
@@ -818,9 +841,91 @@ def _run_warmup(cv, args) -> None:
         ):
             pass
         print(f">> Streaming warmup complete in {time.monotonic()-_ts0:.1f}s")
+        _warmup_production_shapes(cv, args)
         print(f">> Warmup complete in {time.monotonic()-t0:.1f}s")
     except Exception as exc:
         print(f"[WARN] Warmup failed (server will still start): {exc}")
+
+
+def _warmup_production_shapes(cv, args) -> None:
+    """启动阶段用**生产参考音频**做一次流式合成，提前捕获 hift CUDA graph 的生产 shape。
+
+    动机（2026-09-24）：hift decode 中间段 CUDA graph 按 shape 缓存，首次遇到新 shape
+    需 warmup+capture（数十至上百 ms）。生产首请求因此比稳态慢（实测 first audio
+    0.72~0.77s vs 稳态 0.20~0.21s）。此处用与生产**同一份**参考音频预跑一次流式，
+    使生产 shape 在启动期即被捕获 —— 首个真实请求直接命中快路径。
+
+    为何必须用生产参考音频：hop 的 shape 由「首 hop token 数（token_hop_len +
+    prompt_token_pad + pre_lookahead_len）× token_mel_ratio」决定，其中
+    prompt_token_pad 依赖参考音频的 speech token 长度。**换任何其它音频得到的是
+    不同 shape，缓存不会命中**（这正是原 patch 失效的机理）。故本函数复用生产
+    ref_audio_assets 目录（由部署脚本以只读方式挂载）。
+
+    目录不可用/解析失败时静默跳过（回落为"首请求承担捕获成本"的既有行为）。
+    """
+    try:
+        import json as _json
+
+        _dir = getattr(args, "warmup_ref_assets", "") or ""
+        if not _dir or not os.path.isdir(_dir):
+            print(f"[WARN] 生产 ref 目录不可用，跳过 shape 预热: {_dir!r}")
+            return
+
+        # 解析默认资产：current.json 的 asset_id 优先，缺失则取目录内第一个 wav
+        _asset_id = ""
+        _cur = os.path.join(_dir, "current.json")
+        if os.path.isfile(_cur):
+            try:
+                with open(_cur, "r", encoding="utf-8") as _f:
+                    _asset_id = str((_json.load(_f) or {}).get("asset_id") or "")
+            except Exception as _e:
+                print(f"[WARN] 读取 current.json 失败: {_e}")
+        _wav = os.path.join(_dir, f"{_asset_id}.wav") if _asset_id else ""
+        if not _wav or not os.path.isfile(_wav):
+            _cands = sorted(_f for _f in os.listdir(_dir) if _f.endswith(".wav"))
+            if not _cands:
+                print(f"[WARN] 生产 ref 目录内无 wav，跳过 shape 预热: {_dir!r}")
+                return
+            _wav = os.path.join(_dir, _cands[0])
+            print(f"[INFO] current.json 未命中，改用目录内首个 wav: {_cands[0]}")
+
+        # 与 speech 端点同构：同样的加载（16k）、同样的 speaker id（内容 hash）、
+        # 同样的 prompt_text（cross_lingual 模式仅含 <|endofprompt|> 标记）。
+        with open(_wav, "rb") as _f:
+            _raw = _f.read()
+        _zid = f"spk_{hashlib.sha1(_raw).hexdigest()[:16]}"
+        _pw = _load_wav_bytes(_raw, 16000)
+        # cross_lingual 模式（生产默认）的 prompt_text 仅含 <|endofprompt|> 标记，
+        # 与 speech 端点的 _spk_prompt 口径一致。注：prompt_text 不影响 hop shape
+        # （首 hop token 数由门槛决定），此处保持一致只为消除变量。
+        _spk_prompt = "You are a helpful assistant.<|endofprompt|>"
+        print(">> Running production-shape warmup (stream=True, 生产 ref) ...")
+        _tp0 = time.monotonic()
+        # ⚠ 关键：tts() 流式循环会把 token_hop_len 自增至 token_max_hop_len
+        # （*= stream_scale_factor），上一次 streaming warmup 结束后已变为 100。
+        # 必须先复位到生产值，否则本次预热的首 hop token 数（= token_hop_len +
+        # prompt_token_pad + pre_lookahead_len）与生产请求不一致 → 产出的 shape
+        # 与生产 shape 不匹配 → 预捕的 graph 永远不被命中（首测即因此失效）。
+        # 生产侧由 speech 端点每请求复位，此处对齐同一口径。
+        if args.stream_hop_len and hasattr(cv.model, "token_hop_len"):
+            cv.model.token_hop_len = int(args.stream_hop_len)
+            if hasattr(cv.model, "token_min_hop_len"):
+                cv.model.token_min_hop_len = int(args.stream_hop_len)
+            cv.model.token_max_hop_len = max(
+                cv.model.token_max_hop_len, 4 * int(args.stream_hop_len)
+            )
+        if _zid not in cv.frontend.spk2info:
+            cv.add_zero_shot_spk(_spk_prompt, _pw, _zid)
+        # 短文本即可：首 hop 的 token 数 = token_hop_len + prompt_token_pad +
+        # pre_lookahead_len，与文本长度无关；首 hop shape 恰是首块延迟的关键。
+        for _ in cv.inference_zero_shot(
+            "你好", _spk_prompt, _pw, zero_shot_spk_id=_zid, stream=True, speed=1.0
+        ):
+            pass
+        print(f">> Production-shape warmup complete in {time.monotonic()-_tp0:.1f}s "
+              f"(ref={os.path.basename(_wav)}, spk={_zid})")
+    except Exception as exc:  # noqa: BLE001 —— 预热失败不阻塞启动
+        print(f"[WARN] 生产 shape 预热失败（不阻塞启动，首请求将自行捕获）: {exc}")
 
 
 # GPU 保活信号：_active_count 为进行中请求数（引用计数）。并发流式请求会重叠，
@@ -831,6 +936,17 @@ def _run_warmup(cv, args) -> None:
 # finally），天然串行无竞写；保活线程仅做读取（GIL 下 int 读取原子）。
 # 详见 .trae/documents/20260817_模块0_GPU保活增强消除降频.md
 _active_count = 0  # >0 = 有请求进行中（暂停保活），==0 = 空闲（保活可执行 GEMM）
+
+# 首 hop 插桩状态（_patch_first_hop_probe，见该函数文档；仅 PROBE_FIRST_HOP=true 时使用）
+_PROBE_MAX = 24          # 最多打印次数的上限（warmup 亦会触发首 hop，故需留足稳态配额）
+_PROBE_HOP_PRINTED = 0   # 已打印次数
+_PROBE_LAST_HOP_MS = -1.0  # 最近一次首 hop 总耗时（ms），供 _stream_wav_pcm 打点相减
+# hift decode CUDA graph 命中观测（_patch_hift_decode_cudagraph；仅 PROBE 时记录）
+_HIFT_GRAPH_SEEN: dict = {}  # (key, finalize) -> 出现次数（每 key 最多打印 2 次）
+# hift decode 中间段 CUDA graph 多 shape 缓存上限（2026-09-24）：
+# 稳态实测每请求出现 3~4 个流式 hop shape（首 hop 最短，后续按 token_hop_len 递增），
+# 8 个上限留足余量且显存占用仅数 MB（单 graph 静态缓冲约 0.1~1MB）。
+_HIFT_GRAPH_MAX = 8
 
 
 class _SpeechHttpError(Exception):
@@ -855,8 +971,9 @@ class _SpeechHttpError(Exception):
 # `import threading as _threading` 别名（模块级执行时 NameError），已改回 threading。
 _SYNTH_LOCK = threading.Lock()
 
-# 模型态互斥锁：保护 hift CUDA graph patch 的静态缓冲（xc_static/sstft_static/
-# mag_out/phase_out 等 closure 单例）与 cosyvoice.model.token_hop_len 等跨请求
+# 模型态互斥锁：保护 hift CUDA graph patch 的静态缓冲（每个 shape 一份
+# xc_static/sstft_static/mag_out/phase_out，2026-09-24 起为按 shape 的缓冲表，
+# 此前为单 shape 的 closure 单例）与 cosyvoice.model.token_hop_len 等跨请求
 # 共享模型态。并发流式请求若同时执行 copy_→replay→读静态输出，会把对方输入写进
 # 同一静态缓冲产生错乱音频；token_hop_len 复位与流式 hop 推进同理。锁粒度仅覆盖
 # 模型态写段，不覆盖网络/文本处理。
@@ -870,6 +987,14 @@ def _patch_hift_decode_cudagraph(cosyvoice) -> bool:
     （conv_pre 之后、istft 之前）占 decode 主要耗时（实测 conv 段 67ms→4ms、diff=0）。
     stft/_istft（cuFFT）保留 eager，仅中间段捕获为 CUDA graph；shape 命中走 graph 静态缓冲，
     shape 不匹配/异常自动回退原始 decode，保证输出完全一致。
+
+    2026-09-24 修复（多 shape 缓存）：原实现为**单 shape 单例**（`state["graph"]` +
+    单个 `captured_key`），且"捕获仅在 `graph is None` 时进行"——生产各 hop 的 shape
+    随 `token_hop_len` 递增与首 hop 长 prompt_feat 而变化，与 warmup 捕获的 shape 恒不同，
+    于是既不命中也不再捕获，**该 patch 自上线起从未在生产生效**（插桩实测全部 hop
+    走 eager，首 hop hift 77~79ms）。现改为 `state["graphs"]` 按 key 缓存（上限
+    `_HIFT_GRAPH_MAX`），每个新 shape 各捕获一次，稳态请求第 2 次起全部命中。
+    仅缓存 `finalize=False`（流式 hop）；尾块 shape 随文本长度变化，无复用价值。
 
     采用闭包方案（不依赖 types.MethodType 显式绑定 self）：将 hift 模块与原 decode 捕获进
     闭包，`h.decode = wrapped_decode` 直接赋给实例属性，避免绑定冲突导致
@@ -891,16 +1016,17 @@ def _patch_hift_decode_cudagraph(cosyvoice) -> bool:
         orig_decode = h.decode  # 原始 decode（未绑定实例的类方法函数）
 
         # 可变状态（闭包持有，跨调用保持）
+        # graphs：key(xc.shape, s_stft.shape) -> {graph, xc_static, sstft_static, mag_out, phase_out}
+        # 多 shape 缓存（2026-09-24 修复）：原实现为单 shape 单例 + captured_key 单值比较，
+        # 而生产各 hop 的 shape 随 token_hop_len 增长与首 hop 长 prompt_feat 而变化，
+        # 且 warmup 捕获的是 warmup 自身 shape → 生产恒不匹配；又因"捕获仅在 graph is None
+        # 时进行"的分支死角，不匹配后既不命中也不再捕获 → 该 patch 自上线起从未在生产生效
+        # （实测全部 hop 走 eager）。改为按 key 缓存，每个新 shape 各捕获一次。
         # graph_failed / graph_retry_left：capture 失败退避标记——失败后不再逐 hop 重试
         # （每次重试含 3 次 warmup+capture，持续失败会持续劣化性能），每模型进程生命
         # 周期至多重试一次，重试机会耗尽后只走 eager 路径（见 wrapped_decode）。
         state = {
-            "graph": None,
-            "xc_static": None,
-            "sstft_static": None,
-            "mag_out": None,
-            "phase_out": None,
-            "captured_key": None,
+            "graphs": OrderedDict(),  # LRU：命中移尾，满则淘汰最久未用（见 _capture）
             "device": None,
             "graph_failed": False,
             "graph_retry_left": 1,
@@ -947,8 +1073,9 @@ def _patch_hift_decode_cudagraph(cosyvoice) -> bool:
                 window=h.stft_window.to(magnitude.device),
             )
 
-        def _capture(xc: _t.Tensor, s_stft: _t.Tensor):
-            """按 (xc, s_stft) 形状捕获中间段 CUDA graph。失败记 graph_failed 标记（保持 eager，退避见 wrapped_decode）。"""
+        def _capture(xc: _t.Tensor, s_stft: _t.Tensor, key) -> bool:
+            """按 (xc, s_stft) 形状捕获中间段 CUDA graph 并存入 state['graphs'][key]。
+            失败记 graph_failed 标记（保持 eager，退避见 wrapped_decode）。"""
             try:
                 dev = xc.device
                 state["device"] = dev
@@ -963,16 +1090,42 @@ def _patch_hift_decode_cudagraph(cosyvoice) -> bool:
                 with _t.cuda.graph(g):
                     mag_g, phase_g = _middle(xc_s, s_s)
                 _t.cuda.synchronize()
-                state.update(graph=g, xc_static=xc_s, sstft_static=s_s,
-                             mag_out=mag_g, phase_out=phase_g,
-                             captured_key=(tuple(xc.shape), tuple(s_stft.shape)))
+                # LRU 写入：满则先淘汰最久未用（释放其静态缓冲），再存入本 shape。
+                # 生产 shape 集合随文本长度变化，固定上限若只增不汰会被"一次性 shape"
+                # 占满（实测首个请求即占用 5 个），导致长文本的新 shape 无法缓存。
+                while len(state["graphs"]) >= _HIFT_GRAPH_MAX:
+                    _evicted, _ = state["graphs"].popitem(last=False)
+                    print(f"[Patch] hift graph 淘汰最久未用 shape {_evicted[0]}/{_evicted[1]}"
+                          f"（缓存已满 {_HIFT_GRAPH_MAX}）")
+                state["graphs"][key] = {
+                    "graph": g, "xc_static": xc_s, "sstft_static": s_s,
+                    "mag_out": mag_g, "phase_out": phase_g,
+                }
+                # 捕获后一致性自检（仅捕获时一次，零常态开销）：同一输入下
+                # replay 与 eager 应数值一致——这是"graph 不改变音频"的直接证据，
+                # 避免依赖历史结论（原文档称 diff=0，但该 patch 从未在生产命中过，
+                # 其正确性未在生产路径上被验证过）。异常不影响正确性（已有 eager 回退）。
+                try:
+                    with _t.no_grad():
+                        mag_e, phase_e = _middle(xc_s, s_s)
+                    out_e = _istft(mag_e, phase_e)
+                    g.replay()
+                    out_g = _istft(mag_g, phase_g)
+                    _t.cuda.synchronize()
+                    _diff = float((out_e - out_g).abs().max())
+                    print(f"[Patch] hift graph 自检 {key[0]}/{key[1]}: "
+                          f"max|eager-replay|={_diff:.3e} "
+                          f"{'OK' if _diff < 1e-3 else '⚠ 偏差偏大，请核查'}")
+                except Exception as _chk_exc:  # noqa: BLE001
+                    print(f"[WARN] hift graph 自检执行失败（不影响 graph 使用）: {_chk_exc}")
                 print(f"[Patch] hift decode middle CUDA graph captured for "
-                      f"{tuple(xc.shape)}/{tuple(s_stft.shape)}")
+                      f"{key[0]}/{key[1]}（缓存 {len(state['graphs'])}/{_HIFT_GRAPH_MAX}）")
+                return True
             except Exception as exc:  # noqa: BLE001 - 捕获失败不影响正确性
-                state["graph"] = None
                 state["graph_failed"] = True  # 失败标记：停止逐 hop 重试（退避见 wrapped_decode）
                 print(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] [WARN] hift decode CUDA graph capture "
                       f"failed (mark graph_failed, eager-only until retry): {exc}")
+                return False
 
         def wrapped_decode(x: _t.Tensor, s: _t.Tensor, finalize: bool = True) -> _t.Tensor:
             """替代 hift.decode。stft/conv_pre/istft eager；中间 conv 段走 CUDA graph（shape 匹配时）。"""
@@ -989,37 +1142,88 @@ def _patch_hift_decode_cudagraph(cosyvoice) -> bool:
                 s_stft = _t.cat([s_stft_r, s_stft_i], dim=1)
                 key = (tuple(xc.shape), tuple(s_stft.shape))
 
-                if (not finalize and state["graph"] is not None
-                        and key == state["captured_key"]
+                # 观测打点（仅 PROBE_FIRST_HOP）：打印每种新出现的 shape 及其是否命中
+                # 已缓存的 graph。用于判定生产 hop 是否真的走过 replay 快路径。
+                if os.environ.get("PROBE_FIRST_HOP", "").lower() in ("true", "1", "yes"):
+                    _seen_key = (key, bool(finalize))
+                    _cnt = _HIFT_GRAPH_SEEN.get(_seen_key, 0) + 1
+                    _HIFT_GRAPH_SEEN[_seen_key] = _cnt
+                    if _cnt <= 2:  # 每 key 打印前两次（第 2 次即证明该 shape 跨请求可复现）
+                        _entry = state["graphs"].get(key)
+                        _hit = (not finalize and _entry is not None
+                                and xc.device == state["device"]
+                                and s_stft.device == state["device"])
+                        print(
+                            f"[PROBE-HIFT] #{_cnt} xc={key[0]} s={key[1]} finalize={finalize} "
+                            f"缓存={len(state['graphs'])}/{_HIFT_GRAPH_MAX} "
+                            f"命中={'是' if _hit else '否'}", flush=True,
+                        )
+
+                _entry = state["graphs"].get(key)
+                if (not finalize and _entry is not None
                         and xc.device == state["device"]
                         and s_stft.device == state["device"]):
                     # shape 命中：copy 输入进静态缓冲 → replay → 读静态输出。
-                    # 并发流式语义：xc_static/sstft_static/mag_out/phase_out 是闭包
-                    # 单例（跨请求共享），copy_→replay→消费输出（istft/clamp 生成
+                    # 并发流式语义：每个 shape 的 xc_static/sstft_static/mag_out/phase_out
+                    # 是闭包共享的静态缓冲，copy_→replay→消费输出（istft/clamp 生成
                     # 独立张量）必须整段持 _MODEL_STATE_LOCK 原子完成，否则并发请求
                     # 交叉写同一静态缓冲会产生错乱音频；返回值不再引用静态缓冲。
+                    # entry 在锁内重取（锁外的 _entry 仅用于快速分流）——另一线程可能
+                    # 已按 LRU 淘汰该 key，锁外引用会致 move_to_end 抛 KeyError。
                     with _MODEL_STATE_LOCK:
-                        xc_c = xc.contiguous()
-                        s_stft_c = s_stft.contiguous()
-                        with _t.no_grad():
-                            state["xc_static"].copy_(xc_c)
-                            state["sstft_static"].copy_(s_stft_c)
-                            state["graph"].replay()
-                        out = _istft(state["mag_out"], state["phase_out"])
-                        out = out[:, :-int(U * h.istft_params["hop_len"])]
-                        return _t.clamp(out, -h.audio_limit, h.audio_limit)
+                        _entry = state["graphs"].get(key)
+                        if _entry is not None:
+                            state["graphs"].move_to_end(key)  # LRU：标记为最近使用
+                            xc_c = xc.contiguous()
+                            s_stft_c = s_stft.contiguous()
+                            with _t.no_grad():
+                                _entry["xc_static"].copy_(xc_c)
+                                _entry["sstft_static"].copy_(s_stft_c)
+                                _entry["graph"].replay()
+                            out = _istft(_entry["mag_out"], _entry["phase_out"])
+                            out = out[:, :-int(U * h.istft_params["hop_len"])]
+                            out = _t.clamp(out, -h.audio_limit, h.audio_limit)
+                            # 命中路径自检（每 shape 仅首次，由 PROBE_FIRST_HOP 门控）：
+                            # 本次输入与"捕获时输入"必然不同，故可现场验证 replay
+                            # 确实消费了 copy_ 进来的新输入——捕获时自检喂的是同一份
+                            # 输入，无法区分"正确 graph"与"replay 冻结输入"这一失效模式。
+                            # 门控理由：该自检需额外跑一次 eager `_middle`+`_istft`
+                            # （实测约 70ms），属诊断能力而非生产必需——graph 计算正确性
+                            # 已由**捕获时自检**保证（同为 diff=0）。
+                            if (os.environ.get("PROBE_FIRST_HOP", "").lower() in ("true", "1", "yes")
+                                    and not _entry.get("live_verified")):
+                                _entry["live_verified"] = True
+                                try:
+                                    with _t.no_grad():
+                                        _mag_e, _ph_e = _middle(xc, s_stft)
+                                    _out_e = _istft(_mag_e, _ph_e)
+                                    _out_e = _out_e[:, :-int(U * h.istft_params["hop_len"])]
+                                    _out_e = _t.clamp(_out_e, -h.audio_limit, h.audio_limit)
+                                    _d = float((_out_e - out).abs().max())
+                                    print(f"[Patch] hift graph 命中自检 {key[0]}/{key[1]}: "
+                                          f"max|eager-replay|={_d:.3e} "
+                                          f"{'OK' if _d < 1e-3 else '⚠ 偏差偏大，请核查'}",
+                                          flush=True)
+                                except Exception as _chk2:  # noqa: BLE001
+                                    print(f"[WARN] hift graph 命中自检执行失败: {_chk2}", flush=True)
+                            return out
 
-                # eager 或捕获新 graph（首 hop / shape 变化时在此捕获）。
+                # 该 shape 尚未缓存 → 捕获（多 shape 缓存 + LRU，2026-09-24 修复）。
+                # 原实现"仅在 graph is None 时捕获"存在死角：一旦捕获过任一 shape，
+                # 其余 shape 便永不命中也不再捕获 → 全部 eager。改为按 key 判定；
+                # 上限由 _capture 内的 LRU 淘汰保证（此处不再以长度阻塞，否则缓存
+                # 被一次性 shape 占满后新 shape 永久无法缓存）。
+                # 仅缓存 finalize=False（流式 hop）：尾块 shape 随文本长度变化，缓存无复用价值。
                 # 并发语义：capture 的 warmup+捕获需独占 CUDA stream（其他线程并发提交
                 # 会破坏捕获），与 replay 路径同锁（_MODEL_STATE_LOCK）串行化；capture
                 # 失败记 graph_failed 后不再逐 hop 重试，每模型进程生命周期至多重试一次，
                 # 重试机会耗尽后只走 eager 路径。
-                if (not finalize and state["graph"] is None
+                if (not finalize and _entry is None
                         and (not state["graph_failed"] or state["graph_retry_left"] > 0)):
                     with _MODEL_STATE_LOCK:
                         if state["graph_failed"] and state["graph_retry_left"] > 0:
                             state["graph_retry_left"] -= 1  # 消耗最后一次重试机会
-                        _capture(xc, s_stft)
+                        _capture(xc, s_stft, key)
 
                 # eager 计算段（shape 不匹配 / capture 失败 / finalize 尾块）：与 replay
                 # 共享 hift 模块与窗口，同样纳入 _MODEL_STATE_LOCK 防跨线程并发 forward。
@@ -1039,6 +1243,98 @@ def _patch_hift_decode_cudagraph(cosyvoice) -> bool:
     except Exception as exc:
         print(f"[WARN] hift decode CUDA graph patch failed (keep eager): {exc}")
         return False
+
+
+def _patch_first_hop_probe(cosyvoice) -> bool:
+    """首 hop 耗时逐段插桩（方案 C 定位固定开销，2026-09-19）。
+
+    动机：容器内 `first audio` 稳态 ~0.27s，其中 flow(1 步)~100ms 与 hift~40ms 已由
+    `--flow-steps` 扫描外推，但仍有 ~120ms 归属不明（残差推断）。本 patch 在**首 hop**
+    （`token_offset == 0`）拆出三段，用于定位剩余开销：
+
+        total = token2wav 整体（含 .to(device) 搬运、autocast、切片、hift cache 拼接）
+        flow  = flow.inference() 耗时
+        hift  = hift.inference() 耗时
+        准备  = total - flow - hift   ← 即"固定开销"候选
+
+    实现要点（零侵入第三方源码，沿用本文件既有 _patch_* 风格）：
+      - 仅包装 `model.token2wav`；**非首 hop 直通**（不改异步流水线，零干扰）；
+      - 仅首 hop 加 `synchronize()` 取真实 GPU 耗时——首 hop 本即同步点（须拿到结果
+        才能 yield），故扰动可忽略；
+      - 由环境变量 `PROBE_FIRST_HOP=true` 门控，默认不安装（生产零开销）；
+      - 打印上限 `_PROBE_MAX` 次，避免长跑刷屏。
+    """
+    global _PROBE_HOP_PRINTED, _PROBE_LAST_HOP_MS  # noqa: PLW0603 —— 在 _t2w_probe 内赋值
+    import os as _os
+
+    if _os.environ.get("PROBE_FIRST_HOP", "").lower() not in ("true", "1", "yes"):
+        return False
+    if not hasattr(cosyvoice, "model"):
+        return False
+
+    import torch as _t
+
+    _model = cosyvoice.model
+    _orig_t2w = _model.token2wav
+
+    def _sync() -> None:
+        if _t.cuda.is_available():
+            _t.cuda.current_stream().synchronize()
+
+    def _t2w_probe(*a, **kw):
+        # 嵌套函数内对模块级计数器有赋值，必须重复 global 声明（否则被视作局部变量）
+        global _PROBE_HOP_PRINTED, _PROBE_LAST_HOP_MS
+        # 仅首 hop 插桩；非首 hop 直通（含 finalize 收尾 hop 也不测）
+        _off = kw.get("token_offset")
+        if _off is None and len(a) >= 5:
+            _off = a[4]
+        if _off != 0 or _PROBE_HOP_PRINTED >= _PROBE_MAX:
+            return _orig_t2w(*a, **kw)
+
+        _flow_orig = _model.flow.inference
+        _hift_orig = _model.hift.inference
+        _acc: dict = {}
+
+        def _flow_probe(*aa, **kk):
+            _t0 = time.monotonic()
+            _r = _flow_orig(*aa, **kk)
+            _sync()
+            _acc["flow"] = (time.monotonic() - _t0) * 1000.0
+            return _r
+
+        def _hift_probe(*aa, **kk):
+            _t0 = time.monotonic()
+            _r = _hift_orig(*aa, **kk)
+            _sync()
+            _acc["hift"] = (time.monotonic() - _t0) * 1000.0
+            return _r
+
+        _model.flow.inference = _flow_probe
+        _model.hift.inference = _hift_probe
+        _t_total0 = time.monotonic()
+        try:
+            _res = _orig_t2w(*a, **kw)
+            _sync()
+            _total = (time.monotonic() - _t_total0) * 1000.0
+        finally:
+            _model.flow.inference = _flow_orig
+            _model.hift.inference = _hift_orig
+
+        _flow_ms = _acc.get("flow", -1.0)
+        _hift_ms = _acc.get("hift", -1.0)
+        _prep_ms = _total - max(0.0, _flow_ms) - max(0.0, _hift_ms)
+        _PROBE_LAST_HOP_MS = _total
+        print(
+            f"[PROBE-HOP] 首 hop 总计={_total:.0f}ms "
+            f"flow={_flow_ms:.0f}ms hift={_hift_ms:.0f}ms 准备(搬运+autocast+切片)={_prep_ms:.0f}ms",
+            flush=True,
+        )
+        _PROBE_HOP_PRINTED += 1
+        return _res
+
+    _model.token2wav = _t2w_probe
+    print(f"[Patch] first-hop latency probe installed (PROBE_FIRST_HOP, max {_PROBE_MAX} prints)")
+    return True
 
 
 def _start_gpu_keepalive() -> None:
@@ -1097,6 +1393,9 @@ def main() -> None:
                     help="启用 fp16/bf16 推理（CosyVoice2Model fp16 标志）")
     ap.add_argument("--assets_dir", default=r"C:\CX-O\CX-O-SERVER\data\ref_audio_assets")
     ap.add_argument("--tmp_dir", default=r"C:\CX-O\docker\llm\cosyvoice_tmp")
+    ap.add_argument("--warmup-ref-assets", default="/workspace/ref_assets",
+                    help="生产参考音频资产目录（只读挂载）——启动预热用它预捕 hift CUDA graph 的"
+                         "生产 shape，消除首个真实请求的捕获开销；不可用时静默跳过")
     ap.add_argument("--no-warmup", action="store_true",
                     help="跳过启动预热（默认启动时预热一次完整合成）")
     ap.add_argument("--stream-hop-len", type=int, default=None,
@@ -1238,6 +1537,10 @@ def main() -> None:
     # 6) hift.decode 中间段 CUDA graph 加速（2026-08-18）：conv 段 67ms→4ms、diff=0；
     #    仅流式 hop（finalize=False）首段命中，shape 变化/失败自动回退 eager。
     _patch_hift_decode_cudagraph(cosyvoice)
+
+    # 首 hop 耗时逐段插桩（方案 C 定位固定开销）：仅 PROBE_FIRST_HOP=true 时安装，
+    # 生产默认关闭。见 _patch_first_hop_probe 文档。
+    _patch_first_hop_probe(cosyvoice)
 
     # 流式首 hop token 数覆盖（减小可降低首包延迟；仅当显式指定时）
     # 注意：tts() 流式循环用 token_min_hop_len 作为首 hop 初始值（CosyVoice3 默认 100），
