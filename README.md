@@ -92,6 +92,8 @@ cd APP-Frontend
 
 浏览器打开 `http://localhost:3100`，第一次会引导你确认后端连接，连上就能开始用了。
 
+> 模型工作站也能**装成桌面应用**（自带便携 Python 运行环境与三引擎，目标机不用装 Python、不用敲命令）：打包命令 `python CXO-ModelStation/tools/build_desktop.py`，产物在 `CXO-ModelStation/release/`（便携目录 `win-unpacked` 双击 `CXO-ModelStation.exe` 即用），细节见 [CXO-ModelStation/DEPLOY.md](./CXO-ModelStation/DEPLOY.md) §8。
+
 > 语音对话功能还需要额外启动 ASR 和 TTS 服务，具体见部署文档。
 
 ---
@@ -144,7 +146,7 @@ CX-O/
 ├── APP-Frontend/           # 前端桌面应用（Electron，浏览器模式默认端口 3100）
 ├── CX-O-SERVER/            # 后端服务（FastAPI + WebSocket）
 ├── CX-O-VoiceWorkStation/  # 语音工作站（作曲/翻唱CXFC：作曲/歌曲合成/翻唱推理/音域分析自动升降 key/双人合唱分离，端口 8200；engines/ 内含 demucs + AudioSep 分离引擎，见 DEPLOY-SEPARATION.md）
-├── CXO-ModelStation/       # 模型工作站（So-VITS-SVC 训练全链路，后端 8300，训练时前端由后端托管；engines/ 内含 so-vits-svc-4.1-Stable / VoxCPM-main / MeloTTS 三引擎，2026-09-05 自包含化迁入；独立部署见 CXO-ModelStation/DEPLOY.md）
+├── CXO-ModelStation/       # 模型工作站（So-VITS-SVC 训练全链路，后端 8300，训练时前端由后端托管；engines/ 内含 so-vits-svc-4.1-Stable / VoxCPM-main / MeloTTS 三引擎，2026-09-05 自包含化迁入；2026-09-26 起另有桌面版形态：Electron 应用 frontend/electron/ + 便携 Python 运行时 tools/build_runtime.py + 一条命令出包 tools/build_desktop.py，产物 release/；独立部署见 CXO-ModelStation/DEPLOY.md）
 ├── CXO-Tuner/              # 进化实验室（可选独立服务，自我进化，默认端口 8310——2026-09-05 起与模型工作站 8300 错开，可同启）
 ├── CXO-EvalKit/            # LLM 评测框架（可选独立服务，对后端做记忆/延迟/质量自动体检，宿主端口 8320，详见 CXO-EvalKit/DEPLOY.md）
 ├── config/                 # 全局配置文件

@@ -12,6 +12,7 @@ import {
   BACKEND_SERVICE_NAME,
   DATA_SEED_MARKER_FILENAME,
   DATA_SEED_VERSION,
+  DEFAULT_HEALTH_TIMEOUT_MS,
   backendCandidatePorts,
   buildBackendConfig,
   buildBackendEnv,
@@ -193,6 +194,9 @@ describe("buildBackendConfig / serializeBackendConfig", () => {
     expect(env.PATH).toBe("C:/Windows");
     expect(env.PYTHONPATH).toBe(`${layout.voxcpmSrcDir}${path.delimiter}C:/existing`);
     expect(env.PYTHONUNBUFFERED).toBe("1");
+    // 安装目录只读语义：运行期不落字节码缓存、不读用户 site-packages
+    expect(env.PYTHONDONTWRITEBYTECODE).toBe("1");
+    expect(env.PYTHONNOUSERSITE).toBe("1");
     const parsed = JSON.parse(env.CXO_MODELSTATION_CONFIG) as { melotts: { engine_dir: string } };
     expect(parsed.melotts.engine_dir).toBe(layout.melottsEngineDir);
   });
@@ -313,6 +317,27 @@ describe("waitHealthy", () => {
     });
     expect(result.healthy).toBe(false);
     expect(result.attempts).toBe(1);
+  });
+
+  it("默认超时含冷启动余量：DEFAULT_HEALTH_TIMEOUT_MS=180000（3 分钟）", () => {
+    expect(DEFAULT_HEALTH_TIMEOUT_MS).toBe(180_000);
+    expect(DEFAULT_HEALTH_TIMEOUT_MS).toBeGreaterThanOrEqual(180_000);
+  });
+
+  it("未显式传 timeoutMs → 采用默认 180000ms 上限（超时原因携带该值）", async () => {
+    // 注入 now/sleep 让时钟快速越过默认上限，验证默认值被实际采用
+    let clock = 0;
+    const result = await waitHealthy({
+      baseUrl: "http://127.0.0.1:8300",
+      intervalMs: 100_000,
+      isHealthy: async () => false,
+      sleep: async () => {
+        clock += 100_000;
+      },
+      now: () => clock,
+    });
+    expect(result.healthy).toBe(false);
+    expect(result.reason).toContain("180000ms");
   });
 });
 

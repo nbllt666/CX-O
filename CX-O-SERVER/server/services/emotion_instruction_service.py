@@ -55,6 +55,12 @@ LLM_GENERATOR_TIMEOUT = 5.0
 
 # 内嵌指令标记正则：<tts_instruction>...</tts_instruction>
 _TTS_INSTRUCTION_RE = re.compile(r"<tts_instruction\s*>([\s\S]*?)</tts_instruction>")
+# 残缺标签兜底（2026-09-26 修复 6a）：模型偶尔漏掉闭合标记——实测输出
+# `<tts_instruction>{"preset":"友好"}正文…`。上条正则要求闭合标记，此时不匹配会把
+# 标签 JSON 原样泄漏进 TTS 文本（被念出来）。此处按「开标签 → 首个 '}' → 残留闭合片段」裁剪。
+_LOOSE_OPEN_RE = re.compile(r"<tts_instruction\s*>")
+# 注意：\w 在 Unicode 下会吞掉中文字符（实测把"</tts_instruction您好呀"整段删掉），必须 ASCII 限定
+_LOOSE_CLOSE_FRAG_RE = re.compile(r"</?tts[A-Za-z0-9_]*\s*>?")
 
 # 旧 [emotion:name] 标记正则（迁移边界）
 _LEGACY_EMOTION_RE = re.compile(r"\[emotion:([^\]]+)\]")
@@ -361,8 +367,18 @@ def strip_instruction(reply_text: str) -> str:
     """从回复文本中剥离 <tts_instruction> 标记，返回干净的 reply_text。
 
     仅移除指令标记本身，其余文本原样保留（"文本不改写"保证）。
+    修复 6a：完整标签块移除后若仍有开标签残留（模型漏闭合标记），按
+    「开标签 → 首个 '}' → 残留闭合片段」继续裁剪，避免标签泄漏进 TTS。
     """
-    return _TTS_INSTRUCTION_RE.sub("", reply_text).strip()
+    cleaned = _TTS_INSTRUCTION_RE.sub("", reply_text)
+    _m = _LOOSE_OPEN_RE.search(cleaned)
+    if _m:
+        _tail = cleaned[_m.end():]
+        _end = _tail.find("}")  # 标签 JSON 结束（首个右括号）
+        _rest = _tail[_end + 1:] if _end != -1 else _tail
+        _rest = _LOOSE_CLOSE_FRAG_RE.sub("", _rest, count=1)
+        cleaned = cleaned[:_m.start()] + _rest
+    return cleaned.strip()
 
 
 # ============================================================================

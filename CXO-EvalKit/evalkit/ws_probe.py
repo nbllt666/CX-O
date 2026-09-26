@@ -10,8 +10,10 @@
   prefill_started       voice.prefill_started（投机预填启动）
   tts_first_audio       首个 voice.tts_chunk 且带 audio_data（首包 TTS 音频）
   tts_done              voice.tts_chunk is_final=true 或回合静默超时
-主指标 = **asr_final → tts_first_audio**（容器分句定稿 → 首包音频；全双工真实口径，
-服务端 VAD 不参与判定）。辅指标 = stream_start → tts_first_audio（完整轮次）。
+主指标 = **asr_first_partial → tts_first_audio**（首个 ASR 中间结果 → 首包音频；逐句投机响应
+模式的真实体感，服务端 VAD 不参与判定）。辅指标 = asr_final → tts_first_audio（分句定稿 → 首包，
+投机模式下首包常早于定稿故恒 0/负）、speech_end → tts_first_audio（能量法"说完"→ 首包，仅诊断）、
+stream_start → tts_first_audio（完整轮次）。
 
 事件分类对服务端消息格式容错：type 或 action 字段任一命中、data 为 dict 或
 JSON 字符串均可（voice.partial 为裸 dict、tts_chunk 为 StreamMessage）。

@@ -649,6 +649,62 @@
 
 ---
 
+# current-note — package-modelstation-desktop-installer（2026-09-26 交付完成，追加；追加式、不覆盖任何既有条目）
+
+> 更新时间: 2026-09-26 | 变更ID: package-modelstation-desktop-installer | 阶段: **实施 + 验证 + full 档安装包编译全部完成；人工清单（G）待真机验收**
+
+## 七字段交接状态
+
+- **任务**：把 `C:\CX-O\CXO-ModelStation` 独立打包 + 加独立前端（人类四项裁决：Electron 桌面安装包 / 全含 engines+data / 前端独立进程与端口 / 包内嵌便携 Python 环境；追加裁决：现在装 Inno 编译 full 安装包 + 授权根 AGENTS.md 最小注记）。
+- **规格**：`.trae/specs/package-modelstation-desktop-installer/{spec,tasks,checklist}.md`（Task 0~6 全勾选；台账 8 行全填真实 agent id）。
+- **交接状态**：Task 0/1/2/3/4(+4.7~4.9)/5/6 **全部闭合**；checklist A~F 已核验勾选（安装包与文档两项随 Task 6 终值同步勾选）；G 人工清单与 H 本机不可判定项**保留未闭合**。
+- **交付物**：`release\CXO-ModelStation-Setup-0.1.0.exe`（2,404,765,295 B）+ `release\win-unpacked`（34,216 文件 / 6,024,276,063 B）+ `release-nsis-trial`（base 档 NSIS 112.7 MiB）+ `build/runtime`（full/cuda 便携运行时，搬迁自检 PASS）。
+- **未闭合项**：checklist G（真机实装 / GPU 实战训练 / CUDA 实测 / 离线权重训练链路 / 卸载残留策略）+ H（窗口崩溃路径回收、窗口聚焦断言、`voxcpm_cli` informational、签名与图标、`build_runtime.py --runtime-dir`）。
+- **接续入口**：人类按 checklist G 在真实目标机验收；如需严格复现交付，命令为 `python CXO-ModelStation/tools/build_desktop.py --runtime-profile full --torch-index cuda --form inno`（前置：Inno Setup 6 + `iscc` 在 PATH 或默认/逐用户路径）。
+- **回退锚点**：纯浏览器站点形态的 `frontend/`（无 `electron/`）+ 未打包的 `CXO-ModelStation`（引擎/数据全程只读，基线 engines 320 文件 / 28,987,533 B、data 46 文件 / 66,454 B 未被改动）。
+
+### (1) 工程过程
+
+1. Spec 三件套 → GN-004 规格审查（警示放行，`676371ab`，O1~O8 已处置）→ 人类批准。
+2. Task 0 变更文档前置（主线程）→ P1 并行：Task 1 桌面壳（`dbbfea77`，78 passed）+ Task 2 便携运行时（`63291fd2`，base/full 两档 + 搬迁自检）。
+3. Task 3 打包编排（`617da184`，base 命中 NSIS、full 降级 dir + 报告）→ Task 4 打包态注入与数据根（`49b00789`，11/11 断言、端口顺延 8300→8310、VoxCPM 入口修正）。
+4. Task 4.7~4.9 补线（`5cede7d3`）：既有 12 项失败修复（149 passed）、打包器只读加固、健康门余量 180s。
+5. Task 5.1~5.2 独立验证（`ba61f04f`）：三闸门 + 运行时搬迁自检复跑全 PASS。
+6. Task 6（`9f6bd535`）：定位逐用户 Inno 6.7.3 → `--form inno` 重建 win-unpacked（含主线程 `PYTHONDONTWRITEBYTECODE` 注入）→ 编译 full 安装包（1010.3s）→ 静默安装/卸载抽验。
+7. 主线程：`build_desktop.py` 补 iscc 逐用户候选路径（复现性）、DEPLOY §8 / README / AGENTS.md（已授权）/ `.gitignore`、变更文档五~八章回填、checklist 核验、本 note。
+
+### (2) 交接状态
+
+- 实施与验证：**全部闭合**（含补线与追加裁决项）；三闸门与运行时闸门均由独立子代理复跑 PASS。
+- 交付前 GN-004：规格阶段已执行（警示放行）；**实施后 GN-004 独立复审未执行**（登记为待办，建议主线程/后续会话拉起）。
+- 人类裁决记录：四项交付裁决 + full 安装包编译裁决 + AGENTS.md 授权（均已落 spec/tasks/变更文档）。
+
+### (3) 最终结果（可验证证据链）
+
+- **后端**：`pytest tests -q` → **149 passed / 0 failed**（含修复的 12 项既有失败：`TASK_TYPE_VOICEDESIGN` 常量名 + 陈旧端点同步）。
+- **前端**：`tsc --noEmit` 双段退出码 0；`vitest run` **10 文件 / 95 passed**（含主进程单测）。
+- **E2E（打包产物直启）**：`3300/` 200 HTML、`3300/health` healthy、后端由包内 `resources\runtime\python\python.exe -m modelstation.main` 持有、反代业务 API 200、二次启动单实例、优雅关闭零残留端口全释放、数据根两次启动 SHA-256 逐字节一致、产物目录 `*.pyc=0`。
+- **运行时**：搬迁自检 PASS（副本导入 + 副本起后端 healthy + 绝对路径扫描 RELOCATABLE/0 阻断）；体积 base 46MB / full-cpu 1917MB / full-cuda 5636MB。
+- **安装包**：full 档 Inno **2,404,765,295 B（2293.4 MiB）**、payload 5.897 GiB、压缩比 ≈0.38、静默安装/卸载通过且数据根未受影响；base 档 NSIS 112.7 MiB。报告 `installer_produced=true` / `degraded=false`。
+- **留痕**：变更文档 `.trae/documents/20260925_模块7_模型工作站桌面安装包与便携运行时.md`（五~八章已回填，status=已完成）+ 证据 6 份（`test_reports/package-modelstation-desktop-installer/{task1_desktop_shell,task2_portable_runtime,task3_packaging,task4_injection_dataroot,task4b_fixes,task5_verification,task6_inno_installer}.md` + `task6_build.log`）。
+- **未闭合项**：见七字段「未闭合项」（checklist G 人工清单 + H 本机不可判定项），不得视为已完成。
+- **接续入口**：① 主线程对实施后产出拉起 GN-004 独立复审；② 人类按 checklist G 真机验收；③ 可选增强：为 `build_runtime.py` 加 `--runtime-dir`、加应用图标与签名。
+
+### (4) GN-004 交付前复审（2026-09-26，agent `71f02f8e`）
+
+- **结论：警示放行**（无阻断、无 `[SOFT_BLOCK]`）；独立复现 11 项 PASS（含实跑 pytest 149 passed、vitest 10 文件 95 passed、`release/` 产物体积精确相符、`app.asar` 含 `PYTHONDONTWRITEBYTECODE` 且健康门常量 `0x18e4`=180000、包内后端两点修复已生效、`git diff -- AGENTS.md` 仅授权一行、`public/` 与 `.trae/rules/` 零改动、engines/data 基线与 pyc=0 一致、台账 9 行与三段交接齐备、G/H 未闭合如实保留）。
+- **已处置观察项**：
+  - O1（真实缺陷，已修）：DEPLOY §8 原句「full 档安装包未产出，仅便携目录」与实产矛盾 → 改为 §8.1「两种用法（安装包 / 便携目录）」+ §8.4 实测终值表（full 安装包 2293.4 MB），并补安装包直用指引。
+  - O2（已修）：§8.4 手工编译命令补齐 `/DPayloadDir /DOutputDir /DAppVersion` 与 cwd，对齐报告中的真实调用。
+  - O5（已修）：种子计数口径统一为「清单 46 条（含 2 个 `.gitkeep`）+ 6 个可写子目录 + `.seed.json`」（变更文档第四章、checklist E 同步）。
+- **登记为接续（非阻断）**：
+  - O3：`tests/test_dataset_builder.py` 被根 `.gitignore` 的 `test_*.py` 规则忽略、未入版本控制 → 其端点/manifest v2 同步仅存运行态证据，clean checkout 会丢失；建议后续纳入白名单或存 diff 快照。
+  - O4：产物报告 payload 估算把 `engines/MeloTTS/.git`（42 文件 / 6.4MB）计入，而 extraResources 实际排除 `.git` → 估算略高估（不影响判据结论，5.897 GiB 远超 2 GiB 上限）。
+  - O6：`task5_verification.md` 记录的「运行期 240 个 `.pyc`」属旧构建（当时 main.js 尚无注入），Task 6 重建后已为 0（当前 `release\win-unpacked` 复核实测 pyc=0）。
+  - O7：`release-nsis-trial/`（base 档 NSIS 试跑产物）在盘且已被 `.gitignore` 排除，非正式交付 → 交付后可删，DEPLOY §8.4 已标注「试跑产物，非正式交付，可删」。
+
+---
+
 # current-note — evalkit-full-duplex-regression（2026-09-25 文件末尾追加；追加式、不覆盖任何既有条目）
 
 > 更新时间: 2026-09-25 20:15 | 变更ID: evalkit-full-duplex-regression | 阶段: 回归完成，交付前 GN-004 审查中
@@ -743,3 +799,48 @@
 - 已确认结论：停滞**非** ASR/LLM/TTS/嵌入/weaviate 引擎侧、**非**记忆路径、**非**全局阻塞；位于 asr_final 之后 ~+4.0 s 的"LLM 调用前"编排等待；停滞率随服务运行时长上升（17%→25%→42%）
 - 产出物：变更文档（模块0-20260925-04，含两轮运行时证据）
 - 待人类授权：主服务重启（步骤 A 判定退化假设）或重启+插桩（步骤 B 确定等待点）
+
+### (4) 更新（2026-09-26 14:35，追加式）：修复 3~6 交付完成，**全双工段 WS P95 达标（690.6 ms ✅）**
+
+| 字段 | 内容 |
+|------|------|
+| 做到哪了 | 人类裁决「服务端继续定位并治本」→ 四轮修复落地并逐轮验证：**修复 3**（预热补齐 tools）→ **修复 4**（首包窗口判定门控，假设证伪但护栏保留）→ **修复 5**（标签预设优先，人类自定义指示）→ **修复 6a/6b**（缺失闭合标记兜底）；最终 run `61c0d61c` **WS P95 = 690.6 ms ✅ passed**（逐轮 535~758 ms）；定向 pytest **230 passed**（含新增畸形标签用例 2 例） |
+| 为什么 | 定位链（P7a/P7b 插桩 + TTS 容器对齐 + P8 请求指纹）：① 预热请求缺 `tools` → vLLM 前缀块边界位移 → **预热永不命中**（turn0 首 token 639.9→79.7 ms）；② 残留抖动 = **情感标签生成**（30~40 token 全在首包之前，~11ms/token）；③ 模型偶发**漏闭合标记** → 标签 JSON 泄漏进 TTS（会被念出）+ 切片器整段缓冲（首包拖到流尾，+325 ms） |
+| 未闭合项 | ① **插桩清理**（`audio.py` P0~P8 共 12 处 debug-point region + `utils.py` P8 region + `_dbg_first_chunk_seen` + 调试服务器 7778 + 调试记录 + `.dbg/`）——人类裁决"方案定案后再清理"，**现已定案待执行**；② 清理后干净基线复跑；③ GN-004 交付前审查；④ REST 段历史既存未达标（非本任务范围） |
+| 接续入口 | 清理（`grep -c debug-point` 归零为验收）→ 停调试服务器 → 删 `debug-dual-stream-post-final-stall.md` 与 `.dbg/` → 重启主服务 → `turns=9` 干净复跑 → GN-004 交付前审查 → 变更文档 status 置"已完成" |
+| 人类裁决记录 | ASK-20260926-01（主方向=服务端治本；附加=2a/2b/提高 turns；清理=定案后）已闭合；ASK-20260926-02（标签＝预设优先，自定义回答）已闭合 |
+| 请示追踪 | 无悬空请示 |
+| 审查状态 | 检查点 GN-004：警示放行（agent `8af92731`，附四 F1~F12 已按 F1/F2/F3/F4/F6/F10/F11 修正）；交付前审查：未开始 |
+
+#### 关键产物（供接续者快速接手）
+
+- 变更文档：`.trae/documents/20260925_模块0_全双工首包后置停滞修复.md`（附四~附十一：定位链 + 四轮修复 + 逐轮 run 对比）
+- 调试记录：`debug-dual-stream-post-final-stall.md`（12 点插桩清单、离线复核、`[OPEN]` 清理门）
+- run 证据：`CXO-EvalKit/data/runs/{53f2825b,3f8ae8c5,4a816168,97a62a8a,61c0d61c}/`
+- 本轮修复文件：`prefix_warmup.py`(3)、`audio.py::_maybe_agent_interrupt`(4)、`prompt_builder.py::REALTIME_VOICE_PROMPT_PADDING`(5)、`emotion_instruction_service.py::strip_instruction`(6a)、`tts_service.py::split_text_streaming`(6b)、`tests/test_emotion_instruction_service.py`(+2 用例)
+- 诊断脚本（临时，可删）：`%TEMP%\cxo_*`（agentcreate/warmup/coldprefix/attrib_probe/p7_analyze/tts_align/p8_*/gate_check/label_leak/tok_gap/strip_test）
+- **注意**：运行期发现并行会话改动同一文件（`emotion_instruction_service.py` 的 6a 修复曾被回退一次）→ 清理阶段每步改完须立即 grep 复核
+
+### (5) 更新（2026-09-26 15:1x，追加式）：清理完成 + 干净基线双跑达标，**交付已闭合**（GN-004 警示放行 + [V] 已批准）
+
+| 字段 | 内容 |
+|------|------|
+| 做到哪了 | ① **插桩清理**：`audio.py` 11 处 region + 实例属性、`utils.py` P8 整块全部移除（CX-O-SERVER 全仓 `grep "debug-point\|_dbg\|p8_hook\|cxo_p8"` = **0**；`py_compile` OK；修复 1~6 逐项复核全部在位未回退）；② **调试环境清理**（人类裁决授权）：调试服务器 7778 停止；`debug-dual-stream-post-final-stall.md` + `.dbg/`（10 文件）+ `%TEMP%\cxo_p8_hits.log` 删除（前两项为 git 跟踪产物，可经 git 历史回溯）；③ **主服务重启**（14:45:48，detached，日志 `main_clean_stdout/stderr.log`；预热门控「20/20 + 推理后端预热全部完成（共 4 轮）」@14:50:11 后才触发 run）；④ **干净基线双跑达标**：`a90a789b` P95 = **763.2 ✅**、`16d9bafb` P95 = **698.4 ✅**；⑤ **修复 2 配套测试对齐**（清理后定向回归发现旧测试 patch `rss_fetcher.httpx` 失效 → 改 patch `server.core.utils.get_shared_http_client`，实现零改动）→ 定向 **354 passed / 0 failed**；⑥ 变更文档附十二/附十三回填、frontmatter status → **已完成** |
+| 为什么 | 清理后需在无插桩扰动下重建达标证据（原 61c0d61c 690.6 ✅ 为含插桩口径）；追加第二次干净复跑用于支撑"稳定达标"表述（三次连续通过） |
+| 未闭合项 | ① ~~人类 [V] 交付确认~~ **已批准（2026-09-26，ASK-20260926-03）**；② REST 段历史既存未达标（登记，非本任务范围）；③ GN-004 声明的 3 项"未独立验证"已登记（见审查状态行）；④ `%TEMP%` 本任务诊断脚本已清理（见临时文件清理行） |
+| 接续入口 | **交付已完成**（变更文档 status=已关闭）；如后续复现，可参照附十四登记项与附六分析方法；REST 段历史项建议单独立项 |
+| 人类裁决记录 | ASK-20260926-01/02 已闭合；**ASK-20260926-03（[V] 交付确认）= 批准交付**，已闭合 |
+| 请示追踪 | 无悬空请示（[V] 请示 → 批准 → 闭合） |
+| 审查状态 | 交付前审查：**警示放行**（agent `03bf0dc1`，无 [SOFT_BLOCK]）；3 项"未独立验证"声明已登记（会话裁决原文未落盘 / 运行态日志未复核 / `.dbg` 精确计数）；人类 [V] 已批准 → **交付闭合** |
+| GN-004 观察项处置 | O-1 变更文档 frontmatter 的 related_files 已按"修改 / 已入库 / 净零 / 勘查引用 / 关联锚点"分类；O-2 REST p95 改为逐 run 列示（10348.4 / 10691.2 / 11294.5）；O-3 变更文档第二/三章加"已被附录取代"注记 + 步骤逐条勾选；O-4 父任务文档 frontmatter 置"已闭合"并补交叉引用 |
+| 临时文件清理 | `%TEMP%` 本任务专属诊断脚本 **31 个已删除** + 空目录 `cxo_dumps`；保留 `cxo_evalkit_*.log`（在线服务）/`cxo_leader_*`/`cxo_task5`（他会话） |
+
+#### 干净基线双跑证据（turns=9，同一口径）
+
+| run | WS P95 | 阈值 | passed | 逐轮 p→f（ms） | timeouts/errors |
+|-----|--------|------|--------|----------------|-----------------|
+| `a90a789b`（干净 #1） | **763.2** | 800 | ✅ | [541.4, 781.2, 736.2, 558.5, 729.3, 734.8, 545.0, 543.8, 468.1] | 0/0 |
+| `16d9bafb`（干净 #2） | **698.4** | 800 | ✅ | [554.6, 611.5, 756.3, 602.0, 536.9, 535.1, 517.5, 568.9, 576.2] | 0/0 |
+
+- run 总体 status=failed 仅因 REST 段历史既存项（overall p95 约 10.3~11.3 s > 2000：三 run 分别为 10348.4 / 10691.2 / 11294.5，均 0 失败请求）；WS 判定以 `metrics_summary.ws_full_duplex.judgment.passed=true` 为准。
+- 调试记录已删除（其证据蒸馏入变更文档附二~附十三）；新增 run 证据：`CXO-EvalKit/data/runs/{a90a789b,16d9bafb}/`。

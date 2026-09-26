@@ -58,6 +58,10 @@ _NSIS_LIMIT_BYTES = 2 * 1024**3
 _ISCC_CANDIDATES = [
     r"C:\Program Files (x86)\Inno Setup 6\ISCC.exe",
     r"C:\Program Files\Inno Setup 6\ISCC.exe",
+    # 逐用户安装（winget 默认 / 非管理员安装）：本机实测 Inno Setup 6.7.3 落在该位置
+    os.path.join(
+        os.environ.get("LOCALAPPDATA", ""), "Programs", "Inno Setup 6", "ISCC.exe"
+    ),
 ]
 
 
@@ -89,16 +93,35 @@ def _quote(part: str) -> str:
     return f'"{part}"' if " " in part else part
 
 
-def _run(parts: list[str], cwd: Path | None, timeout: int, label: str) -> int:
-    """执行命令并打印命令原文（shell 语义，兼容 Windows 的 npm.cmd / .cmd 包装器）。"""
+def _run(parts: list[str], cwd: Path | None, timeout: int, label: str,
+         env: dict | None = None) -> int:
+    """执行命令并打印命令原文（shell 语义，兼容 Windows 的 npm.cmd / .cmd 包装器）。
+
+    env 缺省继承父进程环境；传入时完全替换（调用方自行 merge os.environ）。
+    """
     command = " ".join(_quote(p) for p in parts)
     _info(f"[{label}] 执行：{command}" + (f"  (cwd={cwd})" if cwd else ""))
     try:
-        proc = subprocess.run(command, cwd=str(cwd) if cwd else None, shell=True, timeout=timeout)
+        proc = subprocess.run(
+            command, cwd=str(cwd) if cwd else None, shell=True, timeout=timeout, env=env
+        )
     except subprocess.TimeoutExpired:
         raise BuildError(f"[{label}] 命令超时（{timeout}s）：{command}")
     _info(f"[{label}] 退出码={proc.returncode}")
     return proc.returncode
+
+
+def _readonly_python_env() -> dict:
+    """引擎校验子进程环境：禁写 .pyc（PYTHONDONTWRITEBYTECODE）并禁读用户 site。
+
+    子进程环境变量可被其后代继承，因此 setup_engines.py 内部的
+    `python -c "import melo"` 探针同样受约束，不再向
+    engines/MeloTTS/melo/__pycache__ 写入字节码（打包输入只读，硬约束）。
+    """
+    env = dict(os.environ)
+    env["PYTHONDONTWRITEBYTECODE"] = "1"
+    env["PYTHONNOUSERSITE"] = "1"
+    return env
 
 
 def _dir_stats(path: Path) -> dict:
@@ -263,7 +286,13 @@ def step_runtime(runtime_dir: Path, profile: str, torch_index: str, skip: bool, 
 # --------------------------------------------------------------------------- #
 def step_engines_check() -> dict:
     _info("步骤 3/7 引擎完整性校验（tools/setup_engines.py）")
-    code = _run([sys.executable, str(_SETUP_ENGINES_PY)], cwd=_MS_ROOT, timeout=900, label="引擎校验")
+    code = _run(
+        [sys.executable, str(_SETUP_ENGINES_PY)],
+        cwd=_MS_ROOT,
+        timeout=900,
+        label="引擎校验",
+        env=_readonly_python_env(),
+    )
     if code != 0:
         raise BuildError(f"引擎校验失败（setup_engines.py 退出码={code}）；修复指引见 CXO-ModelStation/DEPLOY.md")
     return {"exit_code": code, "engines_dir": str(_MS_ROOT / "engines")}

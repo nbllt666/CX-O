@@ -8,9 +8,9 @@
     "creative_drive": 0.0,
     "fatigue": 0.0
   },
-  "last_action": "read_news",
-  "last_cycle_at": "2026-09-25T23:33:46.873218+08:00",
+  "last_action": "wait",
+  "last_cycle_at": "2026-09-26T15:32:10.115228+08:00",
   "daily_budget_used_tokens": 0,
-  "budget_reset_date": "2026-09-25",
+  "budget_reset_date": "2026-09-26",
   "diary_last_at": null
 }

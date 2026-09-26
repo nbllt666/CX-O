@@ -622,91 +622,6 @@ class DualStreamSession:
         LLM 吐出第一个 token 即开始平滑缓冲，平滑缓冲输出第一个词组即开始 TTS 合成，
         TTS 合成出第一个音频块即推送给前端。全链路首包音频延迟 < 300ms。
         """
-        # #region debug-point P0:reporter
-        import json as _dbg_json, time as _dbg_time, urllib.request as _dbg_urlreq
-        import threading as _dbg_threading, queue as _dbg_queue
-        _dbg_u, _dbg_s = "http://127.0.0.1:7778/event", "dual-stream-post-final-stall"
-        try:
-            with open(".dbg/dual-stream-post-final-stall.env", encoding="utf-8") as _dbg_f:
-                for _dbg_l in _dbg_f.read().splitlines():
-                    if _dbg_l.startswith("DEBUG_SERVER_URL="):
-                        _dbg_u = _dbg_l.split("=", 1)[1]
-                    elif _dbg_l.startswith("DEBUG_SESSION_ID="):
-                        _dbg_s = _dbg_l.split("=", 1)[1]
-        except Exception:
-            pass
-        _dbg_q = _dbg_queue.Queue()
-
-        def _dbg_flush_loop():
-            while True:
-                try:
-                    _b = _dbg_q.get()
-                    _dbg_urlreq.urlopen(_dbg_urlreq.Request(
-                        _dbg_u, data=_b, headers={"Content-Type": "application/json"}), timeout=3).read()
-                except Exception:
-                    pass
-
-        _dbg_threading.Thread(target=_dbg_flush_loop, daemon=True, name="dbg-reporter").start()
-        _dbg_t0 = _dbg_time.perf_counter()
-
-        def _dbg(_hid, _msg, **_data):
-            # 非阻塞上报：入队即返回，实际 POST 由独立线程消费（避免占用事件循环）
-            try:
-                _dbg_q.put_nowait(_dbg_json.dumps({
-                    "sessionId": _dbg_s, "runId": "post",
-                    "hypothesisId": _hid, "location": "audio.py:_run_pipeline",
-                    "msg": "[DEBUG] " + _msg,
-                    "data": dict(_data, elapsed_ms=round((_dbg_time.perf_counter() - _dbg_t0) * 1000, 1)),
-                }).encode())
-            except Exception:
-                pass
-
-        # 事件循环延迟监视（仅启动一次）：独立线程探循环滞后，>1s 时上报全线程栈快照
-        _dbg_g = globals()
-        _dbg_g.setdefault("_dbg_loop_monitor_started", False)
-        if not _dbg_g["_dbg_loop_monitor_started"]:
-            _dbg_g["_dbg_loop_monitor_started"] = True
-            import sys as _dbg_m_sys, traceback as _dbg_m_tb
-            _dbg_m_loop = asyncio.get_running_loop()
-
-            def _dbg_loop_monitor():
-                while True:
-                    _evt = _dbg_threading.Event()
-                    _stamp = {"lag": None}
-                    _t0m = _dbg_time.perf_counter()
-
-                    def _probe():
-                        _stamp["lag"] = (_dbg_time.perf_counter() - _t0m) * 1000.0
-                        _evt.set()
-
-                    try:
-                        _dbg_m_loop.call_soon_threadsafe(_probe)
-                    except Exception:
-                        break
-                    _evt.wait(timeout=10)
-                    _lag = _stamp["lag"]
-                    if _lag is None or _lag > 1000.0:
-                        try:
-                            _frames = _dbg_m_sys._current_frames()
-                            _stacks = {
-                                str(_tid): "".join(_dbg_m_tb.format_stack(_f)[-8:])
-                                for _tid, _f in _frames.items()
-                            }
-                            _dbg_q.put_nowait(_dbg_json.dumps({
-                                "sessionId": _dbg_s, "runId": "post", "hypothesisId": "M",
-                                "location": "audio.py:loop-monitor", "msg": "[DEBUG] loop_block",
-                                "data": {"lag_ms": _lag if _lag is not None else "timeout", "stacks": _stacks},
-                            }).encode())
-                        except Exception:
-                            pass
-                    _dbg_time.sleep(0.2)
-
-            _dbg_threading.Thread(target=_dbg_loop_monitor, daemon=True, name="dbg-loop-monitor").start()
-        # #endregion
-        # #region debug-point P1:pipeline-enter
-        self._dbg_first_chunk_seen = False
-        _dbg("D", "pipeline_enter", user_text_len=len(user_text or ""), agent_id=self.agent_id, session_id=self.session_id)
-        # #endregion
         # 注入当前语音会话 client_id 到 contextvars（工具执行读取）。
         # token 保存 set 的返回值，供 finally 中复位，避免引用未定义变量抛 NameError。
         token = set_active_client_id(self.client_id)
@@ -723,10 +638,6 @@ class DualStreamSession:
 
             # 1. 获取 Agent 配置
             agent_config = get_agent_config(self.agent_id)
-            # #region debug-point P2:agent-config
-            _dbg("B", "after_get_agent_config", found=bool(agent_config),
-                 fast_mode=bool((agent_config or {}).get("voice_memory_fast", False)))
-            # #endregion
             if not agent_config:
                 await self.manager.send_message(self.client_id, create_error(
                     request_id=self.request_id,
@@ -749,19 +660,10 @@ class DualStreamSession:
                 try:
                     memory_mgr = get_memory_manager()
                     if memory_mgr is not None:
-                        # #region debug-point P3a:mem-before
-                        _dbg("A", "mem_before")
-                        # #endregion
                         memory_context = await retrieve_memory_context(
                             agent_config, memory_mgr, user_text, self.session_id
                         )
-                        # #region debug-point P3b:mem-after
-                        _dbg("A", "mem_after", ctx_len=len(str(memory_context or "")))
-                        # #endregion
                 except Exception as _mem_e:
-                    # #region debug-point P3e:mem-error
-                    _dbg("A", "mem_error", err=str(_mem_e)[:120])
-                    # #endregion
                     logger.warning(f"双流式记忆检索失败，降级为无记忆: {_mem_e}")
 
             # 3. 构建 messages（实时语音模式）
@@ -771,9 +673,6 @@ class DualStreamSession:
                 agent_config, context_mgr, self.session_id,
                 user_text, memory_context=memory_context, is_realtime_voice=True,
             )
-            # #region debug-point P4:build-messages
-            _dbg("B", "after_build_messages", n_msgs=len(messages or []))
-            # #endregion
 
             # 4. 获取 LLM client
             llm = get_llm_client_for_agent(agent_config)
@@ -825,9 +724,6 @@ class DualStreamSession:
 
             # 构建 Qwen3 统一编排合成参数（参考音频资产/路径）
             tts_kwargs: dict = self._build_tts_kwargs()
-            # #region debug-point P5:pre-tts-loop
-            _dbg("C", "pre_tts_loop")
-            # #endregion
 
             async for chunk in self.tts_service.synthesize_stream_fine(
                 token_stream=smoothed_stream,
@@ -837,13 +733,6 @@ class DualStreamSession:
                 char_threshold=2,
                 **tts_kwargs
             ):
-                # #region debug-point P6:first-chunk
-                if not self._dbg_first_chunk_seen:
-                    self._dbg_first_chunk_seen = True
-                    _dbg("E", "first_tts_chunk", is_final=bool(chunk.get("is_final")),
-                         audio_len=len(chunk.get("audio_data") or ""),
-                         seg_len=len(str(chunk.get("text_segment") or "")))
-                # #endregion
                 # 流结束标记
                 if chunk.get("is_final"):
                     await self._send_tts_chunk(chunk, is_final=True)
@@ -1789,7 +1678,14 @@ def register_audio_handlers(
         B3 在途防护：判定为 fire-and-forget（每帧 ASR 文本都可触发一次），若无
         并发护栏，判定堆积时会并发占用多个 LLM 判定槽。此处加会话级在途标记：
         已有判定在途时新触发直接丢弃（非阻塞、不排队），保证每时刻最多 1 个判定。
+
+        首包窗口护栏（2026-09-26 修复 4）：主回复首包未送出前不发起判定——判定
+        请求（~450 tokens prefill）会与主回复 decode 交错抢占，P7 插桩实测使
+        "首段补全/派发差"从 9~32ms 涨到 216~339ms（每轮 5~7 次判定，首次多落
+        在首包窗口内）。窗口结束（首块送出）即恢复判定。
         """
+        if getattr(session, "_tts_first_chunk_pending", False):
+            return
         if session._interrupt_judging:
             return
         session._interrupt_judging = True

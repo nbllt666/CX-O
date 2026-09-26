@@ -137,16 +137,30 @@ async def _run_single(agent: Dict[str, Any], rounds: int = WARM_ROUNDS) -> bool:
     _host, _model = _resolve_target(agent)
     _client = get_shared_http_client()
     _msgs = build_voice_prefix_messages(_system_prompt)
+    # 修复 3（2026-09-26）：与语音生产路径同形——audio.py::_resolve_voice_tools() 恒带
+    # get_tools_for_agent() 全量工具，而 vLLM 前缀缓存按「从头对齐的 token 块」哈希：
+    # 不带 tools 的预热块与生产请求的块边界整体位移 → 永不命中（实测新建 agent 首轮
+    # 前缀缓存命中仅 44.7%，首 token 640ms vs 常态 ~90ms）。此处补齐同源同口径 tools。
+    _tools: Optional[list] = None
+    try:
+        from server.chat_helpers import get_tools_for_agent
+
+        _tools = get_tools_for_agent() or None
+    except Exception as _e:  # noqa: BLE001 —— 取不到工具时退回无 tools 预热（命中率可能下降）
+        logger.debug("预热 tools 解析失败，按无 tools 预热: %s", _e)
+    _payload: Dict[str, Any] = {
+        "model": _model,
+        "messages": _msgs,
+        "stream": True,
+        "max_tokens": 32,
+    }
+    if _tools:
+        _payload["tools"] = _tools
     for _ in range(max(1, rounds)):
         try:
             async with _client.stream(
                 "POST", f"{_host}/v1/chat/completions",
-                json={
-                    "model": _model,
-                    "messages": _msgs,
-                    "stream": True,
-                    "max_tokens": 32,
-                },
+                json=_payload,
                 timeout=30.0,
             ) as _resp:
                 if _resp.status_code != 200:

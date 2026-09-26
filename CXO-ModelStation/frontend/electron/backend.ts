@@ -51,8 +51,9 @@ export const REQUIRED_DATA_SUBDIRS: readonly string[] = [
   "training/melotts",
   "models/melotts",
 ];
-/** 健康门默认上限与轮询间隔 */
-export const DEFAULT_HEALTH_TIMEOUT_MS = 60_000;
+/** 健康门默认上限与轮询间隔
+ * （上限 180s：冷启动首轮需解压 torch 权重 + 初始化引擎，预留充足余量）。 */
+export const DEFAULT_HEALTH_TIMEOUT_MS = 180_000;
 export const DEFAULT_HEALTH_INTERVAL_MS = 400;
 
 /** 解析后的目录布局（打包态 / 开发态） */
@@ -507,6 +508,10 @@ export function buildBackendEnv(
   env.CXO_MODELSTATION_CONFIG = serializeBackendConfig(layout, dataRoot, server);
   env.PYTHONPATH = mergePythonPath(layout.voxcpmSrcDir, env.PYTHONPATH);
   env.PYTHONUNBUFFERED = "1";
+  // 不写字节码缓存：打包态后端跑在安装目录内，避免运行期在安装目录产生 __pycache__/*.pyc
+  // （用户数据一律落数据根，安装目录保持只读语义）
+  env.PYTHONDONTWRITEBYTECODE = "1";
+  env.PYTHONNOUSERSITE = "1";
   return env;
 }
 

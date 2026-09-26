@@ -103,6 +103,22 @@ class TestStripInstruction:
         assert cleaned.startswith("正文")
         assert cleaned.endswith("结尾")
 
+    def test_strip_missing_close_tag_fallback(self):
+        """修复 6a：模型漏掉闭合标记时，标签不得泄漏（实测 <tts_instruction>{"preset":"友好"}您好！…）。"""
+        reply = '<tts_instruction>{"preset":"友好"}您好！很高兴为您服务。'
+        cleaned = strip_instruction(reply)
+        assert "tts_instruction" not in cleaned
+        assert "preset" not in cleaned
+        assert cleaned == "您好！很高兴为您服务。"
+
+    def test_strip_truncated_close_fragment_fallback(self):
+        """闭合标记残缺（如 </tts_instruction 缺 '>'）时同样不得泄漏。"""
+        reply = '<tts_instruction>{"text":"热情"}</tts_instruction您好呀！很高兴'
+        cleaned = strip_instruction(reply)
+        assert "tts_instruction" not in cleaned
+        assert "text" not in cleaned
+        assert cleaned == "您好呀！很高兴"
+
 
 # ============================================================================
 # 旧标签迁移

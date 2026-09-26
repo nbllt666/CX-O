@@ -22,7 +22,9 @@ from server.autonomy.perception.env.context_sensor import ContextSensor
 from server.autonomy.perception.news.rss_fetcher import RssFetcher
 from server.autonomy.perception.social.hotspot_monitor import HotspotMonitor
 
-_RSS_PATCH_TARGET = "server.autonomy.perception.news.rss_fetcher.httpx.AsyncClient"
+# 修复 2（2026-09-25）：rss_fetcher 改为复用 server.core.utils 的共享 httpx 客户端
+# （不再每次新建 httpx.AsyncClient），故 patch 目标改为共享客户端工厂函数。
+_RSS_PATCH_TARGET = "server.core.utils.get_shared_http_client"
 
 RSS_TWO_ITEMS = """<?xml version="1.0" encoding="UTF-8"?>
 <rss version="2.0">
@@ -64,10 +66,8 @@ def _make_response(text: str, status_code: int = 200) -> MagicMock:
 
 
 def _mock_client(*, get_result: MagicMock = None, side_effect=None) -> AsyncMock:
-    """构造支持 async with 的 mock httpx.AsyncClient，替换其 get 行为。"""
+    """构造 mock 共享 http 客户端（替换 fetch 内 get_shared_http_client 的返回）。"""
     client = AsyncMock()
-    client.__aenter__.return_value = client
-    client.__aexit__.return_value = None
     if get_result is not None:
         client.get.return_value = get_result
     if side_effect is not None:

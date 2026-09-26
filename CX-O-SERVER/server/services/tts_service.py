@@ -64,6 +64,9 @@ _TEXT_KEY = "text"
 # 保证首个切片包含完整标签。开标签/闭合标记都可能横跨 token 到达，必须基于整个 buffer 搜索。
 _TTS_OPEN_TAG = "<tts_instruction"
 _TTS_CLOSE_TAG = "</tts_instruction>"
+# 闭合标记片段（可缺 '>'）：用于 6b 兜底时顺带吞掉紧随 JSON 的残片，避免其泄漏进下一片
+# 注意：\w 在 Unicode 下会吞掉中文，必须 ASCII 限定
+_TTS_CLOSE_FRAG_HEAD_RE = re.compile(r"</?tts[A-Za-z0-9_]*\s*>?")
 
 
 def _tts_open_tag_partial_suffix_len(buffer: str) -> int:
@@ -612,9 +615,24 @@ class TTSService:
             if open_idx != -1:
                 close_idx = buffer.find(_TTS_CLOSE_TAG, open_idx)
                 if close_idx == -1:
-                    # 开标签未闭合：整段继续缓冲，暂不输出切片
-                    continue
-                tag_end = close_idx + len(_TTS_CLOSE_TAG)
+                    # 兜底（2026-09-26 修复 6b）：模型偶尔漏掉闭合标记（实测输出
+                    # `<tts_instruction>{"preset":"友好"}正文…`）。仅当"开标签之后已闭合 JSON
+                    # （首个 '}'）**且**其后已出现 ≥2 个中文字符（正文确已开始）"时，才视为
+                    # 标签已结束并恢复切片——避免把正常完整标签（闭合标记随后即到）切碎。
+                    # 标签本体留在首切片内，由 strip_instruction 6a 兜底剥离。
+                    _brace = buffer.find("}", open_idx)
+                    if _brace == -1 or sum(
+                        1 for _c in buffer[_brace + 1:] if "\u4e00" <= _c <= "\u9fff"
+                    ) < 2:
+                        continue
+                    tag_end = _brace + 1
+                    # 顺带吞掉紧随 JSON 的闭合标记残片（可能缺 '>'），避免其残留在
+                    # 下一片文本中泄漏（6a 只负责清理标签本体所在的那一片）。
+                    _frag_m = _TTS_CLOSE_FRAG_HEAD_RE.match(buffer[tag_end:])
+                    if _frag_m:
+                        tag_end += _frag_m.end()
+                else:
+                    tag_end = close_idx + len(_TTS_CLOSE_TAG)
             elif _tts_open_tag_partial_suffix_len(buffer) > 0:
                 # buffer 尾部疑似开标签前缀（如 "<tts_inst"）：无法确定是否为标签，
                 # 继续缓冲等待更多 token，避免误切片
