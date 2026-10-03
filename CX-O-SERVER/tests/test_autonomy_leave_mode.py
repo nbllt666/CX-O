@@ -1,14 +1,13 @@
 """CX-O-Autonomy P2-T4 离开模式/用户在线休眠策略单元测试。
 
-覆盖：
-① KillSwitch.update_from_user_online —— 在线→sleeping True、离线→sleeping False；
-② user_online_sleep=False 时不改变 sleeping（保留手动休眠状态）；
-③ leave_mode() 语义 —— 未暂停且未休眠→True；在线休眠→False；暂停后→False；
-④ 引擎在用户在线时跳过规划与行动（mock planner 不被调用）、离线时正常规划。
+覆盖（2026-09-27 人类裁决：用户在线休眠落点由急停档改为引擎内标志
+`engine._user_online_sleeping`，行为保留）：
+① 引擎在用户在线时跳过规划与行动（mock planner 不被调用）、离线时正常规划，且
+   在线/离线切换后下一轮自动恢复；
+② user_online_sleep=False 时即使在线也不休眠、正常规划。
 
 运行：python -m pytest tests/test_autonomy_leave_mode.py -q
 """
-import asyncio
 from unittest.mock import AsyncMock
 
 import pytest
@@ -20,9 +19,6 @@ from server.autonomy.core.scheduler.circadian import CircadianScheduler
 from server.autonomy.manager import AutonomyManager
 from server.autonomy.perception.env.context_sensor import ContextSensor
 from server.autonomy.safety.audit import AuditStore
-from server.autonomy.safety.budget.token_ledger import TokenLedger
-from server.autonomy.safety.gate.content_gate import ContentGate
-from server.autonomy.safety.killswitch import KillSwitch
 from server.autonomy.safety.ratelimit.limiter import RateLimiter
 
 # 默认作息（对齐 config.ScheduleConfig 默认值，diary_time=02:00）
@@ -49,7 +45,6 @@ def build_engine(
     tmp_path,
     *,
     online=False,
-    killswitch=None,
     user_online_sleep=True,
 ):
     """构造外部组件全部 mock 的 AutonomyEngine，sensor 为真实 ContextSensor。
@@ -93,13 +88,10 @@ def build_engine(
         "submitted": False,
     }
 
-    token_ledger = TokenLedger(store_path=str(tmp_path / "token_ledger.json"))
     content_gate = AsyncMock()
     content_gate.check.return_value = {"allowed": True, "reason": "ok"}
     rate_limiter = RateLimiter(limit_per_hour=5)
 
-    if killswitch is None:
-        killswitch = KillSwitch(store_path=str(tmp_path / "killswitch.json"))
     audit = AuditStore(path=str(tmp_path / "audit.jsonl"))
 
     handlers = {
@@ -120,10 +112,8 @@ def build_engine(
         planner=planner,
         diary=diary,
         evaluator=evaluator,
-        token_ledger=token_ledger,
         content_gate=content_gate,
         rate_limiter=rate_limiter,
-        killswitch=killswitch,
         audit=audit,
         handlers=handlers,
         persona={"system_prompt": "测试人设"},
@@ -138,76 +128,15 @@ def list_audit(engine):
     return page.get("items", [])
 
 
-# ================================================================ ① KillSwitch.update_from_user_online
-class TestUpdateFromUserOnline:
-    def test_online_sets_sleeping_true(self, tmp_path):
-        ks = KillSwitch(store_path=str(tmp_path / "killswitch.json"))
-        ks.update_from_user_online(True, user_online_sleep=True)
-        assert ks.sleeping is True
-        assert ks.is_active() is False
-
-    def test_offline_clears_sleeping(self, tmp_path):
-        ks = KillSwitch(store_path=str(tmp_path / "killswitch.json"))
-        ks.set_sleeping(True)
-        ks.update_from_user_online(False, user_online_sleep=True)
-        assert ks.sleeping is False
-        assert ks.is_active() is True
-
-    def test_online_offline_roundtrip(self, tmp_path):
-        ks = KillSwitch(store_path=str(tmp_path / "killswitch.json"))
-        ks.update_from_user_online(True, user_online_sleep=True)
-        assert ks.sleeping is True
-        ks.update_from_user_online(False, user_online_sleep=True)
-        assert ks.sleeping is False
-
-
-# ================================================================ ② user_online_sleep=False 不改变 sleeping
-class TestUpdateFromUserOnlineDisabled:
-    def test_disabled_keeps_manual_sleeping(self, tmp_path):
-        ks = KillSwitch(store_path=str(tmp_path / "killswitch.json"))
-        ks.set_sleeping(True)  # 手动休眠
-        ks.update_from_user_online(False, user_online_sleep=False)
-        assert ks.sleeping is True  # 不清除手动状态
-        ks.update_from_user_online(True, user_online_sleep=False)
-        assert ks.sleeping is True  # 也不强制休眠
-
-    def test_disabled_keeps_active_unchanged(self, tmp_path):
-        ks = KillSwitch(store_path=str(tmp_path / "killswitch.json"))
-        assert ks.is_active() is True
-        ks.update_from_user_online(True, user_online_sleep=False)
-        assert ks.sleeping is False
-        assert ks.is_active() is True
-
-
-# ================================================================ ③ leave_mode() 语义
-class TestLeaveMode:
-    def test_offline_and_active_is_leave_mode(self, tmp_path):
-        ks = KillSwitch(store_path=str(tmp_path / "killswitch.json"))
-        # sleeping=False、非 paused → 离开模式
-        assert ks.leave_mode() is True
-
-    def test_online_sleep_not_leave_mode(self, tmp_path):
-        ks = KillSwitch(store_path=str(tmp_path / "killswitch.json"))
-        ks.update_from_user_online(True, user_online_sleep=True)
-        assert ks.sleeping is True
-        assert ks.leave_mode() is False
-
-    def test_paused_not_leave_mode(self, tmp_path):
-        ks = KillSwitch(store_path=str(tmp_path / "killswitch.json"))
-        ks.pause()
-        assert ks.leave_mode() is False
-
-
-# ================================================================ ④ 引擎用户在线跳过规划 / 离线正常规划
+# ================================================================ ① 引擎用户在线跳过规划 / 离线正常规划
 @pytest.mark.asyncio
 async def test_engine_skips_planning_when_user_online(tmp_path):
     engine, state = build_engine(tmp_path, online=True)
 
     await engine._run_round()
 
-    # 用户在线 → sleeping=True → 跳过规划与行动
-    assert engine.killswitch.sleeping is True
-    assert engine.killswitch.leave_mode() is False
+    # 用户在线 → 引擎内休眠标志置位 → 跳过规划与行动
+    assert engine._user_online_sleeping is True
     engine.planner.plan.assert_not_called()
 
     # 审计记录一条 skipped（trigger_reason=user_online_sleep）
@@ -225,8 +154,7 @@ async def test_engine_plans_normally_when_user_offline(tmp_path):
     await engine._run_round()
 
     # 用户离开 → 离开模式 → 正常规划与行动
-    assert engine.killswitch.sleeping is False
-    assert engine.killswitch.leave_mode() is True
+    assert engine._user_online_sleeping is False
     engine.planner.plan.assert_awaited_once()
 
     items = list_audit(engine)
@@ -241,13 +169,13 @@ async def test_engine_transition_online_to_offline_resumes(tmp_path):
     # 在线轮：跳过规划
     await engine._run_round()
     assert engine.planner.plan.call_count == 0
-    assert engine.killswitch.sleeping is True
+    assert engine._user_online_sleeping is True
 
     # 用户离开后下一轮自动恢复自主
     state["online"] = False
     await engine._run_round()
     engine.planner.plan.assert_awaited_once()
-    assert engine.killswitch.sleeping is False
+    assert engine._user_online_sleeping is False
 
     items = list_audit(engine)
     assert len(items) == 2
@@ -262,7 +190,7 @@ async def test_engine_policy_disabled_plans_regardless(tmp_path):
 
     await engine._run_round()
 
-    assert engine.killswitch.sleeping is False
+    assert engine._user_online_sleeping is False
     engine.planner.plan.assert_awaited_once()
     items = list_audit(engine)
     assert items[0]["result"] == "success"

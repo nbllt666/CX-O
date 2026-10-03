@@ -5,7 +5,7 @@
  * - 连接打开后发送 config（agent_id + timeout），30s ping 心跳
  * - 消息路由：stream / voice.partial / voice.tts_chunk / voice.prefill_started /
  *   voice.speaker / response / error / content / done / cancelled / vad_status /
- *   cluster_event / autonomy_cost_alert（toast）/ skill_triggered 等（eventsStore）
+ *   cluster_event（toast）/ skill_triggered 等（eventsStore）
  * - TTS 流式播放：首包优先、back-to-back 衔接、全双工打断
  * - fixed 2s 自动重连（覆盖 HMR 与网络抖动）
  * - 带图消息返回 false，由 caller 回退 HTTP /api/chat/stream
@@ -355,15 +355,6 @@ export function useWebSocket(options: WebSocketOptions): UseWebSocketReturn {
           if (CLUSTER_TOAST_TOPICS.has(topic)) {
             useToastStore.getState().push({ kind: 'cluster', topic, data: clusterEvent });
           }
-          onMessageRef.current?.(data);
-          break;
-        }
-        case 'autonomy_cost_alert': {
-          // D9：自主系统成本告警——直接弹轻量 toast（data: usage_ratio/daily_used/limit/date）
-          useToastStore.getState().push({
-            kind: 'cost',
-            data: (data.data || {}) as Record<string, unknown>,
-          });
           onMessageRef.current?.(data);
           break;
         }

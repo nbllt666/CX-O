@@ -81,9 +81,24 @@ class VoxCPMClient:
         self._zipenhancer_model_path = self._config.zipenhancer_model_path
         self._working_dir = str(_CXO_ROOT / self._config.working_dir)
         self._model = None
-        # 允许作为输入参考音频的根目录，默认仅允许 CXO-ModelStation/data/input，
-        # 防止任意本地文件读取。G6: 锚定 _MS_ROOT 绝对路径，消除 CWD 依赖。
-        self._allowed_audio_root = (_MS_ROOT / "data" / "input").resolve()
+        # 允许作为输入参考音频的根目录，默认仅允许注入配置的 input_dir
+        # （打包态=用户数据根下 input；回退包内 data/input），
+        # 防止任意本地文件读取。G6: 锚定绝对路径，消除 CWD 依赖。
+        self._allowed_audio_root = self._resolve_allowed_audio_root()
+
+    @staticmethod
+    def _resolve_allowed_audio_root() -> Path:
+        """解析参考音频白名单根：优先注入配置 sovits_svc.input_dir，回退包内 data/input。
+
+        打包态包内锚点指向 <安装根>/resources/backend/data/input，与运行期注入的
+        用户数据根 input 目录不一致，会把合法输入误判为越权（同类修复见 security_utils）。
+        """
+        try:
+            from modelstation.config import get_settings
+
+            return Path(get_settings().sovits_svc.input_dir).resolve()
+        except Exception:
+            return (_MS_ROOT / "data" / "input").resolve()
 
     def _validate_audio_path(self, audio_path: str) -> Path:
         """校验 audio_path 解析后必须位于允许的根目录之内，防止任意文件传入子进程。"""

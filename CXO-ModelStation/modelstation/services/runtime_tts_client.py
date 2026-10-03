@@ -37,6 +37,7 @@ import io
 import logging
 import struct
 import time
+import urllib.parse
 import wave
 from pathlib import Path
 from typing import Optional
@@ -216,11 +217,26 @@ class RuntimeTTSClient:
     # ------------------------------------------------------------------
 
     def _get_client(self) -> httpx.AsyncClient:
-        """获取底层 HTTP 客户端（注入优先，缺省惰性自建）。"""
+        """获取底层 HTTP 客户端（注入优先，缺省惰性自建）。
+
+        回环基址强制 ``trust_env=False``：运行时（vLLM）恒在本机，而 httpx 默认
+        ``trust_env=True`` 会经 ``urllib.getproxies()`` 读取 Windows 注册表里的
+        系统代理（如 Clash/mihomo），使回环请求被转发给代理并返回 502
+        （实测：存在系统代理时 127.0.0.1 请求 → 502，``trust_env=False`` → 200）。
+        非回环基址保留 ``trust_env=True``，继续遵循企业代理配置。
+        """
         if self._client is None:
-            self._client = httpx.AsyncClient(timeout=self._timeout)
+            self._client = httpx.AsyncClient(
+                timeout=self._timeout,
+                trust_env=not self._is_loopback_base(),
+            )
             self._owns_client = True
         return self._client
+
+    def _is_loopback_base(self) -> bool:
+        """base_url 是否指向本机回环（127.0.0.0/8、localhost、::1）。"""
+        host = (urllib.parse.urlsplit(self._base_url).hostname or "").lower()
+        return host == "localhost" or host == "::1" or host.startswith("127.")
 
     async def _synthesize(self, body: dict, output_path, *, stream: bool) -> Path:
         """请求运行时 → 音频字节 → （裁剪）→ 落盘；错误统一映射 RuntimeTTSError。"""

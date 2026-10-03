@@ -13,6 +13,8 @@
 ⑩ GET/PUT /dream/config trigger 触发闸门子节：PUT 合法 trigger 往返（响应/GET/
    settings/config.json 均含该值）/ 非法值 422（越界 probability / 未知字段）/
    旧配置（dream 节无 trigger 数据）GET 自动补默认 trigger
+⑪ 真实引擎属性口径回归（TestRealEngineAttributeAlignment）：真实 DreamEngine
+   驱动 list / confirm / reject / purge / session 回滚，防止路由-引擎属性名漂移
 
 运行：python -m pytest tests/test_dream_router.py -q
 """
@@ -92,9 +94,11 @@ class FakePurgeJob:
 class FakeEngine:
     def __init__(self, enabled=True):
         self.config = DreamConfig(enabled=enabled)
-        self.buffer = FakeBuffer()
-        self.consolidator = FakeConsolidator()
-        self.purge_job = FakePurgeJob()
+        # 子组件按真实 DreamEngine 的私有成员名命名（_buffer/_consolidator/_purge_job）：
+        # 路由按私有名访问，替身若用公有名会掩盖属性错配（见 20260927 变更文档）。
+        self._buffer = FakeBuffer()
+        self._consolidator = FakeConsolidator()
+        self._purge_job = FakePurgeJob()
         self.calls = []
 
     async def run_session(self, agent_id="default"):
@@ -267,13 +271,13 @@ class TestReject:
         r = client.post("/api/dream/1/reject", json={"reason": "与事实不符"})
         assert r.status_code == 200
         assert r.json() == {"status": "ok", "buffer_id": 1}
-        assert engine.consolidator.last_reason == "与事实不符"
+        assert engine._consolidator.last_reason == "与事实不符"
 
     def test_reject_without_reason_body(self, client, engine):
         dream_router.set_dream_engine(engine)
         r = client.post("/api/dream/1/reject")
         assert r.status_code == 200
-        assert engine.consolidator.last_reason == ""
+        assert engine._consolidator.last_reason == ""
 
     def test_reject_404_when_candidate_missing(self, client, engine):
         dream_router.set_dream_engine(engine)
@@ -490,3 +494,117 @@ class TestDreamWriteAuthRequired:
         assert c.get("/api/dream/status").status_code == 200
         assert c.get("/api/dream/list").status_code == 200
         assert c.get("/api/dream/config").status_code == 200
+
+
+# ================================================================ 真实引擎属性口径回归
+class _StubDreamMemoryManager:
+    """承接 DreamConsolidator / DreamPurgeJob 的记忆接口（本组用例只验证属性口径）。"""
+
+    def __init__(self):
+        self.written = 0
+
+    def write_dream_memory(self, content, dream_session_id, metadata=None, agent_id="default"):
+        self.written += 1
+        return 100 + self.written
+
+    def consolidate_dream(self, memory_id, confirmed_importance=0.4):
+        return True
+
+    def list_dreams(self, agent_id="default", state=None, limit=50):
+        return []
+
+    def reject_dream(self, memory_id, reason=""):
+        return True
+
+    def purge_dream_session(self, dream_session_id, agent_id="default"):
+        return 2
+
+
+class TestRealEngineAttributeAlignment:
+    """回归：路由访问的子组件名必须与真实 DreamEngine 一致。
+
+    历史缺陷（20260927_模块0_修复梦境接口属性错配）：路由读 engine.buffer /
+    engine.consolidator / engine.purge_job，而真实引擎只有 _buffer / _consolidator /
+    _purge_job，FakeEngine 自造公有名导致单测全绿、生产 500。本组用例用**真实
+    DreamEngine**（真实 DreamBuffer 指向 tmp_path）驱动端点，防止同类漂移复发。
+    """
+
+    @staticmethod
+    def _real_engine(tmp_path):
+        from server.autonomy.dream.buffer import DreamBuffer
+        from server.autonomy.dream.config import DreamConfig
+        from server.autonomy.dream.consolidator import DreamConsolidator
+        from server.autonomy.dream.engine import DreamEngine
+        from server.autonomy.dream.purge import DreamPurgeJob
+
+        cfg = DreamConfig(enabled=True)
+        memory = _StubDreamMemoryManager()
+        buf = DreamBuffer(db_path=str(tmp_path / "dream_buffer.db"), config=cfg)
+        return (
+            DreamEngine(
+                collector=None,
+                generator=None,
+                dream_filter=None,
+                buffer=buf,
+                consolidator=DreamConsolidator(buffer=buf, memory_manager=memory, config=cfg),
+                purge_job=DreamPurgeJob(memory_manager=memory, buffer=buf, config=cfg),
+                config=cfg,
+                interval_seconds=0.05,
+            ),
+            buf,
+        )
+
+    def test_list_and_confirm_and_purge_against_real_engine(self, client, tmp_path):
+        """真实引擎驱动 5 个写读端点：list / confirm / reject / session 回滚 / purge。"""
+        engine, buf = self._real_engine(tmp_path)
+        buffer_id = buf.put(
+            {
+                "dream_session_id": "sess-real",
+                "agent_id": "default",
+                "candidate_content": "梦见一片发光的海",
+                "associated_memories": [1],
+                "associated_entities": ["海"],
+                "lucidity_score": 0.8,
+                "emotion_shift": {"valence": 0.3, "arousal": 0.5},
+            }
+        )
+        reject_id = buf.put(
+            {
+                "dream_session_id": "sess-real-2",
+                "agent_id": "default",
+                "candidate_content": "梦见旧教室的走廊",
+                "associated_memories": [],
+                "associated_entities": ["走廊"],
+                "lucidity_score": 0.5,
+                "emotion_shift": {},
+            }
+        )
+        dream_router.set_dream_engine(engine)
+
+        # ③ list：真实引擎不得抛 AttributeError
+        r = client.get("/api/dream/list")
+        assert r.status_code == 200
+        body = r.json()
+        assert body["total"] == 2
+        assert body["items"][0]["candidate_content"] == "梦见旧教室的走廊"
+
+        # ④ confirm：走真实 DreamConsolidator（stub 记忆接口）
+        r = client.post(f"/api/dream/{buffer_id}/confirm")
+        assert r.status_code == 200
+        assert r.json()["memory_id"] == 101
+
+        # ⑤ reject：走真实 DreamConsolidator（缓冲置 rejected，保留 30 天审计）
+        r = client.post(f"/api/dream/{reject_id}/reject", json={"reason": "与事实不符"})
+        assert r.status_code == 200
+        assert buf.get(reject_id)["decision"] == "rejected"
+        assert buf.get(reject_id)["decision_reason"] == "与事实不符"
+
+        # ⑥ session 回滚：经真实 consolidator.memory_manager 链调用
+        r = client.delete("/api/dream/session/sess-real")
+        assert r.status_code == 200
+        assert r.json() == {"purged": 2}
+
+        # ⑦ purge：走真实 DreamPurgeJob
+        r = client.post("/api/dream/purge")
+        assert r.status_code == 200
+        assert set(r.json()) == {"purged_memories", "purged_buffer"}

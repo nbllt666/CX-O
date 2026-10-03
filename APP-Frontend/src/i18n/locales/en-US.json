@@ -630,7 +630,7 @@
       "running": "Running..."
     },
     "autonomy": {
-      "subtitle": "CX-O-Autonomy: motivations, budget and behavior replay",
+      "subtitle": "CX-O-Autonomy: motivations, focus and behavior replay",
       "refresh": "Refresh",
       "statusTitle": "Current Status",
       "statusBadge": {
@@ -641,8 +641,6 @@
       },
       "lastAction": "Last action",
       "lastCycleAt": "Last cycle",
-      "budgetResetDate": "Budget reset",
-      "budgetUsedToday": "Tokens used today",
       "emptyValue": "—",
       "disabledTitle": "Autonomy System Disabled",
       "disabledHint": "The autonomy system is disabled. Click \"Enable\" to start its daily life.",
@@ -654,11 +652,9 @@
         "fatigue": "Fatigue"
       },
       "motivationsDisabledHint": "Enable the autonomy system to see live motivations",
-      "budgetTitle": "Daily Budget Usage",
-      "budgetUsed": "{{used}} / {{limit}} tokens used",
-      "budgetNoLimit": "No daily token limit configured",
-      "budgetOverThreshold": "Close to daily budget",
-      "budgetExceeded": "Daily budget exceeded",
+      "focusTitle": "Current Focus",
+      "focusEmpty": "No clear focus yet",
+      "focusLevel": "Interest {{pct}}%",
       "controlTitle": "Control",
       "enable": "Enable",
       "disable": "Disable",
@@ -869,7 +865,6 @@
       "subtitle": "Microphone input · TTS playback · Echo cancellation · Multi-client sync",
       "wsConnected": "Connected",
       "wsDisconnected": "Disconnected",
-      "clientsOnline": "{{count}} clients online",
       "sync": "Sync: {{status}}",
       "syncReady": "Ready",
       "syncSynced": "Synced",
@@ -1564,8 +1559,6 @@
     "clusterFailoverCompleted": "Failover completed",
     "clusterNodeLeft": "Node left: {{node}}",
     "clusterRoleChanged": "Role changed to {{role}}",
-    "clusterGeneric": "Cluster event: {{topic}}",
-    "costAlertTitle": "Cost alert",
-    "costAlertMessage": "Today's tokens: {{used}}/{{limit}} ({{ratio}})"
+    "clusterGeneric": "Cluster event: {{topic}}"
   }
 }

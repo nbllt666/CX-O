@@ -1,4 +1,4 @@
-# CosyVoice3 主运行时部署脚本（Task 7 变更：CosyVoice2 -> Fun-CosyVoice3-0.5B-2512）
+﻿# CosyVoice3 主运行时部署脚本（Task 7 变更：CosyVoice2 -> Fun-CosyVoice3-0.5B-2512）
 # 用法: powershell -ExecutionPolicy Bypass -File start-cosyvoice.ps1
 # 前提: cosyvoice conda 环境（Python 3.10 + torch 2.11+cu128）；模型已下载 C:\CX-O\models\Fun-CosyVoice3-0.5B-2512
 # 说明:

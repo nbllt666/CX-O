@@ -1,22 +1,17 @@
 """CX-O-Autonomy 持久化簇（第八轮 G1：R1/R2/R3/R4）单元测试。
 
-覆盖：
+覆盖（2026-09-27 人类裁决：预算台账与急停档持久化已随「删除预算记账 / 急停」移除）：
 ① _atomic_io.atomic_write_json —— 写成功内容正确、写盘中断（os.replace 抛
    OSError）后原文件内容保持完整且无 .tmp 残留、覆盖已存在文件安全；
 ② load 坏档回退 —— autonomy_config.json / dream_config.json 损坏时返回默认
    配置并生成 .corrupt 留痕文件（原文件移除）；
-③ KillSwitch 状态变更（pause/resume/set_sleeping/update_from_user_online）后 store
-   文件内容同步（只写 paused/sleeping，不含 enabled），未变化不重复落盘；遗留
-   killswitch.json（含 enabled 键）加载后不导致停摆；
-④ 遗留 manager_state.json（status=budget_limited / error）经引擎载入归一化为 running；
-⑤ TokenLedger save 后文件内容正确；引擎每轮末尾统一持久化台账（R4 接线）。
+③ 遗留 manager_state.json（status=budget_limited / error）经引擎载入归一化为 running。
 
 运行：python -m pytest tests/test_autonomy_persistence.py -q
 """
 
 import json
 from pathlib import Path
-from unittest.mock import MagicMock
 
 import pytest
 
@@ -28,8 +23,6 @@ from server.autonomy.dream.config import DreamConfig
 from server.autonomy.dream.config import load_config as load_dream_config
 from server.autonomy.manager import AutonomyManager
 from server.autonomy.safety.audit import AuditStore
-from server.autonomy.safety.budget.token_ledger import TokenLedger
-from server.autonomy.safety.killswitch import KillSwitch
 
 
 # ================================================================ ① 原子写
@@ -93,94 +86,14 @@ class TestLoadCorruptFallback:
         assert loaded.agent_id == "测试"
 
 
-# ================================================================ ③ KillSwitch 接线
-class TestKillSwitchPersistenceWiring:
-    def test_pause_persists_without_enabled_key(self, tmp_path):
-        path = tmp_path / "killswitch.json"
-        ks = KillSwitch(store_path=str(path))
-        ks.pause()  # 状态变更即落盘（无需显式 save）
-        data = json.loads(path.read_text(encoding="utf-8"))
-        assert data == {"paused": True, "sleeping": False}
-        assert "enabled" not in data
-        restored = KillSwitch(store_path=str(path)).load()
-        assert restored.paused is True
-        assert restored.is_active() is False
-
-    def test_pause_and_resume_persist(self, tmp_path):
-        path = tmp_path / "killswitch.json"
-        ks = KillSwitch(store_path=str(path))
-        ks.pause()
-        assert json.loads(path.read_text(encoding="utf-8"))["paused"] is True
-        ks.resume()
-        data = json.loads(path.read_text(encoding="utf-8"))
-        assert data == {"paused": False, "sleeping": False}
-
-    def test_legacy_killswitch_enabled_false_does_not_block(self, tmp_path):
-        """不变量③：遗留 killswitch.json（enabled=false）加载后仍可行动。"""
-        path = tmp_path / "killswitch.json"
-        path.write_text(
-            json.dumps({"enabled": False, "paused": False, "sleeping": False}),
-            encoding="utf-8",
-        )
-        ks = KillSwitch(store_path=str(path)).load()
-        assert ks.is_active() is True
-        assert ks.leave_mode() is True
-
-    def test_set_sleeping_persists_and_skips_unchanged(self, tmp_path, monkeypatch):
-        ks = KillSwitch(store_path=str(tmp_path / "killswitch.json"))
-        calls = []
-
-        def _spy_save():
-            calls.append(1)
-            return str(ks.store_path)
-
-        monkeypatch.setattr(ks, "save", _spy_save)
-        ks.set_sleeping(True)
-        assert len(calls) == 1  # 变化 → 落盘
-        ks.set_sleeping(True)
-        assert len(calls) == 1  # 未变化 → 不重复落盘（避免轮级高频写）
-        ks.set_sleeping(False)
-        assert len(calls) == 2
-
-    def test_update_from_user_online_persists(self, tmp_path):
-        path = tmp_path / "killswitch.json"
-        ks = KillSwitch(store_path=str(path))
-        ks.update_from_user_online(True, True)  # 用户在线 → sleeping
-        assert json.loads(path.read_text(encoding="utf-8"))["sleeping"] is True
-
-
-# ================================================================ ④ TokenLedger 接线
-class TestTokenLedgerPersistenceWiring:
-    def test_save_file_content(self, tmp_path):
-        path = tmp_path / "token_ledger.json"
-        ledger = TokenLedger(daily_token_limit=1000, store_path=str(path))
-        ledger.add_tokens({"total_tokens": 300})
-        ledger.add_llm_call()
-        ledger.save()
-        data = json.loads(path.read_text(encoding="utf-8"))
-        assert data["used_tokens"] == 300
-        assert data["llm_calls"] == 1
-        assert data["alerted"] is False
-        assert data["date"]
-
-    def test_save_overwrites_previous_content(self, tmp_path):
-        path = tmp_path / "token_ledger.json"
-        ledger = TokenLedger(daily_token_limit=1000, store_path=str(path))
-        ledger.add_tokens(100)
-        ledger.save()
-        ledger.add_tokens(50)
-        ledger.save()
-        assert json.loads(path.read_text(encoding="utf-8"))["used_tokens"] == 150
-
-
-# ================================================================ ⑤ 引擎轮末持久化
+# ================================================================ ③ 引擎载入遗留状态
 def _build_engine(tmp_path: Path) -> AutonomyEngine:
-    """构造最小依赖引擎：manager 未启用 → 轮级跳过路径，聚焦轮末台账持久化。"""
+    """构造最小依赖引擎：sensor 非 ContextSensor → 用户在线策略跳过，聚焦状态载入。"""
     manager = AutonomyManager(AutonomyConfig(store_path=str(tmp_path)))
     return AutonomyEngine(
         manager=manager,
         motivation=MotivationState(),
-        circadian=object(),  # _current_phase 异常兜底 active，不会被跳过路径触达
+        circadian=object(),  # _current_phase 异常兜底 active
         sensor=object(),  # 非 ContextSensor → 用户在线策略跳过
         rss=None,
         hotspot=None,
@@ -188,46 +101,13 @@ def _build_engine(tmp_path: Path) -> AutonomyEngine:
         planner=None,
         diary=None,
         evaluator=None,
-        token_ledger=TokenLedger(
-            daily_token_limit=1000, store_path=str(tmp_path / "token_ledger.json")
-        ),
         content_gate=None,
         rate_limiter=None,
-        killswitch=KillSwitch(store_path=str(tmp_path / "killswitch.json")),
         audit=AuditStore(path=str(tmp_path / "audit.jsonl")),
         handlers={},
     )
 
 
-@pytest.mark.asyncio
-async def test_round_end_persists_token_ledger(tmp_path):
-    """引擎每轮末尾统一持久化台账（R4 接线：无显式 save 调用即落盘）。"""
-    engine = _build_engine(tmp_path)
-    ledger_path = tmp_path / "token_ledger.json"
-    assert not ledger_path.exists()
-    engine.token_ledger.add_tokens(123)
-    await engine._run_round()
-    data = json.loads(ledger_path.read_text(encoding="utf-8"))
-    assert data["used_tokens"] == 123
-
-
-@pytest.mark.asyncio
-async def test_round_end_ledger_save_failure_not_fatal(tmp_path, monkeypatch):
-    """台账持久化失败仅告警，不影响本轮收尾（last_cycle_at 正常写入）。"""
-    engine = _build_engine(tmp_path)
-
-    def _boom():
-        raise OSError("disk full")
-
-    monkeypatch.setattr(engine.token_ledger, "save", _boom)
-    await engine._run_round()  # 不应抛异常
-    assert engine.manager.last_cycle_at is not None
-    assert json.loads(
-        (tmp_path / "manager_state.json").read_text(encoding="utf-8")
-    )["last_cycle_at"] == engine.manager.last_cycle_at
-
-
-# ================================================================ ④ 遗留 manager_state 归一化
 class TestLegacyManagerStateNormalization:
     @pytest.mark.parametrize("legacy_status", ["budget_limited", "error"])
     def test_legacy_status_normalized_to_running(self, tmp_path, legacy_status):

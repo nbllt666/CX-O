@@ -47,9 +47,11 @@ import subprocess
 import sys
 import uuid
 from datetime import datetime
+from collections import deque
 from pathlib import Path
-from typing import Optional
+from typing import Callable, Optional
 
+from modelstation.services.gpu_batch import is_oom_signature, resolve_auto_batch_size
 from modelstation.services.training_mutex import (
     TRAINING_MELOTTS,
     current_training,
@@ -60,6 +62,12 @@ from modelstation.services.training_mutex import (
 logger = logging.getLogger(__name__)
 
 _OUTPUT_NAME_PATTERN = re.compile(r"^[A-Za-z0-9_-]+$")
+
+# 自适应 batch 参数（本机实测保守标定：MeloTTS 单样本+模型常驻开销更大）
+_PER_SAMPLE_GB = 0.8
+_VRAM_RESERVE_GB = 2.0
+_MAX_AUTO_BATCH = 16
+_DEFAULT_BATCH = 6
 
 # 官方 preprocess_text.py 清洗步骤超时（秒）：BERT 逐条推理，长清单耗时显著
 _PREPROCESS_SUBPROCESS_TIMEOUT = 3600.0
@@ -469,6 +477,20 @@ class MeloTTSTrainer:
 
         if not int(epochs) >= 1:
             raise ValueError(f"epochs must be >= 1, got: {epochs}")
+        # batch_size 缺省（None）= 按显存自适应；显式给定则以其为准（不强改用户意图）
+        if batch_size is None:
+            batch_size, batch_reason = await resolve_auto_batch_size(
+                self._python_path,
+                per_sample_gb=_PER_SAMPLE_GB,
+                reserve_gb=_VRAM_RESERVE_GB,
+                max_batch=_MAX_AUTO_BATCH,
+                fallback=_DEFAULT_BATCH,
+                env={**os.environ, "TORCH_FORCE_NO_WEIGHTS_ONLY_LOAD": "1"},
+            )
+        else:
+            batch_reason = f"请求显式指定 batch={int(batch_size)}"
+        batch_size = int(batch_size)
+        logger.info(f"MeloTTS batch_size={batch_size}（{batch_reason}）")
         if not int(batch_size) >= 1:
             raise ValueError(f"batch_size must be >= 1, got: {batch_size}")
         if not float(learning_rate) > 0:
@@ -579,6 +601,10 @@ class MeloTTSTrainer:
             # Step 4: train.py 子进程（单进程 env:// 等价 torchrun 单卡启动）
             env = {
                 **os.environ,
+                # torch≥2.6 起 torch.load 默认 weights_only=True：MeloTTS train.py 加载
+                # 包内预训练权重/本地训练产物（含 optimizer 等非张量对象）会 UnpicklingError，
+                # 按 PyTorch 官方兼容开关对可信本地权重放开（与 sovits_svc_trainer 同口径）。
+                "TORCH_FORCE_NO_WEIGHTS_ONLY_LOAD": "1",
                 "LOCAL_RANK": "0",
                 "RANK": "0",
                 "WORLD_SIZE": "1",
@@ -595,11 +621,23 @@ class MeloTTSTrainer:
                 # get_hparams 支持 --pretrain_G（train.py: hps.pretrain_G = args or 官方默认下载）
                 args += ["--pretrain_G", str(effective_base_ckpt)]
 
+            async def _spawn_with_batch(batch: int) -> asyncio.subprocess.Process:
+                """按给定 batch 重写训练配置并拉起子进程（OOM 降批重试复用同一入口）。"""
+                self._write_train_config(
+                    config_path,
+                    train_list=work_dir / "train.list",
+                    val_list=work_dir / "val.list",
+                    epochs=epochs,
+                    batch_size=batch,
+                    learning_rate=learning_rate,
+                )
+                return await self._spawn_train(args, cwd=melo_dir, env=env)
+
             logger.info(
                 "Starting MeloTTS training: %s (output=%s, epochs=%d, batch=%d, lr=%g)",
                 task_id, output_name, epochs, batch_size, learning_rate,
             )
-            proc = await self._spawn_train(args, cwd=melo_dir, env=env)
+            proc = await _spawn_with_batch(batch_size)
             self._process = proc
             self._monitor_task = asyncio.create_task(
                 self._monitor_training(
@@ -607,6 +645,8 @@ class MeloTTSTrainer:
                     output_name=output_name,
                     total_epochs=int(epochs),
                     proc=proc,
+                    respawn=_spawn_with_batch,
+                    batch_size=batch_size,
                 )
             )
             _update_train_status(status="running", message="训练进行中")
@@ -636,16 +676,23 @@ class MeloTTSTrainer:
         output_name: str,
         total_epochs: int,
         proc: asyncio.subprocess.Process,
+        respawn: Optional[Callable] = None,
+        batch_size: int = 0,
     ) -> None:
-        """后台监控：解析 epoch 日志行更新进度；收尾校验产物并释放互斥。"""
+        """后台监控：解析 epoch 日志行更新进度；收尾校验产物并释放互斥。
+
+        OOM 兜底：显存不足时按 batch//2 重写配置并重试一次（自适应估算偏乐观的场景）。
+        """
         started_at = asyncio.get_running_loop().time()
         current_epoch = 0
         epoch_seen = False
+        recent_output: "deque[str]" = deque(maxlen=40)  # OOM 特征可能不在最后一行
 
         def _process_line(line_str: str) -> None:
             nonlocal current_epoch, epoch_seen
             if not line_str:
                 return
+            recent_output.append(line_str[:300])
             match = _EPOCH_PATTERN.search(line_str)
             if match:
                 current_epoch = int(match.group(1))
@@ -677,37 +724,60 @@ class MeloTTSTrainer:
 
         done_event = asyncio.Event()
         estimator_task = asyncio.create_task(_time_based_estimator())
+        retried_on_oom = False
         try:
-            stdout_task = asyncio.create_task(self._read_stream(proc.stdout, _process_line))
-            stderr_task = asyncio.create_task(self._read_stream(proc.stderr, _process_line))
-            await asyncio.gather(stdout_task, stderr_task)
+            while True:
+                stdout_task = asyncio.create_task(self._read_stream(proc.stdout, _process_line))
+                stderr_task = asyncio.create_task(self._read_stream(proc.stderr, _process_line))
+                await asyncio.gather(stdout_task, stderr_task)
 
-            # 等待子进程退出，超时主动 kill（对齐 sovits trainer）
-            try:
-                await asyncio.wait_for(proc.wait(), timeout=_TRAIN_MONITOR_TIMEOUT)
-            except asyncio.TimeoutError:
-                logger.error(
-                    f"Training monitor wait timeout after {_TRAIN_MONITOR_TIMEOUT}s; killing process"
-                )
-                await _wait_for_subprocess_exit(proc, _TRAIN_STOP_WAIT_TIMEOUT)
-
-            returncode = proc.returncode if proc.returncode is not None else -1
-            if returncode == 0:
+                # 等待子进程退出，超时主动 kill（对齐 sovits trainer）
                 try:
-                    dst = self._collect_outputs(output_name)
-                    _update_train_status(
-                        status="completed",
-                        progress=1.0,
-                        message=f"训练完成，产物已收集至 {dst}",
+                    await asyncio.wait_for(proc.wait(), timeout=_TRAIN_MONITOR_TIMEOUT)
+                except asyncio.TimeoutError:
+                    logger.error(
+                        f"Training monitor wait timeout after {_TRAIN_MONITOR_TIMEOUT}s; killing process"
                     )
-                    logger.info("MeloTTS training completed: task_id=%s", task_id)
-                except Exception as exc:
-                    _update_train_status(
-                        status="failed",
-                        message=f"训练子进程正常退出但产物收集失败: {exc}",
+                    await _wait_for_subprocess_exit(proc, _TRAIN_STOP_WAIT_TIMEOUT)
+
+                returncode = proc.returncode if proc.returncode is not None else -1
+                if returncode == 0:
+                    try:
+                        dst = self._collect_outputs(output_name)
+                        _update_train_status(
+                            status="completed",
+                            progress=1.0,
+                            message=f"训练完成，产物已收集至 {dst}",
+                        )
+                        logger.info("MeloTTS training completed: task_id=%s", task_id)
+                    except Exception as exc:
+                        _update_train_status(
+                            status="failed",
+                            message=f"训练子进程正常退出但产物收集失败: {exc}",
+                        )
+                        logger.error("MeloTTS output collection failed: %s", exc)
+                    break
+                # OOM 降批重试（仅一次）
+                if (
+                    not retried_on_oom
+                    and respawn is not None
+                    and batch_size > 1
+                    and is_oom_signature("\n".join(recent_output))
+                ):
+                    retried_on_oom = True
+                    new_batch = max(1, batch_size // 2)
+                    logger.warning(
+                        f"MeloTTS 显存不足（batch={batch_size}），降批到 {new_batch} 后重试一次"
                     )
-                    logger.error("MeloTTS output collection failed: %s", exc)
-            else:
+                    _update_train_status(
+                        message=f"显存不足，batch {batch_size} → {new_batch} 后重试"
+                    )
+                    recent_output.clear()
+                    proc = await respawn(new_batch)
+                    self._process = proc
+                    batch_size = new_batch
+                    continue
+
                 _update_train_status(
                     status="failed",
                     message=f"训练子进程异常退出（exit={returncode}）",
@@ -715,6 +785,7 @@ class MeloTTSTrainer:
                 logger.error(
                     "MeloTTS training failed: task_id=%s exit=%s", task_id, returncode
                 )
+                break
         except asyncio.CancelledError:
             # stop 路径取消监控：状态由 stop_training 收尾，此处仅传播取消
             raise

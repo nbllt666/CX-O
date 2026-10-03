@@ -12,12 +12,15 @@ import json
 import logging
 import os
 import re
+import shutil
 import subprocess
 import sys
 import uuid
+from collections import deque
 from pathlib import Path
 from typing import Callable, Optional
 
+from modelstation.services.gpu_batch import is_oom_signature, resolve_auto_batch_size
 from modelstation.services.security_utils import validate_training_data_dir
 
 logger = logging.getLogger(__name__)
@@ -25,11 +28,29 @@ logger = logging.getLogger(__name__)
 _OUTPUT_NAME_PATTERN = re.compile(r"^[A-Za-z0-9_-]+$")
 _SPEAKER_NAME_PATTERN = re.compile(r"[^A-Za-z0-9_-]")
 
+# 自适应 batch 参数（本机实测标定：8 样本 + 模型常驻约 6.7GB ≈ 0.5GB/样本）
+_PER_SAMPLE_GB = 0.5
+_VRAM_RESERVE_GB = 2.0
+_MAX_AUTO_BATCH = 32
+_DEFAULT_BATCH = 4
+
 # 训练 / 预处理子步骤默认超时（秒）
 _TRAIN_SUBPROCESS_TIMEOUT = 3600.0  # 1 小时
 # 训练监控超时（秒）：So-VITS-SVC 训练通常耗时数小时甚至数天，需远大于预处理超时
 _TRAIN_MONITOR_TIMEOUT = 7 * 24 * 3600.0  # 7 days for training monitor
 _TRAIN_STOP_WAIT_TIMEOUT = 10.0
+
+
+def _engine_env() -> dict:
+    """引擎子进程环境：附带 torch≥2.6 的 weights_only 兼容开关。
+
+    引擎（fairseq ContentVec / So-VITS 训练与推理）用 torch.load 读取包内预训练权重与
+    用户本地训练产物，这些检查点含非张量对象（fairseq Dictionary、optimizer 状态等），
+    而 torch 2.6 起 torch.load 默认 weights_only=True 会直接 UnpicklingError
+    （实机复现：安装版 preprocess_hubert_f0 必失败，rc=1）。按 PyTorch 官方兼容开关
+    （TORCH_FORCE_NO_WEIGHTS_ONLY_LOAD）对"可信本地权重"放开，避免改动第三方库代码。
+    """
+    return {**os.environ, "TORCH_FORCE_NO_WEIGHTS_ONLY_LOAD": "1"}
 
 
 async def _wait_for_subprocess_exit(process: asyncio.subprocess.Process, timeout: float) -> bool:
@@ -107,6 +128,7 @@ class SoVITSSVCTrainer:
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
             cwd=str(self._so_vits_svc_dir),
+            env=_engine_env(),
             creationflags=subprocess.CREATE_NEW_PROCESS_GROUP if sys.platform == "win32" else 0,
         )
         try:
@@ -218,7 +240,7 @@ class SoVITSSVCTrainer:
     async def start_training(
         self,
         epochs: int = 10000,
-        batch_size: int = 4,
+        batch_size: Optional[int] = None,
         learning_rate: float = 1e-4,
         output_name: Optional[str] = None,
         speaker_name: Optional[str] = None,
@@ -226,6 +248,21 @@ class SoVITSSVCTrainer:
     ) -> str:
         if self._process and self._process.returncode is None:
             raise RuntimeError("训练已在进行，请先停止当前训练")
+
+        # batch_size 缺省（None）= 按显存自适应；显式给定则以其为准（不强改用户意图）
+        if batch_size is None:
+            batch_size, batch_reason = await resolve_auto_batch_size(
+                self._python_path,
+                per_sample_gb=_PER_SAMPLE_GB,
+                reserve_gb=_VRAM_RESERVE_GB,
+                max_batch=_MAX_AUTO_BATCH,
+                fallback=_DEFAULT_BATCH,
+                env=_engine_env(),
+            )
+        else:
+            batch_reason = f"请求显式指定 batch={int(batch_size)}"
+        batch_size = int(batch_size)
+        logger.info(f"So-VITS-SVC batch_size={batch_size}（{batch_reason}）")
 
         target_speaker = _sanitize_speaker_name(speaker_name or "speaker")
         if target_speaker not in self._preprocessed:
@@ -247,14 +284,26 @@ class SoVITSSVCTrainer:
         # 上游 train.py 仅通过 -c 接收超参（utils.get_hparams），请求中的
         # epochs/batch_size/learning_rate 按请求参数改写上游 config.json 的 train 段
         # 并落盘独立副本到本训练 output_path 下（多训练互不覆盖）。
+        # batch 只影响该配置文件，故 OOM 降批重试可复用同一入口重新拉起进程。
         runtime_config_path = output_path / "config.json"
-        self._write_runtime_config(
-            source_config_path,
-            runtime_config_path,
-            epochs=epochs,
-            batch_size=batch_size,
-            learning_rate=learning_rate,
-        )
+
+        async def _spawn_with_batch(batch: int) -> asyncio.subprocess.Process:
+            """按给定 batch 重写运行配置并拉起训练子进程。"""
+            self._write_runtime_config(
+                source_config_path,
+                runtime_config_path,
+                epochs=epochs,
+                batch_size=batch,
+                learning_rate=learning_rate,
+            )
+            return await asyncio.create_subprocess_exec(
+                *args,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+                cwd=str(self._so_vits_svc_dir),
+                env=_engine_env(),
+                creationflags=subprocess.CREATE_NEW_PROCESS_GROUP if sys.platform == "win32" else 0,
+            )
 
         logger.info(f"Starting So-VITS-SVC training: {self._task_id}")
         logger.info(f"  Training data: {self._training_data_dir}")
@@ -269,16 +318,15 @@ class SoVITSSVCTrainer:
             "-m", model_name,
         ]
 
-        proc = await asyncio.create_subprocess_exec(
-            *args,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-            cwd=str(self._so_vits_svc_dir),
-            creationflags=subprocess.CREATE_NEW_PROCESS_GROUP if sys.platform == "win32" else 0,
-        )
+        proc = await _spawn_with_batch(batch_size)
         self._process = proc
 
-        self._monitor_task = asyncio.create_task(self._monitor_training(epochs, progress_callback, proc))
+        self._monitor_task = asyncio.create_task(
+            self._monitor_training(
+                epochs, progress_callback, proc, model_name,
+                respawn=_spawn_with_batch, batch_size=batch_size,
+            )
+        )
 
         return self._task_id
 
@@ -289,23 +337,57 @@ class SoVITSSVCTrainer:
                 break
             callback(line.decode("utf-8", errors="replace").strip())
 
+    def _collect_outputs(self, output_name: str) -> Path:
+        """训练完成后收集产物：engine logs/<name> → models_dir/<name>。
+
+        上游 train.py 将产物硬编码落盘 ``./logs/<model>``（相对引擎仓库根，
+        实码见 engines/so-vits-svc-4.1-Stable/utils.py get_hparams 的 model_dir），
+        本服务约定训练产物落盘 models_dir/<output_name>/，此处搬运；
+        与 melotts_trainer._collect_outputs 同构（同一条链路两种引擎行为一致）。
+        """
+        src = self._so_vits_svc_dir / "logs" / output_name
+        dst = self._output_dir / output_name
+        dst.mkdir(parents=True, exist_ok=True)
+        if not src.is_dir():
+            raise RuntimeError(
+                f"训练子进程 exit=0 但引擎日志目录不存在: {src}（无产物可收集）"
+            )
+        for pattern in ("G_*.pth", "D_*.pth", "config.json"):
+            for f in src.glob(pattern):
+                shutil.copy2(f, dst / f.name)
+        if not list(dst.glob("G_*.pth")):
+            raise RuntimeError(
+                f"训练完成但未在 {src} 找到 G_*.pth 产物；请检查训练日志"
+            )
+        return dst
+
     async def _monitor_training(
         self,
         total_epochs: int,
         progress_callback: Optional[Callable] = None,
         proc: Optional[asyncio.subprocess.Process] = None,
+        output_name: Optional[str] = None,
+        respawn: Optional[Callable] = None,
+        batch_size: int = 0,
     ):
         epoch_pattern = re.compile(r"epoch:\s*(\d+)", re.IGNORECASE)
         current_epoch = 0
+        last_output_line = ""
+        # 近若干行输出：OOM 特征可能不在最后一行，需跨行上下文判定
+        recent_output: "deque[str]" = deque(maxlen=40)
         process = proc or self._process
         if process is None:
             logger.warning("Monitor training called without a process")
             return
 
         def _process_line(line_str: str):
-            nonlocal current_epoch
+            nonlocal current_epoch, last_output_line
             if not line_str:
                 return
+            # 保留最后一行输出：失败终态时并入 message（子进程 traceback 落在
+            # stdout/stderr 流里，不保留则排障时拿不到真实原因）
+            last_output_line = line_str[:300]
+            recent_output.append(line_str[:300])
             match = epoch_pattern.search(line_str)
             if match:
                 current_epoch = int(match.group(1))
@@ -321,26 +403,75 @@ class SoVITSSVCTrainer:
                     except Exception as e:
                         logger.warning(f"Progress callback error: {e}")
 
-        stdout_task = asyncio.create_task(self._read_stream(process.stdout, _process_line))
-        stderr_task = asyncio.create_task(self._read_stream(process.stderr, _process_line))
-        await asyncio.gather(stdout_task, stderr_task)
+        retried_on_oom = False
+        while True:
+            stdout_task = asyncio.create_task(self._read_stream(process.stdout, _process_line))
+            stderr_task = asyncio.create_task(self._read_stream(process.stderr, _process_line))
+            await asyncio.gather(stdout_task, stderr_task)
 
-        # 等到子进程退出，超时则主动 kill（按子进程句柄所对应的进程）。
-        try:
-            await asyncio.wait_for(process.wait(), timeout=_TRAIN_MONITOR_TIMEOUT)
-        except asyncio.TimeoutError:
+            # 等到子进程退出，超时则主动 kill（按子进程句柄所对应的进程）。
+            try:
+                await asyncio.wait_for(process.wait(), timeout=_TRAIN_MONITOR_TIMEOUT)
+            except asyncio.TimeoutError:
+                logger.error(
+                    f"Training monitor wait timeout after {_TRAIN_MONITOR_TIMEOUT}s; killing process"
+                )
+                await _wait_for_subprocess_exit(process, _TRAIN_STOP_WAIT_TIMEOUT)
+
+            returncode = process.returncode if process.returncode is not None else -1
+            if returncode == 0:
+                # 产物收集：引擎 logs/<name> → models_dir/<name>（收集失败按训练失败上报，
+                # 避免"训练成功但模型列表为空"的静默不一致）
+                try:
+                    dst = self._collect_outputs(output_name or "")
+                    message = f"训练完成，产物已收集至 {dst}"
+                    logger.info(
+                        "So-VITS-SVC training completed: task_id=%s -> %s", self._task_id, dst
+                    )
+                except Exception as exc:
+                    returncode = -1
+                    message = f"训练子进程正常退出但产物收集失败: {exc}"
+                    logger.error("So-VITS-SVC output collection failed: %s", exc)
+                break
+            # OOM 降批重试（仅一次）：自适应估算偏乐观时兜底，避免整轮训练白跑
+            if (
+                not retried_on_oom
+                and respawn is not None
+                and batch_size > 1
+                and is_oom_signature("\n".join(recent_output))
+            ):
+                retried_on_oom = True
+                new_batch = max(1, batch_size // 2)
+                logger.warning(
+                    f"So-VITS-SVC 显存不足（batch={batch_size}），降批到 {new_batch} 后重试一次"
+                )
+                if progress_callback:
+                    try:
+                        progress_callback(message=f"显存不足，batch {batch_size} → {new_batch} 后重试")
+                    except Exception as e:
+                        logger.warning(f"Progress callback error: {e}")
+                recent_output.clear()
+                process = await respawn(new_batch)
+                self._process = process
+                batch_size = new_batch
+                continue
+
+            tail = f"：{last_output_line}" if last_output_line else ""
+            message = f"训练子进程异常退出（exit={returncode}）{tail}"
             logger.error(
-                f"Training monitor wait timeout after {_TRAIN_MONITOR_TIMEOUT}s; killing process"
+                "So-VITS-SVC training failed: task_id=%s exit=%s tail=%s",
+                self._task_id, returncode, last_output_line,
             )
-            await _wait_for_subprocess_exit(process, _TRAIN_STOP_WAIT_TIMEOUT)
+            break
 
         if progress_callback:
             try:
                 progress_callback(
-                    progress=1.0 if process.returncode == 0 else 0.0,
+                    progress=1.0 if returncode == 0 else 0.0,
                     epoch=current_epoch,
                     total_epochs=total_epochs,
-                    status="completed" if process.returncode == 0 else "failed",
+                    status="completed" if returncode == 0 else "failed",
+                    message=message,
                 )
             except Exception as e:
                 logger.warning(f"Progress callback error: {e}")

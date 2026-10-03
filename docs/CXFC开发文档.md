@@ -127,7 +127,7 @@ AUTONOMY_CAPABILITIES = ["autonomy", "search", "memory", "post", "live"]
 
 TOOL_SPECS = [{
     "name": "autonomy_get_status",
-    "description": "返回 CX-O-Autonomy 自主系统状态快照（状态/动机/预算/最近行动）",
+    "description": "返回 CX-O-Autonomy 自主系统状态快照（状态/动机/焦点/最近行动）",
     "parameters": {"type": "object", "properties": {}},
 }, {
     "name": "autonomy_write_memory",

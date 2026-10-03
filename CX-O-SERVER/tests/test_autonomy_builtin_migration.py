@@ -370,8 +370,8 @@ class TestConfigMigration:
         assert settings.config.autonomy.loop_interval_minutes == 30
         assert settings.config.dream.enabled is True
         assert settings.config.dream.dream_temperature == 0.7
-        # 缺失字段由 Pydantic 默认补齐（auto_fill 语义）
-        assert settings.config.autonomy.budget.daily_token_limit == 2000000
+        # 缺失字段由 Pydantic 默认补齐（auto_fill 语义）；预算节已随人类裁决移除
+        assert not hasattr(settings.config.autonomy, "budget")
         assert settings.config.dream.physio.store_raw_hr is False
         # 旧文件改名留档（不删除）
         assert not (legacy_dir / "autonomy_config.json").exists()
@@ -541,6 +541,11 @@ class TestContractMirrorAndHotReload:
         而引擎侧 DreamConfig 尚未同步。此处以 _ALLOWED_EXTERNAL_DELTA 显式登记，
         其余任何漂移仍立即失败；外部工作闭合（引擎侧补 trigger 或配置侧撤回）后
         应将该集合清空恢复全等断言。
+
+        2026-09-27 登记后已清理：autonomy.budget 漂移（配置节侧与 public 契约已删
+        budget，引擎侧 AutonomyConfig 未同步）已随「删除自主预算与门控闸门」变更单
+        补齐——server/autonomy/config.py 的 BudgetConfig 类与 budget 字段已删除，
+        故此处已从登记集合中移除，恢复该维度的全等断言。
         """
         _ALLOWED_EXTERNAL_DELTA = {"dream": {"trigger"}}
 
@@ -549,8 +554,13 @@ class TestContractMirrorAndHotReload:
 
         autonomy_engine = AutonomyConfig().model_dump()
         autonomy_section = AutonomySection().model_dump()
-        assert set(autonomy_section) == set(autonomy_engine)
+        allowed_autonomy = _ALLOWED_EXTERNAL_DELTA.get("autonomy", set())
+        autonomy_delta = set(autonomy_engine) - set(autonomy_section)
+        assert set(autonomy_section) - set(autonomy_engine) == set(), "autonomy 节出现引擎侧缺失字段"
+        assert autonomy_delta <= allowed_autonomy, "autonomy 引擎侧出现未登记的额外字段"
         for key, value in autonomy_engine.items():
+            if key in autonomy_delta:
+                continue  # 已登记的外部漂移（引擎侧字段待生产侧清理）
             if isinstance(value, dict):
                 assert set(autonomy_section[key]) == set(value), f"autonomy.{key} 子节漂移"
                 continue
@@ -573,6 +583,9 @@ class TestContractMirrorAndHotReload:
         migrated_autonomy = base / "autonomy_config.json.migrated"
         if migrated_autonomy.exists():
             raw = json.loads(migrated_autonomy.read_text(encoding="utf-8"))
+            # 预算节已随人类裁决从契约/配置节移除：旧档 budget 键不再进节模型，
+            # 其余字段仍须无损导入（形状兼容证明只针对现行节字段）。
+            raw.pop("budget", None)
             AutonomySection.model_validate(raw)  # 不抛即形状兼容
         migrated_dream = base / "dream_config.json.migrated"
         if migrated_dream.exists():

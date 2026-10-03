@@ -89,7 +89,7 @@ TOOL_SPECS: List[Dict[str, Any]] = [
     {
         "name": "autonomy_get_status",
         "description": (
-            "返回 CX-O-Autonomy 自主系统状态快照（状态/动机/预算/最近行动），"
+            "返回 CX-O-Autonomy 自主系统状态快照（状态/动机/焦点/最近行动），"
             "对齐 autonomy_state.schema.json。未启用抛 AutonomyDisabledError。"
         ),
         "parameters": {"type": "object", "properties": {}},
@@ -235,7 +235,7 @@ SKILL_SPECS: List[Dict[str, Any]] = [
     {
         "name": "autonomy_loop",
         "description": (
-            "CX-O-Autonomy 自主循环：按动机/预算/日程周期性地执行 读新闻→搜索→写记忆→"
+            "CX-O-Autonomy 自主循环：按动机（含焦点对象 focus）/日程周期性地执行 读新闻→搜索→写记忆→"
             "发帖→直播→写日记 等自主行动序列，并记录审计日志。"
         ),
         "prompt_template": "",
@@ -936,9 +936,7 @@ async def setup_autonomy(services: Any, store_path: str = "") -> Optional[Autono
             make_tuner_provider,
         )
         from server.autonomy.safety.audit import AuditStore
-        from server.autonomy.safety.budget.token_ledger import TokenLedger
         from server.autonomy.safety.gate.content_gate import ContentGate
-        from server.autonomy.safety.killswitch import KillSwitch
         from server.autonomy.safety.ratelimit.limiter import RateLimiter
         from server.core.websocket.manager import get_websocket_manager
 
@@ -1018,13 +1016,6 @@ async def setup_autonomy(services: Any, store_path: str = "") -> Optional[Autono
         )
 
         _audit_store = AuditStore(path=str(Path(store_dir) / "audit_logs.jsonl"))
-        token_ledger = TokenLedger(
-            daily_token_limit=config.budget.daily_token_limit,
-            daily_llm_calls_limit=config.budget.daily_llm_calls_limit,
-            cost_alert_threshold=config.budget.cost_alert_threshold,
-            overspend_mode=config.budget.overspend_mode,
-            store_path=str(Path(store_dir) / "token_ledger.json"),
-        ).load()
         content_gate = ContentGate(
             firewall=firewall, enabled=config.safety.content_gate_enabled
         )
@@ -1066,9 +1057,6 @@ async def setup_autonomy(services: Any, store_path: str = "") -> Optional[Autono
         else:
             logger.info("CX-O-Autonomy 未注入蒸馏服务（占位整合路径）")
 
-        killswitch = KillSwitch(
-            store_path=str(Path(store_dir) / "killswitch.json")
-        ).load()
         sensor = ContextSensor()
         circadian = CircadianScheduler(config.schedule.model_dump())
         manager = AutonomyManager(config)
@@ -1268,14 +1256,11 @@ async def setup_autonomy(services: Any, store_path: str = "") -> Optional[Autono
             planner=planner,
             diary=_diary_generator,
             evaluator=FeedbackEvaluator(tuner_provider=make_tuner_provider()),
-            token_ledger=token_ledger,
             content_gate=content_gate,
             rate_limiter=rate_limiter,
-            killswitch=killswitch,
             audit=_audit_store,
             handlers=get_handlers(),
             persona=persona,
-            ws_manager=get_websocket_manager(),
             loop_interval_minutes=config.loop_interval_minutes,
         )
 

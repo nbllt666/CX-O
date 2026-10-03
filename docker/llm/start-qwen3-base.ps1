@@ -1,4 +1,4 @@
-# Qwen3-TTS Base 降级运行时部署脚本（Task 2 交付物：GPU1 启动 / 端口 8093 / Base 模型）
+﻿# Qwen3-TTS Base 降级运行时部署脚本（Task 2 交付物：GPU1 启动 / 端口 8093 / Base 模型）
 # 用法: powershell -ExecutionPolicy Bypass -File start-qwen3-base.ps1
 # 前提: vllm/vllm-omni:latest 已拉取; C:\CX-O\models\Qwen3-TTS-12Hz-1.7B-Base 已下载
 $ErrorActionPreference = "Stop"

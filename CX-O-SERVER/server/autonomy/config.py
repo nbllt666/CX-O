@@ -74,23 +74,6 @@ class ScheduleConfig(BaseModel):
         return v
 
 
-class BudgetConfig(BaseModel):
-    """预算配置（契约 budget）。"""
-
-    model_config = ConfigDict(extra="forbid")
-    daily_token_limit: int = 2000000
-    daily_llm_calls_limit: int = 0
-    cost_alert_threshold: float = 0.8
-    overspend_mode: str = "sleep"
-
-    @field_validator("overspend_mode")
-    @classmethod
-    def _check_overspend_mode(cls, v: str) -> str:
-        if v not in ("sleep", "low_cost"):
-            raise ValueError(f"overspend_mode 非法值 {v!r}，可选 sleep/low_cost")
-        return v
-
-
 class PermissionsConfig(BaseModel):
     """权限配置（契约 permissions）。"""
 
@@ -132,7 +115,6 @@ class AutonomyConfig(BaseModel):
     rss_sources: List[str] = Field(default_factory=list)
     search: SearchConfig = Field(default_factory=SearchConfig)
     schedule: ScheduleConfig = Field(default_factory=ScheduleConfig)
-    budget: BudgetConfig = Field(default_factory=BudgetConfig)
     platforms: List[str] = Field(default_factory=list)
     permissions: PermissionsConfig = Field(default_factory=PermissionsConfig)
     safety: SafetyConfig = Field(default_factory=SafetyConfig)

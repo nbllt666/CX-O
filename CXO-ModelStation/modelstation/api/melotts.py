@@ -45,7 +45,8 @@ class MelottsPreprocessRequest(BaseModel):
 class MelottsTrainRequest(BaseModel):
     # 默认值取 MeloTTS 上游 melo/configs/config.json 实码（epochs=10000/batch=6/lr=3e-4）
     epochs: int = Field(10000, ge=1, le=100000)
-    batch_size: int = Field(6, ge=1)
+    # batch_size 缺省（None）= 按显存自适应；显式给值则以其为准
+    batch_size: Optional[int] = Field(None, ge=1)
     learning_rate: float = Field(3e-4, gt=0)
     output_name: Optional[str] = None
     language: Optional[str] = None

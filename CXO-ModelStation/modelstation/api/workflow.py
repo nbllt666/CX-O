@@ -147,7 +147,7 @@ async def _execute_training(body: dict) -> dict:
     trainer = _get_sovits_trainer()
 
     epochs = body.get("epochs", 10000)
-    batch_size = body.get("batch_size", 4)
+    batch_size = body.get("batch_size")  # None → trainer 侧按显存自适应
     learning_rate = body.get("learning_rate", 1e-4)
     output_name = body.get("output_name")
     speaker_name = body.get("speaker_name", "speaker")

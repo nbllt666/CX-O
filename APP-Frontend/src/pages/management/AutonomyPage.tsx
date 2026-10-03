@@ -4,10 +4,15 @@
  * CX-O-Autonomy 自主系统控制台：
  * - 顶部状态卡片：运行/暂停/休眠/禁用徽章 + 上次行动/上次循环
  * - 四维动机可视化（curiosity/social_need/creative_drive/fatigue 进度条 0-100%）
- * - 日预算用量比例条（daily_budget_used_tokens vs config.budget.daily_token_limit）
+ *   + **当前焦点**（curiosity 的指向性维度：focus.topic + 兴趣强度，2026-10-02 起展示）
  * - 控制区：未启用时「启用」；已启用时「禁用」（恒显示，总开关可回退）+
- *   running 时「暂停」、paused/sleeping 时「恢复」、自动启动设置（急停入口已移除）
+ *   running 时「暂停」、paused/sleeping 时「恢复」、自动启动设置（急停入口已移除）；
+ *   2026-09-27 人类裁决后「暂停/禁用」为**任务级启停**（后端真正 stop/start 后台
+ *   循环任务），前端交互不变
  * - 行为回放：审计列表（timestamp/action/target/result/trigger_reason，加载更多分页）
+ *
+ * 2026-09-27 人类裁决：日预算用量比例条与成本告警已随「删除预算记账闸门」
+ * 一并移除（纯本地项目不需要预算管控）。
  *
  * 数据全部来自 autonomyApi。降级口径：
  * - getStatus 返回 null（后端离线）→ 全页错误态 + 重试
@@ -65,7 +70,7 @@ function isActiveStatus(s: AutonomyStatus | null): s is AutonomyStatusActive {
   return !!s && s.status !== 'disabled';
 }
 
-/** 动机/预算进度条 */
+/** 动机进度条 */
 function Bar({ pct, tone, testId }: { pct: number; tone: string; testId?: string }) {
   const width = Math.max(0, Math.min(100, Math.round(pct * 100)));
   return (
@@ -197,12 +202,9 @@ export default function AutonomyPage() {
   })();
 
   const motivations = active ? (status.motivations ?? EMPTY_MOTIVATIONS) : EMPTY_MOTIVATIONS;
-
-  const usedTokens = active ? (status.daily_budget_used_tokens ?? 0) : 0;
-  const dailyLimit = config?.budget?.daily_token_limit ?? 0;
-  const budgetRatio = dailyLimit > 0 ? usedTokens / dailyLimit : 0;
-  const budgetTone =
-    budgetRatio >= 1 ? 'bg-red-400' : budgetRatio >= (config?.budget?.cost_alert_threshold ?? 0.8) ? 'bg-amber-400' : 'bg-emerald-400';
+  // 当前焦点（curiosity 的指向性维度）：空 topic＝暂无明确焦点
+  const focusTopic = active ? (status.focus?.topic ?? '') : '';
+  const focusLevel = active ? Math.max(0, Math.min(1, status.focus?.level ?? 0)) : 0;
 
   return (
     <div className="mx-auto max-w-6xl space-y-6">
@@ -252,7 +254,7 @@ export default function AutonomyPage() {
             </div>
 
             {active ? (
-              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                 <div className="rounded-lg bg-[rgba(255,255,255,0.04)] p-3">
                   <p className="text-[10px] text-muted-foreground">
                     {t('management.autonomy.lastAction')}
@@ -269,22 +271,6 @@ export default function AutonomyPage() {
                     {status.last_cycle_at
                       ? new Date(status.last_cycle_at).toLocaleString()
                       : t('management.autonomy.emptyValue')}
-                  </p>
-                </div>
-                <div className="rounded-lg bg-[rgba(255,255,255,0.04)] p-3">
-                  <p className="text-[10px] text-muted-foreground">
-                    {t('management.autonomy.budgetResetDate')}
-                  </p>
-                  <p className="mt-0.5 truncate text-sm font-medium">
-                    {status.budget_reset_date || t('management.autonomy.emptyValue')}
-                  </p>
-                </div>
-                <div className="rounded-lg bg-[rgba(255,255,255,0.04)] p-3">
-                  <p className="text-[10px] text-muted-foreground">
-                    {t('management.autonomy.budgetUsedToday')}
-                  </p>
-                  <p className="mt-0.5 truncate text-sm font-medium tabular-nums">
-                    {usedTokens.toLocaleString()}
                   </p>
                 </div>
               </div>
@@ -328,33 +314,32 @@ export default function AutonomyPage() {
                 {t('management.autonomy.motivationsDisabledHint')}
               </p>
             )}
-          </div>
-
-          {/* ── 预算用量 ── */}
-          <div className="glass-panel space-y-2 p-4">
-            <h3 className="text-sm font-semibold">{t('management.autonomy.budgetTitle')}</h3>
-            {dailyLimit > 0 ? (
-              <>
-                <div className="flex items-center justify-between text-xs">
-                  <span className="text-muted-foreground">
-                    {t('management.autonomy.budgetUsed', {
-                      used: usedTokens.toLocaleString(),
-                      limit: dailyLimit.toLocaleString(),
-                    })}
-                  </span>
-                  <span className={cn('tabular-nums font-medium', budgetRatio >= 1 && 'text-red-400', budgetRatio >= (config?.budget?.cost_alert_threshold ?? 0.8) && budgetRatio < 1 && 'text-amber-400')}>
-                    {Math.round(budgetRatio * 100)}%
-                  </span>
-                </div>
-                <Bar pct={budgetRatio} tone={budgetTone} testId="autonomy-budget-bar" />
-                {budgetRatio >= 1 ? (
-                  <p className="text-xs text-red-400">{t('management.autonomy.budgetExceeded')}</p>
-                ) : budgetRatio >= (config?.budget?.cost_alert_threshold ?? 0.8) ? (
-                  <p className="text-xs text-amber-400">{t('management.autonomy.budgetOverThreshold')}</p>
-                ) : null}
-              </>
-            ) : (
-              <p className="text-xs text-muted-foreground">{t('management.autonomy.budgetNoLimit')}</p>
+            {active && (
+              <div
+                data-testid="autonomy-focus"
+                className="space-y-1 rounded-lg bg-[rgba(255,255,255,0.04)] p-3"
+              >
+                <p className="text-[10px] text-muted-foreground">
+                  {t('management.autonomy.focusTitle')}
+                </p>
+                {focusTopic ? (
+                  <>
+                    <div className="flex items-center justify-between gap-3 text-xs">
+                      <span className="truncate font-medium">{focusTopic}</span>
+                      <span className="shrink-0 tabular-nums text-muted-foreground">
+                        {t('management.autonomy.focusLevel', {
+                          pct: Math.round(focusLevel * 100),
+                        })}
+                      </span>
+                    </div>
+                    <Bar pct={focusLevel} tone="bg-fuchsia-400" testId="autonomy-focus-bar" />
+                  </>
+                ) : (
+                  <p className="text-xs text-muted-foreground">
+                    {t('management.autonomy.focusEmpty')}
+                  </p>
+                )}
+              </div>
             )}
           </div>
 

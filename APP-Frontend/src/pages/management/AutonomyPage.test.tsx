@@ -7,10 +7,11 @@ import type { AutonomyAuditEntry, AutonomyConfig, AutonomyStatus } from '@/api/t
 
 /**
  * AutonomyPage「Agent 生活」冒烟 + 关键交互测试（P4-T1）：
- * autonomyApi 整体打桩，避免真实网络；覆盖状态/动机/预算/审计渲染、
+ * autonomyApi 整体打桩，避免真实网络；覆盖状态/动机/审计渲染、
  * 未启用降级态、启用/禁用/暂停/恢复控制、自动启动开关、审计字段渲染与后端错误态。
  * 注：页面已移除紧急停止入口（spec remove-autonomy-stop-paths）；「禁用」（总开关回退）
- * 与「暂停/恢复」由评审 Issue1 + 人类裁定后恢复（UI 入口与后端 CONTROL_ACTIONS 对齐）。
+ * 与「暂停/恢复」由评审 Issue1 + 人类裁定后恢复（UI 入口与后端 CONTROL_ACTIONS 对齐）；
+ * 预算用量卡与成本告警已随「删除预算记账闸门」（2026-09-27 人类裁决）移除。
  */
 vi.mock('@/api/clients/autonomy', () => ({
   autonomyApi: {
@@ -29,8 +30,6 @@ const ACTIVE_STATUS: AutonomyStatus = {
   motivations: { curiosity: 0.8, social_need: 0.5, creative_drive: 0.6, fatigue: 0.2 },
   last_action: 'write_post',
   last_cycle_at: '2026-08-22T10:00:00Z',
-  daily_budget_used_tokens: 120000,
-  budget_reset_date: '2026-08-22',
   diary_last_at: '2026-08-22T09:00:00Z',
 };
 
@@ -41,8 +40,6 @@ const PAUSED_STATUS: AutonomyStatus = {
   motivations: { curiosity: 0.4, social_need: 0.3, creative_drive: 0.2, fatigue: 0.6 },
   last_action: 'write_post',
   last_cycle_at: '2026-08-22T10:00:00Z',
-  daily_budget_used_tokens: 1000,
-  budget_reset_date: '2026-08-22',
 };
 
 const SAMPLE_AUDIT: AutonomyAuditEntry[] = [
@@ -76,12 +73,6 @@ const SAMPLE_CONFIG: AutonomyConfig = {
     diary_time: '02:00',
     quiet_windows: [],
   },
-  budget: {
-    daily_token_limit: 2000000,
-    daily_llm_calls_limit: 0,
-    cost_alert_threshold: 0.8,
-    overspend_mode: 'sleep',
-  },
   platforms: [],
   permissions: { allowed_actions: [], blocked_actions: [] },
   safety: {
@@ -104,7 +95,7 @@ describe('AutonomyPage Agent 生活页', () => {
     vi.clearAllMocks();
   });
 
-  it('加载后渲染状态/动机/预算/审计', async () => {
+  it('加载后渲染状态/动机/审计', async () => {
     mocked.getStatus.mockResolvedValue(ACTIVE_STATUS);
     mocked.getConfig.mockResolvedValue(SAMPLE_CONFIG);
     mocked.getAudit.mockResolvedValue({ items: SAMPLE_AUDIT, total: 2 });
@@ -118,8 +109,9 @@ describe('AutonomyPage Agent 生活页', () => {
     expect(screen.getByText('好奇心')).toBeInTheDocument();
     expect(screen.getByText('80%')).toBeInTheDocument();
     expect(screen.getByText('疲惫度')).toBeInTheDocument();
-    // 预算（含 2,000,000 限额文案）
-    expect(screen.getByText(/2,000,000/)).toBeInTheDocument();
+    // 预算卡已随「删除预算记账闸门」移除 → 不再渲染限额/预算标题（防回归）
+    expect(screen.queryByText(/2,000,000/)).not.toBeInTheDocument();
+    expect(screen.queryByText('今日预算用量')).not.toBeInTheDocument();
     // 审计
     expect(screen.getByText('read_news')).toBeInTheDocument();
     expect(screen.getByText('write_memory')).toBeInTheDocument();
@@ -135,6 +127,37 @@ describe('AutonomyPage Agent 生活页', () => {
     expect(screen.queryByRole('button', { name: '恢复' })).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: '紧急停止' })).not.toBeInTheDocument();
     expect(screen.getByRole('checkbox')).toBeInTheDocument();
+  });
+
+  it('展示当前焦点（topic + 兴趣强度）（curiosity 的指向性维度）', async () => {
+    mocked.getStatus.mockResolvedValue({
+      ...ACTIVE_STATUS,
+      focus: { topic: 'AI 芯片出口管制', level: 0.7 },
+    } as AutonomyStatus);
+    mocked.getConfig.mockResolvedValue(SAMPLE_CONFIG);
+    mocked.getAudit.mockResolvedValue({ items: [], total: 0 });
+
+    render(<AutonomyPage />);
+
+    expect(await screen.findByText('当前焦点')).toBeInTheDocument();
+    expect(screen.getByText('AI 芯片出口管制')).toBeInTheDocument();
+    expect(screen.getByText('兴趣强度 70%')).toBeInTheDocument();
+    expect(screen.getByTestId('autonomy-focus-bar')).toBeInTheDocument();
+    expect(screen.queryByText('暂无明确焦点')).not.toBeInTheDocument();
+  });
+
+  it('无焦点（focus 缺省或 topic 为空）时显示占位文案', async () => {
+    mocked.getStatus.mockResolvedValue({
+      ...ACTIVE_STATUS,
+      focus: { topic: '', level: 0 },
+    } as AutonomyStatus);
+    mocked.getConfig.mockResolvedValue(SAMPLE_CONFIG);
+    mocked.getAudit.mockResolvedValue({ items: [], total: 0 });
+
+    render(<AutonomyPage />);
+
+    expect(await screen.findByText('暂无明确焦点')).toBeInTheDocument();
+    expect(screen.queryByTestId('autonomy-focus-bar')).not.toBeInTheDocument();
   });
 
   it('后端返回 disabled 时显示未启用态', async () => {

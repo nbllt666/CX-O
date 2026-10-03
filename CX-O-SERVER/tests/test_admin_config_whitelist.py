@@ -152,7 +152,7 @@ class TestWhitelistStructure:
         # autonomy 顶层标量 + 子节深层路径在册
         assert {"enabled", "auto_start", "agent_id", "loop_interval_minutes", "store_path"} <= auto
         assert {"schedule.wake_time", "search.mcp_server_name",
-                "budget.overspend_mode", "safety.post_rate_per_hour"} <= auto
+                "safety.post_rate_per_hour", "safety.user_online_sleep"} <= auto
         dream = ADMIN_CONFIG_UPDATE_WHITELIST["dream"]
         # dream 顶层标量 + 子节深层路径在册
         assert {"enabled", "model", "dream_temperature", "min_lucidity",
@@ -359,10 +359,12 @@ class TestAutonomyDreamPaths:
         assert "ADMIN_CONFIG_VALUE_TYPE" in str(ei.value)
         assert env.fake.config.autonomy.enabled is False
 
-    def test_autonomy_overspend_enum_400(self, env):
+    def test_autonomy_budget_path_not_allowed(self, env):
+        # 预算节已删除（2026-09-27 人类裁决）：autonomy.budget.* 不在白名单，
+        # 拒绝理由从「枚举非法」变为「白名单外字段」——白名单拒绝覆盖保留。
         with pytest.raises(AdminControlError) as ei:
             _update(env, {"autonomy.budget.overspend_mode": "yolo"})
-        assert "ADMIN_CONFIG_VALUE_TYPE" in str(ei.value)
+        assert "ADMIN_CONFIG_FIELD_NOT_ALLOWED" in str(ei.value)
 
     def test_autonomy_list_fields_not_allowed(self, env):
         with pytest.raises(AdminControlError) as ei:

@@ -28,10 +28,8 @@ def _make_engine(loop_interval_minutes, monkeypatch, tmp_path) -> AutonomyEngine
         planner=None,
         diary=None,
         evaluator=None,
-        token_ledger=None,
         content_gate=None,
         rate_limiter=None,
-        killswitch=None,
         audit=None,
         handlers={},
         persona={},
@@ -69,7 +67,6 @@ import pytest  # noqa: E402
 from server.autonomy.config import AutonomyConfig  # noqa: E402
 from server.autonomy.manager import AutonomyManager  # noqa: E402
 from server.autonomy.safety.audit import AuditStore  # noqa: E402
-from server.autonomy.safety.killswitch import KillSwitch  # noqa: E402
 
 _PLAN = {
     "action": "read_news",
@@ -81,7 +78,7 @@ _PLAN = {
 
 
 def _build_full_engine(tmp_path):
-    """构造外部依赖全 mock 的引擎（真实 AutonomyManager/KillSwitch/AuditStore）。"""
+    """构造外部依赖全 mock 的引擎（真实 AutonomyManager/AuditStore）。"""
     from unittest.mock import AsyncMock
 
     cfg = AutonomyConfig(store_path=str(tmp_path))
@@ -119,10 +116,8 @@ def _build_full_engine(tmp_path):
         planner=planner,
         diary=diary,
         evaluator=None,
-        token_ledger=None,
         content_gate=None,
         rate_limiter=None,
-        killswitch=KillSwitch(store_path=str(tmp_path / "killswitch.json")),
         audit=audit,
         handlers={"autonomy_read_news": handler},
         persona={},
@@ -132,50 +127,11 @@ def _build_full_engine(tmp_path):
 
 
 @pytest.mark.asyncio
-class TestManagerGate:
-    """[H11] pause/disable 门控——引擎读取管理面标志位（无急停路径）。"""
-
-    async def test_pause_blocks_round_and_audits_skipped(self, tmp_path):
-        engine = _build_full_engine(tmp_path)
-        engine.manager.pause()
-
-        await engine._run_round()
-
-        engine.planner.plan.assert_not_called()
-        items = engine.audit.list(limit=None).get("items", [])
-        assert len(items) == 1
-        assert items[0]["result"] == "skipped"
-        assert items[0]["trigger_reason"] == "paused_or_disabled"
-
-    async def test_resume_restores_action(self, tmp_path):
-        engine = _build_full_engine(tmp_path)
-        engine.manager.pause()
-        await engine._run_round()
-        assert engine.planner.plan.call_count == 0
-
-        engine.manager.resume()  # running=True 复位 → 门控放行
-        await engine._run_round()
-        engine.planner.plan.assert_awaited_once()
-        items = engine.audit.list(limit=None).get("items", [])
-        assert [i["result"] for i in items] == ["skipped", "success"]
-
-    async def test_disable_blocks_round(self, tmp_path):
-        engine = _build_full_engine(tmp_path)
-        engine.manager.disable()  # enabled=False（管理面装配总开关）
-
-        await engine._run_round()
-        engine.planner.plan.assert_not_called()
-        items = engine.audit.list(limit=None).get("items", [])
-        assert items[0]["trigger_reason"] == "paused_or_disabled"
-
-
-@pytest.mark.asyncio
 class TestLoopTermination:
     """[评审 Issue2] 主循环终止路径——标志位守卫 + 任务取消双路径均须生效。
 
-    背景：`while self.killswitch.enabled` 改为无条件循环后，终止一度单点依赖
-    `stop()` 的 task.cancel()（守卫被删）。本组用例锁定两条冗余终止路径，防止
-    "stop() 后主循环不退出"回归。
+    背景：主循环改为无条件循环后，终止一度单点依赖 `stop()` 的 task.cancel()
+    （守卫被删）。本组用例锁定两条冗余终止路径，防止"stop() 后主循环不退出"回归。
     """
 
     async def test_stop_terminates_idle_loop(self, tmp_path):
@@ -231,27 +187,24 @@ class TestLoopTermination:
 
 
 @pytest.mark.asyncio
-class TestLegacyStopFilesDoNotHalt:
-    """[T5.4] 遗留停摆档（killswitch enabled=false / manager status=error）不再导致停摆。"""
+class TestLegacyManagerStateDoesNotHalt:
+    """[T5.4] 遗留 manager_state.json（status=error）经载入归一化后不再导致停摆。
 
-    async def test_legacy_files_still_enter_planning_path(self, tmp_path):
-        """加载遗留 killswitch.json(enabled=false) + manager_state.json(status=error)
-        后运行一轮：本轮仍进入规划与执行路径（非 skipped、不终止）。"""
+    2026-09-27 人类裁决删除急停档后就只剩 manager 遗留态这一条路径：
+    载入时非法 status 归一化为 running，本轮照常进入规划与执行路径。
+    """
+
+    async def test_legacy_manager_state_still_enters_planning_path(self, tmp_path):
+        """加载遗留 manager_state.json(status=error) 后运行一轮：
+        遗留档被归一化、本轮仍进入规划与执行路径（非 skipped、不终止）。"""
         # 升级前遗留档
-        (tmp_path / "killswitch.json").write_text(
-            json.dumps({"enabled": False, "paused": False, "sleeping": False}),
-            encoding="utf-8",
-        )
         (tmp_path / "manager_state.json").write_text(
             json.dumps({"status": "error"}), encoding="utf-8"
         )
 
         engine = _build_full_engine(tmp_path)
-        # 对齐装配层 main.setup_autonomy：KillSwitch(...).load()（忽略遗留 enabled 键）
-        engine.killswitch.load()
 
         # 遗留档不再把系统置于停摆态
-        assert engine.killswitch.is_active() is True
         assert engine.manager.status == "running"
 
         await engine._run_round()
@@ -260,7 +213,6 @@ class TestLegacyStopFilesDoNotHalt:
         engine.planner.plan.assert_awaited_once()
         items = engine.audit.list(limit=None).get("items", [])
         assert items[-1]["result"] == "success"
-        assert items[-1]["trigger_reason"] != "budget_exceeded"
 
 
 @pytest.mark.asyncio
@@ -364,3 +316,249 @@ class TestTodayDailyLogLocalDay:
         got = autonomy_main._today_daily_log()
         ids = {e["id"] for e in got}
         assert ids == {"utc", "prefix"}
+
+
+# ===========================================================================
+# 动机接线与焦点回写（20260930 修复"动机退化为纯时间函数"缺陷）
+# ===========================================================================
+from server.autonomy.core.motivation.state import MotivationState  # noqa: E402
+
+# 一个 tick 周期（loop_interval_minutes=15）对应的分钟数与小时数
+_TICK_MINUTES = 15.0
+_TICK_HOURS = _TICK_MINUTES / 60.0
+
+
+def _make_round_engine(tmp_path, plan, handlers, motivation=None):
+    """构造可指定 plan/handlers 的引擎（真实 AutonomyManager/AuditStore/MotivationState）。"""
+    from unittest.mock import AsyncMock
+
+    cfg = AutonomyConfig(store_path=str(tmp_path))
+    manager = AutonomyManager(cfg)
+    manager.enable()
+
+    planner = AsyncMock()
+    planner.plan.return_value = dict(plan)
+
+    class _NoSensor:
+        pass
+
+    class _StubCircadian:
+        diary_time = datetime.strptime("02:00", "%H:%M").time()
+
+        def current_phase(self, now):
+            return "active"
+
+    return AutonomyEngine(
+        manager=manager,
+        motivation=motivation if motivation is not None else MotivationState(),
+        circadian=_StubCircadian(),
+        sensor=_NoSensor(),
+        rss=None,
+        hotspot=None,
+        memory_actions=None,
+        planner=planner,
+        diary=None,
+        evaluator=None,
+        content_gate=None,
+        rate_limiter=None,
+        audit=AuditStore(path=str(tmp_path / "audit.jsonl")),
+        handlers=handlers,
+        persona={},
+        loop_interval_minutes=15,
+    )
+
+
+class TestMotivationFeedbackWiring:
+    """4 个 record_* 入口此前在生产代码零调用 → 动机只剩 tick 并饱和。"""
+
+    @pytest.mark.asyncio
+    async def test_info_ingestion_drops_curiosity_and_raises_creative(self, tmp_path):
+        from unittest.mock import AsyncMock
+
+        st = MotivationState(curiosity=0.9, creative_drive=0.2)
+        engine = _make_round_engine(
+            tmp_path, _PLAN, {"autonomy_read_news": AsyncMock(return_value=[{"title": "n"}])}, st
+        )
+        await engine._run_round()
+        assert st.curiosity == pytest.approx((0.9 + 0.05 * _TICK_HOURS) * 0.7)
+        assert st.creative_drive == pytest.approx(0.2 - 0.02 * _TICK_HOURS + 0.10)
+
+    @pytest.mark.asyncio
+    async def test_info_ingestion_without_content_skips_material(self, tmp_path):
+        """取回空列表（无素材）时只记信息摄入，不提升创意欲。"""
+        from unittest.mock import AsyncMock
+
+        st = MotivationState(curiosity=0.9, creative_drive=0.2)
+        engine = _make_round_engine(
+            tmp_path, _PLAN, {"autonomy_read_news": AsyncMock(return_value=[])}, st
+        )
+        await engine._run_round()
+        assert st.creative_drive == pytest.approx(0.2 - 0.02 * _TICK_HOURS)
+
+    @pytest.mark.asyncio
+    async def test_interaction_drops_social_need(self, tmp_path):
+        from unittest.mock import AsyncMock
+
+        plan = {
+            "action": "write_post",
+            "target": "weibo",
+            "payload": {"platform": "weibo", "draft": "hi"},
+            "reason": "",
+            "expected_outcome": "",
+        }
+        st = MotivationState(social_need=0.8)
+        engine = _make_round_engine(
+            tmp_path, plan, {"autonomy_write_post": AsyncMock(return_value={"status": "ok"})}, st
+        )
+        await engine._run_round()
+        assert st.social_need == pytest.approx((0.8 + 0.04 * _TICK_HOURS) * 0.7)
+
+    @pytest.mark.asyncio
+    async def test_activity_raises_fatigue(self, tmp_path):
+        from unittest.mock import AsyncMock
+
+        plan = {
+            "action": "start_live",
+            "target": "",
+            "payload": {"script": "s"},
+            "reason": "",
+            "expected_outcome": "",
+        }
+        st = MotivationState(fatigue=0.1)
+        engine = _make_round_engine(
+            tmp_path, plan, {"autonomy_start_live": AsyncMock(return_value={"status": "ok"})}, st
+        )
+        await engine._run_round()
+        assert st.fatigue == pytest.approx(0.1 - 0.10 * _TICK_HOURS + 0.15)
+
+    @pytest.mark.asyncio
+    async def test_failed_action_produces_no_feedback(self, tmp_path):
+        """只认 handler 的 result == "success"：失败/未执行不得改动机。"""
+        from unittest.mock import AsyncMock
+
+        st = MotivationState(curiosity=0.9)
+        handler = AsyncMock(side_effect=RuntimeError("boom"))
+        engine = _make_round_engine(tmp_path, _PLAN, {"autonomy_read_news": handler}, st)
+        await engine._run_round()
+        assert st.curiosity == pytest.approx(0.9 + 0.05 * _TICK_HOURS)
+
+    @pytest.mark.asyncio
+    async def test_wait_action_produces_no_feedback(self, tmp_path):
+        st = MotivationState(curiosity=0.9)
+        plan = {"action": "wait", "target": "", "payload": {}, "reason": "", "expected_outcome": ""}
+        engine = _make_round_engine(tmp_path, plan, {}, st)
+        await engine._run_round()
+        assert st.curiosity == pytest.approx(0.9 + 0.05 * _TICK_HOURS)
+
+    @pytest.mark.asyncio
+    async def test_creation_consumes_creative_drive(self, tmp_path):
+        """write_memory / write_diary 成功 → record_creation（GN-004 Q5 泄压阀）。
+
+        每轮用独立子目录：AutonomyEngine 构造时会按 store_dir 恢复
+        motivation_state.json，复用同一目录会覆盖本用例注入的动机实例。
+        """
+        from unittest.mock import AsyncMock
+
+        for idx, (action, tool) in enumerate(
+            (("write_memory", "autonomy_write_memory"),
+             ("write_diary", "autonomy_write_diary"))
+        ):
+            store = tmp_path / f"case{idx}"
+            store.mkdir()
+            plan = {
+                "action": action,
+                "target": "",
+                "payload": {"content": "x"},
+                "reason": "",
+                "expected_outcome": "",
+            }
+            st = MotivationState(creative_drive=0.8)
+            engine = _make_round_engine(
+                store, plan, {tool: AsyncMock(return_value={"ok": True})}, st
+            )
+            await engine._run_round()
+            assert st.creative_drive == pytest.approx(
+                (0.8 - 0.02 * _TICK_HOURS) * 0.5
+            ), f"{action} 成功后 creative_drive 应按比例消费回落"
+
+    @pytest.mark.asyncio
+    async def test_failed_creation_does_not_consume(self, tmp_path):
+        from unittest.mock import AsyncMock
+
+        plan = {
+            "action": "write_memory",
+            "target": "",
+            "payload": {"content": "x"},
+            "reason": "",
+            "expected_outcome": "",
+        }
+        st = MotivationState(creative_drive=0.8)
+        engine = _make_round_engine(
+            tmp_path, plan, {"autonomy_write_memory": AsyncMock(side_effect=RuntimeError("boom"))}, st
+        )
+        await engine._run_round()
+        assert st.creative_drive == pytest.approx(0.8 - 0.02 * _TICK_HOURS)
+
+
+class TestFocusWriteBack:
+    """LLM 自报 focus → 引擎回写动机层并随 motivation_state.json 持久化。"""
+
+    @pytest.mark.asyncio
+    async def test_plan_focus_written_persisted_and_exposed(self, tmp_path):
+        from unittest.mock import AsyncMock
+
+        plan = dict(_PLAN, focus={"topic": "AI 芯片出口管制", "level": 0.8})
+        st = MotivationState(curiosity=0.9)
+        engine = _make_round_engine(
+            tmp_path, plan, {"autonomy_read_news": AsyncMock(return_value=[{"title": "n"}])}, st
+        )
+        await engine._run_round()
+
+        assert st.to_focus_dict() == {"topic": "AI 芯片出口管制", "level": 0.8}
+        saved = json.loads((tmp_path / "motivation_state.json").read_text(encoding="utf-8"))
+        assert saved["focus"] == {"topic": "AI 芯片出口管制", "level": 0.8}
+        # 动机层 → manager → GET /api/autonomy/status 快照
+        assert engine.manager.get_status()["focus"] == {
+            "topic": "AI 芯片出口管制",
+            "level": 0.8,
+        }
+
+    @pytest.mark.asyncio
+    async def test_absent_focus_keeps_previous(self, tmp_path):
+        from unittest.mock import AsyncMock
+
+        st = MotivationState(curiosity=0.9, focus_topic="旧焦点", focus_level=0.4)
+        engine = _make_round_engine(
+            tmp_path, _PLAN, {"autonomy_read_news": AsyncMock(return_value=[])}, st
+        )
+        await engine._run_round()
+        assert st.to_focus_dict() == {"topic": "旧焦点", "level": 0.4}
+
+    @pytest.mark.asyncio
+    async def test_plan_context_carries_current_focus(self, tmp_path):
+        """规划上下文必须带当前焦点，使 LLM 可延续或更换关注对象。"""
+        from unittest.mock import AsyncMock
+
+        st = MotivationState(focus_topic="量子计算", focus_level=0.7)
+        engine = _make_round_engine(
+            tmp_path, _PLAN, {"autonomy_read_news": AsyncMock(return_value=[])}, st
+        )
+        await engine._run_round()
+        ctx = engine.planner.plan.call_args.args[0]
+        assert ctx["focus"] == {"topic": "量子计算", "level": 0.7}
+
+    @pytest.mark.asyncio
+    async def test_focus_persisted_across_reload(self, tmp_path):
+        """重启续接：MotivationState.load 恢复焦点（动机层持久化为真源）。"""
+        from unittest.mock import AsyncMock
+
+        st = MotivationState()
+        engine = _make_round_engine(
+            tmp_path,
+            dict(_PLAN, focus={"topic": "量子计算", "level": 0.55}),
+            {"autonomy_read_news": AsyncMock(return_value=[])},
+            st,
+        )
+        await engine._run_round()
+        reloaded = MotivationState.load(store_path=str(tmp_path))
+        assert reloaded.to_focus_dict() == {"topic": "量子计算", "level": 0.55}

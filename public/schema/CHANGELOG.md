@@ -2,6 +2,71 @@
 
 > 遵循 AC 范式 v6 rules-3 §六 契约版本化规则。所有契约变更必须记录版本号、变更内容、变更原因、影响范围。
 
+## [1.15.0] - 2026-09-30
+
+### 变更内容
+
+- **数据契约变更（MINOR）**：`schema/autonomy_state.schema.json` —— 顶层新增可选 `focus` 对象（`required: [topic, level]`，`additionalProperties: false`）：`topic` 为"当前最想探索的具体事物"（空串＝暂无明确焦点），`level` 为对该对象的兴趣强度 0-1。`motivations` 四标量与其余字段未动。
+- **数据契约变更（MINOR）**：`schema/autonomy_action.schema.json` —— 新增可选 `focus` 对象（同形状），承载"LLM 每轮在规划输出中自报的本轮关注对象"；缺省表示沿用上次焦点。既有 5 字段与 `required: [action]` 未动。
+- **未改动**：`schema/autonomy_audit.schema.json` —— 审计面 `motivations` 仍为四标量，focus 刻意**不入**审计条目（避免 `additionalProperties: false` 违约与审计面噪声）。
+- **接口契约变更（PATCH）**：`interface_stub/cxo_autonomy.pyi:80` —— `get_status()` docstring 的"状态/动机/**预算**/最近行动"更正为"状态/动机/**焦点**/最近行动"（"预算"系上一单 `remove-autonomy-budget-and-gates` 删除预算能力后的遗留措辞；"焦点"对齐本单新增的 `focus`）。**签名/参数/返回类型/异常零变更**；同批镜像同步 `server/autonomy/main.py:92`、`server/autonomy/main.py:238`、`docs/CXFC开发文档.md:130` 三处工具/技能描述文字（非契约文件）。
+
+### 变更原因
+
+- 人类指令「修复，并且 curiosity 到底是"越高越想探索"才正确（并且应该是针对某个事物的）」——修复 CX-O-Autonomy 动机退化为纯时间函数（4 个行为反馈入口 `record_info_ingestion` / `record_interaction` / `record_activity` / `record_material` 在生产代码零调用，约 20h 后饱和）并确立 curiosity 方向语义。
+- 契约侧依据 ASK-20260928-01 三项裁决：① curiosity 保持标量、新增 `focus` 字段；② 语义落地＝提示词 + 软阈值收敛候选；③ 对象来源＝LLM 每轮自报。`autonomy_state.schema.json` 授权来自 ASK-20260928-01；`autonomy_action.schema.json` 授权来自本轮 **ASK-20260930-01**（选择题判定「授权同批改 action 契约」）——规划器输出受 `additionalProperties: false` 约束，focus 若不入契约会造成实现/契约静默漂移。
+- 按 s0601 契约变更适配流程执行（差异摘要、影响面分级、阻断项、同步顺序、回退锚点见 `.trae/documents/20260930_模块0_修复动机接线与焦点语义.md` 第零章）。
+
+### 影响范围
+
+- **MINOR（纯新增可选字段）**：两份契约新增字段均非必填，既有合法实例（含 `test_autonomy_contracts.py` 最小合法实例、`test_autonomy_skeleton.py` 状态快照断言）全部继续通过。
+- **消费方同步（同批）**：`server/autonomy/models.py`（`AutonomyFocus` + `AutonomyState.focus`）、`server/autonomy/manager.py`（`focus` 属性 + `get_status()` 输出）、`server/autonomy/core/motivation/state.py`（`focus_topic` / `focus_level` / `set_focus` + `motivation_state.json` 落盘恢复）、`server/autonomy/core/planner/action_planner.py`（focus 透传 + 动机方向语义提示词）、`server/autonomy/core/loop/autonomy_engine.py`（focus 注入上下文 + 回写持久化 + 行为反馈接线）。
+- **心跳行为配对与四维非零下限（非契约面，随本单同批落地）**：`server/autonomy/core/motivation/state.py` —— ① 新增 `record_creation()`（`creative_consume_ratio=0.5` 比例式），引擎对 `write_memory`/`write_diary` 成功分派，与 `record_material`（素材 +0.10）配对，消除 `creative_drive` 只升不降被钉在 1.0 的单向结构锁；② **四维统一正下限 `motivation_min=0.02`**（`_clamp_motivation` 覆盖构造 / load / tick / 全部行为反馈），使 **0 边界在四维上均不可达**；③ **curiosity / social_need 的单次行为回落语义由固定扣减改为比例式**（`info_ingestion_ratio` / `social_interaction_ratio`，默认 0.30；原 `info_ingestion_drop` / `social_interaction_drop` 固定扣减已移除），与 `creative_consume_ratio` 口径统一；三个比例系数上界均为 `_MAX_RATIO=0.99`（严格 < 1）。**此变更不改任何契约字段**（下限 0.02 与比例语义均落在契约 [0,1] 与既有字段内），亦不改 `MotivationState` 之外的调用签名；但属**既有默认参数语义的变更**（单次回落幅度由绝对量变为比例），第三方若依赖旧幅度需按本条对齐。
+- **前端同步（原计划不改，后经交付轮落地并闭合）**：`APP-Frontend` 的 `AutonomyStatusActive` / `AutonomyPage.tsx` 已于**交付轮**同步 `focus`（`types.ts` 新增 `AutonomyFocus{topic,level}` 与 `focus?`；`AutonomyPage.tsx` 新增「当前焦点」区块＝topic + 兴趣强度进度条，空焦点显示占位；`zh-CN.json` / `en-US.json` 各补 3 词条，附 2 例单测）。原 2026-09-30 冻结时点判定为"不改"（TS 接口为编译期声明，响应多一个键不构成运行时破坏；且用户长期约束「管理界面不应在前端呈现」），交付轮经人类指令「处理 focus 展示问题，修复语言不对称，然后交付」转为落地；该项"未闭合"已随交付闭合（人类于 2026-10-02 显式授权修正本条表述）。
+- **运行态数据**：`server/autonomy/data/motivation_state.json` 现有饱和值（`1.0/1.0/0.0/0.0`）不手工改写，接线后首个成功行动即自愈；旧文件缺 `focus` 键时按空焦点恢复（向后兼容）。
+
+### 闭合判据
+
+- [x] 2 份契约实体修订并通过 `json.load` 解析校验（**JSON OK**）
+- [x] `focus` 未泄漏进审计契约与审计条目（`autonomy_audit.schema.json` 零改动；`TestAutonomyFocusContract::test_audit_motivations_still_rejects_focus` 反断言通过）
+- [x] 后端定向回归 + 全量回归全绿（最终实测：定向 `-k "autonomy or planner or admin or config or dream"` → **1163 passed / 0 failed**；全量 `pytest tests -q` → **5206 passed / 0 failed**，较上一单基线 5162 恰增本单新增的 44 例；清理轮后复跑）
+- [x] 4 个行为反馈入口（`record_info_ingestion` / `record_interaction` / `record_activity` / `record_material`）+ 创作消费侧 `record_creation` 在生产代码均有调用点（`autonomy_engine.py:416/418/420/422/424`；修复前四入口为零调用）
+- [x] 模型↔契约字段对齐锁定（`test_pydantic_models_align_with_contract`：`AutonomyAction`/`AutonomyState` 字段集与两份 schema 一一对应）
+- [x] 四维 0 边界不可达锁定（`TestCreationConsume` 5 例 + `TestMotivationNonZeroFloor` 3 例：构造与 load 下限 / 200 轮"tick+摄入+互动+活动+素材+消费"全路径穷举四维均 ≥ 下限 / 下限可注入；另有只取素材钉死 1.0 vs 有消费则解除、交替稳态 = +0.10、比例式回落渐近不触 0）
+
+> ✅ **交付状态：已交付（2026-10-02）**。本条对应的变更单 `fix-motivation-feedback-and-focus` **实现、验证、交付全部闭合**。关键证据：后端全量 `pytest tests -q` → **5206 passed / 0 failed**；前端三重闸门 **PASSED** → 有效证据目录 `.trae/documents/test_reports/frontend_gate_20261002_110021/`（93 文件 / 776 用例 + `tsc` EXIT=0 + Playwright 2 passed + Mock 10/10；早先两轮闸门目录 `…20261001_152258` / `…20261001_131252` 因后续改动失效，仅作历史留痕）；GN-004 独立审查累计 **十轮**全部警示放行（第十轮＝交付前审查，判定"可交付、无阻断"）。**交付范围**：契约 [1.15.0]（`focus` 字段）+ 动机反馈接线与焦点语义 + 三轮遗留项清理 + 交付轮前端 focus 展示与语言对称修复。变更单与全部审查记录见 `.trae/documents/20260930_模块0_修复动机接线与焦点语义.md`（§5.10 交付记录）。
+
+## [1.14.0] - 2026-09-27
+
+### 变更内容
+
+- **数据契约变更（MAJOR）**：`schema/autonomy_state.schema.json` —— 删除 `daily_budget_used_tokens`、`budget_reset_date` 两个属性（字段删除）。`status` 枚举 `["running","paused","sleeping"]` 与其余字段未动。
+- **配置契约变更（MAJOR）**：`schema/autonomy_config.schema.json` —— 删除 `budget` 节（原含 `daily_token_limit` / `daily_llm_calls_limit` / `cost_alert_threshold` / `overspend_mode` 四字段，整节移除）。`additionalProperties: false` 保持不变，删除后契约面与实现键集一致。
+- **接口契约变更（MAJOR）**：`interface_stub/cxo_autonomy.pyi` —— 删除 `AutonomyBudgetExceededError` 类与错误码枚举中的 `AUTONOMY_BUDGET_EXCEEDED`。
+- **配置实体同步（非契约文件）**：`CX-O-SERVER/config.json` 的 `autonomy.budget` 块删除——`AutonomySection` 为 `extra="forbid"`，不清理在盘配置会导致 UnifiedConfig 加载失败、服务无法启动（本单实测确认该键存在）。
+
+### 变更原因
+
+- 用户指令「预算记账 → manager 门控 → killswitch 需要删除（对于这个纯本地项目不需要）」，经 AskUserQuestion 三项裁决（ASK-20260927-02）：① 删除深度＝连组件与死代码一起删（该选项显式授权修改 `public/`）；② 前端「启用/禁用/暂停」入口保留、语义改为任务级启停；③「用户在线休眠」行为保留、改由引擎内标志承载。
+- 契约删除与实现删除必须同批：`additionalProperties: false` 下，若响应仍返回已删属性即违约。
+- 按 s0601 契约变更适配流程执行（影响面分级、同步顺序、回退锚点见 `.trae/documents/20260927_模块0_删除自主预算与门控闸门.md` 第零章）。
+
+### 影响范围
+
+- **MAJOR（字段/接口删除）**：依赖 `daily_budget_used_tokens` / `budget_reset_date` / `autonomy.budget.*` / `AutonomyBudgetExceededError` 的下游必须同步。本仓内消费方：`server/autonomy/{manager.py,config.py}`、`server/config.py`（`AutonomyBudgetSection`）、`server/core/admin/control_plane.py`（白名单四项）、前端 `AutonomyPage.tsx` / `api/types.ts` / i18n×2 / `useWebSocket.ts` / `GlobalToast.tsx` —— 同批同步删除。
+- **删除的组件**：`server/autonomy/safety/killswitch.py`、`server/autonomy/safety/budget/`（整体）。
+- **额外交互语义变更（非契约面）**：`POST /api/autonomy/control` 的 `pause`/`disable`/`resume`/`enable` 由「轮级跳过」变为「真正 start/stop 后台循环任务」；`admin_control` 的 config.update 白名单随之收敛（`budget.*` 四项移除）。
+- **不受影响**：`autonomy_action.schema.json`、`autonomy_audit.schema.json`（`cost_tokens` 字段保留，仅不再记账）、梦境契约、`status` 枚举取值。
+- **保留不删（运行态数据）**：`server/autonomy/data/killswitch.json`、`token_ledger.json`（不再被读取，删除不可逆故保留）。
+
+### 闭合判据
+
+- [x] 3 份契约实体修订并通过 JSON/ast 语法校验（`json.load` ×2 + `ast.parse` ×1 通过）
+- [x] `GET /api/autonomy/status` 快照仍通过 `autonomy_state.schema.json` 校验（`tests/test_autonomy_skeleton.py`/`test_autonomy_router.py`/`contracts` 均断言预算字段不存在且状态快照合规）
+- [x] 后端定向回归全绿（`-k "autonomy or admin or config or dream"` → **1119 passed / 0 failed**；全量 `pytest tests -q` → **5162 passed / 0 failed**）
+- [x] 前端 `tsc --noEmit`（EXITCODE=0）+ vitest（92 files / 771 passed）+ playwright（2 passed）+ Mock 回归（13/13）——s0402 三重闸门 PASSED，证据 `.trae/documents/test_reports/frontend_gate_20260930_163635/`
+- [x] 全仓 `killswitch` / `token_ledger` / `budget` 残留引用清零（四类形态核验：import / 属性访问 / 类与字段定义 / 测试正向构造；余下仅为说明性注释、反断言与运行态历史数据）
+
 ## [1.13.0] - 2026-09-05
 
 ### 变更内容

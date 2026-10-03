@@ -1,15 +1,17 @@
 """CX-O-Autonomy 自主系统管理器（P0 最小骨架，P1-T8 再扩展主循环）。
 
-持有配置、运行状态（running/paused/sleeping）、动机、最近行动与当日预算消耗。
+持有配置、运行状态（running/paused/sleeping）、动机与最近行动。
 主循环由 P1-T8 扩展；本阶段仅实现 启用/停用/暂停/恢复/状态快照。
 
-异常契约（对齐 public/interface_stub/cxo_autonomy.pyi，本模块定义 5 类）：
+异常契约（对齐 public/interface_stub/cxo_autonomy.pyi，本模块定义 4 类）：
 - AutonomyError（基类）/ AutonomyDisabledError（error_code = AUTONOMY_DISABLED）
-- AutonomyBudgetExceededError（error_code = AUTONOMY_BUDGET_EXCEEDED）
 - AutonomyActionBlockedError（error_code = AUTONOMY_ACTION_BLOCKED）
 - AutonomyPersistError（error_code = AUTONOMY_PERSIST_ERROR）
 - 其余异常（AutonomyContentRejectedError / AutonomyRateLimitedError /
   AutonomyPlatformNotWhitelistedError）定义于 action/social/poster.py
+
+2026-09-27 人类裁决：`AutonomyBudgetExceededError` 与当日预算消耗字段已随
+「删除预算记账闸门」整体移除（纯本地项目不需要预算管控）。
 """
 
 from __future__ import annotations
@@ -17,7 +19,7 @@ from __future__ import annotations
 from typing import Any, Dict, Optional
 
 from server.autonomy.config import AutonomyConfig
-from server.autonomy.models import Motivations
+from server.autonomy.models import AutonomyFocus, Motivations
 
 
 class AutonomyError(Exception):
@@ -37,12 +39,6 @@ class AutonomyDisabledError(AutonomyError):
     """自主系统未启用时调用工具/端点。error_code = AUTONOMY_DISABLED"""
 
     error_code = "AUTONOMY_DISABLED"
-
-
-class AutonomyBudgetExceededError(AutonomyError):
-    """当日预算超支，降级/拒绝。error_code = AUTONOMY_BUDGET_EXCEEDED"""
-
-    error_code = "AUTONOMY_BUDGET_EXCEEDED"
 
 
 class AutonomyActionBlockedError(AutonomyError):
@@ -74,10 +70,10 @@ class AutonomyManager:
         self.motivations = Motivations(
             curiosity=0.2, social_need=0.2, creative_drive=0.2, fatigue=0.0
         )
+        # 焦点对象（curiosity 的指向性维度，由引擎从动机层同步；空 topic＝暂无明确焦点）
+        self.focus = AutonomyFocus()
         self.last_action: Optional[str] = None
         self.last_cycle_at: Optional[str] = None
-        self.daily_budget_used_tokens: int = 0
-        self.budget_reset_date: Optional[str] = None
         self.diary_last_at: Optional[str] = None
 
     def enable(self) -> None:
@@ -103,15 +99,18 @@ class AutonomyManager:
         self.status = "running"
 
     def get_status(self) -> Dict[str, Any]:
-        """返回状态快照（对齐 autonomy_state.schema.json）。未启用时抛 AutonomyDisabledError。"""
+        """返回状态快照（对齐 autonomy_state.schema.json）。未启用时抛 AutonomyDisabledError。
+
+        focus 为 curiosity 的指向性维度（topic＝当前最想探索的事物，level＝兴趣强度），
+        由引擎每轮从动机层同步；尚无焦点时为 {"topic": "", "level": 0.0}。
+        """
         if not self.enabled:
             raise AutonomyDisabledError("自主系统未启用")
         return {
             "motivations": self.motivations.model_dump(),
+            "focus": self.focus.model_dump(),
             "status": self.status,
             "last_action": self.last_action,
             "last_cycle_at": self.last_cycle_at,
-            "daily_budget_used_tokens": self.daily_budget_used_tokens,
-            "budget_reset_date": self.budget_reset_date,
             "diary_last_at": self.diary_last_at,
         }

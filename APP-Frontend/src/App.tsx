@@ -135,7 +135,7 @@ export default function App() {
           <Route path="/pet" element={<PetPage />} />
           <Route path="/danmaku" element={<DanmakuPage />} />
         </Routes>
-        {/* D9 全局轻量 toast（cluster_event / autonomy_cost_alert）；OBS /source/* 叠加页不挂载 */}
+        {/* D9 全局轻量 toast（cluster_event）；OBS /source/* 叠加页不挂载 */}
         <GlobalToasts />
       </HashRouter>
     );
@@ -166,7 +166,7 @@ export default function App() {
           )}
         </Route>
       </Routes>
-      {/* D9 全局轻量 toast（cluster_event / autonomy_cost_alert） */}
+      {/* D9 全局轻量 toast（cluster_event） */}
       <GlobalToasts />
     </HashRouter>
   );

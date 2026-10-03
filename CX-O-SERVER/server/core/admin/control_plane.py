@@ -90,8 +90,6 @@ ADMIN_CONFIG_UPDATE_WHITELIST: Dict[str, Set[str]] = {
         "search.mcp_server_name", "search.fallback_rss",
         "schedule.wake_time", "schedule.sleep_time", "schedule.golden_start",
         "schedule.golden_end", "schedule.diary_time",
-        "budget.daily_token_limit", "budget.daily_llm_calls_limit",
-        "budget.cost_alert_threshold", "budget.overspend_mode",
         "safety.content_gate_enabled", "safety.persona_check_enabled",
         "safety.post_rate_per_hour", "safety.user_online_sleep",
         "safety.leave_mode_authorize",
@@ -170,7 +168,6 @@ _CONFIG_NUMERIC_BOUNDS: Dict[Tuple[str, str], Tuple[float, float]] = {
     ("dream.trigger", "probability"): (0.0, 1.0),
     ("dream.physio", "base_drop_ratio"): (0.0, 1.0),
     # autonomy：比例型标量（0~1）
-    ("autonomy.budget", "cost_alert_threshold"): (0.0, 1.0),
 }
 # 日志级别枚举（对齐 spec：PUT /admin/logging/level 校验口径，大小写不敏感）
 _LOGGING_LEVELS = frozenset({"DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"})
@@ -180,8 +177,6 @@ _SCHEDULE_TIME_FIELDS = frozenset(
     {"wake_time", "sleep_time", "golden_start", "golden_end", "diary_time"}
 )
 _SCHEDULE_HHMM_RE = re.compile(r"^([01]?[0-9]|2[0-3]):[0-5][0-9]$")
-# overspend_mode 枚举（对齐 AutonomyBudgetSection 校验器）
-_OVERSPEND_MODES = frozenset({"sleep", "low_cost"})
 
 
 def _check_new_section_value(path: str, obj: Any, field: str, value: Any) -> None:
@@ -191,8 +186,8 @@ def _check_new_section_value(path: str, obj: Any, field: str, value: Any) -> Non
     显式守卫（llm/models 维持既有叶子名校验不变，不经此函数）：
     - 类型镜像：以落点字段当前值类型为契约基准（bool/数值/字符串），拒绝越型写入
     - 数值上界：_CONFIG_NUMERIC_BOUNDS 命中时校验闭区间（负值/超大值同路径拒绝）
-    - 枚举/格式：logging.level 级别枚举、schedule 时间 HH:MM、overspend_mode
-      枚举（对齐 config.py 各节校验器契约，防止白名单路径绕过 PUT 专用端点校验）
+    - 枚举/格式：logging.level 级别枚举、schedule 时间 HH:MM
+      （对齐 config.py 各节校验器契约，防止白名单路径绕过 PUT 专用端点校验）
     当前值为 None（Optional 字段缺省，如 dream.physio.device_fingerprint）时跳过类型镜像。
     """
     prefix = path.rsplit(".", 1)[0]
@@ -222,8 +217,6 @@ def _check_new_section_value(path: str, obj: Any, field: str, value: Any) -> Non
         and not _SCHEDULE_HHMM_RE.match(str(value))
     ):
         raise AdminControlError(f"ADMIN_CONFIG_VALUE_TYPE: {path} 时间必须为 HH:MM 格式")
-    if (prefix, field) == ("autonomy.budget", "overspend_mode") and value not in _OVERSPEND_MODES:
-        raise AdminControlError(f"ADMIN_CONFIG_VALUE_TYPE: {path} 可选 sleep/low_cost")
 
 
 def _find_method(svc, *names):

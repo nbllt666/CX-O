@@ -630,7 +630,7 @@
       "running": "执行中..."
     },
     "autonomy": {
-      "subtitle": "CX-O-Autonomy 自主系统：动机、预算与行为回放",
+      "subtitle": "CX-O-Autonomy 自主系统：动机、焦点与行为回放",
       "refresh": "刷新",
       "statusTitle": "当前状态",
       "statusBadge": {
@@ -641,8 +641,6 @@
       },
       "lastAction": "上次行动",
       "lastCycleAt": "上次循环",
-      "budgetResetDate": "预算重置日",
-      "budgetUsedToday": "今日已用 tokens",
       "emptyValue": "—",
       "disabledTitle": "自主系统未启用",
       "disabledHint": "自主系统未启用，点击「启用」开始自主生活",
@@ -654,11 +652,9 @@
         "fatigue": "疲惫度"
       },
       "motivationsDisabledHint": "启用自主系统后展示实时动机状态",
-      "budgetTitle": "今日预算用量",
-      "budgetUsed": "已用 {{used}} / {{limit}} tokens",
-      "budgetNoLimit": "未设置每日预算上限",
-      "budgetOverThreshold": "已接近预算上限",
-      "budgetExceeded": "已超出每日预算",
+      "focusTitle": "当前焦点",
+      "focusEmpty": "暂无明确焦点",
+      "focusLevel": "兴趣强度 {{pct}}%",
       "controlTitle": "控制",
       "enable": "启用",
       "disable": "禁用",
@@ -1563,8 +1559,6 @@
     "clusterFailoverCompleted": "故障转移完成",
     "clusterNodeLeft": "节点离开 {{node}}",
     "clusterRoleChanged": "角色切换为 {{role}}",
-    "clusterGeneric": "集群事件：{{topic}}",
-    "costAlertTitle": "成本告警",
-    "costAlertMessage": "今日 Token 已用 {{used}}/{{limit}}（{{ratio}}）"
+    "clusterGeneric": "集群事件：{{topic}}"
   }
 }

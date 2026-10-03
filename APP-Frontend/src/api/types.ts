@@ -253,14 +253,27 @@ export interface AutonomyStatusDisabled {
   status: 'disabled';
 }
 
-/** 已启用：含动机/状态/上次行动/预算等字段；status 对齐精简后的 autonomy_state.schema.json（仅 running/paused/sleeping） */
+/** 焦点对象：curiosity 的指向性维度（对齐 autonomy_state.schema.json 的 focus）
+ *
+ * topic 为"当前最想探索的具体事物"（空串＝暂无明确焦点），level 为对该对象的兴趣强度 0-1。
+ */
+export interface AutonomyFocus {
+  topic: string;
+  level: number;
+}
+
+/** 已启用：含动机/状态/上次行动等字段；status 对齐精简后的 autonomy_state.schema.json（仅 running/paused/sleeping）
+ *
+ * 2026-09-27 人类裁决：`daily_budget_used_tokens` / `budget_reset_date` 已随
+ * 「删除预算记账闸门」从契约与响应中移除（纯本地项目不需要预算管控）。
+ * `focus` 为 2026-09-30 契约 [1.15.0] 新增字段（curiosity 的指向性维度）。
+ */
 export interface AutonomyStatusActive {
   status: 'running' | 'paused' | 'sleeping';
   motivations?: AutonomyMotivations;
+  focus?: AutonomyFocus;
   last_action?: string | null;
   last_cycle_at?: string | null;
-  daily_budget_used_tokens?: number;
-  budget_reset_date?: string | null;
   diary_last_at?: string | null;
 }
 
@@ -307,12 +320,6 @@ export interface AutonomyConfig {
     golden_end: string;
     diary_time: string;
     quiet_windows: string[];
-  };
-  budget: {
-    daily_token_limit: number;
-    daily_llm_calls_limit: number;
-    cost_alert_threshold: number;
-    overspend_mode: 'sleep' | 'low_cost';
   };
   platforms: string[];
   permissions: {

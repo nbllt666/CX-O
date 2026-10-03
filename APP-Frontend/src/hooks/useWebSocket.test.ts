@@ -145,7 +145,7 @@ describe('useWebSocket 广播事件消费（D9）', () => {
     useEventsStore.setState({ events: [] });
   });
 
-  it('cluster_event 切换/故障类弹 toast（node_joined 不弹）；autonomy_cost_alert 直接弹；skill_triggered 入事件存档', async () => {
+  it('cluster_event 切换/故障类弹 toast（node_joined 不弹）；autonomy_cost_alert 已不再弹；skill_triggered 入事件存档', async () => {
     vi.stubGlobal('WebSocket', MockWebSocket);
     const ws = await openMockWs();
 
@@ -165,13 +165,12 @@ describe('useWebSocket 广播事件消费（D9）', () => {
     });
     expect(useToastStore.getState().toasts).toHaveLength(1);
 
-    // 成本告警 → 直接弹
+    // 成本告警事件已随「删除预算记账闸门」移除消费分支 → 不再弹 toast（防回归）
     await serverSend(ws, {
       type: 'autonomy_cost_alert',
       data: { usage_ratio: 0.9, daily_used: 900, limit: 1000, date: '2026-08-28' },
     });
-    expect(useToastStore.getState().toasts).toHaveLength(2);
-    expect(useToastStore.getState().toasts[1]?.kind).toBe('cost');
+    expect(useToastStore.getState().toasts).toHaveLength(1);
 
     // skill_triggered → 入有界事件存档（不做 UI）
     await serverSend(ws, {
@@ -180,6 +179,6 @@ describe('useWebSocket 广播事件消费（D9）', () => {
     });
     expect(useEventsStore.getState().events).toHaveLength(1);
     expect(useEventsStore.getState().events[0]?.type).toBe('skill_triggered');
-    expect(useToastStore.getState().toasts).toHaveLength(2);
+    expect(useToastStore.getState().toasts).toHaveLength(1);
   });
 });

@@ -2,11 +2,13 @@
 
 - AutonomyAction      自主行动（autonomy_action.schema.json）
 - AutonomyAuditEntry  审计日志条目（autonomy_audit.schema.json）
+- AutonomyFocus       焦点对象（autonomy_state.schema.json 的 focus）
 - AutonomyState       状态快照（autonomy_state.schema.json）
 
 动作枚举 9 项：sleep / wait / read_news / search / write_memory / write_post /
 start_live / stop_live / write_diary；motivations 四维（curiosity / social_need /
-creative_drive / fatigue）均取值 0-1。
+creative_drive / fatigue）均取值 0-1；focus 承载 curiosity 的指向性
+（topic＝当前最想探索的具体事物，level＝对该对象的兴趣强度 0-1）。
 """
 
 from __future__ import annotations
@@ -40,6 +42,18 @@ def _now_iso() -> str:
     return datetime.datetime.now(datetime.timezone.utc).isoformat()
 
 
+class AutonomyFocus(BaseModel):
+    """焦点对象：当前最想探索的"某个事物"及兴趣强度（对齐 autonomy_state.schema.json 的 focus）。
+
+    topic 为空串表示暂无明确焦点；level 为对该对象的兴趣强度 [0,1]。
+    与 motivations.curiosity 正交：curiosity 表达"多想探索"，focus 表达"想探索什么"。
+    """
+
+    model_config = ConfigDict(extra="forbid")
+    topic: str = ""
+    level: float = Field(default=0.0, ge=0.0, le=1.0)
+
+
 class Motivations(BaseModel):
     """动机状态：curiosity / social_need / creative_drive / fatigue 各 0-1。"""
 
@@ -51,7 +65,10 @@ class Motivations(BaseModel):
 
 
 class AutonomyAction(BaseModel):
-    """LLM 规划器输出的自主行动（对齐 autonomy_action.schema.json，action 必填）。"""
+    """LLM 规划器输出的自主行动（对齐 autonomy_action.schema.json，action 必填）。
+
+    focus 为可选字段（契约 @1.15.0 新增）：LLM 自报的本轮关注对象；缺省＝沿用上次焦点。
+    """
 
     model_config = ConfigDict(extra="forbid")
     action: ActionType
@@ -59,6 +76,7 @@ class AutonomyAction(BaseModel):
     payload: Dict[str, Any] = Field(default_factory=dict)
     reason: str = ""
     expected_outcome: str = ""
+    focus: Optional[AutonomyFocus] = None
 
 
 class AutonomyAuditEntry(BaseModel):
@@ -78,13 +96,16 @@ class AutonomyAuditEntry(BaseModel):
 
 
 class AutonomyState(BaseModel):
-    """自主系统状态快照（对齐 autonomy_state.schema.json）。"""
+    """自主系统状态快照（对齐 autonomy_state.schema.json）。
+
+    2026-09-27 人类裁决：`daily_budget_used_tokens` / `budget_reset_date` 已随
+    「删除预算记账闸门」从契约与模型中移除（纯本地项目不需要预算管控）。
+    """
 
     model_config = ConfigDict(extra="forbid")
     motivations: Motivations = Field(default_factory=Motivations)
+    focus: AutonomyFocus = Field(default_factory=AutonomyFocus)
     status: StateStatus = "paused"
     last_action: Optional[str] = None
     last_cycle_at: Optional[str] = None
-    daily_budget_used_tokens: int = Field(default=0, ge=0)
-    budget_reset_date: Optional[str] = None
     diary_last_at: Optional[str] = None

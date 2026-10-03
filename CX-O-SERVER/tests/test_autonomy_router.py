@@ -102,7 +102,7 @@ class TestStatus:
         assert body["motivations"] == {
             "curiosity": 0.2, "social_need": 0.2, "creative_drive": 0.2, "fatigue": 0.0,
         }
-        assert body["daily_budget_used_tokens"] == 0
+        assert "daily_budget_used_tokens" not in body  # 预算消耗字段已随人类裁决移除
 
     # ================================================================ ② 未装配/未启用 → disabled
     def test_status_disabled_when_no_manager(self, client):
@@ -258,7 +258,7 @@ class TestGetConfig:
         assert body["enabled"] is True
         assert body["agent_id"] == "测试人设"
         assert body["loop_interval_minutes"] == 15
-        assert body["budget"]["daily_token_limit"] == 2000000
+        assert "budget" not in body  # 预算节已随人类裁决移除，配置形状不含 budget
 
     def test_config_available_without_manager(self, client, isolated_settings):
         # 未装配（manager 为 None）也可读：返回 settings 节默认值（200，不再 404）
@@ -272,15 +272,15 @@ class TestGetConfig:
 # ================================================================ ⑦ PUT /autonomy/config
 class TestPutConfig:
     def test_config_put_partial_update(self, client, isolated_settings):
-        r = client.put("/api/autonomy/config", json={"budget": {"overspend_mode": "low_cost"}})
+        r = client.put("/api/autonomy/config", json={"schedule": {"wake_time": "07:30"}})
         assert r.status_code == 200
         body = r.json()
-        assert body["budget"]["overspend_mode"] == "low_cost"
+        assert body["schedule"]["wake_time"] == "07:30"
         # 未提交字段保留默认/原值（深度合并 + 自动补齐）
-        assert body["budget"]["daily_token_limit"] == 2000000
+        assert body["schedule"]["sleep_time"] == "02:00"
         assert body["enabled"] is False
         # 已持久化到 UnifiedConfig（settings 内存态 + config.json 磁盘态）
-        assert isolated_settings.config.autonomy.budget.overspend_mode == "low_cost"
+        assert isolated_settings.config.autonomy.schedule.wake_time == "07:30"
 
     def test_config_put_syncs_manager_runtime_config(self, client, isolated_settings, tmp_path):
         # manager 已装配时 PUT 同步 manager.config（映射回 AutonomyConfig，运行时语义）
@@ -300,7 +300,11 @@ class TestPutConfig:
         assert r.status_code == 422
 
     def test_config_put_invalid_enum_422(self, client, isolated_settings):
-        r = client.put("/api/autonomy/config", json={"budget": {"overspend_mode": "explode"}})
+        # allowed_actions 枚举含非法 action → 422（预算节删除后改以权限枚举守门）
+        r = client.put(
+            "/api/autonomy/config",
+            json={"permissions": {"allowed_actions": ["delete_content"]}},
+        )
         assert r.status_code == 422
 
     def test_config_put_invalid_time_422(self, client, isolated_settings):

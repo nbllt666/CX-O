@@ -9,23 +9,31 @@ AutonomyEngine 串联 感知→动机→规划→行动→审计 五层流水线
 - _execute()              按 action 分发执行（sleep/wait 为内部原语不调 handler）
 - _maybe_diary()          日记时刻触发日记生成（is_diary_time 且今日未写）
 
+动机真实性（2026-09-30 修复）：
+- _apply_motivation_feedback() 在行动成功后按 action 写回动机反馈（read_news/search →
+  curiosity 回落（取回内容时创意欲上升）、write_post → social_need 回落、
+  write_memory/write_diary → creative_drive 回落（创作消费，与素材获取配对）、
+  start_live/stop_live → fatigue 上升）。只认 handler 的 result == "success"，
+  不采信 LLM 自述；修复此前 4 个 record_* 入口在生产代码零调用、动机退化为
+  纯时间函数并饱和（curiosity/social_need→1.0，creative_drive/fatigue→0）的缺陷。
+- _apply_plan_focus() 回写 LLM 本轮自报的 focus（curiosity 的指向性维度），
+  与动机状态一并落盘 motivation_state.json；_plan() 将当前焦点注入下一轮上下文。
+
 安全/质量职责：
 - 行动前对 write_post 过内容闸门（fail-closed），拒绝则 result=blocked 不执行；
-- 每轮追加审计（对齐 public/schema/autonomy_audit.schema.json），Token 记账，
-  效果评估；
-- 预算仅记账与告警、不阻断行动：每轮动机更新后同步 TokenLedger（跨日经
-  reset_if_new_day 自动重置），达到成本告警阈值时经 ws_manager.broadcast
-  推送 autonomy_cost_alert（当日仅一次，缺失仅记日志）；超支不再置
-  manager.status 为预算受限态、不再跳过规划与行动；
+- 每轮追加审计（对齐 public/schema/autonomy_audit.schema.json）并做效果评估；
 - round 内任何异常被捕获（不冒泡），记录错误审计后继续下一轮；
 - 主循环以 `while self.running` 守卫周期运行：不存在任何会终止循环的急停路径；
-  paused / sleeping / manager 门控（enabled/running=False）一律降级为轮级跳过
-  （见 _run_round），从而支持"用户在线→休眠、用户离开→离开模式自动恢复"的
-  轮询语义；终止由 stop() 承担（置 running=False 的守卫自退 + task.cancel() 取消）。
+  唯一轮级跳过来源是"用户在线休眠"（见 _apply_user_online_policy），
+  从而支持"用户在线→休眠、用户离开→离开模式自动恢复"的轮询语义；
+  终止由 stop() 承担（置 running=False 的守卫自退 + task.cancel() 取消）。
+- 轮内**不含**预算记账、manager 门控与 killswitch 三道路径（2026-09-27 人类裁决：
+  纯本地项目不需要这些管控设施）。启停语义上移到任务层——由
+  POST /api/autonomy/control 真正 start/stop 后台循环任务，而非轮级空转。
 
 生命周期：构造时从持久化恢复 motivation 与 manager 状态（重启续接）；载入遗留
 manager_state.json 时把 status 归一化为 running/paused/sleeping（历史预算受限态 /
-错误态不回放，避免升级后契约越界）。
+错误态不回放，避免升级后契约越界），并忽略已删除的预算字段。
 本模块无相对路径访问，禁止 "../../" / "..\\\\" 形式。
 """
 
@@ -68,8 +76,6 @@ _MANAGER_STATE_FIELDS: Tuple[str, ...] = (
     "status",
     "last_action",
     "last_cycle_at",
-    "daily_budget_used_tokens",
-    "budget_reset_date",
     "diary_last_at",
 )
 
@@ -83,9 +89,11 @@ class AutonomyEngine:
 
     构造入参按已实现模块真实 API 灵活适配（组件均以关键字注入，便于测试 mock）：
     manager / motivation / circadian / sensor / rss / hotspot / memory_actions /
-    planner / diary / evaluator / token_ledger / content_gate / rate_limiter /
-    killswitch / audit / handlers / persona，另含 loop_interval_minutes、
-    max_diary_per_day 与可选 ws_manager（成本告警 WS 推送，缺失仅记日志）。
+    planner / diary / evaluator / content_gate / rate_limiter / audit / handlers /
+    persona，另含 loop_interval_minutes 与 max_diary_per_day。
+
+    2026-09-27 人类裁决后已移除 token_ledger / killswitch / ws_manager 三个入参
+    （预算记账、killswitch 与成本告警已整体删除，ws_manager 仅曾服务于成本告警推送）。
 
     构造时即执行持久化恢复（motivation 与 manager 状态），实现重启续接。
     """
@@ -103,14 +111,11 @@ class AutonomyEngine:
         planner: Any,
         diary: Any,
         evaluator: Any,
-        token_ledger: Any,
         content_gate: Any,
         rate_limiter: Any,
-        killswitch: Any,
         audit: Any,
         handlers: Dict[str, Callable],
         persona: Optional[Dict[str, Any]] = None,
-        ws_manager: Optional[Any] = None,
         loop_interval_minutes: int = 15,
         max_diary_per_day: bool = True,
     ) -> None:
@@ -130,14 +135,15 @@ class AutonomyEngine:
         self.planner = planner
         self.diary = diary
         self.evaluator = evaluator
-        self.token_ledger = token_ledger
         self.content_gate = content_gate
         self.rate_limiter = rate_limiter
-        self.killswitch = killswitch
         self.audit = audit
         self.handlers = handlers or {}
         self.persona = persona or {}
-        self.ws_manager = ws_manager
+        # 用户在线休眠标志（原 killswitch.sleeping 的落点，2026-09-27 人类裁决：
+        # 行为保留、改由引擎内标志承载）。该状态由传感器每轮实时判定，
+        # 不参与持久化（跨重启保持无意义）。
+        self._user_online_sleeping: bool = False
         self.loop_interval_minutes = max(float(loop_interval_minutes), 1.0)  # 0 被提升为 1 分钟，避免空转忙循环
         self.max_diary_per_day = bool(max_diary_per_day)
         self.hotspot_topics: List[str] = list(_DEFAULT_HOTSPOT_TOPICS)
@@ -186,11 +192,10 @@ class AutonomyEngine:
         主循环无条件运行（while self.running）：不存在任何会终止循环的急停路径，
         终止有两条冗余路径——① stop() 先置 running=False，循环守卫在轮首自检后
         自行退出；② stop() 的 task.cancel() 经 await 点（asyncio.sleep）抛出
-        CancelledError 直接解开循环。两条路径互为兜底（守卫不依赖 killswitch，
+        CancelledError 直接解开循环。两条路径互为兜底（守卫不依赖任何外部开关，
         与"移除急停语义"一致），避免终止单点依赖取消。
-        paused / sleeping / manager 门控（enabled/running=False）一律降级为
-        轮级跳过（见 _run_round），从而支持"用户在线→休眠、用户离开→离开模式
-        自动恢复"的轮询语义。
+        唯一的轮级跳过来源是"用户在线休眠"（见 _run_round），从而支持
+        "用户在线→休眠、用户离开→离开模式自动恢复"的轮询语义。
         round 内任何异常被捕获（不冒泡），记录错误审计后 continue 下一轮；
         running=False 由 stop() 负责（守卫在下一轮首生效）。
         """
@@ -213,22 +218,19 @@ class AutonomyEngine:
 
         轮首用户在线策略（P2-T4 离开模式/用户在线休眠）：
         若 sensor 为真实 ContextSensor 且 config.safety.user_online_sleep 开启，
-        先调用 sensor.is_user_online() 并写入 killswitch.update_from_user_online(...)：
-        - 用户在线 → sleeping=True（休眠，避免"Agent 边聊边自发帖"的分裂感）；
-        - 用户离开 → sleeping=False（离开模式，自主全授权，不拦截操作）。
+        先调用 sensor.is_user_online() 并写入引擎内标志 self._user_online_sleeping：
+        - 用户在线 → 休眠（避免"Agent 边聊边自发帖"的分裂感）；
+        - 用户离开 → 离开模式，自主全授权，不拦截操作。
         用户在线触发休眠时，本轮跳过规划与行动，仅更新动机并记录 result=skipped
-        （trigger_reason=user_online_sleep）的审计条目（推荐方案：保留审计可回溯，
-        且维持轮询语义，用户离开后下一轮自动恢复）。暂停/休眠仅降级为轮级跳过，
-        不终止主循环。
+        （trigger_reason=user_online_sleep）的审计条目（保留审计可回溯，
+        且维持轮询语义，用户离开后下一轮自动恢复）。
 
-        预算仅记账与告警（P6）：动机更新后、规划前调用 _apply_budget_accounting()
-        同步 TokenLedger（跨日自动重置），并在达到成本告警阈值时推送 autonomy
-        成本告警（当日仅一次）。超支不再阻断行动，manager.status 不再进入
-        预算受限态。
+        本方法**不含**预算记账、manager 门控与 killswitch 三道路径
+        （2026-09-27 人类裁决：纯本地项目不需要这些管控设施）。启停语义上移到
+        任务层——POST /api/autonomy/control 真正 start/stop 后台循环任务，
+        因此轮内不存在 paused/disabled 的轮级跳过分支。
 
-        门控顺序：用户在线策略 → 动机 → 预算记账 → manager 门控
-        （_manager_action_allowed，result=skipped / reason=paused_or_disabled）
-        → killswitch.is_active() → 感知/规划/执行；上述门控均不终止主循环。
+        门控顺序：用户在线策略 → 动机 → 感知/规划/执行。
 
         round 内任何异常被捕获（不冒泡）：记录错误审计后本轮结束，由 _run_loop
         继续下一轮。最后更新 manager 的 last_action / last_cycle_at 并保存
@@ -239,34 +241,26 @@ class AutonomyEngine:
         try:
             online_sleep = await self._apply_user_online_policy()
             await self._motivate()
-            await self._apply_budget_accounting()
-            manager_blocked = not self._manager_action_allowed()
-            if manager_blocked:
-                # H11: 管理面门控——pause()/disable() 把 manager.running/enabled
-                # 置 False 后，跳过规划与行动并审计 skipped（降级为轮级跳过以
-                # 维持轮询语义，resume/enable 后自动恢复；不终止主循环）。
+            if online_sleep:
+                # 用户在线触发休眠：跳过规划与行动，仅审计 skipped（轮级跳过
+                # 维持轮询语义，用户离开后下一轮自动恢复；不终止主循环）。
                 action_result = {
                     "action": "wait",
                     "target": "",
                     "payload": {},
-                    "reason": "paused_or_disabled",
+                    "reason": "user_online_sleep",
                     "expected_outcome": "",
                     "result": "skipped",
                 }
-            elif self.killswitch.is_active():
+            else:
                 sense = await self._sense()
                 plan = await self._plan(sense)
                 action_result = await self._execute(plan)
-            else:
-                # 用户在线触发休眠 / 已暂停 / 已休眠：跳过规划与行动，仅审计 skipped
-                action_result = {
-                    "action": "wait",
-                    "target": "",
-                    "payload": {},
-                    "reason": "user_online_sleep" if online_sleep else "sleep_paused_or_stopped",
-                    "expected_outcome": "",
-                    "result": "skipped",
-                }
+                # 动机反馈 + 焦点回写：绑定真实行动结果（result == "success"），
+                # 修复"4 个 record_* 入口生产零调用 → 动机只剩时间演化并饱和"的缺陷；
+                # focus 来自 LLM 本轮自报，缺失则沿用上次焦点。
+                await self._apply_motivation_feedback(action_result)
+                self._apply_plan_focus(plan)
             await self._audit(plan, action_result)
         except Exception as e:
             logger.error("自主循环单轮异常（不冒泡）: %s", e)
@@ -280,27 +274,30 @@ class AutonomyEngine:
             # 匹配；_elapsed_minutes 对 tz-aware 时间戳跨时区求差无混算）。
             self.manager.last_cycle_at = self._local_now_iso()
             self._sync_manager_motivations()
-            # G1/A4: manager 状态落盘为同步文件 IO，经 to_thread 卸载（对齐 _persist_token_ledger）
+            self._sync_manager_focus()
+            # G1/A4: manager 状态落盘为同步文件 IO，经 to_thread 卸载
             await asyncio.to_thread(self._save_manager_state)
-            # R4: 每轮末尾统一持久化 Token 台账（记账/跨日重置均发生在轮内，
-            # 每轮仅落盘一次），避免重启后当日预算清零绕过熔断。
-            await self._persist_token_ledger()
+            # 动机状态（tick + 行为反馈 + 焦点）在轮末统一落盘，保证重启续接
+            # 不丢失本轮反馈（motivation_state.json 为动机层真源）。
+            await asyncio.to_thread(self._save_motivation)
 
     async def _apply_user_online_policy(self) -> bool:
-        """轮首用户在线策略：将传感器判定同步到 killswitch 休眠档。
+        """轮首用户在线策略：把传感器判定写入引擎内休眠标志。
 
-        G1/A4: 改为 async——killswitch.update_from_user_online 内部含条件
-        _persist 落盘（同步 IO），经 asyncio.to_thread 卸载，本方法相应改为
-        协程由 _run_round await（唯一调用点）。
+        2026-09-27 人类裁决：行为保留、落点由 killswitch.sleeping 改为引擎内标志
+        self._user_online_sleeping。该标志不持久化——它由传感器每轮实时判定，
+        跨重启保持无意义；因此本方法不再有落盘 IO（保留 async 形态以对齐唯一调用点
+        `_run_round` 的 await）。
 
         仅在 sensor 为真实 ContextSensor（含可调用 is_user_online）且
-        config.safety.user_online_sleep 开启时生效；否则不改动 killswitch
-        （不干预手动 sleeping / 暂停，测试 MagicMock 替身也不触发）。
+        config.safety.user_online_sleep 开启时生效；否则标志置 False 并返回 False
+        （不触发休眠，测试 MagicMock 替身也不误触发）。
 
         Returns:
             bool: 是否因"用户在线"在本轮触发休眠（True=本轮处于用户在线休眠，
-            用于审计 trigger_reason 区分；False=未触发或策略未开启）。
+            用于审计 trigger_reason 与轮级跳过判定；False=未触发或策略未开启）。
         """
+        self._user_online_sleeping = False
         if not isinstance(self.sensor, ContextSensor):
             return False
         try:
@@ -315,99 +312,8 @@ class AutonomyEngine:
         except Exception as e:
             logger.warning("用户在线判定失败: %s", e)
             is_online = False
-        try:
-            # G1/A4: killswitch 休眠档更新内部含条件 _persist 落盘（同步 IO），经 to_thread 卸载
-            await asyncio.to_thread(
-                self.killswitch.update_from_user_online, is_online, user_online_sleep
-            )
-        except Exception as e:
-            logger.warning("用户在线状态同步 killswitch 失败: %s", e)
-        return bool(is_online)
-
-    # ------------------------------------------------------------ 0) 管理面门控
-    def _manager_action_allowed(self) -> bool:
-        """H11: 管理面门控——manager.enabled 且 manager.running 才允许规划与行动。
-
-        AutonomyManager.pause()/disable() 会把 running（和/或 enabled）置 False，
-        resume()/enable() 复位 True；engine.start() 前装配层已调用 manager.enable()。
-        字段缺失时按启用处理（兼容测试替身，避免误伤）。
-        """
-        return (
-            bool(getattr(self.manager, "enabled", True))
-            and bool(getattr(self.manager, "running", True))
-        )
-
-    # ------------------------------------------------------------ 0) 预算记账与告警
-    async def _apply_budget_accounting(self) -> None:
-        """轮首预算记账：动机更新后、规划前同步 TokenLedger 并推送成本告警。
-
-        仅记账与告警、不阻断行动：先按自然日同步预算日期（跨日自动重置
-        TokenLedger 当日计数），超支时仅记日志；达到成本告警阈值时经
-        ws_manager.broadcast 推送 autonomy_cost_alert（当日仅一次，标记由
-        TokenLedger 内部管理；ws_manager 缺失仅记日志）。超支不再置
-        manager.status 为受限态、不再跳过规划与行动（无返回值）。
-        """
-        if self.token_ledger is None:
-            return
-        try:
-            self._sync_budget_date()
-            if self.token_ledger.is_over_budget():
-                logger.warning("自主系统当日预算超支，仅记账与告警（不阻断行动）")
-        except Exception as e:
-            logger.warning("预算超支判定失败: %s", e)
-            return
-        try:
-            if self.token_ledger.is_alert_triggered():
-                await self._push_cost_alert()
-        except Exception as e:
-            logger.warning("成本告警推送失败: %s", e)
-
-    def _sync_budget_date(self) -> None:
-        """按自然日同步预算日期：跨日时自动重置 TokenLedger 计数并更新 manager.budget_reset_date。
-
-        新的一天（manager.budget_reset_date 与今日不一致）时调用
-        token_ledger.reset_if_new_day() 清零当日计数，使 is_over_budget 自然
-        恢复 False，并记录新的重置日期。
-        """
-        now = self._local_now()
-        if not isinstance(now, datetime):
-            now = datetime.now(timezone(timedelta(hours=8)))
-        today = now.date().isoformat()
-        if getattr(self.manager, "budget_reset_date", None) == today:
-            return
-        try:
-            self.token_ledger.reset_if_new_day(today)
-        except Exception as e:
-            logger.warning("预算跨日重置失败: %s", e)
-        self.manager.budget_reset_date = today
-
-    async def _push_cost_alert(self) -> None:
-        """经 ws_manager.broadcast 推送成本告警（type=autonomy_cost_alert）。
-
-        data 含 usage_ratio / daily_used / limit / date；ws_manager 缺失或
-        无 broadcast 方法时仅记日志，不阻断循环（ws_manager 缺失不抛错）。
-        """
-        now = self._local_now()
-        if not isinstance(now, datetime):
-            now = datetime.now(timezone(timedelta(hours=8)))
-        data: Dict[str, Any] = {
-            "usage_ratio": float(self.token_ledger.usage_ratio()),
-            "daily_used": int(self.token_ledger.daily_used()),
-            "limit": int(self.token_ledger.daily_token_limit),
-            "date": now.date().isoformat(),
-        }
-        ws_manager = self.ws_manager
-        if ws_manager is None:
-            logger.warning(
-                "自主系统成本告警触发但 ws_manager 缺失，仅记录日志（usage_ratio=%.2f）",
-                data["usage_ratio"],
-            )
-            return
-        broadcast = getattr(ws_manager, "broadcast", None)
-        if not callable(broadcast):
-            logger.warning("ws_manager 无 broadcast 方法，仅记录日志（usage_ratio=%.2f）", data["usage_ratio"])
-            return
-        await broadcast({"type": "autonomy_cost_alert", "data": data})
+        self._user_online_sleeping = is_online
+        return is_online
 
     # ------------------------------------------------------------ 1) 感知
     async def _sense(self) -> Dict[str, Any]:
@@ -463,7 +369,12 @@ class AutonomyEngine:
 
     # ------------------------------------------------------------ 2) 动机
     async def _motivate(self) -> Dict[str, float]:
-        """动机层：按流逝分钟 tick 四维动机并持久化。"""
+        """动机层：按流逝分钟 tick 四维动机（落盘由 _run_round 轮末统一承担）。
+
+        落盘统一到轮末，是为了让本轮的行为反馈（_apply_motivation_feedback）
+        与焦点回写（_apply_plan_focus）一并计入 motivation_state.json，
+        避免"反馈只活在内存、重启即丢一轮"。
+        """
         elapsed_minutes = self._elapsed_minutes()
         tick = getattr(self.motivation, "tick", None)
         if callable(tick):
@@ -473,24 +384,104 @@ class AutonomyEngine:
                     await result
             except Exception as e:
                 logger.warning("动机 tick 失败: %s", e)
-        save = getattr(self.motivation, "save", None)
-        if callable(save):
-            try:
-                # G1/A4: 动机状态落盘为同步文件 IO，经 to_thread 卸载
-                await asyncio.to_thread(save, self._store_dir)
-            except Exception as e:
-                logger.warning("动机保存失败: %s", e)
         self._sync_manager_motivations()
         return self._motivation_dict()
+
+    async def _apply_motivation_feedback(self, action_result: Dict[str, Any]) -> None:
+        """按真实行动结果写回动机反馈（只认 handler 的 result == "success"）。
+
+        修复"动机退化为纯时间函数"缺陷：MotivationState 的 4 个行为反馈入口此前在
+        生产代码零调用，动机仅剩 tick 的时间演化并饱和。语义（对齐"动机值越高＝
+        行动倾向越强"）：
+
+        - read_news / search 成功 → record_info_ingestion（curiosity 回落）；
+          且取回非空内容时 → record_material（creative_drive 上升，素材到手）；
+        - write_post 成功 → record_interaction（social_need 回落）；
+        - write_memory / write_diary 成功 → record_creation（creative_drive 回落，
+          创作消费与素材获取配对，避免 creative_drive 只升不降被钉在 1.0）；
+        - start_live / stop_live 成功 → record_activity（fatigue 上升）。
+
+        触发点绑定 handler 结果而非 LLM 自述——模型会自称"学到了很多"但未必真实行动。
+        异常隔离：任何失败仅告警，不阻断本轮（与各层容错口径一致）。
+
+        注：每日日记的定时触发路径（_maybe_diary）不经此处，保持不变。
+        """
+        if not isinstance(action_result, dict):
+            return
+        if str(action_result.get("result", "") or "") != "success":
+            return
+        action = str(action_result.get("action", "") or "")
+        calls: List[str] = []
+        if action in ("read_news", "search"):
+            calls.append("record_info_ingestion")
+            if self._has_material(action_result.get("output")):
+                calls.append("record_material")
+        elif action == "write_post":
+            calls.append("record_interaction")
+        elif action in ("write_memory", "write_diary"):
+            calls.append("record_creation")
+        elif action in ("start_live", "stop_live"):
+            calls.append("record_activity")
+        for name in calls:
+            fn = getattr(self.motivation, name, None)
+            if not callable(fn):
+                continue
+            try:
+                out = fn()
+                if inspect.isawaitable(out):
+                    await out
+            except Exception as e:
+                logger.warning("动机反馈 %s 失败: %s", name, e)
+
+    @staticmethod
+    def _has_material(output: Any) -> bool:
+        """判定行动是否真实取回内容（可作创作素材）：非空 list/tuple/set/dict/str 视为有素材。"""
+        if isinstance(output, (list, tuple, set)):
+            return len(output) > 0
+        if isinstance(output, dict):
+            return bool(output)
+        if isinstance(output, str):
+            return bool(output.strip())
+        return output is not None
+
+    def _apply_plan_focus(self, plan: Optional[Dict[str, Any]]) -> None:
+        """把 LLM 本轮自报的 focus 回写动机层（plan 缺 focus 时沿用上次焦点）。
+
+        焦点不参与时间衰减，仅由自报更新（对齐"LLM 每轮自报"的裁决）。
+        """
+        if not isinstance(plan, dict):
+            return
+        focus = plan.get("focus")
+        if not isinstance(focus, dict):
+            return
+        set_focus = getattr(self.motivation, "set_focus", None)
+        if not callable(set_focus):
+            return
+        try:
+            set_focus(focus.get("topic", ""), focus.get("level", 0.0))
+        except Exception as e:
+            logger.warning("焦点回写失败: %s", e)
+
+    def _save_motivation(self) -> None:
+        """把动机状态（含焦点）落盘为 motivation_state.json（尽力而为）。"""
+        save = getattr(self.motivation, "save", None)
+        if not callable(save):
+            return
+        try:
+            save(self._store_dir)
+        except Exception as e:
+            logger.warning("动机保存失败: %s", e)
 
     # ------------------------------------------------------------ 3) 规划
     async def _plan(self, sense: Dict[str, Any]) -> Dict[str, Any]:
         """规划层：组装上下文调用 ActionPlanner 输出行动决策。
 
+        上下文带当前焦点（curiosity 的指向性维度），使 LLM 可延续或更换关注对象。
         规划器异常不在此吞掉，交由 _run_round 捕获并记录错误审计。
         """
         context: Dict[str, Any] = {
             "motivations": self._motivation_dict(),
+            "focus": self._focus_dict(),
             "phase": self._current_phase(),
             "hotspots": sense.get("hotspots", []),
             "context_snapshot": sense.get("context_snapshot", {}),
@@ -599,10 +590,13 @@ class AutonomyEngine:
     async def _audit(
         self, plan: Optional[Dict[str, Any]], action_result: Dict[str, Any]
     ) -> None:
-        """审计层：追加审计条目（对齐 autonomy_audit.schema.json）、Token 记账并效果评估。
+        """审计层：追加审计条目（对齐 autonomy_audit.schema.json）并做效果评估。
 
         plan 可能为 None（用户在线休眠跳过路径等）：None 时按空字典处理，
         trigger_reason 回退到 action_result.reason，保证跳过原因可回溯。
+
+        2026-09-27 人类裁决：Token 记账已随预算记账整体删除；审计条目的
+        cost_tokens 字段保留（记录本轮实际消耗，仅不再累计计入任何台账）。
         """
         plan = plan if isinstance(plan, dict) else {}
         entry: Dict[str, Any] = {
@@ -625,12 +619,6 @@ class AutonomyEngine:
         except Exception as e:
             logger.error("审计写入失败: %s", e)
             return
-        cost_tokens = int(action_result.get("cost_tokens", 0) or 0)
-        if cost_tokens > 0 and self.token_ledger is not None:
-            try:
-                self.token_ledger.add_tokens(cost_tokens)
-            except Exception as e:
-                logger.warning("Token 记账失败: %s", e)
         if self.evaluator is not None:
             try:
                 await self._maybe_await(self.evaluator.evaluate(action_result))
@@ -840,10 +828,6 @@ class AutonomyEngine:
                 "motivations": motivations_dict,
                 "last_action": getattr(self.manager, "last_action", None),
                 "last_cycle_at": getattr(self.manager, "last_cycle_at", None),
-                "daily_budget_used_tokens": int(
-                    getattr(self.manager, "daily_budget_used_tokens", 0) or 0
-                ),
-                "budget_reset_date": getattr(self.manager, "budget_reset_date", None),
                 "diary_last_at": getattr(self.manager, "diary_last_at", None),
             }
             path = Path(self._store_dir) / "manager_state.json"
@@ -851,21 +835,6 @@ class AutonomyEngine:
             atomic_write_json(path, data)
         except Exception as e:
             logger.warning("保存 manager 状态失败: %s", e)
-
-    async def _persist_token_ledger(self) -> None:
-        """R4: 每轮末尾持久化 Token 台账（尽力而为，不冒泡）。
-
-        记账（_audit → add_tokens）与跨日重置（_sync_budget_date）均发生在
-        轮内，轮末统一落盘一次，避免一轮多次重复写；经 asyncio.to_thread 在
-        工作线程执行原子写，事件循环内不做阻塞文件 IO。重启后从
-        token_ledger.json 恢复当日消耗，避免"重启清零当日预算记账"的口径偏差。
-        """
-        if self.token_ledger is None:
-            return
-        try:
-            await asyncio.to_thread(self.token_ledger.save)
-        except Exception as e:
-            logger.warning("Token 台账持久化失败: %s", e)
 
     # ================================================================ 工具方法
     @staticmethod
@@ -937,6 +906,31 @@ class AutonomyEngine:
         if isinstance(self.motivation, dict):
             return dict(self.motivation)
         return {}
+
+    def _focus_dict(self) -> Dict[str, Any]:
+        """取焦点对象字典；兼容 motivation.to_focus_dict()，缺省回退空焦点。"""
+        to_focus = getattr(self.motivation, "to_focus_dict", None)
+        if callable(to_focus):
+            try:
+                raw = to_focus()
+                if isinstance(raw, dict):
+                    return {
+                        "topic": str(raw.get("topic", "") or ""),
+                        "level": float(raw.get("level", 0.0) or 0.0),
+                    }
+            except Exception:
+                pass
+        return {"topic": "", "level": 0.0}
+
+    def _sync_manager_focus(self) -> None:
+        """把焦点对象同步到 manager.focus（尽力而为，异常不影响落盘流程）。"""
+        focus = self._focus_dict()
+        try:
+            from server.autonomy.models import AutonomyFocus
+
+            self.manager.focus = AutonomyFocus(**focus)
+        except Exception:
+            pass
 
     def _sync_manager_motivations(self) -> None:
         """把动机状态同步到 manager.motivations（尽力而为，字段完整才写）。"""

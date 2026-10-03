@@ -197,18 +197,47 @@ def get_status():
         return {"status": "disabled"}
 
 
+async def _apply_engine_lifecycle(action: str, manager: Any, request: Request) -> None:
+    """任务级启停：把控制指令落到后台循环任务本身。
+
+    2026-09-27 人类裁决：引擎内的 manager 门控已删除（不再有"轮级空转"的 paused
+    语义），启停语义上移到任务层——`pause`/`disable` 真正 `engine.stop()` 取消
+    后台循环任务，`resume`/`enable` 真正 `engine.start()` 新建任务。
+
+    引擎实例取 `manager.engine`（装配层运行时附加），缺失时回退
+    `request.app.state.services.autonomy_engine`；两者皆不可用（纯测试替身）时
+    仅记日志，不影响控制指令本身的返回。
+    """
+    engine = getattr(manager, "engine", None)
+    if engine is None:
+        services = getattr(getattr(request.app, "state", None), "services", None)
+        engine = getattr(services, "autonomy_engine", None)
+    if engine is None:
+        logger.warning("自主引擎实例不可用，控制指令 %s 仅更新 manager 状态", action)
+        return
+    try:
+        if action in ("pause", "disable"):
+            await engine.stop()
+        else:  # enable / resume
+            await engine.start()
+    except Exception as e:
+        logger.warning("控制指令 %s 的引擎任务启停失败（已隔离）: %s", action, e)
+
+
 @router.post("/autonomy/control")
 async def control(
     body: ControlRequest,
     request: Request,
     _: bool = Depends(verify_admin_api_key),
 ):
-    """下发控制指令：enable / disable / pause / resume。
+    """下发控制指令：enable / disable / pause / resume（任务级启停）。
 
     C5: 控制类端点补管理员鉴权（GET 状态端点保持开放）。
     非法 action 返回 400；manager 为 None 时对 enable 尝试从装配入口获取已装配
     单例，仍不可用则尝试运行时装配（services 可用时），均不可用则返回 400。
     enable/disable 会持久化开关状态，保证跨重启保持。
+    pause/disable 真正停止后台循环任务，resume/enable 真正启动（见
+    _apply_engine_lifecycle）。
     """
     action = body.action
     if action not in CONTROL_ACTIONS:
@@ -227,6 +256,7 @@ async def control(
     method = getattr(manager, action)
     method()
     await _persist_enabled(action, manager)
+    await _apply_engine_lifecycle(action, manager, request)
     return {"status": "ok", "state": _manager_state(manager)}
 
 
@@ -260,7 +290,7 @@ def get_config():
 def _deep_merge(base: Dict[str, Any], patch: Dict[str, Any]) -> Dict[str, Any]:
     """递归合并：patch 中的 dict 与 base 中同名 dict 深度合并，其余键整体覆盖。
 
-    用于局部更新配置时保留嵌套子对象（search/schedule/budget/permissions/safety）
+    用于局部更新配置时保留嵌套子对象（search/schedule/permissions/safety）
     未被提交的字段，配合 model_validate 自动补齐缺失字段。
     """
     result = dict(base)

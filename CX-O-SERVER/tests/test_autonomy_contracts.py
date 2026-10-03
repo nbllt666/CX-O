@@ -88,10 +88,6 @@ class TestMinimalValidInstances:
                 "golden_start": "19:00", "golden_end": "23:00",
                 "diary_time": "02:00", "quiet_windows": ["12:00-13:00"],
             },
-            "budget": {
-                "daily_token_limit": 2000000, "daily_llm_calls_limit": 0,
-                "cost_alert_threshold": 0.8, "overspend_mode": "sleep",
-            },
             "platforms": ["weibo", "x"],
             "permissions": {
                 "allowed_actions": [
@@ -133,9 +129,9 @@ class TestMinimalValidInstances:
         sample = {
             "motivations": {"curiosity": 0.3, "social_need": 0.2,
                             "creative_drive": 0.4, "fatigue": 0.1},
+            "focus": {"topic": "AI 芯片出口管制", "level": 0.7},
             "status": "running", "last_action": "read_news",
             "last_cycle_at": "2026-08-22T02:00:00Z",
-            "daily_budget_used_tokens": 1000, "budget_reset_date": "2026-08-22",
             "diary_last_at": "2026-08-21T02:00:00Z",
         }
         validate(instance=sample, schema=state_schema)
@@ -195,6 +191,63 @@ class TestAutonomyStateContract:
                            "last_cycle_at": None}, schema=state_schema)
 
 
+# ================================================================ focus 契约（curiosity 指向性）
+class TestAutonomyFocusContract:
+    """20260930 MINOR 新增：state/action 的可选 focus 对象（{topic, level}）。"""
+
+    def test_state_accepts_focus(self, state_schema):
+        validate(instance={"status": "running",
+                           "focus": {"topic": "量子计算", "level": 0.5}}, schema=state_schema)
+
+    def test_state_focus_requires_level(self, state_schema):
+        with pytest.raises(ValidationError):
+            validate(instance={"focus": {"topic": "AI"}}, schema=state_schema)
+
+    def test_state_rejects_focus_level_out_of_range(self, state_schema):
+        with pytest.raises(ValidationError):
+            validate(instance={"focus": {"topic": "AI", "level": 1.5}}, schema=state_schema)
+
+    def test_action_accepts_focus(self, action_schema):
+        validate(instance={"action": "read_news",
+                           "focus": {"topic": "AI", "level": 0.5}}, schema=action_schema)
+
+    def test_action_rejects_unknown_focus_field(self, action_schema):
+        with pytest.raises(ValidationError):
+            validate(instance={"action": "wait",
+                               "focus": {"topic": "AI", "level": 0.5, "note": "x"}},
+                     schema=action_schema)
+
+    def test_audit_motivations_still_rejects_focus(self, audit_schema):
+        """focus 不得混入审计面 motivations（避免 additionalProperties:false 违约）。"""
+        with pytest.raises(ValidationError):
+            validate(
+                instance={
+                    "timestamp": "2026-09-30T10:00:00Z",
+                    "action": "wait",
+                    "motivations": {
+                        "curiosity": 0.1,
+                        "focus": {"topic": "AI", "level": 0.5},
+                    },
+                },
+                schema=audit_schema,
+            )
+
+    def test_pydantic_models_align_with_contract(self):
+        """锁定模型 ↔ 契约字段对齐（GN-004 O-1：AutonomyAction 曾漏 focus 而称"对齐"）。"""
+        from server.autonomy.models import AutonomyAction, AutonomyFocus, AutonomyState
+
+        assert set(AutonomyAction.model_fields) == {
+            "action", "target", "payload", "reason", "expected_outcome", "focus",
+        }
+        assert AutonomyAction(action="wait").focus is None  # 可选，缺省＝沿用上次焦点
+        assert AutonomyAction(
+            action="read_news", focus={"topic": "AI", "level": 0.5}
+        ).focus == AutonomyFocus(topic="AI", level=0.5)
+        assert set(AutonomyState.model_fields) == {
+            "motivations", "focus", "status", "last_action", "last_cycle_at", "diary_last_at",
+        }
+
+
 # ================================================================ 接口契约 (.pyi)
 class TestAutonomyStub:
     def test_stub_parses(self):
@@ -202,13 +255,13 @@ class TestAutonomyStub:
 
     def test_error_code_and_exception_contract_present(self):
         text = _stub_text()
-        for code in ("AUTONOMY_DISABLED", "AUTONOMY_BUDGET_EXCEEDED",
-                     "AUTONOMY_ACTION_BLOCKED", "AUTONOMY_CONTENT_REJECTED",
+        for code in ("AUTONOMY_DISABLED", "AUTONOMY_ACTION_BLOCKED",
+                     "AUTONOMY_CONTENT_REJECTED",
                      "AUTONOMY_RATE_LIMITED", "AUTONOMY_PLATFORM_NOT_WHITELISTED",
                      "AUTONOMY_PERSIST_ERROR"):
             assert code in text, f"cxo_autonomy.pyi 缺少错误码 {code}"
         for cls in ("class AutonomyError", "class AutonomyDisabledError",
-                    "class AutonomyBudgetExceededError", "class AutonomyActionBlockedError",
+                    "class AutonomyActionBlockedError",
                     "class AutonomyContentRejectedError", "class AutonomyRateLimitedError",
                     "class AutonomyPlatformNotWhitelistedError", "class AutonomyPersistError"):
             assert cls in text, f"cxo_autonomy.pyi 缺少 {cls}"

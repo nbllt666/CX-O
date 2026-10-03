@@ -1,4 +1,4 @@
-# CosyVoice3 + vLLM（Docker）主运行时部署脚本
+﻿# CosyVoice3 + vLLM（Docker）主运行时部署脚本
 # 用法: powershell -ExecutionPolicy Bypass -File start-cosyvoice-vllm.ps1
 # 说明:
 #   - Docker 容器内 vLLM 进程内引擎（Linux 无 WDDM 开销），CosyVoice3 流式首包 <800ms

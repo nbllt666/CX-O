@@ -55,7 +55,8 @@ class SVCPreprocessRequest(BaseModel):
 
 class SVCTrainRequest(BaseModel):
     epochs: int = Field(10000, ge=1, le=100000)
-    batch_size: int = Field(4, ge=1)
+    # batch_size 缺省（None）= 按显存自适应；显式给值则以其为准
+    batch_size: Optional[int] = Field(None, ge=1)
     learning_rate: float = Field(1e-4, gt=0)
     output_name: Optional[str] = None
     # 说话人名称透传；None 时 trainer 走默认 "speaker"（sovits_svc_trainer.start_training）

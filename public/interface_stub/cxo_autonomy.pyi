@@ -1,7 +1,7 @@
 """CX-O-Autonomy 自主系统接口契约（embedded CXFC 插件 + 内部 REST 端点）。
 
 所有异常契约：调用方必须处理约定的异常。
-错误码枚举（统一字符串）：AUTONOMY_DISABLED / AUTONOMY_BUDGET_EXCEEDED / AUTONOMY_ACTION_BLOCKED /
+错误码枚举（统一字符串）：AUTONOMY_DISABLED / AUTONOMY_ACTION_BLOCKED /
 AUTONOMY_CONTENT_REJECTED / AUTONOMY_RATE_LIMITED / AUTONOMY_PLATFORM_NOT_WHITELISTED / AUTONOMY_PERSIST_ERROR
 """
 import datetime
@@ -14,9 +14,6 @@ class AutonomyError(Exception):
 
 class AutonomyDisabledError(AutonomyError):
     """自主系统未启用时调用工具/端点。error_code = AUTONOMY_DISABLED"""
-
-class AutonomyBudgetExceededError(AutonomyError):
-    """当日预算超支，降级/拒绝。error_code = AUTONOMY_BUDGET_EXCEEDED"""
 
 class AutonomyActionBlockedError(AutonomyError):
     """行动被权限白名单/黑名单拒绝。error_code = AUTONOMY_ACTION_BLOCKED"""
@@ -80,7 +77,7 @@ def autonomy_write_diary() -> Dict[str, Any]:
 # ---- 内部 REST 端点（前端 Agent 生活控制页调用，挂载于主服务 /api/autonomy/*） ----
 
 def get_status() -> Dict[str, Any]:
-    """GET /api/autonomy/status —— 状态/动机/预算/最近行动。"""
+    """GET /api/autonomy/status —— 状态/动机/焦点/最近行动。"""
 
 def control(action: str) -> Dict[str, Any]:
     """POST /api/autonomy/control —— body {"action": "enable"|"disable"|"pause"|"resume"}。

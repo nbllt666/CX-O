@@ -1,0 +1,28 @@
+{
+  "exclude": [
+    "**/node_modules",
+    "**/__pycache__",
+    "**/.pytest_cache",
+    "**/*.egg-info",
+    "**/.venv",
+    "**/venv",
+    "**/site-packages",
+    "**/dist",
+    "**/build",
+    "**/release*",
+    "**/logs",
+    "**/.*",
+    "py311",
+    "models",
+    "DiffSinger",
+    "third_party",
+    "LLM_Live2D-master",
+    "weaviate-embeddings",
+    "temp_wheels",
+    "data",
+    "CXHMS/Qwen3-Embedding-0.6B",
+    "CXO-EvalKit/data",
+    "CXO-ModelStation/engines",
+    "CXO-ModelStation/data"
+  ]
+}

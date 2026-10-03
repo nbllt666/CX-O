@@ -1,4 +1,4 @@
-# vLLM Gemma4-E4B 128K context startup script (GPU0, port 8002)
+﻿# vLLM Gemma4-E4B 128K context startup script (GPU0, port 8002)
 # Purpose: rebuild vllm-gemma4 with max-model-len 8192 -> 131072 (128K context)
 # Usage: powershell -ExecutionPolicy Bypass -File start-gemma4-128k.ps1
 # Verified: 2026-08-18, KV cache 2.48 GiB (154,718 tokens), max_model_len 131072 OK on 20GB GPU0.

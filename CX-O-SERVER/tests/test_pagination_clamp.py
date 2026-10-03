@@ -177,7 +177,7 @@ def test_dream_list_candidates_clamps_limit_and_offset(monkeypatch):
             return 0
 
     fake_engine = SimpleNamespace(
-        config=SimpleNamespace(enabled=True), buffer=FakeBuffer()
+        config=SimpleNamespace(enabled=True), _buffer=FakeBuffer()
     )
     monkeypatch.setattr(dream_router, "_engine", fake_engine)
 

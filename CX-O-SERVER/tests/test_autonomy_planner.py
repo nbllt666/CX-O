@@ -10,6 +10,10 @@
 ⑥ 工具调用循环：mock 首轮返回 tool_calls、执行 tool_executor、次轮返回最终
    action（断言 tool_executor 被调用且观察结果进入消息）
 ⑦ tool_calls 全部轮次仍不收敛时按最终轮文本处理
+⑧ 动机方向语义（"越高越想探索"）写入 system prompt
+⑨ 软阈值候选行动（curiosity 0.7 → read_news/search；低于阈值不入候选）
+⑩ focus 自报透传：合法值规整（trim + clamp）、缺失/非法则省略该键
+⑪ 上下文中的当前焦点注入 user 消息
 
 运行：python -m pytest tests/test_autonomy_planner.py -q
 """
@@ -311,3 +315,102 @@ class TestToolCallNoConvergence:
         result = await planner.plan(context)
         assert len(executed) == 2
         assert result == {"action": "wait", "reason": "parse_failed"}
+
+
+# ================================================================ ⑧ 动机方向语义
+class TestMotivationSemantics:
+    @pytest.mark.asyncio
+    async def test_system_prompt_declares_direction_and_focus(self, context):
+        """旧版把裸动机 JSON 喂给 LLM 且不声明方向，导致 curiosity=1.0 被误读为"已足够"。"""
+        client = FakeLLMClient(
+            [LLMResponse(content=json.dumps({"action": "wait"}), finish_reason="stop")]
+        )
+        planner = ActionPlanner(llm_client=client)
+        await planner.plan(context)
+        system_msg = client.chat_calls[0]["messages"][0]["content"]
+        assert "越高越想探索" in system_msg
+        assert "**不是**需求已被满足" in system_msg
+        assert "focus" in system_msg
+
+    @pytest.mark.asyncio
+    async def test_user_message_lists_soft_candidates(self, context):
+        """context: curiosity 0.7 / social_need 0.5 / creative 0.3 / fatigue 0.1。"""
+        client = FakeLLMClient(
+            [LLMResponse(content=json.dumps({"action": "wait"}), finish_reason="stop")]
+        )
+        planner = ActionPlanner(llm_client=client)
+        await planner.plan(context)
+        user_msg = client.chat_calls[0]["messages"][1]["content"]
+        assert "本轮优先候选（软建议，非强制）" in user_msg
+        assert "read_news" in user_msg and "search" in user_msg
+        assert "write_post" not in user_msg  # social_need 0.5 低于软阈值 0.6
+
+    def test_build_candidates_orders_by_value_and_dedups(self):
+        candidates = ActionPlanner._build_candidates({"social_need": 0.9, "curiosity": 0.7})
+        assert candidates == ["write_post", "start_live", "read_news", "search"]
+
+    def test_build_candidates_empty_below_threshold(self):
+        assert ActionPlanner._build_candidates({"curiosity": 0.59, "fatigue": 0.0}) == []
+
+    def test_build_candidates_tolerates_non_numeric(self):
+        assert ActionPlanner._build_candidates("not-a-dict") == []
+        assert ActionPlanner._build_candidates({"curiosity": "high", "fatigue": True}) == []
+
+
+# ================================================================ ⑨⑩ focus 自报
+class TestFocusPassthrough:
+    @pytest.mark.asyncio
+    async def test_focus_from_llm_is_normalized(self, context):
+        content = json.dumps(
+            {
+                "action": "search",
+                "target": "AI",
+                "focus": {"topic": "  AI 芯片出口管制  ", "level": 1.7},
+            },
+            ensure_ascii=False,
+        )
+        client = FakeLLMClient([LLMResponse(content=content, finish_reason="stop")])
+        planner = ActionPlanner(llm_client=client)
+        result = await planner.plan(context)
+        assert result["focus"] == {"topic": "AI 芯片出口管制", "level": 1.0}
+
+    @pytest.mark.asyncio
+    async def test_missing_focus_key_omitted(self, context):
+        """缺省 = 沿用上次焦点（保持"缺省字段不回填"的输出形状）。"""
+        client = FakeLLMClient(
+            [LLMResponse(content=json.dumps({"action": "wait"}), finish_reason="stop")]
+        )
+        planner = ActionPlanner(llm_client=client)
+        result = await planner.plan(context)
+        assert "focus" not in result
+
+    @pytest.mark.asyncio
+    async def test_illegal_focus_omitted(self, context):
+        for bad in ("string-focus", {"level": 0.5}, {"topic": "   "}, None):
+            content = json.dumps({"action": "wait", "focus": bad}, ensure_ascii=False)
+            client = FakeLLMClient([LLMResponse(content=content, finish_reason="stop")])
+            planner = ActionPlanner(llm_client=client)
+            result = await planner.plan(context)
+            assert "focus" not in result, f"非法 focus {bad!r} 不应透传"
+
+    @pytest.mark.asyncio
+    async def test_context_focus_injected_into_user_message(self, context):
+        ctx = dict(context, focus={"topic": "量子计算", "level": 0.8})
+        client = FakeLLMClient(
+            [LLMResponse(content=json.dumps({"action": "wait"}), finish_reason="stop")]
+        )
+        planner = ActionPlanner(llm_client=client)
+        await planner.plan(ctx)
+        user_msg = client.chat_calls[0]["messages"][1]["content"]
+        assert "当前焦点对象" in user_msg
+        assert "量子计算" in user_msg
+
+    @pytest.mark.asyncio
+    async def test_missing_context_focus_shows_placeholder(self, context):
+        client = FakeLLMClient(
+            [LLMResponse(content=json.dumps({"action": "wait"}), finish_reason="stop")]
+        )
+        planner = ActionPlanner(llm_client=client)
+        await planner.plan(context)
+        user_msg = client.chat_calls[0]["messages"][1]["content"]
+        assert "当前焦点对象: 无" in user_msg

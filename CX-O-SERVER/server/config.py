@@ -1194,23 +1194,6 @@ class AutonomyScheduleSection(BaseModel):
         return self
 
 
-class AutonomyBudgetSection(BaseModel):
-    """自主系统预算子节（对齐 autonomy_config.json budget）。"""
-
-    model_config = ConfigDict(extra="forbid")
-    daily_token_limit: int = 2000000
-    daily_llm_calls_limit: int = 0
-    cost_alert_threshold: float = 0.8
-    overspend_mode: str = "sleep"
-
-    @model_validator(mode="after")
-    def _check_overspend_mode(self) -> "AutonomyBudgetSection":
-        """overspend_mode 枚举校验（对齐引擎侧 BudgetConfig）。"""
-        if self.overspend_mode not in ("sleep", "low_cost"):
-            raise ValueError(f"overspend_mode 非法值 {self.overspend_mode!r}，可选 sleep/low_cost")
-        return self
-
-
 class AutonomyPermissionsSection(BaseModel):
     """自主系统权限子节（对齐 autonomy_config.json permissions）。"""
 
@@ -1253,7 +1236,6 @@ class AutonomySection(BaseModel):
     rss_sources: List[str] = Field(default_factory=list)
     search: AutonomySearchSection = Field(default_factory=AutonomySearchSection)
     schedule: AutonomyScheduleSection = Field(default_factory=AutonomyScheduleSection)
-    budget: AutonomyBudgetSection = Field(default_factory=AutonomyBudgetSection)
     platforms: List[str] = Field(default_factory=list)
     permissions: AutonomyPermissionsSection = Field(
         default_factory=lambda: AutonomyPermissionsSection(

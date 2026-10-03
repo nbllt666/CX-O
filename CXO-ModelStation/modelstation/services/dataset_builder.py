@@ -17,8 +17,8 @@
   （migrate_manifest_to_v2 幂等迁移：缺 text 补 None、缺 engine 补 voxcpm）。
   v2 同时服务双消费：So-VITS-SVC（仅需音频）与 MeloTTS（需音频+文本对）。
 - 训练数据目录访问统一经 security_utils.validate_training_data_dir() 集中校验，
-  本模块不自定义任何训练根目录常量（_DATASETS_REL_DIR 仅为传入校验器的相对子路径，
-  锚点为 security_utils._MS_ROOT = CXO-ModelStation）。
+  本模块不自定义任何训练根目录常量（数据集根由 resolve_datasets_root 取
+  settings.sovits_svc.training_data_dir 推导，白名单锚点见 security_utils）。
 - 参考音频白名单（cosyvoice3_zero）：与 infer 输入白名单同口径
   （sovits_svc.training_data_dir ∪ sovits_svc.input_dir），防任意本地文件路径。
 - 异步任务模式：submit 立即返回 task_id，后台 asyncio.create_task 执行，
@@ -45,7 +45,10 @@ from pathlib import Path
 from typing import Any, Callable, Optional
 
 from modelstation.config import ModelStationSettings, get_settings
-from modelstation.services.security_utils import validate_training_data_dir
+from modelstation.services.security_utils import (
+    training_data_root,
+    validate_training_data_dir,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -130,8 +133,13 @@ def ensure_valid_dataset_name(name: str) -> str:
 
 
 def resolve_datasets_root() -> Path:
-    """解析数据集根目录（data/training/sovits_svc/raw），经集中校验。"""
-    return validate_training_data_dir(_DATASETS_REL_DIR)
+    """解析数据集根目录（<训练数据根>/sovits_svc/raw），经集中校验。
+
+    基准取白名单根 ``security_utils.training_data_root()``（打包态=注入配置的用户数据根下
+    ``data/training``，开发态=仓库根），而非包内相对路径 —— 包内锚点在安装版会把数据集
+    写进安装目录，与训练侧读取的注入目录不一致。
+    """
+    return validate_training_data_dir(str(training_data_root() / "sovits_svc" / "raw"))
 
 
 def resolve_dataset_dir(speaker_name: str) -> Path:
@@ -143,7 +151,7 @@ def resolve_dataset_dir(speaker_name: str) -> Path:
     Returns:
         解析后的数据集目录路径（不保证存在）
     """
-    return validate_training_data_dir(f"{_DATASETS_REL_DIR}/{speaker_name}")
+    return validate_training_data_dir(str(resolve_datasets_root() / speaker_name))
 
 
 def _md5_file(path: Path, chunk_size: int = 1 << 20) -> str:

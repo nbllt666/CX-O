@@ -1,4 +1,4 @@
-# 启动 CXO-Tuner 独立微调服务（监听 8310 端口；8300 已归 CXO-ModelStation，勿改回）
+﻿# 启动 CXO-Tuner 独立微调服务（监听 8310 端口；8300 已归 CXO-ModelStation，勿改回）
 # 用法：在 CXO-Tuner 目录下运行  .\start-cxo-tuner.ps1
 Set-Location -Path (Split-Path -Parent $MyInvocation.MyCommand.Path)
 

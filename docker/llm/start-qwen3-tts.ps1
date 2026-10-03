@@ -1,4 +1,4 @@
-# Qwen3-TTS vLLM-Omni 部署脚本（Task 0 交付物：GPU1 启动 / 端口 8091 / VoiceDesign 模型）
+﻿# Qwen3-TTS vLLM-Omni 部署脚本（Task 0 交付物：GPU1 启动 / 端口 8091 / VoiceDesign 模型）
 # 用法: powershell -ExecutionPolicy Bypass -File start-qwen3-tts.ps1
 # 前提: vllm/vllm-omni:latest 已拉取; C:\CX-O\models\Qwen3-TTS-12Hz-1.7B-VoiceDesign 已下载
 $ErrorActionPreference = "Stop"

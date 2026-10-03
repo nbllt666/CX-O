@@ -19,12 +19,6 @@
       "diary_time": {"type": "string", "pattern": "^([01]?[0-9]|2[0-3]):[0-5][0-9]$", "default": "02:00", "description": "每日日记时刻"},
       "quiet_windows": {"type": "array", "default": [], "items": {"type": "string", "pattern": "^([01]?[0-9]|2[0-3]):[0-5][0-9]-([01]?[0-9]|2[0-3]):[0-5][0-9]$"}, "description": "静默档窗口 HH:MM-HH:MM"}
     }},
-    "budget": {"type": "object", "additionalProperties": false, "properties": {
-      "daily_token_limit": {"type": "integer", "minimum": 0, "default": 2000000, "description": "每日 LLM token 预算上限，0 表示不限制"},
-      "daily_llm_calls_limit": {"type": "integer", "minimum": 0, "default": 0, "description": "每日 LLM 调用次数上限，0 表示不限制"},
-      "cost_alert_threshold": {"type": "number", "minimum": 0, "maximum": 1, "default": 0.8, "description": "预算使用率达此比例经 WS 推送告警"},
-      "overspend_mode": {"type": "string", "enum": ["sleep", "low_cost"], "default": "sleep", "description": "超支降级模式"}
-    }},
     "platforms": {"type": "array", "default": [], "items": {"type": "string"}, "description": "发帖白名单平台（如 weibo/x/bilibili/xiaohongshu）"},
     "permissions": {"type": "object", "additionalProperties": false, "properties": {
       "allowed_actions": {"type": "array", "default": ["sleep", "wait", "read_news", "search", "write_memory", "write_post", "start_live", "stop_live", "write_diary"], "items": {"type": "string"}, "description": "允许的自主行动集"},

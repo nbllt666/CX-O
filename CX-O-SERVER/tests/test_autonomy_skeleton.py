@@ -3,13 +3,17 @@
 覆盖：
 1. config 默认值（对齐 autonomy_config.schema.json）+ 缺失字段自动补齐
 2. config save/load 往返一致
-3. 非法枚举（overspend_mode / action）与非法时间格式抛 ValueError
+3. 非法枚举（action）与非法时间格式抛 ValueError
 4. AutonomyManager 启停/暂停/恢复 + get_status 形状（jsonschema 校验对齐 state 契约）
 5. setup_autonomy 在 enabled=False 时返回 None
 6. enabled=True 时经真实 CXFCManager（临时 sqlite storage）装配后，工具直注
    ToolRegistry（category=="builtin"）、技能直注 SkillRegistry，且 /cxfc 插件列表
    不再出现 autonomy 条目（Task 6.1 去插件包装，双形态覆盖）
 7. autonomy_get_status handler 可调用
+
+注：2026-09-27 人类裁决「删除自主预算与门控闸门」后，预算配置面
+（daily_token_limit / daily_llm_calls_limit / cost_alert_threshold / overspend_mode）
+已从契约、配置模型与用例中整体移除；原 overspend_mode 枚举校验用例随类删除而移除。
 
 运行：python -m pytest tests/test_autonomy_skeleton.py -q
 """
@@ -20,7 +24,7 @@ import pytest
 from jsonschema import validate
 
 from server.autonomy.action.social.poster import AutonomyPlatformNotWhitelistedError
-from server.autonomy.config import AutonomyConfig, BudgetConfig, load_config, save_config
+from server.autonomy.config import AutonomyConfig, load_config, save_config
 from server.autonomy.manager import AutonomyDisabledError, AutonomyManager
 from server.autonomy.main import (
     AUTONOMY_CAPABILITIES,
@@ -62,10 +66,8 @@ class TestConfigDefaults:
         assert cfg.schedule.golden_end == "23:00"
         assert cfg.schedule.diary_time == "02:00"
         assert cfg.schedule.quiet_windows == []
-        assert cfg.budget.daily_token_limit == 2000000
-        assert cfg.budget.daily_llm_calls_limit == 0
-        assert cfg.budget.cost_alert_threshold == 0.8
-        assert cfg.budget.overspend_mode == "sleep"
+        # 预算面已随「删除预算记账闸门」整体移除（契约/模型/响应三侧同批）
+        assert not hasattr(cfg, "budget")
         assert cfg.platforms == []
         assert cfg.permissions.allowed_actions == ACTION_ENUM
         assert cfg.permissions.blocked_actions == []
@@ -84,7 +86,7 @@ class TestConfigDefaults:
         assert cfg.agent_id == "default"
         assert cfg.permissions.allowed_actions == ACTION_ENUM
         assert cfg.safety.post_rate_per_hour == 5
-        assert cfg.budget.overspend_mode == "sleep"
+        assert not hasattr(cfg, "budget")
 
         # 部分字段 → 其余自动补齐默认值
         partial = AutonomyConfig.model_validate(
@@ -94,7 +96,6 @@ class TestConfigDefaults:
         assert partial.loop_interval_minutes == 30
         assert partial.platforms == ["weibo"]
         assert partial.agent_id == "default"
-        assert partial.budget.daily_token_limit == 2000000
         assert partial.schedule.wake_time == "08:00"
 
 
@@ -107,7 +108,6 @@ class TestConfigPersistence:
             agent_id="测试人设",
             loop_interval_minutes=30,
             platforms=["weibo", "x"],
-            budget=BudgetConfig(daily_token_limit=1000000, overspend_mode="low_cost"),
         )
         path = save_config(cfg)
         assert Path(path).exists()
@@ -122,10 +122,6 @@ class TestConfigPersistence:
 
 # ================================================================ ③ 非法枚举/时间抛 ValueError
 class TestConfigValidation:
-    def test_invalid_overspend_mode_raises_valueerror(self):
-        with pytest.raises(ValueError):
-            AutonomyConfig(budget={"overspend_mode": "explode"})
-
     def test_invalid_action_raises_valueerror(self):
         with pytest.raises(ValueError):
             AutonomyConfig(permissions={"allowed_actions": ["delete_content"]})
@@ -157,7 +153,7 @@ class TestManagerLifecycle:
         assert st["motivations"] == {
             "curiosity": 0.2, "social_need": 0.2, "creative_drive": 0.2, "fatigue": 0.0,
         }
-        assert st["daily_budget_used_tokens"] == 0
+        assert "daily_budget_used_tokens" not in st  # 预算消耗字段已随人类裁决移除
 
         # 暂停：running 置 False，状态仍可查询（不改变总开关）
         m.pause()

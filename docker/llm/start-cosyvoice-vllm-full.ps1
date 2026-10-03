@@ -1,4 +1,4 @@
-# CosyVoice3 + vLLM（Docker，自包含镜像）启动脚本
+﻿# CosyVoice3 + vLLM（Docker，自包含镜像）启动脚本
 # 用法: powershell -ExecutionPolicy Bypass -File start-cosyvoice-vllm-full.ps1
 # 说明:
 #   - 使用已烤入模型的镜像 cosyvoice-vllm-full:latest（无需 -v 卷挂载，端口为容器内默认 8094）

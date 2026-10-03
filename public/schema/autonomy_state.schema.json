@@ -5,11 +5,10 @@
   "additionalProperties": false,
   "properties": {
     "motivations": {"type": "object", "additionalProperties": false, "properties": {"curiosity": {"type": "number", "minimum": 0, "maximum": 1}, "social_need": {"type": "number", "minimum": 0, "maximum": 1}, "creative_drive": {"type": "number", "minimum": 0, "maximum": 1}, "fatigue": {"type": "number", "minimum": 0, "maximum": 1}}},
+    "focus": {"type": "object", "additionalProperties": false, "required": ["topic", "level"], "description": "当前最想探索的对象与兴趣强度（curiosity 的指向性维度，由 LLM 每轮自报）", "properties": {"topic": {"type": "string", "description": "当前最想探索的具体事物（如某个话题/事件/关键词）；空串表示暂无明确焦点"}, "level": {"type": "number", "minimum": 0, "maximum": 1, "description": "对该对象的兴趣强度，0-1"}}},
     "status": {"type": "string", "enum": ["running", "paused", "sleeping"]},
     "last_action": {"type": ["string", "null"]},
     "last_cycle_at": {"type": ["string", "null"], "format": "date-time"},
-    "daily_budget_used_tokens": {"type": "integer", "minimum": 0},
-    "budget_reset_date": {"type": ["string", "null"], "description": "YYYY-MM-DD 预算重置日"},
     "diary_last_at": {"type": ["string", "null"], "format": "date-time"}
   }
 }

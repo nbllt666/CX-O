@@ -1,18 +1,21 @@
 /**
- * 全局轻量 toast 状态（D9）：cluster_event（仅切换/故障类主题）与
- * autonomy_cost_alert 由 useWebSocket 写入本 store，GlobalToast 组件负责展示。
+ * 全局轻量 toast 状态（D9）：cluster_event（仅切换/故障类主题）由
+ * useWebSocket 写入本 store，GlobalToast 组件负责展示。
  * 不引第三方库——极简有界数组（最多 5 条，FIFO 淘汰），过期由组件侧定时清扫。
+ *
+ * 2026-09-27 人类裁决：`cost`（自主系统成本告警）已在 `GlobalToastKind` 中删除
+ * ——autonomy_cost_alert 事件随「删除预算记账闸门」不再由后端推送。
  */
 import { create } from 'zustand';
 
-export type GlobalToastKind = 'cluster' | 'cost';
+export type GlobalToastKind = 'cluster';
 
 export interface GlobalToastItem {
   id: number;
   kind: GlobalToastKind;
   /** cluster 事件主题（如 cluster.failover_started），渲染侧据此取文案 */
   topic?: string;
-  /** 事件数据：cluster 为后端事件体（{topic,node_id,data,...}），cost 为 {usage_ratio,daily_used,limit,date} */
+  /** 事件数据：cluster 为后端事件体（{topic,node_id,data,...}） */
   data?: Record<string, unknown>;
   /** 前台打点的过期时间戳（与 ChatPage alarm toast 同口径：组件定时清扫） */
   expireAt: number;

@@ -1,18 +1,14 @@
 """CX-O-Autonomy 安全层（P1-T5）单元测试。
 
-覆盖范围：
-① TokenLedger —— add/remaining/超限/usage_ratio cap 1.0/告警一次/新日重置/持久化往返；
-② ContentGate —— 防火墙拒绝与放行、persona_check 调用（同步/异步）、未注入时基础检查；
-③ RateLimiter —— 达上限 allow=False、窗口滑过后恢复、hit 计数、时钟注入；
-④ KillSwitch —— pause/sleeping、resume 恢复、持久化往返、无急停不变量（无 emergency_stop
-   属性、落盘不含 enabled 键）；
-⑤ AuditStore —— append/list 分页/缺字段拒绝/非法枚举拒绝/clear。
+覆盖范围（2026-09-27 人类裁决：预算台账与急停开关已随「删除预算记账 / 急停」整体移除，
+本文件不再覆盖这两者）：
+① ContentGate —— 防火墙拒绝与放行、persona_check 调用（同步/异步）、未注入时基础检查；
+② RateLimiter —— 达上限 allow=False、窗口滑过后恢复、hit 计数、时钟注入；
+③ AuditStore —— append/list 分页/缺字段拒绝/非法枚举拒绝/clear。
 
 运行：python -m pytest tests/test_autonomy_safety.py -q
 """
 import asyncio
-import datetime
-import json
 from pathlib import Path
 
 import pytest
@@ -20,9 +16,7 @@ import pytest
 from server.autonomy.safety import (
     AuditStore,
     ContentGate,
-    KillSwitch,
     RateLimiter,
-    TokenLedger,
 )
 
 
@@ -31,110 +25,7 @@ def _run(coro):
     return asyncio.run(coro)
 
 
-# ================================================================ ① TokenLedger
-class TestTokenLedger:
-    def test_add_and_remaining(self, tmp_path):
-        ledger = TokenLedger(daily_token_limit=2000000, store_path=str(tmp_path / "ledger.json"))
-        assert ledger.daily_used() == 0
-        assert ledger.remaining() == 2000000
-
-        ledger.add_tokens({"prompt_tokens": 100, "completion_tokens": 50})
-        assert ledger.daily_used() == 150
-        ledger.add_tokens(30)
-        assert ledger.daily_used() == 180
-        assert ledger.remaining() == 2000000 - 180
-        assert ledger.get_mode() == "normal"
-
-    def test_total_tokens_takes_priority(self, tmp_path):
-        ledger = TokenLedger(store_path=str(tmp_path / "ledger.json"))
-        # total_tokens 存在时优先使用，忽略 prompt/completion
-        ledger.add_tokens({"prompt_tokens": 100, "completion_tokens": 50, "total_tokens": 160})
-        assert ledger.daily_used() == 160
-
-    def test_add_tokens_invalid_type_rejected(self, tmp_path):
-        ledger = TokenLedger(store_path=str(tmp_path / "ledger.json"))
-        with pytest.raises(TypeError):
-            ledger.add_tokens("100")
-
-    def test_unlimited_remaining_is_none(self, tmp_path):
-        # daily_token_limit=0 表示不限制：remaining 返回 None（无穷大语义）
-        ledger = TokenLedger(daily_token_limit=0, store_path=str(tmp_path / "ledger.json"))
-        assert ledger.remaining() is None
-        assert ledger.usage_ratio() == 0.0
-        assert ledger.is_over_budget() is False
-        assert ledger.get_mode() == "normal"
-
-    def test_over_budget_and_ratio_cap(self, tmp_path):
-        ledger = TokenLedger(daily_token_limit=100, store_path=str(tmp_path / "ledger.json"))
-        ledger.add_tokens(150)
-        assert ledger.is_over_budget() is True
-        assert ledger.usage_ratio() == 1.0  # 超限 cap 1.0
-        assert ledger.get_mode() == "sleep"  # 默认 overspend_mode
-
-    def test_over_budget_with_custom_mode(self, tmp_path):
-        ledger = TokenLedger(
-            daily_token_limit=100,
-            overspend_mode="low_cost",
-            store_path=str(tmp_path / "ledger.json"),
-        )
-        ledger.add_tokens(100)
-        assert ledger.is_over_budget() is True
-        assert ledger.get_mode() == "low_cost"
-
-    def test_llm_calls_over_budget(self, tmp_path):
-        ledger = TokenLedger(
-            daily_token_limit=1000000,
-            daily_llm_calls_limit=2,
-            store_path=str(tmp_path / "ledger.json"),
-        )
-        ledger.add_llm_call()
-        assert ledger.is_over_budget() is False
-        ledger.add_llm_call()  # 达到上限即超支（>= 语义，与 token 判定一致）
-        assert ledger.is_over_budget() is True
-        assert ledger.daily_calls() == 2
-
-    def test_alert_triggered_once_per_day(self, tmp_path):
-        ledger = TokenLedger(
-            daily_token_limit=100,
-            cost_alert_threshold=0.5,
-            store_path=str(tmp_path / "ledger.json"),
-        )
-        ledger.add_tokens(60)  # ratio 0.6 >= 0.5
-        assert ledger.is_alert_triggered() is True
-        assert ledger.is_alert_triggered() is False  # 当日不重复
-
-    def test_alert_not_triggered_below_threshold(self, tmp_path):
-        ledger = TokenLedger(
-            daily_token_limit=100,
-            cost_alert_threshold=0.9,
-            store_path=str(tmp_path / "ledger.json"),
-        )
-        ledger.add_tokens(50)  # ratio 0.5 < 0.9
-        assert ledger.is_alert_triggered() is False
-
-    def test_new_day_reset(self, tmp_path):
-        ledger = TokenLedger(store_path=str(tmp_path / "ledger.json"))
-        ledger.add_tokens(500)
-        tomorrow = (datetime.date.today() + datetime.timedelta(days=1)).isoformat()
-        assert ledger.reset_if_new_day(tomorrow) is True  # 跨日 → 重置
-        assert ledger.daily_used() == 0
-        assert ledger.remaining() == ledger.daily_token_limit
-        assert ledger.reset_if_new_day(tomorrow) is False  # 同日不再重置
-
-    def test_persistence_roundtrip(self, tmp_path):
-        path = str(tmp_path / "ledger.json")
-        ledger = TokenLedger(daily_token_limit=2000000, store_path=path)
-        ledger.add_tokens(1234)
-        ledger.add_llm_call()
-        ledger.save()
-
-        restored = TokenLedger(daily_token_limit=2000000, store_path=path).load()
-        assert restored.daily_used() == 1234
-        assert restored.daily_calls() == 1
-        assert restored.remaining() == 2000000 - 1234
-
-
-# ================================================================ ② ContentGate
+# ================================================================ ① ContentGate
 class _FakeFilterResult:
     """模拟 firewall.py 的 FilterResult。"""
 
@@ -229,7 +120,7 @@ class TestContentGate:
         assert result["reason"] == "gate_disabled"
 
 
-# ================================================================ ③ RateLimiter
+# ================================================================ ② RateLimiter
 class TestRateLimiter:
     def test_allow_and_hit_count(self):
         limiter = RateLimiter(limit_per_hour=2, window_minutes=60)
@@ -269,64 +160,7 @@ class TestRateLimiter:
         assert limiter.window_remaining("post") == 0
 
 
-# ================================================================ ④ KillSwitch
-class TestKillSwitch:
-    def test_default_active(self, tmp_path):
-        ks = KillSwitch(store_path=str(tmp_path / "killswitch.json"))
-        assert ks.is_active() is True
-
-    def test_resume_restores(self, tmp_path):
-        ks = KillSwitch(store_path=str(tmp_path / "killswitch.json"))
-        ks.pause()
-        ks.set_sleeping(True)
-        assert ks.is_active() is False
-        ks.resume()
-        assert ks.is_active() is True
-        assert ks.paused is False
-        assert ks.sleeping is False
-
-    def test_pause_and_sleeping(self, tmp_path):
-        ks = KillSwitch(store_path=str(tmp_path / "killswitch.json"))
-        ks.pause()
-        assert ks.is_active() is False
-        ks.resume()
-        assert ks.is_active() is True
-        ks.set_sleeping(True)
-        assert ks.is_active() is False
-        ks.set_sleeping(False)
-        assert ks.is_active() is True
-
-    def test_persistence_roundtrip(self, tmp_path):
-        path = str(tmp_path / "killswitch.json")
-        ks = KillSwitch(store_path=path)
-        ks.pause()
-        ks.set_sleeping(True)
-        ks.save()
-
-        restored = KillSwitch(store_path=path).load()
-        assert restored.paused is True
-        assert restored.sleeping is True
-        assert restored.is_active() is False
-
-    def test_no_emergency_stop_attribute(self):
-        """不变量①：KillSwitch / AutonomyManager 上不再存在 emergency_stop 属性。"""
-        from server.autonomy.manager import AutonomyManager
-
-        assert not hasattr(KillSwitch, "emergency_stop")
-        assert not hasattr(AutonomyManager, "emergency_stop")
-
-    def test_save_json_has_no_enabled_key(self, tmp_path):
-        """不变量②：killswitch.json 落盘只含 paused/sleeping，不含 enabled 键。"""
-        path = tmp_path / "killswitch.json"
-        ks = KillSwitch(store_path=str(path))
-        ks.pause()
-        ks.save()
-        data = json.loads(path.read_text(encoding="utf-8"))
-        assert set(data.keys()) == {"paused", "sleeping"}
-        assert "enabled" not in data
-
-
-# ================================================================ ⑤ AuditStore
+# ================================================================ ③ AuditStore
 class TestAuditStore:
     def _entry(self, **overrides):
         entry = {

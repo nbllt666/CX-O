@@ -11,7 +11,15 @@
 
 依赖注入对齐 autonomy.py / cxfc.py 模式：模块级 `_engine` 全局 + `set_dream_engine`
 注入函数，由 server/main.py 装配成功后注入。engine 为 None（未装配/未启用）时所有
-引擎端点以 disabled 口径响应（不抛 500）。配置读写走 UnifiedConfig settings 单例
+引擎端点以 disabled 口径响应（不抛 500）。
+
+子组件访问口径：真实 DreamEngine 的子组件为私有成员 `_buffer` / `_consolidator` /
+`_purge_job`（冻结契约 public/interface_stub/dream.pyi 只声明 config 与
+run_session/get_status/start/stop，不承诺公有子组件），本路由与
+server/autonomy/main.py、server/handlers/dream.py 统一按私有名访问；改为公有名
+需先经契约变更流程（s0601）。
+
+配置读写走 UnifiedConfig settings 单例
 （Task 6.2 迁移：GET/PUT /dream/config 直读直写 settings.config.dream 并落盘
 config.json），不依赖引擎实例，始终可用。
 """
@@ -104,10 +112,10 @@ def list_candidates(
     engine = _engine
     if not _engine_ready():
         return {"items": [], "total": 0}
-    items = engine.buffer.list(
+    items = engine._buffer.list(
         agent_id=agent_id, decision=state, limit=limit, offset=offset
     )
-    total = engine.buffer.count(agent_id=agent_id, decision=state)
+    total = engine._buffer.count(agent_id=agent_id, decision=state)
     return {"items": items, "total": total}
 
 
@@ -124,7 +132,7 @@ def confirm(
     engine = _engine
     if not _engine_ready():
         raise HTTPException(status_code=404, detail="梦境引擎未启用")
-    memory_id = engine.consolidator.consolidate(buffer_id, agent_id=agent_id)
+    memory_id = engine._consolidator.consolidate(buffer_id, agent_id=agent_id)
     if memory_id is None:
         raise HTTPException(status_code=404, detail=f"候选 {buffer_id} 不存在或已决策")
     return {"memory_id": memory_id}
@@ -145,7 +153,7 @@ def reject(
     if not _engine_ready():
         raise HTTPException(status_code=404, detail="梦境引擎未启用")
     reason = body.reason if body is not None else ""
-    ok = engine.consolidator.reject(buffer_id, agent_id=agent_id, reason=reason)
+    ok = engine._consolidator.reject(buffer_id, agent_id=agent_id, reason=reason)
     if not ok:
         raise HTTPException(status_code=404, detail=f"候选 {buffer_id} 不存在或已否定")
     return {"status": "ok", "buffer_id": buffer_id}
@@ -164,7 +172,7 @@ def purge_session(
     engine = _engine
     if not _engine_ready():
         raise HTTPException(status_code=404, detail="梦境引擎未启用")
-    purged = engine.consolidator.memory_manager.purge_dream_session(
+    purged = engine._consolidator.memory_manager.purge_dream_session(
         session_id, agent_id=agent_id
     )
     return {"purged": purged}
@@ -179,7 +187,7 @@ async def purge(agent_id: str = "default", _: bool = Depends(verify_admin_api_ke
     engine = _engine
     if not _engine_ready():
         raise HTTPException(status_code=404, detail="梦境引擎未启用")
-    return await engine.purge_job.run(agent_id=agent_id)
+    return await engine._purge_job.run(agent_id=agent_id)
 
 
 @router.get("/dream/config")

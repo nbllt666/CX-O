@@ -7,7 +7,13 @@ target/payload/reason/expected_outcome 可缺省）。
 
 行为语义：
 - 组装 system prompt：人设（persona.system_prompt / description）+ 角色指令 +
+  动机语义（动机值越高＝越强的行动倾向；curiosity 越高越想探索）+ 焦点自报要求 +
   行动集（allowed_actions，默认 9 项）+ 安全约束（禁止非法 action）
+- 软阈值收敛候选：动机值 >= 0.6 者按值降序映射为候选行动（curiosity→read_news/search、
+  social_need→write_post/start_live、creative_drive→write_memory/write_diary、
+  fatigue→sleep），作为"软建议"注入 user 消息；**不裁剪 allowed_actions**（非硬门控）
+- focus 自报：LLM 在决策 JSON 中声明本轮关注对象 focus={topic, level}，经
+  _normalize_focus 规整后透传（缺失/非法则省略该键＝沿用上次焦点）
 - 可选工具调用循环：注入 tool_executor 且 llm_client 支持 tools 时，首轮带
   tools 调用，解析 LLMResponse.tool_calls 逐个执行（tool_executor(name, args)），
   观察结果回填消息，重复直到无 tool_calls 或达 max_tool_rounds，最后按最终轮
@@ -50,6 +56,18 @@ DEFAULT_ALLOWED_ACTIONS: List[str] = [
 
 # 提取最外层 JSON 对象块（容忍 markdown 代码块包裹与前后缀文本）
 _JSON_BLOCK_RE = re.compile(r"\{.*\}", re.DOTALL)
+
+# 动机 → 候选行动软映射（对齐人类裁决：语义落地＝提示词 + 软阈值收敛候选，不是硬门控）。
+# 动机值越高＝越强的行动倾向，候选仅作提示，不裁剪 allowed_actions。
+_MOTIVATION_CANDIDATES: Dict[str, Tuple[str, ...]] = {
+    "curiosity": ("read_news", "search"),
+    "social_need": ("write_post", "start_live"),
+    "creative_drive": ("write_memory", "write_diary"),
+    "fatigue": ("sleep",),
+}
+
+# 软阈值：动机值 >= 该值才计入"本轮优先候选"（仅建议，不限制可选行动）
+_MOTIVATION_SOFT_THRESHOLD = 0.6
 
 
 async def _maybe_await(value: Any) -> Any:
@@ -165,7 +183,11 @@ class ActionPlanner:
 
     # ================================================================ 提示词组装
     def _build_system_prompt(self) -> str:
-        """组装 system prompt：人设 + 角色指令 + 行动集 + 安全约束。"""
+        """组装 system prompt：人设 + 角色指令 + 动机语义 + 焦点自报 + 行动集 + 安全约束。
+
+        动机语义段是"curiosity 越高越想探索"这一裁决的落点——旧版把裸动机 JSON
+        直接喂给 LLM 且不声明方向，导致 curiosity=1.0 被误读为"信息已足够→wait"。
+        """
         lines: List[str] = []
         persona_text = self.persona.get("system_prompt") or self.persona.get("description")
         if persona_text:
@@ -177,7 +199,8 @@ class ActionPlanner:
         lines.append("输出格式（JSON 对象，禁止输出 JSON 之外的任何内容）：")
         lines.append(
             '{"action": "<行动类型>", "target": "<目标对象>", "payload": {<动作负载>}, '
-            '"reason": "<决策理由>", "expected_outcome": "<预期效果>"}'
+            '"reason": "<决策理由>", "expected_outcome": "<预期效果>", '
+            '"focus": {"topic": "<本轮最想探索的具体事物>", "level": <兴趣强度 0-1>}}'
         )
         lines.append("")
         lines.append(f"允许的行动集: {json.dumps(self.allowed_actions, ensure_ascii=False)}")
@@ -185,12 +208,26 @@ class ActionPlanner:
                      "search=搜索；write_memory=写入记忆；write_post=发布动态；"
                      "start_live=开始直播；stop_live=结束直播；write_diary=写日记。")
         lines.append("")
+        lines.append("动机语义（重要）：动机值越高表示越强烈的行动倾向，**不是**需求已被满足。")
+        lines.append("- curiosity 越高越想探索新知识 → 倾向 read_news / search，且应指向 focus.topic；")
+        lines.append("- social_need 越高越想对外表达 → 倾向 write_post / start_live；")
+        lines.append("- creative_drive 越高越有创作冲动 → 倾向 write_memory / write_diary；")
+        lines.append("- fatigue 越高越应该休息 → 倾向 sleep。")
+        lines.append("动机值偏低表示该需求暂时被满足，不必强行执行对应行动。")
+        lines.append("")
+        lines.append("焦点对象：你必须在输出 JSON 中声明本轮最想探索的对象 focus，"
+                     '形如 {"topic": "...", "level": 0.7}。')
+        lines.append("topic 要具体可检索（如\"AI 芯片出口管制\"），禁止\"新闻\"\"生活\"这类泛词；"
+                     "level 为你对该对象的兴趣强度（0-1）；沿用上次焦点时可直接重复上一次的 topic。")
+        lines.append("")
+        lines.append("行动倾向与候选仅为**软建议**：允许的行动集不做裁剪，你可依据实际情境自行取舍。")
+        lines.append("")
         lines.append("安全约束：严禁输出允许行动集之外的 action；严禁输出任何非法、越权或"
                      "违反平台规则的行动；reason 需说明决策依据。")
         return "\n".join(lines)
 
     def _build_user_message(self, context: dict, memory_text: str = "") -> str:
-        """组装 user 消息：当前动机/时段/热点/上下文，可附加记忆摘要。"""
+        """组装 user 消息：当前动机/时段/软候选/焦点/热点/上下文，可附加记忆摘要。"""
         parts: List[str] = []
         parts.append("以下是当前自主系统的状态，请据此输出一个行动决策 JSON。")
         parts.append("")
@@ -200,6 +237,19 @@ class ActionPlanner:
             parts.append(f"动机状态: {json.dumps(motivations, ensure_ascii=False)}")
         else:
             parts.append(f"动机状态: {motivations}")
+        candidates = self._build_candidates(motivations)
+        if candidates:
+            parts.append(
+                "本轮优先候选（软建议，非强制）: "
+                f"{json.dumps(candidates, ensure_ascii=False)}"
+            )
+        else:
+            parts.append("本轮无显著动机（全部低于软阈值），可考虑 wait / sleep")
+        focus = context.get("focus")
+        if isinstance(focus, dict) and focus:
+            parts.append(f"当前焦点对象: {json.dumps(focus, ensure_ascii=False)}")
+        else:
+            parts.append("当前焦点对象: 无（可自行提出一个具体对象）")
         hotspots = context.get("hotspots", []) or []
         if hotspots:
             parts.append(f"社交热点: {json.dumps(hotspots[:5], ensure_ascii=False)}")
@@ -212,6 +262,29 @@ class ActionPlanner:
             parts.append("")
             parts.append(f"相关记忆:\n{memory_text}")
         return "\n".join(parts)
+
+    @staticmethod
+    def _build_candidates(motivations: Any) -> List[str]:
+        """按软阈值把显著动机收敛为候选行动（仅建议，不裁剪 allowed_actions）。
+
+        动机值 >= _MOTIVATION_SOFT_THRESHOLD 者按值降序，依次展开其软映射行动并去重；
+        无显著动机时返回空列表（提示词侧回退"可考虑 wait / sleep"）。
+        """
+        if not isinstance(motivations, dict):
+            return []
+        active: List[Tuple[str, float]] = []
+        for name, value in motivations.items():
+            if isinstance(value, bool) or not isinstance(value, (int, float)):
+                continue
+            if float(value) >= _MOTIVATION_SOFT_THRESHOLD:
+                active.append((str(name), float(value)))
+        active.sort(key=lambda item: item[1], reverse=True)
+        candidates: List[str] = []
+        for name, _ in active:
+            for action in _MOTIVATION_CANDIDATES.get(name, ()):
+                if action not in candidates:
+                    candidates.append(action)
+        return candidates
 
     # ================================================================ 工具调用支持
     def _supports_tools(self) -> bool:
@@ -322,6 +395,9 @@ class ActionPlanner:
         黑名单或不在 allowed_actions 时改写为 wait，reason 注明 blocked_actions
         或非法行动。
 
+        focus 为可选项：LLM 自报且合法时才写入结果（省略＝沿用上次焦点），
+        以保全"缺省字段不回填"的既有输出形状。
+
         Args:
             data: 解析出的原始决策字典（可能含非法字段）。
             blocked_actions: 本次调用的黑名单集合；None 时使用 self.blocked_actions。
@@ -341,10 +417,31 @@ class ActionPlanner:
             reason = f"{note}；{reason}" if reason else note
             action = "wait"
         payload = data.get("payload")
-        return {
+        result: Dict[str, Any] = {
             "action": action,
             "target": data.get("target", ""),
             "payload": payload if isinstance(payload, dict) else {},
             "reason": reason,
             "expected_outcome": data.get("expected_outcome", ""),
         }
+        focus = self._normalize_focus(data.get("focus"))
+        if focus is not None:
+            result["focus"] = focus
+        return result
+
+    @staticmethod
+    def _normalize_focus(raw: Any) -> Optional[Dict[str, Any]]:
+        """规整 LLM 自报的焦点对象；缺失或非法返回 None（调用方省略该键）。
+
+        合法条件：dict 且 topic 去空白后非空；level 非数值按 0.0 处理并 clamp 到 [0,1]。
+        """
+        if not isinstance(raw, dict):
+            return None
+        topic = str(raw.get("topic", "") or "").strip()
+        if not topic:
+            return None
+        try:
+            level = float(raw.get("level", 0.0))
+        except (TypeError, ValueError):
+            level = 0.0
+        return {"topic": topic, "level": max(0.0, min(1.0, level))}

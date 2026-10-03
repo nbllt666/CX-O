@@ -844,3 +844,190 @@
 
 - run 总体 status=failed 仅因 REST 段历史既存项（overall p95 约 10.3~11.3 s > 2000：三 run 分别为 10348.4 / 10691.2 / 11294.5，均 0 失败请求）；WS 判定以 `metrics_summary.ws_full_duplex.judgment.passed=true` 为准。
 - 调试记录已删除（其证据蒸馏入变更文档附二~附十三）；新增 run 证据：`CXO-EvalKit/data/runs/{a90a789b,16d9bafb}/`。
+
+---
+
+# current-note — fix-dream-rest-attr-mismatch（2026-09-27 文件末尾追加；追加式、不覆盖任何既有条目）
+
+> 更新时间: 2026-09-27 01:00 | 变更ID: fix-dream-rest-attr-mismatch | 阶段: **实现+验证完成，交付前 GN-004 审查中**
+
+## 七字段交接状态
+
+| 字段 | 内容 |
+|------|------|
+| 做到哪了 | 梦境 REST 端点属性错配（`engine.buffer/consolidator/purge_job` vs 真实私有 `_buffer/_consolidator/_purge_job`）已修复：路由 6 处访问改私有名 + 模块 docstring 补口径说明；三处测试替身（test_dream_router FakeEngine / test_pagination_clamp SimpleNamespace / last_reason 断言）同步改名；新增 `TestRealEngineAttributeAlignment`（真实 DreamEngine 驱动 list/confirm/purge） |
+| 为什么 | 用户指令「检查一下自主生命功能和梦境功能，详细解释那两个的工作逻辑」→ 体检发现 P0（接口 500）/P1（动机退化为常量）/P2（梦境缓冲 0 条）；用户裁决：**修 P0 按 rules-6 流程走** + **P1 一起评估接线方案** |
+| 未闭合项 | ① ~~人类 [V] 交付确认~~ **已闭合**（ASK-20260927-03，2026-09-30 批准交付，与后续变更单 remove-autonomy-budget-and-gates 一并交付）；② **P1 动机接线 = 仅方案态未实施**（方案见变更文档附录 A，待人类裁决后再开单）；③ P2 梦境缓冲 0 条属"能跑未跑起来"（physio.enabled=false 下仅睡眠窗口边沿一条触发路径），随 P1/配置另行评估；④ 本轮未改 `public/`、未改引擎实现 |
+| 接续入口 | 交付确认后：重启后端使路由修复生效；`GET /api/dream/list` 即应返回 200；P1 若批准，按变更文档附录 A.2 的四处接线点（read_news/search → info_ingestion、write_post → interaction、start_live/stop_live → activity、感知素材非空 → material）在 `_run_round` 执行后挂钩 |
+| 人类裁决记录 | ASK-20260927-01（P0 处置 + P1 是否并办）=「修 P0 按 rules-6 流程走」+「一起评估接线方案」，已闭合 |
+| 请示追踪 | 无悬空请示 |
+| 审查状态 | 交付前 GN-004 审查：**警示放行**（无 [SOFT_BLOCK]，agent `4065124b-f853-45de-b76b-a7b30d8dfe74`）；4 项 [观察] 已全部处置（见下方追加行） |
+
+## 三段交接
+
+### (1) 工程过程
+
+1. 体检（只读）：读 `server/autonomy/main.py`（装配）、`core/loop/autonomy_engine.py`（五层流水线）、`core/motivation/state.py`、`core/scheduler/circadian.py`、`core/planner/action_planner.py`、`dream/engine.py` 与 dream 全子模块；核对运行时数据（`audit_logs.jsonl` / `manager_state.json` / `motivation_state.json` / `dream_buffer.db` / 两个 `*.migrated` 配置）。
+2. 定位 P0：`routers/dream.py` 按公有名访问子组件；`hasattr` 实证真实 DreamEngine 只有私有名；比对冻结契约 `public/interface_stub/dream.pyi`（DreamEngine 仅声明 config + 4 方法，从未承诺公有子组件）→ 定性为路由越权访问，非契约允许面。
+3. 定性 P1：`grep` 证明 `record_material/interaction/activity/info_ingestion` 全仓库零调用，动机退化为纯时间函数（落盘值 1.0/1.0/0.0/0.0 与推算一致）。
+4. rules-6 先文后码：`.trae/documents/20260927_模块0_修复梦境接口属性错配.md`（四章 + 附录 A P1 方案）。
+5. 实施 P0：路由 6 处 + 三处替身改名 + 新增真实引擎回归用例。
+6. 验证：80 / 87 / 769 passed（见下）；并以"修复前该用例 FAILED、修复后 PASS"的对照锁死回归用例有效性。
+
+### (2) 交接状态
+
+- P0 修复：**已闭合**（1 生产文件 + 2 测试文件；含真实引擎回归用例）
+- P1 动机接线评估：**已闭合（分析态）**；其实施 **未闭合**（待人类裁决）
+- P2 梦境未产出候选：**未闭合**（现象已登记，属配置/触发路径问题，非本次范围）
+- 变更文档：**已闭合**（status=已完成，含实际修改/测试结果/经验教训）
+- 交付前 GN-004 审查：见下方追加行
+- 人类 [V] 交付确认：**未闭合**
+
+### (3) 最终结果
+
+- 验证结论：`pytest tests/test_dream_router.py tests/test_dream_engine.py -q` → **80 passed**；
+  加 `test_pagination_clamp.py` → **87 passed**；`-k "dream or autonomy or telemetry or physio"` → **769 passed / 0 failed**（4436 deselected）。
+  回归用例有效性：修复前 `TestRealEngineAttributeAlignment` **FAILED**（`AttributeError: 'DreamEngine' object has no attribute 'consolidator'`），修复后 **PASS**。
+- 产出物清单：`server/api/routers/dream.py`、`tests/test_dream_router.py`、`tests/test_pagination_clamp.py`、
+  `.trae/documents/20260927_模块0_修复梦境接口属性错配.md`、本 note 章节。
+- 合规：`public/`（含 `interface_stub/dream.pyi`）与 `.trae/rules/` 零改动；未改 `dream/engine.py`。
+- 关键事实（供接续者免于重查）：① 路由改动**需重启后端**才在生产生效；② 同文件并行 Edit 存在写覆盖竞态（本轮 3 处修正被静默回退），同文件多次编辑必须串行且改后 grep 复核；③ 真实 DreamEngine 的子组件是私有属性，路由/handlers/main 三处统一按私有名访问。
+
+### (4) GN-004 交付前审查记录与观察项处置（追加式）
+
+- 结论：**警示放行**（无 [SOFT_BLOCK]），agent `4065124b-f853-45de-b76b-a7b30d8dfe74`。
+- **独立核验通过项（GN-004 自跑/读码）**：契约原文确认 DreamEngine 未承诺公有子组件；源码确认私有属性与
+  `consolidator.py:49` 的 `memory_manager` 链；全仓 grep 无公有名残留；**临时改回公有名 → 新用例 FAILED，
+  恢复后 PASS**（判别力经独立复现）；独立复跑 80 / 87 / 769 三组数字逐项一致；`public/`、`.trae/rules/`、
+  `dream/engine.py` 零改动；doc/note 合规。
+- **观察项处置**：O1 `related_files` 未改动项 → 已按"修改 / 勘查引用"分类；O2 端点数措辞不一致 → 统一为"五端点"；
+  O3 真实引擎用例覆盖不足 → 已扩至 5 端点（含 reject 的 decision/reason 与 session 回滚 `{"purged": 2}` 断言），
+  扩后复跑 `test_dream_router.py` **39 passed**、两文件 **80 passed**、相关子集 **769 passed**；
+  O4 测试文件头部清单未登记 → 已补 ⑪ 条目。
+- **GN-004 声明的未独立验证项**（须人类知悉）：① "修复前 `hasattr` 实证"未落盘为文件；② "第一轮 list 200 /
+  confirm 崩"的历史中间态不可回溯复现；③ "需重启后端方生效"属未执行事项。
+- **[V] 未闭合**：人类交付确认（GN-004 通过不豁免）；P1 动机接线仍为方案态待裁决。
+
+---
+
+# current-note — remove-autonomy-budget-and-gates（2026-09-30 文件末尾追加；追加式、不覆盖任何既有条目）
+
+> 更新时间: 2026-09-30 16:50 | 变更ID: remove-autonomy-budget-and-gates | 阶段: **实现+验证完成，交付前 GN-004 审查中**
+
+## 七字段交接状态
+
+| 字段 | 内容 |
+|------|------|
+| 做到哪了 | 用户指令「预算记账 → manager 门控 → killswitch 需要删除（对于这个纯本地项目不需要）」已全链落地：**契约（4 份 public/）→ 在盘 config.json → 后端（引擎/manager/models/safety 删除/config/路由/admin）→ 后端测试 → 前端（预算卡/cost alert/types/i18n/toast）**四批串行完成。前端三重闸门（s0402）**PASSED**；GN-004 首次审查报 `[SOFT_BLOCK]`（引擎侧 `config.py` 残留 `BudgetConfig`）→ 人类裁决"要求修正"→ 已修正并复跑（全量 **5162 passed**、定向 1119 passed），等复审 |
+| 为什么 | 纯本地单用户项目，三套管控设施（每轮记账+告警、轮级门控、killswitch）无收益却把"是否行动"的决定权从动机/规划移交给管控层。经 AskUserQuestion 三项裁决（ASK-20260927-02）：① 删除深度＝连组件与死代码一起删（**该选项显式授权修改 `public/`**）；② 前端「启用/禁用/暂停」入口保留、语义改为**任务级启停**；③「用户在线休眠」行为保留、改由**引擎内标志** `_user_online_sleeping` 承载 |
+| 未闭合项 | ① ~~人类 [V] 交付确认~~ **已闭合**（ASK-20260927-03，2026-09-30 批准交付）；② 需**重启后端**才在生产生效；③ 登记项：孤儿运行态数据（`killswitch.json`/`token_ledger.json`/`manager_state.json` 预算键）、`docs/` 与 `README.md` 未同步、`status` 枚举保留不可达的 `sleeping`、`toastStore.GlobalToastKind` 单值 union、无 autonomy 专项 E2E（Test2 仅全域冒烟）；④ 本单**同时**完成了前序 P0 单（fix-dream-rest-attr-mismatch）的遗留项处置，两单已一并交付 |
+| 接续入口 | 交付确认后重启后端；验证点：`GET /api/autonomy/status` 不再含预算字段且仍通过 `autonomy_state.schema.json`；`POST /api/autonomy/control {"action":"pause"}` 后后台任务真正停止（`engine._task` 取消）而非轮级空转；用户在线的轮次审计 `reason=user_online_sleep`。变更文档：`.trae/documents/20260927_模块0_删除自主预算与门控闸门.md`（第零章= s0601 影响面分析，含回退锚点） |
+| 人类裁决记录 | **ASK-20260927-02（三问）= 连组件一起删 + 按钮改任务级启停 + 保留在线休眠改引擎内标志**，已闭合；`public/` 修改授权随该选项一并给出 |
+| 请示追踪 | 无悬空请示 |
+| 审查状态 | 交付前 GN-004 **首轮**：警示放行 + `[SOFT_BLOCK]`（SB-B 假闭合，agent `13284a30-1cd5-42e8-b06d-5240e420aa80`）——报出引擎侧 `server/autonomy/config.py` 仍留 `BudgetConfig`/`budget`；人类裁决"要求修正"→ 已修正（含 `test_autonomy_skeleton.py` 连带漏改）→ **复审（同 agent）：警示放行、无 `[SOFT_BLOCK]`**，2 项观察项（CHANGELOG 判据未勾选 / note 数字口径）已处置；**[V] 已闭合**（ASK-20260927-03 批准交付） |
+
+## 三段交接
+
+### (1) 工程过程
+
+1. **写前闸门（s0401）**：判定 `public/` 属核心真相源 → **BLOCKED**（人类授权不替代闸门），改走 s0601；`server/`、`tests/`、`APP-Frontend/` 为免检通行区放行。
+2. **契约变更适配（s0601）**：产出差异摘要（3 份契约为 MAJOR 字段/接口删除）+ 影响面分级（S1~S10）+ 阻断项（无）+ 同步顺序（契约→后端→测试→前端→锚点）+ 回退锚点。
+3. **批 1 契约冻结**：`autonomy_state.schema.json` 删两属性、`autonomy_config.schema.json` 删 `budget` 节、`cxo_autonomy.pyi` 删 `AutonomyBudgetExceededError`、`CHANGELOG [1.14.0]`；**额外发现**：`config.json` 的在盘 `autonomy.budget` 块必须同批删除（`extra="forbid"` 否则服务起不来）。
+4. **批 2 后端适配**：引擎删 5 方法 + 3 入参、门控链收敛为「在线休眠→动机→感知/规划/执行」、在线休眠落点改引擎标志；删除 `killswitch.py` + `safety/budget/`；manager/models/config/路由/admin 同步；路由 `control` 改任务级启停。
+5. **批 3 测试适配**：删 `test_autonomy_budget_gate.py`；8 份测试文件 + admin 白名单用例同步；被删能力改为**反断言**锁定。
+6. **批 4 前端适配 + s0402 三重闸门**：删预算卡/cost alert 全链；闸门证据落盘 `test_reports/frontend_gate_20260930_163635/`（四件齐）。
+7. **残留检查**：以**代码形态模式**（而非关键词）复核，捞出并补删 `models.py::AutonomyState` 的两个预算字段。
+8. **验证**：后端全量 + 定向、前端 vitest + tsc + E2E + Mock 13 项。
+
+### (2) 交接状态
+
+- 批 1 契约冻结：**已闭合**（4 份 public/ + config.json，语法校验通过）
+- 批 2 后端适配：**已闭合**（含 `models.py` 补删）
+- 批 3 后端测试适配：**已闭合**（GN-004 首轮时态定向 1120 passed；**修正轮后**定向 1119 passed——少 1 例＝随 `BudgetConfig` 删除而移除的枚举用例）
+- 批 4 前端适配 + 三重闸门：**已闭合**（PASSED，证据四件齐）
+- 交付前 GN-004 审查：见下方追加行
+- 人类 [V] 交付确认：**未闭合**
+
+### (3) 最终结果
+
+- **后端**：全量 `pytest tests -q` → **5162 passed / 0 failed**（228.49s，最终证据 `test_reports/backend_pytest_20260930_final2.txt`；GN-004 首轮时态为 5163，差 1 例＝随 `BudgetConfig` 删除而移除的 `test_invalid_overspend_mode_raises_valueerror`）；定向 `-k "autonomy or admin or config or dream"` → **1119 passed**。
+- **前端**：`npx vitest run` → 92 files / **771 passed**；`npx tsc --noEmit` → **EXITCODE=0**；`npx playwright test` → **2 passed**；Mock 回归 **13/13 PASS**。
+- **残留引用**：`public/` 与 `server/` 的 `killswitch` / `token_ledger` / 预算字段**代码引用清零**（余下为说明性注释、反断言与运行态历史数据）；**修正轮后** `BudgetConfig` 类名形态亦清零。
+- **产出物清单**：4 份 public/ 契约 + `config.json`；后端 **10** 文件（含 2 处删除：`killswitch.py`、`safety/budget/`）；测试 **10** 文件（含 1 份删除 `test_autonomy_budget_gate.py`）；前端 9 文件；变更文档 `.trae/documents/20260927_模块0_删除自主预算与门控闸门.md`；闸门证据目录；后端回归证据 4 份。
+- **关键事实（供接续者免于重查）**：① `public/` 三份契约为 **MAJOR 删除**，第三方若依赖需按 `CHANGELOG [1.14.0]` 适配；② 删除类变更必须扫**三层易漏面**：在盘实体配置（`config.json`）、模型层字段（`models.py` / `server/autonomy/config.py` 双份定义）、以及**因漂移而仍然通过的测试断言**（`test_autonomy_skeleton.py`）；③ 启停语义已从「轮级空转」变为「任务级 stop/start」，`manager.status` 仍只写 running/paused。
+- **经验教训**：① 契约删除要连带扫在盘配置；② **残留检查必须同时覆盖四类形态**——import / 属性访问 / **类与字段定义** / 测试正向构造（本轮两次漏网分别栽在"关键词被注释淹没"与"未含类名形态"上）；③ 删除能力应改写为反断言锁定，误恢复即红；④ 被删除能力的旧测试若仍通过，**往往意味着生产侧未删干净**，应作为漂移信号反向排查。
+
+---
+
+# current-note — fix-motivation-feedback-and-focus（2026-09-30 文件末尾追加；追加式、不覆盖任何既有条目）
+
+> 更新时间: 2026-10-02 11:20 | 变更ID: fix-motivation-feedback-and-focus | 阶段: **实现 + 验证 + 交付全部闭合（2026-10-02）**
+
+## 七字段交接状态
+
+| 字段 | 内容 |
+|------|------|
+| 做到哪了 | 用户指令「修复，并且 curiosity 到底是"越高越想探索"才正确（并且应该是针对某个事物的）」→ 后续「先修复 O-19/O-20 翻译不对称」→ 最终「**处理 focus 展示问题，修复语言不对称，然后交付**」**已全部完成并交付（2026-10-02）**：契约 → 模型/管理器 → 动机层 → 规划器 → 引擎 → 测试五批 + **v1~v4 四轮修正**（创作消费配对 → 比例式消费 → 单维正下限 → 四维统一下限 + curiosity/social 比例式）+ **三轮遗留项清理**（4+4 处"预算"陈旧内容、`motivation_min` 护栏、i18n 守卫）+ **交付轮**（前端 focus 展示 + 删 en 孤儿键使两语言键结构完全对称 1350/1350）。后端全量 **5206 passed / 0 failed**；前端三重闸门 **PASSED**（有效证据 `test_reports/frontend_gate_20261002_110021/`：93 文件 / 776 用例 + tsc 0 + E2E 2 + Mock 10/10） |
+| 为什么 | 缺陷＝`MotivationState` 的 4 个行为反馈入口**生产零调用**，引擎 `_motivate()` 只调 `tick()` → 动机退化为纯时间函数并饱和（落盘实测 `1.0/1.0/0.0/0.0`）。叠加语义缺陷：规划器只喂裸动机 JSON、从不声明方向 → `curiosity=1.0` 被 LLM 误读为"信息已足够→wait"，与正确语义（**越高越想探索**）相反。再叠加维度缺失：动机只有无指向标量，无法表达"在探索什么" |
+| 未闭合项 | **无阻断性未闭合项**（交付已闭合）。**已登记待办（非阻断）**：① 生产生效需**重启后端**后方可观察动机/焦点实况；② **未做真实浏览器人工视觉走查**（focus 区块观感未经人眼确认，闸门 `unclosed_items` 自认，本仓库既有口径）；③ ~~前端 focus 展示~~ **已完成（交付轮）**；④ ~~O-19/O-20 语言不对称与无覆盖~~ **已修复**；⑤ ~~SB-B 四处"预算"陈旧内容~~ **已全清**；⑥ ~~`pyi:80`"预算"措辞~~ **已清且授权已追认**；⑦ 残留（诚实登记）：四维 0 侧全路径不可达、1.0 侧可达但无锁；`motivation_min` 护栏覆盖"下限==上限"矛盾（≤0.99）；每日定时日记路径不计入创作消费；⑧ **N-5**：CHANGELOG [1.15.0] 在多轮中持续刷新（现状态＝已交付）；⑨ **O-13**：curiosity/social 回落语义由固定改比例（ASK-05 授权，登记备查）；⑩ locale 键对称**已完全达成**（例外白名单清空为 `[]`，后续新增不对称会被守卫拦下） |
+| 接续入口 | **本单已交付、无待办接续**。如需继续：生产侧 **重启后端** 使动机接线与 focus 语义生效；验证点：`GET /api/autonomy/status` 应含 `focus={topic,level}` 且过 `autonomy_state.schema.json`；Agent 生活页应显示「当前焦点」区块（topic + 兴趣强度 + 进度条，空焦点显示占位）；`motivation_state.json` 四维恒 ≥ 0.02；五个反馈入口见 `autonomy_engine.py:416/418/420/422/424`。回滚：按变更文档 §0.5 按文件隔离，禁整树 `git checkout` |
+| 人类裁决记录 | **ASK-20260928-01（三问，已闭合）**：① curiosity 保持标量 + `motivations` 旁新增 `focus={topic,level}`（该选项显式授权改 `autonomy_state.schema.json`）；② 语义落地＝提示词 + **软阈值收敛候选**（非只改提示词）；③ 对象来源＝**LLM 每轮自报**。**ASK-20260930-01（已闭合）**：规划器输出受 `autonomy_action.schema.json`（`additionalProperties:false`）约束而上轮授权只覆盖 state 契约 → 人类选「**授权同批改 action 契约**」。**ASK-20260930-02（已闭合）**：「**修正后交付：消除边界锁风险**」→ v1（创作消费配对）。**ASK-20260930-03（已闭合）**：「**要求修正：消除 0 侧可达**」→ v2（比例式消费）。**ASK-20260930-04（已闭合）**：「**要求修正：彻底消除全部 0 路径**」→ v3（`creative_min` 正下限 + ratio 上界 0.99）。**ASK-20260930-05（已闭合）**：口径确认题中人类选「**要求修正：扩展到其他三维**」→ v4（四维统一 `motivation_min` + curiosity/social 改比例式）。**N-5（CHANGELOG 属 public/ 刷新）人类尚未单独裁定**，已登记为交付前知悉项。**ASK-20260930-06（已闭合）**：人类选「**暂停并搁置**」→ 本单不交付，工作树保持现状（产出物全部在盘）。**ASK-20260930-07（已闭合）**：人类选「**解除搁置，先清遗留项**」（未交付、先清登记项）→ 清理轮：`public/interface_stub/cxo_autonomy.pyi:80` docstring"预算"→"焦点"（**该项为人类对该单文件单行的显式授权**，经 s0401 BLOCKED → s0601 判定 PATCH 级零影响）+ `main.py:92`/`main.py:238`/`docs/CXFC开发文档.md:130` 镜像措辞 + `motivation_min` 护栏（≤0.99）；**前端项（`focus` 展示 + `AutonomyPage.tsx:72` 注释）仍待人类裁决**。**ASK-20260930-08（已闭合，两问）**：① SB-B 处置＝「**四处全清（含前端闸门）**」→ 清理轮 v2：`docs/technical.md` §20.3 整节改写（删除指向已删 `safety/budget/token_ledger.py` 的描述）+ `technical.md:943` 去"日预算用量" + `features.html` 两处预算表述 + `zh-CN.json:633` 副标题"预算"→"焦点"；前端三重闸门 **PASSED**（证据 `test_reports/frontend_gate_20261001_131252/`）；② **授权追认**＝「追认：该选项即授权」→ ASK-07 对 `pyi:80` 的 public/ 修改**授权闭合**（GN-004 第七轮裁定①的程序歧义消解）。**人类指令（对应清理轮 v3）**：「先修复 O-19 和 O-20 的翻译不对称问题」→ en-US 副标题补 `focus` 与 zh 对齐 + 新增 `src/i18n/i18n.test.ts` 3 条守卫（键结构对称 / 副标题两语言声明焦点 / 无预算残留）；前端三重闸门重跑 **PASSED**（证据 `test_reports/frontend_gate_20261001_152258/`，含判别力实验）。**人类指令（交付轮，对应 ASK-20261002-01）**：「**处理 focus 展示问题，修复语言不对称，然后交付**」→ ① focus 展示落地（`AutonomyPage` 新增「当前焦点」区块 + `types.ts` 加 `AutonomyFocus` + zh/en 各 3 词条）② 删除 en 孤儿键 `audioPanel.clientsOnline` 并把 `KNOWN_EN_ONLY_KEYS` 清空（两语言键结构 **1350/1350 完全对称**）③ **交付闭合**（CHANGELOG [1.15.0] 注记改为"已交付 2026-10-02"、note 与变更文档 §5.10 同步、变更文档 status→已关闭）；有效闸门证据 `test_reports/frontend_gate_20261002_110021/`。**ASK-20261002-02（已闭合）**：交付闭包中自查发现 `public/schema/CHANGELOG.md` [1.15.0] §影响范围"前端不改（已知未闭合项）"与同条目末尾"已交付（含前端 focus 展示）"并存冲突（即 O-25 要求避免的"已交付／未交付并存"）→ 该文件属 `public/` 受保护路径（rules-0 §四-10），**拉起 AskUserQuestion 请求授权** → 人类选「**授权修正**」→ 已把该行改写为「前端同步（原计划不改，后经交付轮落地并闭合）」，保留历史说明与授权出处 |
+| 请示追踪 | ASK-20260928-01 / ASK-20260930-01 ~ -08 / ASK-20261002-01（交付指令）/ **ASK-20261002-02（CHANGELOG 第 25 行修正授权，已闭合）** **均已闭合**；**无悬空请示、无待裁决项**（原"前端是否展示 focus"已在交付轮由人类指令直接闭合；交付闭包中发现的 `public/schema/CHANGELOG.md` [1.15.0] §影响范围"前端不改"与交付注记并存冲突，已获人类显式授权修正并落地） |
+| 审查状态 | **首轮** GN-004（agent `613f87b7-d688-4a81-a05a-bed779d0c9aa`）= 警示放行（无 `[SOFT_BLOCK]`），独立复现定向 1151 / 全量 5194 并做两处破坏性判别力实验；4 项观察 + 1 项锚点表述不实**已逐项处置**（O-1 `AutonomyAction` 补 `focus` + 前移 `AutonomyFocus` 定义 / O-2 登记不改 / O-3 note 补"终态处理" / O-4 顺序笔误统一 / E7 回退锚点改写为按文件隔离）。**第二轮复审（同 agent）**= 警示放行（无 `[SOFT_BLOCK]`），实测全量 5195 / 定向 1152，O-1/O-3/O-4/E7 真闭合、O-2 判为"经授权的合规延后"；N-1/N-2 已回填。**第三轮复审（同 agent，核验修正轮）**= 警示放行（无 `[SOFT_BLOCK]`），实测全量 **5200** / 定向 **1157**，破坏性实验（移除消费分派或 `creative_consume_drop=0` → 4 failed）证实判别力；判定「核心目标达成（单向 1.0 结构锁已真消除）」；新观察 N-3（行号）/N-4（范围表述 + creative_drive 0 侧补登）/N-5（CHANGELOG 属 public/ 的表述）**均已回填修正**。**三轮均无阻断**。**第四轮复审（同 agent，核验 v2 比例式消费）**= 警示放行（无 `[SOFT_BLOCK]`），实测全量 **5202** / 定向 **1159**，独立复算交替稳态 0.10 > 0（自 0.5 与 1.0 各 200 轮均收敛），破坏实验（改回固定扣减 → 6 failed）证实判别力；判定「v2 定义范围内达成消除 0 侧可达」；新观察 O-5（行号指代，已修正）/O-6（ratio 端点 1.0 等价清空，默认 0.5 **生产不可达**，护栏登记为后续单）/**O-7（严格剩余 0 路径＝既有时间衰减，严重性 LOW，非消费所致）**。**四轮均无阻断**。**第五轮复审（同 agent，核验 v3 正下限 + ratio 上界）**= 警示放行，实测全量 **5205** / 定向 **1162**；独立随机穷举（`creative_min`/初值/ratio 全端点 × 300 操作）**0 违规**；破坏实验（`_clamp_creative` 改回 `_clamp` → 6 failed）证实判别力；新观察 O-8（note 三段交接滞后，已修正）/O-9（"全部 0 路径"口径须人类确认）/O-10（`creative_min=1.0` 极端注入）/O-11（`tick` docstring，已修正）。**第六轮复审（同 agent，核验 v4 四维统一下限）**= 警示放行，实测全量 **5205** / 定向 **1162**；独立随机穷举（`motivation_min`/初值/三 ratio 端点，1008 组合 × 200 操作）**0 违规**；破坏实验（`_clamp_motivation` 改回 `_clamp` → 9 failed）证实判别力；判定「字面'全部 0 路径'（四维）已闭合，无未闭合 0 侧边界锁」；新观察 O-12（note 与 §4.3 锚点滞后，已修正）/O-13（语义变更范围，已登记供知悉）/O-14（§5.5.3 "1.0 侧"措辞，已修正）/O-15（测试 docstring 旧名，已修正）。**六轮均无阻断**。**第七轮复审（同 agent，核验清理轮 v1）**= **警示放行 + `[SOFT_BLOCK] SB-B`（假闭合证据）**：实测全量 **5206** / 定向 **1163**；破坏实验（`motivation_min` 收拢改回 `min(1.0,…)` → 新用例 FAILED）证实判别力；**驳回**我"全仓'预算'遗留仅剩前端一处"的穷尽性声明（反证：`technical.md`×2、`features.html`×2、`zh-CN.json`）→ 已按人类 ASK-08 于清理轮 v2 **四处全清**并经前端三重闸门 PASSED；同轮裁定 public/ 授权实质成立但建议人类追认 → **人类已追认（ASK-08 ②）→ 授权闭合**；另报 O-16（章节物理顺序）/O-17（CHANGELOG 与 note 数字滞后）/O-18（note 时间戳未更新）——**均已在本轮回填修正**。**第八轮复审（同 agent，核验清理轮 v2 + 闸门）**= **警示放行（无 `[SOFT_BLOCK]`；上轮 SB-B 已消解）**：GN-004 独立复跑后端全量 **5206 passed**、前端 `tsc --noEmit` **EXIT=0**、AutonomyPage 用例 **8 passed**，并独立枚举全仓 37 个"预算"命中逐类复核，确认**除有意保留的 `AutonomyPage.tsx:72` 外无"把已删预算描述为现存"的遗漏**；三问裁定＝① public/ 授权链条**已闭合**（人类追认生效）② 清理轮 v2 **满足**"四处全清"③ 交付态表述**一致保持未交付/挂起**；新观察 **O-19**（zh 副标题含"焦点"而 en 未含，属**既有**翻译不对称）/ **O-20**（该文案无自动化覆盖）——均登记为低severity后续候选；**两观察已按人类指令于清理轮 v3 修复**（en 补 focus + 新增 `i18n.test.ts` 守卫，判别力实验证明改回即红）。**第九轮复审（同 agent，核验清理轮 v3）**= **警示放行（无 `[SOFT_BLOCK]`）**：GN-004 独立复跑前端 `tsc --noEmit` **EXIT=0**、`vitest run` **93 文件 / 774 passed**、`i18n.test.ts` **3 passed**；**O-19/O-20 判定为真闭合**（自建三类破坏点：en 去 focus / 注入新 en-only 键 / 往 zh 注入"预算"词条 → 三条守卫逐条转红 3 failed，复原后 3 passed）；并裁定 `KNOWN_EN_ONLY_KEYS` 白名单**不属掩盖问题**（`toEqual` 精确等值断言，注入新键即红）；交付态一致保持"未交付/挂起"。新观察 **O-21**（note 抬头时间戳/"两轮"滞后）/**O-22**（§5.10 快照值 5205 与"后续"仅提 §6.1）——**均已回填修正**。**第十轮复审（同 agent，＝交付前审查）**= **警示放行（无 `[SOFT_BLOCK]`）＋判定"可交付、无阻断"**：独立复跑后端 **5206 passed**、前端 `tsc` **EXIT=0** / `vitest run` **93 文件 / 776 passed** / `i18n.test.ts` **3 passed** / `AutonomyPage.test.tsx` **10 passed**；独立复算语言对称 = **zh 1350 / en 1350（两侧差集均空）**；**三路破坏实验**（`focusTopic=''` / 改坏 zh `focusLevel` 词条 / 往 en 注入新键）→ 焦点用例与 i18n 守卫分别转红（隔离验证表明焦点断言不弱），复原后 13 passed；裁定"删除孤儿键更合适、不升级"；新观察 **O-23**（§6.5 曾引用不存在的 §8）/ **O-24**（§5.10 与 §6.x 顺序）/ **O-25**（交付态锚点待回填）——**三项均已在交付闭包中处理**（改引 §5.10、补阅读顺序说明并重排 §6.5/§6.6、回填交付态）；交付闭包自查另发现 `CHANGELOG.md` §影响范围第 25 行"前端不改（已知未闭合项）"与同条目"已交付（含前端 focus 展示）"并存（同属 O-25 类），已获人类授权（**ASK-20261002-02**）修正并落地。 |
+
+## 三段交接
+
+### (1) 工程过程
+
+1. **写前闸门（s0401）**：判定 `public/schema/**` 属核心真相源 → **BLOCKED**（人类授权不替代闸门），改走 s0601；`server/autonomy/**` 与 `tests/**` 属免检通行区放行；`.trae/documents/**` 属工程交接锚点（格式校验后放行）。
+2. **契约变更适配（s0601）**：产出差异摘要（2 份 MINOR 纯新增 + audit 契约零改动）+ 影响面分级（必须同步 6 项 / 可延后 1 项＝前端 / 需重审 1 项＝审计面隔离）+ 阻断项（无）+ 同步顺序 + 回退锚点；遇"focus 由哪条契约承载"的真实分叉 → **L3 AskUserQuestion（ASK-20260930-01）**，人类授权同批改 action 契约。
+3. **先文后码（rules-6）**：先写 `.trae/documents/20260930_模块0_修复动机接线与焦点语义.md`（第零章 s0601 影响面 + 四章模板），再动代码。
+4. **批 1 契约**：`autonomy_state.schema.json` 顶层新增 `focus`、`autonomy_action.schema.json` 新增可选 `focus`、`CHANGELOG [1.15.0]`。
+5. **批 2 后端基座**：`models.py` 新增 `AutonomyFocus` + `AutonomyState.focus`；`manager.py` 新增 `focus` 属性与 `get_status()["focus"]`；`core/motivation/state.py` 新增 `focus_topic/focus_level`、`set_focus()`、`to_focus_dict()`、`_persist_dict()`（`to_dict()` 保持四标量，审计面不受污染）。
+6. **批 3 规划器**：system prompt 增动机方向语义段 + focus 自报要求；新增 `_build_candidates()` 软阈值候选（>=0.6）并注入 user 消息；`_validate_action` 增 `_normalize_focus` 透传（缺失/非法则省略键）。
+7. **批 4 引擎**：`_plan()` 上下文注入 `focus`；`_run_round` 执行后新增 `_apply_motivation_feedback()`（只认 `result=="success"`）与 `_apply_plan_focus()`；动机落盘从 `_motivate()` 移到轮末统一（`_save_motivation()`），保证反馈/焦点不因重启丢一轮；新增 `_focus_dict()` / `_sync_manager_focus()`。
+8. **批 5 测试**：首轮新增 33 例（契约 7 / 动机 6 / 规划器 10 / 引擎 10）；修正轮 v1 再 +5、v2 再 +2（动机 `TestCreationConsume` 由 3 例扩为 5 例），合计 **+40 例**。
+9. **验证**：契约 `json.load` ×2、`py_compile` ×5、残留 grep；回归最终值见 (3)（中间态 1151/5194 → 1152/5195 → 1157/5200 → **1159/5202**）。
+10. **交付前 GN-004（首轮）**：警示放行，无 `[SOFT_BLOCK]`；4 观察 + 1 锚点表述不实 → 已逐项处置（含 `models.py::AutonomyAction` 补 `focus` 以消除声明级漂移、0.5 节回退锚点改写为"按文件隔离"、note 补"终态处理"）；处置后复跑全量并拉起**复审**。
+11. **GN-004 复审（同 agent）**：警示放行（无 `[SOFT_BLOCK]`），实测全量 5195 / 定向 1152；O-1/O-3/O-4/E7 真闭合、O-2 判为"经授权的合规延后"；新增 N-1/N-2（数字与步骤滞后）已回填。**审查不豁免人类裁决** → 拉起 [V] 交付确认选择题。
+12. **[V] 裁决（ASK-20260930-02）**：人类选「**修正后交付：消除边界锁风险**」→ 追加**修正轮 v1**：动机层新增 `record_creation()`（固定扣减 −0.30）+ 引擎 `write_memory`/`write_diary` 成功分派 + 配对测试；契约面零变更（schema）。复跑全绿并拉起 **GN-004 第三轮复审** → 警示放行；其 N-3/N-4/N-5 已回填（N-4 指出 v1 把边界锁从 1.0 侧搬到了 0 侧）。
+13. **[V] 裁决（ASK-20260930-03）**：人类选「**要求修正：消除 0 侧可达**」→ 追加**修正轮 v2**：`creative_consume_drop: 0.30`（固定扣减）→ `creative_consume_ratio: 0.5`（**比例式**），`record_creation` 改为 `creative_drive *= (1−ratio)`；测试扩为 5 例。复跑全绿并拉起 **GN-004 第四轮复审** → 警示放行；其 O-5（行号指代）已修正，O-6/O-7 登记。
+14. **[V] 裁决（ASK-20260930-04）**：人类选「**要求修正：彻底消除全部 0 路径**」→ 追加**修正轮 v3**：新增 `creative_min=0.02` 正下限（`_clamp_creative` 覆盖构造/load/tick/素材/消费五路径）+ `_MAX_CONSUME_RATIO=0.99` + `TestCreativeNonZeroFloor` 3 例；复跑全绿并拉 **GN-004 第五轮复审** → 警示放行；其 O-8/O-11 已修正，O-9（口径）提请人类裁决。
+15. **[V] 裁决（ASK-20260930-05）**：口径题中人类选「**要求修正：扩展到其他三维**」→ 追加**修正轮 v4**：`creative_min` → **`motivation_min`（四维统一 0.02）**、`_clamp_creative` → `_clamp_motivation`（覆盖四维全路径）、curiosity/social 的行为扣减由固定 −0.30 改**比例式**（`info_ingestion_ratio` / `social_interaction_ratio` = 0.30，`_MAX_RATIO=0.99`）、测试改名扩维；复跑全绿并拉 **GN-004 第六轮复审** → 警示放行（1008 组合 × 200 操作穷举 0 违规）；其 O-12/O-14/O-15 已修正，O-13（语义变更范围）登记供知悉。
+16. **[V] 最终裁决（ASK-20260930-06）= 暂停并搁置** → **本单不交付**；锚点回填为"实现+验证闭合、交付阻塞"态，产出物全部留在工作树。
+17. **遗留项清理轮 v1（ASK-20260930-07 = 解除搁置，先清遗留项）**：过 s0401 写前闸门（`public/interface_stub/**` → BLOCKED）→ 走 s0601（PATCH 级、无必须阻断/同步项、全仓 grep 确认无下游按该 docstring 断言）→ 落地 4 处"预算"遗留措辞修正（pyi:80 / main.py:92 / main.py:238 / docs:CXFC开发文档.md:130）+ `motivation_min` 护栏（收拢 ≤0.99）+ 1 例护栏测试；**前端项未做**，登记为待裁决项。
+18. **遗留项清理轮 v2（ASK-20260930-08 = 四处全清（含前端闸门）+ 授权追认）**：GN-004 第七轮 `[SOFT_BLOCK] SB-B` 驳回了 v1 的"仅剩一处"穷尽声明 → 人类裁定四处全清：`docs/technical.md` §20.3 整节改写（删去把已删 `safety/budget/token_ledger.py` 描述为现存设施的内容）+ `:943` 去"日预算用量" + `features.html` 两处 + `zh-CN.json:633` 副标题；i18n 属前端可见文案 → 走 **s0402 三重闸门**（Test1 vitest 92 文件/771 用例 + tsc EXIT=0；Test2 playwright 2 passed；Test3 Mock 7/7）→ **PASSED**，证据落 `.trae/documents/test_reports/frontend_gate_20261001_131252/`（四件齐备）；同轮人类**追认** public/ 授权 → ASK-07 的 pyi 修改授权闭合。
+
+19. **遗留项清理轮 v3（人类指令「先修复 O-19 和 O-20 的翻译不对称问题」）**：`en-US.json:633` 副标题补 `focus` 与 zh 对齐（O-19）；新增 `APP-Frontend/src/i18n/i18n.test.ts` 3 条守卫断言（键结构对称 / 副标题两语言声明焦点 / 无预算残留），把原先仅靠人工 checklist 的校验变为可执行（O-20）；前端三重闸门重跑 → **PASSED**，新证据目录 `test_reports/frontend_gate_20261001_152258/`（四件齐备 + 判别力实验 `discrimination_experiment.txt`：改回即红）；**上一轮证据 `…131252` 已声明失效（仅作历史留痕）**。
+
+20. **交付轮（人类指令 ASK-20261002-01：「处理 focus 展示问题，修复语言不对称，然后交付」）**：① focus 展示落地（`AutonomyPage` 新增「当前焦点」区块 + `types.ts` 加 `AutonomyFocus{topic,level}`/`focus?` + zh/en 各 3 词条 + 2 例测试；顺带修正 AutonomyPage.tsx:72 陈旧注释）；② 语言不对称修复（删 en 孤儿键 `audioPanel.clientsOnline`、`KNOWN_EN_ONLY_KEYS` 清空 → zh/en 各 1350 键完全对称）；③ 前端三重闸门重跑 **PASSED**（新证据 `frontend_gate_20261002_110021`，四件齐备）＋后端交付回归 **5206 passed**；④ GN-004 第十轮＝交付前审查 → 警示放行、判定"可交付、无阻断"；⑤ **交付闭合**：CHANGELOG [1.15.0] 交付注记 → 已交付（2026-10-02）、变更文档 §5.10 改写为交付记录并新增 §6.5/§6.7、变更文档 status → 已关闭、note 抬头/七字段/三段交接同步；⑥ **交付闭包自查**：发现 `CHANGELOG.md` §影响范围"前端不改（已知未闭合项）"与同条目"已交付（含前端 focus 展示）"并存（即 O-25 类冲突）→ 该文件属 `public/` 保护路径，**拉起 AskUserQuestion 请授权** → 人类选「授权修正」（ASK-20261002-02）→ 已改写为「前端同步（原计划不改，后经交付轮落地并闭合）」。
+
+### (2) 交接状态
+
+- 批 1 契约：**已闭合**（2 份 schema + CHANGELOG；`json.load` 通过）
+- 批 2 后端基座：**已闭合**（models/manager/motivation state；含 O-1 修正的 `AutonomyAction.focus` + `AutonomyFocus` 定义前移）
+- 批 3 规划器：**已闭合**（提示词语义 + 软候选 + focus 透传）
+- 批 4 引擎：**已闭合**（反馈接线 + 焦点回写 + 轮末统一落盘）
+- 批 5 测试 + 回归：**已闭合**（后端累计新增用例 **+44**；后端全量 **5206 passed / 0 failed**）
+- 修正轮 v1~v4：**已闭合**（详见 §5.5.x 与第三~六轮复审）
+- 遗留项清理轮 v1/v2/v3：**均已闭合**（措辞 4+4 处 + `motivation_min` 护栏 + 授权追认 + O-19/O-20 修复与 i18n 守卫）
+- **交付轮（focus 展示 + 语言对称）**：**已闭合**
+- 交付前 GN-004 审查：**十轮全部闭合**（第七轮含 `[SOFT_BLOCK] SB-B`，已消解；第十轮＝交付前审查，判定可交付）
+- 前端三重闸门（s0402）：**已闭合 / PASSED**（有效证据＝`frontend_gate_20261002_110021`：93 文件 / 776 用例 + tsc 0 + E2E 2 + Mock 10/10）
+- 人类 [V] 交付确认：**已闭合 —— 2026-10-02 交付完成**
+
+### (3) 最终结果
+
+- **后端（最终，清理轮 v1 后·v2 未改后端）**：全量 `python -m pytest tests -q` → **5206 passed / 0 failed**（248.56s；上一单基线 5162，**+44 恰为本单新增用例数**＝契约 7 + 动机 15 + 规划器 10 + 引擎 12）；定向 `-k "autonomy or planner or admin or config or dream"` → **1163 passed / 0 failed**（43.35s；基线 1119）。编译与契约语法校验（含 pyi AST）均通过。（清理轮 v2 仅改 docs/ + i18n 文案，不在后端测试范围，故未重跑）
+- **前端（有效证据＝交付轮闸门 `frontend_gate_20261002_110021`）**：`npx vitest run` → **93 文件 / 776 passed**（较清理轮 v3 +2 用例＝`AutonomyPage` 焦点展示 2 例）；`npx tsc --noEmit` → **EXIT=0**；`npx playwright test` → **2 passed**；Test3 Mock 回归 **10/10**。证据目录四件齐备（`test1_streamlit.log` / `test2_playwright.log` / `test3_mock_checklist.md` / `summary.json`）+ `tsc.txt` + `vitest_autonomy_page.txt`。**上一轮 `frontend_gate_20261001_152258`（93 文件 / 774 用例，清理轮 v3）已因焦点展示 + 语言对称改动失效，仅作历史留痕。**
+- **残留复核**：`record_info_ingestion/interaction/activity/material` + `record_creation` 在 `server/` 的生产调用点＝`autonomy_engine.py:416/418/420/422/424`（**修复前四入口为零调用**；行号经 GN-004 N-3 更正）；`focus` 全仓检索无遗留冲突（其余命中为视觉 focus_mode、CSS `:focus`、`focusSpeed` 等无关项）。
+- **关键事实（供接续者免于重查）**：① `focus` 落在 **state 契约顶层**（非 `motivations` 内部）——`test_autonomy_skeleton.py` 断言 `st["motivations"] == {四标量}` 且审计面 `additionalProperties:false`，放内部会双重违约；② 规划器输出必须合 `autonomy_action.schema.json`（`additionalProperties:false`），故 focus 必须进 action 契约，不能"借道 payload"；③ `record_material` **刻意改绑"探索行动取回非空内容"** 而非"感知层非空"（附录 A 原案）——后者几乎每轮成立而 creative_drive 每小时只衰减 0.02，等价于把创意欲钉在 1.0，正是本单要修的同一类"退化为常量"缺陷。
+- **产出物清单**：契约 3 份（2 schema + CHANGELOG）；后端 6 文件（models/manager/motivation state/planner/engine/`__init__`）；后端测试 4 文件；文档 2 份（technical.md / features.html）+ CXFC开发文档.md 措辞；前端 5 文件（`zh-CN.json` / `en-US.json` / **新增 `i18n.test.ts`** / `types.ts` / `AutonomyPage.tsx` + `AutonomyPage.test.tsx`）；前端闸门证据（有效＝`frontend_gate_20261002_110021`）；变更文档 `.trae/documents/20260930_模块0_修复动机接线与焦点语义.md`；本 note 章节。
+- **经验教训**：① 修"退化为常量"类缺陷时，**任何"每轮必然成立"的判据都不能直接当反馈触发源**（会把另一个维度钉死）——触发源必须绑定真实行为；② 状态类字段只有"有指向"才有意义：标量 + 焦点对象（topic/level）分离，避免把方向信息塞进标量语义里；③ 裸数值喂 LLM 必然被误读，**方向语义必须写进提示词**（否则反馈回路闭合了，规划侧仍会自我锁死）；④ **每个维度都必须有"升侧 + 降侧"配对**——`creative_drive` 原只有升侧（素材 +0.10）与 0.02/h 弱衰减，等价于把该维度钉在 1.0（GN-004 Q5 实测：6 轮只读即到 1.0，需 50h 才回落）；⑤ **降侧必须比例式，且"无自愈维度"须设正下限**——v1 的固定扣减（−0.30）在不对称下把边界锁从 1.0 侧搬到 0 侧；v2 改 `× (1−ratio)` 后交替收敛到正不动点，但**仍无法拦住"初始值恰为 0"**（旧盘饱和态即 0）与固定扣减的时间衰减 → v3 用 `creative_min=0.02` 正下限把构造/load/tick/素材/消费五路径一次性闭合；**v4 进一步把下限推广到四维（`motivation_min`）、并把 curiosity/social 的行为扣减也改比例式**，GN-004 六轮复审以 1008 组合 × 200 操作随机穷举验证四维 0 违规。**经验：边界锁与"自愈"无关——凡"贴死边界后该维度不再提供信号"都属锁；四维统一非零下限 + 比例式回落是最小自洽解。**
+
+### 终态处理（rules-5 §3.2）
+
+- **当前状态**：本 note 章节为**活跃交接锚点**，交付态＝**已交付（2026-10-02）**（ASK-20260930-06「暂停并搁置」已于本日解除并经人类 [V] 裁决批准交付；实现 + 验证 + 交付全部闭合）。产出物全部在盘，可吸收 / 归档。
+- **吸收去向**：交付已完成，无需回滚；本单产出物（契约 / 后端 / 前端 / 测试 / 闸门证据）永久留存。变更留痕与 GN-004 十轮审查记录归 `.trae/documents/20260930_模块0_修复动机接线与焦点语义.md`（status 已关闭）。若未来需回滚，按文件隔离执行（详见变更文档 §0.5：禁止整树 `git checkout`，会连带丢失上一单未提交成果）。
+- **登记不改项（后续单候选）**：① ~~O-2 `pyi:80`"预算"措辞~~ **已清（清理轮 v1）且人类已追认授权**；② `motivation_min` 极端注入护栏**已加**（≤0.99），更低值仍属"语义异常但定义明确"；③ ~~前端 `focus` 是否在管理页展示~~ **已落地（交付轮：`AutonomyPage.tsx` 焦点区块 + 2 例测试 + s0402 闸门 PASSED）**；④ curiosity/social 回落幅度由固定改比例属**既有默认语义变更**（ASK-05 选项授权，登记备查）；⑤ ~~O-6 / O-7 / O-9 / O-19 / O-20~~ **均已消除**（v3/v4 解决 0 路径；清理轮 v3 修复语言不对称并补守卫测试）；⑥ ~~`management.audioPanel.clientsOnline` 仅 en-US 有~~ **已清（交付轮：删除 en 孤儿键 + 清空守卫例外白名单 → zh 1350 / en 1350 完全对称）**。
+- **删除条件**：已交付闭合，本 note 章节可吸收或归档（保留历史留痕即可）。
