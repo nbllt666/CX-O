@@ -296,6 +296,7 @@ CX-A 默认关闭（`admin.enabled = false`），关闭时控制平面端点一�
 ## 7. 内部端点
 
 - `POST /api/admin/register`：本机作为被注册方时记录注册，主动注册由 `InstanceRegistry` 对接 `cx_a_endpoint` 完成。计作内部端点，一般不直接调用。
+  - **CX-A 侧接收落点（20261004）**：`cx_a_endpoint` 配置为 CX-A 的 `POST http://<cx-a-host>:8600/api/admin/register`；CX-A 据此维护实例台账（`data/fleet.json`）并统一透传治理指令（`/api/fleet/*`，鉴权见 CX-A 侧 `logs/api_token.json` 令牌链路）。上报格式即本模块 `InstanceRegistry` 实际 payload（`{instance_id, endpoint, role, timestamp}`，无鉴权头）；**CX-A 仅接受回环来源的注册**——跨机实例请在 CX-A 手动登记（`POST /api/fleet/instances`）。
 
 ---
 
