@@ -8,7 +8,7 @@ import WorkflowPage from "./pages/WorkflowPage";
 
 const NAV_ITEMS = [
   { to: "/datasets", label: "数据集管理", desc: "speaker 目录与音频导入" },
-  { to: "/corpus", label: "批量语料生成", desc: "VoxCPM 文本转训练语料" },
+  { to: "/corpus", label: "批量语料生成", desc: "一套流程：参考音频 → 语料 → 编号" },
   { to: "/train", label: "训练控制台", desc: "预处理 / 训练 / 进度" },
   { to: "/models", label: "模型库", desc: "模型列表与试听推理" },
   { to: "/workflow", label: "工作流总览", desc: "三步训练编排" },

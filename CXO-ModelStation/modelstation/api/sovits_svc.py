@@ -49,7 +49,10 @@ router = APIRouter()
 
 
 class SVCPreprocessRequest(BaseModel):
-    training_data_dir: str
+    # 数据来源二选一：dataset_id（统一流程编号 DS-xxx）或 training_data_dir（显式路径）；
+    # 同时给出时以 dataset_id 为准（speaker_name 随编号登记项固定）
+    dataset_id: Optional[str] = None
+    training_data_dir: Optional[str] = None
     speaker_name: str = "speaker"
 
 
@@ -61,6 +64,8 @@ class SVCTrainRequest(BaseModel):
     output_name: Optional[str] = None
     # 说话人名称透传；None 时 trainer 走默认 "speaker"（sovits_svc_trainer.start_training）
     speaker_name: Optional[str] = None
+    # 数据集编号（统一流程 DS-xxx）；提供时覆盖 speaker_name
+    dataset_id: Optional[str] = None
 
 
 class SVCInferRequest(BaseModel):
@@ -131,16 +136,41 @@ async def preprocess(request: SVCPreprocessRequest):
     """So-VITS-SVC 数据预处理"""
     try:
         trainer = _get_trainer()
-        training_data_dir = validate_training_data_dir(request.training_data_dir)
+        if request.dataset_id:
+            # 按编号解析数据集（训练入口直接选择编号）：目录锚定统一数据集根
+            from modelstation.services.dataset_builder import resolve_datasets_root
+            from modelstation.services.dataset_registry import (
+                DatasetRegistryError,
+                get_entry,
+            )
+
+            try:
+                entry = get_entry(request.dataset_id)
+            except DatasetRegistryError as e:
+                raise HTTPException(status_code=400, detail=str(e))
+            training_data_dir = validate_training_data_dir(
+                str(resolve_datasets_root().parent)
+            )
+            speaker_name = entry["name"]
+        else:
+            if not request.training_data_dir:
+                raise HTTPException(
+                    status_code=400, detail="dataset_id 与 training_data_dir 至少提供一个"
+                )
+            training_data_dir = validate_training_data_dir(request.training_data_dir)
+            speaker_name = request.speaker_name
         results = await trainer.preprocess(
             training_data_dir=str(training_data_dir),
-            speaker_name=request.speaker_name,
+            speaker_name=speaker_name,
         )
         all_success = all(v.get("success", False) for v in results.values())
         return {
             "status": "success" if all_success else "partial",
             "results": results,
         }
+    except HTTPException:
+        # 语义化错误（如编号不存在 400）原样透传，不吞为 500
+        raise
     except Exception as e:
         logger.error(f"So-VITS-SVC preprocess error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
@@ -184,12 +214,27 @@ async def start_training(request: SVCTrainRequest):
     try:
         trainer = _get_trainer()
 
+        speaker_name = request.speaker_name
+        if request.dataset_id:
+            # 按编号选择训练数据集（覆盖 speaker_name）
+            from modelstation.services.dataset_registry import (
+                DatasetRegistryError,
+                get_entry,
+            )
+
+            try:
+                speaker_name = get_entry(request.dataset_id)["name"]
+            except DatasetRegistryError as e:
+                _train_status["status"] = "idle"
+                end_training(TRAINING_SOVITS_SVC)
+                raise HTTPException(status_code=400, detail=str(e))
+
         task_id = await trainer.start_training(
             epochs=request.epochs,
             batch_size=request.batch_size,
             learning_rate=request.learning_rate,
             output_name=request.output_name,
-            speaker_name=request.speaker_name,
+            speaker_name=speaker_name,
             progress_callback=lambda **kw: _update_train_status(**kw),
         )
 
@@ -201,6 +246,9 @@ async def start_training(request: SVCTrainRequest):
 
         return {"status": "success", "task_id": task_id, "message": "训练已启动"}
 
+    except HTTPException:
+        # 语义化错误（如编号不存在 400，互斥已在本分支内复位）原样透传，不吞为 500
+        raise
     except Exception as e:
         # 启动失败/异常：复位忙状态 + 释放跨类型互斥（幂等），允许后续重试
         _train_status["status"] = "idle"

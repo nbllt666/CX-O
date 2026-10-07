@@ -23,6 +23,7 @@ const mockedApi = vi.mocked(api, true);
 const sampleDatasets = [
   {
     name: "speaker1",
+    dataset_id: null,
     file_count: 3,
     total_size_bytes: 2048,
     created_at: "2026-09-05T10:00:00+08:00",
@@ -34,6 +35,7 @@ const sampleDatasets = [
   },
   {
     name: "speaker2",
+    dataset_id: null,
     file_count: 0,
     total_size_bytes: 0,
     created_at: "2026-09-05T11:00:00+08:00",

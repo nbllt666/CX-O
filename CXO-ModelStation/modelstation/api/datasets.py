@@ -46,11 +46,10 @@ datasets_router = APIRouter()
 
 class BatchDatasetTextItem(BaseModel):
     text: str = Field(..., min_length=1)
-    control: Optional[str] = None  # 条目级控制描述，覆盖任务级 control（voxcpm）
 
 
 class EngineParams(BaseModel):
-    """运行时引擎专属参数（按 engine 联动；voxcpm 不消费）。
+    """运行时引擎专属参数（按 engine 联动）。
 
     - cosyvoice3_zero：ref_audio_path（必填，白名单路径：training_data_dir ∪ input_dir）、
       ref_text（可选参考转写，提升克隆质量）；
@@ -65,50 +64,77 @@ class EngineParams(BaseModel):
 class BatchGenerateRequest(BaseModel):
     speaker_name: str = Field(..., min_length=1)
     texts: list[BatchDatasetTextItem] = Field(..., min_length=1)
-    engine: Literal["voxcpm", "cosyvoice3_zero", "qwen3_voicedesign"] = Field(
-        default="voxcpm",
-        description="数据集生成引擎：voxcpm（子进程）/ cosyvoice3_zero（零样本克隆）/ "
-        "qwen3_voicedesign（声音设计）；非法值 → 422",
+    engine: Literal["cosyvoice3_zero", "qwen3_voicedesign"] = Field(
+        default="cosyvoice3_zero",
+        description="数据集生成引擎：cosyvoice3_zero（零样本克隆）/ "
+        "qwen3_voicedesign（声音设计）；voxcpm 已停用（请改用统一流程 "
+        "POST /api/datasets/generate）；非法值 → 422",
     )
-    # ---- voxcpm 专属参数（现状不变）----
-    mode: str = Field(default="design", pattern="^(design|controllable_clone|ultimate_clone)$")
-    control: str = ""
-    reference_audio_path: Optional[str] = None
-    prompt_audio_path: Optional[str] = None
-    prompt_text: Optional[str] = None
-    cfg_value: Optional[float] = None
-    inference_timesteps: Optional[int] = None
-    # ---- 运行时引擎参数（cosyvoice3_zero / qwen3_voicedesign）----
     engine_params: EngineParams = Field(default_factory=EngineParams)
+
+
+class PipelineGenerateRequest(BaseModel):
+    """统一数据集生成流程（一套流程）请求。
+
+    流程：qwen3_voicedesign 以 voice_description 生成「初始参考音频」
+    （播报内容=ref_text，缺省用内置句）→ cosyvoice3_zero 以该参考音频
+    零样本克隆生成全部 texts → 数据集登记编号（DS-001 起，目录名缺省同编号）。
+    """
+
+    voice_description: str = Field(..., min_length=1, description="音色描述（自然语言）")
+    texts: list[BatchDatasetTextItem] = Field(..., min_length=1)
+    ref_text: Optional[str] = Field(None, description="参考音频播报文本（缺省用内置句）")
+    name: Optional[str] = Field(
+        None, description="数据集目录名（缺省与编号相同；仅字母/数字/下划线/连字符）"
+    )
+
+
+@batch_router.post("/generate")
+async def generate_dataset_pipeline(request: PipelineGenerateRequest):
+    """提交统一数据集生成流程，立即返回 dataset_id + task_id，后台两阶段执行"""
+    from modelstation.config import get_settings
+    from modelstation.services.dataset_builder import get_dataset_builder
+
+    if getattr(get_settings(), "tts_runtime", None) is None:
+        raise HTTPException(
+            status_code=503,
+            detail="tts_runtime 配置段未就绪，统一流程依赖运行时引擎（qwen3/cosyvoice）",
+        )
+
+    try:
+        result = await get_dataset_builder().submit_pipeline(
+            request.voice_description,
+            [item.model_dump() for item in request.texts],
+            ref_text=request.ref_text or "",
+            speaker_name=request.name,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        logger.error(f"统一流程任务提交失败: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+    return {"status": "success", **result}
 
 
 @batch_router.post("/batch-generate")
 async def submit_batch_generate(request: BatchGenerateRequest):
-    """提交统一数据集批量生成任务（三引擎），立即返回 task_id，后台逐条生成"""
+    """提交批量数据集生成任务（运行时引擎），立即返回 task_id，后台逐条生成"""
     from modelstation.config import get_settings
     from modelstation.services.dataset_builder import get_dataset_builder
 
-    if request.engine != "voxcpm":
-        # 并行时序防御：tts_runtime 配置段由 Task 1 落地，缺失时明确报错（合跑后不可达）
-        if getattr(get_settings(), "tts_runtime", None) is None:
-            raise HTTPException(
-                status_code=503,
-                detail="tts_runtime 配置段未就绪（依赖并行分支 config 落地），"
-                "暂时无法使用运行时引擎，请改用 engine=voxcpm 或等待配置就绪",
-            )
+    # 并行时序防御：tts_runtime 配置段缺失时明确报错（合跑后不可达）
+    if getattr(get_settings(), "tts_runtime", None) is None:
+        raise HTTPException(
+            status_code=503,
+            detail="tts_runtime 配置段未就绪，暂时无法使用运行时引擎",
+        )
 
     try:
         task_id = await get_dataset_builder().submit(
             request.speaker_name,
             [item.model_dump() for item in request.texts],
-            mode=request.mode,
             engine=request.engine,
-            control=request.control,
-            reference_audio_path=request.reference_audio_path,
-            prompt_audio_path=request.prompt_audio_path,
-            prompt_text=request.prompt_text,
-            cfg_value=request.cfg_value,
-            inference_timesteps=request.inference_timesteps,
             engine_params=request.engine_params.model_dump(),
         )
     except ValueError as e:
@@ -133,11 +159,12 @@ async def get_batch_generate_task(task_id: str):
 
 @datasets_router.get("/datasets")
 async def list_svc_datasets():
-    """列出全部 SVC 训练数据集（speaker 目录、音频数量、总大小、创建时间）"""
+    """列出全部 SVC 训练数据集（编号、speaker 目录、音频数量、总大小、创建时间）"""
     from modelstation.services.dataset_builder import list_datasets
+    from modelstation.services.dataset_registry import attach_dataset_ids
 
     try:
-        return {"status": "success", "datasets": list_datasets()}
+        return {"status": "success", "datasets": attach_dataset_ids(list_datasets())}
     except Exception as e:
         logger.error(f"数据集列表查询失败: {e}")
         raise HTTPException(status_code=500, detail=str(e))

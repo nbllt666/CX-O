@@ -35,7 +35,10 @@ router = APIRouter()
 
 
 class MelottsPreprocessRequest(BaseModel):
-    dataset_dir: str
+    # 数据集来源二选一：dataset_id（统一流程编号 DS-xxx）或 dataset_dir（显式路径）；
+    # 同时给出时以 dataset_id 为准
+    dataset_id: Optional[str] = None
+    dataset_dir: Optional[str] = None
     # filelist 说话人名；缺省取 dataset_dir 目录名（清洗语义与 dataset_builder 一致）
     speaker_name: Optional[str] = None
     # 语言代码（filelist 第三列）；缺省取 config.melotts.language
@@ -72,8 +75,27 @@ def _conflict_detail(current: Optional[dict]) -> dict:
 async def preprocess(request: MelottsPreprocessRequest):
     """MeloTTS 数据准备：统一数据集（manifest v2）→ train/val filelist"""
     try:
+        if request.dataset_id:
+            # 按编号解析数据集目录（训练入口直接选择编号）
+            from modelstation.services.dataset_builder import resolve_dataset_dir
+            from modelstation.services.dataset_registry import (
+                DatasetRegistryError,
+                get_entry,
+            )
+
+            try:
+                entry = get_entry(request.dataset_id)
+            except DatasetRegistryError as e:
+                raise HTTPException(status_code=400, detail=str(e))
+            dataset_dir = str(resolve_dataset_dir(entry["name"]))
+        elif request.dataset_dir:
+            dataset_dir = request.dataset_dir
+        else:
+            raise HTTPException(
+                status_code=400, detail="dataset_id 与 dataset_dir 至少提供一个"
+            )
         # 集中校验 dataset_dir 必须位于 data/training 之下（防目录穿越/任意路径）
-        validated_dir = validate_training_data_dir(request.dataset_dir)
+        validated_dir = validate_training_data_dir(dataset_dir)
         kwargs = {"dataset_dir": str(validated_dir)}
         if request.speaker_name is not None:
             kwargs["speaker_name"] = request.speaker_name
@@ -81,6 +103,9 @@ async def preprocess(request: MelottsPreprocessRequest):
             kwargs["language"] = request.language
         stats = prepare_filelists(**kwargs)
         return {"status": "success", "stats": stats}
+    except HTTPException:
+        # 语义化错误（如编号不存在 400）原样透传，不吞为 500
+        raise
     except ValueError as e:
         logger.warning(f"MeloTTS preprocess invalid request: {e}")
         raise HTTPException(status_code=400, detail=str(e))

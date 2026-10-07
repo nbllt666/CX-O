@@ -32,6 +32,8 @@ export interface HealthInfo {
 
 export interface DatasetInfo {
   name: string;
+  /** 数据集编号（统一流程登记 DS-xxx；导入/历史数据集为 null） */
+  dataset_id: string | null;
   file_count: number;
   total_size_bytes: number;
   created_at: string;
@@ -65,12 +67,23 @@ export interface PreprocessResult {
   results: Record<string, { success: boolean } & Record<string, unknown>>;
 }
 
+/** POST /api/sovits-svc/preprocess 请求：数据来源二选一（编号或显式路径） */
+export interface SVCPreprocessRequest {
+  /** 数据集编号（统一流程 DS-xxx，如 DS-001） */
+  dataset_id?: string;
+  /** 数据根目录（含 raw/<speaker>；相对路径锚定 CXO-ModelStation 根） */
+  training_data_dir?: string;
+  speaker_name?: string;
+}
+
 export interface TrainStartRequest {
   epochs: number;
   batch_size: number;
   learning_rate: number;
   output_name?: string | null;
   speaker_name?: string | null;
+  /** 数据集编号（统一流程 DS-xxx）；提供时覆盖 speaker_name */
+  dataset_id?: string | null;
 }
 
 export interface TrainStartResult {
@@ -119,10 +132,12 @@ export interface InferResult {
 
 // ---- MeloTTS 训练（/api/melotts，形状与 sovits 同构）----
 
-/** POST /api/melotts/preprocess 请求：统一数据集（speaker 目录）→ 训练 filelist */
+/** POST /api/melotts/preprocess 请求：数据来源二选一（编号或显式路径） */
 export interface MelottsPreprocessRequest {
+  /** 数据集编号（统一流程 DS-xxx，如 DS-001） */
+  dataset_id?: string;
   /** 数据集目录（相对路径锚定 CXO-ModelStation 根，如 data/training/sovits_svc/raw/speaker1） */
-  dataset_dir: string;
+  dataset_dir?: string;
   speaker_name?: string;
 }
 
@@ -163,13 +178,13 @@ export interface MelottsTrainStatus {
 
 export interface BatchTextItem {
   text: string;
-  control?: string | null;
 }
 
-/** 数据集生成引擎：voxcpm（子进程）/ cosyvoice3_zero（零样本克隆）/ qwen3_voicedesign（声音设计） */
-export type BatchEngine = "voxcpm" | "cosyvoice3_zero" | "qwen3_voicedesign";
+/** 数据集生成引擎：cosyvoice3_zero（零样本克隆）/ qwen3_voicedesign（声音设计）；
+ *  voxcpm 已停用（批量语料统一走一套流程 POST /api/datasets/generate） */
+export type BatchEngine = "cosyvoice3_zero" | "qwen3_voicedesign";
 
-/** 运行时引擎专属参数（按 engine 联动；voxcpm 不消费） */
+/** 运行时引擎专属参数（按 engine 联动） */
 export interface EngineParams {
   /** cosyvoice3_zero：参考音频路径（白名单：training_data_dir ∪ data/input） */
   ref_audio_path?: string;
@@ -182,19 +197,32 @@ export interface EngineParams {
 export interface BatchDatasetRequest {
   speaker_name: string;
   texts: BatchTextItem[];
-  /** 生成引擎（后端默认 voxcpm；运行时引擎参数走 engine_params） */
+  /** 生成引擎（后端默认 cosyvoice3_zero） */
   engine: BatchEngine;
-  // ---- voxcpm 专属参数（现状不变）----
-  /** design | controllable_clone | ultimate_clone（仅 voxcpm） */
-  mode?: string;
-  control?: string;
-  reference_audio_path?: string | null;
-  prompt_audio_path?: string | null;
-  prompt_text?: string | null;
-  cfg_value?: number | null;
-  inference_timesteps?: number | null;
-  // ---- 运行时引擎参数（cosyvoice3_zero / qwen3_voicedesign）----
   engine_params?: EngineParams;
+}
+
+/** POST /api/datasets/generate：统一流程请求（一套流程） */
+export interface PipelineGenerateRequest {
+  /** 音色描述（自然语言，用于 qwen3 生成初始参考音频） */
+  voice_description: string;
+  texts: BatchTextItem[];
+  /** 参考音频播报文本（缺省用内置句） */
+  ref_text?: string | null;
+  /** 数据集目录名（缺省与编号相同） */
+  name?: string | null;
+}
+
+/** POST /api/datasets/generate 响应 */
+export interface PipelineGenerateResult {
+  status: string;
+  /** 数据集编号（DS-001 起，训练入口直接选择该编号） */
+  dataset_id: string;
+  name: string;
+  task_id: string;
+  dataset_dir: string;
+  /** 总条数 = 1（参考音频）+ 语料文本数 */
+  total: number;
 }
 
 export interface BatchDatasetSubmitResult {
@@ -214,9 +242,12 @@ export interface BatchTaskStatus {
   task_id: string;
   speaker_name: string;
   dataset_dir: string;
-  /** 运行时引擎（非 voxcpm）下 mode 为空串 */
+  /** 统一流程（pipeline）下 mode 为空串 */
   mode: string;
-  engine: BatchEngine;
+  /** 引擎来源：运行时引擎 / pipeline（统一流程） */
+  engine: BatchEngine | "pipeline";
+  /** 数据集编号（统一流程 DS-xxx；普通批量任务为空串） */
+  dataset_id: string;
   status: string;
   total: number;
   done: number;
@@ -288,7 +319,7 @@ export const api = {
   getHealth: () => request<HealthInfo>("/health"),
 
   // ---- So-VITS-SVC 训练（/api/sovits-svc）----
-  preprocess: (req: { training_data_dir: string; speaker_name?: string }) =>
+  preprocess: (req: SVCPreprocessRequest) =>
     request<PreprocessResult>("/api/sovits-svc/preprocess", {
       method: "POST",
       headers: JSON_HEADERS,
@@ -341,7 +372,15 @@ export const api = {
       { method: "DELETE" },
     ),
 
-  // ---- 统一批量语料生成（/api/datasets，三引擎）----
+  // ---- 统一流程 / 批量语料生成（/api/datasets）----
+  /** 一套流程：qwen3 初始参考音频 → cosyvoice 批量语料 → 数据集编号 */
+  generateDataset: (req: PipelineGenerateRequest) =>
+    request<PipelineGenerateResult>("/api/datasets/generate", {
+      method: "POST",
+      headers: JSON_HEADERS,
+      body: JSON.stringify(req),
+    }),
+
   submitBatchDataset: (req: BatchDatasetRequest) =>
     request<BatchDatasetSubmitResult>("/api/datasets/batch-generate", {
       method: "POST",

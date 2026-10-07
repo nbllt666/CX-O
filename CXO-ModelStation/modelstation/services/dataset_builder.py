@@ -74,6 +74,11 @@ ENGINE_QWEN3_VOICEDESIGN = "qwen3_voicedesign"
 # 运行时引擎（经 RuntimeTTSClient 走 vLLM HTTP 合成，区别于 voxcpm 子进程链路）
 _RUNTIME_ENGINES = (ENGINE_COSYVOICE3_ZERO, ENGINE_QWEN3_VOICEDESIGN)
 _SUPPORTED_ENGINES = (ENGINE_VOXCPM,) + _RUNTIME_ENGINES
+# 统一流程引擎标识（一套流程：qwen3 初始参考音频 → cosyvoice 批量 → 数据集编号；
+# 仅作为任务/注册表来源标记，实际合成由阶段内引擎承担）
+ENGINE_PIPELINE = "pipeline"
+# 统一流程参考音频缺省播报内容（请求未提供 ref_text 时使用；同时作为 manifest 条目 text）
+_DEFAULT_REFERENCE_TEXT = "你好，这是一段用来确定音色的参考音频，希望你会喜欢我的声音。"
 
 # ---------------------------------------------------------------------------
 # per-dataset_dir 互斥：同一目录并发批量任务会互覆盖 manifest（编号取
@@ -273,7 +278,8 @@ class BatchDatasetTask:
     total: int
     mode: str
     created_at: str
-    engine: str = "voxcpm"  # 引擎来源（voxcpm）
+    engine: str = "voxcpm"  # 引擎来源（voxcpm / 运行时引擎 / pipeline 统一流程）
+    dataset_id: str = ""  # 数据集编号（统一流程登记 DS-xxx；非统一流程为空）
     status: str = "pending"  # pending / running / completed / failed
     done: int = 0  # 本次新生成的条数
     skipped: int = 0  # 指纹命中 manifest 跳过的条数
@@ -290,6 +296,7 @@ class BatchDatasetTask:
             "dataset_dir": self.dataset_dir,
             "mode": self.mode,
             "engine": self.engine,
+            "dataset_id": self.dataset_id,
             "status": self.status,
             "total": self.total,
             "done": self.done,
@@ -461,6 +468,176 @@ class DatasetBuilderService:
         return dict(record.to_dict())
 
     # ------------------------------------------------------------------
+    # 统一流程（一套流程：qwen3 初始参考音频 → cosyvoice 批量 → 数据集编号）
+    # ------------------------------------------------------------------
+
+    async def submit_pipeline(
+        self,
+        voice_description: str,
+        texts: list[dict],
+        *,
+        ref_text: str = "",
+        speaker_name: Optional[str] = None,
+    ) -> dict:
+        """提交统一数据集生成流程，立即返回 dataset_id + task_id，后台执行。
+
+        单任务串行两阶段（共用 per-dataset_dir 互斥锁）：
+          1) qwen3_voicedesign 生成「初始参考音频」（播报内容=ref_text，缺省用内置句），
+             作为 manifest 首条目（role=reference）并回填注册表 ref_audio；
+          2) cosyvoice3_zero 以该参考音频零样本克隆生成全部语料文本。
+
+        编号：经 dataset_registry 分配 DS-xxx（目录名缺省与编号相同）。
+
+        Returns:
+            {"task_id", "dataset_id", "name", "dataset_dir", "total"}；
+            total = 1（参考音频）+ len(texts)
+
+        Raises:
+            ValueError: texts/voice_description 为空或数据集名非法
+        """
+        from modelstation.services import dataset_registry
+
+        if not voice_description or not str(voice_description).strip():
+            raise ValueError("voice_description must not be empty")
+        if not texts:
+            raise ValueError("texts must not be empty")
+        for i, item in enumerate(texts):
+            text = item.get("text") if isinstance(item, dict) else None
+            if not text or not str(text).strip():
+                raise ValueError(f"texts[{i}].text must not be empty")
+
+        desc = str(voice_description).strip()
+        ref_text = str(ref_text or "").strip()
+        try:
+            registered = dataset_registry.register_dataset(
+                speaker_name, engine=ENGINE_PIPELINE, ref_text=ref_text or None,
+            )
+        except dataset_registry.DatasetRegistryError as exc:
+            raise ValueError(str(exc)) from exc
+
+        dataset_dir = resolve_dataset_dir(registered["name"])
+        dataset_dir.mkdir(parents=True, exist_ok=True)
+
+        task_id = uuid.uuid4().hex
+        dataset_registry.update_entry(registered["dataset_id"], task_id=task_id)
+        record = BatchDatasetTask(
+            task_id=task_id,
+            speaker_name=registered["name"],
+            dataset_dir=str(dataset_dir),
+            total=1 + len(texts),
+            mode="",
+            created_at=_now_iso(),
+            engine=ENGINE_PIPELINE,
+            dataset_id=registered["dataset_id"],
+        )
+        self._tasks[task_id] = record
+
+        bg = asyncio.get_running_loop().create_task(
+            self._run_pipeline(record, desc, ref_text, texts, dataset_dir)
+        )
+        self._bg_tasks[task_id] = bg
+        bg.add_done_callback(lambda t, tid=task_id: self._on_bg_done(tid, t))
+        logger.info(
+            "统一流程任务已提交: task_id=%s dataset_id=%s name=%s total=%d",
+            task_id, registered["dataset_id"], registered["name"], 1 + len(texts),
+        )
+        return {
+            "task_id": task_id,
+            "dataset_id": registered["dataset_id"],
+            "name": registered["name"],
+            "dataset_dir": str(dataset_dir),
+            "total": 1 + len(texts),
+        }
+
+    async def _run_pipeline(
+        self,
+        record: BatchDatasetTask,
+        voice_description: str,
+        ref_text: str,
+        texts: list[dict],
+        dataset_dir: Path,
+    ) -> None:
+        """统一流程主体：阶段1 生成参考音频 → 阶段2 cosyvoice 批量克隆。
+
+        全程持有 dataset_dir 互斥锁（manifest 读改写与条目编号防并发互覆盖）。
+        """
+        from modelstation.services import dataset_registry
+
+        dir_lock = _get_dir_lock(os.path.abspath(str(dataset_dir)))
+        try:
+            record.status = "running"
+            async with dir_lock:
+                manifest = self._load_manifest(dataset_dir)
+                entries: list[dict] = manifest.setdefault("entries", [])
+
+                # ---- 阶段1：初始参考音频（qwen3_voicedesign）----
+                spoken = ref_text or _DEFAULT_REFERENCE_TEXT
+                fp = _entry_fingerprint({
+                    "role": "reference",
+                    "engine": ENGINE_QWEN3_VOICEDESIGN,
+                    "voice_description": voice_description,
+                })
+                filename = f"{len(entries) + 1:04d}_{fp[:8]}.wav"
+                ref_path = dataset_dir / filename
+                record.current_text = "（生成初始参考音频）"
+                try:
+                    client = self._runtime_client_factory(ENGINE_QWEN3_VOICEDESIGN)
+                    await self._generate_one_runtime(
+                        ENGINE_QWEN3_VOICEDESIGN, client, spoken,
+                        {"voice_description": voice_description}, ref_path,
+                    )
+                    if not ref_path.is_file():
+                        raise RuntimeError(f"生成完成但输出文件不存在: {ref_path}")
+                except Exception as exc:
+                    record.status = "failed"
+                    record.error = f"初始参考音频生成失败: {exc}"
+                    record.current_text = None
+                    record.finished_at = _now_iso()
+                    logger.error(
+                        "统一流程参考音频生成失败: task_id=%s error=%s", record.task_id, exc,
+                    )
+                    return
+                entries.append({
+                    "fingerprint": fp,
+                    "file": filename,
+                    "md5": _md5_file(ref_path),
+                    "text": spoken,
+                    "engine": ENGINE_QWEN3_VOICEDESIGN,
+                    "mode": "",
+                    "control": "",
+                    "role": "reference",
+                    "created_at": _now_iso(),
+                })
+                self._write_manifest(dataset_dir, manifest)
+                record.done += 1
+                if record.dataset_id:
+                    dataset_registry.update_entry(record.dataset_id, ref_audio=filename)
+                record.current_text = None
+
+                # ---- 阶段2：cosyvoice3_zero 零样本克隆批量生成 ----
+                await self._batch_generate_locked(
+                    record, texts,
+                    engine=ENGINE_COSYVOICE3_ZERO,
+                    mode="",
+                    engine_params={"ref_audio_path": str(ref_path), "ref_text": ref_text},
+                    control="",
+                    reference_audio_path=None,
+                    prompt_audio_path=None,
+                    prompt_text=None,
+                    cfg_value=None,
+                    inference_timesteps=None,
+                    dataset_dir=dataset_dir,
+                )
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            record.status = "failed"
+            record.error = str(exc)
+            record.current_text = None
+            record.finished_at = _now_iso()
+            logger.error("统一流程任务失败: task_id=%s error=%s", record.task_id, exc)
+
+    # ------------------------------------------------------------------
     # 批量生成主流程
     # ------------------------------------------------------------------
 
@@ -519,18 +696,53 @@ class DatasetBuilderService:
         dataset_dir: Path,
     ) -> None:
         """批量生成主体（调用方持有 dataset_dir 互斥锁，同目录任务全程串行）"""
+        await self._batch_generate_locked(
+            record, texts,
+            engine=record.engine,
+            mode=record.mode,
+            engine_params=engine_params,
+            control=control,
+            reference_audio_path=reference_audio_path,
+            prompt_audio_path=prompt_audio_path,
+            prompt_text=prompt_text,
+            cfg_value=cfg_value,
+            inference_timesteps=inference_timesteps,
+            dataset_dir=dataset_dir,
+        )
+
+    async def _batch_generate_locked(
+        self,
+        record: BatchDatasetTask,
+        texts: list[dict],
+        *,
+        engine: str,
+        mode: str,
+        engine_params: Optional[dict],
+        control: str,
+        reference_audio_path: Optional[str],
+        prompt_audio_path: Optional[str],
+        prompt_text: Optional[str],
+        cfg_value: Optional[float],
+        inference_timesteps: Optional[int],
+        dataset_dir: Path,
+    ) -> None:
+        """批量生成核心循环（按给定 engine/mode 执行；调用方持有 dataset_dir 互斥锁）。
+
+        engine/mode 与 record 解耦：统一流程的阶段二以 cosyvoice 引擎参数复用本循环，
+        而 record.engine 保持 "pipeline" 作为任务来源标记。
+        """
         manifest = self._load_manifest(dataset_dir)
         entries: list[dict] = manifest.setdefault("entries", [])
         by_fingerprint = {e.get("fingerprint"): e for e in entries}
 
         # 按引擎获取合成 client：voxcpm 走子进程链路，运行时引擎走 HTTP 客户端
         params = dict(engine_params or {})
-        if record.engine == ENGINE_VOXCPM:
+        if engine == ENGINE_VOXCPM:
             client = self._client_factory()
             runtime_client = None
         else:
             client = None
-            runtime_client = self._runtime_client_factory(record.engine)
+            runtime_client = self._runtime_client_factory(engine)
 
         # voxcpm 推理参数覆盖
         kwargs: dict[str, Any] = {}
@@ -548,10 +760,10 @@ class DatasetBuilderService:
             # 去重指纹参数：voxcpm 沿用旧字段集（不含 engine）保持与既有 manifest
             # 兼容（旧 fingerprint 命中跳过）；运行时引擎以 engine+text+engine_params
             # 为去重维度（参数不同即重新生成）
-            if record.engine == ENGINE_VOXCPM:
+            if engine == ENGINE_VOXCPM:
                 fp_params = {
                     "text": text,
-                    "mode": record.mode,
+                    "mode": mode,
                     "control": effective_control,
                     "reference_audio_path": reference_audio_path,
                     "prompt_audio_path": prompt_audio_path,
@@ -560,7 +772,7 @@ class DatasetBuilderService:
                     "inference_timesteps": inference_timesteps,
                 }
             else:
-                fp_params = {"engine": record.engine, "text": text, "params": params}
+                fp_params = {"engine": engine, "text": text, "params": params}
             fingerprint = _entry_fingerprint(fp_params)
 
             existing = by_fingerprint.get(fingerprint)
@@ -574,15 +786,15 @@ class DatasetBuilderService:
             filename = f"{len(entries) + 1:04d}_{fingerprint[:8]}.wav"
             output_path = dataset_dir / filename
             try:
-                if record.engine == ENGINE_VOXCPM:
+                if engine == ENGINE_VOXCPM:
                     await self._generate_one(
-                        record.engine, client, record.mode, text, effective_control,
+                        engine, client, mode, text, effective_control,
                         reference_audio_path, prompt_audio_path, prompt_text,
                         output_path, kwargs,
                     )
                 else:
                     await self._generate_one_runtime(
-                        record.engine, runtime_client, text, params, output_path,
+                        engine, runtime_client, text, params, output_path,
                     )
                 if not output_path.is_file():
                     raise RuntimeError(f"生成完成但输出文件不存在: {output_path}")
@@ -601,8 +813,8 @@ class DatasetBuilderService:
                 "file": filename,
                 "md5": _md5_file(output_path),
                 "text": text,
-                "engine": record.engine,
-                "mode": record.mode,
+                "engine": engine,
+                "mode": mode,
                 "control": effective_control,
                 "created_at": _now_iso(),
             }

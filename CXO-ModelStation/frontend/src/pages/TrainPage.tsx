@@ -1,12 +1,13 @@
 /*
  * 训练控制台页：模型类型切换（So-VITS-SVC / MeloTTS，分段控件），
- * 预处理表单、训练参数表单、训练状态进度轮询（3s）、停止按钮按类型渲染。
+ * 数据集按编号选择（一套流程产物 DS-xxx；导入数据集按名称回退显式路径），
+ * 训练参数表单、训练状态进度轮询（3s）、停止按钮按类型渲染。
  * 训练状态 GET /api/sovits-svc/status、GET /api/melotts/status：progress 取值 0-1；
  * 两类训练共享「同一时间仅一个训练任务」互斥（409 时展示冲突提示）。
  */
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { api, ApiClientError } from "../api/client";
-import type { TrainStartRequest } from "../api/client";
+import type { DatasetInfo, TrainStartRequest } from "../api/client";
 import { ErrorBar, NoticeBar, StatusBadge } from "../components/ui";
 import { usePolling } from "../hooks/usePolling";
 
@@ -23,6 +24,9 @@ const TYPE_LABELS: Record<TrainModelType, string> = {
   melotts: "MeloTTS",
 };
 
+/** 统一数据集根（导入/历史数据集回退显式路径用，锚定 CXO-ModelStation 根） */
+const SVC_RAW_ROOT = "data/training/sovits_svc";
+
 function toMessage(e: unknown): string {
   return e instanceof Error ? e.message : String(e);
 }
@@ -34,6 +38,11 @@ function formatActionError(e: unknown): string {
     return `训练互斥冲突（同一时间仅允许一个训练任务）：${msg}`;
   }
   return msg;
+}
+
+/** 数据集下拉选项文案：优先展示编号（DS-xxx），导入数据集仅名称 */
+function datasetLabel(ds: DatasetInfo): string {
+  return ds.dataset_id ? `${ds.dataset_id}（${ds.name}）` : ds.name;
 }
 
 export default function TrainPage() {
@@ -55,18 +64,38 @@ export default function TrainPage() {
   const stopped = activePoll.stopped;
   const refresh = activePoll.refresh;
 
-  // ---- sovits 表单状态（现状不变）----
-  const [prepDir, setPrepDir] = useState("");
-  const [prepSpeaker, setPrepSpeaker] = useState("speaker");
+  // ---- 数据集列表（按编号选择；进入页面加载一次）----
+  const [datasets, setDatasets] = useState<DatasetInfo[]>([]);
+  const [datasetsError, setDatasetsError] = useState<string | null>(null);
+  const [selectedName, setSelectedName] = useState("");
+  const [listBusy, setListBusy] = useState(false);
+
+  const loadDatasets = useCallback(async () => {
+    setListBusy(true);
+    setDatasetsError(null);
+    try {
+      const res = await api.listDatasets();
+      setDatasets(res.datasets);
+    } catch (e) {
+      setDatasetsError(toMessage(e));
+    } finally {
+      setListBusy(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    void loadDatasets();
+  }, [loadDatasets]);
+
+  const selected = datasets.find((d) => d.name === selectedName) ?? null;
+
+  // ---- sovits 表单状态 ----
   const [epochs, setEpochs] = useState("10000");
   const [batchSize, setBatchSize] = useState("4");
   const [learningRate, setLearningRate] = useState("0.0001");
   const [outputName, setOutputName] = useState("");
-  const [trainSpeaker, setTrainSpeaker] = useState("");
 
   // ---- melotts 表单状态 ----
-  const [mPrepDir, setMPrepDir] = useState("");
-  const [mPrepSpeaker, setMPrepSpeaker] = useState("speaker");
   const [mEpochs, setMEpochs] = useState("10000");
   const [mBatchSize, setMBatchSize] = useState("4");
   const [mLearningRate, setMLearningRate] = useState("0.0001");
@@ -123,16 +152,18 @@ export default function TrainPage() {
   const handlePreprocess = async () => {
     setActionError(null);
     setNotice(null);
-    if (!prepDir.trim()) {
-      setActionError("请填写训练数据目录（相对路径锚定 CXO-ModelStation 根，如 data/training/sovits_svc/raw/speaker1）");
+    if (!selected) {
+      setActionError("请先选择数据集");
       return;
     }
     setBusy(true);
     try {
-      const res = await api.preprocess({
-        training_data_dir: prepDir.trim(),
-        speaker_name: prepSpeaker.trim() || "speaker",
-      });
+      // 有编号的数据集直接按编号选择；导入数据集回退显式路径
+      const res = await api.preprocess(
+        selected.dataset_id
+          ? { dataset_id: selected.dataset_id }
+          : { training_data_dir: SVC_RAW_ROOT, speaker_name: selected.name },
+      );
       const entries = Object.entries(res.results);
       const okCount = entries.filter(([, v]) => v.success).length;
       setNotice(`预处理完成（${res.status === "success" ? "全部成功" : "部分成功"}）：${okCount}/${entries.length} 个 speaker 成功`);
@@ -146,16 +177,23 @@ export default function TrainPage() {
   const handleTrain = async () => {
     setActionError(null);
     setNotice(null);
+    if (!selected) {
+      setActionError("请先选择数据集");
+      return;
+    }
     const nums = validateTrainNumbers(epochs, batchSize, learningRate);
     if (nums === null) {
       return;
     }
-    const req: TrainStartRequest = { ...nums };
+    const req: TrainStartRequest = {
+      ...nums,
+      // 有编号按编号；导入数据集按名称
+      ...(selected.dataset_id
+        ? { dataset_id: selected.dataset_id }
+        : { speaker_name: selected.name }),
+    };
     if (outputName.trim()) {
       req.output_name = outputName.trim();
-    }
-    if (trainSpeaker.trim()) {
-      req.speaker_name = trainSpeaker.trim();
     }
     setBusy(true);
     try {
@@ -172,16 +210,17 @@ export default function TrainPage() {
   const handleMelottsPreprocess = async () => {
     setActionError(null);
     setNotice(null);
-    if (!mPrepDir.trim()) {
-      setActionError("请填写数据集目录（相对路径锚定 CXO-ModelStation 根，如 data/training/sovits_svc/raw/speaker1）");
+    if (!selected) {
+      setActionError("请先选择数据集");
       return;
     }
     setBusy(true);
     try {
-      const res = await api.melottsPreprocess({
-        dataset_dir: mPrepDir.trim(),
-        speaker_name: mPrepSpeaker.trim() || "speaker",
-      });
+      const res = await api.melottsPreprocess(
+        selected.dataset_id
+          ? { dataset_id: selected.dataset_id }
+          : { dataset_dir: `${SVC_RAW_ROOT}/${selected.name}` },
+      );
       const entries = Object.entries(res.results);
       const okCount = entries.filter(([, v]) => v.success).length;
       setNotice(`MeloTTS 数据准备完成（${res.status === "success" ? "全部成功" : "部分成功"}）：${okCount}/${entries.length} 个 speaker 成功`);
@@ -239,7 +278,7 @@ export default function TrainPage() {
     <div>
       <header className="page-header">
         <h2>训练控制台</h2>
-        <p>数据预处理 → 启动训练 → 进度监控，训练状态每 3 秒自动刷新</p>
+        <p>选择数据集 → 数据预处理 → 启动训练 → 进度监控，训练状态每 3 秒自动刷新</p>
       </header>
 
       <ErrorBar message={error} stopped={stopped} onRetry={refresh} />
@@ -264,6 +303,48 @@ export default function TrainPage() {
         <p className="hint section-gap">
           两类训练共享「同一时间仅一个训练任务」约束：一类训练进行中时，另一类的启动请求会被拒绝（409）
         </p>
+      </section>
+
+      <section className="card">
+        <h3 className="card-title">选择数据集</h3>
+        {datasetsError ? <ErrorBar message={datasetsError} /> : null}
+        {datasets.length === 0 && !datasetsError ? (
+          <p className="muted">
+            暂无数据集：请先在「批量语料生成」页用一套流程生成（完成后自动分配编号），
+            或在「数据集管理」页导入
+          </p>
+        ) : (
+          <div className="form-grid">
+            <div className="field field-full">
+              <label htmlFor="train-dataset">数据集（优先显示编号）</label>
+              <select
+                id="train-dataset"
+                value={selectedName}
+                onChange={(e) => setSelectedName(e.target.value)}
+              >
+                <option value="">请选择数据集</option>
+                {datasets.map((ds) => (
+                  <option key={ds.name} value={ds.name}>
+                    {datasetLabel(ds)} · {ds.file_count} 条音频
+                  </option>
+                ))}
+              </select>
+              <span className="hint">
+                DS-xxx 为一套流程自动分配的编号；导入的数据集按名称选择
+              </span>
+            </div>
+          </div>
+        )}
+        <div className="form-actions">
+          <button
+            type="button"
+            className="btn btn-ghost"
+            disabled={listBusy}
+            onClick={() => void loadDatasets()}
+          >
+            刷新列表
+          </button>
+        </div>
       </section>
 
       <section className="card">
@@ -296,28 +377,8 @@ export default function TrainPage() {
         <>
           <section className="card">
             <h3 className="card-title">数据预处理</h3>
-            <div className="form-grid">
-              <div className="field field-full">
-                <label htmlFor="prep-dir">训练数据目录</label>
-                <input
-                  id="prep-dir"
-                  value={prepDir}
-                  onChange={(e) => setPrepDir(e.target.value)}
-                  placeholder="data/training/sovits_svc/raw/speaker1"
-                />
-                <span className="hint">相对路径锚定 CXO-ModelStation 根目录；须位于 data/training 之内</span>
-              </div>
-              <div className="field">
-                <label htmlFor="prep-speaker">speaker 名称</label>
-                <input
-                  id="prep-speaker"
-                  value={prepSpeaker}
-                  onChange={(e) => setPrepSpeaker(e.target.value)}
-                />
-              </div>
-            </div>
             <div className="form-actions">
-              <button type="button" className="btn btn-primary" disabled={busy} onClick={handlePreprocess}>
+              <button type="button" className="btn btn-primary" disabled={busy || !selected} onClick={handlePreprocess}>
                 开始预处理
               </button>
             </div>
@@ -366,18 +427,9 @@ export default function TrainPage() {
                   placeholder="仅字母/数字/下划线/连字符"
                 />
               </div>
-              <div className="field">
-                <label htmlFor="train-speaker">speaker 名称（可选）</label>
-                <input
-                  id="train-speaker"
-                  value={trainSpeaker}
-                  onChange={(e) => setTrainSpeaker(e.target.value)}
-                  placeholder="默认 speaker"
-                />
-              </div>
             </div>
             <div className="form-actions">
-              <button type="button" className="btn btn-primary" disabled={busy} onClick={handleTrain}>
+              <button type="button" className="btn btn-primary" disabled={busy || !selected} onClick={handleTrain}>
                 开始训练
               </button>
               <span className="hint">训练在后台异步进行，可在上方状态卡监控实时进度</span>
@@ -388,33 +440,11 @@ export default function TrainPage() {
         <>
           <section className="card">
             <h3 className="card-title">数据准备（统一数据集 → 训练 filelist）</h3>
-            <div className="form-grid">
-              <div className="field field-full">
-                <label htmlFor="melotts-prep-dir">数据集目录</label>
-                <input
-                  id="melotts-prep-dir"
-                  value={mPrepDir}
-                  onChange={(e) => setMPrepDir(e.target.value)}
-                  placeholder="data/training/sovits_svc/raw/speaker1"
-                />
-                <span className="hint">
-                  指向统一数据集 speaker 目录（manifest v2 含 text 条目方可生成训练 filelist）；
-                  相对路径锚定 CXO-ModelStation 根目录，须位于 data/training 之内
-                </span>
-              </div>
-              <div className="field">
-                <label htmlFor="melotts-prep-speaker">speaker 名称</label>
-                <input
-                  id="melotts-prep-speaker"
-                  value={mPrepSpeaker}
-                  onChange={(e) => setMPrepSpeaker(e.target.value)}
-                />
-              </div>
-            </div>
             <div className="form-actions">
-              <button type="button" className="btn btn-primary" disabled={busy} onClick={handleMelottsPreprocess}>
+              <button type="button" className="btn btn-primary" disabled={busy || !selected} onClick={handleMelottsPreprocess}>
                 开始数据准备
               </button>
+              <span className="hint">需数据集含文本（一套流程产物自带文本）</span>
             </div>
           </section>
 
