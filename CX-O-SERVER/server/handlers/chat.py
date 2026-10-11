@@ -7,7 +7,9 @@ from typing import TYPE_CHECKING, Optional
 
 from server.core.utils import run_io
 from server.chat_helpers import get_agent_config, get_llm_client_for_agent, get_tools_for_agent, retrieve_memory_context, ensure_agent_session_async
-from server.prompt_builder import build_messages
+from server.prompt_builder import build_messages, load_history_snapshot
+from server.core.chat.stream import ChatStreamState, generate_chat_stream
+from server.core.llm.client import LLMError, raise_for_llm_error
 from server.protocol.message import create_response, create_error, create_stream
 from server.protocol.actions import ChatActions
 from server.services.preset_expand import expand_action_presets
@@ -112,6 +114,7 @@ class ChatContext:
     llm: object
     session_id: str
     memory_context: Optional[str] = None
+    history: Optional[list] = None
 
 
 async def _build_chat_context(
@@ -151,6 +154,7 @@ async def _build_chat_context(
     # 改走异步变体（run_io 有界 IO 池），不再阻塞事件循环
     session_id = await ensure_agent_session_async(context_mgr, agent_id, agent_config["name"])
 
+    history = await load_history_snapshot(context_mgr, session_id)
     await context_mgr.add_message_async(session_id=session_id, role="user", content=user_message)
 
     memory_context = await retrieve_memory_context(
@@ -163,6 +167,7 @@ async def _build_chat_context(
         llm=llm,
         session_id=session_id,
         memory_context=memory_context,
+        history=history,
     )
 
 
@@ -172,60 +177,8 @@ async def _process_tool_calls(tool_calls_buffer, messages, llm):
     await execute_tool_calls_async(tool_calls_buffer, messages)
 
     response = await llm.chat(messages=messages, stream=False)
+    raise_for_llm_error(response)
     return response
-
-
-async def _consume_and_send_stream(
-    llm,
-    messages,
-    agent_config,
-    manager,
-    client_id,
-    request_id,
-    chunk_index,
-    tools=None,
-):
-    """消费流式分块并通过 WebSocket 增量发送 content。
-
-    收敛自 handle_chat_stream 首轮与工具后二次生成的两套几乎相同的消费循环，
-    返回 (full_response, tool_calls_buffer, chunk_index)。
-    """
-    full_response = ""
-    tool_calls_buffer = []
-
-    async def _send(content):
-        nonlocal chunk_index
-        await manager.send_message(client_id, create_stream(
-            request_id=request_id,
-            action=ChatActions.STREAM,
-            chunk_index=chunk_index,
-            data={"content": content},
-            is_final=False,
-        ))
-        chunk_index += 1
-
-    async for chunk in llm.stream_chat(
-        messages=messages,
-        temperature=agent_config.get("temperature", 0.7),
-        max_tokens=agent_config.get("max_tokens", 4096),
-        tools=tools,
-    ):
-        if not chunk:
-            continue
-        if isinstance(chunk, dict):
-            chunk_type = chunk.get("type")
-            if chunk_type == "content":
-                content = chunk.get("content", "")
-                full_response += content
-                await _send(content)
-            elif chunk_type == "tool_calls":
-                tool_calls_buffer.extend(chunk.get("tool_calls", []))
-            # thinking 分块忽略不发送
-        elif isinstance(chunk, str):
-            full_response += chunk
-            await _send(chunk)
-
-    return full_response, tool_calls_buffer, chunk_index
 
 
 def _record_live_feedback(text: str, prompt: str, session_id: str) -> None:
@@ -255,10 +208,11 @@ def register_chat_handlers(manager: "WebSocketManager"):
             if not ctx:
                 return
 
-            messages = build_messages(ctx.agent_config, ctx.context_mgr, ctx.session_id, text, ctx.memory_context, images)
+            messages = build_messages(ctx.agent_config, ctx.context_mgr, ctx.session_id, text, ctx.memory_context, images, history=ctx.history)
             tools = get_tools_for_agent()
 
             response = await ctx.llm.chat(messages=messages, stream=False, tools=tools)
+            raise_for_llm_error(response)
 
             final_response = response.content
             if hasattr(response, "tool_calls") and response.tool_calls:
@@ -303,19 +257,24 @@ def register_chat_handlers(manager: "WebSocketManager"):
             if not ctx:
                 return
 
-            messages = build_messages(ctx.agent_config, ctx.context_mgr, ctx.session_id, text, ctx.memory_context)
+            messages = build_messages(ctx.agent_config, ctx.context_mgr, ctx.session_id, text, ctx.memory_context, history=ctx.history)
             tools = get_tools_for_agent()
 
-            full_response, tool_calls_buffer, chunk_index = await _consume_and_send_stream(
-                ctx.llm, messages, ctx.agent_config, _manager, client_id, request_id, 0, tools=tools,
-            )
-
-            if tool_calls_buffer:
-                await _process_tool_calls(tool_calls_buffer, messages, ctx.llm)
-
-                full_response, _, chunk_index = await _consume_and_send_stream(
-                    ctx.llm, messages, ctx.agent_config, _manager, client_id, request_id, chunk_index,
-                )
+            state = ChatStreamState()
+            chunk_index = 0
+            async for chunk in generate_chat_stream(
+                ctx.llm, messages, ctx.agent_config, tools=tools, state=state,
+            ):
+                if chunk.get("type") == "error":
+                    raise LLMError("模型请求失败，请稍后重试")
+                if chunk.get("type") == "content":
+                    await _manager.send_message(client_id, create_stream(
+                        request_id=request_id, action=ChatActions.STREAM,
+                        chunk_index=chunk_index, data={"content": chunk["content"]},
+                        is_final=False,
+                    ))
+                    chunk_index += 1
+            full_response = state.accumulated_response
 
             if full_response:
                 # 动作预设展开（Task 4.2）：落库前展开 [action:预设名]，保证历史恢复
@@ -355,10 +314,11 @@ def register_chat_handlers(manager: "WebSocketManager"):
             if not ctx:
                 return
 
-            messages = build_messages(ctx.agent_config, ctx.context_mgr, ctx.session_id, text, ctx.memory_context, images)
+            messages = build_messages(ctx.agent_config, ctx.context_mgr, ctx.session_id, text, ctx.memory_context, images, history=ctx.history)
             tools = get_tools_for_agent()
 
             response = await ctx.llm.chat(messages=messages, stream=False, tools=tools)
+            raise_for_llm_error(response)
 
             final_response = response.content
             if hasattr(response, "tool_calls") and response.tool_calls:

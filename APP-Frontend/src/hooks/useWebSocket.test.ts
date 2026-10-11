@@ -51,11 +51,36 @@ class MockWebSocket {
 
 afterEach(() => {
   cleanup();
+  vi.useRealTimers();
   vi.unstubAllGlobals();
   vi.clearAllMocks();
 });
 
 describe('useWebSocket onDisconnect 回调（M2）', () => {
+  it('Agent 切换和显式重连统一复位生成态、通知断开，并且卸载清理定时器', () => {
+    vi.useFakeTimers();
+    vi.stubGlobal('WebSocket', MockWebSocket);
+    const onDisconnect = vi.fn();
+    const { result, rerender, unmount } = renderHook(
+      ({ agentId }) => useWebSocket({ agentId, onDisconnect }),
+      { initialProps: { agentId: 'first' } },
+    );
+    act(() => MockWebSocket.instances[MockWebSocket.instances.length - 1].open());
+    act(() => { result.current.sendMessage('hello'); });
+    expect(result.current.isGenerating).toBe(true);
+    rerender({ agentId: 'second' });
+    expect(result.current.isGenerating).toBe(false);
+    expect(onDisconnect).toHaveBeenCalledTimes(1);
+    act(() => vi.advanceTimersByTime(50));
+    act(() => MockWebSocket.instances[MockWebSocket.instances.length - 1].open());
+    act(() => { result.current.sendMessage('again'); });
+    act(() => result.current.reconnect());
+    expect(result.current.isGenerating).toBe(false);
+    expect(onDisconnect).toHaveBeenCalledTimes(2);
+    unmount();
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
   it('服务端干净关闭(code=1000)：onDisconnect 被调用且不走 error 分支', async () => {
     vi.stubGlobal('WebSocket', MockWebSocket);
     const onError = vi.fn();

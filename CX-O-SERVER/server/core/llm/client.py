@@ -50,6 +50,51 @@ class LLMResponse:
     thinking: Optional[str] = None
 
 
+def raise_for_llm_error(response) -> None:
+    """模型失败时拒绝成功响应，防止调用方落库空回复或报告成功。"""
+    if getattr(response, "error", None) or getattr(response, "finish_reason", None) == "error":
+        raise LLMError("模型请求失败，请稍后重试")
+
+
+class _ToolCallAccumulator:
+    """按 index 聚合 OpenAI 工具增量，完整校验后才交给工具执行器。"""
+
+    def __init__(self):
+        self.calls = {}
+
+    def add(self, deltas):
+        for delta in deltas:
+            index = delta.get("index", 0)
+            call = self.calls.setdefault(index, {
+                "id": "", "type": "function", "function": {"name": "", "arguments": ""}
+            })
+            if delta.get("id"):
+                call["id"] += delta["id"]
+            function = delta.get("function") or {}
+            for field in ("name", "arguments"):
+                value = function.get(field)
+                if value is not None:
+                    call["function"][field] += value
+
+    def complete(self, finished):
+        if not self.calls:
+            return []
+        if not finished:
+            raise LLMError("工具调用流未完整结束")
+        calls = [self.calls[index] for index in sorted(self.calls)]
+        for call in calls:
+            function = call["function"]
+            if not function["name"] or not call["id"]:
+                raise LLMError("工具调用缺少名称或标识")
+            try:
+                arguments = json.loads(function["arguments"])
+            except (TypeError, ValueError) as exc:
+                raise LLMError("工具调用参数不完整") from exc
+            if not isinstance(arguments, dict):
+                raise LLMError("工具调用参数必须是对象")
+        return calls
+
+
 class LLMClient(ABC):
     """LLM 客户端抽象基类：定义聊天、流式聊天、模型名、可用性与嵌入的统一接口。"""
 
@@ -588,12 +633,21 @@ class VLLMClient(LLMClient):
                 _diag_start = time.monotonic()
                 _diag_first_token_logged = False
                 _diag_token_count = 0
+                tool_accumulator = _ToolCallAccumulator()
+                stream_finished = False
                 async for line in response.aiter_lines():
                     if line and line.startswith("data: "):
                         data = line[6:]
+                        if data == "[DONE]":
+                            stream_finished = True
+                            break
                         if data != "[DONE]":
                             try:
                                 chunk = json.loads(data)
+                                if not chunk.get("choices"):
+                                    continue
+                                if chunk["choices"][0].get("finish_reason") == "tool_calls":
+                                    stream_finished = True
                                 content = chunk["choices"][0]["delta"].get("content", "")
 
                                 if content:
@@ -614,9 +668,12 @@ class VLLMClient(LLMClient):
                                 delta = chunk["choices"][0].get("delta", {})
                                 tool_calls = delta.get("tool_calls")
                                 if tool_calls:
-                                    yield {"type": "tool_calls", "tool_calls": tool_calls}
+                                    tool_accumulator.add(tool_calls)
                             except json.JSONDecodeError:
                                 continue
+                tool_calls = tool_accumulator.complete(stream_finished)
+                if tool_calls:
+                    yield {"type": "tool_calls", "tool_calls": tool_calls}
                 logger.info(
                     f"[DIAG-TTFT] stream done: {_diag_token_count} tokens, "
                     f"total {(time.monotonic()-_diag_start)*1000:.1f}ms"
@@ -872,12 +929,21 @@ class TRTLLMClient(LLMClient):
                     yield {"type": "error", "content": f"TRT-LLM HTTP {response.status_code}: {error_text}"}
                     return
 
+                tool_accumulator = _ToolCallAccumulator()
+                stream_finished = False
                 async for line in response.aiter_lines():
                     if line and line.startswith("data: "):
                         data = line[6:]
+                        if data == "[DONE]":
+                            stream_finished = True
+                            break
                         if data != "[DONE]":
                             try:
                                 chunk = json.loads(data)
+                                if not chunk.get("choices"):
+                                    continue
+                                if chunk["choices"][0].get("finish_reason") == "tool_calls":
+                                    stream_finished = True
                                 content = chunk["choices"][0]["delta"].get("content", "")
                                 if content:
                                     yield content
@@ -885,9 +951,12 @@ class TRTLLMClient(LLMClient):
                                 delta = chunk["choices"][0].get("delta", {})
                                 tool_calls = delta.get("tool_calls")
                                 if tool_calls:
-                                    yield {"type": "tool_calls", "tool_calls": tool_calls}
+                                    tool_accumulator.add(tool_calls)
                             except json.JSONDecodeError:
                                 continue
+                tool_calls = tool_accumulator.complete(stream_finished)
+                if tool_calls:
+                    yield {"type": "tool_calls", "tool_calls": tool_calls}
         except Exception as e:
             logger.error(f"TRT-LLM流式调用失败: {e}")
             # #29（差异审查登记）: 顶层异常静默吞掉，调用方无法区分「空输出」与

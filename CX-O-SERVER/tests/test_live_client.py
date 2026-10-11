@@ -64,6 +64,9 @@ class FakeContextManager:
     def add_message(self, sid, msg):
         self.messages.append((sid, msg))
 
+    def get_context(self, sid):
+        return [message for session, message in self.messages if session == sid]
+
 
 class FakeFrontendMarker:
     def format_for_frontend(self, marker_data):
@@ -291,10 +294,23 @@ class TestConfig:
 # ================================================================ _handle_text / interrupt / stop_tts
 class TestText:
     @pytest.mark.asyncio
+    async def test_reply_gets_history_before_current_input(self, handler, monkeypatch):
+        handler._session_id = "s1"
+        handler.context_manager.add_message("s1", {"role": "user", "content": "same"})
+        handler.context_manager.add_message("s1", {"role": "assistant", "content": "old reply"})
+        captured = []
+        monkeypatch.setattr(handler, "_schedule_reply", lambda text, history: captured.append((text, history)))
+        await handler._handle_text(None, {"data": {"text": "same"}})
+        assert captured == [("same", [
+            {"role": "user", "content": "same"}, {"role": "assistant", "content": "old reply"},
+        ])]
+        assert len(handler.context_manager.get_context("s1")) == 3
+
+    @pytest.mark.asyncio
     async def test_text_adds_context_and_acks(self, handler, monkeypatch):
         handler._session_id = "s1"
         # W5: 屏蔽新增的回复生成调度（本用例仅验证既有上下文写入 + ack 行为）
-        monkeypatch.setattr(handler, "_schedule_reply", lambda text: None)
+        monkeypatch.setattr(handler, "_schedule_reply", lambda text, **kwargs: None)
         await handler._handle_text(None, {"data": {"text": "hi"}})
         assert handler.context_manager.messages[0][1] == {"role": "user", "content": "hi"}
         assert handler._manager.sent[0][1]["type"] == "text_ack"
@@ -597,7 +613,7 @@ class TestScheduleReply:
     @pytest.mark.asyncio
     async def test_handle_text_schedules_reply(self, handler, monkeypatch):
         scheduled = []
-        monkeypatch.setattr(handler, "_schedule_reply", lambda text: scheduled.append(text))
+        monkeypatch.setattr(handler, "_schedule_reply", lambda text, **kwargs: scheduled.append(text))
         await handler._handle_text(None, {"data": {"text": "hi"}})
         assert scheduled == ["hi"]
         assert handler._manager.sent[0][1]["type"] == "text_ack"

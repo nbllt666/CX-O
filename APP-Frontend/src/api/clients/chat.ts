@@ -100,26 +100,34 @@ export const chatApi = {
         streamDone = true;
         return;
       }
+      let chunk: StreamChunk;
       try {
-        onChunk(JSON.parse(dataPayload) as StreamChunk);
+        chunk = JSON.parse(dataPayload) as StreamChunk;
       } catch {
         // 忽略单行解析错误
+        return;
       }
+      // 消费方抛出的业务错误必须传给调用方，不能当作 JSON 解析错误吞掉。
+      onChunk(chunk);
     };
 
-    while (!streamDone) {
-      const { value, done } = await reader.read();
-      if (done) break;
-      buffer += decoder.decode(value, { stream: true });
-      const parts = buffer.split('\n');
-      buffer = parts.pop() ?? '';
-      for (const line of parts) {
-        flushLine(line);
+    try {
+      while (!streamDone) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        const parts = buffer.split('\n');
+        buffer = parts.pop() ?? '';
+        for (const line of parts) {
+          flushLine(line);
+          if (streamDone) break;
+        }
       }
-    }
-    // 流结束时处理 buffer 中可能残留的最后一帧（无 \n 终止）
-    if (buffer.length > 0) {
-      flushLine(buffer);
+      // 流结束时处理 buffer 中可能残留的最后一帧（无 \n 终止）
+      if (!streamDone && buffer.length > 0) flushLine(buffer);
+    } finally {
+      await reader.cancel().catch(() => {});
+      reader.releaseLock();
     }
   },
 

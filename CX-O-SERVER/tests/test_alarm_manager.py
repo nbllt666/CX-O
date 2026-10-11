@@ -178,6 +178,18 @@ class TestLifecycle:
         # 二次标记仍返回 True（UPDATE 不校验 status）
         assert mgr.mark_triggered(aid) is True
 
+    def test_mark_triggered_stops_waiting_timer(self, mgr):
+        aid = mgr.create_alarm("ag", 600, "x")
+        timer = mgr._timers[aid]
+        try:
+            assert mgr.mark_triggered(aid) is True
+            timer.join(timeout=1)
+            assert not timer.is_alive()
+            assert aid not in mgr._timers
+        finally:
+            timer.cancel()
+            timer.join(timeout=1)
+
 
 # --------------------------------------------------------------------------- #
 # 定时触发（短延迟真实路径）
@@ -232,6 +244,43 @@ class TestRestoreShutdown:
         mgr.restore_pending_alarms()
         assert aid in mgr._timers
         mgr.shutdown()
+
+    def test_repeated_restore_reclaims_replaced_timers(self, mgr):
+        aid = mgr.create_alarm("ag", 600, "x")
+        timers = [mgr._timers[aid]]
+        try:
+            for _ in range(3):
+                mgr.restore_pending_alarms()
+                replacement = mgr._timers[aid]
+                previous = timers[-1]
+                timers.append(replacement)
+                previous.join(timeout=1)
+                assert not previous.is_alive()
+                assert replacement.is_alive()
+            mgr.shutdown()
+            for timer in timers:
+                timer.join(timeout=1)
+                assert not timer.is_alive()
+        finally:
+            for timer in timers:
+                timer.cancel()
+                timer.join(timeout=1)
+
+    def test_shutdown_during_timer_creation_prevents_start(self, mgr, monkeypatch):
+        from datetime import datetime, timedelta
+        from unittest.mock import Mock
+
+        timer = Mock()
+
+        def create_timer(*args):
+            mgr.shutdown()
+            return timer
+
+        monkeypatch.setattr("server.core.alarm.manager.threading.Timer", create_timer)
+        now = datetime.now()
+        mgr._schedule_alarm(Alarm("a", "ag", "m", now + timedelta(seconds=600), now))
+        timer.start.assert_not_called()
+        assert not mgr._timers
 
     def test_shutdown_cancels_timers_and_closes(self, mgr):
         aid = mgr.create_alarm("ag", 600, "x")

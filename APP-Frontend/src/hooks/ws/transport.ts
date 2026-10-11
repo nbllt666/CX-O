@@ -107,10 +107,14 @@ export function useWSTransport(options: UseWSTransportOptions): UseWSTransportRe
       reconnectTimeoutRef.current = null;
     }
     if (wsRef.current) {
-      // null 化 onclose 防止 manual disconnect 触发自动重连
-      wsRef.current.onclose = null;
-      wsRef.current.close();
+      const ws = wsRef.current;
       wsRef.current = null;
+      // 旧连接已排队的消息/错误也不能继续投递给新会话的回调。
+      ws.onopen = null;
+      ws.onclose = null;
+      ws.onerror = null;
+      ws.onmessage = null;
+      ws.close();
     }
     setIsConnected(false);
   }, []);
@@ -139,7 +143,7 @@ export function useWSTransport(options: UseWSTransportOptions): UseWSTransportRe
       ws.binaryType = binaryTypeRef.current;
 
       ws.onopen = () => {
-        if (isUnmountedRef.current) return;
+        if (isUnmountedRef.current || wsRef.current !== ws) return;
         setIsConnected(true);
         reconnectAttemptsRef.current = 0;
         onOpenRef.current?.(ws);
@@ -164,12 +168,12 @@ export function useWSTransport(options: UseWSTransportOptions): UseWSTransportRe
       };
 
       ws.onerror = () => {
-        if (isUnmountedRef.current) return;
+        if (isUnmountedRef.current || wsRef.current !== ws) return;
         onErrorRef.current?.('WebSocket connection error');
       };
 
       ws.onmessage = (event) => {
-        if (isUnmountedRef.current) return;
+        if (isUnmountedRef.current || wsRef.current !== ws) return;
         onMessageRef.current?.(event);
       };
     } catch (e) {

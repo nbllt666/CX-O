@@ -3,7 +3,7 @@ server/core/chat/stream.py
 ==========================
 CX-O 流式聊天管线（含工具调用循环）。
 
-供后台/非后端传输场景复用（当前唯一消费方：ACP 自动回复）。
+供 HTTP SSE、action-based WebSocket 和 ACP 自动回复复用。
 对外契约：
   - ``ChatStreamState``：聚合状态对象（accumulated_response / tool_calls / ...）
   - ``generate_chat_stream(...)``：异步生成器，逐步产出内容 chunk，
@@ -18,6 +18,7 @@ CX-O 流式聊天管线（含工具调用循环）。
 from __future__ import annotations
 
 import logging
+import json
 from dataclasses import dataclass, field
 from typing import Any, AsyncIterator, Dict, List, Optional
 
@@ -37,6 +38,7 @@ class ChatStreamState:
     chunk_count: int = 0
     llm_rounds: int = 0
     done: bool = False
+    error: Optional[str] = None
 
 
 async def generate_chat_stream(
@@ -48,6 +50,7 @@ async def generate_chat_stream(
     state: Optional[ChatStreamState] = None,
     is_background: bool = False,
     max_tool_rounds: int = MAX_TOOL_ROUNDS,
+    emit_events: bool = False,
 ) -> AsyncIterator[Dict[str, Any]]:
     """流式聊天管线（含工具调用循环），逐步产出内容 chunk。
 
@@ -59,6 +62,7 @@ async def generate_chat_stream(
       - ``state``：聚合状态（缺省自建），调用后可读取 accumulated_response / tool_calls。
       - ``session_id``：保留参数，供调用方标记会话（本实现不依赖）。
       - ``is_background``：后台场景异常不打印堆栈。
+      - ``emit_events``：HTTP 适配启用时额外产出 thinking/tool_call/tool_start/tool_result。
     """
     state = state or ChatStreamState()
     temperature = agent_config.get("temperature", 0.7)
@@ -88,10 +92,18 @@ async def generate_chat_stream(
                         yield {"type": "content", "content": content}
                     elif chunk_type == "thinking":
                         state.thinking += chunk.get("content", "")
+                        if emit_events:
+                            yield chunk
                     elif chunk_type == "tool_calls":
                         tool_calls_buffer.extend(chunk.get("tool_calls", []))
+                        if emit_events:
+                            for tool_call in chunk.get("tool_calls", []):
+                                yield {"type": "tool_call", "tool_call": tool_call}
                     elif chunk_type == "error":
+                        state.error = chunk.get("content") or chunk.get("message") or "模型请求失败"
+                        state.done = True
                         yield chunk
+                        return
                 elif isinstance(chunk, str):
                     state.accumulated_response += chunk
                     state.chunk_count += 1
@@ -100,6 +112,7 @@ async def generate_chat_stream(
             logger.error(
                 f"流式聊天失败: {e}", exc_info=not is_background
             )
+            state.error = str(e)
             yield {"type": "error", "content": str(e)}
             break
 
@@ -109,6 +122,20 @@ async def generate_chat_stream(
         state.tool_calls.extend(tool_calls_buffer)
         from server.core.tools.builtin import execute_tool_calls_async
 
-        await execute_tool_calls_async(tool_calls_buffer, messages)
+        try:
+            for tool_call in tool_calls_buffer:
+                name = tool_call.get("name") or tool_call.get("function", {}).get("name")
+                if emit_events:
+                    yield {"type": "tool_start", "tool_name": name}
+                await execute_tool_calls_async([tool_call], messages)
+                if emit_events:
+                    yield {
+                        "type": "tool_result", "tool_name": name,
+                        "result": json.loads(messages[-1]["content"]),
+                    }
+        except Exception as e:
+            state.error = str(e)
+            yield {"type": "error", "content": str(e)}
+            break
 
     state.done = True

@@ -5,6 +5,7 @@ from typing import Any, Dict, Optional
 
 from server.core.logging_config import get_contextual_logger
 from server.core.utils import run_io
+from server.core.llm.client import LLMError, raise_for_llm_error
 
 from .manager import get_websocket_manager
 
@@ -58,7 +59,7 @@ class ChatWebSocketHandler:
         """处理普通聊天消息"""
         from server.dependencies import get_context_manager, get_memory_manager
         from server.chat_helpers import get_agent_config, get_llm_client_for_agent, retrieve_memory_context
-        from server.prompt_builder import build_messages
+        from server.prompt_builder import build_messages, load_history_snapshot
 
         try:
             agent_id = message.get("agent_id", "default")
@@ -102,6 +103,7 @@ class ChatWebSocketHandler:
                 # 无 session_id 时默认使用 agent-{id} 会话，与前端历史读取键一致
                 session_id = await self._ensure_agent_session(context_mgr, agent_id, agent_config)
 
+            history = await load_history_snapshot(context_mgr, session_id)
             # 伴生C3：上下文写入 run_io 包裹，避免同步 sqlite 阻塞事件循环
             await run_io(
                 context_mgr.add_message,
@@ -120,9 +122,11 @@ class ChatWebSocketHandler:
                 session_id=session_id,
                 user_message=user_message,
                 memory_context=memory_context,
+                history=history,
             )
 
             response = await llm.chat(messages=messages, stream=False)
+            raise_for_llm_error(response)
 
             # 动作预设展开（Task 4.2）：下发/落库前将 [action:预设名] 展开为标签序列，
             # 保证前端展示与历史存储一致（失败静默回退原文本）
@@ -162,7 +166,7 @@ class ChatWebSocketHandler:
         """处理流式聊天消息"""
         from server.dependencies import get_context_manager, get_memory_manager
         from server.chat_helpers import get_agent_config, get_llm_client_for_agent, retrieve_memory_context
-        from server.prompt_builder import build_messages
+        from server.prompt_builder import build_messages, load_history_snapshot
 
         # E4: 提前初始化，保证 except 分支可安全引用（早期异常时为空串，不触发补写）
         full_response = ""
@@ -214,6 +218,7 @@ class ChatWebSocketHandler:
                 client_id, {"type": "session_info", "session_id": session_id}
             )
 
+            history = await load_history_snapshot(context_mgr, session_id)
             # 添加用户消息（伴生C3：同步 sqlite 写入 run_io 包裹，避免阻塞事件循环）
             await run_io(
                 context_mgr.add_message,
@@ -234,6 +239,7 @@ class ChatWebSocketHandler:
                 session_id=session_id,
                 user_message=user_message,
                 memory_context=memory_context,
+                history=history,
             )
 
             # 流式响应（full_response 已在 try 前初始化，供取消/异常路径补写半截回复）
@@ -283,6 +289,8 @@ class ChatWebSocketHandler:
                     elif chunk_type == "tool_calls":
                         # WS 聊天流未启用工具链（stream_chat 未传 tools），防御性跳过
                         logger.debug(f"WS 聊天流忽略 tool_calls 帧: {chunk.get('tool_calls', [])}")
+                    elif chunk_type == "error":
+                        raise LLMError("模型请求失败，请稍后重试")
                     else:
                         content = chunk.get("content", "")
                         if content:

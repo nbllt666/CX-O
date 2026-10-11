@@ -988,6 +988,9 @@ class ACPManager:
             ):
                 pass
 
+            if state.error:
+                logger.warning("ACP 自动回复模型请求失败，跳过回复落库")
+                return
             reply_text = state.accumulated_response or "(无回复内容)"
 
             # 保存助手响应到目标 session

@@ -28,28 +28,28 @@ _BASE_DIR = Path(__file__).resolve().parent.parent  # CXO-ModelStation
 async def lifespan(app: FastAPI):
     logger.info("Starting CXO-ModelStation...")
     logger.info("CXO-ModelStation started successfully")
-    yield
-    logger.info("Shutting down CXO-ModelStation...")
-    _shutdown_resources()
-    logger.info("CXO-ModelStation shutdown complete")
+    try:
+        yield
+    finally:
+        logger.info("Shutting down CXO-ModelStation...")
+        await _shutdown_resources()
+        logger.info("CXO-ModelStation shutdown complete")
 
 
-def _shutdown_resources():
+async def _shutdown_resources():
     """关停时停止后台训练子进程，避免残留孤儿进程与 GPU 显存占用。"""
     try:
         from modelstation.api import sovits_svc as sovits_api
         trainer = sovits_api._trainer_instance
         if trainer is not None:
-            import asyncio
-            asyncio.get_event_loop().run_until_complete(trainer.stop_training())
+            await trainer.stop_training()
     except Exception as e:
         logger.warning(f"Shutdown: failed to stop So-VITS-SVC training: {e}")
     try:
         from modelstation.services import melotts_trainer as melotts_trainer_module
         melotts_trainer = melotts_trainer_module._trainer_instance
         if melotts_trainer is not None:
-            import asyncio
-            asyncio.get_event_loop().run_until_complete(melotts_trainer.stop_training())
+            await melotts_trainer.stop_training()
     except Exception as e:
         logger.warning(f"Shutdown: failed to stop MeloTTS training: {e}")
 

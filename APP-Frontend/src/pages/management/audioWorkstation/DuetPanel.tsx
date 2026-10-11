@@ -174,7 +174,6 @@ export default function DuetPanel({ pollTask, pollIntervalMs = POLL_INTERVAL_MS 
   useEffect(() => {
     if (!activeTaskId) return;
     let stopped = false;
-    let timer: ReturnType<typeof setInterval>;
     const poll = async () => {
       try {
         const next = await resolvedPollTask(activeTaskId);
@@ -184,7 +183,7 @@ export default function DuetPanel({ pollTask, pollIntervalMs = POLL_INTERVAL_MS 
       }
     };
     poll();
-    timer = setInterval(poll, pollIntervalMs);
+    const timer = setInterval(poll, pollIntervalMs);
     return () => {
       stopped = true;
       clearInterval(timer);

@@ -492,6 +492,8 @@ class LiveClientHandler:
     async def _handle_text(self, websocket, message: dict):
         data = message.get("data", {})
         text = data.get("text", "")
+        # 内存历史管理器直接取快照；不向 SQLite 版本的历史读取接口传递此实例。
+        history = [dict(item) for item in self.context_manager.get_context(self._session_id)] if self._session_id else []
 
         if self._session_id:
             # 伴生C3：上下文写入 run_io 包裹（口径同上）
@@ -507,7 +509,7 @@ class LiveClientHandler:
 
         # W5: 补出直播回复链路（C→S text → LLM → stream/response 下发）。
         # fire-and-forget 不阻塞连接消息循环；text_ack 已先行返回，生成失败仅日志。
-        self._schedule_reply(text)
+        self._schedule_reply(text, history=history)
 
     async def _handle_interrupt(self, websocket, message: dict):
         data = message.get("data", {})
@@ -545,7 +547,7 @@ class LiveClientHandler:
             logger.warning(f"live 频道广播失败（type={message.get('type')}）: {e}")
             return False
 
-    def _schedule_reply(self, text: str) -> None:
+    def _schedule_reply(self, text: str, history=None) -> None:
         """调度一轮 AI 回复生成（fire-and-forget，含强引用跟踪与在途守卫）。
 
         在途守卫：上一轮回复未完成时丢弃本轮生成（对齐弹幕反馈的丢弃式限流），
@@ -556,11 +558,12 @@ class LiveClientHandler:
         if self._reply_task is not None and not self._reply_task.done():
             logger.debug("live 回复生成进行中，丢弃本轮 text 生成请求")
             return
-        self._reply_task = asyncio.create_task(self._reply_pipeline(text))
+        pipeline = self._reply_pipeline(text) if history is None else self._reply_pipeline(text, history=history)
+        self._reply_task = asyncio.create_task(pipeline)
         _reply_tasks.add(self._reply_task)
         self._reply_task.add_done_callback(_reply_tasks.discard)
 
-    async def _reply_pipeline(self, text: str) -> None:
+    async def _reply_pipeline(self, text: str, history=None) -> None:
         """W5: live 会话 AI 回复链路——LLM 流式生成 → stream 逐块/response 终稿
         下发 → 上下文回写 → 隐式反馈记录 → 字幕播报同步。
 
@@ -579,7 +582,9 @@ class LiveClientHandler:
                 return
             llm = get_llm_client_for_agent(agent_config)
             session_id = self._session_id or self.client_id
-            messages = build_messages(agent_config, self.context_manager, session_id, text)
+            if history is None:
+                history = [dict(item) for item in self.context_manager.get_context(session_id)]
+            messages = build_messages(agent_config, self.context_manager, session_id, text, history=history)
             try:
                 max_tokens = int(agent_config.get("max_tokens", _LIVE_REPLY_MAX_TOKENS_CAP))
             except (TypeError, ValueError):
@@ -593,6 +598,9 @@ class LiveClientHandler:
             ):
                 content = ""
                 if isinstance(chunk, dict):
+                    if chunk.get("type") == "error":
+                        await self._safe_channel_send({"type": "error", "error": "模型请求失败，请稍后重试"})
+                        return
                     if chunk.get("type") == "content":
                         content = chunk.get("content", "")
                 elif isinstance(chunk, str):

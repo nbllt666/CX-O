@@ -351,3 +351,6 @@ CXO-ModelStation/release/
 CXO-ModelStation/release-*/
 # Electron 主进程/预加载构建产物（vite-plugin-electron 输出，非源码）
 CXO-ModelStation/frontend/dist-electron/
+
+# Keep the training lifecycle regression suite under version control.
+!CXO-ModelStation/tests/test_training_lifecycle.py

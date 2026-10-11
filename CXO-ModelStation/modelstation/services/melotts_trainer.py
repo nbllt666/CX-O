@@ -729,17 +729,41 @@ class MeloTTSTrainer:
             while True:
                 stdout_task = asyncio.create_task(self._read_stream(proc.stdout, _process_line))
                 stderr_task = asyncio.create_task(self._read_stream(proc.stderr, _process_line))
-                await asyncio.gather(stdout_task, stderr_task)
-
-                # 等待子进程退出，超时主动 kill（对齐 sovits trainer）
+                wait_task = asyncio.create_task(proc.wait())
+                tasks = (stdout_task, stderr_task, wait_task)
+                monitor_error = ""
                 try:
-                    await asyncio.wait_for(proc.wait(), timeout=_TRAIN_MONITOR_TIMEOUT)
+                    await asyncio.wait_for(asyncio.gather(*tasks), timeout=_TRAIN_MONITOR_TIMEOUT)
                 except asyncio.TimeoutError:
-                    logger.error(
-                        f"Training monitor wait timeout after {_TRAIN_MONITOR_TIMEOUT}s; killing process"
-                    )
+                    monitor_error = f"训练监控超时（{_TRAIN_MONITOR_TIMEOUT}s）"
+                    logger.error(monitor_error)
+                except asyncio.CancelledError:
+                    if proc.returncode is None:
+                        try:
+                            proc.terminate()
+                        except ProcessLookupError:
+                            pass
+                        await _wait_for_subprocess_exit(proc, _TRAIN_STOP_WAIT_TIMEOUT)
+                    raise
+                except Exception as exc:
+                    monitor_error = f"训练日志读取失败：{exc}"
+                    logger.exception("Training monitor failed")
+                finally:
+                    for task in tasks:
+                        if not task.done():
+                            task.cancel()
+                    await asyncio.gather(*tasks, return_exceptions=True)
+
+                if monitor_error and proc.returncode is None:
+                    try:
+                        proc.terminate()
+                    except ProcessLookupError:
+                        pass
                     await _wait_for_subprocess_exit(proc, _TRAIN_STOP_WAIT_TIMEOUT)
 
+                if monitor_error:
+                    _update_train_status(status="failed", message=monitor_error)
+                    break
                 returncode = proc.returncode if proc.returncode is not None else -1
                 if returncode == 0:
                     try:
@@ -792,6 +816,7 @@ class MeloTTSTrainer:
         finally:
             done_event.set()
             estimator_task.cancel()
+            await asyncio.gather(estimator_task, return_exceptions=True)
             # 所有出口释放互斥（end_training 幂等；仅持有者匹配时生效）
             end_training(TRAINING_MELOTTS)
 

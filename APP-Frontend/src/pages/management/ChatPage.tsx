@@ -11,7 +11,7 @@
  *
  * 语音/双流式/头像面板不在本页范围（归 Task 4 与桌宠侧）。
  */
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { memo, useCallback, useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Bell, Bot, Send, Sparkles, Square, User, X } from 'lucide-react';
 import { useChatStore } from '@/store/chatStore';
@@ -39,7 +39,7 @@ import { SummaryModal } from './SummaryModal';
 const DREAM_SURFACE_PREFIX = '（梦境）';
 
 /** 消息气泡（user 右 / assistant 左；thinking 折叠；工具调用链状态徽章；assistant 正文 Markdown 渲染） */
-function MessageBubble(props: { msg: ChatMsg; loading?: boolean }) {
+const MessageBubble = memo(function MessageBubble(props: { msg: ChatMsg; loading?: boolean }) {
   const { msg, loading } = props;
   const isUser = msg.role === 'user';
 
@@ -81,7 +81,7 @@ function MessageBubble(props: { msg: ChatMsg; loading?: boolean }) {
       </div>
     </div>
   );
-}
+});
 
 export default function ChatPage() {
   const { t } = useTranslation();
@@ -97,6 +97,7 @@ export default function ChatPage() {
   const [input, setInput] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [historyError, setHistoryError] = useState(false);
+  const [isHistoryLoading, setIsHistoryLoading] = useState(!!currentAgentId);
   const [alarms, setAlarms] = useState<
     { message: string; triggeredAt: string; expireAt: number }[]
   >([]);
@@ -107,6 +108,9 @@ export default function ChatPage() {
 
   const tempAssistantIdRef = useRef('');
   const historyTokenRef = useRef<{ cancelled: boolean }>({ cancelled: false });
+  const historyReadyRef = useRef(false);
+  const streamGenerationRef = useRef(0);
+  const activeTransportRef = useRef<'ws' | 'sse' | null>(null);
   const listRef = useRef<HTMLDivElement>(null);
 
   // Agent 列表
@@ -119,6 +123,15 @@ export default function ChatPage() {
     historyTokenRef.current.cancelled = true;
     const token = { cancelled: false };
     historyTokenRef.current = token;
+    historyReadyRef.current = false;
+    streamGenerationRef.current += 1;
+    activeTransportRef.current = null;
+    sseAbortRef.current?.abort();
+    sseAbortRef.current = null;
+    tempAssistantIdRef.current = '';
+    setIsLoading(false);
+    setMessages([]);
+    setIsHistoryLoading(!!currentAgentId);
     setHistoryError(false);
 
     if (!currentAgentId) {
@@ -150,11 +163,21 @@ export default function ChatPage() {
         console.error('History load failed:', error);
         setMessages([]);
         setHistoryError(true);
+      } finally {
+        if (!token.cancelled) {
+          historyReadyRef.current = true;
+          setIsHistoryLoading(false);
+        }
       }
     })();
 
     return () => {
       token.cancelled = true;
+      historyReadyRef.current = false;
+      streamGenerationRef.current += 1;
+      activeTransportRef.current = null;
+      sseAbortRef.current?.abort();
+      sseAbortRef.current = null;
     };
   }, [currentAgentId]);
 
@@ -166,15 +189,18 @@ export default function ChatPage() {
 
   /** 应用归一化事件到当前流式消息 */
   const applyEvent = useCallback((event: StreamEvent) => {
-    setMessages((prev) => applyStreamEvent(prev, tempAssistantIdRef.current, event));
+    const assistantId = tempAssistantIdRef.current;
+    setMessages((prev) => applyStreamEvent(prev, assistantId, event));
   }, []);
 
   /** 收尾：停止 loading + 空正文兜底 */
   const finalize = useCallback(
     (fallbackKey: 'management.chat.doneEmpty' | 'management.chat.cancelled') => {
+      const assistantId = tempAssistantIdRef.current;
+      activeTransportRef.current = null;
       setIsLoading(false);
       setMessages((prev) =>
-        finalizeStreamMessage(prev, tempAssistantIdRef.current, t(fallbackKey)),
+        finalizeStreamMessage(prev, assistantId, t(fallbackKey)),
       );
     },
     [t],
@@ -182,6 +208,8 @@ export default function ChatPage() {
 
   const handleWsMessage = useCallback(
     (data: WebSocketMessage) => {
+      // 独立推送仍可展示；聊天帧只属于当前 WS 生成，不能污染 SSE 回退。
+      if (data.type !== DreamActions.SURFACE && activeTransportRef.current !== 'ws') return;
       switch (data.type) {
         case 'content':
         case 'chat_chunk':
@@ -224,6 +252,8 @@ export default function ChatPage() {
 
   const handleWsError = useCallback(
     (error: string) => {
+      if (activeTransportRef.current !== 'ws') return;
+      activeTransportRef.current = null;
       setIsLoading(false);
       applyEvent({
         type: 'error',
@@ -266,14 +296,19 @@ export default function ChatPage() {
     // 对齐 PetPage M2 修复：服务端干净关闭（code=1000）只触发 onClose 不走 error 分支，
     // 不接线则 isLoading 永久卡死、停止按钮无法复位
     onDisconnect: () => {
+      if (activeTransportRef.current !== 'ws') return;
+      activeTransportRef.current = null;
       setIsLoading(false);
     },
   });
 
   const handleSend = useCallback(async () => {
     const text = input.trim();
-    if (!text || isLoading || !currentAgentId) return;
+    if (!text || isLoading || !currentAgentId || !historyReadyRef.current) return;
 
+    const generation = ++streamGenerationRef.current;
+    const isCurrentRun = () => generation === streamGenerationRef.current &&
+      currentAgentId === useChatStore.getState().currentAgentId;
     const assistantId = nextMessageId('a-');
     tempAssistantIdRef.current = assistantId;
     setMessages((prev) => [
@@ -287,11 +322,13 @@ export default function ChatPage() {
     // WS 优先；未连接或发送失败回退 HTTP SSE 流式
     let sentViaWs = false;
     if (isConnected) {
+      activeTransportRef.current = 'ws';
       sentViaWs = wsSendMessage(text);
     }
     if (sentViaWs) return;
 
     // SSE 回退同样可被停止（C3 修复）：创建 AbortController 并登记到 ref
+    activeTransportRef.current = 'sse';
     const abortController = new AbortController();
     sseAbortRef.current = abortController;
 
@@ -299,8 +336,10 @@ export default function ChatPage() {
       await chatApi.sendMessageStream(
         text,
         (chunk) => {
+          if (!isCurrentRun() || abortController.signal.aborted) return;
           const event = normalizeStreamChunk(chunk);
           if (event.type === 'done') {
+            activeTransportRef.current = null;
             setIsLoading(false);
             setMessages((prev) =>
               finalizeStreamMessage(prev, assistantId, t('management.chat.doneEmpty')),
@@ -316,12 +355,14 @@ export default function ChatPage() {
         undefined,
         abortController.signal,
       );
+      if (!isCurrentRun()) return;
       // SSE 自然结束（[DONE] 不产生 chunk）：确保 loading 复位
       setIsLoading(false);
       setMessages((prev) =>
         finalizeStreamMessage(prev, assistantId, t('management.chat.doneEmpty')),
       );
     } catch (error) {
+      if (!isCurrentRun()) return;
       setIsLoading(false);
       // 用户主动停止（C3 修复）：按"已取消"收尾，不弹错误
       if (error instanceof DOMException && error.name === 'AbortError') {
@@ -339,14 +380,15 @@ export default function ChatPage() {
         }),
       );
     } finally {
-      sseAbortRef.current = null;
+      if (sseAbortRef.current === abortController) sseAbortRef.current = null;
+      if (isCurrentRun()) activeTransportRef.current = null;
     }
   }, [input, isLoading, currentAgentId, isConnected, wsSendMessage, t]);
 
-  /** 停止生成（C3 修复）：WS cancel 与 SSE 回退的 AbortController 一并触发 */
+  /** 只停止当前生成所属的传输，避免另一通道的终态回调互相干扰。 */
   const handleStopGeneration = useCallback(() => {
-    cancelGeneration();
-    sseAbortRef.current?.abort();
+    if (activeTransportRef.current === 'ws') cancelGeneration();
+    if (activeTransportRef.current === 'sse') sseAbortRef.current?.abort();
   }, [cancelGeneration]);
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
@@ -468,8 +510,8 @@ export default function ChatPage() {
             {t('management.chat.empty')}
           </div>
         ) : (
-          messages.map((msg, i) => (
-            <MessageBubble key={msg.id} msg={msg} loading={isLoading && i === messages.length - 1} />
+          messages.map((msg) => (
+            <MessageBubble key={msg.id} msg={msg} loading={isLoading && msg.id === tempAssistantIdRef.current} />
           ))
         )}
       </div>
@@ -497,7 +539,7 @@ export default function ChatPage() {
             <button
               type="button"
               onClick={() => void handleSend()}
-              disabled={!input.trim() || !currentAgentId}
+              disabled={!input.trim() || !currentAgentId || isHistoryLoading}
               title={t('management.chat.send')}
               className="flex h-11 w-11 shrink-0 items-center justify-center rounded-lg bg-primary/85 text-primary-foreground transition-opacity hover:opacity-90 disabled:opacity-40"
             >

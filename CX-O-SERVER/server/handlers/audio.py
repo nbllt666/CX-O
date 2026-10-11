@@ -632,7 +632,7 @@ class DualStreamSession:
                 get_llm_client_for_agent,
                 retrieve_memory_context,
             )
-            from server.prompt_builder import build_messages
+            from server.prompt_builder import build_messages, load_history_snapshot, REALTIME_VOICE_HISTORY_LIMIT
             from server.dependencies import get_context_manager, get_memory_manager
             from server.services.text_smoother import TextSmoother
 
@@ -669,9 +669,11 @@ class DualStreamSession:
             # 3. 构建 messages（实时语音模式）
             # 保留：核心 System Prompt(padded) + 记忆(auto 预注入) + 最近 2 轮对话
             # 跳过：重型隐藏提示词、技能注入（控制 token 膨胀，维持语音低延迟）
+            history = await load_history_snapshot(context_mgr, self.session_id, REALTIME_VOICE_HISTORY_LIMIT)
             messages = build_messages(
                 agent_config, context_mgr, self.session_id,
                 user_text, memory_context=memory_context, is_realtime_voice=True,
+                history=history,
             )
 
             # 4. 获取 LLM client

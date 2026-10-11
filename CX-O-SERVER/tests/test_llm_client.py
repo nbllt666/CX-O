@@ -15,6 +15,39 @@ from unittest.mock import AsyncMock, MagicMock
 from server.core.llm.client import LLMResponse, OllamaClient, TRTLLMClient, VLLMClient
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize("client_type", [VLLMClient, TRTLLMClient])
+@pytest.mark.parametrize("ending", ["done", "finish_reason", "truncated", "invalid_json"])
+async def test_interleaved_tool_deltas_are_complete_before_emission(monkeypatch, client_type, ending):
+    """Two interleaved calls become two complete calls; incomplete streams execute none."""
+    deltas = [
+        {"index": 0, "id": "call_a", "type": "function", "function": {"name": "calculator", "arguments": ""}},
+        {"index": 1, "id": "call_b", "type": "function", "function": {"name": "datetime", "arguments": "{"}},
+        {"index": 0, "function": {"arguments": '{"expression":'}},
+        {"index": 1, "function": {"arguments": "}"}},
+        {"index": 0, "function": {"arguments": '"2+2"}' if ending != "invalid_json" else '"2+2"'}},
+    ]
+    lines = ["data: " + json.dumps({"choices": [{"delta": {"tool_calls": [delta]}}]}) for delta in deltas]
+    if ending == "finish_reason":
+        lines.append('data: {"choices":[{"delta":{},"finish_reason":"tool_calls"}]}')
+    elif ending != "truncated":
+        lines.append("data: [DONE]")
+    shared = httpx.AsyncClient(transport=httpx.MockTransport(
+        lambda request: httpx.Response(200, text="\n\n".join(lines))
+    ))
+    monkeypatch.setattr("server.core.llm.client.get_shared_http_client", lambda: shared)
+    async with shared:
+        chunks = [chunk async for chunk in client_type().stream_chat([{"role": "user", "content": "calculate"}])]
+    if ending in ("truncated", "invalid_json"):
+        assert [chunk["type"] for chunk in chunks] == ["error"]
+    else:
+        assert len(chunks) == 1
+        calls = chunks[0]["tool_calls"]
+        assert [call["id"] for call in calls] == ["call_a", "call_b"]
+        assert [call["function"]["name"] for call in calls] == ["calculator", "datetime"]
+        assert [json.loads(call["function"]["arguments"]) for call in calls] == [{"expression": "2+2"}, {}]
+
+
 @pytest.fixture
 def client():
     return OllamaClient(host="http://localhost:11434", model="qwen3:latest")

@@ -192,6 +192,12 @@ services:
       - PYTHONIOENCODING=utf-8
     volumes:
       - ./data/evalkit:/app/data
+      - type: bind
+        source: ./CXO-EvalKit/config.json
+        target: /app/config.json
+        read_only: true
+        bind:
+          create_host_path: false
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request;urllib.request.urlopen('http://localhost:8300/api/v1/health')"]
       interval: 30s

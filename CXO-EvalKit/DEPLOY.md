@@ -17,6 +17,8 @@ uvicorn evalkit.api:app --host 0.0.0.0 --port 8300
 
 ## 三、Docker 部署
 
+首次启动前，在 `CXO-EvalKit/` 将 `config.example.json` 复制为 `config.json` 并填写配置（已有文件直接编辑，保留其中的配置和密钥）。
+
 ```bash
 # 在仓库根目录执行（profile 门控，裸 up 不会启动）
 docker compose --profile eval up cxo-evalkit
@@ -24,6 +26,7 @@ docker compose --profile eval up cxo-evalkit
 
 - 宿主端口默认 **8320**（环境变量 `CXO_EVALKIT_PORT` 可覆盖），容器内 8300
 - 数据卷挂载 `./data/evalkit → /app/data`（SQLite 库 + run 目录均落于此）
+- 配置只读挂载 `./CXO-EvalKit/config.json → /app/config.json`；源文件缺失会明确报错，不会生成同名目录。修改配置后重新启动 EvalKit 容器生效，密钥不进入镜像。
 
 ## 四、配置说明（config.json）
 

@@ -348,8 +348,9 @@ class AlarmManager:
             self._release_connection()
 
         with self._lock:
-            if alarm_id in self._timers:
-                del self._timers[alarm_id]
+            timer = self._timers.pop(alarm_id, None)
+            if timer is not None:
+                timer.cancel()
 
         return affected > 0
 
@@ -383,8 +384,14 @@ class AlarmManager:
 
         timer = threading.Timer(delay, trigger)
         with self._lock:
+            if self._shutdown:
+                return
+            previous = self._timers.get(alarm.id)
+            if previous is not None:
+                previous.cancel()
             self._timers[alarm.id] = timer
-        timer.start()
+            # 与 shutdown 串行，保证关闭时能取消每个已启动的 Timer。
+            timer.start()
 
     def _trigger_alarm(self, alarm: Alarm):
         if self._shutdown:
@@ -440,8 +447,8 @@ class AlarmManager:
 
     def shutdown(self):
         """关闭管理器：取消全部定时器、关闭缓存的数据库连接并静默日志。"""
-        self._shutdown = True
         with self._lock:
+            self._shutdown = True
             for timer in self._timers.values():
                 timer.cancel()
             self._timers.clear()

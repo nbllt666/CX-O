@@ -5,7 +5,6 @@
 
 import json
 import base64
-import logging
 from typing import List, Optional
 
 from fastapi import APIRouter, HTTPException, Request
@@ -70,7 +69,39 @@ SUMMARY_AGENT_HIDDEN_SYSTEM_PROMPT = """<role>
 
 
 # 统一提示词组装入口（单一真相源，见 server/prompt_builder.py）
-from server.prompt_builder import build_messages
+from server.prompt_builder import build_messages, load_history_snapshot
+from server.core.chat.stream import ChatStreamState, generate_chat_stream
+from server.core.llm.client import LLMError, raise_for_llm_error
+
+
+async def _generate_chat_events(llm, messages, agent_config, tools, session_id, context_mgr, agent_id=None):
+    """将共享聊天管线转换为现有 HTTP SSE 事件，失败后不发送 done。"""
+    def encode(event):
+        return f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
+
+    yield encode({"type": "session", "session_id": session_id})
+    state = ChatStreamState()
+    try:
+        async for event in generate_chat_stream(
+            llm, messages, agent_config, tools=tools, session_id=session_id,
+            state=state, emit_events=True,
+        ):
+            if event.get("type") == "error":
+                yield encode({"type": "error", "message": "流式聊天处理失败，请稍后重试"})
+                return
+            yield encode(event)
+        if state.accumulated_response:
+            response = state.accumulated_response
+            if agent_id is not None:
+                response = expand_action_presets(response, agent_id)
+            await run_io(
+                context_mgr.add_message, session_id=session_id,
+                role="assistant", content=response,
+            )
+        yield encode({"type": "done", "session_id": session_id})
+    except Exception:
+        logger.exception("流式聊天处理失败")
+        yield encode({"type": "error", "message": "流式聊天处理失败，请稍后重试"})
 
 
 @router.post("/chat")
@@ -128,6 +159,7 @@ async def chat(request: Request):
         session_id = f"agent-{chat_req.agent_id}"
         await ensure_agent_session_async(context_mgr, chat_req.agent_id, agent_config["name"])
 
+        history = await load_history_snapshot(context_mgr, session_id)
         await run_io(
             context_mgr.add_message,
             session_id=session_id, role="user", content=chat_req.message,
@@ -144,12 +176,14 @@ async def chat(request: Request):
             user_message=chat_req.message,
             memory_context=memory_context,
             images=chat_req.images,
+            history=history,
         )
 
         # 获取工具（收敛到 chat_helpers.get_tools_for_agent 单一真相源，与流式/WebSocket/ACP 一致）
         tools = get_tools_for_agent()
 
         response = await llm.chat(messages=messages, stream=False, tools=tools)
+        raise_for_llm_error(response)
 
         final_response = response.content
         if hasattr(response, "tool_calls") and response.tool_calls:
@@ -158,6 +192,7 @@ async def chat(request: Request):
             await execute_tool_calls_async(response.tool_calls, messages)
 
             response = await llm.chat(messages=messages, stream=False)
+            raise_for_llm_error(response)
             final_response = response.content
 
         # 动作预设展开（Task 4.2）：下发/落库前将 [action:预设名] 展开为标签序列，
@@ -176,6 +211,8 @@ async def chat(request: Request):
             "tokens_used": response.usage.get("total_tokens", 0) if response.usage else 0,
         }
 
+    except LLMError:
+        raise HTTPException(status_code=502, detail="模型请求失败，请稍后重试")
     except HTTPException:
         raise
     except Exception as e:
@@ -207,6 +244,7 @@ async def chat_stream(request: ChatRequest):
         session_id = f"agent-{request.agent_id}"
         await ensure_agent_session_async(context_mgr, request.agent_id, agent_config["name"])
 
+        history = await load_history_snapshot(context_mgr, session_id)
         # 4. 添加用户消息到上下文
         await run_io(
             context_mgr.add_message,
@@ -226,6 +264,7 @@ async def chat_stream(request: ChatRequest):
             user_message=request.message,
             memory_context=memory_context,
             images=request.images,
+            history=history,
         )
 
         # 7. 获取工具（只过滤 summary 类别，收敛到 chat_helpers.get_tools_for_agent 单一真相源）
@@ -236,131 +275,10 @@ async def chat_stream(request: ChatRequest):
         )
 
         async def generate_stream():
-            """生成流式响应"""
-            full_response = ""
-            full_thinking = ""
-            tool_calls_buffer = []
-
-            # 发送会话ID作为第一个事件
-            yield f"data: {json.dumps({'type': 'session', 'session_id': session_id})}\n\n"
-
-            try:
-                logger.info(
-                    f"开始流式聊天，消息数: {len(messages)}, 工具数: {len(tools) if tools else 0}"
-                )
-                # 调用LLM流式接口
-                async for chunk in llm.stream_chat(
-                    messages=messages,
-                    temperature=agent_config.get("temperature", 0.7),
-                    max_tokens=agent_config.get("max_tokens", 4096),
-                    tools=tools,
-                ):
-                    if chunk:
-                        if logger.isEnabledFor(logging.DEBUG):
-                            logger.debug("收到 chunk: %s, 内容: %s", type(chunk), chunk)
-                        # 检查是否是字典类型（新的返回格式）
-                        if isinstance(chunk, dict):
-                            chunk_type = chunk.get("type")
-                            if chunk_type == "thinking":
-                                thinking_content = chunk.get("content", "")
-                                full_thinking += thinking_content
-                                yield f"data: {json.dumps({'type': 'thinking', 'content': thinking_content})}\n\n"
-                            elif chunk_type == "content":
-                                content = chunk.get("content", "")
-                                full_response += content
-                                yield f"data: {json.dumps({'type': 'content', 'content': content})}\n\n"
-                            elif chunk_type == "tool_calls":
-                                new_tool_calls = chunk.get("tool_calls", [])
-                                logger.info(f"检测到工具调用: {new_tool_calls}")
-                                tool_calls_buffer.extend(new_tool_calls)  # 累积工具调用
-                                # 发送工具调用事件
-                                for tool_call in new_tool_calls:
-                                    yield f"data: {json.dumps({'type': 'tool_call', 'tool_call': tool_call})}\n\n"
-                        # 兼容旧格式：字符串类型
-                        elif isinstance(chunk, str):
-                            full_response += chunk
-                            yield f"data: {json.dumps({'type': 'content', 'content': chunk})}\n\n"
-
-                # 处理工具调用
-                if tool_calls_buffer:
-                    from server.core.tools import parse_tool_args
-                    from server.core.tools.builtin import call_builtin_tool, BUILTIN_TOOL_NAMES, _execute_single_tool_async
-
-                    for tool_call in tool_calls_buffer:
-                        tool_name = tool_call.get("name") or tool_call.get("function", {}).get(
-                            "name"
-                        )
-                        tool_args = parse_tool_args(tool_call)
-
-                        # 发送工具执行开始事件
-                        yield f"data: {json.dumps({'type': 'tool_start', 'tool_name': tool_name})}\n\n"
-
-                        # 执行工具（内置同步工具直接调用；CXFC/异步工具走统一异步执行器）
-                        if tool_name in BUILTIN_TOOL_NAMES:
-                            tool_result = call_builtin_tool(tool_name, tool_args or {})
-                            logger.info(f"内置工具 {tool_name} 执行结果: {tool_result}")
-                        else:
-                            tool_result = await _execute_single_tool_async(tool_name, tool_args or {})
-                            logger.info(f"注册工具 {tool_name} 执行结果: {tool_result}")
-
-                        # 发送工具执行结果事件
-                        logger.info(
-                            f"发送工具结果事件: tool_name={tool_name}, result type={type(tool_result)}"
-                        )
-                        yield f"data: {json.dumps({'type': 'tool_result', 'tool_name': tool_name, 'result': tool_result})}\n\n"
-
-                        # 添加工具调用结果到消息
-                        messages.append(
-                            {"role": "assistant", "content": None, "tool_calls": [tool_call]}
-                        )
-                        messages.append(
-                            {
-                                "role": "tool",
-                                "tool_call_id": tool_call.get("id", ""),
-                                "name": tool_name,
-                                "content": json.dumps(tool_result, ensure_ascii=False),
-                            }
-                        )
-
-                    # 再次调用LLM获取最终响应（流式）
-                    full_response = ""
-                    async for chunk in llm.stream_chat(
-                        messages=messages,
-                        temperature=agent_config.get("temperature", 0.7),
-                        max_tokens=agent_config.get("max_tokens", 4096),
-                    ):
-                        if chunk:
-                            # 检查是否是字典类型（新的返回格式）
-                            if isinstance(chunk, dict):
-                                chunk_type = chunk.get("type")
-                                if chunk_type == "content":
-                                    content = chunk.get("content", "")
-                                    full_response += content
-                                    yield f"data: {json.dumps({'type': 'content', 'content': content})}\n\n"
-                                elif chunk_type == "thinking":
-                                    thinking_content = chunk.get("content", "")
-                                    yield f"data: {json.dumps({'type': 'thinking', 'content': thinking_content})}\n\n"
-                            # 兼容旧格式：字符串类型
-                            elif isinstance(chunk, str):
-                                full_response += chunk
-                                yield f"data: {json.dumps({'type': 'content', 'content': chunk})}\n\n"
-
-                # 流结束，保存完整响应到上下文
-                if full_response:
-                    # 动作预设展开（Task 4.2）：落库前展开 [action:预设名]，保证历史恢复
-                    # 展示与前端标签驱动一致（流式增量已按原样下发，展开作用于最终完整文本）
-                    full_response = expand_action_presets(full_response, request.agent_id)
-                    await run_io(
-                        context_mgr.add_message,
-                        session_id=session_id, role="assistant", content=full_response,
-                    )
-
-                # 发送完成事件
-                yield f"data: {json.dumps({'type': 'done', 'session_id': session_id})}\n\n"
-
-            except Exception as e:
-                logger.error(f"流式聊天错误: {e}", exc_info=True)
-                yield f"data: {json.dumps({'type': 'error', 'message': '流式聊天处理失败'})}\n\n"
+            async for event in _generate_chat_events(
+                llm, messages, agent_config, tools, session_id, context_mgr, agent_id=request.agent_id,
+            ):
+                yield event
 
         return StreamingResponse(
             generate_stream(),
@@ -464,7 +382,7 @@ async def memory_agent_chat_stream(request: MemoryAgentChatRequest):
         await run_io(
             context_mgr.add_message, session_id=session_id, role="user", content=request.message,
         )
-        agent_context_mgr.append_message(agent_id, "user", request.message)
+        await run_io(agent_context_mgr.append_message, agent_id, "user", request.message)
 
         # 7. 构建消息列表（包含历史上下文）
         messages = []
@@ -492,121 +410,10 @@ async def memory_agent_chat_stream(request: MemoryAgentChatRequest):
         )
 
         async def generate_stream():
-            """生成流式响应"""
-            full_response = ""
-            full_thinking = ""
-            tool_calls_buffer = []
-
-            # 发送会话ID作为第一个事件
-            yield f"data: {json.dumps({'type': 'session', 'session_id': session_id})}\n\n"
-
-            try:
-                logger.info(
-                    f"开始记忆管理模型流式聊天，消息数: {len(messages)}, 工具数: {len(tools)}"
-                )
-                # 调用LLM流式接口
-                async for chunk in llm.stream_chat(
-                    messages=messages,
-                    temperature=agent_config.get("temperature", 0.3),
-                    max_tokens=agent_config.get("max_tokens", 4096),
-                    tools=tools,
-                ):
-                    if chunk:
-                        # 检查是否是字典类型（新的返回格式）
-                        if isinstance(chunk, dict):
-                            chunk_type = chunk.get("type")
-                            if chunk_type == "thinking":
-                                thinking_content = chunk.get("content", "")
-                                full_thinking += thinking_content
-                                yield f"data: {json.dumps({'type': 'thinking', 'content': thinking_content})}\n\n"
-                            elif chunk_type == "content":
-                                content = chunk.get("content", "")
-                                full_response += content
-                                yield f"data: {json.dumps({'type': 'content', 'content': content})}\n\n"
-                            elif chunk_type == "tool_calls":
-                                new_tool_calls = chunk.get("tool_calls", [])
-                                logger.info(f"检测到工具调用: {new_tool_calls}")
-                                tool_calls_buffer.extend(new_tool_calls)  # 累积工具调用
-                                # 发送工具调用事件
-                                for tool_call in new_tool_calls:
-                                    yield f"data: {json.dumps({'type': 'tool_call', 'tool_call': tool_call})}\n\n"
-                        # 兼容旧格式：字符串类型
-                        elif isinstance(chunk, str):
-                            full_response += chunk
-                            yield f"data: {json.dumps({'type': 'content', 'content': chunk})}\n\n"
-
-                # 处理工具调用
-                if tool_calls_buffer:
-                    from server.core.tools import parse_tool_args
-                    from server.core.tools.builtin import call_builtin_tool, BUILTIN_TOOL_NAMES, _execute_single_tool_async
-
-                    for tool_call in tool_calls_buffer:
-                        tool_name = tool_call.get("name") or tool_call.get("function", {}).get(
-                            "name"
-                        )
-                        tool_args = parse_tool_args(tool_call)
-
-                        # 发送工具执行开始事件
-                        yield f"data: {json.dumps({'type': 'tool_start', 'tool_name': tool_name})}\n\n"
-
-                        # 执行工具（内置同步工具直接调；CXFC/异步工具走统一异步执行器）
-                        if tool_name in BUILTIN_TOOL_NAMES:
-                            tool_result = call_builtin_tool(tool_name, tool_args or {})
-                        else:
-                            tool_result = await _execute_single_tool_async(tool_name, tool_args or {})
-
-                        # 发送工具执行结果事件
-                        yield f"data: {json.dumps({'type': 'tool_result', 'tool_name': tool_name, 'result': tool_result})}\n\n"
-
-                        # 添加工具调用结果到消息
-                        messages.append(
-                            {"role": "assistant", "content": None, "tool_calls": [tool_call]}
-                        )
-                        messages.append(
-                            {
-                                "role": "tool",
-                                "tool_call_id": tool_call.get("id", ""),
-                                "name": tool_name,
-                                "content": json.dumps(tool_result, ensure_ascii=False),
-                            }
-                        )
-
-                    # 再次调用LLM获取最终响应（流式）
-                    full_response = ""
-                    async for chunk in llm.stream_chat(
-                        messages=messages,
-                        temperature=agent_config.get("temperature", 0.3),
-                        max_tokens=agent_config.get("max_tokens", 4096),
-                    ):
-                        if chunk:
-                            # 检查是否是字典类型（新的返回格式）
-                            if isinstance(chunk, dict):
-                                chunk_type = chunk.get("type")
-                                if chunk_type == "content":
-                                    content = chunk.get("content", "")
-                                    full_response += content
-                                    yield f"data: {json.dumps({'type': 'content', 'content': content})}\n\n"
-                                elif chunk_type == "thinking":
-                                    thinking_content = chunk.get("content", "")
-                                    yield f"data: {json.dumps({'type': 'thinking', 'content': thinking_content})}\n\n"
-                            # 兼容旧格式：字符串类型
-                            elif isinstance(chunk, str):
-                                full_response += chunk
-                                yield f"data: {json.dumps({'type': 'content', 'content': chunk})}\n\n"
-
-                # 流结束，保存完整响应到上下文
-                if full_response:
-                    await run_io(
-                        context_mgr.add_message,
-                        session_id=session_id, role="assistant", content=full_response,
-                    )
-
-                # 发送完成事件
-                yield f"data: {json.dumps({'type': 'done', 'session_id': session_id})}\n\n"
-
-            except Exception as e:
-                logger.error(f"记忆管理模型流式聊天错误: {e}", exc_info=True)
-                yield f"data: {json.dumps({'type': 'error', 'message': '记忆管理模型流式聊天处理失败'})}\n\n"
+            async for event in _generate_chat_events(
+                llm, messages, {"temperature": 0.3, **agent_config}, tools, session_id, context_mgr,
+            ):
+                yield event
 
         return StreamingResponse(
             generate_stream(),
@@ -652,8 +459,7 @@ async def summary_agent_stream_chat(request: SummaryAgentChatRequest):
     使用 summary 模型，仅提供 summary 类别工具（save_diary_entry 等）。
     摘要助手只有一个固定会话 summary-agent-default。
 
-    CX-O 简化：参考现有 chat_stream 的内联 generate_stream() 风格，
-    不依赖 CXHMS 的 ChatStreamState/generate_chat_stream 封装。
+    与普通聊天和记忆管理聊天共用 core/chat/stream.py 流式管线。
     """
     from server.dependencies import get_context_manager, get_model_router
     from server.core.tools import tool_registry
@@ -749,121 +555,10 @@ async def summary_agent_stream_chat(request: SummaryAgentChatRequest):
         )
 
         async def generate_stream():
-            """生成流式响应（参考 CX-O 现有 chat_stream 内联风格）"""
-            full_response = ""
-            full_thinking = ""
-            tool_calls_buffer = []
-
-            # 1. 立即发送 session 事件，让前端显示"思考中"状态
-            yield f"data: {json.dumps({'type': 'session', 'session_id': session_id}, ensure_ascii=False)}\n\n"
-
-            try:
-                logger.info(
-                    f"开始摘要助手流式聊天，消息数: {len(messages)}, 工具数: {len(tools)}"
-                )
-                # 调用LLM流式接口
-                async for chunk in llm.stream_chat(
-                    messages=messages,
-                    temperature=agent_config.get("temperature", 0.3),
-                    max_tokens=agent_config.get("max_tokens", 4096),
-                    tools=tools,
-                ):
-                    if chunk:
-                        # 检查是否是字典类型（新的返回格式）
-                        if isinstance(chunk, dict):
-                            chunk_type = chunk.get("type")
-                            if chunk_type == "thinking":
-                                thinking_content = chunk.get("content", "")
-                                full_thinking += thinking_content
-                                yield f"data: {json.dumps({'type': 'thinking', 'content': thinking_content}, ensure_ascii=False)}\n\n"
-                            elif chunk_type == "content":
-                                content = chunk.get("content", "")
-                                full_response += content
-                                yield f"data: {json.dumps({'type': 'content', 'content': content}, ensure_ascii=False)}\n\n"
-                            elif chunk_type == "tool_calls":
-                                new_tool_calls = chunk.get("tool_calls", [])
-                                logger.info(f"摘要助手检测到工具调用: {new_tool_calls}")
-                                tool_calls_buffer.extend(new_tool_calls)
-                                # 发送工具调用事件
-                                for tool_call in new_tool_calls:
-                                    yield f"data: {json.dumps({'type': 'tool_call', 'tool_call': tool_call}, ensure_ascii=False)}\n\n"
-                        # 兼容旧格式：字符串类型
-                        elif isinstance(chunk, str):
-                            full_response += chunk
-                            yield f"data: {json.dumps({'type': 'content', 'content': chunk}, ensure_ascii=False)}\n\n"
-
-                # 处理工具调用
-                if tool_calls_buffer:
-                    from server.core.tools import parse_tool_args
-                    from server.core.tools.builtin import call_builtin_tool, BUILTIN_TOOL_NAMES, _execute_single_tool_async
-
-                    for tool_call in tool_calls_buffer:
-                        tool_name = tool_call.get("name") or tool_call.get("function", {}).get(
-                            "name"
-                        )
-                        tool_args = parse_tool_args(tool_call)
-
-                        # 发送工具执行开始事件
-                        yield f"data: {json.dumps({'type': 'tool_start', 'tool_name': tool_name}, ensure_ascii=False)}\n\n"
-
-                        # 执行工具（内置同步工具直接调；CXFC/异步工具走统一异步执行器）
-                        if tool_name in BUILTIN_TOOL_NAMES:
-                            tool_result = call_builtin_tool(tool_name, tool_args or {})
-                            logger.info(f"内置工具 {tool_name} 执行结果: {tool_result}")
-                        else:
-                            tool_result = await _execute_single_tool_async(tool_name, tool_args or {})
-                            logger.info(f"注册工具 {tool_name} 执行结果: {tool_result}")
-
-                        # 发送工具执行结果事件
-                        yield f"data: {json.dumps({'type': 'tool_result', 'tool_name': tool_name, 'result': tool_result}, ensure_ascii=False)}\n\n"
-
-                        # 添加工具调用结果到消息
-                        messages.append(
-                            {"role": "assistant", "content": None, "tool_calls": [tool_call]}
-                        )
-                        messages.append(
-                            {
-                                "role": "tool",
-                                "tool_call_id": tool_call.get("id", ""),
-                                "name": tool_name,
-                                "content": json.dumps(tool_result, ensure_ascii=False),
-                            }
-                        )
-
-                    # 再次调用LLM获取最终响应（流式）
-                    full_response = ""
-                    async for chunk in llm.stream_chat(
-                        messages=messages,
-                        temperature=agent_config.get("temperature", 0.3),
-                        max_tokens=agent_config.get("max_tokens", 4096),
-                    ):
-                        if chunk:
-                            if isinstance(chunk, dict):
-                                chunk_type = chunk.get("type")
-                                if chunk_type == "content":
-                                    content = chunk.get("content", "")
-                                    full_response += content
-                                    yield f"data: {json.dumps({'type': 'content', 'content': content}, ensure_ascii=False)}\n\n"
-                                elif chunk_type == "thinking":
-                                    thinking_content = chunk.get("content", "")
-                                    yield f"data: {json.dumps({'type': 'thinking', 'content': thinking_content}, ensure_ascii=False)}\n\n"
-                            elif isinstance(chunk, str):
-                                full_response += chunk
-                                yield f"data: {json.dumps({'type': 'content', 'content': chunk}, ensure_ascii=False)}\n\n"
-
-                # 流结束，保存完整响应到上下文
-                if full_response:
-                    await run_io(
-                        context_mgr.add_message,
-                        session_id=session_id, role="assistant", content=full_response,
-                    )
-
-                # 发送完成事件
-                yield f"data: {json.dumps({'type': 'done', 'session_id': session_id}, ensure_ascii=False)}\n\n"
-
-            except Exception as e:
-                logger.error(f"摘要助手流式聊天错误: {e}", exc_info=True)
-                yield f"data: {json.dumps({'type': 'error', 'message': '摘要助手流式聊天处理失败'}, ensure_ascii=False)}\n\n"
+            async for event in _generate_chat_events(
+                llm, messages, agent_config, tools, session_id, context_mgr,
+            ):
+                yield event
 
         return StreamingResponse(
             generate_stream(),

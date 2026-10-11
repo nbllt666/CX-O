@@ -201,6 +201,23 @@ class TestToolLoop:
 # ---------------------------------------------------------------------------
 
 class TestErrors:
+    async def test_error_stops_queued_tools_and_following_content(self, monkeypatch):
+        llm = _FakeStreamLLM([[
+            {"type": "tool_calls", "tool_calls": [{"name": "datetime", "arguments": {}}]},
+            {"type": "error", "content": "connection lost"},
+            {"type": "content", "content": "must not escape"},
+        ]])
+        calls = []
+        monkeypatch.setattr("server.core.tools.builtin.call_builtin_tool", lambda *args: calls.append(args))
+        state = ChatStreamState()
+        messages = []
+        chunks = await _drain(generate_chat_stream(llm, messages, _AGENT, state=state))
+        assert chunks == [{"type": "error", "content": "connection lost"}]
+        assert state.error == "connection lost"
+        assert state.done is True
+        assert messages == []
+        assert calls == []
+
     async def test_llm_raises_yields_error_and_done(self):
         llm = _FakeStreamLLM([[{"type": "content", "content": "x"}]], raise_on_round=1)
         chunks = await _drain(generate_chat_stream(llm, [], _AGENT))

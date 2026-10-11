@@ -165,6 +165,8 @@ def _patch_chat_deps(monkeypatch, agent_config=None, llm=None, context_mgr=None,
         update_session=lambda *a, **kw: True,
         add_message=lambda session_id, role, content: None,
     )
+    if not hasattr(context_mgr, "get_recent_messages"):
+        context_mgr.get_recent_messages = lambda sid, limit=50: []
     build_messages = build_messages or (lambda **kw: [{"role": "user", "content": "hi"}])
 
     monkeypatch.setattr(chat_helpers, "get_agent_config", lambda agent_id: agent_config)
@@ -256,6 +258,18 @@ class TestHandleChat:
 
 
 class TestHandleChatStream:
+    @pytest.mark.asyncio
+    async def test_provider_error_is_not_chat_content_or_done(self, handler, fake_mgr, monkeypatch):
+        async def stream_chat(**kwargs):
+            yield {"type": "error", "content": "private HTTP 503"}
+
+        _patch_chat_deps(monkeypatch, llm=SimpleNamespace(stream_chat=stream_chat))
+        await handler._handle_chat_stream("c1", {"message": "hello"})
+        types = [message["type"] for _, message in fake_mgr.sent]
+        assert types[-1] == "error"
+        assert "chat_chunk" not in types
+        assert "chat_done" not in types
+
     @pytest.mark.asyncio
     async def test_stream_chunks_and_done(self, handler, fake_mgr, monkeypatch):
         async def stream_chat(messages, temperature=0.7, max_tokens=4096):

@@ -331,6 +331,8 @@ class SoVITSSVCTrainer:
         return self._task_id
 
     async def _read_stream(self, stream, callback):
+        if stream is None:
+            return
         while True:
             line = await stream.readline()
             if not line:
@@ -407,18 +409,45 @@ class SoVITSSVCTrainer:
         while True:
             stdout_task = asyncio.create_task(self._read_stream(process.stdout, _process_line))
             stderr_task = asyncio.create_task(self._read_stream(process.stderr, _process_line))
-            await asyncio.gather(stdout_task, stderr_task)
-
-            # 等到子进程退出，超时则主动 kill（按子进程句柄所对应的进程）。
+            wait_task = asyncio.create_task(process.wait())
+            tasks = (stdout_task, stderr_task, wait_task)
+            monitor_error = ""
+            # 管道读取与进程等待共用期限；日志不再输出/不 EOF 时也必须能超时。
             try:
-                await asyncio.wait_for(process.wait(), timeout=_TRAIN_MONITOR_TIMEOUT)
+                await asyncio.wait_for(asyncio.gather(*tasks), timeout=_TRAIN_MONITOR_TIMEOUT)
             except asyncio.TimeoutError:
-                logger.error(
-                    f"Training monitor wait timeout after {_TRAIN_MONITOR_TIMEOUT}s; killing process"
-                )
+                monitor_error = f"训练监控超时（{_TRAIN_MONITOR_TIMEOUT}s）"
+                logger.error(monitor_error)
+            except asyncio.CancelledError:
+                if process.returncode is None:
+                    try:
+                        process.terminate()
+                    except ProcessLookupError:
+                        pass
+                    await _wait_for_subprocess_exit(process, _TRAIN_STOP_WAIT_TIMEOUT)
+                raise
+            except Exception as exc:
+                monitor_error = f"训练日志读取失败：{exc}"
+                logger.exception("Training monitor failed")
+            finally:
+                for task in tasks:
+                    if not task.done():
+                        task.cancel()
+                await asyncio.gather(*tasks, return_exceptions=True)
+
+            if monitor_error and process.returncode is None:
+                try:
+                    process.terminate()
+                except ProcessLookupError:
+                    pass
                 await _wait_for_subprocess_exit(process, _TRAIN_STOP_WAIT_TIMEOUT)
 
-            returncode = process.returncode if process.returncode is not None else -1
+            returncode = -1 if monitor_error else process.returncode
+            if returncode is None:
+                returncode = -1
+            if monitor_error:
+                message = monitor_error
+                break
             if returncode == 0:
                 # 产物收集：引擎 logs/<name> → models_dir/<name>（收集失败按训练失败上报，
                 # 避免"训练成功但模型列表为空"的静默不一致）

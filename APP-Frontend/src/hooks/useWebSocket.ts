@@ -235,6 +235,15 @@ export function useWebSocket(options: WebSocketOptions): UseWebSocketReturn {
 
   // 卸载时清理心跳定时器，避免跨多次挂载累积残留心跳 interval（泄漏）
   useEffect(() => clearPingInterval, [clearPingInterval]);
+  useEffect(() => clearGeneratingTimer, [clearGeneratingTimer]);
+
+  const cleanupConnection = useCallback(() => {
+    resetIsGenerating();
+    clearPingInterval();
+    textProgressRef.current = '';
+    ttsPlayerRef.current?.interrupt();
+    onDisconnectRef.current?.();
+  }, [resetIsGenerating, clearPingInterval]);
 
   // 消息路由：transport 不解析 JSON，caller 负责解析 + 路由。
   const handleMessage = useCallback((event: MessageEvent) => {
@@ -409,14 +418,7 @@ export function useWebSocket(options: WebSocketOptions): UseWebSocketReturn {
       );
       onConnectRef.current?.();
     },
-    onClose: () => {
-      // 服务端主动关闭时清理（手动 disconnect 走 wrapper 的 cleanup）
-      resetIsGenerating();
-      clearPingInterval();
-      // 断开时清空累计文本段，重连后不残留上一会话内容
-      textProgressRef.current = '';
-      onDisconnectRef.current?.();
-    },
+    onClose: cleanupConnection,
     onError: (error) => {
       console.error('WebSocket error:', error);
       onErrorRef.current?.(error);
@@ -428,14 +430,13 @@ export function useWebSocket(options: WebSocketOptions): UseWebSocketReturn {
   // 所以 onClose 回调不会触发，需在此显式清理业务状态。
   const disconnect = useCallback(() => {
     transportDisconnect();
-    resetIsGenerating();
-    clearPingInterval();
-    onDisconnectRef.current?.();
-  }, [transportDisconnect, clearPingInterval, resetIsGenerating]);
+    cleanupConnection();
+  }, [transportDisconnect, cleanupConnection]);
 
   const reconnect = useCallback(() => {
+    cleanupConnection();
     transportReconnect();
-  }, [transportReconnect]);
+  }, [transportReconnect, cleanupConnection]);
 
   const sendMessage = useCallback(
     (message: string, images?: string[]): boolean => {
@@ -557,12 +558,12 @@ export function useWebSocket(options: WebSocketOptions): UseWebSocketReturn {
 
     if (prevAgentId !== agentId) {
       if (prevAgentId && agentId) {
-        transportReconnect();
+        reconnect();
       } else if (!agentId) {
-        transportDisconnect();
+        disconnect();
       }
     }
-  }, [agentId, transportReconnect, transportDisconnect]);
+  }, [agentId, reconnect, disconnect]);
 
   // offline-timeout 自定义事件监听
   useEffect(() => {

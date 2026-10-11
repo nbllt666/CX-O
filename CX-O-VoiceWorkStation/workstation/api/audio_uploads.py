@@ -20,6 +20,7 @@ import logging
 import uuid
 from pathlib import Path
 
+import anyio
 from fastapi import APIRouter, HTTPException, UploadFile
 
 from workstation.config import get_settings
@@ -29,6 +30,7 @@ router = APIRouter()
 
 # 允许的音频扩展名白名单（大小写不敏感；与上传校验一一对应）
 _ALLOWED_EXTENSIONS = {".wav", ".mp3", ".flac", ".ogg", ".m4a"}
+_UPLOAD_CHUNK_BYTES = 1024 * 1024
 
 
 @router.post("")
@@ -49,19 +51,13 @@ async def upload_audio(file: UploadFile):
             ),
         )
 
-    # 2. 大小上限校验（先读入内存再校验，超限不落盘）
+    # 2. 只读取限额内的数据及至多一个越界字节，内存不随文件总量增长。
     max_bytes = max(1, int(upload_cfg.max_size_mb)) * 1024 * 1024
-    content = await file.read()
-    if len(content) > max_bytes:
+    if file.size is not None and file.size > max_bytes:
         raise HTTPException(
             status_code=400,
-            detail=(
-                f"文件过大: {len(content)} 字节，"
-                f"超过上限 {upload_cfg.max_size_mb}MB"
-            ),
+            detail=f"文件过大: {file.size} 字节，超过上限 {upload_cfg.max_size_mb}MB",
         )
-    if not content:
-        raise HTTPException(status_code=400, detail="上传文件为空")
 
     # 3. 服务端重生成文件名（uuid 片段 + 原扩展名），防穿越防覆盖
     input_dir = Path(upload_cfg.input_dir).resolve()
@@ -73,12 +69,42 @@ async def upload_audio(file: UploadFile):
     if not dest.resolve().is_relative_to(input_dir):
         raise HTTPException(status_code=400, detail="非法落盘路径")
 
-    dest.write_bytes(content)
+    temporary = dest.with_suffix(dest.suffix + ".part")
+    size = 0
+    output = None
+    try:
+        # 获取/关闭句柄必须免受取消作用域影响，否则 Windows 无法清理已打开文件。
+        with anyio.CancelScope(shield=True):
+            output = await anyio.open_file(temporary, "xb")
+        while True:
+            chunk = await file.read(min(_UPLOAD_CHUNK_BYTES, max_bytes - size + 1))
+            if not chunk:
+                break
+            size += len(chunk)
+            if size > max_bytes:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"文件过大，超过上限 {upload_cfg.max_size_mb}MB",
+                )
+            await output.write(chunk)
+        if size == 0:
+            raise HTTPException(status_code=400, detail="上传文件为空")
+        with anyio.CancelScope(shield=True):
+            await output.aclose()
+        output = None
+        await anyio.lowlevel.checkpoint_if_cancelled()
+        temporary.replace(dest)
+    finally:
+        # 包括超限、读取/写入错误与请求取消：不保留不完整的可推理音频。
+        with anyio.CancelScope(shield=True):
+            if output is not None:
+                await output.aclose()
+            temporary.unlink(missing_ok=True)
 
     logger.info(
         "Audio uploaded: %s (%d bytes, original=%r) -> %s",
         filename,
-        len(content),
+        size,
         original_name,
         dest,
     )

@@ -51,6 +51,7 @@ export const agentsApi = {
       url: `/api/agents/${agentId}/clone`,
       method: 'post',
     });
+    clearApiCache('/api/agents');
     return response.agent;
   },
 

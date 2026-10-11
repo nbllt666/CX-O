@@ -16,6 +16,8 @@ from __future__ import annotations
 
 import sys
 from pathlib import Path
+import pytest
+import threading
 
 # 项目根（CX-O-SERVER）加入 sys.path，保证 import server.*
 _PROJECT_ROOT = Path(__file__).resolve().parent.parent
@@ -25,7 +27,24 @@ if str(_PROJECT_ROOT) not in sys.path:
 from server.prompt_builder import (  # noqa: E402
     REALTIME_VOICE_HISTORY_LIMIT,
     build_messages,
+    load_history_snapshot,
 )
+
+
+@pytest.mark.asyncio
+async def test_history_snapshot_reads_off_loop_and_does_not_follow_later_writes():
+    loop_thread = threading.get_ident()
+    rows = [{"role": "user", "content": "earlier"}]
+
+    class Context:
+        def get_recent_messages(self, session_id, limit):
+            assert threading.get_ident() != loop_thread
+            return rows
+
+    snapshot = await load_history_snapshot(Context(), "session", limit=20)
+    rows.append({"role": "user", "content": "current"})
+    rows[0]["content"] = "changed"
+    assert snapshot == [{"role": "user", "content": "earlier"}]
 
 
 class _FakeContextMgr:

@@ -52,13 +52,16 @@ export function createAssistantMessage(id: string): ChatMsg {
   return { id, role: 'assistant', content: '', timestamp: new Date().toISOString() };
 }
 
-function replaceLast(messages: ChatMsg[], next: ChatMsg): ChatMsg[] {
-  return [...messages.slice(0, -1), next];
+function replaceMessage(messages: ChatMsg[], index: number, next: ChatMsg): ChatMsg[] {
+  const updated = [...messages];
+  updated[index] = next;
+  return updated;
 }
 
 /**
  * 将一条流式事件归约到消息列表（不可变更新）。
- * 仅当列表末条消息 id 等于 assistantId 时生效，否则原样返回（防止串台）。
+ * 按 assistantId 更新目标消息，允许梦境等独立消息插入在它之后。
+ * 目标不存在或不是 assistant 时原样返回；未变更消息保持引用，供 UI memo 复用。
  *
  * 事件口径：
  * - content     → 追加正文
@@ -74,17 +77,18 @@ export function applyStreamEvent(
   assistantId: string,
   event: StreamEvent,
 ): ChatMsg[] {
-  const last = messages[messages.length - 1];
-  if (!last || last.id !== assistantId) return messages;
+  const index = messages.findIndex((message) => message.id === assistantId && message.role === 'assistant');
+  const last = messages[index];
+  if (!last) return messages;
 
   switch (event.type) {
     case 'content': {
       if (!event.content) return messages;
-      return replaceLast(messages, { ...last, content: last.content + event.content });
+      return replaceMessage(messages, index, { ...last, content: last.content + event.content });
     }
     case 'thinking': {
       if (!event.content) return messages;
-      return replaceLast(messages, {
+      return replaceMessage(messages, index, {
         ...last,
         thinking: (last.thinking ?? '') + event.content,
       });
@@ -98,14 +102,14 @@ export function applyStreamEvent(
         status: 'pending',
         arguments: tc.arguments ?? tc.function?.arguments,
       };
-      return replaceLast(messages, {
+      return replaceMessage(messages, index, {
         ...last,
         toolCalls: [...(last.toolCalls ?? []), item],
       });
     }
     case 'tool_start': {
       if (!event.tool_name || !last.toolCalls) return messages;
-      return replaceLast(messages, {
+      return replaceMessage(messages, index, {
         ...last,
         toolCalls: last.toolCalls.map((t) =>
           t.name === event.tool_name && t.status === 'pending'
@@ -116,7 +120,7 @@ export function applyStreamEvent(
     }
     case 'tool_result': {
       if (!event.tool_name || !last.toolCalls) return messages;
-      return replaceLast(messages, {
+      return replaceMessage(messages, index, {
         ...last,
         toolCalls: last.toolCalls.map((t) =>
           t.name === event.tool_name
@@ -126,7 +130,7 @@ export function applyStreamEvent(
       });
     }
     case 'error': {
-      return replaceLast(messages, {
+      return replaceMessage(messages, index, {
         ...last,
         isError: true,
         content: event.error ?? '',
@@ -146,25 +150,30 @@ export function finalizeStreamMessage(
   assistantId: string,
   fallback: string,
 ): ChatMsg[] {
-  const last = messages[messages.length - 1];
-  if (!last || last.id !== assistantId || last.content || !fallback) return messages;
-  return replaceLast(messages, { ...last, content: fallback });
+  const index = messages.findIndex((message) => message.id === assistantId && message.role === 'assistant');
+  const last = messages[index];
+  if (!last || last.isError || last.content || !fallback) return messages;
+  return replaceMessage(messages, index, { ...last, content: fallback });
 }
 
 /** SSE chunk（Record<string, unknown>）→ StreamEvent 归一化 */
 export function normalizeStreamChunk(chunk: Record<string, unknown>): StreamEvent {
   const toolCall = chunk.tool_call as StreamEvent['tool_call'] | undefined;
+  const type = typeof chunk.type === 'string' ? chunk.type : '';
+  const errorDetail = chunk.error && typeof chunk.error === 'object'
+    ? (chunk.error as { message?: unknown }).message
+    : chunk.error;
+  // HTTP SSE 使用 message，底层模型流使用 content；保留既有 error 字段优先级。
+  const errorCandidates = type === 'error'
+    ? [errorDetail, chunk.message, chunk.content]
+    : [errorDetail];
+  const error = errorCandidates.find((value): value is string => typeof value === 'string' && value.length > 0);
   return {
-    type: typeof chunk.type === 'string' ? chunk.type : '',
+    type,
     content: typeof chunk.content === 'string' ? chunk.content : undefined,
     tool_call: toolCall,
     tool_name: typeof chunk.tool_name === 'string' ? chunk.tool_name : undefined,
     result: chunk.result,
-    error:
-      typeof chunk.error === 'string'
-        ? chunk.error
-        : chunk.error
-          ? String((chunk.error as { message?: unknown }).message ?? chunk.error)
-          : undefined,
+    error: error ?? (chunk.error ? String(chunk.error) : undefined),
   };
 }

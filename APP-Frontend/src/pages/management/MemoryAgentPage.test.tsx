@@ -138,4 +138,19 @@ describe('MemoryAgentPage 记忆代理页', () => {
 
     expect(await screen.findByText('发送失败，请稍后重试')).toBeInTheDocument();
   });
+
+  it('实际 SSE error/message 帧保留失败说明，不被流结束的成功兜底覆盖', async () => {
+    mockedAgents.getAgentContext.mockResolvedValue({ recent_messages: [] });
+    mockedChat.sendMemoryAgentMessageStream.mockImplementation(async (_msg, onChunk) => {
+      onChunk({ type: 'session', session_id: 'memory-agent-default' });
+      onChunk({ type: 'error', message: '流式聊天处理失败，请稍后重试' });
+    });
+    render(<MemoryAgentPage />);
+    expect(await screen.findByText('记忆管理助手')).toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText(/输入指令/), { target: { value: '失败请求' } });
+    fireEvent.click(screen.getByRole('button', { name: '发送' }));
+    expect(await screen.findByText('流式聊天处理失败，请稍后重试')).toBeVisible();
+    expect(screen.queryByText(i18n.t('management.memoryAgent.doneEmpty'))).not.toBeInTheDocument();
+    await waitFor(() => expect(screen.getByLabelText(/输入指令/)).toBeEnabled());
+  });
 });

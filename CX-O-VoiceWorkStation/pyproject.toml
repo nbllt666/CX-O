@@ -4,6 +4,7 @@ version = "0.1.0"
 description = "CX-O VoiceWorkStation 语音工作站后端"
 requires-python = ">=3.10"
 dependencies = [
+    "anyio>=3.7",
     "jsonschema>=4.0",
     "music21>=9.1",
     # 音域分析（librosa pyin F0 提取）；enhance-cover-pitch-analysis-duet Task 1

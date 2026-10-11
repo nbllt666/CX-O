@@ -202,6 +202,19 @@ def _resolve_history(context_mgr, session_id: str, history: Optional[List[dict]]
         return context_mgr.get_messages(session_id, limit=limit)[-limit:]
 
 
+async def load_history_snapshot(context_mgr, session_id: str, limit: Optional[int] = None) -> List[dict]:
+    """在保存本轮输入前异步抓取历史，通过 build_messages(history=...) 传入。
+
+    同步查询卸载到 IO 线程池；快照隔离随后写入，历史中合法的相同文本完整保留。
+    """
+    from server.core.utils import run_io
+
+    if limit is None:
+        limit = get_settings().config.limits.context.chat_context_limit
+    history = await run_io(_resolve_history, context_mgr, session_id, None, limit)
+    return [dict(message) for message in history]
+
+
 def _inject_cxfc_skills(messages: List[dict], user_message: str) -> None:
     """按用户消息关键词注入匹配的 CXFC 技能提示词（失败不影响主流程）。"""
     try:

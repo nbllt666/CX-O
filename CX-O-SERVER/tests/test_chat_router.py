@@ -578,3 +578,63 @@ class TestSummaryAgentChatStream:
         assert r.status_code == 200
         last = _parse_sse(r)[-1]
         assert last["type"] == "error"
+
+
+@pytest.mark.parametrize("path,model", [
+    ("/chat/stream", None), ("/memory-agent/chat/stream", "memory"),
+    ("/summary-agent/chat/stream", "summary"),
+])
+@pytest.mark.parametrize("after_tool", [False, True])
+def test_provider_error_never_becomes_done_or_assistant_history(harness, path, model, after_tool):
+    harness.agent_config = _simple_config()
+    rounds = [[{"type": "error", "content": "HTTP 503: private upstream detail"}]]
+    if after_tool:
+        rounds.insert(0, [{"type": "tool_calls", "tool_calls": [
+            {"id": "call1", "name": "datetime", "arguments": {}}
+        ]}])
+    llm = FakeStreamLLM(rounds)
+    harness.llm = llm
+    if model:
+        harness.model_router.clients[model] = llm
+    response = harness.client.post(path, json={"message": "hello"})
+    events = _parse_sse(response)
+    assert events[-1]["type"] == "error"
+    assert "done" not in [event["type"] for event in events]
+    assert "private upstream" not in response.text
+    assert all(message["role"] != "assistant" for rows in harness.ctx.messages.values() for message in rows)
+
+
+@pytest.mark.parametrize("after_tool", [False, True])
+def test_nonstream_provider_failure_returns_502_without_assistant(harness, after_tool):
+    from server.core.llm.client import LLMResponse
+    harness.agent_config = _simple_config()
+    responses = [LLMResponse(content="", finish_reason="error", error="HTTP 503")]
+    if after_tool:
+        responses.insert(0, FakeResponse("", tool_calls=[{"id": "call1", "name": "datetime", "arguments": {}}]))
+    harness.llm = FakeLLM(responses)
+    response = harness.client.post("/chat", json={"message": "hello"})
+    assert response.status_code == 502
+    assert [message["role"] for message in harness.ctx.messages["agent-default"]] == ["user"]
+
+
+@pytest.mark.parametrize("path", ["/chat", "/chat/stream"])
+def test_real_builder_includes_current_input_once_and_preserves_earlier_repeat(harness, monkeypatch, path):
+    import server.prompt_builder as builder
+    harness.agent_config = _simple_config()
+    harness.ctx.messages["agent-default"] = [
+        {"role": "user", "content": "same text"}, {"role": "assistant", "content": "previous reply"},
+    ]
+    monkeypatch.setattr("server.api.routers.chat.build_messages", builder.build_messages)
+    monkeypatch.setattr(builder, "_get_hidden_prompts", lambda: {})
+    monkeypatch.setattr(builder, "_inject_cxfc_skills", lambda *args: None)
+    monkeypatch.setattr(builder, "_build_preset_injection", lambda *args: None)
+    harness.llm = FakeLLM([FakeResponse("reply")]) if path == "/chat" else FakeStreamLLM([["reply"]])
+    response = harness.client.post(path, json={"message": "same text"})
+    assert response.status_code == 200
+    calls = harness.llm.chat_calls if path == "/chat" else harness.llm.stream_calls
+    conversation = [message for message in calls[0][0] if message["role"] != "system"]
+    assert conversation == [
+        {"role": "user", "content": "same text"},
+        {"role": "assistant", "content": "previous reply"},
+        {"role": "user", "content": "same text"},
+    ]

@@ -7,7 +7,7 @@ import { defineConfig } from '@playwright/test';
  * - 端口必须与 vite.config.ts 的 DEV_PORT 一致（当前固定 3100，strictPort）。
  * - workers=1：桌面应用三窗共享持久化全局状态（localStorage/zustand persist、
  *   electronStorage 内存缓存、data-theme），并发会产生跨页面串扰，故全程单 worker 串行。
- * - webServer 用 npm run dev 与日常开发口径完全一致（ELECTRON=true）；
+ * - webServer 使用浏览器开发入口，避免浏览器 E2E 启动多余 Electron 桌面窗口；
  *   reuseExistingServer 允许复用人工已起的 dev server，测试结束不误杀外部进程。
  */
 const DEV_PORT = 3100;
@@ -32,7 +32,7 @@ export default defineConfig({
   projects: [{ name: 'chromium', use: { browserName: 'chromium' } }],
 
   webServer: {
-    command: 'npm run dev',
+    command: 'npm run dev:browser',
     url: `http://localhost:${DEV_PORT}`,
     reuseExistingServer: true,
     timeout: 120_000,

@@ -29,6 +29,18 @@ describe('chatStream 流式事件归约', () => {
     expect(next[1].content).toBe('');
   });
 
+  it('梦境插入后仍按 ID 更新并收尾原回复，保留其他消息引用', () => {
+    const messages = [...baseMessages(), { ...createAssistantMessage('dream'), content: '梦境' }];
+    const next = applyStreamEvent(messages, 'a-1', { type: 'content', content: '继续回复' });
+    expect(next[1].content).toBe('继续回复');
+    expect(next[0]).toBe(messages[0]);
+    expect(next[2]).toBe(messages[2]);
+    const finalized = finalizeStreamMessage(messages, 'a-1', '已取消');
+    expect(finalized[1].content).toBe('已取消');
+    expect(finalized[2]).toBe(messages[2]);
+    expect(applyStreamEvent(messages, 'u-1', { type: 'content', content: '不可写用户消息' })).toBe(messages);
+  });
+
   it('thinking 事件累积思考过程', () => {
     let msgs = baseMessages();
     msgs = applyStreamEvent(msgs, 'a-1', { type: 'thinking', content: '先想' });
@@ -96,5 +108,23 @@ describe('chatStream 流式事件归约', () => {
     const malformed = normalizeStreamChunk({ content: 42 });
     expect(malformed.type).toBe('');
     expect(malformed.content).toBeUndefined();
+  });
+
+  it.each([
+    { type: 'error', error: '模型失败', message: '次级消息' },
+    { type: 'error', error: { code: 'E', message: '模型失败' } },
+    { type: 'error', message: '模型失败' },
+    { type: 'error', content: '模型失败' },
+    { type: 'error', error: '', message: '模型失败' },
+    { type: 'error', error: { code: 'E' }, message: '模型失败' },
+  ])('错误字段回退兼容实际后端帧 %j', (chunk) => {
+    expect(normalizeStreamChunk(chunk)).toMatchObject({ type: 'error', error: '模型失败' });
+  });
+
+  it('错误帧即使没有文案也不能被成功收尾文案覆盖', () => {
+    const failed = applyStreamEvent(baseMessages(), 'a-1', normalizeStreamChunk({ type: 'error' }));
+    expect(finalizeStreamMessage(failed, 'a-1', '响应已完成')).toBe(failed);
+    expect(failed[1].isError).toBe(true);
+    expect(normalizeStreamChunk({ type: 'content', content: '正常内容' }).error).toBeUndefined();
   });
 });

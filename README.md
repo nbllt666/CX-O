@@ -70,6 +70,8 @@ python download_voxcpm_support.py
 
 一键入口（推荐）：双击运行项目根目录的 `start-all.bat`，会自动依次拉起 CX-O-SERVER（8000）、VoiceWorkStation（8200）、ModelStation（8300）、APP-Frontend（3100）并打开浏览器；按任意键可统一关闭全部服务。
 
+服务启动日志保存在 `logs/*-launcher.log`。端口已被占用时会提示并跳过；`stop-all.bat` 只停止启动器登记且身份匹配的服务进程。旧版只保存 PID 的停止记录不再自动接管，旧版已启动的服务请从原窗口停止。
+
 也可以手动逐个启动：
 
 ```powershell
