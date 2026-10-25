@@ -211,6 +211,48 @@ describe("TrainPage", () => {
     expect(mockedApi.startTrain).not.toHaveBeenCalled();
   });
 
+  it("展示：MeloTTS 训练中显示已用时与预计剩余（ETA）", async () => {
+    mockedApi.getMelottsStatus.mockResolvedValue({
+      task_id: "task-mel-eta",
+      status: "running",
+      progress: 0.1,
+      epoch: 10,
+      total_epochs: 100,
+      message: "训练进行中（epoch 10/100）",
+      started_at: Math.floor(Date.now() / 1000) - 65,
+      phase: "training",
+      eta_seconds: 754,
+      models: [],
+    });
+
+    render(<TrainPage />);
+    await screen.findByText("空闲");
+    fireEvent.click(screen.getByRole("button", { name: "MeloTTS" }));
+
+    expect(await screen.findByText("预计剩余：12 分 34 秒")).toBeInTheDocument();
+    expect(screen.getByText(/已用时：1 分 \d+ 秒/)).toBeInTheDocument();
+  });
+
+  it("交互：batch_size 留空时提交不携带该字段（后端按显存自适应）", async () => {
+    mockedApi.startMelottsTrain.mockResolvedValue({
+      status: "success",
+      task_id: "task-auto-batch",
+      message: "训练已启动",
+    });
+
+    render(<TrainPage />);
+    await screen.findByText("空闲");
+    fireEvent.click(screen.getByRole("button", { name: "MeloTTS" }));
+    await screen.findByText("训练状态（MeloTTS）");
+
+    expect(screen.getByLabelText("batch_size")).toHaveValue(null);
+    fireEvent.click(screen.getByRole("button", { name: "开始训练" }));
+
+    await waitFor(() => expect(mockedApi.startMelottsTrain).toHaveBeenCalled());
+    const payload = mockedApi.startMelottsTrain.mock.calls[0][0];
+    expect(payload).not.toHaveProperty("batch_size");
+  });
+
   it("交互：melotts 训练返回 409 时展示训练互斥冲突提示", async () => {
     mockedApi.startMelottsTrain.mockRejectedValue(
       new ApiClientError(409, "训练任务正在进行中（当前训练类型: So-VITS-SVC，task_id: abc123）"),

@@ -80,6 +80,8 @@ def create_app() -> FastAPI:
     from modelstation.api.datasets import batch_router as datasets_generate_router
     from modelstation.api.datasets import datasets_router as svc_datasets_router
     from modelstation.api.melotts import router as melotts_router
+    # 一键成模（change-id: add-one-click-voice-model-pipeline）
+    from modelstation.api.pipeline import router as pipeline_router
 
     # 路由前缀（契约变更 change-id: extend-modelstation-standalone-melotts-datasets：
     # 批量生成端点由 /api/voxcpm/batch-dataset 改名 /api/datasets/batch-generate，旧路由移除）
@@ -89,6 +91,7 @@ def create_app() -> FastAPI:
     app.include_router(datasets_generate_router, prefix="/api/datasets", tags=["数据集批量生成"])
     app.include_router(svc_datasets_router, prefix="/api/sovits-svc", tags=["SVC 数据集管理"])
     app.include_router(melotts_router, prefix="/api/melotts", tags=["MeloTTS 训练"])
+    app.include_router(pipeline_router, prefix="/api/pipeline", tags=["一键成模"])
 
     @app.get("/health")
     async def health_check():

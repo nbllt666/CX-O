@@ -107,3 +107,38 @@ async def test_monitor_bounds_pipe_reads_and_cleans_tasks(monkeypatch, tmp_path,
             await asyncio.gather(task, return_exceptions=True)
         reset_registry()
         mt.reset_train_status()
+
+
+@pytest.mark.asyncio
+async def test_sovits_epoch_parsed_from_log_file(monkeypatch, tmp_path):
+    """引擎 epoch 日志只落 train.log 文件（get_logger 仅 FileHandler）→ 监控从文件尾部解析并回调真实 epoch"""
+    log_dir = tmp_path / "logs" / "mymodel"
+    log_dir.mkdir(parents=True)
+    (log_dir / "train.log").write_text(
+        "2026-10-18\tINFO\t====> Epoch: 7, cost 1.00 s\n", encoding="utf-8"
+    )
+    monkeypatch.setattr(svc, "_EPOCH_FILE_POLL_SECONDS", 0.02)
+    # HangingProcess 流永不 EOF：监控 gather 依赖超时收尾，缩短以匹配测试节奏
+    monkeypatch.setattr(svc, "_TRAIN_MONITOR_TIMEOUT", 0.3)
+    proc = HangingProcess()
+    updates: list[dict] = []
+    trainer = svc.SoVITSSVCTrainer(output_dir=str(tmp_path), so_vits_svc_dir=str(tmp_path))
+    monitor = trainer._monitor_training(
+        10, lambda **kw: updates.append(kw), proc=proc, output_name="mymodel"
+    )
+    task = asyncio.create_task(monitor)
+    try:
+        await asyncio.sleep(0.1)
+        # stdout/stderr 未输出任何 epoch 行，epoch 只能来自 train.log 文件解析
+        assert any(u.get("epoch") == 7 for u in updates), f"updates={updates}"
+        proc.terminate()  # returncode=-15 → 监控按异常退出收尾并回填终态
+        await asyncio.wait_for(task, 1.0)
+    finally:
+        if not task.done():
+            task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
+        reset_registry()
+        mt.reset_train_status()
+    final = updates[-1]
+    assert final["status"] == "failed"
+    assert final["epoch"] == 7  # 终态回填的 epoch 取文件解析值，而非 0

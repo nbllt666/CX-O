@@ -78,7 +78,8 @@ export interface SVCPreprocessRequest {
 
 export interface TrainStartRequest {
   epochs: number;
-  batch_size: number;
+  /** 缺省 = 后端按当前显存自适应 */
+  batch_size?: number;
   learning_rate: number;
   output_name?: string | null;
   speaker_name?: string | null;
@@ -113,6 +114,10 @@ export interface TrainStatus {
   epoch: number;
   total_epochs: number;
   message: string;
+  /** MeloTTS 侧扩展字段（sovits 后端不返回，保持可选以兼容联合类型） */
+  started_at?: number | null;
+  phase?: string;
+  eta_seconds?: number | null;
   models: ModelInfo[];
 }
 
@@ -146,23 +151,44 @@ export type MelottsPreprocessResult = PreprocessResult;
 
 export interface MelottsTrainStartRequest {
   epochs: number;
-  batch_size: number;
+  /** 缺省 = 后端按当前显存自适应 */
+  batch_size?: number;
   learning_rate: number;
   output_name?: string | null;
   /** 训练语言（后端默认 ZH） */
   language?: string | null;
 }
 
-/** GET /api/melotts/models 列表项（MeloTTS 产物为目录，无 G/D 权重对） */
+/** GET /api/melotts/models 列表项（模型目录 + 检查点清单） */
 export interface MelottsModelInfo {
   name: string;
   path: string;
   created: number;
+  /** 最新 G 检查点绝对路径（后端附带） */
+  g_model?: string | null;
+  /** G 检查点文件名清单（按落盘先后排序） */
+  checkpoints?: string[];
 }
 
 export interface MelottsModelsResult {
   status: string;
   models: MelottsModelInfo[];
+}
+
+/** POST /api/melotts/infer 请求：模型目录或 G_*.pth + 合成文本 */
+export interface MelottsInferRequest {
+  model_path: string;
+  text: string;
+  /** 检查点文件名（model_path 为目录时生效；缺省取最新） */
+  checkpoint?: string | null;
+  language?: string | null;
+}
+
+export interface MelottsInferResult {
+  status: string;
+  output_filename: string;
+  audio_url: string;
+  checkpoint: string;
 }
 
 /** GET /api/melotts/status：progress 取值 0-1（models 字段后端可选附带） */
@@ -173,6 +199,12 @@ export interface MelottsTrainStatus {
   epoch: number;
   total_epochs: number;
   message: string;
+  /** 本次训练启动时刻（unix 秒），用于展示已用时 */
+  started_at?: number | null;
+  /** 启动子阶段：preprocess / pretrain / launch / training */
+  phase?: string;
+  /** 预计剩余秒数（epoch 样本足够后由后端推算；未知为 null） */
+  eta_seconds?: number | null;
   models?: MelottsModelInfo[];
 }
 
@@ -258,6 +290,66 @@ export interface BatchTaskStatus {
   failures: BatchTaskFailure[];
   created_at: string;
   finished_at: string | null;
+}
+
+// ---- 一键成模（/api/pipeline，change-id: add-one-click-voice-model-pipeline）----
+
+/** 一键成模阶段 id：reference=参考音频、corpus=语料生成、preprocess=数据准备、training=训练、collect=产物收集 */
+export type PipelineStageId = "reference" | "corpus" | "preprocess" | "training" | "collect";
+
+/** 阶段条目：status 取值 pending/running/skipped/completed/failed */
+export interface PipelineStage {
+  id: PipelineStageId;
+  status: string;
+  detail: string | null;
+}
+
+/** POST /api/pipeline/reference 响应：上传参考音频（multipart 单文件），返回服务端受控绝对路径 */
+export interface ReferenceUploadResult {
+  status: string;
+  ref_audio_path: string;
+}
+
+/** POST /api/pipeline/run 请求：输入三选一（voice_description / ref_audio_path / dataset_dir） */
+export interface PipelineRunRequest {
+  model_type: "melotts" | "sovits";
+  voice_description?: string;
+  ref_audio_path?: string;
+  /** 自带数据集目录（本地绝对路径；仅 model_type=sovits 支持） */
+  dataset_dir?: string;
+  /** 语料文本覆盖（每行一条由调用方拆好；缺省用内置语料集） */
+  texts?: BatchTextItem[];
+  /** 语料目标切片条数（提示词/参考模式；合成后按句子边界组装 5~15s 切片） */
+  corpus_target_clips?: number;
+  output_name?: string;
+  max_epochs?: number;
+}
+
+/** POST /api/pipeline/run 响应：立即返回 run_id 与初始阶段清单 */
+export interface PipelineRunStartResult {
+  status: string;
+  run_id: string;
+  stages: PipelineStage[];
+}
+
+/** GET /api/pipeline/run/{run_id}：分阶段进度（corpus 计数 / training 进度与判停 / 产物信息） */
+export interface PipelineRunStatus {
+  run_id: string;
+  status: "running" | "completed" | "failed";
+  model_type: string;
+  dataset_id: string | null;
+  stages: PipelineStage[];
+  corpus: { done: number; total: number };
+  training: {
+    progress: number;
+    epoch: number;
+    total_epochs: number;
+    /** improving=拟合中、converged=已拟合、overfit_risk=过拟合风险、max_epochs=达到上限 */
+    fitting_status: string | null;
+    stop_reason: string | null;
+  };
+  result: { model_name: string; model_dir: string; files: string[] } | null;
+  error: string | null;
 }
 
 export interface WorkflowStep {
@@ -393,6 +485,31 @@ export const api = {
       `/api/datasets/batch-generate/${encodeURIComponent(taskId)}`,
     ),
 
+  // ---- 一键成模（/api/pipeline）----
+  /** multipart 上传参考音频（单文件，字段名 file），返回服务端受控绝对路径 */
+  uploadReference: (file: File) => {
+    const formData = new FormData();
+    formData.append("file", file);
+    return request<ReferenceUploadResult>("/api/pipeline/reference", {
+      method: "POST",
+      body: formData,
+    });
+  },
+
+  /** 一键启动自动全流程（校验失败 400 / 已有运行进行中 409），立即返回 run_id */
+  startPipelineRun: (req: PipelineRunRequest) =>
+    request<PipelineRunStartResult>("/api/pipeline/run", {
+      method: "POST",
+      headers: JSON_HEADERS,
+      body: JSON.stringify(req),
+    }),
+
+  /** 查询一键成模运行的分阶段进度（未知 run_id → 404） */
+  getPipelineRun: (runId: string) =>
+    request<PipelineRunStatus>(
+      `/api/pipeline/run/${encodeURIComponent(runId)}`,
+    ),
+
   // ---- MeloTTS 训练（/api/melotts，形状与 sovits 同构）----
   melottsPreprocess: (req: MelottsPreprocessRequest) =>
     request<MelottsPreprocessResult>("/api/melotts/preprocess", {
@@ -414,6 +531,14 @@ export const api = {
   getMelottsStatus: () => request<MelottsTrainStatus>("/api/melotts/status"),
 
   listMelottsModels: () => request<MelottsModelsResult>("/api/melotts/models"),
+
+  /** MeloTTS 试听推理（对训练产物合成一段音频，输出挂 audition 受控目录） */
+  inferMelotts: (req: MelottsInferRequest) =>
+    request<MelottsInferResult>("/api/melotts/infer", {
+      method: "POST",
+      headers: JSON_HEADERS,
+      body: JSON.stringify(req),
+    }),
 
   // ---- 工作流（/api/workflow）----
   getWorkflowStatus: () => request<WorkflowState>("/api/workflow/status"),

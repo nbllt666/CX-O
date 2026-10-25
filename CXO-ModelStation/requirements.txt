@@ -13,6 +13,11 @@ pydantic>=2
 # HTTP 客户端（外部服务调用）
 httpx
 
+# 音频导入转码（自带数据集模式：44.1kHz 单声道统一转码，延迟导入）
+numpy
+scipy
+soundfile
+
 # 测试
 pytest
 pytest-asyncio

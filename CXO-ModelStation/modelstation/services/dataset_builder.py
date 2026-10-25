@@ -268,6 +268,166 @@ def validate_ref_audio_path(ref_audio_path: str, settings: Optional[ModelStation
     )
 
 
+# ---------------------------------------------------------------------------
+# 语料成片组装（长音频按句子边界切分，5~15s 标准切片）
+# ---------------------------------------------------------------------------
+
+# 切片时长上下限与句间静音（对齐参考工作流 5~15s 切片标准）
+_CLIP_MIN_SECONDS = 5.0
+_CLIP_MAX_SECONDS = 15.0
+_CLIP_GAP_SECONDS = 0.3
+
+
+def assemble_sentence_clips(
+    dataset_dir: Path,
+    *,
+    min_seconds: float = _CLIP_MIN_SECONDS,
+    max_seconds: float = _CLIP_MAX_SECONDS,
+    gap_seconds: float = _CLIP_GAP_SECONDS,
+) -> int:
+    """把逐句合成 wav 组装为 5~15s 标准切片（同步阻塞，调用方须经 to_thread）。
+
+    算法：取 manifest 中 role!=reference 且 text 非空的语料条目（按合成顺序），
+    贪心分组——连续句子拼接（句间插 gap 静音），累计时长达到 min_seconds 即收片；
+    加入下一句将超过 max_seconds 时提前收片；单句超过 max_seconds 独立成片。
+    每组写 clip_NNNN.wav（PCM16），manifest 增对应条目（text 为组内句子顺序拼接，
+    文本-音频配对保持精确），并删除原句条目与文件。
+
+    单条目解码失败时该句独立成片（保留原文件，不阻断整体组装）。
+    全部条目解码失败时不做任何改动，返回 0。
+
+    Returns:
+        成片条数（0 = 无可组装条目）。
+    """
+    import math
+
+    import numpy as np
+    import soundfile as sf
+
+    manifest_path = dataset_dir / "manifest.json"
+    if not manifest_path.is_file():
+        return 0
+    try:
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        logger.warning("成片组装跳过（manifest 读取失败）: %s (%s)", manifest_path, exc)
+        return 0
+    entries: list[dict] = [
+        e for e in (manifest.get("entries") or [])
+        if isinstance(e, dict)
+        and e.get("role") != "reference"
+        and (e.get("text") or "").strip()
+    ]
+    if len(entries) < 2:
+        return 0
+
+    # 解码全部句子（mono float32 + 各自 sr）；失败条目独立保留
+    decoded: list[tuple[int, dict, np.ndarray | None, int]] = []  # (idx, entry, audio, sr)
+    for idx, entry in enumerate(entries):
+        path = dataset_dir / str(entry.get("file") or "")
+        try:
+            audio, sr = sf.read(str(path), dtype="float32", always_2d=True)
+        except Exception as exc:
+            logger.warning("成片组装：句子解码失败，独立保留 %s (%s)", path, exc)
+            decoded.append((idx, entry, None, 0))
+            continue
+        decoded.append((idx, entry, audio.mean(axis=1), int(sr)))
+    if all(audio is None for _, _, audio, _ in decoded):
+        return 0
+    target_sr = next(sr for _, _, audio, sr in decoded if audio is not None)
+
+    # 贪心分组：解码失败条目作为分片屏障独立保留，其余按连续句拼片
+    groups: list[list[tuple[dict, np.ndarray | None, int]]] = []
+    current: list[tuple[dict, np.ndarray | None, int]] = []
+    current_seconds = 0.0
+    for _, entry, audio, sr in decoded:
+        if audio is None:
+            if current:
+                groups.append(current)
+                current, current_seconds = [], 0.0
+            groups.append([(entry, None, sr)])
+            continue
+        seconds = len(audio) / sr
+        if seconds > max_seconds:
+            if current:
+                groups.append(current)
+                current, current_seconds = [], 0.0
+            groups.append([(entry, audio, sr)])
+            continue
+        if current and (current_seconds + seconds > max_seconds or current_seconds >= min_seconds):
+            groups.append(current)
+            current, current_seconds = [], 0.0
+        current.append((entry, audio, sr))
+        current_seconds += seconds
+    if current:
+        groups.append(current)
+
+    gap = np.zeros(int(gap_seconds * target_sr), dtype="float32")
+    consumed_files: set[str] = set()
+    new_entries: list[dict] = []
+    for group in groups:
+        texts: list[str] = []
+        audio_parts: list[np.ndarray] = []
+        engines: set[str] = set()
+        for entry, audio, sr in group:
+            texts.append(str(entry.get("text") or "").strip())
+            engines.add(str(entry.get("engine") or ""))
+            if audio is None:
+                # 解码失败条目：保留原条目与原文件，不写新片
+                new_entries.append(entry)
+                break
+            audio_parts.append(audio)
+            if sr != target_sr:
+                from scipy.signal import resample_poly
+
+                g = math.gcd(int(sr), target_sr)
+                audio_parts[-1] = resample_poly(audio, target_sr // g, sr // g)
+            consumed_files.add(str(entry.get("file") or ""))
+        if not audio_parts:
+            continue
+        filename = f"clip_{len(new_entries) + 1:04d}.wav"
+        merged = audio_parts[0]
+        for part in audio_parts[1:]:
+            merged = np.concatenate([merged, gap, part])
+        clip_path = dataset_dir / filename
+        sf.write(str(clip_path), merged, target_sr, subtype="PCM_16")
+        base = group[0][0]
+        new_entries.append({
+            "fingerprint": _entry_fingerprint({
+                "kind": "clip", "files": [e.get("file") for e, _, _ in group],
+            }),
+            "file": filename,
+            "md5": _md5_file(clip_path),
+            "text": "".join(texts),
+            "engine": next(iter(engines)) if len(engines) == 1 else ENGINE_PIPELINE,
+            "mode": base.get("mode") or "",
+            "control": base.get("control") or "",
+            "role": "corpus_clip",
+            "created_at": _now_iso(),
+        })
+
+    # 重写 manifest：保留 reference 条目 + 未消费条目 + 成片条目（原句条目删除）
+    keep = [
+        e for e in (manifest.get("entries") or [])
+        if not isinstance(e, dict)
+        or e.get("role") == "reference"
+        or str(e.get("file") or "") not in consumed_files
+    ]
+    manifest["entries"] = keep + new_entries
+    tmp_path = dataset_dir / "manifest.json.tmp"
+    tmp_path.write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
+    os.replace(tmp_path, manifest_path)
+    # 删除已拼入成片的原句文件
+    for name in consumed_files:
+        if name:
+            try:
+                (dataset_dir / name).unlink(missing_ok=True)
+            except OSError as exc:
+                logger.warning("成片组装：原句文件删除失败 %s (%s)", name, exc)
+    logger.info("语料成片组装完成: dir=%s 句子=%d 成片=%d", dataset_dir, len(entries), len(new_entries))
+    return len(new_entries)
+
+
 @dataclass
 class BatchDatasetTask:
     """批量数据集任务记录：内存注册表载体，to_dict() 即 API 响应内容"""
@@ -467,6 +627,24 @@ class DatasetBuilderService:
             return None
         return dict(record.to_dict())
 
+    async def wait_task(self, task_id: str) -> None:
+        """等待后台任务完全结束（含成片组装等终态后的收尾步骤）。
+
+        任务状态置为 completed/failed 与后台协程真正退出之间存在收尾窗口
+        （如语料成片组装在批次生成器落终态之后执行），调用方在读取最终计数
+        前应先 await 本方法，避免读到收尾前的中间状态。
+        """
+        bg = self._bg_tasks.get(task_id)
+        if bg is None:
+            return
+        try:
+            await bg
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            # 任务自身的异常已在 _on_bg_done/任务体内落账，此处仅等待退出
+            pass
+
     # ------------------------------------------------------------------
     # 统一流程（一套流程：qwen3 初始参考音频 → cosyvoice 批量 → 数据集编号）
     # ------------------------------------------------------------------
@@ -478,6 +656,7 @@ class DatasetBuilderService:
         *,
         ref_text: str = "",
         speaker_name: Optional[str] = None,
+        target_clips: Optional[int] = None,
     ) -> dict:
         """提交统一数据集生成流程，立即返回 dataset_id + task_id，后台执行。
 
@@ -486,11 +665,15 @@ class DatasetBuilderService:
              作为 manifest 首条目（role=reference）并回填注册表 ref_audio；
           2) cosyvoice3_zero 以该参考音频零样本克隆生成全部语料文本。
 
+        target_clips（语料成片模式）：给出目标切片条数时，语料文本按倍数扩展到
+        约 2.8×target 条（短句拼片后片数 ≥ 目标），全部合成后按句子边界贪心组装为
+        5~15s 标准切片（assemble_sentence_clips，文本精确拼接）；缺省逐句直出。
+
         编号：经 dataset_registry 分配 DS-xxx（目录名缺省与编号相同）。
 
         Returns:
             {"task_id", "dataset_id", "name", "dataset_dir", "total"}；
-            total = 1（参考音频）+ len(texts)
+            total = 1（参考音频）+ 合成句子数
 
         Raises:
             ValueError: texts/voice_description 为空或数据集名非法
@@ -508,6 +691,14 @@ class DatasetBuilderService:
 
         desc = str(voice_description).strip()
         ref_text = str(ref_text or "").strip()
+        if target_clips is not None and int(target_clips) < 1:
+            raise ValueError(f"target_clips must be >= 1, got: {target_clips!r}")
+        # 成片模式：语料池按需截断到约 2.8×目标条（短句拼片后 ≥ 目标条数）。
+        # 不做循环重复——同文本重复项会被指纹去重跳过，白费合成；目标超过
+        # 语料池规模时按池上限产出（计数如实回传）。
+        sentences: list[dict] = list(texts)
+        if target_clips is not None:
+            sentences = sentences[: int(int(target_clips) * 2.8)]
         try:
             registered = dataset_registry.register_dataset(
                 speaker_name, engine=ENGINE_PIPELINE, ref_text=ref_text or None,
@@ -524,7 +715,7 @@ class DatasetBuilderService:
             task_id=task_id,
             speaker_name=registered["name"],
             dataset_dir=str(dataset_dir),
-            total=1 + len(texts),
+            total=1 + len(sentences),
             mode="",
             created_at=_now_iso(),
             engine=ENGINE_PIPELINE,
@@ -533,20 +724,21 @@ class DatasetBuilderService:
         self._tasks[task_id] = record
 
         bg = asyncio.get_running_loop().create_task(
-            self._run_pipeline(record, desc, ref_text, texts, dataset_dir)
+            self._run_pipeline(record, desc, ref_text, sentences, dataset_dir, target_clips)
         )
         self._bg_tasks[task_id] = bg
         bg.add_done_callback(lambda t, tid=task_id: self._on_bg_done(tid, t))
         logger.info(
-            "统一流程任务已提交: task_id=%s dataset_id=%s name=%s total=%d",
-            task_id, registered["dataset_id"], registered["name"], 1 + len(texts),
+            "统一流程任务已提交: task_id=%s dataset_id=%s name=%s total=%d target_clips=%s",
+            task_id, registered["dataset_id"], registered["name"],
+            1 + len(sentences), target_clips,
         )
         return {
             "task_id": task_id,
             "dataset_id": registered["dataset_id"],
             "name": registered["name"],
             "dataset_dir": str(dataset_dir),
-            "total": 1 + len(texts),
+            "total": 1 + len(sentences),
         }
 
     async def _run_pipeline(
@@ -556,8 +748,10 @@ class DatasetBuilderService:
         ref_text: str,
         texts: list[dict],
         dataset_dir: Path,
+        target_clips: Optional[int] = None,
     ) -> None:
-        """统一流程主体：阶段1 生成参考音频 → 阶段2 cosyvoice 批量克隆。
+        """统一流程主体：阶段1 生成参考音频 → 阶段2 cosyvoice 批量克隆 →
+        阶段3（target_clips 模式）按句子边界组装 5~15s 标准切片。
 
         全程持有 dataset_dir 互斥锁（manifest 读改写与条目编号防并发互覆盖）。
         """
@@ -628,6 +822,23 @@ class DatasetBuilderService:
                     inference_timesteps=None,
                     dataset_dir=dataset_dir,
                 )
+
+                # ---- 阶段3（成片模式）：句子边界组装 5~15s 标准切片 ----
+                if target_clips is not None and record.status != "failed":
+                    try:
+                        clips = await asyncio.to_thread(
+                            assemble_sentence_clips, dataset_dir
+                        )
+                    except Exception as exc:  # 组装失败不丢弃已合成语料，保留逐句切片
+                        logger.warning(
+                            "语料成片组装失败（保留逐句切片）: task_id=%s error=%s",
+                            record.task_id, exc,
+                        )
+                        clips = 0
+                    if clips > 0:
+                        # 计数器收敛为最终成片口径（reference + 成片数）
+                        record.total = 1 + clips
+                        record.done = 1 + clips
         except asyncio.CancelledError:
             raise
         except Exception as exc:
@@ -750,6 +961,14 @@ class DatasetBuilderService:
             kwargs["cfg_value"] = cfg_value
         if inference_timesteps is not None:
             kwargs["inference_timesteps"] = inference_timesteps
+
+        # 本地 Qwen3-TTS：整批一次模型调用（吞吐约 4s/句，远快于逐条）
+        if engine != ENGINE_VOXCPM and hasattr(runtime_client, "synthesize_batch"):
+            await self._run_batch_local(
+                record, engine, texts, params, dataset_dir, manifest, entries, by_fingerprint,
+                runtime_client,
+            )
+            return
 
         for index, item in enumerate(texts):
             text = str(item["text"])
@@ -907,6 +1126,82 @@ class DatasetBuilderService:
             return
         raise ValueError(f"Unsupported runtime engine: {engine!r}")
 
+    async def _run_batch_local(
+        self,
+        record: BatchDatasetTask,
+        engine: str,
+        texts: list[dict],
+        params: dict,
+        dataset_dir: Path,
+        manifest: dict,
+        entries: list[dict],
+        by_fingerprint: dict,
+        runtime_client: Any,
+    ) -> None:
+        """本地 Qwen3-TTS 批量合成：分块一次调用多句，再逐条落 manifest。"""
+        chunk_size = 6
+        pending: list[tuple[int, str, str, Path, dict | None]] = []
+        for index, item in enumerate(texts):
+            text = str(item["text"])
+            fingerprint = _entry_fingerprint({"engine": engine, "text": text, "params": params})
+            existing = by_fingerprint.get(fingerprint)
+            if existing is not None and (dataset_dir / existing["file"]).is_file():
+                record.skipped += 1
+                continue
+            filename = f"{len(entries) + len(pending) + 1:04d}_{fingerprint[:8]}.wav"
+            pending.append((index, text, fingerprint, dataset_dir / filename, existing))
+
+        for start in range(0, len(pending), chunk_size):
+            part = pending[start : start + chunk_size]
+            record.current_text = part[0][1]
+            chunk_errors: list[Optional[str]]
+            try:
+                chunk_errors = await runtime_client.synthesize_batch(
+                    engine,
+                    [p[1] for p in part],
+                    params,
+                    [p[3] for p in part],
+                )
+            except Exception as exc:
+                chunk_errors = [f"{type(exc).__name__}: {exc}"] * len(part)
+            for (index, text, fingerprint, output_path, existing), err in zip(part, chunk_errors):
+                if err is None and not output_path.is_file():
+                    err = f"生成完成但输出文件不存在: {output_path}"
+                if err is not None:
+                    record.failed += 1
+                    record.failures.append({"index": index, "text": text, "error": str(err)})
+                    logger.warning(
+                        "本地语料单条生成失败: task_id=%s index=%d error=%s",
+                        record.task_id, index, err,
+                    )
+                    continue
+                entry = {
+                    "fingerprint": fingerprint,
+                    "file": output_path.name,
+                    "md5": _md5_file(output_path),
+                    "text": text,
+                    "engine": engine,
+                    "mode": "",
+                    "control": "",
+                    "created_at": _now_iso(),
+                }
+                if existing is not None and existing in entries:
+                    entries[entries.index(existing)] = entry
+                else:
+                    entries.append(entry)
+                by_fingerprint[fingerprint] = entry
+                self._write_manifest(dataset_dir, manifest)
+                record.done += 1
+
+        record.current_text = None
+        record.finished_at = _now_iso()
+        if record.failed == 0:
+            record.status = "completed"
+        else:
+            record.status = "failed"
+            first = record.failures[0]
+            record.error = f"{record.failed}/{record.total} 条生成失败，首条: {first['error']}"
+
     # ------------------------------------------------------------------
     # manifest 读写
     # ------------------------------------------------------------------
@@ -953,13 +1248,19 @@ def _default_client_factory():
 
 
 def _default_runtime_client_factory(engine: str):
-    """默认运行时 TTS 客户端工厂：按引擎读 settings.tts_runtime 冻结字段构造 RuntimeTTSClient。
+    """默认运行时 TTS 客户端工厂：本地 Qwen3-TTS 优先，HTTP 运行时作为可选回退。
 
-    tts_runtime 配置段由并行分支（Task 1.3）落地；并行时序下段缺失时经
-    getattr 防御抛 RuntimeError（含「配置段未就绪」提示），不崩溃服务。
-    字段名冻结：voicedesign_base_url / voicedesign_model / cosyvoice_base_url /
-    cosyvoice_model / timeout_seconds / sample_rate。
+    - 缺省（CXO_TTS_BACKEND=local）：返回进程内本地客户端，引擎侧加载
+      Qwen3-TTS VoiceDesign / Base（模型常驻），不依赖任何外部 HTTP 服务；
+    - CXO_TTS_BACKEND=http：保持旧行为，按 settings.tts_runtime 冻结字段构造
+      RuntimeTTSClient（vLLM 运行时 8091/8094）。
     """
+    backend = os.environ.get("CXO_TTS_BACKEND", "local").strip().lower()
+    if backend != "http":
+        from modelstation.services.qwen3tts_local import get_local_qwen3tts_client
+
+        return get_local_qwen3tts_client()
+
     from modelstation.services.runtime_tts_client import RuntimeTTSClient
 
     settings = get_settings()
@@ -987,6 +1288,19 @@ def _default_runtime_client_factory(engine: str):
 # ---------------------------------------------------------------------------
 # 数据集管理（列表 / 导入落盘 / 删除），供 API 层调用
 # ---------------------------------------------------------------------------
+
+
+def count_corpus_entries(dataset_dir: Path) -> int:
+    """统计数据集条目数（不含 reference 参考音频条目；manifest 缺失/损坏计 0）。"""
+    path = dataset_dir / "manifest.json"
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return 0
+    entries = data.get("entries") or []
+    return sum(
+        1 for e in entries if isinstance(e, dict) and e.get("role") != "reference"
+    )
 
 
 def get_manifest_stats(dataset_dir: Path) -> dict:

@@ -31,7 +31,7 @@ _SPEAKER_NAME_PATTERN = re.compile(r"[^A-Za-z0-9_-]")
 # 自适应 batch 参数（本机实测标定：8 样本 + 模型常驻约 6.7GB ≈ 0.5GB/样本）
 _PER_SAMPLE_GB = 0.5
 _VRAM_RESERVE_GB = 2.0
-_MAX_AUTO_BATCH = 32
+_MAX_AUTO_BATCH = 36
 _DEFAULT_BATCH = 4
 
 # 训练 / 预处理子步骤默认超时（秒）
@@ -39,6 +39,32 @@ _TRAIN_SUBPROCESS_TIMEOUT = 3600.0  # 1 小时
 # 训练监控超时（秒）：So-VITS-SVC 训练通常耗时数小时甚至数天，需远大于预处理超时
 _TRAIN_MONITOR_TIMEOUT = 7 * 24 * 3600.0  # 7 days for training monitor
 _TRAIN_STOP_WAIT_TIMEOUT = 10.0
+
+# 注意：引擎 get_logger 只挂 FileHandler（engines/so-vits-svc-4.1-Stable/utils.py
+# get_logger），epoch 日志仅落 logs/<名>/train.log 文件、不进子进程 stdout/stderr 流。
+# 监控除解析流（兼容未来引擎改动）外，另按固定间隔读日志文件尾部提取最近 epoch，
+# 作为真实进度经 progress_callback 回填（终态回填的 epoch 亦取该值）。
+_EPOCH_FILE_POLL_SECONDS = 5.0
+_EPOCH_LOG_TAIL_BYTES = 65536
+_EPOCH_LOG_PATTERN = re.compile(r"(?:Train Epoch|====> Epoch):\s*(\d+)")
+
+
+def _parse_last_epoch_from_file(log_path: Optional[Path]) -> int:
+    """从引擎 train.log 尾部解析最近一次 epoch 标记；文件缺失/不可读返回 0。"""
+    if log_path is None:
+        return 0
+    try:
+        with open(log_path, "rb") as fp:
+            fp.seek(0, os.SEEK_END)
+            size = fp.tell()
+            fp.seek(max(0, size - _EPOCH_LOG_TAIL_BYTES))
+            text = fp.read(_EPOCH_LOG_TAIL_BYTES).decode("utf-8", errors="replace")
+    except OSError:
+        return 0
+    last = 0
+    for match in _EPOCH_LOG_PATTERN.finditer(text):
+        last = int(match.group(1))
+    return last
 
 
 def _engine_env() -> dict:
@@ -216,11 +242,15 @@ class SoVITSSVCTrainer:
         epochs: int,
         batch_size: int,
         learning_rate: float,
+        eval_interval: Optional[int] = None,
     ) -> None:
         """读取上游 config.json，改写 train 段超参后写入 target_path。
 
         字段名以上游 configs_template/config_template.json 与 utils.get_hparams 实码为准：
         train.epochs / train.batch_size / train.learning_rate。
+        eval_interval（可选）：一键成模判停保障（change-id:
+        add-one-click-voice-model-pipeline）——判停终止训练子进程后引擎不再存盘，
+        eval_interval 必须足够小以留存检查点；缺省 None 保持上游配置不变。
         """
         if not source_config_path.exists():
             raise RuntimeError(
@@ -234,6 +264,8 @@ class SoVITSSVCTrainer:
         train_section["epochs"] = int(epochs)
         train_section["batch_size"] = int(batch_size)
         train_section["learning_rate"] = float(learning_rate)
+        if eval_interval is not None:
+            train_section["eval_interval"] = int(eval_interval)
         with open(target_path, "w", encoding="utf-8") as f:
             json.dump(config, f, ensure_ascii=False, indent=2)
 
@@ -245,6 +277,7 @@ class SoVITSSVCTrainer:
         output_name: Optional[str] = None,
         speaker_name: Optional[str] = None,
         progress_callback: Optional[Callable] = None,
+        eval_interval: Optional[int] = None,
     ) -> str:
         if self._process and self._process.returncode is None:
             raise RuntimeError("训练已在进行，请先停止当前训练")
@@ -295,6 +328,7 @@ class SoVITSSVCTrainer:
                 epochs=epochs,
                 batch_size=batch,
                 learning_rate=learning_rate,
+                eval_interval=eval_interval,
             )
             return await asyncio.create_subprocess_exec(
                 *args,
@@ -382,6 +416,35 @@ class SoVITSSVCTrainer:
             logger.warning("Monitor training called without a process")
             return
 
+        # 引擎 epoch 日志只落文件（见模块常量注释），按日志尾部解析真实进度
+        epoch_log_path = (
+            self._so_vits_svc_dir / "logs" / output_name / "train.log" if output_name else None
+        )
+
+        async def _epoch_file_poller() -> None:
+            """定期读 train.log 尾部提取最近 epoch，经 progress_callback 回填真实进度。"""
+            nonlocal current_epoch
+            while True:
+                await asyncio.sleep(_EPOCH_FILE_POLL_SECONDS)
+                if process.returncode is not None:
+                    return
+                epoch = _parse_last_epoch_from_file(epoch_log_path)
+                if epoch > current_epoch:
+                    current_epoch = epoch
+                    progress = min(epoch / total_epochs, 1.0) if total_epochs > 0 else 0.0
+                    if progress_callback:
+                        try:
+                            progress_callback(
+                                progress=progress,
+                                epoch=epoch,
+                                total_epochs=total_epochs,
+                                message=f"训练进行中（epoch {epoch}/{total_epochs}）",
+                            )
+                        except Exception as e:
+                            logger.warning(f"Progress callback error: {e}")
+
+        epoch_file_task = asyncio.create_task(_epoch_file_poller())
+
         def _process_line(line_str: str):
             nonlocal current_epoch, last_output_line
             if not line_str:
@@ -419,6 +482,8 @@ class SoVITSSVCTrainer:
                 monitor_error = f"训练监控超时（{_TRAIN_MONITOR_TIMEOUT}s）"
                 logger.error(monitor_error)
             except asyncio.CancelledError:
+                epoch_file_task.cancel()
+                await asyncio.gather(epoch_file_task, return_exceptions=True)
                 if process.returncode is None:
                     try:
                         process.terminate()
@@ -493,11 +558,19 @@ class SoVITSSVCTrainer:
             )
             break
 
+        # 收尾：停掉日志文件轮询（终态回填前，epoch 不再变化）
+        epoch_file_task.cancel()
+        await asyncio.gather(epoch_file_task, return_exceptions=True)
+
         if progress_callback:
             try:
+                # 终态回填前补一次文件解析：最后一次 epoch 行可能落在轮询间隔内
+                final_epoch = max(
+                    current_epoch, _parse_last_epoch_from_file(epoch_log_path)
+                )
                 progress_callback(
                     progress=1.0 if returncode == 0 else 0.0,
-                    epoch=current_epoch,
+                    epoch=final_epoch,
                     total_epochs=total_epochs,
                     status="completed" if returncode == 0 else "failed",
                     message=message,

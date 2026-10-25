@@ -7,8 +7,7 @@ MeloTTS 训练/数据准备 API
 - POST /stop        停止训练
 - GET  /status      训练状态（附带模型列表；列表失败降级为空列表）
 - GET  /models      已训练模型列表（形状对齐 sovits /models）
-
-infer 不在本期范围（MeloTTS 试听留待后续，spec Task 3.3）。
+- POST /infer       试听推理（对训练产物做推理验证，输出至 audition 受控目录）
 
 注意：本模块使用模块级状态（trainer 单例与 trainer 侧 _train_status）。
 部署要求：单 worker（uvicorn --workers 1），跨进程状态不同步。
@@ -53,9 +52,21 @@ class MelottsTrainRequest(BaseModel):
     learning_rate: float = Field(3e-4, gt=0)
     output_name: Optional[str] = None
     language: Optional[str] = None
+    # 检查点保存步频；缺省保持官方配置（1000）
+    eval_interval: Optional[int] = Field(None, ge=1)
     # 预训练基础模型（G checkpoint）路径；缺省用 config.melotts.base_checkpoint，
     # 为空时由 MeloTTS 管线走官方默认预训练模型下载
     base_checkpoint: Optional[str] = None
+
+
+class MelottsInferRequest(BaseModel):
+    # 模型目录或 G_*.pth 检查点（须位于 models_dir 内；目录时取最新检查点）
+    model_path: str
+    text: str
+    # 检查点文件名（仅在 model_path 为目录时生效；缺省取最新）
+    checkpoint: Optional[str] = None
+    # 语言代码（缺省取 config.melotts.language）
+    language: Optional[str] = None
 
 
 def _conflict_detail(current: Optional[dict]) -> dict:
@@ -128,6 +139,8 @@ async def start_training(request: MelottsTrainRequest):
             kwargs["output_name"] = request.output_name
         if request.language is not None:
             kwargs["language"] = request.language
+        if request.eval_interval is not None:
+            kwargs["eval_interval"] = request.eval_interval
         if request.base_checkpoint is not None:
             kwargs["base_checkpoint"] = request.base_checkpoint
         task_id = await trainer.start_training(**kwargs)
@@ -180,4 +193,34 @@ async def list_models():
         return {"status": "success", "models": models}
     except Exception as e:
         logger.error(f"Failed to list MeloTTS models: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/infer")
+async def infer(request: MelottsInferRequest):
+    """MeloTTS 试听推理（训练产物 → audition 受控目录，经 audio-files 播放）"""
+    try:
+        from modelstation.services.melotts_infer import MelottsInferer
+
+        inferer = MelottsInferer()
+        result_path, checkpoint = await inferer.infer(
+            model_path=request.model_path,
+            text=request.text,
+            language=request.language,
+            checkpoint=request.checkpoint,
+        )
+        return {
+            "status": "success",
+            "output_filename": result_path.name,
+            "audio_url": f"/api/audio-files/audition/{result_path.name}",
+            "checkpoint": checkpoint,
+        }
+    except ValueError as e:
+        logger.warning(f"MeloTTS infer invalid request: {e}")
+        raise HTTPException(status_code=400, detail=str(e))
+    except FileNotFoundError as e:
+        logger.warning(f"MeloTTS infer resource not found: {e}")
+        raise HTTPException(status_code=404, detail=str(e))
+    except Exception as e:
+        logger.error(f"MeloTTS infer error: {e}")
         raise HTTPException(status_code=500, detail=str(e))

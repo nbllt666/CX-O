@@ -45,6 +45,7 @@ import shutil
 import socket
 import subprocess
 import sys
+import time
 import uuid
 from datetime import datetime
 from collections import deque
@@ -64,10 +65,20 @@ logger = logging.getLogger(__name__)
 _OUTPUT_NAME_PATTERN = re.compile(r"^[A-Za-z0-9_-]+$")
 
 # 自适应 batch 参数（本机实测保守标定：MeloTTS 单样本+模型常驻开销更大）
-_PER_SAMPLE_GB = 0.8
+_PER_SAMPLE_GB = 1.8
 _VRAM_RESERVE_GB = 2.0
-_MAX_AUTO_BATCH = 16
+_MAX_AUTO_BATCH = 20
 _DEFAULT_BATCH = 6
+
+# 多卡 DDP 不可用（本机实测）：Windows 版 PyTorch 未编译 NCCL，gloo 对 CUDA 张量
+# 做 all_reduce 会以 0xC0000005 崩溃；train.py 的 world_size>1 路径无法在本运行时生效。
+
+# 预训练底模：官方 basespeakers pretrain G.pth 链接已失效（S3 NoSuchBucket），
+# 改用官方发布中文模型（HF）转换出本地底模；缓存于 models_dir/_pretrained。
+_PRETRAIN_RELEASED_REPO = "myshell-ai/MeloTTS-Chinese"
+_PRETRAIN_CACHE_FILENAME = "melotts_zh_base.pth"
+_PRETRAIN_DOWNLOAD_TIMEOUT = 1800.0
+_PRETRAIN_CONVERT_TIMEOUT = 900.0
 
 # 官方 preprocess_text.py 清洗步骤超时（秒）：BERT 逐条推理，长清单耗时显著
 _PREPROCESS_SUBPROCESS_TIMEOUT = 3600.0
@@ -82,9 +93,34 @@ _IMPORT_PROBE_TIMEOUT = 120.0
 _ESTIMATED_SECONDS_PER_EPOCH = 60.0
 _ESTIMATE_INTERVAL_SECONDS = 30.0
 
-# train.py 实码日志行格式（utils.get_logger 经 StreamHandler 输出）：
+# train.py 实码日志行格式（utils.get_logger 输出）：
 #   "Train Epoch: 12 [34%]"（logger.info）/ "====> Epoch: 12"（epoch 收尾）
 _EPOCH_PATTERN = re.compile(r"(?:Train Epoch|====> Epoch):\s*(\d+)")
+
+# 注意：引擎 get_logger 只挂 FileHandler（engines/MeloTTS/melo/utils.py get_logger），
+# epoch 日志仅落 logs/<名>/train.log 文件、不进子进程 stdout/stderr 流。监控除解析流
+# （兼容未来引擎改动）外，另按固定间隔读日志文件尾部提取最近 epoch 作为真实进度；
+# 文件解析命中即置 epoch_seen，时长估算器随即停用。
+_EPOCH_FILE_POLL_SECONDS = 5.0
+_EPOCH_LOG_TAIL_BYTES = 65536
+
+
+def _parse_last_epoch_from_file(log_path: Optional[Path]) -> int:
+    """从引擎 train.log 尾部解析最近一次 epoch 标记；文件缺失/不可读返回 0。"""
+    if log_path is None:
+        return 0
+    try:
+        with open(log_path, "rb") as fp:
+            fp.seek(0, os.SEEK_END)
+            size = fp.tell()
+            fp.seek(max(0, size - _EPOCH_LOG_TAIL_BYTES))
+            text = fp.read(_EPOCH_LOG_TAIL_BYTES).decode("utf-8", errors="replace")
+    except OSError:
+        return 0
+    last = 0
+    for match in _EPOCH_PATTERN.finditer(text):
+        last = int(match.group(1))
+    return last
 
 
 class MelottsEngineNotReadyError(RuntimeError):
@@ -158,6 +194,10 @@ _train_status: dict = {
     "epoch": 0,
     "total_epochs": 0,
     "message": "",
+    # 进度可视化：启动时刻（unix 秒）、当前启动子阶段、预计剩余秒（按 epoch 速度推算）
+    "started_at": None,
+    "phase": "",
+    "eta_seconds": None,
 }
 
 
@@ -176,7 +216,15 @@ def _update_train_status(**kwargs) -> None:
 def reset_train_status() -> None:
     """复位训练状态（测试专用）。"""
     _update_train_status(
-        task_id=None, status="idle", progress=0.0, epoch=0, total_epochs=0, message=""
+        task_id=None,
+        status="idle",
+        progress=0.0,
+        epoch=0,
+        total_epochs=0,
+        message="",
+        started_at=None,
+        phase="",
+        eta_seconds=None,
     )
 
 
@@ -391,6 +439,66 @@ class MeloTTSTrainer:
         )
         return len(train_out), len(val_out), dropped
 
+    async def _ensure_pretrain_base(self, target_config: Path) -> str:
+        """确保本地预训练底模可用，返回 G 检查点路径。
+
+        官方 basespeakers pretrained G.pth 的下载地址已失效（S3 NoSuchBucket），
+        引擎默认下载返回 None → 从零训练，少量语料只会得到噪音。这里改为：
+        下载官方发布的中文模型（HF），按**本次训练 config 的符号表**转换成
+        可部分初始化的本地底模并缓存到 models_dir/_pretrained。
+
+        失败一律抛 RuntimeError（宁可阻断，也不静默产出噪音模型）。
+        """
+        base_dir = self._models_dir / "_pretrained"
+        converted = base_dir / _PRETRAIN_CACHE_FILENAME
+        if converted.is_file() and converted.stat().st_size > 0:
+            return str(converted)
+
+        base_dir.mkdir(parents=True, exist_ok=True)
+        hf_cache = base_dir / "hf"
+        download_code = (
+            "import json;"
+            "from huggingface_hub import hf_hub_download as d;"
+            f"repo={_PRETRAIN_RELEASED_REPO!r};"
+            f"cache={str(hf_cache)!r};"
+            "print(json.dumps({'config': d(repo, 'config.json', cache_dir=cache),"
+            "'ckpt': d(repo, 'checkpoint.pth', cache_dir=cache)}))"
+        )
+        rc, stdout, stderr = await self._run_subprocess(
+            [self._python_path, "-c", download_code],
+            cwd=self._engine_dir,
+            timeout=_PRETRAIN_DOWNLOAD_TIMEOUT,
+        )
+        if rc != 0:
+            raise RuntimeError(
+                "MeloTTS 预训练底模下载失败（官方 pretrain 链接已失效，需联网从 HF "
+                f"获取 {_PRETRAIN_RELEASED_REPO}）: {stderr[-1200:]}"
+            )
+        try:
+            payload = json.loads(stdout.strip().splitlines()[-1])
+        except Exception as exc:
+            raise RuntimeError(f"MeloTTS 预训练底模下载结果不可解析: {exc}; out={stdout[-500:]}")
+
+        script = Path(__file__).resolve().parent / "melotts_pretrain.py"
+        rc, stdout, stderr = await self._run_subprocess(
+            [
+                self._python_path,
+                str(script),
+                "--released-ckpt", str(payload["ckpt"]),
+                "--released-config", str(payload["config"]),
+                "--target-config", str(target_config.resolve()),
+                "--out", str(converted),
+            ],
+            cwd=self._engine_dir,
+            timeout=_PRETRAIN_CONVERT_TIMEOUT,
+        )
+        if rc != 0 or not converted.is_file():
+            raise RuntimeError(
+                f"MeloTTS 预训练底模转换失败（exit={rc}）: {stderr[-1200:]}"
+            )
+        logger.info(f"MeloTTS 预训练底模就绪: {converted} ({stdout.strip()[-200:]})")
+        return str(converted)
+
     def _write_train_config(
         self,
         config_path: Path,
@@ -400,6 +508,7 @@ class MeloTTSTrainer:
         epochs: int,
         batch_size: int,
         learning_rate: float,
+        eval_interval: Optional[int] = None,
     ) -> None:
         """改写官方 preprocess_text.py 产出的 config.json 超参并落盘训练工作目录。
 
@@ -407,6 +516,9 @@ class MeloTTSTrainer:
         melo/preprocess_text.py（spk2id/training_files/validation_files）实码为准：
         train.epochs / train.batch_size / train.learning_rate /
         data.training_files / data.validation_files（绝对路径注入，CWD 免疫）。
+        eval_interval（可选）：一键成模判停保障（change-id:
+        add-one-click-voice-model-pipeline）——判停终止训练子进程后引擎不再存盘，
+        eval_interval 必须足够小以留存检查点；缺省 None 保持官方配置不变。
         """
         if not config_path.is_file():
             raise RuntimeError(
@@ -420,6 +532,8 @@ class MeloTTSTrainer:
         train_section["epochs"] = int(epochs)
         train_section["batch_size"] = int(batch_size)
         train_section["learning_rate"] = float(learning_rate)
+        if eval_interval is not None:
+            train_section["eval_interval"] = int(eval_interval)
         data_section["training_files"] = str(train_list.resolve())
         data_section["validation_files"] = str(val_list.resolve())
         config_path.write_text(
@@ -459,6 +573,7 @@ class MeloTTSTrainer:
         output_name: Optional[str] = None,
         language: Optional[str] = None,
         base_checkpoint: Optional[str] = None,
+        eval_interval: Optional[int] = None,
     ) -> str:
         """启动 MeloTTS 微调训练，返回 task_id。
 
@@ -496,6 +611,9 @@ class MeloTTSTrainer:
         if not float(learning_rate) > 0:
             raise ValueError(f"learning_rate must be > 0, got: {learning_rate}")
 
+        # 引擎侧环境（显存探测与训练子进程共用）
+        engine_env = {**os.environ, "TORCH_FORCE_NO_WEIGHTS_ONLY_LOAD": "1"}
+
         task_id = str(uuid.uuid4())
         if output_name:
             output_name = _sanitize_output_name(output_name)
@@ -522,7 +640,10 @@ class MeloTTSTrainer:
                 progress=0.0,
                 epoch=0,
                 total_epochs=int(epochs),
-                message="训练启动中（数据清洗/配置生成）",
+                message=f"训练启动中（batch_size={batch_size}，语料清洗/配置生成）",
+                started_at=time.time(),
+                phase="preprocess",
+                eta_seconds=None,
             )
 
             prep_info = self._find_latest_prep()
@@ -572,10 +693,21 @@ class MeloTTSTrainer:
                 epochs=epochs,
                 batch_size=batch_size,
                 learning_rate=learning_rate,
+                eval_interval=eval_interval,
             )
 
-            # 训练元数据落盘（复现用：请求参数 / 产物映射 / prep 来源）
+            # 预训练底模就绪：官方 basespeakers 链接已失效，缺省用「官方发布中文模型
+            # → 本仓库符号表」转换出的本地底模；从零初始化在少量语料上只会得到噪音。
             effective_base_ckpt = base_checkpoint if base_checkpoint else self._base_checkpoint
+            if effective_base_ckpt:
+                logger.info(f"使用显式指定的预训练底模: {effective_base_ckpt}")
+            else:
+                _update_train_status(
+                    phase="pretrain", message="准备预训练底模（首次需下载并转换）"
+                )
+                effective_base_ckpt = await self._ensure_pretrain_base(config_path)
+
+            # 训练元数据落盘（复现用：请求参数 / 产物映射 / prep 来源）
             train_meta = {
                 "task_id": task_id,
                 "output_name": output_name,
@@ -598,28 +730,24 @@ class MeloTTSTrainer:
                 json.dumps(train_meta, ensure_ascii=False, indent=2), encoding="utf-8"
             )
 
-            # Step 4: train.py 子进程（单进程 env:// 等价 torchrun 单卡启动）
-            env = {
-                **os.environ,
-                # torch≥2.6 起 torch.load 默认 weights_only=True：MeloTTS train.py 加载
-                # 包内预训练权重/本地训练产物（含 optimizer 等非张量对象）会 UnpicklingError，
-                # 按 PyTorch 官方兼容开关对可信本地权重放开（与 sovits_svc_trainer 同口径）。
-                "TORCH_FORCE_NO_WEIGHTS_ONLY_LOAD": "1",
+            # Step 4: train.py 子进程（单卡 env://，world_size=1）
+            env = dict(engine_env)
+            env.update({
                 "LOCAL_RANK": "0",
                 "RANK": "0",
                 "WORLD_SIZE": "1",
                 "MASTER_ADDR": "127.0.0.1",
                 "MASTER_PORT": str(_pick_free_port()),
-            }
-            args = [
-                self._python_path,
+            })
+            train_args = [
                 "train.py",
                 "--c", str(config_path.resolve()),
                 "--model", output_name,
             ]
             if effective_base_ckpt:
                 # get_hparams 支持 --pretrain_G（train.py: hps.pretrain_G = args or 官方默认下载）
-                args += ["--pretrain_G", str(effective_base_ckpt)]
+                train_args += ["--pretrain_G", str(effective_base_ckpt)]
+            args = [self._python_path, *train_args]
 
             async def _spawn_with_batch(batch: int) -> asyncio.subprocess.Process:
                 """按给定 batch 重写训练配置并拉起子进程（OOM 降批重试复用同一入口）。"""
@@ -630,6 +758,7 @@ class MeloTTSTrainer:
                     epochs=epochs,
                     batch_size=batch,
                     learning_rate=learning_rate,
+                    eval_interval=eval_interval,
                 )
                 return await self._spawn_train(args, cwd=melo_dir, env=env)
 
@@ -637,6 +766,7 @@ class MeloTTSTrainer:
                 "Starting MeloTTS training: %s (output=%s, epochs=%d, batch=%d, lr=%g)",
                 task_id, output_name, epochs, batch_size, learning_rate,
             )
+            _update_train_status(phase="launch", message="拉起训练进程")
             proc = await _spawn_with_batch(batch_size)
             self._process = proc
             self._monitor_task = asyncio.create_task(
@@ -649,7 +779,7 @@ class MeloTTSTrainer:
                     batch_size=batch_size,
                 )
             )
-            _update_train_status(status="running", message="训练进行中")
+            _update_train_status(status="running", phase="training", message="训练进行中")
             return task_id
         except BaseException as exc:
             # 启动失败/异常：释放互斥（幂等）+ 状态复位，允许后续重试
@@ -686,23 +816,52 @@ class MeloTTSTrainer:
         started_at = asyncio.get_running_loop().time()
         current_epoch = 0
         epoch_seen = False
+        # 最近 epoch 的到达时刻（单调钟）：用于按平均每 epoch 耗时推算 ETA
+        epoch_times: "deque[tuple[int, float]]" = deque(maxlen=12)
+
+        def _record_epoch(epoch: int, message: str) -> None:
+            """记录新 epoch：更新进度并按平均速度推算预计剩余秒数。"""
+            nonlocal current_epoch, epoch_seen
+            current_epoch = epoch
+            epoch_seen = True
+            now_mono = asyncio.get_running_loop().time()
+            if not epoch_times or epoch > epoch_times[-1][0]:
+                epoch_times.append((epoch, now_mono))
+            eta: Optional[int] = None
+            if len(epoch_times) >= 2:
+                (e0, t0), (e1, t1) = epoch_times[0], epoch_times[-1]
+                if e1 > e0 and total_epochs > 0:
+                    avg_seconds = (t1 - t0) / (e1 - e0)
+                    eta = max(0, int(avg_seconds * max(total_epochs - epoch, 0)))
+            progress = min(epoch / total_epochs, 1.0) if total_epochs > 0 else 0.0
+            _update_train_status(
+                epoch=epoch, progress=progress, message=message, eta_seconds=eta
+            )
+
         recent_output: "deque[str]" = deque(maxlen=40)  # OOM 特征可能不在最后一行
+        # 引擎 epoch 日志只落文件（见模块常量注释），按日志尾部解析真实进度
+        epoch_log_path = (
+            self.melo_dir / "logs" / output_name / "train.log" if output_name else None
+        )
+
+        async def _epoch_file_poller() -> None:
+            """定期读 train.log 尾部提取最近 epoch，回填真实 epoch/进度。"""
+            nonlocal current_epoch, epoch_seen
+            while True:
+                await asyncio.sleep(_EPOCH_FILE_POLL_SECONDS)
+                if proc.returncode is not None:
+                    return
+                epoch = _parse_last_epoch_from_file(epoch_log_path)
+                if epoch > current_epoch:
+                    _record_epoch(epoch, f"训练进行中（epoch {epoch}/{total_epochs}）")
 
         def _process_line(line_str: str) -> None:
-            nonlocal current_epoch, epoch_seen
             if not line_str:
                 return
             recent_output.append(line_str[:300])
             match = _EPOCH_PATTERN.search(line_str)
             if match:
-                current_epoch = int(match.group(1))
-                epoch_seen = True
-                progress = min(current_epoch / total_epochs, 1.0) if total_epochs > 0 else 0.0
-                _update_train_status(
-                    epoch=current_epoch,
-                    progress=progress,
-                    message=line_str[:300],
-                )
+                _record_epoch(int(match.group(1)), line_str[:300])
             else:
                 _update_train_status(message=line_str[:300])
 
@@ -720,10 +879,15 @@ class MeloTTSTrainer:
                 _update_train_status(
                     progress=estimated,
                     message=f"（按已运行时长估算进度，未解析到 epoch 日志）已运行 {elapsed:.0f}s",
+                    eta_seconds=max(
+                        0,
+                        int((1.0 - estimated) * total_epochs * _ESTIMATED_SECONDS_PER_EPOCH),
+                    ),
                 )
 
         done_event = asyncio.Event()
         estimator_task = asyncio.create_task(_time_based_estimator())
+        epoch_file_task = asyncio.create_task(_epoch_file_poller())
         retried_on_oom = False
         try:
             while True:
@@ -762,22 +926,33 @@ class MeloTTSTrainer:
                     await _wait_for_subprocess_exit(proc, _TRAIN_STOP_WAIT_TIMEOUT)
 
                 if monitor_error:
-                    _update_train_status(status="failed", message=monitor_error)
+                    _update_train_status(
+                        status="failed", message=monitor_error, eta_seconds=None, phase=""
+                    )
                     break
                 returncode = proc.returncode if proc.returncode is not None else -1
                 if returncode == 0:
                     try:
                         dst = self._collect_outputs(output_name)
+                        # 终态回填前补一次文件解析：最后一次 epoch 行可能落在轮询间隔内
+                        final_epoch = max(
+                            current_epoch, _parse_last_epoch_from_file(epoch_log_path)
+                        )
                         _update_train_status(
                             status="completed",
                             progress=1.0,
+                            epoch=final_epoch,
                             message=f"训练完成，产物已收集至 {dst}",
+                            eta_seconds=0,
+                            phase="",
                         )
                         logger.info("MeloTTS training completed: task_id=%s", task_id)
                     except Exception as exc:
                         _update_train_status(
                             status="failed",
                             message=f"训练子进程正常退出但产物收集失败: {exc}",
+                            eta_seconds=None,
+                            phase="",
                         )
                         logger.error("MeloTTS output collection failed: %s", exc)
                     break
@@ -805,6 +980,8 @@ class MeloTTSTrainer:
                 _update_train_status(
                     status="failed",
                     message=f"训练子进程异常退出（exit={returncode}）",
+                    eta_seconds=None,
+                    phase="",
                 )
                 logger.error(
                     "MeloTTS training failed: task_id=%s exit=%s", task_id, returncode
@@ -816,39 +993,40 @@ class MeloTTSTrainer:
         finally:
             done_event.set()
             estimator_task.cancel()
-            await asyncio.gather(estimator_task, return_exceptions=True)
+            epoch_file_task.cancel()
+            await asyncio.gather(estimator_task, epoch_file_task, return_exceptions=True)
             # 所有出口释放互斥（end_training 幂等；仅持有者匹配时生效）
             end_training(TRAINING_MELOTTS)
 
     # ------------------------------------------------------------------
     # 停止 / 模型列表
     # ------------------------------------------------------------------
-    async def stop_training(self) -> None:
-        """停止训练：terminate→kill 链路（对齐 sovits trainer）；所有出口释放互斥。"""
-        if self._process is not None and self._process.returncode is None:
+    async def _terminate_proc(self, proc: Optional[asyncio.subprocess.Process]) -> None:
+        """terminate→kill 单个训练进程（幂等；DDP 各 rank 复用）。"""
+        if proc is None or proc.returncode is not None:
+            return
+        try:
+            proc.terminate()
+        except ProcessLookupError:
+            return
+        try:
+            await asyncio.wait_for(proc.wait(), timeout=_TRAIN_STOP_WAIT_TIMEOUT)
+        except asyncio.TimeoutError:
+            logger.warning(
+                f"Training process did not exit after terminate; killing (pid={proc.pid})"
+            )
             try:
-                self._process.terminate()
+                proc.kill()
             except ProcessLookupError:
                 pass
             try:
-                await asyncio.wait_for(self._process.wait(), timeout=_TRAIN_STOP_WAIT_TIMEOUT)
+                await asyncio.wait_for(proc.wait(), timeout=_TRAIN_STOP_WAIT_TIMEOUT)
             except asyncio.TimeoutError:
-                logger.warning(
-                    f"Training process did not exit after terminate; killing "
-                    f"(pid={self._process.pid})"
-                )
-                try:
-                    self._process.kill()
-                except ProcessLookupError:
-                    pass
-                try:
-                    await asyncio.wait_for(
-                        self._process.wait(), timeout=_TRAIN_STOP_WAIT_TIMEOUT
-                    )
-                except asyncio.TimeoutError:
-                    logger.error(
-                        f"Training process still alive after kill (pid={self._process.pid})"
-                    )
+                logger.error(f"Training process still alive after kill (pid={proc.pid})")
+
+    async def stop_training(self) -> None:
+        """停止训练：terminate→kill 链路（对齐 sovits trainer）；所有出口释放互斥。"""
+        await self._terminate_proc(self._process)
         if self._monitor_task is not None and not self._monitor_task.done():
             self._monitor_task.cancel()
             # join 已取消的监控任务：其 finally 已释放互斥，此处等待收尾完成
@@ -861,7 +1039,9 @@ class MeloTTSTrainer:
                     logger.debug(f"训练监控任务异常退出: {exc}")
         self._process = None
         self._monitor_task = None
-        _update_train_status(status="stopped", message="训练已停止")
+        _update_train_status(
+            status="stopped", message="训练已停止", eta_seconds=None, phase=""
+        )
         # stop 出口释放互斥（幂等：monitor finally 已释放时此处无害）
         end_training(TRAINING_MELOTTS)
         logger.info("MeloTTS training stopped")
@@ -881,6 +1061,8 @@ class MeloTTSTrainer:
                             "created": d.stat().st_mtime,
                             "g_model": str(g_files[-1]) if g_files else None,
                             "d_model": str(d_files[-1]) if d_files else None,
+                            # 供试听选择检查点（按落盘先后排序）
+                            "checkpoints": [p.name for p in g_files],
                         })
         models.sort(key=lambda m: m["created"], reverse=True)
         return models

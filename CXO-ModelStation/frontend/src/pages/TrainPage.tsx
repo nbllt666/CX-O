@@ -24,6 +24,24 @@ const TYPE_LABELS: Record<TrainModelType, string> = {
   melotts: "MeloTTS",
 };
 
+/** MeloTTS 启动子阶段文案（后端 phase 字段） */
+const MELOTTS_PHASE_LABELS: Record<string, string> = {
+  preprocess: "语料清洗（BERT 音素化）",
+  pretrain: "加载预训练底模",
+  launch: "拉起训练进程",
+  training: "模型训练",
+};
+
+/** 秒数 → 人类可读时长（用于已用时 / ETA） */
+function formatDuration(seconds: number): string {
+  const total = Math.max(0, Math.round(seconds));
+  if (total < 60) return `${total} 秒`;
+  const minutes = Math.floor(total / 60);
+  if (minutes < 60) return `${minutes} 分 ${total % 60} 秒`;
+  const hours = Math.floor(minutes / 60);
+  return `${hours} 小时 ${minutes % 60} 分`;
+}
+
 /** 统一数据集根（导入/历史数据集回退显式路径用，锚定 CXO-ModelStation 根） */
 const SVC_RAW_ROOT = "data/training/sovits_svc";
 
@@ -91,13 +109,14 @@ export default function TrainPage() {
 
   // ---- sovits 表单状态 ----
   const [epochs, setEpochs] = useState("10000");
-  const [batchSize, setBatchSize] = useState("4");
+  // batch_size 留空 = 自动（按当前显存估算）；填写数字才覆盖
+  const [batchSize, setBatchSize] = useState("");
   const [learningRate, setLearningRate] = useState("0.0001");
   const [outputName, setOutputName] = useState("");
 
   // ---- melotts 表单状态 ----
   const [mEpochs, setMEpochs] = useState("10000");
-  const [mBatchSize, setMBatchSize] = useState("4");
+  const [mBatchSize, setMBatchSize] = useState("");
   const [mLearningRate, setMLearningRate] = useState("0.0001");
   const [mOutputName, setMOutputName] = useState("");
   const [mLanguage, setMLanguage] = useState("ZH");
@@ -110,6 +129,16 @@ export default function TrainPage() {
   const progressPercent = status
     ? Math.min(100, Math.max(0, Math.round(status.progress * 100)))
     : 0;
+  // 启动/训练时长可视化（MeloTTS 后端提供 started_at / phase / eta_seconds）
+  const phaseLabel = status?.phase ? MELOTTS_PHASE_LABELS[status.phase] : undefined;
+  const elapsedSeconds =
+    running && status?.started_at
+      ? Math.max(0, Math.floor(Date.now() / 1000 - status.started_at))
+      : null;
+  const etaSeconds =
+    modelType === "melotts" && running && typeof status?.eta_seconds === "number"
+      ? status.eta_seconds
+      : null;
 
   /** 类型切换：清空各自表单错误态与通知 */
   const handleTypeChange = (value: TrainModelType) => {
@@ -126,17 +155,23 @@ export default function TrainPage() {
     epochsStr: string,
     batchStr: string,
     lrStr: string,
-  ): { epochs: number; batch_size: number; learning_rate: number } | null => {
+  ): { epochs: number; batch_size: number | null; learning_rate: number } | null => {
     const epochsNum = Number(epochsStr);
-    const batchSizeNum = Number(batchStr);
     const lrNum = Number(lrStr);
     if (!Number.isFinite(epochsNum) || epochsNum < 1) {
       setActionError("epochs 须为 ≥1 的整数");
       return null;
     }
-    if (!Number.isFinite(batchSizeNum) || batchSizeNum < 1) {
-      setActionError("batch_size 须为 ≥1 的整数");
-      return null;
+    // batch_size 留空 / auto：不传字段，由后端按显存自适应
+    const batchTrimmed = batchStr.trim();
+    let batchSizeNum: number | null = null;
+    if (batchTrimmed && batchTrimmed.toLowerCase() !== "auto") {
+      const parsed = Number(batchTrimmed);
+      if (!Number.isFinite(parsed) || parsed < 1) {
+        setActionError("batch_size 须为 ≥1 的整数（留空 = 按显存自动）");
+        return null;
+      }
+      batchSizeNum = Math.floor(parsed);
     }
     if (!Number.isFinite(lrNum) || lrNum <= 0) {
       setActionError("learning_rate 须为正数");
@@ -144,7 +179,7 @@ export default function TrainPage() {
     }
     return {
       epochs: Math.floor(epochsNum),
-      batch_size: Math.floor(batchSizeNum),
+      batch_size: batchSizeNum,
       learning_rate: lrNum,
     };
   };
@@ -186,7 +221,10 @@ export default function TrainPage() {
       return;
     }
     const req: TrainStartRequest = {
-      ...nums,
+      epochs: nums.epochs,
+      learning_rate: nums.learning_rate,
+      // batch_size 留空时不传，后端按显存自适应
+      ...(nums.batch_size !== null ? { batch_size: nums.batch_size } : {}),
       // 有编号按编号；导入数据集按名称
       ...(selected.dataset_id
         ? { dataset_id: selected.dataset_id }
@@ -242,7 +280,10 @@ export default function TrainPage() {
     setBusy(true);
     try {
       const res = await api.startMelottsTrain({
-        ...nums,
+        epochs: nums.epochs,
+        learning_rate: nums.learning_rate,
+        // batch_size 留空时不传，后端按显存自适应
+        ...(nums.batch_size !== null ? { batch_size: nums.batch_size } : {}),
         ...(mOutputName.trim() ? { output_name: mOutputName.trim() } : {}),
         ...(language ? { language } : {}),
       });
@@ -359,6 +400,19 @@ export default function TrainPage() {
             epoch：{status?.epoch ?? 0} / {status?.total_epochs ?? 0}
           </span>
           <span>进度：{progressPercent}%</span>
+          {status?.status === "busy_starting" && phaseLabel ? (
+            <span>阶段：{phaseLabel}</span>
+          ) : null}
+          {elapsedSeconds !== null ? (
+            <span>已用时：{formatDuration(elapsedSeconds)}</span>
+          ) : null}
+          {modelType === "melotts" && running ? (
+            <span>
+              {etaSeconds !== null
+                ? `预计剩余：${formatDuration(etaSeconds)}`
+                : "预计剩余：计算中…"}
+            </span>
+          ) : null}
         </div>
         {status?.message ? <p className="muted">信息：{status.message}</p> : null}
         <div className="form-actions">
@@ -405,6 +459,7 @@ export default function TrainPage() {
                   min={1}
                   value={batchSize}
                   onChange={(e) => setBatchSize(e.target.value)}
+                  placeholder="自动（按显存）"
                 />
               </div>
               <div className="field">
@@ -469,6 +524,7 @@ export default function TrainPage() {
                   min={1}
                   value={mBatchSize}
                   onChange={(e) => setMBatchSize(e.target.value)}
+                  placeholder="自动（按显存）"
                 />
               </div>
               <div className="field">

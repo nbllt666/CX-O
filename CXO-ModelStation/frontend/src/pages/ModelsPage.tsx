@@ -1,7 +1,8 @@
 /*
  * 模型库页：模型列表按类型分组（So-VITS-SVC / MeloTTS）、选择模型 + 试听推理、
- * 结果内嵌播放。MeloTTS 组本期仅展示列表与「暂不支持试听」提示（spec 冻结：
- * melotts infer 不在本期）；后端 melotts 接口未就绪时该组降级提示，不影响 sovits 组。
+ * 结果内嵌播放。
+ * So-VITS-SVC 试听：数据集音频 → 音色转换；
+ * MeloTTS 试听：模型检查点 + 文本 → 合成语音（POST /api/melotts/infer）。
  * 音频来源（sovits 试听）：
  * ① 从数据集目录快捷构造（speaker + 文件名 → 训练数据目录内相对路径，可先经
  *    /api/audio-files/datasets/ 预览确认文件存在）；
@@ -10,7 +11,12 @@
  */
 import { useCallback, useState } from "react";
 import { api } from "../api/client";
-import type { InferResult, MelottsModelInfo, ModelInfo } from "../api/client";
+import type {
+  InferResult,
+  MelottsInferResult,
+  MelottsModelInfo,
+  ModelInfo,
+} from "../api/client";
 import { ErrorBar, NoticeBar, formatEpochTime } from "../components/ui";
 import { usePolling } from "../hooks/usePolling";
 
@@ -47,6 +53,15 @@ export default function ModelsPage() {
   const datasetsFetcher = useCallback(async () => (await api.listDatasets()).datasets, []);
   const { data: datasets } = usePolling(datasetsFetcher, { intervalMs: 10000 });
 
+  // ---- MeloTTS 试听（与 sovits 试听互相独立）----
+  const [selectedMelotts, setSelectedMelotts] = useState<MelottsModelInfo | null>(null);
+  const [melottsCheckpoint, setMelottsCheckpoint] = useState("");
+  const [melottsText, setMelottsText] = useState("");
+  const [melottsBusy, setMelottsBusy] = useState(false);
+  const [melottsNotice, setMelottsNotice] = useState<string | null>(null);
+  const [melottsActionError, setMelottsActionError] = useState<string | null>(null);
+  const [melottsResult, setMelottsResult] = useState<MelottsInferResult | null>(null);
+
   const [selectedModel, setSelectedModel] = useState<ModelInfo | null>(null);
   const [audioPath, setAudioPath] = useState("");
   const [helperSpeaker, setHelperSpeaker] = useState("");
@@ -62,6 +77,44 @@ export default function ModelsPage() {
   const handleSelectModel = (model: ModelInfo) => {
     setSelectedModel(model);
     setActionError(null);
+  };
+
+  const handleSelectMelotts = (model: MelottsModelInfo) => {
+    const checkpoints = model.checkpoints ?? [];
+    setSelectedMelotts(model);
+    // 缺省选最新检查点（列表按落盘先后排序，末位即最新）
+    setMelottsCheckpoint(checkpoints.length ? checkpoints[checkpoints.length - 1] : "");
+    setMelottsNotice(null);
+    setMelottsActionError(null);
+    setMelottsResult(null);
+  };
+
+  const handleInferMelotts = async () => {
+    setMelottsNotice(null);
+    setMelottsActionError(null);
+    setMelottsResult(null);
+    if (!selectedMelotts) {
+      setMelottsActionError("请先在 MeloTTS 列表中选择一个模型");
+      return;
+    }
+    if (!melottsText.trim()) {
+      setMelottsActionError("请填写要合成的文本");
+      return;
+    }
+    setMelottsBusy(true);
+    try {
+      const res = await api.inferMelotts({
+        model_path: selectedMelotts.path,
+        text: melottsText.trim(),
+        ...(melottsCheckpoint ? { checkpoint: melottsCheckpoint } : {}),
+      });
+      setMelottsResult(res);
+      setMelottsNotice(`试听合成完成（${res.checkpoint}），可在下方播放`);
+    } catch (e) {
+      setMelottsActionError(toMessage(e));
+    } finally {
+      setMelottsBusy(false);
+    }
   };
 
   const handleFillFromDataset = () => {
@@ -172,10 +225,11 @@ export default function ModelsPage() {
         )}
       </section>
 
-      {/* ---- MeloTTS 模型组（本期无 infer：仅列表 + 提示）---- */}
+      {/* ---- MeloTTS 模型组（选择模型 + 文本试听）---- */}
       <section className="card">
-        <h3 className="card-title">模型列表（MeloTTS）</h3>
-        <p className="hint">MeloTTS 模型暂不支持试听（推理能力不在本期范围）</p>
+        <h3 className="card-title">
+          模型列表（MeloTTS）{selectedMelotts ? `（已选：${selectedMelotts.name}）` : ""}
+        </h3>
         {melottsError ? (
           <p className="muted" role="status">
             MeloTTS 模型接口未就绪（后端可能尚未部署或服务不可达）：{melottsError}
@@ -187,15 +241,32 @@ export default function ModelsPage() {
               <tr>
                 <th>模型名称</th>
                 <th>创建时间</th>
-                <th>试听</th>
+                <th>检查点</th>
+                <th>操作</th>
               </tr>
             </thead>
             <tbody>
               {melottsModels.map((m: MelottsModelInfo) => (
-                <tr key={m.path}>
+                <tr
+                  key={m.path}
+                  className={selectedMelotts?.path === m.path ? "row-selected" : undefined}
+                >
                   <td>{m.name}</td>
                   <td className="muted">{formatEpochTime(m.created)}</td>
-                  <td className="muted">暂不支持试听</td>
+                  <td className="mono">
+                    {(m.checkpoints ?? []).length > 0
+                      ? `${(m.checkpoints ?? []).length} 个`
+                      : baseName(m.g_model ?? null)}
+                  </td>
+                  <td>
+                    <button
+                      type="button"
+                      className="btn btn-ghost btn-small"
+                      onClick={() => handleSelectMelotts(m)}
+                    >
+                      选择
+                    </button>
+                  </td>
                 </tr>
               ))}
             </tbody>
@@ -207,6 +278,62 @@ export default function ModelsPage() {
         ) : (
           <p className="muted">加载中…</p>
         )}
+
+        {selectedMelotts ? (
+          <div className="section-gap">
+            <NoticeBar message={melottsNotice} variant="success" />
+            <NoticeBar message={melottsActionError} variant="error" />
+            <div className="form-grid">
+              <div className="field">
+                <label htmlFor="melotts-checkpoint">检查点</label>
+                <select
+                  id="melotts-checkpoint"
+                  value={melottsCheckpoint}
+                  onChange={(e) => setMelottsCheckpoint(e.target.value)}
+                >
+                  {(selectedMelotts.checkpoints ?? []).length > 0 ? (
+                    (selectedMelotts.checkpoints ?? []).map((c) => (
+                      <option key={c} value={c}>
+                        {c}
+                      </option>
+                    ))
+                  ) : (
+                    <option value="">（使用最新检查点）</option>
+                  )}
+                </select>
+                <span className="hint">默认最新检查点；早期检查点可能音色更自然</span>
+              </div>
+              <div className="field field-full">
+                <label htmlFor="melotts-text">合成文本</label>
+                <textarea
+                  id="melotts-text"
+                  rows={3}
+                  value={melottsText}
+                  onChange={(e) => setMelottsText(e.target.value)}
+                  placeholder="输入想让该音色朗读的中文文本，例如：今天天气真好，我们一起出去玩吧。"
+                />
+              </div>
+            </div>
+            <div className="form-actions">
+              <button
+                type="button"
+                className="btn btn-primary"
+                disabled={melottsBusy}
+                onClick={handleInferMelotts}
+              >
+                {melottsBusy ? "合成中…" : "开始试听"}
+              </button>
+            </div>
+            {melottsResult ? (
+              <div className="section-gap">
+                <p className="muted">
+                  输出文件：<span className="mono">{melottsResult.output_filename}</span>
+                </p>
+                <audio className="audio-player" controls src={melottsResult.audio_url} />
+              </div>
+            ) : null}
+          </div>
+        ) : null}
       </section>
 
       <section className="card">

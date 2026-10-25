@@ -1,4 +1,5 @@
 import { BrowserRouter, NavLink, Navigate, Route, Routes } from "react-router-dom";
+import AutoModelPage from "./pages/AutoModelPage";
 import ConnectionPage from "./pages/ConnectionPage";
 import CorpusPage from "./pages/CorpusPage";
 import DatasetsPage from "./pages/DatasetsPage";
@@ -7,6 +8,7 @@ import TrainPage from "./pages/TrainPage";
 import WorkflowPage from "./pages/WorkflowPage";
 
 const NAV_ITEMS = [
+  { to: "/auto-model", label: "一键成模", desc: "提示词/参考音频 → 自动产出模型" },
   { to: "/datasets", label: "数据集管理", desc: "speaker 目录与音频导入" },
   { to: "/corpus", label: "批量语料生成", desc: "一套流程：参考音频 → 语料 → 编号" },
   { to: "/train", label: "训练控制台", desc: "预处理 / 训练 / 进度" },
@@ -15,7 +17,7 @@ const NAV_ITEMS = [
   { to: "/connection", label: "连接设置", desc: "后端地址与数据根" },
 ];
 
-/** 模型工作站独立前端：侧边导航布局 + 五页面路由 */
+/** 模型工作站独立前端：侧边导航布局 + 六页面路由（一键成模为第一入口） */
 export default function App() {
   return (
     <BrowserRouter>
@@ -41,14 +43,15 @@ export default function App() {
         </aside>
         <main className="main-content">
           <Routes>
-            <Route path="/" element={<Navigate to="/datasets" replace />} />
+            <Route path="/" element={<Navigate to="/auto-model" replace />} />
+            <Route path="/auto-model" element={<AutoModelPage />} />
             <Route path="/datasets" element={<DatasetsPage />} />
             <Route path="/corpus" element={<CorpusPage />} />
             <Route path="/train" element={<TrainPage />} />
             <Route path="/models" element={<ModelsPage />} />
             <Route path="/workflow" element={<WorkflowPage />} />
             <Route path="/connection" element={<ConnectionPage />} />
-            <Route path="*" element={<Navigate to="/datasets" replace />} />
+            <Route path="*" element={<Navigate to="/auto-model" replace />} />
           </Routes>
         </main>
       </div>
