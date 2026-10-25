@@ -1347,7 +1347,7 @@
     },
     "adminKey": {
       "sectionTitle": "管理密钥",
-      "sectionDesc": "后端管理面接口鉴权（x-api-key）录入",
+      "sectionDesc": "后端管理面与记忆端点鉴权（x-api-key）录入",
       "statusLabel": "配置状态",
       "configured": "已配置",
       "notConfigured": "未配置",
@@ -1355,7 +1355,7 @@
       "inputPlaceholder": "输入管理密钥（已保存值不回显）",
       "save": "保存",
       "clear": "清除",
-      "hint": "密钥仅保存在本地浏览器存储（与后端 ADMIN_API_KEY 对齐），保存后请求自动携带 x-api-key 头"
+      "hint": "密钥仅保存在本地浏览器存储（与后端 ADMIN_API_KEY 对齐）。未配置时记忆端点与 WebSocket 连接会被拒绝；保存后 HTTP 请求自动携带 x-api-key，WebSocket 自动追加 token"
     },
     "audio": {
       "sectionTitle": "音频",

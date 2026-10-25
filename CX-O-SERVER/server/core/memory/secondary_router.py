@@ -6,6 +6,7 @@ from enum import Enum
 from typing import Dict, List, Optional
 
 from server.core.logging_config import get_contextual_logger
+from server.core.memory.decay import DecayCalculator, memory_importance_baseline
 from server.core.utils import extract_json, format_messages_for_summary
 
 # 记忆管理助手 system_prompt 单源常量（E2 收敛：单源下沉 core 侧
@@ -90,7 +91,7 @@ class SecondaryModelRouter:
                     "type": "float",
                     "required": False,
                     "default": 0.1,
-                    "description": "重要性阈值",
+                    "description": "低价值阈值（按当前衰减后时间分判定）",
                 },
                 "max_count": {
                     "type": "int",
@@ -439,7 +440,11 @@ class SecondaryModelRouter:
             )
 
         memories = self.memory_manager.search_memories(limit=max_count)
-        low_value = [m for m in memories if m.get("importance_score", 0.0) < threshold]
+        decay_calculator = DecayCalculator()
+        low_value = [
+            m for m in memories
+            if decay_calculator.calculate_time_score(m, apply_reactivation=False) < threshold
+        ]
 
         # 归档化：遗忘≠删除，低分记忆进入深度归档（target_level=4），原文保留可回溯
         archived_count = 0
@@ -488,7 +493,7 @@ class SecondaryModelRouter:
             )
 
         content = memory.get("content", "")
-        current_importance = memory.get("importance_score", 0.0)
+        current_importance = memory_importance_baseline(memory)
         current_importance_level = memory.get("importance", 3)
 
         # 使用模型分析重要性

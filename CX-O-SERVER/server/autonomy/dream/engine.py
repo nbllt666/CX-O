@@ -248,6 +248,7 @@ class DreamEngine:
             metas.append(
                 {
                     "id": mem.get("id"),
+                    "importance": mem.get("importance"),
                     "importance_score": mem.get("importance_score"),
                     "permanent": mem.get("permanent"),
                     "content": mem.get("content"),

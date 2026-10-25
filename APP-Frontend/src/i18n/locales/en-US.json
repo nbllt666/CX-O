@@ -1347,7 +1347,7 @@
     },
     "adminKey": {
       "sectionTitle": "Admin Key",
-      "sectionDesc": "Enter the admin key (x-api-key) for backend admin endpoints",
+      "sectionDesc": "Enter the admin key (x-api-key) for backend admin and memory endpoints",
       "statusLabel": "Status",
       "configured": "Configured",
       "notConfigured": "Not configured",
@@ -1355,7 +1355,7 @@
       "inputPlaceholder": "Enter admin key (saved value is not shown)",
       "save": "Save",
       "clear": "Clear",
-      "hint": "The key is stored only in local browser storage (aligned with the backend ADMIN_API_KEY); requests automatically carry the x-api-key header once saved"
+      "hint": "The key is stored only in local browser storage (aligned with the backend ADMIN_API_KEY). Without it, memory endpoints and WebSocket connections are rejected; once saved, HTTP requests carry x-api-key and WebSocket URLs append token"
     },
     "audio": {
       "sectionTitle": "Audio",

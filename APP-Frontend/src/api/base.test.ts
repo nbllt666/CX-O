@@ -225,3 +225,29 @@ describe('shouldRetry 重试方法白名单', () => {
     expect(shouldRetry(new AxiosError('无配置'))).toBe(false);
   });
 });
+
+describe('withWsAuth', () => {
+  it('配置管理密钥时追加 token 查询参数', async () => {
+    const { withWsAuth, STORAGE_KEYS } = await loadBase();
+    localStorage.setItem(STORAGE_KEYS.adminKey, 'secret-key');
+    expect(withWsAuth('ws://localhost:8000/ws')).toBe(
+      'ws://localhost:8000/ws?token=secret-key',
+    );
+    expect(withWsAuth('ws://localhost:8000/ws?session_id=abc')).toBe(
+      'ws://localhost:8000/ws?session_id=abc&token=secret-key',
+    );
+  });
+
+  it('未配置管理密钥时保持原 URL', async () => {
+    const { withWsAuth } = await loadBase();
+    expect(withWsAuth('ws://localhost:8000/ws')).toBe('ws://localhost:8000/ws');
+  });
+
+  it('密钥含特殊字符时进行 URL 编码', async () => {
+    const { withWsAuth, STORAGE_KEYS } = await loadBase();
+    localStorage.setItem(STORAGE_KEYS.adminKey, 'a b&c');
+    expect(withWsAuth('ws://localhost:8000/ws')).toBe(
+      'ws://localhost:8000/ws?token=a%20b%26c',
+    );
+  });
+});

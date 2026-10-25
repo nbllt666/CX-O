@@ -57,6 +57,55 @@ class _MemoryCRUDMixin:
         cursor = conn.cursor()
 
         try:
+            # 写路径精确查重：同 Agent/工作区/类型的规范化相同内容直接复用，
+            # 避免完全重复的记忆在库中单调堆积（近重复检测由去重引擎承担）。
+            normalized_content = content.strip().lower()
+            cursor.execute(
+                f"""
+                SELECT id, importance, permanent FROM {table_name}
+                WHERE workspace_id = ? AND type = ? AND is_deleted = FALSE
+                  AND LOWER(TRIM(content)) = ?
+                LIMIT 1
+                """,
+                (workspace_id, memory_type, normalized_content),
+            )
+            duplicate = cursor.fetchone()
+            if duplicate:
+                duplicate_id = duplicate[0]
+                old_importance = duplicate[1] if duplicate[1] is not None else 3
+                old_permanent = bool(duplicate[2])
+                # 重复写入不得静默丢失"升级"意图：永久化或更高重要性时更新原行。
+                should_upgrade = (permanent and not old_permanent) or (importance > old_importance)
+                if should_upgrade:
+                    cursor.execute(
+                        f"""
+                        UPDATE {table_name}
+                        SET importance = ?, importance_score = ?, permanent = ?,
+                            decay_type = CASE WHEN ? THEN 'zero' ELSE decay_type END,
+                            updated_at = ?
+                        WHERE id = ?
+                        """,
+                        (
+                            importance,
+                            1.0 if permanent else max(0.0, min(1.0, float(importance) / 5.0)),
+                            permanent or old_permanent,
+                            permanent,
+                            datetime.now().isoformat(),
+                            duplicate_id,
+                        ),
+                    )
+                    conn.commit()
+                    logger.info(
+                        f"记忆内容已存在，已升级重要性/永久标记: id={duplicate_id}, "
+                        f"importance={old_importance}->{importance}, permanent={permanent}"
+                    )
+                else:
+                    logger.info(
+                        f"记忆内容已存在，跳过重复写入: id={duplicate_id}, type={memory_type}, "
+                        f"agent={agent_id}"
+                    )
+                return duplicate_id
+
             cursor.execute(
                 f"""
                 INSERT INTO {table_name} (
@@ -70,7 +119,7 @@ class _MemoryCRUDMixin:
                     memory_type,
                     content,
                     importance,
-                    0.6 if not permanent else 1.0,
+                    1.0 if permanent else max(0.0, min(1.0, float(importance) / 5.0)),
                     "zero" if permanent else "exponential",
                     json_dumps({}),
                     0,
@@ -513,6 +562,7 @@ class _MemoryCRUDMixin:
             "is_deleted": bool(row["is_deleted"]),
             "source": row["source"],
             "workspace_id": row["workspace_id"],
+            "agent_id": (row["agent_id"] if "agent_id" in row.keys() else "default") or "default",
         }
 
     async def write_memory_async(

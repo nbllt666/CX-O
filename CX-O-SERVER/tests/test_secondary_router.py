@@ -282,12 +282,12 @@ class TestCleanupMemories:
     @pytest.mark.asyncio
     async def test_filters_low_importance(self, router):
         """低分记忆被归档到深度归档级别（不删除），高分记忆不动。"""
-        router.memory_manager.add("高价值", importance_score=0.9)
-        router.memory_manager.add("低价值", importance_score=0.01)
+        router.memory_manager.add("高价值", importance_score=1.0, importance=5)
+        router.memory_manager.add("低价值", importance_score=0.2, importance=1)
         archiver = FakeArchiver()
         router.memory_manager.archiver = archiver
         result = await router.execute_command(
-            _instr("cleanup_memories", threshold=0.1)
+            _instr("cleanup_memories", threshold=0.3)
         )
         assert result.status == "success"
         # 仅低价值记忆被归档（id 已转为 int，target_level=4 深度归档）

@@ -355,7 +355,7 @@ nav.scrolled{background:rgba(11,11,20,.92);box-shadow:0 4px 30px rgba(0,0,0,.4)}
     </div>
     <div class="stats">
       <div class="stat"><div class="num">5</div><div class="lbl">子项目</div></div>
-      <div class="stat"><div class="num">35</div><div class="lbl">路由模块</div></div>
+      <div class="stat"><div class="num">36</div><div class="lbl">路由模块</div></div>
       <div class="stat"><div class="num">56</div><div class="lbl">图谱工具</div></div>
       <div class="stat"><div class="num">15</div><div class="lbl">情感标记</div></div>
       <div class="stat"><div class="num">64</div><div class="lbl">情感参考音频</div></div>
@@ -783,27 +783,26 @@ get_stats · export</div>
       </div>
       <div class="body">
         <div class="desc">
-          <p>独立的语音工作站服务，提供从参考音频到最终推理的端到端语音克隆流水线，多引擎互补。</p>
+          <p>独立的语音工作站服务，覆盖「写歌 → 合成 → 翻唱 → 合唱」全流程；音色训练已迁至独立的模型工作站（<code>CXO-ModelStation :8300</code>），工作站聚焦作曲 / 翻唱与音色资产。</p>
           <ul>
-            <li><strong>① VoxCPM</strong>：参考音频生成（design / controllable_clone / ultimate_clone）</li>
-            <li><strong>② CosyVoice</strong>：情感参考音频（8 情感 + 56 过渡 = 64 参考音频，Instruct2 模式）</li>
-            <li><strong>③ So-VITS-SVC 预处理</strong>：音频切片、语音标注、特征提取</li>
-            <li><strong>④ So-VITS-SVC 训练</strong>：可配置 epochs/batch_size/lr，异步训练，支持 F5-TTS 微调</li>
-            <li><strong>⑤ So-VITS-SVC 推理 + IndexTTS 2</strong>：8 情感 × 5 强度 = 40 组合</li>
+            <li><strong>① 歌谱与编曲</strong>：五线谱编辑、和弦编排、MusicXML 导入、多轨伴奏与混音</li>
+            <li><strong>② 歌声合成</strong>：歌谱驱动人声渲染（song_pipeline / singing_engine），可选声库与变调参数</li>
+            <li><strong>③ 翻唱变声</strong>：So-VITS-SVC 推理，源音频音域分析后自动推荐升降 key（可手调）</li>
+            <li><strong>④ 双人合唱分离</strong>：demucs 分离人声/伴奏 + AudioSep 按文本查询拆分双人声部，各自变声后重混</li>
+            <li><strong>⑤ CXFC 插件</strong>：启动时注册为 CXFC 插件并保持心跳，把作曲/翻唱能力暴露给主服务</li>
           </ul>
-          <p style="margin-top:.6rem"><strong>IndexTTS 按需启停</strong>：<code>IndexTTSManager</code> 单例，空闲超时（默认 300s）自动停止，节省 GPU 资源。So-VITS-SVC 训练与推理引擎已迁至独立的模型工作站（<code>CXO-ModelStation :8300</code>），工作站聚焦作曲 / 翻唱与音色资产。</p>
+          <p style="margin-top:.6rem"><strong>训练域已迁出</strong>：So-VITS-SVC 训练与 MeloTTS 微调、数据集管理、批量语料生成均在 <code>CXO-ModelStation</code>（端口 8300），训练重启不再影响作曲与聊天服务。</p>
         </div>
         <div class="side">
-          <h4>多引擎支持</h4>
-          <div class="kv"><span class="k">VoxCPM</span><span class="v">CLI 子进程</span></div>
-          <div class="kv"><span class="k">CosyVoice</span><span class="v">HTTP API</span></div>
-          <div class="kv"><span class="k">IndexTTS 2</span><span class="v">HTTP API</span></div>
-          <div class="kv"><span class="k">F5-TTS</span><span class="v">CLI 子进程</span></div>
-          <div class="kv"><span class="k">So-VITS-SVC</span><span class="v">CLI 子进程</span></div>
-          <h4 style="margin-top:1rem">情感参考</h4>
-          <div class="kv"><span class="k">情感数</span><span class="v">8</span></div>
-          <div class="kv"><span class="k">过渡数</span><span class="v">56</span></div>
-          <div class="kv"><span class="k">参考总数</span><span class="v">64</span></div>
+          <h4>核心引擎</h4>
+          <div class="kv"><span class="k">So-VITS-SVC</span><span class="v">翻唱推理</span></div>
+          <div class="kv"><span class="k">demucs</span><span class="v">人声/伴奏分离</span></div>
+          <div class="kv"><span class="k">AudioSep</span><span class="v">文本查询声部拆分</span></div>
+          <div class="kv"><span class="k">singing_engine</span><span class="v">歌声合成</span></div>
+          <div class="kv"><span class="k">MusicXML</span><span class="v">歌谱导入</span></div>
+          <h4 style="margin-top:1rem">输入输出</h4>
+          <div class="kv"><span class="k">输入</span><span class="v">歌谱 / 参考音频</span></div>
+          <div class="kv"><span class="k">输出</span><span class="v">成品歌曲 / 翻唱 / 合唱</span></div>
         </div>
       </div>
     </div>
@@ -976,7 +975,7 @@ get_stats · export</div>
       <div class="tech-card">
         <h4>后端框架</h4>
         <div class="chips">
-          <span class="chip hl">Python 3.10+</span>
+          <span class="chip hl">Python 3.11+</span>
           <span class="chip hl">FastAPI</span>
           <span class="chip">Uvicorn</span>
           <span class="chip">WebSocket</span>
@@ -1000,7 +999,7 @@ get_stats · export</div>
         <div class="chips">
           <span class="chip hl">Ollama</span>
           <span class="chip hl">vLLM</span>
-          <span class="chip">qwen3-vl:8b</span>
+          <span class="chip">qwen3:latest</span>
           <span class="chip">Triton</span>
         </div>
       </div>
@@ -1009,8 +1008,7 @@ get_stats · export</div>
         <div class="chips">
           <span class="chip hl">SQLite</span>
           <span class="chip hl">Weaviate</span>
-          <span class="chip">Milvus Lite</span>
-          <span class="chip">ChromaDB</span>
+          <span class="chip">Weaviate Embedded</span>
         </div>
       </div>
       <div class="tech-card">
@@ -1063,14 +1061,14 @@ get_stats · export</div>
     <div class="section-head reveal">
       <span class="tag">Services & Ports</span>
       <h2>服务端口与 API</h2>
-      <p>35 个 REST 路由模块，WebSocket 双端点（/ws 通用、/ws/live 直播），完整覆盖对话、记忆、图谱、Agent、工具、ACP、CXFC、声纹、人脸、会议等。</p>
+      <p>36 个 REST 路由模块，WebSocket 双栈（网关 <code>/ws</code> + <code>/ws/live</code>，主应用 <code>/api/ws/{agent_id}</code> 等），完整覆盖对话、记忆、图谱、Agent、工具、ACP、CXFC、声纹、人脸、会议等。</p>
     </div>
     <table class="port-table reveal">
       <thead><tr><th>服务</th><th>端口</th><th>协议</th><th>说明</th></tr></thead>
       <tbody>
         <tr><td>CX-O-SERVER</td><td class="pnum">8000</td><td>WebSocket / HTTP</td><td>单体应用，集成所有功能</td></tr>
         <tr><td>APP-Frontend</td><td class="pnum">3100</td><td>HTTP</td><td>Web 前端 / Electron 桌面应用</td></tr>
-        <tr><td>CX-O-Gateway</td><td class="pnum">8100</td><td>HTTP</td><td>轻量网关（已整合进 SERVER，可独立部署）</td></tr>
+        <tr><td>CX-O-Gateway</td><td class="pnum">8000</td><td>HTTP / WS</td><td>已整合进 CX-O-SERVER，不再单独占用端口</td></tr>
         <tr><td>VoiceWorkStation</td><td class="pnum">8200</td><td>HTTP</td><td>语音工作站（可选）</td></tr>
         <tr><td>ModelStation</td><td class="pnum">8300</td><td>HTTP</td><td>模型工作站：音色训练 / 语料生成（可选）</td></tr>
         <tr><td>CXO-Tuner</td><td class="pnum">8310</td><td>HTTP</td><td>进化实验室（可选）</td></tr>
@@ -1095,16 +1093,21 @@ POST /api/acp/discover</div>
       </div>
       <div class="card">
         <h3 style="font-size:1rem;margin-bottom:.6rem">WebSocket 端点</h3>
-        <div class="code-block" style="font-size:.74rem">ws://localhost:8000/api/ws/{agent_id}
+        <div class="code-block" style="font-size:.74rem">ws://localhost:8000/ws
+ws://localhost:8000/ws/live
+ws://localhost:8000/api/ws/{agent_id}
 ws://localhost:8000/api/ws/live
+
+// 配置 ADMIN_API_KEY 后需追加鉴权参数
+ws://localhost:8000/ws?token=&lt;ADMIN_API_KEY&gt;
 
 消息格式:
 { "action": "...", "data": {...} }
 { "type": "...", "data": {...} }</div>
       </div>
       <div class="card">
-        <h3 style="font-size:1rem;margin-bottom:.6rem">35 个路由模块</h3>
-        <p style="font-size:.8rem;color:var(--text-2)">chat · config · memory · memory_chat · context · tools · acp · cxfc · service · agents · graph · archive · audio · avatars · backup · admin · stats · vector · websocket · face · voiceprint · meeting · cluster · vision · autonomy · dream · distillation · decision · discovery · physio · ref_audio_assets · multimodal · anythingllm · tuner · _pagination</p>
+        <h3 style="font-size:1rem;margin-bottom:.6rem">36 个路由模块</h3>
+        <p style="font-size:.8rem;color:var(--text-2)">acp · admin · agents · anythingllm · archive · audio · autonomy · avatar_manifest · avatars · backup · chat · cluster · config · context · cxfc · decision · discovery · distillation · dream · face · graph · meeting · memory · memory_chat · multimodal · physio · presets · ref_audio_assets · service · stats · tools · tuner · vector · vision · voiceprint · websocket</p>
       </div>
     </div>
   </div>
@@ -1123,7 +1126,7 @@ ws://localhost:8000/api/ws/live
         <h4><span class="step">1</span>环境要求</h4>
         <ul style="color:var(--text-2);font-size:.88rem;padding-left:1.2rem;line-height:2">
           <li>Windows 10/11 或 Linux</li>
-          <li>Python 3.10+</li>
+          <li>Python 3.11+</li>
           <li>Node.js 18+</li>
           <li>CUDA 11.8+（GPU 支持）</li>
           <li>Miniconda3</li>

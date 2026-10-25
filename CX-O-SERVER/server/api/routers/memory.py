@@ -12,7 +12,9 @@ from server.core.logging_config import get_contextual_logger
 from server.core.memory.secondary_router import SecondaryInstruction
 from server.core.utils import run_io
 
-router = APIRouter()
+# 记忆端点默认强制鉴权：未配置 ADMIN_API_KEY 时一律 403，
+# 与 CX-A 基础管理端点、WebSocket 握手共用同一把管理密钥。
+router = APIRouter(dependencies=[Depends(verify_admin_api_key)])
 logger = get_contextual_logger(__name__)
 
 
@@ -159,7 +161,11 @@ async def list_memories(
                         "id": m.get("id"),
                         "content": m.get("content"),
                         "type": "permanent",
-                        "importance": m.get("importance_score", 3),
+                        "importance": (
+                            m.get("importance")
+                            if m.get("importance") is not None
+                            else 5
+                        ),
                         "tags": m.get("tags", []),
                         "created_at": m.get("created_at"),
                         "updated_at": m.get("updated_at"),

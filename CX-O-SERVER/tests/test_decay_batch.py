@@ -15,13 +15,15 @@ class FakeMemoryManager:
     def __init__(self, memories):
         self.memories = memories
         self.updates = []
+        self.agent_updates = []
         self.sync_calls = 0
 
     def search_memories(self, limit=100, offset=0):
         return self.memories[offset : offset + limit]
 
-    async def update_memory_async(self, memory_id, new_importance, new_metadata):
+    async def update_memory_async(self, memory_id, new_importance, new_metadata, agent_id=None):
         self.updates.append((memory_id, new_importance, new_metadata))
+        self.agent_updates.append((memory_id, agent_id))
         return True
 
     def sync_decay_values(self):
@@ -29,14 +31,17 @@ class FakeMemoryManager:
         return {"updated": 1, "failed": 0}
 
 
-def _mem(mid, importance_score=0.8, created_at=None):
-    return {
+def _mem(mid, importance_score=0.8, created_at=None, importance=None):
+    data = {
         "id": mid,
         "importance_score": importance_score,
         "created_at": created_at or datetime.now().isoformat(),
         "decay_type": "exponential",
         "decay_params": None,
     }
+    if importance is not None:
+        data["importance"] = importance
+    return data
 
 
 @pytest.fixture
@@ -111,6 +116,82 @@ class TestProcessBatch:
         r = await processor.process_batch()
         for _, _, meta in processor.memory_manager.updates:
             assert isinstance(meta, dict)
+
+    @pytest.mark.asyncio
+    async def test_decay_never_writes_back_importance(self, processor):
+        """P0-2: 衰减值只写 metadata 缓存，不回写 importance，避免复利叠乘。"""
+        await processor.process_batch()
+        for _, new_importance, _ in processor.memory_manager.updates:
+            assert new_importance is None
+
+    @pytest.mark.asyncio
+    async def test_repeated_batches_are_idempotent(self):
+        """created_at 不变时，多轮批处理得到相同的派生分数，而非逐轮塌缩。"""
+        fixed_created = datetime(2026, 1, 1, 12, 0, 0).isoformat()
+        mem = _mem(1, importance_score=0.8, created_at=fixed_created, importance=3)
+        mgr = FakeMemoryManager([mem])
+        p = DecayBatchProcessor(memory_manager=mgr)
+
+        await p.process_batch()
+        first_score = mgr.updates[-1][2]["importance_score"]
+        await p.process_batch()
+        second_score = mgr.updates[-1][2]["importance_score"]
+
+        assert first_score == pytest.approx(second_score)
+        assert mem["importance"] == 3
+        assert mem["importance_score"] == 0.8
+
+    @pytest.mark.asyncio
+    async def test_legacy_dead_score_uses_immutable_importance(self):
+        """历史行 importance_score=0.6 但 importance=5 → 以 1.0 为基线，不被旧值拖累。"""
+        fixed_created = datetime(2026, 1, 1, 12, 0, 0).isoformat()
+        mem = _mem(1, importance_score=0.6, created_at=fixed_created, importance=5)
+        mgr = FakeMemoryManager([mem])
+        p = DecayBatchProcessor(memory_manager=mgr)
+
+        await p.process_batch()
+        assert mgr.updates[-1][2]["importance_score"] == pytest.approx(1.0)
+        assert mem["importance"] == 5
+        assert mem["importance_score"] == 0.6  # 旧派生列不被回写
+
+    @pytest.mark.asyncio
+    async def test_snapshot_covers_registered_agent_tables(self):
+        """P0-2: 非默认 Agent 的专属记忆表也必须进入衰减范围。"""
+
+        class FakeMultiAgentManager(FakeMemoryManager):
+            def __init__(self, tables):
+                super().__init__([])
+                self.tables = tables
+
+            def _get_connection(self):
+                agent_ids = list(self.tables)
+
+                class _Cursor:
+                    def execute(self, *args, **kwargs):
+                        return None
+
+                    def fetchall(self):
+                        return [(agent_id,) for agent_id in agent_ids]
+
+                class _Connection:
+                    def cursor(self):
+                        return _Cursor()
+
+                return _Connection()
+
+            def search_memories(self, limit=100, offset=0, agent_id="default"):
+                return self.tables.get(agent_id, [])[offset : offset + limit]
+
+        alice_memory = _mem(2)
+        alice_memory["agent_id"] = "alice"
+        mgr = FakeMultiAgentManager({"default": [_mem(1)], "alice": [alice_memory]})
+        p = DecayBatchProcessor(memory_manager=mgr)
+
+        snapshot = p._snapshot_all_memories()
+        assert {m["id"] for m in snapshot} == {1, 2}
+
+        await p.process_batch()
+        assert (2, "alice") in mgr.agent_updates
 
     @pytest.mark.asyncio
     async def test_update_failure_counts_failed(self, processor):

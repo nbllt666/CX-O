@@ -105,7 +105,9 @@ class DreamConsolidator:
             agent_id=agent_id,
         )
         confirmed = self.memory_manager.consolidate_dream(
-            memory_id, confirmed_importance=self.config.confirmed_importance
+            memory_id,
+            confirmed_importance=self.config.confirmed_importance,
+            agent_id=agent_id,
         )
         if not confirmed:
             # M-E: 提级未生效（可能状态不符）→ 保持 pending 可重试，仅记录失败，

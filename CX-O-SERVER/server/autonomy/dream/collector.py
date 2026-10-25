@@ -1,8 +1,8 @@
 """CX-O-Dream 素材采集（server/autonomy/dream/collector.py）。
 
 只读采集，不持有主库写锁、不写主库（spec "素材采集（只读）"）：
-- 近 material_window_days（默认 7）天内 importance_score < 0.5 的边缘记忆
-  （上限 max_material_items，按 importance_score 升序取最边缘，同分按 created_at DESC）
+- 近 material_window_days（默认 7）天内基线重要性 < 0.5 的边缘记忆
+  （上限 max_material_items，按 memory_importance_baseline 升序取最边缘，同分按 created_at DESC）
 - 知识图谱孤立节点（度数 == 1 的实体；graph_repo 为 None / 无 list / 查询抛异常 →
   优雅降级为空列表，不阻断采集）
 - 最近日记（tags 含 日记 或 #日记）的 emotion_score 作为情绪基调（无则 0.0）
@@ -20,6 +20,7 @@ from datetime import datetime, timedelta
 from typing import Any, Dict, List
 
 from server.autonomy.dream.config import DreamConfig
+from server.core.memory.decay import memory_importance_baseline
 
 logger = logging.getLogger(__name__)
 
@@ -128,11 +129,13 @@ class DreamMaterialCollector:
         for mem in pool or []:
             if not self._is_within_window(mem, cutoff):
                 continue
-            if (mem.get("importance_score") or 0.0) >= _EDGE_IMPORTANCE_THRESHOLD:
+            if memory_importance_baseline(mem) >= _EDGE_IMPORTANCE_THRESHOLD:
                 continue
             edges.append(mem)
-        # 最边缘优先：importance_score 升序，同分按 created_at 降序
-        edges.sort(key=lambda m: (m.get("importance_score") or 0.0, -self._created_ts(m)))
+        # 最边缘优先：基线重要性升序，同分按 created_at 降序
+        edges.sort(
+            key=lambda m: (memory_importance_baseline(m), -self._created_ts(m))
+        )
         return edges[:max_items]
 
     @staticmethod

@@ -507,7 +507,7 @@ class _StubDreamMemoryManager:
         self.written += 1
         return 100 + self.written
 
-    def consolidate_dream(self, memory_id, confirmed_importance=0.4):
+    def consolidate_dream(self, memory_id, confirmed_importance=0.4, agent_id="default"):
         return True
 
     def list_dreams(self, agent_id="default", state=None, limit=50):

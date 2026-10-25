@@ -9,7 +9,7 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 
-from server.core.memory.decay import DecayCalculator
+from server.core.memory.decay import DecayCalculator, memory_importance_baseline
 
 
 @pytest.fixture
@@ -137,3 +137,29 @@ class TestCalculateDecay:
         # 无 decay_params 时按重要性分档取参数
         score = calc.calculate_decay(0.6, "2025-12-31")
         assert 0 < score < 0.6
+
+
+# ---------------------------------------------------------------- 衰减基线
+class TestImportanceBaseline:
+    def test_integer_importance_is_authoritative(self):
+        """importance_score 列是派生缓存，基线必须由不可变 importance 换算。"""
+        assert memory_importance_baseline({"importance": 5, "importance_score": 0.6}) == 1.0
+        assert memory_importance_baseline({"importance": 4, "importance_score": 0.6}) == 0.8
+        assert memory_importance_baseline({"importance": 1, "importance_score": 0.6}) == 0.2
+
+    def test_permanent_is_one(self):
+        assert memory_importance_baseline(
+            {"importance": 3, "importance_score": 0.6, "permanent": True}
+        ) == 1.0
+
+    def test_dream_keeps_fixed_score(self):
+        memory = {"importance": 1, "importance_score": 0.15, "decay_type": "dream"}
+        assert memory_importance_baseline(memory) == 0.15
+
+    def test_legacy_caller_without_importance(self):
+        assert memory_importance_baseline({"importance_score": 0.82}) == 0.82
+        assert memory_importance_baseline({}) == 0.6
+
+    def test_time_score_uses_baseline(self, calc):
+        memory = {"importance": 5, "importance_score": 0.6, "created_at": "2025-01-01T12:00:00"}
+        assert calc.calculate_time_score(memory) == 1.0

@@ -10,7 +10,7 @@
  */
 import { useCallback, useEffect, useRef, useState } from 'react';
 
-import { getWsBaseUrl } from '../api/base';
+import { getWsBaseUrl, withWsAuth } from '../api/base';
 import { useWSTransport } from './ws/transport';
 
 export interface LiveDanmakuData {
@@ -252,7 +252,7 @@ export function useLiveWebSocket(options: UseLiveWebSocketOptions = {}): UseLive
     disconnect: transportDisconnect,
     reconnect: transportReconnect,
   } = useWSTransport({
-    urlBuilder: () => `${getWsBaseUrl()}/ws/live${sessionId ? `?session_id=${encodeURIComponent(sessionId)}` : ''}`,
+    urlBuilder: () => withWsAuth(`${getWsBaseUrl()}/ws/live${sessionId ? `?session_id=${encodeURIComponent(sessionId)}` : ''}`),
     binaryType: 'arraybuffer',
     reconnect: { strategy: 'exponential', delays: [100, 200, 500, 1000, 2000] },
     onOpen: (ws) => {

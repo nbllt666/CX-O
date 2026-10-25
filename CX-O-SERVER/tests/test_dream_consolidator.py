@@ -101,25 +101,16 @@ class TestConsolidate:
         assert mgr.get_memory(memory_id)["importance_score"] == pytest.approx(0.6)
 
     def test_consolidate_agent_isolation(self, buf, mgr):
-        """agent 隔离：写入按 agent 落独立表。
-
-        M4 旧行为契约更新（20260827 第四轮）：_DreamMixin.consolidate_dream 无
-        agent 维度（仅查默认 memories 表），非默认 agent 的固化提级此前恒为
-        False 却被 consolidator 忽略并照常置 approved（谎报成功）。修复后
-        提级未生效 → consolidate 返回 None、缓冲保持 pending 可重试；写入行
-        仍按 agent 隔离落在 alice 独立表且 consolidation_state 保持 pending。
-        """
+        """agent 隔离：写入与固化提级都必须落在 alice 独立表。"""
         buffer_id = buf.put(_sample_candidate(agent_id="alice"))
         memory_id = DreamConsolidator(buf, mgr).consolidate(buffer_id, agent_id="alice")
-        # 提级未生效 → 不再返回 memory_id 谎报完成
-        assert memory_id is None
-        # 缓冲保持 pending（可重试）
-        assert buf.get(buffer_id)["decision"] == "pending"
-        # 写入行确实按 agent 隔离落库，但状态未提级
+        # 固化提级在 Agent 专属表生效 → 返回 memory_id 并置 approved
+        assert memory_id is not None
+        assert buf.get(buffer_id)["decision"] == "approved"
         dreams = mgr.list_dreams(agent_id="alice")
         assert len(dreams) == 1
         assert dreams[0]["metadata"]["dream_session_id"] == "sess-001"
-        assert dreams[0]["metadata"]["consolidation_state"] == "pending"
+        assert dreams[0]["metadata"]["consolidation_state"] == "confirmed"
 
     def test_consolidate_already_approved_returns_none(self, buf, mgr):
         buffer_id = buf.put(_sample_candidate())
@@ -147,7 +138,7 @@ class TestConsolidate:
         c = _make(buf, mgr)
         monkeypatch.setattr(
             mgr, "consolidate_dream",
-            lambda memory_id, confirmed_importance=0.4: False,
+            lambda memory_id, confirmed_importance=0.4, agent_id="default": False,
         )
         assert c.consolidate(buffer_id) is None
         assert buf.get(buffer_id)["decision"] == "pending"

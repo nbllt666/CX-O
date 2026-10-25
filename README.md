@@ -54,12 +54,24 @@ CX-O 是一套面向二次元爱好者的 AI 人格化陪伴系统。它把虚�
 call py311\Scripts\activate.bat
 ```
 
+启动前必须先配置管理密钥（记忆端点与 WebSocket 握手默认强制鉴权，未配置会被拒绝）：
+
+```powershell
+# 当前终端生效；长期使用请写入系统环境变量
+$env:ADMIN_API_KEY = "换成你自己的长随机字符串"
+```
+
+启动后在前端「设置 → 管理密钥」里录入同一把密钥，HTTP 请求会自动携带 `x-api-key`，WebSocket 会自动追加 `token` 参数。
+
 **第二步：拉模型**
 
 ```powershell
-# 对话模型（主模型 + 向量嵌入模型）
-ollama pull qwen3-vl:8b
+# 对话模型（配置默认值 models.main.model=qwen3:latest）+ 向量嵌入模型
+ollama pull qwen3:latest
 ollama pull nomic-embed-text
+
+# 可选：需要屏幕/摄像头视觉理解时，改用视觉模型并在配置里覆盖 models.main.model
+# ollama pull qwen3-vl:8b
 
 # 语音相关模型
 python download_voxcpm2.py
@@ -104,7 +116,7 @@ cd APP-Frontend
 
 | 功能 | 说明 |
 |------|------|
-| 实时语音对话 | 全双工通话，边听边说，双向互相插话，延迟可控在 300ms 内；还能听声辨人——说句「记住我的声音」就能给说话人建档，谁在说话一眼看清 |
+| 实时语音对话 | 全双工通话，边听边说，双向互相插话，首包 <300ms，全链路 P50 约 450–610ms / P95 <800ms；还能听声辨人——说句「记住我的声音」就能给说话人建档，谁在说话一眼看清 |
 | 虚拟形象 | Live2D 和 VRM 双引擎，表情/骨骼/视线/动作、口型同步、风场、音画同步 |
 | 记忆系统 | 三层记忆 + 向量搜索 + 知识图谱 + 自动衰减 + 记忆蒸馏 |
 | 多 Agent | 多个人格独立管理，各自专属音色，ACP 协议互通信，角色卡快速创建 |
@@ -151,11 +163,17 @@ CX-O/
 ├── CXO-ModelStation/       # 模型工作站（So-VITS-SVC 训练全链路，后端 8300，训练时前端由后端托管；engines/ 内含 so-vits-svc-4.1-Stable / VoxCPM-main / MeloTTS 三引擎，2026-09-05 自包含化迁入；2026-09-26 起另有桌面版形态：Electron 应用 frontend/electron/ + 便携 Python 运行时 tools/build_runtime.py + 一条命令出包 tools/build_desktop.py，产物 release/；独立部署见 CXO-ModelStation/DEPLOY.md）
 ├── CXO-Tuner/              # 进化实验室（可选独立服务，自我进化，默认端口 8310——2026-09-05 起与模型工作站 8300 错开，可同启）
 ├── CXO-EvalKit/            # LLM 评测框架（可选独立服务，对后端做记忆/延迟/质量自动体检，宿主端口 8320，详见 CXO-EvalKit/DEPLOY.md）
+├── CXO-NekoAdapter/        # N.E.K.O 插件适配器（独立 sidecar，把插件工具经 CXFC 桥接给后端）
+├── DiffSinger/             # 歌声合成引擎（作曲人声渲染）
+├── third_party/            # 第三方集成（如 free-search-mcp）
 ├── config/                 # 全局配置文件
 ├── docker/                 # Docker 镜像构建文件
 ├── docs/                   # 项目文档
 ├── models/                 # 本地模型存放目录
-└── public/                 # 公共契约资源
+├── plugins/                # 插件目录
+├── public/                 # 公共契约资源
+├── tests/                  # E2E / 集成测试
+└── tools/                  # 运维与构建脚本
 ```
 
 ---
@@ -170,14 +188,14 @@ CX-O/
 - **响应速度**：模拟日常聊天、翻记忆搜索、多人同时发消息三种场景，统计响应时间；还能和上一次体检对比，一旦明显变慢立刻标红
 - **对话质量**：回放一整套生活化对话剧本，AI 裁判从"记没记住事、人设稳不稳定、说话连不连贯"三个角度逐句打分，低于 3 分的回复会连同原文一起列出来，方便定位问题
 
-**怎么用：** 三步走——启动体检服务（`docker compose --profile eval up cxo-evalkit`，或本地 `uvicorn evalkit.api:app --port 8300`）→ 发一条命令开始体检（`POST /api/v1/runs`，选 memory_decay / latency / quality 任意一项）→ 体检完成后拉取报告（`GET /api/v1/runs/{id}/report`，一份 Markdown，直接阅读）。也有内置演示模式，不接真实服务就能先跑通看报告长什么样。详细步骤见 [CXO-EvalKit/DEPLOY.md](./CXO-EvalKit/DEPLOY.md)。
+**怎么用：** 三步走——启动体检服务（`docker compose --profile eval up cxo-evalkit`，或本地 `uvicorn evalkit.api:app --port 8320`）→ 发一条命令开始体检（`POST /api/v1/runs`，选 memory_decay / latency / quality 任意一项）→ 体检完成后拉取报告（`GET /api/v1/runs/{id}/report`，一份 Markdown，直接阅读）。接真实主服务时，`target.admin_api_key` 必须配置成与主服务一致的 `ADMIN_API_KEY`（记忆端点默认强制鉴权）。也有内置演示模式，不接真实服务就能先跑通看报告长什么样。详细步骤见 [CXO-EvalKit/DEPLOY.md](./CXO-EvalKit/DEPLOY.md)。
 
 ---
 
 ## 常见问题
 
 **启动后端报错连不上 Ollama？**
-先确认 Ollama 服务在跑（`ollama serve`），默认地址 `http://localhost:11434`。模型没拉全也会报错，确保 `qwen3-vl:8b` 和 `nomic-embed-text` 都拉好了。
+先确认 Ollama 服务在跑（`ollama serve`），默认地址 `http://localhost:11434`。默认配置使用 `qwen3:latest`，向量嵌入使用 `nomic-embed-text`，确保这两个模型都已拉取（`ollama list` 查看）。如果你在配置里改用视觉模型（如 `qwen3-vl:8b`），也要把它拉下来。
 
 **语音对话没声音？**
 语音对话依赖 ASR 和 TTS 两个独立服务。默认配置走远程模式，需要用 Docker 启动 `asr-sensevoice` 和 TTS 服务。具体端口和启动方式见部署文档。

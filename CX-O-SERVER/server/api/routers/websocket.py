@@ -8,6 +8,7 @@ from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
 from server.core.logging_config import get_contextual_logger
 from server.core.websocket import get_websocket_manager
+from server.core.websocket.security import authorize_websocket
 from server.services.live_client import LiveClientHandler
 
 logger = get_contextual_logger(__name__)
@@ -28,6 +29,12 @@ async def websocket_agent_endpoint(websocket: WebSocket, agent_id: str, timeout:
     - timeout: 离线超时时间（秒），默认 60
     """
     ws_manager = get_websocket_manager()
+
+    denied = authorize_websocket(websocket)
+    if denied:
+        logger.warning(f"WebSocket 握手被拒绝: client={websocket.client}, reason={denied}")
+        await websocket.close(code=1008, reason=denied)
+        return
 
     connection = await ws_manager.connect(
         websocket=websocket, metadata={"agent_id": agent_id, "timeout": timeout}
@@ -75,6 +82,12 @@ async def websocket_endpoint(
     """
     ws_manager = get_websocket_manager()
 
+    denied = authorize_websocket(websocket)
+    if denied:
+        logger.warning(f"WebSocket 握手被拒绝: client={websocket.client}, reason={denied}")
+        await websocket.close(code=1008, reason=denied)
+        return
+
     # 建立连接
     connection = await ws_manager.connect(
         websocket=websocket, client_id=client_id, metadata={"token": token} if token else {}
@@ -115,6 +128,12 @@ async def websocket_chat_endpoint(
     - agent_id: Agent ID（可选，默认 default）
     """
     ws_manager = get_websocket_manager()
+
+    denied = authorize_websocket(websocket)
+    if denied:
+        logger.warning(f"WebSocket 握手被拒绝: client={websocket.client}, reason={denied}")
+        await websocket.close(code=1008, reason=denied)
+        return
 
     # 建立连接
     connection = await ws_manager.connect(
@@ -162,6 +181,12 @@ async def websocket_live_endpoint(
     - session_id: 会话ID（可选）
     """
     ws_manager = get_websocket_manager()
+
+    denied = authorize_websocket(websocket)
+    if denied:
+        logger.warning(f"WebSocket 握手被拒绝: client={websocket.client}, reason={denied}")
+        await websocket.close(code=1008, reason=denied)
+        return
 
     connection = await ws_manager.connect(
         websocket=websocket, metadata={"session_id": session_id, "type": "live"}

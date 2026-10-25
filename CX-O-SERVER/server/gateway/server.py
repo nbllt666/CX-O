@@ -4,9 +4,13 @@ WebSocket 服务端
 from __future__ import annotations
 
 import asyncio
+import ipaddress
 import json
 import logging
+import os
+import secrets
 import time
+
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Request
 from fastapi.responses import Response
 
@@ -17,6 +21,7 @@ from server.protocol.actions import SystemActions
 from server.config import get_config
 from server.gateway.health import health_checker
 from server.core.websocket.manager import get_websocket_manager
+from server.core.websocket.security import authorize_websocket as _authorize_websocket
 from server.core.utils import get_shared_http_client
 
 logger = logging.getLogger(__name__)
@@ -235,6 +240,11 @@ def register_gateway_routes(app: FastAPI):
     async def websocket_endpoint(websocket: WebSocket):
         import uuid
         client_id = str(uuid.uuid4())
+        denied = _authorize_websocket(websocket)
+        if denied:
+            logger.warning(f"WebSocket 握手被拒绝: client={websocket.client}, reason={denied}")
+            await websocket.close(code=1008, reason=denied)
+            return
         try:
             await websocket_handler(websocket, client_id)
         except Exception as e:
@@ -244,6 +254,11 @@ def register_gateway_routes(app: FastAPI):
     async def live_websocket_endpoint(websocket: WebSocket):
         import uuid
         client_id = str(uuid.uuid4())
+        denied = _authorize_websocket(websocket)
+        if denied:
+            logger.warning(f"Live WebSocket 握手被拒绝: client={websocket.client}, reason={denied}")
+            await websocket.close(code=1008, reason=denied)
+            return
         try:
             await handle_live_connection(websocket, client_id)
         except Exception as e:

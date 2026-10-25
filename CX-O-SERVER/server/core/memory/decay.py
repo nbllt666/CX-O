@@ -11,6 +11,50 @@ from server.core.logging_config import get_contextual_logger
 logger = get_contextual_logger(__name__)
 
 
+def memory_importance_baseline(memory: Dict) -> float:
+    """返回记忆用于衰减计算的可信基线分数（0-1）。
+
+    正常记忆以不可变的 ``importance``（1-5 整数）为基线，``importance_score``
+    仅作为派生缓存，避免衰减批处理把已衰减值再次叠乘。梦境记忆的
+    ``importance_score`` 由固化流程单独设定，仍以该列为准。
+    """
+    if memory.get("permanent"):
+        # 真实永久记忆带有 importance 原始值，恒为 1.0；仅当调用方只提供了
+        # 显式 importance_score 时以其为准（兼容混合检索的临时结果结构）。
+        if memory.get("importance") is not None or memory.get("importance_score") is None:
+            return 1.0
+
+    def _clamp(value: float) -> float:
+        return max(0.0, min(1.0, float(value)))
+
+    # 梦境记忆：importance_score 是固化时确定的真实分数
+    if memory.get("decay_type") == "dream":
+        score = memory.get("importance_score")
+        if score is not None:
+            try:
+                return _clamp(score)
+            except (TypeError, ValueError):
+                pass
+
+    # 正常记忆：importance 为不可变原始值，优先据此换算
+    importance = memory.get("importance")
+    if importance is not None:
+        try:
+            return _clamp(float(importance) / 5.0)
+        except (TypeError, ValueError):
+            pass
+
+    # 兼容仅提供 importance_score 的调用方（如混合检索/测试替身）
+    score = memory.get("importance_score")
+    if score is not None:
+        try:
+            return _clamp(score)
+        except (TypeError, ValueError):
+            pass
+
+    return 0.6
+
+
 @dataclass
 class ImportanceLevel:
     """重要性等级数据模型：定义分数区间、衰减类型与衰减参数。"""
@@ -394,7 +438,7 @@ class DecayCalculator:
         self, memory: Dict, apply_reactivation: bool = True, apply_network: bool = False
     ) -> float:
         """计算时间分数（基于当前时间实时计算）"""
-        importance = memory.get("importance_score", memory.get("importance", 3) / 5.0)
+        importance = memory_importance_baseline(memory)
         created_at = memory.get("created_at", datetime.now().isoformat())
         permanent = memory.get("permanent", False)
 
@@ -481,7 +525,7 @@ class DecayCalculator:
         Returns:
             float: 重要性分数
         """
-        return memory.get("importance_score", memory.get("importance", 3) / 5.0)
+        return memory_importance_baseline(memory)
 
 
 def score_to_importance(score: float) -> int:

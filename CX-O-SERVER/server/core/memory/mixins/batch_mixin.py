@@ -29,6 +29,7 @@ class _BatchOperationsMixin:
                     permanent=mem_data.get("permanent", False),
                     emotion_score=mem_data.get("emotion_score", 0.0),
                     workspace_id=mem_data.get("workspace_id", "default"),
+                    agent_id=mem_data.get("agent_id", "default"),
                 )
                 results["success"] += 1
                 results["memory_ids"].append(memory_id)

@@ -85,19 +85,18 @@ class DecayBatchProcessor:
         """处理一批记忆的衰减更新，返回处理结果。
 
         memories 为非 None 时为「快照注入路径」：由 process_all 传入稳定
-        快照切片，避免逐批 search 依赖 ORDER BY importance 排序键（更新
-        importance 会改变排序位置 → offset 分页漂移，漏/重记忆）。
+        快照切片，避免逐批 search 依赖排序键随派生分数变化导致 offset
+        分页漂移、漏记或重复处理。
         """
-        from server.core.memory.decay import DecayCalculator
+        from server.core.memory.decay import DecayCalculator, memory_importance_baseline
 
         if batch_size > 0:
             self._batch_size = batch_size
 
         decay_calculator = DecayCalculator()
         if memories is None:
-            memories = await asyncio.to_thread(
-                self.memory_manager.search_memories, limit=self._batch_size, offset=offset
-            )
+            snapshot = await asyncio.to_thread(self._snapshot_all_memories)
+            memories = snapshot[offset : offset + self._batch_size]
 
         if not memories:
             return BatchDecayResult(total=0, updated=0, failed=0, details=[])
@@ -109,50 +108,50 @@ class DecayBatchProcessor:
         for memory in memories:
             memory_id = memory["id"]
             try:
+                baseline = memory_importance_baseline(memory)
                 decayed_value = decay_calculator.calculate_decay(
-                    importance=memory.get("importance_score", 0.6),
+                    importance=baseline,
                     created_at=memory.get("created_at", datetime.now().isoformat()),
                     decay_type=memory.get("decay_type", "exponential"),
                     decay_params=memory.get("decay_params"),
+                    permanent=bool(memory.get("permanent")),
+                    metadata=memory.get("metadata"),
                 )
 
                 if dry_run:
                     results.append(
                         {
                             "memory_id": memory_id,
-                            "old_value": memory.get("importance_score", 0.0),
+                            "old_value": baseline,
                             "new_value": decayed_value,
                             "dry_run": True,
                         }
                     )
                     updated_count += 1
                 else:
-                    # 更新记忆的重要性和元数据
-                    from server.core.memory.decay import score_to_importance
-
-                    new_importance = score_to_importance(decayed_value)
-
-                    # H9: update_memory 对 metadata 是整列替换——必须先读旧
-                    # metadata 合并衰减字段后再传全量，否则 {"importance_score",
-                    # "decay_updated_at"} 两键覆写会清空 dream 的
-                    # consolidation_state 等既有元数据（持续性数据丢失）。
-                    # 快照条目来自 search_memories/_row_to_memory，metadata 已是
-                    # 完整解析后的 dict。
+                    # 衰减值只作为派生缓存写入 metadata，不回写 importance：
+                    # importance 是不可变原始基线，回写会导致下一轮以已衰减值
+                    # 为起点再次叠乘（不可逆的复利衰减）。
                     merged_metadata = dict(memory.get("metadata") or {})
                     merged_metadata["importance_score"] = decayed_value
                     merged_metadata["decay_updated_at"] = datetime.now().isoformat()
 
-                    success = await self.memory_manager.update_memory_async(
-                        memory_id=memory_id,
-                        new_importance=new_importance,
-                        new_metadata=merged_metadata,
-                    )
+                    update_kwargs = {
+                        "memory_id": memory_id,
+                        "new_importance": None,
+                        "new_metadata": merged_metadata,
+                    }
+                    agent_id = memory.get("agent_id")
+                    if agent_id:
+                        update_kwargs["agent_id"] = agent_id
+
+                    success = await self.memory_manager.update_memory_async(**update_kwargs)
 
                     if success:
                         results.append(
                             {
                                 "memory_id": memory_id,
-                                "old_value": memory.get("importance_score", 0.0),
+                                "old_value": baseline,
                                 "new_value": decayed_value,
                                 "updated": True,
                             }
@@ -229,19 +228,53 @@ class DecayBatchProcessor:
             "details": all_details,
         }
 
-    def _snapshot_all_memories(self) -> List[Dict]:
-        """全量记忆快照（稳定遍历，不受 importance 排序位置变化影响）。"""
+    def _list_agent_ids(self) -> List[str]:
+        """列出需要参与衰减的全部 Agent（默认表 + 注册的 Agent 专属表）。"""
+        agent_ids = ["default"]
+        try:
+            conn = self.memory_manager._get_connection()
+            cursor = conn.cursor()
+            cursor.execute("SELECT agent_id FROM agent_memory_tables")
+            for row in cursor.fetchall():
+                value = row[0]
+                if value and value not in agent_ids:
+                    agent_ids.append(value)
+        except Exception as e:
+            logger.debug(f"读取 Agent 记忆表清单失败，仅处理默认表: {e}")
+        return agent_ids
+
+    def _snapshot_agent_memories(self, agent_id: str) -> List[Dict]:
+        """分页拉取单个 Agent 的全部记忆。"""
         memories: List[Dict] = []
         page = 1000
         offset = 0
         while True:
-            batch = self.memory_manager.search_memories(limit=page, offset=offset)
+            try:
+                batch = self.memory_manager.search_memories(
+                    limit=page, offset=offset, agent_id=agent_id
+                )
+            except TypeError:
+                # 向后兼容：测试替身/旧版管理器不接受 agent_id 参数
+                if agent_id != "default":
+                    return memories
+                batch = self.memory_manager.search_memories(limit=page, offset=offset)
             if not batch:
                 break
             memories.extend(batch)
             if len(batch) < page:
                 break
             offset += page
+        return memories
+
+    def _snapshot_all_memories(self) -> List[Dict]:
+        """全量记忆快照（稳定遍历，不受 importance 排序位置变化影响）。
+
+        覆盖默认表与所有已注册的 Agent 专属表，避免多 Agent 场景下非默认
+        角色的记忆永不衰减。
+        """
+        memories: List[Dict] = []
+        for agent_id in self._list_agent_ids():
+            memories.extend(self._snapshot_agent_memories(agent_id))
         return memories
 
     def get_batch_status(self) -> Dict:

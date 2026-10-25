@@ -229,10 +229,22 @@ class TestRunSession:
         assert item["emotion_shift"] == {"valence": 0.3, "arousal": 0.5}
         assert item["associated_entities"] == ["海", "光"]
         assert item["associated_memories"] == [1, 2]
-        # 传给 filter 的 associated_memories_meta 含 importance_score/permanent
+        # 传给 filter 的 associated_memories_meta 含 importance/importance_score/permanent
         assert filt.calls[0][1] == [
-            {"id": 1, "importance_score": 0.3, "permanent": False, "content": "记忆A"},
-            {"id": 2, "importance_score": 0.2, "permanent": False, "content": "记忆B"},
+            {
+                "id": 1,
+                "importance": None,
+                "importance_score": 0.3,
+                "permanent": False,
+                "content": "记忆A",
+            },
+            {
+                "id": 2,
+                "importance": None,
+                "importance_score": 0.2,
+                "permanent": False,
+                "content": "记忆B",
+            },
         ]
         # 统计累计
         stats = engine.get_status()["stats"]

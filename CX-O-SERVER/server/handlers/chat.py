@@ -150,6 +150,11 @@ async def _build_chat_context(
     context_mgr = get_context_manager()
     llm = get_llm_client_for_agent(agent_config)
 
+    # 工具调用链依赖该上下文变量定位 Agent 专属记忆表
+    from server.core.tools.graph_tools import set_current_agent_id
+
+    set_current_agent_id(agent_id)
+
     # 伴生C3 修复：ensure_session / add_message 均为同步 sqlite 直调，
     # 改走异步变体（run_io 有界 IO 池），不再阻塞事件循环
     session_id = await ensure_agent_session_async(context_mgr, agent_id, agent_config["name"])

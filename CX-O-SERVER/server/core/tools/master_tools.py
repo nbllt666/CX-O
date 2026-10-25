@@ -416,8 +416,16 @@ def write_long_term_memory(
         return {"error": "记忆管理器不可用"}
 
     try:
+        from .graph_tools import get_current_agent_id
+
+        # 与聊天检索保持一致：写入当前会话所属 Agent 的专属记忆表，
+        # 否则自定义角色通过工具保存的记忆在其检索路径中永远不可见。
         memory_id = mm.write_memory(
-            content=content, memory_type="long_term", importance=importance, tags=tags or []
+            content=content,
+            memory_type="long_term",
+            importance=importance,
+            tags=tags or [],
+            agent_id=get_current_agent_id(),
         )
         return {
             "status": "success",
@@ -440,11 +448,14 @@ def search_all_memories(
         return {"error": "记忆管理器不可用"}
 
     try:
+        from .graph_tools import get_current_agent_id
+
         memories = mm.search_memories(
             query=query,
             memory_type=memory_type if memory_type != "all" else None,
             time_range=time_range,
             limit=limit,
+            agent_id=get_current_agent_id(),
         )
         return {
             "status": "success",

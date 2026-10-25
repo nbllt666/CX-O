@@ -101,7 +101,10 @@ class _QueryHelpersMixin:
                 WHERE is_deleted = FALSE 
                 AND workspace_id = ?
                 AND tags LIKE ?
-                ORDER BY importance_score DESC, created_at DESC
+                ORDER BY CASE
+                             WHEN decay_type = 'dream' THEN importance_score
+                             ELSE COALESCE(importance, 3) / 5.0
+                         END DESC, created_at DESC
                 LIMIT ?
             """,
                 (workspace_id, f'%"{tag}"%', limit),
@@ -141,7 +144,11 @@ class _QueryHelpersMixin:
                     date(created_at) as date,
                     COUNT(*) as count,
                     type,
-                    AVG(importance_score) as avg_importance
+                    AVG(CASE
+                        WHEN decay_type = 'dream' THEN importance_score
+                        WHEN permanent = TRUE THEN 1.0
+                        ELSE COALESCE(importance, 3) / 5.0
+                    END) as avg_importance
                 FROM memories 
                 WHERE is_deleted = FALSE 
                 AND workspace_id = ?
@@ -195,7 +202,11 @@ class _QueryHelpersMixin:
                     SUM(CASE WHEN type = 'long_term' THEN 1 ELSE 0 END) as long_term,
                     SUM(CASE WHEN type = 'short_term' THEN 1 ELSE 0 END) as short_term,
                     SUM(CASE WHEN permanent = TRUE THEN 1 ELSE 0 END) as permanent,
-                    AVG(importance_score) as avg_importance,
+                    AVG(CASE
+                        WHEN decay_type = 'dream' THEN importance_score
+                        WHEN permanent = TRUE THEN 1.0
+                        ELSE COALESCE(importance, 3) / 5.0
+                    END) as avg_importance,
                     AVG(emotion_score) as avg_emotion
                 FROM memories 
                 WHERE is_deleted = FALSE AND workspace_id = ?
@@ -308,7 +319,10 @@ class _QueryHelpersMixin:
                     WHERE permanent = TRUE 
                     AND is_deleted = FALSE
                     AND workspace_id = ?
-                    ORDER BY importance_score DESC
+                    ORDER BY CASE
+                                 WHEN decay_type = 'dream' THEN importance_score
+                                 ELSE COALESCE(importance, 5)
+                             END DESC
                     LIMIT ?
                 """,
                     (workspace_id, limit),

@@ -12,7 +12,7 @@
 ```bash
 cd CXO-EvalKit
 pip install -r requirements.txt
-uvicorn evalkit.api:app --host 0.0.0.0 --port 8300
+uvicorn evalkit.api:app --host 0.0.0.0 --port 8320
 ```
 
 ## 三、Docker 部署
@@ -35,7 +35,7 @@ docker compose --profile eval up cxo-evalkit
 | 配置节 | 关键字段 | 说明 |
 |--------|---------|------|
 | `target` | `base_url` | 被测主服务地址；Docker 内默认 `http://host.docker.internal:8000` |
-| `target` | `admin_api_key` | 调主服务 admin 端点用；从主服务 `config.json` 获取；不入报告不入库 |
+| `target` | `admin_api_key` | 必填：与主服务环境变量 `ADMIN_API_KEY` 一致。主服务记忆端点（`/api/memories/*`）默认强制鉴权，缺失会返回 403；该值不入报告不入库 |
 | `judge` | `api_base` / `model` / `api_key` | LLM-as-judge（OpenAI 兼容 chat/completions）；`api_base` 留空跟随 target 同源 |
 | `mock` | `enabled` | `true` 时接内置 stub target + stub judge，无需真实主服务与 LLM 即可跑通 |
 | `thresholds.memory` | `retention_1y_min=0.6` / `permanent_retention=1.0` / `reactivation_must_beat_control=true` | 记忆维度通过阈值 |
@@ -47,7 +47,7 @@ docker compose --profile eval up cxo-evalkit
 ## 五、触发评测
 
 ```bash
-# 记忆衰减（默认 8320 宿主端口；本地 uvicorn 模式换成 8300）
+# 记忆衰减（宿主默认 8320；与 ModelStation 8300 错开，本地 uvicorn 也用 8320）
 curl -X POST http://localhost:8320/api/v1/runs \
   -H "Content-Type: application/json" \
   -d '{"suite": "memory_decay"}'
@@ -79,11 +79,11 @@ run 到达终态（passed / failed / judge_unavailable / error）即可拉取 `t
 
 ## 七、真实模式对接步骤
 
-1. 启动主服务 CX-O-SERVER（端口 8000）
-2. 在 `CXO-EvalKit/config.json` 填入 `target.base_url` 与 `admin_api_key`（从主服务 config 获取）、`judge` 三项
+1. 启动主服务 CX-O-SERVER（端口 8000），并先配置环境变量 `ADMIN_API_KEY`
+2. 在 `CXO-EvalKit/config.json` 填入 `target.base_url` 与 `admin_api_key`（与主服务环境变量 `ADMIN_API_KEY` 一致）、`judge` 三项
 3. 确认 `mock.enabled=false`，触发 run（见第五节）
 4. 轮询 `GET /api/v1/runs/{run_id}` 至终态，拉取报告（见第六节）
 
 ## 八、时间旅行端点安全提示
 
-memory_decay suite 依赖主服务的 time travel（时间回拨）端点，该端点受 **admin api key 门控**，仅供评测专用 agent（`eval-agent-{run_id}`，suite 自动创建与清理）使用——它会真实改写目标 agent 的记忆时间轴，**严禁对日常使用中的 agent 调用**。评测 agent 在 run 结束后会被物理清理，不影响其他数据。
+memory_decay suite 依赖主服务的 time travel（时间回拨）端点，该端点受 **admin api key 门控**，同时主服务全部记忆端点也默认强制同一把密钥，仅供评测专用 agent（`eval-agent-{run_id}`，suite 自动创建与清理）使用——它会真实改写目标 agent 的记忆时间轴，**严禁对日常使用中的 agent 调用**。评测 agent 在 run 结束后会被物理清理，不影响其他数据。

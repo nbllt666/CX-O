@@ -208,6 +208,16 @@ class TestConsolidateDream:
     def test_consolidate_missing_returns_false(self, mgr):
         assert mgr.consolidate_dream(99999) is False
 
+    def test_consolidate_agent_table(self, mgr):
+        """非默认 Agent 的梦境固化必须落在其专属表。"""
+        meta = _dream_meta()
+        meta["dream_session_id"] = "sess-a"
+        mid = mgr.write_dream_memory("角色梦", "sess-a", meta, agent_id="alice")
+        assert mgr.consolidate_dream(mid, agent_id="alice") is True
+        mem = mgr.get_memory(mid, agent_id="alice")
+        assert mem["metadata"]["consolidation_state"] == "confirmed"
+        assert mgr.get_memory(mid, agent_id="default") is None
+
 
 # ================================================================ reject_dream
 class TestRejectDream:

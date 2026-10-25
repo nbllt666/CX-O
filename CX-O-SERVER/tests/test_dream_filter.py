@@ -20,10 +20,13 @@ def _make_candidate(content="梦见在海边捡到一颗会发光的石头", luc
     return {"content": content, "lucidity_score": lucidity_score}
 
 
-def _make_meta(importance_score=0.4, permanent=False, memory_id=1, content="昨晚在公园散步"):
+def _make_meta(
+    importance_score=0.4, permanent=False, memory_id=1, content="昨晚在公园散步", importance=None
+):
     """构造一条关联记忆元数据（引擎侧组装字段）。"""
     return {
         "id": memory_id,
+        "importance": importance,
         "importance_score": importance_score,
         "permanent": permanent,
         "content": content,
@@ -118,6 +121,22 @@ class TestPermanentTouch:
             ],
         )
         assert result["reason"] == "permanent_touch"
+
+    def test_legacy_score_with_high_importance_rejected(self):
+        """历史行 importance_score=0.6（死字段）但 importance=5 → 必须按基线拦截。"""
+        result = _run(
+            _make_candidate(),
+            [_make_meta(importance_score=0.6, importance=5)],
+        )
+        assert result["decision"] == "rejected"
+        assert result["reason"] == "permanent_touch"
+
+    def test_legacy_score_with_importance_below_threshold_approved(self):
+        result = _run(
+            _make_candidate(),
+            [_make_meta(importance_score=0.6, importance=4)],
+        )
+        assert result["approved"] is True
 
     def test_empty_meta_approved(self):
         result = _run(_make_candidate(), [])

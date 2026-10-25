@@ -12,7 +12,7 @@
  */
 import { useCallback, useEffect, useRef, useState } from 'react';
 
-import { getWsBaseUrl, STORAGE_KEYS } from '../api/base';
+import { getWsBaseUrl, STORAGE_KEYS, withWsAuth } from '../api/base';
 import { VoiceActions } from '../constants/actions';
 import { useToastStore } from '../store/toastStore';
 import { useEventsStore } from '../store/eventsStore';
@@ -402,7 +402,7 @@ export function useWebSocket(options: WebSocketOptions): UseWebSocketReturn {
     disconnect: transportDisconnect,
     reconnect: transportReconnect,
   } = useWSTransport({
-    urlBuilder: () => `${getWsBaseUrl()}/ws`,
+    urlBuilder: () => withWsAuth(`${getWsBaseUrl()}/ws`),
     enabled: !!agentId,
     // fixed 2s 重连覆盖开发态 HMR 与运行态网络抖动两类场景
     reconnect: { strategy: 'fixed', delay: 2000 },

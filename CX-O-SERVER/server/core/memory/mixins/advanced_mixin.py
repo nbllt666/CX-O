@@ -7,6 +7,7 @@ from typing import Dict, List, Optional, Tuple, TYPE_CHECKING
 
 
 from ._common import json_dumps, logger
+from server.core.memory.decay import memory_importance_baseline
 
 if TYPE_CHECKING:
     pass
@@ -231,9 +232,7 @@ class _AdvancedSearchMixin:
             for memory in memories:
                 if not memory.get("permanent"):
                     time_score = decay_calculator.calculate_time_score_realtime(
-                        importance=memory.get(
-                            "importance_score", memory.get("importance", 3) / 5.0
-                        ),
+                        importance=memory_importance_baseline(memory),
                         created_at=memory.get("created_at", datetime.now().isoformat()),
                         decay_type=memory.get("decay_type", "exponential"),
                         decay_params=memory.get("decay_params"),
@@ -275,10 +274,14 @@ class _AdvancedSearchMixin:
 
         cursor.execute(
             """
-            SELECT importance_score, COUNT(*)
+            SELECT CASE
+                       WHEN permanent = TRUE THEN 1.0
+                       ELSE COALESCE(importance, 3) / 5.0
+                   END AS score,
+                   COUNT(*)
             FROM memories
             WHERE is_deleted = FALSE AND workspace_id = ?
-            GROUP BY importance_score
+            GROUP BY score
         """,
             (workspace_id,),
         )
@@ -302,7 +305,7 @@ class _AdvancedSearchMixin:
                 time_score = decay_calculator.calculate_time_score(memory, apply_reactivation=True)
                 avg_time_score += time_score
 
-            avg_importance_score += memory.get("importance_score", 0.0)
+            avg_importance_score += memory_importance_baseline(memory)
 
             reactivation_count = memory.get("reactivation_count", 0)
             if reactivation_count > 0:

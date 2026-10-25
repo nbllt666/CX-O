@@ -425,7 +425,7 @@ class TestPrivacyNoRawHrLeak:
         engine = make_engine()
         meta = engine._build_associated_meta([self._memory_with_raw_hr()])
         # 过滤 metadata 仅复制白名单字段
-        assert set(meta[0]) == {"id", "importance_score", "permanent", "content"}
+        assert set(meta[0]) == {"id", "importance", "importance_score", "permanent", "content"}
         cand = DreamCandidate(
             content="梦见云海",
             emotion_shift={"valence": 0.3, "arousal": 0.5},

@@ -50,6 +50,15 @@ class TestTextSimilarity:
     def test_no_overlap(self, engine):
         assert engine._calculate_text_similarity("a b", "c d") == 0.0
 
+    def test_chinese_near_duplicate_detected(self, engine):
+        """中文无空格分词，必须改用字符 n-gram/序列相似度而非词集合。"""
+        sim = engine._calculate_text_similarity("用户喜欢喝咖啡", "用户很喜欢喝咖啡")
+        assert sim >= 0.85
+
+    def test_chinese_different_text_not_high(self, engine):
+        sim = engine._calculate_text_similarity("我在做观澜项目", "这个项目叫观澜")
+        assert sim < 0.85
+
 
 # ---------------------------------------------------------------- 相似度与缓存
 class TestCheckSimilarity:

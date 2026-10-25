@@ -1105,3 +1105,47 @@
 - 未独立验证：真实模型/GPU训练、实际服务树启停、Docker部署、长时压力/延迟/峰值内存/FPS、测试产物删除过程。上述限制不被扩大为已验证收益。
 - 工具及结束提示仍无 `Agent ID: <UUID>`，actual_agent_id＝当前不可判定；task_name仅工具路由，第二落点已回填实施文档，不伪造UUID/resume。
 - 终态：本批本地修复交付闭合，实施文档与原问题单已关闭；本note保留历史，后续可按文件差异恢复，无需全树重置。
+
+---
+
+# current-note — 记忆衰减/多 Agent/鉴权缺陷修复 + 文档漂移全量对齐
+
+> 更新时间: 2026-10-24 19:40 | 变更ID: fix-memory-decay-auth-doc-drift | 阶段: 实现与验证完成，待独立审查与人类确认
+
+## 七字段交接状态
+
+| 字段 | 内容 |
+|------|------|
+| 做到哪了 | P0-1/P0-2/P1-1/P1-2/P1-3（memory.py 36 端点）/P2-1/P2-2 全部修复；记忆端点改为默认强制鉴权并同步前端 WS/HTTP 与 EvalKit；README/docs/technical/deployment/features/cxo-intro/CX-A 文档与 AGENTS.md 漂移已对齐；后端全量与 EvalKit/前端定向测试通过 |
+| 为什么 | 用户要求修复实测缺陷（P0-1 importance_score 死字段、P0-2 衰减复利、P1-1 多 Agent 表分叉、P1-2 WS 无鉴权、P1-3 鉴权覆盖不均、P2-1 中文去重失效、P2-2 CI 缺口），并选择 A（补变更追踪文档）+ C（记忆端点默认强制鉴权），同时指出文档漂移范围远大于单点参数表、要求含 README 全量修复 |
+| 未闭合项 | ① 工作区中 CXO-ModelStation 14 个修改/6 个新增文件与 VWS data/songs 运行产物不属于本轮，需人类裁定；② 历史已被旧衰减批处理压低的 importance 存量无法自动恢复；③ archive/memory_chat/context/chat 等同类 HTTP 入口未纳入鉴权，为本轮明确排除项；④ noble 真机验证与双机集群真机联调受硬件限制 |
+| 接续入口 | `.trae/documents/20261024_模块0_修复记忆衰减与鉴权.md`（逐项方案/步骤/结果）；后端：`cd CX-O-SERVER && python -m pytest tests/ -q`；前端：`cd APP-Frontend && npm run typecheck && npx vitest run src/api/base.test.ts src/hooks/useWebSocket.test.ts src/hooks/useLiveWebSocket.test.ts`；EvalKit：`cd CXO-EvalKit && python -m pytest tests/ -q` |
+| 人类裁决记录 | 2026-10-24：选择 A+C，并要求文档漂移“完全修复（包括 readme）”；未新增 public/ 修改、未提交、未部署 |
+| 请示追踪 | 无悬空请示 |
+| 审查状态 | GN-004 第三轮完整复审：警示放行（无阻断/无 SOFT_BLOCK）。观察项已处理；W4 鉴权面与 B1 工作区变动待人类裁决 |
+
+## 三段交接
+
+### (1) 工程过程
+
+1. 记忆核心：`memory_importance_baseline()` 统一基线 → 写入派生 `importance_score` → 批处理停止回写 `importance` 并全 Agent 快照。
+2. Agent 上下文：HTTP 非流式/流式/WS chat 入口 `set_current_agent_id`，工具写入使用当前 Agent。
+3. 鉴权：新增 `server/core/websocket/security.py`，覆盖网关 `/ws`、`/ws/live` 与主应用 `/api/ws/*`；`memory.py` 36 端点改为 `verify_admin_api_key` 默认强制。
+4. 前端：`withWsAuth()` 追加 `token`；HTTP 拦截器沿用 `x-api-key`；i18n 提示同步。
+5. EvalKit：`TargetClient` 全量请求默认携带 `X-API-Key`；DEPLOY 端口与密钥来源修正。
+6. 文档：README、technical、deployment、features、cxo-intro、CX-A 文档、modules/README、AGENTS.md 按代码事实对齐。
+7. 验证：后端全量、EvalKit 全量、前端 typecheck + 定向 vitest。
+
+### (2) 交接状态
+
+- 代码修复：已完成（后端 5261 passed；EvalKit 82 passed；前端 30 passed + typecheck EXIT 0）。
+- 文档对齐：已完成（grep 校验无残留 35 路由 / Python 3.10+ / data/cxhms.db / Gateway 8100）。
+- 独立审查：GN-004 三轮完成，末轮警示放行；W4/B1 待人类裁决。
+- 人类最终确认：未开始。
+
+### (3) 最终结果
+
+- 验证结论：`memory routes: 36`，路由级依赖为 `verify_admin_api_key`；`python -m compileall -q server` 通过。
+- 产出物清单：后端 23 文件（含新增 security.py）、前端 6 文件、EvalKit 2 文件、工程配置 3 项、文档 8 份、测试 14 文件、变更追踪文档 1 份。
+- 审查记录：GN-004 第三轮完整复审警示放行（观察项已处理；W4/B1 待人类裁决），详见变更文档 §5.5/§5.6。
+- 未独立验证：真实 GPU/模型长测、真实多机部署、历史存量重要性回填。

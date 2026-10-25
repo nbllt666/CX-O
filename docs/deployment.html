@@ -311,7 +311,7 @@ pre code { color: var(--accent-green); }
   <div class="card">
     <span class="tag tag-purple">对话模型</span>
     <h3>LLM 大语言模型（通过 Ollama 拉取）</h3>
-    <p>这是 AI 角色对话的核心模型。通过 Ollama 拉取，默认配置使用 qwen3-vl:8b。</p>
+    <p>这是 AI 角色对话的核心模型。通过 Ollama 拉取，默认配置使用 qwen3:latest。</p>
     <table>
       <tr>
         <th>模型</th>
@@ -320,9 +320,9 @@ pre code { color: var(--accent-green); }
         <th>大小</th>
       </tr>
       <tr>
-        <td>qwen3-vl:8b</td>
+        <td>qwen3:latest</td>
         <td>主对话 / 摘要 / 记忆处理（三个槽位默认都用它）</td>
-        <td><code>ollama pull qwen3-vl:8b</code></td>
+        <td><code>ollama pull qwen3:latest</code></td>
         <td>~5GB</td>
       </tr>
       <tr>
@@ -456,7 +456,7 @@ pre code { color: var(--accent-green); }
   <div class="card">
     <span class="tag tag-green">内置</span>
     <h3>SQLite — 主业务数据库</h3>
-    <p>主业务数据存储在 SQLite 文件中，无需额外安装服务。包括 <code>data/cxhms.db</code>（主库）、<code>data/memories.db</code>（记忆库）、<code>data/sessions.db</code>（会话库）等。</p>
+    <p>主业务数据存储在 SQLite 文件中，无需额外安装服务。包括 <code>data/cxo.db</code>（主库）、<code>data/memories.db</code>（记忆库）、<code>data/sessions.db</code>（会话库）等。</p>
   </div>
 </section>
 
@@ -484,6 +484,7 @@ pre code { color: var(--accent-green); }
       <tr><td>8200</td><td>CX-O VoiceWorkStation</td><td>语音工作站（作曲/翻唱 CXFC）</td></tr>
       <tr><td>8300</td><td>CXO-ModelStation</td><td>模型工作站（So-VITS-SVC / MeloTTS 训练 + 语料生成，后端托管前端）</td></tr>
       <tr><td>8310</td><td>CXO-Tuner</td><td>进化实验室（自我进化，可选，与 ModelStation 端口错开、可同启）</td></tr>
+      <tr><td>8320</td><td>CXO-EvalKit</td><td>LLM 评测框架（可选，容器内 8300，宿主默认 8320）</td></tr>
       <tr><td>11434</td><td>Ollama</td><td>本地 LLM 推理</td></tr>
       <tr><td>50061</td><td>Weaviate gRPC</td><td>向量数据库 gRPC 通道</td></tr>
       <tr><td>9996/9997</td><td>CXFC</td><td>插件发现 / 广播</td></tr>
@@ -517,7 +518,7 @@ npm install</code></pre>
       </li>
       <li><strong>拉取所有模型</strong><br>
         <pre><code># Ollama 模型
-ollama pull qwen3-vl:8b
+ollama pull qwen3:latest
 ollama pull nomic-embed-text
 
 # 语音模型
@@ -626,7 +627,7 @@ cd APP-Frontend
       </tr>
       <tr>
         <td><code>models.main.model</code></td>
-        <td>qwen3-vl:8b</td>
+        <td>qwen3:latest</td>
         <td>主对话模型</td>
       </tr>
       <tr>
@@ -678,6 +679,26 @@ cd APP-Frontend
   </div>
 
   <div class="card">
+    <h3>管理密钥：<code>ADMIN_API_KEY</code>（必填）</h3>
+    <p>从 <code>2026-10-24</code> 起，管理密钥是<strong>必填项</strong>：未配置时记忆端点（<code>/api/memories/*</code>，共 36 个）与 WebSocket 握手一律返回 <code>403</code> / 以 <code>1008</code> 关闭。</p>
+    <table>
+      <tr><th>使用位置</th><td>CX-A 基础管理端点、记忆业务端点、WebSocket 握手</td></tr>
+      <tr><th>传递方式</th><td>HTTP：请求头 <code>x-api-key</code>；WebSocket：<code>x-api-key</code> 头或 <code>token</code> / <code>api_key</code> 查询参数</td></tr>
+      <tr><th>前端同步</th><td>启动后在前端「设置 → 管理密钥」录入同一把密钥；HTTP 请求自动注入请求头，WebSocket 自动追加 <code>token</code></td></tr>
+      <tr><th>评测服务</th><td><code>CXO-EvalKit/config.json</code> 的 <code>target.admin_api_key</code> 需配置为同一把密钥</td></tr>
+    </table>
+    <pre><code># PowerShell（当前终端生效；长期使用请写入系统环境变量）
+$env:ADMIN_API_KEY = "换成你自己的长随机字符串"
+
+# 若用 Docker 部署后端，需在编排中把该变量注入容器环境
+# （当前仓库 docker-compose.yml 不含 CX-O-SERVER 服务）</code></pre>
+    <div class="warning-box">
+      <h4>未配置密钥时的表现</h4>
+      <p>WebSocket 仅允许本机（loopback）连接，远端裸连接被拒绝；HTTP 记忆端点直接返回 403（<code>Admin API key not configured</code>）。这是默认强制的安全基线，不再存在“未配置即放行”的开发模式。</p>
+    </div>
+  </div>
+
+  <div class="card">
     <h3>环境变量覆盖：<code>CXO_</code> 前缀</h3>
     <p>所有配置项都支持通过环境变量覆盖，格式为 <span class="inline-code">CXO_</span> + 配置路径（大写下划线）。优先级高于配置文件。</p>
     <table>
@@ -692,7 +713,7 @@ cd APP-Frontend
       <tr><td><code>CXO_TTS_REMOTE_URL</code></td><td>tts.remote_url</td><td>http://127.0.0.1:8094</td></tr>
       <tr><td><code>CXO_LLM_PROVIDER</code></td><td>models.main.provider</td><td>ollama / vllm / trtllm</td></tr>
       <tr><td><code>CXO_LLM_HOST</code></td><td>models.main.host</td><td>http://localhost:11434</td></tr>
-      <tr><td><code>CXO_LLM_MODEL</code></td><td>models.main.model</td><td>qwen3-vl:8b</td></tr>
+      <tr><td><code>CXO_LLM_MODEL</code></td><td>models.main.model</td><td>qwen3:latest</td></tr>
       <tr><td><code>CXO_LLM_API_KEY</code></td><td>models.main.api_key</td><td>（如有）</td></tr>
       <tr><td><code>CXO_MEMORY_VECTOR_BACKEND</code></td><td>memory.vector_backend</td><td>weaviate / weaviate_embedded</td></tr>
       <tr><td><code>CXO_MEMORY_EMBEDDING_PROVIDER</code></td><td>memory.embedding_provider</td><td>ollama / vllm</td></tr>
@@ -898,7 +919,7 @@ CXO_CLUSTER_ROLE=standby</code></pre>
 
   <div class="card">
     <h3>后端启动报错连不上 Ollama</h3>
-    <p>确认 Ollama 服务在运行（<code>ollama serve</code> 或检查系统服务）。默认地址 <code>http://localhost:11434</code>。确保 <code>qwen3-vl:8b</code> 和 <code>nomic-embed-text</code> 都已拉取（<code>ollama list</code> 查看）。</p>
+    <p>确认 Ollama 服务在运行（<code>ollama serve</code> 或检查系统服务）。默认地址 <code>http://localhost:11434</code>。默认配置使用 <code>qwen3:latest</code>，向量嵌入使用 <code>nomic-embed-text</code>，确保两者都已拉取（<code>ollama list</code> 查看）。需要屏幕/摄像头视觉理解时，可拉取 <code>qwen3-vl:8b</code> 并把 <code>models.main.model</code> 覆盖为该模型。</p>
   </div>
 
   <div class="card">

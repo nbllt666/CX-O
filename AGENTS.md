@@ -65,7 +65,7 @@ CX-O 是**多服务架构**，以下服务目录是独立服务，**非 AC 模�
 | 服务 | 根级目录 | 技术栈 | 端口 |
 |------|---------|--------|------|
 | CX-O Frontend | `APP-Frontend/` | React 18 + TypeScript + Vite + Electron | 3100（浏览器模式）/ Electron 桌面模式 |
-| CX-O Server | `CX-O-SERVER/` | Python 3.10+ + FastAPI + WebSocket | 8000 |
+| CX-O Server | `CX-O-SERVER/` | Python 3.11+ + FastAPI + WebSocket | 8000 |
 | CX-O VoiceWorkStation | `CX-O-VoiceWorkStation/` | Python + FastAPI — 作曲/翻唱CXFC（作曲/歌曲合成/SVC 翻唱推理/音域分析自动升降 key/双人合唱分离流水线/CXFC 插件；训练域已迁至 CXO-ModelStation；分离引擎见 engines/） | 8200 |
 | CX-O ModelStation | `CXO-ModelStation/` | Python + FastAPI（单 worker）+ Vite/React 独立前端；2026-09-26 起另有桌面版形态（Electron 壳，自带便携 Python 运行时 + 三引擎，打包产物 `release/`，见 CXO-ModelStation/DEPLOY.md §8） | 8300（后端；桌面版遇占用自动顺延）/ 3300（前端 dev 与桌面本地站点） |
 | CXO-EvalKit | `CXO-EvalKit/` | Python 3.11+ + FastAPI — LLM 评测框架（自包含子项目，对主服务执行 memory/latency/quality 三维度评测 + judge 评分 + 阈值判定，报告落 run 目录；部署见 CXO-EvalKit/DEPLOY.md） | 8320（宿主，容器内 8300） |
@@ -89,10 +89,10 @@ CX-O 是**多服务架构**，以下服务目录是独立服务，**非 AC 模�
 | 契约层 | 源真理（真实契约源） | public/ 落点 | 当前状态 |
 |--------|---------------------|--------------|----------|
 | 数据契约 | `data/agents.json`、`CX-O-SERVER/server/protocol/message.py`、`server/core/*/models.py`、`APP-Frontend/src/api/types.ts` | `public/schema/` | 🟡 种子阶段，待 s0201 |
-| 接口契约 | `CX-O-SERVER/server/api/routers/` 19 个 FastAPI router + WS Actions | `public/interface_stub/` | 🟡 种子阶段，待 s0201 |
+| 接口契约 | `CX-O-SERVER/server/api/routers/` 36 个 FastAPI router + WS Actions | `public/interface_stub/` | 🟡 种子阶段，待 s0201 |
 | 配置契约 | `CX-O-SERVER/server/config.py` UnifiedConfig、`config/*.yaml`、`.env.example` | `public/config_template/` | 🟡 种子阶段，待 s0201 |
 
-**前端 API 客户端结构**（前端迁移至 APP-Frontend 后）：`APP-Frontend/src/api/clients/` 下 12 域客户端（agents/audio/avatars/chat/config/cxfc/graph/health/memories/service/tools/vector）+ 2 共享文件（base.ts + types.ts），所有 DTO 在 `types.ts`。
+**前端 API 客户端结构**（前端迁移至 APP-Frontend 后）：`APP-Frontend/src/api/clients/` 下 26 个域客户端（admin/agents/audio/autonomy/avatarManifest/avatars/chat/cluster/config/cxfc/discovery/distillation/dream/graph/health/meeting/memories/metrics/neko/physio/service/tools/tuner/vector/vision/voiceworkstation）+ 2 共享文件（base.ts + types.ts），所有 DTO 在 `types.ts`。
 
 ### 4.4 全局错误码要求
 
@@ -157,6 +157,14 @@ CX-O-SERVER 在 spec `migrate-cxhms-radix-acp-multimodal` 下从 CXHMS 迁移了
 | 连接池化 | `server/core/utils.py` | 共享 keep-alive HTTP 客户端，被 Ollama/TRTLLM 客户端、嵌入客户端、模型路由健康检查复用，消除逐请求建连 | `get_shared_http_client` |
 
 **消费方约束**：所有聊天入口（HTTP `/chat`、WS chat handler、ACP 自动回复）必须经 `prompt_builder.build_messages` 组装消息、经 `chat_helpers.get_tools_for_agent` 收集工具；流式管线统一走 `core/chat/stream.py`。新增聊天相关实现不得绕过上述单入口。
+
+### 4.10 鉴权基线（2026-10-24）
+
+- `ADMIN_API_KEY` 为**必填**环境变量，同时用于：CX-A 基础管理端点、记忆业务端点（`/api/memories/*`，36 个，默认强制）、WebSocket 握手（`/ws`、`/ws/live`、`/api/ws/*`）。
+- 未配置时：HTTP 端点返回 `403`；WebSocket 仅允许 loopback，远端裸连接以 `1008` 关闭。
+- 前端 `APP-Frontend/src/api/base.ts` 的 HTTP 拦截器注入 `x-api-key`，`withWsAuth()` 为 WS URL 追加 `token`；管理密钥由「设置 → 管理密钥」写入 localStorage。
+- EvalKit 必须在 `config.json` 的 `target.admin_api_key` 配置同一把密钥。
+- WebSocket 握手仍受 Origin 白名单 / same-origin 校验，新增 WS 端点必须复用 `server/core/websocket/security.py`，禁止自建免鉴权握手。
 
 ---
 

@@ -101,6 +101,7 @@ class TargetClient:
             self._shared = httpx.Client(
                 base_url=self.base_url, timeout=DEFAULT_TIMEOUT,
                 transport=self._transport, trust_env=False,
+                headers=self._default_headers(),
             )
         return _SharedSession(self._shared, timeout)
 
@@ -128,6 +129,12 @@ class TargetClient:
                 return {}
             raise TargetError("target.admin_api_key 未配置，无法调用主服务 admin 端点")
         return {"X-API-Key": self.admin_api_key}
+
+    def _default_headers(self) -> Dict[str, str]:
+        """配置了管理密钥时全量请求统一携带——主服务记忆端点默认强制鉴权。"""
+        if self.admin_api_key:
+            return {"X-API-Key": self.admin_api_key}
+        return {}
 
     # ------------------------------------------------------------------
     # 基础
@@ -197,8 +204,8 @@ class TargetClient:
     ) -> int:
         """种入单条记忆（POST /api/memories 支持 agent_id，保证 eval agent 隔离）。
 
-        注：主服务 POST /api/memories/batch/write 不透传 agent_id（写入 default agent），
-        为满足隔离要求本客户端逐条走 POST /api/memories。
+        注：批量端点 POST /api/memories/batch/write 虽支持逐条 agent_id，
+        但逐条写入便于失败定位且与既有隔离口径一致。
         """
         body: Dict[str, Any] = {
             "content": content,

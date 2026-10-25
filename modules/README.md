@@ -14,7 +14,11 @@
 |------|---------|--------|------|
 | CX-O Frontend | `APP-Frontend/` | React + TypeScript + Vite + Electron | Web 前端 + 桌面宠物 |
 | CX-O Server | `CX-O-SERVER/` | Python + FastAPI + WebSocket | 单体后端 |
-| CX-O VoiceWorkStation | `CX-O-VoiceWorkStation/` | Python | 语音工作站（可选） |
+| CX-O VoiceWorkStation | `CX-O-VoiceWorkStation/` | Python + FastAPI | 语音工作站（作曲/翻唱，可选） |
+| CX-O ModelStation | `CXO-ModelStation/` | Python + FastAPI | 模型工作站（音色训练/语料生成，可选） |
+| CXO-Tuner | `CXO-Tuner/` | Python + FastAPI | 进化实验室（可选） |
+| CXO-EvalKit | `CXO-EvalKit/` | Python + FastAPI | LLM 评测框架（可选） |
+| CXO-NekoAdapter | `CXO-NekoAdapter/` | TypeScript | N.E.K.O 插件适配 sidecar |
 
 这些服务是**独立服务**，不是 AC 模块。它们之间仅通过 `public/` 三层契约通信。
 

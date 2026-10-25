@@ -39,11 +39,79 @@ jobs:
         working-directory: ./CX-O-SERVER
         run: python -B -m pytest -q -p no:cacheprovider
 
-      # 登记（第十二轮 G4 评估）：CX-O-VoiceWorkStation 实际存在 16 个测试文件
-      # （tests/test_*.py，非空占位），但其依赖未固化——pyproject.toml 仅声明
-      # jsonschema/music21，且无 requirements.txt（实际运行还需 fastapi/uvicorn/
-      # voxcpm 等重量级依赖），CI 环境无法可靠安装，故暂不建 test-vws job。
-      # 待 VWS requirements 固化后接入独立 job。
+      # CX-O-VoiceWorkStation 依赖已固化到组件级 requirements.txt，
+      # 由下方 test-vws job 独立安装并运行。
+      # CXO-EvalKit / CXO-ModelStation 各自维护 requirements.txt，
+      # 由 test-evalkit / test-modelstation job 覆盖（原先 CI 仅覆盖 3 个组件）。
+
+  test-vws:
+    runs-on: windows-latest
+    timeout-minutes: 30
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        working-directory: ./CX-O-VoiceWorkStation
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Run VoiceWorkStation tests
+        working-directory: ./CX-O-VoiceWorkStation
+        run: python -B -m pytest -q -p no:cacheprovider
+
+  test-evalkit:
+    runs-on: windows-latest
+    timeout-minutes: 20
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        working-directory: ./CXO-EvalKit
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pytest pytest-asyncio httpx
+
+      - name: Run EvalKit tests
+        working-directory: ./CXO-EvalKit
+        run: python -B -m pytest -q -p no:cacheprovider
+
+  test-modelstation:
+    runs-on: windows-latest
+    timeout-minutes: 20
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        working-directory: ./CXO-ModelStation
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pytest pytest-asyncio httpx
+
+      - name: Run ModelStation tests
+        working-directory: ./CXO-ModelStation
+        run: python -B -m pytest -q -p no:cacheprovider
+
 
   test-tuner:
     runs-on: windows-latest

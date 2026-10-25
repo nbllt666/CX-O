@@ -650,10 +650,12 @@ class WeaviateVectorStore:
                 try:
                     existing = await self.get_vector_by_id(memory_id, agent_id=mem_agent_id)
 
-                    # importance_score 列写入恒 0.6（死字段），自愈同步时用 importance 整数换算真值
+                    # importance_score 列可能是历史派生存量值；以不可变 importance
+                    # 为基线重建，梦境记忆沿用固化分数。
+                    from server.core.memory.decay import memory_importance_baseline
+
                     sync_meta = dict(memory)
-                    if memory.get("importance") is not None:
-                        sync_meta["importance_score"] = memory["importance"] / 5.0
+                    sync_meta["importance_score"] = memory_importance_baseline(memory)
 
                     if existing is None:
                         logger.info(f"Weaviate 向量不存在，创建: memory_id={memory_id}, agent_id={mem_agent_id}")

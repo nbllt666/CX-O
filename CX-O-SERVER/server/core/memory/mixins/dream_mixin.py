@@ -158,6 +158,7 @@ class _DreamMixin:
         self,
         memory_id: int,
         confirmed_importance: float = 0.4,
+        agent_id: str = "default",
     ) -> bool:
         """固化梦境记忆（pending/surfaced → confirmed）。
 
@@ -176,10 +177,11 @@ class _DreamMixin:
         """
         conn = self._get_connection()
         cursor = conn.cursor()
+        table_name = self._get_table_name(agent_id)
 
         try:
             cursor.execute(
-                "SELECT * FROM memories WHERE id = ? AND type = 'dream' AND is_deleted = FALSE",
+                f"SELECT * FROM {table_name} WHERE id = ? AND type = 'dream' AND is_deleted = FALSE",
                 (memory_id,),
             )
             row = cursor.fetchone()
@@ -198,8 +200,8 @@ class _DreamMixin:
             meta["confirmed_at"] = now_iso
 
             cursor.execute(
-                """
-                UPDATE memories
+                f"""
+                UPDATE {table_name}
                 SET importance_score = ?, metadata = ?, decay_params = ?, updated_at = ?
                 WHERE id = ? AND type = 'dream' AND is_deleted = FALSE
             """,

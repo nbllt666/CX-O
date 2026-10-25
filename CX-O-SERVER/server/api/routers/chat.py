@@ -152,6 +152,11 @@ async def chat(request: Request):
         if not agent_config:
             raise HTTPException(status_code=404, detail=f"Agent '{chat_req.agent_id}' 不存在")
 
+        # 工具调用链依赖该上下文变量定位 Agent 专属记忆表
+        from server.core.tools.graph_tools import set_current_agent_id
+
+        set_current_agent_id(chat_req.agent_id)
+
         memory_mgr = get_memory_manager()
         context_mgr = get_context_manager()
         llm = get_llm_client_for_agent(agent_config)
@@ -234,6 +239,11 @@ async def chat_stream(request: ChatRequest):
         agent_config = await get_agent_config_async(request.agent_id)
         if not agent_config:
             raise HTTPException(status_code=404, detail=f"Agent '{request.agent_id}' 不存在")
+
+        # 工具调用链依赖该上下文变量定位 Agent 专属记忆表
+        from server.core.tools.graph_tools import set_current_agent_id
+
+        set_current_agent_id(request.agent_id)
 
         # 2. 获取管理器
         memory_mgr = get_memory_manager()

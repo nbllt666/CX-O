@@ -181,11 +181,14 @@ class _VectorIntegrationMixin:
         """
         memory_row = self.get_memory(int(memory_id), agent_id=agent_id) or {}
         fb = fallback or {}
-        # SQLite importance_score 列恒 0.6（死字段），真实重要性用 importance 整数换算
-        _imp = memory_row.get("importance")
+        from server.core.memory.decay import memory_importance_baseline
+
+        # importance_score 列可能是历史派生存量值；衰减基线以不可变 importance
+        # 整数为准，梦境记忆则沿用其固化分数（见 memory_importance_baseline）。
+        _imp = memory_importance_baseline(memory_row) if memory_row else None
         meta = {
             "type": memory_row.get("type") or fb.get("type", "long_term"),
-            "importance_score": (_imp / 5.0) if _imp is not None else fb.get("importance_score", 0.6),
+            "importance_score": _imp if _imp is not None else fb.get("importance_score", 0.6),
             "tags": memory_row.get("tags") or fb.get("tags") or [],
             "workspace_id": memory_row.get("workspace_id", "default"),
             "is_archived": bool(memory_row.get("is_archived", False)),

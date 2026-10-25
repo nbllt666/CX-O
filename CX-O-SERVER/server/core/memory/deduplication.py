@@ -3,8 +3,10 @@
 检测相似记忆并记录重复关系
 """
 
+import difflib
 import hashlib
 import inspect
+import re
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any, Dict, List, Optional, Set
@@ -125,33 +127,65 @@ class DeduplicationEngine:
             return 0.0
 
     def _calculate_text_similarity(self, text1: str, text2: str) -> float:
-        """计算两个文本的Jaccard相似度
+        """计算两个文本的相似度（0.0 - 1.0）。
 
-        Args:
-            text1: 第一个文本
-            text2: 第二个文本
-
-        Returns:
-            相似度分数 (0.0 - 1.0)
+        英文等以空格分词的语言使用词集合 Jaccard；中日韩文本没有空格，
+        整句会退化为单个 token，故改用字符二元组 Jaccard 与序列相似度
+        的较大值，避免中文重复记忆永远得到 0 分。
         """
         if not text1 or not text2:
             return 0.0
 
-        # 转换为小写并分割成词集合
-        set1 = set(text1.lower().split())
-        set2 = set(text2.lower().split())
+        norm1 = self._normalize_text(text1)
+        norm2 = self._normalize_text(text2)
+        if not norm1 or not norm2:
+            return 0.0
+        if norm1 == norm2:
+            return 1.0
 
+        if self._contains_cjk(norm1) or self._contains_cjk(norm2):
+            bigram_jaccard = self._char_ngram_jaccard(norm1, norm2, n=2)
+            sequence_ratio = difflib.SequenceMatcher(None, norm1, norm2).ratio()
+            return max(bigram_jaccard, sequence_ratio)
+
+        # 以空格分词的语言保持原有词集合 Jaccard 语义
+        set1 = set(norm1.split())
+        set2 = set(norm2.split())
         if not set1 or not set2:
             return 0.0
 
-        # 计算Jaccard相似度
         intersection = len(set1 & set2)
         union = len(set1 | set2)
-
         if union == 0:
             return 0.0
-
         return intersection / union
+
+    @staticmethod
+    def _normalize_text(text: str) -> str:
+        """统一大小写与空白，作为相似度比较的输入。"""
+        return re.sub(r"\s+", " ", text.strip().lower())
+
+    @staticmethod
+    def _contains_cjk(text: str) -> bool:
+        """判断文本是否包含中日韩表意字符。"""
+        return bool(re.search(r"[\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff]", text))
+
+    @staticmethod
+    def _char_ngram_jaccard(text1: str, text2: str, n: int = 2) -> float:
+        """按字符 n-gram 计算 Jaccard 相似度（忽略空白）。"""
+        compact1 = re.sub(r"\s+", "", text1)
+        compact2 = re.sub(r"\s+", "", text2)
+
+        def _ngrams(text: str) -> Set[str]:
+            if len(text) < n:
+                return {text} if text else set()
+            return {text[i : i + n] for i in range(len(text) - n + 1)}
+
+        grams1 = _ngrams(compact1)
+        grams2 = _ngrams(compact2)
+        if not grams1 or not grams2:
+            return 0.0
+        return len(grams1 & grams2) / len(grams1 | grams2)
 
     async def find_similar_memories(
         self, memory_id: int, threshold: float = None, limit: int = 10

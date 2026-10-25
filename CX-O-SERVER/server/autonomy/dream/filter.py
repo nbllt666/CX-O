@@ -7,7 +7,7 @@ DecisionCore.DECISION_POINTS 做语义对齐与追溯，不进入 D1-D6 决策�
 
 拦截规则（按序判定，命中即拒）:
     a. 事实性断言：content 命中 FACTUAL_PATTERNS（"你昨天/你说过/你做了"+具体事件）→ factual_hallucination
-    b. 触碰 permanent 记忆或 importance_score >= 0.95 的关联记忆（红线 R2）→ permanent_touch
+    b. 触碰 permanent 记忆或基线重要性 >= 0.95 的关联记忆（红线 R2）→ permanent_touch
     c. lucidity_score < config.min_lucidity → low_lucidity
     d. 通过 → approved
 
@@ -15,6 +15,8 @@ DecisionCore.DECISION_POINTS 做语义对齐与追溯，不进入 D1-D6 决策�
 """
 
 import re
+
+from server.core.memory.decay import memory_importance_baseline
 
 # 事实性断言模式：第二人称事实锚点 + 后续至少一个字符的具体事件描述。
 # 梦境为联想虚构（is_ground_truth=false），不得断言用户真实经历。
@@ -27,7 +29,7 @@ FACTUAL_PATTERNS = (
     re.compile(r"我记得你.+"),
 )
 
-# 红线 R2 阈值：关联记忆 importance_score >= 0.95 视为高重要性，禁止梦境触碰
+# 红线 R2 阈值：关联记忆基线重要性 >= 0.95 视为高重要性，禁止梦境触碰
 _PERMANENT_IMPORTANCE_THRESHOLD = 0.95
 
 
@@ -48,7 +50,8 @@ class DreamFilter:
         Args:
             candidate: 候选字典，含 content / lucidity_score
             associated_memories_meta: 关联记忆元数据列表（引擎侧组装），
-                每项含 id / importance_score / permanent / content
+                每项含 id / importance / importance_score / permanent / content；
+                判定使用 memory_importance_baseline()（importance 优先）
             config: 配置（含 min_lucidity，如 DreamConfig）
 
         Returns:
@@ -93,11 +96,14 @@ class DreamFilter:
 
     @staticmethod
     def _touches_protected_memory(associated_memories_meta: list) -> bool:
-        """任一关联记忆为 permanent 或 importance_score >= 0.95（红线 R2）。"""
+        """任一关联记忆为 permanent 或基线重要性 >= 0.95（红线 R2）。
+
+        基线统一走 memory_importance_baseline()：真实记忆以不可变 importance
+        换算，避免历史 importance_score=0.6 死字段让高重要性记忆漏过闸门。
+        """
         for meta in associated_memories_meta or []:
             if meta.get("permanent"):
                 return True
-            importance = meta.get("importance_score")
-            if importance is not None and importance >= _PERMANENT_IMPORTANCE_THRESHOLD:
+            if memory_importance_baseline(meta) >= _PERMANENT_IMPORTANCE_THRESHOLD:
                 return True
         return False

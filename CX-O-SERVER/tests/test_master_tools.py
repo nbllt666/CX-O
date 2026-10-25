@@ -17,18 +17,22 @@ import server.core.tools.summary_tools as st
 class FakeMemoryManager:
     def __init__(self):
         self.written = []
+        self.agent_ids = []
+        self.search_agent_ids = []
         self.permanent = []
         self.search_results = []
 
-    def write_memory(self, content, memory_type, importance, tags):
+    def write_memory(self, content, memory_type, importance, tags, agent_id="default"):
         self.written.append((content, memory_type, importance, tags))
+        self.agent_ids.append(agent_id)
         return "mem-1"
 
     def write_permanent_memory(self, content, tags, is_from_main):
         self.permanent.append((content, tags, is_from_main))
         return "perm-1"
 
-    def search_memories(self, query, memory_type, time_range, limit):
+    def search_memories(self, query, memory_type, time_range, limit, agent_id="default"):
+        self.search_agent_ids.append(agent_id)
         return self.search_results
 
 
@@ -192,6 +196,19 @@ class TestWriteLongTermMemory:
         mt.write_long_term_memory(message="别名内容", priority=2, tag="kw")
         assert mm.written[0] == ("别名内容", "long_term", 2, ["kw"])
 
+    def test_uses_current_agent_memory_table(self, clean_deps):
+        """工具写入必须落到当前会话 Agent 的表，与检索路径保持一致。"""
+        from server.core.tools.graph_tools import set_current_agent_id
+
+        mm = FakeMemoryManager()
+        _set_mm(mm)
+        set_current_agent_id("alice")
+        try:
+            mt.write_long_term_memory("角色专属记忆")
+        finally:
+            set_current_agent_id("default")
+        assert mm.agent_ids == ["alice"]
+
     def test_write_exception(self, clean_deps):
         class Boom:
             def write_memory(self, **kw):
@@ -229,6 +246,19 @@ class TestSearchAllMemories:
         _set_mm(Boom())
         r = mt.search_all_memories("q")
         assert "搜索记忆失败" in r["error"]
+
+    def test_search_uses_current_agent_table(self, clean_deps):
+        """读路径同样落到当前会话 Agent 的表，避免写读表分叉。"""
+        from server.core.tools.graph_tools import set_current_agent_id
+
+        mm = FakeMemoryManager()
+        _set_mm(mm)
+        set_current_agent_id("alice")
+        try:
+            mt.search_all_memories("q", limit=5)
+        finally:
+            set_current_agent_id("default")
+        assert mm.search_agent_ids == ["alice"]
 
 
 # ---------------------------------------------------------------- 记忆管理模型

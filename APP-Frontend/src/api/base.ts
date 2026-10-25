@@ -55,6 +55,17 @@ export function getWsBaseUrl(): string {
   );
 }
 
+/**
+ * 为 WebSocket URL 追加管理密钥查询参数。
+ * 浏览器无法为 WS 握手设置自定义请求头，后端从 token/api_key 查询参数读取同一把 ADMIN_API_KEY。
+ */
+export function withWsAuth(url: string): string {
+  const adminKey = localStorage.getItem(STORAGE_KEYS.adminKey);
+  if (!adminKey) return url;
+  const sep = url.includes('?') ? '&' : '?';
+  return `${url}${sep}token=${encodeURIComponent(adminKey)}`;
+}
+
 export function getVoiceWorkstationUrl(): string {
   return (
     localStorage.getItem(STORAGE_KEYS.voiceWsUrl) ||

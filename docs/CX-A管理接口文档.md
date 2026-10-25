@@ -21,7 +21,7 @@ CX-A 管理面内实际存在两套端点，鉴权方式不同：
 
 | 形态 | 鉴权 | 用途 |
 |------|------|------|
-| 基础管理端点 | 请求头 `X-API-Key`（环境变量 `ADMIN_API_KEY`） | 仪表盘、统计、健康、配置读写、日志、备份 |
+| 基础管理端点 | 请求头 `X-API-Key`（环境变量 `ADMIN_API_KEY`，必填） | 仪表盘、统计、健康、配置读写、日志、备份；同一密钥也用于记忆业务端点与 WebSocket 握手 |
 | CX-A 控制平面端点 | 请求头 `Authorization: Bearer <token>`（分级令牌） | 自描述清单、状态、单条控制、批量编排、审计 |
 
 下文分别说明。
@@ -90,6 +90,11 @@ CX-A 默认关闭（`admin.enabled = false`），关闭时控制平面端点一�
 - 来源：环境变量 `ADMIN_API_KEY`。
 - 未配置或校验失败：返回 `403`。
 
+> **同一把密钥的其它用途**（2026-10-24 起）：
+> - **记忆业务端点**：`/api/memories/*` 共 36 个端点默认强制鉴权，未配置 `ADMIN_API_KEY` 一律 `403`（`Admin API key not configured`）。
+> - **WebSocket 握手**：`/ws`、`/ws/live`、`/api/ws/*` 校验 Origin 白名单 / same-origin；配置密钥时要求 `x-api-key` 头或 `token` / `api_key` 查询参数；未配置时仅允许 loopback 连接，远端裸连接以 `1008` 关闭。
+> - **CXFC 鉴权端点**：`server/api/routers/cxfc.py` 同样读取该密钥。
+
 ### 3.2 CX-A 控制平面端点
 
 - 请求头：`Authorization: Bearer <token>`
@@ -130,7 +135,7 @@ CX-A 默认关闭（`admin.enabled = false`），关闭时控制平面端点一�
 
 ## 5. 基础管理端点
 
-以下端点与 CX-O 常规后端共用 `/api` 前缀，鉴权用 `X-API-Key`。管理面两端点族同挂 `/api/admin` 前缀：本节的基础管理端点（`dashboard/stats/health/config/logs/backup`）用 `X-API-Key`；§6 的 CX-A 控制平面（`manifest/status/control/batch/audit`）改用 `Bearer`，二者鉴权相互独立。它们与 CX-O 常规业务路由（如 `/api/agents` 的 Agent 增删改查、`/api/acp`、`/api/graph` 等）在**同一 `/api` 命名空间下并存**；业务端点不套用管理鉴权，基础管理端点也不覆盖业务端点，调用方按前缀 + 鉴权头区分。
+以下端点与 CX-O 常规后端共用 `/api` 前缀，鉴权用 `X-API-Key`。管理面两端点族同挂 `/api/admin` 前缀：本节的基础管理端点（`dashboard/stats/health/config/logs/backup`）用 `X-API-Key`；§6 的 CX-A 控制平面（`manifest/status/control/batch/audit`）改用 `Bearer`，二者鉴权相互独立。它们与 CX-O 常规业务路由（如 `/api/agents` 的 Agent 增删改查、`/api/acp`、`/api/graph` 等）在**同一 `/api` 命名空间下并存**；除 `/api/memories/*`（36 个端点默认强制 `X-API-Key`）等已明确强制鉴权的业务端点外，其余业务端点不套用管理鉴权，基础管理端点也不覆盖业务端点，调用方按前缀 + 鉴权头区分。
 
 ### 5.1 GET `/api/admin/dashboard`
 管理后台仪表盘统计（内存、上下文、ACP）。

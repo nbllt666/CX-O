@@ -5,7 +5,7 @@
  * 轻量连接来接收配置变更通知。fixed 2s 自动重连覆盖网络抖动与后端重启。
  */
 import { useEffect, useRef, useState } from 'react';
-import { getWsBaseUrl } from '../api/base';
+import { getWsBaseUrl, withWsAuth } from '../api/base';
 import { emitConfigChanged } from '../lib/configEvents';
 import { emitMeetingState, emitDanmakuReply } from '../lib/meetingEvents';
 
@@ -26,7 +26,7 @@ export function useConfigReload(): UseConfigReloadReturn {
       if (unmountedRef.current) return;
       let ws: WebSocket;
       try {
-        ws = new WebSocket(`${getWsBaseUrl()}/ws`);
+        ws = new WebSocket(withWsAuth(`${getWsBaseUrl()}/ws`));
       } catch (e) {
         console.error('[configReload] WS 创建失败:', e);
         scheduleReconnect();

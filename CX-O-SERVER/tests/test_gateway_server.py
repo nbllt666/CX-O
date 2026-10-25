@@ -13,6 +13,7 @@ import json
 import pytest
 
 from server.gateway import server as gateway_server
+import server.core.websocket.security as ws_security
 from server.protocol.message import MessageType, create_pong
 
 
@@ -270,3 +271,89 @@ class TestHandleLiveConnection:
                       if isinstance(m, dict) and m.get("type") == "error"]
         assert not err_frames
         assert "c-live2" in _patch_ws_manager.disconnected
+
+
+# ================================================================ WebSocket 握手鉴权
+class _AuthWebSocket:
+    def __init__(self, origin=None, token=None, api_key=None, host="127.0.0.1"):
+        self.headers = {"host": host}
+        if origin is not None:
+            self.headers["origin"] = origin
+        if api_key is not None:
+            self.headers["x-api-key"] = api_key
+        self.query_params = {"token": token} if token is not None else {}
+        self.client = type("Client", (), {"host": host})()
+
+
+class _Cors:
+    enabled = True
+    origins = ["http://localhost:3100", "null"]
+
+
+class _Config:
+    cors = _Cors()
+
+
+@pytest.fixture
+def patch_cors(monkeypatch):
+    monkeypatch.setattr(gateway_server, "get_config", lambda: _Config())
+    monkeypatch.setattr(ws_security, "get_config", lambda: _Config())
+
+
+class TestWebSocketAuth:
+    def test_local_without_key_allowed(self, patch_cors, monkeypatch):
+        monkeypatch.delenv("ADMIN_API_KEY", raising=False)
+        assert gateway_server._authorize_websocket(_AuthWebSocket()) is None
+
+    def test_remote_without_key_rejected(self, patch_cors, monkeypatch):
+        monkeypatch.delenv("ADMIN_API_KEY", raising=False)
+        ws = _AuthWebSocket(host="192.168.1.20")
+        assert gateway_server._authorize_websocket(ws) == "remote_requires_api_key"
+
+    def test_remote_with_valid_key_allowed(self, patch_cors, monkeypatch):
+        monkeypatch.setenv("ADMIN_API_KEY", "secret")
+        ws = _AuthWebSocket(host="192.168.1.20", token="secret")
+        assert gateway_server._authorize_websocket(ws) is None
+
+    def test_remote_with_wrong_key_rejected(self, patch_cors, monkeypatch):
+        monkeypatch.setenv("ADMIN_API_KEY", "secret")
+        ws = _AuthWebSocket(host="192.168.1.20")
+        assert gateway_server._authorize_websocket(ws) == "invalid_credentials"
+
+    def test_disallowed_origin_rejected(self, patch_cors, monkeypatch):
+        monkeypatch.setenv("ADMIN_API_KEY", "secret")
+        ws = _AuthWebSocket(origin="http://evil.example", token="secret", host="192.168.1.20")
+        assert gateway_server._authorize_websocket(ws) == "origin_not_allowed"
+
+    def test_allowed_origin_and_same_origin(self, patch_cors, monkeypatch):
+        monkeypatch.setenv("ADMIN_API_KEY", "secret")
+        allowed = _AuthWebSocket(
+            origin="http://localhost:3100", token="secret", host="192.168.1.20"
+        )
+        assert gateway_server._authorize_websocket(allowed) is None
+
+        same = _AuthWebSocket(
+            origin="http://192.168.1.20:8000", token="secret", host="192.168.1.20:8000"
+        )
+        assert gateway_server._authorize_websocket(same) is None
+
+
+class TestApiWebSocketAuth:
+    """主应用 /api/ws 路由与网关共用同一鉴权闸门。"""
+
+    def test_api_ws_rejects_missing_key(self, monkeypatch):
+        from fastapi import FastAPI
+        from fastapi.testclient import TestClient
+        from starlette.websockets import WebSocketDisconnect
+
+        from server.api.routers import websocket as ws_router
+
+        monkeypatch.setenv("ADMIN_API_KEY", "secret")
+        app = FastAPI()
+        app.include_router(ws_router.router, prefix="/api")
+        client = TestClient(app)
+
+        with pytest.raises(WebSocketDisconnect) as exc:
+            with client.websocket_connect("/api/ws/agent1"):
+                pass
+        assert exc.value.code == 1008

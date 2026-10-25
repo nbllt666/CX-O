@@ -108,6 +108,14 @@ class TestBatchMixin:
         assert res["failed"] == 0
         assert len(res["memory_ids"]) == 2
 
+    def test_batch_write_passes_agent_id(self, mgr):
+        """批量写入按每条 agent_id 落到对应 Agent 表。"""
+        res = mgr.batch_write_memories([{"content": "角色专属", "agent_id": "alice"}])
+        assert res["success"] == 1
+        memory_id = res["memory_ids"][0]
+        assert mgr.get_memory(memory_id, agent_id="alice")["content"] == "角色专属"
+        assert mgr.get_memory(memory_id, agent_id="default") is None
+
     def test_batch_write_error_continue(self, mgr, monkeypatch):
         # 使第二条写入抛错，验证容错路径（默认不中断）
         calls = {"n": 0}
@@ -204,6 +212,21 @@ class TestQueryMixin:
         results = mgr.search_by_tag("unique_q")
         assert len(results) == 1
         assert results[0]["content"] == "带标签"
+
+    def test_search_by_tag_orders_by_immutable_importance(self, mgr):
+        """历史行 importance_score=0.6（死字段）时，排序仍以 importance 档位为准。"""
+        low_id = _write(mgr, "低档", tags=["ord"], importance=1)
+        high_id = _write(mgr, "高档", tags=["ord"], importance=5)
+        conn = mgr._get_connection()
+        cur = conn.cursor()
+        cur.execute(
+            "UPDATE memories SET importance_score = 0.6 WHERE id IN (?, ?)",
+            (low_id, high_id),
+        )
+        conn.commit()
+
+        results = mgr.search_by_tag("ord")
+        assert [r["content"] for r in results] == ["高档", "低档"]
 
     def test_get_memory_statistics(self, mgr):
         _write(mgr, "a", memory_type="long_term")
@@ -444,3 +467,44 @@ class TestAdvancedSearch3D:
         assert {m["id"]: m["final_score"] for m in out2}[21] == pytest.approx(0.9)
         # relevance_weight 仍作为兼容字段输出（不参与公式）
         assert out[0]["applied_weights"]["relevance"] == pytest.approx(0.4)
+
+
+# ================================================================ 写入正确性
+class TestWriteImportance:
+    def test_importance_score_not_hardcoded(self, mgr):
+        """P0-1: importance_score 必须由 importance 整数换算，不能恒为 0.6。"""
+        high_id = _write(mgr, "极重要记忆", importance=5)
+        low_id = _write(mgr, "低重要记忆", importance=1)
+
+        high = mgr.get_memory(high_id)
+        low = mgr.get_memory(low_id)
+        assert high["importance"] == 5
+        assert high["importance_score"] == 1.0
+        assert low["importance"] == 1
+        assert low["importance_score"] == 0.2
+
+    def test_exact_duplicate_reuses_existing_row(self, mgr):
+        """写路径应拦截规范化后完全相同的重复内容。"""
+        first_id = _write(mgr, "用户喜欢喝咖啡", importance=3)
+        second_id = _write(mgr, "  用户喜欢喝咖啡  ", importance=3)
+
+        assert second_id == first_id
+        assert len(mgr.search_memories(query="用户喜欢喝咖啡", limit=10)) == 1
+
+    def test_duplicate_write_upgrades_importance_and_permanent(self, mgr):
+        """重复写入不得静默丢失更高重要性 / 永久化意图。"""
+        first_id = _write(mgr, "可升级记忆", importance=1)
+        upgraded_id = _write(mgr, "可升级记忆", importance=5)
+        assert upgraded_id == first_id
+        mem = mgr.get_memory(first_id)
+        assert mem["importance"] == 5
+        assert mem["importance_score"] == 1.0
+
+        permanent_id = mgr.write_memory(
+            content="可升级记忆", memory_type="long_term", importance=5, permanent=True
+        )
+        assert permanent_id == first_id
+        mem = mgr.get_memory(first_id)
+        assert bool(mem["permanent"]) is True
+        assert mem["decay_type"] == "zero"
+        assert mem["importance_score"] == 1.0

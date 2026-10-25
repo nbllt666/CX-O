@@ -95,7 +95,7 @@ CX-O 将虚拟形象、实时语音对话、记忆管理、直播推流、声音
 | qwen3-tts-base | vLLM-Omni | 8093 | TTS 降级兜底 |
 | llm | Docker / vLLM 或 TRT-LLM | 8080 | 对话大模型推理 |
 | Ollama / vLLM | 外部 | 11434/... | 对话与嵌入模型 |
-| Weaviate | 外部 | 8080 | 向量数据库（可选） |
+| Weaviate | 外部 | 8080（config.py 缺省）/ 8090（仓库 docker-compose 宿主映射） | 向量数据库（可选） |
 
 ### 2.3 数据流
 
@@ -141,8 +141,11 @@ CX-O 将虚拟形象、实时语音对话、记忆管理、直播推流、声音
 
 ### 3.2 双网关（REST + WebSocket）
 
-- **REST**（`server/api/app.py` + `routers/`）：`/api/v1/...` 路由，共 35 个路由模块，覆盖 agents、chat、memory、graph、tools、config、stats、backup、archive、anythingllm、distillation、multimodal、vector、service、acp、cxfc、admin、audio、avatars、live、face（人脸注册/匹配/删除）、voiceprint（声纹档案）、meeting（圆桌会议）、cluster（哨兵）、vision（视觉片段）、autonomy（自主生命）、dream（梦境）、physio（生理信号）、tuner（进化实验室）等。
-- **Gateway / WebSocket**（`server/gateway/server.py`）：`/ws` 与 `/ws/live` 两条通道，接收 `action` 驱动的 JSON 消息，按 `ACTION_HANDLERS` 映射到对应 handler（chat / memory / tools / plugin / context / acp / mcp / config / metrics / system / audio / danmaku / events）。
+- **REST**（`server/api/app.py` + `routers/`）：主前缀 `/api`（`graph` 挂 `/api/graph`；`anythingllm`、`distillation` 与 `cxfc` 的部分路径挂在根级），共 **36 个路由模块**：acp、admin、agents、anythingllm、archive、audio、autonomy、avatar_manifest、avatars、backup、chat、cluster、config、context、cxfc、decision、discovery、distillation、dream、face、graph、meeting、memory、memory_chat、multimodal、physio、presets、ref_audio_assets、service、stats、tools、tuner、vector、vision、voiceprint、websocket。
+- **Gateway / WebSocket**（`server/gateway/server.py` + `server/api/routers/websocket.py`）：网关提供 `/ws` 与 `/ws/live`；主应用另挂 `/api/ws/{agent_id}`、`/api/ws`、`/api/ws/chat`、`/api/ws/live`。两条栈共用同一鉴权闸门（`server/core/websocket/security.py`）。接收 `action` 驱动的 JSON 消息，按 `ACTION_HANDLERS` 映射到对应 handler（chat / memory / tools / plugin / context / acp / mcp / config / metrics / system / audio / danmaku / events）。
+- **鉴权边界**：
+  - `ADMIN_API_KEY` 同时用于 CX-A 基础管理端点、记忆业务端点（36 个 `/api/memories/*` 默认强制，未配置密钥一律 403）与 WebSocket 握手。
+  - WebSocket 握手额外校验 Origin：不在 `cors.origins` 白名单且非 same-origin 时拒绝；配置密钥时接受 `x-api-key` 头或 `token` / `api_key` 查询参数；未配置密钥时仅允许 loopback，远端裸连接以 1008 关闭。
 
 ### 3.3 WebSocket 消息协议（`server/protocol/`）
 
@@ -277,7 +280,7 @@ CX-O 将虚拟形象、实时语音对话、记忆管理、直播推流、声音
 | ASR 触发（T2/T3） | ~280-330ms | Partial 阈值 0.15s |
 | LLM TTFT（预热后） | 50-92ms | 语音前缀预热 + prefix cache 命中 |
 | TTS 首块（WS 实测） | 245-270ms | flow-steps=1 + CUDA graph |
-| hift decode 中间段 | ~4ms | CUDA graph（67ms→4ms） |
+| Shift decode 中间段 | ~4ms | CUDA graph（67ms→4ms） |
 | 全链路 T5 P50 | 449-610ms | 多数轮 <600ms |
 | 全链路 T5 P95 | 637-762ms | 6 轮 10/10 全 <800ms |
 | RTF（CosyVoice3 克隆） | 0.13-0.15 | 独立测量，<1 达标 |
@@ -374,14 +377,17 @@ memories(
 
 **Agent 记忆隔离**：非 default 的 Agent 有专属表 `memories_{safe_agent_id}`（`_get_table_name` + `_ensure_agent_table`），避免跨 Agent 记忆串扰。另配 `audit_logs` 表记录每次写/删/召回操作。
 
+> `importance_score` 列的 DDL 缺省值仍为 `0.6`（历史建表语句），但所有写入路径都会显式写入 `importance / 5.0` 或 `1.0`；读取侧的衰减、统计、归档阈值、重要性分析与时间线/统计 SQL 均统一经 `memory_importance_baseline()` 换算，历史存量行无需迁移即可自愈。梦境记忆的筛选与固化仍以其自身 `importance_score` 为准（梦境衰减分由固化流程设定，不走整数换算）。
+
 ### 5.2 写入流程
 
 **直接写入** `write_memory(content, memory_type, importance, ...)`：
-1. `_ensure_agent_table(agent_id)` 确保表存在。
-2. INSERT 记忆行：`importance_score = 0.6（非永久）或 1.0（永久）`；`decay_type = "zero"（永久）或 "exponential"`。
-3. 写 `audit_logs`（operation=create）并 commit。
-4. **向量同步**（`_sync_vector_for_memory`）：失败仅告警，不影响主操作。
-5. **图同步**（`_sync_to_graph`，`_graph_enabled` 时）：失败仅告警。
+1. `_ensure_agent_table(agent_id)` 确保目标 Agent 表存在。
+2. **精确查重**：同 workspace / type / 未删除记录中做 `LOWER(TRIM(content))` 规范化比对。命中时：若本次请求为永久化或 `importance` 更高，则升级原行的 `importance` / `importance_score` / `permanent` / `decay_type`；否则直接返回已有 id，不再插入。
+3. INSERT 记忆行：`importance_score = importance / 5.0`（永久记忆固定 `1.0`）；`decay_type = "zero"（永久）或 "exponential"`。`importance` 是不可变原始档位，`importance_score` 只是派生缓存。
+4. 写 `audit_logs`（operation=create）并 commit。
+5. **向量同步**（`_sync_vector_for_memory`）：失败仅告警，不影响主操作。
+6. **图同步**（`_sync_to_graph`，`_graph_enabled` 时）：失败仅告警。
 
 **决策写入** `write_with_decision(content, decision, metadata)`（与 DecisionCore 联动）：
 - 按 `decision.location` 分派：
@@ -441,18 +447,18 @@ T(t) = α·e^(-λ₁·Δt) + (1-α)·e^(-λ₂·Δt)
 T(t) = 1 / (1 + (Δt/T₅₀)^k)      # T₅₀=30, k=2
 ```
 
-**永久记忆**：`decay_type="zero"` 或 `importance ≥ 0.95` 或 `permanent=True` → 恒为 1.0，不衰减。
+**永久记忆**：`decay_type="zero"` 或基线 `importance ≥ 0.95` 或 `permanent=True` → 恒为 1.0，不衰减。基线由 `memory_importance_baseline()` 统一给出：正常记忆取 `importance / 5.0`，因此 `importance=5` 换算为 1.0，等价于永久不衰减；带 `importance` 原始值的永久记忆固定 1.0（仅传入 `importance_score` 的混合检索临时结构按该分计算）。
 
 **重要性分层**（`IMPORTANCE_LEVELS`，α/λ₁/λ₂ 随重要度递增衰减速度）：
 
 | 重要度区间 | 等级分 | α | λ₁ | λ₂ | 180天保留率 |
 |-----------|-------|-----|------|------|-----------|
 | ≥0.95 | 1.00 | — | — | — | 1.00（永久） |
-| 0.85–0.99 | 0.92 | 0.2 | 0.01 | 0.001 | 0.95 |
-| 0.70–0.84 | 0.77 | 0.35 | 0.08 | 0.015 | 0.80 |
-| 0.50–0.69 | 0.60 | 0.6 | 0.25 | 0.04 | 0.50 |
-| 0.30–0.49 | 0.40 | 0.75 | 0.45 | 0.08 | 0.25 |
-| <0.30 | 0.15 | 0.9 | 0.80 | 0.15 | 0.05 |
+| 0.85–0.99 | 0.92 | 0.03 | 0.01 | 0.000145 | 0.95 |
+| 0.70–0.84 | 0.77 | 0.10 | 0.08 | 0.000654 | 0.80 |
+| 0.50–0.69 | 0.60 | 0.20 | 0.25 | 0.00262 | 0.50 |
+| 0.30–0.49 | 0.40 | 0.30 | 0.45 | 0.00578 | 0.25 |
+| <0.30 | 0.15 | 0.50 | 0.80 | 0.0128 | 0.05 |
 
 **再激活加成**（`recall_memory` / `calculate_reactivation_score`）：
 
@@ -466,12 +472,14 @@ T(t) = 1 / (1 + (Δt/T₅₀)^k)      # T₅₀=30, k=2
 
 **相关性维度**（`calculate_relevance_score`）：语义相似 60% + 上下文关联 30% + 关键词匹配 10%。
 
-**整数↔分数换算**：`importance_to_score`（5→0.95、4→0.77、3→0.60、2→0.40、1→0.15）与 `score_to_importance` 互为逆。
+**整数↔分数换算**：正常记忆的衰减基线为 `importance / 5.0`（5→1.00、4→0.80、3→0.60、2→0.40、1→0.20），`permanent=True` 固定为 1.0；`score_to_importance` 负责反向分档。梦境记忆沿用固化时写入的 `importance_score`，不走整数换算。仓库中不存在 `importance_to_score` 函数。
+
+**批处理幂等**：`DecayBatchProcessor` 计算时始终以不可变基线 `importance` 为起点，**不回写 `importance`**；衰减结果只写入 `metadata["importance_score"]` 与 `decay_updated_at`。因此重复运行不会复利叠乘，连续多轮结果一致（幂等）。快照覆盖默认 `memories` 表与 `agent_memory_tables` 中登记的全部 `memories_{agent}` 表。
 
 ### 5.5 向量检索
 
 - 后端：`weaviate` 或 `weaviate_embedded`（Milvus Lite / Chroma / Qdrant 已弃用，启动时告警）。
-- 嵌入：Ollama（默认 `nomic-embed-text`）或 vLLM Embedding 模型，维度 `vector_size=768`。
+- 嵌入：Ollama（默认 `nomic-embed-text`）或 vLLM Embedding 模型，维度 `vector_size=1024`（`WeaviateConfig.vector_size` 缺省值）。
 - 启动时 SQLite ↔ 向量库全量/增量同步，保证一致性。
 - 写入/删除时同步增删向量，失败不阻塞主操作。
 
@@ -770,7 +778,7 @@ config.json 文件配置  →  deep_merge  →  环境变量（CXO_ 前缀）  �
 | `qwen3_tts` | runtime `cosyvoice`（枚举 voicedesign/cosyvoice/qwen3_base）；cosyvoice `http://127.0.0.1:8094` / `Fun-CosyVoice3-0.5B-2512`；voicedesign `8091` / `Qwen3-TTS-12Hz-1.7B-VoiceDesign`；qwen3_base `8093` / `Qwen3-TTS-12Hz-1.7B-Base` |
 | `memory` | vector_backend `weaviate`、embedding `nomic-embed-text`、permanent_threshold `0.95`、dedup `0.85`、短期7天/长期365天 |
 | `database` | `data/cxo.db`、`memories.db`、`sessions.db`；`sqlite+aiosqlite` |
-| `graph` | `data/graph.db`、weaviate url `:8080`、embedding `all-MiniLM-L6-v2` |
+| `graph` | `data/graph.db`、weaviate url `:8080`（config.py 缺省；仓库 compose 映射宿主 8090，需按实际填写）、embedding `all-MiniLM-L6-v2` |
 | `acp` | agent_id `cxo-agent-001`、discovery `9999/9998`、group port `10001` |
 | `cxfc` | heartbeat `30`、discovery `9996/9997`、storage `data/cxfc_plugins.db` |
 | `limits.memory` | max_memories `30`、注入 `20`、去重相似 `0.5`、chat_history `50` |

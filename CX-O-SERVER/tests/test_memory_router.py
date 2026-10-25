@@ -17,6 +17,8 @@ from server.api.routers import memory as memory_router_mod
 from server.core.memory import emotion as emotion_mod
 from server.core.memory.router import MemoryRouter, RoutingConfig
 
+TEST_ADMIN_KEY = "test-admin-key"
+
 
 class FakeConn:
     def cursor(self):
@@ -59,7 +61,7 @@ class FakeMemoryManager:
         return [{"id": 1, "content": "x", "metadata": {"date": "2026-08-09"}}]
 
     def get_permanent_memories(self, **kw):
-        return [{"id": 5, "content": "p", "importance_score": 4, "tags": [], "metadata": {}}]
+        return [{"id": 5, "content": "p", "importance": 4, "importance_score": 4, "tags": [], "metadata": {}}]
 
     def get_memory(self, memory_id, agent_id="default"):
         return {"id": memory_id, "content": "m"}
@@ -152,11 +154,17 @@ def client(monkeypatch):
         return 2.5
 
     monkeypatch.setattr(emotion_mod, "get_emotion_for_decay", _fake_emotion)
+    # 记忆端点默认强制鉴权：测试统一配置密钥并携带请求头
+    monkeypatch.setenv("ADMIN_API_KEY", TEST_ADMIN_KEY)
     app = FastAPI()
     app.include_router(memory_router_mod.router)
     app.dependency_overrides[get_memory_manager] = lambda: mm
     app.dependency_overrides[get_secondary_router] = lambda: sr
-    return TestClient(app, raise_server_exceptions=False), mm, sr
+    return (
+        TestClient(app, raise_server_exceptions=False, headers={"x-api-key": TEST_ADMIN_KEY}),
+        mm,
+        sr,
+    )
 
 
 class TestListAgents:
@@ -576,6 +584,20 @@ class TestAsyncParity:
         assert set(body.keys()) == {"status", "statistics"}
         assert body["status"] == "success"
         assert body["statistics"] == {"total": 3}
+
+
+class TestMemoryRouterAuth:
+    def test_key_required_when_not_configured(self, client, monkeypatch):
+        monkeypatch.delenv("ADMIN_API_KEY", raising=False)
+        c, _, _ = client
+        assert c.get("/memories/agents").status_code == 403
+
+    def test_key_enforced(self, client):
+        c, _, _ = client
+        bare = TestClient(c.app, raise_server_exceptions=False)
+        assert bare.get("/memories/agents").status_code == 403
+        assert bare.get("/memories/agents", headers={"x-api-key": "wrong"}).status_code == 403
+        assert c.get("/memories/agents").status_code == 200
 
 
 def _record_run_io(monkeypatch):
