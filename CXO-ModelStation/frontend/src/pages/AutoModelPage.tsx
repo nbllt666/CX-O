@@ -1,9 +1,11 @@
 /*
  * 一键成模页（导航第一入口）：
- *   输入二选一（音色描述提示词 / 上传参考音频）→ 选择模型类型（MeloTTS / So-VITS-SVC）→
- *   一键启动自动全流程（参考音频 → 语料生成 → 数据准备 → 训练 → 产物收集），轮询分阶段进度
- *   （3s，completed/failed 停轮），完成后展示模型文件卡片。
- *   API：POST /api/pipeline/reference、POST /api/pipeline/run、GET /api/pipeline/run/{run_id}。
+ *   提示词模式两阶段：先只生成初始参考音频（qwen3 声音设计，status=awaiting_review），
+ *   用户试听满意后再「继续」以 dataset_id 启动自动全流程（参考音频 → 语料生成 →
+ *   数据准备 → 训练 → 产物收集）；上传参考音频 / 本地数据集模式仍一步启动。
+ *   轮询分阶段进度（3s，completed/failed 停轮），完成后展示模型文件卡片。
+ *   API：POST /api/pipeline/reference、POST /api/pipeline/run、GET /api/pipeline/run/{run_id}、
+ *        POST /api/datasets/preview、GET /api/datasets/batch-generate/{task_id}。
  */
 import { useCallback, useEffect, useState } from "react";
 import { api } from "../api/client";
@@ -91,6 +93,11 @@ export default function AutoModelPage() {
   const corpusOptions =
     modelType === "sovits" ? SOVITS_CORPUS_OPTIONS : MELOTTS_CORPUS_OPTIONS;
 
+  // ---- 提示词模式：初始参考音频试听（awaiting_review 停轮，确认后携带 dataset_id 续跑）----
+  const [previewTaskId, setPreviewTaskId] = useState<string | null>(null);
+  const [previewDatasetId, setPreviewDatasetId] = useState<string | null>(null);
+  const [previewActive, setPreviewActive] = useState(false);
+
   // ---- 运行与轮询（3s，completed/failed 停轮）----
   const [runId, setRunId] = useState<string | null>(null);
   const [pollingActive, setPollingActive] = useState(false);
@@ -105,6 +112,33 @@ export default function AutoModelPage() {
 
   // 仅展示当前 run_id 的数据，避免提交新一轮后短暂展示上一轮残影
   const activeRun = run && run.run_id === runId ? run : null;
+
+  // 参考音频试听任务轮询（复用批量任务查询端点）
+  const { data: previewTask } = usePolling(
+    useCallback(() => api.getBatchTask(previewTaskId as string), [previewTaskId]),
+    { intervalMs: 3000, enabled: previewActive },
+  );
+  const activePreview =
+    previewTask && previewTask.task_id === previewTaskId ? previewTask : null;
+  const previewReady = activePreview?.status === "awaiting_review";
+
+  useEffect(() => {
+    if (!activePreview) {
+      return;
+    }
+    if (activePreview.status === "awaiting_review") {
+      setPreviewActive(false);
+      setNotice(
+        `初始参考音频已生成（数据集编号 ${activePreview.dataset_id}），请先试听；` +
+          "满意后点「继续：生成语料并开始训练」，不满意可修改描述重新生成",
+      );
+      return;
+    }
+    if (activePreview.status === "failed") {
+      setPreviewActive(false);
+      setActionError(activePreview.error ?? "初始参考音频生成失败");
+    }
+  }, [activePreview]);
 
   // 运行结束（completed/failed）即停轮，并生成终态通知
   useEffect(() => {
@@ -150,6 +184,35 @@ export default function AutoModelPage() {
     }
   };
 
+  /** 阶段一（提示词模式）：只生成初始参考音频，完成后停在 awaiting_review 供试听 */
+  const handlePreview = async () => {
+    const desc = voiceDescription.trim();
+    if (!desc) {
+      setActionError("请填写音色描述，或切换到「上传参考音频」");
+      return;
+    }
+    setActionError(null);
+    setNotice(null);
+    setBusy(true);
+    try {
+      const res = await api.previewDatasetReference({
+        voice_description: desc,
+        // 试听不满意重试时复用同一数据集编号（只替换参考音频）
+        ...(previewDatasetId ? { dataset_id: previewDatasetId } : {}),
+      });
+      setPreviewTaskId(res.task_id);
+      setPreviewDatasetId(res.dataset_id);
+      setPreviewActive(true);
+      setNotice(
+        `数据集编号 ${res.dataset_id}：正在生成初始参考音频（qwen3 声音设计），完成后请试听确认`,
+      );
+    } catch (e) {
+      setActionError(toMessage(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const handleSubmit = async () => {
     setActionError(null);
     setNotice(null);
@@ -171,6 +234,15 @@ export default function AutoModelPage() {
         return;
       }
     }
+    // 提示词模式：尚未试听确认 → 先生成参考音频，确认后再走完整流程
+    if (inputMode === "description" && !previewReady) {
+      if (previewActive) {
+        setActionError("初始参考音频生成中，请稍候并试听后再继续");
+        return;
+      }
+      await handlePreview();
+      return;
+    }
     const lines = textsText
       .split("\n")
       .map((line) => line.trim())
@@ -182,7 +254,8 @@ export default function AutoModelPage() {
     }
     const req: PipelineRunRequest = { model_type: modelType, max_epochs: maxEpochs };
     if (inputMode === "description") {
-      req.voice_description = voiceDescription.trim();
+      // 已试听确认：携带 dataset_id 跳过参考音频阶段，直接生成语料并训练
+      req.dataset_id = previewDatasetId as string;
     } else if (inputMode === "dataset") {
       req.dataset_dir = datasetDir.trim();
     } else if (refAudioPath) {
@@ -199,6 +272,10 @@ export default function AutoModelPage() {
       const res = await api.startPipelineRun(req);
       setRunId(res.run_id);
       setPollingActive(true);
+      // 参考音频已确认并进入完整流程：收起试听确认区（run 卡片展示数据集编号）
+      setPreviewActive(false);
+      setPreviewTaskId(null);
+      setPreviewDatasetId(null);
       setNotice("一键成模任务已提交，进度将自动刷新（每 3 秒）");
     } catch (e) {
       setActionError(toMessage(e));
@@ -255,9 +332,18 @@ export default function AutoModelPage() {
               <textarea
                 id="auto-voice-description"
                 value={voiceDescription}
-                onChange={(e) => setVoiceDescription(e.target.value)}
+                onChange={(e) => {
+                  setVoiceDescription(e.target.value);
+                  // 描述变化后旧的试听结论失效：清空已确认数据集，需重新生成并试听
+                  if (previewTaskId || previewDatasetId) {
+                    setPreviewTaskId(null);
+                    setPreviewDatasetId(null);
+                    setPreviewActive(false);
+                  }
+                }}
                 placeholder="例如：年轻女性，声音清亮，语速适中，带轻微东北口音"
               />
+              <span className="hint">先只生成首条参考音频，试听满意后再继续生成语料并训练</span>
             </div>
           ) : inputMode === "dataset" ? (
             <div className="field field-full">
@@ -361,13 +447,19 @@ export default function AutoModelPage() {
           <button
             type="button"
             className="btn btn-primary"
-            disabled={busy || refUploading}
-            onClick={handleSubmit}
+            disabled={busy || refUploading || previewActive}
+            onClick={() => void handleSubmit()}
           >
-            开始
+            {inputMode === "description"
+              ? previewReady
+                ? "继续：生成语料并开始训练"
+                : "生成参考音频（可试听）"
+              : "开始"}
           </button>
           <span className="hint">
-            开始后自动完成：参考音频 → 语料生成 → 数据准备 → 训练 → 产物收集，完成后直接展示模型文件
+            {inputMode === "description"
+              ? "先生成首条参考音频，试听满意后继续：语料生成 → 数据准备 → 训练 → 产物收集"
+              : "开始后自动完成：语料生成 / 数据集导入 → 数据准备 → 训练 → 产物收集"}
           </span>
         </div>
       </section>
@@ -376,6 +468,55 @@ export default function AutoModelPage() {
         message={notice}
         variant={activeRun?.status === "failed" ? "error" : "success"}
       />
+
+      {inputMode === "description" && (previewActive || activePreview) ? (
+        <section className="card">
+          <h3 className="card-title">
+            初始参考音频试听{" "}
+            {activePreview ? (
+              <StatusBadge status={activePreview.status} />
+            ) : (
+              <span className="muted">（生成中）</span>
+            )}
+          </h3>
+          <p className="muted">
+            数据集编号：<span className="mono">{previewDatasetId ?? activePreview?.dataset_id ?? "（分配中）"}</span>
+            {activePreview?.phase ? <> · 阶段：参考音频（qwen3 声音设计）</> : null}
+          </p>
+          {activePreview?.ref_file ? (
+            <>
+              <audio
+                controls
+                src={api.getAudioFileUrl(
+                  "datasets",
+                  "raw",
+                  activePreview.speaker_name,
+                  activePreview.ref_file,
+                )}
+              />
+              <p className="muted section-gap">
+                试听满意后点上方「继续：生成语料并开始训练」；不满意可修改音色描述后重新生成，
+                或直接按当前描述重试一条参考音频
+              </p>
+            </>
+          ) : (
+            <p className="muted">
+              正在生成初始参考音频（qwen3 声音设计），生成完成后即可试听…
+            </p>
+          )}
+          <div className="form-actions">
+            <button
+              type="button"
+              className="btn btn-ghost"
+              disabled={busy || previewActive}
+              onClick={() => void handlePreview()}
+            >
+              按当前描述重新生成参考音频
+            </button>
+            <span className="hint">同一数据集只保留最新一条参考音频，旧文件会自动清理</span>
+          </div>
+        </section>
+      ) : null}
 
       {activeRun ? (
         <section className="card">

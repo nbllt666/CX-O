@@ -61,6 +61,13 @@ class PipelineRunRequest(BaseModel):
             "仅 model_type=sovits 支持；与 voice_description / ref_audio_path 三选一"
         ),
     )
+    dataset_id: Optional[str] = Field(
+        None,
+        description=(
+            "已试听确认参考音频的数据集编号（DS-xxx，来自 /api/datasets/preview 返回）；"
+            "给出时跳过参考音频阶段，直接克隆其余语料；与其余三种输入四选一"
+        ),
+    )
     texts: Optional[list[PipelineTextItem]] = Field(
         None, description="语料文本清单；缺省用服务端内置默认语料"
     )
@@ -129,6 +136,7 @@ async def start_run(request: PipelineRunRequest):
             request.model_type,
             voice_description=request.voice_description,
             ref_audio_path=request.ref_audio_path,
+            dataset_id=request.dataset_id,
             texts=[item.model_dump() for item in request.texts] if request.texts else None,
             output_name=request.output_name,
             max_epochs=request.max_epochs,

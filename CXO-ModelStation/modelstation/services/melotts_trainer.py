@@ -532,6 +532,9 @@ class MeloTTSTrainer:
         train_section["epochs"] = int(epochs)
         train_section["batch_size"] = int(batch_size)
         train_section["learning_rate"] = float(learning_rate)
+        # 训练时声码器照常更新；训练结束后统一换回官方 dec（见 _restore_decoder），
+        # 避免随机初始化判别器把 44.1k HiFi-GAN 带偏（听感「电音」）。
+        train_section["freeze_decoder"] = False
         if eval_interval is not None:
             train_section["eval_interval"] = int(eval_interval)
         data_section["training_files"] = str(train_list.resolve())
@@ -561,6 +564,30 @@ class MeloTTSTrainer:
                 f"训练完成但未在 {src} 找到 G_*.pth 产物；请检查训练日志"
             )
         return dst
+
+    async def _restore_decoder(self, model_dir: Path, base_ckpt: Optional[str]) -> None:
+        """训练后把 G_*.pth 的 dec 权重换回官方底模，消除随机判别器造成的电音。"""
+        if not base_ckpt:
+            logger.warning("无预训练底模路径，跳过声码器恢复: %s", model_dir)
+            return
+        script = Path(__file__).resolve().parent / "melotts_decoder_swap.py"
+        if not script.is_file():
+            raise RuntimeError(f"声码器恢复脚本缺失: {script}")
+        rc, stdout, stderr = await self._run_subprocess(
+            [
+                self._python_path,
+                str(script),
+                "--model-dir", str(model_dir),
+                "--base-ckpt", str(base_ckpt),
+            ],
+            cwd=self._engine_dir,
+            timeout=_PRETRAIN_CONVERT_TIMEOUT,
+        )
+        if rc != 0:
+            raise RuntimeError(
+                f"声码器恢复失败（exit={rc}）: {stderr[-1200:]}"
+            )
+        logger.info(f"MeloTTS 声码器已恢复官方权重: {stdout.strip()[-300:]}")
 
     # ------------------------------------------------------------------
     # 训练主流程
@@ -777,6 +804,7 @@ class MeloTTSTrainer:
                     proc=proc,
                     respawn=_spawn_with_batch,
                     batch_size=batch_size,
+                    base_ckpt=effective_base_ckpt,
                 )
             )
             _update_train_status(status="running", phase="training", message="训练进行中")
@@ -808,6 +836,7 @@ class MeloTTSTrainer:
         proc: asyncio.subprocess.Process,
         respawn: Optional[Callable] = None,
         batch_size: int = 0,
+        base_ckpt: Optional[str] = None,
     ) -> None:
         """后台监控：解析 epoch 日志行更新进度；收尾校验产物并释放互斥。
 
@@ -934,6 +963,7 @@ class MeloTTSTrainer:
                 if returncode == 0:
                     try:
                         dst = self._collect_outputs(output_name)
+                        await self._restore_decoder(dst, base_ckpt)
                         # 终态回填前补一次文件解析：最后一次 epoch 行可能落在轮询间隔内
                         final_epoch = max(
                             current_epoch, _parse_last_epoch_from_file(epoch_log_path)
@@ -942,7 +972,7 @@ class MeloTTSTrainer:
                             status="completed",
                             progress=1.0,
                             epoch=final_epoch,
-                            message=f"训练完成，产物已收集至 {dst}",
+                            message=f"训练完成，产物已收集至 {dst}（声码器已恢复官方权重）",
                             eta_seconds=0,
                             phase="",
                         )

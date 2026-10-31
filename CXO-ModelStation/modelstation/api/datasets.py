@@ -89,6 +89,69 @@ class PipelineGenerateRequest(BaseModel):
     )
 
 
+class DatasetPreviewRequest(BaseModel):
+    """初始参考音频试听请求：只生成 qwen3 声音设计首条音频，等用户确认后再续跑语料。"""
+
+    voice_description: str = Field(..., min_length=1, description="音色描述（自然语言）")
+    ref_text: Optional[str] = Field(None, description="参考音频播报文本（缺省用内置句）")
+    name: Optional[str] = Field(
+        None, description="数据集目录名（缺省与编号相同；仅字母/数字/下划线/连字符）"
+    )
+    dataset_id: Optional[str] = Field(
+        None, description="复用已有数据集重新生成参考音频（试听不满意时改描述重试）"
+    )
+
+
+class DatasetContinueRequest(BaseModel):
+    """试听确认后继续生成其余语料。"""
+
+    texts: list[BatchDatasetTextItem] = Field(..., min_length=1)
+    target_clips: Optional[int] = Field(
+        None, ge=1, description="成片模式目标切片条数；缺省逐句直出"
+    )
+
+
+@batch_router.post("/preview")
+async def preview_dataset_reference(request: DatasetPreviewRequest):
+    """生成初始参考音频并暂停，返回 task_id 供轮询试听（status=awaiting_review）"""
+    from modelstation.services.dataset_builder import get_dataset_builder
+
+    try:
+        result = await get_dataset_builder().submit_preview(
+            request.voice_description,
+            ref_text=request.ref_text or "",
+            speaker_name=request.name,
+            dataset_id=request.dataset_id,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        logger.error(f"参考音频试听任务提交失败: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+    return {"status": "success", **result}
+
+
+@batch_router.post("/{dataset_id}/continue")
+async def continue_dataset_generation(dataset_id: str, request: DatasetContinueRequest):
+    """试听确认后，用该数据集的初始参考音频继续生成其余语料"""
+    from modelstation.services.dataset_builder import get_dataset_builder
+
+    try:
+        result = await get_dataset_builder().continue_generation(
+            dataset_id,
+            [item.model_dump() for item in request.texts],
+            target_clips=request.target_clips,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        logger.error(f"继续语料生成任务提交失败: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+    return {"status": "success", **result}
+
+
 @batch_router.post("/generate")
 async def generate_dataset_pipeline(request: PipelineGenerateRequest):
     """提交统一数据集生成流程，立即返回 dataset_id + task_id，后台两阶段执行"""

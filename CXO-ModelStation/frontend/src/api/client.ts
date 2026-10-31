@@ -269,6 +269,9 @@ export interface BatchTaskFailure {
   error: string;
 }
 
+/** 数据集任务阶段：reference（初始参考音频试听）/ corpus（批量语料）/ clips（成片组装） */
+export type BatchTaskPhase = "reference" | "corpus" | "clips" | "";
+
 /** GET /api/datasets/batch-generate/{task_id}：done 为本次新生成条数 */
 export interface BatchTaskStatus {
   task_id: string;
@@ -290,6 +293,50 @@ export interface BatchTaskStatus {
   failures: BatchTaskFailure[];
   created_at: string;
   finished_at: string | null;
+  /** 当前阶段（reference/corpus/clips；普通批量任务为空串） */
+  phase?: BatchTaskPhase;
+  /** 初始参考音频文件名（仅 reference 阶段完成后回填，用于试听） */
+  ref_file?: string | null;
+}
+
+/** POST /api/datasets/preview：只生成初始参考音频，等用户试听确认 */
+export interface DatasetPreviewRequest {
+  /** 音色描述（自然语言，交给 qwen3_voicedesign） */
+  voice_description: string;
+  /** 参考音频播报文本（缺省用内置句） */
+  ref_text?: string | null;
+  /** 数据集目录名（缺省与编号相同） */
+  name?: string | null;
+  /** 复用已有数据集重新生成参考音频（试听不满意时改描述重试） */
+  dataset_id?: string | null;
+}
+
+/** POST /api/datasets/preview 响应（total=1：只有参考音频） */
+export interface DatasetPreviewResult {
+  status: string;
+  task_id: string;
+  dataset_id: string;
+  name: string;
+  dataset_dir: string;
+  total: number;
+}
+
+/** POST /api/datasets/{dataset_id}/continue：以已试听确认的参考音频继续生成语料 */
+export interface DatasetContinueRequest {
+  texts: BatchTextItem[];
+  /** 成片模式目标切片条数（缺省逐句直出） */
+  target_clips?: number | null;
+}
+
+/** POST /api/datasets/{dataset_id}/continue 响应 */
+export interface DatasetContinueResult {
+  status: string;
+  task_id: string;
+  dataset_id: string;
+  name: string;
+  dataset_dir: string;
+  /** 总条数 = 1（已确认参考音频）+ 本次语料文本数 */
+  total: number;
 }
 
 // ---- 一键成模（/api/pipeline，change-id: add-one-click-voice-model-pipeline）----
@@ -310,13 +357,15 @@ export interface ReferenceUploadResult {
   ref_audio_path: string;
 }
 
-/** POST /api/pipeline/run 请求：输入三选一（voice_description / ref_audio_path / dataset_dir） */
+/** POST /api/pipeline/run 请求：输入四选一（voice_description / ref_audio_path / dataset_dir / dataset_id） */
 export interface PipelineRunRequest {
   model_type: "melotts" | "sovits";
   voice_description?: string;
   ref_audio_path?: string;
   /** 自带数据集目录（本地绝对路径；仅 model_type=sovits 支持） */
   dataset_dir?: string;
+  /** 已试听确认参考音频的数据集编号（跳过 reference 阶段，直接克隆语料） */
+  dataset_id?: string;
   /** 语料文本覆盖（每行一条由调用方拆好；缺省用内置语料集） */
   texts?: BatchTextItem[];
   /** 语料目标切片条数（提示词/参考模式；合成后按句子边界组装 5~15s 切片） */
@@ -472,6 +521,25 @@ export const api = {
       headers: JSON_HEADERS,
       body: JSON.stringify(req),
     }),
+
+  /** 只生成初始参考音频（qwen3 声音设计），完成后 status=awaiting_review 等待试听 */
+  previewDatasetReference: (req: DatasetPreviewRequest) =>
+    request<DatasetPreviewResult>("/api/datasets/preview", {
+      method: "POST",
+      headers: JSON_HEADERS,
+      body: JSON.stringify(req),
+    }),
+
+  /** 试听确认后以该数据集的参考音频继续生成其余语料（逐句推进进度） */
+  continueDatasetGeneration: (datasetId: string, req: DatasetContinueRequest) =>
+    request<DatasetContinueResult>(
+      `/api/datasets/${encodeURIComponent(datasetId)}/continue`,
+      {
+        method: "POST",
+        headers: JSON_HEADERS,
+        body: JSON.stringify(req),
+      },
+    ),
 
   submitBatchDataset: (req: BatchDatasetRequest) =>
     request<BatchDatasetSubmitResult>("/api/datasets/batch-generate", {

@@ -448,6 +448,10 @@ class BatchDatasetTask:
     error: Optional[str] = None
     finished_at: Optional[str] = None
     failures: list[dict] = field(default_factory=list)  # [{index, text, error}]
+    # 进度阶段标识：reference（生成初始参考音频）/ corpus（批量语料）/ clips（成片组装）
+    phase: str = ""
+    # 初始参考音频文件名（试听用；生成成功后回填）
+    ref_file: Optional[str] = None
 
     def to_dict(self) -> dict:
         return {
@@ -467,6 +471,8 @@ class BatchDatasetTask:
             "failures": list(self.failures),
             "created_at": self.created_at,
             "finished_at": self.finished_at,
+            "phase": self.phase,
+            "ref_file": self.ref_file,
         }
 
 
@@ -741,6 +747,318 @@ class DatasetBuilderService:
             "total": 1 + len(sentences),
         }
 
+    async def submit_preview(
+        self,
+        voice_description: str,
+        *,
+        ref_text: str = "",
+        speaker_name: Optional[str] = None,
+        dataset_id: Optional[str] = None,
+    ) -> dict:
+        """仅生成初始参考音频（qwen3 声音设计），供试听后决定是否继续。
+
+        dataset_id 给出时复用该数据集重新生成参考音频（试听不满意可改描述重试），
+        缺省时登记新数据集（DS-xxx）。
+
+        Returns:
+            {"task_id", "dataset_id", "name", "dataset_dir", "total": 1}
+        """
+        from modelstation.services import dataset_registry
+
+        if not voice_description or not str(voice_description).strip():
+            raise ValueError("voice_description must not be empty")
+        desc = str(voice_description).strip()
+        ref_text = str(ref_text or "").strip()
+
+        if dataset_id:
+            try:
+                entry = dataset_registry.get_entry(str(dataset_id))
+            except dataset_registry.DatasetRegistryError as exc:
+                raise ValueError(str(exc)) from exc
+            registered = {"dataset_id": entry["dataset_id"], "name": entry["name"]}
+        else:
+            try:
+                registered = dataset_registry.register_dataset(
+                    speaker_name, engine=ENGINE_PIPELINE, ref_text=ref_text or None,
+                )
+            except dataset_registry.DatasetRegistryError as exc:
+                raise ValueError(str(exc)) from exc
+
+        dataset_dir = resolve_dataset_dir(registered["name"])
+        dataset_dir.mkdir(parents=True, exist_ok=True)
+
+        task_id = uuid.uuid4().hex
+        dataset_registry.update_entry(registered["dataset_id"], task_id=task_id)
+        record = BatchDatasetTask(
+            task_id=task_id,
+            speaker_name=registered["name"],
+            dataset_dir=str(dataset_dir),
+            total=1,
+            mode="",
+            created_at=_now_iso(),
+            engine=ENGINE_PIPELINE,
+            dataset_id=registered["dataset_id"],
+            phase="reference",
+        )
+        self._tasks[task_id] = record
+
+        bg = asyncio.get_running_loop().create_task(
+            self._run_preview(record, desc, ref_text, dataset_dir)
+        )
+        self._bg_tasks[task_id] = bg
+        bg.add_done_callback(lambda t, tid=task_id: self._on_bg_done(tid, t))
+        logger.info(
+            "参考音频试听任务已提交: task_id=%s dataset_id=%s name=%s",
+            task_id, registered["dataset_id"], registered["name"],
+        )
+        return {
+            "task_id": task_id,
+            "dataset_id": registered["dataset_id"],
+            "name": registered["name"],
+            "dataset_dir": str(dataset_dir),
+            "total": 1,
+        }
+
+    async def continue_generation(
+        self,
+        dataset_id: str,
+        texts: list[dict],
+        *,
+        target_clips: Optional[int] = None,
+    ) -> dict:
+        """以已试听确认的初始参考音频继续生成其余语料。
+
+        Returns:
+            {"task_id", "dataset_id", "name", "dataset_dir", "total"}
+
+        Raises:
+            ValueError: 数据集不存在 / 缺少参考音频 / 文本为空
+        """
+        from modelstation.services import dataset_registry
+
+        if not texts:
+            raise ValueError("texts must not be empty")
+        for i, item in enumerate(texts):
+            text = item.get("text") if isinstance(item, dict) else None
+            if not text or not str(text).strip():
+                raise ValueError(f"texts[{i}].text must not be empty")
+        if target_clips is not None and int(target_clips) < 1:
+            raise ValueError(f"target_clips must be >= 1, got: {target_clips!r}")
+
+        try:
+            entry = dataset_registry.get_entry(str(dataset_id))
+        except dataset_registry.DatasetRegistryError as exc:
+            raise ValueError(str(exc)) from exc
+        name = str(entry.get("name") or "")
+        dataset_dir = resolve_dataset_dir(name)
+        if not dataset_dir.is_dir():
+            raise ValueError(f"数据集目录不存在: {dataset_dir}")
+
+        manifest = self._load_manifest(dataset_dir)
+        ref_entry: Optional[dict] = None
+        for item in reversed(manifest.get("entries") or []):
+            if not isinstance(item, dict) or item.get("role") != "reference":
+                continue
+            ref_file = str(item.get("file") or "")
+            if ref_file and (dataset_dir / ref_file).is_file():
+                ref_entry = item
+                break
+        if ref_entry is None:
+            raise ValueError("数据集缺少初始参考音频，请先生成参考音频并试听确认")
+
+        ref_path = dataset_dir / str(ref_entry["file"])
+        ref_text = str(ref_entry.get("text") or entry.get("ref_text") or "")
+
+        sentences: list[dict] = list(texts)
+        if target_clips is not None:
+            sentences = sentences[: int(int(target_clips) * 2.8)]
+
+        task_id = uuid.uuid4().hex
+        dataset_registry.update_entry(str(dataset_id), task_id=task_id)
+        record = BatchDatasetTask(
+            task_id=task_id,
+            speaker_name=name,
+            dataset_dir=str(dataset_dir),
+            total=1 + len(sentences),
+            done=1,
+            mode="",
+            created_at=_now_iso(),
+            engine=ENGINE_PIPELINE,
+            dataset_id=str(entry["dataset_id"]),
+            phase="corpus",
+            ref_file=str(ref_entry["file"]),
+        )
+        self._tasks[task_id] = record
+
+        bg = asyncio.get_running_loop().create_task(
+            self._run_continue(record, sentences, ref_path, ref_text, dataset_dir, target_clips)
+        )
+        self._bg_tasks[task_id] = bg
+        bg.add_done_callback(lambda t, tid=task_id: self._on_bg_done(tid, t))
+        logger.info(
+            "继续语料生成任务已提交: task_id=%s dataset_id=%s total=%d",
+            task_id, dataset_id, 1 + len(sentences),
+        )
+        return {
+            "task_id": task_id,
+            "dataset_id": str(entry["dataset_id"]),
+            "name": name,
+            "dataset_dir": str(dataset_dir),
+            "total": 1 + len(sentences),
+        }
+
+    @staticmethod
+    def _drop_reference_entries(dataset_dir: Path, manifest: dict) -> None:
+        """删除已有参考音频条目与文件（同一数据集只保留最新一条试听音频）。"""
+        entries = manifest.setdefault("entries", [])
+        if not isinstance(entries, list):
+            manifest["entries"] = entries = []
+        kept: list[dict] = []
+        for entry in entries:
+            if isinstance(entry, dict) and entry.get("role") == "reference":
+                name = str(entry.get("file") or "")
+                if name:
+                    try:
+                        (dataset_dir / name).unlink(missing_ok=True)
+                    except OSError as exc:
+                        logger.warning("旧参考音频删除失败 %s (%s)", name, exc)
+                continue
+            kept.append(entry)
+        manifest["entries"] = kept
+
+    async def _generate_reference(
+        self,
+        record: BatchDatasetTask,
+        voice_description: str,
+        ref_text: str,
+        dataset_dir: Path,
+        manifest: dict,
+    ) -> dict:
+        """生成初始参考音频并写入 manifest（调用方持有 dataset_dir 互斥锁）。"""
+        entries: list[dict] = manifest.setdefault("entries", [])
+        spoken = ref_text or _DEFAULT_REFERENCE_TEXT
+        fp = _entry_fingerprint({
+            "role": "reference",
+            "engine": ENGINE_QWEN3_VOICEDESIGN,
+            "voice_description": voice_description,
+        })
+        filename = f"{len(entries) + 1:04d}_{fp[:8]}.wav"
+        ref_path = dataset_dir / filename
+        record.current_text = "（生成初始参考音频）"
+        client = self._runtime_client_factory(ENGINE_QWEN3_VOICEDESIGN)
+        await self._generate_one_runtime(
+            ENGINE_QWEN3_VOICEDESIGN, client, spoken,
+            {"voice_description": voice_description}, ref_path,
+        )
+        if not ref_path.is_file():
+            raise RuntimeError(f"生成完成但输出文件不存在: {ref_path}")
+        entry = {
+            "fingerprint": fp,
+            "file": filename,
+            "md5": _md5_file(ref_path),
+            "text": spoken,
+            "engine": ENGINE_QWEN3_VOICEDESIGN,
+            "mode": "",
+            "control": "",
+            "role": "reference",
+            "created_at": _now_iso(),
+        }
+        entries.append(entry)
+        self._write_manifest(dataset_dir, manifest)
+        return entry
+
+    async def _run_preview(
+        self,
+        record: BatchDatasetTask,
+        voice_description: str,
+        ref_text: str,
+        dataset_dir: Path,
+    ) -> None:
+        """试听阶段主体：只生成初始参考音频，完成后置 awaiting_review 等用户确认。"""
+        from modelstation.services import dataset_registry
+
+        dir_lock = _get_dir_lock(os.path.abspath(str(dataset_dir)))
+        try:
+            record.status = "running"
+            record.phase = "reference"
+            async with dir_lock:
+                manifest = self._load_manifest(dataset_dir)
+                self._drop_reference_entries(dataset_dir, manifest)
+                ref_entry = await self._generate_reference(
+                    record, voice_description, ref_text, dataset_dir, manifest
+                )
+                record.ref_file = str(ref_entry["file"])
+                record.total = 1
+                record.done = 1
+                record.current_text = None
+                record.status = "awaiting_review"
+                if record.dataset_id:
+                    dataset_registry.update_entry(
+                        record.dataset_id, ref_audio=record.ref_file
+                    )
+                logger.info(
+                    "初始参考音频已生成，等待试听确认: task_id=%s file=%s",
+                    record.task_id, record.ref_file,
+                )
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            record.status = "failed"
+            record.error = f"初始参考音频生成失败: {exc}"
+            record.current_text = None
+            record.finished_at = _now_iso()
+            logger.error("初始参考音频生成失败: task_id=%s error=%s", record.task_id, exc)
+
+    async def _run_continue(
+        self,
+        record: BatchDatasetTask,
+        texts: list[dict],
+        ref_path: Path,
+        ref_text: str,
+        dataset_dir: Path,
+        target_clips: Optional[int],
+    ) -> None:
+        """续跑主体：用已确认的参考音频批量克隆语料，必要时再做句子边界成片。"""
+        dir_lock = _get_dir_lock(os.path.abspath(str(dataset_dir)))
+        try:
+            record.status = "running"
+            record.phase = "corpus"
+            async with dir_lock:
+                await self._batch_generate_locked(
+                    record, texts,
+                    engine=ENGINE_COSYVOICE3_ZERO,
+                    mode="",
+                    engine_params={"ref_audio_path": str(ref_path), "ref_text": ref_text},
+                    control="",
+                    reference_audio_path=None,
+                    prompt_audio_path=None,
+                    prompt_text=None,
+                    cfg_value=None,
+                    inference_timesteps=None,
+                    dataset_dir=dataset_dir,
+                )
+                if target_clips is not None and record.status != "failed":
+                    record.phase = "clips"
+                    try:
+                        clips = await asyncio.to_thread(assemble_sentence_clips, dataset_dir)
+                    except Exception as exc:
+                        logger.warning(
+                            "语料成片组装失败（保留逐句切片）: task_id=%s error=%s",
+                            record.task_id, exc,
+                        )
+                        clips = 0
+                    if clips > 0:
+                        record.total = 1 + clips
+                        record.done = 1 + clips
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            record.status = "failed"
+            record.error = str(exc)
+            record.current_text = None
+            record.finished_at = _now_iso()
+            logger.error("继续语料生成任务失败: task_id=%s error=%s", record.task_id, exc)
+
     async def _run_pipeline(
         self,
         record: BatchDatasetTask,
@@ -765,6 +1083,7 @@ class DatasetBuilderService:
                 entries: list[dict] = manifest.setdefault("entries", [])
 
                 # ---- 阶段1：初始参考音频（qwen3_voicedesign）----
+                record.phase = "reference"
                 spoken = ref_text or _DEFAULT_REFERENCE_TEXT
                 fp = _entry_fingerprint({
                     "role": "reference",
@@ -804,11 +1123,13 @@ class DatasetBuilderService:
                 })
                 self._write_manifest(dataset_dir, manifest)
                 record.done += 1
+                record.ref_file = filename
                 if record.dataset_id:
                     dataset_registry.update_entry(record.dataset_id, ref_audio=filename)
                 record.current_text = None
 
                 # ---- 阶段2：cosyvoice3_zero 零样本克隆批量生成 ----
+                record.phase = "corpus"
                 await self._batch_generate_locked(
                     record, texts,
                     engine=ENGINE_COSYVOICE3_ZERO,
@@ -825,6 +1146,7 @@ class DatasetBuilderService:
 
                 # ---- 阶段3（成片模式）：句子边界组装 5~15s 标准切片 ----
                 if target_clips is not None and record.status != "failed":
+                    record.phase = "clips"
                     try:
                         clips = await asyncio.to_thread(
                             assemble_sentence_clips, dataset_dir
@@ -945,6 +1267,7 @@ class DatasetBuilderService:
         manifest = self._load_manifest(dataset_dir)
         entries: list[dict] = manifest.setdefault("entries", [])
         by_fingerprint = {e.get("fingerprint"): e for e in entries}
+        record.phase = "corpus"
 
         # 按引擎获取合成 client：voxcpm 走子进程链路，运行时引擎走 HTTP 客户端
         params = dict(engine_params or {})
@@ -1138,8 +1461,8 @@ class DatasetBuilderService:
         by_fingerprint: dict,
         runtime_client: Any,
     ) -> None:
-        """本地 Qwen3-TTS 批量合成：分块一次调用多句，再逐条落 manifest。"""
-        chunk_size = 6
+        """本地 Qwen3-TTS 合成：逐句调用，进度按句推进（一次多句会让进度长时间不动）。"""
+        chunk_size = 1
         pending: list[tuple[int, str, str, Path, dict | None]] = []
         for index, item in enumerate(texts):
             text = str(item["text"])

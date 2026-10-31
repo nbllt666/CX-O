@@ -706,6 +706,7 @@ class AutoModelPipelineService:
         max_epochs: int = 10000,
         dataset_dir: Optional[str] = None,
         corpus_target_clips: Optional[int] = None,
+        dataset_id: Optional[str] = None,
     ) -> dict:
         """提交一键成模运行，创建 run 记录并起后台任务，立即返回状态快照。
 
@@ -718,6 +719,7 @@ class AutoModelPipelineService:
                         语料文本为空 / output_name 不在白名单 / max_epochs 非法 /
                         参考音频不在 data/input 白名单根下或文件不存在 /
                         dataset_dir 不存在或音频不足 / dataset_dir 与 melotts 组合 /
+                        dataset_id 不存在或缺少已试听确认的参考音频 /
                         corpus_target_clips 非法
             PipelineRunConflictError: 已有运行进行中（409 语义）
         """
@@ -728,13 +730,17 @@ class AutoModelPipelineService:
         has_desc = bool(voice_description and str(voice_description).strip())
         has_ref = bool(ref_audio_path and str(ref_audio_path).strip())
         has_ds = bool(dataset_dir and str(dataset_dir).strip())
-        if has_desc + has_ref + has_ds > 1:
+        # 试听确认后从已有数据集续跑（参考音频已生成，跳过 reference 阶段）
+        has_preview = bool(dataset_id and str(dataset_id).strip())
+        if has_desc + has_ref + has_ds + has_preview > 1:
             raise ValueError(
-                "voice_description / ref_audio_path / dataset_dir 只能三选一，不可同时提供"
+                "voice_description / ref_audio_path / dataset_dir / dataset_id "
+                "只能四选一，不可同时提供"
             )
-        if has_desc + has_ref + has_ds == 0:
+        if has_desc + has_ref + has_ds + has_preview == 0:
             raise ValueError(
-                "voice_description / ref_audio_path / dataset_dir 必须三选一提供其一"
+                "voice_description / ref_audio_path / dataset_dir / dataset_id "
+                "必须四选一提供其一"
             )
         if has_ds and model_type != MODEL_TYPE_SOVITS:
             raise ValueError(
@@ -772,6 +778,10 @@ class AutoModelPipelineService:
         resolved_dataset_dir: Optional[str] = None
         if has_ds:
             resolved_dataset_dir = self._validate_dataset_dir(str(dataset_dir))
+        # 试听确认数据集：编号存在且初始参考音频已落盘（否则视为未确认 → 400）
+        preview_dataset_id: Optional[str] = None
+        if has_preview:
+            preview_dataset_id = self._validate_preview_dataset(str(dataset_id))
 
         # 运行级互斥：同一时间仅一个一键成模运行
         for run in self._runs.values():
@@ -810,6 +820,7 @@ class AutoModelPipelineService:
                 max_epochs=max_epochs,
                 dataset_dir=resolved_dataset_dir,
                 corpus_target_clips=None if has_ds else corpus_target_clips,
+                preview_dataset_id=preview_dataset_id,
             )
         )
         self._bg_tasks[run_id] = bg
@@ -818,7 +829,7 @@ class AutoModelPipelineService:
             "一键成模运行已提交: run_id=%s model_type=%s mode=%s max_epochs=%d",
             run_id,
             model_type,
-            "prompt" if has_desc else ("dataset" if has_ds else "upload"),
+            "preview" if has_preview else ("prompt" if has_desc else ("dataset" if has_ds else "upload")),
             max_epochs,
         )
         return self.get_run(run_id)
@@ -903,6 +914,28 @@ class AutoModelPipelineService:
             )
         return str(resolved)
 
+    @staticmethod
+    def _validate_preview_dataset(dataset_id: str) -> str:
+        """试听确认数据集预校验（fail-closed）：编号存在且初始参考音频已落盘。
+
+        Returns:
+            规范化后的数据集编号（供续跑阶段复用）。
+        """
+        from modelstation.services import dataset_registry
+        from modelstation.services.dataset_builder import resolve_dataset_dir
+
+        try:
+            entry = dataset_registry.get_entry(str(dataset_id))
+        except dataset_registry.DatasetRegistryError as exc:
+            raise ValueError(str(exc))
+        ds_dir = resolve_dataset_dir(str(entry.get("name") or ""))
+        if not ds_dir.is_dir():
+            raise ValueError(f"数据集目录不存在: {ds_dir}")
+        ref_file = str(entry.get("ref_audio") or "")
+        if not ref_file or not (ds_dir / ref_file).is_file():
+            raise ValueError("数据集缺少初始参考音频，请先生成参考音频并试听确认")
+        return str(entry["dataset_id"])
+
     # ------------------------------------------------------------------
     # 后台主流程（每阶段 try/except，失败置 failed 并带 error，不抛出）
     # ------------------------------------------------------------------
@@ -918,9 +951,17 @@ class AutoModelPipelineService:
         max_epochs: int,
         dataset_dir: Optional[str] = None,
         corpus_target_clips: Optional[int] = None,
+        preview_dataset_id: Optional[str] = None,
     ) -> None:
         try:
-            if dataset_dir:
+            if preview_dataset_id:
+                # 试听确认续跑模式：参考音频已生成并通过试听，直接克隆其余语料
+                ds_name = await self._stage_continue_corpus(
+                    run, preview_dataset_id, texts,
+                    corpus_target_clips=corpus_target_clips,
+                )
+                n_clips = max(0, int(run["corpus"]["total"]) - 1) or len(texts)
+            elif dataset_dir:
                 # 自带数据集模式：跳过参考音频/语料生成，导入本地音频即数据集
                 ds_name = await self._stage_import_dataset(run, dataset_dir)
                 n_clips = int(run["corpus"]["total"])
@@ -1016,6 +1057,72 @@ class AutoModelPipelineService:
             "completed",
             f"数据集 {run['dataset_id']}（{ds_name}）导入完成"
             f"（{count} 条，已转码 44.1kHz 单声道 wav）",
+        )
+        return ds_name
+
+    async def _stage_continue_corpus(
+        self,
+        run: dict,
+        dataset_id: str,
+        texts: list[dict],
+        corpus_target_clips: Optional[int] = None,
+    ) -> str:
+        """corpus 阶段（试听确认续跑模式）：参考音频已生成并通过试听，直接克隆语料。
+
+        reference 阶段置 completed（detail 注明已试听确认）；corpus 计数透出语料任务
+        的 done/total；target_clips 模式下成片在后台任务内完成，计数器收敛为成片口径。
+        """
+        from modelstation.services.dataset_builder import get_dataset_builder
+
+        builder = get_dataset_builder()
+        self._set_stage(run, "reference", "completed", "初始参考音频已试听确认")
+        self._set_stage(
+            run,
+            "corpus",
+            "running",
+            "以已确认参考音频克隆语料进行中"
+            + (f"（目标 {corpus_target_clips} 片，合成后自动拼片）" if corpus_target_clips else ""),
+        )
+        try:
+            info = await builder.continue_generation(
+                dataset_id, texts, target_clips=corpus_target_clips
+            )
+        except ValueError as exc:
+            raise _StageError("corpus", str(exc))
+        except Exception as exc:
+            raise _StageError("corpus", f"语料生成任务提交失败: {exc}")
+        task_id = info["task_id"]
+        run["dataset_id"] = info["dataset_id"]
+        ds_name = info["name"]
+        run["corpus"]["done"] = 1
+        run["corpus"]["total"] = info["total"]
+
+        # 轮询语料任务至终态（failed → run failed）；终态后等待后台任务收尾
+        # （成片组装在批次生成器落终态之后执行），再读取最终计数
+        while True:
+            task = builder.get_task(task_id)
+            if task is None:
+                raise _StageError("corpus", f"语料生成任务不存在: {task_id}")
+            run["corpus"]["done"] = task["done"]
+            run["corpus"]["total"] = task["total"]
+            if task["status"] in ("completed", "failed"):
+                await builder.wait_task(task_id)
+                task = builder.get_task(task_id) or task
+                run["corpus"]["done"] = task["done"]
+                run["corpus"]["total"] = task["total"]
+                if task["status"] == "failed":
+                    raise _StageError(
+                        "corpus", f"语料生成任务失败: {task.get('error') or '未知错误'}"
+                    )
+                break
+            await asyncio.sleep(_CORPUS_POLL_SECONDS)
+
+        self._set_stage(
+            run,
+            "corpus",
+            "completed",
+            f"数据集 {run['dataset_id']}（{ds_name}）语料生成完成"
+            f"（{run['corpus']['done']}/{run['corpus']['total']}）",
         )
         return ds_name
 
