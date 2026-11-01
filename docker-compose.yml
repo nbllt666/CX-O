@@ -1,219 +1,29 @@
-# CX-O 统一推理服务 Docker Compose 编排
-# 包含 LLM (vLLM/TRT-LLM) 和 ASR (FunASR+SenseVoice) 服务
+# CX-O 统一推理服务 Docker Compose 聚合入口
 #
-# 使用方式:
-#   裸启动（仅 asr-sensevoice，llm/tuner 受 profile 门控不随裸 up 启动）: docker compose up
-#   启动 LLM:       docker compose --profile llm up llm
+# 2026-11-01 结构调整（change-id: organize-per-service-docker-deploy）：
+#   - 原内联的 asr-sensevoice / llm / cxo-tuner / cxo-evalkit 四段定义已逐字拆入
+#     docker/compose/ 下各自独立的 compose 文件，每服务一份、可单独构建与启停。
+#   - 拆分原因：单文件混排导致无法按服务独立部署/独立审计，且端口/卷/健康检查
+#     变更容易相互影响；拆分后每个服务只有一个真源文件。
+#   - 本文件仅作为兼容聚合器，不含任何 service 定义；修改某服务只需改其
+#     docker/compose/docker-compose.<service>.yml，根入口自动生效。
+#   - 新增的 app 服务（cxo-server / voiceworkstation / neko-adapter）不在本聚合器内，
+#     需用各自独立文件启动，例如：
+#       docker compose -f docker/compose/docker-compose.server.yml up -d
+#
+# 使用方式（与拆分前保持一致）：
+#   裸启动（仅 asr-sensevoice；llm/tuner/evalkit 受 profile 门控不随裸 up 启动）: docker compose up
 #   仅启动 ASR:     docker compose up asr-sensevoice
+#   启动 LLM:       docker compose --profile llm up llm
 #   启动 Tuner:     docker compose --profile tuner up cxo-tuner
+#   启动 EvalKit:   docker compose --profile eval up cxo-evalkit
 #   指定 LLM 后端:  LLM_BACKEND=vllm docker compose --profile llm up llm
 #                    LLM_BACKEND=trtllm docker compose --profile llm up llm
 
-services:
-  # ============================================================
-  # ASR SenseVoice (FunASR) 语音识别服务
-  # ============================================================
-  asr-sensevoice:
-    build:
-      context: ./CX-O-SERVER
-      dockerfile: ../docker/asr/Dockerfile
-    shm_size: '2gb'
-    ports:
-      - "${ASR_PORT:-8005}:8005"
-    environment:
-      - PYTHONIOENCODING=utf-8
-      # 在线聚类相似度阈值（cam++ 余弦；>= 阈值归簇，否则新建会话内临时簇 spk_N）
-      - SPK_SIM_THRESHOLD=${SPK_SIM_THRESHOLD:-0.65}
-      # 推理设备（2026-09-18）：默认 cpu。曾按人类裁决"试挂 GPU1"加速投机解码，
-      # 实测**无收益**（150ms 音频解码 GPU 125ms vs CPU 173ms 看似略快，但 600ms 音频
-      # GPU 249ms 反而慢于 CPU；SenseVoice 300ms GPU 170ms vs CPU 158ms）。
-      # 决定性证据：**10ms 音频在 GPU 上仍耗时 116ms**——投机解码的 ~120ms 里约 116ms
-      # 是 funasr `AutoModel.generate` 的固定开销（cache 初始化/特征/后处理，与音频长度
-      # 无关），非算力瓶颈，GPU 只会额外引入主机-设备传输开销。故回退纯 CPU。
-      # 历史教训（2026-08-18，仍有效）：ASR 用 GPU0 会挤爆显存（满 19.8GB）→ 全链路
-      # P50 超 2.9s 退化。
-      - ASR_DEVICE=${ASR_DEVICE:-cpu}
-      - CUDA_VISIBLE_DEVICES=
-    volumes:
-      - ./CX-O-SERVER/sensevoice:/app/sensevoice:ro
-      - ./CX-O-SERVER/api_server.py:/app/api_server.py:ro
-      # 2026-08-25 流式 ASR 容器改造：引擎包（fsmn-vad 分句 + paraformer 增量 + cam++ 声纹 + 在线聚类）
-      - ./CX-O-SERVER/asr_container:/app/asr_container:ro
-      # 声纹注册 profiles（服务端权威写入，容器只读消费；/api/v1/voiceprint/profiles/sync 重载）
-      - ./CX-O-SERVER/data/voiceprint:/app/data/voiceprint:ro
-      # 注意（2026-08-29）：asr-models 命名卷非空时，Docker 会跳过"镜像内容→空卷"
-      # 的初始化复制，镜像内 /root/.cache/modelscope 不会落入卷；更换/新增镜像内模型
-      # 后需 docker volume rm asr-models 重建空卷，以触发重新复制。
-      - asr-models:/root/.cache/modelscope
-    deploy:
-      resources:
-        reservations:
-          # 2026-09-18：曾挂 GPU1 试加速投机解码，实测无收益（见上方 ASR_DEVICE 注释），
-          # 已回退。保持空列表 = 不申请 GPU 设备。
-          devices: []
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8005/health"]
-      interval: 30s
-      timeout: 10s
-      retries: 5
-      start_period: 120s
-    restart: unless-stopped
-    networks:
-      - cxo-inference
+name: cxo
 
-  # ============================================================
-  # LLM 推理服务 (vLLM + GGUF 或 TRT-LLM)
-  # ============================================================
-  llm:
-    build:
-      # 2026-08-29 修复：context 改仓库根 + dockerfile 加 docker/llm/ 前缀——
-      # Dockerfile.cosyvoice-vllm 的 COPY third_party/... 为仓库根路径，原 ./docker/llm
-      # context 下必然解析失败。四份 Dockerfile 在仓库根 context 下的 COPY 核查：
-      #   vllm / trtllm：无 COPY，任何 context 均可构建；
-      #   cosyvoice-vllm：COPY third_party/cosyvoice-official、docker/llm/cv3plugin、
-      #     docker/llm/cosyvoice_server.py，均以仓库根为基准，根 context 下可解析；
-      #   cosyvoice-vllm.full（LLM_BACKEND=cosyvoice-vllm.full）：COPY 路径同上可解析，
-      #     但还需 --build-context models=./models/Fun-CosyVoice3-0.5B-2512 命名构建
-      #     上下文（compose 无法传递该参数）→ 该变体需按文件头部命令手动构建。
-      context: .
-      dockerfile: docker/llm/Dockerfile.${LLM_BACKEND:-vllm}
-      args:
-        - BUILDKIT_INLINE_CACHE=1
-    shm_size: '4gb'
-    ports:
-      - "${LLM_PORT:-8080}:8080"
-    environment:
-      # vLLM 模式
-      - MODEL_PATH=${LLM_MODEL_PATH:-/workspace/models/model.gguf}
-      - HOST=0.0.0.0
-      - PORT=8080
-      - MAX_MODEL_LEN=${LLM_MAX_MODEL_LEN:-4096}
-      - GPU_MEMORY_UTILIZATION=${LLM_GPU_MEM_UTIL:-0.9}
-      - DTYPE=${LLM_DTYPE:-auto}
-      - MAX_NUM_SEQS=${LLM_MAX_NUM_SEQS:-256}
-      - ENABLE_PREFIX_CACHING=${LLM_PREFIX_CACHING:-true}
-      # Dynamic LoRA 支持（默认关闭，LLM_ENABLE_LORA=true 时启用）
-      - ENABLE_LORA=${LLM_ENABLE_LORA:-false}
-      - BASE_LORA_PATH=${LLM_BASE_LORA_PATH:-/workspace/models/base_lora}
-      - MAX_LORAS=${LLM_MAX_LORAS:-8}
-      - LORA_MODULES=${LLM_LORA_MODULES:-}
-      # TRT-LLM 模式
-      - ENGINE_PATH=${LLM_ENGINE_PATH:-/workspace/engines}
-      # C8（2026-08-30）：tritonserver:24.12 旧版 trtllm-serve 无连字符限流参数，
-      # 以下两变量对旧版不生效（start-trtllm.sh 已同步删除命令行传参）；保留仅为
-      # 向后兼容，新版 trtllm-serve 恢复限流参数后可直接复用。
-      - MAX_BATCH_SIZE=${LLM_MAX_BATCH_SIZE:-256}
-      - MAX_NUM_TOKENS=${LLM_MAX_NUM_TOKENS:-8192}
-    volumes:
-      - ${LLM_MODELS_DIR:-./models}:/workspace/models:ro
-      - llm-engines:/workspace/engines:ro
-    deploy:
-      resources:
-        reservations:
-          devices:
-            - driver: nvidia
-              device_ids: ['${LLM_GPU_ID:-0}']
-              capabilities: [gpu]
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
-      interval: 30s
-      timeout: 10s
-      retries: 5
-      start_period: 120s
-    restart: unless-stopped
-    networks:
-      - cxo-inference
-    profiles:
-      - llm
-
-  # ============================================================
-  # CXO-Tuner 进化服务（QLoRA 微调 / 在线 DPO 进化）
-  # ============================================================
-  # 可选 profile：仅 `docker compose --profile tuner up` 时才启动，
-  # 不启用时完全不影响主系统（asr-sensevoice / llm）。
-  # 镜像约定：cxo/tuner:latest 由 CXO-Tuner/Dockerfile 构建（C5：2026-08-30 补齐
-  # build 源，此前 compose 引用镜像但无构建入口）。
-  cxo-tuner:
-    image: cxo/tuner:latest
-    build:
-      context: ./CXO-Tuner
-      dockerfile: Dockerfile
-    profiles:
-      - tuner
-    ports:
-      - "${CXO_TUNER_PORT:-8310}:8300"
-    environment:
-      # tuner/config.py load_config() 从 CXO_TUNER_CONFIG(JSON) 读取全部配置；
-      # 此处由 compose 变量拼装 JSON，保证镜像内可直接解析，与 config.py 读取方式对齐。
-      # CUDA_VISIBLE_DEVICES 留空（默认）时 tuner 回退纯 CPU 推理；需 GPU 时注入如 "0"。
-      - CXO_TUNER_CONFIG={"judge_model":"${CXO_TUNER_JUDGE_MODEL:-}","base_model":"${CXO_TUNER_BASE_MODEL:-}","vllm_url":"${CXO_TUNER_VLLM_URL:-}","dataset_dir":"/app/data/dataset","lora_dir":"/app/models/lora","character_cards_dir":"/app/data/anchors","trainer":{"CUDA_VISIBLE_DEVICES":"${CXO_TUNER_CUDA_DEVICES:-}"}}
-      # 便于人为可读的独立变量（与台积约定对齐），实际取值以上述 CXO_TUNER_CONFIG 为准
-      - CXO_TUNER_JUDGE_MODEL=${CXO_TUNER_JUDGE_MODEL:-}
-      - CXO_TUNER_BASE_MODEL=${CXO_TUNER_BASE_MODEL:-}
-      - CUDA_VISIBLE_DEVICES=${CXO_TUNER_CUDA_DEVICES:-}
-      - NVIDIA_VISIBLE_DEVICES=all
-    volumes:
-      - ./data/tuner_dataset:/app/data/dataset
-      - ./models/lora:/app/models/lora
-      - ./config/character_cards:/app/data/anchors
-    deploy:
-      resources:
-        reservations:
-          devices:
-            - driver: nvidia
-              count: 1
-              capabilities: [gpu]
-    # X2 修复：补齐 healthcheck（asr/llm 均有）；端点为 /api/v1/health（APIRouter prefix="/api/v1"），
-    # 容器内端口 8300 与 ports 映射及 uvicorn 启动配置对齐；轻量连通性检查。
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8300/api/v1/health"]
-      interval: 30s
-      timeout: 10s
-      retries: 5
-      start_period: 60s
-    restart: unless-stopped
-    networks:
-      - cxo-inference
-
-  # ============================================================
-  # CXO-EvalKit 评测服务（LLM 评测框架：memory/latency/quality suites）
-  # ============================================================
-  # 可选 profile：裸 up 不启动，`docker compose --profile eval up cxo-evalkit` 启动。
-  # 宿主端口默认 8320（CXO_EVALKIT_PORT 覆盖），容器内 8300；
-  # healthcheck 用 python urllib 探活（镜像不装 curl）；数据卷 ./data/evalkit → /app/data。
-  cxo-evalkit:
-    build:
-      context: ./CXO-EvalKit
-      dockerfile: Dockerfile
-    profiles: [eval]
-    ports:
-      - "${CXO_EVALKIT_PORT:-8320}:8300"
-    environment:
-      - PYTHONIOENCODING=utf-8
-    volumes:
-      - ./data/evalkit:/app/data
-      - type: bind
-        source: ./CXO-EvalKit/config.json
-        target: /app/config.json
-        read_only: true
-        bind:
-          create_host_path: false
-    healthcheck:
-      test: ["CMD", "python", "-c", "import urllib.request;urllib.request.urlopen('http://localhost:8300/api/v1/health')"]
-      interval: 30s
-      timeout: 10s
-      retries: 5
-      start_period: 20s
-    restart: unless-stopped
-    networks:
-      - cxo-inference
-
-volumes:
-  llm-engines:
-    driver: local
-  asr-models:
-    driver: local
-
-networks:
-  cxo-inference:
-    driver: bridge
+include:
+  - docker/compose/docker-compose.asr.yml
+  - docker/compose/docker-compose.llm.yml
+  - docker/compose/docker-compose.tuner.yml
+  - docker/compose/docker-compose.evalkit.yml

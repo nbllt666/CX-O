@@ -1,0 +1,17 @@
+# Dockerfile 专属忽略文件（BuildKit 的 Dockerfile.dockerignore）
+# 生效范围：仅 docker/asr/Dockerfile 构建时生效；不影响 CX-O-SERVER/.dockerignore
+#           （后者已改为 SERVER 黑名单）。
+# 环境要求：需 BuildKit（DOCKER_BUILDKIT=1，Docker 23+ 默认开启）。
+# 来源：承接原 CX-O-SERVER/.dockerignore 的 ASR 专用白名单内容
+#       （change-id: organize-per-service-docker-deploy，2026-11-01）。
+#
+# CX-O-SERVER 构建上下文裁剪（仅 ASR 容器构建所需）
+# 只保留：SenseVoice 代码、ASR 容器引擎、api_server、内置模型缓存
+*
+!sensevoice
+!sensevoice/**
+!asr_container
+!asr_container/**
+!api_server.py
+!modelscope_cache
+!modelscope_cache/**

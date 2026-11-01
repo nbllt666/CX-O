@@ -1,0 +1,47 @@
+# CXO-EvalKit 评测服务（独立编排，profiles: [eval]）
+# 从根 docker-compose.yml 拆出（change-id: organize-per-service-docker-deploy）
+#
+# 使用方式:
+#   单独启动: docker compose -f docker/compose/docker-compose.evalkit.yml --profile eval up -d
+#   根聚合器: docker compose --profile eval up cxo-evalkit
+# 路径基准: 本文件位于 docker/compose/，构建上下文与卷路径以 ../../ 为前缀。
+
+services:
+  # ============================================================
+  # CXO-EvalKit 评测服务（LLM 评测框架：memory/latency/quality suites）
+  # ============================================================
+  # 可选 profile：裸 up 不启动，`docker compose --profile eval up cxo-evalkit` 启动。
+  # 宿主端口默认 8320（CXO_EVALKIT_PORT 覆盖），容器内 8300；
+  # healthcheck 用 python urllib 探活（镜像不装 curl）；数据卷 ../../data/evalkit → /app/data。
+  cxo-evalkit:
+    build:
+      context: ../../CXO-EvalKit
+      dockerfile: Dockerfile
+    profiles: [eval]
+    ports:
+      - "${CXO_EVALKIT_PORT:-8320}:8300"
+    environment:
+      - PYTHONIOENCODING=utf-8
+    volumes:
+      - ../../data/evalkit:/app/data
+      - type: bind
+        source: ../../CXO-EvalKit/config.json
+        target: /app/config.json
+        read_only: true
+        bind:
+          create_host_path: false
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request;urllib.request.urlopen('http://localhost:8300/api/v1/health')"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 20s
+    restart: unless-stopped
+    networks:
+      - cxo-inference
+
+networks:
+  cxo-inference:
+    # 2026-11-01 复审修正：显式固定网络名，独立 -f 与根聚合器均落在 cxo-inference。
+    name: cxo-inference
+    driver: bridge

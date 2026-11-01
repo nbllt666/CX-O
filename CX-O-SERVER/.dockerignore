@@ -1,0 +1,49 @@
+# CX-O-SERVER 构建上下文忽略清单（SERVER 镜像黑名单）
+# change-id: organize-per-service-docker-deploy（2026-11-01）
+#
+# 背景：本文件原为 ASR 专用白名单（`*` + `!sensevoice/**` 等），会把 SERVER 代码
+#   排除在构建上下文之外。ASR 白名单已迁至 docker/asr/Dockerfile.dockerignore
+#   （BuildKit 的 Dockerfile 专属忽略文件），本文件改为 SERVER 构建的排除清单。
+#
+# 服务对象：CX-O-SERVER/Dockerfile（context = ./CX-O-SERVER）。
+# 必须保留：server/ 与 requirements.txt 必须进入构建上下文。
+
+# --- 运行时数据与日志（容器内由 bind mount 提供） ---
+data/
+logs/
+backups/
+
+# --- 测试、覆盖率与测试日志产物 ---
+tests/
+htmlcov/
+.pytest_cache/
+.coverage
+coverage_output.txt
+*.log
+
+# --- Python 缓存 / 字节码 ---
+__pycache__/
+**/__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.egg-info/
+
+# --- 本地数据库与密钥（config.json 运行时以 env 或可选 bind mount 提供） ---
+*.db
+*.sqlite
+*.sqlite3
+config.json
+
+# --- 本地 AC 资产（不入镜像） ---
+.trae/
+
+# --- ASR 专用文件（SERVER 镜像不需要，避免体积与混淆） ---
+asr_container/
+sensevoice/
+api_server.py
+modelscope_cache/
+
+# --- VCS 元数据 ---
+.git/
+.gitignore

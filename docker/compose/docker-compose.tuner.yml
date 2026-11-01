@@ -1,0 +1,63 @@
+# CXO-Tuner 进化服务（独立编排，profiles: [tuner]）
+# 从根 docker-compose.yml 拆出（change-id: organize-per-service-docker-deploy）
+#
+# 使用方式:
+#   单独启动: docker compose -f docker/compose/docker-compose.tuner.yml --profile tuner up -d
+#   根聚合器: docker compose --profile tuner up cxo-tuner
+# 路径基准: 本文件位于 docker/compose/，构建上下文与卷路径以 ../../ 为前缀。
+
+services:
+  # ============================================================
+  # CXO-Tuner 进化服务（QLoRA 微调 / 在线 DPO 进化）
+  # ============================================================
+  # 可选 profile：仅 `docker compose --profile tuner up` 时才启动，
+  # 不启用时完全不影响主系统（asr-sensevoice / llm）。
+  # 镜像约定：cxo/tuner:latest 由 CXO-Tuner/Dockerfile 构建（C5：2026-08-30 补齐
+  # build 源，此前 compose 引用镜像但无构建入口）。
+  cxo-tuner:
+    image: cxo/tuner:latest
+    build:
+      context: ../../CXO-Tuner
+      dockerfile: Dockerfile
+    profiles:
+      - tuner
+    ports:
+      - "${CXO_TUNER_PORT:-8310}:8300"
+    environment:
+      # tuner/config.py load_config() 从 CXO_TUNER_CONFIG(JSON) 读取全部配置；
+      # 此处由 compose 变量拼装 JSON，保证镜像内可直接解析，与 config.py 读取方式对齐。
+      # CUDA_VISIBLE_DEVICES 留空（默认）时 tuner 回退纯 CPU 推理；需 GPU 时注入如 "0"。
+      - CXO_TUNER_CONFIG={"judge_model":"${CXO_TUNER_JUDGE_MODEL:-}","base_model":"${CXO_TUNER_BASE_MODEL:-}","vllm_url":"${CXO_TUNER_VLLM_URL:-}","dataset_dir":"/app/data/dataset","lora_dir":"/app/models/lora","character_cards_dir":"/app/data/anchors","trainer":{"CUDA_VISIBLE_DEVICES":"${CXO_TUNER_CUDA_DEVICES:-}"}}
+      # 便于人为可读的独立变量（与台积约定对齐），实际取值以上述 CXO_TUNER_CONFIG 为准
+      - CXO_TUNER_JUDGE_MODEL=${CXO_TUNER_JUDGE_MODEL:-}
+      - CXO_TUNER_BASE_MODEL=${CXO_TUNER_BASE_MODEL:-}
+      - CUDA_VISIBLE_DEVICES=${CXO_TUNER_CUDA_DEVICES:-}
+      - NVIDIA_VISIBLE_DEVICES=all
+    volumes:
+      - ../../data/tuner_dataset:/app/data/dataset
+      - ../../models/lora:/app/models/lora
+      - ../../config/character_cards:/app/data/anchors
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    # X2 修复：补齐 healthcheck（asr/llm 均有）；端点为 /api/v1/health（APIRouter prefix="/api/v1"），
+    # 容器内端口 8300 与 ports 映射及 uvicorn 启动配置对齐；轻量连通性检查。
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8300/api/v1/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+    restart: unless-stopped
+    networks:
+      - cxo-inference
+
+networks:
+  cxo-inference:
+    # 2026-11-01 复审修正：显式固定网络名，独立 -f 与根聚合器均落在 cxo-inference。
+    name: cxo-inference
+    driver: bridge

@@ -8,7 +8,8 @@
  *
  * 结构：可单测的纯路由函数 handleControlRoute（ctx 注入依赖，无真实 IO）+
  * 薄 HTTP 层 startControlServer（真实接线），与 toolBridgeCore/toolBridge
- * 的分层风格一致。仅绑定 127.0.0.1，不对局域网暴露。
+ * 的分层风格一致。监听地址取自配置 controlHost（默认 127.0.0.1，不对局域网暴露；
+ * 容器内由环境变量 CXO_NEKO_ADAPTER_CONTROL_HOST 覆盖为 0.0.0.0）。
  * ============================================================================
  */
 import {
@@ -96,7 +97,14 @@ const CONTROL_ROUTES: Record<string, readonly string[]> = {
 const LOG_LIMIT_MAX = 1000;
 
 /** PUT /config 允许的字符串键 */
-const CONFIG_STRING_KEYS: readonly string[] = ['python', 'sourceDir', 'backendUrl'];
+const CONFIG_STRING_KEYS: readonly string[] = [
+  'python',
+  'sourceDir',
+  'backendUrl',
+  'controlHost',
+  'bridgeHost',
+  'bridgePublicHost',
+];
 /** PUT /config 允许的数字键（number ≥ 0） */
 const CONFIG_NUMBER_KEYS: readonly string[] = ['port', 'controlPort'];
 
@@ -358,11 +366,11 @@ function writeJson(res: ServerResponse, status: number, payload: unknown, extraH
   res.end(data);
 }
 
-/** 监听指定端口，成功后返回实际绑定端口（port=0 时由 OS 分配） */
+/** 监听指定端口，成功后返回实际绑定端口（port=0 时由 OS 分配）；地址取自配置 controlHost */
 function listenOn(server: HttpServer, port: number): Promise<number> {
   return new Promise((resolve, reject) => {
     server.once('error', reject);
-    server.listen(port, '127.0.0.1', () => {
+    server.listen(port, getConfig('controlHost'), () => {
       server.removeListener('error', reject);
       const addr = server.address() as AddressInfo;
       resolve(addr.port);
@@ -385,7 +393,7 @@ export interface ControlServerHandle {
   close(): Promise<void>;
 }
 
-/** 启动控制面服务器：仅绑定 127.0.0.1，EADDRINUSE 递增重试最多 +50 */
+/** 启动控制面服务器：绑定配置 controlHost（默认 127.0.0.1），EADDRINUSE 递增重试最多 +50 */
 export async function startControlServer(options?: ControlServerOptions): Promise<ControlServerHandle> {
   const ctx = options?.ctx ?? buildDefaultContext();
   const basePort = options?.port ?? getConfig('controlPort');
@@ -455,8 +463,8 @@ export async function startControlServer(options?: ControlServerOptions): Promis
   }
 
   ctx.controlPort = actualPort;
-  // 机器可读就绪行（供脚本/宿主探测）
-  console.log(`[adapter] control listening on 127.0.0.1:${actualPort}`);
+  // 机器可读就绪行（供脚本/宿主探测）；host 取实际监听配置（env 覆盖优先）
+  console.log(`[adapter] control listening on ${getConfig('controlHost')}:${actualPort}`);
 
   return {
     port: actualPort,

@@ -62,13 +62,16 @@ binding_rules:
 
 CX-O 是**多服务架构**，以下服务目录是独立服务，**非 AC 模块**，仅通过 `public/` 契约通信：
 
-| 服务 | 根级目录 | 技术栈 | 端口 |
-|------|---------|--------|------|
-| CX-O Frontend | `APP-Frontend/` | React 18 + TypeScript + Vite + Electron | 3100（浏览器模式）/ Electron 桌面模式 |
-| CX-O Server | `CX-O-SERVER/` | Python 3.11+ + FastAPI + WebSocket | 8000 |
-| CX-O VoiceWorkStation | `CX-O-VoiceWorkStation/` | Python + FastAPI — 作曲/翻唱CXFC（作曲/歌曲合成/SVC 翻唱推理/音域分析自动升降 key/双人合唱分离流水线/CXFC 插件；训练域已迁至 CXO-ModelStation；分离引擎见 engines/） | 8200 |
-| CX-O ModelStation | `CXO-ModelStation/` | Python + FastAPI（单 worker）+ Vite/React 独立前端；2026-09-26 起另有桌面版形态（Electron 壳，自带便携 Python 运行时 + 三引擎，打包产物 `release/`，见 CXO-ModelStation/DEPLOY.md §8） | 8300（后端；桌面版遇占用自动顺延）/ 3300（前端 dev 与桌面本地站点） |
-| CXO-EvalKit | `CXO-EvalKit/` | Python 3.11+ + FastAPI — LLM 评测框架（自包含子项目，对主服务执行 memory/latency/quality 三维度评测 + judge 评分 + 阈值判定，报告落 run 目录；部署见 CXO-EvalKit/DEPLOY.md） | 8320（宿主，容器内 8300） |
+| 服务 | 根级目录 | 技术栈 | 端口 | 容器资产（Dockerfile / compose） |
+|------|---------|--------|------|-------------------------------|
+| CX-O Frontend | `APP-Frontend/` | React 18 + TypeScript + Vite + Electron | 3100（浏览器模式）/ Electron 桌面模式 | 不容器化（D-4） |
+| CX-O Server | `CX-O-SERVER/` | Python 3.11+ + FastAPI + WebSocket | 8000 | `CX-O-SERVER/Dockerfile` + `docker/compose/docker-compose.server.yml` |
+| CX-O VoiceWorkStation | `CX-O-VoiceWorkStation/` | Python + FastAPI — 作曲/翻唱CXFC（作曲/歌曲合成/SVC 翻唱推理/音域分析自动升降 key/双人合唱分离流水线/CXFC 插件；训练域已迁至 CXO-ModelStation；分离引擎见 engines/） | 8200 | `CX-O-VoiceWorkStation/Dockerfile` + `docker/compose/docker-compose.voiceworkstation.yml` |
+| CX-O ModelStation | `CXO-ModelStation/` | Python + FastAPI（单 worker）+ Vite/React 独立前端；2026-09-26 起另有桌面版形态（Electron 壳，自带便携 Python 运行时 + 三引擎，打包产物 `release/`，见 CXO-ModelStation/DEPLOY.md §8） | 8300（后端；桌面版遇占用自动顺延）/ 3300（前端 dev 与桌面本地站点） | 阻塞：目录缺失（未生成 Dockerfile / compose，待目录恢复后补齐） |
+| CXO-EvalKit | `CXO-EvalKit/` | Python 3.11+ + FastAPI — LLM 评测框架（自包含子项目，对主服务执行 memory/latency/quality 三维度评测 + judge 评分 + 阈值判定，报告落 run 目录；部署见 CXO-EvalKit/DEPLOY.md） | 8320（宿主，容器内 8300） | `CXO-EvalKit/Dockerfile`（既有）+ `docker/compose/docker-compose.evalkit.yml`（profile `eval`） |
+| CXO-NekoAdapter | `CXO-NekoAdapter/` | Node.js + TypeScript — 电脑控制适配器（控制面 + CXFC 桥） | 48920（控制面）/ 28443-28452（CXFC 桥冲突递增段） | `CXO-NekoAdapter/Dockerfile` + `docker/compose/docker-compose.neko-adapter.yml` |
+| CXO-Tuner | `CXO-Tuner/` | Python + FastAPI — 自我进化（QLoRA 微调 / 在线 DPO） | 8310（宿主，容器内 8300） | `CXO-Tuner/Dockerfile`（既有）+ `docker/compose/docker-compose.tuner.yml`（profile `tuner`） |
+| ASR / LLM 推理服务 | `docker/asr/`、`docker/llm/` | Docker 容器（FunASR + SenseVoice；vLLM / TRT-LLM） | 8005（ASR）/ 8080（LLM） | `docker/asr/Dockerfile`、`docker/llm/Dockerfile.*`（既有）+ `docker/compose/docker-compose.asr.yml`、`docker/compose/docker-compose.llm.yml`（profile `llm`） |
 
 **第三方独立仓库**（原位不动，不纳入 AC 模块管理）：
 - `LLM_Live2D-master/`
@@ -83,6 +86,8 @@ CX-O 是**多服务架构**，以下服务目录是独立服务，**非 AC 模�
 - **`modules/` 为空容器**：预留给未来按 AC 规范（`模块N_xxx`）新增的后端模块，详见 [modules/README.md](./modules/README.md)
 - **`public/` 为跨服务公共真相源**：三层契约（schema/interface_stub/config_template）由各服务共同遵守
 - **`.trae/` 为 AC 资产区**：Rules/Skills/specs/documents/Pipeline，已 .gitignore 忽略（不入 git，本地 AC 资产）
+- **`docker/` 为容器化资产区**（change-id: organize-per-service-docker-deploy，2026-11-01）：`docker/compose/` 每服务一份 compose（asr/llm/tuner/evalkit/server/voiceworkstation/neko-adapter）、`docker/compose/weaviate/` 为 Weaviate 变体、`docker/asr` 与 `docker/llm` 为推理镜像定义；根 `docker-compose.yml` 仅为 `include` 聚合器，部署索引见 [docker/README.md](./docker/README.md)
+- **根 `requirements.txt` 为 CX-O-SERVER 清单兼容垫片**：真实依赖位于 `CX-O-SERVER/requirements.txt`，根文件只保留 `-r CX-O-SERVER/requirements.txt`，`pip install -r requirements.txt` 命令不变
 
 ### 4.3 契约映射表
 

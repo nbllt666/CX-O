@@ -39,7 +39,9 @@ services:
 
   t2v-transformers:
     build:
-      context: ./weaviate-embeddings
+      # 2026-11-01 路径适配：本文件位于 docker/compose/weaviate/，构建上下文需回到仓库根，
+      # 故以 ../../../ 指回 C:\CX-O\weaviate-embeddings（实测 ../../ 仅到 C:\CX-O\docker）。
+      context: ../../../weaviate-embeddings
       dockerfile: Dockerfile.gpu
     image: weaviate-embeddings-gpu:latest
     container_name: weaviate-t2v-transformers

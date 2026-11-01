@@ -44,6 +44,9 @@ const MOCK_CONFIG = {
   port: 48916,
   backendUrl: 'http://127.0.0.1:8000',
   controlPort: 48920,
+  controlHost: '127.0.0.1',
+  bridgeHost: '127.0.0.1',
+  bridgePublicHost: '127.0.0.1',
   autoStart: false,
 };
 
@@ -195,6 +198,27 @@ describe('handleControlRoute', () => {
     expect(r.status).toBe(200);
     expect(r.payload).toEqual({ ...MOCK_CONFIG, port: 48999, backendUrl: 'http://127.0.0.1:9000' });
     expect(calls.setConfig[0]).toEqual({ port: 48999, backendUrl: 'http://127.0.0.1:9000' });
+  });
+
+  it('PUT /config 接受 controlHost / bridgeHost / bridgePublicHost（新键已进入字符串白名单）', async () => {
+    const { ctx, calls } = makeCtx();
+    const r = await server.handleControlRoute(ctx, 'PUT', '/config', {
+      controlHost: '0.0.0.0',
+      bridgeHost: '0.0.0.0',
+      bridgePublicHost: 'cxo-neko-adapter',
+    });
+    expect(r.status).toBe(200);
+    expect(r.payload).toEqual({
+      ...MOCK_CONFIG,
+      controlHost: '0.0.0.0',
+      bridgeHost: '0.0.0.0',
+      bridgePublicHost: 'cxo-neko-adapter',
+    });
+    expect(calls.setConfig[0]).toEqual({
+      controlHost: '0.0.0.0',
+      bridgeHost: '0.0.0.0',
+      bridgePublicHost: 'cxo-neko-adapter',
+    });
   });
 
   it('PUT /config 校验失败：非法键 / 类型错 / 负数端口 / 非对象体 → 400', async () => {
@@ -384,6 +408,30 @@ describe('startControlServer 集成（临时数据目录）', () => {
       const notAllowed = await httpRequestJson(handle.port, 'GET', '/start', null);
       expect(notAllowed.status).toBe(405);
       expect(notAllowed.headers.allow).toBe('POST');
+    } finally {
+      await handle.close();
+    }
+  });
+
+  it('PUT /config 写入 controlHost / bridgeHost / bridgePublicHost 返回 200 并持久化到临时目录', async () => {
+    const handle = await server.startControlServer({ port: 0 });
+    try {
+      const put = await httpRequestJson(handle.port, 'PUT', '/config', {
+        controlHost: '0.0.0.0',
+        bridgeHost: '0.0.0.0',
+        bridgePublicHost: 'cxo-neko-adapter',
+      });
+      expect(put.status).toBe(200);
+      expect(put.body).toMatchObject({
+        controlHost: '0.0.0.0',
+        bridgeHost: '0.0.0.0',
+        bridgePublicHost: 'cxo-neko-adapter',
+      });
+
+      const disk = JSON.parse(fs.readFileSync(path.join(tmpDataDir, 'config.json'), 'utf-8')) as Record<string, unknown>;
+      expect(disk.controlHost).toBe('0.0.0.0');
+      expect(disk.bridgeHost).toBe('0.0.0.0');
+      expect(disk.bridgePublicHost).toBe('cxo-neko-adapter');
     } finally {
       await handle.close();
     }

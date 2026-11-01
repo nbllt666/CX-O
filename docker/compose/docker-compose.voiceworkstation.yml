@@ -1,0 +1,62 @@
+# CX-O VoiceWorkStation 作曲/翻唱CXFC 服务（独立编排）
+# change-id: organize-per-service-docker-deploy（Task 3）
+#
+# 使用方式:
+#   单独启动: docker compose -f docker/compose/docker-compose.voiceworkstation.yml up -d
+#   查看健康: curl -fsS http://127.0.0.1:${CXO_VWS_PORT:-8200}/health
+# 路径基准: 本文件位于 docker/compose/，构建上下文与卷路径以 ../../ 为前缀。
+# 入口约定: 镜像 CMD 为 uvicorn CLI（--host 0.0.0.0 --port 8200），不走 main() 的
+#           127.0.0.1 默认；服务源码 workstation/config.py 保持不动。
+# 不并入根聚合器（根 docker-compose.yml 仍只聚合 asr/llm/tuner/evalkit）。
+
+services:
+  # ============================================================
+  # cxo-vws — CX-O-VoiceWorkStation（作曲/歌曲合成/SVC 翻唱/CXFC）
+  # ============================================================
+  cxo-vws:
+    build:
+      context: ../../CX-O-VoiceWorkStation
+      dockerfile: Dockerfile
+    image: cxo/voiceworkstation:latest
+    ports:
+      - "${CXO_VWS_PORT:-8200}:8200"
+    # 根 .env 可选加载：存在时注入（含 ADMIN_API_KEY 等共享变量），
+    # 缺失时不阻断独立启动（required: false 为 compose 新版 long syntax）。
+    env_file:
+      - path: ../../.env
+        required: false
+    environment:
+      - PYTHONIOENCODING=utf-8
+      # CORS 白名单（逗号分隔），与 workstation/config.py 默认值一致；
+      # null 为 file:// 源（Electron 桌面模式）。
+      - CXO_VWS_CORS_ORIGINS=${CXO_VWS_CORS_ORIGINS:-http://localhost:3100,http://127.0.0.1:3100,null}
+    volumes:
+      # 运行时数据根：songs / svc-results / input / separation / voice_profiles 等。
+      - ../../CX-O-VoiceWorkStation/data:/app/data
+      # ===== 可选只读挂载（默认不启用，按需取消注释）=====
+      # 1) SoundFont（.sf2）：挂载后仍需让 music.soundfont_path 指向容器内路径；
+      #    现码该字段只能由 MusicConfig 默认值/代码配置，无环境变量覆盖（已知边界）。
+      # - ../../CX-O-VoiceWorkStation/data/soundfonts/GeneralUser.sf2:/app/data/soundfonts/GeneralUser.sf2:ro
+      # 2) CXO-ModelStation 只读：config.py 以 _BASE_DIR.parent（容器内 = /）解析默认路径，
+      #    因此挂到 /CXO-ModelStation 恰好对齐 sovits_svc.models_dir / so_vits_svc_dir /
+      #    cover_analysis.training_data_dir 的默认值（仅列表与推理输入，禁止写入）。
+      # - ../../CXO-ModelStation:/CXO-ModelStation:ro
+      # 3) DiffSinger（翻唱/歌声合成外部引擎）：路径由配置决定，镜像内不含。
+      # - ../../<DiffSinger 目录>:/opt/diffsinger:ro
+    healthcheck:
+      # 与 Dockerfile HEALTHCHECK 一致（/health 为轻量连通性检查，不触发耗时生成）
+      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:8200/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 120s
+    restart: unless-stopped
+    networks:
+      - cxo-inference
+
+networks:
+  cxo-inference:
+    # 显式固定网络名，保证独立 -f 与各服务 compose 都落在同名 cxo-inference 网络
+    # （spec Requirement「共享网络互联」：容器内可按服务名解析）。
+    name: cxo-inference
+    driver: bridge

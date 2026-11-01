@@ -19,7 +19,7 @@ from server.core.model_router import ModelRouter
 
 # 项目根（CX-O-SERVER 的上一级，即 c:\CX-O）
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
-DOCKER_COMPOSE = PROJECT_ROOT / "docker-compose.yml"
+DOCKER_COMPOSE = PROJECT_ROOT / "docker" / "compose" / "docker-compose.llm.yml"
 DOCKERFILE_VLLM = PROJECT_ROOT / "docker" / "llm" / "Dockerfile.vllm"
 
 
@@ -138,7 +138,7 @@ class TestConfigOverride:
 # ---------------------------------------------------------------- compose 多 adapter 装载解析
 class TestComposeMultiAdapter:
     def test_compose_defines_lora_envs(self):
-        """docker-compose.yml 的 llm 服务应暴露 LORA_MODULES / MAX_LORAS 默认值。"""
+        """docker/compose/docker-compose.llm.yml（llm 单服务真源）应暴露 LORA_MODULES / MAX_LORAS 默认值。"""
         assert DOCKER_COMPOSE.exists(), f"缺少 {DOCKER_COMPOSE}"
         with open(DOCKER_COMPOSE, "r", encoding="utf-8") as f:
             compose = yaml.safe_load(f)

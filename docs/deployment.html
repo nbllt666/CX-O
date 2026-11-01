@@ -691,7 +691,7 @@ cd APP-Frontend
 $env:ADMIN_API_KEY = "换成你自己的长随机字符串"
 
 # 若用 Docker 部署后端，需在编排中把该变量注入容器环境
-# （当前仓库 docker-compose.yml 不含 CX-O-SERVER 服务）</code></pre>
+# （后端 compose：docker/compose/docker-compose.server.yml，可将 ADMIN_API_KEY 写入根 .env 后由 env_file 注入）</code></pre>
     <div class="warning-box">
       <h4>未配置密钥时的表现</h4>
       <p>WebSocket 仅允许本机（loopback）连接，远端裸连接被拒绝；HTTP 记忆端点直接返回 403（<code>Admin API key not configured</code>）。这是默认强制的安全基线，不再存在“未配置即放行”的开发模式。</p>
@@ -753,31 +753,61 @@ cp .env.example .env</code></pre>
 <!-- Docker 部署 -->
 <section class="section" id="docker">
   <h2 class="section-title">🐳 Docker 部署</h2>
-  <p class="section-desc">推理服务通过 Docker Compose 编排，按需启动。</p>
+  <p class="section-desc">各服务一份独立 compose（位于 <code>docker/compose/</code>），可独立启动；根 <code>docker-compose.yml</code> 仅为聚合器。完整索引见 <code>docker/README.md</code>。</p>
 
   <div class="card">
     <h3>Docker Compose 服务一览</h3>
     <table>
       <tr>
         <th>服务名</th>
-        <th>用途</th>
-        <th>容器端口 → 宿主端口</th>
-        <th>GPU</th>
+        <th>用途 / compose 文件</th>
+        <th>宿主端口 → 容器端口</th>
+        <th>GPU / profile</th>
       </tr>
       <tr>
         <td><code>asr-sensevoice</code></td>
-        <td>ASR 语音识别（FunASR + SenseVoice）</td>
+        <td>ASR 语音识别（FunASR + SenseVoice）· <code>docker/compose/docker-compose.asr.yml</code></td>
         <td>8005 → 8005</td>
         <td>CPU（无空余 GPU）</td>
       </tr>
       <tr>
         <td><code>llm</code></td>
-        <td>LLM 推理（vLLM 或 TRT-LLM）</td>
+        <td>LLM 推理（vLLM 或 TRT-LLM）· <code>docker/compose/docker-compose.llm.yml</code></td>
         <td>8080 → 8080</td>
-        <td>GPU</td>
+        <td>GPU · profile <code>llm</code></td>
+      </tr>
+      <tr>
+        <td><code>cxo-server</code></td>
+        <td>CX-O 后端（FastAPI）· <code>docker/compose/docker-compose.server.yml</code></td>
+        <td>8000 → 8000</td>
+        <td>CPU</td>
+      </tr>
+      <tr>
+        <td><code>cxo-vws</code></td>
+        <td>语音工作站（作曲 / 翻唱 CXFC）· <code>docker/compose/docker-compose.voiceworkstation.yml</code></td>
+        <td>8200 → 8200</td>
+        <td>CPU</td>
+      </tr>
+      <tr>
+        <td><code>cxo-neko-adapter</code></td>
+        <td>电脑控制适配器（控制面 + CXFC 桥）· <code>docker/compose/docker-compose.neko-adapter.yml</code></td>
+        <td>48920 → 48920；28443-28452 → 28443-28452</td>
+        <td>CPU</td>
+      </tr>
+      <tr>
+        <td><code>cxo-tuner</code></td>
+        <td>自我进化（QLoRA / DPO）· <code>docker/compose/docker-compose.tuner.yml</code></td>
+        <td>8310 → 8300</td>
+        <td>GPU · profile <code>tuner</code></td>
+      </tr>
+      <tr>
+        <td><code>cxo-evalkit</code></td>
+        <td>LLM 评测框架 · <code>docker/compose/docker-compose.evalkit.yml</code></td>
+        <td>8320 → 8300</td>
+        <td>CPU · profile <code>eval</code></td>
       </tr>
     </table>
-    <p style="margin-top:12px; color:var(--text-dim)">Docker Compose 现仅编排 ASR 与 LLM 推理服务；TTS 语音合成走独立服务（CosyVoice3 / VoiceDesign / Qwen3-TTS Base），不在此编排内。</p>
+    <p style="margin-top:12px; color:var(--text-dim)">TTS 语音合成走独立服务（CosyVoice3 / VoiceDesign / Qwen3-TTS Base），不在此编排内。Weaviate 向量库使用 <code>docker/compose/weaviate/</code> 下的变体（<code>cpu.yml</code> / <code>gpu.yml</code> / <code>gpu-custom.yml</code> / <code>gpu-full.yml</code> / <code>gpu-multilingual.yml</code>，8090 → 8080、50061 → 50051）。根 <code>docker compose up</code> 仍只启动 <code>asr-sensevoice</code>；<code>cxo-server</code> / <code>cxo-vws</code> / <code>cxo-neko-adapter</code> 不在根聚合器内。</p>
   </div>
 
   <div class="card">
@@ -789,7 +819,7 @@ cp .env.example .env</code></pre>
         <th>项目</th>
         <th>说明</th>
       </tr>
-      <tr><td>启动方式</td><td><code>docker compose --profile tuner up</code>（默认 <code>docker compose up -d</code> 不含此服务）</td></tr>
+      <tr><td>启动方式</td><td><code>docker compose -f docker/compose/docker-compose.tuner.yml --profile tuner up</code>（兼容入口：根 <code>docker compose --profile tuner up</code>；默认 <code>docker compose up -d</code> 不含此服务）</td></tr>
       <tr><td>端口</td><td><code>8310</code>（可用 <code>CXO_TUNER_PORT</code> 调整；2026-09-05 起与模型工作站 8300 错开，两者可同时启动）</td></tr>
       <tr><td>硬件</td><td>支持 GPU 与 CPU——训练默认走 CPU，注入 GPU 编号（<code>CUDA_VISIBLE_DEVICES</code>）即 GPU 加速。推荐有独立空余 GPU 时启用</td></tr>
       <tr><td>挂载</td><td>数据 / 模型 / 角色卡目录卷挂载（对话数据、训练产物 LoRA adapter）</td></tr>
@@ -797,7 +827,7 @@ cp .env.example .env</code></pre>
     </table>
     <div class="highlight-box">
       <h4>怎么用</h4>
-      <p>在设置 → 进化实验室开启能力，然后用 <code>docker compose --profile tuner up</code> 拉起该可选服务。之后正常陪伴、正常聊天即可，系统会在闲时自动学习、不断优化。</p>
+      <p>在设置 → 进化实验室开启能力，然后用 <code>docker compose -f docker/compose/docker-compose.tuner.yml --profile tuner up</code> 拉起该可选服务。之后正常陪伴、正常聊天即可，系统会在闲时自动学习、不断优化。</p>
     </div>
   </div>
 
@@ -854,24 +884,31 @@ cp .env.example .env</code></pre>
 
   <div class="card">
     <h3>常用 Docker 命令</h3>
-    <pre><code># 启动所有推理服务
+    <pre><code># 根聚合器：默认只启动 ASR（llm/tuner/evalkit 受 profile 门控）
 docker compose up -d
 
-# 仅启动 ASR
+# 仅启动 ASR / 仅启动 LLM（指定后端）
 docker compose up -d asr-sensevoice
-
-# 仅启动 LLM（指定后端）
 LLM_BACKEND=vllm docker compose up -d llm
 LLM_BACKEND=trtllm docker compose up -d llm
 
-# 查看服务状态
+# 每服务独立 compose（在仓库根执行）
+docker compose -f docker/compose/docker-compose.server.yml up -d
+docker compose -f docker/compose/docker-compose.voiceworkstation.yml up -d
+docker compose -f docker/compose/docker-compose.neko-adapter.yml up -d
+docker compose -f docker/compose/docker-compose.evalkit.yml --profile eval up -d
+
+# Weaviate 变体（按需选一份）
+docker compose -f docker/compose/weaviate/cpu.yml up -d
+
+# 查看服务状态 / 日志 / 停止
 docker compose ps
-
-# 查看日志
 docker compose logs -f llm
+docker compose down
 
-# 停止所有服务
-docker compose down</code></pre>
+# 语法与路径校验（不启动容器）
+docker compose -f docker/compose/docker-compose.server.yml config
+docker compose config</code></pre>
   </div>
 </section>
 

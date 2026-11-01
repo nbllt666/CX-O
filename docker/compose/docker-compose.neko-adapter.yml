@@ -1,0 +1,70 @@
+# CXO-NekoAdapter 独立编排
+# change-id: organize-per-service-docker-deploy（2026-11-01）
+#
+# 使用方式:
+#   单独启动: docker compose -f docker/compose/docker-compose.neko-adapter.yml up -d
+#   停止:     docker compose -f docker/compose/docker-compose.neko-adapter.yml down
+# 路径基准: 本文件位于 docker/compose/，构建上下文为 ../../CXO-NekoAdapter（服务目录自包含）。
+#
+# 说明:
+#   - 镜像定义见 CXO-NekoAdapter/Dockerfile。
+#   - 三个 host 变量语义必须区分：
+#       * CXO_NEKO_ADAPTER_CONTROL_HOST：控制面**监听地址**，容器内必须 0.0.0.0，
+#         否则宿主无法通过映射端口访问 48920；
+#       * CXO_NEKO_ADAPTER_BRIDGE_HOST：CXFC 桥**监听地址**，同样必须 0.0.0.0；
+#       * CXO_NEKO_ADAPTER_BRIDGE_PUBLIC_HOST：注册给 CX-O 后端的**对外通告地址**。
+#         后端收到该地址后主动发起 HTTPS 调用，因此必须是容器网络内可达的服务名
+#         （本文件固定为 cxo-neko-adapter，与下方服务名一致），不能填 0.0.0.0/127.0.0.1。
+#   - 端口 28443-28452 覆盖 CXFC 桥冲突递增段（MAX_BRIDGE_ATTEMPTS=10），
+#     容器内 28443 被占时桥会顺延，宿主映射整段才能保证可达。
+#   - 后端地址使用容器网络服务名 cxo-server（需先启动 docker-compose.server.yml）。
+#   - 镜像只提供 node + python3；neko 插件服务器所需的第三方 Python 依赖需外部挂载/
+#     安装（见文件头与 docker/README.md）。缺失时控制面仍可用，插件工具桥能力受限。
+#   - 加入固定网络 cxo-inference，与 server / asr / llm 等 compose 共用同一网络。
+
+services:
+  cxo-neko-adapter:
+    build:
+      context: ../../CXO-NekoAdapter
+      dockerfile: Dockerfile
+    image: cxo/neko-adapter:latest
+    ports:
+      - "48920:48920"
+      - "28443-28452:28443-28452"
+    # 可选 env 文件：不存在时跳过（Compose long syntax，需 Compose v2.24+）
+    env_file:
+      - path: ../../.env
+        required: false
+    environment:
+      - CXO_NEKO_ADAPTER_CONTROL_HOST=0.0.0.0
+      - CXO_NEKO_ADAPTER_BRIDGE_HOST=0.0.0.0
+      - CXO_NEKO_ADAPTER_BRIDGE_PUBLIC_HOST=cxo-neko-adapter
+      - CXO_NEKO_ADAPTER_BACKEND_URL=http://cxo-server:8000
+      - CXO_NEKO_ADAPTER_DATA_DIR=/app/data
+      - PYTHONIOENCODING=utf-8
+    volumes:
+      # 适配器自身持久化（config.json / certs）
+      - ../../CXO-NekoAdapter/data:/app/data
+      # 可选（不默认启用）：挂载 neko 源码目录供插件服务器使用，只读；同时需在容器内
+      # 安装其第三方 Python 依赖（或改挂完整运行环境）。取消注释并替换目录名后启用。
+      # - ../../<neko源码目录>:/nekosrc:ro
+    healthcheck:
+      # 探活控制面 /health（控制面在容器内以 0.0.0.0 监听，127.0.0.1 可达）
+      test:
+        - CMD
+        - node
+        - -e
+        - "fetch('http://127.0.0.1:48920/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+    restart: unless-stopped
+    networks:
+      - cxo-inference
+
+networks:
+  cxo-inference:
+    # 显式固定网络名：各服务独立 -f 启动时都落在同名 cxo-inference 网络
+    name: cxo-inference
+    driver: bridge

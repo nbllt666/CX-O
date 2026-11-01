@@ -1,0 +1,88 @@
+# CX-O LLM 推理服务（独立编排，profiles: [llm]）
+# 从根 docker-compose.yml 拆出（change-id: organize-per-service-docker-deploy）
+#
+# 使用方式:
+#   单独启动: docker compose -f docker/compose/docker-compose.llm.yml --profile llm up -d
+#   根聚合器: docker compose --profile llm up llm
+#   指定 LLM 后端: LLM_BACKEND=vllm | trtllm docker compose --profile llm up llm
+# 路径基准: 本文件位于 docker/compose/，构建上下文为仓库根 ../..。
+
+services:
+  # ============================================================
+  # LLM 推理服务 (vLLM + GGUF 或 TRT-LLM)
+  # ============================================================
+  llm:
+    build:
+      # 2026-08-29 修复：context 改仓库根 + dockerfile 加 docker/llm/ 前缀——
+      # Dockerfile.cosyvoice-vllm 的 COPY third_party/... 为仓库根路径，原 ./docker/llm
+      # context 下必然解析失败。四份 Dockerfile 在仓库根 context 下的 COPY 核查：
+      #   vllm / trtllm：无 COPY，任何 context 均可构建；
+      #   cosyvoice-vllm：COPY third_party/cosyvoice-official、docker/llm/cv3plugin、
+      #     docker/llm/cosyvoice_server.py，均以仓库根为基准，根 context 下可解析；
+      #   cosyvoice-vllm.full（LLM_BACKEND=cosyvoice-vllm.full）：COPY 路径同上可解析，
+      #     但还需 --build-context models=./models/Fun-CosyVoice3-0.5B-2512 命名构建
+      #     上下文（compose 无法传递该参数）→ 该变体需按文件头部命令手动构建。
+      # 2026-11-01 拆分：context 保持仓库根（../.. 于 docker/compose/），语义不变。
+      context: ../..
+      dockerfile: docker/llm/Dockerfile.${LLM_BACKEND:-vllm}
+      args:
+        - BUILDKIT_INLINE_CACHE=1
+    shm_size: '4gb'
+    ports:
+      - "${LLM_PORT:-8080}:8080"
+    environment:
+      # vLLM 模式
+      - MODEL_PATH=${LLM_MODEL_PATH:-/workspace/models/model.gguf}
+      - HOST=0.0.0.0
+      - PORT=8080
+      - MAX_MODEL_LEN=${LLM_MAX_MODEL_LEN:-4096}
+      - GPU_MEMORY_UTILIZATION=${LLM_GPU_MEM_UTIL:-0.9}
+      - DTYPE=${LLM_DTYPE:-auto}
+      - MAX_NUM_SEQS=${LLM_MAX_NUM_SEQS:-256}
+      - ENABLE_PREFIX_CACHING=${LLM_PREFIX_CACHING:-true}
+      # Dynamic LoRA 支持（默认关闭，LLM_ENABLE_LORA=true 时启用）
+      - ENABLE_LORA=${LLM_ENABLE_LORA:-false}
+      - BASE_LORA_PATH=${LLM_BASE_LORA_PATH:-/workspace/models/base_lora}
+      - MAX_LORAS=${LLM_MAX_LORAS:-8}
+      - LORA_MODULES=${LLM_LORA_MODULES:-}
+      # TRT-LLM 模式
+      - ENGINE_PATH=${LLM_ENGINE_PATH:-/workspace/engines}
+      # C8（2026-08-30）：tritonserver:24.12 旧版 trtllm-serve 无连字符限流参数，
+      # 以下两变量对旧版不生效（start-trtllm.sh 已同步删除命令行传参）；保留仅为
+      # 向后兼容，新版 trtllm-serve 恢复限流参数后可直接复用。
+      - MAX_BATCH_SIZE=${LLM_MAX_BATCH_SIZE:-256}
+      - MAX_NUM_TOKENS=${LLM_MAX_NUM_TOKENS:-8192}
+    volumes:
+      # 2026-11-01 拆分：默认模型目录相对基准改为 ../../models，仍可用 LLM_MODELS_DIR 覆盖。
+      - ${LLM_MODELS_DIR:-../../models}:/workspace/models:ro
+      - llm-engines:/workspace/engines:ro
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              device_ids: ['${LLM_GPU_ID:-0}']
+              capabilities: [gpu]
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 120s
+    restart: unless-stopped
+    networks:
+      - cxo-inference
+    profiles:
+      - llm
+
+volumes:
+  llm-engines:
+    # 2026-11-01 复审修正：显式固定卷名，独立 -f 运行与根聚合器共用同一卷。
+    name: cxo_llm-engines
+    driver: local
+
+networks:
+  cxo-inference:
+    # 2026-11-01 复审修正：显式固定网络名，独立 -f 与根聚合器均落在 cxo-inference。
+    name: cxo-inference
+    driver: bridge

@@ -1,0 +1,51 @@
+# CX-O SERVER（FastAPI 后端）独立编排
+# change-id: organize-per-service-docker-deploy（2026-11-01）
+#
+# 使用方式:
+#   单独启动: docker compose -f docker/compose/docker-compose.server.yml up -d
+#   停止:     docker compose -f docker/compose/docker-compose.server.yml down
+# 路径基准: 本文件位于 docker/compose/，构建上下文为 ../../CX-O-SERVER（服务目录自包含）。
+#
+# 说明:
+#   - 镜像定义见 CX-O-SERVER/Dockerfile；context 内 requirements.txt / server/ 由该
+#     目录的 .dockerignore 过滤后进入构建上下文。
+#   - config.json 不烘入镜像：默认由 env_file / environment 注入；如需沿用本机
+#     config.json（含 api_key），取消下方可选 bind mount 注释（只读）。
+#   - 加入固定网络 cxo-inference，与 asr / llm / tuner / evalkit 等 compose 文件
+#     共用同一网络，容器内可用服务名互联（如 http://asr-sensevoice:8005、http://llm:8080）。
+
+services:
+  cxo-server:
+    build:
+      context: ../../CX-O-SERVER
+      dockerfile: Dockerfile
+    image: cxo/server:latest
+    ports:
+      - "${CXO_SERVER_PORT:-8000}:8000"
+    # 可选 env 文件：不存在时跳过（Compose long syntax，需 Compose v2.24+）
+    env_file:
+      - path: ../../.env
+        required: false
+    environment:
+      - PYTHONIOENCODING=utf-8
+    volumes:
+      - ../../CX-O-SERVER/data:/app/data
+      - ../../CX-O-SERVER/logs:/app/logs
+      # 可选（不默认启用）：沿用本机 config.json（含 api_key），只读挂载
+      # - ../../CX-O-SERVER/config.json:/app/config.json:ro
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:8000/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 120s
+    restart: unless-stopped
+    networks:
+      - cxo-inference
+
+networks:
+  cxo-inference:
+    # 显式固定网络名：保证各服务独立 -f 启动时都落在同名 cxo-inference 网络，
+    # 容器内可通过服务名互联（spec Requirement「共享网络互联」）。
+    name: cxo-inference
+    driver: bridge

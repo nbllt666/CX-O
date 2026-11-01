@@ -110,12 +110,19 @@ async function startRegistrar(): Promise<void> {
 // 2. CXFC HTTPS 桥
 // ---------------------------------------------------------------------------
 
+/**
+ * 构造注册给 CX-O 后端的插件运行信息。
+ * 主机取值说明（两个 host 语义必须区分）：
+ *  - bridgeHost：桥进程的**监听地址**（容器内为 0.0.0.0，仅决定 socket 绑定）；
+ *  - bridgePublicHost：注册给后端的**对外通告地址**（后端据此发起 HTTPS 调用，
+ *    容器内必须是容器网络内可达的服务名，如 cxo-neko-adapter；默认 127.0.0.1 保持本机语义）。
+ */
 function buildBridgeInfo(): PluginRuntimeInfo {
   if (!tls || !bridgePort) {
     throw new Error('桥未就绪');
   }
   return {
-    host: '127.0.0.1',
+    host: getConfig('bridgePublicHost'),
     port: bridgePort,
     name: 'CXO-NekoAdapter Neko 插件工具桥',
     version: '1.0.0',
@@ -178,7 +185,8 @@ async function startBridgeServer(): Promise<number> {
     try {
       await new Promise<void>((resolve, reject) => {
         server.once('error', reject);
-        server.listen(port, '127.0.0.1', () => {
+        // 监听地址取自配置 bridgeHost（默认 127.0.0.1；容器内由 CXO_NEKO_ADAPTER_BRIDGE_HOST 覆盖为 0.0.0.0）
+        server.listen(port, getConfig('bridgeHost'), () => {
           server.removeListener('error', reject);
           bridgeServer = server;
           bridgePort = port;

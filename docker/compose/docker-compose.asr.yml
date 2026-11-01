@@ -1,0 +1,73 @@
+# CX-O ASR SenseVoice 推理服务（独立编排）
+# 从根 docker-compose.yml 拆出（change-id: organize-per-service-docker-deploy）
+#
+# 使用方式:
+#   单独启动: docker compose -f docker/compose/docker-compose.asr.yml up -d
+#   根聚合器: docker compose up（默认仅启动本服务，行为与拆分前一致）
+# 路径基准: 本文件位于 docker/compose/，构建上下文为仓库根 ../..，卷路径以 ../../ 为前缀。
+
+services:
+  # ============================================================
+  # ASR SenseVoice (FunASR) 语音识别服务
+  # ============================================================
+  asr-sensevoice:
+    build:
+      context: ../..
+      dockerfile: docker/asr/Dockerfile
+    shm_size: '2gb'
+    ports:
+      - "${ASR_PORT:-8005}:8005"
+    environment:
+      - PYTHONIOENCODING=utf-8
+      # 在线聚类相似度阈值（cam++ 余弦；>= 阈值归簇，否则新建会话内临时簇 spk_N）
+      - SPK_SIM_THRESHOLD=${SPK_SIM_THRESHOLD:-0.65}
+      # 推理设备（2026-09-18）：默认 cpu。曾按人类裁决"试挂 GPU1"加速投机解码，
+      # 实测**无收益**（150ms 音频解码 GPU 125ms vs CPU 173ms 看似略快，但 600ms 音频
+      # GPU 249ms 反而慢于 CPU；SenseVoice 300ms GPU 170ms vs CPU 158ms）。
+      # 决定性证据：**10ms 音频在 GPU 上仍耗时 116ms**——投机解码的 ~120ms 里约 116ms
+      # 是 funasr `AutoModel.generate` 的固定开销（cache 初始化/特征/后处理，与音频长度
+      # 无关），非算力瓶颈，GPU 只会额外引入主机-设备传输开销。故回退纯 CPU。
+      # 历史教训（2026-08-18，仍有效）：ASR 用 GPU0 会挤爆显存（满 19.8GB）→ 全链路
+      # P50 超 2.9s 退化。
+      - ASR_DEVICE=${ASR_DEVICE:-cpu}
+      - CUDA_VISIBLE_DEVICES=
+    volumes:
+      - ../../CX-O-SERVER/sensevoice:/app/sensevoice:ro
+      - ../../CX-O-SERVER/api_server.py:/app/api_server.py:ro
+      # 2026-08-25 流式 ASR 容器改造：引擎包（fsmn-vad 分句 + paraformer 增量 + cam++ 声纹 + 在线聚类）
+      - ../../CX-O-SERVER/asr_container:/app/asr_container:ro
+      # 声纹注册 profiles（服务端权威写入，容器只读消费；/api/v1/voiceprint/profiles/sync 重载）
+      - ../../CX-O-SERVER/data/voiceprint:/app/data/voiceprint:ro
+      # 注意（2026-08-29）：asr-models 命名卷非空时，Docker 会跳过"镜像内容→空卷"
+      # 的初始化复制，镜像内 /root/.cache/modelscope 不会落入卷；更换/新增镜像内模型
+      # 后需 docker volume rm asr-models 重建空卷，以触发重新复制。
+      - asr-models:/root/.cache/modelscope
+    deploy:
+      resources:
+        reservations:
+          # 2026-09-18：曾挂 GPU1 试加速投机解码，实测无收益（见上方 ASR_DEVICE 注释），
+          # 已回退。保持空列表 = 不申请 GPU 设备。
+          devices: []
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8005/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 120s
+    restart: unless-stopped
+    networks:
+      - cxo-inference
+
+volumes:
+  asr-models:
+    # 2026-11-01 复审修正：显式固定卷名，独立 -f 运行（project name 推导为 compose）
+    # 与根聚合器（project cxo）共用同一卷，避免 compose_asr-models / cxo_asr-models 分裂。
+    name: cxo_asr-models
+    driver: local
+
+networks:
+  cxo-inference:
+    # 2026-11-01 复审修正：显式固定网络名，保证独立 -f 与根聚合器都落在同名 cxo-inference 网络，
+    # 容器内可通过服务名互联（spec Requirement「共享网络互联」）。
+    name: cxo-inference
+    driver: bridge

@@ -1,0 +1,13 @@
+# CXO-NekoAdapter 构建忽略清单
+# change-id: organize-per-service-docker-deploy（2026-11-01）
+#
+# dist/ 由构建阶段生成；data/ 为运行期持久化（config.json / certs），绝不烘入镜像；
+# 测试与本地日志不进入构建上下文，减少上下文体积并避免泄露本地配置。
+
+node_modules/
+dist/
+data/
+tests/
+*.log
+.pytest_cache/
+.git/

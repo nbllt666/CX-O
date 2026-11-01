@@ -110,6 +110,23 @@ cd APP-Frontend
 
 > 语音对话功能还需要额外启动 ASR 和 TTS 服务，具体见部署文档。
 
+### Docker 分服务部署（可选）
+
+上面的 `start-all.bat` 是默认的一键裸机入口；如果想把单个服务跑在容器里（Linux 服务器、独立升级、隔离依赖），每个服务都有自己的一份 compose，可独立构建与启停。完整索引（服务一览、端口、卷、环境变量与已知边界）见 [docker/README.md](./docker/README.md)。
+
+```bash
+# 后端（8000）
+docker compose -f docker/compose/docker-compose.server.yml up -d
+
+# 语音工作站（8200）
+docker compose -f docker/compose/docker-compose.voiceworkstation.yml up -d
+
+# 电脑控制适配器（48920 + 桥 28443-28452）
+docker compose -f docker/compose/docker-compose.neko-adapter.yml up -d
+```
+
+> 在仓库根执行 `docker compose up` 仍只启动 `asr-sensevoice`（`--profile llm/tuner/eval` 语义不变）。裸机一键启动 `start-all.bat` / `stop-all.bat` 未受任何影响。
+
 ---
 
 ## 核心功能一览

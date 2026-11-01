@@ -24,6 +24,12 @@ export interface AdapterConfig {
   backendUrl: string;
   /** 控制面 HTTP 端口（后续任务使用） */
   controlPort: number;
+  /** 控制面监听地址；默认仅本机 127.0.0.1（容器内可用环境变量覆盖为 0.0.0.0） */
+  controlHost: string;
+  /** CXFC 工具桥监听地址；默认仅本机 127.0.0.1（容器内可用环境变量覆盖为 0.0.0.0） */
+  bridgeHost: string;
+  /** 注册给 CX-O 后端的桥对外通告主机；默认 127.0.0.1（容器内应为容器网络服务名） */
+  bridgePublicHost: string;
   /** 是否随适配器启动自动拉起 neko 运行时 */
   autoStart: boolean;
 }
@@ -34,6 +40,9 @@ export const DEFAULT_CONFIG: AdapterConfig = {
   port: 48916,
   backendUrl: 'http://127.0.0.1:8000',
   controlPort: 48920,
+  controlHost: '127.0.0.1',
+  bridgeHost: '127.0.0.1',
+  bridgePublicHost: '127.0.0.1',
   autoStart: false,
 };
 
@@ -74,7 +83,7 @@ function writeConfigFile(data: ConfigShape): void {
 /**
  * 合并存储值与默认值（auto_init）。
  * 空值/类型不符的键回填默认值，语义与原宿主配置「空字符串回落默认」一致：
- * - python/sourceDir/backendUrl：非空字符串才生效；
+ * - python/sourceDir/backendUrl/controlHost/bridgeHost/bridgePublicHost：非空字符串才生效；
  * - port/controlPort：Number() 为 0 或 NaN 时回落默认（与原 `Number(x) || default` 等价）；
  * - autoStart：严格等于 true 才生效。
  */
@@ -83,6 +92,11 @@ function mergeWithDefaults(stored: ConfigShape): AdapterConfig {
   if (typeof stored.python === 'string' && stored.python) merged.python = stored.python;
   if (typeof stored.sourceDir === 'string' && stored.sourceDir) merged.sourceDir = stored.sourceDir;
   if (typeof stored.backendUrl === 'string' && stored.backendUrl) merged.backendUrl = stored.backendUrl;
+  if (typeof stored.controlHost === 'string' && stored.controlHost) merged.controlHost = stored.controlHost;
+  if (typeof stored.bridgeHost === 'string' && stored.bridgeHost) merged.bridgeHost = stored.bridgeHost;
+  if (typeof stored.bridgePublicHost === 'string' && stored.bridgePublicHost) {
+    merged.bridgePublicHost = stored.bridgePublicHost;
+  }
   const storedPort = Number(stored.port);
   if (Number.isFinite(storedPort) && storedPort > 0) merged.port = storedPort;
   const storedControlPort = Number(stored.controlPort);
@@ -91,9 +105,21 @@ function mergeWithDefaults(stored: ConfigShape): AdapterConfig {
   return merged;
 }
 
-/** 读取全部配置（缺失键已按默认值补全） */
+/** 读取全部配置（缺失键已按默认值补全；环境变量覆盖优先生效） */
 export function getAll(): AdapterConfig {
-  return mergeWithDefaults(readConfigFile());
+  const merged = mergeWithDefaults(readConfigFile());
+  // 环境覆盖仅作用于读取结果，不回写配置文件（容器部署时由 compose environment 注入）
+  const envControlHost = process.env.CXO_NEKO_ADAPTER_CONTROL_HOST;
+  if (typeof envControlHost === 'string' && envControlHost.trim()) merged.controlHost = envControlHost.trim();
+  const envBridgeHost = process.env.CXO_NEKO_ADAPTER_BRIDGE_HOST;
+  if (typeof envBridgeHost === 'string' && envBridgeHost.trim()) merged.bridgeHost = envBridgeHost.trim();
+  const envBridgePublicHost = process.env.CXO_NEKO_ADAPTER_BRIDGE_PUBLIC_HOST;
+  if (typeof envBridgePublicHost === 'string' && envBridgePublicHost.trim()) {
+    merged.bridgePublicHost = envBridgePublicHost.trim();
+  }
+  const envBackendUrl = process.env.CXO_NEKO_ADAPTER_BACKEND_URL;
+  if (typeof envBackendUrl === 'string' && envBackendUrl.trim()) merged.backendUrl = envBackendUrl.trim();
+  return merged;
 }
 
 /** 读取单个配置项（含默认值补全） */
@@ -103,7 +129,14 @@ export function getConfig<K extends keyof AdapterConfig>(key: K): AdapterConfig[
 
 /** 归一化单个写入值（trim / 端口取整下限 0 / 布尔化），非法值保持原样交由合并回落 */
 function normalizeValue<K extends keyof AdapterConfig>(key: K, value: AdapterConfig[K]): unknown {
-  if (key === 'python' || key === 'sourceDir' || key === 'backendUrl') {
+  if (
+    key === 'python' ||
+    key === 'sourceDir' ||
+    key === 'backendUrl' ||
+    key === 'controlHost' ||
+    key === 'bridgeHost' ||
+    key === 'bridgePublicHost'
+  ) {
     return typeof value === 'string' ? value.trim() : value;
   }
   if (key === 'port' || key === 'controlPort') {

@@ -211,6 +211,10 @@ huggingface/
 # Docker
 # ----------------------------------------
 .dockerignore
+# 例外：分服务镜像依赖的构建忽略文件必须入库，否则他机构建上下文裁剪失效
+!CX-O-SERVER/.dockerignore
+!CX-O-VoiceWorkStation/.dockerignore
+!CXO-NekoAdapter/.dockerignore
 
 # ----------------------------------------
 # Trae IDE 配置
@@ -317,12 +321,8 @@ vllm-gemma4/
 weaviate-embeddings/
 CXHMS/
 third_party/flash-attention/
-# Weaviate Docker Compose 文件
-docker-compose.weaviate.yml
-docker-compose.weaviate-gpu.yml
-docker-compose.weaviate-gpu-custom.yml
-docker-compose.weaviate-gpu-full.yml
-docker-compose.weaviate-gpu-multilingual.yml
+# Weaviate Docker Compose 文件（2026-11-01 由仓库根移入 docker/compose/weaviate/；
+# 原根级 5 份实为 tracked 文件，故迁移后随仓库追踪，不再忽略——避免内容丢失）
 DiffSinger
 
 # ----------------------------------------

@@ -739,17 +739,21 @@ T(t) = 1 / (1 + (Δt/T₅₀)^k)      # T₅₀=30, k=2
 
 ## 16. Docker 推理服务
 
-`docker-compose.yml` 编排 GPU 推理服务，构成语音/LLM 推理层：
+`docker-compose.yml` 现为**兼容聚合器**（`name: cxo` + `include`），服务定义位于 `docker/compose/`，每服务一份 compose，可独立构建与启停（2026-11-01 起，change-id: organize-per-service-docker-deploy）：
 
-| 服务 | 说明 |
-|------|------|
-| `asr-sensevoice` | FunASR + SenseVoice 语音识别，端口 8005 |
-| `llm` | 对话大模型（vLLM + GGUF 或 TRT-LLM），端口 8080 |
+| 服务 | compose 文件 | 镜像定义 | 端口（宿主→容器） |
+|------|-------------|---------|------------------|
+| `asr-sensevoice` | `docker/compose/docker-compose.asr.yml` | `docker/asr/Dockerfile`（上下文 `CX-O-SERVER/`） | 8005 → 8005 |
+| `llm` | `docker/compose/docker-compose.llm.yml`（profile `llm`） | `docker/llm/Dockerfile.${LLM_BACKEND:-vllm}` | 8080 → 8080 |
+| `cxo-tuner` | `docker/compose/docker-compose.tuner.yml`（profile `tuner`） | `CXO-Tuner/Dockerfile` | 8310 → 8300 |
+| `cxo-evalkit` | `docker/compose/docker-compose.evalkit.yml`（profile `eval`） | `CXO-EvalKit/Dockerfile` | 8320 → 8300 |
+| `cxo-server` / `cxo-vws` / `cxo-neko-adapter` | `docker/compose/docker-compose.server.yml` / `.voiceworkstation.yml` / `.neko-adapter.yml` | 对应服务目录 Dockerfile | 8000 / 8200 / 48920 + 28443-28452 |
 
-> Docker Compose 现仅编排 ASR 与 LLM 推理服务；TTS 语音合成走独立服务（CosyVoice3 8094 / VoiceDesign 8091 / Qwen3-TTS Base 8093，见 §4.7），不在此编排内。
+> Docker Compose 现编排 ASR、LLM 与上述应用/评测服务；TTS 语音合成走独立服务（CosyVoice3 8094 / VoiceDesign 8091 / Qwen3-TTS Base 8093，见 §4.7），不在此编排内。根 `docker compose up` 仍只启动 `asr-sensevoice`，profile 语义不变；`cxo-server`/`cxo-vws`/`cxo-neko-adapter` 不在根聚合器内。
 
-- 均支持 GPU 资源预留、健康检查、自动重启。
-- 另有 `docker-compose.weaviate*.yml` 用于 Weaviate 向量库部署。
+- 各服务 compose 均含 GPU 资源预留（按需）、健康检查、自动重启，并共用显式固定网络 `cxo-inference`（命名卷 `cxo_asr-models`、`cxo_llm-engines`）。
+- Weaviate 向量库部署使用 `docker/compose/weaviate/` 下的 5 份变体（`cpu.yml` / `gpu.yml` / `gpu-custom.yml` / `gpu-full.yml` / `gpu-multilingual.yml`，原根级 `docker-compose.weaviate*.yml`，2026-11-01 移入），宿主 8090 → 容器 8080、50061 → 50051。
+- 部署索引与每服务命令见 `docker/README.md`。
 
 ---
 
@@ -863,11 +867,14 @@ config.json 文件配置  →  deep_merge  →  环境变量（CXO_ 前缀）  �
 ### 19.4 部署
 
 ```text
-# 仅启用 tuner profile 时才会启动 cxo-tuner 容器
+# 每服务独立 compose（2026-11-01 起，服务定义已从根 docker-compose.yml 拆出）
+docker compose -f docker/compose/docker-compose.tuner.yml --profile tuner up
+
+# 兼容入口（根聚合器，仍按 profile tuner 门控）
 docker compose --profile tuner up
 ```
 
-- 对应 `docker-compose.yml` 服务 `cxo-tuner`，`profiles: ["tuner"]`，GPU `count:1` reservation；
+- 对应 `docker/compose/docker-compose.tuner.yml` 服务 `cxo-tuner`，`profiles: ["tuner"]`，GPU `count:1` reservation；根 `docker-compose.yml` 通过 `include` 聚合，不含内联 service 定义；
 - 数据 / 模型 / 角色卡目录卷挂载；`CXO_TUNER_PORT` 控制端口；
 - 默认 `docker compose up -d` 不含 cxo-tuner（可选性校验通过），不启用时主系统零受影响。
 

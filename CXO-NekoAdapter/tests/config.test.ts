@@ -51,13 +51,30 @@ let config: ConfigModule;
 /** 本轮用例的临时根目录 */
 let tmpRoot: string;
 
+/** 本文件会设置的环境变量（测试间隔离：逐用例保存/恢复） */
+const ENV_KEYS = [
+  'CXO_NEKO_ADAPTER_CONTROL_HOST',
+  'CXO_NEKO_ADAPTER_BRIDGE_HOST',
+  'CXO_NEKO_ADAPTER_BRIDGE_PUBLIC_HOST',
+  'CXO_NEKO_ADAPTER_BACKEND_URL',
+] as const;
+const savedEnv: Record<string, string | undefined> = {};
+
 beforeEach(async () => {
+  for (const key of ENV_KEYS) {
+    savedEnv[key] = process.env[key];
+    delete process.env[key];
+  }
   tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'cxo-config-test-'));
   tmpRoots.current = tmpRoot;
   config = await import('../src/shared/config');
 });
 
 afterEach(() => {
+  for (const key of ENV_KEYS) {
+    if (savedEnv[key] === undefined) delete process.env[key];
+    else process.env[key] = savedEnv[key];
+  }
   // 重置模块注册表：清空 config.ts 模块级状态（writing 标志）并释放 mock 引用
   vi.resetModules();
   fs.rmSync(tmpRoot, { recursive: true, force: true });
@@ -79,6 +96,9 @@ describe('配置默认值自动补全（auto_init）', () => {
       port: 48916,
       backendUrl: 'http://127.0.0.1:8000',
       controlPort: 48920,
+      controlHost: '127.0.0.1',
+      bridgeHost: '127.0.0.1',
+      bridgePublicHost: '127.0.0.1',
       autoStart: false,
     });
   });
@@ -99,6 +119,22 @@ describe('配置默认值自动补全（auto_init）', () => {
 });
 
 describe('set/get 往返与持久化', () => {
+  it('默认监听/通告地址均为 127.0.0.1（controlHost / bridgeHost / bridgePublicHost）', () => {
+    expect(config.getConfig('controlHost')).toBe('127.0.0.1');
+    expect(config.getConfig('bridgeHost')).toBe('127.0.0.1');
+    expect(config.getConfig('bridgePublicHost')).toBe('127.0.0.1');
+  });
+
+  it('setConfig 可写入 controlHost / bridgeHost / bridgePublicHost，且空字符串回落默认', () => {
+    const after = config.setConfig({ controlHost: ' 0.0.0.0 ', bridgeHost: '::', bridgePublicHost: ' cxo-neko-adapter ' });
+    expect(after.controlHost).toBe('0.0.0.0');
+    expect(after.bridgeHost).toBe('::');
+    expect(after.bridgePublicHost).toBe('cxo-neko-adapter');
+    // 空字符串非空才生效 → 回落默认
+    config.setConfig({ controlHost: '' });
+    expect(config.getConfig('controlHost')).toBe('127.0.0.1');
+  });
+
   it('setConfig 后 getConfig/getAll 返回归一化后的值', () => {
     const after = config.setConfig({
       port: 48999.7,
@@ -158,5 +194,41 @@ describe('损坏 JSON 容错与原子写', () => {
     expect(files).toContain('config.json');
     expect(files.some((f) => f.endsWith('.tmp'))).toBe(false);
     expect(files).toContain('certs'); // ensureDataDirs 幂等创建目录结构
+  });
+});
+
+describe('环境变量覆盖（容器部署）', () => {
+  it('设置四个环境变量后 getAll/getConfig 取环境值', () => {
+    process.env.CXO_NEKO_ADAPTER_CONTROL_HOST = '0.0.0.0';
+    process.env.CXO_NEKO_ADAPTER_BRIDGE_HOST = '0.0.0.0';
+    process.env.CXO_NEKO_ADAPTER_BRIDGE_PUBLIC_HOST = 'cxo-neko-adapter';
+    process.env.CXO_NEKO_ADAPTER_BACKEND_URL = 'http://cxo-server:8000';
+
+    const all = config.getAll();
+    expect(all.controlHost).toBe('0.0.0.0');
+    expect(all.bridgeHost).toBe('0.0.0.0');
+    expect(all.bridgePublicHost).toBe('cxo-neko-adapter');
+    expect(all.backendUrl).toBe('http://cxo-server:8000');
+    expect(config.getConfig('controlHost')).toBe('0.0.0.0');
+    expect(config.getConfig('bridgeHost')).toBe('0.0.0.0');
+    expect(config.getConfig('bridgePublicHost')).toBe('cxo-neko-adapter');
+  });
+
+  it('环境值首尾空白被 trim；空白串不覆盖（回落配置文件/默认）', () => {
+    process.env.CXO_NEKO_ADAPTER_CONTROL_HOST = '  0.0.0.0  ';
+    process.env.CXO_NEKO_ADAPTER_BACKEND_URL = '   ';
+    expect(config.getConfig('controlHost')).toBe('0.0.0.0');
+    expect(config.getConfig('backendUrl')).toBe('http://127.0.0.1:8000');
+  });
+
+  it('环境覆盖优先于磁盘配置，且不把环境值写入配置文件', () => {
+    config.setConfig({ controlHost: '192.168.1.10', backendUrl: 'http://disk:8000' });
+    process.env.CXO_NEKO_ADAPTER_CONTROL_HOST = '0.0.0.0';
+    process.env.CXO_NEKO_ADAPTER_BACKEND_URL = 'http://env:8000';
+    expect(config.getConfig('controlHost')).toBe('0.0.0.0');
+    expect(config.getConfig('backendUrl')).toBe('http://env:8000');
+    const onDisk = JSON.parse(fs.readFileSync(configFilePath(), 'utf-8')) as Record<string, unknown>;
+    expect(onDisk.controlHost).toBe('192.168.1.10');
+    expect(onDisk.backendUrl).toBe('http://disk:8000');
   });
 });

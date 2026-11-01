@@ -21,6 +21,10 @@ uvicorn evalkit.api:app --host 0.0.0.0 --port 8320
 
 ```bash
 # 在仓库根目录执行（profile 门控，裸 up 不会启动）
+# 推荐：每服务独立 compose（服务定义已从根 docker-compose.yml 拆出）
+docker compose -f docker/compose/docker-compose.evalkit.yml --profile eval up cxo-evalkit
+
+# 兼容入口（根聚合器仍可用，语义不变）
 docker compose --profile eval up cxo-evalkit
 ```
 

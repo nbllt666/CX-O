@@ -1149,3 +1149,54 @@
 - 产出物清单：后端 23 文件（含新增 security.py）、前端 6 文件、EvalKit 2 文件、工程配置 3 项、文档 8 份、测试 14 文件、变更追踪文档 1 份。
 - 审查记录：GN-004 第三轮完整复审警示放行（观察项已处理；W4/B1 待人类裁决），详见变更文档 §5.5/§5.6。
 - 未独立验证：真实 GPU/模型长测、真实多机部署、历史存量重要性回填。
+
+---
+
+# current-note — organize-per-service-docker-deploy
+
+> 更新时间: 2026-11-01 14:10 | 变更ID: organize-per-service-docker-deploy | 阶段: Task 0-7 完成，GN-004 交付前审查警示放行，待人类最终确认 | 交接状态: 已闭合（人类最终确认除外）
+
+## 七字段交接状态
+
+| 字段 | 内容 |
+|------|------|
+| 做到哪了 | Task 0-7 全部完成：变更文档先行（Task 0）→ docker/compose 骨架与根聚合器（Task 1）→ SERVER 镜像与依赖归位（Task 2）→ VWS 镜像（Task 3）→ Neko 监听配置化 + 镜像（Task 4）→ 根目录/docker-llm 杂物归位（Task 5）→ 文档与锚点同步（Task 6）→ 全量验证 + GN-004 交付前审查 + checklist 核验（Task 7） |
+| 为什么 | 用户需求原文：「目录整理与分服务 Docker 部署」——把分散在根 docker-compose.yml 与仓库根的容器资产收敛为「每服务一份 compose + 服务内 Dockerfile」，使 CX-O-SERVER / VoiceWorkStation / NekoAdapter 可在容器中独立部署，并把根目录一次性产物与 docker/llm 可再生缓存归档或清理；服务源码目录不迁移、业务逻辑不改、public/ 零改动 |
+| 未闭合项 | ① 人类最终交付确认（[V] 节点，不因 GN-004 通过而豁免）；② SERVER/VWS 镜像实构建与容器实启动按 spec Task 7.2 由人类按需触发（`--check` 已通过）；③ CXO-ModelStation 目录缺失 → 容器化阻塞待恢复；④ Neko TLS 自签证书 SAN 仅 127.0.0.1，后端若做主机名校验需重建证书（风险提示）；⑤ `CXO-EvalKit/AGENTS.md:30` 陈旧命令按 rules-4 禁改，已在部署索引登记 |
+| 接续入口 | 部署索引 `docker/README.md`；逐份校验 `docker compose -f docker/compose/docker-compose.<service>.yml config`；复查证据 `.trae/documents/20261101_模块0_目录整理与分服务Docker部署.md` §4.1-b；spec 三件套 `.trae/specs/organize-per-service-docker-deploy/` |
+| 人类裁决记录 | D-1 目录整理尺度（Docker 资产归位 + 根目录杂物收拾，源码目录原位）；D-2 容器化范围（全部在役服务，ModelStation 目录缺失→阻塞）；D-3 编排形态（每服务一份 compose）；D-4 前端暂不容器化。四项均已闭合；Spec 三件套已获批准并完成实现 |
+| 请示追踪 | 无悬空请示（本轮无新增 AskUserQuestion；人工裁决 D-1~D-4 与 Spec 批准均已闭合） |
+| 审查状态 | GN-004 spec 闸门：首轮阻断 6 项→修正→复审警示放行（无 [SOFT_BLOCK]）；GN-004 交付前审查：警示放行（agent fbc50891，无阻断项、无 [SOFT_BLOCK]；观察项 O-1/O-2/O-3/O-4/O-5/O-6 已逐项修正/登记） |
+
+## 三段交接
+
+### (1) 工程过程
+
+1. Task 0：`.trae/documents/20261101_模块0_目录整理与分服务Docker部署.md`（frontmatter + 四章 + 移入/删除/不动三清单）。
+2. Task 1：新建 `docker/compose/` 与 `docker/compose/weaviate/`，拆出 asr/llm/tuner/evalkit 四份 compose；根 `docker-compose.yml` 改为 `name: cxo` + `include`；5 份 weaviate 变体移入新目录并重命名；`.gitignore` 同步。复审修正一次：显式固定网络名 `cxo-inference` 与卷名 `cxo_asr-models` / `cxo_llm-engines`，修正 gpu-custom 路径与 LLM_MODELS_DIR。
+3. Task 2：`CX-O-SERVER/Dockerfile` + 根 requirements 迁入 `CX-O-SERVER/requirements.txt` + 根改为 `-r` 垫片 + `.dockerignore` 改黑名单 + `docker/asr/Dockerfile.dockerignore` 承接 ASR 白名单 + `docker-compose.server.yml` + `.env.example` SERVER 段。
+4. Task 3：`CX-O-VoiceWorkStation/Dockerfile`（CMD 为 uvicorn CLI，不改服务代码）+ `.dockerignore` + `docker-compose.voiceworkstation.yml`。
+5. Task 4：Neko `controlHost`/`bridgeHost`/`bridgePublicHost` + 4 个环境变量覆盖 + 控制面/桥监听改造 + `CONFIG_STRING_KEYS` 增键 + 单测 + 多阶段 Dockerfile/.dockerignore/compose。复审修正一次：`bridgePublicHost` 与监听地址分离（对外通告用服务名 `cxo-neko-adapter`）。
+6. Task 5：根目录 41 个一次性产物 → `.archive/root-diagnostics/20261101_root_cleanup/`；`docker/llm/` 24 个日志 → `logs/archive/20261101_docker_llm/`；删除 5 个可再生缓存目录；引用核查后未归档 0。
+7. Task 6：新增 `docker/README.md`；更新根 `README.md`、根 `AGENTS.md` §4.1/§4.2、`CXO-EvalKit/DEPLOY.md`、`docs/technical.md`、`docs/deployment.html`；变更文档 status → 修复中并补「实际修改清单」；本段追加。
+8. Task 7：13 份 compose `config` 全 EXIT=0；Neko/Tuner/EvalKit 三镜像实构建成功；Neko 容器 `/health`=200；后端全量 pytest 5274 passed（首次唯一失败项改指单服务 compose 后复跑通过）；GN-004 交付前审查警示放行；checklist A-G 核验。
+
+### (2) 交接状态
+
+| 对象 | 状态（三值标记） |
+|------|------------------|
+| Task 0-7 | 已闭合（实体产物 + 验证输出齐备，见 (3)） |
+| 变更文档 `status` | 已闭合（`已完成`，含 §4.1-b 实测结果） |
+| GN-004 交付前审查 | 已闭合（警示放行，无 [SOFT_BLOCK]，观察项已处理） |
+| checklist A-G | 已闭合（逐条勾选；H 段同步三段交接） |
+| `public/` | 已闭合（`git diff -- public` 为空） |
+| `.trae/rules/` | 已闭合（本次零写操作；该目录属 .gitignore，git 无法证明，口径见变更文档 V-8） |
+| 人类最终交付确认 | 未闭合（[V] 节点） |
+
+### (3) 最终结果
+
+- 已验证（2026-11-01 实测）：13 份 compose `config` 全部 EXIT=0（根无 profile 仅 `asr-sensevoice`；`--profile tuner` 为 `asr-sensevoice + cxo-tuner`；llm/eval profile 各自生效；server/vws/neko/weaviate 均通过）。
+- 镜像：`cxo/tuner:verify` 237MB、`cxo/evalkit:verify` 241MB、`cxo/neko-adapter:verify` 357MB 构建成功；Neko 容器 `/health`=200，日志 `control listening on 0.0.0.0:48920`；SERVER/VWS `build --check` 通过（实构建按需）。
+- 回归：Neko `npm test` 70/70、`npm run build` EXIT=0；后端全量 `5274 passed / 0 failed / 233.85s`；requirements 垫片解析 + 逐行等价。
+- 归档：根目录 41 + `docker/llm` 24 = 移入 65；删除 5 个缓存目录；未归档 0；镜像 tar 零改动；`start-all.bat`/`stop-all.bat` 零改动。
+- 产出物清单：`docker/README.md`；`docker/compose/` 7 份 + `docker/compose/weaviate/` 5 份；`CX-O-SERVER` / `CX-O-VoiceWorkStation` / `CXO-NekoAdapter` 三份 Dockerfile；`docker/asr/Dockerfile.dockerignore`；根 `docker-compose.yml`（include 聚合器）、根 `requirements.txt`（垫片）、`.env.example` 新段；Neko 三源码 + 两单测 + 后端测试断言修正；文档 7 份；归档目录 2 个。
