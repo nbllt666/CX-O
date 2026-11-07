@@ -10,6 +10,7 @@ server.services.asr_interrupt 与 server.services.agent_interrupt_user 单元测
 运行：python -m pytest tests/test_interrupt_modules.py -v
 """
 import asyncio
+import time
 import types
 
 import pytest
@@ -238,7 +239,10 @@ class TestAgentInterruptUser:
     def test_parse_interrupt_response_fallback_question(self):
         a = AgentInterruptUser()
         r = a._parse_interrupt_response("你能帮我吗？", is_final=True)
-        assert r["can_interrupt"] is True  # 含问号 → 推断可打断
+        # 说完且像提问 → REPLY（需回复），不再沿用"可打断"
+        assert r["decision"] == "REPLY"
+        assert r["can_interrupt"] is False
+        assert r["should_reply"] is True
 
     def test_parse_interrupt_response_fallback_no_question(self):
         a = AgentInterruptUser()
@@ -326,10 +330,10 @@ class TestAgentInterruptUser:
 
         results = {
             "CONTINUE": {"decision": "CONTINUE", "can_interrupt": False, "should_reply": False},
-            "IGNORE": {"decision": "IGNORE", "can_interrupt": False, "should_reply": False},
+            "SILENT": {"decision": "SILENT", "can_interrupt": False, "should_reply": False},
             "INTERRUPT": {"decision": "INTERRUPT", "can_interrupt": True, "should_reply": True},
         }
-        seq = iter(["CONTINUE", "IGNORE", "INTERRUPT", "CONTINUE"])
+        seq = iter(["CONTINUE", "SILENT", "INTERRUPT", "CONTINUE"])
 
         async def fake_check(text, is_final):
             return results[next(seq)]
@@ -338,13 +342,13 @@ class TestAgentInterruptUser:
 
         # 第 3 次返回 INTERRUPT 的文本需含提问/请求意图，命中 Feature A 闸门后仍按 INTERRUPT 累计
         await a.on_asr_partial_result("在吗？")
-        await a.on_asr_partial_result("我在思考")
+        await a.on_asr_partial_result("我在思考", is_final=True)
         await a.on_asr_partial_result("帮我查一下天气")
         await a.on_asr_partial_result("开始了")
 
         stats = a.get_stats()
         assert stats["total_judgments"] == 4
-        assert stats["decisions"] == {"INTERRUPT": 1, "CONTINUE": 2, "IGNORE": 1}
+        assert stats["decisions"] == {"INTERRUPT": 1, "CONTINUE": 2, "REPLY": 0, "SILENT": 1}
         assert stats["interrupts_triggered"] == 1
         assert stats["replies_triggered"] == 0
 
@@ -357,7 +361,7 @@ class TestAgentInterruptUser:
         a.reset_stats()
         assert a.get_stats() == {
             "total_judgments": 0,
-            "decisions": {"INTERRUPT": 0, "CONTINUE": 0, "IGNORE": 0},
+            "decisions": {"INTERRUPT": 0, "CONTINUE": 0, "REPLY": 0, "SILENT": 0},
             "interrupts_triggered": 0,
             "replies_triggered": 0,
         }
@@ -418,9 +422,9 @@ class TestAgentInterruptUser:
         r = await a.on_asr_partial_result("唉今天好累啊")
         assert r["should_interrupt"] is False
         assert r["should_reply"] is False
-        # 统计按实际生效 decision 累计（INTERRUPT 降级为 IGNORE）
+        # 统计按实际生效 decision 累计（非 final 时 INTERRUPT 降级为 CONTINUE）
         assert a.get_stats()["decisions"]["INTERRUPT"] == 0
-        assert a.get_stats()["decisions"]["IGNORE"] == 1
+        assert a.get_stats()["decisions"]["CONTINUE"] == 1
         assert a.get_stats()["interrupts_triggered"] == 0
 
     @pytest.mark.asyncio
@@ -459,19 +463,19 @@ class TestAgentInterruptUser:
 
     @pytest.mark.asyncio
     async def test_final_question_triggers_reply(self, monkeypatch, caplog):
-        # is_final 且累计文本经意图闸门 → 触发一次回复（short_phrases 场景）
-        # 【标签解耦】should_interrupt=False（非真打断）、should_reply=True（需回复）
+        # is_final 且 LLM 判 REPLY → 触发一次回复（四态模型，不再依赖词表闸门）
         a = AgentInterruptUser()
         a.min_speech_duration_ms = 0
         a._interrupt_cooldown_ms = 0
         a.on_user_speech_start()
 
         async def fake_check(text, is_final):
-            return {"decision": "CONTINUE", "can_interrupt": False, "should_reply": False}
+            return {"decision": "REPLY", "can_interrupt": False, "should_reply": True}
 
         monkeypatch.setattr(a, "_check_can_interrupt", fake_check)
         with caplog.at_level("INFO", logger="server.services.agent_interrupt_user"):
             r = await a.on_asr_partial_result("嗯……然后呢？", is_final=True)
+        assert r["decision"] == "REPLY"
         assert r["should_interrupt"] is False
         assert r["should_reply"] is True
         assert a.get_stats()["replies_triggered"] == 1
@@ -493,13 +497,15 @@ class TestAgentInterruptUser:
 
         monkeypatch.setattr(a, "_check_can_interrupt", fake_check)
         r = await a.on_asr_partial_result("嗯……", is_final=True)
+        assert r["decision"] == "CONTINUE"
         assert r["should_interrupt"] is False
+        assert r["should_reply"] is False
         assert a.get_stats()["interrupts_triggered"] == 0
         assert a.get_stats()["replies_triggered"] == 0
 
     @pytest.mark.asyncio
     async def test_reply_on_final_question_disabled_no_trigger(self, monkeypatch):
-        # reply_on_final_question=False → is_final 含提问也不触发
+        # reply_on_final_question=False → 即使 LLM 判 REPLY 也降级 SILENT（回滚开关）
         a = AgentInterruptUser()
         a.min_speech_duration_ms = 0
         a._interrupt_cooldown_ms = 0
@@ -507,10 +513,11 @@ class TestAgentInterruptUser:
         a.on_user_speech_start()
 
         async def fake_check(text, is_final):
-            return {"decision": "CONTINUE", "can_interrupt": False, "should_reply": False}
+            return {"decision": "REPLY", "can_interrupt": False, "should_reply": True}
 
         monkeypatch.setattr(a, "_check_can_interrupt", fake_check)
         r = await a.on_asr_partial_result("然后呢？", is_final=True)
+        assert r["decision"] == "SILENT"
         assert r["should_interrupt"] is False
         assert r["should_reply"] is False
         assert a.get_stats()["interrupts_triggered"] == 0
@@ -526,7 +533,7 @@ class TestAgentInterruptUser:
 
         async def fake_check(text, is_final):
             if is_final:
-                return {"decision": "CONTINUE", "can_interrupt": False, "should_reply": False}
+                return {"decision": "REPLY", "can_interrupt": False, "should_reply": True}
             return {"decision": "INTERRUPT", "can_interrupt": True, "should_reply": True}
 
         monkeypatch.setattr(a, "_check_can_interrupt", fake_check)
@@ -536,6 +543,7 @@ class TestAgentInterruptUser:
         r2 = await a.on_asr_partial_result("然后呢？", is_final=True)
         assert r2["should_interrupt"] is False
         assert r2["should_reply"] is False
+        assert r2["decision"] == "SILENT"
         assert a.get_stats()["interrupts_triggered"] == 1
         assert a.get_stats()["replies_triggered"] == 0
 
@@ -621,7 +629,7 @@ class TestAgentInterruptUser:
         a.on_user_speech_start()
 
         async def fake_check(text, is_final):
-            return {"decision": "CONTINUE", "can_interrupt": False, "should_reply": False}
+            return {"decision": "REPLY", "can_interrupt": False, "should_reply": True}
 
         monkeypatch.setattr(a, "_check_can_interrupt", fake_check)
         r1 = await a.on_asr_partial_result("帮我查一下", is_final=True)
@@ -630,6 +638,7 @@ class TestAgentInterruptUser:
         r2 = await a.on_asr_partial_result("帮我查一下", is_final=True)
         assert r2["should_interrupt"] is False
         assert r2["should_reply"] is False
+        assert r2["decision"] == "SILENT"
         assert a.get_stats()["replies_triggered"] == 1
         assert a.get_stats()["interrupts_triggered"] == 0
 
@@ -719,10 +728,11 @@ class TestAgentInterruptUser:
         a.on_user_speech_start()
 
         async def fake_check(text, is_final):
-            return {"decision": "CONTINUE", "can_interrupt": False, "should_reply": False}
+            return {"decision": "REPLY", "can_interrupt": False, "should_reply": True}
 
         monkeypatch.setattr(a, "_check_can_interrupt", fake_check)
         r = await a.on_asr_partial_result("明天几点?", is_final=True)
+        assert r["decision"] == "REPLY"
         assert r["should_interrupt"] is False
         assert r["should_reply"] is True
 
@@ -863,10 +873,11 @@ class TestAgentInterruptUser:
         a.on_user_speech_start()
 
         async def fake_check(text, is_final):
-            return {"decision": "CONTINUE", "can_interrupt": False, "should_reply": False}
+            return {"decision": "REPLY", "can_interrupt": False, "should_reply": True}
 
         monkeypatch.setattr(a, "_check_can_interrupt", fake_check)
         r = await a.on_asr_partial_result("还没呢，几点开会？", is_final=True)
+        assert r["decision"] == "REPLY"
         assert r["should_interrupt"] is False
         assert r["should_reply"] is True
         assert a.get_stats()["replies_triggered"] == 1
@@ -924,8 +935,8 @@ class TestAgentInterruptUser:
         assert session._pipeline_task is None  # 未启动兜底 pipeline
 
     @pytest.mark.asyncio
-    async def test_vad_fallback_runs_when_fallback_false(self, monkeypatch):
-        # speech_end_fallback=false → 即使已插话打断，VAD 兜底照常触发
+    async def test_vad_fallback_skipped_when_fallback_false(self, monkeypatch):
+        # LLM 选择打断后不再兜底：即使 speech_end_fallback=false，也不启动 VAD 兜底 pipeline
         session = self._make_dual_session()
         session._has_triggered_this_utterance = False
         session._agent_interrupt_triggered = True
@@ -940,8 +951,8 @@ class TestAgentInterruptUser:
         await session.on_vad_speech_end({"text": "你好"})
         await asyncio.sleep(0)  # 让后台 task 跑完，避免 pending task warning
 
-        assert session._has_triggered_this_utterance is True  # 已触发 LLM
-        assert session._pipeline_task is not None  # 兜底 pipeline 已启动
+        assert session._has_triggered_this_utterance is False  # 未触发 LLM
+        assert session._pipeline_task is None  # 未启动兜底 pipeline
 
     @pytest.mark.asyncio
     async def test_interrupt_and_reply_sets_agent_interrupt_triggered(self, monkeypatch):
@@ -1093,6 +1104,171 @@ class TestAgentInterruptUser:
         # 取消后 await 不抛 CancelledError（已捕获），且 ensure_reply 未执行
         await asyncio.gather(task, return_exceptions=True)
         assert calls == []
+
+
+class TestRouteAgentInterruptVeto:
+    """并行 VAD 停判拦截 × route_agent_interrupt_result（Task 5，全离线）。"""
+
+    def _make_dual_session(self):
+        """构造最小可用的 DualStreamSession（复用既有假 manager/tts 风格）。"""
+        mgr = types.SimpleNamespace(send_message=async_noop)
+        return DualStreamSession(
+            client_id="c", agent_id="a1", request_id="r1",
+            manager=mgr, tts_service=types.SimpleNamespace(),
+        )
+
+    def _make_fakes(self):
+        calls = []
+
+        async def fake_ensure_reply():
+            calls.append("ensure_reply")
+
+        async def fake_interrupt(reply):
+            calls.append(("interrupt", reply))
+
+        return calls, fake_ensure_reply, fake_interrupt
+
+    @pytest.mark.asyncio
+    async def test_veto_when_user_still_speaking(self, monkeypatch):
+        # 用户仍在说话（VAD 证据 active）→ 否决停判：不调用 ensure_reply，计数 +1
+        monkeypatch.setattr("server.handlers.audio.REPLY_CONFIRM_S", 0)
+        calls, fake_ensure_reply, fake_interrupt = self._make_fakes()
+        session = types.SimpleNamespace(
+            client_id="c",
+            user_speech_active=lambda: True,
+            _stop_veto_count=0,
+            ensure_reply=fake_ensure_reply,
+            interrupt_and_reply=fake_interrupt,
+        )
+
+        from server.handlers.audio import route_agent_interrupt_result
+        await route_agent_interrupt_result(
+            session, {"should_reply": True, "should_interrupt": False}
+        )
+
+        assert calls == []
+        assert session._stop_veto_count == 1
+
+    @pytest.mark.asyncio
+    async def test_released_when_user_silent(self, monkeypatch):
+        # 用户已静默 → 放行 ensure_reply（确认窗口置 0 避免等待）
+        monkeypatch.setattr("server.handlers.audio.REPLY_CONFIRM_S", 0)
+        calls, fake_ensure_reply, fake_interrupt = self._make_fakes()
+        session = types.SimpleNamespace(
+            client_id="c",
+            user_speech_active=lambda: False,
+            _stop_veto_count=0,
+            ensure_reply=fake_ensure_reply,
+            interrupt_and_reply=fake_interrupt,
+        )
+
+        from server.handlers.audio import route_agent_interrupt_result
+        await route_agent_interrupt_result(
+            session, {"should_reply": True, "should_interrupt": False}
+        )
+
+        assert calls == ["ensure_reply"]
+        assert session._stop_veto_count == 0
+
+    @pytest.mark.asyncio
+    async def test_interrupt_never_blocked(self, monkeypatch):
+        # 真打断优先：即便 VAD 判定用户仍在说话也不拦 should_interrupt 分支
+        monkeypatch.setattr("server.handlers.audio.REPLY_CONFIRM_S", 0)
+        calls, fake_ensure_reply, fake_interrupt = self._make_fakes()
+        session = types.SimpleNamespace(
+            client_id="c",
+            user_speech_active=lambda: True,
+            _stop_veto_count=0,
+            ensure_reply=fake_ensure_reply,
+            interrupt_and_reply=fake_interrupt,
+        )
+
+        from server.handlers.audio import route_agent_interrupt_result
+        await route_agent_interrupt_result(
+            session,
+            {"should_interrupt": True, "should_reply": True, "reply_content": "x"},
+        )
+
+        assert calls == [("interrupt", "x")]
+        assert session._stop_veto_count == 0
+
+    @pytest.mark.asyncio
+    async def test_no_evidence_released(self, monkeypatch):
+        # 无 VAD 证据（未调用 update_vad_evidence）→ user_speech_active False → 放行
+        monkeypatch.setattr("server.handlers.audio.REPLY_CONFIRM_S", 0)
+        session = self._make_dual_session()
+        assert session.user_speech_active() is False
+
+        calls, fake_ensure_reply, _ = self._make_fakes()
+        monkeypatch.setattr(session, "ensure_reply", fake_ensure_reply)
+
+        from server.handlers.audio import route_agent_interrupt_result
+        await route_agent_interrupt_result(
+            session, {"should_reply": True, "should_interrupt": False}
+        )
+
+        assert calls == ["ensure_reply"]
+        assert session.stop_veto_count == 0
+
+    @pytest.mark.asyncio
+    async def test_parallel_absent_and_silent_releases(self, monkeypatch):
+        # EC-1 回滚：parallel=None（enabled=false/半双工）+ 主 VAD 静默 → 不得恒 veto
+        monkeypatch.setattr("server.handlers.audio.REPLY_CONFIRM_S", 0)
+        session = self._make_dual_session()
+        session.update_vad_evidence({"is_speaking": False, "parallel": None})
+        assert session.user_speech_active() is False
+
+        calls, fake_ensure_reply, _ = self._make_fakes()
+        monkeypatch.setattr(session, "ensure_reply", fake_ensure_reply)
+        from server.handlers.audio import route_agent_interrupt_result
+        await route_agent_interrupt_result(
+            session, {"should_reply": True, "should_interrupt": False}
+        )
+        assert calls == ["ensure_reply"]
+        assert session.stop_veto_count == 0
+
+    @pytest.mark.asyncio
+    async def test_parallel_absent_and_primary_speaking_vetoes(self, monkeypatch):
+        # parallel=None 时仍应尊重主 VAD 的"仍在说话"证据
+        monkeypatch.setattr("server.handlers.audio.REPLY_CONFIRM_S", 0)
+        session = self._make_dual_session()
+        session.update_vad_evidence({"is_speaking": True, "parallel": None})
+        assert session.user_speech_active() is True
+
+        calls, fake_ensure_reply, _ = self._make_fakes()
+        monkeypatch.setattr(session, "ensure_reply", fake_ensure_reply)
+        from server.handlers.audio import route_agent_interrupt_result
+        await route_agent_interrupt_result(
+            session, {"should_reply": True, "should_interrupt": False}
+        )
+        assert calls == []
+        assert session.stop_veto_count == 1
+
+    def test_parallel_present_speech_vetoes(self):
+        session = self._make_dual_session()
+        session.update_vad_evidence({
+            "is_speaking": False,
+            "parallel": {"is_speech": True, "silence_duration_ms": 0.0},
+        })
+        assert session.user_speech_active() is True
+
+    def test_parallel_present_silent_releases(self):
+        session = self._make_dual_session()
+        session.update_vad_evidence({
+            "is_speaking": False,
+            "parallel": {"is_speech": False, "silence_duration_ms": 1000.0},
+        })
+        assert session.user_speech_active() is False
+
+    def test_stale_evidence_releases(self):
+        session = self._make_dual_session()
+        session.update_vad_evidence({
+            "is_speaking": True,
+            "parallel": {"is_speech": True, "silence_duration_ms": 0.0},
+        })
+        # 手动把证据时间戳推到窗口外：陈旧证据必须放行
+        session._last_vad_ts -= 2.0
+        assert session.user_speech_active() is False
 
 
 async def _should_not_be_called(text, is_final):
@@ -1314,3 +1490,125 @@ class TestInterruptContextInjection:
 
 async def _async_append(store, item):
     store.append(item)
+
+
+# ================================================================ 四态判定 / SILENT / 打断保护窗（2026-11-07）
+class TestFourStateAndBargein:
+    """覆盖 CONTINUE / INTERRUPT / REPLY / SILENT 四态与 300ms 人类不可打断窗口。"""
+
+    def _make_session(self):
+        mgr = types.SimpleNamespace(send_message=async_noop)
+        return DualStreamSession(
+            client_id="c4", agent_id="a4", request_id="r4",
+            manager=mgr, tts_service=types.SimpleNamespace(),
+        )
+
+    def test_parse_four_states(self):
+        a = AgentInterruptUser()
+        assert a._parse_interrupt_response('{"decision":"REPLY"}', True)["decision"] == "REPLY"
+        assert a._parse_interrupt_response('{"decision":"SILENT"}', True)["decision"] == "SILENT"
+        # 旧三态 IGNORE 兼容为 SILENT
+        assert a._parse_interrupt_response('{"decision":"IGNORE"}', True)["decision"] == "SILENT"
+
+    @pytest.mark.asyncio
+    async def test_non_final_reply_downgrades_to_continue(self, monkeypatch):
+        a = AgentInterruptUser()
+        a.min_speech_duration_ms = 0
+        a._interrupt_cooldown_ms = 0
+        a.on_user_speech_start()
+
+        async def fake_check(text, is_final):
+            return {"decision": "REPLY", "can_interrupt": False, "should_reply": True}
+
+        monkeypatch.setattr(a, "_check_can_interrupt", fake_check)
+        r = await a.on_asr_partial_result("然后呢", is_final=False)
+        assert r["decision"] == "CONTINUE"
+        assert r["should_reply"] is False
+
+    @pytest.mark.asyncio
+    async def test_silent_records_history_and_skips_fallback(self, monkeypatch):
+        session = self._make_session()
+        written = []
+
+        async def add_message_async(**kwargs):
+            written.append(kwargs)
+
+        fake_mgr = types.SimpleNamespace(
+            ensure_session_async=async_noop,
+            add_message_async=add_message_async,
+        )
+        monkeypatch.setattr("server.dependencies.get_context_manager", lambda: fake_mgr)
+        monkeypatch.setattr(session, "_run_pipeline", async_noop)
+        monkeypatch.setattr(session, "_finalize_turn", async_noop)
+
+        session.note_agent_decision("SILENT", "我在跟别人说话")
+        await session.record_silent_turn("我在跟别人说话")
+        await session.on_vad_speech_end({"text": "我在跟别人说话"})
+        await session.on_final_result({"text": "我在跟别人说话", "is_final": True})
+
+        assert written and written[0]["role"] == "user"
+        assert written[0]["content"] == "我在跟别人说话"
+        assert session._silent_utterance is True
+        assert session.should_preserve_asr_context() is True
+        assert session._has_triggered_this_utterance is False
+        assert session._pipeline_task is None
+
+    @pytest.mark.asyncio
+    async def test_interrupt_sets_no_fallback_and_300ms_window(self, monkeypatch):
+        session = self._make_session()
+        monkeypatch.setattr(session, "interrupt_and_reply", async_noop)
+
+        from server.handlers.audio import route_agent_interrupt_result
+        await route_agent_interrupt_result(session, {
+            "should_interrupt": True, "should_reply": True, "reply_content": "嗯",
+        })
+
+        assert session._no_fallback_this_utterance is True
+        assert session._last_agent_decision == "INTERRUPT"
+        assert session.is_bargein_blocked() is True
+
+    @pytest.mark.asyncio
+    async def test_bargein_window_blocks_then_releases(self, monkeypatch):
+        import server.handlers.audio as audio_mod
+
+        session = self._make_session()
+        interrupted = []
+
+        async def fake_interrupt():
+            interrupted.append(1)
+
+        monkeypatch.setattr(session, "_interrupt_pipeline", fake_interrupt)
+        audio_mod._tts_playing_clients.add(session.client_id)
+        session._pipeline_task = asyncio.create_task(asyncio.sleep(10))
+        try:
+            session.arm_bargein_block(300)
+            await session.on_vad_speech_start()
+            assert interrupted == []  # 300ms 窗口内不反打断
+
+            # 窗口过期后，同一 logic 应恢复打断
+            session._bargein_block_until = time.monotonic() - 0.01
+            await session.on_vad_speech_start()
+            assert interrupted == [1]
+        finally:
+            session._pipeline_task.cancel()
+            try:
+                await session._pipeline_task
+            except asyncio.CancelledError:
+                pass
+            audio_mod._tts_playing_clients.discard(session.client_id)
+
+    @pytest.mark.asyncio
+    async def test_tts_first_audio_arms_bargein_window(self):
+        session = self._make_session()
+        sent = []
+
+        async def fake_send(client_id, message):
+            sent.append(message)
+
+        session.manager.send_message = fake_send
+        await session._send_tts_chunk(
+            {"audio_data": b"\x00\x00", "text_segment": "你"}, is_final=False
+        )
+        assert sent  # 已下发 TTS 块
+        assert session._tts_bargein_block_armed is True
+        assert session.is_bargein_blocked() is True

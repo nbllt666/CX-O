@@ -4,6 +4,7 @@ VAD 能量检测 + 说话状态机 + 回调触发（仅测 ENERGY 模式，无�
 """
 import asyncio
 import struct
+import time
 
 import pytest
 
@@ -12,6 +13,8 @@ from server.services.vad_processor import (
     VADMode,
     VADProcessor,
     AudioStreamProcessor,
+    apply_parallel_config,
+    get_parallel_config,
     get_vad_processor,
 )
 
@@ -23,6 +26,8 @@ def _samples_energy(amplitude: int, n: int = 480) -> bytes:
 
 LOW_SAMPLES = _samples_energy(10)      # 能量 100
 HIGH_SAMPLES = _samples_energy(1000)   # 能量 1e6
+# 60ms 帧：前 30ms 低幅（静音）+ 后 30ms 高幅（有声），用于暴露「首 30ms 盲区」
+MIXED_60MS_SAMPLES = LOW_SAMPLES + HIGH_SAMPLES
 
 
 @pytest.fixture
@@ -120,6 +125,129 @@ class TestCallbacks:
         vad.set_callbacks(on_speech_start=_boom)
         result = vad.process_audio(HIGH_SAMPLES)  # 不抛异常
         assert result["is_speaking"] is True
+
+
+class TestParallelVAD:
+    """并行 VAD 一致判停（spec add-parallel-vad-endpoint-veto Task 5，全离线）。"""
+
+    def _make_vad(self, energy_threshold: int = 500) -> VADProcessor:
+        """构造 ENERGY 主模式 + 默认并行配置的处理器（不依赖 webrtcvad）。"""
+        v = VADProcessor()
+        v.set_config({
+            "mode": "energy",
+            "energy_threshold": energy_threshold,
+            "sample_rate": 16000,
+        })
+        return v
+
+    def test_parallel_gate_off_behaviour_unchanged(self, vad):
+        # parallel_gate=False：完全不进入并行分支，时序/字段与旧用例一致
+        first = vad.process_audio(HIGH_SAMPLES, parallel_gate=False)
+        assert first["is_speaking"] is True
+        assert first["state_changed"] is True
+        assert first["parallel"] is None
+        assert first["end_vetoed"] is False
+
+        vad._state.last_speech_time = 0
+        second = vad.process_audio(LOW_SAMPLES, parallel_gate=False)
+        assert second["is_speaking"] is False
+        assert second["state_changed"] is True
+        assert second["parallel"] is None
+        assert second["end_vetoed"] is False
+
+    def test_long_pause_not_endpointed(self):
+        # 主 VAD 阈值抬高 → 整帧判静默；并行默认能量阈值低 → 整帧判有声。
+        # 主静默 + 并行有声时不得翻转 state_changed，只记录 end_vetoed 证据。
+        v = self._make_vad(energy_threshold=10_000_000)
+        assert v._detect_energy(MIXED_60MS_SAMPLES) is False
+
+        started = v.process_audio(HIGH_SAMPLES, parallel_gate=True)
+        assert started["is_speaking"] is True
+        assert started["state_changed"] is True
+
+        result = v.process_audio(MIXED_60MS_SAMPLES, parallel_gate=True)
+        assert result["is_speaking"] is True
+        assert result["state_changed"] is False
+        assert result["end_vetoed"] is True
+        assert result["parallel"]["is_speech"] is True
+        assert v.end_veto_count == 1
+
+    def test_consistent_silence_endpoints_once(self, vad):
+        # 两路一致静默超过阈值 → 只翻转一次（第二帧不再 state_changed）
+        vad.process_audio(HIGH_SAMPLES, parallel_gate=True)
+        assert vad.is_speaking is True
+
+        vad._state.last_speech_time = 0
+        vad._parallel.last_speech_time = 0
+        first = vad.process_audio(LOW_SAMPLES, parallel_gate=True)
+        second = vad.process_audio(LOW_SAMPLES, parallel_gate=True)
+
+        assert first["is_speaking"] is False
+        assert first["state_changed"] is True
+        assert second["state_changed"] is False
+        assert second["is_speaking"] is False
+
+    def test_subframe_vote_scans_whole_frame(self, vad):
+        # 注入假并行 VAD：仅第 2 个子帧返回有声。若只扫首 30ms 则 ratio=0 → 判静默；
+        # 能判有声即证明整帧子帧都被扫描（60ms → 2 次调用）。
+        class _CountingParallelVAD:
+            def __init__(self):
+                self.calls = 0
+
+            def is_speech(self, sub, sr):
+                self.calls += 1
+                return self.calls == 2
+
+        fake = _CountingParallelVAD()
+        vad.parallel_mode = "webrtc"
+        vad.parallel_webrtc_vote_ratio = 0.5
+        vad._parallel_vad = fake
+
+        result = vad.process_audio(MIXED_60MS_SAMPLES, parallel_gate=True)
+        assert fake.calls == 2
+        assert result["parallel"]["is_speech"] is True
+
+    def test_max_utterance_forces_end(self):
+        # 有界收尾：超过 max_utterance_ms 即使并行仍判有声也强制翻转一次
+        v = self._make_vad()
+        v.parallel_max_utterance_ms = 1
+        v.process_audio(HIGH_SAMPLES, parallel_gate=True)
+        assert v.is_speaking is True
+
+        v._state.speech_start_time = time.time() - 0.05
+        result = v.process_audio(HIGH_SAMPLES, parallel_gate=True)
+        assert result["state_changed"] is True
+        assert result["is_speaking"] is False
+        assert result["speech_duration_ms"] == 0
+
+    def test_parallel_config_defaults_match_reasonably(self):
+        # 模块级缓存 8 键；enabled=False 影响 __init__ 新建实例；finally 恢复防污染
+        cfg = get_parallel_config()
+        assert set(cfg) == {
+            "enabled",
+            "mode",
+            "silence_threshold_ms",
+            "energy_threshold",
+            "subframe_ms",
+            "webrtc_vote_ratio",
+            "consistency_window_ms",
+            "max_utterance_ms",
+        }
+        try:
+            apply_parallel_config({"enabled": False})
+            assert VADProcessor().parallel_enabled is False
+        finally:
+            apply_parallel_config({"enabled": True})
+
+    def test_reset_clears_parallel_state(self, vad):
+        vad.process_audio(HIGH_SAMPLES, parallel_gate=True)
+        assert vad.is_speaking is True
+        assert vad._parallel.is_speech is True
+
+        vad.reset()
+        assert vad.is_speaking is False
+        assert vad._parallel.is_speech is False
+        assert vad._end_vetoed_this_utterance is False
 
 
 class TestSingleton:
@@ -293,6 +421,61 @@ class TestDeferredInterruptEpoch:
         finally:
             for t in list(vp_mod._release_tasks):
                 t.cancel()
+
+
+class _FakeContextStream:
+    """记录 is_last 与 reset 次数，用于验证 SILENT 保留 ASR 上下文。"""
+
+    def __init__(self, result=None):
+        self.result = result
+        self.last_flags = []
+        self.reset_count = 0
+
+    async def send_audio_chunk(self, data, is_last=False, client_id=None):
+        self.last_flags.append(is_last)
+        return True
+
+    async def receive_result(self, timeout=0, client_id=None):
+        return self.result
+
+    async def reset(self, client_id=None):
+        self.reset_count += 1
+
+
+class TestPreserveAsrContext:
+    """SILENT 判定：不发送 is_last、不 reset 流式 ASR（保留识别上下文）。"""
+
+    def _make_proc(self, client_id: str):
+        proc = AudioStreamProcessor(client_id=client_id)
+        proc.set_config({"vad": {"mode": "energy", "energy_threshold": 500, "sample_rate": 16000}})
+        fake = _FakeContextStream()
+        proc.set_asr_client(fake)
+        return proc, fake
+
+    def _force_end(self, proc):
+        """把最后一次说话时间推到很久以前，使下一静默帧立即满足判停阈值。"""
+        proc.vad._state.last_speech_time = 0
+        proc.vad._parallel.last_speech_time = 0
+
+    @pytest.mark.asyncio
+    async def test_preserve_skips_is_last_and_reset(self):
+        proc, fake = self._make_proc("silent-keep")
+        await proc.process_audio_chunk(HIGH_SAMPLES)
+        self._force_end(proc)
+        await proc.process_audio_chunk(LOW_SAMPLES, preserve_asr_context=True)
+
+        assert True not in fake.last_flags
+        assert fake.reset_count == 0
+
+    @pytest.mark.asyncio
+    async def test_default_still_sends_is_last_and_resets(self):
+        proc, fake = self._make_proc("silent-reset")
+        await proc.process_audio_chunk(HIGH_SAMPLES)
+        self._force_end(proc)
+        await proc.process_audio_chunk(LOW_SAMPLES)
+
+        assert True in fake.last_flags
+        assert fake.reset_count == 1
 
 
 def asyncio_sleep(duration):

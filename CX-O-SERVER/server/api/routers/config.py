@@ -586,7 +586,19 @@ def _get_default_vad_config() -> Dict[str, Any]:
             "frame_duration_ms": 30,
             "energy_threshold": 500,
             "silence_threshold_ms": 500,
-            "speech_threshold_ms": 300
+            "speech_threshold_ms": 300,
+            # 并行 VAD 默认配置（change-id: add-parallel-vad-endpoint-veto）
+            # 默认值与 VADProcessor._PARALLEL_DEFAULTS 必须逐键一致，防两套默认值漂移。
+            "parallel": {
+                "enabled": True,
+                "mode": "hybrid",
+                "silence_threshold_ms": 500,
+                "energy_threshold": 500,
+                "subframe_ms": 30,
+                "webrtc_vote_ratio": 0.5,
+                "consistency_window_ms": 500,
+                "max_utterance_ms": 30000
+            }
         },
         "audio_stream": {
             "asr_interval_ms": 500,

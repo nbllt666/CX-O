@@ -1200,3 +1200,98 @@
 - 回归：Neko `npm test` 70/70、`npm run build` EXIT=0；后端全量 `5274 passed / 0 failed / 233.85s`；requirements 垫片解析 + 逐行等价。
 - 归档：根目录 41 + `docker/llm` 24 = 移入 65；删除 5 个缓存目录；未归档 0；镜像 tar 零改动；`start-all.bat`/`stop-all.bat` 零改动。
 - 产出物清单：`docker/README.md`；`docker/compose/` 7 份 + `docker/compose/weaviate/` 5 份；`CX-O-SERVER` / `CX-O-VoiceWorkStation` / `CXO-NekoAdapter` 三份 Dockerfile；`docker/asr/Dockerfile.dockerignore`；根 `docker-compose.yml`（include 聚合器）、根 `requirements.txt`（垫片）、`.env.example` 新段；Neko 三源码 + 两单测 + 后端测试断言修正；文档 7 份；归档目录 2 个。
+
+---
+
+# current-note — add-parallel-vad-endpoint-veto
+
+> 更新时间: 2026-11-06 23:10 | 变更ID: add-parallel-vad-endpoint-veto | 阶段: Task 0-5 完成、Task 6 验证通过，待 GN-004 交付前审查 | 交接状态: 已闭合（GN-004/人类确认除外）
+
+## 七字段交接状态
+
+| 字段 | 内容 |
+|------|------|
+| 做到哪了 | Task 0 变更文档 → Task 1 VADProcessor 并行检测器与一致判停（主线程补正 Silero 并行时阈值统一 500ms）→ Task 2 全双工接线 → Task 3 LLM should_reply 停判拦截（含证据新鲜度）→ Task 4 配置默认与 per-client 传播 → Task 5 单测 → Task 6 全量 pytest 5290 passed / 0 failed / 236.50s、合规 diff 为空、变更文档收口 → GN-004 交付前阻断 B1（parallel=None 恒 veto）已修复并补 5 例真实证据测试 |
+| 为什么 | 用户需求原文「加入并行vad排除错误判停」；人类裁决 D-1 全双工去 VAD 延迟链路、D-2 拦截 LLM 判定停止信号、D-3 维持 500ms + 一致性校验 |
+| 未闭合项 | ① GN-004 交付前审查；② 人类最终交付确认；③ E2E 未执行（需 ASR/LLM/TTS 在线，SKIP）；④ 本机 py311 未安装 webrtcvad，并行子帧投票运行期降级为整帧能量（单测以注入假检测器覆盖投票路径） |
+| 接续入口 | spec `.trae/specs/add-parallel-vad-endpoint-veto/`；实现 `CX-O-SERVER/server/services/vad_processor.py` / `handlers/audio.py` / `api/routers/config.py`；验证 `python -m pytest tests/test_vad_processor.py tests/test_interrupt_modules.py -q`；配置开关 `services.vad.parallel.enabled` |
+| 人类裁决记录 | D-1/D-2/D-3 已闭合；Spec 已批准（NotifyUser approved） |
+| 请示追踪 | 无悬空请示 |
+| 审查状态 | GN-004 spec 闸门：两轮阻断（3+1 项）→ 修正 → 复审警示放行（无 SOFT_BLOCK）；GN-004 交付前审查：进行中 |
+
+## 三段交接
+
+### (1) 工程过程
+
+1. Task 0：`.trae/documents/20261106_模块0_并行VAD排除错误判停.md`（四章 + D-1~D-3 原文 + 三段交接）。
+2. Task 1：`vad_processor.py` 新增 `_PARALLEL_DEFAULTS`/配置缓存/`ParallelVADState`/`process_audio(parallel_gate)`/`_detect_parallel`/`_parallel_subframe_vote`/`max_utterance_ms`；主线程补正并行启用时 Silero 也按 500ms 判停。
+3. Task 2：`process_audio_chunk(parallel_vad=False)` 透传 `parallel`/`end_vetoed`；仅 `handle_voice_dual_stream` 传 True。
+4. Task 3：`DualStreamSession` 增加 VAD 证据与 `user_speech_active`（新鲜度优先）；`route_agent_interrupt_result` 对 `should_reply` 做 veto。
+5. Task 4：`_get_default_vad_config()` 增 `vad.parallel` 八键；`init_audio_stream_processor` 读 `services.vad.parallel` 写模块级缓存（per-client 生效）。
+6. Task 5：新增 `TestParallelVAD` 7 例 + `TestRouteAgentInterruptVeto` 9 例（含 B1 修复补充 5 例）。
+7. Task 6：定向 122 passed、接线 125 passed、全量 5290 passed / 0 failed / 236.50s；`git diff --stat -- public .trae/rules` 与 start/stop bat 均为空。
+8. GN-004 交付前审查阻断 B1：`parallel=None` 曾被推断为「静默 0ms」→ 恒 veto；已用 `parallel_present` 区分并补 5 例真实证据用例，复跑全量通过。
+
+### (2) 交接状态
+
+| 对象 | 状态（三值标记） |
+|------|------------------|
+| Task 0-5 | 已闭合（实体产物 + 测试证据） |
+| Task 6 全量验证 | 已闭合（5290 passed / 0 failed） |
+| 变更文档 | 已闭合（status=已完成） |
+| GN-004 交付前审查 | 已闭合（首轮阻断 B1 → 修复 → 复审警示放行，无 [SOFT_BLOCK]） |
+| 人类最终交付确认 | 未闭合 |
+| `public/` / `.trae/rules/` | 已闭合（零改动） |
+
+### (3) 最终结果
+
+- 验证结论：全量 pytest 5290 passed / 0 failed（基线 5274 + 新增 16）；配置八键与 `_PARALLEL_DEFAULTS` 逐键一致；per-client `enabled=false` 生效；`parallel_gate=False` 半双工路径 `parallel=None` 零回归；`parallel=None` 不再恒 veto；合规 diff 为空。
+- 产出物清单：3 个生产文件、2 个测试文件（+16 例）、变更文档与 note 段落。
+- 未闭合项：人类最终交付确认、E2E 未跑（SKIP）、webrtcvad 缺失导致运行期投票降级为能量。
+
+---
+
+# current-note — 四态判定与全双工打断窗口（2026-11-07）
+
+> 更新时间: 2026-11-07 11:20 | 变更ID: 模块0-20261107-01 | 阶段: 实现与验证完成 | 交接状态: 已闭合
+
+## 七字段交接状态
+
+| 字段 | 内容 |
+|------|------|
+| 做到哪了 | 四态判定（CONTINUE/INTERRUPT/REPLY/SILENT）落地；SILENT 写历史并保留 ASR 上下文；AI 打断与 TTS 首块后 300ms 人类不可打断；LLM 选择 INTERRUPT 后无条件不兜底；定向 130 passed、全量 5298 passed / 0 failed / 263.11s |
+| 为什么 | 用户需求「继续增强：分继续等待、llm打断人、判定说完回复、判定说完不回复、SILENT也保留上下文、INTERRUPT时加300ms人类不可打断窗口、TTS出声了就阻断vad防误判（继续说完比撤回好）、llm选择打断时不兜底」；裁决：新增 REPLY 四态、LLM+ASR 都保留且入历史、TTS 仅前 300ms 保护 |
+| 未闭合项 | ① SILENT 的 ASR 保留依赖 speech_end 前已收到判定（判定晚到则仅保留 LLM 历史）；② E2E 未跑（ASR/LLM/TTS 未在线）；③ `speech_end_fallback` 配置保留但不再影响 INTERRUPT 兜底（无条件不兜底） |
+| 接续入口 | 判定 `CX-O-SERVER/server/services/agent_interrupt_user.py`；会话/路由 `CX-O-SERVER/server/handlers/audio.py`；ASR 保留 `CX-O-SERVER/server/services/vad_processor.py`（`preserve_asr_context`）；回归 `python -m pytest tests/test_interrupt_modules.py tests/test_vad_processor.py -q` |
+| 人类裁决记录 | 四态 REPLY；SILENT LLM+ASR 都保留且入历史；TTS 出声仅前 300ms 保护（均已闭合） |
+| 请示追踪 | 无悬空请示 |
+| 审查状态 | 变更文档 `20261107_模块0_四态判定与全双工打断窗口.md` status=已完成；未单独拉起 GN-004（本轮为 Default 模式增量增强，测试与合规证据已落盘） |
+
+## 三段交接
+
+### (1) 工程过程
+
+1. 变更文档先行（rules-6）。
+2. `agent_interrupt_user.py`：四态归一化/解析/统计；移除 Feature B 词表强判；`last_decision` 记录。
+3. `audio.py`：Session 四态标志、SILENT 历史写入、`preserve_asr_context` 传参、300ms 保护窗、INTERRUPT 不兜底、TTS 首块置窗。
+4. `vad_processor.py`：SILENT 时不发 `is_last`、不 reset 流式 ASR（代际照常推进）。
+5. 测试：更新 Feature B 用例为四态；新增 8 例（四态解析、非 final 降级、SILENT 历史+不兜底、INTERRUPT 不兜底+300ms、窗口过期恢复、TTS 首块置窗、ASR 保留/默认 reset）。
+6. 验证：定向 130 passed；全量 5298 passed / 0 failed / 263.11s；`public/`、`.trae/rules/`、start/stop bat 零改动。
+
+### (2) 交接状态
+
+| 对象 | 状态（三值标记） |
+|------|------------------|
+| 四态判定 | 已闭合 |
+| SILENT 上下文保留（LLM+ASR） | 已闭合（best-effort：判定晚于 reset 时仅保留 LLM 历史） |
+| 300ms 人类不可打断窗口 | 已闭合（AI 打断 + TTS 首块） |
+| INTERRUPT 不兜底 | 已闭合（无条件） |
+| 全量回归 | 已闭合（5298 passed / 0 failed） |
+| 变更文档 | 已闭合（status=已完成） |
+| E2E | 当前不可判定（服务未在线，SKIP） |
+
+### (3) 最终结果
+
+- 验证结论：定向 130 passed；全量 5298 passed / 0 failed / 263.11s；合规 diff 为空。
+- 产出物清单：3 个生产文件、2 个测试文件（+8 例）、变更文档与本 note 段落。
+- 未闭合项：SILENT 判定晚到的 ASR 上下文边界、E2E 未跑。

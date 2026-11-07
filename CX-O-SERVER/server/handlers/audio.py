@@ -49,8 +49,30 @@ async def route_agent_interrupt_result(session, res: dict) -> None:
     - 二者皆真（LLM INTERRUPT 带内容）：先打断再播 reply_content
     """
     if res.get("should_interrupt"):
+        # LLM 选择 INTERRUPT：本轮不再走 VAD 兜底，并开启 300ms 人类不可打断窗口
+        _note_agent_decision(session, "INTERRUPT")
+        _arm_bargein_block(session, 300)
         await session.interrupt_and_reply(res.get("reply_content", ""))
     elif res.get("should_reply"):
+        _note_agent_decision(session, "REPLY")
+        # 【并行 VAD 停判拦截】见 spec add-parallel-vad-endpoint-veto Task 3：
+        # should_reply 仍判为"用户已说完"但并行 VAD 证据显示用户仍在说话（长句
+        # 内部停顿）→ 否决停判，跳过 ensure_reply，避免回复腰斩。veto 单次生效，
+        # 不写持久状态；should_interrupt 分支不受影响。
+        if session.user_speech_active():
+            session._stop_veto_count += 1
+            # 每 utterance 首次 veto 记一行（含最近静默时长）；后续仅累计计数，避免刷屏。
+            if not getattr(session, "_stop_veto_logged", False):
+                session._stop_veto_logged = True
+                evidence = getattr(session, "_last_vad_evidence", None) or {}
+                logger.info(
+                    "[PARALLEL-VAD] veto llm stop: client=%s silence_ms=%.0f is_speaking=%s veto_count=%d",
+                    getattr(session, "client_id", "-"),
+                    float(evidence.get("parallel_silence_ms", float("inf"))),
+                    bool(evidence.get("is_speaking")),
+                    session._stop_veto_count,
+                )
+            return
         # 【停顿续接确认】见 REPLY_CONFIRM_S 注释：延迟窗口让"停顿后继续说"的
         # partial 先启动主管线，ensure_reply 随后因已触发守卫 no-op。
         try:
@@ -59,6 +81,42 @@ async def route_agent_interrupt_result(session, res: dict) -> None:
         except asyncio.CancelledError:
             # 任务已取消（连接断开/会话终止），无需继续 ensure_reply 兜底回复
             return
+    else:
+        # CONTINUE（继续等待）/ SILENT（说完不回复）——均不触发回复
+        _note_agent_decision(session, res.get("decision", "CONTINUE"))
+
+
+def _note_agent_decision(session, decision: str, text: str = "") -> None:
+    """记录四态判定；兼容测试/旧对象（无该方法时直接写属性）。"""
+    fn = getattr(session, "note_agent_decision", None)
+    if callable(fn):
+        fn(decision, text)
+        return
+    normalized = (decision or "").strip().upper()
+    if normalized == "IGNORE":
+        normalized = "SILENT"
+    session._last_agent_decision = normalized
+    session._last_agent_decision_text = text or ""
+    if normalized == "SILENT":
+        session._silent_utterance = True
+        session._no_fallback_this_utterance = True
+    elif normalized == "INTERRUPT":
+        session._no_fallback_this_utterance = True
+        session._silent_utterance = False
+    elif normalized == "REPLY":
+        session._silent_utterance = False
+
+
+def _arm_bargein_block(session, ms: float = 300.0) -> None:
+    """开启人类不可打断窗口；兼容无该方法的测试/旧对象。"""
+    fn = getattr(session, "arm_bargein_block", None)
+    if callable(fn):
+        fn(ms)
+        return
+    session._bargein_block_until = max(
+        getattr(session, "_bargein_block_until", 0.0),
+        time.monotonic() + max(0.0, ms) / 1000.0,
+    )
 
 
 def _is_continuation(prev: str, cur: str) -> bool:
@@ -255,6 +313,30 @@ class DualStreamSession:
         # speech_end 后忽略 speech_start 打断的保护窗口（毫秒）
         self._speech_end_guard_ms: float = 1000.0
 
+        # ---- 并行 VAD 停判证据（spec add-parallel-vad-endpoint-veto Task 3）----
+        # 每帧 VAD 结果快照（主 VAD is_speaking / 并行 is_speech / 并行静默时长），
+        # 供 LLM 停判（should_reply）拦截使用：用户仍在说话时否决 ensure_reply，
+        # 防止长句内部停顿被当作"说完"而腰斩回复。
+        self._last_vad_evidence: Optional[dict] = None
+        # 证据写入时刻（time.monotonic，与 _last_speech_end_time 同源时钟）
+        self._last_vad_ts: float = 0.0
+        # 停判否决累计次数（只读属性 stop_veto_count 暴露，便于观测/测试）
+        self._stop_veto_count: int = 0
+        # 本 utterance 是否已记录过停判否决日志（每 utterance 限流一行；speech_start 复位）
+        self._stop_veto_logged: bool = False
+        # ---- 四态判定 / SILENT 上下文保留 / AI 打断保护窗（2026-11-07）----
+        # 最近一次 LLM 判定（CONTINUE/INTERRUPT/REPLY/SILENT）与其依据文本
+        self._last_agent_decision: str = ""
+        self._last_agent_decision_text: str = ""
+        # 本轮 SILENT：不回复、不兜底、保留 ASR 上下文并写入历史
+        self._silent_utterance: bool = False
+        # 本轮 LLM 选择 INTERRUPT：不再走 VAD speech_end 兜底（防双路 TTS）
+        self._no_fallback_this_utterance: bool = False
+        # 人类不可打断窗口（AI 打断 / TTS 首块后 300ms，给人反应停止说话的时间）
+        self._bargein_block_until: float = 0.0
+        # 本轮 TTS 是否已置过打断保护窗（首块音频只置一次）
+        self._tts_bargein_block_armed: bool = False
+
         # 后台任务引用集合：防止 _finalize_turn / _maybe_agent_interrupt 等长任务
         # 被 GC 提前回收（asyncio 不持有裸 create_task 的引用）。
         self._background_tasks: set = set()
@@ -322,6 +404,7 @@ class DualStreamSession:
         # LLM 预填充/尚未出声阶段（_tts_playing_clients 未标记）触发打断会误伤
         # 刚启动的回复——VAD 对语音尾部/静音边缘的假 speech_start 实测会取消
         # 尚未输出的回复，导致双流无 TTS 输出（2026-08-19 复现）。
+        bargein_blocked = self.is_bargein_blocked()
         if self.client_id in _tts_playing_clients:
             # 打断保护窗口：VAD 处理用户语音尾部残留帧存在滞后，用户语音结束
             # （speech_end）后短窗口内的 speech_start 多为残留误判，跳过打断，
@@ -330,12 +413,28 @@ class DualStreamSession:
                 self._last_speech_end_time
                 and (time.monotonic() - self._last_speech_end_time) * 1000 < self._speech_end_guard_ms
             )
-            if not in_guard_window and self._pipeline_task and not self._pipeline_task.done():
+            if bargein_blocked:
+                # AI 打断后 / TTS 首次出声后 300ms：人类可能还在收尾说话，
+                # 此窗口内不反打断 AI（"继续说完比撤回好"），但仍继续复位本轮状态。
+                logger.info(
+                    "[BARGEIN] 300ms 保护窗内忽略 speech_start（client=%s remain=%.0fms）",
+                    self.client_id,
+                    max(0.0, (self._bargein_block_until - time.monotonic()) * 1000),
+                )
+            elif not in_guard_window and self._pipeline_task and not self._pipeline_task.done():
                 await self._interrupt_pipeline()
         # 重置当前 utterance 的触发标志，允许新 utterance 触发 LLM
         self._has_triggered_this_utterance = False
         # 重置 LLM 插话打断标记（新 utterance 开始，speech_end_fallback 互斥失效）
         self._agent_interrupt_triggered = False
+        # 新 utterance 复位四态判定 / SILENT / 不兜底 / 保护窗状态
+        self._last_agent_decision = ""
+        self._last_agent_decision_text = ""
+        self._silent_utterance = False
+        self._no_fallback_this_utterance = False
+        self._tts_bargein_block_armed = False
+        # 新 utterance 允许再记一行停判否决日志（限流窗口复位，累计计数保留）
+        self._stop_veto_logged = False
         # 重置首帧延续性确认状态（新 utterance 重新做边缘幻觉确认）
         self._pending_partial = ""
         self._partial_confirmed = False
@@ -345,6 +444,128 @@ class DualStreamSession:
         self._diag_partial_seen = 0
         self._diag_partial_withheld = 0
         self._diag_first_visible_logged = False
+
+    @property
+    def stop_veto_count(self) -> int:
+        """停判否决累计次数（只读，供观测与测试断言）。"""
+        return self._stop_veto_count
+
+    def update_vad_evidence(self, vad_result: dict) -> None:
+        """每帧刷新 VAD 证据快照（供停判拦截 user_speech_active 判定）。
+
+        入参非 dict / 空 → 直接返回（不改动既有证据，避免半双工路径清空全双工证据）。
+        时间戳统一用 time.monotonic，与 on_vad_speech_start 的
+        _last_speech_end_time 同源时钟，避免混用 time.time 造成窗口判定错乱。
+        """
+        if not isinstance(vad_result, dict) or not vad_result:
+            return
+        parallel = vad_result.get("parallel")
+        parallel_present = isinstance(parallel, dict)
+        parallel_silence_ms = float("inf")
+        if parallel_present:
+            raw_silence = parallel.get("silence_duration_ms")
+            if isinstance(raw_silence, (int, float)) and not isinstance(raw_silence, bool):
+                parallel_silence_ms = float(raw_silence)
+        self._last_vad_evidence = {
+            "is_speaking": bool(vad_result.get("is_speaking")),
+            # parallel 缺失（半双工/配置回退）时不得用"静默 0ms"推断用户仍在说话，
+            # 否则 user_speech_active 恒真、should_reply 被永久否决（EC-1 回滚开关失效）。
+            "parallel_present": parallel_present,
+            "parallel_is_speech": bool(parallel.get("is_speech")) if parallel_present else False,
+            "parallel_silence_ms": parallel_silence_ms,
+        }
+        self._last_vad_ts = time.monotonic()
+
+    def is_bargein_blocked(self) -> bool:
+        """AI 打断后 / TTS 首次出声后 300ms 内人类不可反打断。"""
+        return time.monotonic() < self._bargein_block_until
+
+    def arm_bargein_block(self, ms: float = 300.0) -> None:
+        """开启人类不可打断窗口（取当前与目标的较晚者，不缩短已有窗口）。"""
+        self._bargein_block_until = max(
+            self._bargein_block_until, time.monotonic() + max(0.0, ms) / 1000.0
+        )
+
+    def note_agent_decision(self, decision: str, text: str = "") -> None:
+        """记录 LLM 四态判定，并同步 SILENT / INTERRUPT 的本轮语义。"""
+        normalized = (decision or "").strip().upper()
+        if normalized == "IGNORE":
+            normalized = "SILENT"
+        self._last_agent_decision = normalized
+        self._last_agent_decision_text = text or ""
+        if normalized == "SILENT":
+            self._silent_utterance = True
+            self._no_fallback_this_utterance = True
+        elif normalized == "INTERRUPT":
+            # LLM 选择打断 → 本轮不再走 VAD speech_end 兜底（无论 reply_content 是否为空）
+            self._no_fallback_this_utterance = True
+            self._silent_utterance = False
+        elif normalized == "REPLY":
+            self._silent_utterance = False
+
+    def should_preserve_asr_context(self) -> bool:
+        """SILENT 且尚未触发主管线时，保留流式 ASR 上下文（不发送 is_last / 不 reset）。"""
+        return self._silent_utterance and not self._has_triggered_this_utterance
+
+    async def record_silent_turn(self, text: str) -> None:
+        """SILENT：把用户文本写入会话历史（仅 user，无 assistant），保留上下文。"""
+        text = (text or "").strip()
+        if not text:
+            return
+        try:
+            from server.dependencies import get_context_manager
+
+            context_mgr = get_context_manager()
+            await context_mgr.ensure_session_async(
+                self.session_id,
+                workspace_id="agent-chats",
+                title="双流式对话",
+                metadata={"agent_id": self.agent_id},
+            )
+            user_metadata = None
+            if self._last_speaker_name:
+                user_metadata = {"speaker": self._last_speaker_name}
+            await context_mgr.add_message_async(
+                session_id=self.session_id, role="user", content=text,
+                metadata=user_metadata,
+            )
+            logger.info(
+                "[SILENT] 保留上下文：client=%s text=%r（不回复）",
+                self.client_id,
+                text[:40],
+            )
+        except Exception as e:
+            logger.error(f"SILENT 上下文记录失败: {e}")
+
+    def user_speech_active(self, window_ms: Optional[int] = None) -> bool:
+        """用户当前是否仍在说话（停判拦截判据）。
+
+        - window_ms 缺省时取并行 VAD 配置的 consistency_window_ms（默认 500）；
+        - 无证据 → False（未接入/单测旧路径放行 ensure_reply）；
+        - 先做新鲜度判定：证据早于窗口 → False（陈旧证据放行，不误拦）；
+        - 主 VAD 判有声 → True；
+        - 仅当证据携带并行 VAD（parallel_present）时，才用并行"有声/最近静默<窗口"
+          作为补充判据；parallel 缺失（半双工或 parallel.enabled=false）时只看主 VAD，
+          保证回滚开关与变更前等价。
+        """
+        if window_ms is None:
+            # 函数内 import 避免 audio ↔ vad_processor 的模块级循环依赖
+            from server.services.vad_processor import get_parallel_config
+
+            window_ms = int(get_parallel_config().get("consistency_window_ms", 500) or 500)
+        evidence = self._last_vad_evidence
+        if evidence is None:
+            return False
+        if (time.monotonic() - self._last_vad_ts) * 1000 > window_ms:
+            return False
+        if evidence.get("is_speaking"):
+            return True
+        if not evidence.get("parallel_present"):
+            return False
+        return bool(
+            evidence.get("parallel_is_speech")
+            or evidence.get("parallel_silence_ms", float("inf")) < window_ms
+        )
 
     async def on_partial_result(self, asr_result: dict) -> None:
         """ASR Partial Result 主驱动：立即触发 LLM Speculative Prefill
@@ -484,15 +705,22 @@ class DualStreamSession:
             return
 
         # ---- 未触发：VAD speech_end 兜底触发 ----
-        # 若本 utterance 已由 LLM 插话打断（interrupt_and_reply 置位）且配置启用
-        # speech_end_fallback，则跳过 VAD 兜底触发：插话回应（_play_reply）已作为
-        # 新 pipeline 在播，此刻再兜底触发主 pipeline 会形成双路 TTS 并发。此互斥
-        # 仅当 LLM 插话打断确实发生时生效，普通场景兜底行为与现状一致。
+        # LLM 本轮已选择 INTERRUPT（无论是否带插话内容）：不再兜底，避免双路 TTS。
+        # SILENT（说完不回复）：同样不兜底，尊重"判定说完不回复"。
+        if self._no_fallback_this_utterance or self._silent_utterance:
+            logger.info(
+                "[NO-FALLBACK] 跳过 VAD 兜底：decision=%s silent=%s client=%s",
+                self._last_agent_decision or "-",
+                self._silent_utterance,
+                self.client_id,
+            )
+            return
+
+        # 若本 utterance 已由 LLM 插话打断（interrupt_and_reply 置位），则跳过 VAD
+        # 兜底触发：插话回应（_play_reply）已作为新 pipeline 在播，此刻再兜底触发
+        # 主 pipeline 会形成双路 TTS 并发。LLM 选择打断即不兜底（不再依赖配置开关）。
         if self._agent_interrupt_triggered:
-            from server.services.agent_interrupt_user import get_agent_interrupt_module
-            # per-client 并发化：使用当前会话的独立打断模块实例
-            if get_agent_interrupt_module(self.client_id).speech_end_fallback:
-                return
+            return
 
         # final 若已在 speech_end 前到达，会被 on_final_result 以 is_speaking=True
         # 累积进 pending；此处合并 pending + final 触发（文本过短则留待合并）。
@@ -567,6 +795,16 @@ class DualStreamSession:
                 self._pending_user_text = f"{self._pending_user_text} {text}"
             else:
                 self._pending_user_text = text
+            return
+
+        # 本轮已判定 SILENT / LLM 选择 INTERRUPT：不启动兜底回复
+        if self._no_fallback_this_utterance or self._silent_utterance:
+            self._final_user_text = text
+            logger.info(
+                "[NO-FALLBACK] on_final_result 跳过兜底：decision=%s client=%s",
+                self._last_agent_decision or "-",
+                self.client_id,
+            )
             return
 
         # 兜底触发：合并 pending + final，直接启动 pipeline
@@ -720,6 +958,8 @@ class DualStreamSession:
             # 不必等整句，首包音频延迟压缩数百毫秒
             await set_tts_playing(self.client_id, True)
             self._tts_chunk_index = 0
+            # 新一轮 TTS：允许首块音频重新开启 300ms 人类不可打断窗口
+            self._tts_bargein_block_armed = False
             # 语音延迟埋点：主管线 TTS 首块打点待命（_send_tts_chunk 消费，零阻断）
             self._tts_first_chunk_pending = True
             self._current_assistant_text = ""
@@ -965,6 +1205,9 @@ class DualStreamSession:
             except Exception as e:
                 logger.warning(f"动作预设展开失败（原样播报）: {e}")
 
+            # AI 打断人：立即开启 300ms 人类不可打断窗口（给人反应停止说话的时间）
+            self.arm_bargein_block(300)
+
             # 标记当前 utterance 已由 LLM 插话打断（供 speech_end_fallback 互斥使用：
             # on_vad_speech_end 据此跳过 VAD 兜底触发，避免双路 TTS 并发）
             self._agent_interrupt_triggered = True
@@ -1013,6 +1256,8 @@ class DualStreamSession:
 
         await set_tts_playing(self.client_id, True)
         self._tts_chunk_index = 0
+        # 插话回复同为新一轮 TTS：允许首块音频重新开启 300ms 保护窗
+        self._tts_bargein_block_armed = False
         # 语音延迟埋点：AI 插话回复不属用户语音轮次，禁用 tts_first_chunk 打点
         self._tts_first_chunk_pending = False
         self._current_assistant_text = ""
@@ -1082,6 +1327,11 @@ class DualStreamSession:
         audio_base64 = None
         if audio_data:
             audio_base64 = base64.b64encode(audio_data).decode("utf-8")
+            # TTS 首次真正出声：开启 300ms 人类不可打断窗口（防残留帧误判撤回；
+            # 用户裁决仅保护前 300ms，之后恢复可打断）
+            if not self._tts_bargein_block_armed:
+                self._tts_bargein_block_armed = True
+                self.arm_bargein_block(300)
 
         stream_msg = create_stream(
             request_id=self.request_id,
@@ -1204,7 +1454,7 @@ def init_interrupt_module():
 
 
 def init_audio_stream_processor(asr_client):
-    from server.services.vad_processor import get_audio_stream_processor
+    from server.services.vad_processor import get_audio_stream_processor, apply_parallel_config
     from server.services.agent_interrupt_user import get_agent_interrupt_module
 
     stream_processor = get_audio_stream_processor()
@@ -1212,6 +1462,29 @@ def init_audio_stream_processor(asr_client):
 
     agent_interrupt = get_agent_interrupt_module()
     stream_processor.set_agent_interrupt(agent_interrupt)
+
+    # 并行 VAD 启动配置（change-id: add-parallel-vad-endpoint-veto）：
+    # 网关启动时仅取 services.vad.parallel 子节写入模块级缓存，后续 per-client
+    # 实例懒创建时由 VADProcessor.__init__ 自动继承；services.vad 的其他键
+    # 不在此处传入（主 VAD 配置仍走既有 set_config 路径）。
+    import json as _json
+    from pathlib import Path
+
+    try:
+        settings_path = Path(__file__).resolve().parent.parent.parent / "config" / "settings.json"
+        with open(settings_path, "r", encoding="utf-8") as f:
+            raw_settings = _json.load(f)
+    except Exception as e:
+        logger.warning(f"读取 settings.json 失败，并行 VAD 使用默认配置: {e}")
+        return
+
+    services = raw_settings.get("services") if isinstance(raw_settings, dict) else None
+    vad_cfg = services.get("vad") if isinstance(services, dict) else None
+    parallel_cfg = vad_cfg.get("parallel") if isinstance(vad_cfg, dict) else None
+    if not isinstance(parallel_cfg, dict):
+        logger.warning("settings.json 缺少 services.vad.parallel 或结构不符，并行 VAD 使用默认配置")
+        return
+    apply_parallel_config(parallel_cfg)
 
 
 def register_audio_handlers(
@@ -1701,6 +1974,15 @@ def register_audio_handlers(
                 text,
                 is_final=bool(asr_result.get("is_final", False)),
             )
+            decision = (res.get("decision") or "").strip().upper()
+            _note_agent_decision(session, decision, text)
+            # SILENT：说完不回复 → 写入历史（仅 user）并保留 ASR 上下文
+            if (
+                decision == "SILENT"
+                and asr_result.get("is_final", False)
+                and not session._has_triggered_this_utterance
+            ):
+                await session.record_silent_turn(text)
             # 【标签解耦】路由决策收敛到 route_agent_interrupt_result：
             # should_interrupt（真打断）→ interrupt_and_reply；
             # should_reply（Feature B 回复）→ ensure_reply 回复兜底（不打断）。
@@ -1832,8 +2114,10 @@ def register_audio_handlers(
             # skip_interrupt=True：vad_processor 内部的 agent_interrupt 判定不触发，
             # 由下方 handler 层 _maybe_agent_interrupt 统一接管（可捕获当前 session，
             # 且用非阻塞 create_task，避免主 LLM 判定阻塞帧处理）
+            # parallel_vad=True：仅全双工启用并行 VAD 一致判停（半双工/live 保持默认 False）
             result = await stream_processor.process_audio_chunk(
-                audio_data, skip_interrupt=True, always_send=True
+                audio_data, skip_interrupt=True, always_send=True, parallel_vad=True,
+                preserve_asr_context=session.should_preserve_asr_context(),
             )
 
             if _diag_enabled:
@@ -1842,6 +2126,9 @@ def register_audio_handlers(
 
             vad_result = result.get("vad", {})
             asr_result = result.get("asr")
+
+            # 每帧刷新 VAD 证据供停判拦截（须在 state_changed 处理之前）
+            session.update_vad_evidence(vad_result)
 
             # 模块级记录最近注册说话人，供会议等外部模块查询（Task 7.2）
             _reg_speaker = _registered_speaker_from(asr_result)

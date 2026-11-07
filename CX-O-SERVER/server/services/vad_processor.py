@@ -15,6 +15,68 @@ from server.core.utils import run_io
 logger = logging.getLogger(__name__)
 
 
+# --------------------------------------------------------------------------- #
+# 并行 VAD 配置（Task 1）
+# 模块级缓存供 VADProcessor.__init__ 读取：全双工实走懒创建的 per-client 实例，
+# 缓存保证这些实例也能拿到启动时应用的配置（不触碰主 VAD 配置）。
+# --------------------------------------------------------------------------- #
+_PARALLEL_DEFAULTS = {
+    "enabled": True,
+    "mode": "hybrid",
+    "silence_threshold_ms": 500.0,
+    "energy_threshold": 500,
+    "subframe_ms": 30,
+    "webrtc_vote_ratio": 0.5,
+    "consistency_window_ms": 500,
+    "max_utterance_ms": 30000,
+}
+
+_parallel_config_cache = dict(_PARALLEL_DEFAULTS)
+
+# webrtcvad 缺失/初始化失败时仅记录一次 warning（per-client 实例多次创建不刷屏）
+_parallel_vad_warned = False
+
+
+def _validate_parallel_value(key: str, value: Any) -> bool:
+    """校验并行 VAD 单个配置项的类型与取值范围（非法值保留默认，不抛异常）。"""
+    if key == "enabled":
+        return isinstance(value, bool)
+    if key == "mode":
+        return isinstance(value, str) and value in ("hybrid", "energy", "webrtc")
+    if key == "webrtc_vote_ratio":
+        return (
+            not isinstance(value, bool)
+            and isinstance(value, (int, float))
+            and 0.0 <= float(value) <= 1.0
+        )
+    if key in ("silence_threshold_ms", "energy_threshold", "subframe_ms", "max_utterance_ms"):
+        return not isinstance(value, bool) and isinstance(value, (int, float)) and float(value) > 0
+    if key == "consistency_window_ms":
+        return not isinstance(value, bool) and isinstance(value, (int, float)) and float(value) >= 0
+    return False
+
+
+def get_parallel_config() -> dict:
+    """返回模块级并行 VAD 配置的副本（避免调用方原地修改缓存）。"""
+    return dict(_parallel_config_cache)
+
+
+def apply_parallel_config(cfg: dict) -> None:
+    """把白名单内的合法键写入模块级并行配置缓存（非法值保留原值，不抛异常）。"""
+    if not isinstance(cfg, dict):
+        return
+    for key in _PARALLEL_DEFAULTS:
+        if key not in cfg:
+            continue
+        value = cfg[key]
+        if _validate_parallel_value(key, value):
+            _parallel_config_cache[key] = value
+        else:
+            logger.warning(
+                "[PARALLEL-VAD] 忽略非法并行配置 %s=%r，保留 %r", key, value, _parallel_config_cache[key]
+            )
+
+
 class VADMode(Enum):
     """语音活动检测模式：能量阈值 / WebRTC / Silero。"""
 
@@ -33,6 +95,19 @@ class VADState:
     silence_duration_ms: float = 0
     speech_duration_ms: float = 0
     frame_count: int = 0
+
+
+@dataclass
+class ParallelVADState:
+    """并行 VAD 状态：独立于主 VAD 记录有声判定与静默时长。
+
+    与主 VADState 分开维护，判停时用「一致静默」语义（两路都静默才算说完）。
+    """
+
+    is_speech: bool = False
+    last_speech_time: float = 0.0
+    silence_duration_ms: float = 0.0
+    speech_probability: float = 0.0
 
 
 class VADProcessor:
@@ -61,7 +136,22 @@ class VADProcessor:
         self._on_speech_end_callback: Optional[Callable] = None
         # B10: 原 _audio_buffer/_buffer_duration_ms 仅初始化从未读写（死缓冲），已删除
         self._initialized = False
+        # 并行 VAD（Task 1）：实例字段从模块级缓存注入，parallel_gate=False 时完全不参与判定
+        self.parallel_enabled = True
+        self.parallel_mode = "hybrid"
+        self.parallel_silence_threshold_ms = 500.0
+        self.parallel_energy_threshold = 500 / 32768.0 ** 2
+        self.parallel_subframe_ms = 30.0
+        self.parallel_webrtc_vote_ratio = 0.5
+        self.parallel_consistency_window_ms = 500.0
+        self.parallel_max_utterance_ms = 30000.0
+        self._parallel = ParallelVADState()
+        self._parallel_vad: Any = None
+        self._end_vetoed_this_utterance = False
+        self.end_veto_count = 0
         self._frame_size = self._compute_frame_size()
+        # 模块级缓存 → 实例字段（同时完成并行 WebRTC 检测器初始化）
+        self.apply_parallel_config(get_parallel_config())
 
     @classmethod
     def get_instance(cls):
@@ -87,7 +177,56 @@ class VADProcessor:
         self._frame_size = self._compute_frame_size()
 
         self._init_vad()
+        # 并行 VAD 子节（白名单键 + 类型校验）：缺省/非法值保留实例当前值；
+        # 模式或子帧参数变化时在此重新初始化并行 WebRTC 检测器
+        self.apply_parallel_config(config.get("parallel", {}))
         self._initialized = True
+
+    def apply_parallel_config(self, cfg: dict) -> None:
+        """应用实例级并行 VAD 配置（白名单键 + 类型校验，非法值保留当前值，不抛异常）。"""
+        if not isinstance(cfg, dict):
+            return
+        for key in _PARALLEL_DEFAULTS:
+            if key not in cfg or not _validate_parallel_value(key, cfg[key]):
+                continue
+            value = cfg[key]
+            if key == "enabled":
+                self.parallel_enabled = bool(value)
+            elif key == "mode":
+                self.parallel_mode = str(value)
+            elif key == "silence_threshold_ms":
+                self.parallel_silence_threshold_ms = float(value)
+            elif key == "energy_threshold":
+                # 与主 VAD 一致：legacy 原始 int16 刻度 → 归一化刻度
+                self.parallel_energy_threshold = float(value) / 32768.0 ** 2
+            elif key == "subframe_ms":
+                self.parallel_subframe_ms = float(value)
+            elif key == "webrtc_vote_ratio":
+                self.parallel_webrtc_vote_ratio = float(value)
+            elif key == "consistency_window_ms":
+                self.parallel_consistency_window_ms = float(value)
+            elif key == "max_utterance_ms":
+                self.parallel_max_utterance_ms = float(value)
+        # 模式/子帧参数可能变化 → 重新初始化并行检测器
+        self._init_parallel_vad()
+
+    def _init_parallel_vad(self):
+        """初始化并行 WebRTC 检测器（aggressiveness=2）。
+
+        webrtcvad 缺失或初始化异常时置 None，由 _detect_parallel 退化为能量判定；
+        仅记录一次 warning，不抛异常（不影响主 VAD 与启动）。
+        """
+        global _parallel_vad_warned
+        self._parallel_vad = None
+        try:
+            import webrtcvad
+            self._parallel_vad = webrtcvad.Vad(2)
+        except Exception as e:  # ImportError / 运行期异常统一降级
+            if not _parallel_vad_warned:
+                _parallel_vad_warned = True
+                logger.warning(
+                    "[PARALLEL-VAD] webrtcvad 不可用（%s），并行检测降级为纯能量判定", e
+                )
 
     def _compute_frame_size(self) -> int:
         """计算 WebRTC VAD 单帧字节数（int16 PCM，每样本 2 字节）。"""
@@ -127,8 +266,16 @@ class VADProcessor:
         self._on_speech_start_callback = on_speech_start
         self._on_speech_end_callback = on_speech_end
 
-    def process_audio(self, audio_data: bytes) -> dict:
-        """处理一帧音频，更新说话状态并返回检测结果字典。"""
+    def process_audio(self, audio_data: bytes, parallel_gate: bool = False) -> dict:
+        """处理一帧音频，更新说话状态并返回检测结果字典。
+
+        parallel_gate=True（仅全双工链路）时并行运行第二个检测器，"起点 OR / 终点 AND"：
+        - 起点 OR：任一检测器判有声即进入说话状态并刷新 last_speech_time（不增加起点延迟）；
+        - 终点 AND：主判静默但并行仍判有声 → 否决判停（end_vetoed），保持 is_speaking；
+        - 一致静默：last_speech_time 按 OR 刷新，故 silence_ms > 阈值 ⇔ 两路均连续静默超阈值；
+        - 有界收尾：utterance 超过 max_utterance_ms 强制翻转一次 speech_end（忽略并行否决）。
+        parallel_gate=False 时完全不进入并行分支，既有 state_changed 时序/回调/字段值不变。
+        """
         current_time = time.time()
 
         if self.mode == VADMode.ENERGY:
@@ -143,15 +290,65 @@ class VADProcessor:
             is_speech = self._detect_energy(audio_data)
             speech_probability = 1.0 if is_speech else 0.0
 
+        # 并行检测器：仅 parallel_gate 且 enabled 时运行；否则整段跳过（零行为影响）
+        parallel_active = bool(parallel_gate and self.parallel_enabled)
+        parallel_is_speech = False
+        if parallel_active:
+            parallel_is_speech, parallel_probability = self._detect_parallel(audio_data, current_time)
+            self._parallel.is_speech = parallel_is_speech
+            self._parallel.speech_probability = parallel_probability
+            if parallel_is_speech:
+                self._parallel.last_speech_time = current_time
+                self._parallel.silence_duration_ms = 0.0
+            elif self._parallel.last_speech_time > 0:
+                self._parallel.silence_duration_ms = (
+                    current_time - self._parallel.last_speech_time
+                ) * 1000
+            else:
+                # 无历史有声记录：视为无限久静默（配合 AND 终点判定）
+                self._parallel.silence_duration_ms = float("inf")
+
         state_changed = False
 
-        if is_speech:
+        # 起点 OR：主或并行任一有声即视为说话
+        combined_speech = is_speech or (parallel_active and parallel_is_speech)
+
+        # 有界收尾：说话时长超过上限 → 忽略并行否决，强制判停一次（防永不收尾）
+        force_end = bool(
+            parallel_active
+            and self._state.is_speaking
+            and (current_time - self._state.speech_start_time) * 1000 > self.parallel_max_utterance_ms
+        )
+
+        # 停判否决（诊断）：主判静默、并行仍判有声 → 本次"想判停"被否决。
+        # 由于起点 OR 已刷新 last_speech_time，这里不会翻转状态，只暴露证据；
+        # 每 utterance 首次命中才计数 + 记一行 INFO（限流）。
+        end_vetoed = bool(
+            parallel_active
+            and self._state.is_speaking
+            and (not is_speech)
+            and parallel_is_speech
+            and not force_end
+        )
+        if end_vetoed and not self._end_vetoed_this_utterance:
+            self._end_vetoed_this_utterance = True
+            self.end_veto_count += 1
+            logger.info(
+                "[PARALLEL-VAD] 停判否决 #%d: primary=silence parallel=speech silence=%.0fms",
+                self.end_veto_count,
+                (current_time - self._state.last_speech_time) * 1000,
+            )
+
+        if combined_speech and not force_end:
+            # 并行有声也刷新 last_speech_time，保证后续 silence_ms 是"两路一致静默"的时长
             self._state.last_speech_time = current_time
 
             if not self._state.is_speaking:
                 self._state.speech_start_time = current_time
                 self._state.is_speaking = True
                 state_changed = True
+                # 新一轮 utterance 开始：重置"本次已否决过停判"标记（累计计数保留作证据）
+                self._end_vetoed_this_utterance = False
 
                 if self._on_speech_start_callback:
                     try:
@@ -170,14 +367,39 @@ class VADProcessor:
                 # 双流式模式下 VAD 仅作兜底，不阻塞 ASR Partial 驱动的主流程。
                 # Silero 模式优先使用 min_silence_duration_ms（默认 150ms）判定句尾，
                 # 相比原 silence_threshold_ms=500ms 加速兜底约 350ms；
-                # WebRTC/Energy 模式继续使用 silence_threshold_ms 保持向后兼容
-                silence_threshold = (
-                    self.min_silence_duration_ms
-                    if self.mode == VADMode.SILERO
-                    else self.silence_threshold_ms
-                )
+                # WebRTC/Energy 模式继续使用 silence_threshold_ms 保持向后兼容。
+                # 并行 VAD 启用时（仅全双工）：统一使用 parallel_silence_threshold_ms
+                # （默认 500ms，D-3 人类裁决），保证 Silero 也按「两路一致静默 500ms」判停；
+                # 半双工/直播（parallel_gate=False）仍保持各自的既有阈值。
+                if parallel_active:
+                    silence_threshold = self.parallel_silence_threshold_ms
+                else:
+                    silence_threshold = (
+                        self.min_silence_duration_ms
+                        if self.mode == VADMode.SILERO
+                        else self.silence_threshold_ms
+                    )
 
-                if silence_ms > silence_threshold:
+                if force_end:
+                    logger.warning(
+                        "[PARALLEL-VAD] 强制判停：utterance 超过 %sms", self.parallel_max_utterance_ms
+                    )
+                    self._state.is_speaking = False
+                    state_changed = True
+                    self._state.speech_duration_ms = 0
+
+                    if self._on_speech_end_callback:
+                        try:
+                            self._on_speech_end_callback()
+                        except Exception as e:
+                            logger.error(f"Speech end callback error: {e}")
+
+                elif parallel_active and (not is_speech) and parallel_is_speech:
+                    # 终点 AND：理论上不会进入（并行有声即 combined_speech=True），
+                    # 保留防御分支避免未来改动后误判停
+                    end_vetoed = True
+
+                elif silence_ms > silence_threshold:
                     self._state.is_speaking = False
                     state_changed = True
                     self._state.speech_duration_ms = 0
@@ -195,7 +417,17 @@ class VADProcessor:
             "speech_probability": speech_probability,
             "state_changed": state_changed,
             "speech_duration_ms": self._state.speech_duration_ms,
-            "silence_duration_ms": self._state.silence_duration_ms
+            "silence_duration_ms": self._state.silence_duration_ms,
+            "parallel": (
+                {
+                    "is_speech": self._parallel.is_speech,
+                    "speech_probability": self._parallel.speech_probability,
+                    "silence_duration_ms": self._parallel.silence_duration_ms,
+                }
+                if parallel_active
+                else None
+            ),
+            "end_vetoed": bool(end_vetoed),
         }
 
     def _calculate_energy(self, audio_data: bytes) -> float:
@@ -251,9 +483,69 @@ class VADProcessor:
             logger.error(f"Silero VAD error: {e}")
             return self._detect_energy(audio_data), 0.5
 
+    def _detect_parallel(self, audio_data: bytes, current_time: float) -> tuple[bool, float]:
+        """并行检测器：整帧能量 + 整帧子帧 WebRTC 投票，返回 (是否语音, 语音概率)。
+
+        设计动机：主 VAD 的 WebRTC 分支只取帧首 30ms（首 30ms 盲区），帧长 >30ms 时
+        后段语音完全丢失；本方法对**整帧所有完整子帧**投票，帧内后段有声也能被发现。
+        """
+        try:
+            energy = self._calculate_energy(audio_data)
+            threshold = self.parallel_energy_threshold
+            energy_prob = min(1.0, energy / threshold) if threshold > 0 else 1.0
+            energy_speech = energy > threshold
+
+            if self.parallel_mode == "energy":
+                return energy_speech, energy_prob
+
+            vote_ratio, vote_speech = self._parallel_subframe_vote(audio_data)
+            if vote_ratio is None:
+                # 不足一个完整子帧 / 并行 WebRTC 不可用 → 退化为能量判定
+                return energy_speech, energy_prob
+
+            if self.parallel_mode == "webrtc":
+                return vote_speech, vote_ratio
+
+            # hybrid：能量与子帧投票任一为真即有声，概率取两者较大值
+            return (energy_speech or vote_speech), max(energy_prob, vote_ratio)
+        except Exception as e:
+            logger.error("[PARALLEL-VAD] 并行检测异常，退化为能量判定: %s", e)
+            return self._detect_energy(audio_data), 0.0
+
+    def _parallel_subframe_vote(self, audio_data: bytes) -> tuple[Optional[float], bool]:
+        """整帧按 subframe_ms 切分为完整子帧做 WebRTC 投票。
+
+        Returns:
+            (vote_ratio, is_speech)；无法投票（无可识别子帧 / 并行 WebRTC 不可用）时
+            返回 (None, False)，由调用方退化为能量判定。
+            非完整尾段不参与投票（避免不足一个 WebRTC 帧导致异常）。
+        """
+        if self._parallel_vad is None:
+            return None, False
+
+        subframe_bytes = int(self.sample_rate * self.parallel_subframe_ms / 1000) * 2
+        if subframe_bytes <= 0:
+            return None, False
+
+        total = len(audio_data) // subframe_bytes
+        if total < 1:
+            return None, False
+
+        voiced = 0
+        for index in range(total):
+            start = index * subframe_bytes
+            sub = audio_data[start:start + subframe_bytes]
+            if self._parallel_vad.is_speech(sub, int(self.sample_rate)):
+                voiced += 1
+
+        ratio = voiced / total
+        return ratio, ratio >= self.parallel_webrtc_vote_ratio
+
     def reset(self):
-        """重置 VAD 检测状态。"""
+        """重置 VAD 检测状态（并行状态与本次否决标记一并清空；累计计数保留作证据）。"""
         self._state = VADState()
+        self._parallel = ParallelVADState()
+        self._end_vetoed_this_utterance = False
 
     @property
     def is_speaking(self) -> bool:
@@ -336,7 +628,8 @@ class AudioStreamProcessor:
         self._on_partial_result_callback = on_partial_result
 
     async def process_audio_chunk(self, audio_data: bytes, skip_interrupt: bool = False,
-                                  always_send: bool = False) -> dict:
+                                  always_send: bool = False, parallel_vad: bool = False,
+                                  preserve_asr_context: bool = False) -> dict:
         """处理单帧音频
 
         skip_interrupt: 双流式(voice.dual_stream)路径传 True。
@@ -350,6 +643,14 @@ class AudioStreamProcessor:
         抑制，静默不产文本），消除服务端 VAD speech 判定(~300ms)带来的 T2 延迟，
         全双工"边说边识别"符合 <800ms 设计目标（2026-08-25 用户指令）。服务端 VAD
         仍保留用于 speech_end 翻转产出 is_last(final 兜底)，不再阻塞音频上行。
+
+        parallel_vad: 仅全双工(voice.dual_stream)路径传 True，透传
+        VADProcessor.process_audio(parallel_gate=...) 启用并行 VAD 一致判停；
+        半双工/live 路径保持默认 False，判定时序与字段值不变。
+
+        preserve_asr_context: SILENT（判定说完不回复）时传 True——本轮不向容器
+        发送 is_last、不 reset 流式 ASR，保留识别上下文供下一句续接；代际计数
+        （_utterance_epoch）仍照常推进，避免旧的打断判定泄漏到下一轮。
         """
         _debug = logger.isEnabledFor(logging.DEBUG)
         if _debug:
@@ -357,15 +658,19 @@ class AudioStreamProcessor:
         # SILERO 模式跑 torch 推理（CPU/GPU 阻塞），移入有界 IO 线程池，避免卡事件循环；
         # WEBRTC/ENERGY 模式为快速 CPU 判定，保持既有内联路径（零侵入、向后兼容）。
         if self.vad.mode == VADMode.SILERO:
-            vad_result = await run_io(self.vad.process_audio, audio_data)
+            vad_result = await run_io(self.vad.process_audio, audio_data, parallel_vad)
         else:
-            vad_result = self.vad.process_audio(audio_data)
+            vad_result = self.vad.process_audio(audio_data, parallel_vad)
         if _debug:
             _diag_t1 = time.time()
 
         result = {
             "vad": vad_result,
             "asr": None,
+            # 并行 VAD 证据透传（Task 2）：半双工/直播（parallel_vad=False）时
+            # parallel 为 None、end_vetoed 为 False，字段恒定存在便于下游无判空
+            "parallel": vad_result.get("parallel"),
+            "end_vetoed": bool(vad_result.get("end_vetoed", False)),
         }
 
         # 无流式 ASR 客户端的兜底路径：仅返回 VAD 结果，不上行 ASR。
@@ -381,6 +686,8 @@ class AudioStreamProcessor:
             # 推理队列打爆（帧速 16.7/s ≫ 推理吞吐），致 keepalive 断连、
             # 本轮识别结果全丢（2026-08-05 18:19 实测复现）。
             is_last = vad_result["state_changed"] and not vad_result["is_speaking"]
+            # SILENT 保留 ASR 上下文：本轮不发 final、不 reset 流式识别缓冲
+            effective_is_last = is_last and not preserve_asr_context
 
             # VAD 门控：仅说话中（及翻转当帧）的音频送 ASR 服务端（半双工/live 默认路径）。
             # ⚠️ 全双工路径（always_send=True，双流式 voice.dual_stream）：**不做门控**，
@@ -394,7 +701,7 @@ class AudioStreamProcessor:
             if should_send:
                 send_success = await self._streaming_client.send_audio_chunk(
                     audio_data,
-                    is_last=is_last,
+                    is_last=effective_is_last,
                     client_id=self.client_id
                 )
             else:
@@ -496,8 +803,10 @@ class AudioStreamProcessor:
                 self._utterance_epoch += 1
                 # VAD on_end 兜底：仅修正 Final 文本，不重启已由 Partial 启动的 LLM 流程。
                 # 双流式模式下主流程已由 ASR Partial Result 驱动，此处只做收尾与状态复位，
-                # 避免阻塞或重复触发 LLM Prefill
-                await self._streaming_client.reset(client_id=self.client_id)
+                # 避免阻塞或重复触发 LLM Prefill。
+                # SILENT（preserve_asr_context=True）：保留流式 ASR 上下文，不清空缓冲。
+                if not preserve_asr_context:
+                    await self._streaming_client.reset(client_id=self.client_id)
 
         except Exception as e:
             logger.error(f"Streaming ASR error: {e}")
